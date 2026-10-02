@@ -121,12 +121,15 @@ pub function hash_key(s: string): string {
   return i32_to_string(a) + "_" + i32_to_string(b);
 }
 
-// hash_bucket maps a string to a bucket index in [0, n). It is hash_key's first
-// polynomial roll, kept numeric: hash_key concatenates two rolls into a string,
-// which is right for a content fingerprint and wrong for an index — a caller
-// that only wants a bucket would pay a string build and a parse per probe.
-// Masking to 0x3FFFFFFF keeps the accumulator non-negative, so the `%` cannot
-// return a negative index.
+// hash_bucket maps a string to a bucket index in [0, n): the polynomial roll
+// `a = a * 31 + byte` over the bytes and then the length, taken four bytes
+// per step, wrapping as it goes and masked to 0x3FFFFFFF once at the end so
+// the `%` cannot return a negative index. util_hash_run pins the step against
+// the byte-at-a-time roll. Which bucket a name lands in reaches no emitted
+// byte: every index over it returns an equal entry whichever end of the chain
+// meets it first, and no table walks its buckets in order. It does reach the
+// per-module cache key (modloader.module_fact_hashes sums it as a checksum),
+// so a change here misses every cached unit once.
 pub function hash_bucket(s: string, n: i32): i32 {
   if (n <= 1) {
     return 0;
@@ -134,12 +137,17 @@ pub function hash_bucket(s: string, n: i32): i32 {
   var a: i32 = 208357;
   var len: i32 = s.len();
   var i: i32 = 0;
+  while (i + 4 <= len) {
+    // 31^4, 31^3, 31^2, 31, 1.
+    a = a * 923521 + s[i] as i32 * 29791 + s[i + 1] as i32 * 961 + s[i + 2] as i32 * 31 + s[i + 3] as i32;
+    i = i + 4;
+  }
   while (i < len) {
-    a = a * 31 + s[i] as i32 + 1 & 1073741823;
+    a = a * 31 + s[i] as i32;
     i = i + 1;
   }
-  a = a * 31 + len & 1073741823;
-  return a % n;
+  a = a * 31 + len;
+  return (a & 1073741823) % n;
 }
 
 // NameIndex is a list of names with a bucket index over it: head[b] is the

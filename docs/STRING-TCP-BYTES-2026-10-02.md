@@ -1,5 +1,12 @@
 # TCP byte sink for D9
 
+Current-main refresh: integrated `c83a5855c`, preserving the removal of the
+AST lowering path. TCP byte sends use the typed-IR lowering arm. Fresh Linux
+target tests, per-module linking, 64 WASI fault cases, IR registry checks and
+all lint gates pass. The refreshed pinned bootstrap, actual stage-2 probes
+and full unit suite remain pending. The measurements below describe the
+earlier checkpoints named alongside them.
+
 Integration checkpoint, October 2: target tests and lint pass with main
 through `0d7a8d321`. The pinned bootstrap produces identical stage-2 and
 stage-3 binaries of 12,130,865 bytes, SHA-256
@@ -7,7 +14,7 @@ stage-3 binaries of 12,130,865 bytes, SHA-256
 Actual stage-2 Darwin loopback passes with ten allocations and ten frees;
 native descriptor and SIGPIPE probes use zero allocations. The WASI component
 loopback passes. The full unit suite and `make lint-all` pass on the
-current main integration, source checkpoint `b8881841c`.
+earlier main integration, source checkpoint `b8881841c`.
 Measurements below retain their original source provenance.
 
 `tcp_send_bytes(fd: i32, data: u8[]): i32` borrows an owned byte array and

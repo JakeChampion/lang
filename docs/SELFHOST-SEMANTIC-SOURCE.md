@@ -2238,10 +2238,10 @@ function type nested in a function value's signature.
 The typed path is the only lowering a compile has, and a refusal is a compile
 error, for a program's module and for each runtime helper it appends: the
 refusals are printed as `FERN_SEM_IR_REPORT` would print them, and the compile
-exits 3. There is no off switch and no bisect knob. Nothing calls the AST
-lowering (`irlower`): every emit path and the FIP claim checks read the
-produced body of each declaration, and a declaration without one is an
-internal error that exits 3 naming it (`ircore.produced`).
+exits 3. There is no off switch and no bisect knob, and no AST lowering: every
+emit path and the FIP claim checks read the produced body of each
+declaration, and a declaration without one is an internal error that exits 3
+naming it (`ircore.produced`).
 
 What the typed path produced whole, 2026-09-24:
 
@@ -2331,7 +2331,8 @@ What is left, in order:
    runtime helpers (`runtime_ast_bodies`), `-assume-eligible` and the
    modload drivers' per-module AST view. The differential legs run the typed
    path only, and the tests' AST legs went with the switch.
-4. The AST lowering itself is deleted.
+4. Done: the AST lowering is deleted. `irlower.fern` went from 108,028 lines
+   to about 33,700; what it still holds is below.
 
 ### What deleting the AST lowering touches, 2026-09-26
 
@@ -2404,24 +2405,27 @@ source lines and the typed path adds about 16,600, so once step 3 lands each
 driver is smaller than it is today. A test that exists to inspect the AST
 lowering's own output goes with the lowering.
 
-**`irlower.fern`.** About 44,600 of its 80,000 lines are reachable only from
-`lower_func`, `lower_func_for` and `lower_module`. That covers `LowerState`
-and its methods, `lower_expr` / `lower_stmt` and their arms, and the reuse
-passes. The rest is shared and stays, or moves into a module of its own:
+**`irlower.fern`.** What every driver reaches, computed by tree-shaking each
+driver's program and taking the union, is what stays; everything else went,
+`LowerState` and its methods, `lower_expr` / `lower_stmt` and their arms, the
+reuse passes and the dumps among it (1,829 functions and 33 types). What
+stays:
 
 - the core types and tables (`LowerResult`, `SigReg`, `FnSigs`,
   `StructTab`, the declaration and field-type lookups);
 - the op builders `ssarc` calls (`sat_binary_ops`, `chk_binary_ops`,
   `map_fbinop` and similar);
 - the layout and RC-body helpers the backends read;
-- the two `FnSigs` fields the emit reads (`borrowable_params`,
-  `strfld_ok_types`) and the admissions behind them;
+- the whole-program registries behind `FnSigs`, of which the emit reads two
+  fields (`borrowable_params`, `strfld_ok_types`) through the field-reclaim
+  admissions; the rest are read only by `wp_fact_rows`, the per-unit cache
+  key's facts;
 - the AST-to-AST lambda lift (`lift_lambdas_typed`), which the typed path
-  runs first;
-- the dumps the driver programs print.
+  runs first.
 
-`regrow_sigs`, `consume_sigs` and `ssarc.caller_sigs` exist only so an
-AST-lowered caller can call a produced callee, and they go with the lowering.
+`regrow_sigs` and `consume_sigs` rewrote registry rows only an AST-lowered
+caller read, and went with it. `ssarc.caller_sigs` stays: its rewrite of
+`borrowable_params` reaches the emit's field-reclaim admission.
 
 **The sites that lowered a body from the AST** read the produced body
 instead: `ircore.produced` for a driver's emit and for the FIP and E068 claim
@@ -2437,14 +2441,11 @@ The probes' verdict was spelled `ast`, from when a bail routed to the AST
 emitter, and then `refused`. It is the typed lowering's now
 (`semlower.verdict`), so step 3 does not change it.
 
-`TestSelfHostSSALoopTailBlockEmittedOnce` pins a loop shape only the AST
-lowering's TCO wrapper builds, and runs a typed leg beside it; its AST leg goes
-with the lowering.
-
 **Other checked-in state:**
 
-- `e2eharness.RequireCompleteSemanticLowering` asserts that the AST lowering
-  did not stand, and goes with it.
-- `.github/cliff-baseline.txt` pins `x86_64/checker.cliff_bytes`, which that
-  file attributes almost wholly to `irlower.LowerState.emit`. It has to be
-  re-baselined when the lowering goes.
+- `e2eharness.RequireCompleteSemanticLowering` reads the report's
+  `module: produced N of N` line, which a compile prints only when nothing was
+  refused.
+- `.github/cliff-baseline.txt` attributes `x86_64/checker.cliff_bytes` almost
+  wholly to `irlower.LowerState.emit`, which no compile runs since #10980; the
+  baseline is re-banked from CI's own report.

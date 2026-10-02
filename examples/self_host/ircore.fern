@@ -50,12 +50,6 @@ function is_array_type(t: string): boolean {
   return slice_unchecked(t, n - 2, n) == "[]";
 }
 
-// array_ret_fns collects the names of functions whose return type is an array,
-// so move-on-return / move-from-call fire (mirrors irlower.lower_module).
-pub function array_ret_fns(mod: parser.Module): string[] {
-  return array_ret_fns_of(mod.funcs);
-}
-
 // array_ret_fns_of is array_ret_fns over an explicit funcs array, so it can be
 // derived over the WHOLE-PROGRAM function set (#3454) rather than one module's.
 pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
@@ -907,9 +901,7 @@ pub function lower_failed_refuse(name: string, r: irlower.LowerResult): i32 {
 }
 
 // wp_fn_sigs derives the whole-program FnSigs base once. These are the
-// pre-`append_dyn` registries (the expensive O(all_funcs) part); a caller folds
-// in its own module's trait_reqs via irlower.fn_sigs_with_dyn, which is cheap,
-// and overrides the registries it wants module-scoped on top.
+// pre-`append_dyn` registries (the expensive O(all_funcs) part).
 //
 // A caller that also needs the raw borrowable-params fixpoint for a tail of its
 // own (strfld_ok_types, structfld_reclaim_ok_types_of) builds the trio inline
@@ -1472,19 +1464,23 @@ function inline_leaf(fd: parser.FuncDecl, r: irlower.LowerResult): boolean {
     return false;
   }
   var k_calld: i32 = ir.kind_id("call_direct");
+  var k_load: i32 = ir.kind_id("load_local");
+  var k_store: i32 = ir.kind_id("store_local");
+  var k_tee: i32 = ir.kind_id("tee_local");
+  var k_calli: i32 = ir.kind_id("call_indirect");
+  var k_callc: i32 = ir.kind_id("call_closure_direct");
+  var k_const_func: i32 = ir.kind_id("const_func");
+  var k_dyn: i32 = ir.kind_id("dyn_dispatch");
   var work: i32 = 0;
   for o in r.ops {
     var k: i32 = o.kind_tag;
-    if (k != ir.kind_id("load_local") && k != ir.kind_id("store_local") && k != ir.kind_id("tee_local")) {
+    if (k != k_load && k != k_store && k != k_tee) {
       work = work + 1;
     }
     if (work > inline_leaf_ops()) {
       return false;
     }
-    if (k == k_calld) {
-      return false;
-    }
-    if (k == ir.kind_id("call_indirect") || k == ir.kind_id("call_closure_direct") || k == ir.kind_id("const_func") || k == ir.kind_id("dyn_dispatch")) {
+    if (k == k_calld || k == k_calli || k == k_callc || k == k_const_func || k == k_dyn) {
       return false;
     }
   }

@@ -1,6 +1,22 @@
 # UDP byte sinks
 
-Current integration includes main through `0d7a8d321` and TCP byte-sink
+The current refresh integrates TCP checkpoint `788bac08c` and main
+`c83a5855c`, preserving typed-IR-only lowering. Source checks, Linux target
+tests and all lint gates pass. The pinned bootstrap reaches identical
+stage-2 and stage-3 binaries of 12,197,089 bytes, SHA-256
+`842842a28bc159277a74495ede99c0279ca8d7287fb03a59dbee824c2ff0e8df`.
+The actual stage-2 compiler passes Darwin and WASI IPv4/IPv6 loopback probes.
+Each native fixture records ten allocations, ten frees and zero live bytes.
+WASI component execution verifies behavior. The refreshed full unit suite
+and all lint gates pass from the immutable current source snapshot.
+
+Building the TCP parent with the same stage-2 compiler gives 12,196,929 bytes,
+so UDP adds 160 file bytes. Code grows from 10,471,136 to 10,480,256 bytes,
+unwind data from 593,020 to 593,364, and data from 941,592 to 943,640.
+These sections fit within the existing file segments; link-edit data grows
+from 171,073 to 171,233 bytes. No size baseline was changed.
+
+The earlier integration includes main through `0d7a8d321` and TCP byte-sink
 checkpoint `b8881841c`. The pinned bootstrap reaches identical stage-2 and
 stage-3 binaries of 12,131,025 bytes, SHA-256
 `8a969e1658775f91d7be1f17a5a621d5b8cedc1697c4e5cd6188204d2ab328c0`.
