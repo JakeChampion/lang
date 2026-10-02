@@ -4,9 +4,9 @@
 // the drop-fn body is never generated — so emitting the drop CALL there used
 // to leave an undefined `__drop_enum_<E>` symbol at link time. This exercises
 // that path without std/regex (see internal/ir emitArraySet gating).
-enum Cell { Text(string), Num(i32), Empty }
+enum Slot { Text(string), Num(i32), Empty }
 
-function cell_len(c: Cell): i32 {
+function cell_len(c: Slot): i32 {
     match (c) {
         Text(s) => { return s.len(); },
         Num(n) => { return n; },
@@ -15,7 +15,7 @@ function cell_len(c: Cell): i32 {
 }
 
 function main(): i32 {
-    var xs: Cell[] = [Text("aaaa"), Num(2), Text("cc"), Empty];
+    var xs: Slot[] = [Text("aaaa"), Num(2), Text("cc"), Empty];
     // Replace a string-carrying element (drops the old "aaaa").
     xs = xs.with(0, Text("z"));
     // Replace a scalar element with a string-carrying one.

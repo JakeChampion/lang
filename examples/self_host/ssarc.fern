@@ -5017,6 +5017,9 @@ function outcome_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
   if (ins.str == "write_file") {
     return Lowered { found: true, r: emit(r, ir.op_write_file()) };
   }
+  if (ins.str == "write_file_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_write_file_bytes())) };
+  }
   if (ins.str == "write_file_exec") {
     return Lowered { found: true, r: emit(r, ir.op_write_file_exec()) };
   }

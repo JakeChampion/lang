@@ -157,9 +157,9 @@ type ArgDeaths struct {
 //     call and x occurs in it exactly once, directly as an argument — the
 //     old binding is overwritten by the result (the #5056 move-and-rebind
 //     shape, sans the `own` requirement);
-//   - the return-position `return f(.., x, ..)` under the same
-//     exactly-once rule: a return exits the function (loop or not), so no
-//     later read exists. This is what keeps recursive accumulator tails
+//   - the return-position `return f(.., x, ..)`, the call anywhere in the
+//     returned value, under the same exactly-once rule over that value: a
+//     return exits the function (loop or not), so no later read exists. This is what keeps recursive accumulator tails
 //     (`return walk(acc, …)`) on the in-place fast path — bracketing them
 //     would force one copy per recursion level, the #4838 O(n²) class;
 //   - the SOLE-OCCURRENCE shape (#6036): a PARAMETER read exactly once in
@@ -173,7 +173,8 @@ type ArgDeaths struct {
 //     textually last (IdentOrder.IsLast) and the call is enclosed by no
 //     loop or lambda body, so control passes it once and nothing reads the
 //     binding again. Admitted for a param and for a `var` local whose
-//     initialiser is a direct call to a named function — the state-
+//     initialiser is a fresh value — a direct call to a named function, or
+//     an array, string or plain struct literal (#10864) — the state-
 //     threading chain `var a = s.emit(o); var b = a.emit(o); return b;`,
 //     where every receiver is at its last use. Each of those was paying a
 //     full-buffer copy per link, which is O(n²) bytes over a chain: the
@@ -192,8 +193,9 @@ type ArgDeaths struct {
 // For a LOCAL the death verdict also needs the binding not to be an alias
 // of something else still live: `var t = holder; f(t)` makes `t`'s last
 // use unbracketed while `holder` still reads the same field buffers, and
-// binding a struct incs the BOX, not the buffers inside it. A direct-call
-// initialiser cannot be that: its result is either freshly allocated or
+// binding a struct incs the BOX, not the buffers inside it. A literal
+// initialiser cannot be that: it builds a new value whose elements and fields
+// each hold their own count. Nor can a direct-call initialiser: its result is either freshly allocated or
 // shares a buffer with an argument, and an argument shares only when the
 // callee grew it in place — which required that argument to have died at
 // ITS call, so nothing observes the sharing. That is the same induction
@@ -215,7 +217,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 }
 
 // CallArgDeathsOwning is CallArgDeaths with `owned` admitted to the
-// last-occurrence shapes beside the params and call-init locals: names the
+// last-occurrence shapes beside the params and fresh-init locals: names the
 // caller knows this frame owns that no declaration here spells, such as the
 // IR's counted consuming-match bindings.
 func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) ArgDeaths {
@@ -248,11 +250,11 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 		}
 		return true
 	})
-	// Locals bound from a direct call to a named function — the only local
-	// binding form the last-occurrence shape admits (see above). A name
-	// declared more than once is dropped: the occurrence order cannot tell
-	// the two bindings apart.
-	callInitLocal := map[string]bool{}
+	// Locals bound from a fresh value — the only local binding form the
+	// last-occurrence shape admits (see above). A spread literal is not one:
+	// it copies the base's fields. A name declared more than once is dropped:
+	// the occurrence order cannot tell the two bindings apart.
+	freshInitLocal := map[string]bool{}
 	declCount := map[string]int{}
 	ast.Walk(body, func(n ast.Node) bool {
 		v, isVar := n.(*ast.Var)
@@ -260,19 +262,26 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 			return true
 		}
 		declCount[v.Name]++
-		if c, isCall := v.Init.(*ast.Call); isCall {
-			if _, named := c.Callee.(*ast.Ident); named {
-				callInitLocal[v.Name] = true
+		switch init := v.Init.(type) {
+		case *ast.Call:
+			if _, named := init.Callee.(*ast.Ident); named {
+				freshInitLocal[v.Name] = true
+			}
+		case *ast.ArrayLit, *ast.StringLit:
+			freshInitLocal[v.Name] = true
+		case *ast.StructLit:
+			if init.Base == nil {
+				freshInitLocal[v.Name] = true
 			}
 		}
 		return true
 	})
 	for name, n := range declCount {
 		if n > 1 {
-			delete(callInitLocal, name)
+			delete(freshInitLocal, name)
 		}
 	}
-	// A local UNPACKED from a call-init local's field — `var eqL = park(…);
+	// A local UNPACKED from a fresh-init local's field — `var eqL = park(…);
 	// var sl = eqL.state;` — is admitted on the same footing. The alias
 	// exclusion asks whether another live name in this frame reads the same
 	// buffers, and the unpack is the only reader of that field: `h.f` occurs
@@ -292,7 +301,7 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 			return true
 		}
 		hid, isID := fa.Target.(*ast.Ident)
-		if !isID || !callInitLocal[hid.Name] {
+		if !isID || !freshInitLocal[hid.Name] {
 			return true
 		}
 		reads, selections, mentions := 0, 0, 0
@@ -329,12 +338,12 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 	// copied the whole buffer (#8498).
 	aliasInitLocal := map[string]bool{}
 	for name, root := range RenameRoots(body) {
-		if isParam[root] || callInitLocal[root] || unpackInitLocal[root] {
+		if isParam[root] || freshInitLocal[root] || unpackInitLocal[root] {
 			aliasInitLocal[name] = true
 		}
 	}
 	admitted := func(name string) bool {
-		return isParam[name] || callInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name] || owned[name]
+		return isParam[name] || freshInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name] || owned[name]
 	}
 	// markOnce marks `name` dead at the call inside `scope` that takes it,
 	// when scope names it exactly once and that occurrence is a direct
@@ -417,15 +426,28 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 				}
 				return true
 			}
-			c, ok := st.Value.(*ast.Call)
-			if !ok {
+			// The call need not be the whole returned value: `return (f(x),
+			// true)` exits the function just the same, so any call in it
+			// takes x's last read when the value names x only there (#10679).
+			// A block, if or match expression is its own statement list in
+			// the self-host's E051 port, so the walk stops at one.
+			if st.Value == nil {
 				return true
 			}
-			for _, a := range c.Args {
-				if aid, ok := a.(*ast.Ident); ok {
-					markOnce(c, aid.Name)
+			ast.Walk(st.Value, func(m ast.Node) bool {
+				switch m.(type) {
+				case *ast.BlockExpr, *ast.IfExpr, *ast.MatchExpr, *ast.Lambda:
+					return false
 				}
-			}
+				if c, isCall := m.(*ast.Call); isCall {
+					for _, a := range c.Args {
+						if aid, ok := a.(*ast.Ident); ok {
+							markOnce(st.Value, aid.Name)
+						}
+					}
+				}
+				return true
+			})
 		}
 		return true
 	})
@@ -842,13 +864,23 @@ func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, 
 // (#9541): each ident argument of a direct call that CallArgDeaths marks dead
 // there, names a `var` local of fn, and is read by no defer or lambda. Those
 // are the positions computeOwnedArgMoves moves into an owned parameter.
-// Calls inside a nested function or lambda are left out: those bodies are
-// lowered as functions of their own.
+// Calls inside a nested function or lambda are left out of fn's own walk:
+// those bodies are lowered as functions of their own, so a nested function is
+// answered by its own walk.
 func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 	out := map[ast.Expr]bool{}
 	if fn.Body == nil {
 		return out
 	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		if inner, ok := n.(*ast.FuncDecl); ok && inner != fn {
+			for e := range lastUseArgs(inner, info) {
+				out[e] = true
+			}
+			return false
+		}
+		return true
+	})
 	d := CallArgDeaths(fn, info)
 	isParam := map[string]bool{}
 	for _, p := range fn.Params {

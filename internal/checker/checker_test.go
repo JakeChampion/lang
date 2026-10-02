@@ -1822,6 +1822,11 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 			function main(): i32 { return 0; }`},
 		{"HttpResponse", `struct HttpResponse { status: i32, body: string }
 			function main(): i32 { return 0; }`},
+		// Reserved whatever kind takes the name (#10855).
+		{"Span", `enum Span { Empty, Wide(f64, string) }
+			function main(): i32 { return 0; }`},
+		{"Option", `struct Option { n: i32 }
+			function main(): i32 { return 0; }`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

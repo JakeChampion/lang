@@ -429,15 +429,12 @@
 # 36888675074.
 # 2026-10-02 — irlower_run.fern removed: it drove only the AST lowering, which
 # nothing calls any more.
-# 2026-10-02 — the nine drivers that linked irlower shrank 18-25% with it
-# (main's #10996); asm_pathprobe_run and checker_modload_run never reached it.
-# Numbers pasted from driver-sizes' own report on run 36961614073.
-fern.fern/stage2 10738192
-fern.fern 10736440
-asm_load_run.fern 8720624
-asm_modload_run.fern 7617744
-asm_ir_run.fern 7419504
-asm_run.fern 6812960
+fern.fern/stage2 10738872
+fern.fern 10737128
+asm_load_run.fern 8721320
+asm_modload_run.fern 7618432
+asm_ir_run.fern 7420200
+asm_run.fern 6813576
 wasm_ir_run.fern 6878120
 wasm_run.fern 6878824
 wasm_runio_run.fern 6878184

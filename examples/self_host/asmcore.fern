@@ -21,18 +21,18 @@ import "./ssa_lift";
 // base_type_name -> util.base_type_name (SH-020).
 
 pub function sanitize_label(name: string): string {
-  var out: string = "";
-  var i: i32 = 0;
-  while (i < name.len()) {
-    var b: i32 = name[i] as i32;
-    if (b == 46) {
-      out = out + "__";
-    } else {
-      out = out + slice_unchecked(name, i, i + 1);
-    }
-    i = i + 1;
+  var dot: i32 = __memchr(name, 46, 0);
+  if (dot < 0) {
+    return name;
   }
-  return out;
+  var out: string = "";
+  var start: i32 = 0;
+  while (dot >= 0) {
+    out = out + slice_unchecked(name, start, dot) + "__";
+    start = dot + 1;
+    dot = __memchr(name, 46, start);
+  }
+  return out + slice_unchecked(name, start, name.len());
 }
 
 // i32_to_string now lives in util.fern (imported as `util`). See SH-020.
@@ -3681,11 +3681,19 @@ pub function rt_src_write_file_exec(t: string): string {
   );
 }
 
-// rt_src_write_file_mode is the shared body, parameterised by emitted function
-// name, creation mode (DECIMAL, as the emitted source is Fern: 420 = 0644,
-// 493 = 0755) and an optional statement spliced in before close(2). One body so
-// the two cannot drift. A failed write(2) closes the file and answers its errno,
-// as native does: a full disk is an error, not a short file.
+// Packed byte arrays lend their storage directly. Diagnostic word arrays
+// use an owned array as packing scratch; neither form constructs a string
+// from the content. Preserve the first write error while always closing.
+pub function rt_src_write_file_bytes(t: string, packed: boolean): string {
+  var prep: string = "var p: usize = __raw_addr(__raw_arr_ptr(bytes), 8);";
+  if (!packed) {
+    prep = "var raw: usize = __raw_arr_box(n / 8 + 1); var scratch: i32[] = __raw_array(raw); var p: usize = __raw_addr(__raw_arr_ptr(scratch), 8); var j: i32 = 0; while (j < n) { __raw_store8(p, j, bytes[j]); j = j + 1; }";
+  }
+  return "function __fern_write_file_bytes" + packed_suffix(packed) + "(path: string, bytes: i32[]): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var invalid: boolean = false; var i: i32 = 0; while (i < plen) { var c: i32 = path[i] as i32; if (c == 0) { invalid = true; } __raw_store8(pathz, i, c); i = i + 1; } __raw_store8(pathz, plen, 0); var pathz_own: string = __raw_string(pathz, plen + 1); if (invalid) { return Err(__fern_io_error(22, __fern_path_copy(pathz_own, plen))); } var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "wr_creat_trunc") + ", 420) as i32; if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } var n: i32 = bytes.len(); " + prep + " var at: i32 = 0; var bad: i32 = 0; while (at < n && bad == 0) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(p, at) as i64, (n - at) as i64) as i32; if (w == 0) { bad = 5; } else { if (w < 0) { if (w != -4) { bad = 0 - w; } } else { at = at + w; } } } var closed: i32 = __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0) as i32; if (bad != 0) { return Err(__fern_io_error(bad, __fern_path_copy(pathz_own, plen))); } if (closed < 0) { return Err(__fern_io_error(0 - closed, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
+}
+
+// Shared text writer, parameterised by symbol, decimal creation mode and
+// optional permission fixup. Plain write_file preserves existing modes.
 pub function rt_src_write_file_mode(t: string, fname: string, mode: string, fixup: string): string {
   return "function " + fname + "(path: string, contents: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "wr_creat_trunc") + ", " + mode + ") as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } var clen: i32 = contents.len(); var cbuf: usize = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j] as i32); j = j + 1; } var cbuf_own: string = __raw_string(cbuf, clen + 1); var put: i32 = 0; while (put < clen) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_addr(cbuf, put) as i64, (clen - put) as i64) as i32; if (w < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Err(__fern_io_error(0 - w, __fern_path_copy(pathz_own, plen))); } if (w == 0) { put = clen; } else { put = put + w; } } " + fixup + "__syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(()); }";
 }
@@ -5053,7 +5061,10 @@ pub struct TyCell { val: Ty }
 
 pub struct TyStructNamed { name: string }
 
-pub type Ty = TyI32 | TyU8 | TyU32 | TyU64 | TyI64 | TyUsize | TyBool | TyString | TyF64 | TyStruct | TyTuple | TyUnknown | TyArray | TyArrayI32 | TyArrayU32 | TyArrayU64 | TyArrayI64 | TyArrayString | TyFnAny | TyMapAny | TyOption | TyResult | TyFn | TyMapStr | TyMapI32 | TyMapIter | TyCell | TyStructNamed;
+pub type Ty = TyI32 | TyU8 | TyU32 | TyU64 | TyI64 | TyUsize | TyBool | TyString | TyF64 | TyStruct
+  | TyTuple | TyUnknown | TyArray | TyArrayI32 | TyArrayU32 | TyArrayU64 | TyArrayI64
+  | TyArrayString | TyFnAny | TyMapAny | TyOption | TyResult | TyFn | TyMapStr | TyMapI32
+  | TyMapIter | TyCell | TyStructNamed;
 
 pub function ty_named(name: string): Ty {
   return TyStructNamed { name: name };
@@ -6812,7 +6823,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "read_file_bytes") {
     return ty_result(ty_array_i32());
   }
-  if (id.name == "write_file") {
+  if (id.name == "write_file" || id.name == "write_file_bytes") {
     return ty_result(ty_unknown());
   }
   if (id.name == "write_file_exec") {
@@ -7657,7 +7668,7 @@ pub function runtime_need_deps(name: string): string[] {
   if (name == "str_concat" || name == "str_read_line" || name == "i32_to_string"
     || name == "u32_to_string" || name == "i64_to_string" || name == "u64_to_string"
     || name == "chr" || name == "args" || name == "read_file" || name == "read_file_bytes"
-    || name == "random_bytes"
+    || name == "random_bytes" || name == "write_file_bytes" || name == "write_file_bytes_u8"
     || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf" || name == "buf"
     || name == "read_file_bytes_u8" || name == "random_bytes_u8" || name == "tcp_recv_u8"
     || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
@@ -9591,6 +9602,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_eprint_str", "__fn___fern_putchar",
     "__fn___fern_read_line", "__fn___fern_read_file", "__fn___fern_read_file_bytes",
     "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
+    "__fn___fern_write_file_bytes", "__fn___fern_write_file_bytes_u8",
     "__fn___fern_reader_read_chunk_bytes", "__fn___fern_reader_read_chunk_bytes_u8", "__fn___fern_writer_write_bytes", "__fn___fern_writer_write_bytes_u8", "__fn___fern_writer_write_some_bytes", "__fn___fern_writer_write_some_bytes_u8",
     "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir",
     "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_remove_file",

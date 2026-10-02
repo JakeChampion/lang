@@ -2230,7 +2230,7 @@ struct WideRec { d: f64, n: i64, s: string }
     var d: f64 = w.d;
     return (d * 2.0) as i32 + (w.n >> 32) as i32 + w.s.len();
 }
-@noinline function span_wide(own sp: Span): i32 {
+@noinline function span_wide(own sp: Extent): i32 {
     match (sp) {
         Wide(d, s) => { return (d * 4.0) as i32 + s.len(); },
         Empty => { return 0; }
@@ -2246,7 +2246,7 @@ struct WideRec { d: f64, n: i64, s: string }
     return wide_fields(w);
 }
 @noinline function mk_span(d: f64): i32 {
-    var sp: Span = Wide(d, "abc");
+    var sp: Extent = Wide(d, "abc");
     return span_wide(sp);
 }
 // A 64-bit ARRAY element. Each element op carries its own slot width, so what
@@ -2539,12 +2539,12 @@ struct Boxed { d: f64, s: string }
 struct Deep { a: i64, xs: i32[], d: f64, s: string }
 struct Paired { pt: (i32, f64), s: string }
 struct Longs { ns: i64[], s: string }
-enum Span { Empty, Wide(f64, string) }
+enum Extent { Empty, Wide(f64, string) }
 @noinline function boxed_len(own b: Boxed): i32 { return b.s.len(); }
 @noinline function deep_len(own d: Deep): i32 { return d.s.len() + d.xs.len(); }
 @noinline function paired_len(own p: Paired): i32 { return p.s.len(); }
 @noinline function longs_len(own l: Longs): i32 { return l.s.len(); }
-@noinline function span_len(own sp: Span): i32 {
+@noinline function span_len(own sp: Extent): i32 {
     match (sp) {
         Wide(_, s) => { return s.len(); },
         Empty => { return 0; }
