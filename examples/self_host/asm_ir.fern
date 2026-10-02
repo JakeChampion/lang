@@ -8693,7 +8693,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_tcp_socket_ctl\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("tcp_socket_ctl");
-  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346) {  // tcp_listen_with, udp_bind .. udp_recvfrom, tcp_connect_with, unix_*, reactor_*, tcp_recv_into, tcp_sendfile
+  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353) {  // socket calls, including the byte send
     // [args] with the last on top; pop and re-push reversed, as udp_send
     // does. recvfrom spreads the datagram into the caller's array from a
     // raw buffer, so it needs the heap.
@@ -8711,7 +8711,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
       k = k - 1;
     }
     s = s.write("    call __fn___fern_" + udp_name + "\n    addq $" + util.i32_to_string(8 * udp_argc) + ", %rsp\n    pushq %rax\n");
-    if (o.kind_tag == 337 || o.kind_tag == 343 || o.kind_tag == 344) {
+    if (o.kind_tag == 337 || o.kind_tag == 343 || o.kind_tag == 344 || o.kind_tag == 353) {
       s = s.need("heap");
     }
     s = s.need(udp_name);
@@ -11518,6 +11518,12 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("tcp_send")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send("x86_64"), s);
+  }
+  if (s.has_need("tcp_send_bytes")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes("x86_64", false), s);
+  }
+  if (s.has_need("tcp_send_bytes_u8")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes("x86_64", true), s);
   }
   if (s.has_need("tcp_listen")) {
     s = s.write("    .text\n");

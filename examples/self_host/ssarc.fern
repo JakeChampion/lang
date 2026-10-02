@@ -5261,6 +5261,9 @@ function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowe
   if (ins.str == "tcp_send") {
     return Lowered { found: true, r: emit(r, ir.op_tcp_send()) };
   }
+  if (ins.str == "tcp_send_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_send_bytes())) };
+  }
   if (ins.str == "tcp_recv") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_recv())) };
   }

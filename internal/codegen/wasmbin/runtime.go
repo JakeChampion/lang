@@ -960,6 +960,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc")
 					needs.add("__alloc_u8")
 					needs.add("__fern_tcp_recv")
+				case "__fern_tcp_send_bytes":
+					needs.add("__free")
+					needs.add("__fern_alloc")
+					needs.add("__fern_tcp_send_bytes")
 				case "__fern_tcp_send":
 					needs.add("__free")
 					// (conn, data) → i32 — bytes sent, -1 on
@@ -3039,6 +3043,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpSendBody,
+	},
+	"__fern_tcp_send_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpSendBytesBody,
 	},
 	"__fern_tcp_close": {
 		// (conn: i32) → i32 (always 0). Drops streams +

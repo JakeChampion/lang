@@ -2992,6 +2992,18 @@ pub function rt_src_tcp_send(t: string): string {
   return "function __fern_tcp_send(fd: i32, s: string): i32 { return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(s) as i64, s.len() as i64, " + flags + ", 0, 0) as i32; }";
 }
 
+pub function rt_src_tcp_send_bytes(t: string, packed: boolean): string {
+  var flags: string = "16384";
+  if (t == "arm64-darwin") {
+    flags = "524288";
+  }
+  var prep: string = "var p: usize = __raw_addr(__raw_arr_ptr(bytes), 8);";
+  if (!packed) {
+    prep = "var raw: usize = __raw_arr_box(n / 8 + 1); var scratch: i32[] = __raw_array(raw); var p: usize = __raw_addr(__raw_arr_ptr(scratch), 8); var j: i32 = 0; while (j < n) { __raw_store8(p, j, bytes[j]); j = j + 1; }";
+  }
+  return "function __fern_tcp_send_bytes" + packed_suffix(packed) + "(fd: i32, bytes: i32[]): i32 { var n: i32 = bytes.len(); " + prep + " return __syscall6(" + sysno(t, "sendto") + ", fd as i64, p as i64, n as i64, " + flags + ", 0, 0) as i32; }";
+}
+
 // rt_src_tcp_recv backs `tcp_recv(fd, max)` (#5714, syscall-leaf) → a fresh
 // `u8[]` of up to `max` bytes, spread one-per-slot like rt_src_random_bytes. A
 // short read, EOF and -errno all come back as the empty array: the op has no
@@ -6628,6 +6640,7 @@ function builtin_i32_names(): string[] {
     "reactor_wait",
     "tcp_recv_into",
     "tcp_send",
+    "tcp_send_bytes",
     "tcp_close",
     "tcp_pollable",
     // sleep_ms(ms) / sleep_ns(ns) are void to a caller, but their op
@@ -9653,6 +9666,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_wasm_block", "__fern_wasm_poll",
     "__fn___fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
     "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept", "__fn___fern_tcp_local_port",
+    "__fn___fern_tcp_send_bytes", "__fn___fern_tcp_send_bytes_u8",
     "__fn___fern_udp_bind", "__fn___fern_udp_connect", "__fn___fern_udp_sendto", "__fn___fern_udp_recvfrom",
     "__fn___fern_tcp_connect_with", "__fn___fern_unix_listen", "__fn___fern_unix_connect",
     "__fn___fern_reactor_new", "__fn___fern_reactor_ctl", "__fn___fern_reactor_wait", "__fn___fern_tcp_recv_into", "__fn___fern_tcp_sendfile",

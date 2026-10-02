@@ -6886,6 +6886,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "poll", params: [fds, t_i32()], modes: [b, v], result: t_i32() },
     ssasem.Contract { name: "timer_fd", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "tcp_send", params: [t_i32(), t_string()], modes: [v, b], result: t_i32() },
+    ssasem.Contract { name: "tcp_send_bytes", params: [t_i32(), bytes], modes: [v, b], result: t_i32() },
     ssasem.Contract { name: "udp_send", params: [t_string(), t_i32(), t_string()], modes: [b, v, b], result: t_i32() },
     ssasem.Contract { name: "tcp_recv", params: [t_i32(), t_i32()], modes: [v, v], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
     ssasem.Contract { name: "tcp_pollable", params: [t_i32()], modes: [v], result: t_i32() },

@@ -1281,6 +1281,11 @@ pub function op_tcp_send(): Op {
   return op0(114);
 }
 
+// Borrow a byte array and report the number sent, or a negative error.
+pub function op_tcp_send_bytes(): Op {
+  return op0(353);
+}
+
 pub function op_tcp_recv(): Op {
   return op0(115);
 }
@@ -4146,6 +4151,9 @@ function kind_id_len13(name: string): i32 {
 }
 
 function kind_id_len14(name: string): i32 {
+  if (name == "tcp_send_bytes") {
+    return 353;
+  }
   if (name == "buf_take_bytes") {
     return 347;
   }
@@ -5323,6 +5331,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 353) {
+    return "tcp_send_bytes";
+  }
   if (id == 352) {
     return "write_file_bytes";
   }
@@ -5492,7 +5503,7 @@ function pops2_io(t: i32): boolean {
     || t == 284  // set_process_group (pid, pgid)
     || t == 311  // fd_dup_onto (fd, newfd)
     || t == 178 || t == 348 || t == 349 || t == 350 || t == 187  // read_chunk, read_chunk_bytes, poll
-    || t == 110 || t == 114 || t == 115 || t == 334 || t == 339  // tcp_connect, tcp_send, tcp_recv, udp_bind, unix_listen
+    || t == 110 || t == 114 || t == 353 || t == 115 || t == 334 || t == 339  // tcp_connect, tcp_send, tcp_send_bytes, tcp_recv, udp_bind, unix_listen
     || t == 344  // tcp_recv_into (fd, buf)
     || t == 202 || t == 213 || t == 308  // writer_write, proc_exec, write_some
     || t == 278;  // signal_mask (how, mask)
