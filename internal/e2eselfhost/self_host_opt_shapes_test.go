@@ -289,6 +289,21 @@ function main(): i32 { return pick(true, 7) + pick(false, 9); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`testq (%r\w+), (%r\w+)`}, "arm64-linux": {`\bcbn?z x\d+,`}},
 		forbid: map[string][]string{"x86-64-linux": {`testq %r11, %r11`, `movq %r\w+, %r11`}, "arm64-linux": {`\bcbn?z x4,`, `mov x4, x`}}},
+	// A 32-bit value read only by further 32-bit arithmetic keeps no sign
+	// extension: the product feeds the sum without one, and the sum is
+	// extended once, where the comparison and the division read it. The roll
+	// overflows on every byte, so the exit code checks the wrap still lands.
+	{name: "wrap_dropped_before_low_reader", fn: "roll", exit: 48, src: `
+@noinline function roll(s: string): i32 {
+    let h: i32 = 7;
+    let i: i32 = 0;
+    while (i < s.len()) { h = h * 1000003 + s[i] as i32; i = i + 1; }
+    if (h < 0) { h = 0 - h; }
+    return h % 97;
+}
+function main(): i32 { return roll("the quick brown fox jumps over the lazy dog"); }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`imulq \$1000003, %\w+, (%\w+)\n\s+movslq`}, "arm64-linux": {`\bmul (x\d+), x\d+, x\d+\n\s+sxtw`}}},
 	// A multiply by a power of two is a shift.
 	{name: "strength_mul_pow2", fn: "times8", exit: 40, src: `
 @noinline function times8(x: i32): i32 { return x * 8; }

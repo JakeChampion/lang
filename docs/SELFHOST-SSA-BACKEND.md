@@ -37,7 +37,12 @@ lowered function it:
    callee's, so the splice keeps every retain and release the call made;
 3. turns `(x >> n) | (x << (W - n))`, Fern's only spelling of a rotate, into
    one `rotr:W:n` unary on x at either width (`ssa.fuse_rotates`; a u32's
-   left half is recognised through the zero extension that follows it), then
+   left half is recognised through the zero extension that follows it),
+   replaces a signed 32-bit wrap by its operand where nothing reads the high
+   half of its result (`ssa.drop_low_wraps`: a sum, difference, product,
+   bitwise op or left shift reads only its operands' low halves, so the wrap
+   after each 32-bit op stays only where the value reaches a comparison, a
+   division, a right shift, a call, a store, a branch or a return), then
    drops what nothing reads (`ssa.prune_dead`), which is the rotate's shifts,
    most of the zeros the lift gives declared locals and the loop-header phis
    nothing reads (the lift gives a header a phi only for the slots the loop's
