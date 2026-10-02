@@ -81,7 +81,8 @@ func TestInterpScriptReadAllStdin(t *testing.T) {
 	if err := os.WriteFile(src, []byte(`
 import "std/io";
 function main(): i32 {
-    var s: string = io.read_all_stdin();
+    var s: string = "";
+    match (io.read_all_stdin()) { Ok(text) => { s = text; }, Err(_) => { return 253; } }
     print("read: " + s);
     return s.len();
 }

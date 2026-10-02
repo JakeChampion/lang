@@ -334,16 +334,26 @@ function main(): i32 {
     i = i + 1;
   }
   var mi: i32 = 0;
+  var src: string = "";
+  match (io.read_all_stdin()) {
+    Ok(text) => {
+      src = text;
+    },
+    Err(_) => {
+      eprint("ferndoc: cannot read UTF-8 stdin");
+      return 1;
+    }
+  }
   while (mi < av.len()) {
     // `-page <std/name>` renders the full Markdown page instead of the
     // association report — the form the byte-for-byte differential against
     // cmd/ferndoc compares.
     if (av[mi] == "-page" && mi + 1 < av.len()) {
-      write(ferndoc.render_page(io.read_all_stdin(), av[mi + 1]));
+      write(ferndoc.render_page(src, av[mi + 1]));
       return 0;
     }
     mi = mi + 1;
   }
-  write(report(io.read_all_stdin()));
+  write(report(src));
   return 0;
 }

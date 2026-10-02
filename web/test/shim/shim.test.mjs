@@ -48,7 +48,10 @@ describe("stdin", () => {
   it("reaches the guest", async () => {
     const bin = compile("echo", `import "std/io";
 function main(): i32 {
-  print("got:" + io.read_all_stdin());
+  match (io.read_all_stdin()) {
+    Ok(text) => { print("got:" + text); },
+    Err(_) => { return 1; },
+  }
   return 0;
 }`);
     const r = await runCoreWasm(bin, { stdin: "hello" });
@@ -61,13 +64,23 @@ function main(): i32 {
   it("is consumed once, then reads empty", async () => {
     const bin = compile("twice", `import "std/io";
 function main(): i32 {
-  var a: string = io.read_all_stdin();
-  var b: string = io.read_all_stdin();
-  print("a=[" + a + "] b=[" + b + "]");
+  var reader: Reader = stdin();
+  match (io.read_all_bytes(reader)) {
+    Ok(bytes) => {
+      if (bytes.len() != 4 || bytes[0] != 111 || bytes[1] != 110 || bytes[2] != 99 || bytes[3] != 101) { return 1; }
+    },
+    Err(_) => { return 2; },
+  }
+  match (io.read_all_bytes(reader)) {
+    Ok(bytes) => { if (bytes.len() != 0) { return 3; } },
+    Err(_) => { return 4; },
+  }
+  match (reader.close()) { Some(_) => { return 5; }, None => {} }
   return 0;
 }`);
     const r = await runCoreWasm(bin, { stdin: "once" });
-    assert.equal(r.stdout, "a=[once] b=[]\n");
+    assert.equal(r.stdout, "");
+    assert.equal(r.exit, 0);
   });
 
   // Nothing passed is an immediate EOF, not a missing import: the old shim
@@ -75,7 +88,10 @@ function main(): i32 {
   it("defaults to empty rather than trapping", async () => {
     const bin = compile("empty", `import "std/io";
 function main(): i32 {
-  print("[" + io.read_all_stdin() + "]");
+  match (io.read_all_stdin()) {
+    Ok(text) => { print("[" + text + "]"); },
+    Err(_) => { return 1; },
+  }
   return 0;
 }`);
     const r = await runCoreWasm(bin);
@@ -87,7 +103,10 @@ function main(): i32 {
   it("carries non-ASCII bytes intact", async () => {
     const bin = compile("utf8", `import "std/io";
 function main(): i32 {
-  print(io.read_all_stdin());
+  match (io.read_all_stdin()) {
+    Ok(text) => { print(text); },
+    Err(_) => { return 1; },
+  }
   return 0;
 }`);
     const r = await runCoreWasm(bin, { stdin: "héllo — ok" });

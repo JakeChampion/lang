@@ -254,7 +254,17 @@ function main(): i32 {
   }
 
   // Otherwise read expressions from stdin, one per line.
-  var lines: string[] = io.read_all_stdin().lines();
+  var text: string = "";
+  match (io.read_all_stdin()) {
+    Ok(input) => {
+      text = input;
+    },
+    Err(_) => {
+      eprint("bc: cannot read UTF-8 stdin");
+      return 1;
+    }
+  }
+  var lines: string[] = text.lines();
   var j: i32 = 0;
   while (j < lines.len()) {
     if (!eval_line(lines[j])) {

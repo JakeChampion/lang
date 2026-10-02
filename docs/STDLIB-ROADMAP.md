@@ -272,7 +272,7 @@ leading `..` is kept, and a path that cancels out cleans to `.`.
 
 ### 9. stdin + println + io.Copy · small · ☑ (partial)
 
-**Surface**: `read_all_stdin() string`, `print(s)` /
+**Surface**: `read_all_stdin(): Result[string, IoError]`, `print(s)` /
 `println(s)`, `eprintln(s)`, `copy(reader, writer) i64`.
 
 **Why**: `read_file` + `write_file` exist but no stdin

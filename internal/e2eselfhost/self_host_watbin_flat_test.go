@@ -41,7 +41,8 @@ import "std/io";
 import "./util";
 import "./watbin";
 function main(): i32 {
-    var wat: string = io.read_all_stdin();
+    var wat: string = "";
+    match (io.read_all_stdin()) { Ok(text) => { wat = text; }, Err(_) => { return 253; } }
     var bs: i32[] = watbin.wat_to_binary(wat);
     var i: i32 = 0;
     while (i < bs.len()) { write(util.i32_to_string(bs[i])); write("\n"); i = i + 1; }

@@ -11,14 +11,26 @@ import "std/io";
 // program re-derives that pattern and returns 42 only if the length
 // and every byte match; a mismatch returns a diagnostic non-42 code.
 function main(): i32 {
-    var s: string = io.read_all_stdin();
-    var n: i32 = s.len();
-    if (n != 5200) { return 1; }
-    var i: i32 = 0;
-    while (i < n) {
-        var expected: i32 = 97 + (i % 26);
-        if ((s[i] as i32) != expected) { return 2; }
-        i = i + 1;
+  var s: string = "";
+  match (io.read_all_stdin()) {
+    Ok(text) => {
+      s = text;
+    },
+    Err(_) => {
+      return 9;
     }
-    return 42;
+  }
+  var n: i32 = s.len();
+  if (n != 5200) {
+    return 1;
+  }
+  var i: i32 = 0;
+  while (i < n) {
+    var expected: i32 = 97 + i % 26;
+    if (s[i] as i32 != expected) {
+      return 2;
+    }
+    i = i + 1;
+  }
+  return 42;
 }

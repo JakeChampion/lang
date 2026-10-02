@@ -1,9 +1,11 @@
 // std/io — convenience wrappers around the built-in Reader /
 // Writer primitives.
 //
-// `read_all_stdin()` pulls the whole of stdin into a single
-// string; `read_input(path)` is the CLI-tool companion that picks
-// stdin or a file from a path operand.
+// `read_all_stdin()` returns complete, validated stdin text as
+// Result[string, IoError]; `read_input(path)` picks stdin or a file
+// from a path operand and returns the same result type.
+// The raw read_all_bytes/read_all_stdin_bytes/read_input_bytes counterparts
+// return Result[u8[], IoError], preserving bytes and reporting I/O failures.
 //
 // The `path` these take is a plain `string`, so it inherits
 // std/path's assumption that filesystem paths are valid UTF-8 —
@@ -16,44 +18,111 @@
 // declares `import "std/io";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
 
-import "std/array";
+import "std/utf8" as utf8;
 
-// `read_all_stdin()` — read until EOF and return the result
-// as a single string. Loops `Reader.read_chunk(4096)` until the
-// read comes back empty.
-//
-// The return type has no error channel, so a failed read ends the
-// read with the bytes already in hand. A caller that has to tell a
-// truncated read from a complete one drives `read_chunk` itself and
-// matches on its `Err`.
-//
-// Chunks are collected into an array and joined once at EOF
-// rather than folded with `out = out + chunk` per iteration.
-// The naive fold is O(total²): each `+` copies the whole
-// accumulated prefix, so an N-byte input in 4 KiB chunks
-// copies ~N²/8192 bytes. `join` walks the chunk list twice
-// (sum the lengths, then one preallocated blit), so the whole
-// read is O(total). This is the core-CLI hot path — every
-// `read_input("-")` from cat / wc / head / grep / … lands here.
-pub function read_all_stdin(): string {
-  var r: Reader = stdin();
-  var chunks: string[] = [];
+// The successful caller owns this packed buffer and must free it. Keeping
+// it packed lets the text boundary validate without a whole-input u8[] copy.
+function read_all_buffer(r: Reader): Result[usize, IoError] {
+  var b: usize = buf_new(4096);
   while (true) {
-    match (r.read_chunk(4096)) {
+    match (r.read_chunk_bytes(4096)) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
-          r.close();
-          return chunks.join("");
+          return Ok(b);
         }
-        chunks = chunks.append(chunk);
+        buf_push_bytes_range(b, chunk, 0, chunk.len());
       },
       Err(e) => {
-        r.close();
-        return chunks.join("");
+        buf_free(b);
+        return Err(e);
       }
     }
   }
-  return "";
+  return Ok(b);
+}
+
+// Read raw input to EOF without interpreting chunks as text. The caller owns
+// the reader and remains responsible for closing it. A failed read returns
+// its error, never a partial success; the accumulated buffer is released.
+pub function read_all_bytes(r: Reader): Result[u8[], IoError] {
+  match (read_all_buffer(r)) {
+    Err(e) => {
+      return Err(e);
+    },
+    Ok(b) => {
+      var bytes: u8[] = buf_take_bytes(b);
+      buf_free(b);
+      return Ok(bytes);
+    }
+  }
+}
+
+function read_stdin_buffer(): Result[usize, IoError] {
+  var r: Reader = stdin();
+  var result: Result[usize, IoError] = read_all_buffer(r);
+  var closed: Option[IoError] = r.close();
+  match (result) {
+    Err(e) => {
+      return Err(e);
+    },
+    Ok(b) => {
+      match (closed) {
+        Some(e) => {
+          buf_free(b);
+          return Err(e);
+        },
+        None => {
+          return Ok(b);
+        }
+      }
+    }
+  }
+}
+
+// Consume and close stdin. A read error takes precedence over a close error;
+// otherwise a failed close is reported rather than silently discarded.
+pub function read_all_stdin_bytes(): Result[u8[], IoError] {
+  match (read_stdin_buffer()) {
+    Err(e) => {
+      return Err(e);
+    },
+    Ok(b) => {
+      var bytes: u8[] = buf_take_bytes(b);
+      buf_free(b);
+      return Ok(bytes);
+    }
+  }
+}
+
+// Raw counterpart to read_input: empty and dash operands consume stdin;
+// every other operand names a file. No UTF-8 decoding is performed.
+pub function read_input_bytes(path: string): Result[u8[], IoError] {
+  if (path == "-" || path == "") {
+    return read_all_stdin_bytes();
+  }
+  return read_file_bytes(path);
+}
+
+// Consume and close stdin, then validate the complete input as UTF-8.
+// A scalar may cross any read boundary. Empty input is Ok(""); malformed
+// input is Err(InvalidUtf8("stdin")). I/O failures are propagated without
+// returning partial text. Use read_all_stdin_bytes for arbitrary bytes.
+pub function read_all_stdin(): Result[string, IoError] {
+  match (read_stdin_buffer()) {
+    Err(e) => {
+      return Err(e);
+    },
+    Ok(b) => {
+      // As in utf8.from_bytes, the unchecked representation stays
+      // inside this constructor until validation succeeds.
+      var text: string = buf_take(b);
+      buf_free(b);
+      if (utf8.is_valid_utf8(text)) {
+        return Ok(text);
+      }
+      return Err(InvalidUtf8("stdin"));
+    }
+  }
 }
 
 // `read_input(path)` — read a CLI-style input operand: the
@@ -70,7 +139,7 @@ pub function read_all_stdin(): string {
 //   }
 pub function read_input(path: string): Result[string, IoError] {
   if (path == "-" || path == "") {
-    return Ok(read_all_stdin());
+    return read_all_stdin();
   }
   return read_file(path);
 }

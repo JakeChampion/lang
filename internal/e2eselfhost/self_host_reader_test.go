@@ -113,7 +113,7 @@ func TestSelfHostStdIoBundleX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
 	mainMod := "import \"std/io\";\n" +
-		"function main(): i32 { write(io.read_all_stdin()); return 0; }\n"
+		"function main(): i32 { match (io.read_all_stdin()) { Ok(text) => { write(text); }, Err(_) => { return 253; } } return 0; }\n"
 	progAsm, progDir := compileSourceModload(t, runner, driverBin, mainMod)
 	if len(progAsm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the std/io bundle")

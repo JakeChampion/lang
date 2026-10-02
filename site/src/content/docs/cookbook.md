@@ -28,9 +28,11 @@ import "std/string";
 import "std/io";
 
 function main(): i32 {
-    var text: string = io.read_all_stdin();
-    for line in text.lines() {
-        print(line);
+    match (io.read_all_stdin()) {
+        Ok(text) => {
+            for line in text.lines() { print(line); }
+        },
+        Err(_) => { eprint("cannot read UTF-8 stdin"); return 1; },
     }
     return 0;
 }
@@ -38,6 +40,8 @@ function main(): i32 {
 
 `io.read_input(path)` is the version that takes a path and treats `"-"`
 as stdin — the convention most Unix filters follow.
+Both text readers report malformed UTF-8 as an error. Use
+`io.read_all_stdin_bytes()` or `io.read_input_bytes(path)` for binary data.
 
 ## Write a file
 

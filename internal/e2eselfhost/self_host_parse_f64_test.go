@@ -133,7 +133,8 @@ func runParseF64Driver(t *testing.T, gcc string, runner []string, dir, name, pro
 
 const parseF64DriverBody = `
 function main(): i32 {
-  var src: string = io.read_all_stdin();
+  var src: string = "";
+  match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }
   var lines: string[] = src.split("\n");
   var i: i32 = 0;
   while (i < lines.len()) {
@@ -189,7 +190,8 @@ func TestSelfHostParseF64Arm64(t *testing.T) {
 
 const f64RangeDriverBody = `
 function main(): i32 {
-  var src: string = io.read_all_stdin();
+  var src: string = "";
+  match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }
   var lines: string[] = src.split("\n");
   var i: i32 = 0;
   while (i < lines.len()) {

@@ -18,6 +18,8 @@ func checkInterpByteIO(t *testing.T, command func(...string) *exec.Cmd, stdlib s
 	for _, tc := range []struct {
 		name, source, input, output string
 	}{
+		{"read-all", e2eharness.IOAllBytesProgram, string(e2eharness.IOAllBytesInput()), ""},
+		{"read-stdin", e2eharness.IOStdinBytesProgram("io.read_all_stdin_bytes()", false), string(e2eharness.IOAllBytesInput()), ""},
 		{"reader", e2eharness.ReaderBytesProgram, string(e2eharness.ReaderBytesInput()), ""},
 		{"writer", e2eharness.WriterBytesProgram, "", string(e2eharness.WriterBytesOutput())},
 		{"buffered_writer", e2eharness.BufferedWriterBytesProgram, "", string(e2eharness.BufferedWriterBytesOutput())},

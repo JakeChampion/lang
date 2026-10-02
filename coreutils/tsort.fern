@@ -290,7 +290,15 @@ pub function main(): i32 {
   }
   var text: string = "";
   if (path == "-") {
-    text = io.read_all_stdin();
+    match (io.read_all_stdin()) {
+      Ok(t) => {
+        text = t;
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(path) + ": read error: " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
   } else {
     // GNU words an open failure and a read failure differently
     // (`tsort: d: read error: Is a directory` for a directory, whose

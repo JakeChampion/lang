@@ -39,7 +39,16 @@ function main(): i32 {
     }
     i = i + 1;
   }
-  var src: string = io.read_all_stdin();
+  var src: string = "";
+  match (io.read_all_stdin()) {
+    Ok(text) => {
+      src = text;
+    },
+    Err(_) => {
+      eprint("arm64 assembler: cannot read UTF-8 stdin");
+      return 1;
+    }
+  }
   var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(src);
   var pa: arm64_native.Arm64Asm = p.asm;
   var tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);

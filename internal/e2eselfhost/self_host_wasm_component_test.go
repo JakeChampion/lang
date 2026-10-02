@@ -384,7 +384,9 @@ import "./parser";
 import "./wasm_ir";
 import "./semlower";
 function main(): i32 {
-    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(io.read_all_stdin())), "wasm32-wasi");
+    var src: string = "";
+    match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }
+    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), "wasm32-wasi");
     write(wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, d.sub));
     return 0;
 }
@@ -397,7 +399,9 @@ import "./parser";
 import "./wasm_ir";
 import "./semlower";
 function main(): i32 {
-    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(io.read_all_stdin())), "wasm32-wasi");
+    var src: string = "";
+    match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }
+    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), "wasm32-wasi");
     write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, false, d.sub));
     return 0;
 }
@@ -637,7 +641,9 @@ import "./parser";
 import "./wasm_ir";
 import "./semlower";
 function main(): i32 {
-    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(io.read_all_stdin())), "wasm32-wasi");
+    var src: string = "";
+    match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }
+    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), "wasm32-wasi");
     write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, true, d.sub));
     return 0;
 }
@@ -964,7 +970,9 @@ import "./parser";
 import "./wasm_ir";
 import "./semlower";
 function main(): i32 {
-    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(io.read_all_stdin())), "wasm32-wasi");
+    var src: string = "";
+    match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }
+    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), "wasm32-wasi");
     write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, true, d.sub));
     return 0;
 }

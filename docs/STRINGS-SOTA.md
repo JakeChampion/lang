@@ -884,6 +884,16 @@ including WASI Preview 1's possible `Interrupted` result. Closed handles
 report an error. Retained arrays remain valid after subsequent reads and
 closing the reader.
 
+Whole-input helpers now preserve the same boundary. `read_all_bytes(reader)`
+borrows a reader and returns owned bytes; `read_all_stdin_bytes()` consumes
+and closes stdin. `read_input_bytes(path)` handles file and stdin operands.
+Their text counterparts `read_all_stdin()` and `read_input(path)` return
+`Result[string, IoError]`. They validate only after collecting the complete
+input, so scalars split across reads remain valid. Malformed stdin returns
+`InvalidUtf8("stdin")`; I/O failures never become successful partial text.
+The example `tee` uses byte input and output, including true append opens
+that preserve an existing file's arbitrary bytes.
+
 The Fern interpreter also supports raw stdin reads; its file-handle opening
 remains unsupported. The existing `Reader.read_chunk` remains text-typed and
 unchecked pending migration of its binary consumers. The new method does not
