@@ -1903,6 +1903,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"shadow-result", "enum Result { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"shadow-ioerror", "enum IoError { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"shadow-jsonvalue", "enum JsonValue { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
+		// A value if's literal arm widens to the width another literal arm needs,
+		// and a typed arm pins it, so the literal must fit (#10859).
+		{"value-if-literal-arms-widen", "function main(): i32 {\n  var r: i64 = 5;\n  var p = if (r > 0) { (2, 4611686018427387905) } else { (3, 4) };\n  var q = if (r > 0) { 4 } else { 4611686018427387905 };\n  return p.0;\n}\n", nil},
+		{"value-if-typed-arm-pins-a-tuple-literal", "function main(): i32 {\n  var r: i64 = 5;\n  var n: i32 = 4;\n  var p = if (r > 0) { (2, n) } else { (3, 4611686018427387905) };\n  return p.0;\n}\n", []string{"E047"}},
+		{"value-match-typed-arm-pins-a-literal", "function main(): i32 {\n  var n: i32 = 4;\n  var q = match (n) { 4 => { n }, _ => { 4611686018427387905 } };\n  return q;\n}\n", []string{"E047"}},
 		// A reserved name is reserved whatever kind takes it (#10855).
 		{"enum-takes-builtin-struct-name", "import \"std/string\";\nenum Span { Empty, Wide(f64, string) }\nfunction f(s: Span): i32 {\n  match (s) { Wide(d, t) => { return (d * 4.0) as i32 + t.len(); }, Empty => { return 0; } }\n}\nfunction main(): i32 { return f(Wide(1.0, \"ab\")); }\n", []string{"E010"}},
 		{"struct-takes-builtin-enum-name", "struct Option { n: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},

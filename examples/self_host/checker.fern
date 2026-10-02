@@ -4604,7 +4604,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
             _ => {}
           }
           if (bts.len() > 0) {
-            var result: typeinfo.Type = vb_unified(bts);
+            var result: typeinfo.Type = vb_arms_unified(bts, mx_body_result_exprs(lm.body));
             if (!is_unknown(result)) {
               return result;
             }
@@ -9826,10 +9826,14 @@ function mx_expr(e: ast.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDe
             if (lm.params.len() == 0 && lm.body.len() == 1) {
               match (lm.body[0]) {
                 ast.StmtMatch(m) => {
-                  out = util.append_diags(out, mx_e031(mx_match_arm_types(m, s), unions, enums, false, expr_line(m.scrutinee), expr_col(m.scrutinee)));
+                  var mts: typeinfo.Type[] = mx_match_arm_types(m, s);
+                  out = util.append_diags(out, mx_e031(mts, unions, enums, false, expr_line(m.scrutinee), expr_col(m.scrutinee)));
+                  out = util.append_diags(out, vb_pinned_ranges(mts, mx_body_result_exprs(lm.body)));
                 },
                 ast.StmtIf(f) => {
-                  out = util.append_diags(out, mx_e031(mx_if_branch_types(f, s), unions, enums, lm.origin == parser.ORIGIN_IF_EXPR, expr_line(f.cond), expr_col(f.cond)));
+                  var fts: typeinfo.Type[] = mx_if_branch_types(f, s);
+                  out = util.append_diags(out, mx_e031(fts, unions, enums, lm.origin == parser.ORIGIN_IF_EXPR, expr_line(f.cond), expr_col(f.cond)));
+                  out = util.append_diags(out, vb_pinned_ranges(fts, mx_body_result_exprs(lm.body)));
                 },
                 _ => {}
               }
@@ -23107,43 +23111,210 @@ function vb_local_name(body: ast.Stmt[]): string {
   return "";
 }
 
-// vb_assigned_types collects the checked type of every value stored into `name`
-// by the desugar chain, threading the scope the chain's own bindings introduce
-// (the tuple destructure and the per-arm binder decls the desugar emits).
-function vb_assigned_types(stmts: ast.Stmt[], name: string, s: Scope, acc: typeinfo.Type[]): typeinfo.Type[] {
-  var out: typeinfo.Type[] = acc;
+// VbStore is one value stored into a value local: its checked type and the
+// expression, which the join reads for an untyped literal.
+struct VbStore { t: typeinfo.Type, e: ast.Expr }
+
+// vb_assigned_stores collects every value stored into `name` by the desugar
+// chain, threading the scope the chain's own bindings introduce (the tuple
+// destructure and the per-arm binder decls the desugar emits).
+function vb_assigned_stores(stmts: ast.Stmt[], name: string, s: Scope, acc: VbStore[]): VbStore[] {
+  var out: VbStore[] = acc;
   var cur: Scope = s;
   for st in stmts {
     match (st) {
       ast.StmtAssign(a) => {
         if (a.target == name) {
-          out = out.append(check_expr(a.value, cur));
+          out = out.append(VbStore { t: check_expr(a.value, cur), e: a.value });
         }
       },
       ast.StmtIf(f) => {
-        out = vb_assigned_types(f.then_body, name, cur, out);
-        out = vb_assigned_types(f.else_body, name, cur, out);
+        out = vb_assigned_stores(f.then_body, name, cur, out);
+        out = vb_assigned_stores(f.else_body, name, cur, out);
       },
       ast.StmtWhile(w) => {
-        out = vb_assigned_types(w.body, name, cur, out);
+        out = vb_assigned_stores(w.body, name, cur, out);
       },
       ast.StmtFor(fr) => {
-        out = vb_assigned_types(fr.body, name, for_body_scope(fr, cur), out);
+        out = vb_assigned_stores(fr.body, name, for_body_scope(fr, cur), out);
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
-          out = vb_assigned_types(arm.body, name, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), out);
+          out = vb_assigned_stores(arm.body, name, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), out);
         }
       },
       ast.StmtDefer(d) => {
         var one: ast.Stmt[] = [d.action];
-        out = vb_assigned_types(one, name, cur, out);
+        out = vb_assigned_stores(one, name, cur, out);
       },
       _ => {}
     }
     cur = bind_stmt(st, cur);
   }
   return out;
+}
+
+// vb_untyped_fits reports whether `e` is a tree of unsuffixed integer literals
+// that `t` can hold: such a literal settles to the type the value is declared
+// with.
+function vb_untyped_fits(e: ast.Expr, t: typeinfo.Type): boolean {
+  return is_integer(t) && int_literal_tree(e) && int_range_diags(e, type_to_irtag(t), false).len() == 0;
+}
+
+// vb_pinned_ranges is E047 for a value if's or match's literal arms, at the
+// width a typed arm pins: native settles every arm at the joint type, and a
+// typed integer arm leaves the literal no room to widen. A tuple pins element
+// by element.
+function vb_pinned_ranges(ts: typeinfo.Type[], es: ast.Expr[]): util.Diag[] {
+  var out: util.Diag[] = [];
+  if (ts.len() != es.len() || ts.len() == 0) {
+    return out;
+  }
+  if let typeinfo.TypeTuple(t0) = ts[0] {
+    var n: i32 = t0.elements.len();
+    var cols: typeinfo.Type[][] = [];
+    var ecols: ast.Expr[][] = [];
+    var k: i32 = 0;
+    while (k < n) {
+      cols = cols.append([]);
+      ecols = ecols.append([]);
+      k = k + 1;
+    }
+    var i: i32 = 0;
+    while (i < ts.len()) {
+      if let typeinfo.TypeTuple(ti) = ts[i] {
+        if (ti.elements.len() != n) {
+          return out;
+        }
+        var ei: ast.Expr[] = vb_tuple_elems(es[i], n);
+        k = 0;
+        while (k < n) {
+          cols = cols.with(k, cols[k].append(ti.elements[k]));
+          ecols = ecols.with(k, ecols[k].append(ei[k]));
+          k = k + 1;
+        }
+      } else {
+        return out;
+      }
+      i = i + 1;
+    }
+    k = 0;
+    while (k < n) {
+      out = util.append_diags(out, vb_pinned_ranges(cols[k], ecols[k]));
+      k = k + 1;
+    }
+    return out;
+  }
+  var pin: string = "";
+  var i: i32 = 0;
+  while (i < ts.len() && pin.len() == 0) {
+    if (is_integer(ts[i]) && !int_literal_tree(es[i])) {
+      pin = type_to_irtag(ts[i]);
+    }
+    i = i + 1;
+  }
+  if (pin.len() == 0) {
+    return out;
+  }
+  i = 0;
+  while (i < es.len()) {
+    if (int_literal_tree(es[i])) {
+      out = util.append_diags(out, int_range_diags(es[i], pin, false));
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// vb_join joins two stores the way native's widenCompositeByLiterals does: where
+// the types disagree and one side is an untyped integer literal the other's type
+// holds, the slot takes the other type. A tuple joins element by element, and a
+// typed value never widens. The joined expression stays a literal only where
+// both sides were, so a later store meets every typed value before it.
+function vb_join(a: VbStore, b: VbStore): VbStore {
+  var none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  if let typeinfo.TypeTuple(at) = a.t {
+    if let typeinfo.TypeTuple(bt) = b.t {
+      if (at.elements.len() != bt.elements.len()) {
+        return VbStore { t: t_unknown("result tuple arities differ"), e: none };
+      }
+      var aes: ast.Expr[] = vb_tuple_elems(a.e, at.elements.len());
+      var bes: ast.Expr[] = vb_tuple_elems(b.e, bt.elements.len());
+      var elems: typeinfo.Type[] = [];
+      var es: ast.Expr[] = [];
+      var i: i32 = 0;
+      while (i < at.elements.len()) {
+        var j: VbStore = vb_join(VbStore { t: at.elements[i], e: aes[i] }, VbStore { t: bt.elements[i], e: bes[i] });
+        if (is_unknown(j.t)) {
+          return j;
+        }
+        elems = elems.append(j.t);
+        es = es.append(j.e);
+        i = i + 1;
+      }
+      return VbStore { t: t_tuple(elems), e: ast.ExprTuple { elements: es, line: 0, col: 0 } };
+    }
+  }
+  var t: typeinfo.Type = join_result_types(a.t, b.t);
+  if (is_unknown(t) && vb_untyped_fits(b.e, a.t)) {
+    t = a.t;
+  } else if (is_unknown(t) && vb_untyped_fits(a.e, b.t)) {
+    t = b.t;
+  }
+  if (!is_unknown(t) && vb_untyped_fits(a.e, t) && vb_untyped_fits(b.e, t)) {
+    return VbStore { t: t, e: a.e };
+  }
+  return VbStore { t: t, e: none };
+}
+
+// vb_tuple_elems is a tuple literal's elements, or `n` unknowns for any other
+// expression, whose elements are typed values.
+function vb_tuple_elems(e: ast.Expr, n: i32): ast.Expr[] {
+  if let ast.ExprTuple(t) = e {
+    if (t.elements.len() == n) {
+      return t.elements;
+    }
+  }
+  var out: ast.Expr[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(ast.ExprUnknown { kind: "", line: 0, col: 0 });
+    i = i + 1;
+  }
+  return out;
+}
+
+// vb_arms_unified is vb_stores_unified over a value if's or match's arm
+// results, or vb_unified when the expressions do not line up with the types.
+function vb_arms_unified(ts: typeinfo.Type[], es: ast.Expr[]): typeinfo.Type {
+  if (ts.len() != es.len()) {
+    return vb_unified(ts);
+  }
+  var ss: VbStore[] = [];
+  var i: i32 = 0;
+  while (i < ts.len()) {
+    ss = ss.append(VbStore { t: ts[i], e: es[i] });
+    i = i + 1;
+  }
+  return vb_stores_unified(ss);
+}
+
+// vb_stores_unified is vb_unified over the stores themselves, so an untyped
+// literal settles to the width another arm needs.
+function vb_stores_unified(ss: VbStore[]): typeinfo.Type {
+  if (ss.len() == 0) {
+    return t_unknown("value block stores nothing");
+  }
+  var acc: VbStore = ss[0];
+  var i: i32 = 1;
+  while (i < ss.len() && !is_unknown(acc.t)) {
+    acc = vb_join(acc, ss[i]);
+    i = i + 1;
+  }
+  if (is_unknown(acc.t) && ss.len() > 1) {
+    return t_unknown("value block arms disagree");
+  }
+  return acc.t;
 }
 
 // vb_unified returns the type every store agrees on, or unknown when they
@@ -23177,8 +23348,8 @@ function vb_store_type(body: ast.Stmt[], name: string, s: Scope): typeinfo.Type 
     chain = chain.append(body[i]);
     i = i + 1;
   }
-  var none: typeinfo.Type[] = [];
-  return vb_unified(vb_assigned_types(chain, name, bind_stmt(body[0], s), none));
+  var none: VbStore[] = [];
+  return vb_stores_unified(vb_assigned_stores(chain, name, bind_stmt(body[0], s), none));
 }
 
 // vb_local_tag names `t` as the value local's declaration spells it, or "" for a

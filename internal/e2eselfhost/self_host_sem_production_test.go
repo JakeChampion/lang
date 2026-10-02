@@ -7099,6 +7099,24 @@ function main(): i32 {
 	// An erased generic forwarding its function parameter to one that builds
 	// `Slot[T]`: the call inside it is keyed at its own variable, `keep__0_U`,
 	// whose instances build Slot at each binding (#10827).
+	// A value if or match whose arms are literals settles every literal at the
+	// width the widest needs, element by element in a tuple (#10859).
+	{name: "a-value-if-widens-a-literal-arm", atLeast: 5, want: "0|1 -1 4 9 1\n", src: `
+import "std/i64";
+function pick(k: i32): i64 {
+    var p = match (k) { 0 => { (1, 4) }, 1 => { (2, -4611686018427387905) }, _ => { (3, 5) } };
+    return p.1 + 4611686018427387904;
+}
+function main(): i32 {
+    var r: i64 = 5;
+    var a = if (r > 0) { (2, 4611686018427387905) } else { (3, 4) };
+    var b = if (r < 0) { (3, 4) } else { (2, 4611686018427387905) };
+    var q = if (r > 0) { 4 } else { 4611686018427387905 };
+    print((a.1 - 4611686018427387904).to_string() + " " + pick(1).to_string() + " " + q.to_string()
+        + " " + (pick(2) - 4611686018427387900).to_string() + " " + (b.1 - 4611686018427387904).to_string());
+    return 0;
+}
+`},
 	{name: "an-erased-generic-forwarding-its-function-parameter", atLeast: 51, want: "0|5 wx\n", src: `
 import "std/i32";
 struct Slot[T] { v: T }
