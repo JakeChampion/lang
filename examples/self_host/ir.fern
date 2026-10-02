@@ -5822,11 +5822,15 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
     while (i < cur.len()) {
       var folded: boolean = false;
       var at: i32 = i;
+      // Decided once per position: six arms ask whether the op here is a
+      // readable 32-bit constant and two whether it is a 64-bit one.
+      var r32: boolean = const_i32_readable(cur[i]);
+      var r64: boolean = const_i64_readable(cur[i]);
       if (i + 2 < cur.len()) {
         var a: Op = cur[i];
         var b: Op = cur[i + 1];
         var o: Op = cur[i + 2];
-        if (const_i32_readable(a) && const_i32_readable(b)
+        if (r32 && const_i32_readable(b)
           && is_foldable_binary_kind(o.kind_tag) && o.width != 64 && !o.unsigned
           && !fold_would_divide_by_zero(o.kind_tag, const_i32_value(b))) {
           out = out.append(op_const_i32(fold_binary_i32(o.kind_tag, const_i32_value(a), const_i32_value(b))));
@@ -5837,7 +5841,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       }
       // The same at 64 bits (native foldBinary64): `const_i64 a ;
       // const_i64 b ; <bin> 64`. A comparison yields an i32.
-      if (!folded && i + 2 < cur.len() && const_i64_readable(cur[i]) && const_i64_readable(cur[i + 1])) {
+      if (!folded && i + 2 < cur.len() && r64 && const_i64_readable(cur[i + 1])) {
         var f64r: Fold64 = fold_binary_i64(cur[i + 2], const_i64_value(cur[i]), const_i64_value(cur[i + 1]));
         if (f64r.ok) {
           if (f64r.cmp) {
@@ -5856,7 +5860,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // whose top bit is set would not be, so that one is refused (the
       // u32 width fold's rule). The pointer-width forms are left alone:
       // what they do depends on the target.
-      if (!folded && i + 1 < cur.len() && const_i32_readable(cur[i])
+      if (!folded && i + 1 < cur.len() && r32
         && cur[i + 1].kind_tag == 7 && cur[i + 1].width == 64) {
         var xv: i64 = const_i32_value(cur[i]) as i64;
         if (cur[i + 1].unsigned) {
@@ -5867,7 +5871,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         changed = true;
         folded = true;
       }
-      if (!folded && i + 1 < cur.len() && const_i64_readable(cur[i])
+      if (!folded && i + 1 < cur.len() && r64
         && cur[i + 1].kind_tag == 8 && cur[i + 1].width == 0
         && (!cur[i + 1].unsigned || const_i64_value(cur[i]) as i32 >= 0)) {
         out = out.append(op_const_i32(const_i64_value(cur[i]) as i32));
@@ -5880,7 +5884,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // bool_not — so the result is 1 for zero and 0 for anything else. There
       // is no bitwise complement anywhere in this IR to confuse it with.
       if (!folded && i + 1 < cur.len()
-        && const_i32_readable(cur[i]) && cur[i + 1].kind_tag == k_not) {
+        && r32 && cur[i + 1].kind_tag == k_not) {
         var nv: i32 = 0;
         if (const_i32_value(cur[i]) == 0) {
           nv = 1;
@@ -5910,7 +5914,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // every i32 arithmetic op. Folding through it is what lets a NESTED
       // constant expression collapse: the pass otherwise sees
       // `const 1 ; const 6 ; int_cast ; add` and stops one step short.
-      if (!folded && i + 1 < cur.len() && const_i32_readable(cur[i])) {
+      if (!folded && i + 1 < cur.len() && r32) {
         var wf: WidthFold = fold_width_op(cur[i + 1], const_i32_value(cur[i]));
         if (wf.ok) {
           out = out.append(op_const_i32(wf.v));
@@ -5923,7 +5927,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // the condition and the scope itself. Only a VOID if — every scope this
       // lowering opens is void, and a typed one would carry a value out of its
       // end that deleting the scope would strand.
-      if (!folded && i + 1 < cur.len() && const_i32_readable(cur[i])
+      if (!folded && i + 1 < cur.len() && r32
         && cur[i + 1].kind_tag == k_if && cur[i + 1].i32_imm == 0) {
         var span: IfSpan = scan_if_block(cur, i + 1);
         if (span.end_at >= 0) {
@@ -5963,7 +5967,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // are stack-neutral — brif pops the condition the const pushed, and `br`
       // touches neither.
       if (!folded && i + 1 < cur.len()
-        && const_i32_readable(cur[i]) && cur[i + 1].kind_tag == k_brif) {
+        && r32 && cur[i + 1].kind_tag == k_brif) {
         if (const_i32_value(cur[i]) != 0) {
           out = out.append(op_br(cur[i + 1].i32_imm));
         }
