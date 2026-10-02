@@ -210,13 +210,13 @@ the Driver's reactor half (`e2eharness.SimReactorProbe`: the virtual clock
 advancing to a scripted readiness or the timeout, interest bits selecting
 it, an unwatch dropping it). The serve loops run on the reactor, so every
 serve, fetch and handler-census gate below exercises it.
-`TestHeldConnectionsHeapBoundX86_64` and `TestSelfHostHeldConnectionsHeapBoundX86_64`
-are the per-held-connection bound of #9853: a serve loop whose handler
+`TestSelfHostHeldConnectionsHeapBoundX86_64` is the per-held-connection
+bound of #9853: a serve loop whose handler
 answers `__heap_bump_bytes()` holds 64 idle connections, then 64 more, and
 the growth the second batch cost must be under 1 KiB per connection (the
 first batch carries the table's one-time growth, so the bound is on the
-second). The Go compiler's loop costs about 145 bytes per connection and
-the self-host's about 120. The twin compiles with the production driver:
+second). The self-host's loop costs about 120 bytes per connection. The
+test compiles with the production driver:
 the per-module driver's older lowering keeps an array of arrays it cannot
 prove fresh, so the connection table it rebuilds per accept leaks there
 by that lowering's design, and a gate on it would measure the lowering
@@ -226,13 +226,12 @@ driver for x86-64, arm64 and wasm under strict IR with complete semantic
 lowering required (it is what caught the self-host `tcp_recv` body
 adopting its buffer before the copy loop, #10486; the rest of that idiom
 in asmcore is `TestSelfHostRawOwnerAfterLastRead`'s, below);
-`TestSupervisedServeReusePortWorkers` and its self-host twin serve
+`TestSelfHostSupervisedServeReusePortWorkers` serves
 through two workers binding their own `SO_REUSEPORT` listeners and prove
 a replacement worker binds anew after a trap.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
-by the `TestArm64Darwin` prefix). `TestServeOptionsX86_64` and
-`TestSelfHostServeOptions` serve through
+by the `TestArm64Darwin` prefix). `TestSelfHostServeOptions` serves through
 `tcp_serve_opts` with a backlog of 4 and `SO_REUSEPORT`, and prove the
 option reached the kernel by binding a second `SO_REUSEPORT` socket to the
 served port while the loop answers. A wasi:cli/run
@@ -299,57 +298,47 @@ and native Darwin run the same fixture; QEMU is permitted for correctness.
 (x86-64 and arm64 on both the flat and SSA backends, native Darwin, and real
 wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
 
-`TestServeShutdownDrainsAndExitsClean`, `TestServeShutdownAbortsAtDrainDeadline`,
-`TestSupervisedServeForwardsShutdown` and `TestServeInheritsListenFds`
-(`internal/e2e`, native x86-64) pin the shutdown (#9854): after SIGTERM
+`TestSelfHostServeShutdownDrainsAndExitsClean`,
+`TestSelfHostServeShutdownAbortsAtDrainDeadline`,
+`TestSelfHostSupervisedServeForwardsShutdown` and
+`TestSelfHostServeInheritsListenFds` pin the shutdown (#9854): after SIGTERM
 a request in flight is answered with close, the readiness path answers
 503 within the grace, an idle keep-alive connection is closed and the
 process exits 0; a request that never completes is cut off at the drain
 deadline and the process exits 1; the supervisor forwards the signal to
 two workers and exits 0 once they drained, logging no death; and a
 listener handed in through `LISTEN_FDS` is served. The scenarios are
-`internal/e2eharness/serve_shutdown.go`'s, and their self-host twins
-(`TestSelfHostServeShutdownDrainsAndExitsClean`,
-`TestSelfHostServeShutdownAbortsAtDrainDeadline`,
-`TestSelfHostSupervisedServeForwardsShutdown`,
-`TestSelfHostServeInheritsListenFds`) drive the same servers compiled by
-the self-host compiler.
-`TestSupervisedServeWorkersServeSideBySide` pins two workers over one
-listener answering side by side and surviving one worker's death, and
-`TestSupervisedServeHandlerStallsItsWorker` (with its self-host twin) the
-converse on one worker: a request behind /slow waits for it, the pin
+`internal/e2eharness/serve_shutdown.go`'s.
+`TestSelfHostSupervisedServeWorkersServeSideBySide` pins two workers over
+one listener answering side by side and surviving one worker's death, and
+`TestSelfHostSupervisedServeHandlerStallsItsWorker` the converse on one
+worker: a request behind /slow waits for it, the pin
 #9857's multiplexing has to turn;
-`TestSupervisedServeOneWorkerPerCPU` counts the default worker set
-against the processing units, and `TestSupervisedServeShutsDownAfterBurst`
-requires every one of four workers to exit on SIGTERM after a burst of
+`TestSelfHostSupervisedServeOneWorkerPerCPU` counts the default worker set
+against the processing units, and
+`TestSelfHostSupervisedServeShutsDownAfterBurst` requires every one of four workers to exit on SIGTERM after a burst of
 connections over the shared listener.
-`TestServeResponseRateCutsStalledReaderX86_64` and
-`TestServeResponseRateKeepsSteadyReaderX86_64` (`internal/e2e`, with
-self-host twins) pin the minimum data rate on the write side: an 8 MiB
+`TestSelfHostServeResponseRateCutsStalledReader` and
+`TestSelfHostServeResponseRateKeepsSteadyReader` pin the minimum data rate on the write side: an 8 MiB
 response to a reader that stops reading is cut off after the grace, and
 one to a reader pacing itself above the rate goes out whole however long
 it takes, which needs the socket's send queue (`tcp_socket_ctl` op 6)
 rather than a writable event for the peer's progress.
 The remaining serve-loop scenarios live in
 `internal/e2eharness/serve_scenarios.go` as well, each a server program
-and a client-side check, so `TestServeWithThreadedStateX86_64`,
-`TestServeLargeResponseX86_64`, `TestServeRecvDeadlineX86_64`,
-`TestSupervisedServeWorkersServeSideBySide`,
-`TestSupervisedServeSurvivesHandlerTrap` and
-`TestSupervisedServeCrashLoopGivesUp` each have a `TestSelfHost` twin
-driving the same server compiled by the self-host compiler
-(`internal/e2eselfhost/self_host_serve_test.go`).
-`TestServeInitProvidedStateX86_64` and its twin
+and a client-side check, driven by the tests in
+`internal/e2eselfhost/self_host_serve_test.go`; `internal/e2e` keeps only
+the interpreter legs.
 `TestSelfHostServeInitProvidedState`, with `TestSelfHostServeHandleOnly`,
 pin the `main` both compilers synthesise for a handler program that
 writes none (`flatten.with_handler_main` in the self-host, the checker
 in native): it serves on `PORT` and threads `init`'s state.
-`TestServeResultHandlerX86_64`, `TestServeStatefulResultHandlerX86_64`
-and their self-host twins pin the handler that answers a Result: the
+`TestSelfHostServeResultHandler` and
+`TestSelfHostServeStatefulResultHandler` pin the handler that answers a Result: the
 compilers wrap it so `?` fails into an RFC 9457 problem and the state
 survives the failure; `TestResultHandlerIsAdapted` (`internal/checker`)
-pins the rename and the wrapper's shape. `TestServeShutdownHookX86_64`
-and `TestSelfHostServeShutdownHook` pin the `shutdown(reason, state)`
+pins the rename and the wrapper's shape. `TestSelfHostServeShutdownHook`
+pins the `shutdown(reason, state)`
 hook: after two requests and SIGTERM the hook reports "sigterm" and the
 count; `TestSynthesisedHandleMainWiresShutdown` and
 `TestSynthesisedHandleMainTakesInitOptions` (`internal/checker`) and
@@ -362,8 +351,8 @@ sees is deterministic. On wasm32-wasi, which has no processes, the
 synthesis serves single-process: `TestSynthesisedHandleMainFollowsTargetProcesses`
 (`internal/checker`), `TestHandlerKindsMatchWhatTheCompilerAccepts` and
 `TestSelfHostWasiCliHandlerProgramBuilds` pin that on both compilers.
-`TestServeStreamingBodyX86_64`, `TestServeStreamingBodyInterp` and
-`TestSelfHostServeStreamingBody` pin the produced bodies: a three-million-byte
+`TestServeStreamingBodyInterp` and `TestSelfHostServeStreamingBody` pin
+the produced bodies: a three-million-byte
 file streamed whole under its length on a keep-alive connection, a chunk
 producer under chunked transfer coding and close-delimited over HTTP/1.0,
 an empty chunk skipped, and a bare head for HEAD.
