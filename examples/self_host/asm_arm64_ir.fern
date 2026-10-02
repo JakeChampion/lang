@@ -4292,12 +4292,11 @@ function dyn_arg_load(s: asmcore.EmitState, reg: string, a: asmcore.DynArg): asm
 
 // emit_dyn_dispatch_chain is a `dyn Trait` method call: it reads the
 // receiver's shape pointer (x1) and dispatches to the matching
-// `<Type>.<method>` through a compare-branch chain over every module method
-// named `method` with a struct receiver, mirroring asm_arm64.fern. Each
-// matched arm pushes the arguments (arg0/receiver on top, the arm64 ABI)
+// `<Type>.<method>` through a compare-branch chain over the `arms` the
+// op_dyn_dispatch tag carries. Each matched arm pushes the arguments (arg0/receiver on top, the arm64 ABI)
 // from where `args` says they are, calls, and leaves the result in x0. x1
 // and x2 are scratch.
-function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32, lp: string, own s: asmcore.EmitState): asmcore.EmitState {
+function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, lp: string, own s: asmcore.EmitState): asmcore.EmitState {
   let dargc: i32 = args.len();
   s = dyn_arg_load(s, "x0", args[0]);
   s = s.write("    ldr x1, [x0]\n");
@@ -4312,7 +4311,7 @@ function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32,
     // docs/DYN-TRAITS.md §4.2.3). A primitive arm UNBOXES: the receiver
     // holds the box pointer, so arg0 is reloaded from box+8.
     let dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
-    if (irtables.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
+    if (irtables.dyn_arm_matches(dfd, arms) && dfd.receiver_type.len() > 0
       && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
       let dbn: string = ddbn;
       let dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
@@ -4352,7 +4351,7 @@ function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32,
     // excludes an array method's `T[]` receiver (base_type_name
     // strips the `[]`, which would otherwise mis-read as an
     // enum — #2766). Mirrors the x86 asm_ir arm.
-    if (irtables.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
+    if (irtables.dyn_arm_matches(dfd, arms) && dfd.receiver_type.len() > 0
       && !asmcore.recv_is_array(dfd.receiver_type)
       && irtables.decl_is_enum(s.struct_decls, ddbn)) {
       let dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);

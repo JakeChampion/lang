@@ -562,14 +562,16 @@ Since two different traits may each provide a method of that name for one
 type, the self-host emits the second provider as `<Type>.<Trait>.<m>`
 (`parser.claim_method_name`) so the symbol namespace stays injective — and
 a dispatch chain searching for a bare `m` would then find only the FIRST
-trait's provider, whatever `d`'s trait says. So `op_dyn_dispatch` carries
-the dyn type's trait set alongside the method name (`str` is `m|B` /
-`m|A,B`), and every backend's arm enumerator resolves through
-`irtables.dyn_arm_matches`: a receiver whose provider for one of the dyn's
-traits was interposed matches THAT definition, and its bare namesake — a
-different trait's method — does not answer for it. Receivers with no
-collision keep matching the bare name, so `dyn A + B` where A provides `m`
-and B provides `n` is unaffected. The reading of the claim table itself is
+trait's provider, whatever `d`'s trait says. So the typed lowering picks
+the arms once (`semsource.dyn_arms`): a receiver must implement every trait
+of the dyn's set, and a receiver whose provider for one of those traits was
+interposed matches THAT definition, while its bare namesake — a different
+trait's method — does not answer for it. `op_dyn_dispatch` carries those
+arms as decl keys (`str` is `Circle.area,Rect.area`), and every backend's
+chain runs over exactly them (`irtables.dyn_arm_matches`). A type with a
+same-named method outside the dyn's traits — an `Add` impl's `add` beside a
+`dyn Adder` — is never an arm; wasm validates every arm, so one there was a
+module wasmtime rejected (#11122). The reading of the claim table itself is
 `parser.dyn_arm_matches` / `parser.dyn_provider_name`, beside the renaming
 it undoes, so both dispatch models share one rule.
 

@@ -627,20 +627,30 @@ pub function is_dyn(t: typeinfo.Type): boolean {
   return false;
 }
 
-// A method call on a dyn receiver names its contract `dyn <method>|<traits>`,
-// a spelling no declaration can take, whose tail is the tag `ir.op_dyn_dispatch`
-// carries. The contract is the implementations' shared signature with the dyn
-// type at the receiver.
-pub function dyn_call_name(method: string, traits: string[]): string {
-  let out: string = "dyn " + method;
+// A method call on a dyn receiver names its contract
+// `dyn <method>|<traits>|<arms>`, a spelling no declaration can take. `arms`
+// are the decl keys of the implementations the call dispatches to
+// (`semsource.dyn_arms`), which `ir.op_dyn_dispatch` carries, so every
+// backend's chain runs over exactly the arms whose contracts were checked. The
+// traits keep two dyn types with the same arms apart: the contract is the
+// implementations' shared signature with the dyn type at the receiver.
+pub function dyn_call_name(method: string, traits: string[], arms: string[]): string {
+  let out: string = "dyn " + method + "|";
   let i: i32 = 0;
   while (i < traits.len()) {
-    if (i == 0) {
-      out = out + "|";
-    } else {
+    if (i > 0) {
       out = out + ",";
     }
     out = out + traits[i];
+    i = i + 1;
+  }
+  out = out + "|";
+  i = 0;
+  while (i < arms.len()) {
+    if (i > 0) {
+      out = out + ",";
+    }
+    out = out + arms[i];
     i = i + 1;
   }
   return out;
@@ -650,21 +660,14 @@ pub function is_dyn_call(name: string): boolean {
   return name.len() > 4 && slice_unchecked(name, 0, 4) == "dyn ";
 }
 
-function dyn_call_bar(name: string): i32 {
-  let i: i32 = 4;
-  while (i < name.len() && name[i] != b'|') {
-    i = i + 1;
-  }
-  return i;
-}
-
-pub function dyn_call_method(name: string): string {
-  return slice_unchecked(name, 4, dyn_call_bar(name)) + "";
-}
-
-pub function dyn_call_traits(name: string): string[] {
+// The arms of a dyn call name: the list after its last `|`, which no trait
+// spelling can contain.
+pub function dyn_call_arms(name: string): string[] {
   let out: string[] = [];
-  let start: i32 = dyn_call_bar(name) + 1;
+  let start: i32 = name.len();
+  while (start > 4 && name[start - 1] != b'|') {
+    start = start - 1;
+  }
   let k: i32 = start;
   while (k <= name.len()) {
     if (k == name.len() || name[k] == b',') {

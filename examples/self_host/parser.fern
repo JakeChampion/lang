@@ -22880,6 +22880,16 @@ pub function receiver_base(receiver: string): string {
   return util.base_type_name(erase_view_spelling(receiver));
 }
 
+// decl_key is the symbol a declaration is called by: a free function's name,
+// and a method's `<receiver_base>.<name>`, since two types may declare one
+// method name. Contracts and dyn dispatch arms are keyed by it.
+pub function decl_key(fd: FuncDecl): string {
+  if (fd.receiver_type.len() == 0) {
+    return fd.name;
+  }
+  return receiver_base(fd.receiver_type) + "." + fd.name;
+}
+
 // receiver_namespace is the name a method declaration is keyed by against
 // the others: every owned-array receiver shares `Array` and every view
 // receiver `slice`, whatever the element, as native keys them.
@@ -23597,9 +23607,9 @@ function claim_method_name(fd: FuncDecl, tname: string, keys: string[], traits: 
 // These three are the INVERSE of claim_method_name: given the traits a `dyn`
 // spans and the method a call names, they say which of the flat symbols the
 // claim table produced is the one that call means. Every dispatcher needs the
-// same answer — the compiled backends through irtables.dyn_arm_matches, the AST
-// interpreter through dyn_provider_name — so the rule lives beside the renaming
-// it undoes rather than once per engine.
+// same answer — the compiled backends through the arms semsource.dyn_arms
+// picks, the AST interpreter through dyn_provider_name — so the rule lives
+// beside the renaming it undoes rather than once per engine.
 
 // dyn_trait_set splits a `dyn Trait` type spelling into its trait names:
 // "dyn B" -> ["B"], "dyn A + B" -> ["A", "B"]. Non-dyn spellings yield none.
