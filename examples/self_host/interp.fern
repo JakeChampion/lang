@@ -4060,7 +4060,7 @@ function call_buf_builtin(name: string, args: Value[]): Value {
 }
 
 function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
-  // The string-taking I/O trio, matching internal/interp's builtinPrint /
+  // The Display-taking I/O trio, matching internal/interp's builtinPrint /
   // builtinWrite / builtinEprint: print and eprint append a newline, write
   // does not, and eprint goes to stderr. The interpreter is itself a Fern
   // program, so each one is the same builtin the interpreted program asked
@@ -4073,7 +4073,21 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (args.len() != 1) {
       return v_err(name + " takes exactly 1 argument");
     }
-    match (args[0]) {
+    // The Display spine: a non-string argument is printed as its
+    // `to_string()`, the call native's checker rewrites it to. This engine
+    // runs no checker pass, so it dispatches the method here.
+    var text_val: Value = args[0];
+    match (text_val) {
+      VString(_) => {},
+      _ => {
+        var no_args: Value[] = [];
+        text_val = call_method(args[0], "to_string", no_args, funcs, aliases, type_decls, argv);
+      }
+    }
+    match (text_val) {
+      VErr(_) => {
+        return text_val;
+      },
       VString(s) => {
         // The typed local is required for the bootstrap: passing
         // `s.v` straight to a Display-constrained builtin resolves the
@@ -4092,7 +4106,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
         return v_int(0);
       },
       _ => {
-        return v_err(name + ": argument must be a string");
+        return v_err(name + ": to_string() did not return a string");
       }
     }
   }
