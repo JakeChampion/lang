@@ -944,7 +944,8 @@ lane's shard 0, whose `TestSelfHostAssumeEligibleByteIdenticalX86_64` is
 503 s of CPU-bound work already running four wide (83 checked per-process
 emits, each paying the whole-program parse floor). No weight can place a
 test that size without making its shard the longest, so it runs in a job of
-its own and leaves the shard partition.
+its own and leaves the shard partition. The test, and its job, went with
+`-assume-eligible` when the typed lowering lost its off switch (#10980).
 
 Lint, the gate's other half, ran twelve steps one after another. The eight
 cheap, read-only ones (`vet`, `gofmt-check`, `fmt-check`, `deadcode`,
