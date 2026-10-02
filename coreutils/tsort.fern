@@ -47,91 +47,133 @@ function is_separator(b: i32): boolean {
   return b == 32 || b == 9 || b == 10;
 }
 
-// The index of the next `b` at or after `from`, or `n` when there is none.
-function next_at(text: string, b: i32, from: i32, n: i32): i32 {
-  var at: i32 = __memchr(text, b, from);
-  if (at < 0) {
-    return n;
+// A name retains a span of the raw input. Equality, hashing and ordering
+// inspect bytes; neither invalid UTF-8 nor NUL suffixes become text.
+struct Name { data: u8[], lo: i32, hi: i32, id: i32, hash_code: i32 }
+
+impl cmp.Hash for Name {
+  function hash(self: Name): i32 {
+    return self.hash_code;
   }
-  return at;
 }
 
-// Every distinct token in first-appearance order, each token's index
-// into that list, and the index itself. One pass over the text: a token
-// is looked up as a view into it and copied out only when it is new.
-// The three separators are found by memchr, each position cached until
-// the scan passes it, so a byte is examined by the Fern loop only when
-// it is a separator.
-function intern(text: string): (string[], i32[], Map[string, i32]) {
-  var names: string[] = [];
+impl cmp.Eq for Name {
+  function eq(self: Name, other: Name): boolean {
+    if (self.hi - self.lo != other.hi - other.lo) {
+      return false;
+    }
+    var i: i32 = 0;
+    while (i < self.hi - self.lo) {
+      if (self.data[self.lo + i] != other.data[other.lo + i]) {
+        return false;
+      }
+      i = i + 1;
+    }
+    return true;
+  }
+}
+
+impl cmp.Ord for Name {
+  function cmp(self: Name, other: Name): i32 {
+    var i: i32 = 0;
+    var n: i32 = self.hi - self.lo;
+    var m: i32 = other.hi - other.lo;
+    while (i < n && i < m) {
+      var a: u8 = self.data[self.lo + i];
+      var b: u8 = other.data[other.lo + i];
+      if (a < b) {
+        return -1;
+      }
+      if (a > b) {
+        return 1;
+      }
+      i = i + 1;
+    }
+    if (n < m) {
+      return -1;
+    }
+    if (n > m) {
+      return 1;
+    }
+    return 0;
+  }
+}
+
+// Intern names in first-appearance order. Hash each token once while
+// scanning; map equality still compares the complete span on collisions.
+function intern(text: u8[]): (Name[], i32[]) {
+  var names: Name[] = [];
   var ids: i32[] = [];
-  var index: Map[string, i32] = map_new(1024);
-  var n: i32 = text.len();
-  var next_sp: i32 = next_at(text, 32, 0, n);
-  var next_nl: i32 = next_at(text, 10, 0, n);
-  var next_tab: i32 = next_at(text, 9, 0, n);
+  var index: Map[Name, i32] = map_new(1024);
   var i: i32 = 0;
-  while (i < n) {
+  while (i < text.len()) {
     if (is_separator(text[i] as i32)) {
       i = i + 1;
       continue;
     }
-    if (next_sp < i) {
-      next_sp = next_at(text, 32, i, n);
+    var j: i32 = i;
+    var end: i32 = -1;
+    var hash: u32 = 2166136261 as u32;
+    while (j < text.len() && !is_separator(text[j] as i32)) {
+      if (end < 0) {
+        if (text[j] == 0 as u8) {
+          end = j;
+        } else {
+          hash = (hash ^ text[j] as u32) * (16777619 as u32);
+        }
+      }
+      j = j + 1;
     }
-    if (next_nl < i) {
-      next_nl = next_at(text, 10, i, n);
+    if (end < 0) {
+      end = j;
     }
-    if (next_tab < i) {
-      next_tab = next_at(text, 9, i, n);
-    }
-    var j: i32 = next_sp;
-    if (next_nl < j) {
-      j = next_nl;
-    }
-    if (next_tab < j) {
-      j = next_tab;
-    }
-    var view: str = slice_unchecked(text, i, j);
-    var nul: i32 = __memchr(view, 0, 0);
-    if (nul >= 0) {
-      view = slice_unchecked(text, i, i + nul);
-    }
-    match (index.get(view)) {
+    var name: Name = Name { data: text, lo: i, hi: end, id: names.len(), hash_code: hash as i32 };
+    match (index.get(name)) {
       Some(id) => {
         ids = ids.append(id);
       },
       None => {
-        var tok: string = view + "";
-        index = index.insert(tok, names.len());
+        index = index.insert(name, names.len());
         ids = ids.append(names.len());
-        names = names.append(tok);
+        names = names.append(name);
       }
     }
     i = j;
   }
-  return (names, ids, index);
+  return (names, ids);
 }
 
-// The indices of `names` in byte order.
-function byte_order(names: string[], index: Map[string, i32]): i32[] {
+// The indices of names in unsigned byte order.
+function byte_order(names: Name[]): i32[] {
   var order: i32[] = [];
-  var sorted: string[] = cmp.sort(names);
-  var s: i32 = 0;
-  while (s < sorted.len()) {
-    order = order.append(index.get_or(sorted[s], 0));
-    s = s + 1;
+  var sorted: Name[] = cmp.sort(names);
+  for name in sorted {
+    order = order.append(name.id);
   }
   return order;
 }
 
+function put_name(out: io_buffered.BufWriter, name: Name): io_buffered.BufWriter {
+  buf_push_bytes_range(out.handle(), name.data, name.lo, name.hi);
+  buf_push_byte(out.handle(), 10);
+  return out.settle();
+}
+
+function error_name(name: Name): void {
+  var b: usize = buf_new(name.hi - name.lo + 32);
+  buf_push(b, gnu.prog() + ": ");
+  buf_push_bytes_range(b, name.data, name.lo, name.hi);
+  buf_push_byte(b, 10);
+  stderr().write_bytes(buf_take_bytes(b));
+  buf_free(b);
+}
+
 // The graph and both phases live in one function so every array is a
 // local the `.with` updates can take in place.
-function run(text: string, fname: string): i32 {
-  var interned: (string[], i32[], Map[string, i32]) = intern(text);
-  var names: string[] = interned.0;
+function run(text: u8[], fname: string): i32 {
+  var interned: (Name[], i32[]) = intern(text);
+  var names: Name[] = interned.0;
   var ids: i32[] = interned.1;
-  var index: Map[string, i32] = interned.2;
   if (ids.len() % 2 == 1) {
     gnu.error(fname + ": input contains an odd number of tokens");
     return 1;
@@ -169,7 +211,7 @@ function run(text: string, fname: string): i32 {
 
   // Only the seeds need sorting for the queue; the byte order of every
   // name is built the first time a loop has to be found.
-  var seeds: string[] = [];
+  var seeds: Name[] = [];
   v = 0;
   while (v < n) {
     if (count[v] == 0) {
@@ -177,12 +219,12 @@ function run(text: string, fname: string): i32 {
     }
     v = v + 1;
   }
-  var sorted_seeds: string[] = cmp.sort(seeds);
+  var sorted_seeds: Name[] = cmp.sort(seeds);
   var queue: i32[] = [];
   var qh: i32 = 0;
   var s: i32 = 0;
   while (s < sorted_seeds.len()) {
-    queue = queue.append(index.get_or(sorted_seeds[s], 0));
+    queue = queue.append(sorted_seeds[s].id);
     s = s + 1;
   }
   var order: i32[] = [];
@@ -194,7 +236,7 @@ function run(text: string, fname: string): i32 {
     while (qh < queue.len()) {
       var w: i32 = queue[qh];
       qh = qh + 1;
-      o = gnu.put(o, names[w] + "\n");
+      o = put_name(o, names[w]);
       remaining = remaining - 1;
       var e: i32 = head[w];
       while (e >= 0) {
@@ -213,7 +255,7 @@ function run(text: string, fname: string): i32 {
     status = 1;
     gnu.error(fname + ": input contains a loop:");
     if (order.len() == 0) {
-      order = byte_order(names, index);
+      order = byte_order(names);
     }
     var chain_head: i32 = 0 - 1;
     var found: boolean = false;
@@ -246,7 +288,7 @@ function run(text: string, fname: string): i32 {
         }
         var c: i32 = chain_head;
         while (true) {
-          gnu.error(names[c]);
+          error_name(names[c]);
           if (c == node) {
             break;
           }
@@ -288,9 +330,9 @@ pub function main(): i32 {
   if (operands.len() == 1) {
     path = operands[0];
   }
-  var text: string = "";
+  var text: u8[] = [];
   if (path == "-") {
-    match (io.read_all_stdin()) {
+    match (io.read_all_stdin_bytes()) {
       Ok(t) => {
         text = t;
       },
@@ -312,7 +354,7 @@ pub function main(): i32 {
         exit(1);
       }
     }
-    match (read_file(path)) {
+    match (read_file_bytes(path)) {
       Ok(t) => {
         text = t;
       },

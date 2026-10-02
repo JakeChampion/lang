@@ -28,8 +28,13 @@ func tsortCases(t *testing.T) []invocation {
 	spaced := tsortFile(t, dir, "f name", "a b\nb a\n")
 	quoted := tsortFile(t, dir, "f'n", "a b c\n")
 	empty := tsortFile(t, dir, "empty", "")
+	binary := tsortFile(t, dir, "binary", "a\xff b\xfe\n")
+	binaryLoop := tsortFile(t, dir, "binary-loop", "a\xff b\xfe b\xfe a\xff\n")
 
 	return []invocation{
+		{name: "file names that are not valid UTF-8", args: []string{binary}},
+		{name: "file loop of binary names", args: []string{binaryLoop}},
+		{name: "distinct names with the same FNV hash", stdin: "costarring liquid liquid zz"},
 		// The queue phase: byte-ordered seeds, FIFO, each written name
 		// freeing its successors most recent first.
 		{name: "one pair", stdin: "a b\n"},

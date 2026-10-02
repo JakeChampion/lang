@@ -17,6 +17,12 @@ The example `tee` uses raw input and output, opens append destinations in
 append mode, and reports output failures while continuing to other files.
 Existing malformed file bytes survive an append.
 
+`tsort` names are arbitrary bytes. Its input, name spans, equality, hashing,
+ordering and output now stay in the byte domain, including cycle diagnostics.
+The graph algorithm keeps GNU's seed and successor ordering. A cached hash
+speeds lookup; full span comparison resolves collisions. The map-key methods
+remain reachable through the compiler's generated indirect calls.
+
 ## Validation
 
 On the current integration with main through `0d7a8d321`:
@@ -30,9 +36,16 @@ On the current integration with main through `0d7a8d321`:
   free counts balance. Cases include NUL, empty input, malformed sequences,
   truncated final input, and every split of two-, three- and four-byte scalars.
 
-Compiler-driver/browser regressions, refreshed bootstrap reproducibility
-and the full unit gate remain pending. Validation durations are not
-performance comparisons.
+Compiler-driver regressions pass in 164.169 seconds, and all nine browser
+shim tests pass. The expanded GNU `env`/`tsort` parity suite passes in 1.139
+seconds, including binary names from files and stdin, cycles, NUL truncation,
+unsigned byte ordering and distinct names with the same FNV hash. Primary
+`tsort` and explicit map-key regressions pass on native and core-WASM targets
+with balanced ownership. The compiler also rejects no extra target effects
+from an unused hash implementation. All lint gates pass after those changes.
+
+Refreshed bootstrap reproducibility and the full unit gate remain pending.
+Validation durations are not performance comparisons.
 
 Bootstrap Preview 2 tests pass. Primary Preview 2 stdin remains unsupported:
 the unchanged compiler refuses both the old `read_chunk` and the new
