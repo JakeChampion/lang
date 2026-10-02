@@ -646,6 +646,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E064 in a body `var` annotation. The init `q()` is itself undefined
 		// (E001), so there is no E003 init-mismatch cascade to diverge on.
 		{"unknown-var-type", "function main(): i32 { var x: Wibble = q(); return 0; }\n", []string{"E001", "E064"}},
+		// A typed init into that annotation is E003 beside the E064, since
+		// the type is unknown to native too (#10965); a bare unknown struct
+		// literal is E043 where it stands.
+		{"unknown-var-type-typed-init", "function main(): i32 { var x: Wibble = 3; return 0; }\n", []string{"E003", "E064"}},
+		{"unknown-struct-literal", "function main(): i32 { var w = Wibble { x: 1 }; return 0; }\n", []string{"E043"}},
 		// Sub-word integer keywords (u8/usize) the parser accepts but the
 		// self-host name resolver doesn't model. They must NOT draw E064 in a
 		// body `var` annotation — the Go oracle accepts them, and the stdlib uses
@@ -3384,6 +3389,11 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"derive-qualified-field-no-impl", "import \"core/cmp\";\nstruct Q { n: i32 }\n@derive(cmp.Eq)\nstruct P { q: Q }\nfunction main(): i32 { return 0; }\n"},
 		{"derive-aliased-bound-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction same[T: c.Eq](a: T, b: T): boolean { return a.eq(b); }\nfunction main(): i32 { var p: P = P { n: 1 }; if (same(p, p)) { return 3; } return 0; }\n"},
 		{"derive-unknown-qualifier", "@derive(cmp.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
+		// An imported module's struct named without its qualifier (#10965):
+		// E064 on the annotation with E003 beside it, and E043 on the literal,
+		// never a clean pass that the lowering then refuses.
+		{"imported-struct-unqualified", "import \"std/http\";\nfunction main(): i32 {\n    var small: HttpLimits = http.http_limits();\n    var l: http.HttpLimits = HttpLimits { ...small, body: 1024 };\n    return l.body;\n}\n"},
+		{"imported-struct-unqualified-literal", "import \"std/http\";\nfunction main(): i32 {\n    var l: http.HttpLimits = HttpLimits { request_line: 1, header_bytes: 2, header_fields: 3, body: 1024 };\n    return l.body;\n}\n"},
 		// Seven programs native accepts that the self-host checker refused (#10767),
 		// and the typed result of an inherent associated call that one of them needed.
 		{"bitwise-and-shift-overloads", "struct F { b: i32 }\nfunction (self: F) bitand(o: F): F { return F { b: self.b & o.b }; }\nfunction (self: F) bitor(o: F): F { return F { b: self.b | o.b }; }\nfunction (self: F) bitxor(o: F): F { return F { b: self.b ^ o.b }; }\nfunction (self: F) shl(o: F): F { return F { b: self.b << o.b }; }\nfunction (self: F) shr(o: F): F { return F { b: self.b >> o.b }; }\nfunction main(): i32 { var a: F = F { b: 12 }; var c: F = a & a; c = a | c; c = a ^ c; c = a << F { b: 1 }; c = c >> F { b: 1 }; return c.b; }\n"},
