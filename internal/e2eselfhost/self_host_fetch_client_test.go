@@ -16,5 +16,5 @@ func TestSelfHostFetchClient(t *testing.T) {
 	bin := buildBin(t, gcc, progDir, "fetchclient", asm)
 	cmd := binCmd(runner, bin)
 	out, _ := cmd.Output()
-	e2eharness.CheckFetchClient(t, up.Port, string(out), cmd.ProcessState.ExitCode())
+	e2eharness.CheckFetchClient(t, up, string(out), cmd.ProcessState.ExitCode())
 }

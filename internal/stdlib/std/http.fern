@@ -2633,6 +2633,13 @@ pub function http_method_ok(method: string): boolean {
   return __is_token(b, 0, b.len());
 }
 
+// `http_method_idempotent(method)` — whether a request with `method` may
+// be sent again when the first attempt failed before any response byte
+// arrived (RFC 9110 §9.2.2): GET, HEAD, PUT, DELETE, OPTIONS and TRACE.
+pub function http_method_idempotent(method: string): boolean {
+  return method == "GET" || method == "HEAD" || method == "PUT" || method == "DELETE" || method == "OPTIONS" || method == "TRACE";
+}
+
 // `http_target_ok(target)` — whether `target` can stand as an origin-form
 // request-target (RFC 9112 §3.2.1): `/`, then `pchar` and `/`, then
 // optionally `?` and a query of `pchar`, `/` and `?`, every `%` followed by
