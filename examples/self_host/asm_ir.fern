@@ -6473,30 +6473,6 @@ function ssa_unsupported(f: ssa.SFunc): string {
   return "";
 }
 
-// ssa_block_index maps a block id to its position in f.blocks (-1 for an id
-// no block carries), built once per function; ssa_block_at reads it. The
-// search this replaces ran once per edge.
-function ssa_block_index(f: ssa.SFunc): i32[] {
-  var most: i32 = 0;
-  for blk in f.blocks {
-    if (blk.id > most) {
-      most = blk.id;
-    }
-  }
-  var out: i32[] = [];
-  var i: i32 = 0;
-  while (i <= most) {
-    out = out.append(0 - 1);
-    i = i + 1;
-  }
-  var pos: i32 = 0;
-  while (pos < f.blocks.len()) {
-    out = out.with(f.blocks[pos].id, pos);
-    pos = pos + 1;
-  }
-  return out;
-}
-
 function ssa_block_at(fr: SsaFrame, id: i32): i32 {
   if (id < 0 || id >= fr.blk_pos.len()) {
     return 0 - 1;
@@ -8277,7 +8253,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irlower
   var save: i32 = 8 * saved.len();
   s = s.write(ssa_save_asm(saved));
   var views: i32[] = ssa_view_slots(f);
-  var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: ssa_block_index(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved), imm: imm, lit0: ssa.literal_first_bytes(f) };
+  var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: ssa.block_positions(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved), imm: imm, lit0: ssa.literal_first_bytes(f) };
   var frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
   // %rsp is 16-byte aligned at a call when the pushes and the frame together
   // are a multiple of 16.
