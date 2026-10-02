@@ -20,10 +20,8 @@ import (
 //   - lift: every fn-VALUED tuple element (capturing lambda, no-capture
 //     lambda, unshadowed bare fn name) wraps into a `__mkclo$…` env box, so
 //     the element representation is uniformly a closure box;
-//   - irlower: the "clo" element tag (literal-side elem_type_tag +
-//     declared-side tuple_elem_tags/tuple_type_elem_tag, which both ask
-//     parser.ref_is_fn_value)
-//     drives env-first `t.N(args)` dispatch, closure-local binding for
+//   - the lowering: the "clo" element tag (irtables.tuple_type_elem_tag,
+//     which asks parser.ref_is_fn_value) drives env-first `t.N(args)` dispatch, closure-local binding for
 //     `var f = t.0`, and the destructure bind.
 //
 // Exit codes are cross-checked against the Go reference (native -interp).

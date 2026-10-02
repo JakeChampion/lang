@@ -1464,11 +1464,11 @@ pub struct LowerResult {
   // (#6639), not for emission — a string is one operand slot on the
   // registers and two on wasm32, so a stack model needs the distinction.
   str_slots: i32[],
-  // why: why this function did not lower. Empty when ok. The strict-IR
-  // diagnostic prints it; nothing on the emit path reads it.
+  // why: why this function did not lower. Empty when ok. Read only by
+  // ircore.lower_failed_refuse, the backends' per-function backstop.
   why: string,
-  // alias_incs: the var-bind alias retains this lowering decided
-  // (`line:col=name`), for the `-rc-plan` aliasBindIncs table (#4482). Nothing on the emit path reads it.
+  // alias_incs: never populated and never read; the `-rc-plan` aliasBindIncs
+  // table it was carried for is native's (#4482).
   alias_incs: string[],
   // name: the symbol this body defines, for a lowering that has no
   // declaration to take one from. Empty for a body lowered from a
