@@ -41,7 +41,7 @@ function main(): i32 { var a = P { x: 7, name: "hi" }; return a.to_json().len();
 	// the self-host twin of native's synthFromJsonValue. Each case exercises
 	// a distinct way the associated call `User.from_json(...)` is consumed,
 	// all of which must route IR (the associated-call Option/Result
-	// return-type recovery in irlower's four scrutinee/binding sites) and
+	// return-type recovery in the lowering's scrutinee/binding sites) and
 	// match the interpreter. A direct `match (User.from_json(...))` over
 	// valid / missing-field / invalid-JSON inputs → 9 + 7 + 5 = 21.
 	{"json-from-struct", `import "std/json";

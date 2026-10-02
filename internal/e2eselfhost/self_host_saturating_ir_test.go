@@ -9,7 +9,7 @@ import (
 )
 
 // The saturating operators `+|` / `-|` / `*|` / `<<|` (#5542) clamp to the operand
-// type's [MIN, MAX] instead of wrapping. irlower.lower_sat_binary emits the
+// type's [MIN, MAX] instead of wrapping. irtables.sat_binary_ops emits the
 // clamp as a void-`if` + store-to-temp chain over ordinary IR ops (no new
 // opcode), so every self-host IR backend lowers it unchanged. These cases
 // mirror the native oracle in `internal/e2e/saturating_arith_test.go`.

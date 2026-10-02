@@ -280,7 +280,7 @@ func TestSelfHostStrBindSfrrecvStdlibX86_64(t *testing.T) {
 }
 
 // TestSelfHostStrBindSfrrecvIRArm64 is the arm64 leg; the admission and the
-// pointer compare are shared irlower, the release a per-backend transcription.
+// pointer compare are in the shared lowering, the release a per-backend transcription.
 func TestSelfHostStrBindSfrrecvIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)

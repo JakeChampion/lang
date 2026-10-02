@@ -10,7 +10,7 @@ import (
 
 // The checked operators `+?` / `-?` / `*?` (#5542) yield `Some(result)` when
 // the exact result fits the operand type and `None` on overflow.
-// irlower.lower_checked_binary emits the clamp condition lower_sat_binary
+// irtables.chk_binary_ops emits the clamp condition sat_binary_ops
 // tests (the same per-backend-proven shape), then constructs `None` /
 // `Some(wrapped)` as a void-`if` + store-to-temp over op_opt_none /
 // op_opt_make — the Option occupies a default (un-i64-marked) pointer slot, so

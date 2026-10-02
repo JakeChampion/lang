@@ -7,7 +7,7 @@ import (
 // TestSelfHostStrTupleReclaimIRArm64 is the arm64 port of
 // TestSelfHostStrTupleReclaimIRX86_64: the string-element tuple admission
 // (tuple_str_elem_fresh) and deep-drop (emit_tuple_child_drops routing through
-// the rc-aware __fern_str_free) live in shared irlower.fern and lower through
+// the rc-aware __fern_str_free) live in shared lowering and lower through
 // op_tuple_get + the backend-complete str_free helper. Case table shared with
 // the x86-64 leg.
 func TestSelfHostStrTupleReclaimIRArm64(t *testing.T) {

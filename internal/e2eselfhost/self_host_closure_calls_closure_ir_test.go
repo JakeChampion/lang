@@ -150,7 +150,7 @@ func TestSelfHostClosureCallsClosureX86IR(t *testing.T) {
 }
 
 // TestSelfHostClosureCallsClosureWasmIR is the wasm sibling: the lift lives in
-// the target-independent irlower, so the wasm IR backend gets it for free.
+// the target-independent lift.fern, so the wasm IR backend gets it for free.
 func TestSelfHostClosureCallsClosureWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host closure-calls-closure wasm IR e2e")

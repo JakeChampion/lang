@@ -96,7 +96,7 @@ func TestSelfHostTupleRetUsizeIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostTupleRetUsizeIRArm64 — the arm64 counterpart. The gates live in
-// shared irlower.fern, so the case table is shared with the x86-64 leg.
+// shared lowering, so the case table is shared with the x86-64 leg.
 func TestSelfHostTupleRetUsizeIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

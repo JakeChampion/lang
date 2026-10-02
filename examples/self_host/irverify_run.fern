@@ -115,7 +115,7 @@ function stack_checks(): i32 {
   }
 
   // ---- 3. scope height -----------------------------------------------
-  // Every scope irlower opens is void, so it must leave the stack where it
+  // Every scope the lowering opens is void, so it must leave the stack where it
   // found it.
   var leaky_if: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(2), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
   if (sp_count(leaky_if) != 1) {
@@ -204,7 +204,7 @@ function stack_checks(): i32 {
     return 101;
   }
 
-  // A non-void scope is not something irlower emits; modelling what it
+  // A non-void scope is not something the lowering emits; modelling what it
   // leaves behind would be guessing.
   if (!util.contains(sp_bail([ir.op_block(1), ir.op_end()]), "non-void block type 1")) {
     return 102;
@@ -711,7 +711,7 @@ function raw_op(kind: string): ir.Op {
   return ir.Op { decl: 0 - 1, kind_tag: ir.kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
-// selfhost_reuse builds the shape irlower ACTUALLY emits, read off a
+// selfhost_reuse builds the shape the lowering ACTUALLY emits, read off a
 // `-dump-fn churn` of conformance/cases/general_reuse_struct:
 //
 //   load_local D; call __fern_rc_is_unique/1; tee_local u

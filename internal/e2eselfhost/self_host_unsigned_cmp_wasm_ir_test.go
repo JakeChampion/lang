@@ -11,7 +11,7 @@ import (
 // TestSelfHostUnsignedCompareWasmIR is the correctness gate for UNSIGNED
 // (u32) ordering comparisons on the wasm IR backend (#2917). A u32 value
 // >= 2^31 is a signed-negative i32, so a signed wasm compare (i32.lt_s /
-// gt_s / le_s / ge_s) gives the wrong answer for it. irlower now flags an
+// gt_s / le_s / ge_s) gives the wrong answer for it. The lowering now flags an
 // ordering-compare op `unsigned` when an operand is u32, and wasm_ir emits
 // the i32.*_u opcode. (x86-64 / arm64 keep u32 positive in their 64-bit
 // slots, so a signed compare already matched there — this brings the wasm

@@ -273,6 +273,19 @@ function float_operands_agree(a: typeinfo.Type, b: typeinfo.Type): boolean {
   return is_float(a) && is_float(b) && (type_eq(a, b) || is_poly_float(a) || is_poly_float(b));
 }
 
+// A binary's operand types, with an unsettled integer literal on one side read
+// at a concrete float on the other — native's settleNumeric before
+// requireFloat, so `r * 2` and `r <= 0` hold for an f32 / f64 `r`.
+function settled_operands(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): (typeinfo.Type, typeinfo.Type) {
+  if (is_float(lt) && !is_poly_float(lt) && unsettled_int_literal(b.right)) {
+    return (lt, lt);
+  }
+  if (is_float(rt) && !is_poly_float(rt) && unsettled_int_literal(b.left)) {
+    return (rt, rt);
+  }
+  return (lt, rt);
+}
+
 function float_result(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
   if (!float_operands_agree(a, b)) {
     return t_unknown("float operands have incompatible widths");
@@ -611,7 +624,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   }
   // core/map's per-process string-hash seed (#6194). Compiler-internal, so
   // it carries no capability or platform row — the `__` prefix is the
-  // inventory's exemption. irlower already lowers it; only this entry was
+  // inventory's exemption. The lowering already handles it; only this entry was
   // missing, and without it `core/map.map_new_impl` does not type.
   if (argc == 0 && name == "__map_hash_seed") {
     return t_i32();
@@ -722,7 +735,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   // self-host EMITS is not uniform: only __fern_rc_inc is a real call that
   // answers its pointer. The 2-arg dec pair drops both arguments and
   // __fern_str_dec does not even lower its one — no-ops still, each pushing a
-  // dummy 0 (irlower, the __fern_arr_dec / __fern_str_dec arms), because the
+  // dummy 0 (ssarc, the __fern_arr_dec / __fern_str_dec arms), because the
   // element deep-drop their stride selects has no self-host equivalent.
   // core/map calls those three in statement position, so nothing may rely on
   // the usize they declare.
@@ -1482,7 +1495,7 @@ function (s: Scope) binop_overload_ret(op: string, lt: typeinfo.Type): typeinfo.
 
 // unop_overload_ret is the unary sibling: `-a` on a composite is `a.neg()`.
 // Written against the same helper so the two operators cannot resolve
-// differently — they are siblings in irlower's lowering too, and the last time
+// differently — they are siblings in the lowering too, and the last time
 // sibling arms here were maintained separately only one of them got fixed.
 function (s: Scope) unop_overload_ret(op: string, ot: typeinfo.Type): typeinfo.Type {
   if (op != "-") {
@@ -2446,8 +2459,7 @@ function is_resolvable_callee(name: string, s: Scope): boolean {
 // for_iter_is_range reports whether a for-loop iter is the synthetic
 // `__range(LOW, HIGH)` / `__range_incl(LOW, HIGH)` call the parser emits
 // for `for i in LOW..HIGH` / `for i in LOW..=HIGH`. The checker binds the
-// loop var from it (range_var_type); irlower carries its own copy (different
-// module) to drive the counted-loop lowering (half-open vs closed).
+// loop var from it (range_var_type).
 function for_iter_is_range(iter: ast.Expr): boolean {
   match (iter) {
     ast.ExprCall(c) => {
@@ -4840,7 +4852,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           },
           typeinfo.TypeUnion(un) => {
             // An enum or struct-union receiver dispatches under the union's
-            // own name, the way irlower keys `<Union>.<method>`. A generic
+            // own name, the way the lowering keys `<Union>.<method>`. A generic
             // union carries its args separately, so the bare name is the key.
             recv_type_name = un.name;
           },
@@ -6030,8 +6042,19 @@ function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
   if (b.op == "__named_arg") {
     return check_expr(b.right, s);
   }
-  var lt: typeinfo.Type = check_expr(b.left, s);
-  var rt: typeinfo.Type = check_expr(b.right, s);
+  return binary_result_type(b, check_expr(b.left, s), check_expr(b.right, s), s);
+}
+
+// binary_result_type is check_binary_expr over operand types already checked
+// (`lt`, `rt`): the annotation walk hands it the types of the operands it
+// annotated rather than checking them again.
+function binary_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type, s: Scope): typeinfo.Type {
+  let (sl, sr) = settled_operands(b, lt, rt);
+  return operator_result_type(b, sl, sr, s);
+}
+
+// operator_result_type types `b` over its settled operand types.
+function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type, s: Scope): typeinfo.Type {
   // `+` is overloaded across i32 (arithmetic) and string
   // (concatenation). Other arithmetic ops are i32-only.
   if (b.op == "+") {
@@ -6150,7 +6173,11 @@ function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
 }
 
 function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
-  var ot: typeinfo.Type = check_expr(u.operand, s);
+  return unary_result_type(u, check_expr(u.operand, s), s);
+}
+
+// unary_result_type is check_unary_expr over the operand's checked type.
+function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typeinfo.Type {
   if (u.op == "-") {
     if (is_integer(ot)) {
       return ot;
@@ -6288,8 +6315,11 @@ function struct_lit_yields(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, 
 }
 
 function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
-  var at: typeinfo.Type = check_expr(x.array, s);
-  var it: typeinfo.Type = check_expr(x.index, s);
+  return index_result_type(check_expr(x.array, s), check_expr(x.index, s));
+}
+
+// index_result_type is check_index_expr over the checked array and index types.
+function index_result_type(at: typeinfo.Type, it: typeinfo.Type): typeinfo.Type {
   if (!is_integer(it)) {
     return t_unknown("array index must be i32");
   }
@@ -6452,7 +6482,12 @@ function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Ty
   if (vqu.len() > 0) {
     return t_union(vqu);
   }
-  var ot: typeinfo.Type = check_expr(fa.obj, s);
+  return field_access_result_type(fa, check_expr(fa.obj, s), s);
+}
+
+// field_access_result_type is check_field_access_expr over the object's
+// checked type, for a read that is not a qualified unit variant.
+function field_access_result_type(fa: ast.ExprFieldAccess, ot: typeinfo.Type, s: Scope): typeinfo.Type {
   match (ot) {
     typeinfo.TypeStruct(sn) => {
       var fsig: StructSig = s.lookup_struct(sn.name);
@@ -6893,6 +6928,20 @@ function rec_local_scope(v: ast.StmtVar, s: Scope): Scope {
     }
   }
   return s;
+}
+
+// bind_mutual_siblings binds, ahead of a statement list, the nested functions
+// in it that call one another around a cycle — native's checkBlock pre-pass.
+// A function recursive only through itself binds through rec_local_scope.
+function bind_mutual_siblings(stmts: ast.Stmt[], s: Scope): Scope {
+  var fns: parser.NestedFn[] = parser.nested_fns(stmts);
+  var out: Scope = s;
+  for f in fns {
+    if (parser.nested_fn_cycle(fns, f.name).len() > 1) {
+      out = out.bind(f.name, lambda_fn_type(f.lam, s));
+    }
+  }
+  return out;
 }
 
 // The result of a lambda that spells none, until its body's exits settle it.
@@ -8128,7 +8177,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
 }
 
 // A written `return` inside a value block leaves the ENCLOSING function:
-// the block is an if- / match-expression desugar irlower inlines, so only
+// the block is an if- / match-expression desugar the lowering inlines, so only
 // the tail of each arm is the block's value. ret_diags stops at a lambda,
 // and a value block's callee is one, so this walks the value blocks one
 // statement's own expressions hold (nested bodies are ret_diags' own
@@ -10423,7 +10472,7 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean): boolean {
 // loopCanBreak: a loop that can break does not diverge, and treating it as
 // divergent accepts a function that falls off its end (#8447). A value
 // block — the desugar of a block-, if- or match-expression — is walked
-// because irlower inlines it, so its `break` targets this loop (#8562); a
+// because the lowering inlines it, so its `break` targets this loop (#8562); a
 // lambda body is not, since its `break` belongs to a loop of its own. A
 // nested loop's header expression runs in this loop's context, so only the
 // nested BODY counts as nested.
@@ -10527,7 +10576,7 @@ function label_in_scope(labels: string[], name: string): boolean {
 // expressions hold, each with the scope it needs. An ordinary lambda is a
 // scope: a label does not cross a function boundary and a `break` inside one is
 // E011, so it recurses with in_loop = false and no labels. A value block is not
-// — it is an if-/match-expression desugar that irlower inlines, so
+// — it is an if-/match-expression desugar that the lowering inlines, so
 // `t = t + { if (c) { break; } i }` breaks the enclosing loop and inherits both.
 //
 // `not_a_scope_root` stops the fold at both node kinds, so a value block's
@@ -10713,7 +10762,7 @@ function dot_index(s: string): i32 {
 // variant_pattern_name is the variant a pattern names, with any ENUM qualifier
 // stripped: `E.Wrap` -> `Wrap`, and in a prefix-mangled module
 // `lib__E.lib__Wrap` -> `lib__Wrap`. That suffix is the name the enum's variant
-// list and the variant struct are both keyed by — the same strip irlower does
+// list and the variant struct are both keyed by — the same strip the lowering does
 // when it lowers the arm. A module qualifier never survives to here (flatten
 // mangles it to `__`), so a dot at this point is always the enum spelling.
 function variant_pattern_name(name: string): string {
@@ -13156,8 +13205,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   // check_expr applies, so this fires only where it already
   // rejects the operands (no new false positives).
   if (b.op == "+") {
-    var pl: typeinfo.Type = check_expr(b.left, s);
-    var pr: typeinfo.Type = check_expr(b.right, s);
+    let (pl, pr) = settled_operands(b, check_expr(b.left, s), check_expr(b.right, s));
     if (!is_unknown(pl) && !is_unknown(pr)) {
       var oks: boolean = type_eq(pl, t_string()) && type_eq(pr, t_string());
       var both_int: boolean = is_integer(pl) && is_integer(pr);
@@ -13178,8 +13226,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
     }
   }
   if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
-    var alt: typeinfo.Type = check_expr(b.left, s);
-    var art: typeinfo.Type = check_expr(b.right, s);
+    let (alt, art) = settled_operands(b, check_expr(b.left, s), check_expr(b.right, s));
     if (!is_unknown(alt) && !is_unknown(art)) {
       var a_both_int: boolean = is_integer(alt) && is_integer(art);
       var oki: boolean = a_both_int && int_operands_agree(alt, art, b.left, b.right);
@@ -13244,8 +13291,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   // checker (requireInteger, or requireFloat when either side is
   // float). `==` / `!=` (equality, E041) are handled above.
   if (b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") {
-    var olt: typeinfo.Type = check_expr(b.left, s);
-    var ort: typeinfo.Type = check_expr(b.right, s);
+    let (olt, ort) = settled_operands(b, check_expr(b.left, s), check_expr(b.right, s));
     if (!is_unknown(olt) && !is_unknown(ort)) {
       var o_both_int: boolean = is_integer(olt) && is_integer(ort);
       var oki_o: boolean = o_both_int && int_operands_agree(olt, ort, b.left, b.right);
@@ -14104,7 +14150,7 @@ function for_iter_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
 
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   var out: util.Diag[] = [];
-  var cur: Scope = s;
+  var cur: Scope = bind_mutual_siblings(stmts, s);
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
@@ -15102,7 +15148,7 @@ function e079_note_try(e: ast.Expr, own acc: E079Probe): E079Probe {
 // it is an ordinary use.
 // A value block is the exception, and it parses to the identical shape (#9553).
 // `(match (k) { … })` and the if-expression / comprehension forms desugar to a
-// zero-arg call of a zero-param lambda, which irlower INLINES rather than
+// zero-arg call of a zero-param lambda, which the lowering INLINES rather than
 // lowering as a function — `lower_defers_body` excludes them from the per-scope
 // defer lowering for that reason. So a `?` inside one leaves the ENCLOSING
 // function after all, which is what makes it E079 rather than an ordinary use.
@@ -16089,21 +16135,76 @@ function lu_rebind_site(site: LuSite, name: string): boolean {
       }
     },
     ast.StmtVar(v) => {
-      // `var y = f(.., x, ..); x = y;` — the store supersedes x before anything
-      // else runs.
+      // `var y = f(.., x, ..); …; x = y;` — the store supersedes x before
+      // anything reads it.
       if let ast.ExprCall(_) = v.init {
-        if (site.idx + 1 < site.stmts.len() && astwalk.count_ident_expr(v.init, name) == 1) {
-          if let ast.StmtAssign(nxt) = site.stmts[site.idx + 1] {
-            if (nxt.target == name && astwalk.count_ident_expr(nxt.value, name) == 0) {
-              return true;
-            }
-          }
+        if (astwalk.count_ident_expr(v.init, name) == 1) {
+          return lu_rebound_after(site, name);
         }
       }
     },
     _ => {}
   }
   return false;
+}
+
+// lu_rebound_after: a later statement of the list stores to `name` without
+// reading it, and every statement before that store is straight-line code that
+// does not name it (#11093).
+function lu_rebound_after(site: LuSite, name: string): boolean {
+  var j: i32 = site.idx + 1;
+  while (j < site.stmts.len()) {
+    if let ast.StmtAssign(a) = site.stmts[j] {
+      if (a.target == name) {
+        if (astwalk.count_ident_expr(a.value, name) != 0) {
+          return false;
+        }
+        var k: i32 = site.idx + 1;
+        while (k < j) {
+          if (!lu_straight(site.stmts[k]) || lu_mentions(site.stmts[k], name) != 0) {
+            return false;
+          }
+          k = k + 1;
+        }
+        return true;
+      }
+    }
+    j = j + 1;
+  }
+  return false;
+}
+
+// lu_straight: a statement that runs through to the next one, so it cannot
+// leave the list before the store does.
+function lu_straight(st: ast.Stmt): boolean {
+  match (st) {
+    ast.StmtVar(v) => {
+      return !lu_has_try(v.init);
+    },
+    ast.StmtAssign(a) => {
+      return !lu_has_try(a.value);
+    },
+    ast.StmtExpr(x) => {
+      return !lu_has_try(x.value);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function lu_has_try(e: ast.Expr): boolean {
+  return astwalk.fold_expr_pruned(e, false, lu_try_at, astwalk.not_lambda);
+}
+
+function lu_try_at(x: ast.Expr, own found: boolean): boolean {
+  if let ast.ExprUnary(u) = x {
+    if (u.op == "try_") {
+      return true;
+    }
+  }
+  return found;
 }
 
 // lu_call collects the keys of `c`'s own-position arguments that die at it.
@@ -22430,7 +22531,7 @@ function type_to_irtag(t: typeinfo.Type): string {
       return st.name;
     },
     typeinfo.TypeMap(m) => {
-      // A map-valued call: the "Map[K, V]" tag irlower's expr_map_type_tag reads
+      // A map-valued call: the "Map[K, V]" tag the lowering reads
       // (its own canonical spelling — see the "Map[" + ktag + ", " + vtag + "]"
       // constructor). Only when both K and V serialise to a scalar/string tag;
       // a composite key/value yields "" (unannotated → structural fallback).
@@ -22443,7 +22544,7 @@ function type_to_irtag(t: typeinfo.Type): string {
     },
     typeinfo.TypeUnion(u) => {
       // A builtin Option/Result-valued call: reconstruct the full "Option[T]" /
-      // "Result[T, E]" tag irlower's try_opt_type keys on, from the union's
+      // "Result[T, E]" tag the lowering keys on, from the union's
       // captured args. "" if any payload/error type isn't scalar/string/struct-
       // serialisable, keeping the tag well-formed.
       if (u.name == "Option" && u.args.len() == 1) {
@@ -22463,9 +22564,9 @@ function type_to_irtag(t: typeinfo.Type): string {
       }
       // A NOMINAL enum-valued expression carries its enum NAME, the sibling of
       // the TypeStruct arm above and read through the same admission helper
-      // (irlower's struct_tag_from_ty, which admits a struct or an enum and
+      // (the lowering's, which admits a struct or an enum and
       // rejects the scalar vocabulary first). A union carrying ARGS is a
-      // generic instantiation whose spelling irlower has no vocabulary for, so
+      // generic instantiation whose spelling the lowering has no vocabulary for, so
       // only the bare form names itself.
       if (u.args.len() == 0) {
         return u.name;
@@ -22473,8 +22574,8 @@ function type_to_irtag(t: typeinfo.Type): string {
       return "";
     },
     typeinfo.TypeTuple(tp) => {
-      // A tuple-valued call: the canonical "(t0, t1, …)" tag irlower's
-      // tuple_type_elem_tag / expr_tuple_elem_tag parse (via parse_type_ref),
+      // A tuple-valued call: the canonical "(t0, t1, …)" tag
+      // irtables.tuple_type_elem_tag parses (via parse_type_ref),
       // so a `f().N` tuple-element read resolves element N's type instead of
       // bailing to the AST path. Every element must serialise to a scalar /
       // string / struct / nested-composite tag; any unserialisable element
@@ -22507,7 +22608,7 @@ function type_to_irtag(t: typeinfo.Type): string {
   return "";
 }
 
-// type_to_arrtag names an ARRAY / slice type as irlower spells it — "f64[]",
+// type_to_arrtag names an ARRAY / slice type as the lowering spells it — "f64[]",
 // "i64[]", "string[]" — or "" for anything else. It is deliberately SEPARATE
 // from type_to_irtag rather than a TypeArray arm added to it: type_to_irtag's
 // result is read by tag-FIRST consumers (expr_is_str / _f64 / _u32 / _u64 all
@@ -22718,16 +22819,41 @@ function settle_struct_lit_wide(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Ex
 // ExprBinary.ty, ExprUnary.ty, ExprFieldAccess.ty and ExprIndex.ty with the
 // checker-inferred result tag.
 // Recurses through every composite so a nested call is reached.
+// Typed is an annotated expression with, where the walk settled it
+// (`known`), the type check_expr answers for the expression as written.
+struct Typed { e: ast.Expr, ty: typeinfo.Type, known: boolean }
+
+// typed_type is the checked type of `orig`, read off its annotation when
+// the walk settled it and checked otherwise.
+function typed_type(t: Typed, orig: ast.Expr, s: Scope): typeinfo.Type {
+  if (t.known) {
+    return t.ty;
+  }
+  return check_expr(orig, s);
+}
+
 function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
+  return annotate_typed(e, s).e;
+}
+
+// annotate_typed stamps an expression with its checked type, bottom up: an
+// operand's type is what its own annotation settled, and the node's type is
+// what check_expr computes from the operands' types (binary_result_type and
+// its siblings), so a subtree is checked once rather than once more per
+// enclosing node.
+function annotate_typed(e: ast.Expr, s: Scope): Typed {
   match (e) {
     ast.ExprIdent(id) => {
-      return ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: type_to_irtag(check_expr(e, s)) };
+      var it: typeinfo.Type = check_ident_expr(id, s);
+      return Typed { e: ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: type_to_irtag(it) }, ty: it, known: true };
     },
     ast.ExprBinary(b) => {
-      var left: ast.Expr = annotate_expr(b.left, s);
-      var right: ast.Expr = annotate_expr(b.right, s);
-      var lt: typeinfo.Type = check_expr(b.left, s);
-      var rt: typeinfo.Type = check_expr(b.right, s);
+      var lta: Typed = annotate_typed(b.left, s);
+      var rta: Typed = annotate_typed(b.right, s);
+      var left: ast.Expr = lta.e;
+      var right: ast.Expr = rta.e;
+      var lt: typeinfo.Type = typed_type(lta, b.left, s);
+      var rt: typeinfo.Type = typed_type(rta, b.right, s);
       // A wide bare literal is i64 only in the absence of a context. Beside
       // a u32 operand, 0xffffffff is a u32, including in comparisons and
       // checked arithmetic whose result tag is not the operand type.
@@ -22739,10 +22865,17 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
           right = settle_int_tree(right, type_to_irtag(lt));
         }
       }
-      return ast.ExprBinary { op: b.op, left: left, right: right, line: b.line, col: b.col, ty: type_to_irtag(check_expr(e, s)) };
+      // A named-argument marker types as its value (check_binary_expr).
+      var bt: typeinfo.Type = rt;
+      if (b.op != "__named_arg") {
+        bt = binary_result_type(b, lt, rt, s);
+      }
+      return Typed { e: ast.ExprBinary { op: b.op, left: left, right: right, line: b.line, col: b.col, ty: type_to_irtag(bt) }, ty: bt, known: true };
     },
     ast.ExprUnary(u) => {
-      return ast.ExprUnary { op: u.op, operand: annotate_expr(u.operand, s), line: u.line, col: u.col, ty: type_to_irtag(check_expr(e, s)) };
+      var oa: Typed = annotate_typed(u.operand, s);
+      var ut: typeinfo.Type = unary_result_type(u, typed_type(oa, u.operand, s), s);
+      return Typed { e: ast.ExprUnary { op: u.op, operand: oa.e, line: u.line, col: u.col, ty: type_to_irtag(ut) }, ty: ut, known: true };
     },
     ast.ExprCall(c) => {
       var nargs: ast.Expr[] = [];
@@ -22751,31 +22884,42 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       }
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
-      var tag: string = type_to_irtag(check_expr(e, s));
-      return ast.ExprCall { callee: annotate_expr(c.callee, s), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: tag };
+      var ct: typeinfo.Type = check_expr(e, s);
+      return Typed { e: ast.ExprCall { callee: annotate_expr(c.callee, s), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: type_to_irtag(ct) }, ty: ct, known: true };
     },
     ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { obj: annotate_expr(fa.obj, s), field: fa.field, line: fa.line, col: fa.col, ty: type_to_irtag(check_expr(e, s)) };
+      var oa: Typed = annotate_typed(fa.obj, s);
+      var vqu: string = qual_variant_union(fa, s);
+      var ft: typeinfo.Type = t_union(vqu);
+      if (vqu.len() == 0) {
+        ft = field_access_result_type(fa, typed_type(oa, fa.obj, s), s);
+      }
+      return Typed { e: ast.ExprFieldAccess { obj: oa.e, field: fa.field, line: fa.line, col: fa.col, ty: type_to_irtag(ft) }, ty: ft, known: true };
     },
     ast.ExprIndex(x) => {
-      return ast.ExprIndex { array: annotate_expr(x.array, s), index: annotate_expr(x.index, s), unchecked: x.unchecked, ty: type_to_irtag(check_expr(e, s)), line: x.line, col: x.col };
+      var aa: Typed = annotate_typed(x.array, s);
+      var ia: Typed = annotate_typed(x.index, s);
+      var xt: typeinfo.Type = index_result_type(typed_type(aa, x.array, s), typed_type(ia, x.index, s));
+      return Typed { e: ast.ExprIndex { array: aa.e, index: ia.e, unchecked: x.unchecked, ty: type_to_irtag(xt), line: x.line, col: x.col }, ty: xt, known: true };
     },
     ast.ExprSlice(sl) => {
-      return ast.ExprSlice { ...sl, array: annotate_expr(sl.array, s), start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(check_expr(sl.array, s)) };
+      var aa: Typed = annotate_typed(sl.array, s);
+      var at: typeinfo.Type = typed_type(aa, sl.array, s);
+      return Typed { e: ast.ExprSlice { ...sl, array: aa.e, start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(at) }, ty: at, known: false };
     },
     ast.ExprArray(a) => {
       var na: ast.Expr[] = [];
       for element in a.elements {
         na = na.append(annotate_expr(element, s));
       }
-      return settle_array_literals(ast.ExprArray { ...a, elements: na }, s);
+      return unsettled(settle_array_literals(ast.ExprArray { ...a, elements: na }, s));
     },
     ast.ExprTuple(t) => {
       var nt: ast.Expr[] = [];
       for element in t.elements {
         nt = nt.append(annotate_expr(element, s));
       }
-      return ast.ExprTuple { elements: nt, line: t.line, col: t.col };
+      return unsettled(ast.ExprTuple { elements: nt, line: t.line, col: t.col });
     },
     ast.ExprStructLit(sli) => {
       var nfv: ast.Expr[] = [];
@@ -22787,16 +22931,22 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       if (sli.has_base) {
         nbase = annotate_expr(sli.base, s);
       }
-      return ast.ExprStructLit { type_name: sli.type_name, field_names: sli.field_names, field_values: nfv, has_base: sli.has_base, base: nbase, line: sli.line, col: sli.col, written: sli.written };
+      return unsettled(ast.ExprStructLit { type_name: sli.type_name, field_names: sli.field_names, field_values: nfv, has_base: sli.has_base, base: nbase, line: sli.line, col: sli.col, written: sli.written });
     },
     ast.ExprLambda(lm) => {
-      return annotate_lambda_expr(lm, s, "");
+      return unsettled(annotate_lambda_expr(lm, s, ""));
     },
     _ => {
-      return e;
+      return unsettled(e);
     }
   }
-  return e;
+  return unsettled(e);
+}
+
+// unsettled is an annotated expression whose type the walk did not settle: a
+// node reading it checks it as it always did.
+function unsettled(e: ast.Expr): Typed {
+  return Typed { e: e, ty: t_unknown("unsettled"), known: false };
 }
 
 // Capture contracts are resolved where the lambda is defined, including
@@ -23581,7 +23731,7 @@ function vb_store_type(body: ast.Stmt[], name: string, s: Scope): typeinfo.Type 
 // type with no literal zero to declare it with (a struct, an array, a tuple),
 // which keeps the parser's declaration.
 function vb_local_tag(t: typeinfo.Type): string {
-  // A `str` VIEW is spelled "string" by the irlower tag vocabulary but has no
+  // A `str` VIEW is spelled "string" by the lowering's tag vocabulary but has no
   // literal to declare a local with — `""` is an OWNED string — so it keeps the
   // parser's declaration, like the aggregates.
   if (type_label(t) == "str") {

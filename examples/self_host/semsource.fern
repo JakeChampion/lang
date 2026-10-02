@@ -703,7 +703,9 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
   if (parser.is_unit_literal(n)) {
     return define(s, 1, [], 0, "", t_void());
   }
-  if (n.is_float) {
+  // An unsuffixed integer literal takes a float expectation, as the checker
+  // settles it beside a float operand.
+  if (n.is_float || n.suffix == "" && ssasem.is_float(expected)) {
     return float_number(n, s, expected);
   }
   if (!integer_literal(n.text)) {
@@ -5173,7 +5175,7 @@ function decl_param_mode(fd: parser.FuncDecl, at: i32, t: typeinfo.Type): i32 {
 }
 
 // Two types may declare one method name, so a method's contract is keyed by
-// its receiver type the way irlower keys <Type>.<method>. A bare key would
+// its receiver type the way the backends label <Type>.<method>. A bare key would
 // let one callee's contract answer for the other. It is also the symbol a call
 // to the declaration names.
 pub function decl_key(fd: parser.FuncDecl): string {
@@ -6852,9 +6854,8 @@ function shared_keys(keys: string[]): boolean[] {
 // text are read and copied, so they are lent; each result box is fresh and
 // owns whatever it carries.
 //
-// Result types are native's registerStructMethod / FuncSigs entries, which is
-// also where irlower's `opt_ret_type` reads them — the three copies name one
-// table so they cannot drift.
+// Result types are native's registerStructMethod / FuncSigs entries — the
+// copies name one table so they cannot drift.
 //
 // The handle metadata surface — stat, flags, seek, the partial write, the
 // truncation, the three fd syncs, isatty, dup_onto, splice_to and the window

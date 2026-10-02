@@ -876,7 +876,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
 }
 
 // fold_target_calls resolves `target_os()` / `target_arch()` in the entry and
-// every loaded module, as fern.fern does before its own check. irlower answers
+// every loaded module, as fern.fern does before its own check. The lowering answers
 // an unfolded call from the pointer width's default target, which names the
 // environment correctly on every native target and the ISA only on arm64 — so
 // a driver that knows its -target folds rather than taking that default.

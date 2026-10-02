@@ -162,7 +162,7 @@ pub function op_const_str(s: string): Op {
 // op_const_func pushes a plain (capture-free) function VALUE — a function
 // pointer. `str` carries the function's name; `i32_imm` is a table-index slot
 // the backend fills (wasm resolves the name to its funcref-table index at emit
-// time, so irlower can pass 0 here). The value is consumed by op_call_indirect.
+// time, so the lowering can pass 0 here). The value is consumed by op_call_indirect.
 pub function op_const_func(table_idx: i32, name: string): Op {
   return Op { decl: 0 - 1, kind_tag: 6, i32_imm: table_idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
@@ -314,7 +314,7 @@ pub function op_ptr_width(): Op {
 // each backend instruction-selects them into its OWN array memory layout
 // (e.g. asm.fern's 8-byte `__fern_arr_box` rc/cap/len header vs the wasm
 // linear-memory slab). This is what lets the
-// production IR path emit asm.fern-compatible arrays without irlower baking
+// production IR path emit asm.fern-compatible arrays without the lowering baking
 // a single layout into the op stream (the target-agnostic-IR discipline:
 // layout lives in the backend, not the IR). `arr_make`'s i32_imm is the
 // element count; it pops that many i32 values (element 0 deepest) and pushes
@@ -484,7 +484,7 @@ pub function op_free(): Op {
 // (8 bytes on x86-64/arm64, 4 on wasm32). Unblocks core/map's __map_hash /
 // __map_dec_value (and the wider Map subsystem) on the IR path.
 // `__load_u8(addr)` is the byte member of the family and has no op of its
-// own: irlower emits `raw_load8` with a constant zero offset.
+// own: the lowering emits `raw_load8` with a constant zero offset.
 pub function op_load_i32(): Op {
   return op0(69);
 }
@@ -592,7 +592,7 @@ pub function op_str_slice(): Op {
 // heap form. Same layout, same rc=-1 immortal sentinel, same operands — only the
 // storage differs, so every consumer of the pushed box is unchanged. The
 // register backends read the immediate; wasm ignores it (its str_slice copies
-// into a fresh inline block, so there is no box to place). irlower emits this
+// into a fresh inline block, so there is no box to place). The lowering emits this
 // form only for a view whose whole life is inside the frame that made it.
 pub function op_str_slice_frame(base: i32): Op {
   return Op { decl: 0 - 1, kind_tag: 102, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
@@ -1674,7 +1674,7 @@ pub function op_map_new(keykind: i32, fns: string): Op {
 // the raw column buffers — the map is the SOLE owner of its keys[]/vals[]
 // buffers and the register map_set's grow path may free the superseded buffer
 // (__fern_arr_push_owned) instead of leaking it. A column whose reads still
-// raw-alias keeps owncols=0 — irlower's map_kv_elem_flag 1, which is an
+// raw-alias keeps owncols=0 — element flag 1, which is an
 // i64/f64/generic column, and a struct or enum VALUE column. A struct or enum
 // KEY column snapshots with per-element retain like a string one (#9962/#9965),
 // so it does not hold owncols back. wasm ignores bit 2 (its map already frees
@@ -2486,7 +2486,7 @@ pub function op_mapiter_advance(): Op {
 // high-level struct ops — layout-agnostic, like the array/string ops. `str`
 // carries the struct's type name, `i32_imm` the field count (struct_make) or
 // the field index in DECL order (struct_get). `struct_make` pops `i32_imm`
-// field values (field 0 deepest, already reordered by irlower into decl order)
+// field values (field 0 deepest, already reordered by the lowering into decl order)
 // and pushes the new struct box. `struct_get` pops [struct] and pushes field
 // `i32_imm`. Every backend lays the box out on 8-byte slots — x86/arm64
 // `[shape_ptr, f0, f1, …]` with field i at (i+1)*8, wasm `[type_id, f0, f1, …]`
@@ -5552,7 +5552,7 @@ function pops3(t: i32): boolean {
 // modelled at all — callers must treat that as "stop tracking", never as zero.
 //
 // `load` (67) and `store` (68) are deliberately unmodelled rather than given
-// native's arities: no self-host backend emits them and irlower never
+// native's arities: no self-host backend emits them and the lowering never
 // constructs one, so an occurrence is already a bug, and bailing says so
 // where a guessed arity would quietly proceed.
 // pops_buf is the operand count of one of the capacity-carrying string
@@ -5748,9 +5748,7 @@ struct IfSpan {
 // scan_if_block finds the `else` and `end` belonging to the `if` AT `if_at`,
 // honouring nesting. The scan starts one past it, so the if's own scope is the
 // depth-0 one — counting the `if` as an opener finds the enclosing scope's `end`
-// instead, which splices the wrong arm and eats a scope. irlower's
-// find_matching_else / find_matching_end do the same job for the backends, but
-// irlower imports THIS module, so it cannot be the shared home without a cycle.
+// instead, which splices the wrong arm and eats a scope.
 function scan_if_block(ops: Op[], if_at: i32): IfSpan {
   var k_block: i32 = kind_id("block");
   var k_loop: i32 = kind_id("loop");
@@ -6079,8 +6077,8 @@ struct WidthFold {
 // `as u32` / `as u8`) and u32_wrap — over the readable i32 constant `v`.
 //
 // The lowering emits one of these after every i32 / u32 / sub-word arithmetic
-// op to wrap the result back into the type's width (irlower's "Plain-i32
-// wrap"), which puts one between a folded constant and the op that would
+// op to wrap the result back into the type's width,
+// which puts one between a folded constant and the op that would
 // consume it: `1 + 2 * 3` lowers to `const 1 ; const 2 ; const 3 ; mul ;
 // int_cast ; add ; int_cast`, and without this the fold stops after the `mul`
 // with a runtime `add` of two constants left in the program.
@@ -6743,8 +6741,8 @@ function zg_rezero(ops: Op[], i: i32): boolean {
 //
 // str_slice's frame form is the one op that writes locals without being a store
 // (three consecutive slots at `i32_imm - 1`), modelled here as const_propagate
-// models it, so this pass is sound on its own reasoning rather than on irlower
-// naming those slots `!view!`.
+// models it, so this pass is sound on its own reasoning rather than on the lowering
+// reserving those slots for the view.
 function zg_first_write(ops: Op[], nslots: i32): i32[] {
   var k_store: i32 = kind_id("store_local");
   var k_tee: i32 = kind_id("tee_local");
@@ -7487,8 +7485,8 @@ pub function const_propagate(ops: Op[]): Op[] {
       // str_slice_frame is the ONE op that writes locals without being a
       // store: the frame form builds its box in three consecutive slots at
       // `i32_imm - 1` (the heap form, immediate 0, writes none). Nothing can
-      // bind those slots today — irlower names them `!view!`, which no source
-      // identifier can spell, so slot_of never hands one to a store — but that
+      // bind those slots today — the lowering reserves them for the view,
+      // so no store ever names one — but that
       // makes this pass sound by a convention in another file rather than by
       // its own reasoning. Modelling the write costs three unbinds and keeps
       // the next frame-form op from arriving into a silent stale binding.

@@ -5,7 +5,7 @@ import (
 )
 
 // TestSelfHostArrTupReclaimWasmIR is the wasm port of
-// TestSelfHostArrTupReclaimIRX86_64: the ARRTUP class lives in shared irlower.fern;
+// TestSelfHostArrTupReclaimIRX86_64: the ARRTUP class lives in shared lowering;
 // on wasm __fern_rc_dec maps to $__fern_arr_dec (wasm_helper_symbol) and op_arr_get
 // reads the 4-byte pointer element slots (a tuple-box element is a pointer, same
 // width as a scalar, so the counted arr_get walk resolves correctly), so the

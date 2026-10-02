@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostTupleRetIntermediateWasmIR is the wasm port of
 // TestSelfHostTupleRetIntermediateIRX86_64: the tuple-fresh-ret registry and
-// "TUP:" crediting live in shared irlower.fern (wasm_ir threads the registry
+// "TUP:" crediting live in shared lowering (wasm_ir threads the registry
 // through both its lower_all_for cache and the per-function emit). Case table
 // shared with the x86-64 leg.
 func TestSelfHostTupleRetIntermediateWasmIR(t *testing.T) {

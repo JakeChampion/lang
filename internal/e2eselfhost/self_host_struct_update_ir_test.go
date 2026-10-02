@@ -3,7 +3,7 @@ package e2eselfhost
 import "testing"
 
 // structUpdateIRCases pin functional struct-update expressions
-// (`T { ...base, field: v }`) to the self-host IR path on x86-64 + wasm. irlower
+// (`T { ...base, field: v }`) to the self-host IR path on x86-64 + wasm. The lowering
 // fully lowers an ExprStructLit with a base (emit each declared field in order;
 // lower the overrides, struct_get-copy the rest from the base), gated only by
 // decl_is_struct + decl_is_leaksafe — so an all-scalar or scalar+string struct

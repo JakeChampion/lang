@@ -7,7 +7,7 @@ import (
 
 // returnIndexAliasCases pin the return-transfer retain for `return xs[i]`
 // where the element is itself an rc-counted array (native: needsRcIncOnAlias's
-// Index arm; self-host: irlower's index_read_is_arr return branch). The callee
+// Index arm; self-host: the lowering's return branch). The callee
 // hands the caller an ALIAS of an element the container still owns; without
 // the retain the caller's exit sweep decs a count the container holds, so the
 // element's box is freed under the live container and reused by the next
@@ -112,7 +112,7 @@ func TestSelfHostReturnIndexAliasX86_64(t *testing.T) {
 }
 
 // TestSelfHostReturnIndexAliasArm64 — arm64 counterpart; the retain is shared
-// irlower analysis, so both register backends inherit it.
+// lowering analysis, so both register backends inherit it.
 func TestSelfHostReturnIndexAliasArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -38,7 +38,7 @@ var returnClosureNestedIRCases = []struct {
 	{"chain-arg", "function pick(n: i32): () => ((i32) => i32) { return () => (x: i32) => x + n; } function main(): i32 { return pick(5)()(10); }", 15},
 }
 
-// TestSelfHostReturnClosureNestedIRX86_64 — the x86-64 irlower fix, through the
+// TestSelfHostReturnClosureNestedIRX86_64 — the x86-64 fix, through the
 // production driver (asm_ir_run `-ir`).
 func TestSelfHostReturnClosureNestedIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -68,7 +68,7 @@ func TestSelfHostReturnClosureNestedIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostReturnClosureNestedIRArm64 — CI-gated arm64 counterpart. The fix is
-// in the shared irlower.fern, so the arm64 IR backend picks it up.
+// in the shared lowering, so the arm64 IR backend picks it up.
 func TestSelfHostReturnClosureNestedIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

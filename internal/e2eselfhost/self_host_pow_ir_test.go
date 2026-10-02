@@ -14,7 +14,7 @@ import (
 // that exp + log lower on wasm it does too. fpow lowers to op_fpow (an op_fbin) ->
 // $__fern_pow_f64, a one-line runtime x^y = exp(y·ln x) composing the two
 // polynomial helpers — the wasm sibling of asm_arm64's __fern_pow_f64. The two
-// f64 operands arrive in stack order x then y (irlower's op_fbin), matching the
+// f64 operands arrive in stack order x then y, matching the
 // param order.
 //
 // Value-tested (not differential — the wasm AST path has no pow to diff against):

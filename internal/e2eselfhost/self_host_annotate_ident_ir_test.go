@@ -13,7 +13,7 @@ import (
 // ExprCall.ty (#5531), ExprFieldAccess.ty and ExprIndex.ty (#6165) and
 // ExprSlice.ty.
 //
-// A bare name gets its type in irlower from the SLOT it reads, and a module
+// A bare name got its type in the AST lowering from the SLOT it read, and a module
 // `const` has no slot at all: its read is really a call to a zero-argument
 // accessor. Each ident predicate therefore grew its own const clause, one at a
 // time — expr_is_str (#2954), then expr_is_f64 and infer_expr_width (#4801) —

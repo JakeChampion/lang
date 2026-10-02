@@ -15,7 +15,7 @@ import (
 // truncated mean back to i32. The three elements sum to 2.4e9 — which overflows
 // i32 (> 2^31-1) and would wrap to a NEGATIVE mean under i32 accumulation — so
 // the program returns 7 ONLY if the i64 accumulation / division / narrowing all
-// lower correctly. This pins that the self-hosted IR path (irlower.lower_i64:
+// lower correctly. This pins that the self-hosted IR path (the lowering's
 // `as i64` widening of an i32 array element, i64 `+`, i64 `/`, `as i32`
 // narrowing) handles the shape the stdlib fix relies on, on every backend.
 //

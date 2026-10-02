@@ -1,6 +1,6 @@
 // The RETURN-position struct update `return T { ...p, f: v }` is the
 // state-threading shape every emitter in the self-host compiler is built out
-// of — `s = s.emit(op)` calls one of these 2,340 times in irlower.fern alone,
+// of — `s = s.emit(op)` called one of these 2,340 times in the deleted irlower.fern alone,
 // and each call allocated a fresh box, retained every carried field into it,
 // and deep-dropped the receiver's box on the way out. p is an
 // owned-by-default parameter there (the callee's exit sweep already frees it),

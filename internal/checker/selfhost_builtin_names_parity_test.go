@@ -18,7 +18,7 @@ import (
 // internal/caps and internal/platforms — plus the two self-host capability
 // MIRRORS, and each of those six has a completeness test. None of them covers
 // the self-hosted COMPILER, which is the expensive half: parser.fern's name
-// list, ircore, ir (op + extension kind id), irlower, asmcore and the three
+// list, ircore, ir (op + extension kind id), semsource, ssarc, asmcore and the three
 // emitters.
 //
 // That gap is not hypothetical. `sleep_ns` was classified in all six places
@@ -55,7 +55,7 @@ func TestSelfHostKnowsEveryNativeBuiltin(t *testing.T) {
 	t.Errorf("%d builtin(s) the native checker knows and the self-hosted compiler does not: %s\n"+
 		"Each one compiles on the native leg and fails the self-host leg with E001 at the call site.\n"+
 		"Teach examples/self_host/parser.fern's builtin_function_names(), and lower it: ircore,\n"+
-		"ir (op + extension kind id), irlower, asmcore, and asm_ir / asm_arm64_ir / wasm_ir.\n"+
+		"ir (op + extension kind id), semsource, ssarc, asmcore, and asm_ir / asm_arm64_ir / wasm_ir.\n"+
 		"See #9085. Do not add an exemption here.",
 		len(missing), strings.Join(missing, ", "))
 }

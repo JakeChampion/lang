@@ -6,7 +6,7 @@ import "testing"
 // called as `Type.f(args)` (constructors / static methods) — through the
 // stack-IR path. The self-host parser desugars an impl method whose first
 // param isn't `self` into a FuncDecl with an empty receiver_name (so the
-// emitter labels it `Type.f` with no receiver slot); irlower resolves a
+// emitter labels it `Type.f` with no receiver slot); the lowering resolves a
 // `Type.f(args)` call site (object = a bare declared-struct name, not a local)
 // to `call_direct("Type.f")` with no receiver. Exit codes are the oracle.
 //

@@ -983,6 +983,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// bound by `var` calling that var, directly or one lambda deeper, is E001.
 		{"rec-local-arrow-e001", "function main(): i32 { var f = (n: i32): i32 => { if (n <= 0) { return 0; } return f(n - 1); }; return f(3); }\n", []string{"E001"}},
 		{"rec-local-arrow-nested-e001", "function main(): i32 { var f = (): i32 => { var g = (): i32 => { return f(); }; return g(); }; return f(); }\n", []string{"E001"}},
+		// Nested functions calling one another around a cycle see each other
+		// whatever their order (native's checkBlock pre-binds the SCC). A
+		// forward reference that closes no cycle, or one between arrow
+		// lambdas, stays E001.
+		{"rec-local-mutual-ok", "function main(): i32 {\n  function isEven(n: i32): boolean { if (n == 0) { return true; } return isOdd(n - 1); }\n  function isOdd(n: i32): boolean { if (n == 0) { return false; } return isEven(n - 1); }\n  if (isEven(10) && !isEven(11) && isOdd(7) && !isOdd(8)) { return 0; }\n  return 1;\n}\n", nil},
+		{"rec-local-three-way-cycle-ok", "function main(): i32 {\n  function a(n: i32): i32 { if (n <= 0) { return 0; } return 1 + b(n - 1); }\n  function b(n: i32): i32 { if (n <= 0) { return 0; } return 2 + c(n - 1); }\n  function c(n: i32): i32 { if (n <= 0) { return 0; } return 3 + a(n - 1); }\n  return a(6);\n}\n", nil},
+		{"rec-local-mutual-capture-ok", "function main(): i32 {\n  var step: i32 = 1;\n  function down(n: i32): i32 { if (n <= 0) { return 0; } return up(n - step) + 1; }\n  function up(n: i32): i32 { if (n <= 0) { return 0; } return down(n - step) + step; }\n  return down(5);\n}\n", nil},
+		{"rec-local-mutual-in-nested-ok", "function main(): i32 {\n  function outer(x: i32): i32 {\n    function ping(n: i32): i32 { if (n <= 0) { return x; } return pong(n - 1) + 1; }\n    function pong(n: i32): i32 { if (n <= 0) { return 0; } return ping(n - 1) + 2; }\n    return ping(4);\n  }\n  return outer(30);\n}\n", nil},
+		{"rec-local-forward-no-cycle-e001", "function main(): i32 {\n  function first(n: i32): i32 { return second(n) + 1; }\n  function second(n: i32): i32 { return n * 2; }\n  return first(3);\n}\n", []string{"E001"}},
+		{"rec-local-arrow-mutual-e001", "function main(): i32 { var f = (n: i32): i32 => { return g(n); }; var g = (n: i32): i32 => { return f(n); }; return 0; }\n", []string{"E001"}},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
 		// var is an i32 over the half-open interval. A clean program draws no
 		// codes from EITHER checker — the differential proves the self-host
@@ -1773,6 +1783,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"settle-tuple-bad-element", "function main(): i32 { var t: (f64, i32) = (1, \"x\"); return 0; }\n", []string{"E003"}},
 		{"settle-array-bad-element", "function main(): i32 { var xs: f64[] = [1, \"x\"]; return 0; }\n", []string{"E034"}},
 		{"settle-not-a-string", "function main(): i32 { var x: f64 = \"a\"; return 0; }\n", []string{"E003"}},
+		// An unsuffixed integer literal beside a concrete float operand reads at
+		// that float, on either side and for comparisons too (native's
+		// settleNumeric before requireFloat). An i32 operand is not a literal.
+		{"settle-binary-sub-f64-ok", "function main(): i32 { var x: f64 = 100.5f64; var y: f64 = x - 100; if (y == 0.5f64) { return 0; } return 1; }\n", nil},
+		{"settle-binary-mul-f32-ok", "function main(): i32 { var r: f32 = 1.5f32; var s: f32 = r * 2; if (s == 3.0f32) { return 0; } return 1; }\n", nil},
+		{"settle-binary-left-literal-ok", "function main(): i32 { var r: f64 = 1.5f64; var s: f64 = 3 - r; if (s > 1) { return 0; } return 1; }\n", nil},
+		{"settle-binary-guard-compare-ok", "enum Shape { Circle(f32), Square(f32) }\nfunction classify(s: Shape): i32 { match (s) { Circle(r) when r <= 0 => { return 1; }, Circle(_) => { return 2; }, Square(_) => { return 3; } } return 0; }\nfunction main(): i32 { if (classify(Circle(0.0f32)) != 1) { return 1; } if (classify(Circle(2.0f32)) != 2) { return 2; } return 0; }\n", nil},
+		{"settle-binary-not-an-ident", "function main(): i32 { var n: i32 = 2; var r: f64 = 1.5f64; var s: f64 = r * n; return 0; }\n", []string{"E009"}},
 		{"field-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n", []string{"E048"}},
 		{"field-compound-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x += 5; return p.x; }\n", []string{"E048"}},
 		{"nested-field-assign", "struct Q { a: i32 }\nstruct P { q: Q }\nfunction main(): i32 { var p: P = P { q: Q { a: 1 } }; p.q.a = 9; return 0; }\n", []string{"E048"}},
@@ -1882,7 +1900,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-on-union-alias", "struct A { n: i32 }\nstruct B { n: i32 }\ntype Shape = A | B;\nfunction f(x: Shape): i32 { var y: i32 = x?; return y; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-marked-enum-ok", "@try\nenum MyOpt { Got(i32), Nope }\nfunction pick(f: MyOpt): MyOpt { var v: i32 = f?; return Got(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E079 through a VALUE BLOCK (#9553). A value block desugars to a
-		// zero-arg call of a zero-param lambda, and irlower inlines it rather
+		// zero-arg call of a zero-param lambda, and the lowering inlines it rather
 		// than lowering a function, so a `?` inside one still leaves the
 		// ENCLOSING function and is E079 — where the same `?` inside a real
 		// lambda is an ordinary use. The existing e079-defer-try-op row only
@@ -2289,6 +2307,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"own-self-reassign-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    a = grow(a, 1);\n    a = grow(a, 2);\n    return a.items.len();\n}\n", nil},
 		{"own-other-name-last-use-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    var c: B = grow(a, 1);\n    return c.items.len();\n}\n", nil},
 		{"own-second-read-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [7] };\n    a = grow(a, a.items[0]);\n    return a.items.len();\n}\n", []string{"E051"}},
+		// The store may come after straight-line statements that do not name
+		// the local (#11093); a read or a branch between keeps it live.
+		{"own-store-after-gap-ok", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    var xs: i32[] = [];\n    var fl: boolean[] = [false];\n    var i: i32 = 0;\n    while (i < 3) {\n        var p: P = step(xs, fl);\n        xs = p.a;\n        fl = p.b;\n        i = i + 1;\n    }\n    return xs.len() + fl.len();\n}\n", nil},
+		{"own-store-after-unrelated-var-ok", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    var fl: boolean[] = [false];\n    var n: i32 = take(fl);\n    var m: i32 = 3;\n    fl = [true];\n    return n + m + fl.len();\n}\n", nil},
+		{"own-store-after-read-bad", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    var fl: boolean[] = [false];\n    var n: i32 = take(fl);\n    var m: i32 = fl.len();\n    fl = [true];\n    return n + m + fl.len();\n}\n", []string{"E051"}},
+		{"own-store-after-branch-bad", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    var k: i32 = 1;\n    var fl: boolean[] = [false];\n    var n: i32 = take(fl);\n    if (k > 0) { k = k + 1; }\n    fl = [true];\n    return n + k + fl.len();\n}\n", []string{"E051"}},
 		// The same three, one nesting level in: the admission is a
 		// STATEMENT-level fact, so a walk that reaches a nested body as one
 		// flat expression loses it and flags the transfer (#7452).
@@ -2962,7 +2986,7 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"int-byte-digit-arith", "function main(): i32 { var s: string = \"7\"; var d: u8 = s[0] - b'0'; return d as i32; }\n"},
 		{"int-usize-mixed", "function main(): i32 { var p: usize = 16; var n: i32 = 4; return (p + n) as i32; }\n"},
 		// The compiler-internal intrinsics core/map's bodies call by name. Each
-		// was already LOWERED by irlower — the comment at its lowering says the
+		// was already LOWERED by the lowering — the comment at its lowering says the
 		// point is that core/map compiles and links — but none was registered in
 		// the self-host checker's intrinsic table, so every body calling one
 		// answered the #4451 "could not infer an expression's type" bail while

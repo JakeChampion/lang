@@ -16,7 +16,7 @@ import (
 // the entry-zeroed slot routes null into that dispatch, so the compiled program
 // SIGSEGVd (exit 139, native and interp both fine at 50). Two calls were the
 // boundary: one call takes the branch and sweeps a live box; the second leaves
-// the slot null and faults. The fix null-guards the sweep in irlower, the same
+// the slot null and faults. The fix null-guards the sweep in the lowering, the same
 // guard emit_enum_deep_reinit_store already documents for the same op, so all
 // backends inherit it.
 //

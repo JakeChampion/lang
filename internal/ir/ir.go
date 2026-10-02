@@ -8839,7 +8839,7 @@ func bindingSlotShape(t ast.Type, ptrW int) int {
 // decrements a random block's rc word — a layout-dependent heap
 // corruption. Observed in practice as the self-host driver miscompiling
 // `match(read_file(..)) { Ok(s) => { write(s); .. } }` (a dangling
-// .Lir_main_* label): irlower's alias_names_in_stmt binds its StmtAssign
+// .Lir_main_* label): the AST lowering's alias_names_in_stmt bound its StmtAssign
 // arm payload as `a`, shadowing the `var a: string[]` accumulators bound
 // in sibling arms, and the wildcard arm's return swept the unwritten
 // binding slot. Reusing the entry-zeroed slot makes that sweep a

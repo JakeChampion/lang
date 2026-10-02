@@ -568,7 +568,7 @@ function main(): i32 {
 
 	// i32::MIN. `0 - 2147483647 - 1` is how std/i32 spells it, because it is the
 	// only way to spell it — and folding it produced an ExprNumber whose TEXT
-	// carried the sign. irlower.literal_is_i64 classifies a literal by text
+	// carried the sign. literal_is_i64 classified a literal by text
 	// LENGTH, so the 11-character "-2147483648" read as an i64 and the i32
 	// return path declined it: the whole module fell off the IR path. lit_i32
 	// now emits unary minus over the magnitude, the shape the parser produces.

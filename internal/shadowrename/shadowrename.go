@@ -62,7 +62,7 @@ type renamer struct {
 	// (isArrayTypeOfLocal / localArrayType / …) answer with whichever
 	// declaration they find first, so one arm's binding is released with
 	// the other's drop plan. In the self-host compiler
-	// irlower.alias_names_in_stmt is exactly this shape — a
+	// the AST lowering's alias_names_in_stmt was exactly this shape — a
 	// `parser.StmtAssign(a)` payload binding beside a `var a: string[]` in
 	// the StmtIf/StmtMatch arms — and it over-released once per assignment
 	// statement in every program the compiler saw.

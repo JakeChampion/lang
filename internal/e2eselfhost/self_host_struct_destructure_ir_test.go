@@ -9,7 +9,7 @@ import (
 // gained the same `let/var Point { x, y } = E;` support as the native
 // front-end: parse_struct_destructure encodes it as a StmtVar whose
 // type_name is "@sd:<Struct>:<fields>" and whose name is the comma-joined
-// bindings, and irlower's lower_struct_destructure expands it into per-field
+// bindings, and semsource expands it into per-field
 // `var bind = tmp.field;` binds (reusing the field-read typing + RC dup-on-
 // projection). These build the self-host x86-64 IR driver and assert the
 // compiled binary agrees with the interpreter oracle.
@@ -89,7 +89,7 @@ func TestSelfHostStructDestructureX86_64(t *testing.T) {
 }
 
 // TestSelfHostStructDestructureArm64 — CI-gated arm64 counterpart. The
-// destructure expansion is shared irlower analysis, so both register
+// destructure expansion is shared lowering analysis, so both register
 // backends inherit it; the driver is built x86 and emits arm64 asm.
 func TestSelfHostStructDestructureArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

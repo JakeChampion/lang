@@ -6,7 +6,7 @@ import "testing"
 // `outer: while/for { … break outer; … continue outer; … }`. The parser records a
 // loop label on StmtWhile/StmtFor and a target label on break/continue; a
 // resolve_labels pass (run at the shared parse entry, before any desugar) bakes
-// each labeled break/continue's RELATIVE loop depth into its `tag`; and irlower's
+// each labeled break/continue's RELATIVE loop depth into its `tag`; and the lowering's
 // break/continue lowering targets loop_blk[len-1-tag] (tag 0 = innermost =
 // unchanged behaviour for unlabeled). Verified to match the interpreter on
 // x86-64 + wasm (and arm64 via qemu).

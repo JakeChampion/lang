@@ -14,7 +14,7 @@ import (
 // frees over 100 rounds against native's 200/200, the box and its payload every
 // round. The same code with the match written as a STATEMENT was already flat.
 //
-// A match/if/block expression desugars to a zero-arg IIFE that irlower INLINES,
+// A match/if/block expression desugars to a zero-arg IIFE that the lowering INLINES,
 // so a name read inside it is an ordinary in-scope read. The struct family
 // learned that (self_host_match_expr_borrow_test.go) and recursed into the
 // STRICT walker, which was right for its own caller and wrong for the walkers

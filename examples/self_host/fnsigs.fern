@@ -593,7 +593,7 @@ pub function decl_field_name_at(structs: irtables.StructTab, struct_name: string
 //   - i32_to_string(n)                         — decimal-text builtin. Also Owned
 //     in str_producer_ownership / expr_is_fresh_str since #4355 (the historical
 //     exclusion guarded the NATIVE emitter's mid-buffer boxing; everything
-//     irlower emits calls the self-host __fern_i32_to_string, which
+//     the lowering emits calls the self-host __fern_i32_to_string, which
 //     __raw_alloc(len)s a tight buffer and boxes it at the base, so its data
 //     pointer IS an alloc boundary and __fern_str_free (class = ceil(len/8))
 //     reclaims it cleanly). (u32_to_string is left out — expr_is_str doesn't
@@ -1672,7 +1672,7 @@ function expr_unsafe_for_vb(e: ast.Expr, name: string, borrowable: string[], rec
     },
     ast.ExprLambda(lm) => {
       // A VALUE BLOCK (`match`/`if`/block/comprehension expression, which
-      // parser.fern desugars to a zero-arg IIFE) is not a closure: irlower
+      // parser.fern desugars to a zero-arg IIFE) is not a closure: the lowering
       // INLINES it, so nothing outlives the expression and a name read
       // inside it is an ordinary in-scope read. Walk it with the same rules
       // as the surrounding code — the strict walker's own StmtReturn arm

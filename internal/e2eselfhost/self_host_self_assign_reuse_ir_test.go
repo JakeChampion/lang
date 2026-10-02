@@ -146,7 +146,7 @@ func TestSelfHostSelfAssignReuseIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostSelfAssignReuseWasmIR runs the same programs through the
-// self-hosted WASM IR backend. The admission set lives in the shared irlower, so
+// self-hosted WASM IR backend. The admission set lives in the shared lowering, so
 // this leg is the value contract on a second backend — the emission counts are
 // asserted on x86-64 above. Exit codes stay < 126 for WASI's _start range.
 func TestSelfHostSelfAssignReuseWasmIR(t *testing.T) {

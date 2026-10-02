@@ -143,7 +143,7 @@ func TestSelfHostStrSliceBorrowIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostStrSliceBorrowIRArm64 is the arm64 leg. The scan is shared
-// irlower; the frame-view form it licenses is a per-backend transcription.
+// lowering analysis; the frame-view form it licenses is a per-backend transcription.
 func TestSelfHostStrSliceBorrowIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)

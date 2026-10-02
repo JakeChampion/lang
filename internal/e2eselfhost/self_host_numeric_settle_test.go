@@ -84,6 +84,16 @@ var numericSettleCases = []struct {
 		`function main(): i32 { var x: f64 = if (1 < 2) { 7 / 2 } else { 1 }; if (x > 3.4) { return 35; } return 36; }`, 35},
 	{"value-if-call-argument",
 		`function g(v: f64): f64 { return v + 0.25; } function main(): i32 { if (g(if (1 < 2) { 1 } else { 2 }) > 1.2) { return 37; } return 38; }`, 37},
+	// A literal beside a concrete float operand reads at that float: native's
+	// settleNumeric runs on a binary's operands before requireFloat.
+	{"binary-operand-f64",
+		`function main(): i32 { var x: f64 = 100.5f64; var y: f64 = x - 100; if (y == 0.5f64) { return 39; } return 40; }`, 39},
+	{"binary-operand-f32",
+		`function main(): i32 { var r: f32 = 1.5f32; var s: f32 = r * 2; if (s == 3.0f32) { return 41; } return 42; }`, 41},
+	{"binary-left-literal",
+		`function main(): i32 { var r: f64 = 0.25f64; var s: f64 = 1 - r; if (s > 0.7f64) { return 43; } return 44; }`, 43},
+	{"binary-guard-compare",
+		`enum Shape { Circle(f32), Square(f32) } function classify(s: Shape): i32 { match (s) { Circle(r) when r < 2 => { return 1; }, Circle(_) => { return 2; }, Square(_) => { return 3; } } return 0; } function main(): i32 { if (classify(Circle(1.5f32)) != 1) { return 46; } if (classify(Circle(2.5f32)) != 2) { return 47; } return 45; }`, 45},
 }
 
 // numericSettleRejects are the shapes settling must NOT swallow: the literalness
@@ -105,6 +115,8 @@ var numericSettleRejects = []struct {
 	// pins this shape, and a settle that recursed unconditionally broke it.
 	{"mixed-binary", `function main(): i32 { var f: f64 = 1 + 2.5; return 0; }`, "E009"},
 	{"mixed-binary-reversed", `function main(): i32 { var f: f64 = 2.5 + 1; return 0; }`, "E009"},
+	// Beside a concrete float, only a literal settles; an i32 value does not.
+	{"binary-i32-local-operand", `function main(): i32 { var n: i32 = 2; var r: f64 = 1.5f64; var s: f64 = r * n; return 0; }`, "E009"},
 	// A value-if branch the settle cannot see the type of (#6679): an i32 VALUE
 	// is not a literal, so the whole if is left unsettled and draws E003 rather
 	// than being widened under the destination. Stamping the closure's return

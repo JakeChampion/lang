@@ -494,7 +494,7 @@ function main(): i32 {
 `},
 	// The UNANNOTATED arm — what the previous change deliberately left refusing.
 	// An arm lambda's parameter spellings are always written but its result only
-	// when the author annotates it, so irlower yields no contract rather than half
+	// when the author annotates it, so the lowering yields no contract rather than half
 	// of one, and the hoisted IIFE reaches semsource with the coarse "fn" tag and
 	// nothing to resolve. The body still says what it returns, so the result is
 	// inferred the same way an unannotated declaration's already is. Produces
@@ -2068,10 +2068,7 @@ function main(): i32 {
 	// column of boxes, each read back after the delete and re-inserted once.
 	// The map helpers are typed: the keyed column's search calls its eq
 	// function, and its release the value column's, through __raw_call*.
-	{name: "map-delete-releases-the-entry", atLeast: 3, want: "35|", reports: []string{
-		"runtime __fern_map_find: produced", "runtime __fern_map_delete: produced",
-		"runtime __fern_map_delete_rel: produced",
-	}, src: `
+	{name: "map-delete-releases-the-entry", atLeast: 3, want: "35|", src: `
 import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
@@ -3346,7 +3343,7 @@ function main(): i32 {
 	// an i64 parameter and an f64 result. Such a slot was refused ("function
 	// signature slot") on the grounds that the untagged indirect call
 	// describes every slot as one word; the call through the value now
-	// carries the signature tag irlower's call sites carry, so wasm
+	// carries a signature tag, so wasm
 	// dispatches it through the funcref type the body was declared with.
 	{name: "sibling-function-with-a-wide-signature", atLeast: 3, want: "28|", src: `
 function main(): i32 {
@@ -7300,6 +7297,41 @@ function main(): i32 {
         return r + 1;
     }
     print((one() + two() + three() + four() + five() + nested()).to_string());
+    return 0;
+}
+`},
+	// A local handed to an `own` parameter and stored to again after
+	// straight-line statements that do not name it is moved at the call
+	// (#11093): ys is stored back only after xs, and gap's xs after an
+	// unrelated var. Each value is freed once.
+	{name: "a-local-stored-after-a-gap-moves-at-the-call", atLeast: 52, want: "0|15\n", src: `
+import "std/i32";
+struct Pair { a: i64[], b: i64[] }
+@noinline function step(own xs: i64[], own ys: i64[], k: i64): Pair {
+    return Pair { a: xs.append(k), b: ys.append(k * 2) };
+}
+@noinline function take(own xs: i64[]): i32 { return xs.len() as i32; }
+function threaded(n: i32): i32 {
+    var xs: i64[] = [];
+    var ys: i64[] = [1];
+    var i: i32 = 0;
+    while (i < n) {
+        var p: Pair = step(xs, ys, i as i64);
+        xs = p.a;
+        ys = p.b;
+        i = i + 1;
+    }
+    return xs.len() as i32 + ys.len() as i32;
+}
+function gap(): i32 {
+    var xs: i64[] = [1, 2];
+    var r: i32 = take(xs);
+    var m: i32 = r + 1;
+    xs = [3];
+    return m + xs.len() as i32;
+}
+function main(): i32 {
+    print((threaded(5) + gap()).to_string());
     return 0;
 }
 `},

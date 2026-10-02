@@ -15,7 +15,7 @@ import (
 // string box is the 24-byte `{rc@base, data@base+8, len@base+16}` block
 // `__fern_str_box` builds. Unlike the Reader leaves of #6921 — which leaked
 // because nothing ever dec'd them — `strbuf_take()` IS treated as a fresh owned
-// string (irlower's str-tracking), so a dropped result reaches
+// string (the lowering's str-tracking), so a dropped result reaches
 // `__fn___fern_str_free`, which reads the refcount at box-8. On a headerless box
 // that is the last word of the PRECEDING allocation, which here is the tail of
 // the text just copied out of the accumulator. The native backend has built this

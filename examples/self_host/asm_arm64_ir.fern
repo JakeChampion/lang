@@ -929,7 +929,7 @@ function movn_text_ok(text: string): boolean {
 // instruction — a wash on size — so the pool keeps them, and the per-function
 // `.ltorg` keeps it in reach.
 // map_eqfn_x5 loads the derived key-equality function pointer (`o.str`, the
-// bare receiver label "K.eq" irlower's map_key_eqfn produces) into x5 for the
+// bare receiver label "K.eq" the lowering produces) into x5 for the
 // four keyed map runtime entries — the arm64 twin of the x86-64 emitter's %r8.
 // A scalar/string key carries "" and gets x5 = 0, which is what the runtime
 // tests to pick the pointer/string compare instead. Without this the arm64
@@ -3947,7 +3947,7 @@ function emit_arm64_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitStat
   s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
   // x4 = per-insert flag bits (mirrors the x86-IR %r9):
   //   bit 0 = kconsume: the KEY arg is a fresh sole-owned string temp
-  //     (o.width bit 1, from irlower's is_fresh_str_temp) — map_set frees
+  //     (o.width bit 1, set by the lowering) — map_set frees
   //     the discarded key on an overwrite so a recurring computed key
   //     doesn't leak (the arm64 twin of the x86-IR fix).
   //   bit 1 = owncols (o.width bit 2, #4353): i32-key AND i32-value map
@@ -4647,7 +4647,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
 // ---- moved verbatim from asm_arm64.fern (#3457 slice 4 untangle) ----
 // The per-type __field_reclaim_<T> / __struct_drop_<T> helper bodies are
 // IR-path-only (emitted by emit_module_ir_unit_arm64_flat + emit_module_ir_gated_sub) and
-// depend only on asmcore / irlower / util / asm_ir — so they live here in the
+// depend only on asmcore / irtables / util / asm_ir — so they live here in the
 // IR selector, mirroring the x86 asm_ir.emit_ir_struct_drop_one layout, not in
 // the AST emitter asm_arm64.fern that #3457 deletes.
 // rt_arm64_str_eq is __fn___fern_str_eq: 1 when two string boxes hold equal
@@ -7661,7 +7661,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    ret\n");
   // __fern_arr_inc_elems(arr) -> arr: one guarded __fn___fern_rc_inc per
   // element of a pointer-element array, the arm64 sibling of the x86-64
-  // body in asm_ir.emit_ir_runtime. irlower emits it ahead of a copy of a
+  // body in asm_ir.emit_ir_runtime. The lowering emits it ahead of a copy of a
   // pointer-element buffer so both buffers hold a count of each element.
   // Same guard chain as the deep-free walks; x19/x20/x21 hold arr/len/i
   // across the bl (callee-saved, x30 saved too). Gated on its need like
@@ -8236,8 +8236,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   // then free the buffer to its size-class freelist (base=arr-16,
   // class=cap+3), exactly as __fn___fern_arr_dec's free path. Array layout
   // (__fern_arr_box): cap@[arr-16], rc@[arr-8], len@[arr], element i @
-  // [arr+8+i*8]. Called ONLY on irlower-proven fresh string[] locals
-  // (slot_is_reclaimable_strarr). Stack-arg ABI (arr at [sp]); x19/x20/x21
+  // [arr+8+i*8]. Called ONLY on compile-time-proven fresh string[] locals
+  // Stack-arg ABI (arr at [sp]); x19/x20/x21
   // hold arr/len/i across the bl calls (callee-saved; x30 saved too —
   // __fn___fern_str_free is a leaf and preserves them).
   s = emit_arm64_arr_deep_free_variant(s, "str_arr_free", "saf", arm64_arr_deep_free_call("str_free"));
@@ -8292,7 +8292,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // The deep-release variants (#4353), the arm64 siblings of the x86-64 family:
     // a credited fresh-string column is freed per element via __fern_str_arr_free,
     // a credited fresh one-dec-BOX column (scalar-element array / all-scalar
-    // struct) via __fern_arrarr_free. Called only on irlower-proven columns
+    // struct) via __fern_arrarr_free. Called only on compile-time-proven columns
     // (MAPVS: / MAPKS: / MAPVA:), where the map is the sole rc=1 owner of every
     // element.
     s = emit_arm64_map_free_variant(s, "_vs", "arr_dec", "str_arr_free", "mapfvs");
@@ -9301,7 +9301,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("    mov x26, x7\n");  // key release (keykind 2), likewise
     s = s.write("    mov x22, x3\n");  // key kind, likewise
     // x24 = per-insert flag bits (bit 0 = kconsume: the incoming KEY is a
-    // fresh sole-owned string temp, from irlower o.width bit 1; bit 1 =
+    // fresh sole-owned string temp, from o.width bit 1; bit 1 =
     // owncols: i32/string-column map whose keys()/values() reads ALL
     // snapshot, so the map solely owns its column buffers — #4353/#5335).
     // x24 is
@@ -9700,7 +9700,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("    ldp x19, x20, [sp], #16\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
-    // __fern_arr_push_owned — the sole-owner self-append (irlower's !aliased
+    // __fern_arr_push_owned — the sole-owner self-append (an !aliased
     // `a = a.append(v)`). Wraps __fern_arr_push and, iff the push GREW
     // (reallocated, result != old), frees the dead old buffer onto its size
     // class (the __fern_arr_dec free path: rc-guarded, sole-owner, ≤512 KiB
