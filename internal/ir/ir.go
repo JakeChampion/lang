@@ -10039,8 +10039,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// after the whole match) is what makes it reach: the arms of a
 			// consuming traversal `return`, so post-match code is dead. The
 			// scrutinee is marked moved (computeMovedLocals) so the exit sweep
-			// doesn't deep-drop it too. Guarded arms free only on the matched
-			// path; a guard-false fall-through leaves the box for the next arm.
+			// doesn't deep-drop it too. A guarded arm releases the box only once
+			// its guard holds, below.
 			if consumeScrut && !pairFormScrutinee && arm.Guard == nil {
 				// Both release paths below branch on the box's uniqueness, and on
 				// the SHARED side the box survives holding the very payloads these
@@ -10071,6 +10071,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 				reuseCtor := b.consumingReuseCtor(arm, consumeEnum)
 				if reuseCtor == nil || !b.rc.consumingMatchReuse[reuseCtor] {
 					b.emitConsumingMatchBoxFree(ptrSlot, consumeEnum, dupSlots)
+					// The reuse path below reads the box through the parameter
+					// and nulls it itself.
+					b.deadConsumedParam(n.Tag, ptrSlot)
 				} else if id, isIdent := n.Tag.(*ast.Ident); isIdent && len(dupSlots) > 0 {
 					// The reuse token is emitted deep inside the arm body's
 					// constructor, so hand the bindings down by scrutinee name.
@@ -10120,6 +10123,18 @@ func (b *builder) stmt(s ast.Stmt) error {
 				b.emit(Op{Kind: OpNot})
 				b.brTo(outerArmD, true)
 			}
+			// A guarded arm of a consuming match frees nothing above, since a
+			// false guard leaves the box to the next arm, and the scrutinee is
+			// marked moved, so the exit sweep skips it too. Once the guard
+			// holds, the box is this arm's: its bindings stayed borrowed, so it
+			// is released deep wherever the arm leaves (#10943).
+			popGuardDrop := func() {}
+			guardDrop := consumeScrut && !pairFormScrutinee && arm.Guard != nil
+			if guardDrop {
+				b.deadConsumedParam(n.Tag, ptrSlot)
+				slot, et := ptrSlot, consumeEnum
+				popGuardDrop = b.pushPendingDrop(func() { b.emitOwnedEnumDrop(slot, et, true) })
+			}
 			// The borrowed payload binding is dead once the arm body ends, and
 			// it is the only reference to a value the callee freshly
 			// allocated. An arm that LEAVES the match early — the ordinary
@@ -10140,11 +10155,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 			if err := b.stmt(arm.Body); err != nil {
 				popPayRelease()
+				popGuardDrop()
 				return err
 			}
 			popPayRelease()
 			if payReleaseSlot >= 0 {
 				b.emitOwnedSlotDrop(payReleaseSlot, payReleaseType)
+			}
+			popGuardDrop()
+			if guardDrop {
+				b.emitOwnedEnumDrop(ptrSlot, consumeEnum, true)
 			}
 			// SAME-shape bindings stay in b.locals after the arm
 			// finishes: the IR only cares about slot indices
@@ -18866,6 +18886,21 @@ func (b *builder) emitOwnedConsumingArmDrop(ptrSlot int32, et ast.EnumType, vari
 	// exit sweep (which still visits the param) must see a null.
 	b.emit(Op{Kind: OpConstI32, I32: 0})
 	b.emit(Op{Kind: OpStoreLocal, I32: paramSlot})
+}
+
+// deadConsumedParam nulls the `own` parameter a consuming match has taken,
+// once an arm owns its box through ptrSlot. The exit sweep still visits a
+// parameter the moved-locals claim cannot reach, such as one consumed by a
+// match nested in another match's arm, and must see a null there (#10944).
+func (b *builder) deadConsumedParam(tag ast.Expr, ptrSlot int32) {
+	id, ok := tag.(*ast.Ident)
+	if !ok {
+		return
+	}
+	if slot, ok := b.locals[id.Name]; ok && slot != ptrSlot {
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	}
 }
 
 // ownParamEnumScrutinee reports the enum type when `tag` is a bare reference to
