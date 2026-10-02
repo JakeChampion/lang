@@ -284,7 +284,7 @@ pub function need_ops(): string[] {
     "remove_dir", "create_link", "create_symlink", "rename", "read_link", "set_file_times",
     "truncate", "sleep_ms", "sleep_ns", "stat", "lstat", "str_bytes", "str_from_bytes",
     "str_split", "tcp_accept", "tcp_close", "tcp_connect", "tcp_listen", "tcp_listen_with",
-    "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_send", "tcp_socket_ctl", "temp_dir",
+    "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_send", "tcp_send_bytes", "tcp_socket_ctl", "temp_dir",
     "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto", "tcp_connect_with", "wasm_block",
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
     "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "write_file_bytes", "open_file",
@@ -2248,6 +2248,11 @@ pub function component_refused_need(needs: string[], io: boolean): string {
     // (err_payload_p2) rather than storing the raw wasi error code, so an
     // `Err(e)` here matches like one from any other target (#5795).
     if (io && (n == "read_file" || n == "read_file_bytes" || n == "write_file" || n == "write_file_bytes")) {
+      i = i + 1;
+      continue;
+    }
+    // The sockets' bodies are preview-2 on every framing.
+    if (io && util.has_str(socket_builtins(), n)) {
       i = i + 1;
       continue;
     }
@@ -4272,6 +4277,41 @@ pub function tcp_send_func(): string {
   return o;
 }
 
+// Word-slot arrays are packed into bounded scratch for the host's list<u8>.
+// Report accepted progress after a later failure so callers do not resend it.
+pub function tcp_send_bytes_func(): string {
+  var o: string = "  (func $__fern_tcp_send_bytes (param $c i32) (param $a i32) (result i32)\n";
+  o = o + "    (local $st i32) (local $ret i32) (local $len i32) (local $off i32) (local $n i32) (local $buf i32) (local $cap i32) (local $i i32)\n";
+  o = o + "    (local.set $st (i32.load offset=8 (local.get $c)))\n";
+  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
+  o = o + "    (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))\n";
+  o = o + "    (local.set $cap (local.get $len))\n";
+  o = o + "    (if (i32.gt_u (local.get $cap) (i32.const 4096)) (then (local.set $cap (i32.const 4096))))\n";
+  o = o + "    (local.set $buf (call $__fern_alloc (local.get $cap)))\n";
+  o = o + "    (local.set $ret (call $__fern_alloc (i32.const 12)))\n";
+  o = o + "    (block $done (loop $more\n";
+  o = o + "      (br_if $done (i32.ge_u (local.get $off) (local.get $len)))\n";
+  o = o + "      (local.set $n (i32.sub (local.get $len) (local.get $off)))\n";
+  o = o + "      (if (i32.gt_u (local.get $n) (local.get $cap)) (then (local.set $n (local.get $cap))))\n";
+  o = o + "      (local.set $i (i32.const 0))\n";
+  o = o + "      (block $packed (loop $pack\n";
+  o = o + "        (br_if $packed (i32.ge_u (local.get $i) (local.get $n)))\n";
+  o = o + "        (i32.store8 (i32.add (local.get $buf) (local.get $i)) (i32.load offset=8 (i32.add (local.get $a) (i32.mul (i32.add (local.get $off) (local.get $i)) (i32.const 4)))))\n";
+  o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $pack)))\n";
+  o = o + "      (call $__fern_wasi_stream_write (local.get $st) (local.get $buf) (local.get $n) (local.get $ret))\n";
+  o = o + "      (if (i32.load8_u (local.get $ret)) (then\n";
+  o = o + "        (if (i32.eqz (i32.load8_u offset=4 (local.get $ret))) (then (call $__fern_wasi_io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
+  o = o + "        (call $__fern_raw_free (local.get $ret) (i32.const 12))\n";
+  o = o + "        (call $__fern_raw_free (local.get $buf) (local.get $cap))\n";
+  o = o + "        (if (i32.gt_u (local.get $off) (i32.const 0)) (then (return (local.get $off))))\n";
+  o = o + "        (return (i32.const -1))))\n";
+  o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n))) (br $more)))\n";
+  o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 12))\n";
+  o = o + "    (call $__fern_raw_free (local.get $buf) (local.get $cap))\n";
+  o = o + "    (local.get $len))\n";
+  return o;
+}
+
 // $__fern_tcp_recv(conn, max) -> u8[]: up to `max` bytes as a fresh
 // `[len][cap][elems]` array block (one byte per 4-byte slot, like
 // random_bytes_ir_func), or the EMPTY array on a stream error / clean EOF.
@@ -5525,6 +5565,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 114) {  // tcp_send
     // tcp_send(conn, s) -> bytes written, or -1. Both args on the stack.
     parts = parts.append("    call $__fern_tcp_send\n");
+  } else if (o.kind_tag == 353) {
+    parts = parts.append("    call $__fern_tcp_send_bytes\n");
   } else if (o.kind_tag == 115) {  // tcp_recv
     // tcp_recv(conn, max) -> a fresh u8[] array block (empty on error/EOF).
     parts = parts.append("    call $__fern_tcp_recv\n");
@@ -12114,8 +12156,16 @@ function preview1_imports(needs: string[]): string {
   if (need(needs, "sleep_ms") || need(needs, "sleep_ns")) {
     parts = parts.append(sleep_ms_import());
   }
-  // Preview-2 timer-pollable ops (#4317): direct component-model imports.
-  // A module using them composes to a component (see wasm_ir helpers).
+  parts = parts.append(preview2_wasi_imports(needs));
+  return util.str_join_chunks(parts);
+}
+
+// preview2_wasi_imports are the preview-2 imports the timer-pollable, socket
+// and poll builtins call directly, on the preview-1 command core and the
+// component core alike.
+function preview2_wasi_imports(needs: string[]): string {
+  var parts: string[] = [];
+  // Timer-pollable ops (#4317).
   if (need(needs, "wasm_timer_pollable")) {
     parts = parts.append(wasi_subscribe_duration_import());
   }
@@ -12140,7 +12190,7 @@ function preview1_imports(needs: string[]): string {
   }
   // tcp_send / tcp_recv need the stream read/write imports (#4318 slice 2);
   // tcp_recv_into needs the error drop among them.
-  if (need_any(needs, ["tcp_send", "tcp_recv", "tcp_recv_into"])) {
+  if (need_any(needs, ["tcp_send", "tcp_send_bytes", "tcp_recv", "tcp_recv_into"])) {
     parts = parts.append(wasi_stream_io_imports());
   }
   // The reactor's own imports: the stream subscribes and the non-blocking
@@ -12386,6 +12436,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (mode == 2) {
     parts = parts.append(component_io_imports(needs, component_uses_stderr(mod, needs)));
+    parts = parts.append(preview2_wasi_imports(needs));
   }
   // WIT `@import` externs. Emitted for EVERY mode: an extern is a declaration
   // in the source, not a property of the framing, and a module that calls one
@@ -12478,7 +12529,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
     "@allocates", "@uses_maps", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_chr", "@uses_strbuf", "@uses_buf",
     "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_all", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
-    "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
+    "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_send_bytes", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
   ])) {
     parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count")));
     parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
@@ -12760,7 +12811,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // host materialises it in guest memory — as does an export whose signature
   // needs the canonical allocator (export_needs_realloc). Like the heap gate
   // above, these come from the module's declarations, not from `needs`.
-  if (module_has_extern_composite_result(mod) || export_needs_realloc(mod) || need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "udp_send") || need(needs, "udp_recvfrom") || need(needs, "reactor_wait") || need(needs, "tcp_recv_into") || mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "read_file") || need(needs, "read_file_bytes") || (need(needs, "write_file") || need(needs, "write_file_bytes")))) {
+  if (module_has_extern_composite_result(mod) || export_needs_realloc(mod) || need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "tcp_send_bytes") || need(needs, "udp_send") || need(needs, "udp_recvfrom") || need(needs, "reactor_wait") || need(needs, "tcp_recv_into") || mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "read_file") || need(needs, "read_file_bytes") || (need(needs, "write_file") || need(needs, "write_file_bytes")))) {
     parts = parts.append(cabi_realloc_helper());
   }
   // $__fern_network_handle is shared by every socket op; emitted with
@@ -12788,6 +12839,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "tcp_send")) {
     parts = parts.append(tcp_send_func());
+  }
+  if (need(needs, "tcp_send_bytes")) {
+    parts = parts.append(tcp_send_bytes_func());
   }
   if (need(needs, "tcp_recv")) {
     parts = parts.append(tcp_recv_func());
@@ -16198,19 +16252,28 @@ function called_names(mod: parser.Module): Map[string, boolean] {
 
 // component_shape classifies a program for the -target wasm32-wasi CLI.
 // Beyond no-I/O (0) and stdout (1), each *single* non-stdout WASI category a
-// program uses maps to the matching component_full_io_* wrap. A program using
-// two or more categories (e.g. read_file + env) has no single wrap yet, so it
-// is rejected (-1) rather than emitting a component whose imports the framing
-// can't satisfy. Shape codes:
+// program uses maps to the matching component_full_io_* wrap, as do a few
+// fs-paired combinations. Any other program, and one reaching sockets, has no
+// fixed wrap (-1) and is composed against the fern world instead
+// (emitforms.wasm_component). Shape codes:
 //   0 no-I/O · 1 stdout · 2 fs-read · 3 fs-write · 4 fs-rw · 5 random
 //   6 env · 7 args · 8 clock(wall) · 9 clock(mono) · 13 stderr · 14 exit
 //   17 stderr + exit (including assertion failures)
 // HostNeeds is what a program asks of its WASI host, one flag per category
 // the component framings distinguish.
-struct HostNeeds { io: boolean, rd: boolean, wr: boolean, env: boolean, args: boolean, rnd: boolean, clkw: boolean, clkm: boolean, ep: boolean, ex: boolean }
+struct HostNeeds { io: boolean, rd: boolean, wr: boolean, env: boolean, args: boolean, rnd: boolean, clkw: boolean, clkm: boolean, ep: boolean, ex: boolean, net: boolean }
 
 function host_needs(mod: parser.Module): HostNeeds {
   var calls: Map[string, boolean] = called_names(mod);
+  var net: boolean = false;
+  var sb: string[] = socket_builtins();
+  var k: i32 = 0;
+  while (k < sb.len()) {
+    if (calls.has(sb[k])) {
+      net = true;
+    }
+    k = k + 1;
+  }
   // Building a Map imports get-random-u64 with no explicit random call in the
   // program: core/map draws its per-process string-hash seed from the same
   // CSPRNG. module_uses_random counts that seed on the lowered side, where it
@@ -16227,7 +16290,18 @@ function host_needs(mod: parser.Module): HostNeeds {
     clkm: calls.has("monotonic_ns"),
     ep: calls.has("eprint") || calls.has("stderr"),
     ex: calls.has("exit"),
+    net: net,
   };
+}
+
+// socket_builtins are the wasi:sockets builtins. Their helper bodies import
+// preview-2 sockets on every framing, and no fixed component shape wires them.
+function socket_builtins(): string[] {
+  return [
+    "tcp_accept", "tcp_close", "tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
+    "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_recv_into", "tcp_send", "tcp_sendfile", "tcp_socket_ctl",
+    "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto",
+  ];
 }
 
 // component_needs_host reports whether a program reaches its WASI host at
@@ -16235,7 +16309,7 @@ function host_needs(mod: parser.Module): HostNeeds {
 // program's own externs.
 pub function component_needs_host(mod: parser.Module): boolean {
   var n: HostNeeds = host_needs(mod);
-  return n.io || n.rd || n.wr || n.env || n.args || n.rnd || n.clkw || n.clkm || n.ep || n.ex;
+  return n.io || n.rd || n.wr || n.env || n.args || n.rnd || n.clkw || n.clkm || n.ep || n.ex || n.net;
 }
 
 pub function component_shape(mod: parser.Module): i32 {
@@ -16250,6 +16324,9 @@ pub function component_shape(mod: parser.Module): i32 {
   var clkm: boolean = n.clkm;
   var ep: boolean = n.ep;
   var ex: boolean = n.ex;
+  if (n.net) {
+    return 0 - 1;
+  }
   // Count distinct non-stdout WASI categories. Single-category programs and
   // a fixed set of two-category fs-paired combos have a wrapped wasi:cli/run
   // shape; anything else is rejected.

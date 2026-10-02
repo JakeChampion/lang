@@ -918,15 +918,16 @@ file sinks still need byte-domain interfaces. See the
 [HTTP byte validation and size report](STRING-WASI-HTTP-BYTES-2026-10-02.md).
 
 The socket TRANSPORT followed. `tcp_recv_deadline` returns
-`Option[u8[]]`, and `std/fetch` is byte-domain end to end —
-`fetch_raw` / `fetch_get` / `get_url` return `u8[]`, their `_deadline`
-siblings `Option[u8[]]`, `fetch_future` an `async.Future[u8[]]`, and
-`http_status` / `http_body` read bytes. An upstream serves whatever
-bytes it likes, so a text-typed response was a `string` this decision
-forbids; callers decode with `utf8.from_bytes` where they want text.
-`std/sim`'s scripted `Net.fetch_future` deliberately stays
-`Future[string]` — its bodies are program values, well-formed by
-construction, and what it exists to pin is the combinator timing.
+`Option[u8[]]`, and `std/fetch` is byte-domain end to end: `send(req)`
+and `plat.http(req)` answer `Result[HttpResponse, FetchError]` with the
+body as `BodyBytes`, `(resp).body_text()` is the checked decode that
+answers `None` for bytes that are not UTF-8, `(resp).body_bytes()` the
+body as it came, and `fetch_future` an `async.Future[u8[]]`. An
+upstream serves whatever bytes it likes, so a text-typed response was a
+`string` this decision forbids. `std/sim`'s scripted `Net.fetch_future`
+deliberately stays `Future[string]` — its bodies are program values,
+well-formed by construction, and what it exists to pin is the
+combinator timing.
 
 The HTTP MESSAGE layer followed. A serve loop holds its buffer as
 `u8[]` and parses it with `http_parse_request_bytes`; `HttpRequest.body`

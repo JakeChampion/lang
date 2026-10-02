@@ -399,11 +399,11 @@ function dyn_set_end(spelling: string, i: i32): i32 {
 // from the declaration. This reads the name back out of either reason.
 function typevar_reason_name(reason: string): string {
   var promoted: string = "type parameter ";
-  if (reason.len() > promoted.len() && slice_unchecked(reason, 0, promoted.len()) == promoted) {
+  if (reason.len() > promoted.len() && util.has_prefix(reason, promoted)) {
     return slice_unchecked(reason, promoted.len(), reason.len()) + "";
   }
   var unresolved: string = "unrecognised type name: ";
-  if (reason.len() > unresolved.len() && slice_unchecked(reason, 0, unresolved.len()) == unresolved) {
+  if (reason.len() > unresolved.len() && util.has_prefix(reason, unresolved)) {
     return slice_unchecked(reason, unresolved.len(), reason.len()) + "";
   }
   return "";
@@ -5797,14 +5797,17 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
   return false;
 }
 
-struct Schemas { ok: boolean, why: string, records: semrecords.Record[], enums: semrecords.Enum[] }
+// `record_names` indexes `records` by struct name, one entry per record in
+// order, so a type is looked up along its name's chain rather than the table.
+struct Schemas { ok: boolean, why: string, records: semrecords.Record[], record_names: util.NameIndex, enums: semrecords.Enum[] }
 
 // Every record and enum type a function's values, contracts and result name
 // gets its declaration's schema, and so does every one a schema's fields
 // name, to a fixpoint over the finite declaration table. A type this
 // boundary cannot give a schema refuses the function.
 function schemas(types: typeinfo.Type[], s: State): Schemas {
-  var out: Schemas = Schemas { ok: true, why: "", records: [], enums: [] };
+  var no_names: string[] = [];
+  var out: Schemas = Schemas { ok: true, why: "", records: [], record_names: util.name_index(no_names), enums: [] };
   var pending: typeinfo.Type[] = types;
   var i: i32 = 0;
   while (i < pending.len()) {
@@ -5889,7 +5892,7 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     if (semtypes.is_handle(t)) {
       return out;
     }
-    if (semrecords.find_in(out.records, t) >= 0) {
+    if (semrecords.find_named(out.records, out.record_names, r.name, t) >= 0) {
       return out;
     }
     if (semtypes.is_env(t)) {
@@ -5934,7 +5937,7 @@ function env_entry(t: typeinfo.Type, views: string[], impls: parser.ImplInfo[], 
     i = i + 1;
     fields = fields.append(semrecords.Field { name: "c" + util.i32_to_string(i), ty: cap });
   }
-  return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields, views: fields_hold_view(fields, views, impls) }) };
+  return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields, views: fields_hold_view(fields, views, impls) }), record_names: out.record_names.added(semrecords.name_of(t)) };
 }
 
 function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: Schemas): Schemas {
@@ -5945,7 +5948,7 @@ function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: S
   if (!fields_resolved(sig)) {
     return Schemas { ...out, ok: false, why: "unresolved record field type" };
   }
-  return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields_of(sig), views: type_holds_view(t, s.views, s.impls) }) };
+  return Schemas { ...out, records: out.records.append(semrecords.Record { ty: t, fields: fields_of(sig), views: type_holds_view(t, s.views, s.impls) }), record_names: out.record_names.added(r.name) };
 }
 
 // A union is a declared enum, whose variants it owns, or a struct-union, whose
@@ -6886,6 +6889,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "poll", params: [fds, t_i32()], modes: [b, v], result: t_i32() },
     ssasem.Contract { name: "timer_fd", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "tcp_send", params: [t_i32(), t_string()], modes: [v, b], result: t_i32() },
+    ssasem.Contract { name: "tcp_send_bytes", params: [t_i32(), bytes], modes: [v, b], result: t_i32() },
     ssasem.Contract { name: "udp_send", params: [t_string(), t_i32(), t_string()], modes: [b, v, b], result: t_i32() },
     ssasem.Contract { name: "tcp_recv", params: [t_i32(), t_i32()], modes: [v, v], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
     ssasem.Contract { name: "tcp_pollable", params: [t_i32()], modes: [v], result: t_i32() },

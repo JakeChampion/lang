@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -26,18 +27,14 @@ func TestComposeStdoutFromWorld(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
 	progPath := filepath.Join(dir, "prog.fern")
 	const want = "hello from the world"
 	if err := os.WriteFile(progPath, []byte(`function main(): i32 { write("`+want+`"); return 0; }`), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
-	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+	if out, err := e2eharness.SelfHostCompileCmd(t, "wasm32-wasi", progPath, refPath).CombinedOutput(); err != nil {
+		t.Fatalf("self-host fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -87,18 +84,14 @@ func TestComposeFsFromWorld(t *testing.T) {
 		t.Skip("wasm-tools not on PATH")
 	}
 	dir := t.TempDir()
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
 	progPath := filepath.Join(dir, "prog.fern")
 	src := `function main(): i32 { match (read_file("in.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 1; } } return 2; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
-	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+	if out, err := e2eharness.SelfHostCompileCmd(t, "wasm32-wasi", progPath, refPath).CombinedOutput(); err != nil {
+		t.Fatalf("self-host fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {

@@ -49,6 +49,7 @@ var BuiltinCaps = map[string]string{
 	"tcp_connect":      "net",
 	"tcp_recv":         "net",
 	"tcp_send":         "net",
+	"tcp_send_bytes":   "net",
 	"tcp_close":        "net",
 	"tcp_pollable":     "net",
 	"udp_send":         "net",

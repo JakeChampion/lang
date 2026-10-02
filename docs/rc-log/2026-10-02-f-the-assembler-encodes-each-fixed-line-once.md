@@ -44,8 +44,9 @@ tree; both rows are built from main at 9cc02c45 and this change on it.
 
 `x86_gas_prepare` keeps its 1.96 G: it runs once, and nothing here
 touches it. Measured against the main before 959b0fe8, where four
-rounds ran, the same change was 36.88 G to 35.06 G; a module that
-needs more than the confirming round still gains per round.
+rounds ran, the same change was 36.88 G to 35.06 G. Since the settle
+of 2026-10-02-i there are at most two rounds, and the second is the
+one that replays.
 
 ## Witnessed
 
