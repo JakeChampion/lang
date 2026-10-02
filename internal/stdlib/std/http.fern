@@ -2072,7 +2072,14 @@ pub function (r: HttpResponse) body_string(): string {
 // `(r: HttpResponse).body_bytes()` — the body as bytes, read as
 // `body_string` reads it.
 pub function (r: HttpResponse) body_bytes(): u8[] {
-  match (r.body) {
+  return r.body.bytes();
+}
+
+// `(b: Body).bytes()` — the bytes a `Body` holds, read as `body_bytes`
+// reads them: a `BodyFile` answers none, since the file is streamed by
+// the serve loop and never read by code a handler reaches.
+pub function (b: Body) bytes(): u8[] {
+  match (b) {
     BodyText(s) => {
       return s.bytes();
     },
@@ -2381,4 +2388,286 @@ pub function (c: SetCookie) serialize(): string {
 // works). Rebind: `r = r.with_set_cookie(c);`.
 pub function (r: HttpResponse) with_set_cookie(c: SetCookie): HttpResponse {
   return HttpResponse { ...r, headers: r.headers.append("Set-Cookie", c.serialize()) };
+}
+
+// ---------------------------------------------------------------------------
+// Response framing — the client side of the wire. `std/fetch` reads a
+// response with these; the request parser above is their twin.
+
+// `HttpResponseFramed` — a parsed response: the response, how many bytes
+// it occupied from where the parse began (so an interim 1xx response can
+// be stepped over to the one behind it), its version, and whether the
+// connection outlives it under the rule `__persists` applies to requests.
+pub struct HttpResponseFramed { response: HttpResponse, len: i32, version: string, keep_alive: boolean }
+
+// `HttpResponseFraming` — `Complete(framed)` once the whole response is
+// in the buffer, `Unfinished` while it is not, `Rejected(code)` for one
+// this parser will not read: 400 for a malformed status line, header
+// block or body framing, 413 for a body past `limits.body`, 431 for a
+// header block or chunk framing past its budget, 501 for a transfer
+// coding under `chunked`, and 505 for a major version other than 1.
+pub enum HttpResponseFraming { Complete(HttpResponseFramed), Unfinished, Rejected(i32) }
+
+// `http_parse_response_framed(buf, method, eof, limits)` — the response
+// at the head of `buf` to a request sent with `method`, under `limits`
+// (`request_line` caps the status line). `eof` says the peer has closed:
+// a response with neither `Content-Length` nor `Transfer-Encoding` is
+// delimited by the close (RFC 9112 §6.3 item 8), so it is `Unfinished`
+// until then and the rest of the buffer once it has. A response to HEAD,
+// and a 1xx, 204 or 304, has no body whatever its headers say (§6.3
+// items 1 and 2). The trailers of a chunked body are the response's
+// `trailers`.
+pub function http_parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
+  return http_parse_response_framed_from(buf, 0, method, eof, limits);
+}
+
+// `http_parse_response_framed_from(buf, from, method, eof, limits)` —
+// the same parse over buf[from, len); `len` counts from `from`.
+pub function http_parse_response_framed_from(buf: u8[], from: i32, method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
+  var first_crlf: i32 = __request_line_end(buf, from, limits.request_line);
+  var headers_end: i32 = __header_block_end(buf, from, limits.header_bytes);
+  var refused: i32 = __response_head_refused(buf, from, first_crlf, headers_end, limits);
+  if (refused != 0) {
+    return Rejected(refused);
+  }
+  if (first_crlf < 0 || headers_end < 0) {
+    return Unfinished;
+  }
+  return __response_body(buf, from, first_crlf, headers_end, __status_code(buf, from), method, eof, limits);
+}
+
+// `__response_head_refused(buf, from, first_crlf, headers_end, limits)`
+// — the code refusing the status line and header block as far as they
+// have arrived, or 0: the status line is refused as soon as its CRLF is
+// in, the block's line endings as they come.
+function __response_head_refused(buf: u8[], from: i32, first_crlf: i32, headers_end: i32, limits: HttpLimits): i32 {
+  if (first_crlf == -2) {
+    return 400;
+  }
+  if (headers_end == -2) {
+    return 431;
+  }
+  if (!__crlf_terminated(buf, from, __head_scanned(buf, from, headers_end, limits))) {
+    return 400;
+  }
+  if (first_crlf >= 0) {
+    return __status_line_refused(buf, from, first_crlf);
+  }
+  return 0;
+}
+
+// `__head_scanned(buf, from, headers_end, limits)` — how far the header
+// block's line endings are checked: to its end once that has arrived,
+// else as far as the block may run.
+function __head_scanned(buf: u8[], from: i32, headers_end: i32, limits: HttpLimits): i32 {
+  if (headers_end >= 0) {
+    return headers_end;
+  }
+  var scanned: i32 = from + limits.header_bytes + 4;
+  if (buf.len() < scanned) {
+    return buf.len();
+  }
+  return scanned;
+}
+
+// `__status_line_refused(buf, from, end)` — 0 when buf[from, end) is a
+// status line (RFC 9112 §4: an HTTP-version, a space, three digits, then
+// the end or a space and a reason phrase), 400 when it is not, 505 for
+// a major version other than 1.
+function __status_line_refused(buf: u8[], from: i32, end: i32): i32 {
+  if (end - from < 8) {
+    return 400;
+  }
+  var version: i32 = __version_status(buf, from, from + 8);
+  if (version != 0) {
+    return version;
+  }
+  if (end < from + 12 || buf[from + 8] != 32 as u8 || !__three_digits(buf, from + 9)) {
+    return 400;
+  }
+  if (end > from + 12 && buf[from + 12] != 32 as u8) {
+    return 400;
+  }
+  if (!__reason_ok(buf, from + 13, end)) {
+    return 400;
+  }
+  return 0;
+}
+
+function __three_digits(buf: u8[], at: i32): boolean {
+  return __is_digit(buf[at]) && __is_digit(buf[at + 1]) && __is_digit(buf[at + 2]);
+}
+
+// `__reason_ok(buf, from, end)` — whether a reason phrase holds no control
+// byte other than HTAB.
+function __reason_ok(buf: u8[], from: i32, end: i32): boolean {
+  var i: i32 = from;
+  while (i < end) {
+    if (buf[i] < 32 as u8 && buf[i] != 9 as u8) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// `__status_code(buf, from)` — the three digits of a status line
+// `__status_line_refused` passed.
+function __status_code(buf: u8[], from: i32): i32 {
+  return (buf[from + 9] as i32 - 48) * 100 + (buf[from + 10] as i32 - 48) * 10 + (buf[from + 11] as i32 - 48);
+}
+
+// `__response_body(...)` — the rest of the parse once the header block
+// has arrived: the headers, then the body under the response's framing.
+function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32, status: i32, method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
+  var hdr_start: i32 = first_crlf + 2;
+  if (hdr_start > headers_end) {
+    hdr_start = headers_end;
+  }
+  var h: HeaderMap = headers.header_map_new();
+  match (__parse_header_bytes(buf, hdr_start, headers_end, limits.header_fields)) {
+    Ok(parsed) => {
+      h = parsed;
+    },
+    Err(code) => {
+      return Rejected(code);
+    }
+  }
+  var version: string = __version_of(buf, from);
+  var at: i32 = headers_end + 4;
+  var body: (i32, u8[], i32, HeaderMap) = __response_payload(buf, at, h, status, method, eof, version, limits);
+  if (body.0 == 1) {
+    return Unfinished;
+  }
+  if (body.0 != 2) {
+    return Rejected(body.0);
+  }
+  var resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(body.1), headers: h, trailers: body.3 };
+  return Complete(HttpResponseFramed { response: resp, len: body.2 - from, version: version, keep_alive: __persists(version, h) });
+}
+
+// `__response_payload(buf, at, h, status, method, eof, version)` — the
+// response's body from `at`, as `__framed_body` answers: none for a
+// bodiless response, the rest of the buffer at the close for one its
+// headers do not delimit, and the declared framing otherwise.
+function __response_payload(buf: u8[], at: i32, h: HeaderMap, status: i32, method: string, eof: boolean, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
+  var empty: u8[] = [];
+  var none: HeaderMap = headers.header_map_new();
+  if (method == "HEAD" || http_bodiless(status)) {
+    return (2, empty, at, none);
+  }
+  if (h.get_all("transfer-encoding").len() == 0 && h.get_all("content-length").len() == 0) {
+    if (!eof) {
+      return (1, empty, 0, none);
+    }
+    if (buf.len() - at > limits.body) {
+      return (413, empty, 0, none);
+    }
+    return (2, __bytes_range(buf, at, buf.len()), buf.len(), none);
+  }
+  match (__http_body_framing(h)) {
+    Ok(framing) => {
+      return __framed_body(buf, at, framing, version, limits);
+    },
+    Err(code) => {
+      return (code, empty, 0, none);
+    }
+  }
+  return (400, empty, 0, none);
+}
+
+// `http_hop_by_hop(name)` — whether a field is hop-by-hop (RFC 9110 §7.6.1
+// and the fields the `Connection` of either peer controls): a client
+// strips these from what it sends and from what it hands back, since the
+// connection they describe is its own, not the caller's.
+pub function http_hop_by_hop(name: string): boolean {
+  var key: string = name.to_lower();
+  return key == "connection" || key == "keep-alive" || key == "proxy-connection" || key == "transfer-encoding" || key == "te" || key == "trailer" || key == "upgrade";
+}
+
+// `http_end_to_end(h)` — `h` without its hop-by-hop fields and without
+// the fields its `Connection` names (§7.6.1: those are hop-by-hop too).
+pub function http_end_to_end(h: HeaderMap): HeaderMap {
+  var named: string[] = [];
+  for v in h.get_all("connection") {
+    for tok in v.split(",") {
+      named = named.append(tok.trim().to_lower());
+    }
+  }
+  var out: HeaderMap = headers.header_map_new();
+  var i: i32 = 0;
+  while (i < h.names.len()) {
+    if (!http_hop_by_hop(h.names[i]) && !__names_hold(named, h.names[i])) {
+      out = out.append(h.names[i], h.values[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function __names_hold(names: string[], name: string): boolean {
+  for n in names {
+    if (n == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// `(r: HttpResponse).body_text()` — the body as text when it is valid
+// UTF-8, `None` when it is not: the read for a body that came off the
+// wire, which may hold anything, where `body_string` is for one a
+// handler built.
+pub function (r: HttpResponse) body_text(): Option[string] {
+  return utf8.from_bytes(r.body_bytes());
+}
+
+// ---------------------------------------------------------------------------
+// Request writing — what a client may put on the wire. The parser above
+// refuses these bytes coming in; a client refuses them going out, so a
+// caller's URL or field cannot split the request it is written into.
+
+// `http_method_ok(method)` — whether `method` is a token (RFC 9110 §9.1).
+pub function http_method_ok(method: string): boolean {
+  var b: u8[] = method.bytes();
+  return __is_token(b, 0, b.len());
+}
+
+// `http_target_ok(target)` — whether `target` can stand as an origin-form
+// request-target (RFC 9112 §3.2.1): `/`, then `pchar` and `/`, then
+// optionally `?` and a query of `pchar`, `/` and `?`, every `%` followed by
+// two hex digits. A space, a control byte and a byte past ASCII all fail.
+// `%2F` passes: a client sends the target as its caller encoded it, and
+// what a decoded segment may hold is the server's rule (`__decoded_path`
+// refuses it), so the set written is wider than the set read.
+pub function http_target_ok(target: string): boolean {
+  if (target.len() == 0 || target[0] != 47 as u8) {
+    return false;
+  }
+  var q: i32 = __find_char(target, 0, target.len(), 63 as u8);
+  if (q < 0) {
+    return __query_ok(target, 0, target.len());
+  }
+  return __query_ok(target, 0, q) && __query_ok(target, q + 1, target.len());
+}
+
+// `http_field_name_ok(name)` — whether `name` is a field name, a token
+// (RFC 9110 §5.1).
+pub function http_field_name_ok(name: string): boolean {
+  var n: u8[] = name.bytes();
+  return __is_token(n, 0, n.len());
+}
+
+// `http_field_value_ok(value)` — whether `value` can be written as one
+// line: no control byte but HTAB and no DEL (RFC 9110 §5.5), the rule
+// `__field_value` reads a value by.
+pub function http_field_value_ok(value: string): boolean {
+  var i: i32 = 0;
+  while (i < value.len()) {
+    if (value[i] < 32 as u8 && value[i] != 9 as u8 || value[i] == 127 as u8) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }

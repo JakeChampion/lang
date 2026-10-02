@@ -1376,14 +1376,13 @@ pub struct X86Asm {
   fix_idx: i32[],
   // Branch relaxation state. br_long[k] pins the k-th relaxable branch
   // (jcc / jmp to a label, in emission order) to its rel32 form; br_n is
-  // the ordinal handed to the next one. x86_gas_assemble re-emits with a
-  // grow-only br_long until it stops changing, so a pass reads the
-  // PREVIOUS pass's decisions and records what this one needs.
+  // the ordinal handed to the next one. x86_gas_assemble emits once with
+  // every branch short, settles br_long on that layout, and emits again.
   // relaxing is set only on the x86_gas_assemble path. The raw encoder
   // API (x86_jcc_label and friends, used directly by drivers and the
   // encode self-tests) keeps its original contract: rel32 always, and a
   // backward branch patched on the spot. Relaxation needs the whole text
-  // and several passes, neither of which a single API call has.
+  // and two rounds, neither of which a single API call has.
   relaxing: boolean,
   br_long: boolean[],
   br_n: i32,
@@ -1408,9 +1407,14 @@ pub struct X86Asm {
   // as .eh_frame by x86_eh_frame. Offsets are final: the relaxation
   // re-emits every pass from scratch, so the last pass's are the bytes'.
   cfi: CfiState,
-  // Whether an alignment directive reached .text, whose padding then
+  // The .text alignment pads, five words each: the offset before the pad,
+  // its width this round, the alignment, the maximum skip (-1 when none) and
+  // the number of relaxable branches recorded before it. A pad's width
   // depends on every branch size before it (x86_relax_settle).
-  text_aligned: boolean,
+  pads: i32[],
+  // Pairs of a label table index and the pad it directly follows, so the
+  // label stays on the pad's far edge whatever width the pad takes.
+  pad_labels: i32[],
 }
 
 // x86_label_buckets is the bucket count of the label-name index. Prime, so
@@ -1460,7 +1464,7 @@ function x86_asm_new(): X86Asm {
 // applied to a fresh X86Asm, so nothing in the assembler ever holds a second
 // reference to the struct it is threading.
 function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
-  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: relaxing, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), text_aligned: false };
+  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: relaxing, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
 }
 
 // x86_asm_new_prepared is the state for a relaxation round over text whose
@@ -1469,7 +1473,7 @@ function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
 // -1) until the round reaches its definition.
 function x86_asm_new_prepared(labs: GasLabels, longs: boolean[]): X86Asm {
   var n: i32 = labs.names.len();
-  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), text_aligned: false };
+  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
 }
 
 // x86_filled is n copies of v.
@@ -1563,7 +1567,12 @@ function x86_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
     return x86_label(a, name);
   }
   var off: i32 = a.code.len();
-  return x86_place_label(a, idx, 0, off);
+  a = x86_place_label(a, idx, 0, off);
+  var n: i32 = a.pads.len();
+  if (n > 0 && a.pads[n - 5] + a.pads[n - 4] == off) {
+    a = X86Asm { ...a, pad_labels: a.pad_labels.append(idx).append(n / 5 - 1) };
+  }
+  return a;
 }
 
 // x86_rodata_label records `name` at the current .rodata offset (section
@@ -1746,11 +1755,8 @@ function x86_queue_fixup_at(own a: X86Asm, at: i32, width: i32, name: string, id
 }
 
 // x86_branch_long reports whether the next relaxable branch must take its
-// rel32 form, per the previous pass's decisions. An ordinal past the end is
-// a branch this pass reached and the last one did not (the first pass
-// reaches them all with no decisions at all), and starts SHORT: the fixpoint
-// only ever grows, so an optimistic start is the one that converges downward
-// onto the layout gas picks.
+// rel32 form. The first round has no decisions yet, so every branch past the
+// end of br_long starts short.
 function x86_branch_long(a: X86Asm, k: i32): boolean {
   if (k >= a.br_long.len()) {
     return false;
@@ -5996,18 +6002,30 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
     }
     return a;
   }
-  a = X86Asm { ...a, text_aligned: true };
-  var pad: i32 = (align - a.code.len() % align) % align;
+  var max: i32 = 0 - 1;
+  if (parts.len() >= 3) {
+    var ms: string = x86_gas_trim(parts[2]);
+    if (ms.len() > 0) {
+      max = x86_gas_atoi(ms);
+    }
+  }
+  var at: i32 = a.code.len();
+  var pad: i32 = x86_pad_width(at, align, max);
+  a = X86Asm { ...a, pads: a.pads.append(at).append(pad).append(align).append(max).append(a.br_n) };
   if (pad == 0) {
     return a;
   }
-  if (parts.len() >= 3) {
-    var ms: string = x86_gas_trim(parts[2]);
-    if (ms.len() > 0 && pad > x86_gas_atoi(ms)) {
-      return a;
-    }
-  }
   return X86Asm { ...a, code: x86_nop_pad(a.code, pad) };
+}
+
+// x86_pad_width is the padding that brings `at` to a multiple of `align`, or
+// none when that is more than `max` bytes (max -1: no limit).
+function x86_pad_width(at: i32, align: i32, max: i32): i32 {
+  var pad: i32 = (align - at % align) % align;
+  if (max >= 0 && pad > max) {
+    return 0;
+  }
+  return pad;
 }
 
 // x86_gas_comment_start returns the index of the `#` that begins a comment,
@@ -6056,15 +6074,11 @@ function x86_gas_comment_start(line: string): i32 {
 // x86_gas_assemble assembles GAS (AT&T) text, relaxing branches to their
 // rel8 form wherever the final layout allows it (#7949).
 //
-// The relaxation is a RE-EMIT to a fixpoint rather than a layout-and-remap:
-// each pass assembles the whole text with the previous pass's branch-size
-// decisions, so every label offset and every fixup is computed fresh and
-// there is nothing to remap. Decisions only ever go short -> long, so the
-// loop is monotone and terminates, and starting all-short lands on the
-// minimal fixpoint — the layout GNU as picks.
-//
-// A pass whose decisions match the one before it is final: nothing moved, so
-// every displacement it computed is the one the bytes will carry.
+// The first round emits every relaxable branch short; x86_relax_settle works
+// out from its layout which must be long, the way GNU as would, and a second
+// round assembles with those decisions, so every label offset and fixup is
+// computed fresh and there is nothing to remap. A text whose branches all
+// stay short is final after the first round.
 pub function x86_gas_assemble(src: string): X86Asm {
   // Parsed ONCE, not per round. The source does not change between
   // relaxation rounds, so splitting and re-parsing it each round bought
@@ -6077,101 +6091,98 @@ pub function x86_gas_assemble(src: string): X86Asm {
   // than hashing the name again in each round.
   var labs: GasLabels = x86_gas_label_table(pl);
   pl = x86_gas_link_labels(pl, labs);
-  var longs: boolean[] = [];
-  var a: X86Asm = x86_gas_assemble_pass_prepared(pl, labs, longs);
-  var pass: i32 = 1;
-  // Each round pins at least one more branch long, so the branch count
-  // bounds the rounds; the cap is a backstop, and falling out of it keeps
-  // every branch long, which is always correct if larger.
-  while (pass <= 24) {
-    var next: boolean[] = x86_relax_grow(a, longs);
-    if (!x86_bools_differ(next, longs)) {
-      return a;
-    }
-    if (pass == 1 && !a.text_aligned) {
-      next = x86_relax_settle(a);
-    }
-    longs = next;
-    a = x86_gas_assemble_pass_prepared(pl, labs, longs);
-    pass = pass + 1;
+  var a: X86Asm = x86_gas_assemble_pass_prepared(pl, labs, []);
+  var longs: boolean[] = x86_relax_settle(a);
+  if (!x86_bools_any(longs)) {
+    return a;
   }
-  return x86_gas_assemble_pass_prepared(pl, labs, x86_bools_all_true(longs.len()));
+  a = x86_gas_assemble_pass_prepared(pl, labs, longs);
+  if (x86_bools_differ(x86_relax_grow(a, longs), longs)) {
+    return X86Asm { ...a, unknown: a.unknown.append("internal: branch relaxation did not settle") };
+  }
+  return a;
 }
 
-// x86_relax_settle finds the relaxation fixpoint from the first round's
-// offsets rather than by assembling a round per step. That round emitted every
-// relaxable branch short, and with no alignment in .text nothing else there
-// changes size between rounds, so a .text offset moves by exactly the growth
-// of the branches before it: 3 bytes for a jmp (EB to E9), 4 for a jcc (7x
-// to 0F 8x). Each step is x86_relax_grow's test on those moved offsets, so the
-// decisions are the ones the round-by-round loop would reach, and the round
-// assembled with them confirms it.
-function x86_relax_settle(a: X86Asm): boolean[] {
-  var n: i32 = a.br_offs.len();
-  var growth: i32[] = [];
-  var targets: i32[] = [];
-  var longs: boolean[] = [];
+// The first round's .text layout as relaxation sees it: its relaxable
+// branches and alignment pads in emission order (`ev`: branch k as k, pad p
+// as -(p + 1)), each with its offset and size in that round, and each
+// branch's growth to its rel32 form: 3 bytes for a jmp (EB to E9), 4 for a
+// jcc (7x to 0F 8x).
+struct RelaxLayout { ev: i32[], start: i32[], size: i32[], grow: i32[], pads_before: i32[] }
+
+function x86_relax_layout(a: X86Asm): RelaxLayout {
+  var nb: i32 = a.br_offs.len();
+  var np: i32 = a.pads.len() / 5;
+  var l: RelaxLayout = RelaxLayout { ev: [], start: [], size: [], grow: [], pads_before: [0] };
   var k: i32 = 0;
-  while (k < n) {
-    var g: i32 = 0;
-    if (a.br_shorts[k]) {
-      g = 4;
+  var p: i32 = 0;
+  var pads: i32 = 0;
+  while (k < nb || p < np) {
+    if (p < np && (k >= nb || a.pads[p * 5 + 4] <= k)) {
+      l = RelaxLayout { ...l, ev: l.ev.append(0 - (p + 1)), start: l.start.append(a.pads[p * 5]), size: l.size.append(a.pads[p * 5 + 1]) };
+      pads = pads + 1;
+      p = p + 1;
+    } else {
+      var g: i32 = 4;
       if (a.code[a.br_offs[k] - 1] == 235) {
         g = 3;
       }
-    }
-    growth = growth.append(g);
-    targets = targets.append(x86_label_target(a, a.br_names[k], a.br_idx[k]));
-    longs = longs.append(!a.br_shorts[k]);
-    k = k + 1;
-  }
-  while (true) {
-    // shift[k] is what the long branches before branch k add to its offset.
-    var shift: i32[] = [];
-    var acc: i32 = 0;
-    k = 0;
-    while (k < n) {
-      shift = shift.append(acc);
-      if (longs[k] && a.br_shorts[k]) {
-        acc = acc + growth[k];
-      }
+      l = RelaxLayout { ...l, ev: l.ev.append(k), start: l.start.append(a.br_offs[k] - 1), size: l.size.append(2) };
+      l = RelaxLayout { ...l, grow: l.grow.append(g) };
       k = k + 1;
     }
-    shift = shift.append(acc);
-    var next: boolean[] = [];
-    var moved: boolean = false;
-    k = 0;
-    while (k < n) {
-      var pinned: boolean = longs[k];
-      if (!pinned) {
-        if (targets[k] < 0) {
-          pinned = true;
-        } else {
-          var target: i32 = targets[k] + shift[x86_branches_before(a.br_offs, targets[k])];
-          var rel: i32 = target - (a.br_offs[k] + shift[k] + 1);
-          pinned = rel < 0 - 128 || rel > 127;
-        }
-      }
-      moved = moved || pinned != longs[k];
-      next = next.append(pinned);
-      k = k + 1;
-    }
-    if (!moved) {
-      return longs;
-    }
-    longs = next;
+    l = RelaxLayout { ...l, pads_before: l.pads_before.append(pads) };
   }
-  return longs;
+  return l;
 }
 
-// x86_branches_before counts the branches whose displacement ends at or before
-// `off`, the ones whose growth moves it; `offs` ascends, as a round emits them.
-function x86_branches_before(offs: i32[], off: i32): i32 {
+// Where each branch's target stands in the first round: its offset (-1 when
+// it is not a .text label, which keeps the branch long), the number of events
+// before it, and the pad it is bound to (-1 when none, else the pad's event).
+struct RelaxTargets { off: i32[], before: i32[], pad: i32[] }
+
+function x86_relax_targets(a: X86Asm, l: RelaxLayout): RelaxTargets {
+  var t: RelaxTargets = RelaxTargets { off: [], before: [], pad: [] };
+  var k: i32 = 0;
+  while (k < a.br_offs.len()) {
+    var idx: i32 = a.br_idx[k];
+    if (idx < 0) {
+      idx = x86_label_idx(a, a.br_names[k]);
+    }
+    var off: i32 = x86_label_target(a, a.br_names[k], a.br_idx[k]);
+    var bound: i32 = 0 - 1;
+    var j: i32 = 0;
+    while (idx >= 0 && j < a.pad_labels.len()) {
+      if (a.pad_labels[j] == idx) {
+        bound = x86_index_of(l.ev, 0 - (a.pad_labels[j + 1] + 1));
+      }
+      j = j + 2;
+    }
+    t = RelaxTargets { off: t.off.append(off), before: t.before.append(x86_events_before(l.start, off)), pad: t.pad.append(bound) };
+    k = k + 1;
+  }
+  return t;
+}
+
+function x86_index_of(xs: i32[], v: i32): i32 {
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (xs[i] == v) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// x86_events_before counts the events that start before `off`, the ones that
+// can move it; `starts` ascends, as a round records them.
+function x86_events_before(starts: i32[], off: i32): i32 {
   var lo: i32 = 0;
-  var hi: i32 = offs.len();
+  var hi: i32 = starts.len();
   while (lo < hi) {
     var mid: i32 = (lo + hi) / 2;
-    if (offs[mid] + 1 <= off) {
+    if (starts[mid] < off) {
       lo = mid + 1;
     } else {
       hi = mid;
@@ -6180,9 +6191,153 @@ function x86_branches_before(offs: i32[], off: i32): i32 {
   return lo;
 }
 
-// x86_relax_grow returns the next round's decisions: every branch this pass
-// emitted SHORT whose displacement does not fit rel8 becomes long. Already-long
-// branches stay long, which is what makes the sequence monotone.
+// One relaxation pass's state: each event's planned start and size, the
+// growth up to and including each event this pass (`prefix`) and the last
+// pass's (`before`), and each branch's form.
+struct RelaxPass { new_start: i32[], new_size: i32[], prefix: i32[], before: i32[], short: boolean[] }
+
+// x86_relax_settle finds the branch decisions from the first round's layout
+// rather than by assembling a round per step, settling sizes the way GNU as
+// does (internal/native/x86_64/relax.go): passes over the events in offset
+// order, each branch judged against the layout as it stands mid-pass. A
+// target behind the branch sits at this pass's position; one ahead at the
+// last pass's position plus the growth so far, except across a pad, which
+// absorbs it (gas's regions). A pad is re-measured at the offset the pass has
+// reached. Growth is monotone, so the passes are bounded by the event count;
+// failing to settle within it leaves every branch long, which is correct if
+// larger.
+function x86_relax_settle(a: X86Asm): boolean[] {
+  var l: RelaxLayout = x86_relax_layout(a);
+  var t: RelaxTargets = x86_relax_targets(a, l);
+  var n: i32 = l.ev.len();
+  var st: RelaxPass = RelaxPass { new_start: [], new_size: [], prefix: [], before: [], short: [] };
+  var k: i32 = 0;
+  while (k < a.br_offs.len()) {
+    st = RelaxPass { ...st, short: st.short.append(t.off[k] >= 0) };
+    k = k + 1;
+  }
+  var laid: RelaxStep = x86_relax_pass(a, l, t, st, false);
+  st = laid.st;
+  var iter: i32 = 0;
+  while (iter < n + 2) {
+    st = RelaxPass { ...st, before: x86_ints_copy(st.prefix) };
+    var r: RelaxStep = x86_relax_pass(a, l, t, st, true);
+    st = r.st;
+    if (!r.changed) {
+      var longs: boolean[] = [];
+      k = 0;
+      while (k < st.short.len()) {
+        longs = longs.append(!st.short[k]);
+        k = k + 1;
+      }
+      return longs;
+    }
+    iter = iter + 1;
+  }
+  return x86_bools_all_true(a.br_offs.len());
+}
+
+struct RelaxStep { st: RelaxPass, changed: boolean }
+
+// x86_relax_pass lays the events out once under the current forms; with
+// `judge` it also pins long every short branch whose target is out of rel8
+// reach as the pass sees it.
+function x86_relax_pass(a: X86Asm, l: RelaxLayout, t: RelaxTargets, own st: RelaxPass, judge: boolean): RelaxStep {
+  var cum: i32 = 0;
+  var changed: boolean = false;
+  var i: i32 = 0;
+  while (i < l.ev.len()) {
+    var at: i32 = l.start[i] + cum;
+    var size: i32 = 0;
+    var e: i32 = l.ev[i];
+    if (e < 0) {
+      var p: i32 = 0 - e - 1;
+      size = x86_pad_width(at, a.pads[p * 5 + 2], a.pads[p * 5 + 3]);
+    } else {
+      size = 2;
+      if (st.short[e] && judge) {
+        var disp: i32 = x86_relax_seen(l, t, st, e, i, cum) - (at + 2);
+        if (disp < 0 - 128 || disp > 127) {
+          st = RelaxPass { ...st, short: st.short.with(e, false) };
+          changed = true;
+        }
+      }
+      if (!st.short[e]) {
+        size = 2 + l.grow[e];
+      }
+    }
+    st = RelaxPass { ...st, new_start: x86_put(st.new_start, i, at), new_size: x86_put(st.new_size, i, size) };
+    cum = cum + size - l.size[i];
+    st = RelaxPass { ...st, prefix: x86_put(st.prefix, i, cum) };
+    i = i + 1;
+  }
+  return RelaxStep { st: st, changed: changed };
+}
+
+// x86_relax_seen is where branch k's target stands as event i sees it
+// mid-pass, with `cum` the growth so far: a position this pass has already
+// laid out, or the last pass's position moved by the growth that reaches it.
+function x86_relax_seen(l: RelaxLayout, t: RelaxTargets, st: RelaxPass, k: i32, i: i32, cum: i32): i32 {
+  var stretch: i32 = cum;
+  if (i > 0) {
+    stretch = stretch - st.before[i - 1];
+  }
+  var b: i32 = t.pad[k];
+  if (b >= 0) {
+    var edge: i32 = st.new_start[b] + st.new_size[b];
+    if (b >= i) {
+      edge = edge + x86_relax_carried(l, stretch, b + 1, i);
+    }
+    return edge;
+  }
+  var off: i32 = t.off[k];
+  var j: i32 = t.before[k];
+  if (j == 0) {
+    return off;
+  }
+  if (j - 1 < i) {
+    return off + st.prefix[j - 1];
+  }
+  return off + st.before[j - 1] + x86_relax_carried(l, stretch, j, i);
+}
+
+// Growth carries to a position past the pass's current event only when no pad
+// lies between them; shrinkage, which only a pad produces, always carries.
+function x86_relax_carried(l: RelaxLayout, stretch: i32, j: i32, i: i32): i32 {
+  if (stretch < 0 || l.pads_before[j] == l.pads_before[i]) {
+    return stretch;
+  }
+  return 0;
+}
+
+// x86_put sets xs[i] to v, appending when i is the next index.
+function x86_put(own xs: i32[], i: i32, v: i32): i32[] {
+  if (i < xs.len()) {
+    return xs.with(i, v);
+  }
+  return xs.append(v);
+}
+
+function x86_ints_copy(xs: i32[]): i32[] {
+  var out: i32[] = [];
+  for x in xs {
+    out = out.append(x);
+  }
+  return out;
+}
+
+function x86_bools_any(xs: boolean[]): boolean {
+  for x in xs {
+    if (x) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// x86_relax_grow is the decisions a round's own layout asks for: every branch
+// it emitted short whose displacement does not fit rel8 is long, and a long
+// one stays long. A settled round asks for the decisions it was assembled with.
 function x86_relax_grow(a: X86Asm, longs: boolean[]): boolean[] {
   var out: boolean[] = [];
   var k: i32 = 0;
@@ -6476,36 +6631,60 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
   return pl;
 }
 
-// x86_gas_classify decides which arm of x86_gas_emit_op an instruction
-// takes, trying the arms in the order the emit once tried them inline, and
-// carries what the arm reads: the table value, the suffix, the stripped base
-// and the split operands. Everything here is a function of the text, so a
-// round never repeats it.
-function x86_gas_classify(mnem: string, rest: string): GasLine {
-  var l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
-  if (mnem == "vzeroupper" && rest.len() == 0) {
-    return GasLine { ...l, kind: GK_VZEROUPPER };
-  }
-  if (mnem == "vpcmpeqb") {
-    return GasLine { ...l, kind: GK_VPCMPEQB };
-  }
-  if (rest.len() == 0) {
-    var fx: i32 = x86_gas_fixed_op(mnem);
-    if (fx >= 0) {
-      return GasLine { ...l, kind: GK_FIXED, ext: fx };
+// MnemIndex is the distinct mnemonics x86_gas_prepare has met, chained
+// through the label-name buckets so a line finds its mnemonic's verdict
+// without redoing the classification.
+struct MnemIndex { names: string[], head: i32[], next: i32[] }
+
+// x86_mnem_lookup is the index of `mnem` in `ix`, or -1.
+function x86_mnem_lookup(ix: MnemIndex, mnem: string): i32 {
+  var i: i32 = ix.head[x86_name_bucket(mnem)];
+  while (i >= 0) {
+    if (ix.names[i] == mnem) {
+      return i;
     }
+    i = ix.next[i];
+  }
+  return 0 - 1;
+}
+
+// x86_mnem_added is `ix` with `mnem`, which it does not hold, appended at
+// the head of its bucket chain.
+function x86_mnem_added(ix: MnemIndex, mnem: string): MnemIndex {
+  var b: i32 = x86_name_bucket(mnem);
+  var at: i32 = ix.names.len();
+  return MnemIndex { names: ix.names.append(mnem), head: ix.head.with(b, at), next: ix.next.append(ix.head[b]) };
+}
+
+// MnemVerdict is what x86_gas_classify decides from the mnemonic alone, in
+// the order its tests run: `a` is the arm the tests before the operand split
+// select, with the suffix width as it stood when that arm returned, `b` the
+// arm the tests after the split select and `c` the arm the last tests select,
+// GK_NONE where none did. `vz` and `fixed` are the two early tests that also
+// need an empty operand text, `vshift` the one that also reads the source
+// operand, and `sfx` the suffix width the later arms keep. A mnemonic's
+// verdict is the same on every line that uses it, so x86_gas_prepare decides
+// it once per distinct mnemonic.
+struct MnemVerdict { vz: boolean, fixed: i32, a_kind: i32, a_ext: i32, a_sfx: i32, sfx: i32, b_kind: i32, b_ext: i32, vshift: i32, c_kind: i32, c_ext: i32 }
+
+// x86_gas_mnem_verdict runs the mnemonic-only tests of the classification,
+// in the order x86_gas_emit_op once tried its arms inline.
+function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
+  var v: MnemVerdict = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: 0 - 1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: 0 - 1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: 0 - 1 };
+  if (mnem == "vpcmpeqb") {
+    return MnemVerdict { ...v, a_kind: GK_VPCMPEQB };
   }
   var rpfx: i32 = x86_gas_rep_pfx(mnem);
   if (rpfx >= 0) {
-    return GasLine { ...l, kind: GK_REP, ext: rpfx };
+    return MnemVerdict { ...v, a_kind: GK_REP, a_ext: rpfx };
   }
   if (x86_gas_is_lock(mnem)) {
-    return GasLine { ...l, kind: GK_LOCK };
+    return MnemVerdict { ...v, a_kind: GK_LOCK };
   }
   if (x86_str_starts_with(mnem, "set")) {
     var scc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()) + "");
     if (scc >= 0) {
-      return GasLine { ...l, kind: GK_SETCC, ext: scc };
+      return MnemVerdict { ...v, a_kind: GK_SETCC, a_ext: scc };
     }
   }
   if (x86_gas_is_branch(mnem)) {
@@ -6513,55 +6692,173 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
     if (mnem == "jmp") {  // jmp FF /4
       bext = 4;
     }
-    return GasLine { ...l, kind: GK_BRANCH, ext: bext };
+    return MnemVerdict { ...v, a_kind: GK_BRANCH, a_ext: bext };
   }
   if (x86_str_starts_with(mnem, "j")) {
     var jcc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
     if (jcc >= 0) {
-      return GasLine { ...l, kind: GK_JCC, ext: jcc };
+      return MnemVerdict { ...v, a_kind: GK_JCC, a_ext: jcc };
     }
   }
   if (x86_gas_is_pushpop(mnem) && mnem == "pushq") {
-    return GasLine { ...l, kind: GK_PUSHQ };
+    return MnemVerdict { ...v, a_kind: GK_PUSHQ };
   }
   if (x86_gas_is_pushpop(mnem)) {
-    return GasLine { ...l, kind: GK_POPQ };
+    return MnemVerdict { ...v, a_kind: GK_POPQ };
   }
   var sfx: i32 = x86_gas_suffix_size(mnem);
-  l = GasLine { ...l, sfx: sfx };
+  v = MnemVerdict { ...v, a_sfx: sfx, sfx: sfx };
   // The mnemonic without its suffix letter, "" when sfx is 0: the arms
   // below key on it, and nothing after classification does.
   var bse: string = "";
   if (sfx > 0) {
     bse = x86_gas_strip_suffix(mnem);
     if (x86_gas_is_imul(bse)) {
-      return GasLine { ...l, kind: GK_IMUL };
+      return MnemVerdict { ...v, a_kind: GK_IMUL };
     }
     var ue: i32 = x86_gas_unary_ext(bse);
     if (ue >= 0) {
-      return GasLine { ...l, kind: GK_UNARY, ext: ue };
+      return MnemVerdict { ...v, a_kind: GK_UNARY, a_ext: ue };
     }
     var ide: i32 = x86_gas_incdec_ext(bse);
     if (ide >= 0) {
-      return GasLine { ...l, kind: GK_INCDEC, ext: ide };
+      return MnemVerdict { ...v, a_kind: GK_INCDEC, a_ext: ide };
     }
     if (x86_gas_is_bswap(bse)) {
-      return GasLine { ...l, kind: GK_BSWAP };
+      return MnemVerdict { ...v, a_kind: GK_BSWAP };
     }
     var sho: i32 = x86_gas_shld_op(bse);
     if (sho >= 0) {
-      return GasLine { ...l, kind: GK_SHLD, ext: sho };
+      return MnemVerdict { ...v, a_kind: GK_SHLD, a_ext: sho };
     }
   }
   if (x86_gas_imm3a_op(mnem) >= 0 || x86_gas_shuf_op(mnem) >= 0) {
-    return GasLine { ...l, kind: GK_SSE_IMM3 };
+    return MnemVerdict { ...v, a_kind: GK_SSE_IMM3 };
   }
   if (x86_gas_is_pextr(mnem)) {
-    return GasLine { ...l, kind: GK_PEXTR };
+    return MnemVerdict { ...v, a_kind: GK_PEXTR };
   }
   if (x86_gas_is_pinsr(mnem)) {
-    return GasLine { ...l, kind: GK_PINSR };
+    return MnemVerdict { ...v, a_kind: GK_PINSR };
   }
+  var lsz: i32 = x86_gas_lea_size(mnem);
+  if (lsz >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_LEA, b_ext: lsz };
+  }
+  var msz: i32 = x86_gas_mov_size(mnem);
+  if (msz == 64) {
+    return MnemVerdict { ...v, b_kind: GK_MOVQ };
+  }
+  if (msz >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_MOV, b_ext: msz };
+  }
+  if (x86_gas_is_movabs(mnem)) {
+    return MnemVerdict { ...v, b_kind: GK_MOVABS };
+  }
+  if (x86_gas_is_vex_two(mnem)) {
+    return MnemVerdict { ...v, b_kind: GK_VEX_TWO };
+  }
+  if (x86_gas_movdq_pfx(mnem) >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_MOVDQ };
+  }
+  var m10: i32 = x86_gas_mov10_pfx(mnem);
+  if (m10 >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_MOV10, b_ext: m10 };
+  }
+  var mmk: i32 = x86_gas_movmsk_op(mnem);
+  if (mmk >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_MOVMSK, b_ext: mmk };
+  }
+  var bsc: i32 = x86_gas_bitscan_op(mnem);
+  if (bsc >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_BITSCAN, b_ext: bsc };
+  }
+  if (x86_gas_is_movqd(mnem)) {
+    return MnemVerdict { ...v, b_kind: GK_MOVQD };
+  }
+  var mx: i32 = x86_gas_extend_op(mnem);
+  if (mx >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_MOVEXT, b_ext: mx };
+  }
+  var f2i: i32 = x86_gas_cvt2si(mnem);
+  if (f2i >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_CVT2SI, b_ext: f2i };
+  }
+  var c2s: i32 = x86_gas_cvt2s_op(mnem);
+  if (c2s >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_CVT2S, b_ext: c2s };
+  }
+  if (sfx > 0) {
+    var ae: i32 = x86_gas_alu_ext(bse);
+    if (ae >= 0) {
+      return MnemVerdict { ...v, b_kind: GK_ALU, b_ext: ae };
+    }
+    if (x86_gas_is_test(bse)) {
+      return MnemVerdict { ...v, b_kind: GK_TEST };
+    }
+    var she: i32 = x86_gas_shift_ext(bse);
+    if (she >= 0) {
+      return MnemVerdict { ...v, b_kind: GK_SHIFT, b_ext: she };
+    }
+    var bti: i32 = x86_gas_bt_idx(bse);
+    if (bti >= 0) {
+      return MnemVerdict { ...v, b_kind: GK_BT, b_ext: bti };
+    }
+    var rmw: i32 = x86_gas_rmw_op(bse);
+    if (rmw >= 0) {
+      return MnemVerdict { ...v, b_kind: GK_RMW, b_ext: rmw };
+    }
+    if (x86_gas_is_xchg(bse)) {
+      return MnemVerdict { ...v, b_kind: GK_XCHG };
+    }
+    if (x86_gas_is_crc32(bse)) {
+      return MnemVerdict { ...v, b_kind: GK_CRC32 };
+    }
+  }
+  if (x86_str_starts_with(mnem, "cmov")) {
+    return MnemVerdict { ...v, b_kind: GK_CMOV };
+  }
+  var sse: i32 = x86_gas_sse_op(mnem);
+  if (sse >= 0) {
+    return MnemVerdict { ...v, c_kind: GK_SSE, c_ext: sse };
+  }
+  var s38: i32 = x86_gas_sse38_op(mnem);
+  if (s38 >= 0) {
+    return MnemVerdict { ...v, c_kind: GK_SSE38, c_ext: s38 };
+  }
+  if (x86_gas_is_movsxd(mnem)) {
+    return MnemVerdict { ...v, c_kind: GK_MOVSXD };
+  }
+  return v;
+}
+
+// x86_gas_classify decides which arm of x86_gas_emit_op an instruction
+// takes and carries what the arm reads: the table value, the suffix and the
+// split operands. Everything here is a function of the text, so a round never
+// repeats it; x86_gas_prepare goes through x86_gas_classify_with so the
+// mnemonic's share is decided once per distinct mnemonic.
+function x86_gas_classify(mnem: string, rest: string): GasLine {
+  return x86_gas_classify_with(x86_gas_mnem_verdict(mnem), mnem, rest);
+}
+
+// x86_gas_classify_with is the classification of one line from its
+// mnemonic's verdict and its operand text: the verdict's arms in their order,
+// with the tests that read the operands between them where they stand.
+function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasLine {
+  var l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
+  if (v.vz && rest.len() == 0) {
+    return GasLine { ...l, kind: GK_VZEROUPPER };
+  }
+  if (v.a_kind == GK_VPCMPEQB) {
+    return GasLine { ...l, kind: GK_VPCMPEQB };
+  }
+  if (rest.len() == 0 && v.fixed >= 0) {
+    return GasLine { ...l, kind: GK_FIXED, ext: v.fixed };
+  }
+  if (v.a_kind != GK_NONE) {
+    return GasLine { ...l, kind: v.a_kind, ext: v.a_ext, sfx: v.a_sfx };
+  }
+  l = GasLine { ...l, sfx: v.sfx };
   var ci: i32 = x86_gas_top_comma(rest);
   if (ci < 0) {
     return GasLine { ...l, kind: GK_UNKNOWN1 };
@@ -6569,97 +6866,14 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
   var src: string = x86_gas_trim(slice_unchecked(rest, 0, ci));
   var dst: string = x86_gas_trim(slice_unchecked(rest, ci + 1, rest.len()));
   l = GasLine { ...l, src: src, dst: dst };
-  var lsz: i32 = x86_gas_lea_size(mnem);
-  if (lsz >= 0) {
-    return GasLine { ...l, kind: GK_LEA, ext: lsz };
+  if (v.b_kind != GK_NONE) {
+    return GasLine { ...l, kind: v.b_kind, ext: v.b_ext };
   }
-  var msz: i32 = x86_gas_mov_size(mnem);
-  if (msz == 64) {
-    return GasLine { ...l, kind: GK_MOVQ };
+  if (v.vshift >= 0 && src.len() > 0 && src[0] == b'$') {
+    return GasLine { ...l, kind: GK_VSHIFT, ext: v.vshift };
   }
-  if (msz >= 0) {
-    return GasLine { ...l, kind: GK_MOV, ext: msz };
-  }
-  if (x86_gas_is_movabs(mnem)) {
-    return GasLine { ...l, kind: GK_MOVABS };
-  }
-  if (x86_gas_is_vex_two(mnem)) {
-    return GasLine { ...l, kind: GK_VEX_TWO };
-  }
-  if (x86_gas_movdq_pfx(mnem) >= 0) {
-    return GasLine { ...l, kind: GK_MOVDQ };
-  }
-  var m10: i32 = x86_gas_mov10_pfx(mnem);
-  if (m10 >= 0) {
-    return GasLine { ...l, kind: GK_MOV10, ext: m10 };
-  }
-  var mmk: i32 = x86_gas_movmsk_op(mnem);
-  if (mmk >= 0) {
-    return GasLine { ...l, kind: GK_MOVMSK, ext: mmk };
-  }
-  var bsc: i32 = x86_gas_bitscan_op(mnem);
-  if (bsc >= 0) {
-    return GasLine { ...l, kind: GK_BITSCAN, ext: bsc };
-  }
-  if (x86_gas_is_movqd(mnem)) {
-    return GasLine { ...l, kind: GK_MOVQD };
-  }
-  var mx: i32 = x86_gas_extend_op(mnem);
-  if (mx >= 0) {
-    return GasLine { ...l, kind: GK_MOVEXT, ext: mx };
-  }
-  var f2i: i32 = x86_gas_cvt2si(mnem);
-  if (f2i >= 0) {
-    return GasLine { ...l, kind: GK_CVT2SI, ext: f2i };
-  }
-  var c2s: i32 = x86_gas_cvt2s_op(mnem);
-  if (c2s >= 0) {
-    return GasLine { ...l, kind: GK_CVT2S, ext: c2s };
-  }
-  if (sfx > 0) {
-    var ae: i32 = x86_gas_alu_ext(bse);
-    if (ae >= 0) {
-      return GasLine { ...l, kind: GK_ALU, ext: ae };
-    }
-    if (x86_gas_is_test(bse)) {
-      return GasLine { ...l, kind: GK_TEST };
-    }
-    var she: i32 = x86_gas_shift_ext(bse);
-    if (she >= 0) {
-      return GasLine { ...l, kind: GK_SHIFT, ext: she };
-    }
-    var bti: i32 = x86_gas_bt_idx(bse);
-    if (bti >= 0) {
-      return GasLine { ...l, kind: GK_BT, ext: bti };
-    }
-    var rmw: i32 = x86_gas_rmw_op(bse);
-    if (rmw >= 0) {
-      return GasLine { ...l, kind: GK_RMW, ext: rmw };
-    }
-    if (x86_gas_is_xchg(bse)) {
-      return GasLine { ...l, kind: GK_XCHG };
-    }
-    if (x86_gas_is_crc32(bse)) {
-      return GasLine { ...l, kind: GK_CRC32 };
-    }
-  }
-  if (x86_str_starts_with(mnem, "cmov")) {
-    return GasLine { ...l, kind: GK_CMOV };
-  }
-  var vsp: i32 = x86_gas_vshift_op(mnem);
-  if (vsp >= 0 && src.len() > 0 && src[0] == b'$') {
-    return GasLine { ...l, kind: GK_VSHIFT, ext: vsp };
-  }
-  var sse: i32 = x86_gas_sse_op(mnem);
-  if (sse >= 0) {
-    return GasLine { ...l, kind: GK_SSE, ext: sse };
-  }
-  var s38: i32 = x86_gas_sse38_op(mnem);
-  if (s38 >= 0) {
-    return GasLine { ...l, kind: GK_SSE38, ext: s38 };
-  }
-  if (x86_gas_is_movsxd(mnem)) {
-    return GasLine { ...l, kind: GK_MOVSXD };
+  if (v.c_kind != GK_NONE) {
+    return GasLine { ...l, kind: v.c_kind, ext: v.c_ext };
   }
   return l;
 }
@@ -6669,6 +6883,10 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
 // comment-only lines are dropped here, so no round ever sees one.
 function x86_gas_prepare(src: string): GasLine[] {
   var out: GasLine[] = [];
+  // A mnemonic's verdict is decided once: `seen` indexes the distinct
+  // mnemonics met so far and `verdicts` holds theirs in the same order.
+  var seen: MnemIndex = MnemIndex { names: [], head: x86_empty_buckets(), next: [] };
+  var verdicts: MnemVerdict[] = [];
   // Each line is read as a view of the text, its comment stripped and its
   // ends trimmed by index, and copied once. The text is scanned for `\n`
   // with __memchr rather than split into a second copy of every line.
@@ -6718,7 +6936,13 @@ function x86_gas_prepare(src: string): GasLine[] {
     if (mnem.len() == 0) {
       out = out.append(GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 });
     } else {
-      out = out.append(GasLine { ...x86_gas_classify(mnem, rest), label: label, body: line });
+      var mi: i32 = x86_mnem_lookup(seen, mnem);
+      if (mi < 0) {
+        mi = seen.names.len();
+        seen = x86_mnem_added(seen, mnem);
+        verdicts = verdicts.append(x86_gas_mnem_verdict(mnem));
+      }
+      out = out.append(GasLine { ...x86_gas_classify_with(verdicts[mi], mnem, rest), label: label, body: line });
     }
   }
   return out;

@@ -793,10 +793,20 @@ func buildTcpRecvBody(idxs map[string]uint32) []byte {
 //	8: $off       — bytes-written-so-far cursor
 //	9: $chunk     — bytes to write this iteration (≤ 4096)
 func buildTcpSendBody(idxs map[string]uint32) []byte {
+	return buildTcpSendSpanBody(idxs, false)
+}
+
+func buildTcpSendBytesBody(idxs map[string]uint32) []byte {
+	return buildTcpSendSpanBody(idxs, true)
+}
+
+func buildTcpSendSpanBody(idxs map[string]uint32, raw bool) []byte {
 	alloc := idxs["__fern_alloc"]
 	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
 	reclaim := func(body []byte) []byte {
-		body = emitStrNormalizeFree(body, idxs, 2, 5, 6)
+		if !raw {
+			body = emitStrNormalizeFree(body, idxs, 2, 5, 6)
+		}
 		body = inst.InstLocalGet(body, 4)
 		body = inst.InstI32Const(body, 12)
 		return inst.InstCall(body, idxs["__free"])
@@ -816,7 +826,17 @@ func buildTcpSendBody(idxs map[string]uint32) []byte {
 	// data_len set) pack their bytes into the (data_data,
 	// data_len) bit pattern itself; that's not a memory
 	// address so blocking-write-and-flush would read garbage.
-	body = emitStrNormalize(body, idxs, 1, 2, 5, 6, 7)
+	if raw {
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalSet(body, 5)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 6)
+	} else {
+		body = emitStrNormalize(body, idxs, 1, 2, 5, 6, 7)
+	}
 
 	// result<_, stream-error>: outer tag at 0, error tag at 4 and
 	// last-operation-failed's owned error handle at 8.
@@ -866,6 +886,13 @@ func buildTcpSendBody(idxs map[string]uint32) []byte {
 		{
 			body = emitStreamErrorDrop(body, idxs, 4)
 			body = reclaim(body)
+			if raw {
+				body = inst.InstLocalGet(body, 8)
+				body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+				body = inst.InstLocalGet(body, 8)
+				body = inst.InstReturn(body)
+				body = inst.InstEnd(body)
+			}
 			body = inst.InstI32Const(body, -1)
 			body = inst.InstReturn(body)
 		}
@@ -887,7 +914,11 @@ func buildTcpSendBody(idxs map[string]uint32) []byte {
 	body = reclaim(body)
 
 	// 7 i32 locals after the 3 params.
-	locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32)
+	nlocals := uint32(7)
+	if raw {
+		nlocals++ // preserve local indices with one fewer parameter
+	}
+	locals := inst.PutLocalsOneGroup(nil, nlocals, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

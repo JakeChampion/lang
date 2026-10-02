@@ -1468,6 +1468,10 @@ function __fern_tcp_send(fd: i32, s: string): i32 {
   return __send_str(fd, s, 0 as usize, 0);
 }
 
+function __fern_tcp_send_bytes(fd: i32, data: u8[]): i32 {
+  return __sendto_bytes(fd, data as usize, data.len(), 0 as usize, 0);
+}
+
 // __fern_tcp_sendfile(fd, file, max) moves up to max bytes from the file
 // at its current position to the socket without a copy through user
 // space: the bytes sent (0 at the file's end), or -errno (-EAGAIN when a

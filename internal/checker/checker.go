@@ -2184,6 +2184,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.NumberType{}, ast.StringType{}},
 		Result: ast.NumberType{},
 	}
+	c.info.FuncSigs["tcp_send_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.NumberType{},
+	}
 	c.info.FuncSigs["tcp_close"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},

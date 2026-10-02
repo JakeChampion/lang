@@ -4411,6 +4411,7 @@ function builtin_sigs(): string[] {
     "tcp_pollable(i32): i32",
     "tcp_recv(i32, i32): u8[]",
     "tcp_send(i32, string): i32",
+    "tcp_send_bytes(i32, u8[]): i32",
     "tcp_socket_ctl(i32, i32, i32): i32",
     "tcp_sendfile(i32, i32, i32): i32",
     "temp_dir(string): Result[string, IoError]",
@@ -4448,7 +4449,7 @@ function builtin_sigs(): string[] {
 pub function builtin_sig(name: string): typeinfo.Type {
   var head: string = name + "(";
   for row in builtin_sigs() {
-    if (row.len() > head.len() && slice_unchecked(row, 0, head.len()) == head) {
+    if (row.len() > head.len() && util.has_prefix(row, head)) {
       var close: i32 = util.index_of_sub(row, "): ");
       var inner: string = slice_unchecked(row, head.len(), close) + "";
       var params: typeinfo.Type[] = [];
@@ -12035,7 +12036,7 @@ function tp_receiver(obj: ast.Expr, recv: typeinfo.Type, s: Scope): string {
   match (recv) {
     typeinfo.TypeUnknown(u) => {
       var prefix: string = "type parameter ";
-      if (u.reason.len() > prefix.len() && slice_unchecked(u.reason, 0, prefix.len()) == prefix) {
+      if (u.reason.len() > prefix.len() && util.has_prefix(u.reason, prefix)) {
         var tp: string = slice_unchecked(u.reason, prefix.len(), u.reason.len()) + "";
         if (util.index_of_str(s.tparams, tp) >= 0) {
           return tp;
@@ -14738,7 +14739,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
     return true;
   }
   var base: string = util.base_type_name(rt);
-  if (parser.is_reserved_struct_name(base)) {
+  if (parser.is_reserved_struct_name(base) || parser.is_reserved_enum_name(base)) {
     return true;
   }
   for sd in mod.structs {
