@@ -50,7 +50,8 @@ After integrating the file-byte per-module fix and newer CI changes from
 `7052f1c0c`, the target matrix and lint pass again. Library-only file and TCP
 callers link and execute on both Linux targets; the TCP fixture checks an
 invalid descriptor and continued access to its borrowed array. The refreshed
-bootstrap reaches the same stage-2/stage-3 hash. The full unit suite is pending.
+bootstrap reaches the same stage-2/stage-3 hash. The full unit suite and
+`make lint-all` pass on the final `d5fc77ab1` source snapshot.
 
 ## Measured native allocation cost
 
