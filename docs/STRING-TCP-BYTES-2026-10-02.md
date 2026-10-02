@@ -1,5 +1,15 @@
 # TCP byte sink for D9
 
+Integration checkpoint, October 2: target tests and lint pass with main
+through `0d7a8d321`. The pinned bootstrap produces identical stage-2 and
+stage-3 binaries of 12,130,865 bytes, SHA-256
+`e5f410b9da8852a06b1a586c4551a9c79f92012db8fc2b79952ac760519c7fba`.
+Actual stage-2 Darwin loopback passes with ten allocations and ten frees;
+native descriptor and SIGPIPE probes use zero allocations. The WASI component
+loopback passes. The full unit suite passed on the earlier `d5fc77ab1`
+checkpoint; the current main integration still needs that full gate.
+Measurements below retain their original source provenance.
+
 `tcp_send_bytes(fd: i32, data: u8[]): i32` borrows an owned byte array and
 sends its bytes without constructing a string. Native code returns the
 underlying send count or negative errno, including short counts. It suppresses
