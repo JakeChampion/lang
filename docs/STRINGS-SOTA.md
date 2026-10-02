@@ -874,6 +874,13 @@ and nothing emitted is now real on every lane. `tcp_recv(fd, max)`
 returns `u8[]` (#7467). The remaining builder and Reader raw paths are
 listed in the migration audit above.
 
+`__memchr_bytes(bytes, byte, from)` searches a borrowed `u8[]` without
+allocating or constructing a string. It returns the first matching byte index
+at or after `from`, or `-1`. Negative starts clamp to zero; starts at or past
+the end and byte values outside 0..255 return `-1`. Packed native arrays use
+the existing vector scan kernels. The self-hosted compiler's unpacked arrays
+use a bounded slot scan, including its four-byte WebAssembly element slots.
+
 `Reader.read_chunk_bytes(n): Result[u8[], IoError]` provides owned raw input
 on the bootstrap interpreter and native/wasm backends, and on the self-hosted
 native and wasm command-module backends. It preserves NUL, malformed UTF-8
@@ -893,6 +900,25 @@ input, so scalars split across reads remain valid. Malformed stdin returns
 `InvalidUtf8("stdin")`; I/O failures never become successful partial text.
 The example `tee` uses byte input and output, including true append opens
 that preserve an existing file's arbitrary bytes.
+
+`ByteLineReader` keeps buffered chunks and returned records in `u8[]`.
+It scans for a byte delimiter, includes that delimiter when present, and
+returns a final unterminated record. Records crossing chunk boundaries use
+bulk builder appends. The cursor retains an I/O error separately from any
+partial final record, so callers must check `error()` after iteration.
+Whole-input byte reads use the same bulk append operation.
+
+`shuf` now uses bytes for input, reservoir records and random-source buffers;
+echo operands remain text. Delimiter scans use `__memchr_bytes`, and regular
+file sizes provide a buffer-capacity hint while reads still continue to EOF.
+GNU parity covers malformed UTF-8, embedded NUL, newline and NUL delimiters,
+repeat mode, reservoir sampling, missing final delimiters and long records.
+The WebAssembly seek helper releases its syscall return buffer on success
+and error; repeated seek tests and the file-input cases check for leaks.
+
+Validation and performance measurements for the current integration are
+pending. Earlier prepared-branch results do not establish its current
+target coverage, ownership balance or performance.
 
 The Fern interpreter also supports raw stdin reads; its file-handle opening
 remains unsupported. The existing `Reader.read_chunk` remains text-typed and

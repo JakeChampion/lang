@@ -358,6 +358,106 @@ function __buf_writer_put_bytes(b: BufWriter, own bytes: u8[]): BufWriter {
   }
 }
 
+// ---- ByteLineReader --------------------------------------------------------
+//
+// Raw records include their terminating byte. The reader remains borrowed:
+// callers close it. Results own their bytes and survive later cursor reads.
+// A read failure is sticky; a partial final record is returned before None.
+pub struct ByteLineReader { r: Reader, chunk: u8[], pos: i32, eof: boolean, term: i32, chunk_size: i32, err: Option[IoError] }
+
+pub function byte_line_reader_new(r: Reader, term: i32, chunk_size: i32): ByteLineReader {
+  return ByteLineReader { r: r, chunk: [], pos: 0, eof: false, term: term, chunk_size: chunk_size, err: None };
+}
+
+pub function (lr: ByteLineReader) error(): Option[IoError] {
+  return lr.err;
+}
+
+function copy_line_bytes(chunk: u8[], lo: i32, hi: i32): u8[] {
+  var out: u8[] = __alloc_u8(hi - lo);
+  var i: i32 = lo;
+  while (i < hi) {
+    out = out.with(i - lo, chunk[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function byte_line_end(chunk: u8[], pos: i32, term: i32): i32 {
+  var end: i32 = __memchr_bytes(chunk, term, pos);
+  if (end < 0) {
+    return chunk.len();
+  }
+  return end;
+}
+
+pub function (lr: ByteLineReader) next_line_bytes(): (Option[u8[]], ByteLineReader) {
+  var s: ByteLineReader = lr;
+  // Allocate a builder only when a record spans chunks. Repeatedly copying
+  // the accumulated prefix would make long records quadratic.
+  var b: usize = 0 as usize;
+  while (true) {
+    var end: i32 = byte_line_end(s.chunk, s.pos, s.term);
+    if (end < s.chunk.len()) {
+      end = end + 1;
+      if (b == 0 as usize) {
+        return (Some(copy_line_bytes(s.chunk, s.pos, end)), ByteLineReader { ...s, pos: end });
+      }
+      buf_push_bytes_range(b, s.chunk, s.pos, end);
+      var line: u8[] = buf_take_bytes(b);
+      buf_free(b);
+      return (Some(line), ByteLineReader { ...s, pos: end });
+    }
+    if (s.pos < s.chunk.len()) {
+      if (b == 0 as usize) {
+        b = buf_new(s.chunk.len() - s.pos);
+      }
+      buf_push_bytes_range(b, s.chunk, s.pos, s.chunk.len());
+    }
+    if (s.eof) {
+      s = ByteLineReader { ...s, chunk: [], pos: 0 };
+      if (b == 0 as usize) {
+        return (None, s);
+      }
+      var tail: u8[] = buf_take_bytes(b);
+      buf_free(b);
+      return (Some(tail), s);
+    }
+    match (s.r.read_chunk_bytes(s.chunk_size)) {
+      Ok(chunk) => {
+        s = ByteLineReader { ...s, chunk: chunk, pos: 0, eof: chunk.len() == 0 };
+      },
+      Err(e) => {
+        s = ByteLineReader { ...s, chunk: [], pos: 0, eof: true, err: Some(e) };
+      }
+    }
+  }
+  return (None, s);
+}
+
+// Switch from records to raw chunks without discarding the unread suffix.
+pub function (lr: ByteLineReader) next_chunk_bytes(): (Option[u8[]], ByteLineReader) {
+  var s: ByteLineReader = lr;
+  if (s.pos < s.chunk.len()) {
+    var rest: u8[] = copy_line_bytes(s.chunk, s.pos, s.chunk.len());
+    return (Some(rest), ByteLineReader { ...s, chunk: [], pos: 0 });
+  }
+  if (s.eof) {
+    return (None, s);
+  }
+  match (s.r.read_chunk_bytes(s.chunk_size)) {
+    Ok(chunk) => {
+      if (chunk.len() == 0) {
+        return (None, ByteLineReader { ...s, eof: true });
+      }
+      return (Some(chunk), s);
+    },
+    Err(e) => {
+      return (None, ByteLineReader { ...s, eof: true, err: Some(e) });
+    }
+  }
+}
+
 // ---- LineReader ------------------------------------------------------------
 //
 // Lines from a Reader, one per call, read in `chunk_size`-byte
