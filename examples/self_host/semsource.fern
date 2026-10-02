@@ -15,6 +15,7 @@ import "./ssaunits";
 import "./ownership";
 import "./util";
 import "./seminline";
+import "./semfuse";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
 // — has no body of its own: it is produced once per instantiation its callers
@@ -7989,7 +7990,7 @@ pub function build_module(mod: parser.Module): Built {
     names = names.append(r.name);
     at = at + 1;
   }
-  var all: Produced[] = inline_leaves(anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names), names, mod.funcs);
+  var all: Produced[] = fuse_pipelines(inline_leaves(anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names), names, mod.funcs), names);
   decls = [];
   instances = [];
   i = 0;
@@ -8048,6 +8049,43 @@ function inline_on(): boolean {
   match (env("FERN_SEM_INLINE")) {
     Some(v) => {
       return v.len() > 0;
+    },
+    None => {
+      return true;
+    }
+  }
+}
+
+// std/array combinator chains fused into one loop (semfuse).
+// `FERN_NO_ARRAY_FUSION=1` turns the pass off, as it does native's.
+function fuse_pipelines(all: Produced[], names: string[]): Produced[] {
+  if (!fusion_on()) {
+    return all;
+  }
+  var funcs: ssasem.Func[] = [];
+  var usable: boolean[] = [];
+  for p in all {
+    funcs = funcs.append(p.func);
+    usable = usable.append(p.ok && !p.template && !p.bodyless);
+  }
+  var out: semfuse.Fused = semfuse.fuse_pipelines(funcs, names, usable);
+  var result: Produced[] = [];
+  var i: i32 = 0;
+  while (i < all.len()) {
+    var p: Produced = all[i];
+    if (out.rewritten[i]) {
+      p = Produced { ...p, func: out.funcs[i], analysis: None };
+    }
+    result = result.append(p);
+    i = i + 1;
+  }
+  return result;
+}
+
+function fusion_on(): boolean {
+  match (env("FERN_NO_ARRAY_FUSION")) {
+    Some(v) => {
+      return v != "1";
     },
     None => {
       return true;
