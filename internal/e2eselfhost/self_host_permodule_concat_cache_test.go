@@ -85,9 +85,9 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	hits, misses = concat("warm")
 	pmWantSets(t, "warm", hits, misses, all, []string{})
 
-	// Body-only edit of a function the reach set drops: lib3's source changes,
-	// so lib3 alone re-emits.
-	edit("lib3.fern", "return x + 305;", "return x + 1305;")
+	// Body-only edit that keeps the value and every fact: lib3's source
+	// changes, so lib3 alone re-emits.
+	edit("lib3.fern", "return m3_f5(x) + 1;", "return m3_f5(x) + 2 - 1;")
 	hits, misses = concat("body")
 	pmWantSets(t, "body", hits, misses, without("lib3"), []string{"lib3"})
 
@@ -107,7 +107,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	// verdict, so lib3's facts move and every module importing lib3 re-emits the
 	// way it would for a signature change. Modules outside that closure are
 	// served. First bring m3_keep into reach, then make the fact-only edit.
-	edit("lib3.fern", "return x + 301;", "return x + 301 + m3_keep([x]) - 1;")
+	edit("lib3.fern", "return m3_f2(x) + 1;", "return m3_f2(x) + 1 + m3_keep([x]) - 1;")
 	b3, err := os.ReadFile(filepath.Join(proj, "lib3.fern"))
 	if err != nil {
 		t.Fatalf("read lib3: %v", err)
