@@ -23,24 +23,30 @@ interpreter networking remains unsupported.
 
 ## Current integration
 
-This refresh includes the merged TCP sink, formatter changes and opcode
-census through `4278d1f9d`, followed by byte-storage parent `6bc8a2961`.
-The first integration passes the Linux target matrix and all lint gates.
-Its measured SSA census admits 330 of 333 registered operations; the three
-existing unsupported operations remain unchanged.
+This refresh includes main through `9b3b60c32`, integrated into the UDP
+branch by `7681b3e75`. It includes the TCP byte sink, bounded byte-read
+storage and upstream interpreter fixes. Refreshed Linux targets, the full
+unit suite and all lint gates pass.
 
 The final storage integration reaches identical stage-2 and stage-3
-compiler binaries of 12,395,313 bytes, SHA-256
-`877f1059c6f14ce3b9af3d708023f1ec31e140468aa2021609ca0b8508ae9bf7`.
+compiler binaries of 12,081,729 bytes, SHA-256
+`9b5f04793cf017f7fce2f8760f0257489cbad849230c9b2b85c6d2d58a133367`.
 The seed is `stage0-20261001-c891ebc`. Stage 1 differs because that seed
 predates generator changes.
 
 The actual final stage-2 compiler passes Darwin and WASI IPv4/IPv6 loopback
 probes. Each native fixture records ten allocations, ten frees and zero
-live bytes. WASI component execution verifies behavior. Final integrated
-Linux targets, the full unit suite and all lint gates pass.
+live bytes. WASI component execution verifies behavior. The actual stage-2
+interpreter also passes HTTP byte serialization, matching native output
+exactly, and the nullary and shadowed-variant regression cases.
 
 ## Target and failure coverage
+
+The interpreter regressions cover a nullary IoError variant and a user enum
+that reuses `BodyBytes`. The user variant must dispatch through its declared
+owner even when a method on the builtin Body appears first. Upstream now
+derives enum method aliases from variant declarations, including injected
+builtins; the HTTP serialization case exercises this through the stdlib.
 
 Real loopback tests verify exact 8193-byte payloads, retained and temporary
 arrays, connected sends and empty datagrams over IPv4 and IPv6. The target
@@ -71,18 +77,19 @@ Every allocation was freed. With instrumentation removed, both one-send
 executables occupy 33,185 bytes. These are allocation and size measurements;
 no throughput claim is made.
 
-The same final stage-2 compiler builds the byte-storage parent and UDP
+The same final stage-2 compiler builds main parent `9b3b60c32` and UDP
 compiler sources:
 
 | Section | Parent bytes | UDP bytes | Growth |
 | --- | ---: | ---: | ---: |
-| Executable file | 12,362,129 | 12,395,313 | 33,184 |
-| Code | 10,640,436 | 10,649,564 | 9,128 |
-| Unwind data | 595,276 | 595,620 | 344 |
-| Data | 949,272 | 951,320 | 2,048 |
+| Executable file | 12,065,057 | 12,081,729 | 16,672 |
+| Code | 10,349,076 | 10,358,196 | 9,120 |
+| Unwind data | 577,340 | 577,684 | 344 |
+| Data | 951,064 | 953,112 | 2,048 |
 
-Code and data each cross a 16,384-byte file-segment boundary; link-edit data
-adds 416 bytes. Those changes account for the entire file increase. The
+Code crosses a 16,384-byte file-segment boundary, data fits in its existing
+segment, and link-edit data adds 288 bytes. Those changes account for the
+entire file increase. The
 added code implements the two byte builtins and their target routing;
 existing send bodies are shared between text and byte variants. No size
 baseline was changed.
