@@ -29,12 +29,6 @@ function main(): i32 {
 // Interpreter-confirmed.
 const strarrFieldToStringWant = 21
 
-var strarrFieldToStringLowerings = []struct{ name, env string }{
-	{"semantic", "FERN_SEM_IR=1"},
-	{"ast", "FERN_SEM_IR="},
-	{"ast_callee", "FERN_SEM_IR_SKIP=round"},
-}
-
 func writeStrarrFieldToStringSrc(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "strarr_field_tostring.fern")
@@ -47,29 +41,21 @@ func writeStrarrFieldToStringSrc(t *testing.T) string {
 func TestSelfHostStrarrFieldToStringX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeStrarrFieldToStringSrc(t)
-	for _, lw := range strarrFieldToStringLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env)
-			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-			if exit != strarrFieldToStringWant {
-				t.Fatalf("exit = %d, want %d\n%s", exit, strarrFieldToStringWant, stderr)
-			}
-			assertBalancedCensus(t, stderr)
-		})
+	bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1")
+	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+	if exit != strarrFieldToStringWant {
+		t.Fatalf("exit = %d, want %d\n%s", exit, strarrFieldToStringWant, stderr)
 	}
+	assertBalancedCensus(t, stderr)
 }
 
 func TestSelfHostStrarrFieldToStringSanitizeX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeStrarrFieldToStringSrc(t)
-	for _, lw := range strarrFieldToStringLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env)
-			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-			if exit != strarrFieldToStringWant || strings.Contains(stderr, "fern-sanitizer:") {
-				t.Fatalf("exit = %d, want %d, and the sanitizer silent\n%s", exit, strarrFieldToStringWant, stderr)
-			}
-		})
+	bin := cli.x86Binary(t, src, "FERN_SANITIZE=1")
+	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+	if exit != strarrFieldToStringWant || strings.Contains(stderr, "fern-sanitizer:") {
+		t.Fatalf("exit = %d, want %d, and the sanitizer silent\n%s", exit, strarrFieldToStringWant, stderr)
 	}
 }
 
@@ -77,22 +63,18 @@ func TestSelfHostStrarrFieldToStringArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
 	src := writeStrarrFieldToStringSrc(t)
-	for _, lw := range strarrFieldToStringLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1", lw.env))
-			if err != nil {
-				t.Fatal(err)
-			}
-			cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), "strarr_field_tostring", string(asm)))
-			var eb strings.Builder
-			cmd.Stderr = &eb
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != strarrFieldToStringWant {
-				t.Fatalf("exit = %d, want %d\n%s", code, strarrFieldToStringWant, eb.String())
-			}
-			assertBalancedCensus(t, eb.String())
-		})
+	asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), "strarr_field_tostring", string(asm)))
+	var eb strings.Builder
+	cmd.Stderr = &eb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != strarrFieldToStringWant {
+		t.Fatalf("exit = %d, want %d\n%s", code, strarrFieldToStringWant, eb.String())
+	}
+	assertBalancedCensus(t, eb.String())
 }
 
 func TestSelfHostStrarrFieldToStringWasm(t *testing.T) {
@@ -101,14 +83,10 @@ func TestSelfHostStrarrFieldToStringWasm(t *testing.T) {
 	}
 	cli := buildSelfHostCLI(t)
 	src := writeStrarrFieldToStringSrc(t)
-	for _, lw := range strarrFieldToStringLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", lw.env)
-			stderr, exit := runWasmCensus(t, wat)
-			if exit != strarrFieldToStringWant {
-				t.Fatalf("exit = %d, want %d\n%s", exit, strarrFieldToStringWant, stderr)
-			}
-			assertBalancedCensus(t, stderr)
-		})
+	wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1")
+	stderr, exit := runWasmCensus(t, wat)
+	if exit != strarrFieldToStringWant {
+		t.Fatalf("exit = %d, want %d\n%s", exit, strarrFieldToStringWant, stderr)
 	}
+	assertBalancedCensus(t, stderr)
 }

@@ -29,13 +29,7 @@ import (
 // each batch deriving the whole-program side tables once and sharing them
 // across its units. The one-unit-per-process shape this used to drive rebuilt
 // the whole-program parse + side-table floor once per unit, 54 times over, for
-// the same units. Two things it uniquely carried moved rather than went away:
-// the one-unit-per-process route itself is driven every push by
-// TestSelfHostAssumeEligibleByteIdenticalX86_64, and so is the per-module
-// IR-eligibility frontier — every module lowering with nothing bailing — which
-// that test's checked per-process half proves and `-assume-eligible` here
-// skips by design. That the two routes emit the same bytes is that test's
-// proof too.
+// the same units.
 //
 // Step 5 carries it past the emit+link milestone to SELF-COMPILE correctness: the
 // per-module-built compiler compiles the whole compiler (the fixpoint gen2 input)
@@ -63,7 +57,7 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	// 1. Emit every unit of the whole compiler. The entry unit folds in the full
 	// runtime-need root set the driver derives itself, so the link below still
 	// checks the need aggregation end to end.
-	units := emitAllWholeCompiler(t, runner, driverBin, entry, dir, "wc", "x86-64-linux", pmEmitAllBatch(), pmGoBuiltEmitMemoryMB)
+	units := emitAllWholeCompiler(t, runner, driverBin, entry, dir, "wc", "x86-64-linux", pmEmitAllBatch, pmGoBuiltEmitMemoryMB)
 	objs := unitObjPaths(t, dir, "wc", units)
 
 	// 2. Link all units — no undefined symbols proves the runtime-need union is
@@ -203,15 +197,8 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 // pmEmitAllBatch is the units-per-process batch every whole-compiler emit-all in
 // this package drives. It is also what `emit_per_module_spawned` uses for the
 // driver's own default build, so the harness and the compiler exercise one
-// memory shape rather than two: 64 over the typed lowering, where every process
-// lowers the whole program first, and 8 over the AST lowering (FERN_SEM_IR=),
-// which accumulates each unit's lowering.
-func pmEmitAllBatch() int {
-	if v, set := os.LookupEnv("FERN_SEM_IR"); set && v == "" {
-		return 8
-	}
-	return 64
-}
+// memory shape rather than two: every process lowers the whole program first.
+const pmEmitAllBatch = 64
 
 // pmFuncBudget is the [lo,hi) function-window budget the emit plan is sized
 // with, passed to the driver as -func-budget so its internal windowing matches.

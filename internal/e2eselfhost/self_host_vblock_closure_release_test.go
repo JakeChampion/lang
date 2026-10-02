@@ -6,10 +6,9 @@ import (
 
 // A value block whose tail names an array local the block declared moves that
 // local into the block's value (#10393): the variable the block initializes
-// takes the local's count and element typing, and the local is left null. On
-// the AST lowering the tail used to be retained into an untyped temp the
-// binding never released, and an unannotated binding lost the element type, so
-// `e[0].len()` over a string[] read the wrong word.
+// takes the local's count and element typing, and the local is left null, so
+// an unannotated binding keeps the element type and `e[0].len()` over a
+// string[] reads the right word.
 const vblockTailMoveSrc = `import "std/i32";
 struct P { x: i32, y: i32 }
 function mk(j: i32): i32[] { return { var q = [j, j * 2]; q = q.append(3); q }; }
@@ -37,7 +36,7 @@ function main(): i32 {
 // Interpreter-confirmed.
 const vblockTailMoveWant = 41
 
-// The move through a nested value block, on both lowerings (#10436).
+// The move through a nested value block (#10436).
 const vblockNestedTailMoveSrc = `function main(): i32 {
     var t: i32 = 0;
     var j: i32 = 0;
@@ -134,42 +133,32 @@ function main(): i32 {
 // Interpreter-confirmed.
 const vblockArrArrWant = 4
 
-type vblockClosureLowering struct{ name, env string }
-
-var (
-	vblockClosureBoth = []vblockClosureLowering{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}}
-	vblockClosureAST  = []vblockClosureLowering{{"ast", "FERN_SEM_IR="}}
-)
-
 var vblockClosureReleaseCases = []struct {
-	name      string
-	src       string
-	want      int
-	lowerings []vblockClosureLowering
+	name string
+	src  string
+	want int
 }{
-	{"vblock_tail_move", vblockTailMoveSrc, vblockTailMoveWant, vblockClosureBoth},
-	{"vblock_nested_tail_move", vblockNestedTailMoveSrc, vblockNestedTailMoveWant, vblockClosureBoth},
-	{"closure_rebind_release", closureRebindReleaseSrc, closureRebindReleaseWant, vblockClosureBoth},
-	{"vblock_defer_unlifted_local", vblockDeferUnliftedSrc, vblockDeferUnliftedWant, vblockClosureBoth},
-	{"vblock_arrarr", vblockArrArrSrc, vblockArrArrWant, vblockClosureBoth},
+	{"vblock_tail_move", vblockTailMoveSrc, vblockTailMoveWant},
+	{"vblock_nested_tail_move", vblockNestedTailMoveSrc, vblockNestedTailMoveWant},
+	{"closure_rebind_release", closureRebindReleaseSrc, closureRebindReleaseWant},
+	{"vblock_defer_unlifted_local", vblockDeferUnliftedSrc, vblockDeferUnliftedWant},
+	{"vblock_arrarr", vblockArrArrSrc, vblockArrArrWant},
 }
 
 func TestSelfHostVblockClosureReleaseX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range vblockClosureReleaseCases {
-		for _, lw := range tc.lowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1", lw.env)
-				if exit != tc.want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				assertBalancedCensus(t, stderr)
-				stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1", lw.env)
-				if exit != tc.want || forArrStructSanitizerFault(stderr, true) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1")
+			if exit != tc.want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1")
+			if exit != tc.want || forArrStructSanitizerFault(stderr, true) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
+			}
+		})
 	}
 }
 
@@ -184,14 +173,12 @@ func TestSelfHostVblockClosureReleaseWasm(t *testing.T) {
 func checkVblockClosureRelease(t *testing.T, target string) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range vblockClosureReleaseCases {
-		for _, lw := range tc.lowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1", lw.env)
-				if exit != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				assertBalancedCensus(t, stderr)
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1")
+			if exit != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
 	}
 }

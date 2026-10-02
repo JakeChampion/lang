@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// A fresh temporary lent to a borrowing callee is released by an AST-lowered
-// caller (refs #9450): a variant construction written at the call site, whose
+// A fresh temporary lent to a borrowing callee is released by the caller
+// (refs #9450): a variant construction written at the call site, whose
 // payloads are fresh, and a string[] literal of fresh or literal elements at a
 // borrowable position of a callee that returns no pointer. `first` hands an
-// element back, so its literal must not be freed; the sanitizer is what would
-// see it if it were.
+// element back, so its literal must not be freed before `f` is done with it;
+// the sanitizer is what would see it if it were.
 const lentTempReleaseSrc = `import "std/i32";
 enum E { A(i32), B(i32) }
 enum S { Word(string), Nothing }
@@ -33,21 +33,19 @@ function main(): i32 {
 
 const lentTempReleaseWant = 93
 
-func TestSelfHostLentTempReleaseAST(t *testing.T) {
+func TestSelfHostLentTempRelease(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "lent_temp_release.fern")
 	if err := os.WriteFile(src, []byte(lentTempReleaseSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bin := cli.x86Binary(t, src, "FERN_SEM_IR=", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+	bin := cli.x86Binary(t, src, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
 	if exit != lentTempReleaseWant {
 		t.Fatalf("exit=%d, want %d (stderr %q)", exit, lentTempReleaseWant, stderr)
 	}
 	allocs, frees, _ := leakSummaryOf(t, "lent_temp_release", stderr)
-	// The one block left is `first`'s element literal box: the callee hands it
-	// back, so no caller-side release may touch it.
-	if allocs-frees != 1 {
-		t.Fatalf("allocs=%d frees=%d, want exactly the handed-back element left (stderr %q)", allocs, frees, stderr)
+	if allocs != frees {
+		t.Fatalf("allocs=%d frees=%d, want every block freed (stderr %q)", allocs, frees, stderr)
 	}
 }

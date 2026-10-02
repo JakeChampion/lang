@@ -117,7 +117,7 @@ func TestSelfHostPerModuleEmitAllObjectCacheX86_64(t *testing.T) {
 		if err := os.MkdirAll(outDir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", outDir, err)
 		}
-		args := []string{"-per-module-emit-all", "-out-dir", outDir, "-assume-eligible"}
+		args := []string{"-per-module-emit-all", "-out-dir", outDir}
 		if useCache {
 			args = append(args, "-cache-dir", cacheDir)
 		}
@@ -323,7 +323,7 @@ func TestSelfHostPerModuleSpawnedCacheX86_64(t *testing.T) {
 
 	spawn := func(useCache bool) (string, string) {
 		t.Helper()
-		args := []string{entry, "-spawned", "-assume-eligible"}
+		args := []string{entry, "-spawned"}
 		if useCache {
 			args = append(args, "-cache-dir", cacheDir)
 		}

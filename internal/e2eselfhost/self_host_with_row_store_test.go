@@ -8,13 +8,12 @@ import (
 	"testing"
 )
 
-// Every `.with` form the AST lowering emits stores its element through
-// lower_with_elem, which retains a bare array local stored as a row of a
-// nested array, as the append arm does (#4702). `units` stores a local `chain`
-// that its next rebind releases; `through` then binds each row to a local and
-// clones the table row by row. Without the retain the rebind freed the stored
-// row and `through` touched it (#10219). Built through the AST lowering, under
-// the sanitizer, which quarantines a freed block.
+// A `.with` that stores a bare array local as a row of a nested array retains
+// it, as the append does (#4702). `units` stores a local `chain` that its next
+// rebind releases; `through` then binds each row to a local and clones the
+// table row by row. Without the retain the rebind freed the stored row and
+// `through` touched it (#10219). Built under the sanitizer, which quarantines
+// a freed block.
 const withRowStoreProg = `@noinline
 function through(deps: i32[][]): i32[][] {
     var out: i32[][] = deps;
@@ -64,7 +63,7 @@ func TestSelfHostWithRowStoreRetained(t *testing.T) {
 	for _, tg := range h.targets {
 		bin := filepath.Join(dir, tg.target+".bin")
 		build := exec.Command(h.cli, "-target", tg.target, "-o", bin, src, h.stdlib)
-		build.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SANITIZE=1")
+		build.Env = append(os.Environ(), "FERN_SANITIZE=1")
 		if combined, err := build.CombinedOutput(); err != nil {
 			t.Fatalf("%s: building: %v\n%s", tg.target, err, combined)
 		}

@@ -8,12 +8,10 @@ import (
 	"testing"
 )
 
-// `m.without(k)` on a map an alias still reads deletes from a copy in the AST
-// lowering (FERN_SEM_IR=), so the alias keeps every entry, as on native and the
-// interpreter (#9835). The alias may be bound before the delete, through either
-// name, or later in an enclosing loop. The census is not pinned balanced: the
-// AST lowering never releases the tuple `without` returns, nor the map in it
-// (#9556).
+// `m.without(k)` on a map an alias still reads deletes from a copy, so the
+// alias keeps every entry, as on native and the interpreter (#9835). The alias
+// may be bound before the delete, through either name, or later in an
+// enclosing loop.
 var mapWithoutAliasCases = []struct {
 	name string
 	src  string
@@ -120,7 +118,7 @@ func TestSelfHostMapWithoutAliasX86_64(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, mode := range []string{"FERN_LEAKCHECK=1", "FERN_SANITIZE=1"} {
-				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, mode, "FERN_SEM_IR="), nil)
+				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, mode), nil)
 				if exit != tc.want {
 					t.Fatalf("%s: exit = %d, want %d\n%s", mode, exit, tc.want, stderr)
 				}
@@ -130,7 +128,7 @@ func TestSelfHostMapWithoutAliasX86_64(t *testing.T) {
 	}
 	t.Run("unaliased_in_place", func(t *testing.T) {
 		allocs := func(source string, want int) int64 {
-			stderr, exit := cli.exitOf(t, source, "x86-64-linux", "FERN_LEAKCHECK=1", "FERN_SEM_IR=")
+			stderr, exit := cli.exitOf(t, source, "x86-64-linux", "FERN_LEAKCHECK=1")
 			if exit != want {
 				t.Fatalf("exit = %d, want %d\n%s", exit, want, stderr)
 			}
@@ -147,7 +145,7 @@ func TestSelfHostMapWithoutAliasWasm(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range mapWithoutAliasCases {
 		t.Run(tc.name, func(t *testing.T) {
-			stderr, exit := cli.exitOf(t, tc.src, "wasm32-wasi", "FERN_LEAKCHECK=1", "FERN_SEM_IR=")
+			stderr, exit := cli.exitOf(t, tc.src, "wasm32-wasi", "FERN_LEAKCHECK=1")
 			if exit != tc.want {
 				t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
 			}
@@ -155,7 +153,7 @@ func TestSelfHostMapWithoutAliasWasm(t *testing.T) {
 	}
 	t.Run("unaliased_in_place", func(t *testing.T) {
 		allocs := func(source string, want int) int64 {
-			stderr, exit := cli.exitOf(t, source, "wasm32-wasi", "FERN_LEAKCHECK=1", "FERN_SEM_IR=")
+			stderr, exit := cli.exitOf(t, source, "wasm32-wasi", "FERN_LEAKCHECK=1")
 			if exit != want {
 				t.Fatalf("exit = %d, want %d\n%s", exit, want, stderr)
 			}

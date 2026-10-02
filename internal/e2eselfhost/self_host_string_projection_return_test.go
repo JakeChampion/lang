@@ -47,7 +47,7 @@ func TestSelfHostStringProjectionReturnOutlivesItsParent(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeEnumMapSrc(t, "string_projection_return", stringProjectionReturnSrc)
 	t.Run("x86-64", func(t *testing.T) {
-		bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", "FERN_SEM_IR=1")
+		bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1")
 		stderr, exit := runWithStdin(t, cli.runner, bin, nil)
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0\n%s", exit, stderr)
@@ -56,7 +56,7 @@ func TestSelfHostStringProjectionReturnOutlivesItsParent(t *testing.T) {
 	})
 	t.Run("arm64", func(t *testing.T) {
 		armgcc, qemu := arm64Tooling(t)
-		asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1", "FERN_SEM_IR=1"))
+		asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -73,7 +73,7 @@ func TestSelfHostStringProjectionReturnOutlivesItsParent(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH")
 		}
-		wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", "FERN_SEM_IR=1")
+		wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1")
 		stderr, exit := runWasmCensus(t, wat)
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0\n%s", exit, stderr)

@@ -3080,23 +3080,21 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
 
 // A map whose key and value are both 32-bit integers or booleans runs on
 // core/map's hash table rather than the runtime's association list (#9608).
-// Production is whole (semlower.substitution), so no AST-lowered
-// body shares a program with a routed map; the bisect knobs keep a mixed
-// module, so under them every map stays on the runtime, as it does in a
-// program whose import closure has no core/map to run on: a map-typed field
-// needs no map op, so nothing in such a program loads it (#10851).
+// A program whose import closure has no core/map to run on keeps every map on
+// the runtime: a map-typed field needs no map op, so nothing in such a
+// program loads it (#10851).
 function routed_map(t: typeinfo.Type, f: ssasem.Func): boolean {
   if (!ssasem.is_map(t)) {
     return false;
   }
-  return routed_key(ssasem.map_key(t)) && routed_value(ssasem.map_value(t)) && f.map_module && map_routing_on();
+  return routed_key(ssasem.map_key(t)) && routed_value(ssasem.map_value(t)) && f.map_module;
 }
 
 function routed_iter(t: typeinfo.Type, f: ssasem.Func): boolean {
   if (!semtypes.is_map_iter(t)) {
     return false;
   }
-  return routed_key(semtypes.map_iter_key(t)) && routed_value(semtypes.map_iter_value(t)) && f.map_module && map_routing_on();
+  return routed_key(semtypes.map_iter_key(t)) && routed_value(semtypes.map_iter_value(t)) && f.map_module;
 }
 
 // A string column, of keys or values, holds one unit of each string, as the
@@ -3123,21 +3121,6 @@ function routed_box(t: typeinfo.Type): boolean {
 
 function routed_column(t: typeinfo.Type): boolean {
   return ssasem.is_i32(t) || ssasem.is_u32(t) || ssasem.is_bool(t);
-}
-
-function map_routing_on(): boolean {
-  return knob_unset("FERN_SEM_IR_ONLY") && knob_unset("FERN_SEM_IR_SKIP");
-}
-
-function knob_unset(name: string): boolean {
-  match (env(name)) {
-    Some(v) => {
-      return v.len() == 0;
-    },
-    None => {
-      return true;
-    }
-  }
 }
 
 function routed_map_op(f: ssasem.Func, ins: ssa.SInst): boolean {

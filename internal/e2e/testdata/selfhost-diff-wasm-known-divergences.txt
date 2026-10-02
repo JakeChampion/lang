@@ -1,10 +1,10 @@
-# Seeds whose SELF-HOST wasm result through the AST lowering
-# disagrees with the interpreter's, for TestDifferential_SelfHostWasm
+# Seeds whose SELF-HOST wasm result disagrees with the interpreter's, for
+# TestDifferential_SelfHostWasm
 # (internal/e2e/diff_oracle_selfhost_wasm_leg_test.go).
 #
 # Format: <seed> <reason + issue>. Blank lines and # comments ignored.
 #
-# Same contract as the four files beside it: a row is a known bug being
+# Same contract as the two files beside it: a row is a known bug being
 # tolerated so the rest of the corpus keeps running, and the leg fails on a new
 # divergence and on a listed seed that starts agreeing.
 #

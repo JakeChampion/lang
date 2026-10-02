@@ -39,9 +39,10 @@ func TestSelfHostIRNeedDetectionX86_64(t *testing.T) {
 		name string
 		prog string
 		want int
-		// ast compiles on the AST lowering, the only one that calls the
-		// built-in map runtime.
-		ast bool
+		// sized bounds the asm: the per-need gating of the hand-written
+		// runtime. The map case also links the Fern-source map helpers, whose
+		// size is theirs, so only its link and exit code are checked.
+		sized bool
 	}{
 		// Map + heap (array) in one module: both runtimes must be emitted.
 		{"map-and-array", `function f(): i32 {
@@ -54,7 +55,7 @@ func TestSelfHostIRNeedDetectionX86_64(t *testing.T) {
 	while (i < xs.len()) { s = s + xs[i]; i = i + 1; }
 	return s;
 }
-function main(): i32 { return f(); }`, 21, true},
+function main(): i32 { return f(); }`, 21, false},
 		// Heap-only (array allocation, no map): the allocator/RC runtime is still
 		// pulled in by the op_allocates marking, with no "maps" need.
 		{"array-only", `function main(): i32 {
@@ -63,22 +64,17 @@ function main(): i32 { return f(); }`, 21, true},
 	var i: i32 = 0;
 	while (i < xs.len()) { s = s + xs[i]; i = i + 1; }
 	return s;
-}`, 60, false},
+}`, 60, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var asm []byte
-			if tc.ast {
-				asm = runCaptureAST(t, runner, driverBin, []byte(tc.prog))
-			} else {
-				asm = runCapture(t, gcc, runner, driverBin, []byte(tc.prog))
-			}
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.prog))
 			if len(asm) == 0 {
 				t.Fatalf("driver produced no asm")
 			}
 			// The IR path produces a far smaller binary than the ~40 KB map/heap
 			// runtime a coarse need set pulls in; a generous bound confirms the
 			// per-need gating held.
-			if len(asm) > 33000 {
+			if tc.sized && len(asm) > 33000 {
 				t.Fatalf("asm is %d bytes — expected the compact IR runtime; the need gating pulled in more than the module uses", len(asm))
 			}
 			progBin := buildBin(t, gcc, dir, "need_"+tc.name, string(asm))

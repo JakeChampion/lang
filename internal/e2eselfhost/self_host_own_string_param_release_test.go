@@ -8,11 +8,8 @@ import (
 	"testing"
 )
 
-// An `own` parameter's reference is the callee's to release, and the AST
-// lowering released one only when it was a struct, so every `own` string
-// leaked a box per call (#8805). The semantic lowering, which the CLI takes by
-// default, already balanced; FERN_SEM_IR= selects the AST lowering, which still
-// lowers any function the semantic path refuses. Each shape runs 100 times:
+// An `own` parameter's reference is the callee's to release, so an `own`
+// string must not leak a box per call (#8805). Each shape runs 100 times:
 // consumed in place, handed straight back, and forwarded to another `own`
 // position, beside an `own` array.
 const ownStringParamSrc = `import "std/i32";
@@ -38,11 +35,6 @@ function main(): i32 {
 // 3 x (10 x 2 + 90 x 3) + 100 x 3 = 1170.
 const ownStringParamWant = 1170 % 101
 
-var ownStringParamLowerings = []struct{ name, env string }{
-	{"semantic", "FERN_SEM_IR=1"},
-	{"ast", "FERN_SEM_IR="},
-}
-
 func writeOwnStringParamSrc(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "own_string_param.fern")
@@ -55,29 +47,21 @@ func writeOwnStringParamSrc(t *testing.T) string {
 func TestSelfHostOwnStringParamReleaseX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeOwnStringParamSrc(t)
-	for _, lw := range ownStringParamLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env)
-			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-			if exit != ownStringParamWant {
-				t.Fatalf("exit = %d, want %d\n%s", exit, ownStringParamWant, stderr)
-			}
-			assertBalancedCensus(t, stderr)
-		})
+	bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1")
+	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+	if exit != ownStringParamWant {
+		t.Fatalf("exit = %d, want %d\n%s", exit, ownStringParamWant, stderr)
 	}
+	assertBalancedCensus(t, stderr)
 }
 
 func TestSelfHostOwnStringParamReleaseSanitizeX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeOwnStringParamSrc(t)
-	for _, lw := range ownStringParamLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env)
-			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-			if exit != ownStringParamWant || strings.Contains(stderr, "fern-sanitizer:") {
-				t.Fatalf("exit = %d, want %d, and the sanitizer silent\n%s", exit, ownStringParamWant, stderr)
-			}
-		})
+	bin := cli.x86Binary(t, src, "FERN_SANITIZE=1")
+	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+	if exit != ownStringParamWant || strings.Contains(stderr, "fern-sanitizer:") {
+		t.Fatalf("exit = %d, want %d, and the sanitizer silent\n%s", exit, ownStringParamWant, stderr)
 	}
 }
 
@@ -87,14 +71,10 @@ func TestSelfHostOwnStringParamReleaseWasm(t *testing.T) {
 	}
 	cli := buildSelfHostCLI(t)
 	src := writeOwnStringParamSrc(t)
-	for _, lw := range ownStringParamLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", lw.env)
-			stderr, exit := runWasmCensus(t, wat)
-			if exit != ownStringParamWant {
-				t.Fatalf("exit = %d, want %d\n%s", exit, ownStringParamWant, stderr)
-			}
-			assertBalancedCensus(t, stderr)
-		})
+	wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1")
+	stderr, exit := runWasmCensus(t, wat)
+	if exit != ownStringParamWant {
+		t.Fatalf("exit = %d, want %d\n%s", exit, ownStringParamWant, stderr)
 	}
+	assertBalancedCensus(t, stderr)
 }

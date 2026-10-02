@@ -124,20 +124,11 @@ func TestSelfHostFloatToU8Saturates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Both legs: the AST lowering (irlower) and the typed pipeline (ssarc)
-	// pick the conversion separately, and both had the same hole.
-	for _, leg := range []struct {
-		name string
-		sem  bool
-	}{{"ast", false}, {"typed", true}} {
-		t.Run(leg.name, func(t *testing.T) {
-			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-				t.Run(target, func(t *testing.T) {
-					got, _, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, leg.sem, "")
-					if got != "0|" {
-						floatToU8Explain(t, leg.name+" "+target, got)
-					}
-				})
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			got, _, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, "")
+			if got != "0|" {
+				floatToU8Explain(t, target, got)
 			}
 		})
 	}

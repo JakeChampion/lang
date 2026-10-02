@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -39,36 +38,11 @@ func TestSelfHostBorrowedFieldRetainIRX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
-	// userCodeCalls: a `call <helper>` under a `__fn_<name>:` label that is not
-	// itself a runtime helper. The runtime block emits helper bodies
-	// unconditionally, so a whole-asm substring match reads every compile as
-	// admitted.
-	userCodeCalls := func(asm, helper string) bool {
-		inUser := false
-		for _, ln := range strings.Split(asm, "\n") {
-			if strings.HasPrefix(ln, "__fn_") && strings.HasSuffix(ln, ":") {
-				inUser = !strings.HasPrefix(ln, "__fn___fern_")
-				continue
-			}
-			if inUser && strings.Contains(ln, "call "+helper) {
-				return true
-			}
-		}
-		return false
-	}
-
-	run := func(t *testing.T, prog, name string, want int, wantDrop string) {
+	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
 		asm := runCapture(t, gcc, runner, driverBin, []byte(prog))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
-		}
-		if wantDrop != "" {
-			// The admission is the AST lowering's, so its drop is read from that lowering.
-			has := userCodeCalls(string(runCaptureAST(t, runner, driverBin, []byte(prog))), wantDrop)
-			if !has {
-				t.Fatalf("%s: caller emits no `call %s` — the borrowed-parameter field store was not admitted, so the returned struct earns no drop", name, wantDrop)
-			}
 		}
 		bin := buildBin(t, gcc, dir, name, string(asm))
 		var cmd *exec.Cmd
@@ -93,7 +67,7 @@ function mk(deps: string[]): H { return H { deps: deps }; }
 function build(pre: string): i32 { var live: string[] = deps_of(pre); var h: H = mk(live); return h.deps.len() + live.len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 6) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
-		"borrowed-field-caller-drops", 0, "__fn___struct_drop_H")
+		"borrowed-field-caller-drops", 0)
 
 	// SOUNDNESS, the sharpest shape: the struct is built from a LIVE local and
 	// dropped FIRST, in an inner scope, and the local's elements are read
@@ -117,7 +91,7 @@ function build(pre: string): i32 {
 }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 92) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
-		"borrowed-field-local-outlives-struct", 0, "")
+		"borrowed-field-local-outlives-struct", 0)
 
 	// TWO structs over ONE array: each drop decs, and the array survives both.
 	// A retain taken once but dec'd twice would tick the underflow detector.
@@ -136,5 +110,5 @@ function build(pre: string): i32 {
 }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 49) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
-		"borrowed-field-two-structs-one-array", 0, "")
+		"borrowed-field-two-structs-one-array", 0)
 }

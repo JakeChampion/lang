@@ -45,19 +45,10 @@ func TestSelfHostValueBlockEarlyReturn(t *testing.T) {
 	if err := os.WriteFile(src, []byte(valueBlockEarlyReturnSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Run("semantic", func(t *testing.T) {
-		bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1", "FERN_SEM_IR=1")
-		stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-		if exit != valueBlockEarlyReturnWant {
-			t.Fatalf("exit=%d, want %d (stderr %q)", exit, valueBlockEarlyReturnWant, stderr)
-		}
-		assertBalancedCensus(t, stderr)
-	})
-	t.Run("ast", func(t *testing.T) {
-		bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1", "FERN_SEM_IR=")
-		stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-		if exit != valueBlockEarlyReturnWant {
-			t.Fatalf("exit=%d, want %d (stderr %q)", exit, valueBlockEarlyReturnWant, stderr)
-		}
-	})
+	bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", "FERN_STRICT_IR=1")
+	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+	if exit != valueBlockEarlyReturnWant {
+		t.Fatalf("exit=%d, want %d (stderr %q)", exit, valueBlockEarlyReturnWant, stderr)
+	}
+	assertBalancedCensus(t, stderr)
 }

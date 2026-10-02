@@ -462,7 +462,7 @@ func TestSelfHostStrArrFieldBufferReleaseWasmIR(t *testing.T) {
 }
 
 // TestSelfHostStrArrFieldBorrowedElemsSanitizeX86_64 runs the borrowed-element
-// rows (#10405) under FERN_SANITIZE on both lowerings. Neither may release an
+// rows (#10405) under FERN_SANITIZE. It may not release an
 // element box `items` still holds. The sanitizer's leak line is not asserted:
 // `Item.name` escaping into `names` withholds that type's field reclaim, which
 // is the admission's sound leak.
@@ -477,13 +477,11 @@ func TestSelfHostStrArrFieldBorrowedElemsSanitizeX86_64(t *testing.T) {
 		if err := os.WriteFile(src, []byte(tc.src+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		for _, lw := range []string{"FERN_SEM_IR=", "FERN_SEM_IR=1"} {
-			t.Run(tc.name+"/"+lw, func(t *testing.T) {
-				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw), nil)
-				if exit != tc.want || strings.Contains(stderr, "use-after-free") || strings.Contains(stderr, "over-release") {
-					t.Fatalf("exit = %d, want %d, with no use-after-free or over-release\n%s", exit, tc.want, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1"), nil)
+			if exit != tc.want || strings.Contains(stderr, "use-after-free") || strings.Contains(stderr, "over-release") {
+				t.Fatalf("exit = %d, want %d, with no use-after-free or over-release\n%s", exit, tc.want, stderr)
+			}
+		})
 	}
 }

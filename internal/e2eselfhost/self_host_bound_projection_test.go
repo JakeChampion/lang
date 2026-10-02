@@ -45,15 +45,13 @@ func TestSelfHostBoundProjectionResult(t *testing.T) {
 	if err := os.WriteFile(src, []byte(boundProjectionSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, lw := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
-		t.Run("x86-64/"+lw.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env)
-			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-			if exit != boundProjectionWant {
-				t.Fatalf("exit=%d, want %d (stderr %q)", exit, boundProjectionWant, stderr)
-			}
-		})
-	}
+	t.Run("x86-64", func(t *testing.T) {
+		bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1")
+		stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+		if exit != boundProjectionWant {
+			t.Fatalf("exit=%d, want %d (stderr %q)", exit, boundProjectionWant, stderr)
+		}
+	})
 	t.Run("wasm32-wasi", func(t *testing.T) {
 		stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1"))
 		if exit != boundProjectionWant {

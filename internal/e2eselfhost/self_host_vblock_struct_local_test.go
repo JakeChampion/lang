@@ -23,18 +23,18 @@ var vblockStructLocalRows = []leakRow{
     var h: Holder = Holder { x: Inst { name: "w" + "", depth: n } };
     return h.x.depth + h.x.name.len();
 }
-` + vblockHolderMain, true, [2]int64{}},
+` + vblockHolderMain, true},
 	{"block_tail", vblockHolder + `function round(n: i32): i32 {
     var h: Holder = { Holder { x: Inst { name: "w" + "", depth: n } } };
     return h.x.depth + h.x.name.len();
 }
-` + vblockHolderMain, true, [2]int64{}},
+` + vblockHolderMain, true},
 	{"block_tail_lent", vblockHolder + `function depth_of(h: Holder): i32 { return h.x.depth; }
 function round(n: i32): i32 {
     var h: Holder = { Holder { x: Inst { name: "w" + "", depth: n } } };
     return depth_of(h) + h.x.name.len();
 }
-` + vblockHolderMain, true, [2]int64{}},
+` + vblockHolderMain, true},
 	// A block that declares a local before its tail is not widened: the value
 	// block's credit view drops the tail, so a block local stored into the
 	// struct would read as unescaped and be freed under the holder.
@@ -42,7 +42,7 @@ function round(n: i32): i32 {
     var h: Holder = { var i: Inst = Inst { name: "w" + "", depth: n }; Holder { x: i } };
     return h.x.depth + h.x.name.len();
 }
-` + vblockHolderMain, false, [2]int64{20, 0}},
+` + vblockHolderMain, false},
 }
 
 func TestSelfHostVblockStructLocalX86_64(t *testing.T) {

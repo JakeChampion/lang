@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -97,30 +96,6 @@ func TestSelfHostMapDeleteFernIRArm64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != 173 {
 				t.Errorf(mapDelFailFmt, tc.name, code)
-			}
-		})
-	}
-}
-
-// TestSelfHostMapDeleteHandAsmGone pins the deletion. It keys on the hand-asm's
-// own local labels (`.Lmd_loop_struct`, `.Lmd_kshift`, …) rather than on the
-// symbol: `__fn___fern_map_delete:` CONTAINS `__fern_map_delete:` as a
-// substring, so the obvious spelling of this assertion fires on the Fern helper
-// it is meant to accept. Nothing but the deleted bodies ever emitted `.Lmd_`.
-func TestSelfHostMapDeleteHandAsmGone(t *testing.T) {
-	cli := newStrictCLI(t)
-	for _, tc := range []struct{ name, target string }{
-		{"x86_64", "x86-64-linux"},
-		{"arm64", "arm64-linux"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			// Only the AST lowering calls the map runtime; the typed one uses core/map.
-			asm := cli.emit(t, tc.target, mapDelStrSrc, "FERN_SEM_IR=")
-			if !strings.Contains(asm, "__fn___fern_map_delete") {
-				t.Fatalf("%s: the Fern helper is absent — this check would pass vacuously", tc.name)
-			}
-			if strings.Contains(asm, ".Lmd_") {
-				t.Errorf("%s: the hand-asm map-delete body is back (its .Lmd_ labels are in the output)", tc.name)
 			}
 		})
 	}

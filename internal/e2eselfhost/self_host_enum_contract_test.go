@@ -129,37 +129,6 @@ function main(): i32 {
 	}
 }
 
-func TestSelfHostEnumContractMissingRetainX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	path := filepath.Join(dir, "irlower.fern")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(data)
-	for _, retain := range []string{
-		`rbl = rbl.retain(rps, "ret-borrowed-binding");`,
-		`rbl = rbl.retain_tos("ret-borrowed-binding");`,
-	} {
-		if strings.Count(source, retain) != 1 {
-			t.Fatalf("mutation target changed: %s", retain)
-		}
-		source = strings.Replace(source, retain, "// deliberately omitted by the lifetime negative control", 1)
-	}
-	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	driver := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "mutated")
-	// The mutation is in irlower, so the compile runs on the AST lowering.
-	asm := hevCompile(t, runner, driver, enumContractRuntimeCases()[1].source, []string{"FERN_SEM_IR=", "FERN_LEAKCHECK=1"})
-	output, code := hevRun(t, runner, buildBin(t, gcc, dir, "missing-retain", asm))
-	if code != 99 {
-		t.Fatalf("missing retain: want post-frame underflow exit 99, got %d\n%s", code, output)
-	}
-}
-
 func TestSelfHostEnumContractIRArm64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	armgcc, armrunner := arm64Tooling(t)

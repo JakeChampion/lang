@@ -81,9 +81,8 @@ func selfHostSemFileHandleSource(base string) string {
 // stdin half is in semProductionPrograms, where it runs on all four targets;
 // this one opens host paths, so it runs only where the binary runs natively.
 //
-// Both halves assert the same two things: the module produces WHOLE (a single
-// refused declaration takes the program to the AST lowering, which is #9781's
-// subject), and the produced program answers what the AST lowering answers.
+// Both halves assert the same two things: the module produces WHOLE, and the
+// produced program gives the expected answer.
 func TestSelfHostSemanticFileHandles(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -97,27 +96,18 @@ func TestSelfHostSemanticFileHandles(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	for _, sem := range []bool{false, true} {
-		// A fresh tree per leg: open_exclusive's second call must refuse
-		// because the FIRST one created the file, not because the other leg
-		// left it behind.
-		base := t.TempDir()
-		src := filepath.Join(t.TempDir(), "main.fern")
-		if err := os.WriteFile(src, []byte(selfHostSemFileHandleSource(base)), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		got, report, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, "x86-64-linux", sem, "")
-		if !sem {
-			if got != "0|" {
-				t.Fatalf("the AST lowering answered %q, want %q", got, "0|")
-			}
-			continue
-		}
-		if got != "0|" {
-			t.Fatalf("FERN_SEM_IR answered %q, want %q\nreport: %s", got, "0|", report)
-		}
-		if n := semProducedCount(t, report); n < 1 {
-			t.Fatalf("produced %d declarations:\n%s", n, report)
-		}
+	// A fresh tree: open_exclusive's second call must refuse because the
+	// FIRST one created the file.
+	base := t.TempDir()
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(selfHostSemFileHandleSource(base)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, report, _ := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, "x86-64-linux", "")
+	if got != "0|" {
+		t.Fatalf("answered %q, want %q\nreport: %s", got, "0|", report)
+	}
+	if n := semProducedCount(t, report); n < 1 {
+		t.Fatalf("produced %d declarations:\n%s", n, report)
 	}
 }
