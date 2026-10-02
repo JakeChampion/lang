@@ -3,6 +3,7 @@ package sourcelint
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -86,6 +87,8 @@ func TestCITestWeightsMergeKeepsTheSlowestObservation(t *testing.T) {
 	for name, timings := range map[string]string{
 		"subtest row":    "TestGood/case 1\n",
 		"missing number": "TestGood\n",
+		"empty run":      "",
+		"blank run":      "\n\n",
 	} {
 		bad := seed(t, map[string]string{"shard.timings": timings})
 		if code, out := runWeights(t, nil, "merge", bad); code == 0 || !strings.Contains(out, "ci-test-weights:") {
@@ -98,13 +101,34 @@ func TestCITestWeightsMergeKeepsTheSlowestObservation(t *testing.T) {
 }
 
 // The verify job prints the merged durations into its log, where a run's
-// evidence outlives the artifacts' retention (docs/CI-WEIGHT-REFRESH.md).
+// evidence outlives the artifacts' retention (docs/CI-WEIGHT-REFRESH.md). The
+// step's conditions are the feature: it has to run on a red run, whose
+// durations are the ones worth keeping, and a merge of no artifacts must not
+// red the lane.
 func TestSelfHostVerifyJobPrintsTheMergedDurations(t *testing.T) {
 	wf, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "test-e2e-selfhost.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(wf), "\n          scripts/ci-test-weights merge shard-outcomes\n") {
-		t.Fatal("test-e2e-selfhost.yml's verify job does not print `ci-test-weights merge shard-outcomes`")
+	job := sliceBlock(string(wf), regexp.MustCompile(`(?m)^  verify:$`), anyJobKey)
+	if job == "" {
+		t.Fatal("test-e2e-selfhost.yml has no `verify:` job")
+	}
+	if !strings.Contains(job, "needs.test.result != 'skipped'") {
+		t.Error("the verify job no longer runs on a red test matrix, so a red run prints no durations")
+	}
+	step := sliceBlock(job, regexp.MustCompile(`(?m)^      - name: measured durations, this run's refresh input$`), anyStep)
+	if step == "" {
+		t.Fatal("the verify job has no `measured durations, this run's refresh input` step")
+	}
+	for _, want := range []struct{ needle, why string }{
+		{"scripts/ci-test-weights merge shard-outcomes", "the step prints something other than the merged durations"},
+		{"if: ${{ !cancelled() }}", "the step is skipped after a failed `verify every shard reported success`, the runs whose durations are worth keeping"},
+		{"continue-on-error: true", "a merge of no artifacts reds the lane instead of printing nothing"},
+		{"::group::measured durations", "docs/CI-WEIGHT-REFRESH.md tells the reader to save the `measured durations` group"},
+	} {
+		if !strings.Contains(step, want.needle) {
+			t.Errorf("the measured-durations step lacks %q: %s", want.needle, want.why)
+		}
 	}
 }
