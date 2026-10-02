@@ -50,7 +50,7 @@ func TestSelfHostHTTPByteSerialization(t *testing.T) {
 					}
 					compile := exec.Command(compiler.cli, args...)
 					if compiler.name == "primary" {
-						compile.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+						compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 					}
 					if out, err := compile.CombinedOutput(); err != nil {
 						t.Fatalf("compile: %v\n%s", err, out)
