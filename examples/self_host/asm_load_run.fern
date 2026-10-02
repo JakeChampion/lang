@@ -25,6 +25,8 @@ import "./asm_ir";
 import "./wasm_ir";
 import "./asmcore";
 import "./treeshake";
+import "./constfold";
+import "./platforms";
 import "./ircore";
 import "./semlower";
 
@@ -94,9 +96,20 @@ function entry_index(parts: flatten.PerModule[]): i32 {
   return 0;
 }
 
+// targeted is `merged` as built for `target`: `target_os()` / `target_arch()`
+// folded to the target's names and the branch the target never takes
+// dropped, ahead of the shake, so a function reached only through the other
+// target's arm (std/fetch's hosted route, which calls std/wasi_http's
+// externs) is not emitted for this one.
+function targeted(merged: parser.Module, target: string): parser.Module {
+  var md: platforms.Descriptor = platforms.for_target(target);
+  return constfold.prune_literal_branches(constfold.fold_target_name(merged, md.environment, md.isa));
+}
+
 // checked_or_exit is the program the merged emit reads: the bundle, held to
-// the checker's build gate, annotated and pruned when `prune` is set.
-function checked_or_exit(merged: parser.Module, prune: boolean): parser.Module {
+// the checker's build gate, built for the target, annotated and pruned when
+// `prune` is set.
+function checked_or_exit(merged: parser.Module, prune: boolean, target: string): parser.Module {
   // Build gate: reject a program the checker rejects before codegen, so this
   // driver is not more permissive than `-check` or the native compiler
   // (#6961). checker.is_build_gate_code decides the set — every coded
@@ -109,7 +122,7 @@ function checked_or_exit(merged: parser.Module, prune: boolean): parser.Module {
   // typed-IR (#5531): stamp each call expression with its checker-inferred
   // result type so the IR lowering READS the type instead of re-deriving it
   // (docs/TYPED-IR-REWRITE.md).
-  return shaken_program(checker.annotate_module(merged), prune);
+  return shaken_program(checker.annotate_module(targeted(merged, target)), prune);
 }
 
 // decided is the typed lowering's verdict on the program checked_or_exit
@@ -119,7 +132,7 @@ function decided(merged: parser.Module, prune: boolean, target: string): semlowe
   if (gated.len() > 0) {
     return semlower.Verdict { ok: false, errors: gated, rows: [] };
   }
-  return semlower.verdict_annotated(shaken_program(checker.annotate_module(merged), prune), target);
+  return semlower.verdict_annotated(shaken_program(checker.annotate_module(targeted(merged, target)), prune), target);
 }
 
 function main(): i32 {
@@ -350,7 +363,7 @@ function main(): i32 {
     }
     // The typed lowering lowers the program the merged emit reads, whole,
     // and this unit is cut from it.
-    var pd: semlower.Driven = semlower.driven_annotated(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune), target);
+    var pd: semlower.Driven = semlower.driven_annotated(checked_or_exit(flatten.bundle(entry_mod, loaded, target), prune, target), target);
     var pg: ircore.Gated = semlower.program(pd);
     var pu: ircore.Units = ircore.split_units(pg, part_mods(parts), entry_index(parts));
     write(asm_ir.emit_module_ir_unit_flat(pu.mods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, pg.im.funcs, pg.stab, 0, 0 - 1, pu.caches[pm_index], pg.base, pd.sub.rt_lower));
@@ -374,7 +387,7 @@ function main(): i32 {
     return 0;
   }
 
-  merged = checked_or_exit(merged, prune);
+  merged = checked_or_exit(merged, prune, target);
 
   if (target == "wasm32-wasi") {
     // The preview1 command core, or the component core, as the CLI emits it.

@@ -201,8 +201,15 @@ function merged_program(entry: parser.Module, loaded: flatten.LoadedModule[], ta
 // functions nothing reaches pruned, as fern.fern prunes them. A module
 // declaring `@import` externs for another target (std/wasi_http) is reached
 // only through the branch the fold dropped, and an emitted caller of an
-// extern is an undefined symbol at link.
+// extern is an undefined symbol at link. The undefined-call gate (E001)
+// judges the program whole first, as the CLI's checker does: the emit
+// entry's own run of it sees only what the shake keeps.
 function merged_emitted(merged: parser.Module): parser.Module {
+  var errs: util.Diag[] = asmcore.check_undefined_calls(merged);
+  if (errs.len() > 0) {
+    eprint(util.format_diags(errs));
+    exit(1);
+  }
   return treeshake.treeshake(merged);
 }
 
