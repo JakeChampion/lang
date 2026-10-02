@@ -182,11 +182,11 @@ functions). Nothing else. The consequences:
 
 `fern -check` on two mutually-importing files: `import cycle detected`. Combined
 with one-module-per-file and no package concept, a mutually-recursive compiler
-pass cannot be split at all. `lower_expr` ↔ `lower_stmt` ↔ `lower_call_method`
-↔ `lower_stmt_var` are irreducibly mutually recursive, so they live in one
-60,552-line file, and the functions inside it grow to 1,704 lines because
-splitting *them* out is the only decomposition the language permits and it
-does not reduce the file.
+pass cannot be split at all. The deleted AST lowering's `lower_expr` ↔
+`lower_stmt` ↔ `lower_call_method` ↔ `lower_stmt_var` were irreducibly
+mutually recursive, so they lived in one 60,552-line file, and the functions
+inside it grew to 1,704 lines because splitting *them* out was the only
+decomposition the language permits and it did not reduce the file.
 
 The second cost is the test-staging tax: because there is no package, every Go
 test that compiles a self-host module lists its transitive module set by hand.
