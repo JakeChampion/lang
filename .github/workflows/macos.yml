@@ -377,6 +377,7 @@ jobs:
 
       - name: go test (SELF-HOST arm64-darwin native execution)
         if: "!cancelled() && matrix.shard == 0 && steps.gate.outputs.signed != 'true'"
+        timeout-minutes: 35
         # The sibling of the step above for the SELF-HOST arm64-darwin path,
         # which lives in a different package (internal/e2eselfhost) and so was
         # not selected by the `-run TestArm64Darwin ./internal/e2e/` filter —
@@ -385,8 +386,15 @@ jobs:
         # the static LC_UNIXTHREAD container, the entry-point offset and the
         # unmapped .bss tail all shipped: on the Linux shards this test only
         # parses the Mach-O it cannot run.
+        #
+        # -timeout is explicit for the reason the corpus step gives: every
+        # test here builds a self-host driver, which is 17 to 60 s each when
+        # the driver cache missed (any change under examples/self_host or the
+        # stdlib re-keys it), and the 212 of them took 700 s on one cold run.
+        # go test's default ten minutes then kills the binary and names
+        # whichever test was in flight, not the wall it hit.
         run: |
-          gotestsum --format standard-verbose -- -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
+          gotestsum --format standard-verbose -- -timeout 30m -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
