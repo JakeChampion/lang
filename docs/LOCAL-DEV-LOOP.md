@@ -193,9 +193,13 @@ until that copying goes.
 ## Where a whole self-host emit spends its time
 
 callgrind over the self-host driver (`-g`, see below) emitting
-`examples/self_host/fern.fern` to x86-64 asm text, 2026-10-02, 263 G
-instructions, 57 s wall on the 4-core container under other load (73 s to a
-linked binary with symbols, 3.5 GB peak). Inclusive shares, one pass each:
+`examples/self_host/fern.fern` to x86-64 asm text, 2026-10-02: 271 G
+instructions for the driver the pinned stage0 builds, 263 G for the one a
+self-host-built compiler builds from the same source (its codegen borrows
+where stage0's releases), 57 s wall on the 4-core container under other load
+(73 s to a linked binary with symbols, 3.5 GB peak). Compare drivers built by
+the same compiler: the input tree moves the count by under 0.02%, the
+building compiler by 3%. Inclusive shares, one pass each:
 
 - The semantic lowering (`semlower.target_substitution`) is 60%: producing
   the rows 40% (`ssarc.lower` of 13.5k bodies 17%, `semsource.build_module`
@@ -207,7 +211,8 @@ linked binary with symbols, 3.5 GB peak). Inclusive shares, one pass each:
 - The checker is 9%.
 
 By self cost the top rows were whole-table scans, since replaced with the
-emitted asm byte-identical and the emit at 239 G instructions (9% fewer):
+emitted asm byte-identical and the stage0-built driver's emit at 239 G
+instructions (271 G before, 11.6% fewer):
 the grow-flags edge resolution in `irlower.grow_param_flags_seeded` (4.8%,
 a scan of all 10.8k functions per dying pass) and `semsource.known_callee`
 (2.3%, 18 M calls of `method_is` scanning every known hander per
