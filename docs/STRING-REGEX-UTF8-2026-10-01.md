@@ -6,7 +6,9 @@ reaches identical stage-2 and stage-3 binaries of 12,114,209 bytes, SHA-256
 Actual stage-2 Darwin, core WASM, Preview 2 and primary interpreter probes
 pass with the allocation counts recorded below. The refreshed Linux target
 matrix, regex fixtures and conformance cases, VCL and `tr` callers, and
-`make lint-all` pass. The full unit gate remains pending.
+`make lint-all` pass. The full unit suite and every lint gate also pass on
+source revision `5b73e9a16`, including the unpartitioned IR, SSA and printer
+packages.
 
 Earlier integration checkpoint, October 2: the file-byte parent `7052f1c0c`
 passes the refreshed Linux target matrix, existing regex fixtures, VCL
