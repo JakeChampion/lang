@@ -29,7 +29,9 @@ store they live in is not reachable from every network), the self-host lane's
 `verify` job prints the same evidence into its log: the group "measured
 durations" holds `scripts/ci-test-weights merge` over that run's artifacts,
 the slowest observation of each test. Save the group's rows as the run
-directory's single `run.timings` file.
+directory's single `run.timings` file. The table is complete only when that
+`verify` job is green: a shard whose artifact is missing fails its first step,
+and the group still prints, short.
 
 ```sh
 scripts/ci-test-weights refresh .github/selfhost-test-weights.txt \
