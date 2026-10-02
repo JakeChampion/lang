@@ -2995,7 +2995,7 @@ function (s: Scope) has_array_method(field: string, view: boolean): boolean {
 function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string): typeinfo.Type {
   match (recv_ty) {
     typeinfo.TypeArray(array) => {
-      if (field == "append" || field == "with") {
+      if (!array.view && (field == "append" || field == "with")) {
         return recv_ty;
       }
       // `xs.len()` — the method spelling of the `len(xs)` builtin. It
@@ -3675,12 +3675,28 @@ function push_str_unique_sorted(xs: string[], v: string): string[] {
 function (s: Scope) unknown_method_message(ns: string, method: string, label: string, recv: typeinfo.Type): string {
   let base: string = "no method \"" + method + "\" on " + label;
   let repl: string = retired_collection_spelling(ns, method);
+  let view: boolean = false;
+  if let typeinfo.TypeArray(a) = recv {
+    view = a.view;
+  }
+  if (view) {
+    repl = "";
+  }
   if (repl.len() > 0) {
     return base + " — the in-place spelling was removed; use \"" + repl
       + "\", which returns the updated " + ns + " (assign the result back)";
   }
   let exact: boolean = s.namespace_is_exact(ns);
   let names: string[] = s.methods_in_namespace(ns);
+  if (view) {
+    exact = true;
+    names = ["len"];
+    for candidate in s.methods.methods {
+      if (parser.spelling_is_view(candidate.receiver_type)) {
+        names = push_str_unique_sorted(names, candidate.name);
+      }
+    }
+  }
   if (exact) {
     let did: string = util.suggest(method, names);
     if (did.len() > 0) {
@@ -13017,14 +13033,14 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // per-argument mismatch. An unknown element type
           // (uninferred receiver) or unknown arg is skipped. Both store the
           // element, so a `str` view is not lent here: native's storesArgument.
-          if (mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
+          if (!ar.view && mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
             let aat: typeinfo.Type = check_expr(c.args[0], s);
             out = util.append_diags(out, int_dest_range_diags(c.args[0], ar.elem));
             if (!is_unknown(aat) && !settles_to(c.args[0], ar.elem, s) && !coercible(aat, ar.elem, s)) {
               out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat) + str_copy_hint(aat, ar.elem), expr_line(c.args[0]), expr_col(c.args[0])));
             }
           }
-          if (mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
+          if (!ar.view && mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
             let wvt: typeinfo.Type = check_expr(c.args[1], s);
             out = util.append_diags(out, int_dest_range_diags(c.args[1], ar.elem));
             if (!is_unknown(wvt) && !settles_to(c.args[1], ar.elem, s) && !coercible(wvt, ar.elem, s)) {
@@ -13064,10 +13080,10 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (mfa.field == "len") {
             abw = 0;
           }
-          if (mfa.field == "append") {
+          if (!ar.view && mfa.field == "append") {
             abw = 1;
           }
-          if (mfa.field == "with") {
+          if (!ar.view && mfa.field == "with") {
             abw = 2;
           }
           if (abw >= 0 && c.args.len() != abw) {
@@ -13991,8 +14007,8 @@ function e055_diag(e: ast.Expr, s: Scope): util.Diag[] {
             typeinfo.TypeMap(_) => {
               is_coll = true;
             },
-            typeinfo.TypeArray(_) => {
-              is_coll = true;
+            typeinfo.TypeArray(array) => {
+              is_coll = !array.view;
             },
             _ => {}
           }
@@ -14111,7 +14127,8 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
       return field != "len" && field != "as_bytes" && s.lookup_method(field, "string").name.len() == 0;
     },
     typeinfo.TypeArray(array) => {
-      return field != "append" && field != "with" && field != "len" && !s.has_array_method(field, array.view);
+      let builtin: boolean = field == "len" || !array.view && (field == "append" || field == "with");
+      return !builtin && !s.has_array_method(field, array.view);
     },
     typeinfo.TypeMap(_) => {
       return !util.has_str(s.methods_in_namespace("Map"), field);

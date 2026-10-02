@@ -134,10 +134,21 @@ graph = ssa.SFunc { name: "byte_view", nparams: 1, nvals: 2, entry: 7, takes_env
 ] };
 `
 
+const semanticViewMutation = `
+let av: typeinfo.Type = typeinfo.TypeArray { elem: i32t, view: true };
+params = [av, i32t, i32t]; types = [av, i32t, i32t, av]; result = av;
+graph = ssa.SFunc { name: "view_mutation", nparams: 3, nvals: 4, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
+        inst(ssasem.append(), 3, [0, 2], 0)], term: ret(3) }
+] };
+`
+
 func semanticCases() []struct{ name, change, want string } {
 	base := []struct{ name, change, want string }{
 		{"nested-projections", "", ""},
 		{"array-lend", semanticArrayLend, ""},
+		{"array-view-cannot-append", semanticViewMutation, "append receiver must own storage"},
+		{"array-view-cannot-update", semanticViewMutation + "graph = change(graph, 3, inst(ssasem.with(), 3, [0, 1, 2], 0));", "with receiver must own storage"},
 		{"array-view-needs-owned-construction", semanticArrayLend + "graph = change(graph, 1, inst(ssasem.array_new(), 1, [], 0));", "array construction must own storage"},
 		{"byte-view", semanticByteView, ""},
 		{"byte-view-string-view", semanticByteView + "types = [view, bv]; params = [view];", ""},

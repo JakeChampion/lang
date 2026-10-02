@@ -1155,6 +1155,9 @@ function append_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "append result type";
   }
   if let typeinfo.TypeArray(a) = recv {
+    if (a.view) {
+      return "append receiver must own storage";
+    }
     if (!semtypes.equal(a.elem, f.values[ins.args[1]])) {
       return "append element type";
     }
@@ -1179,6 +1182,9 @@ function with_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     return "with index type";
   }
   if let typeinfo.TypeArray(a) = recv {
+    if (a.view) {
+      return "with receiver must own storage";
+    }
     if (!semtypes.equal(a.elem, f.values[ins.args[2]])) {
       return "with element type";
     }
