@@ -13868,6 +13868,52 @@ pub function extern_field_is_scalar(ft: string): boolean {
   return ft == "i32" || ft == "u32" || ft == "u8" || ft == "boolean";
 }
 
+// extern_param_field_scalar is a record field a record PARAMETER flattens to
+// one leaf: extern_field_is_scalar, or a 64-bit integer or a float, each
+// passed as its own core type.
+function extern_param_field_scalar(ft: string): boolean {
+  return extern_field_is_scalar(ft) || ft == "i64" || ft == "u64" || is_float_type(ft);
+}
+
+// extern_param_field_load reads a record parameter's scalar leaf at `addr` as
+// its canonical core value.
+function extern_param_field_load(ft: string, addr: string): string {
+  if (ft == "i64" || ft == "u64") {
+    return "(i64.load " + addr + ")";
+  }
+  if (ft == "f32") {
+    return "(f32.demote_f64 (f64.load " + addr + "))";
+  }
+  if (is_float_type(ft)) {
+    return "(f64.load " + addr + ")";
+  }
+  return "(" + extern_field_load_op(ft) + " " + addr + ")";
+}
+
+// extern_record_leaf_valtypes is the core value type of each flattened leaf
+// of record `t`, in order.
+function extern_record_leaf_valtypes(mod: parser.Module, t: string): string[] {
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < mod.structs.len()) {
+    if (mod.structs[i].name == t) {
+      var j: i32 = 0;
+      while (j < mod.structs[i].fields.len()) {
+        var ft: string = mod.structs[i].fields[j].type_name;
+        if (extern_param_field_scalar(ft)) {
+          out = out.append(extern_core_valtype(ft));
+        } else {
+          out = util.append_all(out, extern_record_leaf_valtypes(mod, ft));
+        }
+        j = j + 1;
+      }
+      return out;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
 // extern_record_leaf_count is the total number of flattened scalar leaves of a
 // record, recursing into nested record fields to arbitrary depth. Both record
 // params and results flatten nested records inline to arbitrary depth, so the
@@ -13881,7 +13927,7 @@ pub function extern_record_leaf_count(mod: parser.Module, t: string): i32 {
       var j: i32 = 0;
       while (j < n) {
         var ft: string = mod.structs[i].fields[j].type_name;
-        if (extern_field_is_scalar(ft)) {
+        if (extern_param_field_scalar(ft)) {
           leaves = leaves + 1;
         } else {
           leaves = leaves + extern_record_leaf_count(mod, ft);
@@ -13963,7 +14009,7 @@ pub function extern_record_param_supported(mod: parser.Module, t: string): boole
       var j: i32 = 0;
       while (j < n) {
         var ft: string = mod.structs[i].fields[j].type_name;
-        if (!extern_field_is_scalar(ft) && !extern_record_nestable(mod, ft)) {
+        if (!extern_param_field_scalar(ft) && !extern_record_nestable(mod, ft)) {
           return false;
         }
         j = j + 1;
@@ -14712,8 +14758,8 @@ pub function extern_emit_record_param_leaves(mod: parser.Module, base_expr: stri
   while (fi < n) {
     var ft: string = struct_field_type_at(stab, tn, fi);
     var field_expr: string = "(i32.add " + base_expr + " (i32.const " + util.i32_to_string(xbox_field_off(slot, fi)) + "))";
-    if (extern_field_is_scalar(ft)) {
-      parts = parts.append(" (" + extern_field_load_op(ft) + " " + field_expr + ")");
+    if (extern_param_field_scalar(ft)) {
+      parts = parts.append(" " + extern_param_field_load(ft, field_expr));
     } else {
       parts = parts.append(extern_emit_record_param_leaves(mod, "(i32.load " + field_expr + ")", ft, slot));
     }
@@ -14970,11 +15016,11 @@ pub function extern_imports(mod: parser.Module, slot: i32): string {
             // string / list<T> / list<u8>: canonical (ptr, len) = 2 i32s.
             parts = parts.append(" (param i32) (param i32)");
           } else if (extern_record_param_supported(mod, f.params[sp].type_name)) {
-            // record: flattens to one i32 per leaf (recursing one
-            // level into a nested record field).
+            // record: one core value per leaf, nested records inline.
+            var leaves: string[] = extern_record_leaf_valtypes(mod, f.params[sp].type_name);
             var rn: i32 = 0;
-            while (rn < extern_record_leaf_count(mod, f.params[sp].type_name)) {
-              parts = parts.append(" (param i32)");
+            while (rn < leaves.len()) {
+              parts = parts.append(" (param " + leaves[rn] + ")");
               rn = rn + 1;
             }
           } else if (extern_sum_param_supported(f.params[sp].type_name)) {
