@@ -602,6 +602,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc_rc1")
 					needs.add("__free")
 					needs.add("__fern_reader_read_line_fd")
+				case "__fern_reader_read_chunk_bytes":
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__alloc_u8")
+					needs.add("__free")
+					needs.add("__build_io_error")
+					needs.add("__fern_reader_read_chunk_bytes")
 				case "__fern_reader_read_chunk":
 					// (r, n) → i32 — single fd_read of up to n
 					// bytes into a fresh n-byte heap buffer,
@@ -671,6 +678,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				case "__fern_handle_isatty":
 					// (h) → i32 — 0 / 1, and nothing to box.
 					needs.add("__fern_handle_isatty")
+				case "__fern_writer_write_bytes", "__fern_writer_write_some_bytes":
+					needs.add("__fern_alloc")
+					needs.add("__fern_alloc_rc1")
+					needs.add("__build_io_error")
+					needs.add(callDirectAlias(op.Str))
 				case "__fern_writer_write_some":
 					// (w, s_data, s_len) → i32 — one write and
 					// the count; Result[i64, IoError].
@@ -1063,8 +1075,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// The string builder. Its callees come from
 					// unconditionalHelperCalls below.
 					needs.add(op.Str)
-				case "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte",
-					"buf_push_u64", "buf_len", "buf_take", "buf_free":
+				case "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte",
+					"buf_push_u64", "buf_len", "buf_take", "buf_take_bytes", "buf_free":
 					// The capacity-carrying builder, same shape: its
 					// callees come from unconditionalHelperCalls.
 					needs.add(op.Str)
@@ -1303,9 +1315,11 @@ var unconditionalHelperCalls = map[string][]string{
 	"strbuf_take":            {"__fern_alloc_rc1"},
 	"buf_new":                {"__fern_alloc_rc1"},
 	"buf_take":               {"__fern_alloc_rc1"},
+	"buf_take_bytes":         {"__fern_alloc"},
 	"__fern_buf_reserve":     {"__fern_alloc_rc1", "__fern_box_free"},
 	"buf_push":               {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_range":         {"__fern_str_byte", "__fern_buf_reserve"},
+	"buf_push_bytes_range":   {"__fern_buf_reserve"},
 	"buf_push_mapped":        {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_filtered":      {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
 	"buf_push_expanded":      {"__fern_str_len", "__fern_str_byte", "__fern_buf_reserve"},
@@ -1331,47 +1345,48 @@ var unconditionalHelperCalls = map[string][]string{
 // Each listed caller's preview-2 body translates the host's
 // error-code through appendErrnoFromErrorCode.
 var preview2HelperCalls = map[string][]string{
-	"__fern_read_file":              {"__wasi_errno_of_code"},
-	"__fern_read_file_bytes":        {"__wasi_errno_of_code"},
-	"__fern_write_file":             {"__wasi_errno_of_code"},
-	"__fern_open_reader":            {"__wasi_errno_of_code"},
-	"__fern_open_writer":            {"__wasi_errno_of_code"},
-	"__fern_open_appender":          {"__wasi_errno_of_code"},
-	"__fern_open_exclusive":         {"__wasi_errno_of_code"},
-	"__fern_open_reader_with":       {"__wasi_errno_of_code"},
-	"__fern_open_writer_with":       {"__wasi_errno_of_code"},
-	"__fern_reader_read_chunk":      {"__wasi_errno_of_code"},
-	"__fern_fd_stat":                {"__wasi_errno_of_code"},
-	"__fern_fd_fsync":               {"__wasi_errno_of_code"},
-	"__fern_fd_fdatasync":           {"__wasi_errno_of_code"},
-	"__fern_fd_syncfs":              {"__wasi_errno_of_code"},
-	"__fern_fd_dup_onto":            {"__wasi_errno_of_code"},
-	"__fern_handle_window_size":     {"__wasi_errno_of_code"},
-	"__fern_handle_set_window_size": {"__wasi_errno_of_code"},
-	"__fern_handle_termios_get":     {"__wasi_errno_of_code"},
-	"__fern_handle_termios_set":     {"__wasi_errno_of_code"},
-	"__fern_reader_splice":          {"__wasi_errno_of_code"},
-	"__fern_reader_seek":            {"__wasi_errno_of_code"},
-	"__fern_writer_seek":            {"__wasi_errno_of_code"},
-	"__fern_reader_flags":           {"__wasi_errno_of_code"},
-	"__fern_writer_flags":           {"__wasi_errno_of_code"},
-	"__fern_writer_truncate":        {"__wasi_errno_of_code"},
-	"__fern_remove_file":            {"__wasi_errno_of_code"},
-	"__fern_create_dir_all":         {"__wasi_errno_of_code"},
-	"__fern_create_dir":             {"__wasi_errno_of_code"},
-	"__fern_remove_dir":             {"__wasi_errno_of_code"},
-	"__fern_create_link":            {"__wasi_errno_of_code"},
-	"__fern_create_symlink":         {"__wasi_errno_of_code"},
-	"__fern_read_link":              {"__wasi_errno_of_code"},
-	"__fern_rename":                 {"__wasi_errno_of_code"},
-	"__fern_set_file_times":         {"__wasi_errno_of_code"},
-	"__fern_truncate":               {"__wasi_errno_of_code"},
-	"__fern_temp_dir":               {"__wasi_errno_of_code"},
-	"__fern_stat":                   {"__wasi_errno_of_code"},
-	"__fern_lstat":                  {"__wasi_errno_of_code"},
-	"__fern_open_dir":               {"__wasi_errno_of_code"},
-	"__fern_read_dir_raw":           {"__wasi_errno_of_code"},
-	"__fern_rmdir_rec":              {"__wasi_errno_of_code"},
+	"__fern_read_file":               {"__wasi_errno_of_code"},
+	"__fern_read_file_bytes":         {"__wasi_errno_of_code"},
+	"__fern_write_file":              {"__wasi_errno_of_code"},
+	"__fern_open_reader":             {"__wasi_errno_of_code"},
+	"__fern_open_writer":             {"__wasi_errno_of_code"},
+	"__fern_open_appender":           {"__wasi_errno_of_code"},
+	"__fern_open_exclusive":          {"__wasi_errno_of_code"},
+	"__fern_open_reader_with":        {"__wasi_errno_of_code"},
+	"__fern_open_writer_with":        {"__wasi_errno_of_code"},
+	"__fern_reader_read_chunk":       {"__wasi_errno_of_code"},
+	"__fern_reader_read_chunk_bytes": {"__wasi_errno_of_code"},
+	"__fern_fd_stat":                 {"__wasi_errno_of_code"},
+	"__fern_fd_fsync":                {"__wasi_errno_of_code"},
+	"__fern_fd_fdatasync":            {"__wasi_errno_of_code"},
+	"__fern_fd_syncfs":               {"__wasi_errno_of_code"},
+	"__fern_fd_dup_onto":             {"__wasi_errno_of_code"},
+	"__fern_handle_window_size":      {"__wasi_errno_of_code"},
+	"__fern_handle_set_window_size":  {"__wasi_errno_of_code"},
+	"__fern_handle_termios_get":      {"__wasi_errno_of_code"},
+	"__fern_handle_termios_set":      {"__wasi_errno_of_code"},
+	"__fern_reader_splice":           {"__wasi_errno_of_code"},
+	"__fern_reader_seek":             {"__wasi_errno_of_code"},
+	"__fern_writer_seek":             {"__wasi_errno_of_code"},
+	"__fern_reader_flags":            {"__wasi_errno_of_code"},
+	"__fern_writer_flags":            {"__wasi_errno_of_code"},
+	"__fern_writer_truncate":         {"__wasi_errno_of_code"},
+	"__fern_remove_file":             {"__wasi_errno_of_code"},
+	"__fern_create_dir_all":          {"__wasi_errno_of_code"},
+	"__fern_create_dir":              {"__wasi_errno_of_code"},
+	"__fern_remove_dir":              {"__wasi_errno_of_code"},
+	"__fern_create_link":             {"__wasi_errno_of_code"},
+	"__fern_create_symlink":          {"__wasi_errno_of_code"},
+	"__fern_read_link":               {"__wasi_errno_of_code"},
+	"__fern_rename":                  {"__wasi_errno_of_code"},
+	"__fern_set_file_times":          {"__wasi_errno_of_code"},
+	"__fern_truncate":                {"__wasi_errno_of_code"},
+	"__fern_temp_dir":                {"__wasi_errno_of_code"},
+	"__fern_stat":                    {"__wasi_errno_of_code"},
+	"__fern_lstat":                   {"__wasi_errno_of_code"},
+	"__fern_open_dir":                {"__wasi_errno_of_code"},
+	"__fern_read_dir_raw":            {"__wasi_errno_of_code"},
+	"__fern_rmdir_rec":               {"__wasi_errno_of_code"},
 }
 
 // closePreview2HelperCalls adds the preview-2 bodies' callees; run it
@@ -1406,8 +1421,9 @@ var helperResultBoxCallers = []string{
 	"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
 	"__fern_open_exclusive", "__fern_open_reader_with", "__fern_open_writer_with",
 	"__fern_reader_close_fd", "__fern_writer_close",
-	"__fern_writer_write", "__fern_writer_write_some", "__fern_reader_read_line_fd",
+	"__fern_writer_write", "__fern_writer_write_some", "__fern_writer_write_bytes", "__fern_writer_write_some_bytes", "__fern_reader_read_line_fd",
 	"__fern_reader_read_chunk", "__fern_fd_stat", "__fern_reader_seek", "__fern_writer_seek",
+	"__fern_reader_read_chunk_bytes",
 	"__fern_reader_flags", "__fern_writer_flags",
 	"__fern_writer_truncate",
 	"__fern_fd_fsync", "__fern_fd_fdatasync", "__fern_fd_syncfs",
@@ -2240,6 +2256,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: nil,
 		body:    buildBufPushRangeBody,
 	},
+	"buf_push_bytes_range": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildBufPushBytesRangeBody,
+	},
 	"buf_push_mapped": {
 		// (h, data, len, table) → (). Each byte through a u8[] table.
 		params: []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32,
@@ -2284,6 +2305,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32, encode.ValtypeI32},
 		body:    buildBufTakeBody,
+	},
+	"buf_take_bytes": {
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildBufTakeBytesBody,
 	},
 	"buf_free": {
 		// (h) → (). The buffer, when the builder still owns one, and the
@@ -3128,6 +3154,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildWriterWriteBody,
 	},
+	"__fern_writer_write_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32}, body: buildWriterBytesBody,
+	},
+	"__fern_writer_write_some_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32}, body: buildWriterSomeBytesBody,
+	},
 	"__fern_writer_write_some": {
 		// (w, s_data, s_len) → i32 — heap-form
 		// Result[i64, IoError]: ONE fd_write and the count the
@@ -3147,6 +3181,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildReaderReadLineFdBody,
+	},
+	"__fern_reader_read_chunk_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReaderReadChunkBytesBody,
 	},
 	"__fern_reader_read_chunk": {
 		// (r, n: i32) → i32 — heap-form Result[string, IoError].
@@ -5321,6 +5360,66 @@ func bufCopyBytes(body []byte, strByte, dataLocal, rawLenLocal, nLocal, dstLocal
 	body = inst.InstEnd(body) // end block
 	body = inst.InstEnd(body) // end if
 	return body
+}
+
+// Packed byte arrays have a length at data-4. Clamp once, then append with
+// memory.copy; no string metadata or character conversion is involved.
+func buildBufPushBytesRangeBody(idxs map[string]uint32) []byte {
+	const (
+		h      = 0
+		data   = 1
+		lo     = 2
+		hi     = 3
+		length = 4
+		n      = 5
+		need   = 6
+	)
+	var body []byte
+	body = inst.InstLocalGet(body, lo)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, lo)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, data)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, length)
+	body = inst.InstLocalGet(body, hi)
+	body = inst.InstLocalGet(body, length)
+	body = numeric.InstI32GtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, length)
+	body = inst.InstLocalSet(body, hi)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, hi)
+	body = inst.InstLocalGet(body, lo)
+	body = numeric.InstI32LeS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, hi)
+	body = inst.InstLocalGet(body, lo)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, n)
+	body = inst.InstLocalGet(body, h)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalGet(body, n)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, need)
+	body = bufReserveCall(body, idxs["__fern_buf_reserve"], h, need)
+	body = bufDst(body, h)
+	body = inst.InstLocalGet(body, data)
+	body = inst.InstLocalGet(body, lo)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, n)
+	body = memory.InstMemoryCopy(body)
+	body = inst.InstLocalGet(body, h)
+	body = inst.InstLocalGet(body, need)
+	body = memory.InstI32Store(body, 2, 4)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32), body)
 }
 
 // buildBufPushRangeBody assembles wasm bytes for buf_push_range.

@@ -646,6 +646,7 @@ func New() *Interp {
 	i.Builtins["buf_new"] = &Builtin{Fn: builtinBufNew}
 	i.Builtins["buf_push"] = &Builtin{Fn: builtinBufPush}
 	i.Builtins["buf_push_range"] = &Builtin{Fn: builtinBufPushRange}
+	i.Builtins["buf_push_bytes_range"] = &Builtin{Fn: builtinBufPushBytesRange}
 	i.Builtins["buf_push_mapped"] = &Builtin{Fn: builtinBufPushMapped}
 	i.Builtins["buf_push_filtered"] = &Builtin{Fn: builtinBufPushFiltered}
 	i.Builtins["buf_push_expanded"] = &Builtin{Fn: builtinBufPushExpanded}
@@ -653,6 +654,7 @@ func New() *Interp {
 	i.Builtins["buf_push_u64"] = &Builtin{Fn: builtinBufPushU64}
 	i.Builtins["buf_len"] = &Builtin{Fn: builtinBufLen}
 	i.Builtins["buf_take"] = &Builtin{Fn: builtinBufTake}
+	i.Builtins["buf_take_bytes"] = &Builtin{Fn: builtinBufTakeBytes}
 	i.Builtins["buf_free"] = &Builtin{Fn: builtinBufFree}
 	// `x.len()` dispatches through three mangled names (one per
 	// receiver type the checker registers a method on); all three
@@ -677,6 +679,7 @@ func New() *Interp {
 	i.Builtins["open_writer_with"] = &Builtin{Fn: builtinOpenWriterWith}
 	i.Builtins["__method_Reader_read_line"] = &Builtin{Fn: builtinReaderReadLine}
 	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
+	i.Builtins["__method_Reader_read_chunk_bytes"] = &Builtin{Fn: builtinReaderReadChunkBytes}
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
 	i.Builtins["__method_Reader_stat"] = &Builtin{Fn: builtinFdStat}
 	i.Builtins["__method_Writer_stat"] = &Builtin{Fn: builtinFdStat}
@@ -693,6 +696,8 @@ func New() *Interp {
 	i.Builtins["__method_Writer_isatty"] = &Builtin{Fn: builtinHandleIsatty}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_write_some"] = &Builtin{Fn: builtinWriterWriteSome}
+	i.Builtins["__method_Writer_write_bytes"] = &Builtin{Fn: builtinWriterWriteBytes}
+	i.Builtins["__method_Writer_write_some_bytes"] = &Builtin{Fn: builtinWriterWriteSomeBytes}
 	i.Builtins["__method_Writer_close"] = &Builtin{Fn: builtinWriterClose}
 	i.Builtins["__method_Reader_fsync"] = &Builtin{Fn: builtinFsync}
 	i.Builtins["__method_Writer_fsync"] = &Builtin{Fn: builtinFsync}
@@ -4728,6 +4733,42 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 	return resultOk(String(string(buf[:n]))), nil
 }
 
+// Read raw bytes without creating a language string. A short read owns its
+// payload even when the host reader reports EOF with the final bytes.
+func builtinReaderReadChunkBytes(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("Reader.read_chunk_bytes: expected 2 args")
+	}
+	size, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("Reader.read_chunk_bytes: size must be a number")
+	}
+	if size < 0 {
+		return resultErr(classifyIoError("", syscall.EINVAL)), nil
+	}
+	fd, err := streamFd(args[0])
+	if err != nil {
+		return nil, err
+	}
+	if i.closedStd[fd] || (fd != 0 && i.openFiles[fd] == nil) {
+		return resultErr(classifyIoError("", syscall.EBADF)), nil
+	}
+	r, err := readerStream(i, args[0])
+	if err != nil {
+		return nil, err
+	}
+	buf := make([]byte, int(size))
+	n, rerr := r.Read(buf)
+	if n == 0 && rerr != nil && !errors.Is(rerr, io.EOF) {
+		return resultErr(classifyIoError("", rerr)), nil
+	}
+	out := newArray(n)
+	for j, b := range buf[:n] {
+		out.E[j] = Number(b)
+	}
+	return resultOk(out), nil
+}
+
 func builtinReaderClose(i *Interp, args []Value) (Value, error) {
 	return closeFile(i, args)
 }
@@ -5315,6 +5356,36 @@ func builtinBufPush(i *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
+// builtinBufPushBytesRange borrows an array and appends its clamped range.
+func builtinBufPushBytesRange(i *Interp, args []Value) (Value, error) {
+	if len(args) != 4 {
+		return nil, fmt.Errorf("buf_push_bytes_range: expected 4 args, got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_bytes_range", args[0])
+	if err != nil {
+		return nil, err
+	}
+	a, ok := args[1].(Array)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_bytes_range: expected byte array, got %T", args[1])
+	}
+	lo, lok := args[2].(Number)
+	hi, hik := args[3].(Number)
+	if !lok || !hik {
+		return nil, fmt.Errorf("buf_push_bytes_range: bounds must be numbers")
+	}
+	low, high := max(int64(lo), 0), min(int64(hi), int64(len(a.E)))
+	for at := low; at < high; at++ {
+		n, ok := a.E[at].(Number)
+		if !ok {
+			return nil, fmt.Errorf("buf_push_bytes_range: element %d is %T", at, a.E[at])
+		}
+		b = append(b, byte(n))
+	}
+	i.bufs[h] = b
+	return Void{}, nil
+}
+
 // builtinBufPushRange appends `s[lo:hi]`. Same bounds contract as
 // slice_unchecked's: out of range is an error here, the interp's
 // stand-in for the trap the codegen does not emit.
@@ -5526,6 +5597,22 @@ func builtinBufTake(i *Interp, args []Value) (Value, error) {
 	s := String(b)
 	i.bufs[h] = make([]byte, 0, cap(b))
 	return s, nil
+}
+
+func builtinBufTakeBytes(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("buf_take_bytes: expected 1 arg (b), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_take_bytes", args[0])
+	if err != nil {
+		return nil, err
+	}
+	out := newArray(len(b))
+	for j, value := range b {
+		out.E[j] = Number(value)
+	}
+	i.bufs[h] = b[:0]
+	return out, nil
 }
 
 // builtinBufFree releases the builder. The handle is dead afterwards,

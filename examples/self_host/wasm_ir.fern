@@ -277,7 +277,7 @@ pub function need_ops(): string[] {
     "args", "arr_push", "arr_push_f64", "arr_push_i64", "arr_push_owned", "arr_push_owned_i64",
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "fcos", "fexp", "flog",
     "fpow", "fsin", "monotonic_ns", "now_ns", "now_unix_ms", "poll", "print_str", "putchar",
-    "random_bytes", "read_chunk", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs",
+    "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs",
     "fd_dup_onto", "reader_seek", "reader_splice", "fd_flags", "writer_truncate", "read_dir",
     "read_dir_all", "read_file", "read_file_bytes", "read_line",
     "reader_close", "remove_dir_all", "remove_file", "create_dir_all", "create_dir",
@@ -288,7 +288,7 @@ pub function need_ops(): string[] {
     "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto", "tcp_connect_with", "wasm_block",
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
     "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "open_file",
-    "writer_write", "write_some",
+    "writer_write", "write_some", "write_bytes", "write_some_bytes", "buf_take_bytes", "buf_push_bytes_range",
   ];
 }
 
@@ -1705,6 +1705,8 @@ pub function module_uses_buf(cache: irlower.LowerResult[]): boolean {
     || module_emits_op_cached(cache, "buf_push_expanded")
     || module_emits_op_cached(cache, "buf_push_u64")
     || module_emits_op_cached(cache, "buf_len") || module_emits_op_cached(cache, "buf_take")
+    || module_emits_op_cached(cache, "buf_take_bytes")
+    || module_emits_op_cached(cache, "buf_push_bytes_range")
     || module_emits_op_cached(cache, "buf_free");
 }
 
@@ -2221,7 +2223,7 @@ pub function component_refused_need(needs: string[], io: boolean): string {
     }
     // A Writer is stdout() or stderr(), fd 1 or 2, so its writes reach the
     // same $fd_write shim print and eprint do.
-    if (io && (n == "writer_write" || n == "write_some")) {
+    if (io && (n == "writer_write" || n == "write_some" || n == "write_bytes" || n == "write_some_bytes")) {
       i = i + 1;
       continue;
     }
@@ -2250,6 +2252,7 @@ pub function component_refused_need(needs: string[], io: boolean): string {
     if (n == "arr_push" || n == "arr_push_owned" || n == "arr_push_i64"
       || n == "arr_push_f64" || n == "arr_push_owned_i64" || n == "arr_push_owned_f64"
       || n == "map_iter" || n == "str_split"
+      || n == "buf_take_bytes" || n == "buf_push_bytes_range"
       || n == "str_bytes" || n == "str_from_bytes" || n == "fexp"
       || n == "flog" || n == "fpow" || n == "fsin" || n == "fcos") {
       i = i + 1;
@@ -2794,7 +2797,7 @@ pub function writefile_func_p2(): string {
 // either way, so an eprint-only program carries an unused stdout import and
 // still matches the eprint framing.
 pub function component_io_imports(needs: string[], stderr: boolean): string {
-  var o: string = "";
+  var o: string = "  (import \"wasi:io/error@0.2.0\" \"[resource-drop]error\" (func $io_error_drop (param i32)))\n";
   if (stderr) {
     o = o + "  (import \"wasi:cli/stderr@0.2.0\" \"get-stderr\" (func $get_stderr (result i32)))\n";
     o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $bwf (param i32 i32 i32 i32)))\n";
@@ -2872,7 +2875,12 @@ pub function component_io_shims(needs: string[], stderr: boolean): string {
     o = o + "  (global $__stderr_handle (mut i32) (i32.const -1))\n";
   }
   o = o + "  (func $fd_write (param $fd i32) (param $iovs i32) (param $iovn i32) (param $nw i32) (result i32)\n";
-  o = o + "    (local $h i32) (local $len i32) (local $ret i32)\n";
+  o = o + "    (local $h i32) (local $len i32) (local $ret i32) (local $scratch i32) (local $ptr i32) (local $at i32) (local $chunk i32) (local $vec i32) (local $total i32)\n";
+  o = o + "    (i32.store (local.get $nw) (i32.const 0))\n";
+  o = o + "    (if (i32.and (i32.ne (local.get $fd) (i32.const 1)) (i32.ne (local.get $fd) (i32.const 2))) (then (return (i32.const 8))))\n";
+  if (!stderr) {
+    o = o + "    (if (i32.eq (local.get $fd) (i32.const 2)) (then (return (i32.const 8))))\n";
+  }
   if (stderr) {
     o = o + "    (if (i32.eq (local.get $fd) (i32.const 2))\n";
     o = o + "      (then\n";
@@ -2888,10 +2896,28 @@ pub function component_io_shims(needs: string[], stderr: boolean): string {
     o = o + "      (then (global.set $__stdout_handle (call $get_stdout))))\n";
     o = o + "    (local.set $h (global.get $__stdout_handle))\n";
   }
-  o = o + "    (local.set $len (i32.load (i32.add (local.get $iovs) (i32.const 4))))\n";
-  o = o + "    (local.set $ret (i32.and (i32.add (call $__fern_alloc (i32.const 24)) (i32.const 7)) (i32.const -8)))\n";
-  o = o + "    (call $bwf (local.get $h) (i32.load (local.get $iovs)) (local.get $len) (local.get $ret))\n";
-  o = o + "    (i32.store (local.get $nw) (local.get $len))\n";
+  o = o + "    (local.set $scratch (call $__fern_str_box (i32.const 24)))\n";
+  o = o + "    (local.set $ret (i32.and (i32.add (local.get $scratch) (i32.const 7)) (i32.const -8)))\n";
+  o = o + "    (block $vectors_done (loop $vectors\n";
+  o = o + "      (br_if $vectors_done (i32.ge_u (local.get $vec) (local.get $iovn)))\n";
+  o = o + "      (local.set $ptr (i32.load (local.get $iovs)))\n";
+  o = o + "      (local.set $len (i32.load offset=4 (local.get $iovs))) (local.set $at (i32.const 0))\n";
+  // Even an empty iovec asks the host, preserving a closed-stream error.
+  o = o + "      (block $chunks_done (loop $chunks\n";
+  o = o + "        (local.set $chunk (i32.sub (local.get $len) (local.get $at)))\n";
+  o = o + "        (if (i32.gt_u (local.get $chunk) (i32.const 4096)) (then (local.set $chunk (i32.const 4096))))\n";
+  o = o + "        (call $bwf (local.get $h) (i32.add (local.get $ptr) (local.get $at)) (local.get $chunk) (local.get $ret))\n";
+  o = o + "        (if (i32.load8_u (local.get $ret)) (then\n";
+  o = o + "          (if (i32.eqz (i32.load8_u offset=4 (local.get $ret))) (then (call $io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
+  o = o + "          (drop (call $__fern_arr_dec (local.get $scratch)))\n";
+  o = o + "          (i32.store (local.get $nw) (local.get $total)) (return (i32.const 29))))\n";
+  o = o + "        (local.set $at (i32.add (local.get $at) (local.get $chunk)))\n";
+  o = o + "        (local.set $total (i32.add (local.get $total) (local.get $chunk)))\n";
+  o = o + "        (br_if $chunks_done (i32.eq (local.get $at) (local.get $len))) (br $chunks)))\n";
+  o = o + "      (local.set $vec (i32.add (local.get $vec) (i32.const 1)))\n";
+  o = o + "      (local.set $iovs (i32.add (local.get $iovs) (i32.const 8))) (br $vectors)))\n";
+  o = o + "    (drop (call $__fern_arr_dec (local.get $scratch)))\n";
+  o = o + "    (i32.store (local.get $nw) (local.get $total))\n";
   o = o + "    (i32.const 0))\n";
   if (need(needs, "exit")) {
     o = o + "  (func $proc_exit (param $c i32)\n";
@@ -5365,6 +5391,12 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 65) {  // fcos
     // cos(x): same as fsin, calling $__fern_cos_f64.
     parts = parts.append("    call $__fern_cos_f64\n");
+  } else if (o.kind_tag == 349) {
+    parts = parts.append("    call $__fern_writer_write_bytes\n");
+  } else if (o.kind_tag == 350) {
+    parts = parts.append("    call $__fern_writer_write_some_bytes\n");
+  } else if (o.kind_tag == 348) {
+    parts = parts.append("    call $__fern_reader_read_chunk_bytes\n");
   } else if (o.kind_tag == 178) {  // read_chunk
     // r.read_chunk(n) -> Result[string, IoError]. A Reader is just its fd (stdin =
     // fd 0), so fd + n are on the stack; $__fern_reader_read_chunk reads up
@@ -5770,7 +5802,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // stack: strblock ptr -> copy its bytes onto the builder. Void helper
     // (consumes the arg); push a dummy i32 for the statement-level drop.
     parts = parts.append("    call $__fern_strbuf_append\n    i32.const 0\n");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328) {  // the buf_* builder
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351) {  // the buf_* builder
     parts = emit_wasm_buf_op(o, parts);
   } else if (o.kind_tag == 119) {  // strbuf_take
     // no args -> snapshot the builder into a fresh string box and reset it
@@ -6296,7 +6328,7 @@ function needs_fd_sync(needs: string[]): boolean {
 // needs_io_error reports whether the module carries any fs op — the gate on
 // $__fern_build_io_error and on the strerror texts it selects from.
 pub function needs_io_error(needs: string[]): boolean {
-  return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || need(needs, "fd_flags") || needs_fd_sync(needs);
+  return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need_open_file(needs) || need(needs, "writer_write") || (need(needs, "write_some") || need(needs, "write_bytes") || need(needs, "write_some_bytes")) || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "read_chunk_bytes") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || need(needs, "fd_flags") || needs_fd_sync(needs);
 }
 
 // with_strerror_texts adds the strerror texts and the "Unknown error " prefix
@@ -8853,6 +8885,9 @@ pub function arr_slice_helper(): string {
 // each arm is the bare call; the four void helpers push a dummy i32 for the
 // statement-level drop, the way strbuf_append does.
 function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
+  if (o.kind_tag == 347) {
+    return parts.append("    call $__fern_buf_take_bytes\n");
+  }
   if (o.kind_tag == 291) {
     return parts.append("    call $__fern_buf_new\n");
   }
@@ -8861,6 +8896,9 @@ function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
   }
   if (o.kind_tag == 293) {
     return parts.append("    call $__fern_buf_push_range\n    i32.const 0\n");
+  }
+  if (o.kind_tag == 351) {
+    return parts.append("    call $__fern_buf_push_bytes_range\n    i32.const 0\n");
   }
   if (o.kind_tag == 325) {
     return parts.append("    call $__fern_buf_push_mapped\n    i32.const 0\n");
@@ -8947,6 +8985,41 @@ pub function strbuf_helpers(): string {
   o = o + "    (global.set $__fern_strbuf_cap (i32.const 0))\n";
   o = o + "    (local.get $box))\n";
   return o;
+}
+
+// The wasm array layout uses four-byte slots for u8 elements.
+function buf_push_bytes_range_helper(): string {
+  var o: string = "  (func $__fern_buf_push_bytes_range (param $h i32) (param $a i32) (param $lo i32) (param $hi i32)\n";
+  o = o + "    (local $n i32) (local $len i32) (local $dst i32) (local $src i32)\n";
+  o = o + "    (if (i32.lt_s (local.get $lo) (i32.const 0)) (then (local.set $lo (i32.const 0))))\n";
+  o = o + "    (if (i32.gt_s (local.get $hi) (i32.load (local.get $a))) (then (local.set $hi (i32.load (local.get $a)))))\n";
+  o = o + "    (if (i32.le_s (local.get $hi) (local.get $lo)) (then (return)))\n";
+  o = o + "    (local.set $n (i32.sub (local.get $hi) (local.get $lo)))\n";
+  o = o + "    (local.set $len (i32.load offset=4 (local.get $h)))\n";
+  o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load offset=8 (local.get $h))) (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $n)))))\n";
+  o = o + "    (local.set $dst (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
+  o = o + "    (local.set $src (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $lo) (i32.const 4))))\n";
+  o = o + "    (i32.store offset=4 (local.get $h) (i32.add (local.get $len) (local.get $n)))\n";
+  o = o + "    (loop $copy (i32.store8 (local.get $dst) (i32.load8_u (local.get $src)))\n";
+  o = o + "      (local.set $dst (i32.add (local.get $dst) (i32.const 1))) (local.set $src (i32.add (local.get $src) (i32.const 4)))\n";
+  return o + "      (local.set $n (i32.sub (local.get $n) (i32.const 1))) (br_if $copy (local.get $n))))\n";
+}
+
+// Byte extraction uses array headers, never a string box.
+function buf_take_bytes_helper(): string {
+  // This emitter represents u8[] as four-byte slots, including typed IR.
+  var o: string = "  (func $__fern_buf_take_bytes (param $h i32) (result i32)\n";
+  o = o + "    (local $n i32) (local $a i32) (local $src i32) (local $i i32)\n";
+  o = o + "    (local.set $n (i32.load offset=4 (local.get $h)))\n";
+  o = o + "    (local.set $a (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+  o = o + "    (i32.store (local.get $a) (local.get $n))\n";
+  o = o + "    (i32.store offset=4 (local.get $a) (local.get $n))\n";
+  o = o + "    (local.set $src (i32.add (i32.load (local.get $h)) (i32.const 4)))\n";
+  o = o + "    (block $done (loop $copy (br_if $done (i32.ge_u (local.get $i) (local.get $n)))\n";
+  o = o + "      (i32.store offset=8 (i32.add (local.get $a) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n";
+  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $copy)))\n";
+  o = o + "    (i32.store offset=4 (local.get $h) (i32.const 0))\n";
+  return o + "    (local.get $a))\n";
 }
 
 // buf_helpers emits the wasm capacity-carrying string builder (#8773) — the
@@ -9898,6 +9971,52 @@ pub function writer_write_func(): string {
 // scratch 8. Zero is a real answer rather than an error — a stream with no
 // room right now has written none of them — and the Ok payload is the i64 the
 // Result box carries, as reader_seek's offset is.
+// The primary wasm representation uses four-byte slots for u8. Pack into an
+// owned byte allocation for the host call and release it on every outcome.
+pub function writer_bytes_func(all: boolean): string {
+  var name: string = "write_some_bytes";
+  var error_tag: string = "1";
+  var more: string = "      (br $done)\n";
+  var success: string = "    (local.set $res (call $__fern_str_box (i32.const 16))) (i32.store (local.get $res) (i32.const 0))\n    (i64.store offset=8 (local.get $res) (i64.extend_i32_u (local.get $count)))\n    (local.get $res)\n";
+  if (all) {
+    name = "write_bytes";
+    error_tag = "0";
+    more = "      (local.set $at (i32.add (local.get $at) (local.get $count)))\n      (br_if $done (i32.eq (local.get $at) (local.get $n)))\n      (if (i32.eqz (local.get $count)) (then (local.set $err (i32.const 29)) (br $done)))\n      (br $write)\n";
+    success = "    (local.set $res (call $__fern_str_box (i32.const 8))) (i32.store (local.get $res) (i32.const 1))\n    (i32.store offset=4 (local.get $res) (i32.const 0))\n    (local.get $res)\n";
+  }
+  var o: string = "";
+  o = o + "  (func $__fern_writer_" + name + " (param $fd i32) (param $bytes i32) (result i32)\n";
+  o = o + "    (local $n i32) (local $raw i32) (local $i i32) (local $at i32) (local $count i32) (local $err i32) (local $res i32) (local $path i32)\n";
+  o = o + "    (local.set $n (i32.load (local.get $bytes)))\n";
+  o = o + "    (local.set $raw (call $__fern_arr_box (local.get $n)))\n";
+  o = o + "    (i32.store (local.get $raw) (local.get $n))\n";
+  o = o + "    (i32.store offset=4 (local.get $raw) (local.get $n))\n";
+  o = o + "    (block $packed (loop $pack\n";
+  o = o + "      (br_if $packed (i32.ge_u (local.get $i) (local.get $n)))\n";
+  o = o + "      (i32.store8 offset=8 (i32.add (local.get $raw) (local.get $i)) (i32.load offset=8 (i32.add (local.get $bytes) (i32.mul (local.get $i) (i32.const 4)))))\n";
+  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+  o = o + "      (br $pack)))\n";
+  o = o + "    (block $done (loop $write\n";
+  o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $raw) (i32.const 8)) (local.get $at)))\n";
+  o = o + "      (i32.store (i32.const 4) (i32.sub (local.get $n) (local.get $at)))\n";
+  o = o + "      (local.set $err (call $fd_write (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+  o = o + "      (br_if $done (local.get $err))\n";
+  o = o + "      (local.set $count (i32.load (i32.const 8)))\n";
+  o = o + more;
+  o = o + "    ))\n";
+  o = o + "    (drop (call $__fern_arr_dec (local.get $raw)))\n";
+  o = o + "    (if (local.get $err) (then\n";
+  o = o + "      (local.set $path (call $__fern_str_box (i32.const 4))) (i32.store (local.get $path) (i32.const 0))\n";
+  o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+  o = o + "      (i32.store (local.get $res) (i32.const " + error_tag + "))\n";
+  o = o + "      (i32.store offset=4 (local.get $res) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+  o = o + "      (if (i32.or (i32.eq (local.get $err) (i32.const 27)) (i32.eq (local.get $err) (i32.const 58))) (then (drop (call $__fern_arr_dec (local.get $path)))))\n";
+  o = o + "      (return (local.get $res))))\n";
+  o = o + success;
+  o = o + "  )\n";
+  return o;
+}
+
 pub function writer_write_some_func(): string {
   var o: string = "";
   o = o + "  (func $__fern_writer_write_some (param $fd i32) (param $box i32) (result i32)\n";
@@ -10009,6 +10128,38 @@ pub function read_line_func(): string {
 // reader_close's error path builds one. Same string + box layout env_func
 // builds. Needs the heap runtime (str_box/alloc), and needs_io_error folds
 // "read_chunk" in so the classifier reaches a module that only reads (#8700).
+// Read into array storage and expand backwards into this backend's four-byte
+// u8 slots. No string contains the raw input at any point.
+pub function reader_read_chunk_bytes_func(): string {
+  var o: string = "  (func $__fern_reader_read_chunk_bytes (param $fd i32) (param $n i32) (result i32)\n";
+  o = o + "    (local $a i32) (local $got i32) (local $box i32) (local $err i32) (local $path i32) (local $i i32)\n";
+  o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $err (i32.const 28))) (else\n";
+  o = o + "      (if (i64.gt_u (i64.mul (i64.extend_i32_u (local.get $n)) (i64.const 4)) (i64.const 2147483631)) (then (unreachable)))\n";
+  o = o + "      (local.set $a (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+  o = o + "      (i32.store (local.get $a) (i32.const 0)) (i32.store offset=4 (local.get $a) (local.get $n))\n";
+  o = o + "      (i32.store (i32.const 0) (i32.add (local.get $a) (i32.const 8)))\n";
+  o = o + "      (i32.store (i32.const 4) (local.get $n))\n";
+  o = o + "      (local.set $err (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+  o = o + "      (local.set $got (i32.load (i32.const 8)))))\n";
+  o = o + "    (if (local.get $err) (then\n";
+  o = o + "      (if (local.get $a) (then (drop (call $__fern_arr_dec (local.get $a)))))\n";
+  o = o + "      (local.set $path (call $__fern_str_box (i32.const 4))) (i32.store (local.get $path) (i32.const 0))\n";
+  o = o + "      (local.set $box (call $__fern_str_box (i32.const 8))) (i32.store (local.get $box) (i32.const 1))\n";
+  o = o + "      (i32.store offset=4 (local.get $box) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+  // Interrupted and Unsupported carry no path, so they do not adopt it.
+  o = o + "      (if (i32.or (i32.eq (local.get $err) (i32.const 27)) (i32.eq (local.get $err) (i32.const 58))) (then (drop (call $__fern_arr_dec (local.get $path)))))\n";
+  o = o + "      (return (local.get $box))))\n";
+  o = o + "    (local.set $i (local.get $got))\n";
+  o = o + "    (block $done (loop $expand (br_if $done (i32.eqz (local.get $i)))\n";
+  o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
+  o = o + "      (i32.store offset=8 (i32.add (local.get $a) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u offset=8 (i32.add (local.get $a) (local.get $i))))\n";
+  o = o + "      (br $expand)))\n";
+  o = o + "    (i32.store (local.get $a) (local.get $got))\n";
+  o = o + "    (local.set $box (call $__fern_str_box (i32.const 8))) (i32.store (local.get $box) (i32.const 0))\n";
+  o = o + "    (i32.store offset=4 (local.get $box) (local.get $a))\n";
+  return o + "    (local.get $box))\n";
+}
+
 pub function reader_read_chunk_func(): string {
   var o: string = "";
   o = o + "  (func $__fern_reader_read_chunk (param $fd i32) (param $n i32) (result i32)\n";
@@ -11716,7 +11867,7 @@ function preview1_imports(needs: string[]): string {
   }
   // print_str / eprint_str / putchar write via WASI fd_write
   // — import it only when the module writes to stdout or stderr.
-  if (leak_check_on() || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || need(needs, "write_file") || need(needs, "writer_write") || need(needs, "write_some")) {
+  if (leak_check_on() || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || need(needs, "write_file") || need(needs, "writer_write") || (need(needs, "write_some") || need(needs, "write_bytes") || need(needs, "write_some_bytes"))) {
     parts = parts.append("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
   }
   // read_file / write_file open paths under preopen fd 3: path_open +
@@ -11741,7 +11892,7 @@ function preview1_imports(needs: string[]): string {
   // emit the standalone fd_read import ONLY when the module reads stdin but
   // does NOT do file I/O — otherwise fd_read would be imported twice (an
   // invalid module).
-  if ((need(needs, "read_line") || need(needs, "read_chunk")) && !(need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need_open_file(needs) || need(needs, "truncate"))) {
+  if ((need(needs, "read_line") || need(needs, "read_chunk") || need(needs, "read_chunk_bytes")) && !(need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need_open_file(needs) || need(needs, "truncate"))) {
     parts = parts.append(stdin_fd_read_import());
   }
   // reader_close calls preview1 fd_close. file_imports supplies fd_close for
@@ -12197,8 +12348,8 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // would otherwise emit `call $__fern_alloc` against nothing.
   if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
     "@allocates", "@uses_maps", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_chr", "@uses_strbuf", "@uses_buf",
-    "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_all", "remove_dir_all", "temp_dir", "read_chunk", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
-    "writer_write", "write_some", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
+    "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_all", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
+    "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
   ])) {
     parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count")));
     parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
@@ -12242,6 +12393,12 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_buf")) {
     parts = parts.append(buf_helpers());
+  }
+  if (need(needs, "buf_push_bytes_range")) {
+    parts = parts.append(buf_push_bytes_range_helper());
+  }
+  if (need(needs, "buf_take_bytes")) {
+    parts = parts.append(buf_take_bytes_helper());
   }
   // Per-type $__field_reclaim_<T> + $__struct_drop_<T> RC helper bodies
   // (#3457, Perceus slices 1c/1d + slice-3 nested deep-drop). emit_module's
@@ -12583,6 +12740,12 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "write_some")) {
     parts = parts.append(writer_write_some_func());
   }
+  if (need(needs, "write_bytes")) {
+    parts = parts.append(writer_bytes_func(true));
+  }
+  if (need(needs, "write_some_bytes")) {
+    parts = parts.append(writer_bytes_func(false));
+  }
   // $__fern_read_line boxes a line of stdin (heap-gated via op_allocates).
   if (need(needs, "read_line")) {
     parts = parts.append(read_line_func());
@@ -12594,6 +12757,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // via fd_close (imports emitted above). Backs std/io read_all_stdin on wasm.
   if (need(needs, "read_chunk")) {
     parts = parts.append(reader_read_chunk_func());
+  }
+  if (need(needs, "read_chunk_bytes")) {
+    parts = parts.append(reader_read_chunk_bytes_func());
   }
   if (need(needs, "reader_close")) {
     parts = parts.append(reader_close_func());

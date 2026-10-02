@@ -21,6 +21,21 @@ import (
 var bufIRCases = []struct {
 	name, src, want string
 }{
+	{"take-bytes", `function main(): i32 {
+    var h: usize = buf_new(1);
+    var empty: u8[] = buf_take_bytes(h);
+    if (empty.len() != 0) { return 1; }
+    var i: i32 = 0;
+    while (i < 256) { buf_push_byte(h, i); i = i + 1; }
+    var out: u8[] = buf_take_bytes(h);
+    buf_push_byte(h, 99);
+    var next: u8[] = buf_take_bytes(h);
+    buf_free(h);
+    if (out.len() != 256 || next.len() != 1 || next[0] != 99) { return 2; }
+    i = 0;
+    while (i < 256) { if (out[i] != i as u8) { return 3; } i = i + 1; }
+    return 0;
+}`, ""},
 	{"build", `function main(): i32 { var b: usize = buf_new(16); buf_push(b, "ab"); buf_push(b, "cd"); write(buf_take(b)); buf_free(b); return 0; }`, "abcd"},
 	{"empty-take", `function main(): i32 { var b: usize = buf_new(16); write(buf_take(b)); write("end"); buf_free(b); return 0; }`, "end"},
 	{"reuse-after-take", `function main(): i32 { var b: usize = buf_new(16); buf_push(b, "x"); write(buf_take(b)); buf_push(b, "y"); write(buf_take(b)); buf_free(b); return 0; }`, "xy"},
@@ -56,6 +71,8 @@ var bufIRCases = []struct {
 // -1 for a stdout-checked one.
 func bufExpectedExit(name string) int {
 	switch name {
+	case "take-bytes":
+		return 0
 	case "take-len":
 		return 5
 	case "grow-byte":
