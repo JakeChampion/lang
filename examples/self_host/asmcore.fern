@@ -3153,14 +3153,19 @@ pub function rt_src_reader_read_chunk(t: string): string {
   return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { var p: usize = __raw_alloc(n); var r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (r == n) { return Ok(__raw_string(p, n)); } if (r <= 0) { var short: string = __raw_string(p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(\"\"); } var q: usize = __raw_alloc(r); __memcpy(q, p, r); var full: string = __raw_string(p, n); return Ok(__raw_string(q, r)); }";
 }
 
-// Scratch is owned as an array throughout, including the error path. Packed
-// results retain their physical reserve; legacy results expand byte slots.
+// Scratch is owned as an array throughout, including the error path. Full
+// packed reads transfer it; short reads copy only the bytes actually read so
+// retained pipe chunks cannot each pin the full requested reserve.
 pub function rt_src_reader_read_chunk_bytes(t: string, packed: boolean): string {
+  var copy: string = "";
   var finish: string = "var b: usize = __raw_arr_box(got); var j: i32 = 0; while (j < got) { __raw_store_ptr(b, j + 1, __raw_load8(p, j) as usize); j = j + 1; } return Ok(__raw_array(b));";
   if (packed) {
-    finish = "__store_i64(raw, got as i64); return Ok(scratch);";
+    // Borrow the array through the copy call. Its raw address does not itself
+    // own the storage, so the caller must retain scratch until the call ends.
+    copy = "function __fern_reader_short_bytes(scratch: i32[], got: i32): i32[] { var short: usize = __raw_arr_box(got / 8 + 1); __memcpy(__raw_addr(short, 8), __raw_addr(__raw_arr_ptr(scratch), 8), got); __store_i64(short, got as i64); return __raw_array(short); } ";
+    finish = "if (got == n) { __store_i64(raw, got as i64); return Ok(scratch); } if (got == 0) { return Ok([]); } return Ok(__fern_reader_short_bytes(scratch, got));";
   }
-  return "function __fern_reader_read_chunk_bytes" + packed_suffix(packed) + "(fd: i32, n: i32): Result[i32[], IoError] { if (n < 0) { return Err(__fern_io_error(22, \"\")); } var raw: usize = __raw_arr_box(n / 8 + 1); var scratch: i32[] = __raw_array(raw); var p: usize = __raw_addr(raw, 8); var got: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (got < 0) { return Err(__fern_io_error(0 - got, \"\")); } " + finish + " }";
+  return copy + "function __fern_reader_read_chunk_bytes" + packed_suffix(packed) + "(fd: i32, n: i32): Result[i32[], IoError] { if (n < 0) { return Err(__fern_io_error(22, \"\")); } var raw: usize = __raw_arr_box(n / 8 + 1); var scratch: i32[] = __raw_array(raw); var p: usize = __raw_addr(raw, 8); var got: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (got < 0) { return Err(__fern_io_error(0 - got, \"\")); } " + finish + " }";
 }
 
 // rt_src_reader_close backs `r.close()` and `w.close()` → close(fd), Some on a
