@@ -6476,36 +6476,60 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
   return pl;
 }
 
-// x86_gas_classify decides which arm of x86_gas_emit_op an instruction
-// takes, trying the arms in the order the emit once tried them inline, and
-// carries what the arm reads: the table value, the suffix, the stripped base
-// and the split operands. Everything here is a function of the text, so a
-// round never repeats it.
-function x86_gas_classify(mnem: string, rest: string): GasLine {
-  var l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
-  if (mnem == "vzeroupper" && rest.len() == 0) {
-    return GasLine { ...l, kind: GK_VZEROUPPER };
-  }
-  if (mnem == "vpcmpeqb") {
-    return GasLine { ...l, kind: GK_VPCMPEQB };
-  }
-  if (rest.len() == 0) {
-    var fx: i32 = x86_gas_fixed_op(mnem);
-    if (fx >= 0) {
-      return GasLine { ...l, kind: GK_FIXED, ext: fx };
+// MnemIndex is the distinct mnemonics x86_gas_prepare has met, chained
+// through the label-name buckets so a line finds its mnemonic's verdict
+// without redoing the classification.
+struct MnemIndex { names: string[], head: i32[], next: i32[] }
+
+// x86_mnem_lookup is the index of `mnem` in `ix`, or -1.
+function x86_mnem_lookup(ix: MnemIndex, mnem: string): i32 {
+  var i: i32 = ix.head[x86_name_bucket(mnem)];
+  while (i >= 0) {
+    if (ix.names[i] == mnem) {
+      return i;
     }
+    i = ix.next[i];
+  }
+  return 0 - 1;
+}
+
+// x86_mnem_added is `ix` with `mnem`, which it does not hold, appended at
+// the head of its bucket chain.
+function x86_mnem_added(ix: MnemIndex, mnem: string): MnemIndex {
+  var b: i32 = x86_name_bucket(mnem);
+  var at: i32 = ix.names.len();
+  return MnemIndex { names: ix.names.append(mnem), head: ix.head.with(b, at), next: ix.next.append(ix.head[b]) };
+}
+
+// MnemVerdict is what x86_gas_classify decides from the mnemonic alone, in
+// the order its tests run: `a` is the arm the tests before the operand split
+// select, with the suffix width as it stood when that arm returned, `b` the
+// arm the tests after the split select and `c` the arm the last tests select,
+// GK_NONE where none did. `vz` and `fixed` are the two early tests that also
+// need an empty operand text, `vshift` the one that also reads the source
+// operand, and `sfx` the suffix width the later arms keep. A mnemonic's
+// verdict is the same on every line that uses it, so x86_gas_prepare decides
+// it once per distinct mnemonic.
+struct MnemVerdict { vz: boolean, fixed: i32, a_kind: i32, a_ext: i32, a_sfx: i32, sfx: i32, b_kind: i32, b_ext: i32, vshift: i32, c_kind: i32, c_ext: i32 }
+
+// x86_gas_mnem_verdict runs the mnemonic-only tests of the classification,
+// in the order x86_gas_emit_op once tried its arms inline.
+function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
+  var v: MnemVerdict = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: 0 - 1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: 0 - 1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: 0 - 1 };
+  if (mnem == "vpcmpeqb") {
+    return MnemVerdict { ...v, a_kind: GK_VPCMPEQB };
   }
   var rpfx: i32 = x86_gas_rep_pfx(mnem);
   if (rpfx >= 0) {
-    return GasLine { ...l, kind: GK_REP, ext: rpfx };
+    return MnemVerdict { ...v, a_kind: GK_REP, a_ext: rpfx };
   }
   if (x86_gas_is_lock(mnem)) {
-    return GasLine { ...l, kind: GK_LOCK };
+    return MnemVerdict { ...v, a_kind: GK_LOCK };
   }
   if (x86_str_starts_with(mnem, "set")) {
     var scc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()) + "");
     if (scc >= 0) {
-      return GasLine { ...l, kind: GK_SETCC, ext: scc };
+      return MnemVerdict { ...v, a_kind: GK_SETCC, a_ext: scc };
     }
   }
   if (x86_gas_is_branch(mnem)) {
@@ -6513,55 +6537,173 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
     if (mnem == "jmp") {  // jmp FF /4
       bext = 4;
     }
-    return GasLine { ...l, kind: GK_BRANCH, ext: bext };
+    return MnemVerdict { ...v, a_kind: GK_BRANCH, a_ext: bext };
   }
   if (x86_str_starts_with(mnem, "j")) {
     var jcc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
     if (jcc >= 0) {
-      return GasLine { ...l, kind: GK_JCC, ext: jcc };
+      return MnemVerdict { ...v, a_kind: GK_JCC, a_ext: jcc };
     }
   }
   if (x86_gas_is_pushpop(mnem) && mnem == "pushq") {
-    return GasLine { ...l, kind: GK_PUSHQ };
+    return MnemVerdict { ...v, a_kind: GK_PUSHQ };
   }
   if (x86_gas_is_pushpop(mnem)) {
-    return GasLine { ...l, kind: GK_POPQ };
+    return MnemVerdict { ...v, a_kind: GK_POPQ };
   }
   var sfx: i32 = x86_gas_suffix_size(mnem);
-  l = GasLine { ...l, sfx: sfx };
+  v = MnemVerdict { ...v, a_sfx: sfx, sfx: sfx };
   // The mnemonic without its suffix letter, "" when sfx is 0: the arms
   // below key on it, and nothing after classification does.
   var bse: string = "";
   if (sfx > 0) {
     bse = x86_gas_strip_suffix(mnem);
     if (x86_gas_is_imul(bse)) {
-      return GasLine { ...l, kind: GK_IMUL };
+      return MnemVerdict { ...v, a_kind: GK_IMUL };
     }
     var ue: i32 = x86_gas_unary_ext(bse);
     if (ue >= 0) {
-      return GasLine { ...l, kind: GK_UNARY, ext: ue };
+      return MnemVerdict { ...v, a_kind: GK_UNARY, a_ext: ue };
     }
     var ide: i32 = x86_gas_incdec_ext(bse);
     if (ide >= 0) {
-      return GasLine { ...l, kind: GK_INCDEC, ext: ide };
+      return MnemVerdict { ...v, a_kind: GK_INCDEC, a_ext: ide };
     }
     if (x86_gas_is_bswap(bse)) {
-      return GasLine { ...l, kind: GK_BSWAP };
+      return MnemVerdict { ...v, a_kind: GK_BSWAP };
     }
     var sho: i32 = x86_gas_shld_op(bse);
     if (sho >= 0) {
-      return GasLine { ...l, kind: GK_SHLD, ext: sho };
+      return MnemVerdict { ...v, a_kind: GK_SHLD, a_ext: sho };
     }
   }
   if (x86_gas_imm3a_op(mnem) >= 0 || x86_gas_shuf_op(mnem) >= 0) {
-    return GasLine { ...l, kind: GK_SSE_IMM3 };
+    return MnemVerdict { ...v, a_kind: GK_SSE_IMM3 };
   }
   if (x86_gas_is_pextr(mnem)) {
-    return GasLine { ...l, kind: GK_PEXTR };
+    return MnemVerdict { ...v, a_kind: GK_PEXTR };
   }
   if (x86_gas_is_pinsr(mnem)) {
-    return GasLine { ...l, kind: GK_PINSR };
+    return MnemVerdict { ...v, a_kind: GK_PINSR };
   }
+  var lsz: i32 = x86_gas_lea_size(mnem);
+  if (lsz >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_LEA, b_ext: lsz };
+  }
+  var msz: i32 = x86_gas_mov_size(mnem);
+  if (msz == 64) {
+    return MnemVerdict { ...v, b_kind: GK_MOVQ };
+  }
+  if (msz >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_MOV, b_ext: msz };
+  }
+  if (x86_gas_is_movabs(mnem)) {
+    return MnemVerdict { ...v, b_kind: GK_MOVABS };
+  }
+  if (x86_gas_is_vex_two(mnem)) {
+    return MnemVerdict { ...v, b_kind: GK_VEX_TWO };
+  }
+  if (x86_gas_movdq_pfx(mnem) >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_MOVDQ };
+  }
+  var m10: i32 = x86_gas_mov10_pfx(mnem);
+  if (m10 >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_MOV10, b_ext: m10 };
+  }
+  var mmk: i32 = x86_gas_movmsk_op(mnem);
+  if (mmk >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_MOVMSK, b_ext: mmk };
+  }
+  var bsc: i32 = x86_gas_bitscan_op(mnem);
+  if (bsc >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_BITSCAN, b_ext: bsc };
+  }
+  if (x86_gas_is_movqd(mnem)) {
+    return MnemVerdict { ...v, b_kind: GK_MOVQD };
+  }
+  var mx: i32 = x86_gas_extend_op(mnem);
+  if (mx >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_MOVEXT, b_ext: mx };
+  }
+  var f2i: i32 = x86_gas_cvt2si(mnem);
+  if (f2i >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_CVT2SI, b_ext: f2i };
+  }
+  var c2s: i32 = x86_gas_cvt2s_op(mnem);
+  if (c2s >= 0) {
+    return MnemVerdict { ...v, b_kind: GK_CVT2S, b_ext: c2s };
+  }
+  if (sfx > 0) {
+    var ae: i32 = x86_gas_alu_ext(bse);
+    if (ae >= 0) {
+      return MnemVerdict { ...v, b_kind: GK_ALU, b_ext: ae };
+    }
+    if (x86_gas_is_test(bse)) {
+      return MnemVerdict { ...v, b_kind: GK_TEST };
+    }
+    var she: i32 = x86_gas_shift_ext(bse);
+    if (she >= 0) {
+      return MnemVerdict { ...v, b_kind: GK_SHIFT, b_ext: she };
+    }
+    var bti: i32 = x86_gas_bt_idx(bse);
+    if (bti >= 0) {
+      return MnemVerdict { ...v, b_kind: GK_BT, b_ext: bti };
+    }
+    var rmw: i32 = x86_gas_rmw_op(bse);
+    if (rmw >= 0) {
+      return MnemVerdict { ...v, b_kind: GK_RMW, b_ext: rmw };
+    }
+    if (x86_gas_is_xchg(bse)) {
+      return MnemVerdict { ...v, b_kind: GK_XCHG };
+    }
+    if (x86_gas_is_crc32(bse)) {
+      return MnemVerdict { ...v, b_kind: GK_CRC32 };
+    }
+  }
+  if (x86_str_starts_with(mnem, "cmov")) {
+    return MnemVerdict { ...v, b_kind: GK_CMOV };
+  }
+  var sse: i32 = x86_gas_sse_op(mnem);
+  if (sse >= 0) {
+    return MnemVerdict { ...v, c_kind: GK_SSE, c_ext: sse };
+  }
+  var s38: i32 = x86_gas_sse38_op(mnem);
+  if (s38 >= 0) {
+    return MnemVerdict { ...v, c_kind: GK_SSE38, c_ext: s38 };
+  }
+  if (x86_gas_is_movsxd(mnem)) {
+    return MnemVerdict { ...v, c_kind: GK_MOVSXD };
+  }
+  return v;
+}
+
+// x86_gas_classify decides which arm of x86_gas_emit_op an instruction
+// takes and carries what the arm reads: the table value, the suffix and the
+// split operands. Everything here is a function of the text, so a round never
+// repeats it; x86_gas_prepare goes through x86_gas_classify_with so the
+// mnemonic's share is decided once per distinct mnemonic.
+function x86_gas_classify(mnem: string, rest: string): GasLine {
+  return x86_gas_classify_with(x86_gas_mnem_verdict(mnem), mnem, rest);
+}
+
+// x86_gas_classify_with is the classification of one line from its
+// mnemonic's verdict and its operand text: the verdict's arms in their order,
+// with the tests that read the operands between them where they stand.
+function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasLine {
+  var l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
+  if (v.vz && rest.len() == 0) {
+    return GasLine { ...l, kind: GK_VZEROUPPER };
+  }
+  if (v.a_kind == GK_VPCMPEQB) {
+    return GasLine { ...l, kind: GK_VPCMPEQB };
+  }
+  if (rest.len() == 0 && v.fixed >= 0) {
+    return GasLine { ...l, kind: GK_FIXED, ext: v.fixed };
+  }
+  if (v.a_kind != GK_NONE) {
+    return GasLine { ...l, kind: v.a_kind, ext: v.a_ext, sfx: v.a_sfx };
+  }
+  l = GasLine { ...l, sfx: v.sfx };
   var ci: i32 = x86_gas_top_comma(rest);
   if (ci < 0) {
     return GasLine { ...l, kind: GK_UNKNOWN1 };
@@ -6569,97 +6711,14 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
   var src: string = x86_gas_trim(slice_unchecked(rest, 0, ci));
   var dst: string = x86_gas_trim(slice_unchecked(rest, ci + 1, rest.len()));
   l = GasLine { ...l, src: src, dst: dst };
-  var lsz: i32 = x86_gas_lea_size(mnem);
-  if (lsz >= 0) {
-    return GasLine { ...l, kind: GK_LEA, ext: lsz };
+  if (v.b_kind != GK_NONE) {
+    return GasLine { ...l, kind: v.b_kind, ext: v.b_ext };
   }
-  var msz: i32 = x86_gas_mov_size(mnem);
-  if (msz == 64) {
-    return GasLine { ...l, kind: GK_MOVQ };
+  if (v.vshift >= 0 && src.len() > 0 && src[0] == b'$') {
+    return GasLine { ...l, kind: GK_VSHIFT, ext: v.vshift };
   }
-  if (msz >= 0) {
-    return GasLine { ...l, kind: GK_MOV, ext: msz };
-  }
-  if (x86_gas_is_movabs(mnem)) {
-    return GasLine { ...l, kind: GK_MOVABS };
-  }
-  if (x86_gas_is_vex_two(mnem)) {
-    return GasLine { ...l, kind: GK_VEX_TWO };
-  }
-  if (x86_gas_movdq_pfx(mnem) >= 0) {
-    return GasLine { ...l, kind: GK_MOVDQ };
-  }
-  var m10: i32 = x86_gas_mov10_pfx(mnem);
-  if (m10 >= 0) {
-    return GasLine { ...l, kind: GK_MOV10, ext: m10 };
-  }
-  var mmk: i32 = x86_gas_movmsk_op(mnem);
-  if (mmk >= 0) {
-    return GasLine { ...l, kind: GK_MOVMSK, ext: mmk };
-  }
-  var bsc: i32 = x86_gas_bitscan_op(mnem);
-  if (bsc >= 0) {
-    return GasLine { ...l, kind: GK_BITSCAN, ext: bsc };
-  }
-  if (x86_gas_is_movqd(mnem)) {
-    return GasLine { ...l, kind: GK_MOVQD };
-  }
-  var mx: i32 = x86_gas_extend_op(mnem);
-  if (mx >= 0) {
-    return GasLine { ...l, kind: GK_MOVEXT, ext: mx };
-  }
-  var f2i: i32 = x86_gas_cvt2si(mnem);
-  if (f2i >= 0) {
-    return GasLine { ...l, kind: GK_CVT2SI, ext: f2i };
-  }
-  var c2s: i32 = x86_gas_cvt2s_op(mnem);
-  if (c2s >= 0) {
-    return GasLine { ...l, kind: GK_CVT2S, ext: c2s };
-  }
-  if (sfx > 0) {
-    var ae: i32 = x86_gas_alu_ext(bse);
-    if (ae >= 0) {
-      return GasLine { ...l, kind: GK_ALU, ext: ae };
-    }
-    if (x86_gas_is_test(bse)) {
-      return GasLine { ...l, kind: GK_TEST };
-    }
-    var she: i32 = x86_gas_shift_ext(bse);
-    if (she >= 0) {
-      return GasLine { ...l, kind: GK_SHIFT, ext: she };
-    }
-    var bti: i32 = x86_gas_bt_idx(bse);
-    if (bti >= 0) {
-      return GasLine { ...l, kind: GK_BT, ext: bti };
-    }
-    var rmw: i32 = x86_gas_rmw_op(bse);
-    if (rmw >= 0) {
-      return GasLine { ...l, kind: GK_RMW, ext: rmw };
-    }
-    if (x86_gas_is_xchg(bse)) {
-      return GasLine { ...l, kind: GK_XCHG };
-    }
-    if (x86_gas_is_crc32(bse)) {
-      return GasLine { ...l, kind: GK_CRC32 };
-    }
-  }
-  if (x86_str_starts_with(mnem, "cmov")) {
-    return GasLine { ...l, kind: GK_CMOV };
-  }
-  var vsp: i32 = x86_gas_vshift_op(mnem);
-  if (vsp >= 0 && src.len() > 0 && src[0] == b'$') {
-    return GasLine { ...l, kind: GK_VSHIFT, ext: vsp };
-  }
-  var sse: i32 = x86_gas_sse_op(mnem);
-  if (sse >= 0) {
-    return GasLine { ...l, kind: GK_SSE, ext: sse };
-  }
-  var s38: i32 = x86_gas_sse38_op(mnem);
-  if (s38 >= 0) {
-    return GasLine { ...l, kind: GK_SSE38, ext: s38 };
-  }
-  if (x86_gas_is_movsxd(mnem)) {
-    return GasLine { ...l, kind: GK_MOVSXD };
+  if (v.c_kind != GK_NONE) {
+    return GasLine { ...l, kind: v.c_kind, ext: v.c_ext };
   }
   return l;
 }
@@ -6669,6 +6728,10 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
 // comment-only lines are dropped here, so no round ever sees one.
 function x86_gas_prepare(src: string): GasLine[] {
   var out: GasLine[] = [];
+  // A mnemonic's verdict is decided once: `seen` indexes the distinct
+  // mnemonics met so far and `verdicts` holds theirs in the same order.
+  var seen: MnemIndex = MnemIndex { names: [], head: x86_empty_buckets(), next: [] };
+  var verdicts: MnemVerdict[] = [];
   // Each line is read as a view of the text, its comment stripped and its
   // ends trimmed by index, and copied once. The text is scanned for `\n`
   // with __memchr rather than split into a second copy of every line.
@@ -6718,7 +6781,13 @@ function x86_gas_prepare(src: string): GasLine[] {
     if (mnem.len() == 0) {
       out = out.append(GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 });
     } else {
-      out = out.append(GasLine { ...x86_gas_classify(mnem, rest), label: label, body: line });
+      var mi: i32 = x86_mnem_lookup(seen, mnem);
+      if (mi < 0) {
+        mi = seen.names.len();
+        seen = x86_mnem_added(seen, mnem);
+        verdicts = verdicts.append(x86_gas_mnem_verdict(mnem));
+      }
+      out = out.append(GasLine { ...x86_gas_classify_with(verdicts[mi], mnem, rest), label: label, body: line });
     }
   }
   return out;
