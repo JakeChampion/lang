@@ -67,3 +67,17 @@ The seed predates generator changes on main, so stage 1 differs.
 The full unit suite and `make lint-all` pass in the updated isolated Linux
 snapshot of `a485ca32d`, including the latest main integration.
 TCP, UDP and file byte sinks remain separate work under #10948.
+
+## Browser response handoff
+
+PR CI caught a browser-host regression: the shim decoded the response body
+when `response-outparam.set` ran, before the guest wrote the body. It now
+retains the response resource and collects its chunks after the handler
+returns. Status and headers still come from that response.
+
+The Node regression covers writes before and after handoff, including a
+UTF-8 character split at the 4096-byte boundary. All five HTTP shim tests
+pass, as do all 14 tests in the complete browser shim suite. The rebuilt
+playground passes all 22 Playwright tests, including the HTTP greeting and
+POST echo that failed in CI. Every lint gate passes; the local actionlint
+gate was rerun with the repository's mise tools on PATH.
