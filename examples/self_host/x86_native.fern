@@ -6078,7 +6078,12 @@ pub function x86_gas_assemble(src: string): X86Asm {
   var labs: GasLabels = x86_gas_label_table(pl);
   pl = x86_gas_link_labels(pl, labs);
   var longs: boolean[] = [];
-  var a: X86Asm = x86_gas_assemble_pass_prepared(pl, labs, longs);
+  // The first round encodes every line and keeps the bytes of the ones no
+  // later round can change (EncCache); the rounds after it copy those and
+  // encode only the rest.
+  var first: AsmRound = x86_gas_assemble_pass_prepared(pl, labs, longs, EncCache { code: [], at: [], end: [] });
+  var a: X86Asm = first.a;
+  var cache: EncCache = first.cache;
   var pass: i32 = 1;
   // Each round pins at least one more branch long, so the branch count
   // bounds the rounds; the cap is a backstop, and falling out of it keeps
@@ -6092,10 +6097,10 @@ pub function x86_gas_assemble(src: string): X86Asm {
       next = x86_relax_settle(a);
     }
     longs = next;
-    a = x86_gas_assemble_pass_prepared(pl, labs, longs);
+    a = x86_gas_assemble_pass_prepared(pl, labs, longs, cache).a;
     pass = pass + 1;
   }
-  return x86_gas_assemble_pass_prepared(pl, labs, x86_bools_all_true(longs.len()));
+  return x86_gas_assemble_pass_prepared(pl, labs, x86_bools_all_true(longs.len()), cache).a;
 }
 
 // x86_relax_settle finds the relaxation fixpoint from the first round's
@@ -6366,6 +6371,20 @@ const GK_SSE38: i32 = 43;
 const GK_MOVSXD: i32 = 44;
 
 const GK_UNKNOWN2: i32 = 45;
+
+// EncCache is the first round's encoding of every line no later round can
+// change: the code that round produced, and per line the range of it the
+// line's bytes are, or -1 at `at` for a line that is encoded again each
+// round. A line is kept when it names no label and its encoding touched
+// nothing but `code`: a branch, a rip-relative label operand, a `.quad sym`,
+// a directive and a refused line all leave something else behind, and a
+// round reads what they leave. The byte offsets a round computes are what
+// relaxation changes, and these lines' bytes do not depend on them.
+struct EncCache { code: i32[], at: i32[], end: i32[] }
+
+// AsmRound is one relaxation round's result with the cache it filled (the
+// first round) or reused (every later one).
+struct AsmRound { a: X86Asm, cache: EncCache }
 
 // One source line with everything the relaxation fixpoint cannot change
 // already worked out. Only the byte offsets a round computes vary between
@@ -6726,8 +6745,16 @@ function x86_gas_prepare(src: string): GasLine[] {
 
 // x86_gas_assemble_pass_prepared assembles one relaxation round from the
 // already-parsed lines.
-function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: boolean[]): X86Asm {
+function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: boolean[], cache: EncCache): AsmRound {
   var a: X86Asm = x86_asm_new_prepared(labs, longs);
+  // The first round records; a cache with an entry per line replays.
+  var record: boolean = cache.at.len() == 0;
+  var at: i32[] = [];
+  var end: i32[] = [];
+  if (record) {
+    at = x86_filled(pl.len(), 0 - 1);
+    end = x86_filled(pl.len(), 0);
+  }
   // The CFI recorder is threaded as its own uniquely-held local and folded
   // into `a` once at the end: recording through the field would append its
   // rule arrays through a shared base and copy them per directive (#8172).
@@ -6875,13 +6902,54 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       }
       continue;
     }
+    if (!record) {
+      if (cache.at[li - 1] >= 0) {
+        a = x86_replay_bytes(a, cache, li - 1);
+      } else {
+        a = x86_gas_emit_op(a, pline);
+      }
+      continue;
+    }
+    var c0: i32 = a.code.len();
+    var fx0: i32 = a.fix_offs.len();
+    var ft0: i32 = a.fix_tail_offs.len();
+    var br0: i32 = a.br_offs.len();
+    var un0: i32 = a.unknown.len();
+    var df0: i32 = a.dfix_offs.len();
+    var rd0: i32 = a.rodata.len();
+    var bs0: i32 = a.bss_size;
     a = x86_gas_emit_op(a, pline);
+    if (pline.ref_idx < 0 && a.fix_offs.len() == fx0 && a.fix_tail_offs.len() == ft0 && a.br_offs.len() == br0
+      && a.unknown.len() == un0 && a.dfix_offs.len() == df0 && a.rodata.len() == rd0 && a.bss_size == bs0) {
+      at = at.with(li - 1, c0);
+      end = end.with(li - 1, a.code.len());
+    }
   }
   // Fold the recorder in before resolution: the data base sits past the
   // unwind data, so x86_resolve reads its size through the field.
   a = X86Asm { ...a, cfi: cfi };
   a = x86_resolve(a);
-  return a;
+  if (record) {
+    // Resolution patches fixups only, and a kept line queued none, so its
+    // bytes in the resolved code are the bytes it produced.
+    return AsmRound { a: a, cache: EncCache { code: a.code, at: at, end: end } };
+  }
+  return AsmRound { a: a, cache: cache };
+}
+
+// x86_replay_bytes appends line `i`'s cached bytes. The buffer is pulled out
+// of the struct and folded back once, as x86_resolve does, so the appends
+// grow it in place.
+function x86_replay_bytes(own a: X86Asm, cache: EncCache, i: i32): X86Asm {
+  var code: i32[] = a.code;
+  a = X86Asm { ...a, code: [] };
+  var k: i32 = cache.at[i];
+  var e: i32 = cache.end[i];
+  while (k < e) {
+    code = code.append(cache.code[k]);
+    k = k + 1;
+  }
+  return X86Asm { ...a, code: code };
 }
 
 // ---- call-frame information: `.cfi_*` directives into a .eh_frame image ----
