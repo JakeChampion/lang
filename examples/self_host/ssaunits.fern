@@ -2783,17 +2783,21 @@ function same_takes(a: i32[], b: i32[]): boolean {
 }
 
 pub function verify(f: ssasem.Func, modes: i32[], p: Plan): string {
-  return verify_analyzed(f, modes, p, ssasem.analyze(f));
+  return verify_analyzed(f, modes, p, ssasem.analyze(f), true);
 }
 
 // verify_planned checks `p` against the analysis it was planned from, for a
 // caller that lowers the very `f` it planned: analyze is a function of `f`
-// alone, so a second run would only repeat the first.
+// alone, so a second run would only repeat the first, and so is the contract
+// on the values, result, schema tables and calls, which the plan's ok is the
+// answer to. The modes are this call's own input and are checked.
 pub function verify_planned(f: ssasem.Func, modes: i32[], p: Plan): string {
-  return verify_analyzed(f, modes, p, p.analysis);
+  return verify_analyzed(f, modes, p, p.analysis, false);
 }
 
-function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem.Analysis): string {
+// `whole` runs the contract check on `f` as the planner did, for a plan that
+// may be checked against a function other than the one it was planned from.
+function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem.Analysis, whole: boolean): string {
   if (!p.ok || p.why != "") {
     return "missing successful unit plan";
   }
@@ -2801,7 +2805,14 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   if (!analysis.ok) {
     return analysis.why;
   }
-  var why: string = contract_error(f, modes);
+  var why: string = "";
+  if (whole) {
+    why = contract_error(f, modes);
+  } else if (modes.len() != f.params.len()) {
+    why = "parameter mode dimensions";
+  } else {
+    why = mode_error(f.params, modes);
+  }
   if (why != "") {
     return why;
   }
