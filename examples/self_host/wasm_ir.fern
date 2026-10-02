@@ -17,7 +17,7 @@
 // rc_runtime_helpers — the size-class freelist allocator, __fern_arr_box,
 // __fern_arr_dec, and the rc inc/dec helpers). The Perceus array RC (alias-inc,
 // move-on-return, exit dec-sweep, reassignment retain/cow-release) all comes
-// from irlower's shared lowering, so wasm gets it for free — the helper calls
+// from the shared typed lowering (ssarc), so wasm gets it for free — the helper calls
 // lower to `call $__fern_rc_inc` / `call $__fern_arr_dec`.
 //
 // Like asm_ir, this is a SEPARATE module imported only by its differential
