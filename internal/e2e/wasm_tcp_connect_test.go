@@ -74,7 +74,7 @@ function main(): i32 {
     return 0;
 }`
 
-	compPath := buildComponent(t, src)
+	compPath := buildCLIComponent(t, src)
 
 	run := exec.Command("wasmtime", "run", "-S", "inherit-network", "--env", "PORT="+strconv.Itoa(port), compPath)
 	var sout, serr bytes.Buffer

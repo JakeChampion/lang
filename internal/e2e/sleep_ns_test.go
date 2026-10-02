@@ -85,7 +85,7 @@ func TestInterpSleepNs(t *testing.T) {
 // wasm is the one target that honours the full resolution without rounding:
 // preview-1's poll_oneoff timeout and preview-2's subscribe-duration are both
 // already nanoseconds. main's return reaches us on stdout, not as the exit
-// status — the harness builds with PrintMainResult.
+// status — the harness runs the module with `--invoke main`.
 func TestWASMSleepNs(t *testing.T) {
 	p := buildComponent(t, sleepNsSource)
 	stdout, stderr, ec := runComponent(t, p, runOpts{})

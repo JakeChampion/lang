@@ -79,21 +79,21 @@ pub function find(rows: Escapes[], ix: Index, name: string): i32 {
   return 0 - 1;
 }
 
-// Whether parameter `at` of `name` is consumed, for the ANALYSIS: a symbol
-// with no row — a template, a body this boundary declined, a closure — answers
-// "yes", so an operand handed to one is read as leaving the frame. A builtin
-// has a fixed row, its contract's own modes. That is the conservative direction here, and only here: a caller
+// Whether parameter `at` of the row `find` answered (-1 for none) is
+// consumed, for the ANALYSIS: a symbol with no row — a template, a body this
+// boundary declined, a closure — answers "yes", so an operand handed to one is
+// read as leaving the frame. A builtin has a fixed row, its contract's own
+// modes. That is the conservative direction here, and only here: a caller
 // deciding what to REWRITE must ask `find` first, because "no row" means
 // "this symbol keeps the mode it declared", not "count it".
-pub function consumed(rows: Escapes[], ix: Index, name: string, at: i32): boolean {
-  let i: i32 = find(rows, ix, name);
-  if (i < 0) {
+pub function consumed_at(rows: Escapes[], row: i32, at: i32): boolean {
+  if (row < 0) {
     return true;
   }
-  if (at < 0 || at >= rows[i].bits.len()) {
+  if (at < 0 || at >= rows[row].bits.len()) {
     return true;
   }
-  return rows[i].bits[at];
+  return rows[row].bits[at];
 }
 
 // The bodies any function VALUE names. A counted parameter is spelled in the
@@ -170,13 +170,11 @@ function carry(own out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
   return out;
 }
 
-// Whether `caller` and `callee` lie on one quiet cycle: a call graph's cycle
-// whose functions all return no reference, so nothing a take frees can leave
-// it and a call inside it carries nothing.
-function same_cycle(rows: Escapes[], ix: Index, caller: string, callee: string): boolean {
-  let a: i32 = find(rows, ix, caller);
-  let b: i32 = find(rows, ix, callee);
-  return a >= 0 && b >= 0 && rows[a].cycle >= 0 && rows[a].cycle == rows[b].cycle;
+// Whether the rows `caller` and `callee` (-1 for none) lie on one quiet
+// cycle: a call graph's cycle whose functions all return no reference, so
+// nothing a take frees can leave it and a call inside it carries nothing.
+function same_cycle(rows: Escapes[], caller: i32, callee: i32): boolean {
+  return caller >= 0 && callee >= 0 && rows[caller].cycle >= 0 && rows[caller].cycle == rows[callee].cycle;
 }
 
 // The strongly connected components of `succ` that hold a cycle, numbered from
@@ -280,11 +278,12 @@ pub function cycles(succ: i32[][]): i32[] {
 // A dyn call has no row, and needs none: semsource admits one only where
 // every implementation lends every operand, and those keep the modes they
 // declared (`semsource.dyn_arms`).
-function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
+function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, me: i32): boolean[] {
   if (ssasem.is_dyn_call(ins.str)) {
     return out;
   }
-  if (same_cycle(rows, ix, f.graph.name, ins.str)) {
+  let row: i32 = find(rows, ix, ins.str);
+  if (same_cycle(rows, me, row)) {
     return out;
   }
   let i: i32 = 0;
@@ -292,7 +291,7 @@ function call_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
     // Passing the same parameter to the same slot supplies no independent
     // reason to consume it. Any other escaping use still carries it.
     let unchanged: boolean = ins.str == f.graph.name && unchanged_slot(f, ins.args[i], i);
-    if (!unchanged && ssasem.reference(f.values[ins.args[i]]) && consumed(rows, ix, ins.str, i)) {
+    if (!unchanged && ssasem.reference(f.values[ins.args[i]]) && consumed_at(rows, row, i)) {
       out = carry(out, a, ins.args[i]);
     }
     i = i + 1;
@@ -340,11 +339,9 @@ function indirect_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis
 // parameter itself, which whatever carries the phi carries too (`continued`).
 // Read as a plain loop instead, a walk that rebuilds its input would never
 // consume it.
-function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
-  if (same_cycle(rows, ix, f.graph.name, ins.str)) {
-    return out;
-  }
-  if (!consumed(rows, ix, ins.str, ins.imm)) {
+function slot_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, me: i32): boolean[] {
+  let row: i32 = find(rows, ix, ins.str);
+  if (same_cycle(rows, me, row) || !consumed_at(rows, row, ins.imm)) {
     return out;
   }
   let i: i32 = 1;
@@ -374,12 +371,13 @@ function continued(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis): bool
   return out;
 }
 
-function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
+// `me` is this function's own row, -1 for none.
+function instruction_carried(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index, me: i32): boolean[] {
   if (ins.kind_tag == ssasem.call()) {
-    return call_carried(out, f, a, ins, rows, ix);
+    return call_carried(out, f, a, ins, rows, ix, me);
   }
   if (slot_phi(ins)) {
-    return slot_carried(out, f, a, ins, rows, ix);
+    return slot_carried(out, f, a, ins, rows, ix, me);
   }
   if (ins.kind_tag == ssasem.call_value()) {
     return indirect_carried(out, f, a, ins);
@@ -427,7 +425,7 @@ function lent_values(own out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins
   }
   let i: i32 = 0;
   while (i < ins.args.len()) {
-    if (ssasem.reference(f.values[ins.args[i]]) && !consumed(rows, ix, ins.str, i)) {
+    if (ssasem.reference(f.values[ins.args[i]]) && !consumed_at(rows, at, i)) {
       out = carry(out, a, ins.args[i]);
     }
     i = i + 1;
@@ -464,9 +462,10 @@ function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix:
     out = out.append(false);
     i = i + 1;
   }
+  let me: i32 = find(rows, ix, f.graph.name);
   for b in f.graph.blocks {
     for ins in b.insts {
-      out = instruction_carried(out, f, a, ins, rows, ix);
+      out = instruction_carried(out, f, a, ins, rows, ix, me);
     }
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
       out = out.with(b.term.value, true);

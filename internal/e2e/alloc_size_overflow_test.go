@@ -155,7 +155,7 @@ func TestArrayGrowSizeOverflowAborts(t *testing.T) {
 `
 	t.Run("wasm32-wasi", func(t *testing.T) {
 		holdingMemoryMB(t, 1200, func() {
-			out, stderr, code := runComponent(t, buildNumComponent(t, src), runOpts{})
+			out, stderr, code := runComponent(t, buildCLIComponent(t, src), runOpts{})
 			if code == 0 {
 				t.Errorf("wasm did not trap (exit 0); stdout=%q", out)
 			}

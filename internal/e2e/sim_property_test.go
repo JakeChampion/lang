@@ -46,11 +46,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 const simImports = `import "std/async";
@@ -201,7 +197,8 @@ func assertSimProgramAgrees(t *testing.T, src string) {
 		}
 	})
 	t.Run("wasm32-wasi", func(t *testing.T) {
-		comp := buildSimComponentNative(t, src)
+		// std/sim drives the async poll host, so this leg is native (buildNativeComponent).
+		comp := buildNativeComponent(t, src, wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, CliRunResult: true})
 		got, stderr, ec := runComponent(t, comp, runOpts{})
 		if ec != 0 {
 			t.Fatalf("wasmtime exit = %d\nstdout: %s\nstderr: %s\nsrc:\n%s", ec, got, stderr, src)
@@ -210,43 +207,6 @@ func assertSimProgramAgrees(t *testing.T, src string) {
 			t.Errorf("wasm = %q, interp = %q\nsrc:\n%s", trimOut(got), want, src)
 		}
 	})
-}
-
-// buildSimComponentNative builds src with the native wasm backend. std/sim
-// drives the async poll host, which the self-host's wasm component does not
-// import (`poll is not supported in a wasm component`), so this leg stays
-// native until the wasm async decision on #4451.
-func buildSimComponentNative(t *testing.T, src string) string {
-	t.Helper()
-	skipIfPreview2Missing(t)
-	srcPath := filepath.Join(t.TempDir(), "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		CliRunResult:       true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
-	return finishComponentFromCoreBytes(t, bin)
 }
 
 // TestSimProperty is the deterministic seeded sweep — bounded for CI,

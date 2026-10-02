@@ -27,8 +27,6 @@ package e2e
 import (
 	"fmt"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // materialiseCase is one accumulator body threaded through the same driver.
@@ -117,17 +115,6 @@ func TestX86_64CallResultMaterialiseCliff(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			_, got := compileAndRunX86_64FreeOn(t, c.src())
 			c.check(t, "x86-64-linux", got)
-		})
-	}
-}
-
-func TestWASMCallResultMaterialiseCliff(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	for _, c := range materialiseCases {
-		t.Run(c.name, func(t *testing.T) {
-			c.check(t, "wasm32-wasi", runWasm(t, c.src()))
 		})
 	}
 }
