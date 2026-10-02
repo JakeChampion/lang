@@ -1,11 +1,8 @@
-// E2E tests for the WASM backend, executed against a preview-2
-// Component Model component under wasmtime. The pipeline is parse
-// → check → wasm.EmitWithOptions{PrintMainResult: true} →
-// wasm-tools parse + component embed + component new (with the
-// wasi-preview1-component-adapter for the legacy entry-point
-// trampoline only) → `wasmtime run`. Tests skip when any of
-// wasm-tools / wasmtime / `FERN_WASI_ADAPTER` is missing so
-// `go test ./...` stays green on machines without the toolchain.
+// E2E tests for wasm32-wasi. A program compiles with the self-host CLI to a
+// WASI core module, which `wasmtime run --invoke main` runs, printing main's
+// result after the program's own stdout. Tests of preview-2 host behaviour
+// build a wasi:cli component instead (buildCLIComponent). Tests skip when
+// wasmtime is missing or not the pinned version (skipIfPreview2Missing).
 package e2e
 
 import (
@@ -139,12 +136,7 @@ func buildComponentMulti(t *testing.T, entry string, files map[string]string) st
 			t.Fatal(err)
 		}
 	}
-	core := e2eharness.CompileSelfHostFile(t, e2eharness.TargetWasm32Wasi, filepath.Join(dir, entry), nil)
-	invoked := strings.TrimSuffix(core, ".wasm") + mainCoreSuffix
-	if err := os.Rename(core, invoked); err != nil {
-		t.Fatal(err)
-	}
-	return invoked
+	return e2eharness.CompileSelfHostFile(t, e2eharness.TargetWasm32Wasi, filepath.Join(dir, entry), nil)
 }
 
 // buildCLIComponent compiles src with the self-host compiler to a plain
@@ -218,8 +210,22 @@ func runWasmNative(t *testing.T, src string) int {
 	return parseMainResult(t, runNativeStdout(t, src))
 }
 
-// mainCoreSuffix marks a core module whose `main` runComponent invokes.
-const mainCoreSuffix = ".main.wasm"
+// isCoreModule reports whether the wasm binary at path is a core module
+// rather than a component: their headers differ in the version field, which is
+// 1 for a core module.
+func isCoreModule(t *testing.T, path string) bool {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	head := make([]byte, 8)
+	if _, err := io.ReadFull(f, head); err != nil {
+		t.Fatalf("read wasm header of %s: %v", path, err)
+	}
+	return bytes.Equal(head, []byte{0, 'a', 's', 'm', 1, 0, 0, 0})
+}
 
 // finishComponentFromCoreBytes composes the wasmbin-produced core
 // module into a wasi:cli/run component natively, the same path the fern
@@ -253,7 +259,7 @@ func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, std
 	for _, e := range opts.envs {
 		cmdArgs = append(cmdArgs, "--env", e)
 	}
-	if strings.HasSuffix(componentPath, mainCoreSuffix) {
+	if isCoreModule(t, componentPath) {
 		cmdArgs = append(cmdArgs, "--invoke", "main")
 	}
 	cmdArgs = append(cmdArgs, componentPath)
@@ -923,7 +929,7 @@ func TestWASMReturn42(t *testing.T) {
 }
 
 // i64 round-trips through arithmetic + comparison. main() stays
-// i32 (the test harness reads main's i32 return via int_to_string),
+// i32 (the harness reads main's i32 return from wasmtime's --invoke line),
 // but the body holds an i64 value through addition and comparison.
 // Exercises OpExtendI32S on the casts in, OpAdd/OpEq with Width=64
 // in the body, and the i64 wasm types on the local + parameter
@@ -4079,7 +4085,7 @@ func TestWASMPrintHelloWorld(t *testing.T) {
 }
 
 // Float observation through the component pipeline: stdout only
-// carries i32 results (via PrintMainResult + int_to_string), and
+// carries i32 results (wasmtime's --invoke line), and
 // `wasi:cli/exit` clamps the exit code to 0/1, so neither channel
 // can carry an f32. Float tests instead express the assertion in
 // the lang program itself — main returns 1 when the expected
@@ -6952,12 +6958,7 @@ function main(): i32 {
 // prelude-to-modules stack works on wasm32 too. See the arm64
 // version for the rationale and per-case explanations. Programs
 // return 0 on success; runWasm parses the i32 main returned out
-// of the PrintMainResult-emitted stdout line.
-//
-// The PrintMainResult wrapper picks the mangled `int__int_to_string`
-// name (versus bare `int_to_string` under auto-prelude) so this
-// test exercises both the no-prelude load path AND the wat
-// emitter's runtime-name lookup.
+// of wasmtime's --invoke line.
 func TestWASMNoPreludeStdlibImports(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -16450,9 +16451,8 @@ function main(): i32 {
 	sb.WriteString("    return 0;\n}\n")
 
 	stdout, _ := invokeWasmtime(t, sb.String())
-	// buildComponent uses PrintMainResult: true, so the harness's
-	// trailing main()-returns-0 produces an extra "0" line at the
-	// end. Drop trailing blank + the result line.
+	// wasmtime's --invoke prints main's 0 as a last line. Drop
+	// trailing blank + the result line.
 	gotLines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
 	if len(gotLines) < len(exps) {
 		t.Fatalf("got %d lines, want >= %d\nstdout:\n%s", len(gotLines), len(exps), stdout)

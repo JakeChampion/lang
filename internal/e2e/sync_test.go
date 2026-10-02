@@ -236,7 +236,7 @@ func TestWASMPreview1Sync(t *testing.T) {
 }
 
 // main's return reaches us on STDOUT, not as the exit status: the harness
-// builds with PrintMainResult.
+// runs the module with `--invoke main`.
 func TestWASMSync(t *testing.T) {
 	p := buildComponent(t, syncSource("", true, false))
 	dir := t.TempDir()
