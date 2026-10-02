@@ -14039,7 +14039,7 @@ pub function register_array_method_generics(mod: Module): Module {
         body: fd.body, line: fd.line, col: fd.col,
         import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
         is_pub: true,
-        is_const: false, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [],
+        is_const: false, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: fd.impl_trait, dyn_traits: fd.dyn_traits,
       });
     } else {
       out = out.append(fd);
@@ -14159,7 +14159,7 @@ pub function register_map_method_generics(mod: Module): Module {
         body: fd.body, line: fd.line, col: fd.col,
         import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
         is_pub: true,
-        is_const: false, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [],
+        is_const: false, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: fd.impl_trait, dyn_traits: fd.dyn_traits,
       });
     } else {
       out = out.append(fd);
@@ -14417,7 +14417,7 @@ pub function register_struct_method_generics(mod: Module): Module {
         body: fd.body, line: fd.line, col: fd.col,
         import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: bnames, fip: false, fbip: false, fip_allowance: 0, async: fd.async,
         is_pub: true,
-        is_const: fd.is_const, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: "", dyn_traits: [],
+        is_const: fd.is_const, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: fd.impl_trait, dyn_traits: fd.dyn_traits,
       });
     } else {
       out = out.append(fd);
@@ -23737,7 +23737,7 @@ pub function resolve_dyn_traits(mod: Module): Module {
     let own: string[] = [];
     let base: string = "";
     if (fd.receiver_name.len() > 0 && !ends_with_array_brackets(fd.receiver_type)) {
-      base = util.base_type_name(fd.receiver_type);
+      base = receiver_base(fd.receiver_type);
       if (fd.impl_trait.len() > 0) {
         own = own.append(fd.impl_trait);
       }
@@ -23748,8 +23748,6 @@ pub function resolve_dyn_traits(mod: Module): Module {
   let ix: util.NameIndex = util.name_index(bases);
   for im in mod.impls {
     if (im.trait_name.len() > 0 && !ends_with_array_brackets(im.impl_type)) {
-      // receiver_base also erases a view spelling, which base_type_name keeps;
-      // the two agree for every impl type that reaches here (no view impls).
       let bn: string = receiver_base(im.impl_type);
       for ri in trait_closure(mod.trait_reqs, im.trait_name, im.trait_module) {
         let req: TraitReq = mod.trait_reqs[ri];
