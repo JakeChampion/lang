@@ -2586,3 +2586,47 @@ function __names_hold(names: string[], name: string): boolean {
 pub function (r: HttpResponse) body_text(): Option[string] {
   return utf8.from_bytes(r.body_bytes());
 }
+
+// ---------------------------------------------------------------------------
+// Request writing — what a client may put on the wire. The parser above
+// refuses these bytes coming in; a client refuses them going out, so a
+// caller's URL or field cannot split the request it is written into.
+
+// `http_method_ok(method)` — whether `method` is a token (RFC 9110 §9.1).
+pub function http_method_ok(method: string): boolean {
+  var b: u8[] = method.bytes();
+  return __is_token(b, 0, b.len());
+}
+
+// `http_target_ok(target)` — whether `target` can stand as an origin-form
+// request-target (RFC 9112 §3.2.1): `/`, then `pchar` and `/`, then
+// optionally `?` and a query of `pchar`, `/` and `?`, every `%` followed by
+// two hex digits. A space, a control byte and a byte past ASCII all fail.
+pub function http_target_ok(target: string): boolean {
+  if (target.len() == 0 || target[0] != 47 as u8) {
+    return false;
+  }
+  var q: i32 = __find_char(target, 0, target.len(), 63 as u8);
+  if (q < 0) {
+    return __query_ok(target, 0, target.len());
+  }
+  return __query_ok(target, 0, q) && __query_ok(target, q + 1, target.len());
+}
+
+// `http_field_ok(name, value)` — whether a field can be written as one
+// line: a token name and a value with no control byte but HTAB and no DEL
+// (RFC 9110 §5.1, §5.5), the rule `__field_value` reads a value by.
+pub function http_field_ok(name: string, value: string): boolean {
+  var n: u8[] = name.bytes();
+  if (!__is_token(n, 0, n.len())) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < value.len()) {
+    if (value[i] < 32 as u8 && value[i] != 9 as u8 || value[i] == 127 as u8) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
