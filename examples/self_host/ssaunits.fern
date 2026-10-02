@@ -145,9 +145,11 @@ function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): Grow
 // The rows this function's plan contributes, given the rows `table` already
 // holds for its callees: one per borrowed parameter position an admitted
 // in-place grow or write reaches, directly through an append or a with of its
-// own, through an append whose receiver a phi or an earlier append carries
-// from the parameter (ssarc's links grow those in place), or through a buffer
-// it hands on unbracketed to a callee whose row says that position may grow. A with on a buffer the plan did not admit copies,
+// own, through an append whose receiver a phi, an earlier append or a call
+// carries from the parameter (ssarc's links grow those in place), or through a
+// buffer it hands on unbracketed to a callee whose row says that position may
+// grow — the parameter itself, or a value dying at the call that the same
+// carriers lead back to it. A with on a buffer the plan did not admit copies,
 // so it contributes no row. An owned parameter needs no caller bracket — its caller moved the
 // unit in, or retained and so made the record's own count answer "shared".
 pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]): GrowRow[] {
@@ -181,6 +183,7 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
     }
   }
   for s in p.steps {
+    out = dying_lent_rows(callee, f, p, defs, s, table, out);
     var i: i32 = 0;
     while (i < s.hand_roots.len()) {
       var root: i32 = s.hand_roots[i];
@@ -202,8 +205,34 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
   return out;
 }
 
-// The parameters whose box `v` may be, through phis and the receivers of
-// appends.
+// The rows of a direct call's array operands that die at it, at the positions
+// the callee may grow: the box they carry from a parameter is lent on with
+// nothing in this frame reading it again.
+function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SInst[], s: Step, table: GrowRow[], own out: GrowRow[]): GrowRow[] {
+  if (s.point < 0) {
+    return out;
+  }
+  var ins: ssa.SInst = f.graph.blocks[block_index(f.graph, s.block)].insts[s.point];
+  if (ins.kind_tag != ssasem.call()) {
+    return out;
+  }
+  var i: i32 = 0;
+  while (i < ins.args.len()) {
+    var v: i32 = ins.args[i];
+    if (v >= f.graph.nparams && is_array(f.values[v]) && occurrences(s.drops, v) > 0 && has_row(table, ins.str, i, 0 - 1)) {
+      for param in carried_params(f, defs, v) {
+        if (!p.owned[param]) {
+          out = with_row(out, callee, defs[param].imm, 0 - 1);
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// The parameters whose box `v` may be, through phis, the receivers of
+// appends and the array operands of calls.
 function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
   var out: i32[] = [];
   var seen: boolean[] = bits(f.graph.nvals);
@@ -224,6 +253,12 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
     } else if (d.kind_tag == 8) {
       for a in d.args {
         work = work.append(a);
+      }
+    } else if (d.kind_tag == ssasem.call()) {
+      for a in d.args {
+        if (is_array(f.values[a])) {
+          work = work.append(a);
+        }
       }
     }
   }
