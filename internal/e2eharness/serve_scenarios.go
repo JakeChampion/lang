@@ -305,12 +305,14 @@ func CheckReusePortReachesListener(t *testing.T, port int) {
 	}
 }
 
-// StalledSurvivorServerSource is TrappingServerSource over two workers
-// sharing the supervisor's listener, with /stall holding its worker in
-// the handler for a minute: the worker the crash loop never reaches.
+// StalledSurvivorServerSource is WorkersServerSource with /stall holding its
+// worker in the handler for a minute, through the bag's clock as /slow does
+// (a handler may not reach `sleep_ms` around its bag, E080): the worker the
+// crash loop never reaches.
 func StalledSurvivorServerSource(port int) string {
-	src := strings.Replace(TrappingServerSource(port), "workers: 1 }", "workers: 2 }", 1)
-	return strings.Replace(src, `    return http.ok("ok");`, `    if (req.path == "/stall") { sleep_ms(60000 as i64); }
+	return strings.Replace(WorkersServerSource(port), `    return http.ok("ok");`, `    if (req.path == "/stall") {
+        if (burn(plat, 60000000000 as i64) == 0 - 1) { return http.ok("never"); }
+    }
     return http.ok("ok");`, 1)
 }
 
