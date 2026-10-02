@@ -98,6 +98,7 @@ export async function runHttpHandler(bytes, request) {
   };
 
   let captured = null;
+  let responseError = false;
 
   const reqHandle = mint({ kind: "incoming-request" });
   const outparamHandle = mint({ kind: "response-outparam" });
@@ -194,19 +195,11 @@ export async function runHttpHandler(bytes, request) {
     },
     "[static]response-outparam.set": (outparam, disc, respHandle) => {
       if (disc === 0) {
-        const resp = handles.get(respHandle);
-        const bodyBytes = resp.body
-          ? concatChunks(resp.body.chunks)
-          : new Uint8Array(0);
-        captured = {
-          status: resp.status,
-          headers: resp.headers
-            ? resp.headers.entries.map(([n, v]) => [n, decoder.decode(v)])
-            : [],
-          body: decoder.decode(bodyBytes),
-        };
+        // The guest hands the response to the host before streaming its
+        // body. Keep the resource so later writes remain visible.
+        captured = handles.get(respHandle);
       } else {
-        captured = { status: 500, headers: [], body: "[response error]" };
+        responseError = true;
       }
     },
   };
@@ -247,7 +240,19 @@ export async function runHttpHandler(bytes, request) {
   }
   entry(reqHandle, outparamHandle);
 
-  return (
-    captured || { status: 0, headers: [], body: "(handler set no response)" }
-  );
+  if (responseError) {
+    return { status: 500, headers: [], body: "[response error]" };
+  }
+  if (!captured) {
+    return { status: 0, headers: [], body: "(handler set no response)" };
+  }
+  return {
+    status: captured.status,
+    headers: captured.headers
+      ? captured.headers.entries.map(([n, v]) => [n, decoder.decode(v)])
+      : [],
+    body: decoder.decode(captured.body
+      ? concatChunks(captured.body.chunks)
+      : new Uint8Array(0)),
+  };
 }

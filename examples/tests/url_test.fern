@@ -13,6 +13,98 @@ import "std/utf8" as utf8;
 // reg-name bytes, and the anchored scheme. The Go-side suite unit-tests
 // the prelude origin; this is the migration-shaped (pure-Fern) companion.
 
+// `resolved(base, reference)` — `url_resolve`'s answer, or "none".
+function resolved(base: string, reference: string): string {
+  match (url.url_resolve(base, reference)) {
+    Some(s) => {
+      return s;
+    },
+    None => {
+      return "none";
+    }
+  }
+  return "none";
+}
+
+// RFC 3986 §5.4.1, against its base.
+function test_resolve_normal(): test.TestOutcome {
+  var base: string = "http://a/b/c/d;p?q";
+  var checks: (string, string)[] = [
+    ("g", "http://a/b/c/g"),
+    ("./g", "http://a/b/c/g"),
+    ("g/", "http://a/b/c/g/"),
+    ("/g", "http://a/g"),
+    ("//g", "http://g"),
+    ("?y", "http://a/b/c/d;p?y"),
+    ("g?y", "http://a/b/c/g?y"),
+    ("#s", "http://a/b/c/d;p?q#s"),
+    ("g#s", "http://a/b/c/g#s"),
+    ("", "http://a/b/c/d;p?q"),
+    ("http://x/y", "http://x/y"),
+  ];
+  for check in checks {
+    var got: string = resolved(base, check.0);
+    if (got != check.1) {
+      return test.fail(check.0 + " resolved to " + got + ", want " + check.1);
+    }
+  }
+  return test.pass();
+}
+
+// RFC 3986 §5.4.1 and §5.4.2: dot segments, and a climb above the root
+// dropped rather than refused.
+function test_resolve_dots(): test.TestOutcome {
+  var base: string = "http://a/b/c/d;p?q";
+  var checks: (string, string)[] = [
+    (".", "http://a/b/c/"),
+    ("./", "http://a/b/c/"),
+    ("..", "http://a/b/"),
+    ("../", "http://a/b/"),
+    ("../g", "http://a/b/g"),
+    ("../..", "http://a/"),
+    ("../../g", "http://a/g"),
+    ("../../../g", "http://a/g"),
+    ("/./g", "http://a/g"),
+    ("/../g", "http://a/g"),
+    ("g/../h", "http://a/b/c/h"),
+    ("g;x=1/./y", "http://a/b/c/g;x=1/y"),
+  ];
+  for check in checks {
+    var got: string = resolved(base, check.0);
+    if (got != check.1) {
+      return test.fail(check.0 + " resolved to " + got + ", want " + check.1);
+    }
+  }
+  return test.pass();
+}
+
+function test_resolve_base_parts(): test.TestOutcome {
+  if (resolved("http://[::1]:8080/a/b?x=1", "../c") != "http://[::1]:8080/c") {
+    return test.fail("an IPv6 base with a port: " + resolved("http://[::1]:8080/a/b?x=1", "../c"));
+  }
+  if (resolved("http://h", "p") != "http://h/p") {
+    return test.fail("an empty base path: " + resolved("http://h", "p"));
+  }
+  return test.assert_eq(resolved("http://h/a?x=1#f", ""), "http://h/a?x=1");
+}
+
+function test_resolve_no_scheme(): test.TestOutcome {
+  return test.assert_eq(resolved("/a/b", "c"), "none");
+}
+
+function test_remove_dot_segments(): test.TestOutcome {
+  if (url.url_remove_dot_segments("/a/b/c/./../../g") != "/a/g") {
+    return test.fail("RFC 3986 §5.2.4 example 1: " + url.url_remove_dot_segments("/a/b/c/./../../g"));
+  }
+  if (url.url_remove_dot_segments("mid/content=5/../6") != "mid/6") {
+    return test.fail("RFC 3986 §5.2.4 example 2: " + url.url_remove_dot_segments("mid/content=5/../6"));
+  }
+  if (url.url_remove_dot_segments("/a//b/") != "/a//b/") {
+    return test.fail("empty segments are kept: " + url.url_remove_dot_segments("/a//b/"));
+  }
+  return test.assert_eq(url.url_remove_dot_segments("/.."), "/");
+}
+
 function test_encode_space(): test.TestOutcome {
   return test.assert_eq(url.url_encode("a b"), "a%20b");
 }
@@ -366,5 +458,10 @@ function main(): i32 {
   r = r.it("parse scheme anchored", test_parse_scheme_anchored);
   r = r.it("decode ill-formed is U+FFFD", test_decode_ill_formed_is_replacement);
   r = r.it("decode_bytes keeps the bytes", test_decode_bytes_keeps_the_bytes);
+  r = r.it("resolve normal references", test_resolve_normal);
+  r = r.it("resolve dot segments", test_resolve_dots);
+  r = r.it("resolve keeps the base query and port", test_resolve_base_parts);
+  r = r.it("resolve refuses a base without a scheme", test_resolve_no_scheme);
+  r = r.it("remove dot segments", test_remove_dot_segments);
   return r.finish();
 }

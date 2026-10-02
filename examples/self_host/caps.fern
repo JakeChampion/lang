@@ -60,6 +60,7 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "tcp_connect", capability: "net" },
     BuiltinCap { builtin: "tcp_recv", capability: "net" },
     BuiltinCap { builtin: "tcp_send", capability: "net" },
+    BuiltinCap { builtin: "tcp_send_bytes", capability: "net" },
     BuiltinCap { builtin: "tcp_close", capability: "net" },
     BuiltinCap { builtin: "tcp_pollable", capability: "net" },
     BuiltinCap { builtin: "udp_send", capability: "net" },

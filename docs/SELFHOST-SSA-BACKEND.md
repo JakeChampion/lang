@@ -139,8 +139,9 @@ bytes (-3.9%). The rest of the track, in order:
 
 1. The other hand-written helpers with arguments (`str_concat`,
    `alloc_reuse`), each by its own argument order. `str_eq` and
-   `arr_inc_elems` have their `.r` entries, and on x86-64 `str_eq` answers
-   unequal lengths inline before calling its entry.
+   `arr_inc_elems` have their `.r` entries, and `str_eq` answers unequal
+   lengths, and a first byte that differs from a literal operand's, inline
+   before calling its entry.
 2. Indirect calls, function addresses, closures and dyn dispatch move to
    the `.r` entries together — the one step that can miscompile silently,
    since both symbols exist.

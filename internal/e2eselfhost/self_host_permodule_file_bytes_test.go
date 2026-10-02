@@ -13,18 +13,39 @@ import (
 // A library-only caller must link against the entry unit's shared runtime.
 // Whole-program compilation cannot detect an omitted per-module runtime root.
 func TestSelfHostPerModuleFileBytes(t *testing.T) {
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := writeSelfHostModloadProject(t)
-	driver := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "filebytesdriver")
-	proj := t.TempDir()
-	mustWrite(t, proj, "leaf.fern", `pub function save(): i32 {
+	checkSelfHostPerModuleByteSink(t, `pub function save(): i32 {
   let data: u8[] = [255 as u8, 0 as u8, 128 as u8, 65 as u8];
   match (write_file_bytes("raw.bin", data)) {
     Ok(_) => { return 0; },
     Err(_) => { return 1; }
   }
 }
-`)
+`, func(t *testing.T, dir string) {
+		got, err := os.ReadFile(filepath.Join(dir, "raw.bin"))
+		want := []byte{255, 0, 128, 65}
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("file bytes = %v (%v), want %v", got, err, want)
+		}
+	})
+}
+
+func TestSelfHostPerModuleTCPSendBytes(t *testing.T) {
+	checkSelfHostPerModuleByteSink(t, `pub function save(): i32 {
+  let data: u8[] = [255 as u8, 0 as u8, 128 as u8];
+  if (tcp_send_bytes(-1, data) != -9) { return 1; }
+  if (data.len() != 3 || data[0] != 255 || data[1] != 0 || data[2] != 128) { return 2; }
+  return 0;
+}
+`, nil)
+}
+
+func checkSelfHostPerModuleByteSink(t *testing.T, leaf string, check func(*testing.T, string)) {
+	t.Helper()
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := writeSelfHostModloadProject(t)
+	driver := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "bytesinkdriver")
+	proj := t.TempDir()
+	mustWrite(t, proj, "leaf.fern", leaf)
 	mustWrite(t, proj, "main.fern", `import "./leaf";
 function main(): i32 { return leaf.save(); }
 `)
@@ -74,10 +95,8 @@ function main(): i32 { return leaf.save(); }
 			if out, err := run.CombinedOutput(); err != nil {
 				t.Fatalf("run: %v\n%s", err, out)
 			}
-			got, err := os.ReadFile(filepath.Join(run.Dir, "raw.bin"))
-			want := []byte{255, 0, 128, 65}
-			if err != nil || !bytes.Equal(got, want) {
-				t.Fatalf("file bytes = %v (%v), want %v", got, err, want)
+			if check != nil {
+				check(t, run.Dir)
 			}
 		})
 	}

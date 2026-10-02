@@ -51,10 +51,10 @@ echo
 # the reuse machinery exists and the fixpoint exercises it, so a regression
 # that deleted it would show up here rather than only in a doc.
 echo "1. Roadmap goal 2 — Perceus port at parity in the self-host compiler"
-if grep -q 'struct_fields_reusable_cross' examples/self_host/irlower.fern 2>/dev/null; then
-  ok "constructor-reuse admission present (struct_fields_reusable_cross)"
+if grep -q '^function reuse_pairs(' examples/self_host/ssarc.fern 2>/dev/null; then
+  ok "constructor-reuse admission present (ssarc.reuse_pairs)"
 else
-  bad "struct_fields_reusable_cross is gone — reuse admission was removed?"
+  bad "ssarc.reuse_pairs is gone — reuse admission was removed?"
 fi
 # Parity's criterion is `make distcheck` green (NATIVE-CONVERGENCE.md
 # precondition 1). The gate cannot RUN it — three whole-compiler compiles at
