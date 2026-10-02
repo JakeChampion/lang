@@ -6869,19 +6869,10 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     return ssa_helper_call(ins, reg_of, s);
   }
   if (ssa_reg_call(ins, s)) {
-    // Only this call's own arguments can be in the pool's registers here:
-    // anything live across it is callee-saved or in a slot.
-    let srcs: i32[] = [];
-    let dsts: i32[] = [];
-    let a: i32 = 0;
-    while (a < ins.args.len()) {
-      srcs = srcs.append(reg_of[ins.args[a]]);
-      dsts = dsts.append(a);
-      a = a + 1;
+    if (util.str_has_prefix(ins.str, "__sem_release_") && ins.args.len() == 1 && !s.rc_free_debug) {
+      return ssa_release_nominal(ins, reg_of, lp, s);
     }
-    s = ssa_parallel_moves(srcs, dsts, s);
-    s = s.write("    call __fn_" + asmcore.sanitize_label(ins.str) + ".r\n");
-    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(ssa_reg_call_emit(ins, reg_of, s)));
   }
   let argc: i32 = ins.args.len();
   let helper: boolean = ircore.is_fern_helper(ins.str);
@@ -6907,6 +6898,49 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if (argc > 0) {
     s = s.write("    addq $" + util.i32_to_string(argc * 8) + ", %rsp\n");
   }
+  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
+// ssa_reg_call_emit calls a function through its register entry. Only this
+// call's own arguments can be in the pool's registers here: anything live
+// across it is callee-saved or in a slot.
+function ssa_reg_call_emit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  let a: i32 = 0;
+  while (a < ins.args.len()) {
+    srcs = srcs.append(reg_of[ins.args[a]]);
+    dsts = dsts.append(a);
+    a = a + 1;
+  }
+  s = ssa_parallel_moves(srcs, dsts, s);
+  return s.write("    call __fn_" + asmcore.sanitize_label(ins.str) + ".r\n");
+}
+
+// ssa_release_nominal renders a record's or union's release
+// (`__sem_release_<T>`, ssarc.release_helper_name) the way ssa_rc_dec renders
+// an array's: a count above one is decremented in place and nothing is
+// called, and neither is a null or a static box's negative count; a count of
+// one (the free) or zero (the underflow the helper reports) takes the helper,
+// which frees the children and the box. The helper answers 0, and so do the
+// inline arms where the result has a home.
+function ssa_release_nominal(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_read(reg_of, ins.args[0], "%r11", s);
+  let p: string = ssa_src(reg_of, ins.args[0], "%r11");
+  let id: string = util.i32_to_string(ins.result);
+  let dec: string = lp + "rcreld" + id;
+  let kept: string = lp + "rcrelk" + id;
+  let done: string = lp + "rcrele" + id;
+  let rc: string = "-8(" + p + ")";
+  s = s.write("    cmpq $0x10000, " + p + "\n    jb " + kept + "\n");
+  s = s.write("    cmpl $1, " + rc + "\n    jg " + dec + "\n");
+  s = s.write("    cmpl $0, " + rc + "\n    js " + kept + "\n");
+  s = ssa_reg_call_emit(ins, reg_of, s);
+  s = s.write("    jmp " + done + "\n" + dec + ":\n    subl $1, " + rc + "\n" + kept + ":\n");
+  if (reg_of[ins.result] != 0 - 1) {
+    s = s.write("    xorl %eax, %eax\n");
+  }
+  s = s.write(done + ":\n");
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
