@@ -16,9 +16,7 @@ import (
 // pass had this shape in strarr_own_node, and the gen1 compiler segfaulted
 // there.
 //
-// balanced marks the rows whose census reads zero. The tuple-element and
-// branch-rebound rows report a leak: the retain is kept and nothing gives it
-// back, which is the sound direction.
+// balanced marks the rows whose census reads zero.
 var fieldReadMoveCases = []struct {
 	name     string
 	src      string
@@ -77,7 +75,7 @@ function main(): i32 {
         i = i + 1;
     }
     return acc.m + acc.fr.key.len() + acc.fr.n;
-}`, false},
+}`, true},
 	// A view replaced by a fresh value at the top level owns that value when
 	// it moves, so the literal takes it without a retain (#10482's guard
 	// retained every moved local no sweep releases, and leaked here).
@@ -97,8 +95,7 @@ function main(): i32 {
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.fr.key.len() + acc.fr.n;
 }`, true},
-	// Replaced on one branch only: the other still holds the view, so the
-	// literal keeps its retain.
+	// Replaced on one branch only: the other still holds the view.
 	{"view-rebound-in-branch", `struct Frame { key: string, n: i32 }
 struct Acc { fr: Frame, m: i32 }
 @noinline
@@ -113,7 +110,24 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.fr.key.len() + acc.fr.n;
-}`, false},
+}`, true},
+	// A string element of an array field, bound and moved into a literal (#10540).
+	{"string-elem-from-own-param-array-field", `struct Bag { keys: string[], n: i32 }
+struct Acc { key: string, m: i32 }
+function step(n: i32, own bag: Bag): Acc {
+    let k: string = bag.keys[0];
+    return Acc { key: k, m: bag.n + n };
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let i: i32 = 0;
+    while (i < 8) {
+        let a: Acc = step(1, Bag { keys: ["k" + "x", "y" + ""], n: i });
+        total = total + a.key.len() + a.m;
+        i = i + 1;
+    }
+    return total;
+}`, true},
 }
 
 // TestSelfHostFieldReadMove compiles each row with the emit drivers the
