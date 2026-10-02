@@ -144,6 +144,18 @@ function ts_routed_map_roots(): string[] {
   ];
 }
 
+// User map keys call these methods indirectly after lowering. Root them
+// only when a map is reachable, as for the synthesized runtime calls.
+function ts_map_method_roots(mod: parser.Module): string[] {
+  var out: string[] = [];
+  for implementation in mod.impls {
+    if (implementation.trait_name == "Hash" || implementation.trait_name == "Eq") {
+      out = util.append_all(out, implementation.method_names);
+    }
+  }
+  return out;
+}
+
 function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
   match (e) {
     ast.ExprIdent(id) => {
@@ -849,7 +861,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
   var grown: TsGrown = ts_grow(mod, refset_of(refs), pending);
   if (ts_reaches_map(mod, grown.rs)) {
     var rs0: RefSet = grown.rs;
-    for root in ts_routed_map_roots() {
+    for root in util.append_all(ts_routed_map_roots(), ts_map_method_roots(mod)) {
       if (!refset_has(rs0, root)) {
         rs0 = refset_add(rs0, root);
       }
