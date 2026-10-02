@@ -6,9 +6,9 @@
 // now the only thing that ran that chain over a whole module was a test driver;
 // this is where a whole-program emit path asks for it.
 //
-// The substitution is whole: every declaration produced, and
-// `ircore.lower_gated` reads the produced bodies in place of lowering them. A
-// refusal fails the compile with exit 3, after a line naming each one.
+// The substitution is whole: every declaration produced, and the emit reads
+// the produced bodies (`ircore.gate`). A refusal fails the compile with exit
+// 3, after a line naming each one.
 //
 // The result is handed to the emit path as a VALUE (`ircore.Sub`) rather than
 // produced inside it, so that only a driver that wants the path links the
@@ -480,10 +480,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
   // The declaration-less bodies are merged by symbol here, where the rule
   // lives, so the emit path's tail is a plain append.
   var extra: irlower.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
-  if (n == 0 && extra.len() == 0) {
-    return ircore.no_sub();
-  }
-  return ircore.Sub { ...ircore.no_sub(), on: true, bodies: bodies, extra: extra, sigs: sigs, records: inf.records };
+  return ircore.Sub { ...ircore.no_sub(), bodies: bodies, extra: extra, sigs: sigs, records: inf.records };
 }
 
 // runtime_bodies is the typed lowering of a Fern-source runtime helper
@@ -719,7 +716,7 @@ pub function verdict_text(v: Verdict): string {
 // a per-module build cuts into units (ircore.split_units). A module the gate
 // refuses is an error, as it is for the whole-module emit.
 pub function program(d: Driven): ircore.Gated {
-  var g: ircore.Gated = ircore.gate_program(ircore.sub_lifted(d.sub, checker.ensure_annotated(d.full)), [], d.sub);
+  var g: ircore.Gated = ircore.gate_program(ircore.sub_lifted(d.sub, checker.ensure_annotated(d.full)), d.sub);
   if (!g.ok) {
     ircore.eprint_ir_ineligible();
     exit(1);

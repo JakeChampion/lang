@@ -76,13 +76,18 @@ func runWasmCensus(t *testing.T, wat string, args ...string) (string, int) {
 // arm64-linux or wasm32-wasi), runs it, and returns its stderr and exit code.
 func (c *selfHostCLI) exitOf(t *testing.T, source, target string, env ...string) (string, int) {
 	t.Helper()
+	return c.exitOfStdin(t, source, target, nil, env...)
+}
+
+func (c *selfHostCLI) exitOfStdin(t *testing.T, source, target string, stdin []byte, env ...string) (string, int) {
+	t.Helper()
 	src := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	switch target {
 	case "x86-64-linux":
-		return runWithStdin(t, c.runner, c.x86Binary(t, src, env...), nil)
+		return runWithStdin(t, c.runner, c.x86Binary(t, src, env...), stdin)
 	case "arm64-linux":
 		armgcc, qemu := arm64Tooling(t)
 		asm, err := os.ReadFile(c.emit(t, src, target, env...))
@@ -90,6 +95,7 @@ func (c *selfHostCLI) exitOf(t *testing.T, source, target string, env ...string)
 			t.Fatal(err)
 		}
 		cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, filepath.Dir(src), "prog", string(asm)))
+		cmd.Stdin = bytes.NewReader(stdin)
 		var eb bytes.Buffer
 		cmd.Stderr = &eb
 		_ = cmd.Run()
@@ -98,7 +104,15 @@ func (c *selfHostCLI) exitOf(t *testing.T, source, target string, env ...string)
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Fatal("wasmtime not on PATH")
 		}
-		return runWasmCensus(t, c.emit(t, src, target, env...))
+		cmd := exec.Command("wasmtime", "run", c.emit(t, src, target, env...))
+		cmd.Stdin = bytes.NewReader(stdin)
+		var eb bytes.Buffer
+		cmd.Stderr = &eb
+		_ = cmd.Run()
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			t.Fatalf("wasmtime did not exit normally\n%s", eb.String())
+		}
+		return eb.String(), cmd.ProcessState.ExitCode()
 	}
 	t.Fatalf("exitOf: unsupported target %s", target)
 	return "", 0

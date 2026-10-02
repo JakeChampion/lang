@@ -237,6 +237,14 @@ function fields_have_children(fields: semrecords.Field[]): boolean {
 // carry with the type itself, and drop_captures matches on the body address at
 // run time. A closure box's own captures are no exception since #9637: it
 // takes a unit of each (ssaunits.taken), so walking them is what balances it.
+// A routed map whose columns own what their slots name, released with the
+// map: a string column's strings, and a wide column's cells.
+function owned_columns(t: typeinfo.Type): boolean {
+  var k: typeinfo.Type = ssasem.map_key(t);
+  var v: typeinfo.Type = ssasem.map_value(t);
+  return ssasem.is_text(k) || ssasem.is_string(v) || cell_column(k) || cell_column(v);
+}
+
 function walked(t: typeinfo.Type): boolean {
   return ssasem.reference(t);
 }
@@ -260,7 +268,7 @@ function release_name(t: typeinfo.Type, f: ssasem.Func): string {
   if (routed_map(t, f) && routed_box(ssasem.map_value(t))) {
     return "__map_drop_boxes_impl";
   }
-  if (routed_map(t, f) && (ssasem.is_text(ssasem.map_key(t)) || ssasem.is_string(ssasem.map_value(t)))) {
+  if (routed_map(t, f) && owned_columns(t)) {
     return "__map_drop_strcols_impl";
   }
   if (routed_map(t, f)) {
@@ -3100,7 +3108,7 @@ function routed_iter(t: typeinfo.Type, f: ssasem.Func): boolean {
 // A string column, of keys or values, holds one unit of each string, as the
 // runtime's does.
 function routed_key(t: typeinfo.Type): boolean {
-  return routed_column(t) || ssasem.is_text(t);
+  return routed_column(t) || ssasem.is_text(t) || ssasem.wide_map_key(t);
 }
 
 // A value column may also hold boxes, one unit of each; core/map retains them
@@ -3108,7 +3116,7 @@ function routed_key(t: typeinfo.Type): boolean {
 // A view value column stays on the runtime's map (routed_box), where a view
 // key column is a string column of owned copies (routed_key).
 function routed_value(t: typeinfo.Type): boolean {
-  return routed_column(t) || ssasem.is_string(t) || routed_box(t);
+  return routed_column(t) || ssasem.is_string(t) || routed_box(t) || cell_column(t);
 }
 
 // The boxes a routed value column can hold: any counted value but a string,
@@ -3120,7 +3128,13 @@ function routed_box(t: typeinfo.Type): boolean {
 }
 
 function routed_column(t: typeinfo.Type): boolean {
-  return ssasem.is_i32(t) || ssasem.is_u32(t) || ssasem.is_bool(t);
+  return ssasem.is_i32(t) || ssasem.is_u32(t) || ssasem.is_u8(t) || ssasem.is_bool(t);
+}
+
+// A key or value wider than four bytes, an i64 or u64 or a float, crosses
+// the slot as a cell holding its eight bytes (core/map's __map_cell).
+function cell_column(t: typeinfo.Type): boolean {
+  return ssasem.wide_map_key(t) || ssasem.float_map_value(t);
 }
 
 function routed_map_op(f: ssasem.Func, ins: ssa.SInst): boolean {
@@ -3155,45 +3169,112 @@ function routed_map_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
   if (k == ssasem.map_insert()) {
     return routed_insert(r, f, ins);
   }
-  if (k == ssasem.map_delete()) {
-    return routed_delete(r, f, ins);
-  }
-  r = emit(r, ir.op_load_local(ins.args[0]));
   if (ssasem.is_map_iter_op(k)) {
+    r = emit(r, ir.op_load_local(ins.args[0]));
     return routed_cursor(r, f, ins);
   }
   var t: typeinfo.Type = f.values[ins.args[0]];
   if (k == ssasem.map_len()) {
+    r = emit(r, ir.op_load_local(ins.args[0]));
     return emit(r, ir.op_call_direct("__map_len_impl", 1));
   }
   if (k == ssasem.map_keys()) {
+    r = emit(r, ir.op_load_local(ins.args[0]));
     return routed_column_read(r, ssasem.map_key(t), ir.op_const_i32(0));
   }
   if (k == ssasem.map_values()) {
+    r = emit(r, ir.op_load_local(ins.args[0]));
     return routed_column_read(r, ssasem.map_value(t), ir.op_ptr_width());
   }
-  r = routed_slot(r, ins.args[1], ssasem.map_key(t));
-  if (k == ssasem.map_has()) {
+  r = box_key(r, f, ins);
+  if (k == ssasem.map_delete()) {
+    r = routed_delete(r, f, ins);
+  } else {
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = routed_lookup(r, f, ins);
+  }
+  if (!cell_column(ssasem.map_key(t))) {
+    return r;
+  }
+  return helper(r, key_cell(f), "__map_cell_free");
+}
+
+// has, get and get_or, with the receiver on the stack.
+function routed_lookup(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+  var t: typeinfo.Type = f.values[ins.args[0]];
+  var v: typeinfo.Type = ssasem.map_value(t);
+  r = key_operand(r, f, ins);
+  if (ins.kind_tag == ssasem.map_has()) {
     return emit(r, ir.op_call_direct("__map_has_impl", 2));
   }
-  var counted: boolean = ssasem.is_string(ssasem.map_value(t));
-  if (k == ssasem.map_get()) {
+  var counted: boolean = ssasem.is_string(v);
+  if (ins.kind_tag == ssasem.map_get()) {
+    if (cell_column(v) && ssasem.is_float(v)) {
+      return emit(r, ir.op_call_direct("__map_get_cell_f64_impl", 2));
+    }
+    if (cell_column(v)) {
+      return emit(r, ir.op_call_direct("__map_get_cell_impl", 2));
+    }
     r = emit(r, ir.op_call_direct("__map_get_impl", 2));
     if (!counted) {
       return r;
     }
     return retain_hit_payload(r, ins);
   }
-  r = routed_slot(r, ins.args[2], ssasem.map_value(t));
+  if (cell_column(v)) {
+    return cell_get_or(r, f, ins);
+  }
+  r = routed_slot(r, ins.args[2], v);
   r = emit(r, ir.op_call_direct("__map_get_or_impl", 3));
   if (counted) {
     r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
   }
-  return routed_from_slot(r, ssasem.map_value(t));
+  return routed_from_slot(r, v);
 }
 
-// core/map's valKind: 5 a string, 4 a counted box, 0 a scalar held in the
-// slot itself.
+// get_or on a cell column: the fallback crosses as a cell of its own, the
+// answer is read out of whichever cell comes back, and the fallback's cell
+// is returned after.
+function cell_get_or(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+  var v: typeinfo.Type = ssasem.map_value(f.values[ins.args[0]]);
+  var fallback: i32 = key_cell(f) + 1;
+  r = reserve(r, fallback + 1);
+  r = routed_slot(r, ins.args[2], v);
+  r = emit(r, ir.op_store_local(fallback));
+  r = emit(r, ir.op_load_local(fallback));
+  r = emit(r, ir.op_call_direct("__map_get_or_impl", 3));
+  r = routed_from_slot(r, v);
+  return helper(r, fallback, "__map_cell_free");
+}
+
+// The scratch slot a wide key's cell is held in across one map op, above
+// every slot the insert and delete sequences take.
+function key_cell(f: ssasem.Func): i32 {
+  return scratch_base(f) + 4;
+}
+
+// A wide key crosses as a cell, made once per op and returned after it,
+// unless an insert's new entry keeps it.
+function box_key(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+  var kt: typeinfo.Type = ssasem.map_key(f.values[ins.args[0]]);
+  if (!cell_column(kt)) {
+    return r;
+  }
+  r = reserve(r, key_cell(f) + 1);
+  r = routed_slot(r, ins.args[1], kt);
+  return emit(r, ir.op_store_local(key_cell(f)));
+}
+
+function key_operand(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+  var kt: typeinfo.Type = ssasem.map_key(f.values[ins.args[0]]);
+  if (cell_column(kt)) {
+    return emit(r, ir.op_load_local(key_cell(f)));
+  }
+  return routed_slot(r, ins.args[1], kt);
+}
+
+// core/map's valTag: 5 a string, 4 a counted box, 0 a scalar held in the
+// slot itself, or in an eight-byte cell, whose size is the tag's high bytes.
 function routed_val_tag(t: typeinfo.Type): i32 {
   if (ssasem.is_string(t)) {
     return 5;
@@ -3201,22 +3282,36 @@ function routed_val_tag(t: typeinfo.Type): i32 {
   if (routed_box(t)) {
     return 4;
   }
-  return 0;
-}
-
-// core/map's keyKind: 1 a string, 0 a scalar held in the slot itself.
-function routed_key_tag(t: typeinfo.Type): i32 {
-  if (ssasem.is_text(t)) {
-    return 1;
+  if (cell_column(t)) {
+    return 8 * 256;
   }
   return 0;
 }
 
-// A string key crosses as its box's address, which is its slot already.
+// core/map's keyTag: 1 a string, 0 a scalar held in the slot itself, 2 one
+// held in an eight-byte cell, whose size is the tag's high bytes.
+function routed_key_tag(t: typeinfo.Type): i32 {
+  if (ssasem.is_text(t)) {
+    return 1;
+  }
+  if (cell_column(t)) {
+    return 2 + 8 * 256;
+  }
+  return 0;
+}
+
+// A string key crosses as its box's address, which is its slot already; a
+// wide scalar as a fresh cell (`cell_column`).
 function routed_slot(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type): irlower.LowerResult {
   r = emit(r, ir.op_load_local(slot));
   if (ssasem.reference(t)) {
     return r;
+  }
+  if (ssasem.is_float(t)) {
+    r = emit(r, ir.op_f64_bits());
+  }
+  if (cell_column(t)) {
+    return emit(r, ir.op_call_direct("__map_cell", 1));
   }
   return into_address(r, t);
 }
@@ -3225,7 +3320,14 @@ function routed_from_slot(own r: irlower.LowerResult, t: typeinfo.Type): irlower
   if (ssasem.reference(t)) {
     return r;
   }
-  return from_address(r, t);
+  if (!cell_column(t)) {
+    return from_address(r, t);
+  }
+  r = emit(r, ir.op_call_direct("__map_cell_load", 1));
+  if (ssasem.is_float(t)) {
+    return emit(r, ir.op_f64_from_bits());
+  }
+  return r;
 }
 
 // A column snapshot is a fresh array in this compiler's own layout, built by
@@ -3234,6 +3336,15 @@ function routed_column_read(own r: irlower.LowerResult, elem: typeinfo.Type, off
   r = emit(r, offset);
   if (ssasem.is_bool(elem)) {
     return emit(r, ir.op_call_direct("__map_bool_column", 2));
+  }
+  if (ssasem.is_u8(elem)) {
+    return emit(r, ir.op_call_direct("__map_u8_column", 2));
+  }
+  if (cell_column(elem) && ssasem.is_float(elem)) {
+    return emit(r, ir.op_call_direct("__map_cell_f64_column", 2));
+  }
+  if (cell_column(elem)) {
+    return emit(r, ir.op_call_direct("__map_cell_column", 2));
   }
   if (ssasem.is_text(elem)) {
     return emit(r, ir.op_call_direct("__map_string_column", 2));
@@ -3281,26 +3392,28 @@ function routed_insert(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
   var before: i32 = res + 1;
   var old_val: i32 = res + 2;
   var counted_key: boolean = ssasem.is_text(ssasem.map_key(t));
+  var cell_key: boolean = cell_column(ssasem.map_key(t));
   var boxed_val: boolean = routed_box(ssasem.map_value(t));
   r = reserve(r, old_val + 1);
+  r = box_key(r, f, ins);
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_call_direct("__map_cow_inplace", 1));
   r = emit(r, ir.op_store_local(res));
   r = release_if_copied(r, ins.args[0], res);
-  if (counted_key || boxed_val) {
+  if (counted_key || cell_key || boxed_val) {
     r = emit(r, ir.op_load_local(res));
     r = emit(r, ir.op_call_direct("__map_len_impl", 1));
     r = emit(r, ir.op_store_local(before));
   }
   if (boxed_val) {
-    r = read_at_key(r, t, ins, res, "__map_lookup_val", old_val);
+    r = read_at_key(r, f, ins, res, "__map_lookup_val", old_val);
   }
   r = emit(r, ir.op_load_local(res));
-  r = routed_slot(r, ins.args[1], ssasem.map_key(t));
+  r = key_operand(r, f, ins);
   r = routed_slot(r, ins.args[2], ssasem.map_value(t));
   r = emit(r, ir.op_call_direct("__map_set_impl", 3));
   r = emit(r, ir.op_store_local(res));
-  if (counted_key || boxed_val) {
+  if (counted_key || cell_key || boxed_val) {
     r = emit(r, ir.op_load_local(res));
     r = emit(r, ir.op_call_direct("__map_len_impl", 1));
     r = emit(r, ir.op_load_local(before));
@@ -3308,6 +3421,9 @@ function routed_insert(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     r = emit(r, ir.op_if(0));
     if (counted_key) {
       r = release(r, ins.args[1], ssasem.map_key(t), f);
+    }
+    if (cell_key) {
+      r = helper(r, key_cell(f), "__map_cell_free");
     }
     if (boxed_val) {
       r = helper(r, old_val, value_release(ssasem.map_value(t)));
@@ -3336,13 +3452,13 @@ function routed_delete(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
   r = emit(r, ir.op_store_local(box));
   r = release_if_copied(r, ins.args[0], box);
   if (counted_key) {
-    r = read_at_key(r, t, ins, box, "__map_key_of", old_key);
+    r = read_at_key(r, f, ins, box, "__map_key_of", old_key);
   }
   if (counted_val) {
-    r = read_at_key(r, t, ins, box, "__map_lookup_val", old_val);
+    r = read_at_key(r, f, ins, box, "__map_lookup_val", old_val);
   }
   r = emit(r, ir.op_load_local(box));
-  r = routed_slot(r, ins.args[1], ssasem.map_key(t));
+  r = key_operand(r, f, ins);
   r = emit(r, ir.op_call_direct("__map_delete_impl", 2));
   r = emit(r, ir.op_store_local(found));
   if (counted_key || counted_val) {
@@ -3371,9 +3487,9 @@ function value_release(v: typeinfo.Type): string {
 }
 
 // The slot `reader` finds in `box` for the instruction's key, kept in `into`.
-function read_at_key(own r: irlower.LowerResult, t: typeinfo.Type, ins: ssa.SInst, box: i32, reader: string, into: i32): irlower.LowerResult {
+function read_at_key(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, box: i32, reader: string, into: i32): irlower.LowerResult {
   r = emit(r, ir.op_load_local(box));
-  r = routed_slot(r, ins.args[1], ssasem.map_key(t));
+  r = key_operand(r, f, ins);
   r = emit(r, ir.op_call_direct(reader, 2));
   return emit(r, ir.op_store_local(into));
 }
@@ -4780,8 +4896,17 @@ function handle_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "Reader.read_chunk") {
     return Lowered { found: true, r: emit(r, ir.op_read_chunk()) };
   }
+  if (ins.str == "Reader.read_chunk_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_read_chunk_bytes())) };
+  }
   if (ins.str == "Reader.close" || ins.str == "Writer.close") {
     return Lowered { found: true, r: emit(r, ir.op_reader_close()) };
+  }
+  if (ins.str == "Writer.write_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_write_bytes())) };
+  }
+  if (ins.str == "Writer.write_some_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_write_some_bytes())) };
   }
   if (ins.str == "Writer.write") {
     return Lowered { found: true, r: emit(r, ir.op_writer_write()) };
@@ -5243,6 +5368,9 @@ function builder_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
   if (ins.str == "buf_push_range") {
     return Lowered { found: true, r: emit(r, ir.op_buf_push_range()) };
   }
+  if (ins.str == "buf_push_bytes_range") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_bytes_range())) };
+  }
   if (ins.str == "buf_push_mapped") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_mapped())) };
   }
@@ -5263,6 +5391,9 @@ function builder_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
   }
   if (ins.str == "buf_take") {
     return Lowered { found: true, r: emit(r, ir.op_buf_take()) };
+  }
+  if (ins.str == "buf_take_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_take_bytes())) };
   }
   if (ins.str == "buf_free") {
     return Lowered { found: true, r: emit(r, ir.op_buf_free()) };

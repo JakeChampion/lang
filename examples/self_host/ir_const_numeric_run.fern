@@ -82,10 +82,6 @@ function main(): i32 {
     return 1;
   }
   var d: semlower.Driven = semlower.driven(mod, target);
-  if (!d.sub.on) {
-    eprint("ir_const_numeric_run: the typed lowering did not produce the module");
-    return 1;
-  }
   var sub: ircore.Sub = rebuilt(d.sub);
   if (target == "wasm32-wasi") {
     write(wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, sub));

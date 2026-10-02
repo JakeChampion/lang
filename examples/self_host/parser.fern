@@ -10135,7 +10135,7 @@ pub function builtin_function_names(): string[] {
     // the capacity-carrying string builder (#8773): a handle is the
     // address of its own control block, so any number are live at once.
     "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_len",
-    "buf_take", "buf_free",
+    "buf_take", "buf_take_bytes", "buf_push_bytes_range", "buf_free",
     // Cell[T] constructor (docs/CELL-TYPE-PLAN.md): cell_new(v) is a
     // front-end builtin (like map_new); get/set are method calls, not
     // bare names, so only the constructor needs the E001 suppression.
@@ -12273,6 +12273,11 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           var crt: string = call_ret_type(funcs, cid.name, c.args, env);
           if (crt.len() == 0) {
             crt = func_ret_of(funcs.decls, cid.name);
+          }
+          // This builtin has no FuncDecl to read. Keep its declared
+          // owned byte-array result for generic receiver selection.
+          if (crt.len() == 0 && cid.name == "buf_take_bytes" && c.args.len() == 1) {
+            return "u8[]";
           }
           // A bare type variable as the inferred call type — `A` from a
           // generic whose return type IS an UNBOUNDED type param
@@ -20184,15 +20189,13 @@ pub function lower_defers_prepass_module(mod: Module): Module {
 }
 
 // ---------------------------------------------------------------------------
-// Range-for desugaring for the NON-IR consumers.
+// Range-for desugaring.
 //
 // `for i in LOW..HIGH` parses to a StmtFor whose iter is the synthetic
-// `__range(LOW, HIGH)` call (see parse_stmt). The IR path lowers that directly
-// (irlower.lower_range_for); but the SSA backend and the tree-walking
-// interpreter don't know `__range` — left untouched, they emit a
-// `call __fn___range` (a link error) or mis-evaluate the iter. So for those
-// consumers we desugar the `__range` for-iter into a counting while-loop built
-// from existing nodes:
+// `__range(LOW, HIGH)` call (see parse_stmt). No consumer knows `__range` —
+// left untouched, it is a `call __fn___range` (a link error) or a
+// mis-evaluated iter. So we desugar the `__range` for-iter into a counting
+// while-loop built from existing nodes:
 //
 //     var i = LOW - 1;
 //     var $hi_<var> = HIGH;          // HIGH evaluated once (`0..f()` calls f once)
@@ -20225,10 +20228,7 @@ pub function lower_defers_prepass_module(mod: Module): Module {
 // This runs in desugar_prepass_module (inside module_with_builtins),
 // interp.eval_module and ssa.build_func. module_with_builtins feeds the IR
 // emit, and module_with_builtins_typed, which runs the same prepass, feeds the
-// semantic substitution, so EVERY consumer sees the
-// while-loop and `irlower.lower_range_for` is reached only by the
-// un-desugared modules `irlower_run.fern` reads directly. Its own lowering is
-// tighter than this one — reclaiming it would shrink both range forms (#9565).
+// semantic substitution, so EVERY consumer sees the while-loop.
 function iter_range_args(iter: ast.Expr): ast.Expr[] {
   if (range_call_name(iter) == "") {
     return [];

@@ -2057,6 +2057,12 @@ function x86_str_contains(s: string, sub: string): boolean {
   return x86_str_indexof(s, sub) >= 0;
 }
 
+// x86_gas_has_paren is the memory-operand test, `(` anywhere in the token,
+// asked of every operand the mov and ALU families classify.
+function x86_gas_has_paren(s: string): boolean {
+  return __memchr(s, 40, 0) >= 0;
+}
+
 function x86_str_split(s: string, sep: string): string[] {
   var out: string[] = [];
   var m: i32 = sep.len();
@@ -2069,16 +2075,19 @@ function x86_str_split(s: string, sep: string): string[] {
   var last: i32 = n - m;
   var start: i32 = 0;
   var i: i32 = 0;
+  // The separator's first byte is found by __memchr, as x86_str_indexof
+  // finds a needle: the hot split is the emitted text on `\n`, where every
+  // byte between separators was compared and bumped one at a time.
   while (i <= last) {
-    var hit: boolean = false;
-    if (s[i] == c0) {
-      var j: i32 = 1;
-      while (j < m && s[i + j] == sep[j]) {
-        j = j + 1;
-      }
-      hit = j == m;
+    i = __memchr(s, c0 as i32, i);
+    if (i < 0 || i > last) {
+      break;
     }
-    if (hit) {
+    var j: i32 = 1;
+    while (j < m && s[i + j] == sep[j]) {
+      j = j + 1;
+    }
+    if (j == m) {
       out = out.append(slice_unchecked(s, start, i) + "");
       i = i + m;
       start = i;
@@ -2357,9 +2366,14 @@ function x86_gas_strip_suffix(mnem: string): string {
   return slice_unchecked(mnem, 0, mnem.len() - 1) + "";
 }
 
-// x86_gas_is_xmm reports whether a token names an xmm register.
+// x86_gas_is_xmm reports whether a token names an xmm register: `xmm` at
+// the front, behind an optional `%`, the shape x86_gas_xmm decodes.
 function x86_gas_is_xmm(tok: string): boolean {
-  return x86_str_contains(tok, "xmm");
+  var at: i32 = 0;
+  if (tok.len() > 0 && tok[0] == b'%') {
+    at = 1;
+  }
+  return tok.len() >= at + 3 && tok[at] == b'x' && tok[at + 1] == b'm' && tok[at + 2] == b'm';
 }
 
 // x86_gas_xmm maps an xmm token (`%xmm0`, `xmm12`, …) to its number 0..15,
@@ -2754,14 +2768,14 @@ function x86_gas_ascii(own buf: i32[], line: string): i32[] {
 // (immediate sigil) and a leading `-`.
 function x86_gas_atoi(tok: string): i32 {
   var s: string = tok;
+  var i: i32 = 0;
   if (s.len() > 0 && s[0] == b'$') {
-    s = slice_unchecked(s, 1, s.len()) + "";
+    i = 1;
   }
   var neg: boolean = false;
-  var i: i32 = 0;
-  if (s.len() > 0 && s[0] == b'-') {
+  if (i < s.len() && s[i] == b'-') {
     neg = true;
-    i = 1;
+    i = i + 1;
   }
   var v: i32 = 0;
   // `0x…` hex (mirrors x86_gas_atoi64). Without this the `x` was skipped as a
@@ -2909,7 +2923,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
     return a;
   }
   if (dst_xmm && !src_xmm) {  // movq r/m, %xmm — 66 REX.W 0F 6E /r
-    if (x86_str_contains(src, "(")) {
+    if (x86_gas_has_paren(src)) {
       var xm: GasMem = x86_gas_parse_mem(src);
       if (!x86_gas_mem_ok(xm)) {
         return x86_gas_bad(a, "movq " + src + ", " + dst);
@@ -2928,7 +2942,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
     return a;
   }
   if (src_xmm && !dst_xmm) {  // movq %xmm, r/m — 66 REX.W 0F 7E /r
-    if (x86_str_contains(dst, "(")) {
+    if (x86_gas_has_paren(dst)) {
       var xm2: GasMem = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(xm2)) {
         return x86_gas_bad(a, "movq " + src + ", " + dst);
@@ -3546,7 +3560,7 @@ function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: str
   if (size == 16) {
     a = X86Asm { ...a, code: x86_osz(a.code, 16) };
   }
-  if (x86_str_contains(src, "(")) {
+  if (x86_gas_has_paren(src)) {
     var m: GasMem = x86_gas_parse_mem(src);
     if (m.no_base) {
       return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) };
@@ -3668,7 +3682,7 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
     if (size == 16) {
       tail = 2;
     }
-    if (x86_str_contains(dst, "(")) {
+    if (x86_gas_has_paren(dst)) {
       var mi: GasMem = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi)) {
         return x86_gas_bad(a, mnem + " " + src + ", " + dst);
@@ -3710,8 +3724,8 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
     a = X86Asm { ...a, code: a.code.append(184 + (rd & 7)) };  // B8+rd
     return X86Asm { ...a, code: x86_imm_wide(a.code, size, imm) };
   }
-  var src_mem: boolean = x86_str_contains(src, "(");
-  var dst_mem: boolean = x86_str_contains(dst, "(");
+  var src_mem: boolean = x86_gas_has_paren(src);
+  var dst_mem: boolean = x86_gas_has_paren(dst);
   if (src_mem && !dst_mem) {  // load: 8A/8B, ModRM.reg = destination
     var ml: GasMem = x86_gas_parse_mem(src);
     var rl: i32 = x86_gas_reg_w(dst, size);
@@ -4088,7 +4102,7 @@ function x86_vex(own buf: i32[], rex_r: boolean, rex_x: boolean, rex_b: boolean,
 // operand or a register: the prefix from the operand's REX bits, the
 // opcode, then the ModRM (+SIB+disp).
 function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: i32, op: i32, reg: i32, rm: string): X86Asm {
-  if (x86_str_contains(rm, "(")) {
+  if (x86_gas_has_paren(rm)) {
     var m: GasMem = x86_gas_parse_mem(rm);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + rm);
@@ -4441,7 +4455,7 @@ function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, sr
   var opbase: i32 = ext * 8;
   if (src.len() > 0 && src[0] == b'$') {
     var imm: i32 = x86_gas_atoi(src);
-    if (x86_str_contains(dst, "(")) {
+    if (x86_gas_has_paren(dst)) {
       var mi: GasMem = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi)) {
         return x86_gas_bad(a, mnem + " " + dst);
@@ -4467,8 +4481,8 @@ function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, sr
     }
     return X86Asm { ...a, code: x86_grp1_imm_r(a.code, size, ext, rd, imm) };
   }
-  var src_mem: boolean = x86_str_contains(src, "(");
-  var dst_mem: boolean = x86_str_contains(dst, "(");
+  var src_mem: boolean = x86_gas_has_paren(src);
+  var dst_mem: boolean = x86_gas_has_paren(dst);
   if (src_mem && !dst_mem) {  // load form: opbase|2, reg = destination
     var ml: GasMem = x86_gas_parse_mem(src);
     var rl: i32 = x86_gas_reg_w(dst, size);
@@ -4498,7 +4512,7 @@ function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, sr
 function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string): X86Asm {
   if (src.len() > 0 && src[0] == b'$') {
     var imm: i32 = x86_gas_atoi(src);
-    if (x86_str_contains(dst, "(")) {
+    if (x86_gas_has_paren(dst)) {
       var mi: GasMem = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi)) {
         return x86_gas_bad(a, "test " + dst);
@@ -4522,8 +4536,8 @@ function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string)
     }
     return X86Asm { ...a, code: x86_test_imm_r(a.code, size, rd, imm) };
   }
-  var src_mem: boolean = x86_str_contains(src, "(");
-  var dst_mem: boolean = x86_str_contains(dst, "(");
+  var src_mem: boolean = x86_gas_has_paren(src);
+  var dst_mem: boolean = x86_gas_has_paren(dst);
   if (src_mem != dst_mem) {  // one memory side: 84/85 with reg = the register
     var mop: string = src;
     var rop: string = dst;
@@ -4549,7 +4563,7 @@ function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string)
 // x86_gas_unary_family: the F6/F7 (opbase 246) and FE/FF (opbase 254)
 // one-operand groups, register or sized memory (rip included).
 function x86_gas_unary_family(own a: X86Asm, mnem: string, opbase: i32, ext: i32, size: i32, op: string): X86Asm {
-  if (x86_str_contains(op, "(")) {
+  if (x86_gas_has_paren(op)) {
     var m: GasMem = x86_gas_parse_mem(op);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + op);
@@ -4575,7 +4589,7 @@ function x86_gas_shift_family(own a: X86Asm, mnem: string, ext: i32, size: i32, 
   if (!by_cl) {
     imm = x86_gas_atoi(src);
   }
-  if (x86_str_contains(dst, "(")) {
+  if (x86_gas_has_paren(dst)) {
     var m: GasMem = x86_gas_parse_mem(dst);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + dst);
@@ -4632,7 +4646,7 @@ function x86_gas_shld_family(own a: X86Asm, mnem: string, opimm: i32, size: i32,
     imm = x86_gas_atoi(ops[0]);
     tail = 1;
   }
-  if (x86_str_contains(ops[2], "(")) {
+  if (x86_gas_has_paren(ops[2])) {
     var m: GasMem = x86_gas_parse_mem(ops[2]);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + ops[2]);
@@ -4663,7 +4677,7 @@ function x86_gas_bt_family(own a: X86Asm, mnem: string, idx: i32, size: i32, src
   }
   if (src.len() > 0 && src[0] == b'$') {
     var imm: i32 = x86_gas_atoi(src);
-    if (x86_str_contains(dst, "(")) {
+    if (x86_gas_has_paren(dst)) {
       var mi: GasMem = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi)) {
         return x86_gas_bad(a, mnem + " " + dst);
@@ -4683,7 +4697,7 @@ function x86_gas_bt_family(own a: X86Asm, mnem: string, idx: i32, size: i32, src
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   var regop: i32 = 163 + idx * 8;
-  if (x86_str_contains(dst, "(")) {
+  if (x86_gas_has_paren(dst)) {
     var m: GasMem = x86_gas_parse_mem(dst);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + dst);
@@ -4705,7 +4719,7 @@ function x86_gas_rmw_family(own a: X86Asm, mnem: string, opbase: i32, size: i32,
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   var op: i32 = x86_opsel(opbase, size);
-  if (x86_str_contains(dst, "(")) {
+  if (x86_gas_has_paren(dst)) {
     var m: GasMem = x86_gas_parse_mem(dst);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + dst);
@@ -4722,8 +4736,8 @@ function x86_gas_rmw_family(own a: X86Asm, mnem: string, opbase: i32, size: i32,
 // x86_gas_xchg_family: xchg (86/87) — reg/reg or a memory operand on
 // either side (the memory form is implicitly locked by the CPU).
 function x86_gas_xchg_family(own a: X86Asm, mnem: string, size: i32, src: string, dst: string): X86Asm {
-  var src_mem: boolean = x86_str_contains(src, "(");
-  var dst_mem: boolean = x86_str_contains(dst, "(");
+  var src_mem: boolean = x86_gas_has_paren(src);
+  var dst_mem: boolean = x86_gas_has_paren(dst);
   if (src_mem != dst_mem) {
     var mop: string = src;
     var rop: string = dst;
@@ -4775,7 +4789,7 @@ function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: stri
   if (rd < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  if (x86_str_contains(src, "(")) {
+  if (x86_gas_has_paren(src)) {
     var m: GasMem = x86_gas_parse_mem(src);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + src);
@@ -4805,7 +4819,7 @@ function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: strin
     if (rd < 0) {
       return x86_gas_bad(a, mnem + " " + rest);
     }
-    if (x86_str_contains(ops[0], "(")) {
+    if (x86_gas_has_paren(ops[0])) {
       var m: GasMem = x86_gas_parse_mem(ops[0]);
       if (!x86_gas_mem_ok(m)) {
         return x86_gas_bad(a, mnem + " " + ops[0]);
@@ -4885,7 +4899,7 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
     a = X86Asm { ...a, code: a.code.append(102) };
   }
   a = X86Asm { ...a, code: a.code.append(242) };
-  if (x86_str_contains(src, "(")) {
+  if (x86_gas_has_paren(src)) {
     var m: GasMem = x86_gas_parse_mem(src);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, "crc32 " + src);
@@ -5275,7 +5289,7 @@ function x86_gas_sse_table(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: 
   if (xd < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  if (x86_str_contains(src, "(")) {
+  if (x86_gas_has_paren(src)) {
     var m: GasMem = x86_gas_parse_mem(src);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + src);
@@ -5295,7 +5309,7 @@ function x86_gas_sse_table(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: 
 // would have READ from the store address instead.
 function x86_gas_movdq(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
   var pfx: i32 = x86_gas_movdq_pfx(mnem);
-  if (x86_str_contains(dst, "(")) {
+  if (x86_gas_has_paren(dst)) {
     var m: GasMem = x86_gas_parse_mem(dst);
     var xs: i32 = x86_gas_xmm(src);
     if (!x86_gas_mem_ok(m) || xs < 0) {
@@ -5311,7 +5325,7 @@ function x86_gas_movdq(own a: X86Asm, mnem: string, src: string, dst: string): X
 // register copy (10). The rip-relative load is how a `.double` constant
 // arrives from .rodata.
 function x86_gas_sse_mov10(own a: X86Asm, mnem: string, pfx: i32, src: string, dst: string): X86Asm {
-  if (x86_str_contains(dst, "(")) {
+  if (x86_gas_has_paren(dst)) {
     var m: GasMem = x86_gas_parse_mem(dst);
     var xs: i32 = x86_gas_xmm(src);
     if (!x86_gas_mem_ok(m) || xs < 0) {
@@ -5424,7 +5438,7 @@ function x86_gas_pextr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     w = 1;
     dsize = 64;
   }
-  if (x86_str_contains(ops[2], "(")) {
+  if (x86_gas_has_paren(ops[2])) {
     var m: GasMem = x86_gas_parse_mem(ops[2]);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + ops[2]);
@@ -5477,7 +5491,7 @@ function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     ssize = 64;
   }
   var legacy: boolean = mnem == "pinsrw";
-  if (x86_str_contains(ops[1], "(")) {
+  if (x86_gas_has_paren(ops[1])) {
     var m: GasMem = x86_gas_parse_mem(ops[1]);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + ops[1]);
@@ -5594,7 +5608,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     var ext: i32 = l.ext;  // jmp FF /4, call FF /2
     if (rest.len() > 0 && rest[0] == b'*') {
       var ind: string = x86_gas_trim(slice_unchecked(rest, 1, rest.len()));
-      if (x86_str_contains(ind, "(")) {
+      if (x86_gas_has_paren(ind)) {
         // `*disp(%base[,%index,scale])` and `*sym(%rip)` — FF /2 //4
         // over a memory operand (a callee pointer in a stack slot or
         // a rip-addressed table). The operand size is fixed 64-bit.
@@ -5639,7 +5653,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
       }
       a = X86Asm { ...a, code: x86_push_imm32(a.code, pv) };
     } else {
-      if (x86_str_contains(rest, "(")) {
+      if (x86_gas_has_paren(rest)) {
         var pm: GasMem = x86_gas_parse_mem(rest);
         if (pm.no_base) {
           return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) };
@@ -5655,7 +5669,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return a;
   }
   if (k == GK_POPQ) {
-    if (x86_str_contains(rest, "(")) {
+    if (x86_gas_has_paren(rest)) {
       var qm: GasMem = x86_gas_parse_mem(rest);
       if (qm.no_base) {
         return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) };
@@ -5843,7 +5857,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     if (cxd < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    if (x86_str_contains(src, "(")) {
+    if (x86_gas_has_paren(src)) {
       var cm2: GasMem = x86_gas_parse_mem(src);
       if (!x86_gas_mem_ok(cm2)) {
         return x86_gas_bad(a, mnem + " " + src);
@@ -5909,7 +5923,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   // movsxd is the AT&T spelling GNU as also accepts for movslq — same
   // sign-extending 32-to-64 load (REX.W 63 /r), so it shares the handler.
   if (k == GK_MOVSXD) {
-    if (x86_str_contains(src, "(")) {
+    if (x86_gas_has_paren(src)) {
       var sm: GasMem = x86_gas_parse_mem(src);
       if (sm.no_base) {
         return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) };
@@ -6565,19 +6579,27 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
 // comment-only lines are dropped here, so no round ever sees one.
 function x86_gas_prepare(src: string): GasLine[] {
   var out: GasLine[] = [];
-  var lines: string[] = x86_str_split(src, "\n");
-  var li: i32 = 0;
-  while (li < lines.len()) {
-    var raw: string = lines[li];
-    li = li + 1;
+  // Each line is read as a view of the text, its comment stripped and its
+  // ends trimmed by index, and copied once. The text is scanned for `\n`
+  // with __memchr rather than split into a second copy of every line.
+  var n: i32 = src.len();
+  var pos: i32 = 0;
+  while (pos <= n) {
+    var nl: i32 = __memchr(src, 10, pos);
+    if (nl < 0) {
+      nl = n;
+    }
+    var raw: str = slice_unchecked(src, pos, nl);
+    pos = nl + 1;
     var hash: i32 = x86_gas_comment_start(raw);
     if (hash >= 0) {
-      raw = slice_unchecked(raw, 0, hash) + "";
+      raw = slice_unchecked(raw, 0, hash);
     }
-    var line: string = x86_gas_trim(raw);
-    if (line.len() == 0) {
+    var lv: str = x86_gas_trimmed(raw);
+    if (lv.len() == 0) {
       continue;
     }
+    var line: string = lv + "";
     var label: string = "";
     // label prefix: `name:` possibly followed by more on the same
     // line (asm.fern emits `.L0: .double 84.0`). A label is a single

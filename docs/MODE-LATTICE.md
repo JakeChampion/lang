@@ -197,10 +197,10 @@ annotation returns before one op is examined.
 The verdicts do not ride the gate's `""` refusal, because that
 refusal is turned into "module is not IR-eligible" by its caller,
 which is the wrong thing to say about a module that lowered fine and
-broke a promise (#9623). Nor does the check ride `ircore.lower_gated`
-itself, where it started: lowering is also what the routing and
+broke a promise (#9623). Nor does the check ride the gate
+itself, where it started: gating is also what the routing and
 eligibility probes do — `wasm_ir.ir_route_ok` and `wasm_eligible`
-lower a module only to return a boolean, and
+gate a module only to return a boolean, and
 `asm_ir.module_runtime_needs` runs the whole per-function emit and
 throws the text away — so hooking the lowering made all three exit on
 a claim they were only asked about, and left the per-unit and
@@ -216,11 +216,10 @@ native's single `OpAlloc`, and names a site by op index — the
 self-host `ir.Op` carries no source position.
 
 What is still behind is the *pairing*, not the verification: the
-self-host reuse layer pairs the R3 general case but not the R1
-struct self-overwrite or the R4 consuming-match rebuild, so a bare
-`fbip` native accepts needs a grade here. The counts are pinned by
-`TestSelfHostFipCensusOnNativesShapes`, which fails when the port
-closes either gap.
+AST lowering's reuse layer paired the R3 general case but not the R1
+struct self-overwrite or the R4 consuming-match rebuild, and the census
+that pinned those counts went with that lowering. How the typed
+lowering pairs the three shapes is unmeasured.
 
 ### 2.3 Owned `T[]` vs view `[T]` / `str` — E063 / E065
 

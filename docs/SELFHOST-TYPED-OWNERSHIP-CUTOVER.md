@@ -7,12 +7,13 @@ become a second permanent semantic pipeline.
 
 ## Verified production boundary
 
-`examples/self_host/ircore.fern:lower_gated` lowers and caches each function through
-`irlower.lower_func`. The resulting `ir.Op[]` already contains reference-count
-calls, releases and reuse decisions. The three stack-IR backends consume it.
-Consequently, downstream SSA lifting or `irverifyrc` alone cannot replace the
-AST ownership authority: that would analyze decisions already made by the AST
-lowerer, not supply their semantic justification.
+Every body the three stack-IR backends emit is the typed lowering's
+(`semsource` -> `ssaunits` -> `ssarc`, read through `ircore.gate`), its
+`ir.Op[]` already carrying the reference-count calls, releases and reuse
+decisions; nothing calls the AST lowerer (`irlower.lower_func`). Downstream
+SSA lifting or `irverifyrc` alone could not have replaced the AST ownership
+authority: that would analyze decisions already made by a lowerer, not supply
+their semantic justification.
 
 The necessary boundary is checked semantic values and control flow, followed by
 ownership analysis and explicit RC/reuse lowering, followed by the existing
