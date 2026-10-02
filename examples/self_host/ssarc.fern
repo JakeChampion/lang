@@ -2424,7 +2424,7 @@ function variant_op(k: i32): boolean {
 // narrowing and a string retag move no bytes: the operand is already on the
 // stack and the store below takes it.
 function identity_op(k: i32): boolean {
-  return kind_in([ssasem.variant_up(), ssasem.variant_as(), ssasem.str_as(), ssasem.dyn_up(), ssasem.dyn_as()], k);
+  return kind_in([ssasem.variant_up(), ssasem.variant_as(), ssasem.str_as(), ssasem.array_lend(), ssasem.dyn_up(), ssasem.dyn_as()], k);
 }
 
 function supported_op(k: i32): boolean {

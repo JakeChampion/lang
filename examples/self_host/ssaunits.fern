@@ -1240,7 +1240,7 @@ function is_record(t: typeinfo.Type): boolean {
 function projection(kind: i32): boolean {
   return kind == 7 || kind == ssasem.array_get() || kind == ssasem.tuple_get() || kind == ssasem.record_get()
     || kind == ssasem.variant_get() || kind == ssasem.variant_up() || kind == ssasem.variant_as()
-    || kind == ssasem.slice() || kind == ssasem.str_as() || kind == ssasem.dyn_up() || kind == ssasem.dyn_as();
+    || kind == ssasem.slice() || kind == ssasem.str_as() || kind == ssasem.array_lend() || kind == ssasem.dyn_up() || kind == ssasem.dyn_as();
 }
 
 // Whether reading `arg` reads `w`: the value itself, or one anchored to it.

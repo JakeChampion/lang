@@ -979,7 +979,8 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
     s = v.s;
     ids = ids.append(v.id);
   }
-  return define(s, ssasem.array_new(), ids, 0, "", ty);
+  var owned: typeinfo.Type = typeinfo.TypeArray { elem: elem, view: false };
+  return widen(define(s, ssasem.array_new(), ids, 0, "", owned), ty);
 }
 
 function tuple(e: ast.Expr, t: ast.ExprTuple, s: State, expected: typeinfo.Type): Value {
@@ -1112,8 +1113,8 @@ function slice_bound(t: SliceTree, left: i32, op: string, right: i32, sink: i32)
 // not. Every failing test leaves for one `None` block, so the whole check is
 // a decision tree with two sinks and the result joins as a single phi. The
 // length is read once and each bound evaluated once, before any test runs.
-// `xs[lo:hi]` on an array is a fresh copy of the window, the source's own
-// type, bounds-checked by the runtime rather than by a test here (the AST
+// `xs[lo:hi]` on an array has a view type. Physical lowering still makes a
+// fresh copy, bounds-checked by the runtime rather than by a test here (the AST
 // lowering traps the same way). The elements are copied as bare words, so a
 // counted element type is retained once per copied slot — the copy aliases
 // every one of them.
@@ -1134,7 +1135,7 @@ function array_slice(sl: ast.ExprSlice, src: Value, elem: typeinfo.Type, s: Stat
   if (!is_i32(s.values[lo.id]) || !is_i32(s.values[hi.id])) {
     return refused(s, "slice bound type");
   }
-  return define(s, ssasem.arr_slice(), [src.id, lo.id, hi.id], 0, "", s.values[src.id]);
+  return define(s, ssasem.arr_slice(), [src.id, lo.id, hi.id], 0, "", typeinfo.TypeArray { elem: elem, view: true });
 }
 
 function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
@@ -2512,7 +2513,8 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
     return builtin_length(recv, s);
   }
   if ((fa.field == "bytes" || fa.field == "as_bytes") && c.args.len() == 0 && ssasem.is_text(s.values[recv.id])) {
-    return define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: fa.field == "as_bytes" });
+    var bytes: Value = define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: false });
+    return widen(bytes, typeinfo.TypeArray { elem: t_u8(), view: fa.field == "as_bytes" });
   }
   if (fa.field == "append" && c.args.len() == 1) {
     return builtin_append(c, recv, s);
@@ -3490,6 +3492,8 @@ function invoke_method(recv: Value, args: ast.Expr[], contract: ssasem.Contract,
   if (!bound.ok) {
     return refused(s, bound.why);
   }
+  v = widen(v, ssasem.substitute(contract.params[0], bound));
+  s = v.s;
   if (!semtypes.equal(ssasem.substitute(contract.params[0], bound), s.values[v.id])) {
     return refused(s, "call receiver type");
   }
@@ -3519,6 +3523,8 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
     if (!bound.ok) {
       return refused(s, bound.why);
     }
+    v = widen(v, ssasem.substitute(contract.params[at], bound));
+    s = v.s;
     if (!semtypes.equal(ssasem.substitute(contract.params[at], bound), s.values[v.id])) {
       return refused(s, "call argument type");
     }
@@ -3570,7 +3576,7 @@ function request(s: State, key: string, name: string, b: ssasem.Binding): State 
 }
 
 // A union-typed destination accepts any of its members, and a view-typed one
-// accepts an owned string, whose box it borrows. Each widening is a verified
+// accepts an owned string or array, whose box it borrows. Each widening is a verified
 // operation, not an implicit reinterpretation: the value carries exactly the
 // type the destination declared, and every obligation site keeps its
 // exact-type rule.
@@ -3578,6 +3584,9 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   var s: State = v.s;
   if (semtypes.equal(s.values[v.id], expected)) {
     return v;
+  }
+  if (semtypes.lends_array(s.values[v.id], expected)) {
+    return define(s, ssasem.array_lend(), [v.id], 0, "", expected);
   }
   if (ssasem.is_view(expected) && ssasem.is_string(s.values[v.id])) {
     return define(s, ssasem.str_as(), [v.id], 0, "", expected);

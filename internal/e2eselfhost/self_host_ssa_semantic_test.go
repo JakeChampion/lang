@@ -100,6 +100,8 @@ function type_checks(): i32 {
     var array: typeinfo.Type = typeinfo.TypeArray { elem: tuple, view: false };
     if (!semtypes.equal(array, array) || !semtypes.equal(map, map) || !semtypes.concrete(array, false)) { return 5; }
     if (semtypes.concrete(p, false) || semtypes.concrete(opaque, false) || semtypes.equal(typeinfo.unchecked(), typeinfo.unchecked())) { return 6; }
+    var av: typeinfo.Type = typeinfo.TypeArray { elem: tuple, view: true };
+    if (ssasem.type_key(array) == ssasem.type_key(av)) { return 7; }
     return 0;
 }
 `
@@ -114,9 +116,22 @@ graph = ssa.SFunc { name: "phi", nparams: 3, nvals: 4, entry: 7, takes_env: fals
 ] };
 `
 
+const semanticArrayLend = `
+var av: typeinfo.Type = typeinfo.TypeArray { elem: i32t, view: true };
+params = [ia]; types = [ia, av]; result = av;
+graph = ssa.SFunc { name: "lend", nparams: 1, nvals: 2, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.array_lend(), 1, [0], 0)], term: ret(1) }
+] };
+`
+
 func semanticCases() []struct{ name, change, want string } {
 	base := []struct{ name, change, want string }{
 		{"nested-projections", "", ""},
+		{"array-lend", semanticArrayLend, ""},
+		{"array-view-copy-needs-lend", semanticArrayLend + "graph = change(graph, 1, inst(7, 1, [0], 0));", "copy or phi type"},
+		{"array-lend-cannot-own", semanticArrayLend + "types = [av, ia]; params = [av]; result = ia;", "array lend type"},
+		{"array-lend-element-type", semanticArrayLend + "var wrong: typeinfo.Type = typeinfo.TypeArray { elem: st, view: true }; types = [ia, wrong]; result = types[1];", "array lend type"},
+		{"array-lend-arity", semanticArrayLend + "graph = change(graph, 1, inst(ssasem.array_lend(), 1, [], 0));", "array lend arity"},
 		{"phi", semanticPhi, ""},
 		{"phi-view-mismatch", semanticPhi + "types = types.with(2, view); params = params.with(2, view);", "copy or phi type"},
 		{"branch-needs-bool", semanticPhi + "types = types.with(0, i32t); params = params.with(0, i32t);", "condition type"},

@@ -384,6 +384,12 @@ pub function hole_fill(): i32 {
   return 0 - 49;
 }
 
+// An owned array lent as a view. The result reads the same storage, with
+// an explicit view type so physical lowering can preserve its representation.
+pub function array_lend(): i32 {
+  return 0 - 50;
+}
+
 pub function is_hole_op(kind: i32): boolean {
   return kind == hole_at() || kind == hole_fill();
 }
@@ -1545,6 +1551,15 @@ function variant_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.kind_tag == str_as()) {
     return retag_error(ins, f, result);
   }
+  if (ins.kind_tag == array_lend()) {
+    if (ins.args.len() != 1) {
+      return "array lend arity";
+    }
+    if (!semtypes.lends_array(f.values[ins.args[0]], result)) {
+      return "array lend type";
+    }
+    return "";
+  }
   if (ins.kind_tag == variant_as()) {
     return narrowing_error(ins, f, result);
   }
@@ -1569,18 +1584,21 @@ function slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return "";
 }
 
-// A copy of a window of an array of scalars, the same type as its source and
-// owned whole: no element of it is a reference, so the raw word copy the
-// runtime makes owes nothing to the source.
+// A window has a view type with the source's element type. Physical lowering
+// currently copies its storage; that does not erase its semantic view type.
 function arr_slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 3) {
     return "slice arity";
   }
   var src: typeinfo.Type = f.values[ins.args[0]];
-  if (!semtypes.equal(src, result)) {
+  if (!semtypes.equal(src, result) && !semtypes.lends_array(src, result)) {
     return "slice container type";
   }
-  if let typeinfo.TypeArray(_) = src {} else {
+  if let typeinfo.TypeArray(a) = result {
+    if (!a.view) {
+      return "slice result must be a view";
+    }
+  } else {
     return "slice container type";
   }
   if (!is_i32(f.values[ins.args[1]]) || !is_i32(f.values[ins.args[2]])) {
@@ -1642,7 +1660,7 @@ function str_bytes_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     return "str bytes receiver";
   }
   if let typeinfo.TypeArray(a) = result {
-    if (is_u8(a.elem)) {
+    if (!a.view && is_u8(a.elem)) {
       return "";
     }
   }
@@ -2014,7 +2032,7 @@ function map_operand_error(m: typeinfo.Type, key: typeinfo.Type, value: typeinfo
 
 function is_variant_op(kind: i32): boolean {
   return kind == variant_new() || kind == variant_is() || kind == variant_get()
-    || kind == variant_up() || kind == variant_as() || kind == str_as() || kind == dyn_up() || kind == dyn_box()
+    || kind == variant_up() || kind == variant_as() || kind == str_as() || kind == array_lend() || kind == dyn_up() || kind == dyn_box()
     || kind == dyn_is() || kind == dyn_as();
 }
 
@@ -2333,6 +2351,9 @@ pub function type_key(t: typeinfo.Type): string {
     return key_args(r.name, r.args);
   }
   if let typeinfo.TypeArray(a) = t {
+    if (a.view) {
+      return "$view$" + type_key(a.elem);
+    }
     return "$arr$" + type_key(a.elem);
   }
   if let typeinfo.TypeTuple(tup) = t {
@@ -3329,7 +3350,7 @@ function guard_error(f: Func): string {
 function projects(kind: i32): boolean {
   return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
     || kind == variant_get() || kind == variant_up() || kind == variant_as()
-    || kind == slice() || kind == str_as() || kind == dyn_up() || kind == dyn_as()
+    || kind == slice() || kind == str_as() || kind == array_lend() || kind == dyn_up() || kind == dyn_as()
     || kind == map_iter() || kind == mapiter_key() || kind == mapiter_value();
 }
 
