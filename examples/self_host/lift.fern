@@ -3818,7 +3818,8 @@ function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: irta
 // The lambda then captures the cell (its contract records `Cell[T]`,
 // try_lift_binding passes the pointer); `set` stores into the shared box in
 // place. Two rules select what boxes:
-//   1. #2850: a capture the CLOSURE body writes, a scalar by E049.
+//   1. #2850: a capture the CLOSURE body writes, itself or through a lambda
+//      nested in it. A captured parameter's cell is built on entry.
 //   2. #5394: a capture of an ESCAPING binding (returned / used as a value —
 //      the make_closure env-box path, which snapshots at creation) that the
 //      ENCLOSING body reassigns — any capturable type. The env
@@ -4010,9 +4011,9 @@ function ident_used_as_value_stmts(stmts: ast.Stmt[], name: string): boolean {
 // rather than duplicated; only the reason differs — slot width here, write
 // sharing there.
 //
-// A capture the enclosing function REASSIGNS is skipped — not declined.
-// box_mutated_scalar_captures already boxes those into a SHARED cell (#5394,
-// its escaping-binding branch, which takes a capture of any type), and a shared
+// A capture the enclosing function REASSIGNS, or the lambda itself writes, is
+// skipped — not declined. box_mutated_scalar_captures already boxes those into
+// a SHARED cell (#5394 and #2850 respectively), and a shared
 // cell is what they need: the closure must see the live value, which this
 // creation-time snapshot could not give. Skipping is therefore deferring to the
 // right mechanism. Both paths land on the same `T[]` shape, so either way the
@@ -4039,8 +4040,19 @@ struct WCapStmt { stmt: ast.Stmt, caps: WCaps, changed: boolean }
 
 struct WCapBody { stmts: ast.Stmt[], changed: boolean }
 
+// wcap_shared_targets is what box_mutated_scalar_captures puts in a shared cell
+// for `lm` instead: the names the enclosing function reassigns and the names
+// `lm` itself writes (#2850). Snapshotting either would drop the write.
+function wcap_shared_targets(lm: ast.ExprLambda, atargets: string[]): string[] {
+  var out: string[] = atargets;
+  for t in irtables.lambda_write_targets(lm.body) {
+    out = out.append(t);
+  }
+  return out;
+}
+
 // wcaps_add records one capture name + type when it is wide, not already
-// recorded, and not reassigned by the enclosing function.
+// recorded, and not in `atargets` (wcap_shared_targets).
 function wcaps_add(acc: WCaps, name: string, ty: string, atargets: string[]): WCaps {
   if (!is_wide_cap_type(ty)) {
     return acc;
@@ -4090,9 +4102,10 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: ir
       // This lambda's own wide captures, in lambda_captures order.
       var mine: WCaps = WCaps { names: [], types: [] };
       var caps: string[] = lambda_captures(lm, fd);
+      var shared: string[] = wcap_shared_targets(lm, atargets);
       var ci: i32 = 0;
       while (ci < caps.len()) {
-        mine = wcaps_add(mine, caps[ci], lambda_capture_type(lm, caps[ci]), atargets);
+        mine = wcaps_add(mine, caps[ci], lambda_capture_type(lm, caps[ci]), shared);
         ci = ci + 1;
       }
       // Rewrite the body first (a nested lambda's own cells are emitted
@@ -4416,10 +4429,11 @@ function has_wide_cap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], str
   match (e) {
     ast.ExprLambda(lm) => {
       var caps: string[] = lambda_captures(lm, fd);
+      var shared: string[] = wcap_shared_targets(lm, atargets);
       var ci: i32 = 0;
       while (ci < caps.len()) {
         var cn: string = caps[ci];
-        if (util.index_of_str(atargets, cn) < 0 && is_wide_cap_type(lambda_capture_type(lm, cn))) {
+        if (util.index_of_str(shared, cn) < 0 && is_wide_cap_type(lambda_capture_type(lm, cn))) {
           return true;
         }
         ci = ci + 1;
@@ -4608,13 +4622,35 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], struct
     si = si + 1;
   }
   var bound: string[] = [];
-  return parser.FuncDecl { ...fd, body: capturebox.box_rewrite_stmts(fd.body, boxed, btypes, bsites, bound) };
+  var body: ast.Stmt[] = capturebox.box_rewrite_stmts(fd.body, boxed, btypes, bsites, bound);
+  // A boxed parameter has no `var` to turn into its cell, so the cell is built
+  // from the parameter on entry.
+  var pcells: ast.Stmt[] = [];
+  var pi: i32 = 0;
+  while (pi < boxed.len()) {
+    if (bsites[pi].len() == 0 && is_param_name(fd.params, boxed[pi])) {
+      var pref: ast.Expr = ast.ExprIdent { name: boxed[pi], line: fd.line, col: fd.col, ty: "" };
+      pcells = pcells.append(capturebox.cell_decl(boxed[pi], btypes[pi], pref, fd.line, fd.col));
+    }
+    pi = pi + 1;
+  }
+  for st in body {
+    pcells = pcells.append(st);
+  }
+  return parser.FuncDecl { ...fd, body: pcells };
+}
+
+function is_param_name(params: ast.ParamDecl[], name: string): boolean {
+  for p in params {
+    if (p.name == name) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // first_var_site: the binding-site key of the FIRST `var <name>` in `stmts`,
-// pre-order, or "" when the name is a parameter or is never `var`-declared (a
-// boxed parameter has no cell declaration to match, so nothing is rewritten
-// into one and every read of it stays a read of the parameter).
+// pre-order, or "" when the name is a parameter or is never `var`-declared.
 function first_var_site(stmts: ast.Stmt[], name: string): string {
   for stmt in stmts {
     match (stmt) {
@@ -4763,7 +4799,7 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtable
     }
     if (lam_ok) {
       var caps: string[] = lambda_captures(lam, fd);
-      var wtargets: string[] = irtables.body_assign_targets(lam.body);
+      var wtargets: string[] = irtables.lambda_write_targets(lam.body);
       // Escape test (#5394): a returned inline lambda (bname == "")
       // escapes by definition; a `var f = <lambda>` binding escapes when
       // `f` is later used as a VALUE (returned / passed / stored /
@@ -4803,14 +4839,15 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtable
 }
 
 // box_apply_lambda applies the two boxing clauses to one lambda's captures:
-// #2850 (a capture the LAMBDA body writes, a scalar by E049) and #5394 (any
-// type the OUTER body reassigns, for an escaping binding). Shared by the statement-shape path
-// and the operand-position path so the two cannot drift.
+// #2850 (a capture the LAMBDA body writes, itself or through a lambda nested in
+// it) and #5394 (any type the OUTER body reassigns, for an escaping binding).
+// Shared by the statement-shape path and the operand-position path so the two
+// cannot drift.
 function box_apply_lambda(lam: ast.ExprLambda, esc: boolean, fd: parser.FuncDecl, structs: irtables.StructTab, mfuncs: MFuncs, otargets: string[], dvars: string[], acc: BoxScan): BoxScan {
   var boxed: string[] = acc.names;
   var btypes: string[] = acc.types;
   var caps: string[] = lambda_captures(lam, fd);
-  var wtargets: string[] = irtables.body_assign_targets(lam.body);
+  var wtargets: string[] = irtables.lambda_write_targets(lam.body);
   var ci: i32 = 0;
   while (ci < caps.len()) {
     var cn: string = caps[ci];

@@ -18,6 +18,12 @@ function cell_read(name: string, line: i32, col: i32): ast.Expr {
   return ast.ExprCall { callee: ast.ExprFieldAccess { obj: cell, field: "get", line: line, col: col, ty: "" }, args: [], line: line, col: col, type_args: [], ty: "" };
 }
 
+// cell_decl builds `var $cell$name: Cell[ty] = cell_new(init);`.
+pub function cell_decl(name: string, ty: string, init: ast.Expr, line: i32, col: i32): ast.Stmt {
+  var cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: line, col: col, ty: "" }, args: [init], line: line, col: col, type_args: [], ty: "" };
+  return ast.StmtVar { name: cell_name(name), type_name: "Cell[" + ty + "]", init: cell, line: line, col: col, fn_ret: "", fn_param_types: "" };
+}
+
 function cell_type(elem: typeinfo.Type): typeinfo.Type {
   return typeinfo.TypeStruct { name: "Cell", args: [elem] };
 }
@@ -172,8 +178,7 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
         bxi = 0 - 1;
       }
       if (bxi >= 0) {
-        var cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: v.line, col: v.col, ty: "" }, args: [box_rewrite_expr(v.init, boxed, btypes, bsites, bound)], line: v.line, col: v.col, type_args: [], ty: "" };
-        return ast.StmtVar { name: cell_name(v.name), type_name: "Cell[" + btypes[bxi] + "]", init: cell, line: v.line, col: v.col, fn_ret: "", fn_param_types: "" };
+        return cell_decl(v.name, btypes[bxi], box_rewrite_expr(v.init, boxed, btypes, bsites, bound), v.line, v.col);
       }
       return ast.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes, bsites, bound), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
     },
