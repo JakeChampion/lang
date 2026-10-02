@@ -469,6 +469,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"lambda-exits-conflict", "function main(): i32 { var k: i32 = 3; var h = (b: boolean) => { if (b) { return k; } return true; }; return 0; }\n", []string{"E002"}},
 		{"lambda-try-exit-conflict", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction main(): i32 { var h = (x: i32) => { var y: i32 = g(x)?; return y; }; return 0; }\n", []string{"E002"}},
 		{"lambda-try-exit-clean", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction main(): i32 { var h = (x: i32) => { var y: i32 = g(x)?; if (y > 5) { return None; } return Some(y); }; var r: Option[i32] = h(1); return 0; }\n", nil},
+		// A bare `None` adopts a sibling's arguments and the result keeps
+		// them, so a later exit that disagrees with the first still conflicts.
+		{"lambda-exits-bare-union-keeps-arguments", "function main(): i32 { var k: i32 = 3; var h = (x: i32) => { if (x == 0) { return Some(k); } if (x == 1) { return None; } return Some(\"s\"); }; return 0; }\n", []string{"E002"}},
 		{"lambda-exits-bare-and-value", "function main(): i32 { var k: i32 = 3; var h = (b: boolean) => { if (b) { return; } return k; }; return 0; }\n", []string{"E012"}},
 		// The shadowing guard on that fallback: a binding typed opaquely
 		// unknown (here a builtin variant payload) still shadows the module

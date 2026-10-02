@@ -8663,7 +8663,7 @@ struct DeclType { name: string, ret_arr: boolean, fn_ret: string, fn_params: str
 function parse_decl_type(p: Par): (DeclType, Par) {
   let (name, ret_arr, fn_ret, end) = parse_type_name(p);
   var out: DeclType = DeclType { name: name, ret_arr: ret_arr, fn_ret: fn_ret, fn_params: "", fn_dyn: "" };
-  if (p.verbatim || name != "fn" && name != "fn[]") {
+  if (p.verbatim || !is_fn_contract_tag(name)) {
     return (out, end);
   }
   let (written, wr_arr, wr_ret, wr_end) = parse_type_name(Par { ...p, verbatim: true });
@@ -8687,13 +8687,16 @@ function fn_ref_of(name: string, written: string): TypeRef {
   if (name == "fn[]" && ref.array_depth == 1) {
     ref = ref_ungroup(elem_type_ref(ref));
   }
+  if (name == "[fn]" && ref.is_view) {
+    ref = ref_ungroup(ref.args[0]);
+  }
   return ref;
 }
 
 // fn_contract_of is the #5986 sidecar pair for a tag, or two empty strings when
 // the tag is not callable.
 function fn_contract_of(name: string, written: string): (string, string) {
-  if (name != "fn" && name != "fn[]") {
+  if (!is_fn_contract_tag(name)) {
     return ("", "");
   }
   var ref: TypeRef = fn_ref_of(name, written);
@@ -11037,13 +11040,20 @@ pub function ref_fn_param_spellings(r: TypeRef): string {
   return out;
 }
 
+// is_fn_contract_tag reports whether a coarse callable tag is one whose
+// contract parse_decl_type keeps in the result and parameter sidecars: a
+// function, an array of them, or a view of them.
+pub function is_fn_contract_tag(tag: string): boolean {
+  return tag == "fn" || tag == "fn[]" || tag == "[fn]";
+}
+
 // fn_tag_spelling rebuilds the callable spelling that parse_decl_type splits
-// into a coarse "fn" / "fn[]" tag and its result and parameter sidecars — the
-// inverse of that split, for a reader that wants the declared SHAPE rather than
-// the tag. A tag with no recorded result vouches for no signature, so it stays
-// itself.
+// into a coarse tag (is_fn_contract_tag) and its result and parameter sidecars
+// — the inverse of that split, for a reader that wants the declared SHAPE
+// rather than the tag. A tag with no recorded result vouches for no signature,
+// so it stays itself.
 pub function fn_tag_spelling(tag: string, ret: string, params: string): string {
-  if (ret.len() == 0 || tag != "fn" && tag != "fn[]") {
+  if (ret.len() == 0 || !is_fn_contract_tag(tag)) {
     return tag;
   }
   var list: string = "";
@@ -11062,19 +11072,24 @@ pub function fn_tag_spelling(tag: string, ret: string, params: string): string {
   if (tag == "fn[]") {
     return "(" + spelled + ")[]";
   }
+  if (tag == "[fn]") {
+    return "[" + spelled + "]";
+  }
   return spelled;
 }
 
 // is_coarse_fn_tag reports whether `s` is the callable TAG parse_type_name
-// produces rather than a spelling — "fn" with one "[]" per array dimension.
-// fn_tag_spelling rebuilds only the first two depths and returns every deeper
-// tag unchanged, so the shape is what decides this, not the two strings it
-// happens to rewrite.
+// produces rather than a spelling — "fn" or the view "[fn]", with one "[]" per
+// array dimension. fn_tag_spelling rebuilds only the shallowest forms and
+// returns every deeper tag unchanged, so the shape is what decides this, not the
+// strings it happens to rewrite.
 pub function is_coarse_fn_tag(s: string): boolean {
-  if (s.len() < 2 || slice_unchecked(s, 0, 2) != "fn") {
+  var i: i32 = 2;
+  if (s.len() >= 4 && slice_unchecked(s, 0, 4) == "[fn]") {
+    i = 4;
+  } else if (s.len() < 2 || slice_unchecked(s, 0, 2) != "fn") {
     return false;
   }
-  var i: i32 = 2;
   while (i < s.len()) {
     if (i + 2 > s.len() || slice_unchecked(s, i, i + 2) != "[]") {
       return false;
@@ -15368,7 +15383,18 @@ function ms_call(c: ast.ExprCall, env: MEnv, gstructs: StructDecl[], funcs: MFns
     nargs = nargs.append(ra.rexpr);
     i = i + 1;
   }
-  return RExpr { rexpr: ast.ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
+  // A written type argument names the clone its argument's type does.
+  var targs: string[] = [];
+  for ta in c.type_args {
+    if (ta.len() > 0 && !mono_ty_mentions_var(ta)) {
+      var tm: TyIns = mg_ty(ta, gstructs, cur);
+      cur = tm.mins;
+      targs = targs.append(tm.ty);
+    } else {
+      targs = targs.append(ta);
+    }
+  }
+  return RExpr { rexpr: ast.ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_args: targs, ty: c.ty }, rins: cur };
 }
 
 // method_decl_at is the index in funcs.decls of the method `recv.m` names,
@@ -25366,7 +25392,7 @@ function all_fn_param_bound(params: ast.ParamDecl[], tps: string[]): boolean {
 function has_fn_param_ret_var(params: ast.ParamDecl[], name: string): boolean {
   var i: i32 = 0;
   while (i < params.len()) {
-    if ((params[i].type_name == "fn" || params[i].type_name == "fn[]") && type_mentions_var(params[i].fn_ret, name)) {
+    if (is_fn_contract_tag(params[i].type_name) && type_mentions_var(params[i].fn_ret, name)) {
       return true;
     }
     i = i + 1;
@@ -25377,7 +25403,7 @@ function has_fn_param_ret_var(params: ast.ParamDecl[], name: string): boolean {
 function has_fn_param_arg_var(params: ast.ParamDecl[], name: string): boolean {
   var i: i32 = 0;
   while (i < params.len()) {
-    if ((params[i].type_name == "fn" || params[i].type_name == "fn[]") && params[i].fn_param_types.len() > 0) {
+    if (is_fn_contract_tag(params[i].type_name) && params[i].fn_param_types.len() > 0) {
       for seg in split_top_commas(params[i].fn_param_types) {
         if (token_at_paren_depth0(strip_ws(seg), name)) {
           return true;
