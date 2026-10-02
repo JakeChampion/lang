@@ -5850,18 +5850,27 @@ function no_memo(): SchemaMemo {
   return SchemaMemo { records: [], record_names: util.name_index(none), enums: [] };
 }
 
-// `record_names` indexes `records` by struct name, one entry per record in
-// order, so a type is looked up along its name's chain rather than the table.
-// `memo` is the module's memo as the walk leaves it.
-struct Schemas { ok: boolean, why: string, records: semrecords.Record[], record_names: util.NameIndex, enums: semrecords.Enum[], memo: SchemaMemo }
+// `memo` is the module's memo as the walk leaves it. Every entry the walk
+// appends is a memo entry, so `seen_r[i]` / `seen_e[i]` say whether memo
+// entry `i` is in `records` / `enums`: presence is a bit, not a lookup.
+struct Schemas { ok: boolean, why: string, records: semrecords.Record[], enums: semrecords.Enum[], memo: SchemaMemo, seen_r: boolean[], seen_e: boolean[] }
+
+function no_flags(n: i32): boolean[] {
+  let out: boolean[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(false);
+    i = i + 1;
+  }
+  return out;
+}
 
 // Every record and enum type a function's values, contracts and result name
 // gets its declaration's schema, and so does every one a schema's fields
 // name, to a fixpoint over the finite declaration table. A type this
 // boundary cannot give a schema refuses the function.
 function schemas(types: typeinfo.Type[], s: State, memo: SchemaMemo): Schemas {
-  let no_names: string[] = [];
-  let out: Schemas = Schemas { ok: true, why: "", records: [], record_names: util.name_index(no_names), enums: [], memo: memo };
+  let out: Schemas = Schemas { ok: true, why: "", records: [], enums: [], memo: memo, seen_r: no_flags(memo.records.len()), seen_e: no_flags(memo.enums.len()) };
   let pending: typeinfo.Type[] = types;
   let i: i32 = 0;
   while (i < pending.len()) {
@@ -5946,12 +5955,12 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     if (semtypes.is_handle(t)) {
       return out;
     }
-    if (semrecords.find_named(out.records, out.record_names, r.name, t) >= 0) {
-      return out;
-    }
     let mr: i32 = semrecords.find_named(out.memo.records, out.memo.record_names, r.name, t);
     if (mr >= 0) {
-      return with_record(out, out.memo.records[mr], false);
+      if (out.seen_r[mr]) {
+        return out;
+      }
+      return with_known_record(out, mr);
     }
     if (semtypes.is_env(t)) {
       return env_entry(t, s.views, s.impls, out);
@@ -5959,35 +5968,37 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     return record_entry(t, r, s, out);
   }
   if let typeinfo.TypeUnion(u) = t {
-    if (semrecords.find_enum(out.enums, t) >= 0) {
-      return out;
-    }
     let me: i32 = semrecords.find_enum(out.memo.enums, t);
     if (me >= 0) {
-      return enum_members(out.memo.enums[me], s, with_enum(out, out.memo.enums[me], false));
+      if (out.seen_e[me]) {
+        return out;
+      }
+      return enum_members(out.memo.enums[me], s, with_known_enum(out, me));
     }
     return enum_entry(t, u, s, out);
   }
   return out;
 }
 
-// with_record is `out` with `rec` appended, and in the memo too when the
-// walk has just read it off its declaration.
-function with_record(out: Schemas, rec: semrecords.Record, learned: boolean): Schemas {
-  let name: string = semrecords.name_of(rec.ty);
-  let next: Schemas = Schemas { ...out, records: out.records.append(rec), record_names: out.record_names.added(name) };
-  if (!learned) {
-    return next;
-  }
-  return Schemas { ...next, memo: SchemaMemo { ...next.memo, records: next.memo.records.append(rec), record_names: next.memo.record_names.added(name) } };
+// with_known_record is `out` with memo entry `at` appended.
+function with_known_record(out: Schemas, at: i32): Schemas {
+  return Schemas { ...out, records: out.records.append(out.memo.records[at]), seen_r: out.seen_r.with(at, true) };
 }
 
-function with_enum(out: Schemas, e: semrecords.Enum, learned: boolean): Schemas {
-  let next: Schemas = Schemas { ...out, enums: out.enums.append(e) };
-  if (!learned) {
-    return next;
-  }
-  return Schemas { ...next, memo: SchemaMemo { ...next.memo, enums: next.memo.enums.append(e) } };
+// with_new_record is `out` with `rec`, just read off its declaration,
+// appended and in the memo, at the memo's end, which is where `seen_r`
+// grows.
+function with_new_record(out: Schemas, rec: semrecords.Record): Schemas {
+  let name: string = semrecords.name_of(rec.ty);
+  return Schemas { ...out, records: out.records.append(rec), seen_r: out.seen_r.append(true), memo: SchemaMemo { ...out.memo, records: out.memo.records.append(rec), record_names: out.memo.record_names.added(name) } };
+}
+
+function with_known_enum(out: Schemas, at: i32): Schemas {
+  return Schemas { ...out, enums: out.enums.append(out.memo.enums[at]), seen_e: out.seen_e.with(at, true) };
+}
+
+function with_new_enum(out: Schemas, e: semrecords.Enum): Schemas {
+  return Schemas { ...out, enums: out.enums.append(e), seen_e: out.seen_e.append(true), memo: SchemaMemo { ...out.memo, enums: out.memo.enums.append(e) } };
 }
 
 // A member's box is read through its own record, so the table must carry
@@ -6033,7 +6044,7 @@ function env_entry(t: typeinfo.Type, views: string[], impls: parser.ImplInfo[], 
     i = i + 1;
     fields = fields.append(semrecords.Field { name: "c" + util.i32_to_string(i), ty: cap });
   }
-  return with_record(out, semrecords.Record { ty: t, fields: fields, views: fields_hold_view(fields, views, impls) }, true);
+  return with_new_record(out, semrecords.Record { ty: t, fields: fields, views: fields_hold_view(fields, views, impls) });
 }
 
 function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: Schemas): Schemas {
@@ -6044,7 +6055,7 @@ function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: S
   if (!fields_resolved(sig)) {
     return Schemas { ...out, ok: false, why: "unresolved record field type" };
   }
-  return with_record(out, semrecords.Record { ty: t, fields: fields_of(sig), views: type_holds_view(t, s.views, s.impls) }, true);
+  return with_new_record(out, semrecords.Record { ty: t, fields: fields_of(sig), views: type_holds_view(t, s.views, s.impls) });
 }
 
 // A union is a declared enum, whose variants it owns, or a struct-union, whose
@@ -6068,7 +6079,7 @@ function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Sche
     variants = variants.append(semrecords.Variant { name: name, fields: fields_of(vs) });
   }
   let e: semrecords.Enum = semrecords.Enum { ty: t, variants: variants, layout: layout, views: util.index_of_str(s.views, u.name) >= 0 };
-  return enum_members(e, s, with_enum(out, e, true));
+  return enum_members(e, s, with_new_enum(out, e));
 }
 
 // A builtin union is its instantiation: `Option` with no argument names no
@@ -6095,7 +6106,7 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
       views = true;
     }
   }
-  return with_enum(out, semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option(), views: views }, true);
+  return with_new_enum(out, semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option(), views: views });
 }
 
 // A frame that merely HOLDS a function value never built the box, so its own
