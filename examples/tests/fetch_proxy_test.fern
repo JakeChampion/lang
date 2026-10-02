@@ -1,0 +1,131 @@
+import "std/test";
+import "std/fetch";
+
+// examples/tests/fetch_proxy_test.fern — std/fetch's proxy selection,
+// pure: which variables `proxy_env_from` reads (the lowercase
+// `http_proxy` only, none under `REQUEST_METHOD`, `no_proxy` before
+// `NO_PROXY`) and what `proxy_for` answers for each `no_proxy` form (`*`,
+// a domain with and without its leading dot, a `:port`, an address, a
+// bracketed address with a zone, a CIDR block of either family) and for
+// the hosts never proxied (`localhost` and loopback).
+//
+// Run:  fern -interp examples/tests/fetch_proxy_test.fern
+
+const PROXY: string = "http://proxy.example:3128";
+
+function skipping(skip: string): fetch.ProxyEnv {
+  return fetch.ProxyEnv { http_proxy: PROXY, no_proxy: skip };
+}
+
+// `via(p, url)` — the proxy `p` picks for `url`, or `direct`.
+function via(p: fetch.ProxyEnv, u: string): string {
+  match (p.proxy_for(u)) {
+    Some(s) => {
+      return s;
+    },
+    None => {
+      return "direct";
+    }
+  }
+  return "direct";
+}
+
+// `routes(p, urls)` — `proxy` or `direct` per URL, space-separated.
+function routes(p: fetch.ProxyEnv, urls: string[]): string {
+  var out: string = "";
+  for u in urls {
+    if (out.len() > 0) {
+      out = out + " ";
+    }
+    if (via(p, u) == PROXY) {
+      out = out + "proxy";
+    } else {
+      out = out + "direct";
+    }
+  }
+  return out;
+}
+
+function test_no_proxy_configured(): test.TestOutcome {
+  return test.assert_eq(via(fetch.ProxyEnv { http_proxy: "", no_proxy: "" }, "http://example.com/"), "direct");
+}
+
+function test_a_proxy_is_the_spec_as_given(): test.TestOutcome {
+  return test.assert_eq(via(skipping(""), "http://example.com/a?b"), PROXY);
+}
+
+function test_localhost_and_loopback_are_never_proxied(): test.TestOutcome {
+  return test.assert_eq(routes(skipping(""), ["http://localhost/", "http://LocalHost:8080/", "http://app.localhost/", "http://127.0.0.1/", "http://127.9.9.9:81/", "http://[::1]/", "http://[::ffff:127.0.0.1]/", "http://localhost.example.com/"]), "direct direct direct direct direct direct direct proxy");
+}
+
+function test_star_means_nothing_is_proxied(): test.TestOutcome {
+  return test.assert_eq(routes(skipping("*"), ["http://example.com/", "http://10.0.0.1/"]), "direct direct");
+}
+
+function test_a_domain_covers_itself_and_its_subdomains(): test.TestOutcome {
+  return test.assert_eq(routes(skipping("example.com"), ["http://example.com/", "http://www.example.com/", "http://a.b.example.com/", "http://notexample.com/", "http://example.com.evil.net/"]), "direct direct direct proxy proxy");
+}
+
+function test_a_leading_dot_covers_subdomains_only(): test.TestOutcome {
+  return test.assert_eq(routes(skipping(".example.com"), ["http://example.com/", "http://www.example.com/"]), "proxy direct");
+}
+
+function test_names_compare_folded_without_a_trailing_dot(): test.TestOutcome {
+  return test.assert_eq(routes(skipping("Example.COM."), ["http://WWW.example.com./", "http://example.com/"]), "direct direct");
+}
+
+function test_a_port_limits_an_entry(): test.TestOutcome {
+  return test.assert_eq(routes(skipping("example.com:8080"), ["http://example.com:8080/", "http://example.com:80/", "http://example.com/", "http://www.example.com:8080/"]), "direct proxy proxy direct");
+}
+
+function test_an_address_entry_matches_that_address(): test.TestOutcome {
+  return test.assert_eq(routes(skipping("192.168.1.5,[fe80::1%eth0],[fe80::2]:8080"), ["http://192.168.1.5/", "http://192.168.1.6/", "http://[fe80::1]/", "http://[::ffff:192.168.1.5]/", "http://[fe80::2]:8080/", "http://[fe80::2]/"]), "direct proxy direct direct direct proxy");
+}
+
+function test_a_block_matches_the_addresses_in_it(): test.TestOutcome {
+  return test.assert_eq(routes(skipping("10.0.0.0/8, fd00::/8, 172.16.0.0/12"), ["http://10.1.2.3/", "http://11.0.0.1/", "http://[::ffff:10.9.9.9]/", "http://[fd12::1]/", "http://[fe80::1]/", "http://172.31.0.1/", "http://172.32.0.1/", "http://ten.example/"]), "direct proxy direct direct proxy direct proxy proxy");
+}
+
+function test_entries_are_trimmed_and_empty_ones_skipped(): test.TestOutcome {
+  return test.assert_eq(routes(skipping(" a.example , , .b.example ,"), ["http://a.example/", "http://x.b.example/", "http://b.example/"]), "direct direct proxy");
+}
+
+function test_a_bad_block_or_port_matches_nothing(): test.TestOutcome {
+  return test.assert_eq(routes(skipping("10.0.0.0/x,example.com:zz,[fe80::1"), ["http://10.0.0.1/", "http://example.com/", "http://[fe80::1]/"]), "proxy proxy proxy");
+}
+
+function test_only_the_lowercase_variable_is_read(): test.TestOutcome {
+  var p: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, None, None);
+  return test.assert_eq(p.http_proxy + "|" + p.no_proxy, PROXY + "|");
+}
+
+function test_no_proxy_under_request_method(): test.TestOutcome {
+  var p: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), Some("a.example"), None, Some("GET"));
+  return test.assert_eq(p.http_proxy + "|" + p.no_proxy, "|a.example");
+}
+
+function test_no_proxy_lowercase_wins_over_uppercase(): test.TestOutcome {
+  var lower: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), Some("a.example"), Some("b.example"), None);
+  var upper: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, Some("b.example"), None);
+  return test.assert_eq(lower.no_proxy + "|" + upper.no_proxy, "a.example|b.example");
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("std/fetch proxies");
+  r = r.it("no proxy configured", test_no_proxy_configured);
+  r = r.it("a proxy is the spec as given", test_a_proxy_is_the_spec_as_given);
+  r = r.it("localhost and loopback are never proxied", test_localhost_and_loopback_are_never_proxied);
+  r = r.it("* means nothing is proxied", test_star_means_nothing_is_proxied);
+  r = r.it("a domain covers itself and its subdomains", test_a_domain_covers_itself_and_its_subdomains);
+  r = r.it("a leading dot covers subdomains only", test_a_leading_dot_covers_subdomains_only);
+  r = r.it("names compare folded without a trailing dot", test_names_compare_folded_without_a_trailing_dot);
+  r = r.it("a port limits an entry", test_a_port_limits_an_entry);
+  r = r.it("an address entry matches that address", test_an_address_entry_matches_that_address);
+  r = r.it("a block matches the addresses in it", test_a_block_matches_the_addresses_in_it);
+  r = r.it("entries are trimmed and empty ones skipped", test_entries_are_trimmed_and_empty_ones_skipped);
+  r = r.it("a bad block or port matches nothing", test_a_bad_block_or_port_matches_nothing);
+  r = r.it("only the lowercase variable is read", test_only_the_lowercase_variable_is_read);
+  r = r.it("no proxy under REQUEST_METHOD", test_no_proxy_under_request_method);
+  r = r.it("no_proxy lowercase wins over uppercase", test_no_proxy_lowercase_wins_over_uppercase);
+  return r.finish();
+}

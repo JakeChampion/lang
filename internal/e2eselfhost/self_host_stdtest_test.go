@@ -348,6 +348,8 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"hex", langSrcAbs(t, "examples/tests/hex_test.fern"), ""},
 		{"base64", langSrcAbs(t, "examples/tests/base64_test.fern"), ""},
 		{"url", langSrcAbs(t, "examples/tests/url_test.fern"), ""},
+		{"net", langSrcAbs(t, "examples/tests/net_test.fern"), ""},
+		{"fetch_proxy", langSrcAbs(t, "examples/tests/fetch_proxy_test.fern"), ""},
 		{"cli", langSrcAbs(t, "examples/tests/cli_test.fern"), ""},
 		{"format", langSrcAbs(t, "examples/tests/format_test.fern"), ""},
 		{"csv", langSrcAbs(t, "examples/tests/csv_test.fern"), ""},
