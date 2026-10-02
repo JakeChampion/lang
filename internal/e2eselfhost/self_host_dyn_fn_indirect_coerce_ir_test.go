@@ -13,11 +13,6 @@ import (
 // — and op_dyn_dispatch inside the callee read the unboxed primitive as a shape
 // pointer (SIGSEGV). The interpreter / native x86-64 are correct (107).
 //
-// The fix threaded the fn-type's dyn parameter positions through a new
-// ParamDecl.fn_param_dyn sidecar (parser's non-consuming peek_fn_param_dyn),
-// which lower_func seeded as "FNDYN:<name>|<positions>"; the indirect-call arg
-// lowering consulted it (fn_arg_is_dyn) and dyn-boxed exactly those positions.
-//
 // Each case is oracle-checked against the interpreter, returning a
 // non-negative value <= 126.
 var dynFnIndirectCoerceCases = []struct {
