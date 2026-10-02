@@ -10136,6 +10136,7 @@ pub function builtin_function_names(): string[] {
     "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_send_bytes", "tcp_close",
     "udp_send", "tcp_connect", "tcp_pollable", "tcp_listen_with", "tcp_socket_ctl",
     "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect",
+    "udp_send_bytes", "udp_sendto_bytes",
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
   ];
 }

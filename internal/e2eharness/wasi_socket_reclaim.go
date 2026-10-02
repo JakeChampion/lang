@@ -202,6 +202,11 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 		// streams. The listener remains host-owned and must never be dropped.
 		borrowedListener = "(i32.store (i32.const 0) (i32.const 42))"
 	}
+	census := ""
+	if strings.Contains(wat, "(global $__fern_lc_alloc_count ") {
+		census = `(if (i64.ne (global.get $__fern_lc_alloc_count) (global.get $__fern_lc_free_count)) (then (return (i32.const 8))))
+    (if (i64.ne (global.get $__fern_lc_alloc_bytes) (global.get $__fern_lc_free_bytes)) (then (return (i32.const 9))))`
+	}
 	probe := allocator + fmt.Sprintf(`
   (global $fh_fail (mut i32) (i32.const 0))
   (global $fh_handle (mut i32) (i32.const 0))
@@ -226,8 +231,9 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
     (if (i32.ne (global.get $fh_out) (select (i32.const 0) (i32.const %d) (local.get $step))) (then (return (i32.const 5))))
     (if (global.get $fh_poll) (then (return (i32.const 6))))
     (if (global.get $fh_error) (then (return (i32.const 7))))
+    %s
     (i32.const 0))
-`, borrowedListener, export[1], errorResult, successFailure, socket, streams, streams)
+`, borrowedListener, export[1], errorResult, successFailure, socket, streams, streams, census)
 	end := strings.LastIndex(wat, ")")
 	path := filepath.Join(t.TempDir(), "socket-faults.wat")
 	if err := os.WriteFile(path, []byte(wat[:end]+probe+")"), 0o644); err != nil {
@@ -247,7 +253,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 					t.Fatal(err)
 				}
 				if strings.TrimSpace(string(got)) != "0" {
-					t.Errorf("fault probe returned %q (1=result, 2=success, 3=socket, 4=input, 5=output, 6=pollable, 7=error resource)", got)
+					t.Errorf("fault probe returned %q (1=result, 2=success, 3=socket, 4=input, 5=output, 6=pollable, 7=error resource, 8=allocation balance, 9=byte balance)", got)
 				}
 			})
 		}

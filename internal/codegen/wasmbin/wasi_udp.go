@@ -71,6 +71,14 @@ const (
 //	15: $sent          udp_sendto's answer
 //	16: $any           0.0.0.0 as a u8[], the second fixed box's data pointer
 func buildUdpSendBody(idxs map[string]uint32) []byte {
+	return buildUdpSendSpanBody(idxs, false)
+}
+
+func buildUdpSendBytesBody(idxs map[string]uint32) []byte {
+	return buildUdpSendSpanBody(idxs, true)
+}
+
+func buildUdpSendSpanBody(idxs map[string]uint32, raw bool) []byte {
 	var body []byte
 
 	// Parse the host as a dotted-quad IPv4 literal BEFORE creating the
@@ -233,15 +241,24 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 8)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstLocalGet(body, 3)
-	body = inst.InstLocalGet(body, 4)
-	body = inst.InstCall(body, idxs["__fern_udp_sendto"])
+	if raw {
+		body = inst.InstCall(body, idxs["__fern_udp_sendto_bytes"])
+	} else {
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstCall(body, idxs["__fern_udp_sendto"])
+	}
 	body = inst.InstLocalSet(body, 15)
 	body = inst.InstLocalGet(body, 14)
 	body = inst.InstCall(body, idxs["__fern_udp_close"])
 	body = inst.InstDrop(body)
 	body = inst.InstLocalGet(body, 15)
 
-	locals := inst.PutLocalsOneGroup(nil, 12, encode.ValtypeI32)
+	localCount := uint32(12)
+	if raw {
+		// Reserve the omitted string-length parameter's slot.
+		localCount++
+	}
+	locals := inst.PutLocalsOneGroup(nil, localCount, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
@@ -444,6 +461,14 @@ func buildUdpConnectBody(idxs map[string]uint32) []byte {
 //	13: $flat   the flattened address
 //	14: $tmp
 func buildUdpSendtoBody(idxs map[string]uint32) []byte {
+	return buildUdpSendtoSpanBody(idxs, false)
+}
+
+func buildUdpSendtoBytesBody(idxs map[string]uint32) []byte {
+	return buildUdpSendtoSpanBody(idxs, true)
+}
+
+func buildUdpSendtoSpanBody(idxs map[string]uint32, raw bool) []byte {
 	var body []byte
 	// The address is judged before anything is allocated for the send.
 	body = emitArrayLen(body, 1)
@@ -453,7 +478,14 @@ func buildUdpSendtoBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, ipFlatAddr)
 	body = inst.InstLocalSet(body, 13)
 	body = inst.InstEnd(body)
-	body = emitStrNormalize(body, idxs, 3, 4, 7, 8, 9)
+	if raw {
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalSet(body, 7)
+		body = emitArrayLen(body, 3)
+		body = inst.InstLocalSet(body, 8)
+	} else {
+		body = emitStrNormalize(body, idxs, 3, 4, 7, 8, 9)
+	}
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, idxs["__fern_alloc"])
 	body = inst.InstLocalSet(body, 5)
@@ -581,9 +613,16 @@ func buildUdpSendtoBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, idxs["__free"])
-	body = emitStrNormalizeFree(body, idxs, 4, 7, 8)
+	if !raw {
+		body = emitStrNormalizeFree(body, idxs, 4, 7, 8)
+	}
 	body = inst.InstLocalGet(body, 11)
-	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32), body)
+	localCount := uint32(10)
+	if raw {
+		// Preserve local indices after the four-argument byte signature.
+		localCount++
+	}
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, localCount, encode.ValtypeI32), body)
 }
 
 // buildUdpRecvfromBody assembles __fern_udp_recvfrom.

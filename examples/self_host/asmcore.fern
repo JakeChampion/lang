@@ -2893,8 +2893,33 @@ function peer_word(at: string): string {
   return "(__raw_load8(sa, " + at + ") | (__raw_load8(sa, " + at + " + 1) << 8) | (__raw_load8(sa, " + at + " + 2) << 16) | (__raw_load8(sa, " + at + " + 3) << 24))";
 }
 
+function udp_byte_data(packed: boolean): string {
+  if (packed) {
+    return "var byte_data: usize = __raw_addr(__raw_arr_ptr(data), 8);";
+  }
+  return "var byte_n: i32 = data.len(); var byte_raw: usize = __raw_arr_box(byte_n / 8 + 1); var byte_scratch: i32[] = __raw_array(byte_raw); var byte_data: usize = __raw_addr(__raw_arr_ptr(byte_scratch), 8); var byte_j: i32 = 0; while (byte_j < byte_n) { __raw_store8(byte_data, byte_j, data[byte_j]); byte_j = byte_j + 1; }";
+}
+
 pub function rt_src_udp_send(t: string): string {
-  return "function __fern_udp_send(host: string, port: i32, data: string): i32 { var o0: i32 = 0; var o1: i32 = 0; var o2: i32 = 0; var oct: i32 = 0; var idx: i32 = 0; var i: i32 = 0; var bad: i32 = 0; var dig: i32 = 0; var hn: i32 = host.len(); while (i < hn) { var c: i32 = host[i] as i32; if (c == 46) { if (dig == 0) { bad = 1; } if (idx == 0) { o0 = oct; } else if (idx == 1) { o1 = oct; } else if (idx == 2) { o2 = oct; } else { bad = 1; } idx = idx + 1; oct = 0; dig = 0; } else { if (c < 48) { bad = 1; } if (c > 57) { bad = 1; } oct = oct * 10 + (c - 48); dig = dig + 1; if (oct > 255) { bad = 1; } } i = i + 1; } if (bad != 0) { return -3; } if (idx != 3) { return -3; } if (dig == 0) { return -3; } var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 2, 0) as i32; if (fd < 0) { return fd; } var host_be: i32 = o0 | (o1 << 8) | (o2 << 16) | (oct << 24); var sa: usize = __raw_scratch(16); " + sockaddr_v4(t, "sa") + " var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, 16) as i32; if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rc; } var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_data(data) as i64, data.len() as i64) as i32; __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return w; }";
+  return rt_src_udp_send_mode(t, false, false);
+}
+
+pub function rt_src_udp_send_bytes(t: string, packed: boolean): string {
+  return rt_src_udp_send_mode(t, true, packed);
+}
+
+function rt_src_udp_send_mode(t: string, raw: boolean, packed: boolean): string {
+  var name: string = "__fern_udp_send";
+  var dtype: string = "string";
+  var ptr: string = "__raw_data(data)";
+  var prep: string = "";
+  if (raw) {
+    name = "__fern_udp_send_bytes" + packed_suffix(packed);
+    dtype = "i32[]";
+    ptr = "byte_data";
+    prep = udp_byte_data(packed);
+  }
+  return "function " + name + "(host: string, port: i32, data: " + dtype + "): i32 { var o0: i32 = 0; var o1: i32 = 0; var o2: i32 = 0; var oct: i32 = 0; var idx: i32 = 0; var i: i32 = 0; var bad: i32 = 0; var dig: i32 = 0; var hn: i32 = host.len(); while (i < hn) { var c: i32 = host[i] as i32; if (c == 46) { if (dig == 0) { bad = 1; } if (idx == 0) { o0 = oct; } else if (idx == 1) { o1 = oct; } else if (idx == 2) { o2 = oct; } else { bad = 1; } idx = idx + 1; oct = 0; dig = 0; } else { if (c < 48) { bad = 1; } if (c > 57) { bad = 1; } oct = oct * 10 + (c - 48); dig = dig + 1; if (oct > 255) { bad = 1; } } i = i + 1; } if (bad != 0) { return -3; } if (idx != 3) { return -3; } if (dig == 0) { return -3; } var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 2, 0) as i32; if (fd < 0) { return fd; } var host_be: i32 = o0 | (o1 << 8) | (o2 << 16) | (oct << 24); var sa: usize = __raw_scratch(16); " + sockaddr_v4(t, "sa") + " var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, 16) as i32; if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rc; } " + prep + " var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, " + ptr + " as i64, data.len() as i64) as i32; __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return w; }";
 }
 
 // The datagram sockets (#9853), each the twin of the Fern body in
@@ -2910,11 +2935,29 @@ pub function rt_src_udp_connect(t: string, packed: boolean): string {
 }
 
 pub function rt_src_udp_sendto(t: string, packed: boolean): string {
+  return rt_src_udp_sendto_mode(t, false, packed);
+}
+
+pub function rt_src_udp_sendto_bytes(t: string, packed: boolean): string {
+  return rt_src_udp_sendto_mode(t, true, packed);
+}
+
+function rt_src_udp_sendto_mode(t: string, raw: boolean, packed: boolean): string {
+  var name: string = "__fern_udp_sendto" + packed_suffix(packed);
+  var dtype: string = "string";
+  var ptr: string = "__raw_data(data)";
+  var prep: string = "";
+  if (raw) {
+    name = "__fern_udp_sendto_bytes" + packed_suffix(packed);
+    dtype = "i32[]";
+    ptr = "byte_data";
+    prep = udp_byte_data(packed);
+  }
   var flags: string = "16384";
   if (t == "arm64-darwin") {
     flags = "524288";
   }
-  return "function __fern_udp_sendto" + packed_suffix(packed) + "(fd: i32, addr: i32[], port: i32, data: string): i32 { if (addr.len() == 0) { return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(data) as i64, data.len() as i64, " + flags + ", 0, 0) as i32; } " + af_of_addr(t) + " var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa", packed) + " return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(data) as i64, data.len() as i64, " + flags + ", sa as i64, salen as i64) as i32; }";
+  return "function " + name + "(fd: i32, addr: i32[], port: i32, data: " + dtype + "): i32 { " + prep + " if (addr.len() == 0) { return __syscall6(" + sysno(t, "sendto") + ", fd as i64, " + ptr + " as i64, data.len() as i64, " + flags + ", 0, 0) as i32; } " + af_of_addr(t) + " var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa", packed) + " return __syscall6(" + sysno(t, "sendto") + ", fd as i64, " + ptr + " as i64, data.len() as i64, " + flags + ", sa as i64, salen as i64) as i32; }";
 }
 
 // The datagram lands in a raw buffer and is spread into the caller's array
@@ -6787,6 +6830,8 @@ function builtin_i32_names(): string[] {
     "tcp_recv_into",
     "tcp_send",
     "tcp_send_bytes",
+    "udp_send_bytes",
+    "udp_sendto_bytes",
     "tcp_close",
     "tcp_pollable",
     // sleep_ms(ms) / sleep_ns(ns) are void to a caller, but their op
@@ -9814,6 +9859,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
     "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept", "__fn___fern_tcp_local_port",
     "__fn___fern_tcp_send_bytes", "__fn___fern_tcp_send_bytes_u8",
+    "__fn___fern_udp_send_bytes", "__fn___fern_udp_send_bytes_u8", "__fn___fern_udp_sendto_bytes", "__fn___fern_udp_sendto_bytes_u8",
     "__fn___fern_udp_bind", "__fn___fern_udp_connect", "__fn___fern_udp_sendto", "__fn___fern_udp_recvfrom",
     "__fn___fern_tcp_connect_with", "__fn___fern_unix_listen", "__fn___fern_unix_connect",
     "__fn___fern_reactor_new", "__fn___fern_reactor_ctl", "__fn___fern_reactor_wait", "__fn___fern_tcp_recv_into", "__fn___fern_tcp_sendfile",
