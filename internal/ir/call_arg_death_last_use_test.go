@@ -26,6 +26,7 @@ function (s: St) emit(v: i32): St {
 }
 function pair(a: St, b: St): i32 { return a.ctrl + b.ctrl; }
 function emitf(s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
+function both(s: St, t: St): (St, St) { return (s.emit(1), t.emit(2)); }
 function split(s: St, v: i32): (St, i32) {
     return (St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }, s.ctrl);
 }
@@ -108,6 +109,28 @@ function des_gap(p: St): i32 {
     p = a;
     return p.ctrl + n + k;
 }
+// Straight-line statements that do not name p may stand between the call and
+// the store (#11093): the second of two buffers handed back is stored after
+// the first.
+function var_gap(p: St, k: i32): i32 {
+    var a: St = p.emit(1);
+    var n: i32 = k + 1;
+    p = a;
+    return p.ctrl + n;
+}
+function des_two(s: St, t: St): i32 {
+    let (a, b) = both(s, t);
+    s = a;
+    t = b;
+    return s.ctrl + t.ctrl;
+}
+// Control flow between the call and the store could leave the block first.
+function gap_branch(p: St, k: i32): i32 {
+    var a: St = p.emit(1);
+    if (k > 0) { k = k + 1; }
+    p = a;
+    return p.ctrl + k;
+}
 // The assignment's value hands the cursor to a NESTED call. The store
 // supersedes it either way, so the death belongs at the inner call — and
 // inside a loop no other shape can reach it.
@@ -189,6 +212,7 @@ function enclosing_names_once(s: St): i32 {
 function main(): i32 { return chain(mk(), 1).ctrl + param_last(mk()) + read_after(mk()) +
     alias_init(mk()) + rename_chain(mk()) + rename_twice(mk()) + rename_literal(1) +
     des_rebind(mk()) + var_rebind(mk()) + des_reads_after(mk()) + des_gap(mk()) +
+    var_gap(mk(), 1) + des_two(mk(), mk()) + gap_branch(mk(), 1) +
     nested_in_loop(mk(), 2).ctrl + nested_twice(mk(), 2).ctrl +
     in_loop_live(mk(), 2) + in_loop(mk(), 2).ctrl + twice_in_call(mk()) + lambda_capture(mk()) +
     held_by_enclosing(mk()) + held_by_enclosing_method(mk()) + enclosing_names_once(mk()); }`
@@ -221,6 +245,9 @@ function main(): i32 { return chain(mk(), 1).ctrl + param_last(mk()) + read_afte
 		"var_rebind":      "p",
 		"des_reads_after": "",
 		"des_gap":         "",
+		"var_gap":         "p",
+		"des_two":         "s,t",
+		"gap_branch":      "",
 		"nested_in_loop":  "s",
 		"nested_twice":    "",
 		"in_loop_live":    "",

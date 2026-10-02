@@ -907,3 +907,46 @@ function takes(own s: string): i32 { return s.len() as i32; }
     return r;
 }`)
 }
+
+// A local handed to an `own` parameter and stored to later is dead at the call
+// when only straight-line statements that do not name it stand between
+// (#11093). Control flow, or a read, between the two keeps it live.
+func TestOwnGuardAllowsStoreAfterAGap(t *testing.T) {
+	prelude := `struct Pair { a: i32[], b: boolean[] }
+function step(own xs: i32[], own flags: boolean[]): Pair { return Pair { a: xs, b: flags }; }
+function take(own flags: boolean[]): i32 { return flags.len(); }
+`
+	wantOK(t, "second-of-two-stores", prelude+`function f(): i32 {
+    var xs: i32[] = [];
+    var flags: boolean[] = [false];
+    var i: i32 = 0;
+    while (i < 3) {
+        var p: Pair = step(xs, flags);
+        xs = p.a;
+        flags = p.b;
+        i = i + 1;
+    }
+    return xs.len() + flags.len();
+}`)
+	wantOK(t, "unrelated-var-between", prelude+`function f(): i32 {
+    var flags: boolean[] = [false];
+    var n: i32 = take(flags);
+    var m: i32 = 3;
+    flags = [true];
+    return n + m + flags.len();
+}`)
+	wantE051(t, "read-between", prelude+`function f(): i32 {
+    var flags: boolean[] = [false];
+    var n: i32 = take(flags);
+    var m: i32 = flags.len();
+    flags = [true];
+    return n + m + flags.len();
+}`)
+	wantE051(t, "branch-between", prelude+`function f(k: i32): i32 {
+    var flags: boolean[] = [false];
+    var n: i32 = take(flags);
+    if (k > 0) { k = k + 1; }
+    flags = [true];
+    return n + k + flags.len();
+}`)
+}
