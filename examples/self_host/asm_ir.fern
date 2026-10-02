@@ -25,7 +25,6 @@ import "./util";
 import "./ir";
 import "./irtables";
 import "./fnsigs";
-import "./irverify";
 import "./irverifygate";
 import "./ircore";
 import "./ssa";
@@ -8356,14 +8355,14 @@ function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmco
 
 // emit_function_via_ir_pre emits declaration `fd`'s lowered body `r` through
 // the register path, writing through the global strbuf.
-function emit_function_via_ir_pre(r: irtables.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+function emit_function_via_ir_pre(r: irtables.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
   // the lowering's dispatch); free functions stay `__fn_<name>`.
   let label_name: string = fd.name;
   if (fd.receiver_type.len() > 0) {
     label_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
-  return emit_function_via_ir_named(r, label_name, false, s, vsigs);
+  return emit_function_via_ir_named(r, label_name, false, s, vgate);
 }
 
 // emit_function_via_ir_named is the body of emit_function_via_ir_pre with the
@@ -8372,7 +8371,7 @@ function emit_function_via_ir_pre(r: irtables.LowerResult, fd: parser.FuncDecl, 
 // emits through exactly the same path. `weak` marks the definition co-linkable,
 // the way the per-type __struct_drop_<T> bodies are: several per-module units may
 // each emit an identical copy and the linker keeps one.
-function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string, weak: boolean, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   if (weak) {
     s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n");
   }
@@ -8413,7 +8412,7 @@ function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string,
     dop = dop + 1;
   }
 
-  irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vsigs);
+  irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vgate);
   return emit_ssa_function(r, label_name, s);
 }
 
@@ -10373,18 +10372,18 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   // their own .rodata block then return to .text. A literal-free helper (the
   // str_eq / str_cmp / str_trim bodies) adds none, so
   // this is a no-op for them.
-  let vsigs: irverify.NameIndex = irtables.fn_sig_index(fns);
+  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(fns), pops: s.kinds.pops };
   let lit0: i32 = s.string_lits.len();
   let agg0: i32 = s.const_aggs.len();
   let sh0: i32 = s.shape_lits.len();
   let bodies: irtables.LowerResult[] = s.rt_lower(src);
   let i: i32 = 0;
   while (i < fns.len()) {
-    s = emit_function_via_ir_pre(bodies[i], fns[i], s, vsigs);
+    s = emit_function_via_ir_pre(bodies[i], fns[i], s, vgate);
     i = i + 1;
   }
   // Past the declarations: the drop helpers the typed lowering defines.
-  s = emit_named_bodies(bodies, fns.len(), s, vsigs);
+  s = emit_named_bodies(bodies, fns.len(), s, vgate);
   if (s.shape_lits.len() > sh0) {
     s = asmcore.emit_shape_lits_from(s, sh0);
     s = s.write("    .text\n");
@@ -10428,7 +10427,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   // The IR verify gate's callee-arity index, derived ONCE over the
   // whole-program all_funcs for the reason the registries above are: a
   // per-function rebuild would be O(n^2) on the compiler's own sources.
-  let vsigs: irverify.NameIndex = irtables.fn_sig_index(all_funcs);
+  let vgate: irverifygate.Gate = irverifygate.Gate { sigs: irtables.fn_sig_index(all_funcs), pops: s.kinds.pops };
   // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
   // window that overshoots the module length can't index past mod.funcs.
   let hh: i32 = hi;
@@ -10459,20 +10458,20 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
       }
       s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
     }
-    s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vsigs);
+    s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vgate);
     fi = fi + 1;
   }
   // Cache entries past the declarations are bodies with no FuncDecl, each
   // naming the symbol it defines. `.weak`, so a shard window or a sibling
   // unit that emits the same body co-links to one definition.
-  return emit_named_bodies(cache, mod.funcs.len(), s, vsigs);
+  return emit_named_bodies(cache, mod.funcs.len(), s, vgate);
 }
 
-function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let xi: i32 = from;
   while (xi < cache.len()) {
     if (!s.has_named(cache[xi].name)) {
-      s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vsigs).with_named(cache[xi].name);
+      s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vgate).with_named(cache[xi].name);
     }
     xi = xi + 1;
   }
