@@ -223,9 +223,10 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 // parameter and must drop, `reads_only` must not. The same pair for a record:
 // `keep_or_new` hands its parameter back on one arm and drops it on the other,
 // and `lends_to_builtin` only lends a field to a builtin's lent slot, which
-// takes no unit. And for a receiver: `advance` builds a new cursor out of its
-// parameter and must drop it, `peek` returns an element of its token array and
-// must not.
+// takes no unit. For a recursive enum: `pick` hands back one tree and drops the
+// other, `depth` walks its tree and must not drop it. And for a receiver:
+// `advance` builds a new cursor out of its parameter and must drop it, `peek`
+// returns an element of its token array and must not.
 const inferredModesProgram = `enum Node { Leaf(i32), Label(string), Empty }
 enum Tree { Tip(i32), Fork(Tree, Tree) }
 struct Rec { text: string, n: i32 }
@@ -244,6 +245,11 @@ function depth(t: Tree): i32 {
 @noinline
 function bump(t: Tree): Tree {
     match (t) { Tip(v) => { return Tip(v + 1); }, Fork(l, r) => { return Fork(bump(l), bump(r)); } }
+}
+@noinline
+function pick(a: Tree, b: Tree, k: i32): Tree {
+    if (k > 0) { return a; }
+    return b;
 }
 @noinline
 function lends_to_builtin(r: Rec): i32 { return __count_byte(r.text, 97) + r.n; }
@@ -282,6 +288,8 @@ function main(): i32 {
     if (depth(t) != 5) { return 4; }
     t = bump(t);
     if (depth(t) != 5) { return 5; }
+    t = pick(t, Tip(9), 1);
+    if (depth(t) != 5) { return 7; }
     var c: Cursor = Cursor { toks: [Leaf(2), Label("xy" + "")], pos: 0 };
     var w: i32 = 0;
     while (c.pos < 3) { w = w + reads_only(c.peek()); c = c.advance(); }
@@ -363,12 +371,12 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 		t.Errorf("lends_to_builtin calls %s: a record whose field only reaches a builtin's lent slot was inferred COUNTED", recDrop)
 	}
 	const treeDrop = "__sem_release_Tree"
-	rebuilt, ok := asmWholeFunc(string(asm), "bump")
+	picked, ok := asmWholeFunc(string(asm), "pick")
 	if !ok {
-		t.Fatal("no __fn_bump in the emitted code")
+		t.Fatal("no __fn_pick in the emitted code")
 	}
-	if !strings.Contains(rebuilt, treeDrop) {
-		t.Fatalf("bump does not call %s — the marker this reads is gone, so the traversal assertion below proves nothing", treeDrop)
+	if !strings.Contains(picked, treeDrop) {
+		t.Fatalf("pick does not call %s — the marker this reads is gone, so the traversal assertion below proves nothing", treeDrop)
 	}
 	walk, ok := asmWholeFunc(string(asm), "depth")
 	if !ok {
