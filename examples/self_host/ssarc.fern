@@ -32,15 +32,6 @@ function empty(why: string): irtables.LowerResult {
 // (narrow_slot). A string view is a value here, and an element or field of a
 // container, whose drop releases it through the view's own release
 // (release_name).
-function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
-  for elem in tup.elements {
-    if (!supported(elem, f)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function supported_integer(i: typeinfo.TypeI32): boolean {
   return i.width == 32 || i.width == 8 && i.unsigned || i.width == 64 || i.width == typeinfo.width_ptr() && i.unsigned;
 }
@@ -204,45 +195,64 @@ function supported_leaf(t: typeinfo.Type): boolean {
 // A nominal box is named by a declaration this function's schema table carries,
 // except a cell's: no declaration names it, and what it holds is one slot of
 // its element.
-function supported_nominal(t: typeinfo.Type, f: ssasem.Func): boolean {
+function nominal_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean, own v: ssaunits.Verdict): ssaunits.Verdict {
   if (semtypes.is_cell(t)) {
-    return walkable(semtypes.cell_elem(t), f);
+    return walk_shape(semtypes.cell_elem(t), f, lookup, v);
   }
   // A map cursor has no record layout to find: its block is the map's address
   // and an index, and what it answers is the map's columns, so the two
   // element types are what has to be emittable.
   if (semtypes.is_map_iter(t)) {
-    return walkable(semtypes.map_iter_key(t), f) && walkable(semtypes.map_iter_value(t), f);
+    v = walk_shape(semtypes.map_iter_key(t), f, lookup, v);
+    return walk_shape(semtypes.map_iter_value(t), f, lookup, v);
   }
   if let typeinfo.TypeStruct(_) = t {
-    return semrecords.find(f.records, t) >= 0;
+    return ssaunits.nominal(t, f, lookup, v);
   }
   if let typeinfo.TypeUnion(_) = t {
-    return semrecords.find_enum(f.enums, t) >= 0;
+    return ssaunits.nominal(t, f, lookup, v);
   }
-  return false;
+  return ssaunits.refuse();
 }
 
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-  if (supported_leaf(t)) {
-    return true;
+  return rc_shape(t, f, true, ssaunits.admit()).ok;
+}
+
+// rc_shape folds whether `t` is a value of this physical vocabulary into `v`
+// (ssaunits.Verdict), its struct and union types looked up now or named.
+function rc_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean, own v: ssaunits.Verdict): ssaunits.Verdict {
+  if (!v.ok || supported_leaf(t)) {
+    return v;
   }
   if let typeinfo.TypeI32(i) = t {
-    return supported_integer(i);
+    if (supported_integer(i)) {
+      return v;
+    }
+    return ssaunits.refuse();
   }
   if let typeinfo.TypeFloat(_) = t {
-    return ssasem.is_float(t);
+    if (ssasem.is_float(t)) {
+      return v;
+    }
+    return ssaunits.refuse();
   }
   if let typeinfo.TypeArray(a) = t {
-    return supported(a.elem, f);
+    return rc_shape(a.elem, f, lookup, v);
   }
   if let typeinfo.TypeTuple(tup) = t {
-    return supported_tuple(tup, f);
+    for e in tup.elements {
+      v = rc_shape(e, f, lookup, v);
+    }
+    return v;
   }
   if (ssasem.is_map(t)) {
-    return ssasem.is_supported_map(t);
+    if (ssasem.is_supported_map(t)) {
+      return v;
+    }
+    return ssaunits.refuse();
   }
-  return supported_nominal(t, f);
+  return nominal_shape(t, f, lookup, v);
 }
 
 // A record cloned at a type variable is one declaration per binding, named
@@ -2030,15 +2040,6 @@ function edge(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx
   return r;
 }
 
-function walkable_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
-  for elem in tup.elements {
-    if (!walkable(elem, f)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 // What a schema field has to satisfy is weaker than what a value has to: the
 // walk visits only the REFERENCE fields, so a scalar one needs no vocabulary
 // here at all, and an array or tuple of scalars needs only its own box
@@ -2106,50 +2107,155 @@ function enum_name(t: typeinfo.Type): string {
 }
 
 function walkable(t: typeinfo.Type, f: ssasem.Func): boolean {
+  return walk_shape(t, f, true, ssaunits.admit()).ok;
+}
+
+function walk_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean, own v: ssaunits.Verdict): ssaunits.Verdict {
+  if (!v.ok) {
+    return v;
+  }
   if let typeinfo.TypeArray(a) = t {
-    return walkable(a.elem, f);
+    return walk_shape(a.elem, f, lookup, v);
   }
   if let typeinfo.TypeTuple(tup) = t {
-    return walkable_tuple(tup, f);
+    for e in tup.elements {
+      v = walk_shape(e, f, lookup, v);
+    }
+    return v;
   }
   if (ssasem.reference(t)) {
-    return supported(t, f);
+    return rc_shape(t, f, lookup, v);
   }
   // A handle stores as the descriptor word and its release walks
   // nothing, so a field or payload of one is walkable without a schema.
   if (semtypes.is_handle(t)) {
-    return true;
+    return v;
   }
   if let typeinfo.TypeI32(_) = t {
-    return true;
+    return v;
   }
   if let typeinfo.TypeBool(_) = t {
-    return true;
+    return v;
   }
   if let typeinfo.TypeFloat(fl) = t {
-    return fl.width == 32 || fl.width == 64;
+    if (fl.width == 32 || fl.width == 64) {
+      return v;
+    }
   }
-  return false;
+  return ssaunits.refuse();
 }
 
-function schema_types_error(f: ssasem.Func): string {
-  for record in f.records.list {
-    for field in record.fields {
-      if (!walkable(field.ty, f)) {
-        return "unsupported physical RC record field type";
-      }
+function record_walk(r: semrecords.Record, f: ssasem.Func): ssaunits.Verdict {
+  let v: ssaunits.Verdict = ssaunits.admit();
+  for field in r.fields {
+    v = walk_shape(field.ty, f, false, v);
+  }
+  return v;
+}
+
+function enum_walk(e: semrecords.Enum, f: ssasem.Func): ssaunits.Verdict {
+  let v: ssaunits.Verdict = ssaunits.admit();
+  for vr in e.variants {
+    for field in vr.fields {
+      v = walk_shape(field.ty, f, false, v);
     }
   }
-  for e in f.enums {
-    for v in e.variants {
-      for field in v.fields {
-        if (!walkable(field.ty, f)) {
-          return "unsupported physical RC variant field type";
-        }
-      }
+  return v;
+}
+
+function schema_types_error(f: ssasem.Func, view: ssaunits.SchemaView): string {
+  let fits: boolean = ssaunits.view_fits(view, f);
+  let i: i32 = 0;
+  while (i < f.records.list.len()) {
+    let v: ssaunits.Verdict = ssaunits.admit();
+    if (fits) {
+      v = view.rec_walk[i];
+    } else {
+      v = record_walk(f.records.list[i], f);
     }
+    if (!ssaunits.admitted(v, f)) {
+      return "unsupported physical RC record field type";
+    }
+    i = i + 1;
+  }
+  i = 0;
+  while (i < f.enums.len()) {
+    let v: ssaunits.Verdict = ssaunits.admit();
+    if (fits) {
+      v = view.enum_walk[i];
+    } else {
+      v = enum_walk(f.enums[i], f);
+    }
+    if (!ssaunits.admitted(v, f)) {
+      return "unsupported physical RC variant field type";
+    }
+    i = i + 1;
   }
   return "";
+}
+
+// SchemaSeen is every distinct record and enum schema_views has met, with the
+// verdicts it formed for each, indexed by name like a function's own table.
+struct SchemaSeen {
+  recs: semrecords.Record[],
+  rec_names: util.NameIndex,
+  rec_unit: ssaunits.Verdict[],
+  rec_walk: ssaunits.Verdict[],
+  enums: semrecords.Enum[],
+  enum_names: util.NameIndex,
+  enum_unit: ssaunits.Verdict[],
+  enum_walk: ssaunits.Verdict[],
+}
+
+struct ViewStep { seen: SchemaSeen, view: ssaunits.SchemaView }
+
+// schema_views forms the table-free half of every function's schema checks
+// once per module: a record or enum several functions' tables hold is checked
+// once, and each function's view carries the verdicts for its own table.
+pub function schema_views(funcs: ssasem.Func[]): ssaunits.SchemaView[] {
+  let none: string[] = [];
+  let seen: SchemaSeen = SchemaSeen { recs: [], rec_names: util.name_index(none), rec_unit: [], rec_walk: [], enums: [], enum_names: util.name_index(none), enum_unit: [], enum_walk: [] };
+  let out: ssaunits.SchemaView[] = [];
+  for f in funcs {
+    let step: ViewStep = view_of(f, seen);
+    seen = step.seen;
+    out = out.append(step.view);
+  }
+  return out;
+}
+
+function view_of(f: ssasem.Func, own seen: SchemaSeen): ViewStep {
+  let view: ssaunits.SchemaView = ssaunits.no_view();
+  for r in f.records.list {
+    let name: string = semrecords.record_name(r);
+    let k: i32 = semrecords.find_named(seen.recs, seen.rec_names, name, r.ty);
+    if (k < 0) {
+      k = seen.recs.len();
+      seen = SchemaSeen { ...seen, recs: seen.recs.append(r), rec_names: seen.rec_names.added(name), rec_unit: seen.rec_unit.append(ssaunits.record_unit(r, f)), rec_walk: seen.rec_walk.append(record_walk(r, f)) };
+    }
+    view = ssaunits.SchemaView { ...view, rec_unit: view.rec_unit.append(seen.rec_unit[k]), rec_walk: view.rec_walk.append(seen.rec_walk[k]) };
+  }
+  for e in f.enums {
+    let name: string = enum_name(e.ty);
+    let k: i32 = enum_seen(seen, name, e.ty);
+    if (k < 0) {
+      k = seen.enums.len();
+      seen = SchemaSeen { ...seen, enums: seen.enums.append(e), enum_names: seen.enum_names.added(name), enum_unit: seen.enum_unit.append(ssaunits.enum_unit(e, f)), enum_walk: seen.enum_walk.append(enum_walk(e, f)) };
+    }
+    view = ssaunits.SchemaView { ...view, enum_unit: view.enum_unit.append(seen.enum_unit[k]), enum_walk: view.enum_walk.append(seen.enum_walk[k]) };
+  }
+  return ViewStep { seen: seen, view: view };
+}
+
+function enum_seen(seen: SchemaSeen, name: string, ty: typeinfo.Type): i32 {
+  let i: i32 = seen.enum_names.chain(name);
+  while (i >= 0) {
+    if (seen.enum_names.names[i] == name && semtypes.equal(seen.enums[i].ty, ty)) {
+      return i;
+    }
+    i = seen.enum_names.next[i];
+  }
+  return 0 - 1;
 }
 
 function named(t: typeinfo.Type): string {
@@ -2536,8 +2642,8 @@ pub function merge_helpers(cache: irtables.LowerResult[], helpers: irtables.Lowe
   return out;
 }
 
-function types_error(f: ssasem.Func): string {
-  let why: string = schema_types_error(f);
+function types_error(f: ssasem.Func, view: ssaunits.SchemaView): string {
+  let why: string = schema_types_error(f, view);
   if (why != "") {
     return why;
   }
@@ -2562,12 +2668,12 @@ function types_error(f: ssasem.Func): string {
   return "";
 }
 
-function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab): string {
+function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, view: ssaunits.SchemaView): string {
   let why: string = ssaunits.verify_planned(f, modes, p);
   if (why != "") {
     return why;
   }
-  why = types_error(f);
+  why = types_error(f, view);
   if (why != "") {
     return why;
   }
@@ -6718,8 +6824,8 @@ function place_views(own r: irtables.LowerResult): irtables.LowerResult {
 // by the caller-side bracket.
 // `pure` names the module's functions that reach no observable effect
 // (semlower.pure_rows), the element functions the in-place map may run.
-pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex): irtables.LowerResult {
-  let why: string = validate(f, modes, p, structs);
+pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView): irtables.LowerResult {
+  let why: string = validate(f, modes, p, structs, view);
   if (why != "") {
     return empty(why);
   }

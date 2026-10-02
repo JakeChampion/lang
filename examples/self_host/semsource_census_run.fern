@@ -103,12 +103,12 @@ function leaf(why: string): string {
 struct Stage { planned: boolean, lowered: boolean, plan_why: string, rc_why: string }
 
 function stage_of(p: semsource.Produced, tab: irtables.StructTab): Stage {
-  let plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
+  let plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes, ssaunits.no_view());
   if (!plan.ok) {
     return Stage { planned: false, lowered: false, plan_why: plan.why, rc_why: "" };
   }
   let no_names: string[] = [];
-  let lr: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, ssaunits.no_grows(), util.name_index(no_names));
+  let lr: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, ssaunits.no_grows(), util.name_index(no_names), ssaunits.no_view());
   if (!lr.ok) {
     return Stage { planned: true, lowered: false, plan_why: "", rc_why: lr.why };
   }

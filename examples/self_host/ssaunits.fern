@@ -373,15 +373,6 @@ function successors(b: ssa.SBlock): i32[] {
   return [];
 }
 
-function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
-  for t in tup.elements {
-    if (!supported(t, f)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 // The types that carry no unit at all: the scalars, and a handle, which is
 // its descriptor.
 function unit_free(t: typeinfo.Type): boolean {
@@ -401,31 +392,84 @@ function unit_free(t: typeinfo.Type): boolean {
 }
 
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-  if (unit_free(t)) {
-    return true;
+  return unit_shape(t, f, true, admit()).ok;
+}
+
+// A Verdict is a type's admission with the table read separately: whether its
+// shape is admitted, and the struct and union types it names, each of which
+// has to be in the function's table. A shape folded with `lookup` reads the
+// table as it goes and names nothing.
+pub struct Verdict { ok: boolean, needs: typeinfo.Type[] }
+
+pub function admit(): Verdict {
+  return Verdict { ok: true, needs: [] };
+}
+
+pub function refuse(): Verdict {
+  return Verdict { ok: false, needs: [] };
+}
+
+// admitted is `v` with its named types looked up in f's table.
+pub function admitted(v: Verdict, f: ssasem.Func): boolean {
+  if (!v.ok) {
+    return false;
+  }
+  for t in v.needs {
+    if (!has_nominal(t, f)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+pub function has_nominal(t: typeinfo.Type, f: ssasem.Func): boolean {
+  if let typeinfo.TypeStruct(_) = t {
+    return semrecords.find(f.records, t) >= 0;
+  }
+  return semrecords.find_enum(f.enums, t) >= 0;
+}
+
+// nominal folds a struct or union type into `v`: looked up now, or named.
+pub function nominal(t: typeinfo.Type, f: ssasem.Func, lookup: boolean, own v: Verdict): Verdict {
+  if (!lookup) {
+    return Verdict { ...v, needs: v.needs.append(t) };
+  }
+  if (has_nominal(t, f)) {
+    return v;
+  }
+  return refuse();
+}
+
+// unit_shape folds whether `t` is a value this pass plans into `v`.
+function unit_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean, own v: Verdict): Verdict {
+  if (!v.ok || unit_free(t)) {
+    return v;
   }
   if let typeinfo.TypeString(_) = t {
-    return true;
+    return v;
   }
   if let typeinfo.TypeFunc(_) = t {
-    return true;
+    return v;
   }
   if let typeinfo.TypeDyn(_) = t {
-    return true;
+    return v;
   }
   // A map cursor's unit is its own block; what it reads stays the map's.
   if (semtypes.is_map_iter(t)) {
-    return true;
+    return v;
   }
   if let typeinfo.TypeArray(a) = t {
-    return supported(a.elem, f);
+    return unit_shape(a.elem, f, lookup, v);
   }
   if let typeinfo.TypeTuple(tup) = t {
-    return supported_tuple(tup, f);
+    for e in tup.elements {
+      v = unit_shape(e, f, lookup, v);
+    }
+    return v;
   }
   // A cell holds one unit of its own and one slot; no declaration names it.
   if (semtypes.is_cell(t)) {
-    return supported(semtypes.cell_elem(t), f);
+    return unit_shape(semtypes.cell_elem(t), f, lookup, v);
   }
   // A map holds one unit of its own and one of every key in its column, and
   // one of every value when that column is counted; only the shapes whose
@@ -433,20 +477,23 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
   // itself is a value this pass plans.
   if (ssasem.is_map(t)) {
     if (!ssasem.is_supported_map(t)) {
-      return false;
+      return refuse();
     }
-    if (ssasem.keyed_map_key(ssasem.map_key(t)) && !supported(ssasem.map_key(t), f)) {
-      return false;
+    if (ssasem.keyed_map_key(ssasem.map_key(t))) {
+      v = unit_shape(ssasem.map_key(t), f, lookup, v);
     }
-    return !ssasem.boxed_map_value(ssasem.map_value(t)) || supported(ssasem.map_value(t), f);
+    if (ssasem.boxed_map_value(ssasem.map_value(t))) {
+      v = unit_shape(ssasem.map_value(t), f, lookup, v);
+    }
+    return v;
   }
   if let typeinfo.TypeStruct(_) = t {
-    return semrecords.find(f.records, t) >= 0;
+    return nominal(t, f, lookup, v);
   }
   if let typeinfo.TypeUnion(_) = t {
-    return semrecords.find_enum(f.enums, t) >= 0;
+    return nominal(t, f, lookup, v);
   }
-  return false;
+  return refuse();
 }
 
 function mode_error(params: typeinfo.Type[], modes: i32[]): string {
@@ -478,23 +525,69 @@ function call_contract_error(c: ssasem.Contract, f: ssasem.Func): string {
   return mode_error(c.params, c.modes);
 }
 
-// Check the finite schema tables, not recursive nominal field expansion.
-function schema_fields_error(f: ssasem.Func): string {
-  for record in f.records.list {
-    for field in record.fields {
-      if (!supported(field.ty, f)) {
-        return "unsupported counted record field";
-      }
+// A SchemaView is a function's schema tables already checked as far as no
+// table is involved: per record, then per enum, in table order, the verdict
+// on all its fields as a unit (`*_unit`) and as a physical walk (`*_walk`).
+// ssarc.schema_views forms each distinct entry's once per module. An empty
+// view, which no_view is, leaves every entry to be checked here.
+pub struct SchemaView { rec_unit: Verdict[], rec_walk: Verdict[], enum_unit: Verdict[], enum_walk: Verdict[] }
+
+pub function no_view(): SchemaView {
+  let none: Verdict[] = [];
+  return SchemaView { rec_unit: none, rec_walk: none, enum_unit: none, enum_walk: none };
+}
+
+// view_fits: `v` was formed for this very table.
+pub function view_fits(v: SchemaView, f: ssasem.Func): boolean {
+  return v.rec_unit.len() == f.records.list.len() && v.enum_unit.len() == f.enums.len();
+}
+
+pub function record_unit(r: semrecords.Record, f: ssasem.Func): Verdict {
+  let v: Verdict = admit();
+  for field in r.fields {
+    v = unit_shape(field.ty, f, false, v);
+  }
+  return v;
+}
+
+pub function enum_unit(e: semrecords.Enum, f: ssasem.Func): Verdict {
+  let v: Verdict = admit();
+  for vr in e.variants {
+    for field in vr.fields {
+      v = unit_shape(field.ty, f, false, v);
     }
   }
-  for e in f.enums {
-    for v in e.variants {
-      for field in v.fields {
-        if (!supported(field.ty, f)) {
-          return "unsupported counted variant field";
-        }
-      }
+  return v;
+}
+
+// Check the finite schema tables, not recursive nominal field expansion.
+function schema_fields_error(f: ssasem.Func, view: SchemaView): string {
+  let fits: boolean = view_fits(view, f);
+  let i: i32 = 0;
+  while (i < f.records.list.len()) {
+    let v: Verdict = admit();
+    if (fits) {
+      v = view.rec_unit[i];
+    } else {
+      v = record_unit(f.records.list[i], f);
     }
+    if (!admitted(v, f)) {
+      return "unsupported counted record field";
+    }
+    i = i + 1;
+  }
+  i = 0;
+  while (i < f.enums.len()) {
+    let v: Verdict = admit();
+    if (fits) {
+      v = view.enum_unit[i];
+    } else {
+      v = enum_unit(f.enums[i], f);
+    }
+    if (!admitted(v, f)) {
+      return "unsupported counted variant field";
+    }
+    i = i + 1;
   }
   return "";
 }
@@ -530,7 +623,7 @@ function function_ops_error(f: ssasem.Func): string {
   return "";
 }
 
-function contract_error(f: ssasem.Func, modes: i32[]): string {
+function contract_error(f: ssasem.Func, modes: i32[], view: SchemaView): string {
   if (modes.len() != f.params.len()) {
     return "parameter mode dimensions";
   }
@@ -542,7 +635,7 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
   if (!supported(f.result, f)) {
     return "unsupported counted-unit result";
   }
-  let why: string = schema_fields_error(f);
+  let why: string = schema_fields_error(f, view);
   if (why != "") {
     return why;
   }
@@ -2282,17 +2375,17 @@ function insert_sorted(own xs: i32[], v: i32): i32[] {
   return xs.with(i, v);
 }
 
-pub function plan(f: ssasem.Func, modes: i32[]): Plan {
-  return plan_analyzed(f, modes, ssasem.analyze(f));
+pub function plan(f: ssasem.Func, modes: i32[], view: SchemaView): Plan {
+  return plan_analyzed(f, modes, ssasem.analyze(f), view);
 }
 
 // plan over an analysis the caller already holds of this very `f`.
-pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis): Plan {
+pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, view: SchemaView): Plan {
   if (!semantic.ok) {
     return bad(semantic.why);
   }
   let analysis: ssasem.Analysis = semantic;
-  let why: string = contract_error(f, modes);
+  let why: string = contract_error(f, modes, view);
   if (why != "") {
     return bad(why);
   }
@@ -2863,7 +2956,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   let why: string = "";
   let defs: ssa.SInst[] = p.defs;
   if (whole) {
-    why = contract_error(f, modes);
+    why = contract_error(f, modes, no_view());
     defs = definitions(f);
   } else if (modes.len() != f.params.len()) {
     why = "parameter mode dimensions";
