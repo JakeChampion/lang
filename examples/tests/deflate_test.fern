@@ -1,0 +1,187 @@
+import "std/test";
+import "std/deflate" as deflate;
+import "std/hex" as hex;
+import "std/hash" as hash;
+import "std/utf8" as utf8;
+import "core/int";
+
+// examples/tests/deflate_test.fern — std/deflate against streams Python's
+// zlib produced: a stored block, a fixed-Huffman block, a dynamic block,
+// a 60 KB corpus whose matches reach 32 KB back, a gzip member with every
+// optional header field, two members in one stream, a zlib stream, and
+// the refusals (truncation, a bad checksum, a reserved block type, a
+// preset dictionary, the output cap).
+
+function text(r: Result[deflate.Inflated, deflate.InflateError]): string {
+  match (r) {
+    Ok(inflated) => {
+      match (utf8.from_bytes(inflated.out)) {
+        Some(s) => {
+          return s;
+        },
+        None => {
+          return "<not utf-8>";
+        }
+      }
+    },
+    Err(e) => {
+      return "error: " + e.message();
+    }
+  }
+  return "";
+}
+
+function bytes_text(r: Result[u8[], deflate.InflateError]): string {
+  match (r) {
+    Ok(out) => {
+      match (utf8.from_bytes(out)) {
+        Some(s) => {
+          return s;
+        },
+        None => {
+          return "<not utf-8>";
+        }
+      }
+    },
+    Err(e) => {
+      return "error: " + e.message();
+    }
+  }
+  return "";
+}
+
+function test_stored_block(): test.TestOutcome {
+  return test.assert_eq(text(deflate.inflate(hex.hex_decode("010300fcff616263"), 1024)), "abc");
+}
+
+function test_fixed_block(): test.TestOutcome {
+  return test.assert_eq(text(deflate.inflate(hex.hex_decode("cb48cdc9c957c8402701"), 1024)), "hello hello hello hello");
+}
+
+function test_dynamic_block(): test.TestOutcome {
+  var want: string = "";
+  var i: i32 = 0;
+  while (i < 12) {
+    want = want + "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. ";
+    i = i + 1;
+  }
+  return test.assert_eq(text(deflate.inflate(hex.hex_decode("edcebb1580201044d156a6026b31a0013f08a8b08a8062f56e0926641bcf9b73aeb21a6776d38631d21db0d08335fbe302151d9178de87b76226d341358bfb813b5f317274bb64b1b8a2797a75c0eece4c91bfe66a4910af78c52b5ef18a57bc7fbd1f"), 65536)), want);
+}
+
+function test_consumed(): test.TestOutcome {
+  var stream: u8[] = hex.hex_decode("cb48cdc9c957c8402701");
+  match (deflate.inflate(stream.append(255 as u8), 1024)) {
+    Ok(inflated) => {
+      return test.assert_eq(inflated.consumed, stream.len());
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// `__appended(out, line)` — `out` with the line's bytes on its end, one
+// append per byte so the array grows in place.
+function __appended(own out: u8[], line: string): u8[] {
+  var bs: u8[] = line.bytes();
+  var i: i32 = 0;
+  while (i < bs.len()) {
+    out = out.append(bs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// 3000 numbered lines: dynamic blocks with matches up to the window's
+// full 32 KB back, checked byte for byte and by CRC-32 against the source.
+function test_corpus_gzip(): test.TestOutcome {
+  var want: u8[] = [];
+  var i: i32 = 0;
+  while (i < 3000) {
+    want = __appended(want, "line " + int.int_to_string(i) + " of the corpus\n");
+    i = i + 1;
+  }
+  match (deflate.gunzip(hex.hex_decode("1f8b080000000000000375dd4bce04578184d139abf0122a22dfeb698140b29a563ff68f18779c698d1c02bbbe3febde937ffee33ffffac7ef8f7ffeed8ffffdfb5ffff88f7ffef77ffddffffce5cf7f7f98f561d787c7faf05c1f5eebc37b7df8ac0fdff5e137ffe1f7a4b9297354e6aacc5999bb3287652ecb9c96b9ad735bf7ff5e735be7b6ce6d9ddb3ab7756eebdcd6b9ed98db8eb9edd8ff679cdb8eb9ed98db8eb9ed98db8eb9ed98dbceb9ed9cdbceb9eddcffa6cd6de7dc76ce6de7dc76ce6de7dc76cd6dd7dc76cd6dd7dc76edff8ccc6dd7dc76cd6dd7dc76cd6df7dc76cf6df7dc76cf6df7dc76efff46ce6df7dc76cf6df7dcf6cc6dcfdcf6cc6dcfdcf6cc6dcfdcf6ec2f80b9ed99db9eb9ed9ddbdeb9ed9ddbdeb9ed9ddbdeb9ed9ddbdefded36b7bd73db37b77d73db37b77d73db37b77d73db37b77d73dbb7bfbaf1ddbdbfbc7ffbdbfbb7bfbe7ffbfbfbb7bfc07ffb1bfcb7bfc27ffb3bfcb7bfc47f7ba51265af44a4a0529029e814840a4a05a9b25b253b565294d85eb97b253b58b28b253b59b29b253b5ab2ab253b5bb2bb25078273afdce992dd2ed9f1925d2fd9f992dd2fd901935d30d90993135dbd57ee8ac9ce98ec8ec90e99ec92c94e99ec96c98e99ec9ac9853f1ff6ca1d34d945939d34d94d931d35d955939d35d95d931d36b9f157d25eb9db263b6eb2eb263b6fb2fb263b70b20b273b71b21b270ffe18dc2b77e664774e76e864974e76ea64b74e76ec64d74e76eee4c5dfbc7be52e9eece4c96e9eece8c9ae9eececc9ee9eecf0c92e9f7cf8d31e7fdbef3fee77fb74b74f77fb74b74f77fb74b74f77fb74b74f77fb347884b157eef6e96e9feef6e96e9feef6e96e9feef6299ed3e0418d9ed4ec957856838735785a83c735785e830736bb7dbadba7bb7d7ae081d45eb9dba7bb7dbadba7bb7dbadba7bb7dbadba7bb7dbadba7279ebbed95bb7dbadba7bb7dbadba7bb7dbadba7bb7dbadba7bb7d7ae1f1e25eb9dba7bb7dbadba7bb7dbadba7bb7dbadba7bb7dbadba7379ea2ee95bb7dbadba7bb7dbadba7bb7dbadba7bb7dbadba7bb7dfae061f15eb9dba7bb7dbadba7bb7dbadba7bb7dbadba7bb7dbadba72f9e89ef95bb7dbadba7bb7dbadba7bb7dbadba7bb7dbadba7bb7dfae1d13f9efdef87ffbb7d8edd3ec76e9f63b7cfb1dbe7d8ed73ecf63976fb1cbb7d8ee0278ebd72b7cfb1dbe7d8ed73ecf63976fb1cbb7d8edd3ec76e9f63b7cf51fc92b357eef63976fb1cbb7d8edd3ec76e9f63b7cf815fabf073157eafd20f567b257eb2c26f56f8d10abf5ae167abdd3ec76e9f63b7cfb1dbe738f1bbdc5eb9dbe7d8ed73ecf63976fb1cbb7d8edd3ec76e9f63b7cfb1dbe7b8f0f3e35eb9dbe7d8ed73ecf63976fb1cbb7d8edd3ec76e9f63b7cfb1dbe7b8f12beb5eb9dbe7d8ed73ecf63976fb1cbb7d8edd3ec76e9f63b7cfb1dbe778f063f25eb9dbe7d8ed73ecf63976fb1cbb7d8edd3ec76e9f63b7cfb1dbe778f19bf95eb9dbe7d8ed73ecf63976fb1cbb7d8edd3ec76e9f63b7cfb1dbe7f87034006703f6e180dd3ee76e9f73b7cfb9dbe7dced73eef63977fb9cbb7dcedd3e67700462afdced73eef63977fb9cbb7dcedd3ee76e9f73b7cfb9dbe7dced7316273df6cadd3ee76e9f73b7cfb9dbe7dced73eef63977fb9cbb7dcedd3ee781032d7be56e9f73b7cfb9dbe7dced73eef6397166078776706a07c776746e67afc4c91d1cddc1d91d1cded9ed73eef63977fb9cbb7dcedd3ee785e3497be56e9f73b7cfb9dbe7dced73eef63977fb9cbb7dcedd3ee76e9ff3c629acbd72b7cfb9dbe7dced73eef63977fb9cbb7dcedd3ee76e9f73b7cff9e0b0d95eb9dbe7dced73eef63977fb9cbb7dcedd3ee76e9f73b7cfb9dbe77c71a66eafdced73eef63977fb9cbb7dcedd3ee76e9f73b7cfb9dbe7dced737e383a88b383fbf0e06e9f6bb7cfb5dbe7daed73edf6b976fb5cbb7daedd3ed76e9f2b3822b957eef6b976fb5cbb7daedd3ed76e9f6bb7cfb5dbe7daed73edf6b98a93a07be56e9f6bb7cfb5dbe7daed73edf6b976fb5cbb7daedd3ed76e9febc081d7bd72b7cfb5dbe7daed73edf6b976fb5cbb7daedd3ed76e9f6bb7cf75e25cef5eb9dbe7daed73edf6b976fb5c38b98ca3cb38bb8cc3cb38bdace3cb7b250e30e304338e30eff6b976fb5cbb7daedd3ed76e9f6bb7cf75e394f65eb9dbe7daed73edf6b976fb5cbb7daedd3ed76e9f6bb7cfb5dbe77a70187dafdced73edf6b976fb5cbb7daedd3ed76e9f6bb7cfb5dbe7daed73bd3873bf57eef6b976fb5cbb7daedd3ed76e9f6bb7cfb5dbe7daed73edf6b93e5c2dc0dd827db960b7cfbddbe7deed73eff6b977fbdcbb7deedd3ef76e9f7bb7cf1d5ca1d82b77fbdcbb7deedd3ef76e9f7bb7cfbddbe7deed73eff6b977fbdcc54d91bd72b7cfbddbe7deed73eff6b977fbdcbb7deedd3ef76e9f7bb7cf7de042cc5eb9dbe7deed73eff6b977fbdcbb7deedd3ef76e9f7bb7cfbddbe73e71ef67afdced73eff6b977fbdcbb7deedd3ef76e9f7bb7cfbddbe7deed735fb8deb457eef6b977fbdcbb7d6edcdfc2052edce0c2152edce1c2252edde2da2b718f0b17b976fbdcbb7deedd3ef76e9f7bb7cfbddbe7deed733fb8acb657eef6b977fbdcbb7deedd3ef76e9f7bb7cfbddbe7deed73eff6b95fdcc9db2b77fbdcbb7deedd3ef76e9f7bb7cfbddbe7deed73eff6b977fbdc1fae1ee2eee1be7cb8dbe7d9edf3ecf67976fb3cbb7d9edd3ecf6e9f67b7cfb3dbe709ae58ee95bb7d9edd3ecf6e9f67b7cfb3dbe7d9edf3ecf67976fb3cbb7d9ee226e95eb9dbe7d9edf3ecf67976fb3cbb7d9edd3ecf6e9f67b7cfb3dbe739706176afdcedf3ecf67976fb3cbb7d9edd3ecf6e9f67b7cfb3dbe7d9edf39cb817bc57eef67976fb3cbb7d9edd3ecf6e9f67b7cfb3dbe7d9edf3ecf6792e5c7fde2b77fb3cbb7d9edd3ecf6e9f67b7cfb3dbe7d9edf3ecf67976fb3c376e79ef95bb7d9edd3e0f6eb1e31a3beeb1e3223b6eb2e32a3beeb2eb32fb5e89ebecbb7d9edd3ecf6e9f67b7cfb3dbe7d9edf3ecf67976fb3c2feeecef95bb7d9edd3ecf6e9f67b7cfb3dbe7d9edf3ecf67976fb3cbb7d9e0f34016c828d13ecf67977fbbcbb7ddedd3eef6e9f77b7cfbbdbe7ddedf3eef679038261afdcedf3eef67977fbbcbb7ddedd3eef6e9f77b7cfbbdbe7ddedf316d2c45eb9dbe7ddedf3eef67977fbbcbb7ddedd3eef6e9f77b7cfbbdbe73d006aec95bb7ddedd3eef6e9f77b7cfbbdbe7ddedf3eef67977fbbcbb7dde136ec85eb9dbe7ddedf3eef67977fbbcbb7ddedd3eef6e9f77b7cfbbdbe7bdc0a3ec95bb7ddedd3eef6e9f77b7cfbbdbe7ddedf3eef67977fbbcbb7dde1b0acc5eb9dbe7ddedf3eef67977fbbcbb7ddedd3eef6e9f77b7cfbbdbe77d80ddec95bb7d5e583ec07ca0f980f381e703d007a20f481f993e7be56e9f77b7cfbbdbe7ddedf3eef67977fbbcbb7ddedd3eef6e9ff7035d04bb68e345bb7dbedd3edf6e9f6fb7cfb7dbe7dbedf3edf6f976fb7cbb7dbe8068da2b77fb7cbb7dbedd3edf6e9f6fb7cfb7dbe7dbedf3edf6f976fb7c8544b557eef6f976fb7cbb7dbedd3edf6e9f6fb7cfb7dbe7dbedf3edf6f90e805b7be56e9f6fb7cfb7dbe7dbedf3edf6f976fb7cbb7dbedd3edf6e9fef842bb657eef6f976fb7cbb7dbedd3edf6e9f6fb7cfb7dbe7dbedf3edf6f92ef0697be56e9f6fb7cfb7dbe7dbedf3edf6f976fb7cbb7dbedd3edf6e9fef8612b757eef6f976fb7cbb7dbedd3edf6e9f6fb7cfb7dbe7dbedf3edf6f91e60787be56e9f6fb7cfb7dbe7dbedf3edf6f976fb7cbb7dbedd3edf6e9fef85f9b7574234046908d310a8215443b086700d011b4236146d28db10b8a17443f186f20d051c4a38147128e350c82194c35f8439622fa0c31fa4c31fa8c31facc31fb0c31fb4c31fb8c31fbcc31fc0c35fa557622fccc31fd0c31fd4c31fd8c31fdcc31fe0c31fe4c31fe8c31fecc3df21ae137bc11ffee01ffe0020fe2020fe4020fe6020fe8020fea020fec020fe4ef9a4d80b09f1070af1070bf1070cf1070df1070ef1070ff10710f10711f1770964c55ea0883fa8883fb0883fb8883fc0883fc8883fd0883fd8883fe088bf5b022df6c247fc0148fc4148fc8148fcc148fc0149fc4149fc8149fcc149fc3d2277b11754e20f56e20f58e20f5ae20f5ce20f5ee20f60e20f62e20f64e2ef95318cbd50137f60137f70137f80137f90137fa0137fb0137fc0137fd0137f9f5065a9ca6095d157e2a3e5470b9096202d425a86b410692ad264a4b15790b4246951d2b2a485494b9316278dbe12282d515aa4b44c69a1d252a5c54acb95162c2d595ab4b46c69e1d2d2a5c54bcb9716302d615ac4b48c6921d352a6c54ccb9916342d695ad4b4ac6961d3d2a6c54dcb9b16382d715ae4b4cc69a1d352a7c54ecb9d163c2d795af4b4ec69e1d3d2a7c54fcb9f16402d815a04b50c6a21d452a8c550cba116442d895a14b52c6a61d4d2a8c551cba316482d915a24b54c6aa1d452a9c552cba5164c2d995a34b56c6ae1d4d2a9c553c3a70e80ea40a80e88eac0a80e90ea40a90e98eac0a90ea0ea40aa0ea8ea54ef12435f41ab0eb8eac0ab0ec0ea40ac0ec8ea54efebd00b3bf8c60eecd53b3bf4d20ebdb543afedd07b3bf4e20ef415f8eac0af0e00eb40b00e08ebc0b00e10eb40b10e18ebc0b10e20eb40b20e28ebc0b20e30eb40b30e38ebc0b30e40eb40b40e48ebc0b40e50eb40b50e58ebc0b50e60eb40b60e68ebc0b60e70eb40b70e78ebc0b70e80eb40b80e88ebc0b80e90eb40b90e98ebc0b90ea0eb40ba0ea8ebc0ba0eb0eb40bb0eb8ebc0bb0ec0eb40bc0ec8ebc0bc0ed0eb40bd0ed8ebc0bd0ee0eb40be0ee8ebc0be0ef0eb40bf0ef8ebc0bf0e00ec40c00e08ecc0c00e10ec40c10e18ecc0c10e20ec40c20e28ecc0c20e30ec40c30e38ecc0c3cea1b7b5a2af40620726768062072a76c062072e76006307327640630736768063073a76c063073e760064e7d09bd1f46a34bd1b8d2f47c35ebd1e4def47d30bd2f48634bd220d7d052c3bd0b2032e3bf0b203303b10b303323b30b303343b50b303363b70b303383b90b3033a3bb0b3033c3bd0b3033e3bf0b303403b10b403423b30b403443b50b403463b70b403483b90b4034a3bb0b4034c3bd0b4034e3bf0b403503b10b503523b30b503543b50b503563b70b503583b90b5035a3bb0b5035c3bd0b5035e3bf0b503603b10b603623b30b603643b50b603663b70b603683b90b6036a3bb0b6036c3bd0b6036e3bf0b603703b10b703723b30b703743b50b703763b70b703783b90b7037a3bb0b7037c3bd0b7037e3bf0b703803b10b803823b30b803843b50b803863b70b803883b90b8038a3bb0b8038c3bd0b8038e3ba7de41ab97d0ea2db47a0d2ddf438bbd7a13ad5e45ab77d1ea65b4e82bd0dc81cd1de0dc81ce1df0dc81cf1d00dd81d01d10dd81d11d20dd81d21d30dd81d31d40dd81d41d50dd81d51d60dd81d61d70dd81d71d80dd81d81d90dd81d91da0dd81da1db0dd81db1dc0dd81dc1dd0dd81dd1de0dd81de1df0dd81df1d00de81e01d10de81e11d20de81e21d30de81e31d40de81e41d50de81e51d60de81e61d70de81e71d80de81e81d90de81e91da0de81ea1db0de81eb1dc0de81ec1dd0de81ed1de0de81ee1df0de81ef1d00df81f01d10df81f11d20df81f21d30df81f31d40df81f41d50df81f51d60df81f61d70df81f71d80df81f81d90df81f91da0df81fa1db0df81fb1dc0df81fc1dd0df81fd1de0df81fe1df0df81ff1d00e081001e10e081011e20e081021e30e081031e40e081041e50e081051e60e081061e70e081071e80e081081e90e081091ea0e0810a1eb0e0810b1ec0e0810c1ed0e0810d1ee0e0810e1ef0e0810f1e00e181101e10e181111e20e181121e30e181131e40e181141e50e181151e60e181161e70e181171e80e181181e90e181191ea0e1811a1eb0e1811b1ec0e1811c1ed0e1811d1ee0e1811e1ef0e1811f1e00e281201e10e281211e20e281221e30e281231e40e281241e50e281251e60e281261e70e281271e80e281281e90e281291ea0e2812a1eb0e2812b1ec0e2812c1ed0e2812d1ee0e2812e1ef0e2812f1e00e381301e10e381311e20e381321e30e381331e40e381341e50e381351e60e381361e70e381371e80e381381e90e381391ea0e3813a1eb0e3813b1ec0e3813c1ed0e3813d1ee0e3813e1ef0e3813f1e00e481401e10e481411e20e481421e30e481431e40e481441e50e481451e60e481461e70e481471e80e481481e90e481491ea0e4814a1eb0e4814b1ec0e4814c1ed0e4814d1ee0e4814e1ef0e4814f1e00e581501e10e581511e20e581521e30e581531e40e581541e50e581551e60e581561e70e581571e80e581581e90e581591ea0e5815a1eb0e5815b1ec0e5815c1ed0e5815d1ee0e5815e1ef0e5815f1e00e681601e10e681611e20e681621e30e681631e40e681641e50e681651e60e681661e70e681671e80e681681e90e681691ea0e6816a1eb0e6816b1ec0e6816c1ed0e6816d1ee0e6816e1ef0e6816f1e00e781701e10e781711e20e781721e30e781731e40e781741e50e781751e60e781761e70e781771e80e781781e90e781791ea0e7817a1eb0e7817b1ec0e7817c1ed0e7817d1ee0e7817e1ef0e7817f1e00e881801e10e881811e20e881821e30e881831e40e881841e50e881851e60e881861e70e881871e80e881881e90e881891ea0e8818a1eb0e8818b1ec0e8818c1ed0e8818d1ee0e8818e1ef0e8818f1e00e981901e10e981911e20e981921e30e981931e40e981941e50e981951e60e981961e70e981971e80e981981e90e981991ea0e9819a1eb0e9819b1ec0e9819c1ed0e9819d1ee0e9819e1ef0e9819f1e00ea81a01e10ea81a11e20ea81a21e30ea81a31e40ea81a41e50ea81a51e60ea81a61e70ea81a71e80ea81a81e90ea81a91ea0ea81aa1eb0ea81ab1ec0ea81ac1ed0ea81ad1ee0ea81ae1ef0ea81af1e00eb81b01e10eb81b11e20eb81b21e30eb81b31e40eb81b41e50eb81b51e60eb81b61e70eb81b71e80eb81b81e90eb81b91ea0eb81ba1eb0eb81bb1ec0eb81bc1ed0eb81bd1ee0eb81be1ef0eb81bf1e00ec81c01e10ec81c11e20ec81c21e30ec81c31e40ec81c41e50ec81c51e60ec81c61e70ec81c71e80ec81c81e90ec81c91ea0ec81ca1eb0ec81cb1ec0ec81cc1ed0ec81cd1ee0ec81ce1ef0ec81cf1e00ed81d01e10ed81d11e20ed81d21e30ed81d31e40ed81d41e50ed81d51e60ed81d61e70ed81d71e80ed81d81e90ed81d91ea0ed81da1eb0ed81db1ec0ed81dc1ed0ed81dd1ee0ed81de1ef0ed81df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8ed85df5ef8edfdff7efbbf00096d3c1fea140100"), 1048576)) {
+    Ok(out) => {
+      if (out.len() != want.len()) {
+        return test.fail("length " + int.int_to_string(out.len()) + ", want " + int.int_to_string(want.len()));
+      }
+      var k: i32 = 0;
+      while (k < out.len()) {
+        if (out[k] != want[k]) {
+          return test.fail("byte " + int.int_to_string(k) + " differs");
+        }
+        k = k + 1;
+      }
+      return test.assert_eq(hash.crc32_new().update_bytes(out[:]).finish() == 524053769 as u32, true);
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_gzip_header_fields(): test.TestOutcome {
+  return test.assert_eq(bytes_text(deflate.gunzip(hex.hex_decode("1f8b081e000000000003040001020000612e747874006e6f7465006de14bcb494c4f4f4d0100c11f521707000000"), 1024)), "flagged");
+}
+
+function test_gzip_two_members(): test.TestOutcome {
+  return test.assert_eq(bytes_text(deflate.gunzip(hex.hex_decode("1f8b08000000000000034bcb2c2a2ed10100d7364715060000001f8b08000000000000032b4e4dcecf4b010069111fb606000000"), 1024)), "first,second");
+}
+
+function test_zlib(): test.TestOutcome {
+  return test.assert_eq(bytes_text(deflate.zlib_decode(hex.hex_decode("78daabcac94c52482b4acc4d4d010019b90441"), 1024)), "zlib framed");
+}
+
+function test_adler32(): test.TestOutcome {
+  // RFC 1950's own example value for "Wikipedia".
+  return test.assert_eq(deflate.adler32("Wikipedia".bytes()) == 300286872 as u32, true);
+}
+
+function test_output_limit(): test.TestOutcome {
+  if (bytes_text(deflate.gunzip(hex.hex_decode("1f8b08000000000000034bcb2c2a2ed10100d7364715060000001f8b08000000000000032b4e4dcecf4b010069111fb606000000"), 11)) != "error: the decompressed data is past its limit") {
+    return test.fail("a cap below the output: " + bytes_text(deflate.gunzip(hex.hex_decode("1f8b08000000000000034bcb2c2a2ed10100d7364715060000001f8b08000000000000032b4e4dcecf4b010069111fb606000000"), 11)));
+  }
+  return test.assert_eq(bytes_text(deflate.gunzip(hex.hex_decode("1f8b08000000000000034bcb2c2a2ed10100d7364715060000001f8b08000000000000032b4e4dcecf4b010069111fb606000000"), 12)), "first,second");
+}
+
+function test_truncated(): test.TestOutcome {
+  return test.assert_eq(bytes_text(deflate.gunzip(hex.hex_decode("1f8b080000000000000305c1510e00100c44c1abbcaba11b24b489d487db9b29acf08e3c6e1fd4b0470655e4b9de4aca984e0eb1"), 1024)), "error: the compressed data ends early");
+}
+
+function test_bad_checksums(): test.TestOutcome {
+  if (bytes_text(deflate.gunzip(hex.hex_decode("1f8b08000000000000034b2e4a5648ce484dce06006237cc2b09000000"), 1024)) != "error: the checksum does not match the decompressed data") {
+    return test.fail("gzip CRC-32: " + bytes_text(deflate.gunzip(hex.hex_decode("1f8b08000000000000034b2e4a5648ce484dce06006237cc2b09000000"), 1024)));
+  }
+  return test.assert_eq(bytes_text(deflate.zlib_decode(hex.hex_decode("78daabcac94c52482b4acc4d4d010019b90440"), 1024)), "error: the checksum does not match the decompressed data");
+}
+
+function test_bad_headers(): test.TestOutcome {
+  if (bytes_text(deflate.gunzip("not gzip".bytes(), 1024)) != "error: unsupported compressed data: not gzip") {
+    return test.fail("gzip magic: " + bytes_text(deflate.gunzip("not gzip".bytes(), 1024)));
+  }
+  if (bytes_text(deflate.zlib_decode(hex.hex_decode("7820abcac94c52482b4acc4d4d010019b90441"), 1024)) != "error: unsupported compressed data: a zlib preset dictionary") {
+    return test.fail("zlib FDICT: " + bytes_text(deflate.zlib_decode(hex.hex_decode("7820abcac94c52482b4acc4d4d010019b90441"), 1024)));
+  }
+  return test.assert_eq(text(deflate.inflate(hex.hex_decode("07"), 1024)), "error: malformed compressed data: a reserved block type");
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("std/deflate");
+  r = r.it("stored block", test_stored_block);
+  r = r.it("fixed block", test_fixed_block);
+  r = r.it("dynamic block", test_dynamic_block);
+  r = r.it("consumed stops at the stream's end", test_consumed);
+  r = r.it("corpus gzip", test_corpus_gzip);
+  r = r.it("gzip header fields", test_gzip_header_fields);
+  r = r.it("gzip two members", test_gzip_two_members);
+  r = r.it("zlib", test_zlib);
+  r = r.it("adler32", test_adler32);
+  r = r.it("output limit", test_output_limit);
+  r = r.it("truncated", test_truncated);
+  r = r.it("bad checksums", test_bad_checksums);
+  r = r.it("bad headers", test_bad_headers);
+  return r.finish();
+}

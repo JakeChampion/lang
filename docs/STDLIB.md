@@ -871,6 +871,25 @@ RFC 4648 base32 (standard `A–Z 2–7` alphabet, `=` padding).
   the strict variant to use for a security-sensitive secret / token,
   matching `base64_decode_strict` / `hex_decode_strict`.
 
+### `std/deflate`
+
+DEFLATE decoding (RFC 1951) with the zlib (RFC 1950) and gzip (RFC 1952)
+framings, pure Fern. Every decoder takes `max_out`, the most bytes it
+will produce, and answers `OutputLimit` past it: a compressed body is a
+caller-controlled expansion, so the bound is part of the call.
+
+- `inflate(input, max_out): Result[Inflated, InflateError]` and
+  `inflate_from(input, from, max_out)` decode a raw stream;
+  `Inflated { out, consumed }` says how many input bytes it took, so a
+  framing can read what follows.
+- `gunzip(input, max_out): Result[u8[], InflateError]` decodes every
+  member in the input and checks each CRC-32 and length;
+  `zlib_decode(input, max_out)` checks the Adler-32 (`adler32(bs)` is
+  public). A preset dictionary is not supported.
+- `InflateError`: `Truncated`, `Malformed(what)`, `OutputLimit`,
+  `BadChecksum`, `BadHeader(what)`; `(e).message()`.
+- No encoder yet.
+
 ### `std/hex`
 
 Hex round-trip.
