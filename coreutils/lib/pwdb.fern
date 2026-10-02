@@ -254,6 +254,37 @@ pub function user_by_uid_in(text: string, uid: i64): Option[User] {
   return None;
 }
 
+// The user name for `uid`: the files' entry, then the account database
+// libSystem asks. On Darwin regular accounts live only in Directory Services
+// and /etc/passwd holds just the system ones (#9815); every other target
+// answers no name there and the files are the whole answer.
+pub function user_name(uid: i64): Option[string] {
+  return user_name_in(slurp(passwd_path()), uid);
+}
+
+pub function user_name_in(text: string, uid: i64): Option[string] {
+  match (user_by_uid_in(text, uid)) {
+    Some(u) => {
+      return Some(u.name);
+    },
+    None => {}
+  }
+  if (uid < 0 as i64 || uid > 4294967295 as i64) {
+    return None;
+  }
+  let p: usize = __getpwuid_name(uid as u32);
+  if (p == 0 as usize) {
+    return None;
+  }
+  let bs: u8[] = [];
+  let at: usize = p;
+  while (__load_u8(at) != 0) {
+    bs = bs.append(__load_u8(at) as u8);
+    at = at + 1 as usize;
+  }
+  return Some(string_from_bytes_unchecked(bs));
+}
+
 // The two databases as TEXT, for a caller that looks up more than once. Every
 // lookup below that takes a path re-reads the whole file, which is right for a
 // utility asking once and quadratic for one asking per entry — `chown -Rv`

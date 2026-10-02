@@ -71,6 +71,7 @@ pub function provided_names(): string[] {
     "__fern_str_own",
     "__fern_str_grow",
     "__fern_rc_underflow_get",
+    "__fern_getpwuid_name",
     "__fern_arr_share_inc",
     "__fern_arr_share_dec",
     // reclaim: strings, arrays of them, arrays of arrays, maps

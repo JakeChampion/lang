@@ -5267,6 +5267,9 @@ function value_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
   if (ins.str == "f32_from_bits") {
     return Lowered { found: true, r: emit(r, ir.op_f32_from_bits()) };
   }
+  if (ins.str == "__getpwuid_name") {
+    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_getpwuid_name", 1)) };
+  }
   if (ins.str == "__rc_underflow_count") {
     return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_rc_underflow_get", 0)) };
   }

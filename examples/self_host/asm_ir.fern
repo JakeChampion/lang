@@ -3431,6 +3431,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // or large_class gave the original, in the same tier. Under a heap-event
   // build the growth reports as a free of the old size and an alloc of the
   // new, so the two hooks still pair by size.
+  // __fern_getpwuid_name(uid) -> 0: Linux keeps every account in the files
+  // the caller reads (#9815).
+  if (s.has_need("pwname")) {
+    s = s.write("__fn___fern_getpwuid_name:\n");
+    s = s.write("    xorl %eax, %eax\n");
+    s = s.write("    ret\n");
+  }
   if (s.has_need("str_grow")) {
     s = s.write("__fn___fern_str_grow:\n");
     s = s.write("    movq 16(%rsp), %r8\n");  // a
@@ -9505,6 +9512,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   }
   if (name == "__fern_str_grow") {
     s = s.need("str_grow");
+  }
+  if (name == "__fern_getpwuid_name") {
+    s = s.need("pwname");
   }
   // The VIEW-aware string[] element walk (#6544) is gated the same way
   // and for the same reason: its body's inner

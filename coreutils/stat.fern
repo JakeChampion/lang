@@ -958,9 +958,9 @@ function link_tail(d: Directive): string {
 // the database has none — which is what GNU prints for an orphaned
 // file.
 function user_text(uid: i64): string {
-  match (pwdb.user_by_uid(uid)) {
-    Some(u) => {
-      return u.name;
+  match (pwdb.user_name(uid)) {
+    Some(name) => {
+      return name;
     },
     None => {
       return uid.to_string();

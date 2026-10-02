@@ -2813,11 +2813,19 @@ func linkNativeDarwin(asm, outPath string) error {
 	var bin []byte
 	if emitDebugSyms {
 		syms := nativemacho.FuncSyms(a.TextLabelVAddrs(m.Text), m.Text+uint64(len(text)))
-		bin = nativemacho.StaticExecutableSyms(text, eh, data, filepath.Base(outPath), syms, a.MachODataRebaseOffsets())
+		bin = nativemacho.StaticExecutableSyms(text, eh, data, filepath.Base(outPath), syms, a.MachODataRebaseOffsets(), machOBinds(a))
 	} else {
-		bin = nativemacho.StaticExecutable(text, eh, data, filepath.Base(outPath), a.MachODataRebaseOffsets())
+		bin = nativemacho.StaticExecutable(text, eh, data, filepath.Base(outPath), a.MachODataRebaseOffsets(), machOBinds(a))
 	}
 	return writeExecutable(outPath, bin)
+}
+
+func machOBinds(a *nativearm64.Assembler) []nativemacho.Bind {
+	var out []nativemacho.Bind
+	for _, b := range a.MachODataBinds() {
+		out = append(out, nativemacho.Bind{Off: b.Off, Sym: b.Sym})
+	}
+	return out
 }
 
 // layoutMachO is the Mach-O counterpart of layoutWithUnwind: the code size

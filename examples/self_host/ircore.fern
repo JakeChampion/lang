@@ -121,6 +121,9 @@ function is_rc_helper(name: string): boolean {
     // Never user-callable — only ssarc's reuse emitters emit it.
     || name == "__fern_alloc_reuse"
     || name == "__fern_rc_underflow_get"
+    // The account database's name for a uid: getpwuid(3) through a bound
+    // libSystem slot on arm64-darwin, 0 elsewhere (#9815).
+    || name == "__fern_getpwuid_name"
     // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
     // superseded old box (rc-guarded shallow free) unless it is `new` or the
     // caller's snapshot; passes `new` back through. Body in emit_ir_runtime.
@@ -703,7 +706,7 @@ function with_builtin_enums(lifted: parser.Module): parser.Module {
 pub function all_runtime_need_roots(): string[] {
   return [
     "alloc_u8", "args", "arr_push", "arr_push_owned", "arr_slice",
-    "arr_str_join", "arr_inc_elems", "arr_own_elems", "str_own", "str_grow", "arrarr_free", "chr", "env", "eprint", "heap",
+    "arr_str_join", "arr_inc_elems", "arr_own_elems", "str_own", "str_grow", "pwname", "arrarr_free", "chr", "env", "eprint", "heap",
     "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
     // The map roots that "maps" does NOT reach. Each is marked directly by
     // the arm64 emitter, and runtime_need_deps declares no root with any of
