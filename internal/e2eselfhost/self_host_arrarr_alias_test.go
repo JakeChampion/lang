@@ -125,6 +125,43 @@ function main(): i32 {
     return total;
 }
 `, 18, false},
+	// A break out of a for over a row of an aliased array of arrays (#10219).
+	{"break_out_of_row_for", `@noinline
+function through(deps: i32[][], takes: i32[]): i32[][] {
+    let out: i32[][] = deps;
+    let w: i32 = 0;
+    while (w < deps.len()) {
+        let chain: i32[] = [];
+        for d in deps[w] {
+            chain = chain.append(d);
+            if (takes[d] >= 0) {
+                for e in deps[d] { chain = chain.append(e); }
+                break;
+            }
+        }
+        out = out.with(w, chain);
+        w = w + 1;
+    }
+    return out;
+}
+function main(): i32 {
+    let deps: i32[][] = [];
+    let takes: i32[] = [];
+    let i: i32 = 0;
+    while (i < 12) {
+        let row: i32[] = [];
+        let j: i32 = 0;
+        while (j < i) { row = row.append(j); j = j + 1; }
+        deps = deps.append(row);
+        if (i % 3 == 0) { takes = takes.append(1); } else { takes = takes.append(0 - 1); }
+        i = i + 1;
+    }
+    let r: i32[][] = through(deps, takes);
+    let n: i32 = 0;
+    for x in r { n = n + x.len(); }
+    return n;
+}
+`, 11, false},
 	{"alias_outlives_source", `function main(): i32 {
     let g: i32[][] = [[3, 1], [2, 3]];
     let h: i32[][] = g;
