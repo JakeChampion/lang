@@ -51,7 +51,8 @@ The final stage-2 compiler repeats all 96 text cases and 16 `tsort` cases on
 Darwin/core WASM with balanced ownership. The final integer-index `tsort`
 also passes the GNU parity and primary target suites, all lint gates, and
 16 actual stage-2 Darwin/core-WASM cases with balanced ownership. The full
-unit gate remains pending. Validation durations are not performance comparisons.
+unit suite and all lint gates pass on the final integration. Validation
+durations are not performance comparisons.
 
 Bootstrap Preview 2 tests pass. Primary Preview 2 stdin remains unsupported:
 the unchanged compiler refuses both the old `read_chunk` and the new
