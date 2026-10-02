@@ -5886,22 +5886,51 @@ function schemas(types: typeinfo.Type[], s: State, memo: SchemaMemo): Schemas {
   return out;
 }
 
+// named_by_schemas queues the field types of the records and enums added
+// since `nr` and `ne` that schema_of can walk into or record; a scalar or a
+// string names no schema, and schema_of hands it back unchanged.
 function named_by_schemas(out: Schemas, nr: i32, ne: i32, pending: typeinfo.Type[]): typeinfo.Type[] {
   while (nr < out.records.len()) {
     for field in out.records[nr].fields {
-      pending = pending.append(field.ty);
+      if (names_schema(field.ty)) {
+        pending = pending.append(field.ty);
+      }
     }
     nr = nr + 1;
   }
   while (ne < out.enums.len()) {
     for v in out.enums[ne].variants {
       for field in v.fields {
-        pending = pending.append(field.ty);
+        if (names_schema(field.ty)) {
+          pending = pending.append(field.ty);
+        }
       }
     }
     ne = ne + 1;
   }
   return pending;
+}
+
+function names_schema(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeTuple(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeMap(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeFunc(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeUnion(_) = t {
+    return true;
+  }
+  return false;
 }
 
 // Structural types name records inside them; a nominal type is its own.
@@ -6117,16 +6146,13 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
 // closure_type spells the function value it presents; a body spelling a
 // different function value can never be in the box, so it is left out and the
 // run-time match never sees it.
-function env_rows(named: typeinfo.Type[], contracts: ssasem.Contract[]): ssasem.EnvRow[] {
+function env_rows(named: typeinfo.Type[], envs: ssasem.Contract[]): ssasem.EnvRow[] {
   let out: ssasem.EnvRow[] = [];
   for t in named {
     if (!ssasem.is_func(t)) {
       continue;
     }
-    for c in contracts {
-      if (c.params.len() == 0 || !semtypes.is_env(c.params[0])) {
-        continue;
-      }
+    for c in envs {
       if (!semtypes.equal(ssasem.closure_type(c), t)) {
         continue;
       }
@@ -6161,7 +6187,7 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
       dreach = dyn_types_in(t, dreach);
     }
     let grown: boolean = false;
-    for row in env_rows(reach, s.contracts.list) {
+    for row in env_rows(reach, s.contracts.envs) {
       if (has_env_row(rows, row.fn_ty, row.env_ty)) {
         continue;
       }
@@ -7751,13 +7777,14 @@ function inferred_mode(old: i32, t: typeinfo.Type, consumed: boolean): i32 {
 }
 
 function inferred_contract(c: ssasem.Contract, rows: ownership.Escapes[], ix: ownership.Index): ssasem.Contract {
-  if (ownership.find(rows, ix, c.name) < 0) {
+  let row: i32 = ownership.find(rows, ix, c.name);
+  if (row < 0) {
     return c;
   }
   let modes: i32[] = c.modes;
   let i: i32 = 0;
   while (i < modes.len() && i < c.params.len()) {
-    modes = modes.with(i, inferred_mode(modes[i], c.params[i], ownership.consumed(rows, ix, c.name, i)));
+    modes = modes.with(i, inferred_mode(modes[i], c.params[i], ownership.consumed_at(rows, row, i)));
     i = i + 1;
   }
   return ssasem.Contract { ...c, modes: modes };
@@ -7779,13 +7806,14 @@ function inferred_produced(p: Produced, name: string, rows: ownership.Escapes[],
   for c in p.func.calls {
     calls0 = calls0.append(inferred_contract(c, rows, ix));
   }
-  if (ownership.find(rows, ix, name) < 0) {
+  let row: i32 = ownership.find(rows, ix, name);
+  if (row < 0) {
     return Produced { ...p, func: ssasem.Func { ...p.func, calls: calls0 } };
   }
   let modes: i32[] = p.modes;
   let i: i32 = 0;
   while (i < modes.len() && i < p.func.params.len()) {
-    modes = modes.with(i, inferred_mode(modes[i], p.func.params[i], ownership.consumed(rows, ix, name, i)));
+    modes = modes.with(i, inferred_mode(modes[i], p.func.params[i], ownership.consumed_at(rows, row, i)));
     i = i + 1;
   }
   return Produced { ...p, modes: modes, func: ssasem.Func { ...p.func, calls: calls0 } };

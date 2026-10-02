@@ -1847,12 +1847,10 @@ function read_later_in_block(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst
 function anchored_after(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, root: i32): boolean {
   let b: ssa.SBlock = f.graph.blocks[bi];
   let ins: ssa.SInst = b.insts[pos];
-  let w: i32 = 0;
-  while (w < f.graph.nvals) {
-    if (ssalive.live_out_has(a.flow, bi, w) && reaches_root(a, defs, ins, root, w)) {
+  for w in ssalive.live_out_ids(a.flow, bi) {
+    if (reaches_root(a, defs, ins, root, w)) {
       return true;
     }
-    w = w + 1;
   }
   let i: i32 = pos + 1;
   while (i < b.insts.len()) {

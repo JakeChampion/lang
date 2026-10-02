@@ -22964,7 +22964,111 @@ function erase_view_stmt(st: ast.Stmt): ast.Stmt[] {
   return [st];
 }
 
+// spells_view reports whether erasing `ty` can change it: a `[` that opens
+// a view, or the identifier `str` on its own. A qualified `str.Foo` passes
+// too, and the erasure then leaves it alone.
+function spells_view(ty: string): boolean {
+  let i: i32 = 0;
+  let n: i32 = ty.len();
+  while (i < n) {
+    let b: u8 = ty[i];
+    if (b == b'[' && view_opens_at(ty, i)) {
+      return true;
+    }
+    if (b == b's' && i + 2 < n && ty[i + 1] == b't' && ty[i + 2] == b'r'
+      && (i == 0 || !ident_byte(ty[i - 1] as i32)) && (i + 3 == n || !ident_byte(ty[i + 3] as i32))) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function spells_view_any(tys: string[]): boolean {
+  for t in tys {
+    if (spells_view(t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function spells_view_params(ps: ast.ParamDecl[]): boolean {
+  for p in ps {
+    if (spells_view(p.type_name) || spells_view(p.fn_ret) || spells_view(p.fn_param_types)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// spells_view_stmt and spells_view_expr read the spellings erase_view_stmt
+// and erase_view_expr rewrite, and nothing else.
+function spells_view_stmt(st: ast.Stmt, own found: boolean): boolean {
+  if (found) {
+    return true;
+  }
+  if let ast.StmtVar(v) = st {
+    return spells_view(v.type_name) || spells_view(v.fn_ret) || spells_view(v.fn_param_types);
+  }
+  return false;
+}
+
+function spells_view_expr(e: ast.Expr, own found: boolean): boolean {
+  if (found) {
+    return true;
+  }
+  match (e) {
+    ast.ExprCall(c) => {
+      return spells_view_any(c.type_args) || spells_view(c.ty);
+    },
+    ast.ExprArray(a) => {
+      return spells_view(a.elem_ty);
+    },
+    ast.ExprStructLit(sl) => {
+      return spells_view(sl.type_name) || spells_view(sl.written);
+    },
+    ast.ExprZero(z) => {
+      return spells_view(z.type_name);
+    },
+    ast.ExprUnary(u) => {
+      return u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as " && spells_view(u.op) || spells_view(u.ty);
+    },
+    ast.ExprLambda(lm) => {
+      return spells_view_params(lm.params) || spells_view(lm.ret_type) || spells_view(lm.ret_fn_ret) || spells_view(lm.ret_fn_param_types);
+    },
+    ast.ExprIdent(id) => {
+      return spells_view(id.ty);
+    },
+    ast.ExprBinary(b) => {
+      return spells_view(b.ty);
+    },
+    ast.ExprIndex(ix) => {
+      return spells_view(ix.ty);
+    },
+    ast.ExprSlice(sl2) => {
+      return spells_view(sl2.ty);
+    },
+    ast.ExprFieldAccess(fa) => {
+      return spells_view(fa.ty);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// A body that spells no view and no `str` is handed back as it is: the
+// rewrite would rebuild every node of it to change nothing.
 function erase_view_body(body: ast.Stmt[]): ast.Stmt[] {
+  let found: boolean = false;
+  for st in body {
+    found = astwalk.fold_stmt_nodes(st, found, spells_view_stmt, spells_view_expr, astwalk.descend_all);
+  }
+  if (!found) {
+    return body;
+  }
   return astwalk.splice_stmts(astwalk.map_stmts(body, erase_view_expr), erase_view_stmt);
 }
 
