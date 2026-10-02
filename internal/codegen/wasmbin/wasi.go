@@ -2383,9 +2383,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	if helpers.set["__fern_reader_read_chunk"] || helpers.set["__fern_reader_read_chunk_bytes"] {
 		if opts.Preview2WASI {
 			in.add("wasi_io_blocking_read")
-			if helpers.set["__fern_reader_read_chunk_bytes"] {
-				in.add("wasi_io_error_drop")
-			}
+			in.add("wasi_io_error_drop")
 		} else {
 			in.add("wasi_fd_read")
 		}

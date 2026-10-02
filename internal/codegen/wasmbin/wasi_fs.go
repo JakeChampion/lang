@@ -55,11 +55,14 @@ const (
 const (
 	errnoSuccess int32 = 0
 	errnoAccess  int32 = 2  // EACCES → PermissionDenied
+	errnoBadf    int32 = 8  // EBADF → Other
 	errnoExist   int32 = 20 // EEXIST → AlreadyExists
 	errnoIlseq   int32 = 25 // EILSEQ → InvalidUtf8 (synthetic — raised by __fern_utf8_valid, not the host)
 	errnoInval   int32 = 28 // EINVAL → Other (no variant of its own)
 	errnoIntr    int32 = 27 // EINTR  → Interrupted
+	errnoIo      int32 = 29 // EIO → Other
 	errnoNoEnt   int32 = 44 // ENOENT → NotFound
+	errnoNotDir  int32 = 54 // ENOTDIR → Other
 	errnoNoTsup  int32 = 58 // ENOTSUP → Unsupported
 )
 
@@ -2378,36 +2381,13 @@ func buildWriterCloseBodyP2(idxs map[string]uint32) []byte {
 // and returns None ((4-byte alloc, tag=1) — the Option[IoError] success
 // form). `drop` is the canon resource.drop import for the relevant
 // stream resource. A stdio handle owns no descriptor and carries
-// noDescriptor there.
+// noDescriptor there. The handle is left marked closed (closedHandlePos)
+// for every later method to check.
 func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 	allocRc1 := idxs["__fern_alloc_rc1"]
 
-	var body []byte
-	{
-		// Every u32 stream handle is valid. Track closure in the signed file
-		// position instead: Reader and Writer both store it at offset 8.
-		body = inst.InstLocalGet(body, 0)
-		body = memory.InstI64Load(body, 3, readerPosOff)
-		body = inst.InstI64Const(body, -1)
-		body = numeric.InstI64Eq(body)
-		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		body = inst.InstI32Const(body, 8) // WASI EBADF
-		body = inst.InstI32Const(body, 0)
-		body = inst.InstI32Const(body, 0)
-		body = inst.InstCall(body, idxs["__build_io_error"])
-		body = inst.InstLocalSet(body, 2)
-		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, allocRc1)
-		body = inst.InstLocalTee(body, 1)
-		body = inst.InstI32Const(body, 0) // Some(error)
-		body = memory.InstI32Store(body, 2, 0)
-		body = inst.InstLocalGet(body, 1)
-		body = inst.InstLocalGet(body, 2)
-		body = memory.InstI32Store(body, 2, 4)
-		body = inst.InstLocalGet(body, 1)
-		body = inst.InstReturn(body)
-		body = inst.InstEnd(body)
-	}
+	// A second close answers EBADF, as the kernel does.
+	body := emitClosedSomeP2(nil, idxs, 0, 3, 2, 1)
 	// resource.drop(mem[$self+0]) — the own<…stream> handle.
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 0)
@@ -2427,11 +2407,9 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 		body = inst.InstEnd(body)
 	}
 
-	{
-		body = inst.InstLocalGet(body, 0)
-		body = inst.InstI64Const(body, -1)
-		body = memory.InstI64Store(body, 3, readerPosOff)
-	}
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI64Const(body, closedHandlePos)
+	body = memory.InstI64Store(body, 3, readerPosOff)
 	// Return None, at Option[IoError]'s uniform box size.
 	body = emitPayloadlessResultBox(body, allocRc1, 1, 8, 1)
 
@@ -2582,13 +2560,13 @@ func buildWriterWriteBody(idxs map[string]uint32) []byte {
 //
 // Locals (after 3 params w, content_data, content_len): 3=rb,
 // 4=handle, 5=content_buf, 6=content_byte_len, 7=cur, 8=chunk_len,
-// 9=errptr, 10=box, 14=normalize scratch.
+// 9=errptr, 10=box, 11=errno, 14=normalize scratch.
 func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
 	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
 	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
 
-	var body []byte
+	body := emitClosedSomeP2(nil, idxs, 0, 11, 9, 10)
 	// rb = the static 16-byte result slot; nothing outlives the call.
 	body = inst.InstI32Const(body, writerScratchAddr)
 	body = inst.InstLocalSet(body, 3)
@@ -2903,6 +2881,11 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 	free := idxs["__free"]
 
 	var body []byte
+	// A closed handle reads as None, as EBADF from read(2) does natively.
+	body = emitIfClosedP2(body, 0)
+	body = emitPayloadlessResultBox(body, alloc, 10, 16, 1)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
 	// retbuf = the static slot — result<list<u8>, stream-error>.
 	body = inst.InstI32Const(body, readerLineScratchAddr)
 	body = inst.InstLocalSet(body, 1)
@@ -3229,16 +3212,13 @@ func buildReaderReadChunkBody(idxs map[string]uint32) []byte {
 // stream handle; the host returns the bytes in a list it had
 // cabi_realloc materialise — raw arena memory with no rc header —
 // so they are copied into an rc1 block the caller can release and
-// the raw list goes back through __free. disc != 0 (closed /
-// error) or an empty list yields Ok(""), end of input.
-//
-// Known simplification, the same one buildReadFileBodyP2 carries:
-// blocking-read reports "closed" and "the last operation failed"
-// through one discriminant here, so a preview-2 read never answers
-// Err. Preview 1 has the errno and does (#8700).
+// the raw list goes back through __free. A `closed` stream-error or
+// an empty list yields Ok(""), end of input; `last-operation-failed`
+// is Err(EIO), since the stream carries no errno (#8700).
 //
 // Locals (after 2 params r, n): 2=retbuf(12), 3=handle,
-// 4=chunk_ptr, 5=chunk_len, 6=box, 7=data (the rc1 copy).
+// 4=chunk_ptr, 5=chunk_len, 6=box, 7=data (the rc1 copy),
+// 8=errno, 9=err_ptr.
 func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	// chunk buffer returned as Ok(chunk) string data → rc1, and the
 	// Result box with it.
@@ -3279,6 +3259,7 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	}
 
 	var body []byte
+	body = emitClosedErrP2(body, idxs, 0, 8, 9, 6)
 	// retbuf = alloc(12).
 	body = inst.InstI32Const(body, 12)
 	body = inst.InstCall(body, alloc)
@@ -3293,11 +3274,24 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	body = append(body, 0xAD) // i64.extend_i32_u
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstCall(body, blockingRead)
-	// disc != 0 → end of input.
+	// disc != 0 → a stream-error: tag 0 failed and owns an error
+	// resource, tag 1 is end of input.
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Load8U(body, 0, 4)
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = emitStreamErrorDrop(body, idxs, 2)
+			body = freeRetbuf(body)
+			body = inst.InstI32Const(body, errnoIo)
+			body = inst.InstLocalSet(body, 8)
+			body = emitHandleResultErr(body, idxs["__build_io_error"], alloc, 8, 9, 6)
+		}
+		body = inst.InstEnd(body)
 		body = freeRetbuf(body)
 		body = okEmpty(body)
 		body = inst.InstReturn(body)
@@ -3350,6 +3344,6 @@ func buildReaderReadChunkBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 6)
 
-	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 8, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }

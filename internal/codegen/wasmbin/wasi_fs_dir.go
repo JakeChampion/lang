@@ -1051,7 +1051,8 @@ func emitDirentWalk(body []byte, bufLocal, usedLocal, offLocal, namlenLocal, nam
 // re-normalize at every level.
 //
 // Drains the directory (recursing into subdirectories, unlinking
-// everything else) and then removes the now-empty directory itself.
+// everything else) and then removes the now-empty directory itself. A
+// path that is not a directory is unlinked.
 // The dispatch is on the dirent's d_type: preview-1 reports the entry
 // kind inline, so no per-child stat is needed.
 //
@@ -1079,6 +1080,19 @@ func buildRmdirRecBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32LtS(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		// Not a directory: unlink it, as rm -rf does.
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, -errnoNotDir)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstI32Const(body, preopenDirfd)
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 1)
+			body = inst.InstCall(body, unlink)
+			body = inst.InstReturn(body)
+		}
+		body = inst.InstEnd(body)
 		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalGet(body, 2)
 		body = numeric.InstI32Sub(body)
@@ -1273,6 +1287,8 @@ func buildRemoveDirAllBody(idxs map[string]uint32) []byte {
 
 	// errno != 0 && errno != ENOENT → Err.
 	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32Ne(body)
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, errnoNoEnt)
 	body = numeric.InstI32Ne(body)
@@ -2393,7 +2409,8 @@ func emitOpenDirOrErr(body []byte, idxs map[string]uint32, openDir, buildIoErr, 
 // buildRmdirRecBodyP2 is the preview-2 __fern_rmdir_rec: the same
 // depth-first walk as the preview-1 body, over 12-byte records instead
 // of dirents, with unlink-file-at / remove-directory-at in place of the
-// preview-1 syscalls. Returns 0 or an errno.
+// preview-1 syscalls, and the same unlink of a path that is not a
+// directory. Returns 0 or an errno.
 //
 // Child paths stay preopen-relative and are rebuilt per entry as
 // `parent + "/" + name`, so every removal targets the preopen
@@ -2439,6 +2456,7 @@ func buildRmdirRecBodyP2(idxs map[string]uint32) []byte {
 	}
 
 	var body []byte
+	body = emitPreopenP2(body, alloc, getDirs, 12, 13)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstCall(body, openDir)
@@ -2447,6 +2465,17 @@ func buildRmdirRecBodyP2(idxs map[string]uint32) []byte {
 	body = numeric.InstI32LtS(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		// Not a directory: unlink it, as rm -rf does.
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, -errnoNotDir)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = mutateOrReturn(body, unlink, 0, 1)
+			body = inst.InstI32Const(body, 0)
+			body = inst.InstReturn(body)
+		}
+		body = inst.InstEnd(body)
 		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalGet(body, 2)
 		body = numeric.InstI32Sub(body)
@@ -2477,8 +2506,6 @@ func buildRmdirRecBodyP2(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Sub(body)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 4)
-
-	body = emitPreopenP2(body, alloc, getDirs, 12, 13)
 
 	body = emitDirRecWalk(body, 3, 4, 5, 6, func(b []byte) []byte {
 		b = inst.InstLocalGet(b, 6)

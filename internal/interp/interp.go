@@ -4683,7 +4683,7 @@ func readerStream(i *Interp, v Value) (io.Reader, error) {
 	}
 	f, ok := i.openFiles[fd]
 	if !ok {
-		return nil, fmt.Errorf("Reader with fd=%d not registered (closed already?)", fd)
+		return nil, errClosedHandle
 	}
 	return f, nil
 }
@@ -4701,7 +4701,7 @@ func writerStream(i *Interp, v Value) (io.Writer, error) {
 	}
 	f, ok := i.openFiles[fd]
 	if !ok {
-		return nil, fmt.Errorf("Writer with fd=%d not registered (closed already?)", fd)
+		return nil, errClosedHandle
 	}
 	return f, nil
 }
@@ -4723,6 +4723,9 @@ func builtinReaderReadLine(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Reader.read_line: expected 1 arg")
 	}
 	r, err := readerStream(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return optionNone(), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -4778,6 +4781,9 @@ func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Reader.read_chunk: expected 2 args")
 	}
 	r, err := readerStream(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -4881,6 +4887,9 @@ func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Writer.write: expected 2 args")
 	}
 	w, err := writerStream(i, args[0])
+	if errors.Is(err, errClosedHandle) {
+		return optionSome(ioErrorOther("", syscall.EBADF)), nil
+	}
 	if err != nil {
 		return nil, err
 	}

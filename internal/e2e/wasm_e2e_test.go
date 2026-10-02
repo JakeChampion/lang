@@ -107,11 +107,12 @@ func skipIfPreview2Missing(t *testing.T) {
 // the component with no preopened dirs, no env, and no positional
 // args.
 type runOpts struct {
-	args    []string // positional argv after the component path
-	stdin   string
-	envs    []string // KEY=VAL strings forwarded as `--env`
-	workDir string   // when non-empty, mount as `--dir=<workDir>`
-	fdLimit int      // when > 0, run wasmtime under `ulimit -n <fdLimit>`
+	args      []string // positional argv after the component path
+	stdin     string
+	stdinFile *os.File // when set, standard input in place of `stdin`
+	envs      []string // KEY=VAL strings forwarded as `--env`
+	workDir   string   // when non-empty, mount as `--dir=<workDir>`
+	fdLimit   int      // when > 0, run wasmtime under `ulimit -n <fdLimit>`
 }
 
 // buildComponent compiles src with the self-host compiler to a WASI core
@@ -271,6 +272,9 @@ func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, std
 		cmd = exec.Command("sh", append([]string{"-c", `ulimit -n "$0" && exec wasmtime "$@"`, strconv.Itoa(opts.fdLimit)}, cmdArgs...)...)
 	}
 	cmd.Stdin = strings.NewReader(opts.stdin)
+	if opts.stdinFile != nil {
+		cmd.Stdin = opts.stdinFile
+	}
 	var so, se bytes.Buffer
 	cmd.Stdout = &so
 	cmd.Stderr = &se

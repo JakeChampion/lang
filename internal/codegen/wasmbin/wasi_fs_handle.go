@@ -32,6 +32,43 @@ const errnoSpipe int32 = 70
 // area, of the i64 stream position.
 const readerPosOff uint32 = 8
 
+// closedHandlePos is the position close leaves in a preview-2 Reader or
+// Writer (both keep it at readerPosOff). An open handle's is never
+// negative.
+const closedHandlePos int64 = -1
+
+// emitIfClosedP2 opens an `if` taken when the preview-2 Reader or Writer
+// in `hLocal` has been closed. Close drops its stream and descriptor, and
+// the host traps on a dropped handle, so a method answers EBADF from
+// inside the block rather than reaching the host.
+func emitIfClosedP2(body []byte, hLocal uint32) []byte {
+	body = inst.InstLocalGet(body, hLocal)
+	body = memory.InstI64Load(body, 3, readerPosOff)
+	body = inst.InstI64Const(body, closedHandlePos)
+	body = numeric.InstI64Eq(body)
+	return inst.InstIfStart(body, inst.BlocktypeEmpty)
+}
+
+// emitClosedErrP2 appends "a closed handle returns Err(EBADF)", for a
+// method answering a Result.
+func emitClosedErrP2(body []byte, idxs map[string]uint32, hLocal, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
+	body = emitIfClosedP2(body, hLocal)
+	body = inst.InstI32Const(body, errnoBadf)
+	body = inst.InstLocalSet(body, errnoLocal)
+	body = emitHandleResultErr(body, idxs["__build_io_error"], idxs["__fern_alloc_rc1"], errnoLocal, errPtrLocal, boxLocal)
+	return inst.InstEnd(body)
+}
+
+// emitClosedSomeP2 is emitClosedErrP2 for a method answering
+// Option[IoError]: a closed handle returns Some(EBADF).
+func emitClosedSomeP2(body []byte, idxs map[string]uint32, hLocal, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
+	body = emitIfClosedP2(body, hLocal)
+	body = inst.InstI32Const(body, errnoBadf)
+	body = inst.InstLocalSet(body, errnoLocal)
+	body = emitHandleOptionSome(body, idxs["__build_io_error"], idxs["__fern_alloc_rc1"], errnoLocal, errPtrLocal, boxLocal)
+	return inst.InstEnd(body)
+}
+
 // putLocalsI32I64 encodes a two-group locals vector: n32 i32 slots then
 // n64 i64 slots, numbered in that order after the params.
 func putLocalsI32I64(n32, n64 uint32) []byte {
@@ -159,6 +196,7 @@ func buildFdStatBodyP2(idxs map[string]uint32) []byte {
 	descStat := idxs["wasi_descriptor_stat_p2"]
 
 	var body []byte
+	body = emitClosedErrP2(body, idxs, 0, 6, 7, 9)
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalTee(body, 10)
@@ -324,15 +362,7 @@ func buildReaderSeekBodyP2(idxs map[string]uint32) []byte {
 	// The whence is checked before the handle is: `lseek(pipe, 0, 5)` is
 	// EINVAL where `lseek(pipe, 0, 0)` is ESPIPE.
 	body = emitWhenceGuardP2(body, idxs, 2, 3, 5, 6)
-	body = inst.InstLocalGet(body, 0)
-	body = memory.InstI64Load(body, 3, readerPosOff)
-	body = inst.InstI64Const(body, -1)
-	body = numeric.InstI64Eq(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstI32Const(body, 8) // WASI EBADF, before borrowing a dropped resource.
-	body = inst.InstLocalSet(body, 3)
-	body = emitHandleResultErr(body, buildIoErr, allocRc1, 3, 5, 6)
-	body = inst.InstEnd(body)
+	body = emitClosedErrP2(body, idxs, 0, 3, 5, 6)
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalTee(body, 7)
