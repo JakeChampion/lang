@@ -933,6 +933,43 @@ selection exits 1 in every lane, and `TestShardTestsCoversTheListWithAndWithoutW
 runs the script with an empty, a comment-only, a missing and a real weights
 file and checks the buckets partition the input.
 
+## Twelfth change: the remaining single long jobs, and the gate's other half
+
+With the self-host shards shortened, the next long poles were single jobs:
+`test-e2e-x86_64` at 13.3 minutes (two shards now, like the arm64 gate),
+`test-units-x86_64` at 10.4 (two jobs per host: `internal/ir`, `ssa` and
+`printer`, each 350-390 s of serial tests that cannot t.Parallel, apart from
+the other 75 packages they were sharing four cores with), and the self-host
+lane's shard 0, whose `TestSelfHostAssumeEligibleByteIdenticalX86_64` is
+503 s of CPU-bound work already running four wide (83 checked per-process
+emits, each paying the whole-program parse floor). No weight can place a
+test that size without making its shard the longest, so it runs in a job of
+its own and leaves the shard partition.
+
+Lint, the gate's other half, ran twelve steps one after another. The eight
+cheap, read-only ones (`vet`, `gofmt-check`, `fmt-check`, `deadcode`,
+`actionlint`, `testnames`, `ci-selftest`, `digest-check`) are one
+`make -j -k lint-fast` step now, 85 s on the 4-core container for all of
+them; `check-sources` and `fern-test-cache` keep their steps, the first
+because it is the long one and the second because its probe edits a source
+file while it runs.
+
+### A failed test is readable without its log
+
+Every test job now ends its test steps with `scripts/ci-annotate-failures`
+on the test2json streams gotestsum writes (`GOTESTSUM_JSONFILE`, set once
+per workflow) and the `worker-*.jsonl` files `cmd/ci-test-workers` leaves
+behind. It runs only after a failure and prints one `::error` annotation
+per failed test, with the last lines of that test's output, up to the ten
+GitHub keeps per step. The annotations are what the Checks tab shows and
+what the REST API serves without a redirect to blob storage, so a failure
+is readable from the places a job log is not: a cancelled run after the
+failure reaper, a network that refuses the log redirect, a phone. Before
+this, the coreutils lane's red on main could be seen but not read from
+here, and root-causing it meant reproducing locally against a different
+coreutils oracle. `TestTestRunningJobsAnnotateTheirFailures` pins one step
+per test-running job, after its last test step.
+
 ### Next measurements
 
 Read the `selfhost-driver-cache` step's line on the first shards after

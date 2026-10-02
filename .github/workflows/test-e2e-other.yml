@@ -144,3 +144,6 @@ jobs:
             -binary "$RUNNER_TEMP/e2e-other.test" \
             -output "$RUNNER_TEMP/other-test-results" \
             -workers 2 -timeout 25m -run "$PAT"
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$RUNNER_TEMP"/other-test-results/worker-*.jsonl

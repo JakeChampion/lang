@@ -2814,21 +2814,24 @@ function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i
 // method in scope applies to every array receiver — no element match to make,
 // whether the element is a type variable or a concrete `i32[]` / `string[]`.
 // A receiver whose element does not fit is caught against the method's own
-// signature. A slice receiver (`[T]`) is a different namespace and must not
-// match, hence the leading-`[` exclusion.
+// signature. A view receiver (`[T]`) has a separate namespace; the caller
+// selects that namespace from the checked receiver type.
 //
-// Resolution accepts a concrete element; LOWERING does not yet. One
-// `(arr: i32[]) name()` declaration anywhere in a bundle costs an unrelated
-// generic its type-parameter substitution — `num.sum`'s `T.zero()` lowers to
-// a `const_func "T"` and the module is refused as not IR-eligible. That gap is
-// why std/array still declares its concrete-element verbs as
-// `__method_Array_<name>` free functions.
-function (s: Scope) array_recv_method(field: string): MethodSig {
+// Lowering folds concrete methods without method type parameters into free
+// functions keyed by the receiver element and namespace before view erasure.
+function array_receiver_matches(rt: string, view: boolean): boolean {
+  if (view) {
+    return parser.spelling_is_view(rt);
+  }
+  return rt.len() > 2 && slice_unchecked(rt, 0, 1) != "[" && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]";
+}
+
+function (s: Scope) array_recv_method(field: string, view: boolean): MethodSig {
   var i: i32 = s.methods.head[sig_name_bucket(field)];
   while (i >= 0) {
     var method: MethodSig = s.methods.methods[i];
     var rt: string = method.receiver_type;
-    if (method.name == field && rt.len() > 2 && slice_unchecked(rt, 0, 1) != "[" && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]") {
+    if (method.name == field && array_receiver_matches(rt, view)) {
       return method;
     }
     i = s.methods.next[i];
@@ -2847,7 +2850,10 @@ function (s: Scope) array_recv_method(field: string): MethodSig {
 //
 // An array-RECEIVER method (`(xs: T[]) <field>`) counts too — same surface,
 // declared the other way round.
-function (s: Scope) has_array_method(field: string): boolean {
+function (s: Scope) has_array_method(field: string, view: boolean): boolean {
+  if (view) {
+    return s.has_array_recv_method(field, true);
+  }
   var target: string = "__method_Array_" + field;
   var tn: i32 = target.len();
   var i: i32 = s.sigs.am_head[sig_name_bucket(target)];
@@ -2861,7 +2867,7 @@ function (s: Scope) has_array_method(field: string): boolean {
     }
     i = s.sigs.am_next[i];
   }
-  return s.has_array_recv_method(field);
+  return s.has_array_recv_method(field, false);
 }
 
 // try_array_method_type resolves the result type of an array method call
@@ -2878,7 +2884,7 @@ function (s: Scope) has_array_method(field: string): boolean {
 // itself (the receiver type), short-circuited ahead of the sig scan.
 function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string): typeinfo.Type {
   match (recv_ty) {
-    typeinfo.TypeArray(_) => {
+    typeinfo.TypeArray(array) => {
       if (field == "append" || field == "with") {
         return recv_ty;
       }
@@ -2888,6 +2894,9 @@ function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string)
       // the "isn't a typed value" arm and the statement types unknown.
       if (field == "len") {
         return t_i32();
+      }
+      if (array.view) {
+        return s.arr_recv_ret_type(recv_ty, s.array_recv_method(field, true));
       }
       var target: string = "__method_Array_" + field;
       var tn: i32 = target.len();
@@ -2902,7 +2911,7 @@ function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string)
         }
         i = s.sigs.am_next[i];
       }
-      var arm: MethodSig = s.array_recv_method(field);
+      var arm: MethodSig = s.array_recv_method(field, false);
       if (arm.name.len() > 0) {
         return s.arr_recv_ret_type(recv_ty, arm);
       }
@@ -2937,7 +2946,7 @@ function (s: Scope) arr_recv_ret_type(recv_ty: typeinfo.Type, arm: MethodSig): t
   if (rt.len() <= 2) {
     return arm.ret_type;
   }
-  var elem_param: string = slice_unchecked(rt, 0, rt.len() - 2) + "";
+  var elem_param: string = parser.array_method_element(rt);
   match (recv_ty) {
     typeinfo.TypeArray(ra) => {
       var tps: string[] = [elem_param];
@@ -3635,12 +3644,12 @@ function method_namespace_of(t: typeinfo.Type): string {
   return "";
 }
 
-function (s: Scope) has_array_recv_method(field: string): boolean {
+function (s: Scope) has_array_recv_method(field: string, view: boolean): boolean {
   var i: i32 = s.methods.head[sig_name_bucket(field)];
   while (i >= 0) {
     var method: MethodSig = s.methods.methods[i];
     var rt: string = method.receiver_type;
-    if (method.name == field && rt.len() > 2 && slice_unchecked(rt, 0, 1) != "[" && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]") {
+    if (method.name == field && array_receiver_matches(rt, view)) {
       return true;
     }
     i = s.methods.next[i];
@@ -13784,8 +13793,8 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
     typeinfo.TypeString(_) => {
       return field != "len" && field != "as_bytes" && s.lookup_method(field, "string").name.len() == 0;
     },
-    typeinfo.TypeArray(_) => {
-      return field != "append" && field != "with" && field != "len" && !s.has_array_method(field);
+    typeinfo.TypeArray(array) => {
+      return field != "append" && field != "with" && field != "len" && !s.has_array_method(field, array.view);
     },
     typeinfo.TypeMap(_) => {
       return !util.has_str(s.methods_in_namespace("Map"), field);
@@ -14993,7 +15002,7 @@ function redeclares(funcs: parser.FuncDecl[], di: i32): boolean {
     if (f2.receiver_type.len() == 0 && pe.receiver_type.len() == 0 && pe.name == f2.name) {
       earlier = true;
     }
-    if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && parser.receiver_base(pe.receiver_type) == parser.receiver_base(f2.receiver_type)) {
+    if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type)) {
       earlier = true;
     }
     ej = ej + 1;
@@ -15041,7 +15050,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
   }
   // E006: a free function redeclared (same name, both receiver-less), or
-  // a method redeclared (same name AND receiver type). The redeclaration
+  // a method redeclared (same name AND receiver namespace). The redeclaration
   // SITE — the second + occurrences — is flagged, matching the Go
   // checker.
   var di: i32 = 0;
@@ -15051,7 +15060,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else {
-        out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + parser.receiver_base(f2.receiver_type) + " redeclared", f2.line, f2.col));
+        out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + parser.receiver_namespace(f2.receiver_type) + " redeclared", f2.line, f2.col));
       }
     }
     // E021: a method whose receiver type isn't a known struct / enum /
@@ -22141,6 +22150,9 @@ function type_to_irtag(t: typeinfo.Type): string {
       if (elem.len() == 0) {
         return "";
       }
+      if (a.view) {
+        return "[" + elem + "]";
+      }
       return elem + "[]";
     },
     typeinfo.TypeFunc(_) => {
@@ -22260,6 +22272,9 @@ function type_to_arrtag(t: typeinfo.Type): string {
       var et: string = type_to_irtag(a.elem);
       if (et == "") {
         return "";
+      }
+      if (a.view) {
+        return "[" + et + "]";
       }
       return et + "[]";
     },
@@ -23181,8 +23196,9 @@ function vb_annotation_of(t: typeinfo.Type): string {
       if (type_label(a.elem) == "str") {
         return "";
       }
-      // A spelling, not a message: lowering reads a view as the owned array.
-      return type_label(t_array(a.elem));
+      // Keep the checked namespace until method calls have been resolved.
+      // The AST lowering erases views only after the typed module is built.
+      return typeinfo.spelling(t);
     },
     typeinfo.TypeUnion(u) => {
       if (u.args.len() == 0) {

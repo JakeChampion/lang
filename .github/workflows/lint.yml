@@ -86,46 +86,15 @@ jobs:
       - name: Install uv for generated-source checks
         uses: astral-sh/setup-uv@v7
 
-      - name: Generated digest sources
+      # The cheap gates run as one parallel make (Makefile: lint-fast), with
+      # -k so a failure in one still runs the rest; each prints its own
+      # banner. check-sources keeps a step of its own: it is the long one.
+      - name: vet, gofmt, fern -fmt, deadcode, actionlint, testnames, ci self-test, digest (parallel)
         if: ${{ !cancelled() }}
-        run: make digest-check
-
-      - name: go build ./...
-        if: ${{ !cancelled() }}
-        run: go build ./...
-
-      - name: go vet ./...
-        if: ${{ !cancelled() }}
-        run: go vet ./...
-
-      - name: gofmt
-        if: ${{ !cancelled() }}
-        run: make gofmt-check
-
-      - name: fern -fmt
-        if: ${{ !cancelled() }}
-        run: make fmt-check
-
+        run: make -j"$(nproc)" -k lint-fast
       - name: fern -check sources
         if: ${{ !cancelled() }}
         run: make check-sources
-
-      - name: deadcode
-        if: ${{ !cancelled() }}
-        run: make deadcode
-
-      - name: actionlint
-        if: ${{ !cancelled() }}
-        run: make actionlint
-
-      - name: testnames
-        if: ${{ !cancelled() }}
-        run: make testnames
-
-      - name: ci changes self-test
-        if: ${{ !cancelled() }}
-        run: make ci-selftest
-
       - name: fern test cache
         if: ${{ !cancelled() }}
         run: make fern-test-cache

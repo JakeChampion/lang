@@ -33,6 +33,11 @@ on:
   workflow_call:
   workflow_dispatch:
 
+env:
+  # gotestsum reads this as --jsonfile: the event stream the
+  # failure-annotation step names the failed tests from.
+  GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+
 jobs:
   test:
     strategy:
@@ -258,3 +263,6 @@ jobs:
 
           gotestsum --format pkgname-and-test-fails -- -timeout 20m \
             -run "$UTIL_PAT" ./internal/coreutils/
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
