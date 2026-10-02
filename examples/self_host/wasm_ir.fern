@@ -16225,6 +16225,15 @@ struct HostNeeds { io: boolean, rd: boolean, wr: boolean, env: boolean, args: bo
 
 function host_needs(mod: parser.Module): HostNeeds {
   var calls: Map[string, boolean] = called_names(mod);
+  var net: boolean = false;
+  var sb: string[] = socket_builtins();
+  var k: i32 = 0;
+  while (k < sb.len()) {
+    if (calls.has(sb[k])) {
+      net = true;
+    }
+    k = k + 1;
+  }
   // Building a Map imports get-random-u64 with no explicit random call in the
   // program: core/map draws its per-process string-hash seed from the same
   // CSPRNG. module_uses_random counts that seed on the lowered side, where it
@@ -16241,7 +16250,7 @@ function host_needs(mod: parser.Module): HostNeeds {
     clkm: calls.has("monotonic_ns"),
     ep: calls.has("eprint") || calls.has("stderr"),
     ex: calls.has("exit"),
-    net: calls_any(calls, socket_builtins()),
+    net: net,
   };
 }
 
@@ -16253,17 +16262,6 @@ function socket_builtins(): string[] {
     "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_recv_into", "tcp_send", "tcp_sendfile", "tcp_socket_ctl",
     "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto",
   ];
-}
-
-function calls_any(calls: Map[string, boolean], names: string[]): boolean {
-  var i: i32 = 0;
-  while (i < names.len()) {
-    if (calls.has(names[i])) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
 }
 
 // component_needs_host reports whether a program reaches its WASI host at
