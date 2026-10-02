@@ -6117,16 +6117,13 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
 // closure_type spells the function value it presents; a body spelling a
 // different function value can never be in the box, so it is left out and the
 // run-time match never sees it.
-function env_rows(named: typeinfo.Type[], contracts: ssasem.Contract[]): ssasem.EnvRow[] {
+function env_rows(named: typeinfo.Type[], envs: ssasem.Contract[]): ssasem.EnvRow[] {
   let out: ssasem.EnvRow[] = [];
   for t in named {
     if (!ssasem.is_func(t)) {
       continue;
     }
-    for c in contracts {
-      if (c.params.len() == 0 || !semtypes.is_env(c.params[0])) {
-        continue;
-      }
+    for c in envs {
       if (!semtypes.equal(ssasem.closure_type(c), t)) {
         continue;
       }
@@ -6161,7 +6158,7 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
       dreach = dyn_types_in(t, dreach);
     }
     let grown: boolean = false;
-    for row in env_rows(reach, s.contracts.list) {
+    for row in env_rows(reach, s.contracts.envs) {
       if (has_env_row(rows, row.fn_ty, row.env_ty)) {
         continue;
       }

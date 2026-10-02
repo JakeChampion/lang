@@ -98,14 +98,20 @@ pub struct Contract { name: string, params: typeinfo.Type[], modes: i32[], resul
 
 // Contracts is a contract table with a bucket index over the names, so a call
 // resolves its callee's row by walking one chain, not the table.
-pub struct Contracts { list: Contract[], names: util.NameIndex }
+// envs is the rows whose first parameter is a closure's environment, the
+// closure bodies, in the list's order.
+pub struct Contracts { list: Contract[], names: util.NameIndex, envs: Contract[] }
 
 pub function contracts_of(list: Contract[]): Contracts {
   let names: string[] = [];
+  let envs: Contract[] = [];
   for c in list {
     names = names.append(c.name);
+    if (c.params.len() > 0 && semtypes.is_env(c.params[0])) {
+      envs = envs.append(c);
+    }
   }
-  return Contracts { list: list, names: util.name_index(names) };
+  return Contracts { list: list, names: util.name_index(names), envs: envs };
 }
 
 pub function find_contract(table: Contracts, name: string): i32 {
