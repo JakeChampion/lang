@@ -4605,7 +4605,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
             _ => {}
           }
           if (bts.len() > 0) {
-            var result: typeinfo.Type = vb_unified(bts);
+            var result: typeinfo.Type = vb_arms_unified(bts, mx_body_result_exprs(lm.body));
             if (!is_unknown(result)) {
               return result;
             }
@@ -8295,7 +8295,7 @@ pub struct ViewCallee { key: string, args: ast.Expr[] }
 
 function view_sum_key(fn: parser.FuncDecl): string {
   if (fn.receiver_type.len() > 0) {
-    return util.base_type_name(fn.receiver_type) + "." + fn.name;
+    return parser.receiver_base(fn.receiver_type) + "." + fn.name;
   }
   return fn.name;
 }
@@ -9522,6 +9522,19 @@ function mx_is_numeric(t: typeinfo.Type): boolean {
 // mx_builtin_enum_of returns the built-in enum a variant name belongs to
 // (Option / Result / JsonValue / IoError / Body), or "" if it isn't a built-in
 // variant. Two struct arms in the same non-empty family unify.
+// builtin_union_sig is the variant list of a built-in Option or Result,
+// neither of which is in the union table, so a match on one is held to E014
+// and E030 like any enum's. Any other name answers an empty sig.
+function builtin_union_sig(name: string): UnionSig {
+  if (name == "Option") {
+    return UnionSig { name: name, variants: ["Some", "None"], is_try: false, is_enum: true, module: "", type_params: ["T"] };
+  }
+  if (name == "Result") {
+    return UnionSig { name: name, variants: ["Ok", "Err"], is_try: false, is_enum: true, module: "", type_params: ["T", "E"] };
+  }
+  return UnionSig { name: "", variants: [], is_try: false, is_enum: false, module: "", type_params: [] };
+}
+
 function mx_builtin_enum_of(name: string): string {
   if (name == "Some" || name == "None") {
     return "Option";
@@ -9814,10 +9827,14 @@ function mx_expr(e: ast.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDe
             if (lm.params.len() == 0 && lm.body.len() == 1) {
               match (lm.body[0]) {
                 ast.StmtMatch(m) => {
-                  out = util.append_diags(out, mx_e031(mx_match_arm_types(m, s), unions, enums, false, expr_line(m.scrutinee), expr_col(m.scrutinee)));
+                  var mts: typeinfo.Type[] = mx_match_arm_types(m, s);
+                  out = util.append_diags(out, mx_e031(mts, unions, enums, false, expr_line(m.scrutinee), expr_col(m.scrutinee)));
+                  out = util.append_diags(out, vb_pinned_ranges(mts, mx_body_result_exprs(lm.body)));
                 },
                 ast.StmtIf(f) => {
-                  out = util.append_diags(out, mx_e031(mx_if_branch_types(f, s), unions, enums, lm.origin == parser.ORIGIN_IF_EXPR, expr_line(f.cond), expr_col(f.cond)));
+                  var fts: typeinfo.Type[] = mx_if_branch_types(f, s);
+                  out = util.append_diags(out, mx_e031(fts, unions, enums, lm.origin == parser.ORIGIN_IF_EXPR, expr_line(f.cond), expr_col(f.cond)));
+                  out = util.append_diags(out, vb_pinned_ranges(fts, mx_body_result_exprs(lm.body)));
                 },
                 _ => {}
               }
@@ -10012,6 +10029,14 @@ function find_variant_sig(structs: StructSig[], name: string): StructSig {
   return find_struct_sig(structs, bare);
 }
 
+// slit_names_no_struct reports whether a struct literal's type names no struct
+// at all: not a declared one (an instantiation names its base), and not a
+// built-in.
+function slit_names_no_struct(structs: StructSig[], type_name: string): boolean {
+  var base: string = util.base_type_name(type_name);
+  return find_struct_sig(structs, base).name.len() == 0 && !parser.is_reserved_struct_name(base);
+}
+
 // slit_diags recurses through an expression and emits E005 for every
 // non-update struct literal that omits a declared field. The struct table
 // is module-global, so this needs no scope — and recursing into field
@@ -10026,11 +10051,18 @@ function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
       for field_value in sl.field_values {
         out = util.append_diags(out, slit_diags(field_value, structs));
       }
+      // E043: a literal whose type names no declared struct or variant,
+      // reported where the literal stands as native does (#10965). A
+      // reserved built-in struct is declared by the front end rather than
+      // by a module, so it is not unknown here.
+      if (lit_names_no_struct(sl.type_name, structs)) {
+        out = out.append(dg_at("E043", "unknown struct type \"" + sl.type_name + "\"", sl.line, sl.col));
+      }
       // E043: a struct-literal field whose name isn't declared on the
       // struct. Mirrors the Go checker (per-literal-field "struct S has no
       // field f"). Runs for update literals too (`S { ...b, bad: 1 }`) —
-      // you can't set an unknown field. A non-struct / unknown type name
-      // (generic instantiation, variant) finds no sig and is skipped.
+      // you can't set an unknown field. A generic instantiation or a
+      // variant finds no sig and is skipped.
       var usig: StructSig = find_struct_sig(structs, sl.type_name);
       if (usig.name.len() > 0) {
         for field_name in sl.field_names {
@@ -10038,6 +10070,8 @@ function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
             out = out.append(dg_at("E043", "struct " + sl.type_name + " has no field \"" + field_name + "\"", sl.line, sl.col));
           }
         }
+      } else if (slit_names_no_struct(structs, sl.type_name)) {
+        out = out.append(dg_at("E043", "unknown struct type \"" + sl.type_name + "\"", sl.line, sl.col));
       }
       if (sl.has_base) {
         out = util.append_diags(out, slit_diags(sl.base, structs));
@@ -10094,6 +10128,16 @@ function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
 // stmts_slit_diags walks a statement list (recursing into nested blocks
 // and lambda bodies via slit_diags) collecting the struct-literal E005s
 // from every expression it contains.
+// lit_names_no_struct reports whether a struct literal's type name is a
+// plain identifier that no struct or variant declares: `Self` is the impl's
+// type and a dotted or bracketed spelling resolves elsewhere.
+function lit_names_no_struct(name: string, structs: StructSig[]): boolean {
+  if (name == "Self" || parser.is_reserved_struct_name(name) || !plain_ident(name)) {
+    return false;
+  }
+  return find_variant_sig(structs, name).name.len() == 0;
+}
+
 function stmts_slit_diags(stmts: ast.Stmt[], structs: StructSig[]): util.Diag[] {
   var out: util.Diag[] = [];
   for stmt in stmts {
@@ -10607,9 +10651,19 @@ function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.
     }
     return out;
   }
-  // A declaration shadowing a built-in's name is E010, and the annotation
-  // may still mean the built-in, so its arity is not checked against it.
-  if (parser.is_reserved_struct_name(base) || parser.is_reserved_enum_name(base)) {
+  // A built-in's name means the built-in: a declaration shadowing it is E010.
+  if (parser.is_reserved_struct_name(base)) {
+    var stp: i32 = parser.reserved_struct_tparams(base).len();
+    if (nargs != stp) {
+      out = out.append(dg_at("E019", "struct " + base + " has " + util.i32_to_string(stp) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", 0, 0));
+    }
+    return out;
+  }
+  if (parser.is_reserved_enum_name(base)) {
+    var etp: i32 = parser.reserved_enum_tparams(base).len();
+    if (nargs != etp) {
+      out = out.append(dg_at("E019", "enum " + base + " has " + util.i32_to_string(etp) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", 0, 0));
+    }
     return out;
   }
   for ed in enums {
@@ -14079,6 +14133,9 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
         match (mst) {
           typeinfo.TypeUnion(mun) => {
             var usig: UnionSig = cur.lookup_union(mun.name);
+            if (usig.name.len() == 0) {
+              usig = builtin_union_sig(mun.name);
+            }
             // E023: a plain `match` on a value whose type is an
             // enum the checker doesn't know (the unknown-BASE
             // generic annotation shape — see type_from_ref_names).
@@ -14419,6 +14476,13 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           out = util.append_diags(out, vbound);
           if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !(type_assignable(initt, declared, unions) && dyn_conforms(initt, declared, cur))) {
             out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared) + str_copy_hint(initt, declared), v.line, v.col));
+          }
+          // An annotation naming no declared type (the E064 case) is a type
+          // native cannot assign a typed init to either, so E003 stands
+          // beside the E064 (#10965). An annotation this resolver merely
+          // does not model stays unknown without either diagnostic.
+          if (vbound.len() == 0 && is_unknown(declared) && !is_unknown(initt) && util.index_of_str(cur.tparams, v.type_name) < 0 && e064_unknown_bare(v.type_name, cur.type_names())) {
+            out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + v.type_name, v.line, v.col));
           }
         }
         // E047: an unannotated binding settles its literal-only init at i64
@@ -15097,11 +15161,11 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       if (sdup) {
         out = out.append(dg_at("E006", "struct \"" + s2.name + "\" redeclared", s2.line, s2.col));
       }
-      // E010: a user struct shadowing a reserved built-in struct name. The
+      // E010: a user struct taking a reserved built-in name, struct or enum. The
       // line guard is native's `existing.P == ast.Position{}` check: a
       // synthetic re-entry carries no position and is the compiler's own
       // injection, not a user redeclaration.
-      if (s2.line > 0 && parser.is_reserved_struct_name(s2.name)) {
+      if (s2.line > 0 && (parser.is_reserved_struct_name(s2.name) || parser.is_reserved_enum_name(s2.name))) {
         out = out.append(dg_at("E010", "struct \"" + s2.name + "\" is a reserved built-in name and cannot be redeclared", s2.line, s2.col));
       }
     }
@@ -15124,8 +15188,8 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     if (edup) {
       out = out.append(dg_at("E006", "enum \"" + mod.enums[en].name + "\" redeclared", mod.enums[en].line, mod.enums[en].col));
     }
-    // E010: a user enum shadowing a reserved built-in enum name.
-    if (parser.is_reserved_enum_name(mod.enums[en].name)) {
+    // E010: a user enum taking a reserved built-in name, enum or struct.
+    if (parser.is_reserved_enum_name(mod.enums[en].name) || parser.is_reserved_struct_name(mod.enums[en].name)) {
       out = out.append(dg_at("E010", "enum \"" + mod.enums[en].name + "\" is a reserved built-in name and cannot be redeclared", mod.enums[en].line, mod.enums[en].col));
     }
     var vn: string[] = mod.enums[en].variant_names;
@@ -15667,9 +15731,11 @@ function lu_is_local(fx: LuFn, name: string): boolean {
   return !util.has_str(fx.params, name) && lu_decl_count(fx, name) > 0;
 }
 
-// lu_call_init: declared once, from a call whose callee is named — a function,
-// or a method, which native has rewritten to one by the time it asks.
-function lu_call_init(fx: LuFn, name: string): boolean {
+// lu_fresh_init: declared once, from a fresh value — a call whose callee is
+// named (a function, or a method, which native has rewritten to one by the time
+// it asks), or an array, string or plain struct literal. A spread literal copies
+// its base's fields, so it is not fresh.
+function lu_fresh_init(fx: LuFn, name: string): boolean {
   var li: LuInit = lu_init_of(fx, name);
   if (!li.ok) {
     return false;
@@ -15682,10 +15748,19 @@ function lu_call_init(fx: LuFn, name: string): boolean {
       return true;
     }
   }
+  if let ast.ExprArray(_) = li.init {
+    return true;
+  }
+  if let ast.ExprString(_) = li.init {
+    return true;
+  }
+  if let ast.ExprStructLit(sl) = li.init {
+    return !sl.has_base;
+  }
   return false;
 }
 
-// lu_unpack_init: declared once as `h.f` of a call-initialised `h`, where that is
+// lu_unpack_init: declared once as `h.f` of a fresh-initialised `h`, where that is
 // the only read of `h.f` and every mention of `h` selects a field.
 function lu_unpack_init(fx: LuFn, name: string): boolean {
   var li: LuInit = lu_init_of(fx, name);
@@ -15694,7 +15769,7 @@ function lu_unpack_init(fx: LuFn, name: string): boolean {
   }
   if let ast.ExprFieldAccess(fa) = li.init {
     var h: string = ow_ident_name(fa.obj);
-    if (h.len() == 0 || !lu_call_init(fx, h)) {
+    if (h.len() == 0 || !lu_fresh_init(fx, h)) {
       return false;
     }
     var reads: i32 = 0;
@@ -15729,7 +15804,7 @@ function lu_rename_source(fx: LuFn, name: string): string {
 // lu_admitted is the binding the last-occurrence shapes admit: one bound from a
 // call, unpacked from one, or a rename of such a binding or of a parameter.
 function lu_admitted(fx: LuFn, name: string): boolean {
-  if (lu_call_init(fx, name) || lu_unpack_init(fx, name)) {
+  if (lu_fresh_init(fx, name) || lu_unpack_init(fx, name)) {
     return true;
   }
   var root: string = lu_rename_source(fx, name);
@@ -15743,7 +15818,7 @@ function lu_admitted(fx: LuFn, name: string): boolean {
     seen = seen.append(next);
     next = lu_rename_source(fx, root);
   }
-  return util.has_str(fx.params, root) || lu_call_init(fx, root) || lu_unpack_init(fx, root);
+  return util.has_str(fx.params, root) || lu_fresh_init(fx, root) || lu_unpack_init(fx, root);
 }
 
 // lu_is_last: no occurrence of the name sits after this one.
@@ -15842,15 +15917,14 @@ function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
 }
 
 // lu_dies reports whether the argument `aid` (position `i` of `call`) is dead at
-// the call. `outer` is the outermost call enclosing it, when `has_outer`;
-// `is_root` says `call` is the statement's whole expression.
-function lu_dies(fx: LuFn, call: ast.Expr, callee: string, i: i32, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite): boolean {
+// the call. `outer` is the outermost call enclosing it, when `has_outer`.
+function lu_dies(fx: LuFn, call: ast.Expr, callee: string, i: i32, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
   var name: string = aid.name;
   if (!lu_is_local(fx, name) || util.has_str(fx.facts.escaping, name)) {
     return false;
   }
   var once: boolean = astwalk.count_ident_expr(call, name) == 1;
-  if (lu_rebind_site(site, name, once, is_root)) {
+  if (lu_rebind_site(site, name)) {
     return true;
   }
   if (site.in_loop || !once || !lu_admitted(fx, name)) {
@@ -15868,7 +15942,7 @@ function lu_dies(fx: LuFn, call: ast.Expr, callee: string, i: i32, aid: ast.Expr
 
 // lu_rebind_site: the statement holding the call supersedes `name` whatever
 // follows it.
-function lu_rebind_site(site: LuSite, name: string, once: boolean, is_root: boolean): boolean {
+function lu_rebind_site(site: LuSite, name: string): boolean {
   match (site.stmts[site.idx]) {
     ast.StmtAssign(a) => {
       // `x = f(.., x, ..)`, the call anywhere in the value.
@@ -15878,9 +15952,10 @@ function lu_rebind_site(site: LuSite, name: string, once: boolean, is_root: bool
         }
       }
     },
-    ast.StmtReturn(_) => {
-      // `return f(.., x, ..)`.
-      if (is_root && once && !site.in_iife) {
+    ast.StmtReturn(r) => {
+      // `return f(.., x, ..)`, the call anywhere in a value that names x only
+      // there.
+      if (!site.in_iife && astwalk.count_ident_expr(r.value, name) == 1) {
         return true;
       }
     },
@@ -15903,7 +15978,7 @@ function lu_rebind_site(site: LuSite, name: string, once: boolean, is_root: bool
 }
 
 // lu_call collects the keys of `c`'s own-position arguments that die at it.
-function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
+function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   var cname: string = ow_ident_name(c.callee);
   if (cname.len() == 0 || util.has_str(fx.params, cname) || !ow_is_own_func(fx.ofuncs, cname)) {
     return acc;
@@ -15913,7 +15988,7 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
   while (i < c.args.len() && i < flags.len()) {
     if (flags[i]) {
       if let ast.ExprIdent(aid) = c.args[i] {
-        if (lu_dies(fx, e, cname, i, aid, outer, has_outer, is_root, site)) {
+        if (lu_dies(fx, e, cname, i, aid, outer, has_outer, site)) {
           acc = acc.append(lu_key(aid.line, aid.col));
         }
       }
@@ -16003,7 +16078,7 @@ function lu_children(e: ast.Expr): ast.Expr[] {
   return out;
 }
 
-function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
+function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   var o: ast.Expr = outer;
   var ho: boolean = has_outer;
   if let ast.ExprCall(c) = e {
@@ -16015,14 +16090,14 @@ function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: bool
       }
       return lu_stmts(lm.body, site.in_loop, true, outer, has_outer, fx, acc);
     }
-    acc = lu_call(c, e, outer, has_outer, is_root, site, fx, acc);
+    acc = lu_call(c, e, outer, has_outer, site, fx, acc);
     if (!ho) {
       o = e;
       ho = true;
     }
   }
   for child in lu_children(e) {
-    acc = lu_expr(child, o, ho, false, site, fx, acc);
+    acc = lu_expr(child, o, ho, site, fx, acc);
   }
   return acc;
 }
@@ -16031,9 +16106,9 @@ function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: bool
 // into the body of a synthesised IIFE, which native sees as one expression.
 function lu_root(e: ast.Expr, site: LuSite, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {
   if (has_outer) {
-    return lu_expr(e, outer, true, true, site, fx, acc);
+    return lu_expr(e, outer, true, site, fx, acc);
   }
-  return lu_expr(e, e, false, true, site, fx, acc);
+  return lu_expr(e, e, false, site, fx, acc);
 }
 
 function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {
@@ -16083,15 +16158,45 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: 
 }
 
 // lu_last_use_args is the E051 admission for `fn`: the keys of the local
-// arguments handed to an `own` parameter where they die.
+// arguments handed to an `own` parameter where they die. A nested function is
+// lowered as a function of its own, so its body is answered by its own walk.
 function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFunc[]): string[] {
   var facts: LuFacts = LuFacts { occ: [], vars: [], escaping: [], sels: [] };
+  var nested: ast.ExprLambda[] = [];
   for st in fn.body {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+    nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, lu_nested_fn, lu_outside_nested_fn);
   }
   var fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), ofuncs: ofuncs };
   var none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
-  return lu_stmts(fn.body, false, false, none, false, fx, []);
+  var out: string[] = lu_stmts(fn.body, false, false, none, false, fx, []);
+  for lm in nested {
+    out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }, ofuncs));
+  }
+  return out;
+}
+
+function lu_skip_stmt(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
+  return acc;
+}
+
+// lu_nested_fn collects the lambdas nested `function` declarations desugar to.
+function lu_nested_fn(e: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
+  if let ast.ExprLambda(lm) = e {
+    if (lm.origin == ast.ORIGIN_NESTED_FN) {
+      return acc.append(lm);
+    }
+  }
+  return acc;
+}
+
+// lu_outside_nested_fn stops the walk at a nested function: the recursive walk
+// over its own body finds the functions nested in it.
+function lu_outside_nested_fn(e: ast.Expr): boolean {
+  if let ast.ExprLambda(lm) = e {
+    return lm.origin != ast.ORIGIN_NESTED_FN;
+  }
+  return true;
 }
 
 // ow_count_ident counts occurrences of `name` as a bare ident anywhere
@@ -17850,7 +17955,16 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
   if (parser.is_reserved_struct_name(type_name) || parser.is_reserved_enum_name(type_name)) {
     return false;
   }
-  for byte in type_name {
+  if (!plain_ident(type_name)) {
+    return false;
+  }
+  return is_unknown(type_from_spelling(type_name, tn));
+}
+
+// plain_ident reports whether `name` is one identifier: letters, digits and
+// underscores only, so no array suffix, generic argument, dot or arrow.
+function plain_ident(name: string): boolean {
+  for byte in name {
     var ch: i32 = byte as i32;
     var alpha: boolean = ch >= 65 && ch <= 90 || ch >= 97 && ch <= 122;
     var digit: boolean = ch >= 48 && ch <= 57;
@@ -17858,7 +17972,7 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
       return false;
     }
   }
-  return is_unknown(type_from_spelling(type_name, tn));
+  return name.len() > 0;
 }
 
 // e064_unknown_name is the recursive form of the E064 check (#4363 item 3): it
@@ -23092,43 +23206,210 @@ function vb_local_name(body: ast.Stmt[]): string {
   return "";
 }
 
-// vb_assigned_types collects the checked type of every value stored into `name`
-// by the desugar chain, threading the scope the chain's own bindings introduce
-// (the tuple destructure and the per-arm binder decls the desugar emits).
-function vb_assigned_types(stmts: ast.Stmt[], name: string, s: Scope, acc: typeinfo.Type[]): typeinfo.Type[] {
-  var out: typeinfo.Type[] = acc;
+// VbStore is one value stored into a value local: its checked type and the
+// expression, which the join reads for an untyped literal.
+struct VbStore { t: typeinfo.Type, e: ast.Expr }
+
+// vb_assigned_stores collects every value stored into `name` by the desugar
+// chain, threading the scope the chain's own bindings introduce (the tuple
+// destructure and the per-arm binder decls the desugar emits).
+function vb_assigned_stores(stmts: ast.Stmt[], name: string, s: Scope, acc: VbStore[]): VbStore[] {
+  var out: VbStore[] = acc;
   var cur: Scope = s;
   for st in stmts {
     match (st) {
       ast.StmtAssign(a) => {
         if (a.target == name) {
-          out = out.append(check_expr(a.value, cur));
+          out = out.append(VbStore { t: check_expr(a.value, cur), e: a.value });
         }
       },
       ast.StmtIf(f) => {
-        out = vb_assigned_types(f.then_body, name, cur, out);
-        out = vb_assigned_types(f.else_body, name, cur, out);
+        out = vb_assigned_stores(f.then_body, name, cur, out);
+        out = vb_assigned_stores(f.else_body, name, cur, out);
       },
       ast.StmtWhile(w) => {
-        out = vb_assigned_types(w.body, name, cur, out);
+        out = vb_assigned_stores(w.body, name, cur, out);
       },
       ast.StmtFor(fr) => {
-        out = vb_assigned_types(fr.body, name, for_body_scope(fr, cur), out);
+        out = vb_assigned_stores(fr.body, name, for_body_scope(fr, cur), out);
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
-          out = vb_assigned_types(arm.body, name, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), out);
+          out = vb_assigned_stores(arm.body, name, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), out);
         }
       },
       ast.StmtDefer(d) => {
         var one: ast.Stmt[] = [d.action];
-        out = vb_assigned_types(one, name, cur, out);
+        out = vb_assigned_stores(one, name, cur, out);
       },
       _ => {}
     }
     cur = bind_stmt(st, cur);
   }
   return out;
+}
+
+// vb_untyped_fits reports whether `e` is a tree of unsuffixed integer literals
+// that `t` can hold: such a literal settles to the type the value is declared
+// with.
+function vb_untyped_fits(e: ast.Expr, t: typeinfo.Type): boolean {
+  return is_integer(t) && int_literal_tree(e) && int_range_diags(e, type_to_irtag(t), false).len() == 0;
+}
+
+// vb_pinned_ranges is E047 for a value if's or match's literal arms, at the
+// width a typed arm pins: native settles every arm at the joint type, and a
+// typed integer arm leaves the literal no room to widen. A tuple pins element
+// by element.
+function vb_pinned_ranges(ts: typeinfo.Type[], es: ast.Expr[]): util.Diag[] {
+  var out: util.Diag[] = [];
+  if (ts.len() != es.len() || ts.len() == 0) {
+    return out;
+  }
+  if let typeinfo.TypeTuple(t0) = ts[0] {
+    var n: i32 = t0.elements.len();
+    var cols: typeinfo.Type[][] = [];
+    var ecols: ast.Expr[][] = [];
+    var k: i32 = 0;
+    while (k < n) {
+      cols = cols.append([]);
+      ecols = ecols.append([]);
+      k = k + 1;
+    }
+    var i: i32 = 0;
+    while (i < ts.len()) {
+      if let typeinfo.TypeTuple(ti) = ts[i] {
+        if (ti.elements.len() != n) {
+          return out;
+        }
+        var ei: ast.Expr[] = vb_tuple_elems(es[i], n);
+        k = 0;
+        while (k < n) {
+          cols = cols.with(k, cols[k].append(ti.elements[k]));
+          ecols = ecols.with(k, ecols[k].append(ei[k]));
+          k = k + 1;
+        }
+      } else {
+        return out;
+      }
+      i = i + 1;
+    }
+    k = 0;
+    while (k < n) {
+      out = util.append_diags(out, vb_pinned_ranges(cols[k], ecols[k]));
+      k = k + 1;
+    }
+    return out;
+  }
+  var pin: string = "";
+  var i: i32 = 0;
+  while (i < ts.len() && pin.len() == 0) {
+    if (is_integer(ts[i]) && !int_literal_tree(es[i])) {
+      pin = type_to_irtag(ts[i]);
+    }
+    i = i + 1;
+  }
+  if (pin.len() == 0) {
+    return out;
+  }
+  i = 0;
+  while (i < es.len()) {
+    if (int_literal_tree(es[i])) {
+      out = util.append_diags(out, int_range_diags(es[i], pin, false));
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// vb_join joins two stores the way native's widenCompositeByLiterals does: where
+// the types disagree and one side is an untyped integer literal the other's type
+// holds, the slot takes the other type. A tuple joins element by element, and a
+// typed value never widens. The joined expression stays a literal only where
+// both sides were, so a later store meets every typed value before it.
+function vb_join(a: VbStore, b: VbStore): VbStore {
+  var none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  if let typeinfo.TypeTuple(at) = a.t {
+    if let typeinfo.TypeTuple(bt) = b.t {
+      if (at.elements.len() != bt.elements.len()) {
+        return VbStore { t: t_unknown("result tuple arities differ"), e: none };
+      }
+      var aes: ast.Expr[] = vb_tuple_elems(a.e, at.elements.len());
+      var bes: ast.Expr[] = vb_tuple_elems(b.e, bt.elements.len());
+      var elems: typeinfo.Type[] = [];
+      var es: ast.Expr[] = [];
+      var i: i32 = 0;
+      while (i < at.elements.len()) {
+        var j: VbStore = vb_join(VbStore { t: at.elements[i], e: aes[i] }, VbStore { t: bt.elements[i], e: bes[i] });
+        if (is_unknown(j.t)) {
+          return j;
+        }
+        elems = elems.append(j.t);
+        es = es.append(j.e);
+        i = i + 1;
+      }
+      return VbStore { t: t_tuple(elems), e: ast.ExprTuple { elements: es, line: 0, col: 0 } };
+    }
+  }
+  var t: typeinfo.Type = join_result_types(a.t, b.t);
+  if (is_unknown(t) && vb_untyped_fits(b.e, a.t)) {
+    t = a.t;
+  } else if (is_unknown(t) && vb_untyped_fits(a.e, b.t)) {
+    t = b.t;
+  }
+  if (!is_unknown(t) && vb_untyped_fits(a.e, t) && vb_untyped_fits(b.e, t)) {
+    return VbStore { t: t, e: a.e };
+  }
+  return VbStore { t: t, e: none };
+}
+
+// vb_tuple_elems is a tuple literal's elements, or `n` unknowns for any other
+// expression, whose elements are typed values.
+function vb_tuple_elems(e: ast.Expr, n: i32): ast.Expr[] {
+  if let ast.ExprTuple(t) = e {
+    if (t.elements.len() == n) {
+      return t.elements;
+    }
+  }
+  var out: ast.Expr[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(ast.ExprUnknown { kind: "", line: 0, col: 0 });
+    i = i + 1;
+  }
+  return out;
+}
+
+// vb_arms_unified is vb_stores_unified over a value if's or match's arm
+// results, or vb_unified when the expressions do not line up with the types.
+function vb_arms_unified(ts: typeinfo.Type[], es: ast.Expr[]): typeinfo.Type {
+  if (ts.len() != es.len()) {
+    return vb_unified(ts);
+  }
+  var ss: VbStore[] = [];
+  var i: i32 = 0;
+  while (i < ts.len()) {
+    ss = ss.append(VbStore { t: ts[i], e: es[i] });
+    i = i + 1;
+  }
+  return vb_stores_unified(ss);
+}
+
+// vb_stores_unified is vb_unified over the stores themselves, so an untyped
+// literal settles to the width another arm needs.
+function vb_stores_unified(ss: VbStore[]): typeinfo.Type {
+  if (ss.len() == 0) {
+    return t_unknown("value block stores nothing");
+  }
+  var acc: VbStore = ss[0];
+  var i: i32 = 1;
+  while (i < ss.len() && !is_unknown(acc.t)) {
+    acc = vb_join(acc, ss[i]);
+    i = i + 1;
+  }
+  if (is_unknown(acc.t) && ss.len() > 1) {
+    return t_unknown("value block arms disagree");
+  }
+  return acc.t;
 }
 
 // vb_unified returns the type every store agrees on, or unknown when they
@@ -23162,8 +23443,8 @@ function vb_store_type(body: ast.Stmt[], name: string, s: Scope): typeinfo.Type 
     chain = chain.append(body[i]);
     i = i + 1;
   }
-  var none: typeinfo.Type[] = [];
-  return vb_unified(vb_assigned_types(chain, name, bind_stmt(body[0], s), none));
+  var none: VbStore[] = [];
+  return vb_stores_unified(vb_assigned_stores(chain, name, bind_stmt(body[0], s), none));
 }
 
 // vb_local_tag names `t` as the value local's declaration spells it, or "" for a

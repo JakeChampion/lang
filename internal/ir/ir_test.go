@@ -752,7 +752,7 @@ function main(): i32 {
 }
 
 // Pointer-shaped payloads on wasm: a pointer is i32 on wasm32,
-// so `enum Cell { Filled(string), Empty }` lays flat into the
+// so `enum Slot { Filled(string), Empty }` lays flat into the
 // `(result i32 i32)` pair-form ABI. The wasm function-side
 // emits OpMakeNoneI32 + OpReturnPair instead of an alloc.
 func TestLowerUserEnumPointerPayloadIsNotPairFormOnWasm(t *testing.T) {
@@ -762,10 +762,10 @@ func TestLowerUserEnumPointerPayloadIsNotPairFormOnWasm(t *testing.T) {
 	// one i32 payload slot but a string needs two. `f` should
 	// stay on the heap-box return shape (OpEnumSentinel for
 	// nullary Empty).
-	prog := lowerSource(t, `enum Cell { Filled(string), Empty }
-function f(): Cell { return Empty; }`)
+	prog := lowerSource(t, `enum Slot { Filled(string), Empty }
+function f(): Slot { return Empty; }`)
 	if prog.PairForm["f"] {
-		t.Errorf("f must not be pair-form on wasm32 (Cell payload includes string):\n%s", prog)
+		t.Errorf("f must not be pair-form on wasm32 (Slot payload includes string):\n%s", prog)
 	}
 }
 
@@ -776,8 +776,8 @@ function f(): Cell { return Empty; }`)
 // the payload is pointer-shape. Same nullary `OpMakeNoneI32`
 // for the Empty branch.
 func TestLowerUserEnumPointerPayloadIsPairFormOnNatives(t *testing.T) {
-	prog := lowerSourceWith(t, `enum Cell { Filled(string), Empty }
-function f(): Cell { return Empty; }`, 8)
+	prog := lowerSourceWith(t, `enum Slot { Filled(string), Empty }
+function f(): Slot { return Empty; }`, 8)
 	fn := findFunc(prog, "f")
 	if fn == nil {
 		t.Fatal("f not found")

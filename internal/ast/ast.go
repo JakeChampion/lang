@@ -1159,6 +1159,8 @@ func ElemSizeBytesFor(t Type, ptrW int) int {
 			return 8
 		}
 		return 4
+	case CharType:
+		return 4
 	case StringType:
 		if UseTwoWordStrings(ptrW) {
 			return 2 * ptrW
@@ -4157,6 +4159,9 @@ type UnionDecl struct {
 	// too so the synthesised enum's variant tags are stable across
 	// re-checks.
 	Members []StructType
+	// MemberLines is the source line of each member, parallel to Members, so
+	// the formatter can keep a union written across lines on those lines.
+	MemberLines []int
 	// Public marks the union as exported across modules — same
 	// semantics as EnumDecl.Public.
 	Public bool

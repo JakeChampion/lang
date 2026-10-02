@@ -1,7 +1,8 @@
 # Keep WASI HTTP response bodies as bytes
 
-This change is combined with HTTP byte serialization and the file-byte sink
-at `68aa3984d`. The integrated target tests, bootstrap, full unit suite and lint pass.
+This change includes HTTP byte serialization, the file-byte sink and main
+through `0d7a8d321`. Integrated target tests, bootstrap and lint pass. The full
+unit suite passed before this latest main integration and is being refreshed.
 The primary component size was remeasured with
 the integrated stage-2 compiler and remains 60,113 bytes.
 
@@ -60,8 +61,9 @@ No size baseline was raised.
 
 Helper pruning is integrated. Linux target tests and actual stage-2 Darwin,
 core WASM and Preview 2 probes pass. The pinned seed produces identical
-stage-2 and stage-3 compiler binaries of 12,097,665 bytes, SHA-256
-`c9046fac4eda687a09ee26b41a49a591373aa7e1056ee34ab6d38686381c65f0`.
+stage-2 and stage-3 compiler binaries of 12,130,737 bytes, SHA-256
+`9f2b730c45086688adbcea3fe8d7474d3c67ee617598cf8871581005679374c2`.
 The seed predates generator changes on main, so stage 1 differs.
-The full unit suite and `make lint-all` pass in the updated Linux snapshot.
+`make lint-all` passes in the updated Linux snapshot. The full unit suite
+passed on `fd1a49d27`; its latest main integration is being refreshed.
 TCP, UDP and file byte sinks remain separate work under #10948.

@@ -277,6 +277,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"nested-generic-struct-literal-wide", "struct Box[T] { v: T }\nstruct Two[T] { b: Box[T], c: T }\nfunction main(): i32 { var o = Two { b: Box { v: 4611686018427387904 }, c: 1 }; var r: i64 = o.c; return 0; }\n", nil},
 		// A generic call in an unbound field infers from the destination.
 		{"generic-call-in-unbound-field", "struct Holder[T] { xs: T[], z: T }\nfunction emptyArr[A](): A[] { return []; }\nfunction f[T](t: T): Holder[T] { var h = Holder { xs: emptyArr(), z: t }; return h; }\nfunction main(): i32 { var h = f(7); return h.z; }\n", nil},
+		// A match on a built-in Option or Result is held to E014 and E030
+		// like any enum's (#10985).
+		{"option-match-result-arms", "function f(): Option[i32] { return Some(3); }\nfunction main(): i32 { match (f()) { Ok(_) => { return 1; }, Err(_) => { return 9; } } return 0; }\n", []string{"E014", "E030"}},
+		{"option-match-misspelled-arm", "function f(): Option[i32] { return Some(3); }\nfunction main(): i32 { match (f()) { Some(v) => { return v; }, Nope => { return 9; } } return 0; }\n", []string{"E014", "E030"}},
+		{"result-match-missing-err", "function f(): Result[i32, string] { return Ok(3); }\nfunction main(): i32 { match (f()) { Ok(v) => { return v; } } return 0; }\n", []string{"E030"}},
+		{"option-result-matches-exhaustive", "function f(): Option[i32] { return Some(3); }\nfunction g(): Result[i32, string] { return Err(\"e\"); }\nfunction main(): i32 { var n: i32 = 0; match (f()) { Some(v) when v > 9 => { n = 1; }, Some(v) => { n = v; }, None => { n = 2; } } match (g()) { Ok(v) => { n = n + v; }, _ => { n = n + 1; } } if let Some(w) = f() { n = n + w; } return n; }\n", nil},
 		// Two instantiations of one generic struct in an array literal are
 		// E034 unless an integer literal gives way to the other's (#10912).
 		{"array-two-instantiations", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var xs = [Same { a: 1, b: 2 }, Same { a: \"x\", b: \"y\" }]; return 0; }\n", []string{"E034"}},
@@ -369,6 +375,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// reference and builds something new is clean in both, and one that
 		// can hand its borrowed parameter back — directly, through a local, or
 		// through a chain — still draws E051 in both.
+		// A local handed to an `own` parameter inside a returned tuple dies at
+		// the call, loop or not: the return exits (#10679). A second mention in
+		// the returned value withholds it.
+		{"e051-local-moved-inside-a-returned-tuple", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(n: i32): (i32, boolean) {\n    var i: i32 = 0;\n    while (i < n) {\n        var xs: i32[] = [i];\n        if (i > 2) { return (keep(xs), true); }\n        i = i + 1;\n    }\n    return (0, false);\n}\nfunction main(): i32 { var r: (i32, boolean) = f(5); return r.0; }\n", nil},
+		{"e051-local-named-twice-in-a-returned-tuple", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(n: i32): (i32, i32) {\n    var i: i32 = 0;\n    while (i < n) {\n        var xs: i32[] = [i];\n        if (i > 2) { return (keep(xs), xs.len()); }\n        i = i + 1;\n    }\n    return (0, 0);\n}\nfunction main(): i32 { var r: (i32, i32) = f(5); return r.0; }\n", []string{"E051"}},
 		{"e051-fresh-result-from-a-borrowing-factory", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction build(tag: string): i32[] { return [tag.len()]; }\nfunction main(): i32 { return keep(build(\"xy\")); }\n", nil},
 		{"e051-fresh-result-through-a-call-chain", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction sized(xs: i32[]): i32[] { return [xs.len()]; }\nfunction relay(ys: i32[]): i32[] { return sized(ys); }\nfunction main(): i32 { return keep(relay([1, 2])); }\n", nil},
 		{"e051-result-is-the-borrowed-parameter", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction passthru(xs: i32[]): i32[] { return xs; }\nfunction main(): i32 { return keep(passthru([1, 2])); }\n", []string{"E051"}},
@@ -646,6 +657,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E064 in a body `var` annotation. The init `q()` is itself undefined
 		// (E001), so there is no E003 init-mismatch cascade to diverge on.
 		{"unknown-var-type", "function main(): i32 { var x: Wibble = q(); return 0; }\n", []string{"E001", "E064"}},
+		// A typed init into that annotation is E003 beside the E064, since
+		// the type is unknown to native too (#10965); a bare unknown struct
+		// literal is E043 where it stands.
+		{"unknown-var-type-typed-init", "function main(): i32 { var x: Wibble = 3; return 0; }\n", []string{"E003", "E064"}},
+		{"unknown-struct-literal", "function main(): i32 { var w = Wibble { x: 1 }; return 0; }\n", []string{"E043"}},
 		// Sub-word integer keywords (u8/usize) the parser accepts but the
 		// self-host name resolver doesn't model. They must NOT draw E064 in a
 		// body `var` annotation — the Go oracle accepts them, and the stdlib uses
@@ -1297,6 +1313,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// than the local-backed one, and one that views a param-backed
 		// source, both stay accepted — a summary coarsened to "this
 		// function returns some view" would reject both.
+		// A struct literal naming no struct is E043, so the typed lowering
+		// never meets it (#10965): an imported struct left unqualified, and a
+		// name nothing declares.
+		{"e043-literal-of-unqualified-imported-struct", "import \"std/json\";\nfunction main(): i32 {\n    var e: json.JsonError = JsonError { message: \"m\", offset: 0, line: 1, col: 1 };\n    return e.line;\n}\n", []string{"E043"}},
+		{"e043-literal-of-undeclared-struct", "function main(): i32 {\n    var l = Nope { body: 1024 };\n    return 0;\n}\n", []string{"E043"}},
+		// A `str` receiver's summary is keyed as `string`, the key a call site
+		// looks it up by (#10924).
+		{"e065-str-receiver-method", "function mk(): string { return \"ab\"; }\nfunction (s: str) head1(): str { return slice_unchecked(s, 0, 1); }\nfunction f(): str { var s: string = mk(); return s.head1(); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-callee-launder", "function mk(): string { return \"ab\"; }\nfunction idv(s: str): str { return s; }\nfunction f(): str { var s: string = mk(); return idv(slice_unchecked(s, 0, 1)); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-callee-two-hop", "function mk(): string { return \"ab\"; }\nfunction idv(s: str): str { return s; }\nfunction hop(s: str): str { return idv(s); }\nfunction f(): str { var s: string = mk(); return hop(slice_unchecked(s, 0, 1)); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-callee-method", "function mk(): string { return \"ab\"; }\nfunction (s: string) view(): str { return s; }\nfunction f(): str { var s: string = mk(); return s.view(); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
@@ -1892,6 +1916,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"shadow-result", "enum Result { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"shadow-ioerror", "enum IoError { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"shadow-jsonvalue", "enum JsonValue { A, B }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
+		// A value if's literal arm widens to the width another literal arm needs,
+		// and a typed arm pins it, so the literal must fit (#10859).
+		{"value-if-literal-arms-widen", "function main(): i32 {\n  var r: i64 = 5;\n  var p = if (r > 0) { (2, 4611686018427387905) } else { (3, 4) };\n  var q = if (r > 0) { 4 } else { 4611686018427387905 };\n  return p.0;\n}\n", nil},
+		{"value-if-typed-arm-pins-a-tuple-literal", "function main(): i32 {\n  var r: i64 = 5;\n  var n: i32 = 4;\n  var p = if (r > 0) { (2, n) } else { (3, 4611686018427387905) };\n  return p.0;\n}\n", []string{"E047"}},
+		{"value-match-typed-arm-pins-a-literal", "function main(): i32 {\n  var n: i32 = 4;\n  var q = match (n) { 4 => { n }, _ => { 4611686018427387905 } };\n  return q;\n}\n", []string{"E047"}},
+		// A reserved name is reserved whatever kind takes it (#10855).
+		{"enum-takes-builtin-struct-name", "import \"std/string\";\nenum Span { Empty, Wide(f64, string) }\nfunction f(s: Span): i32 {\n  match (s) { Wide(d, t) => { return (d * 4.0) as i32 + t.len(); }, Empty => { return 0; } }\n}\nfunction main(): i32 { return f(Wide(1.0, \"ab\")); }\n", []string{"E010"}},
+		{"struct-takes-builtin-enum-name", "struct Option { n: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"enum-non-reserved-ok", "enum Color { Red, Green }\nfunction main(): i32 { return 0; }\n", nil},
 		// Generic functions: a concrete argument must NOT be flagged against
 		// the opaque type parameter (E038 false-positive guard).
@@ -2238,16 +2270,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// exactly once, directly, in an `own` position of its OWN
 		// reassignment's RHS is a transfer — admitted by both checkers
 		// (native SelfReassignOwnMoveArg / self-host ow_self_move_admits).
-		// Binding to a different name (old binding kept alive) or a second
-		// read of the local in the same RHS stays E051.
+		// Binding the result to a different name is a move too when nothing
+		// reads the local afterwards (#10864); a second read of the local in
+		// the same RHS stays E051.
 		{"own-self-reassign-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    a = grow(a, 1);\n    a = grow(a, 2);\n    return a.items.len();\n}\n", nil},
-		{"own-kept-alive-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    var c: B = grow(a, 1);\n    return c.items.len();\n}\n", []string{"E051"}},
+		{"own-other-name-last-use-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    var c: B = grow(a, 1);\n    return c.items.len();\n}\n", nil},
 		{"own-second-read-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [7] };\n    a = grow(a, a.items[0]);\n    return a.items.len();\n}\n", []string{"E051"}},
 		// The same three, one nesting level in: the admission is a
 		// STATEMENT-level fact, so a walk that reaches a nested body as one
 		// flat expression loses it and flags the transfer (#7452).
 		{"own-self-reassign-local-func-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    function build(): i32 {\n        var a: B = B { items: [] };\n        a = grow(a, 1);\n        return a.items.len();\n    }\n    return build();\n}\n", nil},
-		{"own-kept-alive-local-func-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    function build(): i32 {\n        var a: B = B { items: [] };\n        var c: B = grow(a, 1);\n        return c.items.len();\n    }\n    return build();\n}\n", []string{"E051"}},
+		{"own-other-name-last-use-local-func-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    function build(): i32 {\n        var a: B = B { items: [] };\n        var c: B = grow(a, 1);\n        return c.items.len();\n    }\n    return build();\n}\n", nil},
 		// A local function's OWN `own` parameter is owned inside its body, so
 		// it transfers onward like a top-level one's.
 		{"own-local-func-param-transfer-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction main(): i32 {\n    function inner(own b: i32[]): i32 { return consume(b); }\n    return inner([1]);\n}\n", nil},
@@ -2617,10 +2650,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"union-generic-member-with-arguments", "struct Box[T] { v: T }\nstruct B { w: i32 }\ntype X = Box[i32] | B;\nfunction main(): i32 { return 0; }\n", nil},
 		{"union-generic-alias", "struct Leaf[T] { v: T }\nstruct Lit { v: i32 }\ntype Tree[T] = Leaf[T] | Lit;\nfunction main(): i32 { var t: Tree[i32] = Lit { v: 1 }; return 0; }\n", nil},
 		{"union-generic-alias-arity", "struct Leaf[T] { v: T }\nstruct Lit { v: i32 }\ntype Tree[T] = Leaf[T] | Lit;\nfunction main(): i32 { var t: Tree[i32, i32] = Lit { v: 1 }; return 0; }\n", []string{"E019"}},
+		// A built-in's annotation is held to the built-in's arity (#10897).
+		{"builtin-struct-arity-map", "import \"core/map\";\nfunction f(x: Map[string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
+		{"builtin-struct-arity-cell", "function f(x: Cell[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
+		{"builtin-enum-arity-option", "function f(x: Option[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
+		{"builtin-enum-arity-result", "function f(x: Result[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
+		{"builtin-arity-ok", "function f(x: Cell[i32], y: Option[i32], z: Result[i32, string], w: IoError): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"enum-generic-arity", "struct Lit { v: i32 }\nenum Tree[T] { Leaf(T), Lit(Lit) }\nfunction f(t: Tree[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E019"}},
-		// A user enum shadowing a built-in's name leaves the annotation meaning
-		// the built-in: `Cell[i32]` is not checked against the enum's arity.
-		{"enum-shadows-builtin-arity", "enum Cell { Text(string), Num(i32) }\nfunction f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		// A user enum taking a built-in struct's name is E010, as a struct would
+		// be, so `Cell[i32]` never has to choose between them (#10855).
+		{"enum-shadows-builtin-arity", "enum Cell { Text(string), Num(i32) }\nfunction f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E010"}},
 		{"union-bare-cell-member", "struct B { w: i32 }\ntype X = Cell | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-bare-map-member", "struct B { w: i32 }\ntype X = Map | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-bare-mapiter-member", "struct B { w: i32 }\ntype X = MapIter | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
@@ -3257,6 +3296,12 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"e051-last-use-ret-binary-lit", lastUsePrelude + "function f(): i32 { var a: i32[] = [1]; return keep(a, 1) + 1; }\n"},
 		{"e051-last-use-mid-call", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var r: i32 = keep(a, 1); return r; }\n"},
 		{"e051-last-use-mid-lit", lastUsePrelude + "function f(): i32 { var a: i32[] = [1]; var r: i32 = keep(a, 1); return r; }\n"},
+		// A literal-built local is as fresh as a call-bound one (#10864).
+		{"e051-last-use-mid-lit-grown", lastUsePrelude + "function f(): i32 { var a: i32[] = []; a = a.append(1); var r: i32 = keep(a, 1); return r; }\n"},
+		{"e051-last-use-ret-binary-lit-grown", lastUsePrelude + "function f(): i32 { var a: i32[] = []; a = a.append(1); return keep(a, 1) + 0; }\n"},
+		{"e051-last-use-mid-struct-lit", lastUsePrelude + "function f(): i32 { var w: W = W { d: [1], n: 2 }; var r: i32 = eat(w); return r; }\n"},
+		{"e051-last-use-mid-string-lit", lastUsePrelude + "function takes(own s: string): i32 { return s.len(); }\nfunction f(): i32 { var s: string = \"ab\"; s = s + \"c\"; var r: i32 = takes(s); return r; }\n"},
+		{"e051-last-use-spread-lit", lastUsePrelude + "function f(): i32 { var v: W = mkw(1); var w: W = W { ...v, n: 2 }; var r: i32 = eat(w); return r + v.n; }\n"},
 		{"e051-last-use-read-again", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var r: i32 = keep(a, 1); return r + a[0]; }\n"},
 		{"e051-last-use-loop", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var t: i32 = 0; while (t < 3) { t = t + keep(a, 1); } return t; }\n"},
 		{"e051-last-use-loop-nested-reassign", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var t: i32 = 0; while (t < 3) { a = grow(grow(a, t), 1); t = t + 1; } return a.len(); }\n"},
@@ -3384,6 +3429,11 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"derive-qualified-field-no-impl", "import \"core/cmp\";\nstruct Q { n: i32 }\n@derive(cmp.Eq)\nstruct P { q: Q }\nfunction main(): i32 { return 0; }\n"},
 		{"derive-aliased-bound-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction same[T: c.Eq](a: T, b: T): boolean { return a.eq(b); }\nfunction main(): i32 { var p: P = P { n: 1 }; if (same(p, p)) { return 3; } return 0; }\n"},
 		{"derive-unknown-qualifier", "@derive(cmp.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
+		// An imported module's struct named without its qualifier (#10965):
+		// E064 on the annotation with E003 beside it, and E043 on the literal,
+		// never a clean pass that the lowering then refuses.
+		{"imported-struct-unqualified", "import \"std/http\";\nfunction main(): i32 {\n    var small: HttpLimits = http.http_limits();\n    var l: http.HttpLimits = HttpLimits { ...small, body: 1024 };\n    return l.body;\n}\n"},
+		{"imported-struct-unqualified-literal", "import \"std/http\";\nfunction main(): i32 {\n    var l: http.HttpLimits = HttpLimits { request_line: 1, header_bytes: 2, header_fields: 3, body: 1024 };\n    return l.body;\n}\n"},
 		// Seven programs native accepts that the self-host checker refused (#10767),
 		// and the typed result of an inherent associated call that one of them needed.
 		{"bitwise-and-shift-overloads", "struct F { b: i32 }\nfunction (self: F) bitand(o: F): F { return F { b: self.b & o.b }; }\nfunction (self: F) bitor(o: F): F { return F { b: self.b | o.b }; }\nfunction (self: F) bitxor(o: F): F { return F { b: self.b ^ o.b }; }\nfunction (self: F) shl(o: F): F { return F { b: self.b << o.b }; }\nfunction (self: F) shr(o: F): F { return F { b: self.b >> o.b }; }\nfunction main(): i32 { var a: F = F { b: 12 }; var c: F = a & a; c = a | c; c = a ^ c; c = a << F { b: 1 }; c = c >> F { b: 1 }; return c.b; }\n"},

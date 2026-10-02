@@ -538,13 +538,10 @@ func (f *formatter) writeEnumVariant(v ast.EnumVariant) {
 	}
 }
 
-// formatUnionDecl emits `type Name = A | B | C;` on a single
-// line. Round-trips the source shape verbatim — members are
-// preserved in declaration order (matches the checker desugar
-// that stamps variant tags by member index, so a reorder here
-// would shift the tag map). Generic unions aren't supported
-// yet (see the punted-follow-up note on UnionDecl); when they
-// land this needs to spell the `[T, U]` parameter list too.
+// formatUnionDecl emits `type Name = A | B | C;`, members in declaration
+// order (the checker desugar stamps variant tags by member index). A union
+// written across lines keeps its lines: members that shared a source line
+// share an output line, and each later line continues with a leading `|`.
 func (f *formatter) formatUnionDecl(ud *ast.UnionDecl) {
 	if ud.PackageScoped {
 		f.b.WriteString("pub(package) ")
@@ -555,8 +552,16 @@ func (f *formatter) formatUnionDecl(ud *ast.UnionDecl) {
 	f.b.WriteString(ud.Name)
 	f.writeTypeParams(ud.TypeParams, nil, nil)
 	f.b.WriteString(" = ")
+	ln := ud.MemberLines
+	kept := len(ln) == len(ud.Members) && len(ln) > 0 && ln[0] > 0 && ln[len(ln)-1] > ln[0]
 	for i, m := range ud.Members {
-		if i > 0 {
+		switch {
+		case i == 0:
+		case kept && ln[i] > ln[i-1]:
+			f.b.WriteByte('\n')
+			f.indent(1)
+			f.b.WriteString("| ")
+		default:
 			f.b.WriteString(" | ")
 		}
 		f.b.WriteString(m.Name)
