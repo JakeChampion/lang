@@ -10830,10 +10830,27 @@ pub function top_arrow_at(s: string): i32 {
   return 0 - 1;
 }
 
+// plain_type_spelling: no bracket, paren or arrow, so every branch of
+// parse_type_ref below falls through to the plain named type.
+function plain_type_spelling(s: string): boolean {
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c: u8 = s[i];
+    if (c == b'[' || c == b'(' || c == b'=') {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
 // parse_type_ref decodes a canonical type spelling into a TypeRef tree. It is the
 // single place the "[]" / "(…)" / "Name[…]" / ", " grammar is scanned; every
 // other decoder should call this rather than re-implement the depth tracking.
 pub function parse_type_ref(sin: string): TypeRef {
+  if (plain_type_spelling(sin)) {
+    return TypeRef { base: sin, args: [], array_depth: 0, is_tuple: false, is_fn: false, is_view: false };
+  }
   var s: string = sin;
   var depth: i32 = 0;
   // Function "(P, Q) => R": base "", args are the parameters with the RESULT
