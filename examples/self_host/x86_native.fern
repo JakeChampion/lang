@@ -6085,7 +6085,8 @@ pub function x86_gas_assemble(src: string): X86Asm {
   // nothing: what differs between rounds is the byte offsets, and those are
   // what a round computes. Not the fix for #8146 — the arena limit that
   // issue tracks is still open and its cause still unidentified.
-  let pl: GasLine[] = x86_gas_prepare(src);
+  let text: GasText = x86_gas_prepare(src);
+  let pl: GasLine[] = text.lines;
   // The labels are indexed once as well: a round places them in the same
   // order, so every reference reads its target through the index rather
   // than hashing the name again in each round.
@@ -6094,13 +6095,13 @@ pub function x86_gas_assemble(src: string): X86Asm {
   // The first round encodes every line and keeps the bytes of the ones the
   // second round cannot change (EncCache); that round copies those and
   // encodes only the rest.
-  let first: AsmRound = x86_gas_assemble_pass_prepared(pl, labs, [], EncCache { code: [], at: [], end: [] });
+  let first: AsmRound = x86_gas_assemble_pass_prepared(pl, labs, [], EncCache { code: [], at: [], end: [] }, text.nmemo);
   let a: X86Asm = first.a;
   let longs: boolean[] = x86_relax_settle(a);
   if (!x86_bools_any(longs)) {
     return a;
   }
-  a = x86_gas_assemble_pass_prepared(pl, labs, longs, first.cache).a;
+  a = x86_gas_assemble_pass_prepared(pl, labs, longs, first.cache, text.nmemo).a;
   if (x86_bools_differ(x86_relax_grow(a, longs), longs)) {
     return X86Asm { ...a, unknown: a.unknown.append("internal: branch relaxation did not settle") };
   }
@@ -6562,7 +6563,11 @@ struct GasLine {
   dst: string,  // the arm takes `rest` whole
   def_idx: i32,  // the label table entry this line's label is, -1 when none
   ref_idx: i32,  // the entry a jcc, jmp, call or `.quad sym` names, -1 when none or unknown
+  memo: i32,  // the x86_gas_prepare memo entry every repeat of this text shares, -1 when none
 }
+
+// GasText is the prepared lines with the size of the memo they index.
+struct GasText { lines: GasLine[], nmemo: i32 }
 
 // The labels of a program, indexed once (x86_gas_label_table): the names in
 // definition order, which is the order every round places them in, so an
@@ -6677,6 +6682,61 @@ function x86_mnem_added(ix: MnemIndex, mnem: string): MnemIndex {
   let b: i32 = x86_name_bucket(mnem);
   let at: i32 = ix.names.len();
   return MnemIndex { names: ix.names.append(mnem), head: ix.head.with(b, at), next: ix.next.append(ix.head[b]) };
+}
+
+// LineMemo is the distinct lines x86_gas_prepare has parsed whose GasLine
+// carries no label and names none (x86_line_memoable), keyed by the raw text
+// between two newlines and chained through the label-name buckets. A
+// repeated line is appended from `lines` without being parsed again, and
+// every repeat shares the one GasLine, whose `memo` is its index here.
+struct LineMemo { keys: string[], head: i32[], next: i32[], lines: GasLine[] }
+
+// x86_line_bucket is x86_name_bucket over a view of the text.
+function x86_line_bucket(s: str): i32 {
+  let h: i32 = 0;
+  let i: i32 = 0;
+  let n: i32 = s.len();
+  while (i < n) {
+    h = h * 131 + s[i] as i32 & 8388607;
+    i = i + 1;
+  }
+  return h % 4093;
+}
+
+function x86_line_memo_lookup(m: LineMemo, raw: str): i32 {
+  let i: i32 = m.head[x86_line_bucket(raw)];
+  while (i >= 0) {
+    if (m.keys[i] == raw) {
+      return i;
+    }
+    i = m.next[i];
+  }
+  return 0 - 1;
+}
+
+// x86_line_memo_added is `m` with `l` under `raw`, which it does not hold.
+// The bucket's old head is read before the head array is stored to: the
+// store is in place on the owned memo.
+function x86_line_memo_added(own m: LineMemo, raw: str, l: GasLine): LineMemo {
+  let b: i32 = x86_line_bucket(raw);
+  let at: i32 = m.keys.len();
+  let prev: i32 = m.head[b];
+  m = LineMemo { ...m, keys: m.keys.append(raw + ""), head: m.head.with(b, at), next: m.next.append(prev), lines: m.lines.append(GasLine { ...l, memo: at }) };
+  return m;
+}
+
+// A line is memoable when its bytes can depend on nothing but its text: a
+// branch to a label is relaxed per round, and a %rip operand is queued as a
+// name-based fixup x86_resolve rewrites per round, so neither reaches the
+// replay cache and the memo would hold one entry per such line for nothing.
+function x86_line_memoable(l: GasLine): boolean {
+  if (l.kind == GK_JCC) {
+    return false;
+  }
+  if (l.kind == GK_BRANCH && (l.rest.len() == 0 || l.rest[0] != b'*')) {
+    return false;
+  }
+  return !x86_str_contains(l.rest, "%rip");
 }
 
 // MnemVerdict is what x86_gas_classify decides from the mnemonic alone, in
@@ -6868,7 +6928,7 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
 // mnemonic's verdict and its operand text: the verdict's arms in their order,
 // with the tests that read the operands between them where they stand.
 function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasLine {
-  let l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
+  let l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1 };
   if (v.vz && rest.len() == 0) {
     return GasLine { ...l, kind: GK_VZEROUPPER };
   }
@@ -6904,12 +6964,15 @@ function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasL
 // x86_gas_prepare does every line's round-invariant parsing once: comment
 // strip, trim, the label prefix, and the mnemonic/operand split. Blank and
 // comment-only lines are dropped here, so no round ever sees one.
-function x86_gas_prepare(src: string): GasLine[] {
+function x86_gas_prepare(src: string): GasText {
   let out: GasLine[] = [];
   // A mnemonic's verdict is decided once: `seen` indexes the distinct
   // mnemonics met so far and `verdicts` holds theirs in the same order.
   let seen: MnemIndex = MnemIndex { names: [], head: x86_empty_buckets(), next: [] };
   let verdicts: MnemVerdict[] = [];
+  // A line's text is parsed once: a repeat of a memoable line is its memo
+  // entry, looked up on the raw text before anything else reads it.
+  let memo: LineMemo = LineMemo { keys: [], head: x86_empty_buckets(), next: [], lines: [] };
   // Each line is read as a view of the text, its comment stripped and its
   // ends trimmed by index, and copied once. The text is scanned for `\n`
   // with __memchr rather than split into a second copy of every line.
@@ -6922,11 +6985,17 @@ function x86_gas_prepare(src: string): GasLine[] {
     }
     let raw: str = slice_unchecked(src, pos, nl);
     pos = nl + 1;
-    let hash: i32 = x86_gas_comment_start(raw);
-    if (hash >= 0) {
-      raw = slice_unchecked(raw, 0, hash);
+    let mi0: i32 = x86_line_memo_lookup(memo, raw);
+    if (mi0 >= 0) {
+      out = out.append(memo.lines[mi0]);
+      continue;
     }
-    let lv: str = x86_gas_trimmed(raw);
+    let hash: i32 = x86_gas_comment_start(raw);
+    let code: str = raw;
+    if (hash >= 0) {
+      code = slice_unchecked(raw, 0, hash);
+    }
+    let lv: str = x86_gas_trimmed(code);
     if (lv.len() == 0) {
       continue;
     }
@@ -6956,32 +7025,42 @@ function x86_gas_prepare(src: string): GasLine[] {
         rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
       }
     }
-    if (mnem.len() == 0) {
-      out = out.append(GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 });
-    } else {
+    let gl: GasLine = GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1, memo: 0 - 1 };
+    if (mnem.len() > 0) {
       let mi: i32 = x86_mnem_lookup(seen, mnem);
       if (mi < 0) {
         mi = seen.names.len();
         seen = x86_mnem_added(seen, mnem);
         verdicts = verdicts.append(x86_gas_mnem_verdict(mnem));
       }
-      out = out.append(GasLine { ...x86_gas_classify_with(verdicts[mi], mnem, rest), label: label, body: line });
+      gl = GasLine { ...x86_gas_classify_with(verdicts[mi], mnem, rest), label: label, body: line };
     }
+    if (label.len() == 0 && x86_line_memoable(gl)) {
+      memo = x86_line_memo_added(memo, raw, gl);
+      gl = memo.lines[memo.lines.len() - 1];
+    }
+    out = out.append(gl);
   }
-  return out;
+  return GasText { lines: out, nmemo: memo.lines.len() };
 }
 
 // x86_gas_assemble_pass_prepared assembles one relaxation round from the
 // already-parsed lines.
-function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: boolean[], cache: EncCache): AsmRound {
+function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: boolean[], cache: EncCache, nmemo: i32): AsmRound {
   let a: X86Asm = x86_asm_new_prepared(labs, longs);
   // The first round records; a cache with an entry per line replays.
   let record: boolean = cache.at.len() == 0;
   let at: i32[] = [];
   let end: i32[] = [];
+  // Within the recording round, the bytes a kept line produced, by its memo
+  // entry: a repeat of it copies those instead of encoding its text again.
+  let mat: i32[] = [];
+  let mend: i32[] = [];
   if (record) {
     at = x86_filled(pl.len(), 0 - 1);
     end = x86_filled(pl.len(), 0);
+    mat = x86_filled(nmemo, 0 - 1);
+    mend = x86_filled(nmemo, 0);
   }
   // The CFI recorder is threaded as its own uniquely-held local and folded
   // into `a` once at the end: recording through the field would append its
@@ -7138,6 +7217,14 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       }
       continue;
     }
+    let mk: i32 = pline.memo;
+    if (mk >= 0 && mat[mk] >= 0) {
+      let c1: i32 = a.code.len();
+      a = x86_copy_bytes(a, mat[mk], mend[mk]);
+      at = at.with(li - 1, c1);
+      end = end.with(li - 1, a.code.len());
+      continue;
+    }
     let c0: i32 = a.code.len();
     let fx0: i32 = a.fix_offs.len();
     let ft0: i32 = a.fix_tail_offs.len();
@@ -7151,6 +7238,10 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       && a.unknown.len() == un0 && a.dfix_offs.len() == df0 && a.rodata.len() == rd0 && a.bss_size == bs0) {
       at = at.with(li - 1, c0);
       end = end.with(li - 1, a.code.len());
+      if (mk >= 0) {
+        mat = mat.with(mk, c0);
+        mend = mend.with(mk, a.code.len());
+      }
     }
   }
   // Fold the recorder in before resolution: the data base sits past the
@@ -7163,6 +7254,19 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
     return AsmRound { a: a, cache: EncCache { code: a.code, at: at, end: end } };
   }
   return AsmRound { a: a, cache: cache };
+}
+
+// x86_copy_bytes appends the code's own bytes [from, to) to its end, the
+// way x86_replay_bytes appends a cached line's.
+function x86_copy_bytes(own a: X86Asm, from: i32, to: i32): X86Asm {
+  let code: i32[] = a.code;
+  a = X86Asm { ...a, code: [] };
+  let k: i32 = from;
+  while (k < to) {
+    code = code.append(code[k]);
+    k = k + 1;
+  }
+  return X86Asm { ...a, code: code };
 }
 
 // x86_replay_bytes appends line `i`'s cached bytes. The buffer is pulled out
