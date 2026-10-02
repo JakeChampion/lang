@@ -1,5 +1,7 @@
-// std/wasi_http — the wasi:http/incoming-handler entry a `-target
-// wasm32-wasi-http` build exports.
+// std/wasi_http — the wasi:http bindings of a `-target wasm32-wasi-http`
+// build: the wasi:http/incoming-handler entry it exports, and the
+// wasi:http/outgoing-handler client std/fetch sends through on that
+// target.
 //
 // A proxy host (`wasmtime serve`, an edge platform) calls the component's
 // `handle(request, response-out)` once per request with two owned resource
@@ -29,7 +31,7 @@ import "std/platform";
 
 // The wasi:http method variant, in the WIT's case order: the discriminant
 // the host writes is this variant's index.
-enum WasiHttpMethod { Get, Head, Post, Put, Delete, Connect, Options, Trace, Patch, Other(string) }
+enum WasiHttpMethod { MethodGet, MethodHead, MethodPost, MethodPut, MethodDelete, MethodConnect, MethodOptions, MethodTrace, MethodPatch, MethodOther(string) }
 
 @import("wasi:http/types@0.2.0", "[method]incoming-request.method")
 function req_method(req: i32): WasiHttpMethod;
@@ -145,77 +147,122 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, Platfo
 
 function method_name(m: WasiHttpMethod): string {
   match (m) {
-    Get => {
+    MethodGet => {
       return "GET";
     },
-    Head => {
+    MethodHead => {
       return "HEAD";
     },
-    Post => {
+    MethodPost => {
       return "POST";
     },
-    Put => {
+    MethodPut => {
       return "PUT";
     },
-    Delete => {
+    MethodDelete => {
       return "DELETE";
     },
-    Connect => {
+    MethodConnect => {
       return "CONNECT";
     },
-    Options => {
+    MethodOptions => {
       return "OPTIONS";
     },
-    Trace => {
+    MethodTrace => {
       return "TRACE";
     },
-    Patch => {
+    MethodPatch => {
       return "PATCH";
     },
-    Other(s) => {
+    MethodOther(s) => {
       return s;
     }
   }
   return "";
 }
 
-// read_body drains the request body: consume, stream, read until the stream
-// closes or errs, drop the stream, then finish the body (its trailers
-// dropped unread). A request the host refuses to consume reads as empty.
+// read_body drains the request body whole. A request the host refuses to
+// consume reads as empty.
 function read_body(request: i32): u8[] {
-  var data: u8[] = [];
   match (req_consume(request)) {
     Ok(body) => {
-      match (body_stream(body)) {
-        Ok(stream) => {
-          var reading: boolean = true;
-          while (reading) {
-            match (stream_read(stream, WRITE_CHUNK as i64)) {
-              Ok(chunk) => {
-                if (chunk.len() == 0) {
-                  reading = false;
-                } else {
-                  var i: i32 = 0;
-                  while (i < chunk.len()) {
-                    data = data.append(chunk[i]);
-                    i = i + 1;
-                  }
-                }
-              },
-              Err(e) => {
-                reading = false;
-              }
-            }
-          }
-          input_stream_drop(stream);
-        },
-        Err(e) => {}
-      }
-      trailers_drop(body_finish(body));
+      let (data, how) = drain(body, None);
+      return data;
     },
     Err(e) => {}
   }
-  return data;
+  return [];
+}
+
+// How a body read ended: closed with every byte read; stopped at the cap;
+// or the stream failed before it closed, the host's word that the body
+// did not arrive whole.
+const READ_WHOLE: i32 = 0;
+
+const READ_PAST_CAP: i32 = 1;
+
+const READ_FAILED: i32 = 2;
+
+// drain reads an incoming body whole: stream, read until the stream
+// closes, fails, or the bytes read would pass `cap` when there is one,
+// drop the stream, then finish the body (its trailers dropped unread).
+// The second value says how the read ended; what was read is handed back
+// either way.
+function drain(body: i32, cap: Option[i32]): (u8[], i32) {
+  var data: u8[] = [];
+  var how: i32 = READ_WHOLE;
+  match (body_stream(body)) {
+    Ok(stream) => {
+      let (read, ended) = read_stream(stream, cap);
+      data = read;
+      how = ended;
+      input_stream_drop(stream);
+    },
+    Err(e) => {}
+  }
+  trailers_drop(body_finish(body));
+  return (data, how);
+}
+
+// read_stream reads `stream` until it closes (`stream-error.closed`, case
+// 1), fails (`last-operation-failed`, case 0), or the bytes read would
+// pass `cap`.
+function read_stream(stream: i32, cap: Option[i32]): (u8[], i32) {
+  var data: u8[] = [];
+  while (true) {
+    match (stream_read(stream, WRITE_CHUNK as i64)) {
+      Ok(chunk) => {
+        if (past(data.len() + chunk.len(), cap)) {
+          return (data, READ_PAST_CAP);
+        }
+        var i: i32 = 0;
+        while (i < chunk.len()) {
+          data = data.append(chunk[i]);
+          i = i + 1;
+        }
+      },
+      Err(e) => {
+        if (e == 1) {
+          return (data, READ_WHOLE);
+        }
+        return (data, READ_FAILED);
+      }
+    }
+  }
+  return (data, READ_WHOLE);
+}
+
+// past reports whether `n` bytes exceed the cap, when there is one.
+function past(n: i32, cap: Option[i32]): boolean {
+  match (cap) {
+    Some(c) => {
+      return n > c;
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
 }
 
 // headers_of reads a fields snapshot into a HeaderMap and drops it.
@@ -249,21 +296,28 @@ function send(response_out: i32, resp: HttpResponse): void {
   match (response_body(response)) {
     Ok(body) => {
       outparam_set(response_out, 0, response, 0, 0 as i64, 0, 0, 0, 0);
-      match (body_write(body)) {
-        Ok(stream) => {
-          write_all(stream, resp.body_bytes());
-          output_stream_drop(stream);
-        },
-        Err(e) => {}
-      }
-      match (body_finish_out(body, None)) {
-        Ok(v) => {},
-        Err(e) => {}
-      }
+      write_body(body, resp.body_bytes());
     },
     Err(e) => {
       outparam_set(response_out, 0, response, 0, 0 as i64, 0, 0, 0, 0);
     }
+  }
+}
+
+// write_body streams `bytes` into an outgoing body and finishes it with
+// no trailers. The output stream is dropped before its parent is
+// finished, the order the host checks.
+function write_body(body: i32, bytes: u8[]): void {
+  match (body_write(body)) {
+    Ok(stream) => {
+      write_all(stream, bytes);
+      output_stream_drop(stream);
+    },
+    Err(e) => {}
+  }
+  match (body_finish_out(body, None)) {
+    Ok(v) => {},
+    Err(e) => {}
   }
 }
 
@@ -292,4 +346,239 @@ function write_all(stream: i32, body: u8[]): void {
     }
   }
   buf_free(chunk);
+}
+
+// ---------------------------------------------------------------------------
+// The outgoing side: wasi:http/outgoing-handler, the host's HTTP client,
+// behind std/fetch on this target. The host resolves the name, dials,
+// speaks TLS and HTTP/2 where it can, and bounds the connect and the
+// waits by `request-options`; this side builds the request, streams the
+// body once the host has taken the request, waits on the response future
+// and reads the answer whole under a cap.
+//
+// A WIT value type with no spelling as an extern parameter is flattened
+// by hand, as `outparam_set` is: `option<string>` is a presence flag then
+// the string, `option<scheme>` a presence flag, the case and the `other`
+// arm's string, `option<duration>` a presence flag then the nanoseconds.
+// A result carrying `error-code` is read as `Result[i64, i64]`: the
+// canonical return area holds the discriminant at 0 and either arm at 8,
+// the handle in the low 32 bits of the ok arm and the error's own case
+// in the low byte of the err arm, since nothing here reads an error's
+// payload.
+
+@import("wasi:http/types@0.2.0", "[constructor]outgoing-request")
+function request_new(headers: i32): i32;
+
+@import("wasi:http/types@0.2.0", "[method]outgoing-request.set-method")
+function request_set_method(req: i32, method: i32, other: string): i32;
+
+@import("wasi:http/types@0.2.0", "[method]outgoing-request.set-scheme")
+function request_set_scheme(req: i32, some: i32, scheme: i32, other: string): i32;
+
+@import("wasi:http/types@0.2.0", "[method]outgoing-request.set-authority")
+function request_set_authority(req: i32, some: i32, authority: string): i32;
+
+@import("wasi:http/types@0.2.0", "[method]outgoing-request.set-path-with-query")
+function request_set_path(req: i32, some: i32, path: string): i32;
+
+@import("wasi:http/types@0.2.0", "[method]outgoing-request.body")
+function request_body(req: i32): Result[i32, i32];
+
+@import("wasi:http/types@0.2.0", "[resource-drop]outgoing-request")
+function request_drop(req: i32): void;
+
+@import("wasi:http/types@0.2.0", "[constructor]request-options")
+function options_new(): i32;
+
+@import("wasi:http/types@0.2.0", "[method]request-options.set-connect-timeout")
+function options_set_connect_timeout(opts: i32, some: i32, ns: i64): i32;
+
+@import("wasi:http/types@0.2.0", "[method]request-options.set-first-byte-timeout")
+function options_set_first_byte_timeout(opts: i32, some: i32, ns: i64): i32;
+
+@import("wasi:http/types@0.2.0", "[method]request-options.set-between-bytes-timeout")
+function options_set_between_bytes_timeout(opts: i32, some: i32, ns: i64): i32;
+
+@import("wasi:http/outgoing-handler@0.2.0", "handle")
+function outgoing_handle(req: i32, some: i32, opts: i32): Result[i64, i64];
+
+@import("wasi:http/types@0.2.0", "[method]future-incoming-response.subscribe")
+function future_subscribe(fut: i32): i32;
+
+@import("wasi:io/poll@0.2.0", "[method]pollable.block")
+function pollable_block(ready: i32): void;
+
+@import("wasi:io/poll@0.2.0", "[resource-drop]pollable")
+function pollable_drop(ready: i32): void;
+
+// `future-incoming-response.get` answers
+// `option<result<result<incoming-response, error-code>>>`, which no
+// extern result type spells: its 56-byte return area is read as fourteen
+// words, each discriminant in the low byte of its word (the option's at
+// 0, the outer result's at 8, the inner result's at 16) and the response
+// handle or the error's case at 24.
+struct FutureGot { w0: i32, w1: i32, w2: i32, w3: i32, w4: i32, w5: i32, w6: i32, w7: i32, w8: i32, w9: i32, w10: i32, w11: i32, w12: i32, w13: i32 }
+
+@import("wasi:http/types@0.2.0", "[method]future-incoming-response.get")
+function future_get(fut: i32): FutureGot;
+
+@import("wasi:http/types@0.2.0", "[resource-drop]future-incoming-response")
+function future_drop(fut: i32): void;
+
+@import("wasi:http/types@0.2.0", "[method]incoming-response.status")
+function response_status(resp: i32): i32;
+
+@import("wasi:http/types@0.2.0", "[method]incoming-response.headers")
+function response_headers(resp: i32): i32;
+
+@import("wasi:http/types@0.2.0", "[method]incoming-response.consume")
+function response_consume(resp: i32): Result[i32, i32];
+
+@import("wasi:http/types@0.2.0", "[resource-drop]incoming-response")
+function response_drop(resp: i32): void;
+
+// `Outgoing` — a request for the host: the method, the authority (the
+// host, with its port when not the scheme's default), whether the scheme
+// is `https`, the request-target, the end-to-end fields, the body, the
+// connect and the inactivity bounds in milliseconds, and the most body
+// bytes the answer may carry.
+pub struct Outgoing { method: string, authority: string, tls: boolean, target: string, headers: HeaderMap, body: u8[], connect_ms: i32, inactivity_ms: i32, body_cap: i32 }
+
+// `OutgoingError` — why the host gave no response: `Code(code)`, the
+// case of the WIT `error-code` the host answered, in its declaration
+// order (`DNS-timeout` is 0, `internal-error` 38); `Field(name)`, a field
+// the host refuses to carry; `BodyPastCap`, a response body past the
+// cap; `CutShort`, a body whose stream failed before it closed;
+// `Lost`, a future that settled with no response.
+pub enum OutgoingError { Code(i32), Field(string), BodyPastCap, CutShort, Lost }
+
+// `outgoing(o)` — `o` sent through the host, and its response read
+// whole.
+pub function outgoing(o: Outgoing): Result[HttpResponse, OutgoingError] {
+  var req: i32 = build_request(o)?;
+  var body: i32 = 0;
+  match (request_body(req)) {
+    Ok(b) => {
+      body = b;
+    },
+    Err(e) => {
+      request_drop(req);
+      return Err(Lost);
+    }
+  }
+  var fut: i32 = 0;
+  match (outgoing_handle(req, 1, options_of(o))) {
+    Ok(h) => {
+      fut = h as i32;
+    },
+    Err(e) => {
+      body_finish_out(body, None);
+      return Err(Code((e & 255 as i64) as i32));
+    }
+  }
+  write_body(body, o.body);
+  var resp: i32 = await_response(fut)?;
+  return read_response(resp, o.body_cap);
+}
+
+// build_request is the host's request for `o`, less its body, or the
+// field the host refused.
+function build_request(o: Outgoing): Result[i32, OutgoingError] {
+  var fields: i32 = fields_new();
+  var i: i32 = 0;
+  while (i < o.headers.names.len()) {
+    match (fields_append(fields, o.headers.names[i], o.headers.values[i])) {
+      Ok(v) => {},
+      Err(e) => {
+        fields_drop(fields);
+        return Err(Field(o.headers.names[i]));
+      }
+    }
+    i = i + 1;
+  }
+  var req: i32 = request_new(fields);
+  var method: i32 = method_index(o.method);
+  var other: string = "";
+  if (method == 9) {
+    other = o.method;
+  }
+  request_set_method(req, method, other);
+  var scheme: i32 = 0;
+  if (o.tls) {
+    scheme = 1;
+  }
+  request_set_scheme(req, 1, scheme, "");
+  request_set_authority(req, 1, o.authority);
+  request_set_path(req, 1, o.target);
+  return Ok(req);
+}
+
+// method_index is the WIT `method` case for a verb: its index among the
+// nine the variant names, or 9 for `other`.
+function method_index(method: string): i32 {
+  var names: string[] = ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"];
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] == method) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 9;
+}
+
+// options_of carries the request's bounds to the host: the connect bound,
+// and the inactivity bound on the first byte and between bytes.
+function options_of(o: Outgoing): i32 {
+  var opts: i32 = options_new();
+  options_set_connect_timeout(opts, 1, millis_ns(o.connect_ms));
+  options_set_first_byte_timeout(opts, 1, millis_ns(o.inactivity_ms));
+  options_set_between_bytes_timeout(opts, 1, millis_ns(o.inactivity_ms));
+  return opts;
+}
+
+function millis_ns(ms: i32): i64 {
+  return ms as i64 * (1000000 as i64);
+}
+
+// await_response blocks on the future until it settles, then reads it:
+// the response handle, or the host's error case.
+function await_response(fut: i32): Result[i32, OutgoingError] {
+  var ready: i32 = future_subscribe(fut);
+  pollable_block(ready);
+  pollable_drop(ready);
+  var got: FutureGot = future_get(fut);
+  future_drop(fut);
+  if ((got.w0 & 255) == 0 || (got.w2 & 255) != 0) {
+    return Err(Lost);
+  }
+  if ((got.w4 & 255) != 0) {
+    return Err(Code(got.w6 & 255));
+  }
+  return Ok(got.w6);
+}
+
+// read_response reads the status, the header snapshot and the body under
+// `cap`, and drops the response once its children are gone.
+function read_response(resp: i32, cap: i32): Result[HttpResponse, OutgoingError] {
+  var status: i32 = response_status(resp);
+  var headers: HeaderMap = headers_of(response_headers(resp));
+  var data: u8[] = [];
+  var how: i32 = READ_WHOLE;
+  match (response_consume(resp)) {
+    Ok(body) => {
+      let (read, ended) = drain(body, Some(cap));
+      data = read;
+      how = ended;
+    },
+    Err(e) => {}
+  }
+  response_drop(resp);
+  if (how == READ_PAST_CAP) {
+    return Err(BodyPastCap);
+  }
+  if (how == READ_FAILED) {
+    return Err(CutShort);
+  }
+  return Ok(HttpResponse { status: status, headers: headers, body: BodyBytes(data), trailers: HeaderMap { names: [], values: [] } });
 }
