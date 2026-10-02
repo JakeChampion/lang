@@ -3140,7 +3140,7 @@ struct SuffixWired { o: i32[], n_cfunc: i32, n_corefunc: i32, n_inst: i32, user_
 // lowerings, the user module's instantiation and its memory / realloc /
 // table plumbing — leaving the export tail to the caller: component_suffix
 // lifts a wasi:cli/run entry, component_suffix_http an incoming-handler.
-function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_inst0: i32, user_mod: i32): SuffixWired {
+function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_resourceT: i32[], n_inst0: i32, user_mod: i32): SuffixWired {
   var n: i32 = imp_iface.len();
   var o: i32[] = [];
   var none: i32[] = [];
@@ -3171,10 +3171,10 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
     if (imp_kind[i] == 1 || imp_kind[i] == 2) {
       tramp_mod = tramp_mod.with(i, n_mod);
       n_mod = n_mod + 1;
-      o = wcat(o, comp_core_module_section(shim_trampoline_core(imp_params[i], none)));
+      o = wcat(o, comp_core_module_section(shim_trampoline_core(imp_params[i], imp_results[i])));
       fixup_mod = fixup_mod.with(i, n_mod);
       n_mod = n_mod + 1;
-      o = wcat(o, comp_core_module_section(shim_tablefill_core(imp_params[i], none)));
+      o = wcat(o, comp_core_module_section(shim_tablefill_core(imp_params[i], imp_results[i])));
     }
     i = i + 1;
   }
@@ -3314,8 +3314,8 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
 
 // component_suffix wires the imports and lifts `core_export` (the user
 // module's `() -> i32` run entry) as wasi:cli/run.
-pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
-  var w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_resourceT, n_inst0, user_mod);
+pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
+  var w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_resourceT, n_inst0, user_mod);
   var o: i32[] = w.o;
   var run_core_f: i32 = w.n_corefunc;
   o = wcat(o, comp_alias_core_func(w.user_inst, core_export));
@@ -3336,8 +3336,8 @@ pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind:
 // surfaced from the imported wasi:http/types instance ahead of the suffix
 // (comp_alias_inst_type); the own<> wrappers and the func type are types
 // n_type0 .. n_type0 + 2.
-pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, req_t: i32, out_t: i32): i32[] {
-  var w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_resourceT, n_inst0, user_mod);
+pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, req_t: i32, out_t: i32): i32[] {
+  var w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_resourceT, n_inst0, user_mod);
   var o: i32[] = w.o;
   var handle_core_f: i32 = w.n_corefunc;
   o = wcat(o, comp_alias_core_func(w.user_inst, "wasi:http/incoming-handler@0.2.0#handle"));
@@ -3354,12 +3354,25 @@ pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_
 // Fixed CLI prefixes surface wasi:io/error's error resource as type 1.
 // Add its drop only when the core requests checked output, preserving the
 // low-level framing API for cores with the original fixed import set.
+// no_results is the result list of `n` imports that all return through a
+// return area: the framed shapes' WASI imports.
+function no_results(n: i32): i32[][] {
+  var out: i32[][] = [];
+  var none: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(none);
+    i = i + 1;
+  }
+  return out;
+}
+
 function component_suffix_io(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string, drop_io_errors: boolean): i32[] {
   if (!drop_io_errors) {
-    return component_suffix(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_resourceT, n_type0, n_inst0, user_mod, core_export);
+    return component_suffix(imp_iface, imp_name, imp_kind, imp_inst, imp_params, no_results(imp_params.len()), imp_resourceT, n_type0, n_inst0, user_mod, core_export);
   }
   var none: i32[] = [];
-  return component_suffix(imp_iface.append("wasi:io/error@0.2.0"), imp_name.append("[resource-drop]error"), imp_kind.append(3), imp_inst.append(0), imp_params.append(none), imp_resourceT.append(1), n_type0, n_inst0, user_mod, core_export);
+  return component_suffix(imp_iface.append("wasi:io/error@0.2.0"), imp_name.append("[resource-drop]error"), imp_kind.append(3), imp_inst.append(0), imp_params.append(none), no_results(imp_params.len() + 1), imp_resourceT.append(1), n_type0, n_inst0, user_mod, core_export);
 }
 
 // blocking_write_name / write_sig: the one memory import every write-shape

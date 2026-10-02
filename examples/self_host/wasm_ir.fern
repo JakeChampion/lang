@@ -2202,10 +2202,16 @@ pub function wasm_ir_deferrals_ok(cache: irtables.LowerResult[]): boolean {
 // producing a core whose imports the framing cannot satisfy. `@`-prefixed needs
 // are the pure predicates (heap / strings / maps / arithmetic), which import
 // nothing; @uses_random is the sole WASI-backed one and is named explicitly.
-pub function component_refused_need(needs: string[], io: boolean): string {
+pub function component_refused_need(needs: string[], io: boolean, proxy: boolean): string {
   var i: i32 = 0;
   while (i < needs.len()) {
     var n: string = needs[i];
+    // A proxy-world core's exit is a trap (proxy_exit_shim), with or
+    // without the host's io.
+    if (proxy && n == "exit") {
+      i = i + 1;
+      continue;
+    }
     // @uses_random is the one WASI-backed `@` predicate: it gates the byte
     // source's IMPORT. Under io that is wasi:random's get-random-u64,
     // which mode 2 emits; with no io there is no import to satisfy it.
@@ -2809,7 +2815,11 @@ pub function writefile_func_p2(): string {
 // wasi:cli/exit last (component_full_io_exit's shape). stdout is imported
 // either way, so an eprint-only program carries an unused stdout import and
 // still matches the eprint framing.
-pub function component_io_imports(needs: string[], stderr: boolean): string {
+// A proxy-world core (`proxy`) imports no wasi:cli/exit: the world does not
+// declare it, and a handler has no process to end, so its `exit` — the
+// bounds trap's, or a program's own — is a trap the host answers with a
+// 500 (component_io_shims).
+pub function component_io_imports(needs: string[], stderr: boolean, proxy: boolean): string {
   var o: string = "  (import \"wasi:io/error@0.2.0\" \"[resource-drop]error\" (func $io_error_drop (param i32)))\n";
   if (stderr) {
     o = o + "  (import \"wasi:cli/stderr@0.2.0\" \"get-stderr\" (func $get_stderr (result i32)))\n";
@@ -2819,7 +2829,7 @@ pub function component_io_imports(needs: string[], stderr: boolean): string {
     o = o + "  (import \"wasi:cli/stdout@0.2.0\" \"get-stdout\" (func $get_stdout (result i32)))\n";
     o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $bwf (param i32 i32 i32 i32)))\n";
   }
-  if (need(needs, "exit")) {
+  if (need(needs, "exit") && !proxy) {
     o = o + "  (import \"wasi:cli/exit@0.2.0\" \"exit\" (func $exit (param i32)))\n";
   }
   // Then the preview2 interfaces in the native compiler's canonical order —
@@ -2882,7 +2892,13 @@ pub function needs_wall_clock(needs: string[]): boolean {
 // blocking-write-and-flush writes into must be aligned to its result type's
 // alignment (a stream-error variant holds an own<error> handle) and the bump
 // pointer is not, so it over-allocates 24 bytes and rounds up to 8.
-pub function component_io_shims(needs: string[], stderr: boolean): string {
+// proxy_exit_shim is $proc_exit for a proxy-world core: a trap, since the
+// world declares no wasi:cli/exit and a handler has no process to end.
+function proxy_exit_shim(): string {
+  return "  (func $proc_exit (param $c i32)\n    (unreachable))\n";
+}
+
+pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean): string {
   var o: string = "  (global $__stdout_handle (mut i32) (i32.const -1))\n";
   if (stderr) {
     o = o + "  (global $__stderr_handle (mut i32) (i32.const -1))\n";
@@ -2932,7 +2948,9 @@ pub function component_io_shims(needs: string[], stderr: boolean): string {
   o = o + "    (drop (call $__fern_arr_dec (local.get $scratch)))\n";
   o = o + "    (i32.store (local.get $nw) (local.get $total))\n";
   o = o + "    (i32.const 0))\n";
-  if (need(needs, "exit")) {
+  if (need(needs, "exit") && proxy) {
+    o = o + proxy_exit_shim();
+  } else if (need(needs, "exit")) {
     o = o + "  (func $proc_exit (param $c i32)\n";
     o = o + "    (call $exit (i32.ne (local.get $c) (i32.const 0)))\n";
     o = o + "    (unreachable))\n";
@@ -3019,14 +3037,14 @@ pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean, sub
     return false;
   }
   var g: ircore.Lowered = ircore.gate(ircore.with_records(lm, sub), sub);
-  return g.ok && ir_route_final(g.cache, component, io);
+  return g.ok && ir_route_final(g.cache, component, io, module_is_proxy(lm));
 }
 
 // ir_route_final is the half of the decision that needs the lowering: the
 // deferral scan (ops the bare core-wasm+preview1 backend does not wire) and, in
 // component mode, the framing's need set.
-pub function ir_route_final(cache: irtables.LowerResult[], component: boolean, io: boolean): boolean {
-  return wasm_ir_deferrals_ok(cache) && (!component || component_refused_need(needs_of(cache), io) == "");
+pub function ir_route_final(cache: irtables.LowerResult[], component: boolean, io: boolean, proxy: boolean): boolean {
+  return wasm_ir_deferrals_ok(cache) && (!component || component_refused_need(needs_of(cache), io, proxy) == "");
 }
 
 // emit_module_mode_or_error_sub is the wasm emit entry for every driver now that
@@ -3073,13 +3091,13 @@ pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolea
   if (asmcore.new_state().use_ir) {
     var g: ircore.Lowered = ircore.gate(lm, sub);
     var cache: irtables.LowerResult[] = g.cache;
-    if (g.ok && ir_route_final(cache, component, io)) {
+    if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
       return emit_ir_module_mode(lm, cache, mode, sub.sigs);
     }
     // A module the lowering took whole but the component framing cannot
     // import for is not an IR bail, so name the op rather than blame the IR.
     if (g.ok && component && wasm_ir_deferrals_ok(cache)) {
-      eprint("error: " + component_refused_need(needs_of(cache), io)
+      eprint("error: " + component_refused_need(needs_of(cache), io, module_is_proxy(lm))
         + " is not supported in a wasm component: the component framing has no import for it (build with -emit core-module for a preview1 module)");
       exit(1);
     }
@@ -12481,7 +12499,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(preview1_imports(needs));
   }
   if (mode == 2) {
-    parts = parts.append(component_io_imports(needs, component_uses_stderr(mod, needs)));
+    parts = parts.append(component_io_imports(needs, component_uses_stderr(mod, needs), module_is_proxy(mod)));
     parts = parts.append(preview2_wasi_imports(needs));
   }
   // WIT `@import` externs. Emitted for EVERY mode: an extern is a declaration
@@ -12584,7 +12602,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // every $fd_write / $proc_exit call site the IR emits links unchanged.
   // Placed after the heap runtime they call into (as the AST path does).
   if (mode == 2) {
-    parts = parts.append(component_io_shims(needs, component_uses_stderr(mod, needs)));
+    parts = parts.append(component_io_shims(needs, component_uses_stderr(mod, needs), module_is_proxy(mod)));
+  } else if (mode == 1 && module_is_proxy(mod) && need(needs, "exit")) {
+    parts = parts.append(proxy_exit_shim());
   }
   // $__fern_arr_dec_ptr2 (string[][] deep reclaim, #4355 slice 9): only
   // when the module lowers a __fern_strarrarr_free call — see

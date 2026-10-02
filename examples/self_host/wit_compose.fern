@@ -131,7 +131,7 @@ pub function compose_run(tbody: i32[], core: i32[]): Composed {
     return Composed { bytes: [], refused: w.refused };
   }
   var o: i32[] = watbin.wcat(w.o, watbin.comp_core_module_section(core));
-  o = watbin.wcat(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, w.rts, w.n_type, w.plan.n_inst, 0, "_lang_run"));
+  o = watbin.wcat(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, ci.results, w.rts, w.n_type, w.plan.n_inst, 0, "_lang_run"));
   return Composed { bytes: o, refused: "" };
 }
 
@@ -159,6 +159,6 @@ pub function compose_http(tbody: i32[], core: i32[]): Composed {
   let (w2, req_t) = surface_resource(w, http_inst, "incoming-request");
   let (w3, out_t) = surface_resource(w2, http_inst, "response-outparam");
   var o: i32[] = watbin.wcat(w3.o, watbin.comp_core_module_section(core));
-  o = watbin.wcat(o, watbin.component_suffix_http(ci.ifaces, ci.names, w3.kinds, w3.insts, ci.params, w3.rts, w3.n_type, w3.plan.n_inst, 0, req_t, out_t));
+  o = watbin.wcat(o, watbin.component_suffix_http(ci.ifaces, ci.names, w3.kinds, w3.insts, ci.params, ci.results, w3.rts, w3.n_type, w3.plan.n_inst, 0, req_t, out_t));
   return Composed { bytes: o, refused: "" };
 }
