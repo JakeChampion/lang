@@ -405,8 +405,8 @@ function main(): i32 {
   // 14e-i. str_slice_frame is the one op that writes locals without being a store
   //        — three consecutive slots at `i32_imm - 1` — so a binding on any of
   //        them ends there. The heap form (immediate 0) writes none and is left
-  //        alone. No program reaches this today, because irlower names those slots
-  //        `!view!` and no store can name them; pinning it keeps the pass sound on
+  //        alone. No program reaches this today, because the lowering reserves those
+  //        slots for the view and no store can name them; pinning it keeps the pass sound on
   //        its own reasoning rather than on that convention.
   var kp_view: ir.Op[] = [
     ir.op_const_i32(7), ir.op_store_local(1), ir.op_str_slice_frame(1),
@@ -687,8 +687,8 @@ function main(): i32 {
 
   // 18e. str_slice's frame form writes three consecutive slots without being a
   //      store, so a guard on one of them is refused — the same write model
-  //      const_propagate carries, kept here rather than inherited from irlower's
-  //      `!view!` naming convention.
+  //      const_propagate carries, kept here rather than inherited from the lowering's
+  //      slot-reservation convention.
   var zg_frame: ir.Op[] = [
     ir.op_str_slice_frame(1), ir.op_drop(), ir.op_load_local(1),
     ir.op_call_direct("__fern_rc_is_unique", 1),

@@ -12,7 +12,7 @@ import (
 // floatBitsIRCases pin the float<->int bit-reinterpret builtins — `f64_bits`,
 // `f64_from_bits`, `f32_bits`, `f32_from_bits` — on the IR path. Before #3513
 // these bailed the whole module to the legacy AST emitter (asm_pathprobe_run
-// reported "ast"); they now lower through irlower's lower_expr / lower_i64.
+// reported "ast"); they now lower through the typed lowering.
 // On the register backends f64_bits/f64_from_bits are no-op reinterprets (the
 // 8-byte slot already holds the IEEE-754 bits) while the f32 pair narrows /
 // widens between f64 and f32; wasm emits the typed reinterpret instructions

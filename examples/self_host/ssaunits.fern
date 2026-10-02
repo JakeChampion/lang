@@ -126,26 +126,25 @@ function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boole
 // identically, however much they differ elsewhere. That is what lets a second
 // lowering keep a body the inference did not move.
 pub function grow_rows_agree(a: GrowTable, b: GrowTable, callees: string[]): boolean {
-  for row in a.rows {
-    if (names_has(callees, row.callee) && !has_row_at(b.rows, b.by_callee, row.callee, row.param, row.field)) {
-      return false;
-    }
-  }
-  for row in b.rows {
-    if (names_has(callees, row.callee) && !has_row_at(a.rows, a.by_callee, row.callee, row.param, row.field)) {
+  for callee in callees {
+    if (!rows_within(a, b, callee) || !rows_within(b, a, callee)) {
       return false;
     }
   }
   return true;
 }
 
-function names_has(names: string[], name: string): boolean {
-  for n in names {
-    if (n == name) {
-      return true;
+// rows_within reports whether every row of `a` for `callee` is in `b`.
+function rows_within(a: GrowTable, b: GrowTable, callee: string): boolean {
+  var i: i32 = a.by_callee.chain(callee);
+  while (i >= 0) {
+    var row: GrowRow = a.rows[i];
+    if (row.callee == callee && !has_row_at(b.rows, b.by_callee, callee, row.param, row.field)) {
+      return false;
     }
+    i = a.by_callee.next[i];
   }
-  return false;
+  return true;
 }
 
 function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): GrowRow[] {
@@ -2783,17 +2782,21 @@ function same_takes(a: i32[], b: i32[]): boolean {
 }
 
 pub function verify(f: ssasem.Func, modes: i32[], p: Plan): string {
-  return verify_analyzed(f, modes, p, ssasem.analyze(f));
+  return verify_analyzed(f, modes, p, ssasem.analyze(f), true);
 }
 
 // verify_planned checks `p` against the analysis it was planned from, for a
 // caller that lowers the very `f` it planned: analyze is a function of `f`
-// alone, so a second run would only repeat the first.
+// alone, so a second run would only repeat the first, and so is the contract
+// on the values, result, schema tables and calls, which the plan's ok is the
+// answer to. The modes are this call's own input and are checked.
 pub function verify_planned(f: ssasem.Func, modes: i32[], p: Plan): string {
-  return verify_analyzed(f, modes, p, p.analysis);
+  return verify_analyzed(f, modes, p, p.analysis, false);
 }
 
-function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem.Analysis): string {
+// `whole` runs the contract check on `f` as the planner did, for a plan that
+// may be checked against a function other than the one it was planned from.
+function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem.Analysis, whole: boolean): string {
   if (!p.ok || p.why != "") {
     return "missing successful unit plan";
   }
@@ -2801,7 +2804,14 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   if (!analysis.ok) {
     return analysis.why;
   }
-  var why: string = contract_error(f, modes);
+  var why: string = "";
+  if (whole) {
+    why = contract_error(f, modes);
+  } else if (modes.len() != f.params.len()) {
+    why = "parameter mode dimensions";
+  } else {
+    why = mode_error(f.params, modes);
+  }
   if (why != "") {
     return why;
   }

@@ -148,7 +148,7 @@ pub struct TypeMap { key: Type, value: Type }
 // name-only union (args=[]) and an instantiated one stay interchangeable
 // everywhere the checker compares them — the field is read only by the
 // typed-IR annotation (type_to_irtag), to reconstruct the "Option[T]" /
-// "Result[T, E]" tag irlower's try_opt_type keys on (#5531).
+// "Result[T, E]" tag the lowering keys on (#5531).
 pub struct TypeUnion { name: string, args: Type[] }
 
 // A `dyn Trait` object type. `traits` is the trait-set text after the

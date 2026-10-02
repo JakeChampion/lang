@@ -108,7 +108,7 @@ func TestSelfHostNumericEdgesIRX86_64(t *testing.T) {
 // masks mod 64 — a count >= 32 wrapped wrongly instead of masking mod 32 like
 // native (`lsl w0`), wasm (`i32.shl`), and the fixed x86 IR path. The div and
 // f64 cases are included too: arm64's sdiv/fcvtzs are non-trapping/saturating in
-// hardware, so they pin that the shared irlower stream stays arm64-clean.
+// hardware, so they pin that the shared lowering's op stream stays arm64-clean.
 // Routing is pinned by the arm64 IR emitter's `.Lssa_` label marker. CI-gated
 // arm64 (qemu).
 func TestSelfHostNumericEdgesIRArm64(t *testing.T) {

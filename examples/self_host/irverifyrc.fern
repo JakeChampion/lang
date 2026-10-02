@@ -26,8 +26,8 @@
 // overwriting a donor's box after a first-match lookup resolved the wrong one;
 // it measured 0 on both sides over 200 rounds, because reaching the
 // destructive path needs a coincidence. Native funnels its three reuse
-// emitters through one emitReuseToken and is correct by construction; irlower
-// has several independent emitters (the struct, tuple, enum and cross-block
+// emitters through one emitReuseToken and is correct by construction; the self-host
+// lowering has several independent emitters (the struct, tuple, enum and cross-block
 // families), which is the shape that produces this class of bug. A check over
 // the emitted ops does not need the coincidence.
 //

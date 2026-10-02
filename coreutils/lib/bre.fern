@@ -1022,10 +1022,8 @@ function parse_group(p0: P): (P, i32) {
 
 // ---- compilation -----------------------------------------------------------
 // `C` — the emitter: the instruction list, the mark slots handed to star
-// loops, the first error (only the instruction budget can fail here),
-// and whether an empty alternation branch is demoted here (compile_alt,
-// compile_rep).
-struct C { insts: Inst[], nmarks: i32, err: string, demote: boolean }
+// loops, and the first error (only the instruction budget can fail here).
+struct C { insts: Inst[], nmarks: i32, err: string }
 
 // `emit` returns the emitter alone rather than the emitter and the index
 // it wrote at, and a caller that needs the index reads `c.insts.len()`
@@ -1080,15 +1078,25 @@ function compile_node(c0: C, nodes: Node[], node: i32): C {
     return compile_node(compile_node(c, nodes, n.a), nodes, n.b);
   }
   if (n.kind == nd_group()) {
-    // Written as one nested expression rather than three steps: naming
-    // the emitter between the appends costs a copy of the instruction
-    // array at each one (#8498).
-    return emit(compile_node(emit(c, Inst { op: op_save(), a: (n.b - 1) * 2, b: 0 }), nodes, n.a), Inst { op: op_save(), a: (n.b - 1) * 2 + 1, b: 0 });
+    return compile_group(c, nodes, n, false);
   }
   if (n.kind == nd_alt()) {
     return compile_alt(c, nodes, n);
   }
   return compile_rep(c, nodes, n);
+}
+
+// A group: its body between the saves of its start and its end. An
+// `optional` group's end save carries the flag update_regs reads (see
+// compile_rep). Written as one nested expression rather than three
+// steps: naming the emitter between the appends costs a copy of the
+// instruction array at each one (#8498).
+function compile_group(c: C, nodes: Node[], n: Node, optional: boolean): C {
+  var flag: i32 = 0;
+  if (optional) {
+    flag = 1;
+  }
+  return emit(compile_node(emit(c, Inst { op: op_save(), a: (n.b - 1) * 2, b: 0 }), nodes, n.a), Inst { op: op_save(), a: (n.b - 1) * 2 + 1, b: flag });
 }
 
 // `A\|B`, with `A` laid out first so the search tries it first.
@@ -1102,16 +1110,13 @@ function compile_node(c0: C, nodes: Node[], node: i32): C {
 // there. Nothing here inspects the branch to decide — the left one is
 // laid out and the swap happens when it turns out to have emitted no
 // instruction, so the rule cannot drift from what the emitter does.
-//
-// `demote` is off inside a counted repetition, where the rule does not
-// hold — compile_rep says what glibc does there instead.
 function compile_alt(c0: C, nodes: Node[], n: Node): C {
   var split: i32 = c0.insts.len();
   var c: C = emit(c0, Inst { op: op_split(), a: 0, b: 0 });
   var first: i32 = c.insts.len();
   c = patch_a(c, split, first);
   c = compile_node(c, nodes, n.a);
-  if (c.demote && c.insts.len() == first && c.err.len() == 0) {
+  if (c.insts.len() == first && c.err.len() == 0) {
     // The empty branch is the fall-through past `B`, so it needs
     // neither a slot of its own nor a jump around one.
     c = compile_node(c, nodes, n.b);
@@ -1131,7 +1136,7 @@ function compile_alt(c0: C, nodes: Node[], n: Node): C {
 }
 
 // A repetition: `min` mandatory copies, then either a star loop or
-// `max - min` optional ones.
+// `max - min` optional ones, in the shape glibc's parse_dup_op builds.
 //
 // The mandatory copies are compiled ONCE and spliced, rather than
 // recompiled per copy: recompiling threads the growing program through
@@ -1140,24 +1145,33 @@ function compile_alt(c0: C, nodes: Node[], n: Node): C {
 // quadratic. Splicing appends into one array in one loop, which grows in
 // place.
 //
-// The body compiles with compile_alt's empty-branch demotion OFF,
-// because inside a counted repetition glibc's answer is not a branch
-// order at all: over `a`, `\(\|a\)\{1,2\}` reports `a` — the demoted
-// order reports the empty group — while over `aa`, `\(\|a\)\{1,2\}a*`
-// reports `a`, which only the demoted order gives. The same two
-// counts disagree again at `\{2\}` and `\{2,3\}`. Nothing static
-// reproduces that, so the copies keep the order the pattern was
-// written in and the family stays as divergent as it has always been
-// (#9092).
+// When the repeated element is a group, its FIRST optional copy is
+// marked optional, and only that one: glibc marks the element before it
+// duplicates it, and a duplicate is built through create_token_tree,
+// which clears the mark. An empty pass through a marked group puts the
+// registers back as the last non-empty group end left them
+// (update_regs), so over `a`, `\(\|a\)\{1,2\}` reports `a` while
+// `\(\|a\)\{1,3\}`, whose last copy is unmarked, reports the empty
+// group (#9092).
 function compile_rep(c0: C, nodes: Node[], n: Node): C {
-  var c: C = compile_copies(C { ...c0, demote: false }, nodes, n.a, rep_min(n));
+  var c: C = compile_copies(c0, nodes, n.a, rep_min(n));
   if (c.err.len() > 0) {
-    return C { ...c, demote: c0.demote };
+    return c;
   }
   if (n.c < 0) {
-    return C { ...compile_star(c, nodes, n.a), demote: c0.demote };
+    return compile_star(c, nodes, n.a);
   }
-  return C { ...compile_optionals(c, nodes, n.a, n.c - rep_min(n)), demote: c0.demote };
+  return compile_optionals(c, nodes, n.a, n.c - rep_min(n));
+}
+
+// The first optional copy of a repeated element: a group is marked
+// optional (compile_rep), anything else compiles as it is.
+function compile_optional_copy(c: C, nodes: Node[], body: i32): C {
+  var n: Node = nodes[body];
+  if (n.kind == nd_group()) {
+    return compile_group(c, nodes, n, true);
+  }
+  return compile_node(c, nodes, body);
 }
 
 function compile_copies(c0: C, nodes: Node[], body: i32, times: i32): C {
@@ -1165,7 +1179,7 @@ function compile_copies(c0: C, nodes: Node[], body: i32, times: i32): C {
     return c0;
   }
   var empty: Inst[] = [];
-  var one: C = compile_node(C { insts: empty, nmarks: 0, err: "", demote: c0.demote }, nodes, body);
+  var one: C = compile_node(C { insts: empty, nmarks: 0, err: "" }, nodes, body);
   if (one.err.len() > 0) {
     return C { ...c0, err: one.err };
   }
@@ -1202,8 +1216,11 @@ function relocate(in: Inst, base: i32, slot_base: i32): Inst {
   if (in.op == op_jmp()) {
     return Inst { ...in, a: in.a + base };
   }
-  if (in.op == op_mark() || in.op == op_progress()) {
+  if (in.op == op_mark()) {
     return Inst { ...in, a: in.a + slot_base };
+  }
+  if (in.op == op_progress()) {
+    return Inst { op: in.op, a: in.a + slot_base, b: in.b + base };
   }
   return in;
 }
@@ -1215,9 +1232,13 @@ function rep_min(n: Node): i32 {
   return n.b;
 }
 
-// `x*` as a loop whose body may not match empty: the `Mark` records where
-// the iteration began and `Progress` refuses to go round again from the
-// same place, which is how `\(a*\)*` reports the last non-empty pass.
+// `x*` as a loop that may pass through its body empty once, and then
+// leaves: the `Mark` records where the iteration began, and `Progress`
+// sends a pass that consumed nothing out of the loop instead of round
+// again. That is glibc's walk, which re-entering the loop node takes as
+// the second time through and leaves by its other edge — and the empty
+// pass runs the group's end, so an optional group goes back to its last
+// non-empty registers (regs_at_save).
 function compile_star(c0: C, nodes: Node[], body: i32): C {
   var slot: i32 = c0.nmarks;
   var c: C = C { ...c0, nmarks: slot + 1 };
@@ -1225,29 +1246,40 @@ function compile_star(c0: C, nodes: Node[], body: i32): C {
   c = emit(c, Inst { op: op_split(), a: 0, b: 0 });
   c = patch_a(c, top, c.insts.len());
   c = emit(c, Inst { op: op_mark(), a: slot, b: 0 });
-  c = compile_node(c, nodes, body);
+  c = compile_optional_copy(c, nodes, body);
   if (c.err.len() > 0) {
     return c;
   }
+  var progress: i32 = c.insts.len();
   c = emit(c, Inst { op: op_progress(), a: slot, b: 0 });
   c = emit(c, Inst { op: op_jmp(), a: top, b: 0 });
-  return patch_b(c, top, c.insts.len());
+  return patch_b(patch_b(c, top, c.insts.len()), progress, c.insts.len());
 }
 
-// `count` nested optional copies, longest first.
+// `count` optional copies as glibc nests them, `((x?)x)?`: every split
+// first, the outermost leading, then the copies in order, each split
+// skipping to just past its own copy. A later copy can match with an
+// earlier one skipped, and the earlier one is tried first.
 function compile_optionals(c0: C, nodes: Node[], body: i32, count: i32): C {
   if (count <= 0) {
     return c0;
   }
-  var split: i32 = c0.insts.len();
-  var c: C = emit(c0, Inst { op: op_split(), a: 0, b: 0 });
-  c = patch_a(c, split, c.insts.len());
-  c = compile_node(c, nodes, body);
-  c = compile_optionals(c, nodes, body, count - 1);
-  if (c.err.len() > 0) {
-    return c;
+  var base: i32 = c0.insts.len();
+  var c: C = c0;
+  var k: i32 = 0;
+  while (k < count) {
+    c = emit(c, Inst { op: op_split(), a: base + k + 1, b: 0 });
+    k = k + 1;
   }
-  return patch_b(c, split, c.insts.len());
+  c = compile_optional_copy(c, nodes, body);
+  c = patch_b(c, base + count - 1, c.insts.len());
+  var j: i32 = 2;
+  while (j <= count && c.err.len() == 0) {
+    c = compile_node(c, nodes, body);
+    c = patch_b(c, base + count - j, c.insts.len());
+    j = j + 1;
+  }
+  return c;
 }
 
 // Whether the tree holds a backreference, which is what rules out
@@ -1288,7 +1320,7 @@ pub function bre_compile_syntax(pat: string, syntax: Syntax): Bre {
     return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: "", pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
   }
   var empty: Inst[] = [];
-  var c: C = C { insts: empty, nmarks: 0, err: "", demote: true };
+  var c: C = C { insts: empty, nmarks: 0, err: "" };
   // No `Save` pair around the whole program: the match is anchored, so
   // group 0 always spans 0 to the end, and a pattern with no groups of
   // its own then carries no capture vector at all.
@@ -1738,9 +1770,10 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
     }
     if (in.op == op_progress()) {
       if (m.marks[in.a] == pos) {
-        return (false, m);
+        pc = in.b;
+      } else {
+        pc = pc + 1;
       }
-      pc = pc + 1;
       continue;
     }
     if (in.op == op_backref()) {
@@ -1776,12 +1809,12 @@ function branch(m0: M, pc: i32, pos: i32, in: Inst, zw: boolean): (boolean, M) {
     return step(r.1, in.b, pos, zw);
   }
   if (in.op == op_save()) {
-    var old: i32 = m0.caps[in.a];
-    var r2: (boolean, M) = step(M { ...m0, caps: m0.caps.with(in.a, pos) }, pc + 1, pos, zw);
+    var old: i32[] = m0.caps;
+    var r2: (boolean, M) = step(M { ...m0, caps: regs_at_save(m0.caps, in, pos, m0.re.ngroups) }, pc + 1, pos, zw);
     if (r2.0) {
       return r2;
     }
-    return (false, M { ...r2.1, caps: r2.1.caps.with(in.a, old) });
+    return (false, M { ...r2.1, caps: old });
   }
   if (in.op == op_mark()) {
     var oldm: i32 = m0.marks[in.a];
@@ -1792,6 +1825,41 @@ function branch(m0: M, pc: i32, pos: i32, in: Inst, zw: boolean): (boolean, M) {
     return (false, M { ...r3.1, marks: r3.1.marks.with(in.a, oldm) });
   }
   return (false, m0);
+}
+
+// The registers past a group boundary, as glibc's update_regs leaves
+// them. `caps` holds every group's start and end, then a second copy of
+// them: what they were at the last non-empty group end. Entering a group
+// sets its start and clears its end. Leaving it non-empty records the
+// end and takes that copy; leaving it empty records the end, except in
+// a group marked optional (compile_rep) that has matched before, where
+// every register goes back to the copy. That is how `\(a*\)*` keeps
+// its last non-empty pass, and inner groups go back with it.
+function regs_at_save(caps: i32[], in: Inst, pos: i32, ngroups: i32): i32[] {
+  var slot: i32 = in.a;
+  if (slot % 2 == 0) {
+    return caps.with(slot, pos).with(slot + 1, 0 - 1);
+  }
+  var n: i32 = ngroups * 2;
+  if (caps[slot - 1] < pos) {
+    var ended: i32[] = caps.with(slot, pos);
+    var k: i32 = 0;
+    while (k < n) {
+      ended = ended.with(n + k, ended[k]);
+      k = k + 1;
+    }
+    return ended;
+  }
+  if (in.b == 1 && caps[n + slot - 1] != 0 - 1) {
+    var back: i32[] = caps;
+    var j: i32 = 0;
+    while (j < n) {
+      back = back.with(j, caps[n + j]);
+      j = j + 1;
+    }
+    return back;
+  }
+  return caps.with(slot, pos);
 }
 
 function fresh_caps(n: i32): i32[] {
@@ -2087,7 +2155,7 @@ function exec_backtrack(re: Bre, text: string, start: i32, lo: i32, hi: i32): Br
   var no: i32[] = [];
   var end: i32 = hi;
   while (end >= start) {
-    var m: M = M { text: text, lo: lo, hi: hi, re: re, target: end, caps: fresh_caps(re.ngroups * 2), marks: fresh_caps(re.nmarks), have_zw: false, zw_caps: no };
+    var m: M = M { text: text, lo: lo, hi: hi, re: re, target: end, caps: fresh_caps(re.ngroups * 4), marks: fresh_caps(re.nmarks), have_zw: false, zw_caps: no };
     var r: (boolean, M) = step(m, 0, start, false);
     if (r.0) {
       return caps_to_match(r.1.caps, re, start, end);
@@ -2164,12 +2232,18 @@ function add_thread(re: Bre, own t0: Threads, gen: i32, pc: i32, caps: i32[], po
     return add_thread(re, add_thread(re, stamp(t0, pc, mark), gen, in.a, caps, pos, text, lo, hi, zw), gen, in.b, caps, pos, text, lo, hi, zw);
   }
   if (in.op == op_save()) {
-    return add_thread(re, stamp(t0, pc, mark), gen, pc + 1, caps.with(in.a, pos), pos, text, lo, hi, zw);
+    return add_thread(re, stamp(t0, pc, mark), gen, pc + 1, regs_at_save(caps, in, pos, re.ngroups), pos, text, lo, hi, zw);
   }
-  // `Mark` and `Progress` guard the backtracker's empty star loops; the
-  // generation stamp already does that job here.
-  if (in.op == op_mark() || in.op == op_progress()) {
-    return add_thread(re, stamp(t0, pc, mark), gen, pc + 1, caps, pos, text, lo, hi, zw);
+  // A thread's loop marks ride after its registers (mark_base).
+  if (in.op == op_mark()) {
+    return add_thread(re, stamp(t0, pc, mark), gen, pc + 1, caps.with(mark_base(re) + in.a, pos), pos, text, lo, hi, zw);
+  }
+  if (in.op == op_progress()) {
+    var next: i32 = pc + 1;
+    if (caps[mark_base(re) + in.a] == pos) {
+      next = in.b;
+    }
+    return add_thread(re, stamp(t0, pc, mark), gen, next, caps, pos, text, lo, hi, zw);
   }
   if (in.op == op_bol() || in.op == op_eol() || in.op == op_assert()) {
     if (!zero_width_holds(re, text, in, pos, lo, hi)) {
@@ -2188,6 +2262,12 @@ function add_thread(re: Bre, own t0: Threads, gen: i32, pc: i32, caps: i32[], po
     return stamp(t0, pc, mark);
   }
   return append_thread(stamp(t0, pc, mark), pc, caps);
+}
+
+// Where a thread's loop marks start in its capture array: past the
+// registers and their copy (regs_at_save).
+function mark_base(re: Bre): i32 {
+  return re.ngroups * 4;
 }
 
 function stamp(own t: Threads, pc: i32, mark: i32): Threads {
@@ -2231,7 +2311,7 @@ function exec_threads_from(re: Bre, text: string, start: i32, lo: i32, hi: i32, 
   // thread seeded at each position can share it rather than allocate
   // one per position — which for a pattern with no groups was an empty
   // array per byte.
-  var seed: i32[] = fresh_caps(re.ngroups * 2);
+  var seed: i32[] = fresh_caps(mark_base(re) + re.nmarks);
   t = add_thread(re, t, start, 0, seed, start, text, lo, hi, false);
   var best: i32 = 0 - 1;
   var best_caps: i32[] = seed;

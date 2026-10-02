@@ -30,9 +30,9 @@ func TestSelfHostFileBytes(t *testing.T) {
 			if target.target == "wasm32-wasi" {
 				forms = append(forms, "core")
 			}
-			modes := []string{"semantic"}
+			modes := []string{"checked"}
 			if compiler.name == "primary" {
-				modes = append(modes, "default")
+				modes = append(modes, "plain")
 			} else {
 				modes = []string{"flat"}
 				if target.target == "arm64-linux" || target.target == "x86-64-linux" {
@@ -59,14 +59,14 @@ func TestSelfHostFileBytes(t *testing.T) {
 							args = append(args, stdlib)
 						}
 						compile := exec.Command(compiler.cli, args...)
-						if compiler.name == "primary" && mode == "semantic" {
-							compile.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+						if compiler.name == "primary" && mode == "checked" {
+							compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 						}
 						if out, err := compile.CombinedOutput(); err != nil {
 							t.Fatalf("compile: %v\n%s", err, out)
 						}
 						diagnostic := e2eharness.CheckFileBytes(t, runX86_64Bin(target.runner, bin))
-						if compiler.name == "primary" && mode == "semantic" && (target.target != "wasm32-wasi" || form == "core") {
+						if compiler.name == "primary" && mode == "checked" && (target.target != "wasm32-wasi" || form == "core") {
 							assertBalancedCensus(t, diagnostic)
 						}
 					})
@@ -105,7 +105,7 @@ func TestSelfHostFileBytesFullDevice(t *testing.T) {
 	_, targets, _ := hostTargets()
 	for _, compiler := range []struct{ name, cli string }{{"primary", cli}, {"bootstrap", bootstrap}} {
 		for _, target := range targets {
-			modes := []string{"semantic"}
+			modes := []string{"checked"}
 			if compiler.name == "bootstrap" {
 				modes = []string{"flat", "ssa"}
 			}
@@ -120,7 +120,7 @@ func TestSelfHostFileBytesFullDevice(t *testing.T) {
 					}
 					compile := exec.Command(compiler.cli, args...)
 					if compiler.name == "primary" {
-						compile.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+						compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 					}
 					if out, err := compile.CombinedOutput(); err != nil {
 						t.Fatalf("compile: %v\n%s", err, out)

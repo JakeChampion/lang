@@ -39,7 +39,7 @@ function main(): i32 { return mk().0.y + mk().1.x; }`}, // 2 + 3 = 5
 }
 
 // TestSelfHostAnnotateTupleIR_X86_64 pins the checker-stamped tuple result type
-// feeding irlower's expr_tuple_elem_tag through the IR path (#5531).
+// feeding the lowering through the IR path (#5531).
 func TestSelfHostAnnotateTupleIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 	for _, tc := range annotateTupleCases {

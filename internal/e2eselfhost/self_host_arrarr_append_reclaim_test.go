@@ -7,7 +7,7 @@ import (
 
 // --- Append-built arr-of-arr row reclaim (#6092) -------------------
 //
-// irlower's "ARRARR:" credit routes a fresh, non-escaping arr-of-arr local to
+// The lowering's "ARRARR:" credit routes a fresh, non-escaping arr-of-arr local to
 // the deep release (__fern_arrarr_free / __fern_strarrarr_free), which frees
 // the inner row buffers and then the outer one. Refusing that credit for any
 // REASSIGNED name — and `g = g.append(row)` is a reassignment — drops an

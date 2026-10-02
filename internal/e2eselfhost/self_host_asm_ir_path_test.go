@@ -402,14 +402,14 @@ function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { 
 		{"arr-alias", `function main(): i32 { var a = [10, 20, 30]; var b = a; return b[0] + b[2] + a.len(); }`, 43},
 		// Cross-function arrays (slice 19): borrowed array params + array
 		// returns (move-on-return). Whole module is IR-eligible, so caller and
-		// callee share irlower's layout — the move/borrow paths run end-to-end.
+		// callee share the lowering's layout — the move/borrow paths run end-to-end.
 		{"arr-param-sum", `function sum(a: i32[]): i32 { var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; } function main(): i32 { var arr = [10, 20, 30]; return sum(arr); }`, 60},
 		{"arr-param-borrow-noreuse", `function len_of(a: i32[]): i32 { return a.len(); } function main(): i32 { var arr = [3, 4, 5]; var n = len_of(arr); var z = [9, 9, 9]; return arr[0] + arr[2] + n; }`, 11},
 		{"arr-return-move", `function make(): i32[] { var a = [10, 20, 30]; return a; } function main(): i32 { var x = make(); var y = [1, 1, 1]; return x[0] + x[2]; }`, 40},
 		{"arr-return-then-mutate", `function make(): i32[] { var a = [1, 2, 3]; return a; } function main(): i32 { var x = make(); x = x.with(1, 99); return x[0] + x[1] + x[2]; }`, 103},
 		{"arr-param-two", `function pick(a: i32[], b: i32[]): i32 { return a[0] + b[1]; } function main(): i32 { var p = [1, 2]; var q = [10, 20]; return pick(p, q); }`, 21},
 		// Array-slot reassignment (Perceus retain-new + cow-guarded release-old
-		// in irlower's StmtVar/StmtAssign): `ys = xs` retains xs and releases
+		// in the lowering): `ys = xs` retains xs and releases
 		// ys's prior buffer; a fresh-literal / loop-rebind reassignment releases
 		// the overwritten buffer. The IR + AST RC accounting must agree.
 		{"arr-reassign-alias", `function main(): i32 { var xs = [1, 2, 3]; var ys = [4, 5, 6]; ys = xs; return ys[0] + ys[2]; }`, 4},
@@ -417,7 +417,7 @@ function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { 
 		{"arr-reassign-fresh", `function main(): i32 { var xs = [1, 2]; xs = [9, 9, 9]; return xs[2]; }`, 9},
 		{"arr-rebind-loop", `function main(): i32 { var s = 0; var i = 0; while (i < 4) { var r = [i, i * 2, i * 3]; s = s + r[2]; i = i + 1; } return s; }`, 18},
 		// Strings (within-function + string params): literal + .len(), concat
-		// (+), equality (==/!=). irlower tracks string-ness (local_is_str) to
+		// (+), equality (==/!=). The lowering tracks string-ness to
 		// pick str_len / str_concat / str_eq over the array/i32 ops; the IR path
 		// reuses asm.fern's 16-byte `[data@0,len@8]` box + __fern_str_concat/_eq
 		// helpers, so exit codes must match the AST path exactly.

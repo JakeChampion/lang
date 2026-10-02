@@ -5,7 +5,7 @@ import (
 )
 
 // TestSelfHostTryOpWasmIR is the wasm sibling of TestSelfHostTryOpX86IR: the
-// try-operator (`inner?`) lowers in the target-independent irlower, so the wasm
+// try-operator (`inner?`) lowers in the target-independent lowering, so the wasm
 // IR backend gets it for free (op_opt_tag / op_opt_payload / op_opt_none /
 // return — the same ops the match-on-Option path already uses). Each case
 // asserts the hardcoded oracle exit code from the IR-emitted module. Exit codes

@@ -32,7 +32,10 @@ func init() {
 // minutes, the comma-and-two-spaces between fields, the singular or
 // plural of `user`, and the whole load-average clause including its
 // two decimals. The digit COUNT survives too, so a `%2d` that became
-// `%d` still fails.
+// `%d` still fails, everywhere but the whole part of a load average:
+// that is `%.2f`, so its width moves with the value, and a load that
+// crosses 10.00 between the two runs would otherwise read as 0.00
+// against 00.00 (#9866). The mask collapses it to one digit.
 //
 // What the mask costs is the VALUES, and they are pinned separately:
 // the boot times come from the fixture, so the elapsed time is chosen
@@ -53,6 +56,7 @@ var (
 	uptimeElapsed = regexp.MustCompile(` ?\d{1,2}:\d{2},`)
 	uptimeLoadRe  = regexp.MustCompile(`load average: .*`)
 	uptimeDigitRe = regexp.MustCompile(`\d`)
+	uptimeWholeRe = regexp.MustCompile(`\d+\.`)
 )
 
 func uptimeZeroDigits(s string) string { return uptimeDigitRe.ReplaceAllString(s, "0") }
@@ -63,8 +67,27 @@ func uptimeZeroDigits(s string) string { return uptimeDigitRe.ReplaceAllString(s
 func maskUptime(s string) string {
 	s = uptimeClockRe.ReplaceAllStringFunc(s, uptimeZeroDigits)
 	s = uptimeElapsed.ReplaceAllStringFunc(s, uptimeZeroDigits)
-	s = uptimeLoadRe.ReplaceAllStringFunc(s, uptimeZeroDigits)
+	s = uptimeLoadRe.ReplaceAllStringFunc(s, func(load string) string {
+		return uptimeZeroDigits(uptimeWholeRe.ReplaceAllString(load, "0."))
+	})
 	return s
+}
+
+// A load average that crosses 10.00 between the two legs changes width,
+// not format; a dropped decimal or separator still shows through.
+func TestMaskUptimeLoadWidth(t *testing.T) {
+	line := func(loads string) string {
+		return " 19:49:16  up  1:02,  2 users,  load average: " + loads + "\n"
+	}
+	want := maskUptime(line("9.87, 0.81, 0.67"))
+	if got := maskUptime(line("10.02, 0.81, 0.67")); got != want {
+		t.Errorf("a load of 10.02 masks to %q, 9.87 to %q", got, want)
+	}
+	for _, bad := range []string{"9.8, 0.81, 0.67", "9.87,0.81, 0.67", "9, 0.81, 0.67"} {
+		if got := maskUptime(line(bad)); got == want {
+			t.Errorf("load average %q masks to the well-formed %q", bad, got)
+		}
+	}
 }
 
 // maskBootErrno drops the strerror suffix GNU appends to `couldn't get

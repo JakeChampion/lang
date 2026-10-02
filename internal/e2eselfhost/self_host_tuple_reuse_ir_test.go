@@ -8,8 +8,8 @@ import (
 )
 
 // tupleReuseIRCases exercise Perceus-style FBIP constructor reuse for tuples on
-// the self-hosted stack-IR path (irlower `cross_tuple_reuse_sites` /
-// `emit_cross_tuple_reuse`). When a fresh, same-arity tuple literal is built into
+// the self-hosted stack-IR path.
+// When a fresh, same-arity tuple literal is built into
 // a local while an earlier tuple local is dead at that point, the new tuple
 // REUSES the dead donor's heap box in place (writing each element via
 // `op_tuple_set` / `_w` at its width) instead of allocating a fresh box — the
@@ -82,8 +82,8 @@ var tupleReuseIRCases = []struct {
 	{"reuse-struct-elem",
 		`struct P { x: i32, y: i32 } function main(): i32 { var k: i32 = 1; var a: (P, i32) = (P { x: 1 * k, y: 2 }, 5); var s: i32 = a.1; var b: (P, i32) = (P { x: 10 * k, y: 20 }, 9); return s + b.0.x + b.0.y + b.1; }`,
 		44},
-	// Loop body: reuse now fires INSIDE the loop body too (irlower
-	// lower_loop_body) — `b` reuses the dead `a`'s box every iteration, so the loop
+	// Loop body: reuse now fires INSIDE the loop body too
+	// — `b` reuses the dead `a`'s box every iteration, so the loop
 	// allocates ONE tuple box, not two. This pins the loop-body reuse and its value
 	// correctness: sum over i in 0..3 of ((i)+(i+1)) + (i)+(i*2):
 	// i=0: (0+1)+(0+0)=1; i=1: (1+2)+(1+2)=6; i=2: (2+3)+(2+4)=11;

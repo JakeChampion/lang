@@ -118,7 +118,7 @@ func TestSelfHostTupleReturnArrayElemMove(t *testing.T) {
 }
 
 // TestSelfHostTupleReturnArrayElemMoveWasm is the wasm-IR mirror — the lowering
-// (irlower.fern) is shared, so the same move-on-return keep must hold in the
+// is shared, so the same move-on-return keep must hold in the
 // WAT emit.
 func TestSelfHostTupleReturnArrayElemMoveWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

@@ -3,7 +3,7 @@ package e2eselfhost
 import "testing"
 
 // whileIRCases pin the standalone `while`-loop construct to the self-host IR path
-// on x86-64 + wasm. The while lowering (irlower.fern's StmtWhile arm) emits a
+// on x86-64 + wasm. The while lowering emits a
 // wasm-style block/loop/br_if and is IR-eligible for any i32-condition loop — it
 // bails only on a 64-bit-width condition. while loops are exercised for exit
 // codes throughout self_host_asm_run_test.go (while-sum, while-early-return, the

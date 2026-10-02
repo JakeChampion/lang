@@ -397,6 +397,24 @@ func exprCases(t *testing.T) []invocation {
 		{name: "two zero intervals are an empty branch", args: []string{"aa", ":", `\(x\{0\}x\{0\}\|a\)a*`}},
 		{name: "the longest overall outranks the demotion", args: []string{"aab", ":", `\(\|a\)\(aab\|a\)`}},
 		{name: "empty branches in sequence", args: []string{"aaa", ":", `\(\|a\)\(\|a\)\(\|a\)a*`}},
+		// A counted repetition expands as glibc's parse_dup_op builds it:
+		// the optional copies nest as `((x?)x)?`, and only the FIRST of
+		// them is an optional group, whose empty pass puts the registers
+		// back. So one optional copy reports the earlier non-empty pass
+		// and two or more report the empty last one (#9092).
+		{name: "one optional copy keeps the non-empty pass", args: []string{"a", ":", `\(\|a\)\{1,2\}`}},
+		{name: "two optional copies end on the empty pass", args: []string{"a", ":", `\(\|a\)\{1,3\}`}},
+		{name: "a mandatory copy ends on the empty pass", args: []string{"a", ":", `\(\|a\)\{2\}`}},
+		{name: "optional copies only", args: []string{"a", ":", `\(\|a\)\{0,2\}`}},
+		{name: "empty branch in an interval over a longer subject", args: []string{"aa", ":", `\(\|a\)\{2,4\}`}},
+		{name: "empty branch in an interval followed by a star", args: []string{"aa", ":", `\(\|a\)\{1,2\}a*`}},
+		{name: "two-byte branch in an interval", args: []string{"abab", ":", `\(\|ab\)\{1,3\}`}},
+		// An unbounded repetition passes through its body empty once and
+		// leaves, and that pass is the optional group's: the registers go
+		// back to the last non-empty pass.
+		{name: "an empty pass after the mandatory copies", args: []string{"a", ":", `\(a\|\)\{2,\}b*`}},
+		{name: "an empty pass restores a longer group", args: []string{"aab", ":", `\(a*\|\)\{3,\}.*`}},
+		{name: "an empty pass after a plus", args: []string{"a", ":", `\(b\|\|a\)\{1,\}.*`}},
 		{name: "group alternation captures the last", args: []string{"ab", ":", `\(a\|b\)*`}},
 		{name: "unset group in an alternation", args: []string{"b", ":", `\(a\)\|\(b\)`}},
 		{name: "set group in an alternation", args: []string{"ab", ":", `\(a\)\|\(b\)`}},

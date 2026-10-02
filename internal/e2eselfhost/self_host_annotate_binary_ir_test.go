@@ -13,7 +13,7 @@ import (
 // (docs/TYPED-IR-REWRITE.md), after ExprCall.ty (#5531), ExprFieldAccess.ty,
 // ExprIndex.ty (#6165), ExprSlice.ty and ExprIdent.ty.
 //
-// Ordinary arithmetic needs no carrier: irlower's predicates compose a binary's
+// Ordinary arithmetic needs no carrier: the lowering composes a binary's
 // type from its OPERANDS, so `a * b` on two f64 locals is already f64. The one
 // shape the operand walk cannot reach is a composite operator overload, where
 // BOTH operands are structs and the result is whatever the method returns:

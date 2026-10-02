@@ -173,7 +173,7 @@ func TestSelfHostFnValueRecvDispatch(t *testing.T) {
 		func(bin string) *exec.Cmd { return runX86_64Bin(runner, bin) })
 }
 
-// arm64 parity: the dispatch decision is target-agnostic (it happens in irlower,
+// arm64 parity: the dispatch decision is target-agnostic (it happens in the lowering,
 // before backend selection), but the aarch64 emitter is the only path where the
 // self-host compiler produces the finished binary itself, so the gate runs there
 // too. The driver is an x86 host binary emitting aarch64 asm; aarch64 gcc links

@@ -15,7 +15,7 @@
 //
 // It is deliberately small and depends only on the verifiers and the op type.
 // Taking the scalars rather than an irtables.LowerResult is what keeps it that
-// way: it does not pull irlower in, so the driver that tests it does not
+// way: it does not pull the lowering in, so the driver that tests it does not
 // either. The callee index is built by irtables.fn_sig_index on the backend
 // side for the same reason — it is an AST question, and answering it here
 // would drag the parser into the gate's closure.

@@ -21,7 +21,7 @@ import (
 // decrements a random live block's rc — a layout-dependent heap corruption.
 // Observed in practice as the self-host driver miscompiling
 // `match(read_file(..)) { Ok(s) => { write(s); .. } }` (a dangling
-// .Lir_main_* branch label): irlower's alias_names_in_stmt binds its
+// .Lir_main_* branch label): the AST lowering's alias_names_in_stmt bound its
 // StmtAssign arm payload as `a`, shadowing the `var a: string[]`
 // accumulators declared in sibling arms (TestSelfHostReadFileIRX86_64/echo
 // pins it end to end).

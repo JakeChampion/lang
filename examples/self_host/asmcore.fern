@@ -2101,13 +2101,13 @@ pub function rt_src_random_i32(t: string): string {
 // as glibc's fopen does (#8823).
 //
 // A Reader/Writer IS its fd, so the helper's own return spelling is
-// `Result[i32, IoError]`; irlower gives the call site the Reader / Writer
-// spelling (opt_ret_type). io_error CONSUMES its path argument, so it gets an
+// `Result[i32, IoError]`; the lowering gives the call site the Reader / Writer
+// spelling. io_error CONSUMES its path argument, so it gets an
 // __fern_path_copy of `pathz_own` rather than the borrowed `path` or the
 // NUL-terminated buffer itself — the same shape every other leaf in the fs
 // bundle uses (#8813).
 //
-// The flags arrive as a PARAMETER, not a per-target constant, because irlower
+// The flags arrive as a PARAMETER, not a per-target constant, because the lowering
 // picks them and has no target: the op site passes the Linux value on every
 // target. So Darwin translates at run time, exactly as the hand-asm did — XNU's
 // O_CREAT/O_TRUNC/O_APPEND/O_EXCL (0x200/0x400/0x8/0x800) match none of
@@ -2716,7 +2716,7 @@ pub function rt_src_tcp_connect_with(t: string, packed: boolean): string {
 // That is what keeps this slice free of a `__syscall6` and its kind-registry
 // churn. The fd is closed on both paths, so the one-shot leaks no descriptor.
 //
-// `host` is a dotted-quad LITERAL (irlower passes the string, unlike
+// `host` is a dotted-quad LITERAL (the lowering passes the string, unlike
 // tcp_connect's pre-packed i32), so the quad is parsed here — accumulate each
 // octet, close a group on '.', and take the last after the loop.
 //
@@ -5147,6 +5147,11 @@ pub function find_array_method_func(field: string, s: EmitState): string {
   return "";
 }
 
+// field_type_tag_in is the type of `field` of the declared struct
+// `struct_name`, unknown when either is undeclared. A field of a declared
+// struct type keeps its name (struct_local_tag), as a local of that type
+// does, so a read through it resolves within that struct rather than by
+// the first-match field scan.
 pub function field_type_tag_in(struct_name: string, field: string, s: EmitState): Ty {
   var di: i32 = 0;
   while (di < s.struct_decls.decls.len()) {
@@ -5155,7 +5160,7 @@ pub function field_type_tag_in(struct_name: string, field: string, s: EmitState)
       var fi: i32 = 0;
       while (fi < sd.fields.len()) {
         if (sd.fields[fi].name == field) {
-          return ty_from_name(sd.fields[fi].type_name);
+          return struct_local_tag(sd.fields[fi].type_name, s);
         }
         fi = fi + 1;
       }
@@ -6528,7 +6533,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   // RECEIVER'S TYPE: `write`, `read_line` and `read_chunk` are ordinary method
   // names, and answering on the name alone gave every user struct declaring one
   // the resource signature, rejecting the program before codegen (#8462). The
-  // real non-struct-receiver gate is applied at lower time (irlower's
+  // real non-struct-receiver gate is applied at lower time (the lowering's
   // resource-method dispatch).
   if (ty_struct_name(rt) == "Reader" && fa.field == "read_chunk_bytes") {
     return ty_result(ty_array_i32());

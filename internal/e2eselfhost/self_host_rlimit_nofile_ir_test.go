@@ -34,7 +34,7 @@ import (
 // unchanged. Only the unlimited normalisation (i64 max) would tell the two
 // apart, and it is unreachable for the same reason. The width is therefore
 // pinned STRUCTURALLY instead, by assertNoNarrowingAfter: without the i64
-// arms in irlower, `var n: i64 = rlimit_nofile()` lowers as a widened i32 and
+// arms in the lowering, `var n: i64 = rlimit_nofile()` lowers as a widened i32 and
 // the backend narrows the pushed result right after the call — which would
 // turn i64 max into -1 on a host that does report unlimited.
 //

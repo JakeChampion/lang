@@ -99,8 +99,8 @@ function put_at_s(own xs: string[], d: i32, v: string): string[] {
 
 // ---- IR binary-op kind -> SSA `binary`/`unary` op string ----------------
 
-// LitWord / decimal_word parse an irlower literal's SOURCE TEXT into the i32 the
-// SSA `const_int` holds. irlower carries integer literals as text so the AST
+// LitWord / decimal_word parse an IR literal's SOURCE TEXT into the i32 the
+// SSA `const_int` holds. The IR carries integer literals as text so the
 // backends can splice hex / full-u32 values straight into an immediate; the lift
 // needs a number, and util.digits_to_i32 handles plain DECIMAL only — so a
 // non-decimal literal reports ok=false and the caller bails rather than emitting

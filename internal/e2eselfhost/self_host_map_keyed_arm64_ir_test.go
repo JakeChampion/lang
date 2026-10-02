@@ -11,8 +11,8 @@ import (
 // or enum compares its keys through K's derived `Eq` on the self-host ARM64
 // path, not by reinterpreting the key box.
 //
-// The arm64 map runtime had no keyed-compare path at all. irlower threads the
-// derived equality symbol through every keyed map op (`map_key_eqfn` →
+// The arm64 map runtime had no keyed-compare path at all. The lowering threads the
+// derived equality symbol through every keyed map op (in
 // `Op.str`), and the x86-64 emitter loads it into %r8 for __fern_map_set /
 // _get / _has / _delete — but the arm64 emitter discarded it, so a
 // struct key fell through to the STRING loop and `__fern_str_eq` read the key

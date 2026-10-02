@@ -6,7 +6,7 @@ import "testing"
 // path (#3581). The self-host IR computed plain-i32 arithmetic in a 64-bit slot
 // and never narrowed it, so `2147483647 + 1` kept the wide value (2147483648 >
 // 0) while the native backend (and, after the checker fix, the AST interpreter
-// oracle) wrapped to -2147483648. irlower now emits op_int_cast("i32") — the
+// oracle) wrapped to -2147483648. The lowering now emits op_int_cast("i32") — the
 // signed sibling of op_u32_wrap — after a plain-i32 +/-/*/<<, so every path
 // agrees. Each case is oracle-checked against the interpreter and returns a
 // small non-negative value.

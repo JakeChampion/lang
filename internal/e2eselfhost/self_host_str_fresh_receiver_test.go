@@ -133,7 +133,7 @@ func TestSelfHostStrFreshReceiverIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostStrFreshReceiverIRArm64 is the arm64 leg; the admission is shared
-// irlower and the release is a per-backend transcription.
+// lowering analysis and the release is a per-backend transcription.
 func TestSelfHostStrFreshReceiverIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

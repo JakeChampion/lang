@@ -10,8 +10,8 @@ import (
 // TestSelfHostMethodWideReturn pins that an i64 returned from a method on a
 // PRIMITIVE receiver keeps all 64 bits.
 //
-// irlower keys a method's return width in i64_ret_fns under "<Type>.<method>",
-// and method_recv_tyname builds that key. It resolved a struct receiver (via
+// The AST lowering keyed a method's return width in i64_ret_fns under "<Type>.<method>",
+// and method_recv_tyname built that key. It resolved a struct receiver (via
 // expr_struct_type) and a u64/width-64 one, but returned "" for every other
 // primitive — i32, string, f64, f32, u32, boolean. With no key, the wide return
 // went untracked and the result was truncated to 32 bits:

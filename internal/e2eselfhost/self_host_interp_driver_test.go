@@ -81,7 +81,7 @@ var interpProgs = []struct {
 	// matching the AST/IR emitters.
 	{"asc-array-identity", "function main(): i32 { var a = [3, 4] as i32[]; return a[0] + a[1]; }", 7},
 	// Range-for `for i in LOW..HIGH`: the parser emits a synthetic
-	// __range(LOW, HIGH) for-iter that the IR path lowers (irlower) but the
+	// __range(LOW, HIGH) for-iter that the IR path lowers but the
 	// interpreter doesn't understand — parser.desugar_ranges_module (run in
 	// interp.eval_module) rewrites it to a counting while-loop so the interp
 	// evaluates it. Without that, an undesugared __range iter mis-evaluates
@@ -422,7 +422,7 @@ var interpProgs = []struct {
 	// Saturating operators (#5542) in the SELF-HOST tree-walking
 	// interpreter: interp.fern computes the i32 forms exactly in a host
 	// i64 and clamps, and the i64 forms with the same pre-check /
-	// round-trip shapes irlower emits. These are the interp-side sibling
+	// round-trip shapes the lowering emits. These are the interp-side sibling
 	// of internal/e2e/saturating_arith_test.go.
 	{"sat-add-hi", "function main(): i32 { var a: i32 = 2147483647; if ((a +| 1) == a) { return 7; } return 0; }", 7},
 	{"sat-sub-lo", "function main(): i32 { var a: i32 = 0 - 2147483647 - 1; if ((a -| 1) == a) { return 7; } return 0; }", 7},

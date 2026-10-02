@@ -43,7 +43,7 @@ var returnClosureContainerIRCases = []struct {
 	{"field-elem-arg", "struct Reg { hs: ((i32) => i32)[] } function pick(r: Reg): (i32) => i32 { return r.hs[0]; } function main(): i32 { var n: i32 = 5; var r = Reg { hs: [(x: i32) => x + n] }; var g = pick(r); return g(10); }", 15},
 }
 
-// TestSelfHostReturnClosureContainerIRX86_64 — the x86-64 irlower fix, through
+// TestSelfHostReturnClosureContainerIRX86_64 — the x86-64 fix, through
 // the production driver (asm_ir_run `-ir`).
 func TestSelfHostReturnClosureContainerIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -73,7 +73,7 @@ func TestSelfHostReturnClosureContainerIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostReturnClosureContainerIRArm64 — CI-gated arm64 counterpart. The
-// fix is in the shared irlower.fern, so the arm64 IR backend picks it up.
+// fix is in the shared lowering, so the arm64 IR backend picks it up.
 func TestSelfHostReturnClosureContainerIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

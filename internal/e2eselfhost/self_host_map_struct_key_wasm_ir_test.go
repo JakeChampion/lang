@@ -13,7 +13,7 @@ import (
 // (#2671) — the wasm sibling of TestSelfHostMapStructKeyIRX86_64. The wasm
 // self-host map is a HASH map (not the x86 linear-scan assoc list), so a
 // struct/enum key needs BOTH a derived hash (to bucket) AND a derived eq (to
-// resolve collisions). irlower emits op_map_new(kind=2) carrying the key's
+// resolve collisions). The lowering emits op_map_new(kind=2) carrying the key's
 // `K.hash|K.eq` symbols; wasm_ir threads their funcref-table slots into the
 // box via $__fern_map_new_struct, and $__fern_map_hk / $__fern_map_keq dispatch
 // them through `call_indirect (type $fn1)` / `(type $fn2)`.

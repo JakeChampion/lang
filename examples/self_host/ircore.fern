@@ -118,7 +118,7 @@ function is_rc_helper(name: string): boolean {
     // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
     // when its cap matches, else freelists it and allocs fresh — so a reuse
     // site guarded by __fern_rc_is_unique degrades instead of corrupting.
-    // Never user-callable — only irlower's reuse emitters emit it.
+    // Never user-callable — only ssarc's reuse emitters emit it.
     || name == "__fern_alloc_reuse"
     || name == "__fern_rc_underflow_get"
     // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
@@ -133,7 +133,7 @@ function is_release_helper(name: string): boolean {
   // string RC reclaim (#2649): frees a fresh, non-escaping heap string's
   // data buffer + 16-byte box. Default ir_helper_symbol maps it to
   // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
-  // only the irlower reclaim sites emit the call.
+  // only the lowering's reclaim sites emit the call.
   return name == "__fern_str_free"
     // string VIEW reclaim (#6544): __fern_str_free plus the one case it
     // must skip — a `s[a:b]` box, which carries the immortal rc sentinel
@@ -141,7 +141,7 @@ function is_release_helper(name: string): boolean {
     // view is dead this returns the 24-byte box alone to the freelist.
     // Default ir_helper_symbol maps it to __fn___fern_str_view_free; wasm
     // routes it to $__fern_arr_dec (its slices copy, so there is no view
-    // box). Never user-callable — only the irlower reclaim sites emit it.
+    // box). Never user-callable — only the lowering's reclaim sites emit it.
     || name == "__fern_str_view_free"
     // string[] ELEMENT reclaim (#4355): the element-walking sibling of the
     // shallow array dec — at rc==1 it __fern_str_free's every element box,
@@ -151,13 +151,13 @@ function is_release_helper(name: string): boolean {
     // routes it to $__fern_arr_dec_ptr (the wasm AST path's pointer-element
     // walk — wasm strings are single inline rc-headered blocks, so the plain
     // per-element $__fern_arr_dec IS the wasm string free). Never
-    // user-callable — only the irlower exit sweep emits it.
+    // user-callable — only the lowering's exit sweep emits it.
     || name == "__fern_str_arr_free"
     // arr-of-arr reclaim (#4355 slice 9): __fern_arrarr_free walks a fresh
     // arr-of-arr's elements (each a scalar-element inner buffer, one
     // rc-guarded __fern_arr_dec apiece) then frees the outer buffer;
     // __fern_strarrarr_free is the string[][] sibling (each element a
-    // string[] released fully by __fern_str_arr_free). Only the irlower
+    // string[] released fully by __fern_str_arr_free). Only the lowering's
     // exit sweep / rebind emits them.
     || name == "__fern_arrarr_free"
     || name == "__fern_strarrarr_free"
@@ -170,7 +170,7 @@ function is_map_release_helper(name: string): boolean {
   // local's keys + values buffers AND the raw 16-byte mapbox. Default
   // ir_helper_symbol maps it to __fn___fern_map_free; wasm_helper_symbol
   // routes it to $__fern_map_release (which additionally deep-drops string
-  // K/V). Never user-callable — only irlower's emit_map_buffers_free emits it.
+  // K/V). Never user-callable — only the lowering emits it.
   return name == "__fern_map_free"
     // #4353: string-VALUE-column deep-release variant — frees the vals
     // column via __fern_str_arr_free (each fresh value box + the buffer)
@@ -241,7 +241,7 @@ function is_text_helper(name: string): boolean {
     // exact-size block, so the heap is its only runtime dep. Body under
     // __fn___fern_arr_str_join,
     // emitted in each native backend's runtime block. Only
-    // irlower's lower_arr_str_join emits the call. wasm emits a matching
+    // ssarc emits the call. wasm emits a matching
     // $__fern_arr_str_join shim over the hand-written $__fern_str_join WAT
     // (wasm.arr_str_join_helper).
     || name == "__fern_arr_str_join";

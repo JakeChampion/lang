@@ -11,7 +11,7 @@ import (
 
 // #4380 lever 3, self-host slice C: the parser's elide_len_bounded_body pass
 // marks `arr[i]` READS inside a `while (i < arr.len())` loop Unchecked when
-// `0 <= i < arr.len()` is syntactically provable, so irlower emits op_arr_get_nc (no
+// `0 <= i < arr.len()` is syntactically provable, so the lowering emits op_arr_get_nc (no
 // per-iteration bounds check + len reload). The pass runs at
 // lower_func entry, so it is shared by every IR backend: x86-64, wasm, and arm64
 // (the latter two already lower the _nc op from slice B). These programs must
@@ -195,7 +195,7 @@ func TestSelfHostBoundsElideIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostBoundsElideIRWasm runs the correctness cases through the wasm IR
-// backend — the elision lives in irlower (target-independent) and wasm_ir.fern
+// backend — the elision lives in the lowering (target-independent) and wasm_ir.fern
 // already lowers op_arr_get_nc (slice B), so wasm gets it for free. Interp oracle.
 func TestSelfHostBoundsElideIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -239,7 +239,7 @@ func TestSelfHostBoundsElideIRWasm(t *testing.T) {
 }
 
 // TestSelfHostBoundsElideIRArm64 — CI-gated arm64 counterpart: asm_arm64_ir.fern
-// already lowers op_arr_get_nc (slice B), so the same irlower marking elides the
+// already lowers op_arr_get_nc (slice B), so the same marking elides the
 // while-loop reads on arm64 too. Verified under qemu.
 func TestSelfHostBoundsElideIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

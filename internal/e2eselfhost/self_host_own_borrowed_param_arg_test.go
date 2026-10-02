@@ -196,7 +196,7 @@ function main(): i32 {
 
 	// Control: a SCALAR parameter at an `own` position. Nothing rc-tracked is
 	// handed over, and a retain on an i32 is a compiler bug that SIGSEGVs
-	// rather than no-opping (see the rc_inc guard note in irlower).
+	// rather than no-opping.
 	{name: "scalar-own-param-control", expected: 3, src: `struct S { xs: i32[], n: i32 }
 @noinline
 function twice(own n: i32): i32 { n = n * 2; return n; }
@@ -243,7 +243,7 @@ func TestSelfHostOwnBorrowedParamArgX86_64(t *testing.T) {
 }
 
 // TestSelfHostOwnBorrowedParamArgArm64 — the same cases through the arm64 emit.
-// The retain comes out of shared irlower analysis rather than per-backend
+// The retain comes out of shared lowering analysis rather than per-backend
 // emission, so this leg is what catches it landing on one register backend.
 func TestSelfHostOwnBorrowedParamArgArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

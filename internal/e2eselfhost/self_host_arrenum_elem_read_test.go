@@ -145,7 +145,7 @@ func TestSelfHostArrEnumElemReadX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrEnumElemReadArm64 — the credit is shared irlower analysis, so
+// TestSelfHostArrEnumElemReadArm64 — the credit is shared lowering analysis, so
 // this leg is where an added release landing on one register backend would show.
 func TestSelfHostArrEnumElemReadArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

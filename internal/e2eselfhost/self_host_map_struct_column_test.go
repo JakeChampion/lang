@@ -9,7 +9,7 @@ import (
 //
 // A `Map[K, S]` whose value struct carries a string or array field. The
 // column's one-dec free (__fern_map_free_va) takes each value box, so every
-// box must first release its own fields: irlower routes such a column through
+// box must first release its own fields: the lowering routes such a column through
 // __map_vals_struct_drop_<S>, a per-type helper each backend hand-writes over
 // its own map layout (the raw {keys@0, vals@8} pair on the register backends,
 // the rc-headered cap/vals/used box on wasm), walking sole-owned values through

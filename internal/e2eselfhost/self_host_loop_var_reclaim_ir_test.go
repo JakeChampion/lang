@@ -170,7 +170,7 @@ func TestSelfHostLoopVarReclaimIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostLoopVarReclaimIRArm64 is the arm64 leg. The slot-reinit drop
-// lives in shared irlower.fern, so both natives are expected to agree exactly
+// lives in the shared lowering, so both natives are expected to agree exactly
 // — including on the two pinned rows, which measured identical byte counts on
 // each. A divergence BETWEEN the legs would mean the gap moved into codegen.
 func TestSelfHostLoopVarReclaimIRArm64(t *testing.T) {

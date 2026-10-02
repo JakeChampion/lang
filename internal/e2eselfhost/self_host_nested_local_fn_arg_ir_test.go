@@ -20,7 +20,7 @@ import (
 // and the callee — which dispatches env-first, reading slot 0 of an assumed
 // [funcval, caps…] box — dereferenced a bare code address.
 //
-// irlower's own comment in lift_inline_closures_stmts describes the same
+// The AST lowering's own comment in lift_inline_closures_stmts described the same
 // failure for the sibling case it already handled: "an UNBOXED reassigned value
 // (a bare lambda / fn pointer) in that slot would env-first-dispatch a non-box
 // and crash."

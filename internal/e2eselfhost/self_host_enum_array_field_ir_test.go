@@ -10,7 +10,7 @@ import (
 )
 
 // enumArrayFieldIRCases exercise ENUM-ARRAY (`E[]`) struct-literal field VALUES
-// through the self-host IR path: the three construction shapes the irlower
+// through the self-host IR path: the three construction shapes the lowering's
 // struct-lit gate now admits for an array-of-enum field, alongside the
 // array-of-struct forms it already accepted —
 //   - a bare-ident enum-array local       (`S { items: one }`)
@@ -96,7 +96,7 @@ func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 
 // TestSelfHostEnumArrayFieldIRArm64 runs the same cases through the arm64 IR
 // backend (asm_ir_run -target arm64-linux → asm_arm64.emit_module's use_ir branch →
-// asm_arm64_ir.emit_body, sharing irlower's enum-array-field lowering). This is
+// asm_arm64_ir.emit_body, sharing the enum-array-field lowering). This is
 // the essential arm64 check: an enum-array struct field's deep-drop goes through
 // arm64's heap-element reclamation, so an over-release here surfaces as a wrong
 // exit code / crash under qemu. Routing through the production emit (no -ir flag,

@@ -12,11 +12,11 @@ import (
 // form that produces a TYPED array: if the lowering can name the element kind,
 // it must also treat the value as an array.
 //
-// The two halves of that question are answered by separate, independently
-// hand-maintained lists in irlower. `is_arr` (in lower_stmt_var) enumerates
+// The two halves of that question were answered by separate, independently
+// hand-maintained lists in the AST lowering. `is_arr` (in lower_stmt_var) enumerated
 // callee names — `__alloc_u8`, `str_split`, `args`, `is_arr_ret_fn`, the string
 // methods — and `expr_is_strarr` / `expr_is_f64arr` / `expr_is_i64arr` each
-// enumerate their own. Nothing tied them together, so they could disagree, and
+// enumerated their own. Nothing tied them together, so they could disagree, and
 // they did: `args()` was in `expr_is_strarr` from the day the builtin landed and
 // missing from `is_arr` ever since. The visible symptom was oddly narrow —
 // `a[i]` and `a.len()` lowered fine, `for s in a` bailed the whole function —

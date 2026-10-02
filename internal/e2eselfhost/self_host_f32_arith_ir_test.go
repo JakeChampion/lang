@@ -11,7 +11,7 @@ import (
 // f32 shares the 8-byte f64 slot on the self-host IR path (#4366), so f32
 // arithmetic (fadd/fsub/fmul/fdiv) computes at DOUBLE precision. Native gives
 // f32 a true 4-byte slot and rounds the result after every op, so a value that
-// is not f32-representable diverged. irlower now rounds the result of an f32
+// is not f32-representable diverged. The lowering now rounds the result of an f32
 // arithmetic op via the f32_bits/f32_from_bits round-trip (the arithmetic
 // sibling of the `as f32` cast rounding); a float COMPARISON (is_fcmp_kind)
 // yields an i32 bool and is left untouched, and f64 arithmetic keeps full

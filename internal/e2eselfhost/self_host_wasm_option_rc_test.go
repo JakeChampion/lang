@@ -92,7 +92,7 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// RC-PAYLOAD (scalar-array) Option consume-by-match free on wasm: a fresh
 		// `var o = Some([..])` consumed by one match now DEEP-DROPS its array payload
 		// (op_opt_payload → dec) then frees the box, right after the match — the same
-		// shared irlower classifier (consumed_rcpayload_option_frees) that drives the
+		// shared lowering classifier that drives the
 		// register backends. Value intact + detector clean (payload + box each freed
 		// exactly once; the borrow `v[i]` ends before the post-match free).
 		{"option-arr-payload-freed", `function main(): i32 { var o: Option[i32[]] = Some([10, 20, 30]); var r = 0; match (o) { Some(v) => { r = v[0] + v[2]; }, None => {} } return r + __rc_underflow_count(); }`, 40},

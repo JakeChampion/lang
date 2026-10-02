@@ -96,7 +96,7 @@ func TestSelfHostBorrowedStructParamReturnX86_64(t *testing.T) {
 }
 
 // TestSelfHostBorrowedStructParamReturnArm64 — the same cases through the arm64
-// emit. The release is shared irlower analysis rather than per-backend
+// emit. The release is shared lowering analysis rather than per-backend
 // emission, so this leg is what would catch it landing on one register backend.
 func TestSelfHostBorrowedStructParamReturnArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

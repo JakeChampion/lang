@@ -11,7 +11,7 @@ import (
 // Phase-A annotate-and-consume migration (docs/TYPED-IR-REWRITE.md), after
 // ExprCall.ty (#5531), ExprFieldAccess.ty (#5986) and ExprIndex.ty (#6165).
 //
-// A slice `a[i:j]` asks irlower two questions about its SOURCE array, and the
+// A slice `a[i:j]` asked the AST lowering two questions about its SOURCE array, and the
 // structural walk misses both whenever the source is not a named slot:
 //
 //   - Is it an array at all? `expr_is_arr_src` gates the whole lowering, and a

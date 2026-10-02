@@ -51,7 +51,7 @@ func TestSelfHostFileBytesFaults(t *testing.T) {
 			}
 			cmd := exec.Command(compiler.cli, args...)
 			if compiler.name == "primary" {
-				cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1")
+				cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 			}
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)

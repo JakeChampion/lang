@@ -155,7 +155,7 @@ func TestSelfHostStructTupleArrayFieldIR(t *testing.T) {
 	}
 }
 
-// The wasm leg: the fixes live in shared irlower.fern, so the wasm IR backend
+// The wasm leg: the fixes live in the shared lowering, so the wasm IR backend
 // admits the same struct and reads the tuple-box pointer elements through the
 // 4-byte-slot arr_get walk. Drives wasm_ir_run (stdin → wat) and runs under
 // wasmtime. Case table shared with the x86-64 leg.

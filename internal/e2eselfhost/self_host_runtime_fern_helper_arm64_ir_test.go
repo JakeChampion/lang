@@ -116,7 +116,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"read_dir", "remove_dir_all",
 		// The CSPRNG i32 and the Reader/Writer file opener (#2649). open_res
 		// carries the Darwin open-flag translation the hand-asm did inline; it
-		// has to stay a run-time check because irlower picks the flags and has
+		// has to stay a run-time check because the lowering picks the flags and has
 		// no target, so the Linux emit here simply has no translation to make.
 		"random_i32", "open_res",
 		// The socket leaves that take only an fd (#2649).
