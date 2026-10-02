@@ -24,11 +24,15 @@ applied once at the end. Integer arithmetic wraps in Fern
 (`docs/INTEGER-SEMANTICS.md`), so the mask was never needed for the roll
 itself, only for the sign of the index the `%` produces.
 
-The buckets names land in change. That is not observable: every index
-over `hash_bucket` chains its entries in ascending order and a lookup
-returns the first entry of a name, whichever bucket it is in, and no
-table walks its buckets in bucket order. The sweep and the identical
-checker binary are the witnesses.
+The buckets names land in change. No emitted byte depends on that:
+every index over `hash_bucket` returns an equal entry whichever end of
+the chain meets it first (`NameIndex` and the irlower tables chain
+ascending, `asmcore`'s literal table descending), and no table walks
+its buckets in bucket order. The sweep and the identical checker binary
+are the witnesses. One thing does read the value: `modloader.
+module_fact_hashes` sums it as a checksum into the per-module cache
+key, so a compiler carrying this change misses every unit the previous
+one cached, once, and rebuilds it.
 
 ## Measured
 
@@ -56,6 +60,11 @@ index in a loop.
 
 ## Witnessed
 
+`TestSelfHostUtilHashBucket` (new: the `util_hash_run` driver compares
+the four-byte step against the byte-at-a-time roll over every length
+from 0 to 41, bytes from every quarter of the range, and bucket counts
+of 0, 1, a negative, a power of two, a prime and the mask itself, so a
+wrong weight or a tail off by one fails where no behaviour test can),
 `TestSelfHostAsmLoadRunStdlibRootVsFlags`, `TestSelfHostIRVerifyRc`,
 `TestSelfHostSemanticSourceRC`, the lint ratchet, and the emit-hash
 sweep.
