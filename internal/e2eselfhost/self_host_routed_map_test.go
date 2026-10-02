@@ -464,22 +464,9 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 			t.Fatalf("the %s program's maps are not routed onto core/map", c.name)
 		}
 	}
-
-	// A bisect knob keeps a mixed module, so under one every map stays on the
-	// runtime and the program still runs.
-	t.Run("bisect_knob", func(t *testing.T) {
-		asm := routedMapAsm(t, selfHostBin, stdlibRoot, routedMapSurfaceSrc, "FERN_SEM_IR_SKIP=__no_such_function__")
-		if strings.Contains(asm, "call __fn___map_set_impl") {
-			t.Fatal("a map was routed under FERN_SEM_IR_SKIP")
-		}
-		stdout, stderr := routedMapRun(t, selfHostBin, stdlibRoot, routedMapSurfaceSrc, "x86-64-linux", "FERN_SEM_IR_SKIP=__no_such_function__")
-		if stdout != "104398092" {
-			t.Fatalf("stdout = %q, want 104398092\n%s", stdout, stderr)
-		}
-	})
 }
 
-func routedMapAsm(t *testing.T, fernBin, stdlibRoot, src string, env ...string) string {
+func routedMapAsm(t *testing.T, fernBin, stdlibRoot, src string) string {
 	t.Helper()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "main.fern")
@@ -488,7 +475,6 @@ func routedMapAsm(t *testing.T, fernBin, stdlibRoot, src string, env ...string) 
 	}
 	out := filepath.Join(dir, "prog.s")
 	cmd := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", in, stdlibRoot, "-o", out)
-	cmd.Env = append(os.Environ(), env...)
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile: %v\n%s", err, msg)
 	}

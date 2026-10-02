@@ -58,7 +58,7 @@ pub struct Op {
   // name give two decls, and a backend resolving `str` by name gets whichever
   // was declared first — reading the other enum's field types and widths. The
   // index is into the SAME decl array the lowering ran against; every consumer
-  // is handed that array (`all_structs` reaches lower_all_for_view and
+  // is handed that array (`all_structs` reaches the lowering and
   // emit_functions_view alike), so it means the same decl on both sides.
   decl: i32,
 }
@@ -267,7 +267,7 @@ pub function op_fbin(kind: string): Op {
 // on x86, fsqrt / frint* / fabs on arm64, f64.sqrt / floor / ceil / trunc / abs
 // on wasm). Round-half-away (__round_f64) and the libm transcendentals
 // log/exp/sin/cos are op_funary kinds too, but need multi-instruction emulation
-// (x86/wasm; arm64 has frinta) or a runtime call on some backends; wasm has neither, so wasm_eligible
+// (x86/wasm; arm64 has frinta) or a runtime call on some backends; wasm has neither, so the wasm routing gate
 // subtracts the transcendental kinds there.
 pub function op_funary(kind: string): Op {
   return Op { decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
@@ -1894,7 +1894,7 @@ pub function op_read_line(): Op {
 // fresh Result[string, IoError] box: Ok(contents) on success, Err(_) on any I/O
 // error (a VALUE op — one arg consumed, the box left on the stack). Lowers to
 // each backend's __fern_read_file helper. No wasm file I/O here, so a read_file
-// module is wasm-ineligible (wasm_eligible) and is refused there.
+// module is wasm-ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_read_file(): Op {
   return op0(169);
 }
@@ -1912,7 +1912,7 @@ pub function op_read_file_bytes(): Op {
 // Some(_) on any I/O error (a VALUE op — two args consumed, the box left on the
 // stack). Lowers to each backend's __fern_write_file helper (the same one the AST
 // path calls). No wasm file I/O here, so a write_file module is wasm-ineligible
-// (wasm_eligible) and is refused there.
+// (wasm_ir.ir_route_ok) and is refused there.
 pub function op_write_file(): Op {
   return op0(170);
 }
@@ -1929,7 +1929,7 @@ pub function op_write_file_exec(): Op {
 // ENOENT/ENOTDIR (a VALUE op — one arg consumed, the box left on the stack).
 // Lowers to each backend's __fern_remove_dir_all helper (the same one the AST
 // path calls). No wasm file I/O here, so a remove_dir_all module is wasm-
-// ineligible (wasm_eligible) and is refused there.
+// ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_remove_dir_all(): Op {
   return op0(172);
 }
@@ -1949,7 +1949,7 @@ pub function op_remove_file(): Op {
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
 // backend's __fern_temp_dir helper (the same one the AST path calls; it also
 // calls __fern_monotonic_ns). No wasm file I/O here, so a temp_dir module is
-// wasm-ineligible (wasm_eligible) and is refused there.
+// wasm-ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_temp_dir(): Op {
   return op0(174);
 }
@@ -1969,7 +1969,7 @@ pub function op_create_dir_all(): Op {
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
 // backend's __fern_read_dir helper (the same one the AST path calls; it boxes a
 // string[] via __fern_arr_box). No wasm file I/O here, so a read_dir module is
-// wasm-ineligible (wasm_eligible) and is refused there.
+// wasm-ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_read_dir(): Op {
   return op0(171);
 }
@@ -1987,7 +1987,7 @@ pub function op_read_dir_all(): Op {
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
 // backend's __fern_env helper (the same one the AST path calls; it boxes the
 // value into a fresh string block). No wasm env access here, so an env module
-// is wasm-ineligible (wasm_eligible) and is refused there.
+// is wasm-ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_env(): Op {
   return op0(176);
 }
@@ -1998,7 +1998,7 @@ pub function op_env(): Op {
 // left on the stack). Lowers to each backend's __fern_stat helper (the same one
 // the AST path calls; it boxes a FileStat struct whose shape pointer is the
 // interned "FileStat" name). No wasm file I/O here, so a stat module is wasm-
-// ineligible (wasm_eligible) and is refused there.
+// ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_stat(): Op {
   return op0(175);
 }
@@ -2040,7 +2040,7 @@ pub function op_statfs(): Op {
 // __fern_subprocess helper (the same one the AST path calls; it boxes a
 // ProcessResult whose shape pointer is the interned "ProcessResult" name). No
 // wasm process spawn here, so a subprocess module is wasm-ineligible
-// (wasm_eligible) and is refused there.
+// (wasm_ir.ir_route_ok) and is refused there.
 pub function op_subprocess(): Op {
   return op0(177);
 }
@@ -2050,7 +2050,7 @@ pub function op_subprocess(): Op {
 // and pushes a fresh Option[string]: Some(chunk) on a non-empty read, None at EOF
 // (a VALUE op — two args consumed, the box left on the stack). Lowers to each
 // backend's __fern_reader_read_chunk helper (the same one the AST path calls). No
-// wasm stdin here, so a read_chunk module is wasm-ineligible (wasm_eligible) and
+// wasm stdin here, so a read_chunk module is wasm-ineligible (wasm_ir.ir_route_ok) and
 // is refused there.
 pub function op_read_chunk(): Op {
   return op0(178);
@@ -2137,7 +2137,7 @@ pub function op_reader_close(): Op {
 // (argv[0] first) — a VALUE op with no args, leaving the array box on the stack.
 // Lowers to each backend's __fern_args helper (which reads the __fern_argc /
 // __fern_argv globals the entry's _start saves from the initial stack). No wasm
-// argv in this runtime, so an args module is wasm-ineligible (wasm_eligible) and
+// argv in this runtime, so an args module is wasm-ineligible (wasm_ir.ir_route_ok) and
 // is refused there.
 pub function op_args(): Op {
   return op0(180);
@@ -2219,7 +2219,7 @@ pub function op_signal_default(): Op {
 //      length (a VALUE op — no args, leaves the box on the stack; allocates).
 // Lower to each register backend's __fern_strbuf_* helpers (byte-for-byte the
 // AST path's, so the IR + AST emitters agree). No wasm IR support yet, so a
-// strbuf module is wasm-ineligible (wasm_eligible) and is refused there.
+// strbuf module is wasm-ineligible (wasm_ir.ir_route_ok) and is refused there.
 pub function op_strbuf_reset(): Op {
   return op0(117);
 }

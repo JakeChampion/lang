@@ -60,13 +60,13 @@ func TestSelfHostMapIterIsReclaimed(t *testing.T) {
 	for _, tc := range mapIterReclaimCases() {
 		src := writeEnumMapSrc(t, "map_iter_"+tc.name, tc.src())
 		t.Run(tc.name+"/x86-64", func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", "FERN_SEM_IR=1")
+			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1")
 			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
 			assertMapIterRun(t, stderr, exit, tc.want)
 		})
 		t.Run(tc.name+"/arm64", func(t *testing.T) {
 			armgcc, qemu := arm64Tooling(t)
-			asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1", "FERN_SEM_IR=1"))
+			asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -80,7 +80,7 @@ func TestSelfHostMapIterIsReclaimed(t *testing.T) {
 			if _, err := exec.LookPath("wasmtime"); err != nil {
 				t.Skip("wasmtime not on PATH")
 			}
-			wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", "FERN_SEM_IR=1")
+			wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1")
 			stderr, exit := runWasmCensus(t, wat)
 			assertMapIterRun(t, stderr, exit, tc.want)
 		})
@@ -114,14 +114,14 @@ func TestSelfHostMapIterAcrossModules(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("x86-64", func(t *testing.T) {
-		stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1", "FERN_SEM_IR=1"), nil)
+		stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1"), nil)
 		assertMapIterRun(t, stderr, exit, 24)
 	})
 	t.Run("wasm", func(t *testing.T) {
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH")
 		}
-		stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", "FERN_SEM_IR=1"))
+		stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1"))
 		assertMapIterRun(t, stderr, exit, 24)
 	})
 }

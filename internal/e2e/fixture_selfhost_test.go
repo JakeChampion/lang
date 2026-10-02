@@ -401,14 +401,10 @@ func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 		leg.backend, ran, expectedFail, skipped, skipReasons)
 }
 
-// fixtureCompile runs the self-host compiler on the typed path, so a fixture
-// it does not produce whole fails the compile. The typed path is spelled on:
-// an ambient FERN_SEM_IR= would otherwise turn it off and leave the gate
-// asserting nothing.
+// fixtureCompile runs the self-host compiler, so a fixture it does not
+// produce whole fails the compile.
 func fixtureCompile(fernBin string, args ...string) *exec.Cmd {
-	cmd := exec.Command(fernBin, args...)
-	cmd.Env = append(os.Environ(), "FERN_SEM_IR=1")
-	return cmd
+	return exec.Command(fernBin, args...)
 }
 
 // strictIRBailSite re-runs a FAILED compile under FERN_STRICT_IR=1 and returns

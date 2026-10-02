@@ -6,25 +6,15 @@ import (
 	"testing"
 )
 
-// appendResultTempCases pin #10560: on the AST lowering an expression-position
-// `.append` result used as another append's receiver (`acc.append(a).append(b)`)
-// or passed as a call argument (`id(xs.append(1))`, `rec(n - 1, acc.append(x))`)
-// stranded its buffer's count. Each row runs under both lowerings with the
-// leakcheck census and FERN_SANITIZE=1 on x86-64 and the census on wasm.
-//
-// astLeak is the most blocks the AST lowering may leave live. It is 0 where the
-// row must balance. The string[] and struct-array rows balance their buffers
-// but not yet their ELEMENTS: a local rebound from a chained append or from a
-// non-producer call loses its element-walking release, which is a separate
-// credit, so those rows allow exactly the elements the final arrays hold.
-// astAllocs, when set, is the AST lowering's exact allocation count: the
-// in-place guard, which fails if a push that grew in place starts copying.
+// appendResultTempCases pin #10560: an expression-position `.append` result
+// used as another append's receiver (`acc.append(a).append(b)`) or passed as a
+// call argument (`id(xs.append(1))`, `rec(n - 1, acc.append(x))`) must not
+// strand its buffer's count. Each row must balance under the leakcheck census
+// and run clean under FERN_SANITIZE=1 on x86-64, and balance on wasm.
 var appendResultTempCases = []struct {
-	name      string
-	src       string
-	want      int
-	astLeak   int64
-	astAllocs int64
+	name string
+	src  string
+	want int
 }{
 	// The issue's receiver repro: a chain on a borrowed parameter, and a chain
 	// rebinding a local. The outer push copies or grows the inner result, whose
@@ -42,7 +32,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (pending.len() + q.len()) % 100;
 }
-`, 40, 0, 0},
+`, 40},
 	// The argument repro: a callee that hands its parameter back retained. 11
 	// allocs / 1 free before.
 	{"arg_identity_callee", `function id(acc: i32[]): i32[] { return acc; }
@@ -55,7 +45,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return pending.len();
 }
-`, 10, 0, 0},
+`, 10},
 	// A recursive accumulator: every frame's append result is an argument of
 	// the next. 6 allocs / 0 frees before.
 	{"arg_recursive_accumulator", `function rec(n: i32, acc: i32[]): i32[] {
@@ -68,7 +58,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return r.len();
 }
-`, 10, 0, 0},
+`, 10},
 	// The 8-byte pushes. `f(xs)` returning `p.append(v)` in place handed the
 	// caller's buffer back uncounted, which the rebind then freed under `xs`.
 	{"wide_elements", `function f(p: f64[]): f64[] { return p.append(1.5); }
@@ -93,7 +83,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (xs.len() + fs.len() + is.len()) % 100;
 }
-`, 50, 0, 0},
+`, 50},
 	{"string_elements_chain", `import "std/i32";
 function tag(k: i32): string { return "t" + k.to_string(); }
 function step(n: i32, acc: string[]): string[] {
@@ -112,7 +102,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return pending.len() + q.len();
 }
-`, 120, 120, 0},
+`, 120},
 	{"struct_elements_chain", `struct P { v: i32, w: i32 }
 function step(n: i32, acc: P[]): P[] {
     return acc.append(P { v: n, w: 1 }).append(P { v: n + 1, w: 2 });
@@ -132,7 +122,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return total % 100;
 }
-`, 0, 120, 0},
+`, 0},
 	// The in-place guard. `grow` and `rec` push onto a buffer their caller no
 	// longer reads, and `roomy.append(20)` must copy because `roomy` is read
 	// again. The allocation count is the one main had, so a release that made a
@@ -158,7 +148,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (xs.len() + r.len()) % 100;
 }
-`, 0, 0, 512},
+`, 0},
 	// Callees that KEEP the argument: in a returned struct, in a returned
 	// array literal, and as an element appended to another array. The first
 	// retains it at the construction, so its temp is released; the other two
@@ -185,36 +175,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return total % 100;
 }
-`, 30, 40, 0},
-}
-
-var appendResultTempLowerings = []struct {
-	name, env string
-	ast       bool
-}{
-	{"ast", "FERN_SEM_IR=", true},
-	{"semantic", "FERN_SEM_IR=1", false},
-}
-
-// checkAppendTempCensus holds a census to its row: balanced on the semantic
-// lowering, and on the AST one at most astLeak blocks live and, for the guard,
-// exactly astAllocs allocations.
-func checkAppendTempCensus(t *testing.T, stderr string, astLeak, astAllocs int64, ast bool) {
-	t.Helper()
-	if !ast || astLeak == 0 {
-		assertBalancedCensus(t, stderr)
-	}
-	summary := leakSummaryLine(stderr)
-	var allocs, frees, live int64
-	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
-		t.Fatalf("parse %q: %v", summary, err)
-	}
-	if ast && allocs-frees > astLeak {
-		t.Errorf("%s: %d blocks live, want at most %d", summary, allocs-frees, astLeak)
-	}
-	if ast && astAllocs != 0 && allocs != astAllocs {
-		t.Errorf("%s: want allocs=%d — an in-place push became a copy, or a copy became in place", summary, astAllocs)
-	}
+`, 30},
 }
 
 func writeAppendTempSrc(t *testing.T, name, src string) string {
@@ -230,20 +191,17 @@ func TestSelfHostAppendResultTempX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range appendResultTempCases {
 		src := writeAppendTempSrc(t, tc.name, tc.src)
-		for _, lw := range appendResultTempLowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env), nil)
-				if exit != tc.want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				checkAppendTempCensus(t, stderr, tc.astLeak, tc.astAllocs, lw.ast)
-				balanced := !lw.ast || tc.astLeak == 0
-				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
-				if exit != tc.want || forArrStructSanitizerFault(stderr, balanced) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer report\n%s", exit, tc.want, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1"), nil)
+			if exit != tc.want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1"), nil)
+			if exit != tc.want || forArrStructSanitizerFault(stderr, true) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer report\n%s", exit, tc.want, stderr)
+			}
+		})
 	}
 }
 
@@ -251,14 +209,12 @@ func TestSelfHostAppendResultTempWasm(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range appendResultTempCases {
 		src := writeAppendTempSrc(t, tc.name, tc.src)
-		for _, lw := range appendResultTempLowerings {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", lw.env))
-				if exit != tc.want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
-				}
-				checkAppendTempCensus(t, stderr, tc.astLeak, tc.astAllocs, lw.ast)
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1"))
+			if exit != tc.want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
 	}
 }

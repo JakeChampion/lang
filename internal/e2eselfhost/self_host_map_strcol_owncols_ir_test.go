@@ -1,33 +1,19 @@
 package e2eselfhost
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
-// Heap-bump FIXPOINTS for #5335 (issue #4353 layer 0, general case): the map
-// grow path frees the superseded column buffers for STRING-column maps too.
-// map_owncols now admits any map whose columns BOTH read back as snapshots
-// (i32 -> __fern_map_snapshot_col, string -> __fern_map_snapshot_col_str), so
-// __fern_map_set routes their appends through the reclaim-on-grow
-// __fern_arr_push_owned. Owning only i32/i32 maps leaves a growing
-// Map[i32,string] / Map[string,i32] / Map[string,string] leaking every
-// superseded keys/vals buffer (bounded per map but unbounded across a churn
-// loop, which is exactly what the fixpoint contract catches).
+// Heap-bump FIXPOINTS for #5335 (issue #4353 layer 0, general case): a
+// growing STRING-column map frees its superseded column buffers, so a churn
+// over Map[i32,string] / Map[string,i32] / Map[string,string] keeps the heap
+// flat.
 //
 // Fixpoint contract (mirrors self_host_map_fixpoint_ir_test.go): growth at
 // N=50 == growth at N=5000, non-zero, under a hard leak guard. The fixed
-// cases pin value-correctness and the soundness edges:
-//   - keys()/values() taken BEFORE later growing inserts must stay valid and
-//     keep SNAPSHOT semantics (the old raw-alias reads were the reason string
-//     columns were excluded from owncols: an owned grow would have freed the
-//     buffer under a live read),
-//   - a flag-1 alias column (i64 values) must KEEP the leak-only push: its
-//     values() read raw-aliases the buffer, so the superseded buffer must
-//     stay alive.
+// cases pin value-correctness and the soundness edges: keys()/values() taken
+// BEFORE later growing inserts must stay valid and keep SNAPSHOT semantics,
+// and an i64-valued map's values() must survive the grows after it.
 var mapStrColOwncolsCases = []struct {
 	name  string
 	src   func(n string) string
@@ -200,121 +186,35 @@ function main(): i32 {
 	}},
 }
 
-// TestSelfHostMapStrColOwncolsIRX86_64 runs the string-column owncols shapes
-// through the self-hosted x86-64 IR driver (asm_run). Fixpoint cases assert
+// TestSelfHostMapStrColOwncolsIRX86_64 runs the string-column shapes through
+// the self-hosted CLI, which loads core/map. Fixpoint cases assert
 // growth(N=50) == growth(N=5000), non-zero, under the leak guard; fixed cases
 // assert their exact exit (121 = value mismatch, 119 = leak guard, 9x = a
 // specific correctness probe) AND are cross-checked against the native
 // `fern -interp` oracle (differential leg: every program is native-valid and
 // must exit identically on both).
 func TestSelfHostMapStrColOwncolsIRX86_64(t *testing.T) {
-	// These programs pin the AST lowering's built-in map runtime; the typed lowering
-	// takes maps from core/map.
-	t.Setenv("FERN_SEM_IR", "")
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-
-	sh := func(t *testing.T, tag, prog string) int {
+	cli := buildSelfHostCLI(t)
+	sh := func(t *testing.T, prog string) int {
 		t.Helper()
-		asm := runCapture(t, gcc, runner, driverBin, []byte(prog+"\n"))
-		if len(asm) == 0 {
-			t.Fatalf("%s: self-host compiler emitted 0 bytes", tag)
-		}
-		progBin := buildBin(t, gcc, dir, tag, string(asm))
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(progBin)
-		} else {
-			cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-		}
-		_ = cmd.Run()
-		return cmd.ProcessState.ExitCode()
+		_, exit := cli.exitOf(t, prog+"\n", "x86-64-linux")
+		return exit
 	}
-
-	// Deterministic owncols-flag pin (the negative-asm-grep discipline): the
-	// x86-64 map_set emission loads the per-insert flag bits into %r9 —
-	// bit 0 = kconsume (fresh string key), bit 1 = owncols. Grepping the
-	// emitted asm pins the routing without depending on freelist-reuse timing.
-	//
-	// owncols says no keys()/values() read aliases the raw column buffers, so
-	// the map solely owns them and a grow may free the superseded one. Every
-	// VALUE column now satisfies that: a pointer column snapshots with a
-	// per-element retain and a cell column snapshots flat, so an i64-valued map
-	// takes owncols too. It did not before — its reads raw-aliased the buffer,
-	// which was a use-after-free in its own right, not merely a reason to
-	// decline the credit.
-	t.Run("owncols-flag-asm", func(t *testing.T) {
-		emit := func(prog string) string {
-			return string(runCapture(t, gcc, runner, driverBin, []byte(prog+"\n")))
-		}
-		strkv := emit(`import "core/map";
-function main(): i32 {
-    var m: Map[string, string] = map_new(2);
-    m = m.insert("k" + "0", "v" + "0");
-    return m.len() - 1;
-}`)
-		// fresh string key (kconsume, bit 0) + owncols (bit 1) = 3
-		if !strings.Contains(strkv, "movq $3, %r9") {
-			t.Errorf("Map[string,string] insert: want owncols+kconsume flag load (movq $3, %%r9) in emitted asm")
-		}
-		strval := emit(`import "core/map";
-function main(): i32 {
-    var m: Map[i32, string] = map_new(2);
-    m = m.insert(1, "v" + "0");
-    return m.len() - 1;
-}`)
-		// i32 key (no kconsume) + owncols = 2
-		if !strings.Contains(strval, "movq $2, %r9") {
-			t.Errorf("Map[i32,string] insert: want owncols flag load (movq $2, %%r9) in emitted asm")
-		}
-		// An 8-byte CELL value column: i32 key (no kconsume) + owncols = 2, the
-		// same as the string-valued map above. The snapshot copies the cells
-		// flat rather than retaining them — the op's widekind, not the column
-		// flag, is what makes an 8-byte cell copy whole.
-		i64val := emit(`import "core/map";
-function main(): i32 {
-    var m: Map[i32, i64] = map_new(2);
-    m = m.insert(1, 11);
-    return m.len() - 1;
-}`)
-		if !strings.Contains(i64val, "movq $2, %r9") {
-			t.Errorf("Map[i32,i64] insert: want owncols flag load (movq $2, %%r9) in emitted asm")
-		}
-		// A column of BOXES: also owncols, and the read retains each element.
-		structval := emit(`import "core/map";
-struct Coord { x: i32, y: i32 }
-function main(): i32 {
-    var m: Map[i32, Coord] = map_new(2);
-    m = m.insert(1, Coord { x: 1, y: 2 });
-    return m.len() - 1;
-}`)
-		if !strings.Contains(structval, "movq $2, %r9") {
-			t.Errorf("Map[i32,Coord] insert: want owncols flag load (movq $2, %%r9) in emitted asm")
-		}
-	})
 
 	for _, tc := range mapStrColOwncolsCases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.fixed {
-				code := sh(t, tc.name, tc.src(""))
+				code := sh(t, tc.src(""))
 				if code != tc.want {
 					t.Errorf("%s: exited %d, want %d", tc.name, code, tc.want)
 				}
 				if native := runInterpExit(t, tc.src("")); native != code {
-					t.Errorf("%s: differential mismatch — native -interp exited %d, self-host IR exited %d", tc.name, native, code)
+					t.Errorf("%s: differential mismatch — native -interp exited %d, self-host exited %d", tc.name, native, code)
 				}
 				return
 			}
-			small := sh(t, tc.name+"-50", tc.src("50"))
-			large := sh(t, tc.name+"-5000", tc.src("5000"))
+			small := sh(t, tc.src("50"))
+			large := sh(t, tc.src("5000"))
 			if small != large {
 				t.Errorf("%s: high-water not bounded (N=50 -> %d, N=5000 -> %d)", tc.name, small, large)
 			}

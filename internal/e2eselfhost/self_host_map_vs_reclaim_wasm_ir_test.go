@@ -21,9 +21,6 @@ import (
 // exclusion (an aliased value stays vconsume=0 → retained → the source local's
 // sweep balances it, no over-release).
 func TestSelfHostMapVsReclaimWasmIR(t *testing.T) {
-	// These programs pin the AST lowering's built-in map runtime; the typed lowering
-	// takes maps from core/map.
-	t.Setenv("FERN_SEM_IR", "")
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host map-vs-reclaim wasm IR e2e")
 	}

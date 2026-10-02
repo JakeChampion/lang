@@ -33,14 +33,14 @@ import (
 func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	// Both generations use the same batch so the comparison isolates the
 	// COMPILER, not the windowing.
-	batchUnits := pmEmitAllBatch()
+	batchUnits := pmEmitAllBatch
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProjectTyped(t)
 	entry := filepath.Join(dir, "asm_modload_run.fern")
 
 	gen0Bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "eafix_gen0")
 
-	t.Logf("gen0: emit-all of the whole compiler (-assume-eligible, batch=%d)", batchUnits)
+	t.Logf("gen0: emit-all of the whole compiler (batch=%d)", batchUnits)
 	unitsG0 := emitAllWholeCompiler(t, runner, gen0Bin, entry, dir, "eafix_g0", "x86-64-linux", batchUnits, pmGoBuiltEmitMemoryMB)
 	gen1Bin := filepath.Join(dir, "eafix_gen1")
 	objsG0 := unitObjPaths(t, dir, "eafix_g0", unitsG0)
@@ -50,7 +50,7 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	}
 
 	// gen1 (self-host-built) emit-all of the SAME source.
-	t.Logf("gen1: emit-all of the whole compiler (-assume-eligible, batch=%d)", batchUnits)
+	t.Logf("gen1: emit-all of the whole compiler (batch=%d)", batchUnits)
 	unitsG1 := emitAllWholeCompiler(t, runner, gen1Bin, entry, dir, "eafix_g1", "x86-64-linux", batchUnits, pmSelfBuiltEmitMemoryMB)
 
 	if len(unitsG1) != len(unitsG0) {
@@ -83,7 +83,7 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 	t.Logf("emit-all fixpoint holds: gen0 == gen1 across %d units, batch=%d, no OOM", len(unitsG0), batchUnits)
 }
 
-// emitAllWholeCompiler drives compilerBin's `-per-module-emit-all -assume-eligible`
+// emitAllWholeCompiler drives compilerBin's `-per-module-emit-all`
 // over the whole-compiler entry in RSS-bounded batches (a fresh process per
 // batch), returning a map of "<modIdx>[_s<lo>]" → unit asm read back from the
 // batch output dir. The plan (planPmEmitWindows) sizes the flat unit range only;
@@ -131,7 +131,7 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 
 	start := time.Now()
 	batches := runPMEmitBatches(totalUnits, batchUnits, memoryMB, func(lo, hi int) (int64, error) {
-		return driveRSS("-per-module-emit-all", "-assume-eligible", "-out-dir", outDir,
+		return driveRSS("-per-module-emit-all", "-out-dir", outDir,
 			"-func-budget", strconv.Itoa(pmFuncBudget),
 			"-unit-range", strconv.Itoa(lo)+":"+strconv.Itoa(hi))
 	})
@@ -150,7 +150,7 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 			if ee, ok := batch.err.(*exec.ExitError); ok {
 				switch ee.ExitCode() {
 				case 125:
-					hint = " — arena exhausted (exit 125); -assume-eligible did not bound the batch"
+					hint = " — arena exhausted (exit 125); lower the batch size"
 				case 137:
 					hint = " — SIGKILLed (exit 137): the HOST ran out of RAM, not the arena; lower the concurrency or the budget knobs"
 				}

@@ -648,30 +648,6 @@ pub function contains(haystack: string, needle: string): boolean {
 
 // index_of_sub is the offset of the first occurrence of `needle` in
 // `haystack`, or -1; an empty needle is found at 0.
-// The last index of `needle` in `haystack`, or -1; compares bytes and
-// allocates nothing.
-pub function last_index_of_sub(haystack: string, needle: string): i32 {
-  if (haystack.len() < needle.len()) {
-    return 0 - 1;
-  }
-  var i: i32 = haystack.len() - needle.len();
-  while (i >= 0) {
-    var j: i32 = 0;
-    var hit: boolean = true;
-    while (hit && j < needle.len()) {
-      if (haystack[i + j] != needle[j]) {
-        hit = false;
-      }
-      j = j + 1;
-    }
-    if (hit) {
-      return i;
-    }
-    i = i - 1;
-  }
-  return 0 - 1;
-}
-
 pub function index_of_sub(haystack: string, needle: string): i32 {
   if (needle.len() == 0) {
     return 0;

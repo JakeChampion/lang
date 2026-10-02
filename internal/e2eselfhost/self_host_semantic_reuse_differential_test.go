@@ -8,32 +8,18 @@ import (
 	"testing"
 )
 
-// The typed (semantic) lowering's reuse pairing, gated the way the AST path's
-// is: a firing count that must be met, a switch that must take it to zero, and
-// the two builds' answers compared against each other.
+// The typed (semantic) lowering's reuse pairing: a firing count that must be
+// met, a switch (FERN_SELFHOST_NO_REUSE=1) that must take it to zero, and the
+// two builds' answers compared against each other.
 //
-// TestSelfHostReuseDifferentialX86_64 does NOT cover this. Its driver is
-// asm_run.fern, which runs lexer -> parser -> asm_ir -> irlower and never
-// touches semlower, so neither of its arms reaches ssarc. fern.fern is the
-// only driver that routes through the semantic path, which is why this suite
-// builds the whole CLI rather than the demo driver.
-//
-// Each case must produce WHOLE on the typed path. Production is all-or-nothing
-// per module, so one refused declaration sends every function to the AST
-// lowering and the counts below would then be measuring irlower, not ssarc —
-// which is exactly the mistake this check exists to prevent. Every intrinsic
-// a case calls must have a semantic contract for the same reason, as
-// `__rc_underflow_count` does.
+// Each case must produce WHOLE on the typed path, so every intrinsic a case
+// calls must have a semantic contract, as `__rc_underflow_count` does.
 var semanticReuseCases = []struct {
 	name string
 	src  string
 	want int
-	// Firings of the reuse call the typed path must emit, and `astPath` what
-	// the AST lowering emits for the same source. Where astPath is 0 the
-	// pairing is reachable ONLY through ssarc, so the count cannot be
-	// satisfied by irlower and the case witnesses this layer alone.
+	// Firings of the reuse call the typed path must emit.
 	firings int
-	astPath int
 	// Allocations the program makes under FERN_LEAKCHECK with the pairing on
 	// and off. A FIRING IS A CALL: `__fern_alloc_reuse` hands the donor block
 	// back only when its cap matches what the construction asks for, and
@@ -71,7 +57,7 @@ function main(): i32 {
     while (i < 4) { var r: R = step(i); t = t + r.n + r.cells[0] + r.tag.len(); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 72, 1, 0, 12, 16, false, false},
+}`, 72, 1, 12, 16, false, false},
 
 	// The degrade path: an array holds a second count on the donor, so the
 	// pairing is static but `__fern_rc_is_unique` fails and the construction
@@ -91,7 +77,7 @@ function main(): i32 {
     var v: i32 = shared(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
-}`, 17, 1, 0, 5, 5, true, false},
+}`, 17, 1, 5, 5, true, false},
 
 	// The donor and the recipient are different TYPES and the same number of
 	// SLOTS, which is the only thing a box has to agree on. Mote and Glyph are
@@ -136,7 +122,7 @@ function main(): i32 {
     t = t + sigil_code(cross_back(5)) + cross_wide(3);
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 251;
-}`, 189, 2, 0, 13, 18, false, false},
+}`, 189, 2, 13, 18, false, false},
 
 	// A tuple box is one word per element and no shape word, so it is storage
 	// a donor of any form can be and storage any form can take: tuple to
@@ -176,7 +162,7 @@ function main(): i32 {
     var t: i32 = tuple_loop(4) + tuple_from_rec(3) + rec_from_tuple(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 60, 3, 0, 10, 16, false, false},
+}`, 60, 3, 10, 16, false, false},
 
 	// A UNION donor: a declared enum whose variants agree on field count, so
 	// its box is a count this frame can state, dying at a call before a record
@@ -209,7 +195,7 @@ function main(): i32 {
     var t: i32 = union_donor(4) + union_donor(9);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 30, 1, 0, 4, 6, false, false},
+}`, 30, 1, 4, 6, false, false},
 
 	// The two rules that decide WHICH dying box a construction builds in,
 	// neither of which the cases above can see: every one of them puts the
@@ -247,7 +233,7 @@ function main(): i32 {
     var t: i32 = hold_over(3) + chain_up(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 32, 4, 4, 3, 7, false, false},
+}`, 32, 4, 3, 7, false, false},
 
 	// A record of scalars: pure storage, with no children to release at the
 	// token. The AST path pairs this shape too, so the count alone does not
@@ -265,7 +251,7 @@ function main(): i32 {
     while (i < 3) { t = t + bump(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 21, 1, 1, 3, 6, false, false},
+}`, 21, 1, 3, 6, false, false},
 	// The frame has ONE token slot, and this case is the shape that made that
 	// matter: a 3-slot donor held for a later 3-slot construction, with a
 	// 4-slot self-update between them. The self pairing's token overwrote the
@@ -293,7 +279,7 @@ function main(): i32 {
     var t: i32 = f(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return t;
-}`, 21, 1, 2, 3, 4, false, false},
+}`, 21, 1, 3, 4, false, false},
 	// A construction whose value is never read has its drop at its own step, so
 	// the value dying there IS the construction's result. The first cut of the
 	// same-instruction pairing took it as a donor for itself: it read a token
@@ -301,7 +287,7 @@ function main(): i32 {
 	// the module its last ALLOCATING op, so the heap runtime block stopped
 	// being emitted and the link failed on an undefined `__fn___fern_arr_dec`.
 	//
-	// Found by `TestDifferential_SelfHostSemanticX86_64` at seed 452, reduced to
+	// Found by `TestDifferential_SelfHostX86_64` at seed 452, reduced to
 	// this. The suite could not express it before: the point is not that the
 	// pairing declines but that it must never be OFFERED, which is what
 	// `noPair` says.
@@ -319,7 +305,7 @@ function main(): i32 {
     while (i < 6) { a = add(a, "x"); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return a.n * 10 + a.names.len() + a.tag.len();
-}`, 67, 1, 1, 3, 9, false, false},
+}`, 67, 1, 3, 9, false, false},
 
 	// The same update over a base another binding still holds: the donor is
 	// shared at its first kept read, so the kept fields are retained, the
@@ -337,7 +323,7 @@ function main(): i32 {
     a = add(a, "y");
     if (__rc_underflow_count() != 0) { return 99; }
     return a.names.len() * 10 + keep.names.len() + keep.tag.len() + a.tag.len() + keep.n;
-}`, 33, 1, 1, 5, 6, false, false},
+}`, 33, 1, 5, 6, false, false},
 
 	// A field carried over into its own slot and read again after the update:
 	// the read keeps its position (another use needs the value), and the
@@ -354,7 +340,7 @@ function main(): i32 {
     while (i < 6) { a = add(a, "x"); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return a.n * 10 + a.names.len() + a.tag.len();
-}`, 189, 1, 0, 3, 9, false, false},
+}`, 189, 1, 3, 9, false, false},
 
 	// A field carried over into its own slot AND copied into another. The two
 	// are distinct reads of slot 0: the carried-over one is kept in place, and
@@ -372,7 +358,7 @@ function main(): i32 {
     var r: i32 = run(3);
     if (__rc_underflow_count() != 0) { return 99; }
     return r;
-}`, 44, 1, 0, 3, 7, false, false},
+}`, 44, 1, 3, 7, false, false},
 
 	// One local named in two field positions is ONE operand value appearing
 	// twice. The donor's slot holds one unit and the construction needs two,
@@ -393,7 +379,7 @@ function main(): i32 {
     var r: i32 = run(3);
     if (__rc_underflow_count() != 0) { return 99; }
     return r;
-}`, 44, 1, 0, 3, 7, false, false},
+}`, 44, 1, 3, 7, false, false},
 
 	// A field read from its own slot, stored back there and also returned:
 	// the read is taken and the construction retains it, two units where the
@@ -414,14 +400,14 @@ function main(): i32 {
     while (i < 4) { var xs: string[] = grab(i); var y: string[] = mkv(); t = t + xs[0].len() + y[1].len(); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 101;
-}`, 46, 1, 0, 28, 32, false, false},
+}`, 46, 1, 28, 32, false, false},
 
 	{"degenerate-self-donor", `struct S0 { f0: i32, f1: i64, f2: boolean }
 function main(): i32 {
     var v0: S0 = S0 { f0: 687i32, f1: 942i64, f2: false };
     if (__rc_underflow_count() != 0) { return 99; }
     return 326i32 & 255i32;
-}`, 70, 0, 0, 1, 1, false, true},
+}`, 70, 0, 1, 1, false, true},
 }
 
 func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
@@ -511,10 +497,8 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			proj := t.TempDir()
 			asmOn, report := emit(t, proj, tc.src, "on")
-			// Without this the counts below can be irlower's: the tally is
-			// printed only on the typed path.
 			if !strings.Contains(report, "declarations") {
-				t.Fatalf("%s: module did not produce whole on the typed path, so the counts below would measure the AST lowering:\n%s", tc.name, report)
+				t.Fatalf("%s: module did not produce whole on the typed path:\n%s", tc.name, report)
 			}
 			if want, ok := keptDropCalls[tc.name]; ok {
 				if got := strings.Count(asmOn, "call __fn___sem_drop_Acc"); got != want {
@@ -522,7 +506,6 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 				}
 			}
 			asmOff, _ := emit(t, proj, tc.src, "off", "FERN_SELFHOST_NO_REUSE=1")
-			asmAST, _ := emit(t, proj, tc.src, "ast", "FERN_SEM_IR=")
 
 			// The runtime helper's own body is emitted either way, so the CALL
 			// is the firing and its label is not.
@@ -532,9 +515,6 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 			}
 			if got := strings.Count(asmOff, witness); got != 0 {
 				t.Errorf("%s: FERN_SELFHOST_NO_REUSE=1 still emitted %d reuse calls — the switch does not reach the typed pairing", tc.name, got)
-			}
-			if got := strings.Count(asmAST, witness); got != tc.astPath {
-				t.Errorf("%s: AST lowering emitted %d reuse calls, want %d — the split between the layers has moved", tc.name, got, tc.astPath)
 			}
 
 			// The allocations the reuse SAVED. A firing that declines saves

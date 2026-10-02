@@ -166,43 +166,6 @@ func TestWasmRouteProbe(t *testing.T) {
 			}
 		})
 	}
-
-	// A declined module is a hard ERROR, which is what retiring wasm.fern bought
-	// here — the AST fallback would have emitted for these and answered wrongly.
-	// The contract needs a shape that is genuinely declined to assert against,
-	// which is why twoVarArrayShape replaced foldShape when the latter started
-	// lowering — a refusal test whose subject no longer refuses proves nothing.
-	t.Run("declined-route-refuses", func(t *testing.T) {
-		// The AST lowering declines this shape; the typed lowering produces it.
-		t.Setenv("FERN_SEM_IR", "")
-		// Not runCapture: that helper fatals on a non-zero exit, and a non-zero
-		// exit is exactly the contract here.
-		wat, stderr, code := runDeclined(t, runner, driverBin, []byte(twoVarArrayShape))
-		if code == 0 || len(wat) != 0 {
-			t.Fatalf("driver exited %d with %d bytes, want a refusal", code, len(wat))
-		}
-		if !strings.Contains(stderr, "not IR-eligible") {
-			t.Errorf("refusal did not say the module is ineligible:\n%s", stderr)
-		}
-	})
-}
-
-// runDeclined runs the driver expecting it to REFUSE, returning stdout, stderr
-// and the exit code rather than fataling on a non-zero exit.
-func runDeclined(t *testing.T, runner []string, bin string, stdin []byte) ([]byte, string, int) {
-	t.Helper()
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(bin)
-	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
-	}
-	cmd.Stdin = bytes.NewReader(stdin)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	_ = cmd.Run()
-	return stdout.Bytes(), stderr.String(), cmd.ProcessState.ExitCode()
 }
 
 // runCaptureArgs is runCapture with extra argv for the driver — the probe needs

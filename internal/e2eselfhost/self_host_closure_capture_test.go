@@ -470,16 +470,14 @@ function main(): i32 {
     return t % 251 + 100;
 }`
 
-// TestSelfHostClosureUsizeCaptureArm64: the usize capture row on arm64, both
-// lowerings, value and underflow gate (interpreter-confirmed 177; the division
-// reads the capture's full width).
+// TestSelfHostClosureUsizeCaptureArm64: the usize capture row on arm64, value
+// and underflow gate (interpreter-confirmed 177; the division reads the
+// capture's full width).
 func TestSelfHostClosureUsizeCaptureArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)
-	for _, env := range []string{"FERN_SEM_IR=1", "FERN_SEM_IR="} {
-		if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", closureUsizeCaptureSrc, env)); code != 177 {
-			t.Errorf("%s: exited %d, want 177 (99 = rc underflow; 139 = a capture retained as an address)", env, code)
-		}
+	if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", closureUsizeCaptureSrc)); code != 177 {
+		t.Errorf("exited %d, want 177 (99 = rc underflow; 139 = a capture retained as an address)", code)
 	}
 }
 

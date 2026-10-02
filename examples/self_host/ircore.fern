@@ -6,9 +6,8 @@
 //
 // Seven groups:
 //
-//   * the AST lowering's gate — lower_gated, which every `*_or_error` entry
-//     runs before it emits, and the per-module all_eligible_view_base* the
-//     drivers run with the typed lowering off;
+//   * the gate — lower_gated, which every `*_or_error` entry runs before it
+//     emits;
 //   * the refusals all three share — strict_ir_refuse, eprint_ir_ineligible and
 //     unsupported_op_refuse, each an eprint-then-exit(3) whose only per-backend
 //     part is the name it prints;
@@ -474,61 +473,6 @@ pub function ssa_block_id_collision(name: string, id: i32): i32 {
   return 0;
 }
 
-// all_eligible_view_base is the PER-MODULE eligibility gate (#3451 — retiring
-// the AST fallback for the bootstrap self-compile): one module of a program,
-// judged against the WHOLE-PROGRAM view. A function in it that calls a sibling
-// module's function (resolved via `known`, an extern at link) OR touches a
-// sibling module's STRUCT layout must lower in the gate exactly as it does in
-// emit_module_funcs, which lowers every function against the whole-program
-// registry base and `all_structs` (#3454). So this gate lowers with the same
-// `base` the emit uses — ircore.wp_fn_sigs over the program's functions, derived
-// once by the driver and shared with every unit it emits — with struct layouts
-// from `all_structs`. Without the view, every module touching an imported struct
-// (parser → lexer.Token, asm → ir.Op, …) fails the gate and bails even though
-// the emit would succeed — the central blocker to routing the bootstrap
-// per-module.
-//
-// The entry unit and a library unit take the same gate: a main-less module is
-// eligible, because the entry emitter's `_start` exits 0 when there is no main.
-pub function all_eligible_view_base(mod: parser.Module, known: string[], all_structs: irlower.StructTab, base: irlower.FnSigs): boolean {
-  return all_eligible_view_base_range(mod, known, all_structs, base, 0, mod.funcs.len());
-}
-
-// all_eligible_view_base_range is all_eligible_view_base over the functions
-// [lo, hi) of `mod` only: the per-process function window, so a windowed unit's
-// pre-check lowers its own window rather than the whole module once per
-// process. hi < 0 (or past the end) means to the module end.
-pub function all_eligible_view_base_range(mod: parser.Module, known: string[], all_structs: irlower.StructTab, base: irlower.FnSigs, lo: i32, hi: i32): boolean {
-  // A function-less module is eligible: a types-only module (ast.fern) has
-  // nothing that could fail to lower, and its unit is the preamble alone.
-  var sg: irlower.FnSigs = irlower.FnSigs {
-    ...irlower.fn_sigs_without_ownership(base),
-    // These two stay scoped to THIS module rather than the whole program.
-    fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
-    closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs),
-  };
-  var freg: irlower.SigReg = module_func_reg(mod);
-  var end: i32 = hi;
-  if (end < 0 || end > mod.funcs.len()) {
-    end = mod.funcs.len();
-  }
-  var i: i32 = lo;
-  if (i < 0) {
-    i = 0;
-  }
-  while (i < end) {
-    if (!func_eligible(mod.funcs[i], mod, all_structs, known, sg, freg)) {
-      if (strict_ir_on()) {
-        strict_ir_refuse(mod.funcs[i].name
-          + func_ineligible_reason(mod.funcs[i], mod, all_structs, known, sg, freg));
-      }
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
 // known_includes reports whether `name` is in the program-wide known-symbol
 // set — a function defined SOMEWHERE in the loaded import graph (any module),
 // not necessarily in the current one. It is the cross-module twin of
@@ -544,80 +488,6 @@ pub function known_includes(known: string[], name: string): boolean {
     i = i + 1;
   }
   return false;
-}
-
-// func_eligible is all_eligible_view_base's per-function check, in ONE
-// lowering: the body must lower (r.ok), every direct call must target a module
-// function, a sibling's (`known`) or an IR runtime helper, and every
-// function-value reference must name one. The registries `sg` and `freg` are
-// derived by the caller once per module, not once per function, for the reason
-// #6011 records: derived HERE they made the gate quadratic over body size.
-function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: irlower.StructTab, known: string[], sg: irlower.FnSigs, freg: irlower.SigReg): boolean {
-  // `sview` is the struct-decl view lowering resolves field layouts against:
-  // the module's own structs for the merged/whole-program path, the WHOLE-
-  // PROGRAM struct union for a per-module unit (so a function touching an
-  // imported struct's layout lowers in the gate exactly as it does in
-  // emit_module_funcs, which already lowers against all_structs).
-  var r: irlower.LowerResult = irlower.lower_func(fd, sview, sg, false);
-  if (!r.ok) {
-    return false;
-  }
-  var i: i32 = 0;
-  while (i < r.ops.len()) {
-    var o: ir.Op = r.ops[i];
-    if (o.kind_tag == 149) {  // call_direct
-      if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) {
-        return false;
-      }
-    } else if (o.kind_tag == 6) {  // const_func
-      if (!module_has_func(freg, o.str) && !known_includes(known, o.str)) {
-        return false;
-      }
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
-// func_ineligible_reason re-runs func_eligible's checks and names WHICH one
-// refused, as a " (…)" suffix for the strict-IR diagnostic. Returns "" if the
-// function is in fact eligible.
-//
-// The two failure modes are very different to debug and the bare function name
-// does not distinguish them: either the BODY did not lower (an unsupported
-// construct), or the body lowered fine but it REFERENCES a symbol the module
-// view does not contain (a missing import, a monomorphised clone that is not in
-// this view, a helper that was not registered — you need to look at the symbol,
-// not the body). Reporting "the IR path bailed" for both sent an earlier
-// investigation bisecting a function whose body was never the problem.
-//
-// The body case then carries LowerResult.why — the innermost node that refused,
-// or the signature gate that did — because "bisect the body", which is what this
-// used to say, is a whole afternoon per bail and cannot group a corpus at all.
-//
-// Only called under strict_ir_on(), so the extra lowering costs nothing on the
-// normal path — which is why func_eligible itself stays a plain boolean and
-// this duplicates its shape rather than the two sharing a richer return.
-function func_ineligible_reason(fd: parser.FuncDecl, mod: parser.Module, sview: irlower.StructTab, known: string[], sg: irlower.FnSigs, freg: irlower.SigReg): string {
-  var r: irlower.LowerResult = irlower.lower_func(fd, sview, sg, false);
-  if (!r.ok) {
-    return " (did not lower: " + r.why + ")";
-  }
-  var i: i32 = 0;
-  while (i < r.ops.len()) {
-    var o: ir.Op = r.ops[i];
-    if (o.kind_tag == 149) {  // call_direct
-      if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) {
-        return " (body lowered, but calls unknown symbol \"" + o.str + "\")";
-      }
-    } else if (o.kind_tag == 6) {  // const_func
-      if (!module_has_func(freg, o.str) && !known_includes(known, o.str)) {
-        return " (body lowered, but references unknown function value \"" + o.str + "\")";
-      }
-    }
-    i = i + 1;
-  }
-  return "";
 }
 
 // module_func_reg indexes every name module_has_func answers to: each function's
@@ -857,8 +727,6 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 // see irlower.lift_lambdas_view. A per-module build must pass one or a fn value
 // handed to a SIBLING module's function is not boxed at the call site (#5698);
 // an empty view keeps the module-only behaviour every other caller has.
-// A per-module route reaches it through lift_lambdas_parts below rather than
-// building the view itself.
 pub function lift_lambdas_view(mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
   // The scale kernel runs BEFORE the lift, which is the whole reason it can
   // be this simple: a recognized element function is still a lambda here,
@@ -884,25 +752,6 @@ pub function lift_lambdas_typed(mod: parser.Module): parser.Module {
 
 function with_builtin_enums(lifted: parser.Module): parser.Module {
   return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs, trait_decls: lifted.trait_decls, inferred_consts: lifted.inferred_consts };
-}
-
-// lift_lambdas_parts lifts and return-type-infers every module of a PER-MODULE
-// bundle, each against the whole-program signature view the others supply. Every
-// per-module route goes through here rather than lifting a part on its own: a
-// part lifted against only its own functions cannot tell that a sibling module's
-// callee takes a fn-typed parameter, so a capturing lambda handed to one is left
-// unboxed and lowering then names a `<fd>$clo` the lift never hoisted — an
-// undefined symbol at link (#5698, #7215).
-pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
-  mods = irlower.prepare_lambda_parts(mods);
-  var view: parser.FuncDecl[] = irlower.module_sig_view(mods);
-  var out: parser.Module[] = [];
-  var i: i32 = 0;
-  while (i < mods.len()) {
-    out = out.append(parser.infer_ret_types_module(lift_lambdas_view(mods[i], view)));
-    i = i + 1;
-  }
-  return out;
 }
 
 // all_runtime_need_roots is the closed set of runtime-need ROOT names — every
@@ -1064,9 +913,8 @@ pub function unsupported_op_refuse(tag: i32, backend: string): string {
 // lower_failed_refuse ends compilation for a function whose lowering bailed,
 // naming the function and the construct that refused (LowerResult.why). Every
 // backend calls it at the top of its per-function emit: the gated routes
-// (lower_gated) never get this far, but `-assume-eligible` skips the gate by
-// design and the wasm per-unit route has none, so this is where their bails
-// surface. A failed result still carries the PARTIAL op stream up to the bail
+// (lower_gated) never get this far, so this is the backstop for a route that
+// emits without the gate. A failed result still carries the PARTIAL op stream up to the bail
 // with n_locals 0, and letting that reach the IR verify gate reports the bail
 // as malformed IR with every local "outside the frame" (#8590) — or on wasm
 // as an elem entry naming a `$<fd>$clo` nothing defines (#7215).
@@ -1790,9 +1638,9 @@ function splice_leaves(r: irlower.LowerResult, self: string, reg: irlower.SigReg
 // It is called from each backend's EMIT entry rather than from lower_gated,
 // because lowering is also what the routing and eligibility probes do. A probe
 // asks how a program would route and must be answered, not killed:
-// wasm_ir.ir_route_ok and wasm_eligible lower a module only to return a
+// wasm_ir.ir_route_ok lowers a module only to return a
 // boolean, and asm_ir.module_runtime_needs runs the whole per-function emit and
-// throws the text away. Hooking the lowering made all three exit on a claim
+// throws the text away. Hooking the lowering made them exit on a claim
 // they were only asked about (#9655).
 //
 // Reaching every emit entry is also what covers the per-unit and per-module

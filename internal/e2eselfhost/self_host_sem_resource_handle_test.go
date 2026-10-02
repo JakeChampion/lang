@@ -18,8 +18,7 @@ var dropCallRE = regexp.MustCompile(`(?m)call \$(__resource_drop_\w+|drop_\w+)$`
 // TestSelfHostSemanticResourceHandles drives WIT resource handles (`own R` /
 // `borrow R`) through the CLI's typed lowering to wasm, which must produce
 // every declaration. Each program's
-// drops are pinned by counting resource-drop call sites against the AST
-// lowering of the same program. Running them needs the poll world composed
+// drops are pinned by counting resource-drop call sites. Running them needs the poll world composed
 // around a component core (the P5 tests in self_host_p5_resource_handle_test.go),
 // which the CLI's preview1 core is not.
 func TestSelfHostSemanticResourceHandles(t *testing.T) {
@@ -32,7 +31,7 @@ func TestSelfHostSemanticResourceHandles(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	emit := func(t *testing.T, src string, sem bool) (string, string) {
+	emit := func(t *testing.T, src string) (string, string) {
 		t.Helper()
 		path := filepath.Join(t.TempDir(), "main.fern")
 		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
@@ -41,15 +40,10 @@ func TestSelfHostSemanticResourceHandles(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "prog.wat")
 		cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", path, stdlibRoot, "-o", out)
 		cmd.Env = append(os.Environ(), "FERN_SEM_IR_REPORT=1")
-		if sem {
-			cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
-		} else {
-			cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
-		}
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
-			t.Fatalf("compile (sem=%v): %v\n%s", sem, err, stderr.String())
+			t.Fatalf("compile: %v\n%s", err, stderr.String())
 		}
 		wat, err := os.ReadFile(out)
 		if err != nil {
@@ -281,14 +275,12 @@ function main(): i32 {
 }`},
 	} {
 		t.Run(row.name, func(t *testing.T) {
-			got, report := emit(t, row.src, true)
+			got, report := emit(t, row.src)
 			if n := semProducedCount(t, report); n != row.declared {
 				t.Fatalf("produced %d declarations, want %d:\n%s", n, row.declared, report)
 			}
-			base, _ := emit(t, row.src, false)
-			gotDrops, baseDrops := len(dropCallRE.FindAllString(got, -1)), len(dropCallRE.FindAllString(base, -1))
-			if gotDrops != row.drops || baseDrops != row.drops {
-				t.Fatalf("resource-drop call sites: typed %d, AST lowering %d, want %d", gotDrops, baseDrops, row.drops)
+			if drops := len(dropCallRE.FindAllString(got, -1)); drops != row.drops {
+				t.Fatalf("resource-drop call sites: %d, want %d", drops, row.drops)
 			}
 		})
 	}

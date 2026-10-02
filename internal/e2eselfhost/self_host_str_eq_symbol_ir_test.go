@@ -119,7 +119,6 @@ func TestSelfHostStrEqSymbolTypeChecks(t *testing.T) {
 		} else {
 			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), cli, p)...)
 		}
-		cmd.Env = append(os.Environ(), "FERN_SEM_IR=1")
 		out, _ := cmd.CombinedOutput()
 		return string(out), cmd.ProcessState.ExitCode()
 	}

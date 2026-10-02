@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"bytes"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -100,15 +99,6 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_concat:", ".Lstrconcat_a_loop"},
 		},
 		{
-			// i32_to_string — backs (n).to_string() / the free fn, Tier-2 via the
-			// intrinsics (#2649). The old register-ABI hand-asm (the bare
-			// __fern_i32_to_string: label + .Li2s_div loop) is gone.
-			"i32_to_string",
-			`function main(): i32 { return i32_to_string(42).len(); }`,
-			"__fn___fern_i32_to_string",
-			[]string{"\n__fern_i32_to_string:", ".Li2s_div"},
-		},
-		{
 			// str_to_upper — Tier-2 via the intrinsics (#2649), under its own
 			// str_case need. The old register-ABI hand-asm (__fern_str_to_upper: /
 			// .Lupper_loop) is gone.
@@ -186,11 +176,6 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 				cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			// The free i32_to_string is a builtin only the AST lowering calls; the
-			// language spells it std/i32's `.to_string()`, which asm_run cannot load.
-			if tc.name == "i32_to_string" {
-				cmd.Env = append(os.Environ(), "FERN_SEM_IR=")
-			}
 			asm, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("driver run: %v", err)

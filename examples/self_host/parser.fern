@@ -20092,7 +20092,7 @@ function collect_dropped_resources(stmts: ast.Stmt[], body: ast.Stmt[], resource
 // the interpreter expands defers at its own entry.
 pub function lower_defers_prepass_module(mod: Module): Module {
   // (1) Ret-type inference (was infer_ret_types_module, which keeps its
-  // standalone form for emit_module_ir_gated's idempotent re-run): stamp
+  // standalone form for emit_module_ir_gated_sub's idempotent re-run): stamp
   // inferred ret_types with a 3-pass fixpoint over the funcs list, so a
   // call to a later-inferred function resolves.
   var funcs: FuncDecl[] = mod.funcs;

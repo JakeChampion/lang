@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -102,46 +101,6 @@ func TestSelfHostMapFindSharedIRArm64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != 152 {
 				t.Errorf(mapFindFailFmt, tc.name, code)
-			}
-		})
-	}
-}
-
-// TestSelfHostMapFindHandAsmLoopsGone pins the deletion, in both directions.
-//
-// The loops are keyed by their own local labels: `.Lmg_loop` / `.Lmh_loop` /
-// `.Lms_loop` and their `_i32` / `_struct` variants were emitted by nothing but
-// the three hand-asm searches, on either backend. The surviving `.Lmg_none` /
-// `.Lms_append` / `.Lmh_no` labels are the callers' answer arms and stay, so
-// the assertion has to key on `_loop` rather than on the `.Lm` stem.
-//
-// The present-side half matters as much: the helper must be emitted ONCE. Three
-// callers reach it by symbol and a fourth (`__fern_map_delete`) by an ordinary
-// Fern call, so emitting it per caller would be a duplicate-symbol link failure
-// — but only for a program that uses more than one map verb, which is exactly
-// the shape a narrower test would miss.
-func TestSelfHostMapFindHandAsmLoopsGone(t *testing.T) {
-	cli := newStrictCLI(t)
-	for _, tc := range []struct{ name, target string }{
-		{"x86_64", "x86-64-linux"},
-		{"arm64", "arm64-linux"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			// Only the AST lowering calls the map runtime; the typed one uses core/map.
-			asm := cli.emit(t, tc.target, mapFindStrSrc, "FERN_SEM_IR=")
-			if n := strings.Count(asm, "__fn___fern_map_find:"); n != 1 {
-				t.Fatalf("%s: %d definitions of __fn___fern_map_find, want exactly 1", tc.name, n)
-			}
-			// map_set, map_get and map_has each call it, and map_delete is not
-			// in this program — so three, and a smaller count means a caller
-			// kept a loop of its own.
-			if n := strings.Count(asm, "__fn___fern_map_find\n"); n < 3 {
-				t.Errorf("%s: only %d call sites of __fn___fern_map_find, want 3 (set, get, has)", tc.name, n)
-			}
-			for _, lbl := range []string{".Lmg_loop", ".Lmh_loop", ".Lms_loop"} {
-				if strings.Contains(asm, lbl) {
-					t.Errorf("%s: a hand-asm key-search loop is back (%s is in the output)", tc.name, lbl)
-				}
 			}
 		})
 	}

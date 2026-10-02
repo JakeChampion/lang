@@ -46,7 +46,7 @@ func TestSelfHostWasmSemanticTCPPollable(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(driver, "-target", "wasm32-wasi", "-emit", "asm", "-o", wat, src)
-	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR=1", "FERN_SEM_IR_REPORT=1")
+	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR_REPORT=1")
 	report, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("compile: %v\n%s", err, report)

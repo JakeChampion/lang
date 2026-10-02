@@ -28,11 +28,6 @@
 
 set -euo pipefail
 
-# The self-hosted compiler measured here takes the typed path, whole, where a
-# refusal fails the run: these are pinned so an ambient setting cannot switch
-# the typed path off or keep a mixed module.
-export FERN_SEM_IR=1 FERN_SEM_IR_ONLY= FERN_SEM_IR_SKIP=
-
 cd "$(dirname "$0")/.."
 
 REPORT="${1:-/dev/stdout}"

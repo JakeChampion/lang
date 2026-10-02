@@ -1,30 +1,18 @@
 package e2eselfhost
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
-// Heap-bump FIXPOINTS for the self-host x86-64 IR path's map reclaim —
-// #4357's self-host twin (the native side landed in #5096). Two fixes pinned:
-//
-//   - the COW-threaded loop shape `var m = map_new(8); m = m.insert(..)`
-//     keeps its "MAP:" reclaim credit (map_nonself_reassigned admits the
-//     sanctioned self-cow reassign; any other rebind still disqualifies), and
-//   - `m.get_or(k, d)` no longer leaks its intermediate: __fern_map_get
-//     allocates a raw 16-byte Option box that the map_get_or emission
-//     consumes on the spot, so the box now goes straight back to the
-//     size-class-2 freelist. Without it ~16 B leaks per call on both the
-//     hit and miss paths, unbounded in a loop (m.has() never leaked).
+// Heap-bump FIXPOINTS for the self-host's map reclaim — #4357's self-host twin
+// (the native side landed in #5096): a cow-threaded map rebuilt in a loop, and
+// `m.get_or(k, d)` on its hit and miss paths, keep the heap flat.
 //
 // Fixpoint contract: growth at N=50 == growth at N=5000, non-zero, under a
 // hard leak guard. The fixed-exit cases pin value-correctness churn and the
-// alias negative (`var x = m.insert(..)` must keep m EXCLUDED from reclaim —
-// the identity-pass-through UAF guard — while staying value-correct).
-// self_host_map_reclaim_ir_test.go keeps the value-only reclaim cases; these
-// are the bump-scaling twins.
+// alias negative (`var x = m.insert(..)` must leave m intact while staying
+// value-correct). self_host_map_reclaim_ir_test.go keeps the value-only
+// reclaim cases; these are the bump-scaling twins.
 var mapFixpointIRCases = []struct {
 	name  string
 	src   func(n string) string
@@ -188,6 +176,8 @@ function main(): i32 {
     return 0;
 }`
 	}},
+	// `x = m.insert(..)` leaves m as it was: a map is a value, so m still
+	// misses key 1 (11 a round from x, 0 from m), as the interpreter answers.
 	{name: "alias-negative", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
@@ -195,7 +185,7 @@ function main(): i32 {
     var x: Map[i32, i32] = m.insert(1, 11);
     var i: i32 = 0; var acc: i32 = 0;
     while (i < 200) { acc = acc + x.get_or(1, 0) + m.get_or(1, 0); i = i + 1; }
-    if (acc != 200 * 22) { return 121; }
+    if (acc != 200 * 11) { return 121; }
     return 0;
 }`
 	}},
@@ -273,51 +263,31 @@ function main(): i32 {
 }
 
 // TestSelfHostMapFixpointIRX86_64 runs the shapes through the self-hosted
-// x86-64 IR driver (asm_run). Fixpoint cases assert growth(N=50) ==
+// CLI, which loads core/map. Fixpoint cases assert growth(N=50) ==
 // growth(N=5000), non-zero, under the leak guard; fixed cases assert their
 // exact exit (121 = value mismatch, 119 = leak guard).
 func TestSelfHostMapFixpointIRX86_64(t *testing.T) {
-	// These programs pin the AST lowering's built-in map runtime; the typed lowering
-	// takes maps from core/map.
-	t.Setenv("FERN_SEM_IR", "")
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-
-	sh := func(t *testing.T, tag, prog string) int {
+	cli := buildSelfHostCLI(t)
+	sh := func(t *testing.T, prog string) int {
 		t.Helper()
-		asm := runCapture(t, gcc, runner, driverBin, []byte(prog+"\n"))
-		if len(asm) == 0 {
-			t.Fatalf("%s: self-host compiler emitted 0 bytes", tag)
-		}
-		progBin := buildBin(t, gcc, dir, tag, string(asm))
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(progBin)
-		} else {
-			cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-		}
-		_ = cmd.Run()
-		return cmd.ProcessState.ExitCode()
+		_, exit := cli.exitOf(t, prog+"\n", "x86-64-linux")
+		return exit
 	}
 
 	for _, tc := range mapFixpointIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.fixed {
-				if code := sh(t, tc.name, tc.src("")); code != tc.want {
+				code := sh(t, tc.src(""))
+				if code != tc.want {
 					t.Errorf("%s: exited %d, want %d (121=value mismatch, 119=leak guard)", tc.name, code, tc.want)
+				}
+				if native := runInterpExit(t, tc.src("")); native != code {
+					t.Errorf("%s: differential mismatch — native -interp exited %d, self-host exited %d", tc.name, native, code)
 				}
 				return
 			}
-			small := sh(t, tc.name+"-50", tc.src("50"))
-			large := sh(t, tc.name+"-5000", tc.src("5000"))
+			small := sh(t, tc.src("50"))
+			large := sh(t, tc.src("5000"))
 			if small != large {
 				t.Errorf("%s: high-water not bounded (N=50 -> %d, N=5000 -> %d)", tc.name, small, large)
 			}
