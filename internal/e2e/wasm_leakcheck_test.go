@@ -289,3 +289,9 @@ func parseWasmLeakCheckLine(t *testing.T, stderr string) (allocs, frees, live in
 
 // wasmLeakCheckLineRe matches the census line anywhere in stderr.
 var wasmLeakCheckLineRe = regexp.MustCompile(`leakcheck: allocs=(-?\d+) frees=(-?\d+) live_bytes=(-?\d+)\n`)
+
+// withResultPrinter imports core/int, whose int_to_string the native
+// PrintMainResult wrapper calls to print main's result.
+func withResultPrinter(src string) string {
+	return "import \"core/int\";\n" + src
+}

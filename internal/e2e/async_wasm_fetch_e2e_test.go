@@ -72,7 +72,7 @@ function main(): i32 {
     return 0;
 }`
 
-	compPath := buildComponent(t, src)
+	compPath := buildNativeComponent(t, src, nativeMainResult)
 	run := exec.Command("wasmtime", "run", "-S", "inherit-network",
 		"--env", "PSLOW="+strconv.Itoa(pSlow), "--env", "PFAST="+strconv.Itoa(pFast), compPath)
 	var sout, serr bytes.Buffer
@@ -169,7 +169,7 @@ function main(): i32 {
     return 0;
 }`
 
-	compPath := buildComponent(t, src)
+	compPath := buildNativeComponent(t, src, nativeMainResult)
 	run := exec.Command("wasmtime", "run", "-S", "inherit-network",
 		"--env", "PA="+strconv.Itoa(pA), "--env", "PB="+strconv.Itoa(pB), compPath)
 	var sout, serr bytes.Buffer

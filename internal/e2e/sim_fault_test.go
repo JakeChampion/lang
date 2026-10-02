@@ -199,7 +199,7 @@ func TestSimFaultNativeX86_64(t *testing.T) {
 }
 
 func TestWASMSimFault(t *testing.T) {
-	if code := runWasm(t, simFaultNativeProgram); code != 42 {
+	if code := runWasmNative(t, simFaultNativeProgram); code != 42 {
 		t.Errorf("wasm sim-fault exit = %d, want 42 (failing check index)", code)
 	}
 }

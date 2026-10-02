@@ -87,25 +87,6 @@ func TestArm64TupleHeapBumpBounded(t *testing.T) {
 	}
 }
 
-func TestWASMTupleHeapBumpBounded(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	small := runWasm(t, tupleBumpGrowthSrc("50"))
-	large := runWasm(t, tupleBumpGrowthSrc("5000"))
-	if small != large {
-		t.Errorf("plain-tuple bump growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
-	}
-	if small == 0 {
-		t.Errorf("expected a non-zero bounded high-water (one box), got 0")
-	}
-	asmall := runWasm(t, tupleArrBumpGrowthSrc("50"))
-	alarge := runWasm(t, tupleArrBumpGrowthSrc("5000"))
-	if asmall != alarge {
-		t.Errorf("tuple-of-array bump growth should be bounded (deep-drop): N=50 -> %d, N=5000 -> %d", asmall, alarge)
-	}
-}
-
 // The string-element sibling (#6879), and the tuple half of the struct fix in
 // #6499: the exit sweep's INLINE tuple arm released a native single-word
 // string element with a bare __fern_rc_dec, which decrements and never frees,

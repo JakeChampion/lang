@@ -191,7 +191,8 @@ func TestWASMStatFields(t *testing.T) {
 // itself and nothing there sets a time.
 //
 // main's return reaches us on STDOUT, not as the exit status: the harness
-// builds with PrintMainResult, so a component that returned 7 still exits 0.
+// runs the module with `--invoke main`, so a program that returned 7 still
+// exits 0.
 func runWasmStatProbe(t *testing.T, src string) (stdout, stderr string) {
 	t.Helper()
 	p := buildComponent(t, src)
@@ -211,7 +212,7 @@ func runWasmStatProbe(t *testing.T, src string) (stdout, stderr string) {
 	return s, e
 }
 
-// parseMainResult reads the integer PrintMainResult wrote to stdout.
+// parseMainResult reads main's integer result from the last line of stdout.
 func parseMainResult(t *testing.T, stdout string) int {
 	t.Helper()
 	for _, ln := range strings.Split(stdout, "\n") {

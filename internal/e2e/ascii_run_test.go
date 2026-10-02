@@ -179,8 +179,7 @@ func TestArm64AsciiRun(t *testing.T) {
 func TestWASMAsciiRun(t *testing.T) {
 	runAsciiRunCorpus(t, func(t *testing.T, src string) string {
 		out, _ := invokeWasmtime(t, src)
-		// The component harness builds with PrintMainResult, so main()'s
-		// return arrives as one extra line. Checking it is this leg's only
+		// wasmtime's --invoke prints main()'s return as one extra line. Checking it is this leg's only
 		// signal that the program ran to completion rather than stopping
 		// early with the right prefix.
 		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")

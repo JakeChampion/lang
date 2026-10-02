@@ -6750,13 +6750,13 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   // (an enum, a generic) stays unknown — the permissive answer — rather than
   // guessing a signature off the name.
   if (!ty_is_unknown(rt)) {
-    let mi: i32 = 0;
-    while (mi < s.funcs.len()) {
+    let mi: i32 = s.funcs_ix.chain(fa.field);
+    while (mi >= 0) {
       if (s.funcs[mi].name == fa.field && s.funcs[mi].receiver_type.len() > 0
         && ty_eq(struct_local_tag(s.funcs[mi].receiver_type, s), rt)) {
         return ty_from_name(s.funcs[mi].ret_type);
       }
-      mi = mi + 1;
+      mi = s.funcs_ix.next[mi];
     }
   }
   return ty_unknown();

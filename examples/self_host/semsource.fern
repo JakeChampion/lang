@@ -2727,7 +2727,7 @@ function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: St
     modes = modes.append(shape.modes[i]);
     i = i + 1;
   }
-  let contract: ssasem.Contract = ssasem.Contract { name: ssasem.dyn_call_name(fa.field, traits), params: params, modes: modes, result: shape.result };
+  let contract: ssasem.Contract = ssasem.Contract { name: ssasem.dyn_call_name(fa.field, traits, arms), params: params, modes: modes, result: shape.result };
   let ids: i32[] = [recv.id];
   i = 0;
   while (i < c.args.len()) {
@@ -5200,17 +5200,6 @@ function decl_param_mode(fd: parser.FuncDecl, at: i32, t: typeinfo.Type): i32 {
   return ssaunits.borrow_mode();
 }
 
-// Two types may declare one method name, so a method's contract is keyed by
-// its receiver type the way the backends label <Type>.<method>. A bare key would
-// let one callee's contract answer for the other. It is also the symbol a call
-// to the declaration names.
-pub function decl_key(fd: parser.FuncDecl): string {
-  if (fd.receiver_type.len() == 0) {
-    return fd.name;
-  }
-  return parser.receiver_base(fd.receiver_type) + "." + fd.name;
-}
-
 // coarse_fn_tag_without_contract reports a declaration whose result is the
 // coarse callable tag carrying none of the signature that tag drops. The one
 // this exists for is synthesised: the IIFE lift.hoist_value_iife declares
@@ -5886,22 +5875,51 @@ function schemas(types: typeinfo.Type[], s: State, memo: SchemaMemo): Schemas {
   return out;
 }
 
+// named_by_schemas queues the field types of the records and enums added
+// since `nr` and `ne` that schema_of can walk into or record; a scalar or a
+// string names no schema, and schema_of hands it back unchanged.
 function named_by_schemas(out: Schemas, nr: i32, ne: i32, pending: typeinfo.Type[]): typeinfo.Type[] {
   while (nr < out.records.len()) {
     for field in out.records[nr].fields {
-      pending = pending.append(field.ty);
+      if (names_schema(field.ty)) {
+        pending = pending.append(field.ty);
+      }
     }
     nr = nr + 1;
   }
   while (ne < out.enums.len()) {
     for v in out.enums[ne].variants {
       for field in v.fields {
-        pending = pending.append(field.ty);
+        if (names_schema(field.ty)) {
+          pending = pending.append(field.ty);
+        }
       }
     }
     ne = ne + 1;
   }
   return pending;
+}
+
+function names_schema(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeTuple(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeMap(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeFunc(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeUnion(_) = t {
+    return true;
+  }
+  return false;
 }
 
 // Structural types name records inside them; a nominal type is its own.
@@ -6117,16 +6135,13 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
 // closure_type spells the function value it presents; a body spelling a
 // different function value can never be in the box, so it is left out and the
 // run-time match never sees it.
-function env_rows(named: typeinfo.Type[], contracts: ssasem.Contract[]): ssasem.EnvRow[] {
+function env_rows(named: typeinfo.Type[], envs: ssasem.Contract[]): ssasem.EnvRow[] {
   let out: ssasem.EnvRow[] = [];
   for t in named {
     if (!ssasem.is_func(t)) {
       continue;
     }
-    for c in contracts {
-      if (c.params.len() == 0 || !semtypes.is_env(c.params[0])) {
-        continue;
-      }
+    for c in envs {
       if (!semtypes.equal(ssasem.closure_type(c), t)) {
         continue;
       }
@@ -6161,7 +6176,7 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
       dreach = dyn_types_in(t, dreach);
     }
     let grown: boolean = false;
-    for row in env_rows(reach, s.contracts.list) {
+    for row in env_rows(reach, s.contracts.envs) {
       if (has_env_row(rows, row.fn_ty, row.env_ty)) {
         continue;
       }
@@ -6314,7 +6329,7 @@ function shadowed_builtins(mod: parser.Module): string[] {
     if (fd.receiver_type.len() == 0) {
       keys = keys.append(fd.name);
     } else if (!std_string && parser.receiver_base(fd.receiver_type) == "string") {
-      keys = keys.append(decl_key(fd));
+      keys = keys.append(parser.decl_key(fd));
     }
   }
   for b in builtin_contracts() {
@@ -6607,7 +6622,7 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.C
   while (at < names.len()) {
     let ty: typeinfo.Type = resolved(checker.scope_type(scope, names[at]), generic, ssasem.unbound(), scope);
     if (at == 0 && is_closure_body(fd)) {
-      ty = env_type(fd, scope, generic, ssasem.unbound(), decl_key(fd));
+      ty = env_type(fd, scope, generic, ssasem.unbound(), parser.decl_key(fd));
     }
     if (!semtypes.shaped(ty, true)) {
       return none;
@@ -6616,7 +6631,7 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.C
     modes = modes.append(decl_param_mode(fd, at, ty));
     at = at + 1;
   }
-  return ssasem.Contract { name: decl_key(fd), params: params, modes: modes, result: result };
+  return ssasem.Contract { name: parser.decl_key(fd), params: params, modes: modes, result: result };
 }
 
 // The method name of a contract key, `Type.field` giving `field`, or "" for
@@ -6799,7 +6814,7 @@ function handers(mod: parser.Module): util.NameIndex {
   while (changed) {
     changed = false;
     for fd in mod.funcs {
-      let key: string = decl_key(fd);
+      let key: string = parser.decl_key(fd);
       if (!found.keys.has(key) && hands_back(fd, found)) {
         found = handers_with(found, key);
         changed = true;
@@ -6817,7 +6832,7 @@ function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contract
   let out: ssasem.Contract[] = [];
   let keys: string[] = [];
   for fd in mod.funcs {
-    keys = keys.append(decl_key(fd));
+    keys = keys.append(parser.decl_key(fd));
   }
   let shared: boolean[] = shared_keys(keys);
   let grown: boolean = true;
@@ -7751,13 +7766,14 @@ function inferred_mode(old: i32, t: typeinfo.Type, consumed: boolean): i32 {
 }
 
 function inferred_contract(c: ssasem.Contract, rows: ownership.Escapes[], ix: ownership.Index): ssasem.Contract {
-  if (ownership.find(rows, ix, c.name) < 0) {
+  let row: i32 = ownership.find(rows, ix, c.name);
+  if (row < 0) {
     return c;
   }
   let modes: i32[] = c.modes;
   let i: i32 = 0;
   while (i < modes.len() && i < c.params.len()) {
-    modes = modes.with(i, inferred_mode(modes[i], c.params[i], ownership.consumed(rows, ix, c.name, i)));
+    modes = modes.with(i, inferred_mode(modes[i], c.params[i], ownership.consumed_at(rows, row, i)));
     i = i + 1;
   }
   return ssasem.Contract { ...c, modes: modes };
@@ -7779,13 +7795,14 @@ function inferred_produced(p: Produced, name: string, rows: ownership.Escapes[],
   for c in p.func.calls {
     calls0 = calls0.append(inferred_contract(c, rows, ix));
   }
-  if (ownership.find(rows, ix, name) < 0) {
+  let row: i32 = ownership.find(rows, ix, name);
+  if (row < 0) {
     return Produced { ...p, func: ssasem.Func { ...p.func, calls: calls0 } };
   }
   let modes: i32[] = p.modes;
   let i: i32 = 0;
   while (i < modes.len() && i < p.func.params.len()) {
-    modes = modes.with(i, inferred_mode(modes[i], p.func.params[i], ownership.consumed(rows, ix, name, i)));
+    modes = modes.with(i, inferred_mode(modes[i], p.func.params[i], ownership.consumed_at(rows, row, i)));
     i = i + 1;
   }
   return Produced { ...p, modes: modes, func: ssasem.Func { ...p.func, calls: calls0 } };
@@ -7975,7 +7992,7 @@ pub function build_module(mod: parser.Module): Built {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     let fd: parser.FuncDecl = mod.funcs[i];
-    let p: Produced = template_entry(decl_key(fd), false, "uninstantiated generic", true);
+    let p: Produced = template_entry(parser.decl_key(fd), false, "uninstantiated generic", true);
     if (!generic_decl(fd)) {
       let made: Made = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, views, mod.funcs, mod.impls, memo);
       p = made.p;
@@ -7983,7 +8000,7 @@ pub function build_module(mod: parser.Module): Built {
     }
     pending = queue(pending, p.requests);
     decls = decls.append(p);
-    names = names.append(decl_key(fd));
+    names = names.append(parser.decl_key(fd));
     i = i + 1;
   }
   let instances: Produced[] = [];
@@ -8021,7 +8038,7 @@ pub function build_module(mod: parser.Module): Built {
     }
     i = i + 1;
   }
-  return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(mod.funcs, mod.impls, util.append_all(decls, instances)) };
+  return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(util.append_all(decls, instances)) };
 }
 
 // Tiny scalar leaves spliced into their callers (seminline). A declaration
@@ -8106,9 +8123,9 @@ function fusion_on(): boolean {
 }
 
 // The implementations a dyn call on `method` over `traits` reaches: the
-// methods `parser.dyn_arm_matches` picks, which is the search every backend's
-// dispatch chain runs, less an array method's `T[]` receiver, which no chain
-// takes.
+// methods `parser.dyn_arm_matches` picks, less an array method's `T[]`
+// receiver, which no chain takes. The call's name carries them to the
+// backends, whose dispatch chains run over exactly these arms.
 // A method is an arm only on a type that implements the whole trait set: a
 // type with a same-named method of its own is never inside the dyn. A
 // monomorphised clone `base__…` implements what its generic base does.
@@ -8123,7 +8140,7 @@ pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method
       continue;
     }
     if (parser.dyn_arm_matches(fd, traits, method, funcs)) {
-      out = out.append(decl_key(fd));
+      out = out.append(parser.decl_key(fd));
     }
   }
   return out;
@@ -8140,7 +8157,7 @@ function arm_receiver_implements(impls: parser.ImplInfo[], n: string, traits: st
   return at + 1 < n.len() && implements_traits(impls, slice_unchecked(n, 0, at) + "", traits);
 }
 
-function dispatched_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], all: Produced[]): string[] {
+function dispatched_arms(all: Produced[]): string[] {
   let out: string[] = [];
   for p in all {
     if (!p.ok) {
@@ -8151,7 +8168,7 @@ function dispatched_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], all
         if (ins.kind_tag != ssasem.call() || !ssasem.is_dyn_call(ins.str)) {
           continue;
         }
-        for arm in dyn_arms(funcs, impls, ssasem.dyn_call_method(ins.str), ssasem.dyn_call_traits(ins.str)) {
+        for arm in ssasem.dyn_call_arms(ins.str) {
           if (util.index_of_str(out, arm) < 0) {
             out = out.append(arm);
           }

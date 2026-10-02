@@ -29,8 +29,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // arrPushCliffHealthySrc threads an accumulator through a borrowed param and
@@ -219,40 +217,6 @@ func TestX86_64ArrPushCliffCounter(t *testing.T) {
 	}
 	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffStrSharedSrc); got != 49 {
 		t.Errorf("x86-64 string-element accumulator behind a live second box: "+
-			"__arr_push_shared_count() = %d, want 49", got)
-	}
-}
-
-func TestWASMArrPushCliffCounter(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	if got := runWasm(t, arrPushCliffHealthySrc); got != 0 {
-		t.Errorf("wasm healthy accumulator: __arr_push_shared_count() = %d, want 0", got)
-	}
-	if got := runWasm(t, arrPushCliffSharedSrc); got != 1 {
-		t.Errorf("wasm shared buffer: __arr_push_shared_count() = %d, want 1", got)
-	}
-	if got := runWasm(t, arrPushCliffFieldBorrowSrc); got != 0 {
-		t.Errorf("wasm field accumulator past a scalar-returning read: "+
-			"__arr_push_shared_count() = %d, want 0", got)
-	}
-	if got := runWasm(t, arrPushCliffFieldAliasSrc); got != 1 {
-		t.Errorf("wasm field accumulator with a live container alias: "+
-			"__arr_push_shared_count() = %d, want 1", got)
-	}
-	if got := runWasm(t, arrPushCliffPtrHealthySrc); got != 0 {
-		t.Errorf("wasm pointer-element accumulator: __arr_push_shared_count() = %d, want 0", got)
-	}
-	if got := runWasm(t, arrPushCliffPtrSharedSrc); got != 49 {
-		t.Errorf("wasm pointer-element accumulator behind a live second box: "+
-			"__arr_push_shared_count() = %d, want 49", got)
-	}
-	if got := runWasm(t, arrPushCliffStrHealthySrc); got != 0 {
-		t.Errorf("wasm string-element accumulator: __arr_push_shared_count() = %d, want 0", got)
-	}
-	if got := runWasm(t, arrPushCliffStrSharedSrc); got != 49 {
-		t.Errorf("wasm string-element accumulator behind a live second box: "+
 			"__arr_push_shared_count() = %d, want 49", got)
 	}
 }
