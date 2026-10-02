@@ -234,7 +234,7 @@ func TestStrSliceUncheckedTrap(t *testing.T) {
 				// wasm's `unreachable` surfaces as wasmtime's own non-zero
 				// exit, not 134 — assert the trap, not its spelling
 				// (matching assertAborts).
-				comp := buildNumComponent(t, c.src)
+				comp := buildCLIComponent(t, c.src)
 				_, _, code := runComponent(t, comp, runOpts{})
 				if code == 0 {
 					t.Errorf("wasm did not trap (exit 0)\nsrc:\n%s", c.src)

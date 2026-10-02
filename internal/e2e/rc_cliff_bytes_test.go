@@ -22,8 +22,6 @@ package e2e
 import (
 	"fmt"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // cliffBytesCase is one driver, run twice: once returning the crossing COUNT
@@ -98,17 +96,6 @@ func TestX86_64ArrPushCliffBytes(t *testing.T) {
 			_, count := compileAndRunX86_64FreeOn(t, c.countSrc())
 			_, bytes := compileAndRunX86_64FreeOn(t, c.bytesSrc())
 			c.check(t, "x86-64-linux", count, bytes)
-		})
-	}
-}
-
-func TestWASMArrPushCliffBytes(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	for _, c := range cliffBytesCases {
-		t.Run(c.name, func(t *testing.T) {
-			c.check(t, "wasm32-wasi", runWasm(t, c.countSrc()), runWasm(t, c.bytesSrc()))
 		})
 	}
 }

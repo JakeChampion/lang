@@ -92,37 +92,40 @@ function declares_extern(full: parser.Module): boolean {
 
 // wasm_component is the wasi:cli/run component for `full`. A program a fixed
 // framing takes is framed by framed_component. One declaring `@import`
-// externs, or reaching WASI no fixed framing wires (sockets, or more than two
-// categories), composes against the fern world, which wires each import its
-// core makes. No bytes with an empty `refused` is the emitter's own refusal,
-// already reported; a non-empty `refused` is the message to print.
+// externs, or reaching WASI no fixed framing wires (sockets, the filesystem
+// past read_file / write_file, or more than two categories), composes against
+// the fern world, which wires each import its core makes. That includes a
+// core whose needs only the lowering shows — a stdio Writer's close is a
+// method call, not a name component_shape sees. No bytes with an empty
+// `refused` is the emitter's own refusal, already reported; a non-empty
+// `refused` is the message to print.
 pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
   let shape: i32 = wasm_ir.component_shape(full);
-  if (shape >= 0 && !declares_extern(full)) {
-    return wit_compose.Composed { bytes: framed_component(full, shape, sub), refused: "" };
+  let framed: boolean = shape >= 0 && !declares_extern(full);
+  if (framed && shape == 0) {
+    return wit_compose.Composed { bytes: watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, false, sub))), refused: "" };
   }
-  let wat: string = wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub);
-  if (wat.len() == 0) {
+  let core: wasm_ir.EmittedCore = wasm_ir.emit_core_or_error_sub(full, true, true, sub);
+  if (core.wat.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "" };
   }
+  if (framed && wasm_ir.component_framable(core.needs)) {
+    return wit_compose.Composed { bytes: framed_component(watbin.wat_to_binary(core.wat), shape), refused: "" };
+  }
   let tbody: i32[] = wit_decode.wit_section_body(watbin.blob_to_bytes(wit_fern_world.fern_world_payload()), 7);
-  let c: wit_compose.Composed = wit_compose.compose_run(tbody, watbin.wat_to_binary(wat));
+  let c: wit_compose.Composed = wit_compose.compose_run(tbody, watbin.wat_to_binary(core.wat));
   if (c.bytes.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: the fern world cannot take this program: " + c.refused };
   }
   return c;
 }
 
-// framed_component is the wasi:cli/run component for `full` in the fixed
-// framing `shape` (wasm_ir.component_shape) names: no-I/O (component_full),
-// stdout/exit (component_full_io), filesystem read / write / read+write over
-// stdout (component_full_io_fs / _fs_write / _fs_rw), and the single-category
-// and fs-paired combinations.
-function framed_component(full: parser.Module, shape: i32, sub: ircore.Sub): i32[] {
-  if (shape == 0) {
-    return watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, false, sub)));
-  }
-  let core: i32[] = watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub));
+// framed_component is the wasi:cli/run component for the I/O core `core` in
+// the fixed framing `shape` (wasm_ir.component_shape) names: stdout/exit
+// (component_full_io), filesystem read / write / read+write over stdout
+// (component_full_io_fs / _fs_write / _fs_rw), and the single-category and
+// fs-paired combinations. The no-I/O framing (shape 0) is wasm_component's.
+function framed_component(core: i32[], shape: i32): i32[] {
   if (shape == 1) {
     return watbin.component_full_io(core, true);
   }

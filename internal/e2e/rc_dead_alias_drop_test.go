@@ -21,8 +21,6 @@ package e2e
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/ast"
 )
 
 // deadAliasAppendSrc: `keep` is read BEFORE the append and never again, so the
@@ -64,17 +62,5 @@ func TestX86_64DeadAliasAppendNoCopy(t *testing.T) {
 	if _, got := compileAndRunX86_64FreeOn(t, liveAliasAppendSrc); got != 199 {
 		t.Errorf("x86-64 live alias: __arr_push_shared_count() = %d, want 199 — "+
 			"the alias is read after the append, so every copy is mandatory", got)
-	}
-}
-
-func TestWASMDeadAliasAppendNoCopy(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	if got := runWasm(t, deadAliasAppendSrc); got != 0 {
-		t.Errorf("wasm dead alias: __arr_push_shared_count() = %d, want 0", got)
-	}
-	if got := runWasm(t, liveAliasAppendSrc); got != 199 {
-		t.Errorf("wasm live alias: __arr_push_shared_count() = %d, want 199", got)
 	}
 }

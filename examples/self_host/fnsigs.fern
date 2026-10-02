@@ -11769,8 +11769,9 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: irtab
   // exemption is only sound while every call is visible, which is the same
   // condition the partial-funcs paths already satisfy by passing [] funcs.
   let arr_fwd: string[] = strarrfld_forwarders_of(funcs, structs);
+  let arr_pix: util.NameIndex = util.name_index(arr_producers);
   for fn in funcs {
-    arr_unsafe = strarrfld_scan_stmts(fn.body, structs, strarrfld_fn_binds(fn, structs), arr_str_fresh, strarr_visible_producers(fn, arr_producers), arr_fwd, strarrfld_fwd_field_of(fn, structs), arr_unsafe);
+    arr_unsafe = strarrfld_scan_stmts(fn.body, structs, strarrfld_fn_binds(fn, structs), arr_str_fresh, strarr_visible_producers(fn, arr_producers, arr_pix), arr_fwd, strarrfld_fwd_field_of(fn, structs), arr_unsafe);
   }
   if (has_strarr_fld) {
     arr_unsafe = strarrfld_borrowed_elem_marks(funcs, structs, arr_str_fresh, arr_producers, arr_unsafe);
@@ -13259,8 +13260,22 @@ function strarrfld_program_has_field(structs: irtables.StructTab): boolean {
 // strarr_visible_producers: the whole-array producers `fn` can call by name —
 // a local or parameter of a producer's name holds an unknown body, not the
 // registered declaration.
-function strarr_visible_producers(fn: parser.FuncDecl, producers: string[]): string[] {
+function strarr_visible_producers(fn: parser.FuncDecl, producers: string[], pix: util.NameIndex): string[] {
   let bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
+  let hides: boolean = false;
+  for b in bound {
+    if (pix.has(b)) {
+      hides = true;
+    }
+  }
+  for p in fn.params {
+    if (pix.has(p.name)) {
+      hides = true;
+    }
+  }
+  if (!hides) {
+    return producers;
+  }
   let vis: string[] = [];
   for pn in producers {
     if (!util.has_str(bound, pn) && !fn_has_param_named(fn, pn)) {
@@ -13375,8 +13390,8 @@ function strarr_store_keys(stores: string[]): util.NameIndex {
   return util.name_index(keys);
 }
 
-function strarr_own_frame_of(fn: parser.FuncDecl, structs: irtables.StructTab, str_fresh: string[], producers: string[], stores: string[], store_keys: util.NameIndex, store_fns: string[]): StrarrOwnFrame {
-  let vis: string[] = strarr_visible_producers(fn, producers);
+function strarr_own_frame_of(fn: parser.FuncDecl, structs: irtables.StructTab, str_fresh: string[], producers: string[], pix: util.NameIndex, stores: string[], store_keys: util.NameIndex, store_fns: string[]): StrarrOwnFrame {
+  let vis: string[] = strarr_visible_producers(fn, producers, pix);
   let bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
   let assigned: string[] = irtables.body_assign_targets(fn.body);
   let params: string[] = [];
@@ -13641,9 +13656,10 @@ function strarr_param_stores(direct: string[], links: string[]): string[] {
 function strarrfld_borrowed_elem_marks(funcs: parser.FuncDecl[], structs: irtables.StructTab, str_fresh: string[], producers: string[], acc: string[]): string[] {
   let none: string[] = [];
   let no_keys: util.NameIndex = util.name_index(none);
+  let pix: util.NameIndex = util.name_index(producers);
   let first: string[] = [];
   for fn in funcs {
-    first = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, none, no_keys, none), first);
+    first = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, pix, none, no_keys, none), first);
   }
   let stores: string[] = strarr_param_stores(strarr_keyed_values(first, "st:"), strarr_keyed_values(first, "ln:"));
   let store_keys: util.NameIndex = strarr_store_keys(stores);
@@ -13657,7 +13673,7 @@ function strarrfld_borrowed_elem_marks(funcs: parser.FuncDecl[], structs: irtabl
   let store_fns: string[] = strarr_store_fns(stores);
   let second: string[] = [];
   for fn in funcs {
-    second = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, stores, store_keys, store_fns), second);
+    second = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, pix, stores, store_keys, store_fns), second);
   }
   for bk in strarr_keyed_values(second, "bd:") {
     for tf in strarr_keyed_values(stores, bk + "|") {

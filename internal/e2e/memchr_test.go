@@ -244,8 +244,8 @@ func TestArm64Memchr(t *testing.T) {
 func TestWASMMemchr(t *testing.T) {
 	runMemchrCorpus(t, func(t *testing.T, src string) string {
 		out, _ := invokeWasmtime(t, src)
-		// The component harness builds with PrintMainResult, so main()'s
-		// return value arrives as one extra line after the corpus. Check
+		// wasmtime's --invoke prints main()'s return value as one extra
+		// line after the corpus. Check
 		// it — it is the leg's only signal that the program ran to
 		// completion rather than stopping early with the right prefix —
 		// then hand back just the corpus lines.

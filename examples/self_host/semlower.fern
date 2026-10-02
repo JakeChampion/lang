@@ -246,9 +246,9 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irtables.S
   while (i < mod.funcs.len()) {
     let fd: parser.FuncDecl = mod.funcs[i];
     plans = plans.append(base_plan(base, changed, i, built.decls[i]));
-    keys = keys.append(semsource.decl_key(fd));
+    keys = keys.append(parser.decl_key(fd));
     funcs = funcs.append(built.decls[i].func);
-    r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(semsource.decl_key(fd)) };
+    r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(parser.decl_key(fd)) };
     i = i + 1;
   }
   let at: i32 = mod.funcs.len();
@@ -510,7 +510,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, base:
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (r.keep[i]) {
-      callees = callees.append(ssarc.Callee { name: semsource.decl_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], receiver: semsource.has_receiver(mod.funcs[i]) });
+      callees = callees.append(ssarc.Callee { name: parser.decl_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], receiver: semsource.has_receiver(mod.funcs[i]) });
       helpers = ssarc.with_drop_helpers(helpers, built.decls[i].func);
       bodies = bodies.append(r.body[i]);
       n = n + 1;
@@ -866,7 +866,7 @@ pub function verdict_annotated(annotated: parser.Module, target: string): Verdic
 function verdict_row(im: parser.Module, inf: Inference, i: i32): VerdictRow {
   let name: string = inf.rows.n1[i];
   if (i < im.funcs.len()) {
-    name = semsource.decl_key(im.funcs[i]);
+    name = parser.decl_key(im.funcs[i]);
   }
   if (inf.rows.keep[i]) {
     return VerdictRow { name: name, state: "produced", why: "" };

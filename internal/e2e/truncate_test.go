@@ -180,7 +180,7 @@ func TestWASMPreview1Truncate(t *testing.T) {
 }
 
 // main's return reaches us on STDOUT, not as the exit status: the harness
-// builds with PrintMainResult.
+// runs the module with `--invoke main`.
 func TestWASMTruncate(t *testing.T) {
 	p := buildComponent(t, truncateSource(""))
 	dir := t.TempDir()

@@ -9641,12 +9641,11 @@ function dyn_arg_operand(a: asmcore.DynArg): string {
 
 // emit_dyn_dispatch_chain is a `dyn Trait` method call: it reads the
 // receiver's shape pointer and dispatches to the matching `<Type>.<method>`
-// through a compare-branch chain over every module method named `method`
-// with a struct receiver, mirroring asm.fern's dyn dispatch. Each matched
-// arm pushes the arguments (arg0/receiver on top, asm.fern's ABI) from
+// through a compare-branch chain over the `arms` the op_dyn_dispatch tag
+// carries. Each matched arm pushes the arguments (arg0/receiver on top, asm.fern's ABI) from
 // where `args` says they are, calls, and leaves the result in %rax. %rcx
 // and %rdx are scratch.
-function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32, lp: string, own s: asmcore.EmitState): asmcore.EmitState {
+function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, lp: string, own s: asmcore.EmitState): asmcore.EmitState {
   let dargc: i32 = args.len();
   s = s.write("    movq " + dyn_arg_operand(args[0]) + ", %rax\n");
   s = s.write("    movq (%rax), %rcx\n");
@@ -9656,13 +9655,12 @@ function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32,
   while (dfi < s.funcs.len()) {
     let dfd: parser.FuncDecl = s.funcs[dfi];
     let ddbn: string = util.base_type_name(dfd.receiver_type);
-    // Dispatch arms: every method named `method` whose receiver is a
-    // struct (value carries its shape) OR a primitive/string (value
+    // Dispatch arms: every arm whose receiver is a struct (value carries its shape) OR a primitive/string (value
     // is heap-boxed at coercion — docs/DYN-TRAITS.md §4.2.3). A
     // primitive arm UNBOXES: the receiver holds the box pointer, so
     // arg0 is reloaded from box+8, not pushed directly.
     let dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
-    if (irtables.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
+    if (irtables.dyn_arm_matches(dfd, arms) && dfd.receiver_type.len() > 0
       && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
       let dbn: string = ddbn;
       let dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
@@ -9701,7 +9699,7 @@ function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32,
     // dispatch to their own impls. recv_is_array excludes an
     // array method's `T[]` receiver (base_type_name strips the
     // `[]`, which would otherwise mis-read as an enum — #2766).
-    if (irtables.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
+    if (irtables.dyn_arm_matches(dfd, arms) && dfd.receiver_type.len() > 0
       && !asmcore.recv_is_array(dfd.receiver_type)
       && irtables.decl_is_enum(s.struct_decls, ddbn)) {
       let dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
