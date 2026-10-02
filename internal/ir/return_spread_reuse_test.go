@@ -139,7 +139,7 @@ function main(): i32 {
 
 // A carried string (and a bool) survive the reuse: the reuse branch never reads or
 // writes them, so the two-word shape that keeps strings out of the placeable
-// set does not arise. LowerState — the struct this issue is about — has one of
+// set does not arise. LowerState — the struct this issue was about — had one of
 // each, so without this the measured shape would not qualify at all.
 func TestReturnSpreadAdmitsCarriedString(t *testing.T) {
 	ip := lowerForTest(t, `struct St { tag: string, ok: boolean, ctrl: i32 }

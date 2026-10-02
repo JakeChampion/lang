@@ -105,8 +105,8 @@ function main(): i32 {
 }`}, // 42
 
 	// Control: a STRUCT-returning overload. This is the shape struct_ret_fns
-	// does record, so it lowered before the carrier and must still lower
-	// through the registry — the tag must not have displaced it.
+	// did record, so it lowered before the carrier and must still lower —
+	// the tag must not have displaced it.
 	{"overload_add_struct", `struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
 function main(): i32 {

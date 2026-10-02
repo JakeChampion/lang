@@ -762,10 +762,8 @@ function main(): i32 { var mm: Map[i32, i32] = map_new(8); var (m2, e) = mm.with
 		// FIRING `var y = match (x) { ... }` reuses x's box in place: payloads are read
 		// into temps at their width (struct_get_i64 / struct_get width-64 for the 8-byte
 		// cases, marked i64/f64 so the arm's ctor-arg expressions type correctly) and
-		// the constructed fields written back at width (lower_i64+struct_set_i64 for i64,
-		// lower_expr+struct_set width-64 for f64). The reuse dispatch intercepts the
-		// firing IIFE match-EXPRESSION directly (it does NOT go through lower_iife_match's
-		// i32-only gate). The result y is read back via a STATEMENT match (the generic
+		// the constructed fields written back at width (struct_set_i64 for i64,
+		// struct_set width-64 for f64). The result y is read back via a STATEMENT match (the generic
 		// enum path handles i64/f64 payloads; the match-EXPRESSION form is still
 		// i32-only, an orthogonal IR-subset gap), so the only width-sensitive lowering
 		// under test is the reuse itself. Value correct + detector 0 (box freed once via y).

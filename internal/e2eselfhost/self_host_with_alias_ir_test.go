@@ -16,8 +16,8 @@ import (
 // which is UNSOUND once `a` is aliased (`var b = a`, captured into a struct
 // literal, …): the in-place write mutates the buffer the alias still reads, so
 // `b` observes the change. The interpreter and the native (Perceus) backend both
-// copy-on-write and leave the alias unchanged. The fix detects the alias at
-// lower_func time (aliased_array_names_of) and routes the aliased self-reassign
+// copy-on-write and leave the alias unchanged. The fix detected the alias at
+// lower_func time (aliased_array_names_of) and routed the aliased self-reassign
 // through the value-producing clone (lower_arr_with_value) instead of the
 // in-place store. The unaliased "no-alias" case still takes the in-place path.
 //

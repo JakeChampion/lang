@@ -15,9 +15,9 @@ import (
 // OPTSTRUCT machinery of the array FIELDS — the #5453 regression.
 //
 // The fix is on the EMISSION side, not the admission side: the block pass gained
-// the same `emit_opt_struct_payload_drop` branch lower_func has, and `blockable`
-// now keys on `dsty` — which already means "the deep drop is available AND no arm
-// moved a field out of it".
+// the same `emit_opt_struct_payload_drop` branch lower_func had, and `blockable`
+// keyed on `dsty`, which meant "the deep drop is available AND no arm moved a
+// field out of it".
 //
 // THE FIELD-MOVE GATE HAD TO BE CORRECTED FIRST. It read `body[match_idx]`, which
 // under a nested lookup is the enclosing `if` — a statement it cannot parse, so

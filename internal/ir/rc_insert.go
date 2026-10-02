@@ -1798,11 +1798,11 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			if sdOk {
 				// Outlined form, for the same reason as the eligible arm
 				// above: this shape is ~6 ops per rc-tracked field and the
-				// sweep repeats per function EXIT. It is the arm that
-				// dominates the self-host compiler — `LowerState` has 24
-				// rc-tracked fields, and `lower_call_named` holds 112 such
-				// locals across 259 exits, which is ~3.5M of its ~3.57M sweep
-				// ops. genStructFlatDropFn emits this body verbatim against
+				// sweep repeats per function EXIT. It was the arm that
+				// dominated the self-host compiler — the AST lowering's
+				// `LowerState` had 24 rc-tracked fields, and `lower_call_named`
+				// held 112 such locals across 259 exits, ~3.5M of its ~3.57M
+				// sweep ops. genStructFlatDropFn emits this body verbatim against
 				// local 0 and declines (keeping the inline path) for the one
 				// shape it cannot reproduce, a Cell field.
 				if ast.RcFreeEnabled {

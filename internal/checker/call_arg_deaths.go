@@ -178,7 +178,7 @@ type ArgDeaths struct {
 //     threading chain `var a = s.emit(o); var b = a.emit(o); return b;`,
 //     where every receiver is at its last use. Each of those was paying a
 //     full-buffer copy per link, which is O(n²) bytes over a chain: the
-//     self-host lowering threads its LowerState this way and one 400-arm
+//     AST lowering threaded its LowerState this way and one 400-arm
 //     `else if` chain bumped 40 MB in `emit` alone. A local that RENAMES
 //     an admitted name at that name's only occurrence — `var c: C = c0;`
 //     on a parameter — is the same binding spelled twice, so it is

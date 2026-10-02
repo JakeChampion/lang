@@ -16,7 +16,7 @@ import (
 //
 // The freshness proof already existed and was going unused. opt_fresh_ret_fns_of
 // registers every free function whose Option/Result return is always a direct
-// constructor, and lower_func seeds it as "OPTFRESH:<name>" — but only
+// constructor, and lower_func seeded it as "OPTFRESH:<name>" — but only
 // lower_try's `?`-edge consulted it. The user-enum sibling
 // (collect_fresh_rcenum_names via rcenum_call_init_owner) has admitted call
 // inits since #4355 slice 5; this is the same admission for Option / Result.

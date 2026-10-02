@@ -19,7 +19,7 @@ import (
 // position which already worked.
 //
 // The mechanism was already here and only lacked a dispatch arm.
-// `lower_call_named` stashes a fresh literal argument in a scratch local and
+// `lower_call_named` stashed a fresh literal argument in a scratch local and
 // frees it after the call, with arms for string literals, scalar-array
 // literals, "ARR:"/"STRARR:" producer calls and the consumed-append temp. Two
 // pieces were missing and BOTH are needed — either alone is a no-op:
@@ -27,8 +27,8 @@ import (
 //   - the stash arm itself, releasing with the discarded-statement arm's own two
 //     shapes (scalar-only -> box dec; reusable rc fields -> __struct_drop_<T>
 //     then the box dec), and
-//   - a "BORROW:" row to consult. Those rows are NARROW-SEEDED, deliberately:
-//     lower_func seeds only callees that lit_arg_callees_expr saw carrying a
+//   - a "BORROW:" row to consult. Those rows were NARROW-SEEDED, deliberately:
+//     lower_func seeded only callees that lit_arg_callees_expr saw carrying a
 //     literal argument, so the list stays tiny. A struct literal was not in that
 //     census, so call_arg_borrowable answered false and the arm could never
 //     fire. Adding the arm without the census entry measures as no change at

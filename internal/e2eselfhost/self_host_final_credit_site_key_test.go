@@ -13,7 +13,7 @@ import (
 // The final block of #7253 step 1, and the one that RETIRES reclaim_slot_name:
 // "ARRTUP:", "ARRSTRUCT:", "ARRSTRUCTA:", "ARRENUM:", "STRUCTARR:",
 // "STRUCTARRA:", "RCENUM:", "RCENUMS:", "SCENUMS:" and the "DYN:" / "DYNCAND:"
-// pair. After this nothing in irlower.fern resolves a reclaim credit by name.
+// pair. After it, nothing in irlower.fern resolved a reclaim credit by name.
 //
 // A name has no scope, so two same-named locals in sibling blocks must each
 // keep their own reclaim verdict. A collision shows as a release landing on a

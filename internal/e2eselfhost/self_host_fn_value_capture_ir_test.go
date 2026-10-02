@@ -105,7 +105,7 @@ function main(): i32 {
 	// arguments have to be pushed at the declared widths or the module does
 	// not even load. Both facts come from the signature, which the flat "fn"
 	// tag drops; the capture read carries the full `(P) => R` spelling so
-	// lower_func can seed FNSIG / FNRET for the local the way it does for a
+	// the lowering has the signature for the local the way it does for a
 	// param. The register backends answered these correctly all along — the
 	// wasm leg is the one that decides them.
 	//
