@@ -1159,6 +1159,8 @@ func ElemSizeBytesFor(t Type, ptrW int) int {
 			return 8
 		}
 		return 4
+	case CharType:
+		return 4
 	case StringType:
 		if UseTwoWordStrings(ptrW) {
 			return 2 * ptrW
