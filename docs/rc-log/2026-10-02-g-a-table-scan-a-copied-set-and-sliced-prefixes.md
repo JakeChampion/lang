@@ -44,7 +44,7 @@ The whole-compiler emit after the previous entry
   through a local, so the set is released before its live row is written and
   the write is in place. Its one caller threads the set through a local at its
   last use, which is what `own` asks of a caller.
-- `util.has_prefix` compares a prefix in place; the 22 sites use it, and
+- `util.str_has_prefix` compares a prefix in place; the 22 sites use it, and
   `asm_arm64_ir`'s `darwin_starts_with` wrapper is gone. `semtypes.prefixed`
   compares in place too (semtypes does not import util).
 

@@ -9539,7 +9539,7 @@ function recv_nomove_methods_of(prev: string[], sty: string): string[] {
   var out: string[] = recv_borrow_methods_of(prev, sty);
   var pfx: string = "RECVIDENT:" + sty + ".";
   for row in prev {
-    if (row.len() > pfx.len() && util.has_prefix(row, pfx)) {
+    if (row.len() > pfx.len() && util.str_has_prefix(row, pfx)) {
       out = push_str_unique(out, slice_unchecked(row, pfx.len(), row.len()) + "");
     }
   }
@@ -26567,7 +26567,7 @@ function struct_ret_key(fn: parser.FuncDecl): string {
 function prefixed_names_of(rows: string[], pfx: string): string[] {
   var out: string[] = [];
   for r in rows {
-    if (r.len() > pfx.len() && util.has_prefix(r, pfx)) {
+    if (r.len() > pfx.len() && util.str_has_prefix(r, pfx)) {
       out = out.append(slice_unchecked(r, pfx.len(), r.len()) + "");
     }
   }

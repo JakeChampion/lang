@@ -230,10 +230,13 @@ the prefix-by-slice compares (`semtypes.is_env` 0.9%) and the
 borrowable registry's 251 buckets (`irlower.param_is_borrowable` 1.7%) with
 it: 214 G to 207 G on the base of 0d7a8d32
 (`docs/rc-log/2026-10-02-g-a-table-scan-a-copied-set-and-sliced-prefixes.md`).
+A fourth round handed the emit state to `asmcore.add_string_lit` owned,
+through the sixteen emitter functions between it and the emit loop, so the
+literal table is no longer copied per interned shape
+(`docs/rc-log/2026-10-02-h-the-emit-state-reaches-the-literal-table-owned.md`).
 What remains is spread wide: `util.hash_bucket` plus `__fern_str_eq` 5.4%
-(the registries' probes), `ssa_lift.lift_impl` 3.4%, `__fern_alloc` 2.3%
-(the literal table copied per interned shape in `asmcore.add_string_lit`
-is the largest single copy, 1.1%).
+(the registries' probes), `ssa_lift.lift_impl` 3.4%, `__fern_alloc` 2.3%,
+and the borrowable registry's copy-on-write store 0.9%.
 
 To re-measure: build the driver with `-g` through the pinned stage0, run
 `valgrind --tool=callgrind` on `-emit asm`, and resolve

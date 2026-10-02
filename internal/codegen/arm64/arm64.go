@@ -20722,6 +20722,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesReaderBytes = true
 			g.usesReaderWriter = true
 			g.usesAllocU8 = true
+			g.usesMemcpy = true
 		case "__method_Reader_close":
 			target = "__fern_close_fd_box"
 			g.usesReaderWriter = true
