@@ -10,9 +10,8 @@ import (
 // relaxation byte for byte: the native assembler's relaxation cases
 // (internal/native/x86_64/relax_test.go), whose bytes are GNU as's, plus two
 // cascades where a later branch's growth pushes an earlier one out of rel8
-// range. Without alignment in .text the fixpoint is settled on the first
-// round's offsets (x86_relax_settle); the .p2align case takes the
-// round-by-round path.
+// range, alignment pads among them (x86_relax_settle settles all of them on
+// the first round's layout).
 func TestSelfHostX86GasRelaxation(t *testing.T) {
 	nops := func(n int) string { return strings.Repeat("nop\n", n) }
 	hexNops := func(n int) string { return strings.Repeat("90", n) }
@@ -37,8 +36,14 @@ func TestSelfHostX86GasRelaxation(t *testing.T) {
 		{"jmp L1\n" + nops(125) + "jmp L2\nL1:\n" + nops(200) + "L2: ret", "e982000000" + hexNops(125) + "e9c8000000" + hexNops(200) + "c3"},
 		{"jz L1\n" + nops(124) + "jz L2\nL1:\n" + nops(200) + "L2: ret", "0f8482000000" + hexNops(124) + "0f84c8000000" + hexNops(200) + "c3"},
 		// Alignment in .text: two self-consistent layouts, of which grow-only
-		// relaxation must land on the short one.
+		// relaxation must land on the short one; and a growth the pad before
+		// the target absorbs, so the later branch stays short (#11001).
 		{"A:\nnop\njmp A\njs L\n" + nops(120) + ".p2align 4\nL: ret", "90ebfd787b" + hexNops(120) + "0f1f00" + "c3"},
+		{"A:\n" + nops(140) + "jle A\njno L\n" + nops(120) + ".p2align 4\nL: ret", hexNops(140) + "0f8e6effffff" + "717c" + hexNops(120) + "0f1f4000" + "c3"},
+		// A label written right after a pad that is empty in the first round
+		// stays on its far edge when the first jmp's growth widens the pad to
+		// five bytes, which puts it out of the second jmp's reach.
+		{"jmp L\n" + nops(8) + "jmp M\n" + nops(124) + ".p2align 3\nM:\n" + nops(200) + "L: ret", "e953010000" + hexNops(8) + "e97e000000" + hexNops(124) + "6690" + hexNops(200) + "c3"},
 	}
 	var body strings.Builder
 	for i, c := range cases {
