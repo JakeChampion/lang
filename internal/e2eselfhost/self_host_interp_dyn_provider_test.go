@@ -21,7 +21,7 @@ import (
 // The interpreter now reads the receiver's DECLARED type out of the scope it is
 // bound in and resolves the written name through `parser.dyn_provider_name`, the
 // same reading of the claim table the compiled backends make through
-// `irlower.dyn_arm_matches`. So the cases split three ways:
+// `irtables.dyn_arm_matches`. So the cases split three ways:
 //
 //   - both traits implemented, reached through `dyn` — the shapes a declaration
 //     is in reach of: a local binding, a parameter, an array element (indexed

@@ -516,7 +516,7 @@ landed — the reuse families shipped **on by default**, each gated by its own
 detector/corruption-probe/fixpoint coverage, and (as of #4350) each carrying
 the runtime `is_unique` token guard.
 
-The reuse-on/off switch exists as `irlower.reuse_layer_disabled()`: setting
+The reuse-on/off switch exists as `irtables.reuse_layer_disabled()`: setting
 **`FERN_SELFHOST_NO_REUSE=1`** in the compiler's environment empties every
 donor-based pairing (self-overwrite / cross-struct / cross-tuple / enum-donor
 / enum-cross / in-arm — the site lists stay empty, so their donor-free

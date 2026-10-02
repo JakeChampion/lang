@@ -13,7 +13,7 @@ import (
 // designed IR lowering whose artifacts the AST backend never produces:
 //
 //   - A no-capture lambda passed as a fn-typed CALL ARGUMENT uses the uniform
-//     env-box ABI (irlower.lift_inline_closures_expr): it is wrapped into an
+//     env-box ABI (lift.lift_inline_closures_expr): it is wrapped into an
 //     env-ignoring `<fn>$wrapN` trampoline boxed as [funcval], and the callee
 //     dispatches it env-first via call_indirect. This pass deliberately runs
 //     BEFORE the no-capture __lam_N lift ("there is one fn-arg shape, the
@@ -21,13 +21,13 @@ import (
 //     here is the trampoline + call_indirect, not __lam_0.
 //   - A capture-free lambda BOUND TO A LOCAL and called directly is hoisted to
 //     a top-level __lam_<k> and the call rewritten to a direct call
-//     (irlower.lift_stmt).
+//     (lift.lift_stmt).
 //
 // This is the check that was missing while the lambda slices silently rode the
 // AST fallback that then existed: a native free-list bug corrupted the lift's
 // reconstructed statements, the lifted module bailed IR eligibility, and the
 // exit-code-only tests passed via AST. The fix (binding each rebuilt statement
-// to a `var` before the result array) is in irlower.lift_stmt.
+// to a `var` before the result array) is in lift.lift_stmt.
 func TestSelfHostLambdaReachesIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping lambda-reaches-IR guard")

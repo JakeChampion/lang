@@ -1,5 +1,5 @@
 // examples/self_host/wasm_ir.fern — the WebAssembly instruction-selector for
-// the target-agnostic stack IR (irlower.fern's Op[]). The wasm sibling of
+// the target-agnostic stack IR (ir.fern's Op[]). The wasm sibling of
 // asm_ir / asm_arm64_ir: it lowers the SAME lowered op stream to textual WAT.
 //
 // wasm is the most natural target of the three: the IR is a stack machine with
@@ -28,7 +28,9 @@ import "./ast";
 import "./parser";
 import "./util";
 import "./ir";
-import "./irlower";
+import "./irtables";
+import "./fnsigs";
+import "./lift";
 import "./irverify";
 import "./irverifygate";
 import "./asmcore";
@@ -72,11 +74,11 @@ pub function large_fl_cells(): i32 {
 // str_values collects the module's distinct string literals (first-seen order,
 // deduped) from the lowered IR. Both the caller's data-section emission and the
 // per-function const_str offset lookup walk this same list, so offsets agree.
-pub function str_values(cache: irlower.LowerResult[]): string[] {
+pub function str_values(cache: irtables.LowerResult[]): string[] {
   var vals: string[] = [];
   var fi: i32 = 0;
   while (fi < cache.len()) {
-    var r: irlower.LowerResult = cache[fi];
+    var r: irtables.LowerResult = cache[fi];
     var i: i32 = 0;
     while (i < r.ops.len()) {
       if (r.ops[i].kind_tag == 5) {  // const_str
@@ -299,7 +301,7 @@ pub function need_ops(): string[] {
 // an undefined-function link failure rather than a wrong answer. The
 // byte-identity invariant is what pins it — whole-program emit routes through
 // this same set, so an omission changes the emitted module and fails the suite.
-pub function needs_of(cache: irlower.LowerResult[]): string[] {
+pub function needs_of(cache: irtables.LowerResult[]): string[] {
   var out: string[] = [];
   var ops: string[] = need_ops();
   var oi: i32 = 0;
@@ -542,7 +544,7 @@ pub function tid_named(): string[] {
 // tid_globals_section declares one immutable global per type id: every struct in
 // the program, every primitive dyn-box shape (prim_type_id), and the literal
 // names above. Emitted once per module by wasm.emit_ir_module.
-pub function tid_globals_section(structs: irlower.StructTab): string {
+pub function tid_globals_section(structs: irtables.StructTab): string {
   var parts: string[] = [];
   var seen: string[] = [];
   var i: i32 = 0;
@@ -553,12 +555,12 @@ pub function tid_globals_section(structs: irlower.StructTab): string {
     }
     i = i + 1;
   }
-  var prims: string[] = irlower.prim_type_ids();
+  var prims: string[] = irtables.prim_type_ids();
   var p: i32 = 0;
   while (p < prims.len()) {
     if (util.index_of_str(seen, prims[p]) < 0) {
       seen = seen.append(prims[p]);
-      parts = parts.append("  (global " + tid_global(prims[p]) + " i32 (i32.const " + util.i32_to_string(irlower.prim_type_id(structs, prims[p])) + "))\n");
+      parts = parts.append("  (global " + tid_global(prims[p]) + " i32 (i32.const " + util.i32_to_string(irtables.prim_type_id(structs, prims[p])) + "))\n");
     }
     p = p + 1;
   }
@@ -616,11 +618,11 @@ function offset_of_value(vals: string[], v: string): i32 {
 // answers 0 — an FBIP reuse or record update targeting one degrades to a fresh
 // box rather than writing through the shared block. The sentinel is written into
 // the rc word anyway so a reader that skips the address guard still sees it.
-pub function const_agg_values(cache: irlower.LowerResult[]): string[] {
+pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
   var vals: string[] = [];
   var fi: i32 = 0;
   while (fi < cache.len()) {
-    var r: irlower.LowerResult = cache[fi];
+    var r: irtables.LowerResult = cache[fi];
     var i: i32 = 0;
     while (i < r.ops.len()) {
       if (r.ops[i].kind_tag == 218) {  // const_struct
@@ -732,15 +734,15 @@ pub function memory_min_pages(sv: string[], cv: string[]): i32 {
   return need;
 }
 
-pub function fl_base_for(cache: irlower.LowerResult[]): i32 {
+pub function fl_base_for(cache: irtables.LowerResult[]): i32 {
   return fl_base_for_strs(str_values(cache), const_agg_values(cache));
 }
 
-pub function large_fl_base_for(cache: irlower.LowerResult[]): i32 {
+pub function large_fl_base_for(cache: irtables.LowerResult[]): i32 {
   return fl_base_for(cache) + fl_cells() * 4;
 }
 
-pub function heap_base_for(cache: irlower.LowerResult[]): i32 {
+pub function heap_base_for(cache: irtables.LowerResult[]): i32 {
   return heap_align8(large_fl_base_for(cache) + large_fl_cells() * 4);
 }
 
@@ -757,10 +759,10 @@ pub function cagg_base_global(ns: string): string {
 // ops it looks for, so the cache/ops walk exists once and a gate is a predicate.
 // Seventeen of them open-coded this same nested loop, which is seventeen places
 // to forget a tag.
-pub function any_op(cache: irlower.LowerResult[], pred: (ir.Op) => boolean): boolean {
+pub function any_op(cache: irtables.LowerResult[], pred: (ir.Op) => boolean): boolean {
   var fi: i32 = 0;
   while (fi < cache.len()) {
-    var r: irlower.LowerResult = cache[fi];
+    var r: irtables.LowerResult = cache[fi];
     var i: i32 = 0;
     while (i < r.ops.len()) {
       if (pred(r.ops[i])) {
@@ -773,7 +775,7 @@ pub function any_op(cache: irlower.LowerResult[], pred: (ir.Op) => boolean): boo
   return false;
 }
 
-pub function module_uses_strings(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_strings(cache: irtables.LowerResult[]): boolean {
   function is_string_use(o: ir.Op): boolean {
     return o.kind_tag == 5 || o.kind_tag == 97 || o.kind_tag == 98  // const_str, str_len, str_concat
       || o.kind_tag == 99 || o.kind_tag == 100  // str_eq, str_cmp
@@ -785,7 +787,7 @@ pub function module_uses_strings(cache: irlower.LowerResult[]): boolean {
 // module_uses_str_cmp reports whether any function emits a str_cmp op (string
 // ordering < <= > >=). Such modules need the FULL string-helper bundle, which
 // includes $__fern_strcmp (the narrow strcat_streq bundle omits it).
-pub function module_uses_str_cmp(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_str_cmp(cache: irtables.LowerResult[]): boolean {
   function is_str_cmp(o: ir.Op): boolean {  // str_cmp
     return o.kind_tag == 100;
   }
@@ -794,7 +796,7 @@ pub function module_uses_str_cmp(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_str_slice reports whether any function uses `s[start:end]` (the
 // str_slice op), gating emission of the $__fern_substr copy helper.
-pub function module_uses_maps(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_maps(cache: irtables.LowerResult[]): boolean {
   // EVERY map op needs the runtime, not only the ones that build a map: each
   // reads or writes the box through a helper the bundle defines, so a module
   // that only READS a map it was handed — a `has` or a `get` on a parameter,
@@ -812,7 +814,7 @@ pub function module_uses_maps(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_memchr gates $__fern_memchr, the byte-search kernel of
 // ATLAS-PLATFORM-PLAN §3. Same shape as module_uses_str_slice below.
-pub function module_uses_memchr(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_memchr(cache: irtables.LowerResult[]): boolean {
   function is_memchr(o: ir.Op): boolean {  // memchr
     return o.kind_tag == 225;
   }
@@ -821,7 +823,7 @@ pub function module_uses_memchr(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_mismatch gates $__fern_mismatch, the two-range comparison kernel
 // of #8791. Same shape as module_uses_memchr above.
-pub function module_uses_mismatch(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_mismatch(cache: irtables.LowerResult[]): boolean {
   function is_mismatch(o: ir.Op): boolean {  // mismatch
     return o.kind_tag == 245;
   }
@@ -830,7 +832,7 @@ pub function module_uses_mismatch(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_rmemchr gates $__fern_rmemchr, the backward byte search of
 // ATLAS-PLATFORM-PLAN §3.3. Same shape as module_uses_memchr above.
-pub function module_uses_rmemchr(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_rmemchr(cache: irtables.LowerResult[]): boolean {
   function is_rmemchr(o: ir.Op): boolean {  // rmemchr
     return o.kind_tag == 234;
   }
@@ -839,7 +841,7 @@ pub function module_uses_rmemchr(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_count_byte gates $__fern_count_byte, the byte tally of
 // ATLAS-PLATFORM-PLAN §3.3. Same shape as module_uses_memchr above.
-pub function module_uses_count_byte(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_count_byte(cache: irtables.LowerResult[]): boolean {
   function is_count_byte(o: ir.Op): boolean {  // count_byte
     return o.kind_tag == 235;
   }
@@ -848,7 +850,7 @@ pub function module_uses_count_byte(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_scan_set gates $__fern_scan_set, the byte-set scan. Same shape
 // as module_uses_memchr above.
-pub function module_uses_scan_set(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_scan_set(cache: irtables.LowerResult[]): boolean {
   function is_scan_set(o: ir.Op): boolean {  // scan_set
     return o.kind_tag == 324;
   }
@@ -857,7 +859,7 @@ pub function module_uses_scan_set(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_bsd_sum gates $__fern_bsd_sum, the BSD checksum. Same shape as
 // module_uses_memchr above.
-pub function module_uses_bsd_sum(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_bsd_sum(cache: irtables.LowerResult[]): boolean {
   function is_bsd_sum(o: ir.Op): boolean {  // bsd_sum
     return o.kind_tag == 329;
   }
@@ -866,7 +868,7 @@ pub function module_uses_bsd_sum(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_count_runs gates $__fern_count_runs, the run count. Same shape
 // as module_uses_memchr above.
-pub function module_uses_count_runs(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_count_runs(cache: irtables.LowerResult[]): boolean {
   function is_count_runs(o: ir.Op): boolean {  // count_runs
     return o.kind_tag == 327;
   }
@@ -875,7 +877,7 @@ pub function module_uses_count_runs(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_sum_bytes gates $__fern_sum_bytes, the byte-sum reduction of
 // ATLAS-PLATFORM-PLAN §3.3. Same shape as module_uses_memchr above.
-pub function module_uses_sum_bytes(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_sum_bytes(cache: irtables.LowerResult[]): boolean {
   function is_sum_bytes(o: ir.Op): boolean {  // sum_bytes
     return o.kind_tag == 253;
   }
@@ -885,7 +887,7 @@ pub function module_uses_sum_bytes(cache: irlower.LowerResult[]): boolean {
 // module_uses_scale_f64 gates $__fern_scale_f64, the f64 scaling kernel of
 // ATLAS-PLATFORM-PLAN §3.3 (the eighth, and the first over an array). Same
 // shape as module_uses_memchr above.
-pub function module_uses_scale_f64(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_scale_f64(cache: irtables.LowerResult[]): boolean {
   function is_scale_f64(o: ir.Op): boolean {  // scale_f64
     return o.kind_tag == 322;
   }
@@ -894,7 +896,7 @@ pub function module_uses_scale_f64(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_crc32_cksum gates $__fern_crc32_cksum, the CRC-32 fold of
 // #9128. Same shape as module_uses_memchr above.
-pub function module_uses_crc32_cksum(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_crc32_cksum(cache: irtables.LowerResult[]): boolean {
   function is_crc32(o: ir.Op): boolean {  // crc32_cksum
     return o.kind_tag == 309;
   }
@@ -903,14 +905,14 @@ pub function module_uses_crc32_cksum(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_ascii_run gates $__fern_ascii_run, the high-bit scan of
 // ATLAS-PLATFORM-PLAN §3. Same shape as module_uses_memchr above.
-pub function module_uses_ascii_run(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_ascii_run(cache: irtables.LowerResult[]): boolean {
   function is_ascii_run(o: ir.Op): boolean {  // ascii_run
     return o.kind_tag == 227;
   }
   return any_op(cache, is_ascii_run);
 }
 
-pub function module_uses_str_slice(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_str_slice(cache: irtables.LowerResult[]): boolean {
   function is_str_slice(o: ir.Op): boolean {  // str_slice
     return o.kind_tag == 102;
   }
@@ -1319,7 +1321,7 @@ function wasm_helper_symbol(name: string): string {
 
 // module_allocates reports whether any function uses an array/alloc op (so the
 // heap + RC runtime needs emitting).
-pub function module_allocates(cache: irlower.LowerResult[]): boolean {
+pub function module_allocates(cache: irtables.LowerResult[]): boolean {
   // ir.op_allocates is the shared list (see ir.fern), identical to asm_ir's
   // heap gate. The RC probes live in rc_runtime_helpers, which uses this same
   // gate, so a program that only READS the counters still needs it: a
@@ -1349,11 +1351,11 @@ pub function module_allocates(cache: irlower.LowerResult[]): boolean {
 // __fern_snapshot_dec — see emit_ir_rc_bodies below + TestSelfHostFieldReclaimWasm);
 // collected by scanning lowered call_direct ops rather than a need-set, matching
 // wasm's module_calls-style gating.
-pub function field_reclaim_types(cache: irlower.LowerResult[]): string[] {
+pub function field_reclaim_types(cache: irtables.LowerResult[]): string[] {
   var out: string[] = [];
   var fi: i32 = 0;
   while (fi < cache.len()) {
-    var r: irlower.LowerResult = cache[fi];
+    var r: irtables.LowerResult = cache[fi];
     var i: i32 = 0;
     while (i < r.ops.len()) {
       if (r.ops[i].kind_tag == 149 && ircore.is_field_reclaim_name(r.ops[i].str)) {  // call_direct
@@ -1373,11 +1375,11 @@ pub function field_reclaim_types(cache: irlower.LowerResult[]): string[] {
 // which a __map_vals_struct_drop_<T> helper is called anywhere in the lowered
 // module; needs_of records each as "@map_vals_struct_drop:<T>" so the link
 // step emits the body without re-lowering.
-pub function map_vals_struct_drop_types(cache: irlower.LowerResult[]): string[] {
+pub function map_vals_struct_drop_types(cache: irtables.LowerResult[]): string[] {
   var out: string[] = [];
   var fi: i32 = 0;
   while (fi < cache.len()) {
-    var r: irlower.LowerResult = cache[fi];
+    var r: irtables.LowerResult = cache[fi];
     var i: i32 = 0;
     while (i < r.ops.len()) {
       if (r.ops[i].kind_tag == 149 && ircore.is_map_vals_struct_drop_name(r.ops[i].str)) {  // call_direct
@@ -1426,11 +1428,11 @@ pub function map_vals_struct_drop_func(t: string): string {
 // deep-dropping rc-array + acyclic nested-struct fields); collected by scanning
 // lowered call_direct ops (the same gating field_reclaim_types uses) plus the
 // transitive nested-struct closure below.
-pub function struct_drop_types(cache: irlower.LowerResult[], structs: irlower.StructTab): string[] {
+pub function struct_drop_types(cache: irtables.LowerResult[], structs: irtables.StructTab): string[] {
   var out: string[] = [];
   var fi: i32 = 0;
   while (fi < cache.len()) {
-    var r: irlower.LowerResult = cache[fi];
+    var r: irtables.LowerResult = cache[fi];
     var i: i32 = 0;
     while (i < r.ops.len()) {
       if (r.ops[i].kind_tag == 149 && ircore.is_struct_drop_name(r.ops[i].str)) {  // call_direct
@@ -1458,20 +1460,20 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: irlower.St
   var frt: string[] = field_reclaim_types(cache);
   var fri: i32 = 0;
   while (fri < frt.len()) {
-    var ffc: i32 = irlower.decl_field_count(structs, frt[fri]);
+    var ffc: i32 = irtables.decl_field_count(structs, frt[fri]);
     var fk: i32 = 0;
     while (fk < ffc) {
-      var fft: string = irlower.decl_field_type_at(structs, frt[fri], fk);
-      if (irlower.is_struct_array_field_type(structs, fft)) {
+      var fft: string = irtables.decl_field_type_at(structs, frt[fri], fk);
+      if (irtables.is_struct_array_field_type(structs, fft)) {
         var felem: str = slice_unchecked(fft, 0, fft.len() - 2);
-        if (irlower.nested_field_deep_drop_ok(structs, felem) && util.index_of_str(out, felem) < 0) {
+        if (irtables.nested_field_deep_drop_ok(structs, felem) && util.index_of_str(out, felem) < 0) {
           out = out.append(felem + "");
         }
       }
       // A DIRECT nested-struct field, for the same reason: the reclaim
       // body now deep-drops it through $__struct_drop_<F> (#8538), so that
       // body has to be emitted even when nothing else drops an F.
-      if (irlower.decl_is_struct(structs, fft) && irlower.nested_field_deep_drop_ok(structs, fft)
+      if (irtables.decl_is_struct(structs, fft) && irtables.nested_field_deep_drop_ok(structs, fft)
         && util.index_of_str(out, fft) < 0) {
         out = out.append(fft);
       }
@@ -1490,11 +1492,11 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: irlower.St
   var di: i32 = 0;
   while (di < out.len()) {
     var dt: string = out[di];
-    var fc: i32 = irlower.decl_field_count(structs, dt);
+    var fc: i32 = irtables.decl_field_count(structs, dt);
     var k: i32 = 0;
     while (k < fc) {
-      var ft: string = irlower.decl_field_type_at(structs, dt, k);
-      if (irlower.decl_is_struct(structs, ft) && irlower.nested_field_deep_drop_ok(structs, ft)) {
+      var ft: string = irtables.decl_field_type_at(structs, dt, k);
+      if (irtables.decl_is_struct(structs, ft) && irtables.nested_field_deep_drop_ok(structs, ft)) {
         if (util.index_of_str(out, ft) < 0) {
           out = out.append(ft);
         }
@@ -1503,9 +1505,9 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: irlower.St
       // deep-drop helper ($__struct_arr_elems_drop_X) calls $__struct_drop_X, so X
       // must be a struct_drop type too. Add it here (the index-driven loop then
       // expands X's own reclaimable fields transitively).
-      if (irlower.is_struct_array_field_type(structs, ft)) {
+      if (irtables.is_struct_array_field_type(structs, ft)) {
         var aelem: str = slice_unchecked(ft, 0, ft.len() - 2);
-        if (irlower.nested_field_deep_drop_ok(structs, aelem)) {
+        if (irtables.nested_field_deep_drop_ok(structs, aelem)) {
           if (util.index_of_str(out, aelem) < 0) {
             out = out.append(aelem + "");
           }
@@ -1524,7 +1526,7 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: irlower.St
 // struct_drop_types already includes each such E as a struct_drop type (so the
 // $__struct_drop_<E> the helper calls exists), so this walk over that closure finds
 // every needed helper.
-pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: irlower.StructTab): string[] {
+pub function struct_arr_elems_drop_types(cache: irtables.LowerResult[], structs: irtables.StructTab): string[] {
   var sdt: string[] = struct_drop_types(cache, structs);
   // The field-reclaim types need the same helpers: emit_wasm_field_reclaim_body
   // deep-drops a replaced `E[]` field through $__struct_arr_elems_drop_E, and a
@@ -1538,13 +1540,13 @@ pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: 
   var out: string[] = [];
   var i: i32 = 0;
   while (i < sdt.len()) {
-    var fc: i32 = irlower.decl_field_count(structs, sdt[i]);
+    var fc: i32 = irtables.decl_field_count(structs, sdt[i]);
     var k: i32 = 0;
     while (k < fc) {
-      var ft: string = irlower.decl_field_type_at(structs, sdt[i], k);
-      if (irlower.is_struct_array_field_type(structs, ft)) {
+      var ft: string = irtables.decl_field_type_at(structs, sdt[i], k);
+      if (irtables.is_struct_array_field_type(structs, ft)) {
         var elem: str = slice_unchecked(ft, 0, ft.len() - 2);
-        if (irlower.nested_field_deep_drop_ok(structs, elem) && util.index_of_str(out, elem) < 0) {
+        if (irtables.nested_field_deep_drop_ok(structs, elem) && util.index_of_str(out, elem) < 0) {
           out = out.append(elem + "");
         }
       }
@@ -1563,7 +1565,7 @@ pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: 
 // the wasm self-host compile linear (#4652). The op-kind arrives by string;
 // resolve it to the integer tag once so the inner scan is an int compare.
 
-pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string): boolean {
+pub function module_emits_op_cached(cache: irtables.LowerResult[], kind: string): boolean {
   var ktag: i32 = ir.kind_id(kind);
   function is_kind(o: ir.Op): boolean {
     return o.kind_tag == ktag;
@@ -1574,7 +1576,7 @@ pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string):
 // module_uses_map_iter reports whether a function makes, reads, advances or
 // releases a cursor. A module can hold a cursor it did not make, a consumed
 // `MapIter` parameter, so the op that makes one is not enough to gate on.
-pub function module_uses_map_iter(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_map_iter(cache: irtables.LowerResult[]): boolean {
   for kind in ["map_iter", "mapiter_has_next", "mapiter_key", "mapiter_value", "mapiter_advance"] {
     if (module_emits_op_cached(cache, kind)) {
       return true;
@@ -1588,7 +1590,7 @@ pub function module_uses_map_iter(cache: irlower.LowerResult[]): boolean {
 // map_values 132, map_get 127, map_iter 133 or mapiter_value 136 with widekind
 // 1 = i64/u64 or 2 = f64), so emit_ir_module_units emits map_w64_helpers.
 // #5253.
-pub function module_uses_map_w64(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_map_w64(cache: irtables.LowerResult[]): boolean {
   function is_map_w64(o: ir.Op): boolean {
     return (o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127 || o.kind_tag == 133 || o.kind_tag == 136) && o.i64_imm != 0;
   }
@@ -1599,7 +1601,7 @@ pub function module_uses_map_w64(cache: irlower.LowerResult[]): boolean {
 // (key kind 3 on map_new 124, map_set 125, map_get 127, map_has 128, map_get_or
 // 129 or map_delete 130, or the key-wide flag on map_keys 131, map_iter 133 or
 // mapiter_key 135), so emit_ir_module_units emits map_k64_helpers (#10005).
-pub function module_uses_map_k64(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_map_k64(cache: irtables.LowerResult[]): boolean {
   return any_op(cache, is_map_k64_op);
 }
 
@@ -1612,39 +1614,39 @@ function is_map_k64_op(o: ir.Op): boolean {
 
 // module_uses_str_case reports whether any function emits an ASCII case-transform
 // op (to_upper / to_lower), so wasm.str_case_helpers is emitted for the IR path.
-pub function module_uses_str_case(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_str_case(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "str_to_upper") || module_emits_op_cached(cache, "str_to_lower");
 }
 
 // module_uses_str_repeat reports whether any function emits the str_repeat op, so
 // wasm.str_repeat_helper is emitted for the IR path.
-pub function module_uses_str_repeat(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_str_repeat(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "str_repeat");
 }
 
 // module_uses_str_trim reports whether any function emits the str_trim op, so
 // wasm.str_trim_helper is emitted for the IR path. (wasm's AST path has no trim,
 // so this is IR-only — no AST counterpart to differential-test against.)
-pub function module_uses_str_trim(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_str_trim(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "str_trim");
 }
 
 // module_uses_str_replace reports whether any function emits the str_replace op,
 // so wasm.str_replace_helper is emitted for the IR path. (IR-only, like trim.)
-pub function module_uses_str_replace(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_str_replace(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "str_replace");
 }
 
 // module_uses_str_lines reports whether any function emits the str_lines op, so
 // wasm.str_lines_helper (and the str_split/substr it depends on) are emitted.
-pub function module_uses_str_lines(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_str_lines(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "str_lines");
 }
 
 // module_calls_direct reports whether any function emits a call_direct to the
 // named runtime helper — the shared scan behind every helper gate keyed on a
 // symbol rather than an op kind (module_emits_op keys on op.kind).
-pub function module_calls_direct(cache: irlower.LowerResult[], name: string): boolean {
+pub function module_calls_direct(cache: irtables.LowerResult[], name: string): boolean {
   function is_call_to(o: ir.Op): boolean {  // call_direct
     return o.kind_tag == 149 && o.str == name;
   }
@@ -1654,7 +1656,7 @@ pub function module_calls_direct(cache: irlower.LowerResult[], name: string): bo
 // module_uses_i32_to_string reports whether any function emits the i32.to_string()
 // runtime call — so the heap allocator + $__fern_i32_to_str helper are emitted,
 // even for an otherwise alloc-free module.
-pub function module_uses_i32_to_string(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_i32_to_string(cache: irtables.LowerResult[]): boolean {
   return module_calls_direct(cache, "__fern_i32_to_string");
 }
 
@@ -1663,25 +1665,25 @@ pub function module_uses_i32_to_string(cache: irlower.LowerResult[]): boolean {
 // register backends compile from asmcore.rt_src_{i64,u64}_to_string, and which
 // wasm serves with the $__fern_{i64,u64}_to_str WAT bodies — so each need pulls
 // its own formatter (and the heap its string block comes from).
-pub function module_uses_i64_to_string(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_i64_to_string(cache: irtables.LowerResult[]): boolean {
   return module_calls_direct(cache, "__fern_i64_to_string");
 }
 
-pub function module_uses_u64_to_string(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_u64_to_string(cache: irtables.LowerResult[]): boolean {
   return module_calls_direct(cache, "__fern_u64_to_string");
 }
 
 // module_uses_u32_to_string gates the u32 wrapper (#5992). It pulls the u64
 // formatter in too — the wrapper delegates to it — so the need is emitted as a
 // pair rather than relying on the module happening to use u64 as well.
-pub function module_uses_u32_to_string(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_u32_to_string(cache: irtables.LowerResult[]): boolean {
   return module_calls_direct(cache, "__fern_u32_to_string");
 }
 
 // module_calls_arr_str_join reports whether any function emits the xs.join(sep)
 // runtime call (#5328) — so needs_of can pull in the $__fern_str_join WAT
 // helper (@uses_arr_str_join).
-pub function module_calls_arr_str_join(cache: irlower.LowerResult[]): boolean {
+pub function module_calls_arr_str_join(cache: irtables.LowerResult[]): boolean {
   return module_calls_direct(cache, "__fern_arr_str_join");
 }
 
@@ -1690,7 +1692,7 @@ pub function module_calls_arr_str_join(cache: irlower.LowerResult[]): boolean {
 // heap allocator are emitted. strbuf_take boxes its result via $__fern_str_box,
 // so the strbuf gate also pulls the heap in (folds into the heap gate alongside
 // module_allocates / module_uses_i32_to_string / module_uses_chr).
-pub function module_uses_strbuf(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_strbuf(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "strbuf_reset") || module_emits_op_cached(cache, "strbuf_append")
     || module_emits_op_cached(cache, "strbuf_take");
 }
@@ -1700,7 +1702,7 @@ pub function module_uses_strbuf(cache: irlower.LowerResult[]): boolean {
 // allocator are emitted. Every one of them reaches $__fern_str_box or
 // $__fern_arr_dec, so the buf gate folds into the heap gate the way the strbuf
 // one does.
-pub function module_uses_buf(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_buf(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "buf_new") || module_emits_op_cached(cache, "buf_push")
     || module_emits_op_cached(cache, "buf_push_range") || module_emits_op_cached(cache, "buf_push_byte")
     || module_emits_op_cached(cache, "buf_push_mapped") || module_emits_op_cached(cache, "buf_push_filtered")
@@ -1715,7 +1717,7 @@ pub function module_uses_buf(cache: irlower.LowerResult[]): boolean {
 // module_uses_chr reports whether any function emits the chr(n) runtime call —
 // so wasm.chr_helper + the heap allocator are emitted. chr allocates its
 // 1-char box, so the chr gate also pulls the heap in.
-pub function module_uses_chr(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_chr(cache: irtables.LowerResult[]): boolean {
   return module_calls_direct(cache, "__fern_chr");
 }
 
@@ -1728,7 +1730,7 @@ pub function module_uses_chr(cache: irlower.LowerResult[]): boolean {
 // module_calls_optarrarr_free: any function lowers a __fern_optarrarr_free
 // call (#4365 Option[<arr>][] reclaim) — gates the $__fern_optarrarr_free WAT
 // body emission, same pattern as module_calls_strarrarr_free below.
-pub function module_calls_optarrarr_free(cache: irlower.LowerResult[]): boolean {
+pub function module_calls_optarrarr_free(cache: irtables.LowerResult[]): boolean {
   function is_optarrarr_free(o: ir.Op): boolean {  // call_direct
     return o.kind_tag == 149 && o.str == "__fern_optarrarr_free";
   }
@@ -1737,7 +1739,7 @@ pub function module_calls_optarrarr_free(cache: irlower.LowerResult[]): boolean 
 
 // module_calls_map_free_vsa: any function lowers a string[]-value-column map
 // free — gates the $__fern_map_release_vsa body.
-pub function module_calls_map_free_vsa(cache: irlower.LowerResult[]): boolean {
+pub function module_calls_map_free_vsa(cache: irtables.LowerResult[]): boolean {
   return module_calls_direct(cache, "__fern_map_free_vsa")
     || module_calls_direct(cache, "__fern_map_free_ksvsa")
     || module_calls_direct(cache, "__fern_map_free_kavsa");
@@ -1745,12 +1747,12 @@ pub function module_calls_map_free_vsa(cache: irlower.LowerResult[]): boolean {
 
 // module_calls_map_free_vf: any function frees a map whose value column is
 // boxes — gates the $__fern_map_release_vf body.
-pub function module_calls_map_free_vf(cache: irlower.LowerResult[]): boolean {
+pub function module_calls_map_free_vf(cache: irtables.LowerResult[]): boolean {
   return module_calls_direct(cache, "__fern_map_free_vf")
     || module_calls_direct(cache, "__fern_map_free_ksvf");
 }
 
-pub function module_calls_strarrarr_free(cache: irlower.LowerResult[]): boolean {
+pub function module_calls_strarrarr_free(cache: irtables.LowerResult[]): boolean {
   function is_strarrarr_free(o: ir.Op): boolean {  // call_direct
     return o.kind_tag == 149 && o.str == "__fern_strarrarr_free";
   }
@@ -1759,14 +1761,14 @@ pub function module_calls_strarrarr_free(cache: irlower.LowerResult[]): boolean 
 
 // module_uses_random reports whether the module calls random_bytes or random_i32
 // (so the wasi random_get import is emitted).
-pub function module_uses_random(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_random(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "random_bytes") || module_emits_op_cached(cache, "random_i32")
     || module_emits_op_cached(cache, "map_hash_seed");  // its lazy draw calls $__fern_random_i32
 }
 
 // module_uses_divrem reports whether any function uses i32 div/rem (so the
 // non-trapping $__fern_idiv / $__fern_irem helpers need emitting).
-pub function module_uses_divrem(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_divrem(cache: irtables.LowerResult[]): boolean {
   function is_divrem(o: ir.Op): boolean {  // div_s, rem_s
     return o.kind_tag == 24 || o.kind_tag == 26;
   }
@@ -1777,7 +1779,7 @@ pub function module_uses_divrem(cache: irlower.LowerResult[]): boolean {
 // the $__fern_idiv64 / $__fern_irem64 helpers (divrem64_helpers) need emitting.
 // module_uses_arr_slice reports whether any function emits a 4-byte-element
 // arr_slice op (width 32), so the $__fern_arr_slice helper needs emitting.
-pub function module_uses_arr_slice(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_arr_slice(cache: irtables.LowerResult[]): boolean {
   function is_arr_slice(o: ir.Op): boolean {  // arr_slice
     return o.kind_tag == 96 && o.width != 64;
   }
@@ -1788,7 +1790,7 @@ pub function module_uses_arr_slice(cache: irlower.LowerResult[]): boolean {
 // arr_slice op (width 64, f64[]), so the $__fern_arr_slice8 helper needs
 // emitting. Distinct from module_uses_arr_slice so a program slicing only one
 // element width pulls in only the helper it calls.
-pub function module_uses_arr_slice8(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_arr_slice8(cache: irtables.LowerResult[]): boolean {
   function is_arr_slice8(o: ir.Op): boolean {  // arr_slice
     return o.kind_tag == 96 && o.width == 64;
   }
@@ -1797,11 +1799,11 @@ pub function module_uses_arr_slice8(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_udivrem / module_uses_i64_udivrem are the same gates for the
 // unsigned helpers.
-pub function module_uses_udivrem(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_udivrem(cache: irtables.LowerResult[]): boolean {
   return any_op(cache, is_udivrem);
 }
 
-pub function module_uses_i64_udivrem(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_i64_udivrem(cache: irtables.LowerResult[]): boolean {
   return any_op(cache, is_i64_udivrem);
 }
 
@@ -1813,7 +1815,7 @@ function is_i64_udivrem(o: ir.Op): boolean {
   return (o.kind_tag == 25 || o.kind_tag == 27) && o.width == 64;
 }
 
-pub function module_uses_i64_divrem(cache: irlower.LowerResult[]): boolean {
+pub function module_uses_i64_divrem(cache: irtables.LowerResult[]): boolean {
   function is_i64_divrem(o: ir.Op): boolean {  // div_s, rem_s
     return (o.kind_tag == 24 || o.kind_tag == 26) && o.width == 64;
   }
@@ -1831,7 +1833,7 @@ pub function module_uses_i64_divrem(cache: irlower.LowerResult[]): boolean {
 // The wasm backend types erased param locals i32, so such a module is refused —
 // an f64-through-erased call emitted type-invalid WAT the wasmtime loader
 // rejects, and (post the register-side widening) an i64 would truncate.
-function module_erased_wide(cache: irlower.LowerResult[]): boolean {
+function module_erased_wide(cache: irtables.LowerResult[]): boolean {
   var i: i32 = 0;
   while (i < cache.len()) {
     if (cache[i].erased_wide) {
@@ -1856,7 +1858,7 @@ function module_erased_wide(cache: irlower.LowerResult[]): boolean {
 // Byte-identity-safe: an all-ok module (every current IR-eligible one, since it
 // emits valid wasm today) is unaffected; the gate only ever moves a
 // silently-bailing module off the IR path.
-function all_lowered_ok(cache: irlower.LowerResult[]): boolean {
+function all_lowered_ok(cache: irtables.LowerResult[]): boolean {
   var i: i32 = 0;
   while (i < cache.len()) {
     if (!cache[i].ok) {
@@ -2092,7 +2094,7 @@ pub function wasm_unsupported_message(name: string): string {
   return "error: " + name + " is not supported on the wasm target";
 }
 
-pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
+pub function wasm_ir_deferrals_ok(cache: irtables.LowerResult[]): boolean {
   return true
     // Total backstop: any function that failed to lower refuses the module,
     // so the op-blocklist below need not be exhaustive (#6).
@@ -2983,7 +2985,7 @@ pub function component_io_shims(needs: string[], stderr: boolean): string {
 // emit_ir_module_units). `base` is the whole-program registry the cache was
 // lowered with; the RC bodies are seeded from it rather than from a second
 // run of the same fixpoints.
-pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResult[], mode: i32, base: irlower.FnSigs): string {
+pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, base: fnsigs.FnSigs): string {
   ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), ir_cache);
   var sv: string[] = str_values(ir_cache);
   var cv: string[] = const_agg_values(ir_cache);
@@ -3023,7 +3025,7 @@ pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean, sub
 // ir_route_final is the half of the decision that needs the lowering: the
 // deferral scan (ops the bare core-wasm+preview1 backend does not wire) and, in
 // component mode, the framing's need set.
-pub function ir_route_final(cache: irlower.LowerResult[], component: boolean, io: boolean): boolean {
+pub function ir_route_final(cache: irtables.LowerResult[], component: boolean, io: boolean): boolean {
   return wasm_ir_deferrals_ok(cache) && (!component || component_refused_need(needs_of(cache), io) == "");
 }
 
@@ -3070,7 +3072,7 @@ pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolea
   // emit directly).
   if (asmcore.new_state().use_ir) {
     var g: ircore.Lowered = ircore.gate(lm, sub);
-    var cache: irlower.LowerResult[] = g.cache;
+    var cache: irtables.LowerResult[] = g.cache;
     if (g.ok && ir_route_final(cache, component, io)) {
       return emit_ir_module_mode(lm, cache, mode, sub.sigs);
     }
@@ -4468,11 +4470,11 @@ pub function route_normalized(mod: parser.Module): parser.Module {
   return lift_lambdas(ircore.script_normalized(mod));
 }
 
-// lift_lambdas re-exports irlower's lambda-lift pre-pass (closures slice 2a) so
+// lift_lambdas re-exports lift's lambda-lift pre-pass (closures slice 2a) so
 // the wasm dispatch sites can hoist no-capture lambda arguments before the
 // eligibility check + emit. A lambda-free module is returned unchanged.
 pub function lift_lambdas(mod: parser.Module): parser.Module {
-  return irlower.lift_lambdas(mod);
+  return lift.lift_lambdas(mod);
 }
 
 // lift_lambdas_parts lifts every part of a per-module bundle against the
@@ -4480,12 +4482,12 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 // env-boxed instead of reaching lowering as a bare lambda that names a `<fd>$clo`
 // the lift never hoisted — a missing elem-table entry at link (#7215).
 pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
-  mods = irlower.prepare_lambda_parts(mods);
-  var view: parser.FuncDecl[] = irlower.module_sig_view(mods);
+  mods = lift.prepare_lambda_parts(mods);
+  var view: parser.FuncDecl[] = lift.module_sig_view(mods);
   var out: parser.Module[] = [];
   var i: i32 = 0;
   while (i < mods.len()) {
-    out = out.append(parser.infer_ret_types_module(irlower.lift_lambdas_view(mods[i], view)));
+    out = out.append(parser.infer_ret_types_module(lift.lift_lambdas_view(mods[i], view)));
     i = i + 1;
   }
   return out;
@@ -4515,11 +4517,11 @@ pub function pipe_after(s: string): string {
   return slice_unchecked(s, i + 1, s.len()) + "";
 }
 
-pub function fn_value_table(cache: irlower.LowerResult[]): string[] {
+pub function fn_value_table(cache: irtables.LowerResult[]): string[] {
   var out: string[] = [];
   var fi: i32 = 0;
   while (fi < cache.len()) {
-    var r: irlower.LowerResult = cache[fi];
+    var r: irtables.LowerResult = cache[fi];
     var i: i32 = 0;
     while (i < r.ops.len()) {
       if (r.ops[i].kind_tag == 6 && util.index_of_str(out, r.ops[i].str) < 0) {  // const_func
@@ -4600,11 +4602,11 @@ pub function fn_sig_key(argc: i32): string {
 // per shape actually dispatched. An untagged op contributes its all-i32 arity
 // signature under its `$fn<argc>` name; a tagged one contributes its own.
 // Entries are "<name>|<sig>" so the emitter has both without re-deriving either.
-pub function indirect_fn_sigs(cache: irlower.LowerResult[]): string[] {
+pub function indirect_fn_sigs(cache: irtables.LowerResult[]): string[] {
   var out: string[] = [];
   var fi: i32 = 0;
   while (fi < cache.len()) {
-    var r: irlower.LowerResult = cache[fi];
+    var r: irtables.LowerResult = cache[fi];
     var i: i32 = 0;
     while (i < r.ops.len()) {
       if (r.ops[i].kind_tag == 150) {  // call_indirect
@@ -4727,7 +4729,7 @@ pub function fn_support_section_units(nss: string[], all_fns: string[], counts: 
 // exactly one base at 0. The table must exist for any call_indirect to validate
 // — including the map's struct-key hk/keq, which is emitted (but dead) even when
 // no function VALUE is taken — so the units form sizes an empty set to 1 slot.
-pub function fn_support_section(cache: irlower.LowerResult[]): string {
+pub function fn_support_section(cache: irtables.LowerResult[]): string {
   var ft: string[] = fn_value_table(cache);
   return fn_support_section_units([""], ft, [ft.len()], indirect_fn_sigs(cache));
 }
@@ -5198,7 +5200,7 @@ function emit_host_op_wat(o: ir.Op): string {
 // decl tables as ordinary parameters rather than through a context: pulling it
 // out leaves nothing else in the op loop needing the function list at all.
 // None of the five scratch locals are touched here.
-function emit_dyn_dispatch_wat(o: ir.Op, structs: irlower.StructTab, funcs: parser.FuncDecl[]): string {
+function emit_dyn_dispatch_wat(o: ir.Op, structs: irtables.StructTab, funcs: parser.FuncDecl[]): string {
   var parts: string[] = [];
   // `dyn Trait` method call. Receiver (arg0) + args are in argc
   // consecutive locals from base_slot. Read the receiver's type id
@@ -5217,13 +5219,13 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: irlower.StructTab, funcs: pars
     // at coercion — docs/DYN-TRAITS.md §4.2.3), AND enum receivers
     // (#4785 — matched per-variant below): each is an `if` arm
     // needing a matching `end`.
-    if (irlower.dyn_arm_matches(funcs[df0], o.str, funcs) && funcs[df0].receiver_type.len() > 0
-      && (irlower.decl_is_struct(structs, dbn0) || irlower.decl_is_prim_recv(structs, dbn0)
-      || !asmcore.recv_is_array(funcs[df0].receiver_type) && irlower.decl_is_enum(structs, dbn0))) {
+    if (irtables.dyn_arm_matches(funcs[df0], o.str, funcs) && funcs[df0].receiver_type.len() > 0
+      && (irtables.decl_is_struct(structs, dbn0) || irtables.decl_is_prim_recv(structs, dbn0)
+      || !asmcore.recv_is_array(funcs[df0].receiver_type) && irtables.decl_is_enum(structs, dbn0))) {
       if (nimpl == 0) {
         if (funcs[df0].ret_type == "i64" || funcs[df0].ret_type == "u64") {
           drt = "i64";
-        } else if (irlower.is_f64_scalar_type_name(funcs[df0].ret_type)) {
+        } else if (irtables.is_f64_scalar_type_name(funcs[df0].ret_type)) {
           drt = "f64";
         }
       }
@@ -5234,9 +5236,9 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: irlower.StructTab, funcs: pars
   var dfi: i32 = 0;
   while (dfi < funcs.len()) {
     var dbn: string = util.base_type_name(funcs[dfi].receiver_type);
-    var dprim: boolean = funcs[dfi].receiver_type.len() > 0 && irlower.decl_is_prim_recv(structs, dbn);
-    if (irlower.dyn_arm_matches(funcs[dfi], o.str, funcs) && funcs[dfi].receiver_type.len() > 0
-      && (irlower.decl_is_struct(structs, dbn) || dprim)) {
+    var dprim: boolean = funcs[dfi].receiver_type.len() > 0 && irtables.decl_is_prim_recv(structs, dbn);
+    if (irtables.dyn_arm_matches(funcs[dfi], o.str, funcs) && funcs[dfi].receiver_type.len() > 0
+      && (irtables.decl_is_struct(structs, dbn) || dprim)) {
       // Shape compare: a struct value carries its type id @0; a
       // primitive `dyn` box stores prim_type_id @0 (op_dyn_box).
       parts = parts.append("    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n" + tid_get(dbn) + "    i32.eq\n");
@@ -5266,19 +5268,19 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: irlower.StructTab, funcs: pars
     // dispatch to their own impls. recv_is_array excludes an
     // array method's `T[]` receiver (base_type_name strips the
     // `[]`, which would otherwise mis-read as an enum — #2766).
-    if (irlower.dyn_arm_matches(funcs[dfi], o.str, funcs) && funcs[dfi].receiver_type.len() > 0
+    if (irtables.dyn_arm_matches(funcs[dfi], o.str, funcs) && funcs[dfi].receiver_type.len() > 0
       && !asmcore.recv_is_array(funcs[dfi].receiver_type)
-      && irlower.decl_is_enum(structs, dbn)
-      && !(irlower.decl_is_struct(structs, dbn) || dprim)) {
+      && irtables.decl_is_enum(structs, dbn)
+      && !(irtables.decl_is_struct(structs, dbn) || dprim)) {
       var denvn: i32 = 0;
-      var dvi: i32 = irlower.stab_enum_first(structs, dbn);
+      var dvi: i32 = irtables.stab_enum_first(structs, dbn);
       while (dvi >= 0) {
         parts = parts.append("    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n    i32.const " + util.i32_to_string(dvi) + "\n    i32.eq\n");
         if (denvn > 0) {
           parts = parts.append("    i32.or\n");
         }
         denvn = denvn + 1;
-        dvi = irlower.stab_enum_next(structs, dvi, dbn);
+        dvi = irtables.stab_enum_next(structs, dvi, dbn);
       }
       parts = parts.append("    if (result " + drt + ")\n");
       var dek: i32 = 0;
@@ -5323,7 +5325,7 @@ struct WasmOpCtx {
   ns: string,
   str_vals: string[],
   cagg_vals: string[],
-  structs: irlower.StructTab,
+  structs: irtables.StructTab,
   fn_table: string[],
   funcs: parser.FuncDecl[],
   base: i32,
@@ -5362,7 +5364,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   var ns: string = cx.ns;
   var str_vals: string[] = cx.str_vals;
   var cagg_vals: string[] = cx.cagg_vals;
-  var structs: irlower.StructTab = cx.structs;
+  var structs: irtables.StructTab = cx.structs;
   var fn_table: string[] = cx.fn_table;
   var funcs: parser.FuncDecl[] = cx.funcs;
   var arrtmp: i32 = cx.base;
@@ -6096,7 +6098,7 @@ function emit_str_op_wat(o: ir.Op): string {
 // the RC-consistency bug (#5509). Consuming the cached `r` makes it one lowering
 // by construction. `fd` supplies the func wrapper (name / receiver / ret); the
 // ~13 ret-fn / borrow side-tables that only fed lower_func are gone.
-function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irlower.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
+function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
   // Methods get the receiver-type-qualified name `$<Type>.<name>` (matching
   // irlower's call_direct dispatch); free functions stay `$<name>`. WAT idents
   // allow `.`. r.n_params already counts the receiver as the first param.
@@ -6113,14 +6115,14 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
 // (erased-generic) return is typed i64 — the uniform 8-byte slot the register
 // backends give every value — so a wide value survives pass-through and the
 // caller coerces at the call boundary (#5464). Free functions only.
-function decl_result_wat(fd: parser.FuncDecl, structs: irlower.StructTab): string {
+function decl_result_wat(fd: parser.FuncDecl, structs: irtables.StructTab): string {
   if (fd.ret_type == "i64" || fd.ret_type == "u64") {
     return " (result i64)\n";
   }
-  if (irlower.is_f64_scalar_type_name(fd.ret_type)) {
+  if (irtables.is_f64_scalar_type_name(fd.ret_type)) {
     return " (result f64)\n";
   }
-  if (irlower.erased_passthrough_safe(fd)) {
+  if (irtables.erased_passthrough_safe(fd)) {
     return " (result i64)\n";
   }
   return " (result i32)\n";
@@ -6134,14 +6136,14 @@ function decl_result_wat(fd: parser.FuncDecl, structs: irlower.StructTab): strin
 // whose declared type disagrees with what it returns, and wasm would validate
 // it and hand back a filler word. An unset kind is a producer that forgot,
 // which is a compile-time stop rather than a wrong module.
-function produced_result_wat(r: irlower.LowerResult): string {
-  if (r.result_kind == irlower.result_i32()) {
+function produced_result_wat(r: irtables.LowerResult): string {
+  if (r.result_kind == irtables.result_i32()) {
     return " (result i32)\n";
   }
-  if (r.result_kind == irlower.result_i64()) {
+  if (r.result_kind == irtables.result_i64()) {
     return " (result i64)\n";
   }
-  if (r.result_kind == irlower.result_f64()) {
+  if (r.result_kind == irtables.result_f64()) {
     return " (result f64)\n";
   }
   eprint("error: produced body " + r.name + " carries no result kind");
@@ -6165,7 +6167,7 @@ function fallthrough_filler(result_wat: string): string {
 // register twins are asm_ir / asm_arm64_ir's emit_function_via_ir_named.
 // fern-lint: allow cyclomatic-complexity
 // The wasm half of the same op table as asm_ir.fern: one guard per op.
-function emit_function_ir_named(ns: string, r: irlower.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irlower.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
+function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
   var arrtmp: i32 = r.n_locals;
   var eltmp: i32 = r.n_locals + 1;
   // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -6263,7 +6265,7 @@ function emit_function_ir_named(ns: string, r: irlower.LowerResult, fn_name: str
 //
 // Whole-program emit passes all_funcs = mod.funcs and all_structs = mod.structs,
 // so it is unchanged.
-pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.LowerResult[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab): string {
+pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables.LowerResult[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab): string {
   // Infer return types for unannotated functions so the IR path's
   // ret-type-keyed call tagging matches what module_with_builtins supplies
   // (parity with the x86 IR path in asm_ir.emit_module_ir).
@@ -6278,7 +6280,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
   // The IR verify gate's callee-arity index: built once for the whole
   // program, not per function, which is what keeps a ~3000-declaration
   // lookup out of the emit loop's inner cost.
-  var vsigs: irverify.NameIndex = irlower.fn_sig_index(all_funcs);
+  var vsigs: irverify.NameIndex = irtables.fn_sig_index(all_funcs);
   var parts: string[] = [];
   var fi: i32 = 0;
   while (fi < mod.funcs.len()) {
@@ -6310,20 +6312,20 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
 }
 
 // emit_functions_ns is the single-unit case: the unit IS the whole program.
-pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irlower.LowerResult[]): string {
+pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irtables.LowerResult[]): string {
   var im: parser.Module = parser.infer_ret_types_module(mod);
-  return emit_functions_view(ns, im, cache, im.funcs, irlower.struct_tab(im.structs));
+  return emit_functions_view(ns, im, cache, im.funcs, irtables.struct_tab(im.structs));
 }
 
 // emit_functions is whole-program emit: one unit, so the bases are unnamespaced.
-pub function emit_functions(mod: parser.Module, cache: irlower.LowerResult[]): string {
+pub function emit_functions(mod: parser.Module, cache: irtables.LowerResult[]): string {
   return emit_functions_ns("", mod, cache);
 }
 
 // struct_type_id returns a struct's runtime type id = its index in the module's
 // struct table. (For scalar-field structs with static field access it is never
 // read, but it occupies the 8-byte header slot so fields land at 8 + i*8.)
-function struct_type_id(structs: irlower.StructTab, name: string): i32 {
+function struct_type_id(structs: irtables.StructTab, name: string): i32 {
   var i: i32 = 0;
   while (i < structs.decls.len()) {
     if (structs.decls[i].name == name) {
@@ -11904,7 +11906,7 @@ pub function le32_escape(n: i32): string {
 // eight bytes, and leaving the high half unwritten would be the one difference
 // between a constant and an allocated box that a future wide-field read could
 // see.
-function const_agg_data(sv: string[], cv: string[], structs: irlower.StructTab, fn_table: string[]): string {
+function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab, fn_table: string[]): string {
   var parts: string[] = [];
   var i: i32 = 0;
   while (i < cv.len()) {
@@ -12437,7 +12439,7 @@ pub function heap_base_for_units(units: WasmUnit[]): i32 {
 // rather than a second emitter (wasm.fern's AST component path is a full
 // parallel copy; this is not).
 pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: string[], fn_sigs: string[], rc_bodies: string, mode: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var parts: string[] = [];
   parts = parts.append("(module\n");
   if (mode == 0) {
@@ -13223,7 +13225,7 @@ pub function ty_spelling_is_array(t: string): boolean {
 // (corruption for a large even value above heap_base), so the classifier is
 // EXACT for the pointer cases and defaults everything else to 'i' (a missed
 // pointer field just leaks, never corrupts).
-pub function struct_field_kind_char(ft: string, structs: irlower.StructTab, mr_types: string[]): string {
+pub function struct_field_kind_char(ft: string, structs: irtables.StructTab, mr_types: string[]): string {
   if (ty_spelling_is_array(ft)) {
     return "a";
   }
@@ -13247,7 +13249,7 @@ pub function struct_field_kind_char(ft: string, structs: irlower.StructTab, mr_t
 // whether a struct's array field is deep-released ($__fern_arr_dec_ptr, which
 // releases the elements) or freed flat ($__fern_arr_dec — for i32/i64/f64
 // scalar elements, which must NOT be dec'd as pointers).
-pub function array_field_elem_is_ptr(ft: string, structs: irlower.StructTab, mr_types: string[]): boolean {
+pub function array_field_elem_is_ptr(ft: string, structs: irtables.StructTab, mr_types: string[]): boolean {
   if (!ty_spelling_is_array(ft)) {
     return false;
   }
@@ -13292,14 +13294,14 @@ pub function array_field_elem_is_ptr(ft: string, structs: irlower.StructTab, mr_
 // The lists are merged across units at link; the struct world they resolve
 // against is shared, so a type appearing in two units yields one body.
 pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: string[], aet: string[], heap_base: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   // #4355: replaced-STRING-field admission over the merged module — the full
-  // read scope at link (see irlower.strfld_reclaim_ok_types_of). The link step
+  // read scope at link (see fnsigs.strfld_reclaim_ok_types_of). The link step
   // holds no lowering, so the verdicts are derived here, once per link.
-  var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs, stab);
+  var bparams: string[] = fnsigs.borrowable_params_interproc(mod.funcs, stab);
   return emit_ir_rc_bodies_seeded(
     mod, frt, sdt, aet, heap_base,
-    irlower.strfld_reclaim_ok_types_of(mod.funcs, stab, bparams), bparams,
+    fnsigs.strfld_reclaim_ok_types_of(mod.funcs, stab, bparams), bparams,
   );
 }
 
@@ -13311,11 +13313,11 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
 // free on is the one the construction-side retain was gated on, and the
 // fixpoint does not run a second time per compile.
 function emit_ir_rc_bodies_seeded(mod: parser.Module, frt: string[], sdt: string[], aet: string[], heap_base: i32, sfok: string[], bparams: string[]): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var parts: string[] = [];
   var mr_types: string[] = collect_method_types(mod);
   // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
-  var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, stab, bparams);
+  var nfok: string[] = fnsigs.structfld_reclaim_ok_types_of(mod.funcs, stab, bparams);
   var frti: i32 = 0;
   while (frti < frt.len()) {
     parts = parts.append(emit_wasm_field_reclaim_body(frt[frti], stab, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0, util.index_of_str(sfok, "sarr:" + frt[frti]) >= 0, util.index_of_str(sfok, "arr:" + frt[frti]) >= 0));
@@ -13325,7 +13327,7 @@ function emit_ir_rc_bodies_seeded(mod: parser.Module, frt: string[], sdt: string
   // here exactly as asm_ir.emit_module_ir_unit_flat seeds them: one
   // "strfldok:<row>" per admission row.
   var ds: asmcore.EmitState = asmcore.new_state();
-  ds = asmcore.EmitState { ...ds, struct_decls: irlower.struct_tab(mod.structs) };
+  ds = asmcore.EmitState { ...ds, struct_decls: irtables.struct_tab(mod.structs) };
   var sfi: i32 = 0;
   while (sfi < sfok.len()) {
     ds = ds.need("strfldok:" + sfok[sfi]);
@@ -13352,21 +13354,21 @@ function emit_ir_rc_bodies_seeded(mod: parser.Module, frt: string[], sdt: string
   var eadone: string[] = [];
   var easdti: i32 = 0;
   while (easdti < sdt.len()) {
-    var eafc: i32 = irlower.decl_field_count(stab, sdt[easdti]);
+    var eafc: i32 = irtables.decl_field_count(stab, sdt[easdti]);
     var eak: i32 = 0;
     while (eak < eafc) {
-      var eaft: string = irlower.decl_field_type_at(stab, sdt[easdti], eak);
-      if (irlower.is_enum_array_field_type(stab, eaft)) {
+      var eaft: string = irtables.decl_field_type_at(stab, sdt[easdti], eak);
+      if (irtables.is_enum_array_field_type(stab, eaft)) {
         var eae: str = slice_unchecked(eaft, 0, eaft.len() - 2);
-        if (irlower.enum_arr_elems_walk_ok(stab, eae) && util.index_of_str(eadone, eae) < 0) {
+        if (irtables.enum_arr_elems_walk_ok(stab, eae) && util.index_of_str(eadone, eae) < 0) {
           eadone = eadone.append(eae + "");
           parts = parts.append(emit_wasm_enum_drop_body(eae + "", stab));
           parts = parts.append(emit_wasm_enum_arr_elems_drop_body(eae + "", stab));
         }
-      } else if (irlower.decl_is_enum(stab, eaft)) {
+      } else if (irtables.decl_is_enum(stab, eaft)) {
         // A DIRECT enum field wants the single-box walk only (#8567); the
         // array case above emits it too, and delegates to it per element.
-        if (irlower.enum_arr_elems_walk_ok(stab, eaft) && util.index_of_str(eadone, eaft) < 0) {
+        if (irtables.enum_arr_elems_walk_ok(stab, eaft) && util.index_of_str(eadone, eaft) < 0) {
           eadone = eadone.append(eaft);
           parts = parts.append(emit_wasm_enum_drop_body(eaft, stab));
         }
@@ -13383,12 +13385,12 @@ function emit_ir_rc_bodies_seeded(mod: parser.Module, frt: string[], sdt: string
 // box itself to the caller's dec (#8567). The wasm sibling of asm_ir's
 // emit_ir_enum_drop_one, and the element step the array walk above delegates to,
 // so a direct enum field and an enum-array element release identically.
-pub function emit_wasm_enum_drop_body(e: string, structs: irlower.StructTab): string {
+pub function emit_wasm_enum_drop_body(e: string, structs: irtables.StructTab): string {
   var o: string = "  (func $__enum_drop_" + e + " (param $e i32) (result i32)\n";
   o = o + "    (if (call $__fern_rc_is_unique (local.get $e)) (then\n";
-  var vi: i32 = irlower.stab_enum_first(structs, e);
+  var vi: i32 = irtables.stab_enum_first(structs, e);
   while (vi >= 0) {
-    var offs: i32[] = irlower.enum_walk_payload_offsets(structs, structs.decls[vi].name);
+    var offs: i32[] = irtables.enum_walk_payload_offsets(structs, structs.decls[vi].name);
     if (offs.len() > 0) {
       o = o + "      (if (i32.eq (i32.load (local.get $e)) (global.get " + tid_global(structs.decls[vi].name) + ")) (then\n";
       var oi: i32 = 0;
@@ -13398,7 +13400,7 @@ pub function emit_wasm_enum_drop_body(e: string, structs: irlower.StructTab): st
       }
       o = o + "      ))\n";
     }
-    vi = irlower.stab_enum_next(structs, vi, e);
+    vi = irtables.stab_enum_next(structs, vi, e);
   }
   o = o + "    ))\n";
   o = o + "    (local.get $e))\n";
@@ -13414,7 +13416,7 @@ pub function emit_wasm_enum_drop_body(e: string, structs: irlower.StructTab): st
 // $__fern_arr_dec. Admission (enum_arr_elems_walk_ok, at the type derivation)
 // keeps every other payload kind out. Frees neither the element boxes nor the
 // buffer — the caller's arr_dec_ptr still does that.
-pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: irlower.StructTab): string {
+pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: irtables.StructTab): string {
   var o: string = "  (func $__enum_arr_elems_drop_" + e + " (param $buf i32) (result i32)\n";
   o = o + "    (local $i i32) (local $n i32) (local $e i32)\n";
   o = o + "    (if (call $__fern_rc_is_unique (local.get $buf)) (then\n";
@@ -13432,8 +13434,8 @@ pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: irlower.Stru
 
 // emit_ir_rc_bodies is the single-unit case: derive the three type lists from
 // the module's own cache.
-pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[], base: irlower.FnSigs): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+pub function emit_ir_rc_bodies(mod: parser.Module, cache: irtables.LowerResult[], base: fnsigs.FnSigs): string {
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   return emit_ir_rc_bodies_seeded(
     mod,
     field_reclaim_types(cache),
@@ -13453,7 +13455,7 @@ pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[],
 // buffer; the caller's arr_dec_ptr (emitted right after) still does that. $__fern_rc_is_unique
 // null-/low-/sentinel-guards internally, so a shared buffer or element is skipped.
 // wasm32 array layout: len at buf[0], element i at buf+8+i*4 (4-byte pointers), rc at buf-8.
-pub function emit_wasm_struct_arr_elems_drop_body(e: string, structs: irlower.StructTab, mr_types: string[]): string {
+pub function emit_wasm_struct_arr_elems_drop_body(e: string, structs: irtables.StructTab, mr_types: string[]): string {
   var o: string = "  (func $__struct_arr_elems_drop_" + e + " (param $buf i32) (result i32)\n";
   o = o + "    (local $i i32) (local $n i32) (local $e i32)\n";
   o = o + "    (if (call $__fern_rc_is_unique (local.get $buf)) (then\n";
@@ -13528,7 +13530,7 @@ pub function emit_wasm_struct_drop_body(t: string, s: asmcore.EmitState, hb: i32
 // emit_wasm_struct_drop_body. `old` null / below heap_base skips the field loop
 // (snapshot_dec null-guards the box free). Returns `new`. `hb` is the module's
 // heap base (the low-address guard threshold).
-pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab, mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean, nest_ok: boolean, sarr_ok: boolean, strarr_ok: boolean): string {
+pub function emit_wasm_field_reclaim_body(t: string, structs: irtables.StructTab, mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean, nest_ok: boolean, sarr_ok: boolean, strarr_ok: boolean): string {
   var o: string = "  (func $__field_reclaim_" + t + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
   o = o + "    (if (i32.and (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (i32.ne (local.get $old) (local.get $new))) (then\n";
   var si: i32 = 0;
@@ -13554,7 +13556,7 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
         // the x86 fr_struct / fr_enum arms. Gated on the whole-program
         // read scan (nest_ok); #6148 is what happens without it.
         var frk_nest: boolean = nest_ok
-          && (irlower.decl_is_struct(structs, ft) || irlower.decl_is_enum(structs, ft));
+          && (irtables.decl_is_struct(structs, ft) || irtables.decl_is_enum(structs, ft));
         if (frk == "a" || frk == "s" && str_ok || ft == "fn" && clo_ok || frk_nest) {
           var off: string = util.i32_to_string(8 + k * 8);
           var oldf: string = "(i32.load offset=" + off + " (local.get $old))";
@@ -13571,7 +13573,7 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
           // wasm leg only, while the exit path's $__struct_drop_<T>
           // already walked deep. A nested-array field's rows take
           // the same walk, as in $__struct_drop_<T>.
-          if (strarr_ok && ft == "string[]" || irlower.is_row_array_field_type(structs, ft)) {
+          if (strarr_ok && ft == "string[]" || irtables.is_row_array_field_type(structs, ft)) {
             dec = "(drop (call $__fern_arr_dec_ptr " + oldf + "))";
           }
           // A replaced struct-ARRAY / enum-ARRAY field (#7067) is
@@ -13589,7 +13591,7 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
           // "i" here) stays on the flat dec in BOTH helpers rather than
           // having raw slots walked as boxes.
           if (sarr_ok
-            && (irlower.is_struct_array_field_type(structs, ft) || irlower.is_enum_array_field_type(structs, ft))
+            && (irtables.is_struct_array_field_type(structs, ft) || irtables.is_enum_array_field_type(structs, ft))
             && array_field_elem_is_ptr(ft, structs, mr_types)) {
             dec = "(drop (call $__fern_arr_dec_ptr " + oldf + "))";
             // MULTI-LEVEL element deep-drop (#2649), the same helpers
@@ -13599,14 +13601,14 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
             // frees the element boxes. struct_drop_types seeds the
             // field-reclaim types into its closure, so the walk helper
             // and anything it calls are emitted for both.
-            if (irlower.is_struct_array_field_type(structs, ft)) {
+            if (irtables.is_struct_array_field_type(structs, ft)) {
               var elem_ty: str = slice_unchecked(ft, 0, ft.len() - 2);
-              if (irlower.nested_field_deep_drop_ok(structs, elem_ty)) {
+              if (irtables.nested_field_deep_drop_ok(structs, elem_ty)) {
                 dec = "(drop (call $__struct_arr_elems_drop_" + elem_ty + " " + oldf + ")) " + dec;
               }
-            } else if (irlower.is_enum_array_field_type(structs, ft)) {
+            } else if (irtables.is_enum_array_field_type(structs, ft)) {
               var eelem_ty: str = slice_unchecked(ft, 0, ft.len() - 2);
-              if (irlower.enum_arr_elems_walk_ok(structs, eelem_ty)) {
+              if (irtables.enum_arr_elems_walk_ok(structs, eelem_ty)) {
                 dec = "(drop (call $__enum_arr_elems_drop_" + eelem_ty + " " + oldf + ")) " + dec;
               }
             }
@@ -13632,15 +13634,15 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
           // keeps its fields for the other owner. A direct ENUM field
           // gets the same treatment from $__enum_drop_ just below
           // (#8567), which applies that gate itself.
-          if (frk_nest && irlower.decl_is_struct(structs, ft)
-            && irlower.nested_field_deep_drop_ok(structs, ft)) {
+          if (frk_nest && irtables.decl_is_struct(structs, ft)
+            && irtables.nested_field_deep_drop_ok(structs, ft)) {
             dec = "(if (call $__fern_rc_is_unique " + oldf + ") (then (drop (call $__struct_drop_" + ft + " " + oldf + ")))) " + dec;
           }
           // The enum sibling (#8567): the live variant's rc payloads,
           // before the dec above frees the enum box. $__enum_drop_ takes
           // the rc==1 gate itself, so no outer guard here.
-          if (frk_nest && irlower.decl_is_enum(structs, ft)
-            && irlower.enum_arr_elems_walk_ok(structs, ft)) {
+          if (frk_nest && irtables.decl_is_enum(structs, ft)
+            && irtables.enum_arr_elems_walk_ok(structs, ft)) {
             dec = "(drop (call $__enum_drop_" + ft + " " + oldf + ")) " + dec;
           }
           // An ARRAY field is a carry the base copy retains too, so
@@ -13672,7 +13674,7 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
 // Enum names aren't in the struct table (only their variants are), so a
 // var typed `Shape` must record `Shape` (not the variant from its
 // initializer) for its methods to dispatch.
-pub function is_enum_type_name(structs: irlower.StructTab, mr_types: string[], name: string): boolean {
+pub function is_enum_type_name(structs: irtables.StructTab, mr_types: string[], name: string): boolean {
   if (name.len() == 0) {
     return false;
   }
@@ -13717,7 +13719,7 @@ pub function is_primitive_type_name(name: string): boolean {
 }
 
 // is_struct_type is true when `t` names a declared struct.
-pub function is_struct_type(structs: irlower.StructTab, t: string): boolean {
+pub function is_struct_type(structs: irtables.StructTab, t: string): boolean {
   var i: i32 = 0;
   while (i < structs.decls.len()) {
     if (structs.decls[i].name == t) {
@@ -14073,7 +14075,7 @@ pub function extern_record_result_supported(mod: parser.Module, t: string): bool
 // pointer to a `[struct_id@0]` box, but struct_id is a *global* id, not the
 // variant index, so the wrapper maps it (extern_plain_enum_disc).
 pub function extern_plain_enum_param(mod: parser.Module, t: string): boolean {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var i: i32 = 0;
   while (i < mod.enums.len()) {
     if (mod.enums[i].name == t) {
@@ -14105,7 +14107,7 @@ pub function extern_plain_enum_param(mod: parser.Module, t: string): boolean {
 // disc and reads the payload at struct_field_off(0); for a payloadless-case
 // value the payload read yields ignored garbage (the host drops it).
 pub function extern_variant_param_supported(mod: parser.Module, t: string): boolean {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var i: i32 = 0;
   while (i < mod.enums.len()) {
     if (mod.enums[i].name == t) {
@@ -14207,7 +14209,7 @@ pub function extern_variant_param_supported(mod: parser.Module, t: string): bool
 // supported variant's arms (the multi-field SlotCount); 1 (or 0) for a
 // single-field variant.
 pub function extern_variant_max_fields(mod: parser.Module, t: string): i32 {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var i: i32 = 0;
   while (i < mod.enums.len()) {
     if (mod.enums[i].name == t) {
@@ -14265,7 +14267,7 @@ function extern_flat_join(a: string, b: string): string {
 // extern_variant_slot_join is the flat type of slot j of a multi-field
 // variant: the join of every arm's field j.
 function extern_variant_slot_join(mod: parser.Module, t: string, j: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var join: string = "";
   var ei: i32 = 0;
   while (ei < mod.enums.len()) {
@@ -14323,7 +14325,7 @@ function extern_flat_coerce(v: string, from: string, to: string): string {
 // (padding a shorter arm). Lazy (not select): a shorter arm's box has no slot j,
 // so the non-matched branches must not read it.
 pub function extern_variant_multifield_slot(mod: parser.Module, t: string, j: i32, boxloc: string, slot: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var join: string = extern_variant_slot_join(mod, t, j);
   var ei: i32 = 0;
   while (ei < mod.enums.len()) {
@@ -14346,7 +14348,7 @@ pub function extern_variant_multifield_slot(mod: parser.Module, t: string, j: i3
 // extern_variant_arm_slot emits one arm's slot-j value: its field j coerced to
 // the slot type `join`, or that type's zero (padding).
 pub function extern_variant_arm_slot(mod: parser.Module, vn: string, j: i32, join: string, boxloc: string, slot: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   if (j < struct_field_count(stab, vn)) {
     var ft: string = struct_field_type_at(stab, vn, j);
     var addr: string = "(i32.add (local.get " + boxloc + ") (i32.const " + util.i32_to_string(xbox_field_off(slot, j)) + "))";
@@ -14358,7 +14360,7 @@ pub function extern_variant_arm_slot(mod: parser.Module, vn: string, j: i32, joi
 // extern_variant_payload_align is the canonical alignment of a multi-field
 // variant's payload: the widest field of any arm.
 function extern_variant_payload_align(mod: parser.Module, t: string): i32 {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var a: i32 = 4;
   var ei: i32 = 0;
   while (ei < mod.enums.len()) {
@@ -14392,7 +14394,7 @@ function extern_flat_size(flat: string): i32 {
 // canonical payload, each at its natural alignment; the last entry is the
 // arm's payload size.
 function extern_arm_canon_offs(mod: parser.Module, vn: string): i32[] {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var offs: i32[] = [];
   var off: i32 = 0;
   var fj: i32 = 0;
@@ -14411,7 +14413,7 @@ function extern_arm_canon_offs(mod: parser.Module, vn: string): i32[] {
 // offset) into the box $s, branched on the discriminant $d. The box holds an
 // f32 as an f64.
 function extern_variant_multifield_lift(mod: parser.Module, t: string, poff: i32, slot: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var o: string = "";
   var ei: i32 = 0;
   while (ei < mod.enums.len()) {
@@ -14448,7 +14450,7 @@ function extern_variant_multifield_lift(mod: parser.Module, t: string, poff: i32
 // extern_variant_area_size is the canonical return area a multi-field variant
 // result needs: the payload offset plus its largest arm.
 function extern_variant_area_size(mod: parser.Module, t: string): i32 {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var big: i32 = 0;
   var ei: i32 = 0;
   while (ei < mod.enums.len()) {
@@ -14472,7 +14474,7 @@ function extern_variant_area_size(mod: parser.Module, t: string): i32 {
 // field. A uniform i32 variant joins to i32 (the original single-slot path); a
 // set with any 64-bit arm joins to i64 (mixed-width: per-arm extend/load).
 pub function extern_variant_join_is64(mod: parser.Module, t: string): boolean {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var i: i32 = 0;
   while (i < mod.enums.len()) {
     if (mod.enums[i].name == t) {
@@ -14501,7 +14503,7 @@ pub function extern_variant_join_is64(mod: parser.Module, t: string): boolean {
 // rather than the i64 bit-container the mixed-width path emits. Checked BEFORE
 // extern_variant_join_is64 (which also fires for an f64 arm).
 pub function extern_variant_is_uniform_f64(mod: parser.Module, t: string): boolean {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var i: i32 = 0;
   while (i < mod.enums.len()) {
     if (mod.enums[i].name == t) {
@@ -14533,7 +14535,7 @@ pub function extern_variant_is_uniform_f64(mod: parser.Module, t: string): boole
 // demote+reinterpret bridge (extern_variant_payload_join_i32_f32 on the param
 // side, extern_variant_result_store_f32 on the result side).
 pub function extern_variant_has_f32_arm(mod: parser.Module, t: string): boolean {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var i: i32 = 0;
   while (i < mod.enums.len()) {
     if (mod.enums[i].name == t) {
@@ -14561,7 +14563,7 @@ pub function extern_variant_has_f32_arm(mod: parser.Module, t: string): boolean 
 // MUST be if/else (not select): the arms read the box at different widths, and
 // only the matched arm's box is wide enough, so non-taken branches must not run.
 pub function extern_variant_payload_join_i64(mod: parser.Module, t: string, boxloc: string, slot: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var ei: i32 = 0;
   while (ei < mod.enums.len()) {
     if (mod.enums[ei].name == t) {
@@ -14584,7 +14586,7 @@ pub function extern_variant_payload_join_i64(mod: parser.Module, t: string, boxl
 // i64.load for a 64-bit field, i64.extend_i32_u(i32.load) for a 32-bit field,
 // i64.const 0 for a payloadless arm. Payload sits at xbox_field_off(slot, 0).
 pub function extern_variant_arm_join_i64(mod: parser.Module, vn: string, boxloc: string, slot: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   if (struct_field_count(stab, vn) == 1) {
     var ft: string = struct_field_type_at(stab, vn, 0);
     var poff: string = util.i32_to_string(xbox_field_off(slot, 0));
@@ -14613,7 +14615,7 @@ pub function extern_variant_arm_join_i64(mod: parser.Module, vn: string, boxloc:
 // extern_variant_has_f32_arm — an f32-free variant keeps the single
 // unconditional i32.load (byte-identical output).
 pub function extern_variant_payload_join_i32_f32(mod: parser.Module, t: string, boxloc: string, slot: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var ei: i32 = 0;
   while (ei < mod.enums.len()) {
     if (mod.enums[ei].name == t) {
@@ -14637,7 +14639,7 @@ pub function extern_variant_payload_join_i32_f32(mod: parser.Module, t: string, 
 // 8-byte f64 at xbox_field_off(slot, 0)), a plain i32.load for a 32-bit field,
 // i32.const 0 for a payloadless arm.
 pub function extern_variant_arm_join_i32_f32(mod: parser.Module, vn: string, boxloc: string, slot: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   if (struct_field_count(stab, vn) == 1) {
     var poff: string = util.i32_to_string(xbox_field_off(slot, 0));
     if (struct_field_type_at(stab, vn, 0) == "f32") {
@@ -14678,7 +14680,7 @@ pub function extern_variant_result_store_f32(mod: parser.Module, t: string, slot
 // extern_variant_result_store_f32_arm emits one arm's result payload store:
 // the promote bridge for an f32 field, the plain i32 copy otherwise.
 pub function extern_variant_result_store_f32_arm(mod: parser.Module, vn: string, slot: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var poff: string = util.i32_to_string(xbox_field_off(slot, 0));
   if (struct_field_count(stab, vn) == 1 && struct_field_type_at(stab, vn, 0) == "f32") {
     return "(f64.store offset=" + poff + " (local.get $s) (f64.promote_f32 (f32.reinterpret_i32 (i32.load offset=4 (local.get $rb)))))";
@@ -14707,7 +14709,7 @@ pub function extern_variant_result_supported(mod: parser.Module, t: string): boo
 // only when the host's discriminant selects a string arm (wasi:http's
 // `method` is `other(string)` beside nine unit verbs).
 pub function extern_variant_string_arms(mod: parser.Module, t: string): i32[] {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var arms: i32[] = [];
   var i: i32 = 0;
   while (i < mod.enums.len()) {
@@ -14756,7 +14758,7 @@ function extern_variant_string_arm_test(arms: i32[]): string {
 // each variant's struct_id. The Fern variant order must match the WIT case
 // order (the index is the disc).
 pub function extern_plain_enum_disc(mod: parser.Module, t: string, eploc: string): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var ei: i32 = 0;
   while (ei < mod.enums.len()) {
     if (mod.enums[ei].name == t) {
@@ -14782,7 +14784,7 @@ pub function extern_plain_enum_disc(mod: parser.Module, t: string, eploc: string
 // payloadless enum value `[struct_id@0]` from an enum *result*. A select-chain
 // `disc==k ? sid_k : acc`.
 pub function extern_plain_enum_sid(mod: parser.Module, t: string, dloc: string): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var ei: i32 = 0;
   while (ei < mod.enums.len()) {
     if (mod.enums[ei].name == t) {
@@ -14826,7 +14828,7 @@ pub function extern_canon_field_size(ft: string): i32 {
 // canonical ABI) the max alignment of the nested record's fields, recursing to
 // arbitrary depth.
 pub function extern_canon_field_align(mod: parser.Module, ft: string): i32 {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   if (extern_field_is_scalar(ft)) {
     return extern_canon_field_size(ft);
   }
@@ -14857,7 +14859,7 @@ pub function extern_canon_field_csize(mod: parser.Module, ft: string): i32 {
 // in result struct `tn`, placing each field (scalar or inlined nested record) at
 // its alignment + size — the layout the host writes the indirect result into.
 pub function extern_canon_top_off(mod: parser.Module, tn: string, idx: i32): i32 {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var pos: i32 = 0;
   var i: i32 = 0;
   while (i < idx) {
@@ -14882,7 +14884,7 @@ pub function extern_canon_top_off(mod: parser.Module, tn: string, idx: i32): i32
 // struct `tn`, accounting for inlined nested record fields (the end of the last
 // field rounded up to the record's max field alignment).
 pub function extern_canon_record_size_nested(mod: parser.Module, tn: string): i32 {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var n: i32 = struct_field_count(stab, tn);
   if (n == 0) {
     return 0;
@@ -14916,7 +14918,7 @@ pub function extern_canon_record_size_nested(mod: parser.Module, tn: string): i3
 // The single local per depth is safe across siblings: a child's pointer is stored
 // into its parent before the next sibling at that depth overwrites the local.
 pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string, canon_base: i32, depth: i32, slot: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var parts: string[] = [];
   var nf: i32 = struct_field_count(stab, tn);
   var rc: i32 = 0;
@@ -14948,7 +14950,7 @@ pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string
 // depth. (The base sub-expression is re-evaluated per leaf, matching the one-level
 // shape this generalizes; the redundant inner-pointer loads are cheap.)
 pub function extern_emit_record_param_leaves(mod: parser.Module, base_expr: string, tn: string, slot: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var parts: string[] = [];
   var n: i32 = struct_field_count(stab, tn);
   var fi: i32 = 0;
@@ -14967,7 +14969,7 @@ pub function extern_emit_record_param_leaves(mod: parser.Module, base_expr: stri
 
 // struct_field_type_at returns the declared type of field `idx` in struct `tn`
 // ("" if out of range / unknown).
-pub function struct_field_type_at(structs: irlower.StructTab, tn: string, idx: i32): string {
+pub function struct_field_type_at(structs: irtables.StructTab, tn: string, idx: i32): string {
   var i: i32 = 0;
   while (i < structs.decls.len()) {
     if (structs.decls[i].name == tn) {
@@ -14988,7 +14990,7 @@ pub function struct_field_type_at(structs: irlower.StructTab, tn: string, idx: i
 // the wrapper materializes the one-field struct from that value (mirrors the Go
 // ExternRecordResult.Direct path). Multi-field records return indirectly.
 pub function extern_record_ret_direct(mod: parser.Module, t: string): boolean {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   return extern_record_result_supported(mod, t)
     && struct_field_count(stab, t) == 1
     && extern_field_is_scalar(struct_field_type_at(stab, t, 0));
@@ -15815,7 +15817,7 @@ function extern_tuple_result_wrapper(f: parser.FuncDecl, slot: i32): string {
 }
 
 pub function extern_wrappers(mod: parser.Module, slot: i32): string {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   var parts: string[] = [];
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
@@ -16341,7 +16343,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
 
 // struct_field_count returns the number of fields in struct `tn` (0 if
 // unknown).
-pub function struct_field_count(structs: irlower.StructTab, tn: string): i32 {
+pub function struct_field_count(structs: irtables.StructTab, tn: string): i32 {
   var i: i32 = 0;
   while (i < structs.decls.len()) {
     if (structs.decls[i].name == tn) {
@@ -16355,7 +16357,7 @@ pub function struct_field_count(structs: irlower.StructTab, tn: string): i32 {
 // struct_id returns a stable runtime type id for a struct (its index in
 // the module's struct table), stored at offset 0 of every struct value so
 // a union `match` can dispatch on it. -1 if unknown.
-pub function struct_id(structs: irlower.StructTab, name: string): i32 {
+pub function struct_id(structs: irtables.StructTab, name: string): i32 {
   var i: i32 = 0;
   while (i < structs.decls.len()) {
     if (structs.decls[i].name == name) {
@@ -16494,7 +16496,7 @@ function extern_elem_from_canon(kind: string, dst: string, src: string): string 
 }
 
 pub function elem_slot_size(kind: string): i32 {
-  if (kind == "i64" || irlower.elem_ty_is_f64slot(kind)) {
+  if (kind == "i64" || irtables.elem_ty_is_f64slot(kind)) {
     return 8;
   }
   return 4;
@@ -16504,7 +16506,7 @@ pub function elem_store_op(kind: string): string {
   if (kind == "i64") {
     return "i64.store";
   }
-  if (irlower.elem_ty_is_f64slot(kind)) {
+  if (irtables.elem_ty_is_f64slot(kind)) {
     return "f64.store";
   }
   return "i32.store";
@@ -16514,7 +16516,7 @@ pub function elem_load_op(kind: string): string {
   if (kind == "i64") {
     return "i64.load";
   }
-  if (irlower.elem_ty_is_f64slot(kind)) {
+  if (irtables.elem_ty_is_f64slot(kind)) {
     return "f64.load";
   }
   return "i32.load";
@@ -17235,7 +17237,7 @@ function fn_slot_push(cx: WasmOpCtx, name: string): string {
   return "    global.get " + fn_base_global(cx.ns) + "\n    i32.const " + util.i32_to_string(util.index_of_str(cx.fn_table, name) - fn_table_base()) + "\n    i32.add\n";
 }
 
-function emit_wasm_struct_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o: ir.Op, structs: irlower.StructTab, parts: string[]): string[] {
+function emit_wasm_struct_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o: ir.Op, structs: irtables.StructTab, parts: string[]): string[] {
   // nf field values on the stack (field nf-1 on top, decl order). Box =
   // [type_id@0, f0@8, f1@16, …] via $__fern_str_box (rc-headered), an
   // 8-byte stride so an f64 field fits — header 8 + nf*8 bytes, field i
@@ -17258,7 +17260,7 @@ function emit_wasm_struct_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32
     // one's — storing an f64 payload through i32.store, which wasm
     // rejects outright (the register backends store every field as
     // 8 bytes, so they never saw it).
-    var emft: string = irlower.decl_at_field_type(structs, o.decl, em);
+    var emft: string = irtables.decl_at_field_type(structs, o.decl, em);
     if (emft == "i64" || emft == "u64") {
       parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n");
       parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n");
@@ -17369,11 +17371,11 @@ function emit_wasm_tuple_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32,
   parts = parts.append("    i32.const " + util.i32_to_string(tn * 8) + "\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
   var tem: i32 = tn - 1;
   while (tem >= 0) {
-    var tk: string = irlower.csv_nth(o.str, tem);
+    var tk: string = irtables.csv_nth(o.str, tem);
     if (tk == "i64") {
       parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n");
       parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n");
-    } else if (irlower.elem_ty_is_f64slot(tk)) {
+    } else if (irtables.elem_ty_is_f64slot(tk)) {
       parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
       parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(tem * 8) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
     } else {
