@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/tty"
 )
 
@@ -627,32 +628,11 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 		3)
 }
 
-// buildSelfHostBinArm64Darwin compiles a self-host driver (fernName, living
-// in dir with its imports) into a native arm64-darwin Mach-O executable and
-// returns its path. Used to run the self-host CLI on the macOS arm64 runner.
-//
-// This goes through the driver's DEFAULT arm64-darwin path — emit plus the
-// in-process assembler and Mach-O writer, no `.s` and no clang — which is
-// both what production does and what `make selfhost-cli` does.
-//
-// It used to write the asm out and link it with `clang -nostdlib -lSystem`,
-// and that never worked on Apple Silicon: the self-host CLI's text is large
-// enough that its `bl __fern_*` runtime calls exceed the ±128 MB range of an
-// AArch64 immediate branch, so clang refused it with a screenful of "fixup
-// value out of range" (#4109 tracks the size). The failure was reported as a
-// t.Skip, so the entire exec half of this test — the only coverage that runs
-// self-host arm64-darwin output — silently never ran. That is how #6042 and
-// its three siblings shipped.
+// buildSelfHostBinArm64Darwin builds a self-host driver (fernName, in dir with
+// its imports) as a native arm64-darwin Mach-O with the stage0 pin, through the
+// self-host's own assembler and Mach-O writer, and returns its path. The build
+// is cached by source closure, so the Darwin tests share one compile.
 func buildSelfHostBinArm64Darwin(t *testing.T, dir, fernName, out string) string {
 	t.Helper()
-	fern := buildLangBinForInterp(t)
-	binPath := filepath.Join(dir, out)
-	cmd := exec.Command(fern, "-target", "arm64-darwin", "-o", binPath, filepath.Join(dir, fernName))
-	if o, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("in-process arm64-darwin build of self-host CLI failed: %v\n%s", err, o)
-	}
-	if err := os.Chmod(binPath, 0o755); err != nil {
-		t.Fatalf("chmod self-host CLI: %v", err)
-	}
-	return binPath
+	return buildSelfHostBinFor(t, dir, fernName, out, e2eharness.TargetArm64Darwin)
 }

@@ -385,8 +385,13 @@ jobs:
         # the static LC_UNIXTHREAD container, the entry-point offset and the
         # unmapped .bss tail all shipped: on the Linux shards this test only
         # parses the Mach-O it cannot run.
+        #
+        # -timeout is explicit for the corpus step's reason above: the set
+        # measures ~590 s, and go test's ten-minute default left no room for
+        # this runner's twofold speed swing.
+        timeout-minutes: 30
         run: |
-          gotestsum --format standard-verbose -- -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
+          gotestsum --format standard-verbose -- -timeout 25m -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

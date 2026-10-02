@@ -61,10 +61,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/drop-selfhost-sources
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: fuzz differential execution (both arches)
         if: ${{ !cancelled() }}
         run: gotestsum --format testname -- -fuzz=FuzzGenerate_ExecutionAgrees -fuzztime=60s -run=^$ ./internal/e2e

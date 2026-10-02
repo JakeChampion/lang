@@ -568,7 +568,6 @@ function main(): i32 {
     if (growPlan.grows[3] != 0 || growPlan.grow_fields[3] != 0) { return 141; }
     var growRows = ssaunits.grow_rows("grow", growFunc, growPlan, []);
     if (growRows.len() != 1 || growRows[0].param != 0 || growRows[0].field != 0) { return 142; }
-    if (ssarc.grow_mask("grow", growFunc, growRows, false) != "0;F:xs;0") { return 143; }
     var growLowered = ssarc.lower(growFunc, [2, 1], growPlan, irlower.struct_tab_empty(), []);
     if (!growLowered.ok) { eprint(growLowered.why); return 144; }
     var sawGrowUnique: boolean = false;

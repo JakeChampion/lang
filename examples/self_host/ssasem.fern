@@ -4344,10 +4344,9 @@ function defining_positions(f: Func): i32[] {
 
 // ---- self-tail recursion ----------------------------------------------------
 
-// A self-recursive call in tail position reuses its own activation on the AST
-// lowering, which gets `irlower.tco_self_tail` out of `lower_func`. A produced
-// body never reaches `lower_func`, so until now it grew the stack once per
-// iteration and a deep enough recursion took the program's stack out (#9692).
+// A self-recursive call in tail position reuses its own activation; without
+// this a produced body grew the stack once per iteration and a deep enough
+// recursion took the program's stack out (#9692).
 //
 // The rewrite is on the GRAPH, before the unit planner and the RC lowering see
 // it, and that placement is the point rather than a convenience: a tail call
@@ -4458,7 +4457,7 @@ function without_cons(kinds: i32[]): i32[] {
 // anchor's release, and the unit keeps the payload whole. A VIEW cannot — the
 // call kept its anchor alive for the callee's frame, the jump re-enters the
 // loop with that anchor dead, and a view's retain is a no-op against the
-// immortal sentinel. `irlower.rc_consumed_drop_wired` is that shape: it
+// immortal sentinel. The compiler's own `rc_consumed_drop_wired` was that shape: it
 // recurses on `slice_unchecked(t, 0, t.len() - 2)`, a view of the very
 // parameter the argument replaces, and rewriting it corrupted the heap of every
 // compiler built through this path (#9692). An address anchored to its box, and

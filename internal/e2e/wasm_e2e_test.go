@@ -16980,8 +16980,7 @@ function main(): i32 {
 // Phase 3 step 3: struct drop handlers. A user struct with
 // pointer-shaped rc-tracked fields drops those fields on its last
 // reference (gated by __fern_rc_is_unique) before dec'ing the box,
-// balancing the per-field inc from Phase 1e-struct-ii. Mirrors
-// TestX86_64RcDropStructFields / TestArm64RcDropStructFields.
+// balancing the per-field inc from Phase 1e-struct-ii.
 func TestWASMRcDropStructFields(t *testing.T) {
 	fires := `struct Holder { items: u8[] }
 function consume(inner: u8[]): i32 {
@@ -17075,8 +17074,7 @@ function main(): i32 {
 	}
 }
 
-// Phase 1d-vi: dec on overwrite. See TestArm64RcDecOnOverwrite
-// for the trace.
+// Phase 1d-vi: dec on overwrite.
 func TestWASMRcDecOnOverwrite(t *testing.T) {
 	src := `function main(): i32 {
     var arr1: u8[] = __alloc_u8(8);
@@ -17132,7 +17130,6 @@ func TestWASMArrayPushAliasedCopies(t *testing.T) {
 	}
 }
 
-// Mirror of TestArm64ArrayIndexSetInPlaceFastPath.
 func TestWASMArrayIndexSetInPlaceFastPath(t *testing.T) {
 	src := `function main(): i32 {
     var xs: i32[] = [10, 20, 30];

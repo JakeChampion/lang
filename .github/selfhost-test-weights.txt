@@ -922,7 +922,6 @@ TestSelfHostNumericSettleChecker 21
 TestSelfHostNumericSettleIRX86_64 2
 TestSelfHostNumericSettleRejects 21
 TestSelfHostOOBBranchRangeArm64 2
-TestSelfHostOpBufferSnapshots 62
 TestSelfHostOpaqueUnderAttributes 21
 TestSelfHostOpenFileWasmIR 2
 TestSelfHostOpenedHandleNeverLandsOnStdoutX86_64 2
