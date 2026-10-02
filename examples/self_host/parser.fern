@@ -18925,21 +18925,24 @@ pub function nested_fn_cycle(sibs: NestedFn[], name: string): string[] {
 // the self-host's own sources (which use none) pass through byte-for-byte,
 // keeping the stage-2 fixpoint intact.
 function hl_has_rec_local(stmts: ast.Stmt[]): boolean {
-  var sibs: NestedFn[] = nested_fns(stmts);
-  for sb in sibs {
-    if (nested_fn_cycle(sibs, sb.name).len() > 0) {
-      return true;
-    }
+  if (hl_list_has_cycle(stmts)) {
+    return true;
+  }
+  function vs(st: ast.Stmt, own hit: boolean): boolean {
+    return hit || hl_owned_lists_have_cycle(st);
   }
   for st in stmts {
-    if (hl_stmt_has_rec_local(st)) {
+    if (astwalk.fold_stmt_spine(st, false, vs)) {
       return true;
     }
   }
   return false;
 }
 
-function hl_stmt_has_rec_local(st: ast.Stmt): boolean {
+// hl_owned_lists_have_cycle checks the statement lists `st` owns directly; the
+// spine reaches the ones nested deeper. It enters no expression, so a lambda a
+// `var` holds is searched here.
+function hl_owned_lists_have_cycle(st: ast.Stmt): boolean {
   match (st) {
     ast.StmtVar(v) => {
       if let ast.ExprLambda(lam) = v.init {
@@ -18948,27 +18951,34 @@ function hl_stmt_has_rec_local(st: ast.Stmt): boolean {
       return false;
     },
     ast.StmtIf(f) => {
-      return hl_has_rec_local(f.then_body) || hl_has_rec_local(f.else_body);
+      return hl_list_has_cycle(f.then_body) || hl_list_has_cycle(f.else_body);
     },
     ast.StmtWhile(w) => {
-      return hl_has_rec_local(w.body);
+      return hl_list_has_cycle(w.body);
     },
     ast.StmtFor(fr) => {
-      return hl_has_rec_local(fr.body);
+      return hl_list_has_cycle(fr.body);
     },
     ast.StmtMatch(m) => {
       for arm in m.arms {
-        if (hl_has_rec_local(arm.body)) {
+        if (hl_list_has_cycle(arm.body)) {
           return true;
         }
       }
       return false;
     },
-    ast.StmtDefer(d) => {
-      return hl_stmt_has_rec_local(d.action);
-    },
     _ => {
       return false;
+    }
+  }
+  return false;
+}
+
+function hl_list_has_cycle(stmts: ast.Stmt[]): boolean {
+  var sibs: NestedFn[] = nested_fns(stmts);
+  for sb in sibs {
+    if (nested_fn_cycle(sibs, sb.name).len() > 0) {
+      return true;
     }
   }
   return false;
