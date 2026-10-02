@@ -35,13 +35,6 @@ func writerBytes(i *Interp, args []Value, all bool) (Value, error) {
 		}
 		return resultErr(v)
 	}
-	fd, err := streamFd(args[0])
-	if err != nil {
-		return nil, err
-	}
-	if i.closedStd[fd] {
-		return failure(syscall.EBADF), nil
-	}
 	f, err := streamFile(i, args[0])
 	if errors.Is(err, errClosedHandle) {
 		return failure(syscall.EBADF), nil

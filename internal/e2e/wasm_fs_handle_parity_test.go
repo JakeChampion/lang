@@ -111,49 +111,66 @@ func dirStdin(t *testing.T) *os.File {
 	return f
 }
 
-// The four legs run src in a fresh directory with `stdin` as its standard
-// input (nil for an empty one) and require main to return 0.
+// parityOpts is how a leg runs its program. The zero value is a fresh
+// empty directory and an empty stdin.
+type parityOpts struct {
+	dir   string   // the working directory, which wasm preopens; empty for a fresh one
+	stdin *os.File // nil for an empty stdin
+	// maxResources, when > 0, caps the preview-2 host's resource table, so
+	// a body that leaks a host resource per call runs out of keys.
+	maxResources int
+}
 
-func runParityInterp(t *testing.T, src string, stdin *os.File) {
+func (o parityOpts) runDir(t *testing.T) string {
+	if o.dir != "" {
+		return o.dir
+	}
+	return t.TempDir()
+}
+
+// The four legs run src as `o` says and require main to return 0.
+
+func runParityInterp(t *testing.T, src string, o parityOpts) {
 	t.Helper()
-	dir := t.TempDir()
-	p := filepath.Join(dir, "prog.fern")
+	p := filepath.Join(t.TempDir(), "prog.fern")
 	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(buildLangBinForInterp(t), "-interp", p)
-	cmd.Dir = dir
-	if stdin != nil {
-		cmd.Stdin = stdin
+	cmd.Dir = o.runDir(t)
+	if o.stdin != nil {
+		cmd.Stdin = o.stdin
 	}
 	if out, code := runWithPipes(t, cmd); code != 0 {
 		t.Errorf("interpreter: exit = %d, want 0 (the code names the case)\n%s", code, out)
 	}
 }
 
-func runParityX86_64(t *testing.T, src string, stdin *os.File) {
+func runParityX86_64(t *testing.T, src string, o parityOpts) {
 	t.Helper()
 	bin, runner := compileX86_64Bin(t, src)
-	cmd := inDir(t, runX86_64Bin(runner, bin))
-	if stdin != nil {
-		cmd.Stdin = stdin
+	cmd := runX86_64Bin(runner, bin)
+	cmd.Dir = o.runDir(t)
+	if o.stdin != nil {
+		cmd.Stdin = o.stdin
 	}
 	if out, code := runWithPipes(t, cmd); code != 0 {
 		t.Errorf("x86-64: exit = %d, want 0 (the code names the case)\n%s", code, out)
 	}
 }
 
-func runParityPreview1(t *testing.T, src string, stdin *os.File) {
+func runParityPreview1(t *testing.T, src string, o parityOpts) {
 	t.Helper()
 	mod := buildPreview1Module(t, src)
-	if code := runPreview1ModuleStdin(t, mod, t.TempDir(), stdin); code != 0 {
+	if code := runPreview1ModuleStdin(t, mod, o.runDir(t), o.stdin); code != 0 {
 		t.Errorf("wasm preview 1: main = %d, want 0 (the code names the case)", code)
 	}
 }
 
-func runParityPreview2(t *testing.T, src string, stdin *os.File) {
+func runParityPreview2(t *testing.T, src string, o parityOpts) {
 	t.Helper()
-	stdout, stderr, ec, _ := runWasmInDirOpts(t, src, nil, runOpts{stdinFile: stdin})
+	comp := buildComponent(t, src)
+	stdout, stderr, ec := runComponent(t, comp, runOpts{workDir: o.runDir(t), stdinFile: o.stdin, maxResources: o.maxResources})
 	if ec != 0 {
 		t.Fatalf("wasm preview 2: wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}
@@ -162,21 +179,35 @@ func runParityPreview2(t *testing.T, src string, stdin *os.File) {
 	}
 }
 
-func TestInterpClosedHandle(t *testing.T)       { runParityInterp(t, closedHandleSource, nil) }
-func TestX86_64ClosedHandle(t *testing.T)       { runParityX86_64(t, closedHandleSource, nil) }
-func TestWASMPreview1ClosedHandle(t *testing.T) { runParityPreview1(t, closedHandleSource, nil) }
-func TestWASMClosedHandle(t *testing.T)         { runParityPreview2(t, closedHandleSource, nil) }
+func TestInterpClosedHandle(t *testing.T) { runParityInterp(t, closedHandleSource, parityOpts{}) }
+func TestX86_64ClosedHandle(t *testing.T) { runParityX86_64(t, closedHandleSource, parityOpts{}) }
+func TestWASMPreview1ClosedHandle(t *testing.T) {
+	runParityPreview1(t, closedHandleSource, parityOpts{})
+}
+func TestWASMClosedHandle(t *testing.T) { runParityPreview2(t, closedHandleSource, parityOpts{}) }
 
-func TestInterpRemoveDirAllPlainFile(t *testing.T) { runParityInterp(t, removeDirAllFileSource, nil) }
-func TestX86_64RemoveDirAllPlainFile(t *testing.T) { runParityX86_64(t, removeDirAllFileSource, nil) }
+func TestInterpRemoveDirAllPlainFile(t *testing.T) {
+	runParityInterp(t, removeDirAllFileSource, parityOpts{})
+}
+func TestX86_64RemoveDirAllPlainFile(t *testing.T) {
+	runParityX86_64(t, removeDirAllFileSource, parityOpts{})
+}
 func TestWASMPreview1RemoveDirAllPlainFile(t *testing.T) {
-	runParityPreview1(t, removeDirAllFileSource, nil)
+	runParityPreview1(t, removeDirAllFileSource, parityOpts{})
 }
-func TestWASMRemoveDirAllPlainFile(t *testing.T) { runParityPreview2(t, removeDirAllFileSource, nil) }
+func TestWASMRemoveDirAllPlainFile(t *testing.T) {
+	runParityPreview2(t, removeDirAllFileSource, parityOpts{})
+}
 
-func TestInterpReadChunkFailure(t *testing.T) { runParityInterp(t, failedReadSource, dirStdin(t)) }
-func TestX86_64ReadChunkFailure(t *testing.T) { runParityX86_64(t, failedReadSource, dirStdin(t)) }
-func TestWASMPreview1ReadChunkFailure(t *testing.T) {
-	runParityPreview1(t, failedReadSource, dirStdin(t))
+func TestInterpReadChunkFailure(t *testing.T) {
+	runParityInterp(t, failedReadSource, parityOpts{stdin: dirStdin(t)})
 }
-func TestWASMReadChunkFailure(t *testing.T) { runParityPreview2(t, failedReadSource, dirStdin(t)) }
+func TestX86_64ReadChunkFailure(t *testing.T) {
+	runParityX86_64(t, failedReadSource, parityOpts{stdin: dirStdin(t)})
+}
+func TestWASMPreview1ReadChunkFailure(t *testing.T) {
+	runParityPreview1(t, failedReadSource, parityOpts{stdin: dirStdin(t)})
+}
+func TestWASMReadChunkFailure(t *testing.T) {
+	runParityPreview2(t, failedReadSource, parityOpts{stdin: dirStdin(t)})
+}
