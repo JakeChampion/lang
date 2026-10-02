@@ -292,8 +292,11 @@ function __request_ok(req: Request): Result[void, FetchError] {
   }
   var i: i32 = 0;
   while (i < req.headers.names.len()) {
-    if (!http.http_field_ok(req.headers.names[i], req.headers.values[i])) {
-      return Err(InvalidRequest("a header has a name that is not a token or a control byte in its value"));
+    if (!http.http_field_name_ok(req.headers.names[i])) {
+      return Err(InvalidRequest("a header name is not a token"));
+    }
+    if (!http.http_field_value_ok(req.headers.values[i])) {
+      return Err(InvalidRequest("a header value has a byte that cannot be written"));
     }
     i = i + 1;
   }
@@ -425,14 +428,12 @@ function __read_response(sock: i32, req: Request, started: i64): Result[HttpResp
   while (true) {
     match (http.http_parse_response_framed_from(buf, from, req.method, eof, req.limits)) {
       Complete(framed) => {
-        if (__interim(framed.response.status)) {
-          from = from + framed.len;
-          if (from > req.limits.header_bytes) {
-            return Err(Protocol("interim responses past the header budget"));
-          }
-          continue;
+        var next: i32 = __after_interim(framed, from, req.limits)?;
+        if (next < 0) {
+          return Ok(HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) });
         }
-        return Ok(HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) });
+        from = next;
+        continue;
       },
       Unfinished => {
         if (eof) {
@@ -465,8 +466,27 @@ function __append_bytes(own buf: u8[], chunk: u8[]): u8[] {
   return buf;
 }
 
-// `__interim(status)` — whether a status is a 1xx, a response before
-// the final one (RFC 9110 §15.2).
+// `__after_interim(framed, from, limits)` — where the response behind an
+// interim `framed` begins, -1 when `framed` is the final response, or
+// the refusal: a 101, since what follows a switch is another protocol
+// and this client never asks for one, and interim responses past one
+// header budget between them.
+function __after_interim(framed: http.HttpResponseFramed, from: i32, limits: http.HttpLimits): Result[i32, FetchError] {
+  if (framed.response.status == 101) {
+    return Err(Protocol("a protocol switch the client did not ask for"));
+  }
+  if (!__interim(framed.response.status)) {
+    return Ok(0 - 1);
+  }
+  var next: i32 = from + framed.len;
+  if (next > limits.header_bytes) {
+    return Err(Protocol("interim responses past the header budget"));
+  }
+  return Ok(next);
+}
+
+// `__interim(status)` — whether a status is a 1xx the final response
+// follows (RFC 9110 §15.2); `__after_interim` refuses 101 before asking.
 function __interim(status: i32): boolean {
   return status >= 100 && status < 200;
 }
@@ -609,7 +629,8 @@ function __join_bytes(chunks: u8[][]): u8[] {
 //
 // On a connect/send failure it resolves immediately to the empty body (a
 // `Ready` future), so a failed upstream doesn't stall the fan-out, and so
-// does a response the parser refuses. The
+// does a response the parser refuses or a `path` that cannot stand on a
+// request line (`http_target_ok`), which is refused before connecting. The
 // read is STREAMING — `__fetch_drain` re-suspends per chunk and accumulates, so
 // the whole response comes back (not just one `recv` buffer) while
 // staying overlapped with the other futures. PORTABLE native + wasm: the
@@ -620,8 +641,11 @@ function __join_bytes(chunks: u8[][]): u8[] {
 // woken token, which differs by backend). On interp the `poll` stub
 // means the `Pending` never resolves (consistent with std/async).
 pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u8[]] {
-  var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
   var empty: u8[] = [];
+  if (!http.http_target_ok(path)) {
+    return Ready(empty);
+  }
+  var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
   var c: i32 = tcp_connect(host_be, port);
   if (c < 0) {
     return Ready(empty);

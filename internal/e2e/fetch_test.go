@@ -124,6 +124,11 @@ function main(): i32 {
     var fs: async.Future[u8[]][] = [fetch.fetch_future(h, %[1]d, "/")];
     var bodies: u8[][] = async.gather(fs, none);
     if (bodies[0].len() != %[2]d) { return 3; }
+    // A path that cannot stand on a request line resolves to the empty
+    // body without connecting.
+    var bad: async.Future[u8[]][] = [fetch.fetch_future(h, %[1]d, "/a\r\nX-Injected: 1")];
+    var refused: u8[][] = async.gather(bad, none);
+    if (refused[0].len() != 0) { return 6; }
     // __fetch_drain's list IS captured, so its appends cross the cliff —
     // pointer-sized, which is the whole point of carrying chunks.
     if (__arr_push_shared_bytes() > (8388608 as i64)) { return 4; }

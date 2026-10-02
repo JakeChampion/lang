@@ -81,6 +81,8 @@ func serveFetchScript(c net.Conn) {
 		resp = []byte("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n")
 	case target == "/h2":
 		resp = []byte("HTTP/2.0 200 OK\r\nContent-Length: 0\r\n\r\n")
+	case target == "/switch":
+		resp = []byte("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n\x81\x05hello")
 	case target == "/flood":
 		// Interim responses past the header budget before any final one:
 		// 2000 of 25 bytes each is 50 000 bytes, past 32 KiB.
@@ -209,6 +211,7 @@ function main(): i32 {
     show("gzipchunked", fetch.send(fetch.get(base() + "/gzipchunked")));
     show("h2", fetch.send(fetch.get(base() + "/h2")));
     show("flood", fetch.send(fetch.get(base() + "/flood")));
+    show("switch", fetch.send(fetch.get(base() + "/switch")));
     show("truncated", fetch.send(fetch.get(base() + "/truncated")));
     show("refused", fetch.send(fetch.get("http://127.0.0.1:%d/")));
     show("badurl", fetch.send(fetch.get("not a url")));
@@ -250,14 +253,15 @@ bighead: error protocol: the header block or chunk framing is past its limit
 gzipchunked: error protocol: a transfer coding other than chunked
 h2: error protocol: an HTTP version other than 1
 flood: error protocol: interim responses past the header budget
+switch: error protocol: a protocol switch the client did not ask for
 truncated: error protocol: the connection closed before the response ended
 refused: error connect: Connection refused
 badurl: error invalid URL: no scheme in not a url
 noscheme: error invalid URL: scheme ftp is not http
 tls: error TLS is not supported
 crlfurl: error invalid URL: a path or query that cannot be written on a request line
-crlfvalue: error invalid request: a header has a name that is not a token or a control byte in its value
-badname: error invalid request: a header has a name that is not a token or a control byte in its value
+crlfvalue: error invalid request: a header value has a byte that cannot be written
+badname: error invalid request: a header name is not a token
 badmethod: error invalid request: the method is not a token
 filebody: error invalid request: a file body cannot be sent
 status: 404

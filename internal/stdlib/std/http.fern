@@ -2602,6 +2602,9 @@ pub function http_method_ok(method: string): boolean {
 // request-target (RFC 9112 §3.2.1): `/`, then `pchar` and `/`, then
 // optionally `?` and a query of `pchar`, `/` and `?`, every `%` followed by
 // two hex digits. A space, a control byte and a byte past ASCII all fail.
+// `%2F` passes: a client sends the target as its caller encoded it, and
+// what a decoded segment may hold is the server's rule (`__decoded_path`
+// refuses it), so the set written is wider than the set read.
 pub function http_target_ok(target: string): boolean {
   if (target.len() == 0 || target[0] != 47 as u8) {
     return false;
@@ -2613,14 +2616,17 @@ pub function http_target_ok(target: string): boolean {
   return __query_ok(target, 0, q) && __query_ok(target, q + 1, target.len());
 }
 
-// `http_field_ok(name, value)` — whether a field can be written as one
-// line: a token name and a value with no control byte but HTAB and no DEL
-// (RFC 9110 §5.1, §5.5), the rule `__field_value` reads a value by.
-pub function http_field_ok(name: string, value: string): boolean {
+// `http_field_name_ok(name)` — whether `name` is a field name, a token
+// (RFC 9110 §5.1).
+pub function http_field_name_ok(name: string): boolean {
   var n: u8[] = name.bytes();
-  if (!__is_token(n, 0, n.len())) {
-    return false;
-  }
+  return __is_token(n, 0, n.len());
+}
+
+// `http_field_value_ok(value)` — whether `value` can be written as one
+// line: no control byte but HTAB and no DEL (RFC 9110 §5.5), the rule
+// `__field_value` reads a value by.
+pub function http_field_value_ok(value: string): boolean {
   var i: i32 = 0;
   while (i < value.len()) {
     if (value[i] < 32 as u8 && value[i] != 9 as u8 || value[i] == 127 as u8) {

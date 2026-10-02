@@ -1112,10 +1112,11 @@ serializer.
   refusals turned outward: `http_method_ok(method)` (a token),
   `http_target_ok(target)` (an origin-form request-target: `/`, `pchar`
   and `/`, then a query of `pchar`, `/` and `?`, every `%` followed by
-  two hex digits) and `http_field_ok(name, value)` (a token name and a
-  value with no control byte but HTAB and no DEL). `std/fetch` checks
-  each before it connects, so a CRLF in a caller's URL or header cannot
-  split the request it is written into.
+  two hex digits; `%2F` passes, since what a decoded segment may hold is
+  the server's rule), `http_field_name_ok(name)` (a token) and
+  `http_field_value_ok(value)` (no control byte but HTAB and no DEL).
+  `std/fetch` checks each before it connects, so a CRLF in a caller's URL
+  or header cannot split the request it is written into.
 - **Request builder:** `request(method, path)` is a request to hand a
   handler in a test (no headers, no body), and `(req).with_header(name,
   value)`, `(req).with_body(body)` (with the `Content-Length` a client
@@ -1620,8 +1621,9 @@ answer is `Result[HttpResponse, FetchError]`.
   file, then DNS) and its addresses raced as `dns.connect_race` does.
   Before it connects the client checks the method, the path and query
   and every header against `std/http`'s `http_method_ok` /
-  `http_target_ok` / `http_field_ok`, so a CRLF in a URL or a field
-  cannot split the request on the wire. It writes `Host`,
+  `http_target_ok` / `http_field_name_ok` / `http_field_value_ok`, so a
+  CRLF in a URL or a field cannot split the request on the wire. It
+  writes `Host`,
   `Content-Length` and `Connection: close` itself and strips hop-by-hop
   fields from what it sends. No TLS yet (`https` fails with `Tls`), no
   redirects followed, no pool.
@@ -1653,7 +1655,8 @@ answer is `Result[HttpResponse, FetchError]`.
   of the response; total runs from the start to the last byte read.
 - **Awaitable:** `fetch_future(host_be, port, path):
   async.Future[u8[]]` resolves to the response body (empty on any
-  failure) — fan out through `async.gather` / `async.race` /
+  failure, a `path` that `http_target_ok` refuses included, which never
+  connects) — fan out through `async.gather` / `async.race` /
   `async.with_deadline`. `ipv4(a,b,c,d)` packs the dotted-quad it and
   `tcp_connect` take.
 
