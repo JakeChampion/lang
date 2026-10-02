@@ -11729,7 +11729,7 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
       var ed: EnumDecl = funcs.enums[owner];
       var own: MEnv = me_variant_binds(ed, vname, c.args, env, funcs.structs, funcs);
       if (str_list_contains(vars, pattern)) {
-        var whole: string = variant_binds_spelling(ed, own);
+        var whole: string = bound_spelling(ed.name, ed.type_params, own);
         if (whole.len() == 0) {
           return binds;
         }
@@ -12244,7 +12244,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       return mono_infer(u.operand, env, funcs);
     },
     ast.ExprStructLit(sl) => {
-      return sl.type_name;
+      return struct_lit_spelling(sl, env, funcs);
     },
     ast.ExprTuple(tu) => {
       // A tuple literal `(e0, e1, …)` → `(T0, T1, …)`, so a `(K, V)[]`
@@ -15239,6 +15239,14 @@ function ms_lambda(lm: ast.ExprLambda, dest: string, env: MEnv, gstructs: Struct
 // field values.
 function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
   var cur: Insts = ins;
+  // A written instantiation (`Stack[i32] { items: [] }`) names the clone the
+  // way an annotation does; the field values need not bind every parameter.
+  var lit_dest: string = dest;
+  if (s.written.len() > 0 && !mono_ty_mentions_var(s.written)) {
+    var wm: TyIns = mg_ty(s.written, gstructs, cur);
+    cur = wm.mins;
+    lit_dest = wm.ty;
+  }
   var vals: ast.Expr[] = [];
   var i: i32 = 0;
   while (i < s.field_values.len()) {
@@ -15258,8 +15266,8 @@ function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: 
   cur = rb.rins;
   var tn: string = s.type_name;
   var gi: i32 = gstruct_index(gstructs, s.type_name);
-  if (gi >= 0 && is_clone_of(dest, s.type_name)) {
-    tn = dest;
+  if (gi >= 0 && is_clone_of(lit_dest, s.type_name)) {
+    tn = lit_dest;
   } else if (gi >= 0) {
     var key: string = infer_lit_key(gstructs[gi], s.field_names, vals, env, funcs);
     if (key.len() > 0) {
@@ -16472,6 +16480,35 @@ function me_variant_binds(ed: EnumDecl, vname: string, args: ast.Expr[], env: ME
   return binds;
 }
 
+// struct_lit_spelling is a struct literal's type: a generic struct written
+// bare has its parameters bound from the field values (`One { v: 7, .. }` is
+// `One[i32]`), and stays bare while one is unbound.
+function struct_lit_spelling(sl: ast.ExprStructLit, env: MEnv, funcs: MFns): string {
+  var si: i32 = gstruct_index(funcs.structs, sl.type_name);
+  if (si < 0 || funcs.structs[si].type_params.len() == 0 || funcs.structs[si].enum_owner.len() > 0) {
+    return sl.type_name;
+  }
+  var sd: StructDecl = funcs.structs[si];
+  var binds: MEnv = MEnv { mnames: [], mtypes: [] };
+  var k: i32 = 0;
+  while (k < sl.field_names.len() && k < sl.field_values.len()) {
+    for f in sd.fields {
+      if (f.name == sl.field_names[k]) {
+        var at: string = mono_infer(sl.field_values[k], env, funcs);
+        if (at.len() > 0) {
+          binds = bind_unify(f.type_name, at, sd.type_params, binds);
+        }
+      }
+    }
+    k = k + 1;
+  }
+  var whole: string = bound_spelling(sd.name, sd.type_params, binds);
+  if (whole.len() == 0) {
+    return sl.type_name;
+  }
+  return whole;
+}
+
 // ctor_variant_name: the variant a call's callee constructs when it names one
 // bare (`Leaf`) or qualified by its generic enum (`Tree.Leaf`); "" otherwise.
 function ctor_variant_name(callee: ast.Expr, enums: EnumDecl[]): string {
@@ -16491,13 +16528,13 @@ function ctor_variant_name(callee: ast.Expr, enums: EnumDecl[]): string {
   return "";
 }
 
-// variant_binds_spelling: `Enum[a, b]` from bindings of every one of the
-// enum's type parameters; "" when any is unbound.
-function variant_binds_spelling(ed: EnumDecl, binds: MEnv): string {
-  var out: string = ed.name + "[";
+// bound_spelling: `Name[a, b]` from bindings of every one of `tparams`; ""
+// when any is unbound.
+function bound_spelling(name: string, tparams: string[], binds: MEnv): string {
+  var out: string = name + "[";
   var j: i32 = 0;
-  while (j < ed.type_params.len()) {
-    var b: string = binds.elook(ed.type_params[j]);
+  while (j < tparams.len()) {
+    var b: string = binds.elook(tparams[j]);
     if (b.len() == 0) {
       return "";
     }
@@ -16523,7 +16560,7 @@ function variant_ctor_spelling(callee: ast.Expr, args: ast.Expr[], env: MEnv, fu
     return "";
   }
   var ed: EnumDecl = funcs.enums[owner];
-  return variant_binds_spelling(ed, me_variant_binds(ed, vname, args, env, funcs.structs, funcs));
+  return bound_spelling(ed.name, ed.type_params, me_variant_binds(ed, vname, args, env, funcs.structs, funcs));
 }
 
 // The spelling a single-param enum's inferred construction binds its type
@@ -16967,7 +17004,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
         vgo = genum_owner_of_variant(enums, vgn);
       }
       if (vgo >= 0 && me_infer_variant_key(enums[vgo], vgn, c.args, "", env, enums, structs, funcs).len() > 0) {
-        return variant_binds_spelling(enums[vgo], me_variant_binds(enums[vgo], vgn, c.args, env, structs, funcs));
+        return bound_spelling(enums[vgo].name, enums[vgo].type_params, me_variant_binds(enums[vgo], vgn, c.args, env, structs, funcs));
       }
       match (c.callee) {
         ast.ExprIdent(cid) => {

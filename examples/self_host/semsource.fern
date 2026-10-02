@@ -3890,7 +3890,10 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
   var after: checker.Scope = checker.bind_stmt(st, s.scope);
   var ty: typeinfo.Type = bound_type(s, v.name, after);
   if (!semtypes.concrete(ty, true)) {
-    ty = closure_slot_type(v.init, s.contracts.list);
+    var cty: typeinfo.Type = closure_slot_type(v.init, s.contracts.list);
+    if (semtypes.concrete(cty, true)) {
+      ty = cty;
+    }
   }
   // A CALL names its own result, in the contract the call reads to produce
   // itself, so an unannotated binding of one needs no type from the checker:
