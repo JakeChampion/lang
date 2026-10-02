@@ -2665,7 +2665,7 @@ function no_preopen_p2(): string {
 pub function readfile_func_p2(): string {
   var o: string = "";
   o = o + "  (func $__fern_read_file (param $np i32) (result i32)\n";
-  o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $buf i32) (local $off i32) (local $cp i32) (local $cl i32) (local $i i32) (local $tmp i32)\n";
+  o = o + "    (local $ra i32) (local $fd i32) (local $strm i32) (local $buf i32) (local $off i32) (local $cp i32) (local $cl i32) (local $tmp i32) (local $cap i32) (local $grown i32)\n";
   o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 32)) (i32.const 7)) (i32.const -8)))\n";
   // first preopen descriptor = load(load(retarea))
   o = o + "    (call $get_directories (local.get $ra))\n";
@@ -2687,7 +2687,8 @@ pub function readfile_func_p2(): string {
   o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
   o = o + "      (return (local.get $tmp))))\n";
   o = o + "    (local.set $strm (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
-  o = o + "    (local.set $buf (call $__fern_alloc (i32.add (i32.const 4) (i32.const 1048576))))\n";
+  o = o + "    (local.set $cap (i32.const 4096))\n";
+  o = o + "    (local.set $buf (call $__fern_str_box (i32.add (i32.const 4) (local.get $cap))))\n";
   o = o + "    (local.set $off (i32.const 0))\n";
   o = o + "    (block $rd (loop $rc\n";
   o = o + "      (call $blocking_read (local.get $strm) (i64.const 4096) (local.get $ra))\n";
@@ -2695,12 +2696,9 @@ pub function readfile_func_p2(): string {
   o = o + "      (local.set $cp (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
   o = o + "      (local.set $cl (i32.load (i32.add (local.get $ra) (i32.const 8))))\n";
   o = o + "      (br_if $rd (i32.eqz (local.get $cl)))\n";
-  o = o + "      (local.set $i (i32.const 0))\n";
-  o = o + "      (block $cd (loop $cc\n";
-  o = o + "        (br_if $cd (i32.ge_u (local.get $i) (local.get $cl)))\n";
-  o = o + "        (i32.store8 (i32.add (i32.add (local.get $buf) (i32.const 4)) (i32.add (local.get $off) (local.get $i))) (i32.load8_u (i32.add (local.get $cp) (local.get $i))))\n";
-  o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "        (br $cc)))\n";
+  o = o + read_room("$buf", false, "(local.get $cl)");
+  o = o + "      (memory.copy (i32.add (i32.add (local.get $buf) (i32.const 4)) (local.get $off)) (local.get $cp) (local.get $cl))\n";
+  o = o + "      (call $__fern_raw_free (local.get $cp) (local.get $cl))\n";
   o = o + "      (local.set $off (i32.add (local.get $off) (local.get $cl)))\n";
   o = o + "      (br $rc)))\n";
   // Everything is in the accumulator: release the stream, then the
@@ -2710,6 +2708,7 @@ pub function readfile_func_p2(): string {
   o = o + "    (i32.store (local.get $buf) (local.get $off))\n";
   // D9 gate (#5714): errno 25 (ilseq) is synthetic — no wasi call produces it.
   o = o + "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $buf) (i32.const 4)) (local.get $off))) (then\n";
+  o = o + "      (drop (call $__fern_arr_dec (local.get $buf)))\n";
   o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
   o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (call $__fern_rc_inc (local.get $np))))\n";
@@ -2723,7 +2722,7 @@ pub function readfile_func_p2(): string {
 
 // readfile_bytes_func_p2 is the preview2 $__fern_read_file_bytes: the same
 // open-at / blocking-read pipeline and error boxing as readfile_func_p2, but
-// each chunk lands in a growing packed u8[] (packed_read_room), the Ok
+// each chunk lands in a growing packed u8[] (read_room), the Ok
 // payload, and the host's chunk list is released once copied.
 pub function readfile_bytes_func_p2(): string {
   var o: string = "";
@@ -2757,7 +2756,7 @@ pub function readfile_bytes_func_p2(): string {
   o = o + "      (local.set $cp (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
   o = o + "      (local.set $cl (i32.load (i32.add (local.get $ra) (i32.const 8))))\n";
   o = o + "      (br_if $rd (i32.eqz (local.get $cl)))\n";
-  o = o + packed_read_room("(local.get $cl)");
+  o = o + read_room("$arr", true, "(local.get $cl)");
   o = o + "      (memory.copy (i32.add (i32.add (local.get $arr) (i32.const 8)) (local.get $off)) (local.get $cp) (local.get $cl))\n";
   o = o + "      (call $__fern_raw_free (local.get $cp) (local.get $cl))\n";
   o = o + "      (local.set $off (i32.add (local.get $off) (local.get $cl)))\n";
@@ -2773,19 +2772,26 @@ pub function readfile_bytes_func_p2(): string {
   return o;
 }
 
-// packed_read_room makes room for `want` more bytes past $off in the packed
-// u8[] $arr of $cap bytes a whole-file read is filling: when they do not fit,
-// $cap doubles until they do and the bytes so far move to a fresh array.
-function packed_read_room(want: string): string {
+// read_room makes room for `want` more bytes past $off in the buffer local
+// `buf` of $cap data bytes a whole-file read is filling, a packed u8[] or,
+// with `packed` false, a string block: when they do not fit, $cap doubles
+// until they do and the bytes so far move to a fresh block of the same kind.
+function read_room(buf: string, packed: boolean, want: string): string {
+  var at: string = "4";
+  var fresh: string = "(call $__fern_str_box (i32.add (i32.const 4) (local.get $cap)))";
+  if (packed) {
+    at = "8";
+    fresh = "(call $__fern_arr_elems (local.get $cap) (i32.const 1))";
+  }
   var o: string = "";
   o = o + "      (if (i32.gt_u (i32.add (local.get $off) " + want + ") (local.get $cap)) (then\n";
   o = o + "        (loop $dbl\n";
   o = o + "          (local.set $cap (i32.shl (local.get $cap) (i32.const 1)))\n";
   o = o + "          (br_if $dbl (i32.gt_u (i32.add (local.get $off) " + want + ") (local.get $cap))))\n";
-  o = o + "        (local.set $grown (call $__fern_arr_elems (local.get $cap) (i32.const 1)))\n";
-  o = o + "        (memory.copy (i32.add (local.get $grown) (i32.const 8)) (i32.add (local.get $arr) (i32.const 8)) (local.get $off))\n";
-  o = o + "        (drop (call $__fern_arr_dec (local.get $arr)))\n";
-  o = o + "        (local.set $arr (local.get $grown))))\n";
+  o = o + "        (local.set $grown " + fresh + ")\n";
+  o = o + "        (memory.copy (i32.add (local.get $grown) (i32.const " + at + ")) (i32.add (local.get " + buf + ") (i32.const " + at + ")) (local.get $off))\n";
+  o = o + "        (drop (call $__fern_arr_dec (local.get " + buf + ")))\n";
+  o = o + "        (local.set " + buf + " (local.get $grown))))\n";
   return o;
 }
 
@@ -9773,12 +9779,10 @@ pub function utf8_valid_func(): string {
 // reads to EOF into a fresh string block, and returns Ok(block) (tag 0)
 // or Err(errno) (tag 1) on open failure. The rights args are i64 — written
 // directly in this hand-authored WAT, independent of the i32 value model.
-// Read cap is 64 KiB (enough for the compiler-test files; larger files
-// truncate — a follow-up can grow the block).
 pub function readfile_func(): string {
   var o: string = "";
   o = o + "  (func $__fern_read_file (param $np i32) (result i32)\n";
-  o = o + "    (local $err i32) (local $fd i32) (local $blk i32) (local $off i32) (local $n i32) (local $tmp i32) (local $cap i32)\n";
+  o = o + "    (local $err i32) (local $fd i32) (local $blk i32) (local $off i32) (local $n i32) (local $tmp i32) (local $cap i32) (local $grown i32)\n";
   // rights_base = FD_READ (2) | FD_SEEK (4) — a valid Rights mask
   // (all-ones is rejected: it sets bits outside the defined Rights set).
   o = o + "    (local.set $err (call $path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.const 0) (i64.const 6) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
@@ -9788,21 +9792,13 @@ pub function readfile_func(): string {
   o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (call $__fern_rc_inc (local.get $np))))\n";
   o = o + "      (return (local.get $tmp))))\n";
   o = o + "    (local.set $fd (i32.load (i32.const 16)))\n";
-  // Growable read buffer: a [len][bytes] block whose data capacity starts
-  // at 64 KiB and extends by 64 KiB whenever it fills. The bump allocator
-  // hands out contiguous bytes and nothing else allocates during the read
-  // loop, so each extension lands right after the current buffer. (The old
-  // code used a fixed 64 KiB buffer, silently truncating larger files: once
-  // off reached 64 KiB the iovec length went to 0, fd_read returned 0, and
-  // the loop mistook that for EOF.)
-  o = o + "    (local.set $cap (i32.const 65536))\n";
+  // A [len][bytes] block that read_room grows. Room comes before each
+  // read, so a full buffer is never mistaken for EOF.
+  o = o + "    (local.set $cap (i32.const 4096))\n";
   o = o + "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $cap))))\n";
   o = o + "    (local.set $off (i32.const 0))\n";
   o = o + "    (block $rd (loop $rc\n";
-  // Ensure room before reading, so a full buffer is never mistaken for EOF.
-  o = o + "      (if (i32.ge_u (local.get $off) (local.get $cap)) (then\n";
-  o = o + "        (drop (call $__fern_alloc (i32.const 65536)))\n";
-  o = o + "        (local.set $cap (i32.add (local.get $cap) (i32.const 65536)))))\n";
+  o = o + read_room("$blk", false, "(i32.const 1)");
   o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $off)))\n";
   o = o + "      (i32.store (i32.const 4) (i32.sub (local.get $cap) (local.get $off)))\n";
   o = o + "      (if (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
@@ -9814,6 +9810,7 @@ pub function readfile_func(): string {
   o = o + "    (i32.store (local.get $blk) (local.get $off))\n";
   // D9 gate (#5714): errno 25 (ilseq) is synthetic — no wasi call produces it.
   o = o + "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $blk) (i32.const 4)) (local.get $off))) (then\n";
+  o = o + "      (drop (call $__fern_arr_dec (local.get $blk)))\n";
   o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
   o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (call $__fern_rc_inc (local.get $np))))\n";
@@ -9828,7 +9825,7 @@ pub function readfile_func(): string {
 // readfile_bytes_func emits $__fern_read_file_bytes(path): Result[u8[], IoError]
 // — read_file's raw sibling: the same path_open / fd_read loop / fd_close
 // pipeline and error boxing as readfile_func, but fd_read fills a growing
-// packed u8[] (packed_read_room), the Ok payload, rather than a string block.
+// packed u8[] (read_room), the Ok payload, rather than a string block.
 pub function readfile_bytes_func(): string {
   var o: string = "";
   o = o + "  (func $__fern_read_file_bytes (param $np i32) (result i32)\n";
@@ -9844,7 +9841,7 @@ pub function readfile_bytes_func(): string {
   o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $cap) (i32.const 1)))\n";
   o = o + "    (local.set $off (i32.const 0))\n";
   o = o + "    (block $rd (loop $rc\n";
-  o = o + packed_read_room("(i32.const 1)");
+  o = o + read_room("$arr", true, "(i32.const 1)");
   o = o + "      (i32.store (i32.const 0) (i32.add (i32.add (local.get $arr) (i32.const 8)) (local.get $off)))\n";
   o = o + "      (i32.store (i32.const 4) (i32.sub (local.get $cap) (local.get $off)))\n";
   o = o + "      (if (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
