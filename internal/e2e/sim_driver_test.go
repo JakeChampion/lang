@@ -114,7 +114,7 @@ func TestSimDriverNativeX86_64(t *testing.T) {
 }
 
 func TestWASMSimDriver(t *testing.T) {
-	if code := runWasm(t, simDriverNativeProgram); code != 42 {
+	if code := runWasmNative(t, simDriverNativeProgram); code != 42 {
 		t.Errorf("wasm std/sim exit = %d, want 42 (failing check index)", code)
 	}
 }

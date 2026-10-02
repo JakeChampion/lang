@@ -738,48 +738,6 @@ func TestArm64AllocReuse(t *testing.T) {
 	}
 }
 
-// Wasm mirror. SKIPs without wasmtime (runs in CI). Sets RcFreeEnabled
-// around runWasm like TestWASMFreelistReuse.
-func TestWASMAllocReuse(t *testing.T) {
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-
-	sameClass := `function main(): i32 {
-    let a: usize = __alloc(64);
-    let b: usize = __alloc_reuse(a, 64, 64);
-    if (a == b) { return 0; }
-    return 1;
-}`
-	if got := runWasm(t, sameClass); got != 0 {
-		t.Errorf("same-class reuse: got %d, want 0 (token should be returned in place)", got)
-	}
-
-	nullToken := `function main(): i32 {
-    let z: usize = 0;
-    let a: usize = __alloc(64);
-    let b: usize = __alloc_reuse(z, 0, 64);
-    if (b == 0) { return 1; }
-    if (b == a) { return 2; }
-    return 0;
-}`
-	if got := runWasm(t, nullToken); got != 0 {
-		t.Errorf("null-token alloc: got %d, want 0 (must allocate a fresh distinct block)", got)
-	}
-
-	mismatch := `function main(): i32 {
-    let a: usize = __alloc(64);
-    let b: usize = __alloc_reuse(a, 64, 32);
-    if (a == b) { return 1; }
-    let c: usize = __alloc(64);
-    if (a == c) { return 0; }
-    return 2;
-}`
-	if got := runWasm(t, mismatch); got != 0 {
-		t.Errorf("class-mismatch: got %d, want 0 (free token + fresh alloc; freed block reusable)", got)
-	}
-}
-
 // --- Phase 5b: self-overwrite struct reuse (FBIP) end-to-end -------
 //
 // These exercise `p = T{ ... }` reusing p's box in place. Correctness

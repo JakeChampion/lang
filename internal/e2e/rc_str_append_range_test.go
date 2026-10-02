@@ -413,7 +413,7 @@ func TestStrAppendRangeTrap(t *testing.T) {
 			t.Run("wasm", func(t *testing.T) {
 				// wasm's `unreachable` surfaces as wasmtime's own non-zero
 				// exit, not 134 — assert the trap, not its spelling.
-				_, _, code := runComponent(t, buildNumComponent(t, c.src), runOpts{})
+				_, _, code := runComponent(t, buildCLIComponent(t, c.src), runOpts{})
 				if code == 0 {
 					t.Errorf("wasm did not trap (exit 0)")
 				}
