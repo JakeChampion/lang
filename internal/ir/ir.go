@@ -16538,10 +16538,13 @@ func (b *builder) callBody(n *ast.Call) error {
 		}
 		// A moved argument (computeOwnedArgMoves) leaves its slot null: the
 		// value on the stack is now the callee's, and every later release of
-		// the slot no-ops on the null.
+		// the slot no-ops on the null. A two-word slot takes a null per word.
 		if aid, isIdent := a.(*ast.Ident); isIdent && b.rc.ownedArgMoves[aid] {
 			if slot, ok := b.locals[aid.Name]; ok {
 				b.emit(Op{Kind: OpConstI32, I32: 0})
+				if TypeIsTwoWord(b.slotShapeType(slot), b.ptrW) {
+					b.emit(Op{Kind: OpConstI32, I32: 0})
+				}
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
 			}
 		}
