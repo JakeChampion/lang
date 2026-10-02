@@ -1367,7 +1367,9 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_idx":                 emitStrIdxHelper,
 	"__str_idx_nc":              emitArrIdxHelperNChecked("__str_idx_nc", 0, false),
 	"__fern_memchr":             emitMemchrHelper,
+	"__fern_count_byte_bytes":   emitCountByteBytesHelper,
 	"__fern_memchr_bytes":       emitMemchrBytesHelper,
+	"__fern_rmemchr_bytes":      emitRmemchrBytesHelper,
 	"__fern_mismatch":           emitMismatchHelper,
 	"__fern_rmemchr":            emitRmemchrHelper,
 	"__fern_count_byte":         emitCountByteHelper,
@@ -4247,7 +4249,9 @@ var runtimeHelperDeps = map[string][]string{
 	"buf_push":                         {"__fern_buf_reserve"},
 	"buf_push_range":                   {"__fern_buf_reserve"},
 	"buf_push_bytes_range":             {"buf_push_range"},
+	"__fern_count_byte_bytes":          {"__fern_count_byte"},
 	"__fern_memchr_bytes":              {"__fern_memchr"},
+	"__fern_rmemchr_bytes":             {"__fern_rmemchr"},
 	"buf_push_mapped":                  {"__fern_buf_reserve"},
 	"buf_push_filtered":                {"__fern_buf_reserve"},
 	"buf_push_expanded":                {"__fern_buf_reserve"},
@@ -5596,9 +5600,19 @@ func emitMismatchHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+func emitCountByteBytesHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("__fern_count_byte_bytes"))
+	w("\tb %s", fnLabel("__fern_count_byte"))
+}
+
 func emitMemchrBytesHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("__fern_memchr_bytes"))
 	w("\tb %s", fnLabel("__fern_memchr"))
+}
+
+func emitRmemchrBytesHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("__fern_rmemchr_bytes"))
+	w("\tb %s", fnLabel("__fern_rmemchr"))
 }
 
 // emitMemchrHelper writes __fern_memchr(s, byte, from) -> the index of the

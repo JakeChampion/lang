@@ -4891,6 +4891,14 @@ func (g *generator) emitMemchrRuntime() {
 // backward scan clamps it DOWN to len-1, so a negative `from` finds nothing
 // here where in __memchr it means "the whole string".
 func (g *generator) emitRmemchrRuntime() {
+	if g.usesRmemchrBytes {
+		g.line(".global __fern_rmemchr_bytes")
+		g.label("__fern_rmemchr_bytes")
+		g.emit("mov w3, w2")
+		g.emit("mov w2, w1")
+		g.emit("ldur w1, [x0, #-4]")
+		g.emit("b __fern_rmemchr")
+	}
 	g.line("")
 	g.line(".global __fern_rmemchr")
 	g.typeDirective("__fern_rmemchr")
@@ -5157,6 +5165,13 @@ func (g *generator) emitCountRunsRuntime() {
 // than sentinels: an out-of-range byte counts 0 because nothing can equal it,
 // an empty string counts 0 because it has no bytes.
 func (g *generator) emitCountByteRuntime() {
+	if g.usesCountByteBytes {
+		g.line(".global __fern_count_byte_bytes")
+		g.label("__fern_count_byte_bytes")
+		g.emit("mov w2, w1")
+		g.emit("ldur w1, [x0, #-4]")
+		g.emit("b __fern_count_byte")
+	}
 	g.line("")
 	g.line(".global __fern_count_byte")
 	g.typeDirective("__fern_count_byte")
@@ -15545,8 +15560,10 @@ type generator struct {
 	usesStrcmp   bool
 	usesStrord   bool
 	// usesMemchr gates the NEON byte-search kernel (__fern_memchr).
-	usesMemchr      bool
-	usesMemchrBytes bool
+	usesMemchr         bool
+	usesCountByteBytes bool
+	usesMemchrBytes    bool
+	usesRmemchrBytes   bool
 	// usesMismatch gates the two-range comparison kernel
 	// (__fern_mismatch), __memchr's kernel over a pair of operand
 	// streams instead of a broadcast needle.
@@ -20252,6 +20269,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__fern_memchr_bytes":
 			g.usesMemchrBytes = true
 			g.usesMemchr = true
+		case "__fern_rmemchr_bytes":
+			g.usesRmemchrBytes = true
+			g.usesRmemchr = true
 		case "__fern_memchr":
 			g.usesMemchr = true
 		case "__fern_mismatch":
@@ -20260,6 +20280,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRmemchr = true
 		case "__fern_crc32_cksum":
 			g.usesCrc32Cksum = true
+		case "__fern_count_byte_bytes":
+			g.usesCountByteBytes = true
+			g.usesCountByte = true
 		case "__fern_count_byte":
 			g.usesCountByte = true
 		case "__fern_scan_set":

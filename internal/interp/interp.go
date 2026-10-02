@@ -876,6 +876,33 @@ func New() *Interp {
 		}
 		return Number(-1), nil
 	}}
+	i.Builtins["__count_byte_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("__count_byte_bytes: expected 2 args, got %d", len(args))
+		}
+		bytes, ok := args[0].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__count_byte_bytes: expected an array, got %T", args[0])
+		}
+		needle, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__count_byte_bytes: expected an integer byte, got %T", args[1])
+		}
+		if needle < 0 || needle > 255 {
+			return Number(0), nil
+		}
+		count := 0
+		for at := 0; at < len(bytes.E); at++ {
+			b, ok := bytes.E[at].(Number)
+			if !ok {
+				return nil, fmt.Errorf("__count_byte_bytes: element %d is %T, not u8", at, bytes.E[at])
+			}
+			if b == needle {
+				count++
+			}
+		}
+		return Number(count), nil
+	}}
 	i.Builtins["__memchr_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__memchr_bytes: expected 3 args, got %d", len(args))
@@ -900,6 +927,37 @@ func New() *Interp {
 			b, ok := bytes.E[at].(Number)
 			if !ok {
 				return nil, fmt.Errorf("__memchr_bytes: element %d is %T, not u8", at, bytes.E[at])
+			}
+			if b == needle {
+				return Number(at), nil
+			}
+		}
+		return Number(-1), nil
+	}}
+	i.Builtins["__rmemchr_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__rmemchr_bytes: expected 3 args, got %d", len(args))
+		}
+		bytes, ok := args[0].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__rmemchr_bytes: expected an array, got %T", args[0])
+		}
+		needle, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__rmemchr_bytes: expected an integer byte, got %T", args[1])
+		}
+		start, ok := args[2].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__rmemchr_bytes: expected an integer start, got %T", args[2])
+		}
+		if needle < 0 || needle > 255 {
+			return Number(-1), nil
+		}
+		from := min(int(start), len(bytes.E)-1)
+		for at := from; at >= 0; at-- {
+			b, ok := bytes.E[at].(Number)
+			if !ok {
+				return nil, fmt.Errorf("__rmemchr_bytes: element %d is %T, not u8", at, bytes.E[at])
 			}
 			if b == needle {
 				return Number(at), nil

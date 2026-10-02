@@ -15484,6 +15484,18 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	if id.Name == "__count_byte_bytes" && len(n.Args) == 2 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_byte_bytes", Width: ResNarrow, I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}}}})
+			return nil
+		}
+	}
 	if id.Name == "__memchr_bytes" && len(n.Args) == 3 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			for _, a := range n.Args {
@@ -15492,6 +15504,18 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 			}
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_memchr_bytes", Width: ResNarrow, I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}}}})
+			return nil
+		}
+	}
+	if id.Name == "__rmemchr_bytes" && len(n.Args) == 3 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_rmemchr_bytes", Width: ResNarrow, I32: 3,
 				Ext: &OpExt{ArgTypes: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}}}})
 			return nil
 		}
