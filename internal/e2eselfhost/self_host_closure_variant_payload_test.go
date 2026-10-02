@@ -15,18 +15,18 @@ import (
 const closureVariantBuiltSrc = `enum E { A(i32, (i32) => i32), B }
 function mk(k: i32): (i32) => i32 { return (x: i32): i32 => x + k; }
 function round(i: i32): i32 {
-    var a: i32 = 0;
-    var v1: E = A(i, (x: i32): i32 => x * 2 + i);
+    let a: i32 = 0;
+    let v1: E = A(i, (x: i32): i32 => x * 2 + i);
     match (v1) { A(n, _) => { a = a + n; }, B => { a = a + 1; } }
-    var v2: E = A(i, (x: i32): i32 => x + i);
+    let v2: E = A(i, (x: i32): i32 => x + i);
     match (v2) { A(n, f) => { a = a + f(n); }, B => { a = a + 1; } }
-    var g: (i32) => i32 = (x: i32): i32 => x * 3 + i;
-    var v3: E = A(i, g);
+    let g: (i32) => i32 = (x: i32): i32 => x * 3 + i;
+    let v3: E = A(i, g);
     match (v3) { A(n, f) => { a = a + f(n); }, B => { a = a + 1; } }
-    var v4: E = A(i, mk(i));
+    let v4: E = A(i, mk(i));
     match (v4) { A(n, f) => { a = a + f(n); }, B => { a = a + 1; } }
-    var v5: E = E.A(i + 1, mk(2));
-    var v6: E = B;
+    let v5: E = E.A(i + 1, mk(2));
+    let v6: E = B;
     match (v6) { A(n, f) => { a = a + f(n); }, B => { a = a + 5; } }
     return a + g(1);
 }
@@ -49,14 +49,14 @@ function use_e(e: E): i32 {
     return 0;
 }
 function round(i: i32): i32 {
-    var a: i32 = 0;
-    var v: E = lam(i);
+    let a: i32 = 0;
+    let v: E = lam(i);
     match (v) { A(n, f) => { a = a + f(n); }, B => { a = a + 1; } }
-    var w: E = viacall(i);
+    let w: E = viacall(i);
     match (w) { A(n, f) => { a = a + f(n); }, B => { a = a + 2; } }
-    var unused: E = lam(i + 1);
-    var g: (i32) => i32 = (x: i32): i32 => x - i;
-    var p: E = wrap(i, g);
+    let unused: E = lam(i + 1);
+    let g: (i32) => i32 = (x: i32): i32 => x - i;
+    let p: E = wrap(i, g);
     a = a + use_e(p) + use_e(viacall(i + 1)) + g(50);
     return a;
 }
@@ -68,12 +68,12 @@ const closureVariantStructFieldSrc = `enum E { A(i32, (i32) => i32), B }
 struct H { e: E, n: i32 }
 function mk(k: i32): (i32) => i32 { return (x: i32): i32 => x + k; }
 function round(i: i32): i32 {
-    var a: i32 = 0;
-    var h: H = H { e: A(i, (x: i32): i32 => x + i), n: i };
+    let a: i32 = 0;
+    let h: H = H { e: A(i, (x: i32): i32 => x + i), n: i };
     match (h.e) { A(n, f) => { a = a + f(n); }, B => { a = a + 1; } }
-    var keep: (i32) => i32 = (x: i32): i32 => x * 2;
-    var hk: H = H { e: A(i, keep), n: 1 };
-    var k: i32 = 0;
+    let keep: (i32) => i32 = (x: i32): i32 => x * 2;
+    let hk: H = H { e: A(i, keep), n: 1 };
+    let k: i32 = 0;
     while (k < 3) {
         hk = H { e: A(k, mk(k)), n: k };
         match (hk.e) { A(n, f) => { a = a + f(n); }, B => { a = a + 1; } }
@@ -89,23 +89,23 @@ function round(i: i32): i32 {
 // called after the variant is gone.
 const closureVariantOutlivesSrc = `enum E { A(i32, (i32) => i32), B }
 function pick(i: i32): (i32) => i32 {
-    var v: E = A(i, (x: i32): i32 => x + i);
+    let v: E = A(i, (x: i32): i32 => x + i);
     match (v) { A(n, f) => { return f; }, B => { return (x: i32): i32 => 0; } }
     return (x: i32): i32 => 1;
 }
 function round(i: i32): i32 {
-    var keep: (i32) => i32 = (x: i32): i32 => x + i;
-    var a: i32 = 0;
-    var k: i32 = 0;
+    let keep: (i32) => i32 = (x: i32): i32 => x + i;
+    let a: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) {
-        var v: E = A(k, keep);
+        let v: E = A(k, keep);
         match (v) { A(n, f) => { a = a + f(n); }, B => { a = a + 1; } }
         k = k + 1;
     }
-    var out: (i32) => i32 = (x: i32): i32 => x;
-    var w: E = A(i, (x: i32): i32 => x * 3);
+    let out: (i32) => i32 = (x: i32): i32 => x;
+    let w: E = A(i, (x: i32): i32 => x * 3);
     match (w) { A(n, f) => { out = f; }, B => { out = (x: i32): i32 => 0; } }
-    var h: (i32) => i32 = pick(i);
+    let h: (i32) => i32 = pick(i);
     return a + keep(100) + out(2) + h(4);
 }
 ` + closureVariantMain
@@ -115,8 +115,8 @@ function round(i: i32): i32 {
 const closureVariantArraySrc = `enum E { A(i32, (i32) => i32), B }
 function mk(k: i32): (i32) => i32 { return (x: i32): i32 => x + k; }
 function round(i: i32): i32 {
-    var g: (i32) => i32 = (x: i32): i32 => x * 2;
-    var es: E[] = [A(i, mk(i)), B, A(i + 1, (x: i32): i32 => x - i), A(2, g)];
+    let g: (i32) => i32 = (x: i32): i32 => x * 2;
+    let es: E[] = [A(i, mk(i)), B, A(i + 1, (x: i32): i32 => x - i), A(2, g)];
     return es.len() + g(i);
 }
 ` + closureVariantMain
@@ -127,11 +127,11 @@ const closureVariantArgBorrowSrc = `enum E { A(i32, (i32) => i32), B }
 function mk(k: i32): (i32) => i32 { return (x: i32): i32 => x + k; }
 function apply2(f: (i32) => i32, n: i32): i32 { return f(f(n)); }
 function round(i: i32): i32 {
-    var a: i32 = 0;
-    var v: E = A(i, mk(i));
+    let a: i32 = 0;
+    let v: E = A(i, mk(i));
     match (v) { A(n, f) => { a = a + apply2(f, n); }, B => { a = a + 1; } }
-    var keep: (i32) => i32 = (x: i32): i32 => x * 3;
-    var w: E = A(i, keep);
+    let keep: (i32) => i32 = (x: i32): i32 => x * 3;
+    let w: E = A(i, keep);
     match (w) { A(n, f) => { a = a + apply2(f, n) + f(1); }, B => { a = a + 1; } }
     return a + keep(2);
 }
@@ -142,22 +142,22 @@ function round(i: i32): i32 {
 const closureVariantMethodSrc = `enum E { A(i32, (i32) => i32), B }
 struct Maker { k: i32 }
 function (b: Maker) maker(): (i32) => i32 {
-    var k: i32 = b.k;
+    let k: i32 = b.k;
     return (x: i32): i32 => x + k;
 }
 function round(i: i32): i32 {
-    var a: i32 = 0;
-    var b: Maker = Maker { k: i };
-    var v: E = A(i, b.maker());
+    let a: i32 = 0;
+    let b: Maker = Maker { k: i };
+    let v: E = A(i, b.maker());
     match (v) { A(n, f) => { a = a + f(n); }, B => { a = a + 1; } }
-    var unused: E = A(1, b.maker());
+    let unused: E = A(1, b.maker());
     return a;
 }
 ` + closureVariantMain
 
 const closureVariantMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;

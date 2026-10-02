@@ -54,16 +54,16 @@ import "std/string";
 // far under both measured leaks and far over the 0 a released box produces.
 func sliceBuiltinHeap(body string) string {
 	return sliceBuiltinPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
+    let base: string = w(pre);
 ` + body + `
 }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -83,48 +83,48 @@ var strSliceBuiltinRecvCases = []struct {
 	// frees what the result points into. It is outside str_borrowing_method and
 	// stays outside; this case reads the result and the source afterwards.
 	{"str-slice-recv-builtin-trim-refused", sliceBuiltinPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var t: str = slice_unchecked(base, 4, base.len()).trim();
-    var p1: string = w("XXXXXXXX");
-    var p2: string = w("YYYYYYYY");
+    let base: string = w(pre);
+    let t: str = slice_unchecked(base, 4, base.len()).trim();
+    let p1: string = w("XXXXXXXX");
+    let p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
     if (has_sub(t, "XXXX")) { return 0 - 1; }
     if (!has_prefix(t, "efgh-a-wide")) { return 0 - 2; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 3; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 102) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 3000) { let r: i32 = round(pre); if (r != 102) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// REFUSED: split's result carries views INTO the receiver's bytes, so the box
 	// has to outlive the call. Also outside str_borrowing_method.
 	{"str-slice-recv-builtin-split-refused", sliceBuiltinPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var parts: string[] = slice_unchecked(base, 4, base.len()).split("-");
-    var p1: string = w("XXXXXXXX");
-    var p2: string = w("YYYYYYYY");
+    let base: string = w(pre);
+    let parts: string[] = slice_unchecked(base, 4, base.len()).split("-");
+    let p1: string = w("XXXXXXXX");
+    let p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
     if (parts.len() < 2) { return 0 - 1; }
     if (parts[0] != "efgh") { return 0 - 2; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 3; }
     return parts.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// The SOURCE outlives the released box. Freeing a 24-byte view header must
 	// leave the shared bytes alone — the immortal-rc case in __fern_str_view_free
 	// is what makes that true, and a plain __fern_str_free here would have been
 	// both wrong in kind and inert in practice.
 	{"str-slice-recv-builtin-source-live", sliceBuiltinPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var up: string = slice_unchecked(base, 4, base.len()).to_ascii_upper();
-    var p1: string = w("XXXXXXXX");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("ZZZZZZZZ");
+    let base: string = w(pre);
+    let up: string = slice_unchecked(base, 4, base.len()).to_ascii_upper();
+    let p1: string = w("XXXXXXXX");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("ZZZZZZZZ");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (has_sub(up, "XXXX")) { return 0 - 2; }
     if (!has_prefix(up, "EFGH-A-WIDE")) { return 0 - 3; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 4; }
     return base.len() + up.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 3000) { let r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrSliceBuiltinRecvIRX86_64 drives the cases through the

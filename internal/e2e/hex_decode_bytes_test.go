@@ -18,7 +18,7 @@ import "std/utf8" as utf8;
 
 function main(): i32 {
     // The bytes come back exactly, including ones that are not text.
-    var b: u8[] = hex.hex_decode("ff");
+    let b: u8[] = hex.hex_decode("ff");
     if (b.len() != 1) { return 1; }
     if (b[0] as i32 != 255) { return 2; }
     // ...and they really are invalid UTF-8, which is the whole reason
@@ -29,7 +29,7 @@ function main(): i32 {
     }
 
     // ASCII payloads decode to bytes that DO read back as text.
-    var hi: u8[] = hex.hex_decode("6869");
+    let hi: u8[] = hex.hex_decode("6869");
     match (utf8.from_bytes(hi)) {
         Some(s) => { if (s != "hi") { return 4; } },
         None => { return 5; }
@@ -42,12 +42,12 @@ function main(): i32 {
 
     // Every byte value round-trips through encode/decode byte-exactly,
     // including the 128 that are not valid UTF-8 on their own.
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 256) {
-        var one: u8[] = [i as u8];
-        var enc: string = hex.hex_encode(one);
+        let one: u8[] = [i as u8];
+        let enc: string = hex.hex_encode(one);
         if (enc.len() != 2) { return 9; }
-        var back: u8[] = hex.hex_decode(enc);
+        let back: u8[] = hex.hex_decode(enc);
         if (back.len() != 1) { return 10; }
         if (back[0] as i32 != i) { return 11; }
         i = i + 1;

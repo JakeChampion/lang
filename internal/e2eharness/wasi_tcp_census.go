@@ -18,15 +18,15 @@ import (
 // whose buffers have separate reclamation requirements. The guest owns both
 // ends and uses an ephemeral listener, avoiding a port-reservation race.
 const WasiTCPCensusProbe = `function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
-        var listener: i32 = tcp_listen(0);
+        let listener: i32 = tcp_listen(0);
         if (listener < 0) { return 1; }
-        var port: i32 = tcp_local_port(listener);
+        let port: i32 = tcp_local_port(listener);
         if (port <= 0) { return 2; }
-        var client: i32 = tcp_connect(127 + 16777216, port);
+        let client: i32 = tcp_connect(127 + 16777216, port);
         if (client < 0) { return 3; }
-        var server: i32 = tcp_accept(listener);
+        let server: i32 = tcp_accept(listener);
         if (server < 0) { return 4; }
         if (tcp_close(server) != 0) { return 5; }
         if (tcp_close(client) != 0) { return 6; }
@@ -101,7 +101,7 @@ func WasiUDPCensusProbe(t *testing.T, data string) (string, func()) {
 		done <- nil
 	}()
 	src := fmt.Sprintf(`function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
         if (udp_send("127.0.0.1", %d, %q) != %d) { return 1; }
         i = i + 1;
@@ -166,9 +166,9 @@ func wasiTCPStreamCensusProbe(t *testing.T, data string, receive bool) (string, 
 		done <- nil
 	}()
 	src := fmt.Sprintf(`function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
-        var c: i32 = tcp_connect(127 + 16777216, %d);
+        let c: i32 = tcp_connect(127 + 16777216, %d);
         if (c < 0) { return 1; }
         if (tcp_send(c, %q) != %d) { return 2; }
         if (tcp_close(c) != 0) { return 3; }
@@ -178,8 +178,8 @@ func wasiTCPStreamCensusProbe(t *testing.T, data string, receive bool) (string, 
 }`, listener.Addr().(*net.TCPAddr).Port, data, len(data))
 	if receive {
 		src = fmt.Sprintf(`function read(c: i32): i32 {
-    var bytes: u8[] = tcp_recv(c, 4096);
-    var i: i32 = 0;
+    let bytes: u8[] = tcp_recv(c, 4096);
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (bytes[i] != 120) { return -1; }
         i = i + 1;
@@ -187,12 +187,12 @@ func wasiTCPStreamCensusProbe(t *testing.T, data string, receive bool) (string, 
     return bytes.len();
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
-        var c: i32 = tcp_connect(127 + 16777216, %d);
+        let c: i32 = tcp_connect(127 + 16777216, %d);
         if (c < 0) { return 1; }
-        var total: i32 = 0;
-        var n: i32 = read(c);
+        let total: i32 = 0;
+        let n: i32 = read(c);
         while (n > 0) { total = total + n; n = read(c); }
         if (n < 0 || total != %d) { return 2; }
         if (tcp_close(c) != 0) { return 3; }

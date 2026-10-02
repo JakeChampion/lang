@@ -9,7 +9,7 @@ The last residue of #7226. `t = (k, u)` with a `string` at position 1 stranded
 The element-kinds string is recorded ONCE, in `bind_var_slot`, from the VAR
 site's literal. Every site that frees a `"TUP:"` box replays it: the rebind
 store, the scope-exit sweep, the precise drop, the reuse recipient release. So
-each of those replays the var site's description against a box that some OTHER
+each of those replays the let site's description against a box that some OTHER
 writer filled. For `'a'` that is harmless — an array element's release is one
 type-fixed `rc_dec` whichever writer stored it. For a string it is not: a writer
 that left a VIEW there would have its box `__fern_str_free`d out from under the
@@ -32,7 +32,7 @@ that the position holds a box the release may claim.
 control flow, stores at each `string`/`str` position of the declaration's tuple
 annotation a value `tup_str_writer_owned` accepts: `strarr_value_is_fresh` (a
 literal, a concat, a string-method producer, a whole-program fresh-ret call), or
-a bare ident whose SOLE `var` binding in the body is one of those and which is
+a bare ident whose SOLE `let` binding in the body is one of those and which is
 never reassigned. An assignment whose value is not a tuple literal disagrees. A
 name with no assignment agrees vacuously, so a tuple that is never rebound keeps
 exactly the kinds it had — that is what makes this a widening and not a change to
@@ -43,7 +43,7 @@ It is credited `"TUPSTRW:"` on the binding site, and `bind_var_slot` records
 lifting it at the rebind alone would have left the scope-exit exposure above in
 place. `tup_kinds_arr_only` is replaced by `tup_kinds_rebind_safe`, which admits
 `'a'` and `'s'` and still refuses `'t'` — a struct position's release is a deep
-field drop keyed on the var site's MOVE of the source, which no rebind repeats.
+field drop keyed on the let site's MOVE of the source, which no rebind repeats.
 
 Views and borrowed aliases are refused by **positive proof of ownership**, not by
 detection. The credit pass runs before lowering, so `is_str_view_local_slot` and
@@ -55,7 +55,7 @@ admitted too and the static-literal rebind's kinds are undisturbed.
 ## The credit-side half, without which the fix is worth exactly half
 
 Releasing at the rebind alone moved 160 B/round to 80, not 0. The other 80 is the
-rebind's element LOCAL: `body_unsafe_for_tup_alias` forgives a `var t = (…, u, …)`
+rebind's element LOCAL: `body_unsafe_for_tup_alias` forgives a `let t = (…, u, …)`
 mention of `u` (the `"TUPE:"` interlock) but had no arm for `t = (…, u, …)`, so a
 rebind's element was still an escape, earned no `"STR:"`, and its own box was
 never swept. The assign arm is added under both `"TUPE:"` and the new `"TUPSW:"`
@@ -91,7 +91,7 @@ Refusals, unchanged in both directions and balanced with zero underflows:
 | refused writer | rounds | before | after |
 | --- | --- | --- | --- |
 | string LITERAL at the rc position | 200 | 600/200 **24000** | 600/200 **24000** |
-| borrowed alias `var u: string = b` | 200 | 800/400 **32000** | 800/400 **32000** |
+| borrowed alias `let u: string = b` | 200 | 800/400 **32000** | 800/400 **32000** |
 | `slice_unchecked` view bound to a local | 200 | 1000/600 **20800** | 1000/600 **20800** |
 
 The 2.0x per doubling on the headline row is the discriminator: a bounded strand
@@ -105,7 +105,7 @@ a control must), and the two round counts fail at 16000 and 32000.
 ## Trap: do not reach for `.trim()` or a bare `slice_unchecked` to build a view
 
 The checker separates `str` from `string`, so a view **cannot** reach a
-`string`-annotated tuple position at all — `var u: string = b.trim()` is E003 and
+`string`-annotated tuple position at all — `let u: string = b.trim()` is E003 and
 `slice_unchecked` in a `string`-returning function is E002. The view row here
 therefore annotates the tuple `(i32, str)`. Note also that the compiler's own
 view CREDIT (`str_view_local`, `__fern_str_view_free`) does not fire on either
@@ -120,14 +120,14 @@ the right length on the self-host, on every round count, with no rc involvement:
 ```fern
 function (s: string) tail(n: i32): str { return slice_unchecked(s, n, s.len()); }
 function main(): i32 {
-    var b: string = w("cd");            // len 54
-    var u: str = b.tail(2);             // len 52
-    var t: (i32, str) = (0, u);
+    let b: string = w("cd");            // len 54
+    let u: str = b.tail(2);             // len 52
+    let t: (i32, str) = (0, u);
     return t.1.len() + b.len();         // native/interp 106, self-host 80
 }
 ```
 
-Binding the element out first (`var v: str = t.1; v.len()`) agrees with both
+Binding the element out first (`let v: str = t.1; v.len()`) agrees with both
 oracles, and so does the same shape with `string` in the annotation, so it is the
 `str` SPELLING of a tuple element tag that a method-dispatch consumer does not
 normalise. Identical before and after this change (verified on the parent), and

@@ -118,7 +118,7 @@ func TestExternRecordResultSubwordCustomProvider(t *testing.T) {
 function make_mix(): Mix;
 
 function main(): i32 {
-	var p: Mix = make_mix();
+	let p: Mix = make_mix();
 	if (p.a + (p.b as i32) + p.c == 1295) { write("` + want + `"); } else { write("mr-bad"); }
 	return 0;
 }`

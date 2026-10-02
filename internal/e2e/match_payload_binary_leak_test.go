@@ -14,7 +14,7 @@ function pair(n: i32): Result[string, i32] {
     return Ok("p" + n.to_string());
 }
 function boxed(n: i32): Option[string] {
-    var r: Option[string] = None;
+    let r: Option[string] = None;
     if (n >= 0) { r = Some("b" + n.to_string()); }
     return r;
 }
@@ -36,8 +36,8 @@ function is_three(n: i32): boolean {
     return false;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 40) {
         match (target(i, i % 2 == 0)) { Ok(s) => { total = total + s.len(); }, Err(_) => { return 1; } }
         if (is_three(i)) { total = total + 100; }

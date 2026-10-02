@@ -31,10 +31,10 @@ function main(): i32 { return iter.sum(0..=10); }`},
 function main(): i32 { return iter.count(2..7); }`},
 	// Precedence: `..` binds looser than `+`, so 0..n+1 is 0..(n+1) → sum 0..4 = 6.
 	{"precedence", `import "core/iter";
-function main(): i32 { var n: i32 = 3; return iter.sum(0..n+1); }`},
+function main(): i32 { let n: i32 = 3; return iter.sum(0..n+1); }`},
 	// Range bound to a var, then consumed as a value.
 	{"bound-to-var", `import "core/iter";
-function main(): i32 { var r = 1..5; return iter.sum(r); }`},
+function main(): i32 { let r = 1..5; return iter.sum(r); }`},
 	// product over an inclusive range: 1*2*3*4 = 24.
 	{"product-inclusive", `import "core/iter";
 function main(): i32 { return iter.product(1..=4); }`},

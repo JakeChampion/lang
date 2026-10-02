@@ -12,13 +12,13 @@ import "testing"
 const pairPayloadBorrowedArgSrc = `import "std/headers";
 import "std/string";
 function bytes_string(buf: u8[], from: i32, end: i32): string {
-    var out: u8[] = __alloc_u8(end - from);
-    var i: i32 = 0;
+    let out: u8[] = __alloc_u8(end - from);
+    let i: i32 = 0;
     while (from + i < end) { out = out.with(i, buf[from + i]); i = i + 1; }
     return string_from_bytes_unchecked(out);
 }
 function find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
-    var i: i32 = from;
+    let i: i32 = from;
     while (i < end) { if (buf[i] == b) { return i; } i = i + 1; }
     return -1;
 }
@@ -27,12 +27,12 @@ function field_value(buf: u8[], from: i32, end: i32): Option[string] {
     return Some(bytes_string(buf, from, end));
 }
 function parse(buf: u8[]): Option[HeaderMap] {
-    var h: HeaderMap = headers.header_map_new();
-    var at: i32 = 0;
+    let h: HeaderMap = headers.header_map_new();
+    let at: i32 = 0;
     while (at < buf.len()) {
-        var e: i32 = find_byte(buf, at, buf.len(), 10 as u8);
+        let e: i32 = find_byte(buf, at, buf.len(), 10 as u8);
         if (e < 0) { e = buf.len(); }
-        var col: i32 = find_byte(buf, at, e, 58 as u8);
+        let col: i32 = find_byte(buf, at, e, 58 as u8);
         if (col < 0) { return None; }
         match (field_value(buf, col + 1, e)) {
             Some(v) => { h = h.append(bytes_string(buf, at, col), v); },
@@ -43,9 +43,9 @@ function parse(buf: u8[]): Option[HeaderMap] {
     return Some(h);
 }
 function main(): i32 {
-    var block: u8[] = "Host: localhost.localdomain\nX-A: one-two-three-four\nX-B: two-three-four-five\n".bytes();
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let block: u8[] = "Host: localhost.localdomain\nX-A: one-two-three-four\nX-B: two-three-four-five\n".bytes();
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         match (parse(block)) {
             Some(h) => { n = n + h.len(); },
@@ -82,12 +82,12 @@ func pairPayloadSinkSrc(decl, body, tail string) string {
 	return `import "core/map";
 function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
-    var b: u8[] = __alloc_u8(8);
+    let b: u8[] = __alloc_u8(8);
     return Some(string_from_bytes_unchecked(b));
 }
 function main(): i32 {
     ` + decl + `
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         match (mk(i)) { Some(v) => { ` + body + ` }, None => { return 1; } }
         i = i + 1;
@@ -98,9 +98,9 @@ function main(): i32 {
 }
 
 var pairPayloadSinkCases = []struct{ name, src string }{
-	{"array-append", pairPayloadSinkSrc(`var xs: string[] = [];`, `xs = xs.append(v);`, `xs.len() - 100`)},
-	{"map-value", pairPayloadSinkSrc(`var m: Map[string, string] = map_new(4);`, `m = m.insert("k", v);`, `m.len() - 1`)},
-	{"map-key", pairPayloadSinkSrc(`var m: Map[string, i32] = map_new(4);`, `m = m.insert(v, i);`, `m.len() - 1`)},
+	{"array-append", pairPayloadSinkSrc(`let xs: string[] = [];`, `xs = xs.append(v);`, `xs.len() - 100`)},
+	{"map-value", pairPayloadSinkSrc(`let m: Map[string, string] = map_new(4);`, `m = m.insert("k", v);`, `m.len() - 1`)},
+	{"map-key", pairPayloadSinkSrc(`let m: Map[string, i32] = map_new(4);`, `m = m.insert(v, i);`, `m.len() - 1`)},
 }
 
 func TestLeakCheckPairPayloadSinkX86_64(t *testing.T) {

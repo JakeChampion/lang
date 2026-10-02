@@ -21,14 +21,14 @@ func TestNonASCIIIdentifiersRejected(t *testing.T) {
 		name, src, wantMsg string
 		wantCol            int
 	}{
-		{"e-acute", "var café = 7;", "identifiers must be ASCII; found 'é'", 8},
+		{"e-acute", "let café = 7;", "identifiers must be ASCII; found 'é'", 8},
 		// The one that used to compile.
-		{"e-circumflex", "var cafê = 7;", "identifiers must be ASCII; found 'ê'", 8},
-		{"greek-start", "var Ω = 7;", "identifiers must be ASCII; found 'Ω'", 5},
-		{"cyrillic", "var привет = 7;", "identifiers must be ASCII; found 'п'", 5},
+		{"e-circumflex", "let cafê = 7;", "identifiers must be ASCII; found 'ê'", 8},
+		{"greek-start", "let Ω = 7;", "identifiers must be ASCII; found 'Ω'", 5},
+		{"cyrillic", "let привет = 7;", "identifiers must be ASCII; found 'п'", 5},
 		// A non-letter still gets the generic message.
 		{"em-dash", "x — 1", "unexpected character '—'", 3},
-		{"emoji", "var 🎉 = 1;", "unexpected character '🎉'", 5},
+		{"emoji", "let 🎉 = 1;", "unexpected character '🎉'", 5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := Tokenize(tc.src)
@@ -68,7 +68,7 @@ func TestIdentifierTextIsWellFormed(t *testing.T) {
 // identifiers are constrained. This is the half of the contract that
 // would be easy to break while tightening the other half.
 func TestNonASCIIAllowedInStringsAndComments(t *testing.T) {
-	toks, comments, err := Tokenize(`var s = "café Ω 🎉"; // façade Ω`)
+	toks, comments, err := Tokenize(`let s = "café Ω 🎉"; // façade Ω`)
 	if err != nil {
 		t.Fatalf("Tokenize: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestNonASCIIAllowedInStringsAndComments(t *testing.T) {
 // as U+FFFD — "invalid UTF-8" and "unsupported character" are different
 // problems with different fixes.
 func TestInvalidUTF8Byte(t *testing.T) {
-	_, _, err := Tokenize("var x = \xff;")
+	_, _, err := Tokenize("let x = \xff;")
 	if err == nil {
 		t.Fatal("Tokenize succeeded on invalid UTF-8, want an error")
 	}
@@ -117,7 +117,7 @@ func TestASCIIIdentifiersUnchanged(t *testing.T) {
 // that byte is true (it is NBSP in Latin-1), so the old trivia skipper
 // would silently swallow it as whitespace.
 func TestContinuationByteIsNotWhitespace(t *testing.T) {
-	_, _, err := Tokenize("var x\xa0= 1;")
+	_, _, err := Tokenize("let x\xa0= 1;")
 	if err == nil {
 		t.Fatal("Tokenize swallowed a 0xA0 continuation byte as whitespace")
 	}
@@ -131,9 +131,9 @@ func TestInvalidUTF8InLiteralOrComment(t *testing.T) {
 		src       string
 		line, col int
 	}{
-		{"var s = \"a\xb2\";", 1, 11},
-		{"var x = 1;\n// caf\xe9\nvar y = 2;", 2, 7},
-		{"var s = \"\xed\xa0\x80\";", 1, 10},
+		{"let s = \"a\xb2\";", 1, 11},
+		{"let x = 1;\n// caf\xe9\nlet y = 2;", 2, 7},
+		{"let s = \"\xed\xa0\x80\";", 1, 10},
 	} {
 		_, _, err := Tokenize(tc.src)
 		lerr, ok := err.(*Error)

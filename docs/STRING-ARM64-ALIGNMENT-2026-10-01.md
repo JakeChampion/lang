@@ -14,9 +14,12 @@ compiler. Primary execution passes on Darwin, x86-64 Linux, ARM64 Linux
 and WASM. The existing assembler data regression also passes, along with
 the full unit suite and `make lint-all`.
 
-The pinned Darwin bootstrap passes its compiler and `tr` smoke tests.
-Stage2 and stage3 are byte-identical at 14,344,993 bytes, SHA-256
+At the original alignment checkpoint, the pinned Darwin bootstrap passes
+its compiler and `tr` smoke tests. Stages two and three are byte-identical
+at 14,344,993 bytes, SHA-256
 `8ab5d33388576d24b204cfdf26ad229eec0cf23b80c98e32f6fbc945ef604faf`.
+The latest integrated compiler's validation is recorded in
+[the producer report](STRING-REGEX-UTF8-2026-10-01.md).
 
 The issue surfaced while measuring the owned-byte RNG API. Its additional
 empty-array constant needs 24 bytes in the Clang-assembled object, but the

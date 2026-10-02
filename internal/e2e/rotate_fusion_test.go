@@ -38,7 +38,7 @@ function rotr64(x: u64, n: u64): u64 {
 
 function main(): i32 {
     // 32-bit, top bit set: an arithmetic right shift would fill with ones.
-    var d: u32 = 0xdeadbeef as u32;
+    let d: u32 = 0xdeadbeef as u32;
     if (((d >> (8 as u32)) | (d << (24 as u32))) != (0xefdeadbe as u32)) { return 1; }
     if (((d >> (1 as u32)) | (d << (31 as u32))) != (0xef56df77 as u32)) { return 2; }
     if (((d >> (31 as u32)) | (d << (1 as u32))) != (0xbd5b7ddf as u32)) { return 3; }
@@ -47,22 +47,22 @@ function main(): i32 {
     if (((d << (24 as u32)) | (d >> (8 as u32))) != (0xefdeadbe as u32)) { return 4; }
 
     // 64-bit.
-    var p: u64 = 0x0123456789abcdef as u64;
-    var q: u64 = 0xfedcba9876543210 as u64;
+    let p: u64 = 0x0123456789abcdef as u64;
+    let q: u64 = 0xfedcba9876543210 as u64;
     if (((p >> (8 as u64)) | (p << (56 as u64))) != (0xef0123456789abcd as u64)) { return 5; }
     if (((q >> (63 as u64)) | (q << (1 as u64))) != (0xfdb97530eca86421 as u64)) { return 6; }
     if (((q << (63 as u64)) | (q >> (1 as u64))) != (0x7f6e5d4c3b2a1908 as u64)) { return 7; }
 
     // A repeated compound operand — the shape std/crypto's digests write, and
     // the one the fusion has to recognise as a single value on both sides.
-    var a: u64 = 0xa5a5a5a5a5a5a5a5 as u64;
-    var b: u64 = 0x5a5a5a5a5a5a5a5a as u64;
+    let a: u64 = 0xa5a5a5a5a5a5a5a5 as u64;
+    let b: u64 = 0x5a5a5a5a5a5a5a5a as u64;
     if ((((a ^ b) >> (32 as u64)) | ((a ^ b) << (32 as u64))) != (0xffffffffffffffff as u64)) { return 8; }
-    var c: u64 = 0xffffffff00000000 as u64;
+    let c: u64 = 0xffffffff00000000 as u64;
     if ((((a ^ c) >> (16 as u64)) | ((a ^ c) << (48 as u64))) != (0xa5a55a5a5a5aa5a5 as u64)) { return 9; }
 
     // Non-constant counts: not fusable, and must keep working.
-    var i: u32 = 1 as u32;
+    let i: u32 = 1 as u32;
     while (i < (32 as u32)) {
         if (rotr32(0x80000001 as u32, i) != rotl32(0x80000001 as u32, (32 as u32) - i)) { return 20; }
         i = i + (1 as u32);
@@ -77,7 +77,7 @@ function main(): i32 {
 
     // A SIGNED right shift is not a rotate: i32 keeps the sign bit, so
     // -2 shifted right by 1 is -1 and the or below is all-ones.
-    var s: i32 = -2;
+    let s: i32 = -2;
     if (((s >> 1) | (s << 31)) != -1) { return 40; }
 
     return 42;

@@ -7,11 +7,11 @@ func TestTupleMatchAcceptsWildcardOnlyArms(t *testing.T) {
 		{"expression", `function main(): i32 { return match ((1i32, true)) { _ => 41i32 }; }`},
 		{"statement", `function main(): i32 { match ((1i32, true)) { _ => { return 41i32; } } return 0; }`},
 		{"expression-false-guard", `function main(): i32 {
-  var value = 0i32;
+  let value = 0i32;
   return match ((1i32, true)) { _ when { value = 41i32; false } => 0i32, _ => value };
 }`},
 		{"statement-false-guard", `function main(): i32 {
-  var value = 0i32;
+  let value = 0i32;
   match ((1i32, true)) { _ when { value = 41i32; false } => { return 0i32; }, _ => { return value; } }
   return 0i32;
 }`},

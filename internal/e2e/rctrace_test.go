@@ -156,9 +156,9 @@ func parseRcTrace(t *testing.T, stderr string) ([]rcTraceEvent, []string) {
 // print so stdout preservation is observable. Every block is released,
 // so allocs and frees must pair exactly.
 const rcTraceBalancedSrc = `function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 40) {
-        var a: usize = __alloc(64);
+        let a: usize = __alloc(64);
         __free(a, 64);
         i = i + 1;
     }
@@ -170,11 +170,11 @@ const rcTraceBalancedSrc = `function main(): i32 {
 // whose buffers stays live to process exit. The dropped one is
 // released each iteration; the kept one never is.
 const rcTraceTwoSitesSrc = `function make_kept(): i32[] { return [1, 2, 3, 4]; }
-function make_dropped(): i32 { var t: i32[] = [9, 9]; return t.len(); }
+function make_dropped(): i32 { let t: i32[] = [9, 9]; return t.len(); }
 function main(): i32 {
-    var keep: i32[] = make_kept();
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let keep: i32[] = make_kept();
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) { n = n + make_dropped(); i = i + 1; }
     return keep.len() + n - 10;
 }`
@@ -252,13 +252,13 @@ const rcTraceOneProducerTwoCallersSrc = `struct Bx { s: string, n: i32 }
 function mk(i: i32, pad: string): Bx { return Bx { s: pad + "0123456789abcdef", n: i }; }
 
 @noinline
-function alpha(pad: string): i32 { var b: Bx = mk(1, pad); return b.n; }
+function alpha(pad: string): i32 { let b: Bx = mk(1, pad); return b.n; }
 
 @noinline
-function beta(pad: string): i32 { var b: Bx = mk(2, pad); return b.n; }
+function beta(pad: string): i32 { let b: Bx = mk(2, pad); return b.n; }
 
 function main(): i32 {
-    var pad: string = "wxyz";
+    let pad: string = "wxyz";
     return alpha(pad) + beta(pad) - 3;
 }`
 
@@ -392,9 +392,9 @@ func TestRcTraceX86_64EmitsIncAndDecEvents(t *testing.T) {
 	// counts are, the incs and decs must balance per pointer.
 	const src = `
 function main(): i32 {
-    var a: u8[] = [1, 2, 3];
-    var b: u8[] = a;
-    var c: u8[] = a;
+    let a: u8[] = [1, 2, 3];
+    let b: u8[] = a;
+    let c: u8[] = a;
     return b.len() + c.len();
 }
 `
@@ -440,10 +440,10 @@ function main(): i32 {
 func TestRcTraceX86_64IncPointerIsTheObjectNotTheBlock(t *testing.T) {
 	const src = `
 function main(): i32 {
-    var a: u8[] = [1, 2, 3];
-    var b: u8[] = a;
-    var c: u8[] = a;
-    var d: u8[] = a;
+    let a: u8[] = [1, 2, 3];
+    let b: u8[] = a;
+    let c: u8[] = a;
+    let d: u8[] = a;
     return b.len() + c.len() + d.len();
 }
 `

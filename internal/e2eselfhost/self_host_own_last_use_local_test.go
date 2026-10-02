@@ -28,18 +28,18 @@ func TestSelfHostOwnLastUseLocal(t *testing.T) {
 	}
 }
 
-// ownLastUseReassignSrc stores a borrowed parameter over a fresh `var` local
+// ownLastUseReassignSrc stores a borrowed parameter over a fresh `let` local
 // before handing it on, once straight and once on one branch: the local no
 // longer holds a count of its own, so the hand-over has to buy one.
 const ownLastUseReassignSrc = `struct W { d: i32[], n: i32 }
 @noinline function eat(own w: W): i32 { return w.n + w.d.len(); }
 @noinline function mkw(n: i32): W { return W { d: [n], n: n }; }
-@noinline function reassign_param(w0: W): i32 { var w: W = mkw(7); w = w0; var r: i32 = eat(w); return r; }
-@noinline function branch_param(w0: W, c: i32): i32 { var w: W = mkw(7); if (c > 1) { w = w0; } else { w = mkw(c); } var r: i32 = eat(w); return r; }
+@noinline function reassign_param(w0: W): i32 { let w: W = mkw(7); w = w0; let r: i32 = eat(w); return r; }
+@noinline function branch_param(w0: W, c: i32): i32 { let w: W = mkw(7); if (c > 1) { w = w0; } else { w = mkw(c); } let r: i32 = eat(w); return r; }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
-    while (i < 3) { var w: W = mkw(i); total = total + reassign_param(w) + branch_param(w, i) + w.n; i = i + 1; }
+    let total: i32 = 0;
+    let i: i32 = 0;
+    while (i < 3) { let w: W = mkw(i); total = total + reassign_param(w) + branch_param(w, i) + w.n; i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return total % 100;
 }

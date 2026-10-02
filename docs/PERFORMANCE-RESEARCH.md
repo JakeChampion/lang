@@ -780,7 +780,7 @@ into a temp, then copy. Threading a *destination address*
 through expression lowering lets the literal write fields
 directly to the eventual home.
 
-Concretely: lowering of `var x: Point = Point{ x: 1, y: 2 }`
+Concretely: lowering of `let x: Point = Point{ x: 1, y: 2 }`
 currently produces (sketch):
 
 ```

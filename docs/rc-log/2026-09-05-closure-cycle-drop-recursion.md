@@ -6,8 +6,8 @@ documented safe-leak into a stack overflow, on all three backends.
 
 ```fern
 function main(): i32 {
-  var g: () => i32 = function (): i32 { return 1; };
-  var f: () => i32 = function (): i32 { return g(); };
+  let g: () => i32 = function (): i32 { return 1; };
+  let f: () => i32 = function (): i32 { return g(); };
   g = f;
   return 0;
 }

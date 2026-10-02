@@ -120,7 +120,7 @@ func TestMarkWrappersAgreeWithRuntimeNeedDeps(t *testing.T) {
 // parseRuntimeNeedDeps reads the declared edges out of runtime_need_deps. Each
 // arm is `if (name == "x" || ...) { ... return v; }`, ending at the first `}`
 // indented as far as its `if` line: every root its condition names gets the
-// literal of the `var v: string[] = [...]` it returns, declared in the arm or
+// literal of the `let v: string[] = [...]` it returns, declared in the arm or
 // elsewhere in the function. Every root the function tests must land in the
 // table, so an arm the parse cannot read fails by name.
 func parseRuntimeNeedDeps(t *testing.T, text string) map[string][]string {
@@ -154,7 +154,7 @@ func parseRuntimeNeedDeps(t *testing.T, text string) map[string][]string {
 			t.Fatalf("runtime_need_deps arm %q returns no named list", first)
 		}
 		v := rets[len(rets)-1][1]
-		decl := regexp.MustCompile(`\bvar ` + v + `: string\[\] = \[([^\]]*)\]`)
+		decl := regexp.MustCompile(`\blet ` + v + `: string\[\] = \[([^\]]*)\]`)
 		l := decl.FindStringSubmatch(rest[:end])
 		if l == nil {
 			l = decl.FindStringSubmatch(body)

@@ -40,8 +40,8 @@ function emit(own s: S, v: i32): S {
     return bump(s, v);
 }
 function main(): i32 {
-    var s: S = S { code: [], n: 0 };
-    var i: i32 = 0;
+    let s: S = S { code: [], n: 0 };
+    let i: i32 = 0;
     while (i < 200) { s = emit(s, 1); i = i + 1; }
     if (s.code.len() != 200) { return 254; }
     if (s.code[7] != 1 || s.code[199] != 1) { return 253; }
@@ -56,12 +56,12 @@ const ownParamNonDominatingLeakSrc = `struct S { code: i32[], n: i32 }
 function bump(own s: S, v: i32): S { return S { ...s, n: s.n + v }; }
 function emit(own s: S, v: i32): i32 {
     if (v > 0) { return 7; }
-    var t: S = bump(s, v);
+    let t: S = bump(s, v);
     return t.n;
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 100) { acc = acc + emit(S { code: [1, 2, 3], n: 0 }, 1); i = i + 1; }
     if (acc != 700) { return 254; }
     return 0;

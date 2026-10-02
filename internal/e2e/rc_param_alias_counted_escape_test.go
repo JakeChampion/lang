@@ -9,10 +9,10 @@ func TestBorrowedParamAliasWithACountedEscape(t *testing.T) {
 	const main = `
 function mkstr(a: string): string { return a + "!"; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var line: string = mkstr("a string long enough to defeat the small-string optimisation");
+        let line: string = mkstr("a string long enough to defeat the small-string optimisation");
         acc = acc + tag(line, i);
         i = i + 1;
     }
@@ -23,8 +23,8 @@ function main(): i32 {
 		want      int
 	}{
 		{"captured", `function tag(src: string, i: i32): i32 {
-    var x: string = src;
-    var f: (i32) => i32 = (k: i32) => x.len() + k;
+    let x: string = src;
+    let f: (i32) => i32 = (k: i32) => x.len() + k;
     return f(i);
 }`, 250},
 	}

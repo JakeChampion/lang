@@ -47,38 +47,38 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 		wantOut  string
 	}{
 		{"exit_42", `function main(): i32 { return 42; }`, 42, ""},
-		{"arith", `function main(): i32 { var x = 6; var y = 7; return x * y; }`, 42, ""},
+		{"arith", `function main(): i32 { let x = 6; let y = 7; return x * y; }`, 42, ""},
 		{"fib", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(10); }`, 55, ""},
-		{"loop_sum", `function main(): i32 { var s: i32 = 0; var i: i32 = 1; while (i <= 10) { s = s + i; i = i + 1; } return s; }`, 55, ""},
-		{"concat", `function main(): i32 { var s: string = "hello, " + "world!"; return s.len(); }`, 13, ""},
+		{"loop_sum", `function main(): i32 { let s: i32 = 0; let i: i32 = 1; while (i <= 10) { s = s + i; i = i + 1; } return s; }`, 55, ""},
+		{"concat", `function main(): i32 { let s: string = "hello, " + "world!"; return s.len(); }`, 13, ""},
 		{"print", `function main(): i32 { print("hi"); return 0; }`, 0, "hi\n"},
 		// The #6047 shapes: a literal long enough that a stuck source index
 		// repeats a byte visibly, and a runtime-built string (concat, which is
 		// where the base+index `ldrb w0, [x0, x1]` copy loop lives).
 		{"print_literal", `function main(): i32 { print("Hello, Fern!"); return 0; }`, 0, "Hello, Fern!\n"},
-		{"print_concat", `function main(): i32 { var s: string = "Hello, " + "Fern!"; print(s); return 0; }`, 0, "Hello, Fern!\n"},
-		{"index_byte", `function main(): i32 { var s: string = "abcdef"; return (s[3] as i32) - 90; }`, 10, ""},
+		{"print_concat", `function main(): i32 { let s: string = "Hello, " + "Fern!"; print(s); return 0; }`, 0, "Hello, Fern!\n"},
+		{"index_byte", `function main(): i32 { let s: string = "abcdef"; return (s[3] as i32) - 90; }`, 10, ""},
 		// The string builder assembled IN-PROCESS: __fern_strbuf_grow's
 		// mov-with-hw-select / lsl / b.hs / cbnz must encode, and a 108,000-byte
 		// build grows the 64 KiB buffer twice before the take.
 		{"strbuf_grow", `function main(): i32 {
     strbuf_reset();
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) { strbuf_append("0123456789abcdefghijklmnopqrstuvwxyz"); i = i + 1; }
-    var s: string = strbuf_take();
+    let s: string = strbuf_take();
     if (s.len() != 108000) { return 1; }
     if ((s[65536] as i32) != (s[16] as i32)) { return 2; }
     if ((s[107999] as i32) != (s[35] as i32)) { return 3; }
     strbuf_append("ok");
-    var t: string = strbuf_take();
+    let t: string = strbuf_take();
     if (t.len() != 2) { return 4; }
     return 42;
 }`, 42, ""},
-		{"struct_method", `struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }`, 12, ""},
-		{"array_sum", `function main(): i32 { var a = [1, 2, 3, 4, 5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15, ""},
+		{"struct_method", `struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { let x = Box { v: 4 }; return x.scale(3); }`, 12, ""},
+		{"array_sum", `function main(): i32 { let a = [1, 2, 3, 4, 5]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15, ""},
 		{"option", `function pick(n: i32): Option[i32] { if (n == 0) { return None; } return Some(n + 1); } function main(): i32 { match (pick(41)) { Some(v) => { return v; }, None => { return 0; } } return 99; }`, 42, ""},
 		{"enum", `enum Shape { Circle(i32), Square(i32) } function area(s: Shape): i32 { match (s) { Circle(r) => { return r*r*3; }, Square(w) => { return w*w; } } } function main(): i32 { return area(Circle(2)) + area(Square(3)); }`, 21, ""},
-		{"floats", `function main(): i32 { var x: f64 = 3.5; var y: f64 = 2.0; var z: f64 = x*y + x/y - x; if (z > 5.0) { return 7; } return 1; }`, 7, ""},
+		{"floats", `function main(): i32 { let x: f64 = 3.5; let y: f64 = 2.0; let z: f64 = x*y + x/y - x; if (z > 5.0) { return 7; } return 1; }`, 7, ""},
 		// The bit-counting intrinsics: the only shapes that make the arm64
 		// backend emit `rbit` (ctz) or the SIMD pair `cnt`/`addv` (popcount),
 		// and hence the only ones that exercise those encoders in
@@ -107,11 +107,11 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
     if (!(__exp_f64(1000.0) > 1.0e308)) { return 1; }        // must overflow to +Inf
     if (!(__exp_f64((0.0 - 1000.0)) == 0.0)) { return 2; }   // must underflow to 0
     if (!(__log_f64(0.0) < (0.0 - 1.0e308))) { return 3; }   // must be -Inf
-    var n: f64 = __log_f64((0.0 - 1.0));                     // must be NaN
+    let n: f64 = __log_f64((0.0 - 1.0));                     // must be NaN
     if (n == n) { return 4; }
     if ((__pow_f64(3.0, 2.0) as i32) != 9) { return 5; }     // exact, not 8
     if ((__pow_f64(10.0, 3.0) as i32) != 1000) { return 6; }
-    var d: f64 = __sin_f64(10.0) - (0.0 - 0.54402111088936981);
+    let d: f64 = __sin_f64(10.0) - (0.0 - 0.54402111088936981);
     if (d < 0.0) { d = 0.0 - d; }
     if (d > 1.0e-15) { return 7; }                           // 3-part reduction
     return 42;
@@ -126,7 +126,7 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 		// contacted: socket -> bind -> listen -> close is enough to prove the
 		// helper is present and callable.
 		{"tcp_listen_close_no_alloc", `function main(): i32 {
-  var fd: i32 = tcp_listen(0);
+  let fd: i32 = tcp_listen(0);
   if (fd < 0) { return 1; }
   if (tcp_close(fd) < 0) { return 2; }
   return 42;
@@ -137,9 +137,9 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 		// also what makes the port-0 bind usable: the kernel picks the port and
 		// this reads it back.
 		{"tcp_local_port_no_alloc", `function main(): i32 {
-  var fd: i32 = tcp_listen(0);
+  let fd: i32 = tcp_listen(0);
   if (fd < 0) { return 1; }
-  var port: i32 = tcp_local_port(fd);
+  let port: i32 = tcp_local_port(fd);
   if (tcp_close(fd) < 0) { return 2; }
   if (port <= 0) { return 3; }
   if (port > 65535) { return 4; }
@@ -212,7 +212,7 @@ func wideFrameSource(n int) string {
 	var b bytes.Buffer
 	b.WriteString("function main(): i32 {\n")
 	for i := 0; i < n; i++ {
-		fmt.Fprintf(&b, "    var v%d: i32 = %d;\n", i, i)
+		fmt.Fprintf(&b, "    let v%d: i32 = %d;\n", i, i)
 	}
 	fmt.Fprintf(&b, "    return v%d - v%d;\n}\n", n-1, n-43)
 	return b.String()

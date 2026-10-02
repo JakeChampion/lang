@@ -51,10 +51,10 @@ func TestSelfHostX86GasRelaxation(t *testing.T) {
 	}
 	runX86GasWasmSelfTest(t, "x86_gas_relax", `
 function relax_hex(src: string): string {
-    var a: X86Asm = x86_gas_assemble(src);
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return "unknown"; }
-    var digits: string = "0123456789abcdef";
-    var out: string = "";
+    let digits: string = "0123456789abcdef";
+    let out: string = "";
     for b in a.code {
         out = out + slice_unchecked(digits, b / 16, b / 16 + 1) + slice_unchecked(digits, b % 16, b % 16 + 1);
     }

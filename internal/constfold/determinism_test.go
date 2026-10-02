@@ -60,8 +60,8 @@ function main(): i32 {
 
 	"mixed_consts_locals": `
 function main(): i32 {
-	var x: i32 = 10;
-	var y: i32 = (3 + 4) * (5 - 2);
+	let x: i32 = 10;
+	let y: i32 = (3 + 4) * (5 - 2);
 	if (x > 0) { return y; }
 	return 0;
 }`,

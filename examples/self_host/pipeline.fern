@@ -27,7 +27,7 @@
 //       return n * fact(n - 1);
 //   }
 //   function main(): i32 {
-//       var c = 2 + 3;            // const-folds to 5
+//       let c = 2 + 3;            // const-folds to 5
 //       return fact(c);            // → 120
 //   }
 
@@ -42,13 +42,13 @@ import "./interp";
 // (interp.Value) so the caller can match on the variant — VInt
 // for success, VErr if anything along the way refused.
 function run_pipeline(src: string): interp.Value {
-  var toks: lexer.Token[] = lexer.tokenize(src);
-  var mod: parser.Module = parser.parse_module(toks);
+  let toks: lexer.Token[] = lexer.tokenize(src);
+  let mod: parser.Module = parser.parse_module(toks);
   // constfold runs ahead of checker / interp so they see the
   // smaller, more concrete tree. Idempotent — running it
   // twice would produce the same result.
-  var folded: parser.Module = constfold.fold_module(mod);
-  var mt: checker.ModuleTypes = checker.check_module(folded);
+  let folded: parser.Module = constfold.fold_module(mod);
+  let mt: checker.ModuleTypes = checker.check_module(folded);
   if (!mt.all_well_typed) {
     return interp.VErr { msg: "pipeline: program does not type-check" };
   }
@@ -58,9 +58,9 @@ function run_pipeline(src: string): interp.Value {
 function main(): i32 {
   // Realistic program: mutual recursion + constfold opportunity
   // + branch + arithmetic — exercises every layer non-trivially.
-  var src: string = "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); }"
-    + " function main(): i32 { var c = 2 + 3; return fact(c); }";
-  var r1: interp.Value = run_pipeline(src);
+  let src: string = "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); }"
+    + " function main(): i32 { let c = 2 + 3; return fact(c); }";
+  let r1: interp.Value = run_pipeline(src);
   match (r1) {
     interp.VInt(i) => {
       if (i.v != 120) {
@@ -79,10 +79,10 @@ function main(): i32 {
   // the call site. Confirm by inspecting the folded module
   // separately — c's initializer should be a single number
   // literal after folding.
-  var toks2: lexer.Token[] = lexer.tokenize(src);
-  var mod2: parser.Module = parser.parse_module(toks2);
-  var folded2: parser.Module = constfold.fold_module(mod2);
-  // fact + main funcs; main's first stmt is `var c = …`
+  let toks2: lexer.Token[] = lexer.tokenize(src);
+  let mod2: parser.Module = parser.parse_module(toks2);
+  let folded2: parser.Module = constfold.fold_module(mod2);
+  // fact + main funcs; main's first stmt is `let c = …`
   // whose init should be a single ExprNumber after folding.
   if (folded2.funcs.len() != 2) {
     return 20;
@@ -108,8 +108,8 @@ function main(): i32 {
   // Negative path: ill-typed program. Checker says it
   // doesn't type-check, run_pipeline surfaces VErr without
   // ever calling the interpreter.
-  var bad: string = "function f(): i32 { return \"oops\"; } function main(): i32 { return f() + 1; }";
-  var r3: interp.Value = run_pipeline(bad);
+  let bad: string = "function f(): i32 { return \"oops\"; } function main(): i32 { return f() + 1; }";
+  let r3: interp.Value = run_pipeline(bad);
   match (r3) {
     interp.VErr(_) => {},
     _ => {
@@ -119,12 +119,12 @@ function main(): i32 {
 
   // Array path: array literal + indexing flows through the
   // interpreter too. Sum of [3, 5, 7, 9] = 24 via while loop.
-  var arr_src: string = "function main(): i32 {"
-    + " var a = [3, 5, 7, 9];"
-    + " var i = 0; var s = 0;"
+  let arr_src: string = "function main(): i32 {"
+    + " let a = [3, 5, 7, 9];"
+    + " let i = 0; let s = 0;"
     + " while (i < a.len()) { s = s + a[i]; i = i + 1; }"
     + " return s; }";
-  var r4: interp.Value = run_pipeline(arr_src);
+  let r4: interp.Value = run_pipeline(arr_src);
   match (r4) {
     interp.VInt(i) => {
       if (i.v != 24) {
@@ -139,8 +139,8 @@ function main(): i32 {
   // No-function path: a top-level-stmts-only program still
   // composes — there's no `main` to call, so interp runs the
   // top_stmts in the implicit entry.
-  var top_src: string = "var x = 7; var y = 11; return x + y;";
-  var r5: interp.Value = run_pipeline(top_src);
+  let top_src: string = "let x = 7; let y = 11; return x + y;";
+  let r5: interp.Value = run_pipeline(top_src);
   match (r5) {
     interp.VInt(i) => {
       if (i.v != 18) {

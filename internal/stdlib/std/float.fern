@@ -36,24 +36,24 @@ function __float_int_part(n: f64): string {
   if (n < 1.0) {
     return "0";
   }
-  var digits: string = "0123456789";
+  let digits: string = "0123456789";
   // Two-pass exact-size buffer (#4379). Digits peel off least-significant
   // first, so the old `out = digits[d] + out` prepended each one — recopying
   // the whole growing string every step, O(digits²) (up to ~309 digits for
   // the largest f64 magnitudes). Instead: a counting pass sizes the result,
   // then a fill pass writes each digit straight into its final slot from the
   // right. Byte-for-byte identical output.
-  var count: i32 = 0;
-  var m: f64 = n;
+  let count: i32 = 0;
+  let m: f64 = n;
   while (m >= 1.0) {
     m = __floor_f64(m / 10.0);
     count = count + 1;
   }
-  var buf: u8[] = __alloc_u8(count);
-  var pos: i32 = count - 1;
+  let buf: u8[] = __alloc_u8(count);
+  let pos: i32 = count - 1;
   while (n >= 1.0) {
-    var q: f64 = __floor_f64(n / 10.0);
-    var d: i32 = (n - q * 10.0) as i32;
+    let q: f64 = __floor_f64(n / 10.0);
+    let d: i32 = (n - q * 10.0) as i32;
     if (d < 0) {
       d = 0;
     }
@@ -105,11 +105,11 @@ function _db_cache32(): string {
 // significant base-64 digit first. The accumulator cannot overflow because
 // every encoded word is itself a 64-bit value.
 function _db_word(s: string, at: i32): u64 {
-  var v: u64 = 0 as u64;
-  var i: i32 = at;
-  var end: i32 = at + 11;
+  let v: u64 = 0 as u64;
+  let i: i32 = at;
+  let end: i32 = at + 11;
   while (i < end) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c < 92) {
       c = c - 48;
     } else {
@@ -143,16 +143,16 @@ function _db_log10_pow2_m43(e: i32): i32 {
 // products; each fits u64 exactly. Scalar results throughout this file
 // rather than pairs, because a returned tuple is a heap cell.
 function _db_mul_hi(x: u64, y: u64): u64 {
-  var m: u64 = 4294967295 as u64;
-  var sh: u64 = 32 as u64;
-  var a: u64 = x >> sh;
-  var b: u64 = x & m;
-  var c: u64 = y >> sh;
-  var d: u64 = y & m;
-  var bd: u64 = b * d;
-  var ad: u64 = a * d;
-  var bc: u64 = b * c;
-  var mid: u64 = (bd >> sh) + (ad & m) + (bc & m);
+  let m: u64 = 4294967295 as u64;
+  let sh: u64 = 32 as u64;
+  let a: u64 = x >> sh;
+  let b: u64 = x & m;
+  let c: u64 = y >> sh;
+  let d: u64 = y & m;
+  let bd: u64 = b * d;
+  let ad: u64 = a * d;
+  let bc: u64 = b * c;
+  let mid: u64 = (bd >> sh) + (ad & m) + (bc & m);
   return a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
 }
 
@@ -163,7 +163,7 @@ function _db_mul192_lo(x: u64, chi: u64, clo: u64): u64 {
 }
 
 function _db_mul192_hi(x: u64, chi: u64, clo: u64): u64 {
-  var hi: u64 = _db_mul_hi(x, chi);
+  let hi: u64 = _db_mul_hi(x, chi);
   if (_db_mul192_lo(x, chi, clo) < x * chi) {  // carry out of the low half
     hi = hi + 1 as u64;
   }
@@ -175,10 +175,10 @@ function _db_mul192_hi(x: u64, chi: u64, clo: u64): u64 {
 // uses at the interval endpoints. beta is in [6, 9] here, so both shifts
 // stay in range.
 function _db_parity64(two_f: u64, chi: u64, clo: u64, beta: i32): i32 {
-  var hi: u64 = two_f * chi + _db_mul_hi(two_f, clo);
-  var lo: u64 = two_f * clo;
-  var back: u64 = (64 - beta) as u64;
-  var flags: i32 = (hi >> back & 1 as u64) as i32;
+  let hi: u64 = two_f * chi + _db_mul_hi(two_f, clo);
+  let lo: u64 = two_f * clo;
+  let back: u64 = (64 - beta) as u64;
+  let flags: i32 = (hi >> back & 1 as u64) as i32;
   if ((hi << beta as u64 | lo >> back) == 0 as u64) {
     flags = flags + 2;
   }
@@ -201,13 +201,13 @@ function _db_rtz(sig: u64, exp: i32): (i64, i32) {
 // short as round-tripping allows. kappa is 2 for binary64, so the divisors
 // below are 10^3 and 10^2.
 function __db_shortest64(n: f64): (i64, i32) {
-  var bits: u64 = f64_bits(n) as u64;
-  var ebits: i32 = (bits >> 52 as u64 & 2047 as u64) as i32;
-  var two_fc: u64 = (bits & 4503599627370495 as u64) << 1 as u64;
+  let bits: u64 = f64_bits(n) as u64;
+  let ebits: i32 = (bits >> 52 as u64 & 2047 as u64) as i32;
+  let two_fc: u64 = (bits & 4503599627370495 as u64) << 1 as u64;
   // A closed interval means both endpoints round back to n, which is the
   // case exactly when the significand is even (round-half-to-even).
-  var closed: boolean = (bits & 1 as u64) == 0 as u64;
-  var be: i32 = 0 - 1074;
+  let closed: boolean = (bits & 1 as u64) == 0 as u64;
+  let be: i32 = 0 - 1074;
   if (ebits != 0) {
     be = ebits - 1075;
     // A power of two has a shorter interval on its left side.
@@ -217,25 +217,25 @@ function __db_shortest64(n: f64): (i64, i32) {
     two_fc = two_fc | 9007199254740992 as u64;  // implicit bit, << 1
   }
 
-  var mk: i32 = _db_log10_pow2(be) - 2;
-  var k: i32 = 0 - mk;
-  var beta: i32 = be + _db_log2_pow10(k);
-  var tbl: string = _db_cache64();
-  var at: i32 = (k + 292) * 22;
-  var chi: u64 = _db_word(tbl, at);
-  var clo: u64 = _db_word(tbl, at + 11);
+  let mk: i32 = _db_log10_pow2(be) - 2;
+  let k: i32 = 0 - mk;
+  let beta: i32 = be + _db_log2_pow10(k);
+  let tbl: string = _db_cache64();
+  let at: i32 = (k + 292) * 22;
+  let chi: u64 = _db_word(tbl, at);
+  let clo: u64 = _db_word(tbl, at + 11);
 
-  var deltai: u64 = chi >> (63 - beta) as u64;
-  var zx: u64 = (two_fc | 1 as u64) << beta as u64;
-  var zi: u64 = _db_mul192_hi(zx, chi, clo);
-  var z_int: boolean = _db_mul192_lo(zx, chi, clo) == 0 as u64;
+  let deltai: u64 = chi >> (63 - beta) as u64;
+  let zx: u64 = (two_fc | 1 as u64) << beta as u64;
+  let zi: u64 = _db_mul192_hi(zx, chi, clo);
+  let z_int: boolean = _db_mul192_lo(zx, chi, clo) == 0 as u64;
 
-  var sig: u64 = zi / (1000 as u64);
-  var r: u64 = zi - 1000 as u64 * sig;
+  let sig: u64 = zi / (1000 as u64);
+  let r: u64 = zi - 1000 as u64 * sig;
 
   // Step 2: try the larger divisor. Falling through to the return means the
   // shorter significand is in the interval; every other path drops to step 3.
-  var smaller: boolean = false;
+  let smaller: boolean = false;
   if (r < deltai) {
     if (r == 0 as u64 && z_int && !closed) {
       sig = sig - 1 as u64;
@@ -245,7 +245,7 @@ function __db_shortest64(n: f64): (i64, i32) {
   } else if (r > deltai) {
     smaller = true;
   } else {
-    var xp: i32 = _db_parity64(two_fc - 1 as u64, chi, clo, beta);
+    let xp: i32 = _db_parity64(two_fc - 1 as u64, chi, clo, beta);
     if (!((xp & 1) != 0 || (xp & 2) != 0 && closed)) {
       smaller = true;
     }
@@ -257,14 +257,14 @@ function __db_shortest64(n: f64): (i64, i32) {
   // Step 3: find the significand with the smaller divisor. r >= deltai here
   // (or r was reset to 1000), and deltai < 1000, so `dist` cannot underflow.
   sig = sig * (10 as u64);
-  var dist: u64 = r - deltai / (2 as u64) + 50 as u64;
+  let dist: u64 = r - deltai / (2 as u64) + 50 as u64;
   // The reference computes ((dist ^ (small_divisor / 2)) & 1) != 0; here
   // small_divisor / 2 is 50, which is even, so this is just dist's parity.
-  var approx: boolean = (dist & 1 as u64) != 0 as u64;
-  var divisible: boolean = dist % (100 as u64) == 0 as u64;
+  let approx: boolean = (dist & 1 as u64) != 0 as u64;
+  let divisible: boolean = dist % (100 as u64) == 0 as u64;
   sig = sig + dist / (100 as u64);
   if (divisible) {
-    var yp: i32 = _db_parity64(two_fc, chi, clo, beta);
+    let yp: i32 = _db_parity64(two_fc, chi, clo, beta);
     if ((yp & 1) != 0 != approx) {
       sig = sig - 1 as u64;
     } else if (sig % (2 as u64) != 0 as u64 && (yp & 2) != 0) {
@@ -279,19 +279,19 @@ function __db_shortest64(n: f64): (i64, i32) {
 // nearest-to-even, so the right endpoint is never pulled in; the left one is
 // nudged up unless it lands on an integer.
 function __db_shorter64(be: i32): (i64, i32) {
-  var mk: i32 = _db_log10_pow2_m43(be);
-  var k: i32 = 0 - mk;
-  var beta: i32 = be + _db_log2_pow10(k);
-  var chi: u64 = _db_word(_db_cache64(), (k + 292) * 22);
+  let mk: i32 = _db_log10_pow2_m43(be);
+  let k: i32 = 0 - mk;
+  let beta: i32 = be + _db_log2_pow10(k);
+  let chi: u64 = _db_word(_db_cache64(), (k + 292) * 22);
 
-  var sh: u64 = (11 - beta) as u64;
-  var xi: u64 = chi - (chi >> 54 as u64) >> sh;
-  var zi: u64 = chi + (chi >> 53 as u64) >> sh;
+  let sh: u64 = (11 - beta) as u64;
+  let xi: u64 = chi - (chi >> 54 as u64) >> sh;
+  let zi: u64 = chi + (chi >> 53 as u64) >> sh;
   if (!(be >= 2 && be <= 3)) {
     xi = xi + 1 as u64;
   }
 
-  var sig: u64 = zi / (10 as u64);
+  let sig: u64 = zi / (10 as u64);
   if (sig * (10 as u64) >= xi) {
     return _db_rtz(sig, mk + 1);
   }
@@ -309,11 +309,11 @@ function __db_shorter64(be: i32): (i64, i32) {
 // __db_shortest32 is the binary32 sibling: 23-bit fraction, 8-bit exponent,
 // a 64-bit cache instead of 128-bit, and kappa 1 (divisors 10^2 and 10^1).
 function __db_shortest32(n: f32): (i64, i32) {
-  var bits: u64 = (f32_bits(n) as i64) as u64;
-  var ebits: i32 = (bits >> 23 as u64 & 255 as u64) as i32;
-  var two_fc: u64 = (bits & 8388607 as u64) << 1 as u64;
-  var closed: boolean = (bits & 1 as u64) == 0 as u64;
-  var be: i32 = 0 - 149;
+  let bits: u64 = (f32_bits(n) as i64) as u64;
+  let ebits: i32 = (bits >> 23 as u64 & 255 as u64) as i32;
+  let two_fc: u64 = (bits & 8388607 as u64) << 1 as u64;
+  let closed: boolean = (bits & 1 as u64) == 0 as u64;
+  let be: i32 = 0 - 149;
   if (ebits != 0) {
     be = ebits - 150;
     if (two_fc == 0 as u64) {
@@ -322,22 +322,22 @@ function __db_shortest32(n: f32): (i64, i32) {
     two_fc = two_fc | 16777216 as u64;  // implicit bit, << 1
   }
 
-  var mk: i32 = _db_log10_pow2(be) - 1;
-  var k: i32 = 0 - mk;
-  var beta: i32 = be + _db_log2_pow10(k);
-  var c: u64 = _db_word(_db_cache32(), (k + 31) * 11);
+  let mk: i32 = _db_log10_pow2(be) - 1;
+  let k: i32 = 0 - mk;
+  let beta: i32 = be + _db_log2_pow10(k);
+  let c: u64 = _db_word(_db_cache32(), (k + 31) * 11);
 
-  var deltai: u64 = c >> (63 - beta) as u64;
+  let deltai: u64 = c >> (63 - beta) as u64;
   // The binary32 product is 96-bit: widen the 32-bit operand into the high
   // half and keep the upper 64 bits.
-  var prod: u64 = _db_mul_hi((two_fc | 1 as u64) << beta as u64 << 32 as u64, c);
-  var zi: u64 = prod >> 32 as u64;
-  var z_int: boolean = (prod & 4294967295 as u64) == 0 as u64;
+  let prod: u64 = _db_mul_hi((two_fc | 1 as u64) << beta as u64 << 32 as u64, c);
+  let zi: u64 = prod >> 32 as u64;
+  let z_int: boolean = (prod & 4294967295 as u64) == 0 as u64;
 
-  var sig: u64 = zi / (100 as u64);
-  var r: u64 = zi - 100 as u64 * sig;
+  let sig: u64 = zi / (100 as u64);
+  let r: u64 = zi - 100 as u64 * sig;
 
-  var smaller: boolean = false;
+  let smaller: boolean = false;
   if (r < deltai) {
     if (r == 0 as u64 && z_int && !closed) {
       sig = sig - 1 as u64;
@@ -347,7 +347,7 @@ function __db_shortest32(n: f32): (i64, i32) {
   } else if (r > deltai) {
     smaller = true;
   } else {
-    var xp: i32 = _db_parity32(two_fc - 1 as u64, c, beta);
+    let xp: i32 = _db_parity32(two_fc - 1 as u64, c, beta);
     if (!((xp & 1) != 0 || (xp & 2) != 0 && closed)) {
       smaller = true;
     }
@@ -357,14 +357,14 @@ function __db_shortest32(n: f32): (i64, i32) {
   }
 
   sig = sig * (10 as u64);
-  var dist: u64 = r - deltai / (2 as u64) + 5 as u64;
+  let dist: u64 = r - deltai / (2 as u64) + 5 as u64;
   // Here small_divisor / 2 is 5, which is ODD, so ((dist ^ 5) & 1) != 0
   // inverts dist's parity.
-  var approx: boolean = (dist & 1 as u64) == 0 as u64;
-  var divisible: boolean = dist % (10 as u64) == 0 as u64;
+  let approx: boolean = (dist & 1 as u64) == 0 as u64;
+  let divisible: boolean = dist % (10 as u64) == 0 as u64;
   sig = sig + dist / (10 as u64);
   if (divisible) {
-    var yp: i32 = _db_parity32(two_fc, c, beta);
+    let yp: i32 = _db_parity32(two_fc, c, beta);
     if ((yp & 1) != 0 != approx) {
       sig = sig - 1 as u64;
     } else if (sig % (2 as u64) != 0 as u64 && (yp & 2) != 0) {
@@ -377,8 +377,8 @@ function __db_shortest32(n: f32): (i64, i32) {
 // _db_parity32 is _db_parity64's 96-bit counterpart: the low 64 bits of the
 // product carry everything it needs. beta is in [3, 6] here.
 function _db_parity32(two_f: u64, c: u64, beta: i32): i32 {
-  var r: u64 = two_f * c;
-  var flags: i32 = (r >> (64 - beta) as u64 & 1 as u64) as i32;
+  let r: u64 = two_f * c;
+  let flags: i32 = (r >> (64 - beta) as u64 & 1 as u64) as i32;
   if ((r >> (32 - beta) as u64 & 4294967295 as u64) == 0 as u64) {
     flags = flags + 2;
   }
@@ -386,19 +386,19 @@ function _db_parity32(two_f: u64, c: u64, beta: i32): i32 {
 }
 
 function __db_shorter32(be: i32): (i64, i32) {
-  var mk: i32 = _db_log10_pow2_m43(be);
-  var k: i32 = 0 - mk;
-  var beta: i32 = be + _db_log2_pow10(k);
-  var c: u64 = _db_word(_db_cache32(), (k + 31) * 11);
+  let mk: i32 = _db_log10_pow2_m43(be);
+  let k: i32 = 0 - mk;
+  let beta: i32 = be + _db_log2_pow10(k);
+  let c: u64 = _db_word(_db_cache32(), (k + 31) * 11);
 
-  var sh: u64 = (40 - beta) as u64;
-  var xi: u64 = c - (c >> 25 as u64) >> sh;
-  var zi: u64 = c + (c >> 24 as u64) >> sh;
+  let sh: u64 = (40 - beta) as u64;
+  let xi: u64 = c - (c >> 25 as u64) >> sh;
+  let zi: u64 = c + (c >> 24 as u64) >> sh;
   if (!(be >= 2 && be <= 3)) {
     xi = xi + 1 as u64;
   }
 
-  var sig: u64 = zi / (10 as u64);
+  let sig: u64 = zi / (10 as u64);
   if (sig * (10 as u64) >= xi) {
     return _db_rtz(sig, mk + 1);
   }
@@ -417,10 +417,10 @@ function __db_shorter32(be: i32): (i64, i32) {
 // The low threshold is Go / C 'g'; the high one and the unpadded `e+`/`e-`
 // spelling are JavaScript's, so 1e20 prints in full where Go %v gives 1e+20.
 function __float_fmt_sci(sig: string, msd: i32): string {
-  var nd: i32 = sig.len();
+  let nd: i32 = sig.len();
   if (msd < 0 - 4 || msd >= 21) {
     // scientific: d[.ddd]e±XX
-    var out: string = "" + slice_unchecked(sig, 0, 1);
+    let out: string = "" + slice_unchecked(sig, 0, 1);
     if (nd > 1) {
       out = out + "." + slice_unchecked(sig, 1, nd);
     }
@@ -431,8 +431,8 @@ function __float_fmt_sci(sig: string, msd: i32): string {
   }
   if (msd < 0) {
     // 0.000sig
-    var z: string = "";
-    var i: i32 = 0;
+    let z: string = "";
+    let i: i32 = 0;
     while (i < 0 - msd - 1) {
       z = z + "0";
       i = i + 1;
@@ -441,8 +441,8 @@ function __float_fmt_sci(sig: string, msd: i32): string {
   }
   if (msd + 1 >= nd) {
     // integer, pad trailing zeros
-    var z2: string = "";
-    var i2: i32 = 0;
+    let z2: string = "";
+    let i2: i32 = 0;
     while (i2 < msd + 1 - nd) {
       z2 = z2 + "0";
       i2 = i2 + 1;
@@ -457,7 +457,7 @@ function __float_fmt_sci(sig: string, msd: i32): string {
 // value == sig * 10^exp — in Go %v / strconv 'g' style, prefixed by `out`
 // (the already-extracted sign). Shared by the f32 and f64 formatters.
 function __float_render(out: string, sig: i64, exp: i32): string {
-  var digits: string = sig.to_string();
+  let digits: string = sig.to_string();
   return out + __float_fmt_sci(digits, digits.len() - 1 + exp);
 }
 
@@ -465,7 +465,7 @@ function __float_shortest(n: f64): string {
   if (n != n) {
     return "NaN";
   }
-  var out: string = "";
+  let out: string = "";
   if (n < 0.0) {
     out = "-";
     n = 0.0 - n;
@@ -476,7 +476,7 @@ function __float_shortest(n: f64): string {
   if (n == 0.0) {
     return out + "0";
   }
-  var d: (i64, i32) = __db_shortest64(n);
+  let d: (i64, i32) = __db_shortest64(n);
   return __float_render(out, d.0, d.1);
 }
 
@@ -488,7 +488,7 @@ function __float_shortest_f32(n: f32): string {
   if (n != n) {
     return "NaN";
   }
-  var out: string = "";
+  let out: string = "";
   if (n < 0.0) {
     out = "-";
     n = 0.0 - n;
@@ -499,7 +499,7 @@ function __float_shortest_f32(n: f32): string {
   if (n == 0.0) {
     return out + "0";
   }
-  var d: (i64, i32) = __db_shortest32(n);
+  let d: (i64, i32) = __db_shortest32(n);
   return __float_render(out, d.0, d.1);
 }
 
@@ -554,11 +554,11 @@ pub function pow10_log2(k: i32): i32 {
 }
 
 function __db_trim(d: (i64, i32)): (i64, i32) {
-  var sig: i64 = d.0;
+  let sig: i64 = d.0;
   if (sig % (10 as i64) != 0 as i64) {
     return d;
   }
-  var exp: i32 = d.1;
+  let exp: i32 = d.1;
   while (sig % (10 as i64) == 0 as i64) {
     sig = sig / (10 as i64);
     exp = exp + 1;
@@ -578,7 +578,7 @@ function __float_to_string_prec(n: f64, prec: i32): string {
   if (n != n) {
     return "NaN";
   }
-  var out: string = "";
+  let out: string = "";
   if (n < 0.0) {
     out = "-";
     n = 0.0 - n;
@@ -587,23 +587,23 @@ function __float_to_string_prec(n: f64, prec: i32): string {
     return out + "Inf";
   }
   // mult = 10^prec.
-  var mult: f64 = 1.0;
-  var i: i32 = 0;
+  let mult: f64 = 1.0;
+  let i: i32 = 0;
   while (i < prec) {
     mult = mult * 10.0;
     i = i + 1;
   }
   // Scale, round half away from zero, and split into integer + fraction
   // halves — both integer-valued f64s now.
-  var scaled: f64 = __floor_f64(n * mult + 0.5);
-  var intf: f64 = __floor_f64(scaled / mult);
-  var fracf: f64 = scaled - intf * mult;
+  let scaled: f64 = __floor_f64(n * mult + 0.5);
+  let intf: f64 = __floor_f64(scaled / mult);
+  let fracf: f64 = scaled - intf * mult;
   out = out + __float_int_part(intf);
   if (prec == 0) {
     return out;
   }
   // Zero-pad the fractional digits out to `prec` places.
-  var fracStr: string = __float_int_part(fracf);
+  let fracStr: string = __float_int_part(fracf);
   while (fracStr.len() < prec) {
     fracStr = "0" + fracStr;
   }
@@ -672,9 +672,9 @@ pub function (x: f64) round_to(digits: i32): f64 {
   if (x != 0.0 && x * 2.0 == x) {  // ±Inf
     return x;
   }
-  var scale: f64 = 1.0;
-  var i: i32 = 0;
-  var d: i32 = digits;
+  let scale: f64 = 1.0;
+  let i: i32 = 0;
+  let d: i32 = digits;
   if (d < 0) {
     d = 0 - d;
   }
@@ -774,7 +774,7 @@ pub function (x: f64) tanh(): f64 {
   if (x < 0.0 - 20.0) {
     return 0.0 - 1.0;
   }
-  var e2: f64 = __exp_f64(x * 2.0);
+  let e2: f64 = __exp_f64(x * 2.0);
   return (e2 - 1.0) / (e2 + 1.0);
 }
 
@@ -806,14 +806,14 @@ pub function (x: f64) cbrt(): f64 {
 // so it does NOT overflow when a naive `x*x + y*y` would, and stays accurate
 // for very lopsided inputs. `hypot(0, 0)` is `0`.
 pub function (x: f64) hypot(y: f64): f64 {
-  var ax: f64 = x.abs();
-  var ay: f64 = y.abs();
-  var hi: f64 = ax.max(ay);
-  var lo: f64 = ax.min(ay);
+  let ax: f64 = x.abs();
+  let ay: f64 = y.abs();
+  let hi: f64 = ax.max(ay);
+  let lo: f64 = ax.min(ay);
   if (hi == 0.0) {
     return 0.0;
   }
-  var r: f64 = lo / hi;
+  let r: f64 = lo / hi;
   return hi * (1.0 + r * r).sqrt();
 }
 
@@ -822,16 +822,16 @@ pub function (x: f64) hypot(y: f64): f64 {
 // by the largest magnitude before squaring, so a component near the f64 max
 // doesn't overflow the sum. `hypot3(0, 0, 0)` is `0`; `hypot3(2, 3, 6)` is `7`.
 pub function (x: f64) hypot3(y: f64, z: f64): f64 {
-  var ax: f64 = x.abs();
-  var ay: f64 = y.abs();
-  var az: f64 = z.abs();
-  var hi: f64 = ax.max(ay).max(az);
+  let ax: f64 = x.abs();
+  let ay: f64 = y.abs();
+  let az: f64 = z.abs();
+  let hi: f64 = ax.max(ay).max(az);
   if (hi == 0.0) {
     return 0.0;
   }
-  var rx: f64 = ax / hi;
-  var ry: f64 = ay / hi;
-  var rz: f64 = az / hi;
+  let rx: f64 = ax / hi;
+  let ry: f64 = ay / hi;
+  let rz: f64 = az / hi;
   return hi * (rx * rx + ry * ry + rz * rz).sqrt();
 }
 
@@ -932,7 +932,7 @@ pub function (x: f64) clamp01(): f64 {
 // `abs_diff(a, b)` — the absolute difference `|a - b|`, the float sibling of the
 // i32 / i64 helpers. NaN in either operand propagates.
 pub function (a: f64) abs_diff(b: f64): f64 {
-  var d: f64 = a - b;
+  let d: f64 = a - b;
   if (d < 0.0) {
     return 0.0 - d;
   }
@@ -984,7 +984,7 @@ pub function (x: f64) recip(): f64 {
 // `+0.0`) reads as positive here — the one case where this differs from a
 // bit-level copysign. NaN magnitude passes through with the chosen sign.
 pub function (x: f64) copysign(sign: f64): f64 {
-  var m: f64 = x.abs();
+  let m: f64 = x.abs();
   if (sign < 0.0) {
     return 0.0 - m;
   }
@@ -1104,14 +1104,14 @@ pub function (x: f32) cbrt(): f32 {
 }
 
 pub function (x: f32) hypot(y: f32): f32 {
-  var ax: f64 = (x as f64).abs();
-  var ay: f64 = (y as f64).abs();
-  var hi: f64 = ax.max(ay);
-  var lo: f64 = ax.min(ay);
+  let ax: f64 = (x as f64).abs();
+  let ay: f64 = (y as f64).abs();
+  let hi: f64 = ax.max(ay);
+  let lo: f64 = ax.min(ay);
   if (hi == 0.0) {
     return 0.0 as f32;
   }
-  var r: f64 = lo / hi;
+  let r: f64 = lo / hi;
   return (hi * (1.0 + r * r).sqrt()) as f32;
 }
 
@@ -1192,7 +1192,7 @@ pub function (x: f32) clamp01(): f32 {
 }
 
 pub function (a: f32) abs_diff(b: f32): f32 {
-  var d: f32 = a - b;
+  let d: f32 = a - b;
   if (d < 0.0 as f32) {
     return 0.0 as f32 - d;
   }
@@ -1225,7 +1225,7 @@ pub function (x: f32) recip(): f32 {
 }
 
 pub function (x: f32) copysign(sign: f32): f32 {
-  var m: f32 = x.abs();
+  let m: f32 = x.abs();
   if (sign < 0.0 as f32) {
     return 0.0 as f32 - m;
   }

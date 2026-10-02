@@ -10,7 +10,7 @@ import (
 // intBinopReassignCases pin the string-freshness collector against integer
 // arithmetic. str_local_binding_is_fresh admits every `+` on the strength of
 // the binding being a string, and collect_fresh_string_in_stmt used to admit a
-// `var` on that predicate alone — so `var e: i32 = ae + 1` was credited as a
+// `let` on that predicate alone — so `let e: i32 = ae + 1` was credited as a
 // fresh string, and the later `e = eb` between two such locals took the
 // string alias-reassign retain: a __fern_rc_inc on an integer, which faults
 // for every value but the immortal sentinel -1. coreutils/lib/ld's `add`
@@ -27,8 +27,8 @@ var intBinopReassignCases = []struct {
 }{
 	{"i32-plus-const", `
 function probe(ae: i32, be: i32): i32 {
-    var e: i32 = ae + 1;
-    var eb: i32 = be + 1;
+    let e: i32 = ae + 1;
+    let eb: i32 = be + 1;
     if (eb < e) {
         e = eb;
     }
@@ -48,16 +48,16 @@ function tz(hi: u64, lo: u64): i32 {
     return 64 + __ctz64(hi);
 }
 function probe(a: V, b: V): i32 {
-    var e: i32 = a.e + tz(a.hi, a.lo);
-    var eb: i32 = b.e + tz(b.hi, b.lo);
+    let e: i32 = a.e + tz(a.hi, a.lo);
+    let eb: i32 = b.e + tz(b.hi, b.lo);
     if (eb < e) {
         e = eb;
     }
     return e;
 }
 function main(): i32 {
-    var a: V = V { neg: false, kind: 0, hi: 0 as u64, lo: 9223372036854775808 as u64, e: 0 - 63 };
-    var b: V = V { neg: false, kind: 0, hi: 0 as u64, lo: 9223372036854775808 as u64, e: 0 - 65 };
+    let a: V = V { neg: false, kind: 0, hi: 0 as u64, lo: 9223372036854775808 as u64, e: 0 - 63 };
+    let b: V = V { neg: false, kind: 0, hi: 0 as u64, lo: 9223372036854775808 as u64, e: 0 - 65 };
     if (probe(a, b) != 0 - 2) { return 1; }
     return 0;
 }`},
@@ -65,8 +65,8 @@ function main(): i32 {
 	// reassign between two of them still balances: no leak, no over-release.
 	{"string-concat-still-credited", `
 function main(): i32 {
-    var s: string = "ab" + "cd";
-    var t: string = "x" + "y";
+    let s: string = "ab" + "cd";
+    let t: string = "x" + "y";
     if (s.len() < 10) {
         t = s;
     }

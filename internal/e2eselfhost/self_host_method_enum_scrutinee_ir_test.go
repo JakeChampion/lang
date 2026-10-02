@@ -39,12 +39,12 @@ func TestSelfHostMethodEnumScrutineeIRX86_64(t *testing.T) {
 	}{
 		// Method returning a generic enum, matched directly (the bug).
 		{"method-generic-enum-scrutinee",
-			`enum Opt[T] { Non, Has(T) } struct S { n: i32 } function (s: S) find(k: i32): Opt[i32] { if (k == s.n) { return Has(s.n * 2); } return Non; } function main(): i32 { var s: S = S { n: 21 }; match (s.find(21)) { Has(v) => { return v; }, Non => { return 0; } } }`,
+			`enum Opt[T] { Non, Has(T) } struct S { n: i32 } function (s: S) find(k: i32): Opt[i32] { if (k == s.n) { return Has(s.n * 2); } return Non; } function main(): i32 { let s: S = S { n: 21 }; match (s.find(21)) { Has(v) => { return v; }, Non => { return 0; } } }`,
 			42},
 		// Same shape but both branches carry a payload (no bare unit variant) —
 		// isolates the scrutinee-type recovery from the unit-variant path.
 		{"method-scrutinee-both-payload",
-			`enum Opt[T] { Non, Has(T) } struct S { n: i32 } function (s: S) find(k: i32): Opt[i32] { if (k == s.n) { return Has(s.n * 2); } return Has(0); } function main(): i32 { var s: S = S { n: 21 }; match (s.find(21)) { Has(v) => { return v; }, Non => { return 0; } } }`,
+			`enum Opt[T] { Non, Has(T) } struct S { n: i32 } function (s: S) find(k: i32): Opt[i32] { if (k == s.n) { return Has(s.n * 2); } return Has(0); } function main(): i32 { let s: S = S { n: 21 }; match (s.find(21)) { Has(v) => { return v; }, Non => { return 0; } } }`,
 			42},
 		// String-payload generic enum from a method, struct-literal receiver.
 		{"method-string-payload-scrutinee",
@@ -56,7 +56,7 @@ func TestSelfHostMethodEnumScrutineeIRX86_64(t *testing.T) {
 			42},
 		// Regression: method result var-bound then matched (worked).
 		{"method-result-var-bound",
-			`enum Opt[T] { Non, Has(T) } struct S { n: i32 } function (s: S) find(k: i32): Opt[i32] { if (k == s.n) { return Has(s.n * 2); } return Non; } function main(): i32 { var s: S = S { n: 21 }; var r: Opt[i32] = s.find(21); match (r) { Has(v) => { return v; }, Non => { return 0; } } }`,
+			`enum Opt[T] { Non, Has(T) } struct S { n: i32 } function (s: S) find(k: i32): Opt[i32] { if (k == s.n) { return Has(s.n * 2); } return Non; } function main(): i32 { let s: S = S { n: 21 }; let r: Opt[i32] = s.find(21); match (r) { Has(v) => { return v; }, Non => { return 0; } } }`,
 			42},
 	}
 	for _, tc := range cases {

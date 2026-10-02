@@ -16,10 +16,10 @@ var mapKeysValuesCases = []struct {
 	src  string
 	exit int
 }{
-	{"keys-sum-literal", "import \"core/map\"; function main(): i32 { var m: Map[i32,i32] = Map { 10: 1, 20: 2, 12: 3 }; var t: i32 = 0; for x in m.keys() { t = t + x; } return t; }", 42},
-	{"keys-sum-built", "import \"core/map\"; function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(7, 0); m = m.insert(35, 0); var t: i32 = 0; for x in m.keys() { t = t + x; } return t; }", 42},
-	{"values-sum", "import \"core/map\"; function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(1, 10); m = m.insert(2, 20); var t: i32 = 0; for x in m.values() { t = t + x; } return t; }", 30},
-	{"keys-len-string", "import \"core/map\"; function main(): i32 { var m: Map[string,i32] = map_new(4); m = m.insert(\"ab\", 1); m = m.insert(\"c\", 2); return m.keys().len() + 40; }", 42},
+	{"keys-sum-literal", "import \"core/map\"; function main(): i32 { let m: Map[i32,i32] = Map { 10: 1, 20: 2, 12: 3 }; let t: i32 = 0; for x in m.keys() { t = t + x; } return t; }", 42},
+	{"keys-sum-built", "import \"core/map\"; function main(): i32 { let m: Map[i32,i32] = map_new(4); m = m.insert(7, 0); m = m.insert(35, 0); let t: i32 = 0; for x in m.keys() { t = t + x; } return t; }", 42},
+	{"values-sum", "import \"core/map\"; function main(): i32 { let m: Map[i32,i32] = map_new(4); m = m.insert(1, 10); m = m.insert(2, 20); let t: i32 = 0; for x in m.values() { t = t + x; } return t; }", 30},
+	{"keys-len-string", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = map_new(4); m = m.insert(\"ab\", 1); m = m.insert(\"c\", 2); return m.keys().len() + 40; }", 42},
 }
 
 // TestSelfHostMapKeysX86_64 — m.keys()/m.values() with the self-hosted

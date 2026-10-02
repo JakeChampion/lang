@@ -18,13 +18,13 @@ var strNeqIRCases = []struct {
 	main string
 }{
 	// Inequality holds -> take the branch.
-	{"ne-true", `function main(): i32 { var a: string = "foo"; if (a != "bar") { return 9; } return 0; }`},
+	{"ne-true", `function main(): i32 { let a: string = "foo"; if (a != "bar") { return 9; } return 0; }`},
 	// Inequality is false (equal strings) -> fall through.
-	{"ne-false", `function main(): i32 { var a: string = "foo"; if (a != "foo") { return 1; } return 5; }`},
+	{"ne-false", `function main(): i32 { let a: string = "foo"; if (a != "foo") { return 1; } return 5; }`},
 	// `!=` between two string variables.
-	{"ne-var", `function main(): i32 { var a: string = "abc"; var b: string = "abd"; if (a != b) { return 7; } return 0; }`},
+	{"ne-var", `function main(): i32 { let a: string = "abc"; let b: string = "abd"; if (a != b) { return 7; } return 0; }`},
 	// `==` and `!=` coexisting in one module.
-	{"eq-ne-mix", `function main(): i32 { var a: string = "hi"; var n = 0; if (a == "hi") { n = n + 3; } if (a != "bye") { n = n + 4; } return n; }`},
+	{"eq-ne-mix", `function main(): i32 { let a: string = "hi"; let n = 0; if (a == "hi") { n = n + 3; } if (a != "bye") { n = n + 4; } return n; }`},
 }
 
 // TestSelfHostStrNeqIR compiles each case with the self-host CLI for

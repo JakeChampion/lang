@@ -17,10 +17,10 @@ enum Wrapped[T] { Full(Box[T]), Empty }
 function wrap[T](x: T): Option[T] { return Some(x); }
 function empty[T](x: T): Wrapped[T] { return Empty; }
 function main(): i32 {
-    var a = wrap(1i64);
-    var b = wrap("hello");
-    var c = empty(2i64);
-    var d: Wrapped[string] = Full(Box { value: "hi" });
+    let a = wrap(1i64);
+    let b = wrap("hello");
+    let c = empty(2i64);
+    let d: Wrapped[string] = Full(Box { value: "hi" });
     return 0;
 }`)
 	if err != nil {

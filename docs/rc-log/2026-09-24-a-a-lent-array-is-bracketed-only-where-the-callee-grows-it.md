@@ -6,7 +6,7 @@
 function scan_width(s: string, other: u8[]): i32 {
     ...
     while (i < n) {
-        var j: i32 = __scan_set(s, i, other);
+        let j: i32 = __scan_set(s, i, other);
         ...
     }
 }

@@ -44,7 +44,7 @@ import "./ssarc";
 struct Hist { keys: string[], counts: i32[] }
 
 function hist_bump(h: Hist, k: string): Hist {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < h.keys.len()) {
     if (h.keys[i] == k) {
       return Hist { keys: h.keys, counts: h.counts.with(i, h.counts[i] + 1) };
@@ -57,17 +57,17 @@ function hist_bump(h: Hist, k: string): Hist {
 function hist_print(label: string, h: Hist): void {
   print(label);
   // selection sort by count, descending
-  var order: i32[] = [];
-  var used: boolean[] = [];
-  var i: i32 = 0;
+  let order: i32[] = [];
+  let used: boolean[] = [];
+  let i: i32 = 0;
   while (i < h.keys.len()) {
     used = used.append(false);
     i = i + 1;
   }
-  var n: i32 = 0;
+  let n: i32 = 0;
   while (n < h.keys.len()) {
-    var best: i32 = 0 - 1;
-    var j: i32 = 0;
+    let best: i32 = 0 - 1;
+    let j: i32 = 0;
     while (j < h.keys.len()) {
       if (!used[j]) {
         if (best < 0 || h.counts[j] > h.counts[best]) {
@@ -87,10 +87,10 @@ function hist_print(label: string, h: Hist): void {
 
 // The leaf reason: strip every cascade prefix.
 function leaf(why: string): string {
-  var tag: string = "call target was refused: ";
-  var out: string = why;
+  let tag: string = "call target was refused: ";
+  let out: string = why;
   while (out.len() > tag.len()) {
-    var head: string = slice_unchecked(out, 0, tag.len()).to_owned();
+    let head: string = slice_unchecked(out, 0, tag.len()).to_owned();
     if (head != tag) {
       return out;
     }
@@ -103,11 +103,11 @@ function leaf(why: string): string {
 struct Stage { planned: boolean, lowered: boolean, plan_why: string, rc_why: string }
 
 function stage_of(p: semsource.Produced, tab: irtables.StructTab): Stage {
-  var plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
+  let plan: ssaunits.Plan = ssaunits.plan(p.func, p.modes);
   if (!plan.ok) {
     return Stage { planned: false, lowered: false, plan_why: plan.why, rc_why: "" };
   }
-  var lr: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, ssaunits.no_grows());
+  let lr: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, ssaunits.no_grows());
   if (!lr.ok) {
     return Stage { planned: true, lowered: false, plan_why: "", rc_why: lr.why };
   }
@@ -116,8 +116,8 @@ function stage_of(p: semsource.Produced, tab: irtables.StructTab): Stage {
 
 // A template's stage is the first its instances stop at.
 function template_stage(key: string, instances: semsource.Produced[], stages: Stage[]): Stage {
-  var out: Stage = Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
-  var i: i32 = 0;
+  let out: Stage = Stage { planned: true, lowered: true, plan_why: "", rc_why: "" };
+  let i: i32 = 0;
   while (i < instances.len()) {
     if (instances[i].key == key) {
       if (!stages[i].planned) {
@@ -160,8 +160,8 @@ function listed_leaf(): string {
 // pipeline, and its own `lowered` against `produced` is the condition, so a
 // body that refuses under the widening is shown rather than hidden.
 function measured_build(merged: parser.Module): semsource.Built {
-  var built: semsource.Built = semsource.build_module(merged);
-  var widened: semsource.Built = semsource.with_inferred_modes(built);
+  let built: semsource.Built = semsource.build_module(merged);
+  let widened: semsource.Built = semsource.with_inferred_modes(built);
   if (!semsource.any_row_changed(semsource.changed_rows(built, widened))) {
     return built;
   }
@@ -169,30 +169,30 @@ function measured_build(merged: parser.Module): semsource.Built {
 }
 
 function report(merged: parser.Module, tab: irtables.StructTab): void {
-  var listed: string = listed_leaf();
-  var built: semsource.Built = measured_build(merged);
-  var total: i32 = built.decls.len();
-  var n_produced: i32 = 0;
-  var n_planned: i32 = 0;
-  var n_lowered: i32 = 0;
-  var n_instances: i32 = 0;
-  var n_bodyless: i32 = 0;
-  var refusals: Hist = Hist { keys: [], counts: [] };
-  var leaves: Hist = Hist { keys: [], counts: [] };
-  var plan_why: Hist = Hist { keys: [], counts: [] };
-  var rc_why: Hist = Hist { keys: [], counts: [] };
-  var stages: Stage[] = [];
+  let listed: string = listed_leaf();
+  let built: semsource.Built = measured_build(merged);
+  let total: i32 = built.decls.len();
+  let n_produced: i32 = 0;
+  let n_planned: i32 = 0;
+  let n_lowered: i32 = 0;
+  let n_instances: i32 = 0;
+  let n_bodyless: i32 = 0;
+  let refusals: Hist = Hist { keys: [], counts: [] };
+  let leaves: Hist = Hist { keys: [], counts: [] };
+  let plan_why: Hist = Hist { keys: [], counts: [] };
+  let rc_why: Hist = Hist { keys: [], counts: [] };
+  let stages: Stage[] = [];
   for inst in built.instances {
-    var st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
+    let st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
     if (inst.ok) {
       n_instances = n_instances + 1;
       st = stage_of(inst, tab);
     }
     stages = stages.append(st);
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < built.decls.len()) {
-    var p: semsource.Produced = built.decls[i];
+    let p: semsource.Produced = built.decls[i];
     if (p.bodyless) {
       n_bodyless = n_bodyless + 1;
     } else if (!p.ok) {
@@ -203,7 +203,7 @@ function report(merged: parser.Module, tab: irtables.StructTab): void {
       }
     } else {
       n_produced = n_produced + 1;
-      var st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
+      let st: Stage = Stage { planned: false, lowered: false, plan_why: "", rc_why: "" };
       if (p.template) {
         st = template_stage(p.key, built.instances, stages);
       } else {
@@ -242,10 +242,10 @@ const STDLIB_EXT: string = ".fern";
 // sealed: an entry's own relative imports (`./util`) miss the overlay and fall
 // through to disk, which is where they live.
 function embedded_stdlib(): modloader.Overlay {
-  var paths: string[] = [];
-  var srcs: string[] = [];
+  let paths: string[] = [];
+  let srcs: string[] = [];
   for a in __fern_assets() {
-    var name: string = a.0;
+    let name: string = a.0;
     if (name.len() > STDLIB_EXT.len()
       && slice_unchecked(name, name.len() - STDLIB_EXT.len(), name.len()) == STDLIB_EXT) {
       paths = paths.append(slice_unchecked(name, 0, name.len() - STDLIB_EXT.len()) + "");
@@ -256,28 +256,28 @@ function embedded_stdlib(): modloader.Overlay {
 }
 
 function main(): i32 {
-  var av: string[] = args();
+  let av: string[] = args();
   if (av.len() < 2) {
     eprint("usage: semsource_census_run <entry.fern>");
     return 2;
   }
-  var entry_path: string = av[1];
-  var dir: string = modloader.dirname(entry_path);
+  let entry_path: string = av[1];
+  let dir: string = modloader.dirname(entry_path);
   match (read_file(entry_path)) {
     Ok(src) => {
-      var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+      let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
       // An unresolved import is the failure mode that once produced a whole
       // phantom refusal class, so the census refuses to count past one.
       let (loaded, missing) = modloader.load_imports(embedded_stdlib(), entry_path, entry);
       if (modloader.report_unresolved(missing, "semsource_census_run")) {
         return 2;
       }
-      var merged: parser.Module = flatten.bundle(entry, loaded, "arm64-linux");
+      let merged: parser.Module = flatten.bundle(entry, loaded, "arm64-linux");
       merged = modloader.merge_builtins(dir, merged);
       // The driver folds the target's name to its two literals before
       // anything lowers, so the boundary never sees the call; the
       // census counts against the default target.
-      var desc: platforms.Descriptor = platforms.for_target("arm64-linux");
+      let desc: platforms.Descriptor = platforms.for_target("arm64-linux");
       merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
       // The pipeline the CLI's typed route runs before it lowers:
       // `lift_lambdas_typed(parser.module_with_builtins_typed(merged))`. This used to hand-roll a prefix of it —
@@ -290,7 +290,7 @@ function main(): i32 {
       // (#9773, #9778).
       merged = parser.module_with_builtins_typed(merged);
       merged = lift.lift_lambdas_typed(merged);
-      var tab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(merged.structs));
+      let tab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(merged.structs));
 
       report(merged, tab);
       return 0;

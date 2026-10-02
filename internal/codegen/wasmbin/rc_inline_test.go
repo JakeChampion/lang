@@ -20,11 +20,11 @@ import (
 
 const rcTrafficSrc = `struct Holder { n: i32, items: i32[] }
 function churn(k: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < k) {
-        var a: Holder = Holder { n: i, items: [i, i + 1] };
-        var b: Holder = a;
+        let a: Holder = Holder { n: i, items: [i, i + 1] };
+        let b: Holder = a;
         acc = acc + b.n + b.items[0];
         i = i + 1;
     }

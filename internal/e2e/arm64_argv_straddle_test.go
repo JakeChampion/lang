@@ -31,13 +31,13 @@ const argvStraddleSrc = `
 // Leave one block on every small freelist class (16..2048) so a block freed
 // into the wrong class has a neighbour to be confused with.
 function churn(): i32 {
-    var held: usize[] = [];
-    var n: i32 = 16;
+    let held: usize[] = [];
+    let n: i32 = 16;
     while (n <= 2048) {
         held = held.append(__alloc(n));
         n = n + 16;
     }
-    var i: i32 = 0;
+    let i: i32 = 0;
     n = 16;
     while (n <= 2048) {
         __free(held[i], n);
@@ -47,22 +47,22 @@ function churn(): i32 {
     return i;
 }
 function main(): i32 {
-    var xs: string[] = args();
+    let xs: string[] = args();
     if (xs.len() != 4) { return 90; }
-    var r: i32 = 0;
+    let r: i32 = 0;
     while (r < 40) {
         if (churn() != 128) { return 91; }
-        var a: string = xs[1];
-        var b: string = xs[2];
-        var c: string = xs[3];
+        let a: string = xs[1];
+        let b: string = xs[2];
+        let c: string = xs[3];
         if (a.len() != 8) { return 92; }
         if (b.len() != 24) { return 93; }
         if (c.len() != 40) { return 94; }
         if (a != "` + argvStraddleA + `") { return 95; }
         if (b != "` + argvStraddleB + `") { return 96; }
         if (c != "` + argvStraddleC + `") { return 97; }
-        var ab: string = a + b;
-        var bc: string = b + c;
+        let ab: string = a + b;
+        let bc: string = b + c;
         if (ab.len() + bc.len() != 96) { return 98; }
         r = r + 1;
     }

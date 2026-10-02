@@ -27,9 +27,9 @@ func targetArchCalls(prog *ast.Program) int {
 func TestFoldWithResolvesTargetArch(t *testing.T) {
 	prog, err := parser.Parse(`function arch(): string { return target_arch(); }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n < 1) {
-        var here: string = target_arch();
+        let here: string = target_arch();
         if (target_arch() == "x86-64" && here == "x86-64") { n = n + 1; }
         n = n + 1;
     }

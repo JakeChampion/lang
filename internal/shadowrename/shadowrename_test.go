@@ -32,8 +32,8 @@ func runRename(t *testing.T, src string) *ast.Program {
 // name the user wrote.
 func TestRenameLeavesUnshadowedNamesAlone(t *testing.T) {
 	prog := runRename(t, `function f(): i32 {
-		var a: i32 = 1;
-		var b: i32 = 2;
+		let a: i32 = 1;
+		let b: i32 = 2;
 		return a + b;
 	}`)
 	fn := prog.Funcs[0]
@@ -49,9 +49,9 @@ func TestRenameLeavesUnshadowedNamesAlone(t *testing.T) {
 // scheme can keep them distinct.
 func TestRenameShadowedDeclarationGetsFreshName(t *testing.T) {
 	prog := runRename(t, `function f(): i32 {
-		var x: i32 = 1;
+		let x: i32 = 1;
 		{
-			var x: i32 = 2;
+			let x: i32 = 2;
 			x = x + 1;
 		}
 		return x;
@@ -61,7 +61,7 @@ func TestRenameShadowedDeclarationGetsFreshName(t *testing.T) {
 	// Two declarations: outer "x" stays, inner shadowed one
 	// must get a `$N` suffix.
 	if len(names) != 2 {
-		t.Fatalf("expected 2 var decls, got %d (%v)", len(names), names)
+		t.Fatalf("expected 2 let decls, got %d (%v)", len(names), names)
 	}
 	if names[0] != "x" {
 		t.Errorf("outer var: got %q, want %q", names[0], "x")
@@ -77,10 +77,10 @@ func TestRenameShadowedDeclarationGetsFreshName(t *testing.T) {
 // the wrong slot.
 func TestRenameReferenceFollowsShadowedDecl(t *testing.T) {
 	prog := runRename(t, `function f(): i32 {
-		var x: i32 = 1;
+		let x: i32 = 1;
 		{
-			var x: i32 = 2;
-			var y: i32 = x + 10;
+			let x: i32 = 2;
+			let y: i32 = x + 10;
 			return y;
 		}
 		return x;
@@ -128,19 +128,19 @@ func TestRenameReferenceFollowsShadowedDecl(t *testing.T) {
 // same suffix.
 func TestRenameSiblingBlocksDontInterfere(t *testing.T) {
 	prog := runRename(t, `function f(): i32 {
-		var x: i32 = 1;
+		let x: i32 = 1;
 		{
-			var x: i32 = 2;
+			let x: i32 = 2;
 		}
 		{
-			var x: i32 = 3;
+			let x: i32 = 3;
 		}
 		return x;
 	}`)
 	fn := prog.Funcs[0]
 	names := collectVarNames(fn.Body)
 	if len(names) != 3 {
-		t.Fatalf("expected 3 var decls, got %d (%v)", len(names), names)
+		t.Fatalf("expected 3 let decls, got %d (%v)", len(names), names)
 	}
 	if names[0] != "x" {
 		t.Errorf("outer var: got %q, want %q", names[0], "x")
@@ -159,10 +159,10 @@ func TestRenameSiblingBlocksDontInterfere(t *testing.T) {
 func TestRenameStructUpdateBaseFollowsShadowedDecl(t *testing.T) {
 	prog := runRename(t, `struct P { x: i32, y: i32 }
 	function f(): i32 {
-		var base: P = P { x: 1, y: 2 };
+		let base: P = P { x: 1, y: 2 };
 		{
-			var base: P = P { x: 100, y: 200 };
-			var updated: P = P { ...base, y: 999 };
+			let base: P = P { x: 100, y: 200 };
+			let updated: P = P { ...base, y: 999 };
 			return updated.x;
 		}
 	}`)
@@ -265,10 +265,10 @@ func TestRenameLocalSharingAFunctionName(t *testing.T) {
 	function g(find: i32): i32 { return find + 1; }
 	function h(c: boolean): i32 {
 		if (c) {
-			var find: i32 = 2;
+			let find: i32 = 2;
 			return find;
 		} else {
-			var f: (i32) => i32 = find;
+			let f: (i32) => i32 = find;
 			return f(3);
 		}
 	}`)

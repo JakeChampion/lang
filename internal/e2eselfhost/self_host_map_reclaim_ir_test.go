@@ -24,13 +24,13 @@ var mapReclaimIRCases = []struct {
 }{
 	// Basic i32-keyed borrow-only map: fresh, read via get_or, never reassigned
 	// or returned -> reclaimable. 2 + 4 = 6.
-	{"i32-borrow-only", `var m: Map[i32, i32] = Map { 1: 2, 3: 4 }; return m.get_or(1, 0) + m.get_or(3, 0);`, 6},
+	{"i32-borrow-only", `let m: Map[i32, i32] = Map { 1: 2, 3: 4 }; return m.get_or(1, 0) + m.get_or(3, 0);`, 6},
 	// Two sequential reclaimable maps: the first is freed at its last use, the
 	// second must allocate cleanly (possibly reusing the freed blocks). 5 + 9 = 14.
-	{"two-sequential", `var a: Map[i32, i32] = Map { 1: 5 }; var x: i32 = a.get_or(1, 0); var b: Map[i32, i32] = Map { 2: 9 }; return x + b.get_or(2, 0);`, 14},
+	{"two-sequential", `let a: Map[i32, i32] = Map { 1: 5 }; let x: i32 = a.get_or(1, 0); let b: Map[i32, i32] = Map { 2: 9 }; return x + b.get_or(2, 0);`, 14},
 	// Grown map (past the initial cap of 8) then reclaimed: exercises the freed
 	// keys/vals buffers being the grown (larger) allocations. sum 1..10 = 55.
-	{"grown-then-reclaimed", `var m: Map[i32, i32] = Map {}; var i: i32 = 1; while (i <= 10) { m = m.insert(i, i); i = i + 1; } var s: i32 = 0; var j: i32 = 1; while (j <= 10) { s = s + m.get_or(j, 0); j = j + 1; } return s;`, 55},
+	{"grown-then-reclaimed", `let m: Map[i32, i32] = Map {}; let i: i32 = 1; while (i <= 10) { m = m.insert(i, i); i = i + 1; } let s: i32 = 0; let j: i32 = 1; while (j <= 10) { s = s + m.get_or(j, 0); j = j + 1; } return s;`, 55},
 }
 
 func mapReclaimIRSrc(mainBody string) string {

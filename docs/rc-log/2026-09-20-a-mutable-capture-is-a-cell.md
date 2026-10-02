@@ -34,14 +34,14 @@ relative pin:
   lambda left the creator's `m` untouched (37 for native's 51 on the probe).
 - A `Cell[i64]` PARAMETER read inside i64 arithmetic bailed the AST lowering
   (`did not lower: call .set`): the parameter path set `is_cell` but not the
-  element-width columns a `var c: Cell[i64]` local gets, so the `get` read as
+  element-width columns a `let c: Cell[i64]` local gets, so the `get` read as
   an i32.
 
 ## The fix
 
 The capture box is the `Cell[T]` the language has:
 
-    var x: T = init;      ->  var $cell$x: Cell[T] = cell_new(init);
+    let x: T = init;      ->  let $cell$x: Cell[T] = cell_new(init);
     x                     ->  $cell$x.get()
     x = v                 ->  $cell$x.set(v);
 
@@ -63,8 +63,8 @@ On the AST lowering, a cell's element is classified as the array `T[]` it
 is read as: `mark_cell_elem` goes through one type-driven marker
 (`mark_array_slot_from_type`) for every element kind rather than the three
 it used to spell out, a `Cell[T]` PARAMETER is routed through it when the
-lowering state is built, and a `var c: Cell[T] = cell_new(init)` local is
-lowered as `var c: T[] = [init]` with the cell marks on top, so the
+lowering state is built, and a `let c: Cell[T] = cell_new(init)` local is
+lowered as `let c: T[] = [init]` with the cell marks on top, so the
 initialiser's shape types the element as it always did for the array box.
 Every `c.get()` on a local or parameter declared `Cell[T]` becomes `c[0]` at
 the function's entry (`cell_reads_as_index`), before any analysis or type

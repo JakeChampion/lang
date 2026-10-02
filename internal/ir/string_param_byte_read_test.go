@@ -15,7 +15,7 @@ import (
 // The byte-index and slice reads were missing from stringParamCounted while its
 // struct sibling (structParamProjectionsSafe) already credited exactly the same
 // reads one field deep. The consequence was not a missing optimisation but a
-// leak: with the param uncredited, the caller's `var f = table(p)` stayed
+// leak: with the param uncredited, the caller's `let f = table(p)` stayed
 // taint-ineligible, so the exit sweep emitted the dec-only __fern_rc_dec rather
 // than the freeing __fern_arr_dec and the array was never reclaimed. A
 // KMP-shaped search leaked its failure table once per call, and a
@@ -39,17 +39,17 @@ func TestStringParamByteReadIsCounted(t *testing.T) {
 		name string
 		body string
 	}{
-		{"byte index", `var n: i32 = 0; if (p[0] == p[1]) { n = 1; } return n;`},
-		{"index in a loop", `var n: i32 = 0; var i: i32 = 0;
+		{"byte index", `let n: i32 = 0; if (p[0] == p[1]) { n = 1; } return n;`},
+		{"index in a loop", `let n: i32 = 0; let i: i32 = 0;
              while (i < p.len()) { if (p[i] == 97) { n = n + 1; } i = i + 1; }
              return n;`},
 		{"slice source", `return slice_unchecked(p, 0, 2).len();`},
 		{"len only, the case that already worked", `return p.len();`},
 		// std/string.bytes: the address of p's bytes dies with the
 		// __memcpy, so nothing retains p (#8403).
-		{"memcpy source", `var n: i32 = p.len(); var out: u8[] = __alloc_u8(n);
+		{"memcpy source", `let n: i32 = p.len(); let out: u8[] = __alloc_u8(n);
              __memcpy(out as usize, p.as_bytes() as usize, n); return out.len();`},
-		{"memcpy destination", `var n: i32 = p.len(); var out: u8[] = __alloc_u8(n);
+		{"memcpy destination", `let n: i32 = p.len(); let out: u8[] = __alloc_u8(n);
              __memcpy(p as usize, out as usize, n); return n;`},
 	}
 	for _, c := range cases {
@@ -75,7 +75,7 @@ func TestStringParamThatIsRetainedStaysUncredited(t *testing.T) {
 		// push store is a counted occurrence since the #7914 element
 		// credit (TestStringParamPushedElementIsCounted).
 		{"bound to a local", `function keep(p: string): i32 {
-            var s: string = p;
+            let s: string = p;
             return s.len();
         }`},
 	}
@@ -96,10 +96,10 @@ func TestStringParamThatIsRetainedStaysUncredited(t *testing.T) {
 // like in the IR.
 func TestCallerFreesArrayFromAByteReadingCallee(t *testing.T) {
 	src := `function table(p: string): i32[] {
-    var f: i32[] = [];
+    let f: i32[] = [];
     f = f.append(0);
-    var k: i32 = 0;
-    var i: i32 = 1;
+    let k: i32 = 0;
+    let i: i32 = 1;
     while (i < p.len()) {
         if (p[i] != p[0]) { k = f[k]; }
         f = f.append(k);
@@ -108,9 +108,9 @@ func TestCallerFreesArrayFromAByteReadingCallee(t *testing.T) {
     return f;
 }
 function search(p: string): i32 {
-    var f: i32[] = table(p);
-    var s: i32 = 0;
-    var j: i32 = 0;
+    let f: i32[] = table(p);
+    let s: i32 = 0;
+    let j: i32 = 0;
     while (j < f.len()) { s = s + f[j]; j = j + 1; }
     return s;
 }
@@ -131,12 +131,12 @@ func TestStringParamByteReadCreditIsInertWithFreeOff(t *testing.T) {
 	defer func(prev bool) { ast.RcFreeEnabled = prev }(ast.RcFreeEnabled)
 	ast.RcFreeEnabled = false
 	src := `function table(p: string): i32[] {
-    var f: i32[] = [];
-    var i: i32 = 0;
+    let f: i32[] = [];
+    let i: i32 = 0;
     while (i < p.len()) { f = f.append(p[i] as i32); i = i + 1; }
     return f;
 }
-function search(p: string): i32 { var f: i32[] = table(p); return f.len(); }
+function search(p: string): i32 { let f: i32[] = table(p); return f.len(); }
 function main(): i32 { return 0; }`
 	for _, ptrW := range []int{4, 8} {
 		p := lowerSourceWith(t, src, ptrW)

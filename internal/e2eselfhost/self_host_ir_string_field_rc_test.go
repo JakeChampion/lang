@@ -43,21 +43,21 @@ func TestSelfHostIRStringFieldRcX86_64(t *testing.T) {
 		// + a scalar field back: a corrupted array header shows as a wrong count.
 		{"rebuild-struct-array-string-field", `struct Node { name: string, kids: i32[], n: i32 }
 function rebuild(src: Node[]): Node[] {
-	var out: Node[] = [];
-	var i: i32 = 0;
+	let out: Node[] = [];
+	let i: i32 = 0;
 	while (i < src.len()) {
-		var s: Node = src[i];
+		let s: Node = src[i];
 		out = out.append(Node { name: s.name, kids: s.kids, n: s.n });
 		i = i + 1;
 	}
 	return out;
 }
 function main(): i32 {
-	var src: Node[] = [];
-	var i: i32 = 0;
+	let src: Node[] = [];
+	let i: i32 = 0;
 	while (i < 6) { src = src.append(Node { name: "x", kids: [], n: i }); i = i + 1; }
-	var r: Node[] = rebuild(src);
-	var sum: i32 = 0; var j: i32 = 0;
+	let r: Node[] = rebuild(src);
+	let sum: i32 = 0; let j: i32 = 0;
 	while (j < r.len()) { sum = sum + r[j].n; j = j + 1; }
 	return r.len() + sum;
 }`, 6 + 15}, // len 6 + (0+1+2+3+4+5)=15 -> 21
@@ -68,8 +68,8 @@ function main(): i32 {
 		{"struct-string-field-beside-array", `struct H { tag: string, n: i32 }
 function mk(name: string, k: i32): H { return H { tag: name, n: k }; }
 function main(): i32 {
-	var guard: i32[] = [7, 8, 9];
-	var h: H = mk("hello", guard.len());
+	let guard: i32[] = [7, 8, 9];
+	let h: H = mk("hello", guard.len());
 	return guard.len() * 10 + h.n + h.tag.len();
 }`, 3*10 + 3 + 5}, // guard.len 3 *10 + h.n(=guard.len=3) + "hello".len 5 -> 38
 
@@ -77,9 +77,9 @@ function main(): i32 {
 		{"string-field-through-rebuilds", `struct B { s: string, v: i32 }
 function copy_b(x: B): B { return B { s: x.s, v: x.v }; }
 function main(): i32 {
-	var a: B = B { s: "abcd", v: 3 };
-	var b: B = copy_b(a);
-	var c: B = copy_b(b);
+	let a: B = B { s: "abcd", v: 3 };
+	let b: B = copy_b(a);
+	let c: B = copy_b(b);
 	return c.s.len() * 10 + c.v;
 }`, 4*10 + 3}, // "abcd".len 4 *10 + 3 -> 43
 	} {

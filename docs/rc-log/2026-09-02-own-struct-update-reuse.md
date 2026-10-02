@@ -57,7 +57,7 @@ them:
   string literal or concatenation. A bare local or another struct's field is an
   uncounted alias the reused box would share with that local's sweep, and
   refuses the function (`own_override_owned`).
-- **p is only read, passed on, or spread**: a `var q = p` alias or a rebind from
+- **p is only read, passed on, or spread**: a `let q = p` alias or a rebind from
   anything but a self-update refuses it. Passing p to a callee is fine either
   way — an `own` position moves it, a borrowing one leaves it, and a counted
   store raises the count the uniqueness guard reads.
@@ -78,7 +78,7 @@ buffer holds.
 
 On the compiler: 59 of the 72 `own` struct parameters in the self-host are
 admitted, 46 of the 54 in `x86_native`. The eight assembler refusals are the
-"take the buffer out" pattern (`var code = a.code; a = X86Asm { ...a, code: [] };
+"take the buffer out" pattern (`let code = a.code; a = X86Asm { ...a, code: [] };
 … return X86Asm { ...a, code: code }`), a bare-local override.
 
 The sanitized self-built stage1 (`FERN_SANITIZE=1`) assembling `lexer.fern`

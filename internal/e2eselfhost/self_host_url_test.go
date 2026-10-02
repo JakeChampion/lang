@@ -36,8 +36,8 @@ var urlCases = []struct {
 }{
 	{"parse-some", `match (url_parse("http://example.com/p?q=1")) { Some(u) => { return 1; }, None => { return 0; } }`, 1},
 	{"parse-none", `match (url_parse("")) { Some(u) => { return 1; }, None => { return 7; } }`, 7},
-	{"query-dup-keys", `var m: Map[string,string[]] = query_parse("a=1&b=2&a=3"); var t: i32 = 0; match (m.get("a")) { Some(v) => { t = t + v.len()*10; }, None => {} } match (m.get("b")) { Some(v) => { t = t + v.len(); }, None => {} } return t;`, 21},
-	{"query-has", `var m: Map[string,string[]] = query_parse("x=9"); if (m.has("x") && !m.has("z")) { return 5; } return 0;`, 5},
+	{"query-dup-keys", `let m: Map[string,string[]] = query_parse("a=1&b=2&a=3"); let t: i32 = 0; match (m.get("a")) { Some(v) => { t = t + v.len()*10; }, None => {} } match (m.get("b")) { Some(v) => { t = t + v.len(); }, None => {} } return t;`, 21},
+	{"query-has", `let m: Map[string,string[]] = query_parse("x=9"); if (m.has("x") && !m.has("z")) { return 5; } return 0;`, 5},
 }
 
 // urlEntry writes std/url.fern plus `mainBody` to a fresh directory and returns

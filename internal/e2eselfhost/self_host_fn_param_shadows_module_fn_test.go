@@ -73,7 +73,7 @@ function handler(input: string): Verdict { return Wrong("wrong function ran"); }
 function good(input: string): Verdict { return Fine; }
 
 function inner(xs: string[], handler: (string) => Verdict): Verdict {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
         match (handler(xs[i])) { Wrong(m) => { return Wrong(m); }, Fine => { } }
         i = i + 1;
@@ -138,8 +138,8 @@ function other(x: i32): i32 { return 2; }
 function apply(f: (i32) => i32): i32 { return f(0); }
 function fwd(pick: (i32) => i32): i32 { return apply(pick); }
 function main(): i32 {
-    var a: i32 = fwd(other);
-    var b: i32 = fwd(pick);
+    let a: i32 = fwd(other);
+    let b: i32 = fwd(pick);
     return a * 10 + b;
 }`, 21},
 }

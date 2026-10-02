@@ -28,7 +28,7 @@ var annotateFieldCases = []struct {
 	// u64 / u32 struct fields feeding an unsigned shift (expr_is_u64/_u32).
 	{"unsigned_fields", `struct Bits { hi: u64, lo: u32 }
 function main(): i32 {
-    var b: Bits = Bits { hi: 18446744073709551615, lo: 4000000000 };
+    let b: Bits = Bits { hi: 18446744073709551615, lo: 4000000000 };
     if ((b.hi >> 1) < 9000000000000000000) { return 1; }
     if ((b.lo >> 1) < 1000000000) { return 2; }
     return 42;
@@ -36,16 +36,16 @@ function main(): i32 {
 	// an i64 struct field is a 64-bit value (infer_expr_width).
 	{"i64_field_width", `struct Wide { n: i64 }
 function main(): i32 {
-    var w: Wide = Wide { n: 5000000000 };
-    var v: i64 = w.n + 1;
+    let w: Wide = Wide { n: 5000000000 };
+    let v: i64 = w.n + 1;
     if (v == 5000000001) { return 42; }
     return 7;
 }`},
 	// f64 struct fields in float arithmetic (expr_is_f64).
 	{"f64_fields", `struct Pt { x: f64, y: f64 }
 function main(): i32 {
-    var p: Pt = Pt { x: 1.5, y: 2.5 };
-    var s: f64 = p.x * p.y;
+    let p: Pt = Pt { x: 1.5, y: 2.5 };
+    let s: f64 = p.x * p.y;
     if (s == 3.75) { return 42; }
     return 7;
 }`},
@@ -53,7 +53,7 @@ function main(): i32 {
 	{"nested_struct_field", `struct Inner { n: i64 }
 struct Outer { inn: Inner }
 function main(): i32 {
-    var o: Outer = Outer { inn: Inner { n: 5000000000 } };
+    let o: Outer = Outer { inn: Inner { n: 5000000000 } };
     if (o.inn.n == 5000000000) { return 42; }
     return 7;
 }`},
@@ -63,16 +63,16 @@ function main(): i32 {
 struct Reg { caps: Map[string, i32] }
 
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("a", 40);
-    var r: Reg = Reg { caps: m };
+    let r: Reg = Reg { caps: m };
     return r.caps.get_or("a", 0) + 2;
 }`},
 	// a struct TUPLE element, then an unsigned field off it — the tuple half of
 	// fa_type_tag feeding the struct half.
 	{"tuple_elem_struct_field", `struct P { v: u64 }
 function main(): i32 {
-    var t: (P, i32) = (P { v: 18446744073709551615 }, 3);
+    let t: (P, i32) = (P { v: 18446744073709551615 }, 3);
     if ((t.0.v >> 1) > 9000000000000000000) { return 42; }
     return 7;
 }`},

@@ -33,7 +33,7 @@ func TestSelfHostBigI64LiteralWasmIR(t *testing.T) {
 	// 9000000000000000007 is 19 digits — far beyond i32 range but inside i64/u64.
 	// 9000000000000000000 is divisible by 256, so the modulus is 7 → exit 7.
 	src := `function main(): i32 {
-    var big: u64 = 9000000000000000007 as u64;
+    let big: u64 = 9000000000000000007 as u64;
     return (big % 256 as u64) as i32;
 }`
 	want := interpExit(t, interpBin, src)

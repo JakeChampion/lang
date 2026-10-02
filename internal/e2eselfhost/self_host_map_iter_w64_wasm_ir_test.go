@@ -19,7 +19,7 @@ import (
 // are builtins there), asserts the WAT reached $__fern_map_iter_w64, then runs
 // under wasmtime. Values are cross-checked against the native interpreter.
 //
-// NOTE: the EXPLICIT `var it: MapIter[K, i64] = m.iter()` form is not covered — a
+// NOTE: the EXPLICIT `let it: MapIter[K, i64] = m.iter()` form is not covered — a
 // pre-existing inference bug (a #5531 interaction: a map used via an explicit
 // `.iter()` loses its i64 value-type tag and lowers the value column narrow) makes
 // that form miscompile on wasm-IR both before and after this change, independent
@@ -41,14 +41,14 @@ func TestSelfHostMapIterW64WasmIR(t *testing.T) {
 	}{
 		// for (k, v) in m: SUM of wide values full-width. 5e9 + 9e9 + 12000000005 =
 		// 26000000005; % 1000 == 5.
-		{"foreach-sum", `function main(): i32 { var m: Map[i32, i64] = Map { 1: 5000000000, 2: 9000000000, 3: 12000000005 }; var s: i64 = 0; for (k, v) in m { s = s + v; } return (s % 1000) as i32; }`, 5},
+		{"foreach-sum", `function main(): i32 { let m: Map[i32, i64] = Map { 1: 5000000000, 2: 9000000000, 3: 12000000005 }; let s: i64 = 0; for (k, v) in m { s = s + v; } return (s % 1000) as i32; }`, 5},
 		// u64 values: OR-reduce over the column then unsigned shift. 18e18 has bit 63
 		// set; OR keeps it; >>63 == 1.
-		{"u64-foreach-shift", `function main(): i32 { var m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64, 2: 1 as u64 }; var acc: u64 = 0; for (k, v) in m { acc = acc | v; } return (acc >> 63) as i32; }`, 1},
+		{"u64-foreach-shift", `function main(): i32 { let m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64, 2: 1 as u64 }; let acc: u64 = 0; for (k, v) in m { acc = acc | v; } return (acc >> 63) as i32; }`, 1},
 		// iterate a map_new'd + .insert map with an OVERWRITE (key 1 twice): only the
 		// live value is snapshotted. 7e9 (key1 final) + 3e9 (key2) = 10e9; % 1000 == 0.
 		// Also guards no over-release of superseded cells (99).
-		{"insert-overwrite-iter", `function main(): i32 { var m: Map[i32, i64] = map_new(8); m = m.insert(1, 5000000000); m = m.insert(2, 3000000000); m = m.insert(1, 7000000000); var s: i64 = 0; for (k, v) in m { s = s + v; } if (__rc_underflow_count() != 0) { return 99; } return (s % 1000) as i32; }`, 0},
+		{"insert-overwrite-iter", `function main(): i32 { let m: Map[i32, i64] = map_new(8); m = m.insert(1, 5000000000); m = m.insert(2, 3000000000); m = m.insert(1, 7000000000); let s: i64 = 0; for (k, v) in m { s = s + v; } if (__rc_underflow_count() != 0) { return 99; } return (s % 1000) as i32; }`, 0},
 	}
 
 	for _, tc := range cases {

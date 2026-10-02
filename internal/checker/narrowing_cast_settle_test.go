@@ -10,7 +10,7 @@ import (
 // canonical way to write a byte wrap, rejected.
 //
 // It only broke expressions with an UNSETTLED operand, which is what made it
-// look arbitrary. `var x: i32 = …; (x % 256) as u8` was accepted all along
+// look arbitrary. `let x: i32 = …; (x % 256) as u8` was accepted all along
 // because x had already committed to i32; the same expression over a loop
 // variable was rejected because the variable had not. Whether an expression
 // type-checked depended on whether its neighbour happened to be declared.
@@ -21,9 +21,9 @@ func TestNarrowingCastDoesNotSettleItsOperand(t *testing.T) {
 	const prelude = `import "std/i32";
 import "std/u64";
 function main(): i32 {
-    var x: i32 = 300;
-    var out: u8[] = [];
-    var acc: u64 = 0;
+    let x: i32 = 300;
+    let out: u8[] = [];
+    let acc: u64 = 0;
 `
 	cases := []struct {
 		name      string

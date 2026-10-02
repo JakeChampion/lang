@@ -12,8 +12,8 @@ function second_x(qs: [P]): i32 {
 }
 
 function main(): i32 {
-    var ps: P[] = [P { x: 1, name: "one" }, P { x: 2, name: "two" }, P { x: 3, name: "three" }];
-    var qs: [P] = ps[1:3];
+    let ps: P[] = [P { x: 1, name: "one" }, P { x: 2, name: "two" }, P { x: 3, name: "three" }];
+    let qs: [P] = ps[1:3];
     if (qs[0].x != 2) { return 1; }
     if (qs[1].name.len() != 5) { return 2; }
     if (second_x(ps[0:2]) != 2) { return 3; }

@@ -316,7 +316,7 @@ func (p *parser) acceptIf(when bool, kind lexer.Kind, text string) (lexer.Token,
 //
 // `_` was already a wildcard in match patterns and `for (k, _) in m`, and
 // only a binding here; the two compilers had also drifted apart over which
-// half was which, so `var (a, _) = t(); var (b, _) = t();` compiled
+// half was which, so `let (a, _) = t(); var (b, _) = t();` compiled
 // self-hosted and was rejected natively. The self-host mirror is
 // `discard_name` in examples/self_host/parser.fern.
 func discardName(name string, pos ast.Position, nth int) string {
@@ -2747,8 +2747,6 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 			return p.parseReturn()
 		case "defer", "errdefer":
 			return p.parseDefer()
-		case "var":
-			return p.parseVar()
 		case "let":
 			// Not directly inside a block (a braceless branch body), so
 			// there is no rest-of-block for a `let … else` to bind over.
@@ -3120,7 +3118,7 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 //     value-less block; the checker reports E060 when it's used where a
 //     value is required.
 //
-// Statement-led forms (keyword statements: `var`/`if`/`while`/… and a
+// Statement-led forms (keyword statements: `let`/`if`/`while`/… and a
 // nested `{`-block) always parse as statements via parseStmt, which
 // consumes its own terminator. A non-keyword item parses as an
 // expression: if a `;` follows it's an ExprStmt, if `}` follows it's
@@ -3231,7 +3229,7 @@ func (p *parser) branchStmtStart() bool {
 		// parseBranchBody then decides statement-vs-tail by the trailing
 		// `;` / `}`, so they still work as ExprStmts when followed by `;`.
 		case "while", "loop", "for", "break", "continue",
-			"return", "defer", "errdefer", "var", "let",
+			"return", "defer", "errdefer", "let",
 			"function", "use":
 			return true
 		}
@@ -3323,8 +3321,9 @@ func (p *parser) parseFor(label string) (ast.Stmt, error) {
 	}
 
 	var init ast.Stmt
-	if p.match(lexer.Keyword, "var") {
-		v, err := p.parseVar() // consumes its own trailing ';'
+	if p.match(lexer.Keyword, "let") {
+		kw := p.advance()
+		v, err := p.parseLetBinding(kw.Pos) // consumes its own trailing ';'
 		if err != nil {
 			return nil, err
 		}
@@ -3394,11 +3393,11 @@ func (p *parser) nextForeachID() int {
 // Shape after desugaring:
 //
 //	{
-//	  var __foreach_iter_N = expr;
-//	  var __foreach_len_N  = len(__foreach_iter_N);
-//	  var __foreach_idx_N  = 0;
+//	  let __foreach_iter_N = expr;
+//	  let __foreach_len_N  = len(__foreach_iter_N);
+//	  let __foreach_idx_N  = 0;
 //	  while (__foreach_idx_N < __foreach_len_N) {
-//	    var IDENT = __foreach_iter_N[__foreach_idx_N];
+//	    let IDENT = __foreach_iter_N[__foreach_idx_N];
 //	    <body>
 //	    __foreach_idx_N = __foreach_idx_N + 1;
 //	  }
@@ -3436,9 +3435,9 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 	// the test holds forever (#10359). It carries a flag instead, cleared
 	// by the step on the round where i reached HIGH:
 	//
-	//	var __range_hi_N = HIGH;
-	//	var i = LOW;
-	//	var __range_go_N = i <= __range_hi_N;
+	//	let __range_hi_N = HIGH;
+	//	let i = LOW;
+	//	let __range_go_N = i <= __range_hi_N;
 	//	for (; __range_go_N; { __range_go_N = i != __range_hi_N; i = i + 1; }) body
 	//
 	// The last increment may wrap; nothing reads i after it.
@@ -3685,7 +3684,7 @@ func (p *parser) forHeaderPatternAhead() bool {
 
 // parseForEachPattern parses the destructuring header `for (a, b) in expr body`
 // (#6096). Its binders come from the SAME grammar and the same irrefutability
-// rule as `var (a, b) = e;` — one pattern path, so a nested element, a `_`
+// rule as `let (a, b) = e;` — one pattern path, so a nested element, a `_`
 // discard or an arity error behaves identically at both sites.
 //
 // The pattern is carried on the ForEach node unlowered, because which loop it
@@ -4945,42 +4944,6 @@ func (p *parser) parseTodo() (ast.Stmt, error) {
 	return &ast.Loop{P: pos, Body: body, IsTodo: true, TodoMsg: msg}, nil
 }
 
-func (p *parser) parseVar() (ast.Stmt, error) {
-	kw := p.advance()
-	// Destructuring form: `var (a, b, …) = expr;` / `var Point { x, y } =
-	// expr;`. Mirrors the `let` spellings (both route to parseDestructure)
-	// but uses the `var` keyword to keep the source surface uniform with
-	// regular `var name = expr;` declarations.
-	if p.atPatternHead() {
-		return p.parseDestructure(kw.Pos)
-	}
-	name, err := p.expect(lexer.Ident, "")
-	if err != nil {
-		return nil, err
-	}
-	var typ ast.Type
-	wasAnnotated := false
-	if _, ok := p.accept(lexer.Punct, ":"); ok {
-		t, err := p.parseType()
-		if err != nil {
-			return nil, err
-		}
-		typ = t
-		wasAnnotated = true
-	}
-	if _, err := p.expect(lexer.Punct, "="); err != nil {
-		return nil, err
-	}
-	init, err := p.parseExpr()
-	if err != nil {
-		return nil, err
-	}
-	if _, err := p.expect(lexer.Punct, ";"); err != nil {
-		return nil, err
-	}
-	return &ast.Var{P: kw.Pos, Name: discardName(name.Text, kw.Pos, 0), Type: typ, Init: init, WasAnnotated: wasAnnotated}, nil
-}
-
 // parseUse desugars `use IDENT : TYPE <- EXPR;` plus the
 // remaining statements of the enclosing block into a synthesised
 // local function declaration + a return-statement that calls
@@ -5100,13 +5063,13 @@ func (p *parser) parseUse(parent *ast.Block) error {
 // unreachable in that position either way.
 func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	kw := p.advance() // let
-	// `let (a, b, …) = expr;` / `let Point { x, y } = expr;` — the
-	// irrefutable forms, which take no `else`: a tuple is statically
-	// arity-checked and a struct has one shape, so neither can fail the
-	// way an enum destructure can. The refutable forms below all have
-	// `(`, `.`, `@` or a literal after the name, never `{`.
-	if p.atPatternHead() {
-		return p.parseDestructure(kw.Pos)
+	// `let name[: T] = expr;`, `let (a, b, …) = expr;` and
+	// `let Point { x, y } = expr;` bind unconditionally and take no
+	// `else`: a name always binds, a tuple is statically arity-checked
+	// and a struct has one shape. The refutable heads below all have
+	// `(`, `.`, `@`, `|` or a literal after the name, never `:` or `=`.
+	if p.atLetBindingHead() {
+		return p.parseLetBinding(kw.Pos)
 	}
 	pats, err := p.parseOrPatterns()
 	if err != nil {
@@ -5142,6 +5105,56 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 		p.parseBlockStmts(rest, false)
 	}
 	return p.buildPatternBindingMatch(kw.Pos, pats, src, rest, elseBlk, ast.OriginLetElse)
+}
+
+// atLetBindingHead reports whether the cursor, just past `let`, is on an
+// unconditional binding: a destructuring pattern head, or a plain name
+// followed by its annotation or initialiser.
+func (p *parser) atLetBindingHead() bool {
+	if p.atPatternHead() {
+		return true
+	}
+	if p.peek().Kind != lexer.Ident || p.peekAt(1).Kind != lexer.Punct {
+		return false
+	}
+	return p.peekAt(1).Text == ":" || p.peekAt(1).Text == "="
+}
+
+// parseLetBinding parses the unconditional forms after `let` — a plain
+// name with an optional annotation, or a destructuring pattern — through
+// the trailing `;`. A `for` initialiser admits exactly these.
+func (p *parser) parseLetBinding(pos ast.Position) (ast.Stmt, error) {
+	if p.atPatternHead() {
+		return p.parseDestructure(pos)
+	}
+	name, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return nil, err
+	}
+	var typ ast.Type
+	wasAnnotated := false
+	if _, ok := p.accept(lexer.Punct, ":"); ok {
+		t, err := p.parseType()
+		if err != nil {
+			return nil, err
+		}
+		typ = t
+		wasAnnotated = true
+	}
+	if _, err := p.expect(lexer.Punct, "="); err != nil {
+		return nil, err
+	}
+	init, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if p.match(lexer.Keyword, "else") {
+		return nil, p.errorf(p.peek().Pos, "`let %s` always binds, so it takes no `else`; a pattern that can miss goes after `let`, e.g. `let Some(%s) = …`", name.Text, name.Text)
+	}
+	if _, err := p.expect(lexer.Punct, ";"); err != nil {
+		return nil, err
+	}
+	return &ast.Var{P: pos, Name: discardName(name.Text, pos, 0), Type: typ, Init: init, WasAnnotated: wasAnnotated}, nil
 }
 
 // atParamPattern reports whether the cursor is on a destructuring
@@ -5224,7 +5237,7 @@ func (p *parser) parseParamPattern() (ast.Param, *ast.Destructure, error) {
 // irrefutableDestructure converts a pattern into the equivalent
 // *ast.Destructure, or reports why the pattern can't stand at a binding
 // site with no miss branch — a destructuring parameter, or the
-// `let`/`var` destructuring forms. `site` names the site for the
+// `let` destructuring forms. `site` names the site for the
 // diagnostic ("parameter" / "destructuring binding").
 //
 // The two shapes that always match are a tuple of binders and `_`, and a
@@ -5327,9 +5340,9 @@ func (p *parser) refutableBindErr(pos ast.Position, what, site string) error {
 // preceded by `IDENT @` naming the whole value.
 //
 // This is the ONE lookahead every irrefutable binding site asks, so a
-// pattern head admitted at one is admitted at all of them: a `let` / `var`
+// pattern head admitted at one is admitted at all of them: a `let`
 // destructure, a destructuring parameter, and a `for` header. Nothing else
-// at those sites can look like this — a plain `var name` declaration is
+// at those sites can look like this — a plain `let name` declaration is
 // followed by `:`, `=` or `;`, a plain parameter by `:`, and `for x in xs`
 // by `in`.
 //
@@ -5349,7 +5362,7 @@ func (p *parser) atPatternHead() bool {
 }
 
 // parseDestructure handles the irrefutable binding statements
-// `let (a, b) = expr;` / `let Point { x, y } = expr;` and their `var`
+// `let (a, b) = expr;` / `let Point { x, y } = expr;` and their `let`
 // spellings. The head reads through parseMatchPattern like every other
 // binding site; there is no `else` here, so a refutable pattern is a
 // parse error rather than a runtime miss. The cursor is on the pattern's
@@ -5977,14 +5990,14 @@ func (p *parser) parseStructLit(pos ast.Position, typeName string, typeArgs []as
 // keys and values are arbitrary expressions; trailing commas are
 // allowed. Empty `Map {}` is also valid and produces an empty
 // map. Lowering happens at IR-build time — no runtime difference
-// from `var m = map_new(N); m.set(k, v); ...`.
+// from `let m = map_new(N); m.set(k, v); ...`.
 // maybeDesugarArrayBuild lowers `Array.build((b: ArrayBuilder[T]):
 // void { BODY })` — the scoped linear builder (docs/ARRAY-BUILDER-PLAN.md)
 // — into an immediately-invoked function that builds a unique local array
 // and returns it:
 //
 //	((): T[] => {
-//	    var b: T[] = [];
+//	    let b: T[] = [];
 //	    BODY'                 // each statement `b.append(x);`  → `b = b.append(x);`
 //	                          //              `b.with(i, x);`  → `b = b.with(i, x);`
 //	    return b;
@@ -6135,7 +6148,7 @@ func (p *parser) maybeDesugarBuild(call *ast.Call) (ast.Expr, error) {
 // maybeDesugarArrayBuild (docs/ARRAY-BUILDER-PLAN.md):
 //
 //	((): Map[K, V] => {
-//	    var b: Map[K, V] = map_new(8);
+//	    let b: Map[K, V] = map_new(8);
 //	    BODY'                 // `b.insert(k, v);` → `b = b.insert(k, v);`
 //	    return b;
 //	})()
@@ -6492,7 +6505,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		case "{":
 			// General value-position block-expression (#4521): a bare
 			// `{ stmts; tail }` where a value is expected — the RHS of
-			// `var x = { … }`, a call argument, an array/struct-field
+			// `let x = { … }`, a call argument, an array/struct-field
 			// value, etc. Reuses parseBranchBody (the same machinery the
 			// if/match branch form uses), so the contents, the E061
 			// value-less check, and the single-expr `{ e }` passthrough all

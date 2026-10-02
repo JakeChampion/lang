@@ -34,7 +34,7 @@ func TestSelfHostLogIRWasm(t *testing.T) {
 
 	// `check` returns true when |log(x) - expected| <= 1e-6 (absolute).
 	const src = `function check(x: f64, expected: f64): boolean {
-    var got: f64 = __log_f64(x);
+    let got: f64 = __log_f64(x);
     return __abs_f64(got - expected) <= 0.000001;
 }
 function main(): i32 {

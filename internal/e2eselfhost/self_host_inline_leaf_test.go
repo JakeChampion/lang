@@ -15,8 +15,8 @@ import (
 const inlineLeafProg = `function lo32(x: i64): i32 { return (x & 4294967295i64) as i32; }
 @noinline function kept(x: i64): i32 { return (x & 4294967295i64) as i32; }
 @noinline function sum(n: i64): i32 {
-    var t: i32 = 0;
-    var i: i64 = 0i64;
+    let t: i32 = 0;
+    let i: i64 = 0i64;
     while (i < n) { t = t + lo32(i * 3i64) + kept(i); i = i + 1i64; }
     return t;
 }

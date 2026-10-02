@@ -104,7 +104,7 @@ var addThenDeref = regexp.MustCompile(`\tadd x0, x1, x0\n\t(ldr|ldrb) [wx]0, \[x
 const fieldReadSrc = `
 struct P { a: i32, b: i32, c: i32 }
 function get(p: P): i32 { return p.c; }
-function main(): i32 { var p: P = P{ a: 1, b: 2, c: 3 }; return get(p); }`
+function main(): i32 { let p: P = P{ a: 1, b: 2, c: 3 }; return get(p); }`
 
 func TestConstantFieldOffsetFoldsIntoLoad(t *testing.T) {
 	asm := compile(t, fieldReadSrc, Options{})
@@ -124,7 +124,7 @@ func TestFoldedFieldOffsetsStayDistinct(t *testing.T) {
 	asm := compile(t, `
 struct P { a: i32, b: i32, c: i32 }
 function main(): i32 {
-    var p: P = P{ a: 1, b: 2, c: 3 };
+    let p: P = P{ a: 1, b: 2, c: 3 };
     return p.a * 100 + p.b * 10 + p.c;
 }`, Options{})
 	for _, want := range []string{"ldr w0, [x0]", "ldr w0, [x0, #4]", "ldr w0, [x0, #8]"} {
@@ -369,8 +369,8 @@ function main(): i32 { return f(4); }`, Options{})
 // being clear, which is a shift and a compare-with-zero rather than a
 // materialised bound and a flag-setting compare.
 func TestRcBelowHeapGuardIsTwoInstructions(t *testing.T) {
-	asm := compile(t, `@noinline function g(a: i32[]): i32[] { var b: i32[] = a; return b; }
-function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0]; }`, Options{})
+	asm := compile(t, `@noinline function g(a: i32[]): i32[] { let b: i32[] = a; return b; }
+function main(): i32 { let x: i32[] = [1, 2, 3]; let y: i32[] = g(x); return y[0]; }`, Options{})
 	if !regexp.MustCompile(`\tlsr x1, x0, #28\n\tcbz x1, `).MatchString(asm) {
 		t.Errorf("the below-heap guard should be `lsr x1, x0, #28` + `cbz`; asm:\n%s", asm)
 	}

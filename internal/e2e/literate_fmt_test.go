@@ -25,7 +25,7 @@ func TestLiterateFmt(t *testing.T) {
 		"",
 		"```fern",
 		"<<setup>>=",
-		"var    x=1;",
+		"let    x=1;",
 		"```",
 		"",
 		"```fern",
@@ -58,7 +58,7 @@ func TestLiterateFmt(t *testing.T) {
 		t.Errorf("greet chunk not reformatted:\n%s", got)
 	}
 	// Statement-fragment chunk reformatted via wrapping.
-	if !strings.Contains(got, "<<setup>>=\nvar x = 1;") {
+	if !strings.Contains(got, "<<setup>>=\nlet x = 1;") {
 		t.Errorf("setup fragment not reformatted:\n%s", got)
 	}
 	// Prose and the ref-bearing root are preserved.

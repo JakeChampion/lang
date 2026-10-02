@@ -37,21 +37,21 @@ var monoIndexArgIRCases = []struct {
 	{"bounded-elem-args", `import "core/cmp";
 function after[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
 function count_desc[T: cmp.Ord](a: T[]): i32 {
-    var c: i32 = 0;
-    var i: i32 = 1;
+    let c: i32 = 0;
+    let i: i32 = 1;
     while (i < a.len()) {
         if (after(a[i - 1], a[i])) { c = c + 1; }
         i = i + 1;
     }
     return c;
 }
-function main(): i32 { var xs: i32[] = [3, 1, 2]; return count_desc(xs); }`},
+function main(): i32 { let xs: i32[] = [3, 1, 2]; return count_desc(xs); }`},
 
 	// Same, with the call in a condition rather than a statement.
 	{"bounded-elem-args-condition", `import "core/cmp";
 function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
 function main(): i32 {
-    var xs: i32[] = [9, 4];
+    let xs: i32[] = [9, 4];
     if (bigger(xs[0], xs[1])) { return 7; }
     return 3;
 }`},
@@ -61,7 +61,7 @@ function main(): i32 {
 	{"bounded-elem-args-string", `import "core/cmp";
 function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
 function main(): i32 {
-    var xs: string[] = ["b", "a"];
+    let xs: string[] = ["b", "a"];
     if (bigger(xs[0], xs[1])) { return 7; }
     return 3;
 }`},
@@ -82,7 +82,7 @@ function main(): i32 {
 import "core/cmp";
 function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
+    let xs: i32[] = [1, 2, 3];
     if (bigger(array.reverse(xs)[0], 1)) { return 7; }
     return 3;
 }`},
@@ -100,8 +100,8 @@ struct S { n: u32 }
 function (s: S) finish(): u32 { return s.n * 2u32; }
 function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
 function main(): i32 {
-    var a: S = S { n: 4u32 };
-    var b: S = S { n: 3u32 };
+    let a: S = S { n: 4u32 };
+    let b: S = S { n: 3u32 };
     if (bigger(a.finish(), b.finish())) { return 7; }
     return 3;
 }`},
@@ -110,8 +110,8 @@ function main(): i32 {
 import "std/hash" as hash;
 function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
 function main(): i32 {
-    var s: hash.SysvSum = hash.sysv_sum_new().update("abc");
-    var e: hash.SysvSum = hash.sysv_sum_new();
+    let s: hash.SysvSum = hash.sysv_sum_new().update("abc");
+    let e: hash.SysvSum = hash.sysv_sum_new();
     if (bigger(s.finish(), e.finish())) { return 7; }
     return 3;
 }`},

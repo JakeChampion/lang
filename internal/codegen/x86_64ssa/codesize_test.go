@@ -76,7 +76,7 @@ func TestCodeSizeSmallerThanStackMachine(t *testing.T) {
 	// Straight-line and loop code — where register allocation wins clearly.
 	local := map[string]string{
 		"arith": `function f(a: i32, b: i32, c: i32): i32 { return (a*b + c) * (a - b) + c*c - (a+b+c); } function main(): i32 { return f(3, 5, 7); }`,
-		"loop":  `function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 1000) { t = t + i*3 - 1; i = i + 1; } return t; }`,
+		"loop":  `function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 1000) { t = t + i*3 - 1; i = i + 1; } return t; }`,
 	}
 	for name, src := range local {
 		ssaB, smB := textSizes(t, src)
@@ -113,16 +113,16 @@ func genMixedProgram(n int) string {
 	for i := 0; i < n; i++ {
 		switch i % 4 {
 		case 0:
-			fmt.Fprintf(&b, "function fn%d(a: i32): i32 { var b: i32 = a + 3; var c: i32 = a - 1; return (a*b + c) * (a - b) + c*c - (a+b+c); }\n", i)
+			fmt.Fprintf(&b, "function fn%d(a: i32): i32 { let b: i32 = a + 3; let c: i32 = a - 1; return (a*b + c) * (a - b) + c*c - (a+b+c); }\n", i)
 		case 1:
-			fmt.Fprintf(&b, "function fn%d(n: i32): i32 { var t: i32 = 0; var i: i32 = 0; while (i < n) { t = t + i*3 - 1; i = i + 1; } return t; }\n", i)
+			fmt.Fprintf(&b, "function fn%d(n: i32): i32 { let t: i32 = 0; let i: i32 = 0; while (i < n) { t = t + i*3 - 1; i = i + 1; } return t; }\n", i)
 		case 2:
 			fmt.Fprintf(&b, "function fn%d(x: i32): i32 { if (x < 10) { return x*x; } if (x < 100) { return x + 7; } return x - 3; }\n", i)
 		case 3:
 			fmt.Fprintf(&b, "function fn%d(x: i32): i32 { return fn%d(x) + fn%d(x); }\n", i, i-1, i-2)
 		}
 	}
-	b.WriteString("function main(): i32 { var s: i32 = 0;\n")
+	b.WriteString("function main(): i32 { let s: i32 = 0;\n")
 	for i := 0; i < n; i++ {
 		fmt.Fprintf(&b, "  s = s + fn%d(%d);\n", i, i%20)
 	}

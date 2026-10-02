@@ -34,33 +34,33 @@ function opcount2(s: St): i32 { return opcount(s); }
 // Every later use of 's' reads a scalar field only, so nothing in this frame
 // can observe the buffer emit grows.
 function unobserved(s: St, v: i32): i32 {
-    var p: St = s.emit(v);
+    let p: St = s.emit(v);
     return p.ctrl + depth(s);
 }
 // Same, one call deeper — the summary has to close over calls.
 function unobserved_indirect(s: St, v: i32): i32 {
-    var p: St = s.emit(v);
+    let p: St = s.emit(v);
     return p.ctrl + depth2(s);
 }
 // The later use reads ops through the binding: the bracket has to stay.
 function observed(s: St, v: i32): i32 {
-    var p: St = s.emit(v);
+    let p: St = s.emit(v);
     return p.ctrl + opcount(s);
 }
 // The later use reaches ops one call deeper.
 function observed_indirect(s: St, v: i32): i32 {
-    var p: St = s.emit(v);
+    let p: St = s.emit(v);
     return p.ctrl + opcount2(s);
 }
 // The later use names the field itself.
 function observed_direct(s: St, v: i32): i32 {
-    var p: St = s.emit(v);
+    let p: St = s.emit(v);
     return p.ctrl + s.ops.len();
 }
 // An unmodelled use — the binding is aliased, and the alias can read anything.
 function aliased(s: St, v: i32): i32 {
-    var p: St = s.emit(v);
-    var q: St = s;
+    let p: St = s.emit(v);
+    let q: St = s;
     return p.ctrl + q.ops.len();
 }
 function main(): i32 { return 0; }`
@@ -108,19 +108,19 @@ function keep(s: St, v: i32): St {
     return St { ...s, ctrl: s.ctrl + v };
 }
 function pass(s: St, v: i32): i32 {
-    var p: St = grow_nested(s, v);
+    let p: St = grow_nested(s, v);
     return p.ctrl + depth(s);
 }
 function pass_keep(s: St, v: i32): i32 {
-    var p: St = keep(s, v);
+    let p: St = keep(s, v);
     return p.ctrl + depth(s);
 }
 function outer(s: St, v: i32): i32 {
-    var r: i32 = pass(s, v);
+    let r: i32 = pass(s, v);
     return r + s.ops.len();
 }
 function outer_keep(s: St, v: i32): i32 {
-    var r: i32 = pass_keep(s, v);
+    let r: i32 = pass_keep(s, v);
     return r + s.ops.len();
 }
 function main(): i32 { return 0; }`
@@ -175,20 +175,20 @@ function park(s: St, v: i32): Pair { return Pair { state: s.emit(v), slot: v }; 
 // paths it cannot reach.
 function branch_returns(s: St, k: i32): i32 {
     if (k > 0) {
-        var a: St = s.emit(k);
+        let a: St = s.emit(k);
         return a.ctrl;
     }
-    var b: St = s.emit(0);
+    let b: St = s.emit(0);
     return b.ctrl;
 }
 // The same first read, but the branch falls through to a later read of s.
 function branch_falls_through(s: St, k: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     if (k > 0) {
-        var a: St = s.emit(k);
+        let a: St = s.emit(k);
         t = a.ctrl;
     }
-    var b: St = s.emit(0);
+    let b: St = s.emit(0);
     return b.ctrl + t;
 }
 // An ARRAY argument is excluded from the path shape: the first read keeps its
@@ -196,25 +196,25 @@ function branch_falls_through(s: St, k: i32): i32 {
 function push(xs: i32[], v: i32): i32[] { return xs.append(v); }
 function branch_returns_arr(xs: i32[], k: i32): i32 {
     if (k > 0) {
-        var a: i32[] = push(xs, k);
+        let a: i32[] = push(xs, k);
         return a.len();
     }
-    var b: i32[] = push(xs, 0);
+    let b: i32[] = push(xs, 0);
     return b.len();
 }
 // 'sl' is the only name for the buffer in p.state, and p is read only at its
 // other field afterwards.
 function unpack(s: St, k: i32): i32 {
-    var p: Pair = park(s, k);
-    var sl: St = p.state;
-    var r: St = sl.emit(k + 1);
+    let p: Pair = park(s, k);
+    let sl: St = p.state;
+    let r: St = sl.emit(k + 1);
     return r.ctrl + p.slot;
 }
 // p.state is read again, so sl is not the only name for it.
 function unpack_reread(s: St, k: i32): i32 {
-    var p: Pair = park(s, k);
-    var sl: St = p.state;
-    var r: St = sl.emit(k + 1);
+    let p: Pair = park(s, k);
+    let sl: St = p.state;
+    let r: St = sl.emit(k + 1);
     return r.ctrl + p.state.ops.len();
 }
 function main(): i32 { return branch_returns(mk(), 1) + branch_falls_through(mk(), 1) +

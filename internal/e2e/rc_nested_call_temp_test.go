@@ -21,8 +21,8 @@ function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(
 function sum(l: List): i32 { match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } } }
 function dup(xs: List): List { match (xs) { Cons(h, t) => { return Cons(h, dup(t)); }, Nil => { return Nil; } } }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { total = total + sum(dup(build(5))); i = i + 1; }   // 15 per iter
     if (total != 1500) { return 999; }
     return __rc_underflow_count();
@@ -33,8 +33,8 @@ function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(
 function sum(l: List): i32 { match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } } }
 function (xs: List) dup(): List { match (xs) { Cons(h, t) => { return Cons(h, t.dup()); }, Nil => { return Nil; } } }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { total = total + sum(build(5).dup()); i = i + 1; }
     if (total != 1500) { return 999; }
     return __rc_underflow_count();
@@ -74,9 +74,9 @@ function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(
 function sum(l: List): i32 { match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } } }
 function dup(xs: List): List { match (xs) { Cons(h, t) => { return Cons(h, dup(t)); }, Nil => { return Nil; } } }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < ` + n + `) { var u: i32 = sum(dup(build(5))); i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < ` + n + `) { let u: i32 = sum(dup(build(5))); i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}

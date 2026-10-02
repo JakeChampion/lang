@@ -16,7 +16,7 @@ import "std/string";
 // iter_combinators precedent (interp-only for a self-host-compiler gap).
 
 function test_multiple(): test.TestOutcome {
-  var a: i32[] = "abcabcabc".find_all("bc");
+  let a: i32[] = "abcabcabc".find_all("bc");
   return test.assert_eq_array(a, [1, 4, 7]);
 }
 
@@ -42,12 +42,12 @@ function test_trailing(): test.TestOutcome {
 }
 
 function test_len_equals_count(): test.TestOutcome {
-  var s: string = "a.b.c.d";
+  let s: string = "a.b.c.d";
   return test.assert_eq(s.find_all(".").len(), s.count("."));
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/string find_all");
+  let r: test.TestRunner = test.test_new("std/string find_all");
   r = r.it("multiple matches", test_multiple);
   r = r.it("non-overlapping", test_non_overlapping);
   r = r.it("no match", test_no_match);

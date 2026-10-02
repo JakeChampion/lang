@@ -22,15 +22,15 @@ import "testing"
 // way on both, and the e2e legs that cover the single-word side need cross
 // tooling this layer does not.
 func TestMapOverwriteDropReleasesClaimedColumns(t *testing.T) {
-	// `a = b`, where b is a COW copy of a: the loop's `var b` reinit drop, the
+	// `a = b`, where b is a COW copy of a: the loop's `let b` reinit drop, the
 	// overwrite, and the exit sweep each owe the key column.
 	chain := `import "core/map";
 function chain(n: i32): i32 {
-    var a: Map[string, i32] = map_new(16);
+    let a: Map[string, i32] = map_new(16);
     a = a.insert("k" + "ey", 1);
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var b = a;
+        let b = a;
         b = b.insert("c" + "hain", i);
         a = b;
         i = i + 1;
@@ -81,11 +81,11 @@ func TestMapOverwriteDropWalksTheValueColumn(t *testing.T) {
 		callee string
 	}{
 		{"string values", "strvals", `function strvals(n: i32): i32 {
-    var a: Map[string, string] = map_new(16);
+    let a: Map[string, string] = map_new(16);
     a = a.insert("k", "v");
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var b = a;
+        let b = a;
         b = b.insert("c" + "hain", "w");
         a = b;
         i = i + 1;
@@ -95,11 +95,11 @@ func TestMapOverwriteDropWalksTheValueColumn(t *testing.T) {
 function main(): i32 { return strvals(3); }`, "__drop_map_str_values"},
 		{"struct values", "structvals", `struct Rec { name: string }
 function structvals(n: i32): i32 {
-    var a: Map[string, Rec] = map_new(16);
+    let a: Map[string, Rec] = map_new(16);
     a = a.insert("k", Rec { name: "v" });
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var b = a;
+        let b = a;
         b = b.insert("c" + "hain", Rec { name: "w" });
         a = b;
         i = i + 1;

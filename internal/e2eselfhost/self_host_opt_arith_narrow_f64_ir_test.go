@@ -18,17 +18,17 @@ var optArithNarrowF64IRCases = []struct {
 	main string
 }{
 	// (payload * 4.0) as i32. 2.5 * 4.0 = 10.
-	{"mul-narrow", `function main(): i32 { var o: Option[f64] = Some(2.5); return match (o) { Some(v) => (v * 4.0) as i32, None => 0 }; }`},
+	{"mul-narrow", `function main(): i32 { let o: Option[f64] = Some(2.5); return match (o) { Some(v) => (v * 4.0) as i32, None => 0 }; }`},
 	// (payload + 1.5) as i32. 2.5 + 1.5 = 4.
-	{"add-narrow", `function main(): i32 { var o: Option[f64] = Some(2.5); return match (o) { Some(v) => (v + 1.5) as i32, None => 0 }; }`},
+	{"add-narrow", `function main(): i32 { let o: Option[f64] = Some(2.5); return match (o) { Some(v) => (v + 1.5) as i32, None => 0 }; }`},
 	// Result[f64, i32], Ok arm arith-then-narrow. 3.5 + 1.0 = 4.
-	{"result-add", `function main(): i32 { var r: Result[f64, i32] = Ok(3.5); return match (r) { Ok(v) => (v + 1.0) as i32, Err(e) => e }; }`},
+	{"result-add", `function main(): i32 { let r: Result[f64, i32] = Ok(3.5); return match (r) { Ok(v) => (v + 1.0) as i32, Err(e) => e }; }`},
 	// None arm taken — the arith arm is not evaluated. 7.
-	{"none-taken", `function main(): i32 { var o: Option[f64] = None; return match (o) { Some(v) => (v * 4.0) as i32, None => 7 }; }`},
+	{"none-taken", `function main(): i32 { let o: Option[f64] = None; return match (o) { Some(v) => (v * 4.0) as i32, None => 7 }; }`},
 	// A compound f64 arith composition over the payload. 3.0 * 2.0 + 1.0 = 7.
-	{"compound", `function main(): i32 { var o: Option[f64] = Some(3.0); return match (o) { Some(v) => (v * 2.0 + 1.0) as i32, None => 0 }; }`},
+	{"compound", `function main(): i32 { let o: Option[f64] = Some(3.0); return match (o) { Some(v) => (v * 2.0 + 1.0) as i32, None => 0 }; }`},
 	// Regression: the i64 arith-narrow (already on the IR path) still works. 42.
-	{"i64-keep", `function main(): i32 { var o: Option[i64] = Some(40); return match (o) { Some(v) => (v + 2) as i32, None => 0 }; }`},
+	{"i64-keep", `function main(): i32 { let o: Option[i64] = Some(40); return match (o) { Some(v) => (v + 2) as i32, None => 0 }; }`},
 }
 
 // TestSelfHostOptArithNarrowF64IR compiles each case with the self-host CLI for

@@ -8,7 +8,7 @@ import (
 
 // --- A map local borrowed by a TUPLE element keeps its reclaim (#7212) -------
 //
-// `var t: (i32, Map[K, V]) = (i, m)` mentions `m` at a container-element
+// `let t: (i32, Map[K, V]) = (i, m)` mentions `m` at a container-element
 // position, so both map-reclaim gates refused it: alias_idents_in_value credited
 // the alias and expr_unsafe_for called the element an escape. Nothing on the
 // tuple side took over either — construction emits no rc_inc for a map slot, and
@@ -35,8 +35,8 @@ import (
 func mapTupleElemChurn(prelude, body string, rounds int) string {
 	return fmt.Sprintf(`import "core/map";
 %sfunction churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
 %s
         i = i + 1;
@@ -66,8 +66,8 @@ var mapTupleElemFlatCases = []struct {
 		// why only the exit-set gate is overridden and precise_drop_names is
 		// left refusing.
 		name: "basic",
-		body: `        var m: Map[string, i32] = map_new(4);
-        var t: (i32, Map[string, i32]) = (i, m);
+		body: `        let m: Map[string, i32] = map_new(4);
+        let t: (i32, Map[string, i32]) = (i, m);
         acc = (acc + t.0 + t.1.get_or("k", 0)) % 91;`,
 		want100: 36,
 		want200: 62,
@@ -76,8 +76,8 @@ var mapTupleElemFlatCases = []struct {
 		// The map at element 0. Nothing in the gate keys on position; this pins
 		// that.
 		name: "pos0",
-		body: `        var m: Map[string, i32] = map_new(4);
-        var t: (Map[string, i32], i32) = (m, i);
+		body: `        let m: Map[string, i32] = map_new(4);
+        let t: (Map[string, i32], i32) = (m, i);
         acc = (acc + t.1 + t.0.len()) % 91;`,
 		want100: 36,
 		want200: 62,
@@ -87,9 +87,9 @@ var mapTupleElemFlatCases = []struct {
 		// checks EVERY Map-typed position of the host, not just the one the
 		// call is about, so a second map cannot rely on the first's proof.
 		name: "two_maps",
-		body: `        var a: Map[string, i32] = map_new(4);
-        var b: Map[string, i32] = map_new(4);
-        var t: (Map[string, i32], Map[string, i32]) = (a, b);
+		body: `        let a: Map[string, i32] = map_new(4);
+        let b: Map[string, i32] = map_new(4);
+        let t: (Map[string, i32], Map[string, i32]) = (a, b);
         acc = (acc + i + t.0.len() + t.1.len()) % 91;`,
 		want100: 36,
 		want200: 62,
@@ -98,8 +98,8 @@ var mapTupleElemFlatCases = []struct {
 		// The SAME map at both positions. One box, two uncounted pointers, one
 		// release — an over-release here would show as +100 in the exit code.
 		name: "same_map_twice",
-		body: `        var m: Map[string, i32] = map_new(4);
-        var t: (Map[string, i32], Map[string, i32]) = (m, m);
+		body: `        let m: Map[string, i32] = map_new(4);
+        let t: (Map[string, i32], Map[string, i32]) = (m, m);
         acc = (acc + i + t.0.len() + t.1.len()) % 91;`,
 		want100: 36,
 		want200: 62,
@@ -109,8 +109,8 @@ var mapTupleElemFlatCases = []struct {
 		// "TUPRC:" and emit_tuple_child_drops runs over it. That walk must free
 		// the array and still skip the map, or the map is released twice.
 		name: "arr_and_map",
-		body: `        var m: Map[string, i32] = map_new(4);
-        var t: (i32[], Map[string, i32]) = ([i, i + 1], m);
+		body: `        let m: Map[string, i32] = map_new(4);
+        let t: (i32[], Map[string, i32]) = ([i, i + 1], m);
         acc = (acc + t.0.len() + t.1.len()) % 91;`,
 		want100: 18,
 		want200: 36,
@@ -121,8 +121,8 @@ var mapTupleElemFlatCases = []struct {
 		// it skips, so a use in the enclosing tail is still seen.
 		name: "if_host",
 		body: `        if (i % 2 == 0) {
-            var m: Map[string, i32] = map_new(4);
-            var t: (i32, Map[string, i32]) = (i, m);
+            let m: Map[string, i32] = map_new(4);
+            let t: (i32, Map[string, i32]) = (i, m);
             acc = (acc + t.0 + t.1.get_or("k", 0)) % 91;
         } else { acc = (acc + 1) % 91; }`,
 		want100: 43,
@@ -130,11 +130,11 @@ var mapTupleElemFlatCases = []struct {
 	},
 	{
 		name: "match_host",
-		body: `        var o: Option[i32] = Some(i);
+		body: `        let o: Option[i32] = Some(i);
         match (o) {
             Some(v) => {
-                var m: Map[string, i32] = map_new(4);
-                var t: (i32, Map[string, i32]) = (v, m);
+                let m: Map[string, i32] = map_new(4);
+                let t: (i32, Map[string, i32]) = (v, m);
                 acc = (acc + t.0 + t.1.get_or("k", 0)) % 91;
             },
             None => { acc = acc + 1; }
@@ -148,8 +148,8 @@ var mapTupleElemFlatCases = []struct {
 		// only thing costing this shape its credit.
 		name:    "borrow_call_arg",
 		prelude: "function tlen(mm: Map[string, i32]): i32 { return mm.len(); }\n",
-		body: `        var m: Map[string, i32] = map_new(4);
-        var t: (i32, Map[string, i32]) = (i, m);
+		body: `        let m: Map[string, i32] = map_new(4);
+        let t: (i32, Map[string, i32]) = (i, m);
         acc = (acc + t.0 + tlen(m)) % 91;`,
 		want100: 36,
 		want200: 62,
@@ -173,15 +173,15 @@ var mapTupleElemHazardCases = []struct {
 		name: "payload_returned",
 		src: `import "core/map";
 function pick(i: i32): Map[string, i32] {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", i);
-    var t: (i32, Map[string, i32]) = (i, m);
+    let t: (i32, Map[string, i32]) = (i, m);
     return t.1;
 }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var g: Map[string, i32] = pick(i); acc = (acc + g.get_or("k", 0)) % 91; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let g: Map[string, i32] = pick(i); acc = (acc + g.get_or("k", 0)) % 91; i = i + 1; }
     return acc;
 }
 function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
@@ -193,16 +193,16 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		name: "payload_extracted_escapes",
 		src: `import "core/map";
 function pick(i: i32): Map[string, i32] {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("k", i);
-    var t: (i32, Map[string, i32]) = (i, m);
-    var keep: Map[string, i32] = t.1;
+    let t: (i32, Map[string, i32]) = (i, m);
+    let keep: Map[string, i32] = t.1;
     return keep;
 }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var g: Map[string, i32] = pick(i); acc = (acc + g.get_or("k", 0)) % 91; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let g: Map[string, i32] = pick(i); acc = (acc + g.get_or("k", 0)) % 91; i = i + 1; }
     return acc;
 }
 function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
@@ -214,9 +214,9 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		// asks whether the box gets a second NAME, not whether that name
 		// outlives the frame — the cheap conservative reading.
 		name: "payload_extracted_local",
-		src: mapTupleElemChurn("", `        var m: Map[string, i32] = map_new(4);
-        var t: (i32, Map[string, i32]) = (i, m);
-        var keep: Map[string, i32] = t.1;
+		src: mapTupleElemChurn("", `        let m: Map[string, i32] = map_new(4);
+        let t: (i32, Map[string, i32]) = (i, m);
+        let keep: Map[string, i32] = t.1;
         acc = (acc + t.0 + keep.len()) % 91;`, 60),
 		want: 41,
 	},
@@ -225,9 +225,9 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		// back the receiver's own box, so `mm` is a third name for it.
 		// map_recv_borrows is a whitelist precisely so this stays out.
 		name: "identity_through_tuple",
-		src: mapTupleElemChurn("", `        var m: Map[string, i32] = map_new(4);
-        var t: (i32, Map[string, i32]) = (i, m);
-        var mm: Map[string, i32] = t.1.insert("k", i);
+		src: mapTupleElemChurn("", `        let m: Map[string, i32] = map_new(4);
+        let t: (i32, Map[string, i32]) = (i, m);
+        let mm: Map[string, i32] = t.1.insert("k", i);
         acc = (acc + t.0 + mm.get_or("k", 0)) % 91;`, 60),
 		want: 82,
 	},
@@ -236,14 +236,14 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		name: "tuple_returned",
 		src: `import "core/map";
 function mk(i: i32): (i32, Map[string, i32]) {
-    var m: Map[string, i32] = map_new(4);
-    var t: (i32, Map[string, i32]) = (i, m);
+    let m: Map[string, i32] = map_new(4);
+    let t: (i32, Map[string, i32]) = (i, m);
     return t;
 }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var p: (i32, Map[string, i32]) = mk(i); acc = (acc + p.0 + p.1.len()) % 91; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let p: (i32, Map[string, i32]) = mk(i); acc = (acc + p.0 + p.1.len()) % 91; i = i + 1; }
     return acc;
 }
 function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
@@ -254,17 +254,17 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		// A second local alias of the map, alongside the tuple. The override is
 		// for tuple-element positions ONLY; anything else still excludes.
 		name: "second_alias",
-		src: mapTupleElemChurn("", `        var m: Map[string, i32] = map_new(4);
-        var t: (i32, Map[string, i32]) = (i, m);
-        var q: Map[string, i32] = m;
+		src: mapTupleElemChurn("", `        let m: Map[string, i32] = map_new(4);
+        let t: (i32, Map[string, i32]) = (i, m);
+        let q: Map[string, i32] = m;
         acc = (acc + t.0 + q.len()) % 91;`, 60),
 		want: 41,
 	},
 	{
 		// No tuple ANNOTATION, so nothing says which positions are maps.
 		name: "unannotated_host",
-		src: mapTupleElemChurn("", `        var m: Map[string, i32] = map_new(4);
-        var t = (i, m);
+		src: mapTupleElemChurn("", `        let m: Map[string, i32] = map_new(4);
+        let t = (i, m);
         acc = (acc + t.0 + t.1.len()) % 91;`, 60),
 		want: 41,
 	},
@@ -272,8 +272,8 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		// The host is REASSIGNED, so the tuple binding is not the only thing
 		// that decides what the box is reachable from.
 		name: "host_reassigned",
-		src: mapTupleElemChurn("", `        var m: Map[string, i32] = map_new(4);
-        var t: (i32, Map[string, i32]) = (i, m);
+		src: mapTupleElemChurn("", `        let m: Map[string, i32] = map_new(4);
+        let t: (i32, Map[string, i32]) = (i, m);
         t = (i + 1, m);
         acc = (acc + t.0 + t.1.len()) % 91;`, 60),
 		want: 10,
@@ -282,9 +282,9 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		// A `for (k, v) in m` alongside the tuple. Iteration has its own
 		// exclusion and it is not one this override touches.
 		name: "map_iterated",
-		src: mapTupleElemChurn("", `        var m: Map[string, i32] = map_new(4);
+		src: mapTupleElemChurn("", `        let m: Map[string, i32] = map_new(4);
         m = m.insert("k", i);
-        var t: (i32, Map[string, i32]) = (i, m);
+        let t: (i32, Map[string, i32]) = (i, m);
         for (kk, vv) in m { acc = (acc + vv) % 91; }
         acc = (acc + t.0) % 91;`, 60),
 		want: 82,
@@ -300,8 +300,8 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 		// residue is the box, not the map.
 		name: "for_host_box_residue",
 		src: mapTupleElemChurn("", `        for k in 0 .. 2 {
-            var m: Map[string, i32] = map_new(4);
-            var t: (i32, Map[string, i32]) = (i + k, m);
+            let m: Map[string, i32] = map_new(4);
+            let t: (i32, Map[string, i32]) = (i + k, m);
             acc = (acc + t.0 + t.1.get_or("k", 0)) % 91;
         }`, 200),
 		want: 51,

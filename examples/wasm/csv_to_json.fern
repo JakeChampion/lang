@@ -20,7 +20,7 @@ import "std/json";
 import "std/string";
 
 function read_all(r: Reader): string {
-  var out: string = "";
+  let out: string = "";
   while (true) {
     match (r.read_line()) {
       Some(line) => {
@@ -35,8 +35,8 @@ function read_all(r: Reader): string {
 }
 
 function row_to_object(headers: string[], row: string[]): JsonValue {
-  var m: Map[string, JsonValue] = map_new(headers.len());
-  var i: i32 = 0;
+  let m: Map[string, JsonValue] = map_new(headers.len());
+  let i: i32 = 0;
   while (i < headers.len() && i < row.len()) {
     m = m.insert(headers[i].trim().to_owned(), JString(row[i].trim().to_owned()));
     i = i + 1;
@@ -45,18 +45,18 @@ function row_to_object(headers: string[], row: string[]): JsonValue {
 }
 
 function main(): i32 {
-  var raw: str = read_all(stdin()).trim();
-  var lines: string[] = raw.split("\n");
+  let raw: str = read_all(stdin()).trim();
+  let lines: string[] = raw.split("\n");
   if (lines.len() == 0 || lines[0].is_empty()) {
     print("[]");
     return 0;
   }
-  var headers: string[] = lines[0].split(",");
-  var rows: JsonValue[] = [];
-  var i: i32 = 1;
+  let headers: string[] = lines[0].split(",");
+  let rows: JsonValue[] = [];
+  let i: i32 = 1;
   while (i < lines.len()) {
     if (!lines[i].is_empty()) {
-      var fields: string[] = lines[i].split(",");
+      let fields: string[] = lines[i].split(",");
       rows = rows.append(row_to_object(headers, fields));
     }
     i = i + 1;

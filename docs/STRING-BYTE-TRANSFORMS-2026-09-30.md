@@ -56,11 +56,11 @@ wall time with `time.perf_counter`. Every execution must exit zero.
 ```fern
 import "std/string";
 function main(): i32 {
-    var av: string[] = args();
-    var rounds: i32 = av[2].parse_int_or(0);
-    var hay: string = "a".repeat(8192);
-    var needle: string = "a".repeat(127) + "b";
-    var expected: i32 = 0 - 1;
+    let av: string[] = args();
+    let rounds: i32 = av[2].parse_int_or(0);
+    let hay: string = "a".repeat(8192);
+    let needle: string = "a".repeat(127) + "b";
+    let expected: i32 = 0 - 1;
     if (av[1] == "unicode") {
         hay = "é".repeat(4096);
         needle = "é".repeat(63) + "ê";
@@ -70,7 +70,7 @@ function main(): i32 {
         needle = "éd";
         expected = 3;
     }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < rounds) {
         if (hay.index_of(needle) != expected) { return 1; }
         if (hay.last_index_of(needle) != expected) { return 2; }

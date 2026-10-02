@@ -16,12 +16,12 @@ import "testing"
 // non-negative value <= 126 (cf. #2908).
 const stringFromBytesPrelude = `function hex_lc(n: i32): i32 { if (n < 10) { return 48 + n; } return 97 + (n - 10); }
 function hexenc(s: string): string {
-    var n: i32 = s.len();
+    let n: i32 = s.len();
     if (n == 0) { return ""; }
-    var buf: u8[] = __alloc_u8(n * 2);
-    var i: i32 = 0;
+    let buf: u8[] = __alloc_u8(n * 2);
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
+        let b: i32 = s[i] as i32;
         buf = buf.with(i * 2, hex_lc((b >> 4) & 15) as u8);
         buf = buf.with(i * 2 + 1, hex_lc(b & 15) as u8);
         i = i + 1;
@@ -35,9 +35,9 @@ var stringFromBytesIRCases = []struct {
 	main string
 }{
 	// Minimal direct use: pack [72, 105] ("Hi") -> length 2.
-	{"direct-len", `function main(): i32 { var b: u8[] = __alloc_u8(2); b = b.with(0, 72 as u8); b = b.with(1, 105 as u8); return string_from_bytes_unchecked(b).len(); }`},
+	{"direct-len", `function main(): i32 { let b: u8[] = __alloc_u8(2); b = b.with(0, 72 as u8); b = b.with(1, 105 as u8); return string_from_bytes_unchecked(b).len(); }`},
 	// Round-trip a byte through the packed string: [65]("A")[0] = 65.
-	{"direct-byte", `function main(): i32 { var b: u8[] = __alloc_u8(1); b = b.with(0, 65 as u8); return string_from_bytes_unchecked(b)[0] as i32; }`},
+	{"direct-byte", `function main(): i32 { let b: u8[] = __alloc_u8(1); b = b.with(0, 65 as u8); return string_from_bytes_unchecked(b)[0] as i32; }`},
 	// hex_encode: "A" -> "41"; first digit '4' = 52.
 	{"hex-digit0", stringFromBytesPrelude + `function main(): i32 { return hexenc("A")[0] as i32; }`},
 	// hex_encode: "z" (0x7a) -> "7a"; second digit 'a' = 97.

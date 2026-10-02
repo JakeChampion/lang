@@ -41,8 +41,8 @@ function main(): i32 {
         Ok(ra) => {
             match (open_reader("%s")) {
                 Ok(rb) => {
-                    var tasks: async.Future[i32][] = [start_io(ra.fd), start_io(rb.fd)];
-                    var results: i32[] = async.gather(tasks, -1);
+                    let tasks: async.Future[i32][] = [start_io(ra.fd), start_io(rb.fd)];
+                    let results: i32[] = async.gather(tasks, -1);
                     if (results.len() != 2) { return 90; }
                     if (results[0] < 0) { return 91; }
                     if (results[1] < 0) { return 92; }
@@ -70,14 +70,14 @@ func TestAsyncGatherTimers(t *testing.T) {
 	src := `import "std/async";
 
 function start_timer(ms: i32): async.Future[i32] {
-    var fd: i32 = timer_fd(ms);
+    let fd: i32 = timer_fd(ms);
     function resume(woken_fd: i32): async.Future[i32] { return Ready(ms); }
     return Pending(fd, resume);
 }
 
 function main(): i32 {
-    var tasks: async.Future[i32][] = [start_timer(10), start_timer(15)];
-    var results: i32[] = async.gather(tasks, -1);
+    let tasks: async.Future[i32][] = [start_timer(10), start_timer(15)];
+    let results: i32[] = async.gather(tasks, -1);
     if (results.len() != 2) { return 90; }
     if (results[0] != 10) { return 91; }
     if (results[1] != 15) { return 92; }
@@ -107,14 +107,14 @@ func TestAsyncRaceTimers(t *testing.T) {
 	src := `import "std/async";
 
 function start_timer(ms: i32): async.Future[i32] {
-    var fd: i32 = timer_fd(ms);
+    let fd: i32 = timer_fd(ms);
     function resume(woken_fd: i32): async.Future[i32] { return Ready(ms); }
     return Pending(fd, resume);
 }
 
 function main(): i32 {
-    var tasks: async.Future[i32][] = [start_timer(5000), start_timer(10)];
-    var (winner, value) = async.race(tasks, -1);
+    let tasks: async.Future[i32][] = [start_timer(5000), start_timer(10)];
+    let (winner, value) = async.race(tasks, -1);
     if (value != 10) { return 91; }
     if (winner != 1) { return 92; }
     return 42;
@@ -141,7 +141,7 @@ func TestAsyncWithDeadline(t *testing.T) {
 import "std/time";
 
 function start_timer(ms: i32): async.Future[i32] {
-    var fd: i32 = timer_fd(ms);
+    let fd: i32 = timer_fd(ms);
     function resume(w: i32): async.Future[i32] { return Ready(ms); }
     return Pending(fd, resume);
 }
@@ -154,8 +154,8 @@ function start_timer(ms: i32): async.Future[i32] {
 			// 5ms timer, 5s deadline → completes → Some(5).
 			name: "completes_in_time",
 			body: `function main(): i32 {
-    var tasks: async.Future[i32][] = [start_timer(5)];
-    var r: Option[i32][] = async.with_deadline(time.duration_millis(5000), tasks);
+    let tasks: async.Future[i32][] = [start_timer(5)];
+    let r: Option[i32][] = async.with_deadline(time.duration_millis(5000), tasks);
     match (r[0]) { Some(v) => { return v; }, None => { return 99; } }
 }`,
 			want: 5,
@@ -164,8 +164,8 @@ function start_timer(ms: i32): async.Future[i32] {
 			// 5s timer, 20ms deadline → times out → None → map to 42.
 			name: "times_out",
 			body: `function main(): i32 {
-    var tasks: async.Future[i32][] = [start_timer(5000)];
-    var r: Option[i32][] = async.with_deadline(time.duration_millis(20), tasks);
+    let tasks: async.Future[i32][] = [start_timer(5000)];
+    let r: Option[i32][] = async.with_deadline(time.duration_millis(20), tasks);
     match (r[0]) { Some(v) => { return 99; }, None => { return 42; } }
 }`,
 			want: 42,

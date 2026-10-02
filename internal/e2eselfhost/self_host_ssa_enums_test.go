@@ -4,11 +4,11 @@ package e2eselfhost
 // field shapes. A variant's field is read only where a test of the same value
 // for that variant has held.
 const semanticEnum = `
-var shape: typeinfo.Type = typeinfo.TypeUnion { name: "Shape", args: [] };
-var dot = semrecords.Variant { name: "Dot", fields: [] };
-var full = semrecords.Variant { name: "Full", fields: [semrecords.Field { name: "__ev", ty: ia }] };
-var line = semrecords.Variant { name: "Line", fields: [semrecords.Field { name: "__ev", ty: i32t }] };
-var shapeEnum = semrecords.Enum { views: false, ty: shape, variants: [dot, full, line], layout: semrecords.layout_variant() };
+let shape: typeinfo.Type = typeinfo.TypeUnion { name: "Shape", args: [] };
+let dot = semrecords.Variant { name: "Dot", fields: [] };
+let full = semrecords.Variant { name: "Full", fields: [semrecords.Field { name: "__ev", ty: ia }] };
+let line = semrecords.Variant { name: "Line", fields: [semrecords.Field { name: "__ev", ty: i32t }] };
+let shapeEnum = semrecords.Enum { views: false, ty: shape, variants: [dot, full, line], layout: semrecords.layout_variant() };
 enums = [shapeEnum];
 params = [shape]; types = [shape, bt, ia, i32t, i32t, i32t, shape]; result = i32t;
 graph = ssa.SFunc { name: "measure", nparams: 1, nvals: 7, entry: 7, takes_env: false, blocks: [
@@ -23,16 +23,16 @@ graph = ssa.SFunc { name: "measure", nparams: 1, nvals: 7, entry: 7, takes_env: 
 func semanticEnumCases() []struct{ name, change, want string } {
 	cases := []struct{ name, change, want string }{
 		{"enum-guarded-projection", "", ""},
-		{"enum-unguarded-projection", `var b = graph.blocks[0]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(0, ssa.SBlock { ...b, term: ssa.STerm { ...b.term, t: 27, f: 17 } }) };`, "unguarded variant projection"},
+		{"enum-unguarded-projection", `let b = graph.blocks[0]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(0, ssa.SBlock { ...b, term: ssa.STerm { ...b.term, t: 27, f: 17 } }) };`, "unguarded variant projection"},
 		{"enum-projection-other-test", `graph = change(graph, 1, variant_test(1, 0, "Line"));`, "unguarded variant projection"},
 		{"enum-missing-schema", "enums = [];", "missing variant schema"},
 		{"enum-unknown-variant", `graph = change(graph, 1, variant_test(1, 0, "Blob"));`, "unknown variant"},
 		{"enum-test-type", "types = types.with(1, i32t);", "variant test type"},
 		{"enum-test-arity", `graph = change(graph, 1, ssa.SInst { kind_tag: ssasem.variant_is(), result: 1, args: [0, 0], imm: 0, str: "Full" });`, "variant test arity"},
-		{"enum-projection-index", `var b = graph.blocks[1]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(1, ssa.SBlock { ...b, insts: b.insts.with(0, variant_field(2, 0, 1, "Full")) }) };`, "variant projection index"},
+		{"enum-projection-index", `let b = graph.blocks[1]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(1, ssa.SBlock { ...b, insts: b.insts.with(0, variant_field(2, 0, 1, "Full")) }) };`, "variant projection index"},
 		{"enum-projection-type", "types = types.with(2, sa);", "variant projection type"},
-		{"enum-construction-arity", `var b = graph.blocks[2]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(2, ssa.SBlock { ...b, insts: b.insts.with(1, variant_make(6, "Dot", [5])) }) };`, "variant construction arity"},
-		{"enum-construction-field-type", `var b = graph.blocks[2]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(2, ssa.SBlock { ...b, insts: b.insts.with(1, variant_make(6, "Full", [5])) }) };`, "variant field type"},
+		{"enum-construction-arity", `let b = graph.blocks[2]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(2, ssa.SBlock { ...b, insts: b.insts.with(1, variant_make(6, "Dot", [5])) }) };`, "variant construction arity"},
+		{"enum-construction-field-type", `let b = graph.blocks[2]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(2, ssa.SBlock { ...b, insts: b.insts.with(1, variant_make(6, "Full", [5])) }) };`, "variant field type"},
 		{"enum-construction-nonunion", "types = types.with(6, ia);", "missing variant schema"},
 		{"enum-duplicate-schema", "enums = [shapeEnum, shapeEnum];", "duplicate enum schema"},
 		{"enum-duplicate-variant", `enums = [semrecords.Enum { ...shapeEnum, variants: [dot, dot] }];`, "duplicate variant name"},
@@ -69,14 +69,14 @@ if (!drops(find(p, 17, 0, 0 - 1), [0])) { return 53; }
 if (!drops(find(p, 17, 2, 0 - 1), [2])) { return 54; }
 if (!drops(find(p, 7, ssaunits.edge_point(), 27), [0])) { return 55; }
 `, "", ""},
-		{"enum-leaked-counted-match", semanticEnum + "modes = [3];", "", `var s = find(p, 17, 0, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "counted unit leaks at return"},
+		{"enum-leaked-counted-match", semanticEnum + "modes = [3];", "", `let s = find(p, 17, 0, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "counted unit leaks at return"},
 		{"changed-payload-take", semanticEnum + "modes = [3];", "", `p = ssaunits.Plan { ...p, payloads: p.payloads.with(2, false) };`, "payload take disagrees with the plan"},
 		{"enum-construction-supply", semanticEnum + `modes = [2];
 types = types.with(5, ia).append(i32t);
-var b = graph.blocks[2];
+let b = graph.blocks[2];
 graph = ssa.SFunc { ...graph, nvals: 8, blocks: graph.blocks.with(2, ssa.SBlock { ...b, insts: [inst(ssasem.array_new(), 5, [], 0), variant_make(6, "Full", [5]), inst(1, 7, [], 0)], term: ret(7) }) };
 `, `
-var made = find(p, 27, 1, 0 - 1);
+let made = find(p, 27, 1, 0 - 1);
 if (!supply(made, 0, 5, 0, ssaunits.move_unit()) || !drops(made, [6])) { return 54; }
 `, "", ""},
 	}

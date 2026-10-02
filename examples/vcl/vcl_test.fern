@@ -24,7 +24,7 @@ import "./printer";
 // diagnostic prefixed with "ERR:" so a failing case reports the parse
 // error rather than an empty string.
 function roundtrip(src: string): string {
-  var r: parser.ParseResult = parser.parse(src);
+  let r: parser.ParseResult = parser.parse(src);
   if (r.diags.len() > 0) {
     return "ERR:" + r.diags[0].msg;
   }
@@ -39,9 +39,9 @@ function diag_count(src: string): i32 {
 
 // tok_texts is the token spellings of `src`, minus the trailing EOF.
 function tok_texts(src: string): string[] {
-  var toks: lexer.Tok[] = lexer.lex(src).toks;
-  var out: string[] = [];
-  var i: i32 = 0;
+  let toks: lexer.Tok[] = lexer.lex(src).toks;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < toks.len() - 1) {
     out = out.append(toks[i].text);
     i = i + 1;
@@ -70,12 +70,12 @@ function test_property_name_is_one_token(): test.TestOutcome {
 // The unit suffixes are matched longest-first, so `100ms` is
 // milliseconds and not `100m` followed by `s`.
 function test_ms_beats_m(): test.TestOutcome {
-  var toks: lexer.Tok[] = lexer.lex("100ms").toks;
+  let toks: lexer.Tok[] = lexer.lex("100ms").toks;
   return test.assert_eq(toks[0].text + "|" + toks[0].aux, "100|ms");
 }
 
 function test_byte_unit(): test.TestOutcome {
-  var toks: lexer.Tok[] = lexer.lex("256KB").toks;
+  let toks: lexer.Tok[] = lexer.lex("256KB").toks;
   return test.assert_eq(toks[0].text + "|" + toks[0].aux, "256|KB");
 }
 
@@ -92,12 +92,12 @@ function test_comment_forms(): test.TestOutcome {
 // Positions survive a multi-line comment, which is the case that breaks
 // when line counting lives anywhere but the one cursor-advance helper.
 function test_position_after_block_comment(): test.TestOutcome {
-  var toks: lexer.Tok[] = lexer.lex("/* one\ntwo\n*/ here").toks;
+  let toks: lexer.Tok[] = lexer.lex("/* one\ntwo\n*/ here").toks;
   return test.assert_eq(toks[0].line.to_string() + ":" + toks[0].col.to_string(), "3:4");
 }
 
 function test_unterminated_string_reports(): test.TestOutcome {
-  var r: lexer.LexResult = lexer.lex("sub s { set x = \"oops;\n}");
+  let r: lexer.LexResult = lexer.lex("sub s { set x = \"oops;\n}");
   return test.assert_eq(r.diags.len(), 1);
 }
 
@@ -140,7 +140,7 @@ function test_set_compound_op(): test.TestOutcome {
 }
 
 function test_return_forms(): test.TestOutcome {
-  var out: string = roundtrip("sub s { return (hash); } sub t { return (synth(750, \"Moved\")); } sub u { return; }");
+  let out: string = roundtrip("sub s { return (hash); } sub t { return (synth(750, \"Moved\")); } sub u { return; }");
   if (!out.contains("return (hash);")) {
     return test.fail("bare action lost: " + out);
   }
@@ -154,7 +154,7 @@ function test_return_forms(): test.TestOutcome {
 }
 
 function test_new_and_method_call(): test.TestOutcome {
-  var out: string = roundtrip("sub vcl_init { new rr = directors.round_robin(); rr.add_backend(o); }");
+  let out: string = roundtrip("sub vcl_init { new rr = directors.round_robin(); rr.add_backend(o); }");
   if (!out.contains("new rr = directors.round_robin();")) {
     return test.fail(out);
   }
@@ -165,7 +165,7 @@ function test_new_and_method_call(): test.TestOutcome {
 }
 
 function test_unset_and_call(): test.TestOutcome {
-  var out: string = roundtrip("sub s { unset req.http.Cookie; call helper; }");
+  let out: string = roundtrip("sub s { unset req.http.Cookie; call helper; }");
   if (!out.contains("unset req.http.Cookie;")) {
     return test.fail(out);
   }
@@ -178,8 +178,8 @@ function test_unset_and_call(): test.TestOutcome {
 // Each of the three `elseif` spellings comes back as it was written —
 // the reason the chain is stored flat with its keyword.
 function test_elseif_spellings_preserved(): test.TestOutcome {
-  var src: string = "sub s { if (a) { call x; } elseif (b) { call y; } elsif (c) { call z; } else if (d) { call w; } else { call v; } }";
-  var out: string = roundtrip(src);
+  let src: string = "sub s { if (a) { call x; } elseif (b) { call y; } elsif (c) { call z; } else if (d) { call w; } else { call v; } }";
+  let out: string = roundtrip(src);
   if (!out.contains("} elseif (b) {")) {
     return test.fail("elseif lost: " + out);
   }
@@ -231,7 +231,7 @@ function shape(e: ast.Expr): string {
 // subroutine of `src` — the shortest path from source text to a
 // structural assertion.
 function cond_shape(src: string): string {
-  var r: parser.ParseResult = parser.parse("sub s { if (" + src + ") { call x; } }");
+  let r: parser.ParseResult = parser.parse("sub s { if (" + src + ") { call x; } }");
   if (r.diags.len() > 0) {
     return "ERR:" + r.diags[0].msg;
   }
@@ -305,7 +305,7 @@ function test_written_parens_survive(): test.TestOutcome {
 }
 
 function test_regex_match_operators(): test.TestOutcome {
-  var out: string = roundtrip("sub s { if (req.url ~ \"^/a\" && req.url !~ \"^/b\") { call x; } }");
+  let out: string = roundtrip("sub s { if (req.url ~ \"^/a\" && req.url !~ \"^/b\") { call x; } }");
   return test.assert_contains(out, "if (req.url ~ \"^/a\" && req.url !~ \"^/b\")");
 }
 
@@ -317,7 +317,7 @@ function test_acl_match_and_negation(): test.TestOutcome {
 // because they are not interchangeable: only the long forms can hold a
 // `\"`, and VCL has no escapes to fall back on.
 function test_long_string_forms(): test.TestOutcome {
-  var out: string = roundtrip("sub s { set a = {\"has \" quote\"}; set b = \"\"\"triple\"\"\"; set c = \"plain\"; }");
+  let out: string = roundtrip("sub s { set a = {\"has \" quote\"}; set b = \"\"\"triple\"\"\"; set c = \"plain\"; }");
   if (!out.contains("{\"has \" quote\"}")) {
     return test.fail("brace form lost: " + out);
   }
@@ -331,7 +331,7 @@ function test_long_string_forms(): test.TestOutcome {
 }
 
 function test_duration_and_bytes_survive(): test.TestOutcome {
-  var out: string = roundtrip("sub s { set beresp.ttl = 1h; set x = 256KB; set y = 100ms; }");
+  let out: string = roundtrip("sub s { set beresp.ttl = 1h; set x = 256KB; set y = 100ms; }");
   if (!out.contains("= 1h;")) {
     return test.fail(out);
   }
@@ -355,7 +355,7 @@ function test_recovers_within_a_block(): test.TestOutcome {
 // A bad declaration resynchronises on the next top-level keyword, so the
 // subroutine after it still parses.
 function test_recovers_across_declarations(): test.TestOutcome {
-  var r: parser.ParseResult = parser.parse("backend { .host = \"x\"; } sub vcl_recv { call ok; }");
+  let r: parser.ParseResult = parser.parse("backend { .host = \"x\"; } sub vcl_recv { call ok; }");
   if (r.diags.len() == 0) {
     return test.fail("expected a diagnostic for the unnamed backend");
   }
@@ -369,7 +369,7 @@ function test_error_inside_if_body_is_reported(): test.TestOutcome {
 }
 
 function test_diagnostic_position(): test.TestOutcome {
-  var r: parser.ParseResult = parser.parse("sub s {\n  set = 1;\n}");
+  let r: parser.ParseResult = parser.parse("sub s {\n  set = 1;\n}");
   if (r.diags.len() != 1) {
     return test.fail("expected one diagnostic");
   }
@@ -385,14 +385,14 @@ function test_unclosed_brace_reports(): test.TestOutcome {
 // tree changes nothing. Anything the printer renders in a form the parser
 // reads back differently shows up here.
 function test_print_is_a_fixed_point(): test.TestOutcome {
-  var src: string = "vcl 4.1;\nimport std;\nbackend b { .host = \"1.2.3.4\"; .probe = { .url = \"/\"; } }\nacl a { ! \"10.0.0.0\"/8; }\nsub vcl_recv {\n  if (req.url ~ \"^/x\" || (a && b)) { set req.http.H = \"v\"; return (pass); }\n  elseif (c) { unset req.http.H; }\n  else { std.log({\"long\"}); }\n}\n";
-  var once: string = roundtrip(src);
-  var twice: string = roundtrip(once);
+  let src: string = "vcl 4.1;\nimport std;\nbackend b { .host = \"1.2.3.4\"; .probe = { .url = \"/\"; } }\nacl a { ! \"10.0.0.0\"/8; }\nsub vcl_recv {\n  if (req.url ~ \"^/x\" || (a && b)) { set req.http.H = \"v\"; return (pass); }\n  elseif (c) { unset req.http.H; }\n  else { std.log({\"long\"}); }\n}\n";
+  let once: string = roundtrip(src);
+  let twice: string = roundtrip(once);
   return test.assert_eq(twice, once);
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("vcl");
+  let r: test.TestRunner = test.test_new("vcl");
   r = r.it("dashed header is one token", test_dashed_header_is_one_token);
   r = r.it("spaced minus is an operator", test_spaced_minus_is_an_operator);
   r = r.it("property name is one token", test_property_name_is_one_token);

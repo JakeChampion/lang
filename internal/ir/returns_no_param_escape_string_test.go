@@ -37,10 +37,10 @@ func TestReturnsNoParamEscapeStringFresh(t *testing.T) {
 enum E { A(S, i32), B(i32, i32) }
 function mk(n: i32): E { return A(S { name: "ab", n: n }, n); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var e: E = mk(i);
+        let e: E = mk(i);
         match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
@@ -55,10 +55,10 @@ function main(): i32 {
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var e: E = mk("a", i);
+        let e: E = mk("a", i);
         match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
@@ -79,11 +79,11 @@ function main(): i32 {
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm, n: n }, n); }
 function main(): i32 {
-    var keep: string = "aa" + "bb";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: string = "aa" + "bb";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var e: E = mk(keep, i);
+        let e: E = mk(keep, i);
         match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
@@ -104,16 +104,16 @@ function main(): i32 {
 	const countedPush = `struct S { names: string[], n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E {
-    var xs: string[] = [];
+    let xs: string[] = [];
     xs = xs.append(nm);
     return A(S { names: xs, n: n }, n);
 }
 function main(): i32 {
-    var keep: string = "aa" + "bb";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: string = "aa" + "bb";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var e: E = mk(keep, i);
+        let e: E = mk(keep, i);
         match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }

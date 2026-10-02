@@ -18,7 +18,7 @@ function test_argv_basic(): test.TestOutcome {
   // can't pin a specific argv shape here (this file is
   // invoked from CI via `fern -interp FILE`), so just check
   // the call doesn't crash and returns a string array.
-  var a: string[] = args();
+  let a: string[] = args();
   if (a.len() < 1) {
     return test.fail("args() returned empty (expected at least argv[0])");
   }
@@ -26,33 +26,33 @@ function test_argv_basic(): test.TestOutcome {
 }
 
 function test_map_len_string_string(): test.TestOutcome {
-  var m: Map[string, string] = map_new(8);
+  let m: Map[string, string] = map_new(8);
   m = m.insert("a", "alpha");
   m = m.insert("b", "beta");
   return test.assert_map_len(m, 2);
 }
 
 function test_map_has_string_string(): test.TestOutcome {
-  var m: Map[string, string] = map_new(4);
+  let m: Map[string, string] = map_new(4);
   m = m.insert("ok", "yes");
   return test.assert_map_has(m, "ok", "yes");
 }
 
 function test_map_lacks_string_string(): test.TestOutcome {
-  var m: Map[string, string] = map_new(4);
+  let m: Map[string, string] = map_new(4);
   m = m.insert("ok", "yes");
   return test.assert_map_lacks(m, "missing");
 }
 
 function test_map_has_i32_i32(): test.TestOutcome {
-  var m: Map[i32, i32] = map_new(4);
+  let m: Map[i32, i32] = map_new(4);
   m = m.insert(1, 100);
   m = m.insert(2, 200);
   return test.assert_map_has(m, 1, 100);
 }
 
 function test_map_has_wrong_value_reports(): test.TestOutcome {
-  var m: Map[string, string] = map_new(4);
+  let m: Map[string, string] = map_new(4);
   m = m.insert("k", "actual");
   match (test.assert_map_has(m, "k", "expected")) {
     Fail(msg) => {
@@ -78,8 +78,8 @@ function test_golden_bootstrap_and_compare(r: test.TestRunner): test.TestRunner 
   if (dir == "") {
     return rr;
   }
-  var path: string = dir + "/golden.txt";
-  var actual: string = "line 1\nline 2\n";
+  let path: string = dir + "/golden.txt";
+  let actual: string = "line 1\nline 2\n";
   // First call: file missing → bootstrap (writes + passes).
   rr = rr.it("bootstrap golden", () => test.assert_matches_golden(path, actual));
   // Second call: file present → compare equal.
@@ -108,8 +108,8 @@ function main(): i32 {
   // Lift `--filter PATTERN` off the command line. Falls back
   // to "" (no filter) when the flag is absent, which makes
   // `test_new_filtered` behave identically to `test_new`.
-  var filter: string = test.parse_filter_from_args(args());
-  var r: test.TestRunner = test.test_new_filtered("batch 8", filter);
+  let filter: string = test.parse_filter_from_args(args());
+  let r: test.TestRunner = test.test_new_filtered("batch 8", filter);
 
   r = r.it("argv populated", test_argv_basic);
   r = r.it("map len string-string", test_map_len_string_string);

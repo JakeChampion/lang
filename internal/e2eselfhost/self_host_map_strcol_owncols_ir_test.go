@@ -27,23 +27,23 @@ var mapStrColOwncolsCases = []struct {
 	{name: "strval-grow", src: func(n string) string {
 		return `import "core/map";
 function step(k: i32): i32 {
-    var m: Map[i32, string] = map_new(2);
+    let m: Map[i32, string] = map_new(2);
     m = m.insert(k, "v" + "0");
     m = m.insert(k + 1, "v" + "1");
     m = m.insert(k + 2, "v" + "2");
     m = m.insert(k + 3, "v" + "3");
     m = m.insert(k + 4, "v" + "4");
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (m.has(k)) { r = r + 1; }
     if (m.has(k + 4)) { r = r + 1; }
     return r;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
     if (acc != ` + n + ` * 2) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 3000) { return 119; }
     return g / 16;
 }`
@@ -56,7 +56,7 @@ function main(): i32 {
 	{name: "strkey-grow", src: func(n string) string {
 		return `import "core/map";
 function step(k: i32): i32 {
-    var m: Map[string, i32] = map_new(2);
+    let m: Map[string, i32] = map_new(2);
     m = m.insert("k" + "0", k);
     m = m.insert("k" + "1", k + 1);
     m = m.insert("k" + "2", k + 2);
@@ -65,11 +65,11 @@ function step(k: i32): i32 {
     return m.len();
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
     if (acc != ` + n + ` * 5) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 3000) { return 119; }
     return g / 16;
 }`
@@ -78,7 +78,7 @@ function main(): i32 {
 	{name: "strkv-grow", src: func(n string) string {
 		return `import "core/map";
 function step(k: i32): i32 {
-    var m: Map[string, string] = map_new(2);
+    let m: Map[string, string] = map_new(2);
     m = m.insert("k" + "0", "v" + "0");
     m = m.insert("k" + "1", "v" + "1");
     m = m.insert("k" + "2", "v" + "2");
@@ -87,11 +87,11 @@ function step(k: i32): i32 {
     return m.len();
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
     if (acc != ` + n + ` * 5) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 3000) { return 119; }
     return g / 16;
 }`
@@ -104,11 +104,11 @@ function main(): i32 {
 	{name: "valalias-snapshot-safe", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
-    var m: Map[i32, string] = map_new(2);
+    let m: Map[i32, string] = map_new(2);
     m = m.insert(1, "a" + "b");
     m = m.insert(2, "c" + "d");
-    var ks: i32[] = m.keys();
-    var vs: string[] = m.values();
+    let ks: i32[] = m.keys();
+    let vs: string[] = m.values();
     m = m.insert(3, "e" + "f");
     m = m.insert(4, "g" + "h");
     m = m.insert(5, "i" + "j");
@@ -128,10 +128,10 @@ function main(): i32 {
 	{name: "keyalias-snapshot-safe", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(2);
+    let m: Map[string, i32] = map_new(2);
     m = m.insert("a" + "b", 11);
     m = m.insert("c" + "d", 22);
-    var ks: string[] = m.keys();
+    let ks: string[] = m.keys();
     m = m.insert("e" + "f", 33);
     m = m.insert("g" + "h", 44);
     m = m.insert("i" + "j", 55);
@@ -149,9 +149,9 @@ function main(): i32 {
 	{name: "strkv-churn", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 300) {
-        var m: Map[string, string] = map_new(2);
+        let m: Map[string, string] = map_new(2);
         m = m.insert("k" + "0", "v" + "0");
         m = m.insert("k" + "1", "v" + "1");
         m = m.insert("k" + "2", "v" + "2");
@@ -170,9 +170,9 @@ function main(): i32 {
 	{name: "i64val-churn", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        var m: Map[i32, i64] = map_new(2);
+        let m: Map[i32, i64] = map_new(2);
         m = m.insert(1, 11);
         m = m.insert(2, 22);
         m = m.insert(3, 33);

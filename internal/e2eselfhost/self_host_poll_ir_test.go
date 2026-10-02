@@ -27,7 +27,7 @@ func TestSelfHostPollIRX86_64(t *testing.T) {
 
 	// poll([], 0) → -1 (no fd ready); -1 truncates to exit code 255.
 	main := `function main(): i32 {
-    var fds: i32[] = [];
+    let fds: i32[] = [];
     return poll(fds, 0);
 }`
 	src := []byte(main + "\n")

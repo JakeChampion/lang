@@ -6,7 +6,7 @@ import (
 
 // --- A string[] FIELD READ bound to a LOCAL, then stored ----------------------
 //
-// `var tt: string[] = q.f; var p: P = P { f: tt, n: i }` — the hoisted spelling
+// `let tt: string[] = q.f; let p: P = P { f: tt, n: i }` — the hoisted spelling
 // of the inline share self_host_strarr_field_share_read_test.go admitted, and
 // the row that file pinned as `hoisted_bind_still_leaks` while it stayed open
 // (#5338). It measured 800 allocs / 300 frees, 16800 live, against native's
@@ -48,8 +48,8 @@ import (
 
 const strarrBindShareDecl = `struct P { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
-function mkv(i: i32): string[] { var o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
-function churn(i: i32): i32 { var a: string[] = mkv(i); var b: string[] = mkv(i + 1); return a[0].len() + b[1].len(); }
+function mkv(i: i32): string[] { let o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
+function churn(i: i32): i32 { let a: string[] = mkv(i); let b: string[] = mkv(i + 1); return a[0].len() + b[1].len(); }
 `
 
 // strarrBindChurnMain drives 200 rounds and separates the three failure modes:
@@ -58,8 +58,8 @@ function churn(i: i32): i32 { var a: string[] = mkv(i); var b: string[] = mkv(i 
 // segfaults on its own.
 const strarrBindChurnMain = `
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -67,7 +67,7 @@ function main(): i32 {
 
 const strarrBindPlainMain = `
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0;
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -81,9 +81,9 @@ func strarrBindShareCases() []arrenumShareCase {
 			// differ only in whether the read is named.
 			name: "bind_then_store",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var tt: string[] = q.f;
-    var p: P = P { f: tt, n: i };
+    let q: P = P { f: mkv(i), n: i };
+    let tt: string[] = q.f;
+    let p: P = P { f: tt, n: i };
     return (p.f.len() + p.f[0].len() + p.n + q.n) % 101;
 }` + strarrBindPlainMain,
 			want: 72,
@@ -94,15 +94,15 @@ func strarrBindShareCases() []arrenumShareCase {
 			// admitted and balances. Reads every element back after churn.
 			name: "escaping_holder_now_clean",
 			src: strarrBindShareDecl + `function make(i: i32): P {
-    var q: P = P { f: mkv(i), n: i };
-    var tt: string[] = q.f;
-    var p: P = P { f: tt, n: i };
+    let q: P = P { f: mkv(i), n: i };
+    let tt: string[] = q.f;
+    let p: P = P { f: tt, n: i };
     return p;
 }
 function round(i: i32): i32 {
-    var want: i32 = w("a").len();
-    var p: P = make(i);
-    var junk: i32 = churn(i * 3 + 1);
+    let want: i32 = w("a").len();
+    let p: P = make(i);
+    let junk: i32 = churn(i * 3 + 1);
     if (p.f.len() != 2) { return 0 - 1; }
     if (p.f[0].len() != want) { return 0 - 2; }
     return (p.f[1].len() + junk) % 101;
@@ -115,9 +115,9 @@ function round(i: i32): i32 {
 			// read it is scoped to.
 			name: "fresh_local_bind_unchanged",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
-    var src: string[] = mkv(i);
-    var tt: string[] = src;
-    var p: P = P { f: tt, n: i };
+    let src: string[] = mkv(i);
+    let tt: string[] = src;
+    let p: P = P { f: tt, n: i };
     return (p.f.len() + p.f[0].len() + p.n) % 101;
 }` + strarrBindPlainMain,
 			want: 71,
@@ -127,15 +127,15 @@ function round(i: i32): i32 {
 			// free would dangle it, so the read stays marked.
 			name: "refused_element_escapes",
 			src: strarrBindShareDecl + `function grab(i: i32): string {
-    var q: P = P { f: mkv(i), n: i };
-    var tt: string[] = q.f;
-    var p: P = P { f: tt, n: i };
+    let q: P = P { f: mkv(i), n: i };
+    let tt: string[] = q.f;
+    let p: P = P { f: tt, n: i };
     return tt[0];
 }
 function round(i: i32): i32 {
-    var want: i32 = w("a").len();
-    var s: string = grab(i);
-    var junk: i32 = churn(i * 3 + 1);
+    let want: i32 = w("a").len();
+    let s: string = grab(i);
+    let junk: i32 = churn(i * 3 + 1);
     if (s.len() != want) { return 0 - 1; }
     return (s.len() + junk) % 101;
 }` + strarrBindChurnMain,
@@ -146,15 +146,15 @@ function round(i: i32): i32 {
 			// both structs.
 			name: "refused_array_escapes",
 			src: strarrBindShareDecl + `function grab(i: i32): string[] {
-    var q: P = P { f: mkv(i), n: i };
-    var tt: string[] = q.f;
-    var p: P = P { f: tt, n: i };
+    let q: P = P { f: mkv(i), n: i };
+    let tt: string[] = q.f;
+    let p: P = P { f: tt, n: i };
     return tt;
 }
 function round(i: i32): i32 {
-    var want: i32 = w("a").len();
-    var xs: string[] = grab(i);
-    var junk: i32 = churn(i * 3 + 1);
+    let want: i32 = w("a").len();
+    let xs: string[] = grab(i);
+    let junk: i32 = churn(i * 3 + 1);
     if (xs.len() != 2) { return 0 - 1; }
     if (xs[0].len() != want) { return 0 - 2; }
     return (xs[1].len() + junk) % 101;
@@ -166,12 +166,12 @@ function round(i: i32): i32 {
 			// the lasting element alias strarr_expr_unsafe exists to catch.
 			name: "refused_element_bound",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
-    var want: i32 = w("a").len();
-    var q: P = P { f: mkv(i), n: i };
-    var tt: string[] = q.f;
-    var e: string = tt[0];
-    var p: P = P { f: tt, n: i };
-    var junk: i32 = churn(i * 3 + 1);
+    let want: i32 = w("a").len();
+    let q: P = P { f: mkv(i), n: i };
+    let tt: string[] = q.f;
+    let e: string = tt[0];
+    let p: P = P { f: tt, n: i };
+    let junk: i32 = churn(i * 3 + 1);
     if (e.len() != want) { return 0 - 1; }
     return (e.len() + p.n + junk) % 101;
 }` + strarrBindChurnMain,
@@ -184,10 +184,10 @@ function round(i: i32): i32 {
 			// released (#9209), so this balances.
 			name: "appended_now_clean",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var tt: string[] = q.f;
+    let q: P = P { f: mkv(i), n: i };
+    let tt: string[] = q.f;
     tt = tt.append(w("c"));
-    var p: P = P { f: tt, n: i };
+    let p: P = P { f: tt, n: i };
     return (p.f.len() + p.f[0].len() + q.f.len() + q.n) % 101;
 }` + strarrBindPlainMain,
 			want: 68,
@@ -201,10 +201,10 @@ function round(i: i32): i32 {
 			// only the accounting moved — and native and interp agree.
 			name: "iterated_now_clean",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var tt: string[] = q.f;
-    var p: P = P { f: tt, n: i };
-    var acc: i32 = 0;
+    let q: P = P { f: mkv(i), n: i };
+    let tt: string[] = q.f;
+    let p: P = P { f: tt, n: i };
+    let acc: i32 = 0;
     for s in tt { acc = acc + s.len(); }
     return (acc + p.n + q.n) % 101;
 }` + strarrBindPlainMain,
@@ -215,12 +215,12 @@ function round(i: i32): i32 {
 			// built at admission time, so every call argument is a hazard —
 			// the direction that can only refuse.
 			name: "refused_call_argument",
-			src: strarrBindShareDecl + `function keep(xs: string[]): i32 { var k: string[] = xs; return k[0].len() + k.len(); }
+			src: strarrBindShareDecl + `function keep(xs: string[]): i32 { let k: string[] = xs; return k[0].len() + k.len(); }
 function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var tt: string[] = q.f;
-    var p: P = P { f: tt, n: i };
-    var k: i32 = keep(tt);
+    let q: P = P { f: mkv(i), n: i };
+    let tt: string[] = q.f;
+    let p: P = P { f: tt, n: i };
+    let k: i32 = keep(tt);
     return (k + p.n + q.n) % 101;
 }` + strarrBindPlainMain,
 			want: 72,

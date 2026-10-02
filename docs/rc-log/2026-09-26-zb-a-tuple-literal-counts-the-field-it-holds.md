@@ -74,16 +74,16 @@ frees / live bytes:
 
 | fragment | main | this change |
 |---|---|---|
-| `var (a, b) = (r.n, r.ys)` (`i32[]`) | 5 / 3 / 72 | 5 / 3 / 88 |
+| `let (a, b) = (r.n, r.ys)` (`i32[]`) | 5 / 3 / 72 | 5 / 3 / 88 |
 | `f((r.n, r.ys))` (`i32[]`) | 5 / 3 / 72 | 5 / 3 / 88 |
-| `var (a, b) = (r.n, r.xs)` (`string[]`) | 5 / 2 / 112 | 5 / 3 / 80 |
+| `let (a, b) = (r.n, r.xs)` (`string[]`) | 5 / 2 / 112 | 5 / 3 / 80 |
 | `match ((r.n, r.xs))` (`string[]`) | 5 / 2 / 112 | 5 / 3 / 80 |
 
 The `string[]` rows gain a free because the record's deep drop is no longer
 withheld. The `i32[]` rows now keep the buffer the tuple retained, 16 bytes
 more. On main that buffer was freed under a tuple that still pointed at it.
 The semantic lowering is clean on all four. `refused_elem_extracted`
-(`var u = p.1`) also leaks. Its mechanism changed: before, `strarrfld_scan`'s
+(`let u = p.1`) also leaks. Its mechanism changed: before, `strarrfld_scan`'s
 mark withheld the record's drop; now it is the tuple's unreleased retain, since
 the extraction refuses `TUPELEMOK:`. The byte count is the same.
 

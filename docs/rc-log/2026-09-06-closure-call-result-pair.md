@@ -12,7 +12,7 @@ function makeAdder(n: i32): (i32) => i32 {
     return add;
 }
 function main(): i32 {
-    var add5 = makeAdder(5);
+    let add5 = makeAdder(5);
     return add5(37);
 }
 ```

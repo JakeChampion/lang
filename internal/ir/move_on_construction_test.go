@@ -2,14 +2,14 @@ package ir_test
 
 import "testing"
 
-// Move-on-construction: `var s = Wrap{ inner: x }` where x is an owned
+// Move-on-construction: `let s = Wrap{ inner: x }` where x is an owned
 // rc local at its last use moves x into the field — the field-init inc
 // and x's exit-sweep dec cancel, so no __fern_rc_inc remains.
 func TestMoveOnConstructionElidesIncForLastUse(t *testing.T) {
 	ip := lowerForTest(t, `struct Wrap { inner: i32[] }
 function f(): i32 {
-    var x: i32[] = [1, 2, 3];
-    var s: Wrap = Wrap { inner: x };
+    let x: i32[] = [1, 2, 3];
+    let s: Wrap = Wrap { inner: x };
     return s.inner[0];
 }
 function main(): i32 { return f(); }`)
@@ -27,8 +27,8 @@ function main(): i32 { return f(); }`)
 func TestMoveOnConstructionKeepsIncWhenReadAgain(t *testing.T) {
 	ip := lowerForTest(t, `struct Wrap { inner: i32[] }
 function f(): i32 {
-    var x: i32[] = [1, 2, 3];
-    var s: Wrap = Wrap { inner: x };
+    let x: i32[] = [1, 2, 3];
+    let s: Wrap = Wrap { inner: x };
     return s.inner[0] + x[1];
 }
 function main(): i32 { return f(); }`)
@@ -46,8 +46,8 @@ function main(): i32 { return f(); }`)
 // dec's it), so the element inc is elided.
 func TestMoveOnConstructionElidesIncForTupleElement(t *testing.T) {
 	ip := lowerForTest(t, `function f(): i32 {
-    var x: i32[] = [1, 2, 3];
-    var t: (i32[], i32) = (x, 9);
+    let x: i32[] = [1, 2, 3];
+    let t: (i32[], i32) = (x, 9);
     return t.0[0] + t.1;
 }
 function main(): i32 { return f(); }`)
@@ -65,7 +65,7 @@ function main(): i32 { return f(); }`)
 // thunk dec's the capture), so the capture inc is elided.
 func TestMoveOnConstructionElidesIncForClosureCapture(t *testing.T) {
 	ip := lowerForTest(t, `function f(): () => i32 {
-    var x: i32[] = [1, 2, 3];
+    let x: i32[] = [1, 2, 3];
     function get(): i32 { return x[0]; }
     return get;
 }
@@ -85,9 +85,9 @@ function main(): i32 { return f()(); }`)
 func TestMoveOnConstructionKeepsIncForBranched(t *testing.T) {
 	ip := lowerForTest(t, `struct Wrap { inner: i32[] }
 function f(c: boolean): i32 {
-    var x: i32[] = [1, 2, 3];
+    let x: i32[] = [1, 2, 3];
     if (c) {
-        var s: Wrap = Wrap { inner: x };
+        let s: Wrap = Wrap { inner: x };
         return s.inner[0];
     }
     return x[0];
@@ -107,8 +107,8 @@ function main(): i32 { return f(true); }`)
 // it), so the element inc is elided.
 func TestMoveOnConstructionElidesIncForArrayElement(t *testing.T) {
 	ip := lowerForTest(t, `function f(): i32 {
-    var x: i32[] = [1, 2, 3];
-    var xs: i32[][] = [x];
+    let x: i32[] = [1, 2, 3];
+    let xs: i32[][] = [x];
     return xs[0][0];
 }
 function main(): i32 { return f(); }`)
@@ -121,13 +121,13 @@ function main(): i32 { return f(); }`)
 	}
 }
 
-// Composes with move-on-return: `var s = Wrap{inner: x}; return s` moves
+// Composes with move-on-return: `let s = Wrap{inner: x}; return s` moves
 // x into s AND moves s out to the caller — zero rc traffic in f.
 func TestMoveOnConstructionComposesWithReturn(t *testing.T) {
 	ip := lowerForTest(t, `struct Wrap { inner: i32[] }
 function f(): Wrap {
-    var x: i32[] = [1, 2, 3];
-    var s: Wrap = Wrap { inner: x };
+    let x: i32[] = [1, 2, 3];
+    let s: Wrap = Wrap { inner: x };
     return s;
 }
 function main(): i32 { return f().inner[0]; }`)
@@ -140,14 +140,14 @@ function main(): i32 { return f().inner[0]; }`)
 	}
 }
 
-// Move-on-destructure: `var (a, b) = t` where t is an owned rc tuple
+// Move-on-destructure: `let (a, b) = t` where t is an owned rc tuple
 // local at its last use moves t into the destructure temp — the temp's
 // alias inc and t's exit-sweep dec cancel. The extracted elements get
 // their own dup-inc, so this only removes the box-aliasing inc/dec pair.
 func TestMoveOnDestructureElidesIncForLastUse(t *testing.T) {
 	ip := lowerForTest(t, `function f(): i32 {
-    var t: (i32[], i32) = ([1, 2, 3], 9);
-    var (a, b) = t;
+    let t: (i32[], i32) = ([1, 2, 3], 9);
+    let (a, b) = t;
     return a[0] + b;
 }
 function main(): i32 { return f(); }`)
@@ -168,8 +168,8 @@ function main(): i32 { return f(); }`)
 // last use, so the box alias inc is kept.
 func TestMoveOnDestructureKeepsIncWhenReadAgain(t *testing.T) {
 	ip := lowerForTest(t, `function f(): i32 {
-    var t: (i32[], i32) = ([1, 2, 3], 9);
-    var (a, b) = t;
+    let t: (i32[], i32) = ([1, 2, 3], 9);
+    let (a, b) = t;
     return a[0] + b + t.1;
 }
 function main(): i32 { return f(); }`)

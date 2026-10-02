@@ -2,7 +2,7 @@
 
 ```fern
 function f(b: i32[]): i32 {
-    var c: i32[] = b.append(9);
+    let c: i32[] = b.append(9);
     return b.len() * 10 + c.len();
 }
 ```

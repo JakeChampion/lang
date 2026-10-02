@@ -75,12 +75,12 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 	}{
 		{
 			name:    "subprocess",
-			src:     `function main(): i32 { var r = subprocess("/bin/echo", [], ""); return r.exit_code; }` + "\n",
+			src:     `function main(): i32 { let r = subprocess("/bin/echo", [], ""); return r.exit_code; }` + "\n",
 			mustSay: "subprocess",
 		},
 		{
 			name:    "timer_fd",
-			src:     `function main(): i32 { var fd: i32 = timer_fd(10); if (fd >= 0) { return 0; } return 1; }` + "\n",
+			src:     `function main(): i32 { let fd: i32 = timer_fd(10); if (fd >= 0) { return 0; } return 1; }` + "\n",
 			mustSay: "timer_fd",
 		},
 		{
@@ -90,7 +90,7 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 			// (before this it deferred to the AST emitter, which also emitted a call
 			// against an undefined $__c_call0). asm_ir.is_c_call classifies the ident.
 			name:    "c_call",
-			src:     `function main(): i32 { var cb: usize = 0; return __c_call0(cb) as i32; }` + "\n",
+			src:     `function main(): i32 { let cb: usize = 0; return __c_call0(cb) as i32; }` + "\n",
 			mustSay: "__c_call0",
 		},
 		// One per shape of the raw floor (#6946): a syscall, an argument-taking
@@ -109,7 +109,7 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 		},
 		{
 			name:    "raw_alloc",
-			src:     `function main(): i32 { var p: i32 = __raw_alloc(64); return 0; }` + "\n",
+			src:     `function main(): i32 { let p: i32 = __raw_alloc(64); return 0; }` + "\n",
 			mustSay: "__raw_alloc",
 		},
 		{

@@ -22,30 +22,30 @@ import (
 // credit to collide with.
 
 const otNestedFnSrc = `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+    let acc: i32 = 0;
+    let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
     if (i >= 0) {
         match (o) { Some(t) => { acc = acc + t.0 + t.1.len(); }, None => { acc = acc + 1; } }
     }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 7;
 }
 `
 
 const otFlatFnSrc = `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+    let acc: i32 = 0;
+    let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
     match (o) { Some(t) => { acc = acc + t.0 + t.1.len(); }, None => { acc = acc + 1; } }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 7;
 }
@@ -53,12 +53,12 @@ function main(): i32 {
 
 const otNestedBlockSrc = `import "core/int";
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var o: Option[(i32, i32[])] = Some((k, [k, k + 1]));
+            let o: Option[(i32, i32[])] = Some((k, [k, k + 1]));
             if (k >= 0) {
                 match (o) { Some(t) => { acc = acc + t.0 + t.1.len(); }, None => { acc = acc + 1; } }
             }
@@ -72,12 +72,12 @@ function main(): i32 {
 
 const otFlatBlockSrc = `import "core/int";
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var o: Option[(i32, i32[])] = Some((k, [k, k + 1]));
+            let o: Option[(i32, i32[])] = Some((k, [k, k + 1]));
             match (o) { Some(t) => { acc = acc + t.0 + t.1.len(); }, None => { acc = acc + 1; } }
             k = k + 1;
         }
@@ -92,13 +92,13 @@ function main(): i32 {
 // walk it.
 const otPayloadEscapesSrc = `import "core/int";
 function main(): i32 {
-    var held: i32[] = [0, 0];
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let held: i32[] = [0, 0];
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var o: Option[(i32, i32[])] = Some((k, [k, k + 1]));
+            let o: Option[(i32, i32[])] = Some((k, [k, k + 1]));
             if (k >= 0) {
                 match (o) { Some(t) => { held = t.1; acc = acc + t.0; }, None => { acc = acc + 1; } }
             }

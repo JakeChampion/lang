@@ -35,10 +35,10 @@ const sanExitStatus = 124
 // sanSelfHostCleanSrc: the rc-driven drop-everything loop. Every row is
 // precisely dropped, so a sanitizer run must be silent.
 const sanSelfHostCleanSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < 50) {
-        var row: i32[] = [i, i + 1, i + 2];
+        let row: i32[] = [i, i + 1, i + 2];
         sum = sum + row[0];
         i = i + 1;
     }
@@ -52,9 +52,9 @@ const sanSelfHostCleanSrc = `function main(): i32 {
 // the block to its size class now, and the two agree. Exit code 42 passes
 // through the report untouched.
 const sanSelfHostLeakSrc = `function main(): i32 {
-    var a: usize = __alloc(60);
-    var b: usize = __alloc(60);
-    var c: usize = __alloc(60);
+    let a: usize = __alloc(60);
+    let b: usize = __alloc(60);
+    let c: usize = __alloc(60);
     __free(a, 60);
     if (b == c) { return 9; }
     return 42;
@@ -71,7 +71,7 @@ const sanSelfHostLeakSrc = `function main(): i32 {
 // diagnostic divergence: both texts are byte-identical across backends, and
 // each fires for the mechanism that actually happened in its runtime.)
 const sanSelfHostDoubleFreeSrc = `function main(): i32 {
-    var a: u8[] = __alloc_u8(16);
+    let a: u8[] = __alloc_u8(16);
     __rc_dec(a);
     __rc_dec(a);
     return 0;

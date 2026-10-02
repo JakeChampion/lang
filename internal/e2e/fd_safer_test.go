@@ -24,7 +24,7 @@ import (
 const fdSaferStdoutSrc = `function main(): i32 {
     match (open_writer("alias.out")) {
         Ok(w) => {
-            var refused: boolean = false;
+            let refused: boolean = false;
             match (stdout().write("TO-STDOUT\n")) {
                 Some(e) => { refused = true; },
                 None => { }

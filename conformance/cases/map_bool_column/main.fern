@@ -21,28 +21,28 @@ import "core/map";
 // wasm is unaffected by the stride itself: a wasm32 boolean element strides 4,
 // which is what the runtime already wrote.
 function main(): i32 {
-    var vm: Map[i32, boolean] = map_new(2);
+    let vm: Map[i32, boolean] = map_new(2);
     vm = vm.insert(0, true);
     vm = vm.insert(1, false);
     vm = vm.insert(2, true);
     vm = vm.insert(3, false);
-    var vs: boolean[] = vm.values();
+    let vs: boolean[] = vm.values();
     if (vs.len() != 4) { return 1; }
     if (!vs[0]) { return 2; }
     if (vs[1]) { return 3; }
     if (!vs[2]) { return 4; }
     if (vs[3]) { return 5; }
 
-    var vtrue: i32 = 0;
+    let vtrue: i32 = 0;
     for v in vs { if (v) { vtrue = vtrue + 1; } }
     if (vtrue != 2) { return 6; }
 
     // Grown past the initial capacity, so the rehash moves the column before
     // it is snapshotted, and read at an index past the first two.
-    var big: Map[i32, boolean] = map_new(2);
-    var i: i32 = 0;
+    let big: Map[i32, boolean] = map_new(2);
+    let i: i32 = 0;
     while (i < 9) { big = big.insert(i, (i % 3) == 0); i = i + 1; }
-    var bs: boolean[] = big.values();
+    let bs: boolean[] = big.values();
     if (bs.len() != 9) { return 7; }
     if (!bs[6]) { return 8; }
     if (bs[7]) { return 9; }

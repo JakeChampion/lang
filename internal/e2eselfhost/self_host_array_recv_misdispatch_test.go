@@ -47,7 +47,7 @@ function (xs: T[]) pow[T: cmp.Ord, U: cmp.Ord](u: U): i32 {
 }
 
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
+    let xs: i32[] = [1, 2, 3];
     return xs.pow(2);
 }
 `

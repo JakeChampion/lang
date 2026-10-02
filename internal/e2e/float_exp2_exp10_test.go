@@ -11,7 +11,7 @@ import "testing"
 // toolchain is absent.
 const floatExp2Exp10Prog = `
 import "std/float" as float;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
     if (!approx((3.0).exp2(), 8.0)) { return 1; }
     if (!approx((10.0).exp2(), 1024.0)) { return 2; }

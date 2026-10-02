@@ -33,25 +33,25 @@ var nestedGenericStructIRCases = []nestedGenericStructIRCase{
 	// the core shape, annotation-driven instantiation.
 	{"two_level_i32", `struct Box[T] { v: T }
 function main(): i32 {
-    var b: Box[Box[i32]] = Box { v: Box { v: 7 } };
+    let b: Box[Box[i32]] = Box { v: Box { v: 7 } };
     return b.v.v;
 }`, 7},
 	// no annotation: the inner literal's own instantiation drives the outer key.
 	{"two_level_no_anno", `struct Box[T] { v: T }
 function main(): i32 {
-    var b = Box { v: Box { v: 7 } };
+    let b = Box { v: Box { v: 7 } };
     return b.v.v;
 }`, 7},
 	// three levels of nesting.
 	{"three_level", `struct Box[T] { v: T }
 function main(): i32 {
-    var b: Box[Box[Box[i32]]] = Box { v: Box { v: Box { v: 5 } } };
+    let b: Box[Box[Box[i32]]] = Box { v: Box { v: Box { v: 5 } } };
     return b.v.v.v;
 }`, 5},
 	// nested string payload, method dispatch on the innermost field.
 	{"nested_string_method", `struct Box[T] { v: T }
 function main(): i32 {
-    var b: Box[Box[string]] = Box { v: Box { v: "hello" } };
+    let b: Box[Box[string]] = Box { v: Box { v: "hello" } };
     return b.v.v.len();
 }`, 5},
 	// a method on the generic struct, called on a nested instantiation (the
@@ -59,7 +59,7 @@ function main(): i32 {
 	{"nested_method", `struct Box[T] { v: T }
 function (b: Box[T]) get(): T { return b.v; }
 function main(): i32 {
-    var b: Box[Box[i32]] = Box { v: Box { v: 7 } };
+    let b: Box[Box[i32]] = Box { v: Box { v: 7 } };
     return b.get().v;
 }`, 7},
 	// the method is called at BOTH levels (`b.get()` returns the inner Box,
@@ -67,8 +67,8 @@ function main(): i32 {
 	{"nested_method_both_levels", `struct Box[T] { v: T }
 function (b: Box[T]) get(): T { return b.v; }
 function main(): i32 {
-    var b: Box[Box[i32]] = Box { v: Box { v: 7 } };
-    var inner = b.get();
+    let b: Box[Box[i32]] = Box { v: Box { v: 7 } };
+    let inner = b.get();
     return inner.get();
 }`, 7},
 	// A literal whose type argument comes only from a field of an unannotated
@@ -76,20 +76,20 @@ function main(): i32 {
 	// (#10275).
 	{"field_of_unannotated_local", `struct P[T] { b: T }
 function main(): i32 {
-    var p = P { b: "xy" };
-    var q = P { b: p.b };
+    let p = P { b: "xy" };
+    let q = P { b: p.b };
     return q.b.len();
 }`, 2},
 	{"rebind_from_unannotated_fields", `struct P[T] { a: T[], b: T }
 function main(): i32 {
-    var p = P { a: ["q"], b: "xy" };
-    var q = P { a: p.a, b: p.b };
+    let p = P { a: ["q"], b: "xy" };
+    let q = P { a: p.a, b: p.b };
     return q.a.len();
 }`, 1},
 	// the reassignment in #10275: the new literal reads the local it replaces.
 	{"reassign_over_own_field", `struct P[T] { a: T[], b: T }
 function main(): i32 {
-    var p = P { a: ["q"], b: "xy" };
+    let p = P { a: ["q"], b: "xy" };
     p = P { a: p.a.append("z"), b: p.b };
     return p.a.len();
 }`, 2},
@@ -97,17 +97,17 @@ function main(): i32 {
 	{"field_of_call_bound_local", `struct P[T] { b: T }
 function mk(): P[string] { return P { b: "xy" }; }
 function main(): i32 {
-    var p = mk();
-    var q = P { b: p.b };
+    let p = mk();
+    let q = P { b: p.b };
     return q.b.len();
 }`, 2},
 	// so do a `for` variable over an array of instantiations and an Option
 	// payload.
 	{"field_of_for_var", `struct P[T] { b: T }
 function main(): i32 {
-    var ps: P[string][] = [P { b: "xy" }, P { b: "abc" }];
-    var n: i32 = 0;
-    for p in ps { var q = P { b: p.b }; n = n + q.b.len(); }
+    let ps: P[string][] = [P { b: "xy" }, P { b: "abc" }];
+    let n: i32 = 0;
+    for p in ps { let q = P { b: p.b }; n = n + q.b.len(); }
     return n;
 }`, 5},
 	// the same over an unannotated Option / Result scrutinee, both Result arms,
@@ -115,52 +115,52 @@ function main(): i32 {
 	{"field_of_unannotated_ok_payload", `struct P[T] { b: T }
 function mk(): Result[P[string], string] { return Ok(P { b: "xy" }); }
 function main(): i32 {
-    var r = mk();
+    let r = mk();
     match (r) {
-        Ok(p) => { var q = P { b: p.b }; return q.b.len(); },
+        Ok(p) => { let q = P { b: p.b }; return q.b.len(); },
         Err(e) => { return 9; }
     }
 }`, 2},
 	{"field_of_unannotated_err_payload", `struct P[T] { b: T }
 function mk(): Result[i32, P[string]] { return Err(P { b: "abc" }); }
 function main(): i32 {
-    var r = mk();
+    let r = mk();
     match (r) {
         Ok(v) => { return v; },
-        Err(p) => { var q = P { b: p.b }; return q.b.len(); }
+        Err(p) => { let q = P { b: p.b }; return q.b.len(); }
     }
 }`, 3},
 	{"field_of_unannotated_some_payload", `struct P[T] { b: T }
 function main(): i32 {
-    var o = Some(P { b: "xy" });
+    let o = Some(P { b: "xy" });
     match (o) {
-        Some(p) => { var q = P { b: p.b }; return q.b.len(); },
+        Some(p) => { let q = P { b: p.b }; return q.b.len(); },
         None => { return 9; }
     }
 }`, 2},
 	{"field_of_enum_payload", `struct P[T] { b: T }
 enum E { A(P[string]), B }
 function main(): i32 {
-    var e: E = A(P { b: "xy" });
+    let e: E = A(P { b: "xy" });
     match (e) {
-        A(p) => { var q = P { b: p.b }; return q.b.len(); },
+        A(p) => { let q = P { b: p.b }; return q.b.len(); },
         B => { return 9; }
     }
 }`, 2},
 	{"field_of_generic_enum_payload", `struct P[T] { b: T }
 enum Tree[T] { Leaf(T), Node(Tree[T], Tree[T]) }
 function main(): i32 {
-    var t: Tree[string] = Leaf("xyz");
+    let t: Tree[string] = Leaf("xyz");
     match (t) {
-        Leaf(v) => { var q = P { b: v }; return q.b.len(); },
+        Leaf(v) => { let q = P { b: v }; return q.b.len(); },
         Node(l, r) => { return 9; }
     }
 }`, 3},
 	{"field_of_option_payload", `struct P[T] { b: T }
 function main(): i32 {
-    var o: Option[P[string]] = Some(P { b: "xy" });
+    let o: Option[P[string]] = Some(P { b: "xy" });
     match (o) {
-        Some(p) => { var q = P { b: p.b }; return q.b.len(); },
+        Some(p) => { let q = P { b: p.b }; return q.b.len(); },
         None => { return 9; }
     }
 }`, 2},
@@ -169,19 +169,19 @@ function main(): i32 {
 	// field says.
 	{"literal_in_array_argument", `struct Same[T] { a: T, b: T }
 function take(xs: Same[i64][]): i32 {
-    var s: i64 = xs[0].a + xs[0].b + xs[1].b;
+    let s: i64 = xs[0].a + xs[0].b + xs[1].b;
     return (s - 8589934592) as i32;
 }
 function main(): i32 {
-    var y: i64 = 4294967296;
+    let y: i64 = 4294967296;
     return take([Same { a: 3, b: y }, Same { a: 1, b: 4294967296 }]);
 }`, 3},
 	// a nested instantiation and a flat instantiation of the same struct
 	// coexisting (each clones independently).
 	{"coexist_with_flat", `struct Box[T] { v: T }
 function main(): i32 {
-    var a: Box[Box[i32]] = Box { v: Box { v: 3 } };
-    var c: Box[i32] = Box { v: 4 };
+    let a: Box[Box[i32]] = Box { v: Box { v: 3 } };
+    let c: Box[i32] = Box { v: 4 };
     return a.v.v + c.v;
 }`, 7},
 }

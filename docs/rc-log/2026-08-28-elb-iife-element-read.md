@@ -17,7 +17,7 @@ statement form makes and earns the same admissions.
 It widens `arrenum_esc_expr` in exactly one place — an `is_iife_callee` call,
 whose lambda body recurses into `arrenum_param_escapes` — and delegates every
 other form to the stricter walker, so the widening cannot reach past this
-shape. The four statement VALUE positions (var init, assign value, return,
+shape. The four statement VALUE positions (let init, assign value, return,
 expression statement) route through it; conditions and iterators keep the
 strict walker, where an IIFE would be a different question.
 

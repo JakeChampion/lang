@@ -21,17 +21,17 @@ import (
 const x86SSAOpenEnvSrc = `import "std/string";
 
 function main(): i32 {
-    var base: string = getcwd();
+    let base: string = getcwd();
 
     // open_appender: O_APPEND, so a second open writes past what is there.
     match (write_file(base + "/a", "one")) { Ok(_) => {}, Err(e) => { return 10; } }
-    var ap: Writer = match (open_appender(base + "/a")) { Ok(h) => h, Err(e) => { return 11; } };
+    let ap: Writer = match (open_appender(base + "/a")) { Ok(h) => h, Err(e) => { return 11; } };
     match (ap.write("two")) { Some(e) => { return 12; }, None => {} }
     match (ap.close()) { Some(e) => { return 13; }, None => {} }
     match (read_file(base + "/a")) { Ok(c) => { if (c != "onetwo") { return 14; } }, Err(e) => { return 15; } }
 
     // open_exclusive: creates, and refuses a name that already exists.
-    var ex: Writer = match (open_exclusive(base + "/x")) { Ok(h) => h, Err(e) => { return 20; } };
+    let ex: Writer = match (open_exclusive(base + "/x")) { Ok(h) => h, Err(e) => { return 20; } };
     match (ex.write("new")) { Some(e) => { return 21; }, None => {} }
     match (ex.close()) { Some(e) => { return 22; }, None => {} }
     match (open_exclusive(base + "/x")) { Ok(h) => { return 23; }, Err(e) => {} }
@@ -39,25 +39,25 @@ function main(): i32 {
     // open_writer_with: bit 0 is O_CREAT. Without it a missing name fails;
     // with it the file is created.
     match (open_writer_with(base + "/w", 0)) { Ok(h) => { return 30; }, Err(e) => {} }
-    var ww: Writer = match (open_writer_with(base + "/w", 1)) { Ok(h) => h, Err(e) => { return 31; } };
+    let ww: Writer = match (open_writer_with(base + "/w", 1)) { Ok(h) => h, Err(e) => { return 31; } };
     match (ww.write("made")) { Some(e) => { return 32; }, None => {} }
     match (ww.close()) { Some(e) => { return 33; }, None => {} }
     match (read_file(base + "/w")) { Ok(c) => { if (c != "made") { return 34; } }, Err(e) => { return 35; } }
 
     // open_reader_with: reads what is there, and refuses a missing name even
     // with the nonblock bit set.
-    var rw: Reader = match (open_reader_with(base + "/w", 2)) { Ok(h) => h, Err(e) => { return 40; } };
+    let rw: Reader = match (open_reader_with(base + "/w", 2)) { Ok(h) => h, Err(e) => { return 40; } };
     match (rw.read_chunk(16)) { Ok(s) => { if (s != "made") { return 41; } }, Err(e) => { return 42; } }
     match (rw.close()) { Some(e) => { return 43; }, None => {} }
     match (open_reader_with(base + "/no-such-name", 2)) { Ok(h) => { return 44; }, Err(e) => {} }
 
     // environ: memoised, and every entry is NAME=VALUE. env() must agree with
     // what environ reports for the same name.
-    var e1: string[] = environ();
-    var e2: string[] = environ();
+    let e1: string[] = environ();
+    let e2: string[] = environ();
     if (e1.len() != e2.len()) { return 50; }
     if (e1.len() < 1) { return 51; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < e1.len()) {
         if (!e1[i].contains("=")) { return 52; }
         if (e1[i] != e2[i]) { return 53; }
@@ -65,7 +65,7 @@ function main(): i32 {
     }
     // env() must find the name environ() reports, which is what says the two
     // helpers read the same vector.
-    var first: string = e1[0];
+    let first: string = e1[0];
     match (env(first.slice_snap(0, first.index_of("=")))) { Some(v) => {}, None => { return 54; } }
 
     // read_line: standard input, one line at a time, the newline kept.

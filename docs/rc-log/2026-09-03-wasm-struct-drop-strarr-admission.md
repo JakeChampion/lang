@@ -1,7 +1,7 @@
 # 2026-09-03 — wasm's `__struct_drop_<T>` freed base-copied `string[]` fields ungated (#8119)
 
 The self-host-built `asm_run.wasm` ran linear memory to 3.84 GB on
-`function main(): i32 { return 0; }` (1.70 GB on `var a: i32 = 1; return a;`)
+`function main(): i32 { return 0; }` (1.70 GB on `let a: i32 = 1; return a;`)
 and trapped at address 0xffffffff inside `$__fern_strcat`. The native-built
 wasm of the same source, and the self-host-built x86-64 binary, both compile
 the program.
@@ -30,7 +30,7 @@ __fern_arr_dec ← __fern_arr_dec_ptr ← __struct_drop_irlower__FnSigs
 whole-program one it was handed:
 
 ```
-var sg: fnsigs.FnSigs = fnsigs.FnSigs { ...irlower.fn_sigs_with_dyn(base, …), … };
+let sg: fnsigs.FnSigs = fnsigs.FnSigs { ...irlower.fn_sigs_with_dyn(base, …), … };
 ```
 
 A base copy hands the new box every array field pointer with NO retain
@@ -70,7 +70,7 @@ one `strfldok:<row>` per admission row, the `FNPTR:` markers as-is. wasm's own
 | reduced probe (`Sigs { ...with_dyn(base) }` dropped, then `base.ys` read after 8 junk allocs) — self-host wasm | 29 (corrupted) | 25 |
 | the same, self-host x86-64 | 25 | 25 |
 | `asm_run.wasm` (self-host-built) on `return 0` | trap, memory 0xe4ec0000 | exit 0, 490 B of asm |
-| `asm_run.wasm` on `var a: i32 = 1; return a;` | trap, memory ~1.7 GB | exit 0, 593 B of asm |
+| `asm_run.wasm` on `let a: i32 = 1; return a;` | trap, memory ~1.7 GB | exit 0, 593 B of asm |
 
 `$__struct_drop_Sigs` on the probe went from three decs (the nested struct plus
 `arr_dec_ptr` on both `string[]` fields) to one.
@@ -84,7 +84,7 @@ one `strfldok:<row>` per admission row, the `FNPTR:` markers as-is. wasm's own
   same compiler. The new differential is on `asm_run`.
 - The field-reclaim twin (`emit_wasm_field_reclaim_body`) still releases every
   `frk == "a"` field ungated (shallow, under the cow guard). A base-copy probe
-  (`var t = Sigs { ...sg }; sg = Sigs { ...sg, xs: fresh() }`) did not route
+  (`let t = Sigs { ...sg }; sg = Sigs { ...sg, xs: fresh() }`) did not route
   through `__field_reclaim_Sigs` on either backend, so it stays as the
   2026-09-01 entry left it: measured divergent, no witness.
 

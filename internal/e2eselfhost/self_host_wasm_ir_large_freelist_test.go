@@ -58,16 +58,16 @@ func TestSelfHostWasmIRLargeFreelist(t *testing.T) {
 	// measurement too. The bump reading is reported in KiB.
 	src := func(iters int) string {
 		return fmt.Sprintf(`function fill(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i); i = i + 1; }
     return a;
 }
 function main(): i32 {
-    var r: i32 = 0;
-    var i: i32 = 0;
+    let r: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
-        var a: i32[] = fill(160000);
+        let a: i32[] = fill(160000);
         r = r + a.len();
         i = i + 1;
     }

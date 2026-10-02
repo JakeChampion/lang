@@ -19,30 +19,30 @@ function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }
 @noinline
 function (a: Big) id_or_make(k: i32): Big {
     if (k <= 0) { return a; }
-    var mag: u64[] = a.mag;
+    let mag: u64[] = a.mag;
     return make(a.neg, mag);
 }
 @noinline
 function handed_back(i: i32): i32 {
-    var b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
-    var c: Big = b.id_or_make(0);
+    let b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    let c: Big = b.id_or_make(0);
     return c.mag.len() + i;
 }
 @noinline
 function remade(i: i32): i32 {
-    var b: Big = Big { neg: false, mag: [1 as u64, 2 as u64] };
-    var c: Big = b.id_or_make(1);
+    let b: Big = Big { neg: false, mag: [1 as u64, 2 as u64] };
+    let c: Big = b.id_or_make(1);
     return c.mag.len() + i;
 }
 @noinline
 function field_args(i: i32): i32 {
-    var b: Big = Big { neg: true, mag: [4 as u64] };
-    var c: Big = make(b.neg, b.mag);
+    let b: Big = Big { neg: true, mag: [4 as u64] };
+    let c: Big = make(b.neg, b.mag);
     return c.mag.len() + b.mag.len() + i;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         t = t + handed_back(i) + remade(i) + field_args(i);
         i = i + 1;

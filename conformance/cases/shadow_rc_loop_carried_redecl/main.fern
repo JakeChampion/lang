@@ -10,20 +10,20 @@ struct P { xs: i32[], s: string }
 function w(s: string): string { return s + ""; }
 
 function round(base: P, i: i32): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 2) {
-        if (k == 0) { var v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
-        if (k == 1) { var v: P = base; t = t + v.xs.len(); }
+        if (k == 0) { let v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
+        if (k == 1) { let v: P = base; t = t + v.xs.len(); }
         k = k + 1;
     }
     return t;
 }
 
 function main(): i32 {
-    var base: P = P { xs: [1, 2, 3], s: w("b") };
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let base: P = P { xs: [1, 2, 3], s: w("b") };
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { t = t + round(base, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (base.xs.len() != 3) { return 98; }

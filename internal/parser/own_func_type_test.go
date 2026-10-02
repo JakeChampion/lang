@@ -57,7 +57,7 @@ function f(h: (own Conn)): void {}`)
 // A lambda spells a consuming parameter the way a declaration does.
 func TestArrowLambdaParsesOwnParam(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
-    var g: (own i32[]) => i32 = (own xs: i32[]) => xs.len();
+    let g: (own i32[]) => i32 = (own xs: i32[]) => xs.len();
     return g([1]);
 }`)
 	if err != nil {

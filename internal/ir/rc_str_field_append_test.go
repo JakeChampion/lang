@@ -67,8 +67,8 @@ func lowerForTestPtrW(t *testing.T, src string, ptrW int) *ir.Program {
 
 const strFieldAppendSelfOverwriteSrc = `struct B { buf: string, n: i32 }
 function main(): i32 {
-    var b: B = B { buf: "", n: 0 };
-    var i: i32 = 0;
+    let b: B = B { buf: "", n: 0 };
+    let i: i32 = 0;
     while (i < 4) { b = B { ...b, buf: b.buf + "ab", n: b.n + 1 }; i = i + 1; }
     return b.buf.len() - 8;
 }`
@@ -125,8 +125,8 @@ func TestStrFieldAppendSelfOverwriteGrowsInPlaceArm64(t *testing.T) {
 func TestStrFieldAppendReturnSpreadGrowsInPlace(t *testing.T) {
 	fn := funcByName(lowerForTest(t, `struct B { buf: string, n: i32 }
 function grow(n: i32): B {
-    var b: B = B { buf: "", n: 0 };
-    var i: i32 = 0;
+    let b: B = B { buf: "", n: 0 };
+    let i: i32 = 0;
     while (i < n) { b = B { ...b, buf: b.buf + "z" }; i = i + 1; }
     return B { ...b, buf: b.buf + "!" };
 }
@@ -143,7 +143,7 @@ function main(): i32 { return grow(3).buf.len() - 4; }`), "grow")
 func TestStrFieldAppendRefusesCrossFieldRead(t *testing.T) {
 	fn := funcByName(lowerForTest(t, `struct B { buf: string, other: string }
 function main(): i32 {
-    var b: B = B { buf: "", other: "xy" };
+    let b: B = B { buf: "", other: "xy" };
     b = B { ...b, buf: b.other + "z" };
     return b.buf.len() - 3;
 }`), "main")
@@ -160,8 +160,8 @@ function main(): i32 {
 func TestStrFieldAppendRefusesForeignBase(t *testing.T) {
 	fn := funcByName(lowerForTest(t, `struct B { buf: string, n: i32 }
 function main(): i32 {
-    var p: B = B { buf: "a", n: 0 };
-    var q: B = B { buf: "b", n: 1 };
+    let p: B = B { buf: "a", n: 0 };
+    let q: B = B { buf: "b", n: 1 };
     p = B { ...q, buf: q.buf + "c" };
     return p.buf.len() - 2;
 }`), "main")
@@ -172,8 +172,8 @@ function main(): i32 {
 
 const strFieldAppendChainSrc = `struct B { buf: string, n: i32 }
 function main(): i32 {
-    var b: B = B { buf: "", n: 0 };
-    var i: i32 = 0;
+    let b: B = B { buf: "", n: 0 };
+    let i: i32 = 0;
     while (i < 4) { b = B { ...b, buf: b.buf + "a" + "bb", n: b.n + 1 }; i = i + 1; }
     return b.buf.len() - 12;
 }`
@@ -234,8 +234,8 @@ func TestStrFieldAppendChainGrowsOneBufferArm64(t *testing.T) {
 func TestStrFieldAppendChainStopsAtAReadOfTheBase(t *testing.T) {
 	fn := funcByName(lowerForTest(t, `struct B { buf: string, n: i32 }
 function main(): i32 {
-    var b: B = B { buf: "ab", n: 0 };
-    var i: i32 = 0;
+    let b: B = B { buf: "ab", n: 0 };
+    let i: i32 = 0;
     while (i < 3) { b = B { ...b, buf: b.buf + "-" + b.buf, n: b.n + 1 }; i = i + 1; }
     return b.buf.len() - 23;
 }`), "main")

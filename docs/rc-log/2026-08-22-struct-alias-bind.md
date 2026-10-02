@@ -91,7 +91,7 @@ exit 99, with `allocs == frees` at `live_bytes 0`, the census silent as always.
 | internal/stdlib | 12 | 11 | 0 | 0 | 0 |
 
 Against string's 53%, so on this class the refusal is nearly the whole change.
-The 12 non-parameter self-host sites are `var st: LowerState = s;` shapes whose
+The 12 non-parameter self-host sites are `let st: LowerState = s;` shapes whose
 sources are receivers or reassigned loop locals, which earn no credit either — so
 the creditable population in the compiler's own sources is close to zero, and
 `internal/e2eselfhost` is the only coverage that reaches the credited case.
@@ -133,7 +133,7 @@ it fit. Bisecting the fixture line by line says otherwise:
 | `if let P3 { x, .. } = q` | `100/0` | **`100/100`** |
 
 The alias site is the **scrutinee of a struct-pattern `if let`**, which desugars
-to a bare-ident `var` bind of the local. The `@` binder is not an alias site at
+to a bare-ident `let` bind of the local. The `@` binder is not an alias site at
 all, and combining it with the plain destructure *suppresses* that one's fix,
 because `w` is a second binding of the whole value whose own use fails the gate.
 
@@ -141,7 +141,7 @@ So the fixture's 100 frees come from `q`, not from `p`.
 
 ## What the counting method could and could not see
 
-The origin count was a regex over `var x: T = y;`. It cannot see any alias site
+The origin count was a regex over `let x: T = y;`. It cannot see any alias site
 that is **produced by desugaring**, and that is a property of the method, not a
 slip — nothing in `if let P { x, y } = p` looks like a binding of `p` at all.
 
@@ -176,8 +176,8 @@ already on the books rather than a new one. `build_struct_match` caches the
 scrutinee before binding:
 
 ```
-var __sm.._v = p;     // alias level 1
-var w = __sm.._v;     // alias level 2   (s_var_at, at_binding branch)
+let __sm.._v = p;     // alias level 1
+let w = __sm.._v;     // alias level 2   (s_var_at, at_binding branch)
 ```
 
 So `@` is the second link of an **alias chain**, and chains are conservatively
@@ -190,9 +190,9 @@ Measured against hand-written analogues, which match exactly:
 
 | shape | main | change |
 | --- | --- | --- |
-| one level — `var t = p;` | `100/0` | **`100/100`** |
+| one level — `let t = p;` | `100/0` | **`100/100`** |
 | plain `if let P { x, y } = p` | `100/0` | **`100/100`** |
-| two levels — `var t = p; var w = t;` | `100/0` | `100/0` |
+| two levels — `let t = p; let w = t;` | `100/0` | `100/0` |
 | `if let w @ P { .. } = p` | `100/0` | `100/0` |
 | `@` with `w` NEVER USED | `100/0` | `100/0` |
 

@@ -59,7 +59,7 @@ Every measurement agreed:
 | `return src[0]` | 1200 / 800, live 16000 | 1200 / 1200, live 0 |
 | `return src[0].xs` | 1200 / 800, live 16000 | 1200 / 1200, live 0 |
 | `o.append(src[0]); return o` | 1600 / 1200, live 16000 | 1600 / 1600, live 0 |
-| `var e = src[0]` inside the callee | 4 / 2 | 4 / 4 |
+| `let e = src[0]` inside the callee | 4 / 2 | 4 / 4 |
 
 Every one reads its payload back correctly under both, with churn in between so a
 freed box is reused, and matches native and interp exit-for-exit under both. Eleven

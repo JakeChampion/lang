@@ -14,13 +14,13 @@ package e2eharness
 // check holds, else the number of the first failing check.
 func ReactorSignalProbe(mode string) string {
 	deliver := `function deliver(): i32 {
-    var p = subprocess("/bin/sh", ["-c", "kill -USR1 $PPID"], "");
+    let p = subprocess("/bin/sh", ["-c", "kill -USR1 $PPID"], "");
     return p.exit_code;
 }
 `
 	if mode == "native" {
 		deliver = `function deliver(): i32 {
-    var child: i32 = proc_fork();
+    let child: i32 = proc_fork();
     if (child == 0) {
         proc_exec("/bin/sh", ["-c", "kill -USR1 $PPID"]);
         exit(1);
@@ -30,19 +30,19 @@ func ReactorSignalProbe(mode string) string {
 }
 
 function watcher(port: i32): i32 {
-    var d: async.RealDriver = async.real_driver();
+    let d: async.RealDriver = async.real_driver();
     if (d.watch_parent() != 0) { return 1; }
-    var got: i32[] = d.wait(2, 10000);
+    let got: i32[] = d.wait(2, 10000);
     if (got.len() < 2 || got[0] != 0 - 15 || got[1] != 1) { return 2; }
     match (net.connect(net.socket_addr(net.ipv4_loopback(), port))) { Ok(fd) => { tcp_close(fd); return 0; }, Err(e) => { return 3; } }
     return 3;
 }
 
 function parent_exit(drv: async.RealDriver): i32 {
-    var ln: i32 = 0;
+    let ln: i32 = 0;
     match (net.listen_with(0, net.listen_options())) { Ok(fd) => { ln = fd; }, Err(e) => { return 1; } }
-    var port: i32 = tcp_local_port(ln);
-    var child: i32 = proc_fork();
+    let port: i32 = tcp_local_port(ln);
+    let child: i32 = proc_fork();
     if (child == 0) {
         if (proc_fork() == 0) { exit(watcher(port)); }
         sleep_ms(1000 as i64);
@@ -50,7 +50,7 @@ function parent_exit(drv: async.RealDriver): i32 {
     }
     if (child < 0 || proc_waitpid(child) != 0) { return 2; }
     if (drv.watch(ln, 1) != 0) { return 3; }
-    var got: i32[] = drv.wait(2, 15000);
+    let got: i32[] = drv.wait(2, 15000);
     if (got.len() < 2 || got[0] != ln) { return 4; }
     match (net.accept(ln)) { Ok(fd) => { tcp_close(fd); }, Err(e) => { return 5; } }
     drv.unwatch(ln);
@@ -65,7 +65,7 @@ function parent_exit(drv: async.RealDriver): i32 {
 	body := `    if (drv.watch_signal(sigusr1()) != 0) { return fail(2); }
     if (drv.wait(2, 20).len() != 0) { return fail(3); }
     if (deliver() != 0) { return fail(4); }
-    var got: i32[] = drv.wait(2, 2000);
+    let got: i32[] = drv.wait(2, 2000);
     if (got.len() < 2 || got[0] != 0 - sigusr1() || got[1] != 1) { return fail(5); }
     if (drv.wait(2, 20).len() != 0) { return fail(6); }
     if (deliver() != 0) { return fail(4); }
@@ -105,7 +105,7 @@ function sigusr1(): i32 {
 }
 
 function main(): i32 {
-    var drv: async.RealDriver = async.real_driver();
+    let drv: async.RealDriver = async.real_driver();
 ` + body + `    if (drv.close() != 0) { return fail(11); }
     print("ok");
     return 42;

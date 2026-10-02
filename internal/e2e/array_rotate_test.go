@@ -21,16 +21,16 @@ var rotateCases = []struct {
 	want int
 }{
 	// [1..5] rotate_left 2 -> [3,4,5,1,2]; sum of first two (3+4) tag = 7.
-	{"left-basic", `function rotate_left[T](xs: T[], n: i32): T[] { var len: i32 = xs.len(); var out: T[] = []; if (len == 0) { return out; } var sh: i32 = ((n % len) + len) % len; var i: i32 = 0; while (i < len) { out = out.append(xs[(i + sh) % len]); i = i + 1; } return out; }
-function main(): i32 { var xs: i32[] = [1, 2, 3, 4, 5]; var r = rotate_left(xs, 2); return r[0] * 10 + r[1]; }`, 34},
+	{"left-basic", `function rotate_left[T](xs: T[], n: i32): T[] { let len: i32 = xs.len(); let out: T[] = []; if (len == 0) { return out; } let sh: i32 = ((n % len) + len) % len; let i: i32 = 0; while (i < len) { out = out.append(xs[(i + sh) % len]); i = i + 1; } return out; }
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; let r = rotate_left(xs, 2); return r[0] * 10 + r[1]; }`, 34},
 	// rotate_right 2 -> [4,5,1,2,3]; r[0]*10+r[1] = 45.
-	{"right-basic", `function rotate_left[T](xs: T[], n: i32): T[] { var len: i32 = xs.len(); var out: T[] = []; if (len == 0) { return out; } var sh: i32 = ((n % len) + len) % len; var i: i32 = 0; while (i < len) { out = out.append(xs[(i + sh) % len]); i = i + 1; } return out; }
+	{"right-basic", `function rotate_left[T](xs: T[], n: i32): T[] { let len: i32 = xs.len(); let out: T[] = []; if (len == 0) { return out; } let sh: i32 = ((n % len) + len) % len; let i: i32 = 0; while (i < len) { out = out.append(xs[(i + sh) % len]); i = i + 1; } return out; }
 function rotate_right[T](xs: T[], n: i32): T[] { return rotate_left(xs, 0 - n); }
-function main(): i32 { var xs: i32[] = [1, 2, 3, 4, 5]; var r = rotate_right(xs, 2); return r[0] * 10 + r[1]; }`, 45},
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; let r = rotate_right(xs, 2); return r[0] * 10 + r[1]; }`, 45},
 	// n > len wraps (7 % 5 == 2 -> same as left-basic): r[0]*10+r[1] = 34.
-	{"wrap-and-negative", `function rotate_left[T](xs: T[], n: i32): T[] { var len: i32 = xs.len(); var out: T[] = []; if (len == 0) { return out; } var sh: i32 = ((n % len) + len) % len; var i: i32 = 0; while (i < len) { out = out.append(xs[(i + sh) % len]); i = i + 1; } return out; }
-function same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } var i = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }
-function main(): i32 { var xs: i32[] = [1, 2, 3, 4, 5]; if (!same(rotate_left(xs, 7), rotate_left(xs, 2))) { return 0; } if (!same(rotate_left(xs, 0 - 1), rotate_left(xs, 4))) { return 0; } var r = rotate_left(xs, 7); return r[0] * 10 + r[1]; }`, 34},
+	{"wrap-and-negative", `function rotate_left[T](xs: T[], n: i32): T[] { let len: i32 = xs.len(); let out: T[] = []; if (len == 0) { return out; } let sh: i32 = ((n % len) + len) % len; let i: i32 = 0; while (i < len) { out = out.append(xs[(i + sh) % len]); i = i + 1; } return out; }
+function same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } let i = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; if (!same(rotate_left(xs, 7), rotate_left(xs, 2))) { return 0; } if (!same(rotate_left(xs, 0 - 1), rotate_left(xs, 4))) { return 0; } let r = rotate_left(xs, 7); return r[0] * 10 + r[1]; }`, 34},
 }
 
 // TestNativeArrayRotate runs the inline programs on interp / x86-64 / wasm /
@@ -64,18 +64,18 @@ func TestNativeArrayRotate(t *testing.T) {
 // negative, and empty cases.
 func TestNativeArrayRotateModule(t *testing.T) {
 	src := `import "std/array" as arr;
-function same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } var i = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }
+function same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } let i = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }
 function main(): i32 {
-    var r = 0;
-    var xs: i32[] = [1, 2, 3, 4, 5];
+    let r = 0;
+    let xs: i32[] = [1, 2, 3, 4, 5];
     if (same(arr.rotate_left(xs, 2), [3, 4, 5, 1, 2])) { r = r + 1; }
     if (same(xs.rotate_right(2), [4, 5, 1, 2, 3])) { r = r + 2; }
     if (same(xs.rotate_left(7), xs.rotate_left(2))) { r = r + 4; }       // wrap
     if (same(xs.rotate_left(0), xs)) { r = r + 8; }                       // zero shift
-    var e: i32[] = [];
+    let e: i32[] = [];
     if (arr.rotate_left(e, 3).len() == 0) { r = r + 16; }               // empty
-    var ss: string[] = ["a", "b", "c"];
-    var sr = ss.rotate_left(1);
+    let ss: string[] = ["a", "b", "c"];
+    let sr = ss.rotate_left(1);
     if (sr[0] == "b" && sr[1] == "c" && sr[2] == "a") { r = r + 32; }   // strings
     return r;
 }

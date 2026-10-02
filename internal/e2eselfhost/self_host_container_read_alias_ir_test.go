@@ -8,21 +8,21 @@ import (
 )
 
 // containerReadAliasCases pin the #3457 container-read alias-inc: an
-// array-typed `var` binding whose init READS the buffer out of a container it
-// does not own — a struct field (`var vn: string[] = h.names;`), a tuple
-// element (`var xs: i32[] = t.0;`), or an array-of-array element
-// (`var row: i32[] = g[i];`) — is a second reference to a buffer the container
+// array-typed `let` binding whose init READS the buffer out of a container it
+// does not own — a struct field (`let vn: string[] = h.names;`), a tuple
+// element (`let xs: i32[] = t.0;`), or an array-of-array element
+// (`let row: i32[] = g[i];`) — is a second reference to a buffer the container
 // still points at. The self-host IR exit sweep decs every is_arr slot, so
 // without a retain at the binding that dec frees the field out from under its
 // owner: the buffer is released while the container still reads it, and the
 // next allocation recycles it.
 //
 // Found by routing the self-host CHECKER through the IR path (the #3457
-// AST-emitter retirement): `var vn: string[] = mod.enums[en].variant_names;`
+// AST-emitter retirement): `let vn: string[] = mod.enums[en].variant_names;`
 // freed the enum table's variant-name buffer, after which unit-variant lookups
 // read recycled memory — a bogus E001 on `return (A, 1)` and a missing E030 on
 // a guarded-only match. The binding now takes the same Perceus dup the
-// bare-ident alias (`var b = a;`) has always taken, so the sweep dec is
+// bare-ident alias (`let b = a;`) has always taken, so the sweep dec is
 // balanced; a borrowed source leaks one count (sound), never over-frees.
 var containerReadAliasCases = []struct {
 	name string
@@ -35,19 +35,19 @@ var containerReadAliasCases = []struct {
 	// allocations recycled it and later reads returned garbage.
 	{"container-read-struct-field", `struct Holder { names: string[] }
 function total(h: Holder): i32 {
-    var vn: string[] = h.names;
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let vn: string[] = h.names;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < vn.len()) { n = n + vn[i].len(); i = i + 1; }
     return n;
 }
 function main(): i32 {
-    var h: Holder = Holder { names: ["ab", "cde"] };
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let h: Holder = Holder { names: ["ab", "cde"] };
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) {
         acc = (acc + total(h)) % 251;
-        var junk: i32[] = [k, k + 1, k + 2];
+        let junk: i32[] = [k, k + 1, k + 2];
         acc = (acc + junk[0]) % 251;
         k = k + 1;
     }
@@ -59,22 +59,22 @@ function main(): i32 {
 	// Array-of-array element read and tuple-element read — the same alias, via
 	// ExprIndex and a numeric ExprFieldAccess respectively.
 	{"container-read-index-and-tuple", `function pick(g: i32[][], i: i32): i32 {
-    var row: i32[] = g[i];
+    let row: i32[] = g[i];
     return row[0] + row[1];
 }
 function firstof(t: (i32[], i32)): i32 {
-    var xs: i32[] = t.0;
+    let xs: i32[] = t.0;
     return xs[0] + xs[1];
 }
 function main(): i32 {
-    var g: i32[][] = [[1, 2], [3, 4]];
-    var t: (i32[], i32) = ([5, 6], 7);
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let g: i32[][] = [[1, 2], [3, 4]];
+    let t: (i32[], i32) = ([5, 6], 7);
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) {
         acc = (acc + pick(g, k % 2)) % 251;
         acc = (acc + firstof(t)) % 251;
-        var junk: i32[] = [k, k + 1, k + 2];
+        let junk: i32[] = [k, k + 1, k + 2];
         acc = (acc + junk[0]) % 251;
         k = k + 1;
     }
@@ -90,20 +90,20 @@ function main(): i32 {
 	// fields, not string[], tuple elements, or array-of-array elements).
 	{"container-read-reassign", `struct Holder { names: string[] }
 function total(h: Holder, seed: string[]): i32 {
-    var vn: string[] = seed;
+    let vn: string[] = seed;
     vn = h.names;
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < vn.len()) { n = n + vn[i].len(); i = i + 1; }
     return n;
 }
 function main(): i32 {
-    var h: Holder = Holder { names: ["ab", "cde"] };
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let h: Holder = Holder { names: ["ab", "cde"] };
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 200) {
         acc = (acc + total(h, ["z"])) % 251;
-        var junk: i32[] = [k, k + 1, k + 2];
+        let junk: i32[] = [k, k + 1, k + 2];
         acc = (acc + junk[0]) % 251;
         k = k + 1;
     }

@@ -47,21 +47,21 @@ type Tok = TId | TPunct | TEof;
 struct Res { lex: Lx, tok: Tok }
 
 function scan(l: Lx, start_line: i32): Res {
-  var t: Tok = TId { text: slice_unchecked(l.src, l.i, l.i + 1) + "", line: start_line };
+  let t: Tok = TId { text: slice_unchecked(l.src, l.i, l.i + 1) + "", line: start_line };
   return Res { lex: Lx { src: l.src, i: l.i + 1, line: l.line + 1 }, tok: t };
 }
 
 function run(src: string): i32 {
-  var l: Lx = Lx { src: src, i: 0, line: 1 };
-  var out: Tok[] = [];
+  let l: Lx = Lx { src: src, i: 0, line: 1 };
+  let out: Tok[] = [];
   while (l.i < 8) {
-    var start_line: i32 = l.line;
+    let start_line: i32 = l.line;
     if (l.src[l.i] == 46) {  // '.' — a punct token built INLINE here, tainting start_line
       out = out.append(TPunct { text: ".", line: start_line });
       l = Lx { src: l.src, i: l.i + 1, line: l.line };
       continue;
     }
-    var r = scan(l, start_line);
+    let r = scan(l, start_line);
     l = r.lex;
     out = out.append(r.tok);
   }
@@ -69,8 +69,8 @@ function run(src: string): i32 {
 }
 
 function main(): i32 {
-  var acc: i32 = 0;
-  var n: i32 = 0;
+  let acc: i32 = 0;
+  let n: i32 = 0;
   while (n < 100) {
     acc = acc + run("abc.def.g");
     n = n + 1;

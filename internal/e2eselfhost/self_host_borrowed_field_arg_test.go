@@ -32,8 +32,8 @@ function tagof(v: V): i32 {
 }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], v: V.A([9, 8, 7]), n: 0 };
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], v: V.A([9, 8, 7]), n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         o = S { xs: o.xs.append(i), v: o.v, n: i };
         i = i + 1;
@@ -42,8 +42,8 @@ function work(k: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(%d); r = r + 1; }
     return t & 63;
 }`, k)
@@ -70,9 +70,9 @@ function tagof(v: V): i32 {
 function keep(v: V): V { return v; }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], v: V.A([9, 8, 7]), n: 0 };
-    var kept: V = keep(o.v);
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], v: V.A([9, 8, 7]), n: 0 };
+    let kept: V = keep(o.v);
+    let i: i32 = 0;
     while (i < k) {
         o = S { xs: o.xs.append(i), v: o.v, n: i };
         i = i + 1;
@@ -81,8 +81,8 @@ function work(k: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(8); r = r + 1; }
     return t & 63;
 }`
@@ -106,8 +106,8 @@ struct S { xs: i32[], inner: I, n: i32 }
 function itag(v: I): i32 { return v.tag; }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9] }, n: 0 };
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9] }, n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         o = S { xs: o.xs.append(i), inner: o.inner, n: i };
         i = i + 1;
@@ -116,8 +116,8 @@ function work(k: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(%d); r = r + 1; }
     return t & 63;
 }`, read, k)
@@ -133,9 +133,9 @@ struct S { xs: i32[], inner: I, n: i32 }
 function keepi(v: I): I { return v; }
 
 function work(k: i32): i32 {
-    var o: S = S { xs: [1, 2], inner: I { tag: 3, data: [9] }, n: 0 };
-    var p: I = keepi(o.inner);
-    var i: i32 = 0;
+    let o: S = S { xs: [1, 2], inner: I { tag: 3, data: [9] }, n: 0 };
+    let p: I = keepi(o.inner);
+    let i: i32 = 0;
     while (i < k) {
         o = S { xs: o.xs.append(i), inner: o.inner, n: i };
         i = i + 1;
@@ -144,8 +144,8 @@ function work(k: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(8); r = r + 1; }
     return t & 63;
 }`
@@ -170,8 +170,8 @@ func borrowedStringFieldArgSrc(k int, viaCall bool) string {
 function slen(v: string): i32 { return v.len(); }
 
 function work(k: i32): i32 {
-    var o: S = S { name: "seed", xs: [1, 2], n: 0 };
-    var i: i32 = 0;
+    let o: S = S { name: "seed", xs: [1, 2], n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         o = S { name: "ab" + "cd", xs: o.xs.append(i), n: i };
         i = i + 1;
@@ -180,8 +180,8 @@ function work(k: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(%d); r = r + 1; }
     return t & 63;
 }`, read, k)
@@ -198,9 +198,9 @@ const borrowedStringFieldArgRetainedSrc = `struct S { name: string, xs: i32[], n
 function keeps(v: string): string { return v; }
 
 function work(k: i32): i32 {
-    var o: S = S { name: "seed", xs: [1, 2], n: 0 };
-    var kept: string = keeps(o.name);
-    var i: i32 = 0;
+    let o: S = S { name: "seed", xs: [1, 2], n: 0 };
+    let kept: string = keeps(o.name);
+    let i: i32 = 0;
     while (i < k) {
         o = S { name: "ab" + "cd", xs: o.xs.append(i), n: i };
         i = i + 1;
@@ -209,8 +209,8 @@ function work(k: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 10) { t = t + work(8); r = r + 1; }
     return t & 63;
 }`

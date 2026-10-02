@@ -20,17 +20,17 @@ var auditStdArrayCases = []struct {
 	exit int
 }{
 	{"sum", `import "std/array";
-function main(): i32 { var xs: i32[] = [3, 1, 2]; return xs.sum(); }`, 6},
+function main(): i32 { let xs: i32[] = [3, 1, 2]; return xs.sum(); }`, 6},
 	{"product", `import "std/array";
-function main(): i32 { var xs: i32[] = [3, 1, 2]; return xs.product(); }`, 6},
+function main(): i32 { let xs: i32[] = [3, 1, 2]; return xs.product(); }`, 6},
 	{"sorted_asc", `import "std/array";
-function main(): i32 { var xs: i32[] = [3, 1, 2]; var s: i32[] = xs.sorted_asc(); return s[0] * 100 + s[1] * 10 + s[2]; }`, 123},
+function main(): i32 { let xs: i32[] = [3, 1, 2]; let s: i32[] = xs.sorted_asc(); return s[0] * 100 + s[1] * 10 + s[2]; }`, 123},
 	// base-5 positional encode of the descending result [3,2,1] (values < 5),
 	// kept < 256 so it round-trips through the 8-bit exit code: 3*25+2*5+1 = 86.
 	{"sorted_desc", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 3, 2]; var s: i32[] = xs.sorted_desc(); return s[0] * 25 + s[1] * 5 + s[2]; }`, 86},
+function main(): i32 { let xs: i32[] = [1, 3, 2]; let s: i32[] = xs.sorted_desc(); return s[0] * 25 + s[1] * 5 + s[2]; }`, 86},
 	{"max-some", `import "std/array";
-function main(): i32 { var xs: i32[] = [3, 1, 2]; match (xs.max()) { Some(m) => { return m; }, None => { return 0; } } }`, 3},
+function main(): i32 { let xs: i32[] = [3, 1, 2]; match (xs.max()) { Some(m) => { return m; }, None => { return 0; } } }`, 3},
 }
 
 // TestSelfHostAuditStdArrayX86_64 compiles each std/array reduction bundle

@@ -19,8 +19,8 @@ import (
 func TestAllocU8ReadsItsSizeAt32Bits(t *testing.T) {
 	asm := compile(t, `
 function main(): i32 {
-    var n: i32 = 3;
-    var b: u8[] = __alloc_u8(n);
+    let n: i32 = 3;
+    let b: u8[] = __alloc_u8(n);
     return b.len();
 }`, Options{})
 	body, ok := runtimeHelperBody(asm, "__alloc_u8")

@@ -8,7 +8,7 @@ import "std/array" as array;
 // nested-array shape through the self-host IR path on real stdlib bodies.
 
 function test_slice_basic(): test.TestOutcome {
-  var s: i32[] = array.slice([10, 20, 30, 40, 50], 1, 4);
+  let s: i32[] = array.slice([10, 20, 30, 40, 50], 1, 4);
   if (s.len() != 3) {
     return test.fail("slice length");
   }
@@ -17,7 +17,7 @@ function test_slice_basic(): test.TestOutcome {
 
 function test_slice_clamped(): test.TestOutcome {
   // Out-of-range bounds clamp to [0, len] instead of faulting.
-  var s: i32[] = array.slice([1, 2, 3], 0 - 3, 100);
+  let s: i32[] = array.slice([1, 2, 3], 0 - 3, 100);
   return test.assert_true(s.len() == 3 && s[0] == 1 && s[2] == 3);
 }
 
@@ -27,7 +27,7 @@ function test_slice_empty(): test.TestOutcome {
 }
 
 function test_chunks_even(): test.TestOutcome {
-  var c: i32[][] = array.chunks([1, 2, 3, 4], 2);
+  let c: i32[][] = array.chunks([1, 2, 3, 4], 2);
   if (c.len() != 2) {
     return test.fail("chunk count");
   }
@@ -36,7 +36,7 @@ function test_chunks_even(): test.TestOutcome {
 
 function test_chunks_uneven(): test.TestOutcome {
   // A short final chunk when len isn't a multiple of size.
-  var c: i32[][] = array.chunks([1, 2, 3, 4, 5], 2);
+  let c: i32[][] = array.chunks([1, 2, 3, 4, 5], 2);
   if (c.len() != 3) {
     return test.fail("chunk count");
   }
@@ -49,12 +49,12 @@ function test_chunks_nonpositive_size(): test.TestOutcome {
 }
 
 function test_chunks_empty_input(): test.TestOutcome {
-  var e: i32[] = [];
+  let e: i32[] = [];
   return test.assert_eq(array.chunks(e, 3).len(), 0);
 }
 
 function test_windows_basic(): test.TestOutcome {
-  var w: i32[][] = array.windows([1, 2, 3, 4], 2);
+  let w: i32[][] = array.windows([1, 2, 3, 4], 2);
   if (w.len() != 3) {
     return test.fail("window count");
   }
@@ -72,7 +72,7 @@ function test_windows_too_wide(): test.TestOutcome {
 
 function test_windows_full_width(): test.TestOutcome {
   // size == len yields exactly one window (the whole array).
-  var w: i32[][] = array.windows([1, 2, 3], 3);
+  let w: i32[][] = array.windows([1, 2, 3], 3);
   if (w.len() != 1) {
     return test.fail("window count");
   }
@@ -80,7 +80,7 @@ function test_windows_full_width(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/array batch");
+  let r: test.TestRunner = test.test_new("std/array batch");
   r = r.it("slice basic", test_slice_basic);
   r = r.it("slice clamped", test_slice_clamped);
   r = r.it("slice empty", test_slice_empty);

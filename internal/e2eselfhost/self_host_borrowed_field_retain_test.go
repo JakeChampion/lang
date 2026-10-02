@@ -62,11 +62,11 @@ func TestSelfHostBorrowedFieldRetainIRX86_64(t *testing.T) {
 	// all — not a shallower one, none.
 	run(t, `struct H { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
-function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function mk(deps: string[]): H { return H { deps: deps }; }
-function build(pre: string): i32 { var live: string[] = deps_of(pre); var h: H = mk(live); return h.deps.len() + live.len(); }
-function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 6) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function build(pre: string): i32 { let live: string[] = deps_of(pre); let h: H = mk(live); return h.deps.len() + live.len(); }
+function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (build(pre) != 6) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"borrowed-field-caller-drops", 0)
 
 	// SOUNDNESS, the sharpest shape: the struct is built from a LIVE local and
@@ -77,38 +77,38 @@ function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0
 	// memory rather than their own bytes.
 	run(t, `struct H { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
-function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
-function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
+function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function fill(n: i32): string { let s: string = ""; let i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
 function mk(deps: string[]): H { return H { deps: deps }; }
 function build(pre: string): i32 {
-    var live: string[] = deps_of(pre);
-    var seen: i32 = 0;
-    if (live.len() > 0) { var h: H = mk(live); seen = h.deps.len(); }
-    var junk1: string = fill(40);
-    var junk2: string[] = deps_of(pre);
+    let live: string[] = deps_of(pre);
+    let seen: i32 = 0;
+    if (live.len() > 0) { let h: H = mk(live); seen = h.deps.len(); }
+    let junk1: string = fill(40);
+    let junk2: string[] = deps_of(pre);
     if (junk1.len() < 0 || junk2.len() < 0) { return 0; }
     return seen + live.len() + live[0].len() + live[2].len();
 }
-function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 92) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (build(pre) != 92) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"borrowed-field-local-outlives-struct", 0)
 
 	// TWO structs over ONE array: each drop decs, and the array survives both.
 	// A retain taken once but dec'd twice would tick the underflow detector.
 	run(t, `struct H { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
-function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
-function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
+function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function fill(n: i32): string { let s: string = ""; let i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
 function mk(deps: string[]): H { return H { deps: deps }; }
 function build(pre: string): i32 {
-    var live: string[] = deps_of(pre);
-    var a: H = mk(live);
-    var b: H = mk(live);
-    var junk: string = fill(40);
+    let live: string[] = deps_of(pre);
+    let a: H = mk(live);
+    let b: H = mk(live);
+    let junk: string = fill(40);
     if (junk.len() < 0) { return 0; }
     return a.deps.len() + b.deps.len() + live[1].len();
 }
-function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 49) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (build(pre) != 49) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"borrowed-field-two-structs-one-array", 0)
 }

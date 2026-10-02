@@ -42,7 +42,7 @@ function lsink(l: Lst): i32 { return 0; }
 func TestOwnedUseAfterCallConsume(t *testing.T) {
 	wantE050(t, "call-then-use", ownPrelude+`
 function f(own xs: i32[]): i32 {
-    var a: i32 = sink(xs);   // consume xs (whole-value arg)
+    let a: i32 = sink(xs);   // consume xs (whole-value arg)
     return sink(xs);         // E050: xs already moved
 }`)
 }
@@ -63,7 +63,7 @@ function bsink(b: Box): i32 { return 0; }
 func TestOwnedUseAfterMatchConsume(t *testing.T) {
 	wantE050(t, "match-then-use", ownBoxPrelude+`
 function f(own b: Box): i32 {
-    var r: i32 = match (b) { Str(s) => s.len(), Arr(a) => a.len(), Nil => 0 };   // takes s / a
+    let r: i32 = match (b) { Str(s) => s.len(), Arr(a) => a.len(), Nil => 0 };   // takes s / a
     return r + bsink(b);                                                       // E050
 }`)
 	wantE050(t, "match-stmt-then-use", ownBoxPrelude+`
@@ -76,12 +76,12 @@ function f(own b: Box): i32 {
 func TestOwnedUseAfterTagOnlyMatchOK(t *testing.T) {
 	wantOK(t, "scalar-payload-match-then-use", ownPrelude+`
 function f(own l: Lst): i32 {
-    var r: i32 = match (l) { Cons(h) => h, Nil => 0 };
+    let r: i32 = match (l) { Cons(h) => h, Nil => 0 };
     return r + lsink(l);
 }`)
 	wantOK(t, "tag-only-match-then-match", ownBoxPrelude+`
 function f(own b: Box): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (b) { Str(_) => { t = 1; }, Arr(_) => { t = 2; }, Nil => { t = 3; } }
     match (b) { Str(s) => { return t + s.len(); }, Arr(a) => { return t + a.len(); }, Nil => { return t; } }
 }`)
@@ -90,9 +90,9 @@ function f(own b: Box): i32 {
 func TestOwnedConsumeInLoop(t *testing.T) {
 	wantE050(t, "consume-in-loop", ownPrelude+`
 function f(own xs: i32[]): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var a: i32 = sink(xs);   // a later iteration would use xs after move
+        let a: i32 = sink(xs);   // a later iteration would use xs after move
         i = i + 1;
     }
     return 0;
@@ -104,7 +104,7 @@ func TestOwnedConsumeInThenUsedAfterMerge(t *testing.T) {
 	// moved, so the later use is rejected.
 	wantE050(t, "consume-in-nondiverging-then", ownPrelude+`
 function f(own xs: i32[], c: boolean): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     if (c) {
         acc = sink(xs);   // consume on the then-path, falls through
     }
@@ -117,8 +117,8 @@ function f(own xs: i32[], c: boolean): i32 {
 func TestOwnedBorrowThenConsumeOK(t *testing.T) {
 	wantOK(t, "borrow*-then-consume", ownPrelude+`
 function f(own xs: i32[]): i32 {
-    var a: i32 = xs[0];      // borrow (projection)
-    var b: i32 = xs[1];      // borrow
+    let a: i32 = xs[0];      // borrow (projection)
+    let b: i32 = xs[1];      // borrow
     return a + b + sink(xs); // consume (last use)
 }`)
 }
@@ -146,7 +146,7 @@ function f(own xs: i32[]): i32 {
 func TestOwnedMethodReceiverIsBorrowOK(t *testing.T) {
 	wantOK(t, "method-receiver-borrow", ownPrelude+`
 function f(own xs: i32[]): i32 {
-    var n: i32 = xs.len();   // receiver borrow
+    let n: i32 = xs.len();   // receiver borrow
     return n + sink(xs);     // consume after borrow — fine
 }`)
 }
@@ -160,8 +160,8 @@ function f(own xs: i32[]): i32 {
 func TestOwnedBorrowArgIsNotConsumeOK(t *testing.T) {
 	wantOK(t, "borrow-arg-not-consume", ownPrelude+`
 function f(own xs: i32[]): i32 {
-    var a: i32 = peek(xs);   // borrow (arg to a borrowed param)
-    var b: i32 = peek(xs);   // still a borrow — not use-after-move
+    let a: i32 = peek(xs);   // borrow (arg to a borrowed param)
+    let b: i32 = peek(xs);   // still a borrow — not use-after-move
     return a + b + sink(xs); // consume at the end
 }`)
 }
@@ -175,16 +175,16 @@ func TestOwnedReadFormsAreBorrows(t *testing.T) {
 	wantOK(t, "slice-and-compare-reads", ownPrelude+`
 function takesl(s: [i32]): i32 { return s.len(); }
 function f(own xs: i32[]): i32 {
-    var n: i32 = takesl(xs[0:1]);     // slice read (borrow)
-    var c: boolean = xs.len() == 3;   // method-then-compare (reads)
+    let n: i32 = takesl(xs[0:1]);     // slice read (borrow)
+    let c: boolean = xs.len() == 3;   // method-then-compare (reads)
     if (c) { return n; }
     return n + sink(xs);              // consume at the end
 }`)
 	wantOK(t, "string-concat-read", ownPrelude+`
 function slen(s: string): i32 { return 0; }
 function f(own s: string): i32 {
-    var t: i32 = slen(s + "!");       // string-concat operand read (borrow)
-    var u: boolean = s == "x";        // comparison read (borrow)
+    let t: i32 = slen(s + "!");       // string-concat operand read (borrow)
+    let u: boolean = s == "x";        // comparison read (borrow)
     if (u) { return t; }
     return t + slen(s);
 }`)
@@ -229,22 +229,22 @@ func TestOwnGuardAllowsLocalAtLastUse(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		{"returned-call", `
 function f(): i32 {
-    var xs: i32[] = [1, 2];
+    let xs: i32[] = [1, 2];
     return consume(xs);
 }`},
 		{"call-initialised-last-read", `
 function mk(): i32[] { return [1, 2]; }
 function f(): i32 {
-    var xs: i32[] = mk();
-    var n: i32 = consume(xs);
+    let xs: i32[] = mk();
+    let n: i32 = consume(xs);
     return n;
 }`},
 		{"last-read-on-the-returning-path", `
 function mk(): Box { return Wrap([1]); }
 function f(c: boolean): i32 {
-    var b: Box = mk();
+    let b: Box = mk();
     if (c) {
-        var n: i32 = consumeBox(b);
+        let n: i32 = consumeBox(b);
         return n;
     }
     match (b) { Wrap(xs) => { return xs.len(); } }
@@ -252,8 +252,8 @@ function f(c: boolean): i32 {
 		{"two-statement-rebind", `
 function grow(own xs: i32[], v: i32): i32[] { return xs.append(v); }
 function f(): i32 {
-    var xs: i32[] = [1];
-    var ys: i32[] = grow(xs, 2);
+    let xs: i32[] = [1];
+    let ys: i32[] = grow(xs, 2);
     xs = ys;
     return xs.len();
 }`},
@@ -268,30 +268,30 @@ func TestOwnGuardRejectsLocalStillLive(t *testing.T) {
 		{"read-again", `
 function mk(): i32[] { return [1, 2]; }
 function f(): i32 {
-    var xs: i32[] = mk();
-    var n: i32 = consume(xs);
+    let xs: i32[] = mk();
+    let n: i32 = consume(xs);
     return n + xs.len();
 }`},
 		{"inside-a-loop", `
 function mk(): i32[] { return [1, 2]; }
 function f(): i32 {
-    var xs: i32[] = mk();
-    var n: i32 = 0;
+    let xs: i32[] = mk();
+    let n: i32 = 0;
     while (n < 3) { n = n + consume(xs); }
     return n;
 }`},
 		{"read-by-a-defer", `
 function mk(): i32[] { return [1, 2]; }
 function f(): i32 {
-    var xs: i32[] = mk();
-    defer { var k: i32 = xs.len(); }
+    let xs: i32[] = mk();
+    defer { let k: i32 = xs.len(); }
     return consume(xs);
 }`},
 		{"captured-by-a-lambda", `
 function mk(): i32[] { return [1, 2]; }
 function f(): i32 {
-    var xs: i32[] = mk();
-    var g = (): i32 => xs.len();
+    let xs: i32[] = mk();
+    let g = (): i32 => xs.len();
     return consume(xs) + g();
 }`},
 	} {
@@ -331,7 +331,7 @@ function f(): i32 {
 func TestOwnGuardIgnoresShadowingParameter(t *testing.T) {
 	wantOK(t, "shadowing-param", ownConsumer+`
 function filterish(rows: i32[][], consume: (i32[]) => i32): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for r in rows { n = n + consume(r); }
     return n;
 }
@@ -341,7 +341,7 @@ function main(): i32 { return filterish([[1, 2]], (v: i32[]) => v[0]); }`)
 func TestOwnGuardIgnoresShadowingLocal(t *testing.T) {
 	wantOK(t, "shadowing-local", ownConsumer+`
 function f(xs: i32[]): i32 {
-    var consume: (i32[]) => i32 = (v: i32[]) => v[0];
+    let consume: (i32[]) => i32 = (v: i32[]) => v[0];
     return consume(xs);
 }`)
 }
@@ -349,7 +349,7 @@ function f(xs: i32[]): i32 {
 func TestOwnGuardIgnoresShadowingLambdaParameter(t *testing.T) {
 	wantOK(t, "shadowing-lambda-param", ownConsumer+`
 function f(xs: i32[]): i32 {
-    var run: ((i32[]) => i32) = (consume: i32[]) => consume.len();
+    let run: ((i32[]) => i32) = (consume: i32[]) => consume.len();
     return run(xs);
 }`)
 }
@@ -361,7 +361,7 @@ function f(xs: i32[]): i32 {
 func TestOwnGuardShadowedCalleeDoesNotConsume(t *testing.T) {
 	wantOK(t, "shadowing-param-no-consume", ownConsumer+`
 function f(own xs: i32[], consume: (i32[]) => i32): i32 {
-    var r: i32 = consume(xs);
+    let r: i32 = consume(xs);
     return r + xs.len();
 }`)
 }
@@ -370,7 +370,7 @@ function f(own xs: i32[], consume: (i32[]) => i32): i32 {
 func TestOwnGuardIgnoresShadowingLoopVariable(t *testing.T) {
 	wantOK(t, "shadowing-loop-var", ownConsumer+`
 function f(fns: ((i32[]) => i32)[], xs: i32[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for consume in fns { n = n + consume(xs); }
     return n;
 }`)
@@ -381,8 +381,8 @@ function f(fns: ((i32[]) => i32)[], xs: i32[]): i32 {
 func TestOwnGuardLocalShadowsOnlyAfterItsDeclaration(t *testing.T) {
 	wantE051(t, "local-shadow-after-call", ownConsumer+`
 function f(xs: i32[]): i32 {
-    var a: i32 = consume(xs);
-    var consume: (i32[]) => i32 = (v: i32[]) => v[0];
+    let a: i32 = consume(xs);
+    let consume: (i32[]) => i32 = (v: i32[]) => v[0];
     return a + consume(xs);
 }`)
 }
@@ -390,8 +390,8 @@ function f(xs: i32[]): i32 {
 func TestOwnGuardLocalShadowStaysInItsBlock(t *testing.T) {
 	wantE051(t, "local-shadow-inner-block", ownConsumer+`
 function f(xs: i32[], c: boolean): i32 {
-    var n: i32 = 0;
-    if (c) { var consume: (i32[]) => i32 = (v: i32[]) => v[0]; n = consume(xs); }
+    let n: i32 = 0;
+    if (c) { let consume: (i32[]) => i32 = (v: i32[]) => v[0]; n = consume(xs); }
     return n + consume(xs);
 }`)
 }
@@ -402,7 +402,7 @@ func TestOwnGuardArmBinderShadowsOnABorrowedScrutinee(t *testing.T) {
 	wantOK(t, "arm-binder-borrowed-scrutinee", `enum Box { B((i32[]) => i32) }
 function consume(own xs: i32[]): i32 { return xs[0]; }
 function f(b: Box, xs: i32[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (b) { B(consume) => { n = consume(xs); } }
     return n;
 }`)
@@ -415,7 +415,7 @@ func TestOwnGuardShadowElsewhereStillGuardsRealCall(t *testing.T) {
 	wantE051(t, "shadow-elsewhere", ownConsumer+`
 function apply(g: ((i32[]) => i32), zs: i32[]): i32 { return g(zs); }
 function f(xs: i32[]): i32 {
-    var a: i32 = apply((consume: i32[]) => consume.len(), xs);
+    let a: i32 = apply((consume: i32[]) => consume.len(), xs);
     return a + consume(xs);
 }`)
 }
@@ -456,8 +456,8 @@ func TestOwnGuardRejectsEnumLocal(t *testing.T) {
 function eat(own sp: Extent): i32 { return 0; }
 function peek(sp: Extent): i32 { return 0; }
 function f(): i32 {
-    var sp: Extent = Empty;
-    var n: i32 = eat(sp);              // read again below, so not a move
+    let sp: Extent = Empty;
+    let n: i32 = eat(sp);              // read again below, so not a move
     return n + peek(sp);
 }`)
 }
@@ -468,7 +468,7 @@ func TestOwnGuardAllowsEnumLocalAtLastUse(t *testing.T) {
 	wantOK(t, "enum-local-last-use", `enum Extent { Empty, Wide(i32[]) }
 function eat(own sp: Extent): i32 { return 0; }
 function f(): i32 {
-    var sp: Extent = Empty;
+    let sp: Extent = Empty;
     return eat(sp);                    // dead after the call → moved
 }`)
 }
@@ -524,7 +524,7 @@ func TestOwnedSiblingMatchBindingNameReuseOK(t *testing.T) {
 	wantOK(t, "sibling-match-binding-name-reuse", ownConsumer+`
 function mkBox(): Box { return Wrap([1, 2]); }
 function f(): i32 {
-    var a: i32 = 0;
+    let a: i32 = 0;
     match (mkBox()) { Wrap(e) => { a = consumeBox(Wrap(e)); } }
     match (mkBox()) { Wrap(e) => { a = a + consumeBox(Wrap(e)); } }
     return a;
@@ -539,13 +539,13 @@ func TestConsumingMethodsAccepted(t *testing.T) {
 	// the method-call transfer makes `t.inc()` consume the owned binding `t`.
 	wantOK(t, "inherent-own-self", `enum List { Cons(i32, List), Nil }
 function (own xs: List) inc(): List { match (xs) { Cons(h, t) => { return Cons(h + 1, t.inc()); }, Nil => { return Nil; } } }
-function main(): i32 { var ys: List = Cons(1, Nil).inc(); return 0; }`)
+function main(): i32 { let ys: List = Cons(1, Nil).inc(); return 0; }`)
 
 	// A consuming method's receiver still goes through the E051 call-site guard:
 	// a BORROWED receiver can't be transferred.
 	wantE051(t, "borrowed-receiver-to-consuming-method", `enum List { Cons(i32, List), Nil }
 function (own xs: List) inc(): List { match (xs) { Cons(h, t) => { return Cons(h + 1, t.inc()); }, Nil => { return Nil; } } }
-function f(borrowed: List): i32 { var ys: List = borrowed.inc(); return 0; }`)
+function f(borrowed: List): i32 { let ys: List = borrowed.inc(); return 0; }`)
 }
 
 // --- E051 self-reassign move admission (#4873 step 0) --------------------
@@ -559,7 +559,7 @@ func TestOwnGuardAllowsSelfReassignMove(t *testing.T) {
 struct B { items: i32[] }
 function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
 function f(): i32 {
-    var a = B { items: [] };
+    let a = B { items: [] };
     a = grow(a, 1);
     a = grow(a, 2);
     return a.items.len();
@@ -575,7 +575,7 @@ func TestOwnGuardRejectsSelfReassignSecondRead(t *testing.T) {
 struct B { items: i32[] }
 function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
 function f(): i32 {
-    var a = B { items: [7] };
+    let a = B { items: [7] };
     a = grow(a, a.items[0]);
     return a.items.len();
 }`)
@@ -593,8 +593,8 @@ func TestOwnGuardAllowsSelfReassignMoveInLambda(t *testing.T) {
 struct B { items: i32[] }
 function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
 function f(): i32 {
-    var lam = (): i32 => {
-        var a = B { items: [] };
+    let lam = (): i32 => {
+        let a = B { items: [] };
         a = grow(a, 1);
         a = grow(a, 2);
         return a.items.len();
@@ -609,7 +609,7 @@ struct B { items: i32[] }
 function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
 function f(): i32 {
     function inner(): i32 {
-        var a = B { items: [] };
+        let a = B { items: [] };
         a = grow(a, 1);
         return a.items.len();
     }
@@ -634,9 +634,9 @@ func TestOwnGuardRejectsKeptAliveLocalInLambda(t *testing.T) {
 struct B { items: i32[] }
 function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
 function f(): i32 {
-    var lam = (): i32 => {
-        var a = B { items: [] };
-        var c = grow(a, 1);
+    let lam = (): i32 => {
+        let a = B { items: [] };
+        let c = grow(a, 1);
         return c.items.len();
     };
     return lam();
@@ -646,8 +646,8 @@ function f(): i32 {
 func TestOwnedUseAfterConsumeInLambda(t *testing.T) {
 	wantE050(t, "double-consume-in-lambda", ownPrelude+`
 function f(own xs: i32[]): i32 {
-    var lam = (): i32 => {
-        var a: i32 = sink(xs);
+    let lam = (): i32 => {
+        let a: i32 = sink(xs);
         return a + sink(xs);   // E050: xs already moved
     };
     return lam();
@@ -660,7 +660,7 @@ function f(own xs: i32[]): i32 {
 func TestOwnedNestedParamShadowsOuter(t *testing.T) {
 	src := ownPrelude + `
 function f(own xs: i32[]): i32 {
-    var lam = (xs: i32[]): i32 => { return sink(xs); };
+    let lam = (xs: i32[]): i32 => { return sink(xs); };
     return lam([1]) + sink(xs);
 }`
 	err := checkSource(t, src)
@@ -698,7 +698,7 @@ function step(own a: Asm, v: i32): Asm {
 func TestOwnGuardAllowsSupersededFieldMoveOnLocal(t *testing.T) {
 	wantOK(t, "field-move-local-base", fieldMovePrelude+`
 function build(): i32 {
-    var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
+    let a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
     a = Asm { ...a, cfi: record(a.cfi, 1) };
     a = Asm { ...a, cfi: record(a.cfi, a.code.len()) };
     return a.cfi.n;
@@ -763,8 +763,8 @@ function step(own a: Asm): Asm {
 func TestOwnGuardRejectsSupersededFieldMoveKeptAliveBase(t *testing.T) {
 	wantE051(t, "field-move-kept-alive-base", fieldMovePrelude+`
 function build(): i32 {
-    var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
-    var b: Asm = Asm { ...a, cfi: record(a.cfi, 1) };
+    let a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
+    let b: Asm = Asm { ...a, cfi: record(a.cfi, 1) };
     return b.cfi.n + a.cfi.n;
 }`)
 }
@@ -774,7 +774,7 @@ function build(): i32 {
 func TestOwnGuardRejectsSupersededFieldMoveOnShadowingBorrowedParam(t *testing.T) {
 	wantE051(t, "field-move-nested-borrowed-param", fieldMovePrelude+`
 function build(): i32 {
-    var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
+    let a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
     function inner(a: Asm): Asm {
         a = Asm { ...a, cfi: record(a.cfi, 1) };
         return a;
@@ -809,7 +809,7 @@ function main(): i32 { return consume(passthru([1, 2])); }`)
 func TestOwnGuardRejectsAResultBorrowedThroughALocal(t *testing.T) {
 	wantE051(t, "result-borrowed-through-a-local", ownConsumer+`
 function hop(xs: i32[]): i32[] {
-    var y: i32[] = xs;
+    let y: i32[] = xs;
     return y;
 }
 function main(): i32 { return consume(hop([1, 2])); }`)
@@ -880,30 +880,30 @@ function eat(own w: W): i32 { return w.tag.len() as i32; }
 function takes(own s: string): i32 { return s.len() as i32; }
 `
 	wantOK(t, "grown-array-in-binary", prelude+`function f(): i32 {
-    var xs: i64[] = [];
+    let xs: i64[] = [];
     xs = xs.append(1);
     return take(xs) + 0;
 }`)
 	wantOK(t, "grown-array-in-var", prelude+`function f(): i32 {
-    var xs: i64[] = [];
+    let xs: i64[] = [];
     xs = xs.append(1);
-    var r: i32 = take(xs);
+    let r: i32 = take(xs);
     return r;
 }`)
 	wantOK(t, "struct-literal", prelude+`function f(): i32 {
-    var w: W = W { d: [1], tag: "t" };
-    var r: i32 = eat(w);
+    let w: W = W { d: [1], tag: "t" };
+    let r: i32 = eat(w);
     return r;
 }`)
 	wantOK(t, "string-literal", prelude+`function f(): i32 {
-    var s: string = "ab";
+    let s: string = "ab";
     s = s + "c";
-    var r: i32 = takes(s);
+    let r: i32 = takes(s);
     return r;
 }`)
 	wantE051(t, "spread-literal", prelude+`function f(v: W): i32 {
-    var w: W = W { ...v, tag: "u" };
-    var r: i32 = eat(w);
+    let w: W = W { ...v, tag: "u" };
+    let r: i32 = eat(w);
     return r;
 }`)
 }
@@ -917,11 +917,11 @@ function step(own xs: i32[], own flags: boolean[]): Pair { return Pair { a: xs, 
 function take(own flags: boolean[]): i32 { return flags.len(); }
 `
 	wantOK(t, "second-of-two-stores", prelude+`function f(): i32 {
-    var xs: i32[] = [];
-    var flags: boolean[] = [false];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let flags: boolean[] = [false];
+    let i: i32 = 0;
     while (i < 3) {
-        var p: Pair = step(xs, flags);
+        let p: Pair = step(xs, flags);
         xs = p.a;
         flags = p.b;
         i = i + 1;
@@ -929,22 +929,22 @@ function take(own flags: boolean[]): i32 { return flags.len(); }
     return xs.len() + flags.len();
 }`)
 	wantOK(t, "unrelated-var-between", prelude+`function f(): i32 {
-    var flags: boolean[] = [false];
-    var n: i32 = take(flags);
-    var m: i32 = 3;
+    let flags: boolean[] = [false];
+    let n: i32 = take(flags);
+    let m: i32 = 3;
     flags = [true];
     return n + m + flags.len();
 }`)
 	wantE051(t, "read-between", prelude+`function f(): i32 {
-    var flags: boolean[] = [false];
-    var n: i32 = take(flags);
-    var m: i32 = flags.len();
+    let flags: boolean[] = [false];
+    let n: i32 = take(flags);
+    let m: i32 = flags.len();
     flags = [true];
     return n + m + flags.len();
 }`)
 	wantE051(t, "branch-between", prelude+`function f(k: i32): i32 {
-    var flags: boolean[] = [false];
-    var n: i32 = take(flags);
+    let flags: boolean[] = [false];
+    let n: i32 = take(flags);
     if (k > 0) { k = k + 1; }
     flags = [true];
     return n + k + flags.len();

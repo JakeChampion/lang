@@ -133,7 +133,7 @@ function consume(own xs: string[]): i32 {
     return 0;
 }
 function churn(): i32 {
-    var i = 0;
+    let i = 0;
     while (i < 32) {
         if (consume(["old" + "!", "keep" + "!"]) != 0) { return 1; }
         i = i + 1;
@@ -142,7 +142,7 @@ function churn(): i32 {
 }
 function main(): i32 {
     if (churn() != 0) { return 1; }
-    var before: i64 = __heap_bump_bytes();
+    let before: i64 = __heap_bump_bytes();
     if (churn() != 0) { return 2; }
     if (__heap_bump_bytes() != before) { return 3; }
     if (__rc_underflow_count() != 0) { return 99; }

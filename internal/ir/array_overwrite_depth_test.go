@@ -9,30 +9,30 @@ import "testing"
 // and was emitted for every shape, so `a = mk()` and `a = f(a)` through
 // a cowing callee each stranded one element per overwrite.
 //
-// The same reclaim `var a = mk()` re-executed in a loop already gets
+// The same reclaim `let a = mk()` re-executed in a loop already gets
 // right (emitVarReinitDropOld routes to the deep emitOwnedSlotDrop), so
 // the two spellings of one thing disagreed.
 
 const overwriteSrc = `
 function mk(pad: string): string[] {
-    var o: string[] = [];
+    let o: string[] = [];
     o = o.append(pad + "-0123456789abcdef");
     return o;
 }
 function via_with(a: string[], v: string): string[] { return a.with(0, v); }
 
 function plain(pad: string): i32 {
-    var a: string[] = mk(pad);
+    let a: string[] = mk(pad);
     a = mk(pad);
     return a[0].len();
 }
 function via_call(pad: string): i32 {
-    var a: string[] = mk(pad);
+    let a: string[] = mk(pad);
     a = via_with(a, pad + "-fedcba9876543210");
     return a[0].len();
 }
 function self_append(pad: string): i32 {
-    var a: string[] = mk(pad);
+    let a: string[] = mk(pad);
     a = a.append(pad + "-fedcba9876543210");
     return a[0].len() + a[1].len();
 }
@@ -41,7 +41,7 @@ function self_append(pad: string): i32 {
 // here pays, so a shape that adds one has a deep OVERWRITE release and
 // a shape that matches it does not.
 function no_overwrite(pad: string): i32 {
-    var a: string[] = mk(pad);
+    let a: string[] = mk(pad);
     return a[0].len();
 }
 function main(): i32 { return 0; }`

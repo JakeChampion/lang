@@ -36,8 +36,8 @@ import (
 
 func nestedOptChurn(prelude, body string, rounds int) string {
 	return fmt.Sprintf(`%sfunction churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
 %s
         i = i + 1;
@@ -63,7 +63,7 @@ var nestedOptFlatCases = []struct {
 		// BORROW — it reads the tag and payload and retains nothing — where the
 		// coarse walker called any bare ident an escape.
 		name: "option_inner",
-		body: `        var o: Option[Option[i32]] = Some(Some(i));
+		body: `        let o: Option[Option[i32]] = Some(Some(i));
         match (o) {
             Some(inner) => { match (inner) { Some(v) => { acc = (acc + v) % 91; }, None => { acc = (acc + 1) % 91; } } },
             None => { acc = (acc + 2) % 91; }
@@ -77,7 +77,7 @@ var nestedOptFlatCases = []struct {
 		// would be stranded by the very same dec that fully releases a scalar
 		// one. type_is_scalar_union is what proves both.
 		name: "result_inner",
-		body: `        var o: Option[Result[i32, i32]] = Some(Ok(i));
+		body: `        let o: Option[Result[i32, i32]] = Some(Ok(i));
         match (o) {
             Some(inner) => { match (inner) { Ok(v) => { acc = (acc + v) % 91; }, Err(e) => { acc = (acc + e) % 91; } } },
             None => { acc = (acc + 2) % 91; }
@@ -89,7 +89,7 @@ var nestedOptFlatCases = []struct {
 		// No binding at all (`Some(_)`). Pins that the credit depends on the
 		// declaration, not some use of the payload.
 		name: "unused_binding",
-		body: `        var o: Option[Option[i32]] = Some(Some(i));
+		body: `        let o: Option[Option[i32]] = Some(Some(i));
         match (o) { Some(_) => { acc = (acc + 1) % 91; }, None => { acc = (acc + 2) % 91; } }`,
 		want100: 9,
 		want200: 18,
@@ -99,7 +99,7 @@ var nestedOptFlatCases = []struct {
 		// inner box, the outer box — and the two-level drop must free all three.
 		// allocs == frees is what says it did.
 		name: "rc_inner_array_literal",
-		body: `        var o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
+		body: `        let o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
         match (o) {
             Some(inner) => { match (inner) { Some(v) => { acc = (acc + v.len() + v[0]) % 91; }, None => { acc = (acc + 1) % 91; } } },
             None => { acc = (acc + 2) % 91; }
@@ -113,8 +113,8 @@ var nestedOptFlatCases = []struct {
 		// the second — the interlock, not a double free. The underflow term in
 		// the exit code is what proves that rather than the byte count.
 		name: "rc_inner_array_ident",
-		body: `        var xs: i32[] = [i, i + 1];
-        var o: Option[Option[i32[]]] = Some(Some(xs));
+		body: `        let xs: i32[] = [i, i + 1];
+        let o: Option[Option[i32[]]] = Some(Some(xs));
         match (o) {
             Some(inner) => { match (inner) { Some(v) => { acc = (acc + v.len()) % 91; }, None => { acc = (acc + 1) % 91; } } },
             None => { acc = (acc + 2) % 91; }
@@ -127,7 +127,7 @@ var nestedOptFlatCases = []struct {
 		// skips, shared decs, unique frees) rather than the array dec — on asm a
 		// string box's data buffer is separate and its block class differs.
 		name: "rc_inner_string",
-		body: `        var o: Option[Option[string]] = Some(Some("ab"));
+		body: `        let o: Option[Option[string]] = Some(Some("ab"));
         match (o) {
             Some(inner) => { match (inner) { Some(v) => { acc = (acc + v.len()) % 91; }, None => { acc = (acc + 1) % 91; } } },
             None => { acc = (acc + 2) % 91; }
@@ -139,7 +139,7 @@ var nestedOptFlatCases = []struct {
 		// A string[] inner: __fern_str_arr_free walks the elements, where the
 		// flat dec would strand every element box.
 		name: "rc_inner_string_array",
-		body: `        var o: Option[Option[string[]]] = Some(Some(["a", "b"]));
+		body: `        let o: Option[Option[string[]]] = Some(Some(["a", "b"]));
         match (o) {
             Some(inner) => { match (inner) { Some(v) => { acc = (acc + v.len()) % 91; }, None => { acc = (acc + 1) % 91; } } },
             None => { acc = (acc + 2) % 91; }
@@ -164,8 +164,8 @@ var nestedOptHazardCases = []struct {
 		// reading relaxes the scrutinee position and nothing else, so this is
 		// still an escape.
 		name: "binding_escapes",
-		src: nestedOptChurn("", `        var keep: Option[i32] = None;
-        var o: Option[Option[i32]] = Some(Some(i));
+		src: nestedOptChurn("", `        let keep: Option[i32] = None;
+        let o: Option[Option[i32]] = Some(Some(i));
         match (o) { Some(inner) => { keep = inner; }, None => { acc = (acc + 2) % 91; } }
         match (keep) { Some(v) => { acc = (acc + v) % 91; }, None => { acc = (acc + 3) % 91; } }`, 200),
 		want: 62,
@@ -175,8 +175,8 @@ var nestedOptHazardCases = []struct {
 		// local's own scalar-Option reclaim already frees it; this drop would be
 		// the second. opt_arg_is_direct_ctor is what excludes it.
 		name: "inner_is_local",
-		src: nestedOptChurn("", `        var inner0: Option[i32] = Some(i);
-        var o: Option[Option[i32]] = Some(inner0);
+		src: nestedOptChurn("", `        let inner0: Option[i32] = Some(i);
+        let o: Option[Option[i32]] = Some(inner0);
         match (o) {
             Some(inner) => { match (inner) { Some(v) => { acc = (acc + v) % 91; }, None => { acc = (acc + 1) % 91; } } },
             None => { acc = (acc + 2) % 91; }
@@ -186,8 +186,8 @@ var nestedOptHazardCases = []struct {
 	{
 		// Bound from a CALL, so the box is not this frame's to free.
 		name: "bound_from_call",
-		src: nestedOptChurn("function mk(i: i32): Option[Option[i32]] { var q: Option[Option[i32]] = Some(Some(i)); return q; }\n",
-			`        var o: Option[Option[i32]] = mk(i);
+		src: nestedOptChurn("function mk(i: i32): Option[Option[i32]] { let q: Option[Option[i32]] = Some(Some(i)); return q; }\n",
+			`        let o: Option[Option[i32]] = mk(i);
         match (o) {
             Some(inner) => { match (inner) { Some(v) => { acc = (acc + v) % 91; }, None => { acc = (acc + 1) % 91; } } },
             None => { acc = (acc + 2) % 91; }
@@ -201,8 +201,8 @@ var nestedOptHazardCases = []struct {
 		// nested_opt_payload_arm_escapes is what sees this; the outer arm looks
 		// clean to every other gate.
 		name: "inner_payload_escapes",
-		src: nestedOptChurn("", `        var held: i32[] = [];
-        var o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
+		src: nestedOptChurn("", `        let held: i32[] = [];
+        let o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
         match (o) {
             Some(inner) => { match (inner) { Some(v) => { held = v; }, None => { acc = (acc + 1) % 91; } } },
             None => { acc = (acc + 2) % 91; }
@@ -215,7 +215,7 @@ var nestedOptHazardCases = []struct {
 		// offset 8 of the inner box unconditionally, and a None box never stored
 		// one — opt_arg_is_some_ctor is what keeps this out.
 		name: "inner_none_under_rc_type",
-		src: nestedOptChurn("", `        var o: Option[Option[i32[]]] = Some(None);
+		src: nestedOptChurn("", `        let o: Option[Option[i32[]]] = Some(None);
         match (o) { Some(inner) => { acc = (acc + 1) % 91; }, None => { acc = (acc + 2) % 91; } }`, 200),
 		want: 18,
 	},
@@ -224,7 +224,7 @@ var nestedOptHazardCases = []struct {
 		// string / string[] inner and nothing else, so an Option inner refuses
 		// rather than recursing — the walk is two levels deep by construction.
 		name: "triple_nested",
-		src: nestedOptChurn("", `        var o: Option[Option[Option[i32]]] = Some(Some(Some(i)));
+		src: nestedOptChurn("", `        let o: Option[Option[Option[i32]]] = Some(Some(Some(i)));
         match (o) { Some(inner) => { acc = (acc + 1) % 91; }, None => { acc = (acc + 2) % 91; } }`, 200),
 		want: 18,
 	},
@@ -232,8 +232,8 @@ var nestedOptHazardCases = []struct {
 		// The INNER BOX itself extracted to an outer local, so the outer arm's
 		// binding escapes under the scrutinee-borrow reading too.
 		name: "inner_box_extracted",
-		src: nestedOptChurn("", `        var o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
-        var keep: Option[i32[]] = None;
+		src: nestedOptChurn("", `        let o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
+        let keep: Option[i32[]] = None;
         match (o) { Some(inner) => { keep = inner; }, None => { acc = (acc + 2) % 91; } }
         match (keep) { Some(v) => { acc = (acc + v.len()) % 91; }, None => { acc = (acc + 3) % 91; } }`, 200),
 		want: 36,

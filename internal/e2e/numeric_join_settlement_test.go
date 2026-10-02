@@ -8,28 +8,28 @@ const numericJoinSettlementProgram = `
 struct Box { tag: i32 }
 enum Tag { A, B }
 function literal_join(tag: i32): boolean {
-    var narrow: f32 = 16777216.0;
-    var value = match (tag) { 0 => 16777216.0, _ => narrow };
+    let narrow: f32 = 16777216.0;
+    let value = match (tag) { 0 => 16777216.0, _ => narrow };
     return value + 1.0 == value;
 }
 function tuple_join(tag: (i32, i32)): boolean {
-    var narrow: f32 = 16777216.0;
-    var value = match (tag) { (0, _) => (16777216.0, 3), _ => (narrow, 3) };
+    let narrow: f32 = 16777216.0;
+    let value = match (tag) { (0, _) => (16777216.0, 3), _ => (narrow, 3) };
     return value.0 + 1.0 == value.0 && value.1 == 3;
 }
 function struct_join(tag: Box): boolean {
-    var narrow: f32 = 16777216.0;
-    var value = match (tag) { Box { tag: 0 } => (3, (16777216.0, 4)), _ => (3, (narrow, 4)) };
+    let narrow: f32 = 16777216.0;
+    let value = match (tag) { Box { tag: 0 } => (3, (16777216.0, 4)), _ => (3, (narrow, 4)) };
     return value.1.0 + 1.0 == value.1.0 && value.1.1 == 4;
 }
 function enum_join(tag: Tag): boolean {
-    var narrow: f32 = 16777216.0;
-    var value = match (tag) { A => { var marker = 3; (16777216.0, marker) }, B => (narrow, 3) };
+    let narrow: f32 = 16777216.0;
+    let value = match (tag) { A => { let marker = 3; (16777216.0, marker) }, B => (narrow, 3) };
     return value.0 + 1.0 == value.0 && value.1 == 3;
 }
 function if_join(tag: boolean): boolean {
-    var narrow: f32 = 16777216.0;
-    var value = if (tag) { var marker = 3; (16777216.0, marker) } else { (narrow, 3) };
+    let narrow: f32 = 16777216.0;
+    let value = if (tag) { let marker = 3; (16777216.0, marker) } else { (narrow, 3) };
     return value.0 + 1.0 == value.0 && value.1 == 3;
 }
 function main(): i32 {

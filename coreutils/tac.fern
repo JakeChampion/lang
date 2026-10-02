@@ -44,7 +44,7 @@ function opt_separator(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "Write each FILE to standard output, last line first.\n";
   out = out + "\n";
@@ -103,11 +103,11 @@ function fail(o: Out, msg: string): Out {
 // has no fixed length, so that path answers (start, end) through
 // `search_back` instead.
 function find_plain(s: Settings, w: string, bound: i32): i32 {
-  var n: i32 = s.sep.len();
-  var first: i32 = s.sep[0] as i32;
-  var k: i32 = bound - n;
+  let n: i32 = s.sep.len();
+  let first: i32 = s.sep[0] as i32;
+  let k: i32 = bound - n;
   while (k >= 0) {
-    var j: i32 = __rmemchr(w, first, k);
+    let j: i32 = __rmemchr(w, first, k);
     if (j < 0) {
       break;
     }
@@ -137,10 +137,10 @@ struct Src { r: Reader, held: string, seekable: boolean }
 // `read_block(src, name, at, n)` — up to `n` bytes at offset `at`,
 // short at end of input, or the diagnostic GNU gives the failure.
 function read_block(src: Src, name: string, at: i64, n: i64, o: Out): (Out, string, boolean) {
-  var out: Out = o;
+  let out: Out = o;
   if (!src.seekable) {
-    var lo: i32 = at as i32;
-    var hi: i32 = lo + n as i32;
+    let lo: i32 = at as i32;
+    let hi: i32 = lo + n as i32;
     if (hi > src.held.len()) {
       hi = src.held.len();
     }
@@ -152,7 +152,7 @@ function read_block(src: Src, name: string, at: i64, n: i64, o: Out): (Out, stri
       return (fail(out, gnu.quotef(name) + ": seek failed: " + gnu.io_error_text(e)), "", false);
     }
   }
-  var got: string = "";
+  let got: string = "";
   while (got.len() as i64 < n) {
     match (src.r.read_chunk((n - got.len() as i64) as i32)) {
       Ok(c) => {
@@ -186,40 +186,40 @@ function read_block(src: Src, name: string, at: i64, n: i64, o: Out): (Out, stri
 // the bytes straight out of the window; a full block is taken out of
 // it and handed to stdio without another copy.
 function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): Out {
-  var out: Out = o;
-  var h: usize = o.buf;
+  let out: Out = o;
+  let h: usize = o.buf;
   if (size < 1 as i64) {
     return out;
   }
-  var block: i64 = initial_read_size();
-  var saved: i64 = size % block;
+  let block: i64 = initial_read_size();
+  let saved: i64 = size % block;
   if (saved == 0 as i64) {
     saved = block;
   }
-  var file_pos: i64 = size - saved;
-  var rb: (Out, string, boolean) = read_block(src, name, file_pos, block, out);
+  let file_pos: i64 = size - saved;
+  let rb: (Out, string, boolean) = read_block(src, name, file_pos, block, out);
   out = rb.0;
   if (!rb.2) {
     return out;
   }
-  var w: string = rb.1;
-  var past_end: i32 = w.len();
-  var bound: i32 = past_end;
-  var first_time: boolean = true;
+  let w: string = rb.1;
+  let past_end: i32 = w.len();
+  let bound: i32 = past_end;
+  let first_time: boolean = true;
   while (true) {
-    var m0: i32 = 0;
-    var m1: i32 = 0;
+    let m0: i32 = 0;
+    let m1: i32 = 0;
     if (s.regex) {
-      var m: (i32, i32) = s.re.search_back(w, bound);
+      let m: (i32, i32) = s.re.search_back(w, bound);
       m0 = m.0;
       m1 = m.1;
     } else {
       m0 = find_plain(s, w, bound);
       m1 = m0 + s.sep.len();
     }
-    var lo: i32 = 0;
-    var last: boolean = true;
-    var emit: boolean = true;
+    let lo: i32 = 0;
+    let last: boolean = true;
+    let emit: boolean = true;
     if (m0 >= 0) {
       last = false;
       lo = m1;
@@ -238,17 +238,17 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
         block = file_pos;
         file_pos = 0 as i64;
       }
-      var next: (Out, string, boolean) = read_block(src, name, file_pos, block, out);
+      let next: (Out, string, boolean) = read_block(src, name, file_pos, block, out);
       out = next.0;
       if (!next.2) {
         return out;
       }
-      var n: i32 = next.1.len();
+      let n: i32 = next.1.len();
       w = next.1 + slice_unchecked(w, 0, past_end);
       // A regular expression is re-run over the pending bytes, which is
       // what lets `^` match at the old window's start; a plain
       // separator can only straddle the join.
-      var straddle: i32 = n + s.sep.len() - 1;
+      let straddle: i32 = n + s.sep.len() - 1;
       if (s.regex) {
         bound = n + past_end;
       } else if (n + bound < straddle) {
@@ -260,13 +260,13 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
       continue;
     }
     if (emit && lo < past_end) {
-      var avail: i32 = write_size() - buf_len(h);
+      let avail: i32 = write_size() - buf_len(h);
       if (past_end - lo < avail) {
         buf_push_range(h, w, lo, past_end);
       } else {
         buf_push_range(h, w, lo, lo + avail);
         write_out(out, buf_take(h));
-        var from: i32 = lo + avail;
+        let from: i32 = lo + avail;
         while (past_end - from >= write_size()) {
           write_out(out, slice_unchecked(w, from, from + write_size()) + "");
           from = from + write_size();
@@ -301,7 +301,7 @@ function hold_stream(r: Reader, name: string, o: Out): (Out, string, boolean) {
   // read_all_stdin documents: `held = held + c` copies the whole prefix per
   // chunk, so holding an N-byte stream in 8 KiB pieces copies ~N²/8192 bytes.
   // `join` sums the lengths and blits once, so the hold is O(N).
-  var chunks: string[] = [];
+  let chunks: string[] = [];
   while (true) {
     match (r.read_chunk(8192)) {
       Ok(c) => {
@@ -321,10 +321,10 @@ function hold_stream(r: Reader, name: string, o: Out): (Out, string, boolean) {
 // `tac_file(path, o, s)` — one operand. `-` is stdin, which the
 // diagnostics call `standard input`; whether it seeks decides the path.
 function tac_file(path: string, o: Out, s: Settings): Out {
-  var out: Out = o;
-  var is_stdin: boolean = path == "-";
-  var name: string = path;
-  var r: Reader = stdin();
+  let out: Out = o;
+  let is_stdin: boolean = path == "-";
+  let name: string = path;
+  let r: Reader = stdin();
   if (is_stdin) {
     name = "standard input";
   } else {
@@ -337,8 +337,8 @@ function tac_file(path: string, o: Out, s: Settings): Out {
       }
     }
   }
-  var size: i64 = 0 as i64;
-  var seekable: boolean = false;
+  let size: i64 = 0 as i64;
+  let seekable: boolean = false;
   match (r.seek(0 as i64, 2)) {
     Ok(n) => {
       size = n;
@@ -346,9 +346,9 @@ function tac_file(path: string, o: Out, s: Settings): Out {
     },
     Err(_) => {}
   }
-  var src: Src = Src { r: r, held: "", seekable: true };
+  let src: Src = Src { r: r, held: "", seekable: true };
   if (!seekable) {
-    var h: (Out, string, boolean) = hold_stream(r, name, out);
+    let h: (Out, string, boolean) = hold_stream(r, name, out);
     out = h.0;
     if (!h.2) {
       return out;
@@ -369,18 +369,18 @@ function tac_file(path: string, o: Out, s: Settings): Out {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [];
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("b", "before", opt_before()));
   opts = opts.append(gnu.flag("r", "regex", opt_regex()));
   opts = opts.append(gnu.valued("s", "separator", opt_separator()));
 
-  var sep: string = "\n";
-  var before: boolean = false;
-  var regex: boolean = false;
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "tac", help_text(), 1);
+  let sep: string = "\n";
+  let before: boolean = false;
+  let regex: boolean = false;
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "tac", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -400,7 +400,7 @@ pub function main(): i32 {
 
   // An empty separator is refused as a regular expression and is the
   // NUL byte otherwise: GNU takes the length of `""` to be one.
-  var re: bre.Bre = bre.bre_compile("");
+  let re: bre.Bre = bre.bre_compile("");
   if (regex) {
     if (sep.len() == 0) {
       gnu.error("separator cannot be empty");
@@ -414,15 +414,15 @@ pub function main(): i32 {
   } else if (sep.len() == 0) {
     sep = string_from_bytes_unchecked([0 as u8]);
   }
-  var s: Settings = Settings { sep: sep, before: before, regex: regex, re: re };
+  let s: Settings = Settings { sep: sep, before: before, regex: regex, re: re };
 
-  var files: string[] = g.operands();
+  let files: string[] = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
-  var out: Out = Out { w: stdout(), buf: buf_new(write_size()), ok: true };
-  var read_stdin: boolean = false;
-  var i: i32 = 0;
+  let out: Out = Out { w: stdout(), buf: buf_new(write_size()), ok: true };
+  let read_stdin: boolean = false;
+  let i: i32 = 0;
   while (i < files.len()) {
     if (files[i] == "-") {
       read_stdin = true;
@@ -447,7 +447,7 @@ pub function main(): i32 {
   // for something other than a closed descriptor is reported.
   match (out.w.close()) {
     Some(e) => {
-      var text: string = gnu.io_error_text(e);
+      let text: string = gnu.io_error_text(e);
       if (text != "Bad file descriptor") {
         gnu.error("write error: " + text);
         exit(1);

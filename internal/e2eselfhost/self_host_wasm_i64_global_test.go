@@ -41,9 +41,9 @@ func TestSelfHostWasmI64GlobalEncodesItsOwnType(t *testing.T) {
 	// exit code, because `wasmtime run` reports every non-zero program exit as
 	// 1 and would flatten "counted" and "blind" into the same reading.
 	const src = `function main(): i32 {
-	var a: string = "x" + "y";
-	var b: string = a + "z";
-	var c: string = b + "!";
+	let a: string = "x" + "y";
+	let b: string = a + "z";
+	let c: string = b + "!";
 	if (c.len() != 4) { print("wrong-length"); return 0; }
 	if (__heap_alloc_count() > (0 as i64)) { print("counted"); } else { print("blind"); }
 	return 0;

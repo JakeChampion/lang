@@ -1,6 +1,6 @@
 // spec: AL-01
 //
-// Pushing a value that was BOUND to a local first — `var v = …;
+// Pushing a value that was BOUND to a local first — `let v = …;
 // xs = xs.append(v)` — must cost the same fresh memory as pushing the
 // identical value inline. It did not: the element took a retain (the
 // same `needsRcIncOnAlias` one an array literal's elements take) AND an
@@ -28,10 +28,10 @@ struct Val { kind: i32, kids: i32[] }
 struct Doc { vals: Val[], root: i32 }
 
 function direct(n: i32): i32 {
-    var vals: Val[] = [];
-    var total: i32 = 0;
+    let vals: Val[] = [];
+    let total: i32 = 0;
     for i in 0..n {
-        var v: Val = Val { kind: i, kids: [i, i + 1] };
+        let v: Val = Val { kind: i, kids: [i, i + 1] };
         vals = vals.append(v);
         total = total + vals.len();
     }
@@ -39,10 +39,10 @@ function direct(n: i32): i32 {
 }
 
 function nested(n: i32): i32 {
-    var d: Doc = Doc { vals: [], root: 0 };
-    var total: i32 = 0;
+    let d: Doc = Doc { vals: [], root: 0 };
+    let total: i32 = 0;
     for i in 0..n {
-        var v: Val = Val { kind: i, kids: [i, i + 1] };
+        let v: Val = Val { kind: i, kids: [i, i + 1] };
         d = Doc { ...d, vals: d.vals.append(v) };
         total = total + d.vals.len();
     }
@@ -51,22 +51,22 @@ function nested(n: i32): i32 {
 
 // Array declared BEFORE the element.
 function build_ordered(k: i32): i32 {
-    var vals: Val[] = [];
-    var v: Val = Val { kind: k, kids: [k] };
+    let vals: Val[] = [];
+    let v: Val = Val { kind: k, kids: [k] };
     vals = vals.append(v);
     return vals.len();
 }
 
 // The same two declarations, swapped. Nothing else differs.
 function build_swapped(k: i32): i32 {
-    var v: Val = Val { kind: k, kids: [k] };
-    var vals: Val[] = [];
+    let v: Val = Val { kind: k, kids: [k] };
+    let vals: Val[] = [];
     vals = vals.append(v);
     return vals.len();
 }
 
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     for i in 0..n {
         acc = acc + direct(8) + nested(8) + build_ordered(i) + build_swapped(i);
     }
@@ -74,11 +74,11 @@ function rounds(n: i32): i32 {
 }
 
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(50);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(100);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds(50);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = rounds(100);
+    let b2: i64 = __heap_bump_bytes();
 
     print(x.to_string());
     print(y.to_string());

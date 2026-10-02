@@ -38,8 +38,8 @@ func TestSelfHostQualifiedVariantIRX86_64(t *testing.T) {
 	prog := `enum Color { Red, Green, Custom(i32) }
 struct Box { c: Color, n: i32 }
 function use_box(): i32 {
-    var b: Box = Box { c: Color.Custom(7), n: 5 };
-    var r: i32 = 0;
+    let b: Box = Box { c: Color.Custom(7), n: 5 };
+    let r: i32 = 0;
     match (b.c) {
         Color.Red => { r = 1; },
         Color.Green => { r = 2; },

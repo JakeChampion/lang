@@ -17,42 +17,42 @@ func TestUsizeArrayElementsKeepTheirHighWord(t *testing.T) {
 	const prelude = `function same(a: usize, b: usize): boolean { return (a as u64) == (b as u64); }
 function first(xs: usize[]): usize { return xs[0]; }
 function main(): i32 {
-    var seed: u64 = 8589934599 as u64;
-    var zero: usize = 0 as usize;
-    var wide: usize = seed as usize;
+    let seed: u64 = 8589934599 as u64;
+    let zero: usize = 0 as usize;
+    let wide: usize = seed as usize;
     if ((wide as u64) != (seed & ((zero - 1) as u64))) { return 100; }
 `
 	cases := []struct{ name, body string }{
-		{"literal", `    var xs: usize[] = [zero, wide];
+		{"literal", `    let xs: usize[] = [zero, wide];
     if (same(xs[1], wide) && same(xs[0], zero)) { return 0; }
     return 1;`},
-		{"append", `    var xs: usize[] = [];
+		{"append", `    let xs: usize[] = [];
     xs = xs.append(wide);
     xs = xs.append(zero);
     if (same(first(xs), wide) && same(xs[1], zero)) { return 0; }
     return 1;`},
-		{"with", `    var xs: usize[] = [zero, zero];
+		{"with", `    let xs: usize[] = [zero, zero];
     xs = xs.with(1, wide);
     if (same(xs[1], wide) && same(xs[0], zero)) { return 0; }
     return 1;`},
-		{"for-in", `    var xs: usize[] = [wide, wide];
-    var sum: u64 = 0 as u64;
+		{"for-in", `    let xs: usize[] = [wide, wide];
+    let sum: u64 = 0 as u64;
     for w in xs { sum = sum + (w as u64); }
     if (sum == (wide as u64) * (2 as u64)) { return 0; }
     return 1;`},
-		{"slice", `    var xs: usize[] = [zero, wide];
-    var view: [usize] = xs[1:2];
+		{"slice", `    let xs: usize[] = [zero, wide];
+    let view: [usize] = xs[1:2];
     if (same(view[0], wide)) { return 0; }
     return 1;`},
-		{"nested", `    var grid: usize[][] = [[zero, wide]];
+		{"nested", `    let grid: usize[][] = [[zero, wide]];
     grid = grid.append([wide]);
     if (same(grid[0][1], wide) && same(grid[1][0], wide)) { return 0; }
     return 1;`},
-		{"closure-capture", `    var tag: i32 = 3;
-    var f = (): usize => { if (tag == 3) { return wide; } return zero; };
+		{"closure-capture", `    let tag: i32 = 3;
+    let f = (): usize => { if (tag == 3) { return wide; } return zero; };
     if (same(f(), wide)) { return 0; }
     return 1;`},
-		{"cell", `    var box = cell_new(zero);
+		{"cell", `    let box = cell_new(zero);
     box.set(wide);
     if (same(box.get(), wide)) { return 0; }
     return 1;`},

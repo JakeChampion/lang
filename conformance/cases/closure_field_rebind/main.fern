@@ -7,8 +7,8 @@
 // Interp and native both answered correctly throughout, so only an execution
 // differential could see it — no diagnostic ever fired.
 //
-// The mark is set for a closure-box TUPLE element (`var f = t.0`); the
-// named-struct-field sibling (`var g = h.f`) was missing, and the same walk
+// The mark is set for a closure-box TUPLE element (`let f = t.0`); the
+// named-struct-field sibling (`let g = h.f`) was missing, and the same walk
 // that recovers a tuple-typed field's element tags is where it belongs.
 //
 // Positions, so a future narrowing is visible:
@@ -35,49 +35,49 @@ function add(a: i32, b: i32): i32 { return a + b; }
 function seven(): i32 { return 7; }
 
 function local_rebind(i: i32): i32 {
-    var h: H = H { f: inc };
-    var g = h.f;
+    let h: H = H { f: inc };
+    let g = h.f;
     return g(i);
 }
 
 function param_rebind(h: H, i: i32): i32 {
-    var g = h.f;
+    let g = h.f;
     return g(i);
 }
 
 function lambda_rebind(i: i32): i32 {
-    var h: H = H { f: (x: i32): i32 => x * 3 };
-    var g = h.f;
+    let h: H = H { f: (x: i32): i32 => x * 3 };
+    let g = h.f;
     return g(i);
 }
 
 function two_args(i: i32): i32 {
-    var a: A = A { g: add };
-    var q = a.g;
+    let a: A = A { g: add };
+    let q = a.g;
     return q(i, i + 1);
 }
 
 function zero_args(): i32 {
-    var z: Z = Z { z: seven };
-    var q = z.z;
+    let z: Z = Z { z: seven };
+    let q = z.z;
     return q();
 }
 
 function twice(i: i32): i32 {
-    var h: H = H { f: inc };
-    var g = h.f;
+    let h: H = H { f: inc };
+    let g = h.f;
     return g(i) + g(i * 2);
 }
 
 // Control: the direct field call, which lowered correctly before the fix.
 function direct(i: i32): i32 {
-    var h: H = H { f: inc };
+    let h: H = H { f: inc };
     return h.f(i);
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 49) {
         acc = acc + local_rebind(i) + param_rebind(H { f: inc }, i) + lambda_rebind(i);
         acc = acc + two_args(i) + zero_args() + twice(i) + direct(i);

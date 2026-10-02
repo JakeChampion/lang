@@ -35,7 +35,7 @@ impl Holder for IntBox {
     function get(self: Self): Self::Item { return self.v; }
 }
 function main(): i32 {
-    var b: IntBox = IntBox { v: 7 };
+    let b: IntBox = IntBox { v: 7 };
     return b.get();
 }`,
 	},
@@ -55,8 +55,8 @@ impl Holder for IntBox {
     function get(self: Self): Self::Item { return self.v; }
 }
 function main(): i32 {
-    var b: IntBox = IntBox { v: 7 };
-    var s: string = b.get();
+    let b: IntBox = IntBox { v: 7 };
+    let s: string = b.get();
     return 0;
 }`,
 	},
@@ -104,7 +104,7 @@ impl Holder for IntBox {
 }
 function first[H: Holder](h: H): H::Item { return h.get(); }
 function main(): i32 {
-    var b: IntBox = IntBox { v: 7 };
+    let b: IntBox = IntBox { v: 7 };
     return first(b);
 }`,
 	},
@@ -151,7 +151,7 @@ impl[T] Carrier for Box[T] {
     function get(self: Self): Self::Ok { return self.v; }
 }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 7 };
+    let b: Box[i32] = Box { v: 7 };
     return b.get();
 }`,
 	},
@@ -171,8 +171,8 @@ impl[T] Carrier for Box[T] {
     function get(self: Self): Self::Ok { return self.v; }
 }
 function main(): i32 {
-    var b: Box[i32] = Box { v: 7 };
-    var s: string = b.get();
+    let b: Box[i32] = Box { v: 7 };
+    let s: string = b.get();
     return 0;
 }`,
 	},

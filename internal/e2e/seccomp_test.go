@@ -208,18 +208,18 @@ func TestSeccompDoesNotBreakWorkingPrograms(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"arithmetic only", `function main(): i32 { var a: i32 = 6; return a * 7 - 42; }`},
+		{"arithmetic only", `function main(): i32 { let a: i32 = 6; return a * 7 - 42; }`},
 		{"heap + strings", `function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4];
-    var s: string = "a" + "b";
+    let xs: i32[] = [1, 2, 3, 4];
+    let s: string = "a" + "b";
     print(s);
     return xs.len() - 4;
 }`},
 		{"loops and allocation churn", `function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var row: i32[] = [i, i + 1, i + 2];
+        let row: i32[] = [i, i + 1, i + 2];
         n = n + row.len();
         i = i + 1;
     }
@@ -227,16 +227,16 @@ func TestSeccompDoesNotBreakWorkingPrograms(t *testing.T) {
     return n - 600;
 }`},
 		{"clock", `function main(): i32 {
-    var t: i64 = now_unix_ms();
+    let t: i64 = now_unix_ms();
     if (t > 0) { return 0; }
     return 1;
 }`},
 		// The socket helpers are Fern bodies over the raw floor, whose
 		// literal syscall numbers the allowlist has to carry.
 		{"sockets", `function main(): i32 {
-    var fd: i32 = tcp_listen(0);
+    let fd: i32 = tcp_listen(0);
     if (fd < 0) { return 1; }
-    var port: i32 = tcp_local_port(fd);
+    let port: i32 = tcp_local_port(fd);
     tcp_close(fd);
     if (port <= 0) { return 2; }
     return 0;

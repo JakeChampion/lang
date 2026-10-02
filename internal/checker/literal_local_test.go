@@ -32,28 +32,28 @@ func TestLiteralLocalTakesOneType(t *testing.T) {
 		body string
 		code string // "" = accepted
 	}{
-		{"widens to i64", "var x = 5; var y: i64 = x;", ""},
-		{"narrows to u8", "var x = 5; var y: u8 = x;", ""},
-		{"shift count", "var x = 5; var z: u64 = 1 as u64 << x;", ""},
-		{"operand of a wider op", "var x = 5; var y: i64 = x + (1 as i64);", ""},
-		{"assigned a typed value", "var x = 0; var n: i64 = 7i64; x = n; var y: i64 = x;", ""},
-		{"through another literal local", "var x = 5; var y = x + 1; var z: u64 = y;", ""},
-		{"range loop variable", "for i in 0..64 { var b: i64 = (1 as u64 << i) as i64; }", ""},
-		{"cast does not decide", "var x = 5; var f: f64 = x as f64; var y: i64 = x;", ""},
-		{"no use fixes a width", "var x = 5; var y = x * 2; return y;", ""},
-		{"compared with a settled local", "var hi = 255; var i = 250; var b: u8 = i; if (i != hi) {} var c: u8 = hi;", ""},
-		{"equal with a settled local on the left", "var hi = 255; var i = 250; var b: u8 = i; if (hi == i) {} var c: u8 = hi;", ""},
-		{"ordered with a settled local", "var hi = 255; var i = 250; var b: u8 = i; if (hi < i) {} var c: u8 = hi;", ""},
-		{"compared before either settles", "var hi = 255; var i = 250; if (i != hi) {} var b: u8 = i; var c: u8 = hi;", ""},
-		{"arithmetic with a settled local", "var hi = 255; var i = 250; var b: u8 = i; var d = hi - i; var e: u8 = d; var c: u8 = hi;", ""},
-		{"assigned a settled local", "var hi = 255; var i = 250; var b: u8 = i; hi = i; var c: u8 = hi;", ""},
-		{"compared local takes the other's width", "var hi = 255; var i = 250; var b: u8 = i; if (i != hi) {} var c: i32 = hi;", "E003"},
-		{"compared local out of range", "var hi = 300; var i = 250; var b: u8 = i; if (i != hi) {}", "E047"},
+		{"widens to i64", "let x = 5; let y: i64 = x;", ""},
+		{"narrows to u8", "let x = 5; let y: u8 = x;", ""},
+		{"shift count", "let x = 5; let z: u64 = 1 as u64 << x;", ""},
+		{"operand of a wider op", "let x = 5; let y: i64 = x + (1 as i64);", ""},
+		{"assigned a typed value", "let x = 0; let n: i64 = 7i64; x = n; let y: i64 = x;", ""},
+		{"through another literal local", "let x = 5; let y = x + 1; let z: u64 = y;", ""},
+		{"range loop variable", "for i in 0..64 { let b: i64 = (1 as u64 << i) as i64; }", ""},
+		{"cast does not decide", "let x = 5; let f: f64 = x as f64; let y: i64 = x;", ""},
+		{"no use fixes a width", "let x = 5; let y = x * 2; return y;", ""},
+		{"compared with a settled local", "let hi = 255; let i = 250; let b: u8 = i; if (i != hi) {} let c: u8 = hi;", ""},
+		{"equal with a settled local on the left", "let hi = 255; let i = 250; let b: u8 = i; if (hi == i) {} let c: u8 = hi;", ""},
+		{"ordered with a settled local", "let hi = 255; let i = 250; let b: u8 = i; if (hi < i) {} let c: u8 = hi;", ""},
+		{"compared before either settles", "let hi = 255; let i = 250; if (i != hi) {} let b: u8 = i; let c: u8 = hi;", ""},
+		{"arithmetic with a settled local", "let hi = 255; let i = 250; let b: u8 = i; let d = hi - i; let e: u8 = d; let c: u8 = hi;", ""},
+		{"assigned a settled local", "let hi = 255; let i = 250; let b: u8 = i; hi = i; let c: u8 = hi;", ""},
+		{"compared local takes the other's width", "let hi = 255; let i = 250; let b: u8 = i; if (i != hi) {} let c: i32 = hi;", "E003"},
+		{"compared local out of range", "let hi = 300; let i = 250; let b: u8 = i; if (i != hi) {}", "E047"},
 
-		{"two widths", "var x = 5; var a: i32 = x; var b: i64 = x;", "E003"},
-		{"two widths through a second local", "var x = 5; var y = x; var a: i64 = x; var b: i32 = y;", "E003"},
-		{"float is not an integer width", "var x = 5; var f: f64 = x;", "E003"},
-		{"value fixed by the literal", "var x = 300; var b: u8 = x;", "E047"},
+		{"two widths", "let x = 5; let a: i32 = x; let b: i64 = x;", "E003"},
+		{"two widths through a second local", "let x = 5; let y = x; let a: i64 = x; let b: i32 = y;", "E003"},
+		{"float is not an integer width", "let x = 5; let f: f64 = x;", "E003"},
+		{"value fixed by the literal", "let x = 300; let b: u8 = x;", "E047"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -78,10 +78,10 @@ func TestLiteralLocalTakesOneType(t *testing.T) {
 // The interpreter answered 2, x86-64 answered 1, and wasm refused the module.
 func TestLiteralLocalTwoWidthsIsRejected(t *testing.T) {
 	err := checkSource(t, `function main(): i32 {
-    var x = 2147483647;
+    let x = 2147483647;
     x = x + 1;
-    var a: i32 = x;
-    var b: i64 = x;
+    let a: i32 = x;
+    let b: i64 = x;
     if (b > 0i64) { return 1; }
     if (a < 0) { return 2; }
     return 3;
@@ -97,13 +97,13 @@ func TestLiteralLocalTwoWidthsIsRejected(t *testing.T) {
 // is left to pick a slot width of its own.
 func TestLiteralLocalSettlesEveryRead(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 {
-    var t: i64 = 0 as i64;
+    let t: i64 = 0 as i64;
     for i in 0..64 {
-        var bits: i64 = (1 as u64 << i) as i64;
+        let bits: i64 = (1 as u64 << i) as i64;
         t = t + bits;
     }
-    var k = 1;
-    var m = k + 2;
+    let k = 1;
+    let m = k + 2;
     return m;
 }
 `)

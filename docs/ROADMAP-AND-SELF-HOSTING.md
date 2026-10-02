@@ -329,7 +329,7 @@ language**:
   desugaring) formats an i32 / i64 into a fresh `[len][bytes]` block via the
   integer→string runtime; a string receiver is the identity. f-strings work
   end-to-end (the parser lowers them to `"…" + (expr).to_string() + …`);
-- **arrays of structs** — a `var pts = [Struct{…}, …]` (or a `T[]`
+- **arrays of structs** — a `let pts = [Struct{…}, …]` (or a `T[]`
   annotation) is tracked with its element struct type, so `for p in pts`
   binds `p` as that struct and `pts[i].field` resolves (found + fixed via an
   integration capstone — word count, a reduce taking an `fn`, and a
@@ -349,7 +349,7 @@ unaffected.
 A third pass (struct spread-update, struct-union `match` + a method on the
 bound variant, a closure capturing an array, 2-D arrays, `Option[Option]`,
 string recursion, split/join round-trip, nested loops with `break`) mostly
-ran first-try and turned up one real gap: **`var (a, b) = …` tuple
+ran first-try and turned up one real gap: **`let (a, b) = …` tuple
 destructuring** wasn't lowered (the comma-encoded binding fell through to a
 single bogus local). The StmtVar path now splits the two names and binds
 them from the tuple's slots (`a = t.0`, `b = t.1`).
@@ -428,7 +428,7 @@ bool-`match`, so the parser / native changes stay byte-identical.
 
 A tenth pass caught a **returned-closure** bug: a function returning a
 closure (`function make_adder(n: i32): fn { return function(x) {…}; }`)
-worked, but binding its result — `var add5 = make_adder(5)` — then
+worked, but binding its result — `let add5 = make_adder(5)` — then
 calling `add5(37)` emitted a *direct* `(call $add5 …)` to a function
 that doesn't exist. The wasm backend only treated a local as
 closure-valued (`fn_names`) when it was bound to a lambda *literal*; a
@@ -436,7 +436,7 @@ local bound to a call of an `fn`-returning function was missed, so the
 call site took the direct-call path instead of `call_indirect`. Fixed by
 threading the set of `fn`-returning free functions
 (`fn_returning_func_names`) into `collect_fn_var_names`, which now also
-marks `var f = g(…)` when `g`'s return type is the coarse closure
+marks `let f = g(…)` when `g`'s return type is the coarse closure
 spelling `fn`. wasm-only change (no parser / native edits), and no
 self-host source function returns bare `fn`, so the fixpoint stays
 byte-identical.
@@ -453,12 +453,12 @@ the helper name. Fixed by recursing `expr_uses_divrem` into every
 compound node (array, tuple, index, slice, struct-lit, field-access).
 wasm-only change; fixpoint byte-identical.
 
-A twelfth pass extended the returned-closure fix to **methods**: `var f =
+A twelfth pass extended the returned-closure fix to **methods**: `let f =
 obj.m()` where the receiver method `m` returns a closure was still lowered
 as a direct `(call $f …)`. The tenth-pass fix only recognised
 *free-function* calls (`fn_returning_func_names` + an `ExprIdent` callee in
 `collect_fn_var_names`). Added `fn_returning_method_names` and an
-`ExprFieldAccess`-callee case so `var f = obj.m()` is marked closure-valued
+`ExprFieldAccess`-callee case so `let f = obj.m()` is marked closure-valued
 and flows through `call_indirect`. (Surfaced while probing with the
 Go-compiler-accurate `(i32) => i32` function-type spelling — the Go
 compiler rejects the bare `fn` type as non-callable, so probes must use the
@@ -468,11 +468,11 @@ inside such a lambda (`return function(x) { return x + a.base; }`) remains a
 separate, deeper capture-typing gap, tracked for a later pass.
 
 A thirteenth pass found a **parser** gap (not a backend one): a
-nested-array *type annotation* — `var grid: i32[][] = …` — dropped the
-`var` binding. `parse_type_name` consumed only the first `[…]` group, so
+nested-array *type annotation* — `let grid: i32[][] = …` — dropped the
+`let` binding. `parse_type_name` consumed only the first `[…]` group, so
 the second `[]` was left on the cursor and the surrounding declaration
 misaligned. (The nested-array literal + iteration already worked when
-written unannotated, e.g. `var grid = [[1,2],[3,4]]`.) Fixed by consuming
+written unannotated, e.g. `let grid = [[1,2],[3,4]]`.) Fixed by consuming
 trailing `[]` array suffixes after the first bracket group, so `i32[][]`,
 `T[][][]`, `Map[K, V][]`, etc. parse to a complete type name. This is a
 parser edit (shared by every backend), so the fixpoint gate is the guard;
@@ -481,7 +481,7 @@ byte-identical.
 
 A fourteenth pass closed the **struct-capture-in-lambda** gap flagged in
 the twelfth: a lambda that captures a struct value and reads one of its
-fields — `var f = function() { return p.x; }` over a struct local `p`, or
+fields — `let f = function() { return p.x; }` over a struct local `p`, or
 the method-receiver form `return function(x) { return x + a.base; }` —
 emitted a bogus `(i32.const 0)` for the field read. The capture pointer
 loaded fine from the env box, but the captured name wasn't struct-typed
@@ -495,7 +495,7 @@ struct params, returned closures, and method receivers. wasm-only;
 fixpoint byte-identical.
 
 A fifteenth pass closed the **tuple-destructure-struct-typing** gap: a
-`var (p, n) = t` whose tuple element is a struct left the binding untyped,
+`let (p, n) = t` whose tuple element is a struct left the binding untyped,
 so `p.field` read a bogus `(i32.const 0)`. The destructure-emit (loading
 `t.0` / `t.1` as i32 pointers) was already correct; only the *type
 tracking* of the new bindings was missing. Fixed by typing each
@@ -504,7 +504,7 @@ resolves the element type from an inline tuple literal, a tuple-returning
 free function or method (parsed from its return-type spelling), or a
 tracked tuple local (a new `tup_svtypes` Ctx field, populated in statement
 order during `collect_str_locals_stmts` so an intermediate
-`var t = (P{…}, 1); var (p, n) = t;` works too). wasm-only; fixpoint
+`let t = (P{…}, 1); let (p, n) = t;` works too). wasm-only; fixpoint
 byte-identical.
 
 Gated by 482 differential cases as of this writing. What remained for the
@@ -935,7 +935,7 @@ differential cases in total.
 The at-scale probe also turned up a self-host **parser** gap (and fixed
 it): a parenthesized type followed by `[]` — a tuple array `(i32, i32)[]`
 or a closure array `(() => i32)[]` — left the trailing `[]` on the cursor
-after `parse_type_name`'s paren branch, so the `var`'s binding local was
+after `parse_type_name`'s paren branch, so the `let`'s binding local was
 never declared ("unknown local $ps"). `parse_type_name` now consumes the
 trailing `[]` (`consume_array_suffix`), which fixes **array-of-tuples**
 end-to-end (Go already handled it; now the self-host does too — index,
@@ -943,8 +943,8 @@ end-to-end (Go already handled it; now the self-host does too — index,
 work fully too: the paren reader treats a `=>` *inside* the parens as a
 function type (coarsed to `fn`, so `(() => i32)[]` → `fn[]`), and
 `wasm.fern` tracks `fn[]` locals/params (`collect_fn_arr_names`) so a
-closure read from an element — `var c = fns[i]` or `for f in fns` — is
-itself callable through `call_indirect`. `var c = fns[0]; c()`,
+closure read from an element — `let c = fns[i]` or `for f in fns` — is
+itself callable through `call_indirect`. `let c = fns[0]; c()`,
 `for f in fns { f() }`, and `((i32) => i32)[]` with args all run and match
 the Go compiler. (The bare `fn` type stays intentionally opaque — not
 callable; doesn't accept a concrete lambda on return.) Both fixes are in
@@ -956,7 +956,7 @@ remains is packaging, not language" claim above is not yet absolute):
 backends. The wasm / native array representation uses a fixed **4-byte
 element slot** (`[len:i32][cap:i32][elems: 4 bytes each]`), so an `i64[]`
 element is stored / loaded as an i32. Small i64 values (< 2³¹) happen to
-round-trip — `var xs: i64[] = [10, 20, 30]` sums correctly — but a
+round-trip — `let xs: i64[] = [10, 20, 30]` sums correctly — but a
 literal that doesn't fit in i32 is emitted as an out-of-range
 `(i32.const 5000000000)` and the wasm module fails to load; a large value
 read back is truncated. The Go compiler stores `i64[]` elements in 8-byte
@@ -1002,7 +1002,7 @@ An eighteenth pass landed the first leg of the 8-byte-slot series: the
 **wasm backend now stores `i64[]` / `f64[]` elements in 8-byte slots**
 with `i64`/`f64` load/store. A new `array_elem_kind` classifier (backed by
 `i64_arr_names` / `f64_arr_names` Ctx sets, seeded from `i64[]`/`f64[]`
-params + var decls + wide-array-returning calls/slices) drives the stride
+params + let decls + wide-array-returning calls/slices) drives the stride
 (`elem_slot_size`) and op (`elem_load_op` / `elem_store_op`) at every
 element site: the literal emit (`emit_array_literal_kind`, taking the
 declared kind so a bare-integer `i64[]` literal stores wide), the index
@@ -1122,7 +1122,7 @@ function eval(e: Expr): i32 {
 }
 
 function main(): i32 {
-    var e: Expr = Add { l: 1, r: 2 };  // implicit wrap
+    let e: Expr = Add { l: 1, r: 2 };  // implicit wrap
     return eval(e);
 }
 ```

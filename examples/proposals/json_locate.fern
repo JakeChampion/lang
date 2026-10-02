@@ -24,10 +24,10 @@ struct Loc { offset: i32, line: i32, col: i32 }
 struct Scan { pos: i32, err: i32 }
 
 function line_col(s: string, off: i32): Loc {
-  var line: i32 = 1;
-  var col: i32 = 1;
-  var i: i32 = 0;
-  var stop: i32 = off;
+  let line: i32 = 1;
+  let col: i32 = 1;
+  let i: i32 = 0;
+  let stop: i32 = off;
   if (stop > s.len()) {
     stop = s.len();
   }
@@ -48,7 +48,7 @@ function is_ws(b: i32): boolean {
 }
 
 function skip_ws(s: string, p: Scan): Scan {
-  var i: i32 = p.pos;
+  let i: i32 = p.pos;
   while (i < s.len() && is_ws(s[i] as i32)) {
     i = i + 1;
   }
@@ -76,9 +76,9 @@ function scan_string(s: string, p: Scan): Scan {
   if (p.pos >= s.len() || s[p.pos] as i32 != 34) {
     return fail(p);
   }
-  var i: i32 = p.pos + 1;
+  let i: i32 = p.pos + 1;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 92) {
       i = i + 2;
       continue;
@@ -92,11 +92,11 @@ function scan_string(s: string, p: Scan): Scan {
 }
 
 function scan_number(s: string, p: Scan): Scan {
-  var i: i32 = p.pos;
+  let i: i32 = p.pos;
   if (i < s.len() && s[i] as i32 == 45) {
     i = i + 1;
   }
-  var digits: i32 = 0;
+  let digits: i32 = 0;
   while (i < s.len() && s[i] as i32 >= 48 && s[i] as i32 <= 57) {
     i = i + 1;
     digits = digits + 1;
@@ -106,7 +106,7 @@ function scan_number(s: string, p: Scan): Scan {
   }
   if (i < s.len() && s[i] as i32 == 46) {
     i = i + 1;
-    var frac: i32 = 0;
+    let frac: i32 = 0;
     while (i < s.len() && s[i] as i32 >= 48 && s[i] as i32 <= 57) {
       i = i + 1;
       frac = frac + 1;
@@ -122,11 +122,11 @@ function scan_value(s: string, p0: Scan, depth: i32): Scan {
   if (depth > 64) {
     return fail(p0);
   }
-  var p: Scan = skip_ws(s, p0);
+  let p: Scan = skip_ws(s, p0);
   if (p.pos >= s.len()) {
     return fail(p);
   }
-  var b: i32 = s[p.pos] as i32;
+  let b: i32 = s[p.pos] as i32;
 
   if (b == 34) {
     return scan_string(s, p);
@@ -158,7 +158,7 @@ function scan_value(s: string, p0: Scan, depth: i32): Scan {
       if (p.pos >= s.len()) {
         return fail(p);
       }
-      var c: i32 = s[p.pos] as i32;
+      let c: i32 = s[p.pos] as i32;
       if (c == 44) {
         p = Scan { pos: p.pos + 1, err: p.err };
         continue;
@@ -193,7 +193,7 @@ function scan_value(s: string, p0: Scan, depth: i32): Scan {
       if (p.pos >= s.len()) {
         return fail(p);
       }
-      var c2: i32 = s[p.pos] as i32;
+      let c2: i32 = s[p.pos] as i32;
       if (c2 == 44) {
         p = Scan { pos: p.pos + 1, err: p.err };
         continue;
@@ -211,7 +211,7 @@ function scan_value(s: string, p0: Scan, depth: i32): Scan {
 // Locate the first syntax error, or a Loc with offset -1 when the whole
 // document is a single well-formed value.
 function locate(s: string): Loc {
-  var p: Scan = scan_value(s, Scan { pos: 0, err: -1 }, 0);
+  let p: Scan = scan_value(s, Scan { pos: 0, err: -1 }, 0);
   if (p.err >= 0) {
     return line_col(s, p.err);
   }
@@ -252,9 +252,9 @@ function bad_docs(): string[] {
 
 // Every well-formed document must be accepted by BOTH implementations.
 function test_good_documents_agree(): test.TestOutcome {
-  var xs: string[] = good_docs();
+  let xs: string[] = good_docs();
   for i in 0..xs.len() {
-    var loc: Loc = locate(xs[i]);
+    let loc: Loc = locate(xs[i]);
     if (loc.offset >= 0) {
       return test.fail("scanner rejected good doc " + i.to_string()
         + " at offset " + loc.offset.to_string());
@@ -274,9 +274,9 @@ function test_good_documents_agree(): test.TestOutcome {
 // This is the cross-check: two independent scanners agreeing on where a
 // document goes wrong is much stronger evidence than either alone.
 function test_bad_documents_agree_on_the_offset(): test.TestOutcome {
-  var xs: string[] = bad_docs();
+  let xs: string[] = bad_docs();
   for i in 0..xs.len() {
-    var loc: Loc = locate(xs[i]);
+    let loc: Loc = locate(xs[i]);
     if (loc.offset < 0) {
       return test.fail("scanner accepted bad doc " + i.to_string());
     }
@@ -299,7 +299,7 @@ function test_bad_documents_agree_on_the_offset(): test.TestOutcome {
 // The location must be derived from the offset consistently: line and
 // column are 1-based, and re-deriving them from the offset must agree.
 function test_line_and_column_are_derived_from_the_offset(): test.TestOutcome {
-  var xs: string[] = bad_docs();
+  let xs: string[] = bad_docs();
   for i in 0..xs.len() {
     match (json.json_parse_result(xs[i])) {
       Ok(_) => {
@@ -311,7 +311,7 @@ function test_line_and_column_are_derived_from_the_offset(): test.TestOutcome {
             + e.line.to_string() + " col " + e.col.to_string()
             + "; both are 1-based");
         }
-        var mine: Loc = line_col(xs[i], e.offset);
+        let mine: Loc = line_col(xs[i], e.offset);
         if (mine.line != e.line || mine.col != e.col) {
           return test.fail("doc " + i.to_string() + ": std/json says "
             + e.line.to_string() + ":" + e.col.to_string()
@@ -327,7 +327,7 @@ function test_line_and_column_are_derived_from_the_offset(): test.TestOutcome {
 // A multi-line document must report the line the error is actually on,
 // not line 1 — the whole reason for carrying a line at all.
 function test_the_reported_line_is_the_offending_one(): test.TestOutcome {
-  var doc: string = "{\n  \"a\": 1,\n  \"b\": ,\n}";
+  let doc: string = "{\n  \"a\": 1,\n  \"b\": ,\n}";
   match (json.json_parse_result(doc)) {
     Ok(_) => {
       return test.fail("malformed document parsed");
@@ -347,7 +347,7 @@ function test_the_reported_line_is_the_offending_one(): test.TestOutcome {
 // json_parse keeps its Option contract exactly: the two must agree on
 // accept/reject for every fixture, since one now delegates to the other.
 function test_json_parse_still_agrees(): test.TestOutcome {
-  var good: string[] = good_docs();
+  let good: string[] = good_docs();
   for i in 0..good.len() {
     match (json.json_parse(good[i])) {
       Some(_) => {},
@@ -356,7 +356,7 @@ function test_json_parse_still_agrees(): test.TestOutcome {
       }
     }
   }
-  var bad: string[] = bad_docs();
+  let bad: string[] = bad_docs();
   for j in 0..bad.len() {
     match (json.json_parse(bad[j])) {
       Some(_) => {
@@ -372,7 +372,7 @@ function test_json_parse_still_agrees(): test.TestOutcome {
 
 function main(): i32 {
   eprint("json_locate — locating the first syntax error in a document");
-  var xs: string[] = bad_docs();
+  let xs: string[] = bad_docs();
   for i in 0..xs.len() {
     match (json.json_parse_result(xs[i])) {
       Ok(_) => {
@@ -385,7 +385,7 @@ function main(): i32 {
     }
   }
 
-  var r: test.TestRunner = test.test_new("json_locate");
+  let r: test.TestRunner = test.test_new("json_locate");
   r = r.it("good documents agree", test_good_documents_agree);
   r = r.it("bad documents agree on the offset", test_bad_documents_agree_on_the_offset);
   r = r.it("line and column are derived from the offset", test_line_and_column_are_derived_from_the_offset);

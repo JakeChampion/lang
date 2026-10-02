@@ -36,8 +36,8 @@ var annotateSliceCases = []struct {
 	// Gap 1: the source is an if-expression (a 0-arg IIFE after desugar), which
 	// expr_is_arr_src does not recognise. Bailed pre-carrier.
 	{"slice_of_if_expr_f64", `function main(): i32 {
-    var c: boolean = true;
-    var xs: [f64] = (if (c) { [1.5, 2.5, 4.5] } else { [3.5, 4.5, 5.5] })[0:2];
+    let c: boolean = true;
+    let xs: [f64] = (if (c) { [1.5, 2.5, 4.5] } else { [3.5, 4.5, 5.5] })[0:2];
     return (xs[1] * 10.0) as i32;
 }`}, // 25
 	// Gap 2: the source is a struct field reached through a call result. Bailed
@@ -45,7 +45,7 @@ var annotateSliceCases = []struct {
 	{"slice_of_call_field_f64", `struct Box { data: f64[] }
 function mk(): Box { return Box { data: [1.5, 2.5, 4.5] }; }
 function main(): i32 {
-    var xs: [f64] = mk().data[0:2];
+    let xs: [f64] = mk().data[0:2];
     return (xs[1] * 10.0) as i32;
 }`}, // 25
 	// Gap 3: the i64 sibling — exercises BOTH halves, since the element width
@@ -53,34 +53,34 @@ function main(): i32 {
 	{"slice_of_call_field_i64", `struct Box { data: i64[] }
 function mk(): Box { return Box { data: [7000000000, 9000000000, 1] }; }
 function main(): i32 {
-    var xs: [i64] = mk().data[0:2];
+    let xs: [i64] = mk().data[0:2];
     return (xs[1] / 1000000000) as i32;
 }`}, // 9
 	// Negative guard: the same if-expression shape over an i32[] must stay
 	// 4-byte. A leaf that widened on any non-empty tag would break this.
 	{"slice_of_if_expr_i32_narrow", `function main(): i32 {
-    var c: boolean = true;
-    var xs: [i32] = (if (c) { [10, 20, 30] } else { [40, 50, 60] })[0:2];
+    let c: boolean = true;
+    let xs: [i32] = (if (c) { [10, 20, 30] } else { [40, 50, 60] })[0:2];
     return xs[1] + 22;
 }`}, // 42
 	// Negative guard: a string[] element is pointer-shaped, not 8-byte-numeric.
 	{"slice_of_call_field_string", `struct Box { data: string[] }
 function mk(): Box { return Box { data: ["ab", "cd", "ef"] }; }
 function main(): i32 {
-    var xs: [string] = mk().data[0:2];
+    let xs: [string] = mk().data[0:2];
     return xs[1].len() + 40;
 }`}, // 42
 	// Structural path, unchanged: a slice of a named f64[] local. The walk
 	// resolves this from the slot, so the tag must never be consulted.
 	{"slice_of_local_f64", `function main(): i32 {
-    var a: f64[] = [1.5, 2.5, 4.5];
-    var xs: [f64] = a[0:2];
+    let a: f64[] = [1.5, 2.5, 4.5];
+    let xs: [f64] = a[0:2];
     return (xs[1] * 10.0) as i32;
 }`}, // 25
 	// Structural path, unchanged: a slice of a nested array element `m[1][0:2]`.
 	{"slice_of_nested_index_f64", `function main(): i32 {
-    var m: f64[][] = [[1.5, 2.5, 4.5], [9.5, 8.5, 7.5]];
-    var xs: [f64] = m[1][0:2];
+    let m: f64[][] = [[1.5, 2.5, 4.5], [9.5, 8.5, 7.5]];
+    let xs: [f64] = m[1][0:2];
     return (xs[1] * 10.0) as i32;
 }`}, // 85
 }

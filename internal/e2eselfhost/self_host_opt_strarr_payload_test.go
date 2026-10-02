@@ -85,10 +85,10 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 	// most of the bytes.
 	t.Run("option_string_array", func(t *testing.T) {
 		balanced(t, "osa_option", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 400) {
-        var o: Option[string[]] = Some(["a" + "b", "c"]);
+        let o: Option[string[]] = Some(["a" + "b", "c"]);
         match (o) { Some(xs) => { acc = (acc + xs.len()) % 251; }, None => {} }
         i = i + 1;
     }
@@ -101,10 +101,10 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 	// candidate's recorded variant is what makes offset 8 a pointer here.
 	t.Run("result_ok_string_array", func(t *testing.T) {
 		balanced(t, "osa_result", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 400) {
-        var o: Result[string[], string] = Ok(["a" + "b", "c"]);
+        let o: Result[string[], string] = Ok(["a" + "b", "c"]);
         match (o) { Ok(xs) => { acc = (acc + xs.len()) % 251; }, Err(e) => { acc = acc + e.len(); } }
         i = i + 1;
     }
@@ -117,10 +117,10 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 	// since the class existed.
 	t.Run("unannotated_literal", func(t *testing.T) {
 		balanced(t, "osa_unannot", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 400) {
-        var o = Some(["ab", "cde"]);
+        let o = Some(["ab", "cde"]);
         match (o) { Some(xs) => { acc = (acc + xs.len()) % 251; }, None => {} }
         i = i + 1;
     }
@@ -133,10 +133,10 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 	// and 2800 % 251 = 39.
 	t.Run("element_reads_exact_value", func(t *testing.T) {
 		allocs, frees, live := countsRC(t, "osa_reads", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 400) {
-        var o: Option[string[]] = Some(["ab", "cde"]);
+        let o: Option[string[]] = Some(["ab", "cde"]);
         match (o) { Some(xs) => { acc = (acc + xs[0].len() + xs[1].len() + xs.len()) % 251; }, None => {} }
         i = i + 1;
     }
@@ -156,10 +156,10 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 	// through the element walk would surface here rather than as a silent leak.
 	t.Run("scalar_array_control", func(t *testing.T) {
 		balanced(t, "osa_control", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 400) {
-        var o: Option[i32[]] = Some([i, i + 1]);
+        let o: Option[i32[]] = Some([i, i + 1]);
         match (o) { Some(xs) => { acc = (acc + xs[0]) % 251; }, None => {} }
         i = i + 1;
     }
@@ -177,11 +177,11 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 	// match. Freeing its elements would dangle.
 	t.Run("aliased_payload_refused", func(t *testing.T) {
 		allocs, frees, live := countsRC(t, "osa_alias", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var xs: string[] = ["a" + "b", "c"];
-        var o: Option[string[]] = Some(xs);
+        let xs: string[] = ["a" + "b", "c"];
+        let o: Option[string[]] = Some(xs);
         match (o) { Some(ys) => { acc = (acc + ys.len()) % 251; }, None => {} }
         acc = (acc + xs[0].len()) % 251;
         i = i + 1;
@@ -197,11 +197,11 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 	// An ESCAPING arm binding: the payload outlives the arm through `held`.
 	t.Run("escaping_arm_binding_refused", func(t *testing.T) {
 		allocs, frees, live := countsRC(t, "osa_escape", `function main(): i32 {
-    var acc: i32 = 0;
-    var held: string[] = [];
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let held: string[] = [];
+    let i: i32 = 0;
     while (i < 200) {
-        var o: Option[string[]] = Some(["a" + "b", "c"]);
+        let o: Option[string[]] = Some(["a" + "b", "c"]);
         match (o) { Some(ys) => { held = ys; }, None => {} }
         acc = (acc + held.len()) % 251;
         i = i + 1;

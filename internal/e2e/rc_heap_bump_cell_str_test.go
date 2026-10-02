@@ -31,37 +31,37 @@ function wide(k: i32): string { return "a-value-well-past-the-inline-threshold-"
 function eat(s: string): i32 { return s.len(); }
 
 function c_len(k: i32): i32 {
-    var c: Cell[string] = cell_new(wide(k));
+    let c: Cell[string] = cell_new(wide(k));
     return c.get().len();
 }
 function c_eq(k: i32): i32 {
-    var c: Cell[string] = cell_new(wide(k));
+    let c: Cell[string] = cell_new(wide(k));
     if (c.get() == "zz") { return 2; }
     return 1;
 }
 function c_concat(k: i32): i32 {
-    var c: Cell[string] = cell_new(wide(k));
-    var s: string = c.get() + "y";
+    let c: Cell[string] = cell_new(wide(k));
+    let s: string = c.get() + "y";
     return s.len();
 }
 function c_arg(k: i32): i32 {
-    var c: Cell[string] = cell_new(wide(k));
+    let c: Cell[string] = cell_new(wide(k));
     return eat(c.get());
 }
 function c_set(k: i32): i32 {
-    var c: Cell[string] = cell_new(wide(k));
+    let c: Cell[string] = cell_new(wide(k));
     c.set(wide(k + 1));
-    var s: string = c.get();
+    let s: string = c.get();
     return s.len();
 }
 function c_unread(k: i32): i32 {
-    var c: Cell[string] = cell_new(wide(k));
+    let c: Cell[string] = cell_new(wide(k));
     return k - k + 1;
 }
 
 function churn(n: i32, which: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         if (which == 1) { t = t + c_len(i); }
         if (which == 2) { t = t + c_eq(i); }
@@ -75,16 +75,16 @@ function churn(n: i32, which: i32): i32 {
 }
 
 function perRound(which: i32): i32 {
-    var warm: i32 = churn(100, which);
+    let warm: i32 = churn(100, which);
     if (warm <= 0) { return 99; }
-    var before: i64 = __heap_bump_bytes();
-    var again: i32 = churn(200, which);
+    let before: i64 = __heap_bump_bytes();
+    let again: i32 = churn(200, which);
     if (again <= 0) { return 99; }
     return ((__heap_bump_bytes() - before) as i32) / 200;
 }
 
 function main(): i32 {
-    var which: i32 = 1;
+    let which: i32 = 1;
     while (which <= 6) {
         if (perRound(which) != 0) { return which; }
         which = which + 1;

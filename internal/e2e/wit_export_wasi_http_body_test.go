@@ -43,7 +43,7 @@ function set_response_ok(out: own ResponseOutparam, resp: own OutgoingResponse):
 
 @export("wasi:http/incoming-handler@0.2.0", "handle")
 function on_request(request: own IncomingRequest, response_out: own ResponseOutparam): void {
-	var resp: own OutgoingResponse = response_new(fields_new());
+	let resp: own OutgoingResponse = response_new(fields_new());
 	match (response_body(resp)) {
 		Ok(body) => {
 			match (body_write(body)) {

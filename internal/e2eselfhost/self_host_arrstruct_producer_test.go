@@ -7,21 +7,21 @@ import (
 // --- An array-of-structs from a producer that returns a LOCAL ----------------
 //
 // The arrstruct twin of #7335. `collect_fresh_arrstruct_names` admits
-// `var g: Val[] = mk(..)` off the "ARRSTRUCTF:" registry, and
+// `let g: Val[] = mk(..)` off the "ARRSTRUCTF:" registry, and
 // `fn_returns_fresh_arrstruct` built that registry by proving every return of
 // the callee is a fresh array LITERAL — syntactically. The append-built form,
 // which is how a producer that computes its elements has to be written, was
 // refused:
 //
 //	function mk(i: i32): Val[] { return [Val { .. }, Val { .. }]; }        clean
-//	function mk(i: i32): Val[] { var vals: Val[] = [];
+//	function mk(i: i32): Val[] { let vals: Val[] = [];
 //	                             vals = vals.append(Val { .. });
 //	                             return vals; }                            leaks
 //
 // Same caller either way. The refused form left the consumer's slot uncredited,
 // so its exit sweep took the shallow buffer dec: every element box and every
 // element ARRAY field stranded. The leak needs no struct literal at the call
-// site to appear — `var src: Val[] = mk(i); return src.len() + src[0].k;` is
+// site to appear — `let src: Val[] = mk(i); return src.len() + src[0].k;` is
 // enough, which is what makes this an ordinary-code leak rather than a matrix
 // corner. The construction-retain matrix's struct_arr__local / __param cells
 // read as a construction-retain hole and were this instead: their `mkv` is
@@ -46,7 +46,7 @@ type arrstructProdCase struct {
 	balance bool // assert allocs == frees at live_bytes 0
 }
 
-const arrstructProdMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
+const arrstructProdMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 200) { t = t + round(i); i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
@@ -57,8 +57,8 @@ func arrstructProdCases() []arrstructProdCase {
 		{
 			// The repro: the producer builds by self-append and returns the local.
 			name: "producer_returns_local",
-			src: arrstructProdDecl + `function mk(i: i32): Val[] { var vals: Val[] = []; vals = vals.append(Val { kids: [i, i + 1], k: i }); vals = vals.append(Val { kids: [i + 2], k: i }); return vals; }
-function round(i: i32): i32 { var v: Val[] = mk(i); return v.len() + v[0].k; }` + arrstructProdMain,
+			src: arrstructProdDecl + `function mk(i: i32): Val[] { let vals: Val[] = []; vals = vals.append(Val { kids: [i, i + 1], k: i }); vals = vals.append(Val { kids: [i + 2], k: i }); return vals; }
+function round(i: i32): i32 { let v: Val[] = mk(i); return v.len() + v[0].k; }` + arrstructProdMain,
 			want: 48, balance: true,
 		},
 		{
@@ -66,14 +66,14 @@ function round(i: i32): i32 { var v: Val[] = mk(i); return v.len() + v[0].k; }` 
 			// this change, and the diff that isolated the cause.
 			name: "producer_returns_literal",
 			src: arrstructProdDecl + `function mk(i: i32): Val[] { return [Val { kids: [i, i + 1], k: i }, Val { kids: [i + 2], k: i }]; }
-function round(i: i32): i32 { var v: Val[] = mk(i); return v.len() + v[0].k; }` + arrstructProdMain,
+function round(i: i32): i32 { let v: Val[] = mk(i); return v.len() + v[0].k; }` + arrstructProdMain,
 			want: 48, balance: true,
 		},
 		{
 			// No producer at all: the literal bound straight into the local. Always
 			// credited; must stay so.
 			name: "literal_init",
-			src: arrstructProdDecl + `function round(i: i32): i32 { var v: Val[] = [Val { kids: [i, i + 1], k: i }, Val { kids: [i + 2], k: i }]; return v.len() + v[0].k; }` +
+			src: arrstructProdDecl + `function round(i: i32): i32 { let v: Val[] = [Val { kids: [i, i + 1], k: i }, Val { kids: [i + 2], k: i }]; return v.len() + v[0].k; }` +
 				arrstructProdMain,
 			want: 48, balance: true,
 		},
@@ -84,14 +84,14 @@ function round(i: i32): i32 { var v: Val[] = mk(i); return v.len() + v[0].k; }` 
 			// so the alias cannot inherit it — asserted, not assumed. 99 here would
 			// be main's `b` freed under it, and no byte count would say so.
 			name: "sibling_alias",
-			src: arrstructProdDecl + `function mk(i: i32): Val[] { var vals: Val[] = []; vals = vals.append(Val { kids: [i, i + 1], k: i }); return vals; }
+			src: arrstructProdDecl + `function mk(i: i32): Val[] { let vals: Val[] = []; vals = vals.append(Val { kids: [i, i + 1], k: i }); return vals; }
 function round(base: Val[], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: Val[] = mk(i);  t = t + v.len() + v[0].k; }
-    if (i % 2 == 1) { var v: Val[] = base;   t = t + v.len() + v[0].k; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: Val[] = mk(i);  t = t + v.len() + v[0].k; }
+    if (i % 2 == 1) { let v: Val[] = base;   t = t + v.len() + v[0].k; }
     return t;
 }
-function main(): i32 { var b: Val[] = [Val { kids: [7, 8], k: 9 }]; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let b: Val[] = [Val { kids: [7, 8], k: 9 }]; let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 12,
 		},
 		{
@@ -99,8 +99,8 @@ function main(): i32 { var b: Val[] = [Val { kids: [7, 8], k: 9 }]; var t: i32 =
 			// so the returned container's counted co-owner is a local of the frame
 			// being left. Admitting it would free `e`'s box twice. Stays a safe leak.
 			name: "producer_bare_ident_elem",
-			src: arrstructProdDecl + `function mk(i: i32): Val[] { var e: Val = Val { kids: [i, i + 1], k: i }; var vals: Val[] = []; vals = vals.append(e); return vals; }
-function round(i: i32): i32 { var v: Val[] = mk(i); return v.len() + v[0].k; }` + arrstructProdMain,
+			src: arrstructProdDecl + `function mk(i: i32): Val[] { let e: Val = Val { kids: [i, i + 1], k: i }; let vals: Val[] = []; vals = vals.append(e); return vals; }
+function round(i: i32): i32 { let v: Val[] = mk(i); return v.len() + v[0].k; }` + arrstructProdMain,
 			want: 14,
 		},
 		{
@@ -109,8 +109,8 @@ function round(i: i32): i32 { var v: Val[] = mk(i); return v.len() + v[0].k; }` 
 			// own outright.
 			name: "producer_foreign_rebind",
 			src: arrstructProdDecl + `function other(i: i32): Val[] { return [Val { kids: [i], k: i }]; }
-function mk(i: i32): Val[] { var vals: Val[] = []; vals = vals.append(Val { kids: [i, i + 1], k: i }); if (i % 3 == 0) { vals = other(i); } return vals; }
-function round(i: i32): i32 { var v: Val[] = mk(i); return v.len() + v[0].k; }` + arrstructProdMain,
+function mk(i: i32): Val[] { let vals: Val[] = []; vals = vals.append(Val { kids: [i, i + 1], k: i }); if (i % 3 == 0) { vals = other(i); } return vals; }
+function round(i: i32): i32 { let v: Val[] = mk(i); return v.len() + v[0].k; }` + arrstructProdMain,
 			want: 14,
 		},
 		{
@@ -118,8 +118,8 @@ function round(i: i32): i32 { var v: Val[] = mk(i); return v.len() + v[0].k; }` 
 			// callee cannot promise the caller owns it outright.
 			name: "producer_local_escapes",
 			src: arrstructProdDecl + `function sink(vs: Val[]): i32 { return vs.len(); }
-function mk(i: i32): Val[] { var vals: Val[] = []; vals = vals.append(Val { kids: [i, i + 1], k: i }); var n: i32 = sink(vals); return vals; }
-function round(i: i32): i32 { var v: Val[] = mk(i); return v.len() + v[0].k; }` + arrstructProdMain,
+function mk(i: i32): Val[] { let vals: Val[] = []; vals = vals.append(Val { kids: [i, i + 1], k: i }); let n: i32 = sink(vals); return vals; }
+function round(i: i32): i32 { let v: Val[] = mk(i); return v.len() + v[0].k; }` + arrstructProdMain,
 			want: 14,
 		},
 	}

@@ -28,11 +28,11 @@ import (
 func arrOfEnumBumpSrc(n string) string {
 	return `enum E { Arr(i32[]), Empty }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var xs: E[] = [Arr([i, i + 1, i + 2]), Arr([i + 3])];
+        let xs: E[] = [Arr([i, i + 1, i + 2]), Arr([i + 3])];
         match (xs[0]) {
             Arr(a) => { acc = acc + a[0]; },
             Empty => {},
@@ -48,11 +48,11 @@ function main(): i32 {
 // array — returns 0 iff value-correct AND no over-release.
 const arrOfEnumUnderflowSrc = `enum E { Arr(i32[]), Empty }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var a: i32[] = [i, i + 1, i + 2];
-        var xs: E[] = [Arr(a), Empty];
+        let a: i32[] = [i, i + 1, i + 2];
+        let xs: E[] = [Arr(a), Empty];
         acc = acc + a[0] + a[2];
         i = i + 1;
     }

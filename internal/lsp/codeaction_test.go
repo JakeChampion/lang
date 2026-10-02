@@ -12,7 +12,7 @@ import (
 // the replacement — and applying it to the document text produces the
 // corrected program.
 func TestCodeActionQuickfixFromDiagnosticData(t *testing.T) {
-	src := "function main(): i32 { var count = 1; return kount; }\n"
+	src := "function main(): i32 { let count = 1; return kount; }\n"
 	s := NewServer()
 	s.updateDoc("file:///t", src)
 	state := s.docs["file:///t"]

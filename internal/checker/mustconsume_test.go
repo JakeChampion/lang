@@ -37,16 +37,16 @@ enum Pending { Reply(string), Close }
 func TestMustConsumeCleanShapes(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"consumed_on_both_arms", ticketDecl + `function f(n: i32): void {
-    var t: Ticket = Ticket { id: 1 };
+    let t: Ticket = Ticket { id: 1 };
     if (n > 0) { sink(t); } else { sink(t); }
 }`},
 		{"returned", ticketDecl + `function f(): Ticket {
-    var t: Ticket = Ticket { id: 1 };
+    let t: Ticket = Ticket { id: 1 };
     return t;
 }`},
 		{"transferred_to_local", ticketDecl + `function f(): Ticket {
-    var t: Ticket = Ticket { id: 1 };
-    var u: Ticket = t;
+    let t: Ticket = Ticket { id: 1 };
+    let u: Ticket = t;
     return u;
 }`},
 		{"own_param_is_the_sink", ticketDecl + `function take(own t: Ticket): void {
@@ -66,14 +66,14 @@ function f(): void {
     return 0;
 }`},
 		{"consumed_before_early_return", ticketDecl + `function f(n: i32): i32 {
-    var t: Ticket = Ticket { id: 1 };
+    let t: Ticket = Ticket { id: 1 };
     sink(t);
     if (n > 5) { return 1; }
     return 0;
 }`},
 		{"field_read_is_neutral", ticketDecl + `function f(): i32 {
-    var t: Ticket = Ticket { id: 7 };
-    var n: i32 = t.id;
+    let t: Ticket = Ticket { id: 7 };
+    let n: i32 = t.id;
     sink(t);
     return n;
 }`},
@@ -81,13 +81,13 @@ function f(): void {
 struct Envelope { inner: Ticket }
 function open_env(e: Envelope): Envelope { return e; }
 function f(): void {
-    var t: Ticket = Ticket { id: 1 };
-    var e: Envelope = Envelope { inner: t };
+    let t: Ticket = Ticket { id: 1 };
+    let e: Envelope = Envelope { inner: t };
     open_env(e);
 }`},
 		{"unmarked_types_unaffected", `struct Plain { id: i32 }
 function f(): void {
-    var p: Plain = Plain { id: 1 };
+    let p: Plain = Plain { id: 1 };
 }
 `},
 	}
@@ -100,14 +100,14 @@ func TestMustConsumeLeaks(t *testing.T) {
 	scopeMsg := "may go out of scope without being consumed"
 	cases := []struct{ name, src, frag string }{
 		{"plain_leak", ticketDecl + `function f(): void {
-    var t: Ticket = Ticket { id: 1 };
+    let t: Ticket = Ticket { id: 1 };
 }`, scopeMsg},
 		{"one_arm_leaks", ticketDecl + `function f(n: i32): void {
-    var t: Ticket = Ticket { id: 1 };
+    let t: Ticket = Ticket { id: 1 };
     if (n > 0) { sink(t); }
 }`, scopeMsg},
 		{"early_return_leaks", ticketDecl + `function f(n: i32): i32 {
-    var t: Ticket = Ticket { id: 1 };
+    let t: Ticket = Ticket { id: 1 };
     if (n > 5) { return 1; }
     sink(t);
     return 0;
@@ -116,35 +116,35 @@ func TestMustConsumeLeaks(t *testing.T) {
     print("ignored");
 }`, scopeMsg},
 		{"enum_leak", pendingDecl + `function f(): void {
-    var p: Pending = Close;
+    let p: Pending = Close;
 }`, scopeMsg},
 		{"loop_consume_does_not_discharge", ticketDecl + `function f(n: i32): void {
-    var t: Ticket = Ticket { id: 1 };
+    let t: Ticket = Ticket { id: 1 };
     while (n > 0) {
         sink(t);
         n = n - 1;
     }
 }`, scopeMsg},
 		{"laundered_into_array", ticketDecl + `function f(): void {
-    var t: Ticket = Ticket { id: 1 };
-    var arr: Ticket[] = [t];
+    let t: Ticket = Ticket { id: 1 };
+    let arr: Ticket[] = [t];
 }`, "stored into an array literal"},
 		{"laundered_into_unmarked_struct", ticketDecl + `struct Box { inner: Ticket }
 function f(): void {
-    var t: Ticket = Ticket { id: 1 };
-    var b: Box = Box { inner: t };
+    let t: Ticket = Ticket { id: 1 };
+    let b: Box = Box { inner: t };
 }`, "stored into unmarked struct"},
 		{"laundered_into_tuple", ticketDecl + `function f(): (Ticket, i32) {
-    var t: Ticket = Ticket { id: 1 };
+    let t: Ticket = Ticket { id: 1 };
     return (t, 3);
 }`, "stored into a tuple"},
 		{"captured_by_closure", ticketDecl + `function f(): void {
-    var t: Ticket = Ticket { id: 1 };
-    var g = () => t.id;
+    let t: Ticket = Ticket { id: 1 };
+    let g = () => t.id;
     print("captured");
 }`, "captured by a closure"},
 		{"overwrite_unconsumed", pendingDecl + `function f(): void {
-    var p: Pending = Close;
+    let p: Pending = Close;
     p = Reply("again");
     match (p) { Reply(s) => {}, Close => {} }
 }`, "overwriting"},

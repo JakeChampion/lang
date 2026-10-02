@@ -29,8 +29,8 @@ const x86SSASignalSrc = `function main(): i32 {
 
     // signal_mask answers the mask that was blocked BEFORE the call, so
     // blocking then restoring reads the old value back.
-    var before: i64 = signal_mask(0, 512i64);
-    var blocked: i64 = signal_mask(2, before);
+    let before: i64 = signal_mask(0, 512i64);
+    let blocked: i64 = signal_mask(2, before);
     if (blocked % 1024i64 < 512i64) { return 20; }
     if (signal_mask(0, 0i64) != before) { return 21; }
 
@@ -45,7 +45,7 @@ const x86SSASignalSrc = `function main(): i32 {
 
     // priority reads the nice value unbiased, and raising it is always
     // permitted where lowering it may not be.
-    var p: i32 = priority();
+    let p: i32 = priority();
     if (p < 0 - 20 || p > 19) { return 50; }
     match (set_priority(p + 1)) { Ok(_) => {}, Err(e) => { return 51; } }
     if (priority() != p + 1) { return 52; }

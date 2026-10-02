@@ -12,16 +12,16 @@ import (
 var voidCallCases = []struct{ name, source, want string }{
 	{"void-call-empty", `function pilot(): string { noop(); return "effect"; } function noop(): void {}`, "effect\n"},
 	{"void-call-owned", `function pilot(): string { sink([["released"]]); return "released"; }
-function sink(own items: string[][]): void { var child = items[0]; }`, "released\n"},
+function sink(own items: string[][]): void { let child = items[0]; }`, "released\n"},
 	{"void-call-borrow", `function pilot(): string {
-  var items = [["kept"]]; read(items[0]); return items[0][0];
+  let items = [["kept"]]; read(items[0]); return items[0][0];
 }
-function read(items: string[]): void { var value = items[0]; }`, "kept\n"},
+function read(items: string[]): void { let value = items[0]; }`, "kept\n"},
 	{"void-call-own-borrow-alias", `function pilot(): string { return check(["anchored"]); }
 function check(own items: string[]): string { inspect(items, items); return "anchored"; }
-function inspect(reader: string[], own taken: string[]): void { var value = reader[0]; }`, "anchored\n"},
+function inspect(reader: string[], own taken: string[]): void { let value = reader[0]; }`, "anchored\n"},
 	{"void-call-shared-owned-children", `function pilot(): string {
-  var items = ["twice"]; sink([items], [items]); return items[0];
+  let items = ["twice"]; sink([items], [items]); return items[0];
 }
 function sink(own first: string[][], own second: string[][]): void {}`, "twice\n"},
 	{"void-call-recursive", `function pilot(): string { recurse(["recursive"], 3i32); return "recursive"; }
@@ -29,10 +29,10 @@ function recurse(own items: string[], n: i32): void { if (n == 0i32) { return; }
 	{"void-call-return-call", `function pilot(): string { relay(["relayed"]); return "relayed"; }
 function relay(own items: string[]): void { return sink(items); }
 function sink(own items: string[]): void {}`, "relayed\n"},
-	{"void-call-allocated-callee", `function pilot(): string { var i = 0i32; while (i < 64i32) { allocate(); i = i + 1i32; } return "balanced"; }
-function allocate(): void { var parent = ((["temporary"], true), [["nested"]]); }`, "balanced\n"},
+	{"void-call-allocated-callee", `function pilot(): string { let i = 0i32; while (i < 64i32) { allocate(); i = i + 1i32; } return "balanced"; }
+function allocate(): void { let parent = ((["temporary"], true), [["nested"]]); }`, "balanced\n"},
 	{"void-call-argument-order", `function pilot(): string {
-  var n = 0i32;
+  let n = 0i32;
   sink({ n = n + 1i32; n }, { n = n * 2i32; n });
   if (n == 2i32) { return "ordered"; } return "wrong";
 }
@@ -41,9 +41,9 @@ function sink(a: i32, b: i32): void {}`, "ordered\n"},
   sink({ return "argument exit"; ["dead"] }, fault()); return "wrong";
 }
 function sink(items: string[], n: i32): void {}
-function fault(): i32 { var empty: i32[] = []; return empty[0]; }`, "argument exit\n"},
+function fault(): i32 { let empty: i32[] = []; return empty[0]; }`, "argument exit\n"},
 	{"void-call-argument-continue", `function pilot(): string {
-  var i = 0i32; while (i < 2i32) { i = i + 1i32; sink({ continue; i }); return "wrong"; } return "continued";
+  let i = 0i32; while (i < 2i32) { i = i + 1i32; sink({ continue; i }); return "wrong"; } return "continued";
 }
 function sink(n: i32): void {}`, "continued\n"},
 }
@@ -80,7 +80,7 @@ func voidEffectProgram(t *testing.T) *Program {
 	prog, info := checkedProgram(t, `function pilot(own items: string[]): string {
   inspect(items, items); return "done";
 }
-function inspect(reader: string[], own taken: string[]): void { var value = reader[0]; }`)
+function inspect(reader: string[], own taken: string[]): void { let value = reader[0]; }`)
 	p, err := BuildProgram(prog, info)
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +222,7 @@ func TestARM64TypedVoidCallsKeepObservableEffects(t *testing.T) {
 	armLauncher(t)
 	for _, optimize := range []bool{false, true} {
 		out := lowerCheckedARM64(t, `function pilot(): string { fault(); return "call erased"; }
-function fault(): void { var empty: i32[] = []; var value = empty[0]; }`)
+function fault(): void { let empty: i32[] = []; let value = empty[0]; }`)
 		stdout, stderr, code := runARM64Pilot(t, armExecutable(t, out, printHarness(out), optimize))
 		if code != 134 || stdout != "" {
 			t.Fatalf("optimized=%v: exit %d stdout %q stderr %q; expected bounds abort", optimize, code, stdout, stderr)

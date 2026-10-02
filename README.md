@@ -1,302 +1,217 @@
 # Fern
 
-📚 **Documentation: <https://jakechampion.github.io/lang/>**
+Fern is a small, statically typed, general-purpose language that compiles to
+a static native binary or to WebAssembly from the same source. It has no
+runtime to boot and no garbage collector: memory is reference counted, with
+the counting largely elided at compile time. A hello-world binary is a few
+kilobytes and startup is the kernel's `exec` followed by your `main`.
+
+The compiler is a single binary. It parses, type-checks, optimises,
+assembles, and links in-process, so building a program needs nothing on
+`PATH` but `fern` itself. The same binary formats, lints, type-checks,
+interprets, resolves packages, and reports what capabilities a package
+reaches.
+
+**Documentation:** <https://jakechampion.github.io/lang/>
 ([tutorial](https://jakechampion.github.io/lang/tutorial/install/) ·
 [reference](https://jakechampion.github.io/lang/reference/syntax/) ·
 [standard library](https://jakechampion.github.io/lang/stdlib/) ·
-[playground](https://jakechampion.github.io/lang/playground/))
+[playground](https://jakechampion.github.io/lang/playground/) ·
+[why Fern](https://jakechampion.github.io/lang/why/))
 
-Fern is a small statically-typed, general-purpose language with several
-backends, written in Go. It grew up around two workloads it's especially
-good at — fast-startup CLI tools and short-lived edge-function HTTP
-servers — and is broadening out from there into a language you can reach
-for generally, including long-running programs (its own self-hosted
-compiler among them). Targets so far:
+## A taste
 
-- **ARM64 / aarch64** Linux ELF — the **default** target (AWS Graviton 2+,
-  Android, qemu-aarch64), ARMv8.2-A baseline with the cryptographic
-  extensions. Assembled and linked **in-process**
-  by the pure-Go native backend — no external toolchain needed. Pass `-cc
-  aarch64-linux-gnu-gcc` to opt out to an external assembler/linker.
-- **ARM64 / aarch64 Darwin** Mach-O — native Apple Silicon Macs. Assembled,
-  linked, and **ad-hoc code-signed in-process** by the pure-Go native
-  backend (static, no dyld) — no external toolchain needed. Pass `-cc clang`
-  to opt out to clang + `ld64`/`lld`.
-- **x86-64 / amd64** Linux ELF — System V AMD64 ABI, Haswell-class baseline
-  (x86-64-v3, 2013). Like arm64, assembled and linked **in-process** by
-  the pure-Go native backend (no external toolchain); pass `-cc
-  x86_64-linux-gnu-gcc` to opt out.
-- **WebAssembly** — a WASI Preview 2 Component Model component, ready for
-  `wasmtime run` or `wasmtime serve` (`wasi:http/incoming-handler`).
+```fern
+import "std/string";
+import "std/i32";
 
-The pipeline is end-to-end — lexer → recursive-descent parser → type checker
-(aggregated errors, did-you-mean hints) → monomorphisation → closure
-conversion → IR lowering → IR optimisation → backend emitter: ARM64 (`.s`,
-Linux ELF or Mach-O via `-target arm64-darwin`), x86-64 (`.s`, Linux ELF), or
-WASM (preview-2 component). The native backends share the IR layer, so a new
-language feature usually needs only `Lower` + the IR; codegen picks it up for
-free.
+enum Shape { Circle(i32), Rect(i32, i32) }
 
-Inspired by Vladimir Keleshev's *Compiling to Assembly from Scratch*
-(https://keleshev.com/compiling-to-assembly-from-scratch), but designed
-independently in idiomatic Go — no source from the book was copied.
-
-## Install
-
-Three ways to get `fern`, easiest first (see the
-[install guide](https://jakechampion.github.io/lang/tutorial/install/)
-for details):
-
-```
-# 1. Prebuilt binary — grab the asset for your platform from the rolling
-#    nightly release: https://github.com/JakeChampion/lang/releases/tag/nightly
-#    (fern-linux-x86_64 / fern-linux-arm64 / fern-darwin-arm64).tar.gz
-
-# 2. go install (needs Go 1.26+)
-go install github.com/jakechampion/lang/cmd/fern@latest
-
-# 3. Build from a checkout
-go build ./cmd/fern
-
-# 4. Bootstrap the self-host compiler from a checkout with no Go at all:
-#    a pinned earlier compiler builds the current one (docs/BOOTSTRAP.md)
-make bootstrap                        # -> bin/fern-selfhost
-```
-
-## Build & run
-
-The native backends assemble **and** link in-process, so producing an
-executable needs no external toolchain:
-
-```
-# ARM64 Linux (the default target)
-./fern -o factorial examples/factorial.fern
-qemu-aarch64 factorial          # or run natively on arm64 hardware
-
-# ARM64 macOS (Apple Silicon) — runs natively on a Mac
-./fern -target arm64-darwin -o factorial examples/factorial.fern
-./factorial
-#   ...or cross-compile from Linux (the binary ships unchanged; copy to a Mac):
-./fern -target arm64-darwin -cc clang -o factorial examples/factorial.fern
-
-# x86-64 Linux
-./fern -target x86-64-linux -o factorial examples/factorial.fern
-./factorial
-
-# WASM (self-contained preview-2 component, no external adapter)
-./fern -target wasm32-wasi -o factorial.wasm examples/factorial.fern
-wasmtime run factorial.wasm
-
-# Run straight through the interpreter (no binary emitted)
-./fern -interp examples/factorial.fern
-
-# Formatter
-./fern -fmt examples/factorial.fern        # writes idiomatic source to stdout
-./fern -fmt -w examples/factorial.fern     # overwrite the file in place
-./fern -fmt -d examples/factorial.fern     # print a unified diff against
-                                           # the file; exits 1 when they differ
-./fern -fmt -w examples/*.fern             # any mode takes a file list, gofmt-style
-
-# Linter (see docs/LINT.md). Parse-only, so a file with a type error still
-# lints. `fern -lint-rules` lists the rules with their options.
-./fern -lint examples/factorial.fern
-./fern -lint examples/                     # every .fern source under a directory
-./fern -lint -lint-set cyclomatic-complexity=deny \
-       -lint-opt cyclomatic-complexity.max=20 examples/
-
-# Per-package capability report (net / fs / env / subprocess / time / random;
-# see docs/PACKAGE-CAPABILITIES-BRIEF.md). Grants are also ENFORCED on every
-# compile / -check / -interp: a dependency whose fern.toml entry carries
-# `capabilities = [...]` gets an E070 error when it reaches outside the grant
-# (dependencies without the key warn for now).
-./fern -capabilities app/main.fern
-
-# What the std/array combinator chains in a program cost, and whether the IR
-# fused each into one loop (see docs/ARRAY-ALGEBRA.md). A chain that did not
-# fuse names the stage and the rule that stopped it, rather than silently
-# allocating a temporary per stage. FERN_ARRAY_REPORT=1 adds a histogram of
-# the reasons. Describes the NATIVE compiler; the self-hosted one fuses
-# nothing.
-./fern -array-report app/main.fern
-
-# Literate programming (Knuth-style named chunks; see docs/LITERATE.md)
-./fern -interp examples/literate/fizzbuzz.fern.md   # tangle in memory, then run
-./fern -tangle examples/literate/fizzbuzz.fern.md   # emit plain Fern source
-./fern -weave  examples/literate/fizzbuzz.fern.md   # emit cross-referenced Markdown
-```
-
-To opt out to an external assembler/linker, pass `-cc` (e.g. `-cc
-aarch64-linux-gnu-gcc` on Linux, `-cc clang` on Darwin).
-
-The formatter re-emits from the parsed tree, so `//` comments and blank lines
-are dropped; format → parse → format is byte-stable.
-
-A `.fern.md` file is a Markdown document whose `fern` code chunks (`<<name>>=`)
-are reassembled — *tangled* — from the root chunk `<<*>>` into a compilable
-program; chunks may be defined in any order. A literate file works anywhere a
-`.fern` file does (compile / `--run` / `-check` / `-interp`): it's tangled in
-memory first, and diagnostics are mapped back to the line you wrote in the
-document. See [docs/LITERATE.md](docs/LITERATE.md).
-
-`go test ./...` runs the unit and IR-pass tests. The e2e tests in
-`internal/e2e` exercise the full pipeline on both backends (linking arm64 with
-`aarch64-linux-gnu-gcc` under `qemu-aarch64`, running WAT through `wasmtime`),
-skipping automatically when toolchains aren't on `PATH`. CI installs all of
-them; a separate macOS job (`.github/workflows/macos.yml`) verifies the
-arm64-darwin Mach-O target natively on Apple Silicon.
-
-The `Makefile` wraps the common flows:
-
-```
-make build           # go build → bin/fern
-make test            # go test ./...
-make examples        # compile + cross-link every examples/*.fern (arm64 Linux)
-make run-factorial   # compile, link, run under qemu-aarch64
-```
-
-## Language at a glance
-
-```
-struct Point { x: i32, y: i32 }
-
-function (p: Point) magnitude(): i32 {
-  return p.x * p.x + p.y * p.y;
+function (s: Shape) area(): i32 {
+  match (s) {
+    Circle(r) => { return 3 * r * r; },
+    Rect(w, h) => { return w * h; },
+  }
 }
 
-function factorial(n: i32, acc: i32): i32 {
-  if (n == 0) { return acc; }
-  return factorial(n - 1, acc * n);    // tail call → loop
+// `?` unwraps Some and returns None early.
+function parse_pair(a: string, b: string): Option[i32] {
+  let w: i32 = a.parse_int()?;
+  let h: i32 = b.parse_int()?;
+  return Some(Rect(w, h).area());
 }
 
 function main(): i32 {
-  var origin: Point = Point { x: 3, y: 4 };
-  print("hello");                         // write(2) syscall on arm64, fd_write on wasm
-  return origin.magnitude() + factorial(5, 1);
+  let shapes: Shape[] = [Circle(2), Rect(3, 4)];
+  let total: i32 = 0;
+  for s in shapes {
+    total = total + s.area();
+  }
+  print(total.to_string());               // 24
+  match (parse_pair("6", "7")) {
+    Some(n) => { print(n.to_string()); }, // 42
+    None => { print("bad input"); },
+  }
+  return 0;
 }
 ```
 
-Supported:
+Sum types with exhaustive `match`, generics, traits with static dispatch,
+methods on any type including primitives, closures, `Option` / `Result`
+with `?`, `defer` / `errdefer`, saturating and checked integer operators,
+and a module system with `pub` visibility. There are no exceptions and no
+null. The [language reference](https://jakechampion.github.io/lang/reference/syntax/)
+has the full surface.
 
-- **Modules / imports** via `import "./path";` — resolved relative to the
-  importing file, `.fern` appended; functions addressed as `util.fn(args)`,
-  struct types as `util.Foo`. The loader detects cycles and flattens to one
-  program.
-- **Visibility** — top-level decls are module-private by default; mark them
-  `pub function` / `pub struct` / `pub const` to export.
-- **Top-level constants** — `const NAME[: T] = expr;`, where initialisers may
-  be expressions over earlier consts; references fold to literals at compile
-  time.
-- Top-level `function` declarations with typed parameters and return.
-- **Sum types** via `enum Foo { Bar, Baz(T1, T2) }`, consumed with
-  exhaustiveness-checked `match`; values lower to a heap `[tag, payload…]`
-  block.
-- **Generic enums** (`enum Option[T] { Some(T), None }`,
-  `Result[T, E] { Ok(T), Err(E) }`) — type arguments inferred, generics
-  erased at runtime.
-- **Methods** on structs via the `function (p: Point) name(): T` receiver
-  clause.
-- **Nested functions** with closures that capture outer-scope
-  variables by value — scalars and pointer-shaped values (strings,
-  arrays, structs) alike. Reference-typed captures are read-only
-  inside the closure (reassigning one is rejected, since it could
-  close a reference cycle); return the new value instead.
-- `var x: T = expr;` (annotation optional — inferred from the initialiser).
-- Statements: `if` / `else`, `while`, `for(init; cond; step)`,
-  `for x in arr / "string"`, `match` (pattern dispatch, incl. literal
-  arms), `return`, `break`, `continue`, blocks, expression statements.
-- Types: sized integers `i8` / `i16` / `i32` / `i64` / `u8` / `u16` /
-  `u32` / `u64` plus `usize` (target-aware native pointer width; `i32`
-  is the default literal type), `boolean`, `void`, `f32` / `f64`
-  (IEEE), `string`, owned arrays (`i32[]`), non-owning slice views
-  (`[i32]`), tuples (`(i32, string)`), `Map[K, V]`, nominal structs,
-  generic structs/enums, and function types (`(T, U) => V`).
-- Operators: `+ - * / %`, `== != < > <= >=`, `&& || !`, bitwise
-  `& | ^ << >>`, unary `-`. String `+` concatenates, `==` / `!=` compare
-  contents, indexing returns the byte at a position.
-- Literals: integer, boolean, float, string, arrays, struct constructors.
-- `len(s)` / `len(arr)`, compound assignment (`x += 7`), `if` /
-  `match` as expressions (`var s = if (x > 0) { "+" } else { "-" };`),
-  tail-call optimisation, and function values (lowered to indirect
-  calls).
+## Install
 
-Built-ins:
+```sh
+# Prebuilt binary from the rolling nightly release
+#   https://github.com/JakeChampion/lang/releases/tag/nightly
+#   fern-linux-x86_64.tar.gz / fern-linux-arm64.tar.gz / fern-darwin-arm64.tar.gz
 
-- `print` / `write` / `eprint` / `putchar` — output (stdout newline-terminated,
-  stdout raw, stderr newline-terminated, single byte).
-- `len(x): i32`, `args(): string[]`, `exit(code): void`.
-- `stdin(): Reader` / `stdout(): Writer` / `stderr(): Writer` — standard
-  streams with `.read_line()` / `.write(s)` methods.
-- `env(name): Option[string]` — environment lookup.
-- `read_file` / `write_file` — slurp / truncate-write whole files.
-- `open_reader` / `open_writer` / `open_appender` / `open_exclusive` —
-  `Result[Reader|Writer, IoError]` with `.read_line()` / `.read_chunk(size)` /
-  `.write(s)` / `.close()` for streaming, `.stat()` for the handle's own
-  `FileStat` (fstat), and `Reader.seek(offset, whence)` for lseek — a pipe
-  answers `Other("Illegal seek")`, which is how a utility learns it must
-  stream. `open_exclusive` is `O_CREAT|O_EXCL`: it creates the file or
-  answers `AlreadyExists(path)`, never opening a name someone else made,
-  which is what a temporary file at a chosen path needs.
+# Or with Go 1.26+
+go install github.com/jakechampion/lang/cmd/fern@latest
 
-WASM builds need a preopened directory — pass `wasmtime --dir=...`; paths are
-relative to that preopen.
+# Or from a checkout
+make build        # -> bin/fern
+```
 
-`Option[T]`, `Result[T, E]`, and `IoError` are built into the language —
-always in scope, no import needed — as enums with the canonical
-Rust-shaped variants. `IoError` carries the offending path where it makes
-sense (`NotFound(path)`, `PermissionDenied(path)`, `Other(path, message)`,
-etc.). Use them anywhere user-defined enums work. See the
-[error-handling reference](https://jakechampion.github.io/lang/reference/error-handling/)
-for the `?` operator and the combinator methods.
+`fern -version` prints the commit a binary was built from.
 
-## Optimisation
+## Build and run
 
-The IR is a stack-machine bytecode with structured control flow. Every backend
-consumes the same `ir.Program`, so the optimisation pipeline lives in one place:
+```sh
+fern -o hello examples/hello.fern                          # ARM64 Linux (default)
+fern -target arm64-darwin -o hello examples/hello.fern     # Apple Silicon macOS
+fern -target x86-64-linux -o hello examples/hello.fern     # x86-64 Linux
+fern -target wasm32-wasi -o hello.wasm examples/hello.fern # WASI component
+wasmtime run hello.wasm
 
-| Pass               | What it does |
-|--------------------|--------------|
-| `Inline`           | Substitutes small leaf-function bodies, including ones with internal control flow / multiple returns. |
-| `FuseTee`          | Collapses adjacent `OpStoreLocal X ; OpLoadLocal X` to a single `OpTeeLocal X` (cleaner WAT, identity on ARM64). |
-| `TailCallOptimize` | Wraps the body in a loop and rewrites `OpCallDirect <self> ; OpReturn` to a parameter rebind plus `OpBr`. Wired into every backend (arm64, x86-64, wasm), so self-tail recursion runs in O(1) stack depth everywhere. |
-| `FlattenBranches`  | `if (c) { return X; } return Y;` → typed value-returning if + one trailing return. |
-| `OptimizeCleanup`  | Iterates `PropagateCopies` (drop dead tees / stores) + `ConstPropagate` (replace loads of constant-bound slots) + `Fold` (constant arithmetic, constant-if pruning, const+drop) + `ReduceStrength` (`x * 2^k → x << k`, identity ops) to a fixed point. |
-| `EliminateDeadCode`| Drops ops between a terminator (`OpReturn` / `OpReturnVoid` / `OpBr`) and the next control-flow merge. |
+fern -interp examples/hello.fern     # run through the interpreter, no binary
+fern -check examples/hello.fern      # type-check only
+fern -fmt -w examples/hello.fern     # format in place (-d for a diff)
+fern -lint examples/                 # lint a tree (fern -lint-rules lists the rules)
+fern -repl                           # interactive session
+```
 
-Concrete payoff — `function f(): i32 { var x: i32 = 7; var y:
-i32 = x + 3; return y * 2 + x; }` lowers to twelve IR ops and
-collapses to a single `const.i32 27 ; return` after the pipeline.
+Every native target is assembled and linked in-process, and the Darwin
+binary is ad-hoc code-signed in-process too. Pass `-cc` to opt out to an
+external assembler and linker. `fern -targets` lists every target with the
+capabilities its host provides; `fern -explain E030` explains an error
+code.
 
-## Calling conventions
+### Targets
 
-**ARM64**: standard AAPCS64, libc-free — linked in-process by the native
-backend on Linux (or `gcc -static -nostdlib` via `-cc`; `clang -nostdlib`
-on Darwin), with our own `_start` that sets up
-argc/argv/envp and the bump heap before calling `main`. I/O bottoms out in
-direct syscalls. Heap-backed values come from `__fern_alloc`, a bump arena
-over a 64 MiB mmap region with no per-allocation header and no `free`; strings
-carry a 4-byte little-endian length prefix at `ptr - 4` (plus a trailing NUL).
+| Target | Output | Baseline |
+| --- | --- | --- |
+| `arm64-linux` (default) | static ELF | ARMv8.2-A with the crypto extensions |
+| `arm64-android` | static position-independent ELF | as `arm64-linux` |
+| `arm64-darwin` | static Mach-O, signed | Apple Silicon, latest macOS |
+| `x86-64-linux` | static ELF | x86-64-v3 (Haswell, 2013) |
+| `wasm32-wasi` | WASI Preview 2 component | `wasmtime run` |
+| `wasm32-wasi-http` | `wasi:http/incoming-handler` component | `wasmtime serve` |
 
-**WASM**: standard WASM calling convention. A `funcref` table holds every
-function referenced as a value; closures are `{fn_idx, env_ptr}` 8-byte heap
-pairs, and arrays / strings / structs share the same length-prefixed
-bump-allocated layout as ARM64.
+The CPU baselines are deliberate: a binary is static with no runtime
+dispatch, so a selected instruction is a hard requirement. The
+`-backend ssa` register-allocating emitter is available on both native Linux
+ISAs. Per-backend support and known gaps: `docs/BACKEND-PARITY.md`.
 
-## Repository layout
+## More than a compiler
+
+- **Packages.** A `fern.toml` manifest declares `path`, hash-addressed `url`,
+  and workspace dependencies; `fern -add`, `-fetch`, `-resolve` (Minimum
+  Version Selection into `fern.lock`), and `-vendor` manage them. Only
+  `-fetch` touches the network. `docs/PACKAGES.md`.
+- **Capabilities.** A manifest can grant a dependency `net`, `fs`, `env`,
+  `subprocess`, `time`, or `random`; reaching outside the grant is a compile
+  error. `fern -capabilities` reports what each package uses and
+  `fern -effects` does the same per function. `docs/PACKAGE-CAPABILITIES-BRIEF.md`.
+- **Testing.** `std/test` is a TAP-13 runner written in Fern; see
+  `examples/tests/`. `fern -cover` instruments a build for line and branch
+  coverage and `fern -cover-report -lcov` writes an lcov tracefile.
+- **Debugging.** `fern -sanitize` catches double frees and use-after-free and
+  prints a leak census at exit; `-g` emits a symbol table; fatal aborts print
+  a frame-pointer backtrace by default. `docs/SANITIZER.md`.
+- **Literate programming.** A `.fern.md` file is a Markdown document whose
+  named code chunks are tangled into a program and works anywhere a `.fern`
+  file does; `fern -weave -html` turns it back into a cross-referenced page
+  and `-doctest` runs its example blocks. `docs/LITERATE.md`.
+- **Embedding and sharing.** `-embed DIR` compiles assets into the binary;
+  `-shared -export` emits a `.so` loadable with `dlopen` or Android's
+  `System.loadLibrary`. `docs/EMBED.md`.
+- **Editor support.** `fern-lsp` plus a VS Code extension in `editors/`.
+- **Async.** Colourless concurrency through `std/async` combinators over
+  `Future[T]`, with real overlapping socket I/O on the native backends.
+  `docs/ASYNC.md`.
+
+## The self-hosted compiler
+
+Fern has two compilers. The Fern one under `examples/self_host/` is where
+the language now lands: it compiles itself to a byte-identical fixpoint
+(`make distcheck`) and builds every program in `coreutils/`. `make bootstrap`
+builds it from a checkout with no Go installed, using a pinned earlier
+release (`docs/BOOTSTRAP.md`), and `make selfhost-cli` builds it with the Go
+compiler for the host you are on.
+
+The Go compiler under `internal/` has been frozen since 2026-09-28. It is the
+stage-0 bootstrap and the differential oracle, and accepts only bugfixes,
+oracle needs, and what the self-host sources need to build
+(`docs/NATIVE-FREEZE.md`, `docs/NATIVE-CONVERGENCE.md`). Retiring its
+backends is the next roadmap step.
+
+The `coreutils/` tree is GNU coreutils reimplemented in Fern, held to
+byte-for-byte output parity with GNU and benchmarked against GNU and the
+Rust uutils. It is the standing conformance and performance check: a
+divergence has the same standing as a miscompile. `docs/COREUTILS.md`.
+
+## How the compiler works
 
 ```
-cmd/fern/                  # CLI driver
-internal/lexer/            # token stream
-internal/parser/           # recursive-descent parser → AST
-internal/ast/              # AST types + Position
-internal/checker/          # type checker + did-you-mean hints
-internal/closureconv/      # nested-function hoisting
-internal/ir/               # stack-machine IR + lowering + opt passes
-internal/codegen/          # arm64/, x86_64/, wasmbin/ emitters
-internal/native/           # pure-Go assemblers + ELF/Mach-O linkers
-internal/monomorph/        # generic instantiation
-internal/modload/          # module/import resolution
-internal/diag/             # error formatting with source context
-internal/e2e/              # end-to-end tests for every backend
-internal/interp/           # AST tree-walking interpreter (REPL)
-examples/                  # sample programs
+source → lexer → parser → type checker → monomorphisation → closure conversion
+       → IR lowering → IR optimisation → refcount insertion and elision
+       → backend (arm64 / x86-64 / wasm) → in-process assembler + linker
 ```
+
+The IR is a stack-machine bytecode with structured control flow that every
+backend consumes, so optimisation passes live in one place: inlining,
+tail-call elimination, constant propagation and folding, strength
+reduction, dead-code elimination, and fusion of `std/array` combinator
+chains into single loops. Reference counting follows the Perceus approach:
+increments and decrements are placed at compile time, borrowed parameters
+skip them, and an allocation whose last reference is dropped can be reused
+in place for a fresh one of the same shape.
+
+```
+cmd/fern/             CLI driver           cmd/fern-lsp/       language server
+cmd/ferndoc/          stdlib doc generator cmd/fern-wasm/      playground bundle
+internal/lexer,parser,checker,monomorph,closureconv,ir   front end and IR
+internal/codegen/     arm64/, x86_64/, wasmbin/ emitters
+internal/native/      pure-Go assemblers, ELF and Mach-O linkers, code signing
+internal/stdlib/std/  the standard library, written in Fern
+internal/interp/      tree-walking interpreter and REPL
+internal/e2e*/        end-to-end suites for every backend and the self-host
+examples/self_host/   the compiler written in Fern
+coreutils/            GNU coreutils in Fern
+site/                 the documentation site
+```
+
+## Developing
+
+Tool versions are pinned in `mise.toml`; `eval "$(scripts/toolchain-env)"`
+installs them.
+
+```sh
+make build        # go build -> bin/fern
+make test         # go test ./...
+make examples     # compile every examples/*.fern
+make bootstrap    # build the self-host compiler without Go
+```
+
+The end-to-end suites in `internal/e2e`, `internal/e2eselfhost`, and the
+differential tests run programs under qemu-aarch64, natively on x86-64 and
+Apple Silicon, and under wasmtime. A missing runtime makes a test skip, and
+a skip is a missing dependency rather than a pass. Which suite proves what,
+and which ones look authoritative but are not, is in `docs/TEST-GATES.md`;
+timings and memory budgets are in `docs/LOCAL-DEV-LOOP.md`. Design notes,
+decisions, and plans live in `docs/`.

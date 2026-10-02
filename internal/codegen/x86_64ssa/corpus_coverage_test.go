@@ -19,8 +19,8 @@ var corpusPrograms = []string{
 	`function add(a: i32, b: i32): i32 { return a + b; }`,
 	`function abs(n: i32): i32 { if (n < 0) { return 0 - n; } else { return n; } }`,
 	`function sum(n: i32): i32 {
-		var total: i32 = 0;
-		var i: i32 = 0;
+		let total: i32 = 0;
+		let i: i32 = 0;
 		while (i < n) { total = total + i; i = i + 1; }
 		return total;
 	}`,
@@ -34,14 +34,14 @@ var corpusPrograms = []string{
 	`function main(): i32 { return 1 + 2 + 3; }`,
 
 	// Composite types: struct field access, array indexing, match, string.
-	`struct Point { x: i32, y: i32 } function mk(a: i32, b: i32): i32 { var p = Point { x: a, y: b }; return p.x + p.y; }`,
-	`function arr(): i32 { var a = [1, 2, 3]; return a[0] + a[2]; }`,
+	`struct Point { x: i32, y: i32 } function mk(a: i32, b: i32): i32 { let p = Point { x: a, y: b }; return p.x + p.y; }`,
+	`function arr(): i32 { let a = [1, 2, 3]; return a[0] + a[2]; }`,
 	`function m(n: i32): i32 { return match (n) { 0 => 10, 1 => 20, _ => 30 }; }`,
-	`function slen(): i32 { var x = "hi"; return x.len(); }`,
+	`function slen(): i32 { let x = "hi"; return x.len(); }`,
 
 	// Closures: a returned closure over a capture, and a closure passed as an
 	// argument then called indirectly.
-	`function adder(n: i32): (i32) => i32 { function add(x: i32): i32 { return x + n; } return add; } function useit(): i32 { var f = adder(3); return f(4); }`,
+	`function adder(n: i32): (i32) => i32 { function add(x: i32): i32 { return x + n; } return add; } function useit(): i32 { let f = adder(3); return f(4); }`,
 	`function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function callit(): i32 { return apply((y: i32): i32 => { return y * 2; }, 21); }`,
 
 	// Option construction + match (the pair-return path).

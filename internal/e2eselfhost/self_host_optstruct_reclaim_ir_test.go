@@ -8,7 +8,7 @@ import (
 )
 
 // optStructReclaimCases pin the #4365 `Option[<struct-with-array-field>]` reclaim: a
-// `var o: Option[P] = Some(P { xs: [i, i+1] })` (P has an rc-array field) consumed by a
+// `let o: Option[P] = Some(P { xs: [i, i+1] })` (P has an rc-array field) consumed by a
 // borrow-only match leaked its payload array buffer + struct box + option box per
 // iteration on the self-host IR path (native bounds it). The new "OPTSTRUCT:" class is
 // the struct sibling of "OPTTUP:": it admits a fresh Some(<struct literal>) / None
@@ -36,13 +36,13 @@ var optStructReclaimCases = []struct {
 	// Core churn: rebuilt per iteration, scalar/array read only.
 	{"optstruct-churn", `struct P { xs: i32[] }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Option[P] = Some(P { xs: [i, i + 1] }); match (o) { Some(p) => { acc = (acc + p.xs[0]) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[P] = Some(P { xs: [j, j + 1] }); match (o2) { Some(p) => { acc = (acc + p.xs[0]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Option[P] = Some(P { xs: [i, i + 1] }); match (o) { Some(p) => { acc = (acc + p.xs[0]) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[P] = Some(P { xs: [j, j + 1] }); match (o2) { Some(p) => { acc = (acc + p.xs[0]) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -52,13 +52,13 @@ function main(): i32 {
 	// are all admitted — still reclaims (bounded).
 	{"optstruct-borrow-full", `struct P { n: i32, xs: i32[] }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Option[P] = Some(P { n: i, xs: [i, i + 1] }); match (o) { Some(p) => { acc = (acc + p.n + p.xs[0] + p.xs.len()) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[P] = Some(P { n: j, xs: [j, j + 1] }); match (o2) { Some(p) => { acc = (acc + p.xs[1]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Option[P] = Some(P { n: i, xs: [i, i + 1] }); match (o) { Some(p) => { acc = (acc + p.n + p.xs[0] + p.xs.len()) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[P] = Some(P { n: j, xs: [j, j + 1] }); match (o2) { Some(p) => { acc = (acc + p.xs[1]) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -68,14 +68,14 @@ function main(): i32 {
 	// arm — the local is NOT credited (leak-safe), and MUST NOT be over-released.
 	{"optstruct-escape-store-safe", `struct P { xs: i32[] }
 function main(): i32 {
-    var keep: i32[] = [0, 0];
-    var i: i32 = 0;
+    let keep: i32[] = [0, 0];
+    let i: i32 = 0;
     while (i < 50) {
-        var o: Option[P] = Some(P { xs: [i, i + 1] });
+        let o: Option[P] = Some(P { xs: [i, i + 1] });
         match (o) { Some(p) => { keep = p.xs; }, None => {} }
         i = i + 1;
     }
-    var acc: i32 = keep[0] + keep[1];
+    let acc: i32 = keep[0] + keep[1];
     if (acc < 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -85,10 +85,10 @@ function main(): i32 {
 	{"optstruct-escape-call-safe", `struct P { xs: i32[] }
 function take(xs: i32[]): i32 { return xs[0]; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var o: Option[P] = Some(P { xs: [i, i + 1] });
+        let o: Option[P] = Some(P { xs: [i, i + 1] });
         match (o) { Some(p) => { acc = (acc + take(p.xs)) % 251; }, None => {} }
         i = i + 1;
     }
@@ -107,14 +107,14 @@ function main(): i32 {
 	// non-scalar; `p.name.len()` is a borrow).
 	{"optstruct-string-field-churn", `struct P { name: string, n: i32 }
 function main(): i32 {
-    var pre: string = "n";
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Option[P] = Some(P { name: pre + "x", n: i }); match (o) { Some(p) => { acc = (acc + p.n + p.name.len()) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[P] = Some(P { name: pre + "x", n: j }); match (o2) { Some(p) => { acc = (acc + p.n + p.name.len()) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "n";
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Option[P] = Some(P { name: pre + "x", n: i }); match (o) { Some(p) => { acc = (acc + p.n + p.name.len()) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[P] = Some(P { name: pre + "x", n: j }); match (o2) { Some(p) => { acc = (acc + p.n + p.name.len()) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -127,15 +127,15 @@ function main(): i32 {
 	// and `shared` still reads "abcd" (sum 0x61+0x62+0x63+0x64 = 394).
 	{"optstruct-string-field-alias-safe", `struct P { name: string, n: i32 }
 function main(): i32 {
-    var shared: string = "ab" + "cd";
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Option[P] = Some(P { name: shared, n: i }); match (o) { Some(p) => { acc = (acc + p.n + p.name.len()) % 251; }, None => {} } i = i + 1; }
-    var junk: string = "";
-    var c: i32 = 0;
+    let shared: string = "ab" + "cd";
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Option[P] = Some(P { name: shared, n: i }); match (o) { Some(p) => { acc = (acc + p.n + p.name.len()) % 251; }, None => {} } i = i + 1; }
+    let junk: string = "";
+    let c: i32 = 0;
     while (c < 20) { junk = "zz" + "zz"; c = c + 1; }
-    var sum: i32 = 0;
-    var k: i32 = 0;
+    let sum: i32 = 0;
+    let k: i32 = 0;
     while (k < shared.len()) { sum = sum + (shared[k] as i32); k = k + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0 || junk.len() != 4) { return 97; }
@@ -147,13 +147,13 @@ function main(): i32 {
 	// block-scoped one — 35200 bytes over 100 rounds with frees=0.
 	{"optstruct-scalar-only-payload", `struct P { a: i32, b: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Option[P] = Some(P { a: i, b: i + 1 }); match (o) { Some(p) => { acc = (acc + p.a + p.b) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[P] = Some(P { a: j, b: j + 1 }); match (o2) { Some(p) => { acc = (acc + p.a + p.b) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Option[P] = Some(P { a: i, b: i + 1 }); match (o) { Some(p) => { acc = (acc + p.a + p.b) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[P] = Some(P { a: j, b: j + 1 }); match (o2) { Some(p) => { acc = (acc + p.a + p.b) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -163,10 +163,10 @@ function main(): i32 {
 	// string out of the arm — un-credited, leak-safe, detector zero.
 	{"optstruct-string-escape-store-safe", `struct P { name: string, n: i32 }
 function main(): i32 {
-    var held: string = "";
-    var i: i32 = 0;
+    let held: string = "";
+    let i: i32 = 0;
     while (i < 50) {
-        var o: Option[P] = Some(P { name: "a" + "b", n: i });
+        let o: Option[P] = Some(P { name: "a" + "b", n: i });
         match (o) { Some(p) => { held = p.name; }, None => {} }
         i = i + 1;
     }
@@ -182,8 +182,8 @@ function pick(o: Option[P]): i32[] {
     return [0];
 }
 function main(): i32 {
-    var o: Option[P] = Some(P { xs: [6, 7] });
-    var a = pick(o);
+    let o: Option[P] = Some(P { xs: [6, 7] });
+    let a = pick(o);
     if (__rc_underflow_count() != 0) { return 99; }
     return a[0] + a[1];
 }`, 13},
@@ -195,13 +195,13 @@ function main(): i32 {
 	// which is what separates freeing the buffer from freeing the elements — is
 	// pinned on x86-64 by TestSelfHostOptStrArrPayloadX86_64.
 	{"optstrarr-churn", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Option[string[]] = Some(["a" + "b", "c"]); match (o) { Some(xs) => { acc = (acc + xs.len()) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[string[]] = Some(["a" + "b", "c"]); match (o2) { Some(xs) => { acc = (acc + xs.len()) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Option[string[]] = Some(["a" + "b", "c"]); match (o) { Some(xs) => { acc = (acc + xs.len()) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[string[]] = Some(["a" + "b", "c"]); match (o2) { Some(xs) => { acc = (acc + xs.len()) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -210,13 +210,13 @@ function main(): i32 {
 	// The Result spelling, and an element READ through the payload so the borrow
 	// is exercised rather than only the length.
 	{"optstrarr-result-read", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Result[string[], string] = Ok(["ab", "cde"]); match (o) { Ok(xs) => { acc = (acc + xs[0].len() + xs[1].len()) % 251; }, Err(e) => { acc = acc + e.len(); } } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Result[string[], string] = Ok(["ab", "cde"]); match (o2) { Ok(xs) => { acc = (acc + xs[0].len()) % 251; }, Err(e) => { acc = acc + e.len(); } } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Result[string[], string] = Ok(["ab", "cde"]); match (o) { Ok(xs) => { acc = (acc + xs[0].len() + xs[1].len()) % 251; }, Err(e) => { acc = acc + e.len(); } } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Result[string[], string] = Ok(["ab", "cde"]); match (o2) { Ok(xs) => { acc = (acc + xs[0].len()) % 251; }, Err(e) => { acc = acc + e.len(); } } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -225,11 +225,11 @@ function main(): i32 {
 	// ALIASED-payload negative: the array is a live local read after the match, so
 	// the credit must be declined. Leak-safe, never over-released, value exact.
 	{"optstrarr-alias-safe", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var xs: string[] = ["a" + "b", "c"];
-        var o: Option[string[]] = Some(xs);
+        let xs: string[] = ["a" + "b", "c"];
+        let o: Option[string[]] = Some(xs);
         match (o) { Some(ys) => { acc = acc + ys.len(); }, None => {} }
         acc = acc + xs[0].len();
         i = i + 1;

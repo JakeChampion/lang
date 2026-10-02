@@ -27,7 +27,7 @@ import "./lib/gnu";
 import "./lib/pwdb";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [USERNAME]...\n";
   out = out + "Print group memberships for each USERNAME or, if no USERNAME is specified, for\n";
   out = out + "the current process (which may differ if the groups database has changed).\n";
@@ -43,11 +43,11 @@ function help_text(): string {
 pub struct Line { out: io_buffered.BufWriter, text: string, ok: boolean }
 
 function names_of(o: io_buffered.BufWriter, gids: i64[]): Line {
-  var names: Option[string][] = pwdb.group_names(gids);
-  var text: string = "";
-  var ok: boolean = true;
-  var w: io_buffered.BufWriter = o;
-  var i: i32 = 0;
+  let names: Option[string][] = pwdb.group_names(gids);
+  let text: string = "";
+  let ok: boolean = true;
+  let w: io_buffered.BufWriter = o;
+  let i: i32 = 0;
   while (i < gids.len()) {
     if (i > 0) {
       text = text + " ";
@@ -73,20 +73,20 @@ function names_of(o: io_buffered.BufWriter, gids: i64[]): Line {
 }
 
 pub function main(): i32 {
-  var operands: string[] = gnu.parse_standard_options_only(args(), "groups", help_text(), 1);
-  var o: io_buffered.BufWriter = gnu.out_new();
-  var ok: boolean = true;
+  let operands: string[] = gnu.parse_standard_options_only(args(), "groups", help_text(), 1);
+  let o: io_buffered.BufWriter = gnu.out_new();
+  let ok: boolean = true;
   if (operands.len() == 0) {
-    var l: Line = names_of(o, pwdb.process_groups());
+    let l: Line = names_of(o, pwdb.process_groups());
     o = gnu.put(l.out, l.text + "\n");
     ok = l.ok;
   } else {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < operands.len()) {
       match (pwdb.user_by_name(operands[i])) {
         Some(u) => {
           o = gnu.put(o, operands[i] + " : ");
-          var ul: Line = names_of(o, pwdb.group_list(u.name, u.gid));
+          let ul: Line = names_of(o, pwdb.group_list(u.name, u.gid));
           o = gnu.put(ul.out, ul.text + "\n");
           if (!ul.ok) {
             ok = false;

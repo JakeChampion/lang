@@ -19,12 +19,12 @@ import "std/i64" as i64m;
 import "std/u32" as u32m;
 import "std/u64" as u64m;
 function main(): i32 {
-    var max32: i32 = 2147483647;
-    var min32: i32 = 0 - 2147483647 - 1;
-    var max64: i64 = 9223372036854775807;
-    var min64: i64 = (0 as i64) - 9223372036854775807 - 1;
-    var umax32: u32 = 4294967295 as u32;
-    var umax64: u64 = 18446744073709551615 as u64;
+    let max32: i32 = 2147483647;
+    let min32: i32 = 0 - 2147483647 - 1;
+    let max64: i64 = 9223372036854775807;
+    let min64: i64 = (0 as i64) - 9223372036854775807 - 1;
+    let umax32: u32 = 4294967295 as u32;
+    let umax64: u64 = 18446744073709551615 as u64;
     // i32: in-range, +overflow -> MAX, -overflow -> MIN, (-)*(-) -> +MAX,
     // MIN * -1 -> MAX, largest in-range square.
     if ((6).saturating_mul(7) != 42) { return 1; }

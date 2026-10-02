@@ -1,7 +1,7 @@
 # The unmatched-Option alias: refusing the retain left nobody releasing
 
 #7687's Option half. `opt_unmatched_esc_ok` carried `!name_is_alias_bound` as an
-explicit conjunct, so `var x: Option[T] = src` denied `src` its whole reclaim
+explicit conjunct, so `let x: Option[T] = src` denied `src` its whole reclaim
 credit whenever `src` had no consuming match of its own. Nothing released either
 slot afterwards.
 
@@ -85,7 +85,7 @@ The two rows still leaking are not an alias defect at all. `return`ing before a
 consuming match strands the local, with no alias anywhere:
 
 ```fern
-var src: Option[i32[]] = Some([i, i + 1]);
+let src: Option[i32[]] = Some([i, i + 1]);
 if (i >= 0) { return 5; }
 match (src) { Some(b) => { return b.len(); }, None => { return 2; } }
 ```

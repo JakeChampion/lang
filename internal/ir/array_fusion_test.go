@@ -91,7 +91,7 @@ function main(): i32 { return run([1 as i64]) as i32; }`)
 func TestFuseMapMapReduceRemovesTheCombinatorCalls(t *testing.T) {
 	p, n := fuseSrc(t, `import "std/array";
 function run(xs: i64[]): i64 {
-  var out: Option[i64] = xs
+  let out: Option[i64] = xs
     .map((x: i64): i64 => x + (1 as i64))
     .map((x: i64): i64 => x * (2 as i64))
     .reduce((a: i64, b: i64): i64 => a + b);
@@ -311,9 +311,9 @@ function main(): i32 { return run([1 as i64]) as i32; }`)
 func TestFuseTwoChainsInOneFunction(t *testing.T) {
 	p, n := fuseSrc(t, `import "std/array";
 function run(xs: i64[], ys: i64[]): i64 {
-  var a: i64 = xs.map((x: i64): i64 => x + (1 as i64))
+  let a: i64 = xs.map((x: i64): i64 => x + (1 as i64))
                  .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
-  var b: i64 = ys.filter((y: i64): boolean => y > (0 as i64))
+  let b: i64 = ys.filter((y: i64): boolean => y > (0 as i64))
                  .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
   return a + b;
 }
@@ -332,8 +332,8 @@ function main(): i32 { return run([1 as i64], [2 as i64]) as i32; }`)
 func TestFuseChainInsideALoop(t *testing.T) {
 	p, n := fuseSrc(t, `import "std/array";
 function run(xs: i64[], rounds: i32): i64 {
-  var total: i64 = 0 as i64;
-  var i: i32 = 0;
+  let total: i64 = 0 as i64;
+  let i: i32 = 0;
   while (i < rounds) {
     total = total + xs.map((x: i64): i64 => x + (1 as i64))
                       .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
@@ -499,13 +499,13 @@ func countOps(t *testing.T, p *ir.Program, fn string, kind ir.OpKind) int {
 func TestReducePeelsOnlyWhenNoStageCanSkip(t *testing.T) {
 	p, n := fuseSrc(t, `import "std/array";
 function peeled(xs: i64[]): i64 {
-  var out: Option[i64] = xs
+  let out: Option[i64] = xs
     .map((x: i64): i64 => x + (1 as i64))
     .reduce((a: i64, b: i64): i64 => a + b);
   match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }
 }
 function flagged(xs: i64[]): i64 {
-  var out: Option[i64] = xs
+  let out: Option[i64] = xs
     .filter((x: i64): boolean => x > (0 as i64))
     .reduce((a: i64, b: i64): i64 => a + b);
   match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }

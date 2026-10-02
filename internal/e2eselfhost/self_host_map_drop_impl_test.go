@@ -17,17 +17,17 @@ import (
 // word at base + 8) but with no buffer, so only the handle is released.
 const mapDropImplReuseSrc = `import "core/map";
 function handle(): usize {
-    var base: usize = __alloc(16);
+    let base: usize = __alloc(16);
     __store_i32(base, 1);
-    var h: usize = base + 8;
+    let h: usize = base + 8;
     __store_ptr(h, 0 as usize);
     return h;
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var last: usize = 0 as usize;
+    let i: i32 = 0;
+    let last: usize = 0 as usize;
     while (i < 1000) {
-        var h: usize = handle();
+        let h: usize = handle();
         __map_drop_impl(h);
         last = h;
         i = i + 1;
@@ -42,10 +42,10 @@ function main(): i32 {
 // draw, and the drop frees the kv buffer before the handle.
 const mapNewImplReuseSrc = `import "core/map";
 function main(): i32 {
-    var i: i32 = 0;
-    var last: usize = 0 as usize;
+    let i: i32 = 0;
+    let last: usize = 0 as usize;
     while (i < 1000) {
-        var h: usize = map_new_impl(4, 1, 0);
+        let h: usize = map_new_impl(4, 1, 0);
         __map_drop_impl(h);
         last = h;
         i = i + 1;
@@ -61,13 +61,13 @@ function main(): i32 {
 // string and array releases a scalar map never reaches at run time.
 const mapSetGetSrc = `import "core/map";
 function main(): i32 {
-    var h: usize = map_new_impl(4, 0, 0);
-    var i: i32 = 0;
+    let h: usize = map_new_impl(4, 0, 0);
+    let i: i32 = 0;
     while (i < 200) {
         h = __map_set_impl(h, (i * 3) as usize, (i * 7) as usize);
         i = i + 1;
     }
-    var s: i32 = __map_len_impl(h);
+    let s: i32 = __map_len_impl(h);
     i = 0;
     while (i < 200) {
         s = s + (__map_get_or_impl(h, (i * 3) as usize, 0 as usize) as i32);
@@ -85,16 +85,16 @@ function main(): i32 {
 // (header and 8-byte slots) rather than native's (#9608).
 const mapColumnsSrc = `import "core/map";
 function main(): i32 {
-    var h: usize = map_new_impl(4, 0, 0);
-    var i: i32 = 0;
+    let h: usize = map_new_impl(4, 0, 0);
+    let i: i32 = 0;
     while (i < 20) {
         h = __map_set_impl(h, (i * 3) as usize, (i * 7) as usize);
         i = i + 1;
     }
-    var ks: i32[] = __map_i32_column(h, 0);
-    var vs: i32[] = __map_i32_column(h, __ptr_width());
-    var bs: boolean[] = __map_bool_column(h, __ptr_width());
-    var s: i32 = ks.len() + vs.len() + bs.len();
+    let ks: i32[] = __map_i32_column(h, 0);
+    let vs: i32[] = __map_i32_column(h, __ptr_width());
+    let bs: boolean[] = __map_bool_column(h, __ptr_width());
+    let s: i32 = ks.len() + vs.len() + bs.len();
     i = 0;
     while (i < ks.len()) {
         s = s + ks[i] + vs[i];

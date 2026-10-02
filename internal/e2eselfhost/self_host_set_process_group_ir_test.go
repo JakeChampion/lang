@@ -86,7 +86,7 @@ const setProcessGroupSelfHostSource = `function main(): i32 {
     // parent's waitpid is a signal delivered to THAT group — and the parent
     // is not in it, so a kill landing on the caller's own group instead
     // would take the parent down with it.
-    var kid: i32 = proc_fork();
+    let kid: i32 = proc_fork();
     if (kid < 0) { return 12; }
     if (kid == 0) {
         match (set_process_group(0, 0)) {
@@ -107,7 +107,7 @@ const setProcessGroupSelfHostSource = `function main(): i32 {
         Err(e) => { return 14; }
     }
     // proc_waitpid reports a signal death as 128+signal.
-    var status: i32 = proc_waitpid(kid);
+    let status: i32 = proc_waitpid(kid);
     if (status != 137) { return 15; }
     return 0;
 }`

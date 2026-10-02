@@ -47,10 +47,10 @@ func TestArm64NativePIERelocFree(t *testing.T) {
 		out  string
 	}{
 		{"exit", `function main(): i32 { return 42; }`, 42, ""},
-		{"arith", `function main(): i32 { var x = 6; var y = 7; return x * y; }`, 42, ""},
+		{"arith", `function main(): i32 { let x = 6; let y = 7; return x * y; }`, 42, ""},
 		{"fib", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n-1)+fib(n-2); }
 function main(): i32 { return fib(10); }`, 55, ""},
-		{"loop", `function main(): i32 { var n = 0; var i = 0; while (i < 42) { n = n + 1; i = i + 1; } return n; }`, 42, ""},
+		{"loop", `function main(): i32 { let n = 0; let i = 0; while (i < 42) { n = n + 1; i = i + 1; } return n; }`, 42, ""},
 		{"string", `function main(): i32 { print("hello PIE"); return 0; }`, 0, "hello PIE\n"},
 	}
 	for _, c := range cases {
@@ -170,7 +170,7 @@ function main(): i32 { return apply(dbl, 20) + apply(inc, 1); }`, 42, true},
 		{"dyntrait", `trait Shape { function area(self: Self): i32; }
 struct Sq { s: i32 }
 impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } }
-function main(): i32 { var d: dyn Shape = Sq { s: 7 }; return d.area(); }`, 49, true},
+function main(): i32 { let d: dyn Shape = Sq { s: 7 }; return d.area(); }`, 49, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -220,7 +220,7 @@ function main(): i32 { return apply(dbl, 21); }`, 42, true},
 		{"dyntrait", `trait Shape { function area(self: Self): i32; }
 struct Sq { s: i32 }
 impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } }
-function main(): i32 { var d: dyn Shape = Sq { s: 7 }; return d.area(); }`, 49, true},
+function main(): i32 { let d: dyn Shape = Sq { s: 7 }; return d.area(); }`, 49, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

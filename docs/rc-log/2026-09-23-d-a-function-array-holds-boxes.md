@@ -42,7 +42,7 @@ markers, `check_fn_array_fields` and its driver calls, the `'3'` parameter proof
 rules and the forced-boxes argument rule, the annotation-driven zero-parameter
 wrappers for tuples and Option/Result payloads, `lift_arg_is_fn_value_declared`,
 `lift_module_fn_arity`, and the parser's `infer_fnvalue_locals_module`, which
-existed to stop `var f = mk` reading as a const call.
+existed to stop `let f = mk` reading as a const call.
 
 The struct-drop walk already classified a `fn[]` field as an element-walked box
 array (the coarse `fn` reads as enum-like), with the `FNPTR:` marker opting a

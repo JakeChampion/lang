@@ -62,24 +62,24 @@ function trial_limit(): u64 {
 struct Primes { p: u64[], inv: u64[], lim: u64[], text: string[], textnl: string[], lead: string, grp: string, spf: u8[] }
 
 function small_primes(): Primes {
-  var limit: i32 = trial_limit() as i32;
-  var composite: u8[] = __alloc_u8(limit + 1);
-  var p: u64[] = [2 as u64];
-  var inv: u64[] = [0 as u64];
-  var lim: u64[] = [0 as u64];
-  var text: string[] = [" 2"];
-  var textnl: string[] = [" 2\n"];
-  var n: i32 = 3;
+  let limit: i32 = trial_limit() as i32;
+  let composite: u8[] = __alloc_u8(limit + 1);
+  let p: u64[] = [2 as u64];
+  let inv: u64[] = [0 as u64];
+  let lim: u64[] = [0 as u64];
+  let text: string[] = [" 2"];
+  let textnl: string[] = [" 2\n"];
+  let n: i32 = 3;
   while (n <= limit) {
     if (composite[n] as i32 == 0) {
-      var v: u64 = n as u64;
+      let v: u64 = n as u64;
       p = p.append(v);
       inv = inv.append(inverse_mod_2_64(v));
       lim = lim.append((0 as u64 - 1 as u64) / v);
-      var spelled: string = " " + (n as i64).to_string();
+      let spelled: string = " " + (n as i64).to_string();
       text = text.append(spelled);
       textnl = textnl.append(spelled + "\n");
-      var m: i32 = n * n;
+      let m: i32 = n * n;
       while (m <= limit) {
         composite = composite.with(m, 1 as u8);
         m = m + n;
@@ -87,14 +87,14 @@ function small_primes(): Primes {
     }
     n = n + 2;
   }
-  var lead: usize = buf_new(5000);
-  var grp: usize = buf_new(4000);
-  var k: i32 = 0;
+  let lead: usize = buf_new(5000);
+  let grp: usize = buf_new(4000);
+  let k: i32 = 0;
   while (k < 1000) {
-    var s: string = (k as i64).to_string();
+    let s: string = (k as i64).to_string();
     buf_push_byte(lead, 32);
     buf_push(lead, s);
-    var pad: i32 = s.len();
+    let pad: i32 = s.len();
     while (pad < 4) {
       buf_push_byte(lead, 10);
       pad = pad + 1;
@@ -108,11 +108,11 @@ function small_primes(): Primes {
     buf_push_byte(grp, 10);
     k = k + 1;
   }
-  var lead_s: string = buf_take(lead);
-  var grp_s: string = buf_take(grp);
+  let lead_s: string = buf_take(lead);
+  let grp_s: string = buf_take(grp);
   buf_free(lead);
   buf_free(grp);
-  var spf: u8[] = [];
+  let spf: u8[] = [];
   return Primes { p: p, inv: inv, lim: lim, text: text, textnl: textnl, lead: lead_s, grp: grp_s, spf: spf };
 }
 
@@ -134,17 +134,17 @@ function table_after(): i32 {
 }
 
 function factor_table(pr: Primes): u8[] {
-  var bound: i32 = table_bound() as i32;
-  var t: u8[] = __alloc_u8(bound >> 1);
-  var k: i32 = 1;
+  let bound: i32 = table_bound() as i32;
+  let t: u8[] = __alloc_u8(bound >> 1);
+  let k: i32 = 1;
   while (k < pr.p.len()) {
-    var p: i32 = pr.p[k] as i32;
-    var m: i32 = p * p;
+    let p: i32 = pr.p[k] as i32;
+    let m: i32 = p * p;
     if (m >= bound) {
       break;
     }
-    var step: i32 = p + p;
-    var mark: u8 = k as u8;
+    let step: i32 = p + p;
+    let mark: u8 = k as u8;
     while (m < bound) {
       if (t[m >> 1] as i32 == 0) {
         t = t.with(m >> 1, mark);
@@ -164,8 +164,8 @@ function with_table(pr: Primes): Primes {
 // p^-1 mod 2^64 for odd p, by Newton's iteration: each step doubles the
 // bits that are right, and the seed is right to three.
 function inverse_mod_2_64(p: u64): u64 {
-  var inv: u64 = p;
-  var i: i32 = 0;
+  let inv: u64 = p;
+  let i: i32 = 0;
   while (i < 5) {
     inv = inv * (2 as u64 - p * inv);
     i = i + 1;
@@ -174,7 +174,7 @@ function inverse_mod_2_64(p: u64): u64 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION] [NUMBER]...\n";
   out = out + "Print the prime factors of each specified integer NUMBER.  If none\n";
   out = out + "are specified on the command line, read them from standard input.\n";
@@ -200,24 +200,24 @@ function help_text(): string {
 // `mul_hi(x, y)` — the high word of the 128-bit product. The two middle
 // sums cannot overflow: a 32x32 product leaves room for a 32-bit carry.
 function mul_hi(x: u64, y: u64): u64 {
-  var m: u64 = 4294967295 as u64;
-  var a0: u64 = x & m;
-  var a1: u64 = x >> 32 as u64;
-  var b0: u64 = y & m;
-  var b1: u64 = y >> 32 as u64;
-  var mid: u64 = a0 * b1 + (a0 * b0 >> 32 as u64);
-  var mid2: u64 = a1 * b0 + (mid & m);
+  let m: u64 = 4294967295 as u64;
+  let a0: u64 = x & m;
+  let a1: u64 = x >> 32 as u64;
+  let b0: u64 = y & m;
+  let b1: u64 = y >> 32 as u64;
+  let mid: u64 = a0 * b1 + (a0 * b0 >> 32 as u64);
+  let mid2: u64 = a1 * b0 + (mid & m);
   return a1 * b1 + (mid >> 32 as u64) + (mid2 >> 32 as u64);
 }
 
 // `sq_hi(x)` — the high word of x * x, a multiply fewer than `mul_hi`.
 function sq_hi(x: u64): u64 {
-  var m: u64 = 4294967295 as u64;
-  var a0: u64 = x & m;
-  var a1: u64 = x >> 32 as u64;
-  var p01: u64 = a0 * a1;
-  var mid: u64 = p01 + (a0 * a0 >> 32 as u64);
-  var mid2: u64 = p01 + (mid & m);
+  let m: u64 = 4294967295 as u64;
+  let a0: u64 = x & m;
+  let a1: u64 = x >> 32 as u64;
+  let p01: u64 = a0 * a1;
+  let mid: u64 = p01 + (a0 * a0 >> 32 as u64);
+  let mid2: u64 = p01 + (mid & m);
   return a1 * a1 + (mid >> 32 as u64) + (mid2 >> 32 as u64);
 }
 
@@ -226,7 +226,7 @@ function sq_hi(x: u64): u64 {
 // difference is (hi - t) * 2^64 exactly and lies in (-n, n): one
 // conditional add finishes it.
 function redc(hi: u64, lo: u64, n: u64, ninv: u64): u64 {
-  var t: u64 = mul_hi(lo * ninv, n);
+  let t: u64 = mul_hi(lo * ninv, n);
   if (hi >= t) {
     return hi - t;
   }
@@ -242,7 +242,7 @@ function mont_sq(a: u64, n: u64, ninv: u64): u64 {
 }
 
 function addmod(a: u64, b: u64, n: u64): u64 {
-  var s: u64 = a + b;
+  let s: u64 = a + b;
   if (s < a || s >= n) {
     s = s - n;
   }
@@ -264,8 +264,8 @@ function mont_one(n: u64): u64 {
 // `mont_r2(n)` — 2^128 mod n, what takes a value into Montgomery form,
 // by doubling 2^64 mod n sixty-four times.
 function mont_r2(n: u64): u64 {
-  var r: u64 = mont_one(n);
-  var k: i32 = 0;
+  let r: u64 = mont_one(n);
+  let k: i32 = 0;
   while (k < 64) {
     r = addmod(r, r, n);
     k = k + 1;
@@ -275,9 +275,9 @@ function mont_r2(n: u64): u64 {
 
 // `mont_pow(base, e, n, ninv, one)` — base^e in Montgomery form.
 function mont_pow(base: u64, e: u64, n: u64, ninv: u64, one: u64): u64 {
-  var result: u64 = one;
-  var b: u64 = base;
-  var k: u64 = e;
+  let result: u64 = one;
+  let b: u64 = base;
+  let k: u64 = e;
   while (k > 0 as u64) {
     if ((k & 1 as u64) == 1 as u64) {
       result = mont_mul(result, b, n, ninv);
@@ -300,9 +300,9 @@ function is_prime_u64(n: u64): boolean {
   if (n < 2 as u64) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 12) {
-    var b: u64 = mr_base(i);
+    let b: u64 = mr_base(i);
     if (n == b) {
       return true;
     }
@@ -311,19 +311,19 @@ function is_prime_u64(n: u64): boolean {
     }
     i = i + 1;
   }
-  var d: u64 = n - 1 as u64;
-  var s: i32 = 0;
+  let d: u64 = n - 1 as u64;
+  let s: i32 = 0;
   while ((d & 1 as u64) == 0 as u64) {
     d = d >> 1 as u64;
     s = s + 1;
   }
-  var ninv: u64 = inverse_mod_2_64(n);
-  var one: u64 = mont_one(n);
-  var r2: u64 = mont_r2(n);
-  var n_minus_1: u64 = n - one;
+  let ninv: u64 = inverse_mod_2_64(n);
+  let one: u64 = mont_one(n);
+  let r2: u64 = mont_r2(n);
+  let n_minus_1: u64 = n - one;
   i = 0;
   while (i < 12) {
-    var base: u64 = mont_mul(mr_base(i), r2, n, ninv);
+    let base: u64 = mont_mul(mr_base(i), r2, n, ninv);
     if (!mr_witness(base, d, s, n, ninv, one, n_minus_1)) {
       return false;
     }
@@ -334,11 +334,11 @@ function is_prime_u64(n: u64): boolean {
 
 // Whether `base` fails to witness compositeness.
 function mr_witness(base: u64, d: u64, s: i32, n: u64, ninv: u64, one: u64, n_minus_1: u64): boolean {
-  var x: u64 = mont_pow(base, d, n, ninv, one);
+  let x: u64 = mont_pow(base, d, n, ninv, one);
   if (x == one || x == n_minus_1) {
     return true;
   }
-  var r: i32 = 1;
+  let r: i32 = 1;
   while (r < s) {
     x = mont_sq(x, n, ninv);
     if (x == n_minus_1) {
@@ -361,10 +361,10 @@ function mr_witness(base: u64, d: u64, s: i32, n: u64, ninv: u64, one: u64, n_mi
 // resumes from the last checkpoint a step at a time; when even that gives
 // n, the sequence is restarted with the next `a`.
 function gcd_u64(a: u64, b: u64): u64 {
-  var x: u64 = a;
-  var y: u64 = b;
+  let x: u64 = a;
+  let y: u64 = b;
   while (y != 0 as u64) {
-    var t: u64 = x % y;
+    let t: u64 = x % y;
     x = y;
     y = t;
   }
@@ -377,11 +377,11 @@ function rho_batch(): i32 {
 
 // A factor of the odd composite `n`, never 1 or n.
 function rho_u64(n: u64): u64 {
-  var ninv: u64 = inverse_mod_2_64(n);
-  var one: u64 = mont_one(n);
-  var a: u64 = 1 as u64;
+  let ninv: u64 = inverse_mod_2_64(n);
+  let one: u64 = mont_one(n);
+  let a: u64 = 1 as u64;
   while (true) {
-    var g: u64 = rho_try(n, ninv, one, a);
+    let g: u64 = rho_try(n, ninv, one, a);
     if (g != n) {
       return g;
     }
@@ -391,14 +391,14 @@ function rho_u64(n: u64): u64 {
 }
 
 function rho_try(n: u64, ninv: u64, one: u64, a: u64): u64 {
-  var mask: i32 = rho_batch() - 1;
-  var p: u64 = one;
-  var x: u64 = addmod(one, one, n);
-  var y: u64 = x;
-  var z: u64 = x;
-  var k: i32 = 1;
-  var l: i32 = 1;
-  var g: u64 = 1 as u64;
+  let mask: i32 = rho_batch() - 1;
+  let p: u64 = one;
+  let x: u64 = addmod(one, one, n);
+  let y: u64 = x;
+  let z: u64 = x;
+  let k: i32 = 1;
+  let l: i32 = 1;
+  let g: u64 = 1 as u64;
   while (g == 1 as u64) {
     while (true) {
       x = addmod(mont_sq(x, n, ninv), a, n);
@@ -421,7 +421,7 @@ function rho_try(n: u64, ninv: u64, one: u64, a: u64): u64 {
     z = x;
     k = l;
     l = l + l;
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < k) {
       x = addmod(mont_sq(x, n, ninv), a, n);
       i = i + 1;
@@ -448,9 +448,9 @@ function push_line_u64(h: usize, n0: u64, pr: Primes, exponents: boolean): void 
     buf_push_byte(h, 10);
     return;
   }
-  var n: u64 = n0;
+  let n: u64 = n0;
   if ((n & 1 as u64) == 0 as u64) {
-    var twos: i32 = 0;
+    let twos: i32 = 0;
     while ((n & 1 as u64) == 0 as u64) {
       n = n >> 1 as u64;
       twos = twos + 1;
@@ -478,8 +478,8 @@ function push_line_u64(h: usize, n0: u64, pr: Primes, exponents: boolean): void 
 // line is finished — which the factor table does for a remainder below
 // its bound — else a remainder with no factor below the trial limit.
 function push_small(h: usize, n0: u64, pr: Primes, exponents: boolean): u64 {
-  var n: u64 = n0;
-  var bound: u64 = 0 as u64;
+  let n: u64 = n0;
+  let bound: u64 = 0 as u64;
   if (pr.spf.len() > 0) {
     bound = table_bound();
   }
@@ -487,18 +487,18 @@ function push_small(h: usize, n0: u64, pr: Primes, exponents: boolean): u64 {
     push_table(h, n, pr, exponents);
     return 1 as u64;
   }
-  var i: i32 = 1;
-  var np: i32 = pr.p.len();
+  let i: i32 = 1;
+  let np: i32 = pr.p.len();
   while (i < np) {
-    var d: u64 = pr.p[i];
+    let d: u64 = pr.p[i];
     if (d * d > n) {
       break;
     }
-    var iv: u64 = pr.inv[i];
-    var q: u64 = n * iv;
-    var lm: u64 = pr.lim[i];
+    let iv: u64 = pr.inv[i];
+    let q: u64 = n * iv;
+    let lm: u64 = pr.lim[i];
     if (q <= lm) {
-      var count: i32 = 0;
+      let count: i32 = 0;
       while (q <= lm) {
         n = q;
         q = n * iv;
@@ -520,17 +520,17 @@ function push_small(h: usize, n0: u64, pr: Primes, exponents: boolean): u64 {
 
 // The rest of the line for an odd `n` in 3 .. `table_bound()`, by lookup.
 function push_table(h: usize, n0: u64, pr: Primes, exponents: boolean): void {
-  var n: u64 = n0;
+  let n: u64 = n0;
   while (true) {
-    var k: i32 = pr.spf[(n >> 1 as u64) as i32] as i32;
+    let k: i32 = pr.spf[(n >> 1 as u64) as i32] as i32;
     if (k == 0) {
       push_num(h, n, pr, true, true);
       return;
     }
-    var iv: u64 = pr.inv[k];
-    var lm: u64 = pr.lim[k];
-    var q: u64 = n * iv;
-    var count: i32 = 0;
+    let iv: u64 = pr.inv[k];
+    let lm: u64 = pr.lim[k];
+    let q: u64 = n * iv;
+    let count: i32 = 0;
     while (q <= lm) {
       n = q;
       q = n * iv;
@@ -545,7 +545,7 @@ function push_table(h: usize, n0: u64, pr: Primes, exponents: boolean): void {
 
 // `n` has no factor below the trial limit: prime, or split by rho.
 function split_u64(own f: u64[], n: u64): u64[] {
-  var out: u64[] = f;
+  let out: u64[] = f;
   if (n == 1 as u64) {
     return out;
   }
@@ -553,7 +553,7 @@ function split_u64(own f: u64[], n: u64): u64[] {
     out = out.append(n);
     return out;
   }
-  var d: u64 = rho_u64(n);
+  let d: u64 = rho_u64(n);
   out = split_u64(out, d);
   out = split_u64(out, n / d);
   return out;
@@ -572,10 +572,10 @@ function bi_mulmod(a: bigint.BigInt, b: bigint.BigInt, n: bigint.BigInt): bigint
 }
 
 function bi_powmod(base: bigint.BigInt, e: bigint.BigInt, n: bigint.BigInt): bigint.BigInt {
-  var result: bigint.BigInt = bigint.from_i64(1 as i64);
-  var b: bigint.BigInt = bi_mod(base, n);
-  var bits: i32 = e.bit_length();
-  var i: i32 = 0;
+  let result: bigint.BigInt = bigint.from_i64(1 as i64);
+  let b: bigint.BigInt = bi_mod(base, n);
+  let bits: i32 = e.bit_length();
+  let i: i32 = 0;
   while (i < bits) {
     if (e.bit(i)) {
       result = bi_mulmod(result, b, n);
@@ -587,10 +587,10 @@ function bi_powmod(base: bigint.BigInt, e: bigint.BigInt, n: bigint.BigInt): big
 }
 
 function bi_gcd(a: bigint.BigInt, b: bigint.BigInt): bigint.BigInt {
-  var x: bigint.BigInt = a;
-  var y: bigint.BigInt = b;
+  let x: bigint.BigInt = a;
+  let y: bigint.BigInt = b;
   while (!y.is_zero()) {
-    var t: bigint.BigInt = bi_mod(x, y);
+    let t: bigint.BigInt = bi_mod(x, y);
     x = y;
     y = t;
   }
@@ -598,13 +598,13 @@ function bi_gcd(a: bigint.BigInt, b: bigint.BigInt): bigint.BigInt {
 }
 
 function is_prime_big(n: bigint.BigInt): boolean {
-  var one: bigint.BigInt = bigint.from_i64(1 as i64);
+  let one: bigint.BigInt = bigint.from_i64(1 as i64);
   if (n.cmp(one) <= 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 12) {
-    var b: bigint.BigInt = bigint.from_u64(mr_base(i));
+    let b: bigint.BigInt = bigint.from_u64(mr_base(i));
     if (n.cmp(b) == 0) {
       return true;
     }
@@ -613,9 +613,9 @@ function is_prime_big(n: bigint.BigInt): boolean {
     }
     i = i + 1;
   }
-  var n1: bigint.BigInt = n.sub(one);
-  var d: bigint.BigInt = n1;
-  var s: i32 = 0;
+  let n1: bigint.BigInt = n.sub(one);
+  let d: bigint.BigInt = n1;
+  let s: i32 = 0;
   while (!d.bit(0)) {
     d = d.shr(1);
     s = s + 1;
@@ -631,12 +631,12 @@ function is_prime_big(n: bigint.BigInt): boolean {
 }
 
 function mr_witness_big(n: bigint.BigInt, n1: bigint.BigInt, d: bigint.BigInt, s: i32, base: bigint.BigInt): boolean {
-  var one: bigint.BigInt = bigint.from_i64(1 as i64);
-  var x: bigint.BigInt = bi_powmod(base, d, n);
+  let one: bigint.BigInt = bigint.from_i64(1 as i64);
+  let x: bigint.BigInt = bi_powmod(base, d, n);
   if (x.cmp(one) == 0 || x.cmp(n1) == 0) {
     return true;
   }
-  var r: i32 = 1;
+  let r: i32 = 1;
   while (r < s) {
     x = bi_mulmod(x, x, n);
     if (x.cmp(n1) == 0) {
@@ -648,10 +648,10 @@ function mr_witness_big(n: bigint.BigInt, n1: bigint.BigInt, d: bigint.BigInt, s
 }
 
 function rho_big(n: bigint.BigInt): bigint.BigInt {
-  var one: bigint.BigInt = bigint.from_i64(1 as i64);
-  var c: bigint.BigInt = one;
+  let one: bigint.BigInt = bigint.from_i64(1 as i64);
+  let c: bigint.BigInt = one;
   while (true) {
-    var g: bigint.BigInt = rho_try_big(n, c);
+    let g: bigint.BigInt = rho_try_big(n, c);
     if (g.cmp(one) != 0 && g.cmp(n) != 0) {
       return g;
     }
@@ -661,15 +661,15 @@ function rho_big(n: bigint.BigInt): bigint.BigInt {
 }
 
 function rho_try_big(n: bigint.BigInt, c: bigint.BigInt): bigint.BigInt {
-  var one: bigint.BigInt = bigint.from_i64(1 as i64);
-  var x: bigint.BigInt = bigint.from_i64(2 as i64);
-  var y: bigint.BigInt = x;
-  var g: bigint.BigInt = one;
+  let one: bigint.BigInt = bigint.from_i64(1 as i64);
+  let x: bigint.BigInt = bigint.from_i64(2 as i64);
+  let y: bigint.BigInt = x;
+  let g: bigint.BigInt = one;
   while (g.cmp(one) == 0) {
     x = bi_mod(bi_mulmod(x, x, n).add(c), n);
     y = bi_mod(bi_mulmod(y, y, n).add(c), n);
     y = bi_mod(bi_mulmod(y, y, n).add(c), n);
-    var diff: bigint.BigInt = x.sub(y);
+    let diff: bigint.BigInt = x.sub(y);
     if (diff.is_negative()) {
       diff = diff.negate();
     }
@@ -688,8 +688,8 @@ struct Wide { small: u64[], big: bigint.BigInt[] }
 
 // The rest of the line for a number past 64 bits.
 function push_line_big(h: usize, n0: bigint.BigInt, pr: Primes, exponents: boolean): void {
-  var n: bigint.BigInt = n0;
-  var twos: i32 = 0;
+  let n: bigint.BigInt = n0;
+  let twos: i32 = 0;
   while (!n.bit(0)) {
     n = n.shr(1);
     twos = twos + 1;
@@ -697,10 +697,10 @@ function push_line_big(h: usize, n0: bigint.BigInt, pr: Primes, exponents: boole
   if (twos > 0) {
     push_run(h, pr, 0, twos, exponents, false);
   }
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < pr.p.len()) {
-    var bd: bigint.BigInt = bigint.from_u64(pr.p[i]);
-    var count: i32 = 0;
+    let bd: bigint.BigInt = bigint.from_u64(pr.p[i]);
+    let count: i32 = 0;
     while (bi_mod(n, bd).is_zero()) {
       n = n.divmod(bd).0;
       count = count + 1;
@@ -710,10 +710,10 @@ function push_line_big(h: usize, n0: bigint.BigInt, pr: Primes, exponents: boole
     }
     i = i + 1;
   }
-  var empty_small: u64[] = [];
-  var empty_big: bigint.BigInt[] = [];
-  var w: Wide = split_big(Wide { small: empty_small, big: empty_big }, n);
-  var big: bigint.BigInt[] = sort_big(w.big);
+  let empty_small: u64[] = [];
+  let empty_big: bigint.BigInt[] = [];
+  let w: Wide = split_big(Wide { small: empty_small, big: empty_big }, n);
+  let big: bigint.BigInt[] = sort_big(w.big);
   if (big.len() == 0) {
     if (w.small.len() == 0) {
       buf_push_byte(h, 10);
@@ -723,13 +723,13 @@ function push_line_big(h: usize, n0: bigint.BigInt, pr: Primes, exponents: boole
     return;
   }
   push_sorted_u64(h, w.small, pr, exponents, false);
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < big.len()) {
-    var count: i32 = 1;
+    let count: i32 = 1;
     while (j + count < big.len() && big[j + count].cmp(big[j]) == 0) {
       count = count + 1;
     }
-    var spelled: string = " " + big[j].to_string();
+    let spelled: string = " " + big[j].to_string();
     if (exponents) {
       buf_push(h, spelled);
       if (count > 1) {
@@ -737,7 +737,7 @@ function push_line_big(h: usize, n0: bigint.BigInt, pr: Primes, exponents: boole
         push_num(h, count as u64, pr, false, false);
       }
     } else {
-      var k: i32 = 0;
+      let k: i32 = 0;
       while (k < count) {
         buf_push(h, spelled);
         k = k + 1;
@@ -749,20 +749,20 @@ function push_line_big(h: usize, n0: bigint.BigInt, pr: Primes, exponents: boole
 }
 
 function split_big(f: Wide, n: bigint.BigInt): Wide {
-  var one: bigint.BigInt = bigint.from_i64(1 as i64);
+  let one: bigint.BigInt = bigint.from_i64(1 as i64);
   if (n.cmp(one) <= 0) {
     return f;
   }
   if (n.bit_length() <= 64) {
-    var small: u64[] = f.small;
+    let small: u64[] = f.small;
     small = split_u64(small, n.low_u64());
     return Wide { ...f, small: small };
   }
   if (is_prime_big(n)) {
     return Wide { ...f, big: f.big.append(n) };
   }
-  var d: bigint.BigInt = rho_big(n);
-  var out: Wide = split_big(f, d);
+  let d: bigint.BigInt = rho_big(n);
+  let out: Wide = split_big(f, d);
   return split_big(out, n.divmod(d).0);
 }
 
@@ -785,7 +785,7 @@ function push_run(h: usize, pr: Primes, k: i32, count: i32, exponents: boolean, 
     push_num(h, count as u64, pr, false, nl);
     return;
   }
-  var j: i32 = 1;
+  let j: i32 = 1;
   while (j < count) {
     buf_push(h, pr.text[k]);
     j = j + 1;
@@ -805,29 +805,29 @@ function push_text(h: usize, pr: Primes, k: i32, nl: boolean): void {
 // the leading group from `lead`, with the space before it when `space`,
 // the rest from `grp`, and the newline after the last when `nl`.
 function push_num(h: usize, n: u64, pr: Primes, space: boolean, nl: boolean): void {
-  var tail: i32 = 0;
+  let tail: i32 = 0;
   if (nl) {
     tail = 1;
   }
   if (n < 1000 as u64) {
-    var v: i32 = n as i32;
-    var digits: i32 = 1;
+    let v: i32 = n as i32;
+    let digits: i32 = 1;
     if (v >= 10) {
       digits = 2;
     }
     if (v >= 100) {
       digits = 3;
     }
-    var at: i32 = v * 5;
+    let at: i32 = v * 5;
     if (!space) {
       at = at + 1;
     }
     buf_push_range(h, pr.lead, at, v * 5 + 1 + digits + tail);
     return;
   }
-  var q: u64 = n / (1000 as u64);
+  let q: u64 = n / (1000 as u64);
   push_num(h, q, pr, space, false);
-  var r: i32 = (n - q * (1000 as u64)) as i32;
+  let r: i32 = (n - q * (1000 as u64)) as i32;
   buf_push_range(h, pr.grp, r * 4, r * 4 + 3 + tail);
 }
 
@@ -844,7 +844,7 @@ function push_prime_run(h: usize, p: u64, count: i32, pr: Primes, exponents: boo
     push_num(h, count as u64, pr, false, nl);
     return;
   }
-  var j: i32 = 1;
+  let j: i32 = 1;
   while (j < count) {
     push_num(h, p, pr, true, false);
     j = j + 1;
@@ -856,11 +856,11 @@ function push_prime_run(h: usize, p: u64, count: i32, pr: Primes, exponents: boo
 // before they are pushed, the last one ending the line when `nl`.
 // Insertion sort: there are at most a few.
 function push_sorted_u64(h: usize, xs: u64[], pr: Primes, exponents: boolean, nl: boolean): void {
-  var fs: u64[] = xs;
-  var i: i32 = 1;
+  let fs: u64[] = xs;
+  let i: i32 = 1;
   while (i < fs.len()) {
-    var v: u64 = fs[i];
-    var j: i32 = i - 1;
+    let v: u64 = fs[i];
+    let j: i32 = i - 1;
     while (j >= 0 && fs[j] > v) {
       fs = fs.with(j + 1, fs[j]);
       j = j - 1;
@@ -868,10 +868,10 @@ function push_sorted_u64(h: usize, xs: u64[], pr: Primes, exponents: boolean, nl
     fs = fs.with(j + 1, v);
     i = i + 1;
   }
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < fs.len()) {
-    var p: u64 = fs[k];
-    var count: i32 = 1;
+    let p: u64 = fs[k];
+    let count: i32 = 1;
     while (k + count < fs.len() && fs[k + count] == p) {
       count = count + 1;
     }
@@ -881,11 +881,11 @@ function push_sorted_u64(h: usize, xs: u64[], pr: Primes, exponents: boolean, nl
 }
 
 function sort_big(xs: bigint.BigInt[]): bigint.BigInt[] {
-  var out: bigint.BigInt[] = xs;
-  var i: i32 = 1;
+  let out: bigint.BigInt[] = xs;
+  let i: i32 = 1;
   while (i < out.len()) {
-    var v: bigint.BigInt = out[i];
-    var j: i32 = i - 1;
+    let v: bigint.BigInt = out[i];
+    let j: i32 = i - 1;
     while (j >= 0 && out[j].cmp(v) > 0) {
       out = out.with(j + 1, out[j]);
       j = j - 1;
@@ -911,9 +911,9 @@ function sort_big(xs: bigint.BigInt[]): bigint.BigInt[] {
 // ends any C string. The digits are echoed without their leading zeros,
 // which is what GNU prints.
 function handle(h: usize, text: string, lo: i32, hi: i32, split: boolean, exponents: boolean, pr: Primes): i64 {
-  var i: i32 = lo;
+  let i: i32 = lo;
   // `c` is the byte at `i`, or -1 at `hi`, read once per position.
-  var c: i32 = -1;
+  let c: i32 = -1;
   if (i < hi) {
     c = text[i] as i32;
   }
@@ -931,7 +931,7 @@ function handle(h: usize, text: string, lo: i32, hi: i32, split: boolean, expone
       c = text[i] as i32;
     }
   }
-  var ds: i32 = i;
+  let ds: i32 = i;
   while (c == 48) {
     i = i + 1;
     c = -1;
@@ -939,11 +939,11 @@ function handle(h: usize, text: string, lo: i32, hi: i32, split: boolean, expone
       c = text[i] as i32;
     }
   }
-  var sig: i32 = i;
+  let sig: i32 = i;
   // The accumulation wraps past nineteen digits; it is only read below
   // that, and a longer number is parsed again as a bigint.
-  var v: u64 = 0 as u64;
-  var d: u32 = (c - 48) as u32;
+  let v: u64 = 0 as u64;
+  let d: u32 = (c - 48) as u32;
   while (d <= 9 as u32) {
     v = v * (10 as u64) + d as u64;
     i = i + 1;
@@ -953,8 +953,8 @@ function handle(h: usize, text: string, lo: i32, hi: i32, split: boolean, expone
     }
     d = (c - 48) as u32;
   }
-  var end: i32 = i;
-  var valid: boolean = i > ds;
+  let end: i32 = i;
+  let valid: boolean = i > ds;
   if (i < hi) {
     if (c == 0) {
       end = token_end(text, i, hi, split);
@@ -974,7 +974,7 @@ function handle(h: usize, text: string, lo: i32, hi: i32, split: boolean, expone
   if (sig == i) {
     sig = i - 1;
   }
-  var code: i64 = 0 as i64;
+  let code: i64 = 0 as i64;
   if (i - sig <= 19) {
     if (v < table_bound()) {
       code = 4 as i64;
@@ -1015,7 +1015,7 @@ function token_end(text: string, i: i32, hi: i32, split: boolean): i32 {
   if (!split) {
     return hi;
   }
-  var k: i32 = i;
+  let k: i32 = i;
   while (k < hi && !is_blank(text[k] as i32)) {
     k = k + 1;
   }
@@ -1024,7 +1024,7 @@ function token_end(text: string, i: i32, hi: i32, split: boolean): i32 {
 
 // `text[lo:hi]` up to its first NUL, for the diagnostic.
 function cut_at_nul(text: string, lo: i32, hi: i32): string {
-  var i: i32 = lo;
+  let i: i32 = lo;
   while (i < hi && text[i] as i32 != 0) {
     i = i + 1;
   }
@@ -1061,21 +1061,21 @@ function out_new(): Out {
 // `line_done(o, start)` — after a line that began `start` bytes into
 // the buffer: write what GNU would write now. Exits on a failure.
 function line_done(o: Out, start: i32): void {
-  var len: i32 = buf_len(o.h);
+  let len: i32 = buf_len(o.h);
   if (o.tty) {
-    var line: string = buf_take(o.h);
+    let line: string = buf_take(o.h);
     out_write(o, line);
     return;
   }
   if (len < pipe_buf()) {
     return;
   }
-  var s: string = buf_take(o.h);
+  let s: string = buf_take(o.h);
   if (len == pipe_buf() || start == 0) {
     out_write(o, s);
     return;
   }
-  var head: string = slice_unchecked(s, 0, start) + "";
+  let head: string = slice_unchecked(s, 0, start) + "";
   out_write(o, head);
   buf_push_range(o.h, s, start, len);
 }
@@ -1097,14 +1097,14 @@ function out_write(o: Out, piece: string): void {
 // — with nothing pending, only a close that fails for something other
 // than a closed descriptor is reported. Returns the exit status.
 function out_finish(o: Out, status: i32): i32 {
-  var s: string = buf_take(o.h);
+  let s: string = buf_take(o.h);
   buf_free(o.h);
   if (s.len() > 0) {
     out_write(o, s);
   }
   match (o.w.close()) {
     Some(e) => {
-      var text: string = gnu.io_error_text(e);
+      let text: string = gnu.io_error_text(e);
       if (text != "Bad file descriptor") {
         gnu.error("write error: " + text);
         return 1;
@@ -1124,9 +1124,9 @@ struct State { o: Out, status: i32, pr: Primes, seen: i32 }
 // Folds `handle`'s result into the state and finishes the line it may
 // have pushed, which began `start` bytes into the buffer.
 function after(st: State, code: i64, start: i32): State {
-  var what: i32 = (code & 7 as i64) as i32;
-  var seen: i32 = st.seen;
-  var pr: Primes = st.pr;
+  let what: i32 = (code & 7 as i64) as i32;
+  let seen: i32 = st.seen;
+  let pr: Primes = st.pr;
   if ((what & 4) != 0) {
     seen = seen + 1;
     if (seen == table_after()) {
@@ -1148,15 +1148,15 @@ function chunk_bytes(): i32 {
 // the input. The state is held in locals across the loop: rebuilding it
 // per token would be an allocation per number.
 function handle_stdin(st: State, exponents: boolean): State {
-  var r: Reader = stdin();
-  var o: Out = st.o;
-  var status: i32 = st.status;
-  var pr: Primes = st.pr;
-  var seen: i32 = st.seen;
-  var h: usize = o.h;
-  var carry: string = "";
+  let r: Reader = stdin();
+  let o: Out = st.o;
+  let status: i32 = st.status;
+  let pr: Primes = st.pr;
+  let seen: i32 = st.seen;
+  let h: usize = o.h;
+  let carry: string = "";
   while (true) {
-    var chunk: string = "";
+    let chunk: string = "";
     match (r.read_chunk(chunk_bytes())) {
       Ok(c) => {
         chunk = c;
@@ -1165,19 +1165,19 @@ function handle_stdin(st: State, exponents: boolean): State {
         break;
       }
     }
-    var n: i32 = chunk.len();
+    let n: i32 = chunk.len();
     if (n == 0) {
       break;
     }
     // Tokens before the chunk's last blank are complete; what follows it
     // may continue in the next chunk.
-    var lim: i32 = n;
+    let lim: i32 = n;
     while (lim > 0 && !is_blank(chunk[lim - 1] as i32)) {
       lim = lim - 1;
     }
-    var i: i32 = 0;
+    let i: i32 = 0;
     if (carry.len() > 0) {
-      var f: i32 = 0;
+      let f: i32 = 0;
       while (f < n && !is_blank(chunk[f] as i32)) {
         f = f + 1;
       }
@@ -1185,10 +1185,10 @@ function handle_stdin(st: State, exponents: boolean): State {
       if (lim == 0) {
         continue;
       }
-      var start: i32 = buf_len(h);
-      var rc: i64 = handle(h, carry, 0, carry.len(), true, exponents, pr);
+      let start: i32 = buf_len(h);
+      let rc: i64 = handle(h, carry, 0, carry.len(), true, exponents, pr);
       carry = "";
-      var what: i32 = (rc & 7 as i64) as i32;
+      let what: i32 = (rc & 7 as i64) as i32;
       status = status | what & 1;
       if ((what & 4) != 0) {
         seen = seen + 1;
@@ -1204,10 +1204,10 @@ function handle_stdin(st: State, exponents: boolean): State {
         i = i + 1;
         continue;
       }
-      var at: i32 = buf_len(h);
-      var rt: i64 = handle(h, chunk, i, lim, true, exponents, pr);
+      let at: i32 = buf_len(h);
+      let rt: i64 = handle(h, chunk, i, lim, true, exponents, pr);
       i = (rt >> 3 as i64) as i32;
-      var what: i32 = (rt & 7 as i64) as i32;
+      let what: i32 = (rt & 7 as i64) as i32;
       if (what != 0) {
         status = status | what & 1;
         if ((what & 4) != 0) {
@@ -1225,9 +1225,9 @@ function handle_stdin(st: State, exponents: boolean): State {
   }
   r.close();
   if (carry.len() > 0) {
-    var start: i32 = buf_len(h);
-    var rc: i64 = handle(h, carry, 0, carry.len(), true, exponents, pr);
-    var what: i32 = (rc & 7 as i64) as i32;
+    let start: i32 = buf_len(h);
+    let rc: i64 = handle(h, carry, 0, carry.len(), true, exponents, pr);
+    let what: i32 = (rc & 7 as i64) as i32;
     status = status | what & 1;
     line_done(o, start);
   }
@@ -1235,12 +1235,12 @@ function handle_stdin(st: State, exponents: boolean): State {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [gnu.flag("h", "exponents", 1), gnu.flag("", "-debug", 2)];
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "factor", help_text(), 1);
-  var exponents: boolean = false;
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [gnu.flag("h", "exponents", 1), gnu.flag("", "-debug", 2)];
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "factor", help_text(), 1);
+  let exponents: boolean = false;
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -1253,15 +1253,15 @@ pub function main(): i32 {
       }
     }
   }
-  var operands: string[] = g.operands();
-  var st: State = State { o: out_new(), status: 0, pr: small_primes(), seen: 0 };
+  let operands: string[] = g.operands();
+  let st: State = State { o: out_new(), status: 0, pr: small_primes(), seen: 0 };
   if (operands.len() == 0) {
     st = handle_stdin(st, exponents);
   } else {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < operands.len()) {
-      var s: string = operands[i];
-      var start: i32 = buf_len(st.o.h);
+      let s: string = operands[i];
+      let start: i32 = buf_len(st.o.h);
       st = after(st, handle(st.o.h, s, 0, s.len(), false, exponents, st.pr), start);
       i = i + 1;
     }

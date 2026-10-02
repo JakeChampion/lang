@@ -12,10 +12,10 @@ import (
 // itself: 2^31 bytes, one past the i32 length ceiling. Each doubling is a
 // memcpy, so the run takes seconds.
 const concatDoublingSrc = `function main(): i32 {
-    var a: string = "x";
-    var i: i32 = 0;
+    let a: string = "x";
+    let i: i32 = 0;
     while (i < 30) { a = a + a; i = i + 1; }
-    var b: string = a + a;
+    let b: string = a + a;
     if (b.len() < 0) { return 3; }
     return 0;
 }

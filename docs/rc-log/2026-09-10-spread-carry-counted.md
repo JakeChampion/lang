@@ -46,7 +46,7 @@ had been freed. Minimal program, self-host x86-64, before the fix:
 struct Sc { names: string[], types: i32[], depth: i32 }
 function (s: Sc) bind(n: string, t: i32): Sc { return Sc { names: s.names.append(n), types: s.types.append(t), depth: s.depth }; }
 function lam(s: Sc, ps: string[]): i32 {
-    var ls: Sc = Sc { ...s, depth: 0 };
+    let ls: Sc = Sc { ...s, depth: 0 };
     …  ls = ls.bind(ps[i], i + 10);  …
 }
 ```
@@ -90,7 +90,7 @@ carry is retained but not counted, exactly the line
 `return_value_is_strictfresh_struct` already draws for an override. The box
 then earns no fresh credit, its rebinds do not reclaim, and the retained count
 is released only with the base's: the same leak the pre-#8982 alias form
-(`var ls = s; ls = ls.bind(…)`) had, and no free.
+(`let ls = s; ls = ls.bind(…)`) had, and no free.
 
 `is_fresh_struct_init` was the other gap: it called every struct literal a
 sole-owner box, spread or not, so a spread carrying an uncounted kind was
@@ -101,7 +101,7 @@ registry, so `sfok` is threaded through the 35 predicates between
 
 The counted carry also retires two demotions that were written against the
 uncounted one, or the base's own count leaks instead. The fixture
-`alloc_flat_struct_self_update` caught it (`fork_base`: `var b = Buf { ...a, … }`
+`alloc_flat_struct_self_update` caught it (`fork_base`: `let b = Buf { ...a, … }`
 printed `grows`, 400/300 per shape census): `derived_anywhere` marked `a`
 NODEEP because a value derived from it was bound elsewhere, and
 `moves_fields_stmts` was asked with `spread_counted = false` at the fresh-local,

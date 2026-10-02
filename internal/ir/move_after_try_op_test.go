@@ -26,28 +26,28 @@ function g(c: i32): Result[i32, i32] {
 	return Ok(c * 2);
 }
 function aliased(c: i32): Result[i32, i32] {
-	var x: i32[] = [1, 2, 3];
-	var r: i32 = g(c)?;
-	var y: i32[] = x;
+	let x: i32[] = [1, 2, 3];
+	let r: i32 = g(c)?;
+	let y: i32[] = x;
 	return Ok(y[0] + r);
 }
 function aliased_before(c: i32): Result[i32, i32] {
-	var x: i32[] = [1, 2, 3];
-	var y: i32[] = x;
-	var r: i32 = g(c)?;
+	let x: i32[] = [1, 2, 3];
+	let y: i32[] = x;
+	let r: i32 = g(c)?;
 	return Ok(y[0] + r);
 }
 function owned(own a: i32[], c: i32): Result[i32, i32] {
-	var r: i32 = g(c)?;
+	let r: i32 = g(c)?;
 	return Ok(take(a) + r);
 }
 function owned_before(own a: i32[], c: i32): Result[i32, i32] {
-	var t: i32 = take(a);
-	var r: i32 = g(c)?;
+	let t: i32 = take(a);
+	let r: i32 = g(c)?;
 	return Ok(t + r);
 }
 function main(): i32 {
-	var acc: i32 = 0;
+	let acc: i32 = 0;
 	match (aliased(0)) { Ok(v) => { acc = acc + v; }, Err(e) => { acc = acc + e; } }
 	match (aliased_before(0)) { Ok(v) => { acc = acc + v; }, Err(e) => { acc = acc + e; } }
 	match (owned([4], 0)) { Ok(v) => { acc = acc + v; }, Err(e) => { acc = acc + e; } }

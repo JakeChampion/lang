@@ -13,16 +13,16 @@ import "testing"
 // could only ever fail and the call stays unguarded.
 
 const withInplaceSrc = `function accum(n: i32): i32 {
-    var buf: u8[] = [];
-    var k: i32 = 0;
+    let buf: u8[] = [];
+    let k: i32 = 0;
     while (k < 8) { buf = buf.append(0u8); k = k + 1; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 8) { buf = buf.with(i, (i + n) as u8); i = i + 1; }
     return buf[0] as i32;
 }
 function keepsOriginal(n: i32): i32 {
-    var a: i32[] = [1, 2, 3];
-    var b: i32[] = a.with(0, n);
+    let a: i32[] = [1, 2, 3];
+    let b: i32[] = a.with(0, n);
     return a[0] + b[0];
 }
 function main(): i32 { return 0; }`

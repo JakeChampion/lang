@@ -14,11 +14,11 @@ import "testing"
 // Sixty-four zeros in a row is 2^-512 as an accident and unmissable as a
 // truncation.
 const randomBytesLargeProbe = `function main(): i32 {
-    var bs: u8[] = random_bytes(1048576);
+    let bs: u8[] = random_bytes(1048576);
     if (bs.len() != 1048576) { return 1; }
-    var run: i32 = 0;
-    var worst: i32 = 0;
-    var i: i32 = 0;
+    let run: i32 = 0;
+    let worst: i32 = 0;
+    let i: i32 = 0;
     while (i < bs.len()) {
         if (bs[i] == 0 as u8) { run = run + 1; } else { run = 0; }
         if (run > worst) { worst = run; }

@@ -28,14 +28,14 @@ enum Extent { Empty, Wide(i32[]) }
 }
 
 function main(): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     total = total + eat(Empty);                  // 0
     total = total + eat(Extent.Empty);             // 0
     total = total + eat(Wide([1, 2, 3]));        // 3
-    var held: Extent = Wide([4, 5]);
+    let held: Extent = Wide([4, 5]);
     total = total + borrowed_len(held);          // 2
     total = total + borrowed_len(held);          // 2 — still readable
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { total = total + eat(Empty) + eat(Wide([7])); i = i + 1; }
     return total;
 }

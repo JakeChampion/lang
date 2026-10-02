@@ -4,8 +4,8 @@ Closes `str__fieldread` on the construction-retain matrix — 400 allocs / 200 f
 against native's 300/300. Matrix: 7 leaking cells → 6.
 
 ```fern
-var q: P = P { f: mkv(i), n: i };
-var p: P = P { f: q.f, n: i };      // the read: leaked
+let q: P = P { f: mkv(i), n: i };
+let p: P = P { f: q.f, n: i };      // the read: leaked
 ```
 
 The read lowers through `struct_get` to the source box's buffer, so the new box
@@ -22,8 +22,8 @@ The finding that made this tractable is a minimal pair — the same program, the
 same answer, differing only in where the read lands:
 
 ```fern
-var tmp: string = q.f;              // clean: 400/400
-var p: P = P { f: tmp, n: i };
+let tmp: string = q.f;              // clean: 400/400
+let p: P = P { f: tmp, n: i };
 ```
 
 `strfld_safe_operand` forgives a direct field-read init (the #4768 read-side

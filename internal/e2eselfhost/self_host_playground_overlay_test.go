@@ -39,8 +39,8 @@ import (
 // presence. gcd(48, 36) is 12.
 const playgroundProgram = `import "std/i64";
 function main(): i32 {
-    var a: i64 = 48;
-    var b: i64 = 36;
+    let a: i64 = 48;
+    let b: i64 = 36;
     return a.gcd(b) as i32;
 }
 `
@@ -123,11 +123,11 @@ func TestSelfHostPlaygroundOverlay(t *testing.T) {
 func playgroundInterpByteMethods(t *testing.T, bin string) {
 	const src = `import "std/i32";
 function main(): i32 {
-    var s: string = "a1";
-    var n: i32 = 0;
+    let s: string = "a1";
+    let n: i32 = 0;
     if (s[1].is_ascii_digit()) { n = n + 1; }
     if (s[0].is_ascii_alpha()) { n = n + 2; }
-    var b: i32 = 32;
+    let b: i32 = 32;
     if ((b as u8).is_ascii_white_space()) { n = n + 4; }
     return n;
 }
@@ -162,7 +162,7 @@ func playgroundInterpRuns(t *testing.T, bin string) {
 func playgroundInterpStdlib(t *testing.T, bin string) {
 	const src = `import "std/i32";
 function main(): i32 {
-  var n: i32 = 42;
+  let n: i32 = 42;
   print("n=" + n.to_string());
   print(f"fstring {n}");
   return 0;

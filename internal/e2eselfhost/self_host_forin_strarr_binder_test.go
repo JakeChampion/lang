@@ -6,7 +6,7 @@ import (
 
 // --- A string[] local read by `for s in names` -------------------------------
 //
-// `var names: string[] = [mk("a"), mk("b")]; for s in names { t = t + s.len(); }`
+// `let names: string[] = [mk("a"), mk("b")]; for s in names { t = t + s.len(); }`
 // measured 500 allocs / 100 frees against native's 100/100 — the whole array and
 // both element boxes surviving every round. It is `for_in_str_elem__loop__read`
 // on both leak-matrix arches (#5338, #7292/#7356 family).
@@ -40,22 +40,22 @@ import (
 // FERN_RC_FREE_DEBUG=1: no trap, no quarantine hit.
 
 const forinBinderDecl = `function mkstr(a: string): string { return a + "-long-enough-to-heap-allocate"; }
-function churn(i: i32): i32 { var a: string[] = [mkstr("c"), mkstr("d")]; return a[0].len() + a[1].len(); }
+function churn(i: i32): i32 { let a: string[] = [mkstr("c"), mkstr("d")]; return a[0].len() + a[1].len(); }
 function keepstr(x: string): i32 { return x.len(); }
 function stash(x: string): string { return x; }
 `
 
 const forinBinderChurnMain = `
 function main(): i32 {
-    var acc: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } acc = acc + r; i = i + 1; }
+    let acc: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } acc = acc + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`
 
 func forinBinderCases() []arrenumShareCase {
-	plain := "\nfunction main(): i32 { var acc: i32 = 0; var i: i32 = 0; " +
+	plain := "\nfunction main(): i32 { let acc: i32 = 0; let i: i32 = 0; " +
 		"while (i < 100) { acc = acc + round(i); i = i + 1; } " +
 		"if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }\n"
 	return []arrenumShareCase{
@@ -64,8 +64,8 @@ func forinBinderCases() []arrenumShareCase {
 			name: "forin_len_read",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var names: string[] = [mkstr("a"), mkstr("b")];
-    var t: i32 = 0;
+    let names: string[] = [mkstr("a"), mkstr("b")];
+    let t: i32 = 0;
     for s in names { t = (t + s.len()) % 101; }
     return t;
 }` + plain,
@@ -78,9 +78,9 @@ function round(i: i32): i32 {
 			name: "indexed_read_unchanged",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var names: string[] = [mkstr("a"), mkstr("b")];
-    var t: i32 = 0;
-    var j: i32 = 0;
+    let names: string[] = [mkstr("a"), mkstr("b")];
+    let t: i32 = 0;
+    let j: i32 = 0;
     while (j < names.len()) { t = (t + names[j].len()) % 101; j = j + 1; }
     return t;
 }` + plain,
@@ -91,10 +91,10 @@ function round(i: i32): i32 {
 			// keeps nothing, so the borrow is still transient.
 			name: "binder_scalar_call_arg",
 			src: forinBinderDecl + `function round(i: i32): i32 {
-    var names: string[] = [mkstr("a"), mkstr("b")];
-    var t: i32 = 0;
+    let names: string[] = [mkstr("a"), mkstr("b")];
+    let t: i32 = 0;
     for s in names { t = t + keepstr(s); }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (t < 20) { return 0 - 1; }
     return (t + junk) % 101;
 }` + forinBinderChurnMain,
@@ -104,11 +104,11 @@ function round(i: i32): i32 {
 			// The binder is assigned to a local that outlives the loop.
 			name: "refused_binder_escapes_local",
 			src: forinBinderDecl + `function round(i: i32): i32 {
-    var want: i32 = mkstr("a").len();
-    var names: string[] = [mkstr("a"), mkstr("b")];
-    var keep: string = "";
+    let want: i32 = mkstr("a").len();
+    let names: string[] = [mkstr("a"), mkstr("b")];
+    let keep: string = "";
     for s in names { keep = s; }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (keep.len() != want) { return 0 - 1; }
     return (keep.len() + junk) % 101;
 }` + forinBinderChurnMain,
@@ -119,11 +119,11 @@ function round(i: i32): i32 {
 			// carried out through it.
 			name: "refused_binder_bound_local",
 			src: forinBinderDecl + `function round(i: i32): i32 {
-    var want: i32 = mkstr("a").len();
-    var names: string[] = [mkstr("a"), mkstr("b")];
-    var last: string = "";
-    for s in names { var t2: string = s; last = t2; }
-    var junk: i32 = churn(i);
+    let want: i32 = mkstr("a").len();
+    let names: string[] = [mkstr("a"), mkstr("b")];
+    let last: string = "";
+    for s in names { let t2: string = s; last = t2; }
+    let junk: i32 = churn(i);
     if (last.len() != want) { return 0 - 1; }
     return (last.len() + junk) % 101;
 }` + forinBinderChurnMain,
@@ -133,11 +133,11 @@ function round(i: i32): i32 {
 			// The binder is stored into a container.
 			name: "refused_binder_into_container",
 			src: forinBinderDecl + `function round(i: i32): i32 {
-    var want: i32 = mkstr("a").len();
-    var names: string[] = [mkstr("a"), mkstr("b")];
-    var out: string[] = [];
+    let want: i32 = mkstr("a").len();
+    let names: string[] = [mkstr("a"), mkstr("b")];
+    let out: string[] = [];
     for s in names { out = out.append(s); }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (out[0].len() != want) { return 0 - 1; }
     return (out.len() + junk) % 101;
 }` + forinBinderChurnMain,
@@ -147,14 +147,14 @@ function round(i: i32): i32 {
 			// The binder leaves the frame as a return value.
 			name: "refused_binder_returned",
 			src: forinBinderDecl + `function grab(i: i32): string {
-    var names: string[] = [mkstr("a"), mkstr("b")];
+    let names: string[] = [mkstr("a"), mkstr("b")];
     for s in names { return s; }
     return mkstr("z");
 }
 function round(i: i32): i32 {
-    var want: i32 = mkstr("a").len();
-    var g: string = grab(i);
-    var junk: i32 = churn(i);
+    let want: i32 = mkstr("a").len();
+    let g: string = grab(i);
+    let junk: i32 = churn(i);
     if (g.len() != want) { return 0 - 1; }
     return (g.len() + junk) % 101;
 }` + forinBinderChurnMain,
@@ -167,11 +167,11 @@ function round(i: i32): i32 {
 			// has to be drawn on where the RESULT goes.
 			name: "refused_call_launders_binder",
 			src: forinBinderDecl + `function round(i: i32): i32 {
-    var want: i32 = mkstr("a").len();
-    var names: string[] = [mkstr("a"), mkstr("b")];
-    var kept: string = "";
+    let want: i32 = mkstr("a").len();
+    let names: string[] = [mkstr("a"), mkstr("b")];
+    let kept: string = "";
     for s in names { kept = stash(s); }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (kept.len() != want) { return 0 - 1; }
     return (kept.len() + junk) % 101;
 }` + forinBinderChurnMain,
@@ -183,10 +183,10 @@ function round(i: i32): i32 {
 			// its own symbol and the array keeps its deep credit.
 			name: "binder_shadows_array",
 			src: forinBinderDecl + `function round(i: i32): i32 {
-    var names: string[] = [mkstr("a"), mkstr("b")];
-    var t: i32 = 0;
+    let names: string[] = [mkstr("a"), mkstr("b")];
+    let t: i32 = 0;
     for names in names { t = (t + names.len()) % 101; }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     return (t + junk) % 101;
 }` + forinBinderChurnMain,
 			want: 65,

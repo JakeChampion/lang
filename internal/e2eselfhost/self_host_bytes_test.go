@@ -44,7 +44,7 @@ func TestSelfHostBytesX86_64(t *testing.T) {
 			// encode → write the encoded form, then `|`, then decode.
 			mainSrc := "import \"std/" + tc.mod + "\";\n" +
 				"function main(): i32 {\n" +
-				"    var e: string = " + tc.mod + "." + tc.mod + "_encode(" + u8ArrayLit(tc.input) + ");\n" +
+				"    let e: string = " + tc.mod + "." + tc.mod + "_encode(" + u8ArrayLit(tc.input) + ");\n" +
 				"    write(e); write(\"|\");\n" +
 				"    write(" + fmt.Sprintf(tc.decodeFmt, tc.mod+"."+tc.mod+"_decode(e)") + ");\n" +
 				"    return 0;\n" +
@@ -92,7 +92,7 @@ func TestSelfHostBytesArm64(t *testing.T) {
 		t.Run(tc.mod, func(t *testing.T) {
 			mainSrc := "import \"std/" + tc.mod + "\";\n" +
 				"function main(): i32 {\n" +
-				"    var e: string = " + tc.mod + "." + tc.mod + "_encode(" + u8ArrayLit(tc.input) + ");\n" +
+				"    let e: string = " + tc.mod + "." + tc.mod + "_encode(" + u8ArrayLit(tc.input) + ");\n" +
 				"    write(e); write(\"|\");\n" +
 				"    write(" + fmt.Sprintf(tc.decodeFmt, tc.mod+"."+tc.mod+"_decode(e)") + ");\n" +
 				"    return 0;\n" +

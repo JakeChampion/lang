@@ -12,7 +12,7 @@ import (
 //
 // `slot_is_reclaimable_strarr` resolved "SARR:" / "SARRB:" through
 // reclaim_slot_name, so the credit was keyed by the source NAME and a name has no
-// scope. Two `var v: string[]` in sibling `if` arms are two slots under one key:
+// scope. Two `let v: string[]` in sibling `if` arms are two slots under one key:
 // the arm that binds a FRESH array earns the credit, and the arm that binds a bare
 // ALIAS inherits it and hands its buffer to __fern_str_arr_free — a buffer someone
 // else still owns.
@@ -48,10 +48,10 @@ type strarrKeyCase struct {
 }
 
 const strarrW = "function w(a: string): string { return a + \"!\"; }\n" +
-	"function mk(): string[] { var a: string[] = [w(\"p\"), w(\"q\")]; return a; }\n"
+	"function mk(): string[] { let a: string[] = [w(\"p\"), w(\"q\")]; return a; }\n"
 
-const strarrMain = "\nfunction main(): i32 { var b: string[] = [w(\"a\"), w(\"b\")]; " +
-	"var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } " +
+const strarrMain = "\nfunction main(): i32 { let b: string[] = [w(\"a\"), w(\"b\")]; " +
+	"let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
 func strarrKeyCases() []strarrKeyCase {
@@ -61,9 +61,9 @@ func strarrKeyCases() []strarrKeyCase {
 			// nothing but this bug.
 			name: "param_alias",
 			src: strarrW + `function round(base: string[], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: string[] = mk();  t = t + v.len(); }
-    if (i % 2 == 1) { var v: string[] = base;  t = t + v.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: string[] = mk();  t = t + v.len(); }
+    if (i % 2 == 1) { let v: string[] = base;  t = t + v.len(); }
     return t;
 }` + strarrMain,
 			want: 34,
@@ -74,9 +74,9 @@ func strarrKeyCases() []strarrKeyCase {
 			// denying the credit outright.
 			name: "param_rename",
 			src: strarrW + `function round(base: string[], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: string[] = mk();  t = t + v.len(); }
-    if (i % 2 == 1) { var u: string[] = base;  t = t + u.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: string[] = mk();  t = t + v.len(); }
+    if (i % 2 == 1) { let u: string[] = base;  t = t + u.len(); }
     return t;
 }` + strarrMain,
 			want: 34,
@@ -87,12 +87,12 @@ func strarrKeyCases() []strarrKeyCase {
 			name: "struct_field_alias",
 			src: `struct H { xs: string[] }
 ` + strarrW + `function round(h: H, i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: string[] = mk();  t = t + v.len(); }
-    if (i % 2 == 1) { var v: string[] = h.xs;  t = t + v.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: string[] = mk();  t = t + v.len(); }
+    if (i % 2 == 1) { let v: string[] = h.xs;  t = t + v.len(); }
     return t;
 }
-function main(): i32 { var h: H = H { xs: [w("a"), w("b")] }; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(h, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let h: H = H { xs: [w("a"), w("b")] }; let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(h, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34,
 		},
 		{
@@ -101,8 +101,8 @@ function main(): i32 { var h: H = H { xs: [w("a"), w("b")] }; var t: i32 = 0; va
 			// is the case that catches it: it balances exactly.
 			name: "fresh_only",
 			src: strarrW + `function round(base: string[], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: string[] = mk();  t = t + v.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: string[] = mk();  t = t + v.len(); }
     return t;
 }` + strarrMain,
 			want: 17,
@@ -112,8 +112,8 @@ function main(): i32 { var h: H = H { xs: [w("a"), w("b")] }; var t: i32 = 0; va
 			// inherit and nothing may be released.
 			name: "alias_only",
 			src: strarrW + `function round(base: string[], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 1) { var v: string[] = base;  t = t + v.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 1) { let v: string[] = base;  t = t + v.len(); }
     return t;
 }` + strarrMain,
 			want: 17,
@@ -123,14 +123,14 @@ function main(): i32 { var h: H = H { xs: [w("a"), w("b")] }; var t: i32 = 0; va
 			// and was correct throughout, so a change that disturbed the shared
 			// machinery instead of this one credit would show here.
 			name: "scalar_arr_unaffected",
-			src: `function mkI(n: i32): i32[] { var a: i32[] = [n, n + 1, n + 2]; return a; }
+			src: `function mkI(n: i32): i32[] { let a: i32[] = [n, n + 1, n + 2]; return a; }
 function round(base: i32[], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: i32[] = mkI(i); t = t + v.len(); }
-    if (i % 2 == 1) { var v: i32[] = base;   t = t + v.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: i32[] = mkI(i); t = t + v.len(); }
+    if (i % 2 == 1) { let v: i32[] = base;   t = t + v.len(); }
     return t;
 }
-function main(): i32 { var b: i32[] = [7, 8, 9]; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let b: i32[] = [7, 8, 9]; let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 51,
 		},
 	}

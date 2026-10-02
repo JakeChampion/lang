@@ -10,7 +10,7 @@ import "testing"
 // itself when its toolchain is absent.
 const arrayDistanceNormalizeProg = `
 import "std/array" as array;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
     if (!approx(array.distance_f64([0.0, 0.0], [3.0, 4.0]), 5.0)) { return 1; }
     if (!approx(array.distance_f64([1.0, 2.0], [1.0, 2.0]), 0.0)) { return 2; }  // equal -> 0
@@ -18,12 +18,12 @@ function main(): i32 {
     // mismatched lengths -> shorter
     if (!approx(array.distance_f64([0.0, 0.0, 9.0], [3.0, 4.0]), 5.0)) { return 4; }
     // normalize -> unit vector
-    var u: f64[] = array.normalize_f64([3.0, 4.0]);
+    let u: f64[] = array.normalize_f64([3.0, 4.0]);
     if (!approx(u[0], 0.6)) { return 5; }
     if (!approx(u[1], 0.8)) { return 6; }
     if (!approx(array.norm_f64(u), 1.0)) { return 7; }
     // zero vector returned unchanged (no NaN from div by zero)
-    var z: f64[] = array.normalize_f64([0.0, 0.0]);
+    let z: f64[] = array.normalize_f64([0.0, 0.0]);
     if (!approx(z[0], 0.0)) { return 8; }
     if (!approx(z[1], 0.0)) { return 9; }
     // empty returned unchanged

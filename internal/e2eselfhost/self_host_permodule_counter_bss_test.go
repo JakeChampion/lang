@@ -40,10 +40,10 @@ import (
 // cliff count — and so a zero cliff WEIGHT — for a program that never appends to
 // a shared buffer).
 const perModuleCounterLibSrc = `pub function probe(): i32 {
-    var xs: i32[] = [];
-    var i: i32 = 1;
+    let xs: i32[] = [];
+    let i: i32 = 1;
     while (i <= 3) { xs = xs.append(i); i = i + 1; }
-    var mark: i64 = __heap_bump_bytes();
+    let mark: i64 = __heap_bump_bytes();
     if (mark <= (0 as i64)) { return 1; }
     if (xs.len() != 3) { return 2; }
     if (__arr_push_shared_bytes() != (0 as i64)) { return 3; }

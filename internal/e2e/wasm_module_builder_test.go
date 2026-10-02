@@ -17,20 +17,20 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var p0: u8[] = [];
-    var r0: u8[] = [encode.valtype_i32()];
-    var bodyExpr: u8[] = inst.inst_i32_const([], 42);
-    var localsBytes: u8[] = inst.put_locals_empty([]);
-    var fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
+    let p0: u8[] = [];
+    let r0: u8[] = [encode.valtype_i32()];
+    let bodyExpr: u8[] = inst.inst_i32_const([], 42);
+    let localsBytes: u8[] = inst.put_locals_empty([]);
+    let fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
 
     // Whole module in one immutable builder chain.
-    var m: module.Module = module.module_new()
+    let m: module.Module = module.module_new()
         .with_types([p0], [r0])
         .with_functions([0u32])
         .with_exports(["main"], [sections.export_func()], [0u32])
         .with_code([fn]);
 
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
     // Preamble.
     if (bytes[0] != 0u8) { return 10; }
@@ -77,30 +77,30 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    var p0: u8[] = [];
-    var r0: u8[] = [];
-    var bodyExpr: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_nop([]));
+    let p0: u8[] = [];
+    let r0: u8[] = [];
+    let bodyExpr: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_nop([]));
     // Type () -> (); function 0; a memory; start = func 0.
-    var m: module.Module = module.module_new()
+    let m: module.Module = module.module_new()
         .with_types([p0], [r0])
         .with_functions([0u32])
         .with_memory(1u32, 0 - 1)
         .with_start(0u32)
         .with_code([bodyExpr]);
-    var bytes: u8[] = module.build(m);
+    let bytes: u8[] = module.build(m);
 
     // Scan section IDs; require a memory (5) and a start (8) section
     // to be present — proves with_memory/with_start set their gates.
-    var saw_mem: boolean = false;
-    var saw_start: boolean = false;
-    var i: i32 = 8; // past the 8-byte preamble
+    let saw_mem: boolean = false;
+    let saw_start: boolean = false;
+    let i: i32 = 8; // past the 8-byte preamble
     // Cheap structural scan: section id byte then LEB body size.
     // Bodies here are small (<128), so the size is a single byte.
     while (i < bytes.len()) {
-        var id: i32 = bytes[i] as i32;
+        let id: i32 = bytes[i] as i32;
         if (id == 5) { saw_mem = true; }
         if (id == 8) { saw_start = true; }
-        var size: i32 = bytes[i + 1] as i32;
+        let size: i32 = bytes[i + 1] as i32;
         i = i + 2 + size;
     }
     if (!saw_mem) { return 1; }

@@ -97,7 +97,7 @@ func TestExternEnumParamCustomProvider(t *testing.T) {
 function pick(c: Color): i32;
 
 function main(): i32 {
-	var c: Color = Green;
+	let c: Color = Green;
 	if (pick(c) == 101) { write("` + want + `"); } else { write("enum-bad"); }
 	return 0;
 }`

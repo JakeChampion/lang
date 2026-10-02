@@ -70,7 +70,7 @@ All 14 rc regression probes unchanged. Pinned across x86 / arm64 / wasm by
 - **A SOLE top-level match that binds its payload out** stays at 300/100 against
   native's 300/300. That shape takes the other branch, where
   `match_arm_binds_rc_payload` refuses it. Pinned as the gap it is.
-- **A CALL-bound enum with a sole top-level match** — `var v: E = mkv(i)` — is
+- **A CALL-bound enum with a sole top-level match** — `let v: E = mkv(i)` — is
   200/0 against native's 200/200, while the identical shape bound from an INLINE
   ctor is 200/200. Measured before and after this slice: unchanged both times,
   so it is genuinely separate. The match-consumed branch admits the call bind

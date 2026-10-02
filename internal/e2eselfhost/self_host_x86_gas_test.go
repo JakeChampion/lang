@@ -113,12 +113,12 @@ func TestSelfHostX86GasVexGroundTruth(t *testing.T) {
 
 const x86GasVexGroundTruthMain = `
 function main(): i32 {
-    var src: string = "    .text\n_start:\n    vmovdqu (%rax,%rdx), %ymm0\n    vmovdqu (%r8,%r9), %ymm3\n    vmovdqu (%rdi), %ymm9\n    vmovdqu %ymm1, %ymm0\n    vpbroadcastb %xmm1, %ymm1\n    vpbroadcastb %xmm9, %ymm10\n    vpcmpeqb %ymm1, %ymm0, %ymm0\n    vpcmpeqb %ymm9, %ymm10, %ymm11\n    vpcmpeqb (%rax,%rdx), %ymm1, %ymm0\n    vpmovmskb %ymm0, %eax\n    vpmovmskb %ymm0, %r9d\n    vpmovmskb %ymm10, %r11d\n    vzeroupper\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = "    .text\n_start:\n    vmovdqu (%rax,%rdx), %ymm0\n    vmovdqu (%r8,%r9), %ymm3\n    vmovdqu (%rdi), %ymm9\n    vmovdqu %ymm1, %ymm0\n    vpbroadcastb %xmm1, %ymm1\n    vpbroadcastb %xmm9, %ymm10\n    vpcmpeqb %ymm1, %ymm0, %ymm0\n    vpcmpeqb %ymm9, %ymm10, %ymm11\n    vpcmpeqb (%rax,%rdx), %ymm1, %ymm0\n    vpmovmskb %ymm0, %eax\n    vpmovmskb %ymm0, %r9d\n    vpmovmskb %ymm10, %r11d\n    vzeroupper\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 95; }
-    var exp: i32[] = [197, 254, 111, 4, 16, 196, 129, 126, 111, 28, 8, 197, 126, 111, 15, 197, 254, 111, 193, 196, 226, 125, 120, 201, 196, 66, 125, 120, 209, 197, 253, 116, 193, 196, 65, 45, 116, 217, 197, 245, 116, 4, 16, 197, 253, 215, 192, 197, 125, 215, 200, 196, 65, 125, 215, 218, 197, 248, 119];
+    let exp: i32[] = [197, 254, 111, 4, 16, 196, 129, 126, 111, 28, 8, 197, 126, 111, 15, 197, 254, 111, 193, 196, 226, 125, 120, 201, 196, 66, 125, 120, 209, 197, 253, 116, 193, 196, 65, 45, 116, 217, 197, 245, 116, 4, 16, 197, 253, 215, 192, 197, 125, 215, 200, 196, 65, 125, 215, 218, 197, 248, 119];
     if (a.code.len() != exp.len()) { return 96; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < exp.len()) {
         if (a.code[i] != exp[i]) { return 97; }
         i = i + 1;
@@ -273,12 +273,12 @@ func TestSelfHostX86GasGroundTruth(t *testing.T) {
 // and both REX extension bits.
 const x86GasGroundTruthMain = `
 function main(): i32 {
-    var src: string = "    .text\n_start:\n    andb %dl, %al\n    orb %dl, %al\n    setp %dl\n    setnp %dl\n    movd %eax, %xmm0\n    movd %xmm0, %eax\n    movsxd %eax, %rax\n    cvtsd2ss %xmm0, %xmm1\n    cvtss2sd %xmm0, %xmm1\n    lzcntl %eax, %eax\n    lzcntq %rax, %rax\n    tzcntl %eax, %eax\n    tzcntq %rax, %rax\n    popcntl %eax, %eax\n    popcntq %rax, %rax\n    movq $0, %rax\n    movq $-1, %rax\n    shlq %cl, %rax\n    shrq %cl, %rax\n    sarq %cl, %rax\n    shlq $3, %rax\n    shrq $3, %rcx\n    sarq $3, %rdx\n    testq $1, %rcx\n    call *%r11\n    call *%rax\n    call *-40(%rbp)\n    rep stosq\n    rep movsq\n    rep stosb\n    leaq 0(,%rcx,8), %rsi\n    leaq 16(,%rdx,8), %rsi\n    cvttsd2si %xmm0, %eax\n    cvttsd2si %xmm0, %rax\n    testl %ecx, %ecx\n    testl %r9d, %r8d\n    testl %eax, %r10d\n    addw %ax, %bx\n    movb $1, %cl\n    shlb $3, %cl\n    notw (%rdi)\n    adcq %rcx, %rax\n    sbbq $1, %rcx\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = "    .text\n_start:\n    andb %dl, %al\n    orb %dl, %al\n    setp %dl\n    setnp %dl\n    movd %eax, %xmm0\n    movd %xmm0, %eax\n    movsxd %eax, %rax\n    cvtsd2ss %xmm0, %xmm1\n    cvtss2sd %xmm0, %xmm1\n    lzcntl %eax, %eax\n    lzcntq %rax, %rax\n    tzcntl %eax, %eax\n    tzcntq %rax, %rax\n    popcntl %eax, %eax\n    popcntq %rax, %rax\n    movq $0, %rax\n    movq $-1, %rax\n    shlq %cl, %rax\n    shrq %cl, %rax\n    sarq %cl, %rax\n    shlq $3, %rax\n    shrq $3, %rcx\n    sarq $3, %rdx\n    testq $1, %rcx\n    call *%r11\n    call *%rax\n    call *-40(%rbp)\n    rep stosq\n    rep movsq\n    rep stosb\n    leaq 0(,%rcx,8), %rsi\n    leaq 16(,%rdx,8), %rsi\n    cvttsd2si %xmm0, %eax\n    cvttsd2si %xmm0, %rax\n    testl %ecx, %ecx\n    testl %r9d, %r8d\n    testl %eax, %r10d\n    addw %ax, %bx\n    movb $1, %cl\n    shlb $3, %cl\n    notw (%rdi)\n    adcq %rcx, %rax\n    sbbq $1, %rcx\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 90; }
-    var exp: i32[] = [32, 208, 8, 208, 15, 154, 194, 15, 155, 194, 102, 15, 110, 192, 102, 15, 126, 192, 72, 99, 192, 242, 15, 90, 200, 243, 15, 90, 200, 243, 15, 189, 192, 243, 72, 15, 189, 192, 243, 15, 188, 192, 243, 72, 15, 188, 192, 243, 15, 184, 192, 243, 72, 15, 184, 192, 72, 199, 192, 0, 0, 0, 0, 72, 199, 192, 255, 255, 255, 255, 72, 211, 224, 72, 211, 232, 72, 211, 248, 72, 193, 224, 3, 72, 193, 233, 3, 72, 193, 250, 3, 72, 247, 193, 1, 0, 0, 0, 65, 255, 211, 255, 208, 255, 85, 216, 243, 72, 171, 243, 72, 165, 243, 170, 72, 141, 52, 205, 0, 0, 0, 0, 72, 141, 52, 213, 16, 0, 0, 0, 242, 15, 44, 192, 242, 72, 15, 44, 192, 133, 201, 69, 133, 200, 65, 133, 194, 102, 1, 195, 177, 1, 192, 225, 3, 102, 247, 23, 72, 17, 200, 72, 131, 217, 1];
+    let exp: i32[] = [32, 208, 8, 208, 15, 154, 194, 15, 155, 194, 102, 15, 110, 192, 102, 15, 126, 192, 72, 99, 192, 242, 15, 90, 200, 243, 15, 90, 200, 243, 15, 189, 192, 243, 72, 15, 189, 192, 243, 15, 188, 192, 243, 72, 15, 188, 192, 243, 15, 184, 192, 243, 72, 15, 184, 192, 72, 199, 192, 0, 0, 0, 0, 72, 199, 192, 255, 255, 255, 255, 72, 211, 224, 72, 211, 232, 72, 211, 248, 72, 193, 224, 3, 72, 193, 233, 3, 72, 193, 250, 3, 72, 247, 193, 1, 0, 0, 0, 65, 255, 211, 255, 208, 255, 85, 216, 243, 72, 171, 243, 72, 165, 243, 170, 72, 141, 52, 205, 0, 0, 0, 0, 72, 141, 52, 213, 16, 0, 0, 0, 242, 15, 44, 192, 242, 72, 15, 44, 192, 133, 201, 69, 133, 200, 65, 133, 194, 102, 1, 195, 177, 1, 192, 225, 3, 102, 247, 23, 72, 17, 200, 72, 131, 217, 1];
     if (a.code.len() != exp.len()) { return 91; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < exp.len()) {
         if (a.code[i] != exp[i]) { return i + 1; }
         i = i + 1;
@@ -292,13 +292,13 @@ function main(): i32 {
     if (x86_gas_reg("%rax") != 0 || x86_gas_reg("%rdi") != 7 || x86_gas_reg("rbp") != 5) { return 1; }
     if (x86_gas_reg("%rip") != (0 - 1)) { return 2; }
     if (x86_gas_atoi("$60") != 60 || x86_gas_atoi("42") != 42 || x86_gas_atoi("-8") != (0 - 8)) { return 3; }
-    var m: GasMem = x86_gas_parse_mem("-8(%rbp)");
+    let m: GasMem = x86_gas_parse_mem("-8(%rbp)");
     if (m.is_rip || m.base != 5 || m.disp != (0 - 8)) { return 4; }
-    var m2: GasMem = x86_gas_parse_mem("(%rax)");
+    let m2: GasMem = x86_gas_parse_mem("(%rax)");
     if (m2.is_rip || m2.base != 0 || m2.disp != 0) { return 5; }
-    var m3: GasMem = x86_gas_parse_mem("answer(%rip)");
+    let m3: GasMem = x86_gas_parse_mem("answer(%rip)");
     if (!m3.is_rip || m3.label != "answer") { return 6; }
-    var a: X86Asm = x86_gas_assemble("\tmovq $0, %rax\n\tmovq $7, %rcx\nloop:\n\taddq $6, %rax\n\tsubq $1, %rcx\n\tcmpq $0, %rcx\n\tjne loop\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n");
+    let a: X86Asm = x86_gas_assemble("\tmovq $0, %rax\n\tmovq $7, %rcx\nloop:\n\taddq $6, %rax\n\tsubq $1, %rcx\n\tcmpq $0, %rcx\n\tjne loop\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n");
     // movq $imm, %reg SIGN-extends: REX.W C7 /0 id (48 c7 c0 …), not the
     // zero-extending 32-bit B8+r id this used to assert — which is exactly
     // how "movq $-1, %rax" came to load 4294967295.
@@ -307,22 +307,22 @@ function main(): i32 {
     // paren-aware operand split + indexed memory parsing (slice 2j):
     if (x86_gas_top_comma("$0, (%r12,%r15,1)") != 2) { return 9; }
     if (x86_gas_top_comma("(%rax,%rcx,1), %rdx") != 13) { return 10; }
-    var mi: GasMem = x86_gas_parse_mem("(%r12,%r15,1)");
+    let mi: GasMem = x86_gas_parse_mem("(%r12,%r15,1)");
     if (!mi.has_index || mi.base != 12 || mi.index != 15 || mi.scale != 1) { return 11; }
-    var mi2: GasMem = x86_gas_parse_mem("8(%rsp,%rcx,8)");
+    let mi2: GasMem = x86_gas_parse_mem("8(%rsp,%rcx,8)");
     if (!mi2.has_index || mi2.base != 4 || mi2.index != 1 || mi2.scale != 8 || mi2.disp != 8) { return 12; }
     // 8-bit register parsing (slice 2k):
     if (x86_gas_reg8("%al") != 0 || x86_gas_reg8("%dl") != 2 || x86_gas_reg8("%r8b") != 8) { return 13; }
     // SH-005: an unsupported mnemonic is RECORDED, not silently dropped —
     // one-operand-shaped, two-operand-shaped, and the cmpb non-imm form.
     if (a.unknown.len() != 0) { return 14; }
-    var u1: X86Asm = x86_gas_assemble("\tfrobnicate %rax\n");
+    let u1: X86Asm = x86_gas_assemble("\tfrobnicate %rax\n");
     if (u1.unknown.len() != 1) { return 15; }
     // A width mismatch must land on the unknown list, never encode at the
     // wrong width (the silent-widening audit, #7893).
-    var u2: X86Asm = x86_gas_assemble("\tmovw %eax, %bx\n");
+    let u2: X86Asm = x86_gas_assemble("\tmovw %eax, %bx\n");
     if (u2.unknown.len() != 1) { return 16; }
-    var u3: X86Asm = x86_gas_assemble("\tfnord %xmm0, %xmm1\n");
+    let u3: X86Asm = x86_gas_assemble("\tfnord %xmm0, %xmm1\n");
     if (u3.unknown.len() != 1) { return 17; }
     if (x86_gas_reg8("%rax") != (0 - 1)) { return 14; }
     // xmm parsing + float literal parsing (slice 2n):
@@ -334,40 +334,40 @@ function main(): i32 {
     if (!x86_gas_has_paren("-8(%rbp)") || x86_gas_has_paren("%rax") || x86_gas_has_paren("$1")) { return 100; }
     // split keeps empty fields, a trailing separator's empty tail, and a
     // text with no separator; a two-byte separator matches whole.
-    var sp: string[] = x86_str_split("a\n\nbc\n", "\n");
+    let sp: string[] = x86_str_split("a\n\nbc\n", "\n");
     if (sp.len() != 4 || sp[0] != "a" || sp[1] != "" || sp[2] != "bc" || sp[3] != "") { return 101; }
-    var sp2: string[] = x86_str_split("x, y,z", ", ");
+    let sp2: string[] = x86_str_split("x, y,z", ", ");
     if (sp2.len() != 2 || sp2[0] != "x" || sp2[1] != "y,z") { return 102; }
-    var sp3: string[] = x86_str_split("none", "\n");
+    let sp3: string[] = x86_str_split("none", "\n");
     if (sp3.len() != 1 || sp3[0] != "none") { return 103; }
-    var fv: f64 = x86_gas_parse_f64("84.5");
+    let fv: f64 = x86_gas_parse_f64("84.5");
     if (fv < 84.4 || fv > 84.6) { return 17; }
-    var fz: f64 = x86_gas_parse_f64("2.0");
+    let fz: f64 = x86_gas_parse_f64("2.0");
     if (fz < 1.9 || fz > 2.1) { return 18; }
     // .ascii byte extraction (slice 2o): "hi!" -> 104,105,33.
-    var ab: i32[] = x86_gas_ascii([], ".ascii \"hi!\"");
+    let ab: i32[] = x86_gas_ascii([], ".ascii \"hi!\"");
     if (ab.len() != 3 || ab[0] != 104 || ab[1] != 105 || ab[2] != 33) { return 19; }
     // escape handling: "\n\t" -> 10, 9.
-    var ac: i32[] = x86_gas_ascii([], ".ascii \"\\n\\t\"");
+    let ac: i32[] = x86_gas_ascii([], ".ascii \"\\n\\t\"");
     if (ac.len() != 2 || ac[0] != 10 || ac[1] != 9) { return 20; }
     // atoi64 (slice 2p): decimal, hex, negative.
-    var n1: i64 = x86_gas_atoi64("$4611686018427387904");
-    var ref1: i64 = 4611686018427387904;
+    let n1: i64 = x86_gas_atoi64("$4611686018427387904");
+    let ref1: i64 = 4611686018427387904;
     if (n1 != ref1) { return 21; }
-    var n2: i64 = x86_gas_atoi64("$0x40");
-    var ref2: i64 = 64;
+    let n2: i64 = x86_gas_atoi64("$0x40");
+    let ref2: i64 = 64;
     if (n2 != ref2) { return 22; }
-    var n3: i64 = x86_gas_atoi64("-5");
-    var ref3: i64 = 0 - 5;
+    let n3: i64 = x86_gas_atoi64("-5");
+    let ref3: i64 = 0 - 5;
     if (n3 != ref3) { return 23; }
     // exponent parsing (#4342): the pre-fix parser stopped at the 'e',
     // so a spliced-text .double operand like 1e3 mis-assembled off by the
     // whole power of ten.
-    var fe: f64 = x86_gas_parse_f64("1e3");
+    let fe: f64 = x86_gas_parse_f64("1e3");
     if (fe < 999.9 || fe > 1000.1) { return 24; }
-    var fs: f64 = x86_gas_parse_f64("1.5e-2");
+    let fs: f64 = x86_gas_parse_f64("1.5e-2");
     if (fs < 0.0149 || fs > 0.0151) { return 25; }
-    var fm: f64 = x86_gas_parse_f64("-2.5e+2");
+    let fm: f64 = x86_gas_parse_f64("-2.5e+2");
     if (fm < (0.0 - 250.1) || fm > (0.0 - 249.9)) { return 26; }
     // A '#' inside a string literal is DATA, not the start of a comment.
     // Stripping from the first '#' truncated the string and shifted every
@@ -376,21 +376,21 @@ function main(): i32 {
     if (x86_gas_comment_start("    .ascii \"a#b\"") != (0 - 1)) { return 27; }
     if (x86_gas_comment_start("    movq %rax, %rcx # note") != 20) { return 28; }
     if (x86_gas_comment_start("    .ascii \"q\" # t") != 15) { return 29; }
-    var sh: X86Asm = x86_gas_assemble(".section .rodata\n.S0: .ascii \"p?q#f\"\n");
+    let sh: X86Asm = x86_gas_assemble(".section .rodata\n.S0: .ascii \"p?q#f\"\n");
     if (sh.rodata.len() != 5 || sh.rodata[3] != 35) { return 30; }
     // A no-base SIB "disp(,%index,scale)" is its own addressing mode; the
     // empty base field read as register -1 and was masked to a real one.
-    var nb: GasMem = x86_gas_parse_mem("0(,%rcx,8)");
+    let nb: GasMem = x86_gas_parse_mem("0(,%rcx,8)");
     if (!nb.no_base || !nb.has_index || nb.index != 1 || nb.scale != 8) { return 31; }
-    var wb: GasMem = x86_gas_parse_mem("8(%rsp,%rcx,8)");
+    let wb: GasMem = x86_gas_parse_mem("8(%rsp,%rcx,8)");
     if (wb.no_base) { return 32; }
     // SH-005 on the DIRECTIVE side: an unrecognised directive is recorded,
     // not silently ignored — it would shift every symbol after it.
-    var ud: X86Asm = x86_gas_assemble("    .section .rodata\n    .octa 1\n");
+    let ud: X86Asm = x86_gas_assemble("    .section .rodata\n    .octa 1\n");
     if (ud.unknown.len() != 1) { return 33; }
     // ... while the symbol-table metadata the in-process linker has no use
     // for stays ignorable.
-    var ok: X86Asm = x86_gas_assemble("    .globl m\n    .type m,@function\n    .size m,4\n    .weak w\n");
+    let ok: X86Asm = x86_gas_assemble("    .globl m\n    .type m,@function\n    .size m,4\n    .weak w\n");
     if (ok.unknown.len() != 0) { return 34; }
     // The packed-SSE2 front end, assembled as the __memchr kernel emits it
     // (docs/ATLAS-PLATFORM-PLAN.md §3): splat, load, compare, gather, scan.
@@ -398,13 +398,13 @@ function main(): i32 {
     // of pinning the whole sequence rather than each mnemonic alone is that
     // it also proves the parser hands the operands over in the right order,
     // which a per-encoder check cannot see.
-    var vk: X86Asm = x86_gas_assemble("\tmovd %ecx, %xmm1\n\tpunpcklbw %xmm1, %xmm1\n\tpunpcklwd %xmm1, %xmm1\n\tpshufd $0, %xmm1, %xmm1\n\tmovdqu (%rax,%rdx), %xmm0\n\tpcmpeqb %xmm1, %xmm0\n\tpmovmskb %xmm0, %r9d\n\ttestl %r9d, %r9d\n\tbsfl %r9d, %r9d\n");
+    let vk: X86Asm = x86_gas_assemble("\tmovd %ecx, %xmm1\n\tpunpcklbw %xmm1, %xmm1\n\tpunpcklwd %xmm1, %xmm1\n\tpshufd $0, %xmm1, %xmm1\n\tmovdqu (%rax,%rdx), %xmm0\n\tpcmpeqb %xmm1, %xmm0\n\tpmovmskb %xmm0, %r9d\n\ttestl %r9d, %r9d\n\tbsfl %r9d, %r9d\n");
     if (vk.unknown.len() != 0) { return 35; }
-    var want: i32[] = [102, 15, 110, 201, 102, 15, 96, 201, 102, 15, 97, 201,
+    let want: i32[] = [102, 15, 110, 201, 102, 15, 96, 201, 102, 15, 97, 201,
         102, 15, 112, 201, 0, 243, 15, 111, 4, 16, 102, 15, 116, 193,
         102, 68, 15, 215, 200, 69, 133, 201, 69, 15, 188, 201];
     if (vk.code.len() != want.len()) { return 36; }
-    var vi: i32 = 0;
+    let vi: i32 = 0;
     while (vi < want.len()) {
         if (vk.code[vi] != want[vi]) { return 37; }
         vi = vi + 1;
@@ -414,13 +414,13 @@ function main(): i32 {
     // cmpl-then-notl pair that reads the mask as EQUAL rather than
     // FOUND, and the 64-bit SIB-indexed load/xor its overlapping trailing
     // window addresses with. GNU as output for this exact text.
-    var mm: X86Asm = x86_gas_assemble("\tmovdqu (%rsi,%rdx), %xmm0\n\tmovdqu (%rcx,%rdx), %xmm1\n\tpcmpeqb %xmm1, %xmm0\n\tpmovmskb %xmm0, %eax\n\tcmpl $65535, %eax\n\tnotl %eax\n\tbsfl %eax, %eax\n\tmovq (%rsi,%rdi), %rax\n\txorq (%rcx,%rdi), %rax\n\tbsfq %rax, %rax\n\tshrq $3, %rax\n");
+    let mm: X86Asm = x86_gas_assemble("\tmovdqu (%rsi,%rdx), %xmm0\n\tmovdqu (%rcx,%rdx), %xmm1\n\tpcmpeqb %xmm1, %xmm0\n\tpmovmskb %xmm0, %eax\n\tcmpl $65535, %eax\n\tnotl %eax\n\tbsfl %eax, %eax\n\tmovq (%rsi,%rdi), %rax\n\txorq (%rcx,%rdi), %rax\n\tbsfq %rax, %rax\n\tshrq $3, %rax\n");
     if (mm.unknown.len() != 0) { return 54; }
-    var mw: i32[] = [243, 15, 111, 4, 22, 243, 15, 111, 12, 17, 102, 15, 116, 193,
+    let mw: i32[] = [243, 15, 111, 4, 22, 243, 15, 111, 12, 17, 102, 15, 116, 193,
         102, 15, 215, 192, 61, 255, 255, 0, 0, 247, 208, 15, 188, 192,
         72, 139, 4, 62, 72, 51, 4, 57, 72, 15, 188, 192, 72, 193, 232, 3];
     if (mm.code.len() != mw.len()) { return 55; }
-    var mi: i32 = 0;
+    let mi: i32 = 0;
     while (mi < mw.len()) {
         if (mm.code[mi] != mw[mi]) { return 56; }
         mi = mi + 1;
@@ -428,11 +428,11 @@ function main(): i32 {
     // The backward kernel's tail differs from the forward one's by exactly one
     // instruction, so the front end is checked on that one: bsrl, not bsfl.
     // 0F BD C8 / 45 0F BD C9, GNU as output for this text.
-    var vb: X86Asm = x86_gas_assemble("\tbsrl %eax, %ecx\n\tbsrl %r9d, %r9d\n");
+    let vb: X86Asm = x86_gas_assemble("\tbsrl %eax, %ecx\n\tbsrl %r9d, %r9d\n");
     if (vb.unknown.len() != 0) { return 38; }
-    var bw: i32[] = [15, 189, 200, 69, 15, 189, 201];
+    let bw: i32[] = [15, 189, 200, 69, 15, 189, 201];
     if (vb.code.len() != bw.len()) { return 39; }
-    var bi: i32 = 0;
+    let bi: i32 = 0;
     while (bi < bw.len()) {
         if (vb.code[bi] != bw[bi]) { return 40; }
         bi = bi + 1;
@@ -449,11 +449,11 @@ function main(): i32 {
     // at a memory and a register destination alike. The pre-#7886 encoder
     // always widened to 81 /7 id, which assembles to the same semantics and
     // different bytes; these are GNU as output for this exact text.
-    var am: X86Asm = x86_gas_assemble("\tcmpl $1, -4(%rax)\n\taddl %ecx, 8(%rdx)\n\tsubl (%rsi), %eax\n\tcmpl $1, %edx\n\taddl %ecx, %eax\n");
+    let am: X86Asm = x86_gas_assemble("\tcmpl $1, -4(%rax)\n\taddl %ecx, 8(%rdx)\n\tsubl (%rsi), %eax\n\tcmpl $1, %edx\n\taddl %ecx, %eax\n");
     if (am.unknown.len() != 0) { return 41; }
-    var amw: i32[] = [131, 120, 252, 1, 1, 74, 8, 43, 6, 131, 250, 1, 1, 200];
+    let amw: i32[] = [131, 120, 252, 1, 1, 74, 8, 43, 6, 131, 250, 1, 1, 200];
     if (am.code.len() != amw.len()) { return 42; }
-    var ai: i32 = 0;
+    let ai: i32 = 0;
     while (ai < amw.len()) {
         if (am.code[ai] != amw[ai]) { return 43; }
         ai = ai + 1;
@@ -466,10 +466,10 @@ function main(): i32 {
 // resulting ELF to stdout. acc=0; repeat 7×: acc += 6; exit(acc) -> 42.
 const x86GasLoopDriverMain = `
 function main(): i32 {
-    var src: string = ".text\n.globl _start\n_start:\n\tmovq $0, %rax\n\tmovq $7, %rcx\nloop:\n\taddq $6, %rax\n\tsubq $1, %rcx\n\tcmpq $0, %rcx\n\tjne loop\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = ".text\n.globl _start\n_start:\n\tmovq $0, %rax\n\tmovq $7, %rcx\nloop:\n\taddq $6, %rax\n\tsubq $1, %rcx\n\tcmpq $0, %rcx\n\tjne loop\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
+    let bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
@@ -479,10 +479,10 @@ function main(): i32 {
 // .quad via leaq sym(%rip), exercising the directive + rip path -> 42.
 const x86GasRodataDriverMain = `
 function main(): i32 {
-    var src: string = ".text\n_start:\n\tleaq answer(%rip), %rax\n\tmovq (%rax), %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\nanswer:\n\t.quad 42\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = ".text\n_start:\n\tleaq answer(%rip), %rax\n\tmovq (%rax), %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\nanswer:\n\t.quad 42\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
-    var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
+    let bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
@@ -491,8 +491,8 @@ function main(): i32 {
 // x86GasMulDriverMain: imulq (6 * 7 = 42).
 const x86GasMulDriverMain = `
 function main(): i32 {
-    var src: string = "\tmovq $6, %rax\n\tmovq $7, %rcx\n\timulq %rcx, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = "\tmovq $6, %rax\n\tmovq $7, %rcx\n\timulq %rcx, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
@@ -502,8 +502,8 @@ function main(): i32 {
 // x86GasIncShlDriverMain: incq + shlq ((5+1)<<3 - 6 = 48 - 6 = 42).
 const x86GasIncShlDriverMain = `
 function main(): i32 {
-    var src: string = "\tmovq $5, %rax\n\tincq %rax\n\tshlq $3, %rax\n\tsubq $6, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = "\tmovq $5, %rax\n\tincq %rax\n\tshlq $3, %rax\n\tsubq $6, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
@@ -513,8 +513,8 @@ function main(): i32 {
 // x86GasDivDriverMain: cqto + idivq (84 / 2 = 42).
 const x86GasDivDriverMain = `
 function main(): i32 {
-    var src: string = "\tmovq $84, %rax\n\tcqto\n\tmovq $2, %rcx\n\tidivq %rcx\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = "\tmovq $84, %rax\n\tcqto\n\tmovq $2, %rcx\n\tidivq %rcx\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
@@ -528,8 +528,8 @@ function main(): i32 {
 // Any wrong encoding — a reversed shld source, a dropped carry — exits 1.
 const x86GasCarryChainDriverMain = `
 function main(): i32 {
-    var src: string = "\tmovabs $0x0123456789abcdef, %rsi\n\tmovabs $0xfedcba9876543210, %rdi\n\tmovq $8, %rcx\n\tshldq %cl, %rdi, %rsi\n\tmovabs $0x23456789abcdeffe, %rax\n\tcmpq %rax, %rsi\n\tjne bad\n\tmovabs $0x0000000100000001, %rax\n\tmovabs $0x0000000100000001, %rcx\n\tmulq %rcx\n\tmovabs $0x0000000200000001, %rcx\n\tcmpq %rcx, %rax\n\tjne bad\n\tcmpq $1, %rdx\n\tjne bad\n\tmovq $-1, %rax\n\tmovq $1, %rcx\n\taddq %rcx, %rax\n\tmovq $5, %rax\n\tmovq $7, %rcx\n\tadcq %rcx, %rax\n\tcmpq $13, %rax\n\tjne bad\n\tmovq $0, %rax\n\tmovq $1, %rcx\n\tsubq %rcx, %rax\n\tmovq $20, %rax\n\tmovq $6, %rcx\n\tsbbq %rcx, %rax\n\tcmpq $13, %rax\n\tjne bad\n\tmovq $42, %rdi\n\tjmp out\nbad:\n\tmovq $1, %rdi\nout:\n\tmovq $60, %rax\n\tsyscall\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = "\tmovabs $0x0123456789abcdef, %rsi\n\tmovabs $0xfedcba9876543210, %rdi\n\tmovq $8, %rcx\n\tshldq %cl, %rdi, %rsi\n\tmovabs $0x23456789abcdeffe, %rax\n\tcmpq %rax, %rsi\n\tjne bad\n\tmovabs $0x0000000100000001, %rax\n\tmovabs $0x0000000100000001, %rcx\n\tmulq %rcx\n\tmovabs $0x0000000200000001, %rcx\n\tcmpq %rcx, %rax\n\tjne bad\n\tcmpq $1, %rdx\n\tjne bad\n\tmovq $-1, %rax\n\tmovq $1, %rcx\n\taddq %rcx, %rax\n\tmovq $5, %rax\n\tmovq $7, %rcx\n\tadcq %rcx, %rax\n\tcmpq $13, %rax\n\tjne bad\n\tmovq $0, %rax\n\tmovq $1, %rcx\n\tsubq %rcx, %rax\n\tmovq $20, %rax\n\tmovq $6, %rcx\n\tsbbq %rcx, %rax\n\tcmpq $13, %rax\n\tjne bad\n\tmovq $42, %rdi\n\tjmp out\nbad:\n\tmovq $1, %rdi\nout:\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
@@ -539,12 +539,12 @@ function main(): i32 {
 // x86GasCarryChainGroundTruthMain: bytes from as + objdump, not the manual.
 const x86GasCarryChainGroundTruthMain = `
 function main(): i32 {
-    var src: string = "    .text\n_start:\n    shldq %cl, %rdi, %rsi\n    shldq %cl, %rax, %r11\n    shldq %cl, %r12, %r11\n    mulq %rsi\n    mulq %r11\n    adcq %r10, %rsi\n    adcq %rcx, %rax\n    sbbq %r11, %rsi\n    sbbq %rax, %rcx\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = "    .text\n_start:\n    shldq %cl, %rdi, %rsi\n    shldq %cl, %rax, %r11\n    shldq %cl, %r12, %r11\n    mulq %rsi\n    mulq %r11\n    adcq %r10, %rsi\n    adcq %rcx, %rax\n    sbbq %r11, %rsi\n    sbbq %rax, %rcx\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 90; }
-    var exp: i32[] = [72, 15, 165, 254, 73, 15, 165, 195, 77, 15, 165, 227, 72, 247, 230, 73, 247, 227, 76, 17, 214, 72, 17, 200, 76, 25, 222, 72, 25, 193];
+    let exp: i32[] = [72, 15, 165, 254, 73, 15, 165, 195, 77, 15, 165, 227, 72, 247, 230, 73, 247, 227, 76, 17, 214, 72, 17, 200, 76, 25, 222, 72, 25, 193];
     if (a.code.len() != exp.len()) { return 91; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < exp.len()) {
         if (a.code[i] != exp[i]) { return i + 1; }
         i = i + 1;
@@ -556,8 +556,8 @@ function main(): i32 {
 // x86GasExtRegDriverMain: extended-register arithmetic (imulq %r13,%r12).
 const x86GasExtRegDriverMain = `
 function main(): i32 {
-    var src: string = "\tmovq $6, %r12\n\tmovq $7, %r13\n\timulq %r13, %r12\n\tmovq %r12, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = "\tmovq $6, %r12\n\tmovq $7, %r13\n\timulq %r13, %r12\n\tmovq %r12, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
@@ -572,9 +572,9 @@ function main(): i32 {
 // failure overwrite. Any dropped/mis-encoded instruction exits != 42.
 const x86GasRuntimeOpsDriverMain = `
 function main(): i32 {
-    var src: string = ".text\n.globl _start\n_start:\n\tmovabs $17179869184, %rcx\n\tshrq $30, %rcx\n\tbtq $4, %rcx\n\tjc bitok\n\tmovq $1, %rdi\n\tjmp done\nbitok:\n\tincl counter(%rip)\n\tincl counter(%rip)\n\tmovl counter(%rip), %eax\n\tsubq $16, %rsp\n\tmovq $0, 8(%rsp)\n\tmovl $24, 8(%rsp)\n\tmovq 8(%rsp), %rdi\n\taddq %rax, %rdi\n\taddq %rcx, %rdi\n\tcmpq %rcx, 8(%rsp)\n\tja done\n\tmovq $2, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .bss\n.align 8\ncounter: .quad 0\n";
-    var a: X86Asm = x86_gas_assemble(src);
-    var entry: i32 = x86_label_off(a, "_start");
+    let src: string = ".text\n.globl _start\n_start:\n\tmovabs $17179869184, %rcx\n\tshrq $30, %rcx\n\tbtq $4, %rcx\n\tjc bitok\n\tmovq $1, %rdi\n\tjmp done\nbitok:\n\tincl counter(%rip)\n\tincl counter(%rip)\n\tmovl counter(%rip), %eax\n\tsubq $16, %rsp\n\tmovq $0, 8(%rsp)\n\tmovl $24, 8(%rsp)\n\tmovq 8(%rsp), %rdi\n\taddq %rax, %rdi\n\taddq %rcx, %rdi\n\tcmpq %rcx, 8(%rsp)\n\tja done\n\tmovq $2, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .bss\n.align 8\ncounter: .quad 0\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    let entry: i32 = x86_label_off(a, "_start");
     write(string_from_bytes_unchecked(to_u8(elf_program_x86(a.code, [], [], a.rodata, a.bss_size, entry))));
     return 0;
 }
@@ -583,8 +583,8 @@ function main(): i32 {
 // x86GasExtMemDriverMain: store r8 to [rsp], reload into r9, exit(r9)=42.
 const x86GasExtMemDriverMain = `
 function main(): i32 {
-    var src: string = "\tsubq $16, %rsp\n\tmovq $42, %r8\n\tmovq %r8, (%rsp)\n\tmovq (%rsp), %r9\n\tmovq %r9, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = "\tsubq $16, %rsp\n\tmovq $42, %r8\n\tmovq %r8, (%rsp)\n\tmovq (%rsp), %r9\n\tmovq %r9, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
@@ -594,8 +594,8 @@ function main(): i32 {
 // x86GasIndexDriverMain: SIB-index store/load — [rsp + rcx*8] = 42, reload.
 const x86GasIndexDriverMain = `
 function main(): i32 {
-    var src: string = "\tsubq $64, %rsp\n\tmovq $42, %rax\n\tmovq $2, %rcx\n\tmovq %rax, (%rsp,%rcx,8)\n\tmovq (%rsp,%rcx,8), %rdi\n\taddq $64, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = "\tsubq $64, %rsp\n\tmovq $42, %rax\n\tmovq $2, %rcx\n\tmovq %rax, (%rsp,%rcx,8)\n\tmovq (%rsp,%rcx,8), %rdi\n\taddq $64, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
@@ -605,8 +605,8 @@ function main(): i32 {
 // x86GasByteImmDriverMain: movb $42, (%rsp) ; movzbq (%rsp), %rdi.
 const x86GasByteImmDriverMain = `
 function main(): i32 {
-    var src: string = "\tsubq $16, %rsp\n\tmovb $42, (%rsp)\n\tmovzbq (%rsp), %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = "\tsubq $16, %rsp\n\tmovb $42, (%rsp)\n\tmovzbq (%rsp), %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
@@ -616,8 +616,8 @@ function main(): i32 {
 // x86GasByteRegDriverMain: movb %cl, (%rsp) ; movzbq (%rsp), %r8.
 const x86GasByteRegDriverMain = `
 function main(): i32 {
-    var src: string = "\tsubq $16, %rsp\n\tmovq $42, %rcx\n\tmovb %cl, (%rsp)\n\tmovzbq (%rsp), %r8\n\tmovq %r8, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = "\tsubq $16, %rsp\n\tmovq $42, %rcx\n\tmovb %cl, (%rsp)\n\tmovzbq (%rsp), %r8\n\tmovq %r8, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;
@@ -643,8 +643,8 @@ func TestSelfHostX86GasNegativeQuadRuns(t *testing.T) {
 // `leaq sym(%rip)` and compared against `cmpq $imm` (sign-extended).
 const x86GasNegativeQuadDriverMain = `
 function main(): i32 {
-    var src: string = ".text\n_start:\n\tmovq $43, %rdi\n\tleaq vals(%rip), %rax\n\tmovq (%rax), %rcx\n\tcmpq $-1, %rcx\n\tjne done\n\tmovq 8(%rax), %rcx\n\tcmpq $-5, %rcx\n\tjne done\n\tmovq 16(%rax), %rcx\n\tcmpq $-2147483648, %rcx\n\tjne done\n\tmovq $42, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\nvals:\n\t.quad -1\n\t.quad -5\n\t.quad -2147483648\n";
-    var a: X86Asm = x86_gas_assemble(src);
+    let src: string = ".text\n_start:\n\tmovq $43, %rdi\n\tleaq vals(%rip), %rax\n\tmovq (%rax), %rcx\n\tcmpq $-1, %rcx\n\tjne done\n\tmovq 8(%rax), %rcx\n\tcmpq $-5, %rcx\n\tjne done\n\tmovq 16(%rax), %rcx\n\tcmpq $-2147483648, %rcx\n\tjne done\n\tmovq $42, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\nvals:\n\t.quad -1\n\t.quad -5\n\t.quad -2147483648\n";
+    let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.code, a.rodata))));
     return 0;

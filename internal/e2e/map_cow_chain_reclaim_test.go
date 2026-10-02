@@ -61,11 +61,11 @@ struct Rec { name: string, n: i32 }
 // Array values (valKind 2) — the column the copy claims with an inc and the
 // chain's release now dec's, so an over-release shows up as a wrong element.
 function arr_chain(rounds: i32): i32 {
-    var a: Map[string, i32[]] = map_new(16);
+    let a: Map[string, i32[]] = map_new(16);
     a = a.insert("arr-seed-key-that-heap-allocates", [11, 22, 33]);
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < rounds) {
-        var b = a;
+        let b = a;
         b = b.insert("arr-chain-key-that-heap-allocates" + i.to_string(), [i, i + 1]);
         a = b;
         if (a.get_or("arr-seed-key-that-heap-allocates", [0])[2] != 33) { return 0 - 1; }
@@ -80,11 +80,11 @@ function arr_chain(rounds: i32): i32 {
 // is where the un-walked column cost the most: 83648 / 83968 bytes on arm64 /
 // wasm over 100 rounds, now 0.
 function str_chain(rounds: i32): i32 {
-    var a: Map[string, string] = map_new(16);
+    let a: Map[string, string] = map_new(16);
     a = a.insert("sv-seed-key-that-heap-allocates", "sv-seed-value-that-heap-allocates");
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < rounds) {
-        var b = a;
+        let b = a;
         b = b.insert("sv-chain-key" + i.to_string(), "sv-chain-value" + i.to_string());
         a = b;
         if (a.get_or("sv-seed-key-that-heap-allocates", "?") != "sv-seed-value-that-heap-allocates") { return 0 - 1; }
@@ -99,14 +99,14 @@ function str_chain(rounds: i32): i32 {
 // #8432: their get_or fallback, not their column, which is why arr_chain
 // read the same despite having been walked all along.
 function struct_chain(rounds: i32): i32 {
-    var a: Map[string, Rec] = map_new(16);
+    let a: Map[string, Rec] = map_new(16);
     a = a.insert("st-seed-key-that-heap-allocates", Rec { name: "st-seed-name-that-heap-allocates", n: 7 });
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < rounds) {
-        var b = a;
+        let b = a;
         b = b.insert("st-chain-key" + i.to_string(), Rec { name: "st-chain-name" + i.to_string(), n: i });
         a = b;
-        var got = a.get_or("st-seed-key-that-heap-allocates", Rec { name: "?", n: 0 - 1 });
+        let got = a.get_or("st-seed-key-that-heap-allocates", Rec { name: "?", n: 0 - 1 });
         if (got.n != 7) { return 0 - 1; }
         if (got.name != "st-seed-name-that-heap-allocates") { return 0 - 2; }
         i = i + 1;
@@ -117,12 +117,12 @@ function struct_chain(rounds: i32): i32 {
 // The old handle is STILL held by another binding at the rebind, so the walk
 // must not run at all — every helper self-guards on the handle's rc==1.
 function aliased_chain(rounds: i32): i32 {
-    var keep: Map[string, i32] = map_new(16);
+    let keep: Map[string, i32] = map_new(16);
     keep = keep.insert("keep-key-that-heap-allocates", 5);
-    var a = keep;
-    var i: i32 = 0;
+    let a = keep;
+    let i: i32 = 0;
     while (i < rounds) {
-        var b = a;
+        let b = a;
         b = b.insert("al-chain-key-that-heap-allocates" + i.to_string(), i);
         a = b;
         if (keep.get_or("keep-key-that-heap-allocates", 0 - 1) != 5) { return 0 - 1; }
@@ -135,12 +135,12 @@ function aliased_chain(rounds: i32): i32 {
 // keys() snapshots the key column and co-owns it, so the snapshot is read
 // after the map it came from was released.
 function keys_chain(rounds: i32): i32 {
-    var a: Map[string, i32] = map_new(16);
+    let a: Map[string, i32] = map_new(16);
     a = a.insert("ky-seed-key-that-heap-allocates", 8);
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < rounds) {
-        var ks = a.keys();
-        var b = a;
+        let ks = a.keys();
+        let b = a;
         b = b.insert("ky-chain-key-that-heap-allocates" + i.to_string(), i);
         a = b;
         if (ks[0].len() == 0) { return 0 - 1; }
@@ -151,11 +151,11 @@ function keys_chain(rounds: i32): i32 {
 
 // i32 keys: no key column, so only the buf and handle are ever owed.
 function scalar_chain(rounds: i32): i32 {
-    var a: Map[i32, i32] = map_new(16);
+    let a: Map[i32, i32] = map_new(16);
     a = a.insert(999, 5);
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < rounds) {
-        var b = a;
+        let b = a;
         b = b.insert(i, i);
         a = b;
         i = i + 1;
@@ -249,11 +249,11 @@ import "core/map";
 import "std/i32";
 
 function chain(rounds: i32): i32 {
-    var a: Map[string, i32] = map_new(16);
+    let a: Map[string, i32] = map_new(16);
     a = a.insert("seed-key-that-heap-allocates", 1);
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < rounds) {
-        var b = a;
+        let b = a;
         b = b.insert("chain-key-that-heap-allocates" + i.to_string(), i);
         a = b;
         i = i + 1;
@@ -263,11 +263,11 @@ function chain(rounds: i32): i32 {
 
 function main(): i32 {
     if (chain(100) < 0) { return 1; }
-    var b1: i64 = __heap_bump_bytes();
+    let b1: i64 = __heap_bump_bytes();
     if (chain(200) < 0) { return 2; }
-    var b2: i64 = __heap_bump_bytes();
+    let b2: i64 = __heap_bump_bytes();
     if (chain(400) < 0) { return 3; }
-    var b3: i64 = __heap_bump_bytes();
+    let b3: i64 = __heap_bump_bytes();
     if ((b3 - b2) > (b2 - b1) * 5 / 2) { return 4; }
     if (__rc_underflow_count() != 0) { return 5; }
     return 42;

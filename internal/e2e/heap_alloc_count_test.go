@@ -37,7 +37,7 @@ const allocCountReaderSrc = `function main(): i32 {
 `
 
 const allocCountSilentSrc = `function main(): i32 {
-	var xs: i32[] = [1, 2, 3];
+	let xs: i32[] = [1, 2, 3];
 	return xs.len();
 }
 `

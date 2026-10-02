@@ -69,7 +69,7 @@ func TestTinyLeafBudgetSpendIgnoresLineMarkers(t *testing.T) {
 	// `leaf` is under the tiny cap counted BOTH ways, so it is admitted in
 	// both builds and only the charge can differ.
 	src := `function leaf(x: i32): i32 {
-			var a: i32 = x + 1;
+			let a: i32 = x + 1;
 			a = a * 3;
 			a = a + 2;
 			return a;

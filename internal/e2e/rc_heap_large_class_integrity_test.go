@@ -18,20 +18,20 @@ import (
 // Guards both the x86-64 (bsr) and arm64 (clz) large-tier class arithmetic.
 const largeClassIntegritySrc = `
 function build(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i * 3 + 1); i = i + 1; }
     return a;
 }
 function check(n: i32): i32 {
-    var a: i32[] = build(n);
-    var i: i32 = 0;
+    let a: i32[] = build(n);
+    let i: i32 = 0;
     while (i < n) { if (a[i] != i * 3 + 1) { return 1; } i = i + 1; }
     return 0;
 }
 function main(): i32 {
-    var k: i32 = 0;
-    var bad: i32 = 0;
+    let k: i32 = 0;
+    let bad: i32 = 0;
     while (k < 500) {
         bad = bad + check(520) + check(540) + check(600) + check(700) +
               check(1000) + check(1030) + check(1300) + check(2050) +

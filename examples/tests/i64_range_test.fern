@@ -11,14 +11,14 @@ import "std/i64";
 // migration-shaped (pure-Fern, std/test-driven) companion.
 
 function test_abs_diff_wide(): test.TestOutcome {
-  var a: i64 = 5000000000 as i64;
-  var b: i64 = 3000000000 as i64;
+  let a: i64 = 5000000000 as i64;
+  let b: i64 = 3000000000 as i64;
   return test.assert_eq(a.abs_diff(b), 2000000000 as i64);
 }
 
 function test_abs_diff_reversed(): test.TestOutcome {
-  var a: i64 = 5000000000 as i64;
-  var b: i64 = 3000000000 as i64;
+  let a: i64 = 5000000000 as i64;
+  let b: i64 = 3000000000 as i64;
   return test.assert_eq(b.abs_diff(a), 2000000000 as i64);
 }
 
@@ -60,7 +60,7 @@ function test_between_outside(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/i64 range");
+  let r: test.TestRunner = test.test_new("std/i64 range");
   r = r.it("abs_diff wide", test_abs_diff_wide);
   r = r.it("abs_diff reversed", test_abs_diff_reversed);
   r = r.it("abs_diff mixed sign", test_abs_diff_mixed_sign);

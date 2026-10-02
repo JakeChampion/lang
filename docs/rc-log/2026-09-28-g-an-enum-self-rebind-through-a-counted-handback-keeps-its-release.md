@@ -16,11 +16,11 @@ cs = hb_sc_param(cs);                           // the scalar-payload twin
 
 Each rebound local lost its credit altogether.
 
-- **An rc-payload local bound from an `RCE:` call** (`var cur: Rc = mk_rc(r)`)
+- **An rc-payload local bound from an `RCE:` call** (`let cur: Rc = mk_rc(r)`)
   is the fresh family, `collect_fresh_rcenum_names`. That family admits a
   reassigned local only when `all_assigns_fresh_rcenum` finds every rebind is
   a fresh chain. `hb_rc_param(cur)` is not one.
-- **A local bound from an `ENUM:` call** (`var cs: Sc = mk_sc(r)`) is
+- **A local bound from an `ENUM:` call** (`let cs: Sc = mk_sc(r)`) is
   `ECALL:`, and `collect_counted_enum_local_sites` refused any reassigned
   local, because the assign path had no counted-enum release.
 

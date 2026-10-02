@@ -36,7 +36,7 @@ func TestScoreModel(t *testing.T) {
 		want int
 		body string
 	}{
-		{"straight-line", 1, `var a: i32 = 1; return a;`},
+		{"straight-line", 1, `let a: i32 = 1; return a;`},
 		{"if", 2, `if (n > 0) { return 1; } return 0;`},
 		{"if-else", 2, `if (n > 0) { return 1; } else { return 2; }`},
 		// `else if` nests a second If, so a three-way chain costs two
@@ -44,7 +44,7 @@ func TestScoreModel(t *testing.T) {
 		{"else-if chain", 3, `if (n > 0) { return 1; } else if (n < 0) { return 2; } else { return 3; }`},
 		{"if-expression", 2, `return if (n > 0) { 1 } else { 2 };`},
 		{"while", 2, `while (n > 0) { n = n - 1; } return n;`},
-		{"c-for", 2, `for (var i: i32 = 0; i < n; i = i + 1) { n = n; } return n;`},
+		{"c-for", 2, `for (let i: i32 = 0; i < n; i = i + 1) { n = n; } return n;`},
 		{"loop", 2, `loop { break; } return n;`},
 		{"and", 3, `if (n > 0 && n < 9) { return 1; } return 0;`},
 		{"or", 3, `if (n > 0 || n < 9) { return 1; } return 0;`},
@@ -132,7 +132,7 @@ function f(e: E): i32 {
 func TestScoreForEachAndTry(t *testing.T) {
 	src := `
 function f(xs: i32[]): i32 {
-  var t: i32 = 0;
+  let t: i32 = 0;
   for x in xs { t = t + x; }
   return t;
 }
@@ -145,7 +145,7 @@ function f(xs: i32[]): i32 {
 	// account for even though nothing is spelled `if`.
 	try := `
 function g(o: Option[i32]): Option[i32] {
-  var v: i32 = o?;
+  let v: i32 = o?;
   return Some(v + 1);
 }
 `
@@ -163,7 +163,7 @@ function f(xs: i32[]): i32[] {
   return map(xs, (x: i32) => { if (x > 0) { return x; } return 0 - x; });
 }
 pub function map[T, U](xs: T[], fn: (T) => U): U[] {
-  var out: U[] = [];
+  let out: U[] = [];
   return out;
 }
 `

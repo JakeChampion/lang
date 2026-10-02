@@ -5,7 +5,7 @@ if-expression is credited as moved". The credit was not the cause.
 
 ## What the debug print said
 
-`a = a.with(0, 9 + i)` after `var b: i32[] = if (a[0] == 1) { a } else { c }`
+`a = a.with(0, 9 + i)` after `let b: i32[] = if (a[0] == 1) { a } else { c }`
 reaches the StmtAssign arm with the target spelled `$cell$$binding$0$a`. The
 if-expression desugars to a zero-argument lambda (`ORIGIN_IF_EXPR`), the
 capture-lift pass finds that lambda in operand position, and an operand
@@ -33,7 +33,7 @@ Two things were wrong at once:
   at exit. The probe never saw it because `__rc_underflow_count()` is read
   before the sweep runs; from a caller's frame the parent compiler exits 99
   on `if-expression-alias-exit-sweep`. The leaf now takes the alias retain
-  (`retain_tos`) for the read shapes the `var` ladder retains — a bare array
+  (`retain_tos`) for the read shapes the `let` ladder retains — a bare array
   local, a struct field of any array kind (through the ladder's own field
   classifiers, `scalar_arr_field_type` and its struct / enum / nested
   siblings), a tuple element, a nested-array element
@@ -65,8 +65,8 @@ Self-host x86-64, `FERN_LEAKCHECK=1` at emit, interpreter as oracle:
 
 | shape | before | after |
 | --- | --- | --- |
-| `var b = if (c) { a } else { d }`, 100 updates of `a` | 103 / 3, live 4,800 | 3 / 3 |
-| `var b = if (c) { a } else { mk() }`, 100 updates | 102 / 2, live 4,800 | 2 / 2 |
+| `let b = if (c) { a } else { d }`, 100 updates of `a` | 103 / 3, live 4,800 | 3 / 3 |
+| `let b = if (c) { a } else { mk() }`, 100 updates | 102 / 2, live 4,800 | 2 / 2 |
 | the bind alone, underflow read after the frame exits | exit 99 | exit 0 |
 | the bind alone, underflow read inside the frame | 2 / 2, exit 0 | 2 / 2, exit 0 |
 

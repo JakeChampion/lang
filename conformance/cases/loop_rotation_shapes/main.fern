@@ -18,37 +18,37 @@
 // through a process exit status and as the raw i32 through the wasm harness,
 // which is a disagreement in the fixture rather than in any backend.
 function main(): i32 {
-  var h: i32 = 1;
+  let h: i32 = 1;
 
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 5) { h = h * 31 + i; i = i + 1; }
 
   // Guard must skip the body entirely.
-  var z: i32 = 0;
+  let z: i32 = 0;
   while (z > 10) { h = h * 7; z = z + 1; }
-  for (var y: i32 = 9; y < 3; y = y + 1) { h = h * 7; }
+  for (let y: i32 = 9; y < 3; y = y + 1) { h = h * 7; }
 
   // `continue` reaches the bottom test; the increment is in the body here, so
   // a continue that skipped it would not terminate.
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < 6) { j = j + 1; if (j % 2 == 0) { continue; } h = h * 13 + j; }
 
   // `continue` in a `for` must still run the step.
-  for (var q: i32 = 0; q < 6; q = q + 1) { if (q % 2 == 0) { continue; } h = h * 13 + q; }
+  for (let q: i32 = 0; q < 6; q = q + 1) { if (q % 2 == 0) { continue; } h = h * 13 + q; }
 
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < 100) { if (k == 4) { break; } h = h * 17 + k; k = k + 1; }
-  for (var r: i32 = 0; r < 100; r = r + 1) { if (r == 4) { break; } h = h * 17 + r; }
+  for (let r: i32 = 0; r < 100; r = r + 1) { if (r == 4) { break; } h = h * 17 + r; }
 
   // Labelled break/continue out of a nested loop.
-  var a: i32 = 0;
+  let a: i32 = 0;
   outer: while (a < 4) {
     a = a + 1;
-    var b: i32 = 0;
+    let b: i32 = 0;
     while (b < 4) { b = b + 1; if (b == 2) { continue outer; } if (a == 3) { break outer; } h = h * 3 + b; }
   }
-  louter: for (var c: i32 = 0; c < 4; c = c + 1) {
-    for (var d: i32 = 0; d < 4; d = d + 1) {
+  louter: for (let c: i32 = 0; c < 4; c = c + 1) {
+    for (let d: i32 = 0; d < 4; d = d + 1) {
       if (d == 2) { continue louter; }
       if (c == 3) { break louter; }
       h = h * 3 + d;
@@ -57,7 +57,7 @@ function main(): i32 {
 
   // A condition the cheapness test refuses (a call), so this loop keeps the
   // unrotated shape — both forms have to agree on the same answer.
-  var n: i32 = 0;
+  let n: i32 = 0;
   while (n < five()) { h = h * 11 + n; n = n + 1; }
 
   return ((h % 251) + 251) % 251;

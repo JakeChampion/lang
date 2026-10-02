@@ -49,22 +49,22 @@ func TestSelfHostTypedArrayInvariantIR(t *testing.T) {
 	}{
 		// args() — THE case. Both halves, so the original asymmetry (index ok,
 		// for-loop bails) cannot come back silently.
-		{"args-index", `function main(): i32 { var a = args(); return a.len(); }`, 3, []string{"A", "B"}},
-		{"args-for", `function main(): i32 { var a = args(); var n = 0; for s in a { n = n + 1; } return n; }`, 3, []string{"A", "B"}},
+		{"args-index", `function main(): i32 { let a = args(); return a.len(); }`, 3, []string{"A", "B"}},
+		{"args-for", `function main(): i32 { let a = args(); let n = 0; for s in a { n = n + 1; } return n; }`, 3, []string{"A", "B"}},
 
 		// string[] from split and from a declared return type.
-		{"split-index", `function main(): i32 { var xs = "a-b-c".split("-"); return xs.len(); }`, 3, nil},
-		{"split-for", `function main(): i32 { var xs = "a-b-c".split("-"); var n = 0; for s in xs { n = n + s.len(); } return n; }`, 3, nil},
-		{"strret-index", "function mk(): string[] { return [\"ab\", \"cde\"]; }\nfunction main(): i32 { var xs = mk(); return xs[0].len() + xs[1].len(); }", 5, nil},
-		{"strret-for", "function mk(): string[] { return [\"ab\", \"cde\"]; }\nfunction main(): i32 { var xs = mk(); var n = 0; for s in xs { n = n + s.len(); } return n; }", 5, nil},
+		{"split-index", `function main(): i32 { let xs = "a-b-c".split("-"); return xs.len(); }`, 3, nil},
+		{"split-for", `function main(): i32 { let xs = "a-b-c".split("-"); let n = 0; for s in xs { n = n + s.len(); } return n; }`, 3, nil},
+		{"strret-index", "function mk(): string[] { return [\"ab\", \"cde\"]; }\nfunction main(): i32 { let xs = mk(); return xs[0].len() + xs[1].len(); }", 5, nil},
+		{"strret-for", "function mk(): string[] { return [\"ab\", \"cde\"]; }\nfunction main(): i32 { let xs = mk(); let n = 0; for s in xs { n = n + s.len(); } return n; }", 5, nil},
 
 		// The string methods that yield arrays.
-		{"bytes-for", `function main(): i32 { var b = "abc".bytes(); var n = 0; for c in b { n = n + 1; } return n; }`, 3, nil},
-		{"lines-for", "function main(): i32 { var l = \"a\\nb\\nc\".lines(); var n = 0; for x in l { n = n + 1; } return n; }", 3, nil},
+		{"bytes-for", `function main(): i32 { let b = "abc".bytes(); let n = 0; for c in b { n = n + 1; } return n; }`, 3, nil},
+		{"lines-for", "function main(): i32 { let l = \"a\\nb\\nc\".lines(); let n = 0; for x in l { n = n + 1; } return n; }", 3, nil},
 
 		// The WIDE element kinds, whose flags are the other two predicates.
-		{"i64ret-for", "function mk(): i64[] { return [5000000000, 1]; }\nfunction main(): i32 { var xs = mk(); var n = 0; for v in xs { n = n + 1; } return n; }", 2, nil},
-		{"f64ret-for", "function mk(): f64[] { return [1.5, 2.5]; }\nfunction main(): i32 { var xs = mk(); var n = 0; for v in xs { n = n + 1; } return n; }", 2, nil},
+		{"i64ret-for", "function mk(): i64[] { return [5000000000, 1]; }\nfunction main(): i32 { let xs = mk(); let n = 0; for v in xs { n = n + 1; } return n; }", 2, nil},
+		{"f64ret-for", "function mk(): f64[] { return [1.5, 2.5]; }\nfunction main(): i32 { let xs = mk(); let n = 0; for v in xs { n = n + 1; } return n; }", 2, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")

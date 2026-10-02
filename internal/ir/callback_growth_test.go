@@ -15,8 +15,8 @@ struct Callback { run: (State) => State }
 function pure(s: State): State { return s; }
 function array(xs: i32[], cb: (i32[]) => i32[]): i32[] { return cb(xs); }
 function record(s: State, cb: (State) => State): State { return cb(s); }
-function renamed(s: State, cb: (State) => State): State { var alias = s; return cb(alias); }
-function local(s: State, cb: (State) => State): State { var f = cb; return f(s); }
+function renamed(s: State, cb: (State) => State): State { let alias = s; return cb(alias); }
+function local(s: State, cb: (State) => State): State { let f = cb; return f(s); }
 function collision(s: State, pure: (State) => State): State { return pure(s); }
 function field(s: State, cb: (i32[]) => i32[]): i32[] { return cb(s.xs); }
 function nested(s: Nested, cb: (i32[]) => i32[]): i32[] { return cb(s.state.xs); }

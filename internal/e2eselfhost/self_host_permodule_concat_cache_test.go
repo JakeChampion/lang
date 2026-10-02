@@ -81,14 +81,13 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	hits, misses = concat("warm")
 	pmWantSets(t, "warm", hits, misses, all, []string{})
 
-	// Body-only edit that keeps the value and every fact: lib3's source
-	// changes, so lib3 alone re-emits.
-	edit("lib3.fern", "return x + 306;", "return x + 307 - 1;")
+	// Body-only edit of a function the reach set drops: lib3's source changes,
+	// so lib3 alone re-emits.
+	edit("lib3.fern", "return x + 305;", "return x + 1305;")
 	hits, misses = concat("body")
 	pmWantSets(t, "body", hits, misses, without("lib3"), []string{"lib3"})
 
-	// Caller edit: m3_f1 is already reached through the chain, but the entry
-	// now calls it directly too. Only the entry's source changes.
+	// Reach edit: the entry keeps its value but now reaches m3_f1.
 	edit("entry.fern", "lib3.m3_f0(1)", "lib3.m3_f0(1) + lib3.m3_f1(1) - lib3.m3_f1(1)")
 	hits, misses = concat("reach")
 	var reHits []string
@@ -114,7 +113,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 		t.Fatalf("write lib3: %v", err)
 	}
 	concat("keep")
-	edit("lib3.fern", "{ return xs.len(); }", "{ var h: i32[][] = [xs]; return h[0].len(); }")
+	edit("lib3.fern", "{ return xs.len(); }", "{ let h: i32[][] = [xs]; return h[0].len(); }")
 	hits, misses = concat("fact")
 	pmWantSets(t, "fact", hits, misses, reHits, []string{"__entry", "lib3"})
 

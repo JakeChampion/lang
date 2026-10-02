@@ -2,28 +2,28 @@
 // its uses settle (#10123). The range loop variable here is a u64 because it is
 // a u64 shift count, so the shift reaches bit 63 instead of wrapping at 32.
 function main(): i32 {
-    var t: i64 = 0 as i64;
+    let t: i64 = 0 as i64;
     for i in 0..64 {
-        var bits: i64 = (1 as u64 << i) as i64;
+        let bits: i64 = (1 as u64 << i) as i64;
         t = t + bits;
     }
     if (t != -1i64) { return 1; }
 
     // Read at i64 once, so it is an i64 everywhere: the add does not wrap.
-    var x = 2147483647;
+    let x = 2147483647;
     x = x + 1;
-    var wide: i64 = x;
+    let wide: i64 = x;
     if (wide != 2147483648i64) { return 2; }
 
     // A local seeded from another literal local shares its type.
-    var k = 7;
-    var m = k + 1;
-    var shifted: u64 = (1 as u64) << m;
+    let k = 7;
+    let m = k + 1;
+    let shifted: u64 = (1 as u64) << m;
     if (shifted != 256u64) { return 3; }
     if (k != 7) { return 4; }
 
     // No use fixes a width: i32, and the arithmetic wraps at 32 bits.
-    var n = 2147483647;
+    let n = 2147483647;
     n = n + 1;
     if (n >= 0) { return 5; }
     return 0;

@@ -91,7 +91,7 @@ function test_corpus_loads_and_runs(r: test.TestRunner): test.TestRunner {
 }
 
 function test_corpus_dir_missing_uses_fallback(): test.TestOutcome {
-  var seeds: u8[][] = fuzz.fuzz_corpus_from_dir_or(
+  let seeds: u8[][] = fuzz.fuzz_corpus_from_dir_or(
     "/tmp/lang-corpus-definitely-does-not-exist-83472",
     ["one".bytes(), "two".bytes(), "three".bytes()],
   );
@@ -104,7 +104,7 @@ function test_corpus_dir_empty_uses_fallback(r: test.TestRunner): test.TestRunne
     return rr;
   }
   // Empty directory — should fall back to the inline seeds.
-  var seeds: u8[][] = fuzz.fuzz_corpus_from_dir_or(dir, ["fallback".bytes()]);
+  let seeds: u8[][] = fuzz.fuzz_corpus_from_dir_or(dir, ["fallback".bytes()]);
   return rr.it("empty corpus falls back", () => test.assert_eq(seeds.len(), 1));
 }
 
@@ -123,7 +123,7 @@ function test_new_mutators_dont_crash(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("fuzz corpus");
+  let r: test.TestRunner = test.test_new("fuzz corpus");
   r = test_corpus_loads_and_runs(r);
   r = r.it(
     "missing corpus dir falls back",

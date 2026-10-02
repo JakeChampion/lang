@@ -17,16 +17,16 @@ import (
 const ownStringFieldStoreSrc = `import "std/i32";
 struct Box { s: string }
 function store(own s: string): Box { return Box { s: s }; }
-function via(own s: string): Box { var b: Box = Box { s: s }; return b; }
-function peek(own s: string): i32 { var b: Box = Box { s: s }; return b.s.len(); }
+function via(own s: string): Box { let b: Box = Box { s: s }; return b; }
+function peek(own s: string): i32 { let b: Box = Box { s: s }; return b.s.len(); }
 function plain(own s: string): i32 { return s.len(); }
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var b: Box = store("a" + i.to_string());
+        let b: Box = store("a" + i.to_string());
         n = n + b.s.len();
-        var c: Box = via("b" + i.to_string());
+        let c: Box = via("b" + i.to_string());
         n = n + c.s.len();
         n = n + peek("c" + i.to_string());
         n = n + plain("d" + i.to_string());

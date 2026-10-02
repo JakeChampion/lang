@@ -1,7 +1,7 @@
-# Two guards counted `var` only, and one of them was load-bearing
+# Two guards counted `let` only, and one of them was load-bearing
 
 `body_declares_name` and `local_decl_count` are both hand-rolled "what does this
-body bind" walks in `irlower.fern`. Both saw a `var` (and `local_decl_count`
+body bind" walks in `irlower.fern`. Both saw a `let` (and `local_decl_count`
 did not even see a `for` binder). Neither read a match pattern, a
 comma-joined destructure, or `for (k, v)`.
 
@@ -19,10 +19,10 @@ was incomplete: `subst_fcall_expr` rewrites `f(…)` inside `for` and `match`
 bodies, and the counter did not look at their binders.
 
 ```fern
-var base: i32 = 10;
-var f = function(n: i32): i32 { return n + base; };
-var acc: i32 = f(1);
-var fns: ((i32) => i32)[] = [(y: i32) => y * 100, (y: i32) => y * 200];
+let base: i32 = 10;
+let f = function(n: i32): i32 { return n + base; };
+let acc: i32 = f(1);
+let fns: ((i32) => i32)[] = [(y: i32) => y * 100, (y: i32) => y * 200];
 for f in fns { acc = acc + f(2); }        // <- the loop binder shadows
 return acc;
 ```

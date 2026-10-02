@@ -30,7 +30,7 @@ func TestPreciseDropControlFlowStruct(t *testing.T) {
 	// present). Without the placement the scalar struct would be swept inline.
 	ip := lowerForTest(t, `struct P { x: i32, y: i32 }
 function add(p: P): i32 { return p.x + p.y; }
-function f(n: i32): i32 { var p: P = P { x: 1, y: 2 }; var c: i32 = 0; if (n > 0) { c = add(p); } return c + n; }
+function f(n: i32): i32 { let p: P = P { x: 1, y: 2 }; let c: i32 = 0; if (n > 0) { c = add(p); } return c + n; }
 function main(): i32 { return 0; }`)
 	if !usesCall(ip, "f", "__drop_struct_") {
 		t.Errorf("scalar struct last-used in an if: expected a precise __drop_struct_ placement, found none")

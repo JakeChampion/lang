@@ -28,9 +28,9 @@ import (
 var predicateAdapterPrelude = `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
-function any[T, I: Iterator[T]](it: I, pred: (T) => boolean): boolean { var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { if (pred(t.0)) { return true; } cur = t.1; }, None => { go = false; }, } } return false; }
-function all[T, I: Iterator[T]](it: I, pred: (T) => boolean): boolean { var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { if (!pred(t.0)) { return false; } cur = t.1; }, None => { go = false; }, } } return true; }
-function find[T, I: Iterator[T]](it: I, pred: (T) => boolean): Option[T] { var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { if (pred(t.0)) { return Some(t.0); } cur = t.1; }, None => { go = false; }, } } return None; }
+function any[T, I: Iterator[T]](it: I, pred: (T) => boolean): boolean { let cur = it; let go = true; while (go) { match (cur.next()) { Some(t) => { if (pred(t.0)) { return true; } cur = t.1; }, None => { go = false; }, } } return false; }
+function all[T, I: Iterator[T]](it: I, pred: (T) => boolean): boolean { let cur = it; let go = true; while (go) { match (cur.next()) { Some(t) => { if (!pred(t.0)) { return false; } cur = t.1; }, None => { go = false; }, } } return true; }
+function find[T, I: Iterator[T]](it: I, pred: (T) => boolean): Option[T] { let cur = it; let go = true; while (go) { match (cur.next()) { Some(t) => { if (pred(t.0)) { return Some(t.0); } cur = t.1; }, None => { go = false; }, } } return None; }
 `
 
 var predicateAdapterCases = []struct {

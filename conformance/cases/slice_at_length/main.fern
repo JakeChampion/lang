@@ -12,7 +12,7 @@ function view(xs: i32[], lo: i32, hi: i32): [i32] {
 }
 
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
+    let xs: i32[] = [1, 2, 3];
     print(view(xs, 3, 3).len().to_string());
     print(view(xs, 0, 3).len().to_string());
     print(view(xs, 2, 2).len().to_string());

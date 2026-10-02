@@ -33,10 +33,10 @@ import "core/map";
 struct Q { a: i32, xs: i32[] }
 
 function scalar_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32] = Map {};
+        let m: Map[i32, i32] = Map {};
         m = m.insert(i, i + 1);
         m = m.insert(i + 1, i + 2);
         acc = (acc + m.len()) % 251;
@@ -46,10 +46,10 @@ function scalar_churn(n: i32): i32 {
 }
 
 function strkey_churn(n: i32, s: string): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[string, i32] = Map { s: i };
+        let m: Map[string, i32] = Map { s: i };
         acc = (acc + m.len()) % 251;
         i = i + 1;
     }
@@ -57,10 +57,10 @@ function strkey_churn(n: i32, s: string): i32 {
 }
 
 function strval_churn(n: i32, s: string): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, string] = Map { 1: s };
+        let m: Map[i32, string] = Map { 1: s };
         acc = (acc + m.len()) % 251;
         i = i + 1;
     }
@@ -68,10 +68,10 @@ function strval_churn(n: i32, s: string): i32 {
 }
 
 function structval_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, Q] = Map { 1: Q { a: i, xs: [i, i + 1] } };
+        let m: Map[i32, Q] = Map { 1: Q { a: i, xs: [i, i + 1] } };
         acc = (acc + m.len()) % 251;
         i = i + 1;
     }
@@ -79,30 +79,30 @@ function structval_churn(n: i32): i32 {
 }
 
 function main(): i32 {
-    var s: string = "a-map-key-past-the-inline-threshold-abcdef";
+    let s: string = "a-map-key-past-the-inline-threshold-abcdef";
 
     if (scalar_churn(1000) < 0) { return 11; }
-    var a1: i64 = __heap_bump_bytes();
+    let a1: i64 = __heap_bump_bytes();
     if (scalar_churn(2000) < 0) { return 11; }
-    var a2: i64 = __heap_bump_bytes();
+    let a2: i64 = __heap_bump_bytes();
     if ((a2 - a1) / 2000 != 0) { return 1; }
 
     if (strkey_churn(1000, s) < 0) { return 12; }
-    var b1: i64 = __heap_bump_bytes();
+    let b1: i64 = __heap_bump_bytes();
     if (strkey_churn(2000, s) < 0) { return 12; }
-    var b2: i64 = __heap_bump_bytes();
+    let b2: i64 = __heap_bump_bytes();
     if ((b2 - b1) / 2000 != 0) { return 2; }
 
     if (strval_churn(1000, s) < 0) { return 13; }
-    var c1: i64 = __heap_bump_bytes();
+    let c1: i64 = __heap_bump_bytes();
     if (strval_churn(2000, s) < 0) { return 13; }
-    var c2: i64 = __heap_bump_bytes();
+    let c2: i64 = __heap_bump_bytes();
     if ((c2 - c1) / 2000 != 0) { return 3; }
 
     if (structval_churn(1000) < 0) { return 14; }
-    var d1: i64 = __heap_bump_bytes();
+    let d1: i64 = __heap_bump_bytes();
     if (structval_churn(2000) < 0) { return 14; }
-    var d2: i64 = __heap_bump_bytes();
+    let d2: i64 = __heap_bump_bytes();
     if ((d2 - d1) / 2000 != 0) { return 4; }
 
     if (s.len() != 42) { return 15; }
@@ -144,10 +144,10 @@ const mapLitArrValueParityProg = `
 import "core/map";
 
 function lit_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32[]] = Map { 1: [i, i + 1] };
+        let m: Map[i32, i32[]] = Map { 1: [i, i + 1] };
         acc = (acc + m.len()) % 251;
         i = i + 1;
     }
@@ -155,10 +155,10 @@ function lit_churn(n: i32): i32 {
 }
 
 function insert_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32[]] = map_new(1);
+        let m: Map[i32, i32[]] = map_new(1);
         m = m.insert(1, [i, i + 1]);
         acc = (acc + m.len()) % 251;
         i = i + 1;
@@ -168,16 +168,16 @@ function insert_churn(n: i32): i32 {
 
 function main(): i32 {
     if (insert_churn(1000) < 0) { return 11; }
-    var a1: i64 = __heap_bump_bytes();
+    let a1: i64 = __heap_bump_bytes();
     if (insert_churn(2000) < 0) { return 11; }
-    var a2: i64 = __heap_bump_bytes();
-    var insertPer: i64 = (a2 - a1) / 2000;
+    let a2: i64 = __heap_bump_bytes();
+    let insertPer: i64 = (a2 - a1) / 2000;
 
     if (lit_churn(1000) < 0) { return 12; }
-    var b1: i64 = __heap_bump_bytes();
+    let b1: i64 = __heap_bump_bytes();
     if (lit_churn(2000) < 0) { return 12; }
-    var b2: i64 = __heap_bump_bytes();
-    var litPer: i64 = (b2 - b1) / 2000;
+    let b2: i64 = __heap_bump_bytes();
+    let litPer: i64 = (b2 - b1) / 2000;
 
     if (litPer > insertPer) { return 1; }
     if (__rc_underflow_count() != 0) { return 2; }
@@ -216,11 +216,11 @@ struct Holder { m: Map[i32, i32] }
 // A live local array stored as a literal's VALUE: the map's column drop must
 // not pull the buffer out from under the local that still names it.
 function alias_value(n: i32): i32 {
-    var live: i32[] = [7, 8, 9];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let live: i32[] = [7, 8, 9];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32[]] = Map { 1: live };
+        let m: Map[i32, i32[]] = Map { 1: live };
         acc = (acc + m.len()) % 251;
         i = i + 1;
     }
@@ -229,14 +229,14 @@ function alias_value(n: i32): i32 {
 
 // The literal ESCAPES the frame that built it.
 function mk_map(k: i32): Map[i32, i32] {
-    var m: Map[i32, i32] = Map { 1: k, 2: k + 1 };
+    let m: Map[i32, i32] = Map { 1: k, 2: k + 1 };
     return m;
 }
 function escape_return(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32] = mk_map(i);
+        let m: Map[i32, i32] = mk_map(i);
         acc = (acc + m.get_or(2, 0)) % 251;
         i = i + 1;
     }
@@ -245,11 +245,11 @@ function escape_return(n: i32): i32 {
 
 // The literal is stored into a struct field and read through it.
 function into_struct(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32] = Map { 1: i, 2: i + 1 };
-        var h: Holder = Holder { m: m };
+        let m: Map[i32, i32] = Map { 1: i, 2: i + 1 };
+        let h: Holder = Holder { m: m };
         acc = (acc + h.m.get_or(1, 0)) % 251;
         i = i + 1;
     }
@@ -258,11 +258,11 @@ function into_struct(n: i32): i32 {
 
 // A second binding names the same handle; both are read.
 function alias_local(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32] = Map { 1: i };
-        var m2: Map[i32, i32] = m;
+        let m: Map[i32, i32] = Map { 1: i };
+        let m2: Map[i32, i32] = m;
         acc = (acc + m.get_or(1, 0) + m2.get_or(1, 0)) % 251;
         i = i + 1;
     }
@@ -272,11 +272,11 @@ function alias_local(n: i32): i32 {
 // A VALUE read out of the literal outlives the round it came from — the
 // inc-on-get co-ownership the column drop must respect.
 function value_out(n: i32): i32 {
-    var keep: i32[] = [0];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: i32[] = [0];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32[]] = Map { 1: [i, i + 1] };
+        let m: Map[i32, i32[]] = Map { 1: [i, i + 1] };
         match (m.get(1)) { Some(g) => { keep = g; }, None => { acc = acc + 1; } }
         acc = (acc + keep[0]) % 251;
         i = i + 1;
@@ -286,10 +286,10 @@ function value_out(n: i32): i32 {
 
 // String key and string value both sourced from a live local.
 function string_cols(n: i32, s: string): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[string, string] = Map { s: s };
+        let m: Map[string, string] = Map { s: s };
         acc = (acc + m.len() + m.get_or(s, "").len()) % 251;
         i = i + 1;
     }
@@ -298,10 +298,10 @@ function string_cols(n: i32, s: string): i32 {
 
 // Struct values, read back out of the literal.
 function struct_values(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, Q] = Map { 1: Q { a: i, xs: [i, i + 1] } };
+        let m: Map[i32, Q] = Map { 1: Q { a: i, xs: [i, i + 1] } };
         match (m.get(1)) { Some(q) => { acc = (acc + q.a + q.xs[1]) % 251; }, None => { acc = acc + 1; } }
         i = i + 1;
     }
@@ -309,7 +309,7 @@ function struct_values(n: i32): i32 {
 }
 
 function main(): i32 {
-    var s: string = "a-string-past-the-inline-threshold-abcdef";
+    let s: string = "a-string-past-the-inline-threshold-abcdef";
     if (alias_value(200) != 224) { return 1; }
     if (escape_return(200) != 20) { return 2; }
     if (into_struct(200) != 71) { return 3; }

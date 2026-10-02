@@ -18,12 +18,12 @@ func NativeSocketSendProbe(payload string, shut bool) string {
 		result, rounds = -int(syscall.EPIPE), 32
 	}
 	return fmt.Sprintf(`function main(): i32 {
-    var sig: i32 = %d;
+    let sig: i32 = %d;
     signal_default(sig);
     if (signal_disposition(sig) != 0) { return 92; }
-    var data: string = %q;
+    let data: string = %q;
     if (tcp_send(-1, data) != -%d) { return 90; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
         if (tcp_send(3, data) != %d) { return 91; }
         i = i + 1;

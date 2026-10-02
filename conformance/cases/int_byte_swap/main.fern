@@ -10,8 +10,8 @@ function main(): i32 {
     // u32 round-trip on a high-bit value
     if ((4278190080 as u32).byte_swap() != (255 as u32)) { return 3; }   // 0xFF000000 -> 0x000000FF
     // u64: 0x0102030405060708 -> 0x0807060504030201
-    var v: u64 = 72623859790382856 as u64;
-    var sw: u64 = 578437695752307201 as u64;
+    let v: u64 = 72623859790382856 as u64;
+    let sw: u64 = 578437695752307201 as u64;
     if (v.byte_swap() != sw) { return 4; }
     if (v.byte_swap().byte_swap() != v) { return 5; }
     // i64 round-trips (bit pattern reversed twice)

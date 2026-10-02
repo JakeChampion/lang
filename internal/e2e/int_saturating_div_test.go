@@ -17,10 +17,10 @@ import "std/i64" as i64m;
 import "std/u32" as u32m;
 import "std/u64" as u64m;
 function main(): i32 {
-    var max32: i32 = 2147483647;
-    var min32: i32 = 0 - 2147483647 - 1;
-    var max64: i64 = 9223372036854775807;
-    var min64: i64 = (0 as i64) - 9223372036854775807 - 1;
+    let max32: i32 = 2147483647;
+    let min32: i32 = 0 - 2147483647 - 1;
+    let max64: i64 = 9223372036854775807;
+    let min64: i64 = (0 as i64) - 9223372036854775807 - 1;
     // i32.
     if ((17).saturating_div(5) != 3) { return 1; }
     if (min32.saturating_div(0 - 1) != max32) { return 2; }        // MIN / -1 clamps to MAX

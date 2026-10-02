@@ -14,9 +14,9 @@ import (
 // the want is 8+4+2+1 = 15 (bits 8/4/2/1).
 func TestSelfHostIRF64Eligible(t *testing.T) {
 	progs := []string{
-		"function main(): i32 { var x: f64 = 1.5; var y: f64 = 2.25; var z: f64 = x + y; if (z > 3.0) { return 7; } return 0; }",
-		"function main(): i32 { var n: i32 = 10; var x: f64 = n as f64; var y: f64 = x / 4.0; return y as i32; }",
-		"function scale(x: f64, k: f64): f64 { return x * k; } function main(): i32 { var r: f64 = scale(3.0, 2.5); if (r > 7.0) { return 7; } return 0; }",
+		"function main(): i32 { let x: f64 = 1.5; let y: f64 = 2.25; let z: f64 = x + y; if (z > 3.0) { return 7; } return 0; }",
+		"function main(): i32 { let n: i32 = 10; let x: f64 = n as f64; let y: f64 = x / 4.0; return y as i32; }",
+		"function scale(x: f64, k: f64): f64 { return x * k; } function main(): i32 { let r: f64 = scale(3.0, 2.5); if (r > 7.0) { return 7; } return 0; }",
 		"struct B { } function (b: B) half(): f64 { return 0.5; } function main(): i32 { return 0; }",
 	}
 	if got := eligBits(t, progs, []int{8, 4, 2, 1}); got != 15 {

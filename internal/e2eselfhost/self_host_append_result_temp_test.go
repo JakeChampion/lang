@@ -23,10 +23,10 @@ var appendResultTempCases = []struct {
     return acc.append(n).append(n + 1);
 }
 function main(): i32 {
-    var pending: i32[] = [];
-    var fd: i32 = 0;
+    let pending: i32[] = [];
+    let fd: i32 = 0;
     while (fd < 60) { pending = step(fd, pending); fd = fd + 1; }
-    var q: i32[] = [];
+    let q: i32[] = [];
     fd = 0;
     while (fd < 60) { q = q.append(fd).append(fd); fd = fd + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -37,10 +37,10 @@ function main(): i32 {
 	// allocs / 1 free before.
 	{"arg_identity_callee", `function id(acc: i32[]): i32[] { return acc; }
 function main(): i32 {
-    var pending: i32[] = [];
-    var fd: i32 = 0;
+    let pending: i32[] = [];
+    let fd: i32 = 0;
     while (fd < 10) { pending = id(pending.append(fd)); fd = fd + 1; }
-    var k: i32[] = id(id(pending.append(1)).append(2));
+    let k: i32[] = id(id(pending.append(1)).append(2));
     if (k.len() != 12 || pending.len() != 10) { return 90; }
     if (__rc_underflow_count() != 0) { return 99; }
     return pending.len();
@@ -53,7 +53,7 @@ function main(): i32 {
     return rec(n - 1, acc.append(n));
 }
 function main(): i32 {
-    var r: i32[] = rec(10, []);
+    let r: i32[] = rec(10, []);
     if (r[0] != 10 || r[9] != 1) { return 90; }
     if (__rc_underflow_count() != 0) { return 99; }
     return r.len();
@@ -66,11 +66,11 @@ function stepf(n: i32, acc: f64[]): f64[] { return acc.append(n as f64).append(0
 function stepi(n: i32, acc: i64[]): i64[] { return acc.append(n as i64).append(7 as i64); }
 function idf(acc: f64[]): f64[] { return acc; }
 function main(): i32 {
-    var xs: f64[] = [];
-    var fs: f64[] = [];
-    var is: i64[] = [];
-    var g: f64[] = [];
-    var i: i32 = 0;
+    let xs: f64[] = [];
+    let fs: f64[] = [];
+    let is: i64[] = [];
+    let g: f64[] = [];
+    let i: i32 = 0;
     while (i < 30) {
         xs = f(xs);
         fs = stepf(i, fs);
@@ -90,9 +90,9 @@ function step(n: i32, acc: string[]): string[] {
     return acc.append(tag(n)).append(tag(n + 1));
 }
 function main(): i32 {
-    var pending: string[] = [];
-    var q: string[] = [];
-    var i: i32 = 0;
+    let pending: string[] = [];
+    let q: string[] = [];
+    let i: i32 = 0;
     while (i < 30) {
         pending = step(i, pending);
         q = q.append(tag(i)).append(tag(i + 100));
@@ -108,15 +108,15 @@ function step(n: i32, acc: P[]): P[] {
     return acc.append(P { v: n, w: 1 }).append(P { v: n + 1, w: 2 });
 }
 function main(): i32 {
-    var pending: P[] = [];
-    var q: P[] = [];
-    var i: i32 = 0;
+    let pending: P[] = [];
+    let q: P[] = [];
+    let i: i32 = 0;
     while (i < 30) {
         pending = step(i, pending);
         q = q.append(P { v: i, w: 3 }).append(P { v: i, w: 4 });
         i = i + 1;
     }
-    var total: i32 = 0;
+    let total: i32 = 0;
     for p in pending { total = total + p.v + p.w; }
     for p2 in q { total = total + p2.w; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -133,17 +133,17 @@ function rec(n: i32, acc: i32[]): i32[] {
     if (n == 0) { return acc; }
     return rec(n - 1, acc.append(n));
 }
-function sum(xs: i32[]): i32 { var t: i32 = 0; for x in xs { t = t + x; } return t; }
+function sum(xs: i32[]): i32 { let t: i32 = 0; for x in xs { t = t + x; } return t; }
 function main(): i32 {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < 1000) { xs = grow(xs, i); i = i + 1; }
-    var r: i32[] = rec(1000, []);
-    var roomy: i32[] = [];
+    let r: i32[] = rec(1000, []);
+    let roomy: i32[] = [];
     i = 0;
     while (i < 3) { roomy = roomy.append(i); i = i + 1; }
-    var a: i32 = sum(roomy.append(20));
-    var b: i32 = sum(roomy);
+    let a: i32 = sum(roomy.append(20));
+    let b: i32 = sum(roomy);
     if (a != b + 20 || roomy.len() != 3) { return 90; }
     if (__rc_underflow_count() != 0) { return 99; }
     return (xs.len() + r.len()) % 100;
@@ -159,13 +159,13 @@ function hold(xs: i32[]): Holder { return Holder { xs: xs, n: xs.len() }; }
 function wrap(xs: i32[]): i32[][] { return [xs]; }
 function push_into(out: i32[][], xs: i32[]): i32[][] { return out.append(xs); }
 function main(): i32 {
-    var ys: i32[] = [1, 2];
-    var outs: i32[][] = [];
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let ys: i32[] = [1, 2];
+    let outs: i32[][] = [];
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) {
-        var h: Holder = hold(ys.append(i));
-        var w: i32[][] = wrap(ys.append(i));
+        let h: Holder = hold(ys.append(i));
+        let w: i32[][] = wrap(ys.append(i));
         outs = push_into(outs, ys.append(i).append(i));
         total = total + h.xs[2] + h.n + w[0][2];
         i = i + 1;

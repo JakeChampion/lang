@@ -21,7 +21,7 @@ const dynComposeDowncastSrc = `trait P { type Item; function get(self: Self): Se
 struct B { v: i32 }
 impl P for B { type Item = i32; function get(self: Self): i32 { return self.v; } }
 function main(): i32 {
-    var d: dyn P[Item = i32] = B { v: 41 };
+    let d: dyn P[Item = i32] = B { v: 41 };
     match (d as? B) {
         Some(b) => { return b.v + 1; },
         None => { return 0; }

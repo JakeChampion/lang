@@ -54,7 +54,7 @@ function main(): i32 { return 0; }`
 // bare hand-out, because everyOccurrenceSafe is all-or-nothing.
 func TestStringParamSetThenReturnedBareStaysUncredited(t *testing.T) {
 	src := `function put(xs: string[], v: string): string {
-    var ys: string[] = xs.with(0, v);
+    let ys: string[] = xs.with(0, v);
     if (ys.len() > 99) { return "x"; }
     return v;
 }

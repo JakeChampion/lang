@@ -6,7 +6,7 @@ of them already.
 ## A value block yielding its own array local (#10393)
 
 ```fern
-var ps = { var q = [j, j + 1]; q };
+let ps = { let q = [j, j + 1]; q };
 ```
 
 `lower_value_block` stored the tail into a `$vbi` temp with `tmp = q`. That
@@ -29,14 +29,14 @@ from a block read the wrong word.
 
 Element credits: `collect_fresh_structarr_names` and `collect_fresh_strarr_names`
 treat the binding as a fresh literal when the moved local was bound from one and
-the statements between its `var` and the tail pass the class's escape gate for
+the statements between its `let` and the tail pass the class's escape gate for
 it. The gate uses an empty borrowable list, so any call argument naming it
 declines the credit.
 
 ## A closure local rebound in a loop (#10392)
 
 ```fern
-while (i < 6) { var g: (i32) => i32 = mk(i); … }
+while (i < 6) { let g: (i32) => i32 = mk(i); … }
 ```
 
 `lower_stmt_var_closure` stored a fresh closure (a lambda, `__mkclo$`, or a
@@ -53,7 +53,7 @@ temp back to that temp's own store. Without that, a returned closure moved from
 ## A destructured scalar tuple literal
 
 The tuple-pattern match desugar reads its scrutinee with
-`var (e0, e1) = (i % 3, 0)`, and `lower_stmt_var_destructure` never released
+`let (e0, e1) = (i % 3, 0)`, and `lower_stmt_var_destructure` never released
 the tuple box. A tuple literal whose elements are all scalar is now released
 after its elements are read out. Without an `@` binding, nothing else can see
 the box.

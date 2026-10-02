@@ -20,29 +20,29 @@ var dynMultiTraitIRCases = []struct {
 	// AND weigh() (from Weigh) on the same value. show()=10, weigh()=w=3 →
 	// 10 + 3 = 13. Both traits must dispatch or the sum is wrong.
 	{"two-trait-scalar",
-		`trait Show { function show(self: Self): i32; } trait Weigh { function weigh(self: Self): i32; } struct Apple { w: i32 } impl Show for Apple { function show(self: Self): i32 { return 10; } } impl Weigh for Apple { function weigh(self: Self): i32 { return self.w; } } function describe(x: dyn Show + Weigh): i32 { return x.show() + x.weigh(); } function main(): i32 { var a: Apple = Apple { w: 3 }; return describe(a); }`, 13},
+		`trait Show { function show(self: Self): i32; } trait Weigh { function weigh(self: Self): i32; } struct Apple { w: i32 } impl Show for Apple { function show(self: Self): i32 { return 10; } } impl Weigh for Apple { function weigh(self: Self): i32 { return self.w; } } function describe(x: dyn Show + Weigh): i32 { return x.show() + x.weigh(); } function main(): i32 { let a: Apple = Apple { w: 3 }; return describe(a); }`, 13},
 	// Order-insensitive: `dyn Weigh + Show` (the other source order) must behave
 	// identically — dispatch is set-agnostic. Same value, same result 13.
 	{"two-trait-scalar-reordered",
-		`trait Show { function show(self: Self): i32; } trait Weigh { function weigh(self: Self): i32; } struct Apple { w: i32 } impl Show for Apple { function show(self: Self): i32 { return 10; } } impl Weigh for Apple { function weigh(self: Self): i32 { return self.w; } } function describe(x: dyn Weigh + Show): i32 { return x.show() + x.weigh(); } function main(): i32 { var a: Apple = Apple { w: 3 }; return describe(a); }`, 13},
+		`trait Show { function show(self: Self): i32; } trait Weigh { function weigh(self: Self): i32; } struct Apple { w: i32 } impl Show for Apple { function show(self: Self): i32 { return 10; } } impl Weigh for Apple { function weigh(self: Self): i32 { return self.w; } } function describe(x: dyn Weigh + Show): i32 { return x.show() + x.weigh(); } function main(): i32 { let a: Apple = Apple { w: 3 }; return describe(a); }`, 13},
 	// HETEROGENEOUS `dyn Show + Weigh[]`: two concrete types, BOTH impl-ing BOTH
 	// traits, iterated + each dispatched on show()+weigh(). Apple{w:3}: 10+3=13;
 	// Brick{kg:5}: 20+5=25. Sum = 38.
 	{"two-trait-array",
-		`trait Show { function show(self: Self): i32; } trait Weigh { function weigh(self: Self): i32; } struct Apple { w: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return 10; } } impl Weigh for Apple { function weigh(self: Self): i32 { return self.w; } } impl Show for Brick { function show(self: Self): i32 { return 20; } } impl Weigh for Brick { function weigh(self: Self): i32 { return self.kg; } } function total(xs: dyn Show + Weigh[]): i32 { var t: i32 = 0; for x in xs { t = t + x.show() + x.weigh(); } return t; } function main(): i32 { var xs: dyn Show + Weigh[] = [Apple { w: 3 }, Brick { kg: 5 }]; return total(xs); }`, 38},
+		`trait Show { function show(self: Self): i32; } trait Weigh { function weigh(self: Self): i32; } struct Apple { w: i32 } struct Brick { kg: i32 } impl Show for Apple { function show(self: Self): i32 { return 10; } } impl Weigh for Apple { function weigh(self: Self): i32 { return self.w; } } impl Show for Brick { function show(self: Self): i32 { return 20; } } impl Weigh for Brick { function weigh(self: Self): i32 { return self.kg; } } function total(xs: dyn Show + Weigh[]): i32 { let t: i32 = 0; for x in xs { t = t + x.show() + x.weigh(); } return t; } function main(): i32 { let xs: dyn Show + Weigh[] = [Apple { w: 3 }, Brick { kg: 5 }]; return total(xs); }`, 38},
 	// THREE traits: `dyn A + B + C`, a method from EACH. a()=1, b()=2*v, c()=100.
 	// v=4 → 1 + 8 + 100 = 109.
 	{"three-trait-scalar",
-		`trait A { function a(self: Self): i32; } trait B { function b(self: Self): i32; } trait C { function c(self: Self): i32; } struct T { v: i32 } impl A for T { function a(self: Self): i32 { return 1; } } impl B for T { function b(self: Self): i32 { return self.v * 2; } } impl C for T { function c(self: Self): i32 { return 100; } } function f(x: dyn A + B + C): i32 { return x.a() + x.b() + x.c(); } function main(): i32 { var t: T = T { v: 4 }; return f(t); }`, 109},
+		`trait A { function a(self: Self): i32; } trait B { function b(self: Self): i32; } trait C { function c(self: Self): i32; } struct T { v: i32 } impl A for T { function a(self: Self): i32 { return 1; } } impl B for T { function b(self: Self): i32 { return self.v * 2; } } impl C for T { function c(self: Self): i32 { return 100; } } function f(x: dyn A + B + C): i32 { return x.a() + x.b() + x.c(); } function main(): i32 { let t: T = T { v: 4 }; return f(t); }`, 109},
 	// A multi-trait method taking an ARGUMENT, dispatched dynamically across the
 	// set. scale() (from Sc) * k=3, plus tag() (from Tag). v=5: 5*3 + 7 = 22.
 	{"two-trait-method-arg",
-		`trait Sc { function scale(self: Self, k: i32): i32; } trait Tag { function tag(self: Self): i32; } struct W { v: i32 } impl Sc for W { function scale(self: Self, k: i32): i32 { return self.v * k; } } impl Tag for W { function tag(self: Self): i32 { return 7; } } function f(x: dyn Sc + Tag): i32 { return x.scale(3) + x.tag(); } function main(): i32 { var w: W = W { v: 5 }; return f(w); }`, 22},
+		`trait Sc { function scale(self: Self, k: i32): i32; } trait Tag { function tag(self: Self): i32; } struct W { v: i32 } impl Sc for W { function scale(self: Self, k: i32): i32 { return self.v * k; } } impl Tag for W { function tag(self: Self): i32 { return 7; } } function f(x: dyn Sc + Tag): i32 { return x.scale(3) + x.tag(); } function main(): i32 { let w: W = W { v: 5 }; return f(w); }`, 22},
 	// SINGLE-trait `dyn Show` through the SAME harness — the 1-element regression
 	// gate: must lower/behave exactly as before the multi-trait parse change.
 	// show() = 16.
 	{"single-trait-regression",
-		`trait Show { function show(self: Self): i32; } struct Circle { r: i32 } impl Show for Circle { function show(self: Self): i32 { return self.r * self.r; } } function f(s: dyn Show): i32 { return s.show(); } function main(): i32 { var c: Circle = Circle { r: 4 }; return f(c); }`, 16},
+		`trait Show { function show(self: Self): i32; } struct Circle { r: i32 } impl Show for Circle { function show(self: Self): i32 { return self.r * self.r; } } function f(s: dyn Show): i32 { return s.show(); } function main(): i32 { let c: Circle = Circle { r: 4 }; return f(c); }`, 16},
 }
 
 // TestSelfHostDynMultiTraitIR compiles each case with the self-host CLI for

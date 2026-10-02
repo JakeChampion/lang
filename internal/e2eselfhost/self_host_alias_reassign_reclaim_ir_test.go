@@ -8,15 +8,15 @@ import (
 )
 
 // aliasReassignReclaimCases pin the #3425 stage-2 alias-reassign reclaim fix: a
-// FRESH struct local (`var t = S { arr: [] }`) that is later REASSIGNED from an
+// FRESH struct local (`let t = S { arr: [] }`) that is later REASSIGNED from an
 // ALIAS — a match-arm payload binding (`t = l`), a struct-field read (`t = x.s`),
 // or an array-element read (`t = xs[i]`) — no longer owns a fresh box after the
 // rebind; its rc fields BORROW whatever the RHS points into (still owned by its
 // container). The self-host IR path used to keep such a local in
-// reclaimable_names, so the loop's next-iteration `var t = ...` re-init reclaim
+// reclaimable_names, so the loop's next-iteration `let t = ...` re-init reclaim
 // (emit_field_reclaim_store) freed the container's live array out from under it
 // — a double-free / use-after-free. This is exactly how the merged-bundle IR
-// self-compile SIGSEGV'd (box_mutated_scalar_captures' `var lam = ExprLambda{};
+// self-compile SIGSEGV'd (box_mutated_scalar_captures' `let lam = ExprLambda{};
 // match (v.init) { ExprLambda(l) => { lam = l; } }` freed fd's own lambda body).
 //
 // reassigned_from_alias now excludes such locals from reclaim entirely — they
@@ -30,7 +30,7 @@ var aliasReassignReclaimCases = []struct {
 	want int
 }{
 	// The mirror image (#8983): a local bound from a SPREAD over a borrowed base
-	// (`var ls = Sc { ...s, depth: 0 }`) holds a fresh rc-1 box, and a unique box is
+	// (`let ls = Sc { ...s, depth: 0 }`) holds a fresh rc-1 box, and a unique box is
 	// taken to own its fields — `ls.bind(…)` moves the array out of it and pushes
 	// in place, and the rebind's reclaim frees what the successor replaced. The
 	// base copy used to carry the arrays uncounted, so both landed on the
@@ -42,20 +42,20 @@ var aliasReassignReclaimCases = []struct {
 	{"spread-carry-owned", `struct Sc { names: string[], types: i32[], depth: i32 }
 function (s: Sc) bind(n: string, t: i32): Sc { return Sc { names: s.names.append(n), types: s.types.append(t), depth: s.depth }; }
 function lam(s: Sc, ps: string[]): i32 {
-    var ls: Sc = Sc { ...s, depth: 0 };
-    var i: i32 = 0;
+    let ls: Sc = Sc { ...s, depth: 0 };
+    let i: i32 = 0;
     while (i < ps.len()) { ls = ls.bind(ps[i], i + 10); i = i + 1; }
     return ls.names.len() + ls.types.len();
 }
 function main(): i32 {
-    var s: Sc = Sc { names: [], types: [], depth: 1 };
+    let s: Sc = Sc { names: [], types: [], depth: 1 };
     s = s.bind("a", 1);
     s = s.bind("b", 2);
     s = s.bind("c", 3);
-    var r: i32 = lam(s, ["p", "q"]);
-    var j1: i32[] = [7, 7, 7, 7];
-    var j2: i32[] = [8, 8, 8, 8];
-    var j3: i32[] = [9, 9, 9, 9];
+    let r: i32 = lam(s, ["p", "q"]);
+    let j1: i32[] = [7, 7, 7, 7];
+    let j2: i32[] = [8, 8, 8, 8];
+    let j3: i32[] = [9, 9, 9, 9];
     if (r != 10) { return 90; }
     if (s.names.len() != 3 || s.types.len() != 3) { return 91; }
     if (s.types[0] + s.types[1] + s.types[2] != 6) { return 92; }
@@ -66,21 +66,21 @@ function main(): i32 {
 	{"alias-element", `struct S { arr: i32[] }
 struct Box { items: S[] }
 function scan(b: Box): Box {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < b.items.len()) {
-        var t: S = S { arr: [] };
+        let t: S = S { arr: [] };
         t = b.items[i];
-        var n: i32 = t.arr.len();
+        let n: i32 = t.arr.len();
         i = i + 1;
     }
     return b;
 }
 function main(): i32 {
-    var b: Box = Box { items: [S { arr: [1, 2, 3] }, S { arr: [4, 5, 6] }] };
-    var b2: Box = scan(b);
-    var j1: i32[] = [7, 7, 7];
-    var j2: i32[] = [8, 8, 8];
-    var sum: i32 = b2.items[0].arr[0] + b2.items[0].arr[1] + b2.items[0].arr[2] + b2.items[1].arr[0] + b2.items[1].arr[1] + b2.items[1].arr[2];
+    let b: Box = Box { items: [S { arr: [1, 2, 3] }, S { arr: [4, 5, 6] }] };
+    let b2: Box = scan(b);
+    let j1: i32[] = [7, 7, 7];
+    let j2: i32[] = [8, 8, 8];
+    let sum: i32 = b2.items[0].arr[0] + b2.items[0].arr[1] + b2.items[0].arr[2] + b2.items[1].arr[0] + b2.items[1].arr[1] + b2.items[1].arr[2];
     if (sum != 21) { return 90; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -90,21 +90,21 @@ function main(): i32 {
 struct Wrap { s: S }
 struct Box { items: Wrap[] }
 function scan(b: Box): Box {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < b.items.len()) {
-        var t: S = S { arr: [] };
+        let t: S = S { arr: [] };
         t = b.items[i].s;
-        var n: i32 = t.arr.len();
+        let n: i32 = t.arr.len();
         i = i + 1;
     }
     return b;
 }
 function main(): i32 {
-    var b: Box = Box { items: [Wrap { s: S { arr: [1, 2, 3] } }, Wrap { s: S { arr: [4, 5, 6] } }] };
-    var b2: Box = scan(b);
-    var j1: i32[] = [7, 7, 7];
-    var j2: i32[] = [8, 8, 8];
-    var sum: i32 = b2.items[0].s.arr[0] + b2.items[1].s.arr[2];
+    let b: Box = Box { items: [Wrap { s: S { arr: [1, 2, 3] } }, Wrap { s: S { arr: [4, 5, 6] } }] };
+    let b2: Box = scan(b);
+    let j1: i32[] = [7, 7, 7];
+    let j2: i32[] = [8, 8, 8];
+    let sum: i32 = b2.items[0].s.arr[0] + b2.items[1].s.arr[2];
     if (sum != 7) { return 90; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -113,10 +113,10 @@ function main(): i32 {
 	// is NOT an alias — it stays reclaimable, values exact, no over-release.
 	{"fresh-relit-safe", `struct S { arr: i32[] }
 function main(): i32 {
-    var t: S = S { arr: [0] };
-    var i: i32 = 0;
+    let t: S = S { arr: [0] };
+    let i: i32 = 0;
     while (i < 100) { t = S { arr: [i, i + 1] }; i = i + 1; }
-    var got: i32 = t.arr[0] + t.arr[1];
+    let got: i32 = t.arr[0] + t.arr[1];
     if (got != 199) { return 90; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;

@@ -1,6 +1,6 @@
 # An enum local shared into a struct field — killer-drops slice 5
 
-`var src: E = E.A([..]); var p: P = P { e: src, … }` stranded src's box AND
+`let src: E = E.A([..]); let p: P = P { e: src, … }` stranded src's box AND
 its payload, once per construction (probe: 300 allocs / 100 frees over 100
 rounds; native clean). The construction RETAINS the value — the k_enum
 arm's dec is what that retain balances — so the strand was not the field's
@@ -48,7 +48,7 @@ for an over-release. Strict arm64 whole-compiler emit clean.
 
 The construction-retain matrix's `enum__local` cell does not flip on this
 slice alone. The cell is COMPOUND: its second half
-(`var q: P = P { f: mkv(..) }; var p: P = q;`) leaks 300 allocs / 0 frees
+(`let q: P = P { f: mkv(..) }; let p: P = q;`) leaks 300 allocs / 0 frees
 with the first half removed, while the enum-source half measures 250/250
 clean.
 

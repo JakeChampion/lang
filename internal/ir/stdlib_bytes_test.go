@@ -40,8 +40,8 @@ func TestStdlibBytesIntrinsicRequiresCanonicalDeclaration(t *testing.T) {
 
 func TestStdlibBytesIntrinsicBorrowsSourceAndReturnsFreshArray(t *testing.T) {
 	prog, err := parser.Parse(`function __method_string_bytes(s: string): u8[] {
-    var out: u8[] = __alloc_u8(s.len());
-    var data: usize = __str_bytes(s, 0 as usize);
+    let out: u8[] = __alloc_u8(s.len());
+    let data: usize = __str_bytes(s, 0 as usize);
     __memcpy(out as usize, data, s.len());
     return out;
 }

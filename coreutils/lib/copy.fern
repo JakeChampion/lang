@@ -312,7 +312,7 @@ function create_mode(cfg: Cfg, src: Info): i32 {
     // `--no-preserve=mode`: the source's bits are not consulted at all.
     // Measured — a 0777 source lands 0644 under umask 022, which is the
     // 0666 an `open` would have created, not 0777 filtered.
-    var deflt: i32 = 438;
+    let deflt: i32 = 438;
     if (src.is_dir) {
       deflt = 511;
     }
@@ -325,7 +325,7 @@ function create_mode(cfg: Cfg, src: Info): i32 {
 // back. Process-wide state for the two calls in between, which is why it
 // is restored immediately and never held across a copy.
 function current_umask(): i32 {
-  var m: i32 = umask(0);
+  let m: i32 = umask(0);
   umask(m);
   return m;
 }
@@ -365,7 +365,7 @@ pub struct Replace { verdict: i32, backup: string, out: io_buffered.BufWriter, s
 // been read; `none-fail` is the same skip with a diagnostic and a
 // failing status, and `--debug` names the skip either way.
 function decide(cfg: Cfg, s: State, src: Info, dst: Info, dest: string): Replace {
-  var w: io_buffered.BufWriter = s.out;
+  let w: io_buffered.BufWriter = s.out;
   if (update_skips(cfg.update)) {
     if (cfg.update == update_none_fail()) {
       return Replace { verdict: skip(), backup: "", out: gnu.error_out(w, "not replacing " + gnu.quotea(dest)), status: 1 };
@@ -389,7 +389,7 @@ function decide(cfg: Cfg, s: State, src: Info, dst: Info, dest: string): Replace
     }
   }
   if (cfg.backups) {
-    var name: string = gnu.backup_name(dest, cfg.control, cfg.suffix);
+    let name: string = gnu.backup_name(dest, cfg.control, cfg.suffix);
     match (rename(dest, name)) {
       Ok(_) => {},
       Err(e) => {
@@ -444,7 +444,7 @@ function verbose_line(cfg: Cfg, s: State, src: string, dest: string, backup: str
   if (!cfg.verbose) {
     return s;
   }
-  var line: string = gnu.quotea(src) + " -> " + gnu.quotea(dest);
+  let line: string = gnu.quotea(src) + " -> " + gnu.quotea(dest);
   if (cfg.verbose_style == vstyle_move()) {
     line = "copied " + line;
   }
@@ -475,7 +475,7 @@ function debug_line(cfg: Cfg, s: State, sparse: boolean): State {
   if (!cfg.debug) {
     return s;
   }
-  var how: string = "no";
+  let how: string = "no";
   if (sparse) {
     how = "zero blocks";
   }
@@ -520,7 +520,7 @@ struct Bytes { ok: boolean, err: string, wrote_hole: boolean }
 // `blksize` is what `stat` reports; the fallback is the usual 4 KiB, and
 // an absurd value is ignored rather than trusted.
 function hole_block(src: Info): i32 {
-  var bs: i32 = src.blksize as i32;
+  let bs: i32 = src.blksize as i32;
   if (bs < 512 || bs > 1048576) {
     return 4096;
   }
@@ -531,8 +531,8 @@ function hole_block(src: Info): i32 {
 struct Run { to: i32, zero: boolean }
 
 function next_run(data: string, from: i32, bs: i32): Run {
-  var zero: boolean = run_is_zero(data, from, bs);
-  var at: i32 = from + piece_len(data, from, bs);
+  let zero: boolean = run_is_zero(data, from, bs);
+  let at: i32 = from + piece_len(data, from, bs);
   while (at < data.len() && run_is_zero(data, at, bs) == zero) {
     at = at + piece_len(data, at, bs);
   }
@@ -547,15 +547,15 @@ function piece_len(data: string, from: i32, bs: i32): i32 {
 }
 
 function run_is_zero(data: string, from: i32, bs: i32): boolean {
-  var end: i32 = from + piece_len(data, from, bs);
-  var piece: string = slice_unchecked(data, from, end) + "";
+  let end: i32 = from + piece_len(data, from, bs);
+  let piece: string = slice_unchecked(data, from, end) + "";
   return __count_byte(piece, 0) == piece.len();
 }
 
 function write_all(w: Writer, data: string, from: i32, to: i32): string {
-  var off: i32 = from;
+  let off: i32 = from;
   while (off < to) {
-    var piece: string = slice_unchecked(data, off, to) + "";
+    let piece: string = slice_unchecked(data, off, to) + "";
     match (w.write_some(piece)) {
       Err(e) => {
         return gnu.io_error_text(e);
@@ -576,8 +576,8 @@ function write_all(w: Writer, data: string, from: i32, to: i32): string {
 // and positioned at zero; `holes` says a run of zeros may be seeked over
 // instead of written.
 function write_data(r: Reader, w: Writer, holes: boolean, total: i64, bs: i32): Bytes {
-  var wrote_hole: boolean = false;
-  var ended_in_hole: boolean = false;
+  let wrote_hole: boolean = false;
+  let ended_in_hole: boolean = false;
   while (true) {
     match (r.read_chunk(chunk_size())) {
       Err(e) => {
@@ -588,15 +588,15 @@ function write_data(r: Reader, w: Writer, holes: boolean, total: i64, bs: i32): 
           break;
         }
         if (!holes) {
-          var werr: string = write_all(w, data, 0, data.len());
+          let werr: string = write_all(w, data, 0, data.len());
           if (werr.len() > 0) {
             return Bytes { ok: false, err: werr, wrote_hole: wrote_hole };
           }
           ended_in_hole = false;
         } else {
-          var at: i32 = 0;
+          let at: i32 = 0;
           while (at < data.len()) {
-            var run: Run = next_run(data, at, bs);
+            let run: Run = next_run(data, at, bs);
             if (run.zero) {
               match (w.seek((run.to - at) as i64, 1)) {
                 Err(e2) => {
@@ -608,7 +608,7 @@ function write_data(r: Reader, w: Writer, holes: boolean, total: i64, bs: i32): 
                 }
               }
             } else {
-              var werr2: string = write_all(w, data, at, run.to);
+              let werr2: string = write_all(w, data, at, run.to);
               if (werr2.len() > 0) {
                 return Bytes { ok: false, err: werr2, wrote_hole: wrote_hole };
               }
@@ -655,7 +655,7 @@ function existing_mode(cfg: Cfg, src: Info): i32 {
 // already; the chmod used to ignore it and set the source's bits anyway,
 // so `cp --preserve=timestamps src taken` re-moded `taken`.
 function apply_attrs(cfg: Cfg, s: State, src: Info, dest: string, want_mode: i32): State {
-  var st: State = s;
+  let st: State = s;
   if (cfg.attrs.ownership) {
     match (chown_at(dest, src.uid as i32, src.gid as i32, false)) {
       Ok(_) => {},
@@ -690,7 +690,7 @@ function apply_attrs(cfg: Cfg, s: State, src: Info, dest: string, want_mode: i32
 // copy rather than a second copy. Keyed on (dev, ino) because an inode
 // number alone is only unique per filesystem.
 function link_lookup(s: State, src: Info): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.link_ino.len()) {
     if (s.link_ino[i] == src.ino && s.link_dev[i] == src.dev) {
       return s.link_dest[i];
@@ -706,7 +706,7 @@ function link_record(s: State, src: Info, dest: string): State {
 
 // ---- one regular file -----------------------------------------------------------
 function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean): State {
-  var st: State = s;
+  let st: State = s;
   // `--reflink=always` asks for a clone and accepts nothing else. There is
   // no clone primitive, so the answer is the one GNU gives on a filesystem
   // that cannot clone — which is every filesystem this is tested on, and
@@ -714,7 +714,7 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
   if (cfg.reflink == reflink_always()) {
     return fail(st, "failed to clone " + gnu.quotea(dest) + " from " + gnu.quotea(src_path) + ": Operation not supported");
   }
-  var want_mode: i32 = create_mode(cfg, src);
+  let want_mode: i32 = create_mode(cfg, src);
   if (existed && !cfg.attrs.mode) {
     // An existing destination keeps its own permissions: the file is
     // truncated in place, never recreated, so nothing re-derives them.
@@ -754,7 +754,7 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
       return fail(st, "cannot open " + gnu.quotea(src_path) + " for reading: " + gnu.io_error_text(e2));
     },
     Ok(r) => {
-      var opened: DestOpen = open_dest(cfg, dest, existed);
+      let opened: DestOpen = open_dest(cfg, dest, existed);
       match (opened.err) {
         Some(e3) => {
           match (r.close()) {
@@ -774,8 +774,8 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
           return fail(st, "cannot create regular file " + gnu.quotea(dest));
         },
         Some(w) => {
-          var holes: boolean = wants_holes(cfg, src);
-          var b: Bytes = write_data(r, w, holes, src.size, hole_block(src));
+          let holes: boolean = wants_holes(cfg, src);
+          let b: Bytes = write_data(r, w, holes, src.size, hole_block(src));
           match (r.close()) {
             Some(_) => {},
             None => {}
@@ -811,7 +811,7 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
 // not exist. `lstat` sees the link, `stat` follows it, so the pair is the
 // question; neither alone answers it.
 function dangling_symlink(path: string): boolean {
-  var l: Info = lstat_of(path);
+  let l: Info = lstat_of(path);
   if (!l.ok || !l.is_link) {
     return false;
   }
@@ -858,7 +858,7 @@ function open_dest(cfg: Cfg, dest: string, existed: boolean): DestOpen {
 
 // ---- one symbolic link ------------------------------------------------------------
 function copy_link(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean): State {
-  var st: State = s;
+  let st: State = s;
   match (read_link(src_path)) {
     Err(e) => {
       return fail(st, "cannot read symbolic link " + gnu.quotea(src_path) + ": " + gnu.io_error_text(e));
@@ -902,7 +902,7 @@ function copy_link(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
 // is what asks for the other reading, and the caller routes that to
 // copy_file instead.
 function copy_special(cfg: Cfg, s: State, dest: string, src: Info, existed: boolean): State {
-  var st: State = s;
+  let st: State = s;
   if (existed) {
     match (remove_file(dest)) {
       Ok(_) => {},
@@ -913,8 +913,8 @@ function copy_special(cfg: Cfg, s: State, dest: string, src: Info, existed: bool
   // byte above the major, so `rdev % 256` truncates every node with a
   // minor of 256 or more. `listing.fern` already had the encoding for
   // `ls -l`'s device column, so this reuses it rather than restating it.
-  var major: i32 = listing.dev_major(src.rdev as u64) as i32;
-  var minor: i32 = listing.dev_minor(src.rdev as u64) as i32;
+  let major: i32 = listing.dev_major(src.rdev as u64) as i32;
+  let minor: i32 = listing.dev_minor(src.rdev as u64) as i32;
   match (mknod(dest, src.mode as i32, major, minor)) {
     Ok(_) => {},
     Err(e) => {
@@ -957,12 +957,12 @@ function dirent_cmp(a: DirEnt, b: DirEnt): i32 {
 // The stat per entry is what readdir's own `d_ino` would give for free;
 // #9317 is the primitive that would remove it.
 function walk_order(dir: string, names: string[]): DirEnt[] {
-  var es: DirEnt[] = [];
-  var i: i32 = 0;
+  let es: DirEnt[] = [];
+  let i: i32 = 0;
   while (i < names.len()) {
-    var info: Info = lstat_of(gnu.join_path(dir, names[i]));
-    var dev: i64 = 0;
-    var ino: i64 = 0;
+    let info: Info = lstat_of(gnu.join_path(dir, names[i]));
+    let dev: i64 = 0;
+    let ino: i64 = 0;
     if (info.ok) {
       dev = info.dev;
       ino = info.ino;
@@ -981,7 +981,7 @@ function walk_order(dir: string, names: string[]): DirEnt[] {
 // the walk skips this for every file, which is what keeps the scan
 // proportional to the tree's directory count rather than to its size.
 function made(st: State, dev: i64, ino: i64): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < st.made_ino.len()) {
     if (st.made_ino[i] == ino && st.made_dev[i] == dev) {
       return true;
@@ -992,7 +992,7 @@ function made(st: State, dev: i64, ino: i64): boolean {
 }
 
 function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean, top: boolean): State {
-  var st: State = s;
+  let st: State = s;
   if (top) {
     // Each command-line operand gets its own set: the abort below ends
     // the operand, not the run, and the diagnostic names this operand's
@@ -1017,11 +1017,11 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
     // measured, `cp -rv s d` with `d` and `d/sub` already there prints
     // neither `s -> d` nor `s/sub -> d/sub`, only the files under them.
     st = verbose_dir_line(cfg, st, src_path, dest);
-    var mi: Info = lstat_of(dest);
+    let mi: Info = lstat_of(dest);
     st = State { ...st, made_dev: st.made_dev.append(mi.dev), made_ino: st.made_ino.append(mi.ino) };
   }
-  var entries: string[] = [];
-  var readable: boolean = true;
+  let entries: string[] = [];
+  let readable: boolean = true;
   match (read_dir(src_path)) {
     Err(e2) => {
       st = fail(st, "cannot read directory " + gnu.quotea(src_path) + ": " + gnu.io_error_text(e2));
@@ -1032,8 +1032,8 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
     }
   }
   if (readable) {
-    var order: DirEnt[] = walk_order(src_path, entries);
-    var j: i32 = 0;
+    let order: DirEnt[] = walk_order(src_path, entries);
+    let j: i32 = 0;
     while (j < order.len()) {
       if (st.aborted) {
         break;
@@ -1051,7 +1051,7 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
       j = j + 1;
     }
   }
-  var want: i32 = create_mode(cfg, src);
+  let want: i32 = create_mode(cfg, src);
   if (existed && !cfg.attrs.mode) {
     // An existing directory keeps its own permissions, as an existing
     // file does.
@@ -1068,8 +1068,8 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
 // `top` says this name came from the command line: it is what `-H`
 // distinguishes, and what `-x` takes its device from.
 pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: boolean): State {
-  var st: State = s;
-  var src: Info = source_info(cfg, src_path, top);
+  let st: State = s;
+  let src: Info = source_info(cfg, src_path, top);
   if (!src.ok) {
     return fail(st, "cannot stat " + gnu.quotea(src_path) + ": " + src.err);
   }
@@ -1080,8 +1080,8 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
     // of the copy.
     return st;
   }
-  var dst: Info = lstat_of(dest);
-  var existed: boolean = dst.ok;
+  let dst: Info = lstat_of(dest);
+  let existed: boolean = dst.ok;
   if (existed && dst.dev == src.dev && dst.ino == src.ino) {
     return fail(st, gnu.quotea(src_path) + " and " + gnu.quotea(dest) + " are the same file");
   }
@@ -1099,9 +1099,9 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
   if (existed && dst.is_dir) {
     return fail(st, "cannot overwrite directory " + gnu.quotea(dest) + " with non-directory " + gnu.quotea(src_path));
   }
-  var backup: string = "";
+  let backup: string = "";
   if (existed) {
-    var r: Replace = decide(cfg, st, src, dst, dest);
+    let r: Replace = decide(cfg, st, src, dst, dest);
     st = State { ...st, out: r.out };
     if (r.verdict == skip()) {
       // A skip is not always a success: `--update=none-fail` refuses to
@@ -1130,7 +1130,7 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
   // a link to the first copy. Asked BEFORE the `-v` line because the two
   // wordings disagree about it — `cp` names the pair either way, while
   // `mv`'s line says `copied` and nothing was, so it is not printed.
-  var follower: string = "";
+  let follower: string = "";
   if (!cfg.sym_link && !(cfg.hard_link && !src.is_link) && cfg.attrs.links && src.nlink > 1) {
     follower = link_lookup(st, src);
   }
@@ -1170,7 +1170,7 @@ function relative_link_ok(target: string, dest: string): boolean {
   if (target.len() > 0 && target[0] as i32 == 47) {
     return true;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < dest.len()) {
     if (dest[i] as i32 == 47) {
       return false;
@@ -1181,7 +1181,7 @@ function relative_link_ok(target: string, dest: string): boolean {
 }
 
 function make_symlink(s: State, target: string, dest: string, existed: boolean): State {
-  var st: State = s;
+  let st: State = s;
   if (!relative_link_ok(target, dest)) {
     return fail(st, dest + ": can make relative symbolic links only in current directory");
   }
@@ -1202,7 +1202,7 @@ function make_symlink(s: State, target: string, dest: string, existed: boolean):
 }
 
 function make_hardlink(s: State, target: string, dest: string, existed: boolean): State {
-  var st: State = s;
+  let st: State = s;
   if (existed) {
     match (remove_file(dest)) {
       Ok(_) => {},

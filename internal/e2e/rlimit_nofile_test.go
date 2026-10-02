@@ -43,7 +43,7 @@ func softNofile(t *testing.T) int64 {
 // compared exactly — a soft limit does not drift under a running process.
 func rlimitSource(want int64) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var n: i64 = rlimit_nofile();
+    let n: i64 = rlimit_nofile();
     // All-ones RLIM_INFINITY reaching a caller unclamped reads as -1.
     if (n < (0 as i64)) { return 1; }
     // Every kernel enforces a ceiling above the three standard descriptors.

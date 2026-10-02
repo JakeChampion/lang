@@ -55,21 +55,21 @@ function __b64_decode_char(c: i32): i32 {
 }
 
 pub function base64_encode(bs: u8[]): string {
-  var n: i32 = bs.len();
+  let n: i32 = bs.len();
   if (n == 0) {
     return "";
   }
-  var out_len: i32 = (n + 2) / 3 * 4;
-  var buf: u8[] = __alloc_u8(out_len);
-  var i: i32 = 0;
-  var j: i32 = 0;
+  let out_len: i32 = (n + 2) / 3 * 4;
+  let buf: u8[] = __alloc_u8(out_len);
+  let i: i32 = 0;
+  let j: i32 = 0;
   // Single shared `b0` / `b1` / `b2` declarations so the
   // wasm emitter (which names locals by lang identifier)
   // doesn't trip on duplicate declarations across the
   // sibling 3-byte / 1-byte / 2-byte branches.
-  var b0: i32 = 0;
-  var b1: i32 = 0;
-  var b2: i32 = 0;
+  let b0: i32 = 0;
+  let b1: i32 = 0;
+  let b2: i32 = 0;
   while (i + 3 <= n) {
     b0 = bs[i] as i32;
     b1 = bs[i + 1] as i32;
@@ -81,7 +81,7 @@ pub function base64_encode(bs: u8[]): string {
     i = i + 3;
     j = j + 4;
   }
-  var rem: i32 = n - i;
+  let rem: i32 = n - i;
   if (rem == 1) {
     b0 = bs[i] as i32;
     buf = buf.with(j, __b64_alphabet(b0 >> 2) as u8);
@@ -100,10 +100,10 @@ pub function base64_encode(bs: u8[]): string {
 }
 
 pub function base64_decode(s: string): u8[] {
-  var sLen: i32 = s.len();
+  let sLen: i32 = s.len();
   // Walk forward to count consecutive valid base64 chars;
   // first non-base64 (eg `=` padding) terminates the input.
-  var n: i32 = 0;
+  let n: i32 = 0;
   while (n < sLen) {
     if (__b64_decode_char(s[n] as i32) < 0) {
       break;
@@ -113,15 +113,15 @@ pub function base64_decode(s: string): u8[] {
   if (n == 0) {
     return [];
   }
-  var out_len: i32 = n * 3 / 4;
+  let out_len: i32 = n * 3 / 4;
   if (out_len == 0) {
     return [];
   }
-  var buf: u8[] = __alloc_u8(out_len);
-  var i: i32 = 0;
-  var j: i32 = 0;
-  var acc: i32 = 0;  // 6-bit-shift accumulator
-  var bits: i32 = 0;  // bits currently held in acc
+  let buf: u8[] = __alloc_u8(out_len);
+  let i: i32 = 0;
+  let j: i32 = 0;
+  let acc: i32 = 0;  // 6-bit-shift accumulator
+  let bits: i32 = 0;  // bits currently held in acc
   while (i < n) {
     acc = acc << 6 | __b64_decode_char(s[i] as i32);
     bits = bits + 6;
@@ -145,8 +145,8 @@ pub function base64_decode(s: string): u8[] {
 // padding must align the total to a multiple of 4 (proper RFC 4648). A bare
 // `""` decodes to `Some("")`; `"=="` (padding, no data) is `None`.
 pub function base64_decode_strict(s: string): Option[u8[]] {
-  var sLen: i32 = s.len();
-  var n: i32 = 0;
+  let sLen: i32 = s.len();
+  let n: i32 = 0;
   while (n < sLen) {
     if (__b64_decode_char(s[n] as i32) < 0) {
       break;
@@ -155,8 +155,8 @@ pub function base64_decode_strict(s: string): Option[u8[]] {
   }
   // Everything after the data run must be `=` padding — a non-`=` char
   // (including a valid base64 char after a `=`) means the token is malformed.
-  var p: i32 = n;
-  var pad: i32 = 0;
+  let p: i32 = n;
+  let pad: i32 = 0;
   while (p < sLen) {
     if (s[p] != 61) {  // 61 = '='
       return None;
@@ -179,15 +179,15 @@ pub function base64_decode_strict(s: string): Option[u8[]] {
   if (pad > 0 && (n + pad) % 4 != 0) {
     return None;
   }
-  var out_len: i32 = n * 3 / 4;
+  let out_len: i32 = n * 3 / 4;
   if (out_len == 0) {
     return Some([]);
   }
-  var buf: u8[] = __alloc_u8(out_len);
-  var i: i32 = 0;
-  var j: i32 = 0;
-  var acc: i32 = 0;
-  var bits: i32 = 0;
+  let buf: u8[] = __alloc_u8(out_len);
+  let i: i32 = 0;
+  let j: i32 = 0;
+  let acc: i32 = 0;
+  let bits: i32 = 0;
   while (i < n) {
     acc = acc << 6 | __b64_decode_char(s[i] as i32);
     bits = bits + 6;
@@ -213,10 +213,10 @@ pub function base64_decode_strict(s: string): Option[u8[]] {
 // with `base64url_encode` for any byte content.
 
 function __b64_std_to_url(s: string): string {
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c == 43) {  // '+' → '-'
       out = out.append(45 as u8);
     } else if (c == 47) {  // '/' → '_'
@@ -231,10 +231,10 @@ function __b64_std_to_url(s: string): string {
 }
 
 function __b64_url_to_std(s: string): string {
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c == 45) {  // '-' → '+'
       out = out.append(43 as u8);
     } else if (c == 95) {  // '_' → '/'
@@ -275,7 +275,7 @@ pub function base64url_decode_strict(s: string): Option[u8[]] {
   // Reject the non-URL-safe standard-alphabet characters up front:
   // `__b64_url_to_std` leaves `+` / `/` untouched, so base64_decode_strict
   // would otherwise accept them.
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] == 43 || s[i] == 47) {  // '+' or '/'
       return None;

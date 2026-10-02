@@ -113,7 +113,7 @@ func TestPropagateCopiesEnablesFoldToCollapseInlinedCall(t *testing.T) {
 // helper expansion, so the read counts protect them.
 func TestPropagateCopiesPreservesHelperSlots(t *testing.T) {
 	p := lowerSource(t, `function f(): i32 {
-		var a: i32[] = [10, 20, 30];
+		let a: i32[] = [10, 20, 30];
 		return a[1];
 	}`)
 	PropagateCopies(p)

@@ -13,7 +13,7 @@ import (
 // copied the buffer once per call; bump_assign, the self-reassign spelling,
 // was already free and stays here as the control.
 const returnWithInPlaceSrc = `function bump_ret(own idx: i32[], shape: i32[]): i32[] {
-	var k: i32 = shape.len() - 1;
+	let k: i32 = shape.len() - 1;
 	while (k >= 0) {
 		if (idx[k] + 1 < shape[k]) { return idx.with(k, idx[k] + 1); }
 		idx = idx.with(k, 0);
@@ -23,7 +23,7 @@ const returnWithInPlaceSrc = `function bump_ret(own idx: i32[], shape: i32[]): i
 }
 
 function bump_assign(own idx: i32[], shape: i32[]): i32[] {
-	var k: i32 = shape.len() - 1;
+	let k: i32 = shape.len() - 1;
 	while (k >= 0) {
 		if (idx[k] + 1 < shape[k]) {
 			idx = idx.with(k, idx[k] + 1);
@@ -41,25 +41,25 @@ function one_ret(own idx: i32[], shape: i32[]): i32[] {
 }
 
 function main(): i32 {
-	var shape: i32[] = [4, 4, 4];
+	let shape: i32[] = [4, 4, 4];
 
-	var a: i32[] = [0, 0, 0];
-	var at: i64 = __heap_alloc_count();
-	var i: i32 = 0;
+	let a: i32[] = [0, 0, 0];
+	let at: i64 = __heap_alloc_count();
+	let i: i32 = 0;
 	while (i < 63) { a = bump_ret(a, shape); i = i + 1; }
 	if (__heap_alloc_count() - at != (0 as i64)) { return 90; }
 	if (a[0] != 3 || a[1] != 3 || a[2] != 3) { return 91; }
 
-	var b: i32[] = [0, 0, 0];
-	var at2: i64 = __heap_alloc_count();
-	var j: i32 = 0;
+	let b: i32[] = [0, 0, 0];
+	let at2: i64 = __heap_alloc_count();
+	let j: i32 = 0;
 	while (j < 63) { b = bump_assign(b, shape); j = j + 1; }
 	if (__heap_alloc_count() - at2 != (0 as i64)) { return 92; }
 	if (b[0] != 3 || b[1] != 3 || b[2] != 3) { return 93; }
 
-	var c: i32[] = [0, 0, 0];
-	var at3: i64 = __heap_alloc_count();
-	var k: i32 = 0;
+	let c: i32[] = [0, 0, 0];
+	let at3: i64 = __heap_alloc_count();
+	let k: i32 = 0;
 	while (k < 7) { c = one_ret(c, shape); k = k + 1; }
 	if (__heap_alloc_count() - at3 != (0 as i64)) { return 94; }
 	if (c[1] != 3) { return 95; }

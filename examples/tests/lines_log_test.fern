@@ -16,7 +16,7 @@ import "std/test";
 // between cases.
 
 function test_lines_match(): test.TestOutcome {
-  var actual: string = "line 1\nline 2\nline 3\n";
+  let actual: string = "line 1\nline 2\nline 3\n";
   return test.assert_lines_eq(actual, ["line 1", "line 2", "line 3"]);
 }
 
@@ -55,7 +55,7 @@ function test_lines_empty_input(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("lines+log");
+  let r: test.TestRunner = test.test_new("lines+log");
 
   // r.log emits TAP comments; the test stream interleaves
   // them with `ok`/`not ok` lines so the log breadcrumbs

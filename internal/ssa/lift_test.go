@@ -552,7 +552,7 @@ func TestLiftFloatNeg(t *testing.T) {
 	}
 }
 
-// TestLiftStoreLocal — `var x = 5; return x;` lifts to one
+// TestLiftStoreLocal — `let x = 5; return x;` lifts to one
 // const_int 5 + ret; OpStoreLocal writes the const into a
 // local slot, OpLoadLocal reads it back.
 func TestLiftStoreLocal(t *testing.T) {
@@ -663,7 +663,7 @@ func TestLiftLoadUninitialisedLocalDefaultZero(t *testing.T) {
 	}
 }
 
-// TestLiftLocalArithmetic — `var x = a + 1; var y = x * 2; return y;`
+// TestLiftLocalArithmetic — `let x = a + 1; let y = x * 2; return y;`
 // composes locals with binary arithmetic; Optimize folds it
 // down (if a were const) or leaves it as a sequenced computation.
 func TestLiftLocalArithmetic(t *testing.T) {

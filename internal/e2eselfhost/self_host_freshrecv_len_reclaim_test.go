@@ -42,14 +42,14 @@ var freshRecvLenCases = []struct {
 	{"freshrecv-len-churn", `import "std/i32";
 function (s: string) tails(n: i32): string {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen) + "";
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 5000) { var b2s: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + b2s.tails(4).len()) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 5000) { let b2s: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + b2s.tails(4).len()) % 251; i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
@@ -60,14 +60,14 @@ function main(): i32 {
 	{"freshrecv-len-identity-alias-safe", `import "std/i32";
 function (s: string) tails(n: i32): string {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen) + "";
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) {
-        var b: string = "long-enough-payload-" + (i % 8).to_string();
+        let b: string = "long-enough-payload-" + (i % 8).to_string();
         if (b.tails(0).len() != b.len()) { return 96; }
         if (b.len() != 21) { return 95; }
         i = i + 1;
@@ -81,15 +81,15 @@ function main(): i32 {
 	{"freshrecv-len-alternating", `import "std/i32";
 function (s: string) tails(n: i32): string {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen) + "";
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 5000) {
-        var b3: string = "long-enough-payload-" + (i % 8).to_string();
+        let b3: string = "long-enough-payload-" + (i % 8).to_string();
         acc = (acc + b3.tails(i % 2 * 4).len()) % 251;
         if (b3.len() != 21) { return 96; }
         i = i + 1;
@@ -106,14 +106,14 @@ function main(): i32 {
 	{"freshrecv-len-view-alias-safe", `import "std/i32";
 function (s: string) tails(n: i32): str {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen);
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) {
-        var b: string = "long-enough-payload-" + (i % 8).to_string();
+        let b: string = "long-enough-payload-" + (i % 8).to_string();
         if (b.tails(4).len() != 17) { return 96; }
         if (b.len() != 21) { return 95; }
         if ((b[20] as i32) != 48 + (i % 8)) { return 94; }
@@ -127,15 +127,15 @@ function main(): i32 {
 	{"freshrecv-len-view-alternating", `import "std/i32";
 function (s: string) tails(n: i32): str {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen);
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 5000) {
-        var b3: string = "long-enough-payload-" + (i % 8).to_string();
+        let b3: string = "long-enough-payload-" + (i % 8).to_string();
         acc = (acc + b3.tails((i % 3) * 40 - 40).len()) % 251;
         if (b3.len() != 21) { return 96; }
         i = i + 1;
@@ -151,15 +151,15 @@ function main(): i32 {
 	{"freshrecv-len-chain-identity", `import "std/i32";
 function (s: string) tails(n: i32): str {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen);
 }
 function (s: string) same(): string { return s; }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) {
-        var b: string = "long-enough-payload-" + (i % 8).to_string();
+        let b: string = "long-enough-payload-" + (i % 8).to_string();
         if (b.tails(0).same().len() != 21) { return 96; }
         if (b.len() != 21) { return 95; }
         if ((b[20] as i32) != 48 + (i % 8)) { return 94; }
@@ -174,15 +174,15 @@ function main(): i32 {
 	{"freshrecv-len-chain-alias-safe", `import "std/i32";
 function (s: string) tails(n: i32): str {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen);
 }
 function (s: string) owned(): string { return s + ""; }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) {
-        var b: string = "long-enough-payload-" + (i % 8).to_string();
+        let b: string = "long-enough-payload-" + (i % 8).to_string();
         if (b.tails(4).owned().len() != 17) { return 96; }
         if (b.len() != 21) { return 95; }
         if ((b[20] as i32) != 48 + (i % 8)) { return 94; }
@@ -203,10 +203,10 @@ function (s: string) pick(n: i32, alt: string): str {
     return slice_unchecked(s, n, s.len());
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 2000) {
-        var b: string = "long-enough-payload-" + (i % 8).to_string();
-        var alt: string = "alternate-payload-" + (i % 8).to_string();
+        let b: string = "long-enough-payload-" + (i % 8).to_string();
+        let alt: string = "alternate-payload-" + (i % 8).to_string();
         if (b.pick(0 - 1, alt).len() != 19) { return 96; }
         if (alt.len() != 19) { return 95; }
         if (b.len() != 21) { return 94; }
@@ -232,18 +232,18 @@ var freshRecvLenLeakCases = []struct {
 	{"freshrecv-len-leak-flat", `import "std/i32";
 function (s: string) tails(n: i32): string {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen) + "";
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var b: string = "long-enough-payload-" + (w % 8).to_string(); acc = (acc + b.tails(4).len()) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var c: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + c.tails(4).len()) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let b: string = "long-enough-payload-" + (w % 8).to_string(); acc = (acc + b.tails(4).len()) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let c: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + c.tails(4).len()) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -258,18 +258,18 @@ function main(): i32 {
 	{"freshrecv-len-view-leak-flat", `import "std/i32";
 function (s: string) tails(n: i32): str {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen);
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var b: string = "long-enough-payload-" + (w % 8).to_string(); acc = (acc + b.tails(4).len()) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var c: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + c.tails(4).len()) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let b: string = "long-enough-payload-" + (w % 8).to_string(); acc = (acc + b.tails(4).len()) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let c: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + c.tails(4).len()) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -287,19 +287,19 @@ function main(): i32 {
 	{"freshrecv-len-chain-bounded", `import "std/i32";
 function (s: string) tails(n: i32): str {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen);
 }
 function (s: string) owned(): string { return s + ""; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var b: string = "long-enough-payload-" + (w % 8).to_string(); acc = (acc + b.tails(4).owned().len()) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var c: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + c.tails(4).owned().len()) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let b: string = "long-enough-payload-" + (w % 8).to_string(); acc = (acc + b.tails(4).owned().len()) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let c: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + c.tails(4).owned().len()) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 240000) { return 98; }
     if (acc < 0) { return 97; }

@@ -28,39 +28,39 @@ function radix_char(d: i32): i32 {
 function int_to_string_radix(n: i32, base: i32): string {
     if (base < 2 || base > 36) { return ""; }
     if (n == 0) { return "0"; }
-    var neg: boolean = (n < 0);
-    var mag: i64 = n as i64;
+    let neg: boolean = (n < 0);
+    let mag: i64 = n as i64;
     if (neg) { mag = 0 - mag; }
-    var digits: u8[] = __alloc_u8(33);
-    var k: i32 = 0;
-    var b64: i64 = base as i64;
+    let digits: u8[] = __alloc_u8(33);
+    let k: i32 = 0;
+    let b64: i64 = base as i64;
     while (mag > (0 as i64)) {
-        var d: i32 = (mag % b64) as i32;
+        let d: i32 = (mag % b64) as i32;
         digits = digits.with(k, radix_char(d) as u8);
         k = k + 1;
         mag = mag / b64;
     }
-    var out_len: i32 = k;
+    let out_len: i32 = k;
     if (neg) { out_len = k + 1; }
-    var buf: u8[] = __alloc_u8(out_len);
-    var bi: i32 = 0;
+    let buf: u8[] = __alloc_u8(out_len);
+    let bi: i32 = 0;
     if (neg) { buf = buf.with(0, 45 as u8); bi = 1; }
-    var j: i32 = k - 1;
+    let j: i32 = k - 1;
     while (j >= 0) { buf = buf.with(bi, digits[j]); bi = bi + 1; j = j - 1; }
     return string_from_bytes_unchecked(buf);
 }
 function parse_int_radix(s: string, base: i32): Option[i32] {
     if (base < 2 || base > 36) { return None; }
-    var n: i32 = s.len();
+    let n: i32 = s.len();
     if (n == 0) { return None; }
-    var neg: boolean = false;
-    var i: i32 = 0;
+    let neg: boolean = false;
+    let i: i32 = 0;
     if (s[0] == 45) { neg = true; i = 1; }
     else if (s[0] == 43) { i = 1; }
     if (i >= n) { return None; }
-    var v: i32 = 0;
+    let v: i32 = 0;
     while (i < n) {
-        var d: i32 = radix_digit(s[i] as i32);
+        let d: i32 = radix_digit(s[i] as i32);
         if (d < 0 || d >= base) { return None; }
         v = v * base + d;
         i = i + 1;
@@ -76,22 +76,22 @@ var coreIntRadixIRCases = []struct {
 	want int
 }{
 	// hex: 255 -> "ff" (len 2).
-	{"hex-len", `var s: string = int_to_string_radix(255, 16); return s.len();`, 2},
+	{"hex-len", `let s: string = int_to_string_radix(255, 16); return s.len();`, 2},
 	// hex first byte: 'f' = 102.
-	{"hex-byte", `var s: string = int_to_string_radix(255, 16); return s[0] as i32;`, 102},
+	{"hex-byte", `let s: string = int_to_string_radix(255, 16); return s[0] as i32;`, 102},
 	// binary: 10 -> "1010" (len 4).
-	{"binary-len", `var s: string = int_to_string_radix(10, 2); return s.len();`, 4},
+	{"binary-len", `let s: string = int_to_string_radix(10, 2); return s.len();`, 4},
 	// base36: 30 -> "u" = 117.
-	{"base36-byte", `var s: string = int_to_string_radix(30, 36); return s[0] as i32;`, 117},
+	{"base36-byte", `let s: string = int_to_string_radix(30, 36); return s[0] as i32;`, 117},
 	// zero is the early-return "0" (len 1).
-	{"zero", `var s: string = int_to_string_radix(0, 16); return s.len();`, 1},
+	{"zero", `let s: string = int_to_string_radix(0, 16); return s.len();`, 1},
 	// negative: -255 base 16 -> "-ff" (len 3), first byte '-' = 45.
-	{"neg-len", `var s: string = int_to_string_radix(0 - 255, 16); return s.len();`, 3},
-	{"neg-sign", `var s: string = int_to_string_radix(0 - 255, 16); return s[0] as i32;`, 45},
+	{"neg-len", `let s: string = int_to_string_radix(0 - 255, 16); return s.len();`, 3},
+	{"neg-sign", `let s: string = int_to_string_radix(0 - 255, 16); return s[0] as i32;`, 45},
 	// out-of-range base -> "".
-	{"bad-base", `var s: string = int_to_string_radix(10, 99); return s.len();`, 0},
+	{"bad-base", `let s: string = int_to_string_radix(10, 99); return s.len();`, 0},
 	// round-trip through the (IR-audited) parser: parse(to_string(100,16),16) == 100.
-	{"round-trip", `var s: string = int_to_string_radix(100, 16); match (parse_int_radix(s, 16)) { Some(v) => { return v; }, None => { return 0; } } return 0;`, 100},
+	{"round-trip", `let s: string = int_to_string_radix(100, 16); match (parse_int_radix(s, 16)) { Some(v) => { return v; }, None => { return 0; } } return 0;`, 100},
 }
 
 func coreIntRadixIRSrc(mainBody string) string {

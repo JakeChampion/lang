@@ -41,8 +41,8 @@ import (
 // reproduce it.
 const floatLabelNSProg = `import "std/float";
 function main(): i32 {
-    var a: f64 = 1.0 / 3.0;
-    var b: f64 = 0.1;
+    let a: f64 = 1.0 / 3.0;
+    let b: f64 = 0.1;
     write(a.to_string() + "|" + b.to_string() + "|" + a.to_string_prec(4) + "\n");
     return 0;
 }

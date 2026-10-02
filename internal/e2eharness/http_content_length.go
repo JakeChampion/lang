@@ -14,7 +14,7 @@ func HTTPContentLengthProbe() string {
 	var src strings.Builder
 	src.WriteString(`import "std/http";
 function parsed_length(value: string, body: string): i32 {
-    var wire: string = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: " + value + "\r\n\r\n" + body;
+    let wire: string = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: " + value + "\r\n\r\n" + body;
     match (http.http_parse_request(wire)) {
         Some(req) => { return req.body_len(); },
         None => { return -1; }
@@ -40,7 +40,7 @@ function main(): i32 {
 			fmt.Fprintf(&src, "    if (parsed_length(%s, %s) != %d) { print(%q); return 1; }\n", strconv.Quote(value), strconv.Quote(strings.Repeat("x", available)), want, strconv.Itoa(index))
 		}
 	}
-	src.WriteString(`    var full: string = "x".repeat(1048576);
+	src.WriteString(`    let full: string = "x".repeat(1048576);
     if (parsed_length("1048576", full) != 1048576) { print("body-limit"); return 1; }
     if (parsed_length("1048577", full + "x") != -1) { print("over-limit"); return 1; }
     return 42;

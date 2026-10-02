@@ -25,12 +25,12 @@ shape: a `u64[]` limb array bound from something the frame does not own, then
 
 ```fern
 function __bi_mul_small(a: u64[], k: u64): u64[] {
-    var out: u64[] = a;
+    let out: u64[] = a;
     while (i < a.len()) { out = out.with(i, prod & mask); … }
 }
 
 pub function (a: BigInt) to_string(): string {
-    var cur: u64[] = a.mag;
+    let cur: u64[] = a.mag;
     while (i >= 0) { cur = cur.with(i, c / ten9); … }
 }
 ```
@@ -75,11 +75,11 @@ never frees the live box.
 
 The three ways a slot reaches the clone arm all hold a count when they do:
 
-- `var cur = a`, `a` a borrowed param — the alias bind retains (the ladder's
+- `let cur = a`, `a` a borrowed param — the alias bind retains (the ladder's
   array limb). Its two retain-eliding exits do not apply: move-on-alias
   TRANSFERS the count, and dead-alias cancellation requires neither name be
   reassigned, which `a = a.with(…)` is.
-- `var cur = b.mag` — the scalar-array field bind is a Perceus dup
+- `let cur = b.mag` — the scalar-array field bind is a Perceus dup
   (`retain_tos`), as are the struct-array and enum-array field binds.
 - a bare array param — an ownflag, allocated for every non-`own` array param
   the body assigns, so the release is the flag's and this credit never sees it.
@@ -107,7 +107,7 @@ native build on the full 300-byte fixture.
 Probes, each 100 `.with`es over a 4-element array (self-host x86-64, native in
 brackets): a borrowed param aliased into a local 1006 / 6 → 1006 / 1006 [7 / 7];
 a struct-field bind 1007 / 2 → 1007 / 1002; an aliased local 1006 / 1 →
-1006 / 1001; `var h = H { xs: a }; a = a.with(0, 9)` 3 / 2 → 3 / 3 [3 / 3], same
+1006 / 1001; `let h = H { xs: a }; a = a.with(0, 9)` 3 / 2 → 3 / 3 [3 / 3], same
 answer throughout.
 
 ## Gates

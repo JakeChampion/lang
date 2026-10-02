@@ -26,7 +26,7 @@ struct Box { tag: string, n: i32 }
 
 function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen);
 }
@@ -37,14 +37,14 @@ function (b: Box) relabel(t: string): Box {
 }
 
 function rounds(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for i in 0..n {
-        var base: string = "long-enough-payload-" + (i % 8).to_string();
+        let base: string = "long-enough-payload-" + (i % 8).to_string();
         t = t + base.drop(2).len() + base.tail(4).to_owned().len();
         // Identity path: the result aliases `base`, still live below.
         t = t + base.tail(0).len() + base.len();
 
-        var b: Box = Box { tag: "start-tag-value", n: i % 8 };
+        let b: Box = Box { tag: "start-tag-value", n: i % 8 };
         t = t + b.relabel("fresh-tag-value").tag.len();
         t = t + b.relabel("").tag.len() + b.tag.len();
     }
@@ -52,11 +52,11 @@ function rounds(n: i32): i32 {
 }
 
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(50);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(100);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds(50);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = rounds(100);
+    let b2: i64 = __heap_bump_bytes();
 
     print(x.to_string());
     print(y.to_string());

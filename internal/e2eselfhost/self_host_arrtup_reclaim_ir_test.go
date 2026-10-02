@@ -8,7 +8,7 @@ import (
 )
 
 // arrtupReclaimCases pin the #4365 `(<tuple-with-array>)[]` array-of-tuples reclaim:
-// a `var xs: (i32, i32[])[] = [(i, [i, i+1]), ...]` local — an array whose ELEMENTS
+// a `let xs: (i32, i32[])[] = [(i, [i, i+1]), ...]` local — an array whose ELEMENTS
 // are tuples each carrying a fresh inner array — leaked all three levels (the
 // per-element inner array buffers, the element tuple boxes, and the outer buffer)
 // per loop iteration on the self-host IR path (native bounds it). The new "ARRTUP:"
@@ -22,7 +22,7 @@ import (
 // SOUNDNESS: the element payload use is checked by arrtup_elem_payload_escapes — a
 // scalar field read (xs[i].0), an indexed array-field read (xs[i].1[j]) and
 // xs[i].1.len() are borrows (reclaim proceeds); a BARE array-field extraction
-// (store / return / pass / alias / slice xs[i].1) OR a bound element (var t = xs[i] /
+// (store / return / pass / alias / slice xs[i].1) OR a bound element (let t = xs[i] /
 // for t in xs, via arrarr_row_escapes) escapes and the local is left leak-safe
 // (never over-released).
 var arrtupReclaimCases = []struct {
@@ -32,13 +32,13 @@ var arrtupReclaimCases = []struct {
 }{
 	// Core churn: rebuilt per iteration, scalar read only.
 	{"arrtup-churn", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var xs: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])]; acc = (acc + xs[0].0) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var ys: (i32, i32[])[] = [(j, [j, j + 1]), (j + 1, [j + 2, j + 3])]; acc = (acc + ys[0].0) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let xs: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])]; acc = (acc + xs[0].0) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let ys: (i32, i32[])[] = [(j, [j, j + 1]), (j + 1, [j + 2, j + 3])]; acc = (acc + ys[0].0) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -47,17 +47,17 @@ var arrtupReclaimCases = []struct {
 	// Full borrow set: scalar field (xs[i].0), indexed array-field (xs[i].1[j]) and
 	// xs[i].1.len() are all admitted — still reclaims (bounded).
 	{"arrtup-borrow-full", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 5000) {
-        var xs: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])];
+        let xs: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])];
         acc = (acc + xs[0].0 + xs[1].1[0] + xs[0].1.len()) % 251;
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var ys: (i32, i32[])[] = [(j, [j, j + 1])]; acc = (acc + ys[0].1[1]) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let ys: (i32, i32[])[] = [(j, [j, j + 1])]; acc = (acc + ys[0].1[1]) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -66,14 +66,14 @@ var arrtupReclaimCases = []struct {
 	// PAYLOAD-ESCAPE-STORE negative: `keep = xs[0].1` extracts the array out of an
 	// element — the local is NOT credited (leak-safe), and MUST NOT be over-released.
 	{"arrtup-escape-store-safe", `function main(): i32 {
-    var keep: i32[] = [0, 0];
-    var i: i32 = 0;
+    let keep: i32[] = [0, 0];
+    let i: i32 = 0;
     while (i < 50) {
-        var xs: (i32, i32[])[] = [(i, [i, i + 1])];
+        let xs: (i32, i32[])[] = [(i, [i, i + 1])];
         keep = xs[0].1;
         i = i + 1;
     }
-    var acc: i32 = keep[0] + keep[1];
+    let acc: i32 = keep[0] + keep[1];
     if (acc < 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -82,10 +82,10 @@ var arrtupReclaimCases = []struct {
 	// (a retain) — un-credited, leak-safe, detector zero.
 	{"arrtup-escape-call-safe", `function take(xs: i32[]): i32 { return xs[0]; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var xs: (i32, i32[])[] = [(i, [i, i + 1])];
+        let xs: (i32, i32[])[] = [(i, [i, i + 1])];
         acc = (acc + take(xs[0].1)) % 251;
         i = i + 1;
     }
@@ -96,12 +96,12 @@ function main(): i32 {
 	// ESCAPE-VIA-FN negative: the array-of-tuples is returned — ownership moves out,
 	// nothing freed, value exact (a[0].0 + a[0].1[0] + a[1].1[1] = 5 + 5 + 8 = 18).
 	{"arrtup-escape-fn-safe", `function mk(n: i32): (i32, i32[])[] {
-    var xs: (i32, i32[])[] = [(n, [n, n + 1]), (n + 1, [n + 2, n + 3])];
+    let xs: (i32, i32[])[] = [(n, [n, n + 1]), (n + 1, [n + 2, n + 3])];
     return xs;
 }
 function main(): i32 {
-    var a = mk(5);
-    var v: i32 = a[0].0 + a[0].1[0] + a[1].1[1];
+    let a = mk(5);
+    let v: i32 = a[0].0 + a[0].1[0] + a[1].1[1];
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
 }`, 18},

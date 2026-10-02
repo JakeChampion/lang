@@ -96,7 +96,7 @@ func TestExternListU8ResultCustomProvider(t *testing.T) {
 function get_bytes(n: u32): u8[];
 
 function main(): i32 {
-	var xs: u8[] = get_bytes(4u32);
+	let xs: u8[] = get_bytes(4u32);
 	if (xs.len() == 4 && xs[3] == 3) { write("` + want + `"); } else { write("bytes-bad"); }
 	return 0;
 }`

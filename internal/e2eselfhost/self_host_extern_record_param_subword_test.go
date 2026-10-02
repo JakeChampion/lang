@@ -105,7 +105,7 @@ func TestSelfHostExternRecordParamSubwordCustomProvider(t *testing.T) {
 @import("local:test/sink@0.1.0", "sum-mix")
 function sum_mix(p: Mix): i32;
 function main(): i32 {
-    var p: Mix = Mix { a: 0 - 5, b: 300, c: 1000 };
+    let p: Mix = Mix { a: 0 - 5, b: 300, c: 1000 };
     if (sum_mix(p) == 1295) { write("` + want + `"); } else { write("mix-bad"); }
     return 0;
 }`

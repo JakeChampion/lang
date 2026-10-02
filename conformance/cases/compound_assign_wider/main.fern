@@ -4,19 +4,19 @@ import "core/int";
 // the read-modify-write lowering must use width-correct load/op/store for i64 /
 // u32 / u8 (wrap) / f64 locals, and the full operator set on i32.
 function main(): i32 {
-    var i = 5 as i64;   i += 3 as i64;   // 8
-    var j = 4 as i64;   j *= 3 as i64;   // 12
-    var u = 100 as u32; u += 20 as u32;  // 120
-    var w = 250 as u8;  w += 10 as u8;   // 4 (u8 wrap)
-    var x = 2.5;        x += 1.5;        // 4.0
-    var y = 3.0;        y *= 4.0;        // 12.0
-    var a = 20;         a -= 5;          // 15
-    var b = 20;         b /= 4;          // 5
-    var c = 23;         c %= 5;          // 3
+    let i = 5 as i64;   i += 3 as i64;   // 8
+    let j = 4 as i64;   j *= 3 as i64;   // 12
+    let u = 100 as u32; u += 20 as u32;  // 120
+    let w = 250 as u8;  w += 10 as u8;   // 4 (u8 wrap)
+    let x = 2.5;        x += 1.5;        // 4.0
+    let y = 3.0;        y *= 4.0;        // 12.0
+    let a = 20;         a -= 5;          // 15
+    let b = 20;         b /= 4;          // 5
+    let c = 23;         c %= 5;          // 3
 
     // Loop accumulation into an i64 with `+=`.
-    var s = 0 as i64;
-    var k = 0;
+    let s = 0 as i64;
+    let k = 0;
     while (k < 5) { s += k as i64; k = k + 1; } // 0+1+2+3+4 = 10
 
     if ((i as i32) != 8) { return 11; }

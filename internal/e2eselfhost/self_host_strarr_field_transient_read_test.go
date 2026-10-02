@@ -42,15 +42,15 @@ var strArrFieldTransientReadCases = []struct {
 	// (leaked, ~200 B/round of element boxes) before; flat after.
 	{"strarr-field-transient-elem-read-flat", `struct Node { name: string, deps: string[], mtime: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
-function mk(pre: string): string[] { var o: string[] = []; var i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
+function mk(pre: string): string[] { let o: string[] = []; let i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
 function node(name: string, deps: string[], mtime: i32): Node { return Node { name: name, deps: deps, mtime: mtime }; }
-function round(pre: string, n: i32): i32 { var f: Node = node(w(pre), mk(pre), n); return f.deps.len() + f.name.len() + f.deps[0].len(); }
-function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre, i)) % 251; i = i + 1; } return acc; }
+function round(pre: string, n: i32): i32 { let f: Node = node(w(pre), mk(pre), n); return f.deps.len() + f.name.len() + f.deps[0].len(); }
+function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre, i)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var a: i32 = churn(2000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(2000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let a: i32 = churn(2000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(2000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -63,21 +63,21 @@ function main(): i32 {
 	// recycled buffer of the same length cannot pass.
 	{"strarr-field-view-elem-read-refused", `struct View { title: string, lines: string[] }
 function w(pre: string): string { return pre + "  a-wide-element-past-the-inline-threshold  "; }
-function mk(pre: string): string[] { var o: string[] = []; var i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
+function mk(pre: string): string[] { let o: string[] = []; let i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
 function doc(title: string, lines: string[]): View { return View { title: title, lines: lines }; }
-function expect(pre: string): i32 { var r: string[] = mk(pre); return r[0].trim().len() + w(pre).len(); }
-function round(pre: string): i32 { var d: View = doc(w(pre), mk(pre)); var v: str = d.lines[0].trim(); var pad: string[] = mk(pre); if (pad.len() < 0) { return 0; } return v.len() + d.title.len(); }
-function main(): i32 { var pre: string = "ab"; var e: i32 = expect(pre); var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != e) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// A BOUND element is the other lasting alias: `var t = d.lines[0]` hands the
+function expect(pre: string): i32 { let r: string[] = mk(pre); return r[0].trim().len() + w(pre).len(); }
+function round(pre: string): i32 { let d: View = doc(w(pre), mk(pre)); let v: str = d.lines[0].trim(); let pad: string[] = mk(pre); if (pad.len() < 0) { return 0; } return v.len() + d.title.len(); }
+function main(): i32 { let pre: string = "ab"; let e: i32 = expect(pre); let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != e) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+	// A BOUND element is the other lasting alias: `let t = d.lines[0]` hands the
 	// box to a local that outlives the struct's drop. Still refused; `t` reads
 	// live bytes under allocation pressure.
 	{"strarr-field-bound-elem-read-refused", `struct Held { title: string, lines: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
-function mk(pre: string): string[] { var o: string[] = []; var i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
+function mk(pre: string): string[] { let o: string[] = []; let i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
 function doc(title: string, lines: string[]): Held { return Held { title: title, lines: lines }; }
-function hold(pre: string): i32 { var d: Held = doc(w(pre), mk(pre)); var t: string = d.lines[0]; return t.len() + d.title.len(); }
-function round(pre: string): i32 { var k: i32 = hold(pre); var pad: string[] = mk(pre); var pad2: string[] = mk(pre); if (pad.len() < 0 || pad2.len() < 0) { return 0; } return k; }
-function main(): i32 { var pre: string = "ab"; var e: i32 = w("ab").len() * 2; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != e) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function hold(pre: string): i32 { let d: Held = doc(w(pre), mk(pre)); let t: string = d.lines[0]; return t.len() + d.title.len(); }
+function round(pre: string): i32 { let k: i32 = hold(pre); let pad: string[] = mk(pre); let pad2: string[] = mk(pre); if (pad.len() < 0 || pad2.len() < 0) { return 0; } return k; }
+function main(): i32 { let pre: string = "ab"; let e: i32 = w("ab").len() * 2; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != e) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrArrFieldTransientReadIRX86_64 drives the cases through the

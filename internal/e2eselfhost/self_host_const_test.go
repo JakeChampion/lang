@@ -18,7 +18,7 @@ var constCases = []struct {
 }{
 	{"simple", "const X: i32 = 42; function main(): i32 { return X; }", 42},
 	{"two-consts", "const A: i32 = 10; const B: i32 = 32; function main(): i32 { return A + B; }", 42},
-	{"pub-const-loop", "pub const N: i32 = 7; function main(): i32 { var s: i32 = 0; var i: i32 = 0; while (i < N) { s = s + i; i = i + 1; } return s; }", 21},
+	{"pub-const-loop", "pub const N: i32 = 7; function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < N) { s = s + i; i = i + 1; } return s; }", 21},
 	{"const-expr", "const BASE: i32 = 1000; function main(): i32 { return (BASE / 100) + 32; }", 42},
 }
 

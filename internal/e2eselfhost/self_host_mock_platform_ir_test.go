@@ -24,13 +24,13 @@ function (m: MPlat) record(name: string, args: string): void {
     m.sink.set(m.sink.get() + name + "\t" + args + "\n");
 }
 function (m: MPlat) calls(): MCall[] {
-    var out: MCall[] = [];
-    var log: string = m.sink.get();
-    var start: i32 = 0;
-    var tab: i32 = -1;
-    var i: i32 = 0;
+    let out: MCall[] = [];
+    let log: string = m.sink.get();
+    let start: i32 = 0;
+    let tab: i32 = -1;
+    let i: i32 = 0;
     while (i < log.len()) {
-        var ch: i32 = log[i] as i32;
+        let ch: i32 = log[i] as i32;
         if (ch == 9 && tab < 0) { tab = i; }
         if (ch == 10) {
             if (tab < 0) {
@@ -51,8 +51,8 @@ function (m: MPlat) calls(): MCall[] {
 function (m: MPlat) call_count(): i32 { return m.calls().len(); }
 function (m: MPlat) reset(): void { m.sink.set(""); }
 function (m: MPlat) has_call(name: string): boolean {
-    var cs: MCall[] = m.calls();
-    var i: i32 = 0;
+    let cs: MCall[] = m.calls();
+    let i: i32 = 0;
     while (i < cs.len()) {
         if (cs[i].name == name) { return true; }
         i = i + 1;
@@ -60,8 +60,8 @@ function (m: MPlat) has_call(name: string): boolean {
     return false;
 }
 function (m: MPlat) find_call(name: string): Option[MCall] {
-    var cs: MCall[] = m.calls();
-    var i: i32 = 0;
+    let cs: MCall[] = m.calls();
+    let i: i32 = 0;
     while (i < cs.len()) {
         if (cs[i].name == name) { return Some(cs[i]); }
         i = i + 1;
@@ -76,22 +76,22 @@ var mockPlatformIRCases = []struct {
 	want int
 }{
 	// record accumulates into the shared cell; call_count parses it back: 3.
-	{"call-count", `var m: MPlat = mplat_new(); m.record("fetch", "a"); m.record("kv", "b"); m.record("fetch", "c"); return m.call_count();`, 3},
+	{"call-count", `let m: MPlat = mplat_new(); m.record("fetch", "a"); m.record("kv", "b"); m.record("fetch", "c"); return m.call_count();`, 3},
 	// indexed array-of-struct field read: calls()[1].name == "kv" -> first char 'k' = 107.
-	{"indexed-field", `var m: MPlat = mplat_new(); m.record("fetch", "a"); m.record("kv", "b"); return m.calls()[1].name[0] as i32;`, 107},
+	{"indexed-field", `let m: MPlat = mplat_new(); m.record("fetch", "a"); m.record("kv", "b"); return m.calls()[1].name[0] as i32;`, 107},
 	// the record a HANDLER would make reaches the mock the test still holds,
 	// because both hold the same cell: two views, one log.
-	{"shared-cell", `var m: MPlat = mplat_new(); var view: MPlat = MPlat { sink: m.sink }; view.record("fetch", "a"); view.record("kv", "b"); return m.call_count();`, 2},
+	{"shared-cell", `let m: MPlat = mplat_new(); let view: MPlat = MPlat { sink: m.sink }; view.record("fetch", "a"); view.record("kv", "b"); return m.call_count();`, 2},
 	// has_call membership scan: present -> 1.
-	{"has-call-yes", `var m: MPlat = mplat_new(); m.record("fetch", "a"); m.record("kv", "b"); if (m.has_call("kv")) { return 1; } return 0;`, 1},
+	{"has-call-yes", `let m: MPlat = mplat_new(); m.record("fetch", "a"); m.record("kv", "b"); if (m.has_call("kv")) { return 1; } return 0;`, 1},
 	// has_call membership scan: absent -> 9.
-	{"has-call-no", `var m: MPlat = mplat_new(); m.record("fetch", "a"); if (m.has_call("missing")) { return 1; } return 9;`, 9},
+	{"has-call-no", `let m: MPlat = mplat_new(); m.record("fetch", "a"); if (m.has_call("missing")) { return 1; } return 9;`, 9},
 	// find_call returns Some(first match); inspect its args length: "GET" -> 3.
-	{"find-some", `var m: MPlat = mplat_new(); m.record("fetch", "GET"); m.record("kv", "set"); match (m.find_call("fetch")) { Some(c) => { return c.args.len(); }, None => { return 0; }, } return 0;`, 3},
+	{"find-some", `let m: MPlat = mplat_new(); m.record("fetch", "GET"); m.record("kv", "set"); match (m.find_call("fetch")) { Some(c) => { return c.args.len(); }, None => { return 0; }, } return 0;`, 3},
 	// find_call on a missing name renders the None arm: 7.
-	{"find-none", `var m: MPlat = mplat_new(); m.record("fetch", "GET"); match (m.find_call("nope")) { Some(c) => { return 0; }, None => { return 7; }, } return 0;`, 7},
+	{"find-none", `let m: MPlat = mplat_new(); m.record("fetch", "GET"); match (m.find_call("nope")) { Some(c) => { return 0; }, None => { return 7; }, } return 0;`, 7},
 	// reset clears the log through the same cell: call_count back to 0.
-	{"reset", `var m: MPlat = mplat_new(); m.record("fetch", "a"); m.record("kv", "b"); m.reset(); return m.call_count();`, 0},
+	{"reset", `let m: MPlat = mplat_new(); m.record("fetch", "a"); m.record("kv", "b"); m.reset(); return m.call_count();`, 0},
 }
 
 func mockPlatformIRSrc(mainBody string) string {

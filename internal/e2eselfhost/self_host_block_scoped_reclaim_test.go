@@ -56,18 +56,18 @@ func TestSelfHostBlockScopedReclaimX86_64(t *testing.T) {
 
 	t.Run("tuple_declared_in_loop", func(t *testing.T) {
 		balanced(t, "bs_tuple", `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var t: (i32, i32[]) = (i, [i + 1]);
+        let t: (i32, i32[]) = (i, [i + 1]);
         acc = acc + t.0 + t.1[0];
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { acc = acc + round(r); r = r + 1; }
     return acc % 7;
 }`, 4)
@@ -75,18 +75,18 @@ function main(): i32 {
 
 	t.Run("opttup_declared_in_loop", func(t *testing.T) {
 		balanced(t, "bs_opttup", `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 4) {
-        var o: Option[(i32, i32[])] = Some((k, [k, k + 1]));
+        let o: Option[(i32, i32[])] = Some((k, [k, k + 1]));
         match (o) { Some(t) => { acc = acc + t.0 + t.1.len(); }, None => {} }
         k = k + 1;
     }
     return acc + i;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`, 42)
@@ -95,18 +95,18 @@ function main(): i32 {
 	t.Run("optstruct_declared_in_loop", func(t *testing.T) {
 		balanced(t, "bs_optstruct", `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 4) {
-        var o: Option[P] = Some(P { xs: [k, k + 1], n: k });
+        let o: Option[P] = Some(P { xs: [k, k + 1], n: k });
         match (o) { Some(p) => { acc = acc + p.n + p.xs.len(); }, None => {} }
         k = k + 1;
     }
     return acc + i;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`, 42)
@@ -114,18 +114,18 @@ function main(): i32 {
 
 	t.Run("optarrarr_declared_in_loop", func(t *testing.T) {
 		balanced(t, "bs_optarrarr", `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 4) {
-        var o: Option[i32[][]] = Some([[k, k + 1], [k + 2]]);
+        let o: Option[i32[][]] = Some([[k, k + 1], [k + 2]]);
         match (o) { Some(g) => { acc = acc + g.len(); }, None => {} }
         k = k + 1;
     }
     return acc + i;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`, 23)
@@ -135,14 +135,14 @@ function main(): i32 {
 		// Two slots, one name-keyed credit. Each must be freed exactly once — this
 		// is the case a shared credit could double-free.
 		balanced(t, "bs_siblings", `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         if (i % 2 == 0) {
-            var t: (i32, i32[]) = (i, [1]);
+            let t: (i32, i32[]) = (i, [1]);
             acc = acc + t.0 + t.1[0];
         } else {
-            var t: (i32, i32[]) = (i, [2]);
+            let t: (i32, i32[]) = (i, [2]);
             acc = acc + t.0 + t.1[0];
         }
         i = i + 1;
@@ -150,8 +150,8 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { acc = acc + round(r); r = r + 1; }
     return acc % 7;
 }`, 3)
@@ -163,11 +163,11 @@ function main(): i32 {
 		// rather than "t" — measured, exactly half of this corpus stayed unreclaimed
 		// until retire_locals was made prefix-once.
 		balanced(t, "bs_nested2", `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         if (i > 0) {
-            var t: (i32, i32[]) = (i, [i + 1]);
+            let t: (i32, i32[]) = (i, [i + 1]);
             acc = acc + t.0 + t.1[0];
         }
         i = i + 1;
@@ -175,8 +175,8 @@ function main(): i32 {
     return acc + r;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { acc = acc + round(r); r = r + 1; }
     return acc % 7;
 }`, 3)
@@ -204,18 +204,18 @@ func TestSelfHostBlockScopedReclaimHazardsX86_64(t *testing.T) {
 			// is read after the loop. Freeing the retired slot would dangle it.
 			name: "aliased_to_an_outer_local",
 			src: `function round(r: i32): i32 {
-    var outer: (i32, i32) = (0, 0);
-    var i: i32 = 0;
+    let outer: (i32, i32) = (0, 0);
+    let i: i32 = 0;
     while (i < 4) {
-        var t: (i32, i32) = (i, i + 1);
+        let t: (i32, i32) = (i, i + 1);
         outer = t;
         i = i + 1;
     }
     return outer.0 + outer.1;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { acc = acc + round(r); r = r + 1; }
     return acc % 71;
 }`,
@@ -225,21 +225,21 @@ function main(): i32 {
 			// Stored into a container declared outside the loop, read after it.
 			name: "escapes_into_an_outer_container",
 			src: `function round(r: i32): i32 {
-    var xs: (i32, i32)[] = [];
-    var i: i32 = 0;
+    let xs: (i32, i32)[] = [];
+    let i: i32 = 0;
     while (i < 4) {
-        var t: (i32, i32) = (i, i + 1);
+        let t: (i32, i32) = (i, i + 1);
         xs = xs.append(t);
         i = i + 1;
     }
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < xs.len()) { acc = acc + xs[j].0 + xs[j].1; j = j + 1; }
     return acc;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { acc = acc + round(r); r = r + 1; }
     return acc % 7;
 }`,
@@ -250,19 +250,19 @@ function main(): i32 {
 			// it at its own exit sweep.
 			name: "returned_from_inside_the_loop",
 			src: `function build(r: i32): (i32, i32) {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var t: (i32, i32) = (i, i + r);
+        let t: (i32, i32) = (i, i + r);
         if (i == 3) { return t; }
         i = i + 1;
     }
     return (0, 0);
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var p: (i32, i32) = build(r);
+        let p: (i32, i32) = build(r);
         acc = acc + p.0 + p.1;
         r = r + 1;
     }
@@ -276,16 +276,16 @@ function main(): i32 {
 			// zeroes the whole body slot range, and this pins that it still does.
 			name: "declaring_branch_never_taken",
 			src: `function round(r: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     if (r > 1000) {
-        var t: (i32, i32) = (r, 1);
+        let t: (i32, i32) = (r, 1);
         acc = t.0 + t.1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { acc = acc + round(r); r = r + 1; }
     return acc % 7;
 }`,
@@ -297,18 +297,18 @@ function main(): i32 {
 			name: "block_scoped_option_payload_escapes",
 			src: `function take(a: i32[]): i32 { return a.len(); }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+        let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
         match (o) { Some(t) => { acc = acc + take(t.1); }, None => {} }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { acc = acc + round(r); r = r + 1; }
     return acc % 71;
 }`,

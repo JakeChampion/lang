@@ -118,7 +118,7 @@ func TestExternTupleResultCustomProvider(t *testing.T) {
 function make_pair(a: i32, b: i32): (i32, i32);
 
 function main(): i32 {
-	var p: (i32, i32) = make_pair(10, 32);
+	let p: (i32, i32) = make_pair(10, 32);
 	if (p.0 + p.1 == 42) { write("` + want + `"); } else { write("mkp-bad"); }
 	return 0;
 }`

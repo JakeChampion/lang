@@ -8,9 +8,9 @@ function (xs: u8[]) back(): u8 {
 }
 
 function main(): i32 {
-  var source: string = "az";
-  var bytes = source.as_bytes();
-  var owned: u8[] = [97 as u8, 122 as u8];
+  let source: string = "az";
+  let bytes = source.as_bytes();
+  let owned: u8[] = [97 as u8, 122 as u8];
   if (bytes.back() != 122 as u8 || owned.back() != 97 as u8) {
     return 1;
   }

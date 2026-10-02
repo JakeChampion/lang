@@ -26,7 +26,7 @@ import (
 //   - the loop guard is exactly `i < arr.len()` / `i < len(arr)` (strict `<`,
 //     both operands bare idents) — gives the upper bound `i < len` — or
 //     `i < n` where an earlier statement of the same block declared
-//     `var n = arr.len()` and nothing between it and the loop assigns or
+//     `let n = arr.len()` and nothing between it and the loop assigns or
 //     re-binds `n` or `arr`;
 //   - `i` is initialised to a non-negative integer literal in the For's Init or
 //     the statement immediately before the loop, and every assignment to `i` in
@@ -141,7 +141,7 @@ func tryElideLoop(forNode *ast.For, before []ast.Stmt, prev ast.Stmt, cond ast.E
 
 // loopIndexAndArray matches `IDX < ARR.len()` / `IDX < len(ARR)` / `IDX < N`
 // with a strict `<` and bare idents, and returns (IDX, ARR, N): N is "" for
-// the direct forms, and for the captured form the name of the `var N =
+// the direct forms, and for the captured form the name of the `let N =
 // ARR.len()` declared among `before` (see capturedLenArray).
 func loopIndexAndArray(cond ast.Expr, before []ast.Stmt) (idx, arr, lenVar string, ok bool) {
 	bin, isBin := cond.(*ast.Binary)
@@ -165,10 +165,10 @@ func loopIndexAndArray(cond ast.Expr, before []ast.Stmt) (idx, arr, lenVar strin
 }
 
 // capturedLenArray resolves a loop bound `n` to the array whose length it
-// holds: the nearest `var n = ARR.len()` among the statements before the
+// holds: the nearest `let n = ARR.len()` among the statements before the
 // loop, with no statement after it assigning or re-binding `n` or `ARR`.
 // A declaration inside a nested statement does not count — it may not have
-// run — so only a direct `var` of the block qualifies.
+// run — so only a direct `let` of the block qualifies.
 func capturedLenArray(n string, before []ast.Stmt) (string, bool) {
 	for k := len(before) - 1; k >= 0; k-- {
 		if v, ok := before[k].(*ast.Var); ok && v.Name == n {
@@ -216,7 +216,7 @@ func lenCallArray(e ast.Expr) (string, bool) {
 
 // idxStartsNonNegative proves `idx`'s value at loop entry is a non-negative
 // integer literal: from the For's Init, else from the statement immediately
-// before the loop (`var i = 0` / `i = 0`). Nothing runs between that statement
+// before the loop (`let i = 0` / `i = 0`). Nothing runs between that statement
 // and the loop guard, so the literal is the entry value.
 func idxStartsNonNegative(forNode *ast.For, prev ast.Stmt, idx string) bool {
 	if forNode != nil && forNode.Init != nil {
@@ -232,7 +232,7 @@ func idxStartsNonNegative(forNode *ast.For, prev ast.Stmt, idx string) bool {
 	return false
 }
 
-// initValueOfIdent returns the RHS value of a `var idx = v` or `idx = v`
+// initValueOfIdent returns the RHS value of a `let idx = v` or `idx = v`
 // statement, if s is exactly that.
 func initValueOfIdent(s ast.Stmt, idx string) (ast.Expr, bool) {
 	switch x := s.(type) {
@@ -316,7 +316,7 @@ func assignsIdent(n ast.Node, name string) bool {
 }
 
 // bindsIdent reports whether any binding construct in n's subtree introduces
-// (declares / shadows) `name`: a local `var`, tuple destructure, lambda / local
+// (declares / shadows) `name`: a local `let`, tuple destructure, lambda / local
 // function parameter, or a match / if-let / let-else pattern binding.
 func bindsIdent(n ast.Node, name string) bool {
 	found := false

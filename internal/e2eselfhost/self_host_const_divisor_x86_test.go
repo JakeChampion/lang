@@ -143,26 +143,26 @@ var constDivisorOracleCases = []struct {
 }{
 	// INT_MIN / -1 wraps to INT_MIN and INT_MIN % -1 is 0, through `neg`
 	// and the zeroing arm rather than a guard.
-	{"int-min-by-neg1", `function main(): i32 { var xs: i32[] = [-2147483648]; var x: i32 = xs[0]; if (x / -1 == -2147483648 && x % -1 == 0) { return 5; } return 9; }`},
+	{"int-min-by-neg1", `function main(): i32 { let xs: i32[] = [-2147483648]; let x: i32 = xs[0]; if (x / -1 == -2147483648 && x % -1 == 0) { return 5; } return 9; }`},
 	// The biased shift: -17 / 8 is -2 (not -3) and -17 % 8 is -1 (not 7).
-	{"neg-by-pow2", `function main(): i32 { var xs: i32[] = [-17]; var x: i32 = xs[0]; return (x / 8 + 10) * 10 + (x % 8 + 5); }`},
-	{"int-min-by-pow2", `function main(): i32 { var xs: i32[] = [-2147483648]; var x: i32 = xs[0]; if (x / 1024 == -2097152 && x % 1024 == 0 && x / -1024 == 2097152) { return 5; } return 9; }`},
+	{"neg-by-pow2", `function main(): i32 { let xs: i32[] = [-17]; let x: i32 = xs[0]; return (x / 8 + 10) * 10 + (x % 8 + 5); }`},
+	{"int-min-by-pow2", `function main(): i32 { let xs: i32[] = [-2147483648]; let x: i32 = xs[0]; if (x / 1024 == -2097152 && x % 1024 == 0 && x / -1024 == 2097152) { return 5; } return 9; }`},
 	// The reciprocal on both signs, INT_MIN and INT_MAX, and a negative divisor.
-	{"reciprocal", `function main(): i32 { var xs: i32[] = [9000, -9000, -2147483648, 2147483647]; var h: i32 = 0; var i: i32 = 0; while (i < 4) { var x: i32 = xs[i]; h = h * 31 + x / 4093 + x % 4093 + x / -7 + x % -7 + x / 3; i = i + 1; } if (h < 0) { h = 0 - h; } return h % 200; }`},
+	{"reciprocal", `function main(): i32 { let xs: i32[] = [9000, -9000, -2147483648, 2147483647]; let h: i32 = 0; let i: i32 = 0; while (i < 4) { let x: i32 = xs[i]; h = h * 31 + x / 4093 + x % 4093 + x / -7 + x % -7 + x / 3; i = i + 1; } if (h < 0) { h = 0 - h; } return h % 200; }`},
 	// u32 above 2^31 through the 33-bit magic (7) and the plain one (3).
-	{"u32-highbit", `function main(): i32 { var us: u32[] = [3000000000u32, 4294967295u32]; var h: u32 = 0u32; var i: i32 = 0; while (i < 2) { var u: u32 = us[i]; h = h * 31u32 + u / 7u32 + u % 7u32 + u / 3u32 + u % 3u32 + u / 1024u32 + u % 1024u32; i = i + 1; } return (h % 200u32) as i32; }`},
+	{"u32-highbit", `function main(): i32 { let us: u32[] = [3000000000u32, 4294967295u32]; let h: u32 = 0u32; let i: i32 = 0; while (i < 2) { let u: u32 = us[i]; h = h * 31u32 + u / 7u32 + u % 7u32 + u / 3u32 + u % 3u32 + u / 1024u32 + u % 1024u32; i = i + 1; } return (h % 200u32) as i32; }`},
 	// i64: the reciprocal, and a power-of-two mask past bit 31.
-	{"i64-wide", `function main(): i32 { var ws: i64[] = [-9223372036854775808i64, -7i64, 1099511627783i64]; var h: i64 = 0i64; var i: i32 = 0; while (i < 3) { var w: i64 = ws[i]; h = h * 31i64 + w / 97i64 + w % 97i64 + w / 1099511627776i64 + w % 1099511627776i64 + w / -1099511627776i64; i = i + 1; } if (h < 0i64) { h = 0i64 - h; } return (h % 200i64) as i32; }`},
+	{"i64-wide", `function main(): i32 { let ws: i64[] = [-9223372036854775808i64, -7i64, 1099511627783i64]; let h: i64 = 0i64; let i: i32 = 0; while (i < 3) { let w: i64 = ws[i]; h = h * 31i64 + w / 97i64 + w % 97i64 + w / 1099511627776i64 + w % 1099511627776i64 + w / -1099511627776i64; i = i + 1; } if (h < 0i64) { h = 0i64 - h; } return (h % 200i64) as i32; }`},
 	// The 64-bit reciprocals at the ends of the range: u64 through a magic one
 	// bit wider than the word (7) and a plain one (10), i64 by a divisor too
 	// wide for an imm32.
-	{"u64-reciprocal", `function main(): i32 { var us: u64[] = [18446744073709551615u64, 9223372036854775808u64, 12345678901234567u64]; var h: u64 = 0u64; var i: i32 = 0; while (i < 3) { var u: u64 = us[i]; h = h * 31u64 + u / 7u64 + u % 7u64 + u / 10u64 + u % 10u64 + u / 100u64; i = i + 1; } return (h % 200u64) as i32; }`},
-	{"i64-wide-reciprocal", `function main(): i32 { var ws: i64[] = [9223372036854775807i64, -9223372036854775808i64, -1234567890123i64]; var h: i64 = 0i64; var i: i32 = 0; while (i < 3) { var w: i64 = ws[i]; h = h * 31i64 + w / 1000000000000i64 + w % 1000000000000i64 + w / -7i64 + w % -7i64 + w / 10i64; i = i + 1; } if (h < 0i64) { h = 0i64 - h; } return (h % 200i64) as i32; }`},
+	{"u64-reciprocal", `function main(): i32 { let us: u64[] = [18446744073709551615u64, 9223372036854775808u64, 12345678901234567u64]; let h: u64 = 0u64; let i: i32 = 0; while (i < 3) { let u: u64 = us[i]; h = h * 31u64 + u / 7u64 + u % 7u64 + u / 10u64 + u % 10u64 + u / 100u64; i = i + 1; } return (h % 200u64) as i32; }`},
+	{"i64-wide-reciprocal", `function main(): i32 { let ws: i64[] = [9223372036854775807i64, -9223372036854775808i64, -1234567890123i64]; let h: i64 = 0i64; let i: i32 = 0; while (i < 3) { let w: i64 = ws[i]; h = h * 31i64 + w / 1000000000000i64 + w % 1000000000000i64 + w / -7i64 + w % -7i64 + w / 10i64; i = i + 1; } if (h < 0i64) { h = 0i64 - h; } return (h % 200i64) as i32; }`},
 	// Zero and one literals, which need no arithmetic at all.
-	{"degenerate", `function main(): i32 { var xs: i32[] = [-17]; var x: i32 = xs[0]; if (x / 0 == 0 && x % 0 == -17 && x / 1 == -17 && x % 1 == 0) { return 5; } return 9; }`},
+	{"degenerate", `function main(): i32 { let xs: i32[] = [-17]; let x: i32 = xs[0]; if (x / 0 == 0 && x % 0 == -17 && x / 1 == -17 && x % 1 == 0) { return 5; } return 9; }`},
 	// The dynamic path on its dword forms: INT_MIN and -1 from arrays.
-	{"dynamic-int-min", `function main(): i32 { var xs: i32[] = [-2147483648, -1, 0, 7]; var a: i32 = xs[0]; var b: i32 = xs[1]; var z: i32 = xs[2]; var s: i32 = xs[3]; if (a / b == -2147483648 && a % b == 0 && s / z == 0 && s % z == 7 && a / s == -306783378 && a % s == -2) { return 5; } return 9; }`},
-	{"dynamic-u32-highbit", `function main(): i32 { var us: u32[] = [3000000003u32, 10u32, 0u32]; var u: u32 = us[0]; var d: u32 = us[1]; var z: u32 = us[2]; if (u / d == 300000000u32 && u % d == 3u32 && u / z == 0u32 && u % z == u) { return 5; } return 9; }`},
+	{"dynamic-int-min", `function main(): i32 { let xs: i32[] = [-2147483648, -1, 0, 7]; let a: i32 = xs[0]; let b: i32 = xs[1]; let z: i32 = xs[2]; let s: i32 = xs[3]; if (a / b == -2147483648 && a % b == 0 && s / z == 0 && s % z == 7 && a / s == -306783378 && a % s == -2) { return 5; } return 9; }`},
+	{"dynamic-u32-highbit", `function main(): i32 { let us: u32[] = [3000000003u32, 10u32, 0u32]; let u: u32 = us[0]; let d: u32 = us[1]; let z: u32 = us[2]; if (u / d == 300000000u32 && u % d == 3u32 && u / z == 0u32 && u % z == u) { return 5; } return 9; }`},
 }
 
 func TestSelfHostConstDivisorRuntimeX86_64(t *testing.T) {

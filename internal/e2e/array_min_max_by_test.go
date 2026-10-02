@@ -25,24 +25,24 @@ var minMaxByCases = []struct {
 }{
 	// lengths [2,1,4,3]; longest is index 2 (tag 3), shortest index 1 (tag 2);
 	// 3*10 + 2 = 32.
-	{"max-min", `function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
-function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) < 0) { best = xs[i]; } i = i + 1; } return Some(best); }
+	{"max-min", `function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
+function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) < 0) { best = xs[i]; } i = i + 1; } return Some(best); }
 struct R { tag: i32, w: string }
 function cmp_len(a: R, b: R): i32 { return a.w.len() - b.w.len(); }
 function pick(o: Option[R]): i32 { match (o) { Some(r) => { return r.tag; }, None => { return 0 - 1; } } }
-function main(): i32 { var rs: R[] = [R { tag: 1, w: "bb" }, R { tag: 2, w: "a" }, R { tag: 3, w: "dddd" }, R { tag: 4, w: "ccc" }]; return pick(max_by(rs, cmp_len)) * 10 + pick(min_by(rs, cmp_len)); }`, 32},
+function main(): i32 { let rs: R[] = [R { tag: 1, w: "bb" }, R { tag: 2, w: "a" }, R { tag: 3, w: "dddd" }, R { tag: 4, w: "ccc" }]; return pick(max_by(rs, cmp_len)) * 10 + pick(min_by(rs, cmp_len)); }`, 32},
 	// empty -> None for both; encode as 2 (max None) + 3 (min None) = 5.
-	{"empty-none", `function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
-function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) < 0) { best = xs[i]; } i = i + 1; } return Some(best); }
+	{"empty-none", `function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
+function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) < 0) { best = xs[i]; } i = i + 1; } return Some(best); }
 function cmp_i(a: i32, b: i32): i32 { return a - b; }
-function main(): i32 { var e: i32[] = []; var r = 0; match (max_by(e, cmp_i)) { Some(x) => {}, None => { r = r + 2; } } match (min_by(e, cmp_i)) { Some(x) => {}, None => { r = r + 3; } } return r; }`, 5},
+function main(): i32 { let e: i32[] = []; let r = 0; match (max_by(e, cmp_i)) { Some(x) => {}, None => { r = r + 2; } } match (min_by(e, cmp_i)) { Some(x) => {}, None => { r = r + 3; } } return r; }`, 5},
 	// ties keep the FIRST extremum: two elements share length 4; max returns the
 	// earlier one (tag 10), not tag 11.
-	{"ties-first", `function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
+	{"ties-first", `function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (cmp(xs[i], best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
 struct R { tag: i32, w: string }
 function cmp_len(a: R, b: R): i32 { return a.w.len() - b.w.len(); }
 function pick(o: Option[R]): i32 { match (o) { Some(r) => { return r.tag; }, None => { return 0 - 1; } } }
-function main(): i32 { var rs: R[] = [R { tag: 10, w: "wxyz" }, R { tag: 7, w: "q" }, R { tag: 11, w: "abcd" }]; return pick(max_by(rs, cmp_len)); }`, 10},
+function main(): i32 { let rs: R[] = [R { tag: 10, w: "wxyz" }, R { tag: 7, w: "q" }, R { tag: 11, w: "abcd" }]; return pick(max_by(rs, cmp_len)); }`, 10},
 }
 
 // TestNativeArrayMinMaxBy runs the inline programs on interp / x86-64 / wasm /
@@ -79,12 +79,12 @@ func TestNativeArrayMinMaxByModule(t *testing.T) {
 struct Rec { id: i32, name: string }
 function by_name(a: Rec, b: Rec): i32 { return a.name.cmp(b.name); }
 function main(): i32 {
-    var r = 0;
-    var rs: Rec[] = [Rec { id: 1, name: "bravo" }, Rec { id: 2, name: "alpha" }, Rec { id: 3, name: "delta" }, Rec { id: 4, name: "charlie" }];
+    let r = 0;
+    let rs: Rec[] = [Rec { id: 1, name: "bravo" }, Rec { id: 2, name: "alpha" }, Rec { id: 3, name: "delta" }, Rec { id: 4, name: "charlie" }];
     match (arr.max_by(rs, by_name)) { Some(x) => { if (x.id == 3) { r = r + 1; } }, None => {} }
     match (rs.min_by(by_name)) { Some(x) => { if (x.id == 2) { r = r + 2; } }, None => {} }
     match (rs.max_by((a: Rec, b: Rec): i32 => { return b.id - a.id; })) { Some(x) => { if (x.id == 1) { r = r + 4; } }, None => {} }
-    var e: Rec[] = [];
+    let e: Rec[] = [];
     match (arr.min_by(e, by_name)) { Some(x) => {}, None => { r = r + 8; } }
     return r;
 }

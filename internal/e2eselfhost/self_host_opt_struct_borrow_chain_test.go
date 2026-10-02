@@ -49,14 +49,14 @@ func TestSelfHostOptStructBorrowChainX86_64(t *testing.T) {
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
     match (o) { Some(p) => { acc = p.n + p.inner.ys.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -68,14 +68,14 @@ function main(): i32 {
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
     match (o) { Some(p) => { acc = p.inner.ys[1] + p.n; }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -88,14 +88,14 @@ function main(): i32 {
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { inner: Inner { ys: [i, i, i, i, i, i, i, i, i, i] }, n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { inner: Inner { ys: [i, i, i, i, i, i, i, i, i, i] }, n: i });
     match (o) { Some(p) => { acc = p.n + p.inner.ys.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -108,14 +108,14 @@ function main(): i32 {
 			src: `struct Inner { ys: i32[], a: i32, b: i32, c: i32, d: i32 }
 struct P { inner: Inner, n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1], a: 1, b: 2, c: 3, d: 4 }, n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1], a: 1, b: 2, c: 3, d: 4 }, n: i });
     match (o) { Some(p) => { acc = p.n + p.inner.ys.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -128,14 +128,14 @@ function main(): i32 {
 			src: `struct Inner { ys: i32[], tag: string }
 struct P { inner: Inner, n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1], tag: "hello" }, n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1], tag: "hello" }, n: i });
     match (o) { Some(p) => { acc = p.n + p.inner.ys.len() + p.inner.tag.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -201,15 +201,15 @@ func TestSelfHostOptStructBorrowChainHazardsX86_64(t *testing.T) {
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
 function round(i: i32): i32 {
-    var held: Inner = Inner { ys: [0] };
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
+    let held: Inner = Inner { ys: [0] };
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
     match (o) { Some(p) => { held = p.inner; acc = p.n; }, None => {} }
     return acc + held.ys[1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -222,15 +222,15 @@ function main(): i32 {
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
 function round(i: i32): i32 {
-    var held: i32[] = [];
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
+    let held: i32[] = [];
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
     match (o) { Some(p) => { held = p.inner.ys; acc = p.n; }, None => {} }
     return acc + held[1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -243,15 +243,15 @@ function main(): i32 {
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
 function round(i: i32): i32 {
-    var keep: i32[][] = [];
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
+    let keep: i32[][] = [];
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
     match (o) { Some(p) => { keep = keep.append(p.inner.ys); acc = p.n; }, None => {} }
     return acc + keep[0][1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -265,15 +265,15 @@ function main(): i32 {
 struct P { inner: Inner, n: i32 }
 function keepit(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
-    var held: i32[] = [];
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
+    let held: i32[] = [];
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1] }, n: i });
     match (o) { Some(p) => { held = keepit(p.inner.ys); acc = p.n; }, None => {} }
     return acc + held[1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -326,14 +326,14 @@ func TestSelfHostOptStructBorrowChainNoUnderflowX86_64(t *testing.T) {
 	src := `struct Inner { ys: i32[], tag: string }
 struct P { inner: Inner, n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1], tag: "hello" }, n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { inner: Inner { ys: [i, i + 1], tag: "hello" }, n: i });
     match (o) { Some(p) => { acc = p.n + p.inner.ys.len() + p.inner.ys[0] + p.inner.tag.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();

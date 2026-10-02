@@ -17,11 +17,11 @@ const bufCallProg = `@noinline function swap(x: i32, h: usize, s: string): i32 {
 @noinline function four(h: usize, s: string, a: i32, b: i32): void { buf_push_range(h, s, a, b); }
 @noinline function one(h: usize, c: i32): void { buf_push_byte(h, c); }
 function main(): i32 {
-    var h: usize = buf_new(4);
-    var k: i32 = swap(7, h, "ab" + "");
+    let h: usize = buf_new(4);
+    let k: i32 = swap(7, h, "ab" + "");
     four(h, "0123456789" + "", 2, 6);
     one(h, 90);
-    var out: string = buf_take(h);
+    let out: string = buf_take(h);
     if (out != "ab2345Z") { return 1; }
     return 35 + k;
 }

@@ -6,7 +6,7 @@ up, and the one that cost it everything: 40.2 ms against GNU's 3.6 on a
 
 ```fern
 function conv(data: string, flag: boolean): string {
-  var out: string = data;
+  let out: string = data;
   out = ident(out, flag);   // ident can hand its argument straight back
   return out;
 }
@@ -25,7 +25,7 @@ sixteen pages in.
 
 Two wrong guesses first, both built and measured as exact no-ops, and both
 worth recording so nobody repeats them. The RESULT binding was never the
-leak — `var out2 = ident(data, flag)`, bound straight from the borrowed
+leak — `let out2 = ident(data, flag)`, bound straight from the borrowed
 parameter with no intermediate alias, is clean, so the caller's half of
 `paramCountedRetain`'s pairing was already wired. A `rhsTainted` carve-out
 for a counted string result changed nothing; neither did admitting a counted
@@ -104,7 +104,7 @@ dd, 64 MiB at `bs=64k`: **2.2 ms against GNU's 3.6** — 1.23× rather than
 
 ## What is still open
 
-`var out = data; var out2 = ident(out); return out2;` — the same handback
+`let out = data; let out2 = ident(out); return out2;` — the same handback
 with the alias never REASSIGNED — still leaks the seed inc. `countedSeed`
 only credits a seed whose local is later overwritten, so that shape has
 neither the credit nor #9244's cancellation (whose leg declines: the alias

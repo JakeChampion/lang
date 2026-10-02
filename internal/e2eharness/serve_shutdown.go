@@ -34,8 +34,8 @@ func ServeShutdownSource(port, drainMs int, entry string) string {
 import "std/tcp";
 import "std/time";
 function burn(n: i32): i32 {
-    var x: i32 = 12345;
-    var i: i32 = 0;
+    let x: i32 = 12345;
+    let i: i32 = 0;
     while (i < n) {
         x = (x * 1103515245 + 12345) & 2147483647;
         i = i + 1;
@@ -50,7 +50,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), shutdown_grace: time.duration_millis(300 as i64), readiness_path: "/healthz", drain_deadline: time.duration_millis(%d as i64) };
+    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), shutdown_grace: time.duration_millis(300 as i64), readiness_path: "/healthz", drain_deadline: time.duration_millis(%d as i64) };
     return %s;
 }
 `, drainMs, fmt.Sprintf(entry, port))

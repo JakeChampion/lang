@@ -31,11 +31,11 @@ func firstCode(err error) string {
 // true and useless — the reader wrote a lambda on purpose.
 func TestAnonymousFunctionExpressionIsRetired(t *testing.T) {
 	for _, src := range []string{
-		`function main(): i32 { var f = function (x: i32): i32 { return x + 1; }; return f(41); }`,
+		`function main(): i32 { let f = function (x: i32): i32 { return x + 1; }; return f(41); }`,
 		`function g(f: (i32) => i32): i32 { return f(1); }
 function main(): i32 { return g(function (x: i32): i32 { return x + 1; }); }`,
 		`function main(): i32 { return (function (): i32 { return 7; })(); }`,
-		`function main(): void { var f = function (): void {}; f(); }`,
+		`function main(): void { let f = function (): void {}; f(); }`,
 	} {
 		_, err := Parse(src)
 		if err == nil {

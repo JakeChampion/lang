@@ -16,13 +16,13 @@ var pipeHoleIRCases = []struct {
 }{
 	// Hole in the second slot: sub(10, 3) = 7.
 	{"hole-second", `function sub(a: i32, b: i32): i32 { return a - b; }
-function main(): i32 { var x: i32 = 3; return x |> sub(10, _); }`, 7},
+function main(): i32 { let x: i32 = 3; return x |> sub(10, _); }`, 7},
 	// Position-distinguishing middle slot: pick(1, 20, 3) = 1 + 200 + 3.
 	{"hole-middle", `function pick(a: i32, b: i32, c: i32): i32 { return a + b * 10 + c; }
 function main(): i32 { return 20 |> pick(1, _, 3); }`, 204},
 	// Nested pipes: inner hole binds inner LHS → sub(20, sub(5, 3)) = 18.
 	{"nested", `function sub(a: i32, b: i32): i32 { return a - b; }
-function main(): i32 { var x: i32 = 3; return 20 |> sub(_, x |> sub(5, _)); }`, 18},
+function main(): i32 { let x: i32 = 3; return 20 |> sub(_, x |> sub(5, _)); }`, 18},
 	// Chained hole stages: sub(9,4)=5, then sub(8,5)=3.
 	{"chained", `function sub(a: i32, b: i32): i32 { return a - b; }
 function main(): i32 { return 4 |> sub(9, _) |> sub(8, _); }`, 3},

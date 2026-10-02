@@ -21,27 +21,27 @@ import "./checker";
 import "./modloader";
 
 function main(): i32 {
-  var a: string[] = args();
+  let a: string[] = args();
   if (a.len() < 2) {
     eprint("usage: checker_modload_run <entry.fern>");
     return 2;
   }
-  var entry_path: string = a[1];
+  let entry_path: string = a[1];
   match (read_file(entry_path)) {
     Ok(src) => {
-      var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+      let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
       let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), entry_path, entry);
       if (modloader.report_unresolved(missing, "checker_modload_run")) {
         return 2;
       }
-      var merged: parser.Module = flatten.bundle(entry, loaded, "");
+      let merged: parser.Module = flatten.bundle(entry, loaded, "");
       // NB: no merge_builtins here — the checker knows the built-in
       // types itself (is_builtin_variant / built-in enum table), and
       // injecting real JsonValue/IoError decls would be flagged as
       // E010 "reserved built-in name redeclared". (The asm driver
       // merges them because the EMITTER needs their field layout.)
-      var mt: checker.ModuleTypes = checker.check_module(merged);
-      var j: i32 = 0;
+      let mt: checker.ModuleTypes = checker.check_module(merged);
+      let j: i32 = 0;
       while (j < mt.diags.len()) {
         if (mt.diags[j].code.len() > 0) {
           print(mt.diags[j].code);

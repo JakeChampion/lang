@@ -6,9 +6,9 @@
 import "std/regex";
 
 function main(): i32 {
-  var r: i32 = 0;
+  let r: i32 = 0;
 
-  var ms: regex.RMatch[] = regex.regex_find_all("[0-9]+", "a12b345c6");
+  let ms: regex.RMatch[] = regex.regex_find_all("[0-9]+", "a12b345c6");
   if (ms.len() == 3) {
     r = r + 1;
   }
@@ -29,12 +29,12 @@ function main(): i32 {
     r = r + 32;
   }
 
-  var parts: string[] = require_regex_parts(regex.regex_split("a,b,,c", ","));
+  let parts: string[] = require_regex_parts(regex.regex_split("a,b,,c", ","));
   if (parts.len() == 4 && parts[0] == "a" && parts[2] == "" && parts[3] == "c") {
     r = r + 64;
   }
 
-  var ws: string[] = require_regex_parts(regex.regex_split("one  two   three", " +"));
+  let ws: string[] = require_regex_parts(regex.regex_split("one  two   three", " +"));
   if (ws.len() == 3 && ws[0] == "one" && ws[1] == "two" && ws[2] == "three") {
     r = r + 128;
   }

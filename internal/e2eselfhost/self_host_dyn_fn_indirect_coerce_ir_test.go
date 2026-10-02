@@ -13,10 +13,10 @@ import (
 // — and op_dyn_dispatch inside the callee read the unboxed primitive as a shape
 // pointer (SIGSEGV). The interpreter / native x86-64 are correct (107).
 //
-// The fix threads the fn-type's dyn parameter positions through a new
+// The fix threaded the fn-type's dyn parameter positions through a new
 // ParamDecl.fn_param_dyn sidecar (parser's non-consuming peek_fn_param_dyn),
-// which lower_func seeds as "FNDYN:<name>|<positions>"; the indirect-call arg
-// lowering consults it (fn_arg_is_dyn) and dyn-boxes exactly those positions.
+// which lower_func seeded as "FNDYN:<name>|<positions>"; the indirect-call arg
+// lowering consulted it (fn_arg_is_dyn) and dyn-boxed exactly those positions.
 //
 // Each case is oracle-checked against the interpreter, returning a
 // non-negative value <= 126.
@@ -53,7 +53,7 @@ function main(): i32 { return apply((x: i32) => x + 100); }`},
 	{"struct-dyn-at-indirect-call", `trait Speak { function say(self: Self): i32; }
 struct Cat { v: i32 }
 impl Speak for Cat { function say(self: Self): i32 { return self.v + 100; } }
-function apply(f: (dyn Speak) => i32): i32 { var c: Cat = Cat { v: 7 }; return f(c); }
+function apply(f: (dyn Speak) => i32): i32 { let c: Cat = Cat { v: 7 }; return f(c); }
 function main(): i32 { return apply((s: dyn Speak) => s.say()); }`},
 }
 

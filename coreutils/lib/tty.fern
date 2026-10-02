@@ -60,14 +60,14 @@ function proc_name(want: i64): Option[string] {
 // The first character device under /dev/pts or /dev with that device
 // number. A directory that cannot be read contributes nothing.
 function walk_dev(want: i64): Option[string] {
-  var ds: string[] = dirs();
-  var d: i32 = 0;
+  let ds: string[] = dirs();
+  let d: i32 = 0;
   while (d < ds.len()) {
     match (read_dir(ds[d])) {
       Ok(names) => {
-        var i: i32 = 0;
+        let i: i32 = 0;
         while (i < names.len()) {
-          var path: string = ds[d] + "/" + names[i];
+          let path: string = ds[d] + "/" + names[i];
           match (stat(path)) {
             Ok(st) => {
               if (is_char_device(st) && st.rdev == want) {
@@ -91,7 +91,7 @@ pub function name_of_stdin(): Option[string] {
   if (!isatty(0)) {
     return None;
   }
-  var want: i64 = 0;
+  let want: i64 = 0;
   match (stdin().stat()) {
     Ok(st) => {
       if (!is_char_device(st)) {

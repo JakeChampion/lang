@@ -5,7 +5,7 @@ import "./shadowlib";
 // 0 outright, so a rewriter that stopped mangling altogether cannot pass.
 function main(): i32 {
     if (shadowlib.unshadowed() != 100) { return 0; }
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (shadowlib.tuple_binder() == 7) { r = r + 1; }
     if (shadowlib.nested_tuple_binder() == 7) { r = r + 2; }
     if (shadowlib.variant_in_tuple_binder() == 7) { r = r + 4; }

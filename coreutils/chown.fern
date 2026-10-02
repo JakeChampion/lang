@@ -161,7 +161,7 @@ pub struct Target { spec: owner.Spec, from: owner.Spec, has_from: boolean, db: o
 pub struct St { out: gnu.Stdio, status: i32 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [OWNER][:[GROUP]] FILE...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... --reference=RFILE FILE...\n";
   out = out + "Change the owner and/or group of each FILE to OWNER and/or GROUP.\n";
@@ -206,7 +206,7 @@ function help_text(): string {
 // '--reference' and `--no` names '--no-dereference' before
 // '--no-preserve-root'. `--help` and `--version` are appended by getopt_new.
 pub function option_table(chgrp_mode: boolean): gnu.Opt[] {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("R", "recursive", opt_recursive()));
   opts = opts.append(gnu.flag("c", "changes", opt_changes()));
   opts = opts.append(gnu.flag("", "dereference", opt_dereference()));
@@ -231,9 +231,9 @@ pub struct Parsed { s: Settings, from: string, has_from: boolean, reference: str
 // argument. Keeping the two apart would put `reference` in the wrong place in
 // every ambiguity list.
 function table_with_reference(chgrp_mode: boolean): gnu.Opt[] {
-  var opts: gnu.Opt[] = [];
-  var base: gnu.Opt[] = option_table(chgrp_mode);
-  var i: i32 = 0;
+  let opts: gnu.Opt[] = [];
+  let base: gnu.Opt[] = option_table(chgrp_mode);
+  let i: i32 = 0;
   while (i < base.len()) {
     if (base[i].id == opt_reference()) {
       opts = opts.append(gnu.valued("", "reference", opt_reference()));
@@ -246,14 +246,14 @@ function table_with_reference(chgrp_mode: boolean): gnu.Opt[] {
 }
 
 pub function parse(argv: string[], chgrp_mode: boolean, name: string): Parsed {
-  var s: Settings = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false, deref: deref_default(), traverse: trav_p(), chgrp_mode: chgrp_mode };
-  var from: string = "";
-  var has_from: boolean = false;
-  var reference: string = "";
-  var has_reference: boolean = false;
-  var g: gnu.Getopt = gnu.getopt_new(argv, table_with_reference(chgrp_mode), name, help_text(), 1);
+  let s: Settings = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false, deref: deref_default(), traverse: trav_p(), chgrp_mode: chgrp_mode };
+  let from: string = "";
+  let has_from: boolean = false;
+  let reference: string = "";
+  let has_reference: boolean = false;
+  let g: gnu.Getopt = gnu.getopt_new(argv, table_with_reference(chgrp_mode), name, help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -299,7 +299,7 @@ pub function parse(argv: string[], chgrp_mode: boolean, name: string): Parsed {
 // fts trims a RUN of trailing slashes to one before the operand is printed,
 // and leaves `/` and `//` alone: `d///` is `d/`, `///` is `/`.
 function fts_trim(p: string): string {
-  var n: i32 = p.len();
+  let n: i32 = p.len();
   if (n > 2 && p[n - 1] as i32 == 47) {
     while (n > 1 && p[n - 2] as i32 == 47) {
       n = n - 1;
@@ -353,11 +353,11 @@ function is_root_dir(info: FileStat): boolean {
 }
 
 function refuse_root(st0: St, path: string): St {
-  var same: string = "";
+  let same: string = "";
   if (path != "/") {
     same = " (same as '/')";
   }
-  var st: St = fail_loud(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
+  let st: St = fail_loud(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
   return fail_loud(st, "use --no-preserve-root to override this failsafe");
 }
 
@@ -392,15 +392,15 @@ function descends_links(s: Settings, top: boolean): boolean {
 // what the entry carried before; an unreadable entry has none, and the
 // "from" clause is left off rather than filled with a guess.
 function describe(t: Target, s: Settings, path: string, old_uid: i64, old_gid: i64, known: boolean, changed: boolean, failed: boolean): string {
-  var gv: boolean = t.spec.group_verb(s.chgrp_mode);
-  var noun: string = "ownership of ";
+  let gv: boolean = t.spec.group_verb(s.chgrp_mode);
+  let noun: string = "ownership of ";
   if (gv) {
     noun = "group of ";
   }
-  var to: string = t.spec.render(s.chgrp_mode);
-  var from: string = owner.current_label(t.db, old_uid, old_gid, t.spec.names_group(), gv);
+  let to: string = t.spec.render(s.chgrp_mode);
+  let from: string = owner.current_label(t.db, old_uid, old_gid, t.spec.names_group(), gv);
   if (failed) {
-    var head: string = "failed to change " + noun + gnu.quotea(path);
+    let head: string = "failed to change " + noun + gnu.quotea(path);
     if (known) {
       if (to.len() == 0) {
         return head + "\n";
@@ -437,16 +437,16 @@ function from_matches(t: Target, uid: i64, gid: i64): boolean {
 }
 
 function change_one(st0: St, s: Settings, t: Target, path: string, uid: i64, gid: i64): St {
-  var st: St = st0;
+  let st: St = st0;
   if (!from_matches(t, uid, gid)) {
     if (s.verbosity == v_all()) {
       return St { ...st, out: st.out.fwrite(describe(t, s, path, uid, gid, true, false, false)) };
     }
     return st;
   }
-  var want_uid: i64 = t.spec.uid;
-  var want_gid: i64 = t.spec.gid;
-  var changed: boolean = want_uid >= 0 as i64 && want_uid != uid || want_gid >= 0 as i64 && want_gid != gid;
+  let want_uid: i64 = t.spec.uid;
+  let want_gid: i64 = t.spec.gid;
+  let changed: boolean = want_uid >= 0 as i64 && want_uid != uid || want_gid >= 0 as i64 && want_gid != gid;
   if (want_uid < 0 as i64 && want_gid < 0 as i64) {
     // Nothing to ask the kernel for. GNU still makes the call; the
     // observable difference would be an errno on an entry it could not
@@ -464,7 +464,7 @@ function change_one(st0: St, s: Settings, t: Target, path: string, uid: i64, gid
       return st;
     },
     Err(e) => {
-      var noun: string = "changing ownership of ";
+      let noun: string = "changing ownership of ";
       if (t.spec.uid < 0 as i64) {
         noun = "changing group of ";
       }
@@ -477,7 +477,7 @@ function change_one(st0: St, s: Settings, t: Target, path: string, uid: i64, gid
 // The entry could not be reached at all. `-v` still prints its line, with no
 // "from" clause because nothing was read to put in one.
 function unreachable(st0: St, s: Settings, t: Target, path: string, msg: string): St {
-  var st: St = fail_quiet(st0, s, msg);
+  let st: St = fail_quiet(st0, s, msg);
   return say(st, s, describe(t, s, path, 0 as i64, 0 as i64, false, false, true));
 }
 
@@ -492,7 +492,7 @@ struct Seen { ok: boolean, uid: i64, gid: i64, is_dir: boolean, is_link: boolean
 // both, and a BROKEN one has no answer at all — that is the `cannot
 // dereference` path rather than `cannot access`.
 function look(s: Settings, path: string, top: boolean): (Seen, string) {
-  var want_target: boolean = follows(s) || descends_links(s, top);
+  let want_target: boolean = follows(s) || descends_links(s, top);
   match (lstat(path)) {
     Ok(li) => {
       if (!want_target || !filetype.is_link(li.mode)) {
@@ -500,9 +500,9 @@ function look(s: Settings, path: string, top: boolean): (Seen, string) {
       }
       match (stat(path)) {
         Ok(ti) => {
-          var dir: boolean = filetype.is_dir(ti.mode) && descends_links(s, top);
-          var uid: i64 = ti.uid as i64;
-          var gid: i64 = ti.gid as i64;
+          let dir: boolean = filetype.is_dir(ti.mode) && descends_links(s, top);
+          let uid: i64 = ti.uid as i64;
+          let gid: i64 = ti.gid as i64;
           if (!follows(s)) {
             uid = li.uid as i64;
             gid = li.gid as i64;
@@ -523,9 +523,9 @@ function look(s: Settings, path: string, top: boolean): (Seen, string) {
 // One entry, and everything under it. The children are visited BEFORE the
 // entry itself: fts hands chown its post-order visit.
 function process(st0: St, s: Settings, t: Target, path: string, top: boolean): St {
-  var st: St = st0;
-  var r: (Seen, string) = look(s, path, top);
-  var seen: Seen = r.0;
+  let st: St = st0;
+  let r: (Seen, string) = look(s, path, top);
+  let seen: Seen = r.0;
   if (!seen.ok) {
     return unreachable(st, s, t, path, r.1);
   }
@@ -535,7 +535,7 @@ function process(st0: St, s: Settings, t: Target, path: string, top: boolean): S
   if (s.recursive && seen.is_dir) {
     match (read_dir(path)) {
       Ok(names) => {
-        var i: i32 = 0;
+        let i: i32 = 0;
         while (i < names.len()) {
           st = process(st, s, t, child_path(path, names[i]), false);
           i = i + 1;
@@ -565,9 +565,9 @@ function is_root(path: string): boolean {
 
 // ---- main ------------------------------------------------------------------
 pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
-  var p: Parsed = parse(argv, chgrp_mode, name);
-  var s: Settings = p.s;
-  var files: string[] = p.files;
+  let p: Parsed = parse(argv, chgrp_mode, name);
+  let s: Settings = p.s;
+  let files: string[] = p.files;
 
   // Following every link while descending none would visit a tree the
   // operands do not describe, so the combination is refused rather than
@@ -577,8 +577,8 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
     exit(1);
   }
 
-  var spec_text: string = "";
-  var has_spec: boolean = false;
+  let spec_text: string = "";
+  let has_spec: boolean = false;
   if (!p.has_reference) {
     if (files.len() == 0) {
       gnu.die_usage("missing operand", 1);
@@ -593,12 +593,12 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
     gnu.die_usage("missing operand", 1);
   }
 
-  var st: St = St { out: gnu.stdio_new(), status: 0 };
-  var db: owner.Db = owner.db_load();
-  var t: Target = Target { spec: owner.spec_none(), from: owner.spec_none(), has_from: false, db: db };
+  let st: St = St { out: gnu.stdio_new(), status: 0 };
+  let db: owner.Db = owner.db_load();
+  let t: Target = Target { spec: owner.spec_none(), from: owner.spec_none(), has_from: false, db: db };
 
   if (p.has_from) {
-    var f: owner.Parsed = owner.parse(db, p.from);
+    let f: owner.Parsed = owner.parse(db, p.from);
     if (f.warn_dot) {
       gnu.error(owner.dot_warning(p.from));
     }
@@ -612,7 +612,7 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
   if (p.has_reference) {
     match (stat(p.reference)) {
       Ok(info) => {
-        var sp: owner.Spec = owner.spec_none();
+        let sp: owner.Spec = owner.spec_none();
         if (!chgrp_mode) {
           sp = owner.Spec { ...sp, uid: info.uid as i64 };
         }
@@ -625,7 +625,7 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
       }
     }
   } else if (has_spec) {
-    var parsed: owner.Parsed = owner.parse_group_only(db, spec_text);
+    let parsed: owner.Parsed = owner.parse_group_only(db, spec_text);
     if (!chgrp_mode) {
       parsed = owner.parse(db, spec_text);
     }
@@ -639,7 +639,7 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
     t = Target { ...t, spec: parsed.spec };
   }
 
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < files.len()) {
     st = process(st, s, t, fts_trim(files[i]), true);
     i = i + 1;

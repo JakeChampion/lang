@@ -54,18 +54,18 @@ function sink(s: string): i32 { return s.len(); }
 		},
 		{
 			name:      "fresh binding inside the loop",
-			fstring:   `var t: string = f"{k}-iteration"; n = n + t.len();`,
-			desugared: `var t: string = k.to_string() + "-iteration"; n = n + t.len();`,
+			fstring:   `let t: string = f"{k}-iteration"; n = n + t.len();`,
+			desugared: `let t: string = k.to_string() + "-iteration"; n = n + t.len();`,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			body := func(stmt string) string {
 				return preamble + `function main(): i32 {
-  var s: string = "";
-  var k: K = K { n: 1 };
-  var i: i32 = 0;
-  var n: i32 = 0;
+  let s: string = "";
+  let k: K = K { n: 1 };
+  let i: i32 = 0;
+  let n: i32 = 0;
   while (i < 3) { ` + stmt + ` i = i + 1; }
   return s.len() + n + k.n;
 }`

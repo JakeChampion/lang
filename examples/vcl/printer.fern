@@ -35,8 +35,8 @@ function quote(s: ast.StrLit): string {
 
 // join renders `args` comma-separated.
 function join_args(args: ast.Expr[]): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < args.len()) {
     if (i > 0) {
       out = out + ", ";
@@ -105,10 +105,10 @@ function print_return(r: ast.ReturnStmt): string {
 // print_if renders a whole flat chain, putting back the `elseif` /
 // `elsif` / `else if` spelling each arm was written with.
 function print_if(s: ast.IfStmt, depth: i32): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < s.arms.len()) {
-    var arm: ast.IfArm = s.arms[i];
+    let arm: ast.IfArm = s.arms[i];
     if (i == 0) {
       out = out + indent(depth) + "if (" + print_expr(arm.cond) + ") ";
     } else {
@@ -129,8 +129,8 @@ pub function print_block(b: ast.Block, depth: i32): string {
   if (b.stmts.len() == 0) {
     return "{ }";
   }
-  var out: string = "{\n";
-  var i: i32 = 0;
+  let out: string = "{\n";
+  let i: i32 = 0;
   while (i < b.stmts.len()) {
     out = out + print_stmt(b.stmts[i], depth + 1) + "\n";
     i = i + 1;
@@ -178,10 +178,10 @@ pub function print_stmt(s: ast.Stmt, depth: i32): string {
 // print_props renders a backend or probe body, recursing for the nested
 // block an inline `.probe = { … }` uses.
 function print_props(p: ast.PropBlock, depth: i32): string {
-  var out: string = "{\n";
-  var i: i32 = 0;
+  let out: string = "{\n";
+  let i: i32 = 0;
   while (i < p.props.len()) {
-    var prop: ast.Prop = p.props[i];
+    let prop: ast.Prop = p.props[i];
     out = out + indent(depth + 1) + prop.name + " = ";
     match (prop.value) {
       PVExpr(e) => {
@@ -197,11 +197,11 @@ function print_props(p: ast.PropBlock, depth: i32): string {
 }
 
 function print_acl_entry(e: ast.AclEntry): string {
-  var out: string = "";
+  let out: string = "";
   if (e.negated) {
     out = out + "! ";
   }
-  var body: string = "\"" + e.host + "\"";
+  let body: string = "\"" + e.host + "\"";
   if (e.mask != "") {
     body = body + "/" + e.mask;
   }
@@ -212,8 +212,8 @@ function print_acl_entry(e: ast.AclEntry): string {
 }
 
 function print_acl(a: ast.AclDecl): string {
-  var out: string = "acl " + a.name + " {\n";
-  var i: i32 = 0;
+  let out: string = "acl " + a.name + " {\n";
+  let i: i32 = 0;
   while (i < a.entries.len()) {
     out = out + indent(1) + print_acl_entry(a.entries[i]) + "\n";
     i = i + 1;
@@ -283,11 +283,11 @@ function decl_kind(d: ast.Decl): string {
 // declarations, except between adjacent one-liners of the same kind, so
 // a run of imports stays a paragraph.
 pub function print_program(decls: ast.Decl[]): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < decls.len()) {
     if (i > 0) {
-      var same: boolean = decl_kind(decls[i]) == decl_kind(decls[i - 1]);
+      let same: boolean = decl_kind(decls[i]) == decl_kind(decls[i - 1]);
       if (!same || decl_kind(decls[i]) == "block") {
         out = out + "\n";
       }

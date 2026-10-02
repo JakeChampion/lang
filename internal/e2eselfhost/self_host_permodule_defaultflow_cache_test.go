@@ -33,7 +33,7 @@ func pmCacheTree(t *testing.T, leaf string) (string, string) {
 	write("leaf.fern", leaf)
 	write("mid.fern", "import \"./leaf\";\n"+
 		"pub function mid_val(): i32 {\n"+
-		"    var x = leaf.leaf_val();\n"+
+		"    let x = leaf.leaf_val();\n"+
 		"    if (x > 0) { return 42; }\n"+
 		"    return 0;\n"+
 		"}\n")
@@ -398,7 +398,7 @@ func TestSelfHostPerModuleTransitiveInvalidationX86_64(t *testing.T) {
 		"pub function get(): leaf.Thing { return leaf.make_thing(); }\n")
 	write("main.fern", "import \"./mid\";\n"+
 		"function main(): i32 {\n"+
-		"    var t = mid.get();\n"+
+		"    let t = mid.get();\n"+
 		"    return t.b + 1;\n"+
 		"}\n")
 	const leafBefore = "pub struct Thing { a: i32, b: i32 }\n" +

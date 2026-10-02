@@ -297,7 +297,7 @@ func TestConstPropSkipsNonConstStore(t *testing.T) {
 	}
 }
 
-// End-to-end through the full optimisation pipeline: a `var x = 7;
+// End-to-end through the full optimisation pipeline: a `let x = 7;
 // return x + 3;` style body collapses to a single `const.i32 10` —
 // the store / load pair fuses to a tee, PropagateCopies drops the
 // dead tee, and Fold collapses the resulting `const 7 ; const 3 ;
@@ -305,7 +305,7 @@ func TestConstPropSkipsNonConstStore(t *testing.T) {
 // the test guards against pipeline regression.
 func TestConstPropEnablesEndToEndCollapse(t *testing.T) {
 	p := lowerSource(t, `function f(): i32 {
-		var x: i32 = 7;
+		let x: i32 = 7;
 		return x + 3;
 	}`)
 	Inline(p)
@@ -333,7 +333,7 @@ func TestConstPropEnablesEndToEndCollapse(t *testing.T) {
 // collapses — settles in one pipeline call.
 func TestConstPropMultiLoadCollapses(t *testing.T) {
 	p := lowerSource(t, `function f(): i32 {
-		var x: i32 = 5;
+		let x: i32 = 5;
 		return x + x;
 	}`)
 	Inline(p)
@@ -359,12 +359,12 @@ func TestConstPropMultiLoadCollapses(t *testing.T) {
 }
 
 // i64 constants flow through locals the same way i32 constants
-// do. The fold pipeline collapses `var x: i64 = 7i64; return x +
+// do. The fold pipeline collapses `let x: i64 = 7i64; return x +
 // 3i64` to a single OpConstI64 10 via the same tee + propagate +
 // fold sequence.
 func TestConstPropTracksI64(t *testing.T) {
 	p := lowerSource(t, `function f(): i64 {
-		var x: i64 = 7i64;
+		let x: i64 = 7i64;
 		return x + 3i64;
 	}`)
 	Inline(p)
@@ -488,7 +488,7 @@ func TestConstPropSpecialisesDispatchSecondArm(t *testing.T) {
 // Idempotence: a second pass produces identical output.
 func TestConstPropIsIdempotent(t *testing.T) {
 	p := lowerSource(t, `function f(): i32 {
-		var x: i32 = 7;
+		let x: i32 = 7;
 		return x + 3;
 	}`)
 	Inline(p)

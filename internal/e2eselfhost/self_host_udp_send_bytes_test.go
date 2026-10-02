@@ -15,16 +15,16 @@ import (
 )
 
 const udpSendBytesProgram = `function main(): i32 {
-    var addr: u8[] = UDP_ADDRESS;
-    var fd: i32 = udp_bind(addr, 0);
+    let addr: u8[] = UDP_ADDRESS;
+    let fd: i32 = udp_bind(addr, 0);
     assert(fd >= 0);
-    var data: u8[] = [];
+    let data: u8[] = [];
     for i in 0..8193 { data = data.append((i % 256) as u8); }
-    var retained: u8[] = data;
+    let retained: u8[] = data;
     assert(udp_sendto_bytes(fd, addr, UDP_PORT, data) == data.len());
     assert(udp_sendto_bytes(fd, addr, UDP_PORT, retained) == retained.len());
     assert(udp_sendto_bytes(fd, addr, UDP_PORT, [255u8, 0u8, 128u8]) == 3);
-    var empty: u8[] = [];
+    let empty: u8[] = [];
     assert(udp_sendto_bytes(fd, addr, UDP_PORT, empty) == 0);
     assert(udp_connect(fd, addr, UDP_PORT) == 0);
     assert(udp_sendto_bytes(fd, empty, 0, [0u8, 255u8]) == 2);

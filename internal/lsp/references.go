@@ -334,7 +334,7 @@ func collectInFunc(state *docState, fd *ast.FuncDecl, name string) []occurrence 
 	if state.info != nil {
 		for _, v := range state.info.Locals[fd] {
 			if v.Name == name {
-				// Var.P is at the `var`/`let` keyword — adjust
+				// Var.P is at the `let` keyword — adjust
 				// to the name's actual position via the source
 				// scan helper from inlay.go.
 				if endPos, ok := varNameEndPos(state.src, v); ok {
@@ -412,7 +412,7 @@ func collectByName(state *docState, name string, _ bool) []occurrence {
 			return true
 		})
 	}
-	// Type-annotation references (`var c: Color`).
+	// Type-annotation references (`let c: Color`).
 	for _, tr := range state.prog.TypeRefs {
 		if tr.Name == name {
 			out = append(out, occurrence{

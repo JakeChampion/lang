@@ -32,22 +32,22 @@ const pushEarlyExitN = 2
 func pushEarlyExitSrc(pre, mid, post string) string {
 	return fmt.Sprintf(`struct Val { kind: i32, kids: i32[] }
 function churn(n: i32): i32 {
-    var vals: Val[] = [];
-    var total: i32 = 0;
+    let vals: Val[] = [];
+    let total: i32 = 0;
     for i in 0..n {
-%s        var v = Val { kind: i, kids: [i] };
+%s        let v = Val { kind: i, kids: [i] };
 %s        vals = vals.append(v);
 %s        total = total + vals.len();
     }
     return total;
 }
 function main(): i32 {
-    var w1: i32 = churn(%d);
-    var b0: i64 = __heap_bump_bytes();
-    var w2: i32 = churn(%d);
-    var b1: i64 = __heap_bump_bytes();
+    let w1: i32 = churn(%d);
+    let b0: i64 = __heap_bump_bytes();
+    let w2: i32 = churn(%d);
+    let b1: i64 = __heap_bump_bytes();
     if (w1 != %d || w2 != %d) { return 201; }
-    var d: i64 = b1 - b0;
+    let d: i64 = b1 - b0;
     if (d <= 0) { return 0; }
     if (d > 200) { return 200; }
     return (d as i32);

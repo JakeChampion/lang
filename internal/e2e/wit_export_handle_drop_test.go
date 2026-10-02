@@ -73,7 +73,7 @@ resource Thing;
 function new_thing(): own Thing;
 
 @export("local:test/handler@0.1.0", "handle")
-function on_request(): void { var t: own Thing = new_thing(); return; }`
+function on_request(): void { let t: own Thing = new_thing(); return; }`
 	mainPath := filepath.Join(dir, "reactor.fern")
 	if err := os.WriteFile(mainPath, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)

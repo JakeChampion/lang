@@ -6,7 +6,7 @@
 import "std/regex";
 
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (regex.regex_match("abc", "xxabcyy")) { r = r + 1; }              // literal, searched
     if (regex.regex_match("^a.c$", "axc")) { r = r + 2; }               // anchors + `.`
     if (regex.regex_match("a*b", "aaab")) { r = r + 4; }                // `*` greedy

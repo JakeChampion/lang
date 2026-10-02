@@ -16,7 +16,7 @@ variable went back bare and uncounted. The caller could not tell such a result
 from a fresh one.
 
 Other sites already treated the result as owned, so an uncounted return was a
-use-after-free, not only a missed release. `var g = pass(keep)` released
+use-after-free, not only a missed release. `let g = pass(keep)` released
 `keep`'s box on its loop rebind (#10392's release), and `pass(keep)(10)`
 released it through the callee temp.
 
@@ -58,7 +58,7 @@ released it through the callee temp.
 | #10437 array literal | 18 / 6 | 18 / 18 |
 | tuple element from a call | 12 / 0 | 12 / 12 |
 | tuple element from a local | 18 / 12 | 18 / 18 |
-| `var g = pass(keep)` in a loop | 1 / 1, use-after-free | 1 / 1, clean |
+| `let g = pass(keep)` in a loop | 1 / 1, use-after-free | 1 / 1, clean |
 | `closureCallIntoContainerSrc` | 78 / 22 | 78 / 78 |
 | `closureContainerSharedSrc` | exit 99 (want 4), 52 / 40 | exit 4, 52 / 52 |
 | `closureReturnBorrowedSrc` | use-after-free | 6 / 6, clean |

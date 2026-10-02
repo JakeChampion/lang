@@ -32,16 +32,16 @@ import (
 const arrWithStrElemChurnSrc = `import "std/i32";
 import "std/string";
 function mks(): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
+    let out: string[] = [];
+    let i: i32 = 0;
     while (i < 8) { out = out.append("kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; }
     return out;
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var a: string[] = mks();
+        let a: string[] = mks();
         a = a.with(3, a[5]);
         t = t + a.len() + a[3].len();
         i = i + 1;

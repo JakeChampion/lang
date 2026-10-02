@@ -20,9 +20,9 @@ func testComponentLongWrites(t *testing.T, compiler string, runner []string, std
 			dir := t.TempDir()
 			src, bin := filepath.Join(dir, "write.fern"), filepath.Join(dir, "write.wasm")
 			source := `function main(): i32 {
-  var s = ""; var i = 0;
+  let s = ""; let i = 0;
   while (i < 8193) { s = s + "x"; i = i + 1; }
-  var w = ` + stream + `();
+  let w = ` + stream + `();
   match (w.write(s)) { Some(_) => { return 1; }, None => {} }
   match (w.write_some(s)) { Err(_) => { return 2; }, Ok(n) => { if (n != 8193) { return 3; } } }
   return 0;

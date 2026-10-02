@@ -33,31 +33,31 @@ var outerMutCaptureIRCases = []struct {
 	// closure is created; the closure must read the new binding.
 	{"array-reassign",
 		`function main(): i32 {
-    var a: i32[] = [10, 1];
-    var f: () => i32 = (): i32 => { return a[0]; };
+    let a: i32[] = [10, 1];
+    let f: () => i32 = (): i32 => { return a[0]; };
     a = [42, 1];
     return f();
 }`, 42},
 	{"string-reassign",
 		`function main(): i32 {
-    var s: string = "aa";
-    var f: () => i32 = (): i32 => { return s.len(); };
+    let s: string = "aa";
+    let f: () => i32 = (): i32 => { return s.len(); };
     s = "abcdef";
     return f() + 36;
 }`, 42},
 	{"struct-reassign",
 		`struct B { v: i32 }
 function main(): i32 {
-    var b: B = B { v: 10 };
-    var f: () => i32 = (): i32 => { return b.v; };
+    let b: B = B { v: 10 };
+    let f: () => i32 = (): i32 => { return b.v; };
     b = B { v: 42 };
     return f();
 }`, 42},
 	// The scalar control row — also by-reference (bailed to AST pre-fix).
 	{"i32-outer-reassign",
 		`function main(): i32 {
-    var n: i32 = 10;
-    var f: () => i32 = (): i32 => { return n; };
+    let n: i32 = 10;
+    let f: () => i32 = (): i32 => { return n; };
     n = 42;
     return f();
 }`, 42},
@@ -67,19 +67,19 @@ function main(): i32 {
 	// loop keeps advancing (0+1+2+3+4... via the live counter).
 	{"outer-mutate-then-capture",
 		`function main(): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     total = total + 15;
-    var f: () => i32 = (): i32 => { return total + 27; };
+    let f: () => i32 = (): i32 => { return total + 27; };
     return f();
 }`, 42},
 	{"loop-accumulator",
 		`function main(): i32 {
-    var s: i32 = 0;
-    var i: i32 = 0;
-    var add: () => i32 = (): i32 => { s = s + i; return 0; };
+    let s: i32 = 0;
+    let i: i32 = 0;
+    let add: () => i32 = (): i32 => { s = s + i; return 0; };
     while (i < 4) {
         i = i + 1;
-        var r: i32 = add();
+        let r: i32 = add();
     }
     return s + 32;
 }`, 42},
@@ -87,42 +87,42 @@ function main(): i32 {
 	// outer scope also reassigns it — one shared cell, writes visible both ways.
 	{"outer-and-inner-write",
 		`function main(): i32 {
-    var x: i32 = 0;
-    var f: () => i32 = (): i32 => { x = x + 4; return 0; };
+    let x: i32 = 0;
+    let f: () => i32 = (): i32 => { x = x + 4; return 0; };
     x = 3;
-    var r: i32 = f();
+    let r: i32 = f();
     return x + 35;
 }`, 42},
 	// A `.with` self-reassign on a soon-captured array (#5300's hand-boxed
 	// repro — the aliasing shape that used to bail the whole function).
 	{"with-selfreassign-then-capture",
 		`function main(): i32 {
-    var a: i32[] = [0, 1];
+    let a: i32[] = [0, 1];
     a = a.with(0, 42);
-    var f: () => i32 = (): i32 => { return a[0]; };
+    let f: () => i32 = (): i32 => { return a[0]; };
     return f();
 }`, 42},
 	// RC guard: reassign the captured array to another still-live local and
 	// back; both bindings stay readable (an over-release corrupts one).
 	{"alias-reassign-live",
 		`function main(): i32 {
-    var keep: i32[] = [40, 7];
-    var a: i32[] = [10, 1];
-    var f: () => i32 = (): i32 => { return a[0]; };
+    let keep: i32[] = [40, 7];
+    let a: i32[] = [10, 1];
+    let f: () => i32 = (): i32 => { return a[0]; };
     a = keep;
     a = [1, 2];
     a = keep;
-    var x: i32 = f();
-    var y: i32 = keep[0];
+    let x: i32 = f();
+    let y: i32 = keep[0];
     return x + y - 38;
 }`, 42},
 	// A loop growing the captured string 40 times — the closure reads the
 	// final value (also exercises repeated frees of the superseded strings).
 	{"loop-string-grow",
 		`function main(): i32 {
-    var s: string = "x";
-    var f: () => i32 = (): i32 => { return s.len(); };
-    var i: i32 = 0;
+    let s: string = "x";
+    let f: () => i32 = (): i32 => { return s.len(); };
+    let i: i32 = 0;
     while (i < 40) {
         s = s + "y";
         i = i + 1;
@@ -140,10 +140,10 @@ function main(): i32 {
 	{"escape-loop-body-array",
 		`function apply(x: i32, f: (i32) => i32): i32 { return f(x); }
 function main(): i32 {
-    var total: i32 = 0;
-    var ks: i32[] = [20, 20];
+    let total: i32 = 0;
+    let ks: i32[] = [20, 20];
     for k in ks {
-        var seen: string[] = [];
+        let seen: string[] = [];
         seen = seen.append("a");
         function rw(x: i32): i32 { return x + seen.len(); }
         total = total + apply(k, rw);
@@ -155,10 +155,10 @@ function main(): i32 {
 struct F { ps: P[] }
 function apply(x: i32, f: (i32) => i32): i32 { return f(x); }
 function main(): i32 {
-    var fs: F[] = [F { ps: [P { name: "a" }, P { name: "b" }] }, F { ps: [] }];
-    var total: i32 = 38;
+    let fs: F[] = [F { ps: [P { name: "a" }, P { name: "b" }] }, F { ps: [] }];
+    let total: i32 = 38;
     for fd in fs {
-        var names: string[] = [];
+        let names: string[] = [];
         for pd in fd.ps { names = names.append(pd.name); }
         function rw(x: i32): i32 { return x + names.len(); }
         total = total + apply(1, rw);
@@ -167,47 +167,47 @@ function main(): i32 {
 }`, 42},
 	{"escape-array-reassign",
 		`function mk(): () => i32 {
-    var a: i32[] = [10, 1];
-    var f: () => i32 = (): i32 => { return a[0]; };
+    let a: i32[] = [10, 1];
+    let f: () => i32 = (): i32 => { return a[0]; };
     a = [42, 1];
     return f;
 }
 function main(): i32 {
-    var g: () => i32 = mk();
+    let g: () => i32 = mk();
     return g();
 }`, 42},
 	{"escape-string-reassign",
 		`function mk(): () => i32 {
-    var s: string = "aa";
-    var f: () => i32 = (): i32 => { return s.len(); };
+    let s: string = "aa";
+    let f: () => i32 = (): i32 => { return s.len(); };
     s = "abcdef";
     return f;
 }
 function main(): i32 {
-    var g: () => i32 = mk();
+    let g: () => i32 = mk();
     return g() + 36;
 }`, 42},
 	{"escape-struct-reassign",
 		`struct B { v: i32 }
 function mk(): () => i32 {
-    var b: B = B { v: 10 };
-    var f: () => i32 = (): i32 => { return b.v; };
+    let b: B = B { v: 10 };
+    let f: () => i32 = (): i32 => { return b.v; };
     b = B { v: 42 };
     return f;
 }
 function main(): i32 {
-    var g: () => i32 = mk();
+    let g: () => i32 = mk();
     return g();
 }`, 42},
 	{"escape-i32-reassign",
 		`function mk(): () => i32 {
-    var n: i32 = 10;
-    var f: () => i32 = (): i32 => { return n; };
+    let n: i32 = 10;
+    let f: () => i32 = (): i32 => { return n; };
     n = 42;
     return f;
 }
 function main(): i32 {
-    var g: () => i32 = mk();
+    let g: () => i32 = mk();
     return g();
 }`, 42},
 	// The escaped closure also WRITES the shared cell: outer sets 38 before
@@ -215,14 +215,14 @@ function main(): i32 {
 	// write through the same cell (40 + 2 = 42).
 	{"escape-mixed-write",
 		`function mk(): () => i32 {
-    var n: i32 = 0;
-    var f: () => i32 = (): i32 => { n = n + 2; return n; };
+    let n: i32 = 0;
+    let f: () => i32 = (): i32 => { n = n + 2; return n; };
     n = 38;
     return f;
 }
 function main(): i32 {
-    var g: () => i32 = mk();
-    var r1: i32 = g();
+    let g: () => i32 = mk();
+    let r1: i32 = g();
     return g();
 }`, 42},
 	// Escape via an ARRAY CONTAINER (`[f]`), capture reassigned after: needs
@@ -231,9 +231,9 @@ function main(): i32 {
 	// bare-calls the env box and SIGSEGVs).
 	{"escape-container-reassign",
 		`function main(): i32 {
-    var a: i32[] = [10, 1];
-    var f: () => i32 = (): i32 => { return a[0]; };
-    var fs: (() => i32)[] = [f];
+    let a: i32[] = [10, 1];
+    let f: () => i32 = (): i32 => { return a[0]; };
+    let fs: (() => i32)[] = [f];
     a = [42, 1];
     return fs[0]();
 }`, 42},
@@ -241,10 +241,10 @@ function main(): i32 {
 	// one; both read the post-reassignment buffer: 20 + 21 = 41.
 	{"escape-two-closures-shared-capture",
 		`function main(): i32 {
-    var a: i32[] = [10, 1];
-    var direct: () => i32 = (): i32 => { return a[0]; };
-    var esc: () => i32 = (): i32 => { return a[0] + 1; };
-    var keep: (() => i32)[] = [esc];
+    let a: i32[] = [10, 1];
+    let direct: () => i32 = (): i32 => { return a[0]; };
+    let esc: () => i32 = (): i32 => { return a[0] + 1; };
+    let keep: (() => i32)[] = [esc];
     a = [20, 1];
     return direct() + keep[0]();
 }`, 41},

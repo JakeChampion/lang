@@ -30,12 +30,12 @@ function main(): i32 {
     if (!(5u32 < 861u32)) { return 8; }
 
     // Through LOCALS: the route that was already correct.
-    var a: u32 = 2147484527u32;
-    var b: u32 = 861u32;
+    let a: u32 = 2147484527u32;
+    let b: u32 = 861u32;
     if (a % b != 713u32) { return 9; }
 
     // Signed i32 stays signed — the fix must not make every 32-bit op unsigned.
-    var neg: i32 = 0i32 - 677i32;
+    let neg: i32 = 0i32 - 677i32;
     if (!(neg < 3i32)) { return 10; }
     if ((0i32 - 16i32) >> 2i32 != 0i32 - 4i32) { return 12; }
 

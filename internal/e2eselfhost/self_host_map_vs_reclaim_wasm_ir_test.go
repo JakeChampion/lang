@@ -41,34 +41,34 @@ func TestSelfHostMapVsReclaimWasmIR(t *testing.T) {
 		// Built without a lookup (m.get_or(k, "") would allocate a fresh "" default
 		// temp that leaks independently, confounding the measurement).
 		{"mapvs-value-column-flat-wasm", `function build_iv(n: i32): i32 {
-    var m: Map[i32, string] = Map { 1: "a" + "b", 2: "c" + "d" };
+    let m: Map[i32, string] = Map { 1: "a" + "b", 2: "c" + "d" };
     return 1;
 }
 function build_ii(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2, 3: 4 };
+    let m: Map[i32, i32] = Map { 1: 2, 3: 4 };
     return 1;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { acc = acc + build_iv(i) + build_ii(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 500) { acc = acc + build_iv(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
-    var k: i32 = 0;
+    let s2: i32 = (__heap_bump_bytes() as i32);
+    let k: i32 = 0;
     while (k < 500) { acc = acc + build_ii(k); k = k + 1; }
-    var k2: i32 = (__heap_bump_bytes() as i32);
+    let k2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
 		{"mapvs-value-correct-wasm", `function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var m: Map[i32, string] = Map { 7: "hel" + "lo", 8: "wor" + "ld" };
+        let m: Map[i32, string] = Map { 7: "hel" + "lo", 8: "wor" + "ld" };
         if (m.get_or(7, "").len() != 5) { bad = 1; }
         if (m.get_or(8, "").len() != 5) { bad = 1; }
         i = i + 1;
@@ -78,11 +78,11 @@ function main(): i32 {
     return 0;
 }`, 0},
 		{"mapvs-aliased-value-excluded-wasm", `function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var s: string = "aa" + "bb";
-        var m: Map[i32, string] = Map { 1: s };
+        let s: string = "aa" + "bb";
+        let m: Map[i32, string] = Map { 1: s };
         if (s.len() != 4) { bad = 1; }
         if (m.get_or(1, "").len() != 4) { bad = 1; }
         i = i + 1;

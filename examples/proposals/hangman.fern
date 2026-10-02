@@ -66,7 +66,7 @@ function word_has(w: string, c: string): boolean {
 // The distinct letters of a word, which is what "guessed everything" means —
 // a repeated letter is one thing to find, not two.
 function distinct_letters(w: string): set.Set[string] {
-  var s: set.Set[string] = set.set_new();
+  let s: set.Set[string] = set.set_new();
   for i in 0..w.len() {
     s = s.add(letter_at(w, i));
   }
@@ -95,7 +95,7 @@ function guess(g: Game, c: string): Game {
   if (g.guessed.contains(c)) {
     return g;
   }
-  var w: i32 = g.wrong;
+  let w: i32 = g.wrong;
   if (!word_has(g.word, c)) {
     w = w + 1;
   }
@@ -106,9 +106,9 @@ function guess(g: Game, c: string): Game {
 }
 
 function masked(g: Game): string {
-  var out: string = "";
+  let out: string = "";
   for i in 0..g.word.len() {
-    var c: string = letter_at(g.word, i);
+    let c: string = letter_at(g.word, i);
     if (g.guessed.contains(c)) {
       out = out + c;
     } else {
@@ -127,10 +127,10 @@ function remaining(g: Game): i32 {
 // The mask, derived from the word and a set of letters with no game state in
 // between. `masked` walks the game; this walks the word. They must agree.
 function derived_mask(word: string, letters: string[]): string {
-  var out: string = "";
+  let out: string = "";
   for i in 0..word.len() {
-    var c: string = letter_at(word, i);
-    var shown: boolean = false;
+    let c: string = letter_at(word, i);
+    let shown: boolean = false;
     for k in 0..letters.len() {
       if (letters[k] == c) {
         shown = true;
@@ -148,9 +148,9 @@ function derived_mask(word: string, letters: string[]): string {
 // The wrong count, derived the same way: how many DISTINCT letters in the
 // sequence are absent from the word, counting a repeat once.
 function derived_wrong(word: string, letters: string[]): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for k in 0..letters.len() {
-    var dup: boolean = false;
+    let dup: boolean = false;
     for j in 0..k {
       if (letters[j] == letters[k]) {
         dup = true;
@@ -164,7 +164,7 @@ function derived_wrong(word: string, letters: string[]): i32 {
 }
 
 function play(word: string, max_wrong: i32, letters: string[]): Game {
-  var g: Game = new_game(word, max_wrong);
+  let g: Game = new_game(word, max_wrong);
   for k in 0..letters.len() {
     g = guess(g, letters[k]);
   }
@@ -179,7 +179,7 @@ function words(): string[] {
 }
 
 function chars_of(w: string): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   for i in 0..w.len() {
     out = out.append(letter_at(w, i));
   }
@@ -197,12 +197,12 @@ function alphabet(): string[] {
 // recomputes differently the second time, passes a life-count assertion and
 // fails this one.
 function test_a_repeated_guess_changes_nothing(): test.TestOutcome {
-  var ws: string[] = words();
+  let ws: string[] = words();
   for i in 0..ws.len() {
-    var az: string[] = alphabet();
+    let az: string[] = alphabet();
     for k in 0..az.len() {
-      var once: Game = play(ws[i], 6, [az[k]]);
-      var twice: Game = guess(once, az[k]);
+      let once: Game = play(ws[i], 6, [az[k]]);
+      let twice: Game = guess(once, az[k]);
       if (masked(twice) != masked(once) || twice.wrong != once.wrong
         || twice.guessed.len() != once.guessed.len()
         || remaining(twice) != remaining(once)) {
@@ -228,15 +228,15 @@ function test_a_repeated_guess_changes_nothing(): test.TestOutcome {
 // derivation throughout and failed on "banana", which the guess sequence
 // completes with five letters still to come.
 function test_stepping_agrees_with_deriving_at_every_prefix(): test.TestOutcome {
-  var ws: string[] = words();
-  var seq: string[] = chars_of("aeioubcnrsxyz");
+  let ws: string[] = words();
+  let seq: string[] = chars_of("aeioubcnrsxyz");
   for i in 0..ws.len() {
-    var g: Game = new_game(ws[i], 99);
-    var sofar: string[] = [];
+    let g: Game = new_game(ws[i], 99);
+    let sofar: string[] = [];
     for k in 0..seq.len() {
       if (is_over(g)) {
-        var wasm: string = masked(g);
-        var wasw: i32 = g.wrong;
+        let wasm: string = masked(g);
+        let wasw: i32 = g.wrong;
         g = guess(g, seq[k]);
         if (masked(g) != wasm || g.wrong != wasw) {
           return test.fail("\"" + ws[i] + "\": a finished game moved"
@@ -248,12 +248,12 @@ function test_stepping_agrees_with_deriving_at_every_prefix(): test.TestOutcome 
       }
       g = guess(g, seq[k]);
       sofar = sofar.append(seq[k]);
-      var dm: string = derived_mask(ws[i], sofar);
+      let dm: string = derived_mask(ws[i], sofar);
       if (masked(g) != dm) {
         return test.fail("\"" + ws[i] + "\" after " + k.to_string()
           + " guesses: stepped to " + masked(g) + ", derives as " + dm);
       }
-      var dw: i32 = derived_wrong(ws[i], sofar);
+      let dw: i32 = derived_wrong(ws[i], sofar);
       if (g.wrong != dw) {
         return test.fail("\"" + ws[i] + "\" after " + k.to_string()
           + " guesses: stepped wrong=" + g.wrong.to_string()
@@ -267,16 +267,16 @@ function test_stepping_agrees_with_deriving_at_every_prefix(): test.TestOutcome 
 // The win fires on the guess that completes the word — not before, and the
 // game must not already be won at the start of a non-empty word.
 function test_the_win_fires_exactly_on_the_last_letter(): test.TestOutcome {
-  var ws: string[] = words();
+  let ws: string[] = words();
   for i in 0..ws.len() {
-    var need: string[] = distinct_letters(ws[i]).to_array();
-    var g: Game = new_game(ws[i], 6);
+    let need: string[] = distinct_letters(ws[i]).to_array();
+    let g: Game = new_game(ws[i], 6);
     if (is_won(g)) {
       return test.fail("\"" + ws[i] + "\" is won before any guess");
     }
     for k in 0..need.len() {
       g = guess(g, need[k]);
-      var last: boolean = k == need.len() - 1;
+      let last: boolean = k == need.len() - 1;
       if (is_won(g) != last) {
         return test.fail("\"" + ws[i] + "\": after " + (k + 1).to_string()
           + " of " + need.len().to_string() + " letters, is_won="
@@ -300,8 +300,8 @@ function test_the_win_fires_exactly_on_the_last_letter(): test.TestOutcome {
 // checked because only one of them is visible from a transcript.
 function test_the_loss_fires_exactly_at_max_wrong(): test.TestOutcome {
   for limit in 1..7 {
-    var g: Game = new_game("fern", limit);
-    var misses: string[] = chars_of("xyzwqvpo");
+    let g: Game = new_game("fern", limit);
+    let misses: string[] = chars_of("xyzwqvpo");
     for k in 0..limit {
       if (is_lost(g)) {
         return test.fail("limit " + limit.to_string() + ": lost after "
@@ -322,22 +322,22 @@ function test_the_loss_fires_exactly_at_max_wrong(): test.TestOutcome {
 // a game, or a late wrong one can un-win it — both reachable in any UI that
 // does not itself check.
 function test_a_finished_game_ignores_further_guesses(): test.TestOutcome {
-  var won: Game = play("fern", 6, chars_of("fern"));
+  let won: Game = play("fern", 6, chars_of("fern"));
   if (!is_won(won)) {
     return test.fail("the setup did not win");
   }
-  var after: Game = guess(guess(won, "x"), "z");
+  let after: Game = guess(guess(won, "x"), "z");
   if (!is_won(after) || is_lost(after) || after.wrong != won.wrong
     || masked(after) != masked(won)) {
     return test.fail("a won game moved on: wrong " + won.wrong.to_string()
       + " -> " + after.wrong.to_string() + ", mask " + masked(won)
       + " -> " + masked(after));
   }
-  var lost: Game = play("fern", 2, chars_of("xy"));
+  let lost: Game = play("fern", 2, chars_of("xy"));
   if (!is_lost(lost)) {
     return test.fail("the setup did not lose");
   }
-  var after2: Game = guess(guess(guess(lost, "f"), "e"), "r");
+  let after2: Game = guess(guess(guess(lost, "f"), "e"), "r");
   if (!is_lost(after2) || is_won(after2) || masked(after2) != masked(lost)) {
     return test.fail("a lost game moved on: mask " + masked(lost) + " -> "
       + masked(after2) + ", is_won=" + is_won(after2).to_string());
@@ -358,22 +358,22 @@ function test_a_finished_game_ignores_further_guesses(): test.TestOutcome {
 // contains, so the word can never be completed, and max_wrong is far above the
 // 25 guesses available. Under those conditions the claim is unconditional.
 function test_the_order_of_guesses_does_not_matter(): test.TestOutcome {
-  var ws: string[] = words();
+  let ws: string[] = words();
   for i in 0..ws.len() {
-    var hold: string = letter_at(ws[i], 0);
-    var fwd: string[] = [];
-    var az: string[] = alphabet();
+    let hold: string = letter_at(ws[i], 0);
+    let fwd: string[] = [];
+    let az: string[] = alphabet();
     for k in 0..az.len() {
       if (az[k] != hold) {
         fwd = fwd.append(az[k]);
       }
     }
-    var rev: string[] = [];
+    let rev: string[] = [];
     for k in 0..fwd.len() {
       rev = rev.append(fwd[fwd.len() - 1 - k]);
     }
-    var a: Game = play(ws[i], 99, fwd);
-    var b: Game = play(ws[i], 99, rev);
+    let a: Game = play(ws[i], 99, fwd);
+    let b: Game = play(ws[i], 99, rev);
     if (is_over(a) || is_over(b)) {
       return test.fail("\"" + ws[i] + "\": withholding '" + hold
         + "' should have kept the game running, but it ended");
@@ -391,11 +391,11 @@ function test_the_order_of_guesses_does_not_matter(): test.TestOutcome {
 // What is left to find only ever shrinks, and reaches zero exactly when the
 // game is won. Monotonicity is what makes the game finite.
 function test_what_is_left_only_shrinks(): test.TestOutcome {
-  var ws: string[] = words();
-  var az: string[] = alphabet();
+  let ws: string[] = words();
+  let az: string[] = alphabet();
   for i in 0..ws.len() {
-    var g: Game = new_game(ws[i], 99);
-    var prev: i32 = remaining(g);
+    let g: Game = new_game(ws[i], 99);
+    let prev: i32 = remaining(g);
     if (prev != distinct_letters(ws[i]).len()) {
       return test.fail("\"" + ws[i] + "\": starts with " + prev.to_string()
         + " remaining but has "
@@ -403,7 +403,7 @@ function test_what_is_left_only_shrinks(): test.TestOutcome {
     }
     for k in 0..az.len() {
       g = guess(g, az[k]);
-      var now: i32 = remaining(g);
+      let now: i32 = remaining(g);
       if (now > prev) {
         return test.fail("\"" + ws[i] + "\": remaining rose from "
           + prev.to_string() + " to " + now.to_string());
@@ -426,19 +426,19 @@ function test_what_is_left_only_shrinks(): test.TestOutcome {
 // degenerate shapes, and "aaa" is the one where counting occurrences instead
 // of distinct letters gives the wrong answer.
 function test_repeated_letters_count_once(): test.TestOutcome {
-  var g: Game = new_game("aaa", 6);
+  let g: Game = new_game("aaa", 6);
   if (remaining(g) != 1) {
     return test.fail("\"aaa\" has " + remaining(g).to_string()
       + " letters left to find; it has one");
   }
-  var after: Game = guess(g, "a");
+  let after: Game = guess(g, "a");
   if (!is_won(after)) {
     return test.fail("\"aaa\" not won after guessing 'a': " + masked(after));
   }
   if (masked(after) != "aaa") {
     return test.fail("\"aaa\" masked as " + masked(after) + " after 'a'");
   }
-  var m: Game = new_game("mississippi", 6);
+  let m: Game = new_game("mississippi", 6);
   if (remaining(m) != 4) {
     return test.fail("\"mississippi\" has " + remaining(m).to_string()
       + " distinct letters; it has 4 (m i s p)");
@@ -450,14 +450,14 @@ function test_repeated_letters_count_once(): test.TestOutcome {
 
 function main(): i32 {
   eprint("hangman — a word list and a guess tracker");
-  var g: Game = new_game("compiler", 6);
-  var seq: string[] = chars_of("eaoicmplr");
+  let g: Game = new_game("compiler", 6);
+  let seq: string[] = chars_of("eaoicmplr");
   eprint("  word: " + masked(g) + "  (" + remaining(g).to_string()
     + " letters to find)");
   for k in 0..seq.len() {
-    var before: i32 = g.wrong;
+    let before: i32 = g.wrong;
     g = guess(g, seq[k]);
-    var mark: string = "hit ";
+    let mark: string = "hit ";
     if (g.wrong > before) {
       mark = "miss";
     }
@@ -474,15 +474,15 @@ function main(): i32 {
     eprint("  lost");
   }
 
-  var ws: string[] = words();
+  let ws: string[] = words();
   for i in 0..ws.len() {
-    var w: Game = play(ws[i], 6, distinct_letters(ws[i]).to_array());
+    let w: Game = play(ws[i], 6, distinct_letters(ws[i]).to_array());
     eprint("  \"" + ws[i] + "\" solved by its own "
       + distinct_letters(ws[i]).len().to_string() + " letters: "
       + masked(w) + " (" + w.wrong.to_string() + " wrong)");
   }
 
-  var t: test.TestRunner = test.test_new("hangman");
+  let t: test.TestRunner = test.test_new("hangman");
   t = t.it("a repeated guess changes nothing", test_a_repeated_guess_changes_nothing);
   t = t.it("stepping agrees with deriving at every prefix", test_stepping_agrees_with_deriving_at_every_prefix);
   t = t.it("the win fires exactly on the last letter", test_the_win_fires_exactly_on_the_last_letter);

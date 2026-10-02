@@ -29,7 +29,7 @@ func TestRunRewritesGenericCallSitesInsideEveryExprShape(t *testing.T) {
 import "core/map";
 function id[T](x: T): T { return x; }
 function main(): i32 {
-    var m: Map[i32, i32] = Map { 1: id(42) };
+    let m: Map[i32, i32] = Map { 1: id(42) };
     return 0;
 }`,
 		},
@@ -39,7 +39,7 @@ function main(): i32 {
 import "core/map";
 function id[T](x: T): T { return x; }
 function main(): i32 {
-    var m: Map[i32, i32] = Map { id(1): 42 };
+    let m: Map[i32, i32] = Map { id(1): 42 };
     return 0;
 }`,
 		},
@@ -49,7 +49,7 @@ function main(): i32 {
 import "std/i32";
 function id[T](x: T): T { return x; }
 function main(): i32 {
-    var s: string = f"hello {id(42)} world";
+    let s: string = f"hello {id(42)} world";
     return 0;
 }`,
 		},
@@ -57,7 +57,7 @@ function main(): i32 {
 			name: "Assign rhs",
 			src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     n = id(7);
     return n;
 }`,
@@ -74,7 +74,7 @@ function main(): i32 {
 			name: "match arm guard",
 			src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var n: i32 = 3;
+    let n: i32 = 3;
     match (n) {
         1 when id(n) > 2 => { return 1; },
         _ => { return 0; },
@@ -86,7 +86,7 @@ function main(): i32 {
 			src: `enum Wrap { One(i32), None }
 function id[T](x: T): T { return x; }
 function main(): i32 {
-    var w: Wrap = One(id(5));
+    let w: Wrap = One(id(5));
     match (w) { One(v) => { return v; }, None => { return 0; }, }
 }`,
 		},
@@ -94,7 +94,7 @@ function main(): i32 {
 			name: "for-in iterable",
 			src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     for x in id([1, 2, 3]) { total = total + x; }
     return total;
 }`,
@@ -103,7 +103,7 @@ function main(): i32 {
 			name: "Lambda body",
 			src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var f: (i32) => i32 = (x: i32): i32 => { return id(x) + 1; };
+    let f: (i32) => i32 = (x: i32): i32 => { return id(x) + 1; };
     return f(41);
 }`,
 		},
@@ -158,8 +158,8 @@ func TestRunRewritesGenericStructLitsInEveryPosition(t *testing.T) {
 			src: `struct Box[T] { v: T }
 function rewrap[T](x: T): Box[T] { return Box { ...Box { v: x }, v: x }; }
 function main(): i32 {
-    var a: Box[i32] = rewrap(1);
-    var b: Box[boolean] = rewrap(true);
+    let a: Box[i32] = rewrap(1);
+    let b: Box[boolean] = rewrap(true);
     if (b.v) { return a.v; }
     return 0;
 }`,
@@ -170,8 +170,8 @@ function main(): i32 {
 struct Box[T] { v: T }
 function show[T](x: T): string { return f"{Box { v: 42 }.v}"; }
 function main(): i32 {
-    var s: string = show(1);
-    var t: string = show(true);
+    let s: string = show(1);
+    let t: string = show(true);
     return s.len() - t.len();
 }`,
 		},
@@ -179,8 +179,8 @@ function main(): i32 {
 			name: "defer body",
 			src: `struct Box[T] { v: T }
 function run[T](x: T): i32 {
-    var r: i32 = 0;
-    defer { var h: Box[i32] = Box { v: 5 }; r = h.v; }
+    let r: i32 = 0;
+    defer { let h: Box[i32] = Box { v: 5 }; r = h.v; }
     return 7;
 }
 function main(): i32 { return run(1) + run(true); }`,
@@ -225,38 +225,38 @@ func TestRunSubstitutesMethodCallTypeArgsInGenericBody(t *testing.T) {
 		{
 			name: "push on T[] inside for-in (map)",
 			src: `function map_arr[T, U](xs: T[], f: (T) => U): U[] {
-    var out: U[] = [];
+    let out: U[] = [];
     for x in xs { out = out.append(f(x)); }
     return out;
 }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var ys: i32[] = map_arr(xs, (n: i32): i32 => { return n * 10; });
+    let xs: i32[] = [1, 2, 3];
+    let ys: i32[] = map_arr(xs, (n: i32): i32 => { return n * 10; });
     return ys[0] + ys[1] + ys[2];
 }`,
 		},
 		{
 			name: "push-only generic body",
 			src: `function dup[T](xs: T[]): T[] {
-    var out: T[] = [];
+    let out: T[] = [];
     for x in xs { out = out.append(x); }
     return out;
 }
 function main(): i32 {
-    var xs: i32[] = [5, 7];
-    var ys: i32[] = dup(xs);
+    let xs: i32[] = [5, 7];
+    let ys: i32[] = dup(xs);
     return ys[0] + ys[1];
 }`,
 		},
 		{
 			name: "len method on T[]",
 			src: `function count[T](xs: T[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for x in xs { n = n + xs.len(); }
     return n;
 }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
+    let xs: i32[] = [1, 2, 3];
     return count(xs);
 }`,
 		},
@@ -303,7 +303,7 @@ func TestRunHandlesPartiallyInferredGenericCalls(t *testing.T) {
 			name: "pick with Ok+Err args, Result destination annotation",
 			src: `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
 function main(): i32 {
-    var r: Result[i32, i32] = pick(true, Ok(1), Err(2));
+    let r: Result[i32, i32] = pick(true, Ok(1), Err(2));
     return 0;
 }`,
 		},
@@ -311,7 +311,7 @@ function main(): i32 {
 			name: "id with Ok arg, Result destination annotation",
 			src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var r: Result[i32, i32] = id(Ok(7));
+    let r: Result[i32, i32] = id(Ok(7));
     return 0;
 }`,
 		},
@@ -319,7 +319,7 @@ function main(): i32 {
 			name: "pick with None+None args, Option destination annotation",
 			src: `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
 function main(): i32 {
-    var o: Option[i32] = pick(true, None, None);
+    let o: Option[i32] = pick(true, None, None);
     return 0;
 }`,
 		},
@@ -381,13 +381,13 @@ function main(): i32 { return id(3) + id(4); }`},
 function main(): i32 { return -id(5); }`},
 		{node: "Index", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var a: i32[] = [id(1), 2, 3];
+    let a: i32[] = [id(1), 2, 3];
     return a[id(0)];
 }`},
 		{node: "SliceExpr", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var a: i32[] = [1, 2, 3, 4];
-    var s: [i32] = a[id(0):id(2)];
+    let a: i32[] = [1, 2, 3, 4];
+    let s: [i32] = a[id(0):id(2)];
     return s.len();
 }`},
 		{node: "FieldAccess", src: `function id[T](x: T): T { return x; }
@@ -395,8 +395,8 @@ struct P { x: i32 }
 function main(): i32 { return id(P { x: 7 }).x; }`},
 		{node: "TryOp", src: `function id[T](x: T): T { return x; }
 function main(): Option[i32] {
-    var o: Option[i32] = id(Some(7));
-    var v: i32 = o?;
+    let o: Option[i32] = id(Some(7));
+    let v: i32 = o?;
     return Some(v);
 }`},
 		{node: "IfExpr", src: `function id[T](x: T): T { return x; }
@@ -410,44 +410,44 @@ function main(): i32 {
 }`},
 		{node: "ArrayLit", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var a: i32[] = [id(1), id(2), id(3)];
+    let a: i32[] = [id(1), id(2), id(3)];
     return a[0];
 }`},
 		{node: "TupleLit", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var t: (i32, i32) = (id(3), id(4));
-    var (a, b) = t;
+    let t: (i32, i32) = (id(3), id(4));
+    let (a, b) = t;
     return a + b;
 }`},
 		{node: "StructLit.Fields", src: `function id[T](x: T): T { return x; }
 struct P { x: i32, y: i32 }
 function main(): i32 {
-    var p: P = P { x: id(1), y: id(2) };
+    let p: P = P { x: id(1), y: id(2) };
     return p.x + p.y;
 }`},
 		{node: "MapLit.Key+Value", src: `
 import "core/map";
 function id[T](x: T): T { return x; }
 function main(): i32 {
-    var m: Map[i32, i32] = Map { id(1): id(10) };
+    let m: Map[i32, i32] = Map { id(1): id(10) };
     return m.len();
 }`},
 		{node: "FString.Interpolant", src: `
 import "std/i32";
 function id[T](x: T): T { return x; }
 function main(): i32 {
-    var s: string = f"x={id(42)}";
+    let s: string = f"x={id(42)}";
     return s.len();
 }`},
 		{node: "Assign", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     n = id(7);
     return n;
 }`},
 		{node: "Lambda", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var f: (i32) => i32 = (x: i32): i32 => { return id(x) + 1; };
+    let f: (i32) => i32 = (x: i32): i32 => { return id(x) + 1; };
     return f(41);
 }`},
 		{node: "CastExpr", src: `function id[T](x: T): T { return x; }
@@ -464,14 +464,14 @@ function main(): i32 { return (id(7i64) as i32); }`},
 
 		// ---- Statement shapes with sub-expressions ----
 		{node: "Var.Init", src: `function id[T](x: T): T { return x; }
-function main(): i32 { var n: i32 = id(7); return n; }`},
+function main(): i32 { let n: i32 = id(7); return n; }`},
 		{node: "Destructure.Init", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var (a, b) = id((1, 2));
+    let (a, b) = id((1, 2));
     return a + b;
 }`},
 		{node: "ExprStmt.Expr", src: `function id[T](x: T): T { return x; }
-function main(): i32 { var n: i32 = 0; n = id(7); return n; }`},
+function main(): i32 { let n: i32 = 0; n = id(7); return n; }`},
 		{node: "Return.Value", src: `function id[T](x: T): T { return x; }
 function main(): i32 { return id(7); }`},
 		{node: "If.Cond+Then+Else", src: `function id[T](x: T): T { return x; }
@@ -491,20 +491,20 @@ function main(): i32 {
 }`},
 		{node: "While.Cond+Body", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (id(i) < 3) { i = id(i) + 1; }
     return i;
 }`},
 		{node: "For.Init+Cond+Step+Body", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var sum: i32 = 0;
-    for (var i: i32 = id(0); i < 3; i = id(i) + 1) { sum = id(sum) + i; }
+    let sum: i32 = 0;
+    for (let i: i32 = id(0); i < 3; i = id(i) + 1) { sum = id(sum) + i; }
     return sum;
 }`},
 		{node: "Match.Tag+Arms", src: `function id[T](x: T): T { return x; }
 enum L { Red, Green }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (id(Red)) {
         Red => { n = id(1); },
         Green => { n = id(2); }
@@ -518,7 +518,7 @@ function main(): i32 {
 }`},
 		{node: "Defer.Expr", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     defer n = id(100);
     n = 7;
     return n;
@@ -758,7 +758,7 @@ function main(): i32 { return outer(7); }`},
 		{"nested-fn-annotation", `struct Box[T] { v: T }
 function outer(n: i32): i32 {
   function inner(k: i32): i32 {
-    var b: Box[i32] = Box { v: k };
+    let b: Box[i32] = Box { v: k };
     return b.v;
   }
   return inner(n);
@@ -766,8 +766,8 @@ function outer(n: i32): i32 {
 function main(): i32 { return outer(7); }`},
 		{"lambda-annotation", `struct Box[T] { v: T }
 function outer(n: i32): i32 {
-  var f = ((k: i32) => {
-    var c: Box[i32] = Box { v: k };
+  let f = ((k: i32) => {
+    let c: Box[i32] = Box { v: k };
     c.v
   });
   return f(n);
@@ -779,8 +779,8 @@ function outer[T](acc: T): T {
   return apply(acc, skip);
 }
 function main(): i32 {
-  var a: i32 = outer(7);
-  var b: string[] = outer(["x", "y"]);
+  let a: i32 = outer(7);
+  let b: string[] = outer(["x", "y"]);
   return a + b.len();
 }`},
 	} {
@@ -831,49 +831,49 @@ func TestMonomorphEntersDeferAndLoopBodies(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"defer-struct-lit", `struct Holder[T] { v: T }
 function run(): i32 {
-  var r: i32 = 0;
-  defer { var h: Holder[i32] = Holder { v: 5 }; r = h.v; }
+  let r: i32 = 0;
+  defer { let h: Holder[i32] = Holder { v: 5 }; r = h.v; }
   return 7;
 }
 function main(): i32 { return run(); }`},
 		{"defer-in-generic", `struct Box[T] { v: T }
 function outer[T](x: T): i32 {
-  var r: i32 = 0;
-  defer { var b: Box[T] = Box { v: x }; r = 1; }
+  let r: i32 = 0;
+  defer { let b: Box[T] = Box { v: x }; r = 1; }
   return 7;
 }
 function main(): i32 { return outer(3); }`},
 		{"defer-nested", `struct Box[T] { v: T }
 function run(n: i32): i32 {
-  var r: i32 = 0;
-  if (n > 0) { defer { var h: Box[i32] = Box { v: 5 }; r = h.v; } }
+  let r: i32 = 0;
+  if (n > 0) { defer { let h: Box[i32] = Box { v: 5 }; r = h.v; } }
   return 7;
 }
 function main(): i32 { return run(1); }`},
 		{"defer-two-insts", `struct Box[T] { v: T }
 function outer[T](x: T): i32 {
-  var r: i32 = 0;
-  defer { var b: Box[T] = Box { v: x }; r = 1; }
+  let r: i32 = 0;
+  defer { let b: Box[T] = Box { v: x }; r = 1; }
   return 7;
 }
 function main(): i32 {
-  var a: i32 = outer(3);
-  var b: i32 = outer("s");
+  let a: i32 = outer(3);
+  let b: i32 = outer("s");
   return a + b - 7;
 }`},
 		{"loop-two-insts", `struct Box[T] { v: T }
 function outer[T](x: T): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   loop {
-    var b: Box[T] = Box { v: x };
+    let b: Box[T] = Box { v: x };
     n = n + 1;
     if (n > 0) { break; }
   }
   return 7;
 }
 function main(): i32 {
-  var a: i32 = outer(3);
-  var b: i32 = outer("s");
+  let a: i32 = outer(3);
+  let b: i32 = outer("s");
   return a + b - 7;
 }`},
 	} {
@@ -896,7 +896,7 @@ function main(): i32 {
 func TestMonomorphTupleArgProducesAssemblerSafeName(t *testing.T) {
 	src := `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var t = id((3, 4));
+    let t = id((3, 4));
     return t.0 + t.1;
 }`
 	prog, err := parser.Parse(src)
@@ -940,7 +940,7 @@ function main(): i32 {
 func TestMonomorphNestedGenericNameIsConsistent(t *testing.T) {
 	src := `struct Box[T] { v: T }
 function main(): i32 {
-    var b: Box[Box[i32]] = Box { v: Box { v: 42 } };
+    let b: Box[Box[i32]] = Box { v: Box { v: 42 } };
     return b.v.v;
 }`
 	prog, err := parser.Parse(src)
@@ -1070,15 +1070,15 @@ func TestGenericDeriveDefaultMonomorphises(t *testing.T) {
 		{"struct-param", `trait Default { function default(): Self; }
 @derive(Default) struct Inner { n: i32 }
 @derive(Default) struct Box[T] { v: T }
-function main(): i32 { var b: Box[Inner] = Box.default(); return b.v.n; }`},
+function main(): i32 { let b: Box[Inner] = Box.default(); return b.v.n; }`},
 		{"primitive-param", `trait Default { function default(): Self; }
 impl Default for i32 { function default(): i32 { return 0; } }
 @derive(Default) struct Box[T] { v: T }
-function main(): i32 { var b: Box[i32] = Box.default(); return b.v; }`},
+function main(): i32 { let b: Box[i32] = Box.default(); return b.v; }`},
 		{"string-param", `trait Default { function default(): Self; }
 impl Default for string { function default(): string { return ""; } }
 @derive(Default) struct Box[T] { v: T }
-function main(): i32 { var b: Box[string] = Box.default(); return b.v.len(); }`},
+function main(): i32 { let b: Box[string] = Box.default(); return b.v.len(); }`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1132,7 +1132,7 @@ func TestAssocCallRewriteNamesEveryScalarWidth(t *testing.T) {
 			src := fmt.Sprintf(`trait Default { function default(): Self; }
 impl Default for %[1]s { function default(): %[1]s { return %[2]s; } }
 function zero[T: Default](): T { return T.default(); }
-function main(): i32 { var b: %[1]s = zero[%[1]s](); return %[3]s; }`, s.ty, s.zero, s.use)
+function main(): i32 { let b: %[1]s = zero[%[1]s](); return %[3]s; }`, s.ty, s.zero, s.use)
 			prog, _, err := modload.LoadSource(src)
 			if err != nil {
 				t.Fatalf("load: %v", err)
@@ -1220,8 +1220,8 @@ func TestRunRewritesSubstitutedCallTypeArgsAgainstEnumClone(t *testing.T) {
 enum H[T] { Leaf(T), Br(H[T][]) }
 function count[T](kids: H[T][]): i32 { return kids.len(); }
 function main(): i32 {
-  var a: H[i32] = Leaf(1);
-  var xs: H[i32][] = [a, Leaf(2)];
+  let a: H[i32] = Leaf(1);
+  let xs: H[i32][] = [a, Leaf(2)];
   return count(xs);
 }`},
 		{"match-binding-array-indexed-and-recursed", `
@@ -1230,16 +1230,16 @@ function depth[T](n: H[T]): i32 {
   match (n) {
     Leaf(x) => { return 1; },
     Br(kids) => {
-      var d: i32 = 0;
-      var i: i32 = 0;
-      while (i < kids.len()) { var k: i32 = depth(kids[i]); if (k > d) { d = k; } i = i + 1; }
+      let d: i32 = 0;
+      let i: i32 = 0;
+      while (i < kids.len()) { let k: i32 = depth(kids[i]); if (k > d) { d = k; } i = i + 1; }
       return d + 1;
     },
   }
 }
 function main(): i32 {
-  var a: H[i32] = Leaf(1);
-  var b: H[i32] = Br([a, Leaf(2)]);
+  let a: H[i32] = Leaf(1);
+  let b: H[i32] = Br([a, Leaf(2)]);
   return depth(Br([b]));
 }`},
 		{"for-in-over-match-binding-array", `
@@ -1247,18 +1247,18 @@ enum H[T] { Leaf(T), Br(H[T][]) }
 function depth[T](n: H[T]): i32 {
   match (n) {
     Leaf(x) => { return 1; },
-    Br(kids) => { var d: i32 = 0; for k in kids { var q: i32 = depth(k); if (q > d) { d = q; } } return d + 1; },
+    Br(kids) => { let d: i32 = 0; for k in kids { let q: i32 = depth(k); if (q > d) { d = q; } } return d + 1; },
   }
 }
 function main(): i32 {
-  var b: H[i32] = Br([Leaf(1), Leaf(2)]);
+  let b: H[i32] = Br([Leaf(1), Leaf(2)]);
   return depth(Br([b]));
 }`},
 		{"array-literal-of-clone-inside-generic-body", `
 enum H[T] { Leaf(T), Br(H[T][]) }
-function wrap[T](x: H[T]): H[T] { var kids: H[T][] = [x]; return Br(kids); }
+function wrap[T](x: H[T]): H[T] { let kids: H[T][] = [x]; return Br(kids); }
 function main(): i32 {
-  var w: H[i32] = wrap(Leaf(3));
+  let w: H[i32] = wrap(Leaf(3));
   match (w) { Br(kids) => { return kids.len(); }, Leaf(v) => { return 0; } }
 }`},
 	} {
@@ -1288,7 +1288,7 @@ func TestRunKeepsValueReceiverSpelledLikeTypeParam(t *testing.T) {
 function same[T: cmp.Eq](T: T, u: T): i32 { if (T.eq(u)) { return 1; } return 0; }
 function main(): i32 { return same(3, 3) + same("a", "b"); }`},
 		{"local", `import "core/cmp";
-function same[T: cmp.Eq](a: T, u: T): i32 { var T: T = a; if (T.eq(u)) { return 1; } return 0; }
+function same[T: cmp.Eq](a: T, u: T): i32 { let T: T = a; if (T.eq(u)) { return 1; } return 0; }
 function main(): i32 { return same(3, 3) + same("a", "b"); }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

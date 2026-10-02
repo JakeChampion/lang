@@ -25,14 +25,14 @@ enum Wrapper { Wrap(i32[]) }
 
 // Both arms construct a Holder; the single dead donor a feeds whichever runs.
 function branch_step(i: i32): i32 {
-    var a: Holder = Holder { n: i, items: [i, i + 1] };
-    var s: i32 = a.n + a.items[0] + a.items[1];      // a's last use: 3i+1
-    var acc: i32 = 0;
+    let a: Holder = Holder { n: i, items: [i, i + 1] };
+    let s: i32 = a.n + a.items[0] + a.items[1];      // a's last use: 3i+1
+    let acc: i32 = 0;
     if (i % 2 == 0) {
-        var b: Holder = Holder { n: s, items: [s, 1] };
+        let b: Holder = Holder { n: s, items: [s, 1] };
         acc = b.n + b.items[0] + b.items[1];          // 2s+1 = 6i+3
     } else {
-        var c: Holder = Holder { n: s + 1, items: [s, 2] };
+        let c: Holder = Holder { n: s + 1, items: [s, 2] };
         acc = c.n + c.items[0] + c.items[1];          // 2s+3 = 6i+5
     }
     return acc;
@@ -40,17 +40,17 @@ function branch_step(i: i32): i32 {
 
 // A dead TUPLE donates its box to a struct of the same class.
 function tuple_step(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var s: i32 = t.0 + t.1[0] + t.1[1];              // t's last use: 3i+1
-    var b: Holder = Holder { n: s, items: [s, 2] };
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let s: i32 = t.0 + t.1[0] + t.1[1];              // t's last use: 3i+1
+    let b: Holder = Holder { n: s, items: [s, 2] };
     return b.n + b.items[0] + b.items[1];             // 2s+2 = 6i+4
 }
 
 // A dead ENUM donates its box (tag + payload) to a struct of the same class.
 function enum_step(i: i32): i32 {
-    var a: Wrapper = Wrap([i, i + 1]);
-    var s: i32 = match (a) { Wrap(xs) => xs[0] };     // a's last use: i
-    var b: Holder = Holder { n: s, items: [s, 3] };
+    let a: Wrapper = Wrap([i, i + 1]);
+    let s: i32 = match (a) { Wrap(xs) => xs[0] };     // a's last use: i
+    let b: Holder = Holder { n: s, items: [s, 3] };
     return b.n + b.items[0] + b.items[1];             // 2s+3 = 2i+3
 }
 
@@ -62,19 +62,19 @@ function main(): i32 {
 
     // Warm the freelists, then run each shape 400 times and require the bump
     // high-water to stay put: a leaked donor box grows it linearly.
-    var warm: i32 = branch_step(1) + tuple_step(1) + enum_step(1);
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var br: i32 = 0;
-    var tu: i32 = 0;
-    var en: i32 = 0;
-    var i: i32 = 0;
+    let warm: i32 = branch_step(1) + tuple_step(1) + enum_step(1);
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let br: i32 = 0;
+    let tu: i32 = 0;
+    let en: i32 = 0;
+    let i: i32 = 0;
     while (i < 400) {
         br = br + branch_step(i);
         tu = tu + tuple_step(i);
         en = en + enum_step(i);
         i = i + 1;
     }
-    var grew: i32 = (__heap_bump_bytes() as i32) - before;
+    let grew: i32 = (__heap_bump_bytes() as i32) - before;
     if (br != 480400) { return 5; }
     if (tu != 480400) { return 6; }
     if (en != 160800) { return 7; }

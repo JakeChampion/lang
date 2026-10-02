@@ -17,7 +17,7 @@ const enumMapDeclaredSrc = `import "core/map";
 enum Rec { Text(string), Pair(string, string), Obj(Map[string, string]) }
 
 function once(v: string): i32 {
-    var r: Rec = Pair(v + "-a", v + "-b-longer-payload");
+    let r: Rec = Pair(v + "-a", v + "-b-longer-payload");
     match (r) {
         Pair(a, b) => { return a.len() + b.len(); },
         Text(s) => { return s.len(); },
@@ -26,7 +26,7 @@ function once(v: string): i32 {
     return 0;
 }
 function main(): i32 {
-    var n: i32 = 0; var i: i32 = 0;
+    let n: i32 = 0; let i: i32 = 0;
     while (i < 200) { n = once("val"); i = i + 1; }
     return n;
 }
@@ -37,9 +37,9 @@ function main(): i32 {
 const enumMapBuiltSrc = `import "core/map";
 enum Rec { Text(string), Pair(string, string), Obj(Map[string, string]) }
 function once(v: string, k: i32): i32 {
-    var r: Rec = Pair(v + "-a", v + "-b-longer-payload");
+    let r: Rec = Pair(v + "-a", v + "-b-longer-payload");
     if (k % 3 == 0) {
-        var m: Map[string, string] = map_new(4);
+        let m: Map[string, string] = map_new(4);
         m = m.insert("key", v + "-value-longer-than-inline");
         r = Obj(m);
     }
@@ -51,7 +51,7 @@ function once(v: string, k: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var n: i32 = 0; var i: i32 = 0;
+    let n: i32 = 0; let i: i32 = 0;
     while (i < 200) { n = n + once("val", i); i = i + 1; }
     return n % 101;
 }
@@ -62,7 +62,7 @@ function main(): i32 {
 const enumMapRecursiveSrc = `import "core/map";
 enum Tree3 { Leaf(string), Node(Tree3[]), Obj(Map[string, Tree3]) }
 function once(v: string): i32 {
-    var r: Tree3 = Node([Leaf(v + "-a"), Leaf(v + "-b-longer-payload")]);
+    let r: Tree3 = Node([Leaf(v + "-a"), Leaf(v + "-b-longer-payload")]);
     match (r) {
         Node(ks) => { return ks.len(); },
         Leaf(s) => { return s.len(); },
@@ -71,7 +71,7 @@ function once(v: string): i32 {
     return 0;
 }
 function main(): i32 {
-    var n: i32 = 0; var i: i32 = 0;
+    let n: i32 = 0; let i: i32 = 0;
     while (i < 200) { n = once("val"); i = i + 1; }
     return n;
 }

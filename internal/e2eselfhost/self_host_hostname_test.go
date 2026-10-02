@@ -17,7 +17,7 @@ import (
 // non-empty check.
 func selfHostHostnameSource(want string) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var h: string = hostname();
+    let h: string = hostname();
     print(h);
     if (h == %q) { return 0; }
     return 1;
@@ -111,10 +111,10 @@ func TestSelfHostHostnameIRWasm(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	const src = `function main(): i32 {
-    var h: string = hostname();
+    let h: string = hostname();
     if (h.len() != 0) { return 1; }
     if (h != "") { return 2; }
-    var s: string = "[" + h + "]";
+    let s: string = "[" + h + "]";
     if (s != "[]") { return 3; }
     return 0;
 }`

@@ -12,8 +12,8 @@ projection, so nothing tied the `Option` to the string it reads, and the
 string was released at its own last use, the slice:
 
 ```
-var s: string = "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string();
-match (s[0:30]) { Some(v) => { var junk = ...; print(v); }, ... }
+let s: string = "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string();
+match (s[0:30]) { Some(v) => { let junk = ...; print(v); }, ... }
 ```
 
 On main this prints `junk`'s bytes where `v`'s should be.

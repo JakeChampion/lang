@@ -17,7 +17,7 @@ import (
 // union of every loaded module's signatures into emit; asm_ir_run models that
 // with `-ir-sigs <file>` (parse a sibling for signatures only).
 //
-// Library B's bgreet returns a STRING ("hi"); entry A does `var s = bgreet();
+// Library B's bgreet returns a STRING ("hi"); entry A does `let s = bgreet();
 // return s.len();`. Only with B's signature in the whole-program view does the
 // entry type bgreet's result as a string and lower `.len()` to str_len → 2.
 // Without it the typed lowering refuses the unit: the checker sees a call to
@@ -45,7 +45,7 @@ func TestSelfHostIRWholeProgramSignatures(t *testing.T) {
 	}
 
 	libSrc := "function bgreet(): string { return \"hi\"; }"
-	entrySrc := "function main(): i32 { var s = bgreet(); return s.len(); }"
+	entrySrc := "function main(): i32 { let s = bgreet(); return s.len(); }"
 
 	// Sibling source on disk for -ir-sigs (absolute path so the driver's
 	// read_file resolves it regardless of cwd).

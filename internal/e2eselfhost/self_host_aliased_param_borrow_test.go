@@ -16,14 +16,14 @@ import (
 // case:
 //
 //	return p.len() + o.len();            caller 80/80  — flat
-//	var q: string = p; ... q.len() ...   caller 80/40
-//	var q: string = p; q = o; ...        caller 80/0
+//	let q: string = p; ... q.len() ...   caller 80/40
+//	let q: string = p; q = o; ...        caller 80/0
 //
 // The whole loss is caller-side, the same expensive half #7507 found when a
 // callee read its param through a match expression.
 //
 // borrowable_params_interproc's per-param gate calls the escape walker with an
-// EMPTY alias_ok, so `var q = p` reads as a bare-ident escape — the same
+// EMPTY alias_ok, so `let q = p` reads as a bare-ident escape — the same
 // asymmetry #7512 closed one layer down for the string credit. Two readings are
 // now admitted as a UNION of independent proofs: the first forgives a bare-ident
 // match scrutinee and stays strict on aliases, the second forgives non-escaping
@@ -35,9 +35,9 @@ import (
 //   - the alias sites are collected WITHOUT alias_bind_sites_of's reassigned-
 //     target exclusion. That exclusion protects a LOCAL's reclaim credit, where a
 //     slot reassigned before its sweep would release the wrong box. The question
-//     here is only whether the PARAM escapes, and `var q = p; q = o;` answers it:
+//     here is only whether the PARAM escapes, and `let q = p; q = o;` answers it:
 //     q briefly aliases p, then stops naming it.
-//   - the REASSIGN sites are collected too. `var q = p; q = o;` escapes p through
+//   - the REASSIGN sites are collected too. `let q = p; q = o;` escapes p through
 //     the bind and o through the assignment; forgiving only the bind left the
 //     other caller half still refused, measured at 80/40.
 //
@@ -68,16 +68,16 @@ type aliasedParamCase struct {
 }
 
 const apbMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`
 
 const apbCaller = `function round(i: i32): i32 {
-    var a: string = "ab" + "cd";
-    var b: string = "ef" + "gh";
+    let a: string = "ab" + "cd";
+    let b: string = "ef" + "gh";
     return consume(a, b) + a.len() - a.len();
 }
 `
@@ -97,7 +97,7 @@ func aliasedParamCases() []aliasedParamCase {
 			// One param aliased into a local. Base: 80/40 — the caller reclaims
 			// `b` (whose param is only read) and leaks `a`.
 			name: "param_aliased_to_local",
-			src: `function consume(p: string, o: string): i32 { var q: string = p; return q.len() + o.len(); }
+			src: `function consume(p: string, o: string): i32 { let q: string = p; return q.len() + o.len(); }
 ` + apbCaller + apbMain,
 			want: 63, allocs: 40, frees: 40,
 		},
@@ -106,7 +106,7 @@ func aliasedParamCases() []aliasedParamCase {
 			// 80/0, the caller reclaiming neither. This is the row that needs the
 			// reassign sites; with the bind arm alone it sits at 80/40.
 			name: "param_aliased_then_reassigned",
-			src: `function consume(p: string, o: string): i32 { var q: string = p; q = o; return q.len() + p.len(); }
+			src: `function consume(p: string, o: string): i32 { let q: string = p; q = o; return q.len() + p.len(); }
 ` + apbCaller + apbMain,
 			want: 63, allocs: 40, frees: 40,
 		},
@@ -118,17 +118,17 @@ func aliasedParamCases() []aliasedParamCase {
 			// clean either way. Native returns 7. Base: 200/120.
 			name: "caller_reads_params_back_after_churn",
 			src: `function consume(p: string, o: string): i32 {
-    var q: string = p;
+    let q: string = p;
     q = o;
     return q.len() + p.len();
 }
 function round(i: i32): i32 {
-    var a: string = "ab" + "cd";
-    var b: string = "efg" + "hij";
-    var n: i32 = consume(a, b);
-    var j1: string = "pp" + "qq";
-    var j2: string = "rr" + "ss";
-    var j3: string = "tt" + "uu";
+    let a: string = "ab" + "cd";
+    let b: string = "efg" + "hij";
+    let n: i32 = consume(a, b);
+    let j1: string = "pp" + "qq";
+    let j2: string = "rr" + "ss";
+    let j3: string = "tt" + "uu";
     return n + a.len() * 7 + (a[0] as i32) + b.len()
         + j1.len() - j1.len() + j2.len() - j2.len() + j3.len() - j3.len();
 }
@@ -142,13 +142,13 @@ function round(i: i32): i32 {
 			// returned alias.
 			name: "escaping_alias_keeps_param_refused",
 			src: `function consume(p: string, o: string): string {
-    var q: string = p;
+    let q: string = p;
     return q;
 }
 function round(i: i32): i32 {
-    var a: string = "ab" + "cd";
-    var b: string = "ef" + "gh";
-    var r: string = consume(a, b);
+    let a: string = "ab" + "cd";
+    let b: string = "ef" + "gh";
+    let r: string = consume(a, b);
     return r.len() + a.len() + b.len();
 }
 ` + apbMain,
@@ -161,8 +161,8 @@ function round(i: i32): i32 {
 			// literal allocates it and the other three grow it in place (#10960).
 			name: "string_accumulator_unchanged",
 			src: `function round(i: i32): i32 {
-    var s: string = "";
-    var k: i32 = 0;
+    let s: string = "";
+    let k: i32 = 0;
     while (k < 4) { s = s + "ab"; k = k + 1; }
     return s.len();
 }

@@ -14,13 +14,13 @@ import (
 const borrowedFieldMoveSrc = `struct Frame { key: string, n: i32 }
 struct Acc { fr: Frame, k: i32 }
 function node(own st: Acc): Acc {
-    var fr: Frame = st.fr;
+    let fr: Frame = st.fr;
     return Acc { fr: fr, k: st.k + 1 };
 }
 function main(): i32 {
-    var f: Frame = Frame { key: "k" + "x", n: 1 };
-    var acc: Acc = Acc { fr: f, k: 0 };
-    var i: i32 = 0;
+    let f: Frame = Frame { key: "k" + "x", n: 1 };
+    let acc: Acc = Acc { fr: f, k: 0 };
+    let i: i32 = 0;
     while (i < 5) { acc = node(acc); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc.k + acc.fr.key.len();

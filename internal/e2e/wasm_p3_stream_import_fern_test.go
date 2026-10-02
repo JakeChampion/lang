@@ -20,7 +20,7 @@ import (
 //
 //	@import("test:dep/d","prod") async function body(): stream[u8];
 //	async function run(): i32 {
-//	    var b: u8[] = body();                 // colorless: collects the stream to u8[]
+//	    let b: u8[] = body();                 // colorless: collects the stream to u8[]
 //	    return (b[0] as i32) + (b[1] as i32) + (b[2] as i32);
 //	}
 //
@@ -38,7 +38,7 @@ func TestWasmP3StreamImportFromFern(t *testing.T) {
 
 	src := `@import("test:dep/d", "prod") async function body(): stream[u8];
 async function run(): i32 {
-	var b: u8[] = body();
+	let b: u8[] = body();
 	return (b[0] as i32) + (b[1] as i32) + (b[2] as i32);
 }
 function main(): i32 { return 0; }

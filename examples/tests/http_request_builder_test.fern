@@ -45,12 +45,12 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 }
 
 function test_json_body_is_created(): test.TestOutcome {
-  var m: MockPlatform = mock_platform.mock_platform_new();
-  var req: HttpRequest = http.request("POST", "/items").with_json("{\"n\": 1}");
+  let m: MockPlatform = mock_platform.mock_platform_new();
+  let req: HttpRequest = http.request("POST", "/items").with_json("{\"n\": 1}");
   if (req.body_len() != 8) {
     return test.fail("body length: " + req.body_len().to_string());
   }
-  var resp: HttpResponse = handle(req, m.as_platform());
+  let resp: HttpResponse = handle(req, m.as_platform());
   match (test.assert_status(resp, 200)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -82,8 +82,8 @@ function test_json_body_is_created(): test.TestOutcome {
 }
 
 function test_body_without_its_type_is_refused(): test.TestOutcome {
-  var m: MockPlatform = mock_platform.mock_platform_new();
-  var resp: HttpResponse = handle(http.request("POST", "/items").with_body("{}"), m.as_platform());
+  let m: MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("POST", "/items").with_body("{}"), m.as_platform());
   match (test.assert_status(resp, 415)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -94,8 +94,8 @@ function test_body_without_its_type_is_refused(): test.TestOutcome {
 }
 
 function test_header_names_the_caller(): test.TestOutcome {
-  var m: MockPlatform = mock_platform.mock_platform_new();
-  var resp: HttpResponse = handle(http.request("GET", "/whoami").with_header("X-Caller", "ada"), m.as_platform());
+  let m: MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("GET", "/whoami").with_header("X-Caller", "ada"), m.as_platform());
   match (test.assert_status(resp, 200)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -109,16 +109,16 @@ function test_header_names_the_caller(): test.TestOutcome {
 }
 
 function test_bare_request_has_nothing(): test.TestOutcome {
-  var req: HttpRequest = http.request("GET", "/whoami");
+  let req: HttpRequest = http.request("GET", "/whoami");
   if (req.headers.len() != 0 || req.body_len() != 0 || req.trailers.len() != 0) {
     return test.fail("a bare request carries something");
   }
-  var m: MockPlatform = mock_platform.mock_platform_new();
+  let m: MockPlatform = mock_platform.mock_platform_new();
   return test.assert_status(handle(req, m.as_platform()), 401);
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("HTTP request builder");
+  let r: test.TestRunner = test.test_new("HTTP request builder");
   r = r.it("a JSON body is created", test_json_body_is_created);
   r = r.it("a body without its type is refused", test_body_without_its_type_is_refused);
   r = r.it("a header names the caller", test_header_names_the_caller);

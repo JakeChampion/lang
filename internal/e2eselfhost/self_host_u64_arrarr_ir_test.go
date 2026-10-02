@@ -19,15 +19,15 @@ var u64ArrArrIRCases = []struct {
 	main string
 }{
 	// m[0][0] >> 58: unsigned = 0xF9CCD8A1C5080000 >> 58 = 62; signed (arith) = 254.
-	{"nested-shr", `function main(): i32 { var m: u64[][] = [[18000000000000000000, 1], [2, 3]]; var r: u64 = m[0][0] >> 58; return r as i32; }`},
+	{"nested-shr", `function main(): i32 { let m: u64[][] = [[18000000000000000000, 1], [2, 3]]; let r: u64 = m[0][0] >> 58; return r as i32; }`},
 	// m[0][0] > 100: unsigned true (7); signed (negative) false (9).
-	{"nested-cmp", `function main(): i32 { var m: u64[][] = [[18000000000000000000, 1], [2, 3]]; if (m[0][0] > (100 as u64)) { return 7; } return 9; }`},
+	{"nested-cmp", `function main(): i32 { let m: u64[][] = [[18000000000000000000, 1], [2, 3]]; if (m[0][0] > (100 as u64)) { return 7; } return 9; }`},
 	// Alias a u64[][] local, then nested-index the alias: the "u64" arrarr tag
 	// must propagate across the aliasing bind.
-	{"nested-alias", `function main(): i32 { var m: u64[][] = [[18000000000000000000, 1], [2, 3]]; var n: u64[][] = m; var r: u64 = n[0][0] >> 58; return r as i32; }`},
+	{"nested-alias", `function main(): i32 { let m: u64[][] = [[18000000000000000000, 1], [2, 3]]; let n: u64[][] = m; let r: u64 = n[0][0] >> 58; return r as i32; }`},
 	// i64[][] width regression: the shared 8-byte width path must still read the
 	// full element (not truncate) — value fits so signed/unsigned agree here.
-	{"i64-width-regress", `function main(): i32 { var m: i64[][] = [[10, 20], [30, 40]]; return m[1][0] as i32; }`},
+	{"i64-width-regress", `function main(): i32 { let m: i64[][] = [[10, 20], [30, 40]]; return m[1][0] as i32; }`},
 }
 
 // TestSelfHostU64ArrArrIR compiles each case with the self-host CLI for

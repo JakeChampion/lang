@@ -43,8 +43,8 @@ func costSource(fns int) string {
 	var sb strings.Builder
 	for i := 0; i < fns; i++ {
 		sb.WriteString("function gen" + strconv.Itoa(i) + "(n: i32): i32 {\n")
-		sb.WriteString("var acc: i32 = 0;\n")
-		sb.WriteString("    var k: i32 = 1;\n")
+		sb.WriteString("let acc: i32 = 0;\n")
+		sb.WriteString("    let k: i32 = 1;\n")
 		sb.WriteString("while (k < n) {\n")
 		sb.WriteString("        if (k > 3) {\n")
 		sb.WriteString("acc = acc + k;\n")

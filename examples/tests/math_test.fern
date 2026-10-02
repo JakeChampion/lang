@@ -104,9 +104,9 @@ function test_rgb_luminance(): test.TestOutcome {
   if (math.rgb_luminance(math.pack_rgb(0, 0, 0)) != 0) {
     return test.fail("black");
   }
-  var green: i32 = math.rgb_luminance(math.pack_rgb(0, 255, 0));
-  var red: i32 = math.rgb_luminance(math.pack_rgb(255, 0, 0));
-  var blue: i32 = math.rgb_luminance(math.pack_rgb(0, 0, 255));
+  let green: i32 = math.rgb_luminance(math.pack_rgb(0, 255, 0));
+  let red: i32 = math.rgb_luminance(math.pack_rgb(255, 0, 0));
+  let blue: i32 = math.rgb_luminance(math.pack_rgb(0, 0, 255));
   return test.assert_true(green > red && red > blue);
 }
 
@@ -133,10 +133,10 @@ function test_rgb_is_dark(): test.TestOutcome {
 // does so with p ~ 0.9916); the truncating impl NEVER does. We also
 // assert every draw is in-bounds and small ranges stay in-range.
 function test_random_int_range(): test.TestOutcome {
-  var i: i32 = 0;
-  var over: i32 = 0;
+  let i: i32 = 0;
+  let over: i32 = 0;
   while (i < 4000) {
-    var v: i32 = math.random_int(0, 2000000000);
+    let v: i32 = math.random_int(0, 2000000000);
     if (v < 0 || v >= 2000000000) {
       return test.fail("random_int(0, 2e9) out of range: " + v.to_string());
     }
@@ -152,7 +152,7 @@ function test_random_int_range(): test.TestOutcome {
   // Small range stays strictly in [5, 8).
   i = 0;
   while (i < 500) {
-    var w: i32 = math.random_int(5, 8);
+    let w: i32 = math.random_int(5, 8);
     if (w < 5 || w >= 8) {
       return test.fail("random_int(5, 8) out of range: " + w.to_string());
     }
@@ -168,7 +168,7 @@ function test_random_int_empty(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/math");
+  let r: test.TestRunner = test.test_new("std/math");
   r = r.it("range", test_range);
   r = r.it("range empty", test_range_empty);
   r = r.it("range single", test_range_single);

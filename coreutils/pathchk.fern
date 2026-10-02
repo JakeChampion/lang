@@ -50,7 +50,7 @@ import "std/array";
 import "./lib/gnu";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... NAME...\n";
   out = out + "Diagnose invalid or non-portable file names.\n";
   out = out + "\n";
@@ -95,7 +95,7 @@ function is_slash(s: string, i: i32): boolean {
 // The start of the component after `i`, skipping the separator run, or
 // the length of `s` when nothing is left.
 function component_start(s: string, i: i32): i32 {
-  var j: i32 = i;
+  let j: i32 = i;
   while (j < s.len() && is_slash(s, j)) {
     j = j + 1;
   }
@@ -104,7 +104,7 @@ function component_start(s: string, i: i32): i32 {
 
 // The end of the component beginning at `start`.
 function component_end(s: string, start: i32): i32 {
-  var j: i32 = start;
+  let j: i32 = start;
   while (j < s.len() && !is_slash(s, j)) {
     j = j + 1;
   }
@@ -115,9 +115,9 @@ function component_end(s: string, start: i32): i32 {
 // name would read it as an option. The diagnostic names the whole file
 // name rather than the component that broke the rule.
 function check_leading_dash(name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < name.len()) {
-    var start: i32 = component_start(name, i);
+    let start: i32 = component_start(name, i);
     if (start >= name.len()) {
       return true;
     }
@@ -135,27 +135,27 @@ function check_leading_dash(name: string): boolean {
 // whole string, so the earliest offending BYTE is reported even when
 // an earlier component is the one that is too long.
 function check_posix_minimums(name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < name.len()) {
-    var b: i32 = name[i] as i32;
+    let b: i32 = name[i] as i32;
     if (!is_portable(b)) {
       gnu.error("non-portable character " + gnu.quote(slice_unchecked(name, i, i + 1) + "") + " in file name " + gnu.quotea(name));
       return false;
     }
     i = i + 1;
   }
-  var path_limit: i32 = posix_path_max() - 1;
+  let path_limit: i32 = posix_path_max() - 1;
   if (name.len() > path_limit) {
     gnu.error("limit " + path_limit.to_string() + " exceeded by length " + name.len().to_string() + " of file name " + gnu.quotea(name));
     return false;
   }
   i = 0;
   while (i < name.len()) {
-    var start: i32 = component_start(name, i);
+    let start: i32 = component_start(name, i);
     if (start >= name.len()) {
       return true;
     }
-    var end: i32 = component_end(name, start);
+    let end: i32 = component_end(name, start);
     if (end - start > posix_name_max()) {
       gnu.error("limit " + posix_name_max().to_string() + " exceeded by length " + (end - start).to_string() + " of file name component " + gnu.quotea(slice_unchecked(name, start, end) + ""));
       return false;
@@ -169,13 +169,13 @@ function check_posix_minimums(name: string): boolean {
 // shorter can be refused by a conforming filesystem, so a name that
 // answers false here needs no query at all.
 function has_long_component(name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < name.len()) {
-    var start: i32 = component_start(name, i);
+    let start: i32 = component_start(name, i);
     if (start >= name.len()) {
       return false;
     }
-    var end: i32 = component_end(name, start);
+    let end: i32 = component_end(name, start);
     if (end - start > posix_name_max()) {
       return true;
     }
@@ -196,17 +196,17 @@ function check_filesystem_lengths(name: string): boolean {
   if (!has_long_component(name)) {
     return true;
   }
-  var limit: i64 = 0 - 1;
-  var querying: boolean = true;
-  var i: i32 = 0;
+  let limit: i64 = 0 - 1;
+  let querying: boolean = true;
+  let i: i32 = 0;
   while (i < name.len()) {
-    var start: i32 = component_start(name, i);
+    let start: i32 = component_start(name, i);
     if (start >= name.len()) {
       return true;
     }
-    var end: i32 = component_end(name, start);
+    let end: i32 = component_end(name, start);
     if (querying) {
-      var dir: string = ".";
+      let dir: string = ".";
       if (start > 0) {
         dir = slice_unchecked(name, 0, start) + "";
       }
@@ -239,7 +239,7 @@ function check_filesystem(name: string): boolean {
       return true;
     },
     Err(e) => {
-      var text: string = gnu.io_error_text(e);
+      let text: string = gnu.io_error_text(e);
       if (name.len() > 0 && text == "No such file or directory") {
         return check_filesystem_lengths(name);
       }
@@ -269,16 +269,16 @@ function check_name(name: string, posix: boolean, shape: boolean): boolean {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [gnu.flag("p", "", 1), gnu.flag("P", "", 2), gnu.flag("", "portability", 3)];
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "pathchk", help_text(), 1);
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [gnu.flag("p", "", 1), gnu.flag("P", "", 2), gnu.flag("", "portability", 3)];
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "pathchk", help_text(), 1);
   // The scan does not permute: `pathchk NAME -p` checks NAME in the
   // default mode and then checks a file called `-p`.
   g = g.in_order();
-  var posix: boolean = false;
-  var shape: boolean = false;
+  let posix: boolean = false;
+  let shape: boolean = false;
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -296,12 +296,12 @@ pub function main(): i32 {
       }
     }
   }
-  var operands: string[] = g.operands();
+  let operands: string[] = g.operands();
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
-  var ok: boolean = true;
-  var i: i32 = 0;
+  let ok: boolean = true;
+  let i: i32 = 0;
   while (i < operands.len()) {
     if (!check_name(operands[i], posix, shape)) {
       ok = false;

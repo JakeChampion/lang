@@ -32,7 +32,7 @@ function is_none(o: Option[f64]): boolean {
 }
 
 function near(a: f64, b: f64): boolean {
-  var d: f64 = a - b;
+  let d: f64 = a - b;
   if (d < 0.0) {
     d = 0.0 - d;
   }
@@ -40,13 +40,13 @@ function near(a: f64, b: f64): boolean {
 }
 
 function test_median_odd(): test.TestOutcome {
-  var odd: f64[] = [5.0, 1.0, 3.0, 2.0, 4.0];
+  let odd: f64[] = [5.0, 1.0, 3.0, 2.0, 4.0];
   return test.assert_eq_f64_near(unwrap(array.median_f64(odd)), 3.0, 0.0001);
 }
 
 function test_median_even(): test.TestOutcome {
   // sorted 2,4,8,10 -> average of 4 and 8.
-  var even: f64[] = [10.0, 2.0, 8.0, 4.0];
+  let even: f64[] = [10.0, 2.0, 8.0, 4.0];
   return test.assert_eq_f64_near(unwrap(array.median_f64(even)), 6.0, 0.0001);
 }
 
@@ -55,7 +55,7 @@ function test_median_single(): test.TestOutcome {
 }
 
 function test_range(): test.TestOutcome {
-  var xs: f64[] = [5.0, 1.0, 3.0, 2.0, 4.0];
+  let xs: f64[] = [5.0, 1.0, 3.0, 2.0, 4.0];
   if (!near(unwrap(array.range_f64(xs)), 4.0)) {
     return test.fail("range 5-1");
   }
@@ -66,7 +66,7 @@ function test_range(): test.TestOutcome {
 }
 
 function test_empty_none(): test.TestOutcome {
-  var empty: f64[] = [];
+  let empty: f64[] = [];
   if (!is_none(array.median_f64(empty))) {
     return test.fail("median of empty");
   }
@@ -74,7 +74,7 @@ function test_empty_none(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/array f64 median/range");
+  let r: test.TestRunner = test.test_new("std/array f64 median/range");
   r = r.it("median odd", test_median_odd);
   r = r.it("median even", test_median_even);
   r = r.it("median single", test_median_single);

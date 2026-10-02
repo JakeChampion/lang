@@ -560,8 +560,8 @@ native stack switching.
 
 ```
 concurrent {
-    var a = task { plat.fetch(req_a) };   // suspends on I/O
-    var b = task { plat.fetch(req_b) };   // suspends on I/O
+    let a = task { plat.fetch(req_a) };   // suspends on I/O
+    let b = task { plat.fetch(req_b) };   // suspends on I/O
     use(a.value, b.value);                // joins; scope-bounded
 }
 ```

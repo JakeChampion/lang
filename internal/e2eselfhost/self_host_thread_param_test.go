@@ -13,20 +13,20 @@ const threadInst = "struct Inst { name: string, depth: i32 }\n"
 const threadHolder = threadInst + "struct Holder { x: Inst }\n"
 
 const threadInstMain = `function main(): i32 {
-    var pending: Inst[] = [];
-    var fd: i32 = 0;
+    let pending: Inst[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = walk(fd, pending); fd = fd + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in pending { t = t + p.depth + p.name.len(); }
     return (t + pending.len()) % 100;
 }
 `
 
 const threadStrMain = `function main(): i32 {
-    var pending: string[] = [];
-    var fd: i32 = 0;
+    let pending: string[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = walk(fd, pending); fd = fd + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in pending { t = t + p.len(); }
     return (t + pending.len()) % 100;
 }
@@ -38,8 +38,8 @@ var threadParamRows = []leakRow{
     return acc;
 }
 function main(): i32 {
-    var pending: Inst[] = [];
-    var fd: i32 = 0;
+    let pending: Inst[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = walk(fd, pending); fd = fd + 1; }
     return pending.len() % 256;
 }
@@ -50,8 +50,8 @@ function walk(n: i32, acc: string[]): string[] {
     return acc;
 }
 function main(): i32 {
-    var pending: string[] = [];
-    var fd: i32 = 0;
+    let pending: string[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = walk(fd, pending); fd = fd + 1; }
     return pending.len() % 256;
 }
@@ -62,10 +62,10 @@ function main(): i32 {
     return acc.append(Inst { name: "w" + "", depth: n });
 }
 function main(): i32 {
-    var pending: Inst[] = [];
-    var fd: i32 = 0;
+    let pending: Inst[] = [];
+    let fd: i32 = 0;
     while (fd < 60) { pending = walk(fd, pending); fd = fd + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in pending { t = t + p.depth + p.name.len(); }
     return t % 100;
 }
@@ -74,7 +74,7 @@ function main(): i32 {
 	// literal seed.
 	{"alias_recursive", threadInst + `function rec(n: i32, acc: Inst[]): Inst[] {
     if (n == 0) { return acc; }
-    var next: Inst[] = acc.append(Inst { name: "r" + "", depth: n });
+    let next: Inst[] = acc.append(Inst { name: "r" + "", depth: n });
     return rec(n - 1, next);
 }
 function step(n: i32, acc: Inst[]): Inst[] {
@@ -82,15 +82,15 @@ function step(n: i32, acc: Inst[]): Inst[] {
     return acc;
 }
 function walk(stmts: i32[], acc: Inst[]): Inst[] {
-    var out: Inst[] = acc;
+    let out: Inst[] = acc;
     for st in stmts { out = step(st, out); }
     return out;
 }
 function main(): i32 {
-    var pending: Inst[] = [Inst { name: "seed" + "", depth: 1 }];
-    var fd: i32 = 0;
+    let pending: Inst[] = [Inst { name: "seed" + "", depth: 1 }];
+    let fd: i32 = 0;
     while (fd < 10) { pending = walk([fd, fd + 1], pending); fd = fd + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in pending { t = t + p.depth; }
     return (t + pending.len()) % 100;
 }
@@ -101,16 +101,16 @@ function step(n: i32, acc: string[]): string[] {
     return acc.append(n.to_string());
 }
 function walk(n: i32, acc: string[]): string[] {
-    var out: string[] = acc;
-    var i: i32 = 0;
+    let out: string[] = acc;
+    let i: i32 = 0;
     while (i < 3) { out = step(n + i, out); i = i + 1; }
     return out;
 }
 function main(): i32 {
-    var pending: string[] = ["s" + ""];
-    var fd: i32 = 0;
+    let pending: string[] = ["s" + ""];
+    let fd: i32 = 0;
     while (fd < 20) { pending = walk(fd, pending); fd = fd + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in pending { t = t + p.len(); }
     return (t + pending.len()) % 100;
 }
@@ -122,8 +122,8 @@ function walk(n: i32, acc: Node[]): Node[] {
     return acc;
 }
 function main(): i32 {
-    var pending: Node[] = [];
-    var fd: i32 = 0;
+    let pending: Node[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = walk(fd, pending); fd = fd + 1; }
     return pending.len();
 }
@@ -139,11 +139,11 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var pending: Inst[] = [];
-    var fd: i32 = 0;
-    var tag: string = "t" + "";
+    let pending: Inst[] = [];
+    let fd: i32 = 0;
+    let tag: string = "t" + "";
     while (fd < 12) { pending = walk(fd, tag, pending); fd = fd + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in pending { t = t + p.name.len() + p.depth; }
     return (t + tag.len()) % 100;
 }
@@ -151,7 +151,7 @@ function main(): i32 {
 	// A parameter named like a strict-fresh producer: the call reaches the
 	// caller's closure, so walk threads nothing.
 	{"value_block_read", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
-    if (acc.len() > 0) { var d: i32 = { acc[0].depth }; return acc.append(Inst { name: "w" + "", depth: d + n }); }
+    if (acc.len() > 0) { let d: i32 = { acc[0].depth }; return acc.append(Inst { name: "w" + "", depth: d + n }); }
     return acc.append(Inst { name: "w" + "", depth: n });
 }
 ` + threadInstMain, true},
@@ -160,12 +160,12 @@ function walk(n: i32, mk: (i32) => Inst, acc: Inst[]): Inst[] {
     return acc.append(mk(n));
 }
 function main(): i32 {
-    var keep: Inst = Inst { name: "k" + "", depth: 3 };
-    var f: (i32) => Inst = (d: i32) => keep;
-    var pending: Inst[] = [];
-    var fd: i32 = 0;
+    let keep: Inst = Inst { name: "k" + "", depth: 3 };
+    let f: (i32) => Inst = (d: i32) => keep;
+    let pending: Inst[] = [];
+    let fd: i32 = 0;
     while (fd < 4) { pending = walk(fd, f, pending); fd = fd + 1; }
-    var t: i32 = keep.depth + keep.name.len();
+    let t: i32 = keep.depth + keep.name.len();
     for p in pending { t = t + p.depth + p.name.len(); }
     return (t + pending.len() + mk(1).depth) % 256;
 }
@@ -180,14 +180,14 @@ function walk(n: i32, acc: Inst[], h: Holder): Holder {
     return Holder { xs: acc };
 }
 function thread(n: i32, acc: Inst[]): Inst[] {
-    var kept: Holder = walk(n, acc, Holder { xs: [] });
+    let kept: Holder = walk(n, acc, Holder { xs: [] });
     return kept.xs;
 }
 function main(): i32 {
-    var pending: Inst[] = [];
-    var fd: i32 = 0;
+    let pending: Inst[] = [];
+    let fd: i32 = 0;
     while (fd < 12) { pending = thread(fd, pending); fd = fd + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in pending { t = t + p.depth; }
     return (t + pending.len()) % 256;
 }
@@ -198,11 +198,11 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var pending: Inst[] = [];
-    var fd: i32 = 0;
-    var old: Inst[] = [];
+    let pending: Inst[] = [];
+    let fd: i32 = 0;
+    let old: Inst[] = [];
     while (fd < 12) { old = pending; pending = walk(fd, pending); fd = fd + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in old { t = t + p.depth; }
     for p in pending { t = t + p.depth; }
     return (t + pending.len() + old.len()) % 256;
@@ -212,29 +212,29 @@ function main(): i32 {
 	// holder built by another function, another array, a loop variable kept
 	// past its iteration, or an element's string field.
 	{"elem_struct_field", threadHolder + `function walk(n: i32, acc: Inst[]): Inst[] {
-    if (acc.len() > 0) { var h: Holder = Holder { x: acc[0] }; return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }
+    if (acc.len() > 0) { let h: Holder = Holder { x: acc[0] }; return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }
     return acc.append(Inst { name: "w" + "", depth: n });
 }
 ` + threadInstMain, false},
 	{"elem_value_block", threadHolder + `function walk(n: i32, acc: Inst[]): Inst[] {
-    if (acc.len() > 0) { var h: Holder = { Holder { x: acc[0] } }; return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }
+    if (acc.len() > 0) { let h: Holder = { Holder { x: acc[0] } }; return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }
     return acc.append(Inst { name: "w" + "", depth: n });
 }
 ` + threadInstMain, false},
 	{"elem_holder", threadHolder + `function hold(e: Inst): Holder { return Holder { x: e }; }
 function walk(n: i32, acc: Inst[]): Inst[] {
-    if (acc.len() > 0) { var h: Holder = hold(acc[0]); return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }
+    if (acc.len() > 0) { let h: Holder = hold(acc[0]); return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }
     return acc.append(Inst { name: "w" + "", depth: n });
 }
 ` + threadInstMain, false},
 	{"elem_other_array", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
-    var ys: Inst[] = [];
+    let ys: Inst[] = [];
     if (acc.len() > 0) { ys = ys.append(acc[0]); }
     return acc.append(Inst { name: "w" + "", depth: n + ys.len() });
 }
 ` + threadInstMain, false},
 	{"elem_loop_var", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
-    var ys: Inst[] = [];
+    let ys: Inst[] = [];
     for p in acc { ys = ys.append(p); }
     return acc.append(Inst { name: "w" + "", depth: n + ys.len() });
 }
@@ -253,20 +253,20 @@ function walk(n: i32, acc: Inst[]): Inst[] {
 	{"string_elem_struct_field", `import "std/i32";
 struct Hs { s: string }
 function walk(n: i32, acc: string[]): string[] {
-    if (acc.len() > 0) { var h: Hs = Hs { s: acc[0] }; return acc.append(h.s + "x"); }
+    if (acc.len() > 0) { let h: Hs = Hs { s: acc[0] }; return acc.append(h.s + "x"); }
     return acc.append("w" + "");
 }
 ` + threadStrMain, false},
 	{"string_elem_other_array", `import "std/i32";
 function walk(n: i32, acc: string[]): string[] {
-    var ys: string[] = [];
+    let ys: string[] = [];
     if (acc.len() > 0) { ys = ys.append(acc[0]); }
     return acc.append("w" + ys.len().to_string());
 }
 ` + threadStrMain, false},
 	{"string_elem_loop_var", `import "std/i32";
 function walk(n: i32, acc: string[]): string[] {
-    var ys: string[] = [];
+    let ys: string[] = [];
     for p in acc { ys = ys.append(p); }
     return acc.append("w" + ys.len().to_string());
 }
@@ -277,10 +277,10 @@ function walk(n: i32, acc: string[]): string[] {
     return acc;
 }
 function main(): i32 {
-    var rows: Inst[][] = [[Inst { name: "a" + "", depth: 1 }, Inst { name: "b" + "", depth: 2 }]];
-    var pending: Inst[] = [];
+    let rows: Inst[][] = [[Inst { name: "a" + "", depth: 1 }, Inst { name: "b" + "", depth: 2 }]];
+    let pending: Inst[] = [];
     pending = walk(rows, pending);
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in pending { t = t + p.depth + p.name.len(); }
     for r in rows { t = t + r.len(); }
     return (t + pending.len()) % 256;

@@ -59,14 +59,14 @@ function area(s: Shape): i32 {
 	return 0;
 }
 function main(): i32 {
-	var p: Point = Point { x: 3, y: 4 };
+	let p: Point = Point { x: 3, y: 4 };
 	return area(Circle(p.x));
 }`,
 
 	"fstring_parts": `
 function main(): i32 {
-	var name: string = "world";
-	var n: i32 = 42;
+	let name: string = "world";
+	let n: i32 = 42;
 	print(f"hello, {name}, value={n}, end");
 	return 0;
 }`,
@@ -77,8 +77,8 @@ function classify(n: i32): i32 {
 	return 0;
 }
 function sum_to(n: i32): i32 {
-	var s: i32 = 0;
-	var i: i32 = 0;
+	let s: i32 = 0;
+	let i: i32 = 0;
 	while (i <= n) { s = s + i; i = i + 1; }
 	return s;
 }

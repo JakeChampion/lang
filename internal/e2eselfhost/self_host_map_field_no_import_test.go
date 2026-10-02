@@ -14,7 +14,7 @@ const mapFieldNoImportSrc = `enum E { A(i32), B(Map[string, i32]) }
 struct Holder { n: i32, counts: Map[i32, i32] }
 function pick(h: Holder): i32 { return h.n; }
 function main(): i32 {
-    var e: E = A(1);
+    let e: E = A(1);
     match (e) {
         A(x) => { return x; },
         _ => { return 0; }

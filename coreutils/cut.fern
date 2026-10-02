@@ -78,7 +78,7 @@ function opt_blank_fields(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " OPTION... [FILE]...\n";
   out = out + "Print selected parts of lines from each FILE to standard output.\n";
   out = out + "\n";
@@ -144,7 +144,7 @@ function u64_max(): u64 {
 // One byte as a string; the line and output delimiters are single bytes
 // often enough that this is worth having.
 function byte_str(b: i32): string {
-  var bs: u8[] = [];
+  let bs: u8[] = [];
   bs = bs.append(b as u8);
   return string_from_bytes_unchecked(bs);
 }
@@ -159,16 +159,16 @@ struct Ranges { los: u64[], his: u64[] }
 // through the usage path; the wording differs between the field and the
 // byte/character modes, which is what `fields` selects.
 function parse_list(spec: string, fields: boolean): Ranges {
-  var los: u64[] = [];
-  var his: u64[] = [];
-  var i: i32 = 0;
-  var initial: u64 = 1 as u64;
-  var value: u64 = 0 as u64;
-  var lhs: boolean = false;
-  var rhs: boolean = false;
-  var dash: boolean = false;
+  let los: u64[] = [];
+  let his: u64[] = [];
+  let i: i32 = 0;
+  let initial: u64 = 1 as u64;
+  let value: u64 = 0 as u64;
+  let lhs: boolean = false;
+  let rhs: boolean = false;
+  let dash: boolean = false;
   while (true) {
-    var c: i32 = 0 - 1;
+    let c: i32 = 0 - 1;
     if (i < spec.len()) {
       c = spec[i] as i32;
     }
@@ -228,7 +228,7 @@ function parse_list(spec: string, fields: boolean): Ranges {
       }
       // UINTMAX_MAX is out of range even though it fits: GNU reserves
       // it, so a list naming it is refused like one that overflows.
-      var over: boolean = false;
+      let over: boolean = false;
       match (value.checked_mul(10 as u64)) {
         Some(m) => {
           match (m.checked_add((c - 48) as u64)) {
@@ -248,11 +248,11 @@ function parse_list(spec: string, fields: boolean): Ranges {
         over = true;
       }
       if (over) {
-        var from: i32 = i;
+        let from: i32 = i;
         while (from > 0 && is_digit(spec[from - 1] as i32)) {
           from = from - 1;
         }
-        var end: i32 = i;
+        let end: i32 = i;
         while (end < spec.len() && is_digit(spec[end] as i32)) {
           end = end + 1;
         }
@@ -297,13 +297,13 @@ function bad_value_word(fields: boolean): string {
 // Sort by start, then fuse pairs that OVERLAP. Adjacency is not enough:
 // `1-2,3-4` stays two ranges, which the output delimiter can see.
 function merge(r: Ranges): Ranges {
-  var los: u64[] = r.los;
-  var his: u64[] = r.his;
-  var i: i32 = 1;
+  let los: u64[] = r.los;
+  let his: u64[] = r.his;
+  let i: i32 = 1;
   while (i < los.len()) {
-    var lo: u64 = los[i];
-    var hi: u64 = his[i];
-    var j: i32 = i - 1;
+    let lo: u64 = los[i];
+    let hi: u64 = his[i];
+    let j: i32 = i - 1;
     while (j >= 0 && los[j] > lo) {
       los = los.with(j + 1, los[j]);
       his = his.with(j + 1, his[j]);
@@ -313,13 +313,13 @@ function merge(r: Ranges): Ranges {
     his = his.with(j + 1, hi);
     i = i + 1;
   }
-  var outl: u64[] = [];
-  var outh: u64[] = [];
+  let outl: u64[] = [];
+  let outh: u64[] = [];
   i = 0;
   while (i < los.len()) {
-    var lo: u64 = los[i];
-    var hi: u64 = his[i];
-    var k: i32 = i + 1;
+    let lo: u64 = los[i];
+    let hi: u64 = his[i];
+    let k: i32 = i + 1;
     while (k < los.len() && los[k] <= hi) {
       if (his[k] > hi) {
         hi = his[k];
@@ -338,10 +338,10 @@ function merge(r: Ranges): Ranges {
 // never match a position, and keeping it would be a range the output
 // delimiter counted.
 function complement_of(r: Ranges): Ranges {
-  var los: u64[] = [];
-  var his: u64[] = [];
-  var prev: u64 = 0 as u64;
-  var i: i32 = 0;
+  let los: u64[] = [];
+  let his: u64[] = [];
+  let prev: u64 = 0 as u64;
+  let i: i32 = 0;
   while (i < r.los.len()) {
     if (r.los[i] > prev + 1 as u64) {
       los = los.append(prev + 1 as u64);
@@ -361,8 +361,8 @@ function complement_of(r: Ranges): Ranges {
 struct Settings { r: Ranges, fields: boolean, delim: i32, term: i32, suppress: boolean, out_delim: string, out_delim_set: boolean, ws: boolean, trim: boolean }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [];
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("b", "bytes", opt_bytes()));
   opts = opts.append(gnu.valued("c", "characters", opt_chars()));
   opts = opts.append(gnu.valued("f", "fields", opt_fields()));
@@ -375,31 +375,31 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
   opts = opts.append(gnu.valued("F", "", opt_blank_fields()));
 
-  var spec: string = "";
+  let spec: string = "";
   // 0 none yet, 1 bytes or characters, 2 fields.
-  var mode: i32 = 0;
-  var delim: i32 = 9;
-  var delim_set: boolean = false;
-  var term: i32 = 10;
-  var suppress: boolean = false;
-  var complement: boolean = false;
-  var out_delim: string = "";
-  var out_delim_set: boolean = false;
+  let mode: i32 = 0;
+  let delim: i32 = 9;
+  let delim_set: boolean = false;
+  let term: i32 = 10;
+  let suppress: boolean = false;
+  let complement: boolean = false;
+  let out_delim: string = "";
+  let out_delim_set: boolean = false;
   // `-w` / `-F`: a run of blanks is the delimiter. `space_out` is the
   // `-F` half, which also makes a space the default output delimiter.
-  var ws: boolean = false;
-  var ws_set: boolean = false;
-  var trim: boolean = false;
-  var space_out: boolean = false;
+  let ws: boolean = false;
+  let ws_set: boolean = false;
+  let trim: boolean = false;
+  let space_out: boolean = false;
 
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "cut", help_text(), 1);
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "cut", help_text(), 1);
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
         if (m.id == opt_bytes() || m.id == opt_chars() || m.id == opt_fields() || m.id == opt_blank_fields()) {
-          var want: i32 = 1;
+          let want: i32 = 1;
           if (m.id == opt_fields() || m.id == opt_blank_fields()) {
             want = 2;
           }
@@ -466,7 +466,7 @@ pub function main(): i32 {
   if (delim_set && !ws_set) {
     ws = false;
   }
-  var r: Ranges = parse_list(spec, mode == 2);
+  let r: Ranges = parse_list(spec, mode == 2);
   if (complement) {
     r = complement_of(r);
   }
@@ -477,7 +477,7 @@ pub function main(): i32 {
     }
   }
 
-  var files: string[] = g.operands();
+  let files: string[] = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
@@ -488,45 +488,45 @@ pub function main(): i32 {
 // straight into stdout's builder, which is flushed once it holds a
 // block, so no byte is copied into an accumulator on the way.
 function run(files: string[], s: Settings): i32 {
-  var o: io_buffered.BufWriter = gnu.out_with(block_size());
-  var h: usize = o.handle();
-  var ok: boolean = true;
+  let o: io_buffered.BufWriter = gnu.out_with(block_size());
+  let h: usize = o.handle();
+  let ok: boolean = true;
   // A field delimiter equal to the line delimiter makes the whole FILE
   // one record whose fields are its lines.
-  var one_record: boolean = s.fields && s.delim == s.term;
+  let one_record: boolean = s.fields && s.delim == s.term;
 
-  var fi: i32 = 0;
-  var have_reader: boolean = false;
-  var is_stdin: boolean = false;
-  var name: string = "";
-  var r: Reader = stdin();
-  var chunk: string = "";
-  var pos: i32 = 0;
-  var delimat: i32 = 0 - 1;
-  var carry: string = "";
-  var tail: boolean = false;
-  var done: boolean = false;
+  let fi: i32 = 0;
+  let have_reader: boolean = false;
+  let is_stdin: boolean = false;
+  let name: string = "";
+  let r: Reader = stdin();
+  let chunk: string = "";
+  let pos: i32 = 0;
+  let delimat: i32 = 0 - 1;
+  let carry: string = "";
+  let tail: boolean = false;
+  let done: boolean = false;
   // The running record, for the one_record shape.
-  var rec_idx: u64 = 1 as u64;
-  var rec_k: i32 = 0;
-  var rec_printed: boolean = false;
-  var rec_open: boolean = false;
-  var rec_ri: i32 = 0;
+  let rec_idx: u64 = 1 as u64;
+  let rec_k: i32 = 0;
+  let rec_printed: boolean = false;
+  let rec_open: boolean = false;
+  let rec_ri: i32 = 0;
   // Whether field 1 is selected, and gnulib's rule for when it has to
   // be read into a buffer before the line can be judged delimited: when
   // exactly one of "non-delimited lines are suppressed" and "field 1 is
   // wanted" holds, the other cannot be decided without the field.
   // Whether the output delimiter is the input delimiter, which is what
   // lets consecutive selected fields go out as one slice of the input.
-  var join_runs: boolean = s.out_delim.len() == 1 && s.out_delim[0] as i32 == s.delim;
-  var first_sel: boolean = s.r.los.len() > 0 && s.r.los[0] <= 1 as u64;
+  let join_runs: boolean = s.out_delim.len() == 1 && s.out_delim[0] as i32 == s.delim;
+  let first_sel: boolean = s.r.los.len() > 0 && s.r.los[0] <= 1 as u64;
 
   while (true) {
     if (pos >= chunk.len()) {
       chunk = "";
       pos = 0;
       tail = false;
-      var got: boolean = false;
+      let got: boolean = false;
       while (!got) {
         if (!have_reader) {
           // A record open across the lines of the file just finished is
@@ -552,7 +552,7 @@ function run(files: string[], s: Settings): i32 {
               r = stdin();
               have_reader = true;
             } else {
-              var opened: boolean = false;
+              let opened: boolean = false;
               match (open_reader(name)) {
                 Ok(f) => {
                   r = f;
@@ -567,8 +567,8 @@ function run(files: string[], s: Settings): i32 {
             }
           }
         } else {
-          var piece: string = "";
-          var read_ok: boolean = true;
+          let piece: string = "";
+          let read_ok: boolean = true;
           match (r.read_chunk(read_size())) {
             Ok(c) => {
               piece = c;
@@ -606,7 +606,7 @@ function run(files: string[], s: Settings): i32 {
       continue;
     }
 
-    var j: i32 = __memchr(chunk, s.term, pos);
+    let j: i32 = __memchr(chunk, s.term, pos);
     if (j < 0) {
       if (!tail) {
         carry = carry + slice_unchecked(chunk, pos, chunk.len());
@@ -616,10 +616,10 @@ function run(files: string[], s: Settings): i32 {
       j = chunk.len() - 1;
     }
 
-    var buf: string = chunk;
-    var lo: i32 = pos;
-    var hi: i32 = j + 1;
-    var carried: boolean = carry.len() > 0;
+    let buf: string = chunk;
+    let lo: i32 = pos;
+    let hi: i32 = j + 1;
+    let carried: boolean = carry.len() > 0;
     if (carried) {
       buf = carry + slice_unchecked(chunk, pos, j + 1);
       carry = "";
@@ -630,19 +630,19 @@ function run(files: string[], s: Settings): i32 {
     // The line's content, without the terminator it may carry.
     // Only the tail a file left behind is unterminated: it holds
     // everything after that file's last line delimiter.
-    var terminated: boolean = !tail;
-    var body: i32 = hi;
+    let terminated: boolean = !tail;
+    let body: i32 = hi;
     if (terminated) {
       body = hi - 1;
     }
 
     if (!s.fields) {
-      var len: u64 = (body - lo) as u64;
-      var printed: boolean = false;
-      var k: i32 = 0;
+      let len: u64 = (body - lo) as u64;
+      let printed: boolean = false;
+      let k: i32 = 0;
       while (k < s.r.los.len() && s.r.los[k] <= len) {
-        var a: u64 = s.r.los[k];
-        var b: u64 = s.r.his[k];
+        let a: u64 = s.r.los[k];
+        let b: u64 = s.r.his[k];
         if (b > len) {
           b = len;
         }
@@ -683,8 +683,8 @@ function run(files: string[], s: Settings): i32 {
       // `-w` / `-F`: a RUN of blanks is one delimiter, so a leading or
       // trailing run leaves an empty field at that end — unless
       // `--whitespace-delimited=trimmed` took the two runs off first.
-      var a: i32 = lo;
-      var z: i32 = body;
+      let a: i32 = lo;
+      let z: i32 = body;
       if (s.trim) {
         while (a < z && is_blank_byte(buf[a] as i32)) {
           a = a + 1;
@@ -693,7 +693,7 @@ function run(files: string[], s: Settings): i32 {
           z = z - 1;
         }
       }
-      var wb: i32 = a;
+      let wb: i32 = a;
       while (wb < z && !is_blank_byte(buf[wb] as i32)) {
         wb = wb + 1;
       }
@@ -705,12 +705,12 @@ function run(files: string[], s: Settings): i32 {
           buf_push_byte(h, s.term);
         }
       } else {
-        var widx: u64 = 1 as u64;
-        var wri: i32 = 0;
-        var wprinted: boolean = false;
-        var wp: i32 = a;
+        let widx: u64 = 1 as u64;
+        let wri: i32 = 0;
+        let wprinted: boolean = false;
+        let wp: i32 = a;
         while (true) {
-          var we: i32 = wp;
+          let we: i32 = wp;
           while (we < z && !is_blank_byte(buf[we] as i32)) {
             we = we + 1;
           }
@@ -727,7 +727,7 @@ function run(files: string[], s: Settings): i32 {
           if (we >= z || wri >= s.r.los.len()) {
             break;
           }
-          var wn: i32 = we;
+          let wn: i32 = we;
           while (wn < z && is_blank_byte(buf[wn] as i32)) {
             wn = wn + 1;
           }
@@ -739,7 +739,7 @@ function run(files: string[], s: Settings): i32 {
     } else {
       // Where the next delimiter is. Kept as a cursor across lines so
       // the scans over one chunk cost it once in total.
-      var nd: i32 = delimat;
+      let nd: i32 = delimat;
       if (carried) {
         nd = __memchr(buf, s.delim, 0);
       } else if (nd >= 0 && nd < lo) {
@@ -758,18 +758,18 @@ function run(files: string[], s: Settings): i32 {
           buf_push_byte(h, s.term);
         }
       } else {
-        var p: i32 = lo;
-        var idx: u64 = 1 as u64;
-        var ri: i32 = 0;
-        var printed: boolean = false;
+        let p: i32 = lo;
+        let idx: u64 = 1 as u64;
+        let ri: i32 = 0;
+        let printed: boolean = false;
         // Consecutive selected fields joined by the input delimiter are
         // the input's own bytes, so when the output delimiter IS that
         // byte they go out as ONE slice — `-f1,3-5` costs two appends
         // per line rather than seven.
-        var run: i32 = 0 - 1;
+        let run: i32 = 0 - 1;
         while (true) {
-          var e: i32 = body;
-          var last: boolean = true;
+          let e: i32 = body;
+          let last: boolean = true;
           if (nd >= 0 && nd < body) {
             e = nd;
             last = false;

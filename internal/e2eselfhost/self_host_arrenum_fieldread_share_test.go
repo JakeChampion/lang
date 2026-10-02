@@ -6,7 +6,7 @@ import (
 
 // --- The FIELD-READ spelling of the enum-array counted share -----------------
 //
-// `var p: P = P { f: q.f, … }` off a live sibling holder — the flatten__RewriteCtx
+// `let p: P = P { f: q.f, … }` off a live sibling holder — the flatten__RewriteCtx
 // shape, enum-array flavour, and the construction matrix's enum_arr__fieldread
 // cell (600 allocs / 300 frees against native's 600/600). The read lowers via
 // struct_get to the SOURCE box's buffer, so the new box co-owns it; the share was
@@ -44,12 +44,12 @@ import (
 
 const arrenumFieldReadDecl = `enum E { A(i32[]), B }
 struct P { f: E[], n: i32 }
-function mkv(i: i32): E[] { var o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
+function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
 `
 
 const arrenumFieldReadMain = `
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -61,9 +61,9 @@ func arrenumFieldReadCases() []arrenumShareCase {
 			// The matrix cell: two live holders over one buffer.
 			name: "basic",
 			src: arrenumFieldReadDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var t: i32 = 0;
-    var p: P = P { f: q.f, n: i };
+    let q: P = P { f: mkv(i), n: i };
+    let t: i32 = 0;
+    let p: P = P { f: q.f, n: i };
     t = p.f.len() + p.n;
     return (t + q.n + q.f.len()) % 101;
 }` + arrenumFieldReadMain,
@@ -74,9 +74,9 @@ func arrenumFieldReadCases() []arrenumShareCase {
 			// alone took it to 600/300 while `basic` was clean.
 			name: "blockscoped",
 			src: arrenumFieldReadDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var t: i32 = 0;
-    if (i >= 0) { var p: P = P { f: q.f, n: i }; t = p.f.len() + p.n; }
+    let q: P = P { f: mkv(i), n: i };
+    let t: i32 = 0;
+    if (i >= 0) { let p: P = P { f: q.f, n: i }; t = p.f.len() + p.n; }
     return (t + q.n + q.f.len()) % 101;
 }` + arrenumFieldReadMain,
 			want: 70, balance: true,
@@ -86,9 +86,9 @@ func arrenumFieldReadCases() []arrenumShareCase {
 			// the source's walk with no co-owner at all.
 			name: "conditional",
 			src: arrenumFieldReadDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var t: i32 = 0;
-    if (i % 2 == 0) { var p: P = P { f: q.f, n: i }; t = p.f.len() + p.n; }
+    let q: P = P { f: mkv(i), n: i };
+    let t: i32 = 0;
+    if (i % 2 == 0) { let p: P = P { f: q.f, n: i }; t = p.f.len() + p.n; }
     return (t + q.n + q.f.len()) % 101;
 }` + arrenumFieldReadMain,
 			want: 45, balance: true,
@@ -99,9 +99,9 @@ func arrenumFieldReadCases() []arrenumShareCase {
 			name: "holder_escapes",
 			src: arrenumFieldReadDecl + `function keepit(p: P): i32 { return p.f.len() + p.n; }
 function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = P { f: q.f, n: i + 1 };
-    var t: i32 = keepit(p);
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = P { f: q.f, n: i + 1 };
+    let t: i32 = keepit(p);
     return (t + q.n + q.f.len()) % 101;
 }` + arrenumFieldReadMain,
 			want: 69, balance: true,
@@ -111,9 +111,9 @@ function round(i: i32): i32 {
 			// to the one that finds rc 1.
 			name: "chain",
 			src: arrenumFieldReadDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = P { f: q.f, n: i + 1 };
-    var z: P = P { f: p.f, n: i + 2 };
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = P { f: q.f, n: i + 1 };
+    let z: P = P { f: p.f, n: i + 2 };
     return (q.f.len() + p.f.len() + z.f.len() + z.n) % 101;
 }` + arrenumFieldReadMain,
 			want: 66, balance: true,
@@ -123,9 +123,9 @@ function round(i: i32): i32 {
 			// uncounted this was exit 99 at 700 allocs, 700 frees, live_bytes 0.
 			name: "respread",
 			src: arrenumFieldReadDecl + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = P { f: q.f, n: i + 1 };
-    var z: P = P { ...p, n: i + 2 };
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = P { f: q.f, n: i + 1 };
+    let z: P = P { ...p, n: i + 2 };
     return (p.f.len() + z.n + q.n + z.f.len()) % 101;
 }` + arrenumFieldReadMain,
 			want: 68, balance: true,
@@ -136,10 +136,10 @@ function round(i: i32): i32 {
 			// — still the leak it was, deliberately.
 			name: "moved_ret",
 			src: arrenumFieldReadDecl + `function hold(i: i32): P {
-    var q: P = P { f: mkv(i), n: i };
+    let q: P = P { f: mkv(i), n: i };
     return P { f: q.f, n: i };
 }
-function round(i: i32): i32 { var p: P = hold(i); return (p.f.len() + p.n) % 101; }` + arrenumFieldReadMain,
+function round(i: i32): i32 { let p: P = hold(i); return (p.f.len() + p.n) % 101; }` + arrenumFieldReadMain,
 			want: 70,
 		},
 		{
@@ -149,19 +149,19 @@ function round(i: i32): i32 { var p: P = hold(i); return (p.f.len() + p.n) % 101
 			// it agreed with native throughout the bug this catches.
 			name: "source_uaf",
 			src: arrenumFieldReadDecl + `function churn(i: i32): i32 {
-    var a: i32[] = [i, i + 1, i + 2, i + 3];
-    var b: i32[] = [i + 4, i + 5, i + 6, i + 7];
+    let a: i32[] = [i, i + 1, i + 2, i + 3];
+    let b: i32[] = [i + 4, i + 5, i + 6, i + 7];
     return a[0] + b[3];
 }
 function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var t: i32 = 0;
+    let q: P = P { f: mkv(i), n: i };
+    let t: i32 = 0;
     if (i % 2 == 0) {
-        var p: P = P { f: q.f, n: i };
+        let p: P = P { f: q.f, n: i };
         t = p.f.len() + p.n;
     }
-    var junk: i32 = churn(i * 7 + 3);
-    var v: i32 = 0;
+    let junk: i32 = churn(i * 7 + 3);
+    let v: i32 = 0;
     match (q.f[0]) {
         E.A(xs) => { v = xs[0] + xs[1]; },
         E.B => { v = 0 - 1; }
@@ -170,8 +170,8 @@ function round(i: i32): i32 {
     return (t + v) % 101;
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;

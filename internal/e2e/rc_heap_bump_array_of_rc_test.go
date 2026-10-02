@@ -21,11 +21,11 @@ import (
 func arrOfStructBumpSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var g: P[][] = [[P{x: i, y: 1}], [P{x: 2, y: i}]];
+        let g: P[][] = [[P{x: i, y: 1}], [P{x: 2, y: i}]];
         acc = acc + g[0][0].x;
         i = i + 1;
     }
@@ -35,11 +35,11 @@ function main(): i32 {
 
 func arrOf3DBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var g: i32[][][] = [[[i, i + 1]], [[i + 2]]];
+        let g: i32[][][] = [[[i, i + 1]], [[i + 2]]];
         acc = acc + g[0][0][1];
         i = i + 1;
     }
@@ -50,11 +50,11 @@ func arrOf3DBumpSrc(n string) string {
 // Both shapes value-correct + no over-release across many iterations.
 const arrOfRcUnderflowSrc = `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var g: P[][] = [[P{x: i, y: 1}, P{x: 7, y: 2}], [P{x: 2, y: i}]];
-        var h: i32[][][] = [[[i, i + 1]], [[i + 2, i + 3]]];
+        let g: P[][] = [[P{x: i, y: 1}, P{x: 7, y: 2}], [P{x: 2, y: i}]];
+        let h: i32[][][] = [[[i, i + 1]], [[i + 2, i + 3]]];
         acc = acc + g[0][1].x + g[1][0].y + h[0][0][1] + h[1][0][0];
         i = i + 1;
     }

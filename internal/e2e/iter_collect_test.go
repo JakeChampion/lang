@@ -27,14 +27,14 @@ var iterCollectCases = []struct {
 	{"collect-i32", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct RangeIter { cur: i32, end: i32 }
 impl Iterator[i32] for RangeIter { function next(self: Self): Option[(i32, Self)] { if (self.cur >= self.end) { return None; } return Some((self.cur, RangeIter { cur: self.cur + 1, end: self.end })); } }
-function collect[T, I: Iterator[T]](it: I): T[] { var out: T[] = []; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { out = out.append(t.0); cur = t.1; }, None => { go = false; }, } } return out; }
-function main(): i32 { var xs = collect(RangeIter { cur: 0, end: 4 }); var s = 0; for x in xs { s = s + x; } return s + xs.len(); }`, 10},
+function collect[T, I: Iterator[T]](it: I): T[] { let out: T[] = []; let cur = it; let go = true; while (go) { match (cur.next()) { Some(t) => { out = out.append(t.0); cur = t.1; }, None => { go = false; }, } } return out; }
+function main(): i32 { let xs = collect(RangeIter { cur: 0, end: 4 }); let s = 0; for x in xs { s = s + x; } return s + xs.len(); }`, 10},
 	// the SAME generic collect at T=boolean: collect 3 trues, count them → 3.
 	{"collect-bool", `pub trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
 struct BoolSeq { n: i32 }
 impl Iterator[boolean] for BoolSeq { function next(self: Self): Option[(boolean, Self)] { if (self.n <= 0) { return None; } return Some((true, BoolSeq { n: self.n - 1 })); } }
-function collect[T, I: Iterator[T]](it: I): T[] { var out: T[] = []; var cur = it; var go = true; while (go) { match (cur.next()) { Some(t) => { out = out.append(t.0); cur = t.1; }, None => { go = false; }, } } return out; }
-function main(): i32 { var xs = collect(BoolSeq { n: 3 }); var c = 0; for b in xs { if (b) { c = c + 1; } } return c; }`, 3},
+function collect[T, I: Iterator[T]](it: I): T[] { let out: T[] = []; let cur = it; let go = true; while (go) { match (cur.next()) { Some(t) => { out = out.append(t.0); cur = t.1; }, None => { go = false; }, } } return out; }
+function main(): i32 { let xs = collect(BoolSeq { n: 3 }); let c = 0; for b in xs { if (b) { c = c + 1; } } return c; }`, 3},
 }
 
 // TestNativeIterCollect runs the inline collect cases on interp / x86-64 / wasm.
@@ -80,10 +80,10 @@ func TestNativeIterCollectArm64(t *testing.T) {
 func TestNativeIterCollectModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    var r = 0;
-    var ys = iter.collect(iter.of([3, 1, 2]));
+    let r = 0;
+    let ys = iter.collect(iter.of([3, 1, 2]));
     if (ys.len() == 3 && ys[0] == 3 && ys[1] == 1 && ys[2] == 2) { r = r + 1; }
-    var zs = iter.collect(iter.range(0, 4));
+    let zs = iter.collect(iter.range(0, 4));
     if (zs.len() == 4 && zs[0] == 0 && zs[3] == 3) { r = r + 2; }
     return r;
 }

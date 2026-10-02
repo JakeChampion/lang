@@ -26,7 +26,7 @@ func TestSelfHostWasmComponentAssert(t *testing.T) {
 		{"assert-fail", `print("before"); assert(false, "overflow"); print("after");`, "before\n", "assertion failed: overflow\n", 1},
 		{"exit-ok", `eprint("done"); exit(0); print("after");`, "", "done\n", 0},
 		{"exit-error", `print("before"); eprint("failed"); exit(7); print("after");`, "before\n", "failed\n", 1},
-		{"writer-exit", `var w = stderr(); w.write("error\n"); exit(1);`, "", "error\n", 1},
+		{"writer-exit", `let w = stderr(); w.write("error\n"); exit(1);`, "", "error\n", 1},
 	} {
 		for _, mode := range []string{"self-host", "bootstrap"} {
 			t.Run(tc.name+"/"+mode, func(t *testing.T) {

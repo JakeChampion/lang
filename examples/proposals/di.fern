@@ -48,7 +48,7 @@ struct Container { providers: Provider[] }
 struct State { names: string[], vals: i32[], order: string[], stack: string[], err: string }
 
 function find_provider(c: Container, name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < c.providers.len()) {
     if (c.providers[i].name == name) {
       return i;
@@ -59,7 +59,7 @@ function find_provider(c: Container, name: string): i32 {
 }
 
 function cached(s: State, name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.names.len()) {
     if (s.names[i] == name) {
       return i;
@@ -70,7 +70,7 @@ function cached(s: State, name: string): i32 {
 }
 
 function on_stack(s: State, name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.stack.len()) {
     if (s.stack[i] == name) {
       return true;
@@ -81,8 +81,8 @@ function on_stack(s: State, name: string): boolean {
 }
 
 function join(xs: string[], sep: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (i > 0) {
       out = out + sep;
@@ -105,27 +105,27 @@ function join(xs: string[], sep: string): string {
 //   3. the cache — a name already built is returned, never rebuilt. This is
 //      the singleton guarantee.
 function resolve(c: Container, s_in: State, name: string, wanted_by: string): (State, i32) {
-  var s: State = s_in;
+  let s: State = s_in;
   if (s.err.len() > 0) {
     return (s, 0);
   }
 
   if (on_stack(s, name)) {
-    var path: string = join(s.stack, " -> ") + " -> " + name;
+    let path: string = join(s.stack, " -> ") + " -> " + name;
     return (State {
       names: s.names, vals: s.vals, order: s.order, stack: s.stack,
       err: "cycle: " + path,
     }, 0);
   }
 
-  var hit: i32 = cached(s, name);
+  let hit: i32 = cached(s, name);
   if (hit >= 0) {
     return (s, s.vals[hit]);
   }
 
-  var pi: i32 = find_provider(c, name);
+  let pi: i32 = find_provider(c, name);
   if (pi < 0) {
-    var who: string = wanted_by;
+    let who: string = wanted_by;
     if (who.len() == 0) {
       who = "(root)";
     }
@@ -140,8 +140,8 @@ function resolve(c: Container, s_in: State, name: string, wanted_by: string): (S
     stack: s.stack.append(name), err: s.err,
   };
 
-  var args: i32[] = [];
-  var d: i32 = 0;
+  let args: i32[] = [];
+  let d: i32 = 0;
   while (d < c.providers[pi].deps.len()) {
     let (s2, v) = resolve(c, s, c.providers[pi].deps[d], name);
     s = s2;
@@ -152,11 +152,11 @@ function resolve(c: Container, s_in: State, name: string, wanted_by: string): (S
     d = d + 1;
   }
 
-  var made: i32 = c.providers[pi].make(args);
+  let made: i32 = c.providers[pi].make(args);
 
   // Pop the path, cache the value, and record that this one was built.
-  var popped: string[] = [];
-  var k: i32 = 0;
+  let popped: string[] = [];
+  let k: i32 = 0;
   while (k < s.stack.len() - 1) {
     popped = popped.append(s.stack[k]);
     k = k + 1;
@@ -180,20 +180,20 @@ function new_state(): State {
 // the set — what must and must not be built — and checks ordering separately
 // against the declared edges.
 function reachable(c: Container, root: string): string[] {
-  var seen: string[] = [];
-  var queue: string[] = [root];
+  let seen: string[] = [];
+  let queue: string[] = [root];
   while (queue.len() > 0) {
-    var n: string = queue[0];
-    var rest: string[] = [];
-    var i: i32 = 1;
+    let n: string = queue[0];
+    let rest: string[] = [];
+    let i: i32 = 1;
     while (i < queue.len()) {
       rest = rest.append(queue[i]);
       i = i + 1;
     }
     queue = rest;
 
-    var already: boolean = false;
-    var j: i32 = 0;
+    let already: boolean = false;
+    let j: i32 = 0;
     while (j < seen.len()) {
       if (seen[j] == n) {
         already = true;
@@ -202,9 +202,9 @@ function reachable(c: Container, root: string): string[] {
     }
     if (!already) {
       seen = seen.append(n);
-      var pi: i32 = find_provider(c, n);
+      let pi: i32 = find_provider(c, n);
       if (pi >= 0) {
-        var d: i32 = 0;
+        let d: i32 = 0;
         while (d < c.providers[pi].deps.len()) {
           queue = queue.append(c.providers[pi].deps[d]);
           d = d + 1;
@@ -216,7 +216,7 @@ function reachable(c: Container, root: string): string[] {
 }
 
 function position(xs: string[], name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (xs[i] == name) {
       return i;
@@ -260,8 +260,8 @@ function test_a_shared_dependency_is_built_once(): test.TestOutcome {
   if (v != 1112) {
     return test.fail("app resolved to " + v.to_string() + ", want 1112");
   }
-  var built: i32 = 0;
-  var i: i32 = 0;
+  let built: i32 = 0;
+  let i: i32 = 0;
   while (i < s.order.len()) {
     if (s.order[i] == "config") {
       built = built + 1;
@@ -283,9 +283,9 @@ function test_a_shared_dependency_is_built_once(): test.TestOutcome {
 // the reachable set from an independent traversal, not against the resolver's
 // own order.
 function test_dependencies_are_built_before_dependents(): test.TestOutcome {
-  var graphs: Container[] = [diamond(), chain()];
-  var roots: string[] = ["app", "eight"];
-  var g: i32 = 0;
+  let graphs: Container[] = [diamond(), chain()];
+  let roots: string[] = ["app", "eight"];
+  let g: i32 = 0;
   while (g < graphs.len()) {
     let (s, _) = resolve(graphs[g], new_state(), roots[g], "");
     if (s.err.len() > 0) {
@@ -293,12 +293,12 @@ function test_dependencies_are_built_before_dependents(): test.TestOutcome {
     }
 
     // Everything reachable was built, and nothing else was.
-    var reach: string[] = reachable(graphs[g], roots[g]);
+    let reach: string[] = reachable(graphs[g], roots[g]);
     if (s.order.len() != reach.len()) {
       return test.fail("built [" + join(s.order, ",") + "] but reachable is ["
         + join(reach, ",") + "]");
     }
-    var r: i32 = 0;
+    let r: i32 = 0;
     while (r < reach.len()) {
       if (position(s.order, reach[r]) < 0) {
         return test.fail("reachable provider \"" + reach[r] + "\" was never built");
@@ -306,13 +306,13 @@ function test_dependencies_are_built_before_dependents(): test.TestOutcome {
       r = r + 1;
     }
     // The ordering claim itself.
-    var p: i32 = 0;
+    let p: i32 = 0;
     while (p < graphs[g].providers.len()) {
-      var me: i32 = position(s.order, graphs[g].providers[p].name);
+      let me: i32 = position(s.order, graphs[g].providers[p].name);
       if (me >= 0) {
-        var d: i32 = 0;
+        let d: i32 = 0;
         while (d < graphs[g].providers[p].deps.len()) {
-          var dep: i32 = position(s.order, graphs[g].providers[p].deps[d]);
+          let dep: i32 = position(s.order, graphs[g].providers[p].deps[d]);
           if (dep < 0 || dep > me) {
             return test.fail("\"" + graphs[g].providers[p].name
               + "\" was built before its dependency \""
@@ -332,7 +332,7 @@ function test_dependencies_are_built_before_dependents(): test.TestOutcome {
 // included because it only works if the cycle check runs BEFORE the cache
 // lookup — the ordering the resolver's comment calls out.
 function test_cycles_are_reported_with_their_path(): test.TestOutcome {
-  var two: Container = Container { providers: [
+  let two: Container = Container { providers: [
     Provider { name: "a", deps: ["b"], make: (xs: i32[]) => 1 },
     Provider { name: "b", deps: ["a"], make: (xs: i32[]) => 2 },
   ] };
@@ -344,7 +344,7 @@ function test_cycles_are_reported_with_their_path(): test.TestOutcome {
     return test.fail("cycle path is not readable: \"" + s1.err + "\"");
   }
 
-  var self: Container = Container { providers: [
+  let self: Container = Container { providers: [
     Provider { name: "s", deps: ["s"], make: (xs: i32[]) => 1 },
   ] };
   let (s2, _) = resolve(self, new_state(), "s", "");
@@ -357,7 +357,7 @@ function test_cycles_are_reported_with_their_path(): test.TestOutcome {
 
   // A longer cycle reached through a valid prefix: the healthy part still
   // builds, and the error still names the loop rather than the entry point.
-  var deep: Container = Container { providers: [
+  let deep: Container = Container { providers: [
     Provider { name: "root", deps: ["x"], make: (xs: i32[]) => 1 },
     Provider { name: "x", deps: ["y"], make: (xs: i32[]) => 1 },
     Provider { name: "y", deps: ["x"], make: (xs: i32[]) => 1 },
@@ -372,7 +372,7 @@ function test_cycles_are_reported_with_their_path(): test.TestOutcome {
 // A missing provider names both the absent name and who wanted it. Without
 // the second half the message is a search, not a diagnosis.
 function test_a_missing_provider_names_who_wanted_it(): test.TestOutcome {
-  var c: Container = Container { providers: [
+  let c: Container = Container { providers: [
     Provider { name: "app", deps: ["logger"], make: (xs: i32[]) => 1 },
   ] };
   let (s, _) = resolve(c, new_state(), "app", "");
@@ -399,7 +399,7 @@ function test_resolving_again_builds_nothing(): test.TestOutcome {
   if (s1.err.len() > 0) {
     return test.fail("first resolve failed: " + s1.err);
   }
-  var built_first: i32 = s1.order.len();
+  let built_first: i32 = s1.order.len();
 
   let (s2, v2) = resolve(diamond(), s1, "app", "");
   if (s2.err.len() > 0) {
@@ -424,13 +424,13 @@ function test_resolving_again_builds_nothing(): test.TestOutcome {
 }
 
 function test_degenerate_graphs(): test.TestOutcome {
-  var empty: Container = Container { providers: [] };
+  let empty: Container = Container { providers: [] };
   let (s, _) = resolve(empty, new_state(), "anything", "");
   if (!s.err.contains("no provider")) {
     return test.fail("empty container: \"" + s.err + "\"");
   }
 
-  var solo: Container = Container { providers: [
+  let solo: Container = Container { providers: [
     Provider { name: "only", deps: [], make: (xs: i32[]) => 42 },
   ] };
   let (s2, v) = resolve(solo, new_state(), "only", "");
@@ -446,7 +446,7 @@ function test_degenerate_graphs(): test.TestOutcome {
 
   // A provider depending on the same name twice gets it once, and the
   // constructor still receives two arguments.
-  var twice: Container = Container { providers: [
+  let twice: Container = Container { providers: [
     Provider { name: "base", deps: [], make: (xs: i32[]) => 5 },
     Provider { name: "pair", deps: ["base", "base"], make: (xs: i32[]) => xs[0] + xs[1] },
   ] };
@@ -457,8 +457,8 @@ function test_degenerate_graphs(): test.TestOutcome {
   if (p != 10) {
     return test.fail("pair = " + p.to_string() + ", want 10");
   }
-  var builds: i32 = 0;
-  var i: i32 = 0;
+  let builds: i32 = 0;
+  let i: i32 = 0;
   while (i < s3.order.len()) {
     if (s3.order[i] == "base") {
       builds = builds + 1;
@@ -473,7 +473,7 @@ function test_degenerate_graphs(): test.TestOutcome {
 
 // A failure must not leave half-built state that a later resolve trusts.
 function test_a_failed_resolve_reports_the_first_error(): test.TestOutcome {
-  var c: Container = Container { providers: [
+  let c: Container = Container { providers: [
     Provider { name: "app", deps: ["good", "missing"], make: (xs: i32[]) => 1 },
     Provider { name: "good", deps: [], make: (xs: i32[]) => 7 },
   ] };
@@ -497,20 +497,20 @@ function main(): i32 {
   let (s2, v2) = resolve(chain(), new_state(), "eight", "");
   eprint("chain:   eight = " + v2.to_string() + "  built [" + join(s2.order, ", ") + "]");
 
-  var bad: Container = Container { providers: [
+  let bad: Container = Container { providers: [
     Provider { name: "a", deps: ["b"], make: (xs: i32[]) => 1 },
     Provider { name: "b", deps: ["a"], make: (xs: i32[]) => 2 },
   ] };
   let (s3, _) = resolve(bad, new_state(), "a", "");
   eprint("cycle:   " + s3.err);
 
-  var miss: Container = Container { providers: [
+  let miss: Container = Container { providers: [
     Provider { name: "app", deps: ["logger"], make: (xs: i32[]) => 1 },
   ] };
   let (s4, _) = resolve(miss, new_state(), "app", "");
   eprint("missing: " + s4.err);
 
-  var r: test.TestRunner = test.test_new("di");
+  let r: test.TestRunner = test.test_new("di");
   r = r.it("a shared dependency is built once", test_a_shared_dependency_is_built_once);
   r = r.it("dependencies are built before dependents", test_dependencies_are_built_before_dependents);
   r = r.it("cycles are reported with their path", test_cycles_are_reported_with_their_path);

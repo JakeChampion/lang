@@ -25,14 +25,14 @@ function fold(names: string[], acc: string[]): string[] {
 
 // a param rebound by its own self-append
 function fill(out: string[], n: i32): string[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) { out = out.append("fill"); i = i + 1; }
   return out;
 }
 
 // an i32[] param rebound the same way
 function fill_ints(out: i32[], n: i32): i32[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) { out = out.append(i * 3); i = i + 1; }
   return out;
 }
@@ -52,7 +52,7 @@ function maybe_grow(acc: string[], go: boolean, twice: boolean): string[] {
 function count_grown(acc: string[]): i32 {
   acc = acc.append("c1");
   acc = fill(acc, 9);
-  var n: i32 = acc.len();
+  let n: i32 = acc.len();
   return n;
 }
 
@@ -64,47 +64,47 @@ function swap_in(acc: string[], other: string[]): string[] {
 }
 
 function churn(): i32 {
-  var junk: string[] = [];
-  var i: i32 = 0;
+  let junk: string[] = [];
+  let i: i32 = 0;
   while (i < 400) { junk = junk.append("junk" + i.to_string()); i = i + 1; }
   return junk.len();
 }
 
 function sum_bytes(xs: string[]): i32 {
-  var t: i32 = 0;
+  let t: i32 = 0;
   for s in xs {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < s.len()) { t = t + (s[i] as i32); i = i + 1; }
   }
   return t;
 }
 
 function main(): i32 {
-  var names: string[] = [];
-  var i: i32 = 0;
+  let names: string[] = [];
+  let i: i32 = 0;
   while (i < 37) { names = names.append("name"); i = i + 1; }
 
-  var total: i32 = 0;
-  var round: i32 = 0;
+  let total: i32 = 0;
+  let round: i32 = 0;
   while (round < 20) {
-    var seed: string[] = [];
-    var folded: string[] = fold(names, seed);
-    var seed2: string[] = [];
-    var filled: string[] = fill(seed2, 21);
-    var iseed: i32[] = [];
-    var ints: i32[] = fill_ints(iseed, 40);
-    var a1: string[] = ["a"];
-    var g0: string[] = maybe_grow(a1, false, false);
-    var a2: string[] = ["a", "b"];
-    var g1: string[] = maybe_grow(a2, true, false);
-    var a3: string[] = ["a", "b", "c"];
-    var g2: string[] = maybe_grow(a3, true, true);
-    var base: string[] = ["k0", "k1"];
-    var swapped: string[] = swap_in(seed, base);
-    var counted: i32 = count_grown(base);
+    let seed: string[] = [];
+    let folded: string[] = fold(names, seed);
+    let seed2: string[] = [];
+    let filled: string[] = fill(seed2, 21);
+    let iseed: i32[] = [];
+    let ints: i32[] = fill_ints(iseed, 40);
+    let a1: string[] = ["a"];
+    let g0: string[] = maybe_grow(a1, false, false);
+    let a2: string[] = ["a", "b"];
+    let g1: string[] = maybe_grow(a2, true, false);
+    let a3: string[] = ["a", "b", "c"];
+    let g2: string[] = maybe_grow(a3, true, true);
+    let base: string[] = ["k0", "k1"];
+    let swapped: string[] = swap_in(seed, base);
+    let counted: i32 = count_grown(base);
     churn();
     total = total + sum_bytes(folded) + folded.len() + sum_bytes(filled) + sum_bytes(g0) + sum_bytes(g1) + sum_bytes(g2) + sum_bytes(swapped) + sum_bytes(base) + counted + seed.len() + a1.len() + a2.len() + a3.len();
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < ints.len()) { total = total + ints[k]; k = k + 1; }
     round = round + 1;
   }

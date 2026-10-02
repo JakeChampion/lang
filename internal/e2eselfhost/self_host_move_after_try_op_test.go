@@ -20,15 +20,15 @@ function g(c: i32): Result[i32, i32] {
 
 @noinline
 function aliased(c: i32): Result[i32, i32] {
-    var x: i32[] = [1, 2, 3];
-    var r: i32 = g(c)?;
-    var y: i32[] = x;
+    let x: i32[] = [1, 2, 3];
+    let r: i32 = g(c)?;
+    let y: i32[] = x;
     return Ok(y[0] + r);
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         match (aliased(0)) {
             Ok(v) => { acc = acc + 1000; },

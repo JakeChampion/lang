@@ -35,8 +35,8 @@ function sum(d: dyn Producer[Item = i32]): i32 {
     return d.get();
 }
 function main(): i32 {
-    var x: dyn Producer[Item = i32] = IntBox { v: 40 };
-    var y: dyn Producer[Item = i32] = Pair { a: 1, b: 1 };
+    let x: dyn Producer[Item = i32] = IntBox { v: 40 };
+    let y: dyn Producer[Item = i32] = Pair { a: 1, b: 1 };
     return sum(x) + sum(y);
 }
 `

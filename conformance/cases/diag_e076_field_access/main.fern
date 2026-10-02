@@ -12,6 +12,6 @@ function f(a: i32, b: i32 = config.timeout): i32 {
 }
 
 function main(): i32 {
-    var config: Config = Config { timeout: 41 };
+    let config: Config = Config { timeout: 41 };
     return f(1);
 }

@@ -35,7 +35,7 @@ pub struct Tabs { list: u64[], extend: u64, increment: u64, size: u64 }
 
 // `tabs_new()` — no `-t` seen yet.
 pub function tabs_new(): Tabs {
-  var none: u64[] = [];
+  let none: u64[] = [];
   return Tabs { list: none, extend: 0 as u64, increment: 0 as u64, size: 0 as u64 };
 }
 
@@ -56,15 +56,15 @@ function is_blank(c: i32): boolean {
 // value in one operand is still committed as an extend size, and the
 // stored one is already set.
 pub function (t: Tabs) parse(stops: string): Tabs {
-  var out: Tabs = t;
-  var i: i32 = 0;
-  var have: boolean = false;
-  var value: u64 = 0 as u64;
-  var want_extend: boolean = false;
-  var want_increment: boolean = false;
-  var ok: boolean = true;
+  let out: Tabs = t;
+  let i: i32 = 0;
+  let have: boolean = false;
+  let value: u64 = 0 as u64;
+  let want_extend: boolean = false;
+  let want_increment: boolean = false;
+  let ok: boolean = true;
   while (i < stops.len()) {
-    var c: i32 = stops[i] as i32;
+    let c: i32 = stops[i] as i32;
     if (c == 44 || is_blank(c)) {
       if (have) {
         out = commit(out, value, want_extend, want_increment);
@@ -89,7 +89,7 @@ pub function (t: Tabs) parse(stops: string): Tabs {
         value = 0 as u64;
         have = true;
       }
-      var over: boolean = false;
+      let over: boolean = false;
       match (value.checked_mul(10 as u64)) {
         Some(m) => {
           match (m.checked_add((c - 48) as u64)) {
@@ -108,8 +108,8 @@ pub function (t: Tabs) parse(stops: string): Tabs {
       if (over) {
         // The whole digit run is named, and the run is then skipped so
         // the parse resumes at whatever follows it.
-        var from: i32 = digits_start(stops, i);
-        var end: i32 = i;
+        let from: i32 = digits_start(stops, i);
+        let end: i32 = i;
         while (end < stops.len() && is_digit(stops[end] as i32)) {
           end = end + 1;
         }
@@ -139,7 +139,7 @@ pub function (t: Tabs) parse(stops: string): Tabs {
 
 // Where the digit run containing `i` starts.
 function digits_start(stops: string, i: i32): i32 {
-  var from: i32 = i;
+  let from: i32 = i;
   while (from > 0 && is_digit(stops[from - 1] as i32)) {
     from = from - 1;
   }
@@ -171,8 +171,8 @@ function commit(t: Tabs, value: u64, want_extend: boolean, want_increment: boole
 // of one with no `/` or `+` is a WIDTH, not a single stop, so `-t 4` has
 // a stop every four columns rather than one at column 4 and none after.
 pub function (t: Tabs) finish(): Tabs {
-  var prev: u64 = 0 as u64;
-  var i: i32 = 0;
+  let prev: u64 = 0 as u64;
+  let i: i32 = 0;
   while (i < t.list.len()) {
     if (t.list[i] == 0 as u64) {
       gnu.error("tab size cannot be 0");
@@ -190,7 +190,7 @@ pub function (t: Tabs) finish(): Tabs {
     exit(1);
   }
   if (t.list.len() == 0) {
-    var uniform: u64 = 8 as u64;
+    let uniform: u64 = 8 as u64;
     if (t.extend != 0 as u64) {
       uniform = t.extend;
     } else if (t.increment != 0 as u64) {
@@ -212,7 +212,7 @@ pub function (t: Tabs) next_column(column: u64, idx: i32): (u64, i32) {
   if (t.size != 0 as u64) {
     return (column + (t.size - column % t.size), idx);
   }
-  var i: i32 = idx;
+  let i: i32 = idx;
   while (i < t.list.len()) {
     if (column < t.list[i]) {
       return (t.list[i], i);
@@ -223,7 +223,7 @@ pub function (t: Tabs) next_column(column: u64, idx: i32): (u64, i32) {
     return (column + (t.extend - column % t.extend), i);
   }
   if (t.increment != 0 as u64) {
-    var last: u64 = 0 as u64;
+    let last: u64 = 0 as u64;
     if (t.list.len() > 0) {
       last = t.list[t.list.len() - 1];
     }

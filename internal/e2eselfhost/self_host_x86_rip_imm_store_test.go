@@ -38,9 +38,9 @@ func TestSelfHostX86RipImmediateStoreLinks(t *testing.T) {
     strbuf_reset();
     strbuf_append("ab");
     strbuf_append("cd");
-    var first: string = strbuf_take();
+    let first: string = strbuf_take();
     strbuf_append("xy");
-    var second: string = strbuf_take();
+    let second: string = strbuf_take();
     print(first);
     print(second);
     if (first.len() != 4) { return 1; }

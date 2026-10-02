@@ -8,7 +8,7 @@ import "std/float";
 // and prints no trailing digits. The exclusion cost two backends
 // of real coverage.
 function main(): i32 {
-    var x: f64 = 16.0;
+    let x: f64 = 16.0;
     print(x.sqrt().to_string());
     return 0;
 }

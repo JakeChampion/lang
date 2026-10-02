@@ -21,7 +21,7 @@ type nameHit struct {
 	enumLit     *ast.EnumLit
 	fieldAccess *ast.FieldAccess
 	// typeRef is non-nil for hits in type-annotation slots
-	// (`var c: Color` → typeRef captures `Color`'s position).
+	// (`let c: Color` → typeRef captures `Color`'s position).
 	// Picked up from Program.TypeRefs rather than the AST walk.
 	typeRef *ast.TypeRef
 	// methodCall is non-nil when the cursor lands on the method

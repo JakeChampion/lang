@@ -3056,10 +3056,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// Block-expressions (`if`/`match` value branches `{ stmts; tail }`)
 	// now lower on every compiled backend (slice 2): the builder lowers
 	// the leading statements through the normal statement-lowering path
-	// (in a fresh shadowrename frame so block-local `var`s get their own
+	// (in a fresh shadowrename frame so block-local `let`s get their own
 	// slots) and then lowers the trailing expression as the block's
 	// value. Block-local RC is handled by the existing function-exit dec
-	// sweep — every block-local `var` is registered in `info.Locals[fn]`
+	// sweep — every block-local `let` is registered in `info.Locals[fn]`
 	// (checkBlockExpr → checkStmt), gets a zero-init'd slot, and is
 	// dec'd at scope exit exactly like a top-level local; the Tail value
 	// is produced after the leading stmts and (when it references a
@@ -3085,7 +3085,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// in a function carries a name that's globally unique
 	// within the function. The IR's per-name `b.locals` slot
 	// lookup is otherwise blind to scoping — two nested
-	// `var x: i64` declarations would collapse onto a single
+	// `let x: i64` declarations would collapse onto a single
 	// slot and the outer reads would silently see the inner
 	// store's value. Runs before closureconv so the closure
 	// pass sees post-rename names everywhere.
@@ -4032,7 +4032,7 @@ func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info
 // pair-form and TRMC because each rewrites the return before the inc is
 // reached.
 //
-// Deliberately not extended to the taint propagation: `var t = p.toks[i];
+// Deliberately not extended to the taint propagation: `let t = p.toks[i];
 // return t` still escapes. The credit rests on the inc the RETURN emits, and
 // only a return can be shown to emit it here.
 func returnedCountedProjection(e ast.Expr, tainted map[string]bool, retained bool) bool {
@@ -4058,8 +4058,8 @@ func returnedCountedProjection(e ast.Expr, tainted map[string]bool, retained boo
 func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, variantPayloads map[string][]ast.Type, escapes *summaryTable[[]bool], retained bool) bool {
 	tainted := map[string]bool{pname: true}
 	// Declared types of the slots an assignment can write, for the same
-	// slot-typed reachability test a `var` initialiser gets: `x = f(p)`
-	// carries p's heap into x exactly as `var x = f(p)` does.
+	// slot-typed reachability test a `let` initialiser gets: `x = f(p)`
+	// carries p's heap into x exactly as `let x = f(p)` does.
 	slotType := map[string]ast.Type{}
 	for _, p := range fn.Params {
 		slotType[p.Name] = p.Type
@@ -4154,7 +4154,7 @@ func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, varian
 // computeFreshLocals returns the locals of `fn` that provably hold a param-free
 // value at every return — letting `return r` (where r was built locally)
 // qualify, not just `return Ctor(..)`. A local is fresh when:
-//   - it has exactly one `var` declaration (no shadowing / redeclaration),
+//   - it has exactly one `let` declaration (no shadowing / redeclaration),
 //   - that declaration's init is itself param-free (exprNoParamEscape, with the
 //     fresh set available so one fresh local may seed another), and
 //   - the name is used ONLY inside return-value expressions.
@@ -4297,7 +4297,7 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 		}
 		return true
 	})
-	// Distinct-target append (#5608): `var ys = xs.append(v)`. The same COW
+	// Distinct-target append (#5608): `let ys = xs.append(v)`. The same COW
 	// induction as the self-rebind above — the result is xs's own buffer (the
 	// rc==1 in-place path) or a fresh copy of it — so the receiver occurrence
 	// does not end xs's freshness either, and the rc pairing balances on both
@@ -4354,7 +4354,7 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 		if !exprNoParamEscape(call.Args[1], slots[0], info, variantPayloads, q, nil) {
 			return true
 		}
-		// A `var x = …` declaration contributes no Ident node for x (Var.Name
+		// A `let x = …` declaration contributes no Ident node for x (Var.Name
 		// is a string), so a single occurrence means the receiver is used
 		// exactly once — here — and never read again.
 		if occ := occurrencesOf(recv.Name); len(occ) == 1 && occ[0] == recv {
@@ -4554,8 +4554,8 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		}
 		// A fresh-result builtin allocates its result and copies whatever
 		// bytes it was handed, so no parameter heap flows through it. This
-		// is what lets a map builder (`var m = map_new(8); …; return m;`),
-		// `bytes()` (`var out = __alloc_u8(n); …; return out;`) and the
+		// is what lets a map builder (`let m = map_new(8); …; return m;`),
+		// `bytes()` (`let out = __alloc_u8(n); …; return out;`) and the
 		// int-to-string family (every one ends in
 		// `string_from_bytes_unchecked`) prove their returns fresh.
 		if freshResultBuiltin(id.Name) {
@@ -4567,7 +4567,7 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		// receiver is, provided the element itself can't strand a param alias
 		// in the buffer. Mirrors rhsTainted's receiver-aliasing arms for
 		// `__method_Map_set` / `__method_Array_set`, and is the piece that lets
-		// `var ys = xs.append(v); return ys;` prove fresh (#5608). Without it
+		// `let ys = xs.append(v); return ys;` prove fresh (#5608). Without it
 		// the generic any-arg rule below rejected the call and the caller's
 		// binding fell back to a non-freeing dec.
 		if id.Name == "__method_Array_push" && len(x.Args) == 2 {
@@ -5177,7 +5177,7 @@ func (b *builder) emitPairFormPushValue(e ast.Expr) error {
 // container, freeing the very cell the caller had just been given:
 //
 //	function find(name: string): Option[Unit] {
-//	    var us: Unit[] = units();          // rc=1, swept at exit
+//	    let us: Unit[] = units();          // rc=1, swept at exit
 //	    for i in 0..us.len() {
 //	        if (us[i].name == name) { return Some(us[i]); }
 //	    }                                  // ^ element handed over uninc'd
@@ -5404,7 +5404,7 @@ type builder struct {
 	// Set by the Assign lowering just before it lowers the RHS, cleared
 	// after. The concat lowering consults it (by node identity) to emit
 	// __fern_str_append instead of OpStrConcat — the in-place-when-unique
-	// append that turns the pervasive `var out = ""; loop { out = out +
+	// append that turns the pervasive `let out = ""; loop { out = out +
 	// piece }` stdlib idiom from an allocate-and-copy per piece into a
 	// memcpy into the existing buffer's size-class slack (#5637 option 3).
 	// selfStrAppendDone records that the concat site actually took that
@@ -5531,7 +5531,7 @@ type builder struct {
 	// reuse. See the rcPlan field docs for each table's contract.
 	rc rcPlan
 	// closureTarget[localName] = the hoisted closure FuncName a
-	// FuncType local was assigned via `var f = MakeClosure{...}`.
+	// FuncType local was assigned via `let f = MakeClosure{...}`.
 	// Lets emitDec dispatch a closure's drop to the per-closure
 	// __closure_drop_<name> thunk (which frees the captured pointer
 	// targets), falling back to the generic __fern_closure_drop for
@@ -5891,7 +5891,7 @@ func (b *builder) isTryReturnType(t ast.Type) bool {
 }
 
 // computeMovedLocals finds Phase 4 move-on-alias sites: a top-level
-// `var y = x` / `y = x` statement whose source x is an owned rc local
+// `let y = x` / `y = x` statement whose source x is an owned rc local
 // AND whose read of x is x's LAST occurrence in the function. Such an
 // x is dead after the alias, so the alias's transfer inc and x's
 // exit-sweep dec cancel — emitting neither moves the reference to y
@@ -5907,7 +5907,7 @@ func (b *builder) isTryReturnType(t ast.Type) bool {
 // exit before the move). Aliases inside control flow keep their inc.
 //
 // "Last occurrence" is the max pre-order Ident index for the name: a
-// `var x` definition isn't an Ident node, so the count covers reads
+// `let x` definition isn't an Ident node, so the count covers reads
 // plus assign-target writes — the alias being the last occurrence
 // therefore also rules out any later read OR reassignment of x.
 // isArraySetCall reports whether c is a desugared `arr.with(i, v)` —
@@ -8824,7 +8824,7 @@ func bindingSlotShape(t ast.Type, ptrW int) int {
 // of static type bt, plus a restore closure for bindings whose visibility
 // ends with their arm / Then body (match arms, if-let and let-else after
 // their desugar to a match, tuple-match binds). When the name ALREADY has
-// a slot — a `var` of the same name elsewhere in the function
+// a slot — a `let` of the same name elsewhere in the function
 // (pre-allocated at entry and covered by the zero-init safety net) or an
 // earlier arm's same-named binding — the slot is REUSED instead of freshly
 // allocated.
@@ -8840,7 +8840,7 @@ func bindingSlotShape(t ast.Type, ptrW int) int {
 // corruption. Observed in practice as the self-host driver miscompiling
 // `match(read_file(..)) { Ok(s) => { write(s); .. } }` (a dangling
 // .Lir_main_* label): the AST lowering's alias_names_in_stmt bound its StmtAssign
-// arm payload as `a`, shadowing the `var a: string[]` accumulators bound
+// arm payload as `a`, shadowing the `let a: string[]` accumulators bound
 // in sibling arms, and the wildcard arm's return swept the unwritten
 // binding slot. Reusing the entry-zeroed slot makes that sweep a
 // null-guarded no-op on unentered paths and keeps every same-named
@@ -8894,13 +8894,13 @@ func (b *builder) bindingSlotScoped(name string, bt ast.Type) (int32, func()) {
 // lowerFunc's entry
 // loops never stamp scratchType for param / var slots, so reading
 // b.scratchType directly returns nil there, which reads as single-word
-// and let a pointer-shaped match binding reuse a same-named `var`'s
+// and let a pointer-shaped match binding reuse a same-named `let`'s
 // TWO-WORD string slot (wasm ptrW==4 + arm64 TwoWordOverride). The
 // backend then fanned every OpLoadLocal / OpStoreLocal of the binding
 // into two words while the IR balanced for one — an operand-stack
 // underflow that read garbage into the binding (observed as the
 // self-host interp's `parser.ExprTuple(t)` arm trapping its own bounds
-// check on arm64 once a sibling arm gained `var t: string`, #4497).
+// check on arm64 once a sibling arm gained `let t: string`, #4497).
 func (b *builder) slotShapeType(slot int32) ast.Type {
 	if int(slot) < len(b.fn.Params) {
 		return b.fn.Params[slot].Type
@@ -9447,7 +9447,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		idx, ok := b.locals[n.Name]
 		if !ok {
-			return fmt.Errorf("ir: var %q has no slot (compiler bug)", n.Name)
+			return fmt.Errorf("ir: let %q has no slot (compiler bug)", n.Name)
 		}
 		// when the init expression aliases an existing
 		// array (i.e. it's a bare ident load of an array-typed
@@ -9477,9 +9477,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 		}
 		// Phase 5h: release the slot's previous value before this
-		// (re-)init store. For a loop-body `var` this reclaims the prior
+		// (re-)init store. For a loop-body `let` this reclaims the prior
 		// iteration's allocation instead of leaking it; for a once-run
-		// `var` the zero-init makes it a NULL-guarded no-op. The new value
+		// `let` the zero-init makes it a NULL-guarded no-op. The new value
 		// is on the stack underneath — emitVarReinitDropOld is net-zero —
 		// so it survives for the store below.
 		//
@@ -9506,7 +9506,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		// The temp is an rc-tracked tuple local (swept at scope exit).
 		// When Init ALIASES an existing tuple (a bare ident / field /
-		// index load — `var (a, b) = t`), the temp co-owns that box, so
+		// index load — `let (a, b) = t`), the temp co-owns that box, so
 		// bump the rc: otherwise the temp's exit box_free and the
 		// source's would both free the same box (double free), or — for
 		// a borrowed tuple PARAM — the temp would free the caller's box
@@ -10247,7 +10247,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// statements, type-erased generic paths).
 		//
 		// IsFloat takes precedence — set by settleFloat when a
-		// polymorphic literal lands in float context (`var r:
+		// polymorphic literal lands in float context (`let r:
 		// f32 = 0`, `r * 2`, `r <= 0` against an f32 r). Emit
 		// the f-const path with the integer Value cast to float.
 		if n.IsFloat {
@@ -11191,7 +11191,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// reference. Without the retain the drop would free the element out
 		// from under the result; without the drop `mk_strs()[0]` leaked the
 		// spine AND every element it did not extract (304 B a round where
-		// `var xs = mk_strs(); xs[0]` was flat). The is_unique gate carries
+		// `let xs = mk_strs(); xs[0]` was flat). The is_unique gate carries
 		// the safety the other way: an aliased container (a callee returning
 		// its own param, rc >= 2) is only dec'd, so the retain is merely
 		// unbalanced — a leak, never a use-after-free.
@@ -11679,7 +11679,7 @@ func (b *builder) expr(e ast.Expr) error {
 		storeOpAndWidth := arrayElemStoreOpFor(n.ElemType, b.ptrW)
 		// array-element initialisation is an alias-creating site when
 		// the element type is also array-shaped — e.g.
-		// `var matrix: u8[][] = [inner];` stores `inner`'s pointer into
+		// `let matrix: u8[][] = [inner];` stores `inner`'s pointer into
 		// the matrix's slot 0, so the new matrix co-owns `inner`. Same
 		// gating as the Var / Assign / call-arg / struct-field /
 		// closure-capture sites.
@@ -11762,7 +11762,7 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpAdd})
 	case *ast.MapLit:
 		// Lower `Map { k1: v1, k2: v2, ... }` to:
-		//   var __m = map_new(N, keyKind, valKind);
+		//   let __m = map_new(N, keyKind, valKind);
 		//   __m.set(k1, v1);
 		//   __m.set(k2, v2);
 		//   ...
@@ -11978,8 +11978,8 @@ func (b *builder) expr(e ast.Expr) error {
 			// (no needless copy / no leak). The fast ownership-flow-aware
 			// inc-only path is the Perceus port's job (roadmap goal 2).
 			//
-			// Issue #4871: the same aliasing arises one `var` removed —
-			// `var m = s.m.insert(...); Struct { m: m }` — where the field value
+			// Issue #4871: the same aliasing arises one `let` removed —
+			// `let m = s.m.insert(...); Struct { m: m }` — where the field value
 			// is a plain ident, not a direct call, so isMapMutatorCall misses it.
 			// borrowedMapFieldResults flags such a local (mutator with a
 			// field-access receiver); clone it too, but only when it is MOVED
@@ -12070,7 +12070,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// local decs at its own scope exit; a base that is a FRESH value —
 			// a call result, a nested literal — has no such owner, so
 			// `T { ...mk(), f: v }` leaked one base box per evaluation,
-			// unbounded, while `var b = mk(); T { ...b, f: v }` was flat.
+			// unbounded, while `let b = mk(); T { ...b, f: v }` was flat.
 			// Every pointer field was inc'd into the new box just above, so
 			// the deep drop nets each of them back to their new owner's single
 			// reference and frees the shell.
@@ -12208,7 +12208,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// back to this expression's single reference. Without the retain the
 		// drop would free the field out from under the result; without the
 		// drop the whole container leaked — `mk_box().items` cost 96 B a
-		// round, unbounded, where `var b = mk_box(); b.items` was flat. It is
+		// round, unbounded, where `let b = mk_box(); b.items` was flat. It is
 		// the same inc-then-deep-drop pair the struct-update spread already
 		// uses for a fresh base.
 		//
@@ -12260,7 +12260,7 @@ func (b *builder) expr(e ast.Expr) error {
 		//
 		//   1. Lower each leading statement through `b.stmt` — the same
 		//      path a normal `{ }` block's statements take. Block-local
-		//      `var`s already have their own pre-allocated, zero-init'd
+		//      `let`s already have their own pre-allocated, zero-init'd
 		//      slots: shadowrename gave the block its own frame (so a `k`
 		//      here doesn't collide with a `k` in a sibling branch), and
 		//      checkBlockExpr → checkStmt registered each in
@@ -12268,11 +12268,11 @@ func (b *builder) expr(e ast.Expr) error {
 		//   2. Lower `Tail` as an expression, leaving its value on the
 		//      operand stack as the BlockExpr's result.
 		//
-		// RC / ownership: block-local `var`s are dropped by the existing
+		// RC / ownership: block-local `let`s are dropped by the existing
 		// function-exit dec sweep (`emitRcDecLocalsAtExit`) exactly like
 		// any other local — there's no separate scope-exit drop here, so
 		// there's nothing to order against the Tail value. When `Tail`
-		// references a block-local (e.g. `{ var s = a + b; s }`), the
+		// references a block-local (e.g. `{ let s = a + b; s }`), the
 		// normal Ident-load rules apply: a bare-ident tail is the value
 		// being returned, and the slot's exit dec is balanced against the
 		// reference the caller now holds (the result is consumed by the
@@ -12285,7 +12285,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// `break` / `continue`), so it has no trailing value and the
 		// checker typed it `never` (#4522). Lower the statements only —
 		// the diverging terminal (OpReturn / OpBr) makes any enclosing
-		// consumer (the store into `var x = { …; return … }`, the merge
+		// consumer (the store into `let x = { …; return … }`, the merge
 		// after an if/match arm) unreachable, and the ssa lift skips it,
 		// so there is no value to push. A non-diverging nil Tail is a
 		// compiler bug (checker E061 should have rejected it), but the
@@ -12895,7 +12895,7 @@ func (b *builder) fieldOwner(e ast.Expr) string {
 		// no struct declares, so the owner came back "" and lowering aborted
 		// with `field access on unresolved struct ""` — on code the checker
 		// accepts and the interpreter runs. Binding the element to a local
-		// first (`var p: P = t.1; p.field`) always worked, which is what kept
+		// first (`let p: P = t.1; p.field`) always worked, which is what kept
 		// this narrow.
 		if tup, ok := b.targetTupleType(x.Target); ok {
 			idx, err := strconv.Atoi(x.Field)
@@ -13123,7 +13123,7 @@ func (b *builder) callReturnType(c *ast.Call) ast.Type {
 // `mk_strs()[0]`. Those lowerings retain the loaded string and deep-drop the
 // container, so the value arrives owning its single reference and nothing
 // downstream reclaims it: `mk_box().name.len()` leaked one buffer a round
-// where `var s = mk_box().name` was flat, because only the binding site knew
+// where `let s = mk_box().name` was flat, because only the binding site knew
 // the read was a move. A borrowing consumer has to know it too.
 //
 // The call case is what keeps `"n = " + n.to_string()` from leaking the
@@ -13525,7 +13525,7 @@ func (b *builder) binary(n *ast.Binary) error {
 		}
 		// FloatWidth=0 means "unannotated" — an unsettled float
 		// binary with no expected-type pressure (e.g. an inferred
-		// `var y = 1.0 / 3.0`). Default to f64 so the op width
+		// `let y = 1.0 / 3.0`). Default to f64 so the op width
 		// matches the f64 default its operand literals lower to;
 		// a 32-bit default here left the operands as f64 consts
 		// feeding an f32 op (wasm rejected the type mismatch, the
@@ -14983,7 +14983,7 @@ func (b *builder) emitLentViewDrops(slots []int32) {
 //
 // Without this, a fresh string temp handed to a string-returning call is never
 // reclaimed at all: `(k * 66049).to_binary().pad_start(40, "0")` leaks one block
-// per call, while the identical code with the intermediate bound to a `var` does
+// per call, while the identical code with the intermediate bound to a `let` does
 // not (#5942). It hid from the x86-64 leakcheck suite because ≤ 7-byte strings
 // are SSO-inline on the single-word ABI, so short intermediates allocate nothing;
 // arm64 and wasm heap-allocate them. `first([1, 2])` leaked its literal the same
@@ -15095,8 +15095,8 @@ type arrayFieldPath struct {
 // to `calleeName`: for each argument position the callee may grow in place
 // (computeGrowParams), a surviving plain-ident argument contributes its own
 // buffer and/or the named array fields of its struct type — only the fields
-// the callee can actually grow, since bracketing the other twenty of a
-// LowerState forces a copy on each of them too. Skipped when the arg dies at
+// the callee can actually grow, since bracketing the other fields of a wide
+// struct forces a copy on each of them too. Skipped when the arg dies at
 // this call (the strict
 // self-reassign shape — keeps the #4838 O(n) accumulator chains on the
 // in-place fast path), is a move site, is not an rc-tracked alias, or
@@ -15138,7 +15138,7 @@ func (b *builder) growBracketArgs(n *ast.Call, calleeName string) []growBracketE
 		// An owned-by-default position is NOT exempt: the caller's retain is
 		// on the BOX, and a field buffer inside it stays at its own count, so
 		// the callee's rc==1 fast path would still grow the buffer this
-		// binding reads back through (`var c = a.push(3); a.size()`).
+		// binding reads back through (`let c = a.push(3); a.size()`).
 		if gp[ai].buffer {
 			out = append(out, growBracketEntry{slot: slot, fieldPath: chain})
 		}
@@ -16268,7 +16268,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// it is only safe when the arg is DEAD at that point. If the callee
 	// RETURNS its arg (`pick[T](c,a,b)` → `if c { a } else { b }`;
 	// `id[T](x)` → `x`) the result aliases the arg, and a caller that binds
-	// / reads the result later (`var v = pick(false, x, Pair{...}); v.fst`)
+	// / reads the result later (`let v = pick(false, x, Pair{...}); v.fst`)
 	// would touch freed memory (observed: diff-oracle seeds 1392/1596/1836
 	// segfault). Only a concrete scalar result (number / bool / float /
 	// void) provably cannot BE or CONTAIN the arg. Note a pointer result is
@@ -17110,7 +17110,7 @@ func (b *builder) localFuncType(name string) (*ast.FuncType, error) {
 		if v.Name == name {
 			ft, ok := v.Type.(*ast.FuncType)
 			if !ok {
-				return nil, fmt.Errorf("ir: indirect call through non-function-typed var %q", name)
+				return nil, fmt.Errorf("ir: indirect call through non-function-typed let %q", name)
 			}
 			return ft, nil
 		}
@@ -18091,7 +18091,7 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 
 // localNameUnique reports whether `name` has exactly one declaration in
 // the current function's locals — i.e. it is not shadowed by a same-name
-// `var` in a sibling/nested scope. The zero-init safety net
+// `let` in a sibling/nested scope. The zero-init safety net
 // keys on name (`zeroSeen[v.Name]`), so a unique name's single slot is
 // guaranteed zero-initialised at function entry; a shadowed name has
 // multiple distinct slots sharing one name-keyed zero, only one of which
@@ -18111,7 +18111,7 @@ func (b *builder) localNameUnique(name string) bool {
 }
 
 // bindingNameUnique reports whether `name` names exactly one slot in this
-// frame: a parameter no `var` shadows, or a single unshadowed local.
+// frame: a parameter no `let` shadows, or a single unshadowed local.
 // localNameUnique answers the narrower question about declared locals only, so
 // a parameter — which has no declaration among them — reads as non-unique
 // there.
@@ -18151,7 +18151,7 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// deep per-element loop (__drop_arr_struct_ / __drop_arr_tuple_ /
 		// __drop_arr_arr_) so the element boxes / inner buffers reclaim too,
 		// mirroring the exit sweep (arrElemStructDropName). Without this a
-		// `var g = [[..],[..]]` loop leaked the INNER buffers every iteration
+		// `let g = [[..],[..]]` loop leaked the INNER buffers every iteration
 		// (the profiling probe measured 3264 B → 320064 B). Other pointer-
 		// element buffers (array-of-rc whose element isn't deep-droppable
 		// here) still leak their elements via the plain arr_dec — safe under
@@ -18185,7 +18185,7 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// string-key column + buf + handle) via emitMapSlotDrop, mirroring
 		// the exit sweep. Routing it through emitStructEnumSlotDrop instead
 		// would hit dropFnNameFor's Map decline → a flat box dec that leaks
-		// the buf/handle/values — the `var m = map_new(8)` loop leak the
+		// the buf/handle/values — the `let m = map_new(8)` loop leak the
 		// profiling probe measured (6400 B → 640000 B). Every map-drop helper
 		// self-guards on rc==1, so a shared map only dec's.
 		if st, isMap := ty.(ast.StructType); isMap && st.Name == "Map" {
@@ -18195,7 +18195,7 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// Owned struct / enum loop var: deep-drop on reinit, mirroring the
 		// exit sweep. A flat __fern_rc_dec here neither frees the box (rc_dec
 		// has no free path) nor recurses into rc-tracked fields / payloads, so
-		// a `var b = Box{ data: [...] }` (or `var e = Arr([...])`) re-declared
+		// a `let b = Box{ data: [...] }` (or `let e = Arr([...])`) re-declared
 		// in a loop leaked its box AND its nested heap field every iteration
 		// but the last. Route through the generated __drop_struct_<N> /
 		// __drop_enum_<N> fn (via dropFnNameFor — the same one the exit
@@ -18237,7 +18237,7 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 	case ast.TupleType:
 		// Tuple reclamation on loop-body re-declaration — mirrors the exit
 		// sweep's TupleType branch (emitRcDecLocalsAtExitExcept). A tuple is
-		// heap-boxed with an rc header, so a `var t = (a, b)` re-declared in
+		// heap-boxed with an rc header, so a `let t = (a, b)` re-declared in
 		// a loop reuses one slot across iterations; without a dec on reinit
 		// every prior iteration's box (and its rc-tracked elements) leaks.
 		//
@@ -18266,7 +18266,7 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 	case ast.DynTraitType:
 		// `dyn Trait` reclamation on loop-body re-declaration
 		// (docs/DYN-TRAITS.md §4.4) — mirrors the exit sweep's DynTraitType
-		// branch. Without this a `var d: dyn Shape = C{...}` re-declared each
+		// branch. Without this a `let d: dyn Shape = C{...}` re-declared each
 		// iteration leaks the prior iteration's concrete `data` object (and
 		// anything it transitively owns) — the exit sweep only reclaims the
 		// final iteration. The per-set __drop_dyn_<set> helper reads the
@@ -18984,7 +18984,7 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 			// Always adopt the substituted decl. The generic decl's payloads are
 			// ParamTypes, which uniformEnumDropLoads / uniformEnumBoxSize cannot
 			// size or classify, so the uniform path was skipped and the box
-			// leaked for a SCALAR instantiation: `var o = Some(k)` allocated 16
+			// leaked for a SCALAR instantiation: `let o = Some(k)` allocated 16
 			// bytes per construction and never freed them (#5917).
 			//
 			// The previous gate gave this up on the stated grounds that a scalar
@@ -19253,7 +19253,7 @@ func (b *builder) emitRetainValueOnStack(t ast.Type) {
 // would be a use-after-free.
 //
 // The fresh-box arm is what makes the temp spelling agree with the bound one:
-// `var b = mk(); T { ...b, f: v }` already reclaims mk's box at b's scope exit
+// `let b = mk(); T { ...b, f: v }` already reclaims mk's box at b's scope exit
 // through this same `dropStructField`, under the same is_unique gate, on the
 // same oracle. Escape freedom is a far stronger fact and out of reach for a
 // registry builder — every field of `fnsigs.fn_sigs_for_borrow`'s 40-field
@@ -19667,7 +19667,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				// pointer-changed test that serves __map_cow_inplace (whose doc
 				// leaves "the source handle's rc to the normal dec-on-overwrite
 				// at the assignment site") therefore double-releases here: for
-				// `var a = acc; a = a.with(..)` the second dec landed on the
+				// `let a = acc; a = a.with(..)` the second dec landed on the
 				// CALLER's buffer (#6057).
 			} else if isSelfMapMutation(n.Value, t.Name) {
 				newTmp := b.allocSlot()
@@ -19740,7 +19740,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				// callee because __fern_arr_cow_inplace_ptr incs each
 				// element into the copy it hands back. The buffer-only dec
 				// then frees the buffer and strands one element per
-				// overwrite, which is the same reclaim `var a = mk()`
+				// overwrite, which is the same reclaim `let a = mk()`
 				// re-executed in a loop already gets right
 				// (emitVarReinitDropOld → emitOwnedSlotDrop).
 				release := arrDec
@@ -19852,7 +19852,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				//     over-release isSelfMapMutation's COW-aware branch exists
 				//     to avoid.
 				//
-				//     A MOVED alias brings one too. `var (m2, ok) = m.without(k);
+				//     A MOVED alias brings one too. `let (m2, ok) = m.without(k);
 				//     m = m2` skips the transfer inc and skips m2's exit sweep,
 				//     so no inc is emitted — but the count m2 held is still
 				//     handed to the slot, on top of the one the slot already
@@ -19920,7 +19920,7 @@ func (b *builder) assign(n *ast.Assign) error {
 			// and gated identically (RcFreeEnabled && freeEligible). A
 			// reassignment ends the old binding's ownership exactly like a
 			// scope exit would, so the same eligible-gated str_dec applies.
-			// This is what makes `var s = ""; for … { s = s + chunk }`
+			// This is what makes `let s = ""; for … { s = s + chunk }`
 			// reclaim each intermediate buffer instead of orphaning it —
 			// the alias-inc side (needsRcIncOnAlias) already retains string
 			// RHSs, so this is its matching release. Without it the inc/dec
@@ -20405,7 +20405,7 @@ func isMapDeleteCall(e ast.Expr) bool {
 //     owner — already owned, nothing to retain.
 //   - rc <= 1 (sole owner): the SAME handle, un-retained. Whoever takes the
 //     result and the receiver's binding then share ONE count, and both
-//     release it (#6227 — `var m2 = m.insert(k, v); m = m2;` dropped entries
+//     release it (#6227 — `let m2 = m.insert(k, v); m = m2;` dropped entries
 //     silently; the `without` spelling, whose tuple return cannot be written
 //     any other way, freed the handle and SEGV'd on the next probe).
 //
@@ -20697,7 +20697,7 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 	// excluded here while they were still uncounted at construction — that
 	// era is over (#4174 rc-tracked native strings + the genStructDropFn
 	// string-field arms), and lifting the exclusion is what un-quadratics
-	// the self-host LowerState/EmitState `s = s.emit(op)` threading: with
+	// self-host-style `s = s.emit(op)` threading: with
 	// the old box flat-dec'd (never freed) every superseded state pinned the
 	// ops array at rc >= 2, so each statement's append cloned the whole
 	// accumulated array — the #3425 Effect-A O(ops^2) that kept the merged
@@ -20856,7 +20856,7 @@ func (b *builder) emitOwnFlagOverwriteDec(name string, releaseOwned, balanceSame
 // is rc-gated. A uniquely-owned buffer (rc==1) either mutates in place (no old
 // buffer to free) or, when full, allocates a fresh buffer and leaves the old at
 // rc==1 — so the overwrite's __fern_arr_dec frees exactly the orphan. A
-// borrowed-DERIVED local (`var x = param`, alias-inc'd to rc≥2) takes the COPY
+// borrowed-DERIVED local (`let x = param`, alias-inc'd to rc≥2) takes the COPY
 // path and the overwrite dec only lowers rc to ≥1 — never freeing the param's
 // still-live buffer. A general `x = f(x)` has no such guarantee (f may return a
 // borrowed buffer at rc==1 that the result still aliases → buffer-UAF), which is
@@ -22829,7 +22829,7 @@ func isCellSelfMapCow(value ast.Expr, cellName string) bool {
 }
 
 // isBoxedCellMapCow reports whether `value` is a cow-in-place map mutator whose
-// receiver is a read of ANY boxcapture cell — isCellSelfMapCow for a `var`
+// receiver is a read of ANY boxcapture cell — isCellSelfMapCow for a `let`
 // initialiser, which has no cell of its own to compare against.
 func (b *builder) isBoxedCellMapCow(value ast.Expr) bool {
 	if b.info == nil || len(b.info.BoxedCells) == 0 {
@@ -23037,7 +23037,7 @@ func (b *builder) appendDecision(n *ast.Call) (bool, string) {
 // caller's and whose fields the #4873 grow bracket covers, or a local the
 // frame built (freshLocalRoots). The mutation analysis proves no later read
 // through the ROOT observes the grow; this is the other half — that no other
-// name holds the same box — without which `var t = o.inner; t.xs.append(v)`
+// name holds the same box — without which `let t = o.inner; t.xs.append(v)`
 // lengthened `o.inner.xs` too (#8768).
 func (b *builder) fieldAppendRootOK(fa *ast.FieldAccess) bool {
 	root, _, ok := fieldPlace(fa)
@@ -23126,8 +23126,8 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	// still readable after the grow. The grow helper's rc==1 in-place fast
 	// path mutates the operand buffer's length header and returns the SAME
 	// pointer; that's only sound when nothing reads the buffer again. For a
-	// reused ident it corrupts later reads — e.g. `var a = walk(path.append(d),
-	// …); var b = path.append(d).len();`, where the first append mutates
+	// reused ident it corrupts later reads — e.g. `let a = walk(path.append(d),
+	// …); let b = path.append(d).len();`, where the first append mutates
 	// `path` in place and the second sees the longer buffer (interp ≠
 	// compiled, #4827). Here the rc==1 check is not enough: `path` is uniquely
 	// referenced (rc 1) yet READ twice, and rc counts references, not
@@ -23905,7 +23905,7 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	// The rebuilt Option box carries the same 8-byte rc header every
 	// heap box gets (rc=1 at [base+0], data = base+8) — like emitEnumNew
 	// / a Some(..) literal. Without it the scope-exit drop of an unused
-	// `var o = m.get(k)` reads heap metadata at [data-8] as the rc and
+	// `let o = m.get(k)` reads heap metadata at [data-8] as the rc and
 	// underflows.
 	const rcHeaderBytes = 8
 	baseSlot := b.allocSlot()

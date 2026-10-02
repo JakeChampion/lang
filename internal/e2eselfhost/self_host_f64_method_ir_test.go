@@ -33,15 +33,15 @@ var f64MethodCases = []struct {
 	name string
 	body string
 }{
-	{"sqrt", `var x: f64 = 16.0; return x.sqrt() as i32;`},    // 4
-	{"floor", `var x: f64 = 7.9; return x.floor() as i32;`},   // 7
-	{"ceil", `var x: f64 = 7.1; return x.ceil() as i32;`},     // 8
-	{"trunc", `var x: f64 = 7.9; return x.trunc() as i32;`},   // 7
-	{"round", `var x: f64 = 2.5; return x.round() as i32;`},   // 3
-	{"abs", `var x: f64 = 0.0 - 5.5; return x.abs() as i32;`}, // 5
-	{"pow", `var x: f64 = 2.0; return x.pow(5.0) as i32;`},    // 32
-	{"exp", `var x: f64 = 2.0; return x.exp() as i32;`},       // 7
-	{"log", `var x: f64 = 10.0; return x.log() as i32;`},      // 2
+	{"sqrt", `let x: f64 = 16.0; return x.sqrt() as i32;`},    // 4
+	{"floor", `let x: f64 = 7.9; return x.floor() as i32;`},   // 7
+	{"ceil", `let x: f64 = 7.1; return x.ceil() as i32;`},     // 8
+	{"trunc", `let x: f64 = 7.9; return x.trunc() as i32;`},   // 7
+	{"round", `let x: f64 = 2.5; return x.round() as i32;`},   // 3
+	{"abs", `let x: f64 = 0.0 - 5.5; return x.abs() as i32;`}, // 5
+	{"pow", `let x: f64 = 2.0; return x.pow(5.0) as i32;`},    // 32
+	{"exp", `let x: f64 = 2.0; return x.exp() as i32;`},       // 7
+	{"log", `let x: f64 = 10.0; return x.log() as i32;`},      // 2
 }
 
 // f64MethodSrc builds a minimal program calling an f64 method. std/test is NOT

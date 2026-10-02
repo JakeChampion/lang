@@ -60,7 +60,7 @@ func TestSelfHostEnum64bitIR(t *testing.T) {
 		// enum with an f64 payload (a 4-byte truncation fails). 2.5 > 2.0 -> 6
 		{"f64-payload", `enum E { V(f64), W } function f(e: E): i32 { match (e) { V(x) => { if (x > 2.0) { return 6; } return 1; }, W => { return 3; } } return 0; } function main(): i32 { return f(V(2.5)); }`, 6},
 		// i64 payload used in arithmetic inside the arm.
-		{"i64-arith", `enum E { N(i64) } function f(e: E): i32 { match (e) { N(v) => { var s: i64 = v + v; if (s > 11000000000) { return 9; } return 1; } } return 0; } function main(): i32 { return f(N(6000000000)); }`, 9},
+		{"i64-arith", `enum E { N(i64) } function f(e: E): i32 { match (e) { N(v) => { let s: i64 = v + v; if (s > 11000000000) { return 9; } return 1; } } return 0; } function main(): i32 { return f(N(6000000000)); }`, 9},
 		// A u64 payload (bit 63 set) bound + shifted UNSIGNED: the payload reads at
 		// 8-byte width (struct_get_i64, matching the mark_u64 binding — else the
 		// wasm module fails to validate) and `x >> 57` selects shr_u, so

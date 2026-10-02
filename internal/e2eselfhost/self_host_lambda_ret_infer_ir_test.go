@@ -32,60 +32,60 @@ var lambdaRetInferCases = []struct {
 }{
 	// Index of a CAPTURED array — the capture arrives as a lifted-fn param.
 	{"lambda_index_captured_f64_array", `function main(): i32 {
-    var a: f64[] = [1.5, 4.5];
-    var f: () => f64 = () => a[1];
+    let a: f64[] = [1.5, 4.5];
+    let f: () => f64 = () => a[1];
     return (f() * 10.0) as i32;
 }`}, // 45
 	// Index of a CALL result inside the lambda — named by irt_func_ret.
 	{"lambda_index_call_f64_array", `function mk(): f64[] { return [1.5, 4.5]; }
 function main(): i32 {
-    var f: () => f64 = () => mk()[1];
+    let f: () => f64 = () => mk()[1];
     return (f() * 10.0) as i32;
 }`}, // 45
 	// Tuple element of a captured tuple — the ExprFieldAccess arm.
 	{"lambda_tuple_elem_captured", `function mk(): (f64, i32) { return (4.5, 7); }
 function main(): i32 {
-    var t: (f64, i32) = mk();
-    var f: () => f64 = () => t.0;
+    let t: (f64, i32) = mk();
+    let f: () => f64 = () => t.0;
     return (f() * 10.0) as i32 + t.1;
 }`}, // 52
 	// Regression guard: a float LITERAL body already inferred correctly and must
 	// keep doing so (the arm this fix sits beside).
 	{"lambda_literal_f64", `function main(): i32 {
-    var f: () => f64 = () => 4.5;
+    let f: () => f64 = () => 4.5;
     return (f() * 10.0) as i32;
 }`}, // 45
 	// Regression guard: a CALL body already inferred via irt_func_ret.
 	{"lambda_call_f64", `function mk(): f64 { return 4.5; }
 function main(): i32 {
-    var f: () => f64 = () => mk();
+    let f: () => f64 = () => mk();
     return (f() * 10.0) as i32;
 }`}, // 45
 	// Negative guard: an i32 element must NOT be inferred f64 — the element type
 	// comes from the array's own spelling, not from a default.
 	{"lambda_index_i32_array_narrow", `function main(): i32 {
-    var a: i32[] = [1, 40];
-    var f: () => i32 = () => a[1];
+    let a: i32[] = [1, 40];
+    let f: () => i32 = () => a[1];
     return f() + 2;
 }`}, // 42
 	// Negative guard: a string element keeps its pointer shape.
 	{"lambda_index_string_array", `function main(): i32 {
-    var a: string[] = ["ab", "cdef"];
-    var f: () => string = () => a[1];
+    let a: string[] = ["ab", "cdef"];
+    let f: () => string = () => a[1];
     return f().len() + 38;
 }`}, // 42
 	// Struct FIELD body — needs the struct table threaded into the inference
 	// (me_field_type_of).
 	{"lambda_struct_field", `struct P { x: f64 }
 function main(): i32 {
-    var p: P = P { x: 4.5 };
-    var f: () => f64 = () => p.x;
+    let p: P = P { x: 4.5 };
+    let f: () => f64 = () => p.x;
     return (f() * 10.0) as i32;
 }`}, // 45
 	// Unary body — `-x` keeps the operand's type.
 	{"lambda_unary_neg", `function main(): i32 {
-    var a: f64[] = [1.5, 4.5];
-    var f: () => f64 = () => -a[1];
+    let a: f64[] = [1.5, 4.5];
+    let f: () => f64 = () => -a[1];
     return (f() * -10.0) as i32;
 }`}, // 45
 	// METHOD-call body — irt_func_ret only sees receiver-less functions, so this
@@ -93,21 +93,21 @@ function main(): i32 {
 	{"lambda_method_call", `struct P { x: f64 }
 function (p: P) scaled(): f64 { return p.x * 2.0; }
 function main(): i32 {
-    var p: P = P { x: 2.25 };
-    var f: () => f64 = () => p.scaled();
+    let p: P = P { x: 2.25 };
+    let f: () => f64 = () => p.scaled();
     return (f() * 10.0) as i32;
 }`}, // 45
 	// Slice-then-index body — pins the `[T]` slice spelling round-tripping
 	// through both the slice arm and the index arm.
 	{"lambda_slice_index", `function main(): i32 {
-    var a: f64[] = [1.5, 2.5, 4.5];
-    var f: () => f64 = () => a[0:2][1];
+    let a: f64[] = [1.5, 2.5, 4.5];
+    let f: () => f64 = () => a[0:2][1];
     return (f() * 10.0) as i32;
 }`}, // 25
 	// Regression guard: a binary body already delegated to its left operand.
 	{"lambda_binary_index", `function main(): i32 {
-    var a: f64[] = [1.5, 2.25];
-    var f: () => f64 = () => a[1] * 2.0;
+    let a: f64[] = [1.5, 2.25];
+    let f: () => f64 = () => a[1] * 2.0;
     return (f() * 10.0) as i32;
 }`}, // 45
 	// A BUILTIN-method body, which inference cannot answer without absorbing the
@@ -115,16 +115,16 @@ function main(): i32 {
 	// type instead — the annotation outranking the inference.
 	{"lambda_builtin_map_get_or", `import "core/map";
 function main(): i32 {
-    var m: Map[string, f64] = map_new(4);
+    let m: Map[string, f64] = map_new(4);
     m = m.insert("k", 4.5);
-    var f: () => f64 = () => m.get_or("k", 0.0);
+    let f: () => f64 = () => m.get_or("k", 0.0);
     return (f() * 10.0) as i32;
 }`}, // 45
 	// The declared type must not override an EXPLICIT lambda annotation, and an
 	// i32 declared return must stay i32 — the stamp only ever fills a hole.
 	{"lambda_declared_i32_narrow", `function main(): i32 {
-    var a: i32[] = [1, 40];
-    var f: () => i32 = () => a[1];
+    let a: i32[] = [1, 40];
+    let f: () => i32 = () => a[1];
     return f() + 2;
 }`}, // 42
 }

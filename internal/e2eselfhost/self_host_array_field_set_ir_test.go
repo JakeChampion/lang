@@ -16,14 +16,14 @@ var arrayFieldSetCases = []struct {
 		// The reduced repro: a fresh array literal replaces an empty one.
 		"set-fresh-literal",
 		`struct S { code: i32[], n: i32 }
-function main(): i32 { var s: S = S { code: [], n: 0 }; s = S { ...s, code: [1, 2] }; return s.code.len(); }`,
+function main(): i32 { let s: S = S { code: [], n: 0 }; s = S { ...s, code: [1, 2] }; return s.code.len(); }`,
 		2,
 	},
 	{
 		// Control: the SCALAR field of the same struct.
 		"set-scalar-field",
 		`struct S { code: i32[], n: i32 }
-function main(): i32 { var s: S = S { code: [1], n: 0 }; s = S { ...s, n: 5 }; return s.n + s.code.len(); }`,
+function main(): i32 { let s: S = S { code: [1], n: 0 }; s = S { ...s, n: 5 }; return s.n + s.code.len(); }`,
 		6,
 	},
 	{
@@ -32,7 +32,7 @@ function main(): i32 { var s: S = S { code: [1], n: 0 }; s = S { ...s, n: 5 }; r
 		// data.
 		"set-aliased-local",
 		`struct S { code: i32[], n: i32 }
-function main(): i32 { var s: S = S { code: [], n: 0 }; var o: i32[] = [7, 8, 9]; s = S { ...s, code: o }; return s.code[1] + o[2]; }`,
+function main(): i32 { let s: S = S { code: [], n: 0 }; let o: i32[] = [7, 8, 9]; s = S { ...s, code: o }; return s.code[1] + o[2]; }`,
 		17,
 	},
 	{
@@ -41,8 +41,8 @@ function main(): i32 { var s: S = S { code: [], n: 0 }; var o: i32[] = [7, 8, 9]
 		"set-in-loop",
 		`struct S { code: i32[], n: i32 }
 function main(): i32 {
-    var s: S = S { code: [], n: 0 };
-    var i: i32 = 0;
+    let s: S = S { code: [], n: 0 };
+    let i: i32 = 0;
     while (i < 50) { s = S { ...s, code: [i, i + 1] }; i = i + 1; }
     return s.code[0] + s.code[1];
 }`,
@@ -53,7 +53,7 @@ function main(): i32 {
 		"set-struct-array-field",
 		`struct P { x: i32 }
 struct T { items: P[], n: i32 }
-function main(): i32 { var t: T = T { items: [], n: 0 }; t = T { ...t, items: [P { x: 4 }, P { x: 5 }] }; return t.items[0].x + t.items[1].x; }`,
+function main(): i32 { let t: T = T { items: [], n: 0 }; t = T { ...t, items: [P { x: 4 }, P { x: 5 }] }; return t.items[0].x + t.items[1].x; }`,
 		9,
 	},
 }

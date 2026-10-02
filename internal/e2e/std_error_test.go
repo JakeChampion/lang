@@ -21,12 +21,12 @@ function find(ok: boolean): Result[i32, NotFound] {
     return Err(NotFound { what: "missing" });
 }
 function handler(ok: boolean): Result[i32, dyn error.Error] {
-    var v: i32 = find(ok)?;
+    let v: i32 = find(ok)?;
     return Ok(v + 1);
 }
 function main(): i32 {
-    var a: i32 = match (handler(true)) { Ok(v) => v, Err(e) => 0 };
-    var b: i32 = match (handler(false)) { Ok(v) => 0, Err(e) => e.message().len() };
+    let a: i32 = match (handler(true)) { Ok(v) => v, Err(e) => 0 };
+    let b: i32 = match (handler(false)) { Ok(v) => 0, Err(e) => e.message().len() };
     return a + b;
 }
 `

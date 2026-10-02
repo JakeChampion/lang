@@ -19,7 +19,7 @@ import "core/int";
 function d(n: i32): string { return int.int_to_string_radix(n, 10); }
 
 function main(): i32 {
-    var mn: i32 = 0 - 2147483647 - 1;   // i32::MIN = -2147483648
+    let mn: i32 = 0 - 2147483647 - 1;   // i32::MIN = -2147483648
     print(d(mn.digits()));               // 10
     print(d(mn.sum_of_digits()));        // 47 = 2+1+4+7+4+8+3+6+4+8
     if (mn.has_digit(8)) { print("has8"); } else { print("no8"); }
@@ -29,7 +29,7 @@ function main(): i32 {
     print("[" + "hello".truncate(0 - 3, "..") + "]");   // []
     print("[" + "hello".truncate(0, "..") + "]");       // []
     // divmod by zero is the total-division pair, not a sentinel
-    var dm = (10).divmod(0);
+    let dm = (10).divmod(0);
     print(d(dm.0) + "," + d(dm.1));      // 0,10 — total division, no sentinel
     print("[" + int.int_to_string_radix(42, 99) + "]");   // []  base > 36
     print("[" + int.int_to_string_radix(42, 1) + "]");    // []  base < 2

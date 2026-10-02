@@ -21,9 +21,9 @@ var x86SSAProcEnvCases = []struct {
 		// length; the exit status is the argument count itself.
 		name: "args_names_the_program_and_is_memoised",
 		src: `function main(): i32 {
-  var a: string[] = args();
+  let a: string[] = args();
   if (a.len() >= 1 && a[0].len() > 4) { stdout().write("has-name\n"); }
-  var b: string[] = args();
+  let b: string[] = args();
   if (b.len() == a.len()) { stdout().write("stable\n"); }
   return a.len();
 }`,

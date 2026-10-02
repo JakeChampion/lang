@@ -21,7 +21,7 @@ import (
 // answer on arm64 and wasm.
 func TestLowerCellStringAccumulateOrder(t *testing.T) {
 	const src = `function build(): i32 {
-    var c: Cell[string] = cell_new("");
+    let c: Cell[string] = cell_new("");
     c.set(c.get() + "one;");
     return c.get().len();
 }`

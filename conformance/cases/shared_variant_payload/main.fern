@@ -56,7 +56,7 @@ function b_bare(v: B): i32 {
 }
 
 function main(): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     total = total + a_of(A.W(1));       // 1  — the first-declared enum
     total = total + b_of(B.W(4.5));     // 3
     total = total + c_of(C.W("abcd"));  // 7

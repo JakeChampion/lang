@@ -65,7 +65,7 @@ pub function ipv4_word(a: i32, b: i32, c: i32, d: i32): i32 {
 // The in_addr word of the first IPv4 address among `xs`, which is the
 // first AF_INET answer gethostid takes.
 function first_v4_word(xs: net.IpAddr[]): Option[i32] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     match (xs[i].packed_v4()) {
       Some(w) => {
@@ -100,10 +100,10 @@ pub function default_sources(): Source[] {
 // with their actions. No `hosts:` line means the compiled-in default; a
 // present but empty one means no sources at all.
 pub function nsswitch_hosts(contents: string): Source[] {
-  var lines: string[] = contents.lines();
-  var i: i32 = 0;
+  let lines: string[] = contents.lines();
+  let i: i32 = 0;
   while (i < lines.len()) {
-    var line: string = strip_comment(lines[i]).trim() + "";
+    let line: string = strip_comment(lines[i]).trim() + "";
     i = i + 1;
     if (!line.starts_with("hosts:")) {
       continue;
@@ -115,7 +115,7 @@ pub function nsswitch_hosts(contents: string): Source[] {
 
 // The line up to its `#`, if any.
 function strip_comment(line: string): string {
-  var h: i32 = line.index_of("#");
+  let h: i32 = line.index_of("#");
   if (h < 0) {
     return line;
   }
@@ -125,18 +125,18 @@ function strip_comment(line: string): string {
 // The tokens after `hosts:`: a bare word is a source, and a bracketed
 // group applies its `STATUS=action` pairs to the source before it.
 function parse_sources(rest: string): Source[] {
-  var out: Source[] = [];
-  var toks: string[] = rest.fields();
-  var in_bracket: boolean = false;
-  var i: i32 = 0;
+  let out: Source[] = [];
+  let toks: string[] = rest.fields();
+  let in_bracket: boolean = false;
+  let i: i32 = 0;
   while (i < toks.len()) {
-    var t: string = toks[i];
+    let t: string = toks[i];
     i = i + 1;
     if (t.starts_with("[")) {
       in_bracket = true;
       t = slice_unchecked(t, 1, t.len()) + "";
     }
-    var closes: boolean = t.ends_with("]");
+    let closes: boolean = t.ends_with("]");
     if (closes) {
       t = slice_unchecked(t, 0, t.len() - 1) + "";
     }
@@ -158,23 +158,23 @@ function parse_sources(rest: string): Source[] {
 // negates the status, so the action lands on every OTHER status. An
 // action other than `return` is `continue` (`merge` continues too).
 function apply_action(s: Source, pair: string): Source {
-  var eq: i32 = pair.index_of("=");
+  let eq: i32 = pair.index_of("=");
   if (eq < 0) {
     return s;
   }
-  var status: string = (slice_unchecked(pair, 0, eq) + "").to_ascii_lower();
-  var ret: boolean = (slice_unchecked(pair, eq + 1, pair.len()) + "").eq_ignore_ascii_case("return");
-  var negate: boolean = status.starts_with("!");
+  let status: string = (slice_unchecked(pair, 0, eq) + "").to_ascii_lower();
+  let ret: boolean = (slice_unchecked(pair, eq + 1, pair.len()) + "").eq_ignore_ascii_case("return");
+  let negate: boolean = status.starts_with("!");
   if (negate) {
     status = slice_unchecked(status, 1, status.len()) + "";
   }
-  var on_success: boolean = status == "success";
-  var on_notfound: boolean = status == "notfound";
-  var on_unavail: boolean = status == "unavail" || status == "tryagain";
+  let on_success: boolean = status == "success";
+  let on_notfound: boolean = status == "notfound";
+  let on_unavail: boolean = status == "unavail" || status == "tryagain";
   if (!on_success && !on_notfound && !on_unavail) {
     return s;
   }
-  var r: Source = s;
+  let r: Source = s;
   if (on_success != negate) {
     r = Source { ...r, success_return: ret };
   }
@@ -216,10 +216,10 @@ function system_sources(): Source[] {
 // `lookup(name, sources)` — the NSS walk for an IPv4 address: each source
 // in turn until one answers or one's action ends the walk.
 pub function lookup(name: string, sources: Source[]): Option[i32] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < sources.len()) {
-    var s: Source = sources[i];
-    var r: (i32, i32) = lookup_source(s.name, name);
+    let s: Source = sources[i];
+    let r: (i32, i32) = lookup_source(s.name, name);
     if (r.0 == success()) {
       return Some(r.1);
     }
@@ -299,11 +299,11 @@ pub function canon_host(name: string): Option[string] {
     },
     None => {}
   }
-  var sources: Source[] = system_sources();
-  var i: i32 = 0;
+  let sources: Source[] = system_sources();
+  let i: i32 = 0;
   while (i < sources.len()) {
-    var s: Source = sources[i];
-    var r: (i32, string) = canon_source(s.name, name);
+    let s: Source = sources[i];
+    let r: (i32, string) = canon_source(s.name, name);
     if (r.0 == success()) {
       return Some(r.1);
     }

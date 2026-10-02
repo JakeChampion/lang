@@ -11,7 +11,7 @@ import (
 
 // --- An UNMATCHED Option local's alias bind gets a retain and a credit -------
 //
-// `var x: Option[T] = src` denied `src` its whole reclaim credit whenever `src`
+// `let x: Option[T] = src` denied `src` its whole reclaim credit whenever `src`
 // had no consuming match of its own — the `!name_is_alias_bound` conjunct in
 // `opt_unmatched_esc_ok` (#7687). Nothing else released either slot, so the bind
 // alone leaked the box and its payload:
@@ -50,7 +50,7 @@ type optAliasBindCase struct {
 	want int
 }
 
-const optAliasBindMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
+const optAliasBindMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 100) { t = t + round(i); i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
@@ -61,8 +61,8 @@ func optAliasBindCases() []optAliasBindCase {
 			// nothing but the bind is different from the control below. Was 200/0.
 			name: "arr_alias_never_read",
 			src: `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
     return 7;
 }` + optAliasBindMain,
 			want: 36,
@@ -71,7 +71,7 @@ func optAliasBindCases() []optAliasBindCase {
 			// Its control: the same program without the bind. Clean throughout.
 			name: "arr_no_alias",
 			src: `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
+    let src: Option[i32[]] = Some([i, i + 1]);
     return 7;
 }` + optAliasBindMain,
 			want: 36,
@@ -84,9 +84,9 @@ func optAliasBindCases() []optAliasBindCase {
 			// pairing that admits the box while staying strict on the payload.
 			name: "arr_alias_matched",
 			src: `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
+    let t: i32 = 0;
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
     match (x) { Some(a) => { t = a.len(); }, None => {} }
     return t;
 }` + optAliasBindMain,
@@ -98,9 +98,9 @@ func optAliasBindCases() []optAliasBindCase {
 			// go to 99 if the alias took a second deep release.
 			name: "arr_both_matched",
 			src: `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
+    let t: i32 = 0;
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
     match (x) { Some(a) => { t = a.len(); }, None => {} }
     match (src) { Some(b) => { t = t + b.len(); }, None => {} }
     return t;
@@ -112,9 +112,9 @@ func optAliasBindCases() []optAliasBindCase {
 			// family's own gate, not the unmatched one. Clean before and after.
 			name: "arr_source_matched",
 			src: `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
+    let t: i32 = 0;
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
     match (src) { Some(b) => { t = b.len(); }, None => {} }
     return t;
 }` + optAliasBindMain,
@@ -127,8 +127,8 @@ func optAliasBindCases() []optAliasBindCase {
 			name: "str_alias_never_read",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var src: Option[string] = Some(w("ab"));
-    var x: Option[string] = src;
+    let src: Option[string] = Some(w("ab"));
+    let x: Option[string] = src;
     return 7;
 }` + optAliasBindMain,
 			want: 36,
@@ -137,9 +137,9 @@ function round(i: i32): i32 {
 			name: "str_alias_matched",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var src: Option[string] = Some(w("ab"));
-    var x: Option[string] = src;
+    let t: i32 = 0;
+    let src: Option[string] = Some(w("ab"));
+    let x: Option[string] = src;
     match (x) { Some(s) => { t = s.len(); }, None => {} }
     return t;
 }` + optAliasBindMain,
@@ -152,8 +152,8 @@ function round(i: i32): i32 {
 			name: "optopt_alias_never_read",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var src: Option[Option[string]] = Some(Some(w("ab")));
-    var x: Option[Option[string]] = src;
+    let src: Option[Option[string]] = Some(Some(w("ab")));
+    let x: Option[Option[string]] = src;
     return 7;
 }` + optAliasBindMain,
 			want: 36,
@@ -165,9 +165,9 @@ function round(i: i32): i32 {
 			// bind happened.
 			name: "arr_conditional_alias",
 			src: `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
+    let src: Option[i32[]] = Some([i, i + 1]);
     if (i % 2 == 0) {
-        var x: Option[i32[]] = src;
+        let x: Option[i32[]] = src;
         return 5;
     }
     return 7;
@@ -175,7 +175,7 @@ function round(i: i32): i32 {
 			want: 19,
 		},
 		{
-			// THE CHAIN (#7750). `var t = …; var v = t; var u = v;` shares one box
+			// THE CHAIN (#7750). `let t = …; let v = t; let u = v;` shares one box
 			// across three names; asking the three conditions one bind at a time
 			// refuses all of them, because the middle link's bare-ident use in the
 			// next bind reads as an escape. Every link retains at its bind and
@@ -183,9 +183,9 @@ function round(i: i32): i32 {
 			// decs — the single-link arithmetic with more owners.
 			name: "arr_alias_chain",
 			src: `function round(i: i32): i32 {
-    var t: Option[i32[]] = Some([i, i + 1]);
-    var v: Option[i32[]] = t;
-    var u: Option[i32[]] = v;
+    let t: Option[i32[]] = Some([i, i + 1]);
+    let v: Option[i32[]] = t;
+    let u: Option[i32[]] = v;
     return i % 7;
 }` + optAliasBindMain,
 			want: 46,
@@ -195,10 +195,10 @@ function round(i: i32): i32 {
 			// stops at.
 			name: "arr_alias_chain_three_links",
 			src: `function round(i: i32): i32 {
-    var t: Option[i32[]] = Some([i, i + 1]);
-    var v: Option[i32[]] = t;
-    var u: Option[i32[]] = v;
-    var z: Option[i32[]] = u;
+    let t: Option[i32[]] = Some([i, i + 1]);
+    let v: Option[i32[]] = t;
+    let u: Option[i32[]] = v;
+    let z: Option[i32[]] = u;
     return i % 7;
 }` + optAliasBindMain,
 			want: 46,
@@ -209,10 +209,10 @@ function round(i: i32): i32 {
 			// just the first.
 			name: "arr_alias_chain_matched",
 			src: `function round(i: i32): i32 {
-    var t: Option[i32[]] = Some([i, i + 1]);
-    var v: Option[i32[]] = t;
-    var u: Option[i32[]] = v;
-    var n: i32 = 0;
+    let t: Option[i32[]] = Some([i, i + 1]);
+    let v: Option[i32[]] = t;
+    let u: Option[i32[]] = v;
+    let n: i32 = 0;
     match (u) { Some(a) => { n = a.len(); }, None => {} }
     return n + i;
 }` + optAliasBindMain,
@@ -223,9 +223,9 @@ function round(i: i32): i32 {
 			name: "str_alias_chain",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: Option[string] = Some(w("ab"));
-    var v: Option[string] = t;
-    var u: Option[string] = v;
+    let t: Option[string] = Some(w("ab"));
+    let v: Option[string] = t;
+    let u: Option[string] = v;
     return i % 7;
 }` + optAliasBindMain,
 			want: 46,
@@ -237,9 +237,9 @@ function round(i: i32): i32 {
 			name: "optopt_alias_chain",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: Option[Option[string]] = Some(Some(w("ab")));
-    var v: Option[Option[string]] = t;
-    var u: Option[Option[string]] = v;
+    let t: Option[Option[string]] = Some(Some(w("ab")));
+    let v: Option[Option[string]] = t;
+    let u: Option[Option[string]] = v;
     return i % 7;
 }` + optAliasBindMain,
 			want: 46,
@@ -250,11 +250,11 @@ function round(i: i32): i32 {
 			// unconditionally.
 			name: "arr_alias_chain_conditional",
 			src: `function round(i: i32): i32 {
-    var t: Option[i32[]] = Some([i, i + 1]);
-    var n: i32 = 0;
+    let t: Option[i32[]] = Some([i, i + 1]);
+    let n: i32 = 0;
     if (i % 2 == 0) {
-        var v: Option[i32[]] = t;
-        var u: Option[i32[]] = v;
+        let v: Option[i32[]] = t;
+        let u: Option[i32[]] = v;
         n = 1;
     }
     return n + i;
@@ -265,10 +265,10 @@ function round(i: i32): i32 {
 			// A link hands the PAYLOAD out of an alias chain.
 			name: "refuses_alias_chain_payload_out",
 			src: `function round(i: i32): i32 {
-    var t: Option[i32[]] = Some([i, i + 1]);
-    var v: Option[i32[]] = t;
-    var u: Option[i32[]] = v;
-    var out: i32[] = [0];
+    let t: Option[i32[]] = Some([i, i + 1]);
+    let v: Option[i32[]] = t;
+    let u: Option[i32[]] = v;
+    let out: i32[] = [0];
     match (u) { Some(a) => { out = a; }, None => {} }
     return out.len() + i;
 }` + optAliasBindMain,
@@ -278,13 +278,13 @@ function round(i: i32): i32 {
 			// The last link is RETURNED, so the box outlives the frame.
 			name: "refuses_alias_chain_returned",
 			src: `function esc(i: i32): Option[i32[]] {
-    var t: Option[i32[]] = Some([i, i + 1]);
-    var v: Option[i32[]] = t;
-    var u: Option[i32[]] = v;
+    let t: Option[i32[]] = Some([i, i + 1]);
+    let v: Option[i32[]] = t;
+    let u: Option[i32[]] = v;
     return u;
 }
 function round(i: i32): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (esc(i)) { Some(a) => { n = a.len(); }, None => {} }
     return n + i;
 }` + optAliasBindMain,
@@ -297,9 +297,9 @@ function round(i: i32): i32 {
 			// which is why the exit and the sanitizer leg are the guard.
 			name: "refuses_alias_carrying_payload_out",
 			src: `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
-    var out: i32[] = [0];
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
+    let out: i32[] = [0];
     match (x) { Some(xs) => { out = xs; }, None => {} }
     return out.len();
 }` + optAliasBindMain,
@@ -310,8 +310,8 @@ function round(i: i32): i32 {
 			// the credit describes.
 			name: "refuses_reassigned_alias",
 			src: `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
     x = None;
     return 7;
 }` + optAliasBindMain,
@@ -323,11 +323,11 @@ function round(i: i32): i32 {
 			// every round rather than only at function exit.
 			name: "arr_alias_in_a_loop",
 			src: `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var j: i32 = 0;
+    let t: i32 = 0;
+    let j: i32 = 0;
     while (j < 3) {
-        var src: Option[i32[]] = Some([i, i + j]);
-        var x: Option[i32[]] = src;
+        let src: Option[i32[]] = Some([i, i + j]);
+        let x: Option[i32[]] = src;
         match (x) { Some(a) => { t = (t + a.len()) % 101; }, None => {} }
         j = j + 1;
     }

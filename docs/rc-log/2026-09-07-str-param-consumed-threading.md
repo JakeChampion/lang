@@ -35,7 +35,7 @@ therefore not merely quadratic: it was an OOM. 8-byte pieces, x86-64 `-O`:
 `__fern_str_append` growing in place.
 
 That is the issue's `loop_in_callee` shape written the obvious way. It was
-linear only when the body opened with `var acc: string = acc0;`, because the
+linear only when the body opened with `let acc: string = acc0;`, because the
 COPY is a local and locals were the only names the promotion reached.
 
 ## Why the entry retain, and why it is not the array's flag

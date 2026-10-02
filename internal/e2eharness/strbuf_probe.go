@@ -7,13 +7,13 @@ package e2eharness
 // append. Non-zero exits are keyed in StrbufCeilingProbeCodes.
 const StrbufCeilingProbe = `function main(): i32 {
     strbuf_reset();
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 4096) { strbuf_append("0123456789abcdef"); i = i + 1; }
-    var chunk: string = strbuf_take();
+    let chunk: string = strbuf_take();
     if (chunk.len() != 65536) { return 1; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 1100) { strbuf_append(chunk); j = j + 1; }
-    var big: string = strbuf_take();
+    let big: string = strbuf_take();
     if (big.len() != 72089600) { return 2; }
     if (big[0] != 48) { return 3; }
     if (big[72089599] != 102) { return 4; }

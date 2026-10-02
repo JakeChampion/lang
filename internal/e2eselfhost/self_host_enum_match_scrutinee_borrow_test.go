@@ -41,8 +41,8 @@ type enumScrutineeCase struct {
 }
 
 const escrMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -58,9 +58,9 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// escape walk decides alone. Base: 200 allocs / 0 frees.
 			name: "matched_twice",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = mkv(i);
-    var a: i32 = 0;
-    var b: i32 = 0;
+    let v: E = mkv(i);
+    let a: i32 = 0;
+    let b: i32 = 0;
     match (v) { E.A(xs) => { a = xs.len(); }, E.B => { a = 0; } }
     match (v) { E.A(xs) => { b = xs.len(); }, E.B => { b = 0; } }
     return (a + b) % 101;
@@ -73,8 +73,8 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// branch decides. Base: 200 / 0.
 			name: "matched_in_if",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = mkv(i);
-    var a: i32 = 0;
+    let v: E = mkv(i);
+    let a: i32 = 0;
     if (i % 2 == 0) { match (v) { E.A(xs) => { a = xs.len(); }, E.B => { a = 0; } } }
     return a % 101;
 }
@@ -86,9 +86,9 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// Base: 200 / 0.
 			name: "matched_in_while",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = mkv(i);
-    var a: i32 = 0;
-    var k: i32 = 0;
+    let v: E = mkv(i);
+    let a: i32 = 0;
+    let k: i32 = 0;
     while (k < 2) { match (v) { E.A(xs) => { a = a + xs.len(); }, E.B => { a = a; } } k = k + 1; }
     return a % 101;
 }
@@ -101,8 +101,8 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// sweep leaves `keep` holding one.
 			name: "non_sole_match_binds_payload_out",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = mkv(i);
-    var keep: i32[] = [0];
+    let v: E = mkv(i);
+    let keep: i32[] = [0];
     if (i % 2 == 0) { match (v) { E.A(xs) => { keep = xs; }, E.B => { keep = [0]; } } }
     return (keep.len() + keep[0]) % 101;
 }
@@ -122,17 +122,17 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			src: `enum E { A(i32[]), B }
 function mkv(): E { return E.A([7, 8]); }
 function round(i: i32): i32 {
-    var v: E = mkv();
-    var keep: i32[] = [0];
+    let v: E = mkv();
+    let keep: i32[] = [0];
     if (i % 2 == 0) { match (v) { E.A(xs) => { keep = xs; }, E.B => { keep = [0]; } } }
-    var j1: i32[] = [111, 222];
-    var j2: i32[] = [333, 444];
-    var j3: i32[] = [555, 666];
+    let j1: i32[] = [111, 222];
+    let j2: i32[] = [333, 444];
+    let j3: i32[] = [555, 666];
     return keep[0] + keep[keep.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0] + j3[0] - j3[0];
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -145,8 +145,8 @@ function main(): i32 {
 			// reclaimed.
 			name: "sole_match_binds_payload_out_reclaimed",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = mkv(i);
-    var keep: i32[] = [0];
+    let v: E = mkv(i);
+    let keep: i32[] = [0];
     match (v) { E.A(xs) => { keep = xs; }, E.B => { keep = [0]; } }
     return (keep.len() + keep[0]) % 101;
 }
@@ -159,8 +159,8 @@ function main(): i32 {
 			// control for that branch, since this slice must not disturb it.
 			name: "inline_ctor_sole_match_unchanged",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = E.A([i, i + 1]);
-    var a: i32 = 0;
+    let v: E = E.A([i, i + 1]);
+    let a: i32 = 0;
     match (v) { E.A(xs) => { a = xs.len(); }, E.B => { a = 0; } }
     return a % 101;
 }

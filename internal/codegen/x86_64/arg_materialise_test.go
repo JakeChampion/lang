@@ -76,8 +76,8 @@ func TestSingleArgumentLoadsStraightIntoItsRegister(t *testing.T) {
 	asm := compileOpts(t, `
 @noinline function twice(x: i64): i64 { return x + x; }
 function main(): i32 {
-  var t: i64 = 0i64;
-  var i: i64 = 0i64;
+  let t: i64 = 0i64;
+  let i: i64 = 0i64;
   while (i < 4i64) { t = t + twice(i); i = i + 1i64; }
   return t as i32;
 }`, Options{})
@@ -96,8 +96,8 @@ func TestCopyOutOfAccKeptWithoutACall(t *testing.T) {
 	asm := compileOpts(t, `
 @noinline function g(a: i64, b: i64): i64 { return a * b; }
 function main(): i32 {
-  var t: i64 = 0i64;
-  var i: i64 = 0i64;
+  let t: i64 = 0i64;
+  let i: i64 = 0i64;
   while (i < 4i64) { t = t + g(i, i + 1i64) + i; i = i + 1i64; }
   return t as i32;
 }`, Options{})

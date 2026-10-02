@@ -31,23 +31,23 @@ func TestSelfHostStrReclaimWasmIR(t *testing.T) {
 		// Fresh concat reclaimed each iteration, 2000 iters. churn returns sum%100
 		// (kept 0); main returns 99 if any string was double-freed (underflow > 0).
 		// "ab"+"cd" = len 4; sum stays a multiple of 4 → % 100 hits 0 at 2000 iters.
-		{"loop-concat", `function churn(n: i32): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = "ab" + "cd"; sum = (sum + s.len()) % 100; i = i + 1; } return sum; } function main(): i32 { var r: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 0},
+		{"loop-concat", `function churn(n: i32): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < n) { let s: string = "ab" + "cd"; sum = (sum + s.len()) % 100; i = i + 1; } return sum; } function main(): i32 { let r: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 0},
 		// Fresh .to_ascii_upper() reclaimed each iteration. base len 3; sum kept mod 100.
 		{"loop-to-upper", `import "std/string";
-function churn(n: i32): i32 { var base: string = "xyz"; var sum: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = base.to_ascii_upper(); sum = (sum + s.len()) % 100; i = i + 1; } return sum; } function main(): i32 { var r: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 0},
+function churn(n: i32): i32 { let base: string = "xyz"; let sum: i32 = 0; let i: i32 = 0; while (i < n) { let s: string = base.to_ascii_upper(); sum = (sum + s.len()) % 100; i = i + 1; } return sum; } function main(): i32 { let r: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 0},
 		// Scope-exit reclaim of a single fresh string (no loop): freed once at return.
 		// A double free would tick underflow → 99. len("hi"+"!") = 3.
-		{"scope-exit", `function churn(): i32 { var s: string = "hi" + "!"; return s.len(); } function main(): i32 { var r: i32 = churn(); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 3},
+		{"scope-exit", `function churn(): i32 { let s: string = "hi" + "!"; return s.len(); } function main(): i32 { let r: i32 = churn(); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 3},
 		// Aliased fresh string must NOT be reclaimed (would double-free the shared
 		// block) — the analysis excludes it; underflow stays 0, value correct. 3+3=6.
-		{"aliased-safe", `function churn(): i32 { var s: string = "ab" + "c"; var t: string = s; return s.len() + t.len(); } function main(): i32 { var r: i32 = churn(); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 6},
+		{"aliased-safe", `function churn(): i32 { let s: string = "ab" + "c"; let t: string = s; return s.len() + t.len(); } function main(): i32 { let r: i32 = churn(); if (__rc_underflow_count() != 0) { return 99; } return r; }`, 6},
 		// to_string's result reclaimed each iteration. Value-only.
 		// i in 0..49: 10*1 + 40*2 = 90.
 		{"loop-i32-to-string", `import "std/i32";
-function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 50) { var s: string = i.to_string(); sum = sum + s.len(); i = i + 1; } return sum; }`, 90},
+function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 50) { let s: string = i.to_string(); sum = sum + s.len(); i = i + 1; } return sum; }`, 90},
 		// Un-annotated chr(..) reclaimed each iteration (the rc-header fix makes the
 		// wasm chr block reclaimable). Value-only. 20 iters * len 1 = 20.
-		{"unannotated-chr", `function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 20) { var s = chr(65 + i); sum = sum + s.len(); i = i + 1; } return sum; }`, 20},
+		{"unannotated-chr", `function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 20) { let s = chr(65 + i); sum = sum + s.len(); i = i + 1; } return sum; }`, 20},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

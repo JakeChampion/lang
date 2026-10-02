@@ -198,8 +198,8 @@ func TestFoldRejectsSaturatingOperators(t *testing.T) {
 func TestFoldSubstitutesAcrossExpressionPositions(t *testing.T) {
 	prog := fold(t, `const N: i32 = 3;
 function main(): i32 {
-	var arr: i32[] = [N, N + 1, N * 2];
-	var k: i32 = arr[N - 1];
+	let arr: i32[] = [N, N + 1, N * 2];
+	let k: i32 = arr[N - 1];
 	if (k > N) { return k; }
 	return 0;
 }`)
@@ -369,7 +369,7 @@ const XS: i32[] = [A, A * 3];
 const E: i32[] = [];
 const W: i64[] = [5000000000];
 const T: (i32, string) = (4, "abc");
-function main(): i32 { var a: i32[] = XS; var b: i32[] = XS; var e: i32[] = E; var w: i64[] = W; var t: (i32, string) = T; return 0; }`)
+function main(): i32 { let a: i32[] = XS; let b: i32[] = XS; let e: i32[] = E; let w: i64[] = W; let t: (i32, string) = T; return 0; }`)
 	inits := map[string]ast.Expr{}
 	var order []ast.Expr
 	for _, st := range prog.Funcs[0].Body.Stmts {

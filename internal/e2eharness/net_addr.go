@@ -59,7 +59,7 @@ function show[T: cmp.Display](v: T): string { return v.to_string(); }
 function same[T: cmp.Eq](a: T, b: T): boolean { return a.eq(b); }
 function describe[E: error.Error](e: E): string { return e.message(); }
 function roundtrips(e: net.NetError): boolean {
-    var back: net.NetError = net.error_from_errno(0 - e.errno());
+    let back: net.NetError = net.error_from_errno(0 - e.errno());
     return back.eq(e) && net.error_from_errno(e.errno()).eq(e) && back.errno() == e.errno();
 }
 function is_other(e: net.NetError, want: i32): boolean {
@@ -82,19 +82,19 @@ function intr(): net.NetError {
     return net.error_from_errno(4);
 }
 function main(): i32 {
-    var addr_in_use: net.NetError = AddrInUse;
-    var addr_not_available: net.NetError = AddrNotAvailable;
-    var refused: net.NetError = ConnectionRefused;
-    var reset: net.NetError = ConnectionReset;
-    var aborted: net.NetError = ConnectionAborted;
-    var timed_out: net.NetError = TimedOut;
-    var would_block: net.NetError = WouldBlock;
-    var in_progress: net.NetError = InProgress;
-    var net_unreach: net.NetError = NetworkUnreachable;
-    var host_unreach: net.NetError = HostUnreachable;
-    var other_a: net.NetError = net.error_from_errno(12345);
-    var other_b: net.NetError = net.error_from_errno(-12345);
-    var other_c: net.NetError = net.error_from_errno(12346);
+    let addr_in_use: net.NetError = AddrInUse;
+    let addr_not_available: net.NetError = AddrNotAvailable;
+    let refused: net.NetError = ConnectionRefused;
+    let reset: net.NetError = ConnectionReset;
+    let aborted: net.NetError = ConnectionAborted;
+    let timed_out: net.NetError = TimedOut;
+    let would_block: net.NetError = WouldBlock;
+    let in_progress: net.NetError = InProgress;
+    let net_unreach: net.NetError = NetworkUnreachable;
+    let host_unreach: net.NetError = HostUnreachable;
+    let other_a: net.NetError = net.error_from_errno(12345);
+    let other_b: net.NetError = net.error_from_errno(-12345);
+    let other_c: net.NetError = net.error_from_errno(12346);
 `)
 	index := 0
 	check := func(cond string) {

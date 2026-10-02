@@ -35,27 +35,27 @@ func TestSelfHostMapI64ValueWasmIR(t *testing.T) {
 	}{
 		// (1) wide i64 LITERAL value round-trips full-width. 5000000007 % 1000 == 7
 		// (a truncating i32 store would give 705032711 % 1000 == 711).
-		{"i64-literal", `function main(): i32 { var m: Map[i32, i64] = Map { 1: 5000000007 }; var g: i64 = m.get_or(1, 0); return (g % 1000) as i32; }`, 7},
+		{"i64-literal", `function main(): i32 { let m: Map[i32, i64] = Map { 1: 5000000007 }; let g: i64 = m.get_or(1, 0); return (g % 1000) as i32; }`, 7},
 		// (2) u64 CAST value + chained unsigned shift. 18e18 >> 58 == 62.
-		{"u64-cast-shift", `function main(): i32 { var m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64 }; return (m.get_or(1, 0 as u64) >> 58) as i32; }`, 62},
+		{"u64-cast-shift", `function main(): i32 { let m: Map[i32, u64] = Map { 1: 18000000000000000000 as u64 }; return (m.get_or(1, 0 as u64) >> 58) as i32; }`, 62},
 		// (3) i64 value from a VARIABLE, inserted via .insert on a map_new'd map.
 		// 9000000000 % 1000 == 0.
-		{"i64-var-insert", `function main(): i32 { var m: Map[i32, i64] = map_new(8); var v: i64 = 9000000000; m = m.insert(1, v); return (m.get_or(1, 0) % 1000) as i32; }`, 0},
+		{"i64-var-insert", `function main(): i32 { let m: Map[i32, i64] = map_new(8); let v: i64 = 9000000000; m = m.insert(1, v); return (m.get_or(1, 0) % 1000) as i32; }`, 0},
 		// (4) u64 value inserted via .insert (cast), chained shift. Same 62.
-		{"u64-insert-shift", `function main(): i32 { var m: Map[i32, u64] = map_new(8); m = m.insert(1, 18000000000000000000 as u64); return (m.get_or(1, 0 as u64) >> 58) as i32; }`, 62},
+		{"u64-insert-shift", `function main(): i32 { let m: Map[i32, u64] = map_new(8); m = m.insert(1, 18000000000000000000 as u64); return (m.get_or(1, 0 as u64) >> 58) as i32; }`, 62},
 		// (5) unannotated get_or binding width-tracks i64, so a later `% 1000` is
 		// 64-bit. 12000000005 % 1000 == 5.
-		{"i64-unannotated-getor", `function main(): i32 { var m: Map[i32, i64] = Map { 2: 12000000005 }; var g = m.get_or(2, 0); return (g % 1000) as i32; }`, 5},
+		{"i64-unannotated-getor", `function main(): i32 { let m: Map[i32, i64] = Map { 2: 12000000005 }; let g = m.get_or(2, 0); return (g % 1000) as i32; }`, 5},
 		// (6) MISS path returns the (wide) default full-width. 7000000009 % 1000 == 9.
-		{"i64-default-miss", `function main(): i32 { var m: Map[i32, i64] = map_new(8); var g: i64 = m.get_or(99, 7000000009); return (g % 1000) as i32; }`, 9},
+		{"i64-default-miss", `function main(): i32 { let m: Map[i32, i64] = map_new(8); let g: i64 = m.get_or(99, 7000000009); return (g % 1000) as i32; }`, 9},
 		// (7) OVERWRITE churn: 200 inserts on the same key free 199 superseded cells;
 		// a double-free of a cell ticks the underflow detector → 99. Final value
 		// 199*3000000000 % 1000 == 0.
-		{"i64-overwrite-churn", `function main(): i32 { var m: Map[i32, i64] = map_new(8); var i: i32 = 0; while (i < 200) { m = m.insert(1, (i as i64) * 3000000000); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return (m.get_or(1, 0) % 1000) as i32; }`, 0},
+		{"i64-overwrite-churn", `function main(): i32 { let m: Map[i32, i64] = map_new(8); let i: i32 = 0; while (i < 200) { m = m.insert(1, (i as i64) * 3000000000); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return (m.get_or(1, 0) % 1000) as i32; }`, 0},
 		// (8) BUILD-AND-DROP reclaim: a wide map built + dropped per call across 300
 		// iterations; every cell freed exactly once (99 = over-release, 88 = wrong
 		// value). m.get_or(2,·) == 2*5000000000 == 10000000000.
-		{"i64-build-drop-reclaim", `function build(): i32 { var m: Map[i32, i64] = map_new(8); var i: i32 = 0; while (i < 8) { m = m.insert(i, (i as i64) * 5000000000); i = i + 1; } if (m.get_or(2, 0) != 10000000000) { return 1; } return 0; } function main(): i32 { var bad: i32 = 0; var k: i32 = 0; while (k < 300) { if (build() != 0) { bad = 1; } k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } if (bad != 0) { return 88; } return 0; }`, 0},
+		{"i64-build-drop-reclaim", `function build(): i32 { let m: Map[i32, i64] = map_new(8); let i: i32 = 0; while (i < 8) { m = m.insert(i, (i as i64) * 5000000000); i = i + 1; } if (m.get_or(2, 0) != 10000000000) { return 1; } return 0; } function main(): i32 { let bad: i32 = 0; let k: i32 = 0; while (k < 300) { if (build() != 0) { bad = 1; } k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } if (bad != 0) { return 88; } return 0; }`, 0},
 	}
 
 	for _, tc := range cases {

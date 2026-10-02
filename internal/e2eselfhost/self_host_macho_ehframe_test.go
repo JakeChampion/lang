@@ -18,7 +18,7 @@ import (
 
 const machoEhFrameDriverMain = `
 function main(): i32 {
-    var asm: string = "";
+    let asm: string = "";
     asm = asm + "_main:\n";
     asm = asm + ".cfi_startproc\n";
     asm = asm + "    stp x29, x30, [sp, #-16]!\n";
@@ -41,17 +41,17 @@ function main(): i32 {
     asm = asm + ".cfi_def_cfa_offset 0\n";
     asm = asm + "    ret\n";
     asm = asm + ".cfi_endproc\n";
-    var p: Arm64GasProg = arm64_gas_program(asm);
-    var pa: Arm64Asm = p.asm;
-    var ehlen: i32 = arm64_eh_frame_darwin_len(p);
-    var tv: i64 = macho_text_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);
-    var ev: i64 = macho_eh_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);
-    var dv: i64 = macho_data_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);
-    var eh: i32[] = arm64_eh_frame_darwin(p, tv, ev);
+    let p: Arm64GasProg = arm64_gas_program(asm);
+    let pa: Arm64Asm = p.asm;
+    let ehlen: i32 = arm64_eh_frame_darwin_len(p);
+    let tv: i64 = macho_text_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);
+    let ev: i64 = macho_eh_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);
+    let dv: i64 = macho_data_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);
+    let eh: i32[] = arm64_eh_frame_darwin(p, tv, ev);
     p = arm64_gas_link(p, tv, dv);
-    var pa2: Arm64Asm = p.asm;
-    var none: i32[] = [];
-    var bin: i32[] = macho_executable(pa2.code, eh, p.data, "fern", macho_entry_off(pa2), p.bss_size, none);
+    let pa2: Arm64Asm = p.asm;
+    let none: i32[] = [];
+    let bin: i32[] = macho_executable(pa2.code, eh, p.data, "fern", macho_entry_off(pa2), p.bss_size, none);
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }
@@ -62,7 +62,7 @@ function main(): i32 {
 // header earlier.
 const machoNoEhFrameDriverMain = `
 function main(): i32 {
-    var asm: string = "";
+    let asm: string = "";
     asm = asm + "_main:\n";
     asm = asm + "    stp x29, x30, [sp, #-16]!\n";
     asm = asm + "    mov x29, sp\n";
@@ -74,14 +74,14 @@ function main(): i32 {
     asm = asm + "    sub sp, sp, #16\n";
     asm = asm + "    add sp, sp, #16\n";
     asm = asm + "    ret\n";
-    var p: Arm64GasProg = arm64_gas_program(asm);
-    var pa: Arm64Asm = p.asm;
-    var tv: i64 = macho_text_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);
-    var dv: i64 = macho_data_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);
+    let p: Arm64GasProg = arm64_gas_program(asm);
+    let pa: Arm64Asm = p.asm;
+    let tv: i64 = macho_text_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);
+    let dv: i64 = macho_data_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);
     p = arm64_gas_link(p, tv, dv);
-    var pa2: Arm64Asm = p.asm;
-    var none: i32[] = [];
-    var bin: i32[] = macho_executable(pa2.code, none, p.data, "fern", macho_entry_off(pa2), p.bss_size, none);
+    let pa2: Arm64Asm = p.asm;
+    let none: i32[] = [];
+    let bin: i32[] = macho_executable(pa2.code, none, p.data, "fern", macho_entry_off(pa2), p.bss_size, none);
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }

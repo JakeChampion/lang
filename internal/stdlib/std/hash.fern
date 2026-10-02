@@ -37,11 +37,11 @@ pub struct Cksum {
 }
 
 function __cksum_tables(): u32[] {
-  var t: u32[] = [];
-  var i: u32 = 0;
+  let t: u32[] = [];
+  let i: u32 = 0;
   while (i < 256) {
-    var c: u32 = i << 24;
-    var k: i32 = 0;
+    let c: u32 = i << 24;
+    let k: i32 = 0;
     while (k < 8) {
       if ((c & 0x80000000) != 0) {
         c = c << 1 ^ 0x04c11db7;
@@ -53,8 +53,8 @@ function __cksum_tables(): u32[] {
     t = t.append(c);
     i = i + 1;
   }
-  var j: i32 = 0;
-  var p: u32 = 0;
+  let j: i32 = 0;
+  let p: u32 = 0;
   while (j < 1792) {
     p = t[j];
     t = t.append(p << 8 ^ t[(p >> 24 & 255) as i32]);
@@ -68,13 +68,13 @@ pub function cksum_new(): Cksum {
 }
 
 function __cksum_absorb(c: Cksum, bs: [u8]): Cksum {
-  var t: u32[] = c.table;
-  var crc: u32 = c.crc;
-  var n: i32 = bs.len();
-  var i: i32 = 0;
-  var lim: i32 = n - 8;
-  var w0: u32 = 0;
-  var w1: u32 = 0;
+  let t: u32[] = c.table;
+  let crc: u32 = c.crc;
+  let n: i32 = bs.len();
+  let i: i32 = 0;
+  let lim: i32 = n - 8;
+  let w0: u32 = 0;
+  let w1: u32 = 0;
   while (i <= lim) {
     w0 = crc ^ (bs[i] as u32 << 24 | bs[i + 1] as u32 << 16 | bs[i + 2] as u32 << 8 | bs[i + 3] as u32);
     w1 = bs[i + 4] as u32 << 24 | bs[i + 5] as u32 << 16 | bs[i + 6] as u32 << 8 | bs[i + 7] as u32;
@@ -128,9 +128,9 @@ pub function (c: Cksum) len(): u64 {
 // finish() — the CRC with the length folded in and complemented. Reads the
 // state without consuming it: more `update`s may follow.
 pub function (c: Cksum) finish(): u32 {
-  var t: u32[] = c.table;
-  var crc: u32 = c.crc;
-  var n: u64 = c.len;
+  let t: u32[] = c.table;
+  let crc: u32 = c.crc;
+  let n: u64 = c.len;
   while (n != 0 as u64) {
     crc = crc << 8 ^ t[((crc >> 24 ^ (n & 255 as u64) as u32) & 255) as i32];
     n = n >> 8 as u64;
@@ -159,11 +159,11 @@ pub struct Crc32 {
 }
 
 function __crc32b_tables(): u32[] {
-  var t: u32[] = [];
-  var i: u32 = 0;
+  let t: u32[] = [];
+  let i: u32 = 0;
   while (i < 256) {
-    var c: u32 = i;
-    var k: i32 = 0;
+    let c: u32 = i;
+    let k: i32 = 0;
     while (k < 8) {
       if ((c & 1) != 0) {
         c = c >> 1 ^ 0xedb88320;
@@ -175,8 +175,8 @@ function __crc32b_tables(): u32[] {
     t = t.append(c);
     i = i + 1;
   }
-  var j: i32 = 0;
-  var p: u32 = 0;
+  let j: i32 = 0;
+  let p: u32 = 0;
   while (j < 1792) {
     p = t[j];
     t = t.append(p >> 8 ^ t[(p & 255) as i32]);
@@ -190,13 +190,13 @@ pub function crc32_new(): Crc32 {
 }
 
 function __crc32_absorb(c: Crc32, bs: [u8]): Crc32 {
-  var t: u32[] = c.table;
-  var crc: u32 = c.crc;
-  var n: i32 = bs.len();
-  var i: i32 = 0;
-  var lim: i32 = n - 8;
-  var w0: u32 = 0;
-  var w1: u32 = 0;
+  let t: u32[] = c.table;
+  let crc: u32 = c.crc;
+  let n: i32 = bs.len();
+  let i: i32 = 0;
+  let lim: i32 = n - 8;
+  let w0: u32 = 0;
+  let w1: u32 = 0;
   while (i <= lim) {
     w0 = crc ^ (bs[i] as u32 | bs[i + 1] as u32 << 8 | bs[i + 2] as u32 << 16 | bs[i + 3] as u32 << 24);
     w1 = bs[i + 4] as u32 | bs[i + 5] as u32 << 8 | bs[i + 6] as u32 << 16 | bs[i + 7] as u32 << 24;
@@ -248,9 +248,9 @@ pub function bsd_sum_new(): BsdSum {
 }
 
 function __bsd_sum_absorb(s: BsdSum, bs: [u8]): BsdSum {
-  var sum: u32 = s.sum;
-  var n: i32 = bs.len();
-  var i: i32 = 0;
+  let sum: u32 = s.sum;
+  let n: i32 = bs.len();
+  let i: i32 = 0;
   while (i < n) {
     sum = (sum >> 1 | sum << 15) & 0xffff;
     sum = sum + bs[i] as u32 & 0xffff;
@@ -301,9 +301,9 @@ pub function sysv_sum_new(): SysvSum {
 }
 
 function __sysv_sum_absorb(s: SysvSum, bs: [u8]): SysvSum {
-  var sum: u32 = s.sum;
-  var n: i32 = bs.len();
-  var i: i32 = 0;
+  let sum: u32 = s.sum;
+  let n: i32 = bs.len();
+  let i: i32 = 0;
   while (i < n) {
     sum = sum + bs[i] as u32;
     i = i + 1;
@@ -323,7 +323,7 @@ function __sysv_sum_absorb(s: SysvSum, bs: [u8]): SysvSum {
 // `chunk.len()` for the byte count, not `chunk.as_bytes().len()`: both answer
 // the same number, and the second builds the whole chunk as an array to throw
 // it away. On the self-hosted compiler that array is one i32 slot PER BYTE
-// (irlower's str_bytes — the slot model has no zero-copy view), so a 64 KiB
+// (ssarc's str_bytes — the slot model has no zero-copy view), so a 64 KiB
 // chunk allocated 256 KiB an update and `cksum -a sysv` spent 9.6x its own
 // runtime on it.
 pub function (s: SysvSum) update(chunk: string): SysvSum {
@@ -341,7 +341,7 @@ pub function (s: SysvSum) update_bytes(chunk: [u8]): SysvSum {
 // finish() — the 16-bit checksum: the wrapped 32-bit byte sum folded to
 // 16 bits, then folded once more so the carry of the first fold lands.
 pub function (s: SysvSum) finish(): u32 {
-  var r: u32 = (s.sum & 0xffff) + (s.sum >> 16);
+  let r: u32 = (s.sum & 0xffff) + (s.sum >> 16);
   return (r & 0xffff) + (r >> 16);
 }
 

@@ -75,12 +75,12 @@ function walk_b(n: Node, d: i32): i32 { if (d <= 0) { return n.items[0]; } retur
 	// Across 200M iterations the reclaimed buffers recycle → bounded → exit 0; under
 	// the least-fixpoint `nd` leaked every call → heap exhausted → SIGKILL (137).
 	run(t, cycle+`function once(): i32 {
-    var nd: Node = Node { items: [5, 6, 7] };
+    let nd: Node = Node { items: [5, 6, 7] };
     return walk_a(nd, 4);
 }
 function main(): i32 {
-    var s: i32 = 0;
-    var f: i32 = 0;
+    let s: i32 = 0;
+    let f: i32 = 0;
     while (f < 200000000) { s = s + once(); f = f + 1; }
     return s - s;
 }`, "borrow_infer_cycle_churn", 0)
@@ -91,12 +91,12 @@ function main(): i32 {
 	// over-release detector must stay 0. A wrong free of a live buffer would corrupt
 	// the value or tick the detector.
 	run(t, cycle+`function once(): i32 {
-    var nd: Node = Node { items: [5, 6, 7] };
+    let nd: Node = Node { items: [5, 6, 7] };
     return walk_a(nd, 4);
 }
 function main(): i32 {
-    var s: i32 = 0;
-    var f: i32 = 0;
+    let s: i32 = 0;
+    let f: i32 = 0;
     while (f < 1000) { s = s + once(); f = f + 1; }
     return (s - 5000) + __rc_underflow_count();
 }`, "borrow_infer_cycle_sound", 0)

@@ -7,7 +7,7 @@ function adder(n: i32): (i32) => i32 { return (b: i32): i32 => b + n; }
 function call_through(mk: (i32) => ((i32) => i32)): i32 { return mk(1)(2); }
 
 function main(): i32 {
-    var typed: (i32) => ((i32) => i32) = adder;
-    var untyped = adder;
+    let typed: (i32) => ((i32) => i32) = adder;
+    let untyped = adder;
     return typed(10)(20) + untyped(3)(4) + call_through(adder);
 }

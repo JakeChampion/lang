@@ -163,10 +163,10 @@ func buildAndRunSanitized(t *testing.T, gcc string, runner []string, asm string,
 // sanCleanSrc is the rc-driven drop-everything loop: every row is
 // precisely dropped, so a sanitizer run must be silent.
 const sanCleanSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < 50) {
-        var row: i32[] = [i, i + 1, i + 2];
+        let row: i32[] = [i, i + 1, i + 2];
         sum = sum + row[0];
         i = i + 1;
     }
@@ -178,9 +178,9 @@ const sanCleanSrc = `function main(): i32 {
 // exit code 42. The verdict must name 128 bytes in 2 blocks and must
 // not clobber main's exit code.
 const sanLeakSrc = `function main(): i32 {
-    var a: usize = __alloc(60);
-    var b: usize = __alloc(60);
-    var c: usize = __alloc(60);
+    let a: usize = __alloc(60);
+    let b: usize = __alloc(60);
+    let c: usize = __alloc(60);
     __free(a, 60);
     if (b == c) { return 9; }
     return 42;
@@ -192,7 +192,7 @@ const sanLeakSrc = `function main(): i32 {
 // to notice. Under the sanitizer that stops being a counter nobody
 // reads and becomes a fatal, named report.
 const sanDoubleFreeSrc = `function main(): i32 {
-    var a: u8[] = __alloc_u8(16);
+    let a: u8[] = __alloc_u8(16);
     __rc_dec(a);
     __rc_dec(a);
     return 0;
@@ -206,12 +206,12 @@ const sanDoubleFreeSrc = `function main(): i32 {
 // the use-after-free detector rests on, since a recycled block would
 // overwrite its own poison.
 const sanQuarantineSrc = `function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var row: i32[] = [i, i + 1, i + 2];
+        let row: i32[] = [i, i + 1, i + 2];
         i = i + row[0] * 0 + 1;
     }
-    var b: i64 = __heap_bump_bytes();
+    let b: i64 = __heap_bump_bytes();
     return (b / 1024) as i32;
 }`
 
@@ -219,7 +219,7 @@ const sanQuarantineSrc = `function main(): i32 {
 // __fern_rc_dec are both emitted — they carry the use-after-free poison
 // check, and a program that touches neither doesn't get either helper.
 const sanRcHelpersSrc = `function main(): i32 {
-    var a: u8[] = __alloc_u8(16);
+    let a: u8[] = __alloc_u8(16);
     __rc_inc(a);
     __rc_dec(a);
     return 0;
@@ -234,8 +234,8 @@ const sanRcHelpersSrc = `function main(): i32 {
 // retained raw address then reaches __fern_rc_inc, which reads the
 // poison. Perceus's own drop of `a` at scope exit is never reached.
 const sanUseAfterFreeSrc = `function main(): i32 {
-    var a: u8[] = __alloc_u8(16);
-    var p: usize = a as usize;
+    let a: u8[] = __alloc_u8(16);
+    let p: usize = a as usize;
     __fern_arr_dec(p, 1);
     __fern_rc_inc(p);
     return 0;

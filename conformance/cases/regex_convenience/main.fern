@@ -5,7 +5,7 @@
 import "std/regex";
 
 function main(): i32 {
-  var r: i32 = 0;
+  let r: i32 = 0;
   if (regex.regex_full_match("a|aa", "aa")) {  // shorter alt exists; full still true
     r = r + 1;
   }

@@ -16,25 +16,25 @@ import (
 )
 
 // TestWasmP3StreamForIn locks in that `for x in <stream-returning call>` iterates
-// a u8 stream RESULT directly — no intermediate `var b: u8[] = …` needed:
+// a u8 stream RESULT directly — no intermediate `let b: u8[] = …` needed:
 //
 //	@import("test:dep/d","prod") async function body(): stream[u8];
 //	async function run(): i32 {
-//	    var sum: i32 = 0;
+//	    let sum: i32 = 0;
 //	    for x in body() { sum = sum + (x as i32); }   // LAZY: one element at a time
 //	    return sum;
 //	}
 //
 // This runs LAZILY (L2, docs/STREAM-TYPE-SURFACE.md): the parser leaves the
 // for-in as an ast.ForEach, and the checker lowers it to a per-element read loop
-// — `var h = body$open(); while (true) { var v = __stream_next_u8(h); if v < 0
-// break; var x = v as u8; BODY } __stream_drop(h)` — so each byte is pulled off
+// — `let h = body$open(); while (true) { let v = __stream_next_u8(h); if v < 0
+// break; let x = v as u8; BODY } __stream_drop(h)` — so each byte is pulled off
 // the wire (read + await) as the loop turns, never materialising the whole
 // sequence. Result is identical to the eager collect-then-iterate form; the
 // structural difference is pinned by the checker test
 // TestStreamForEachDesugarsToLazyLoop. Runs against the EOF producer → 42.
 //
-// (A non-u8 stream, or a value-context `var b: u8[] = body()`, still collects
+// (A non-u8 stream, or a value-context `let b: u8[] = body()`, still collects
 // eagerly via the collect-wrapper — the `-1` EOF sentinel of the per-element read
 // is unambiguous only for byte elements. See docs/STREAM-TYPE-SURFACE.md.)
 func TestWasmP3StreamForIn(t *testing.T) {
@@ -42,7 +42,7 @@ func TestWasmP3StreamForIn(t *testing.T) {
 
 	src := `@import("test:dep/d", "prod") async function body(): stream[u8];
 async function run(): i32 {
-	var sum: i32 = 0;
+	let sum: i32 = 0;
 	for x in body() {
 		sum = sum + (x as i32);
 	}

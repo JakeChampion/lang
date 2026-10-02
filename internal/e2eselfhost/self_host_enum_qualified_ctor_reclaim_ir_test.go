@@ -60,12 +60,12 @@ func TestSelfHostEnumQualifiedCtorReclaimIRX86_64(t *testing.T) {
 	// leaked every iteration → heap exhausted → SIGKILL.
 	run(t, `enum Bag { Items(i32[]), None }
 function mk(): i32 {
-    var b: Bag = Bag.Items([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]);
+    let b: Bag = Bag.Items([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]);
     match (b) { Items(_) => {}, None => {}, }
     return 5;
 }
 function main(): i32 {
-    var s: i32 = 0; var f: i32 = 0;
+    let s: i32 = 0; let f: i32 = 0;
     while (f < 40000000) { s = mk(); f = f + 1; }
     return s - 5;
 }`, "qual_ctor_literal_churn", 0)
@@ -76,14 +76,14 @@ function main(): i32 {
 	// would double-free → freelist corruption / crash; a wrong free → wrong value.
 	run(t, `enum Bag { Items(i32[]), None }
 function mk(): i32 {
-    var xs: i32[] = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16];
-    var b: Bag = Bag.Items(xs);
-    var r: i32 = xs[0] + xs[15];
+    let xs: i32[] = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16];
+    let b: Bag = Bag.Items(xs);
+    let r: i32 = xs[0] + xs[15];
     match (b) { Items(_) => {}, None => {}, }
     return r;
 }
 function main(): i32 {
-    var s: i32 = 0; var f: i32 = 0;
+    let s: i32 = 0; let f: i32 = 0;
     while (f < 20000000) { s = mk(); f = f + 1; }
     return s - 17;
 }`, "qual_ctor_bareident_churn", 0)

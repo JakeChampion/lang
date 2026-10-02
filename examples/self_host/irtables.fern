@@ -63,8 +63,8 @@ pub function sig_bucket_count(n: i32): i32 {
 // joined string. Folded by the modulus at every step, so the accumulator stays
 // small and the hash needs no wrapping arithmetic.
 function sig_key_bucket(a: string, b: string, nb: i32): i32 {
-  var h: i32 = 0;
-  var i: i32 = 0;
+  let h: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
     if (a[i] == b'|') {
       return h;
@@ -72,7 +72,7 @@ function sig_key_bucket(a: string, b: string, nb: i32): i32 {
     h = (h * 131 + a[i] as i32) % nb;
     i = i + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < b.len()) {
     if (b[j] == b'|') {
       return h;
@@ -87,22 +87,22 @@ function sig_key_bucket(a: string, b: string, nb: i32): i32 {
 // each row onto the front of its bucket, which leaves every chain in ascending
 // row order without needing a per-bucket tail.
 pub function sig_reg_of(rows: string[]): SigReg {
-  var nb: i32 = sig_bucket_count(rows.len());
-  var head: i32[] = [];
-  var b: i32 = 0;
+  let nb: i32 = sig_bucket_count(rows.len());
+  let head: i32[] = [];
+  let b: i32 = 0;
   while (b < nb) {
     head = head.append(0 - 1);
     b = b + 1;
   }
-  var next: i32[] = [];
-  var j: i32 = 0;
+  let next: i32[] = [];
+  let j: i32 = 0;
   while (j < rows.len()) {
     next = next.append(0 - 1);
     j = j + 1;
   }
-  var k: i32 = rows.len() - 1;
+  let k: i32 = rows.len() - 1;
   while (k >= 0) {
-    var bk: i32 = sig_key_bucket(rows[k], "", nb);
+    let bk: i32 = sig_key_bucket(rows[k], "", nb);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
     k = k - 1;
@@ -114,7 +114,7 @@ pub function sig_reg_of(rows: string[]): SigReg {
 // stops at the first '|' on both sides, so a "<name>|<value>" row shares the
 // bucket of the bare name and the exact compare here still rejects it.
 pub function sig_reg_has_exact(r: SigReg, name: string): boolean {
-  var i: i32 = r.head[sig_key_bucket(name, "", r.head.len())];
+  let i: i32 = r.head[sig_key_bucket(name, "", r.head.len())];
   while (i >= 0) {
     if (r.rows[i] == name) {
       return true;
@@ -132,10 +132,10 @@ pub function csv_nth(enc: string, n: i32): string {
   if (enc.len() == 0) {
     return "";
   }
-  var depth: i32 = 0;
-  var idx: i32 = 0;
-  var start: i32 = 0;
-  var k: i32 = 0;
+  let depth: i32 = 0;
+  let idx: i32 = 0;
+  let start: i32 = 0;
+  let k: i32 = 0;
   while (k <= enc.len()) {
     if (k == enc.len() || depth == 0 && enc[k] == b',') {  // end, or top-level ','
       if (idx == n) {
@@ -144,7 +144,7 @@ pub function csv_nth(enc: string, n: i32): string {
       idx = idx + 1;
       start = k + 1;
     } else {
-      var ch: u8 = enc[k];
+      let ch: u8 = enc[k];
       if (ch == b'[' || ch == b'(') {
         depth = depth + 1;
       } else if (ch == b']' || ch == b')') {
@@ -164,7 +164,7 @@ pub function csv_nth(enc: string, n: i32): string {
 // index is what callers then read fields through, since the by-name
 // accessors are first-match too.
 pub function variant_decl_index(structs: StructTab, name: string, owner: string): i32 {
-  var vi: i32 = stab_first(structs, name);
+  let vi: i32 = stab_first(structs, name);
   while (vi >= 0) {
     if (structs.decls[vi].enum_owner == owner) {
       return vi;
@@ -175,8 +175,7 @@ pub function variant_decl_index(structs: StructTab, name: string, owner: string)
 }
 
 // ---- struct decl helpers -----------------------------------------------
-// The core lookups take the decl table directly (so lower_func can use them
-// while building its initial state); the LowerState methods delegate.
+// The core lookups take the decl table directly.
 // decl_field_index returns a field's position in DECL order (-1 if absent);
 // decl_is_struct reports whether `name` is a declared struct.
 
@@ -215,29 +214,29 @@ function stab_buckets(): i32 {
 // every chain in ascending index order without a per-bucket tail. Mirrors
 // mfuncs_table.
 pub function struct_tab(decls: parser.StructDecl[]): StructTab {
-  var nb: i32 = stab_buckets();
-  var head: i32[] = [];
-  var ehead: i32[] = [];
-  var b: i32 = 0;
+  let nb: i32 = stab_buckets();
+  let head: i32[] = [];
+  let ehead: i32[] = [];
+  let b: i32 = 0;
   while (b < nb) {
     head = head.append(0 - 1);
     ehead = ehead.append(0 - 1);
     b = b + 1;
   }
-  var next: i32[] = [];
-  var enext: i32[] = [];
-  var j: i32 = 0;
+  let next: i32[] = [];
+  let enext: i32[] = [];
+  let j: i32 = 0;
   while (j < decls.len()) {
     next = next.append(0 - 1);
     enext = enext.append(0 - 1);
     j = j + 1;
   }
-  var k: i32 = decls.len() - 1;
+  let k: i32 = decls.len() - 1;
   while (k >= 0) {
-    var bk: i32 = util.hash_bucket(decls[k].name, nb);
+    let bk: i32 = util.hash_bucket(decls[k].name, nb);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
-    var eb: i32 = util.hash_bucket(decls[k].enum_owner, nb);
+    let eb: i32 = util.hash_bucket(decls[k].enum_owner, nb);
     enext = enext.with(k, ehead[eb]);
     ehead = ehead.with(eb, k);
     k = k - 1;
@@ -268,8 +267,8 @@ pub function stab_first(structs: StructTab, name: string): i32 {
 // taking whichever registered first (#9968). A reader that wants the variant
 // asks variant_decl_index with the enum it already knows, or unit_decl_index.
 pub function stab_struct_first(structs: StructTab, name: string): i32 {
-  var i: i32 = stab_first(structs, name);
-  var j: i32 = i;
+  let i: i32 = stab_first(structs, name);
+  let j: i32 = i;
   while (j >= 0) {
     if (structs.decls[j].enum_owner == "") {
       return j;
@@ -284,7 +283,7 @@ pub function stab_next(structs: StructTab, i: i32, name: string): i32 {
 }
 
 function stab_skip(structs: StructTab, from: i32, name: string): i32 {
-  var j: i32 = from;
+  let j: i32 = from;
   while (j >= 0) {
     if (structs.decls[j].name == name) {
       return j;
@@ -308,7 +307,7 @@ pub function stab_enum_next(structs: StructTab, i: i32, owner: string): i32 {
 }
 
 function stab_enum_skip(structs: StructTab, from: i32, owner: string): i32 {
-  var j: i32 = from;
+  let j: i32 = from;
   while (j >= 0) {
     if (structs.decls[j].enum_owner == owner) {
       return j;
@@ -394,7 +393,7 @@ pub function is_subword_array_type(t: string): boolean {
 // recursive-drop follow-up); aliasing it (bind / return / assign) bails, like the
 // scalar-array fields, so the leak-only IR never creates a dangling second owner.
 pub function is_struct_array_field_type(structs: StructTab, t: string): boolean {
-  var n: i32 = t.len();
+  let n: i32 = t.len();
   if (n < 3) {
     return false;
   }
@@ -413,7 +412,7 @@ pub function is_struct_array_field_type(structs: StructTab, t: string): boolean 
 // alias-creating positions (bind / return / assign), so the leak-only IR never
 // creates a dangling second owner.
 pub function is_enum_array_field_type(structs: StructTab, t: string): boolean {
-  var n: i32 = t.len();
+  let n: i32 = t.len();
   if (n < 3) {
     return false;
   }
@@ -432,14 +431,14 @@ pub function is_enum_array_field_type(structs: StructTab, t: string): boolean {
 // calls this): a `T[][][]` field keeps its whole struct off the IR path, so
 // recognising it here would classify a receiver that can never be reached.
 pub function is_nested_array_field_type(structs: StructTab, t: string): boolean {
-  var n: i32 = t.len();
+  let n: i32 = t.len();
   if (n < 5) {
     return false;
   }
   if (slice_unchecked(t, n - 2, n) != "[]") {
     return false;
   }
-  var elt: str = slice_unchecked(t, 0, n - 2);
+  let elt: str = slice_unchecked(t, 0, n - 2);
   return is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt)
     || is_enum_array_field_type(structs, elt);
 }
@@ -461,14 +460,14 @@ pub function is_row_array_field_type(structs: StructTab, t: string): boolean {
 // returns "" — matching the former scan, whose ")"-suffix test failed on the
 // trailing "]".
 pub function tuple_type_elem_tag(t: string, n: i32): string {
-  var r: parser.TypeRef = parser.parse_type_ref(t);
+  let r: parser.TypeRef = parser.parse_type_ref(t);
   if (r.array_depth != 0 || !r.is_tuple) {
     return "";
   }
   if (n < 0 || n >= r.args.len()) {
     return "";
   }
-  var rt: string = parser.render_type_ref(r.args[n]);
+  let rt: string = parser.render_type_ref(r.args[n]);
   // A declared fn-typed element holds a closure BOX at runtime (the lift
   // pass wraps every fn-valued tuple element into a `__mkclo$…` env box),
   // so tag it "clo" for the env-first `t.N(args)` dispatch.
@@ -521,7 +520,7 @@ pub function is_enum_like_name(t: string, structs: StructTab): boolean {
   }
   // A bracketed generic (Option[..]/Result[..]/Map[..]/Box[..]) or a tuple
   // "(..)" is not a bare enum.
-  var ci: i32 = 0;
+  let ci: i32 = 0;
   while (ci < t.len()) {
     if (t[ci] == b'[') {
       return false;
@@ -574,8 +573,8 @@ pub function prim_type_ids(): string[] {
 // share spellings but each maps to its own slot; that is harmless (an impl names
 // exactly one spelling, used at both box and dispatch).
 pub function prim_type_id(structs: StructTab, name: string): i32 {
-  var names: string[] = prim_type_ids();
-  var i: i32 = 0;
+  let names: string[] = prim_type_ids();
+  let i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == name) {
       return structs.decls.len() + i;
@@ -588,7 +587,7 @@ pub function prim_type_id(structs: StructTab, name: string): i32 {
 // decl_field_type returns the declared type name of `field` in `struct_name`
 // ("" if absent) — used to track a string-typed field's reads as strings.
 pub function decl_field_type(structs: StructTab, struct_name: string, field: string): string {
-  var si: i32 = stab_struct_first(structs, struct_name);
+  let si: i32 = stab_struct_first(structs, struct_name);
   if (si < 0) {
     return "";
   }
@@ -659,15 +658,15 @@ pub function elem_ty_is_f64slot(t: string): boolean {
 // product signed `*|` divides back, -1 where the operator needs neither.
 // `kind` names the operand width and signedness (i32 / u32 / u8 / i64 / u64).
 pub function sat_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, oslot: i32, hslot: i32, sslot: i32): ir.Op[] {
-  var uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
-  var w: i32 = 0;
+  let uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
+  let w: i32 = 0;
   if (wide) {
     w = 64;
   }
-  var ops: ir.Op[] = [];
+  let ops: ir.Op[] = [];
 
   if (op == "<<|") {
-    var back: string = "shr_s";
+    let back: string = "shr_s";
     if (uns) {
       back = "shr_u";
     }
@@ -769,10 +768,10 @@ pub function sat_binary_ops(op: string, kind: string, wide: boolean, lslot: i32,
     // `adj` reaches the guard bound (MAX ∓ b) — the inverse of the
     // arithmetic; `act` is the arithmetic itself. The sign test on b
     // that selects the clamp direction flips with the operator too.
-    var act: string = "add";
-    var adj: string = "sub";
-    var hicmp: string = "gt_s";
-    var locmp: string = "lt_s";
+    let act: string = "add";
+    let adj: string = "sub";
+    let hicmp: string = "gt_s";
+    let locmp: string = "lt_s";
     if (op == "-|") {
       act = "sub";
       adj = "add";
@@ -901,7 +900,7 @@ function sat_temp(slot: i32, k: string, norm: boolean, kind: string, w: i32, lsl
 
 function sat_const(kind: string, which: string, own ops: ir.Op[]): ir.Op[] {
   if (kind == "i64" || kind == "u64") {
-    var t: string = "0";
+    let t: string = "0";
     if (which == "negone") {
       t = "-1";
     }
@@ -917,7 +916,7 @@ function sat_const(kind: string, which: string, own ops: ir.Op[]): ir.Op[] {
     }
     return ops.append(ir.op_const_i64_text(t));
   }
-  var v: i32 = 0;
+  let v: i32 = 0;
   if (which == "negone") {
     v = 0 - 1;
   }
@@ -989,7 +988,7 @@ function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32
   // Checked shift: fail on an out-of-range count — `>= width` (spelled
   // `> width-1` so gt_u / gt_s suffice) and, for signed operands, `< 0`.
   if (op == "<<?" || op == ">>?") {
-    var wm1: i32 = 31;
+    let wm1: i32 = 31;
     if (kind == "u8") {
       wm1 = 7;
     } else if (w == 64) {
@@ -1054,9 +1053,9 @@ function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32
     return ops.append(ir.op_bin("and", 0, false));
   }
   if (op == "+?" || op == "-?") {
-    var rsign_hi: string = "gt_s";
-    var rsign_lo: string = "lt_s";
-    var adj: string = "sub";
+    let rsign_hi: string = "gt_s";
+    let rsign_lo: string = "lt_s";
+    let adj: string = "sub";
     if (op == "-?") {
       rsign_hi = "lt_s";
       rsign_lo = "gt_s";
@@ -1108,14 +1107,14 @@ function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32
 // `rslot`, the wrapped result in `sslot` (a width-marked slot), the Option in
 // `oslot` (a pointer slot) and loaded last.
 pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, sslot: i32, oslot: i32): ir.Op[] {
-  var uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
-  var w: i32 = 0;
+  let uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
+  let w: i32 = 0;
   if (wide) {
     w = 64;
   }
-  var ops: ir.Op[] = [];
+  let ops: ir.Op[] = [];
 
-  var basek: string = "add";
+  let basek: string = "add";
   if (op == "-?") {
     basek = "sub";
   }
@@ -1152,7 +1151,7 @@ pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32,
   // the raw, un-guarded division). Their overflow check needs only l / r, so
   // the division is deferred into the Some branch below, where the divisor is
   // provably non-zero (and not the signed `MIN / -1`) and so can't trap.
-  var is_divrem: boolean = op == "/?" || op == "%?";
+  let is_divrem: boolean = op == "/?" || op == "%?";
   if (!is_divrem && sslot >= 0) {
     ops = sat_load(lslot, ops);
     ops = sat_load(rslot, ops);
@@ -1330,7 +1329,7 @@ pub function nested_field_deep_drop_ok(structs: StructTab, sty: string): boolean
   if (sty.len() == 0) {
     return false;
   }
-  var visiting: string[] = [];
+  let visiting: string[] = [];
   return nddo_reach(structs, sty, visiting) == 1;
 }
 
@@ -1355,14 +1354,14 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
   if (visiting.len() > 16) {  // depth backstop → treat as unsafe
     return 0 - 1;
   }
-  var nv: string[] = visiting.append(sty);
-  var n: i32 = decl_field_count(structs, sty);
-  var has_arr: boolean = false;
-  var fi: i32 = 0;
+  let nv: string[] = visiting.append(sty);
+  let n: i32 = decl_field_count(structs, sty);
+  let has_arr: boolean = false;
+  let fi: i32 = 0;
   while (fi < n) {
-    var fdt: string = decl_field_type_at(structs, sty, fi);
+    let fdt: string = decl_field_type_at(structs, sty, fi);
     if (decl_is_struct(structs, fdt)) {
-      var r: i32 = nddo_reach(structs, fdt, nv);
+      let r: i32 = nddo_reach(structs, fdt, nv);
       if (r < 0) {  // a cycle below poisons this struct too
         return 0 - 1;
       }
@@ -1398,20 +1397,18 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
 // --- cross-block reuse (FBIP): a block-top donor reused by a construction nested
 // --- in a LATER if-arm of that block ------------------------------------------
 //
-// The complement to same-block reuse: a `var d = T{…}` at block B's top level,
+// The complement to same-block reuse: a `let d = T{…}` at block B's top level,
 // dead by the time control reaches a later statement k, whose box is reused by a
-// `var c = T{…}` at the TOP LEVEL of an IF-arm at statement k. Restricted to
+// `let c = T{…}` at the TOP LEVEL of an IF-arm at statement k. Restricted to
 // IF-arms (then/else) so the recipient runs at most ONCE per run of B — a while /
 // for body would reuse the once-allocated donor repeatedly (2nd turn: donor slot
 // already zeroed → write to null). When B is itself a loop body, D is re-declared
-// each iteration, so the pattern "loop { var a = …; if (c) { var b = … /*reuse a*/ } }"
-// fires every iteration. The pairing is carried to the nested lower_block via
-// LowerState.xblock_pending (recip|donor); the recursive lower_block consumes it
-// when it constructs the recipient. Donor selection excludes any donor a
+// each iteration, so the pattern "loop { let a = …; if (c) { let b = … /*reuse a*/ } }"
+// fires every iteration. Donor selection excludes any donor a
 // same-block site already consumed (so the two passes never double-free a box).
 
 // reuse_layer_disabled: the #4350 §6.5 differential switch. When the
-// FERN_SELFHOST_NO_REUSE env var is "1" in the COMPILER's environment, every
+// FERN_SELFHOST_NO_REUSE env let is "1" in the COMPILER's environment, every
 // donor-based box-reuse pairing (self-overwrite / cross-struct / cross-tuple /
 // enum-donor / enum-cross / in-arm) and the ENUMRE in-place reassign upgrade
 // are suppressed: constructions allocate fresh boxes, donors take their normal
@@ -1419,8 +1416,8 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
 // back to emit_enum_reclaim_store's free+alloc — mirroring native
 // ast.RcReuseEnabled=false. Reuse-on vs reuse-off must be OBSERVATIONALLY
 // IDENTICAL (the differential gate in self_host_reuse_differential_test.go
-// asserts it); OFF trades only alloc count / peak heap. Read per lower_block /
-// lower_func entry (an env scan — no allocation on the None path).
+// asserts it); OFF trades only alloc count / peak heap. Read once per function
+// by ssarc (an env scan — no allocation on the None path).
 pub function reuse_layer_disabled(): boolean {
   match (env("FERN_SELFHOST_NO_REUSE")) {
     Some(v) => {
@@ -1433,7 +1430,7 @@ pub function reuse_layer_disabled(): boolean {
   return false;
 }
 
-// LowerResult is lower_func's output: the lowered op stream, the local-slot
+// LowerResult is one function's lowering: the lowered op stream, the local-slot
 // count (operand-frame size for the interpreter / a backend — the count
 // ir.optimize_ops returns, which a slot-allocating pass grows past the
 // lowering's own), and ok.
@@ -1467,15 +1464,11 @@ pub struct LowerResult {
   // (#6639), not for emission — a string is one operand slot on the
   // registers and two on wasm32, so a stack model needs the distinction.
   str_slots: i32[],
-  // why: why this function did not lower — either a SIGNATURE refusal raised
-  // in lower_func itself (an unlowerable return / receiver / param type) or
-  // the body's innermost failing node, carried out of LowerState.fail_why.
-  // Empty when ok. The strict-IR diagnostic prints it; nothing on the emit
-  // path reads it.
+  // why: why this function did not lower. Empty when ok. Read only by
+  // ircore.lower_failed_refuse, the backends' per-function backstop.
   why: string,
-  // alias_incs: the var-bind alias retains this lowering decided
-  // (`line:col=name`), carried out of LowerState for the `-rc-plan`
-  // aliasBindIncs table (#4482). Nothing on the emit path reads it.
+  // alias_incs: never populated and never read; the `-rc-plan` aliasBindIncs
+  // table it was carried for is native's (#4482).
   alias_incs: string[],
   // name: the symbol this body defines, for a lowering that has no
   // declaration to take one from. Empty for a body lowered from a
@@ -1511,7 +1504,7 @@ pub function result_f64(): i32 {
 // is_array_type_name reports whether a type string denotes an array (ends
 // with "[]", e.g. "i32[]").
 pub function is_array_type_name(t: string): boolean {
-  var n: i32 = t.len();
+  let n: i32 = t.len();
   if (n < 2) {
     return false;
   }
@@ -1531,7 +1524,7 @@ pub function is_f64_scalar_type_name(t: string): boolean {
 // --- Binding-SITE keys for the tuple class credits (#7272 / #7253 step 1) ---
 //
 // The class credits are collected from the AST, before any slot exists, so their
-// key has always been the variable NAME — and a name has no scope. Two `var t`
+// key has always been the variable NAME — and a name has no scope. Two `let t`
 // in sibling blocks are two slots under one key, and when they are not the same
 // class the table hands each slot BOTH credits: the box takes the "TUP:" shallow
 // dec AND the "TUPRCS:" deep free, and is released twice. Measured as exit 99
@@ -1553,20 +1546,20 @@ pub function reclaim_site_key_of(name: string, line: i32, col: i32): string {
   return name + "@" + util.i32_to_string(line) + ":" + util.i32_to_string(col);
 }
 
-// local_decl_count: how many `var name` declarations `stmts` contains, nested
+// local_decl_count: how many `let name` declarations `stmts` contains, nested
 // blocks included.
 // Over astwalk's binder walk, for the reason body_declares_name is — and here it
 // was a live miscompile rather than a latent one. The copy this replaces counted
-// `var` declarations only: it did not read `for` binders, match payload binders,
+// `let` declarations only: it did not read `for` binders, match payload binders,
 // or the comma-joined destructure form. try_lift_binding uses the count to
 // refuse the lambda lift when a name means two things, and subst_fcall_expr
 // rewrites `f(…)` inside `for` and `match` bodies — so a `for f in fns` over a
 // lifted `f` counted 1, the lift proceeded, and every element's call was
 // rewritten to the hoisted body. Measured 35 against the interpreter's 99.
 pub function local_decl_count(stmts: ast.Stmt[], name: string): i32 {
-  var bound: string[] = astwalk.collect_bound_stmts(stmts, []);
-  var n: i32 = 0;
-  var i: i32 = 0;
+  let bound: string[] = astwalk.collect_bound_stmts(stmts, []);
+  let n: i32 = 0;
+  let i: i32 = 0;
   while (i < bound.len()) {
     if (bound[i] == name) {
       n = n + 1;
@@ -1602,13 +1595,13 @@ pub function enum_arr_elems_walk_ok(structs: StructTab, ename: string): boolean 
   if (!decl_is_enum(structs, ename)) {
     return false;
   }
-  var any_walked: boolean = false;
+  let any_walked: boolean = false;
   for sd in structs.decls {
     if (sd.enum_owner == ename) {
-      var n: i32 = decl_field_count(structs, sd.name);
-      var fi: i32 = 0;
+      let n: i32 = decl_field_count(structs, sd.name);
+      let fi: i32 = 0;
       while (fi < n) {
-        var ft: string = decl_field_type_at(structs, sd.name, fi);
+        let ft: string = decl_field_type_at(structs, sd.name, fi);
         if (enum_walk_payload_field(ft)) {
           any_walked = true;
         } else if (!is_scalar_type_name(ft)) {
@@ -1625,9 +1618,9 @@ pub function enum_arr_elems_walk_ok(structs: StructTab, ename: string): boolean 
 // enum_walk_payload_field payloads ((k+1)*8 — shape@0, fields@8+), for the
 // element-walk emitters.
 pub function enum_walk_payload_offsets(structs: StructTab, vname: string): i32[] {
-  var out: i32[] = [];
-  var n: i32 = decl_field_count(structs, vname);
-  var fi: i32 = 0;
+  let out: i32[] = [];
+  let n: i32 = decl_field_count(structs, vname);
+  let fi: i32 = 0;
   while (fi < n) {
     if (enum_walk_payload_field(decl_field_type_at(structs, vname, fi))) {
       out = out.append((fi + 1) * 8);
@@ -1639,8 +1632,8 @@ pub function enum_walk_payload_offsets(structs: StructTab, vname: string): i32[]
 
 // erased_expr_uses_any: does `e` reference any of the (erased-param) names?
 function erased_expr_uses_any(e: ast.Expr, names: string[]): boolean {
-  var ids: string[] = astwalk.collect_idents_expr(e, []);
-  var i: i32 = 0;
+  let ids: string[] = astwalk.collect_idents_expr(e, []);
+  let i: i32 = 0;
   while (i < ids.len()) {
     if (util.index_of_str(names, ids[i]) >= 0) {
       return true;
@@ -1684,7 +1677,7 @@ function erased_return_value_ok(e: ast.Expr, names: string[]): boolean {
 // bound to a local, passed to a (concrete-typed) closure/function, used in
 // arithmetic, or placed in a non-tuple container, its i64 spelling collides with
 // the concrete type the sink expects — e.g.
-// `fold[T,A](init:A, f:(A,T)=>A): A { var acc = init; acc = f(acc,..); return acc }`
+// `fold[T,A](init:A, f:(A,T)=>A): A { let acc = init; acc = f(acc,..); return acc }`
 // passes `A` to a closure typed at the concrete `A`, so init must NOT widen.
 // Conservative: any unrecognised statement, or any non-return use, fails safe.
 function erased_uses_only_returned(stmts: ast.Stmt[], names: string[]): boolean {
@@ -1781,8 +1774,8 @@ pub function erased_passthrough_safe(fn: parser.FuncDecl): boolean {
   if (!parser.looks_type_var(fn.ret_type)) {
     return false;
   }
-  var enames: string[] = [];
-  var i: i32 = 0;
+  let enames: string[] = [];
+  let i: i32 = 0;
   while (i < fn.params.len()) {
     if (parser.looks_type_var(fn.params[i].type_name)) {
       enames = enames.append(fn.params[i].name);
@@ -1813,19 +1806,19 @@ function declares_typevars(fn: parser.FuncDecl): boolean {
 // callee-resolution pass look a callee up without scanning the declaration
 // list per call op.
 //
-// The arity counts the receiver, because lower_func does: the receiver is
+// The arity counts the receiver, because the lowering does: the receiver is
 // param slot 0 of a method, and the call site pushes it as the first argument.
 // DECLARED functions, not lowered ones — a function whose lowering bailed and
 // a generic monomorphised under another name are both absent from the lowered
 // set while being perfectly well declared.
 pub function fn_sig_index(funcs: parser.FuncDecl[]): irverify.NameIndex {
-  var sigs: irverify.FnSig[] = [];
+  let sigs: irverify.FnSig[] = [];
   for fn in funcs {
-    var nm: string = fn.name;
+    let nm: string = fn.name;
     if (fn.receiver_type.len() > 0) {
       nm = util.base_type_name(fn.receiver_type) + "." + fn.name;
     }
-    var np: i32 = fn.params.len();
+    let np: i32 = fn.params.len();
     if (fn.receiver_name.len() > 0) {
       np = np + 1;
     }
@@ -1854,16 +1847,16 @@ pub function fn_sig_index(funcs: parser.FuncDecl[]): irverify.NameIndex {
 // every consumer without threading fd through the lift, and costs one walk of
 // the body.
 pub function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg): string[] {
-  var bound: string[] = [];
+  let bound: string[] = [];
   if (fd.receiver_name.len() > 0) {
     bound = bound.append(fd.receiver_name);
   }
-  var pi: i32 = 0;
+  let pi: i32 = 0;
   while (pi < fd.params.len()) {
     bound = bound.append(fd.params[pi].name);
     pi = pi + 1;
   }
-  var b: i32 = 0;
+  let b: i32 = 0;
   while (b < fd.body.len()) {
     bound = astwalk.collect_bound_stmt(fd.body[b], bound);
     b = b + 1;
@@ -1876,8 +1869,8 @@ pub function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg):
   // against the module-fn set and return the list unchanged when none of them
   // shadows one — the overwhelmingly common case. Scanning the whole list
   // against every binder is the same answer at O(gfns x bound).
-  var shadows: boolean = false;
-  var bi: i32 = 0;
+  let shadows: boolean = false;
+  let bi: i32 = 0;
   while (bi < bound.len()) {
     if (sig_reg_has_exact(gset, bound[bi])) {
       shadows = true;
@@ -1889,8 +1882,8 @@ pub function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg):
   if (!shadows) {
     return gfns;
   }
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < gfns.len()) {
     if (util.index_of_str(bound, gfns[i]) < 0) {
       out = out.append(gfns[i]);
@@ -1901,10 +1894,10 @@ pub function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg):
 }
 
 pub function lambda_has_no_captures(lam: ast.ExprLambda, gfns: string[]): boolean {
-  var used: string[] = astwalk.collect_lambda_idents(lam, []);
-  var ui: i32 = 0;
+  let used: string[] = astwalk.collect_lambda_idents(lam, []);
+  let ui: i32 = 0;
   while (ui < used.len()) {
-    var u: string = used[ui];
+    let u: string = used[ui];
     if (util.index_of_str(gfns, u) < 0
       && u != "None" && u != "true" && u != "false") {
       return false;
@@ -1925,15 +1918,28 @@ pub function body_assign_targets(stmts: ast.Stmt[]): string[] {
 // assign_targets_into threads ONE accumulator through astwalk's statement
 // spine. It is a hot path — a statement at depth d sits in the body of every
 // block above it — so every consumer takes the set as a PARAMETER and each
-// scope folds it once: lower_func for the fn-level analyses and lower_block for
-// its own block (#6911). The block-level classifiers fold no block of their
-// own: they thread the function's set down as block_reassigns' filter.
+// scope folds it once (#6911).
 // assign_target_into captures nothing, so the fold allocates nothing per call.
 function assign_targets_into(out: string[], stmts: ast.Stmt[]): string[] {
   for stmt in stmts {
     out = astwalk.fold_stmt_spine(stmt, out, assign_target_into);
   }
   return out;
+}
+
+// lambda_write_targets is body_assign_targets reaching into nested lambda
+// bodies as well: a nested lambda's write to a name free in `stmts` writes that
+// same binding (lexical resolution makes every binding's name distinct).
+pub function lambda_write_targets(stmts: ast.Stmt[]): string[] {
+  let out: string[] = [];
+  for stmt in stmts {
+    out = astwalk.fold_stmt_nodes(stmt, out, assign_target_into, keep_targets, astwalk.descend_all);
+  }
+  return out;
+}
+
+function keep_targets(e: ast.Expr, own acc: string[]): string[] {
+  return acc;
 }
 
 function assign_target_into(st: ast.Stmt, own acc: string[]): string[] {

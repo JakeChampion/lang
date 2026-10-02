@@ -36,7 +36,7 @@ const factLiterate = "# Factorial\n" +
 	"```fern\n" +
 	"<<main>>=\n" +
 	"function main(): i32 {\n" +
-	"    var f: i32 = fact(5);\n" +
+	"    let f: i32 = fact(5);\n" +
 	"    print(f.to_string());\n" +
 	"    return f;\n" +
 	"}\n" +
@@ -134,7 +134,7 @@ func TestLiterateWeaveStdout(t *testing.T) {
 func TestLiterateDiagnosticPointsAtDocumentLine(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	// The offending line ("var f: i32 = "oops";") is deliberately late
+	// The offending line ("let f: i32 = "oops";") is deliberately late
 	// in the document but, after tangling, would land early in the
 	// generated source — so a naive (non-remapped) diagnostic would
 	// report the wrong line.
@@ -148,7 +148,7 @@ func TestLiterateDiagnosticPointsAtDocumentLine(t *testing.T) {
 		"```fern\n" + // 8
 		"<<main>>=\n" + // 9
 		"function main(): i32 {\n" + // 10
-		"    var f: i32 = \"oops\";\n" + // 11  <-- type error here
+		"    let f: i32 = \"oops\";\n" + // 11  <-- type error here
 		"    return f;\n" + // 12
 		"}\n" + // 13
 		"```\n" // 14
@@ -170,7 +170,7 @@ func TestLiterateDiagnosticPointsAtDocumentLine(t *testing.T) {
 	if !strings.Contains(msg, "buggy.fern.md:11:") {
 		t.Errorf("diagnostic should point at buggy.fern.md line 11, got:\n%s", msg)
 	}
-	if !strings.Contains(msg, `var f: i32 = "oops";`) {
+	if !strings.Contains(msg, `let f: i32 = "oops";`) {
 		t.Errorf("diagnostic should render the document source line, got:\n%s", msg)
 	}
 }

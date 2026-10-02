@@ -28,7 +28,7 @@ function main(): i32 { return helper(); }`, 101},
 	// Bare reached form.
 	{"bare-reached", `function main(): i32 { todo; }`, 101},
 	// `todo` stays usable as an ordinary identifier.
-	{"identifier", `function main(): i32 { var todo: i32 = 5; todo = todo + 1; return todo + 2; }`, 8},
+	{"identifier", `function main(): i32 { let todo: i32 = 5; todo = todo + 1; return todo + 2; }`, 8},
 }
 
 // TestSelfHostTodoIR compiles each case with the self-host CLI for

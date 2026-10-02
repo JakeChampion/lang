@@ -79,7 +79,7 @@ function test_empty_and_lone_sign(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/string parse_int_radix");
+  let r: test.TestRunner = test.test_new("std/string parse_int_radix");
   r = r.it("hex", test_hex);
   r = r.it("binary", test_binary);
   r = r.it("octal", test_octal);

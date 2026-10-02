@@ -27,34 +27,34 @@ var closureArrUniformCases = []struct {
 	// is a passthrough call carrying a capturing lambda. Reduced from fernsmith
 	// seed 215 — and then rewritten to CALL the value, which the reduced seed
 	// never does, so it could not have shown the crash.
-	{"cross-return-plain-and-passthrough", `function id[T](x: T): T { return x; } function gen(c: boolean, p1: i32): ((i32) => i32)[] { return if (c) { [((x: i32) => x)] } else { [id(((y: i32) => (y + p1)))] }; } function main(): i32 { var fs: ((i32) => i32)[] = gen(false, 5i32); return fs[0i32](1i32) & 63i32; }`, 6},
+	{"cross-return-plain-and-passthrough", `function id[T](x: T): T { return x; } function gen(c: boolean, p1: i32): ((i32) => i32)[] { return if (c) { [((x: i32) => x)] } else { [id(((y: i32) => (y + p1)))] }; } function main(): i32 { let fs: ((i32) => i32)[] = gen(false, 5i32); return fs[0i32](1i32) & 63i32; }`, 6},
 	// The same disagreement one container in: the arms of a value-position if
 	// bound to a LOCAL, one holding a passthrough element and one a plain
 	// lambda. This one bailed rather than crashing — the arm-array rewrite
 	// counted only a direct capturing lambda, so nothing boxed at all.
-	{"arm-array-passthrough-element", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; } function main(): i32 { var p: i32 = 4i32; var fs: ((i32) => i32)[] = (if (true) { [pick(true, ((x: i32) => (x + p)), ((y: i32) => y))] } else { [((z: i32) => z)] }); return fs[0i32](1i32) & 63i32; }`, 5},
+	{"arm-array-passthrough-element", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; } function main(): i32 { let p: i32 = 4i32; let fs: ((i32) => i32)[] = (if (true) { [pick(true, ((x: i32) => (x + p)), ((y: i32) => y))] } else { [((z: i32) => z)] }); return fs[0i32](1i32) & 63i32; }`, 5},
 	// Both returns hold only no-capture lambdas.
-	{"all-plain-returns", `function gen(c: boolean): ((i32) => i32)[] { return if (c) { [((x: i32) => x)] } else { [((y: i32) => (y + 1i32))] }; } function main(): i32 { var fs: ((i32) => i32)[] = gen(false); return fs[0i32](1i32) & 63i32; }`, 2},
+	{"all-plain-returns", `function gen(c: boolean): ((i32) => i32)[] { return if (c) { [((x: i32) => x)] } else { [((y: i32) => (y + 1i32))] }; } function main(): i32 { let fs: ((i32) => i32)[] = gen(false); return fs[0i32](1i32) & 63i32; }`, 2},
 
 	// `xs.with(i, v)` / `xs.append(v)`: the clone keeps the receiver's boxes and
 	// the stored value is boxed to match, so the destination dispatches
 	// env-first. Each case reads the WRITTEN element and an untouched one, so a
 	// representation that agrees only at index 0 still fails.
-	{"with-lambda-into-plain-fn-array", `function main(): i32 { var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; var w: ((i32) => i32)[] = s.with(0i32, ((b: i32) => (b + 1i32))); return ((w[0i32](5i32) + w[1i32](5i32) + s[0i32](5i32)) & 63i32); }`, 18},
-	{"with-capturing-lambda-into-plain-fn-array", `function main(): i32 { var n: i32 = 3i32; var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; var w: ((i32) => i32)[] = s.with(0i32, ((b: i32) => (b + n))); return ((w[0i32](5i32) + w[1i32](5i32)) & 63i32); }`, 15},
+	{"with-lambda-into-plain-fn-array", `function main(): i32 { let s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; let w: ((i32) => i32)[] = s.with(0i32, ((b: i32) => (b + 1i32))); return ((w[0i32](5i32) + w[1i32](5i32) + s[0i32](5i32)) & 63i32); }`, 18},
+	{"with-capturing-lambda-into-plain-fn-array", `function main(): i32 { let n: i32 = 3i32; let s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; let w: ((i32) => i32)[] = s.with(0i32, ((b: i32) => (b + n))); return ((w[0i32](5i32) + w[1i32](5i32)) & 63i32); }`, 15},
 	// The value is a LOCAL holding the lambda, not the lambda itself. A
 	// lambda-bound local is already an env box, so the receiver has to box even
 	// though no lambda appears in the `.with` at all.
-	{"with-boxed-local-into-plain-fn-array", `function main(): i32 { var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; var f = ((b: i32) => (b + 1i32)); var w: ((i32) => i32)[] = s.with(0i32, f); return ((w[0i32](5i32) + f(1i32)) & 63i32); }`, 8},
+	{"with-boxed-local-into-plain-fn-array", `function main(): i32 { let s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; let f = ((b: i32) => (b + 1i32)); let w: ((i32) => i32)[] = s.with(0i32, f); return ((w[0i32](5i32) + f(1i32)) & 63i32); }`, 8},
 	// A bare module-fn NAME as the value gets the `$wrapN` trampoline box a
 	// fn-name array ELEMENT gets, so the clone holds boxes throughout.
-	{"with-fn-name-into-closure-array", `function bump(x: i32): i32 { return (x + 1i32); } function main(): i32 { var n: i32 = 2i32; var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + n))]; var w: ((i32) => i32)[] = s.with(0i32, bump); return ((w[0i32](5i32) + w[1i32](5i32)) & 63i32); }`, 13},
+	{"with-fn-name-into-closure-array", `function bump(x: i32): i32 { return (x + 1i32); } function main(): i32 { let n: i32 = 2i32; let s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + n))]; let w: ((i32) => i32)[] = s.with(0i32, bump); return ((w[0i32](5i32) + w[1i32](5i32)) & 63i32); }`, 13},
 	// No fn value in the `.with` at all: the value is an element read out of
 	// the receiver.
-	{"with-element-of-closure-array", `function main(): i32 { var n: i32 = 2i32; var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + n))]; var w: ((i32) => i32)[] = s.with(0i32, s[1i32]); return ((w[0i32](5i32) + w[1i32](5i32)) & 63i32); }`, 14},
-	{"append-capturing-lambda-to-plain-fn-array", `function main(): i32 { var n: i32 = 4i32; var s: ((i32) => i32)[] = [((a: i32) => a)]; var w: ((i32) => i32)[] = s.append(((b: i32) => (b + n))); return ((w[0i32](1i32) + w[1i32](5i32)) & 63i32); }`, 10},
+	{"with-element-of-closure-array", `function main(): i32 { let n: i32 = 2i32; let s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + n))]; let w: ((i32) => i32)[] = s.with(0i32, s[1i32]); return ((w[0i32](5i32) + w[1i32](5i32)) & 63i32); }`, 14},
+	{"append-capturing-lambda-to-plain-fn-array", `function main(): i32 { let n: i32 = 4i32; let s: ((i32) => i32)[] = [((a: i32) => a)]; let w: ((i32) => i32)[] = s.append(((b: i32) => (b + n))); return ((w[0i32](1i32) + w[1i32](5i32)) & 63i32); }`, 10},
 	// A `.with` on a NON-fn array beside a function array.
-	{"non-fn-with-beside-fn-array", `function main(): i32 { var xs: i32[] = [1i32, 2i32]; var ys: i32[] = xs.with(0i32, 7i32); var s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; return ((s[0i32](ys[0i32]) + s[1i32](ys[1i32])) & 63i32); }`, 11},
+	{"non-fn-with-beside-fn-array", `function main(): i32 { let xs: i32[] = [1i32, 2i32]; let ys: i32[] = xs.with(0i32, 7i32); let s: ((i32) => i32)[] = [((a: i32) => a), ((c: i32) => (c + 2i32))]; return ((s[0i32](ys[0i32]) + s[1i32](ys[1i32])) & 63i32); }`, 11},
 }
 
 // TestSelfHostClosureArrUniformIRX86_64 — the x86-64 IR path (asm_ir_run `-ir`).

@@ -31,63 +31,63 @@ var chainedFnArgCallCases = []struct {
 }{
 	// The #4767 repro: generic + named-fn arg + inline `.len()` chain.
 	{"chained-len-generic", `function take_while[T](xs: T[], p: (T) => boolean): T[] {
-    var out: T[] = [];
-    var i: i32 = 0;
+    let out: T[] = [];
+    let i: i32 = 0;
     while (i < xs.len() && p(xs[i])) { out = out.append(xs[i]); i = i + 1; }
     return out;
 }
 function lt5(x: i32): boolean { return x < 5; }
 function main(): i32 {
-    var c: i32[] = [1, 2, 3];
+    let c: i32[] = [1, 2, 3];
     return take_while(c, lt5).len();
 }`, 3},
 	// Non-generic sibling — proves the generic was not part of the trigger.
 	{"chained-len-nongeneric", `function take_while_i(xs: i32[], p: (i32) => boolean): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
+    let out: i32[] = [];
+    let i: i32 = 0;
     while (i < xs.len() && p(xs[i])) { out = out.append(xs[i]); i = i + 1; }
     return out;
 }
 function lt5(x: i32): boolean { return x < 5; }
 function main(): i32 {
-    var c: i32[] = [1, 2, 3];
+    let c: i32[] = [1, 2, 3];
     return take_while_i(c, lt5).len();
 }`, 3},
 	// Inline typed-lambda argument in the chained call.
 	{"chained-len-lambda-arg", `function take_while[T](xs: T[], p: (T) => boolean): T[] {
-    var out: T[] = [];
-    var i: i32 = 0;
+    let out: T[] = [];
+    let i: i32 = 0;
     while (i < xs.len() && p(xs[i])) { out = out.append(xs[i]); i = i + 1; }
     return out;
 }
 function main(): i32 {
-    var c: i32[] = [1, 2, 3];
+    let c: i32[] = [1, 2, 3];
     return take_while(c, (x: i32) => x < 2).len();
 }`, 1},
 	// A fn-arg call NESTED in the receiver of another fn-arg call — the
 	// recursion must reach the inner call through the outer callee.
 	{"chained-len-nested", `function take_while[T](xs: T[], p: (T) => boolean): T[] {
-    var out: T[] = [];
-    var i: i32 = 0;
+    let out: T[] = [];
+    let i: i32 = 0;
     while (i < xs.len() && p(xs[i])) { out = out.append(xs[i]); i = i + 1; }
     return out;
 }
 function lt5(x: i32): boolean { return x < 5; }
 function main(): i32 {
-    var c: i32[] = [1, 2, 3];
+    let c: i32[] = [1, 2, 3];
     return take_while(take_while(c, lt5), (x: i32) => x < 3).len();
 }`, 2},
 	// Index chain on the fn-arg call result (worked pre-fix via ExprIndex's
 	// existing recursion) — pinned so the two consumption shapes stay in sync.
 	{"chained-index", `function take_while[T](xs: T[], p: (T) => boolean): T[] {
-    var out: T[] = [];
-    var i: i32 = 0;
+    let out: T[] = [];
+    let i: i32 = 0;
     while (i < xs.len() && p(xs[i])) { out = out.append(xs[i]); i = i + 1; }
     return out;
 }
 function lt5(x: i32): boolean { return x < 5; }
 function main(): i32 {
-    var c: i32[] = [1, 2, 3];
+    let c: i32[] = [1, 2, 3];
     return take_while(c, lt5)[1];
 }`, 2},
 }

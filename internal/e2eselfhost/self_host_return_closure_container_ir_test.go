@@ -9,7 +9,7 @@ import (
 // container across a function boundary — the struct-field / param variants of
 // issue #5202 (cases B, C, E). closure_ret_fns_of / closurearr_ret_fns_of
 // register a function declared to return a function or a function array, so a
-// caller's `var g = pick()` binds g a closure local / closure array, whatever
+// caller's `let g = pick()` binds g a closure local / closure array, whatever
 // the return statements spell:
 //
 //	B — `return r.hs[0]` / `return fs[i]`: an element of a closure ARRAY that is
@@ -30,17 +30,17 @@ var returnClosureContainerIRCases = []struct {
 	exit int
 }{
 	// B — struct-field closure-array element.
-	{"field-elem", "struct Reg { hs: (() => i32)[] } function pick(r: Reg): () => i32 { return r.hs[0]; } function main(): i32 { var n: i32 = 8; var r = Reg { hs: [() => n] }; var g = pick(r); return g(); }", 8},
+	{"field-elem", "struct Reg { hs: (() => i32)[] } function pick(r: Reg): () => i32 { return r.hs[0]; } function main(): i32 { let n: i32 = 8; let r = Reg { hs: [() => n] }; let g = pick(r); return g(); }", 8},
 	// C — whole closure-array struct field, indexed at the caller.
-	{"whole-arr", "struct Reg { hs: (() => i32)[] } function pick(r: Reg): (() => i32)[] { return r.hs; } function main(): i32 { var n: i32 = 8; var hs = pick(Reg { hs: [() => n] }); return hs[0](); }", 8},
+	{"whole-arr", "struct Reg { hs: (() => i32)[] } function pick(r: Reg): (() => i32)[] { return r.hs; } function main(): i32 { let n: i32 = 8; let hs = pick(Reg { hs: [() => n] }); return hs[0](); }", 8},
 	// E — fn-valued struct field selected from a struct-array element (registry).
-	{"registry", "struct KV { k: i32, f: () => i32 } function lookup(kvs: KV[], key: i32): () => i32 { var i: i32 = 0; while (i < kvs.len()) { if (kvs[i].k == key) { return kvs[i].f; } i = i + 1; } return () => 0; } function main(): i32 { var n: i32 = 8; var kvs: KV[] = [KV { k: 1, f: () => n }, KV { k: 2, f: () => n * 2 }]; var g = lookup(kvs, 2); return g(); }", 16},
+	{"registry", "struct KV { k: i32, f: () => i32 } function lookup(kvs: KV[], key: i32): () => i32 { let i: i32 = 0; while (i < kvs.len()) { if (kvs[i].k == key) { return kvs[i].f; } i = i + 1; } return () => 0; } function main(): i32 { let n: i32 = 8; let kvs: KV[] = [KV { k: 1, f: () => n }, KV { k: 2, f: () => n * 2 }]; let g = lookup(kvs, 2); return g(); }", 16},
 	// B — element of an fn[] PARAM (not a field): `return fs[i]`.
-	{"param-fnarr", "function get(fs: (() => i32)[], i: i32): () => i32 { return fs[i]; } function main(): i32 { var n: i32 = 5; var g = get([() => n, () => n + 2], 1); return g(); }", 7},
+	{"param-fnarr", "function get(fs: (() => i32)[], i: i32): () => i32 { return fs[i]; } function main(): i32 { let n: i32 = 5; let g = get([() => n, () => n + 2], 1); return g(); }", 7},
 	// E — fn-valued scalar struct field: `return s.f`.
-	{"scalar-field", "struct S { f: () => i32 } function pick(s: S): () => i32 { return s.f; } function main(): i32 { var n: i32 = 9; var g = pick(S { f: () => n }); return g(); }", 9},
+	{"scalar-field", "struct S { f: () => i32 } function pick(s: S): () => i32 { return s.f; } function main(): i32 { let n: i32 = 9; let g = pick(S { f: () => n }); return g(); }", 9},
 	// Argument-taking closure returned from a struct-field element.
-	{"field-elem-arg", "struct Reg { hs: ((i32) => i32)[] } function pick(r: Reg): (i32) => i32 { return r.hs[0]; } function main(): i32 { var n: i32 = 5; var r = Reg { hs: [(x: i32) => x + n] }; var g = pick(r); return g(10); }", 15},
+	{"field-elem-arg", "struct Reg { hs: ((i32) => i32)[] } function pick(r: Reg): (i32) => i32 { return r.hs[0]; } function main(): i32 { let n: i32 = 5; let r = Reg { hs: [(x: i32) => x + n] }; let g = pick(r); return g(10); }", 15},
 }
 
 // TestSelfHostReturnClosureContainerIRX86_64 — the x86-64 fix, through

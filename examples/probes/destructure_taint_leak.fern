@@ -18,21 +18,21 @@ struct E { v: i32[] }
 struct P { n: i32 }
 
 function two(n: i32): (E, P) {
-  var xs: i32[] = [];
+  let xs: i32[] = [];
   xs = xs.append(n);
   return (E { v: xs }, P { n: n });
 }
 
 function grab(n: i32): i32 {
   let (inner_expr, inner_p) = two(n);
-  var elems: E[] = [];
+  let elems: E[] = [];
   elems = elems.append(inner_expr);
   return elems[0].v[0] + inner_p.n;
 }
 
 function main(): i32 {
-  var acc: i32 = 0;
-  var i: i32 = 0;
+  let acc: i32 = 0;
+  let i: i32 = 0;
   while (i < 500) {
     acc = acc + grab(i % 3);
     i = i + 1;

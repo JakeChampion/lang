@@ -47,7 +47,7 @@ func TestSelfHostFreshOwnedBuiltinsMatchChecker(t *testing.T) {
 	}
 }
 
-// parseFernFreshOwnedBuiltins reads the hard-coded `var out: string[] = [ ... ]`
+// parseFernFreshOwnedBuiltins reads the hard-coded `let out: string[] = [ ... ]`
 // literal at the head of ow_fresh_builtins.
 func parseFernFreshOwnedBuiltins(t *testing.T, path string) map[string]bool {
 	t.Helper()
@@ -59,9 +59,9 @@ func parseFernFreshOwnedBuiltins(t *testing.T, path string) map[string]bool {
 	if fn == "" {
 		t.Fatalf("no ow_fresh_builtins function found in %s", path)
 	}
-	lit := regexp.MustCompile(`(?s)var out: string\[\] = \[(.*?)\];`).FindStringSubmatch(fn)
+	lit := regexp.MustCompile(`(?s)let out: string\[\] = \[(.*?)\];`).FindStringSubmatch(fn)
 	if lit == nil {
-		t.Fatalf("no `var out: string[] = [...]` literal found in ow_fresh_builtins")
+		t.Fatalf("no `let out: string[] = [...]` literal found in ow_fresh_builtins")
 	}
 	out := map[string]bool{}
 	for _, m := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(lit[1], -1) {

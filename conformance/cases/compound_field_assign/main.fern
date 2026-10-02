@@ -3,7 +3,7 @@
 // field assignment (E048).
 struct Acc { v: i32 }
 function main(): i32 {
-    var a: Acc = Acc { v: 7 };
+    let a: Acc = Acc { v: 7 };
     a.v += 35;   // 42
     a.v -= 0;
     return a.v;

@@ -18,18 +18,18 @@ const formatDurationIRPrelude = `import "std/i32";
 function i32_abs(n: i32): i32 { if (n < 0) { return 0 - n; } return n; }
 function fmt_duration_ms(ms: i32): string {
     if (ms == 0) { return "0ms"; }
-    var neg: boolean = (ms < 0);
-    var mag: i32 = ms;
+    let neg: boolean = (ms < 0);
+    let mag: i32 = ms;
     if (neg) { mag = i32_abs(ms); }
-    var sign: string = "";
+    let sign: string = "";
     if (neg) { sign = "-"; }
-    var h: i32 = mag / 3600000;
-    var rem: i32 = mag - h * 3600000;
-    var m: i32 = rem / 60000;
+    let h: i32 = mag / 3600000;
+    let rem: i32 = mag - h * 3600000;
+    let m: i32 = rem / 60000;
     rem = rem - m * 60000;
-    var s: i32 = rem / 1000;
-    var msPart: i32 = rem - s * 1000;
-    var out: string = "";
+    let s: i32 = rem / 1000;
+    let msPart: i32 = rem - s * 1000;
+    let out: string = "";
     if (h > 0) { out = out + h.to_string() + "h"; }
     if (m > 0) { if (out.len() > 0) { out = out + " "; } out = out + m.to_string() + "m"; }
     if (s > 0) { if (out.len() > 0) { out = out + " "; } out = out + s.to_string() + "s"; }

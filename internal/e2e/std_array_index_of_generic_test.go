@@ -30,8 +30,8 @@ func TestStdArrayIndexOfContainsGeneric(t *testing.T) {
 	t.Run("check i32[] receiver with std/i32 imported", func(t *testing.T) {
 		src := `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var i: Option[i32] = xs.index_of(2);
+    let xs: i32[] = [1, 2, 3];
+    let i: Option[i32] = xs.index_of(2);
     if (xs.contains(3)) { match (i) { Some(v) => { return v; }, None => { return 0 - 1; } } }
     return 0 - 1;
 }`
@@ -61,7 +61,7 @@ function main(): i32 {
 			t.Run(recv.name, func(t *testing.T) {
 				src := `import "std/i32";
 function main(): i32 {
-    var xs: ` + recv.ty + ` = ` + recv.lit + `;
+    let xs: ` + recv.ty + ` = ` + recv.lit + `;
     if (xs.contains(` + recv.target + `)) {
         match (xs.index_of(` + recv.target + `)) { Some(v) => { return v; }, None => { return 0 - 1; } }
     }
@@ -89,13 +89,13 @@ function main(): i32 {
 			name: "i32[] hit / miss / absent",
 			src: `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
+    let xs: i32[] = [1, 2, 3];
     match (xs.index_of(2)) { Some(v) => { if (v != 1) { return 1; } }, None => { return 1; } }
     match (xs.index_of(1)) { Some(v) => { if (v != 0) { return 2; } }, None => { return 2; } }
     match (xs.index_of(9)) { Some(_) => { return 3; }, None => {} }
     if (!xs.contains(3)) { return 4; }
     if (xs.contains(9)) { return 5; }
-    var empty: i32[] = [];
+    let empty: i32[] = [];
     match (empty.index_of(1)) { Some(_) => { return 6; }, None => {} }
     if (empty.contains(1)) { return 7; }
     return 42;
@@ -106,7 +106,7 @@ function main(): i32 {
 			name: "i64[] receiver",
 			src: `import "std/array";
 function main(): i32 {
-    var xs: i64[] = [10, 20, 30];
+    let xs: i64[] = [10, 20, 30];
     match (xs.index_of(30)) { Some(v) => { if (v != 2) { return 1; } }, None => { return 1; } }
     match (xs.index_of(11)) { Some(_) => { return 2; }, None => {} }
     if (!xs.contains(20)) { return 3; }
@@ -119,7 +119,7 @@ function main(): i32 {
 			name: "u8[] receiver",
 			src: `import "std/array";
 function main(): i32 {
-    var xs: u8[] = [7, 8, 9];
+    let xs: u8[] = [7, 8, 9];
     match (xs.index_of(9)) { Some(v) => { if (v != 2) { return 1; } }, None => { return 1; } }
     match (xs.index_of(6)) { Some(_) => { return 2; }, None => {} }
     if (!xs.contains(8)) { return 3; }
@@ -135,7 +135,7 @@ function main(): i32 {
 			name: "string[] receiver keeps content equality",
 			src: `import "std/array";
 function main(): i32 {
-    var xs: string[] = ["a", "bb", "ccc"];
+    let xs: string[] = ["a", "bb", "ccc"];
     match (xs.index_of("bb")) { Some(v) => { if (v != 1) { return 1; } }, None => { return 1; } }
     match (xs.index_of("zz")) { Some(_) => { return 2; }, None => {} }
     if (!xs.contains("ccc")) { return 3; }
@@ -155,7 +155,7 @@ import "core/cmp" as cmp;
 @derive(cmp.Eq)
 struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var ps: Point[] = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
+    let ps: Point[] = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
     match (ps.index_of(Point { x: 3, y: 4 })) { Some(v) => { if (v != 1) { return 1; } }, None => { return 1; } }
     match (ps.index_of(Point { x: 1, y: 2 })) { Some(v) => { if (v != 0) { return 2; } }, None => { return 2; } }
     match (ps.index_of(Point { x: 3, y: 9 })) { Some(_) => { return 3; }, None => {} }
@@ -171,8 +171,8 @@ function main(): i32 {
 			name: "mixed element types in one program",
 			src: `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var ss: string[] = ["a", "b"];
+    let xs: i32[] = [1, 2, 3];
+    let ss: string[] = ["a", "b"];
     match (xs.index_of(3)) { Some(v) => { if (v != 2) { return 1; } }, None => { return 1; } }
     match (ss.index_of("b")) { Some(v) => { if (v != 1) { return 2; } }, None => { return 2; } }
     if (!xs.contains(1)) { return 3; }

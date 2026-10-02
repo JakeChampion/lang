@@ -154,7 +154,7 @@ function main(): i32 { return helper(); }
 function main(): i32 { return 0; }
 `},
 	{"statement-comments-unchanged", `function main(): i32 {
-    var x: i32 = 7;  // Trailing comment.
+    let x: i32 = 7;  // Trailing comment.
     // leading comment
     return x;
 }

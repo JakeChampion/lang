@@ -6,17 +6,17 @@ direct call to a hoisted `__lam_N(args, caps…)`. The rewrite is
 `subst_fcall_expr`, which matches an `ExprIdent` callee by NAME and recurses
 into `if` / `while` / `for` / `match` bodies.
 
-It has no notion of scope. So a nested `var f = <another lambda>` has its OWN
+It has no notion of scope. So a nested `let f = <another lambda>` has its OWN
 calls rewritten to the OUTER lambda's hoisted body.
 
 ## Measured
 
 ```fern
 function apply(v: i64): i64 {
-    var g: (i64) => i64 = (x: i64) => x * 2i64;
-    var t: i64 = g(v);
+    let g: (i64) => i64 = (x: i64) => x * 2i64;
+    let t: i64 = g(v);
     if (v > 0i64) {
-        var g: (i32) => i32 = (y: i32) => y + 1;   // shadows
+        let g: (i32) => i32 = (y: i32) => y + 1;   // shadows
         t = t + (g(3) as i64);                     // ran the OUTER lambda
     }
     return t + g(v + 1i64);

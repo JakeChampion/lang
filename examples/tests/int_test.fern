@@ -152,7 +152,7 @@ function test_roundtrip(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("core/int");
+  let r: test.TestRunner = test.test_new("core/int");
   r = r.it("to_string zero", test_to_string_zero);
   r = r.it("to_string positive", test_to_string_pos);
   r = r.it("to_string negative", test_to_string_neg);

@@ -17,11 +17,11 @@ functions whose every return hands the caller one count:
 - a never-reassigned local built by either, escaping only by the return. Its
   box is this frame's own whether a `SCENUMS:`/`RCENUMS:` credit moves it out on
   return or no credit touches it;
-- a never-reassigned `var g = h.e` field alias. Its `EALIAS:` credit dups it and
+- a never-reassigned `let g = h.e` field alias. Its `EALIAS:` credit dups it and
   the move-on-return keeps it; where no credit took it, the return retains it
   (`ERETALIAS:`, `ret_enum_alias_uncounted`).
 
-A caller binding `var a = f(..)` of a member (not an `RCE:` one, which keeps its
+A caller binding `let a = f(..)` of a member (not an `RCE:` one, which keeps its
 own credit) is tagged `ECALL:` under the same reassign and escape gates as
 `EALIAS:`, and takes the same rc-gated release (`credit_counted_enum_local`):
 the gated deep drop where the enum's walk exists, else the box-only dec. The

@@ -22,16 +22,16 @@ const coreIntParseIRPrelude = `function __radix_digit(c: i32): i32 {
 }
 function parse_int_radix(s: string, base: i32): Option[i32] {
     if (base < 2 || base > 36) { return None; }
-    var n: i32 = s.len();
+    let n: i32 = s.len();
     if (n == 0) { return None; }
-    var neg: boolean = false;
-    var i: i32 = 0;
+    let neg: boolean = false;
+    let i: i32 = 0;
     if (s[0] == 45) { neg = true; i = 1; }
     else if (s[0] == 43) { i = 1; }
     if (i >= n) { return None; }
-    var v: i32 = 0;
+    let v: i32 = 0;
     while (i < n) {
-        var d: i32 = __radix_digit(s[i] as i32);
+        let d: i32 = __radix_digit(s[i] as i32);
         if (d < 0 || d >= base) { return None; }
         v = v * base + d;
         i = i + 1;

@@ -10,7 +10,7 @@ array-method call goes: `register_array_method_generics` folds std/json's
 element-poly `(xs: T[]) to_json[T: Json]()` into a free generic
 `__arrm_to_json[T]`, and the monomorphiser rewrites `arr.to_json()` into
 `__arrm_to_json__i32(arr)`, one clone per element type. A bare local receiver
-already took that route: `var nums: i32[] = [10, 20]; nums.to_json()` produced
+already took that route: `let nums: i32[] = [10, 20]; nums.to_json()` produced
 whole. So did a parameter's field, `b.items.to_json()`. Only a receiver rooted
 at `self` did not.
 

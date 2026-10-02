@@ -28,7 +28,7 @@ func TestNumericJoinDestinationCannotWidenConcreteArm(t *testing.T) {
 					if reverse {
 						a, b = b, a
 					}
-					src := fmt.Sprintf("%s function f(tag: %s, concrete: i32): %s { var result: %s = %s; return result; }", form.decl, form.tag, destination, destination, fmt.Sprintf(form.expr, a, b))
+					src := fmt.Sprintf("%s function f(tag: %s, concrete: i32): %s { let result: %s = %s; return result; }", form.decl, form.tag, destination, destination, fmt.Sprintf(form.expr, a, b))
 					err := checkSource(t, src)
 					if destination == "i32" {
 						if err != nil {
@@ -65,14 +65,14 @@ func TestNumericJoinStampsResolvedArmWidths(t *testing.T) {
 	}
 	for _, form := range forms {
 		for _, numeric := range numerics {
-			for _, wrap := range []string{"%s", "(%s, 3)", "(3, (%s, 4))", "({ var marker = 1; (3, (%s, 4)) })"} {
+			for _, wrap := range []string{"%s", "(%s, 3)", "(3, (%s, 4))", "({ let marker = 1; (3, (%s, 4)) })"} {
 				for _, reverse := range []bool{false, true} {
 					t.Run(fmt.Sprintf("%s/%s/%s/reverse=%t", form.name, numeric.ty, wrap, reverse), func(t *testing.T) {
 						a, b := fmt.Sprintf(wrap, numeric.literal), fmt.Sprintf(wrap, "concrete")
 						if reverse {
 							a, b = b, a
 						}
-						src := fmt.Sprintf("%s function f(tag: %s, concrete: %s): i32 { var result = %s; return 0; }", form.decl, form.tag, numeric.ty, fmt.Sprintf(form.expr, a, b))
+						src := fmt.Sprintf("%s function f(tag: %s, concrete: %s): i32 { let result = %s; return 0; }", form.decl, form.tag, numeric.ty, fmt.Sprintf(form.expr, a, b))
 						prog, err := parser.Parse(src)
 						if err != nil {
 							t.Fatal(err)
@@ -118,7 +118,7 @@ func TestNumericJoinKeepsUnconstrainedLiteralsPolymorphic(t *testing.T) {
 		"match (tag) { true => (13.25, 3), _ => (14.5, 4) }",
 	} {
 		t.Run(expr, func(t *testing.T) {
-			prog, err := parser.Parse("function f(tag: boolean): i32 { var value = " + expr + "; return 0; }")
+			prog, err := parser.Parse("function f(tag: boolean): i32 { let value = " + expr + "; return 0; }")
 			if err != nil {
 				t.Fatal(err)
 			}

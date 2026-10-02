@@ -46,11 +46,11 @@ import (
 // A failure returns a small distinct code rather than a checksum, so the exit
 // status says WHICH shape disagreed. 42 means every comparison matched.
 const crc32CksumIRProg = `function ref(crc: i32, s: string): i32 {
-    var c: i32 = crc;
-    var i: i32 = 0;
+    let c: i32 = crc;
+    let i: i32 = 0;
     while (i < s.len()) {
         c = c ^ ((s[i] as i32) << 24);
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 8) {
             if (c < 0) { c = (c << 1) ^ 0x04c11db7; }
             else { c = c << 1; }
@@ -61,17 +61,17 @@ const crc32CksumIRProg = `function ref(crc: i32, s: string): i32 {
     return c;
 }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n <= 40) {
-        var base: string = "";
-        var k: i32 = 0;
+        let base: string = "";
+        let k: i32 = 0;
         while (k < n) { base = base + "a"; k = k + 1; }
         if (__crc32_cksum(0, base) != ref(0, base)) { return 1; }
         if (__crc32_cksum(1, base) != ref(1, base)) { return 2; }
         if (__crc32_cksum(0 - 1, base) != ref(0 - 1, base)) { return 3; }
-        var at: i32 = 0;
+        let at: i32 = 0;
         while (at < n) {
-            var s: string = slice_unchecked(base, 0, at) + "\xff" + slice_unchecked(base, at + 1, n);
+            let s: string = slice_unchecked(base, 0, at) + "\xff" + slice_unchecked(base, at + 1, n);
             if (__crc32_cksum(0, s) != ref(0, s)) { return 4; }
             if (__crc32_cksum(0 - 559038737, s) != ref(0 - 559038737, s)) { return 5; }
             at = at + 1;
@@ -89,8 +89,8 @@ function main(): i32 {
     // MOST do not, so the length is the whole of what makes these two cases
     // carry the claim: 40 high bytes answers 0x438e3ca6 and cannot tell the
     // two pushes apart at all. One block and eight.
-    var hi: string = "";
-    var h: i32 = 0;
+    let hi: string = "";
+    let h: i32 = 0;
     while (h < 16) { hi = hi + "\xff"; h = h + 1; }
     if (__crc32_cksum(0, hi) != 0 - 223276853) { return 10; }
     while (h < 128) { hi = hi + "\xff"; h = h + 1; }
@@ -99,10 +99,10 @@ function main(): i32 {
     if (__crc32_cksum(0 - 1, "x") != 0 - 2001448981) { return 11; }
     // The streaming identity the carried state exists for: the same bytes cut
     // at irregular offsets fold to the same CRC as one call.
-    var full: string = "abcdefghijklmnopqrstuvwxyz0123456789";
+    let full: string = "abcdefghijklmnopqrstuvwxyz0123456789";
     if (__crc32_cksum(0, full) != 0 - 1714478310) { return 12; }
-    var a: i32 = __crc32_cksum(0, slice_unchecked(full, 0, 7));
-    var b: i32 = __crc32_cksum(a, slice_unchecked(full, 7, 20));
+    let a: i32 = __crc32_cksum(0, slice_unchecked(full, 0, 7));
+    let b: i32 = __crc32_cksum(a, slice_unchecked(full, 7, 20));
     if (__crc32_cksum(b, slice_unchecked(full, 20, 36)) != 0 - 1714478310) { return 13; }
     return 42;
 }

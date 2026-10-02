@@ -1,6 +1,6 @@
 # An enum-field alias holds a count
 
-On the AST lowering, `var g = h.e` (a direct enum field of a struct) bound an
+On the AST lowering, `let g = h.e` (a direct enum field of a struct) bound an
 uncounted alias of the struct's enum box. Rebinding `h` released the box, the
 next same-size allocation reused the block, and `g` read the new occupant
 (#10310): 93 instead of 3 with a balanced census and no underflow. Passing the
@@ -49,7 +49,7 @@ callee returns a direct constructor ("RCE:" and the scalar fresh-ret row), so a
 returned alias or local now leaks in the caller where it used to be freed
 before the caller read it (#10365). An alias the collector does not admit
 takes no dup, so the dup and the release stay co-extensive, and it is still
-the uncounted borrow #10310 describes: a reassigned alias (`var g = h.e; … g = A(5);`
+the uncounted borrow #10310 describes: a reassigned alias (`let g = h.e; … g = A(5);`
 answers 11 where 18 is right) and one assigned to an outer local (`last = g`
 answers 93 where 3 is right) still read a recycled box after the struct is rebound. Dup'ing those
 too leaked on shapes base and native keep clean

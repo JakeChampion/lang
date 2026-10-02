@@ -43,10 +43,10 @@ func scalarEnumArrCases() []scalarEnumArrCase {
 			// Was 3/2 with the element box stranded.
 			name: "scalar_producer",
 			src: `enum Tag { Box(i32), Nil }
-function mkv(i: i32): Tag[] { var o: Tag[] = []; o = o.append(Tag.Box(i)); return o; }
+function mkv(i: i32): Tag[] { let o: Tag[] = []; o = o.append(Tag.Box(i)); return o; }
 function round(src: Tag[], i: i32): i32 {
-    var t: i32 = 0;
-    var e: Tag = src[0];
+    let t: i32 = 0;
+    let e: Tag = src[0];
     match (e) {
         Box(v) => { t = (t + v) % 101; },
         Nil => { t = 9; }
@@ -54,9 +54,9 @@ function round(src: Tag[], i: i32): i32 {
     return (t + i - i) % 101;
 }
 function main(): i32 {
-    var keep: Tag[] = mkv(5);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: Tag[] = mkv(5);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(keep, i); i = i + 1; }
     acc = acc + keep.len();
     if (__rc_underflow_count() != 0) { return 99; }
@@ -70,8 +70,8 @@ function main(): i32 {
 			name: "scalar_literal",
 			src: `enum Tag { Box(i32), Nil }
 function round(src: Tag[], i: i32): i32 {
-    var t: i32 = 0;
-    var e: Tag = src[0];
+    let t: i32 = 0;
+    let e: Tag = src[0];
     match (e) {
         Box(v) => { t = (t + v) % 101; },
         Nil => { t = 9; }
@@ -79,9 +79,9 @@ function round(src: Tag[], i: i32): i32 {
     return (t + i - i) % 101;
 }
 function main(): i32 {
-    var keep: Tag[] = [Tag.Box(5), Tag.Nil];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: Tag[] = [Tag.Box(5), Tag.Nil];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(keep, i); i = i + 1; }
     acc = acc + keep.len();
     if (__rc_underflow_count() != 0) { return 99; }
@@ -94,15 +94,15 @@ function main(): i32 {
 			// path — must not move.
 			name: "rcpayload_control",
 			src: `enum E { A(i32[]), B }
-function mkv(i: i32): E[] { var o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
+function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
 function rd(src: E[], i: i32): i32 {
-    var e: E = src[0];
+    let e: E = src[0];
     return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + i - i;
 }
 function main(): i32 {
-    var keep: E[] = mkv(7);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: E[] = mkv(7);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + rd(keep, i); i = i + 1; }
     acc = acc + keep.len();
     if (__rc_underflow_count() != 0) { return 99; }

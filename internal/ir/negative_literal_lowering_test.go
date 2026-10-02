@@ -54,11 +54,11 @@ func TestUnaryElementDoesNotLoseItsTupleShape(t *testing.T) {
 struct Pair { a: i32, b: i32 }
 
 function main(): i32 {
-    var n: i32 = 4;
-    var x: i32 = sum((-1, 9));
-    var y: i32 = sum((-n, -9));
-    var z: i32 = sum((1, 9));
-    var p: Pair = Pair { a: -1, b: 9 };
+    let n: i32 = 4;
+    let x: i32 = sum((-1, 9));
+    let y: i32 = sum((-n, -9));
+    let z: i32 = sum((1, 9));
+    let p: Pair = Pair { a: -1, b: 9 };
     return x + y + z + p.a + p.b;
 }
 `)

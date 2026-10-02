@@ -31,7 +31,7 @@ function test_strip_preserves_surrounding(): test.TestOutcome {
 
 function test_styles(): test.TestOutcome {
   // Every style strips back to its content.
-  var styled: string = ansi.italic(ansi.underline(ansi.reverse(ansi.strikethrough("q"))));
+  let styled: string = ansi.italic(ansi.underline(ansi.reverse(ansi.strikethrough("q"))));
   return test.assert_eq(ansi.strip(styled), "q");
 }
 
@@ -67,7 +67,7 @@ function test_256_and_truecolor(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/ansi");
+  let r: test.TestRunner = test.test_new("std/ansi");
   r = r.it("strip roundtrip", test_strip_roundtrip);
   r = r.it("strip preserves text", test_strip_preserves_surrounding);
   r = r.it("styles", test_styles);

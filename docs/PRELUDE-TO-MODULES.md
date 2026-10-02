@@ -44,7 +44,7 @@ import "std/string";
 import "std/array";
 
 function main(): i32 {
-    var xs: string[] = "a,b,c".split(",");
+    let xs: string[] = "a,b,c".split(",");
     return len(xs);
 }
 ```
@@ -123,7 +123,7 @@ Tasks:
    this file. Roughly 40-50 helpers (abs, clamp, gcd, lcm,
    is_prime, factorial, etc.).
 2. In `prelude.fern`, add `import "std/i32";` at the top.
-   Prelude re-export keeps existing code (`var k: i32 = (5).abs();`)
+   Prelude re-export keeps existing code (`let k: i32 = (5).abs();`)
    working unchanged.
 3. Run the full e2e suite. Any failures mean cross-module
    method resolution is broken — fix in this PR before
@@ -322,7 +322,7 @@ pub use "./shapes".{Point, Shape, Area};
 // consumer
 import "./facade";
 function dynArea(a: dyn facade.Area): i32 { return a.area(); }   // → shapes__Area
-var p: facade.Point = facade.Point { x: 6, y: 7 };               // → shapes__Point
+let p: facade.Point = facade.Point { x: 6, y: 7 };               // → shapes__Point
 ```
 
 Implementation (`internal/modload/modload.go`): `pub use` targets are

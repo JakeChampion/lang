@@ -57,7 +57,7 @@ function opt_comma(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "Convert blanks in each FILE to tabs, writing to standard output.\n";
   out = out + "\n";
@@ -91,25 +91,25 @@ function digit_of(id: i32): string {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [];
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("t", "tabs", opt_tabs()));
   opts = opts.append(gnu.flag("a", "all", opt_all()));
   opts = opts.append(gnu.flag("", "first-only", opt_first()));
   opts = opts.append(gnu.flag(",", "", opt_comma()));
-  var d: i32 = 0;
+  let d: i32 = 0;
   while (d < 10) {
     opts = opts.append(gnu.flag(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit(d)));
     d = d + 1;
   }
 
-  var stops: tabs.Tabs = tabs.tabs_new();
-  var all: boolean = false;
-  var first_only: boolean = false;
-  var obsolete: string = "";
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "unexpand", help_text(), 1);
+  let stops: tabs.Tabs = tabs.tabs_new();
+  let all: boolean = false;
+  let first_only: boolean = false;
+  let obsolete: string = "";
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "unexpand", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -138,7 +138,7 @@ pub function main(): i32 {
   }
   stops = stops.finish();
 
-  var files: string[] = g.operands();
+  let files: string[] = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
@@ -150,23 +150,23 @@ pub function main(): i32 {
 // once it holds a block, so no byte is copied into an accumulator on the
 // way.
 function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
-  var o: io_buffered.BufWriter = gnu.out_with(block_size());
-  var h: usize = o.handle();
-  var pad: string = "        ";
-  var ok: boolean = true;
+  let o: io_buffered.BufWriter = gnu.out_with(block_size());
+  let h: usize = o.handle();
+  let pad: string = "        ";
+  let ok: boolean = true;
   // Non-zero when every stop is the same distance apart, which is the
   // case for a default run and for `-t N`.
-  var step: u64 = stops.size;
+  let step: u64 = stops.size;
 
-  var fi: i32 = 0;
-  var have_reader: boolean = false;
-  var is_stdin: boolean = false;
-  var name: string = "";
-  var r: Reader = stdin();
-  var chunk: string = "";
-  var pos: i32 = 0;
-  var carry: string = "";
-  var final: boolean = false;
+  let fi: i32 = 0;
+  let have_reader: boolean = false;
+  let is_stdin: boolean = false;
+  let name: string = "";
+  let r: Reader = stdin();
+  let chunk: string = "";
+  let pos: i32 = 0;
+  let carry: string = "";
+  let final: boolean = false;
 
   while (true) {
     if (pos >= chunk.len()) {
@@ -175,7 +175,7 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
       }
       chunk = "";
       pos = 0;
-      var got: boolean = false;
+      let got: boolean = false;
       while (!got) {
         if (!have_reader) {
           if (fi >= files.len()) {
@@ -191,7 +191,7 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
               r = stdin();
               have_reader = true;
             } else {
-              var opened: boolean = false;
+              let opened: boolean = false;
               match (open_reader(name)) {
                 Ok(f) => {
                   r = f;
@@ -206,8 +206,8 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
             }
           }
         } else {
-          var piece: string = "";
-          var read_ok: boolean = true;
+          let piece: string = "";
+          let read_ok: boolean = true;
           match (r.read_chunk(read_size())) {
             Ok(c) => {
               piece = c;
@@ -236,7 +236,7 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
       continue;
     }
 
-    var j: i32 = __memchr(chunk, 10, pos);
+    let j: i32 = __memchr(chunk, 10, pos);
     if (j < 0) {
       if (!final) {
         carry = carry + slice_unchecked(chunk, pos, chunk.len());
@@ -246,9 +246,9 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
       j = chunk.len() - 1;
     }
 
-    var buf: string = chunk;
-    var lo: i32 = pos;
-    var hi: i32 = j + 1;
+    let buf: string = chunk;
+    let lo: i32 = pos;
+    let hi: i32 = j + 1;
     if (carry.len() > 0) {
       buf = carry + slice_unchecked(chunk, pos, j + 1);
       carry = "";
@@ -257,7 +257,7 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
     }
     pos = j + 1;
 
-    var lead: i32 = buf[lo] as i32;
+    let lead: i32 = buf[lo] as i32;
     if (!convert_all && lead != 32 && lead != 9) {
       // Nothing to convert: only leading blanks are candidates and this
       // line has none, so it goes out as it stands.
@@ -265,28 +265,28 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
     } else {
       // The line stays a view into the chunk: every scan below is
       // bounded by `end`, so nothing here needs it copied out.
-      var end: i32 = hi;
-      var p: i32 = lo;
-      var column: u64 = 0 as u64;
-      var idx: i32 = 0;
-      var convert: boolean = true;
-      var pending: i32 = 0;
-      var held: boolean = false;
+      let end: i32 = hi;
+      let p: i32 = lo;
+      let column: u64 = 0 as u64;
+      let idx: i32 = 0;
+      let convert: boolean = true;
+      let pending: i32 = 0;
+      let held: boolean = false;
       // Whether the pending run starts straight after a non-blank. A
       // single blank is only held there; one that opens a line or
       // follows a tab is converted as soon as it reaches the stop.
-      var after_nb: boolean = false;
+      let after_nb: boolean = false;
       while (p < end) {
-        var c: i32 = buf[p] as i32;
+        let c: i32 = buf[p] as i32;
         if (convert && (c == 32 || c == 9)) {
           // The uniform case is most of them, and it is arithmetic:
           // taking it here keeps the call and its tuple out of the
           // inner loop.
-          var target: u64 = 0 as u64;
+          let target: u64 = 0 as u64;
           if (step != 0 as u64) {
             target = column + (step - column % step);
           } else {
-            var nx: (u64, i32) = stops.next_column(column, idx);
+            let nx: (u64, i32) = stops.next_column(column, idx);
             target = nx.0;
             idx = nx.1;
           }
@@ -346,9 +346,9 @@ function run(files: string[], stops: tabs.Tabs, convert_all: boolean): i32 {
             p = end;
             convert = false;
           } else {
-            var q: i32 = p;
+            let q: i32 = p;
             while (q < end) {
-              var b: i32 = buf[q] as i32;
+              let b: i32 = buf[q] as i32;
               if (b == 32 || b == 9) {
                 break;
               }
