@@ -14,9 +14,9 @@ import (
 // shallow-dec'd them on EVERY call — but the env box owns the references,
 // so an rc==1 capture was freed out from under the box's owner on the
 // first call (a per-call use-after-free; 2 underflow ticks on the 2-call
-// escaping shape below, on unmodified pre-fix main). lower_func now
-// registers env-extract names as "ENVCAP:" borrows and the sweep skips
-// them — a borrow is not released by the borrower.
+// escaping shape below, on unmodified pre-fix main). The fix had lower_func
+// register env-extract names as "ENVCAP:" borrows for the sweep to skip —
+// a borrow is not released by the borrower.
 func TestSelfHostClosureCaptureBorrowIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

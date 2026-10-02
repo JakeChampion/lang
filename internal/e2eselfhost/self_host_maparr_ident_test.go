@@ -10,8 +10,8 @@ import "testing"
 // `ms` typed as one `Map[K, V]` and `ms.len()` lowered to op_map_len over array
 // memory — a SEGFAULT, not a bail, where native answers 1.
 //
-// Both readers now go through LowerState.slot_map_type, which answers "" for an
-// array slot. The array-ELEMENT readers are unaffected: they pair map_type_of
+// The fix sent both readers through LowerState.slot_map_type, which answered ""
+// for an array slot. The array-ELEMENT readers are unaffected: they pair map_type_of
 // with is_arr_slot explicitly, which is how `ms[i].get(k)` already worked and
 // why it is a control here rather than a fix.
 var mapArrIdentCases = []struct {

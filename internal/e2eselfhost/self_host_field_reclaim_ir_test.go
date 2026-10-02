@@ -10,7 +10,7 @@ import (
 // TestSelfHostFieldReclaimIRX86_64 covers field-level move tracking (#3457): the
 // per-type __field_reclaim_<T> helper that frees a superseded builder box's
 // REPLACED array-field buffers before freeing the box. This converges the
-// dominant clone-form leak — `LowerState { ops: s.ops.append(op), … }` clones
+// dominant clone-form leak — `S { ops: s.ops.append(op), … }` clones
 // `s.ops` each emit, so the dead SOURCE buffer leaks O(K^2)/function without it.
 //
 // A struct PARAM threaded through a consume-rebind snapshots its entry box; each

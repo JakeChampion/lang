@@ -40,7 +40,7 @@ func largeSingleFnProgram(n int) string {
 // exit 42. The point is the SIZE: at 240 statements the pre-#4652 quadratic
 // re-lowering needed ≈ 9 GB of bump arena, well past the 3.875 GiB cap, so the
 // driver was OOM-killed and produced no WAT. With the lower-once cache
-// (wasm_ir.lower_all_for, threaded through the gate + every collect pass) the
+// (the gate's `cache`, threaded through every collect pass) the
 // same compile is linear (≈ 0.3 GB), so this is a regression guard: reintroduce
 // the per-pass re-lowering and the driver OOMs (empty output / signal: killed)
 // instead of emitting a valid module.

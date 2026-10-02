@@ -15,9 +15,9 @@ import (
 // arr_ret_fns, and its field-access limb knew only the builtins (`.bytes()`,
 // `.split()`, `.keys()`) and the std/array helpers, so a plain user method fell
 // through. That left the `.len()` dispatch gate resting on its last disjunct,
-// "the receiver is not a struct" — and `expr_struct_type` reports a
+// "the receiver is not a struct" — and `expr_struct_type` reported a
 // `P[]`-returning call as the ELEMENT type P, because the struct_ret_fns
-// registry strips the `[]`. So for a STRUCT-element array the fallback denied
+// registry stripped the `[]`. So for a STRUCT-element array the fallback denied
 // an array it could not otherwise see and `.len()` resolved against P, emitting
 // `Inner.len`: a symbol nothing declares (#7627).
 //

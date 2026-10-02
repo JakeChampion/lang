@@ -13,9 +13,9 @@ import (
 // `function f(s: S): R { s = s.step(x); ...; return ... }`, where a struct PARAM
 // (or method receiver) is threaded through a consume-rebind. Such a param is not
 // reclaimable the normal way (params are caller-owned, and the final value may
-// share the caller's fields), so lower_func snapshots the param's ENTRY box into
-// a hidden `$snap$<name>` local and each reassign frees the old box only when it
-// differs from BOTH the new value (cow) AND the snapshot — via the helper
+// share the caller's fields), so lower_func snapshotted the param's ENTRY box into
+// a hidden `$snap$<name>` local and each reassign freed the old box only when it
+// differed from BOTH the new value (cow) AND the snapshot — via the helper
 // __fern_snapshot_dec(new, old, snap) -> new. A function thus reclaims its OWN
 // intermediate builder boxes but never the caller's original.
 //

@@ -15095,8 +15095,8 @@ type arrayFieldPath struct {
 // to `calleeName`: for each argument position the callee may grow in place
 // (computeGrowParams), a surviving plain-ident argument contributes its own
 // buffer and/or the named array fields of its struct type — only the fields
-// the callee can actually grow, since bracketing the other twenty of a
-// LowerState forces a copy on each of them too. Skipped when the arg dies at
+// the callee can actually grow, since bracketing the other fields of a wide
+// struct forces a copy on each of them too. Skipped when the arg dies at
 // this call (the strict
 // self-reassign shape — keeps the #4838 O(n) accumulator chains on the
 // in-place fast path), is a move site, is not an rc-tracked alias, or
@@ -20697,7 +20697,7 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 	// excluded here while they were still uncounted at construction — that
 	// era is over (#4174 rc-tracked native strings + the genStructDropFn
 	// string-field arms), and lifting the exclusion is what un-quadratics
-	// the self-host LowerState/EmitState `s = s.emit(op)` threading: with
+	// self-host-style `s = s.emit(op)` threading: with
 	// the old box flat-dec'd (never freed) every superseded state pinned the
 	// ops array at rc >= 2, so each statement's append cloned the whole
 	// accumulated array — the #3425 Effect-A O(ops^2) that kept the merged

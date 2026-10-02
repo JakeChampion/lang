@@ -79,12 +79,9 @@ var constAggWasmCases = []struct {
 		`struct N { v: i32, f: boolean } function hx(): N { return N { v: 0x1f, f: false }; } function main(): i32 { let a: N = hx(); let t: i32 = 0; if (a.f) { t = t + 100; } return t + a.v; }`,
 		31, 1, true},
 	// The constant/REUSE interaction: two same-block literals where the second
-	// would otherwise reuse the first's dead box. Both reach static placement,
-	// because `reuse_recipient_ok` excludes a recipient that is itself constant —
-	// the reuse scanners run per STATEMENT in lower_block, before the literal
-	// reaches lower_expr where the constant is recognised, so a claimed recipient
-	// silently loses its placement. Shared with the x86-64 suite, which reads the
-	// same shape through the allocation counter.
+	// would otherwise reuse the first's dead box. Both reach static placement:
+	// a recipient that is itself constant is not reused into. Shared with the
+	// x86-64 suite, which reads the same shape through the allocation counter.
 	{"reuse-shape-all-constant",
 		`struct P { x: i32, y: i32 } function main(): i32 { let cond: i32 = 1; let r: i32 = 0; if (cond > 0) { let a: P = P { x: 10, y: 20 }; let s: i32 = a.x + a.y; let b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
 		37, 2, true},

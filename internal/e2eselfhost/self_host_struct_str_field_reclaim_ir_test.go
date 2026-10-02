@@ -11,7 +11,7 @@ import (
 // FIELD of a reclaimable, non-escaping struct local is now reclaimed when the
 // struct is dropped. The struct-lit construction retains (rc_inc) a non-fresh
 // string field — gated on the per-lit ownership precompute (field_ownerships /
-// str_producer_ownership) so the classifying read stays out of lower_expr's hot
+// str_producer_ownership) so the classifying read stays out of the lowering's hot
 // path — and the k_str arm of the per-type __struct_drop frees it (rc-aware:
 // free at rc==1, dec at rc>1, skip an immortal view/literal at rc<0).
 //

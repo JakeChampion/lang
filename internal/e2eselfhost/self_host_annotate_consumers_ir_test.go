@@ -432,7 +432,7 @@ function main(): i32 {
 	// gap g21 — was: bail (mono-survival)
 	{"mono_arrm_fold_tuple_ty", `// Gap 21: generic ARRAY-method fold (parser.fern:9034) rebuilds xs.stats()
 // as __arrm_stats__u32(xs) with ty:"" — dropping the checker's "(f64, i32)"
-// stamp that expr_tuple_elem_tag's ExprCall arm (irlower.fern:2394) needs.
+// stamp the lowering needs to width the .0 read.
 function (xs: T[]) stats(): (f64, i32) {
     return (xs.len() as f64 + 0.25, 7);
 }
@@ -443,7 +443,7 @@ function main(): i32 {
 }`},
 	{"mono_arrm_fold_tuple_ty_control", `// Control for gap 21: same tuple-returning call read at .0, but through a
 // FREE function — no __arrm_ fold, so the mono fallthrough (parser.fern:9096)
-// carries ty: c.ty and the stamp reaches irlower.
+// carries ty: c.ty and the stamp reaches the lowering.
 function stats(xs: u32[]): (f64, i32) {
     return (xs.len() as f64 + 0.25, 7);
 }
@@ -455,8 +455,7 @@ function main(): i32 {
 	// gap g22 — was: bail (mono-survival)
 	{"mono_mapm_fold_tuple_ty", `// Gap 22: generic MAP-method fold (parser.fern:9060) rebuilds m.stats()
 // as __mapm_stats__string;i32(m) with ty:"" — dropping the checker's
-// "(f64, i32)" stamp that expr_tuple_elem_tag's ExprCall arm
-// (irlower.fern:2394) needs to width the .0 read.
+// "(f64, i32)" stamp the lowering needs to width the .0 read.
 import "core/map";
 
 function (m: Map[K, V]) stats(): (f64, i32) {
@@ -469,7 +468,7 @@ function main(): i32 {
 }`},
 	{"mono_mapm_fold_tuple_ty_control", `// Control for gap 22: same tuple-returning call read at .0, but through a
 // FREE function — no __mapm_ fold, so the mono fallthrough (parser.fern:9096)
-// carries ty: c.ty and the stamp reaches irlower.
+// carries ty: c.ty and the stamp reaches the lowering.
 import "core/map";
 
 function stats(m: Map[string, i32]): (f64, i32) {

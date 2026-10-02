@@ -6,10 +6,8 @@ import "testing"
 // through the stack-IR path. An enum defaults to its FIRST variant, each
 // payload defaulted. The synthesized `default()` is an associated function
 // (receiver-less `Enum.default()`) that constructs a variant; both the
-// associated call and the variant construction now lower through the IR path
-// (the enum-in-IR slice: enum returns are registered in struct_ret_fns, and
-// the assoc-fn lowering recognises an enum target by its registered return
-// type). `match` reads the variant via shape-pointer identity — the same
+// associated call and the variant construction now lower through the IR path.
+// `match` reads the variant via shape-pointer identity — the same
 // representation IR `struct_make` writes — so a freshly-defaulted variant
 // matches correctly.
 //

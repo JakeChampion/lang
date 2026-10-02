@@ -30,7 +30,7 @@ import (
 // every `f"{x}"` desugars to `x.to_string()`.
 //
 // WHY THE TEST LIVES AT THE CREDIT SITE. `str_local_binding_is_fresh` is deliberately
-// PURELY SYNTACTIC — no LowerState, no types — with the type gate applied separately
+// PURELY SYNTACTIC — no lowering state, no types — with the type gate applied separately
 // through the slot's is_str. is_str is true for BOTH receivers here, because the RESULT
 // is a string either way; what has to be tested is the RECEIVER's type, which that
 // predicate cannot see. Its ~20 other callers drive the accumulator and concat-temp

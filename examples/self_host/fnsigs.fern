@@ -423,8 +423,8 @@ pub function is_leaksafe_tuple_field_dv(structs: irtables.StructTab, t: string, 
 
 // selfrebind_field_alias reports whether `e` is exactly `srb.<f>` — a field read
 // off the local whose own self-rebind literal is being lowered (#6653). `srb` is
-// "" everywhere else, so this is false unless LowerState.selfrebind was set for
-// this expression. Only a DIRECT `srb.<f>`: a deeper chain `srb.a.b` reaches a
+// "" everywhere else, so this is false unless the caller passes the local being
+// self-rebound. Only a DIRECT `srb.<f>`: a deeper chain `srb.a.b` reaches a
 // box the successor does not supersede, so that one keeps its retain.
 pub function selfrebind_field_alias(e: ast.Expr, srb: string): boolean {
   if (srb.len() == 0) {
@@ -1385,7 +1385,7 @@ function struct_has_deep_tuple_field(structs: irtables.StructTab, sty: string): 
 // right after its last top-level use is sound. Anything uncertain is omitted and
 // falls back to the function-exit dec-sweep (the safe-leak invariant). The drop
 // is emitted as dec + ZERO the slot, so the later exit-sweep harmlessly decs a
-// null on that slot (no LowerState threading needed).
+// null on that slot.
 
 // str_borrowing_method reports whether a string method neither hands its
 // receiver's box out nor returns a view of it: `len` plus the predicates and the
@@ -1515,8 +1515,7 @@ function expr_unsafe_for_vb(e: ast.Expr, name: string, borrowable: string[], rec
     },
     ast.ExprBinary(b) => {
       // The string binary ops — concat and the comparisons — read their
-      // operands' bytes and move nothing, which is what lower_expr's
-      // lower_view_borrowed calls at each of them say. Every other op is
+      // operands' bytes and move nothing. Every other op is
       // arithmetic on scalars, where a slice operand cannot arise.
       if (b.op == "+" || b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
         return binop_operand_unsafe_for_vb(b.left, name, borrowable, recv_borrow, vb_borrow)
@@ -3280,12 +3279,11 @@ function strloc_escapes(stmts: ast.Stmt[], name: string, reg: string[], body: as
   return false;
 }
 
-// tostring_recv_is_scalar_param is the state-free twin of tostring_recv_is_scalar,
-// for the whole-program fresh-ret registry: str_fresh_ret_fns_of walks FuncDecls
-// with no LowerState, so a receiver is resolved against the callee's DECLARED
-// params instead of its slots. Only a provably scalar receiver admits — a struct
+// tostring_recv_is_scalar_param serves the whole-program fresh-ret registry:
+// str_fresh_ret_fns_of walks FuncDecls, so a receiver is resolved against the
+// callee's DECLARED params. Only a provably scalar receiver admits — a struct
 // / enum / dyn `to_string` (user-written or @derive) may return an ALIAS of a
-// live field, which is the same reason tostring_recv_is_scalar gates on it.
+// live field.
 // A receiver that is not one of the callee's params answers false: its type is
 // not in the signature, and an unregistered function merely leaks.
 // trim_recv_is_string_param: the receiver of a `.trim()` is provably a STRING
@@ -4873,7 +4871,7 @@ function moves_fields_stmt(st: ast.Stmt, name: string, nomove: string[], spread_
 // --- fresh-struct-return classification + snapshot-LOCAL reclaim (#3457) ------
 //
 // The dominant self-host builder is a LOCAL that is threaded and MOVED OUT:
-//   let st: LowerState = se.emit(op);   // bound from a fresh-RET method
+//   let st: S = se.emit(op);            // bound from a fresh-RET method
 //   st = st.emit(op2);                  // threaded via own methods (safe)
 //   return st;                          // moved out
 // `reclaimable_names_of` excludes it (`return st` is an escape under
@@ -4883,7 +4881,7 @@ function moves_fields_stmt(st: ast.Stmt, name: string, nomove: string[], spread_
 // the binding DERIVED from (`se` here): a fresh box copies the borrowed
 // receiver's fields uncounted, so without it the first rebind released a field
 // buffer the caller still owned. The same snapshot admits the alias `let sc = s`
-// and the call-derived `let sl = lower_expr(x, s)`, whose box may BE the
+// and the call-derived `let sl = f(x, s)`, whose box may BE the
 // source's; those two earn no struct credit and reclaim by their rebinds only.
 
 // body_has_return: does any return appear, nested control flow included?
@@ -7256,8 +7254,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: i
     }
     // "ARR:<name>" entries (#4365): FREE functions returning a SCALAR-element
     // array box this frame allocated. Uses this registry (prefix-multiplexed, the reclaimable_
-    // names convention) so the discarded-call reclaim in lower_stmt reads it
-    // off LowerState with no new threading; every other consumer looks up bare
+    // names convention); every other consumer looks up bare
     // names / "<Base>.<method>" keys, which an "ARR:"-prefixed entry can never
     // match. Consumed by the discarded `mk(i);` statement reclaim and by the
     // `mk()[i]` read reclaim (#6491) — both the caller-side shallow
@@ -7998,8 +7995,7 @@ function borrowed_arg_count(c: ast.ExprCall, cn: string, name: string, borrowabl
 // RHS is always a FRESH variant ctor, so the new box never equals the old — no cow guard.
 
 // variant_ctor_qualified_name: the VARIANT a qualified construction `E.V(args)`
-// / bare `E.V` names, or "". The structs-only sibling of qualified_variant_enum
-// (which needs a LowerState for its shadowing check): the field must be a
+// / bare `E.V` names, or "". The field must be a
 // variant and the object the bare name of the enum that owns it, so a method
 // call `o.v(…)` cannot pass by naming a receiver after its own enum.
 function variant_ctor_qualified_name(fa: ast.ExprFieldAccess, structs: irtables.StructTab): string {
@@ -9539,8 +9535,8 @@ function arrstruct_self_store_elem(e: ast.Expr, name: string, structs: irtables.
 
 // arrstruct_counted_field_share: `e` is a struct literal that mentions `name`
 // ONLY as the bare-ident value of a field whose declared type takes the
-// construction alias-inc — the ExprStructLit ident arm in lower_expr, which
-// retains an array-of-struct field source unconditionally. The field therefore
+// construction alias-inc, which retains an array-of-struct field source
+// unconditionally. The field therefore
 // holds a COUNTED share, and reading it as an escape cost the source its whole
 // reclaim: `let p: P = P { f: src, … }` left `src` with the generic buffer dec,
 // freeing the outer array while every element box and element array field
@@ -11646,9 +11642,9 @@ function strfld_collect_unsafe_stmts(stmts: ast.Stmt[], acc: string[]): string[]
   return a;
 }
 
-// struct_routes_field_reclaim_at is the same question without a LowerState, so
-// the whole-program registry passes can ask it. The construction-side string
-// retain is gated on this verdict (slit_reclaim), so any analysis that decides a
+// struct_routes_field_reclaim_at reads only the struct table and the admission
+// list, so the whole-program registry passes can ask it. The construction-side
+// string retain is gated on this verdict (slit_reclaim), so any analysis that decides a
 // string field store COUNTS has to consult the same one — a credit the retain
 // does not honour is an over-release, not a missed optimisation.
 pub function struct_routes_field_reclaim_at(structs: irtables.StructTab, sfok: string[], sty: string): boolean {

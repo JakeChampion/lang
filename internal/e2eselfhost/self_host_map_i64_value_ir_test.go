@@ -16,7 +16,7 @@ import (
 //  1. a wide i64/u64 value (`Map { 1: 5000000007 }`) lowered as op_const_i32 and
 //     TRUNCATED to 32 bits before the 8-byte store (stayed on IR, silently wrong);
 //  2. a CAST value (`x as u64`) bailed the whole function
-//     (as_i64/as_u64 has no lower_expr arm), where a chained 64-bit unsigned op
+//     (as_i64/as_u64 had no lower_expr arm), where a chained 64-bit unsigned op
 //     then used a signed shift and diverged once bit 63 was set.
 //
 // The fix routes an i64/u64 map insert/set VALUE and get_or DEFAULT through

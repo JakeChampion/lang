@@ -20,10 +20,8 @@ import (
 //   - lift: every fn-VALUED tuple element (capturing lambda, no-capture
 //     lambda, unshadowed bare fn name) wraps into a `__mkclo$…` env box, so
 //     the element representation is uniformly a closure box;
-//   - irlower: the "clo" element tag (literal-side elem_type_tag +
-//     declared-side tuple_elem_tags/tuple_type_elem_tag, which both ask
-//     parser.ref_is_fn_value)
-//     drives env-first `t.N(args)` dispatch, closure-local binding for
+//   - the lowering: the "clo" element tag (irtables.tuple_type_elem_tag,
+//     which asks parser.ref_is_fn_value) drives env-first `t.N(args)` dispatch, closure-local binding for
 //     `let f = t.0`, and the destructure bind.
 //
 // Exit codes are cross-checked against the Go reference (native -interp).
@@ -47,7 +45,7 @@ var tupleFnIRCases = []struct {
 	{"named-fn-returned", "function dbl(x: i32): i32 { return x * 2; } function mk(): ((i32) => i32, i32) { return (dbl, 1); } function main(): i32 { let t = mk(); return t.0(21); }", 42},
 	// TWO closures in one tuple.
 	{"two-closures", "function mk(): ((i32) => i32, (i32) => i32) { let n = 1; let m = 2; let t = ((x: i32): i32 => { return x + n; }, (x: i32): i32 => { return x + m; }); return t; } function main(): i32 { let t = mk(); return t.0(19) + t.1(20); }", 42},
-	// Destructure the returned tuple and call the bound element (`let (f, k)
+	// Destructure the returned tuple and call the bound element (`var (f, k)
 	// = mk(); f(…)`): the "clo" tag binds f a closure local.
 	{"destructure-call", "function mk(): ((i32) => i32, i32) { let n = 5; let t = ((x: i32): i32 => { return x + n; }, 5); return t; } function main(): i32 { let (f, k) = mk(); return f(32) + k; }", 42},
 	// Regression: a plain scalar/string tuple keeps its precise spelling and

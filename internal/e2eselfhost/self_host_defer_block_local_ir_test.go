@@ -3,9 +3,10 @@ package e2eselfhost
 import "testing"
 
 // deferBlockLocalCases exercise a `defer` whose action names a local declared
-// INSIDE the block the defer sits in (#6821). lower_defers_func replays each
-// action wherever the function can exit, the function TAIL included, and by then
-// irlower has retired the declaring block's locals out of name resolution — so
+// INSIDE the block the defer sits in (#6821). lower_defers_func replayed each
+// action wherever the function could exit, the function TAIL included, and by
+// then the AST lowering had retired the declaring block's locals out of name
+// resolution — so
 // the replay lowered `msg` as a function VALUE and the whole module bailed
 // ("references unknown function value"). A defer over a block-scoped local is
 // ordinary code that native compiles, so the bail was a pure self-host gap.

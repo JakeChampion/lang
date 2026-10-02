@@ -12,7 +12,7 @@ import (
 // the AST lowering had to know at two places that have to agree: the value predicates
 // (expr_is_f64 / infer_expr_width, which decide how the result is typed
 // downstream) and the load site (lower_expr's arr_get width / lower_i64's
-// arr_get_i64, which decide how many bytes come out of memory). Both now read
+// arr_get_i64, which decide how many bytes come out of memory). Both came to read
 // one leaf, ix_type_tag, which prefers the structural walk and falls back to the
 // checker-stamped ix.ty.
 //

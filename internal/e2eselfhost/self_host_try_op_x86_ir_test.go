@@ -48,7 +48,7 @@ var tryOpIRCases = []struct {
 	{"result-ok-u64", `function g(): Result[u64, i32] { return Ok(99 as u64); } function f(): Result[u64, i32] { let x: u64 = g()?; return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return (v / 9) as i32; }, Err(e) => { return e; } } }`, 11},
 	// Unannotated `let x = inner?` (i64 payload) — width inferred via infer_expr_width.
 	{"unannotated-i64", `function g(): Result[i64, i32] { return Ok(80 as i64); } function f(): Result[i64, i32] { let x = g()?; return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return (v / 10) as i32; }, Err(e) => { return e; } } }`, 8},
-	// `inner?` as a subexpression with i64 arithmetic — the lower_expr path.
+	// `inner?` as a subexpression with i64 arithmetic.
 	{"try-in-subexpr-i64", `function g(): Result[i64, i32] { return Ok(40 as i64); } function f(): Result[i64, i32] { return Ok(g()? + 10); } function main(): i32 { match (f()) { Ok(v) => { return (v / 10) as i32; }, Err(e) => { return e; } } }`, 5},
 }
 

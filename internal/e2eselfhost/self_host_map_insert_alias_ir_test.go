@@ -10,8 +10,8 @@ import "testing"
 // which is unsound once `m` is aliased (`let n = m`): the in-place write mutates
 // the buffer `n` still references, so `n` observes the change. The interpreter
 // and the native (Perceus) backend both copy-on-write and leave `n` unchanged.
-// The fix detects the alias at lower_func time (aliased_array_names_of, shared
-// with #3599) and routes the aliased self-reassign through a map clone
+// The fix detected the alias at lower_func time (aliased_array_names_of, shared
+// with #3599) and routed the aliased self-reassign through a map clone
 // (lower_map_clone_insert: fresh map_new + a copy loop over keys()/values(),
 // mutate the sole-owned clone) instead of the in-place store. The unaliased
 // "no-alias" case still takes the in-place path.

@@ -20,7 +20,7 @@ import (
 // proof `__fern_str_free` needs, because op_opt_make stores the payload
 // UNCOUNTED: a fresh payload is sole-owned, an aliased one is not. Only the
 // flag was being discarded by the two name extractors, so lower_func
-// could not see it; it is now seeded as "OPTFRESHF:<name>" beside the existing
+// could not see it; the fix seeded it as "OPTFRESHF:<name>" beside the existing
 // "OPTFRESH:<name>".
 //
 // Freeing a non-fresh payload under a live alias does not leak less — it

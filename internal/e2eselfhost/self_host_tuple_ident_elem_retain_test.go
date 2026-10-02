@@ -11,10 +11,10 @@ import (
 
 // --- The bare-ident tuple element's retain, given back (#7226) ---------------
 //
-// lower_expr's ExprTuple arm retains an element that is a bare ident naming an
-// rc-container local (gated on slot_is_rc_container), so the tuple box is a
-// second owner and __fern_rc_is_unique cannot call the source local unique while
-// the tuple still points at its buffer. Nothing gave that reference back: the
+// lower_expr's ExprTuple arm retained an element that is a bare ident naming an
+// rc-container local (gated on slot_is_rc_container), so the tuple box was a
+// second owner and __fern_rc_is_unique could not call the source local unique while
+// the tuple still pointed at its buffer. Nothing gave that reference back: the
 // only dec was the is_arr sweep's, which covers the LOCAL's own reference, so
 // incs 1 / decs 1 against a start rc of 1 left the buffer at 1 forever.
 //

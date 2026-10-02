@@ -172,9 +172,8 @@ func TestSelfHostFloatIntrinsicsX86_64(t *testing.T) {
 }
 
 // TestSelfHostFloatTranscendentalsArm64 — CI-gated arm64 counterpart of the
-// transcendental IR test. asm_arm64.emit_module routes IR-eligible modules
-// through emit_function_via_ir, so once the lowering makes the transcendentals
-// eligible, asm_ir_run (-target arm64-linux) emits them via asm_arm64_ir's fsin/fcos/fexp/flog/fpow
+// transcendental IR test. asm_ir_run (-target arm64-linux) emits the
+// transcendentals via asm_arm64_ir's fsin/fcos/fexp/flog/fpow
 // branches — `bl __fern_<op>_f64` into the fdlibm runtime helpers that
 // emit_runtime always defines. Same fixed oracle exits as the x86 test.
 func TestSelfHostFloatTranscendentalsArm64(t *testing.T) {

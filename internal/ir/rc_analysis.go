@@ -3714,7 +3714,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// every container on the chain deep-drops the next one, so the
 		// counted-alias argument holds at each level, and the two-level
 		// read taints nothing the one-level read does not (#8179, the
-		// self-host LowerState's nested per-function box). A non-struct
+		// AST lowering's nested per-function box). A non-struct
 		// source, or a Map anywhere on the chain, keeps the conservative
 		// taint. The escape sink walk is unchanged, so a projection flowing
 		// into an UNCOUNTED sink (`m.set(k, r.field)`) still taints its
@@ -8385,8 +8385,9 @@ func projectionRoot(e ast.Expr) string {
 // unresolvable field path, and makes every field of the struct growable.
 //
 // The field set is what keeps the caller-side bracket proportionate: a
-// `LowerState` has twenty-odd array fields, and bracketing all of them because
-// the callee appends to ONE forces a copy on each of the others as well.
+// struct can have twenty-odd array fields (the AST lowering's `LowerState` did),
+// and bracketing all of them because the callee appends to ONE forces a copy
+// on each of the others as well.
 type growParam struct {
 	buffer bool
 	fields map[string]bool

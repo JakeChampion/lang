@@ -16,8 +16,7 @@ import (
 // arithmetic five (`+= -= *= /= %=`) — so a program using `x &= y` parsed wrong
 // and the module bailed. parser.fern now mirrors the native
 // set exactly, so the bitwise/shift forms desugar to the already-IR-eligible
-// binary ops (`& | ^ << >>` all lower through lower_expr) and the whole module
-// routes IR.
+// binary ops and the whole module routes IR.
 //
 // Each case is oracle-checked against the interpreter and routing-pinned to "ir"
 // via asm_pathprobe_run, mirroring self_host_labeled_break_ir_test.go. Results

@@ -134,7 +134,7 @@ function main(): i32 {
 // is also what makes this a test of the tally's capacity check and not just of
 // the rc check.
 //
-// This is the self-host `LowerState` shape reduced: a struct threaded by
+// This is the deleted AST lowering's `LowerState` shape reduced: a struct threaded by
 // functional update whose OTHER methods hand back a fresh box sharing the same
 // accumulator field.
 const arrPushCliffPtrSharedSrc = `struct Item { v: i32 }

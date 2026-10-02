@@ -7,7 +7,7 @@ import "testing"
 // ExprCall arm lowered only i64-returning calls (and the 0-arg if/match IIFE)
 // and bailed everything else via `return s.fail()`, dropping the whole module to
 // the legacy AST emitter. #2691 widens it: a width-32 call result (not
-// i64-returning, not the IIFE) is lowered via lower_expr (the normal call path)
+// i64-returning, not the IIFE) was lowered via lower_expr (the normal call path)
 // and sign-extended to i64 (op_int_extend). This is provably safe — the checker
 // forbids i64 + f64/string/u32 and rejects binding a bare i32 call to an i64
 // (E009; it needs an explicit `as i64`), so a call reaching this point in a valid

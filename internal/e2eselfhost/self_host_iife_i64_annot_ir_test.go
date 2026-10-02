@@ -9,7 +9,7 @@ import "testing"
 // but a fully-small-literal i64 expression — where i64-ness comes ONLY from the
 // binding annotation (`let x: i64 = if (c) { 5 } else { 9 }`) — failed the
 // branch-value width classifier and bailed the whole module to the legacy AST
-// emitter. #2691 threads a force_i64 flag from lower_i64 (the binding context is
+// emitter. #2691 threaded a force_i64 flag from lower_i64 (the binding context is
 // definitionally i64/u64) through lower_iife / lower_iife_match so the inline temp
 // is marked i64 and each small-literal branch is widened into it. Each case is
 // oracle-checked against the interpreter and returns <= 126. Mirrors

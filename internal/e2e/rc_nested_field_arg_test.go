@@ -5,7 +5,7 @@ import "testing"
 // A local bound from a call whose argument is a field read TWO levels deep
 // (`filter(fresh(), s.frame.alias)`) reclaims exactly like the one-level read
 // (`filter(fresh(), s.alias)`): both are counted aliases of a container the
-// frame deep-drops, so neither taints the binding. The shape is the self-host
+// frame deep-drops, so neither taints the binding. The shape was the AST lowering's
 // `lower_stmt_grow_exempt_inner` after LowerState's per-function facts moved
 // into a nested box (#8179): the callee hands its first parameter back bare and
 // passes the second on to a helper, which is what puts the argument's taint on

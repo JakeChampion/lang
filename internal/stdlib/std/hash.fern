@@ -323,7 +323,7 @@ function __sysv_sum_absorb(s: SysvSum, bs: [u8]): SysvSum {
 // `chunk.len()` for the byte count, not `chunk.as_bytes().len()`: both answer
 // the same number, and the second builds the whole chunk as an array to throw
 // it away. On the self-hosted compiler that array is one i32 slot PER BYTE
-// (irlower's str_bytes — the slot model has no zero-copy view), so a 64 KiB
+// (ssarc's str_bytes — the slot model has no zero-copy view), so a 64 KiB
 // chunk allocated 256 KiB an update and `cksum -a sysv` spent 9.6x its own
 // runtime on it.
 pub function (s: SysvSum) update(chunk: string): SysvSum {

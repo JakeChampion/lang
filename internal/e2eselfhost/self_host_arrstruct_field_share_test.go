@@ -7,8 +7,7 @@ import (
 // --- The struct-literal FIELD share of an array-of-structs local -------------
 //
 // `let p: P = P { f: src, … }` where `src` is a credited `Inner[]` local. The
-// construction RETAINS `src` unconditionally (the ExprStructLit ident arm in
-// lower_expr, `fav_alias_inc`), so the field holds a COUNTED share — but every
+// construction RETAINS `src` unconditionally, so the field holds a COUNTED share — but every
 // escape gate on the ARRSTRUCT credit read the bare ident as an escape and sank
 // `src`'s reclaim outright. It then took the generic buffer dec, freeing the
 // outer array while every element box and element array field stranded.

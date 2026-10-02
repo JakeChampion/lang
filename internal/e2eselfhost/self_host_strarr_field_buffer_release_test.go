@@ -15,9 +15,9 @@ import (
 // alloc_flat_fresh_array_arg: one shared lowering change moved it on the wasm
 // leg and not at all on x86-64 or arm64.
 //
-// lower_expr's ExprStructLit array arm retains a BARE IDENT naming an rc-tracked
-// slot, so `S { xs: p }` hands the field a counted reference; a fresh literal or
-// a proven producer gives it one the field solely owns. Either way the box has
+// lower_expr's ExprStructLit array arm retained a BARE IDENT naming an rc-tracked
+// slot, so `S { xs: p }` handed the field a counted reference; a fresh literal or
+// a proven producer gave it one the field solely owned. Either way the box had
 // something to give back. The register backends reached a `string[]` field only
 // through their DEEP arm (__fern_str_arr_free, gated on the "strfldok:arr:<T>"
 // strarrfld admission), so a type the scan refused — including one refused only

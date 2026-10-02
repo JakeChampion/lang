@@ -10326,8 +10326,7 @@ function emit_ir_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asm
 }
 
 // emit_ir_runtime_fern_fn lowers a runtime helper WRITTEN IN FERN through the
-// IR pipeline (issue #2649) — the IR-path analog of asm.fern's
-// emit_runtime_fern_fn. The helper emits as __fn_<name> exactly like a user
+// IR pipeline (issue #2649). The helper emits as __fn_<name> exactly like a user
 // function (so the IR call site's `call __fn___fern_<name>` resolves to it),
 // replacing a hand-written stack-arg wrapper in emit_ir_runtime.
 //
@@ -10342,7 +10341,7 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   // (this runs in the entry block, past the pool), so flush any NEW ones here in
   // their own .rodata block then return to .text. A literal-free helper (the
   // str_eq / str_cmp / str_trim bodies) adds none, so
-  // this is a no-op for them. Mirrors the AST emit_runtime_fern_fn flush.
+  // this is a no-op for them.
   let vsigs: irverify.NameIndex = irtables.fn_sig_index(fns);
   let lit0: i32 = s.string_lits.len();
   let agg0: i32 = s.const_aggs.len();
@@ -10715,8 +10714,8 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // string literals when str_ns == "", so the whole-program emit is unchanged).
   s = asmcore.emit_shape_lits_from(s, 0);
   // The "maps" / "heap" needs were marked per-function during the emit loop
-  // above (off the ops each lower_func already produced), so there is no need to
-  // re-lower the module here. The whole-program extra_needs (sibling modules'
+  // above (off the ops each function's lowering already produced), so there is
+  // no need to re-lower the module here. The whole-program extra_needs (sibling modules'
   // needs, for the entry's single shared runtime) were folded in above, BEFORE
   // _start (so its argc/argv save sees a sibling's args need) and hence before
   // close_needs, so their declared deps resolve too. close_needs() pulls in

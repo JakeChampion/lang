@@ -17,7 +17,7 @@ import (
 // intermediate field read all reclaim; binding to a var still does.
 //
 // THE MECHANISM WAS HERE, for a different receiver. `lower_expr`'s
-// ExprFieldAccess arm already reclaims the box behind a SCALAR field read off a
+// ExprFieldAccess arm already reclaimed the box behind a SCALAR field read off a
 // strict-fresh producer CALL (`mk().k`, #6491): stash the box, read the field,
 // deep-drop the rc fields while the box still owns them, then dec it. A struct
 // LITERAL receiver is the same temporary and takes the same release; it simply

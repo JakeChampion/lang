@@ -7307,7 +7307,7 @@ function cp_max_slot(ops: Op[]): i32 {
 // written. Called at an `else` to restore the entry state for the second arm, and
 // at an `end` to reconcile the scope. Only a bound slot can need it, and
 // `bound` holds every one, so the walk is over those rather than every slot.
-function cp_kill_after(has: boolean[], wrote: i32[], at: i32, bound: i32[]): boolean[] {
+function cp_kill_after(own has: boolean[], wrote: i32[], at: i32, bound: i32[]): boolean[] {
   let k: i32 = 0;
   while (k < bound.len()) {
     let s: i32 = bound[k];
@@ -7338,7 +7338,7 @@ function cp_still_bound(bound: i32[], has: boolean[]): i32[] {
 // re-enters the body with what the previous iteration left, so a binding the body
 // can change is not assumable inside it. Scanning for the writes rather than
 // dropping the whole table keeps the bindings the body cannot touch.
-function cp_loop_body_kill(ops: Op[], at: i32, has: boolean[]): boolean[] {
+function cp_loop_body_kill(ops: Op[], at: i32, own has: boolean[]): boolean[] {
   let k_store: i32 = kind_id("store_local");
   let k_tee: i32 = kind_id("tee_local");
   let k_block: i32 = kind_id("block");

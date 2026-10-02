@@ -102,7 +102,7 @@ func TestSelfHostNumericEdgesIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostNumericEdgesIRArm64 runs the same cases through the arm64 IR
-// backend (asm_ir_run -target arm64-linux → asm_arm64.emit_module's use_ir branch →
+// backend (asm_ir_run -target arm64-linux → asm_arm64_ir.emit_module_or_error_sub →
 // asm_arm64_ir.emit_body). The arm64-specific regression here is #4330: the
 // i32 shifts emitted the bare x-form (`lsl/asr/lsr x0, x0, x1`), whose count
 // masks mod 64 — a count >= 32 wrapped wrongly instead of masking mod 32 like
