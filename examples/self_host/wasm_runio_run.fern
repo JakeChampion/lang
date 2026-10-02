@@ -26,12 +26,18 @@ function main(): i32 {
   // the harvested corpus since #5977; component mode never had a probe at all,
   // so its decline set was unmeasured, and those declines are exactly what an
   // IR-or-error reroute turns into hard errors.
+  // `-reactor`: the core imports its WASI host only when the program reaches
+  // it, the form an export-only component (and a wasi:http handler) takes.
   var decide: boolean = false;
+  var reactor: boolean = false;
   var av: string[] = args();
   var ai: i32 = 1;
   while (ai < av.len()) {
     if (av[ai] == "-decide") {
       decide = true;
+    }
+    if (av[ai] == "-reactor") {
+      reactor = true;
     }
     ai = ai + 1;
   }
@@ -52,6 +58,6 @@ function main(): i32 {
     }
     return 0;
   }
-  write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, true, d.sub));
+  write(wasm_ir.emit_module_mode_or_error_sub(d.full, true, !reactor || wasm_ir.component_needs_host(d.full), d.sub));
   return 0;
 }

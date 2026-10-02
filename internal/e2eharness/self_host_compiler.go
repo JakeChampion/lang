@@ -1,6 +1,7 @@
 package e2eharness
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -365,4 +366,69 @@ func hostSelfHostTarget() string {
 		return TargetArm64Darwin
 	}
 	return ""
+}
+
+var (
+	componentCoreOnce sync.Once
+	componentCorePath string
+)
+
+// SelfHostComponentCore is the self-host compiler's wasi:cli/run component
+// core for the single-module program at srcPath: the core module with its
+// WASI through preview-2 imports (wasm_runio_run.fern), assembled to binary
+// for a test to compose itself.
+func SelfHostComponentCore(t testing.TB, srcPath string) []byte {
+	t.Helper()
+	return selfHostComponentCore(t, srcPath)
+}
+
+// SelfHostReactorCore is SelfHostComponentCore for a component that exports
+// rather than runs: the core imports its WASI host only when the program
+// reaches it.
+func SelfHostReactorCore(t testing.TB, srcPath string) []byte {
+	t.Helper()
+	return selfHostComponentCore(t, srcPath, "-reactor")
+}
+
+func selfHostComponentCore(t testing.TB, srcPath string, args ...string) []byte {
+	t.Helper()
+	host := hostSelfHostTarget()
+	if host == "" {
+		t.Skipf("no self-host target runs natively on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	componentCoreOnce.Do(func() {
+		dir := WriteSelfHostAsmProject(t)
+		CopySelfHostDriver(t, dir, "wasm_runio_run.fern")
+		componentCorePath = CachedDriverBinFor(t, dir, "wasm_runio_run.fern", host)
+	})
+	if componentCorePath == "" {
+		t.Fatal("the self-host component-core driver failed to build; the first test to need it has the error")
+	}
+	src, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emit := exec.Command(componentCorePath, args...)
+	emit.Stdin = bytes.NewReader(src)
+	var stderr bytes.Buffer
+	emit.Stderr = &stderr
+	wat, err := emit.Output()
+	if err != nil || len(wat) == 0 {
+		t.Fatalf("self-host component core for %s: %v\n%s", srcPath, err, stderr.Bytes())
+	}
+	corePath := filepath.Join(t.TempDir(), "core.wasm")
+	parse := exec.Command(wasmtools, "parse", "-", "-o", corePath)
+	parse.Stdin = bytes.NewReader(wat)
+	if out, err := parse.CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools parse of the self-host component core: %v\n%s", err, out)
+	}
+	core, err := os.ReadFile(corePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return core
 }

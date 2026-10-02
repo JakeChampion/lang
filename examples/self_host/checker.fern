@@ -1475,9 +1475,7 @@ function cmp_method_receiver(t: typeinfo.Type): string {
 //
 // The return type is the method's as declared, so a scalar-returning overload
 // (a dot product `function (a: V) mul(b: V): f64`) types as f64 rather than
-// falling through to "requires matching numeric operands". irlower's
-// struct_ret_fns registry records only STRUCT returns, so it cannot answer this
-// one — which is why the answer has to come from here.
+// falling through to "requires matching numeric operands".
 function (s: Scope) binop_overload_ret(op: string, lt: typeinfo.Type): typeinfo.Type {
   return s.overload_ret(ast.operator_method(op), lt);
 }
@@ -7567,12 +7565,8 @@ function gc_is_typevar_name(n: string, tparams: string[], tn: TypeNames): boolea
 // than guessing, so an unbindable variable simply leaves the return type
 // partially unknown and the caller falls back to the old behaviour.
 //
-// A CONTAINER return (`both[T](a: T, b: T): (T, T)`) keeps first-wins, and must
-// until irlower does: `rewrite_typevars_to_argrefs` encodes a type variable as
-// "$arg<i>" naming the FIRST param declaring it, and every reader of that
-// registry resolves the one position. Widening only the checker's answer there
-// would type the call i64 while the tuple read stays 4-byte — a silent
-// miscompile in place of today's refusal (#8722 part 4).
+// A CONTAINER return (`both[T](a: T, b: T): (T, T)`) keeps first-wins (#8722
+// part 4).
 function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], tn: TypeNames, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
   var ns: string[] = names;
   var ts: typeinfo.Type[] = types;
@@ -8254,7 +8248,7 @@ function name_in(name: string, list: string[]): boolean {
 // argument 0. Here the call is still an ExprFieldAccess with the receiver
 // on the side, so view_callee reassembles the list.
 //
-// A summary is keyed the way str_ret_fns is — bare for a free function,
+// A summary is keyed the way the borrowability registry is — bare for a free function,
 // "<BaseType>.<name>" for a method — because a method name can collide
 // across receiver types whose bodies view different things.
 
@@ -22317,9 +22311,8 @@ function type_to_irtag(t: typeinfo.Type): string {
       return "boolean";
     },
     typeinfo.TypeStruct(st) => {
-      // A struct-valued call carries its nominal type NAME as the tag, so
-      // irlower's expr_struct_type can read it instead of re-deriving via the
-      // struct_ret_fns registry. A struct name never collides with a scalar tag
+      // A struct-valued call carries its nominal type NAME as the tag. A
+      // struct name never collides with a scalar tag
       // (f64/i32/... are reserved), and the scalar predicates that read c.ty
       // compare it to their own keyword, so a struct name reads false there —
       // matching the structural walk's false for a struct call.

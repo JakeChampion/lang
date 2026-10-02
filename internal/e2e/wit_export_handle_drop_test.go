@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -78,11 +78,7 @@ function on_request(): void { var t: own Thing = new_thing(); return; }`
 	if err := os.WriteFile(mainPath, []byte(prog), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
-	info, p := loadCheckMono(t, mainPath)
-	core, err := wasmbin.BuildWithOptions(p, info, wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
+	core := e2eharness.SelfHostReactorCore(t, mainPath)
 	if !bytes.Contains(core, []byte("[resource-drop]thing")) {
 		t.Fatalf("core missing the auto-inserted [resource-drop]thing import")
 	}
