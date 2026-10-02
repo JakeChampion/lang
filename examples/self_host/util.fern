@@ -29,43 +29,32 @@ pub function i32_to_string(n: i32): string {
   if (n < 0 && 0 - n == n) {
     return "-2147483648";
   }
-  var neg: boolean = false;
-  if (n < 0) {
-    neg = true;
+  var neg: boolean = n < 0;
+  if (neg) {
     n = 0 - n;
   }
-  var out: string = "";
+  // The digits are written into a buffer of their exact count, so the text
+  // is one allocation rather than one per digit.
+  var len: i32 = 0;
+  var m: i32 = n;
+  while (m > 0) {
+    len = len + 1;
+    m = m / 10;
+  }
+  if (neg) {
+    len = len + 1;
+  }
+  var buf: u8[] = __alloc_u8(len);
+  var at: i32 = len;
   while (n > 0) {
-    var d: i32 = n % 10;
-    var c: string = "";
-    if (d == 0) {
-      c = "0";
-    } else if (d == 1) {
-      c = "1";
-    } else if (d == 2) {
-      c = "2";
-    } else if (d == 3) {
-      c = "3";
-    } else if (d == 4) {
-      c = "4";
-    } else if (d == 5) {
-      c = "5";
-    } else if (d == 6) {
-      c = "6";
-    } else if (d == 7) {
-      c = "7";
-    } else if (d == 8) {
-      c = "8";
-    } else {
-      c = "9";
-    }
-    out = c + out;
+    at = at - 1;
+    buf = buf.with(at, (48 + n % 10) as u8);
     n = n / 10;
   }
   if (neg) {
-    out = "-" + out;
+    buf = buf.with(0, 45 as u8);
   }
-  return out;
+  return string_from_bytes_unchecked(buf);
 }
 
 // i64_to_string renders a signed 64-bit integer in base 10 — the i64 sibling
@@ -80,43 +69,30 @@ pub function i64_to_string(n: i64): string {
   if (n < 0 && 0 - n == n) {
     return "-9223372036854775808";
   }
-  var neg: boolean = false;
-  if (n < 0) {
-    neg = true;
+  var neg: boolean = n < 0;
+  if (neg) {
     n = 0 - n;
   }
-  var out: string = "";
+  var len: i32 = 0;
+  var m: i64 = n;
+  while (m > 0) {
+    len = len + 1;
+    m = m / 10;
+  }
+  if (neg) {
+    len = len + 1;
+  }
+  var buf: u8[] = __alloc_u8(len);
+  var at: i32 = len;
   while (n > 0) {
-    var d: i64 = n % 10;
-    var c: string = "";
-    if (d == 0) {
-      c = "0";
-    } else if (d == 1) {
-      c = "1";
-    } else if (d == 2) {
-      c = "2";
-    } else if (d == 3) {
-      c = "3";
-    } else if (d == 4) {
-      c = "4";
-    } else if (d == 5) {
-      c = "5";
-    } else if (d == 6) {
-      c = "6";
-    } else if (d == 7) {
-      c = "7";
-    } else if (d == 8) {
-      c = "8";
-    } else {
-      c = "9";
-    }
-    out = c + out;
+    at = at - 1;
+    buf = buf.with(at, (48 + (n % 10) as i32) as u8);
     n = n / 10;
   }
   if (neg) {
-    out = "-" + out;
+    buf = buf.with(0, 45 as u8);
   }
-  return out;
+  return string_from_bytes_unchecked(buf);
 }
 
 // hash_key maps a string to a content-addressed key string, used by the

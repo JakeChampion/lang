@@ -6,11 +6,7 @@ import "testing"
 // sweep an explicit `return` runs, and that sweep must release a local whose
 // alias sits textually AFTER the `?` — the scan that claims such an alias as
 // a move stops at the first statement that can leave the function, and the
-// `?` is one (#8442). The analysis verdict itself is pinned against native by
-// TestSelfHostRcPlanDiff's move-after-try-op case; this is the runtime half,
-// which stays clean whichever table the emitter consults for the elision
-// (today it reads the slots whose retain it actually dropped, not the
-// verdict, so the wrong verdict was inert here).
+// `?` is one (#8442).
 //
 // The program drives the Err path (c == 0) so the leak would be on the path
 // taken; the Ok path is clean either way. aliased(0) is Err(7), so 50 rounds

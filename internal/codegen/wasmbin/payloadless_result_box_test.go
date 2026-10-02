@@ -43,6 +43,7 @@ var payloadlessArmAbsent = map[string]bool{
 	"__fern_read_file":               true,
 	"__fern_read_file_bytes":         true,
 	"__fern_write_file":              true,
+	"__fern_write_file_bytes":        true,
 	"__fern_open_reader":             true,
 	"__fern_open_reader_with":        true,
 	"__fern_open_writer_with":        true,

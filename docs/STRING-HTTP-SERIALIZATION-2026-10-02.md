@@ -1,9 +1,9 @@
 # HTTP byte serialization
 
-The serializer and WASI byte writer are combined on the raw pipeline at
-`282343afb`. Integrated target tests, the three-stage bootstrap, the full
-unit suite and lint pass. Timing measurements below retain
-their original compiler provenance; artifact sizes use the integrated compiler.
+The serializer and WASI byte writer are combined with the file-byte sink and
+main's compiler changes at `68aa3984d`. Integrated target tests, the three-stage
+bootstrap, full unit suite and lint pass. Timing measurements below retain their
+original compiler provenance; artifact sizes use the current integrated compiler.
 
 `http_serialize_response_bytes`, `http_serialize_response_conn_bytes`, and
 `http_serialize_response_to_bytes` return the complete response as `u8[]`.
@@ -95,9 +95,11 @@ core WebAssembly, and Preview2. Native reports 443 allocations and 443 frees;
 core WebAssembly reports 494 and 494, both with zero live bytes. Components
 are checked for behavior because their entry point does not print a census.
 The integrated Linux target matrix passes, including both interpreters and
-the real WASI HTTP host. The pinned seed produces three identical Darwin
-compiler binaries of 14,593,761 bytes, SHA-256
-`47999bf7047d24eb916fed92110b578f22d7809673b60cbc4b2c3cb2e353ed73`.
-The full unit suite and `make lint-all` pass in an isolated Linux snapshot. Host Go linking
+the real WASI HTTP host. The pinned seed produces identical stage-2 and stage-3
+Darwin compiler binaries of 12,097,665 bytes, SHA-256
+`c9046fac4eda687a09ee26b41a49a591373aa7e1056ee34ab6d38686381c65f0`.
+Stage 1 differs because the seed predates generator changes on main.
+The full unit suite and `make lint-all` pass in the updated isolated Linux snapshot.
+Host Go linking
 is blocked by Darwin file-table exhaustion; actual stage-2 execution covers
 the integrated Darwin compiler.

@@ -38,7 +38,7 @@ function main(): i32 {
 	if (__rc_underflow_count() != 0) { return 99; }
 	return a + b;
 }`, 10, true},
-		// The consumed-tuple shape of TestSelfHostRcPlanDiff: a reassigned
+		// The consumed-tuple shape: a reassigned
 		// tuple param destructured at its last mention, called on both the
 		// reassigning and the non-reassigning path.
 		{"consumed-tuple-destructure", `function tup(t: (string, i32), re: boolean): i32 {

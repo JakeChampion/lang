@@ -11,9 +11,8 @@ import (
 
 // #6639 slice 5: the IR verifiers now run on the COMPILE path.
 //
-// Slices 1-3 wrote the passes; nothing ran them outside a test driver.
-// irverify_run.fern builds op streams by hand and irlower_run.fern sweeps the
-// conformance corpus — neither is the compiler, so the module with the most
+// Slices 1-3 wrote the passes; nothing ran them outside a test driver, and a
+// test driver is not the compiler, so the module with the most
 // lowering in it, the self-host compiler's own ~1000 functions, went through
 // every build unchecked. examples/self_host/irverifygate.fern closes that: all
 // three backends call it once per function they are about to emit, so any
