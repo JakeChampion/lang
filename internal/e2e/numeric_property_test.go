@@ -30,8 +30,6 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
-	"github.com/jakechampion/lang/internal/constfold"
 	e2eharness "github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/modload"
@@ -432,11 +430,8 @@ func runBackendsAgainst(t *testing.T, src, want string, skip map[string]string, 
 	})
 }
 
-// buildNumComponent builds a plain wasi:cli/run component the way
-// `fern -target wasm32-wasi` does — no result-printer wrapper, so the
-// program's own `print`s are the only stdout (the oracle's
-// buildComponent appends main's return value, which would show up
-// as a spurious trailing "0" line here).
+// buildNumComponent compiles src with the self-host compiler to a plain
+// wasi:cli/run component, so the program's own prints are its only stdout.
 func buildNumComponent(t *testing.T, src string) string {
 	t.Helper()
 	skipIfPreview2Missing(t)
@@ -445,30 +440,11 @@ func buildNumComponent(t *testing.T, src string) string {
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
+	comp := filepath.Join(dir, "prog.component.wasm")
+	if out, err := e2eharness.SelfHostCompileCmd(t, e2eharness.TargetWasm32Wasi, srcPath, comp).CombinedOutput(); err != nil {
+		t.Fatalf("SELFHOST-COMPILE-FAIL -target wasm32-wasi: %v\n%s\nsrc:\n%s", err, out, src)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		CliRunResult:       true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
-	return finishComponentFromCoreBytes(t, bin)
+	return comp
 }
 
 // TestNumericProperty_Differential is the deterministic, seeded

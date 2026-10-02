@@ -59,9 +59,9 @@ func TestX86_64EnumRcPayloadsMatchesMove(t *testing.T) {
 		prev := ast.EnumRcPayloads
 		defer func() { ast.EnumRcPayloads = prev }()
 		ast.EnumRcPayloads = false
-		outOff, exitOff := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
+		outOff, exitOff := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
 		ast.EnumRcPayloads = true
-		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
+		outOn, exitOn := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("enum-rc-payloads-on diverged from move model:\n move=(exit %d) %q\n rc  =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
@@ -76,9 +76,9 @@ func TestArm64EnumRcPayloadsMatchesMove(t *testing.T) {
 		prev := ast.EnumRcPayloads
 		defer func() { ast.EnumRcPayloads = prev }()
 		ast.EnumRcPayloads = false
-		outOff, exitOff := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
+		outOff, exitOff := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
 		ast.EnumRcPayloads = true
-		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
+		outOn, exitOn := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("enum-rc-payloads-on diverged from move model:\n move=(exit %d) %q\n rc  =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
