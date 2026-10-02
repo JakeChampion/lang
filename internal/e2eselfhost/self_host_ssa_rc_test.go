@@ -413,7 +413,9 @@ function main(): i32 {
     let rowAll: string = "";
     for bucket in rowSigs.borrowable_params { rowAll = rowAll + bucket; }
     if (!has_sub(rowAll, "CNT:mk|100\n") || has_sub("\n" + rowAll, "\nmk|")) { return 130; }
-    let rowNone = ssarc.caller_sigs(fnsigs.FnSigs { ...rowSigs, borrowable_params: fnsigs.borrow_reg_set(rowSigs.borrowable_params, "mk", "1") }, [ssarc.Callee { name: "mk", f: withKidsFunc, modes: [3], plan: ssaunits.refused("no plan"), receiver: false }]);
+    let rowReg: string[] = rowSigs.borrowable_params;
+    rowReg = fnsigs.borrow_reg_set(rowReg, "mk", "1");
+    let rowNone = ssarc.caller_sigs(fnsigs.FnSigs { ...rowSigs, borrowable_params: rowReg }, [ssarc.Callee { name: "mk", f: withKidsFunc, modes: [3], plan: ssaunits.refused("no plan"), receiver: false }]);
     rowAll = "";
     for bucket in rowNone.borrowable_params { rowAll = rowAll + bucket; }
     if (has_sub("\n" + rowAll, "\nmk|")) { return 131; }
