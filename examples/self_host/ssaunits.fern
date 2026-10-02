@@ -1503,8 +1503,9 @@ function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs:
 // out of — the source is released in the same step, and leaving the dependency
 // would read every later use of the element as a borrow outliving its
 // container. A payload take says the same about an enum box's payload.
-// `reflow` marks a take whose box is released alone (`shell_root`): that box
-// has to die at the read, which the flow derived before the take cannot say.
+// `reflow` marks a take whose box is released alone (`shell_root`), or whose
+// box was live out of the read's block only as the taken value's anchor: that
+// box has to die at the read, which the flow derived before the take cannot say.
 struct Units { owned: boolean[], parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[], reflow: boolean }
 
 // The payload takes are derived FIRST and folded into ownership before the
@@ -1515,7 +1516,8 @@ struct Units { owned: boolean[], parents: i32[][], deps: i32[][], takes: i32[], 
 // rather than taking its own unit — which is the whole of what a hold exists
 // to prevent (#9891).
 function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa.SInst[]): Units {
-  var payloads: boolean[] = payload_takes(f, a, base, defs);
+  var pt: PayloadTakes = payload_takes(f, a, base, defs);
+  var payloads: boolean[] = pt.taken;
   var owned: boolean[] = base;
   var i: i32 = 0;
   while (i < payloads.len()) {
@@ -1528,7 +1530,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
   var held: boolean[] = held_elements(f, a, owned, defs);
   var parents: i32[][] = a.parents;
   var deps: i32[][] = a.dependencies;
-  var reflow: boolean = false;
+  var reflow: boolean = pt.crossing;
   i = 0;
   while (i < takes.len()) {
     // A taken record field reflows, as a taken payload does: the values
@@ -1746,9 +1748,9 @@ function other_payload_get(ins: ssa.SInst, root: i32, slot: i32): boolean {
 // The box whose slot the read at (`bi`, `pos`) may MOVE out of rather than
 // borrow, or -1: an enum's payload named by a variant read, or a record's
 // array or record field. Same shape as `projection_root` above, over the one
-// slot the read names: the box is a unit of this frame's own, it does not
-// leave the block, and after the read it is reached only through reads of its
-// OTHER slots.
+// slot the read names: the box is a unit of this frame's own, no later block
+// names it, and after the read it is reached only through reads of its OTHER
+// slots (`needed_past`).
 //
 // A tuple take next door demands more of its source — `takeable_root`, a box
 // this frame ALLOCATED — because it nulls without asking. Here the physical
@@ -1782,7 +1784,7 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
   if (!owned[root] || projection(defs[root].kind_tag) && !taken_read(defs[root].kind_tag)) {
     return none;
   }
-  if (field && needed_past(f, a, defs, bi, ins, root) || !field && ssalive.live_out_has(a.flow, bi, root)) {
+  if (needed_past(f, a, defs, bi, ins, root)) {
     return none;
   }
   if (read_later_in_block(f, a, defs, bi, pos, root)) {
@@ -1892,7 +1894,9 @@ function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: 
   return named_after(f, a.flow, bi, root) || reached_past_take(f, a, defs, bi, take, root);
 }
 
-// A block after bi reads v.
+// A block after bi reads v. The walk stops at the block defining v — a loop's
+// header, for a phi — since past that definition v is a new value, and only a
+// phi operand there can still read the old one.
 function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32): boolean {
   var seen: boolean[] = bits(f.graph.blocks.len());
   var work: i32[] = [];
@@ -1908,11 +1912,35 @@ function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32): boolean
     }
     seen = seen.with(k, true);
     var blk: ssa.SBlock = f.graph.blocks[k];
+    if (block_defines(blk, v)) {
+      if (phi_reads(blk, v)) {
+        return true;
+      }
+      continue;
+    }
     if (block_reads(blk, v)) {
       return true;
     }
     for id in successors(blk) {
       work = work.append(ssalive.position(fl, id));
+    }
+  }
+  return false;
+}
+
+function block_defines(blk: ssa.SBlock, v: i32): boolean {
+  for ins in blk.insts {
+    if (ins.result == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function phi_reads(blk: ssa.SBlock, v: i32): boolean {
+  for ins in blk.insts {
+    if (ins.kind_tag == 8 && ssa.reads_value(ins, v)) {
+      return true;
     }
   }
   return false;
@@ -2049,8 +2077,16 @@ function option_layout(f: ssasem.Func, t: typeinfo.Type): boolean {
 // To a fixpoint: a take makes its read a unit of the frame's own, which a read
 // of one of ITS slots may take from in turn — `var ws = s.words; var xs =
 // ws.xs;`.
-function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): boolean[] {
+//
+// `crossing` is set when a take's box is live out of the read's block in the
+// flow derived before the take — the taken value leaves the block, and the box
+// stayed live only as its anchor — so the flow has to be derived again for the
+// box to die at the read.
+struct PayloadTakes { taken: boolean[], crossing: boolean }
+
+function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): PayloadTakes {
   var out: boolean[] = bits(f.graph.nvals);
+  var crossing: boolean = false;
   var own: boolean[] = owned;
   var grown: boolean = true;
   while (grown) {
@@ -2060,17 +2096,21 @@ function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
       var pos: i32 = 0;
       while (pos < f.graph.blocks[bi].insts.len()) {
         var v: i32 = f.graph.blocks[bi].insts[pos].result;
-        if (v >= 0 && v < out.len() && !out[v] && payload_root(f, a, own, defs, bi, pos) >= 0) {
-          out = out.with(v, true);
-          own = own.with(v, true);
-          grown = true;
+        if (v >= 0 && v < out.len() && !out[v]) {
+          var root: i32 = payload_root(f, a, own, defs, bi, pos);
+          if (root >= 0) {
+            out = out.with(v, true);
+            own = own.with(v, true);
+            crossing = crossing || ssalive.live_out_has(a.flow, bi, root);
+            grown = true;
+          }
         }
         pos = pos + 1;
       }
       bi = bi + 1;
     }
   }
-  return out;
+  return PayloadTakes { taken: out, crossing: crossing };
 }
 
 // The record whose field buffer the append or with at (`bi`, `pos`) may grow
