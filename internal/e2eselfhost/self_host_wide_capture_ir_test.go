@@ -106,7 +106,7 @@ func TestSelfHostWideCaptureIR(t *testing.T) {
 		// IMMEDIATELY-INVOKED lambdas — the other shape that never reaches the
 		// env box, and the one the pass used to cellar anyway (#6278). `if` and
 		// `match` in value position parse into `(<zero-param lambda>)()`, which
-		// lower_iife lowers INLINE in the enclosing scope, so the names it reads
+		// lowers INLINE in the enclosing scope, so the names it reads
 		// are the enclosing function's own locals. The cell re-bind was not
 		// merely wasted work: prepending a statement turned the one-statement
 		// body into a value BLOCK, and a 64-bit block tail is deferred (#6267),

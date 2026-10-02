@@ -73,9 +73,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"clo-arr-forin", `function main(): i32 { var fs = [(x: i32): i32 => { return x + 1; }, (x: i32): i32 => { return x + 2; }]; var s = 0; for f in fs { s = s + f(10); } return s; }`, 23},
 		{"clo-arr-mixed", `function dbl(x: i32): i32 { return x * 2; } function main(): i32 { var fs = [dbl, (x: i32): i32 => { return x + 5; }]; return fs[0](10) + fs[1](10); }`, 35},
 		// flat_map shape: `for y in f(x)` where `f` is a closure PARAM whose type
-		// `(T) => U[]` returns an array (ParamDecl.ret_arr). lower_func admits
-		// such a param into its arr_ret_fns view, so the foreach snapshot
-		// `var $forit = f(x)` marks an owned array and `for y in f(x)` lowers like
+		// `(T) => U[]` returns an array, so `for y in f(x)` lowers like
 		// `for x in xs`. Was BAIL lower (the single bail across the functional
 		// core); now ir. The bare-fn-name arg `apply(dup)` uses the existing
 		// fn-value-arg path (callee_param_is_fn still sees type_name "fn").
@@ -745,7 +743,7 @@ function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { 
 		// paths (the freed buffers are sole-owned, never a caller alias).
 		{"fresh-ret-call-discarded", `struct Box { ops: i32[] } function mk(): Box { return Box { ops: [1, 2, 3] }; } function use_it(): i32 { var r: Box = mk(); var a = r.ops[0]; var b = r.ops[1]; var c = r.ops[2]; return a + b + c; } function main(): i32 { return use_it(); }`, 6},
 		// Same, but the discarded local's field is forwarded into a fresh builder
-		// (the lower_func-style `s = s.append_all(r.ops)`) then r dies — the field
+		// (the builder-style `s = s.append_all(r.ops)`) then r dies — the field
 		// read is a borrow, so r stays reclaimable.
 		{"fresh-ret-call-discarded-forward", `struct Box { ops: i32[] } function mk(): Box { return Box { ops: [5, 6, 7] }; } function sum(xs: i32[]): i32 { var s = 0; var i = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; } function use_it(): i32 { var r: Box = mk(); return sum(r.ops); } function main(): i32 { return use_it(); }`, 18},
 		{"tuple-str-i32-dotn", `function main(): i32 { var t = ("hello", 7); return t.0.len() + t.1; }`, 12},
@@ -1845,7 +1843,7 @@ function main(): i32 { var ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z")
 		// rebind `var xs = t.0` recover the i64[] type. The literal is identified by
 		// its unambiguous 64-bit first element (a bare integer literal stays i32).
 		// The element is a heap pointer in one slot; the self-host AST path bailed it
-		// at construction (lower_expr can't lower an `as i64` element), so these pin
+		// at construction (lower_expr couldn't lower an `as i64` element), so these pin
 		// the absolute IR value. #3353.
 		{"tuple-i64arr-elem-index", `function main(): i32 { var t = ([10 as i64, 20 as i64], 3); return (t.0[1] as i32) + t.1; }`, 23},
 		{"tuple-i64arr-elem-two", `function main(): i32 { var t = ([10 as i64, 20 as i64], 3); return (t.0[0] as i32) + (t.0[1] as i32) + t.1; }`, 33},
@@ -1985,7 +1983,7 @@ function main(): i32 { var ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z")
 		{"clo-cap-struct-field-with-nonfn", `struct Box { f: (i32) => i32, base: i32 } function main(): i32 { var n = 10; var b = Box { f: (x: i32): i32 => { return x + n; }, base: 100 }; return b.f(7) + b.base; }`, 117},
 		// CAPTURING inline lambda passed as a CALL ARGUMENT (slice #3445 follow-up).
 		// The lift pass wraps the fn-typed argument into an env box [funcval, caps…]
-		// and the callee's fn-typed param `f` is a closure local (lower_func), so
+		// and the callee's fn-typed param `f` is a closure local, so
 		// `f(x)` dispatches env-first. n=10: apply(λx.x+n, 5) = 5 + 10 = 15.
 		{"clo-cap-fn-arg", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var n = 10; return apply((x: i32): i32 => { return x + n; }, 5); }`, 15},
 		// Capturing lambda argument with TWO captures: box [funcval, a, b]. a=8,

@@ -3,10 +3,7 @@ package e2eselfhost
 import "testing"
 
 // nestedMatchIRCases pin a `match` nested inside another `match` arm's body to the
-// self-host IR path on x86-64 + wasm. lower_stmt's StmtMatch arm lowers each arm
-// body via lower_block, which recurses through lower_stmt for every statement —
-// including a nested StmtMatch — with no guard against nesting (the only bails are
-// per-arm pattern/payload shapes, which apply identically at any depth). The
+// self-host IR path on x86-64 + wasm. The
 // self-hosted compiler emits this construct itself: @derive(Eq) codegen builds an
 // inner match as an outer arm body, and @derive(Eq) already routes IR. No other
 // self-host test nests a match in an arm (the block-expr `match-arm-block` case
@@ -40,7 +37,7 @@ function main(): i32 { return f(A(1), A(2), A(3)); }`},
 	// Inner match scrutinises a STRING.
 	{"nested-string-inner", `function f(k: i32, s: string): i32 { match (k) { 0 => { match (s) { "hi" => { return 2; }, _ => { return 0; }, } }, _ => { return 9; }, } }
 function main(): i32 { return f(0, "hi"); }`},
-	// Nested match in EXPRESSION-value (tail) position — exercises lower_value_tail.
+	// Nested match in EXPRESSION-value (tail) position.
 	{"nested-expr-value", `enum E { A(i32), B }
 function f(x: E, k: i32): i32 { var r: i32 = match (x) { A(n) => match (k) { 0 => n, _ => n + k }, B => 0 }; return r; }
 function main(): i32 { return f(A(7), 3); }`},

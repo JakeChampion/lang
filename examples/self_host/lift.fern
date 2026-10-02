@@ -137,7 +137,7 @@ pub function fn_spelling_of(p: ast.ParamDecl): string {
 // initialiser the lift has replaced with a `__mkclo$<target>` env-box
 // constructor. The box carries no signature, so an UNANNOTATED binding — which
 // is what a nested `function lf(x: i64): boolean { … }` declaration desugars to
-// — would otherwise lose it, and lower_func's FNSIG seeding has nothing to read
+// — would otherwise lose it, leaving the lowering no signature to read
 // (#6862). "" when the binding is not that shape or already spells its type out.
 //
 // The hoisted target's params are `__env` followed by the lambda's own, so its
@@ -1207,7 +1207,7 @@ function clo_owner_name(fd: parser.FuncDecl): string {
 // it stayed an ExprLambda and bailed the module to AST. This pass
 // hoists each such lambda to a UNIQUELY-named `<fd>$cloN` (so a function may host
 // several distinct inline closures) via make_clo_func, and replaces the inline
-// lambda with a `__mkclo$<fd>$cloN(caps…)` marker that lower_expr turns into the
+// lambda with a `__mkclo$<fd>$cloN(caps…)` marker that the lowering turns into the
 // env box [funcval, caps…] — the same box the call side already unpacks for
 // closure arrays / struct "fn" fields. Captures must all be i32 (make_clo_func
 // declines otherwise), in which case the lambda is left in place (module bails to
@@ -2109,7 +2109,7 @@ function fd_bound_names(fd: parser.FuncDecl): string[] {
 
 // lift_callee_param_is_fn reports whether free function / method `callee`'s
 // param `idx` is fn-typed (coarse type_name "fn"). The lift-pass mirror of
-// LowerState.callee_param_is_fn / asmcore.callee_param_is_fn, reading the module
+// asmcore.callee_param_is_fn, reading the module
 // funcs directly.
 // lift_binding_param_is_fn is lift_callee_param_is_fn for a callee that is a
 // BINDING of this function rather than a module function: a nested local
@@ -2959,7 +2959,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
 // env-ignoring trampoline → box [funcval]; an already-boxed value (a boxed
 // fn-value local ident, a closure param/local, a `mk()` call returning a
 // closure) flows UNWRAPPED. This makes EVERY fn-value argument an env box so the
-// callee's fn-typed param (marked a closure local in lower_func) dispatches it
+// callee's fn-typed param (marked a closure local by the lowering) dispatches it
 // env-first. Running BEFORE the no-capture __lam_N lift means a no-capture
 // lambda / fn-name arg becomes a `__mkclo$…` marker the later lift leaves alone,
 // so the two arg representations never disagree — there is one fn-arg shape, the box.

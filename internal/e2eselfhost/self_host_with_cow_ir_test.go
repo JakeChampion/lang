@@ -940,7 +940,7 @@ function main(): i32 {
     return 0;
 }`, 4},
 	// The same program written WITHOUT the annotations. The credit is resolved
-	// from the callee's declared return type (struct_ret_fns) the way the
+	// from the callee's declared return type the way the
 	// `dyn T` arm already does it, so the unannotated spelling reclaims like
 	// its annotated twin rather than leaking the box and its buffer (#9224).
 	{"struct-handback-bind-unannotated", `struct Big { neg: boolean, mag: u64[] }

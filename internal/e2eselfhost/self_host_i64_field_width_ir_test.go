@@ -8,7 +8,7 @@ import "testing"
 // struct fields / i64 tuple elements (8-byte struct_get_i64 / tuple_get_w) and
 // bail every other field via `return s.fail()`, dropping the whole module to
 // the legacy AST emitter. #2691 widens it: an i32/u32 struct field or tuple
-// element has its value lowered via lower_expr and sign/zero-extended to i64
+// element had its value lowered via lower_expr and sign/zero-extended to i64
 // (op_int_extend). The checker forbids i64 + u32 (E009), so a plain i32 member
 // here is signed; the u32 flag stays defensive. This is the struct/tuple sibling
 // of the i32-ident and i32-array-element widenings. Each case narrows the i64

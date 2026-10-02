@@ -7,12 +7,12 @@ import (
 
 // --- Block-local scalar-payload enum reclaim (#6127) ------------------------
 //
-// consumed_scalar_enum_frees is run by lower_func over the fn's TOP-LEVEL
+// consumed_scalar_enum_frees was run by lower_func over the fn's TOP-LEVEL
 // statements only, so a scalar-payload enum declared inside a loop or an if was
 // reclaimed nowhere and leaked its box per iteration — the same top-level-only
 // gap #4357 closed for rc-payload options and rc-payload enums, never mirrored
-// for the scalar half. lower_block now runs the same classifier over its own
-// statement list and frees at the consuming match.
+// for the scalar half. The fix had lower_block run the same classifier over its
+// own statement list and free at the consuming match.
 //
 // Releasing at the match rather than at a scope exit is not a preference: a
 // nested block retires its names to "!retired!" before the function-exit sweep
@@ -44,10 +44,8 @@ function main(): i32 {
     return t / 100;
 }`
 
-// A function holding BOTH a top-level candidate (owned by lower_func's
-// consumed_scalar_enum_frees) and a nested one (owned by lower_block's): the
-// box counts must balance exactly. If the two analyses both claimed the
-// top-level candidate, its box would be dec'd twice.
+// A function holding BOTH a top-level candidate and a nested one: the box
+// counts must balance exactly, or one of the two boxes is dec'd twice.
 const scalarEnumMixedSrc = `enum E { Box(i32, i32), Nil }
 
 function round(i: i32): i32 {
@@ -209,8 +207,8 @@ function main(): i32 {
 		if allocs != frees {
 			t.Errorf("allocs=%d frees=%d — a function holding a TOP-LEVEL and a nested "+
 				"candidate must free exactly what it allocates; frees > allocs means "+
-				"lower_func's and lower_block's analyses both claimed one box "+
-				"(double free), frees < allocs means one is unclaimed", allocs, frees)
+				"one box was released twice (double free), frees < allocs means one "+
+				"was never released", allocs, frees)
 		}
 		if live != 0 {
 			t.Errorf("live_bytes=%d, want 0", live)
@@ -420,11 +418,9 @@ function main(): i32 {
 	})
 
 	t.Run("rc_payload_top_level_and_nested_balance", func(t *testing.T) {
-		// The double-free guard for this half: lower_func's rcenumfrees owns the
-		// top-level candidate, lower_block's owns the nested one. Zeroing the slot
-		// after the block free is what also keeps it disjoint from the RCENUM
-		// loop-rebind reclaim — without it the next iteration's
-		// emit_enum_deep_reinit_store would deep-drop the box just released.
+		// The double-free guard for this half: a top-level and a nested
+		// candidate in one function, the nested one rebound every iteration,
+		// each released exactly once.
 		src := `enum T { Text(string), Nil }
 function round(i: i32): i32 {
     var acc: i32 = 0;

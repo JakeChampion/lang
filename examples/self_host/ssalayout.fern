@@ -188,7 +188,7 @@ function pending_edges(l: Loops, region: boolean[], root: i32, reps: i32[]): i32
   return pending;
 }
 
-function release(l: Loops, region: boolean[], root: i32, chosen: i32, pending: i32[], reps: i32[]): i32[] {
+function release(l: Loops, region: boolean[], root: i32, chosen: i32, own pending: i32[], reps: i32[]): i32[] {
   var x: i32 = 0;
   while (x < l.n) {
     if (region[x] && reps[x] == chosen) {

@@ -109,13 +109,13 @@ const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 ticks=300000 view=19
 
 // TestSelfHostSemanticTailRecursion is the reference-typed half of #9692.
 //
-// The AST lowering is NOT the oracle here, which is why this is a test of its
-// own rather than a row in semProductionPrograms. Its TCO
-// (`irlower.tco_self_tail`) matches an op-stream `call_direct f/N` immediately
+// It was a test of its own rather than a row in semProductionPrograms because
+// the deleted AST lowering could not be its oracle. That lowering's TCO
+// (`irlower.tco_self_tail`) matched an op-stream `call_direct f/N` immediately
 // followed by `return`, and once a parameter carries a unit the frame still
 // owes a release after the call returns — the emitted asm for the `rebuilt`
-// shape is `bl __fn_rebuilt` then `bl __fn___fern_arr_dec` then `ret`. So the
-// pair is not adjacent, the rewrite does not fire, and the AST leg dies on
+// shape was `bl __fn_rebuilt` then `bl __fn___fern_arr_dec` then `ret`. So the
+// pair was not adjacent, the rewrite did not fire, and the AST leg died on
 // these depths. Native does the same thing for the same reason (#9794).
 //
 // The graph rewrite has no such limit: it runs before the unit planner, so

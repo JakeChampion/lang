@@ -4424,11 +4424,8 @@ function emit_arm64_op_dyn_downcast(o: ir.Op, i: i32, lp: string, own s: asmcore
 // the IR path: the .text header, each function from the stack IR, and a
 // `_start` that calls __fn_main and exits with its result. It does NOT emit
 // the heap/RC runtime and does NOT reset/take the strbuf — the CALLER
-// (asm_arm64.emit_module, or the differential driver) appends asm_arm64's own
-// emit_runtime and materialises the output. Keeping the runtime on the caller
-// side is what lets asm_arm64 import this module (for the use_ir dispatch)
-// without a cycle: asm_arm64_ir never imports asm_arm64. Caller must have
-// judged the module eligible (ircore.gate) and seeded `s`
+// (emit_module_ir_flat) appends the runtime and materialises the output.
+// Caller must have judged the module eligible (ircore.gate) and seeded `s`
 // (struct_decls / funcs).
 // emit_ir_start writes the program entry: capture argc / argv / envp, push a
 // frame, call __fn_main, exit with its result. Both IR emitters use it — the

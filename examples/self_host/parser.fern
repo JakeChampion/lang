@@ -3492,7 +3492,7 @@ function parse_expr(p: Par): (ast.Expr, Par) {
 // `[var v = <zero>; <chain>; return v;]`: the chain's arm tails assign, and the
 // single terminal return is the block's value. Empty for every other desugar
 // (the StmtIf / StmtMatch forms, whose arm returns ARE the value because their
-// bodies are single-statement and lower through lower_iife's own rewrites).
+// bodies are single-statement).
 // scrut_bind holds the declaration of the local a literal match reads its
 // scrutinee from, when it is not a bare name; stmt then tests that local, and
 // parse_primary wraps the match's IIFE in a block that declares it first.
@@ -7834,10 +7834,8 @@ pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
 
 // parse_param consumes `ident: type_name` and returns a fresh Par +
 // the ParamDecl. ret_arr records, for a closure-typed param `(T) => U[]`
-// (coarsed to type_name "fn"), that the closure RETURNS an array — the one
-// bit lower_func needs to admit `for y in f(x)` (flat_map's shape) onto the
-// IR path. The type position is a bare ident in this cut —
-// no array / generic / union syntax.
+// (coarsed to type_name "fn"), that the closure RETURNS an array. The type
+// position is a bare ident in this cut — no array / generic / union syntax.
 
 // parse_type_name reads a (possibly generic) type spelling and
 // returns it as a single concatenated string. Recognises:
@@ -7849,10 +7847,9 @@ pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
 // the parser saw nothing useful.
 // fn_ret records, for a closure-typed result `(T) => R` (coarsed to the flat
 // tag "fn"), the spelling of R when R is a concrete STRUCT type — the sibling
-// of the `ret_arr` bit. It lets a fn-value PARAM `g: () => P` carry enough to
-// resolve `g().field` (struct_ret_fns gets a `g|P` entry in lower_func), so the
-// call-result field read lowers on the IR path instead of bailing
-// (#3640 slice A). Empty for non-struct returns (the common fn-value case).
+// of the `ret_arr` bit. It lets a fn-value PARAM `g: () => P` carry its return
+// type, which the checker reads for the declared callable type (#3640 slice A).
+// Empty for non-struct returns (the common fn-value case).
 
 // consume_array_suffix swallows trailing `[]` suffix(es) after a type and
 // appends them to `name`. Needed for the parenthesized type forms — a
@@ -8234,8 +8231,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
     // `(…) => R` — coarse "fn"; a trailing `[]` makes it an
     // array of closures. Record ret_arr when R is itself an
     // array (`(T) => U[]`): the tag stays the plain "fn" all
-    // consumers expect, but the bit is still recorded so lower_func can
-    // admit `for y in f(x)` (flat_map) onto the IR path.
+    // consumers expect.
     let (fnr_name, fnr_ret_arr, fnr_fn_ret, fnr_p) = consume_array_suffix(p, "fn");
     var r_is_arr: boolean = ret_spelling_is_array(rr_name);
     // Preserve R when it is a concrete struct return type, so a
@@ -22480,7 +22476,7 @@ pub function elide_len_bounded_body(stmts: ast.Stmt[]): ast.Stmt[] {
 
 // elb_recurse_stmt rebuilds one statement with elide_len_bounded_body applied to
 // each nested statement list (does NOT descend into lambda bodies — they are
-// lifted to their own FuncDecls before lower_func, each processed separately).
+// lifted to their own FuncDecls before lowering, each processed separately).
 function elb_recurse_stmt(st: ast.Stmt): ast.Stmt {
   match (st) {
     ast.StmtIf(f) => {
@@ -25964,11 +25960,6 @@ function settle_float_expr(e: ast.Expr): ast.Expr {
 // destination with nothing to settle against. Settling the BRANCHES is enough
 // for both readers: the checker types the arms, and the lowering reads
 // the IIFE's float-ness off its first branch's returned value.
-//
-// The closure's own `ret_type` is deliberately left alone. Stamping it f64
-// makes the lambda an f64-signature function, which lower_func bails on — the
-// whole module then falls off the IR path, trading an over-reject for a refusal
-// to compile.
 //
 // The settle is all-or-nothing across the branches. For a branch whose type this
 // pass cannot see (an i32 local, a call) the untouched tree is returned, because

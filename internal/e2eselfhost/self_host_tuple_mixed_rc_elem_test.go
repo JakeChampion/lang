@@ -33,7 +33,7 @@ import (
 //
 // What the sweep actually needs is weaker than sole ownership: it needs the tuple
 // to hold a COUNTED REFERENCE to every position it dec's. A bare-ident element
-// has one — lower_expr's ExprTuple arm rc_inc's an element naming an rc-container
+// has one — the tuple construction rc_inc's an element naming an rc-container
 // local (#4350 / #7226), so the tuple is a second owner and the drop's dec gives
 // exactly that retain back while the local's own sweep spends its own reference.
 // tuple_arg_payload_retained is that weaker admission; tuple_arg_payload_fresh

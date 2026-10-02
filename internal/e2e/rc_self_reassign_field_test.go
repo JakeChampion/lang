@@ -25,7 +25,7 @@ import (
 // (1) the bounded-heap win for the string-free accumulator, (2) that a
 // string-FIELD accumulator is value-correct + over-release-free now that it
 // reclaims, and (3) the bounded-heap win for the string-FIELD accumulator —
-// the self-host LowerState/EmitState `s = s.emit(op)` shape, where flat-dec'ing
+// the self-host-style `s = s.emit(op)` shape, where flat-dec'ing
 // the old boxes pins the ops array at rc >= 2 and turns every append into a
 // whole-array clone (the #3425 Effect-A quadratic).
 
@@ -158,7 +158,7 @@ func TestX86_64SelfReassignFieldSound(t *testing.T) {
 
 // The string-fielded LOCAL accumulator (`s = s.step(v)` on a struct with a
 // string field + growing i32[]) reclaims O(N) now that typeSelfDropSafe admits
-// strings (#3425) — the LowerState/EmitState threading shape.
+// strings (#3425) — the self-host state-threading shape.
 func TestX86_64SelfReassignStringFieldBounded(t *testing.T) {
 	_, n1 := compileAndRunX86_64FreeOn(t, selfReassignStringFieldBumpSrc("200"))
 	_, n2 := compileAndRunX86_64FreeOn(t, selfReassignStringFieldBumpSrc("400"))

@@ -113,7 +113,7 @@ function rd(src: E[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.
 			// is a zero-param IIFE, so the walker met an ExprLambda whose
 			// capture set holds the param and refused it as carried out of the
 			// frame — while the statement-form sibling above balanced, one
-			// token apart. lower_iife lowers such a body INLINE with no env
+			// token apart. Such a body lowers INLINE with no env
 			// box, so the read is the enclosing frame's own and earns the same
 			// admissions.
 			name: "callee_extracts_element_expr",

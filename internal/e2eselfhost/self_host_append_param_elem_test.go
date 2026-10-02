@@ -6,8 +6,8 @@ import (
 
 // --- A struct element a CALLEE appends is owned by the array, not the caller
 //
-// `emitf(s, o) { return St { ops: s.ops.append(o) }; }` — the shape the
-// self-host's own LowerState/EmitState threading is built from — stored the
+// `emitf(s, o) { return St { ops: s.ops.append(o) }; }` — the self-host's own
+// state-threading shape — stored the
 // caller's box into the array without retaining it. The caller then released it
 // on the binding's next rebind, and the array was left pointing at freed
 // memory.

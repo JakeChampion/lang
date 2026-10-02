@@ -1090,7 +1090,6 @@ function main(): i32 {
         // Link-verified end to end by TestSelfHostPerModuleConcatArm64;
         // the first attempt (#5937) emitted a dangling __fn_i32__gcd and
         // was reverted, which is why that test asserts through the LINK.
-        // The batched spawned path stays x86-only for now.
         var anfuncs: i32 = ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len();
         if (anfuncs > 512 || force_spawned) {
           if (anfuncs < single_process_max && !force_spawned) {
