@@ -87,9 +87,8 @@ function main(): i32 {
 				t.Fatal("self-host compiler emitted 0 bytes for -target arm64")
 			}
 			if !strings.Contains(asm, ".Lssa_") {
-				t.Error("did not lower through the arm64 IR path, which " +
-					"carries no function budget, so an over-budget program should still " +
-					"reach it (#3457)")
+				t.Error("did not lower through the arm64 IR path, which an " +
+					"over-budget program should reach through the per-module rescue (#3457)")
 			}
 		})
 	}
