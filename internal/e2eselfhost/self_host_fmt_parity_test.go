@@ -62,6 +62,29 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"assert-statements", `function check(x: i32, message: string): void {
+  assert(x > 0);
+  assert(!(x > 10), "x is " + x.to_string());
+  assert(x != 7, message);
+  assert(x != 8, "");
+  if (!(x > 0)) { eprint("assertion failed"); exit(1); }
+}
+`},
+	{"assert-comments", `function check(x: i32): void {
+  // Keep the contract.
+  assert(
+    x > 0,
+    "positive value required"
+  ); // Keep the explanation.
+  assert(x < 10);
+}
+`},
+	{"assert-nested", `function check(x: i32): void {
+  defer assert(x > 0);
+  var f: (i32) => void = (n: i32): void => { assert(n > 0); };
+  f(x);
+}
+`},
 	// `assert` desugars to `if (!cond) { eprint(…); exit(1); }` in both
 	// parsers; both formatters print the call it was written as, with and
 	// without a message, and with a condition that needs no parentheses
