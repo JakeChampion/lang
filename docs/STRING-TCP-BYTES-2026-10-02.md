@@ -6,8 +6,8 @@ stage-3 binaries of 12,130,865 bytes, SHA-256
 `e5f410b9da8852a06b1a586c4551a9c79f92012db8fc2b79952ac760519c7fba`.
 Actual stage-2 Darwin loopback passes with ten allocations and ten frees;
 native descriptor and SIGPIPE probes use zero allocations. The WASI component
-loopback passes. The full unit suite passed on the earlier `d5fc77ab1`
-checkpoint; the current main integration still needs that full gate.
+loopback passes. The full unit suite and `make lint-all` pass on the
+current main integration, source checkpoint `b8881841c`.
 Measurements below retain their original source provenance.
 
 `tcp_send_bytes(fd: i32, data: u8[]): i32` borrows an owned byte array and
