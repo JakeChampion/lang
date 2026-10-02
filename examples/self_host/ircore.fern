@@ -43,6 +43,22 @@ import "./treeshake";
 import "./flatten";
 import "./modloader";
 
+// A generated release whose final operation drops the argument's counted
+// block. This body contract excludes borrowed string descriptors and special
+// map/closure releases; their names alone do not prove a shared-header drop.
+pub function counted_release_body(r: irtables.LowerResult): boolean {
+  let n: i32 = r.ops.len();
+  if (r.n_params != 1 || n < 5 || !util.str_has_prefix(r.name, "__sem_release_")) {
+    return false;
+  }
+  return r.ops[n - 5].kind_tag == ir.op_load_local(0).kind_tag && r.ops[n - 5].i32_imm == 0
+    && r.ops[n - 4].kind_tag == ir.op_call_direct("", 1).kind_tag
+    && r.ops[n - 4].str == "__fern_rc_dec" && r.ops[n - 4].i32_imm == 1
+    && r.ops[n - 3].kind_tag == ir.op_drop().kind_tag
+    && r.ops[n - 2].kind_tag == ir.op_const_i32(0).kind_tag && r.ops[n - 2].i32_imm == 0
+    && r.ops[n - 1].kind_tag == ir.op_return().kind_tag;
+}
+
 // is_array_type reports whether a type string denotes an array (ends "[]").
 function is_array_type(t: string): boolean {
   let n: i32 = t.len();

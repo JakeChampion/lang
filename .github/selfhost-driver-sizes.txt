@@ -429,11 +429,12 @@
 # 36888675074.
 # 2026-10-02 — irlower_run.fern removed: it drove only the AST lowering, which
 # nothing calls any more.
-# 2026-10-02 — fern.fern/stage2 10738872 -> 11469104 (+6.8%), the current
-# compiler's own code generation growing with main's self-host merges of the
-# day (stage1, built by the pin, is unchanged); the other rows stay inside 5%.
-# Number pasted from driver-sizes' own report on run 37059823097.
-fern.fern/stage2 11469104
+# 2026-10-02 — fern.fern/stage2 10738872 -> 11565456 (+7.7%), main's growth
+# since that refresh, chiefly #11116's inline release guard (eight
+# instructions where each record or union release was one call); fern.fern,
+# which the pin builds, stays inside 5%. Number pasted from driver-sizes' own
+# report on run 37063932061 (#11147, which adds 0.06% of its own).
+fern.fern/stage2 11565456
 fern.fern 10737128
 asm_load_run.fern 8721320
 asm_modload_run.fern 7618432
