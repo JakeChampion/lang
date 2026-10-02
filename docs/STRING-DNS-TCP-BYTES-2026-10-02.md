@@ -38,8 +38,8 @@ NAT64 and dial regressions pass. WASI TCP connect, stream and listener tests,
 socket subscriptions, polling storage and lifetime tests, and reactor tests
 also pass, as do the Go WebAssembly backend unit tests and `make lint-all`.
 The additional checked-in silent-peer deadline test passes with both
-compilers, and its refreshed lint gate passes. The full unit suite remains
-pending.
+compilers, and its refreshed lint gate passes. The full unit suite and all
+lint gates also pass from the immutable final source snapshot.
 
 The pinned three-stage Darwin bootstrap reaches identical stage-2 and
 stage-3 compiler binaries of 12,130,881 bytes, SHA-256
