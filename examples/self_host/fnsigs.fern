@@ -13393,7 +13393,7 @@ function strarr_store_keys(stores: string[]): util.NameIndex {
   return util.name_index(keys);
 }
 
-function strarr_own_frame_of(fn: parser.FuncDecl, structs: irtables.StructTab, str_fresh: string[], producers: string[], pix: util.NameIndex, stores: string[], store_keys: util.NameIndex, store_fns: string[]): StrarrOwnFrame {
+function strarr_own_frame_of(fn: parser.FuncDecl, structs: irtables.StructTab, str_fresh: string[], producers: string[], pix: util.NameIndex, no_keys: util.NameIndex): StrarrOwnFrame {
   let vis: string[] = strarr_visible_producers(fn, producers, pix);
   let bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
   let assigned: string[] = irtables.body_assign_targets(fn.body);
@@ -13407,7 +13407,7 @@ function strarr_own_frame_of(fn: parser.FuncDecl, structs: irtables.StructTab, s
   }
   let src: StrarrOwnSrc = StrarrOwnSrc { str_fresh: str_fresh, producers: vis, owned: [], binds: strarr_frame_binds(fn, structs), structs: structs };
   src = StrarrOwnSrc { ...src, owned: strarr_owned_locals(fn, bound, src) };
-  return StrarrOwnFrame { fnkey: fn.name, params: params, src: src, stores: stores, store_keys: store_keys, store_fns: store_fns };
+  return StrarrOwnFrame { fnkey: fn.name, params: params, src: src, stores: [], store_keys: no_keys, store_fns: [] };
 }
 
 // strarr_frame_binds: strarrfld_fn_binds plus every struct-typed local of `fn`,
@@ -13525,19 +13525,25 @@ function strarr_callee_key(c: ast.ExprCall): string {
 function strarr_own_node(e: ast.Expr, own st: StrarrOwnAcc): StrarrOwnAcc {
   let fr: StrarrOwnFrame = st.fr;
   let a: string[] = st.out;
-  if let ast.ExprStructLit(sl) = e {
-    a = strarr_own_struct_lit(sl, fr, a);
-  }
-  if let ast.ExprCall(c) = e {
-    a = strarr_own_call(c, fr, a);
-  }
-  if let ast.ExprIdent(id) = e {
-    if (fr.store_fns.len() > 0 && util.has_str(fr.store_fns, id.name)) {
+  match (e) {
+    ast.ExprStructLit(sl) => {
+      a = strarr_own_struct_lit(sl, fr, a);
+    },
+    ast.ExprCall(c) => {
+      a = strarr_own_call(c, fr, a);
+    },
+    ast.ExprIdent(id) => {
+      if (fr.store_fns.len() == 0 || !util.has_str(fr.store_fns, id.name)) {
+        return st;
+      }
       a = a.append("id:" + id.name);
+    },
+    ast.ExprLambda(lm) => {
+      a = strarr_own_stmts(lm.body, StrarrOwnFrame { ...fr, fnkey: "", params: [], src: StrarrOwnSrc { ...fr.src, owned: [], binds: [] } }, a);
+    },
+    _ => {
+      return st;
     }
-  }
-  if let ast.ExprLambda(lm) = e {
-    a = strarr_own_stmts(lm.body, StrarrOwnFrame { ...fr, fnkey: "", params: [], src: StrarrOwnSrc { ...fr.src, owned: [], binds: [] } }, a);
   }
   return StrarrOwnAcc { fr: fr, out: a };
 }
@@ -13568,21 +13574,31 @@ function strarr_own_call(c: ast.ExprCall, fr: StrarrOwnFrame, own a: string[]): 
   if (k.len() == 0) {
     return a;
   }
-  if (fr.store_fns.len() > 0 && util.has_str(fr.store_fns, ident_name_or_empty(c.callee))) {
+  if (fr.store_fns.len() == 0) {
+    let i: i32 = 0;
+    while (i < c.args.len()) {
+      let pk: string = strarr_frame_param_key(c.args[i], fr);
+      if (pk.len() > 0) {
+        a = a.append("ln:" + k + "#" + util.i32_to_string(i) + "|" + pk);
+      }
+      i = i + 1;
+    }
+    return a;
+  }
+  if (util.has_str(fr.store_fns, ident_name_or_empty(c.callee))) {
     a = a.append("cl:" + k);
   }
-  let i: i32 = 0;
-  while (i < c.args.len()) {
-    let ck: string = k + "#" + util.i32_to_string(i);
-    let pk: string = strarr_frame_param_key(c.args[i], fr);
-    if (fr.store_fns.len() == 0) {
-      if (pk.len() > 0) {
-        a = a.append("ln:" + ck + "|" + pk);
-      }
-    } else if (pk.len() == 0 && !strarr_owned_value(c.args[i], fr.src) && fr.store_keys.has(ck)) {
+  // A store key is "<fn>#<j>", so a callee no row names has none.
+  if (!util.has_str(fr.store_fns, k)) {
+    return a;
+  }
+  let j: i32 = 0;
+  while (j < c.args.len()) {
+    let ck: string = k + "#" + util.i32_to_string(j);
+    if (strarr_frame_param_key(c.args[j], fr).len() == 0 && !strarr_owned_value(c.args[j], fr.src) && fr.store_keys.has(ck)) {
       a = a.append("bd:" + ck);
     }
-    i = i + 1;
+    j = j + 1;
   }
   return a;
 }
@@ -13661,8 +13677,11 @@ function strarrfld_borrowed_elem_marks(funcs: parser.FuncDecl[], structs: irtabl
   let no_keys: util.NameIndex = util.name_index(none);
   let pix: util.NameIndex = util.name_index(producers);
   let first: string[] = [];
+  let frames: StrarrOwnFrame[] = [];
   for fn in funcs {
-    first = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, pix, none, no_keys, none), first);
+    let fr: StrarrOwnFrame = strarr_own_frame_of(fn, structs, str_fresh, producers, pix, no_keys);
+    first = strarr_own_stmts(fn.body, fr, first);
+    frames = frames.append(fr);
   }
   let stores: string[] = strarr_param_stores(strarr_keyed_values(first, "st:"), strarr_keyed_values(first, "ln:"));
   let store_keys: util.NameIndex = strarr_store_keys(stores);
@@ -13675,8 +13694,10 @@ function strarrfld_borrowed_elem_marks(funcs: parser.FuncDecl[], structs: irtabl
   }
   let store_fns: string[] = strarr_store_fns(stores);
   let second: string[] = [];
-  for fn in funcs {
-    second = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, pix, stores, store_keys, store_fns), second);
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    second = strarr_own_stmts(funcs[i].body, StrarrOwnFrame { ...frames[i], stores: stores, store_keys: store_keys, store_fns: store_fns }, second);
+    i = i + 1;
   }
   for bk in strarr_keyed_values(second, "bd:") {
     for tf in strarr_keyed_values(stores, bk + "|") {
