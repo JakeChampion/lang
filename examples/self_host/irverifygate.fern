@@ -2,9 +2,7 @@
 // verifiers (#6639).
 //
 // irverify.fern and irverifystack.fern were written and then only ever run
-// from test drivers: irverify_run.fern builds op streams by hand, and
-// irlower_run.fern sweeps the conformance corpus through `-verify` /
-// `-verifystack`. Neither is the compiler. So the module with the most
+// from test drivers, neither of them the compiler. So the module with the most
 // lowering in it — the self-host compiler's own sources, ~1000 functions of
 // the hardest code the lowerer sees — went through every build unchecked, and
 // a malformed op stream still reached the backend the way it always did: as a

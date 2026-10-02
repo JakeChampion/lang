@@ -6,7 +6,7 @@
 //
 // Seven groups:
 //
-//   * the gate — lower_gated, which every `*_or_error` entry runs before it
+//   * the gate — gate / gate_program, which every `*_or_error` entry runs before it
 //     emits;
 //   * the refusals all three share — strict_ir_refuse, eprint_ir_ineligible and
 //     unsupported_op_refuse, each an eprint-then-exit(3) whose only per-backend
@@ -91,7 +91,7 @@ pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // / wasm counterparts). They use the stack-arg ABI and symbols — see
 // ir_helper_symbol for the name map. The whitelist
 // is exact: any OTHER __fern_* / __rc_* call is NOT provided here, so
-// lower_gated refuses the module rather than emitting a call with no body.
+// gate refuses the module rather than emitting a call with no body.
 pub function is_fern_helper(name: string): boolean {
   return is_rc_helper(name)
     || is_release_helper(name)
@@ -473,33 +473,12 @@ pub function ssa_block_id_collision(name: string, id: i32): i32 {
   return 0;
 }
 
-// known_includes reports whether `name` is in the program-wide known-symbol
-// set — a function defined SOMEWHERE in the loaded import graph (any module),
-// not necessarily in the current one. It is the cross-module twin of
-// module_has_func: together they let per-module eligibility admit a call whose
-// target is a sibling module's `__fn_*` symbol (resolved at link) while still
-// bailing on a truly-unknown / builtin-only name.
-pub function known_includes(known: string[], name: string): boolean {
-  var i: i32 = 0;
-  while (i < known.len()) {
-    if (known[i] == name) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
-// module_func_reg indexes every name module_has_func answers to: each function's
-// own name, plus the method-call form "<Type>.<method>" (the irlower dispatch
-// label) for a receiver function. Built ONCE per module and threaded, like `sg`
-// above and for the same reason — the eligibility walk asks per call op per
-// function, so deriving it per query is the same quadratic.
-//
-// Composing the dispatch label here rather than at the query is the other half:
-// the scan this replaces built one per RECEIVER FUNCTION on every query, and
-// discarded all but the match.
-pub function module_func_reg(mod: parser.Module): irlower.SigReg {
+// defined_reg indexes every name a call or function value in `mod` may name
+// and find defined: each declaration's own name, the method-call form
+// "<Type>.<method>" (the dispatch label) for a receiver function, and the
+// bodies the substitution defines beside the declarations. Built once per
+// module, since the eligibility walk asks per call op.
+function defined_reg(mod: parser.Module, extra: irlower.LowerResult[]): irlower.SigReg {
   var rows: string[] = [];
   for fd in mod.funcs {
     rows = rows.append(fd.name);
@@ -507,12 +486,10 @@ pub function module_func_reg(mod: parser.Module): irlower.SigReg {
       rows = rows.append(util.base_type_name(fd.receiver_type) + "." + fd.name);
     }
   }
+  for x in extra {
+    rows = rows.append(x.name);
+  }
   return irlower.sig_reg_of(rows);
-}
-
-// module_has_func reports whether `name` is a function defined in the module.
-pub function module_has_func(freg: irlower.SigReg, name: string): boolean {
-  return irlower.sig_reg_has_exact(freg, name);
 }
 
 // ---- compare-and-branch fusion --------------------------------------------
@@ -586,13 +563,11 @@ pub function flip_int_cmp_kind(id: i32): i32 {
 // # Why this is an AST pass and not native's IR pass
 //
 // native/internal/ir/array_scale.go is a whole-PROGRAM IR pass, because it has
-// to read the element function's body to find the constant. This compiler has
-// no whole-program IR at emit time: the emitters lower one function at a time
-// (asm_ir.fern's emit_module_funcs -> irlower.lower_func), and lower_module,
-// which does return the whole module's IR, is only reached by the verify and
-// eval harnesses. A pass hooked there rewrites nothing that gets emitted.
+// to read the element function's body to find the constant. Here the typed
+// lowering builds each body from the checked AST, so a rewrite of the AST is
+// one every backend's emit sees.
 //
-// The whole-program artifact at emit time is the AST, and it is a better fit
+// The AST is a better fit
 // anyway. Native's hardest problem is deleting an op range without disturbing
 // the operand stack -- it shipped a miscompile doing exactly that (#9917), and
 // the fix was to ask flatten's stack model instead of assuming positions. A
@@ -811,6 +786,7 @@ pub function all_runtime_need_roots(): string[] {
     // __fern_tcp_listen / __fern_tcp_send / __fern_poll / … (#5686).
     // Filesystem + process:
     "stat", "lstat", "statfs", "access", "read_dir", "read_dir_all", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
+    "write_file_bytes", "write_file_bytes_u8",
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
     "chmod", "chmod_at", "set_file_times", "truncate", "mknod", "chown_at",
     "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_dup_onto",
@@ -915,7 +891,7 @@ pub function unsupported_op_refuse(tag: i32, backend: string): string {
 // lower_failed_refuse ends compilation for a function whose lowering bailed,
 // naming the function and the construct that refused (LowerResult.why). Every
 // backend calls it at the top of its per-function emit: the gated routes
-// (lower_gated) never get this far, so this is the backstop for a route that
+// (gate) never get this far, so this is the backstop for a route that
 // emits without the gate. A failed result still carries the PARTIAL op stream up to the bail
 // with n_locals 0, and letting that reach the IR verify gate reports the bail
 // as malformed IR with every local "outside the frame" (#8590) — or on wasm
@@ -949,21 +925,18 @@ pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: irlower.StructTab): i
 // Sub is a whole-module semantic lowering the CALLER produced, threaded into
 // the emit as a value. The pipeline behind it (semsource -> ssaunits -> ssarc,
 // `semlower`) is a large import closure, so passing the RESULT rather than
-// calling the producer is what keeps a driver that cannot use the path from
-// linking it: `no_sub()` is the AST lowering, unchanged.
+// calling the producer is what keeps a driver that emits nothing from linking
+// it. `no_sub()` is the empty substitution.
 pub struct Sub {
-  on: boolean,
-  // One entry per mod.funcs, `ok` where a produced body replaces the AST one.
+  // One entry per mod.funcs.
   bodies: irlower.LowerResult[],
   // The bodies with no declaration of their own: the generic instances and
   // the per-type drop helpers, deduped onto the cache tail by symbol.
   extra: irlower.LowerResult[],
   // The registries `ssarc.caller_sigs` rewrote from the produced callees'
-  // verified contracts. The AST lowering of what is left must read these, and
-  // so must the emit.
+  // verified contracts, which the emit reads.
   sigs: irlower.FnSigs,
-  // The runtime helpers' lowering, handed to the emit's state; independent of
-  // `on`, since a helper produces whether or not the program's module did.
+  // The runtime helpers' lowering, handed to the emit's state.
   rt_lower: (string) => irlower.LowerResult[],
   // The typed module the producer lambda-lifted, which a register backend's
   // emit reads erased rather than lifting again; `has_lifted` says it is set.
@@ -976,7 +949,7 @@ pub struct Sub {
 
 pub function no_sub(): Sub {
   var none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [] };
-  return Sub { on: false, bodies: [], extra: [], sigs: irlower.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [] };
+  return Sub { bodies: [], extra: [], sigs: irlower.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [] };
 }
 
 // The register emit's lambda-lifted module: the producer's, erased, when it
@@ -998,104 +971,57 @@ pub function with_records(mod: parser.Module, sub: Sub): parser.Module {
   return parser.Module { ...mod, structs: util.append_all(mod.structs, sub.records) };
 }
 
-// The body the substitution produced for declaration `i`, else the AST
-// lowering's.
-pub function produced_or_lowered(sub: Sub, i: i32, fd: parser.FuncDecl, structs: irlower.StructTab, sg: irlower.FnSigs, for_wasm: boolean): irlower.LowerResult {
-  if (sub.on && i < sub.bodies.len() && sub.bodies[i].ok) {
-    return sub.bodies[i];
+// produced is the body the typed lowering produced for declaration `i`
+// (`fd`) of the bodies an emit reads. Every declaration has one: a refusal
+// already failed the compile where the substitution was built, so a missing
+// body is a compiler bug, reported naming the function.
+pub function produced(bodies: irlower.LowerResult[], i: i32, fd: parser.FuncDecl): irlower.LowerResult {
+  if (i < bodies.len() && bodies[i].ok) {
+    return bodies[i];
   }
-  return irlower.lower_func(fd, structs, sg, for_wasm);
+  var name: string = fd.name;
+  if (fd.receiver_type.len() > 0) {
+    name = util.base_type_name(fd.receiver_type) + "." + fd.name;
+  }
+  eprint("error: internal: no typed body for " + name + " — every declaration the emit reads is produced by the typed lowering or refused before it");
+  exit(3);
+  return bodies[0];
 }
 
-// The registry base the lowering and the emit share: the whole-program set when
-// no substitution is happening, and the rewritten set when one is. The
-// substitution was built from that same set, so it is not computed again.
-pub function sub_base(sub: Sub, funcs: parser.FuncDecl[], structs: irlower.StructTab): irlower.FnSigs {
-  if (sub.on) {
-    return sub.sigs;
-  }
-  return wp_fn_sigs(funcs, structs);
-}
-
-// The cache the emit reads: each produced body in place of the AST one, then
-// the declaration-less bodies on the tail.
-pub function sub_cache(sub: Sub, cache: irlower.LowerResult[]): irlower.LowerResult[] {
-  if (!sub.on) {
-    return cache;
-  }
-  var out: irlower.LowerResult[] = [];
-  var i: i32 = 0;
-  while (i < cache.len()) {
-    if (i < sub.bodies.len() && sub.bodies[i].ok) {
-      out = out.append(sub.bodies[i]);
-    } else {
-      out = out.append(cache[i]);
-    }
-    i = i + 1;
-  }
-  // Already deduped by symbol and conflict-checked where it was built
-  // (ssarc.merge_helpers), so the tail is a plain append here.
-  for h in sub.extra {
-    out = out.append(h);
-  }
-  return out;
-}
-
-// Lowered is lower_gated's result: `ok` is the module's IR-eligibility verdict,
-// and when it holds `cache[i]` is mod.funcs[i]'s LowerResult, ready to emit
-// from. A separate flag rather than an empty cache, because a function-less
-// module is eligible and its cache is legitimately empty.
+// Lowered is gate's result: `ok` is the module's IR-eligibility verdict, and
+// when it holds `cache[i]` is mod.funcs[i]'s body, ready to emit from, with
+// the declaration-less bodies on the tail. A separate flag rather than an
+// empty cache, because a function-less module is eligible and its cache is
+// legitimately empty.
 pub struct Lowered {
   ok: boolean,
   cache: irlower.LowerResult[],
 }
 
-// lower_gated is the FUSED eligibility gate + lowering pass every whole-program
-// emit path runs (#4394 lever 3, shared here for arm64 and wasm as well as x86,
-// #8199): each function is lowered ONCE with the emit-side registries `sg`, its
-// eligibility judged on that same LowerResult, and the result kept so the emit
-// never lowers it a second time. The verdict is r.ok plus a call_direct /
-// const_func scan whose only rejections are USER function names (RC-inserted
-// __struct_drop_ / __field_reclaim_ / __fern_* helper calls all pass
-// is_fern_helper).
-//
-// `for_wasm` selects the wasm lowering shape (the erased-param widening and
-// arg-stash forms); it changes instruction selection, never whether a body
-// lowers, so the wasm gate can sit on the same cache its emit consumes.
-pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irlower.FnSigs, known: string[], for_wasm: boolean, sub: Sub): Lowered {
+// gate is the eligibility verdict every whole-program emit path asks of the
+// typed lowering `sub` for `mod`: each declaration's produced body, then a
+// call_direct / const_func scan whose only rejections are USER function names
+// nothing defines (RC-inserted __struct_drop_ / __field_reclaim_ / __fern_*
+// helper calls all pass is_fern_helper). The cache it returns is the one the
+// emit reads.
+pub function gate(mod: parser.Module, sub: Sub): Lowered {
   var cache: irlower.LowerResult[] = [];
-  var freg: irlower.SigReg = module_func_reg(mod);
-  // The bodies the substitution defines beside the declarations, which a
-  // produced body calls by name the way an AST one calls a declaration.
-  var extra: string[] = [];
-  for x in sub.extra {
-    extra = extra.append(x.name);
-  }
+  var freg: irlower.SigReg = defined_reg(mod, sub.extra);
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
-    // A declaration the substitution produced is not lowered again: its
-    // body is the one the emit reads, and the AST lowering's verdict on it
-    // is not asked for, so the semantic lowering reaches what the AST
-    // lowering refuses.
-    var r: irlower.LowerResult = produced_or_lowered(sub, i, mod.funcs[i], structs, sg, for_wasm);
-    if (!r.ok) {
-      if (strict_ir_on()) {
-        strict_ir_refuse(mod.funcs[i].name + " (did not lower: " + r.why + ")");
-      }
-      return Lowered { ok: false, cache: [] };
-    }
+    var r: irlower.LowerResult = produced(sub.bodies, i, mod.funcs[i]);
     var j: i32 = 0;
     while (j < r.ops.len()) {
       var o: ir.Op = r.ops[j];
       if (o.kind_tag == 149) {  // call_direct
-        if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str) && !known_includes(extra, o.str)) {
+        if (!is_fern_helper(o.str) && !is_c_call(o.str) && !irlower.sig_reg_has_exact(freg, o.str)) {
           if (strict_ir_on()) {
             strict_ir_refuse(mod.funcs[i].name + " (call to unknown symbol " + o.str + ")");
           }
           return Lowered { ok: false, cache: [] };
         }
       } else if (o.kind_tag == 6) {  // const_func
-        if (!module_has_func(freg, o.str) && !known_includes(known, o.str) && !known_includes(extra, o.str)) {
+        if (!irlower.sig_reg_has_exact(freg, o.str)) {
           if (strict_ir_on()) {
             strict_ir_refuse(mod.funcs[i].name + " (function value " + o.str + " not defined)");
           }
@@ -1107,12 +1033,14 @@ pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irl
     cache = cache.append(r);
     i = i + 1;
   }
-  return Lowered { ok: true, cache: cache };
+  // Already deduped by symbol and conflict-checked where it was built
+  // (ssarc.merge_helpers), so the tail is a plain append here.
+  return Lowered { ok: true, cache: util.append_all(cache, sub.extra) };
 }
 
 // Gated is the whole program a register backend emits: the module it gates,
-// the emit cache (the substitution's bodies in place, its extra bodies on the
-// tail) and the registry base. `ok` is lower_gated's verdict.
+// the emit cache (the substitution's bodies, its extra bodies on the tail) and
+// the registry base. `ok` is gate's verdict.
 pub struct Gated {
   ok: boolean,
   im: parser.Module,
@@ -1124,15 +1052,11 @@ pub struct Gated {
 // gate_program is the gate both register backends' whole-module emits run, and
 // what a per-module build cuts into units (split_units). `lifted` is the
 // lambda-lifted module (sub_lifted).
-pub function gate_program(lifted: parser.Module, known: string[], sub: Sub): Gated {
+pub function gate_program(lifted: parser.Module, sub: Sub): Gated {
   var im: parser.Module = with_records(parser.infer_ret_types_module(script_normalized(lifted)), sub);
   var stab: irlower.StructTab = irlower.struct_tab(im.structs);
-  var base: irlower.FnSigs = sub_base(sub, im.funcs, stab);
-  var g: Lowered = lower_gated(im, stab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false, sub);
-  if (!g.ok) {
-    return Gated { ok: false, im: im, stab: stab, base: base, cache: [] };
-  }
-  return Gated { ok: true, im: im, stab: stab, base: base, cache: sub_cache(sub, g.cache) };
+  var g: Lowered = gate(im, sub);
+  return Gated { ok: g.ok, im: im, stab: stab, base: sub.sigs, cache: g.cache };
 }
 
 // Units is a gated program cut into one unit per module of a per-module build:
@@ -1425,7 +1349,7 @@ function digest_flags(x: boolean, y: boolean): i32 {
 // a unit the compiler's size (`inlineTinyLeafOps`, measured there at -12.3% Ir
 // on `sort -k2,2n` for +0.09% of the self-host's text) — with the same budget
 // bounding the sum of a large unit's growth. It runs on the lowering the register backends emit, the
-// substituted bodies included (after sub_cache); wasm declares each local with
+// substituted bodies included; wasm declares each local with
 // a type (i64_slots / f64_slots), which the splice does not extend.
 //
 // A candidate is a declaration of at most inline_leaf_ops() ops besides its
@@ -1637,27 +1561,23 @@ function splice_leaves(r: irlower.LowerResult, self: string, reg: irlower.SigReg
 // `fern.fern` performed no IR verification at all, so an un-paired construction
 // compiled silently under the self-host while native reported E068 (#9623).
 //
-// It is called from each backend's EMIT entry rather than from lower_gated,
-// because lowering is also what the routing and eligibility probes do. A probe
-// asks how a program would route and must be answered, not killed:
-// wasm_ir.ir_route_ok lowers a module only to return a
-// boolean, and asm_ir.module_runtime_needs runs the whole per-function emit and
-// throws the text away. Hooking the lowering made them exit on a claim
-// they were only asked about (#9655).
+// It is called from each backend's EMIT entry rather than from the gate,
+// because the routing and eligibility probes gate too. A probe asks how a
+// program would route and must be answered, not killed: wasm_ir.ir_route_ok
+// gates a module only to return a boolean, and asm_ir.module_runtime_needs
+// runs the whole per-function emit and throws the text away. Hooking the gate
+// made them exit on a claim they were only asked about (#9655).
 //
 // Reaching every emit entry is also what covers the per-unit and per-module
-// builds — `asm_ir_run -ir-unit`, `asm_modload_run -per-module-emit-*` — which
-// re-lower outside lower_gated and so accepted an unverified claim.
+// builds — `asm_ir_run -ir-unit`, `asm_modload_run -per-module-emit-*`.
 //
 // `[lo, hi)` is the emit's own function window (hi < 0 means "to the end"), so
 // a sharded emit checks what it emits and the shards together cover the module.
-// `cache`, where the caller already lowered, is the lowering the emit will use;
-// a claimed function outside it is lowered here, which costs one lowering per
-// CLAIM rather than per function — two in the whole tree today.
+// `cache` is the bodies the emit reads.
 //
 // The unannotated early return is what keeps this free: one boolean pair per
 // function, before any op is examined.
-pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache: irlower.LowerResult[], structs: irlower.StructTab, sg: irlower.FnSigs, for_wasm: boolean): void {
+pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache: irlower.LowerResult[]): void {
   var diags: util.Diag[] = [];
   var hh: i32 = hi;
   if (hh < 0 || hh > funcs.len()) {
@@ -1666,7 +1586,7 @@ pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache:
   var i: i32 = lo;
   while (i < hh) {
     if (funcs[i].fip || funcs[i].fbip) {
-      diags = fip_claim_diags(funcs[i], claim_lowering(cache, i, funcs[i], structs, sg, for_wasm), diags);
+      diags = fip_claim_diags(funcs[i], produced(cache, i, funcs[i]), diags);
     }
     i = i + 1;
   }
@@ -1675,15 +1595,6 @@ pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache:
   }
   eprint(util.format_diags(diags));
   exit(1);
-}
-
-// claim_lowering is the lowering to judge function `i` against: the caller's,
-// when it kept one, and a fresh one otherwise.
-function claim_lowering(cache: irlower.LowerResult[], i: i32, fn: parser.FuncDecl, structs: irlower.StructTab, sg: irlower.FnSigs, for_wasm: boolean): irlower.LowerResult {
-  if (i < cache.len()) {
-    return cache[i];
-  }
-  return irlower.lower_func(fn, structs, sg, for_wasm);
 }
 
 // fip_claim_diags appends this function's E068 verdicts.

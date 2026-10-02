@@ -10,9 +10,9 @@ import (
 // reference of its own, because the caller owns p across the whole call and
 // the callee never releases it.
 //
-// TestSelfHostRcPlanDiff pins the PLAN and TestSelfHostLeakMatrixX86_64 pins
-// a per-round census verdict. Neither can see what actually breaks if the
-// cancellation half-lands: the pair is NET-ZERO, so a missing retain with the
+// TestSelfHostLeakMatrixX86_64 pins a per-round census verdict, which cannot
+// see what actually breaks if the cancellation half-lands: the pair is
+// NET-ZERO, so a missing retain with the
 // sweep dec still in place, or a `.with` mutating the caller's array through
 // the alias, moves the ANSWER and leaves allocs == frees. These cases check
 // the answer alongside the balance — the refused rows assert the caller's

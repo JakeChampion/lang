@@ -335,7 +335,8 @@ var rcInertBuiltins = map[string]bool{
 	// out; neither is retained. Its sibling `write_file` resolves
 	// through the rename rule, but there is no
 	// `__fern_write_file_exec` helper for this one to follow.
-	"write_file_exec": true,
+	"write_file_exec":  true,
+	"write_file_bytes": true,
 
 	// (path, mode) → Result. The path is read and NUL-copied, never
 	// retained; the mode is a scalar. Native-only — E066 refuses it on
@@ -584,8 +585,9 @@ var rcInert = map[string]bool{
 	"__fern_wasm_poll":  true, "__fern_wasm_pollable_drop": true,
 	"__fern_wasm_timer_pollable": true, "__fern_write": true,
 	"__fern_write_file": true, "__fern_writer_close": true,
-	"__fern_writer_truncate": true,
-	"__fern_writer_write":    true, "__http_entry": true, "__load_i32": true,
+	"__fern_write_file_bytes": true,
+	"__fern_writer_truncate":  true,
+	"__fern_writer_write":     true, "__http_entry": true, "__load_i32": true,
 	"__load_i64": true, "__load_ptr": true, "__load_u8": true, "__memcpy": true,
 	"__store_u8": true, "__str_bytes": true, "__arr_set_len": true,
 	"__memset": true, "__method_string_as_bytes": true,

@@ -15918,6 +15918,17 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
       }
       return wfs.emit(ir.op_write_file());
     }
+    if (cid.name == "write_file_bytes" && c.args.len() == 2) {
+      var wfb: LowerState = lower_expr(c.args[0], s);
+      if (!wfb.ok) {
+        return wfb;
+      }
+      wfb = lower_expr(c.args[1], wfb);
+      if (!wfb.ok) {
+        return wfb;
+      }
+      return wfb.emit(ir.op_write_file_bytes());
+    }
     // write_file_exec(path, contents) — write_file with the executable bit, so
     // a compiler emitting a finished binary can produce a runnable one (#6133).
     if (cid.name == "write_file_exec" && c.args.len() == 2) {
@@ -96552,7 +96563,7 @@ function builtin_opt_ret_type(name: string): string {
   if (name == "read_file_bytes") {
     return "Result[u8[], IoError]";
   }
-  if (name == "write_file") {
+  if (name == "write_file" || name == "write_file_bytes") {
     return "Result[void, IoError]";
   }
   if (name == "write_file_exec") {
@@ -103355,6 +103366,15 @@ pub function grow_param_flags_seeded(funcs: parser.FuncDecl[], seeds: string[]):
   var e_ck: i32[] = [];
   var e_argi: i32[] = [];
   var e_ppi: i32[] = [];
+  // The callee of every dying pass is found by name; a scan of all the
+  // functions per pass is quadratic in the whole program.
+  var fnames: string[] = [];
+  var fni: i32 = 0;
+  while (fni < funcs.len()) {
+    fnames = fnames.append(funcs[fni].name);
+    fni = fni + 1;
+  }
+  var by_name: util.NameIndex = util.name_index(fnames);
   var fk0: i32 = 0;
   while (fk0 < funcs.len()) {
     var fd0: parser.FuncDecl = funcs[fk0];
@@ -103395,28 +103415,30 @@ pub function grow_param_flags_seeded(funcs: parser.FuncDecl[], seeds: string[]):
         if (meth) {
           bare = slice_unchecked(cname, 1, cname.len()) + "";
         }
-        var ck0: i32 = 0;
-        while (ck0 < funcs.len()) {
+        // The bucket chain is ascending, so the edges land in declaration
+        // order, as a scan would place them.
+        var ck0: i32 = by_name.chain(bare);
+        while (ck0 >= 0) {
           var hit: boolean = false;
-          if (meth) {
-            hit = funcs[ck0].name == bare && funcs[ck0].receiver_type.len() > 0;
-          } else {
-            hit = funcs[ck0].name == cname && funcs[ck0].receiver_type.len() == 0;
+          if (by_name.names[ck0] == bare) {
+            if (meth) {
+              hit = funcs[ck0].receiver_type.len() > 0;
+            } else {
+              hit = funcs[ck0].receiver_type.len() == 0;
+            }
           }
           if (hit) {
             e_fk = e_fk.append(fk0);
             e_ck = e_ck.append(ck0);
             e_argi = e_argi.append(argi);
             e_ppi = e_ppi.append(ppi0);
-            // A free-function name is unique; a method name is not,
-            // so every method so spelled is an edge.
-            if (!meth) {
-              ck0 = funcs.len();
-            } else {
-              ck0 = ck0 + 1;
-            }
+          }
+          // A free-function name is unique; a method name is not, so
+          // every method so spelled is an edge.
+          if (hit && !meth) {
+            ck0 = 0 - 1;
           } else {
-            ck0 = ck0 + 1;
+            ck0 = by_name.next[ck0];
           }
         }
       }

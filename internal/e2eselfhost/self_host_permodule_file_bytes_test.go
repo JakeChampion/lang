@@ -1,0 +1,84 @@
+package e2eselfhost
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// A library-only caller must link against the entry unit's shared runtime.
+// Whole-program compilation cannot detect an omitted per-module runtime root.
+func TestSelfHostPerModuleFileBytes(t *testing.T) {
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := writeSelfHostModloadProject(t)
+	driver := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "filebytesdriver")
+	proj := t.TempDir()
+	mustWrite(t, proj, "leaf.fern", `pub function save(): i32 {
+  let data: u8[] = [255 as u8, 0 as u8, 128 as u8, 65 as u8];
+  match (write_file_bytes("raw.bin", data)) {
+    Ok(_) => { return 0; },
+    Err(_) => { return 1; }
+  }
+}
+`)
+	mustWrite(t, proj, "main.fern", `import "./leaf";
+function main(): i32 { return leaf.save(); }
+`)
+	copyStdlibTree(t, proj)
+	entry := filepath.Join(proj, "main.fern")
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			gcc := x86gcc
+			var qemu string
+			if target == "arm64-linux" {
+				gcc, qemu = arm64Tooling(t)
+			}
+			drive := func(args ...string) string {
+				t.Helper()
+				out, err := runX86_64Bin(x86runner, driver, append([]string{entry, "-target", target}, args...)...).CombinedOutput()
+				if err != nil {
+					t.Fatalf("driver %v: %v\n%s", args, err, out)
+				}
+				return string(out)
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(drive("-per-module-count")))
+			if err != nil || n < 2 {
+				t.Fatalf("per-module count = %d (%v), want >=2", n, err)
+			}
+			var needArgs []string
+			for _, root := range strings.Fields(drive("-per-module-needs")) {
+				needArgs = append(needArgs, "-extra-need", root)
+			}
+			var objects []string
+			for i := 0; i < n; i++ {
+				unit := drive(append([]string{"-per-module-emit", strconv.Itoa(i)}, needArgs...)...)
+				objects = append(objects, mustWrite(t, proj, target+"_u"+strconv.Itoa(i)+".s", unit))
+			}
+			bin := filepath.Join(proj, target+"_prog")
+			linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, objects...)
+			linkArgs = append(linkArgs, "-o", bin)
+			if out, err := exec.Command(gcc, linkArgs...).CombinedOutput(); err != nil {
+				t.Fatalf("per-module link: %v\n%s", err, out)
+			}
+			var run *exec.Cmd
+			if target == "arm64-linux" {
+				run = runArm64Bin(qemu, bin)
+			} else {
+				run = runX86_64Bin(x86runner, bin)
+			}
+			run.Dir = t.TempDir()
+			if out, err := run.CombinedOutput(); err != nil {
+				t.Fatalf("run: %v\n%s", err, out)
+			}
+			got, err := os.ReadFile(filepath.Join(run.Dir, "raw.bin"))
+			want := []byte{255, 0, 128, 65}
+			if err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("file bytes = %v (%v), want %v", got, err, want)
+			}
+		})
+	}
+}

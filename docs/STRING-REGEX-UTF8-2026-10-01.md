@@ -1,13 +1,15 @@
 # Checked regex text and explicit byte output
 
-Integration checkpoint, October 2: the raw-pipeline parent `282343afb`
+Integration checkpoint, October 2: the file-byte parent `7052f1c0c`
 passes the refreshed Linux target matrix, existing regex fixtures, VCL
 backend TAP suite, `tr` callers and `make lint-all`. Actual stage-2 Darwin,
 core WASM, Preview 2 and primary interpreter fixtures pass. Native reports
 5172 allocations and 5172 frees; core WASM reports 5224 and 5224. Stage 2
 and stage 3 are identical, SHA-256
-`e1cf022bf95bfa4277734439ff29a790c4858c3f8741d508d9425dcaf3f461b0`.
-The newest main integration and its full unit gate remain pending. Earlier
+`bf57540e6d87a899384a14f556e89b78f435c43c560180533b64532de6164f17`.
+The stage-2 and stage-3 executables occupy 12,097,649 bytes. Stage 1 differs
+because the seed predates generator changes on main. The full unit gate
+on this integration remains pending. Earlier
 measurements below retain their original revision and validation context.
 
 `std/regex` matches bytes. For example, `.` consumes one byte of `é`,

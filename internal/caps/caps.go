@@ -67,6 +67,7 @@ var BuiltinCaps = map[string]string{
 	"read_file":        "fs",
 	"read_file_bytes":  "fs",
 	"write_file":       "fs",
+	"write_file_bytes": "fs",
 	"write_file_exec":  "fs",
 	"open_reader":      "fs",
 	"open_writer":      "fs",

@@ -785,7 +785,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
 					needs.add("__fern_read_file_bytes")
-				case "__fern_write_file":
+				case "__fern_write_file", "__fern_write_file_bytes":
 					// (path, content) → Option[IoError]. Same
 					// __build_io_error / __fern_str_len /
 					// __fern_str_byte chain as read_file plus
@@ -796,7 +796,7 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
-					needs.add("__fern_write_file")
+					needs.add(callDirectAlias(op.Str))
 				case "__fern_remove_file":
 					// (path) → Result[void, IoError]. Same
 					// __build_io_error / __fern_str_len /
@@ -1348,6 +1348,7 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_read_file":               {"__wasi_errno_of_code"},
 	"__fern_read_file_bytes":         {"__wasi_errno_of_code"},
 	"__fern_write_file":              {"__wasi_errno_of_code"},
+	"__fern_write_file_bytes":        {"__wasi_errno_of_code"},
 	"__fern_open_reader":             {"__wasi_errno_of_code"},
 	"__fern_open_writer":             {"__wasi_errno_of_code"},
 	"__fern_open_appender":           {"__wasi_errno_of_code"},
@@ -1417,7 +1418,7 @@ func closePreview2HelperCalls(needs *runtimeNeeds) {
 // __fern_alloc_box.
 var helperResultBoxCallers = []string{
 	"__fern_env", "__fern_config_get", "__fern_read_line",
-	"__fern_read_file", "__fern_read_file_bytes", "__fern_write_file",
+	"__fern_read_file", "__fern_read_file_bytes", "__fern_write_file", "__fern_write_file_bytes",
 	"__fern_open_reader", "__fern_open_writer", "__fern_open_appender",
 	"__fern_open_exclusive", "__fern_open_reader_with", "__fern_open_writer_with",
 	"__fern_reader_close_fd", "__fern_writer_close",
@@ -2730,6 +2731,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildWriteFileBody,
+	},
+	"__fern_write_file_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildWriteFileBytesBody,
 	},
 	"__fern_remove_file": {
 		// (path_data, path_len) → i32 — heap-form
