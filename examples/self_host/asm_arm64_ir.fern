@@ -1839,10 +1839,12 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   var b: string = ssa_src(reg_of, ins.args[1], "x5");
   var n: string = util.i32_to_string(ins.result);
   s = s.write("    ldr x6, [" + a + ", #8]\n    ldr x7, [" + b + ", #8]\n    cmp x6, x7\n    b.ne " + lp + "streqn" + n + "\n");
-  if (fr.lit0[ins.args[1]] >= 0) {
-    s = s.write("    ldr x6, [" + a + "]\n    ldrb w6, [x6]\n    cmp w6, #" + util.i32_to_string(fr.lit0[ins.args[1]]) + "\n    b.ne " + lp + "streqn" + n + "\n");
-  } else if (fr.lit0[ins.args[0]] >= 0) {
-    s = s.write("    ldr x6, [" + b + "]\n    ldrb w6, [x6]\n    cmp w6, #" + util.i32_to_string(fr.lit0[ins.args[0]]) + "\n    b.ne " + lp + "streqn" + n + "\n");
+  var lit_a: i32 = fr.lit0[ins.args[0]];
+  var lit_b: i32 = fr.lit0[ins.args[1]];
+  if (lit_b >= 0) {
+    s = s.write("    ldr x6, [" + a + "]\n    ldrb w6, [x6]\n    cmp w6, #" + util.i32_to_string(lit_b) + "\n    b.ne " + lp + "streqn" + n + "\n");
+  } else if (lit_a >= 0) {
+    s = s.write("    ldr x6, [" + b + "]\n    ldrb w6, [x6]\n    cmp w6, #" + util.i32_to_string(lit_a) + "\n    b.ne " + lp + "streqn" + n + "\n");
   }
   s = ssa_parallel_moves([reg_of[ins.args[0]], reg_of[ins.args[1]]], [0, 1], s);
   s = s.write("    bl __fn___fern_str_eq.r\n    b " + lp + "streqd" + n + "\n");

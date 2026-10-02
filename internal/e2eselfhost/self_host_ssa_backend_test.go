@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1513,28 +1514,32 @@ function main(): i32 {
 	}
 }
 
-// A comparison against a non-empty literal tests the operand's first byte
-// inline after the lengths, so a chain of same-length literals rejects most
-// arms without calling the helper; a comparison of two non-literals, and one
-// against the empty literal, has no byte to test.
+// A comparison against a non-empty literal tests the other operand's first
+// byte inline after the lengths, so a chain of same-length literals rejects
+// most arms without calling the helper. The shape assertion pins which
+// operand's byte is read: the byte compare must load the buffer the length
+// compare read FIRST when the literal is on the right, and SECOND when it is
+// on the left, since reading the literal's own byte would compare it with
+// itself and reject nothing. A comparison of two non-literals, and one against
+// the empty literal, has no byte to test.
 func TestSelfHostSSAStrEqTestsLiteralFirstByteInline(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "streqlit.fern")
-	prog := `function code(s: string): i32 {
+	// code is past the inliner's size threshold, so main calls it and its
+	// listing holds every comparison, the two-non-literals one included.
+	prog := `function code(s: string, t: string): i32 {
     if (s == "add") { return 1; }
     if (s == "and") { return 2; }
     if (s == "sub") { return 3; }
     if ("xor" == s) { return 4; }
     if (s == "") { return 5; }
+    if (s == t) { return 6; }
     return 0;
 }
-function same(a: string, b: string): boolean {
-    return a == b;
-}
 function main(): i32 {
-    var r: i32 = code("add") + code("and") * 2 + code("sub") * 4 + code("xor") * 8 + code("") * 16 + code("sum") * 32 + code("adz") * 64;
-    if (same("ab", "ab") && !same("ab", "ac")) { r = r + 64; }
+    var r: i32 = code("add", "q") + code("and", "q") * 2 + code("sub", "q") * 4 + code("xor", "q") * 8 + code("", "q") * 16;
+    r = r + code("sum", "sum") + code("adz", "q") * 64 + code("sum", "q") * 64;
     return r;
 }
 `
@@ -1542,12 +1547,16 @@ function main(): i32 {
 		t.Fatal(err)
 	}
 	shapes := map[string]struct {
-		byte  *regexp.Regexp // the inline compare of the operand's first byte with the literal's
-		entry string         // the register-entry call
+		sites func(fn string) []byteSite
+		entry string // the register-entry call
 	}{
-		"x86-64-linux": {regexp.MustCompile(`(?m)^\s+cmpb \$(97|115|120), \(%rdx\)$`), "call __fn___fern_str_eq.r\n"},
-		"arm64-linux":  {regexp.MustCompile(`(?m)^\s+ldrb w6, \[x6\]\n\s+cmp w6, #(97|115|120)$`), "bl __fn___fern_str_eq.r\n"},
+		"x86-64-linux": {x86ByteSites, "call __fn___fern_str_eq.r\n"},
+		"arm64-linux":  {arm64ByteSites, "bl __fn___fern_str_eq.r\n"},
 	}
+	// The four non-empty literals, sorted as text: 's' once and 'a' twice on
+	// the right, so the byte read is the first length operand's; 'x' on the
+	// left, so it is the second's.
+	const wantSites = "115:first 120:second 97:first 97:first"
 	for _, tg := range h.targets {
 		shape, ok := shapes[tg.target]
 		if !ok {
@@ -1563,21 +1572,110 @@ function main(): i32 {
 		if fn == "" {
 			t.Fatalf("%s: no __fn_code in the listing:\n%s", tg.target, asm)
 		}
-		if n := len(shape.byte.FindAllString(fn, -1)); n != 4 {
-			t.Errorf("%s: code tests %d first bytes inline, want 4 (the four non-empty literals, on either side):\n%s", tg.target, n, fn)
+		var got []string
+		for _, site := range shape.sites(fn) {
+			got = append(got, site.String())
 		}
-		if n := strings.Count(fn, shape.entry); n != 5 {
-			t.Errorf("%s: code calls the helper's register entry %d times, want 5:\n%s", tg.target, n, fn)
+		sort.Strings(got)
+		if g := strings.Join(got, " "); g != wantSites {
+			t.Errorf("%s: code's byte compares are %q, want %q (the byte read must be the non-literal operand's):\n%s", tg.target, g, wantSites, fn)
 		}
-		if same := functionListing(string(asm), "__fn_same"); same != "" && shape.byte.MatchString(same) {
-			t.Errorf("%s: same tests a first byte inline with no literal operand:\n%s", tg.target, same)
+		if n := strings.Count(fn, shape.entry); n != 6 {
+			t.Errorf("%s: code calls the helper's register entry %d times, want 6:\n%s", tg.target, n, fn)
 		}
 		bin := filepath.Join(dir, "streqlit-"+tg.target)
 		h.compileWith(t, tg, src, bin, "-backend", "ssa")
-		if _, code := h.runProduced(t, tg, bin); code != 1+2*2+3*4+4*8+5*16+64 {
-			t.Errorf("%s: exit = %d, want %d: each literal matched, the near misses rejected", tg.target, code, 1+2*2+3*4+4*8+5*16+64)
+		if _, code := h.runProduced(t, tg, bin); code != 1+2*2+3*4+4*8+5*16+6 {
+			t.Errorf("%s: exit = %d, want %d: each literal matched, the equal non-literals matched, the near misses rejected", tg.target, code, 1+2*2+3*4+4*8+5*16+6)
 		}
 	}
+}
+
+// byteSite is one inline first-byte compare: the literal's byte, and whether
+// the buffer it reads is the length compare's first or second operand.
+type byteSite struct {
+	lit     string
+	operand string
+}
+
+func (b byteSite) String() string { return b.lit + ":" + b.operand }
+
+func whichOperand(loaded, first, second string) string {
+	switch loaded {
+	case first:
+		return "first"
+	case second:
+		return "second"
+	}
+	return "neither(" + loaded + ")"
+}
+
+// x86ByteSites reads every `cmpb $c, (%rdx)` in a listing together with the
+// four lines above it: the two length loads and the buffer load.
+func x86ByteSites(fn string) []byteSite {
+	lines := listingLines(fn)
+	var (
+		lenA = regexp.MustCompile(`^movq 8\((\S+)\), %rdx$`)
+		lenB = regexp.MustCompile(`^cmpq 8\((\S+)\), %rdx$`)
+		load = regexp.MustCompile(`^movq \((\S+)\), %rdx$`)
+		cmpb = regexp.MustCompile(`^cmpb \$(\d+), \(%rdx\)$`)
+	)
+	var out []byteSite
+	for i, l := range lines {
+		m := cmpb.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		if i < 4 {
+			out = append(out, byteSite{m[1], "no-preamble"})
+			continue
+		}
+		a, b, r := lenA.FindStringSubmatch(lines[i-4]), lenB.FindStringSubmatch(lines[i-3]), load.FindStringSubmatch(lines[i-1])
+		if a == nil || b == nil || r == nil {
+			out = append(out, byteSite{m[1], "no-preamble"})
+			continue
+		}
+		out = append(out, byteSite{m[1], whichOperand(r[1], a[1], b[1])})
+	}
+	return out
+}
+
+// arm64ByteSites is x86ByteSites for the arm64 shape: `ldrb w6, [x6]` then
+// `cmp w6, #c`, six lines after the two length loads.
+func arm64ByteSites(fn string) []byteSite {
+	lines := listingLines(fn)
+	var (
+		lenA = regexp.MustCompile(`^ldr x6, \[(\S+), #8\]$`)
+		lenB = regexp.MustCompile(`^ldr x7, \[(\S+), #8\]$`)
+		load = regexp.MustCompile(`^ldr x6, \[(\S+)\]$`)
+		cmp  = regexp.MustCompile(`^cmp w6, #(\d+)$`)
+	)
+	var out []byteSite
+	for i, l := range lines {
+		m := cmp.FindStringSubmatch(l)
+		if m == nil || i < 1 || lines[i-1] != "ldrb w6, [x6]" {
+			continue
+		}
+		if i < 6 {
+			out = append(out, byteSite{m[1], "no-preamble"})
+			continue
+		}
+		a, b, r := lenA.FindStringSubmatch(lines[i-6]), lenB.FindStringSubmatch(lines[i-5]), load.FindStringSubmatch(lines[i-2])
+		if a == nil || b == nil || r == nil {
+			out = append(out, byteSite{m[1], "no-preamble"})
+			continue
+		}
+		out = append(out, byteSite{m[1], whichOperand(r[1], a[1], b[1])})
+	}
+	return out
+}
+
+func listingLines(fn string) []string {
+	var out []string
+	for _, l := range strings.Split(fn, "\n") {
+		out = append(out, strings.TrimSpace(l))
+	}
+	return out
 }
 
 // rcPoisonWord is the value a freed block's count is overwritten with, which

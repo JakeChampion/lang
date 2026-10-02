@@ -7021,10 +7021,12 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   var b: string = ssa_src(reg_of, ins.args[1], "%rcx");
   var n: string = util.i32_to_string(ins.result);
   s = s.write("    movq 8(" + a + "), %rdx\n    cmpq 8(" + b + "), %rdx\n    jne " + lp + "streqn" + n + "\n");
-  if (fr.lit0[ins.args[1]] >= 0) {
-    s = s.write("    movq (" + a + "), %rdx\n    cmpb $" + util.i32_to_string(fr.lit0[ins.args[1]]) + ", (%rdx)\n    jne " + lp + "streqn" + n + "\n");
-  } else if (fr.lit0[ins.args[0]] >= 0) {
-    s = s.write("    movq (" + b + "), %rdx\n    cmpb $" + util.i32_to_string(fr.lit0[ins.args[0]]) + ", (%rdx)\n    jne " + lp + "streqn" + n + "\n");
+  var lit_a: i32 = fr.lit0[ins.args[0]];
+  var lit_b: i32 = fr.lit0[ins.args[1]];
+  if (lit_b >= 0) {
+    s = s.write("    movq (" + a + "), %rdx\n    cmpb $" + util.i32_to_string(lit_b) + ", (%rdx)\n    jne " + lp + "streqn" + n + "\n");
+  } else if (lit_a >= 0) {
+    s = s.write("    movq (" + b + "), %rdx\n    cmpb $" + util.i32_to_string(lit_a) + ", (%rdx)\n    jne " + lp + "streqn" + n + "\n");
   }
   s = s.write("    movq " + a + ", %rdx\n");
   if (b != "%rcx") {

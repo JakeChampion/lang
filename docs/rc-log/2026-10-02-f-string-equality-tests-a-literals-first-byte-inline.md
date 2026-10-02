@@ -42,17 +42,22 @@ tree; both rows are built from main at 0d7a8d32 and this change on it.
 | stage 2, total Ir | 37.86 G | 37.53 G (−0.88%) |
 | stage 2, `__fern_str_eq` self Ir | 1,044.7 M | 635.2 M |
 | stage 2, `__fern_str_eq` calls | 41.6 M | 28.9 M |
+| stage 2, static instructions | 2,609,109 | 2,629,922 (+0.80%) |
+| `checker.fern` binary, bytes | 2,301,659 | 2,315,051 (+0.58%) |
 
 The 12.7 M calls the byte test rejects cost the three instructions at
-every one of the 41.6 M sites with a literal operand instead; the net is
-the total row.
+every one of the 41.6 M sites with a literal operand instead, and the
+sites are what the two size rows count; the net is the total row.
 
 ## Witnessed
 
-`TestSelfHostSSAStrEqTestsLiteralFirstByteInline` (new: the byte compare
-appears once per non-empty literal on either side and not for two
-non-literals; near misses on the first and last byte are rejected and the
-matches found, on both ISAs), `TestSelfHostSSAStrEqComparesLengthsInline`,
+`TestSelfHostSSAStrEqTestsLiteralFirstByteInline` (new: on both ISAs the
+byte compare appears once per non-empty literal and reads the buffer of
+the operand that is not the literal, the first length operand's for a
+literal on the right and the second's for one on the left, so arms that
+read the literal's own byte fail; a comparison of two non-literals emits
+none; near misses on the first and last byte are rejected and the matches
+found), `TestSelfHostSSAStrEqComparesLengthsInline`,
 the `TestSelfHostSSA*`, `TestSelfHostStr*` and `TestSelfHostArm64*`
 backend suites, `TestSelfHostSemanticSourceRC`, the x86-64 and arm64
 fixture lanes, and the lint ratchet.
