@@ -92,7 +92,10 @@ pub function inflate_from(input: u8[], from: i32, max_out: i32): Result[Inflated
 // is rebuilt per bit, and what it holds is what each bit costs.
 struct __State { pos: i32, bitbuf: i32, bitcnt: i32, out: u8[], max_out: i32, last: i32, distance: i32, failed: boolean, error: InflateError, lengths: i32[] }
 
-// `__fail(s, e)` — `s` failed with `e`, unless it had failed already.
+// `__fail(s, e)` — `s` failed with `e`, unless it had failed already. A
+// failed state reads as nothing: `last` and `distance` are 0 and every
+// reader hands it back unchanged, so a caller that goes on without
+// asking copies nothing and appends nothing.
 function __fail(own s: __State, e: InflateError): __State {
   if (s.failed) {
     return s;
@@ -228,8 +231,11 @@ function __decode(own s: __State, data: u8[], h: __Huff): __State {
   var first: i32 = 0;
   var index: i32 = 0;
   var len: i32 = 1;
-  while (len <= 15 && !s.failed) {
+  while (len <= 15) {
     s = __bits(s, data, 1);
+    if (s.failed) {
+      return s;
+    }
     code = code | s.last;
     var count: i32 = h.count[len];
     if (code - count < first) {
@@ -272,6 +278,9 @@ function __codes(own s: __State, data: u8[], lencode: __Huff, distcode: __Huff):
   s = __State { ...s, out: [], lengths: [] };
   while (!s.failed) {
     s = __decode(s, data, lencode);
+    if (s.failed) {
+      return __State { ...s, out: out };
+    }
     var sym: i32 = s.last;
     if (sym < 256) {
       if (out.len() >= s.max_out) {
@@ -301,11 +310,17 @@ function __pair(own s: __State, data: u8[], sym: i32, distcode: __Huff, produced
   s = __bits(s, data, __length_extra()[sym]);
   var len: i32 = __length_base()[sym] + s.last;
   s = __decode(s, data, distcode);
+  if (s.failed) {
+    return s;
+  }
   var dsym: i32 = s.last;
   if (dsym >= 30) {
     return __fail(s, Malformed("a distance code past 29"));
   }
   s = __bits(s, data, __dist_extra()[dsym]);
+  if (s.failed) {
+    return s;
+  }
   var dist: i32 = __dist_base()[dsym] + s.last;
   if (dist > produced) {
     return __fail(s, Malformed("a distance before the start of the output"));

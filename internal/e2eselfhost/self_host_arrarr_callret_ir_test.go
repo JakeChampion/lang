@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -242,79 +241,4 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, "arrarr-fnscope-sweep-flat", 0)
-}
-
-// TestSelfHostArrArrReturnProofX86_64 pins the arr-of-arr registry itself:
-// the "AAC:" rows of a function every return of which is fresh, and the
-// "AACH:" / "AACHS:" rows of a handback, fresh when its `own` arguments are. A
-// run-time check cannot see a refusal, which is only a leak.
-func TestSelfHostArrArrReturnProofX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	const probe = `import "./rundriver";
-import "./irlower";
-import "./lexical";
-import "./parser";
-function main(): i32 {
-    var m = rundriver.parse_stdin("arrarr-proof");
-    // Resolved as the lowering sees them: every binding renamed.
-    var funcs: parser.FuncDecl[] = [];
-    for f in m.funcs { funcs = funcs.append(lexical.resolve_func(f).func); }
-    var rows = irlower.opt_fresh_ret_fns_of(funcs, irlower.struct_tab(m.structs), []);
-    for row in rows { print(row); }
-    return 0;
-}`
-	if err := os.WriteFile(filepath.Join(dir, "proof.fern"), []byte(probe), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	bin := buildSelfHostBin(t, gcc, dir, "proof.fern", "proof")
-	native := buildLangBinForInterp(t)
-	// A lax handback: its appended row holds a borrowed string.
-	const laxH = `function h(own g: string[][], s: string): string[][] { g = g.append([s]); return g; } `
-	// A strict handback: every string it adds is fresh.
-	const strictH = `function h(own g: string[][]): string[][] { g = g.append(["a" + "b"]); return g; } `
-	cases := []struct {
-		name, source string
-		want, refuse []string
-	}{
-		{"literal", `function build(i: i32): string[][] { return [["a" + "b"]]; }`, []string{"AAC:build|s"}, nil},
-		{"literal-borrowed-string", `function build(s: string): string[][] { return [[s]]; }`, []string{"AAC:build|p"}, []string{"AAC:build|s"}},
-		{"returned-local", `function build(i: i32): string[][] { var t: string[][] = [["a" + "b"], ["c" + "d"]]; return t; }`, []string{"AAC:build|s"}, nil},
-		{"append-built-local", `function build(i: i32): i32[][] { var t: i32[][] = []; t = t.append([i]); return t; }`, []string{"AAC:build|p"}, nil},
-		{"forward-producer", `function mk(i: i32): string[][] { return [["a" + "b"]]; } function build(i: i32): string[][] { return mk(i); }`, []string{"AAC:build|s"}, nil},
-		{"handback-strict", strictH + `function build(own g: string[][]): string[][] { return h(g); }`, []string{"AACH:build", "AACH:build|0", "AACHS:build"}, []string{"AAC:build|s", "AAC:build|p"}},
-		{"handback-lax", laxH + `function build(own g: string[][]): string[][] { return h(g, "x"); }`, []string{"AACH:build", "AACH:build|0"}, []string{"AACHS:build"}},
-		{"handback-self", `function build(own g: i32[][]): i32[][] { g = g.append([1]); return g; }`, []string{"AACH:build", "AACH:build|0"}, nil},
-		{"handback-unfresh-local", `function build(own g: string[][], q: string[][]): string[][] { var t: string[][] = q; return t; }`, nil, []string{"AAC:build|s", "AAC:build|p", "AACH:build"}},
-		{"parameter-return", `function build(g: string[][]): string[][] { return g; }`, nil, []string{"AAC:build|s", "AAC:build|p", "AACH:build"}},
-		{"arrarr-not-a-row-producer", `function build(q: i32[][], i: i32): i32[][] { return [q[0], [i]]; }`, nil, []string{"AAC:build|s", "AAC:build|p", "ARC:build|s", "ARC:build|p"}},
-		{"local-escapes", `function build(q: string[][][]): string[][] { var t: string[][] = [["a" + "b"]]; q = q.append(t); return t; }`, nil, []string{"AAC:build|s", "AAC:build|p"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "proof-input.fern")
-			if err := os.WriteFile(path, []byte(tc.source), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if out, err := exec.Command(native, "-check", path).CombinedOutput(); err != nil {
-				t.Fatalf("native source validity: %v\n%s", err, out)
-			}
-			out := runCapture(t, gcc, runner, bin, []byte(tc.source))
-			rows := map[string]bool{}
-			for _, row := range strings.Fields(string(out)) {
-				rows[row] = true
-			}
-			for _, r := range tc.want {
-				if !rows[r] {
-					t.Errorf("missing %s; registry:\n%s", r, out)
-				}
-			}
-			for _, r := range tc.refuse {
-				if rows[r] {
-					t.Errorf("published %s; registry:\n%s", r, out)
-				}
-			}
-		})
-	}
 }

@@ -57,7 +57,7 @@ function main(): i32 {
 			cmd.Stdout = &stdout
 			_ = cmd.Run()
 			if got := strings.TrimSpace(stdout.String()); got != "70890 crc-ok" || cmd.ProcessState.ExitCode() != 0 {
-				t.Fatalf("exit %d, stdout %q, want \"70890 524053769\"", cmd.ProcessState.ExitCode(), got)
+				t.Fatalf("exit %d, stdout %q, want \"70890 crc-ok\"", cmd.ProcessState.ExitCode(), got)
 			}
 		})
 	}
