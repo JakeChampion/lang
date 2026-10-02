@@ -14,6 +14,11 @@ rounded up to whole seconds, with a minimum of one:
 - Unobserved weights remain unchanged. Weight-one entries are omitted because
   the partitioner already defaults to one.
 - Missing, empty, repeated-directory and malformed input is rejected.
+- A test the tree no longer defines gets no row, whether a run measured it or
+  the old table declared it; each drop is reported on stderr. The runs always
+  predate the tree the table is written for, the file's lookup is exact, and
+  `tools/testname_gate.sh` fails on a name nothing answers to.
+  `FERN_WEIGHT_TREE` names the tree to scan (the repository by default).
 
 The command writes to stdout and does not edit the repository. The existing
 single-run `check` behavior and the live test-list partition are unchanged.

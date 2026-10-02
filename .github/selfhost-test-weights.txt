@@ -4,7 +4,8 @@
 # group (scripts/ci-test-weights merge, docs/CI-WEIGHT-REFRESH.md) with
 # `scripts/ci-test-weights refresh`: each entry is ceil(the slower of the two
 # observations); lowering requires both runs. Entries whose replacement rounds
-# to one second are omitted, since tests absent from this file weigh 1.
+# to one second are omitted, since tests absent from this file weigh 1, as
+# are the tests both runs measured that a45fbe06 has since deleted.
 # All registered tests are still assigned exactly once by scripts/shard-tests.
 #
 # The ISOLATED_DRIVER_TESTS of test-e2e-selfhost.yml run in the cli job, not
@@ -52,8 +53,6 @@ TestSelfHostAnnotateWidthIR_X86_64 3
 TestSelfHostAppendBorrowedParamWasmIR 2
 TestSelfHostAppendFreshReclaimIRX86_64 3
 TestSelfHostAppendParamElemWasmIR 2
-TestSelfHostAppendReport 2
-TestSelfHostAppendReportExprPosition 2
 TestSelfHostAppendResultTempWasm 2
 TestSelfHostAppendResultTempX86_64 3
 TestSelfHostAppendValueSemanticsArm64 3
@@ -314,7 +313,6 @@ TestSelfHostCompoundBitwiseIRX86_64 3
 TestSelfHostConcatPastLengthCeilingAborts 2
 TestSelfHostCondBranch 38
 TestSelfHostConditionalValueReleaseArm64 2
-TestSelfHostConditionalValueReleasePlanOffX86_64 2
 TestSelfHostConditionalValueReleaseWasm 3
 TestSelfHostConditionalValueReleaseX86_64 3
 TestSelfHostConstAggregateArm64PIE 2
@@ -429,7 +427,6 @@ TestSelfHostEnumCallTempWasm 2
 TestSelfHostEnumCallTempX86_64 2
 TestSelfHostEnumCapturingPayloadIRX86_64 2
 TestSelfHostEnumContractIRArm64 78
-TestSelfHostEnumContractMissingRetainX86_64 69
 TestSelfHostEnumContractVerify 6
 TestSelfHostEnumCrossReuseIR 2
 TestSelfHostEnumFieldAliasCountArm64 2
@@ -731,7 +728,6 @@ TestSelfHostLentRecordReleaseSanitizeX86_64 3
 TestSelfHostLentRecordReleaseWasm 3
 TestSelfHostLentRecordReleaseX86_64 2
 TestSelfHostLentTempRelease 2
-TestSelfHostLentTempReleaseAST 2
 TestSelfHostLentViewHandback 2
 TestSelfHostLetElseArm64 2
 TestSelfHostLetElseIRX86_64 2
@@ -775,15 +771,12 @@ TestSelfHostMapCompositeKeyLitIRX86_64 3
 TestSelfHostMapCoreIRX86_64 3
 TestSelfHostMapDeleteFernIRArm64 2
 TestSelfHostMapDeleteFernIRX86_64 2
-TestSelfHostMapDeleteHandAsmGone 2
 TestSelfHostMapDeleteReleaseArm64 4
 TestSelfHostMapDeleteReleaseWasm 4
-TestSelfHostMapDeleteReleaseWasmAST 2
 TestSelfHostMapDeleteReleaseX86_64 5
 TestSelfHostMapFieldNoImportArm64 2
 TestSelfHostMapFieldNoImportWasm 2
 TestSelfHostMapFieldNoImportX86_64 2
-TestSelfHostMapFindHandAsmLoopsGone 2
 TestSelfHostMapFindSharedIRArm64 2
 TestSelfHostMapFindSharedIRX86_64 2
 TestSelfHostMapFixpointIRX86_64 2
@@ -1215,7 +1208,6 @@ TestSelfHostSleepMsIRX86_64 2
 TestSelfHostSleepMsWideCount 2
 TestSelfHostSleepWasmBinary 2
 TestSelfHostSliceArgRelease 2
-TestSelfHostSliceArgReleaseAST 2
 TestSelfHostSliceBoundsIR 2
 TestSelfHostSliceBoundsIRArm64 2
 TestSelfHostSliceViewsIR 2
@@ -1327,7 +1319,6 @@ TestSelfHostStringArm64 5
 TestSelfHostStringByteTransforms 2
 TestSelfHostStringCharacterSet 2
 TestSelfHostStringConcatCopySearchDoesNotLeak 2
-TestSelfHostStringConcatCopySearchLegacyAST 2
 TestSelfHostStringConstructors 2
 TestSelfHostStringEscapesIR 2
 TestSelfHostStringEscapesMatchNativeX86_64 3
@@ -1389,7 +1380,6 @@ TestSelfHostTargetCapabilityDifferentialX86_64 3
 TestSelfHostTcoIR 2
 TestSelfHostTcpClientIRX86_64 2
 TestSelfHostThreadParamArm64 6
-TestSelfHostThreadParamMixedX86_64 5
 TestSelfHostThreadParamWasm 4
 TestSelfHostThreadParamX86_64 7
 TestSelfHostTimeDateIR 8
