@@ -11265,7 +11265,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
   if (pb > 0 && slice_unchecked(pattern, pattern.len() - 1, pattern.len()) == "]" && cb < 0) {
     var pbase: str = slice_unchecked(pattern, 0, pb);
     var mpfx: string = pbase + "__";
-    if (concrete.len() > mpfx.len() && slice_unchecked(concrete, 0, mpfx.len()) == mpfx) {
+    if (concrete.len() > mpfx.len() && util.has_prefix(concrete, mpfx)) {
       var pp: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
       var ckey: str = slice_unchecked(concrete, mpfx.len(), concrete.len());
       var cp: string[] = [ckey + ""];
@@ -13089,7 +13089,7 @@ function inst_struct(ot: string, structs: StructDecl[]): InstStruct {
         si = i;
       } else if (structs[i].type_params.len() > 0 && first_bracket(ot) < 0) {
         var pfx: string = structs[i].name + "__";
-        if (ot.len() > pfx.len() && slice_unchecked(ot, 0, pfx.len()) == pfx) {
+        if (ot.len() > pfx.len() && util.has_prefix(ot, pfx)) {
           var rest: string = slice_unchecked(ot, pfx.len(), ot.len()) + "";
           cts = [rest];
           if (structs[i].type_params.len() != 1) {
@@ -15277,7 +15277,7 @@ function lit_field_decl_type(structs: StructDecl[], name: string, field: string)
 // is_clone_of: `mangled` names a monomorphised clone of generic struct `base`.
 function is_clone_of(mangled: string, base: string): boolean {
   var pfx: string = base + "__";
-  return mangled.len() > pfx.len() && slice_unchecked(mangled, 0, pfx.len()) == pfx;
+  return mangled.len() > pfx.len() && util.has_prefix(mangled, pfx);
 }
 
 // ms_expr_to is ms_expr for an expression bound to the mangled type `dest`: a
@@ -15388,7 +15388,7 @@ function retype_assoc_ctor(init: ast.Expr, concrete: string, gstructs: StructDec
             ast.ExprIdent(oid) => {
               if (gstruct_index(gstructs, oid.name) >= 0) {
                 var pfx: string = oid.name + "__";
-                if (concrete.len() > pfx.len() && slice_unchecked(concrete, 0, pfx.len()) == pfx) {
+                if (concrete.len() > pfx.len() && util.has_prefix(concrete, pfx)) {
                   return ast.ExprCall { callee: ast.ExprFieldAccess { obj: ast.ExprIdent { name: concrete, line: oid.line, col: oid.col, ty: "" }, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, args: c.args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
                 }
               }

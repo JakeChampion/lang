@@ -4449,7 +4449,7 @@ function builtin_sigs(): string[] {
 pub function builtin_sig(name: string): typeinfo.Type {
   var head: string = name + "(";
   for row in builtin_sigs() {
-    if (row.len() > head.len() && slice_unchecked(row, 0, head.len()) == head) {
+    if (row.len() > head.len() && util.has_prefix(row, head)) {
       var close: i32 = util.index_of_sub(row, "): ");
       var inner: string = slice_unchecked(row, head.len(), close) + "";
       var params: typeinfo.Type[] = [];
@@ -12036,7 +12036,7 @@ function tp_receiver(obj: ast.Expr, recv: typeinfo.Type, s: Scope): string {
   match (recv) {
     typeinfo.TypeUnknown(u) => {
       var prefix: string = "type parameter ";
-      if (u.reason.len() > prefix.len() && slice_unchecked(u.reason, 0, prefix.len()) == prefix) {
+      if (u.reason.len() > prefix.len() && util.has_prefix(u.reason, prefix)) {
         var tp: string = slice_unchecked(u.reason, prefix.len(), u.reason.len()) + "";
         if (util.index_of_str(s.tparams, tp) >= 0) {
           return tp;
