@@ -1,5 +1,5 @@
 // examples/self_host/wasm_ir.fern — the WebAssembly instruction-selector for
-// the target-agnostic stack IR (irlower.fern's Op[]). The wasm sibling of
+// the target-agnostic stack IR (ir.fern's Op[]). The wasm sibling of
 // asm_ir / asm_arm64_ir: it lowers the SAME lowered op stream to textual WAT.
 //
 // wasm is the most natural target of the three: the IR is a stack machine with
@@ -4470,7 +4470,7 @@ pub function route_normalized(mod: parser.Module): parser.Module {
   return lift_lambdas(ircore.script_normalized(mod));
 }
 
-// lift_lambdas re-exports irlower's lambda-lift pre-pass (closures slice 2a) so
+// lift_lambdas re-exports lift's lambda-lift pre-pass (closures slice 2a) so
 // the wasm dispatch sites can hoist no-capture lambda arguments before the
 // eligibility check + emit. A lambda-free module is returned unchanged.
 pub function lift_lambdas(mod: parser.Module): parser.Module {

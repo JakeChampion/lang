@@ -1,5 +1,5 @@
 // examples/self_host/asm_arm64_ir.fern — the arm64 instruction-selector for
-// the target-agnostic stack IR (irlower.fern's Op[]). The arm64 sibling of
+// the target-agnostic stack IR (ir.fern's Op[]). The arm64 sibling of
 // asm_ir.fern: it lowers the SAME lowered op stream to arm64 in asm_arm64's
 // dialect (__fn_<name> labels, the 16-byte operand rt-stack, x29 frame), so a
 // fully-IR-eligible module gets a native-parity Perceus array RC backend on

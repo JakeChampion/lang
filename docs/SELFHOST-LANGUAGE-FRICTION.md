@@ -51,7 +51,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,979** in 55 modules — `checker.fern`, `fnsigs.fern`, `parser.fern` and `semsource.fern` carry most of them | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 5 modules (`wasm_ir`'s call set, `builtins`' mirror of `JObject`, `printer`'s line-id table for the linear-space diff (#8611), `modloader`'s fact-hash de-duplication set, and `seminline`'s leaf table) | pinned |
-| `astwalk` call sites (walkers on the shared spine) | — | **168** across 13 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, `fnsigs.fern` and `lift.fern`'s cap-type, assign-targets, Perceus escape-scanner and env-box-lift families, `treeshake.fern`'s name collector, and `asmcore.fern`'s P001/P002 pre-check (#6993) | floor |
+| `astwalk` call sites (walkers on the shared spine) | — | **266** across 21 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, `fnsigs.fern` and `lift.fern`'s cap-type, assign-targets, Perceus escape-scanner and env-box-lift families, `treeshake.fern`'s name collector, and `asmcore.fern`'s P001/P002 pre-check (#6993) | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |

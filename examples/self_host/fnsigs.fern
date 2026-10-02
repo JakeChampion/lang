@@ -1730,8 +1730,9 @@ function expr_unsafe_for_vb(e: ast.Expr, name: string, borrowable: string[], rec
 //
 // One bucket is scanned, not the whole registry. This runs for every call-arg on
 // every body walk of every pass of both interproc fixpoints, over a table with
-// an entry per function in the module — 1,359 of them for irlower.fern itself —
-// so the probe length is what this costs, and bucketing is what bounds it.
+// an entry per function in the module — 1,359 of them for the pre-split
+// irlower.fern — so the probe length is what this costs, and bucketing is what
+// bounds it.
 //
 // Keys are matched by byte comparison, NOT by slicing out `e[p:bar]` and
 // comparing strings: the slice allocated a fresh string per record examined, and
@@ -5323,7 +5324,7 @@ function return_value_is_strictfresh_struct(e: ast.Expr, structs: irtables.Struc
           // A bare IDENT — a parameter or a live local. Admitted only
           // when this struct's type ROUTES field reclaim, because that
           // is the same predicate the construction retain is gated on
-          // (irlower.fern's struct-lit `slit_reclaim`): routed means the
+          // (the struct-lit `slit_reclaim` gate): routed means the
           // literal took a reference, so the caller's drop decs a count
           // it owns instead of freeing the caller's array. Unrouted, the
           // field is an uncounted alias and crediting the caller would
@@ -14114,8 +14115,8 @@ function payload_type_at(structs: irtables.StructTab, ptype: string, variant: st
 //
 // Bucketing on the key's FIRST BYTE would not do: self-host names are dominated
 // by shared prefixes (set_*, emit_*, is_*, lower_*, collect_*), so the worst
-// first-byte bucket holds 159 of irlower.fern's 1,359 functions — 11.7% of the
-// table. The whole key is hashed instead.
+// first-byte bucket held 159 of the pre-split irlower.fern's 1,359 functions —
+// 11.7% of the table. The whole key is hashed instead.
 //
 // A prime count keeps unrelated hash strides from aliasing onto the same bucket.
 // Sized to the table: the compiler's own registry holds some 11 k keys across

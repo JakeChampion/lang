@@ -4352,8 +4352,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // tempting to push %r12 onto the freelist when its rc==1, but that DOUBLE-
     // FREEs: today's lowering deliberately depends on __fern_arr_push never
     // freeing, because borrow-form appends can hand it an ALIASED (rc>1) buffer
-    // the struct/owner still references (see irlower.fern's note "arr_push's …
-    // returned an ALIASED buffer leaves it rc>1"). Adding the free turns the OOM
+    // the struct/owner still references (see fnsigs.fern's note on arr_push's
+    // un-share of a shared receiver). Adding the free turns the OOM
     // into a SIGSEGV. Reclaim-on-grow is sound only AFTER the lowering routes
     // every non-consume append through the clone form (lower_arr_append_value),
     // leaving op_arr_push for true consumes, and drops the self-consume
