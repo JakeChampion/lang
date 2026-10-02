@@ -6,8 +6,8 @@ import (
 )
 
 // A `T[][]` local that shares its buffer with another — an alias, a struct
-// field bind, or a local reassigned from it — takes the rows-walking release
-// on the AST lowering, so the last owner frees the rows (#10416). Before, only
+// field bind, or a local reassigned from it — takes the rows-walking release,
+// so the last owner frees the rows (#10416). Before, only
 // a fresh unaliased local did, and an alias left every slot on the shallow
 // buffer dec, which freed the outer buffer and stranded the rows. Reads that
 // follow the first release run after fresh allocations, so a row freed early
@@ -73,6 +73,58 @@ function main(): i32 {
     return n;
 }
 `, 24, false},
+	// A literal rebound inside an `if` (#10497's remainder on the AST lowering).
+	{"literal_rebound_in_if", `function main(): i32 {
+    let q: string[][] = [["a" + "b", "c"]];
+    if (q.len() == 1) {
+        q = [["x" + "y"]];
+    }
+    let junk: string[][] = [["j" + "k"]];
+    return q[0][0].len() + q.len() + junk.len();
+}
+`, 4, false},
+	{"literal_rebound_in_if_ints", `function main(): i32 {
+    let q: i32[][] = [[1, 2], [3]];
+    if (q.len() == 2) {
+        q = [[7]];
+    }
+    let junk: i32[][] = [[8, 8], [8, 8]];
+    return q[0][0] + q.len() + junk.len();
+}
+`, 10, false},
+	// A field bind whose holder is typed from a call result (#10548's remainder).
+	{"field_bind_call_holder", `struct Names { n: i32, names: string[][] }
+function mk(i: i32): Names {
+    return Names { n: i, names: [["a" + "b"], ["c" + ""]] };
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) {
+        let r = mk(i);
+        let p = r.names;
+        total = total + p.len() + p[1].len() + p[0][0].len();
+        i = i + 1;
+    }
+    return total;
+}
+`, 20, false},
+	{"field_bind_call_holder_ints", `struct Bag { n: i32, grid: i32[][] }
+function mk(i: i32): Bag {
+    return Bag { n: i, grid: [[i, 1], [2]] };
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) {
+        let r = mk(i);
+        let p = r.grid;
+        total = total + p.len() + p[1].len() + p[0][0];
+        i = i + 1;
+    }
+    return total;
+}
+`, 18, false},
 	{"alias_outlives_source", `function main(): i32 {
     let g: i32[][] = [[3, 1], [2, 3]];
     let h: i32[][] = g;
