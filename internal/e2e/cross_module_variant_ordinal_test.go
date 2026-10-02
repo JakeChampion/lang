@@ -50,6 +50,11 @@ func writeVariantOrdinalProject(t *testing.T) string {
 	return dir
 }
 
+// Each module's constructor resolves within its own module on every compile.
+func TestCrossModuleVariantOrdinalEmitIsDeterministic(t *testing.T) {
+	assertEmitDeterministic(t, filepath.Join(writeVariantOrdinalProject(t), "main.fern"))
+}
+
 // The answer on both compiled targets. a's Wrap holding 7 and b's holding 9
 // makes a constructor that built the other module's tag visible as a wrong
 // digit or a -1.
