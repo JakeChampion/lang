@@ -12,8 +12,8 @@ import "testing"
 // the AST emitter. The parser now parses each if/match value branch as a
 // block-with-tail (parse_branch_body): leading `;`-terminated statements run
 // before a trailing expression — written WITHOUT a `;` — that is the branch's
-// value. The result is a `Stmt[]` ending in `s_return(tail)`, which irlower's
-// existing lower_value_tail lowers (leading statements + the value-producing
+// value. The result is a `Stmt[]` ending in `s_return(tail)`, which the lowering
+// lowers (leading statements + the value-producing
 // terminal). A lone trailing expression with no leading statements stays
 // `[s_return(expr)]`, byte-identical to the single-expr branch.
 //

@@ -18,7 +18,7 @@ import (
 // "duplicate func identifier" before it could run. The gate now skips the
 // standalone emit when a split/lines op already pulls the helper in.
 //
-// These programs use .split()/.lines(), which the self-host irlower recognizes
+// These programs use .split()/.lines(), which the self-host lowering recognizes
 // directly (no stdlib) but the native checker does not resolve without a
 // std/string import — so they're pinned to a hard-coded expected exit rather
 // than an interp oracle. Each is a self-contained i32 return < 126.

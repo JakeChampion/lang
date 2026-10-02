@@ -14,7 +14,7 @@ import (
 // (examples/self_host/ir.fern's hoist_loop_invariants — the op-list port of
 // native's internal/ir/licm.go, #8245) and the slot growth it depends on (#8247).
 //
-// The ir_licm_run driver builds the op list irlower emits for each `while`
+// The ir_licm_run driver builds the op list the lowering emits for each `while`
 // shape, runs the pass, and prints the ops AND the frame count. The lines
 // mirror the cases in internal/ir/licm_test.go, except the typed-lowering
 // rows: native's header still stops at `block`, so licm_typed_block_header is

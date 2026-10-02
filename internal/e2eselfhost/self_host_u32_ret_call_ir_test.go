@@ -13,7 +13,7 @@ import (
 // into an unsigned-sensitive op (`>>` `/` `%` `>` …). A clean u32 in [0, 2^32)
 // with bit 31 set still reads signed-negative in the 32-bit slot, so wasm's
 // signed `i32.shr_s` / `div_s` / `rem_s` / `gt_s` diverge from the unsigned
-// answer; irlower must select the `_u` opcode.
+// answer; the lowering must select the `_u` opcode.
 //
 // expr_is_u32 must treat a u32-returning call as u32. Skipping it holds for
 // value WRAPPING — the callee already masked its result into [0, 2^32) — but

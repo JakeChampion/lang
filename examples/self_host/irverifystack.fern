@@ -24,7 +24,7 @@
 // backends carry a single box pointer, so EVERY value is one slot on every
 // self-host target. Two more uniformities fall out of the lowering:
 //
-//   - Every scope is void. irlower emits `op_block(0)` / `op_loop(0)` /
+//   - Every scope is void. The lowering emits `op_block(0)` / `op_loop(0)` /
 //     `op_if(0)` and nothing else — a value-producing `if` routes its result
 //     through a local — so a scope must leave the stack at the height it
 //     started, and a branch carries nothing.
@@ -174,7 +174,7 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[]): StackResult {
         }
       }
       if (o.i32_imm != 0) {
-        // Every scope irlower opens is void. A typed one would carry
+        // Every scope the lowering opens is void. A typed one would carry
         // a value out of its end, which nothing here models.
         return StackResult { problems: none, bail: "non-void block type " + util.i32_to_string(o.i32_imm) };
       }

@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostTupleRetIntermediateIRArm64 is the arm64 port of
 // TestSelfHostTupleRetIntermediateIRX86_64: the tuple-fresh-ret registry and
-// "TUP:" crediting live in shared irlower.fern, so one change covers all
+// "TUP:" crediting live in shared lowering, so one change covers all
 // backends. Case table shared with the x86-64 leg.
 func TestSelfHostTupleRetIntermediateIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)

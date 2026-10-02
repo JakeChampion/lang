@@ -190,8 +190,8 @@ function main(): i32 {
 	// MUST NOT REGRESS, and the case that keeps the rule from being written as
 	// "any rebind clones": the source is an `own` param and is dead after the
 	// rebind, so `heap` is the buffer's only remaining name and the stores stay
-	// in place. This is the const-eval VM's shape (irlower's `eval_ops`, which
-	// rebinds `heap` from `heap_in` and writes it a dozen times per op), and the
+	// in place. This is the const-eval VM's shape (the AST lowering's `eval_ops`, which
+	// rebound `heap` from `heap_in` and wrote it a dozen times per op), and the
 	// reason #6170 was split out of #6158 in the first place.
 	//
 	// Asserted by ALLOCATION, not by answer: getting this wrong is silent

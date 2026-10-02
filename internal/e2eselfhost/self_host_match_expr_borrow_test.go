@@ -16,7 +16,7 @@ import (
 // plain field read was flat.
 //
 // A match expression is not an AST expression: parser.fern desugars it to a
-// zero-arg IIFE marked ORIGIN_MATCH_EXPR, one of the VALUE BLOCK origins irlower
+// zero-arg IIFE marked ORIGIN_MATCH_EXPR, one of the VALUE BLOCK origins the lowering
 // INLINES rather than calls, so no closure is ever built. expr_unsafe_for's
 // ExprLambda arm did not know that and read every ident in the body as a
 // capture. From there the credit machinery worked correctly on a false premise:

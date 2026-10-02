@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostOptAarrReclaimIRArm64 is the arm64 port of
 // TestSelfHostOptAarrReclaimIRX86_64: the "OPTAARR:" crediting lives in shared
-// irlower.fern and the arm64 __fn___fern_optarrarr_free body mirrors the
+// lowering and the arm64 __fn___fern_optarrarr_free body mirrors the
 // x86-64 one (uniqueness-gated payload dec + rc-guarded box dec + buffer
 // free). Case table shared with the x86-64 leg.
 func TestSelfHostOptAarrReclaimIRArm64(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 // calls. This required a checker change: TypeUnion gained an `args` field so a
 // builtin generic union stops dropping its type argument (Option[i32] →
 // TypeUnion{"Option", [i32]}); type_to_irtag then reconstructs the "Option[T]" /
-// "Result[T, E]" tag, and irlower's try_opt_type reads it off c.ty instead of
+// "Result[T, E]" tag, and the AST lowering's try_opt_type read it off c.ty instead of
 // re-deriving via opt_ret_type + argref/closure resolution. try_opt_type drives
 // `match` scrutinee routing and the `?` operator's payload/error typing.
 //
@@ -34,7 +34,7 @@ function main(): i32 { match (name_of(1)) { Some(v) => { return v.len(); }, None
 }
 
 // TestSelfHostAnnotateOptIR_X86_64 pins the checker-stamped Option/Result result
-// type feeding irlower's try_opt_type through the IR path (#5531).
+// type feeding the lowering through the IR path (#5531).
 func TestSelfHostAnnotateOptIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

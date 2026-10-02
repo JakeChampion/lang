@@ -425,7 +425,7 @@ func stageProvidedFixture(t *testing.T, stdRoot, caseDir string) string {
 // This side matters more than native's. The bug it exists for is here —
 // docs/rc-log/2026-08-29-xblock-recipient-site-key.md is emit_cross_struct_reuse
 // overwriting a donor's box after a first-match lookup resolved the wrong one,
-// and irlower has several independent reuse emitters where native funnels all
+// and the self-host lowering has several independent reuse emitters where native funnels all
 // three through one emitReuseToken.
 //
 // The driver asserts both directions on BOTH compilers' emitted shapes, and

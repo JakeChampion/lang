@@ -243,7 +243,7 @@ func TestSelfHostOptaarrForInIterX86_64(t *testing.T) {
 }
 
 // TestSelfHostOptaarrForInIterArm64 — the credit and its release helper are
-// shared irlower.fern / Fern-source IR, so this leg exists to catch a backend
+// shared lowering / Fern-source IR, so this leg exists to catch a backend
 // that lowers the widened element walk into something that computes differently,
 // not to re-measure the leak (no detector here).
 func TestSelfHostOptaarrForInIterArm64(t *testing.T) {

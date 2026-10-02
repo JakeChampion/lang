@@ -175,7 +175,7 @@ func TestSelfHostStrSourceMethodBindingIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostStrSourceMethodBindingIRArm64 is the arm64 leg; the credit is shared
-// irlower and the release is a per-backend transcription.
+// lowering analysis and the release is a per-backend transcription.
 func TestSelfHostStrSourceMethodBindingIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)

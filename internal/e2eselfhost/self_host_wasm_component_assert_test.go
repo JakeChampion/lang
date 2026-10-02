@@ -28,7 +28,7 @@ func TestSelfHostWasmComponentAssert(t *testing.T) {
 		{"exit-error", `print("before"); eprint("failed"); exit(7); print("after");`, "before\n", "failed\n", 1},
 		{"writer-exit", `var w = stderr(); w.write("error\n"); exit(1);`, "", "error\n", 1},
 	} {
-		for _, mode := range []string{"default", "semantic", "bootstrap"} {
+		for _, mode := range []string{"self-host", "bootstrap"} {
 			t.Run(tc.name+"/"+mode, func(t *testing.T) {
 				src := filepath.Join(t.TempDir(), "assert.fern")
 				if err := os.WriteFile(src, []byte(fmt.Sprintf("function main(): i32 { %s return 0; }\n", tc.body)), 0o644); err != nil {
@@ -43,10 +43,7 @@ func TestSelfHostWasmComponentAssert(t *testing.T) {
 					args = append(args, stdlib)
 				}
 				cmd := exec.Command(compiler, args...)
-				cmd.Env = append(os.Environ(), "FERN_SEM_IR=0", "FERN_STRICT_IR=1")
-				if mode == "semantic" {
-					cmd.Env = append(cmd.Env, "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1")
-				}
+				cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("compile: %v\n%s", err, out)
 				}

@@ -13,7 +13,7 @@ import (
 // element, or an enum-variant payload binding) and then chained directly into
 // an unsigned-sensitive op (`>>` `/` `%` `>` …). A u32 value with bit 31 set is
 // signed-negative in a 32-bit slot, so wasm's signed `i32.shr_s` / `div_s` /
-// `gt_s` diverge from the unsigned answer; irlower must select the `_u` opcode.
+// `gt_s` diverge from the unsigned answer; the lowering must select the `_u` opcode.
 //
 // expr_is_u32 must recognise more than a u32 IDENT slot and a u32[] ident
 // element, or `p.n >> k`, `t.0 >> k`, `[big][0] >> k`, `a[lo:hi][0] >> k`, and

@@ -19,7 +19,7 @@ import (
 //
 // A u32 result is a clean value in [0, 2^32), but with bit 31 set it is
 // signed-negative in a 32-bit slot, so wasm's signed `i32.shr_s` / `div_s` /
-// `gt_s` diverge from the unsigned answer; irlower must select the `_u` opcode.
+// `gt_s` diverge from the unsigned answer; the lowering must select the `_u` opcode.
 // This is wasm-only: x86-64 / arm64 keep the u32 zero-extended in a 64-bit
 // register, so a signed shift already matched there.
 //

@@ -1894,7 +1894,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-on-union-alias", "struct A { n: i32 }\nstruct B { n: i32 }\ntype Shape = A | B;\nfunction f(x: Shape): i32 { var y: i32 = x?; return y; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-marked-enum-ok", "@try\nenum MyOpt { Got(i32), Nope }\nfunction pick(f: MyOpt): MyOpt { var v: i32 = f?; return Got(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E079 through a VALUE BLOCK (#9553). A value block desugars to a
-		// zero-arg call of a zero-param lambda, and irlower inlines it rather
+		// zero-arg call of a zero-param lambda, and the lowering inlines it rather
 		// than lowering a function, so a `?` inside one still leaves the
 		// ENCLOSING function and is E079 — where the same `?` inside a real
 		// lambda is an ordinary use. The existing e079-defer-try-op row only
@@ -2301,6 +2301,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"own-self-reassign-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    a = grow(a, 1);\n    a = grow(a, 2);\n    return a.items.len();\n}\n", nil},
 		{"own-other-name-last-use-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    var c: B = grow(a, 1);\n    return c.items.len();\n}\n", nil},
 		{"own-second-read-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [7] };\n    a = grow(a, a.items[0]);\n    return a.items.len();\n}\n", []string{"E051"}},
+		// The store may come after straight-line statements that do not name
+		// the local (#11093); a read or a branch between keeps it live.
+		{"own-store-after-gap-ok", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    var xs: i32[] = [];\n    var fl: boolean[] = [false];\n    var i: i32 = 0;\n    while (i < 3) {\n        var p: P = step(xs, fl);\n        xs = p.a;\n        fl = p.b;\n        i = i + 1;\n    }\n    return xs.len() + fl.len();\n}\n", nil},
+		{"own-store-after-unrelated-var-ok", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    var fl: boolean[] = [false];\n    var n: i32 = take(fl);\n    var m: i32 = 3;\n    fl = [true];\n    return n + m + fl.len();\n}\n", nil},
+		{"own-store-after-read-bad", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    var fl: boolean[] = [false];\n    var n: i32 = take(fl);\n    var m: i32 = fl.len();\n    fl = [true];\n    return n + m + fl.len();\n}\n", []string{"E051"}},
+		{"own-store-after-branch-bad", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    var k: i32 = 1;\n    var fl: boolean[] = [false];\n    var n: i32 = take(fl);\n    if (k > 0) { k = k + 1; }\n    fl = [true];\n    return n + k + fl.len();\n}\n", []string{"E051"}},
 		// The same three, one nesting level in: the admission is a
 		// STATEMENT-level fact, so a walk that reaches a nested body as one
 		// flat expression loses it and flags the transfer (#7452).
@@ -2974,7 +2980,7 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"int-byte-digit-arith", "function main(): i32 { var s: string = \"7\"; var d: u8 = s[0] - b'0'; return d as i32; }\n"},
 		{"int-usize-mixed", "function main(): i32 { var p: usize = 16; var n: i32 = 4; return (p + n) as i32; }\n"},
 		// The compiler-internal intrinsics core/map's bodies call by name. Each
-		// was already LOWERED by irlower — the comment at its lowering says the
+		// was already LOWERED by the lowering — the comment at its lowering says the
 		// point is that core/map compiles and links — but none was registered in
 		// the self-host checker's intrinsic table, so every body calling one
 		// answered the #4451 "could not infer an expression's type" bail while

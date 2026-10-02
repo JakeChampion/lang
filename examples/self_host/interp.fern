@@ -218,7 +218,7 @@ function box_i64(n: i64): Value {
 // x * 100000` must not overflow as i32. The interpreter is otherwise
 // untyped at the value level, so this declared-type hint at var/param
 // binding sites is where width intent enters.
-// The zero of an annotation, tagged as that annotation's plane: irlower picks
+// The zero of an annotation, tagged as that annotation's plane: the lowering picks
 // the constant's width the same way, and a reference type's zero is the null
 // word the compiled paths store, which is v_int(0) here.
 function zero_value_of(type_name: string): Value {

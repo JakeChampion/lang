@@ -5175,7 +5175,7 @@ function decl_param_mode(fd: parser.FuncDecl, at: i32, t: typeinfo.Type): i32 {
 }
 
 // Two types may declare one method name, so a method's contract is keyed by
-// its receiver type the way irlower keys <Type>.<method>. A bare key would
+// its receiver type the way the backends label <Type>.<method>. A bare key would
 // let one callee's contract answer for the other. It is also the symbol a call
 // to the declaration names.
 pub function decl_key(fd: parser.FuncDecl): string {
@@ -6768,27 +6768,83 @@ function handers(mod: parser.Module): util.NameIndex {
 // the pass after its callee's lands.
 function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contracts {
   var out: ssasem.Contract[] = [];
+  var keys: string[] = [];
+  for fd in mod.funcs {
+    keys = keys.append(decl_key(fd));
+  }
+  var shared: boolean[] = shared_keys(keys);
   var grown: boolean = true;
   while (grown) {
     grown = false;
+    // The table's names as the round starts. Only a key several
+    // declarations share can be added twice in one round, so only those
+    // also check the round's own additions.
+    var have: util.NameIndex = util.name_index(contract_names(out));
+    var added: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-      if (ssasem.find_contract_in(out, decl_key(mod.funcs[i])) < 0) {
+      var present: boolean = have.has(keys[i]);
+      if (!present && shared[i]) {
+        present = util.has_str(added, keys[i]);
+      }
+      if (!present) {
         var c: ssasem.Contract = contract(mod.funcs[i], scopes[i], out);
         if (c.name != "") {
           out = out.append(c);
+          if (shared[i]) {
+            added = added.append(c.name);
+          }
           grown = true;
         }
       }
       i = i + 1;
     }
   }
-  for b in builtin_contracts() {
-    if (ssasem.find_contract_in(out, b.name) < 0) {
-      out = out.append(b);
+  // A builtin joins unless a declaration or an earlier builtin has its name.
+  var declared: util.NameIndex = util.name_index(contract_names(out));
+  var builtins: ssasem.Contract[] = builtin_contracts();
+  var bnames: string[] = [];
+  for b in builtins {
+    bnames = bnames.append(b.name);
+  }
+  var bix: util.NameIndex = util.name_index(bnames);
+  var j: i32 = 0;
+  while (j < builtins.len()) {
+    if (!declared.has(bnames[j]) && bix.find(bnames[j]) == j) {
+      out = out.append(builtins[j]);
     }
+    j = j + 1;
   }
   return ssasem.contracts_of(out);
+}
+
+function contract_names(cs: ssasem.Contract[]): string[] {
+  var out: string[] = [];
+  for c in cs {
+    out = out.append(c.name);
+  }
+  return out;
+}
+
+// shared_keys marks every key that more than one declaration carries.
+function shared_keys(keys: string[]): boolean[] {
+  var ix: util.NameIndex = util.name_index(keys);
+  var out: boolean[] = [];
+  var i: i32 = 0;
+  while (i < keys.len()) {
+    out = out.append(false);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < keys.len()) {
+    var first: i32 = ix.find(keys[i]);
+    if (first != i) {
+      out = out.with(first, true);
+      out = out.with(i, true);
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 // The stream HANDLES and what a program does with one. A handle is its bare
@@ -6798,9 +6854,8 @@ function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contract
 // text are read and copied, so they are lent; each result box is fresh and
 // owns whatever it carries.
 //
-// Result types are native's registerStructMethod / FuncSigs entries, which is
-// also where irlower's `opt_ret_type` reads them — the three copies name one
-// table so they cannot drift.
+// Result types are native's registerStructMethod / FuncSigs entries — the
+// copies name one table so they cannot drift.
 //
 // The handle metadata surface — stat, flags, seek, the partial write, the
 // truncation, the three fd syncs, isatty, dup_onto, splice_to and the window

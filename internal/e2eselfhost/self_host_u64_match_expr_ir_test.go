@@ -83,7 +83,7 @@ func TestSelfHostU64MatchExprIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostU64MatchExprIRArm64 — the arm64 IR path lowers from the same
-// irlower predicate, so the gate is shared; the emit is not.
+// typed lowering, so the gate is shared; the emit is not.
 func TestSelfHostU64MatchExprIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

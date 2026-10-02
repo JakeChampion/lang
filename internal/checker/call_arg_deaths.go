@@ -470,6 +470,10 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 	//
 	// The store's value must not READ x: `var y = f(x); x = g(x);` would hand
 	// g the buffer the callee just grew.
+	//
+	// Statements may stand between the two when none names x and each runs
+	// through to the next — no control flow, no `?` — so nothing reads x or
+	// leaves the block before the store (#11093).
 	ast.Walk(body, func(n ast.Node) bool {
 		blk, isBlk := n.(*ast.Block)
 		if !isBlk {
@@ -489,19 +493,15 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 			if !isCall {
 				continue
 			}
-			es, isExpr := blk.Stmts[i+1].(*ast.ExprStmt)
-			if !isExpr {
-				continue
+			for j := i + 1; j < len(blk.Stmts); j++ {
+				t, asn := storeTarget(blk.Stmts[j])
+				if t == "" || !StmtReferencesName(c, t) || !reboundAfter(blk.Stmts[i+1:j], t) {
+					continue
+				}
+				if !StmtReferencesName(asn.Value, t) {
+					markOnce(c, t)
+				}
 			}
-			asn, isAsn := es.Expr.(*ast.Assign)
-			if !isAsn || asn.Value == nil {
-				continue
-			}
-			t, isID := asn.Target.(*ast.Ident)
-			if !isID || StmtReferencesName(asn.Value, t.Name) {
-				continue
-			}
-			markOnce(c, t.Name)
 		}
 		return true
 	})
@@ -915,4 +915,52 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 		}
 	}
 	return out
+}
+
+// storeTarget is the local a statement `x = v` stores to, and the store.
+func storeTarget(st ast.Stmt) (string, *ast.Assign) {
+	es, isExpr := st.(*ast.ExprStmt)
+	if !isExpr {
+		return "", nil
+	}
+	asn, isAsn := es.Expr.(*ast.Assign)
+	if !isAsn || asn.Value == nil {
+		return "", nil
+	}
+	t, isID := asn.Target.(*ast.Ident)
+	if !isID {
+		return "", nil
+	}
+	return t.Name, asn
+}
+
+// reboundAfter reports whether every statement in gap runs through to the
+// next one without naming name: a var, a destructure or an expression
+// statement holding no `?`.
+func reboundAfter(gap []ast.Stmt, name string) bool {
+	for _, st := range gap {
+		switch st.(type) {
+		case *ast.Var, *ast.Destructure, *ast.ExprStmt:
+		default:
+			return false
+		}
+		if StmtReferencesName(st, name) || holdsTry(st) {
+			return false
+		}
+	}
+	return true
+}
+
+func holdsTry(n ast.Node) bool {
+	found := false
+	ast.Walk(n, func(m ast.Node) bool {
+		switch m.(type) {
+		case *ast.TryOp:
+			found = true
+		case *ast.Lambda, *ast.FuncDecl:
+			return false
+		}
+		return !found
+	})
+	return found
 }

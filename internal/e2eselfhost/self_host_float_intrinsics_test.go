@@ -62,7 +62,7 @@ var floatTranscendentalCases = []struct {
 }
 
 // TestSelfHostFloatTranscendentalsIRX86_64 proves the transcendentals lower
-// through the IR path (not just the legacy AST emitter): irlower maps
+// through the IR path (not just the legacy AST emitter): the lowering maps
 // __sin_f64/__cos_f64/__exp_f64/__log_f64 to op_funary fsin/fcos/fexp/flog and
 // __pow_f64 to the fpow fbin, which asm_ir lowers to a call into the shared
 // `__fern_*_f64` runtime bundle. For each case the path prober must report "ir" (the
@@ -173,7 +173,7 @@ func TestSelfHostFloatIntrinsicsX86_64(t *testing.T) {
 
 // TestSelfHostFloatTranscendentalsArm64 — CI-gated arm64 counterpart of the
 // transcendental IR test. asm_arm64.emit_module routes IR-eligible modules
-// through emit_function_via_ir, so once irlower makes the transcendentals
+// through emit_function_via_ir, so once the lowering makes the transcendentals
 // eligible, asm_ir_run (-target arm64-linux) emits them via asm_arm64_ir's fsin/fcos/fexp/flog/fpow
 // branches — `bl __fern_<op>_f64` into the fdlibm runtime helpers that
 // emit_runtime always defines. Same fixed oracle exits as the x86 test.

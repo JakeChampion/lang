@@ -266,6 +266,9 @@ function release_name(t: typeinfo.Type, f: ssasem.Func): string {
   if (ssasem.is_string(t)) {
     return "__fern_str_free";
   }
+  if (routed_map(t, f) && ssasem.keyed_map_key(ssasem.map_key(t))) {
+    return "__map_drop_keyed_impl";
+  }
   if (routed_map(t, f) && routed_box(ssasem.map_value(t))) {
     return "__map_drop_boxes_impl";
   }
@@ -340,6 +343,13 @@ function map_release_name(t: typeinfo.Type): string {
 // that releases one value — the key's first, the value's on top — so the
 // runtime can walk a column whose shape it does not know.
 function release(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
+  if (routed_map(t, f) && ssasem.keyed_map_key(ssasem.map_key(t))) {
+    r = emit(r, ir.op_load_local(slot));
+    r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_key(t))));
+    r = emit(r, ir.op_const_closure(value_env_release(ssasem.map_value(t))));
+    r = emit(r, ir.op_call_direct(release_name(t, f), 3));
+    return emit(r, ir.op_drop());
+  }
   if (routed_map(t, f) && routed_box(ssasem.map_value(t))) {
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_value(t))));
@@ -2163,6 +2173,107 @@ function env_release_name(t: typeinfo.Type): string {
   return release_helper_name(t) + "$env";
 }
 
+// The routed maps this function's values and schema fields name whose key
+// column is keyed, each once.
+function routed_keyed_maps(f: ssasem.Func): typeinfo.Type[] {
+  var out: typeinfo.Type[] = [];
+  var names: string[] = [];
+  for t in schema_types(f) {
+    if (!routed_map(t, f) || !ssasem.keyed_map_key(ssasem.map_key(t))) {
+      continue;
+    }
+    var name: string = ssasem.type_key(t);
+    if (util.index_of_str(names, name) < 0) {
+      names = names.append(name);
+      out = out.append(t);
+    }
+  }
+  return out;
+}
+
+// What a keyed routed map hands core/map as function values: the key's hash
+// and equality, the key's release, and the value's release, each a closure
+// body taking its environment first. `done` grows as each is added, so two
+// maps sharing a key or value type add its closure once.
+function append_keyed_closures(own out: irtables.LowerResult[], t: typeinfo.Type, done: util.NameIndex): irtables.LowerResult[] {
+  var k: typeinfo.Type = ssasem.map_key(t);
+  var v: typeinfo.Type = ssasem.map_value(t);
+  var fresh: irtables.LowerResult[] = [key_closure(k, "hash", 2), key_closure(k, "eq", 3), env_release_helper(k), value_env_helper(v)];
+  for h in fresh {
+    if (!done.has(h.name) && util.index_of_str(result_names(out), h.name) < 0) {
+      out = out.append(h);
+    }
+  }
+  return out;
+}
+
+function result_names(rows: irtables.LowerResult[]): string[] {
+  var out: string[] = [];
+  for r in rows {
+    out = out.append(r.name);
+  }
+  return out;
+}
+
+// The closure body a keyed probe calls for `which`, "hash" or "eq": its
+// environment, then the key or the two keys, handed to the key type's own
+// function (ssasem.keyed_map_key_fn).
+function key_closure(k: typeinfo.Type, which: string, nparams: i32): irtables.LowerResult {
+  var r: irtables.LowerResult = irtables.LowerResult {
+    ...empty(""), ok: true,
+    n_params: nparams, n_locals: nparams, name: key_closure_name(k, which),
+  };
+  var p: i32 = 1;
+  while (p < nparams) {
+    r = emit(r, ir.op_load_local(p));
+    p = p + 1;
+  }
+  r = emit(r, ir.op_call_direct(ssasem.keyed_map_key_fn(k, which), nparams - 1));
+  return emit(r, ir.op_return());
+}
+
+function key_closure_name(k: typeinfo.Type, which: string): string {
+  return "__sem_key" + which + "_" + ssasem.type_key(k) + "$env";
+}
+
+// The release of one value of a keyed routed map's column, as a closure: a
+// string's, a box's through its type's helper, a wide value's cell, or
+// nothing for a scalar.
+function value_env_release(v: typeinfo.Type): string {
+  if (ssasem.is_string(v)) {
+    return "__sem_str_release$env";
+  }
+  if (routed_box(v)) {
+    return env_release_name(v);
+  }
+  if (cell_column(v)) {
+    return "__sem_cell_release$env";
+  }
+  return "__sem_scalar_release$env";
+}
+
+function value_env_helper(v: typeinfo.Type): irtables.LowerResult {
+  if (routed_box(v)) {
+    return env_release_helper(v);
+  }
+  var r: irtables.LowerResult = irtables.LowerResult {
+    ...empty(""), ok: true,
+    n_params: 2, n_locals: 2, name: value_env_release(v),
+  };
+  if (ssasem.is_string(v)) {
+    r = emit(r, ir.op_load_local(1));
+    r = emit(r, ir.op_call_direct("__fern_str_free", 1));
+    return emit(r, ir.op_return());
+  }
+  if (cell_column(v)) {
+    r = emit(r, ir.op_load_local(1));
+    r = emit(r, ir.op_call_direct("__map_cell_free", 1));
+    return emit(r, ir.op_return());
+  }
+  r = emit(r, ir.op_const_i32(0));
+  return emit(r, ir.op_return());
+}
+
 // A box column's release in the shape a function value's body takes, its
 // environment first: core/map's drop of a routed map calls it through a
 // closure.
@@ -2271,6 +2382,9 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irtables.LowerRes
     if (!done.has(env_release_name(v))) {
       out = out.append(env_release_helper(v));
     }
+  }
+  for t in routed_keyed_maps(f) {
+    out = append_keyed_closures(out, t, done);
   }
   return out;
 }
@@ -3108,9 +3222,11 @@ function routed_iter(t: typeinfo.Type, f: ssasem.Func): boolean {
 }
 
 // A string column, of keys or values, holds one unit of each string, as the
-// runtime's does.
+// runtime's does; a keyed column (a derived Eq + Hash nominal, or a tuple or
+// array key) one unit of each key, hashed and compared through closures over
+// the key type's own functions (key_closure).
 function routed_key(t: typeinfo.Type): boolean {
-  return routed_column(t) || ssasem.is_text(t) || ssasem.wide_map_key(t);
+  return routed_column(t) || ssasem.is_text(t) || ssasem.wide_map_key(t) || ssasem.keyed_map_key(t);
 }
 
 // A value column may also hold boxes, one unit of each; core/map retains them
@@ -3207,17 +3323,17 @@ function routed_lookup(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   var v: typeinfo.Type = ssasem.map_value(t);
   r = key_operand(r, f, ins);
   if (ins.kind_tag == ssasem.map_has()) {
-    return emit(r, ir.op_call_direct("__map_has_impl", 2));
+    return map_entry(r, f, ins, "__map_has_impl", "__map_has_keyed_impl", 2);
   }
   var counted: boolean = ssasem.is_string(v);
   if (ins.kind_tag == ssasem.map_get()) {
     if (cell_column(v) && ssasem.is_float(v)) {
-      return emit(r, ir.op_call_direct("__map_get_cell_f64_impl", 2));
+      return map_entry(r, f, ins, "__map_get_cell_f64_impl", "__map_get_cell_f64_keyed_impl", 2);
     }
     if (cell_column(v)) {
-      return emit(r, ir.op_call_direct("__map_get_cell_impl", 2));
+      return map_entry(r, f, ins, "__map_get_cell_impl", "__map_get_cell_keyed_impl", 2);
     }
-    r = emit(r, ir.op_call_direct("__map_get_impl", 2));
+    r = map_entry(r, f, ins, "__map_get_impl", "__map_get_keyed_impl", 2);
     if (!counted) {
       return r;
     }
@@ -3227,7 +3343,7 @@ function routed_lookup(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
     return cell_get_or(r, f, ins);
   }
   r = routed_slot(r, ins.args[2], v);
-  r = emit(r, ir.op_call_direct("__map_get_or_impl", 3));
+  r = map_entry(r, f, ins, "__map_get_or_impl", "__map_get_or_keyed_impl", 3);
   if (counted) {
     r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
   }
@@ -3244,7 +3360,7 @@ function cell_get_or(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst
   r = routed_slot(r, ins.args[2], v);
   r = emit(r, ir.op_store_local(fallback));
   r = emit(r, ir.op_load_local(fallback));
-  r = emit(r, ir.op_call_direct("__map_get_or_impl", 3));
+  r = map_entry(r, f, ins, "__map_get_or_impl", "__map_get_or_keyed_impl", 3);
   r = routed_from_slot(r, v);
   return helper(r, fallback, "__map_cell_free");
 }
@@ -3291,10 +3407,14 @@ function routed_val_tag(t: typeinfo.Type): i32 {
 }
 
 // core/map's keyTag: 1 a string, 0 a scalar held in the slot itself, 2 one
-// held in an eight-byte cell, whose size is the tag's high bytes.
+// held in an eight-byte cell, whose size is the tag's high bytes, 4 a
+// counted keyed key.
 function routed_key_tag(t: typeinfo.Type): i32 {
   if (ssasem.is_text(t)) {
     return 1;
+  }
+  if (ssasem.keyed_map_key(t)) {
+    return 4;
   }
   if (cell_column(t)) {
     return 2 + 8 * 256;
@@ -3393,7 +3513,7 @@ function routed_insert(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   var res: i32 = scratch_base(f);
   var before: i32 = res + 1;
   var old_val: i32 = res + 2;
-  var counted_key: boolean = ssasem.is_text(ssasem.map_key(t));
+  var counted_key: boolean = counted_key_column(ssasem.map_key(t));
   var cell_key: boolean = cell_column(ssasem.map_key(t));
   var boxed_val: boolean = routed_box(ssasem.map_value(t));
   r = reserve(r, old_val + 1);
@@ -3413,7 +3533,7 @@ function routed_insert(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   r = emit(r, ir.op_load_local(res));
   r = key_operand(r, f, ins);
   r = routed_slot(r, ins.args[2], ssasem.map_value(t));
-  r = emit(r, ir.op_call_direct("__map_set_impl", 3));
+  r = map_entry(r, f, ins, "__map_set_impl", "__map_set_keyed_impl", 3);
   r = emit(r, ir.op_store_local(res));
   if (counted_key || cell_key || boxed_val) {
     r = emit(r, ir.op_load_local(res));
@@ -3421,7 +3541,9 @@ function routed_insert(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
     r = emit(r, ir.op_load_local(before));
     r = emit(r, ir.op_bin("eq", 0, false));
     r = emit(r, ir.op_if(0));
-    if (counted_key) {
+    if (counted_key && ssasem.keyed_map_key(ssasem.map_key(t))) {
+      r = helper(r, ins.args[1], value_release(ssasem.map_key(t)));
+    } else if (counted_key) {
       r = release(r, ins.args[1], ssasem.map_key(t), f);
     }
     if (cell_key) {
@@ -3446,7 +3568,7 @@ function routed_delete(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   var found: i32 = box + 1;
   var old_key: i32 = box + 2;
   var old_val: i32 = box + 3;
-  var counted_key: boolean = ssasem.is_text(ssasem.map_key(t));
+  var counted_key: boolean = counted_key_column(ssasem.map_key(t));
   var counted_val: boolean = ssasem.is_string(ssasem.map_value(t)) || routed_box(ssasem.map_value(t));
   r = reserve(r, old_val + 1);
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -3461,13 +3583,13 @@ function routed_delete(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   }
   r = emit(r, ir.op_load_local(box));
   r = key_operand(r, f, ins);
-  r = emit(r, ir.op_call_direct("__map_delete_impl", 2));
+  r = map_entry(r, f, ins, "__map_delete_impl", "__map_delete_keyed_impl", 2);
   r = emit(r, ir.op_store_local(found));
   if (counted_key || counted_val) {
     r = emit(r, ir.op_load_local(found));
     r = emit(r, ir.op_if(0));
     if (counted_key) {
-      r = helper(r, old_key, "__fern_str_free");
+      r = helper(r, old_key, value_release(ssasem.map_key(t)));
     }
     if (counted_val) {
       r = helper(r, old_val, value_release(ssasem.map_value(t)));
@@ -3477,6 +3599,11 @@ function routed_delete(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   r = emit(r, ir.op_load_local(box));
   r = emit(r, ir.op_load_local(found));
   return emit(r, ir.op_tuple_make_k(2, tuple_kinds(f.values[ins.result])));
+}
+
+// A key column holding one unit of each key: a string or a keyed column.
+function counted_key_column(k: typeinfo.Type): boolean {
+  return ssasem.is_text(k) || ssasem.keyed_map_key(k);
 }
 
 // The release of one value a routed column holds: a string's, or a box's
@@ -3492,8 +3619,28 @@ function value_release(v: typeinfo.Type): string {
 function read_at_key(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, box: i32, reader: string, into: i32): irtables.LowerResult {
   r = emit(r, ir.op_load_local(box));
   r = key_operand(r, f, ins);
-  r = emit(r, ir.op_call_direct(reader, 2));
+  r = map_entry(r, f, ins, reader, keyed_twin(reader), 2);
   return emit(r, ir.op_store_local(into));
+}
+
+function keyed_twin(reader: string): string {
+  if (reader == "__map_key_of") {
+    return "__map_key_of_keyed";
+  }
+  return "__map_lookup_val_keyed";
+}
+
+// A call to core/map's `plain` entry for the instruction's map, or for a
+// keyed key column to its `keyed` twin, with the key type's hash and
+// equality closures after the other `argc` arguments.
+function map_entry(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, plain: string, keyed: string, argc: i32): irtables.LowerResult {
+  var k: typeinfo.Type = ssasem.map_key(f.values[ins.args[0]]);
+  if (!ssasem.keyed_map_key(k)) {
+    return emit(r, ir.op_call_direct(plain, argc));
+  }
+  r = emit(r, ir.op_const_closure(key_closure_name(k, "hash")));
+  r = emit(r, ir.op_const_closure(key_closure_name(k, "eq")));
+  return emit(r, ir.op_call_direct(keyed, argc + 2));
 }
 
 function release_if_copied(own r: irtables.LowerResult, receiver: i32, handle: i32): irtables.LowerResult {
@@ -3917,8 +4064,8 @@ function held(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): ir
 
 // A runtime helper (ircore.is_fern_helper) binds its parameters in reverse
 // push order (#5666): the backends push a helper call's operands as they come,
-// where a user call's go last first. So the last argument goes in first, as
-// irlower pushes them. __fern_map_find is the one such helper a typed body
+// where a user call's go last first. So the last argument goes in first.
+// __fern_map_find is the one such helper a typed body
 // calls with more than one argument.
 function fern_helper_call(name: string, argc: i32): boolean {
   return argc > 1 && name == "__fern_map_find";
@@ -4323,12 +4470,13 @@ function input_root(f: ssasem.Func, state: i32[], roots: boolean[], a: i32): i32
 // Candidates with a use the encoding cannot reach, removed.
 function prune(f: ssasem.Func, p: ssaunits.Plan, state: i32[]): i32[] {
   var out: i32[] = state;
+  var at: i32[] = ssa.block_positions(f.graph);
   for step in p.steps {
     for h in step.hand_roots {
       out = unlink(out, h);
     }
     for supply in step.supplies {
-      if (supply.value >= 0 && supply.value < state.len() && state[supply.value] != 0 - 1 && !linked_supply(f, p, state, step, supply)) {
+      if (supply.value >= 0 && supply.value < state.len() && state[supply.value] != 0 - 1 && !linked_supply(f, p, at, state, step, supply)) {
         out = unlink(out, supply.value);
       }
     }
@@ -4343,16 +4491,16 @@ function unlink(own state: i32[], v: i32): i32[] {
   return state.with(v, 0 - 1);
 }
 
-function linked_supply(f: ssasem.Func, p: ssaunits.Plan, state: i32[], step: ssaunits.Step, supply: ssaunits.Supply): boolean {
+function linked_supply(f: ssasem.Func, p: ssaunits.Plan, at: i32[], state: i32[], step: ssaunits.Step, supply: ssaunits.Supply): boolean {
   if (supply.mode != ssaunits.move_unit()) {
     return false;
   }
-  var b: ssa.SBlock = f.graph.blocks[block_index(f.graph, step.block)];
+  var b: ssa.SBlock = f.graph.blocks[at[step.block]];
   if (step.point == ssaunits.return_point()) {
     return b.term.kind_tag == 1 && b.term.value == supply.value;
   }
   if (step.point == ssaunits.edge_point()) {
-    var dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, step.target)];
+    var dest: ssa.SBlock = f.graph.blocks[at[step.target]];
     if (supply.slot < 0 || supply.slot >= dest.insts.len()) {
       return false;
     }
@@ -4707,8 +4855,8 @@ function function_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
 
 // The funcref signature tag a call through a value dispatches by: one width
 // char per slot, the environment word first, then `_` and the result — the
-// spelling irlower's call sites carry, so both name one funcref type on wasm.
-// An all-narrow signature carries no tag, as those sites carry none.
+// spelling wasm_ir.fn_type_name turns into `$fn<tag>`.
+// An all-narrow signature carries no tag.
 function signature_tag(sig: typeinfo.Type): string {
   var tag: string = "w";
   for p in ssasem.func_params(sig) {
@@ -5544,7 +5692,7 @@ function no_op_release(own r: irtables.LowerResult, operands: i32): irtables.Low
 }
 
 // __fern_box_free(data, size): the raw free of the rc'd block that starts 8
-// bytes before `data` and is `size + 8` long, as irlower lowers it.
+// bytes before `data` and is `size + 8` long.
 function box_free(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_drop());
@@ -5610,7 +5758,7 @@ function raw_memory_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__map_hash_seed") {
     return Lowered { found: true, r: emit(r, ir.op_map_hash_seed()) };
   }
-  // core/map's array-value releases stay no-ops, as irlower lowers them: the
+  // core/map's array-value releases stay no-ops: the
   // lent operands are dropped, nothing is released, and the dummy 0 a void
   // call leaves is pushed. No routed map has an array column.
   if (ins.str == "__fern_str_dec") {
@@ -5672,7 +5820,7 @@ function raw_memory_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
 }
 
 // The floor the runtime helpers are written on, and the two rc test hooks:
-// the ops irlower emits for each. `__raw_array` and `__raw_arr_ptr` emit
+// the ops the lowering emits for each. `__raw_array` and `__raw_arr_ptr` emit
 // nothing: the address already is the array.
 struct RawOps { name: string, ops: ir.Op[] }
 

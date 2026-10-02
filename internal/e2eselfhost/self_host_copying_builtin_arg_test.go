@@ -11,7 +11,7 @@ import (
 // or `w.write(out)` leaves `out` owned and its scope-exit release freeing. The
 // self-host's escape walk had no such credit: any builtin taking `out` was
 // an escape, so the local lost its release and every round leaked its
-// accumulator. copying_builtin_keys (irlower.fern) seeds the same table into
+// accumulator. copying_builtin_keys (fnsigs.fern) seeds the same table into
 // the borrowability registry both builders produce.
 //
 // The method form is admitted by NAME: the walk cannot see a receiver's type,

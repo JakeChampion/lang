@@ -126,7 +126,7 @@ func TestSelfHostHandbackRebindX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostHandbackRebindArm64 — the credit is shared irlower analysis, so
+// TestSelfHostHandbackRebindArm64 — the credit is shared lowering analysis, so
 // this leg is what would catch the added release landing on one register
 // backend.
 func TestSelfHostHandbackRebindArm64(t *testing.T) {

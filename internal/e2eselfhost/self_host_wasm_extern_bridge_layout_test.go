@@ -25,7 +25,7 @@ import (
 //   - the two calling-convention shims the IR path needs and the AST path does
 //     not: a void extern and a void export.
 //
-// TestSelfHostWasmVariantF32ArmMatchIR covers the irlower fix the bridge
+// TestSelfHostWasmVariantF32ArmMatchIR covers the lowering fix the bridge
 // surfaced, on a program with no WIT in it at all.
 
 // The routing assertion. The IR framing emits tid_globals_section
@@ -164,7 +164,7 @@ function on_request(x: i32): void { return; }`,
 	}
 }
 
-// TestSelfHostWasmVariantF32ArmMatchIR pins the irlower fix the f32-arm WIT
+// TestSelfHostWasmVariantF32ArmMatchIR pins the lowering fix the f32-arm WIT
 // variant surfaced, with no WIT involved: an f32 enum payload is CONSTRUCTED
 // widened to an 8-byte f64 (op_struct_new's f64.store), so the match arm must
 // read it back with f64.load; reading the low half with i32.load makes

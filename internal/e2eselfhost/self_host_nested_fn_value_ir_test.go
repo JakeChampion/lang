@@ -16,7 +16,7 @@ import (
 // closure_lift_one, which only lifts call-only closures, so a value-used binding
 // was never boxed.
 //
-// Two irlower changes fix it: (1) lambda_captures only treats an ENCLOSING LOCAL
+// Two lift changes fix it: (1) lambda_captures only treats an ENCLOSING LOCAL
 // as a capture (enum constructors / I/O builtins that are free in the body are no
 // longer mis-captured, which had made make_clo_func decline), and (2) a
 // var-bound lambda USED AS A VALUE is env-boxed into the uniform `__mkclo$` box

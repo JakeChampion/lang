@@ -7,7 +7,7 @@ import (
 
 // --- Append-built struct-array element reclaim (#6127) -------------
 //
-// irlower's "STRUCTARR:" credit routes a fresh, non-escaping scalar-field
+// The lowering's "STRUCTARR:" credit routes a fresh, non-escaping scalar-field
 // struct array to __fern_arrarr_free, which frees each element STRUCT BOX and
 // then the outer buffer. Like the arr-of-arr class before #6092, that credit
 // was refused for any REASSIGNED name — and `ps = ps.append(P { .. })` is a

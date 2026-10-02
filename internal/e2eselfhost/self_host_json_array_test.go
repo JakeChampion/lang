@@ -6,7 +6,7 @@ import "testing"
 // `(xs: T[]) to_json[T: Json]()` (the std/json array `to_json`) through the
 // self-hosted compiler's IR path. The self-host emits generic bodies by
 // ERASURE — so the one emitted `(xs: T[]) to_json()` body bakes in the i32
-// element dispatch and can't serialise a string/struct array. irlower
+// element dispatch and can't serialise a string/struct array. The lowering
 // special-cases the CALL SITE (`arr.to_json()`, where the element type IS
 // known) into an inline loop whose per-element `arr[i].to_json()` dispatches to
 // the right impl: i32 -> __fn_i32__to_json, string -> __fn_string__to_json, a

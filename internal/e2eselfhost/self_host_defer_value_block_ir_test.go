@@ -11,7 +11,7 @@ import (
 
 // deferValueBlockCases pin a `defer` written inside a value-position `{ … }`
 // block through the self-host IR path (#6857). The self-host parses such a
-// block into an immediately-invoked zero-parameter lambda that irlower inlines,
+// block into an immediately-invoked zero-parameter lambda that the lowering inlines,
 // so the parse-time defer rewrite — which walked statements only — never reached
 // the defer and the whole module refused to lower.
 //

@@ -4942,7 +4942,7 @@ function main(): i32 {
 		// reach first, so one arm's value is released with the other's drop
 		// plan.
 		//
-		// The self-host compiler's irlower.alias_names_in_stmt is this shape
+		// The AST lowering's alias_names_in_stmt was this shape
 		// verbatim (`parser.StmtAssign(a)` beside `var a: string[]` in the
 		// StmtIf / StmtMatch arms), which cost one over-release per ASSIGNMENT
 		// STATEMENT in every program it compiled — the largest single

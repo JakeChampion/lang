@@ -11,7 +11,7 @@ import (
 // TestSelfHostTryBoxReclaimWasmIR is the wasm port of the #4355 `?`-consumed
 // source-box reclaim (x86 sibling: TestSelfHostTryBoxReclaimIRX86_64). The
 // self-host IR path has no pair-form ABI — op_opt_make boxes everywhere — so
-// the same irlower-level frees apply unchanged; the box dec routes through
+// the same lowering-level frees apply unchanged; the box dec routes through
 // wasm's __fern_rc_dec and the string payload through the string sweep. The
 // per-round residual is pinned at zero: the caller's own match frees the
 // outer `var r = ...` box as well.

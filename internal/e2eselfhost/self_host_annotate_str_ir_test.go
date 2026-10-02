@@ -33,7 +33,7 @@ function main(): i32 { var g: string = tag("hi") + "!"; return g.len(); }`}, // 
 }
 
 // TestSelfHostAnnotateStrIR_X86_64 pins the checker-stamped string result type
-// feeding irlower's expr_is_str through the IR path (#5531).
+// feeding the lowering through the IR path (#5531).
 func TestSelfHostAnnotateStrIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

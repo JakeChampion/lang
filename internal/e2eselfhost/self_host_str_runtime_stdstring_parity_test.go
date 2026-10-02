@@ -7,7 +7,7 @@ import (
 )
 
 // A `.split(sep)` / `.lines()` / `.trim()` written against std/string does NOT
-// reach std/string under the self-host: irlower lowers each to a runtime helper
+// reach std/string under the self-host: the lowering lowers each to a runtime helper
 // the compiler emits itself (asmcore.rt_src_str_split / _lines / _trim). Those
 // helpers therefore ARE std/string as far as a self-hosted program is concerned,
 // and every place they disagreed with it was one program with two answers,

@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestSelfHostLoopReuseWasmIR proves loop-body FBIP reuse (irlower
-// `lower_loop_body`) lowers correctly on the self-hosted WASM IR backend,
+// TestSelfHostLoopReuseWasmIR proves loop-body FBIP reuse
+// lowers correctly on the self-hosted WASM IR backend,
 // including the recipient prior-release (an `if (old != donor) rc_dec` guarding
 // the loop-carried box). Value-through-wasmtime is the contract; exit codes stay
 // < 126 for WASI's _start range.
@@ -37,7 +37,7 @@ func TestSelfHostLoopReuseWasmIR(t *testing.T) {
 		// Functional-update (self-overwrite) reuse in a loop: `c = P { ...d, y: 3 }`
 		// reuses d's box in place each iteration. sum over i in 0..3 of i + 3 = 18.
 		{"loop-funcupdate-reuse", `struct P { x: i32, y: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var d: P = P { x: i, y: 0 }; var c: P = P { ...d, y: 3 }; sum = sum + c.x + c.y; i = i + 1; } return sum; }`, 18},
-		// Same-block reuse fires in an if-arm body too (irlower lowers every nested
+		// Same-block reuse fires in an if-arm body too (the lowering lowers every nested
 		// block with reuse). `b` reuses dead `a`'s box inside the `if`. (10+20)+(3+4)=37.
 		// Each x is multiplied by a 1-valued variable so both literals stay OFF the
 		// static-constant path (#6149) — written with bare literals the donor is

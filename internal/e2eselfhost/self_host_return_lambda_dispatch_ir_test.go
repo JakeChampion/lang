@@ -77,7 +77,7 @@ func TestSelfHostReturnLambdaDispatchIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostReturnLambdaDispatchIRArm64 — CI-gated arm64 counterpart. The fix is
-// in the shared irlower.fern lift pass, so the arm64 IR backend picks it up.
+// in the shared lift pass, so the arm64 IR backend picks it up.
 func TestSelfHostReturnLambdaDispatchIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

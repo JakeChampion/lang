@@ -16,7 +16,7 @@ import (
 // The scan tolerated exactly one borrow of a `string[]` field: `x.f.len()`, the
 // whole-array length. An ELEMENT read marked the field unsafe however briefly
 // the element lived, so `f.deps[0].len()` cost the type its admission and every
-// element box leaked. That is a line irlower already knows how to draw the other
+// element box leaked. That is a line fnsigs already knows how to draw the other
 // way round: strarr_expr_unsafe, the same question asked about a string[] LOCAL,
 // separates a transient element receiver from a lasting alias and admits the
 // former. The field scan now draws it too.
@@ -110,7 +110,7 @@ func TestSelfHostStrArrFieldTransientReadIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostStrArrFieldTransientReadIRArm64 is the arm64 leg: the admission is
-// shared irlower, the element walk is a per-backend transcription.
+// shared lowering analysis, the element walk is a per-backend transcription.
 func TestSelfHostStrArrFieldTransientReadIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

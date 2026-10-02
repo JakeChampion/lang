@@ -34,7 +34,7 @@ function main(): i32 { var p = origin(); return p.x * p.y; }`}, // 12
 }
 
 // TestSelfHostAnnotateStructIR_X86_64 pins the checker-stamped struct result type
-// feeding irlower's expr_struct_type through the IR path (#5531).
+// feeding the lowering through the IR path (#5531).
 func TestSelfHostAnnotateStructIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 	for _, tc := range annotateStructCases {

@@ -28,7 +28,7 @@ import (
 //
 // That annotation describes ONE literal, and plenty of literals have none of
 // their own — a sibling literal in the same initialiser, a `return`, a call
-// argument, a struct-field value. The third fix is in irlower, where the types
+// argument, a struct-field value. The third fix is in the lowering, where the types
 // the parser lacks are in hand: a key argument that is provably an integer
 // overrides the constructor's spelling (#7438). Evidence only — a key it cannot
 // type keeps whatever the constructor said, so a string key is never flipped.
@@ -142,7 +142,7 @@ function main(): i32 {
 }`},
 
 	// #7438 — the declaration reaches ONE literal, so neither of the fixes
-	// above covers a literal with no annotation of its own. irlower resolves
+	// above covers a literal with no annotation of its own. The lowering resolves
 	// the kind from the key ARGUMENT's type instead, which is the answer the
 	// parser could not give; the constructor spelling is kept wherever no key
 	// carries positive integer evidence, so a string key is never flipped.

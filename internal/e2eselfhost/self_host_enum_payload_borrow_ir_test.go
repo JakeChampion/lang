@@ -290,7 +290,7 @@ func TestSelfHostEnumFieldAliasIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostEnumFieldAliasIRArm64 — the same cases on arm64, which the shared
-// irlower analysis makes a real second backend rather than a formality: the
+// lowering analysis makes a real second backend rather than a formality: the
 // retain sites emit through a different instruction selector, and the parent
 // commit fails all three here too.
 func TestSelfHostEnumFieldAliasIRArm64(t *testing.T) {

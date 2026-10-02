@@ -27,6 +27,21 @@ import (
 // Returns the entry path and the module count.
 func writeConcatFixture(t *testing.T, dir string) (string, int) {
 	t.Helper()
+	return writeConcatFixtureShape(t, dir, true)
+}
+
+// writeFlatConcatFixture is the same program with every function a leaf,
+// `return x + <m*nFn+f>;`, and only each module's f0 reached from the entry.
+// The object-cache test edits a function the reach set drops and then widens
+// the reach, which needs functions nothing calls; asm_modload_run gates on the
+// raw count, so the flat shape still lands in the rescue band there.
+func writeFlatConcatFixture(t *testing.T, dir string) (string, int) {
+	t.Helper()
+	return writeConcatFixtureShape(t, dir, false)
+}
+
+func writeConcatFixtureShape(t *testing.T, dir string, chained bool) (string, int) {
+	t.Helper()
 	const nMod, nFn = 7, 100
 	proj := filepath.Join(dir, "concatproj")
 	if err := os.MkdirAll(proj, 0o755); err != nil {
@@ -36,10 +51,18 @@ func writeConcatFixture(t *testing.T, dir string) (string, int) {
 	want := 0
 	for m := 0; m < nMod; m++ {
 		var lib strings.Builder
-		for f := 0; f < nFn-1; f++ {
-			fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { return m%d_f%d(x) + 1; }\n", m, f, m, f+1)
+		if chained {
+			for f := 0; f < nFn-1; f++ {
+				fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { return m%d_f%d(x) + 1; }\n", m, f, m, f+1)
+			}
+			fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { var e: IoError = NotFound(\"p\"); match (e) { NotFound(_) => { return x; }, _ => { return 0 - 1; } } }\n", m, nFn-1)
+			want += nFn // the argument 1, plus one per link of the chain
+		} else {
+			for f := 0; f < nFn; f++ {
+				fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { return x + %d; }\n", m, f, m*nFn+f)
+			}
+			want += 1 + m*nFn // m*nFn+0 added to the argument 1
 		}
-		fmt.Fprintf(&lib, "pub function m%d_f%d(x: i32): i32 { var e: IoError = NotFound(\"p\"); match (e) { NotFound(_) => { return x; }, _ => { return 0 - 1; } } }\n", m, nFn-1)
 		if err := os.WriteFile(filepath.Join(proj, fmt.Sprintf("lib%d.fern", m)), []byte(lib.String()), 0o644); err != nil {
 			t.Fatalf("write lib%d: %v", m, err)
 		}
@@ -48,7 +71,6 @@ func writeConcatFixture(t *testing.T, dir string) (string, int) {
 			calls.WriteString(" + ")
 		}
 		fmt.Fprintf(&calls, "lib%d.m%d_f0(1)", m, m)
-		want += nFn // the argument 1, plus one per link of the chain
 	}
 	entry := fmt.Sprintf("%s\nfunction main(): i32 {\n    var t: i32 = %s;\n    if (t == %d) { return 0; }\n    return 1;\n}\n",
 		imports.String(), calls.String(), want)

@@ -9,7 +9,7 @@ import (
 
 // annotateIndexCases exercise the ExprIndex.ty typed-IR carrier (#5531's third,
 // docs/TYPED-IR-REWRITE.md). An index read `a[i]` yields an ELEMENT whose width
-// irlower must know at two places that have to agree: the value predicates
+// the AST lowering had to know at two places that have to agree: the value predicates
 // (expr_is_f64 / infer_expr_width, which decide how the result is typed
 // downstream) and the load site (lower_expr's arr_get width / lower_i64's
 // arr_get_i64, which decide how many bytes come out of memory). Both now read
@@ -69,7 +69,7 @@ function main(): i32 { return (mk().data[1] / 1000000000) as i32; }`}, // 9
 }
 
 // TestSelfHostAnnotateIndexIR_X86_64 pins the ExprIndex.ty carrier feeding
-// irlower's ix_type_tag through the self-host x86-64 IR path. asm_load_run.fern
+// the lowering through the self-host x86-64 IR path. asm_load_run.fern
 // is the driver because it runs checker.annotate_module after the checker gate
 // and before emit — asm_ir_run and the native compiler skip the pass, leaving
 // every ty empty and exercising only the structural walk.

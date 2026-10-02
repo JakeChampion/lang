@@ -141,7 +141,7 @@ function main(): i32 {
 	// visible rather than merely wrong — it re-clones `next` at cap == len, so
 	// the next append reallocs `next` while `rows` still has spare capacity and
 	// grows in place, and the container is left with two arrays one entry apart
-	// (#8224; the shape is irlower's own `var aug = sg.struct_ret_fns`).
+	// (#8224; the shape was the AST lowering's own `var aug = sg.struct_ret_fns`).
 	{"field-read-alias-refuses-exemption", `
 struct Reg { rows: i32[], next: i32[] }
 struct Sigs { reg: Reg, tag: i32 }
@@ -940,7 +940,7 @@ func TestSelfHostFieldAppendInPlaceX86_64(t *testing.T) {
 }
 
 // TestSelfHostFieldAppendInPlaceArm64 — the same cases through the arm64 emit.
-// The decision is shared irlower analysis, so this leg guards the two register
+// The decision is shared lowering analysis, so this leg guards the two register
 // backends agreeing about the grow helper's uniqueness gate.
 func TestSelfHostFieldAppendInPlaceArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

@@ -346,7 +346,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"forin-nested", `function main(): i32 { var xs = [1, 2, 3]; var t = 0; for a in xs { for b in xs { t = t + a * b; } } return t; }`},
 		{"forin-string", `function main(): i32 { var ss: string[] = ["a", "bb", "ccc", "dddd"]; var n = 0; for s in ss { n = n + s.len(); } return n; }`},
 		// Array-of-arrays (#2987): inner binding / loop var types as an array on
-		// the wasm backend too (the fix lives in the shared irlower).
+		// the wasm backend too (the fix lives in the shared lowering).
 		{"arr2d-forin-annot", `function main(): i32 { var a: i32[][] = [[1, 2], [3, 4]]; var s = 0; for row in a { for x in row { s = s + x; } } return s; }`},
 		{"arr2d-forin-literal", `function main(): i32 { var a = [[1, 2], [3, 4]]; var s = 0; for row in a { for x in row { s = s + x; } } return s; }`},
 		{"arr2d-manual-bind", `function main(): i32 { var a: i32[][] = [[1, 2], [3, 4]]; var row = a[1]; var s = 0; for x in row { s = s + x; } return s; }`},
@@ -666,17 +666,17 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// USER-enum match-expression with an i32 payload binding (#2938 follow-up).
 		{"matchexpr-userenum-bind", `enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(7); var y = match (o) { Has(n) => n, Nil => 0 }; return y; }`},
 		{"matchexpr-userenum-3var", `enum E { Num(i32), Word, Nil } function main(): i32 { var e: E = Num(5); return match (e) { Num(n) => n * 3, Word => 1, Nil => 0 }; }`},
-		// STRING-valued if / match expressions on the wasm backend (shared irlower).
+		// STRING-valued if / match expressions on the wasm backend (shared lowering).
 		{"ifexpr-str", `function main(): i32 { var n = 5; var s = if (n > 3) { "big" } else { "small" }; return s.len(); }`},
 		{"ifexpr-str-elseif", `function main(): i32 { var n = 5; var s = if (n > 10) { "big" } else if (n > 3) { "mid" } else { "low" }; return s.len(); }`},
 		{"ifexpr-str-concat", `function main(): i32 { var n = 2; var s = if (n > 3) { "a" } else { "bb" }; return (s + "!").len(); }`},
 		{"matchexpr-str-unit", `enum C { A, B } function main(): i32 { var c: C = A; var s = match (c) { A => "xx", B => "y" }; return s.len(); }`},
 		{"matchexpr-str-payload", `enum E { N(i32), Z } function f(e: E): string { return match (e) { N(n) => if (n > 0) { "pos" } else { "neg" }, Z => "zero" }; } function main(): i32 { return f(N(5)).len() + f(Z).len(); }`},
-		// f64-valued if / match expressions on the wasm backend (shared irlower).
+		// f64-valued if / match expressions on the wasm backend (shared lowering).
 		{"ifexpr-f64", `function main(): i32 { var n = 5; var f = if (n > 3) { 1.5 } else { 2.5 }; return (f * 2.0) as i32; }`},
 		{"ifexpr-f64-elseif", `function main(): i32 { var n = 5; var f = if (n > 10) { 1.0 } else if (n > 3) { 2.5 } else { 9.0 }; return (f * 2.0) as i32; }`},
 		{"matchexpr-f64", `enum C { A, B } function main(): i32 { var c: C = A; var f = match (c) { A => 1.5, B => 2.5 }; return (f * 10.0) as i32; }`},
-		// i64-valued if / match expressions on the wasm backend (shared irlower).
+		// i64-valued if / match expressions on the wasm backend (shared lowering).
 		{"ifexpr-i64-annot", `function main(): i32 { var n = 5; var x: i64 = if (n > 3) { 5000000000 } else { 1 }; return (x % 7) as i32; }`},
 		{"ifexpr-i64-elsebig", `function main(): i32 { var n = 1; var x: i64 = if (n > 3) { 1 } else { 5000000000 }; return (x % 7) as i32; }`},
 		{"matchexpr-i64", `enum C { A, B } function main(): i32 { var c: C = A; var x: i64 = match (c) { A => 8000000000, B => 1 }; return (x % 1000) as i32; }`},
@@ -934,7 +934,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"lines-empty", `function main(): i32 { return "".lines().len() + 4; }`, 4},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice). The legacy
 		// AST wasm path has no range desugar, so this uses the IR-only gate:
-		// the parser emits __range(LOW, HIGH) and irlower lowers a counted loop
+		// the parser emits __range(LOW, HIGH) and the lowering lowers a counted loop
 		// to wasm block/loop/br_if. Half-open, HIGH bound once, empty/reversed
 		// ranges run zero iterations.
 		{"range-sum", "function main(): i32 { var s = 0; for i in 0..5 { s = s + i; } return s; }", 10},
@@ -946,7 +946,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"range-nested", "function main(): i32 { var t = 0; for i in 0..3 { for j in 0..3 { t = t + 1; } } return t; }", 9},
 		{"range-hi-once", "function side(): i32 { return 4; } function main(): i32 { var c = 0; for i in 0..side() { c = c + 1; } return c; }", 4},
 		// Inclusive range-for `for i in LOW..=HIGH` (#2699): the closed
-		// interval [LOW, HIGH] — irlower emits a `le_s` (i <= hi) loop
+		// interval [LOW, HIGH] — the lowering emits a `le_s` (i <= hi) loop
 		// condition instead of the half-open `lt_s`. HIGH bound once;
 		// a single-point range runs one iteration; reversed runs zero.
 		{"rangei-sum", "function main(): i32 { var s = 0; for i in 0..=5 { s = s + i; } return s; }", 15},

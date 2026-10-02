@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostArrTupProducerReclaimIRArm64 is the arm64 port of
 // TestSelfHostArrTupProducerReclaimIRX86_64: the "ARRTUPF:" / "ARRSTRUCTF:"
-// registries and the collect arms that read them live in shared irlower.fern, and
+// registries and the collect arms that read them live in shared lowering, and
 // the release is the existing counted element walk, so the leg differs only in
 // which backend lowers it. Case table shared with the x86-64 leg.
 func TestSelfHostArrTupProducerReclaimIRArm64(t *testing.T) {

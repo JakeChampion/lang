@@ -31,7 +31,7 @@ func assertNoDanglingLocalLabels(t *testing.T, ctx string, asm []byte) {
 // defining, sorted.
 //
 // The character class has to admit `$`: a capturing lambda is hoisted to
-// `<fn>$cloN` (irlower.fern:54733) and its labels carry that name. Excluding it
+// `<fn>$cloN` and its labels carry that name. Excluding it
 // truncated every REFERENCE at the `$` while each DEFINITION was recorded whole,
 // so a closure label reported as dangling from an assembly that links.
 func danglingLocalLabels(asm []byte) []string {

@@ -165,7 +165,7 @@ func TestSelfHostStrBinopOperandBorrowIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostStrBinopOperandBorrowIRArm64 is the arm64 leg; the borrowability
-// verdict is shared irlower and the release is a per-backend transcription.
+// verdict is in the shared lowering and the release is a per-backend transcription.
 func TestSelfHostStrBinopOperandBorrowIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

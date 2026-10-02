@@ -7,7 +7,7 @@ import (
 
 // --- Index row reads no longer forfeit the arr-of-arr credit (#7805) ---------
 //
-// irlower's "ARRARR:" credit routes a fresh, non-escaping arr-of-arr local to
+// The lowering's "ARRARR:" credit routes a fresh, non-escaping arr-of-arr local to
 // the deep release (__fern_arrarr_free), which rc-decs each row buffer and then
 // frees the outer one. arrarr_row_escapes used to refuse that credit for ANY
 // bare single-index row read — `var row = g[i]` or `row = g[i]` — on the

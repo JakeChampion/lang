@@ -276,9 +276,7 @@ function float_operands_agree(a: typeinfo.Type, b: typeinfo.Type): boolean {
 // A binary's operand types, with an unsettled integer literal on one side read
 // at a concrete float on the other — native's settleNumeric before
 // requireFloat, so `r * 2` and `r <= 0` hold for an f32 / f64 `r`.
-function binary_operands(b: ast.ExprBinary, s: Scope): (typeinfo.Type, typeinfo.Type) {
-  var lt: typeinfo.Type = check_expr(b.left, s);
-  var rt: typeinfo.Type = check_expr(b.right, s);
+function settled_operands(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): (typeinfo.Type, typeinfo.Type) {
   if (is_float(lt) && !is_poly_float(lt) && unsettled_int_literal(b.right)) {
     return (lt, lt);
   }
@@ -626,7 +624,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   }
   // core/map's per-process string-hash seed (#6194). Compiler-internal, so
   // it carries no capability or platform row — the `__` prefix is the
-  // inventory's exemption. irlower already lowers it; only this entry was
+  // inventory's exemption. The lowering already handles it; only this entry was
   // missing, and without it `core/map.map_new_impl` does not type.
   if (argc == 0 && name == "__map_hash_seed") {
     return t_i32();
@@ -737,7 +735,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   // self-host EMITS is not uniform: only __fern_rc_inc is a real call that
   // answers its pointer. The 2-arg dec pair drops both arguments and
   // __fern_str_dec does not even lower its one — no-ops still, each pushing a
-  // dummy 0 (irlower, the __fern_arr_dec / __fern_str_dec arms), because the
+  // dummy 0 (ssarc, the __fern_arr_dec / __fern_str_dec arms), because the
   // element deep-drop their stride selects has no self-host equivalent.
   // core/map calls those three in statement position, so nothing may rely on
   // the usize they declare.
@@ -1497,7 +1495,7 @@ function (s: Scope) binop_overload_ret(op: string, lt: typeinfo.Type): typeinfo.
 
 // unop_overload_ret is the unary sibling: `-a` on a composite is `a.neg()`.
 // Written against the same helper so the two operators cannot resolve
-// differently — they are siblings in irlower's lowering too, and the last time
+// differently — they are siblings in the lowering too, and the last time
 // sibling arms here were maintained separately only one of them got fixed.
 function (s: Scope) unop_overload_ret(op: string, ot: typeinfo.Type): typeinfo.Type {
   if (op != "-") {
@@ -1592,7 +1590,10 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
 // `+`-joined trait bound(s) when parameter i's declared type is exactly a
 // bounded type parameter (`x: T` where `T: Tr`), else "". Drives the E021
 // generic-bound conformance check at call sites (#4842) — see call_diags.
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string }
+// `typevars` is every parameter spelling that is a type VARIABLE of the
+// callee, each once in parameter order, as gc_is_typevar_name recognises
+// them: what the call binding and the literal settling read.
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[] }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -1814,28 +1815,99 @@ pub struct StructTable {
   index: util.NameIndex,
   // The module's declared `resource` names, which a handle type names.
   resources: util.NameIndex,
+  // The module's spellings resolved once, carried here so a scope's
+  // TypeNames reads them (Scope.type_names).
+  spellings: SpellMemo,
+}
+
+// SpellMemo is the type spellings a module writes, each resolved once against
+// its declarations: `types[i]` is what `names.names[i]` resolves to. A
+// spelling resolves to the same type wherever the module writes it, since
+// type_from_spelling reads only the declared names, so the resolution of the
+// few hundred spellings a module repeats hundreds of thousands of times is
+// read off this rather than parsed again.
+pub struct SpellMemo { names: util.NameIndex, types: typeinfo.Type[] }
+
+function no_spellings(): SpellMemo {
+  var none: string[] = [];
+  return SpellMemo { names: util.name_index(none), types: [] };
 }
 
 // TypeNames is the declared struct and union names a type spelling resolves
 // against. A scope reads it off its tables (Scope.type_names); a caller holding
-// bare name lists indexes them once with type_names.
+// bare name lists indexes them once with type_names. `spellings` is the
+// module's memo, empty for a caller holding bare lists.
 pub struct TypeNames {
   structs: util.NameIndex,
   unions: util.NameIndex,
   resources: util.NameIndex,
+  spellings: SpellMemo,
 }
 
 function type_names(struct_names: string[], union_names: string[], resource_names: string[]): TypeNames {
-  return TypeNames { structs: util.name_index(struct_names), unions: util.name_index(union_names), resources: util.name_index(resource_names) };
+  return TypeNames { structs: util.name_index(struct_names), unions: util.name_index(union_names), resources: util.name_index(resource_names), spellings: no_spellings() };
+}
+
+// with_spellings is `tn` with the module's spellings resolved against it.
+function with_spellings(tn: TypeNames, mod: parser.Module): TypeNames {
+  var names: util.NameIndex = tn.spellings.names;
+  var types: typeinfo.Type[] = [];
+  for sp in module_spellings(mod) {
+    if (sp.len() == 0 || names.has(sp)) {
+      continue;
+    }
+    names = names.added(sp);
+    types = types.append(type_from_spelling(sp, tn));
+  }
+  return TypeNames { ...tn, spellings: SpellMemo { names: names, types: types } };
+}
+
+// module_spellings is the type spellings the module's declarations and the
+// statements of its bodies write: parameters, returns, fields and `var`
+// annotations. The walk stays on the statement spine, which is where nearly
+// every spelling a body reads is written; a spelling it does not reach (a
+// lambda's parameters, a `zero`) is parsed where it is read, as every
+// spelling was.
+function module_spellings(mod: parser.Module): string[] {
+  var out: string[] = [];
+  for fd in mod.funcs {
+    for p in fd.params {
+      out = out.append(p.type_name);
+    }
+    out = out.append(fd.ret_type);
+    for st in fd.body {
+      out = astwalk.fold_stmt_spine(st, out, spelling_of_stmt);
+    }
+  }
+  for sd in mod.structs {
+    for f in sd.fields {
+      out = out.append(f.type_name);
+    }
+  }
+  for st in mod.top_stmts {
+    out = astwalk.fold_stmt_spine(st, out, spelling_of_stmt);
+  }
+  return out;
+}
+
+function spelling_of_stmt(st: ast.Stmt, own acc: string[]): string[] {
+  match (st) {
+    ast.StmtVar(v) => {
+      return acc.append(v.type_name);
+    },
+    _ => {
+      return acc;
+    }
+  }
 }
 
 // struct_table indexes `structs` by name.
-function struct_table(structs: StructSig[], resources: string[]): StructTable {
+function struct_table(structs: StructSig[], resources: string[], spellings: SpellMemo): StructTable {
   var names: string[] = [];
   for sd in structs {
     names = names.append(sd.name);
   }
-  return StructTable { structs: structs, index: util.name_index(names), resources: util.name_index(resources) };
+  return StructTable { structs: structs, index: util.name_index(names), resources: util.name_index(resources), spellings: spellings };
 }
 
 function resource_names(mod: parser.Module): string[] {
@@ -2005,7 +2077,7 @@ function new_scope(): Scope {
   var ss: StructSig[] = [];
   var us: UnionSig[] = [];
   var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, []), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: struct_table(ss, [], no_spellings()), unions: union_table(us), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [], tpvars: [], tpvar_tps: [] };
 }
 
 // new_scope_full is a module's scope. The impl table rides on every one:
@@ -2036,7 +2108,7 @@ function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
 // a cast — so a type parameter cannot be captured by a same-named declared type
 // at one of them.
 function (s: Scope) type_names(): TypeNames {
-  return TypeNames { structs: s.structs.index, unions: s.unions.index, resources: s.structs.resources };
+  return TypeNames { structs: s.structs.index, unions: s.unions.index, resources: s.structs.resources, spellings: s.structs.spellings };
 }
 
 function (s: Scope) resolve_type(name: string): typeinfo.Type {
@@ -2387,8 +2459,7 @@ function is_resolvable_callee(name: string, s: Scope): boolean {
 // for_iter_is_range reports whether a for-loop iter is the synthetic
 // `__range(LOW, HIGH)` / `__range_incl(LOW, HIGH)` call the parser emits
 // for `for i in LOW..HIGH` / `for i in LOW..=HIGH`. The checker binds the
-// loop var from it (range_var_type); irlower carries its own copy (different
-// module) to drive the counted-loop lowering (half-open vs closed).
+// loop var from it (range_var_type).
 function for_iter_is_range(iter: ast.Expr): boolean {
   match (iter) {
     ast.ExprCall(c) => {
@@ -2478,7 +2549,7 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
   var empty: typeinfo.Type[] = [];
   var nob: string[] = [];
   var non: string[] = [];
-  return FuncSig { receiver: "", name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false };
+  return FuncSig { receiver: "", name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false, typevars: [] };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -4246,16 +4317,7 @@ function settle_shared_literal_typevars(c: ast.ExprCall, nargs: ast.Expr[], s: S
   }
   var sig: FuncSig = s.lookup_sig(name);
   var out: ast.Expr[] = nargs;
-  // Type variables are recognised as the call binding does (gc_is_typevar_name):
-  // a module-loaded callee keeps its parameters' spellings but not always its
-  // type_params list.
-  var tvs: string[] = [];
-  for ptn in sig.param_type_names {
-    if (util.index_of_str(tvs, ptn) < 0 && gc_is_typevar_name(ptn, sig.type_params, s.type_names())) {
-      tvs = tvs.append(ptn);
-    }
-  }
-  for tp in tvs {
+  for tp in sig.typevars {
     let (wty, wok) = shared_literal_typevar_width(sig, c, tp, s);
     if (wok) {
       var tag: string = type_to_irtag(wty);
@@ -4790,7 +4852,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           },
           typeinfo.TypeUnion(un) => {
             // An enum or struct-union receiver dispatches under the union's
-            // own name, the way irlower keys `<Union>.<method>`. A generic
+            // own name, the way the lowering keys `<Union>.<method>`. A generic
             // union carries its args separately, so the bare name is the key.
             recv_type_name = un.name;
           },
@@ -5980,7 +6042,19 @@ function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
   if (b.op == "__named_arg") {
     return check_expr(b.right, s);
   }
-  let (lt, rt) = binary_operands(b, s);
+  return binary_result_type(b, check_expr(b.left, s), check_expr(b.right, s), s);
+}
+
+// binary_result_type is check_binary_expr over operand types already checked
+// (`lt`, `rt`): the annotation walk hands it the types of the operands it
+// annotated rather than checking them again.
+function binary_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type, s: Scope): typeinfo.Type {
+  let (sl, sr) = settled_operands(b, lt, rt);
+  return operator_result_type(b, sl, sr, s);
+}
+
+// operator_result_type types `b` over its settled operand types.
+function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type, s: Scope): typeinfo.Type {
   // `+` is overloaded across i32 (arithmetic) and string
   // (concatenation). Other arithmetic ops are i32-only.
   if (b.op == "+") {
@@ -6099,7 +6173,11 @@ function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
 }
 
 function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
-  var ot: typeinfo.Type = check_expr(u.operand, s);
+  return unary_result_type(u, check_expr(u.operand, s), s);
+}
+
+// unary_result_type is check_unary_expr over the operand's checked type.
+function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typeinfo.Type {
   if (u.op == "-") {
     if (is_integer(ot)) {
       return ot;
@@ -6237,8 +6315,11 @@ function struct_lit_yields(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, 
 }
 
 function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
-  var at: typeinfo.Type = check_expr(x.array, s);
-  var it: typeinfo.Type = check_expr(x.index, s);
+  return index_result_type(check_expr(x.array, s), check_expr(x.index, s));
+}
+
+// index_result_type is check_index_expr over the checked array and index types.
+function index_result_type(at: typeinfo.Type, it: typeinfo.Type): typeinfo.Type {
   if (!is_integer(it)) {
     return t_unknown("array index must be i32");
   }
@@ -6401,7 +6482,12 @@ function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Ty
   if (vqu.len() > 0) {
     return t_union(vqu);
   }
-  var ot: typeinfo.Type = check_expr(fa.obj, s);
+  return field_access_result_type(fa, check_expr(fa.obj, s), s);
+}
+
+// field_access_result_type is check_field_access_expr over the object's
+// checked type, for a read that is not a qualified unit variant.
+function field_access_result_type(fa: ast.ExprFieldAccess, ot: typeinfo.Type, s: Scope): typeinfo.Type {
   match (ot) {
     typeinfo.TypeStruct(sn) => {
       var fsig: StructSig = s.lookup_struct(sn.name);
@@ -6905,7 +6991,13 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
     }
-    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const });
+    var tvs: string[] = [];
+    for spelling in ptn {
+      if (util.index_of_str(tvs, spelling) < 0 && gc_is_typevar_name(spelling, fd.type_params, tn)) {
+        tvs = tvs.append(spelling);
+      }
+    }
+    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs });
     i = i + 1;
   }
   return out;
@@ -7243,8 +7335,17 @@ function union_sig_names(unions: UnionSig[]): string[] {
   return out;
 }
 
-// Parse once, then resolve every constituent through the same structured ladder.
+// Parse once, then resolve every constituent through the same structured
+// ladder; a spelling the module's memo holds is read off it instead.
 function type_from_spelling(name: string, tn: TypeNames): typeinfo.Type {
+  // Read through a local: the stage0 pin's pre-codegen gate types a read
+  // through a struct-typed field by the field's name across every struct
+  // (#11066, fixed in asmcore here, not yet in the pin).
+  var memo: SpellMemo = tn.spellings;
+  var at: i32 = memo.names.find(name);
+  if (at >= 0) {
+    return memo.types[at];
+  }
   return type_from_ref_names(parser.parse_type_ref(name), tn);
 }
 
@@ -8076,7 +8177,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
 }
 
 // A written `return` inside a value block leaves the ENCLOSING function:
-// the block is an if- / match-expression desugar irlower inlines, so only
+// the block is an if- / match-expression desugar the lowering inlines, so only
 // the tail of each arm is the block's value. ret_diags stops at a lambda,
 // and a value block's callee is one, so this walks the value blocks one
 // statement's own expressions hold (nested bodies are ret_diags' own
@@ -10363,7 +10464,7 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean): boolean {
 // loopCanBreak: a loop that can break does not diverge, and treating it as
 // divergent accepts a function that falls off its end (#8447). A value
 // block — the desugar of a block-, if- or match-expression — is walked
-// because irlower inlines it, so its `break` targets this loop (#8562); a
+// because the lowering inlines it, so its `break` targets this loop (#8562); a
 // lambda body is not, since its `break` belongs to a loop of its own. A
 // nested loop's header expression runs in this loop's context, so only the
 // nested BODY counts as nested.
@@ -10467,7 +10568,7 @@ function label_in_scope(labels: string[], name: string): boolean {
 // expressions hold, each with the scope it needs. An ordinary lambda is a
 // scope: a label does not cross a function boundary and a `break` inside one is
 // E011, so it recurses with in_loop = false and no labels. A value block is not
-// — it is an if-/match-expression desugar that irlower inlines, so
+// — it is an if-/match-expression desugar that the lowering inlines, so
 // `t = t + { if (c) { break; } i }` breaks the enclosing loop and inherits both.
 //
 // `not_a_scope_root` stops the fold at both node kinds, so a value block's
@@ -10653,7 +10754,7 @@ function dot_index(s: string): i32 {
 // variant_pattern_name is the variant a pattern names, with any ENUM qualifier
 // stripped: `E.Wrap` -> `Wrap`, and in a prefix-mangled module
 // `lib__E.lib__Wrap` -> `lib__Wrap`. That suffix is the name the enum's variant
-// list and the variant struct are both keyed by — the same strip irlower does
+// list and the variant struct are both keyed by — the same strip the lowering does
 // when it lowers the arm. A module qualifier never survives to here (flatten
 // mangles it to `__`), so a dot at this point is always the enum spelling.
 function variant_pattern_name(name: string): string {
@@ -13096,7 +13197,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   // check_expr applies, so this fires only where it already
   // rejects the operands (no new false positives).
   if (b.op == "+") {
-    let (pl, pr) = binary_operands(b, s);
+    let (pl, pr) = settled_operands(b, check_expr(b.left, s), check_expr(b.right, s));
     if (!is_unknown(pl) && !is_unknown(pr)) {
       var oks: boolean = type_eq(pl, t_string()) && type_eq(pr, t_string());
       var both_int: boolean = is_integer(pl) && is_integer(pr);
@@ -13117,7 +13218,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
     }
   }
   if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
-    let (alt, art) = binary_operands(b, s);
+    let (alt, art) = settled_operands(b, check_expr(b.left, s), check_expr(b.right, s));
     if (!is_unknown(alt) && !is_unknown(art)) {
       var a_both_int: boolean = is_integer(alt) && is_integer(art);
       var oki: boolean = a_both_int && int_operands_agree(alt, art, b.left, b.right);
@@ -13182,7 +13283,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   // checker (requireInteger, or requireFloat when either side is
   // float). `==` / `!=` (equality, E041) are handled above.
   if (b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") {
-    let (olt, ort) = binary_operands(b, s);
+    let (olt, ort) = settled_operands(b, check_expr(b.left, s), check_expr(b.right, s));
     if (!is_unknown(olt) && !is_unknown(ort)) {
       var o_both_int: boolean = is_integer(olt) && is_integer(ort);
       var oki_o: boolean = o_both_int && int_operands_agree(olt, ort, b.left, b.right);
@@ -15039,7 +15140,7 @@ function e079_note_try(e: ast.Expr, own acc: E079Probe): E079Probe {
 // it is an ordinary use.
 // A value block is the exception, and it parses to the identical shape (#9553).
 // `(match (k) { … })` and the if-expression / comprehension forms desugar to a
-// zero-arg call of a zero-param lambda, which irlower INLINES rather than
+// zero-arg call of a zero-param lambda, which the lowering INLINES rather than
 // lowering as a function — `lower_defers_body` excludes them from the per-scope
 // defer lowering for that reason. So a `?` inside one leaves the ENCLOSING
 // function after all, which is what makes it E079 rather than an ordinary use.
@@ -15118,11 +15219,11 @@ function registered_intrinsics(): string[] {
 
 // redeclares reports whether funcs[di] redeclares an earlier function, method
 // or associated function, or a surface builtin.
-function redeclares(funcs: parser.FuncDecl[], di: i32): boolean {
+function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): boolean {
   var f2: parser.FuncDecl = funcs[di];
   var earlier: boolean = false;
-  var ej: i32 = 0;
-  while (ej < di) {
+  var ej: i32 = names.chain(f2.name);
+  while (ej >= 0 && ej < di) {
     var pe: parser.FuncDecl = funcs[ej];
     // Key redeclaration on the receiver TYPE, not the receiver NAME:
     // an ASSOCIATED function (`impl Default for i32 { function default()
@@ -15138,7 +15239,7 @@ function redeclares(funcs: parser.FuncDecl[], di: i32): boolean {
     if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type)) {
       earlier = true;
     }
-    ej = ej + 1;
+    ej = names.next[ej];
   }
   // A free function named like a builtin or an intrinsic redeclares it, as
   // native's pre-registered signature makes it there.
@@ -15186,10 +15287,15 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   // a method redeclared (same name AND receiver namespace). The redeclaration
   // SITE — the second + occurrences — is flagged, matching the Go
   // checker.
+  var decl_names: string[] = [];
+  for fd in mod.funcs {
+    decl_names = decl_names.append(fd.name);
+  }
+  var decl_index: util.NameIndex = util.name_index(decl_names);
   var di: i32 = 0;
   while (di < mod.funcs.len()) {
     var f2: parser.FuncDecl = mod.funcs[di];
-    if (redeclares(mod.funcs, di)) {
+    if (redeclares(mod.funcs, decl_index, di)) {
       if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else {
@@ -15345,6 +15451,10 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
 // dyn-trait consuming methods) — it under-reports rather than over-reports.
 pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[] }
 
+// OwnFuncs is the module's own-taking free functions with a name index over
+// them, one entry per row in order.
+pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex }
+
 struct MovedEntry { mname: string, mline: i32 }
 
 struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
@@ -15365,7 +15475,7 @@ struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 // checked type is scalar carries no reference, so handing it to a consuming
 // parameter transfers nothing and needs no proof of ownership (native's
 // scalarArgs).
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[] }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[] }
 
 // ow_expr_is_scalar is native's definitelyScalar on the argument's checked type.
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
@@ -15502,23 +15612,17 @@ function ow_nested_moved(m: MovedEntry[], params: ast.ParamDecl[]): MovedEntry[]
   return out;
 }
 
-function ow_func_flags(ofuncs: OwnFunc[], name: string): boolean[] {
-  for ofunc in ofuncs {
-    if (ofunc.name == name) {
-      return ofunc.flags;
-    }
+function ow_func_flags(ofuncs: OwnFuncs, name: string): boolean[] {
+  var i: i32 = ofuncs.names.find(name);
+  if (i >= 0) {
+    return ofuncs.rows[i].flags;
   }
   var empty: boolean[] = [];
   return empty;
 }
 
-function ow_is_own_func(ofuncs: OwnFunc[], name: string): boolean {
-  for ofunc in ofuncs {
-    if (ofunc.name == name) {
-      return true;
-    }
-  }
-  return false;
+function ow_is_own_func(ofuncs: OwnFuncs, name: string): boolean {
+  return ofuncs.names.has(name);
 }
 
 // ow_variant_known reports whether `name` is a declared VARIANT, optionally of
@@ -15672,7 +15776,7 @@ struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[], sels: LuSel[] 
 
 // LuFn is what every verdict reads: the body's facts, its parameter names and
 // the own-func table.
-struct LuFn { facts: LuFacts, params: string[], ofuncs: OwnFunc[] }
+struct LuFn { facts: LuFacts, params: string[], ofuncs: OwnFuncs }
 
 // LuSite is the statement a call sits in: its innermost statement list, its
 // index there, whether a loop re-runs it, and whether that list is the body of
@@ -15971,7 +16075,7 @@ function lu_returns_before_reading(site: LuSite, name: string): boolean {
 }
 
 function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
-  for ofn in fx.ofuncs {
+  for ofn in fx.ofuncs.rows {
     if (ofn.name == callee) {
       return i >= ofn.arr.len() || ofn.arr[i];
     }
@@ -16023,21 +16127,76 @@ function lu_rebind_site(site: LuSite, name: string): boolean {
       }
     },
     ast.StmtVar(v) => {
-      // `var y = f(.., x, ..); x = y;` — the store supersedes x before anything
-      // else runs.
+      // `var y = f(.., x, ..); …; x = y;` — the store supersedes x before
+      // anything reads it.
       if let ast.ExprCall(_) = v.init {
-        if (site.idx + 1 < site.stmts.len() && astwalk.count_ident_expr(v.init, name) == 1) {
-          if let ast.StmtAssign(nxt) = site.stmts[site.idx + 1] {
-            if (nxt.target == name && astwalk.count_ident_expr(nxt.value, name) == 0) {
-              return true;
-            }
-          }
+        if (astwalk.count_ident_expr(v.init, name) == 1) {
+          return lu_rebound_after(site, name);
         }
       }
     },
     _ => {}
   }
   return false;
+}
+
+// lu_rebound_after: a later statement of the list stores to `name` without
+// reading it, and every statement before that store is straight-line code that
+// does not name it (#11093).
+function lu_rebound_after(site: LuSite, name: string): boolean {
+  var j: i32 = site.idx + 1;
+  while (j < site.stmts.len()) {
+    if let ast.StmtAssign(a) = site.stmts[j] {
+      if (a.target == name) {
+        if (astwalk.count_ident_expr(a.value, name) != 0) {
+          return false;
+        }
+        var k: i32 = site.idx + 1;
+        while (k < j) {
+          if (!lu_straight(site.stmts[k]) || lu_mentions(site.stmts[k], name) != 0) {
+            return false;
+          }
+          k = k + 1;
+        }
+        return true;
+      }
+    }
+    j = j + 1;
+  }
+  return false;
+}
+
+// lu_straight: a statement that runs through to the next one, so it cannot
+// leave the list before the store does.
+function lu_straight(st: ast.Stmt): boolean {
+  match (st) {
+    ast.StmtVar(v) => {
+      return !lu_has_try(v.init);
+    },
+    ast.StmtAssign(a) => {
+      return !lu_has_try(a.value);
+    },
+    ast.StmtExpr(x) => {
+      return !lu_has_try(x.value);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function lu_has_try(e: ast.Expr): boolean {
+  return astwalk.fold_expr_pruned(e, false, lu_try_at, astwalk.not_lambda);
+}
+
+function lu_try_at(x: ast.Expr, own found: boolean): boolean {
+  if let ast.ExprUnary(u) = x {
+    if (u.op == "try_") {
+      return true;
+    }
+  }
+  return found;
 }
 
 // lu_call collects the keys of `c`'s own-position arguments that die at it.
@@ -16223,7 +16382,7 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: 
 // lu_last_use_args is the E051 admission for `fn`: the keys of the local
 // arguments handed to an `own` parameter where they die. A nested function is
 // lowered as a function of its own, so its body is answered by its own walk.
-function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFunc[]): string[] {
+function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs): string[] {
   var facts: LuFacts = LuFacts { occ: [], vars: [], escaping: [], sels: [] };
   var nested: ast.ExprLambda[] = [];
   for st in fn.body {
@@ -16931,8 +17090,9 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
 
 // collect_own_funcs records every function that has at least one `own`
 // parameter, with a per-parameter owned-flag list (for the E051 guard).
-function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFunc[] {
+function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFuncs {
   var out: OwnFunc[] = [];
+  var names: string[] = [];
   for func in funcs {
     var any_own: boolean = false;
     var flags: boolean[] = [];
@@ -16948,9 +17108,10 @@ function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFunc[] {
     }
     if (any_own && func.receiver_name.len() == 0) {
       out = out.append(OwnFunc { name: func.name, flags: flags, arr: arr });
+      names = names.append(func.name);
     }
   }
-  return out;
+  return OwnFuncs { rows: out, names: util.name_index(names) };
 }
 
 // ow_type_is_pointer reports whether a declared type SPELLING is
@@ -17030,7 +17191,7 @@ function ow_spine_stmts(body: ast.Stmt[]): ast.Stmt[] {
 
 // ow_borrowed_params names the parameters of `fn` that are pointers the caller
 // still owns — the only values whose owner outlives the call.
-function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFunc[]): string[] {
+function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFuncs): string[] {
   var flags: boolean[] = ow_func_flags(ofuncs, fn.name);
   var out: string[] = [];
   var i: i32 = 0;
@@ -17169,7 +17330,7 @@ function ow_borrowed_locals(spine: ast.Stmt[], mod: parser.Module, borrowed: str
 
 // ow_func_result_borrows reports whether any of the returns of `fn` is derived
 // from one of its borrowed pointer parameters.
-function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFunc[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   var borrowed: string[] = ow_borrowed_params(fn, mod, ofuncs);
   if (borrowed.len() == 0) {
     return false;
@@ -17228,7 +17389,7 @@ function ow_fresh_builtins(): string[] {
 // scrutinee alone (#9539): a pointer-returning function takes no pointer
 // parameter, so its result is built fresh, or every pointer parameter is
 // `own`, so the callee already took ownership of each.
-function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex): string[] {
+function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex): string[] {
   var out: string[] = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
@@ -17260,7 +17421,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builti
 // ow_result_borrows settles the least fixed point described at
 // ow_fresh_owners. After the first round only a function calling one the
 // previous round marked can change its answer, so only those are examined again.
-function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex): util.NameIndex {
+function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex): util.NameIndex {
   var none: string[] = [];
   var borrows: util.NameIndex = util.name_index(none);
   var pending: parser.FuncDecl[] = [];
@@ -17305,7 +17466,7 @@ function ow_calls_any(fn: parser.FuncDecl, names: util.NameIndex): boolean {
 
 // ow_fresh_owners is the complement: every pointer-returning function the
 // fixpoint did not mark, plus the builtins.
-function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex, borrows: util.NameIndex): string[] {
+function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
   var out: string[] = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
@@ -17328,7 +17489,7 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.N
 // a borrow back. ow_call_may_borrow already treats every method callee as able
 // to, so one pass over the settled `borrows` is enough — a method reached only
 // through another method is pessimistic already.
-function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex, borrows: util.NameIndex): string[] {
+function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
   var out: string[] = [];
   var refused: string[] = [];
   for fn in mod.funcs {
@@ -17360,7 +17521,7 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.
 // ordinary programs are untouched. The result-borrow fixpoint always spans the
 // module; only the bodies `focus` admits (in_focus) are walked.
 pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
-  var ofuncs: OwnFunc[] = collect_own_funcs(mod.funcs);
+  var ofuncs: OwnFuncs = collect_own_funcs(mod.funcs);
   var builtins: util.NameIndex = util.name_index(ow_fresh_builtins());
   var borrows: util.NameIndex = ow_result_borrows(mod, ofuncs, builtins);
   var fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);
@@ -17381,7 +17542,7 @@ pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
         borrowed = borrowed.append(param.name);
       }
     }
-    if (owned.len() > 0 || ofuncs.len() > 0) {
+    if (owned.len() > 0 || ofuncs.rows.len() > 0) {
       var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs) };
       var nomoved: MovedEntry[] = [];
       var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
@@ -20902,10 +21063,10 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     well_typed = false;
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names, rnames);
+  var tn: TypeNames = with_spellings(type_names(struct_names, union_names, rnames), mod);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   var st: SigTable = sig_table(sigs);
-  var stt: StructTable = struct_table(structs, rnames);
+  var stt: StructTable = struct_table(structs, rnames, tn.spellings);
   var ut: UnionTable = union_table(unions);
   var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
   var body_diags: util.Diag[] = [];
@@ -21339,11 +21500,11 @@ function module_env(mod: parser.Module): ModuleEnv {
     unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names, rnames);
+  var tn: TypeNames = with_spellings(type_names(struct_names, union_names, rnames), mod);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   return ModuleEnv {
     sigs: sig_table(sigs),
-    structs: struct_table(structs, rnames),
+    structs: struct_table(structs, rnames, tn.spellings),
     unions: union_table(unions),
     methods: method_table(collect_method_sigs(mod.funcs, tn)),
     imports: import_paths_of(mod),
@@ -22362,7 +22523,7 @@ function type_to_irtag(t: typeinfo.Type): string {
       return st.name;
     },
     typeinfo.TypeMap(m) => {
-      // A map-valued call: the "Map[K, V]" tag irlower's expr_map_type_tag reads
+      // A map-valued call: the "Map[K, V]" tag the lowering reads
       // (its own canonical spelling — see the "Map[" + ktag + ", " + vtag + "]"
       // constructor). Only when both K and V serialise to a scalar/string tag;
       // a composite key/value yields "" (unannotated → structural fallback).
@@ -22375,7 +22536,7 @@ function type_to_irtag(t: typeinfo.Type): string {
     },
     typeinfo.TypeUnion(u) => {
       // A builtin Option/Result-valued call: reconstruct the full "Option[T]" /
-      // "Result[T, E]" tag irlower's try_opt_type keys on, from the union's
+      // "Result[T, E]" tag the lowering keys on, from the union's
       // captured args. "" if any payload/error type isn't scalar/string/struct-
       // serialisable, keeping the tag well-formed.
       if (u.name == "Option" && u.args.len() == 1) {
@@ -22395,9 +22556,9 @@ function type_to_irtag(t: typeinfo.Type): string {
       }
       // A NOMINAL enum-valued expression carries its enum NAME, the sibling of
       // the TypeStruct arm above and read through the same admission helper
-      // (irlower's struct_tag_from_ty, which admits a struct or an enum and
+      // (the lowering's, which admits a struct or an enum and
       // rejects the scalar vocabulary first). A union carrying ARGS is a
-      // generic instantiation whose spelling irlower has no vocabulary for, so
+      // generic instantiation whose spelling the lowering has no vocabulary for, so
       // only the bare form names itself.
       if (u.args.len() == 0) {
         return u.name;
@@ -22405,8 +22566,8 @@ function type_to_irtag(t: typeinfo.Type): string {
       return "";
     },
     typeinfo.TypeTuple(tp) => {
-      // A tuple-valued call: the canonical "(t0, t1, …)" tag irlower's
-      // tuple_type_elem_tag / expr_tuple_elem_tag parse (via parse_type_ref),
+      // A tuple-valued call: the canonical "(t0, t1, …)" tag
+      // irtables.tuple_type_elem_tag parses (via parse_type_ref),
       // so a `f().N` tuple-element read resolves element N's type instead of
       // bailing to the AST path. Every element must serialise to a scalar /
       // string / struct / nested-composite tag; any unserialisable element
@@ -22439,7 +22600,7 @@ function type_to_irtag(t: typeinfo.Type): string {
   return "";
 }
 
-// type_to_arrtag names an ARRAY / slice type as irlower spells it — "f64[]",
+// type_to_arrtag names an ARRAY / slice type as the lowering spells it — "f64[]",
 // "i64[]", "string[]" — or "" for anything else. It is deliberately SEPARATE
 // from type_to_irtag rather than a TypeArray arm added to it: type_to_irtag's
 // result is read by tag-FIRST consumers (expr_is_str / _f64 / _u32 / _u64 all
@@ -22495,10 +22656,10 @@ function build_module_tables(mod: parser.Module): ModuleTables {
     unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
-  var tn: TypeNames = type_names(struct_names, union_names, rnames);
+  var tn: TypeNames = with_spellings(type_names(struct_names, union_names, rnames), mod);
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
-  return ModuleTables { structs: struct_table(structs, rnames), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod), impls: assoc_func_impls(mod.impls, mod.funcs), trait_reqs: mod.trait_reqs };
+  return ModuleTables { structs: struct_table(structs, rnames, tn.spellings), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod), impls: assoc_func_impls(mod.impls, mod.funcs), trait_reqs: mod.trait_reqs };
 }
 
 // settle_generic_lit_fields settles at i64 each bare integer literal whose
@@ -22650,16 +22811,41 @@ function settle_struct_lit_wide(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Ex
 // ExprBinary.ty, ExprUnary.ty, ExprFieldAccess.ty and ExprIndex.ty with the
 // checker-inferred result tag.
 // Recurses through every composite so a nested call is reached.
+// Typed is an annotated expression with, where the walk settled it
+// (`known`), the type check_expr answers for the expression as written.
+struct Typed { e: ast.Expr, ty: typeinfo.Type, known: boolean }
+
+// typed_type is the checked type of `orig`, read off its annotation when
+// the walk settled it and checked otherwise.
+function typed_type(t: Typed, orig: ast.Expr, s: Scope): typeinfo.Type {
+  if (t.known) {
+    return t.ty;
+  }
+  return check_expr(orig, s);
+}
+
 function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
+  return annotate_typed(e, s).e;
+}
+
+// annotate_typed stamps an expression with its checked type, bottom up: an
+// operand's type is what its own annotation settled, and the node's type is
+// what check_expr computes from the operands' types (binary_result_type and
+// its siblings), so a subtree is checked once rather than once more per
+// enclosing node.
+function annotate_typed(e: ast.Expr, s: Scope): Typed {
   match (e) {
     ast.ExprIdent(id) => {
-      return ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: type_to_irtag(check_expr(e, s)) };
+      var it: typeinfo.Type = check_ident_expr(id, s);
+      return Typed { e: ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: type_to_irtag(it) }, ty: it, known: true };
     },
     ast.ExprBinary(b) => {
-      var left: ast.Expr = annotate_expr(b.left, s);
-      var right: ast.Expr = annotate_expr(b.right, s);
-      var lt: typeinfo.Type = check_expr(b.left, s);
-      var rt: typeinfo.Type = check_expr(b.right, s);
+      var lta: Typed = annotate_typed(b.left, s);
+      var rta: Typed = annotate_typed(b.right, s);
+      var left: ast.Expr = lta.e;
+      var right: ast.Expr = rta.e;
+      var lt: typeinfo.Type = typed_type(lta, b.left, s);
+      var rt: typeinfo.Type = typed_type(rta, b.right, s);
       // A wide bare literal is i64 only in the absence of a context. Beside
       // a u32 operand, 0xffffffff is a u32, including in comparisons and
       // checked arithmetic whose result tag is not the operand type.
@@ -22671,10 +22857,17 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
           right = settle_int_tree(right, type_to_irtag(lt));
         }
       }
-      return ast.ExprBinary { op: b.op, left: left, right: right, line: b.line, col: b.col, ty: type_to_irtag(check_expr(e, s)) };
+      // A named-argument marker types as its value (check_binary_expr).
+      var bt: typeinfo.Type = rt;
+      if (b.op != "__named_arg") {
+        bt = binary_result_type(b, lt, rt, s);
+      }
+      return Typed { e: ast.ExprBinary { op: b.op, left: left, right: right, line: b.line, col: b.col, ty: type_to_irtag(bt) }, ty: bt, known: true };
     },
     ast.ExprUnary(u) => {
-      return ast.ExprUnary { op: u.op, operand: annotate_expr(u.operand, s), line: u.line, col: u.col, ty: type_to_irtag(check_expr(e, s)) };
+      var oa: Typed = annotate_typed(u.operand, s);
+      var ut: typeinfo.Type = unary_result_type(u, typed_type(oa, u.operand, s), s);
+      return Typed { e: ast.ExprUnary { op: u.op, operand: oa.e, line: u.line, col: u.col, ty: type_to_irtag(ut) }, ty: ut, known: true };
     },
     ast.ExprCall(c) => {
       var nargs: ast.Expr[] = [];
@@ -22683,31 +22876,42 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       }
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
-      var tag: string = type_to_irtag(check_expr(e, s));
-      return ast.ExprCall { callee: annotate_expr(c.callee, s), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: tag };
+      var ct: typeinfo.Type = check_expr(e, s);
+      return Typed { e: ast.ExprCall { callee: annotate_expr(c.callee, s), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: type_to_irtag(ct) }, ty: ct, known: true };
     },
     ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { obj: annotate_expr(fa.obj, s), field: fa.field, line: fa.line, col: fa.col, ty: type_to_irtag(check_expr(e, s)) };
+      var oa: Typed = annotate_typed(fa.obj, s);
+      var vqu: string = qual_variant_union(fa, s);
+      var ft: typeinfo.Type = t_union(vqu);
+      if (vqu.len() == 0) {
+        ft = field_access_result_type(fa, typed_type(oa, fa.obj, s), s);
+      }
+      return Typed { e: ast.ExprFieldAccess { obj: oa.e, field: fa.field, line: fa.line, col: fa.col, ty: type_to_irtag(ft) }, ty: ft, known: true };
     },
     ast.ExprIndex(x) => {
-      return ast.ExprIndex { array: annotate_expr(x.array, s), index: annotate_expr(x.index, s), unchecked: x.unchecked, ty: type_to_irtag(check_expr(e, s)), line: x.line, col: x.col };
+      var aa: Typed = annotate_typed(x.array, s);
+      var ia: Typed = annotate_typed(x.index, s);
+      var xt: typeinfo.Type = index_result_type(typed_type(aa, x.array, s), typed_type(ia, x.index, s));
+      return Typed { e: ast.ExprIndex { array: aa.e, index: ia.e, unchecked: x.unchecked, ty: type_to_irtag(xt), line: x.line, col: x.col }, ty: xt, known: true };
     },
     ast.ExprSlice(sl) => {
-      return ast.ExprSlice { ...sl, array: annotate_expr(sl.array, s), start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(check_expr(sl.array, s)) };
+      var aa: Typed = annotate_typed(sl.array, s);
+      var at: typeinfo.Type = typed_type(aa, sl.array, s);
+      return Typed { e: ast.ExprSlice { ...sl, array: aa.e, start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(at) }, ty: at, known: false };
     },
     ast.ExprArray(a) => {
       var na: ast.Expr[] = [];
       for element in a.elements {
         na = na.append(annotate_expr(element, s));
       }
-      return settle_array_literals(ast.ExprArray { ...a, elements: na }, s);
+      return unsettled(settle_array_literals(ast.ExprArray { ...a, elements: na }, s));
     },
     ast.ExprTuple(t) => {
       var nt: ast.Expr[] = [];
       for element in t.elements {
         nt = nt.append(annotate_expr(element, s));
       }
-      return ast.ExprTuple { elements: nt, line: t.line, col: t.col };
+      return unsettled(ast.ExprTuple { elements: nt, line: t.line, col: t.col });
     },
     ast.ExprStructLit(sli) => {
       var nfv: ast.Expr[] = [];
@@ -22719,16 +22923,22 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       if (sli.has_base) {
         nbase = annotate_expr(sli.base, s);
       }
-      return ast.ExprStructLit { type_name: sli.type_name, field_names: sli.field_names, field_values: nfv, has_base: sli.has_base, base: nbase, line: sli.line, col: sli.col, written: sli.written };
+      return unsettled(ast.ExprStructLit { type_name: sli.type_name, field_names: sli.field_names, field_values: nfv, has_base: sli.has_base, base: nbase, line: sli.line, col: sli.col, written: sli.written });
     },
     ast.ExprLambda(lm) => {
-      return annotate_lambda_expr(lm, s, "");
+      return unsettled(annotate_lambda_expr(lm, s, ""));
     },
     _ => {
-      return e;
+      return unsettled(e);
     }
   }
-  return e;
+  return unsettled(e);
+}
+
+// unsettled is an annotated expression whose type the walk did not settle: a
+// node reading it checks it as it always did.
+function unsettled(e: ast.Expr): Typed {
+  return Typed { e: e, ty: t_unknown("unsettled"), known: false };
 }
 
 // Capture contracts are resolved where the lambda is defined, including
@@ -23513,7 +23723,7 @@ function vb_store_type(body: ast.Stmt[], name: string, s: Scope): typeinfo.Type 
 // type with no literal zero to declare it with (a struct, an array, a tuple),
 // which keeps the parser's declaration.
 function vb_local_tag(t: typeinfo.Type): string {
-  // A `str` VIEW is spelled "string" by the irlower tag vocabulary but has no
+  // A `str` VIEW is spelled "string" by the lowering's tag vocabulary but has no
   // literal to declare a local with — `""` is an OWNED string — so it keeps the
   // parser's declaration, like the aggregates.
   if (type_label(t) == "str") {
@@ -24464,7 +24674,7 @@ function gcall_of(e: ast.Expr, want: typeinfo.Type, s: Scope): (ast.Expr, typein
     if (parser.is_value_block(c)) {
       return (e, want, false);
     }
-    return (e, want, gcall_sig(c, s).ret_type_name.len() > 0 && gcall_tvars(gcall_sig(c, s), s).len() > 0);
+    return (e, want, gcall_sig(c, s).ret_type_name.len() > 0 && gcall_sig(c, s).typevars.len() > 0);
   }
   return (e, want, false);
 }
@@ -24509,19 +24719,7 @@ function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
       return s.lookup_sig(cid.name);
     }
   }
-  return FuncSig { receiver: "", name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false };
-}
-
-// gcall_tvars: the type variables a signature declares some parameter AS —
-// recognised as the call binding does (gc_is_typevar_name).
-function gcall_tvars(sig: FuncSig, s: Scope): string[] {
-  var tvs: string[] = [];
-  for ptn in sig.param_type_names {
-    if (util.index_of_str(tvs, ptn) < 0 && gc_is_typevar_name(ptn, sig.type_params, s.type_names())) {
-      tvs = tvs.append(ptn);
-    }
-  }
-  return tvs;
+  return FuncSig { receiver: "", name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false, typevars: [] };
 }
 
 // lit_bound_typevar: every argument declared as `tp` is an untyped integer
@@ -24563,7 +24761,7 @@ function gcall_open_tvars(e: ast.Expr, s: Scope): (ast.Expr, string[]) {
   if let ast.ExprCall(c) = ce {
     var sig: FuncSig = gcall_sig(c, s);
     var ret: parser.TypeRef = parser.parse_type_ref(sig.ret_type_name);
-    for tp in gcall_tvars(sig, s) {
+    for tp in sig.typevars {
       if (type_ref_names_any(ret, [tp]) && lit_bound_typevar(sig, c, tp, s)) {
         tvs = tvs.append(tp);
       }
@@ -24582,7 +24780,7 @@ function gcall_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer):
   }
   if let ast.ExprCall(c) = ce {
     var sig: FuncSig = gcall_sig(c, s);
-    let (bn, bt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), lifted, gcall_tvars(sig, s), s.type_names(), [], []);
+    let (bn, bt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), lifted, sig.typevars, s.type_names(), [], []);
     var out: LitInfer = st;
     var i: i32 = 0;
     while (i < bn.len()) {

@@ -106,7 +106,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	// fallback gone it now forks ~35 emit children, and under qemu that took the
 	// whole test from 297 s past the 18-minute shard timeout. Its unique value
 	// was the #3561 string[]-field `.append()` UAF guard, whose fix is in SHARED
-	// irlower.fern and which the x86 twin exercises on every run — so what is
+	// lowering and which the x86 twin exercises on every run — so what is
 	// lost here is a duplicate, while what is gained is coverage of code that
 	// otherwise had none.
 	gen2, err := runX86_64Bin(x86runner, driverBin, entry, "-target", "arm64-linux").Output()
