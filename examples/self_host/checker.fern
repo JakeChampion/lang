@@ -10051,11 +10051,18 @@ function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
       for field_value in sl.field_values {
         out = util.append_diags(out, slit_diags(field_value, structs));
       }
+      // E043: a literal whose type names no declared struct or variant,
+      // reported where the literal stands as native does (#10965). A
+      // reserved built-in struct is declared by the front end rather than
+      // by a module, so it is not unknown here.
+      if (lit_names_no_struct(sl.type_name, structs)) {
+        out = out.append(dg_at("E043", "unknown struct type \"" + sl.type_name + "\"", sl.line, sl.col));
+      }
       // E043: a struct-literal field whose name isn't declared on the
       // struct. Mirrors the Go checker (per-literal-field "struct S has no
       // field f"). Runs for update literals too (`S { ...b, bad: 1 }`) —
-      // you can't set an unknown field. A non-struct / unknown type name
-      // (generic instantiation, variant) finds no sig and is skipped.
+      // you can't set an unknown field. A generic instantiation or a
+      // variant finds no sig and is skipped.
       var usig: StructSig = find_struct_sig(structs, sl.type_name);
       if (usig.name.len() > 0) {
         for field_name in sl.field_names {
@@ -10121,6 +10128,16 @@ function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
 // stmts_slit_diags walks a statement list (recursing into nested blocks
 // and lambda bodies via slit_diags) collecting the struct-literal E005s
 // from every expression it contains.
+// lit_names_no_struct reports whether a struct literal's type name is a
+// plain identifier that no struct or variant declares: `Self` is the impl's
+// type and a dotted or bracketed spelling resolves elsewhere.
+function lit_names_no_struct(name: string, structs: StructSig[]): boolean {
+  if (name == "Self" || parser.is_reserved_struct_name(name) || !plain_ident(name)) {
+    return false;
+  }
+  return find_variant_sig(structs, name).name.len() == 0;
+}
+
 function stmts_slit_diags(stmts: ast.Stmt[], structs: StructSig[]): util.Diag[] {
   var out: util.Diag[] = [];
   for stmt in stmts {
@@ -14460,6 +14477,13 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !(type_assignable(initt, declared, unions) && dyn_conforms(initt, declared, cur))) {
             out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared) + str_copy_hint(initt, declared), v.line, v.col));
           }
+          // An annotation naming no declared type (the E064 case) is a type
+          // native cannot assign a typed init to either, so E003 stands
+          // beside the E064 (#10965). An annotation this resolver merely
+          // does not model stays unknown without either diagnostic.
+          if (vbound.len() == 0 && is_unknown(declared) && !is_unknown(initt) && util.index_of_str(cur.tparams, v.type_name) < 0 && e064_unknown_bare(v.type_name, cur.type_names())) {
+            out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + v.type_name, v.line, v.col));
+          }
         }
         // E047: an unannotated binding settles its literal-only init at i64
         // when a literal in it has no i32 reading (#3676 / #8668), so a
@@ -17931,7 +17955,16 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
   if (parser.is_reserved_struct_name(type_name) || parser.is_reserved_enum_name(type_name)) {
     return false;
   }
-  for byte in type_name {
+  if (!plain_ident(type_name)) {
+    return false;
+  }
+  return is_unknown(type_from_spelling(type_name, tn));
+}
+
+// plain_ident reports whether `name` is one identifier: letters, digits and
+// underscores only, so no array suffix, generic argument, dot or arrow.
+function plain_ident(name: string): boolean {
+  for byte in name {
     var ch: i32 = byte as i32;
     var alpha: boolean = ch >= 65 && ch <= 90 || ch >= 97 && ch <= 122;
     var digit: boolean = ch >= 48 && ch <= 57;
@@ -17939,7 +17972,7 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
       return false;
     }
   }
-  return is_unknown(type_from_spelling(type_name, tn));
+  return name.len() > 0;
 }
 
 // e064_unknown_name is the recursive form of the E064 check (#4363 item 3): it
