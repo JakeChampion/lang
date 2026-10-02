@@ -1641,7 +1641,7 @@ function sat_clamp(v: i64, minv: i64, maxv: i64): i64 {
 // Add / sub pre-check against the bound; mul post-checks the WRAPPED product
 // with a division round-trip, plus the `a == -1 && b == MIN` term that a total
 // `MIN / -1 == MIN` would otherwise hide. Mirrors the IR lowering
-// (irlower.lower_sat_binary) and native's ir.satBinary.
+// (irlower.sat_binary_ops) and native's ir.satBinary.
 function sat_i64(op: string, a: i64, b: i64): i64 {
   var maxv: i64 = 9223372036854775807;
   var minv: i64 = 0 - 9223372036854775807 - 1;

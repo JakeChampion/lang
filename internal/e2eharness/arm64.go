@@ -7,18 +7,10 @@ package e2eharness
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"testing"
 
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
-	nativeelf "github.com/jakechampion/lang/internal/native/elf"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 // Arm64Tooling locates the C linker used to assemble the
@@ -142,67 +134,15 @@ func CompileArm64Bin(t *testing.T, src string) (binPath, qemu string) {
 }
 
 // compileArm64BinOpts is CompileArm64Bin with the emit options spelled out —
-// the seam the high-heap gate uses.
+// the seam the high-heap gate uses (FERN_HIGH_HEAP=1 on the compiler).
 func compileArm64BinOpts(t *testing.T, src string, opts arm64codegen.Options) (binPath, qemu string) {
 	t.Helper()
-	gcc, qemu := Arm64Tooling(t)
-
-	// Route the source through modload so cross-module qualified
-	// imports inside the stdlib (e.g. `int.int_to_string_radix(…)`
-	// in std/i32) get the proper rewriting — that's the same
-	// pipeline `cmd/fern` uses. Without this, bare in-source
-	// qualified calls would hit "undefined identifier" because
-	// modload's rewriter is the only thing that recognises the
-	// `mod.fn(args)` shape.
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
+	qemu = Arm64Runner(t)
+	var env []string
+	if opts.HighHeapProbe {
+		env = []string{"FERN_HIGH_HEAP=1"}
 	}
-	prog, _, err := modload.Load(srcPath)
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: "linux"}); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	// Monomorphise generic functions before codegen — the
-	// production driver (cmd/fern) always runs this; the e2e
-	// harness was missing it which only mattered once OpCallDirect
-	// started consulting per-arg types for SysV register allocation
-	// under the two-word string ABI.
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := arm64codegen.EmitWithOptions(prog, info, opts)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-
-	asmPath := filepath.Join(dir, "prog.s")
-	binPath = filepath.Join(dir, "prog")
-	if err := os.WriteFile(asmPath, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write asm: %v", err)
-	}
-	// FERN_NATIVE_ASM=1 routes the assemble+link step through the pure-Go
-	// native backend instead of gcc — used to audit native coverage across
-	// the whole arm64 e2e suite. Default (unset) keeps the gcc path.
-	if os.Getenv("FERN_NATIVE_ASM") != "" {
-		text, rodata, err := nativearm64.AssembleProgram(asm, nativeelf.TextVAddr)
-		if err != nil {
-			t.Fatalf("NATIVE-ASM-FAIL: %v\n--- asm ---\n%s", err, asm)
-		}
-		if err := os.WriteFile(binPath, nativeelf.StaticExecutableData(text, rodata), 0o755); err != nil {
-			t.Fatalf("write native bin: %v", err)
-		}
-	} else if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
-	}
-	return binPath, qemu
+	return compileSelfHostProgram(t, TargetArm64Linux, src, env), qemu
 }
 
 // finishArm64Run turns a completed run into (stdout, exit code), failing

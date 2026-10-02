@@ -41,8 +41,8 @@ jobs:
           - { nshard: 2, shard: 1 }
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/drop-selfhost-sources
       - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
       - name: build native test runners
         run: |
           go test -c -o "$RUNNER_TEMP/e2e-x86_64.test" ./internal/e2e/

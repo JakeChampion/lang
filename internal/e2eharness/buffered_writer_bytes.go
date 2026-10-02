@@ -7,7 +7,11 @@ func BufferedWriterBytesOutput() []byte {
 	}
 	out = append(out, 0xc3, 0xff, 'a', 0, 0x80, 0xff, 'a')
 	out = append(out, []byte("tail")...)
-	return append(out, 255, 0, 128, 254, 193, 255, 0, 254, 255, 0, 128, 254)
+	out = append(out, 255, 0, 128, 254, 193, 255, 0, 254, 255, 0, 128, 254)
+	for range 64 {
+		out = append(out, 255, 0, 128, 0)
+	}
+	return out
 }
 
 const BufferedWriterBytesProgram = `import "std/io_buffered" as io;
@@ -38,12 +42,32 @@ function main(): i32 {
   if (b.buffered() != 0) { return 1; }
   match (b.error()) { Some(_) => { return 2; }, None => {} }
   buf_free(b.handle());
+  // Fresh builder results must be released after the writer borrows them.
+  // Exercise direct writes, buffered writes, ranges, and empty arrays.
+  var seed = buf_new(3);
+  for capacity in [1, 64] {
+    var fresh = io.buf_writer_new(stdout(), capacity);
+    for iteration in 0..32 {
+      buf_push_byte(seed, 255); buf_push_byte(seed, 0); buf_push_byte(seed, 128);
+      fresh = fresh.write_bytes(buf_take_bytes(seed));
+      buf_push_byte(seed, 255); buf_push_byte(seed, 0); buf_push_byte(seed, 128);
+      fresh = fresh.write_bytes_range(buf_take_bytes(seed), 1, 2);
+      fresh = fresh.write_bytes(buf_take_bytes(seed));
+      fresh = fresh.flush();
+    }
+    buf_free(fresh.handle());
+  }
   // An existing error discards pending bytes but survives each flush.
   var failed = io.BufWriter { w: stdout(), buf: buf_new(1), cap: 1, err: Some(Other("first", "failure")) };
   failed = failed.write_byte(255);
   failed = failed.write_string("discarded");
   failed = failed.write_bytes(held);
   failed = failed.write_bytes_range(held, 1, 3);
+  buf_push_byte(seed, 255);
+  failed = failed.write_bytes(buf_take_bytes(seed));
+  buf_push_byte(seed, 255);
+  failed = failed.write_bytes_range(buf_take_bytes(seed), 0, 1);
+  buf_free(seed);
   if (failed.buffered() != 0) { return 3; }
   match (failed.error()) {
     Some(Other(path, message)) => { if (path != "first" || message != "failure") { return 4; } },

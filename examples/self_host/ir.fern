@@ -20,9 +20,9 @@
 //
 import "./util";
 
-// SCOPE: the `Op` value and its constructor helpers. AST -> IR lowering
-// lives in irlower.fern (mirroring the native `builder`); the backends
-// consume the resulting `Op[]` from their asm_*_ir modules.
+// SCOPE: the `Op` value and its constructor helpers. The typed lowering
+// (ssarc.fern) builds the `Op[]`; the backends consume it from their asm_*_ir
+// modules.
 
 // ---- Op ----------------------------------------------------------------
 
@@ -61,71 +61,6 @@ pub struct Op {
   // is handed that array (`all_structs` reaches the lowering and
   // emit_functions_view alike), so it means the same decl on both sides.
   decl: i32,
-}
-
-// OpBuffer preserves lowering-state snapshots without copying the entire
-// instruction stream on an append. Full chunks form an immutable reverse
-// chain; only the bounded tail changes. Optimizers and backends receive the
-// ordinary forward Op[] produced by to_array.
-pub enum OpChunks { NoOpChunks, OpChunk(Op[], OpChunks) }
-
-pub struct OpBuffer { count: i32, chunks: OpChunks, tail: Op[] }
-
-pub function op_buffer(): OpBuffer {
-  return OpBuffer { count: 0, chunks: NoOpChunks, tail: [] };
-}
-
-pub function (b: OpBuffer) len(): i32 {
-  return b.count;
-}
-
-pub function (b: OpBuffer) append(op: Op): OpBuffer {
-  if (b.tail.len() < 32) {
-    var tail: Op[] = [];
-    for item in b.tail {
-      tail = tail.append(item);
-    }
-    tail = tail.append(op);
-    return OpBuffer { count: b.count + 1, chunks: b.chunks, tail: tail };
-  }
-  return OpBuffer { count: b.count + 1, chunks: OpChunk(b.tail, b.chunks), tail: [op] };
-}
-
-pub function (b: OpBuffer) last_or(fallback: Op): Op {
-  if (b.tail.len() == 0) {
-    return fallback;
-  }
-  return b.tail[b.tail.len() - 1];
-}
-
-pub function (b: OpBuffer) to_array(): Op[] {
-  // An iterative traversal avoids stack depth growing with the input. The
-  // temporary table holds chunk references, not copies of their elements.
-  var chunks: Op[][] = [b.tail];
-  var current: OpChunks = b.chunks;
-  var more: boolean = true;
-  while (more) {
-    match (current) {
-      NoOpChunks => {
-        more = false;
-      },
-      OpChunk(items, previous) => {
-        chunks = chunks.append(items);
-        current = previous;
-      }
-    }
-  }
-  var result: Op[] = [];
-  var i: i32 = chunks.len();
-  while (i > 0) {
-    i = i - 1;
-    var j: i32 = 0;
-    while (j < chunks[i].len()) {
-      result = result.append(chunks[i][j]);
-      j = j + 1;
-    }
-  }
-  return result;
 }
 
 // WidthPtr is the backend-resolved pointer-width sentinel (native's
@@ -271,14 +206,6 @@ pub function op_fbin(kind: string): Op {
 // subtracts the transcendental kinds there.
 pub function op_funary(kind: string): Op {
   return Op { decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
-}
-
-// f64 <-> i32 conversions. i32_to_f64 widens a signed i32 to f64 (cvtsi2sd /
-// scvtf / f64.convert_i32_s); f64_to_i32 truncates an f64 toward zero to a
-// signed i32 (cvttsd2si / fcvtzs / i32.trunc_f64_s). The value is held on the stack
-// as bits on the register backends; wasm's typed stack flips i32<->f64 here.
-pub function op_i32_to_f64(): Op {
-  return op0(11);
 }
 
 // int_to_f64 is op_i32_to_f64 carrying the operand's WIDTH and SIGNEDNESS, the
@@ -444,10 +371,6 @@ pub function op_arr_set_i64(): Op {
 
 pub function op_arr_len(): Op {
   return op0(90);
-}
-
-pub function op_arr_rc(): Op {
-  return op0(91);
 }
 
 // `arr_push` pops [arr, val] → a (possibly grown) array with `val` appended via
@@ -2904,20 +2827,6 @@ pub function dyn_dispatch_traits(tag: string): string[] {
 // matches a primitive arm, and reloads the value from offset 8 (UNBOX).
 pub function op_dyn_box(type_name: string): Op {
   return Op { decl: 0 - 1, kind_tag: 146, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
-}
-
-// op_dyn_downcast is the `e as? T` fallible downcast (docs/DYN-TRAITS.md §9).
-// The `dyn Trait` value (a heap pointer carrying its concrete shape at offset 0)
-// is on top of the operand stack. The op reads that offset-0 shape and compares
-// it to T's interned shape (the SAME `.S<idx>` label / numeric type-id the
-// op_dyn_dispatch arms and struct_make use, so pointer/id identity holds) — on
-// an exact match it builds `Some(value)` (the value IS the concrete `T`
-// pointer), else `None`, leaving an ordinary Option box (tag@0, payload@) a
-// downstream `match` reads with the same opt_tag/opt_payload it reads any
-// Option with. `str` is the target concrete type name T. No new shape metadata:
-// the downcast is a single shape read + compare, mirroring the dispatch chain.
-pub function op_dyn_downcast(target: string): Op {
-  return Op { decl: 0 - 1, kind_tag: 148, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: target };
 }
 
 pub function op_call_indirect(argc: i32): Op {
@@ -5792,7 +5701,7 @@ pub function is_terminator_kind(id: i32): boolean {
 
 // is_foldable_binary_kind reports whether `id` is an i32 binary op a constant
 // folder can evaluate at compile time (pop r, pop l, push apply) — the int-id
-// twin of irlower.is_bin_kind and native's isFoldableBinary. Division and
+// twin of native's isFoldableBinary. Division and
 // remainder are included; a zero divisor is never folded
 // (fold_would_divide_by_zero), so its runtime behaviour is kept.
 pub function is_foldable_binary_kind(id: i32): boolean {
@@ -6594,10 +6503,18 @@ pub function derive_magic_u(d: u64, w: i32): MagicU {
   return MagicU { m: q2 + 1u64 & mask, s: p - w, add: add };
 }
 
+// StrengthKinds is the kind ids strength_rewrite compares against, decided
+// once per pass rather than once per constant.
+struct StrengthKinds { mul: i32, add: i32, sub: i32, or: i32, xor: i32, shl: i32, shr_s: i32, shr_u: i32, and: i32, div_s: i32, div_u: i32, rem_s: i32, rem_u: i32 }
+
+function strength_kinds(): StrengthKinds {
+  return StrengthKinds { mul: kind_id("mul"), add: kind_id("add"), sub: kind_id("sub"), or: kind_id("or"), xor: kind_id("xor"), shl: kind_id("shl"), shr_s: kind_id("shr_s"), shr_u: kind_id("shr_u"), and: kind_id("and"), div_s: kind_id("div_s"), div_u: kind_id("div_u"), rem_s: kind_id("rem_s"), rem_u: kind_id("rem_u") };
+}
+
 // strength_rewrite decides what replaces `const k ; bop`.
-function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
+function strength_rewrite(ks: StrengthKinds, k: i32, bop: Op): StrengthRewrite {
   var t: i32 = bop.kind_tag;
-  if (t == kind_id("mul")) {
+  if (t == ks.mul) {
     if (k == 1) {
       return strength_del();
     }
@@ -6610,15 +6527,13 @@ function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
     }
     return strength_none();
   }
-  if (t == kind_id("add") || t == kind_id("sub") || t == kind_id("or")
-    || t == kind_id("xor") || t == kind_id("shl")
-    || t == kind_id("shr_s") || t == kind_id("shr_u")) {
+  if (t == ks.add || t == ks.sub || t == ks.or || t == ks.xor || t == ks.shl || t == ks.shr_s || t == ks.shr_u) {
     if (k == 0) {
       return strength_del();
     }
     return strength_none();
   }
-  if (t == kind_id("and")) {
+  if (t == ks.and) {
     if (k == 0) {
       return strength_drop0();
     }
@@ -6627,13 +6542,13 @@ function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
     }
     return strength_none();
   }
-  if (t == kind_id("div_s")) {
+  if (t == ks.div_s) {
     if (k == 1) {
       return strength_del();
     }
     return strength_none();
   }
-  if (t == kind_id("div_u")) {
+  if (t == ks.div_u) {
     if (k == 1) {
       return strength_del();
     }
@@ -6643,13 +6558,13 @@ function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
     }
     return strength_none();
   }
-  if (t == kind_id("rem_s")) {
+  if (t == ks.rem_s) {
     if (k == 1) {
       return strength_drop0();
     }
     return strength_none();
   }
-  if (t == kind_id("rem_u")) {
+  if (t == ks.rem_u) {
     if (k == 1) {
       return strength_drop0();
     }
@@ -6667,12 +6582,13 @@ function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
 // rewrite's output is appended, never rescanned, but the REMAINING input is,
 // so the second site is found in the same pass.
 pub function reduce_strength_ex(ops: Op[]): StrengthResult {
+  var ks: StrengthKinds = strength_kinds();
   var out: Op[] = [];
   var changed: boolean = false;
   var i: i32 = 0;
   while (i < ops.len()) {
     if (i + 1 < ops.len() && const_i32_readable(ops[i]) && ops[i + 1].width == 0) {
-      var repl: StrengthRewrite = strength_rewrite(const_i32_value(ops[i]), ops[i + 1]);
+      var repl: StrengthRewrite = strength_rewrite(ks, const_i32_value(ops[i]), ops[i + 1]);
       if (repl.ok) {
         var r: i32 = 0;
         while (r < repl.ops.len()) {
@@ -8130,137 +8046,4 @@ pub function is_str_op_kind(tag: i32): boolean {
     || tag == 99 || tag == 100 || tag == 225 || tag == 227
     || tag == 234 || tag == 235 || tag == 245 || tag == 253
     || tag == 309 || tag == 322 || tag == 324 || tag == 327 || tag == 329;
-}
-
-// --- Structured-scope navigation over an op stream ---
-//
-// br / br_if name a scope by DEPTH, so resolving one means walking the op
-// stream to find the scope it means. Both native backends and the IR
-// interpreter need that walk, and it reads nothing but ops and kind tags —
-// so it belongs with the op model rather than with lowering.
-
-// is_opener reports whether an op kind opens a structured scope (if / block
-// / loop) — used for the nesting counts below.
-function is_opener(k: string): boolean {
-  return k == "if" || k == "block" || k == "loop";
-}
-
-// find_matching_end returns the index of the `end` closing the structured
-// scope whose body begins at `start` (one past the opener), honouring
-// nesting across if / block / loop.
-pub function find_matching_end(ops: Op[], start: i32): i32 {
-  var depth: i32 = 0;
-  var i: i32 = start;
-  while (i < ops.len()) {
-    var k: string = kind_name(ops[i].kind_tag);
-    if (is_opener(k)) {
-      depth = depth + 1;
-    } else if (k == "end") {
-      if (depth == 0) {
-        return i;
-      }
-      depth = depth - 1;
-    }
-    i = i + 1;
-  }
-  return ops.len();
-}
-
-// find_matching_else returns the index of the `else` for the if whose body
-// begins at `start`, or -1 if that if has no else (its scope closes at end).
-pub function find_matching_else(ops: Op[], start: i32): i32 {
-  var depth: i32 = 0;
-  var i: i32 = start;
-  while (i < ops.len()) {
-    var k: string = kind_name(ops[i].kind_tag);
-    if (is_opener(k)) {
-      depth = depth + 1;
-    } else if (k == "end") {
-      if (depth == 0) {
-        return 0 - 1;
-      }
-      depth = depth - 1;
-    } else if (k == "else") {
-      if (depth == 0) {
-        return i;
-      }
-    }
-    i = i + 1;
-  }
-  return 0 - 1;
-}
-
-// enclosing_opener returns the index of the d-th enclosing structured opener
-// from `pc` (d=0 is the innermost), scanning backward and skipping
-// already-closed inner scopes. The target of a `br d` / `br_if d`.
-pub function enclosing_opener(ops: Op[], pc: i32, d: i32): i32 {
-  var need: i32 = d;
-  var skip: i32 = 0;
-  var i: i32 = pc - 1;
-  while (i >= 0) {
-    var k: string = kind_name(ops[i].kind_tag);
-    if (k == "end") {
-      skip = skip + 1;
-    } else if (is_opener(k)) {
-      if (skip > 0) {
-        skip = skip - 1;
-      } else {
-        if (need == 0) {
-          return i;
-        }
-        need = need - 1;
-      }
-    }
-    i = i - 1;
-  }
-  return 0 - 1;
-}
-
-// do_branch resolves a `br d` from `pc`: branching to a loop re-enters its
-// header (re-evaluating the condition); branching to a block/if jumps past
-// its matching end (forward exit).
-pub function do_branch(ops: Op[], pc: i32, d: i32): i32 {
-  var op: i32 = enclosing_opener(ops, pc, d);
-  if (ops[op].kind_tag == 153) {  // loop
-    return op + 1;
-  }
-  return find_matching_end(ops, op + 1) + 1;
-}
-
-// LoweredFn is one function's lowered form, tagged with its name + arity so
-// the interpreter and the backend can resolve direct calls.
-//
-// The slot lists and `ret_type` are what a pass ANALYSING the ops needs and
-// the emit path does not: the backends reach the same facts through
-// LowerState, which does not survive lowering, and the op stream says
-// `load_local 1` rather than what slot 1 holds.
-//
-// Counting operands does NOT need them, contrary to what landing them
-// assumed: native's verifyStack is type-directed because a string is one
-// operand slot there on the register backends and two on wasm32, and the
-// self-host has no such split — wasm_ir.fern carries a string as a single
-// block pointer, so every value is one slot on every target and
-// irverifystack.fern reads none of these lists (#6639 slice 2). What does
-// need them is any pass asking what a value IS: the wasm signature emit
-// reads i64_slots / f64_slots to type its params and locals.
-//
-// Each list is one VALUE kind, params included — what the slot holds, not
-// whether the exit sweep owns it. The sweep answers that itself, from
-// irlower.fern's slot_is_reclaimable_* predicates (#7322).
-pub struct LoweredFn {
-  name: string,
-  ok: boolean,
-  ops: Op[],
-  n_locals: i32,
-  n_params: i32,
-  arr_slots: i32[],
-  i64_slots: i32[],
-  f64_slots: i32[],
-  str_slots: i32[],
-  // ret_type is the DECLARED return type, verbatim from the FuncDecl
-  // ("i32", "string", "" for void) — the type the ops must leave on the
-  // stack at the end of the function.
-  ret_type: string,
-  // alias_incs: the var-bind alias retains lowering decided (`line:col=name`).
-  alias_incs: string[],
 }

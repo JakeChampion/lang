@@ -283,7 +283,7 @@ pub function (b: BufWriter) flush(): BufWriter {
   }
   // The take rewinds the builder, so a sticky error still discards the
   // bytes the fd has already refused, as it did before.
-  return __buf_writer_flush_bytes(b, buf_take_bytes(b.buf));
+  return __buf_writer_put_bytes(b, buf_take_bytes(b.buf));
 }
 
 // `(b).close()` — flush, then close the Writer: fclose. The error is the
@@ -374,11 +374,6 @@ function __buf_writer_put_bytes(b: BufWriter, bytes: u8[]): BufWriter {
       return b;
     }
   }
-}
-
-// Flush transfers an extracted buffer; direct writes only borrow caller data.
-function __buf_writer_flush_bytes(b: BufWriter, own bytes: u8[]): BufWriter {
-  return __buf_writer_put_bytes(b, bytes);
 }
 
 // ---- ByteLineReader --------------------------------------------------------

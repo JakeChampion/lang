@@ -29,6 +29,11 @@ invariant from holding across the stdlib.
 | `u8.to_ascii_string` | a byte value | empty text for bytes above 127; ASCII, including NUL, is preserved |
 | `rng_bytes` / `random_bytes` | pseudorandom or system random bytes | owned `u8[]`, with no text conversion |
 
+HTTP response serialization now has `*_bytes` siblings that preserve the
+body and frame its byte length. The text siblings retain replacement decoding
+and count the decoded bytes they emit. Both evaluate chunk producers once.
+See [HTTP byte serialization](STRING-HTTP-SERIALIZATION-2026-10-02.md).
+
 The rule the table follows: where the API has an error channel the
 bytes are refused through it; where it has none they decode as U+FFFD,
 one per maximal subpart (`utf8.from_bytes_lossy`, the rule the string
@@ -962,9 +967,18 @@ their fast path; sticky write errors and close-error precedence are unchanged.
 `BufWriter.write_bytes` borrows a raw array and retains the direct-write path
 for a full block when its buffer is empty. `write_bytes_range` appends a
 clamped byte range without constructing a temporary array. The write helper
-borrows its input; a consuming adapter releases flush's extracted buffer
-after the write returns. The shared writer corpus checks both paths,
+borrows its input; the compiler releases fresh builder results after the
+borrowing call. The shared writer corpus checks both paths, fresh arguments,
 clamped/inverted ranges, retained aliases and sticky errors.
+
+Both HTTP component adapters use `body_bytes()` and writes of at most 4096
+bytes. The primary `std/wasi_http` adapter passes `u8[]` to the host's
+`list<u8>` import; the bootstrap emitter forwards the packed array. Neither
+converts binary bodies through a string. Each hands off the response before
+writing its body, letting the host drain the stream under backpressure.
+This closes the HTTP component adapters' part of #10948; the TCP, UDP and
+file sinks still need byte-domain interfaces. See the
+[HTTP byte validation and size report](STRING-WASI-HTTP-BYTES-2026-10-02.md).
 
 The socket TRANSPORT followed. `tcp_recv_deadline` returns
 `Option[u8[]]`, and `std/fetch` is byte-domain end to end —
