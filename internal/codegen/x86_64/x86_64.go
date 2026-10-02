@@ -947,6 +947,16 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesProcessAlive {
 		g.emitProcessAliveRuntime()
 	}
+	if g.usesPwName {
+		// Linux keeps every account in the files the caller reads.
+		g.line("")
+		g.line(".globl __fern_getpwuid_name")
+		g.line(".type __fern_getpwuid_name, @function")
+		g.label("__fern_getpwuid_name")
+		g.emit("xor eax, eax")
+		g.emit("ret")
+		g.line(".size __fern_getpwuid_name, .-__fern_getpwuid_name")
+	}
 	if g.usesSignalSend {
 		g.emitSignalSendRuntime()
 	}
@@ -1445,6 +1455,9 @@ type generator struct {
 	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
 	// name a process group to kill(2), not a process.
 	usesProcessAlive bool
+	// usesPwName pulls in `__fern_getpwuid_name(uid)`, which answers 0 here:
+	// only arm64-darwin has an account database outside /etc/passwd.
+	usesPwName bool
 	// usesSignalSend pulls in `__fern_signal_send(pid, sig)` — kill(2),
 	// Result[void, IoError]. The pid reaches the kernel as written:
 	// non-positive spellings name process groups, which is what a sender
@@ -2209,6 +2222,8 @@ func (g *generator) recordUse(target string) {
 		g.usesTimerFd = true
 	case "process_alive":
 		g.usesProcessAlive = true
+	case "__getpwuid_name":
+		g.usesPwName = true
 	case "signal_send":
 		g.usesSignalSend = true
 		g.usesIoError = true
@@ -4095,6 +4110,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_timer_fd"
 		case "process_alive":
 			target = "__fern_process_alive"
+		case "__getpwuid_name":
+			target = "__fern_getpwuid_name"
 		case "signal_send":
 			target = "__fern_signal_send"
 		case "set_process_group":

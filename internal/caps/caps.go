@@ -239,16 +239,19 @@ var Ungated = map[string]bool{
 	// descriptors it may open reaches nothing it could not already
 	// reach. `internal/platforms` gates that one too, because there the
 	// question is whether the target has resource limits at all.
-	"geteuid":       true,
-	"getegid":       true,
-	"getuid":        true,
-	"getgid":        true,
-	"getgroups":     true,
-	"rlimit_nofile": true,
-	"target_os":     true,
-	"target_arch":   true,
-	"args":          true,
-	"exit":          true,
+	"geteuid": true,
+	"getegid": true,
+	"getuid":  true,
+	// The account database's name for a uid: the same question /etc/passwd
+	// answers, asked of Directory Services on Darwin (#9815).
+	"__getpwuid_name": true,
+	"getgid":          true,
+	"getgroups":       true,
+	"rlimit_nofile":   true,
+	"target_os":       true,
+	"target_arch":     true,
+	"args":            true,
+	"exit":            true,
 	// A signal disposition reconfigures how THIS process reacts to
 	// something delivered to it. It reaches nothing outside the
 	// process and confers no authority a dependency could escalate

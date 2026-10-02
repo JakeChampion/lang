@@ -891,6 +891,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesProcessAlive {
 		g.emitProcessAliveRuntime()
 	}
+	if g.usesPwName {
+		g.emitPwNameRuntime()
+	}
 	if g.usesSignalSend {
 		g.emitSignalSendRuntime()
 	}
@@ -13789,6 +13792,47 @@ func (g *generator) emitIdRuntime(sym, sysname string) {
 	g.line(".ltorg")
 }
 
+// emitPwNameRuntime emits `__fern_getpwuid_name(uid)`: the address of
+// `pw_name` in the passwd entry libSystem's getpwuid(3) answers, or 0 when
+// it knows no such uid. Darwin keeps regular accounts in Directory Services,
+// which only libSystem can ask (#9815); the call goes through a __DATA slot
+// dyld binds to `_getpwuid` at load. getpwuid follows AAPCS64, which is the
+// convention every runtime call here already assumes. Other targets answer 0
+// and the caller reads /etc/passwd.
+func (g *generator) emitPwNameRuntime() {
+	if g.darwin {
+		g.line("")
+		g.line(`.section __DATA,__const`)
+		g.line(`.p2align 3`)
+		g.label("__fern_got_getpwuid")
+		g.line(`	.quad _getpwuid`)
+		g.line(`.text`)
+	}
+	g.line("")
+	g.line(".global __fern_getpwuid_name")
+	g.typeDirective("__fern_getpwuid_name")
+	g.label("__fern_getpwuid_name")
+	if !g.darwin {
+		g.emit("mov x0, #0")
+		g.emit("ret")
+		g.sizeDirective("__fern_getpwuid_name")
+		return
+	}
+	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit("mov x29, sp")
+	g.emit("mov w0, w0") // uid_t is 32 bits
+	g.adrpAdd("x16", "__fern_got_getpwuid")
+	g.emit("ldr x16, [x16]")
+	g.emit("blr x16")
+	g.emit("cbz x0, .Lpwname_done")
+	g.emit("ldr x0, [x0]") // pw_name is the struct's first field
+	g.label(".Lpwname_done")
+	g.emit("ldp x29, x30, [sp], #16")
+	g.emit("ret")
+	g.sizeDirective("__fern_getpwuid_name")
+	g.line(".ltorg")
+}
+
 // emitGetgroupsRuntime emits `__fern_getgroups()` — the supplementary
 // group set as a cached `number[]`.
 //
@@ -15597,6 +15641,9 @@ type generator struct {
 	// (ESRCH). A non-positive pid is 0 without a syscall: those spellings
 	// name a process group to kill(2), not a process.
 	usesProcessAlive bool
+	// usesPwName pulls in `__fern_getpwuid_name(uid)`: libSystem's
+	// getpwuid(3) through a dyld-bound slot on Darwin, 0 elsewhere.
+	usesPwName bool
 	// usesWindowSize pulls in `__fern_window_size(fd)` — one TIOCGWINSZ
 	// ioctl projected onto WinSize, with the errno as an IoError.
 	usesWindowSize bool
@@ -20433,6 +20480,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// exists, 0 when it does not.
 			target = "__fern_process_alive"
 			g.usesProcessAlive = true
+		case "__getpwuid_name":
+			target = "__fern_getpwuid_name"
+			g.usesPwName = true
 		case "signal_send":
 			// signal_send(pid, sig): kill(2) — Result[void, IoError].
 			target = "__fern_signal_send"

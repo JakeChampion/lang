@@ -1,13 +1,14 @@
 // Package macho writes minimal arm64 Mach-O executables — the container half
 // of the native arm64-darwin path, the counterpart of internal/native/elf for
 // Linux. It replaces the clang/ld64 link step in cmd/fern for the
-// self-contained programs the code generator emits (raw `svc #0x80` syscalls,
-// no libc).
+// programs the code generator emits: raw `svc #0x80` syscalls, plus the few
+// libSystem functions only libSystem can answer, which dyld binds into
+// __DATA slots at load (getpwuid(3), #9815).
 //
 // The layout is __PAGEZERO, a r-x __TEXT segment holding the Mach-O header +
 // load commands + machine code, an optional r/w __DATA segment (string
 // constants + writable globals, merged), and a __LINKEDIT segment carrying the
-// rebase stream, the symbol table and an ad-hoc code signature.
+// rebase and bind streams, the symbol table and an ad-hoc code signature.
 //
 // # What Apple Silicon requires, and how each requirement announces itself
 //
@@ -79,6 +80,17 @@ const (
 	rebaseOpDoRebaseImmTms = 0x50
 	rebaseTypePointer      = 1
 
+	// Bind opcodes: name an imported symbol, the dylib it comes from and the
+	// slot dyld writes its address into.
+	bindOpDone                 = 0x00
+	bindOpSetDylibOrdinalImm   = 0x10
+	bindOpSetSymbolTrailingImm = 0x40
+	bindOpSetTypeImm           = 0x50
+	bindOpSetSegmentAndOffULEB = 0x70
+	bindOpDoBind               = 0x90
+	bindTypePointer            = 1
+	libSystemOrdinal           = 1 // the image's only LC_LOAD_DYLIB
+
 	dyldPath      = "/usr/lib/dyld"
 	libSystemPath = "/usr/lib/libSystem.B.dylib"
 
@@ -108,6 +120,8 @@ type layout struct {
 	linkeditFileOff int // start of __LINKEDIT (fixups, symtab, strtab, then sig)
 	rebaseOff       int // file offset of the LC_DYLD_INFO_ONLY rebase stream
 	rebaseLen       int
+	bindOff         int // file offset of the bind stream, right after the rebases
+	bindLen         int
 	textVAddr       uint64 // address of the first code byte (== entry)
 	ehVAddr         uint64 // address of __eh_frame (0 when none)
 	dataVAddr       uint64 // __DATA segment base
@@ -124,7 +138,7 @@ type layout struct {
 // so does the __eh_frame section header, so the assembler must lay out against
 // a layout with the SAME hasSyms and the same has-unwind answer — see
 // SegmentMap.
-func layoutFor(textLen, ehLen, dataLen, symtabLen, strtabLen, rebaseLen int, hasSyms bool) layout {
+func layoutFor(textLen, ehLen, dataLen, symtabLen, strtabLen, rebaseLen, bindLen int, hasSyms bool) layout {
 	hasData := dataLen > 0
 	textOff := machHeaderLen + loadCommandsLen(hasData, ehLen > 0, hasSyms)
 	textEnd := textOff + textLen
@@ -143,12 +157,15 @@ func layoutFor(textLen, ehLen, dataLen, symtabLen, strtabLen, rebaseLen int, has
 	}
 	linkeditFileOff := textVMSize + dataFileLen
 	rebaseOff := linkeditFileOff
-	symOff := alignUp(rebaseOff+rebaseLen, 8)
+	bindOff := rebaseOff + rebaseLen
+	symOff := alignUp(bindOff+bindLen, 8)
 	strOff := symOff + symtabLen
 	sigOff := alignUp(strOff+strtabLen, 16)
 	lo := layout{
 		rebaseOff:       rebaseOff,
 		rebaseLen:       rebaseLen,
+		bindOff:         bindOff,
+		bindLen:         bindLen,
 		textOff:         textOff,
 		textLen:         textLen,
 		ehOff:           ehOff,
@@ -192,7 +209,7 @@ type ImageMap struct {
 // asks once with a placeholder length to render it and again with the real
 // one to place the data.
 func SegmentMap(textLen, ehLen, dataLen int, syms bool) ImageMap {
-	lo := layoutFor(textLen, ehLen, dataLen, 0, 0, 0, syms)
+	lo := layoutFor(textLen, ehLen, dataLen, 0, 0, 0, 0, syms)
 	return ImageMap{Text: lo.textVAddr, EhFrame: lo.ehVAddr, Data: lo.dataVAddr}
 }
 
@@ -202,9 +219,17 @@ func SegmentMap(textLen, ehLen, dataLen int, syms bool) ImageMap {
 // constants + writable globals, merged by the assembler) occupies a r/w
 // __DATA segment. Execution begins at the first code byte (the code
 // generator's `_main`). The sizes must match those passed to SegmentMap so
-// addresses line up.
-func StaticExecutable(text, eh, data []byte, identifier string, rebases []int) []byte {
-	return staticExecutable(text, eh, data, identifier, nil, rebases)
+// addresses line up. `binds` are the __DATA slots dyld fills with libSystem
+// symbols.
+func StaticExecutable(text, eh, data []byte, identifier string, rebases []int, binds []Bind) []byte {
+	return staticExecutable(text, eh, data, identifier, nil, rebases, binds)
+}
+
+// Bind is one __DATA slot, at offset Off in the data blob, that dyld fills
+// with the address of libSystem's Sym (`_getpwuid`).
+type Bind struct {
+	Off int
+	Sym string
 }
 
 // StaticExecutableSyms is StaticExecutable plus a static symbol table
@@ -214,11 +239,11 @@ func StaticExecutable(text, eh, data []byte, identifier string, rebases []int) [
 // symbolicate arm64-darwin binaries. The text/data must have been laid out
 // against SegmentMap with syms set (the LC_SYMTAB command shifts every
 // address).
-func StaticExecutableSyms(text, eh, data []byte, identifier string, syms []Sym, rebases []int) []byte {
-	return staticExecutable(text, eh, data, identifier, syms, rebases)
+func StaticExecutableSyms(text, eh, data []byte, identifier string, syms []Sym, rebases []int, binds []Bind) []byte {
+	return staticExecutable(text, eh, data, identifier, syms, rebases, binds)
 }
 
-func staticExecutable(text, eh, data []byte, identifier string, syms []Sym, rebases []int) []byte {
+func staticExecutable(text, eh, data []byte, identifier string, syms []Sym, rebases []int, binds []Bind) []byte {
 	hasSyms := len(syms) > 0
 	var nlists, strtab []byte
 	if hasSyms {
@@ -226,11 +251,12 @@ func staticExecutable(text, eh, data []byte, identifier string, syms []Sym, reba
 	}
 	// __DATA is segment index 2 (__PAGEZERO 0, __TEXT 1); with no data blob
 	// there is nothing to rebase.
-	var rebase []byte
+	var rebase, bind []byte
 	if len(data) > 0 {
 		rebase = rebaseOpcodes(2, rebases)
+		bind = bindOpcodes(2, binds)
 	}
-	lo := layoutFor(len(text), len(eh), len(data), len(nlists), len(strtab), len(rebase), hasSyms)
+	lo := layoutFor(len(text), len(eh), len(data), len(nlists), len(strtab), len(rebase), len(bind), hasSyms)
 	codeLimit := lo.sigOff
 
 	sig := codeSignature(nil, identifier, codeLimit, lo.textVMSize) // size probe
@@ -241,13 +267,13 @@ func staticExecutable(text, eh, data []byte, identifier string, syms []Sym, reba
 
 	buf := make([]byte, lo.sigOff)
 	mh := newImage(buf)
-	mh.machHeader()
+	mh.machHeader(len(bind) > 0)
 	mh.segmentText(uint64(lo.textOff), len(text), uint64(lo.ehOff), len(eh))
 	if len(data) > 0 {
 		mh.segmentData(lo.dataVAddr, uint64(lo.dataFileLen), uint64(lo.textVMSize), len(data))
 	}
 	mh.segmentLinkedit(linkeditVAddr, uint64(linkeditVMSize), uint64(lo.linkeditFileOff), linkeditFileLen)
-	mh.dyldInfo(uint32(lo.rebaseOff), uint32(lo.rebaseLen))
+	mh.dyldInfo(uint32(lo.rebaseOff), uint32(lo.rebaseLen), uint32(lo.bindOff), uint32(lo.bindLen))
 	mh.symtab(uint32(lo.symOff), uint32(len(syms)), uint32(lo.strOff), uint32(len(strtab)))
 	mh.dysymtab(uint32(len(syms)))
 	mh.buildVersion()
@@ -258,6 +284,7 @@ func staticExecutable(text, eh, data []byte, identifier string, syms []Sym, reba
 	mh.done()
 
 	copy(buf[lo.rebaseOff:], rebase)
+	copy(buf[lo.bindOff:], bind)
 	copy(buf[lo.textOff:], text)
 	if len(eh) > 0 {
 		copy(buf[lo.ehOff:], eh)
@@ -361,6 +388,29 @@ func rebaseOpcodes(segIdx int, offs []int) []byte {
 		b = append(b, rebaseOpDoRebaseImmTms|1)
 	}
 	b = append(b, rebaseOpDone)
+	for len(b)%8 != 0 {
+		b = append(b, 0)
+	}
+	return b
+}
+
+// bindOpcodes builds the LC_DYLD_INFO_ONLY bind stream: each slot in segment
+// `segIdx` receives the address of its symbol from libSystem, the image's one
+// dylib. Non-lazy, so dyld resolves every import before `_main` runs.
+func bindOpcodes(segIdx int, binds []Bind) []byte {
+	if len(binds) == 0 {
+		return nil
+	}
+	b := []byte{bindOpSetDylibOrdinalImm | libSystemOrdinal, bindOpSetTypeImm | bindTypePointer}
+	for _, bd := range binds {
+		b = append(b, bindOpSetSymbolTrailingImm)
+		b = append(b, bd.Sym...)
+		b = append(b, 0)
+		b = append(b, byte(bindOpSetSegmentAndOffULEB|segIdx))
+		b = uleb(b, uint64(bd.Off))
+		b = append(b, bindOpDoBind)
+	}
+	b = append(b, bindOpDone)
 	for len(b)%8 != 0 {
 		b = append(b, 0)
 	}

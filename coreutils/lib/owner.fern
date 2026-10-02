@@ -443,9 +443,9 @@ pub function (sp: Spec) names_group(): boolean {
 // An id as the -v line shows it: the database's name for it, or the number
 // when nothing claims it.
 pub function user_label(db: Db, uid: i64): string {
-  match (pwdb.user_by_uid_in(db.pw, uid)) {
-    Some(u) => {
-      return u.name;
+  match (pwdb.user_name_in(db.pw, uid)) {
+    Some(name) => {
+      return name;
     },
     None => {
       return uid.to_string();

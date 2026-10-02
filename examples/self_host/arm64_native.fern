@@ -8180,6 +8180,10 @@ pub struct Arm64GasProg {
   // pointer came out null and every `match` on it fell through.
   dref_offs: i32[],
   dref_syms: string[],
+  // The `.quad` slots naming a libSystem symbol (arm64_import_sym), which
+  // dyld binds at load instead of the slide being added (#9815).
+  bind_offs: i32[],
+  bind_syms: string[],
   bss_size: i32,  // total zero-init .bss bytes (ELF memsz beyond filesz; e.g. the heap)
   bss_names: string[],  // .bss symbol names
   bss_offs: i32[],  // each .bss symbol's offset within the bss region
@@ -8197,7 +8201,7 @@ function arm64_gas_prog_new(): Arm64GasProg {
     dlab_head: arm64_empty_buckets(), dlab_next: [], dlab_tail: arm64_empty_buckets(),
     pf_sites: [], pf_syms: [], pf_kinds: [],
     lit_sites: [], lit_vals: [],
-    dref_offs: [], dref_syms: [],
+    dref_offs: [], dref_syms: [], bind_offs: [], bind_syms: [],
     bss_size: 0, bss_names: [], bss_offs: [],
     unknown: [],
     cfi: cfi_new(cfi_profile_arm64()),
@@ -9629,7 +9633,26 @@ function arm64_gas_sym_addr(p: Arm64GasProg, aw: Arm64Asm, name: string, text_va
 // was exactly that: every `match` on a static constant fell through both arms
 // and the program returned 0.
 pub function arm64_gas_rebase_offs(p: Arm64GasProg): i32[] {
-  return p.dref_offs;
+  let out: i32[] = [];
+  for off in p.dref_offs {
+    let bound: boolean = false;
+    for b in p.bind_offs {
+      if (b == off) {
+        bound = true;
+      }
+    }
+    if (!bound) {
+      out = out.append(off);
+    }
+  }
+  return out;
+}
+
+// arm64_import_sym reports whether an undefined `.quad` target names a
+// libSystem symbol: spelled `_name`. Fern's own symbols are `__`-prefixed or
+// local, so an undefined one of those stays a link error.
+function arm64_import_sym(name: string): boolean {
+  return name.len() > 1 && name[0] == b'_' && name[1] != b'_';
 }
 
 // arm64_gas_link resolves the queued @PAGE/@PAGEOFF fixups now that the
@@ -9696,7 +9719,10 @@ pub function arm64_gas_link(own p: Arm64GasProg, text_vaddr: i64, data_vaddr: i6
   let di: i32 = 0;
   while (di < p.dref_offs.len()) {
     let dres: Arm64SymAddr = arm64_gas_sym_addr(p, aw, p.dref_syms[di], text_vaddr, data_vaddr, data_len);
-    if (!dres.found) {
+    if (!dres.found && arm64_import_sym(p.dref_syms[di])) {
+      // dyld fills the slot; it stays zero here.
+      p = Arm64GasProg { ...p, bind_offs: p.bind_offs.append(p.dref_offs[di]), bind_syms: p.bind_syms.append(p.dref_syms[di]) };
+    } else if (!dres.found) {
       p = Arm64GasProg { ...p, unknown: p.unknown.append("symbol:" + p.dref_syms[di]) };
     } else {
       let off: i32 = p.dref_offs[di];
@@ -10269,15 +10295,49 @@ function macho_lcstr(buf: i32[], cmd: i32, path: string): i32[] {
   return macho_zeros(buf, size - fixed - path.len());
 }
 
-// macho_dyld_info writes LC_DYLD_INFO_ONLY. Only the rebase stream is ever
-// populated — the image imports, exports and binds nothing — so every other
-// off/size pair is zero.
-function macho_dyld_info(buf: i32[], rebase_off: i32, rebase_size: i32): i32[] {
+// macho_dyld_info writes LC_DYLD_INFO_ONLY: the rebase stream and the
+// non-lazy bind stream. Nothing binds weakly or lazily and nothing is
+// exported, so those off/size pairs are zero.
+function macho_dyld_info(buf: i32[], rebase_off: i32, rebase_size: i32, bind_off: i32, bind_size: i32): i32[] {
   buf = macho_le32w(buf, 0x80000022);  // LC_DYLD_INFO_ONLY | LC_REQ_DYLD
   buf = macho_le32(buf, 48);
   buf = macho_le32(buf, rebase_off);
   buf = macho_le32(buf, rebase_size);
-  return macho_zeros(buf, 32);  // bind, weak_bind, lazy_bind, export
+  if (bind_size == 0) {
+    bind_off = 0;
+  }
+  buf = macho_le32(buf, bind_off);
+  buf = macho_le32(buf, bind_size);
+  return macho_zeros(buf, 24);  // weak_bind, lazy_bind, export
+}
+
+// macho_bind_opcodes builds the bind stream: each slot in segment `seg_idx`
+// receives the address of its symbol from libSystem, the image's one dylib
+// (ordinal 1). Non-lazy, so dyld resolves every import before `_main` runs.
+function macho_bind_opcodes(seg_idx: i32, offs: i32[], syms: string[]): i32[] {
+  if (offs.len() == 0) {
+    return [];
+  }
+  let buf: i32[] = [0x10 | 1, 0x50 | 1];  // SET_DYLIB_ORDINAL_IMM(1), SET_TYPE_IMM(POINTER)
+  let i: i32 = 0;
+  while (i < offs.len()) {
+    buf = buf.append(0x40);  // SET_SYMBOL_TRAILING_FLAGS_IMM
+    let k: i32 = 0;
+    while (k < syms[i].len()) {
+      buf = buf.append(syms[i][k] as i32);
+      k = k + 1;
+    }
+    buf = buf.append(0);
+    buf = buf.append(0x70 | seg_idx);  // SET_SEGMENT_AND_OFFSET_ULEB
+    buf = macho_uleb(buf, offs[i]);
+    buf = buf.append(0x90);  // DO_BIND
+    i = i + 1;
+  }
+  buf = buf.append(0);  // DONE
+  while (buf.len() % 8 != 0) {
+    buf = buf.append(0);
+  }
+  return buf;
 }
 
 // macho_uleb appends `v` as an unsigned LEB128 (the encoding every operand in
@@ -10499,6 +10559,12 @@ pub function macho_entry_off(a: Arm64Asm): i32 {
 // LC_DYLD_INFO_ONLY rebase stream is how the image asks for that. Pass an
 // empty array when the data blob holds no absolute addresses.
 pub function macho_executable(text: i32[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[]): i32[] {
+  return macho_executable_binds(text, eh, data, ident, entry_off, bss, rebase_offs, [], []);
+}
+
+// macho_executable_binds is macho_executable plus the `.quad` slots dyld binds
+// to libSystem symbols (arm64_gas_binds).
+pub function macho_executable_binds(text: i32[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[]): i32[] {
   let text_len: i32 = text.len();
   let eh_len: i32 = eh.len();
   let has_eh: boolean = eh_len > 0;
@@ -10520,11 +10586,13 @@ pub function macho_executable(text: i32[], eh: i32[], data: i32[], ident: string
   // and sig_off lands exactly where it used to, so those images are
   // byte-identical to before.
   let rebase: i32[] = [];
+  let bind: i32[] = [];
   if (has_data) {
     rebase = macho_rebase_opcodes(2, rebase_offs);
+    bind = macho_bind_opcodes(2, bind_offs, bind_syms);
   }
   let linkedit_off: i32 = text_vmsize + data_file_len;
-  let code_limit: i32 = macho_align_up(linkedit_off + rebase.len(), 16);
+  let code_limit: i32 = macho_align_up(linkedit_off + rebase.len() + bind.len(), 16);
 
   let base: i64 = macho_base_vaddr();
   let text_vaddr: i64 = base + text_off as i64;
@@ -10553,8 +10621,13 @@ pub function macho_executable(text: i32[], eh: i32[], data: i32[], ident: string
   buf = macho_le32(buf, ncmds);
   buf = macho_le32(buf, sizeofcmds);
   // MH_NOUNDEFS | MH_DYLDLINK | MH_TWOLEVEL | MH_PIE. MH_PIE is the one
-  // the kernel checks before dyld runs at all.
-  buf = macho_le32(buf, 0x00200085);
+  // the kernel checks before dyld runs at all. An image that binds imports
+  // has undefined symbols, so it drops MH_NOUNDEFS.
+  if (bind.len() > 0) {
+    buf = macho_le32(buf, 0x00200084);
+  } else {
+    buf = macho_le32(buf, 0x00200085);
+  }
   buf = macho_le32(buf, 0);  // reserved
 
   // ---- __PAGEZERO ----
@@ -10587,7 +10660,7 @@ pub function macho_executable(text: i32[], eh: i32[], data: i32[], ident: string
   buf = macho_seg(buf, "__LINKEDIT", linkedit_vaddr, linkedit_vmsize as i64, linkedit_off as i64, linkedit_file_len as i64, 1, 1, 0);
 
   // ---- the dyld command set (see the module comment) ----
-  buf = macho_dyld_info(buf, linkedit_off, rebase.len());
+  buf = macho_dyld_info(buf, linkedit_off, rebase.len(), linkedit_off + rebase.len(), bind.len());
   buf = macho_symtab(buf, 0, 0, 0, 0);
   buf = macho_dysymtab(buf);
   buf = macho_build_version(buf);
@@ -10616,6 +10689,7 @@ pub function macho_executable(text: i32[], eh: i32[], data: i32[], ident: string
     buf = macho_pad_to(buf, linkedit_off);
   }
   buf = macho_cat(buf, rebase);
+  buf = macho_cat(buf, bind);
   buf = macho_pad_to(buf, code_limit);
   // buf length is now code_limit; sign it and append the signature.
   let sig: i32[] = macho_code_signature(buf, code_limit, text_vmsize, ident);

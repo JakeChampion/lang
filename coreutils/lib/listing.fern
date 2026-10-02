@@ -1628,9 +1628,9 @@ function owner_of(n: IdNames, uid: u32): (string, IdNames) {
     i = i + 1;
   }
   let name: string = uid.to_string();
-  match (pwdb.user_by_uid_in(n.passwd, key)) {
-    Some(u) => {
-      name = u.name;
+  match (pwdb.user_name_in(n.passwd, key)) {
+    Some(found) => {
+      name = found;
     },
     None => {}
   }
