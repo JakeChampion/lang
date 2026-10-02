@@ -6644,7 +6644,10 @@ pub function reduce_strength(ops: Op[]): Op[] {
 // would leave the enclosing scope one slot high — a wasm module that fails
 // validation rather than a smaller one.
 pub function eliminate_dead_code(ops: Op[]): Op[] {
+  // `out` is written from the first dropped op on, so a list with nothing dead
+  // comes back as it is.
   var out: Op[] = [];
+  var copying: boolean = false;
   var depth: i32 = 0;
   var dead: boolean = false;
   var dead_depth: i32 = 0;
@@ -6658,36 +6661,33 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
   var i: i32 = 0;
   while (i < ops.len()) {
     var t: i32 = ops[i].kind_tag;
-    if (t == k_block || t == k_loop || t == k_if) {
-      if (!dead) {
+    if (t == k_end || t == k_else) {
+      if (dead && depth == dead_depth) {
+        dead = false;
+      }
+    }
+    if (!dead) {
+      if (copying) {
         out = out.append(ops[i]);
       }
+    } else if (!copying) {
+      out = fold_prefixed(ops, i, []);
+      copying = true;
+    }
+    if (t == k_block || t == k_loop || t == k_if) {
       depth = depth + 1;
     } else if (t == k_end) {
-      if (dead && depth == dead_depth) {
-        dead = false;
-      }
-      if (!dead) {
-        out = out.append(ops[i]);
-      }
       depth = depth - 1;
-    } else if (t == k_else) {
-      if (dead && depth == dead_depth) {
-        dead = false;
-      }
-      if (!dead) {
-        out = out.append(ops[i]);
-      }
-    } else if (!dead) {
-      out = out.append(ops[i]);
-      if (t == k_return || t == k_br) {
-        dead = true;
-        dead_depth = depth;
-      }
+    } else if (!dead && (t == k_return || t == k_br)) {
+      dead = true;
+      dead_depth = depth;
     }
     i = i + 1;
   }
-  return out;
+  if (copying) {
+    return out;
+  }
+  return ops;
 }
 
 // ---- zero-slot uniqueness guards (native internal/ir/zeroslot.go) -------
@@ -7578,22 +7578,30 @@ pub function propagate_copies(ops: Op[]): Op[] {
     }
     i = i + 1;
   }
+  // `out` is written from the first dead tee on.
   var out: Op[] = [];
+  var copying: boolean = false;
   i = 0;
   while (i < ops.len()) {
-    var o: Op = ops[i];
     var dead_tee: boolean = false;
-    if (o.kind_tag == k_tee && o.i32_imm >= 0 && o.i32_imm <= maxs) {
-      if (reads[o.i32_imm] == 0 && stores[o.i32_imm] == 0 && tees[o.i32_imm] == 1) {
-        dead_tee = true;
-      }
+    var sl2: i32 = ops[i].i32_imm;
+    if (ops[i].kind_tag == k_tee && sl2 >= 0 && sl2 <= maxs) {
+      dead_tee = reads[sl2] == 0 && stores[sl2] == 0 && tees[sl2] == 1;
     }
     if (!dead_tee) {
-      out = out.append(o);
+      if (copying) {
+        out = out.append(ops[i]);
+      }
+    } else if (!copying) {
+      out = fold_prefixed(ops, i, []);
+      copying = true;
     }
     i = i + 1;
   }
-  return out;
+  if (copying) {
+    return out;
+  }
+  return ops;
 }
 
 pub function fuse_tee(ops: Op[]): Op[] {

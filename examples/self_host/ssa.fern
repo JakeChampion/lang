@@ -1540,9 +1540,10 @@ function mate_interferes(f: SFunc, at: i32[], blk_start: i32[], r: i32, a: i32, 
     i = i + 1;
   }
   var work: i32[] = successor_positions(f, at, ablk);
-  while (work.len() > 0) {
-    var b: i32 = work[work.len() - 1];
-    work = drop_last_i(work);
+  var next: i32 = 0;
+  while (next < work.len()) {
+    var b: i32 = work[next];
+    next = next + 1;
     if (b < 0 || b == hdr || reach[b]) {
       continue;
     }
@@ -2128,9 +2129,10 @@ pub function thread_forwarding(f: SFunc): SFunc {
     i = i + 1;
   }
   var work: i32[] = [position_of(at, g.entry)];
-  while (work.len() > 0) {
-    var b: i32 = work[work.len() - 1];
-    work = drop_last_i(work);
+  var next: i32 = 0;
+  while (next < work.len()) {
+    var b: i32 = work[next];
+    next = next + 1;
     if (b < 0 || live[b]) {
       continue;
     }
@@ -2429,19 +2431,10 @@ function inst_has_effect(k: i32): boolean {
   // everything but a load (40) and a label address (45..47) has one: the
   // output, file and buffer ops, a store, a bounds-checked read (it may
   // abort) and the box allocation.
-  var below: i32[] = [6, 11, 12, 14, 16, 17];
-  for e in below {
-    if (k == e) {
-      return true;
-    }
+  if (k < 19) {
+    return k == 6 || k == 11 || k == 12 || k == 14 || k == 16 || k == 17;
   }
-  var pure: i32[] = [40, 45, 46, 47, 52, 54, 57, 58];
-  for q in pure {
-    if (k == q) {
-      return false;
-    }
-  }
-  return k >= 19;
+  return k != 40 && k != 45 && k != 46 && k != 47 && k != 52 && k != 54 && k != 57 && k != 58;
 }
 
 // prune_roots is every value an effectful instruction or a terminator reads.

@@ -366,8 +366,8 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	// to climb, and pinning one would fight the migration it measures. The
 	// feature rows above stay pinned because a move there is news either way;
 	// a module converting more loops is not.
-	atLeast(t, c, "for..in loops", 1979,
-		"Measured at 1979 in 55 modules, most of them in checker, fnsigs, parser and semsource. A fall USUALLY means a module went back to hand-indexing — but not always: folding a collector onto astwalk removes its for..in loops along with its variant arms, and INDEXING a table deletes the scan whole rather than converting it, so the SH-022 walker migration, the index-loop conversion and #6888's table indexes move this row in different directions and a floor here protects nothing in between. Lower it for a fold or an index; raise it to the measurement for a loop conversion; investigate it otherwise. The astwalk floor is the one carrying the signal for the fold half.")
+	atLeast(t, c, "for..in loops", 1978,
+		"Measured at 1978 in 55 modules, most of them in checker, fnsigs, parser and semsource. A fall USUALLY means a module went back to hand-indexing — but not always: folding a collector onto astwalk removes its for..in loops along with its variant arms, and INDEXING a table deletes the scan whole rather than converting it, so the SH-022 walker migration, the index-loop conversion and #6888's table indexes move this row in different directions and a floor here protects nothing in between. Lower it for a fold or an index; raise it to the measurement for a loop conversion; investigate it otherwise. The astwalk floor is the one carrying the signal for the fold half.")
 	atLeast(t, c, "astwalk call sites", 266,
 		"Hand-written AST walkers collapsing onto the shared fold spine is what this counts. It should only climb; a fall means a consumer went back to spelling its own traversal. Raise it to the measurement on every conversion — left at a stale 85 while the count reached 96, it would have accepted a walker going back to hand-indexing without a word.")
 
