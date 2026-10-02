@@ -24,6 +24,7 @@ import (
 func TestFetchClient(t *testing.T) {
 	bin := buildFernCLI(t)
 	up := e2eharness.StartFetchUpstream(t)
+	e2eharness.SetFetchProxy(t, up)
 	closed := e2eharness.ClosedLoopbackPort(t)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "fetch_client.fern")
@@ -49,6 +50,7 @@ func TestFetchClient(t *testing.T) {
 
 func TestFetchClientInterp(t *testing.T) {
 	up := e2eharness.StartFetchUpstream(t)
+	e2eharness.SetFetchProxy(t, up)
 	closed := e2eharness.ClosedLoopbackPort(t)
 	out, code := runInterpExitCode(t, e2eharness.FetchClientSource(up.Port, closed))
 	e2eharness.CheckFetchClient(t, up, out, code)

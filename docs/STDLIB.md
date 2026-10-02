@@ -1284,9 +1284,15 @@ order, built with `ipv4(a, b, c, d)`, `ipv6(bytes)` or `ip_parse(text)` and
 rendered by `to_string()` in the RFC 5952 canonical form; `SocketAddr` is an
 address and a port, parsed by `socket_addr_parse` from `a.b.c.d:port` and
 the bracketed `[v6]:port` form. The predicates (`is_loopback`,
-`is_private`, `is_link_local`, `is_multicast`, `is_unspecified`) unwrap an
-IPv4-mapped IPv6 address first; `packed_v4()` bridges an `IpAddr` to the
-packed IPv4 argument `tcp_connect` takes.
+`is_private`, `is_link_local`, `is_multicast`, `is_unspecified`) read the
+address as given; `to_canonical()` unwraps an IPv4-mapped IPv6 address for
+them. `is_global()` is the one an outbound block list wants: false for
+every block that is not reachable from anywhere (unspecified, loopback,
+private, link-local, shared 100.64/10, the documentation and benchmarking
+nets, multicast, reserved, broadcast, unique-local, 2001:db8::/32), and an
+IPv6 address carrying an IPv4 one (IPv4-mapped, NAT64 64:ff9b::/96, 6to4)
+answers for the address it carries. `packed_v4()` bridges an `IpAddr` to
+the packed IPv4 argument `tcp_connect` takes.
 
 `NetError` is a closed enum (`AddrInUse`, `ConnectionRefused`,
 `WouldBlock`, … and `Other(errno)`); `error_from_errno(n)` maps the errno a
@@ -1647,7 +1653,10 @@ answer is `Result[HttpResponse, FetchError]`.
   or chunks; a `BodyFile` is refused, since the client never reads a
   file), `(req).with_timeouts(t)`, `(req).with_limits(l)`. `std/url`
   parses the URL; the host is resolved by `std/dns` (a literal, the hosts
-  file, then DNS) and its addresses raced as `dns.connect_race` does.
+  file, then DNS) and its addresses raced as `dns.connect_race` does. An
+  IPv4 address in the URL is four decimal octets or refused
+  (`2130706433`, `0177.0.0.1`, `127.1` read as loopback to some resolvers
+  and as a name to others).
   Before it connects the client checks the method, the path and query
   and every header against `std/http`'s `http_method_ok` /
   `http_target_ok` / `http_field_name_ok` / `http_field_value_ok`, so a
@@ -1674,6 +1683,24 @@ answer is `Result[HttpResponse, FetchError]`.
 - **Sending:** `send(req)` from a program with a `main`;
   `(plat: Platform).http(req)` from a handler, the capability-scoped
   route (a recording bag answers what `MockPlatform.http_set` canned).
+  The handler's route reaches global addresses only: once the host has
+  resolved, an address `net.is_global` refuses (loopback, a private or
+  link-local block, the cloud metadata address, an IPv4 address carried
+  inside an IPv6 one) fails the request with `Blocked` before anything is
+  dialled, so a rebinding record is caught too. `send` has no such rule.
+- **Proxies:** both routes go through the forward proxy the environment
+  names, read through `config_get` as `ProxyEnv` (`proxy_env()`,
+  `proxy_env_from(...)` for the pure form): the lowercase `http_proxy`
+  only, as curl reads it (a CGI host maps a client's `Proxy:` header onto
+  the uppercase name), and none under `REQUEST_METHOD`; `no_proxy` (or
+  `NO_PROXY`) lists the hosts reached directly as `*`, a domain (with a
+  leading dot, its subdomains only), an address, a CIDR block of either
+  family, any of them with a `:port`, zones ignored. `localhost` and
+  loopback are never proxied. `(p).proxy_for(url)` is the pure decision.
+  A proxied request carries the absolute-form target, the origin's
+  `Host`, and `Proxy-Authorization: Basic` from the proxy URL's
+  credentials; the block list above does not apply to the proxy's
+  address, since the environment is the deployment's.
 - **Responses:** the same `HttpResponse` the server side builds, with
   `BodyBytes`, headers case-folded and the hop-by-hop fields stripped, a
   chunked body decoded and its trailers in `trailers`, interim 1xx
@@ -1686,7 +1713,9 @@ answer is `Result[HttpResponse, FetchError]`.
   `http` / `https`, or a path or query that cannot stand on a request
   line), `InvalidRequest(what)` (a method that is not a token, a header
   that cannot be written as one line, or a file body; `what` names the
-  rule, never the value), `Dns(DnsError)`, `Connect(NetError)`, `Tls`,
+  rule, never the value), `Dns(DnsError)`, `Connect(NetError)`,
+  `Blocked(what)` (a host the handler's route may not reach, naming the
+  address), `Tls`,
   `Timeout(Phase)` with `Phase` one of `Connecting` / `Inactivity` /
   `Total`, `Protocol(what)` (a response the parser refuses, interim
   1xx responses past one `limits.header_bytes` between them, or a 101

@@ -114,6 +114,11 @@ func (up *FetchUpstream) serve(c net.Conn) {
 		resp = append(bytes.Repeat([]byte("HTTP/1.1 100 Continue\r\n\r\n"), 2000), "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"...)
 	case target == "/truncated":
 		resp = []byte("HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\nonly a little")
+	case strings.HasPrefix(target, "http://"):
+		// An absolute-form target is what a client writes to a forward
+		// proxy: answer as the proxy saw it.
+		text := proxyLine(method, target, host, body, headerValue(head, "x-trace"), headerValue(head, "proxy-authorization"))
+		resp = []byte(fmt.Sprintf("HTTP/1.1 201 Created\r\nContent-Length: %d\r\n\r\n%s", len(text), text))
 	case strings.HasPrefix(target, "/echo"):
 		text := echoLine(method, target, host, body, headerValue(head, "x-trace"), headerValue(head, "authorization"), headerValue(head, "cookie"))
 		resp = []byte(fmt.Sprintf("HTTP/1.1 201 Created\r\nContent-Length: %d\r\n\r\n%s", len(text), text))
@@ -166,6 +171,22 @@ func echoLine(method, target, host, body, trace, auth, cookie string) string {
 	return fmt.Sprintf("%s %s host=%s len=%d body=%s trace=%s auth=%s cookie=%s", method, target, host, len(body), body, trace, auth, cookie)
 }
 
+// proxyLine is what an absolute-form target answers: the request as the
+// proxy saw it.
+func proxyLine(method, target, host, body, trace, proxyAuth string) string {
+	return fmt.Sprintf("%s %s host=%s len=%d body=%s trace=%s proxy-auth=%s", method, target, host, len(body), body, trace, proxyAuth)
+}
+
+// SetFetchProxy names the upstream as the forward proxy for the test
+// process and every program it runs (`http_proxy`, with credentials), so
+// a request for a host other than loopback goes to the upstream as an
+// absolute-form target. Loopback is never proxied, so every other case
+// of FetchClientSource is unaffected.
+func SetFetchProxy(t *testing.T, up *FetchUpstream) {
+	t.Helper()
+	t.Setenv("http_proxy", "http://u:p@127.0.0.1:"+strconv.Itoa(up.Port))
+}
+
 // readRequest reads a request head and the body its Content-Length
 // declares.
 func readRequest(c net.Conn) (head, body string, ok bool) {
@@ -214,7 +235,13 @@ func headerValue(head, name string) string {
 // relative Location resolved, a 303 and a 302-after-POST rewritten to
 // GET, a 307 keeping the POST, credentials dropped across origins and
 // kept within one; the reset cases pin the one retry of an idempotent
-// request and none of a POST. `closedPort` is a port nothing listens on.
+// request and none of a POST. The policy cases pin `plat.http` refusing
+// a loopback origin that `send` reaches, the numeric host forms refused
+// before any lookup, and the proxy SetFetchProxy names taking every
+// request for a host that is not loopback (through `send` and through
+// `plat.http`, whose block list does not apply to the proxy), with the
+// absolute-form target, the origin's `Host` and the proxy credentials.
+// `closedPort` is a port nothing listens on.
 func FetchClientSource(port, closedPort int) string {
 	return fmt.Sprintf(`import "std/fetch";
 import "std/http";
@@ -260,7 +287,12 @@ function main(): i32 {
     show("echo", fetch.send(fetch.request("POST", base() + "/echo?q=1").with_header("X-Trace", "t1").with_text("payload")));
     var raw: u8[] = "raw".bytes();
     show("put", fetch.send(fetch.request("PUT", base() + "/echo").with_bytes(raw)));
-    show("plat", platform.platform_new().http(fetch.get(base() + "/echo")));
+    show("blocked", platform.platform_new().http(fetch.get(base() + "/echo")));
+    show("numeric", fetch.send(fetch.get("http://2130706433/")));
+    show("octal", fetch.send(fetch.get("http://0177.0.0.1/")));
+    show("short", fetch.send(fetch.get("http://127.1/")));
+    show("proxied", fetch.send(fetch.request("POST", "http://origin.invalid:81/via?x=1").with_header("X-Trace", "p1").with_text("body")));
+    show("platproxied", platform.platform_new().http(fetch.get("http://origin.invalid/via")));
     match (fetch.send(fetch.get(base() + "/binary"))) {
         Ok(resp) => {
             var bs: u8[] = resp.body_bytes();
@@ -331,7 +363,12 @@ nobody: 204 [] headers: content-length=99 trailers:
 head: 200 [] headers: content-length=5 x-up=1 trailers:
 echo: 201 [ECHO] headers: content-length=ECHOLEN trailers:
 put: 201 [PUT] headers: content-length=PUTLEN trailers:
-plat: 201 [PLAT] headers: content-length=PLATLEN trailers:
+blocked: error blocked: 127.0.0.1 is not a global address
+numeric: error invalid URL: an IPv4 address that is not four decimal octets
+octal: error invalid URL: an IPv4 address that is not four decimal octets
+short: error invalid URL: an IPv4 address that is not four decimal octets
+proxied: 201 [VIAPOST] headers: content-length=VIAPOSTLEN trailers:
+platproxied: 201 [VIAGET] headers: content-length=VIAGETLEN trailers:
 binary: 4 255 97 <not utf-8>
 big: 312000
 limit: error response body past its limit
@@ -378,7 +415,8 @@ func CheckFetchClient(t *testing.T, up *FetchUpstream, stdout string, exit int) 
 	for name, line := range map[string]string{
 		"ECHO":       echoLine("POST", "/echo?q=1", host, "payload", "t1", "", ""),
 		"PUT":        echoLine("PUT", "/echo", host, "raw", "", "", ""),
-		"PLAT":       echoLine("GET", "/echo", host, "", "", "", ""),
+		"VIAPOST":    proxyLine("POST", "http://origin.invalid:81/via?x=1", "origin.invalid:81", "body", "p1", "Basic dTpw"),
+		"VIAGET":     proxyLine("GET", "http://origin.invalid/via", "origin.invalid", "", "", "Basic dTpw"),
 		"POST303":    echoLine("GET", "/echo", host, "", "", "", ""),
 		"POST302":    echoLine("GET", "/echo", host, "", "", "", ""),
 		"POST307":    echoLine("POST", "/echo", host, "payload", "", "", ""),

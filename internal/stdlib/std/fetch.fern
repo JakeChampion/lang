@@ -24,6 +24,18 @@
 // answering is sent once more. No TLS yet (`https` fails with `Tls`), no
 // pool: each request is one connection sent with `Connection: close`.
 //
+// The two routes differ in what they may reach. `plat.http` refuses a
+// host that resolves to an address `net.is_global` does not admit
+// (loopback, a private or link-local block, the cloud metadata address,
+// an IPv4 one carried inside an IPv6 one), checked on the addresses the
+// client is about to dial rather than on the name, so a record that
+// rebinds is caught too; a handler's upstream URL may have come from a
+// request, and the platform it runs on is not its to reach. `send` has no
+// such rule. Both go through the forward proxy the environment names
+// (`ProxyEnv`: the lowercase `http_proxy`, `no_proxy`, nothing under
+// `REQUEST_METHOD`), and neither resolves an IPv4 address written as
+// anything but four decimal octets.
+//
 // A single `send` is a blocking request; overlapping several upstreams is
 // `std/async`'s job — `fetch_future` returns an `async.Future[u8[]]` you
 // fan out through `async.gather` / `async.race`, and their reads overlap
@@ -41,6 +53,7 @@ import "std/headers";
 import "std/url";
 import "std/dns";
 import "std/net";
+import "std/base64";
 import "core/int";
 
 // ipv4(a, b, c, d) — pack a dotted-quad into the network-byte-order
@@ -65,7 +78,9 @@ pub enum Phase { Connecting, Inactivity, Total }
 // header that cannot be written as one line, or a file body (a handler
 // reads files through its bag, not through the client); `Dns` for a name
 // that did not resolve; `Connect` for
-// addresses that all failed; `Tls` for `https` (not supported yet);
+// addresses that all failed; `Blocked` for a host that resolves to an
+// address the route may not reach (`plat.http` and `net.is_global`);
+// `Tls` for `https` (not supported yet);
 // `Timeout` for a bound passed; `Protocol` for a response this client
 // cannot read, with what was wrong; `Io` for a send or read the kernel
 // refused; `Redirect` for a redirect the client would not follow: more
@@ -79,6 +94,7 @@ pub enum FetchError {
   InvalidRequest(string),
   Dns(dns.DnsError),
   Connect(net.NetError),
+  Blocked(string),
   Tls,
   Timeout(Phase),
   Protocol(string),
@@ -137,6 +153,9 @@ function __later_message(e: FetchError): string {
     },
     Io(n) => {
       return "i/o: " + n.message();
+    },
+    Blocked(what) => {
+      return "blocked: " + what;
     },
     Redirect(what) => {
       return "redirect: " + what;
@@ -244,12 +263,40 @@ pub function (r: HttpResponse) ok_or_status(): Result[HttpResponse, i32] {
 // ---------------------------------------------------------------------------
 // Sending
 
-// Where a request goes: the host as the URL names it, the port, and the
-// request-target (path and query) to put on the request line.
-struct __Target { host: string, port: i32, target: string }
+// Where a request goes: the host and port to dial, the request-target
+// for the request line, the `Host` value (the origin's, whichever is
+// dialled), the `Proxy-Authorization` to write (empty for none), and
+// whether the origin itself is dialled.
+struct __Target { host: string, port: i32, target: string, host_field: string, proxy_auth: string, direct: boolean }
 
-// `__target_of(url)` — the URL split for the wire, or why it cannot be.
-function __target_of(raw: string): Result[__Target, FetchError] {
+// `__target_of(url, policy)` — the URL split for the wire, or why it
+// cannot be: through the proxy the environment names for it, as the
+// absolute-form target a proxy forwards (RFC 9112 §3.2.2), else straight
+// to the origin.
+function __target_of(raw: string, policy: __Policy): Result[__Target, FetchError] {
+  var u: Url = __http_url(raw)?;
+  var port: i32 = u.port;
+  if (port == 0) {
+    port = 80;
+  }
+  var host_field: string = __host_field(u.host, port);
+  var target: string = __request_target(u)?;
+  match (policy.proxies.proxy_for(raw)) {
+    Some(spec) => {
+      var p: __Proxy = __proxy_of(spec)?;
+      return Ok(__Target { host: p.host, port: p.port, target: "http://" + host_field + target, host_field: host_field, proxy_auth: p.auth, direct: false });
+    },
+    None => {}
+  }
+  return Ok(__Target { host: u.host, port: port, target: target, host_field: host_field, proxy_auth: "", direct: true });
+}
+
+// `__http_url(raw)` — `raw` parsed, when it is an `http` URL naming a
+// host this client dials. An IPv4 address is four decimal octets or
+// nothing: `2130706433`, `0177.0.0.1` and `127.1` each read as loopback
+// to some resolvers and as a name to others, and an address that reads
+// two ways is how a block list is bypassed.
+function __http_url(raw: string): Result[Url, FetchError] {
   var u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.url_parse(raw)) {
     Some(parsed) => {
@@ -271,11 +318,36 @@ function __target_of(raw: string): Result[__Target, FetchError] {
   if (u.host.len() == 0) {
     return Err(InvalidUrl("no host in " + raw));
   }
-  var port: i32 = u.port;
-  if (port == 0) {
-    port = 80;
+  if (__ambiguous_ipv4(u.host)) {
+    return Err(InvalidUrl("an IPv4 address that is not four decimal octets"));
   }
-  return Ok(__Target { host: u.host, port: port, target: __request_target(u)? });
+  return Ok(u);
+}
+
+// `__ambiguous_ipv4(host)` — a host whose last label starts with a digit
+// (no top-level domain does) and that is not a dotted quad: a number a
+// resolver may read as an address.
+function __ambiguous_ipv4(host: string): boolean {
+  if (host.index_of(":") >= 0) {
+    return false;
+  }
+  var end: i32 = host.len();
+  if (end > 0 && host[end - 1] == 46) {
+    end = end - 1;
+  }
+  var start: i32 = slice_unchecked(host, 0, end).to_owned().last_index_of(".") + 1;
+  if (start >= end || host[start] < 48 || host[start] > 57) {
+    return false;
+  }
+  match (net.ipv4_parse(host)) {
+    Some(a) => {
+      return false;
+    },
+    None => {
+      return true;
+    }
+  }
+  return true;
 }
 
 // `__request_target(u)` — the origin-form request-target of `u`: its
@@ -321,23 +393,23 @@ function __request_ok(req: Request): Result[void, FetchError] {
   return Ok(());
 }
 
-// `__host_field(t)` — the `Host` value: the host, bracketed when it is an
-// IPv6 address, and the port when it is not the scheme's default.
-function __host_field(t: __Target): string {
-  var host: string = t.host;
-  if (host.index_of(":") >= 0) {
-    host = "[" + host + "]";
+// `__host_field(host, port)` — the `Host` value: the host, bracketed when
+// it is an IPv6 address, and the port when it is not the scheme's default.
+function __host_field(host: string, port: i32): string {
+  var h: string = host;
+  if (h.index_of(":") >= 0) {
+    h = "[" + h + "]";
   }
-  if (t.port != 80) {
-    return host + ":" + int.int_to_string(t.port);
+  if (port != 80) {
+    return h + ":" + int.int_to_string(port);
   }
-  return host;
+  return h;
 }
 
 // `__head(req, t, body_len)` — the request line and header block: the
 // caller's end-to-end fields, then what the client decides.
 function __head(req: Request, t: __Target, body_len: i32): string {
-  var out: string = req.method + " " + t.target + " HTTP/1.1\r\n" + "Host: " + __host_field(t) + "\r\n";
+  var out: string = req.method + " " + t.target + " HTTP/1.1\r\n" + "Host: " + t.host_field + "\r\n";
   var fields: HeaderMap = http.http_end_to_end(req.headers);
   var i: i32 = 0;
   while (i < fields.names.len()) {
@@ -349,6 +421,9 @@ function __head(req: Request, t: __Target, body_len: i32): string {
   if (body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
     out = out + "Content-Length: " + int.int_to_string(body_len) + "\r\n";
   }
+  if (t.proxy_auth.len() > 0 && !__holds(fields.names, "proxy-authorization")) {
+    out = out + "Proxy-Authorization: " + t.proxy_auth + "\r\n";
+  }
   return out + "Connection: close\r\n\r\n";
 }
 
@@ -357,11 +432,21 @@ function __head(req: Request, t: __Target, body_len: i32): string {
 // `req.redirects` hops, all under the one total bound. Blocking: every
 // connection is closed before it answers.
 pub function send(req: Request): Result[HttpResponse, FetchError] {
+  return __send_as(req, __Policy { public_only: false, proxies: proxy_env() });
+}
+
+// `__Policy` — what a route may reach: `public_only` refuses a host that
+// resolves to an address `net.is_global` does not admit; `proxies` is the
+// environment's proxy configuration, read once per `send`.
+struct __Policy { public_only: boolean, proxies: ProxyEnv }
+
+// `__send_as(req, policy)` — `send` under a route's policy.
+function __send_as(req: Request, policy: __Policy): Result[HttpResponse, FetchError] {
   var started: i64 = monotonic_ns();
   var cur: Request = req;
   var hops: i32 = 0;
   while (true) {
-    var resp: HttpResponse = __send_once(cur, started)?;
+    var resp: HttpResponse = __send_once(cur, started, policy)?;
     if (!__redirects(resp.status) || req.redirects == 0) {
       return Ok(resp);
     }
@@ -481,23 +566,24 @@ function __effective_port(u: Url): i32 {
   return 80;
 }
 
-// `__send_once(req, started)` — one hop: the request validated, sent
+// `__send_once(req, started, policy)` — one hop: the request validated, sent
 // and its response read, and sent once more when the peer reset the
 // connection before any response byte and the method is idempotent
 // (RFC 9110 §9.2.2): a reset before an answer says nothing happened.
-function __send_once(req: Request, started: i64): Result[HttpResponse, FetchError] {
-  var t: __Target = __target_of(req.url)?;
+function __send_once(req: Request, started: i64, policy: __Policy): Result[HttpResponse, FetchError] {
+  var t: __Target = __target_of(req.url, policy)?;
   match (__request_ok(req)) {
     Ok(_) => {},
     Err(e) => {
       return Err(e);
     }
   }
-  var first: Result[HttpResponse, FetchError] = __attempt(req, t, started);
+  var guard: boolean = policy.public_only && t.direct;
+  var first: Result[HttpResponse, FetchError] = __attempt(req, t, started, guard);
   match (first) {
     Err(e) => {
       if (__reset(e) && http.http_method_idempotent(req.method)) {
-        return __attempt(req, t, started);
+        return __attempt(req, t, started, guard);
       }
       return Err(e);
     },
@@ -523,10 +609,11 @@ function __reset(e: FetchError): boolean {
   return false;
 }
 
-// `__attempt(req, t, started)` — one connection: opened, the request
-// written, the response read, and closed.
-function __attempt(req: Request, t: __Target, started: i64): Result[HttpResponse, FetchError] {
-  var sock: i32 = __connect(t, req.timeouts)?;
+// `__attempt(req, t, started, guard)` — one connection: opened (only to
+// a global address when `guard`), the request written, the response
+// read, and closed.
+function __attempt(req: Request, t: __Target, started: i64, guard: boolean): Result[HttpResponse, FetchError] {
+  var sock: i32 = __connect(t, req.timeouts, guard)?;
   var body: u8[] = req.body.bytes();
   var sent: Result[void, FetchError] = __send_all(sock, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
   match (sent) {
@@ -541,9 +628,10 @@ function __attempt(req: Request, t: __Target, started: i64): Result[HttpResponse
   return answer;
 }
 
-// `__connect(t, timeouts)` — a connection to the host, resolved and raced
-// under the connect bound.
-function __connect(t: __Target, timeouts: Timeouts): Result[i32, FetchError] {
+// `__connect(t, timeouts, guard)` — a connection to the host, resolved
+// and raced under the connect bound; with `guard`, refused before the
+// race when any address resolved is not a global one.
+function __connect(t: __Target, timeouts: Timeouts, guard: boolean): Result[i32, FetchError] {
   var addrs: net.IpAddr[] = [];
   match (dns.resolve(t.host)) {
     Ok(found) => {
@@ -552,6 +640,9 @@ function __connect(t: __Target, timeouts: Timeouts): Result[i32, FetchError] {
     Err(e) => {
       return Err(Dns(e));
     }
+  }
+  if (guard) {
+    __global_only(addrs)?;
   }
   var connect_ms: i32 = timeouts.connect_ms;
   if (timeouts.total_ms < connect_ms) {
@@ -570,6 +661,17 @@ function __connect(t: __Target, timeouts: Timeouts): Result[i32, FetchError] {
     }
   }
   return Err(Timeout(Connecting));
+}
+
+// `__global_only(addrs)` — the refusal naming the first of `addrs` that
+// is not a global address, when there is one.
+function __global_only(addrs: net.IpAddr[]): Result[void, FetchError] {
+  for a in addrs {
+    if (!a.is_global()) {
+      return Err(Blocked(a.to_string() + " is not a global address"));
+    }
+  }
+  return Ok(());
 }
 
 // `__send_all(sock, payload)` — every byte of `payload` written, or the
@@ -722,7 +824,10 @@ function __rejected(code: i32): FetchError {
 
 // `(plat: Platform).http(req)` — `send(req)` through the handler's
 // `Platform` bag, the capability-scoped route (docs/PLATFORM-RESEARCH.md
-// Rec §1): a handler can only fetch through the platform it was handed.
+// Rec §1): a handler can only fetch through the platform it was handed,
+// and only to a global address (`Blocked` otherwise); a proxy the
+// environment names is dialled wherever it is, since the environment is
+// the deployment's.
 //
 // A recording bag reaches no socket: the call is logged as `http` with
 // `METHOD url` and answered with what the test canned for that pair
@@ -730,7 +835,7 @@ function __rejected(code: i32): FetchError {
 // what a real request gives for a host that is not listening.
 pub function (plat: Platform) http(req: Request): Result[HttpResponse, FetchError] {
   if (!plat.is_mock()) {
-    return send(req);
+    return __send_as(req, __Policy { public_only: true, proxies: proxy_env() });
   }
   var summary: string = req.method + " " + req.url;
   plat.record("http", summary);
@@ -763,6 +868,333 @@ function __canned_response(v: string): HttpResponse {
     None => {}
   }
   return http.text(status, body);
+}
+
+// ---------------------------------------------------------------------------
+// Proxies
+
+// `ProxyEnv` — the forward-proxy configuration an environment carries:
+// `http_proxy`, the proxy for `http` URLs as `[http://][user:password@]host[:port]`,
+// empty for none; `no_proxy`, the comma-separated hosts reached directly.
+pub struct ProxyEnv { http_proxy: string, no_proxy: string }
+
+// `proxy_env()` — the configuration as the environment sets it, read
+// through `config_get` so it arrives the same way on every target (a
+// variable where there is an environment, a binding on the proxy world);
+// `proxy_env_from` says which names.
+pub function proxy_env(): ProxyEnv {
+  return proxy_env_from(config_get("http_proxy"), config_get("no_proxy"), config_get("NO_PROXY"), config_get("REQUEST_METHOD"));
+}
+
+// `proxy_env_from(http_proxy, no_proxy, no_proxy_upper, request_method)` —
+// the configuration from its variables. Only the lowercase `http_proxy`
+// is read, as curl reads it: a CGI host turns a client's `Proxy:` request
+// header into the uppercase `HTTP_PROXY` (httpoxy). Under `REQUEST_METHOD`,
+// the sign of a CGI invocation, no proxy is read at all, since there even
+// the lowercase name may be the client's. `no_proxy` is read either way,
+// the lowercase name first.
+pub function proxy_env_from(http_proxy: Option[string], no_proxy: Option[string], no_proxy_upper: Option[string], request_method: Option[string]): ProxyEnv {
+  var proxy: string = "";
+  match (http_proxy) {
+    Some(p) => {
+      proxy = p;
+    },
+    None => {}
+  }
+  match (request_method) {
+    Some(m) => {
+      proxy = "";
+    },
+    None => {}
+  }
+  var skip: string = "";
+  match (no_proxy) {
+    Some(n) => {
+      skip = n;
+    },
+    None => {
+      match (no_proxy_upper) {
+        Some(n) => {
+          skip = n;
+        },
+        None => {}
+      }
+    }
+  }
+  return ProxyEnv { http_proxy: proxy, no_proxy: skip };
+}
+
+// `(p).proxy_for(url)` — the proxy a request for `url` goes through, or
+// `None` for a direct connection: no `http_proxy`; a host that is
+// `localhost`, under it, or a loopback address, never proxied whatever
+// `no_proxy` says; or a host `no_proxy` names. An entry of `no_proxy` is
+// `*` for every host; an address block in CIDR notation (`10.0.0.0/8`,
+// `fd00::/8`) for a host that is an address in it; an address, bracketed
+// or not, its zone ignored (a zone in an entry is what let `[::1%25.example.com]`
+// pass as a subdomain elsewhere); or a domain, matching the host and its
+// subdomains, only the subdomains with a leading dot. A `:port` on an
+// entry limits it to that port. Names compare ASCII case-folded, without
+// a trailing dot.
+pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string] {
+  if (p.http_proxy.len() == 0) {
+    return None;
+  }
+  var u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  match (url.url_parse(target_url)) {
+    Some(parsed) => {
+      u = parsed;
+    },
+    None => {
+      return None;
+    }
+  }
+  var host: string = __host_name(u.host);
+  var ip: Option[net.IpAddr] = __canonical_ip(host);
+  if (__never_proxied(host, ip)) {
+    return None;
+  }
+  for entry in p.no_proxy.split(",") {
+    if (__no_proxy_matches(entry.trim(), host, __effective_port(u), ip)) {
+      return None;
+    }
+  }
+  return Some(p.http_proxy);
+}
+
+// `__never_proxied(host, ip)` — `localhost`, a name under it, or a
+// loopback address: reached directly whatever `no_proxy` says.
+function __never_proxied(host: string, ip: Option[net.IpAddr]): boolean {
+  if (host == "localhost" || host.ends_with(".localhost")) {
+    return true;
+  }
+  match (ip) {
+    Some(a) => {
+      return a.is_loopback();
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// `__host_name(h)` — `h` ASCII case-folded, its trailing dot dropped.
+function __host_name(h: string): string {
+  var s: string = h.to_lower();
+  if (s.len() > 1 && s.ends_with(".")) {
+    return slice_unchecked(s, 0, s.len() - 1).to_owned();
+  }
+  return s;
+}
+
+// `__canonical_ip(text)` — `text` as an address, an IPv4 one unwrapped
+// from its IPv6 form, or `None` for a name.
+function __canonical_ip(text: string): Option[net.IpAddr] {
+  match (net.ip_parse(text)) {
+    Some(a) => {
+      return Some(a.to_canonical());
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// One `no_proxy` entry: its name, address or block, and the port it is
+// limited to (0 for any, -1 for a port that does not read).
+struct __Rule { name: string, port: i32 }
+
+// `__no_proxy_matches(entry, host, port, ip)` — whether one `no_proxy`
+// entry names `host` (an address `ip` when it is one) at `port`.
+function __no_proxy_matches(entry: string, host: string, port: i32, ip: Option[net.IpAddr]): boolean {
+  if (entry.len() == 0) {
+    return false;
+  }
+  if (entry == "*") {
+    return true;
+  }
+  var rule: __Rule = __entry_rule(entry);
+  if (rule.port != 0 && rule.port != port) {
+    return false;
+  }
+  var name: string = __host_name(rule.name);
+  if (name.index_of("/") >= 0) {
+    return __in_block(ip, name);
+  }
+  match (__canonical_ip(name)) {
+    Some(a) => {
+      return __same_ip(ip, a);
+    },
+    None => {}
+  }
+  if (name.starts_with(".")) {
+    return host.ends_with(name);
+  }
+  return host == name || host.ends_with("." + name);
+}
+
+// `__entry_rule(entry)` — `entry` split into what it names and its
+// `:port`: a bracketed address keeps its brackets' contents, a bare one
+// with more than one colon is an IPv6 address with no port, and a zone
+// (`%eth0`) is dropped from either.
+function __entry_rule(entry: string): __Rule {
+  var name: string = entry;
+  var rest: string = "";
+  if (entry.starts_with("[")) {
+    var close: i32 = entry.index_of("]");
+    if (close < 0) {
+      return __Rule { name: entry, port: -1 };
+    }
+    name = slice_unchecked(entry, 1, close).to_owned();
+    rest = slice_unchecked(entry, close + 1, entry.len()).to_owned();
+  } else {
+    var colon: i32 = entry.index_of(":");
+    if (colon >= 0 && colon == entry.last_index_of(":")) {
+      name = slice_unchecked(entry, 0, colon).to_owned();
+      rest = slice_unchecked(entry, colon, entry.len()).to_owned();
+    }
+  }
+  var zone: i32 = name.index_of("%");
+  if (zone >= 0) {
+    name = slice_unchecked(name, 0, zone).to_owned();
+  }
+  return __Rule { name: name, port: __rule_port(rest) };
+}
+
+// `__rule_port(rest)` — the port of a `:port`, 0 for nothing, -1 for
+// anything else.
+function __rule_port(rest: string): i32 {
+  if (rest.len() == 0) {
+    return 0;
+  }
+  if (!rest.starts_with(":")) {
+    return -1;
+  }
+  match (int.parse_int_radix(slice_unchecked(rest, 1, rest.len()).to_owned(), 10)) {
+    Some(n) => {
+      if (n > 0 && n < 65536) {
+        return n;
+      }
+      return -1;
+    },
+    None => {
+      return -1;
+    }
+  }
+  return -1;
+}
+
+// `__same_ip(ip, a)` — whether the host is the address `a`.
+function __same_ip(ip: Option[net.IpAddr], a: net.IpAddr): boolean {
+  match (ip) {
+    Some(h) => {
+      return h.eq(a);
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// `__in_block(ip, block)` — whether the host is an address in the CIDR
+// `block`.
+function __in_block(ip: Option[net.IpAddr], block: string): boolean {
+  var slash: i32 = block.index_of("/");
+  var bits: i32 = -1;
+  match (int.parse_int_radix(slice_unchecked(block, slash + 1, block.len()).to_owned(), 10)) {
+    Some(n) => {
+      bits = n;
+    },
+    None => {}
+  }
+  var prefix: Option[net.IpAddr] = __canonical_ip(slice_unchecked(block, 0, slash).to_owned());
+  match (ip) {
+    Some(a) => {
+      match (prefix) {
+        Some(p) => {
+          return __prefix_matches(a, p, bits);
+        },
+        None => {
+          return false;
+        }
+      }
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// `__prefix_matches(a, p, bits)` — same family and the first `bits` bits
+// equal.
+function __prefix_matches(a: net.IpAddr, p: net.IpAddr, bits: i32): boolean {
+  var ab: u8[] = a.bytes();
+  var pb: u8[] = p.bytes();
+  if (ab.len() != pb.len() || bits < 0 || bits > ab.len() * 8) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i * 8 + 8 <= bits) {
+    if (ab[i] != pb[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  var rem: i32 = bits - i * 8;
+  if (rem == 0) {
+    return true;
+  }
+  var mask: i32 = 255 << 8 - rem & 255;
+  return (ab[i] as i32 & mask) == (pb[i] as i32 & mask);
+}
+
+// The proxy `http_proxy` names: where to dial it and the
+// `Proxy-Authorization` value its credentials make, empty for none.
+struct __Proxy { host: string, port: i32, auth: string }
+
+// `__proxy_of(spec)` — `spec` as `[http://][user:password@]host[:port]`,
+// port 80 when none, or why it names no proxy this client can use.
+function __proxy_of(spec: string): Result[__Proxy, FetchError] {
+  var full: string = spec;
+  if (full.index_of("://") < 0) {
+    full = "http://" + full;
+  }
+  var u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  match (url.url_parse(full)) {
+    Some(parsed) => {
+      u = parsed;
+    },
+    None => {
+      return Err(InvalidUrl("http_proxy is not a URL"));
+    }
+  }
+  if (u.scheme != "http" || u.host.len() == 0) {
+    return Err(InvalidUrl("http_proxy is not an http URL with a host"));
+  }
+  var port: i32 = u.port;
+  if (port == 0) {
+    port = 80;
+  }
+  return Ok(__Proxy { host: u.host, port: port, auth: __proxy_auth(full) });
+}
+
+// `__proxy_auth(full)` — `Basic` with the URL's userinfo, or empty.
+function __proxy_auth(full: string): string {
+  var start: i32 = full.index_of("://") + 3;
+  var end: i32 = full.len();
+  var slash: i32 = slice_unchecked(full, start, end).to_owned().index_of("/");
+  if (slash >= 0) {
+    end = start + slash;
+  }
+  var authority: string = slice_unchecked(full, start, end).to_owned();
+  var at: i32 = authority.last_index_of("@");
+  if (at < 0) {
+    return "";
+  }
+  return "Basic " + base64.base64_encode(slice_unchecked(authority, 0, at).to_owned().bytes());
 }
 
 // ---------------------------------------------------------------------------

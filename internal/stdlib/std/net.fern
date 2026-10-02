@@ -263,6 +263,102 @@ pub function (a: IpAddr) to_canonical(): IpAddr {
   return ipv4(b[12] as i32, b[13] as i32, b[14] as i32, b[15] as i32);
 }
 
+// `is_global()` — an address that is reachable from anywhere, so the
+// one an outbound request may dial from inside a network without
+// reaching the network itself. False for the unspecified address,
+// loopback, the private blocks (RFC 1918, RFC 4193), link-local (169.254/16,
+// where the cloud metadata services sit, and fe80::/10), the shared block
+// 100.64/10 (RFC 6598), this-network 0/8, the IETF protocol block
+// 192.0.0.0/24, the documentation blocks (192.0.2/24, 198.51.100/24,
+// 203.0.113/24, 2001:db8::/32), benchmarking 198.18/15, multicast, the
+// reserved 240/4 and broadcast. An IPv6 address carrying an IPv4 one
+// (IPv4-mapped, NAT64's 64:ff9b::/96, 6to4's 2002::/16) answers for the
+// address it carries, so `::ffff:10.0.0.1` reads as `10.0.0.1`.
+pub function (a: IpAddr) is_global(): boolean {
+  match (a) {
+    V4(b) => {
+      return !__v4_special(b);
+    },
+    V6(b) => {
+      match (__embedded_v4(b)) {
+        Some(inner) => {
+          return !__v4_special(inner);
+        },
+        None => {
+          return !__v6_special(b);
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// The IPv4 blocks `is_global` refuses.
+function __v4_special(b: u8[]): boolean {
+  return __v4_low_blocks(b) || __v4_doc_blocks(b) || (b[0] & 240) >= 224;
+}
+
+// This-network 0/8, private 10/8, loopback 127/8, shared 100.64/10,
+// link-local 169.254/16 and private 172.16/12.
+function __v4_low_blocks(b: u8[]): boolean {
+  if (b[0] == 0 || b[0] == 10 || b[0] == 127) {
+    return true;
+  }
+  if (b[0] == 100 && (b[1] & 192) == 64) {
+    return true;
+  }
+  if (b[0] == 169 && b[1] == 254) {
+    return true;
+  }
+  return b[0] == 172 && (b[1] & 240) == 16;
+}
+
+// Private 192.168/16, the IETF protocol block 192.0.0/24, the three
+// documentation nets and the benchmarking range 198.18/15.
+function __v4_doc_blocks(b: u8[]): boolean {
+  if (b[0] == 192) {
+    return b[1] == 168 || b[1] == 0 && (b[2] == 0 || b[2] == 2);
+  }
+  if (b[0] == 198) {
+    return (b[1] & 254) == 18 || b[1] == 51 && b[2] == 100;
+  }
+  return b[0] == 203 && b[1] == 0 && b[2] == 113;
+}
+
+// The IPv6 blocks `is_global` refuses, once an embedded IPv4 address has
+// been ruled out: unspecified, loopback, unique-local fc00::/7, link-local
+// fe80::/10, multicast ff00::/8 and documentation 2001:db8::/32.
+function __v6_special(b: u8[]): boolean {
+  if (__all_zero(b, 0, 15)) {
+    return b[15] == 0 || b[15] == 1;
+  }
+  if ((b[0] & 254) == 252 || b[0] == 255) {
+    return true;
+  }
+  if (b[0] == 254 && (b[1] & 192) == 128) {
+    return true;
+  }
+  return b[0] == 32 && b[1] == 1 && b[2] == 13 && b[3] == 184;
+}
+
+// The IPv4 address an IPv6 one carries: the low four bytes of an
+// IPv4-mapped (`::ffff:a.b.c.d`) or NAT64 well-known-prefix
+// (`64:ff9b::a.b.c.d`) address, bytes 2 to 5 of a 6to4 one
+// (`2002:abcd:ef01::`); `None` for any other.
+function __embedded_v4(b: u8[]): Option[u8[]] {
+  if (__all_zero(b, 0, 10) && b[10] == 255 && b[11] == 255) {
+    return Some([b[12], b[13], b[14], b[15]]);
+  }
+  var head: i32 = b[0] as i32 << 24 | b[1] as i32 << 16 | b[2] as i32 << 8 | b[3] as i32;
+  if (head == 6619035 && __all_zero(b, 4, 12)) {
+    return Some([b[12], b[13], b[14], b[15]]);
+  }
+  if (head >> 16 == 8194) {
+    return Some([b[2], b[3], b[4], b[5]]);
+  }
+  return None;
+}
+
 // `packed_v4()` — a `V4` as the packed network-order `i32` the
 // `tcp_connect(host_be, port)` builtin and `fetch.ipv4` take
 // (`a | b << 8 | c << 16 | d << 24`); `None` for a `V6`.
