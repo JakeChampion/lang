@@ -65,6 +65,16 @@ the existing complexity limit. The integrated full unit suite, all lint
 gates, existing regex fixtures and VCL caller checks pass. The primary
 Darwin compiler also runs all 42 VCL backend TAP tests successfully.
 
+The 2026-10-02 integration with raw I/O and concrete view dispatch was
+rechecked across the RNG, ASCII and regex matrices. Darwin passed in
+8.353 seconds for bootstrap tests and 50.577 seconds for primary tests;
+Linux/WASM passed in 3.880 and 158.167 seconds respectively. These are
+validation durations, not performance comparisons. The fresh published-seed
+bootstrap took 38, 37 and 34 seconds, with stages two and three identical:
+14,610,337 bytes, SHA-256
+`710ae976e3d8e7f91741bc13bb48fb60e1500a7b946570b223c8a954e37739c4`.
+The final unit suite and every lint gate for this integration also passed.
+
 ## Native measurements
 
 Measured on arm64 macOS on 2026-10-01 with strict semantic lowering and

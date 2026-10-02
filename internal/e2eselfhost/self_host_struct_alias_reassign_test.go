@@ -148,7 +148,9 @@ function round(i: i32): i32 {
 		{
 			// The string-builder CONSUME-REBIND (`s = s + part`). A different path
 			// entirely — emit_str_reclaim_store, whose RHS is a fresh box and which
-			// deliberately emits no inc. Nothing here may disturb it.
+			// deliberately emits no inc. Nothing here may disturb it. One box per
+			// round: the first append onto the empty literal allocates it and the
+			// other three grow it in place (#10960).
 			name: "string_accumulator_unchanged",
 			src: `function round(i: i32): i32 {
     var s: string = "";
@@ -157,7 +159,7 @@ function round(i: i32): i32 {
     return s.len();
 }
 ` + sarMain,
-			want: 63, allocs: 80, frees: 80,
+			want: 63, allocs: 20, frees: 20,
 		},
 	}
 }

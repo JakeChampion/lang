@@ -10549,6 +10549,8 @@ pub struct MFns {
   // The `__smm_<Base>_<field>` fold names. A handful per module, and the test
   // is a SUFFIX match rather than equality, so this one stays a scan.
   smm: string[],
+  // Concrete array/view folds, indexed separately from generic templates.
+  array_concrete: i32[],
   // The module's struct decls, so a struct-literal FIELD VALUE can be
   // rewritten against the field's declared type. It travels here for the same
   // reason the index does: built from one array, it cannot disagree with the
@@ -10589,6 +10591,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
   var gname: string[] = [];
   var gat: i32[] = [];
   var smm: string[] = [];
+  var array_concrete: i32[] = [];
   var i: i32 = 0;
   while (i < decls.len()) {
     if (decls[i].type_params.len() > 0 && decls[i].receiver_name.len() == 0) {
@@ -10597,6 +10600,9 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     }
     if (decls[i].name.len() > 6 && slice_unchecked(decls[i].name, 0, 6) == "__smm_") {
       smm = smm.append(decls[i].name);
+    }
+    if (is_concrete_array_fold(decls[i])) {
+      array_concrete = array_concrete.append(i);
     }
     i = i + 1;
   }
@@ -10613,7 +10619,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     ghead = ghead.with(bk, k);
     k = k - 1;
   }
-  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, structs: structs, enums: enums, impls: impls };
+  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, enums: enums, impls: impls };
 }
 
 // bg_find returns the position in `fns.decls` of the bounded-generic function
@@ -11833,7 +11839,10 @@ function call_ret_type(funcs: MFns, name: string, args: ast.Expr[], env: MEnv): 
   if (fi < 0) {
     return "";
   }
-  var fd: FuncDecl = funcs.decls[fi];
+  return decl_call_ret_type(funcs, funcs.decls[fi], args, env);
+}
+
+function decl_call_ret_type(funcs: MFns, fd: FuncDecl, args: ast.Expr[], env: MEnv): string {
   // A generic whose type params were ALL erased — every one unbounded —
   // still carries them in its RETURN type: `pick2[T](keep: (T) => boolean):
   // T[]` reaches here with type_params empty and ret_type "T[]". Handing
@@ -12050,10 +12059,18 @@ pub function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
 // recv_method_ret_of is the declared return type of a receiver method call
 // `recv.m(args)` whose receiver type the walk knows. A generic receiver's
 // method returns its type variable, which names nothing concrete.
-function recv_method_ret_of(cfa: ast.ExprFieldAccess, env: MEnv, funcs: MFns): string {
+function recv_method_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, funcs: MFns): string {
   var rvt: string = mono_infer(cfa.obj, env, funcs);
   if (rvt.len() == 0) {
     return "";
+  }
+  var concrete: i32 = concrete_array_method_at(funcs, rvt, cfa.field);
+  if (concrete >= 0) {
+    var call_args: ast.Expr[] = [cfa.obj];
+    for arg in args {
+      call_args = call_args.append(arg);
+    }
+    return decl_call_ret_type(funcs, funcs.decls[concrete], call_args, env);
   }
   var mrt: string = assoc_ret_of(funcs.decls, rvt, cfa.field);
   if (mrt.len() == 0) {
@@ -12364,7 +12381,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
               }
             }
           }
-          var mrt: string = recv_method_ret_of(cfa, env, funcs);
+          var mrt: string = recv_method_ret_of(cfa, c.args, env, funcs);
           if (mrt.len() > 0) {
             return mrt;
           }
@@ -12386,6 +12403,13 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
             _ => {}
           }
           return stamped_scalar(c.ty);
+        },
+        ast.ExprLambda(lm) => {
+          // Value blocks carry the checker's result, including view receivers.
+          if (!mono_ty_mentions_var(lm.ret_type)) {
+            return lm.ret_type;
+          }
+          return "";
         },
         _ => {
           return stamped_scalar(c.ty);
@@ -12527,6 +12551,36 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
               }
             },
             _ => {}
+          }
+          // Fold concrete receivers before erasure can merge their namespaces.
+          if (funcs.array_concrete.len() > 0) {
+            var concrete: i32 = concrete_array_method_at(funcs, mono_infer(fac.obj, env, funcs), fac.field);
+            if (concrete >= 0) {
+              var receiver: RExpr = mono_expr(fac.obj, env, funcs, cur);
+              var args: ast.Expr[] = [receiver.rexpr];
+              for arg in nargs {
+                args = args.append(arg);
+              }
+              var name: string = funcs.decls[concrete].name;
+              var instances: Insts = receiver.rins;
+              if (funcs.decls[concrete].type_params.len() > 0) {
+                // Infer from the original arguments: a nested generic call
+                // already rewritten in nargs names a clone outside decls.
+                var raw: ast.Expr[] = [fac.obj];
+                for arg in c.args {
+                  raw = raw.append(arg);
+                }
+                var key: string = explicit_inst_key(funcs.decls[concrete], c.type_args);
+                if (key.len() == 0) {
+                  key = infer_inst(funcs.decls[concrete], raw, env, funcs);
+                }
+                if (key.len() > 0) {
+                  instances = instances.iadd(name, key);
+                  name = name + "__" + sanitize_key(key);
+                }
+              }
+              return RExpr { rexpr: ast.ExprCall { ...c, callee: ast.ExprIdent { name: name, line: fac.line, col: fac.col, ty: "" }, args: args }, rins: instances };
+            }
           }
           // Value-receiver generic array method `recv.m(args)` —
           // m was folded to a bounded free generic `__arrm_m[T]`
@@ -12713,7 +12767,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
       return RExpr { rexpr: ast.ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col, written: s.written }, rins: rb.rins };
     },
     ast.ExprLambda(lm) => {
-      var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins, "");
+      var bodyr: RStmts = mono_stmts(lm.body, bind_params(env, lm.params), funcs, ins, "");
       return RExpr { rexpr: ast.ExprLambda { ...lm, body: bodyr.rstmts }, rins: bodyr.rins3 };
     },
     _ => {
@@ -13195,7 +13249,13 @@ function mono_stmts(stmts: ast.Stmt[], env: MEnv, funcs: MFns, ins: Insts, ret_t
 // callee's return-position type var from a fn PARAM passed on (`map_values(f)`
 // calling `__om_map_values(t, f)` with `f: (V) => W`).
 function env_from_params(params: ast.ParamDecl[]): MEnv {
-  var e: MEnv = MEnv { mnames: [], mtypes: [] };
+  return bind_params(MEnv { mnames: [], mtypes: [] }, params);
+}
+
+// bind_params is env_from_params on top of an enclosing env: a lambda's
+// parameters shadow what its body can otherwise see.
+function bind_params(env: MEnv, params: ast.ParamDecl[]): MEnv {
+  var e: MEnv = env;
   var i: i32 = 0;
   while (i < params.len()) {
     var pt: string = params[i].type_name;
@@ -13863,7 +13923,7 @@ pub function array_method_element(spelling: string): string {
   return "";
 }
 
-// is_generic_array_method gates the array-method path: a method
+// The generic array-method path accepts a method
 // (`receiver_name` set) whose receiver is `<var>[]` or `[<var>]` for one type
 // variable. Closure ("fn") params ARE allowed (`reduce` / `sort_by` /
 // `filter` / `any` / `all` / `find`) and so are the method's OWN
@@ -13885,6 +13945,42 @@ pub function array_method_element(spelling: string): string {
 // path the equivalent free generic `max[T: cmp.Ord](xs: T[])` already uses.
 // What stays excluded is a bounded EXTRA type param (a bounded `U` not
 // fixed by the receiver): `fd.type_params` may hold the receiver var alone.
+function is_concrete_array_method(fd: FuncDecl): boolean {
+  var elem: string = array_method_element(fd.receiver_type);
+  return fd.receiver_name.len() > 0 && elem.len() > 0
+    && type_str_vars(elem, []).len() == 0;
+}
+
+pub function concrete_array_method_name(receiver: string, method: string): string {
+  var elem: string = array_method_element(receiver);
+  if (elem.len() == 0) {
+    return "";
+  }
+  var prefix: string = "__carrm_";
+  if (spelling_is_view(receiver)) {
+    prefix = "__cviewm_";
+  }
+  return prefix + sanitize_key(elem) + "__" + method;
+}
+
+function is_concrete_array_fold(fd: FuncDecl): boolean {
+  return fd.receiver_name.len() == 0
+    && (util.str_has_prefix(fd.name, "__carrm_") || util.str_has_prefix(fd.name, "__cviewm_"));
+}
+
+function concrete_array_method_at(funcs: MFns, receiver: string, method: string): i32 {
+  if (funcs.array_concrete.len() == 0) {
+    return 0 - 1;
+  }
+  var name: string = concrete_array_method_name(receiver, method);
+  for at in funcs.array_concrete {
+    if (funcs.decls[at].name == name) {
+      return at;
+    }
+  }
+  return 0 - 1;
+}
+
 function is_generic_array_method(fd: FuncDecl): boolean {
   if (fd.receiver_name.len() == 0) {
     return false;
@@ -13909,6 +14005,8 @@ function is_generic_array_method(fd: FuncDecl): boolean {
 // register_array_method_generics rewrites each generic array-receiver
 // method into a bounded free generic `__arrm_<name>[T]` with the
 // receiver folded to a leading param, and drops the original method. A
+// concrete receiver gets a free function keyed by its element and namespace.
+// View methods have separate names throughout both lowering paths. A
 // no-op when none is present (the compiler's own sources call the free
 // `concat(xs, ys)` form, never `xs.concat(ys)`, so the byte-identical
 // bootstrap fixpoint is preserved). Runs before monomorphize_module so
@@ -13917,7 +14015,7 @@ pub function register_array_method_generics(mod: Module): Module {
   var any_am: boolean = false;
   var ci: i32 = 0;
   while (ci < mod.funcs.len()) {
-    if (is_generic_array_method(mod.funcs[ci])) {
+    if (is_generic_array_method(mod.funcs[ci]) || is_concrete_array_method(mod.funcs[ci])) {
       any_am = true;
     }
     ci = ci + 1;
@@ -13930,7 +14028,13 @@ pub function register_array_method_generics(mod: Module): Module {
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     var fd: FuncDecl = mod.funcs[i];
-    if (is_generic_array_method(fd)) {
+    if (is_concrete_array_method(fd)) {
+      var params: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+      for param in fd.params {
+        params = params.append(param);
+      }
+      out = out.append(FuncDecl { ...fd, name: concrete_array_method_name(fd.receiver_type, fd.name), receiver_name: "", receiver_type: "", params: params });
+    } else if (is_generic_array_method(fd)) {
       var elem: string = array_method_element(fd.receiver_type);
       var tps: string[] = [elem + ""];
       var prefix: string = "__arrm_";
@@ -14591,11 +14695,11 @@ function erase_promotions(funcs: FuncDecl[], erased: string[]): FuncDecl[] {
 
 function monomorphize_module(mod: Module, erased: string[]): Module {
   var funcs: FuncDecl[] = erase_promotions(promote_erased_forwarders(mod.funcs), erased);
-  // Nothing to do if there are no bounded generics.
+  // Concrete array methods also need their receiver calls folded.
   var any_bg: boolean = false;
   var bi: i32 = 0;
   while (bi < funcs.len()) {
-    if (funcs[bi].receiver_name.len() == 0 && funcs[bi].type_params.len() > 0) {
+    if (funcs[bi].receiver_name.len() == 0 && funcs[bi].type_params.len() > 0 || is_concrete_array_fold(funcs[bi])) {
       any_bg = true;
     }
     bi = bi + 1;
@@ -22583,7 +22687,21 @@ function erase_str_names(ty: string): string {
 // receiver_base is the name a method is keyed by on its receiver: the base
 // type, with `str` spelled `string` as the lowering spells it.
 pub function receiver_base(receiver: string): string {
-  return erase_view_spelling(util.base_type_name(receiver));
+  return util.base_type_name(erase_view_spelling(receiver));
+}
+
+// receiver_namespace is the name a method declaration is keyed by against
+// the others: every owned-array receiver shares `Array` and every view
+// receiver `slice`, whatever the element, as native keys them.
+pub function receiver_namespace(receiver: string): string {
+  var r: TypeRef = parse_type_ref(receiver);
+  if (r.array_depth > 0) {
+    return "Array";
+  }
+  if (r.is_view) {
+    return "slice";
+  }
+  return receiver_base(receiver);
 }
 
 function erase_view_list(tys: string[]): string[] {

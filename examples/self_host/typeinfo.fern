@@ -328,6 +328,9 @@ pub function spelling(t: Type): string {
       if (elem.len() == 0) {
         return "";
       }
+      if (a.view) {
+        return "[" + elem + "]";
+      }
       return elem + "[]";
     },
     TypeStruct(s) => {

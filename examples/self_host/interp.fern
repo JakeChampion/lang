@@ -1393,10 +1393,8 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
   return v_err("undefined method `" + name + "` on `Cell`");
 }
 
-// reader_method reads the program's stdin through the host's: `read_chunk(n)`
-// answers Result[string, IoError], `read_line()` Option[string], and `close()`
-// leaves the descriptor to the host, which owns it.
-function reader_method(rs: VStruct, name: string, args: Value[]): Value {
+// Read the descriptor recorded in the interpreter's opaque stdio handle.
+function stdio_fd(rs: VStruct): i32 {
   var fd: i32 = 0 - 1;
   var fi: i32 = 0;
   while (fi < rs.field_names.len()) {
@@ -1405,13 +1403,21 @@ function reader_method(rs: VStruct, name: string, args: Value[]): Value {
     }
     fi = fi + 1;
   }
-  if (fd != 0) {
+  return fd;
+}
+
+// Read stdin through the host. Byte chunks stay arrays throughout the bridge.
+function reader_method(rs: VStruct, name: string, args: Value[]): Value {
+  if (stdio_fd(rs) != 0) {
     return v_err("Reader." + name + ": only stdin is readable here");
   }
-  if (name == "close") {
-    return v_void();
-  }
   var r: Reader = stdin();
+  if (name == "close") {
+    if (args.len() != 0) {
+      return v_err("Reader.close takes no arguments");
+    }
+    return option_io_error_value(r.close());
+  }
   if (name == "read_line") {
     if (args.len() != 0) {
       return v_err("Reader.read_line takes no arguments");
@@ -1419,7 +1425,17 @@ function reader_method(rs: VStruct, name: string, args: Value[]): Value {
     return option_string_value(r.read_line());
   }
   if (args.len() != 1 || !is_i32_arg(args[0])) {
-    return v_err("Reader.read_chunk takes one integer argument");
+    return v_err("Reader." + name + " takes one integer argument");
+  }
+  if (name == "read_chunk_bytes") {
+    match (r.read_chunk_bytes(vint_bits(args[0]))) {
+      Ok(chunk) => {
+        return v_variant("Ok", [byte_array_value(chunk)]);
+      },
+      Err(e) => {
+        return v_variant("Err", [io_error_value(e)]);
+      }
+    }
   }
   match (r.read_chunk(vint_bits(args[0]))) {
     Ok(chunk) => {
@@ -1429,6 +1445,89 @@ function reader_method(rs: VStruct, name: string, args: Value[]): Value {
       return v_variant("Err", [io_error_value(e)]);
     }
   }
+}
+
+function byte_array_value(bytes: u8[]): Value {
+  var out: Value[] = [];
+  var i: i32 = 0;
+  while (i < bytes.len()) {
+    out = out.append(v_int(bytes[i] as i32));
+    i = i + 1;
+  }
+  return v_arr_of(out, "u8");
+}
+
+function option_io_error_value(error: Option[IoError]): Value {
+  match (error) {
+    Some(e) => {
+      return v_variant("Some", [io_error_value(e)]);
+    },
+    None => {
+      return v_variant("None", []);
+    }
+  }
+}
+
+function write_count_value(result: Result[i64, IoError]): Value {
+  match (result) {
+    Ok(n) => {
+      return v_variant("Ok", [box_i64(n)]);
+    },
+    Err(e) => {
+      return v_variant("Err", [io_error_value(e)]);
+    }
+  }
+}
+
+// Materialize a host byte array from boxed interpreter values. Neither the
+// program's array nor its aliases are modified or exposed to the host writer.
+function writer_byte_method(w: Writer, name: string, value: Value): Value {
+  if let VArr(a) = value {
+    var bytes: u8[] = __alloc_u8(a.elements.len());
+    var i: i32 = 0;
+    while (i < a.elements.len()) {
+      if (!is_i32_arg(a.elements[i])) {
+        return v_err("Writer." + name + ": expected byte array");
+      }
+      bytes = bytes.with(i, vint_bits(a.elements[i]) as u8);
+      i = i + 1;
+    }
+    if (name == "write_bytes") {
+      return option_io_error_value(w.write_bytes(bytes));
+    }
+    return write_count_value(w.write_some_bytes(bytes));
+  }
+  return v_err("Writer." + name + ": expected byte array");
+}
+
+function writer_method(rs: VStruct, name: string, args: Value[]): Value {
+  var fd: i32 = stdio_fd(rs);
+  if (fd != 1 && fd != 2) {
+    return v_err("Writer." + name + ": only stdout and stderr are writable here");
+  }
+  var w: Writer = stdout();
+  if (fd == 2) {
+    w = stderr();
+  }
+  if (name == "close") {
+    if (args.len() != 0) {
+      return v_err("Writer.close takes no arguments");
+    }
+    return option_io_error_value(w.close());
+  }
+  if (args.len() != 1) {
+    return v_err("Writer." + name + " takes one argument");
+  }
+  if (name == "write_bytes" || name == "write_some_bytes") {
+    return writer_byte_method(w, name, args[0]);
+  }
+  if let VString(s) = args[0] {
+    if (name == "write") {
+      return option_io_error_value(w.write(s.v));
+    }
+    return write_count_value(w.write_some(s.v));
+  }
+  return v_err("Writer." + name + ": expected string");
 }
 
 function option_string_value(o: Option[string]): Value {
@@ -3371,8 +3470,11 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
       return cell_method(uc, name, args);
     },
     VStruct(rs) => {
-      if (rs.type_name == "Reader" && (name == "read_chunk" || name == "read_line" || name == "close")) {
+      if (rs.type_name == "Reader" && (name == "read_chunk" || name == "read_chunk_bytes" || name == "read_line" || name == "close")) {
         return reader_method(rs, name, args);
+      }
+      if (rs.type_name == "Writer" && (name == "write" || name == "write_some" || name == "write_bytes" || name == "write_some_bytes" || name == "close")) {
+        return writer_method(rs, name, args);
       }
     },
     _ => {}
@@ -3917,22 +4019,9 @@ function call_buf_read(name: string, h: usize, args: Value[]): Value {
   return v_void();
 }
 
-// Read the host builder directly so the interpreter remains buildable by the
-// pinned bootstrap, which predates the new builtin. No string is constructed.
+// Extract through the host byte API, preserving its ownership and reset rules.
 function call_buf_take_bytes(h: usize): Value {
-  var n: i32 = buf_len(h);
-  var data: usize = __load_ptr(h);
-  if (target_arch() == "wasm32") {
-    data = data + 4 as usize;
-  }
-  var out: Value[] = [];
-  var i: i32 = 0;
-  while (i < n) {
-    out = out.append(v_int(__load_u8(data + i as usize)));
-    i = i + 1;
-  }
-  __store_ptr(h + __ptr_width() as usize, 0 as usize);
-  return v_arr_of(out, "u8");
+  return byte_array_value(buf_take_bytes(h));
 }
 
 function call_buf_builtin(name: string, args: Value[]): Value {
@@ -4475,6 +4564,16 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
       return v_err("stdin takes no arguments");
     }
     return v_struct("Reader", ["fd"], [v_int(0)]);
+  }
+  if (name == "stdout" || name == "stderr") {
+    if (args.len() != 0) {
+      return v_err(name + " takes no arguments");
+    }
+    var fd: i32 = 1;
+    if (name == "stderr") {
+      fd = 2;
+    }
+    return v_struct("Writer", ["fd"], [v_int(fd)]);
   }
   if (name == "read_line") {
     if (args.len() != 0) {
