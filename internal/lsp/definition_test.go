@@ -24,7 +24,7 @@ func TestDefinition_LocalVar(t *testing.T) {
 		t.Errorf("definition start line = %d, want 1", got.Range.Start.Line)
 	}
 	if got.Range.Start.Character != 2 {
-		t.Errorf("definition start col = %d, want 2 (start of `var` keyword)", got.Range.Start.Character)
+		t.Errorf("definition start col = %d, want 2 (start of `let` keyword)", got.Range.Start.Character)
 	}
 }
 

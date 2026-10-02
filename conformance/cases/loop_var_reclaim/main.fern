@@ -24,7 +24,7 @@ function churn(n: i32): i32 {
     while (i < n) {
         // array loop-body var: built and discarded each iteration
         let row: i32[] = [i, i * 2, i * 3];
-        // struct loop-body var
+        // struct loop-body let
         let p: Pt = Pt { x: i, y: i + 1 };
         // enum loop-body var with an array payload
         let b: Box = Val([i, i + 5]);

@@ -2747,7 +2747,7 @@ so BOTH the IR and AST self-host paths get it) recognises a local bound to a bar
 0-arg fn name and used ONLY as a call target, and inlines it — drops the binding
 and rewrites every `f(args)` to `mk(args)` (a 0-arg fn-value called is exactly
 its direct call evaluated at each call site, matching native). A `const` (or any
-0-arg fn) bound to a var and used as a VALUE (`let f = K; f + 1`) is left as a
+0-arg fn) bound to a let and used as a VALUE (`let f = K; f + 1`) is left as a
 const-call, so const semantics are unchanged. Coverage:
 `TestSelfHostZeroArgFnValueIRX86_64` — i32 return, struct return, called-twice,
 loop-call, a >0-arg fn-value, and the const-as-value soundness case — each

@@ -161,7 +161,7 @@ type-name classifier that mirrors `ast.IsPointerType`).
 The self-host `E049` pass is a lightweight standalone walk that does not
 thread the full type environment, so it infers an **unannotated**
 capture's type only from an obvious pointer-shaped *literal* init
-(`let s = "x"`, `= [..]`, `= P {..}`, `= (..)`). An unannotated var bound
+(`let s = "x"`, `= [..]`, `= P {..}`, `= (..)`). An unannotated let bound
 to a pointer-shaped **non-literal** init — a call or another identifier,
 e.g. `let s = mk();` where `mk` returns `string` — is conservatively
 treated as scalar, so a write-back capture of it is **not** flagged even

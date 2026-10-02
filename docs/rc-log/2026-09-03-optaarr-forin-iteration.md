@@ -115,7 +115,7 @@ Without the stub the same probe exits 0 and takes the leak-safe fallback.
 
 `TestSelfHostOptaarrForInIter{X86_64,Arm64,Wasm}` asserts `live_bytes > 0` on
 every refused row, not just its exit code: guarded arm, payload binding stored
-out, payload handed to a call, loop var stored out, bare `let o = xs[i]`, and
+out, payload handed to a call, loop let stored out, bare `let o = xs[i]`, and
 the two out-of-class annotations (`Option[string[]][]`, whose payload is not a
 leak-safe scalar array, and `Option[Option[i32[]]][]`, which is not an option of
 an array at all). A balance appearing there means the credit reached a shape

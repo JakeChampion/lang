@@ -59,7 +59,7 @@ short-lived-process semantics. The edge/CLI niche stays a design
 *center of gravity* — the workloads we tune hardest for — not a
 *ceiling*.
 
-The historical TS-flavoured surface (`var`, `T[]`, `if/else`) was a
+The historical TS-flavoured surface (`let`, `T[]`, `if/else`) was a
 starting point, not a constraint. From here we look at Roc, MoonBit,
 Rust, Zig, Odin, Hare, Gleam for design inspiration — not at TS.
 

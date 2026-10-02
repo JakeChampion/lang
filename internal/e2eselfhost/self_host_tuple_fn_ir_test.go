@@ -45,7 +45,7 @@ var tupleFnIRCases = []struct {
 	{"named-fn-returned", "function dbl(x: i32): i32 { return x * 2; } function mk(): ((i32) => i32, i32) { return (dbl, 1); } function main(): i32 { let t = mk(); return t.0(21); }", 42},
 	// TWO closures in one tuple.
 	{"two-closures", "function mk(): ((i32) => i32, (i32) => i32) { let n = 1; let m = 2; let t = ((x: i32): i32 => { return x + n; }, (x: i32): i32 => { return x + m; }); return t; } function main(): i32 { let t = mk(); return t.0(19) + t.1(20); }", 42},
-	// Destructure the returned tuple and call the bound element (`var (f, k)
+	// Destructure the returned tuple and call the bound element (`let (f, k)
 	// = mk(); f(…)`): the "clo" tag binds f a closure local.
 	{"destructure-call", "function mk(): ((i32) => i32, i32) { let n = 5; let t = ((x: i32): i32 => { return x + n; }, 5); return t; } function main(): i32 { let (f, k) = mk(); return f(32) + k; }", 42},
 	// Regression: a plain scalar/string tuple keeps its precise spelling and

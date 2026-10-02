@@ -246,7 +246,7 @@ struct S { data: u8[], pos: i32 } function mk(s: string): S { return S { data: s
 		// binds). Same value: 3 + 7 = 10.
 		{"structfield-tuple-fn-local", `struct S { p: (i32, () => i32) } function main(): i32 { let s = S { p: (3, () => 7) }; let t = s.p; return t.0 + t.1(); }`, 10},
 		// DESTRUCTURING a tuple read from an array-of-tuples whose element is a
-		// STRUCT / STRING / ENUM: `var (p, n) = a[i]` over `(P, i32)[]`. Direct
+		// STRUCT / STRING / ENUM: `let (p, n) = a[i]` over `(P, i32)[]`. Direct
 		// access (`a[i].0.x`) already resolved via the array slot's arrarr_elem,
 		// but the destructure's dtag resolution had no ExprIndex arm, so the
 		// binding fell through untyped and `p.x` read an unmarked slot → bail. The

@@ -127,7 +127,7 @@ function main(): i32 {
 					}
 					if allocs != frees || live != 0 {
 						t.Errorf("allocs=%d frees=%d live_bytes=%d, want balanced / 0 — the "+
-							"arm's `var` takes a reference nothing gives back (#9923)",
+							"arm's `let` takes a reference nothing gives back (#9923)",
 							allocs, frees, live)
 					}
 				})

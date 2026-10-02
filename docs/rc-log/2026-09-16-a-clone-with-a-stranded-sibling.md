@@ -27,7 +27,7 @@ rejects the module (#9488). Native monomorphises both parameters —
 `__fn_iter__filter__f64__iter__ArrayIter__f64` — so this is a self-host
 divergence, not a language one.
 
-**Clause (c-fn)** is the fn-param sibling of (c) and (c-arr): an erased var
+**Clause (c-fn)** is the fn-param sibling of (c) and (c-arr): an erased let
 promotes when the declaration carries a declared bound (so the clone happens
 regardless) and EVERY erased var is reachable through a fn param, so promoting
 the set strands nothing — the same argument clause (c′) makes. `map[T, U, I]`

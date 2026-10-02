@@ -7,7 +7,7 @@
 // end, from a thin self-validating driver.
 //
 // Scope (matches the parser's): i32 / bool / string runtime
-// values, var binding through a flat scope, arithmetic /
+// values, let binding through a flat scope, arithmetic /
 // comparison / logical / string-concat ops over the same op
 // set the checker (#619) handles. The return value of the first
 // `return` statement is what main() surfaces — anything past it

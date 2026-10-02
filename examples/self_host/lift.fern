@@ -3391,7 +3391,7 @@ function lift_inline_closures_expr(e: ast.Expr, fd: parser.FuncDecl, funcs: pars
 // value_use_idents_expr collects every ident referenced in a VALUE position —
 // i.e. all idents EXCEPT the direct bare-name callee of a call `g(...)`. A
 // nested lambda's free vars all count (they go in the env box as values). Used to
-// decide whether a fn-value `let` binding must be env-boxed: a var that is only
+// decide whether a fn-value `let` binding must be env-boxed: a let that is only
 // ever CALLED is left to closure_lift_one's cheaper direct-call lift; one used
 // as a value (passed, returned, stored, captured) is boxed into a uniform box.
 function value_use_idents_expr(e: ast.Expr, own acc: string[]): string[] {
