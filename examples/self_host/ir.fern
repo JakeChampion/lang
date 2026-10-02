@@ -7286,16 +7286,32 @@ function cp_max_slot(ops: Op[]): i32 {
 // cp_kill_after unbinds every slot whose last write is later than `at`, which for
 // `at` = the index a scope opened at is exactly the set that scope could have
 // written. Called at an `else` to restore the entry state for the second arm, and
-// at an `end` to reconcile the scope.
-function cp_kill_after(has: boolean[], wrote: i32[], at: i32): boolean[] {
-  var s: i32 = 0;
-  while (s < has.len()) {
+// at an `end` to reconcile the scope. Only a bound slot can need it, and
+// `bound` holds every one, so the walk is over those rather than every slot.
+function cp_kill_after(has: boolean[], wrote: i32[], at: i32, bound: i32[]): boolean[] {
+  var k: i32 = 0;
+  while (k < bound.len()) {
+    var s: i32 = bound[k];
     if (has[s] && wrote[s] > at) {
       has = has.with(s, false);
     }
-    s = s + 1;
+    k = k + 1;
   }
   return has;
+}
+
+// cp_still_bound is `bound` without the slots no longer bound, so a kill walks
+// only what is live.
+function cp_still_bound(bound: i32[], has: boolean[]): i32[] {
+  var out: i32[] = [];
+  var k: i32 = 0;
+  while (k < bound.len()) {
+    if (has[bound[k]]) {
+      out = out.append(bound[k]);
+    }
+    k = k + 1;
+  }
+  return out;
 }
 
 // cp_loop_body_kill unbinds every slot the loop body opened at `at` writes. A
@@ -7368,10 +7384,13 @@ pub function const_propagate(ops: Op[]): Op[] {
   // has[slot] says whether it is live. Carrying the op rather than a value keeps
   // both constant shapes on one path and cannot invent a spelling the backends
   // have not seen. wrote[slot] is the op index of the slot's last write, which
-  // is how a scope's end names the slots it could have written.
+  // is how a scope's end names the slots it could have written. bound lists
+  // every slot has[] is true for, each once, and may also hold slots since
+  // unbound until the next kill drops them.
   var known: Op[] = [];
   var has: boolean[] = [];
   var wrote: i32[] = [];
+  var bound: i32[] = [];
   var z: i32 = 0;
   while (z < nslots) {
     known = known.append(op_const_i32(0));
@@ -7418,7 +7437,8 @@ pub function const_propagate(ops: Op[]): Op[] {
       // The then-arm's bindings do not reach the else-arm; dropping what the
       // arm wrote leaves exactly the state the if opened with.
       if (depth > 0 && fr_kind[depth - 1] == k_if && wc != fr_wc[depth - 1]) {
-        has = cp_kill_after(has, wrote, fr_at[depth - 1]);
+        has = cp_kill_after(has, wrote, fr_at[depth - 1], bound);
+        bound = cp_still_bound(bound, has);
       }
       out = out.append(o);
     } else if (kt == k_end) {
@@ -7427,7 +7447,8 @@ pub function const_propagate(ops: Op[]): Op[] {
         // wrote still holds after it. Every other scope is conditional.
         var straight: boolean = fr_kind[depth - 1] == k_block && !fr_br[depth - 1];
         if (!straight && wc != fr_wc[depth - 1]) {
-          has = cp_kill_after(has, wrote, fr_at[depth - 1]);
+          has = cp_kill_after(has, wrote, fr_at[depth - 1], bound);
+          bound = cp_still_bound(bound, has);
         }
         depth = depth - 1;
       }
@@ -7474,6 +7495,9 @@ pub function const_propagate(ops: Op[]): Op[] {
         wc = wc + 1;
         if (out.len() > 0 && (const_i32_readable(out[out.len() - 1]) || const_i64_readable(out[out.len() - 1]))) {
           known = known.with(sl, out[out.len() - 1]);
+          if (!has[sl]) {
+            bound = bound.append(sl);
+          }
           has = has.with(sl, true);
         } else if (has[sl]) {
           has = has.with(sl, false);
