@@ -1408,6 +1408,9 @@ pub struct X86Asm {
   // as .eh_frame by x86_eh_frame. Offsets are final: the relaxation
   // re-emits every pass from scratch, so the last pass's are the bytes'.
   cfi: CfiState,
+  // Whether an alignment directive reached .text, whose padding then
+  // depends on every branch size before it (x86_relax_settle).
+  text_aligned: boolean,
 }
 
 // x86_label_buckets is the bucket count of the label-name index. Prime, so
@@ -1457,7 +1460,7 @@ function x86_asm_new(): X86Asm {
 // applied to a fresh X86Asm, so nothing in the assembler ever holds a second
 // reference to the struct it is threading.
 function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
-  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: relaxing, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()) };
+  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: relaxing, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), text_aligned: false };
 }
 
 // x86_asm_new_prepared is the state for a relaxation round over text whose
@@ -1466,7 +1469,7 @@ function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
 // -1) until the round reaches its definition.
 function x86_asm_new_prepared(labs: GasLabels, longs: boolean[]): X86Asm {
   var n: i32 = labs.names.len();
-  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()) };
+  return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), text_aligned: false };
 }
 
 // x86_filled is n copies of v.
@@ -5993,6 +5996,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
     }
     return a;
   }
+  a = X86Asm { ...a, text_aligned: true };
   var pad: i32 = (align - a.code.len() % align) % align;
   if (pad == 0) {
     return a;
@@ -6074,20 +6078,106 @@ pub function x86_gas_assemble(src: string): X86Asm {
   var labs: GasLabels = x86_gas_label_table(pl);
   pl = x86_gas_link_labels(pl, labs);
   var longs: boolean[] = [];
-  var pass: i32 = 0;
+  var a: X86Asm = x86_gas_assemble_pass_prepared(pl, labs, longs);
+  var pass: i32 = 1;
   // Each round pins at least one more branch long, so the branch count
   // bounds the rounds; the cap is a backstop, and falling out of it keeps
   // every branch long, which is always correct if larger.
-  while (pass < 24) {
-    var a: X86Asm = x86_gas_assemble_pass_prepared(pl, labs, longs);
+  while (pass <= 24) {
     var next: boolean[] = x86_relax_grow(a, longs);
     if (!x86_bools_differ(next, longs)) {
       return a;
     }
+    if (pass == 1 && !a.text_aligned) {
+      next = x86_relax_settle(a);
+    }
     longs = next;
+    a = x86_gas_assemble_pass_prepared(pl, labs, longs);
     pass = pass + 1;
   }
   return x86_gas_assemble_pass_prepared(pl, labs, x86_bools_all_true(longs.len()));
+}
+
+// x86_relax_settle finds the relaxation fixpoint from the first round's
+// offsets rather than by assembling a round per step. That round emitted every
+// relaxable branch short, and with no alignment in .text nothing else there
+// changes size between rounds, so a .text offset moves by exactly the growth
+// of the branches before it: 3 bytes for a jmp (EB to E9), 4 for a jcc (7x
+// to 0F 8x). Each step is x86_relax_grow's test on those moved offsets, so the
+// decisions are the ones the round-by-round loop would reach, and the round
+// assembled with them confirms it.
+function x86_relax_settle(a: X86Asm): boolean[] {
+  var n: i32 = a.br_offs.len();
+  var growth: i32[] = [];
+  var targets: i32[] = [];
+  var longs: boolean[] = [];
+  var k: i32 = 0;
+  while (k < n) {
+    var g: i32 = 0;
+    if (a.br_shorts[k]) {
+      g = 4;
+      if (a.code[a.br_offs[k] - 1] == 235) {
+        g = 3;
+      }
+    }
+    growth = growth.append(g);
+    targets = targets.append(x86_label_target(a, a.br_names[k], a.br_idx[k]));
+    longs = longs.append(!a.br_shorts[k]);
+    k = k + 1;
+  }
+  while (true) {
+    // shift[k] is what the long branches before branch k add to its offset.
+    var shift: i32[] = [];
+    var acc: i32 = 0;
+    k = 0;
+    while (k < n) {
+      shift = shift.append(acc);
+      if (longs[k] && a.br_shorts[k]) {
+        acc = acc + growth[k];
+      }
+      k = k + 1;
+    }
+    shift = shift.append(acc);
+    var next: boolean[] = [];
+    var moved: boolean = false;
+    k = 0;
+    while (k < n) {
+      var pinned: boolean = longs[k];
+      if (!pinned) {
+        if (targets[k] < 0) {
+          pinned = true;
+        } else {
+          var target: i32 = targets[k] + shift[x86_branches_before(a.br_offs, targets[k])];
+          var rel: i32 = target - (a.br_offs[k] + shift[k] + 1);
+          pinned = rel < 0 - 128 || rel > 127;
+        }
+      }
+      moved = moved || pinned != longs[k];
+      next = next.append(pinned);
+      k = k + 1;
+    }
+    if (!moved) {
+      return longs;
+    }
+    longs = next;
+  }
+  return longs;
+}
+
+// x86_branches_before counts the branches whose displacement ends at or before
+// `off`, the ones whose growth moves it; `offs` ascends, as a round emits them.
+function x86_branches_before(offs: i32[], off: i32): i32 {
+  var lo: i32 = 0;
+  var hi: i32 = offs.len();
+  while (lo < hi) {
+    var mid: i32 = (lo + hi) / 2;
+    if (offs[mid] + 1 <= off) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
 }
 
 // x86_relax_grow returns the next round's decisions: every branch this pass
