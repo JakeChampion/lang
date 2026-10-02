@@ -5965,8 +5965,13 @@ function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
   if (b.op == "__named_arg") {
     return check_expr(b.right, s);
   }
-  var lt: typeinfo.Type = check_expr(b.left, s);
-  var rt: typeinfo.Type = check_expr(b.right, s);
+  return binary_result_type(b, check_expr(b.left, s), check_expr(b.right, s), s);
+}
+
+// binary_result_type is check_binary_expr over operand types already checked
+// (`lt`, `rt`): the annotation walk hands it the types of the operands it
+// annotated rather than checking them again.
+function binary_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type, s: Scope): typeinfo.Type {
   // `+` is overloaded across i32 (arithmetic) and string
   // (concatenation). Other arithmetic ops are i32-only.
   if (b.op == "+") {
@@ -6085,7 +6090,11 @@ function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
 }
 
 function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
-  var ot: typeinfo.Type = check_expr(u.operand, s);
+  return unary_result_type(u, check_expr(u.operand, s), s);
+}
+
+// unary_result_type is check_unary_expr over the operand's checked type.
+function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typeinfo.Type {
   if (u.op == "-") {
     if (is_integer(ot)) {
       return ot;
@@ -6223,8 +6232,11 @@ function struct_lit_yields(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, 
 }
 
 function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
-  var at: typeinfo.Type = check_expr(x.array, s);
-  var it: typeinfo.Type = check_expr(x.index, s);
+  return index_result_type(check_expr(x.array, s), check_expr(x.index, s));
+}
+
+// index_result_type is check_index_expr over the checked array and index types.
+function index_result_type(at: typeinfo.Type, it: typeinfo.Type): typeinfo.Type {
   if (!is_integer(it)) {
     return t_unknown("array index must be i32");
   }
@@ -6387,7 +6399,12 @@ function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Ty
   if (vqu.len() > 0) {
     return t_union(vqu);
   }
-  var ot: typeinfo.Type = check_expr(fa.obj, s);
+  return field_access_result_type(fa, check_expr(fa.obj, s), s);
+}
+
+// field_access_result_type is check_field_access_expr over the object's
+// checked type, for a read that is not a qualified unit variant.
+function field_access_result_type(fa: ast.ExprFieldAccess, ot: typeinfo.Type, s: Scope): typeinfo.Type {
   match (ot) {
     typeinfo.TypeStruct(sn) => {
       var fsig: StructSig = s.lookup_struct(sn.name);
@@ -22625,16 +22642,41 @@ function settle_struct_lit_wide(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Ex
 // ExprBinary.ty, ExprUnary.ty, ExprFieldAccess.ty and ExprIndex.ty with the
 // checker-inferred result tag.
 // Recurses through every composite so a nested call is reached.
+// Typed is an annotated expression with, where the walk settled it
+// (`known`), the type check_expr answers for the expression as written.
+struct Typed { e: ast.Expr, ty: typeinfo.Type, known: boolean }
+
+// typed_type is the checked type of `orig`, read off its annotation when
+// the walk settled it and checked otherwise.
+function typed_type(t: Typed, orig: ast.Expr, s: Scope): typeinfo.Type {
+  if (t.known) {
+    return t.ty;
+  }
+  return check_expr(orig, s);
+}
+
 function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
+  return annotate_typed(e, s).e;
+}
+
+// annotate_typed stamps an expression with its checked type, bottom up: an
+// operand's type is what its own annotation settled, and the node's type is
+// what check_expr computes from the operands' types (binary_result_type and
+// its siblings), so a subtree is checked once rather than once more per
+// enclosing node.
+function annotate_typed(e: ast.Expr, s: Scope): Typed {
   match (e) {
     ast.ExprIdent(id) => {
-      return ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: type_to_irtag(check_expr(e, s)) };
+      var it: typeinfo.Type = check_ident_expr(id, s);
+      return Typed { e: ast.ExprIdent { name: id.name, line: id.line, col: id.col, ty: type_to_irtag(it) }, ty: it, known: true };
     },
     ast.ExprBinary(b) => {
-      var left: ast.Expr = annotate_expr(b.left, s);
-      var right: ast.Expr = annotate_expr(b.right, s);
-      var lt: typeinfo.Type = check_expr(b.left, s);
-      var rt: typeinfo.Type = check_expr(b.right, s);
+      var lta: Typed = annotate_typed(b.left, s);
+      var rta: Typed = annotate_typed(b.right, s);
+      var left: ast.Expr = lta.e;
+      var right: ast.Expr = rta.e;
+      var lt: typeinfo.Type = typed_type(lta, b.left, s);
+      var rt: typeinfo.Type = typed_type(rta, b.right, s);
       // A wide bare literal is i64 only in the absence of a context. Beside
       // a u32 operand, 0xffffffff is a u32, including in comparisons and
       // checked arithmetic whose result tag is not the operand type.
@@ -22646,10 +22688,17 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
           right = settle_int_tree(right, type_to_irtag(lt));
         }
       }
-      return ast.ExprBinary { op: b.op, left: left, right: right, line: b.line, col: b.col, ty: type_to_irtag(check_expr(e, s)) };
+      // A named-argument marker types as its value (check_binary_expr).
+      var bt: typeinfo.Type = rt;
+      if (b.op != "__named_arg") {
+        bt = binary_result_type(b, lt, rt, s);
+      }
+      return Typed { e: ast.ExprBinary { op: b.op, left: left, right: right, line: b.line, col: b.col, ty: type_to_irtag(bt) }, ty: bt, known: true };
     },
     ast.ExprUnary(u) => {
-      return ast.ExprUnary { op: u.op, operand: annotate_expr(u.operand, s), line: u.line, col: u.col, ty: type_to_irtag(check_expr(e, s)) };
+      var oa: Typed = annotate_typed(u.operand, s);
+      var ut: typeinfo.Type = unary_result_type(u, typed_type(oa, u.operand, s), s);
+      return Typed { e: ast.ExprUnary { op: u.op, operand: oa.e, line: u.line, col: u.col, ty: type_to_irtag(ut) }, ty: ut, known: true };
     },
     ast.ExprCall(c) => {
       var nargs: ast.Expr[] = [];
@@ -22658,31 +22707,42 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       }
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
-      var tag: string = type_to_irtag(check_expr(e, s));
-      return ast.ExprCall { callee: annotate_expr(c.callee, s), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: tag };
+      var ct: typeinfo.Type = check_expr(e, s);
+      return Typed { e: ast.ExprCall { callee: annotate_expr(c.callee, s), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: type_to_irtag(ct) }, ty: ct, known: true };
     },
     ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { obj: annotate_expr(fa.obj, s), field: fa.field, line: fa.line, col: fa.col, ty: type_to_irtag(check_expr(e, s)) };
+      var oa: Typed = annotate_typed(fa.obj, s);
+      var vqu: string = qual_variant_union(fa, s);
+      var ft: typeinfo.Type = t_union(vqu);
+      if (vqu.len() == 0) {
+        ft = field_access_result_type(fa, typed_type(oa, fa.obj, s), s);
+      }
+      return Typed { e: ast.ExprFieldAccess { obj: oa.e, field: fa.field, line: fa.line, col: fa.col, ty: type_to_irtag(ft) }, ty: ft, known: true };
     },
     ast.ExprIndex(x) => {
-      return ast.ExprIndex { array: annotate_expr(x.array, s), index: annotate_expr(x.index, s), unchecked: x.unchecked, ty: type_to_irtag(check_expr(e, s)), line: x.line, col: x.col };
+      var aa: Typed = annotate_typed(x.array, s);
+      var ia: Typed = annotate_typed(x.index, s);
+      var xt: typeinfo.Type = index_result_type(typed_type(aa, x.array, s), typed_type(ia, x.index, s));
+      return Typed { e: ast.ExprIndex { array: aa.e, index: ia.e, unchecked: x.unchecked, ty: type_to_irtag(xt), line: x.line, col: x.col }, ty: xt, known: true };
     },
     ast.ExprSlice(sl) => {
-      return ast.ExprSlice { ...sl, array: annotate_expr(sl.array, s), start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(check_expr(sl.array, s)) };
+      var aa: Typed = annotate_typed(sl.array, s);
+      var at: typeinfo.Type = typed_type(aa, sl.array, s);
+      return Typed { e: ast.ExprSlice { ...sl, array: aa.e, start: annotate_expr(sl.start, s), end: annotate_expr(sl.end, s), ty: type_to_arrtag(at) }, ty: at, known: false };
     },
     ast.ExprArray(a) => {
       var na: ast.Expr[] = [];
       for element in a.elements {
         na = na.append(annotate_expr(element, s));
       }
-      return settle_array_literals(ast.ExprArray { ...a, elements: na }, s);
+      return unsettled(settle_array_literals(ast.ExprArray { ...a, elements: na }, s));
     },
     ast.ExprTuple(t) => {
       var nt: ast.Expr[] = [];
       for element in t.elements {
         nt = nt.append(annotate_expr(element, s));
       }
-      return ast.ExprTuple { elements: nt, line: t.line, col: t.col };
+      return unsettled(ast.ExprTuple { elements: nt, line: t.line, col: t.col });
     },
     ast.ExprStructLit(sli) => {
       var nfv: ast.Expr[] = [];
@@ -22694,16 +22754,22 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       if (sli.has_base) {
         nbase = annotate_expr(sli.base, s);
       }
-      return ast.ExprStructLit { type_name: sli.type_name, field_names: sli.field_names, field_values: nfv, has_base: sli.has_base, base: nbase, line: sli.line, col: sli.col, written: sli.written };
+      return unsettled(ast.ExprStructLit { type_name: sli.type_name, field_names: sli.field_names, field_values: nfv, has_base: sli.has_base, base: nbase, line: sli.line, col: sli.col, written: sli.written });
     },
     ast.ExprLambda(lm) => {
-      return annotate_lambda_expr(lm, s, "");
+      return unsettled(annotate_lambda_expr(lm, s, ""));
     },
     _ => {
-      return e;
+      return unsettled(e);
     }
   }
-  return e;
+  return unsettled(e);
+}
+
+// unsettled is an annotated expression whose type the walk did not settle: a
+// node reading it checks it as it always did.
+function unsettled(e: ast.Expr): Typed {
+  return Typed { e: e, ty: t_unknown("unsettled"), known: false };
 }
 
 // Capture contracts are resolved where the lambda is defined, including
