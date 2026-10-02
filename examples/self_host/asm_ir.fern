@@ -10543,8 +10543,7 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub): stri
 // `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
 pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs, rt: (string) => irlower.LowerResult[]): string {
   // Infer return types for unannotated functions so the IR path's
-  // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
-  // matches what module_with_builtins supplies.
+  // ret-type-keyed call tagging matches what module_with_builtins supplies.
   // (#4394 lever 3: `cache`, when non-empty, is the caller's pre-lowered
   // per-function LowerResult set — indexed by mod.funcs position — reused by
   // emit_module_funcs instead of re-lowering. The caller must have inferred

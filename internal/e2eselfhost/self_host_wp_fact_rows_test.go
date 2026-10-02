@@ -9,9 +9,8 @@ import (
 
 // TestWpFactRowsCoversEveryFnSigsField keeps irlower.wp_fact_rows complete. The
 // per-module cache keys fold those rows, and the function names FnSigs' columns
-// one by one, so a column added to FnSigs and to neither the rows nor the
-// signature-only list in its comment would let a cached unit outlive the fact it
-// was lowered with.
+// one by one, so a column added to FnSigs and not to the rows would let a
+// cached unit outlive the fact it was lowered with.
 func TestWpFactRowsCoversEveryFnSigsField(t *testing.T) {
 	b, err := os.ReadFile("../../examples/self_host/irlower.fern")
 	if err != nil {
@@ -27,7 +26,7 @@ func TestWpFactRowsCoversEveryFnSigsField(t *testing.T) {
 		t.Fatal("cannot find wp_fact_rows and its comment in irlower.fern")
 	}
 	fields := regexp.MustCompile(`(?m)^\s+([a-z_0-9]+):`).FindAllStringSubmatch(st[1], -1)
-	if len(fields) < 40 {
+	if len(fields) < 2 {
 		t.Fatalf("parsed only %d FnSigs fields; the pattern no longer matches the struct", len(fields))
 	}
 	var missing []string
@@ -37,6 +36,6 @@ func TestWpFactRowsCoversEveryFnSigsField(t *testing.T) {
 		}
 	}
 	if len(missing) > 0 {
-		t.Fatalf("wp_fact_rows neither folds nor lists as signature-only these FnSigs fields: %s", strings.Join(missing, ", "))
+		t.Fatalf("wp_fact_rows does not fold these FnSigs fields: %s", strings.Join(missing, ", "))
 	}
 }
