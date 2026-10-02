@@ -8961,7 +8961,7 @@ function callgate_ns_present(pfx: string, names: string[]): boolean {
   var i: i32 = 0;
   while (i < names.len()) {
     var nm: string = names[i];
-    if (nm.len() > pfx.len() && util.has_prefix(nm, pfx)) {
+    if (nm.len() > pfx.len() && util.str_has_prefix(nm, pfx)) {
       return true;
     }
     i = i + 1;

@@ -11706,7 +11706,7 @@ function darwin_retarget_locals(line: string): string {
 // darwin_is_reg_entry reports whether the symbol starting at `i` is a
 // function's register entry, `__fn_<name>.r`.
 function darwin_is_reg_entry(line: string, i: i32): boolean {
-  if (!util.has_prefix(slice_unchecked(line, i, line.len()), "__fn_")) {
+  if (!util.str_has_prefix(slice_unchecked(line, i, line.len()), "__fn_")) {
     return false;
   }
   var j: i32 = i;
@@ -11774,9 +11774,9 @@ pub function darwinize(asm: string): string {
       var keep: boolean = true;
       var out_line: string = line + "";
 
-      if (util.has_prefix(body, ".type ") || util.has_prefix(body, ".size ")) {
+      if (util.str_has_prefix(body, ".type ") || util.str_has_prefix(body, ".size ")) {
         keep = false;
-      } else if (util.has_prefix(body, ".note.GNU-stack")) {
+      } else if (util.str_has_prefix(body, ".note.GNU-stack")) {
         keep = false;
       } else if (body == ".section .rodata") {
         out_line = "    .section __TEXT,__const";
@@ -11797,7 +11797,7 @@ pub function darwinize(asm: string): string {
         out_line = "    .globl _main";
       } else if (line == "_start:") {
         out_line = "_main:";
-      } else if (util.has_prefix(body, "adrp ")) {
+      } else if (util.str_has_prefix(body, "adrp ")) {
         out_line = line + "@PAGE";
       } else if (darwin_index_of_unquoted(line, ":lo12:") >= 0) {
         var idx: i32 = darwin_index_of_unquoted(line, ":lo12:");
@@ -11811,7 +11811,7 @@ pub function darwinize(asm: string): string {
         // marks it fallible so the `svc` arm normalises the errno.
         out_line = "    ldr x16, [sp], #16";
         pend_sys = 0;
-      } else if (util.has_prefix(body, "mov x8, #")) {
+      } else if (util.str_has_prefix(body, "mov x8, #")) {
         // Match the LSTRIPPED body, not a literal "    mov x8, #".
         // The emitter's indentation is not uniform — the subprocess
         // helper's `close(fd)` sequences carry two and even three

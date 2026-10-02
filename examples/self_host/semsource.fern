@@ -399,11 +399,11 @@ function dyn_set_end(spelling: string, i: i32): i32 {
 // from the declaration. This reads the name back out of either reason.
 function typevar_reason_name(reason: string): string {
   var promoted: string = "type parameter ";
-  if (reason.len() > promoted.len() && util.has_prefix(reason, promoted)) {
+  if (reason.len() > promoted.len() && util.str_has_prefix(reason, promoted)) {
     return slice_unchecked(reason, promoted.len(), reason.len()) + "";
   }
   var unresolved: string = "unrecognised type name: ";
-  if (reason.len() > unresolved.len() && util.has_prefix(reason, unresolved)) {
+  if (reason.len() > unresolved.len() && util.str_has_prefix(reason, unresolved)) {
     return slice_unchecked(reason, unresolved.len(), reason.len()) + "";
   }
   return "";
