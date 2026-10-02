@@ -5804,6 +5804,15 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // readable 32-bit constant and two whether it is a 64-bit one.
       var r32: boolean = const_i32_readable(cur[i]);
       var r64: boolean = const_i64_readable(cur[i]);
+      // Every arm reads a constant here, the str_eq one a string constant,
+      // so any other op goes straight to the copy.
+      if (!r32 && !r64 && cur[i].kind_tag != k_const_str) {
+        if (copying) {
+          out = out.append(cur[i]);
+        }
+        i = i + 1;
+        continue;
+      }
       if (i + 2 < cur.len()) {
         var a: Op = cur[i];
         var b: Op = cur[i + 1];
