@@ -1434,6 +1434,16 @@ an off switch (`FERN_NO_ARRAY_FUSION=1` is the pattern) so "did the pass do
 this?" is one run rather than a rebuild, and so a suite failure can be
 attributed without bisecting.
 
+The self-host's fusion pass (`examples/self_host/semfuse.fern`, #11072) is
+gated the same way, on all three self-host targets:
+`TestSelfHostArrayFusionMatchesHandWrittenLoops` compares every chain shape
+against a loop inside the program, `TestSelfHostArrayFusionStopsAllocatingIntermediates`
+bounds `__heap_alloc_count()` per chain and requires a shared intermediate and
+an unresolved element function to keep allocating, and
+`TestSelfHostArrayFusionKeepsEffectOrder` reads the order of prints from
+element functions. Native's `Test*ArrayFusion*` legs in `internal/e2e` still
+build with the native backend and say nothing about this pass.
+
 ## Diagnostic modes
 
 When a gate fails and the failure is a heap corruption rather than a wrong
