@@ -81,7 +81,7 @@ func dirLinkSource(prefix string, withUmask bool) string {
 		// umask(2) sets and reads in one step, so reading it is
 		// umask(umask(0)) — and the mask it reports is the one that was
 		// installed a moment earlier, not whatever the shell had.
-		src += `    var prev: i32 = umask(18);
+		src += `    let prev: i32 = umask(18);
     if (umask(prev) != 18) { return 21; }
 `
 	}

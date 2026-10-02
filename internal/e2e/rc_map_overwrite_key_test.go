@@ -21,8 +21,8 @@ import "std/i32";
 @noinline
 function suffix(i: i32): string { return "-a-wide-payload-past-any-inline-threshold-" + (i % 4).to_string(); }
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[string, i32] = map_new(4);
+    let i: i32 = 0;
     while (i < 500) {
         m = m.insert("k" + suffix(i), i);
         i = i + 1;
@@ -36,9 +36,9 @@ import "std/i32";
 @noinline
 function suffix(i: i32): string { return "-a-wide-payload-past-any-inline-threshold-" + (i % 4).to_string(); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var m: Map[string, i32] = map_new(4);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let m: Map[string, i32] = map_new(4);
+    let i: i32 = 0;
     while (i < ` + n + `) {
         m = m.insert("k" + suffix(i), i);
         i = i + 1;
@@ -57,16 +57,16 @@ import "std/i32";
 @noinline
 function suffix(i: i32): string { return "-a-wide-payload-past-any-inline-threshold-" + (i % 4).to_string(); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var m: Map[string, i32] = map_new(4);
-        var k: string = "k" + suffix(i);
+        let m: Map[string, i32] = map_new(4);
+        let k: string = "k" + suffix(i);
         m = m.insert(k, 1);
         m = m.insert(k, 2);
         m = m.insert("lit-key-long-literal", 1);
         m = m.insert("lit-key-long-literal", 2);
-        var ks: string[] = ["e" + suffix(i)];
+        let ks: string[] = ["e" + suffix(i)];
         m = m.insert(ks[0], 3);
         m = m.insert(ks[0], 4);
         acc = acc + (k.len() - ks[0].len()) + (m.get_or(k, 0) - 2) + (m.get_or(ks[0], 0) - 4) + (m.len() - 3);

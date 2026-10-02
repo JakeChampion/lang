@@ -16,19 +16,19 @@ struct N { o: Option[Option[i32[]]], n: i32 }
 struct S { o: Option[string[]], n: i32 }
 
 function none_field(i: i32): i32 {
-    var h: H = H { o: None, n: i };
+    let h: H = H { o: None, n: i };
     match (h.o) { Some(xs) => { return 253; }, None => {} }
     return h.n;
 }
 
 function some_field(i: i32): i32 {
-    var h: H = H { o: Some([i, i + 1]), n: i };
+    let h: H = H { o: Some([i, i + 1]), n: i };
     match (h.o) { Some(xs) => { return h.n + xs[1]; }, None => {} }
     return 253;
 }
 
 function nested_field(i: i32): i32 {
-    var v: N = N { o: Some(Some([i, i + 2])), n: i };
+    let v: N = N { o: Some(Some([i, i + 2])), n: i };
     match (v.o) {
         Some(inner) => { match (inner) { Some(xs) => { return v.n + xs[1]; }, None => { return 253; } } },
         None => {}
@@ -37,14 +37,14 @@ function nested_field(i: i32): i32 {
 }
 
 function strarr_field(i: i32): i32 {
-    var s: S = S { o: Some(["a" + "b", "c" + "d"]), n: i };
+    let s: S = S { o: Some(["a" + "b", "c" + "d"]), n: i };
     match (s.o) { Some(ss) => { return s.n + ss.len() + ss[0].len(); }, None => {} }
     return 253;
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         acc = acc + none_field(i) + some_field(i) + nested_field(i) + strarr_field(i);
         i = i + 1;

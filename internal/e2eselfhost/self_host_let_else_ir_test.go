@@ -21,20 +21,20 @@ var letElseIRCases = []struct {
 	src  string
 	exit int
 }{
-	{"matched", "enum Shape { Circle(i32), Empty } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var s: Shape = Circle(42); let Circle(r) = s else { return 0 + pad; } return r + pad; }", 42},
-	{"else-path", "enum Shape { Circle(i32), Empty } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var s: Shape = Empty; let Circle(r) = s else { return 7 + pad; } return r + pad; }", 7},
-	{"opt-some", "import \"core/map\"; struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 42); let Some(v) = m.get(\"k\") else { return 1 + pad; } return v + pad; }", 42},
-	{"opt-none", "import \"core/map\"; struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 42); let Some(v) = m.get(\"absent\") else { return 9 + pad; } return v + pad; }", 9},
-	{"rest-multi", "import \"core/map\"; struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 40); let Some(v) = m.get(\"k\") else { return 1 + pad; } var w: i32 = v + 2 + pad; return w; }", 42},
+	{"matched", "enum Shape { Circle(i32), Empty } struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let s: Shape = Circle(42); let Circle(r) = s else { return 0 + pad; } return r + pad; }", 42},
+	{"else-path", "enum Shape { Circle(i32), Empty } struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let s: Shape = Empty; let Circle(r) = s else { return 7 + pad; } return r + pad; }", 7},
+	{"opt-some", "import \"core/map\"; struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 42); let Some(v) = m.get(\"k\") else { return 1 + pad; } return v + pad; }", 42},
+	{"opt-none", "import \"core/map\"; struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 42); let Some(v) = m.get(\"absent\") else { return 9 + pad; } return v + pad; }", 9},
+	{"rest-multi", "import \"core/map\"; struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 40); let Some(v) = m.get(\"k\") else { return 1 + pad; } let w: i32 = v + 2 + pad; return w; }", 42},
 	// The head now goes through the shared parse_pattern rather than a
 	// hand-rolled binding list, so `@` and or-patterns work here as they do in
 	// a match arm and in `if let`.
-	{"at-binding", "enum E { A(i32), B(i32) } struct Point { x: i32, y: i32 } function whole(e: E): i32 { match (e) { A(v) => { return v; }, B(v) => { return 0; } } } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = A(6); let w @ A(x) = e else { return 1 + pad; } return whole(w) + x + pad; }", 12},
-	{"or-first-alt", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = A(4); let A(x) | B(x) = e else { return 21 + pad; } return x + pad; }", 4},
-	{"or-second-alt", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = B(4); let A(x) | B(x) = e else { return 21 + pad; } return x + pad; }", 4},
+	{"at-binding", "enum E { A(i32), B(i32) } struct Point { x: i32, y: i32 } function whole(e: E): i32 { match (e) { A(v) => { return v; }, B(v) => { return 0; } } } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let e: E = A(6); let w @ A(x) = e else { return 1 + pad; } return whole(w) + x + pad; }", 12},
+	{"or-first-alt", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let e: E = A(4); let A(x) | B(x) = e else { return 21 + pad; } return x + pad; }", 4},
+	{"or-second-alt", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let e: E = B(4); let A(x) | B(x) = e else { return 21 + pad; } return x + pad; }", 4},
 	// A variant outside the alternatives still reaches the else, so the
 	// wildcard arm survives the per-alternative expansion.
-	{"or-no-match-else", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = C(9); let A(x) | B(x) = e else { return 21 + pad; } return x + pad; }", 21},
+	{"or-no-match-else", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let e: E = C(9); let A(x) | B(x) = e else { return 21 + pad; } return x + pad; }", 21},
 }
 
 // TestSelfHostLetElseIRX86_64 compiles each case through the self-hosted x86-64

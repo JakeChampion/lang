@@ -47,31 +47,31 @@ func TestSelfHostIntToF64WasmIR(t *testing.T) {
 		// The two programs from #5992, which lived only in x86_64_test.go /
 		// arm64_test.go and so had never been fed to a wasm driver.
 		{"u32-roundtrips-through-f64", `function main(): i32 {
-    var u: u32 = 3000000000 as u32;
-    var f: f64 = u as f64;
-    var back: u32 = f as u32;
+    let u: u32 = 3000000000 as u32;
+    let f: f64 = u as f64;
+    let back: u32 = f as u32;
     if (back == u) { return 0; }
     return 1;
 }`, "f64.convert_i32_u"},
 		{"u64-max-is-above-1e19", `function main(): i32 {
-    var i: i64 = 0 - 1i64;
-    var u: u64 = i as u64;
-    var f: f64 = u as f64;
-    var threshold: f64 = 10000000000000000000.0f64;
+    let i: i64 = 0 - 1i64;
+    let u: u64 = i as u64;
+    let f: f64 = u as f64;
+    let threshold: f64 = 10000000000000000000.0f64;
     if (f > threshold) { return 0; }
     return 1;
 }`, "f64.convert_i64_u"},
 		// The signed forms must keep their opcodes: a fix that made everything
 		// unsigned would pass the two cases above and silently break these.
 		{"negative-i32-stays-signed", `function main(): i32 {
-    var n: i32 = 0 - 5;
-    var f: f64 = n as f64;
+    let n: i32 = 0 - 5;
+    let f: f64 = n as f64;
     if (f < 0.0) { return 0; }
     return 1;
 }`, "f64.convert_i32_s"},
 		{"negative-i64-stays-signed", `function main(): i32 {
-    var n: i64 = 0 - 5000000000;
-    var f: f64 = n as f64;
+    let n: i64 = 0 - 5000000000;
+    let f: f64 = n as f64;
     if (f < 0.0) { return 0; }
     return 1;
 }`, "f64.convert_i64_s"},

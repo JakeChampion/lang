@@ -19,7 +19,7 @@ function lookup(path: string): Result[string, http.HttpError] {
 }
 
 function serve(req: HttpRequest): Result[HttpResponse, http.HttpError] {
-  var name: string = lookup(req.path)?;
+  let name: string = lookup(req.path)?;
   return Ok(http.ok(name));
 }
 
@@ -28,8 +28,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 }
 
 function test_ok_passes_through(): test.TestOutcome {
-  var m: MockPlatform = mock_platform.mock_platform_new();
-  var resp: HttpResponse = handle(http.request("GET", "/items/1"), m.as_platform());
+  let m: MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("GET", "/items/1"), m.as_platform());
   match (test.assert_status(resp, 200)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -40,8 +40,8 @@ function test_ok_passes_through(): test.TestOutcome {
 }
 
 function test_fail_answers_a_problem(): test.TestOutcome {
-  var m: MockPlatform = mock_platform.mock_platform_new();
-  var resp: HttpResponse = handle(http.request("GET", "/items/9"), m.as_platform());
+  let m: MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("GET", "/items/9"), m.as_platform());
   match (test.assert_status(resp, 404)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -58,8 +58,8 @@ function test_fail_answers_a_problem(): test.TestOutcome {
 }
 
 function test_error_keeps_its_own_title_and_escapes(): test.TestOutcome {
-  var m: MockPlatform = mock_platform.mock_platform_new();
-  var resp: HttpResponse = handle(http.request("GET", "/items/locked"), m.as_platform());
+  let m: MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = handle(http.request("GET", "/items/locked"), m.as_platform());
   match (test.assert_status(resp, 403)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -70,7 +70,7 @@ function test_error_keeps_its_own_title_and_escapes(): test.TestOutcome {
 }
 
 function test_problem_quotes_its_text(): test.TestOutcome {
-  var resp: HttpResponse = http.problem(422, "Bad \"name\"", "line\nbreak");
+  let resp: HttpResponse = http.problem(422, "Bad \"name\"", "line\nbreak");
   match (test.assert_status(resp, 422)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -81,17 +81,17 @@ function test_problem_quotes_its_text(): test.TestOutcome {
 }
 
 function test_problem_without_detail(): test.TestOutcome {
-  var resp: HttpResponse = http.problem(503, "", "");
+  let resp: HttpResponse = http.problem(503, "", "");
   return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Service Unavailable\",\"status\":503}");
 }
 
 function decode(text: string): Result[HttpResponse, json.JsonError] {
-  var v: JsonValue = json.json_parse_result(text)?;
+  let v: JsonValue = json.json_parse_result(text)?;
   return Ok(http.ok("parsed"));
 }
 
 function test_json_error_answers_400(): test.TestOutcome {
-  var resp: HttpResponse = http.respond(decode("{\"n\": "));
+  let resp: HttpResponse = http.respond(decode("{\"n\": "));
   match (test.assert_status(resp, 400)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -104,7 +104,7 @@ function test_json_error_answers_400(): test.TestOutcome {
     },
     Pass => {}
   }
-  var body: string = resp.body_string();
+  let body: string = resp.body_string();
   if (!body.contains("\"title\":\"Malformed JSON\"")) {
     return test.fail("body: " + body);
   }
@@ -119,7 +119,7 @@ function failing(): Result[HttpResponse, string] {
 }
 
 function test_string_error_answers_500_without_the_message(): test.TestOutcome {
-  var resp: HttpResponse = http.respond(failing());
+  let resp: HttpResponse = http.respond(failing());
   match (test.assert_status(resp, 500)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -137,7 +137,7 @@ function counted(n: i32, ok: boolean): (i32, Result[HttpResponse, http.HttpError
 }
 
 function test_respond_with_keeps_the_state(): test.TestOutcome {
-  var good: (i32, HttpResponse) = http.respond_with(counted(1, true));
+  let good: (i32, HttpResponse) = http.respond_with(counted(1, true));
   if (good.0 != 2) {
     return test.fail("state after Ok: " + good.0.to_string());
   }
@@ -147,7 +147,7 @@ function test_respond_with_keeps_the_state(): test.TestOutcome {
     },
     Pass => {}
   }
-  var bad: (i32, HttpResponse) = http.respond_with(counted(2, false));
+  let bad: (i32, HttpResponse) = http.respond_with(counted(2, false));
   if (bad.0 != 2) {
     return test.fail("state after Err: " + bad.0.to_string());
   }
@@ -167,8 +167,8 @@ function exploding(): Result[HttpResponse, dyn error.Error] {
 }
 
 function test_dyn_error_answers_500_and_logs_the_message(): test.TestOutcome {
-  var m: MockPlatform = mock_platform.mock_platform_new();
-  var resp: HttpResponse = http.respond_error(exploding(), m.as_platform());
+  let m: MockPlatform = mock_platform.mock_platform_new();
+  let resp: HttpResponse = http.respond_error(exploding(), m.as_platform());
   match (test.assert_status(resp, 500)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -199,15 +199,15 @@ function counted_dyn(n: i32, ok: boolean): (i32, Result[HttpResponse, dyn error.
 }
 
 function test_respond_error_with_keeps_the_state(): test.TestOutcome {
-  var m: MockPlatform = mock_platform.mock_platform_new();
-  var good: (i32, HttpResponse) = http.respond_error_with(counted_dyn(1, true), m.as_platform());
+  let m: MockPlatform = mock_platform.mock_platform_new();
+  let good: (i32, HttpResponse) = http.respond_error_with(counted_dyn(1, true), m.as_platform());
   if (good.0 != 2) {
     return test.fail("state after Ok: " + good.0.to_string());
   }
   if (m.call_count() != 0) {
     return test.fail("an Ok answer was logged");
   }
-  var bad: (i32, HttpResponse) = http.respond_error_with(counted_dyn(2, false), m.as_platform());
+  let bad: (i32, HttpResponse) = http.respond_error_with(counted_dyn(2, false), m.as_platform());
   if (bad.0 != 2) {
     return test.fail("state after Err: " + bad.0.to_string());
   }
@@ -221,7 +221,7 @@ function test_respond_error_with_keeps_the_state(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var t: test.TestRunner = test.test_new("HTTP respond");
+  let t: test.TestRunner = test.test_new("HTTP respond");
   t = t.it("an Ok response passes through", test_ok_passes_through);
   t = t.it("a failed lookup answers a problem", test_fail_answers_a_problem);
   t = t.it("an error keeps its own title, and the detail is quoted", test_error_keeps_its_own_title_and_escapes);

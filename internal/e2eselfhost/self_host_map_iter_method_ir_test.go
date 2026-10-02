@@ -14,11 +14,11 @@ func TestSelfHostMapIterMethodIR(t *testing.T) {
 	// Sum the values via the iterator: 7 + 8 = 15.
 	src := `import "core/map";
 function f(): i32 {
-    var m: Map[string, i32] = map_new(0);
+    let m: Map[string, i32] = map_new(0);
     m = m.insert("a", 7);
     m = m.insert("b", 8);
-    var sum: i32 = 0;
-    var it: MapIter[string, i32] = m.iter();
+    let sum: i32 = 0;
+    let it: MapIter[string, i32] = m.iter();
     while (it.has_next()) {
         sum = sum + it.value();
         it.advance();

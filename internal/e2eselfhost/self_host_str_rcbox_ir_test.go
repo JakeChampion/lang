@@ -52,17 +52,17 @@ func TestSelfHostStrRcBoxIRX86_64(t *testing.T) {
 	// DOUBLE-FREE SAFETY NET at scale: 2,000,000 fresh concat chains, each reclaimed. A
 	// double-free would bump __rc_underflow_count() -> exit 99; a leak would exhaust
 	// the heap (SIGKILL 137). r = "aaxbb" len 5, t stays 0, underflow 0 -> exit 0.
-	run(t, `function churn(n: i32): i32 { var pre: string = "aa"; var suf: string = "bb"; var t: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = pre + "x" + suf; if (r.len() < 5) { t = 1; } i = i + 1; } return t; } function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+	run(t, `function churn(n: i32): i32 { let pre: string = "aa"; let suf: string = "bb"; let t: i32 = 0; let i: i32 = 0; while (i < n) { let r: string = pre + "x" + suf; if (r.len() < 5) { t = 1; } i = i + 1; } return t; } function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"rcbox-churn-no-underflow", 0, true)
 
 	// VALUE + underflow check on a fresh literal-operand concat reclaimed at scope exit.
 	// "hi"+"!" = len 3; underflow 0.
-	run(t, `function mk(): i32 { var s: string = "hi" + "!"; return s.len(); } function main(): i32 { var r: i32 = mk(); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
+	run(t, `function mk(): i32 { let s: string = "hi" + "!"; return s.len(); } function main(): i32 { let r: i32 = mk(); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
 		"rcbox-scope-exit", 3, true)
 
 	// i32 `.to_string()` churn: the digit-string box is rc-headered too; reclaimed each iter,
 	// no over-release. Every decimal string has len >= 1, so ok stays 0 -> exit 0.
 	run(t, `import "std/i32";
-function churn(n: i32): i32 { var ok: i32 = 0; var i: i32 = 0; while (i < n) { var s: string = i.to_string(); if (s.len() < 1) { ok = 1; } i = i + 1; } return ok; } function main(): i32 { var r: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
+function churn(n: i32): i32 { let ok: i32 = 0; let i: i32 = 0; while (i < n) { let s: string = i.to_string(); if (s.len() < 1) { ok = 1; } i = i + 1; } return ok; } function main(): i32 { let r: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
 		"rcbox-i32-to-string-churn", 0, true)
 }

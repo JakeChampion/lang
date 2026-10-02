@@ -4,12 +4,12 @@ import "core/int";
 import "std/i32";
 
 function main(): i32 {
-    var mode: i32 = 0o755;
-    var mask: u32 = 0o170000u32;
-    var bits: i32 = 0b1010;
-    var wide: i64 = 0o777777777777i64;
-    var byte: u8 = 0b11111111u8;
-    var bad: i32 = 0;
+    let mode: i32 = 0o755;
+    let mask: u32 = 0o170000u32;
+    let bits: i32 = 0b1010;
+    let wide: i64 = 0o777777777777i64;
+    let byte: u8 = 0b11111111u8;
+    let bad: i32 = 0;
     if (mode != 493 || mode != 0x1ed) { bad = bad + 1; }
     if (mask != 61440u32) { bad = bad + 2; }
     if (bits != 10) { bad = bad + 4; }

@@ -82,7 +82,7 @@ function x86_rex_w(): i32 {
 // r8..r15 are numbered 8..15; the low 3 bits go in the ModR/M / SIB
 // fields (which already mask with & 7).
 function x86_rex(w: i32, reg: i32, index: i32, base: i32): i32 {
-  var v: i32 = 64;  // 0x40
+  let v: i32 = 64;  // 0x40
   if (w != 0) {
     v = v | 8;
   }
@@ -240,7 +240,7 @@ function x86_rex_w_of(size: i32): i32 {
 
 // x86_rex_rr appends the REX for a two-register form (ModRM reg + rm).
 function x86_rex_rr(own buf: i32[], size: i32, reg: i32, rm: i32): i32[] {
-  var rex: i32 = x86_rex(x86_rex_w_of(size), reg, 0, rm);
+  let rex: i32 = x86_rex(x86_rex_w_of(size), reg, 0, rm);
   if (rex != 64 || x86_rex8_force(size, reg) || x86_rex8_force(size, rm)) {
     buf = buf.append(rex);
   }
@@ -249,7 +249,7 @@ function x86_rex_rr(own buf: i32[], size: i32, reg: i32, rm: i32): i32[] {
 
 // x86_rex_r appends the REX for a form whose only register is ModRM.rm.
 function x86_rex_r(own buf: i32[], size: i32, reg: i32): i32[] {
-  var rex: i32 = x86_rex(x86_rex_w_of(size), 0, 0, reg);
+  let rex: i32 = x86_rex(x86_rex_w_of(size), 0, 0, reg);
   if (rex != 64 || x86_rex8_force(size, reg)) {
     buf = buf.append(rex);
   }
@@ -412,12 +412,12 @@ function x86_sib(scale: i32, index: i32, base: i32): i32 {
 // memory operand `[base + disp]` with the given ModR/M `reg` field (the
 // other operand — a register for load/store).
 function x86_emit_mem(own buf: i32[], reg: i32, base: i32, disp: i32): i32[] {
-  var b: i32 = base & 7;
-  var is_rsp: boolean = b == 4;  // SIB escape
-  var is_rbp: boolean = b == 5;  // no mod=00 form
+  let b: i32 = base & 7;
+  let is_rsp: boolean = b == 4;  // SIB escape
+  let is_rbp: boolean = b == 5;  // no mod=00 form
 
-  var md: i32 = 2;  // default: disp32
-  var has_disp8: boolean = false;
+  let md: i32 = 2;  // default: disp32
+  let has_disp8: boolean = false;
   if (disp == 0 && !is_rbp) {
     md = 0;  // no displacement
   } else if (disp >= 0 - 128 && disp <= 127) {
@@ -468,16 +468,16 @@ function x86_mov_store_r64(own buf: i32[], base: i32, disp: i32, src: i32): i32[
 // a bare 0x40 is legal but not what gas writes, and the differential
 // compares bytes.
 function x86_lea_load(own buf: i32[], size: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  var ix: i32 = 0;
+  let ix: i32 = 0;
   if (has_index) {
     ix = index;
   }
   buf = x86_osz(buf, size);
-  var w: i32 = 0;
+  let w: i32 = 0;
   if (size == 64) {
     w = 1;
   }
-  var rex: i32 = x86_rex(w, dst, ix, base);
+  let rex: i32 = x86_rex(w, dst, ix, base);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -510,10 +510,10 @@ function x86_scale_bits(scale: i32): i32 {
 // x86_emit_mem_idx appends the ModR/M + SIB (+ displacement) for
 // `[base + index*scale + disp]` with the given ModR/M `reg` field.
 function x86_emit_mem_idx(own buf: i32[], reg: i32, base: i32, index: i32, scale: i32, disp: i32): i32[] {
-  var b: i32 = base & 7;
-  var is_rbp: boolean = b == 5;
-  var md: i32 = 2;
-  var has_disp8: boolean = false;
+  let b: i32 = base & 7;
+  let is_rbp: boolean = b == 5;
+  let md: i32 = 2;
+  let has_disp8: boolean = false;
   if (disp == 0 && !is_rbp) {
     md = 0;
   } else {
@@ -558,12 +558,12 @@ function x86_mov_store_r64_idx(own buf: i32[], base: i32, index: i32, scale: i32
 
 // x86_byte_mem_rex emits the (optional) REX for a byte memory op.
 function x86_byte_mem_rex(own buf: i32[], w: i32, reg: i32, has_index: boolean, index: i32, base: i32): i32[] {
-  var ix: i32 = 0;
+  let ix: i32 = 0;
   if (has_index) {
     ix = index;
   }
-  var rex: i32 = x86_rex(w, reg, ix, base);
-  var force: boolean = w == 0 && reg >= 4 && reg <= 7;  // spl..dil
+  let rex: i32 = x86_rex(w, reg, ix, base);
+  let force: boolean = w == 0 && reg >= 4 && reg <= 7;  // spl..dil
   if (rex != 64 || force) {
     buf = buf.append(rex);
   }
@@ -603,7 +603,7 @@ function x86_movzb_mem(own buf: i32[], w: i32, dst: i32, base: i32, has_index: b
 // Verified vs gas: movsbl (%rax),%ecx = 0F BE 08, movsbq (%r9),%r11 =
 // 4D 0F BE 19, movswl (%rax),%ecx = 0F BF 08.
 function x86_movext_mem(own buf: i32[], op: i32, w: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  var ix: i32 = 0;
+  let ix: i32 = 0;
   if (has_index) {
     ix = index;
   }
@@ -611,7 +611,7 @@ function x86_movext_mem(own buf: i32[], op: i32, w: i32, dst: i32, base: i32, ha
   // operand, and here the reg field is the 32-/64-bit destination while the
   // narrow value lives in memory. Forcing on `dst` 4..7 would put a bare
   // 0x40 in front of `movzbl (%rax), %esi`, which gas does not.
-  var rex: i32 = x86_rex(w, dst, ix, base);
+  let rex: i32 = x86_rex(w, dst, ix, base);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -634,11 +634,11 @@ function x86_movzb_reg(own buf: i32[], w: i32, dst: i32, src8: i32): i32[] {
 // Verified vs gas: movsbl %al,%ecx = 0F BE C8, movsbq %al,%rcx = 48 0F BE C8,
 // movswl %ax,%ecx = 0F BF C8, movswq %ax,%rcx = 48 0F BF C8.
 function x86_movext_reg(own buf: i32[], op: i32, w: i32, dst: i32, src: i32): i32[] {
-  var rex: i32 = x86_rex(w, dst, 0, src);
+  let rex: i32 = x86_rex(w, dst, 0, src);
   // A byte SOURCE of spl/bpl/sil/dil needs a REX of its own even when
   // nothing else does, or those numbers name ah/ch/dh/bh. A WORD source
   // has no such ambiguity, so the force applies only to the byte opcodes.
-  var force: boolean = (op == 182 || op == 190) && x86_rex8_force(8, src);
+  let force: boolean = (op == 182 || op == 190) && x86_rex8_force(8, src);
   if (rex != 64 || force) {
     buf = buf.append(rex);
   }
@@ -651,11 +651,11 @@ function x86_movext_reg(own buf: i32[], op: i32, w: i32, dst: i32, src: i32): i3
 
 // x86_push_mem: `push mem` (0xFF /6) — push a memory operand.
 function x86_push_mem(own buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  var ix: i32 = 0;
+  let ix: i32 = 0;
   if (has_index) {
     ix = index;
   }
-  var rex: i32 = x86_rex(0, 0, ix, base);
+  let rex: i32 = x86_rex(0, 0, ix, base);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -665,11 +665,11 @@ function x86_push_mem(own buf: i32[], base: i32, has_index: boolean, index: i32,
 
 // x86_pop_mem: `pop mem` (0x8F /0).
 function x86_pop_mem(own buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  var ix: i32 = 0;
+  let ix: i32 = 0;
   if (has_index) {
     ix = index;
   }
-  var rex: i32 = x86_rex(0, 0, ix, base);
+  let rex: i32 = x86_rex(0, 0, ix, base);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -681,8 +681,8 @@ function x86_pop_mem(own buf: i32[], base: i32, has_index: boolean, index: i32, 
 // flag as a 0/1 byte. `op` is the second opcode byte (e.g. 0x9C setl).
 // reg8 spl..dil (4..7) need a REX to disambiguate from ah..bh.
 function x86_setcc_reg8(own buf: i32[], op: i32, reg8: i32): i32[] {
-  var rex: i32 = x86_rex(0, 0, 0, reg8);
-  var force: boolean = reg8 >= 4 && reg8 <= 7;
+  let rex: i32 = x86_rex(0, 0, 0, reg8);
+  let force: boolean = reg8 >= 4 && reg8 <= 7;
   if (rex != 64 || force) {
     buf = buf.append(rex);
   }
@@ -695,7 +695,7 @@ function x86_setcc_reg8(own buf: i32[], op: i32, reg8: i32): i32[] {
 // x86_alu_load_r64: `<op> <dst>, mem` with a memory *source* — the
 // load-form ALU (add 0x03, sub 0x2B, cmp 0x3B; reg=dst, r/m=mem).
 function x86_alu_load_r64(own buf: i32[], opcode: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  var ix: i32 = 0;
+  let ix: i32 = 0;
   if (has_index) {
     ix = index;
   }
@@ -757,7 +757,7 @@ function x86_sse_any_rr(own buf: i32[], pfx: i32, opcode: i32, reg: i32, rm: i32
   if (pfx != 0) {
     buf = buf.append(pfx);
   }
-  var rex: i32 = x86_rex(0, reg, 0, rm);
+  let rex: i32 = x86_rex(0, reg, 0, rm);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -771,7 +771,7 @@ function x86_sse_any_rr(own buf: i32[], pfx: i32, opcode: i32, reg: i32, rm: i32
 // (pextrq/pinsrq).
 function x86_sse_3a_imm(own buf: i32[], w: i32, opcode: i32, reg: i32, rm: i32, imm: i32): i32[] {
   buf = buf.append(102);  // 0x66
-  var rex: i32 = x86_rex(w, reg, 0, rm);
+  let rex: i32 = x86_rex(w, reg, 0, rm);
   if (w == 1 || rex != 64) {
     buf = buf.append(rex);
   }
@@ -786,7 +786,7 @@ function x86_sse_3a_imm(own buf: i32[], w: i32, opcode: i32, reg: i32, rm: i32, 
 // sibling of x86_movq_gpr_to_xmm.
 function x86_movd_gpr_to_xmm(own buf: i32[], xmm: i32, gpr: i32): i32[] {
   buf = buf.append(102);  // 0x66
-  var rex: i32 = x86_rex(0, xmm, 0, gpr);
+  let rex: i32 = x86_rex(0, xmm, 0, gpr);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -798,7 +798,7 @@ function x86_movd_gpr_to_xmm(own buf: i32[], xmm: i32, gpr: i32): i32[] {
 // x86_movd_xmm_to_gpr: `movd <gpr32>, <xmm>` (66 0F 7E /r) — the inverse.
 function x86_movd_xmm_to_gpr(own buf: i32[], xmm: i32, gpr: i32): i32[] {
   buf = buf.append(102);  // 0x66
-  var rex: i32 = x86_rex(0, xmm, 0, gpr);
+  let rex: i32 = x86_rex(0, xmm, 0, gpr);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -833,7 +833,7 @@ function x86_bitscan_rr(own buf: i32[], pfx: i32, opcode: i32, w: i32, dst: i32,
   if (pfx != 0) {
     buf = buf.append(pfx);
   }
-  var rex: i32 = x86_rex(w, dst, 0, src);
+  let rex: i32 = x86_rex(w, dst, 0, src);
   if (w == 1 || rex != 64) {
     buf = buf.append(rex);
   }
@@ -891,7 +891,7 @@ function x86_popcnt_rr(own buf: i32[], w: i32, dst: i32, src: i32): i32[] {
 // cvttss2si %xmm9,%r11 = F3 4D 0F 2C D9, cvtsi2ss %rax,%xmm1 = F3 48 0F 2A C8.
 function x86_cvt_to_gpr(own buf: i32[], pfx: i32, op: i32, w: i32, gpr: i32, xmm: i32): i32[] {
   buf = buf.append(pfx);
-  var rex: i32 = x86_rex(w, gpr, 0, xmm);
+  let rex: i32 = x86_rex(w, gpr, 0, xmm);
   if (w == 1 || rex != 64) {
     buf = buf.append(rex);
   }
@@ -902,7 +902,7 @@ function x86_cvt_to_gpr(own buf: i32[], pfx: i32, op: i32, w: i32, gpr: i32, xmm
 
 function x86_cvt_to_xmm(own buf: i32[], pfx: i32, w: i32, xmm: i32, gpr: i32): i32[] {
   buf = buf.append(pfx);
-  var rex: i32 = x86_rex(w, xmm, 0, gpr);
+  let rex: i32 = x86_rex(w, xmm, 0, gpr);
   if (w == 1 || rex != 64) {
     buf = buf.append(rex);
   }
@@ -1045,7 +1045,7 @@ function x86_mov_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   a = X86Asm { ...a, code: a.code.append(139) };  // 0x8B
   a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) };  // RIP-relative
   a = X86Asm { ...a, code: x86_le32(a.code, 0) };
-  var patch_off: i32 = a.code.len() - 4;
+  let patch_off: i32 = a.code.len() - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
@@ -1059,7 +1059,7 @@ function x86_movl_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm 
   a = X86Asm { ...a, code: a.code.append(139) };  // 0x8B
   a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) };  // RIP-relative
   a = X86Asm { ...a, code: x86_le32(a.code, 0) };
-  var patch_off: i32 = a.code.len() - 4;
+  let patch_off: i32 = a.code.len() - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
@@ -1079,7 +1079,7 @@ function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: strin
   a = X86Asm { ...a, code: a.code.append(opcode) };
   a = X86Asm { ...a, code: a.code.append(x86_modrm(0, 0, 5)) };  // RIP-relative, /0
   a = X86Asm { ...a, code: x86_le32(a.code, 0) };
-  var patch_off: i32 = a.code.len() - 4;
+  let patch_off: i32 = a.code.len() - 4;
   a = x86_queue_fixup(a, patch_off, 4, name + "");
   a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
   a = X86Asm { ...a, fix_tail_bytes: a.fix_tail_bytes.append(imm_bytes) };
@@ -1093,7 +1093,7 @@ function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: strin
 // `patch_off` — 0 for every fixup but an immediate store to a rip-relative
 // global.
 function x86_fix_tail(a: X86Asm, patch_off: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.fix_tail_offs.len()) {
     if (a.fix_tail_offs[i] == patch_off) {
       return a.fix_tail_bytes[i];
@@ -1110,7 +1110,7 @@ function x86_mov_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm 
   a = X86Asm { ...a, code: a.code.append(137) };  // 0x89
   a = X86Asm { ...a, code: a.code.append(x86_modrm(0, src, 5)) };  // RIP-relative
   a = X86Asm { ...a, code: x86_le32(a.code, 0) };
-  var patch_off: i32 = a.code.len() - 4;
+  let patch_off: i32 = a.code.len() - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
@@ -1124,7 +1124,7 @@ function x86_movl_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm
   a = X86Asm { ...a, code: a.code.append(137) };  // 0x89
   a = X86Asm { ...a, code: a.code.append(x86_modrm(0, src, 5)) };  // RIP-relative
   a = X86Asm { ...a, code: x86_le32(a.code, 0) };
-  var patch_off: i32 = a.code.len() - 4;
+  let patch_off: i32 = a.code.len() - 4;
   return x86_queue_fixup(a, patch_off, 4, name);
 }
 
@@ -1132,7 +1132,7 @@ function x86_movl_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm
 // be 0 here — used for the 32-bit / byte ops whose default size needs no
 // prefix unless an extended register is involved).
 function x86_rex_opt(own buf: i32[], reg: i32, index: i32, base: i32): i32[] {
-  var rex: i32 = x86_rex(0, reg, index, base);
+  let rex: i32 = x86_rex(0, reg, index, base);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -1148,7 +1148,7 @@ function x86_mov_r32_r32(own buf: i32[], dst: i32, src: i32): i32[] {
 
 // x86_movl_load: `movl mem, <dst>` (0x8B /r) — 32-bit load (zero-extends).
 function x86_movl_load(own buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  var ix: i32 = 0;
+  let ix: i32 = 0;
   if (has_index) {
     ix = index;
   }
@@ -1160,7 +1160,7 @@ function x86_movl_load(own buf: i32[], dst: i32, base: i32, has_index: boolean, 
 // x86_movslq_load: `movslq mem, <dst>` (REX.W 0x63 /r) — sign-extend a
 // 32-bit memory operand into a 64-bit register.
 function x86_movslq_load(own buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  var ix: i32 = 0;
+  let ix: i32 = 0;
   if (has_index) {
     ix = index;
   }
@@ -1181,7 +1181,7 @@ function x86_movslq_rr(own buf: i32[], dst: i32, src: i32): i32[] {
 // x86_movzwq_load: `movzwq mem, <dst>` (REX.W 0F B7 /r) — zero-extend a
 // 16-bit memory operand into a 64-bit register.
 function x86_movzwq_load(own buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  var ix: i32 = 0;
+  let ix: i32 = 0;
   if (has_index) {
     ix = index;
   }
@@ -1429,9 +1429,9 @@ function x86_label_buckets(): i32 {
 // 2^31, so the hash still needs no wrapping arithmetic, without paying an
 // integer division per character.
 function x86_name_bucket(name: string): i32 {
-  var h: i32 = 0;
-  var i: i32 = 0;
-  var n: i32 = name.len();
+  let h: i32 = 0;
+  let i: i32 = 0;
+  let n: i32 = name.len();
   while (i < n) {
     h = h * 131 + name[i] as i32 & 8388607;
     i = i + 1;
@@ -1441,9 +1441,9 @@ function x86_name_bucket(name: string): i32 {
 
 // x86_empty_buckets is a bucket array of `x86_label_buckets()` empty slots.
 function x86_empty_buckets(): i32[] {
-  var b: i32[] = [];
-  var i: i32 = 0;
-  var n: i32 = x86_label_buckets();
+  let b: i32[] = [];
+  let i: i32 = 0;
+  let n: i32 = x86_label_buckets();
   while (i < n) {
     b = b.append(0 - 1);
     i = i + 1;
@@ -1472,13 +1472,13 @@ function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
 // buckets are shared, and every label starts unplaced (section and offset
 // -1) until the round reaches its definition.
 function x86_asm_new_prepared(labs: GasLabels, longs: boolean[]): X86Asm {
-  var n: i32 = labs.names.len();
+  let n: i32 = labs.names.len();
   return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], dfix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fix_offs: [], fix_names: [], fix_widths: [], fix_idx: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_idx: [], br_shorts: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [] };
 }
 
 // x86_filled is n copies of v.
 function x86_filled(n: i32, v: i32): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   while (out.len() < n) {
     out = out.append(v);
   }
@@ -1507,7 +1507,7 @@ pub function x86_eh_frame_hdr(a: X86Asm, text_vaddr: i64, eh_vaddr: i64, hdr_vad
 // boundary the ELF data image uses (so a rip-relative reference to .rodata
 // resolves to the same offset the loader maps it at).
 function x86_align8(n: i32): i32 {
-  var p: i32 = n;
+  let p: i32 = n;
   while (p % 8 != 0) {
     p = p + 1;
   }
@@ -1517,7 +1517,7 @@ function x86_align8(n: i32): i32 {
 // x86_align4 rounds `n` up to the next multiple of 4, .eh_frame_hdr's
 // alignment.
 function x86_align4(n: i32): i32 {
-  var p: i32 = n;
+  let p: i32 = n;
   while (p % 4 != 0) {
     p = p + 1;
   }
@@ -1530,9 +1530,9 @@ function x86_align4(n: i32): i32 {
 // push-front) is what makes x86_label_idx's bucket walk visit definitions in
 // the order they were placed, so a repeated name still resolves to the first.
 function x86_add_label(own a: X86Asm, name: string, sec: i32, off: i32): X86Asm {
-  var at: i32 = a.lab_names.len();
-  var b: i32 = x86_name_bucket(name);
-  var prev: i32 = a.lab_tail[b];
+  let at: i32 = a.lab_names.len();
+  let b: i32 = x86_name_bucket(name);
+  let prev: i32 = a.lab_tail[b];
   a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
   a = X86Asm { ...a, lab_secs: a.lab_secs.append(sec) };
   a = X86Asm { ...a, lab_offs: a.lab_offs.append(off) };
@@ -1556,7 +1556,7 @@ function x86_place_label(own a: X86Asm, idx: i32, sec: i32, off: i32): X86Asm {
 
 // x86_label records `name` at the current .text offset (section 0).
 function x86_label(own a: X86Asm, name: string): X86Asm {
-  var off: i32 = a.code.len();
+  let off: i32 = a.code.len();
   return x86_add_label(a, name, 0, off);
 }
 
@@ -1566,9 +1566,9 @@ function x86_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   if (idx < 0) {
     return x86_label(a, name);
   }
-  var off: i32 = a.code.len();
+  let off: i32 = a.code.len();
   a = x86_place_label(a, idx, 0, off);
-  var n: i32 = a.pads.len();
+  let n: i32 = a.pads.len();
   if (n > 0 && a.pads[n - 5] + a.pads[n - 4] == off) {
     a = X86Asm { ...a, pad_labels: a.pad_labels.append(idx).append(n / 5 - 1) };
   }
@@ -1578,7 +1578,7 @@ function x86_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
 // x86_rodata_label records `name` at the current .rodata offset (section
 // 1); follow it with bytes pushed onto a.rodata (e.g. via x86_rodata_quad).
 function x86_rodata_label(own a: X86Asm, name: string): X86Asm {
-  var off: i32 = a.rodata.len();
+  let off: i32 = a.rodata.len();
   return x86_add_label(a, name, 1, off);
 }
 
@@ -1586,7 +1586,7 @@ function x86_rodata_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   if (idx < 0) {
     return x86_rodata_label(a, name);
   }
-  var off: i32 = a.rodata.len();
+  let off: i32 = a.rodata.len();
   return x86_place_label(a, idx, 1, off);
 }
 
@@ -1602,7 +1602,7 @@ function x86_rodata_quad(own a: X86Asm, v: i64): X86Asm {
 // .bss is zero-init memory not present in the file: only the running size
 // advances (x86_bss_skip), and the ELF sets p_memsz > p_filesz.
 function x86_bss_label(own a: X86Asm, name: string): X86Asm {
-  var off: i32 = a.bss_size;
+  let off: i32 = a.bss_size;
   return x86_add_label(a, name, 2, off);
 }
 
@@ -1610,7 +1610,7 @@ function x86_bss_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   if (idx < 0) {
     return x86_bss_label(a, name);
   }
-  var off: i32 = a.bss_size;
+  let off: i32 = a.bss_size;
   return x86_place_label(a, idx, 2, off);
 }
 
@@ -1626,7 +1626,7 @@ function x86_bss_skip(own a: X86Asm, n: i32): X86Asm {
 // was 37% of a whole-compiler assemble, one pass over ~14k names per branch
 // fixup and again per resolve (#6911).
 function x86_label_idx(a: X86Asm, name: string): i32 {
-  var i: i32 = a.lab_head[x86_name_bucket(name)];
+  let i: i32 = a.lab_head[x86_name_bucket(name)];
   while (i >= 0) {
     if (a.lab_names[i] == name) {
       return i;
@@ -1640,7 +1640,7 @@ function x86_label_idx(a: X86Asm, name: string): i32 {
 // -1 if not yet placed. (Used for the immediate backward-branch patch,
 // which only targets .text — .rodata offsets aren't final until resolve.)
 pub function x86_label_off(a: X86Asm, name: string): i32 {
-  var i: i32 = x86_label_idx(a, name);
+  let i: i32 = x86_label_idx(a, name);
   if (i < 0 || a.lab_secs[i] != 0) {
     return 0 - 1;
   }
@@ -1719,15 +1719,15 @@ function x86_fixup_or_patch(own a: X86Asm, name: string): X86Asm {
 }
 
 function x86_fixup_or_patch_at(own a: X86Asm, name: string, idx: i32): X86Asm {
-  var at: i32 = a.code.len() - 4;
+  let at: i32 = a.code.len() - 4;
   if (!a.relaxing) {
-    var target: i32 = x86_label_target(a, name, idx);
+    let target: i32 = x86_label_target(a, name, idx);
     if (target >= 0) {
       // Take the buffer OUT of the struct before patching: `a.code`
       // read while `a` still holds it is a second reference, which
       // sends the `.with` down the copy path — one .text clone per
       // backward branch.
-      var code: i32[] = a.code;
+      let code: i32[] = a.code;
       a = X86Asm { ...a, code: [] };
       code = x86_patch_rel32(code, at, x86_rel_to(target, at));
       return X86Asm { ...a, code: code };
@@ -1789,7 +1789,7 @@ function x86_lea_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   a = X86Asm { ...a, code: a.code.append(141) };  // 0x8D
   a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) };  // RIP-relative
   a = X86Asm { ...a, code: x86_le32(a.code, 0) };  // placeholder disp32
-  var patch_off: i32 = a.code.len() - 4;
+  let patch_off: i32 = a.code.len() - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
@@ -1803,16 +1803,16 @@ function x86_jcc_label(own a: X86Asm, cc: i32, name: string): X86Asm {
 // a name the table does not hold), which the round's patch and resolve
 // read in place of the name.
 function x86_jcc_label_at(own a: X86Asm, cc: i32, name: string, idx: i32): X86Asm {
-  var k: i32 = a.br_n;
+  let k: i32 = a.br_n;
   if (a.relaxing && !x86_branch_long(a, k)) {  // 0x70+cc ib
     a = X86Asm { ...a, code: a.code.append(112 + (cc & 15)) };
     a = X86Asm { ...a, code: a.code.append(0) };  // placeholder rel8
-    var at: i32 = a.code.len() - 1;
+    let at: i32 = a.code.len() - 1;
     a = x86_queue_fixup_at(a, at, 1, name, idx);
     return x86_branch_record(a, at, name, idx, true);
   }
   a = X86Asm { ...a, code: x86_jcc_rel32(a.code, cc, 0) };  // placeholder rel32
-  var at4: i32 = a.code.len() - 4;
+  let at4: i32 = a.code.len() - 4;
   a = x86_fixup_or_patch_at(a, name, idx);
   return x86_branch_record(a, at4, name, idx, false);
 }
@@ -1823,16 +1823,16 @@ function x86_jmp_label(own a: X86Asm, name: string): X86Asm {
 }
 
 function x86_jmp_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
-  var k: i32 = a.br_n;
+  let k: i32 = a.br_n;
   if (a.relaxing && !x86_branch_long(a, k)) {  // 0xEB ib
     a = X86Asm { ...a, code: a.code.append(235) };
     a = X86Asm { ...a, code: a.code.append(0) };  // placeholder rel8
-    var at: i32 = a.code.len() - 1;
+    let at: i32 = a.code.len() - 1;
     a = x86_queue_fixup_at(a, at, 1, name, idx);
     return x86_branch_record(a, at, name, idx, true);
   }
   a = X86Asm { ...a, code: x86_jmp_rel32(a.code, 0) };
-  var at4: i32 = a.code.len() - 4;
+  let at4: i32 = a.code.len() - 4;
   a = x86_fixup_or_patch_at(a, name, idx);
   return x86_branch_record(a, at4, name, idx, false);
 }
@@ -1873,7 +1873,7 @@ function x86_gas_is_symbol(tok: string): boolean {
   if (tok.len() == 0) {
     return false;
   }
-  var c: i32 = tok[0] as i32;
+  let c: i32 = tok[0] as i32;
   if (c == 45 || c == 36) {  // '-' / '$'
     return false;
   }
@@ -1891,7 +1891,7 @@ function x86_rodata_quad_sym(own a: X86Asm, name: string): X86Asm {
 }
 
 function x86_rodata_quad_sym_at(own a: X86Asm, name: string, idx: i32): X86Asm {
-  var off: i32 = a.rodata.len();
+  let off: i32 = a.rodata.len();
   a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, 0) };
   a = X86Asm { ...a, dfix_offs: a.dfix_offs.append(off) };
   a = X86Asm { ...a, dfix_names: a.dfix_names.append(name) };
@@ -1919,9 +1919,9 @@ function x86_unwind_eh_len(a: X86Asm): i32 {
 // layout (elf.fern cannot be imported here); TestSelfHostUnwindData holds
 // the two to the same answer.
 pub function x86_data_base(a: X86Asm): i32 {
-  var end: i32 = a.code.len();
-  var hdr_len: i32 = x86_unwind_hdr_len(a);
-  var eh_len: i32 = x86_unwind_eh_len(a);
+  let end: i32 = a.code.len();
+  let hdr_len: i32 = x86_unwind_hdr_len(a);
+  let eh_len: i32 = x86_unwind_eh_len(a);
   if (hdr_len > 0 && eh_len > 0) {
     end = x86_align8(x86_align4(end) + hdr_len) + eh_len;
   }
@@ -1935,20 +1935,20 @@ pub function x86_data_base(a: X86Asm): i32 {
 // addresses from there, because .text and the data blob share one PT_LOAD.
 // An unresolvable name is recorded, not patched as 0.
 pub function x86_resolve_data(own a: X86Asm, text_vaddr: i32): X86Asm {
-  var padded_text: i32 = x86_data_base(a);
-  var bss_base: i32 = padded_text + a.rodata.len();
-  var rodata: i32[] = a.rodata;
+  let padded_text: i32 = x86_data_base(a);
+  let bss_base: i32 = padded_text + a.rodata.len();
+  let rodata: i32[] = a.rodata;
   a = X86Asm { ...a, rodata: [] };
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.dfix_offs.len()) {
-    var name: string = a.dfix_names[i];
-    var target: i32 = x86_final_target(a, name, a.dfix_idx[i], padded_text, bss_base);
+    let name: string = a.dfix_names[i];
+    let target: i32 = x86_final_target(a, name, a.dfix_idx[i], padded_text, bss_base);
     if (target < 0) {
       a = X86Asm { ...a, unknown: a.unknown.append(".quad " + name) };
     } else {
-      var at: i32 = a.dfix_offs[i];
-      var abs: i64 = text_vaddr as i64 + target as i64;
-      var j: i32 = 0;
+      let at: i32 = a.dfix_offs[i];
+      let abs: i64 = text_vaddr as i64 + target as i64;
+      let j: i32 = 0;
       while (j < 8) {
         rodata = rodata.with(at + j, (abs >> (j * 8) as i64 & 255 as i64) as i32);
         j = j + 1;
@@ -1965,17 +1965,17 @@ pub function x86_resolve_data(own a: X86Asm, text_vaddr: i32): X86Asm {
 // data image places .rodata at. Call once after emitting the whole
 // program; afterwards a.code + a.rodata are the final sections.
 function x86_resolve(own a: X86Asm): X86Asm {
-  var padded_text: i32 = x86_data_base(a);
-  var bss_base: i32 = padded_text + a.rodata.len();
+  let padded_text: i32 = x86_data_base(a);
+  let bss_base: i32 = padded_text + a.rodata.len();
   // The buffer is pulled out of the struct ONCE and threaded through the
   // whole fixup loop as a uniquely-owned local, then folded back. Patching
   // it in place inside the struct cloned the entire .text per fixup.
-  var code: i32[] = a.code;
+  let code: i32[] = a.code;
   a = X86Asm { ...a, code: [] };
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.fix_offs.len()) {
-    var patch_off: i32 = a.fix_offs[i];
-    var target: i32 = x86_final_target(a, a.fix_names[i], a.fix_idx[i], padded_text, bss_base);
+    let patch_off: i32 = a.fix_offs[i];
+    let target: i32 = x86_final_target(a, a.fix_names[i], a.fix_idx[i], padded_text, bss_base);
     // A missing label is -1; patching that as a displacement branches
     // into the ELF header, so refuse rather than emit it (#6045).
     if (target < 0) {
@@ -1983,7 +1983,7 @@ function x86_resolve(own a: X86Asm): X86Asm {
     } else if (a.fix_widths[i] == 1) {
       // A relaxed branch: one byte, and the next instruction is one
       // byte past the displacement rather than four.
-      var rel8: i32 = target - (patch_off + 1);
+      let rel8: i32 = target - (patch_off + 1);
       if (rel8 < 0 - 128 || rel8 > 127) {
         // The relaxation fixpoint is meant to have pinned this one
         // long already; reaching here means the layout moved under
@@ -2011,8 +2011,8 @@ function x86_resolve(own a: X86Asm): X86Asm {
 // its unit tests, and an `import "std/string"` breaks the second.
 
 function x86_str_indexof(s: string, sub: string): i32 {
-  var n: i32 = s.len();
-  var m: i32 = sub.len();
+  let n: i32 = s.len();
+  let m: i32 = sub.len();
   if (m == 0) {
     return 0;
   }
@@ -2024,18 +2024,18 @@ function x86_str_indexof(s: string, sub: string): i32 {
   // (docs/ATLAS-PLATFORM-PLAN.md §3), so both paths below locate the
   // needle's first byte with it rather than a compare and a bump per
   // position.
-  var c0: u8 = sub[0];
+  let c0: u8 = sub[0];
   if (m == 1) {
     return __memchr(s, c0 as i32, 0);
   }
-  var last: i32 = n - m;
-  var i: i32 = 0;
+  let last: i32 = n - m;
+  let i: i32 = 0;
   while (i <= last) {
     i = __memchr(s, c0 as i32, i);
     if (i < 0 || i > last) {
       return 0 - 1;
     }
-    var j: i32 = 1;
+    let j: i32 = 1;
     while (j < m && s[i + j] == sub[j]) {
       j = j + 1;
     }
@@ -2048,11 +2048,11 @@ function x86_str_indexof(s: string, sub: string): i32 {
 }
 
 function x86_str_starts_with(s: string, pre: string): boolean {
-  var m: i32 = pre.len();
+  let m: i32 = pre.len();
   if (m > s.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m) {
     if (s[i] != pre[i]) {
       return false;
@@ -2073,17 +2073,17 @@ function x86_gas_has_paren(s: string): boolean {
 }
 
 function x86_str_split(s: string, sep: string): string[] {
-  var out: string[] = [];
-  var m: i32 = sep.len();
+  let out: string[] = [];
+  let m: i32 = sep.len();
   if (m == 0) {
     out = out.append(s);
     return out;
   }
-  var n: i32 = s.len();
-  var c0: u8 = sep[0];
-  var last: i32 = n - m;
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let c0: u8 = sep[0];
+  let last: i32 = n - m;
+  let start: i32 = 0;
+  let i: i32 = 0;
   // The separator's first byte is found by __memchr, as x86_str_indexof
   // finds a needle: the hot split is the emitted text on `\n`, where every
   // byte between separators was compared and bumped one at a time.
@@ -2092,7 +2092,7 @@ function x86_str_split(s: string, sep: string): string[] {
     if (i < 0 || i > last) {
       break;
     }
-    var j: i32 = 1;
+    let j: i32 = 1;
     while (j < m && s[i + j] == sep[j]) {
       j = j + 1;
     }
@@ -2158,8 +2158,8 @@ struct GasMem {
 // self-host string `trim` only removes spaces, but asm.fern indents with
 // tabs, so the mnemonic-splitting relies on this.
 function x86_gas_trim(s: string): string {
-  var a: i32 = 0;
-  var b: i32 = s.len();
+  let a: i32 = 0;
+  let b: i32 = s.len();
   while (a < b && (s[a] == b' ' || s[a] == b'\t')) {
     a = a + 1;
   }
@@ -2172,8 +2172,8 @@ function x86_gas_trim(s: string): string {
 // x86_gas_trimmed is x86_gas_trim as a view of its operand, for a reader
 // that is done with the bytes before the operand goes.
 function x86_gas_trimmed(s: str): str {
-  var a: i32 = 0;
-  var b: i32 = s.len();
+  let a: i32 = 0;
+  let b: i32 = s.len();
   while (a < b && (s[a] == b' ' || s[a] == b'\t')) {
     a = a + 1;
   }
@@ -2187,23 +2187,23 @@ function x86_gas_trimmed(s: str): str {
 // `rax`, at any width) to width * 16 + number, or -1. The high-byte names
 // ah/ch/dh/bh are not accepted.
 function x86_gas_reg_decode(tok: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   if (tok.len() > 0 && tok[0] == b'%') {
     i = 1;
   }
-  var n: i32 = tok.len() - i;
+  let n: i32 = tok.len() - i;
   if (n >= 2 && tok[i] == b'r' && tok[i + 1] >= b'0' && tok[i + 1] <= b'9') {
     return x86_gas_reg_numbered(tok, i + 1);
   }
   if (n == 2) {
     if (tok[i + 1] == b'l') {
-      var low: i32 = x86_gas_reg_pair(tok[i], b'x');
+      let low: i32 = x86_gas_reg_pair(tok[i], b'x');
       if (low >= 0 && low < 4) {
         return 8 * 16 + low;
       }
       return 0 - 1;
     }
-    var word: i32 = x86_gas_reg_pair(tok[i], tok[i + 1]);
+    let word: i32 = x86_gas_reg_pair(tok[i], tok[i + 1]);
     if (word >= 0) {
       return 16 * 16 + word;
     }
@@ -2212,14 +2212,14 @@ function x86_gas_reg_decode(tok: string): i32 {
   if (n != 3) {
     return 0 - 1;
   }
-  var tail: i32 = x86_gas_reg_pair(tok[i + 1], tok[i + 2]);
+  let tail: i32 = x86_gas_reg_pair(tok[i + 1], tok[i + 2]);
   if (tail >= 0 && tok[i] == b'r') {
     return 64 * 16 + tail;
   }
   if (tail >= 0 && tok[i] == b'e') {
     return 32 * 16 + tail;
   }
-  var head: i32 = x86_gas_reg_pair(tok[i], tok[i + 1]);
+  let head: i32 = x86_gas_reg_pair(tok[i], tok[i + 1]);
   if (head >= 4 && tok[i + 2] == b'l') {
     return 8 * 16 + head;
   }
@@ -2262,8 +2262,8 @@ function x86_gas_reg_pair(a: u8, b: u8): i32 {
 // x86_gas_reg_numbered decodes r8..r15 from the digits at `at`, with an
 // optional d / w / b width suffix, as x86_gas_reg_decode does.
 function x86_gas_reg_numbered(tok: string, at: i32): i32 {
-  var j: i32 = at;
-  var num: i32 = 0 - 1;
+  let j: i32 = at;
+  let num: i32 = 0 - 1;
   if (tok[j] == b'8' || tok[j] == b'9') {
     num = tok[j] as i32 - 48;
     j = j + 1;
@@ -2295,7 +2295,7 @@ function x86_gas_reg_numbered(tok: string, at: i32): i32 {
 // x86_gas_reg_sized maps a register token to its number when it names a
 // register of exactly `width` bits, else -1.
 function x86_gas_reg_sized(tok: string, width: i32): i32 {
-  var r: i32 = x86_gas_reg_decode(tok);
+  let r: i32 = x86_gas_reg_decode(tok);
   if (r >= 0 && r / 16 == width) {
     return r % 16;
   }
@@ -2307,7 +2307,7 @@ function x86_gas_reg_sized(tok: string, width: i32): i32 {
 // asm.fern emits the 32-bit form for e.g. the cvttsd2si destination
 // (`cvttsd2si %xmm0, %eax`).
 function x86_gas_reg(tok: string): i32 {
-  var r: i32 = x86_gas_reg_decode(tok);
+  let r: i32 = x86_gas_reg_decode(tok);
   if (r >= 0 && (r / 16 == 64 || r / 16 == 32)) {
     return r % 16;
   }
@@ -2354,7 +2354,7 @@ function x86_gas_suffix_size(mnem: string): i32 {
   if (mnem.len() < 2) {
     return 0;
   }
-  var c: u8 = mnem[mnem.len() - 1];
+  let c: u8 = mnem[mnem.len() - 1];
   if (c == b'b') {
     return 8;
   }
@@ -2378,7 +2378,7 @@ function x86_gas_strip_suffix(mnem: string): string {
 // x86_gas_is_xmm reports whether a token names an xmm register: `xmm` at
 // the front, behind an optional `%`, the shape x86_gas_xmm decodes.
 function x86_gas_is_xmm(tok: string): boolean {
-  var at: i32 = 0;
+  let at: i32 = 0;
   if (tok.len() > 0 && tok[0] == b'%') {
     at = 1;
   }
@@ -2388,7 +2388,7 @@ function x86_gas_is_xmm(tok: string): boolean {
 // x86_gas_xmm maps an xmm token (`%xmm0`, `xmm12`, …) to its number 0..15,
 // or -1.
 function x86_gas_xmm(tok: string): i32 {
-  var s: string = tok;
+  let s: string = tok;
   if (s.len() > 0 && s[0] == b'%') {
     s = slice_unchecked(s, 1, s.len()) + "";
   }
@@ -2398,10 +2398,10 @@ function x86_gas_xmm(tok: string): i32 {
   if (s[0] != b'x' || s[1] != b'm' || s[2] != b'm') {
     return 0 - 1;
   }
-  var v: i32 = 0;
-  var i: i32 = 3;
+  let v: i32 = 0;
+  let i: i32 = 3;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c >= 48 && c <= 57) {
       v = v * 10 + (c - 48);
     }
@@ -2413,7 +2413,7 @@ function x86_gas_xmm(tok: string): i32 {
 // x86_gas_ymm maps a ymm token (`%ymm0`, `ymm12`, …) to its number 0..15,
 // or -1.
 function x86_gas_ymm(tok: string): i32 {
-  var s: string = tok;
+  let s: string = tok;
   if (s.len() > 0 && s[0] == b'%') {
     s = slice_unchecked(s, 1, s.len()) + "";
   }
@@ -2423,10 +2423,10 @@ function x86_gas_ymm(tok: string): i32 {
   if (s[0] != b'y' || s[1] != b'm' || s[2] != b'm') {
     return 0 - 1;
   }
-  var v: i32 = 0;
-  var i: i32 = 3;
+  let v: i32 = 0;
+  let i: i32 = 3;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c >= 48 && c <= 57) {
       v = v * 10 + (c - 48);
     }
@@ -2445,11 +2445,11 @@ function x86_gas_ymm(tok: string): i32 {
 // signalling via the first element sentinel — the caller adjusts dp, so
 // this returns the raw halved digits INCLUDING a possible leading zero.
 function pf64_div2(b: i32[]): i32[] {
-  var out: i32[] = [];
-  var r: i32 = 0;
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let r: i32 = 0;
+  let i: i32 = 0;
   while (i < b.len()) {
-    var cur: i32 = r * 10 + b[i];
+    let cur: i32 = r * 10 + b[i];
     out = out.append(cur / 2);
     r = cur % 2;
     i = i + 1;
@@ -2466,22 +2466,22 @@ function pf64_div2(b: i32[]): i32[] {
 // Fern has no multi-return here; the carry is prepended as a FIRST element
 // (0 or 1) and the caller splits it off.
 function pf64_mul2(b: i32[]): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < b.len()) {
     out = out.append(0);
     i = i + 1;
   }
-  var carry: i32 = 0;
-  var j: i32 = b.len() - 1;
+  let carry: i32 = 0;
+  let j: i32 = b.len() - 1;
   while (j >= 0) {
-    var cur: i32 = b[j] * 2 + carry;
+    let cur: i32 = b[j] * 2 + carry;
     out = out.with(j, cur % 10);
     carry = cur / 10;
     j = j - 1;
   }
-  var res: i32[] = [carry];
-  var k: i32 = 0;
+  let res: i32[] = [carry];
+  let k: i32 = 0;
   while (k < out.len()) {
     res = res.append(out[k]);
     k = k + 1;
@@ -2492,8 +2492,8 @@ function pf64_mul2(b: i32[]): i32[] {
 // pf64_sub returns b[from : upto) as a fresh array (slices are a distinct
 // type here, so buffer trims copy).
 function pf64_sub(b: i32[], from: i32, upto: i32): i32[] {
-  var out: i32[] = [];
-  var i: i32 = from;
+  let out: i32[] = [];
+  let i: i32 = from;
   while (i < upto) {
     out = out.append(b[i]);
     i = i + 1;
@@ -2503,7 +2503,7 @@ function pf64_sub(b: i32[], from: i32, upto: i32): i32[] {
 
 // pf64_all_zero reports whether every digit in b is zero.
 function pf64_all_zero(b: i32[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < b.len()) {
     if (b[i] != 0) {
       return false;
@@ -2514,17 +2514,17 @@ function pf64_all_zero(b: i32[]): boolean {
 }
 
 function parse_f64_bits(s: string): i64 {
-  var i: i32 = 0;
-  var neg: boolean = false;
+  let i: i32 = 0;
+  let neg: boolean = false;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
   } else if (s.len() > 0 && s[0] == b'+') {
     i = 1;
   }
-  var signbit: i64 = 0;
+  let signbit: i64 = 0;
   if (neg) {
-    var one: i64 = 1;
+    let one: i64 = 1;
     signbit = one << 63;
   }
   // Collect significant digits and the decimal point position:
@@ -2533,12 +2533,12 @@ function parse_f64_bits(s: string): i64 {
   // significant decimal digits anywhere in the binary64 range (the smallest,
   // 2^-1075, is 5^1075 / 10^1075), so an input with a non-zero digit past
   // 800 cannot be a tie and rounding up off the round bit is correct.
-  var digits: i32[] = [];
-  var dp: i32 = 0;
-  var sticky: boolean = false;
-  var started: boolean = false;
+  let digits: i32[] = [];
+  let dp: i32 = 0;
+  let sticky: boolean = false;
+  let started: boolean = false;
   while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-    var d: i32 = s[i] as i32 - 48;
+    let d: i32 = s[i] as i32 - 48;
     if (started || d != 0) {
       started = true;
       if (digits.len() < 800) {
@@ -2555,7 +2555,7 @@ function parse_f64_bits(s: string): i64 {
   if (i < s.len() && s[i] == b'.') {
     i = i + 1;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-      var fd: i32 = s[i] as i32 - 48;
+      let fd: i32 = s[i] as i32 - 48;
       if (started || fd != 0) {
         started = true;
         if (digits.len() < 800) {
@@ -2573,14 +2573,14 @@ function parse_f64_bits(s: string): i64 {
   }
   if (i < s.len() && (s[i] == b'e' || s[i] == b'E')) {
     i = i + 1;
-    var eneg: boolean = false;
+    let eneg: boolean = false;
     if (i < s.len() && s[i] == b'-') {
       eneg = true;
       i = i + 1;
     } else if (i < s.len() && s[i] == b'+') {
       i = i + 1;
     }
-    var exp: i32 = 0;
+    let exp: i32 = 0;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
       if (exp < 100000) {
         exp = exp * 10 + (s[i] as i32 - 48);
@@ -2605,7 +2605,7 @@ function parse_f64_bits(s: string): i64 {
   // [10^(dp-1), 10^dp), so dp > 310 overflows every double and dp < -350
   // underflows below half the minimum subnormal.
   if (dp > 310) {
-    var inf: i64 = 2047;
+    let inf: i64 = 2047;
     return signbit | inf << 52;
   }
   if (dp < 0 - 350) {
@@ -2615,9 +2615,9 @@ function parse_f64_bits(s: string): i64 {
   // While the decimal point is right of the front (value >= 1), halve;
   // while the value is below 0.5, double. dp reaches 0 first, then the
   // leading-digit test finishes the job.
-  var bexp: i32 = 0;
+  let bexp: i32 = 0;
   while (dp > 0) {
-    var hb: i32[] = pf64_div2(digits);
+    let hb: i32[] = pf64_div2(digits);
     if (hb.len() > 0 && hb[0] == 0) {
       digits = pf64_sub(hb, 1, hb.len());
       dp = dp - 1;
@@ -2630,7 +2630,7 @@ function parse_f64_bits(s: string): i64 {
     }
   }
   while (dp < 0 || digits.len() > 0 && digits[0] < 5) {
-    var db: i32[] = pf64_mul2(digits);
+    let db: i32[] = pf64_mul2(digits);
     if (db[0] != 0) {
       // Carry out of the fraction: 2×0.D >= 1, i.e. C.D' × 10^dp.
       // Renormalize as 0.(C D') × 10^(dp+1) — the carry becomes the
@@ -2654,32 +2654,32 @@ function parse_f64_bits(s: string): i64 {
   // E = bexp + 1022. E >= 2047 overflows; E <= 0 goes subnormal with
   // 52 + E mantissa bits; below -1 it is under half the minimum
   // subnormal and rounds to zero.
-  var e: i32 = bexp + 1022;
+  let e: i32 = bexp + 1022;
   if (e >= 2047) {
-    var inf2: i64 = 2047;
+    let inf2: i64 = 2047;
     return signbit | inf2 << 52;
   }
-  var nbits: i32 = 53;
+  let nbits: i32 = 53;
   if (e <= 0) {
     nbits = 52 + e;
   }
   if (nbits < 0) {
     return signbit;
   }
-  var mant: i64 = 0;
-  var k2: i32 = 0;
+  let mant: i64 = 0;
+  let k2: i32 = 0;
   while (k2 < nbits) {
-    var mb: i32[] = pf64_mul2(digits);
+    let mb: i32[] = pf64_mul2(digits);
     mant = mant * 2 + mb[0] as i64;
     digits = pf64_sub(mb, 1, mb.len());
     k2 = k2 + 1;
   }
   // Round to nearest, ties to even: round bit is the next binary digit;
   // sticky is any remainder (or parse-time truncation).
-  var rb: i32[] = pf64_mul2(digits);
-  var roundbit: i32 = rb[0];
-  var rest: i32[] = pf64_sub(rb, 1, rb.len());
-  var st: boolean = sticky || !pf64_all_zero(rest);
+  let rb: i32[] = pf64_mul2(digits);
+  let roundbit: i32 = rb[0];
+  let rest: i32[] = pf64_sub(rb, 1, rb.len());
+  let st: boolean = sticky || !pf64_all_zero(rest);
   if (roundbit == 1 && (st || (mant & 1) == 1)) {
     mant = mant + 1;
   }
@@ -2689,18 +2689,18 @@ function parse_f64_bits(s: string): i64 {
     // this encoding produces arithmetically.
     return signbit | mant;
   }
-  var full: i64 = 1;
+  let full: i64 = 1;
   full = full << 53;
   if (mant == full) {
     // 1.111…1 rounded up to 10.00…0: renormalize.
     mant = mant / 2;
     e = e + 1;
     if (e >= 2047) {
-      var inf3: i64 = 2047;
+      let inf3: i64 = 2047;
       return signbit | inf3 << 52;
     }
   }
-  var hidden: i64 = 1;
+  let hidden: i64 = 1;
   hidden = hidden << 52;
   return signbit | e as i64 << 52 | mant - hidden;
 }
@@ -2722,7 +2722,7 @@ function x86_gas_parse_f64(s: string): f64 {
 // back as `A`, NUL, `0`. Only the two GAS assemblers were affected; the wasm
 // path spells the same bytes as WAT hex escapes and always round-tripped.
 function x86_gas_escape(line: string, i: i32): (i32, i32) {
-  var e: i32 = line[i + 1] as i32;
+  let e: i32 = line[i + 1] as i32;
   if (e == 110) {  // \n
     return (10, 2);
   }
@@ -2733,10 +2733,10 @@ function x86_gas_escape(line: string, i: i32): (i32, i32) {
     return (13, 2);
   }
   if (e >= 48 && e <= 55) {  // \N, \NN, \NNN — octal
-    var v: i32 = e - 48;
-    var n: i32 = 2;
+    let v: i32 = e - 48;
+    let n: i32 = 2;
     while (n < 4 && i + n < line.len()) {
-      var d: i32 = line[i + n] as i32;
+      let d: i32 = line[i + n] as i32;
       if (d < 48 || d > 55) {
         break;
       }
@@ -2752,13 +2752,13 @@ function x86_gas_escape(line: string, i: i32): (i32, i32) {
 // `buf`, processing the escapes x86_gas_escape decodes. The string is the part
 // between the first `"` and the closing unescaped `"`.
 function x86_gas_ascii(own buf: i32[], line: string): i32[] {
-  var q1: i32 = x86_str_indexof(line, "\"");
+  let q1: i32 = x86_str_indexof(line, "\"");
   if (q1 < 0) {
     return buf;
   }
-  var i: i32 = q1 + 1;
+  let i: i32 = q1 + 1;
   while (i < line.len()) {
-    var c: i32 = line[i] as i32;
+    let c: i32 = line[i] as i32;
     if (c == 34) {  // closing '"'
       return buf;
     }
@@ -2776,17 +2776,17 @@ function x86_gas_ascii(own buf: i32[], line: string): i32[] {
 // x86_gas_atoi parses a decimal integer token, tolerating a leading `$`
 // (immediate sigil) and a leading `-`.
 function x86_gas_atoi(tok: string): i32 {
-  var s: string = tok;
-  var i: i32 = 0;
+  let s: string = tok;
+  let i: i32 = 0;
   if (s.len() > 0 && s[0] == b'$') {
     i = 1;
   }
-  var neg: boolean = false;
+  let neg: boolean = false;
   if (i < s.len() && s[i] == b'-') {
     neg = true;
     i = i + 1;
   }
-  var v: i32 = 0;
+  let v: i32 = 0;
   // `0x…` hex (mirrors x86_gas_atoi64). Without this the `x` was skipped as a
   // non-digit and the hex digits read as DECIMAL — e.g. `$0x22` (the mmap
   // MAP_PRIVATE|MAP_ANONYMOUS flags asm.fern emits) parsed to 22, not 34, so
@@ -2795,8 +2795,8 @@ function x86_gas_atoi(tok: string): i32 {
   if (i + 1 < s.len() && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) {
     i = i + 2;
     while (i < s.len()) {
-      var c: i32 = s[i] as i32;
-      var d: i32 = 0 - 1;
+      let c: i32 = s[i] as i32;
+      let d: i32 = 0 - 1;
       if (c >= 48 && c <= 57) {
         d = c - 48;
       } else {
@@ -2815,7 +2815,7 @@ function x86_gas_atoi(tok: string): i32 {
     }
   } else {
     while (i < s.len()) {
-      var c: i32 = s[i] as i32;
+      let c: i32 = s[i] as i32;
       if (c >= 48 && c <= 57) {
         v = v * 10 + (c - 48);
       }
@@ -2832,22 +2832,22 @@ function x86_gas_atoi(tok: string): i32 {
 // hex, optional `$` sigil and `-`), for movabsq's imm64. Two's-complement
 // wraps give the right bits for INT64_MIN.
 function x86_gas_atoi64(tok: string): i64 {
-  var s: string = tok;
+  let s: string = tok;
   if (s.len() > 0 && s[0] == b'$') {
     s = slice_unchecked(s, 1, s.len()) + "";
   }
-  var neg: boolean = false;
-  var i: i32 = 0;
+  let neg: boolean = false;
+  let i: i32 = 0;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
   }
-  var v: i64 = 0;
+  let v: i64 = 0;
   if (i + 1 < s.len() && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) {
     i = i + 2;
     while (i < s.len()) {
-      var c: i32 = s[i] as i32;
-      var d: i32 = 0 - 1;
+      let c: i32 = s[i] as i32;
+      let d: i32 = 0 - 1;
       if (c >= 48 && c <= 57) {
         d = c - 48;
       } else {
@@ -2866,7 +2866,7 @@ function x86_gas_atoi64(tok: string): i64 {
     }
   } else {
     while (i < s.len()) {
-      var c: i32 = s[i] as i32;
+      let c: i32 = s[i] as i32;
       if (c >= 48 && c <= 57) {
         v = v * 10 + (c - 48) as i64;
       }
@@ -2882,58 +2882,58 @@ function x86_gas_atoi64(tok: string): i64 {
 // x86_gas_parse_mem parses a memory operand `disp(%base)` / `(%base)` /
 // `disp(%base,%index,scale)` / `sym(%rip)`.
 function x86_gas_parse_mem(op: string): GasMem {
-  var lp: i32 = x86_str_indexof(op, "(");
+  let lp: i32 = x86_str_indexof(op, "(");
   if (lp < 0) {
     // Not a memory operand — defensive fallback (avoids an op[0:-1]
     // corrupt slice); callers gate on `.contains("(")` so this is rare.
     return GasMem { is_rip: false, label: "", base: x86_gas_reg(op), disp: 0, has_index: false, index: 0, scale: 1, no_base: false };
   }
-  var disp_str: str = slice_unchecked(op, 0, lp);
-  var inner: str = slice_unchecked(op, lp + 1, op.len() - 1);  // between ( and )
+  let disp_str: str = slice_unchecked(op, 0, lp);
+  let inner: str = slice_unchecked(op, lp + 1, op.len() - 1);  // between ( and )
   if (inner == "%rip") {
     return GasMem { is_rip: true, label: disp_str + "", base: 0, disp: 0, has_index: false, index: 0, scale: 1, no_base: false };
   }
-  var d: i32 = 0;
+  let d: i32 = 0;
   if (disp_str.len() > 0) {
     d = x86_gas_atoi(disp_str);
   }
   // The parts between the commas are read as views of the operand: a base,
   // then an index and a scale, none of which outlives this call.
-  var c1: i32 = x86_str_indexof(inner, ",");
+  let c1: i32 = x86_str_indexof(inner, ",");
   if (c1 < 0) {
     return GasMem { is_rip: false, label: "", base: x86_gas_reg(x86_gas_trimmed(inner)), disp: d, has_index: false, index: 0, scale: 1, no_base: false };
   }
-  var b0: str = x86_gas_trimmed(slice_unchecked(inner, 0, c1));
-  var after: str = slice_unchecked(inner, c1 + 1, inner.len());
-  var c2: i32 = x86_str_indexof(after, ",");
+  let b0: str = x86_gas_trimmed(slice_unchecked(inner, 0, c1));
+  let after: str = slice_unchecked(inner, c1 + 1, inner.len());
+  let c2: i32 = x86_str_indexof(after, ",");
   // Two-element SIB `(%base,%index)` — an implicit scale of 1 (asm.fern emits
   // this for byte-element indexing, e.g. `movzbl (%rax,%rcx), %eax`). Without
   // this the whole `%base,%index` string resolved to a single -1 register.
   if (c2 < 0) {
     return GasMem { is_rip: false, label: "", base: x86_gas_reg(b0), disp: d, has_index: true, index: x86_gas_reg(x86_gas_trimmed(after)), scale: 1, no_base: b0.len() == 0 };
   }
-  var ix: i32 = x86_gas_reg(x86_gas_trimmed(slice_unchecked(after, 0, c2)));
-  var scale_str: str = slice_unchecked(after, c2 + 1, after.len());
-  var c3: i32 = x86_str_indexof(scale_str, ",");
+  let ix: i32 = x86_gas_reg(x86_gas_trimmed(slice_unchecked(after, 0, c2)));
+  let scale_str: str = slice_unchecked(after, c2 + 1, after.len());
+  let c3: i32 = x86_str_indexof(scale_str, ",");
   if (c3 >= 0) {
     scale_str = slice_unchecked(scale_str, 0, c3);
   }
-  var sc: i32 = x86_gas_atoi(x86_gas_trimmed(scale_str));
+  let sc: i32 = x86_gas_atoi(x86_gas_trimmed(scale_str));
   return GasMem { is_rip: false, label: "", base: x86_gas_reg(b0), disp: d, has_index: true, index: ix, scale: sc, no_base: b0.len() == 0 };
 }
 
 // x86_gas_movq dispatches the movq operand shapes (AT&T src, dst),
 // including the SSE forms movq %gpr,%xmm and movq %xmm,%gpr.
 function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
-  var src_xmm: boolean = x86_gas_is_xmm(src);
-  var dst_xmm: boolean = x86_gas_is_xmm(dst);
+  let src_xmm: boolean = x86_gas_is_xmm(src);
+  let dst_xmm: boolean = x86_gas_is_xmm(dst);
   if (dst_xmm && src_xmm) {  // movq %xmm, %xmm — F3 0F 7E /r, reg = dst
     a = X86Asm { ...a, code: x86_sse_any_rr(a.code, 243, 126, x86_gas_xmm(dst), x86_gas_xmm(src)) };
     return a;
   }
   if (dst_xmm && !src_xmm) {  // movq r/m, %xmm — 66 REX.W 0F 6E /r
     if (x86_gas_has_paren(src)) {
-      var xm: GasMem = x86_gas_parse_mem(src);
+      let xm: GasMem = x86_gas_parse_mem(src);
       if (!x86_gas_mem_ok(xm)) {
         return x86_gas_bad(a, "movq " + src + ", " + dst);
       }
@@ -2943,7 +2943,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
       a = X86Asm { ...a, code: a.code.append(110) };
       return x86_gas_membytes(a, x86_gas_xmm(dst), xm, 0);
     }
-    var gs: i32 = x86_gas_reg(src);
+    let gs: i32 = x86_gas_reg(src);
     if (gs < 0) {
       return x86_gas_bad(a, "movq " + src + ", " + dst);
     }
@@ -2952,7 +2952,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
   }
   if (src_xmm && !dst_xmm) {  // movq %xmm, r/m — 66 REX.W 0F 7E /r
     if (x86_gas_has_paren(dst)) {
-      var xm2: GasMem = x86_gas_parse_mem(dst);
+      let xm2: GasMem = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(xm2)) {
         return x86_gas_bad(a, "movq " + src + ", " + dst);
       }
@@ -2962,7 +2962,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
       a = X86Asm { ...a, code: a.code.append(126) };
       return x86_gas_membytes(a, x86_gas_xmm(src), xm2, 0);
     }
-    var gd: i32 = x86_gas_reg(dst);
+    let gd: i32 = x86_gas_reg(dst);
     if (gd < 0) {
       return x86_gas_bad(a, "movq " + src + ", " + dst);
     }
@@ -2976,10 +2976,10 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
 // (the operand separator), or -1. A comma inside `(%base,%index,scale)`
 // must not split the operands, so this skips parenthesised commas.
 function x86_gas_top_comma(s: string): i32 {
-  var depth: i32 = 0;
-  var i: i32 = 0;
+  let depth: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c: u8 = s[i];
+    let c: u8 = s[i];
     if (c == b'(') {
       depth = depth + 1;
     } else {
@@ -3556,11 +3556,11 @@ function x86_gas_sse38_op(mnem: string): i32 {
 // operand encodes a LOAD from whatever base the parse falls back to, which is
 // a valid instruction reading the wrong place (#8083).
 function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: string): X86Asm {
-  var w: i32 = 0;
+  let w: i32 = 0;
   if (size == 64) {
     w = 1;
   }
-  var d: i32 = x86_gas_reg_w(dst, size);
+  let d: i32 = x86_gas_reg_w(dst, size);
   if (d < 0) {
     return x86_gas_bad(a, "movext " + src + ", " + dst);
   }
@@ -3570,7 +3570,7 @@ function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: str
     a = X86Asm { ...a, code: x86_osz(a.code, 16) };
   }
   if (x86_gas_has_paren(src)) {
-    var m: GasMem = x86_gas_parse_mem(src);
+    let m: GasMem = x86_gas_parse_mem(src);
     if (m.no_base) {
       return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) };
     }
@@ -3580,7 +3580,7 @@ function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: str
     a = X86Asm { ...a, code: x86_movext_mem(a.code, op, w, d, m.base, m.has_index, m.index, m.scale, m.disp) };
     return a;
   }
-  var sr: i32 = x86_gas_reg8(src);
+  let sr: i32 = x86_gas_reg8(src);
   if (op == 191 || op == 183) {
     sr = x86_gas_reg16(src);
   }
@@ -3624,15 +3624,15 @@ function x86_gas_mem_ok(m: GasMem): boolean {
 // operand. `force8` marks an 8-bit REGISTER in the reg field (spl..dil
 // force a REX).
 function x86_gas_mem_rex(own buf: i32[], size: i32, reg: i32, m: GasMem, force8: boolean): i32[] {
-  var ix: i32 = 0;
-  var bs: i32 = 0;
+  let ix: i32 = 0;
+  let bs: i32 = 0;
   if (!m.is_rip) {
     if (m.has_index) {
       ix = m.index;
     }
     bs = m.base;
   }
-  var rex: i32 = x86_rex(x86_rex_w_of(size), reg, ix, bs);
+  let rex: i32 = x86_rex(x86_rex_w_of(size), reg, ix, bs);
   if (rex != 64 || force8) {
     buf = buf.append(rex);
   }
@@ -3652,7 +3652,7 @@ function x86_gas_membytes(own a: X86Asm, reg: i32, m: GasMem, tail: i32): X86Asm
     // a whole-.text copy per append through the leaked reference.
     a = X86Asm { ...a, code: a.code.append(x86_modrm(0, reg, 5)) };
     a = X86Asm { ...a, code: x86_le32(a.code, 0) };
-    var patch_off: i32 = a.code.len() - 4;
+    let patch_off: i32 = a.code.len() - 4;
     if (tail > 0) {
       a = x86_queue_fixup(a, patch_off, 4, m.label);
       a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
@@ -3683,8 +3683,8 @@ function x86_gas_mem_op(own a: X86Asm, size: i32, op0f: boolean, op: i32, reg: i
 // by size rather than folded in.
 function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst: string): X86Asm {
   if (src.len() > 0 && src[0] == b'$') {
-    var imm: i32 = x86_gas_atoi(src);
-    var tail: i32 = 4;
+    let imm: i32 = x86_gas_atoi(src);
+    let tail: i32 = 4;
     if (size == 8) {
       tail = 1;
     }
@@ -3692,7 +3692,7 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
       tail = 2;
     }
     if (x86_gas_has_paren(dst)) {
-      var mi: GasMem = x86_gas_parse_mem(dst);
+      let mi: GasMem = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi)) {
         return x86_gas_bad(a, mnem + " " + src + ", " + dst);
       }
@@ -3709,7 +3709,7 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
       }
       return X86Asm { ...a, code: x86_imm_wide(a.code, size, imm) };
     }
-    var rd: i32 = x86_gas_reg_w(dst, size);
+    let rd: i32 = x86_gas_reg_w(dst, size);
     if (rd < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -3718,7 +3718,7 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
       // zero-extending B8+r id — `movq $-1, %rax` is -1, not
       // 4294967295. An immediate too wide for a signed 32-bit field
       // takes the 10-byte movabsq.
-      var iv: i64 = x86_gas_atoi64(src);
+      let iv: i64 = x86_gas_atoi64(src);
       if (iv >= (0 - 2147483648) as i64 && iv <= 2147483647 as i64) {
         return X86Asm { ...a, code: x86_mov_r64_imm32(a.code, rd, iv as i32) };
       }
@@ -3733,11 +3733,11 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
     a = X86Asm { ...a, code: a.code.append(184 + (rd & 7)) };  // B8+rd
     return X86Asm { ...a, code: x86_imm_wide(a.code, size, imm) };
   }
-  var src_mem: boolean = x86_gas_has_paren(src);
-  var dst_mem: boolean = x86_gas_has_paren(dst);
+  let src_mem: boolean = x86_gas_has_paren(src);
+  let dst_mem: boolean = x86_gas_has_paren(dst);
   if (src_mem && !dst_mem) {  // load: 8A/8B, ModRM.reg = destination
-    var ml: GasMem = x86_gas_parse_mem(src);
-    var rl: i32 = x86_gas_reg_w(dst, size);
+    let ml: GasMem = x86_gas_parse_mem(src);
+    let rl: i32 = x86_gas_reg_w(dst, size);
     if (!x86_gas_mem_ok(ml) || rl < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -3753,8 +3753,8 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
     return x86_gas_mem_op(a, size, false, x86_opsel(138, size), rl, ml, x86_rex8_force(size, rl), 0);
   }
   if (dst_mem && !src_mem) {  // store: 88/89, ModRM.reg = source
-    var ms: GasMem = x86_gas_parse_mem(dst);
-    var rs: i32 = x86_gas_reg_w(src, size);
+    let ms: GasMem = x86_gas_parse_mem(dst);
+    let rs: i32 = x86_gas_reg_w(src, size);
     if (!x86_gas_mem_ok(ms) || rs < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -3769,8 +3769,8 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
     }
     return x86_gas_mem_op(a, size, false, x86_opsel(136, size), rs, ms, x86_rex8_force(size, rs), 0);
   }
-  var r1: i32 = x86_gas_reg_w(src, size);
-  var r2: i32 = x86_gas_reg_w(dst, size);
+  let r1: i32 = x86_gas_reg_w(src, size);
+  let r2: i32 = x86_gas_reg_w(dst, size);
   // mem -> mem has no x86 encoding, so a src_mem here is a misparse:
   // record rather than drop (SH-005).
   if (r1 < 0 || r2 < 0 || src_mem) {
@@ -3782,9 +3782,9 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
 // x86_gas_split_ops splits an operand list on top-level commas (commas
 // inside `(%b,%i,s)` do not separate operands), trimming each piece.
 function x86_gas_split_ops(rest: string): string[] {
-  var out: string[] = [];
-  var s: string = rest;
-  var c: i32 = x86_gas_top_comma(s);
+  let out: string[] = [];
+  let s: string = rest;
+  let c: i32 = x86_gas_top_comma(s);
   while (c >= 0) {
     out = out.append(x86_gas_trim(slice_unchecked(s, 0, c)));
     s = slice_unchecked(s, c + 1, s.len()) + "";
@@ -3930,7 +3930,7 @@ function x86_gas_bt_idx(mnem: string): i32 {
 // x86_gas_lockable: the base mnemonics the F0 lock prefix may precede —
 // anything else is #UD at runtime, so it is refused at assembly.
 function x86_gas_lockable(mnem: string): boolean {
-  var names: string[] = [
+  let names: string[] = [
     "adc",
     "add",
     "and",
@@ -3949,7 +3949,7 @@ function x86_gas_lockable(mnem: string): boolean {
     "xchg",
     "xor",
   ];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == mnem) {
       return true;
@@ -4075,20 +4075,20 @@ function x86_gas_cc_code(cond: string): i32 {
 // and are stored inverted; vvvv is the second source register, inverted
 // too, 0 when unused.
 function x86_vex(own buf: i32[], rex_r: boolean, rex_x: boolean, rex_b: boolean, mmmmm: i32, w: boolean, vvvv: i32, l: boolean, pp: i32): i32[] {
-  var vinv: i32 = (15 - (vvvv & 15)) * 8;
-  var lbit: i32 = 0;
+  let vinv: i32 = (15 - (vvvv & 15)) * 8;
+  let lbit: i32 = 0;
   if (l) {
     lbit = 4;
   }
   if (mmmmm == 1 && !w && !rex_x && !rex_b) {
-    var b2: i32 = pp & 3 | lbit | vinv;
+    let b2: i32 = pp & 3 | lbit | vinv;
     if (!rex_r) {
       b2 = b2 | 128;
     }
     buf = buf.append(197);
     return buf.append(b2);
   }
-  var c2: i32 = mmmmm & 31;
+  let c2: i32 = mmmmm & 31;
   if (!rex_r) {
     c2 = c2 | 128;
   }
@@ -4098,7 +4098,7 @@ function x86_vex(own buf: i32[], rex_r: boolean, rex_x: boolean, rex_b: boolean,
   if (!rex_b) {
     c2 = c2 | 32;
   }
-  var c3: i32 = pp & 3 | lbit | vinv;
+  let c3: i32 = pp & 3 | lbit | vinv;
   if (w) {
     c3 = c3 | 128;
   }
@@ -4112,12 +4112,12 @@ function x86_vex(own buf: i32[], rex_r: boolean, rex_x: boolean, rex_b: boolean,
 // opcode, then the ModRM (+SIB+disp).
 function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: i32, op: i32, reg: i32, rm: string): X86Asm {
   if (x86_gas_has_paren(rm)) {
-    var m: GasMem = x86_gas_parse_mem(rm);
+    let m: GasMem = x86_gas_parse_mem(rm);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + rm);
     }
-    var ix: boolean = false;
-    var bs: boolean = false;
+    let ix: boolean = false;
+    let bs: boolean = false;
     if (!m.is_rip) {
       if (m.has_index) {
         ix = m.index >= 8;
@@ -4128,7 +4128,7 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
     a = X86Asm { ...a, code: a.code.append(op) };
     return x86_gas_membytes(a, reg, m, 0);
   }
-  var rr: i32 = x86_gas_ymm(rm);
+  let rr: i32 = x86_gas_ymm(rm);
   if (rr < 0) {
     return x86_gas_bad(a, mnem + " " + rm);
   }
@@ -4144,15 +4144,15 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
 // destination are not forms the kernels use, so they are refused.
 function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
   if (mnem == "vmovdqu") {
-    var yd: i32 = x86_gas_ymm(dst);
+    let yd: i32 = x86_gas_ymm(dst);
     if (yd < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     return x86_gas_vex_rm(a, mnem, 1, 2, 0, 111, yd, src);
   }
   if (mnem == "vpbroadcastb") {
-    var bd: i32 = x86_gas_ymm(dst);
-    var bx: i32 = x86_gas_xmm(src);
+    let bd: i32 = x86_gas_ymm(dst);
+    let bx: i32 = x86_gas_xmm(src);
     if (bd < 0 || bx < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -4160,8 +4160,8 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
     a = X86Asm { ...a, code: a.code.append(120) };
     return X86Asm { ...a, code: a.code.append(x86_modrm(3, bd, bx)) };
   }
-  var rd: i32 = x86_gas_reg32(dst);
-  var ys: i32 = x86_gas_ymm(src);
+  let rd: i32 = x86_gas_reg32(dst);
+  let ys: i32 = x86_gas_ymm(src);
   if (rd < 0 || ys < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -4177,12 +4177,12 @@ function x86_gas_is_vex_two(mnem: string): boolean {
 // x86_gas_vpcmpeqb: the three-operand `vpcmpeqb src2, %ymm_src1, %ymm_dst`
 // (VEX.256.66.0F 74 /r), src2 a ymm or memory; src1 rides in VEX.vvvv.
 function x86_gas_vpcmpeqb(own a: X86Asm, mnem: string, rest: string): X86Asm {
-  var ops: string[] = x86_gas_split_ops(rest);
+  let ops: string[] = x86_gas_split_ops(rest);
   if (ops.len() != 3) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  var y1: i32 = x86_gas_ymm(ops[1]);
-  var yd: i32 = x86_gas_ymm(ops[2]);
+  let y1: i32 = x86_gas_ymm(ops[1]);
+  let yd: i32 = x86_gas_ymm(ops[2]);
   if (y1 < 0 || yd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -4444,7 +4444,7 @@ function x86_gas_rep_ok(mnem: string): boolean {
 
 // x86_gas_emit_packed appends a packed fixed-byte sequence.
 function x86_gas_emit_packed(own a: X86Asm, packed: i32): X86Asm {
-  var n: i32 = packed / 16777216;
+  let n: i32 = packed / 16777216;
   a = X86Asm { ...a, code: a.code.append(packed & 255) };
   if (n >= 2) {
     a = X86Asm { ...a, code: a.code.append(packed / 256 & 255) };
@@ -4461,55 +4461,55 @@ function x86_gas_emit_packed(own a: X86Asm, packed: i32): X86Asm {
 // reg/reg, memory source, memory destination, and the immediate forms with
 // the 83 short-immediate selection — mirroring the native alu().
 function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, src: string, dst: string): X86Asm {
-  var opbase: i32 = ext * 8;
+  let opbase: i32 = ext * 8;
   if (src.len() > 0 && src[0] == b'$') {
-    var imm: i32 = x86_gas_atoi(src);
+    let imm: i32 = x86_gas_atoi(src);
     if (x86_gas_has_paren(dst)) {
-      var mi: GasMem = x86_gas_parse_mem(dst);
+      let mi: GasMem = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi)) {
         return x86_gas_bad(a, mnem + " " + dst);
       }
       if (size == 8 || x86_imm_fits8(imm)) {
-        var opi: i32 = 131;  // 83 /ext ib
+        let opi: i32 = 131;  // 83 /ext ib
         if (size == 8) {  // 80 /ext ib
           opi = 128;
         }
         a = x86_gas_mem_op(a, size, false, opi, ext, mi, false, 1);
         return X86Asm { ...a, code: a.code.append(imm & 255) };
       }
-      var ib: i32 = 4;
+      let ib: i32 = 4;
       if (size == 16) {
         ib = 2;
       }
       a = x86_gas_mem_op(a, size, false, 129, ext, mi, false, ib);
       return X86Asm { ...a, code: x86_imm_wide(a.code, size, imm) };
     }
-    var rd: i32 = x86_gas_reg_w(dst, size);
+    let rd: i32 = x86_gas_reg_w(dst, size);
     if (rd < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     return X86Asm { ...a, code: x86_grp1_imm_r(a.code, size, ext, rd, imm) };
   }
-  var src_mem: boolean = x86_gas_has_paren(src);
-  var dst_mem: boolean = x86_gas_has_paren(dst);
+  let src_mem: boolean = x86_gas_has_paren(src);
+  let dst_mem: boolean = x86_gas_has_paren(dst);
   if (src_mem && !dst_mem) {  // load form: opbase|2, reg = destination
-    var ml: GasMem = x86_gas_parse_mem(src);
-    var rl: i32 = x86_gas_reg_w(dst, size);
+    let ml: GasMem = x86_gas_parse_mem(src);
+    let rl: i32 = x86_gas_reg_w(dst, size);
     if (!x86_gas_mem_ok(ml) || rl < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     return x86_gas_mem_op(a, size, false, x86_opsel(opbase | 2, size), rl, ml, x86_rex8_force(size, rl), 0);
   }
   if (dst_mem && !src_mem) {  // store form: opbase, reg = source
-    var ms: GasMem = x86_gas_parse_mem(dst);
-    var rs: i32 = x86_gas_reg_w(src, size);
+    let ms: GasMem = x86_gas_parse_mem(dst);
+    let rs: i32 = x86_gas_reg_w(src, size);
     if (!x86_gas_mem_ok(ms) || rs < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     return x86_gas_mem_op(a, size, false, x86_opsel(opbase, size), rs, ms, x86_rex8_force(size, rs), 0);
   }
-  var r1: i32 = x86_gas_reg_w(src, size);
-  var r2: i32 = x86_gas_reg_w(dst, size);
+  let r1: i32 = x86_gas_reg_w(src, size);
+  let r2: i32 = x86_gas_reg_w(dst, size);
   if (r1 < 0 || r2 < 0 || src_mem) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -4520,13 +4520,13 @@ function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, sr
 // operand on either side, and the F6/F7 /0 immediate forms.
 function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string): X86Asm {
   if (src.len() > 0 && src[0] == b'$') {
-    var imm: i32 = x86_gas_atoi(src);
+    let imm: i32 = x86_gas_atoi(src);
     if (x86_gas_has_paren(dst)) {
-      var mi: GasMem = x86_gas_parse_mem(dst);
+      let mi: GasMem = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi)) {
         return x86_gas_bad(a, "test " + dst);
       }
-      var ib: i32 = 4;
+      let ib: i32 = 4;
       if (size == 8) {
         ib = 1;
       }
@@ -4539,30 +4539,30 @@ function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string)
       }
       return X86Asm { ...a, code: x86_imm_wide(a.code, size, imm) };
     }
-    var rd: i32 = x86_gas_reg_w(dst, size);
+    let rd: i32 = x86_gas_reg_w(dst, size);
     if (rd < 0) {
       return x86_gas_bad(a, "test " + src + ", " + dst);
     }
     return X86Asm { ...a, code: x86_test_imm_r(a.code, size, rd, imm) };
   }
-  var src_mem: boolean = x86_gas_has_paren(src);
-  var dst_mem: boolean = x86_gas_has_paren(dst);
+  let src_mem: boolean = x86_gas_has_paren(src);
+  let dst_mem: boolean = x86_gas_has_paren(dst);
   if (src_mem != dst_mem) {  // one memory side: 84/85 with reg = the register
-    var mop: string = src;
-    var rop: string = dst;
+    let mop: string = src;
+    let rop: string = dst;
     if (dst_mem) {
       mop = dst;
       rop = src;
     }
-    var m2: GasMem = x86_gas_parse_mem(mop);
-    var rr: i32 = x86_gas_reg_w(rop, size);
+    let m2: GasMem = x86_gas_parse_mem(mop);
+    let rr: i32 = x86_gas_reg_w(rop, size);
     if (!x86_gas_mem_ok(m2) || rr < 0) {
       return x86_gas_bad(a, "test " + src + ", " + dst);
     }
     return x86_gas_mem_op(a, size, false, x86_opsel(132, size), rr, m2, x86_rex8_force(size, rr), 0);
   }
-  var r1: i32 = x86_gas_reg_w(src, size);
-  var r2: i32 = x86_gas_reg_w(dst, size);
+  let r1: i32 = x86_gas_reg_w(src, size);
+  let r2: i32 = x86_gas_reg_w(dst, size);
   if (r1 < 0 || r2 < 0 || src_mem) {
     return x86_gas_bad(a, "test " + src + ", " + dst);
   }
@@ -4573,13 +4573,13 @@ function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string)
 // one-operand groups, register or sized memory (rip included).
 function x86_gas_unary_family(own a: X86Asm, mnem: string, opbase: i32, ext: i32, size: i32, op: string): X86Asm {
   if (x86_gas_has_paren(op)) {
-    var m: GasMem = x86_gas_parse_mem(op);
+    let m: GasMem = x86_gas_parse_mem(op);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + op);
     }
     return x86_gas_mem_op(a, size, false, x86_opsel(opbase, size), ext, m, false, 0);
   }
-  var r: i32 = x86_gas_reg_w(op, size);
+  let r: i32 = x86_gas_reg_w(op, size);
   if (r < 0) {
     return x86_gas_bad(a, mnem + " " + op);
   }
@@ -4590,21 +4590,21 @@ function x86_gas_unary_family(own a: X86Asm, mnem: string, opbase: i32, ext: i32
 // (D0/D1, the form GNU as selects for a count of one), or $imm8 (C0/C1) —
 // on a register or sized memory destination.
 function x86_gas_shift_family(own a: X86Asm, mnem: string, ext: i32, size: i32, src: string, dst: string): X86Asm {
-  var by_cl: boolean = src == "%cl";
+  let by_cl: boolean = src == "%cl";
   if (!by_cl && (src.len() == 0 || src[0] != b'$')) {
     return x86_gas_bad(a, mnem + " " + src);
   }
-  var imm: i32 = 0;
+  let imm: i32 = 0;
   if (!by_cl) {
     imm = x86_gas_atoi(src);
   }
   if (x86_gas_has_paren(dst)) {
-    var m: GasMem = x86_gas_parse_mem(dst);
+    let m: GasMem = x86_gas_parse_mem(dst);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + dst);
     }
-    var op: i32 = x86_opsel(210, size);  // D2/D3 %cl
-    var tail: i32 = 0;
+    let op: i32 = x86_opsel(210, size);  // D2/D3 %cl
+    let tail: i32 = 0;
     if (!by_cl) {
       if (imm == 1) {
         op = x86_opsel(208, size);
@@ -4619,7 +4619,7 @@ function x86_gas_shift_family(own a: X86Asm, mnem: string, ext: i32, size: i32, 
     }
     return a;
   }
-  var r: i32 = x86_gas_reg_w(dst, size);
+  let r: i32 = x86_gas_reg_w(dst, size);
   if (r < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -4633,30 +4633,30 @@ function x86_gas_shift_family(own a: X86Asm, mnem: string, ext: i32, size: i32, 
 // double-precision shifts: `$imm|%cl, %src, r/m-dst`. ModRM.reg is the
 // SOURCE, the reverse of the usual direction. No 8-bit form.
 function x86_gas_shld_family(own a: X86Asm, mnem: string, opimm: i32, size: i32, rest: string): X86Asm {
-  var ops: string[] = x86_gas_split_ops(rest);
+  let ops: string[] = x86_gas_split_ops(rest);
   if (ops.len() != 3 || size == 8) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  var rs: i32 = x86_gas_reg_w(ops[1], size);
+  let rs: i32 = x86_gas_reg_w(ops[1], size);
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  var by_cl: boolean = ops[0] == "%cl";
+  let by_cl: boolean = ops[0] == "%cl";
   if (!by_cl && (ops[0].len() == 0 || ops[0][0] != b'$')) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  var op: i32 = opimm;
+  let op: i32 = opimm;
   if (by_cl) {
     op = opimm + 1;
   }
-  var imm: i32 = 0;
-  var tail: i32 = 0;
+  let imm: i32 = 0;
+  let tail: i32 = 0;
   if (!by_cl) {
     imm = x86_gas_atoi(ops[0]);
     tail = 1;
   }
   if (x86_gas_has_paren(ops[2])) {
-    var m: GasMem = x86_gas_parse_mem(ops[2]);
+    let m: GasMem = x86_gas_parse_mem(ops[2]);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + ops[2]);
     }
@@ -4666,7 +4666,7 @@ function x86_gas_shld_family(own a: X86Asm, mnem: string, opimm: i32, size: i32,
     }
     return a;
   }
-  var rd: i32 = x86_gas_reg_w(ops[2], size);
+  let rd: i32 = x86_gas_reg_w(ops[2], size);
   if (rd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -4685,35 +4685,35 @@ function x86_gas_bt_family(own a: X86Asm, mnem: string, idx: i32, size: i32, src
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   if (src.len() > 0 && src[0] == b'$') {
-    var imm: i32 = x86_gas_atoi(src);
+    let imm: i32 = x86_gas_atoi(src);
     if (x86_gas_has_paren(dst)) {
-      var mi: GasMem = x86_gas_parse_mem(dst);
+      let mi: GasMem = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi)) {
         return x86_gas_bad(a, mnem + " " + dst);
       }
       a = x86_gas_mem_op(a, size, true, 186, 4 + idx, mi, false, 1);
       return X86Asm { ...a, code: a.code.append(imm & 255) };
     }
-    var rd: i32 = x86_gas_reg_w(dst, size);
+    let rd: i32 = x86_gas_reg_w(dst, size);
     if (rd < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     a = X86Asm { ...a, code: x86_op0f_rr(a.code, size, 186, 4 + idx, rd) };
     return X86Asm { ...a, code: a.code.append(imm & 255) };
   }
-  var rs: i32 = x86_gas_reg_w(src, size);
+  let rs: i32 = x86_gas_reg_w(src, size);
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  var regop: i32 = 163 + idx * 8;
+  let regop: i32 = 163 + idx * 8;
   if (x86_gas_has_paren(dst)) {
-    var m: GasMem = x86_gas_parse_mem(dst);
+    let m: GasMem = x86_gas_parse_mem(dst);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + dst);
     }
     return x86_gas_mem_op(a, size, true, regop, rs, m, false, 0);
   }
-  var rd2: i32 = x86_gas_reg_w(dst, size);
+  let rd2: i32 = x86_gas_reg_w(dst, size);
   if (rd2 < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -4723,19 +4723,19 @@ function x86_gas_bt_family(own a: X86Asm, mnem: string, idx: i32, size: i32, src
 // x86_gas_rmw_family: xadd (0F C0/C1) and cmpxchg (0F B0/B1) — reg source
 // in ModRM.reg, register or memory destination.
 function x86_gas_rmw_family(own a: X86Asm, mnem: string, opbase: i32, size: i32, src: string, dst: string): X86Asm {
-  var rs: i32 = x86_gas_reg_w(src, size);
+  let rs: i32 = x86_gas_reg_w(src, size);
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  var op: i32 = x86_opsel(opbase, size);
+  let op: i32 = x86_opsel(opbase, size);
   if (x86_gas_has_paren(dst)) {
-    var m: GasMem = x86_gas_parse_mem(dst);
+    let m: GasMem = x86_gas_parse_mem(dst);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + dst);
     }
     return x86_gas_mem_op(a, size, true, op, rs, m, x86_rex8_force(size, rs), 0);
   }
-  var rd: i32 = x86_gas_reg_w(dst, size);
+  let rd: i32 = x86_gas_reg_w(dst, size);
   if (rd < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -4745,24 +4745,24 @@ function x86_gas_rmw_family(own a: X86Asm, mnem: string, opbase: i32, size: i32,
 // x86_gas_xchg_family: xchg (86/87) — reg/reg or a memory operand on
 // either side (the memory form is implicitly locked by the CPU).
 function x86_gas_xchg_family(own a: X86Asm, mnem: string, size: i32, src: string, dst: string): X86Asm {
-  var src_mem: boolean = x86_gas_has_paren(src);
-  var dst_mem: boolean = x86_gas_has_paren(dst);
+  let src_mem: boolean = x86_gas_has_paren(src);
+  let dst_mem: boolean = x86_gas_has_paren(dst);
   if (src_mem != dst_mem) {
-    var mop: string = src;
-    var rop: string = dst;
+    let mop: string = src;
+    let rop: string = dst;
     if (dst_mem) {
       mop = dst;
       rop = src;
     }
-    var m: GasMem = x86_gas_parse_mem(mop);
-    var rr: i32 = x86_gas_reg_w(rop, size);
+    let m: GasMem = x86_gas_parse_mem(mop);
+    let rr: i32 = x86_gas_reg_w(rop, size);
     if (!x86_gas_mem_ok(m) || rr < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     return x86_gas_mem_op(a, size, false, x86_opsel(134, size), rr, m, x86_rex8_force(size, rr), 0);
   }
-  var r1: i32 = x86_gas_reg_w(src, size);
-  var r2: i32 = x86_gas_reg_w(dst, size);
+  let r1: i32 = x86_gas_reg_w(src, size);
+  let r2: i32 = x86_gas_reg_w(dst, size);
   if (r1 < 0 || r2 < 0 || src_mem) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -4773,9 +4773,9 @@ function x86_gas_xchg_family(own a: X86Asm, mnem: string, size: i32, src: string
 // widths. A bare condition spelling (`cmovne`) takes its width from the
 // destination register; a trailing size suffix (`cmovneq`) is explicit.
 function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
-  var cond: string = slice_unchecked(mnem, 4, mnem.len()) + "";
-  var size: i32 = 0;
-  var cc: i32 = x86_gas_cc_code(cond);
+  let cond: string = slice_unchecked(mnem, 4, mnem.len()) + "";
+  let size: i32 = 0;
+  let cc: i32 = x86_gas_cc_code(cond);
   if (cc >= 0) {
     size = 64;
     if (x86_gas_reg32(dst) >= 0) {
@@ -4794,18 +4794,18 @@ function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: stri
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
   }
-  var rd: i32 = x86_gas_reg_w(dst, size);
+  let rd: i32 = x86_gas_reg_w(dst, size);
   if (rd < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   if (x86_gas_has_paren(src)) {
-    var m: GasMem = x86_gas_parse_mem(src);
+    let m: GasMem = x86_gas_parse_mem(src);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + src);
     }
     return x86_gas_mem_op(a, size, true, 64 + cc, rd, m, false, 0);
   }
-  var rs: i32 = x86_gas_reg_w(src, size);
+  let rs: i32 = x86_gas_reg_w(src, size);
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -4816,7 +4816,7 @@ function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: stri
 // operands (0F AF /r, reg = dst, register or memory source), or 3 operands
 // (`$imm, %src, %dst` — 6B /r ib or 69 /r iw/id). No 8-bit two/three-op form.
 function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: string): X86Asm {
-  var ops: string[] = x86_gas_split_ops(rest);
+  let ops: string[] = x86_gas_split_ops(rest);
   if (ops.len() == 1) {
     return x86_gas_unary_family(a, mnem, 246, 5, size, ops[0]);
   }
@@ -4824,18 +4824,18 @@ function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: strin
     return x86_gas_bad(a, mnem + " " + rest);
   }
   if (ops.len() == 2) {
-    var rd: i32 = x86_gas_reg_w(ops[1], size);
+    let rd: i32 = x86_gas_reg_w(ops[1], size);
     if (rd < 0) {
       return x86_gas_bad(a, mnem + " " + rest);
     }
     if (x86_gas_has_paren(ops[0])) {
-      var m: GasMem = x86_gas_parse_mem(ops[0]);
+      let m: GasMem = x86_gas_parse_mem(ops[0]);
       if (!x86_gas_mem_ok(m)) {
         return x86_gas_bad(a, mnem + " " + ops[0]);
       }
       return x86_gas_mem_op(a, size, true, 175, rd, m, false, 0);
     }
-    var rs: i32 = x86_gas_reg_w(ops[0], size);
+    let rs: i32 = x86_gas_reg_w(ops[0], size);
     if (rs < 0) {
       return x86_gas_bad(a, mnem + " " + rest);
     }
@@ -4844,9 +4844,9 @@ function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: strin
   if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  var imm: i32 = x86_gas_atoi(ops[0]);
-  var rs3: i32 = x86_gas_reg_w(ops[1], size);
-  var rd3: i32 = x86_gas_reg_w(ops[2], size);
+  let imm: i32 = x86_gas_atoi(ops[0]);
+  let rs3: i32 = x86_gas_reg_w(ops[1], size);
+  let rd3: i32 = x86_gas_reg_w(ops[2], size);
   if (rs3 < 0 || rd3 < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -4868,11 +4868,11 @@ function x86_gas_bswap(own a: X86Asm, mnem: string, size: i32, op: string): X86A
   if (size != 32 && size != 64) {
     return x86_gas_bad(a, mnem + " " + op);
   }
-  var r: i32 = x86_gas_reg_w(op, size);
+  let r: i32 = x86_gas_reg_w(op, size);
   if (r < 0) {
     return x86_gas_bad(a, mnem + " " + op);
   }
-  var rex: i32 = x86_rex(x86_rex_w_of(size), 0, 0, r);
+  let rex: i32 = x86_rex(x86_rex_w_of(size), 0, 0, r);
   if (rex != 64) {
     a = X86Asm { ...a, code: a.code.append(rex) };
   }
@@ -4885,8 +4885,8 @@ function x86_gas_bswap(own a: X86Asm, mnem: string, size: i32, op: string): X86A
 // the mandatory F2), REX.W follows the destination. A 64-bit destination
 // pairs only with byte and qword sources; a 32-bit one with b/w/l.
 function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string): X86Asm {
-  var dsize: i32 = 32;
-  var rd: i32 = x86_gas_reg32(dst);
+  let dsize: i32 = 32;
+  let rd: i32 = x86_gas_reg32(dst);
   if (rd < 0) {
     rd = x86_gas_reg64(dst);
     dsize = 64;
@@ -4900,7 +4900,7 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
   if (dsize == 32 && size == 64) {
     return x86_gas_bad(a, "crc32 " + src + ", " + dst);
   }
-  var op: i32 = 241;
+  let op: i32 = 241;
   if (size == 8) {
     op = 240;
   }
@@ -4909,7 +4909,7 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
   }
   a = X86Asm { ...a, code: a.code.append(242) };
   if (x86_gas_has_paren(src)) {
-    var m: GasMem = x86_gas_parse_mem(src);
+    let m: GasMem = x86_gas_parse_mem(src);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, "crc32 " + src);
     }
@@ -4919,11 +4919,11 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
     a = X86Asm { ...a, code: a.code.append(op) };
     return x86_gas_membytes(a, rd, m, 0);
   }
-  var rs: i32 = x86_gas_reg_w(src, size);
+  let rs: i32 = x86_gas_reg_w(src, size);
   if (rs < 0) {
     return x86_gas_bad(a, "crc32 " + src + ", " + dst);
   }
-  var rex: i32 = x86_rex(x86_rex_w_of(dsize), rd, 0, rs);
+  let rex: i32 = x86_rex(x86_rex_w_of(dsize), rd, 0, rs);
   if (rex != 64 || x86_rex8_force(size, rs)) {
     a = X86Asm { ...a, code: a.code.append(rex) };
   }
@@ -5272,7 +5272,7 @@ function x86_gas_sse_int_op(mnem: string): i32 {
 
 // x86_gas_sse_op consults both halves of the SSE table.
 function x86_gas_sse_op(mnem: string): i32 {
-  var v: i32 = x86_gas_sse_fp_op(mnem);
+  let v: i32 = x86_gas_sse_fp_op(mnem);
   if (v >= 0) {
     return v;
   }
@@ -5294,18 +5294,18 @@ function x86_gas_sse_mem(own a: X86Asm, pfx: i32, op: i32, reg: i32, m: GasMem, 
 // x86_gas_sse_table: a two-byte-opcode SSE table op, `src, %xmm` with an
 // xmm or memory (rip included) source.
 function x86_gas_sse_table(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: string, dst: string): X86Asm {
-  var xd: i32 = x86_gas_xmm(dst);
+  let xd: i32 = x86_gas_xmm(dst);
   if (xd < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   if (x86_gas_has_paren(src)) {
-    var m: GasMem = x86_gas_parse_mem(src);
+    let m: GasMem = x86_gas_parse_mem(src);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + src);
     }
     return x86_gas_sse_mem(a, pfx, op, xd, m, 0);
   }
-  var xs: i32 = x86_gas_xmm(src);
+  let xs: i32 = x86_gas_xmm(src);
   if (xs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -5317,10 +5317,10 @@ function x86_gas_sse_table(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: 
 // missing before this port — the operands written backwards through 6F
 // would have READ from the store address instead.
 function x86_gas_movdq(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
-  var pfx: i32 = x86_gas_movdq_pfx(mnem);
+  let pfx: i32 = x86_gas_movdq_pfx(mnem);
   if (x86_gas_has_paren(dst)) {
-    var m: GasMem = x86_gas_parse_mem(dst);
-    var xs: i32 = x86_gas_xmm(src);
+    let m: GasMem = x86_gas_parse_mem(dst);
+    let xs: i32 = x86_gas_xmm(src);
     if (!x86_gas_mem_ok(m) || xs < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -5335,8 +5335,8 @@ function x86_gas_movdq(own a: X86Asm, mnem: string, src: string, dst: string): X
 // arrives from .rodata.
 function x86_gas_sse_mov10(own a: X86Asm, mnem: string, pfx: i32, src: string, dst: string): X86Asm {
   if (x86_gas_has_paren(dst)) {
-    var m: GasMem = x86_gas_parse_mem(dst);
-    var xs: i32 = x86_gas_xmm(src);
+    let m: GasMem = x86_gas_parse_mem(dst);
+    let xs: i32 = x86_gas_xmm(src);
     if (!x86_gas_mem_ok(m) || xs < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -5348,11 +5348,11 @@ function x86_gas_sse_mov10(own a: X86Asm, mnem: string, pfx: i32, src: string, d
 // x86_gas_movmsk: pmovmskb (66 0F D7), movmskps (0F 50), movmskpd
 // (66 0F 50) — sign-bit gathers into a 32- or 64-bit GPR destination.
 function x86_gas_movmsk(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: string, dst: string): X86Asm {
-  var rd: i32 = x86_gas_reg32(dst);
+  let rd: i32 = x86_gas_reg32(dst);
   if (rd < 0) {
     rd = x86_gas_reg64(dst);
   }
-  var xs: i32 = x86_gas_xmm(src);
+  let xs: i32 = x86_gas_xmm(src);
   if (rd < 0 || xs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -5362,12 +5362,12 @@ function x86_gas_movmsk(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: str
 // x86_gas_vshift_imm: `psll/psrl/psra $imm8, %xmm` — 66 [REX.B] 0F 71/72/73
 // /ext ib, the shifted register in ModRM.rm.
 function x86_gas_vshift_imm(own a: X86Asm, mnem: string, packed: i32, src: string, dst: string): X86Asm {
-  var xr: i32 = x86_gas_xmm(dst);
+  let xr: i32 = x86_gas_xmm(dst);
   if (xr < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   a = X86Asm { ...a, code: a.code.append(102) };
-  var rex: i32 = x86_rex(0, 0, 0, xr);
+  let rex: i32 = x86_rex(0, 0, 0, xr);
   if (rex != 64) {
     a = X86Asm { ...a, code: a.code.append(rex) };
   }
@@ -5379,13 +5379,13 @@ function x86_gas_vshift_imm(own a: X86Asm, mnem: string, packed: i32, src: strin
 
 // x86_gas_sse38: `66 [REX] 0F 38 <op> /r` (xmm, xmm).
 function x86_gas_sse38(own a: X86Asm, mnem: string, op: i32, src: string, dst: string): X86Asm {
-  var xd: i32 = x86_gas_xmm(dst);
-  var xs: i32 = x86_gas_xmm(src);
+  let xd: i32 = x86_gas_xmm(dst);
+  let xs: i32 = x86_gas_xmm(src);
   if (xd < 0 || xs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   a = X86Asm { ...a, code: a.code.append(102) };
-  var rex: i32 = x86_rex(0, xd, 0, xs);
+  let rex: i32 = x86_rex(0, xd, 0, xs);
   if (rex != 64) {
     a = X86Asm { ...a, code: a.code.append(rex) };
   }
@@ -5399,21 +5399,21 @@ function x86_gas_sse38(own a: X86Asm, mnem: string, op: i32, src: string, dst: s
 // 66 0F 3A group (roundsd/roundss/pcmpistri/pcmpestri) and the shuffles
 // (pshufd/shufps/shufpd). The caller guarantees one lookup hits.
 function x86_gas_sse_imm3(own a: X86Asm, mnem: string, rest: string): X86Asm {
-  var ops: string[] = x86_gas_split_ops(rest);
+  let ops: string[] = x86_gas_split_ops(rest);
   if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  var imm: i32 = x86_gas_atoi(ops[0]);
-  var xs: i32 = x86_gas_xmm(ops[1]);
-  var xd: i32 = x86_gas_xmm(ops[2]);
+  let imm: i32 = x86_gas_atoi(ops[0]);
+  let xs: i32 = x86_gas_xmm(ops[1]);
+  let xd: i32 = x86_gas_xmm(ops[2]);
   if (xs < 0 || xd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  var op3a: i32 = x86_gas_imm3a_op(mnem);
+  let op3a: i32 = x86_gas_imm3a_op(mnem);
   if (op3a >= 0) {
     return X86Asm { ...a, code: x86_sse_3a_imm(a.code, 0, op3a, xd, xs, imm) };
   }
-  var sh: i32 = x86_gas_shuf_op(mnem);
+  let sh: i32 = x86_gas_shuf_op(mnem);
   a = X86Asm { ...a, code: x86_sse_any_rr(a.code, sh / 256, sh & 255, xd, xs) };
   return X86Asm { ...a, code: a.code.append(imm & 255) };
 }
@@ -5424,18 +5424,18 @@ function x86_gas_sse_imm3(own a: X86Asm, mnem: string, rest: string): X86Asm {
 // DESTINATION and reg = the xmm source (REX.W selects the q width). A
 // memory destination always takes the 3A form (pextrw's is 3A 15).
 function x86_gas_pextr(own a: X86Asm, mnem: string, rest: string): X86Asm {
-  var ops: string[] = x86_gas_split_ops(rest);
+  let ops: string[] = x86_gas_split_ops(rest);
   if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  var imm: i32 = x86_gas_atoi(ops[0]);
-  var xs: i32 = x86_gas_xmm(ops[1]);
+  let imm: i32 = x86_gas_atoi(ops[0]);
+  let xs: i32 = x86_gas_xmm(ops[1]);
   if (xs < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  var op: i32 = 20;  // pextrb 3A 14
-  var w: i32 = 0;
-  var dsize: i32 = 32;
+  let op: i32 = 20;  // pextrb 3A 14
+  let w: i32 = 0;
+  let dsize: i32 = 32;
   if (mnem == "pextrw") {
     op = 21;
   }
@@ -5448,12 +5448,12 @@ function x86_gas_pextr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     dsize = 64;
   }
   if (x86_gas_has_paren(ops[2])) {
-    var m: GasMem = x86_gas_parse_mem(ops[2]);
+    let m: GasMem = x86_gas_parse_mem(ops[2]);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + ops[2]);
     }
     a = X86Asm { ...a, code: a.code.append(102) };
-    var msz: i32 = 32;
+    let msz: i32 = 32;
     if (w == 1) {
       msz = 64;
     }
@@ -5464,7 +5464,7 @@ function x86_gas_pextr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     a = x86_gas_membytes(a, xs, m, 1);
     return X86Asm { ...a, code: a.code.append(imm & 255) };
   }
-  var rd: i32 = x86_gas_reg_w(ops[2], dsize);
+  let rd: i32 = x86_gas_reg_w(ops[2], dsize);
   if (rd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -5479,18 +5479,18 @@ function x86_gas_pextr(own a: X86Asm, mnem: string, rest: string): X86Asm {
 // pinsrw is the legacy 66 0F C4 /r ib; the others 66 0F 3A 20/22 /r ib
 // (REX.W selects q). ModRM.reg is the xmm destination throughout.
 function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
-  var ops: string[] = x86_gas_split_ops(rest);
+  let ops: string[] = x86_gas_split_ops(rest);
   if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  var imm: i32 = x86_gas_atoi(ops[0]);
-  var xd: i32 = x86_gas_xmm(ops[2]);
+  let imm: i32 = x86_gas_atoi(ops[0]);
+  let xd: i32 = x86_gas_xmm(ops[2]);
   if (xd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  var w: i32 = 0;
-  var ssize: i32 = 32;
-  var op: i32 = 32;  // pinsrb 3A 20
+  let w: i32 = 0;
+  let ssize: i32 = 32;
+  let op: i32 = 32;  // pinsrb 3A 20
   if (mnem == "pinsrd") {
     op = 34;
   }
@@ -5499,14 +5499,14 @@ function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     w = 1;
     ssize = 64;
   }
-  var legacy: boolean = mnem == "pinsrw";
+  let legacy: boolean = mnem == "pinsrw";
   if (x86_gas_has_paren(ops[1])) {
-    var m: GasMem = x86_gas_parse_mem(ops[1]);
+    let m: GasMem = x86_gas_parse_mem(ops[1]);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + ops[1]);
     }
     a = X86Asm { ...a, code: a.code.append(102) };
-    var msz: i32 = 32;
+    let msz: i32 = 32;
     if (w == 1) {
       msz = 64;
     }
@@ -5521,7 +5521,7 @@ function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     a = x86_gas_membytes(a, xd, m, 1);
     return X86Asm { ...a, code: a.code.append(imm & 255) };
   }
-  var rs: i32 = x86_gas_reg_w(ops[1], ssize);
+  let rs: i32 = x86_gas_reg_w(ops[1], ssize);
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -5543,9 +5543,9 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
 // ones x86_gas_classify chose between; each reads its table value from
 // `l.ext` and the operands from the split the classification kept.
 function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
-  var mnem: string = l.mnem;
-  var rest: string = l.rest;
-  var k: i32 = l.kind;
+  let mnem: string = l.mnem;
+  let rest: string = l.rest;
+  let k: i32 = l.kind;
   // The AVX2 forms live outside the generated tables (VEX.128.0F 77 for
   // vzeroupper; the rest below the operand split).
   if (k == GK_VZEROUPPER) {
@@ -5567,11 +5567,11 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   // while ZF is set. repne/repnz repeat while it is clear, which is a
   // different byte and not an alias.
   if (k == GK_REP) {
-    var rpfx: i32 = l.ext;
+    let rpfx: i32 = l.ext;
     if (!x86_gas_rep_ok(rest)) {
       return x86_gas_bad(a, mnem + " " + rest);
     }
-    var sop: i32 = x86_gas_fixed_op(rest);
+    let sop: i32 = x86_gas_fixed_op(rest);
     // An operand-size prefix goes BEFORE the repeat prefix: gas assembles
     // `rep movsw` as 66 F3 A5, not F3 66 A5. A REX stays after it
     // (`rep movsq` is F3 48 A5), so only the 66 moves.
@@ -5586,14 +5586,14 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   // lock prefix: F0, validated against the lockable set — a lock on
   // anything else is #UD at runtime, so it is refused at assembly.
   if (k == GK_LOCK) {
-    var lsp: i32 = x86_str_indexof(rest, " ");
-    var lm: string = rest;
-    var lr: string = "";
+    let lsp: i32 = x86_str_indexof(rest, " ");
+    let lm: string = rest;
+    let lr: string = "";
     if (lsp >= 0) {
       lm = slice_unchecked(rest, 0, lsp) + "";
       lr = x86_gas_trim(slice_unchecked(rest, lsp + 1, rest.len()));
     }
-    var lb: string = lm;
+    let lb: string = lm;
     if (x86_gas_suffix_size(lm) > 0) {
       lb = x86_gas_strip_suffix(lm);
     }
@@ -5614,14 +5614,14 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   // A `*` operand means INDIRECT — through a register or stack slot — not
   // a branch to a label of that name.
   if (k == GK_BRANCH) {
-    var ext: i32 = l.ext;  // jmp FF /4, call FF /2
+    let ext: i32 = l.ext;  // jmp FF /4, call FF /2
     if (rest.len() > 0 && rest[0] == b'*') {
-      var ind: string = x86_gas_trim(slice_unchecked(rest, 1, rest.len()));
+      let ind: string = x86_gas_trim(slice_unchecked(rest, 1, rest.len()));
       if (x86_gas_has_paren(ind)) {
         // `*disp(%base[,%index,scale])` and `*sym(%rip)` — FF /2 //4
         // over a memory operand (a callee pointer in a stack slot or
         // a rip-addressed table). The operand size is fixed 64-bit.
-        var cm: GasMem = x86_gas_parse_mem(ind);
+        let cm: GasMem = x86_gas_parse_mem(ind);
         if (!x86_gas_mem_ok(cm)) {
           return x86_gas_bad(a, mnem + " " + rest);
         }
@@ -5629,7 +5629,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
         a = X86Asm { ...a, code: a.code.append(255) };  // 0xFF
         return x86_gas_membytes(a, ext, cm, 0);
       }
-      var ireg: i32 = x86_gas_reg(ind);
+      let ireg: i32 = x86_gas_reg(ind);
       if (ireg < 0) {
         return x86_gas_bad(a, mnem + " " + rest);
       }
@@ -5654,7 +5654,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   // one-operand: push/pop take a register or a memory operand
   if (k == GK_PUSHQ) {
     if (rest.len() > 0 && rest[0] == b'$') {  // $imm — 6A ib when it fits
-      var pv: i32 = x86_gas_atoi(rest);
+      let pv: i32 = x86_gas_atoi(rest);
       if (x86_imm_fits8(pv)) {
         a = X86Asm { ...a, code: a.code.append(106) };
         a = X86Asm { ...a, code: a.code.append(pv & 255) };
@@ -5663,7 +5663,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
       a = X86Asm { ...a, code: x86_push_imm32(a.code, pv) };
     } else {
       if (x86_gas_has_paren(rest)) {
-        var pm: GasMem = x86_gas_parse_mem(rest);
+        let pm: GasMem = x86_gas_parse_mem(rest);
         if (pm.no_base) {
           return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) };
         }
@@ -5679,7 +5679,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   }
   if (k == GK_POPQ) {
     if (x86_gas_has_paren(rest)) {
-      var qm: GasMem = x86_gas_parse_mem(rest);
+      let qm: GasMem = x86_gas_parse_mem(rest);
       if (qm.no_base) {
         return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) };
       }
@@ -5694,7 +5694,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   }
   // Suffixed families that split their own operands (any arity), plus
   // the one-operand groups.
-  var sfx: i32 = l.sfx;
+  let sfx: i32 = l.sfx;
   if (k == GK_IMUL) {
     return x86_gas_imul_family(a, mnem, sfx, rest);
   }
@@ -5728,18 +5728,18 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     // with no diagnostic; drivers check `a.unknown` after assembly.
     return X86Asm { ...a, unknown: a.unknown.append(mnem) };
   }
-  var src: string = l.src;
-  var dst: string = l.dst;
+  let src: string = l.src;
+  let dst: string = l.dst;
   // lea at every width AT&T spells. Intel writes one `lea` and reads the
   // width off the destination register; AT&T names it in the suffix, so
   // each spelling needs an arm or the instruction is dropped.
   if (k == GK_LEA) {
-    var lsz: i32 = l.ext;
-    var ld: i32 = x86_gas_reg_w(dst, lsz);
+    let lsz: i32 = l.ext;
+    let ld: i32 = x86_gas_reg_w(dst, lsz);
     if (ld < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    var m: GasMem = x86_gas_parse_mem(src);
+    let m: GasMem = x86_gas_parse_mem(src);
     if (m.is_rip) {  // `leaq sym(%rip), %reg`
       // The rip fixup writes a 64-bit-form displacement; the narrower
       // spellings have no such emitter, so they are refused rather
@@ -5791,17 +5791,17 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   }
   // Sign-bit gathers: the destination is a GPR, not an xmm.
   if (k == GK_MOVMSK) {
-    var mmk: i32 = l.ext;
+    let mmk: i32 = l.ext;
     return x86_gas_movmsk(a, mnem, mmk / 256, mmk % 256, src, dst);
   }
   // The bit scans and counts. The `l` forms are not routed to the `q` ones
   // the way testl is: the count differs by width (lzcntl counts from bit
   // 31, lzcntq from 63), so the suffix picks REX.W.
   if (k == GK_BITSCAN) {
-    var bsc: i32 = l.ext;
-    var bsw: i32 = bsc % 256;
-    var bsd: i32 = x86_gas_reg32(dst);
-    var bss: i32 = x86_gas_reg32(src);
+    let bsc: i32 = l.ext;
+    let bsw: i32 = bsc % 256;
+    let bsd: i32 = x86_gas_reg32(dst);
+    let bss: i32 = x86_gas_reg32(src);
     if (bsw == 1) {
       bsd = x86_gas_reg64(dst);
       bss = x86_gas_reg64(src);
@@ -5827,7 +5827,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   // needs an entry here, and a missing one is an instruction the assembler
   // drops rather than an error it reports.
   if (k == GK_MOVEXT) {
-    var mx: i32 = l.ext;
+    let mx: i32 = l.ext;
     return x86_gas_movext(a, mx / 256, mx % 256 * 8, src, dst);
   }
   // The float->int converts: cvt(t)sd2si and cvt(t)ss2si, `t` selecting the
@@ -5836,9 +5836,9 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   // emitter writes almost always. The AT&T `l`/`q` suffixes name that width
   // explicitly and are accepted alongside the bare spelling.
   if (k == GK_CVT2SI) {
-    var f2i: i32 = l.ext;
-    var cvw: i32 = 1;
-    var cvd: i32 = x86_gas_reg32(dst);
+    let f2i: i32 = l.ext;
+    let cvw: i32 = 1;
+    let cvd: i32 = x86_gas_reg32(dst);
     if (cvd >= 0) {  // `%eax` — 32-bit destination, no REX.W
       cvw = 0;
     } else {
@@ -5847,7 +5847,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
         return x86_gas_bad(a, mnem + " " + src + ", " + dst);
       }
     }
-    var cvx: i32 = x86_gas_xmm(src);
+    let cvx: i32 = x86_gas_xmm(src);
     if (cvx < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -5859,19 +5859,19 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   // `l` suffix the 32-bit source. A memory source used to fall into the
   // register parser and encode reg 7 silently.
   if (k == GK_CVT2S) {
-    var c2s: i32 = l.ext;
-    var cpfx: i32 = c2s / 256;
-    var cw: i32 = c2s % 256;
-    var cxd: i32 = x86_gas_xmm(dst);
+    let c2s: i32 = l.ext;
+    let cpfx: i32 = c2s / 256;
+    let cw: i32 = c2s % 256;
+    let cxd: i32 = x86_gas_xmm(dst);
     if (cxd < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     if (x86_gas_has_paren(src)) {
-      var cm2: GasMem = x86_gas_parse_mem(src);
+      let cm2: GasMem = x86_gas_parse_mem(src);
       if (!x86_gas_mem_ok(cm2)) {
         return x86_gas_bad(a, mnem + " " + src);
       }
-      var csz: i32 = 32;
+      let csz: i32 = 32;
       if (cw == 1) {
         csz = 64;
       }
@@ -5881,7 +5881,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
       a = X86Asm { ...a, code: a.code.append(42) };
       return x86_gas_membytes(a, cxd, cm2, 0);
     }
-    var crs: i32 = x86_gas_reg64(src);
+    let crs: i32 = x86_gas_reg64(src);
     if (cw == 0) {
       crs = x86_gas_reg32(src);
     }
@@ -5923,7 +5923,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return x86_gas_vshift_imm(a, mnem, l.ext, src, dst);
   }
   if (k == GK_SSE) {
-    var sse: i32 = l.ext;
+    let sse: i32 = l.ext;
     return x86_gas_sse_table(a, mnem, sse / 256, sse & 255, src, dst);
   }
   if (k == GK_SSE38) {
@@ -5933,7 +5933,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   // sign-extending 32-to-64 load (REX.W 63 /r), so it shares the handler.
   if (k == GK_MOVSXD) {
     if (x86_gas_has_paren(src)) {
-      var sm: GasMem = x86_gas_parse_mem(src);
+      let sm: GasMem = x86_gas_parse_mem(src);
       if (sm.no_base) {
         return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) };
       }
@@ -5969,19 +5969,19 @@ function x86_gas_directive_ignorable(line: string): boolean {
 // is ignored, as in the native assembler — .text padding is always
 // executable NOPs.
 function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
-  var sp: i32 = x86_str_indexof(line, " ");
+  let sp: i32 = x86_str_indexof(line, " ");
   if (sp < 0) {
     return x86_gas_bad(a, line);
   }
-  var parts: string[] = x86_str_split(slice_unchecked(line, sp + 1, line.len()) + "", ",");
-  var n: i32 = x86_gas_atoi(x86_gas_trim(parts[0]));
-  var align: i32 = n;
+  let parts: string[] = x86_str_split(slice_unchecked(line, sp + 1, line.len()) + "", ",");
+  let n: i32 = x86_gas_atoi(x86_gas_trim(parts[0]));
+  let align: i32 = n;
   if (x86_str_starts_with(line, ".p2align")) {
     if (n > 30) {
       return x86_gas_bad(a, line);
     }
     align = 1;
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < n) {
       align = align * 2;
       k = k + 1;
@@ -6002,15 +6002,15 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
     }
     return a;
   }
-  var max: i32 = 0 - 1;
+  let max: i32 = 0 - 1;
   if (parts.len() >= 3) {
-    var ms: string = x86_gas_trim(parts[2]);
+    let ms: string = x86_gas_trim(parts[2]);
     if (ms.len() > 0) {
       max = x86_gas_atoi(ms);
     }
   }
-  var at: i32 = a.code.len();
-  var pad: i32 = x86_pad_width(at, align, max);
+  let at: i32 = a.code.len();
+  let pad: i32 = x86_pad_width(at, align, max);
   a = X86Asm { ...a, pads: a.pads.append(at).append(pad).append(align).append(max).append(a.br_n) };
   if (pad == 0) {
     return a;
@@ -6021,7 +6021,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
 // x86_pad_width is the padding that brings `at` to a multiple of `align`, or
 // none when that is more than `max` bytes (max -1: no limit).
 function x86_pad_width(at: i32, align: i32, max: i32): i32 {
-  var pad: i32 = (align - at % align) % align;
+  let pad: i32 = (align - at % align) % align;
   if (max >= 0 && pad > max) {
     return 0;
   }
@@ -6034,18 +6034,18 @@ function x86_pad_width(at: i32, align: i32, max: i32): i32 {
 function x86_gas_comment_start(line: string): i32 {
   // Most lines hold no `#` at all, and most that do hold no quote before it;
   // both answer from two byte scans without the walk below.
-  var hash: i32 = x86_str_indexof(line, "#");
+  let hash: i32 = x86_str_indexof(line, "#");
   if (hash < 0) {
     return hash;
   }
-  var quote: i32 = x86_str_indexof(line, "\"");
+  let quote: i32 = x86_str_indexof(line, "\"");
   if (quote < 0 || quote > hash) {
     return hash;
   }
-  var i: i32 = quote;
-  var in_str: boolean = false;
+  let i: i32 = quote;
+  let in_str: boolean = false;
   while (i < line.len()) {
-    var c: i32 = line[i] as i32;
+    let c: i32 = line[i] as i32;
     if (in_str) {
       // A backslash escapes the next character, so an escaped quote
       // does not end the string.
@@ -6085,18 +6085,18 @@ pub function x86_gas_assemble(src: string): X86Asm {
   // nothing: what differs between rounds is the byte offsets, and those are
   // what a round computes. Not the fix for #8146 — the arena limit that
   // issue tracks is still open and its cause still unidentified.
-  var pl: GasLine[] = x86_gas_prepare(src);
+  let pl: GasLine[] = x86_gas_prepare(src);
   // The labels are indexed once as well: a round places them in the same
   // order, so every reference reads its target through the index rather
   // than hashing the name again in each round.
-  var labs: GasLabels = x86_gas_label_table(pl);
+  let labs: GasLabels = x86_gas_label_table(pl);
   pl = x86_gas_link_labels(pl, labs);
   // The first round encodes every line and keeps the bytes of the ones the
   // second round cannot change (EncCache); that round copies those and
   // encodes only the rest.
-  var first: AsmRound = x86_gas_assemble_pass_prepared(pl, labs, [], EncCache { code: [], at: [], end: [] });
-  var a: X86Asm = first.a;
-  var longs: boolean[] = x86_relax_settle(a);
+  let first: AsmRound = x86_gas_assemble_pass_prepared(pl, labs, [], EncCache { code: [], at: [], end: [] });
+  let a: X86Asm = first.a;
+  let longs: boolean[] = x86_relax_settle(a);
   if (!x86_bools_any(longs)) {
     return a;
   }
@@ -6115,19 +6115,19 @@ pub function x86_gas_assemble(src: string): X86Asm {
 struct RelaxLayout { ev: i32[], start: i32[], size: i32[], grow: i32[], pads_before: i32[] }
 
 function x86_relax_layout(a: X86Asm): RelaxLayout {
-  var nb: i32 = a.br_offs.len();
-  var np: i32 = a.pads.len() / 5;
-  var l: RelaxLayout = RelaxLayout { ev: [], start: [], size: [], grow: [], pads_before: [0] };
-  var k: i32 = 0;
-  var p: i32 = 0;
-  var pads: i32 = 0;
+  let nb: i32 = a.br_offs.len();
+  let np: i32 = a.pads.len() / 5;
+  let l: RelaxLayout = RelaxLayout { ev: [], start: [], size: [], grow: [], pads_before: [0] };
+  let k: i32 = 0;
+  let p: i32 = 0;
+  let pads: i32 = 0;
   while (k < nb || p < np) {
     if (p < np && (k >= nb || a.pads[p * 5 + 4] <= k)) {
       l = RelaxLayout { ...l, ev: l.ev.append(0 - (p + 1)), start: l.start.append(a.pads[p * 5]), size: l.size.append(a.pads[p * 5 + 1]) };
       pads = pads + 1;
       p = p + 1;
     } else {
-      var g: i32 = 4;
+      let g: i32 = 4;
       if (a.code[a.br_offs[k] - 1] == 235) {
         g = 3;
       }
@@ -6146,16 +6146,16 @@ function x86_relax_layout(a: X86Asm): RelaxLayout {
 struct RelaxTargets { off: i32[], before: i32[], pad: i32[] }
 
 function x86_relax_targets(a: X86Asm, l: RelaxLayout): RelaxTargets {
-  var t: RelaxTargets = RelaxTargets { off: [], before: [], pad: [] };
-  var k: i32 = 0;
+  let t: RelaxTargets = RelaxTargets { off: [], before: [], pad: [] };
+  let k: i32 = 0;
   while (k < a.br_offs.len()) {
-    var idx: i32 = a.br_idx[k];
+    let idx: i32 = a.br_idx[k];
     if (idx < 0) {
       idx = x86_label_idx(a, a.br_names[k]);
     }
-    var off: i32 = x86_label_target(a, a.br_names[k], a.br_idx[k]);
-    var bound: i32 = 0 - 1;
-    var j: i32 = 0;
+    let off: i32 = x86_label_target(a, a.br_names[k], a.br_idx[k]);
+    let bound: i32 = 0 - 1;
+    let j: i32 = 0;
     while (idx >= 0 && j < a.pad_labels.len()) {
       if (a.pad_labels[j] == idx) {
         bound = x86_index_of(l.ev, 0 - (a.pad_labels[j + 1] + 1));
@@ -6169,7 +6169,7 @@ function x86_relax_targets(a: X86Asm, l: RelaxLayout): RelaxTargets {
 }
 
 function x86_index_of(xs: i32[], v: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (xs[i] == v) {
       return i;
@@ -6182,10 +6182,10 @@ function x86_index_of(xs: i32[], v: i32): i32 {
 // x86_events_before counts the events that start before `off`, the ones that
 // can move it; `starts` ascends, as a round records them.
 function x86_events_before(starts: i32[], off: i32): i32 {
-  var lo: i32 = 0;
-  var hi: i32 = starts.len();
+  let lo: i32 = 0;
+  let hi: i32 = starts.len();
   while (lo < hi) {
-    var mid: i32 = (lo + hi) / 2;
+    let mid: i32 = (lo + hi) / 2;
     if (starts[mid] < off) {
       lo = mid + 1;
     } else {
@@ -6211,24 +6211,24 @@ struct RelaxPass { new_start: i32[], new_size: i32[], prefix: i32[], before: i32
 // failing to settle within it leaves every branch long, which is correct if
 // larger.
 function x86_relax_settle(a: X86Asm): boolean[] {
-  var l: RelaxLayout = x86_relax_layout(a);
-  var t: RelaxTargets = x86_relax_targets(a, l);
-  var n: i32 = l.ev.len();
-  var st: RelaxPass = RelaxPass { new_start: [], new_size: [], prefix: [], before: [], short: [] };
-  var k: i32 = 0;
+  let l: RelaxLayout = x86_relax_layout(a);
+  let t: RelaxTargets = x86_relax_targets(a, l);
+  let n: i32 = l.ev.len();
+  let st: RelaxPass = RelaxPass { new_start: [], new_size: [], prefix: [], before: [], short: [] };
+  let k: i32 = 0;
   while (k < a.br_offs.len()) {
     st = RelaxPass { ...st, short: st.short.append(t.off[k] >= 0) };
     k = k + 1;
   }
-  var laid: RelaxStep = x86_relax_pass(a, l, t, st, false);
+  let laid: RelaxStep = x86_relax_pass(a, l, t, st, false);
   st = laid.st;
-  var iter: i32 = 0;
+  let iter: i32 = 0;
   while (iter < n + 2) {
     st = RelaxPass { ...st, before: x86_ints_copy(st.prefix) };
-    var r: RelaxStep = x86_relax_pass(a, l, t, st, true);
+    let r: RelaxStep = x86_relax_pass(a, l, t, st, true);
     st = r.st;
     if (!r.changed) {
-      var longs: boolean[] = [];
+      let longs: boolean[] = [];
       k = 0;
       while (k < st.short.len()) {
         longs = longs.append(!st.short[k]);
@@ -6247,62 +6247,67 @@ struct RelaxStep { st: RelaxPass, changed: boolean }
 // `judge` it also pins long every short branch whose target is out of rel8
 // reach as the pass sees it.
 function x86_relax_pass(a: X86Asm, l: RelaxLayout, t: RelaxTargets, own st: RelaxPass, judge: boolean): RelaxStep {
-  var cum: i32 = 0;
-  var changed: boolean = false;
-  var i: i32 = 0;
+  let new_start: i32[] = st.new_start;
+  let new_size: i32[] = st.new_size;
+  let prefix: i32[] = st.prefix;
+  let short: boolean[] = st.short;
+  let cum: i32 = 0;
+  let changed: boolean = false;
+  let i: i32 = 0;
   while (i < l.ev.len()) {
-    var at: i32 = l.start[i] + cum;
-    var size: i32 = 0;
-    var e: i32 = l.ev[i];
+    let at: i32 = l.start[i] + cum;
+    let size: i32 = 0;
+    let e: i32 = l.ev[i];
     if (e < 0) {
-      var p: i32 = 0 - e - 1;
+      let p: i32 = 0 - e - 1;
       size = x86_pad_width(at, a.pads[p * 5 + 2], a.pads[p * 5 + 3]);
     } else {
       size = 2;
-      if (st.short[e] && judge) {
-        var disp: i32 = x86_relax_seen(l, t, st, e, i, cum) - (at + 2);
+      if (short[e] && judge) {
+        let disp: i32 = x86_relax_seen(l, t, st.before, new_start, new_size, prefix, e, i, cum) - (at + 2);
         if (disp < 0 - 128 || disp > 127) {
-          st = RelaxPass { ...st, short: st.short.with(e, false) };
+          short = short.with(e, false);
           changed = true;
         }
       }
-      if (!st.short[e]) {
+      if (!short[e]) {
         size = 2 + l.grow[e];
       }
     }
-    st = RelaxPass { ...st, new_start: x86_put(st.new_start, i, at), new_size: x86_put(st.new_size, i, size) };
+    new_start = x86_put(new_start, i, at);
+    new_size = x86_put(new_size, i, size);
     cum = cum + size - l.size[i];
-    st = RelaxPass { ...st, prefix: x86_put(st.prefix, i, cum) };
+    prefix = x86_put(prefix, i, cum);
     i = i + 1;
   }
-  return RelaxStep { st: st, changed: changed };
+  return RelaxStep { st: RelaxPass { new_start: new_start, new_size: new_size, prefix: prefix, before: st.before, short: short }, changed: changed };
 }
 
 // x86_relax_seen is where branch k's target stands as event i sees it
 // mid-pass, with `cum` the growth so far: a position this pass has already
 // laid out, or the last pass's position moved by the growth that reaches it.
-function x86_relax_seen(l: RelaxLayout, t: RelaxTargets, st: RelaxPass, k: i32, i: i32, cum: i32): i32 {
-  var stretch: i32 = cum;
+function x86_relax_seen(l: RelaxLayout, t: RelaxTargets, before: i32[], new_start: i32[], new_size: i32[], prefix: i32[], k: i32, i: i32, cum: i32): i32 {
+  let stretch: i32 = cum;
   if (i > 0) {
-    stretch = stretch - st.before[i - 1];
+    stretch = stretch - before[i - 1];
   }
-  var b: i32 = t.pad[k];
+  let b: i32 = t.pad[k];
   if (b >= 0) {
-    var edge: i32 = st.new_start[b] + st.new_size[b];
+    let edge: i32 = new_start[b] + new_size[b];
     if (b >= i) {
       edge = edge + x86_relax_carried(l, stretch, b + 1, i);
     }
     return edge;
   }
-  var off: i32 = t.off[k];
-  var j: i32 = t.before[k];
+  let off: i32 = t.off[k];
+  let j: i32 = t.before[k];
   if (j == 0) {
     return off;
   }
   if (j - 1 < i) {
-    return off + st.prefix[j - 1];
+    return off + prefix[j - 1];
   }
-  return off + st.before[j - 1] + x86_relax_carried(l, stretch, j, i);
+  return off + before[j - 1] + x86_relax_carried(l, stretch, j, i);
 }
 
 // Growth carries to a position past the pass's current event only when no pad
@@ -6323,7 +6328,7 @@ function x86_put(own xs: i32[], i: i32, v: i32): i32[] {
 }
 
 function x86_ints_copy(xs: i32[]): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for x in xs {
     out = out.append(x);
   }
@@ -6343,22 +6348,22 @@ function x86_bools_any(xs: boolean[]): boolean {
 // it emitted short whose displacement does not fit rel8 is long, and a long
 // one stays long. A settled round asks for the decisions it was assembled with.
 function x86_relax_grow(a: X86Asm, longs: boolean[]): boolean[] {
-  var out: boolean[] = [];
-  var k: i32 = 0;
+  let out: boolean[] = [];
+  let k: i32 = 0;
   while (k < a.br_offs.len()) {
-    var pinned: boolean = false;
+    let pinned: boolean = false;
     if (k < longs.len()) {
       pinned = longs[k];
     }
     if (!pinned && a.br_shorts[k]) {
-      var target: i32 = x86_label_target(a, a.br_names[k], a.br_idx[k]);
+      let target: i32 = x86_label_target(a, a.br_names[k], a.br_idx[k]);
       // An unresolved target cannot be measured, so it must not stay
       // short: x86_resolve reports it, and a rel8 placeholder would
       // hide the report behind a range error instead.
       if (target < 0) {
         pinned = true;
       } else {
-        var rel: i32 = target - (a.br_offs[k] + 1);
+        let rel: i32 = target - (a.br_offs[k] + 1);
         if (rel < 0 - 128 || rel > 127) {
           pinned = true;
         }
@@ -6374,7 +6379,7 @@ function x86_bools_differ(x: boolean[], y: boolean[]): boolean {
   if (x.len() != y.len()) {
     return true;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < x.len()) {
     if (x[i] != y[i]) {
       return true;
@@ -6385,8 +6390,8 @@ function x86_bools_differ(x: boolean[], y: boolean[]): boolean {
 }
 
 function x86_bools_copy(xs: boolean[]): boolean[] {
-  var out: boolean[] = [];
-  var i: i32 = 0;
+  let out: boolean[] = [];
+  let i: i32 = 0;
   while (i < xs.len()) {
     out = out.append(xs[i]);
     i = i + 1;
@@ -6395,8 +6400,8 @@ function x86_bools_copy(xs: boolean[]): boolean[] {
 }
 
 function x86_bools_all_true(n: i32): boolean[] {
-  var out: boolean[] = [];
-  var i: i32 = 0;
+  let out: boolean[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(true);
     i = i + 1;
@@ -6574,20 +6579,20 @@ struct GasLabels {
 // their order, chaining each into its bucket the way x86_add_label does, so
 // a duplicate still resolves to its first definition.
 function x86_gas_label_table(pl: GasLine[]): GasLabels {
-  var names: string[] = [];
-  var head: i32[] = x86_empty_buckets();
-  var tail: i32[] = x86_empty_buckets();
-  var next: i32[] = [];
-  var li: i32 = 0;
+  let names: string[] = [];
+  let head: i32[] = x86_empty_buckets();
+  let tail: i32[] = x86_empty_buckets();
+  let next: i32[] = [];
+  let li: i32 = 0;
   while (li < pl.len()) {
-    var name: string = pl[li].label;
+    let name: string = pl[li].label;
     li = li + 1;
     if (name.len() == 0) {
       continue;
     }
-    var at: i32 = names.len();
-    var b: i32 = x86_name_bucket(name);
-    var prev: i32 = tail[b];
+    let at: i32 = names.len();
+    let b: i32 = x86_name_bucket(name);
+    let prev: i32 = tail[b];
     names = names.append(name);
     next = next.append(0 - 1);
     if (prev < 0) {
@@ -6603,7 +6608,7 @@ function x86_gas_label_table(pl: GasLine[]): GasLabels {
 // x86_gas_label_lookup is the table index of `name`, its first definition,
 // or -1.
 function x86_gas_label_lookup(labs: GasLabels, name: string): i32 {
-  var i: i32 = labs.head[x86_name_bucket(name)];
+  let i: i32 = labs.head[x86_name_bucket(name)];
   while (i >= 0) {
     if (labs.names[i] == name) {
       return i;
@@ -6619,16 +6624,16 @@ function x86_gas_label_lookup(labs: GasLabels, name: string): i32 {
 // keeps -1 and the round looks it up by name, which reports it unresolved
 // exactly as before.
 function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
-  var ndef: i32 = 0;
-  var li: i32 = 0;
+  let ndef: i32 = 0;
+  let li: i32 = 0;
   while (li < pl.len()) {
-    var l: GasLine = pl[li];
-    var def_idx: i32 = 0 - 1;
+    let l: GasLine = pl[li];
+    let def_idx: i32 = 0 - 1;
     if (l.label.len() > 0) {
       def_idx = ndef;
       ndef = ndef + 1;
     }
-    var ref_idx: i32 = 0 - 1;
+    let ref_idx: i32 = 0 - 1;
     if (l.kind == GK_JCC) {
       ref_idx = x86_gas_label_lookup(labs, l.rest);
     } else if (l.kind == GK_BRANCH) {
@@ -6636,7 +6641,7 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
         ref_idx = x86_gas_label_lookup(labs, l.rest);
       }
     } else if (l.kind == GK_NONE && x86_str_starts_with(l.body, ".quad")) {
-      var qop: string = x86_gas_trim(slice_unchecked(l.body, 6, l.body.len()));
+      let qop: string = x86_gas_trim(slice_unchecked(l.body, 6, l.body.len()));
       if (x86_gas_is_symbol(qop)) {
         ref_idx = x86_gas_label_lookup(labs, qop);
       }
@@ -6656,7 +6661,7 @@ struct MnemIndex { names: string[], head: i32[], next: i32[] }
 
 // x86_mnem_lookup is the index of `mnem` in `ix`, or -1.
 function x86_mnem_lookup(ix: MnemIndex, mnem: string): i32 {
-  var i: i32 = ix.head[x86_name_bucket(mnem)];
+  let i: i32 = ix.head[x86_name_bucket(mnem)];
   while (i >= 0) {
     if (ix.names[i] == mnem) {
       return i;
@@ -6669,8 +6674,8 @@ function x86_mnem_lookup(ix: MnemIndex, mnem: string): i32 {
 // x86_mnem_added is `ix` with `mnem`, which it does not hold, appended at
 // the head of its bucket chain.
 function x86_mnem_added(ix: MnemIndex, mnem: string): MnemIndex {
-  var b: i32 = x86_name_bucket(mnem);
-  var at: i32 = ix.names.len();
+  let b: i32 = x86_name_bucket(mnem);
+  let at: i32 = ix.names.len();
   return MnemIndex { names: ix.names.append(mnem), head: ix.head.with(b, at), next: ix.next.append(ix.head[b]) };
 }
 
@@ -6688,11 +6693,11 @@ struct MnemVerdict { vz: boolean, fixed: i32, a_kind: i32, a_ext: i32, a_sfx: i3
 // x86_gas_mnem_verdict runs the mnemonic-only tests of the classification,
 // in the order x86_gas_emit_op once tried its arms inline.
 function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
-  var v: MnemVerdict = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: 0 - 1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: 0 - 1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: 0 - 1 };
+  let v: MnemVerdict = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: 0 - 1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: 0 - 1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: 0 - 1 };
   if (mnem == "vpcmpeqb") {
     return MnemVerdict { ...v, a_kind: GK_VPCMPEQB };
   }
-  var rpfx: i32 = x86_gas_rep_pfx(mnem);
+  let rpfx: i32 = x86_gas_rep_pfx(mnem);
   if (rpfx >= 0) {
     return MnemVerdict { ...v, a_kind: GK_REP, a_ext: rpfx };
   }
@@ -6700,20 +6705,20 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
     return MnemVerdict { ...v, a_kind: GK_LOCK };
   }
   if (x86_str_starts_with(mnem, "set")) {
-    var scc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()) + "");
+    let scc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()) + "");
     if (scc >= 0) {
       return MnemVerdict { ...v, a_kind: GK_SETCC, a_ext: scc };
     }
   }
   if (x86_gas_is_branch(mnem)) {
-    var bext: i32 = 2;  // call FF /2
+    let bext: i32 = 2;  // call FF /2
     if (mnem == "jmp") {  // jmp FF /4
       bext = 4;
     }
     return MnemVerdict { ...v, a_kind: GK_BRANCH, a_ext: bext };
   }
   if (x86_str_starts_with(mnem, "j")) {
-    var jcc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
+    let jcc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
     if (jcc >= 0) {
       return MnemVerdict { ...v, a_kind: GK_JCC, a_ext: jcc };
     }
@@ -6724,28 +6729,28 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_gas_is_pushpop(mnem)) {
     return MnemVerdict { ...v, a_kind: GK_POPQ };
   }
-  var sfx: i32 = x86_gas_suffix_size(mnem);
+  let sfx: i32 = x86_gas_suffix_size(mnem);
   v = MnemVerdict { ...v, a_sfx: sfx, sfx: sfx };
   // The mnemonic without its suffix letter, "" when sfx is 0: the arms
   // below key on it, and nothing after classification does.
-  var bse: string = "";
+  let bse: string = "";
   if (sfx > 0) {
     bse = x86_gas_strip_suffix(mnem);
     if (x86_gas_is_imul(bse)) {
       return MnemVerdict { ...v, a_kind: GK_IMUL };
     }
-    var ue: i32 = x86_gas_unary_ext(bse);
+    let ue: i32 = x86_gas_unary_ext(bse);
     if (ue >= 0) {
       return MnemVerdict { ...v, a_kind: GK_UNARY, a_ext: ue };
     }
-    var ide: i32 = x86_gas_incdec_ext(bse);
+    let ide: i32 = x86_gas_incdec_ext(bse);
     if (ide >= 0) {
       return MnemVerdict { ...v, a_kind: GK_INCDEC, a_ext: ide };
     }
     if (x86_gas_is_bswap(bse)) {
       return MnemVerdict { ...v, a_kind: GK_BSWAP };
     }
-    var sho: i32 = x86_gas_shld_op(bse);
+    let sho: i32 = x86_gas_shld_op(bse);
     if (sho >= 0) {
       return MnemVerdict { ...v, a_kind: GK_SHLD, a_ext: sho };
     }
@@ -6759,11 +6764,11 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_gas_is_pinsr(mnem)) {
     return MnemVerdict { ...v, a_kind: GK_PINSR };
   }
-  var lsz: i32 = x86_gas_lea_size(mnem);
+  let lsz: i32 = x86_gas_lea_size(mnem);
   if (lsz >= 0) {
     return MnemVerdict { ...v, b_kind: GK_LEA, b_ext: lsz };
   }
-  var msz: i32 = x86_gas_mov_size(mnem);
+  let msz: i32 = x86_gas_mov_size(mnem);
   if (msz == 64) {
     return MnemVerdict { ...v, b_kind: GK_MOVQ };
   }
@@ -6779,50 +6784,50 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_gas_movdq_pfx(mnem) >= 0) {
     return MnemVerdict { ...v, b_kind: GK_MOVDQ };
   }
-  var m10: i32 = x86_gas_mov10_pfx(mnem);
+  let m10: i32 = x86_gas_mov10_pfx(mnem);
   if (m10 >= 0) {
     return MnemVerdict { ...v, b_kind: GK_MOV10, b_ext: m10 };
   }
-  var mmk: i32 = x86_gas_movmsk_op(mnem);
+  let mmk: i32 = x86_gas_movmsk_op(mnem);
   if (mmk >= 0) {
     return MnemVerdict { ...v, b_kind: GK_MOVMSK, b_ext: mmk };
   }
-  var bsc: i32 = x86_gas_bitscan_op(mnem);
+  let bsc: i32 = x86_gas_bitscan_op(mnem);
   if (bsc >= 0) {
     return MnemVerdict { ...v, b_kind: GK_BITSCAN, b_ext: bsc };
   }
   if (x86_gas_is_movqd(mnem)) {
     return MnemVerdict { ...v, b_kind: GK_MOVQD };
   }
-  var mx: i32 = x86_gas_extend_op(mnem);
+  let mx: i32 = x86_gas_extend_op(mnem);
   if (mx >= 0) {
     return MnemVerdict { ...v, b_kind: GK_MOVEXT, b_ext: mx };
   }
-  var f2i: i32 = x86_gas_cvt2si(mnem);
+  let f2i: i32 = x86_gas_cvt2si(mnem);
   if (f2i >= 0) {
     return MnemVerdict { ...v, b_kind: GK_CVT2SI, b_ext: f2i };
   }
-  var c2s: i32 = x86_gas_cvt2s_op(mnem);
+  let c2s: i32 = x86_gas_cvt2s_op(mnem);
   if (c2s >= 0) {
     return MnemVerdict { ...v, b_kind: GK_CVT2S, b_ext: c2s };
   }
   if (sfx > 0) {
-    var ae: i32 = x86_gas_alu_ext(bse);
+    let ae: i32 = x86_gas_alu_ext(bse);
     if (ae >= 0) {
       return MnemVerdict { ...v, b_kind: GK_ALU, b_ext: ae };
     }
     if (x86_gas_is_test(bse)) {
       return MnemVerdict { ...v, b_kind: GK_TEST };
     }
-    var she: i32 = x86_gas_shift_ext(bse);
+    let she: i32 = x86_gas_shift_ext(bse);
     if (she >= 0) {
       return MnemVerdict { ...v, b_kind: GK_SHIFT, b_ext: she };
     }
-    var bti: i32 = x86_gas_bt_idx(bse);
+    let bti: i32 = x86_gas_bt_idx(bse);
     if (bti >= 0) {
       return MnemVerdict { ...v, b_kind: GK_BT, b_ext: bti };
     }
-    var rmw: i32 = x86_gas_rmw_op(bse);
+    let rmw: i32 = x86_gas_rmw_op(bse);
     if (rmw >= 0) {
       return MnemVerdict { ...v, b_kind: GK_RMW, b_ext: rmw };
     }
@@ -6836,11 +6841,11 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_str_starts_with(mnem, "cmov")) {
     return MnemVerdict { ...v, b_kind: GK_CMOV };
   }
-  var sse: i32 = x86_gas_sse_op(mnem);
+  let sse: i32 = x86_gas_sse_op(mnem);
   if (sse >= 0) {
     return MnemVerdict { ...v, c_kind: GK_SSE, c_ext: sse };
   }
-  var s38: i32 = x86_gas_sse38_op(mnem);
+  let s38: i32 = x86_gas_sse38_op(mnem);
   if (s38 >= 0) {
     return MnemVerdict { ...v, c_kind: GK_SSE38, c_ext: s38 };
   }
@@ -6863,7 +6868,7 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
 // mnemonic's verdict and its operand text: the verdict's arms in their order,
 // with the tests that read the operands between them where they stand.
 function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasLine {
-  var l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
+  let l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
   if (v.vz && rest.len() == 0) {
     return GasLine { ...l, kind: GK_VZEROUPPER };
   }
@@ -6877,12 +6882,12 @@ function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasL
     return GasLine { ...l, kind: v.a_kind, ext: v.a_ext, sfx: v.a_sfx };
   }
   l = GasLine { ...l, sfx: v.sfx };
-  var ci: i32 = x86_gas_top_comma(rest);
+  let ci: i32 = x86_gas_top_comma(rest);
   if (ci < 0) {
     return GasLine { ...l, kind: GK_UNKNOWN1 };
   }
-  var src: string = x86_gas_trim(slice_unchecked(rest, 0, ci));
-  var dst: string = x86_gas_trim(slice_unchecked(rest, ci + 1, rest.len()));
+  let src: string = x86_gas_trim(slice_unchecked(rest, 0, ci));
+  let dst: string = x86_gas_trim(slice_unchecked(rest, ci + 1, rest.len()));
   l = GasLine { ...l, src: src, dst: dst };
   if (v.b_kind != GK_NONE) {
     return GasLine { ...l, kind: v.b_kind, ext: v.b_ext };
@@ -6900,39 +6905,39 @@ function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasL
 // strip, trim, the label prefix, and the mnemonic/operand split. Blank and
 // comment-only lines are dropped here, so no round ever sees one.
 function x86_gas_prepare(src: string): GasLine[] {
-  var out: GasLine[] = [];
+  let out: GasLine[] = [];
   // A mnemonic's verdict is decided once: `seen` indexes the distinct
   // mnemonics met so far and `verdicts` holds theirs in the same order.
-  var seen: MnemIndex = MnemIndex { names: [], head: x86_empty_buckets(), next: [] };
-  var verdicts: MnemVerdict[] = [];
+  let seen: MnemIndex = MnemIndex { names: [], head: x86_empty_buckets(), next: [] };
+  let verdicts: MnemVerdict[] = [];
   // Each line is read as a view of the text, its comment stripped and its
   // ends trimmed by index, and copied once. The text is scanned for `\n`
   // with __memchr rather than split into a second copy of every line.
-  var n: i32 = src.len();
-  var pos: i32 = 0;
+  let n: i32 = src.len();
+  let pos: i32 = 0;
   while (pos <= n) {
-    var nl: i32 = __memchr(src, 10, pos);
+    let nl: i32 = __memchr(src, 10, pos);
     if (nl < 0) {
       nl = n;
     }
-    var raw: str = slice_unchecked(src, pos, nl);
+    let raw: str = slice_unchecked(src, pos, nl);
     pos = nl + 1;
-    var hash: i32 = x86_gas_comment_start(raw);
+    let hash: i32 = x86_gas_comment_start(raw);
     if (hash >= 0) {
       raw = slice_unchecked(raw, 0, hash);
     }
-    var lv: str = x86_gas_trimmed(raw);
+    let lv: str = x86_gas_trimmed(raw);
     if (lv.len() == 0) {
       continue;
     }
-    var line: string = lv + "";
-    var label: string = "";
+    let line: string = lv + "";
+    let label: string = "";
     // label prefix: `name:` possibly followed by more on the same
     // line (asm.fern emits `.L0: .double 84.0`). A label is a single
     // token (no space / paren / comma) before the first ':'.
-    var colon: i32 = x86_str_indexof(line, ":");
+    let colon: i32 = x86_str_indexof(line, ":");
     if (colon > 0) {
-      var before: str = slice_unchecked(line, 0, colon);
+      let before: str = slice_unchecked(line, 0, colon);
       if (x86_str_indexof(before, " ") < 0 && x86_str_indexof(before, "(") < 0 && x86_gas_top_comma(before) < 0) {
         label = before + "";
         line = x86_gas_trim(slice_unchecked(line, colon + 1, line.len()));
@@ -6941,11 +6946,11 @@ function x86_gas_prepare(src: string): GasLine[] {
     if (label.len() == 0 && line.len() == 0) {
       continue;
     }
-    var mnem: string = "";
-    var rest: string = "";
+    let mnem: string = "";
+    let rest: string = "";
     if (line.len() > 0 && line[0] != b'.') {
       mnem = line;
-      var sp: i32 = x86_str_indexof(line, " ");
+      let sp: i32 = x86_str_indexof(line, " ");
       if (sp >= 0) {
         mnem = slice_unchecked(line, 0, sp) + "";
         rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
@@ -6954,7 +6959,7 @@ function x86_gas_prepare(src: string): GasLine[] {
     if (mnem.len() == 0) {
       out = out.append(GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 });
     } else {
-      var mi: i32 = x86_mnem_lookup(seen, mnem);
+      let mi: i32 = x86_mnem_lookup(seen, mnem);
       if (mi < 0) {
         mi = seen.names.len();
         seen = x86_mnem_added(seen, mnem);
@@ -6969,11 +6974,11 @@ function x86_gas_prepare(src: string): GasLine[] {
 // x86_gas_assemble_pass_prepared assembles one relaxation round from the
 // already-parsed lines.
 function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: boolean[], cache: EncCache): AsmRound {
-  var a: X86Asm = x86_asm_new_prepared(labs, longs);
+  let a: X86Asm = x86_asm_new_prepared(labs, longs);
   // The first round records; a cache with an entry per line replays.
-  var record: boolean = cache.at.len() == 0;
-  var at: i32[] = [];
-  var end: i32[] = [];
+  let record: boolean = cache.at.len() == 0;
+  let at: i32[] = [];
+  let end: i32[] = [];
   if (record) {
     at = x86_filled(pl.len(), 0 - 1);
     end = x86_filled(pl.len(), 0);
@@ -6981,13 +6986,13 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
   // The CFI recorder is threaded as its own uniquely-held local and folded
   // into `a` once at the end: recording through the field would append its
   // rule arrays through a shared base and copy them per directive (#8172).
-  var cfi: CfiState = cfi_new(cfi_profile_x86());
-  var section: i32 = 0;  // 0 = .text, 1 = .rodata
-  var li: i32 = 0;
+  let cfi: CfiState = cfi_new(cfi_profile_x86());
+  let section: i32 = 0;  // 0 = .text, 1 = .rodata
+  let li: i32 = 0;
   while (li < pl.len()) {
-    var pline: GasLine = pl[li];
-    var lbl: string = pline.label;
-    var line: string = pline.body;
+    let pline: GasLine = pl[li];
+    let lbl: string = pline.label;
+    let line: string = pline.body;
     li = li + 1;
     if (lbl.len() > 0) {
       if (section == 1) {
@@ -7010,7 +7015,7 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
           // A directive the recorder cannot take is a refusal, since
           // a dropped rule unwinds at the wrong instruction with
           // well-formed bytes.
-          var cfi_bad_before: i32 = cfi.bad.len();
+          let cfi_bad_before: i32 = cfi.bad.len();
           cfi = cfi_directive(cfi, line, a.code.len());
           if (cfi.bad.len() > cfi_bad_before) {
             a = X86Asm { ...a, unknown: a.unknown.append(cfi.bad[cfi.bad.len() - 1]) };
@@ -7034,7 +7039,7 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       } else if (line == ".data") {
         section = 1;
       } else if (x86_str_starts_with(line, ".quad")) {
-        var qop: string = x86_gas_trim(slice_unchecked(line, 6, line.len()));
+        let qop: string = x86_gas_trim(slice_unchecked(line, 6, line.len()));
         if (section == 2) {
           a = x86_bss_skip(a, 8);  // zero-init quad reserves 8 bytes
         } else if (x86_gas_is_symbol(qop)) {
@@ -7058,9 +7063,9 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
         // labelled directive; ignoring it (the pre-#5434 behaviour)
         // silently dropped the 8 rodata bytes and shifted everything
         // after — the SH-005 hazard class.
-        var lrest: string = x86_gas_trim(slice_unchecked(line, 6, line.len()));
-        var ltok: string = "";
-        var lci: i32 = 0;
+        let lrest: string = x86_gas_trim(slice_unchecked(line, 6, line.len()));
+        let ltok: string = "";
+        let lci: i32 = 0;
         while (lci < lrest.len()) {
           if (lrest[lci] == b',') {
             a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(x86_gas_trim(ltok))) };
@@ -7081,11 +7086,11 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
         // Reserve N zero bytes; `.zero` / `.space` are the SSA
         // backend's spellings. In an initialised section the bytes
         // must be laid down, or every later symbol shifts.
-        var zn: i32 = x86_gas_atoi(x86_gas_trim(slice_unchecked(line, x86_str_indexof(line, " "), line.len())));
+        let zn: i32 = x86_gas_atoi(x86_gas_trim(slice_unchecked(line, x86_str_indexof(line, " "), line.len())));
         if (section == 2) {
           a = x86_bss_skip(a, zn);
         } else if (section == 1) {
-          var zi: i32 = 0;
+          let zi: i32 = 0;
           while (zi < zn) {
             a = X86Asm { ...a, rodata: a.rodata.append(0) };
             zi = zi + 1;
@@ -7100,9 +7105,9 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
         // branch's own comment named. `cksum -a crc` of a 512-byte
         // file then segfaulted on the `movdqa` that read the next
         // symbol, at an address `.align 16` no longer reached.
-        var brest: string = x86_gas_trim(slice_unchecked(line, 5, line.len()));
-        var btok: string = "";
-        var bci: i32 = 0;
+        let brest: string = x86_gas_trim(slice_unchecked(line, 5, line.len()));
+        let btok: string = "";
+        let bci: i32 = 0;
         while (bci < brest.len()) {
           if (brest[bci] == b',') {
             a = X86Asm { ...a, rodata: a.rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255) };
@@ -7133,14 +7138,14 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
       }
       continue;
     }
-    var c0: i32 = a.code.len();
-    var fx0: i32 = a.fix_offs.len();
-    var ft0: i32 = a.fix_tail_offs.len();
-    var br0: i32 = a.br_offs.len();
-    var un0: i32 = a.unknown.len();
-    var df0: i32 = a.dfix_offs.len();
-    var rd0: i32 = a.rodata.len();
-    var bs0: i32 = a.bss_size;
+    let c0: i32 = a.code.len();
+    let fx0: i32 = a.fix_offs.len();
+    let ft0: i32 = a.fix_tail_offs.len();
+    let br0: i32 = a.br_offs.len();
+    let un0: i32 = a.unknown.len();
+    let df0: i32 = a.dfix_offs.len();
+    let rd0: i32 = a.rodata.len();
+    let bs0: i32 = a.bss_size;
     a = x86_gas_emit_op(a, pline);
     if (pline.ref_idx < 0 && a.fix_offs.len() == fx0 && a.fix_tail_offs.len() == ft0 && a.br_offs.len() == br0
       && a.unknown.len() == un0 && a.dfix_offs.len() == df0 && a.rodata.len() == rd0 && a.bss_size == bs0) {
@@ -7164,10 +7169,10 @@ function x86_gas_assemble_pass_prepared(pl: GasLine[], labs: GasLabels, longs: b
 // of the struct and folded back once, as x86_resolve does, so the appends
 // grow it in place.
 function x86_replay_bytes(own a: X86Asm, cache: EncCache, i: i32): X86Asm {
-  var code: i32[] = a.code;
+  let code: i32[] = a.code;
   a = X86Asm { ...a, code: [] };
-  var k: i32 = cache.at[i];
-  var e: i32 = cache.end[i];
+  let k: i32 = cache.at[i];
+  let e: i32 = cache.end[i];
   while (k < e) {
     code = code.append(cache.code[k]);
     k = k + 1;
@@ -7323,8 +7328,8 @@ pub function cfi_empty(s: CfiState): boolean {
 // ---- small helpers -----------------------------------------------------
 
 function cfi_trim(s: string): string {
-  var i: i32 = 0;
-  var j: i32 = s.len();
+  let i: i32 = 0;
+  let j: i32 = s.len();
   while (i < j && (s[i] == b' ' || s[i] == b'\t')) {
     i = i + 1;
   }
@@ -7337,9 +7342,9 @@ function cfi_trim(s: string): string {
 // cfi_split_ops splits an operand list on commas, trimmed, dropping a
 // leading `%` so the AT&T spelling and the bare one read the same.
 function cfi_split_ops(rest: string): string[] {
-  var out: string[] = [];
-  var tok: string = "";
-  var i: i32 = 0;
+  let out: string[] = [];
+  let tok: string = "";
+  let i: i32 = 0;
   while (i < rest.len()) {
     if (rest[i] == b',') {
       out = out.append(cfi_trim(tok));
@@ -7352,7 +7357,7 @@ function cfi_split_ops(rest: string): string[] {
   if (cfi_trim(tok).len() > 0 || out.len() > 0) {
     out = out.append(cfi_trim(tok));
   }
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < out.len()) {
     if (out[k].len() > 0 && out[k][0] == b'%') {
       out = out.with(k, slice_unchecked(out[k], 1, out[k].len()) + "");
@@ -7365,7 +7370,7 @@ function cfi_split_ops(rest: string): string[] {
 // cfi_atoi parses a decimal integer with an optional sign; -1 with ok=false
 // is reported through cfi_is_int.
 function cfi_is_int(s: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   if (s.len() > 0 && (s[0] == b'-' || s[0] == b'+')) {
     i = 1;
   }
@@ -7382,15 +7387,15 @@ function cfi_is_int(s: string): boolean {
 }
 
 function cfi_atoi(s: string): i32 {
-  var neg: boolean = false;
-  var i: i32 = 0;
+  let neg: boolean = false;
+  let i: i32 = 0;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
   } else if (s.len() > 0 && s[0] == b'+') {
     i = 1;
   }
-  var v: i32 = 0;
+  let v: i32 = 0;
   while (i < s.len()) {
     v = v * 10 + (s[i] as i32 - 48);
     i = i + 1;
@@ -7407,13 +7412,13 @@ function cfi_atoi(s: string): i32 {
 // the aarch64 one is x0..x30 = 0..30 with sp = 31 and the fp/lr aliases.
 function cfi_reg_num(p: CfiProfile, tok: string): i32 {
   if (cfi_is_int(tok)) {
-    var n: i32 = cfi_atoi(tok);
+    let n: i32 = cfi_atoi(tok);
     if (n < 0) {
       return 0 - 1;
     }
     return n;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < p.reg_names.len()) {
     if (p.reg_names[i] == tok) {
       return p.reg_nums[i];
@@ -7425,9 +7430,9 @@ function cfi_reg_num(p: CfiProfile, tok: string): i32 {
 
 // cfi_uleb appends v as unsigned LEB128.
 pub function cfi_uleb(b: i32[], v: i32): i32[] {
-  var x: i32 = v;
+  let x: i32 = v;
   while (true) {
-    var c: i32 = x & 127;
+    let c: i32 = x & 127;
     x = x >> 7;
     if (x != 0) {
       b = b.append(c | 128);
@@ -7440,9 +7445,9 @@ pub function cfi_uleb(b: i32[], v: i32): i32[] {
 
 // cfi_sleb appends v as signed LEB128.
 pub function cfi_sleb(b: i32[], v: i32): i32[] {
-  var x: i32 = v;
+  let x: i32 = v;
   while (true) {
-    var c: i32 = x & 127;
+    let c: i32 = x & 127;
     x = x >> 7;  // arithmetic: the sign is preserved
     if (x == 0 && (c & 64) == 0 || x == 0 - 1 && (c & 64) != 0) {
       return b.append(c);
@@ -7477,8 +7482,8 @@ function cfi_le64_i64(own b: i32[], v: i64): i32[] {
 // for the whole program, and an append through a borrowed spread copies the
 // whole buffer, quadratically, on every relaxation pass (#8172).
 function cfi_add_rule(own s: CfiState, off: i32, body: i32[]): CfiState {
-  var pos: i32 = s.rule_bytes.len();
-  var i: i32 = 0;
+  let pos: i32 = s.rule_bytes.len();
+  let i: i32 = 0;
   while (i < body.len()) {
     s = CfiState { ...s, rule_bytes: s.rule_bytes.append(body[i]) };
     i = i + 1;
@@ -7499,17 +7504,17 @@ function cfi_bad(own s: CfiState, what: string): CfiState {
 // `off`. `line` is the whole directive as written; anything this module
 // cannot express lands on s.bad rather than being dropped.
 pub function cfi_directive(own s: CfiState, line: string, off: i32): CfiState {
-  var t: string = cfi_trim(line);
-  var sp: i32 = 0;
+  let t: string = cfi_trim(line);
+  let sp: i32 = 0;
   while (sp < t.len() && t[sp] != b' ' && t[sp] != b'\t') {
     sp = sp + 1;
   }
-  var d: string = slice_unchecked(t, 0, sp) + "";
-  var rest: string = "";
+  let d: string = slice_unchecked(t, 0, sp) + "";
+  let rest: string = "";
   if (sp < t.len()) {
     rest = cfi_trim(slice_unchecked(t, sp, t.len()) + "");
   }
-  var ops: string[] = cfi_split_ops(rest);
+  let ops: string[] = cfi_split_ops(rest);
 
   if (d == ".cfi_sections") {  // the image writer decides
     return s;
@@ -7566,7 +7571,7 @@ function cfi_cfa_directive(own s: CfiState, d: string, ops: string[], rest: stri
   if (ops.len() < 1) {
     return cfi_bad(s, d + ": missing register operand");
   }
-  var r: i32 = cfi_reg_num(s.profile, ops[0]);
+  let r: i32 = cfi_reg_num(s.profile, ops[0]);
   if (r < 0) {
     return cfi_bad(s, d + " " + rest);
   }
@@ -7584,7 +7589,7 @@ function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: stri
   if (ops.len() < 1) {
     return cfi_bad(s, d + ": missing register operand");
   }
-  var r: i32 = cfi_reg_num(s.profile, ops[0]);
+  let r: i32 = cfi_reg_num(s.profile, ops[0]);
   if (r < 0) {
     return cfi_bad(s, d + " " + rest);
   }
@@ -7592,11 +7597,11 @@ function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: stri
     if (ops.len() < 2 || !cfi_is_int(ops[1])) {
       return cfi_bad(s, d + " " + rest);
     }
-    var n: i32 = cfi_atoi(ops[1]);
+    let n: i32 = cfi_atoi(ops[1]);
     if (n % s.profile.data_align != 0) {
       return cfi_bad(s, d + " " + ops[0] + ": offset not a multiple of the data alignment");
     }
-    var f: i32 = n / s.profile.data_align;
+    let f: i32 = n / s.profile.data_align;
     // A positive CFA-relative offset needs the extended_sf form, which
     // this module does not produce; refuse rather than unwind wrongly.
     if (f < 0) {
@@ -7611,7 +7616,7 @@ function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: stri
     if (ops.len() < 2) {
       return cfi_bad(s, d + ": missing operand");
     }
-    var rb: i32 = cfi_reg_num(s.profile, ops[1]);
+    let rb: i32 = cfi_reg_num(s.profile, ops[1]);
     if (rb < 0) {
       return cfi_bad(s, d + " " + rest);
     }
@@ -7638,7 +7643,7 @@ function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: stri
 // units of the code alignment factor. A delta that is not a multiple of it
 // is reported through `bad`, so the caller passes it back.
 function cfi_advance(own b: i32[], p: CfiProfile, delta: i32): i32[] {
-  var d: i32 = delta / p.code_align;
+  let d: i32 = delta / p.code_align;
   if (d == 0) {
     return b;
   }
@@ -7678,7 +7683,7 @@ function cfi_pad_entry(own b: i32[], at: i32, align: i32): i32[] {
 
 // cfi_cie renders the single CIE every FDE points at, length field included.
 function cfi_cie(p: CfiProfile): i32[] {
-  var b: i32[] = [];
+  let b: i32[] = [];
   b = cfi_le32(b, 0);  // CIE id
   b = b.append(1);  // version
   b = b.append(122);  // 'z'
@@ -7689,7 +7694,7 @@ function cfi_cie(p: CfiProfile): i32[] {
   b = cfi_uleb(b, p.ra_column);
   b = cfi_uleb(b, 1);  // augmentation data length
   b = b.append(p.ptr_enc);
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < p.initial.len()) {
     b = b.append(p.initial[i]);
     i = i + 1;
@@ -7699,7 +7704,7 @@ function cfi_cie(p: CfiProfile): i32[] {
 }
 
 function cfi_cat(own a: i32[], b: i32[]): i32[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < b.len()) {
     a = a.append(b[i]);
     i = i + 1;
@@ -7710,10 +7715,10 @@ function cfi_cat(own a: i32[], b: i32[]): i32[] {
 // cfi_fde_payload renders one FDE's payload (everything after its length
 // field) for the FDE at section offset `at`, not yet padded.
 function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr: i64, eh_vaddr: i64): i32[] {
-  var b: i32[] = [];
+  let b: i32[] = [];
   b = cfi_le32(b, at + 4);  // CIE pointer: the distance BACK to the CIE
-  var field_va: i64 = eh_vaddr + (at + 8) as i64;
-  var loc: i64 = text_vaddr + s.fde_start[k] as i64 - field_va;
+  let field_va: i64 = eh_vaddr + (at + 8) as i64;
+  let loc: i64 = text_vaddr + s.fde_start[k] as i64 - field_va;
   if (p.ptr_size == 8) {
     b = cfi_le64_i64(b, loc);
     b = cfi_le64_i64(b, (s.fde_end[k] - s.fde_start[k]) as i64);
@@ -7722,16 +7727,16 @@ function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr
     b = cfi_le32(b, s.fde_end[k] - s.fde_start[k]);
   }
   b = cfi_uleb(b, 0);  // augmentation data length
-  var pc: i32 = s.fde_start[k];
-  var r: i32 = s.fde_rule_first[k];
-  var end: i32 = s.rule_off.len();
+  let pc: i32 = s.fde_start[k];
+  let r: i32 = s.fde_rule_first[k];
+  let end: i32 = s.rule_off.len();
   if (k + 1 < s.fde_rule_first.len()) {
     end = s.fde_rule_first[k + 1];
   }
   while (r < end) {
     b = cfi_advance(b, p, s.rule_off[r] - pc);
     pc = s.rule_off[r];
-    var q: i32 = 0;
+    let q: i32 = 0;
     while (q < s.rule_len[r]) {
       b = b.append(s.rule_bytes[s.rule_pos[r] + q]);
       q = q + 1;
@@ -7755,14 +7760,14 @@ pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr:
   if (cfi_empty(s) || s.open) {
     return [];
   }
-  var out: i32[] = cfi_cie(p);
-  var at: i32 = out.len();
-  var n: i32 = s.fde_start.len();
-  var payloads: i32[] = [];  // every payload, concatenated
-  var lens: i32[] = [];
-  var k: i32 = 0;
+  let out: i32[] = cfi_cie(p);
+  let at: i32 = out.len();
+  let n: i32 = s.fde_start.len();
+  let payloads: i32[] = [];  // every payload, concatenated
+  let lens: i32[] = [];
+  let k: i32 = 0;
   while (k < n) {
-    var pl: i32[] = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
+    let pl: i32[] = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
     if (k == n - 1 && (at + 4 + pl.len()) % 8 != 0) {
       pl = cfi_cat(pl, [0, 0, 0, 0]);
     }
@@ -7771,11 +7776,11 @@ pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr:
     at = at + 4 + pl.len();
     k = k + 1;
   }
-  var pos: i32 = 0;
+  let pos: i32 = 0;
   k = 0;
   while (k < n) {
     out = cfi_le32(out, lens[k]);
-    var q: i32 = 0;
+    let q: i32 = 0;
     while (q < lens[k]) {
       out = out.append(payloads[pos + q]);
       q = q + 1;
@@ -7808,15 +7813,15 @@ pub function cfi_eh_frame_hdr(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_va
     return [];
   }
   // FDE offsets within .eh_frame: the CIE first, then each padded FDE.
-  var cie_len: i32 = cfi_cie(p).len();
-  var at: i32 = cie_len;
-  var n: i32 = s.fde_start.len();
-  var fns: i64[] = [];
-  var fdes: i64[] = [];
-  var k: i32 = 0;
+  let cie_len: i32 = cfi_cie(p).len();
+  let at: i32 = cie_len;
+  let n: i32 = s.fde_start.len();
+  let fns: i64[] = [];
+  let fdes: i64[] = [];
+  let k: i32 = 0;
   while (k < n) {
-    var pl: i32[] = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
-    var plen: i32 = pl.len();
+    let pl: i32[] = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
+    let plen: i32 = pl.len();
     if (k == n - 1 && (at + 4 + plen) % 8 != 0) {
       plen = plen + 4;
     }
@@ -7828,21 +7833,21 @@ pub function cfi_eh_frame_hdr(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_va
   // Binary-searched, so sorted by function address; recorded in .text
   // order it already is, but a lookup that silently misses is not worth
   // leaving to that.
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < n) {
-    var j: i32 = i;
+    let j: i32 = i;
     while (j > 0 && fns[j] < fns[j - 1]) {
-      var tf: i64 = fns[j];
+      let tf: i64 = fns[j];
       fns = fns.with(j, fns[j - 1]);
       fns = fns.with(j - 1, tf);
-      var td: i64 = fdes[j];
+      let td: i64 = fdes[j];
       fdes = fdes.with(j, fdes[j - 1]);
       fdes = fdes.with(j - 1, td);
       j = j - 1;
     }
     i = i + 1;
   }
-  var b: i32[] = [1, 27, 3, 59];  // version, pcrel|sdata4, udata4, datarel|sdata4
+  let b: i32[] = [1, 27, 3, 59];  // version, pcrel|sdata4, udata4, datarel|sdata4
   b = cfi_le32_i64(b, eh_vaddr - (hdr_vaddr + 4 as i64));
   b = cfi_le32(b, n);
   k = 0;

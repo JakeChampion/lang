@@ -1,6 +1,6 @@
 # An enum read through a match EXPRESSION reclaimed nothing — killer-drops slice 10
 
-`var v: E = E.A([i, i + 1]); consume(v);` over 100 rounds: **200 allocs / 0
+`let v: E = E.A([i, i + 1]); consume(v);` over 100 rounds: **200 allocs / 0
 frees** against native's 200/200. Not one block — the enum box and its payload,
 every round. The identical read written as a match STATEMENT was already flat.
 
@@ -42,7 +42,7 @@ match-borrow reading, both of which delegate expressions to `expr_unsafe_for`:
   match expression had that param marked non-borrowable — and every CALLER then
   refused its own enum local's release. This is the expensive half.
 - **`ef_unsafe_expr`** (slice 5's enum-field fork), which is the caller's own
-  `var t = match (v) { … }` read.
+  `let t = match (v) { … }` read.
 
 ## The fix, and why it is not one line
 
@@ -82,7 +82,7 @@ pinned across x86 / arm64 / wasm by
 `internal/e2eselfhost/self_host_enum_value_block_borrow_test.go`.
 
 The negative control is the row that matters: a value block whose VALUE is the
-enum (`var y: E = if (c) { v } else { mkv(i) }`) stays refused at 300/0,
+enum (`let y: E = if (c) { v } else { mkv(i) }`) stays refused at 300/0,
 unchanged by this slice — the strict walker's StmtReturn arm catches a name that
 really does leave the block, inside one exactly as outside one.
 

@@ -10,7 +10,7 @@ The "RCE:" registry and the "ENUM:" registry both key on a named callee, so an
 rc enum a closure call returned was never released in any of these positions:
 
 - lent to a borrowable parameter (`run(g(w), g)`);
-- bound (`var e: S = g(n)`);
+- bound (`let e: S = g(n)`);
 - rebound in a loop (`cur = g(w)`).
 
 Whatever the payload was, the chain leaked.
@@ -85,7 +85,7 @@ function is already an `ENUM:` member.
 ## Not covered
 
 - #9841's own probe still reads 29 / 2. `run` starts its loop from
-  `var cur: Step = s`, a parameter alias. That shape leaks with a direct call as
+  `let cur: Step = s`, a parameter alias. That shape leaks with a direct call as
   well (15 / 0 for a string payload), because the alias makes the parameter
   unborrowable and holds no count of its own. Filed as #10588.
 - The guard's 10 leaked blocks are the enum each closure captures. A capturing

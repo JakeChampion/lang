@@ -40,14 +40,14 @@ const crossModuleVariantMain = `
 import "./tokens";
 
 function main(): i32 {
-    var t1: tokens.Tok = tokens.make_a();
-    var v1: i32 = 0;
+    let t1: tokens.Tok = tokens.make_a();
+    let v1: i32 = 0;
     match (t1) {
         tokens.TokA(a) => { v1 = a.x; },
         tokens.TokB(b) => { v1 = b.y; }
     }
-    var t2: tokens.Tok = tokens.make_b();
-    var v2: i32 = 0;
+    let t2: tokens.Tok = tokens.make_b();
+    let v2: i32 = 0;
     match (t2) {
         tokens.TokA(a) => { v2 = a.x; },
         tokens.TokB(b) => { v2 = b.y; }
@@ -167,7 +167,7 @@ import "./tokens" as lexer;
 import "./tokens";
 
 function main(): i32 {
-    var t: tokens.Tok = tokens.make_a();
+    let t: tokens.Tok = tokens.make_a();
     match (t) {
         lexer.TokA(a) => { return a.x; },
         lexer.TokB(b) => { return b.y; }

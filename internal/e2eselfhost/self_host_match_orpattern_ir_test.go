@@ -5,7 +5,7 @@ import "testing"
 // matchOrPatternIRCases pin match-arm OR-PATTERNS (`A | B => …`, issue #2698)
 // to the self-host IR path on x86-64 + wasm. The parser desugars an or-pattern
 // into one arm per alternative sharing the (per-alternative) guard + body, so
-// the checker (exhaustiveness, payload binding) and irlower see an ordinary
+// the checker (exhaustiveness, payload binding) and the lowering see an ordinary
 // flat arm list — no new IR. These cases prove the desugar survives the
 // self-host parser end to end: payloadless variants, a same-name payload
 // binding reused across alternatives, a guard applied to every alternative,

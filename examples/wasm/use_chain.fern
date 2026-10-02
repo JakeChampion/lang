@@ -79,7 +79,7 @@ function main(): i32 {
       print("triple-doubled then plus two: fail");
     }
   }
-  var add7: (i32) => i32 = adder(7);
+  let add7: (i32) => i32 = adder(7);
   print("adder factory: 7 + 35 = " + add7(35).to_string());
   return 0;
 }

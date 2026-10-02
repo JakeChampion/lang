@@ -15,15 +15,15 @@ struct Box { n: i64, tag: i32 }
 
 function main(): i32 {
     // Struct-literal field position.
-    var s: Box = Box { n: (if (true) { id(5000000000i64) } else { id(7i64) }), tag: 1 };
+    let s: Box = Box { n: (if (true) { id(5000000000i64) } else { id(7i64) }), tag: 1 };
     if (s.n != 5000000000i64) { return 1; }
 
     // Call-argument position.
-    var viaArg: i64 = widen((if (false) { id(3i64) } else { pick(true, 6000000000i64, 4i64) }));
+    let viaArg: i64 = widen((if (false) { id(3i64) } else { pick(true, 6000000000i64, 4i64) }));
     if (viaArg != 6000000000i64) { return 2; }
 
     // Array-element position.
-    var xs: i64[] = [1i64, (if (true) { id(7000000000i64) } else { id(2i64) }), 3i64];
+    let xs: i64[] = [1i64, (if (true) { id(7000000000i64) } else { id(2i64) }), 3i64];
     if (xs[1] != 7000000000i64) { return 3; }
 
     return 0;

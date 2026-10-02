@@ -54,16 +54,16 @@ function adder(n: i32): (i32) => i32 {
 	return (x: i32): i32 => { return x + n; };
 }
 function main(): i32 {
-	var f: (i32) => i32 = adder(10);
-	var g: (i32) => i32 = adder(20);
+	let f: (i32) => i32 = adder(10);
+	let g: (i32) => i32 = adder(20);
 	return f(1) + g(2);
 }`,
 
 	"mixed_widths": `
 function main(): i32 {
-	var a: i64 = 1;
-	var b: f64 = 2.5;
-	var c: i32 = 3;
+	let a: i64 = 1;
+	let b: f64 = 2.5;
+	let c: i32 = 3;
 	return c;
 }`,
 }

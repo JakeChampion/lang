@@ -24,8 +24,8 @@ import (
 const arrayFusionSrc = `import "std/array";
 
 function build(n: i32): i64[] {
-	var xs: i64[] = [];
-	var i: i32 = 0;
+	let xs: i64[] = [];
+	let i: i32 = 0;
 	while (i < n) { xs = xs.append((i as i64) + (1 as i64)); i = i + 1; }
 	return xs;
 }
@@ -36,14 +36,14 @@ function via_map_fold(xs: i64[]): i64 {
 	         .fold(0 as i64, (a: i64, b: i64): i64 => a + b);
 }
 function loop_map_fold_plus_one(xs: i64[]): i64 {
-	var acc: i64 = 0 as i64;
-	var i: i32 = 0;
+	let acc: i64 = 0 as i64;
+	let i: i32 = 0;
 	while (i < xs.len()) { acc = acc + xs[i] + (1 as i64); i = i + 1; }
 	return acc;
 }
 function loop_map_fold(xs: i64[]): i64 {
-	var acc: i64 = 0 as i64;
-	var i: i32 = 0;
+	let acc: i64 = 0 as i64;
+	let i: i32 = 0;
 	while (i < xs.len()) { acc = acc + xs[i] * (3 as i64); i = i + 1; }
 	return acc;
 }
@@ -56,8 +56,8 @@ function via_filter_map_fold(xs: i64[]): i64 {
 	         .fold(0 as i64, (a: i64, b: i64): i64 => a + b);
 }
 function loop_filter_map_fold(xs: i64[]): i64 {
-	var acc: i64 = 0 as i64;
-	var i: i32 = 0;
+	let acc: i64 = 0 as i64;
+	let i: i32 = 0;
 	while (i < xs.len()) {
 		if (xs[i] % (2 as i64) == (0 as i64)) { acc = acc + xs[i] + (10 as i64); }
 		i = i + 1;
@@ -68,7 +68,7 @@ function loop_filter_map_fold(xs: i64[]): i64 {
 // map -> map -> reduce. 'reduce' has no seed: its accumulator is the first
 // element to arrive, so 'h' runs one time fewer than there are elements.
 function via_map_map_reduce(xs: i64[]): i64 {
-	var out: Option[i64] = xs
+	let out: Option[i64] = xs
 		.map((x: i64): i64 => x + (1 as i64))
 		.map((x: i64): i64 => x * (2 as i64))
 		.reduce((a: i64, b: i64): i64 => a + b);
@@ -76,8 +76,8 @@ function via_map_map_reduce(xs: i64[]): i64 {
 }
 function loop_map_map_reduce(xs: i64[]): i64 {
 	if (xs.len() == 0) { return 0 as i64 - (1 as i64); }
-	var acc: i64 = (xs[0] + (1 as i64)) * (2 as i64);
-	var i: i32 = 1;
+	let acc: i64 = (xs[0] + (1 as i64)) * (2 as i64);
+	let i: i32 = 1;
 	while (i < xs.len()) { acc = acc + (xs[i] + (1 as i64)) * (2 as i64); i = i + 1; }
 	return acc;
 }
@@ -86,15 +86,15 @@ function loop_map_map_reduce(xs: i64[]): i64 {
 // fused loop that walked the elements in another order, or that folded the
 // seed in twice, agrees with the loop on a sum and disagrees here.
 function via_order_sensitive(xs: i64[]): i64 {
-	var out: Option[i64] = xs
+	let out: Option[i64] = xs
 		.map((x: i64): i64 => x + (1 as i64))
 		.reduce((a: i64, b: i64): i64 => a * (2 as i64) - b);
 	match (out) { Some(v) => { return v; }, None => { return 0 as i64 - (1 as i64); } }
 }
 function loop_order_sensitive(xs: i64[]): i64 {
 	if (xs.len() == 0) { return 0 as i64 - (1 as i64); }
-	var acc: i64 = xs[0] + (1 as i64);
-	var i: i32 = 1;
+	let acc: i64 = xs[0] + (1 as i64);
+	let i: i32 = 1;
 	while (i < xs.len()) { acc = acc * (2 as i64) - (xs[i] + (1 as i64)); i = i + 1; }
 	return acc;
 }
@@ -102,7 +102,7 @@ function loop_order_sensitive(xs: i64[]): i64 {
 // A filter that admits nothing, feeding a reduce: the loop never runs, so the
 // answer is None and not a zero accumulator dressed up as Some.
 function via_all_filtered(xs: i64[]): i64 {
-	var out: Option[i64] = xs
+	let out: Option[i64] = xs
 		.filter((x: i64): boolean => x < (0 as i64))
 		.reduce((a: i64, b: i64): i64 => a + b);
 	match (out) { Some(v) => { return v; }, None => { return 0 as i64 - (7 as i64); } }
@@ -111,16 +111,16 @@ function via_all_filtered(xs: i64[]): i64 {
 // Two chains in one function: emitting the first shifts every op index the
 // second was planned against.
 function via_two_chains(xs: i64[]): i64 {
-	var a: i64 = xs.map((x: i64): i64 => x + (1 as i64))
+	let a: i64 = xs.map((x: i64): i64 => x + (1 as i64))
 	               .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
-	var b: i64 = xs.filter((y: i64): boolean => y > (2 as i64))
+	let b: i64 = xs.filter((y: i64): boolean => y > (2 as i64))
 	               .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
 	return a + b;
 }
 function loop_two_chains(xs: i64[]): i64 {
-	var a: i64 = 0 as i64;
-	var b: i64 = 0 as i64;
-	var i: i32 = 0;
+	let a: i64 = 0 as i64;
+	let b: i64 = 0 as i64;
+	let i: i32 = 0;
 	while (i < xs.len()) {
 		a = a + xs[i] + (1 as i64);
 		if (xs[i] > (2 as i64)) { b = b + xs[i]; }
@@ -133,8 +133,8 @@ function loop_two_chains(xs: i64[]): i64 {
 // enclosing structured-control-flow region, so a br target off by one level
 // leaves the enclosing loop spinning or exits it early.
 function via_chain_in_loop(xs: i64[], rounds: i32): i64 {
-	var total: i64 = 0 as i64;
-	var i: i32 = 0;
+	let total: i64 = 0 as i64;
+	let i: i32 = 0;
 	while (i < rounds) {
 		total = total + xs.map((x: i64): i64 => x + (1 as i64))
 		                  .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
@@ -143,10 +143,10 @@ function via_chain_in_loop(xs: i64[], rounds: i32): i64 {
 	return total;
 }
 function loop_chain_in_loop(xs: i64[], rounds: i32): i64 {
-	var total: i64 = 0 as i64;
-	var r: i32 = 0;
+	let total: i64 = 0 as i64;
+	let r: i32 = 0;
 	while (r < rounds) {
-		var i: i32 = 0;
+		let i: i32 = 0;
 		while (i < xs.len()) { total = total + xs[i] + (1 as i64); i = i + 1; }
 		r = r + 1;
 	}
@@ -163,8 +163,8 @@ function via_three_maps(xs: i64[]): i64 {
 	         .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
 }
 function loop_three_maps(xs: i64[]): i64 {
-	var acc: i64 = 0 as i64;
-	var i: i32 = 0;
+	let acc: i64 = 0 as i64;
+	let i: i32 = 0;
 	while (i < xs.len()) { acc = acc + ((xs[i] + (1 as i64)) * (2 as i64)) - (1 as i64); i = i + 1; }
 	return acc;
 }
@@ -181,8 +181,8 @@ function via_in_branch(xs: i64[], c: i32): i64 {
 }
 
 function doubled(xs: i64[]): i64[] {
-	var out: i64[] = [];
-	var i: i32 = 0;
+	let out: i64[] = [];
+	let i: i32 = 0;
 	while (i < xs.len()) { out = out.append(xs[i] * (2 as i64)); i = i + 1; }
 	return out;
 }
@@ -191,14 +191,14 @@ function via_call_receiver(xs: i64[]): i64 {
 	                  .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
 }
 function loop_call_receiver(xs: i64[]): i64 {
-	var acc: i64 = 0 as i64;
-	var i: i32 = 0;
+	let acc: i64 = 0 as i64;
+	let i: i32 = 0;
 	while (i < xs.len()) { acc = acc + xs[i] * (2 as i64) + (1 as i64); i = i + 1; }
 	return acc;
 }
 
 function check(n: i32): i32 {
-	var xs: i64[] = build(n);
+	let xs: i64[] = build(n);
 	if (via_map_fold(xs) != loop_map_fold(xs)) { return 10; }
 	if (via_filter_map_fold(xs) != loop_filter_map_fold(xs)) { return 11; }
 	if (via_map_map_reduce(xs) != loop_map_map_reduce(xs)) { return 12; }
@@ -217,10 +217,10 @@ function main(): i32 {
 	// Empty, singleton, and a length where the filter admits some but not
 	// all. The singleton is the case a reduce gets wrong by calling its
 	// combining function on one element.
-	var sizes: i32[] = [0, 1, 2, 3, 17];
-	var i: i32 = 0;
+	let sizes: i32[] = [0, 1, 2, 3, 17];
+	let i: i32 = 0;
 	while (i < sizes.len()) {
-		var bad: i32 = check(sizes[i]);
+		let bad: i32 = check(sizes[i]);
 		if (bad != 0) { return bad * 10 + i; }
 		i = i + 1;
 	}
@@ -236,8 +236,8 @@ function main(): i32 {
 const arrayFusionAllocSrc = `import "std/array";
 
 function build(n: i32): i64[] {
-	var xs: i64[] = [];
-	var i: i32 = 0;
+	let xs: i64[] = [];
+	let i: i32 = 0;
 	while (i < n) { xs = xs.append((i as i64) + (1 as i64)); i = i + 1; }
 	return xs;
 }
@@ -250,19 +250,19 @@ function via_filter_map_fold(xs: i64[]): i64 {
 
 function main(): i32 {
 	// The counter has to move at all, or every assertion below is vacuous.
-	var mark: i64 = __heap_alloc_count();
-	var probe: i64[] = build(64);
+	let mark: i64 = __heap_alloc_count();
+	let probe: i64[] = build(64);
 	if (probe.len() != 64) { return 98; }
 	if (__heap_alloc_count() - mark <= 0 as i64) { return 99; }
 
 	// The intermediates are gone, not merely recycled: unfused, each of the
 	// two stages allocates a buffer linear in the input, once per round.
-	var big: i64[] = build(2000);
-	var before: i64 = __heap_alloc_count();
-	var sink: i64 = 0 as i64;
-	var r: i32 = 0;
+	let big: i64[] = build(2000);
+	let before: i64 = __heap_alloc_count();
+	let sink: i64 = 0 as i64;
+	let r: i32 = 0;
 	while (r < 20) { sink = sink + via_filter_map_fold(big); r = r + 1; }
-	var used: i64 = __heap_alloc_count() - before;
+	let used: i64 = __heap_alloc_count() - before;
 	if (sink == 0 as i64) { return 96; }
 	// Fused this is zero. The bound is loose so a sink that boxes its answer
 	// once per round still passes, and tight enough that one buffer per stage
@@ -337,45 +337,45 @@ const closureEnvSrc = `
 function scale(): i64 { return 3 as i64; }
 
 function apply1(fn: (i64) => i64, xs: i64[]): i64 {
-	var acc: i64 = 0 as i64;
-	var i: i32 = 0;
+	let acc: i64 = 0 as i64;
+	let i: i32 = 0;
 	while (i < xs.len()) { acc = acc + fn(xs[i]); i = i + 1; }
 	return acc;
 }
 
 function build(n: i32): i64[] {
-	var xs: i64[] = [];
-	var i: i32 = 0;
+	let xs: i64[] = [];
+	let i: i32 = 0;
 	while (i < n) { xs = xs.append((i as i64) + (1 as i64)); i = i + 1; }
 	return xs;
 }
 
 function main(): i32 {
-	var xs: i64[] = build(64);
+	let xs: i64[] = build(64);
 
 	// Captures nothing: its env is the constant the fold replaces.
-	var plain: i64 = apply1((x: i64): i64 => x * scale(), xs);
-	var wantPlain: i64 = 0 as i64;
-	var i: i32 = 0;
+	let plain: i64 = apply1((x: i64): i64 => x * scale(), xs);
+	let wantPlain: i64 = 0 as i64;
+	let i: i32 = 0;
 	while (i < xs.len()) { wantPlain = wantPlain + xs[i] * scale(); i = i + 1; }
 	if (plain != wantPlain) { return 90; }
 
 	// Captures one value. A null env would read 'bump' as garbage.
-	var bump: i64 = 11 as i64;
-	var one: i64 = apply1((x: i64): i64 => x * scale() + bump, xs);
+	let bump: i64 = 11 as i64;
+	let one: i64 = apply1((x: i64): i64 => x * scale() + bump, xs);
 	if (one != wantPlain + (64 as i64) * bump) { return 91; }
 
 	// Captures two, so a null env cannot accidentally read the right one.
-	var a: i64 = 5 as i64;
-	var b: i64 = 7 as i64;
-	var two: i64 = apply1((x: i64): i64 => x * a + b, xs);
-	var wantTwo: i64 = 0 as i64;
-	var j: i32 = 0;
+	let a: i64 = 5 as i64;
+	let b: i64 = 7 as i64;
+	let two: i64 = apply1((x: i64): i64 => x * a + b, xs);
+	let wantTwo: i64 = 0 as i64;
+	let j: i32 = 0;
 	while (j < xs.len()) { wantTwo = wantTwo + xs[j] * a + b; j = j + 1; }
 	if (two != wantTwo) { return 92; }
 
 	// A capturing closure called through a value that outlives its scope.
-	var made: (i64) => i64 = (x: i64): i64 => x + a + b;
+	let made: (i64) => i64 = (x: i64): i64 => x + a + b;
 	if (apply1(made, xs) != wantPlain / scale() + (64 as i64) * (a + b)) { return 93; }
 	return 0;
 }

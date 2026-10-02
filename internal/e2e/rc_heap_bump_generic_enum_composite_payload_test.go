@@ -28,12 +28,12 @@ import (
 func genEnumCompositeBumpSrc(n string) string {
 	return `enum Wrap[T] { W(T[]), Empty }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
-    var stem: string = "alpha";
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
+    let stem: string = "alpha";
     while (i < ` + n + `) {
-        var w: Wrap[string] = W([stem + "x", stem + "yy", stem + "zzz"]);
+        let w: Wrap[string] = W([stem + "x", stem + "yy", stem + "zzz"]);
         match (w) {
             W(xs) => { acc = acc + xs.len(); },
             Empty => {},
@@ -51,12 +51,12 @@ function main(): i32 {
 // value + underflow contracts are asserted, not the bump.
 const genEnumCompositeUnderflowSrc = `enum Wrap[T] { W(T[]), Empty }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var stem: string = "s";
-        var a: string[] = [stem + "x", stem + "yy", stem + "zzz"];
-        var w: Wrap[string] = W(a);
+        let stem: string = "s";
+        let a: string[] = [stem + "x", stem + "yy", stem + "zzz"];
+        let w: Wrap[string] = W(a);
         acc = acc + a[0].len() + a[2].len();
         match (w) { W(xs) => { acc = acc + xs[1].len(); }, Empty => {} }
         i = i + 1;

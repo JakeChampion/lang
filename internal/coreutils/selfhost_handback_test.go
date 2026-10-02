@@ -17,7 +17,7 @@ import (
 // `Getopt` had as many fields as uniq's `Cfg`. The self-host's tail release
 // at `return long_option(s, a)` in `Getopt.next` freed `s`'s box, though
 // long_option hands that box back INSIDE the tuple it returns (through its
-// alias `var s: Getopt = g`); the freed block sat in the same freelist class
+// alias `let s: Getopt = g`); the freed block sat in the same freelist class
 // as `Cfg` from then on, and the next `Cfg { ...cfg, … }` in uniq's option
 // loop recycled it under the live Getopt. EQUAL FIELD COUNTS are what put
 // the two structs in one class, which is why every build where they

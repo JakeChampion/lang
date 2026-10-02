@@ -24,7 +24,7 @@ construction retains exist.
 
 ## The loop-carried strand, recorded
 
-A LOOP rebind re-reading the same field (`while { var p = P { f: q.f } }`)
+A LOOP rebind re-reading the same field (`while { let p = P { f: q.f } }`)
 still strands the per-iteration retains: `__field_reclaim_<T>`'s cow
 guard skips a pointer-equal field, and that skip is load-bearing for
 spread carries (#6653's balance is retain-suppressed + cow-skipped, and

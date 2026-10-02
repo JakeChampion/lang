@@ -16,7 +16,7 @@ import "testing"
 const mapValuePtrIRPrelude = `function ap(m: Map[string, string[]], k: string, v: string): Map[string, string[]] {
     match (m.get(k)) {
         Some(e) => { return m.insert(k, e.append(v)); },
-        None => { var a: string[] = [v]; return m.insert(k, a); },
+        None => { let a: string[] = [v]; return m.insert(k, a); },
     }
     return m;
 }
@@ -37,11 +37,11 @@ var mapValuePtrIRCases = []struct {
 	want int
 }{
 	// #3495: append to "a" must NOT leak into sibling "b". a:[1,3]=2, b:[2]=1 -> 21.
-	{"dup-key-sibling", `var m: Map[string, string[]] = Map {}; m = ap(m, "a", "1"); m = ap(m, "b", "2"); m = ap(m, "a", "3"); return vcount(m, "a") * 10 + vcount(m, "b");`, 21},
+	{"dup-key-sibling", `let m: Map[string, string[]] = Map {}; m = ap(m, "a", "1"); m = ap(m, "b", "2"); m = ap(m, "a", "3"); return vcount(m, "a") * 10 + vcount(m, "b");`, 21},
 	// three distinct keys each with one value, via the helper -> none corrupted.
-	{"three-keys", `var m: Map[string, string[]] = Map {}; m = ap(m, "x", "1"); m = ap(m, "y", "2"); m = ap(m, "z", "3"); return vcount(m, "x") * 100 + vcount(m, "y") * 10 + vcount(m, "z");`, 111},
+	{"three-keys", `let m: Map[string, string[]] = Map {}; m = ap(m, "x", "1"); m = ap(m, "y", "2"); m = ap(m, "z", "3"); return vcount(m, "x") * 100 + vcount(m, "y") * 10 + vcount(m, "z");`, 111},
 	// scalar (i32) values via a helper must stay correct (vis=0, no regression).
-	{"scalar-values", `var m: Map[string, i32] = Map {}; m = iput(m, "a", 5); m = iput(m, "b", 7); return iget(m, "a") + iget(m, "b");`, 12},
+	{"scalar-values", `let m: Map[string, i32] = Map {}; m = iput(m, "a", 5); m = iput(m, "b", 7); return iget(m, "a") + iget(m, "b");`, 12},
 }
 
 func mapValuePtrIRSrc(mainBody string) string {

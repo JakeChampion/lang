@@ -22,23 +22,23 @@ import "testing"
 // expectations are oracle-checked against the native interpreter. FEATURE-AUDIT
 // std/sort + core/cmp sort row.
 const sortIRPrelude = `pub function sort_i32_asc(arr: i32[]): i32[] {
-    var n: i32 = arr.len();
+    let n: i32 = arr.len();
     if (n < 2) { return arr; }
-    var src: i32[] = arr;
-    var width: i32 = 1;
+    let src: i32[] = arr;
+    let width: i32 = 1;
     while (width < n) {
-        var dst: i32[] = [];
-        var c: i32 = 0;
+        let dst: i32[] = [];
+        let c: i32 = 0;
         while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
+        let lo: i32 = 0;
         while (lo < n) {
-            var mid: i32 = lo + width;
+            let mid: i32 = lo + width;
             if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
+            let hi: i32 = lo + width + width;
             if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
+            let i: i32 = lo;
+            let j: i32 = mid;
+            let k: i32 = lo;
             while (i < mid && j < hi) {
                 if (src[j] < src[i]) {
                     dst = dst.with(k, src[j]);
@@ -59,23 +59,23 @@ const sortIRPrelude = `pub function sort_i32_asc(arr: i32[]): i32[] {
     return src;
 }
 pub function sort_i32_desc(arr: i32[]): i32[] {
-    var n: i32 = arr.len();
+    let n: i32 = arr.len();
     if (n < 2) { return arr; }
-    var src: i32[] = arr;
-    var width: i32 = 1;
+    let src: i32[] = arr;
+    let width: i32 = 1;
     while (width < n) {
-        var dst: i32[] = [];
-        var c: i32 = 0;
+        let dst: i32[] = [];
+        let c: i32 = 0;
         while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
+        let lo: i32 = 0;
         while (lo < n) {
-            var mid: i32 = lo + width;
+            let mid: i32 = lo + width;
             if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
+            let hi: i32 = lo + width + width;
             if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
+            let i: i32 = lo;
+            let j: i32 = mid;
+            let k: i32 = lo;
             while (i < mid && j < hi) {
                 if (src[j] > src[i]) {
                     dst = dst.with(k, src[j]);
@@ -96,11 +96,11 @@ pub function sort_i32_desc(arr: i32[]): i32[] {
     return src;
 }
 pub function string_cmp(a: string, b: string): i32 {
-    var n: i32 = a.len();
-    var m: i32 = b.len();
-    var min: i32 = n;
+    let n: i32 = a.len();
+    let m: i32 = b.len();
+    let min: i32 = n;
     if (m < n) { min = m; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < min) {
         if (a[i] < b[i]) { return 0 - 1; }
         if (a[i] > b[i]) { return 1; }
@@ -111,23 +111,23 @@ pub function string_cmp(a: string, b: string): i32 {
     return 0;
 }
 pub function sort_strings_asc(arr: string[]): string[] {
-    var n: i32 = arr.len();
+    let n: i32 = arr.len();
     if (n < 2) { return arr; }
-    var src: string[] = arr;
-    var width: i32 = 1;
+    let src: string[] = arr;
+    let width: i32 = 1;
     while (width < n) {
-        var dst: string[] = [];
-        var c: i32 = 0;
+        let dst: string[] = [];
+        let c: i32 = 0;
         while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
+        let lo: i32 = 0;
         while (lo < n) {
-            var mid: i32 = lo + width;
+            let mid: i32 = lo + width;
             if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
+            let hi: i32 = lo + width + width;
             if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
+            let i: i32 = lo;
+            let j: i32 = mid;
+            let k: i32 = lo;
             while (i < mid && j < hi) {
                 if (string_cmp(src[j], src[i]) < 0) {
                     dst = dst.with(k, src[j]);
@@ -148,23 +148,23 @@ pub function sort_strings_asc(arr: string[]): string[] {
     return src;
 }
 pub function sort_strings_desc(arr: string[]): string[] {
-    var n: i32 = arr.len();
+    let n: i32 = arr.len();
     if (n < 2) { return arr; }
-    var src: string[] = arr;
-    var width: i32 = 1;
+    let src: string[] = arr;
+    let width: i32 = 1;
     while (width < n) {
-        var dst: string[] = [];
-        var c: i32 = 0;
+        let dst: string[] = [];
+        let c: i32 = 0;
         while (c < n) { dst = dst.append(src[c]); c = c + 1; }
-        var lo: i32 = 0;
+        let lo: i32 = 0;
         while (lo < n) {
-            var mid: i32 = lo + width;
+            let mid: i32 = lo + width;
             if (mid > n) { mid = n; }
-            var hi: i32 = lo + width + width;
+            let hi: i32 = lo + width + width;
             if (hi > n) { hi = n; }
-            var i: i32 = lo;
-            var j: i32 = mid;
-            var k: i32 = lo;
+            let i: i32 = lo;
+            let j: i32 = mid;
+            let k: i32 = lo;
             while (i < mid && j < hi) {
                 if (string_cmp(src[j], src[i]) > 0) {
                     dst = dst.with(k, src[j]);
@@ -185,7 +185,7 @@ pub function sort_strings_desc(arr: string[]): string[] {
     return src;
 }
 function is_sorted_i32_asc(a: i32[]): i32 {
-    var i: i32 = 1;
+    let i: i32 = 1;
     while (i < a.len()) {
         if (a[i - 1] > a[i]) { return 0; }
         i = i + 1;
@@ -200,25 +200,25 @@ var sortIRCases = []struct {
 	want int
 }{
 	// ascending merge sort: [5,3,1,4,2] -> [1,2,3,4,5]; min*10 + max = 15.
-	{"i32-asc", `var a: i32[] = [5, 3, 1, 4, 2]; var s: i32[] = sort_i32_asc(a); return s[0] * 10 + s[4];`, 15},
+	{"i32-asc", `let a: i32[] = [5, 3, 1, 4, 2]; let s: i32[] = sort_i32_asc(a); return s[0] * 10 + s[4];`, 15},
 	// descending: [5,3,1,4,2] -> [5,4,3,2,1]; first*10 + last = 51.
-	{"i32-desc", `var a: i32[] = [5, 3, 1, 4, 2]; var s: i32[] = sort_i32_desc(a); return s[0] * 10 + s[4];`, 51},
+	{"i32-desc", `let a: i32[] = [5, 3, 1, 4, 2]; let s: i32[] = sort_i32_desc(a); return s[0] * 10 + s[4];`, 51},
 	// the ascending result is non-decreasing -> predicate returns 1.
-	{"i32-sorted-pred", `var a: i32[] = [9, 1, 8, 2, 7, 3]; return is_sorted_i32_asc(sort_i32_asc(a));`, 1},
+	{"i32-sorted-pred", `let a: i32[] = [9, 1, 8, 2, 7, 3]; return is_sorted_i32_asc(sort_i32_asc(a));`, 1},
 	// duplicates survive (stable count): [4,4,1,4] -> [1,4,4,4]; middle two are 4 -> 8.
-	{"i32-dups", `var a: i32[] = [4, 4, 1, 4]; var s: i32[] = sort_i32_asc(a); return s[1] + s[2];`, 8},
+	{"i32-dups", `let a: i32[] = [4, 4, 1, 4]; let s: i32[] = sort_i32_asc(a); return s[1] + s[2];`, 8},
 	// byte-lex comparator: "apple" < "banana" -> -1; mapped to a small int via +2.
 	{"string-cmp", `return string_cmp("apple", "banana") + 2;`, 1},
 	// string sort ascending: smallest is "apple" (len 5).
-	{"string-asc", `var a: string[] = ["cherry", "apple", "banana"]; var s: string[] = sort_strings_asc(a); return s[0].len();`, 5},
+	{"string-asc", `let a: string[] = ["cherry", "apple", "banana"]; let s: string[] = sort_strings_asc(a); return s[0].len();`, 5},
 	// string sort descending: largest is "cherry" (len 6).
-	{"string-desc", `var a: string[] = ["cherry", "apple", "banana"]; var s: string[] = sort_strings_desc(a); return s[0].len();`, 6},
+	{"string-desc", `let a: string[] = ["cherry", "apple", "banana"]; let s: string[] = sort_strings_desc(a); return s[0].len();`, 6},
 	// n < 2 early-return actually EXECUTES (returns the borrowed scalar
 	// array param directly): empty -> len 0 (+3 to distinguish from traps).
-	{"i32-empty", `var e: i32[] = []; return sort_i32_asc(e).len() + 3;`, 3},
+	{"i32-empty", `let e: i32[] = []; return sort_i32_asc(e).len() + 3;`, 3},
 	// n < 2 early-return over a pointer-element (string[]) array: the
 	// singleton survives the return-borrowed-param path intact.
-	{"string-singleton", `var a: string[] = ["hi"]; var s: string[] = sort_strings_asc(a); return s[0].len();`, 2},
+	{"string-singleton", `let a: string[] = ["hi"]; let s: string[] = sort_strings_asc(a); return s[0].len();`, 2},
 }
 
 func sortIRSrc(mainBody string) string {

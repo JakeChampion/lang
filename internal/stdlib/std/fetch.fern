@@ -23,6 +23,11 @@
 // leaves the origin; an idempotent request the peer resets before
 // answering is sent once more. No TLS yet (`https` fails with `Tls`), no
 // pool: each request is one connection sent with `Connection: close`.
+// The client asks for `gzip` unless the caller wrote an `Accept-Encoding`
+// of their own, and undoes the coding it asked for, so a caller sees the
+// bytes the origin meant: the body cap bounds what the decoder may
+// produce, and `Decoding`'s depth and ratio refuse a response that
+// stacks codings or grew implausibly.
 //
 // The two routes differ in what they may reach. `plat.http` refuses a
 // host that resolves to an address `net.is_global` does not admit
@@ -57,6 +62,7 @@ import "std/url";
 import "std/dns";
 import "std/net";
 import "std/base64";
+import "std/deflate";
 import "core/int";
 
 // ipv4(a, b, c, d) — pack a dotted-quad into the network-byte-order
@@ -88,7 +94,10 @@ pub enum Phase { Connecting, Inactivity, Total }
 // cannot read, with what was wrong; `Io` for a send or read the kernel
 // refused; `Redirect` for a redirect the client would not follow: more
 // hops than `Request.redirects`, a 3xx without a `Location`, or one that
-// is not a URL; `BodyLimit` for a body past `HttpLimits.body`;
+// is not a URL; `BodyLimit` for a body past `HttpLimits.body`, decoded or
+// not; `Decode` for a content coding the client could not undo: more
+// codings than `Decoding.depth`, a body that is not gzip, or one grown
+// past what `Decoding.ratio` allows, the message naming the allowance;
 // `Cancelled` for a request abandoned by its caller, part of the sum so a
 // match written today survives the client growing cancellation; this
 // client does not produce it yet.
@@ -104,6 +113,7 @@ pub enum FetchError {
   Io(net.NetError),
   Redirect(string),
   BodyLimit,
+  Decode(string),
   Cancelled,
 }
 
@@ -166,6 +176,9 @@ function __later_message(e: FetchError): string {
     BodyLimit => {
       return "response body past its limit";
     },
+    Decode(what) => {
+      return "decode: " + what;
+    },
     Cancelled => {
       return "cancelled";
     },
@@ -202,13 +215,36 @@ pub function timeouts(): Timeouts {
 // `limits.body`, the status line is capped by `limits.request_line`),
 // and `redirects`, the most 3xx hops `send` follows (0 answers the 3xx
 // as data).
-pub struct Request { method: string, url: string, headers: HeaderMap, body: Body, timeouts: Timeouts, limits: http.HttpLimits, redirects: i32 }
+pub struct Request { method: string, url: string, headers: HeaderMap, body: Body, timeouts: Timeouts, limits: http.HttpLimits, redirects: i32, decoding: Decoding }
+
+// `Decoding` — what the client undoes in a response body: `depth`, how
+// many content codings it undoes (each one `gzip`), 0 for none, and then
+// it asks for none either; `ratio`, the most the decoded body may exceed
+// its encoded size, as a multiple, judged on the response as a whole once
+// every coding is undone. A decoded body of 64 KiB or less is never
+// refused on the ratio: a small body compresses far past any plausible
+// ratio (a run of zeros a thousandfold), and the cap already bounds it.
+// A `ratio` of 0 or less admits only that much. A body refused names
+// the allowance that refused it, so a caller sees which bound applied.
+// The decoder never produces more than `limits.body` bytes whatever the
+// ratio says, so the ratio is a policy on a response's shape, not what
+// bounds memory.
+pub struct Decoding { depth: i32, ratio: i32 }
+
+// What the ratio never refuses: a decoded body of this many bytes or
+// fewer.
+const RATIO_FLOOR: i32 = 65536;
+
+// `decoding()` — one coding undone, a body allowed to grow a hundredfold.
+pub function decoding(): Decoding {
+  return Decoding { depth: 1, ratio: 100 };
+}
 
 // `request(method, url)` — a request with no headers and no body, the
-// default bounds, and ten redirects.
+// default bounds, ten redirects and the default decoding.
 pub function request(method: string, url: string): Request {
-  var none: u8[] = [];
-  return Request { method: method, url: url, headers: headers.header_map_new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.http_limits(), redirects: 10 };
+  let none: u8[] = [];
+  return Request { method: method, url: url, headers: headers.header_map_new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.http_limits(), redirects: 10, decoding: decoding() };
 }
 
 // `get(url)` — `request("GET", url)`.
@@ -254,6 +290,12 @@ pub function (r: Request) with_redirects(hops: i32): Request {
   return Request { ...r, redirects: hops };
 }
 
+// `(r: Request).with_decoding(d)` — `r` undoing content codings as `d`
+// says; `Decoding { depth: 0, ... }` asks for none and undoes none.
+pub function (r: Request) with_decoding(d: Decoding): Request {
+  return Request { ...r, decoding: d };
+}
+
 // `(r: HttpResponse).ok_or_status()` — `Ok(r)` for a 2xx status, else
 // `Err(status)`: for a caller that treats anything else as a failure.
 pub function (r: HttpResponse) ok_or_status(): Result[HttpResponse, i32] {
@@ -277,16 +319,16 @@ struct __Target { host: string, port: i32, target: string, host_field: string, p
 // absolute-form target a proxy forwards (RFC 9112 §3.2.2), else straight
 // to the origin.
 function __target_of(raw: string, policy: __Policy): Result[__Target, FetchError] {
-  var u: Url = __http_url(raw)?;
-  var port: i32 = u.port;
+  let u: Url = __http_url(raw)?;
+  let port: i32 = u.port;
   if (port == 0) {
     port = 80;
   }
-  var host_field: string = __host_field(u.host, port);
-  var target: string = __request_target(u)?;
+  let host_field: string = __host_field(u.host, port);
+  let target: string = __request_target(u)?;
   match (policy.proxies.proxy_for(raw)) {
     Some(spec) => {
-      var p: __Proxy = __proxy_of(spec)?;
+      let p: __Proxy = __proxy_of(spec)?;
       return Ok(__Target { host: p.host, port: p.port, target: "http://" + host_field + target, host_field: host_field, proxy_auth: p.auth, direct: false, origin: u.host });
     },
     None => {}
@@ -300,7 +342,7 @@ function __target_of(raw: string, policy: __Policy): Result[__Target, FetchError
 // to some resolvers and as a name to others, and an address that reads
 // two ways is how a block list is bypassed.
 function __http_url(raw: string): Result[Url, FetchError] {
-  var u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.url_parse(raw)) {
     Some(parsed) => {
       u = parsed;
@@ -334,11 +376,11 @@ function __ambiguous_ipv4(host: string): boolean {
   if (host.index_of(":") >= 0) {
     return false;
   }
-  var end: i32 = host.len();
+  let end: i32 = host.len();
   if (end > 0 && host[end - 1] == 46) {
     end = end - 1;
   }
-  var start: i32 = slice_unchecked(host, 0, end).to_owned().last_index_of(".") + 1;
+  let start: i32 = slice_unchecked(host, 0, end).to_owned().last_index_of(".") + 1;
   if (start >= end || host[start] < 48 || host[start] > 57) {
     return false;
   }
@@ -356,7 +398,7 @@ function __ambiguous_ipv4(host: string): boolean {
 // `__request_target(u)` — the origin-form request-target of `u`: its
 // path (`/` for none) and query, when they can stand on a request line.
 function __request_target(u: Url): Result[string, FetchError] {
-  var target: string = u.path;
+  let target: string = u.path;
   if (target.len() == 0) {
     target = "/";
   }
@@ -377,7 +419,7 @@ function __request_ok(req: Request): Result[void, FetchError] {
   if (!http.http_method_ok(req.method)) {
     return Err(InvalidRequest("the method is not a token"));
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < req.headers.names.len()) {
     if (!http.http_field_name_ok(req.headers.names[i])) {
       return Err(InvalidRequest("a header name is not a token"));
@@ -399,7 +441,7 @@ function __request_ok(req: Request): Result[void, FetchError] {
 // `__host_field(host, port)` — the `Host` value: the host, bracketed when
 // it is an IPv6 address, and the port when it is not the scheme's default.
 function __host_field(host: string, port: i32): string {
-  var h: string = host;
+  let h: string = host;
   if (h.index_of(":") >= 0) {
     h = "[" + h + "]";
   }
@@ -412,22 +454,41 @@ function __host_field(host: string, port: i32): string {
 // `__head(req, t, body_len)` — the request line and header block: the
 // caller's end-to-end fields, then what the client decides.
 function __head(req: Request, t: __Target, body_len: i32): string {
-  var out: string = req.method + " " + t.target + " HTTP/1.1\r\n" + "Host: " + t.host_field + "\r\n";
-  var fields: HeaderMap = http.http_end_to_end(req.headers);
-  var i: i32 = 0;
+  let out: string = req.method + " " + t.target + " HTTP/1.1\r\n" + "Host: " + t.host_field + "\r\n";
+  let fields: HeaderMap = http.http_end_to_end(req.headers);
+  let i: i32 = 0;
   while (i < fields.names.len()) {
     if (fields.names[i] != "host" && fields.names[i] != "content-length") {
       out = out + fields.names[i] + ": " + fields.values[i] + "\r\n";
     }
     i = i + 1;
   }
+  return out + __client_fields(req, t, body_len) + "Connection: close\r\n\r\n";
+}
+
+// `__client_fields(req, t, body_len)` — the fields the client decides:
+// the body's length (always for a method that usually carries one), the
+// `Accept-Encoding: gzip` it undoes itself, and the proxy's credentials
+// when the caller wrote none.
+function __client_fields(req: Request, t: __Target, body_len: i32): string {
+  let out: string = "";
   if (body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
     out = out + "Content-Length: " + int.int_to_string(body_len) + "\r\n";
   }
-  if (t.proxy_auth.len() > 0 && !__holds(fields.names, "proxy-authorization")) {
+  if (__asks_gzip(req)) {
+    out = out + "Accept-Encoding: gzip\r\n";
+  }
+  if (t.proxy_auth.len() > 0 && !__holds(req.headers.names, "proxy-authorization")) {
     out = out + "Proxy-Authorization: " + t.proxy_auth + "\r\n";
   }
-  return out + "Connection: close\r\n\r\n";
+  return out;
+}
+
+// `__asks_gzip(req)` — whether the client writes `Accept-Encoding: gzip`
+// for `req`, and so undoes the coding: a depth above 0 and no
+// `Accept-Encoding` of the caller's own, whose codings are theirs to undo.
+function __asks_gzip(req: Request): boolean {
+  return req.decoding.depth > 0 && !__holds(req.headers.names, "accept-encoding");
 }
 
 // `send(req)` — the request sent and its response read, as the module
@@ -445,11 +506,11 @@ struct __Policy { public_only: boolean, proxies: ProxyEnv }
 
 // `__send_as(req, policy)` — `send` under a route's policy.
 function __send_as(req: Request, policy: __Policy): Result[HttpResponse, FetchError] {
-  var started: i64 = monotonic_ns();
-  var cur: Request = req;
-  var hops: i32 = 0;
+  let started: i64 = monotonic_ns();
+  let cur: Request = req;
+  let hops: i32 = 0;
   while (true) {
-    var resp: HttpResponse = __send_once(cur, started, policy)?;
+    let resp: HttpResponse = __send_once(cur, started, policy)?;
     if (!__redirects(resp.status) || req.redirects == 0) {
       return Ok(resp);
     }
@@ -474,7 +535,7 @@ function __redirects(status: i32): boolean {
 // (`Authorization`, `Proxy-Authorization`, `Cookie`) dropped when the hop
 // leaves the origin. `Host` is written per hop by the client.
 function __next_hop(cur: Request, resp: HttpResponse): Result[Request, FetchError] {
-  var location: string = "";
+  let location: string = "";
   match (resp.headers.get("location")) {
     Some(l) => {
       location = l;
@@ -483,7 +544,7 @@ function __next_hop(cur: Request, resp: HttpResponse): Result[Request, FetchErro
       return Err(Redirect("a " + int.int_to_string(resp.status) + " without a Location"));
     }
   }
-  var target: string = "";
+  let target: string = "";
   match (url.url_resolve(cur.url, location)) {
     Some(t) => {
       target = t;
@@ -492,9 +553,9 @@ function __next_hop(cur: Request, resp: HttpResponse): Result[Request, FetchErro
       return Err(Redirect("a Location that is not a URL"));
     }
   }
-  var next: Request = Request { ...cur, url: target };
+  let next: Request = Request { ...cur, url: target };
   if (__rewrites_to_get(resp.status, cur.method)) {
-    var none: u8[] = [];
+    let none: u8[] = [];
     next = Request { ...next, method: "GET", body: BodyBytes(none), headers: __without(next.headers, ["content-type", "content-length"]) };
   }
   if (!__same_origin(cur.url, target)) {
@@ -515,8 +576,8 @@ function __rewrites_to_get(status: i32, method: string): boolean {
 
 // `__without(h, names)` — `h` less the fields named (case-folded names).
 function __without(h: HeaderMap, names: string[]): HeaderMap {
-  var out: HeaderMap = headers.header_map_new();
-  var i: i32 = 0;
+  let out: HeaderMap = headers.header_map_new();
+  let i: i32 = 0;
   while (i < h.names.len()) {
     if (!__holds(names, h.names[i])) {
       out = out.append(h.names[i], h.values[i]);
@@ -538,8 +599,8 @@ function __holds(names: string[], name: string): boolean {
 // `__same_origin(a, b)` — whether two URLs share scheme, host (ASCII
 // case-folded) and effective port, the origin a credential is scoped to.
 function __same_origin(a: string, b: string): boolean {
-  var ua: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
-  var ub: Url = ua;
+  let ua: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  let ub: Url = ua;
   match (url.url_parse(a)) {
     Some(p) => {
       ua = p;
@@ -577,7 +638,7 @@ function __effective_port(u: Url): i32 {
 // connection before any response byte and the method is idempotent
 // (RFC 9110 §9.2.2): a reset before an answer says nothing happened.
 function __send_once(req: Request, started: i64, policy: __Policy): Result[HttpResponse, FetchError] {
-  var t: __Target = __target_of(req.url, policy)?;
+  let t: __Target = __target_of(req.url, policy)?;
   match (__request_ok(req)) {
     Ok(_) => {},
     Err(e) => {
@@ -585,8 +646,8 @@ function __send_once(req: Request, started: i64, policy: __Policy): Result[HttpR
     }
   }
   __origin_checked(t, policy)?;
-  var guard: boolean = policy.public_only && t.direct;
-  var first: Result[HttpResponse, FetchError] = __attempt(req, t, started, guard);
+  let guard: boolean = policy.public_only && t.direct;
+  let first: Result[HttpResponse, FetchError] = __attempt(req, t, started, guard);
   match (first) {
     Err(e) => {
       if (__reset(e) && http.http_method_idempotent(req.method)) {
@@ -607,7 +668,7 @@ function __send_once(req: Request, started: i64, policy: __Policy): Result[HttpR
 // the origin is dialled directly or the route has no such rule.
 function __origin_checked(t: __Target, policy: __Policy): Result[void, FetchError] {
   if (policy.public_only && !t.direct) {
-    var checked: net.IpAddr[] = __resolve(t.origin, true)?;
+    let checked: net.IpAddr[] = __resolve(t.origin, true)?;
   }
   return Ok(());
 }
@@ -631,9 +692,9 @@ function __reset(e: FetchError): boolean {
 // a global address when `guard`), the request written, the response
 // read, and closed.
 function __attempt(req: Request, t: __Target, started: i64, guard: boolean): Result[HttpResponse, FetchError] {
-  var sock: i32 = __connect(t, req.timeouts, guard)?;
-  var body: u8[] = req.body.bytes();
-  var sent: Result[void, FetchError] = __send_all(sock, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
+  let sock: i32 = __connect(t, req.timeouts, guard)?;
+  let body: u8[] = req.body.bytes();
+  let sent: Result[void, FetchError] = __send_all(sock, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
   match (sent) {
     Ok(_) => {},
     Err(e) => {
@@ -641,7 +702,7 @@ function __attempt(req: Request, t: __Target, started: i64, guard: boolean): Res
       return Err(e);
     }
   }
-  var answer: Result[HttpResponse, FetchError] = __read_response(sock, req, started);
+  let answer: Result[HttpResponse, FetchError] = __read_response(sock, req, started);
   tcp_close(sock);
   return answer;
 }
@@ -650,12 +711,12 @@ function __attempt(req: Request, t: __Target, started: i64, guard: boolean): Res
 // and raced under the connect bound; with `guard`, refused before the
 // race when any address resolved is not a global one.
 function __connect(t: __Target, timeouts: Timeouts, guard: boolean): Result[i32, FetchError] {
-  var addrs: net.IpAddr[] = __resolve(t.host, guard)?;
-  var connect_ms: i32 = timeouts.connect_ms;
+  let addrs: net.IpAddr[] = __resolve(t.host, guard)?;
+  let connect_ms: i32 = timeouts.connect_ms;
   if (timeouts.total_ms < connect_ms) {
     connect_ms = timeouts.total_ms;
   }
-  var opts: dns.DialOptions = dns.DialOptions { ...dns.dial_options(), timeout_ms: connect_ms };
+  let opts: dns.DialOptions = dns.DialOptions { ...dns.dial_options(), timeout_ms: connect_ms };
   match (dns.connect_race(addrs, t.port, opts)) {
     Ok(sock) => {
       return Ok(sock);
@@ -701,7 +762,7 @@ function __resolve(host: string, guard: boolean): Result[net.IpAddr[], FetchErro
 // prefix the nameservers reveal is judged by the address it carries.
 function __global_only(addrs: net.IpAddr[]): Result[void, FetchError] {
   for a in addrs {
-    var seen: net.IpAddr = a;
+    let seen: net.IpAddr = a;
     match (dns.nat64_carried(a)) {
       Some(v4) => {
         seen = v4;
@@ -719,9 +780,9 @@ function __global_only(addrs: net.IpAddr[]): Result[void, FetchError] {
 // failure as the kernel reported it. The payload is handed to `tcp_send`
 // as the bytes it holds; a body is not text, and never read as one.
 function __send_all(sock: i32, payload: string): Result[void, FetchError] {
-  var at: i32 = 0;
+  let at: i32 = 0;
   while (at < payload.len()) {
-    var n: i32 = tcp_send(sock, slice_unchecked(payload, at, payload.len()).to_owned());
+    let n: i32 = tcp_send(sock, slice_unchecked(payload, at, payload.len()).to_owned());
     if (n < 0) {
       return Err(Io(net.error_from_errno(0 - n)));
     }
@@ -740,15 +801,15 @@ function __send_all(sock: i32, payload: string): Result[void, FetchError] {
 // hop-by-hop fields stripped. The buffer is uniquely owned and grows in
 // place, so the read stays linear in the response.
 function __read_response(sock: i32, req: Request, started: i64): Result[HttpResponse, FetchError] {
-  var buf: u8[] = [];
-  var from: i32 = 0;
-  var eof: boolean = false;
+  let buf: u8[] = [];
+  let from: i32 = 0;
+  let eof: boolean = false;
   while (true) {
     match (http.http_parse_response_framed_from(buf, from, req.method, eof, req.limits)) {
       Complete(framed) => {
-        var next: i32 = __after_interim(framed, from, req.limits)?;
+        let next: i32 = __after_interim(framed, from, req.limits)?;
         if (next < 0) {
-          return Ok(HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) });
+          return __decoded(HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) }, req);
         }
         from = next;
         continue;
@@ -762,7 +823,7 @@ function __read_response(sock: i32, req: Request, started: i64): Result[HttpResp
         return Err(__rejected(code));
       }
     }
-    var chunk: u8[] = __recv_bounded(sock, req.timeouts, started)?;
+    let chunk: u8[] = __recv_bounded(sock, req.timeouts, started)?;
     if (chunk.len() == 0) {
       eof = true;
     } else {
@@ -776,7 +837,7 @@ function __read_response(sock: i32, req: Request, started: i64): Result[HttpResp
 // place: `buf` is owned here, so each push lands on a unique array and
 // the accumulation over a whole response is one linear pass.
 function __append_bytes(own buf: u8[], chunk: u8[]): u8[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < chunk.len()) {
     buf = buf.append(chunk[i]);
     i = i + 1;
@@ -795,6 +856,103 @@ function __closed_early(got: i32): FetchError {
   return Protocol("the connection closed before the response ended");
 }
 
+// `__decoded(resp, req)` — `resp` with its content codings undone when
+// the client asked for them: a `Content-Encoding` of `gzip` (or
+// `x-gzip`) codings, each undone in turn from the last applied, each
+// under `req.limits.body`, their number under `req.decoding.depth` and
+// the whole under `req.decoding.ratio`; the `Content-Encoding` and
+// `Content-Length` fields then dropped since neither describes the body
+// any more. A body with no coding, an empty one (a HEAD or 204 answer may
+// still name a coding), and a coding the client did not ask for are
+// handed back as they came.
+function __decoded(resp: HttpResponse, req: Request): Result[HttpResponse, FetchError] {
+  let codings: string[] = __codings(resp.headers);
+  let body: u8[] = resp.body_bytes();
+  if (!__asks_gzip(req) || codings.len() == 0 || body.len() == 0 || !__all_gzip(codings)) {
+    return Ok(resp);
+  }
+  if (codings.len() > req.decoding.depth) {
+    return Err(Decode("content codings past the depth of " + int.int_to_string(req.decoding.depth)));
+  }
+  let encoded: i32 = body.len();
+  let left: i32 = codings.len();
+  while (left > 0) {
+    body = __gunzipped(body, req.limits.body)?;
+    left = left - 1;
+  }
+  let allowed: i64 = __allowed(encoded, req.decoding.ratio);
+  if (body.len() as i64 > allowed) {
+    return Err(Decode("a body of " + int.int_to_string(body.len()) + " bytes from " + int.int_to_string(encoded) + " encoded, past the " + int.int_to_string(allowed as i32) + " allowed"));
+  }
+  return Ok(HttpResponse { ...resp, body: BodyBytes(body), headers: __without(resp.headers, ["content-encoding", "content-length"]) });
+}
+
+// `__allowed(encoded, ratio)` — the most decoded bytes a response of
+// `encoded` bytes may become: `ratio` times that, and never less than
+// `RATIO_FLOOR`. A refusal fits `i32` since the body it names is under
+// `limits.body`.
+function __allowed(encoded: i32, ratio: i32): i64 {
+  let allowed: i64 = encoded as i64 * (ratio as i64);
+  if (allowed < RATIO_FLOOR as i64) {
+    return RATIO_FLOOR as i64;
+  }
+  return allowed;
+}
+
+// `__codings(h)` — the `Content-Encoding` codings in the order applied,
+// each trimmed and case-folded, `identity` dropped.
+function __codings(h: HeaderMap): string[] {
+  let out: string[] = [];
+  for v in h.get_all("content-encoding") {
+    for c in v.split(",") {
+      let name: string = c.trim().to_lower();
+      if (name.len() > 0 && name != "identity") {
+        out = out.append(name);
+      }
+    }
+  }
+  return out;
+}
+
+// `__all_gzip(codings)` — whether every coding is one the client asked
+// for.
+function __all_gzip(codings: string[]): boolean {
+  for c in codings {
+    if (c != "gzip" && c != "x-gzip") {
+      return false;
+    }
+  }
+  return true;
+}
+
+// `__gunzipped(body, max_out)` — one gzip coding undone, the decoder
+// producing at most `max_out` bytes.
+function __gunzipped(body: u8[], max_out: i32): Result[u8[], FetchError] {
+  match (deflate.gunzip(body, max_out)) {
+    Ok(out) => {
+      return Ok(out);
+    },
+    Err(e) => {
+      return Err(__undecodable(e));
+    }
+  }
+  return Ok(body);
+}
+
+// `__undecodable(e)` — the decoder's refusal as a `FetchError`: the
+// output cap is the body cap, anything else is a `Decode`.
+function __undecodable(e: deflate.InflateError): FetchError {
+  match (e) {
+    deflate.OutputLimit => {
+      return BodyLimit;
+    },
+    _ => {
+      return Decode("a gzip body that does not decode: " + e.message());
+    }
+  }
+  return BodyLimit;
+}
+
 // `__after_interim(framed, from, limits)` — where the response behind an
 // interim `framed` begins, -1 when `framed` is the final response, or
 // the refusal: a 101, since what follows a switch is another protocol
@@ -807,7 +965,7 @@ function __after_interim(framed: http.HttpResponseFramed, from: i32, limits: htt
   if (!__interim(framed.response.status)) {
     return Ok(0 - 1);
   }
-  var next: i32 = from + framed.len;
+  let next: i32 = from + framed.len;
   if (next > limits.header_bytes) {
     return Err(Protocol("interim responses past the header budget"));
   }
@@ -824,13 +982,13 @@ function __interim(status: i32): boolean {
 // response within the tighter of the inactivity bound and what is left
 // of the total, or the bound that passed.
 function __recv_bounded(sock: i32, timeouts: Timeouts, started: i64): Result[u8[], FetchError] {
-  var ns_per_ms: i64 = 1000000;
-  var left_ms: i64 = timeouts.total_ms as i64 - (monotonic_ns() - started) / ns_per_ms;
+  let ns_per_ms: i64 = 1000000;
+  let left_ms: i64 = timeouts.total_ms as i64 - (monotonic_ns() - started) / ns_per_ms;
   if (left_ms <= 0) {
     return Err(Timeout(Total));
   }
-  var wait_ms: i64 = timeouts.inactivity_ms as i64;
-  var bound: Phase = Inactivity;
+  let wait_ms: i64 = timeouts.inactivity_ms as i64;
+  let bound: Phase = Inactivity;
   if (left_ms < wait_ms) {
     wait_ms = left_ms;
     bound = Total;
@@ -878,7 +1036,7 @@ pub function (plat: Platform) http(req: Request): Result[HttpResponse, FetchErro
   if (!plat.is_mock()) {
     return __send_as(req, __Policy { public_only: true, proxies: proxy_env() });
   }
-  var summary: string = req.method + " " + req.url;
+  let summary: string = req.method + " " + req.url;
   plat.record("http", summary);
   match (plat.canned("http " + summary)) {
     Some(v) => {
@@ -894,14 +1052,14 @@ pub function (plat: Platform) http(req: Request): Result[HttpResponse, FetchErro
 // `__canned_response(v)` — the canned `STATUS BODY` as a response, 200
 // when the status does not read.
 function __canned_response(v: string): HttpResponse {
-  var sp: i32 = v.index_of(" ");
-  var code: string = v;
-  var body: string = "";
+  let sp: i32 = v.index_of(" ");
+  let code: string = v;
+  let body: string = "";
   if (sp >= 0) {
     code = slice_unchecked(v, 0, sp).to_owned();
     body = slice_unchecked(v, sp + 1, v.len()).to_owned();
   }
-  var status: i32 = 200;
+  let status: i32 = 200;
   match (int.parse_int_radix(code, 10)) {
     Some(n) => {
       status = n;
@@ -935,7 +1093,7 @@ pub function proxy_env(): ProxyEnv {
 // the lowercase name may be the client's. `no_proxy` is read either way,
 // the lowercase name first.
 pub function proxy_env_from(http_proxy: Option[string], no_proxy: Option[string], no_proxy_upper: Option[string], request_method: Option[string]): ProxyEnv {
-  var proxy: string = "";
+  let proxy: string = "";
   match (http_proxy) {
     Some(p) => {
       proxy = p;
@@ -948,7 +1106,7 @@ pub function proxy_env_from(http_proxy: Option[string], no_proxy: Option[string]
     },
     None => {}
   }
-  var skip: string = "";
+  let skip: string = "";
   match (no_proxy) {
     Some(n) => {
       skip = n;
@@ -980,7 +1138,7 @@ pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string] {
   if (p.http_proxy.len() == 0) {
     return None;
   }
-  var u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.url_parse(target_url)) {
     Some(parsed) => {
       u = parsed;
@@ -989,8 +1147,8 @@ pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string] {
       return None;
     }
   }
-  var host: string = __host_name(u.host);
-  var ip: Option[net.IpAddr] = __canonical_ip(host);
+  let host: string = __host_name(u.host);
+  let ip: Option[net.IpAddr] = __canonical_ip(host);
   if (__never_proxied(host, ip)) {
     return None;
   }
@@ -1021,7 +1179,7 @@ function __never_proxied(host: string, ip: Option[net.IpAddr]): boolean {
 
 // `__host_name(h)` — `h` ASCII case-folded, its trailing dot dropped.
 function __host_name(h: string): string {
-  var s: string = h.to_lower();
+  let s: string = h.to_lower();
   if (s.len() > 1 && s.ends_with(".")) {
     return slice_unchecked(s, 0, s.len() - 1).to_owned();
   }
@@ -1055,11 +1213,11 @@ function __no_proxy_matches(entry: string, host: string, port: i32, ip: Option[n
   if (entry == "*") {
     return true;
   }
-  var rule: __Rule = __entry_rule(entry);
+  let rule: __Rule = __entry_rule(entry);
   if (rule.port != 0 && rule.port != port) {
     return false;
   }
-  var name: string = __host_name(rule.name);
+  let name: string = __host_name(rule.name);
   if (name.index_of("/") >= 0) {
     return __in_block(ip, name);
   }
@@ -1080,17 +1238,17 @@ function __no_proxy_matches(entry: string, host: string, port: i32, ip: Option[n
 // with more than one colon is an IPv6 address with no port, and a zone
 // (`%eth0`) is dropped from either, a `/bits` after it kept.
 function __entry_rule(entry: string): __Rule {
-  var name: string = entry;
-  var rest: string = "";
+  let name: string = entry;
+  let rest: string = "";
   if (entry.starts_with("[")) {
-    var close: i32 = entry.index_of("]");
+    let close: i32 = entry.index_of("]");
     if (close < 0) {
       return __Rule { name: entry, port: -1 };
     }
     name = slice_unchecked(entry, 1, close).to_owned();
     rest = slice_unchecked(entry, close + 1, entry.len()).to_owned();
   } else {
-    var colon: i32 = entry.index_of(":");
+    let colon: i32 = entry.index_of(":");
     if (colon >= 0 && colon == entry.last_index_of(":")) {
       name = slice_unchecked(entry, 0, colon).to_owned();
       rest = slice_unchecked(entry, colon, entry.len()).to_owned();
@@ -1102,12 +1260,12 @@ function __entry_rule(entry: string): __Rule {
 // `__without_zone(name)` — `name` less its `%zone`, a `/bits` after the
 // zone kept.
 function __without_zone(name: string): string {
-  var zone: i32 = name.index_of("%");
+  let zone: i32 = name.index_of("%");
   if (zone < 0) {
     return name;
   }
-  var after: string = slice_unchecked(name, zone, name.len()).to_owned();
-  var slash: i32 = after.index_of("/");
+  let after: string = slice_unchecked(name, zone, name.len()).to_owned();
+  let slash: i32 = after.index_of("/");
   if (slash < 0) {
     return slice_unchecked(name, 0, zone).to_owned();
   }
@@ -1153,15 +1311,15 @@ function __same_ip(ip: Option[net.IpAddr], a: net.IpAddr): boolean {
 // `__in_block(ip, block)` — whether the host is an address in the CIDR
 // `block`.
 function __in_block(ip: Option[net.IpAddr], block: string): boolean {
-  var slash: i32 = block.index_of("/");
-  var bits: i32 = -1;
+  let slash: i32 = block.index_of("/");
+  let bits: i32 = -1;
   match (int.parse_int_radix(slice_unchecked(block, slash + 1, block.len()).to_owned(), 10)) {
     Some(n) => {
       bits = n;
     },
     None => {}
   }
-  var prefix: Option[net.IpAddr] = __canonical_ip(slice_unchecked(block, 0, slash).to_owned());
+  let prefix: Option[net.IpAddr] = __canonical_ip(slice_unchecked(block, 0, slash).to_owned());
   match (ip) {
     Some(a) => {
       match (prefix) {
@@ -1183,23 +1341,23 @@ function __in_block(ip: Option[net.IpAddr], block: string): boolean {
 // `__prefix_matches(a, p, bits)` — same family and the first `bits` bits
 // equal.
 function __prefix_matches(a: net.IpAddr, p: net.IpAddr, bits: i32): boolean {
-  var ab: u8[] = a.bytes();
-  var pb: u8[] = p.bytes();
+  let ab: u8[] = a.bytes();
+  let pb: u8[] = p.bytes();
   if (ab.len() != pb.len() || bits < 0 || bits > ab.len() * 8) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i * 8 + 8 <= bits) {
     if (ab[i] != pb[i]) {
       return false;
     }
     i = i + 1;
   }
-  var rem: i32 = bits - i * 8;
+  let rem: i32 = bits - i * 8;
   if (rem == 0) {
     return true;
   }
-  var mask: i32 = 255 << 8 - rem & 255;
+  let mask: i32 = 255 << 8 - rem & 255;
   return (ab[i] as i32 & mask) == (pb[i] as i32 & mask);
 }
 
@@ -1210,11 +1368,11 @@ struct __Proxy { host: string, port: i32, auth: string }
 // `__proxy_of(spec)` — `spec` as `[http://][user:password@]host[:port]`,
 // port 80 when none, or why it names no proxy this client can use.
 function __proxy_of(spec: string): Result[__Proxy, FetchError] {
-  var full: string = spec;
+  let full: string = spec;
   if (full.index_of("://") < 0) {
     full = "http://" + full;
   }
-  var u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.url_parse(full)) {
     Some(parsed) => {
       u = parsed;
@@ -1226,7 +1384,7 @@ function __proxy_of(spec: string): Result[__Proxy, FetchError] {
   if (u.scheme != "http" || u.host.len() == 0) {
     return Err(InvalidUrl("http_proxy is not an http URL with a host"));
   }
-  var port: i32 = u.port;
+  let port: i32 = u.port;
   if (port == 0) {
     port = 80;
   }
@@ -1237,18 +1395,18 @@ function __proxy_of(spec: string): Result[__Proxy, FetchError] {
 // `user:password`, the colon supplied when the URL names no password; or
 // empty.
 function __proxy_auth(full: string): string {
-  var start: i32 = full.index_of("://") + 3;
-  var end: i32 = full.len();
-  var slash: i32 = slice_unchecked(full, start, end).to_owned().index_of("/");
+  let start: i32 = full.index_of("://") + 3;
+  let end: i32 = full.len();
+  let slash: i32 = slice_unchecked(full, start, end).to_owned().index_of("/");
   if (slash >= 0) {
     end = start + slash;
   }
-  var authority: string = slice_unchecked(full, start, end).to_owned();
-  var at: i32 = authority.last_index_of("@");
+  let authority: string = slice_unchecked(full, start, end).to_owned();
+  let at: i32 = authority.last_index_of("@");
   if (at < 0) {
     return "";
   }
-  var userinfo: string = slice_unchecked(authority, 0, at).to_owned();
+  let userinfo: string = slice_unchecked(authority, 0, at).to_owned();
   if (userinfo.index_of(":") < 0) {
     userinfo = userinfo + ":";
   }
@@ -1268,18 +1426,18 @@ function __proxy_auth(full: string): string {
 // client's buffer has no second reference, so it appends in place
 // (`__append_bytes`) instead.
 function __join_bytes(chunks: u8[][]): u8[] {
-  var total: i32 = 0;
-  var k: i32 = 0;
+  let total: i32 = 0;
+  let k: i32 = 0;
   while (k < chunks.len()) {
     total = total + chunks[k].len();
     k = k + 1;
   }
-  var out: u8[] = __alloc_u8(total);
-  var w: i32 = 0;
-  var j: i32 = 0;
+  let out: u8[] = __alloc_u8(total);
+  let w: i32 = 0;
+  let j: i32 = 0;
   while (j < chunks.len()) {
-    var i: i32 = 0;
-    var n: i32 = chunks[j].len();
+    let i: i32 = 0;
+    let n: i32 = chunks[j].len();
     while (i < n) {
       out = out.with(w, chunks[j][i]);
       w = w + 1;
@@ -1297,8 +1455,8 @@ function __join_bytes(chunks: u8[][]): u8[] {
 // (docs/ASYNC-REDESIGN.md): drive several through `async.gather` and
 // their reads overlap on one thread —
 //
-//   var none: u8[] = [];
-//   var bodies = async.gather([
+//   let none: u8[] = [];
+//   let bodies = async.gather([
 //       fetch.fetch_future(cache, 80, "/k"),
 //       fetch.fetch_future(primary, 80, "/k"),
 //   ], none);
@@ -1317,12 +1475,12 @@ function __join_bytes(chunks: u8[][]): u8[] {
 // woken token, which differs by backend). On interp the `poll` stub
 // means the `Pending` never resolves (consistent with std/async).
 pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u8[]] {
-  var empty: u8[] = [];
+  let empty: u8[] = [];
   if (!http.http_target_ok(path)) {
     return Ready(empty);
   }
-  var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
-  var c: i32 = tcp_connect(host_be, port);
+  let request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
+  let c: i32 = tcp_connect(host_be, port);
   if (c < 0) {
     return Ready(empty);
   }
@@ -1330,7 +1488,7 @@ pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u
     tcp_close(c);
     return Ready(empty);
   }
-  var no_chunks: u8[][] = [];
+  let no_chunks: u8[][] = [];
   return __fetch_drain(c, no_chunks);
 }
 
@@ -1353,8 +1511,8 @@ pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u
 // pays one linear pass at EOF.
 function __fetch_drain(c: i32, chunks: u8[][]): async.Future[u8[]] {
   function resume(woken: i32): async.Future[u8[]] {
-    var dropped: i32 = wasm_pollable_drop(woken);
-    var chunk: u8[] = tcp_recv(c, 4096);
+    let dropped: i32 = wasm_pollable_drop(woken);
+    let chunk: u8[] = tcp_recv(c, 4096);
     if (chunk.len() == 0) {
       tcp_close(c);
       return Ready(__body_of(__join_bytes(chunks)));
@@ -1372,10 +1530,10 @@ function __body_of(raw: u8[]): u8[] {
       return framed.response.body_bytes();
     },
     _ => {
-      var empty: u8[] = [];
+      let empty: u8[] = [];
       return empty;
     }
   }
-  var none: u8[] = [];
+  let none: u8[] = [];
   return none;
 }

@@ -43,7 +43,7 @@ func TestExternImportScalarRunsUnderWasmtime(t *testing.T) {
 function random_u64(): u64;
 
 function main(): i32 {
-	var r: u64 = random_u64();
+	let r: u64 = random_u64();
 	if ((r & 0) == 0) {
 		write("` + want + `");
 	}

@@ -27,9 +27,9 @@ import (
 const nullStructDropProg = `struct P { n: i32, xs: i32[] }
 @noinline function inner_size(p: P): i32 { return p.xs.len(); }
 function main(): i32 {
-    var lp: P = P { n: 1, xs: [1, 2] };
-    var s: i32 = inner_size(lp);
-    var r: i32 = random_i32();
+    let lp: P = P { n: 1, xs: [1, 2] };
+    let s: i32 = inner_size(lp);
+    let r: i32 = random_i32();
     while ((r & 1) != 0 || r < 16777216) { r = random_i32(); }
     return s;
 }

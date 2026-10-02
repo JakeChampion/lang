@@ -39,11 +39,11 @@ import (
 // argv[0] as typed, and an environment built by the caller.
 const procExecAsArgvEnvpSrc = `
 function main(): i32 {
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 70; }
     if (pid == 0) {
-        var script: string = "test \"$0\" = myname || exit 61; test \"$FERNX\" = 42 || exit 62; test -z \"${HOME+set}\" || exit 63; exit 29";
-        var rc: i32 = proc_exec_as("/bin/sh", ["myname", "-c", script], ["FERNX=42"]);
+        let script: string = "test \"$0\" = myname || exit 61; test \"$FERNX\" = 42 || exit 62; test -z \"${HOME+set}\" || exit 63; exit 29";
+        let rc: i32 = proc_exec_as("/bin/sh", ["myname", "-c", script], ["FERNX=42"]);
         return 71;
     }
     return proc_waitpid(pid);
@@ -53,12 +53,12 @@ function main(): i32 {
 // vector (the NULL terminator alone), not a missing one.
 const procExecAsFailAndEmptySrc = `
 function main(): i32 {
-    var rc: i32 = proc_exec_as("/nonexistent/binary", ["x"], ["A=1"]);
+    let rc: i32 = proc_exec_as("/nonexistent/binary", ["x"], ["A=1"]);
     if (rc >= 0) { return 70; }
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 71; }
     if (pid == 0) {
-        var r2: i32 = proc_exec_as("/bin/sh", ["sh", "-c", "test -z \"${HOME+set}\" && exit 31"], []);
+        let r2: i32 = proc_exec_as("/bin/sh", ["sh", "-c", "test -z \"${HOME+set}\" && exit 31"], []);
         return 72;
     }
     return proc_waitpid(pid);
@@ -70,10 +70,10 @@ function main(): i32 {
 // passed through rather than deduplicated.
 const procExecAsSingleArgvSrc = `
 function main(): i32 {
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 70; }
     if (pid == 0) {
-        var rc: i32 = proc_exec_as("%s", ["true"], ["A=1", "A=2"]);
+        let rc: i32 = proc_exec_as("%s", ["true"], ["A=1", "A=2"]);
         return 71;
     }
     return proc_waitpid(pid);
@@ -181,7 +181,7 @@ func TestArm64DarwinProcExecAs(t *testing.T) {
 func TestInterpProcExecAsENOSYS(t *testing.T) {
 	src := `
 function main(): i32 {
-    var rc: i32 = proc_exec_as("/bin/true", ["true"], []);
+    let rc: i32 = proc_exec_as("/bin/true", ["true"], []);
     if (rc == 0 - 38) { return 9; }
     return 8;
 }`

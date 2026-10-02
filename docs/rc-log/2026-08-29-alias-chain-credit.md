@@ -1,8 +1,8 @@
 # The alias chain: a set question asked one bind at a time
 
-#7386. `alias_bind_sites_of` vets each `var v = src` on its own, and a bare-ident
-re-alias reads as an escape — so `var t = p; var v = t; var u = v;` refuses `v`
-(because `var u = v` is an escape of `v`), which costs `p` its credit too, and
+#7386. `alias_bind_sites_of` vets each `let v = src` on its own, and a bare-ident
+re-alias reads as an escape — so `let t = p; let v = t; let u = v;` refuses `v`
+(because `let u = v` is an escape of `v`), which costs `p` its credit too, and
 nothing releases the box the three names share.
 
 ## Measured
@@ -50,7 +50,7 @@ alias questions are asked about.
 Because the tuple limbs measured an OVER-RELEASE under it, and the census is
 blind to it.
 
-`var t: (i32, i32[]) = (i, [i, i+1]); var v = t; var u = v;` exits **99**
+`let t: (i32, i32[]) = (i, [i, i+1]); let v = t; let u = v;` exits **99**
 (`__rc_underflow()`) with a census reading a perfectly clean `200/200
 live_bytes 0`. `FERN_RC_TRACE=1` on a single round settles the mechanism: two
 allocations, two frees, and only ONE retain for the two links — three decs

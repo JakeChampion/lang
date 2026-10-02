@@ -15,12 +15,12 @@ import (
 const strarrFieldToStringSrc = `import "std/i32";
 struct Rec { n: i32, xs: string[] }
 function round(i: i32): i32 {
-    var r: Rec = Rec { n: i, xs: [i.to_string(), "x", (i * 3).to_string()] };
+    let r: Rec = Rec { n: i, xs: [i.to_string(), "x", (i * 3).to_string()] };
     return r.n + r.xs.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     return acc % 83;
 }

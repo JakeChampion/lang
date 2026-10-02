@@ -21,10 +21,10 @@ import (
 func reassignReplacedFieldSrc(n string) string {
 	return `struct Box { data: i32[], tag: i32 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
-    var b: Box = Box { data: [0], tag: 0 };
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
+    let b: Box = Box { data: [0], tag: 0 };
     while (i < ` + n + `) {
         b = Box { data: [i, i + 1, i + 2], tag: i };
         sum = sum + b.data[0] + b.tag;
@@ -40,8 +40,8 @@ function main(): i32 {
 // false → dec only). Returns 0 iff value-correct AND no over-release.
 const reassignCarryOverSrc = `struct Box { data: i32[], tag: i32 }
 function main(): i32 {
-    var b: Box = Box { data: [10, 20, 30], tag: 0 };
-    var i: i32 = 0;
+    let b: Box = Box { data: [10, 20, 30], tag: 0 };
+    let i: i32 = 0;
     while (i < 200) {
         b = Box { data: b.data, tag: b.tag + 1 };
         i = i + 1;

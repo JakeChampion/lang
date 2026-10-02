@@ -86,14 +86,14 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// Mode 1 — no I/O at all. The framing (component_full) supplies no
 		// imports, so an IR core here must be import-free.
 		{"noio-const", false, `function main(): i32 { return 42; }`, true, nil},
-		{"noio-arith", false, `function main(): i32 { var x: i32 = 5; var y: i32 = 5; return x - y; }`, true, nil},
-		{"noio-array", false, `function main(): i32 { var xs: i32[] = [1, 2, 3]; return xs[0] + xs[2]; }`, true, nil},
-		{"noio-string", false, `function main(): i32 { var s: string = "ab" + "cd"; return s.len(); }`, true, nil},
+		{"noio-arith", false, `function main(): i32 { let x: i32 = 5; let y: i32 = 5; return x - y; }`, true, nil},
+		{"noio-array", false, `function main(): i32 { let xs: i32[] = [1, 2, 3]; return xs[0] + xs[2]; }`, true, nil},
+		{"noio-string", false, `function main(): i32 { let s: string = "ab" + "cd"; return s.len(); }`, true, nil},
 		// A WIDE first local. This lowers like any other, but it emits
 		// "(local i64 i32 …" rather than "(local i32 …", which is exactly the
 		// shape a first-type-specific discriminator misses — kept as a row so
 		// the probe itself stays correct.
-		{"noio-wide-local", false, `function main(): i32 { var n: i64 = 7; if (n > 0) { return 0; } return 1; }`, true, nil},
+		{"noio-wide-local", false, `function main(): i32 { let n: i64 = 7; if (n > 0) { return 0; } return 1; }`, true, nil},
 		// A no-I/O core may not exit: mode 1 has no proc_exit to call and no
 		// wasi:cli/exit to shim it over. This used to fall back to the AST
 		// emitter, where exit was equally unwired — a core with a dangling
@@ -109,7 +109,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
 		{"io-putchar", true, `function main(): i32 { putchar(72); putchar(105); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
-		{"io-fstring", true, "import \"std/i32\";\nfunction main(): i32 { var n: i32 = 21; write(f\"answer={n * 2}\"); return 0; }", true,
+		{"io-fstring", true, "import \"std/i32\";\nfunction main(): i32 { let n: i32 = 21; write(f\"answer={n * 2}\"); return 0; }", true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
 		// eprint reorders the trio (get-stderr first) to match
 		// component_full_io_eprint, and keeps stdout imported even when the
@@ -131,7 +131,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// positionally.
 		{"io-random-i32", true, `function main(): i32 { if (random_i32() != 0) { write("r"); } return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:random/random@0.2.0 get-random-u64"}},
-		{"io-random-bytes", true, `function main(): i32 { var b: u8[] = random_bytes(4); if (b.len() == 4) { write("b"); } return 0; }`, true,
+		{"io-random-bytes", true, `function main(): i32 { let b: u8[] = random_bytes(4); if (b.len() == 4) { write("b"); } return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:random/random@0.2.0 get-random-u64"}},
 		{"io-clock-wall", true, `function main(): i32 { if (now_unix_ms() > 0) { write("w"); } return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/wall-clock@0.2.0 now"}},
@@ -153,7 +153,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// list into, without which `component new` rejects the module.
 		{"io-env", true, `function main(): i32 { match (env("HOME")) { Some(v) => { write(v); }, None => { write("none"); } } return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-environment"}},
-		{"io-args", true, `function main(): i32 { var a: string[] = args(); write(a[0]); return 0; }`, true,
+		{"io-args", true, `function main(): i32 { let a: string[] = args(); write(a[0]); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
 
 		// The filesystem pair, last of component_shape's categories to move.

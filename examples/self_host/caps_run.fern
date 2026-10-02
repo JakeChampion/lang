@@ -28,7 +28,7 @@ function parse(src: string): parser.Module {
 // module belonging to root package "app", and bundle module `helper` belonging
 // to dependency package "helper" with the given grant.
 function app_pkgs(governed: boolean, grants: string[]): caps.Pkg[] {
-  var none: string[] = [];
+  let none: string[] = [];
   return [
     caps.Pkg { module: "", name: "app", root: true, governed: false, grants: none },
     caps.Pkg { module: "helper", name: "helper", root: false, governed: governed, grants: grants },
@@ -38,11 +38,11 @@ function app_pkgs(governed: boolean, grants: string[]): caps.Pkg[] {
 // row_caps renders one package's capabilities as `fs,net`, or "" when the
 // package has no row at all — which is a different answer from `-`.
 function row_caps(rows: caps.Row[], pkg: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < rows.len()) {
     if (rows[i].pkg == pkg) {
-      var out: string = "";
-      var u: i32 = 0;
+      let out: string = "";
+      let u: i32 = 0;
       while (u < rows[i].uses.len()) {
         if (u > 0) {
           out = out + ",";
@@ -66,9 +66,9 @@ function main(): i32 {
   // would make the capability unreportable (analyze emits in vocabulary
   // order) AND ungrantable, so the package could never be fixed by editing
   // its manifest.
-  var bs: caps.BuiltinCap[] = caps.builtin_caps();
-  var vocab: string[] = caps.capabilities();
-  var i: i32 = 0;
+  let bs: caps.BuiltinCap[] = caps.builtin_caps();
+  let vocab: string[] = caps.capabilities();
+  let i: i32 = 0;
   while (i < bs.len()) {
     if (!util.has_str(vocab, bs[i].capability)) {
       return 1;
@@ -76,7 +76,7 @@ function main(): i32 {
     i = i + 1;
   }
   // The vocabulary is sorted, which analyze relies on for its row order.
-  var v: i32 = 1;
+  let v: i32 = 1;
   while (v < vocab.len()) {
     if (!util.str_less(vocab[v - 1], vocab[v])) {
       return 2;
@@ -85,16 +85,16 @@ function main(): i32 {
   }
   // Nothing is both tagged and ungated: the two lists are a partition, and
   // an overlap would mean the answer depended on which was consulted first.
-  var ung: string[] = caps.ungated();
-  var u2: i32 = 0;
+  let ung: string[] = caps.ungated();
+  let u2: i32 = 0;
   while (u2 < ung.len()) {
     if (caps.capability_of(ung[u2]).len() > 0) {
       return 3;
     }
     u2 = u2 + 1;
   }
-  var fu: i32 = 0;
-  var fung: string[] = caps.frontend_ungated();
+  let fu: i32 = 0;
+  let fung: string[] = caps.frontend_ungated();
   while (fu < fung.len()) {
     if (caps.capability_of(fung[fu]).len() > 0) {
       return 4;
@@ -105,9 +105,9 @@ function main(): i32 {
     fu = fu + 1;
   }
   // No builtin is tagged twice.
-  var d1: i32 = 0;
+  let d1: i32 = 0;
   while (d1 < bs.len()) {
-    var d2: i32 = d1 + 1;
+    let d2: i32 = d1 + 1;
     while (d2 < bs.len()) {
       if (bs[d1].builtin == bs[d2].builtin) {
         return 6;
@@ -122,8 +122,8 @@ function main(): i32 {
   // is the gate CLAUDE.md asks for: a new builtin has to be classified in
   // BOTH capability systems, and the way that goes wrong is one being
   // updated and not the other.
-  var reg: string[] = parser.builtin_function_names();
-  var r: i32 = 0;
+  let reg: string[] = parser.builtin_function_names();
+  let r: i32 = 0;
   while (r < reg.len()) {
     if (!caps.classified(reg[r])) {
       eprint("caps: unclassified builtin: " + reg[r]);
@@ -133,7 +133,7 @@ function main(): i32 {
   }
   // …and the classification claims nothing the front end does not have: a
   // stale frontend_ungated() entry is a name nobody can call.
-  var fe: i32 = 0;
+  let fe: i32 = 0;
   while (fe < fung.len()) {
     if (!util.has_str(reg, fung[fe])) {
       return 8;
@@ -146,9 +146,9 @@ function main(): i32 {
   // `fs` because helper does, which is the whole point of a transitive
   // grant. The chain is an example, from a root of the package down to the
   // builtin.
-  var two: parser.Module = parse("function main(): i32 { helper__save(\"x\"); return 0; }\n"
+  let two: parser.Module = parse("function main(): i32 { helper__save(\"x\"); return 0; }\n"
     + "function helper__save(s: string): void { write_file(\"/tmp/x\", s); }\n");
-  var granted: caps.Row[] = caps.analyze(two, app_pkgs(true, ["fs"]));
+  let granted: caps.Row[] = caps.analyze(two, app_pkgs(true, ["fs"]));
   if (granted.len() != 2) {
     return 10;
   }
@@ -166,7 +166,7 @@ function main(): i32 {
   // Declared reachability, not live paths: a function nothing calls still
   // counts for the package that declares it. The report says what the
   // package's code COULD do.
-  var dead: parser.Module = parse("function main(): i32 { return 0; }\n"
+  let dead: parser.Module = parse("function main(): i32 { return 0; }\n"
     + "function helper__unused(): void { tcp_connect(0, 80); }\n");
   if (row_caps(caps.analyze(dead, app_pkgs(true, ["net"])), "helper") != "net") {
     return 14;
@@ -178,10 +178,10 @@ function main(): i32 {
 
   // A module with no package entry folds through: stdlib usage lands on the
   // row of whichever package calls into it, and the stdlib gets no row.
-  var thru: parser.Module = parse("function main(): i32 { helper__get(); return 0; }\n"
+  let thru: parser.Module = parse("function main(): i32 { helper__get(); return 0; }\n"
     + "function helper__get(): void { fetch__send(); }\n"
     + "function fetch__send(): void { tcp_connect(0, 80); }\n");
-  var trows: caps.Row[] = caps.analyze(thru, app_pkgs(true, ["net"]));
+  let trows: caps.Row[] = caps.analyze(thru, app_pkgs(true, ["net"]));
   if (trows.len() != 2) {
     return 16;
   }
@@ -196,8 +196,8 @@ function main(): i32 {
   // during emit rather than rewriting the call in the AST, so the walk has
   // to follow the receiver itself — without this the capability is invisible
   // behind any package that exposes its API as methods.
-  var meth: parser.Module = parse("struct Client { id: i32 }\n"
-    + "function main(): i32 { var c: Client = Client { id: 1 }; helper__use(c); return 0; }\n"
+  let meth: parser.Module = parse("struct Client { id: i32 }\n"
+    + "function main(): i32 { let c: Client = Client { id: 1 }; helper__use(c); return 0; }\n"
     + "function helper__use(c: Client): void { c.save(); }\n"
     + "function (c: Client) save(): void { write_file(\"/tmp/x\", \"y\"); }\n");
   if (row_caps(caps.analyze(meth, app_pkgs(true, ["fs"])), "helper") != "fs") {
@@ -205,7 +205,7 @@ function main(): i32 {
   }
   // A METHOD named like a gated builtin is not that builtin: builtins are
   // free functions, so `sb.stat()` reaches nothing.
-  var shadow: parser.Module = parse("struct Sb { n: i32 }\n"
+  let shadow: parser.Module = parse("struct Sb { n: i32 }\n"
     + "function main(): i32 { return 0; }\n"
     + "function helper__probe(s: Sb): void { s.stat(); }\n"
     + "function (s: Sb) stat(): void { }\n");
@@ -220,8 +220,8 @@ function main(): i32 {
   }
 
   // Reaching outside the grant is an error, with the chain in the message.
-  var over: caps.Row[] = caps.analyze(two, app_pkgs(true, ["net"]));
-  var errs: caps.Violation[] = caps.enforce(over, app_pkgs(true, ["net"]));
+  let over: caps.Row[] = caps.analyze(two, app_pkgs(true, ["net"]));
+  let errs: caps.Violation[] = caps.enforce(over, app_pkgs(true, ["net"]));
   if (errs.len() != 1) {
     return 31;
   }
@@ -237,7 +237,7 @@ function main(): i32 {
 
   // No `capabilities` key at all is warn-and-allow — the migration default
   // for manifests that predate the key.
-  var warns: caps.Violation[] = caps.enforce(caps.analyze(two, app_pkgs(false, [])), app_pkgs(false, []));
+  let warns: caps.Violation[] = caps.enforce(caps.analyze(two, app_pkgs(false, [])), app_pkgs(false, []));
   if (warns.len() != 1) {
     return 35;
   }
@@ -250,7 +250,7 @@ function main(): i32 {
 
   // An EMPTY grant is not the same as no key: `capabilities = []` denies
   // everything, and denial is an error rather than a warning.
-  var denied: caps.Violation[] = caps.enforce(caps.analyze(two, app_pkgs(true, [])), app_pkgs(true, []));
+  let denied: caps.Violation[] = caps.enforce(caps.analyze(two, app_pkgs(true, [])), app_pkgs(true, []));
   if (denied.len() != 1 || !denied[0].governed) {
     return 38;
   }
@@ -258,8 +258,8 @@ function main(): i32 {
   // The ROOT package is never enforced or warned, however much it reaches:
   // grants restrict dependencies, and the program's author is trusting
   // themselves.
-  var rootonly: parser.Module = parse("function main(): i32 { write_file(\"/tmp/x\", \"y\"); tcp_connect(0, 80); return 0; }\n");
-  var rp: caps.Pkg[] = app_pkgs(true, []);
+  let rootonly: parser.Module = parse("function main(): i32 { write_file(\"/tmp/x\", \"y\"); tcp_connect(0, 80); return 0; }\n");
+  let rp: caps.Pkg[] = app_pkgs(true, []);
   if (caps.enforce(caps.analyze(rootonly, rp), rp).len() != 0) {
     return 39;
   }

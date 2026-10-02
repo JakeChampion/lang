@@ -40,7 +40,7 @@ Not a construction form. A donor whose box is still live at the construction
 because something was projected out of it and not retained:
 
 ```fern
-var t: string = p.text;          // borrowed out of p, no inc
+let t: string = p.text;          // borrowed out of p, no inc
 p = Peep { ...p, n: n - 2 };     // p's box would be the recipient
 if (t.len() == 7) { return p; }  // t still read here
 ```
@@ -49,7 +49,7 @@ The plan keeps `p` alive as the owner of `t`, so `p` is dropped after the
 construction rather than at it, and every pairing rule requires the donor to be
 dead there — correctly, since reusing a live box and then dropping it is a
 double free. The AST lowering reuses here because its eligibility test is
-syntactic: `t` is a `var` it treats as carrying its own count.
+syntactic: `t` is a `let` it treats as carrying its own count.
 
 Reduced to a 20-line fixture the shape is exact — the typed path fires 0 and
 the AST path 1 — and it is the projection that decides. Reading an `i32`

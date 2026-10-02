@@ -24,13 +24,13 @@ const arrayWithEnumSrc = `
 enum E { S(string), N(i32) }
 
 function patch(xs: E[], i: i32): E[] {
-    var ys: E[] = xs;
+    let ys: E[] = xs;
     ys = ys.with(i, N(7));
     return ys;
 }
 
 function main(): i32 {
-    var a: E[] = [S("hello"), N(1)];
+    let a: E[] = [S("hello"), N(1)];
     a = patch(a, 0);
     return a.len();
 }`

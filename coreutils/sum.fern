@@ -33,7 +33,7 @@ function opt_sysv(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "Print a 16-bit checksum and a block count for each FILE.\n";
   out = out + "\n";
@@ -91,7 +91,7 @@ function read_size(): i32 {
 }
 
 function sum_reader(r: Reader, sysv: boolean, owned: boolean): Tally {
-  var c: Ctx = ctx_new(sysv);
+  let c: Ctx = ctx_new(sysv);
   while (true) {
     match (r.read_chunk(read_size())) {
       Ok(chunk) => {
@@ -135,7 +135,7 @@ function sum_path(path: string, sysv: boolean): Tally {
 // zeros rather than spaces when `zero`. The BSD line is `%05d %5d`;
 // System V prints both numbers bare.
 function pad(s: string, width: i32, zero: boolean): string {
-  var n: i32 = width - s.len();
+  let n: i32 = width - s.len();
   if (n <= 0) {
     return s;
   }
@@ -146,7 +146,7 @@ function pad(s: string, width: i32, zero: boolean): string {
 }
 
 function line_for(t: Tally, sysv: boolean, name: string, named: boolean): string {
-  var out: string = "";
+  let out: string = "";
   if (sysv) {
     out = t.checksum.to_string() + " " + t.blocks.to_string();
   } else {
@@ -159,15 +159,15 @@ function line_for(t: Tally, sysv: boolean, name: string, named: boolean): string
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [];
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("r", "", opt_bsd()));
   opts = opts.append(gnu.flag("s", "sysv", opt_sysv()));
 
-  var sysv: boolean = false;
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "sum", help_text(), 1);
+  let sysv: boolean = false;
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "sum", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -179,8 +179,8 @@ pub function main(): i32 {
     }
   }
 
-  var operands: string[] = g.operands();
-  var named: boolean = operands.len() > 0;
+  let operands: string[] = g.operands();
+  let named: boolean = operands.len() > 0;
   if (!named) {
     operands = ["-"];
   }
@@ -188,11 +188,11 @@ pub function main(): i32 {
   // Line buffered, as GNU sets stdout to be: each line reaches the fd
   // as it is printed, so `> /dev/full` names ENOSPC on the line that
   // failed rather than at the close.
-  var out: io_buffered.BufWriter = gnu.out_new();
-  var ok: boolean = true;
-  var i: i32 = 0;
+  let out: io_buffered.BufWriter = gnu.out_new();
+  let ok: boolean = true;
+  let i: i32 = 0;
   while (i < operands.len()) {
-    var t: Tally = sum_path(operands[i], sysv);
+    let t: Tally = sum_path(operands[i], sysv);
     if (t.failed) {
       ok = false;
       match (t.err) {

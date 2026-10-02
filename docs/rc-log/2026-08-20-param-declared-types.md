@@ -4,15 +4,15 @@
 RECEIVER's declared type — the mechanism
 `2026-08-20-join-result-fresh-credit.md` chose over a slot flag. Both read the
 same name/type pair, and that pair was harvested only from the body's annotated
-`var`s. A parameter is a declaration that never appears as a `var`, so every
+`let`s. A parameter is a declaration that never appears as a `let`, so every
 param receiver was refused.
 
 400 rounds of the churn harness, a pair of compilers from the same commit:
 
 | shape | x86-64 | arm64 | wasm |
 | --- | --- | --- | --- |
-| `f(xs: string[])` → `var s = xs.join(sep)` | 131200 → **0** | 131200 → **0** | 128000 → **0** |
-| `f(n: i32)` → `var s = n.to_string()` | 12800 → **0** | 12800 → **0** | 9600 → **0** |
+| `f(xs: string[])` → `let s = xs.join(sep)` | 131200 → **0** | 131200 → **0** | 128000 → **0** |
+| `f(n: i32)` → `let s = n.to_string()` | 12800 → **0** | 12800 → **0** | 9600 → **0** |
 
 One change, two classes, because they already shared the harvester.
 
@@ -48,7 +48,7 @@ now standing negative cases in their suites.
 
 ## What is left
 
-An UNANNOTATED local receiver (`var xs = base.split("-")` with no `: string[]`)
+An UNANNOTATED local receiver (`let xs = base.split("-")` with no `: string[]`)
 still has nothing to read and is still refused. That is the honest remaining
 limit of declaration-reading, and it is sound in the direction that matters: the
 wrong answer on this side is a leak, not an over-release.

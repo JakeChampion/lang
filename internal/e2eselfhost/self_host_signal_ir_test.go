@@ -18,7 +18,7 @@ import (
 const signalDispositionProg = `function main(): i32 {
     if (args().len() == 2) { signal_ignore(13); }
     if (args().len() == 3) { signal_ignore(13); signal_default(13); }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 200000) {
         print("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
         i = i + 1;
@@ -63,13 +63,13 @@ var signalDispositionCases = []struct {
 // whatever exec'd it. SIGINT (2) is every kernel, so its bit works on both
 // legs; the exit code names the failing step.
 const signalReadOpsProg = `function main(): i32 {
-    var bit: i64 = 2 as i64;
+    let bit: i64 = 2 as i64;
     signal_mask(1, bit);
     if ((signal_mask(0, 0 as i64) & bit) != (0 as i64)) { return 71; }
-    var prev: i64 = signal_mask(0, bit);
+    let prev: i64 = signal_mask(0, bit);
     if ((prev & bit) != (0 as i64)) { return 72; }
     if ((signal_mask(0, 0 as i64) & bit) == (0 as i64)) { return 73; }
-    var p2: i64 = signal_mask(1, bit);
+    let p2: i64 = signal_mask(1, bit);
     if ((p2 & bit) == (0 as i64)) { return 74; }
     if (signal_default(2) != 0) { return 75; }
     if (signal_disposition(2) != 0) { return 76; }

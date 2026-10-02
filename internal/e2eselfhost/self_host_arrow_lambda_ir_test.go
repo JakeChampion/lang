@@ -20,20 +20,20 @@ var arrowLambdaIRCases = []struct {
 	main string
 }{
 	// Capture-free arrow lambda, bound and called.
-	{"noncap", `function main(): i32 { var f = (x: i32): i32 => x + 1; return f(5); }`},
+	{"noncap", `function main(): i32 { let f = (x: i32): i32 => x + 1; return f(5); }`},
 	// Capturing an outer scalar.
-	{"capture", `function main(): i32 { var n = 10; var f = (x: i32): i32 => x + n; return f(5); }`},
+	{"capture", `function main(): i32 { let n = 10; let f = (x: i32): i32 => x + n; return f(5); }`},
 	// Zero-arg capturing arrow lambda.
-	{"capture-noargs", `function main(): i32 { var n = 7; var f = (): i32 => n * 2; return f(); }`},
+	{"capture-noargs", `function main(): i32 { let n = 7; let f = (): i32 => n * 2; return f(); }`},
 	// Two params + a capture.
-	{"two-params-cap", `function main(): i32 { var k = 3; var f = (a: i32, b: i32): i32 => a + b + k; return f(4, 5); }`},
+	{"two-params-cap", `function main(): i32 { let k = 3; let f = (a: i32, b: i32): i32 => a + b + k; return f(4, 5); }`},
 	// Capture used twice in the body expression.
-	{"capture-twice", `function main(): i32 { var n = 6; var f = (x: i32): i32 => x * n + n; return f(4); }`},
+	{"capture-twice", `function main(): i32 { let n = 6; let f = (x: i32): i32 => x * n + n; return f(4); }`},
 	// Regression: the () => {} closure form still lowers.
-	{"fn-form-regress", `function main(): i32 { var n = 10; var f = (x: i32): i32 => { return x + n; }; return f(5); }`},
+	{"fn-form-regress", `function main(): i32 { let n = 10; let f = (x: i32): i32 => { return x + n; }; return f(5); }`},
 	// `own` on the FIRST parameter: the lookahead must read past the modifier
 	// to the `name: T` shape, as it does on a declaration.
-	{"own-first-param", `function main(): i32 { var f = (own a: string[]): string[] => a; var xs: string[] = f(["x", "y"]); return xs.len(); }`},
+	{"own-first-param", `function main(): i32 { let f = (own a: string[]): string[] => a; let xs: string[] = f(["x", "y"]); return xs.len(); }`},
 }
 
 // TestSelfHostArrowLambdaIR compiles each case with the self-host CLI for

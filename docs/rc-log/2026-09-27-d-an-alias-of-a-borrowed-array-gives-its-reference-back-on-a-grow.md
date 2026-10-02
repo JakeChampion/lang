@@ -5,7 +5,7 @@ Fixes #10367.
 
 ```fern
 function walk(n: i32, acc: string[]): string[] {
-    var out: string[] = acc;
+    let out: string[] = acc;
     if (n % 4 == 0) { out = out.append("w" + ""); }
     return out;
 }
@@ -17,7 +17,7 @@ program without the local, or with `walk` produced, was balanced.
 
 ## Two causes
 
-- `var out = acc` retains acc's buffer, so `out` holds a counted reference to
+- `let out = acc` retains acc's buffer, so `out` holds a counted reference to
   a buffer the caller also holds. `append_target_sole_owner` did not ask
   `borrowed_names` (the ownership set `.with` already consults), so the
   self-append took `__fern_arr_push_owned`. On a grow that helper frees the
@@ -29,7 +29,7 @@ program without the local, or with `walk` produced, was balanced.
   (`returned_moved_arr_slots`), as if the result were out's buffer. After a
   grow or a copy it is not, and out's reference to the old buffer was never
   released. This held for any counted array local, not only an alias:
-  `var a: i32[] = [n, 2, 3, 4]; return a.append(5);` leaked the four-element
+  `let a: i32[] = [n, 2, 3, 4]; return a.append(5);` leaked the four-element
   buffer on every call. `settle_returned_append` now stores the result through
   the same aliased-push store, so the kept slot holds the returned reference.
 

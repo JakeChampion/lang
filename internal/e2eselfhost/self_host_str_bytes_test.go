@@ -7,8 +7,8 @@ import "testing"
 // slot 0, but a wasm string is one block, its length and then its bytes at +4,
 // so reading slot 0 there answered the length and every byte read came back 0.
 const strBytesProg = `@noinline function first_byte(s: string): i32 {
-    var scratch: usize = __alloc(16);
-    var c: i32 = __load_u8(__str_bytes(s, scratch));
+    let scratch: usize = __alloc(16);
+    let c: i32 = __load_u8(__str_bytes(s, scratch));
     __free(scratch, 16);
     return c;
 }
@@ -21,7 +21,7 @@ function print_int(n: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var long: string = "a string of more than seven bytes";
+    let long: string = "a string of more than seven bytes";
     print_int(first_byte("hi")); print("");
     print_int(first_byte(long)); print("");
     print_int(last_byte(long)); print("");

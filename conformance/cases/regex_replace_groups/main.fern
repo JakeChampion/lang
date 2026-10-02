@@ -6,7 +6,7 @@
 import "std/regex";
 
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
 
     // swap two groups in every match
     if (regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1") == "b@a d@c") { r = r + 1; }
@@ -30,8 +30,8 @@ function main(): i32 {
     if (regex.regex_replace_all_groups("b", "abc", "$z$") == "a$z$c") { r = r + 64; }
 
     // zero-width matches: same shape regex_replace_all produces
-    var viaGroups: string = regex.regex_replace_all_groups("a*", "bc", "<$0>");
-    var viaLiteral: string = regex.regex_replace_all("a*", "bc", "<>");
+    let viaGroups: string = regex.regex_replace_all_groups("a*", "bc", "<$0>");
+    let viaLiteral: string = regex.regex_replace_all("a*", "bc", "<>");
     if (viaGroups == viaLiteral && viaGroups == "<>b<>c<>") { r = r + 128; }
 
     return r;

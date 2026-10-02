@@ -62,7 +62,7 @@ function test_consteq(): test.TestOutcome {
 
 // hmac_verify: the correct MAC verifies; a wrong MAC and a wrong key don't.
 function test_hmac_verify(): test.TestOutcome {
-  var mac: u8[] = crypto.hmac_sha256_bytes("key".bytes(), "The quick brown fox jumps over the lazy dog");
+  let mac: u8[] = crypto.hmac_sha256_bytes("key".bytes(), "The quick brown fox jumps over the lazy dog");
   return test.assert_true(
     crypto.hmac_verify("key".bytes(), "The quick brown fox jumps over the lazy dog", mac)
       && !crypto.hmac_verify("wrongkey".bytes(), "The quick brown fox jumps over the lazy dog", mac),
@@ -110,7 +110,7 @@ function test_pbkdf2_truncated(): test.TestOutcome {
 // pbkdf2_verify_hex accepts the right password and rejects a wrong one
 // (and a wrong stored key), comparing in constant time.
 function test_pbkdf2_verify(): test.TestOutcome {
-  var stored: string = "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b";
+  let stored: string = "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b";
   if (!crypto.pbkdf2_verify_hex("password", "salt".bytes(), 1, stored)) {
     return test.fail("should accept");
   }
@@ -118,15 +118,15 @@ function test_pbkdf2_verify(): test.TestOutcome {
     return test.fail("wrong password accepted");
   }
   // wrong stored key (last nibble flipped) must be rejected
-  var tampered: string = "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17a";
+  let tampered: string = "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17a";
   return test.assert_false(crypto.pbkdf2_verify_hex("password", "salt".bytes(), 1, tampered));
 }
 
 // HKDF-SHA256 (RFC 5869) against Test Case 1 and Test Case 3. Fast (a
 // few HMACs), so the full vectors run on the interp oracle here.
 function __hkdf_byte_rep(b: i32, n: i32): u8[] {
-  var a: u8[] = [];
-  var i: i32 = 0;
+  let a: u8[] = [];
+  let i: i32 = 0;
   while (i < n) {
     a = a.append(b as u8);
     i = i + 1;
@@ -135,15 +135,15 @@ function __hkdf_byte_rep(b: i32, n: i32): u8[] {
 }
 
 function test_hkdf_tc1(): test.TestOutcome {
-  var ikm: u8[] = __hkdf_byte_rep(11, 22);  // 0x0b × 22
-  var salt: u8[] = [
+  let ikm: u8[] = __hkdf_byte_rep(11, 22);  // 0x0b × 22
+  let salt: u8[] = [
     0 as u8, 1 as u8, 2 as u8, 3 as u8, 4 as u8, 5 as u8,
     6 as u8, 7 as u8, 8 as u8, 9 as u8, 10 as u8, 11 as u8, 12 as u8,
   ];
   // 0xf0..0xf9 — the RFC's `info` is arbitrary octets, not text, which
   // is why `info` is `u8[]` (#5730): as a `string` this vector would
   // need an unchecked construction of non-UTF-8 bytes.
-  var info: u8[] = [
+  let info: u8[] = [
     240 as u8, 241 as u8, 242 as u8, 243 as u8, 244 as u8,
     245 as u8, 246 as u8, 247 as u8, 248 as u8, 249 as u8,
   ];
@@ -155,8 +155,8 @@ function test_hkdf_tc1(): test.TestOutcome {
 
 function test_hkdf_tc3_empty(): test.TestOutcome {
   // Zero-length salt (→ 32 zero bytes) and zero-length info.
-  var ikm: u8[] = __hkdf_byte_rep(11, 22);
-  var e: u8[] = [];
+  let ikm: u8[] = __hkdf_byte_rep(11, 22);
+  let e: u8[] = [];
   return test.assert_eq(
     crypto.hkdf_sha256_hex(e, ikm, e, 42),
     "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8",
@@ -165,10 +165,10 @@ function test_hkdf_tc3_empty(): test.TestOutcome {
 
 function test_hkdf_expand_matches_oneshot(): test.TestOutcome {
   // hkdf_expand(hkdf_extract(...)) equals the one-shot hkdf_sha256.
-  var ikm: u8[] = __hkdf_byte_rep(11, 22);
-  var salt: u8[] = __hkdf_byte_rep(0, 13);
-  var info: u8[] = __hkdf_byte_rep(255, 4);
-  var prk: u8[] = crypto.hkdf_extract(salt, ikm);
+  let ikm: u8[] = __hkdf_byte_rep(11, 22);
+  let salt: u8[] = __hkdf_byte_rep(0, 13);
+  let info: u8[] = __hkdf_byte_rep(255, 4);
+  let prk: u8[] = crypto.hkdf_extract(salt, ikm);
   // Both sides are `u8[]`, which has no structural `==` (E041), so
   // compare byte-wise — consteq is exactly that compare.
   return test.assert_true(crypto.consteq(
@@ -180,7 +180,7 @@ function test_hkdf_expand_matches_oneshot(): test.TestOutcome {
 // TOTP / HOTP (RFC 6238 SHA-256 mode) against Appendix B: key =
 // "12345678901234567890123456789012" (32 ASCII bytes), 8 digits, 30s.
 function test_totp_rfc6238(): test.TestOutcome {
-  var key: u8[] = "12345678901234567890123456789012".bytes();
+  let key: u8[] = "12345678901234567890123456789012".bytes();
   if (crypto.totp_sha256(key, 59, 30, 8) != 46119246) {
     return test.fail("T=59");
   }
@@ -194,7 +194,7 @@ function test_totp_rfc6238(): test.TestOutcome {
 }
 
 function test_hotp_and_digits(): test.TestOutcome {
-  var key: u8[] = "12345678901234567890123456789012".bytes();
+  let key: u8[] = "12345678901234567890123456789012".bytes();
   // TOTP at time 59 (period 30) is HOTP at counter 1.
   if (crypto.hotp_sha256(key, 1, 8) != 46119246) {
     return test.fail("hotp c=1");
@@ -204,7 +204,7 @@ function test_hotp_and_digits(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/crypto");
+  let r: test.TestRunner = test.test_new("std/crypto");
   r = r.it("sha256 empty", test_sha256_empty);
   r = r.it("sha256 abc", test_sha256_abc);
   r = r.it("sha256 pangram", test_sha256_pangram);

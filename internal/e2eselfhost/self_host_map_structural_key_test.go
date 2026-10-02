@@ -29,37 +29,37 @@ function yn(b: boolean): string {
 }
 
 function main(): i32 {
-    var a: Map[(string, i32), i32] = map_new(8);
-    var i: i32 = 0;
+    let a: Map[(string, i32), i32] = map_new(8);
+    let i: i32 = 0;
     while (i < 300) {
         a = a.insert(pair_name(i), i);
         i = i + 1;
     }
     a = a.insert(("k5", 5), 500);
-    var sa: i32 = a.get_or(("k" + 5.to_string(), 5), 0) + a.get_or(("k299", 299 % 7), 0) + a.get_or(("k1", 2), 0);
+    let sa: i32 = a.get_or(("k" + 5.to_string(), 5), 0) + a.get_or(("k299", 299 % 7), 0) + a.get_or(("k1", 2), 0);
 
-    var b: Map[(boolean, i64, (char, u8)), string] = map_new(4);
+    let b: Map[(boolean, i64, (char, u8)), string] = map_new(4);
     b = b.insert((true, 9000000000i64, ('a', 2 as u8)), "x");
     b = b.insert((false, 9000000000i64, ('a', 2 as u8)), "y");
-    var sb: string = b.get_or((true, 9000000000i64, ('a', 2 as u8)), "-") + b.get_or((false, 9000000000i64, ('a', 2 as u8)), "-")
+    let sb: string = b.get_or((true, 9000000000i64, ('a', 2 as u8)), "-") + b.get_or((false, 9000000000i64, ('a', 2 as u8)), "-")
         + b.get_or((true, 1i64, ('a', 2 as u8)), "-") + b.get_or((true, 9000000000i64, ('b', 2 as u8)), "-");
 
-    var c: Map[string[], i32] = Map { ["ab", "c"]: 1, ["a", "bc"]: 2 };
+    let c: Map[string[], i32] = Map { ["ab", "c"]: 1, ["a", "bc"]: 2 };
     c = c.insert([], 3);
-    var parts: string[] = ["a", "b" + "c"];
-    var sc: i32 = c.get_or(parts, 0) * 100 + c.get_or(["ab", "c"], 0) * 10 + c.get_or([], 0);
-    var hc: boolean = c.has(["ab"]);
-    var (c2, had) = c.without(["ab", "c"]);
+    let parts: string[] = ["a", "b" + "c"];
+    let sc: i32 = c.get_or(parts, 0) * 100 + c.get_or(["ab", "c"], 0) * 10 + c.get_or([], 0);
+    let hc: boolean = c.has(["ab"]);
+    let (c2, had) = c.without(["ab", "c"]);
 
-    var d: Map[i32[][], i32] = map_new(4);
+    let d: Map[i32[][], i32] = map_new(4);
     d = d.insert([[1, 2], [3]], 7);
-    var sd: i32 = d.get_or([[1, 2], [3]], 0) + d.get_or([[1], [2, 3]], 0);
+    let sd: i32 = d.get_or([[1, 2], [3]], 0) + d.get_or([[1], [2, 3]], 0);
 
-    var total: i32 = 0;
+    let total: i32 = 0;
     for k in a.keys() {
         total = total + k.1;
     }
-    var vs: i32 = 0;
+    let vs: i32 = 0;
     for (k, v) in c2 {
         vs = vs + v + k.len();
     }

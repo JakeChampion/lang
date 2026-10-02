@@ -6,22 +6,22 @@ import "std/pmap";
 // its path with no snapshot held. Same key shape as map_int, so the two
 // isolate what the HAMT costs over the open-addressed core/map.
 function main(): i32 {
-  var m: pmap.PMap[i32, i32] = pmap.pmap_new();
-  var i: i32 = 0;
+  let m: pmap.PMap[i32, i32] = pmap.pmap_new();
+  let i: i32 = 0;
   while (i < 4000) {
     m = m.insert(i * 7, i);
     i = i + 1;
   }
-  var r: i32 = 0;
+  let r: i32 = 0;
   while (r < 20) {
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 4000) {
       m = m.insert(j * 7, j + r);
       j = j + 1;
     }
     r = r + 1;
   }
-  var total: i64 = 0i64;
+  let total: i64 = 0i64;
   i = 0;
   while (i < 4000) {
     total = total + m.get_or(i * 7, 0) as i64;

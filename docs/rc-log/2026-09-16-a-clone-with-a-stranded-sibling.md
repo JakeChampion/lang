@@ -27,7 +27,7 @@ rejects the module (#9488). Native monomorphises both parameters —
 `__fn_iter__filter__f64__iter__ArrayIter__f64` — so this is a self-host
 divergence, not a language one.
 
-**Clause (c-fn)** is the fn-param sibling of (c) and (c-arr): an erased var
+**Clause (c-fn)** is the fn-param sibling of (c) and (c-arr): an erased let
 promotes when the declaration carries a declared bound (so the clone happens
 regardless) and EVERY erased var is reachable through a fn param, so promoting
 the set strands nothing — the same argument clause (c′) makes. `map[T, U, I]`
@@ -54,8 +54,8 @@ comes out empty and the template is dropped. That turned a working program into
 a compile error for a predicate held in a LOCAL —
 
 ```fern
-var keep = (x: f64): boolean => { return x > 3.0; };
-var big = iter.filter(iter.of(xs), keep);
+let keep = (x: f64): boolean => { return x > 3.0; };
+let big = iter.filter(iter.of(xs), keep);
 ```
 
 — because the env bound `keep` to the coarse `fn` tag (or, unannotated, to

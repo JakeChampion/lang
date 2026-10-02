@@ -99,7 +99,7 @@ struct Line { p: Point, q: Point }
 function sum_line(l: Line): i32;
 
 function main(): i32 {
-	var l: Line = Line { p: Point { x: 1, y: 2 }, q: Point { x: 3, y: 4 } };
+	let l: Line = Line { p: Point { x: 1, y: 2 }, q: Point { x: 3, y: 4 } };
 	if (sum_line(l) == 10) { write("` + want + `"); } else { write("ln-bad"); }
 	return 0;
 }`

@@ -6,12 +6,12 @@ struct Holder { id: i32, items: i32[] }
 struct Bag { tag: i32, data: i32[] }
 
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var a: Holder = Holder { id: i, items: [i, i + 1] };
-        var s: i32 = a.id + a.items[0] + a.items[1];   // a's last use
-        var b: Bag = Bag { tag: s, data: [i + 2, i + 3] };   // reuses a's box (same class)
+        let a: Holder = Holder { id: i, items: [i, i + 1] };
+        let s: i32 = a.id + a.items[0] + a.items[1];   // a's last use
+        let b: Bag = Bag { tag: s, data: [i + 2, i + 3] };   // reuses a's box (same class)
         acc = acc + b.tag + b.data[0] + b.data[1];
         i = i + 1;
     }

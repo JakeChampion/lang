@@ -70,18 +70,18 @@ func TestSelfHostOptStructStringFieldX86_64(t *testing.T) {
 	t.Run("block_scoped_string_field", func(t *testing.T) {
 		balanced(t, "oss_block", `struct P { name: string, n: i32 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var o: Option[P] = Some(P { name: "a" + "b", n: i });
+        let o: Option[P] = Some(P { name: "a" + "b", n: i });
         match (o) { Some(p) => { acc = acc + p.n + p.name.len(); }, None => {} }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 97;
 }`, "this was 48000, with frees=800 of 2400 allocs")
@@ -93,18 +93,18 @@ function main(): i32 {
 	t.Run("payload_string_never_read", func(t *testing.T) {
 		balanced(t, "oss_noread", `struct P { name: string, n: i32 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var o: Option[P] = Some(P { name: "a" + "b", n: i });
+        let o: Option[P] = Some(P { name: "a" + "b", n: i });
         match (o) { Some(p) => { acc = acc + p.n; }, None => {} }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 97;
 }`, "the string field alone must earn the OPTSTRUCT credit")
@@ -114,14 +114,14 @@ function main(): i32 {
 	t.Run("fn_level_single_bind", func(t *testing.T) {
 		balanced(t, "oss_fnlevel", `struct P { name: string, n: i32 }
 function round(r: i32): i32 {
-    var o: Option[P] = Some(P { name: "a" + "b", n: r });
-    var acc: i32 = 0;
+    let o: Option[P] = Some(P { name: "a" + "b", n: r });
+    let acc: i32 = 0;
     match (o) { Some(p) => { acc = p.n + p.name.len(); }, None => {} }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 97;
 }`, "the fn-level bind leaked the same way as the block-scoped one")
@@ -132,9 +132,9 @@ function main(): i32 {
 	t.Run("rebound_in_a_loop", func(t *testing.T) {
 		balanced(t, "oss_rebind", `struct P { name: string, n: i32 }
 function round(r: i32): i32 {
-    var o: Option[P] = Some(P { name: "a" + "b", n: 0 });
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let o: Option[P] = Some(P { name: "a" + "b", n: 0 });
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         o = Some(P { name: "c" + "d", n: i });
         i = i + 1;
@@ -143,8 +143,8 @@ function round(r: i32): i32 {
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 97;
 }`, "every superseded box has to go at the rebind, not just the last one")
@@ -156,18 +156,18 @@ function main(): i32 {
 	t.Run("string_and_array_fields", func(t *testing.T) {
 		balanced(t, "oss_both", `struct P { name: string, xs: i32[], n: i32 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var o: Option[P] = Some(P { name: "a" + "b", xs: [i, i + 1], n: i });
+        let o: Option[P] = Some(P { name: "a" + "b", xs: [i, i + 1], n: i });
         match (o) { Some(p) => { acc = acc + p.n + p.name.len() + p.xs[0]; }, None => {} }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 97;
 }`, "the array half of the payload must still be reclaimed")
@@ -180,18 +180,18 @@ function main(): i32 {
 	t.Run("scalar_only_payload", func(t *testing.T) {
 		balanced(t, "oss_scalar", `struct P { a: i32, b: i32 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var o: Option[P] = Some(P { a: i, b: i + 1 });
+        let o: Option[P] = Some(P { a: i, b: i + 1 });
         match (o) { Some(p) => { acc = acc + p.a + p.b; }, None => {} }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 97;
 }`, "this was 35200, with frees=0 — neither box was released")
@@ -206,25 +206,25 @@ function main(): i32 {
 	t.Run("aliased_string_field_payload_survives", func(t *testing.T) {
 		src := `struct P { name: string, n: i32 }
 function round(r: i32): i32 {
-    var shared: string = "ab" + "cd";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let shared: string = "ab" + "cd";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var o: Option[P] = Some(P { name: shared, n: i });
+        let o: Option[P] = Some(P { name: shared, n: i });
         match (o) { Some(p) => { acc = acc + p.n + p.name.len(); }, None => {} }
         i = i + 1;
     }
-    var junk: string = "";
-    var c: i32 = 0;
+    let junk: string = "";
+    let c: i32 = 0;
     while (c < 6) { junk = "zz" + "zz"; c = c + 1; }
-    var sum: i32 = 0;
-    var k: i32 = 0;
+    let sum: i32 = 0;
+    let k: i32 = 0;
     while (k < shared.len()) { sum = sum + (shared[k] as i32); k = k + 1; }
     return acc + sum + junk.len() + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 251;
 }`
@@ -236,19 +236,19 @@ function main(): i32 {
 	t.Run("escaping_payload_field_still_strands", func(t *testing.T) {
 		src := `struct P { name: string, n: i32 }
 function round(r: i32): i32 {
-    var held: string = "";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let held: string = "";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var o: Option[P] = Some(P { name: "a" + "b", n: i });
+        let o: Option[P] = Some(P { name: "a" + "b", n: i });
         match (o) { Some(p) => { held = p.name; acc = acc + p.n; }, None => {} }
         i = i + 1;
     }
     return acc + held.len() + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 97;
 }`

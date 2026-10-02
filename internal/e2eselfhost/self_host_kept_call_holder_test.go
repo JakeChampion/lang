@@ -7,7 +7,7 @@ import (
 
 // --- A holder handed whole to a call, and a closure array's clone -----------
 //
-// `var result: M = M { items: mod.items, funcs: fresh }` takes a counted share
+// `let result: M = M { items: mod.items, funcs: fresh }` takes a counted share
 // of `mod.items`, and the bind-site flip (mark_enum_arr_share) then grants the
 // holder its deep drop. That drop walks `result.funcs`, whose element boxes
 // `rebuild(result)` hands back inside its own result: appended uncounted,
@@ -35,66 +35,66 @@ struct F { body: E[], n: i32 }
 struct M { funcs: F[], items: E[], k: i32 }
 function touch(f: F): F { if (f.n < 0) { return F { body: [], n: 0 }; } return f; }
 function stamp(fs: F[]): F[] {
-    var out: F[] = [];
-    var i: i32 = 0;
+    let out: F[] = [];
+    let i: i32 = 0;
     while (i < fs.len()) { out = out.append(fs[i]); i = i + 1; }
     return out;
 }
 function rebuild(m: M): M {
-    var fs: F[] = [];
-    var i: i32 = 0;
+    let fs: F[] = [];
+    let i: i32 = 0;
     while (i < m.funcs.len()) { fs = fs.append(touch(m.funcs[i])); i = i + 1; }
     return M { ...m, funcs: fs };
 }
 function infer(m: M): M { return m; }
 function lift(mod: M): M {
-    var worklist: F[] = [];
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) { var wf: F = mod.funcs[i]; worklist = worklist.append(wf); i = i + 1; }
-    var newfuncs: F[] = [];
-    var wi: i32 = 0;
-    while (wi < worklist.len()) { var fd: F = worklist[wi]; newfuncs = newfuncs.append(fd); wi = wi + 1; }
-    var result: M = M { funcs: stamp(newfuncs), items: mod.items, k: mod.k + 1 };
+    let worklist: F[] = [];
+    let i: i32 = 0;
+    while (i < mod.funcs.len()) { let wf: F = mod.funcs[i]; worklist = worklist.append(wf); i = i + 1; }
+    let newfuncs: F[] = [];
+    let wi: i32 = 0;
+    while (wi < worklist.len()) { let fd: F = worklist[wi]; newfuncs = newfuncs.append(fd); wi = wi + 1; }
+    let result: M = M { funcs: stamp(newfuncs), items: mod.items, k: mod.k + 1 };
     return infer(rebuild(result));
 }
 function round(i: i32): i32 {
-    var m: M = M { funcs: [F { body: [E.A(i), E.B], n: 1 }, F { body: [E.B], n: 2 }], items: [E.A(i + 1)], k: 0 };
-    var r: M = lift(m);
-    var v: i32 = 0;
+    let m: M = M { funcs: [F { body: [E.A(i), E.B], n: 1 }, F { body: [E.B], n: 2 }], items: [E.A(i + 1)], k: 0 };
+    let r: M = lift(m);
+    let v: i32 = 0;
     match (r.funcs[0].body[0]) { E.A(x) => { v = x; }, E.B => { v = 0 - 1; } }
     return (v + r.funcs[1].n + r.funcs[0].body.len() + r.items.len() + r.k + m.k) % 101;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
 `},
-	// The holder handed on through an alias: `var alias = result` is the same
+	// The holder handed on through an alias: `let alias = result` is the same
 	// box, so `infer(alias)` keeps it exactly as `infer(result)` would.
 	{"kept_call_alias", `enum E { A(i32), B }
 struct F { body: E[], n: i32 }
 struct M { funcs: F[], items: E[], k: i32 }
 function touch(f: F): F { if (f.n < 0) { return F { body: [], n: 0 }; } return f; }
 function rebuild(m: M): M {
-    var fs: F[] = [];
-    var i: i32 = 0;
+    let fs: F[] = [];
+    let i: i32 = 0;
     while (i < m.funcs.len()) { fs = fs.append(touch(m.funcs[i])); i = i + 1; }
     return M { ...m, funcs: fs };
 }
 function infer(m: M): M { return m; }
 function lift(mod: M): M {
-    var fresh: F[] = [];
-    var i: i32 = 0;
+    let fresh: F[] = [];
+    let i: i32 = 0;
     while (i < mod.funcs.len()) { fresh = fresh.append(touch(mod.funcs[i])); i = i + 1; }
-    var result: M = M { funcs: fresh, items: mod.items, k: mod.k + 1 };
-    var alias: M = result;
+    let result: M = M { funcs: fresh, items: mod.items, k: mod.k + 1 };
+    let alias: M = result;
     return infer(rebuild(alias));
 }
 function round(i: i32): i32 {
-    var m: M = M { funcs: [F { body: [E.A(i), E.B], n: 1 }, F { body: [E.B], n: 2 }], items: [E.A(i + 1)], k: 0 };
-    var r: M = lift(m);
-    var v: i32 = 0;
+    let m: M = M { funcs: [F { body: [E.A(i), E.B], n: 1 }, F { body: [E.B], n: 2 }], items: [E.A(i + 1)], k: 0 };
+    let r: M = lift(m);
+    let v: i32 = 0;
     match (r.funcs[0].body[0]) { E.A(x) => { v = x; }, E.B => { v = 0 - 1; } }
     return (v + r.funcs[1].n + r.funcs[0].body.len() + r.items.len() + r.k + m.k) % 101;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
 `},
 	// The closure array reached through a struct field, whose declared type is
 	// the flat "fn[]" spelling that is_enum_array_field_type admits.
@@ -104,26 +104,26 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + 
 function inc(x: i32): i32 { return x + 7; }
 function dec(x: i32): i32 { return x - 1; }
 function round(i: i32): i32 {
-    var h: H = H { hs: [inc, inc, dec], n: i };
-    var keep: H = h;
-    var w: ((i32) => i32)[] = h.hs.with(1, dec);
-    var a: ((i32) => i32)[] = h.hs.append(inc);
-    var f: (i32) => i32 = w[1];
-    var g: (i32) => i32 = a[3];
-    var k: (i32) => i32 = keep.hs[2];
+    let h: H = H { hs: [inc, inc, dec], n: i };
+    let keep: H = h;
+    let w: ((i32) => i32)[] = h.hs.with(1, dec);
+    let a: ((i32) => i32)[] = h.hs.append(inc);
+    let f: (i32) => i32 = w[1];
+    let g: (i32) => i32 = a[3];
+    let k: (i32) => i32 = keep.hs[2];
     return (f(i) + g(i) + k(i) + a.len() + h.n) % 101;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
 `},
 	{"closure_array_with", `function round(i: i32): i32 {
-    var v1: (i32) => i32 = ((x: i32) => x + 7);
-    var s0: ((i32) => i32)[] = [v1, v1, ((y: i32) => y - 1), v1];
-    var a0: ((i32) => i32)[] = s0;
-    var w: ((i32) => i32)[] = s0.with(1, ((z: i32) => z + 10));
-    var a: ((i32) => i32)[] = w.append(v1);
+    let v1: (i32) => i32 = ((x: i32) => x + 7);
+    let s0: ((i32) => i32)[] = [v1, v1, ((y: i32) => y - 1), v1];
+    let a0: ((i32) => i32)[] = s0;
+    let w: ((i32) => i32)[] = s0.with(1, ((z: i32) => z + 10));
+    let a: ((i32) => i32)[] = w.append(v1);
     return (s0[1](i) + w[1](i) + a[4](i) + a0[2](i) + a.len()) % 101;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
 `},
 }
 

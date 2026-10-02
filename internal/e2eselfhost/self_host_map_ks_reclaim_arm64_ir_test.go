@@ -25,24 +25,24 @@ func TestSelfHostMapKsReclaimIRArm64(t *testing.T) {
 
 	// string-KEY column differential.
 	run(t, `function build_sk(n: i32): i32 {
-    var m: Map[string, i32] = Map { "a" + "b": 1, "c" + "d": 2 };
+    let m: Map[string, i32] = Map { "a" + "b": 1, "c" + "d": 2 };
     return 1;
 }
 function build_ik(n: i32): i32 {
-    var m: Map[string, i32] = Map { "a": 1, "b": 2 };
+    let m: Map[string, i32] = Map { "a": 1, "b": 2 };
     return 1;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { acc = acc + build_sk(i) + build_ik(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 500) { acc = acc + build_sk(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
-    var k: i32 = 0;
+    let s2: i32 = (__heap_bump_bytes() as i32);
+    let k: i32 = 0;
     while (k < 500) { acc = acc + build_ik(k); k = k + 1; }
-    var k2: i32 = (__heap_bump_bytes() as i32);
+    let k2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
     if (acc < 0) { return 97; }
@@ -51,24 +51,24 @@ function main(): i32 {
 
 	// BOTH columns differential.
 	run(t, `function build_ss(n: i32): i32 {
-    var m: Map[string, string] = Map { "a" + "b": "x" + "y", "c" + "d": "z" + "w" };
+    let m: Map[string, string] = Map { "a" + "b": "x" + "y", "c" + "d": "z" + "w" };
     return 1;
 }
 function build_ii(n: i32): i32 {
-    var m: Map[string, i32] = Map { "a": 1, "b": 2 };
+    let m: Map[string, i32] = Map { "a": 1, "b": 2 };
     return 1;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { acc = acc + build_ss(i) + build_ii(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 500) { acc = acc + build_ss(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
-    var k: i32 = 0;
+    let s2: i32 = (__heap_bump_bytes() as i32);
+    let k: i32 = 0;
     while (k < 500) { acc = acc + build_ii(k); k = k + 1; }
-    var k2: i32 = (__heap_bump_bytes() as i32);
+    let k2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
     if (acc < 0) { return 97; }
@@ -77,10 +77,10 @@ function main(): i32 {
 
 	// Correctness + aliased-key exclusion.
 	run(t, `function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var m: Map[string, i32] = Map { "hel" + "lo": 5, "wor" + "ld": 6 };
+        let m: Map[string, i32] = Map { "hel" + "lo": 5, "wor" + "ld": 6 };
         if (m.get_or("hello", 0) != 5) { bad = 1; }
         if (m.get_or("world", 0) != 6) { bad = 1; }
         i = i + 1;
@@ -95,28 +95,28 @@ function main(): i32 {
 	// key (kconsume via x24) on an overwrite. Differential against a literal-keyed
 	// map doing the same overwrites. Lighter churn under qemu.
 	run(t, `function build_sk_over(n: i32): i32 {
-    var m: Map[string, i32] = Map { "wo" + "rd": 0 };
-    var j: i32 = 0;
+    let m: Map[string, i32] = Map { "wo" + "rd": 0 };
+    let j: i32 = 0;
     while (j < 8) { m = m.insert("wo" + "rd", j); j = j + 1; }
     return 1;
 }
 function build_ik_over(n: i32): i32 {
-    var m: Map[string, i32] = Map { "k": 0 };
-    var j: i32 = 0;
+    let m: Map[string, i32] = Map { "k": 0 };
+    let j: i32 = 0;
     while (j < 8) { m = m.insert("k", j); j = j + 1; }
     return 1;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { acc = acc + build_sk_over(i) + build_ik_over(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 500) { acc = acc + build_sk_over(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
-    var k: i32 = 0;
+    let s2: i32 = (__heap_bump_bytes() as i32);
+    let k: i32 = 0;
     while (k < 500) { acc = acc + build_ik_over(k); k = k + 1; }
-    var k2: i32 = (__heap_bump_bytes() as i32);
+    let k2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
     if (acc < 0) { return 97; }
@@ -125,11 +125,11 @@ function main(): i32 {
 
 	// Overwrite correctness + no over-release: recurring fresh key reads last value.
 	run(t, `function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var m: Map[string, i32] = Map { "wo" + "rd": 0 };
-        var j: i32 = 0;
+        let m: Map[string, i32] = Map { "wo" + "rd": 0 };
+        let j: i32 = 0;
         while (j < 8) { m = m.insert("wo" + "rd", j); j = j + 1; }
         if (m.get_or("word", 0) != 7) { bad = 1; }
         if (m.len() != 1) { bad = 1; }
@@ -143,12 +143,12 @@ function main(): i32 {
 	// Overwrite with an ALIASED key (a bare local reused): kconsume=0, so map_set
 	// must NOT free the key — the local stays valid, no over-release.
 	run(t, `function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var key: string = "wo" + "rd";
-        var m: Map[string, i32] = Map { "wo" + "rd": 0 };
-        var j: i32 = 0;
+        let key: string = "wo" + "rd";
+        let m: Map[string, i32] = Map { "wo" + "rd": 0 };
+        let j: i32 = 0;
         while (j < 8) { m = m.insert(key, j); j = j + 1; }
         if (key.len() != 4) { bad = 1; }
         if (m.get_or("word", 0) != 7) { bad = 1; }

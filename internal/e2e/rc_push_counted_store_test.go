@@ -23,16 +23,16 @@ import "testing"
 
 func pushProjectionSrc(n string) string {
 	return `function work(k: i32): i32 {
-    var src: i32[][] = [[k, k + 1], [k + 2]];
-    var out: i32[][] = [];
+    let src: i32[][] = [[k, k + 1], [k + 2]];
+    let out: i32[][] = [];
     out = out.append(src[0]);
-    var e: i32[] = out[0];
+    let e: i32[] = out[0];
     return e[0] + e[1];
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var s: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let s: i32 = 0;
     while (i < ` + n + `) {
         s = s + work(i);
         i = i + 1;
@@ -70,15 +70,15 @@ func TestWasmArrayPushProjectionSourceReclaims(t *testing.T) {
 // The pushed element must survive its source container's reclaim, and the
 // element inc / container dec must balance exactly.
 const pushProjectionBalanceSrc = `function work(k: i32): i32 {
-    var src: string[][] = [["a", "bc"], ["def"]];
-    var out: string[][] = [];
+    let src: string[][] = [["a", "bc"], ["def"]];
+    let out: string[][] = [];
     out = out.append(src[1]);
-    var e: string[] = out[0];
+    let e: string[] = out[0];
     return e[0].len() + k - k;
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var s: i32 = 0;
+    let i: i32 = 0;
+    let s: i32 = 0;
     while (i < 200) {
         s = s + work(i);
         i = i + 1;
@@ -104,15 +104,15 @@ func TestWasmArrayPushProjectionNoUnderflow(t *testing.T) {
 // (and the overwritten element dropped), so the projection's source
 // container reclaims and the balance stays exact.
 const withProjectionBalanceSrc = `function work(k: i32): i32 {
-    var src: i32[][] = [[k, k + 1], [k + 2]];
-    var out: i32[][] = [[k]];
+    let src: i32[][] = [[k, k + 1], [k + 2]];
+    let out: i32[][] = [[k]];
     out = out.with(0, src[0]);
-    var e: i32[] = out[0];
+    let e: i32[] = out[0];
     return e[0] + e[1];
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var s: i32 = 0;
+    let i: i32 = 0;
+    let s: i32 = 0;
     while (i < 200) {
         s = s + work(i);
         i = i + 1;
@@ -137,15 +137,15 @@ func TestWasmArraySetProjectionNoUnderflow(t *testing.T) {
 // alias is inc'd and every local (sources + binding) reclaims exactly once.
 func ifYieldBalanceSrc(cond string) string {
 	return `function pick(c: boolean, k: i32): i32 {
-    var a: i32[][] = [[k, k + 1]];
-    var b2: i32[][] = [[k + 2]];
-    var v: i32[][] = if (c) { a } else { b2 };
-    var e: i32[] = v[0];
+    let a: i32[][] = [[k, k + 1]];
+    let b2: i32[][] = [[k + 2]];
+    let v: i32[][] = if (c) { a } else { b2 };
+    let e: i32[] = v[0];
     return e[0];
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var s: i32 = 0;
+    let i: i32 = 0;
+    let s: i32 = 0;
     while (i < 200) {
         s = s + pick(` + cond + `, i);
         i = i + 1;
@@ -176,17 +176,17 @@ func TestWasmIfExprYieldNoUnderflow(t *testing.T) {
 // locals from arms; balance must stay exact whichever arm runs.
 const matchYieldBalanceSrc = `enum Tag { A, B }
 function pick(t: Tag, k: i32): i32 {
-    var a: i32[][] = [[k, k + 1]];
-    var b2: i32[][] = [[k + 2]];
-    var v: i32[][] = match (t) { A => a, _ => b2 };
-    var w: i32[][] = match (k % 2) { 0 => a, _ => v };
+    let a: i32[][] = [[k, k + 1]];
+    let b2: i32[][] = [[k + 2]];
+    let v: i32[][] = match (t) { A => a, _ => b2 };
+    let w: i32[][] = match (k % 2) { 0 => a, _ => v };
     return w[0][0];
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var s: i32 = 0;
+    let i: i32 = 0;
+    let s: i32 = 0;
     while (i < 200) {
-        var t: Tag = A;
+        let t: Tag = A;
         if (i % 3 == 0) { t = B; }
         s = s + pick(t, i);
         i = i + 1;
@@ -211,14 +211,14 @@ func TestWasmMatchExprYieldNoUnderflow(t *testing.T) {
 // view stay valid for the whole function, releases stay exact, and the churn
 // loop stays flat (x reclaims once per call; the elided pair adds nothing).
 const deadAliasBalanceSrc = `function work(k: i32): i32 {
-    var x: i32[][] = [[k, k + 1], [k + 2]];
-    var y: i32[][] = x;
+    let x: i32[][] = [[k, k + 1], [k + 2]];
+    let y: i32[][] = x;
     return y[1][0] + y[0][1] + x[0][0];
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var s: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let s: i32 = 0;
     while (i < 5000) {
         s = s + work(i);
         i = i + 1;

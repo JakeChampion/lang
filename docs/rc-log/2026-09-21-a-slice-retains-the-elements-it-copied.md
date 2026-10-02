@@ -27,7 +27,7 @@ Worth writing down, because the first version of this change's test was wrong
 about it.
 
 `a[i:j]` on an array is a **slice view**, type `[T]` — a borrowed window, not
-an owned `T[]`. Native holds both halves of that: `var mid: string[] =
+an owned `T[]`. Native holds both halves of that: `let mid: string[] =
 all[1:3]` is E003, and returning a view out of the frame that owns its backing
 storage is E063, by name.
 

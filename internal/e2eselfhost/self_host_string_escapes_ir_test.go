@@ -32,7 +32,7 @@ var stringEscapeIRCases = []struct {
 	// \xNN form of NUL is still one byte.
 	{"null-hex-len", `function main(): i32 { return "\x00".len(); }`},
 	// Byte index lands on the decoded LF: "a\nb"[1] == '\n' == 10.
-	{"escape-byte-index", `function main(): i32 { var s: string = "a\nb"; return s[1] as i32; }`},
+	{"escape-byte-index", `function main(): i32 { let s: string = "a\nb"; return s[1] as i32; }`},
 	// Concat of two single-escape literals: "\t" + "\n" -> 2.
 	{"concat-escapes", `function main(): i32 { return ("\t" + "\n").len(); }`},
 	// A mix of every escape in one literal: a TAB b \ c " d LF e -> 9.

@@ -40,10 +40,10 @@ function code_of(e: IoError): i32 {
 }
 
 function main(): i32 {
-    var uid0: u32 = geteuid();
-    var root: boolean = uid0 == 0;
-    var neg: i64 = 0i64 - 1i64;
-    var big: i64 = 4294967296i64;
+    let uid0: u32 = geteuid();
+    let root: boolean = uid0 == 0;
+    let neg: i64 = 0i64 - 1i64;
+    let big: i64 = 4294967296i64;
 
     // A path that does not exist is an Err, and WHICH errno is the kernel's
     // choice rather than ours: Linux looks the path up BEFORE checking
@@ -55,7 +55,7 @@ function main(): i32 {
     match (chroot("/no-such-directory-at-all-9678")) {
         Ok(v) => { return 61; },
         Err(e) => {
-            var c: i32 = code_of(e);
+            let c: i32 = code_of(e);
             if (c != 1) { if (c != 7) { return 62; } }
         }
     }

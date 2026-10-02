@@ -1548,7 +1548,7 @@ type generator struct {
 	// (arm64 parity — the arm64 backend carries the same field). Inlining
 	// expands each OpRcInc / OpRcDec / OpRcIsUnique from a single `call`
 	// into ~10 instructions; in the self-host compiler's largest lowering
-	// function (irlower__lower_expr, ~9.75M IR ops with ~1.66M rc ops) that
+	// function (the deleted AST lowering's lower_expr, ~9.75M IR ops with ~1.66M rc ops) that
 	// bloat balloons the emitted `.s` — the inlined rc sequences alone add
 	// hundreds of MB, and GNU `as` on the resulting ~1 GB driver `.s` peaks
 	// at ~11 GB RSS, which is what forced the swap file the test harness
@@ -2700,7 +2700,7 @@ func (g *generator) emitStartRuntime() {
 
 // rcInlineMaxOps is the per-function IR-op ceiling for the opt-2b inline rc
 // fast path (see the rcInlineOK field). Matches the arm64 backend's threshold
-// so both backends flip exactly the same function (irlower__lower_expr,
+// so both backends flip exactly the same functions (the deleted AST lowering's lower_expr was
 // ~9.75M ops) to the `call` form: 1M sits ~2× above the largest normal
 // self-host function (~0.5M ops) and ~10× below lower_expr, so every
 // user-scale function keeps the inline win. A var (not a const) only so the

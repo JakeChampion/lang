@@ -18,9 +18,9 @@ import (
 const flatOperandsProg = `@noinline function stop(s: string, from: i32, set: u8[]): i32 { return __scan_set(s, from, set); }
 @noinline function nl(s: string): i32 { return __count_byte(s, 10); }
 function main(): i32 {
-    var set: u8[] = __alloc_u8(256);
+    let set: u8[] = __alloc_u8(256);
     set = set.with(44, 1 as u8);
-    var s: string = "ab,cd\nef,g\n" + "";
+    let s: string = "ab,cd\nef,g\n" + "";
     return stop(s, 0, set) * 10 + stop(s, 3, set) + nl(s) * 100;
 }
 `

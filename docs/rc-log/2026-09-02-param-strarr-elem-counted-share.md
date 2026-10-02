@@ -10,7 +10,7 @@ seen the frame and ruled out the fused string free; this entry is the cause.
 
 ```fern
 function reclaimable_credit(asrows: string[], out: string[]): string[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < asrows.len()) { out = out.append(asrows[i]); i = i + 1; }
     return out;
 }
@@ -46,7 +46,7 @@ destination, and not how the element was read (index, bound local, `for`).
 
 ## The fix
 
-`LocalInfo.str_caller_elem` marks a string slot bound from such a read (`var
+`LocalInfo.str_caller_elem` marks a string slot bound from such a read (`let
 e = p[i]`, `for e in p`, a reassign, an alias). `str_param_elem_escapes`
 recognises a direct `p[i]` over a `string[]` parameter or a marked local. Four
 store sites retain it: the self-append (`out = out.append(v)`), the

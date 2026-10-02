@@ -58,7 +58,7 @@ function opt_truncate(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... STRING1 [STRING2]\n";
   out = out + "Translate, squeeze, and/or delete characters from standard input,\n";
   out = out + "writing to standard output.  STRING1 and STRING2 specify arrays of\n";
@@ -137,10 +137,10 @@ function octal3(c: i32): string {
 // `printable_str(s)` — gnulib's make_printable_str: the same, except
 // that the seven bytes with a named C escape take it.
 function printable_str(s: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c == 7) {
       out = out + "\\a";
     } else if (c == 8) {
@@ -211,12 +211,12 @@ function class_id(name: string): i32 {
 // C-locale membership: the classes are fixed by the locale, and this
 // corpus is asserted in C.
 function in_class(cls: i32, c: i32): boolean {
-  var lower: boolean = c >= 97 && c <= 122;
-  var upper: boolean = c >= 65 && c <= 90;
-  var digit: boolean = c >= 48 && c <= 57;
-  var alpha: boolean = lower || upper;
-  var alnum: boolean = alpha || digit;
-  var graph: boolean = c >= 33 && c <= 126;
+  let lower: boolean = c >= 97 && c <= 122;
+  let upper: boolean = c >= 65 && c <= 90;
+  let digit: boolean = c >= 48 && c <= 57;
+  let alpha: boolean = lower || upper;
+  let alnum: boolean = alpha || digit;
+  let graph: boolean = c >= 33 && c <= 126;
   if (cls == 0) {
     return alnum;
   }
@@ -258,7 +258,7 @@ function class_first(cls: i32): i32 {
 }
 
 function class_next(cls: i32, after: i32): i32 {
-  var i: i32 = after + 1;
+  let i: i32 = after + 1;
   while (i < 256) {
     if (in_class(cls, i)) {
       return i;
@@ -269,8 +269,8 @@ function class_next(cls: i32, after: i32): i32 {
 }
 
 function class_size(cls: i32): u64 {
-  var n: u64 = 0 as u64;
-  var i: i32 = 0;
+  let n: u64 = 0 as u64;
+  let i: i32 = 0;
   while (i < 256) {
     if (in_class(cls, i)) {
       n = n + 1 as u64;
@@ -296,12 +296,12 @@ function es_is(e: ES, i: i32, b: i32): boolean {
 // octal escape over \377 keeps only two digits and leaves the third as
 // a byte of its own.
 function unquote(raw: string): ES {
-  var bs: u8[] = [];
-  var fl: u8[] = [];
-  var n: i32 = raw.len();
-  var i: i32 = 0;
+  let bs: u8[] = [];
+  let fl: u8[] = [];
+  let n: i32 = raw.len();
+  let i: i32 = 0;
   while (i < n) {
-    var c: i32 = raw[i] as i32;
+    let c: i32 = raw[i] as i32;
     if (c != 92) {
       bs = bs.append(c as u8);
       fl = fl.append(0 as u8);
@@ -315,9 +315,9 @@ function unquote(raw: string): ES {
       i = i + 1;
       continue;
     }
-    var d: i32 = raw[i + 1] as i32;
-    var val: i32 = d;
-    var adv: i32 = 2;
+    let d: i32 = raw[i + 1] as i32;
+    let val: i32 = d;
+    let adv: i32 = 2;
     if (d == 92) {
       val = 92;
     } else if (d == 97) {
@@ -340,14 +340,14 @@ function unquote(raw: string): ES {
         val = 8 * val + (raw[i + 2] as i32 - 48);
         adv = 3;
         if (i + 3 < n && is_octal(raw[i + 3] as i32)) {
-          var wide: i32 = 8 * val + (raw[i + 3] as i32 - 48);
+          let wide: i32 = 8 * val + (raw[i + 3] as i32 - 48);
           if (wide < 256) {
             val = wide;
             adv = 4;
           } else {
-            var d1: string = chr(raw[i + 1] as i32);
-            var d2: string = chr(raw[i + 2] as i32);
-            var d3: string = chr(raw[i + 3] as i32);
+            let d1: string = chr(raw[i + 1] as i32);
+            let d2: string = chr(raw[i + 2] as i32);
+            let d3: string = chr(raw[i + 3] as i32);
             gnu.error("warning: the ambiguous octal escape \\" + d1 + d2 + d3 + " is being\n\tinterpreted as the 2-byte sequence \\0" + d1 + d2 + ", " + d3);
           }
         }
@@ -377,16 +377,16 @@ function die(msg: string): void {
 // rather than a fall-through, because `*` and `]` already fixed the
 // shape.
 function build_spec(e: ES): Item[] {
-  var items: Item[] = [];
-  var n: i32 = e.s.len();
-  var i: i32 = 0;
+  let items: Item[] = [];
+  let n: i32 = e.s.len();
+  let i: i32 = 0;
   while (i < n) {
     if (es_is(e, i, 91)) {
-      var handled: boolean = false;
+      let handled: boolean = false;
       if (es_is(e, i + 1, 58) || es_is(e, i + 1, 61)) {
-        var delim: i32 = e.s[i + 1] as i32;
-        var j: i32 = i + 2;
-        var close: i32 = 0 - 1;
+        let delim: i32 = e.s[i + 1] as i32;
+        let j: i32 = i + 2;
+        let close: i32 = 0 - 1;
         while (j + 1 < n) {
           if (e.s[j] as i32 == delim && e.s[j + 1] as i32 == 93 && e.esc[j] as i32 == 0 && e.esc[j + 1] as i32 == 0) {
             close = j;
@@ -395,12 +395,12 @@ function build_spec(e: ES): Item[] {
           j = j + 1;
         }
         if (close >= 0) {
-          var body: string = slice_unchecked(e.s, i + 2, close) + "";
+          let body: string = slice_unchecked(e.s, i + 2, close) + "";
           if (delim == 58) {
             if (body.len() == 0) {
               die("missing character class name " + gnu.quote("[::]"));
             }
-            var cls: i32 = class_id(body);
+            let cls: i32 = class_id(body);
             if (cls < 0) {
               die("invalid character class " + gnu.quote(printable_str(body)));
             }
@@ -419,8 +419,8 @@ function build_spec(e: ES): Item[] {
         }
       }
       if (!handled && i + 2 < n && es_is(e, i + 2, 42)) {
-        var k: i32 = i + 3;
-        var end: i32 = 0 - 1;
+        let k: i32 = i + 3;
+        let end: i32 = 0 - 1;
         while (k < n && e.esc[k] as i32 == 0) {
           if (e.s[k] as i32 == 93) {
             end = k;
@@ -429,7 +429,7 @@ function build_spec(e: ES): Item[] {
           k = k + 1;
         }
         if (end >= 0) {
-          var digits: string = slice_unchecked(e.s, i + 3, end) + "";
+          let digits: string = slice_unchecked(e.s, i + 3, end) + "";
           items = items.append(Item { kind: 4, a: e.s[i + 1] as i32, b: 0, n: repeat_count(digits) });
           i = end + 1;
           handled = true;
@@ -440,8 +440,8 @@ function build_spec(e: ES): Item[] {
       }
     }
     if (es_is(e, i + 1, 45) && i + 2 < n) {
-      var lo: i32 = e.s[i] as i32;
-      var hi: i32 = e.s[i + 2] as i32;
+      let lo: i32 = e.s[i] as i32;
+      let hi: i32 = e.s[i + 2] as i32;
       if (hi < lo) {
         die("range-endpoints of '" + printable_char(lo) + "-" + printable_char(hi) + "' are in reverse collating sequence order");
       }
@@ -463,29 +463,29 @@ function repeat_count(digits: string): u64 {
   if (digits.len() == 0) {
     return 0 as u64;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < digits.len() && (digits[i] as i32 == 32 || digits[i] as i32 >= 9 && digits[i] as i32 <= 13)) {
     i = i + 1;
   }
-  var neg: boolean = false;
+  let neg: boolean = false;
   if (i < digits.len() && (digits[i] as i32 == 43 || digits[i] as i32 == 45)) {
     neg = digits[i] as i32 == 45;
     i = i + 1;
   }
-  var base: u64 = 10 as u64;
+  let base: u64 = 10 as u64;
   if (i < digits.len() && digits[i] as i32 == 48) {
     base = 8 as u64;
   }
-  var start: i32 = i;
-  var v: u64 = 0 as u64;
-  var over: boolean = false;
-  var limit: u64 = 18446744073709551615 as u64;
+  let start: i32 = i;
+  let v: u64 = 0 as u64;
+  let over: boolean = false;
+  let limit: u64 = 18446744073709551615 as u64;
   while (i < digits.len()) {
-    var c: i32 = digits[i] as i32;
+    let c: i32 = digits[i] as i32;
     if (c < 48 || c > 57) {
       break;
     }
-    var d: u64 = (c - 48) as u64;
+    let d: u64 = (c - 48) as u64;
     if (d >= base) {
       break;
     }
@@ -528,14 +528,14 @@ function cur_step(i: i32): Cur {
 // upper/lower marker (0 none, 1 lower, 2 upper) the translation loop
 // pairs against.
 function spec_next(items: Item[], c: Cur): (i32, i32, Cur) {
-  var cur: Cur = c;
+  let cur: Cur = c;
   while (cur.i < items.len()) {
-    var it: Item = items[cur.i];
+    let it: Item = items[cur.i];
     if (it.kind == 0 || it.kind == 3) {
       return (it.a, 0, cur_step(cur.i));
     }
     if (it.kind == 1) {
-      var v: i32 = it.a;
+      let v: i32 = it.a;
       if (!cur.fresh) {
         v = cur.st + 1;
       }
@@ -545,11 +545,11 @@ function spec_next(items: Item[], c: Cur): (i32, i32, Cur) {
       return (v, 0, Cur { i: cur.i, st: v, fresh: false, k: 0 as u64 });
     }
     if (it.kind == 2) {
-      var m: i32 = class_first(it.a);
+      let m: i32 = class_first(it.a);
       if (!cur.fresh) {
         m = class_next(it.a, cur.st);
       }
-      var ul: i32 = 0;
+      let ul: i32 = 0;
       if (it.a == 6) {
         ul = 1;
       }
@@ -561,7 +561,7 @@ function spec_next(items: Item[], c: Cur): (i32, i32, Cur) {
       }
       return (m, ul, Cur { i: cur.i, st: m, fresh: false, k: 0 as u64 });
     }
-    var done: u64 = cur.k;
+    let done: u64 = cur.k;
     if (cur.fresh) {
       done = 0 as u64;
     }
@@ -575,10 +575,10 @@ function spec_next(items: Item[], c: Cur): (i32, i32, Cur) {
 }
 
 function spec_len(items: Item[]): u64 {
-  var total: u64 = 0 as u64;
-  var i: i32 = 0;
+  let total: u64 = 0 as u64;
+  let i: i32 = 0;
   while (i < items.len()) {
-    var it: Item = items[i];
+    let it: Item = items[i];
     if (it.kind == 0 || it.kind == 3) {
       total = total + 1 as u64;
     } else if (it.kind == 1) {
@@ -594,8 +594,8 @@ function spec_len(items: Item[]): u64 {
 }
 
 function count_indefinite(items: Item[]): i32 {
-  var n: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = 0;
+  let i: i32 = 0;
   while (i < items.len()) {
     if (items[i].kind == 4 && items[i].n == 0 as u64) {
       n = n + 1;
@@ -606,7 +606,7 @@ function count_indefinite(items: Item[]): i32 {
 }
 
 function has_equiv(items: Item[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < items.len()) {
     if (items[i].kind == 3) {
       return true;
@@ -619,7 +619,7 @@ function has_equiv(items: Item[]): boolean {
 // A class other than `upper` or `lower`: the ones SET2 may not carry
 // while translating.
 function has_restricted_class(items: Item[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < items.len()) {
     if (items[i].kind == 2 && items[i].a != 6 && items[i].a != 10) {
       return true;
@@ -632,15 +632,15 @@ function has_restricted_class(items: Item[]): boolean {
 // `members(items)` — the 256-entry membership of a fully expanded
 // spec, and with `flip` its complement.
 function members(items: Item[], flip: boolean): u8[] {
-  var set: u8[] = __alloc_u8(256);
-  var i: i32 = 0;
+  let set: u8[] = __alloc_u8(256);
+  let i: i32 = 0;
   while (i < 256) {
     set = set.with(i, 0 as u8);
     i = i + 1;
   }
-  var cur: Cur = cur_new();
+  let cur: Cur = cur_new();
   while (true) {
-    var r: (i32, i32, Cur) = spec_next(items, cur);
+    let r: (i32, i32, Cur) = spec_next(items, cur);
     cur = r.2;
     if (r.0 < 0) {
       break;
@@ -650,7 +650,7 @@ function members(items: Item[], flip: boolean): u8[] {
   if (flip) {
     i = 0;
     while (i < 256) {
-      var v: i32 = 1;
+      let v: i32 = 1;
       if (set[i] as i32 == 1) {
         v = 0;
       }
@@ -662,8 +662,8 @@ function members(items: Item[], flip: boolean): u8[] {
 }
 
 function member_count(set: u8[]): u64 {
-  var n: u64 = 0 as u64;
-  var i: i32 = 0;
+  let n: u64 = 0 as u64;
+  let i: i32 = 0;
   while (i < 256) {
     if (set[i] as i32 != 0) {
       n = n + 1 as u64;
@@ -675,8 +675,8 @@ function member_count(set: u8[]): u64 {
 
 // ---- the translation table --------------------------------------------------
 function identity_table(): u8[] {
-  var t: u8[] = __alloc_u8(256);
-  var i: i32 = 0;
+  let t: u8[] = __alloc_u8(256);
+  let i: i32 = 0;
   while (i < 256) {
     t = t.with(i, i as u8);
     i = i + 1;
@@ -704,18 +704,18 @@ function to_lower(c: i32): i32 {
 // misalignment GNU refuses. The walk runs one step past the end of the
 // shorter set so that a trailing class in SET2 is still met.
 function build_xlate(s1: Item[], s2: Item[], truncate: boolean): u8[] {
-  var t: u8[] = identity_table();
-  var c1: Cur = cur_new();
-  var c2: Cur = cur_new();
+  let t: u8[] = identity_table();
+  let c1: Cur = cur_new();
+  let c2: Cur = cur_new();
   while (true) {
-    var r1: (i32, i32, Cur) = spec_next(s1, c1);
+    let r1: (i32, i32, Cur) = spec_next(s1, c1);
     c1 = r1.2;
-    var r2: (i32, i32, Cur) = spec_next(s2, c2);
+    let r2: (i32, i32, Cur) = spec_next(s2, c2);
     c2 = r2.2;
     if (r1.1 == 0 && r2.1 != 0) {
       die("misaligned [:upper:] and/or [:lower:] construct");
     }
-    var to: i32 = r2.0;
+    let to: i32 = r2.0;
     if (to < 0 && r1.0 >= 0 && !truncate) {
       to = extend_byte(s2);
     }
@@ -738,14 +738,14 @@ function build_xlate(s1: Item[], s2: Item[], truncate: boolean): u8[] {
 // once it runs out. No case folding: the complement has no classes to
 // align with.
 function build_xlate_complement(s1: Item[], s2: Item[], truncate: boolean): u8[] {
-  var t: u8[] = identity_table();
-  var in1: u8[] = members(s1, false);
-  var cur: Cur = cur_new();
-  var last: i32 = 0 - 1;
-  var i: i32 = 0;
+  let t: u8[] = identity_table();
+  let in1: u8[] = members(s1, false);
+  let cur: Cur = cur_new();
+  let last: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < 256) {
     if (in1[i] as i32 == 0) {
-      var r: (i32, i32, Cur) = spec_next(s2, cur);
+      let r: (i32, i32, Cur) = spec_next(s2, cur);
       cur = r.2;
       if (r.0 >= 0) {
         last = r.0;
@@ -770,13 +770,13 @@ function read_size(): i32 {
 // `last` is the previously emitted byte, carried across chunks so a run
 // that straddles a read is still one byte.
 function xf_squeeze(chunk: string, sq: u8[], last: i32): (string, i32) {
-  var n: i32 = chunk.len();
-  var buf: u8[] = __alloc_u8(n);
-  var j: i32 = 0;
-  var prev: i32 = last;
-  var i: i32 = 0;
+  let n: i32 = chunk.len();
+  let buf: u8[] = __alloc_u8(n);
+  let j: i32 = 0;
+  let prev: i32 = last;
+  let i: i32 = 0;
   while (i < n) {
-    var c: i32 = chunk[i] as i32;
+    let c: i32 = chunk[i] as i32;
     if (c != prev || sq[c] as i32 == 0) {
       buf = buf.with(j, c as u8);
       j = j + 1;
@@ -788,13 +788,13 @@ function xf_squeeze(chunk: string, sq: u8[], last: i32): (string, i32) {
 }
 
 function xf_translate_squeeze(chunk: string, t: u8[], sq: u8[], last: i32): (string, i32) {
-  var n: i32 = chunk.len();
-  var buf: u8[] = __alloc_u8(n);
-  var j: i32 = 0;
-  var prev: i32 = last;
-  var i: i32 = 0;
+  let n: i32 = chunk.len();
+  let buf: u8[] = __alloc_u8(n);
+  let j: i32 = 0;
+  let prev: i32 = last;
+  let i: i32 = 0;
   while (i < n) {
-    var c: i32 = t[chunk[i] as i32] as i32;
+    let c: i32 = t[chunk[i] as i32] as i32;
     if (c != prev || sq[c] as i32 == 0) {
       buf = buf.with(j, c as u8);
       j = j + 1;
@@ -806,13 +806,13 @@ function xf_translate_squeeze(chunk: string, t: u8[], sq: u8[], last: i32): (str
 }
 
 function xf_delete_squeeze(chunk: string, del: u8[], sq: u8[], last: i32): (string, i32) {
-  var n: i32 = chunk.len();
-  var buf: u8[] = __alloc_u8(n);
-  var j: i32 = 0;
-  var prev: i32 = last;
-  var i: i32 = 0;
+  let n: i32 = chunk.len();
+  let buf: u8[] = __alloc_u8(n);
+  let j: i32 = 0;
+  let prev: i32 = last;
+  let i: i32 = 0;
   while (i < n) {
-    var c: i32 = chunk[i] as i32;
+    let c: i32 = chunk[i] as i32;
     if (del[c] as i32 == 0) {
       if (c != prev || sq[c] as i32 == 0) {
         buf = buf.with(j, c as u8);
@@ -830,7 +830,7 @@ function xf_delete_squeeze(chunk: string, del: u8[], sq: u8[], last: i32): (stri
 // and words the fault differently; the extra line is GNU's and is
 // printed before the `Try …` line.
 function check_operands(ops: string[], deleting: boolean, squeezing: boolean): void {
-  var n: i32 = ops.len();
+  let n: i32 = ops.len();
   if (n == 0) {
     gnu.die_usage("missing operand", 1);
   }
@@ -863,14 +863,14 @@ function check_operands(ops: string[], deleting: boolean, squeezing: boolean): v
 // its count here, because that is the first point at which SET1's
 // length is known.
 function resolve_indefinite(s2: Item[], len1: u64, len2: u64): Item[] {
-  var out: Item[] = s2;
-  var fill: u64 = 0 as u64;
+  let out: Item[] = s2;
+  let fill: u64 = 0 as u64;
   if (len1 > len2) {
     fill = len1 - len2;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < out.len()) {
-    var it: Item = out[i];
+    let it: Item = out[i];
     if (it.kind == 4 && it.n == 0 as u64) {
       out = out.with(i, Item { kind: 4, a: it.a, b: it.b, n: fill });
     }
@@ -886,7 +886,7 @@ function fill_byte(items: Item[]): i32 {
   if (items.len() == 0) {
     return 0 - 2;
   }
-  var last: Item = items[items.len() - 1];
+  let last: Item = items[items.len() - 1];
   if (last.kind == 2) {
     return 0 - 1;
   }
@@ -901,7 +901,7 @@ function fill_byte(items: Item[]): i32 {
 // refused for the class pairing at the FIRST byte, never getting as far
 // as the class tail that `tr [:lower:]0 [:upper:]` is refused for.
 function extend_byte(s2: Item[]): i32 {
-  var fb: i32 = fill_byte(s2);
+  let fb: i32 = fill_byte(s2);
   if (fb == 0 - 2) {
     die("when not truncating set1, string2 must be non-empty");
   }
@@ -912,8 +912,8 @@ function extend_byte(s2: Item[]): i32 {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [];
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("c", "complement", opt_complement()));
   opts = opts.append(gnu.flag("C", "", opt_complement()));
   opts = opts.append(gnu.flag("d", "delete", opt_delete()));
@@ -922,13 +922,13 @@ pub function main(): i32 {
 
   // tr's optstring starts with `+`: the first operand ends the option
   // scan, so `tr a b -d` is three operands and not two with a flag.
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "tr", help_text(), 1).in_order();
-  var complement: boolean = false;
-  var deleting: boolean = false;
-  var squeezing: boolean = false;
-  var truncate: boolean = false;
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "tr", help_text(), 1).in_order();
+  let complement: boolean = false;
+  let deleting: boolean = false;
+  let squeezing: boolean = false;
+  let truncate: boolean = false;
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -948,12 +948,12 @@ pub function main(): i32 {
     }
   }
 
-  var ops: string[] = g.operands();
+  let ops: string[] = g.operands();
   check_operands(ops, deleting, squeezing);
-  var translating: boolean = ops.len() == 2 && !deleting;
+  let translating: boolean = ops.len() == 2 && !deleting;
 
-  var s1: Item[] = build_spec(unquote(ops[0]));
-  var s2: Item[] = [];
+  let s1: Item[] = build_spec(unquote(ops[0]));
+  let s2: Item[] = [];
   if (ops.len() == 2) {
     s2 = build_spec(unquote(ops[1]));
   }
@@ -965,9 +965,9 @@ pub function main(): i32 {
     die("only one [c*] repeat construct may appear in string2");
   }
 
-  var xlate: u8[] = [];
-  var del: u8[] = [];
-  var sq: u8[] = [];
+  let xlate: u8[] = [];
+  let del: u8[] = [];
+  let sq: u8[] = [];
   if (translating) {
     if (has_equiv(s2)) {
       die("[=c=] expressions may not appear in string2 when translating");
@@ -975,7 +975,7 @@ pub function main(): i32 {
     if (has_restricted_class(s2)) {
       die("when translating, the only character classes that may appear in\nstring2 are 'upper' and 'lower'");
     }
-    var len1: u64 = spec_len(s1);
+    let len1: u64 = spec_len(s1);
     if (complement) {
       len1 = 256 as u64 - member_count(members(s1, false));
     }
@@ -997,9 +997,9 @@ pub function main(): i32 {
     }
   }
 
-  var o: io_buffered.BufWriter = gnu.out_new();
-  var r: Reader = stdin();
-  var last: i32 = 0 - 1;
+  let o: io_buffered.BufWriter = gnu.out_new();
+  let r: Reader = stdin();
+  let last: i32 = 0 - 1;
   while (true) {
     match (r.read_chunk(read_size())) {
       Ok(chunk) => {
@@ -1007,19 +1007,19 @@ pub function main(): i32 {
           break;
         }
         if (translating && squeezing) {
-          var t2: (string, i32) = xf_translate_squeeze(chunk, xlate, sq, last);
+          let t2: (string, i32) = xf_translate_squeeze(chunk, xlate, sq, last);
           last = t2.1;
           o = gnu.put(o, t2.0);
         } else if (translating) {
           o = gnu.check(o.write_mapped(chunk, xlate));
         } else if (deleting && squeezing) {
-          var d2: (string, i32) = xf_delete_squeeze(chunk, del, sq, last);
+          let d2: (string, i32) = xf_delete_squeeze(chunk, del, sq, last);
           last = d2.1;
           o = gnu.put(o, d2.0);
         } else if (deleting) {
           o = gnu.check(o.write_filtered(chunk, del));
         } else {
-          var q2: (string, i32) = xf_squeeze(chunk, sq, last);
+          let q2: (string, i32) = xf_squeeze(chunk, sq, last);
           last = q2.1;
           o = gnu.put(o, q2.0);
         }

@@ -18,8 +18,8 @@ import (
 
 const ownStrParamSrc = `function put(own a: string, s: string): string { a = a + s; return a; }
 function main(): i32 {
-    var acc: string = "";
-    var i: i32 = 0;
+    let acc: string = "";
+    let i: i32 = 0;
     while (i < 3) { acc = put(acc, "12345678"); i = i + 1; }
     return acc.len();
 }`
@@ -96,8 +96,8 @@ func TestOwnStringParamSelfAppendsInPlace(t *testing.T) {
 func TestReassignedStringParamMatchesTheOwnShape(t *testing.T) {
 	const src = `function put(a: string, s: string): string { a = a + s; return a; }
 function main(): i32 {
-    var acc: string = "";
-    var i: i32 = 0;
+    let acc: string = "";
+    let i: i32 = 0;
     while (i < 3) { acc = put(acc, "12345678"); i = i + 1; }
     return acc.len();
 }`
@@ -129,8 +129,8 @@ function main(): i32 {
 func TestBorrowedStringParamStillCopies(t *testing.T) {
 	const src = `function put(a: string, s: string): string { return a + s; }
 function main(): i32 {
-    var acc: string = "";
-    var i: i32 = 0;
+    let acc: string = "";
+    let i: i32 = 0;
     while (i < 3) { acc = put(acc, "12345678"); i = i + 1; }
     return acc.len();
 }`

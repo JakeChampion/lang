@@ -11,7 +11,7 @@ import (
 
 // enumMethodIRCases call a method on an enum-typed RECEIVER. Enum methods on a
 // PARAM already lowered (the param carries its declared enum type); a method on
-// an enum-valued LOCAL (`var d = Dir.N; d.code()`) or a FRESH variant
+// an enum-valued LOCAL (`let d = Dir.N; d.code()`) or a FRESH variant
 // (`Dir.N.code()`) did not — the local's enum type was never recorded, so the
 // dispatch couldn't form the `<Enum>.<method>` label and bailed to AST.
 //
@@ -19,7 +19,7 @@ import (
 // (`Dir.N` → `Dir`), and the unannotated-enum-binding recording (#2947) — which
 // was DEAD CODE, shadowed by an identical `else if (struct_ty == "")` guard on
 // the preceding struct-array-literal branch — is folded into that branch so it
-// actually runs. Together a `var d = <variant>` local (qualified or bare,
+// actually runs. Together a `let d = <variant>` local (qualified or bare,
 // unit or payload) records its enum type, and `d.method()` / `Variant.method()`
 // dispatch through the IR path.
 var enumMethodIRCases = []struct {
@@ -27,10 +27,10 @@ var enumMethodIRCases = []struct {
 	src      string
 	expected int
 }{
-	{"qual-unit-local", `enum Dir { N, S } function (d: Dir) code(): i32 { match (d) { Dir.N => { return 7; }, Dir.S => { return 9; } } } function main(): i32 { var d = Dir.S; return d.code(); }`, 9},
-	{"bare-unit-local", `enum Dir { N, S } function (d: Dir) code(): i32 { return 7; } function main(): i32 { var d = N; return d.code(); }`, 7},
-	{"payload-local", `enum E { A(i32), B } function (e: E) get(): i32 { match (e) { E.A(n) => { return n; }, E.B => { return 0; } } } function main(): i32 { var e = E.A(42); return e.get(); }`, 42},
-	{"method-returns-enum", `enum Dir { N, S } function (d: Dir) opp(): Dir { match (d) { Dir.N => { return Dir.S; }, Dir.S => { return Dir.N; } } } function main(): i32 { var d = Dir.N; match (d.opp()) { Dir.N => { return 0; }, Dir.S => { return 1; } } }`, 1},
+	{"qual-unit-local", `enum Dir { N, S } function (d: Dir) code(): i32 { match (d) { Dir.N => { return 7; }, Dir.S => { return 9; } } } function main(): i32 { let d = Dir.S; return d.code(); }`, 9},
+	{"bare-unit-local", `enum Dir { N, S } function (d: Dir) code(): i32 { return 7; } function main(): i32 { let d = N; return d.code(); }`, 7},
+	{"payload-local", `enum E { A(i32), B } function (e: E) get(): i32 { match (e) { E.A(n) => { return n; }, E.B => { return 0; } } } function main(): i32 { let e = E.A(42); return e.get(); }`, 42},
+	{"method-returns-enum", `enum Dir { N, S } function (d: Dir) opp(): Dir { match (d) { Dir.N => { return Dir.S; }, Dir.S => { return Dir.N; } } } function main(): i32 { let d = Dir.N; match (d.opp()) { Dir.N => { return 0; }, Dir.S => { return 1; } } }`, 1},
 	{"fresh-variant-method", `enum Dir { N, S } function (d: Dir) code(): i32 { return 7; } function main(): i32 { return Dir.N.code(); }`, 7},
 }
 

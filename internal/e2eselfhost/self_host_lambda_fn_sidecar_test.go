@@ -32,7 +32,7 @@ var lambdaFnSidecarCases = []struct {
     function idmaker(base: T): (T) => T {
         return (x: T) => x;
     }
-    var f: (T) => T = idmaker(seed);
+    let f: (T) => T = idmaker(seed);
     return f(seed);
 }
 
@@ -52,7 +52,7 @@ pub function mk(): i32 {
     function pick(b: Box): (Box) => i32 {
         return (x: Box) => x.v;
     }
-    var g: (Box) => i32 = pick(Box { v: 3 });
+    let g: (Box) => i32 = pick(Box { v: 3 });
     return g(Box { v: 4 });
 }
 `,
@@ -73,7 +73,7 @@ function main(): i32 {
         if (n <= 0) { return (x: i32) => x; }
         return rec(n - 1);
     }
-    var f: (i32) => i32 = rec(2);
+    let f: (i32) => i32 = rec(2);
     return f(9);
 }
 `,

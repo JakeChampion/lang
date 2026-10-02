@@ -28,7 +28,7 @@ enum Holder { Has(P), Empty }
     match (b) { Arr(a) when a.len() > 2 => { return a; }, Arr(a) => { return a; }, Nil => { return []; } }
 }
 @noinline function fall_guarded(own b: Box): i32 {
-    match (b) { Arr(a) when a.len() > 1 => { var n: i32 = a.len(); n = n + 1; }, Arr(a) => { return 0; }, Nil => { return 0; } }
+    match (b) { Arr(a) when a.len() > 1 => { let n: i32 = a.len(); n = n + 1; }, Arr(a) => { return 0; }, Nil => { return 0; } }
     return 7;
 }
 @noinline function keep(own h: Holder): P {
@@ -44,22 +44,22 @@ enum Holder { Has(P), Empty }
     return 0;
 }
 @noinline function shared_box(): i32 {
-    var shared = Arr([4, 5]);
-    var other = shared;
-    var n = len(shared);
+    let shared = Arr([4, 5]);
+    let other = shared;
+    let n = len(shared);
     match (other) { Arr(a) => { return n + a.len(); }, Nil => { return n; } }
     return n;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
         total = total + len(Arr([1, 2, 3]));
         total = total + shared_box();
         total = total + len_guarded(Arr([6, 7, 8, 9]));
         total = total + len_guarded(Arr([6, 7, 8, 9, 10, 11]));
         total = total + keep_guarded(Arr([4, 5, 6])).len() + fall_guarded(Arr([1, 2]));
-        var p = keep(Has(P { xs: [1], n: 2 }));
+        let p = keep(Has(P { xs: [1], n: 2 }));
         total = total + p.xs.len() + p.n;
         total = total + sum(inc(Cons(1, Cons(2, Nil2))));
         i = i + 1;

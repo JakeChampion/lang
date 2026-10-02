@@ -112,7 +112,7 @@ func TestSelfHostExternU8ArrayParamCustomProvider(t *testing.T) {
 	prog := `@import("local:test/sink@0.1.0", "sum-bytes")
 function sum_bytes(b: u8[]): i32;
 function main(): i32 {
-    var b: u8[] = [10 as u8, 20 as u8, 12 as u8];
+    let b: u8[] = [10 as u8, 20 as u8, 12 as u8];
     if (sum_bytes(b) == 42) { write("` + want + `"); } else { write("u8p-bad"); }
     return 0;
 }`

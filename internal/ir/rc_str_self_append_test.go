@@ -18,8 +18,8 @@ import (
 // strSelfAppendSrc is the canonical accumulator: an owned literal-init local
 // grown by a borrowed piece and returned.
 const strSelfAppendSrc = `function build(n: i32, piece: string): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) {
         out = out + piece;
         i = i + 1;
@@ -91,8 +91,8 @@ func TestLowerStrSelfAppendSuppressesOverwriteDec(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 
 	control := `function build(n: i32, piece: string): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) {
         out = piece + "!";
         i = i + 1;
@@ -188,7 +188,7 @@ func TestLowerStrSelfAppendThreadsConsumedParam(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 
 	src := `function grow(acc: string, n: i32): string {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         acc = acc + "x";
         i = i + 1;
@@ -256,8 +256,8 @@ func TestLowerStrSelfAppendOnlyOuterConcat(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 
 	src := `function build(n: i32, a: string, b: string): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) {
         out = out + (a + b);
         i = i + 1;
@@ -341,8 +341,8 @@ func TestLowerStringOverwriteFrees(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 
 	src := `function build(n: i32, piece: string): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) {
         out = piece + "!";
         i = i + 1;
@@ -366,8 +366,8 @@ function main(): i32 { return build(3, "ab").len(); }`
 // emits a separator writes it — the two joins in ONE statement. It parses
 // left-nested as `((out + piece) + ",")`.
 const strSelfAppendChainSrc = `function build(n: i32, piece: string): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) {
         out = out + piece + ",";
         i = i + 1;
@@ -422,8 +422,8 @@ func TestLowerStrSelfAppendChainStopsAtAReadOfTheAccumulator(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 
 	src := `function build(n: i32, sep: string): string {
-    var out: string = "ab";
-    var i: i32 = 0;
+    let out: string = "ab";
+    let i: i32 = 0;
     while (i < n) {
         out = out + sep + out;
         i = i + 1;

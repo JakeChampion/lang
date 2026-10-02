@@ -32,9 +32,9 @@ Stop producing the element. The helper now scans for the newlines itself and
 appends exactly the lines wanted:
 
 ```fern
-var out: string[] = [];
-var start: i32 = 0;
-var i: i32 = 0;
+let out: string[] = [];
+let start: i32 = 0;
+let i: i32 = 0;
 while (i < sl) {
     if (s[i] == 10) { out = out.append(s[start:i]); start = i + 1; }
     i = i + 1;

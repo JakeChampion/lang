@@ -1498,7 +1498,7 @@ function test_failing(): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("failure-shape");
+    let r: test.TestRunner = test.test_new("failure-shape");
     r = r.it("passing", () => test_passing());
     r = r.it("failing", () => test_failing());
     return r.finish();
@@ -1580,7 +1580,7 @@ function passing(): test.TestOutcome { return test.assert_eq(1, 1); }
 func TestRunnerDroppedItResultStillFailsSuite(t *testing.T) {
 	runDroppedHandleCase(t, droppedHandlePreamble+`
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("dropped-it");
+    let r: test.TestRunner = test.test_new("dropped-it");
     r = r.it("kept", passing);
     r.it("dropped result", failing);
     return r.finish();
@@ -1602,9 +1602,9 @@ function main(): i32 {
 func TestRunnerUnusedSubsuiteHandleStillFailsSuite(t *testing.T) {
 	runDroppedHandleCase(t, droppedHandlePreamble+`
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("unused-subsuite");
+    let r: test.TestRunner = test.test_new("unused-subsuite");
     r = r.it("kept", passing);
-    var sub: test.TestRunner = r.subsuite("child");
+    let sub: test.TestRunner = r.subsuite("child");
     sub = sub.it("child fails", failing);
     return r.finish();
 }
@@ -1627,9 +1627,9 @@ function main(): i32 {
 func TestRunnerDroppedItAndUnusedSubsuiteTogether(t *testing.T) {
 	runDroppedHandleCase(t, droppedHandlePreamble+`
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("s");
+    let r: test.TestRunner = test.test_new("s");
     r.it("dropped result", failing);
-    var sub: test.TestRunner = r.subsuite("child");
+    let sub: test.TestRunner = r.subsuite("child");
     sub = sub.it("child fails", failing);
     return r.finish();
 }
@@ -1757,7 +1757,7 @@ function detect_bad(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("fuzz-failure");
+    let r: test.TestRunner = test.test_new("fuzz-failure");
     r = r.fuzz("detect", ["good".bytes(), "BAD seed".bytes(), "another".bytes()], 5, detect_bad);
     return r.finish();
 }
@@ -1903,7 +1903,7 @@ func TestRunnerDeferCleanupRunsAtFinish(t *testing.T) {
 import "std/test";
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("cleanup");
+    let r: test.TestRunner = test.test_new("cleanup");
     match (temp_dir("fern-cleanup-probe")) {
         Ok(dir) => {
             print("# tempdir: " + dir);
@@ -2165,7 +2165,7 @@ function detect_bad(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("shrink-failure");
+    let r: test.TestRunner = test.test_new("shrink-failure");
     r = r.fuzz_shrink("detect",
                       ["lots of padding here BAD lots more padding".bytes()],
                       5, detect_bad);
@@ -4556,7 +4556,7 @@ func TestRunnerEmptySuiteIsValidTAP(t *testing.T) {
 import "std/test";
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("empty");
+    let r: test.TestRunner = test.test_new("empty");
     return r.finish();
 }
 `)
@@ -4607,9 +4607,9 @@ import "std/test";
 function failing(): test.TestOutcome { return test.assert_eq(1, 2); }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("discarded");
+    let r: test.TestRunner = test.test_new("discarded");
     r.it("dropped result", failing);
-    var sub: test.TestRunner = r.subsuite("child");
+    let sub: test.TestRunner = r.subsuite("child");
     sub = sub.it("child fails", failing);
     return r.finish();
 }
@@ -4656,9 +4656,9 @@ import "std/test";
 function passing(): test.TestOutcome { return test.assert_eq(1, 1); }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("clean");
+    let r: test.TestRunner = test.test_new("clean");
     r = r.it("first", passing);
-    var sub: test.TestRunner = r.subsuite("child");
+    let sub: test.TestRunner = r.subsuite("child");
     sub = sub.it("nested", passing);
     r = r.merge(sub);
     r = r.it("last", passing);

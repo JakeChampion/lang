@@ -20,9 +20,9 @@ function (self: F) bitxor(o: F): F { return F { b: self.b ^ o.b }; }
 function (self: F) shl(o: F): F { return F { b: self.b << o.b }; }
 function (self: F) shr(o: F): F { return F { b: self.b >> o.b }; }
 function main(): i32 {
-    var a: F = F { b: 12 };          // 1100
-    var b: F = F { b: 10 };          // 1010
-    var c: F = a & b;                // 1000 = 8
+    let a: F = F { b: 12 };          // 1100
+    let b: F = F { b: 10 };          // 1010
+    let c: F = a & b;                // 1000 = 8
     c = a | b;                       // 1110 = 14
     c = a ^ b;                       // 0110 = 6
     c = F { b: 3 } << F { b: 1 };    // 6

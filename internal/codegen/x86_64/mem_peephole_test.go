@@ -61,7 +61,7 @@ func TestFoldAddIntoLoad(t *testing.T) {
 // OpAdd(base, offset) followed by a zero-displacement load.
 const fieldLoadProg = `struct P { a: i64, b: i64 }
 @noinline function get(p: P): i64 { return p.b; }
-function main(): i32 { var p = P { a: 1, b: 2 }; return get(p) as i32; }`
+function main(): i32 { let p = P { a: 1, b: 2 }; return get(p) as i32; }`
 
 func TestPeepholeFoldsAddIntoLoad(t *testing.T) {
 	off := compileOpts(t, fieldLoadProg, Options{NoPeephole: true})
@@ -170,8 +170,8 @@ func TestWritesAccBeforeReading(t *testing.T) {
 // counterProg increments two i64 frame slots in a loop, the shape that
 // lowers to load / add / store against the same slot.
 const counterProg = `@noinline function f(n: i64): i64 {
-  var i: i64 = 0;
-  var s: i64 = 0;
+  let i: i64 = 0;
+  let s: i64 = 0;
   while (i < n) { s = s + 2; i = i + 1; }
   return s;
 }
@@ -234,16 +234,16 @@ func TestPeepholeDropsDeadReload(t *testing.T) {
 // increment, so each fused increment ends a statement and the next statement
 // opens with the block labels the `if` left behind.
 const scanLoopProg = `@noinline function scan(bs: u8[]): i32 {
-  var i: i32 = 0;
-  var n: i32 = bs.len();
-  var lines: i32 = 0;
+  let i: i32 = 0;
+  let n: i32 = bs.len();
+  let lines: i32 = 0;
   while (i < n) {
     if (bs[i] as i32 == 10) { lines = lines + 1; }
     i = i + 1;
   }
   return lines;
 }
-function main(): i32 { var a: u8[] = [10, 1, 10]; return scan(a); }`
+function main(): i32 { let a: u8[] = [10, 1, 10]; return scan(a); }`
 
 // A label must not protect a dead reload. Both of this loop's fused increments
 // are followed by one, and each reload's overwriter is separated from it only by

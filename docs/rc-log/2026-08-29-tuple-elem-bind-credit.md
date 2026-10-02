@@ -3,7 +3,7 @@
 #7766, found while confirming #7466's latent alias-side gap. The source side is
 not latent.
 
-`var e: T = t.1` on an rc-tuple refused `"TUPRC:"` and `"TUPRCS:"` together, so
+`let e: T = t.1` on an rc-tuple refused `"TUPRC:"` and `"TUPRCS:"` together, so
 the local got no release at all: the tuple box and its element buffer both
 leaked.
 
@@ -14,9 +14,9 @@ and the native x86-64 backend agreeing on every exit code.
 
 | shape | rounds | native | before | after |
 | --- | --- | --- | --- | --- |
-| `var e: i32[] = t.1` | 100 | 200/200/0 | **200/0 live 8000** | 200/200/0 |
+| `let e: i32[] = t.1` | 100 | 200/200/0 | **200/0 live 8000** | 200/200/0 |
 | same | 400 | 800/800/0 | **800/0 live 32000** | 800/800/0 |
-| `var e: string = t.1` on `(i32, string)` | 100 | 100/100/0 | **300/0 live 7200** | 300/300/0 |
+| `let e: string = t.1` on `(i32, string)` | 100 | 100/100/0 | **300/0 live 7200** | 300/300/0 |
 | bound, read, then dead | 100 | 200/200/0 | **200/0** | 200/200/0 |
 | three-element tuple, one bound | 100 | 200/200/0 | **400/0 live 12000** | 400/400/0 |
 | loop-resident, bound per iteration | 100 | 600/600/0 | **600/0 live 24000** | 600/600/0 |
@@ -29,7 +29,7 @@ arithmetic: `fern-sanitizer: leak 8000 bytes in 200 blocks`.
 
 `rctuple_esc_expr`'s own header states it:
 
-> `return t.1` / `var u = t.1` hands the element's reference to a NEW owner, so
+> `return t.1` / `let u = t.1` hands the element's reference to a NEW owner, so
 > releasing it here over-releases it (witnessed as exit 99 on the escaping form).
 
 That is right for `return t.1`: the element outlives the frame and the
@@ -44,7 +44,7 @@ element correctly stranded); the local bind measured 200/0.
 
 ## The narrowing
 
-`tuple_elem_bind_sites_of` collects the `var e = t.<i>` binds whose target is
+`tuple_elem_bind_sites_of` collects the `let e = t.<i>` binds whose target is
 neither reassigned nor escaping (the ordinary `body_unsafe_for` on the TARGET),
 and `rctuple_esc_stmt_alias`'s StmtVar arm forgives a site in that set — the same
 shape the `alias_ok` forgiveness already had, one relation over.

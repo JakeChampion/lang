@@ -175,8 +175,8 @@ func TestTwoArgumentCallNeedsNoOperandStack(t *testing.T) {
 	asm := compileOpts(t, `
 @noinline function pair(a: i32, b: i32): i32 { return a - b; }
 function main(): i32 {
-  var t: i32 = 0;
-  var i: i32 = 0;
+  let t: i32 = 0;
+  let i: i32 = 0;
   while (i < 4) { t = t + pair(i, 7); i = i + 1; }
   return t;
 }`, Options{})

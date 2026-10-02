@@ -32,11 +32,11 @@ import (
 func enumArrBumpSrc(n string) string {
 	return `enum Box { Val(string), Empty }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var xs: Box[] = [Val("hello there friend, "), Val("general kenobi!!!"), Empty];
+        let xs: Box[] = [Val("hello there friend, "), Val("general kenobi!!!"), Empty];
         acc = acc + xs.len();
         i = i + 1;
     }
@@ -49,11 +49,11 @@ function main(): i32 {
 // == 7400.
 const enumArrCheckBox = `enum Box { Val(string), Empty }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        var xs: Box[] = [Val("hello there friend, "), Val("general kenobi!!!"), Empty];
-        var a: i32 = match (xs[0]) { Val(s) => s.len(), Empty => 0 };
-        var b: i32 = match (xs[1]) { Val(s) => s.len(), Empty => 0 };
+        let xs: Box[] = [Val("hello there friend, "), Val("general kenobi!!!"), Empty];
+        let a: i32 = match (xs[0]) { Val(s) => s.len(), Empty => 0 };
+        let b: i32 = match (xs[1]) { Val(s) => s.len(), Empty => 0 };
         acc = acc + a + b;
         i = i + 1;
     }
@@ -64,11 +64,11 @@ function main(): i32 {
 // Generic Option[string][] — exercises the substituted-decl registration:
 // 18 + 6 == 24, ×200 == 4800.
 const enumArrCheckOption = `function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        var xs: Option[string][] = [Some("hello there friend"), None, Some("kenobi")];
-        var a: i32 = match (xs[0]) { Some(s) => s.len(), None => 0 };
-        var b: i32 = match (xs[2]) { Some(s) => s.len(), None => 0 };
+        let xs: Option[string][] = [Some("hello there friend"), None, Some("kenobi")];
+        let a: i32 = match (xs[0]) { Some(s) => s.len(), None => 0 };
+        let b: i32 = match (xs[2]) { Some(s) => s.len(), None => 0 };
         acc = acc + a + b;
         i = i + 1;
     }
@@ -80,12 +80,12 @@ const enumArrCheckOption = `function main(): i32 {
 // 5 + 4 + 5 == 14, ×200 == 2800.
 const enumArrCheckNested = `enum Box { Val(string), Empty }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        var g: Box[][] = [[Val("alpha"), Empty], [Val("beta"), Val("gamma")]];
-        var a: i32 = match (g[0][0]) { Val(s) => s.len(), Empty => 0 };
-        var b: i32 = match (g[1][0]) { Val(s) => s.len(), Empty => 0 };
-        var c: i32 = match (g[1][1]) { Val(s) => s.len(), Empty => 0 };
+        let g: Box[][] = [[Val("alpha"), Empty], [Val("beta"), Val("gamma")]];
+        let a: i32 = match (g[0][0]) { Val(s) => s.len(), Empty => 0 };
+        let b: i32 = match (g[1][0]) { Val(s) => s.len(), Empty => 0 };
+        let c: i32 = match (g[1][1]) { Val(s) => s.len(), Empty => 0 };
         acc = acc + a + b + c;
         i = i + 1;
     }

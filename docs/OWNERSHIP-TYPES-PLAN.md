@@ -263,7 +263,7 @@ precompute shape.
   StringType at the LowerWith choke point** (`ir/erase_str.go`, mirroring
   HandleType erasure; no backend sees it). Spelled as a **contextual type
   name**, not a lexer keyword (std/log's `.str` method + `str` identifiers
-  keep working). Semantics: `string` freely borrows INTO `str` (var init,
+  keep working). Semantics: `string` freely borrows INTO `str` (let init,
   argument, element); `str` flows into `string` *parameters* (borrowed-by-
   default positions, `argAssignable`); `str` never silently promotes into an
   owning sink (var/field/return — strict `assignable`); `.to_owned()`

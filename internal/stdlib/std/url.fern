@@ -66,7 +66,7 @@ function __url_hex_val(c: i32): i32 {
 }
 
 pub function url_encode(s: string): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return "";
   }
@@ -74,8 +74,8 @@ pub function url_encode(s: string): string {
   // `out = out + …` concat chain, which recopied the whole prefix each
   // step (O(n²) — the #4379 hot path). Pass 1 sizes the output (1 byte
   // per unreserved char, 3 for a `%XX` escape); pass 2 fills it.
-  var out_len: i32 = 0;
-  var i: i32 = 0;
+  let out_len: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (__url_unreserved(s[i] as i32)) {
       out_len = out_len + 1;
@@ -84,11 +84,11 @@ pub function url_encode(s: string): string {
     }
     i = i + 1;
   }
-  var buf: u8[] = __alloc_u8(out_len);
-  var pos: i32 = 0;
+  let buf: u8[] = __alloc_u8(out_len);
+  let pos: i32 = 0;
   i = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (__url_unreserved(b)) {
       buf = buf.with(pos, b as u8);
       pos = pos + 1;
@@ -115,15 +115,15 @@ pub function url_decode(s: string): string {
 
 // `url_decode_bytes(s)` — the bytes `url_decode` reads as text.
 pub function url_decode_bytes(s: string): u8[] {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return [];
   }
   // Decoded output is at most n bytes; count the exact length (each
   // valid `%XX` folds 3 input bytes to 1) then fill one buffer — O(n)
   // rather than the O(n²) `out = out + …` chain.
-  var out_len: i32 = 0;
-  var i: i32 = 0;
+  let out_len: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (s[i] == 37 && i + 2 < n
       && __url_hex_val(s[i + 1] as i32) >= 0 && __url_hex_val(s[i + 2] as i32) >= 0) {
@@ -133,11 +133,11 @@ pub function url_decode_bytes(s: string): u8[] {
     }
     out_len = out_len + 1;
   }
-  var buf: u8[] = __alloc_u8(out_len);
-  var pos: i32 = 0;
+  let buf: u8[] = __alloc_u8(out_len);
+  let pos: i32 = 0;
   i = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 37 && i + 2 < n
       && __url_hex_val(s[i + 1] as i32) >= 0 && __url_hex_val(s[i + 2] as i32) >= 0) {
       buf = buf.with(pos, (__url_hex_val(s[i + 1] as i32) << 4 | __url_hex_val(s[i + 2] as i32)) as u8);
@@ -162,14 +162,14 @@ pub function form_decode(s: string): string {
 
 // `form_decode_bytes(s)` — the bytes `form_decode` reads as text.
 pub function form_decode_bytes(s: string): u8[] {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return [];
   }
   // Same two-pass exact-size fill as url_decode (O(n)); a `+` folds to
   // a single space byte, a valid `%XX` folds 3 input bytes to 1.
-  var out_len: i32 = 0;
-  var i: i32 = 0;
+  let out_len: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (s[i] == 37 && i + 2 < n
       && __url_hex_val(s[i + 1] as i32) >= 0 && __url_hex_val(s[i + 2] as i32) >= 0) {
@@ -179,11 +179,11 @@ pub function form_decode_bytes(s: string): u8[] {
     }
     out_len = out_len + 1;
   }
-  var buf: u8[] = __alloc_u8(out_len);
-  var pos: i32 = 0;
+  let buf: u8[] = __alloc_u8(out_len);
+  let pos: i32 = 0;
   i = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 43) {  // '+' -> space
       buf = buf.with(pos, 32 as u8);
       i = i + 1;
@@ -205,16 +205,16 @@ pub function form_decode_bytes(s: string): u8[] {
 // The encoder to pair with `application/x-www-form-urlencoded`
 // bodies and query strings.
 pub function form_encode(s: string): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return "";
   }
   // Same two-pass exact-size fill as url_encode (O(n)); a space is one
   // `+` byte, an unreserved char one byte, anything else a `%XX` triple.
-  var out_len: i32 = 0;
-  var i: i32 = 0;
+  let out_len: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 32) {
       out_len = out_len + 1;
     } else if (__url_unreserved(b)) {
@@ -224,11 +224,11 @@ pub function form_encode(s: string): string {
     }
     i = i + 1;
   }
-  var buf: u8[] = __alloc_u8(out_len);
-  var pos: i32 = 0;
+  let buf: u8[] = __alloc_u8(out_len);
+  let pos: i32 = 0;
   i = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 32) {  // space -> '+'
       buf = buf.with(pos, 43 as u8);
       pos = pos + 1;
@@ -337,7 +337,7 @@ function __resolved(b: Url, reference: string): Option[string] {
   if (reference.len() >= 2 && reference[0] == 47 as u8 && reference[1] == 47 as u8) {
     return Some(b.scheme + ":" + reference);
   }
-  var r: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  let r: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url_parse(reference)) {
     Some(parsed) => {
       r = parsed;
@@ -349,7 +349,7 @@ function __resolved(b: Url, reference: string): Option[string] {
   if (r.scheme.len() > 0) {
     return Some(reference);
   }
-  var pq: (string, string) = __merged(b, r, reference);
+  let pq: (string, string) = __merged(b, r, reference);
   return Some(__url_compose(b.scheme, b.host, b.port, url_remove_dot_segments(pq.0), pq.1, r.fragment));
 }
 
@@ -373,7 +373,7 @@ function __merged(b: Url, r: Url, reference: string): (string, string) {
 // `__merged_path(base, rel)` — RFC 3986 §5.2.3: `rel` after the base
 // path's last `/`, or under the root when the base path is empty.
 function __merged_path(base: string, rel: string): string {
-  var cut: i32 = base.len();
+  let cut: i32 = base.len();
   while (cut > 0 && base[cut - 1] != 47 as u8) {
     cut = cut - 1;
   }
@@ -388,7 +388,7 @@ function __merged_path(base: string, rel: string): string {
 // address, the port only when one was given, `?` and `#` only before a
 // query or fragment that has bytes.
 function __url_compose(scheme: string, host: string, port: i32, path: string, query: string, fragment: string): string {
-  var out: string = scheme + "://";
+  let out: string = scheme + "://";
   if (host.index_of(":") >= 0) {
     out = out + "[" + host + "]";
   } else {
@@ -408,8 +408,8 @@ function __url_compose(scheme: string, host: string, port: i32, path: string, qu
 }
 
 function __port_text(port: i32): string {
-  var digits: string = "";
-  var n: i32 = port;
+  let digits: string = "";
+  let n: i32 = port;
   while (n > 0) {
     digits = string_from_bytes_unchecked([(48 + n % 10) as u8]) + digits;
     n = n / 10;
@@ -424,20 +424,20 @@ function __port_text(port: i32): string {
 // std/http's rule for what a peer may send, not a reference's). Empty
 // segments are kept.
 pub function url_remove_dot_segments(path: string): string {
-  var segments: string[] = [];
-  var n: i32 = path.len();
-  var absolute: boolean = n > 0 && path[0] == 47 as u8;
-  var at: i32 = 0;
+  let segments: string[] = [];
+  let n: i32 = path.len();
+  let absolute: boolean = n > 0 && path[0] == 47 as u8;
+  let at: i32 = 0;
   if (absolute) {
     at = 1;
   }
   while (at <= n) {
-    var seg_end: i32 = at;
+    let seg_end: i32 = at;
     while (seg_end < n && path[seg_end] != 47 as u8) {
       seg_end = seg_end + 1;
     }
-    var seg: string = slice_unchecked(path, at, seg_end).to_owned();
-    var last: boolean = seg_end == n;
+    let seg: string = slice_unchecked(path, at, seg_end).to_owned();
+    let last: boolean = seg_end == n;
     if (seg == "..") {
       segments = __drop_last(segments);
     }
@@ -455,8 +455,8 @@ pub function url_remove_dot_segments(path: string): string {
 
 // `__drop_last(segments)` — `segments` less its last, or empty as it was.
 function __drop_last(segments: string[]): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i + 1 < segments.len()) {
     out = out.append(segments[i]);
     i = i + 1;
@@ -468,8 +468,8 @@ function __drop_last(segments: string[]): string[] {
 // them and a leading one for an absolute path; a trailing slash is the
 // empty last segment.
 function __joined_path(segments: string[], absolute: boolean): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < segments.len()) {
     if (i > 0 || absolute) {
       out = out + "/";
@@ -508,12 +508,12 @@ function __joined_path(segments: string[], absolute: boolean): string {
 //     or a value above 65535 is `None` — never a silent 0, which a caller
 //     cannot tell from "no port given".
 pub function url_parse(s: string): Option[Url] {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return None;
   }
 
-  var u: Url = Url {
+  let u: Url = Url {
     scheme: "",
     host: "",
     port: 0,
@@ -526,10 +526,10 @@ pub function url_parse(s: string): Option[Url] {
   // scheme and "//" follows. Anchored at 0 — scanning for any "://"
   // in the string made `/redirect?to=http://x` a scheme of
   // "/redirect?to=http".
-  var scheme_end: i32 = -1;
-  var i: i32 = 0;
+  let scheme_end: i32 = -1;
+  let i: i32 = 0;
   while (i < n) {
-    var sb: i32 = s[i] as i32;
+    let sb: i32 = s[i] as i32;
     if (sb == 58) {  // ':'
       if (i + 2 < n && s[i + 1] == 47 && s[i + 2] == 47) {
         scheme_end = i;
@@ -542,14 +542,14 @@ pub function url_parse(s: string): Option[Url] {
     }
   }
 
-  var rest_start: i32 = 0;
+  let rest_start: i32 = 0;
   if (scheme_end > 0) {
     u = Url { ...u, scheme: slice_unchecked(s, 0, scheme_end) + "" };
     rest_start = scheme_end + 3;
   }
 
   // Find fragment '#' from rest_start onwards.
-  var frag_start: i32 = n;
+  let frag_start: i32 = n;
   i = rest_start;
   while (i < n) {
     if (s[i] == 35) {  // '#'
@@ -563,7 +563,7 @@ pub function url_parse(s: string): Option[Url] {
   }
 
   // Find query '?' in [rest_start, frag_start).
-  var query_start: i32 = frag_start;
+  let query_start: i32 = frag_start;
   i = rest_start;
   while (i < frag_start) {
     if (s[i] == 63) {  // '?'
@@ -580,7 +580,7 @@ pub function url_parse(s: string): Option[Url] {
   // '/' in [rest_start, query_start). Without a scheme the
   // whole [rest_start, ...] is the path, so authority_end
   // collapses to rest_start.
-  var authority_end: i32 = query_start;
+  let authority_end: i32 = query_start;
   if (scheme_end > 0) {
     i = rest_start;
     while (i < query_start) {
@@ -598,7 +598,7 @@ pub function url_parse(s: string): Option[Url] {
   if (scheme_end > 0) {
     // Userinfo ends at the LAST '@': a host cannot contain one, but
     // a password can, so the first '@' is the wrong split point.
-    var host_start: i32 = rest_start;
+    let host_start: i32 = rest_start;
     i = rest_start;
     while (i < authority_end) {
       if (s[i] == 64) {  // '@'
@@ -607,10 +607,10 @@ pub function url_parse(s: string): Option[Url] {
       i = i + 1;
     }
 
-    var host: string = "";
-    var colon: i32 = -1;
+    let host: string = "";
+    let colon: i32 = -1;
     if (host_start < authority_end && s[host_start] == 91) {  // '['
-      var close: i32 = -1;
+      let close: i32 = -1;
       i = host_start + 1;
       while (i < authority_end) {
         if (s[i] == 93) {  // ']'
@@ -647,7 +647,7 @@ pub function url_parse(s: string): Option[Url] {
           i = i + 1;
         }
       }
-      var host_end: i32 = authority_end;
+      let host_end: i32 = authority_end;
       if (colon >= 0) {
         host_end = colon;
       }
@@ -656,11 +656,11 @@ pub function url_parse(s: string): Option[Url] {
 
     // Port: *DIGIT, at most 65535. Empty means "unspecified" (0);
     // anything else is a parse failure, not a silent 0.
-    var port: i32 = 0;
+    let port: i32 = 0;
     if (colon >= 0) {
       i = colon + 1;
       while (i < authority_end) {
-        var b: i32 = s[i] as i32;
+        let b: i32 = s[i] as i32;
         if (b < 48 || b > 57) {
           return None;
         }
@@ -683,26 +683,26 @@ pub function url_parse(s: string): Option[Url] {
 }
 
 pub function query_parse(s: string): Map[string, string[]] {
-  var m: Map[string, string[]] = map_new(8);
-  var n: i32 = s.len();
+  let m: Map[string, string[]] = map_new(8);
+  let n: i32 = s.len();
   if (n == 0) {
     return m;
   }
 
-  var pair_start: i32 = 0;
-  var i: i32 = 0;
+  let pair_start: i32 = 0;
+  let i: i32 = 0;
   // Walk one past the end so a final pair without a
   // trailing `&` still gets processed via the `i == n`
   // sentinel.
   while (i <= n) {
-    var sep: boolean = false;
+    let sep: boolean = false;
     if (i == n) {
       sep = true;
     } else if (s[i] == 38) {  // '&'
       sep = true;
     }
     if (sep) {
-      var pair_len: i32 = i - pair_start;
+      let pair_len: i32 = i - pair_start;
       if (pair_len > 0) {
         m = __query_pair(m, s, pair_start, i);
       }
@@ -720,8 +720,8 @@ pub function query_parse(s: string): Map[string, string[]] {
 // (`m = __query_pair(...)`).
 function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32): Map[string, string[]] {
   // Find '=' in [start, end).
-  var eq: i32 = -1;
-  var j: i32 = start;
+  let eq: i32 = -1;
+  let j: i32 = start;
   while (j < end) {
     if (s[j] == 61) {  // '='
       eq = j;
@@ -729,8 +729,8 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
     }
     j = j + 1;
   }
-  var key: string = "";
-  var val: string = "";
+  let key: string = "";
+  let val: string = "";
   if (eq >= 0) {
     key = form_decode(slice_unchecked(s, start, eq));
     val = form_decode(slice_unchecked(s, eq + 1, end));
@@ -744,7 +744,7 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
       m = m.insert(key, existing.append(val));
     },
     None => {
-      var arr: string[] = [val];
+      let arr: string[] = [val];
       m = m.insert(key, arr);
     }
   }
@@ -762,7 +762,7 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
 
 // __query_eq_pos — index of the first '=' in [start, end), or -1.
 function __query_eq_pos(s: string, start: i32, end: i32): i32 {
-  var j: i32 = start;
+  let j: i32 = start;
   while (j < end) {
     if (s[j] == 61) {  // '='
       return j;
@@ -775,7 +775,7 @@ function __query_eq_pos(s: string, start: i32, end: i32): i32 {
 // __query_key_at / __query_val_at — decoded key / value of the pair in
 // [start, end). A pair with no '=' is all key, empty value.
 function __query_key_at(s: string, start: i32, end: i32): string {
-  var eq: i32 = __query_eq_pos(s, start, end);
+  let eq: i32 = __query_eq_pos(s, start, end);
   if (eq >= 0) {
     return form_decode(slice_unchecked(s, start, eq));
   }
@@ -783,7 +783,7 @@ function __query_key_at(s: string, start: i32, end: i32): string {
 }
 
 function __query_val_at(s: string, start: i32, end: i32): string {
-  var eq: i32 = __query_eq_pos(s, start, end);
+  let eq: i32 = __query_eq_pos(s, start, end);
   if (eq >= 0) {
     return form_decode(slice_unchecked(s, eq + 1, end));
   }
@@ -794,11 +794,11 @@ function __query_val_at(s: string, start: i32, end: i32): string {
 // `?a=1&a=2` → Some("1"); a bare `?flag` → Some(""); a missing key →
 // None.
 pub function query_get(query: string, key: string): Option[string] {
-  var n: i32 = query.len();
-  var pair_start: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = query.len();
+  let pair_start: i32 = 0;
+  let i: i32 = 0;
   while (i <= n) {
-    var sep: boolean = false;
+    let sep: boolean = false;
     if (i == n) {
       sep = true;
     } else if (query[i] == 38) {  // '&'
@@ -817,11 +817,11 @@ pub function query_get(query: string, key: string): Option[string] {
 
 // query_has(query, key) — true iff `key` appears at least once.
 pub function query_has(query: string, key: string): boolean {
-  var n: i32 = query.len();
-  var pair_start: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = query.len();
+  let pair_start: i32 = 0;
+  let i: i32 = 0;
   while (i <= n) {
-    var sep: boolean = false;
+    let sep: boolean = false;
     if (i == n) {
       sep = true;
     } else if (query[i] == 38) {
@@ -841,12 +841,12 @@ pub function query_has(query: string, key: string): boolean {
 // query_get_all(query, key) — every decoded value for `key`, in order.
 // `?a=1&b=2&a=3` with key "a" → ["1", "3"]; a missing key → [].
 pub function query_get_all(query: string, key: string): string[] {
-  var out: string[] = [];
-  var n: i32 = query.len();
-  var pair_start: i32 = 0;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let n: i32 = query.len();
+  let pair_start: i32 = 0;
+  let i: i32 = 0;
   while (i <= n) {
-    var sep: boolean = false;
+    let sep: boolean = false;
     if (i == n) {
       sep = true;
     } else if (query[i] == 38) {
@@ -869,7 +869,7 @@ pub function query_get_all(query: string, key: string): string[] {
 // input keeps the output deterministic — the round-trip inverse of
 // query_parse for single-valued keys. An empty list yields "".
 pub function query_encode(pairs: (string, string)[]): string {
-  var n: i32 = pairs.len();
+  let n: i32 = pairs.len();
   if (n == 0) {
     return "";
   }
@@ -878,8 +878,8 @@ pub function query_encode(pairs: (string, string)[]): string {
   // is a pure O(len) transform, so a sizing pass that calls it once per part
   // (and a fill pass that re-encodes) stays O(total) overall while emitting
   // into a single preallocated buffer. Byte-for-byte identical output.
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (i > 0) {  // "&"
       total = total + 1;
@@ -888,8 +888,8 @@ pub function query_encode(pairs: (string, string)[]): string {
     total = total + form_encode(k).len() + 1 + form_encode(v).len();  // key "=" value
     i = i + 1;
   }
-  var buf: u8[] = __alloc_u8(total);
-  var pos: i32 = 0;
+  let buf: u8[] = __alloc_u8(total);
+  let pos: i32 = 0;
   i = 0;
   while (i < n) {
     if (i > 0) {  // '&'
@@ -897,9 +897,9 @@ pub function query_encode(pairs: (string, string)[]): string {
       pos = pos + 1;
     }
     let (k2, v2) = pairs[i];
-    var ek: string = form_encode(k2);
-    var ekl: i32 = ek.len();
-    var a: i32 = 0;
+    let ek: string = form_encode(k2);
+    let ekl: i32 = ek.len();
+    let a: i32 = 0;
     while (a < ekl) {
       buf = buf.with(pos, ek[a] as u8);
       pos = pos + 1;
@@ -907,9 +907,9 @@ pub function query_encode(pairs: (string, string)[]): string {
     }
     buf = buf.with(pos, 61 as u8);  // '='
     pos = pos + 1;
-    var ev: string = form_encode(v2);
-    var evl: i32 = ev.len();
-    var b: i32 = 0;
+    let ev: string = form_encode(v2);
+    let evl: i32 = ev.len();
+    let b: i32 = 0;
     while (b < evl) {
       buf = buf.with(pos, ev[b] as u8);
       pos = pos + 1;

@@ -63,9 +63,9 @@ function pick(n: i32): Option[u8[]] {
     return None;
 }
 function main(): i32 {
-    var cur: u8[] = [0];
-    var i: i32 = 0;
-    var go: boolean = true;
+    let cur: u8[] = [0];
+    let i: i32 = 0;
+    let go: boolean = true;
     while (go) {
         match (pick(i)) {
             Some(v) => { cur = v; i = i + 1; },
@@ -80,8 +80,8 @@ function main(): i32 {
 // and the shape the case above now matches.
 const freshRebindSrc = `
 function main(): i32 {
-    var cur: u8[] = [0];
-    var i: i32 = 0;
+    let cur: u8[] = [0];
+    let i: i32 = 0;
     while (i < 3) { cur = [1, 2, 3]; i = i + 1; }
     return __rc_get(cur);
 }

@@ -22,7 +22,7 @@ driver builds.
 | string | `9b4423842` and later | 60032 | 60000 |
 
 `gt` never moved. The residual it holds is one box per round — the outer
-`var r = innerT(pre)` box that the caller's own match still leaks, the
+`let r = innerT(pre)` box that the caller's own match still leaks, the
 pre-existing class this gate was always written around.
 
 ## Pin

@@ -72,7 +72,7 @@ into the other.
   parameter (the box is the caller's, and its fields are the grow bracket's job
   — `computeGrowParams` already seeds a field-receiver `.with`), or a local the
   function BUILDS: bound once, at the top level, from a struct literal, and
-  assigned nothing else. `var t = o.inner` is a local naming another container's
+  assigned nothing else. `let t = o.inner` is a local naming another container's
   box, and emptying its field takes the buffer from a container the analysis
   cannot even see the reads of, since they are rooted at a different name. This
   is the port's #8556 rule; native's append arm still has no root rule at all,

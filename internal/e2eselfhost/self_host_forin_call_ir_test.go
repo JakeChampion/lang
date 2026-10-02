@@ -39,10 +39,10 @@ func TestSelfHostForInCallResultIRX86_64(t *testing.T) {
 		want int
 	}{
 		{"i32-array-call", `function mk(): i32[] { return [1, 2, 4]; }
-function f(): i32 { var s: i32 = 0; for x in mk() { s = s + x; } return s; }
+function f(): i32 { let s: i32 = 0; for x in mk() { s = s + x; } return s; }
 function main(): i32 { return f(); }`, 7},
 		{"string-array-call", `function getkeys(): string[] { return ["a", "b", "c"]; }
-function f(): i32 { var c: i32 = 0; for k in getkeys() { c = c + 1; } return c; }
+function f(): i32 { let c: i32 = 0; for k in getkeys() { c = c + 1; } return c; }
 function main(): i32 { return f(); }`, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

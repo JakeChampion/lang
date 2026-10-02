@@ -10,7 +10,7 @@ import (
 
 // --- A MIXED rc tuple — one bare ident, one fresh literal (#7281) ------------
 //
-// `var t: (i32[], i32[]) = (xs, [i + 2, i + 3])` released NOTHING: not the two
+// `let t: (i32[], i32[]) = (xs, [i + 2, i + 3])` released NOTHING: not the two
 // buffers, not the tuple box.
 //
 //	100 rounds   allocs=300 frees=0    live_bytes=12000
@@ -33,7 +33,7 @@ import (
 //
 // What the sweep actually needs is weaker than sole ownership: it needs the tuple
 // to hold a COUNTED REFERENCE to every position it dec's. A bare-ident element
-// has one — lower_expr's ExprTuple arm rc_inc's an element naming an rc-container
+// has one — the tuple construction rc_inc's an element naming an rc-container
 // local (#4350 / #7226), so the tuple is a second owner and the drop's dec gives
 // exactly that retain back while the local's own sweep spends its own reference.
 // tuple_arg_payload_retained is that weaker admission; tuple_arg_payload_fresh
@@ -56,7 +56,7 @@ type tupMixedRcCase struct {
 	balance bool
 }
 
-const tupMixedRcMain = "\nfunction main(): i32 { var x: i32 = 0; var r: i32 = 0; " +
+const tupMixedRcMain = "\nfunction main(): i32 { let x: i32 = 0; let r: i32 = 0; " +
 	"while (r < 100) { x = x + round(r); r = r + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return x % 83; }"
 
@@ -66,8 +66,8 @@ func tupMixedRcCases() []tupMixedRcCase {
 			// The issue's repro. Base: allocs=300 frees=0 live_bytes=12000.
 			name: "mixed_sweep",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
     return t.0[0] + t.1[1];
 }` + tupMixedRcMain,
 			want: 74, balance: true,
@@ -77,8 +77,8 @@ func tupMixedRcCases() []tupMixedRcCase {
 			// same 12000. A fix that only looked at position 0 would pass one.
 			name: "mixed_literal_first",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32[], i32[]) = ([i + 2, i + 3], xs);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32[], i32[]) = ([i + 2, i + 3], xs);
     return t.0[0] + t.1[1];
 }` + tupMixedRcMain,
 			want: 74, balance: true,
@@ -89,9 +89,9 @@ func tupMixedRcCases() []tupMixedRcCase {
 			// worked by pulling shapes into "TUPRCS:" would move this one.
 			name: "all_ident",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var ys: i32[] = [i + 4, i + 5];
-    var t: (i32[], i32[]) = (xs, ys);
+    let xs: i32[] = [i, i + 1];
+    let ys: i32[] = [i + 4, i + 5];
+    let t: (i32[], i32[]) = (xs, ys);
     return t.0[0] + t.1[1];
 }` + tupMixedRcMain,
 			want: 25, balance: true,
@@ -101,7 +101,7 @@ func tupMixedRcCases() []tupMixedRcCase {
 			// widened admission must still admit unchanged.
 			name: "all_fresh",
 			src: `function round(i: i32): i32 {
-    var t: (i32[], i32[]) = ([i, i + 1], [i + 2, i + 3]);
+    let t: (i32[], i32[]) = ([i, i + 1], [i + 2, i + 3]);
     return t.0[0] + t.1[1];
 }` + tupMixedRcMain,
 			want: 74, balance: true,
@@ -110,8 +110,8 @@ func tupMixedRcCases() []tupMixedRcCase {
 			// CONTROL, already correct: a scalar beside a bare ident is "TUP:".
 			name: "scalar_ident",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
     return t.1[0] + t.1[1];
 }` + tupMixedRcMain,
 			want: 40, balance: true,
@@ -122,8 +122,8 @@ func tupMixedRcCases() []tupMixedRcCase {
 			// leak one buffer per round here.
 			name: "dup_ident",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32[], i32[]) = (xs, xs);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32[], i32[]) = (xs, xs);
     return t.0[0] + t.1[1];
 }` + tupMixedRcMain,
 			want: 40, balance: true,
@@ -135,10 +135,10 @@ func tupMixedRcCases() []tupMixedRcCase {
 			// Base: allocs=201 frees=0 live_bytes=8040.
 			name: "param_element",
 			src: `function round(base: i32[], i: i32): i32 {
-    var t: (i32[], i32[]) = (base, [i + 2, i + 3]);
+    let t: (i32[], i32[]) = (base, [i + 2, i + 3]);
     return t.0[0] + t.1[1];
 }
-function main(): i32 { var b: i32[] = [7, 8]; var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(b, r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let b: i32[] = [7, 8]; let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(b, r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 57, balance: true,
 		},
 		{
@@ -149,12 +149,12 @@ function main(): i32 { var b: i32[] = [7, 8]; var x: i32 = 0; var r: i32 = 0; wh
 			// which no byte count would show. Base: allocs=151 frees=50 live=4040.
 			name: "sibling_alias",
 			src: `function round(base: i32[], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: (i32[], i32[]) = (base, [i + 1, i + 2]); t = t + v.1[0]; }
-    if (i % 2 == 1) { var v: (i32[], i32[]) = (base, base); t = t + v.1[0]; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: (i32[], i32[]) = (base, [i + 1, i + 2]); t = t + v.1[0]; }
+    if (i % 2 == 1) { let v: (i32[], i32[]) = (base, base); t = t + v.1[0]; }
     return t;
 }
-function main(): i32 { var b: i32[] = [7, 8]; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let b: i32[] = [7, 8]; let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 28, balance: true,
 		},
 		{
@@ -163,8 +163,8 @@ function main(): i32 { var b: i32[] = [7, 8]; var t: i32 = 0; var i: i32 = 0; wh
 			// Base: allocs=400 frees=0 live_bytes=16000.
 			name: "nested_mixed",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, (i32[], i32[])) = (i, (xs, [i + 2, i + 3]));
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, (i32[], i32[])) = (i, (xs, [i + 2, i + 3]));
     return t.1.0[0] + t.1.1[1];
 }` + tupMixedRcMain,
 			want: 74, balance: true,
@@ -176,8 +176,8 @@ function main(): i32 { var b: i32[] = [7, 8]; var t: i32 = 0; var i: i32 = 0; wh
 			name: "unannotated_source",
 			src: `function mk(i: i32): i32[] { return [i, i + 1]; }
 function round(i: i32): i32 {
-    var xs = mk(i);
-    var t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
+    let xs = mk(i);
+    let t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
     return t.0[0] + t.1[1];
 }` + tupMixedRcMain,
 			want: 74, balance: true,
@@ -188,10 +188,10 @@ function round(i: i32): i32 {
 			// leaves a different remainder. Base: allocs=700 frees=400 live=12000.
 			name: "loop_scoped",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 3) { var t: (i32[], i32[]) = (xs, [i + k, i + k + 1]); acc = acc + t.1[0]; k = k + 1; }
+    let xs: i32[] = [i, i + 1];
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 3) { let t: (i32[], i32[]) = (xs, [i + k, i + k + 1]); acc = acc + t.1[0]; k = k + 1; }
     return acc;
 }` + tupMixedRcMain,
 			want: 44, balance: true,
@@ -203,9 +203,9 @@ function round(i: i32): i32 {
 			// with the fresh half already released and the ident half stranded.
 			name: "rebound",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
-    var k: i32 = 0;
+    let xs: i32[] = [i, i + 1];
+    let t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
+    let k: i32 = 0;
     while (k < 3) { t = (xs, [i + k, i + k + 1]); k = k + 1; }
     return t.0[0] + t.1[1];
 }` + tupMixedRcMain,
@@ -220,7 +220,7 @@ function round(i: i32): i32 {
 			// from native. That native gap is its own bug, not this one's.
 			name: "discarded_literal",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
+    let xs: i32[] = [i, i + 1];
     (xs, [i + 2, i + 3]);
     return xs[0];
 }` + tupMixedRcMain,
@@ -228,16 +228,16 @@ function round(i: i32): i32 {
 		},
 		{
 			// DELIBERATELY still refused, and asserted on the exit code alone.
-			// `var keep: i32[] = t.0` extracts an owned pointer element, so
+			// `let keep: i32[] = t.0` extracts an owned pointer element, so
 			// rctuple_payload_escapes denies the credit and this keeps its 12000 —
 			// the safe direction. What the row pins is that it must not start
 			// OVER-releasing while it waits, which is where a careless widening of
 			// the escape gate would take it.
 			name: "elem_escapes_still_leaks",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
-    var keep: i32[] = t.0;
+    let xs: i32[] = [i, i + 1];
+    let t: (i32[], i32[]) = (xs, [i + 2, i + 3]);
+    let keep: i32[] = t.0;
     return keep[0] + t.1[1];
 }` + tupMixedRcMain,
 			want: 74,

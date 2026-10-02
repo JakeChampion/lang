@@ -26,12 +26,12 @@ function read(ok: boolean): Result[i32, IoErr] {
     return Err(IoErr { code: 42 });
 }
 function run(ok: boolean): Result[i32, AppErr] {
-    var v: i32 = read(ok)?;
+    let v: i32 = read(ok)?;
     return Ok(v);
 }
 function main(): i32 {
-    var a: i32 = match (run(true)) { Ok(v) => v, Err(e) => 0 };
-    var b: i32 = match (run(false)) { Ok(v) => 0, Err(e) => e.code };
+    let a: i32 = match (run(true)) { Ok(v) => v, Err(e) => 0 };
+    let b: i32 = match (run(false)) { Ok(v) => 0, Err(e) => e.code };
     return a + b;
 }
 `

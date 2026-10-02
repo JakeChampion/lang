@@ -7,23 +7,23 @@ import "std/test";
 // `__int_to_string_u64` override would surface here.
 
 function test_i64_addition(): test.TestOutcome {
-  var a: i64 = 5000000000;
-  var b: i64 = 3000000000;
+  let a: i64 = 5000000000;
+  let b: i64 = 3000000000;
   return test.assert_eq(a + b, 8000000000);
 }
 
 function test_i64_max(): test.TestOutcome {
-  var max: i64 = 9223372036854775807;
+  let max: i64 = 9223372036854775807;
   return test.assert_eq(max, 9223372036854775807);
 }
 
 function test_u32_max(): test.TestOutcome {
-  var max: u32 = 4294967295u32;
+  let max: u32 = 4294967295u32;
   return test.assert_eq(max, 4294967295u32);
 }
 
 function test_u64_max(): test.TestOutcome {
-  var max: u64 = 18446744073709551615u64;
+  let max: u64 = 18446744073709551615u64;
   return test.assert_eq(max, 18446744073709551615u64);
 }
 
@@ -32,7 +32,7 @@ function test_u64_neq(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("wide-numerics");
+  let r: test.TestRunner = test.test_new("wide-numerics");
   r = r.it("i64 addition", test_i64_addition);
   r = r.it("i64 max", test_i64_max);
   r = r.it("u32 max", test_u32_max);

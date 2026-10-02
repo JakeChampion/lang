@@ -43,8 +43,8 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 	// std/io.read_all_stdin, with a print to make the result
 	// observable.
 	echoSrc := "function main(): i32 {\n" +
-		"    var r: Reader = stdin();\n" +
-		"    var out: string = \"\";\n" +
+		"    let r: Reader = stdin();\n" +
+		"    let out: string = \"\";\n" +
 		"    while (true) {\n" +
 		"        match (r.read_chunk(4096)) {\n" +
 		"            Ok(chunk) => {\n" +
@@ -163,7 +163,7 @@ func TestSelfHostReadFileX86_64(t *testing.T) {
 
 	// A "cat" program: read argv[1] and print it, or exit 7 on error.
 	catSrc := "function main(): i32 {\n" +
-		"    var path: string = args()[1];\n" +
+		"    let path: string = args()[1];\n" +
 		"    match (read_file(path)) {\n" +
 		"        Ok(contents) => { write(contents); return 0; },\n" +
 		"        Err(e) => { return 7; },\n" +

@@ -50,7 +50,7 @@ func TestFormatIncludesFilename(t *testing.T) {
 }
 
 func TestFormatSpanRendersSquiggle(t *testing.T) {
-	src := "var hello = 1;\n"
+	src := "let hello = 1;\n"
 	e := &fakeSpanErr{
 		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 5}, msg: "bad"},
 		span:    5, // "hello"
@@ -164,7 +164,7 @@ type fakeLabeledErr struct {
 func (e *fakeLabeledErr) Labels() []Label { return e.labels }
 
 func TestFormatRendersMultiLabel(t *testing.T) {
-	src := "function f(): i32 {\n    var x: i32 = 1;\n    x = \"oops\";\n    return x;\n}\n"
+	src := "function f(): i32 {\n    let x: i32 = 1;\n    x = \"oops\";\n    return x;\n}\n"
 	err := &fakeLabeledErr{
 		fakeErr: fakeErr{
 			pos: ast.Position{Line: 3, Col: 9},
@@ -191,7 +191,7 @@ func TestFormatRendersMultiLabel(t *testing.T) {
 }
 
 func TestFormatRendersHelpLabel(t *testing.T) {
-	src := "var x = 1;\n"
+	src := "let x = 1;\n"
 	err := &fakeLabeledErr{
 		fakeErr: fakeErr{
 			pos: ast.Position{Line: 1, Col: 5},
@@ -199,12 +199,12 @@ func TestFormatRendersHelpLabel(t *testing.T) {
 		},
 		labels: []Label{
 			{Pos: ast.Position{Line: 1, Col: 5}, Length: 1, Message: "annotation goes here", Kind: LabelPrimary},
-			{Pos: ast.Position{Line: 1, Col: 5}, Length: 1, Message: "try `var x: i32 = 1;`", Kind: LabelHelp},
+			{Pos: ast.Position{Line: 1, Col: 5}, Length: 1, Message: "try `let x: i32 = 1;`", Kind: LabelHelp},
 		},
 	}
 	out := Format("", src, err)
 	// Help labels get `help:` prefix.
-	if !strings.Contains(out, "1:5: help: try `var x: i32 = 1;`") {
+	if !strings.Contains(out, "1:5: help: try `let x: i32 = 1;`") {
 		t.Errorf("missing help label in:\n%s", out)
 	}
 }
@@ -233,7 +233,7 @@ func TestFormatLabeledWithOnlyPrimaryMatchesNonLabeled(t *testing.T) {
 // the same shape as the primary header, so cross-file labels
 // (`declared in lib/foo.fern`) render with the right path.
 func TestFormatLabeledIncludesFilenameOnSecondary(t *testing.T) {
-	src := "var x: i32 = 1;\nx = true;\n"
+	src := "let x: i32 = 1;\nx = true;\n"
 	err := &fakeLabeledErr{
 		fakeErr: fakeErr{
 			pos: ast.Position{Line: 2, Col: 1},

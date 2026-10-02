@@ -7,20 +7,20 @@
 enum Pick { Lo, Hi }
 
 function boxed(p: i64): i64[] {
-    var v: i64 = if (p > 4i64) { p * 3i64 } else { 7i64 };
+    let v: i64 = if (p > 4i64) { p * 3i64 } else { 7i64 };
     return [v];
 }
 
 function led(p: i64): i64 {
-    return { var t: i64 = p + 1i64; if (t > 4i64) { t * 3i64 } else { 7i64 } };
+    return { let t: i64 = p + 1i64; if (t > 4i64) { t * 3i64 } else { 7i64 } };
 }
 
 function led_u(p: u64): u64 {
-    return { var t: u64 = p + 1u64; if (t > 4u64) { t * 3u64 } else { 7u64 } };
+    return { let t: u64 = p + 1u64; if (t > 4u64) { t * 3u64 } else { 7u64 } };
 }
 
 function picked(p: i64, k: Pick): i64 {
-    return { var t: i64 = p * 2i64; match (k) { Lo => { t + 1i64 }, Hi => { t + 100i64 } } };
+    return { let t: i64 = p * 2i64; match (k) { Lo => { t + 1i64 }, Hi => { t + 100i64 } } };
 }
 
 function main(): i32 {

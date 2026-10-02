@@ -41,22 +41,22 @@ func lowerCheckedARM64(t *testing.T, source string) *ARM64Program {
 }
 
 var armLowerCases = []struct{ name, source, want string }{
-	{"array", `function pilot(): string { var items = ["alpha", "beta"]; return items[1]; }`, "beta\n"},
-	{"nested-array", `function pilot(): string { var items = [["left"], ["right"]]; return items[1][0]; }`, "right\n"},
-	{"tuple", `function pilot(): string { var pair = (["tuple"], 7i64); let (items, _) = pair; return items[0]; }`, "tuple\n"},
-	{"append", `function pilot(): string { var items = ["first"]; var more = items.append("last"); return more[1]; }`, "last\n"},
-	{"append-nested", `function pilot(): string { var items = [["first"]]; var more = items.append(["last"]); return more[1][0]; }`, "last\n"},
+	{"array", `function pilot(): string { let items = ["alpha", "beta"]; return items[1]; }`, "beta\n"},
+	{"nested-array", `function pilot(): string { let items = [["left"], ["right"]]; return items[1][0]; }`, "right\n"},
+	{"tuple", `function pilot(): string { let pair = (["tuple"], 7i64); let (items, _) = pair; return items[0]; }`, "tuple\n"},
+	{"append", `function pilot(): string { let items = ["first"]; let more = items.append("last"); return more[1]; }`, "last\n"},
+	{"append-nested", `function pilot(): string { let items = [["first"]]; let more = items.append(["last"]); return more[1][0]; }`, "last\n"},
 	{"forward-call", `function pilot(): string { return get(["called"]); } function get(items: string[]): string { return items[0]; }`, "called\n"},
 	{"owned-call", `function pilot(): string { return get(["consumed"]); } function get(own items: string[]): string { return items[0]; }`, "consumed\n"},
 	{"borrow-and-consume", `function pilot(): string { return get(["anchored"]); } function get(own items: string[]): string { return take(items[0], items); } function take(item: string, own items: string[]): string { return item; }`, "anchored\n"},
 	{"early-return", `function pilot(): string { return choose(["early"], true); } function choose(own items: string[], yes: boolean): string { if (yes) { return items[0]; } return "other"; }`, "early\n"},
 	{"other-return", `function pilot(): string { return choose(["early"], false); } function choose(own items: string[], yes: boolean): string { if (yes) { return items[0]; } return "other"; }`, "other\n"},
-	{"embedded-zero", `function pilot(): string { var items = ["a\0b"]; return items[0]; }`, "a\x00b\n"},
+	{"embedded-zero", `function pilot(): string { let items = ["a\0b"]; return items[0]; }`, "a\x00b\n"},
 	{"generated-name-shadow", `function pilot(): string { return __semir_helper_2(["safe"]); } function __semir_helper_2(items: string[]): string { return items[0]; }`, "safe\n"},
 	{"recursive-borrowed-return", `function pilot(): string { return descend([["recursive"]], false)[0]; }
 function descend(items: string[][], stop: boolean): string[] {
   if (stop) { return items[0]; }
-  var returned = descend(items, true); var wrapped = [returned]; return wrapped[0];
+  let returned = descend(items, true); let wrapped = [returned]; return wrapped[0];
 }`, "recursive\n"},
 	{"mutual-counted-return", `function pilot(): string { return first([["mutual"]], false)[0]; }
 function first(own items: string[][], stop: boolean): string[] {

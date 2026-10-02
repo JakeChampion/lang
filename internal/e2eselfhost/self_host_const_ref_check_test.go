@@ -40,13 +40,13 @@ func TestSelfHostConstRefCheckX86_64(t *testing.T) {
 	}{
 		// The reference alone, in the three positions a value reaches.
 		{"const-i32-returned", "const N: i32 = 41;\nfunction main(): i32 { return N - 41; }\n"},
-		{"const-i32-in-arith", "const N: i32 = 41;\nfunction main(): i32 { var x: i32 = N * 2 - 82; return x; }\n"},
+		{"const-i32-in-arith", "const N: i32 = 41;\nfunction main(): i32 { let x: i32 = N * 2 - 82; return x; }\n"},
 		{"const-i32-as-argument", "const N: i32 = 41;\nfunction take(x: i32): i32 { return x - 41; }\nfunction main(): i32 { return take(N); }\n"},
 		// Each const type resolves to its OWN declared type, not to a default:
 		// a boolean read as i32 would fail the condition, and an f64 read as
 		// i32 would fail the arithmetic.
 		{"const-boolean-in-condition", "const B: boolean = true;\nfunction main(): i32 { if (B) { return 0; } return 1; }\n"},
-		{"const-f64-in-arith", "const F: f64 = 1.5;\nfunction main(): i32 { var g: f64 = F + 0.5; if (g > 1.9) { return 0; } return 1; }\n"},
+		{"const-f64-in-arith", "const F: f64 = 1.5;\nfunction main(): i32 { let g: f64 = F + 0.5; if (g > 1.9) { return 0; } return 1; }\n"},
 		// One const reading an earlier one — the const's own body goes through
 		// the same resolution as a function body's reference.
 		{"const-reads-earlier-const", "const A: i32 = 2;\nconst B: i32 = A * 3;\nfunction main(): i32 { return B - 6; }\n"},

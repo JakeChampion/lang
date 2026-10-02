@@ -11,7 +11,7 @@ import (
 // POINTER element was excluded, because the loaded value aliases the buffer
 // about to be freed. Excluded meant the container was never released:
 // `mk_strs()[0].len()` leaked the spine and every element it did not extract,
-// 304 B a round with no plateau, where `var xs = mk_strs(); xs[0].len()` was
+// 304 B a round with no plateau, where `let xs = mk_strs(); xs[0].len()` was
 // flat. The fix is the pair the fresh-container field read already uses
 // (#6401) — retain the element, then deep-drop the container, which nets the
 // element to the expression's own single reference.
@@ -36,14 +36,14 @@ func countStringRetains(fn *Func) int {
 // The elements are fresh concats rather than literals so each one is a real
 // heap buffer the container's deep drop has to reach.
 const freshIndexSrc = `function mks(n: i32, p: string): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
+    let out: string[] = [];
+    let i: i32 = 0;
     while (i < n) { out = out.append(p + "-elem"); i = i + 1; }
     return out;
 }
 function borrowed(n: i32, p: string): i32 { return mks(n, p)[0].len(); }
-function bound(n: i32, p: string): i32 { var s: string = mks(n, p)[0]; return s.len(); }
-function fromlocal(n: i32, p: string): i32 { var xs: string[] = mks(n, p); return xs[0].len(); }
+function bound(n: i32, p: string): i32 { let s: string = mks(n, p)[0]; return s.len(); }
+function fromlocal(n: i32, p: string): i32 { let xs: string[] = mks(n, p); return xs[0].len(); }
 function fromparam(xs: string[]): i32 { return xs[0].len(); }
 function main(): i32 { return 0; }`
 
@@ -109,7 +109,7 @@ func TestIndexOfABorrowedArrayDropsNothing(t *testing.T) {
 			t.Errorf("ptrW=%d: fromparam retained an element of a borrowed array (%d "+
 				"retains) — an unbalanced inc leaks it; ops:\n%s", ptrW, n, p)
 		}
-		// A local container is dropped by the `var` machinery, not by the
+		// A local container is dropped by the `let` machinery, not by the
 		// index: the NULL-guarded reinit drop before the init store and the
 		// exit sweep, two in total. A third would mean the index reclaimed a
 		// container the local still owns.

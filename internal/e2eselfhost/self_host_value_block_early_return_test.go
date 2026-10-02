@@ -15,7 +15,7 @@ import (
 // produce a value on the other.
 const valueBlockEarlyReturnSrc = `import "std/i32";
 function probe(p: string): i32 {
-    var si: FileStat = match (stat(p)) { Ok(v) => v, Err(_) => { return 1; } };
+    let si: FileStat = match (stat(p)) { Ok(v) => v, Err(_) => { return 1; } };
     if (si.is_dir) { return 4; }
     return 16;
 }
@@ -23,12 +23,12 @@ function mine(p: string): Result[FileStat, string] {
     match (stat(p)) { Ok(v) => { return Ok(v); }, Err(_) => { return Err("no"); } }
 }
 function wrapped(p: string): i32 {
-    var si: FileStat = match (mine(p)) { Ok(v) => v, Err(_) => { return 1; } };
+    let si: FileStat = match (mine(p)) { Ok(v) => v, Err(_) => { return 1; } };
     if (si.is_dir) { return 4; }
     return 16;
 }
 function label(n: i32): string {
-    var s: string = if (n > 0) { "pos" + n.to_string() } else { return "neg"; };
+    let s: string = if (n > 0) { "pos" + n.to_string() } else { return "neg"; };
     return s + "!";
 }
 function main(): i32 {

@@ -10,11 +10,11 @@ const enumNameShadowedProg = `
 enum R { X, Y, Z(i32) }
 struct S { X: i32 }
 
-function string_local(): i32 { var R: string = "abc"; return R.len(); }
-function struct_local(): i32 { var R: S = S { X: 7 }; return R.X; }
+function string_local(): i32 { let R: string = "abc"; return R.len(); }
+function struct_local(): i32 { let R: S = S { X: 7 }; return R.X; }
 function param(R: S): i32 { return R.X; }
-function captured_field(): i32 { var R: S = S { X: 6 }; var inner = (): i32 => { return R.X; }; return inner(); }
-function captured_method(): i32 { var R: string = "abcd"; var inner = (): i32 => { return R.len(); }; return inner(); }
+function captured_field(): i32 { let R: S = S { X: 6 }; let inner = (): i32 => { return R.X; }; return inner(); }
+function captured_method(): i32 { let R: string = "abcd"; let inner = (): i32 => { return R.len(); }; return inner(); }
 function tag(r: R): i32 { match (r) { X => { return 1; }, Y => { return 2; }, Z(n) => { return n; } } }
 
 function main(): i32 {

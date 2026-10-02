@@ -20,14 +20,14 @@ import "testing"
 // (it has no raw address space), so the program cannot run there at all.
 const memcpySizeClassesProgram = `
 function check(n: i32, soff: i32, doff: i32): i32 {
-    var src: u8[] = __alloc_u8(160);
-    var i: i32 = 0;
+    let src: u8[] = __alloc_u8(160);
+    let i: i32 = 0;
     while (i < 160) { src = src.with(i, ((i + 1) % 256) as u8); i = i + 1; }
-    var dst: u8[] = __alloc_u8(160);
+    let dst: u8[] = __alloc_u8(160);
     i = 0;
     while (i < 160) { dst = dst.with(i, 0xEE as u8); i = i + 1; }
     __memcpy((dst as usize) + doff, (src as usize) + soff, n);
-    var bad: i32 = 0;
+    let bad: i32 = 0;
     i = 0;
     while (i < 160) {
         if (i >= doff && i < doff + n) {
@@ -41,8 +41,8 @@ function check(n: i32, soff: i32, doff: i32): i32 {
 }
 
 function main(): i32 {
-    var bad: i32 = 0;
-    var n: i32 = 0;
+    let bad: i32 = 0;
+    let n: i32 = 0;
     while (n <= 96) {
         bad = bad + check(n, 0, 0);
         bad = bad + check(n, 1, 0);

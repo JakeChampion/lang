@@ -15,19 +15,19 @@ var strAggregateCases = []struct {
 	src  string
 	want int
 }{
-	{"tuple_literal", `function main(): i32 { var p: (str, i32) = ("abc", 4); return p.0.len() + p.1; }
+	{"tuple_literal", `function main(): i32 { let p: (str, i32) = ("abc", 4); return p.0.len() + p.1; }
 `, 7},
 	{"tuple_result", `function mk(): (str, i32) { return ("abc", 4); }
-function main(): i32 { var p: (str, i32) = mk(); return p.0.len() + p.1; }
+function main(): i32 { let p: (str, i32) = mk(); return p.0.len() + p.1; }
 `, 7},
 	{"field_literal", `struct H { s: str, n: i32 }
-function main(): i32 { var h: H = H { s: "abc", n: 1 }; return h.n + h.s.len(); }
+function main(): i32 { let h: H = H { s: "abc", n: 1 }; return h.n + h.s.len(); }
 `, 4},
 	{"field_view", `struct H { s: str, n: i32 }
 function mk(t: string): H { return H { s: slice_unchecked(t, 0, 3), n: 1 }; }
-function main(): i32 { var h: H = mk("abcde"); return h.n + h.s.len(); }
+function main(): i32 { let h: H = mk("abcde"); return h.n + h.s.len(); }
 `, 4},
-	{"tuple_view", `function main(): i32 { var t: string = "abcde"; var p: (str, i32) = (slice_unchecked(t, 0, 3), 4); return p.0.len() + p.1; }
+	{"tuple_view", `function main(): i32 { let t: string = "abcde"; let p: (str, i32) = (slice_unchecked(t, 0, 3), 4); return p.0.len() + p.1; }
 `, 7},
 }
 

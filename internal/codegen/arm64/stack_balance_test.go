@@ -213,7 +213,7 @@ function main(): i32 { return tag(Named { id: 5, label: "hello" }) + tag(Named {
 	// The same discard without a match: a string local nothing reads.
 	"dead_string_local": `
 function f(n: i32): i32 {
-	var s: string = "unread";
+	let s: string = "unread";
 	return n + 1;
 }
 function main(): i32 { return f(4); }`,
@@ -222,7 +222,7 @@ function main(): i32 { return f(4); }`,
 	"discarded_string_call_result": `
 function name(n: i32): string { return "x"; }
 function f(n: i32): i32 {
-	var s: string = name(n);
+	let s: string = name(n);
 	return n + 1;
 }
 function main(): i32 { return f(4); }`,
@@ -231,7 +231,7 @@ function main(): i32 { return f(4); }`,
 	"unread_struct_string_field": `
 struct Named { id: i32, label: string }
 function tag(n: Named): i32 {
-	var s: string = n.label;
+	let s: string = n.label;
 	return n.id;
 }
 function main(): i32 { return tag(Named { id: 5, label: "hello" }); }`,

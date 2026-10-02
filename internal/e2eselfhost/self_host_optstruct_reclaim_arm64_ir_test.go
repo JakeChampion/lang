@@ -7,7 +7,7 @@ import (
 // TestSelfHostOptStructReclaimIRArm64 is the arm64 port of
 // TestSelfHostOptStructReclaimIRX86_64: the OPTSTRUCT class (admission + inline
 // tag-check/struct-field-deep-drop/box-free + the struct-payload escape checker) lives in
-// shared irlower.fern and lowers through op_opt_tag / op_opt_payload / emit_struct_field_
+// shared lowering and lowers through op_opt_tag / op_opt_payload / emit_struct_field_
 // drops (-> __struct_drop_<P>) / __fern_rc_dec, all backend-complete. Case table shared
 // with the x86-64 leg.
 func TestSelfHostOptStructReclaimIRArm64(t *testing.T) {

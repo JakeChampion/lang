@@ -10,7 +10,7 @@ import "std/i32";
 // growth and shrink boundary (`is_valid` after each append and pop
 // through several trie levels), and index order everywhere.
 function test_new_is_empty(): test.TestOutcome {
-  var v: pvec.PVec[i32] = pvec.pvec_new();
+  let v: pvec.PVec[i32] = pvec.pvec_new();
   if (!v.is_empty() || v.len() != 0) {
     return test.fail("empty vector has elements");
   }
@@ -18,8 +18,8 @@ function test_new_is_empty(): test.TestOutcome {
 }
 
 function test_append_get(): test.TestOutcome {
-  var v: pvec.PVec[i32] = pvec.pvec_new();
-  var i: i32 = 0;
+  let v: pvec.PVec[i32] = pvec.pvec_new();
+  let i: i32 = 0;
   while (i < 3000) {
     v = v.append(i);
     if (!v.is_valid()) {
@@ -44,13 +44,13 @@ function test_append_get(): test.TestOutcome {
 }
 
 function test_with_is_persistent(): test.TestOutcome {
-  var v: pvec.PVec[i32] = pvec.pvec_new();
-  var i: i32 = 0;
+  let v: pvec.PVec[i32] = pvec.pvec_new();
+  let i: i32 = 0;
   while (i < 1500) {
     v = v.append(i);
     i = i + 1;
   }
-  var snapshot: pvec.PVec[i32] = v;
+  let snapshot: pvec.PVec[i32] = v;
   i = 0;
   while (i < 1500) {
     v = v.with(i, i * 2);
@@ -74,13 +74,13 @@ function test_with_is_persistent(): test.TestOutcome {
 }
 
 function test_pop(): test.TestOutcome {
-  var v: pvec.PVec[i32] = pvec.pvec_new();
-  var i: i32 = 0;
+  let v: pvec.PVec[i32] = pvec.pvec_new();
+  let i: i32 = 0;
   while (i < 1100) {
     v = v.append(i);
     i = i + 1;
   }
-  var full: pvec.PVec[i32] = v;
+  let full: pvec.PVec[i32] = v;
   i = 0;
   while (i < 1100) {
     v = v.pop();
@@ -105,8 +105,8 @@ function test_pop(): test.TestOutcome {
 }
 
 function test_pop_then_append(): test.TestOutcome {
-  var v: pvec.PVec[i32] = pvec.from_array([1, 2, 3]);
-  var i: i32 = 0;
+  let v: pvec.PVec[i32] = pvec.from_array([1, 2, 3]);
+  let i: i32 = 0;
   while (i < 1100) {
     v = v.append(i);
     i = i + 1;
@@ -128,13 +128,13 @@ function test_pop_then_append(): test.TestOutcome {
 }
 
 function test_to_array_fold(): test.TestOutcome {
-  var v: pvec.PVec[i32] = pvec.pvec_new();
-  var i: i32 = 0;
+  let v: pvec.PVec[i32] = pvec.pvec_new();
+  let i: i32 = 0;
   while (i < 2500) {
     v = v.append(i);
     i = i + 1;
   }
-  var arr: i32[] = v.to_array();
+  let arr: i32[] = v.to_array();
   if (arr.len() != 2500) {
     return test.fail("to_array len");
   }
@@ -145,17 +145,17 @@ function test_to_array_fold(): test.TestOutcome {
     }
     i = i + 1;
   }
-  var sum: i32 = v.fold(0, (a: i32, x: i32) => a + x);
+  let sum: i32 = v.fold(0, (a: i32, x: i32) => a + x);
   return test.assert_eq(sum, 3123750);
 }
 
 function test_map_filter(): test.TestOutcome {
-  var v: pvec.PVec[i32] = pvec.from_array([1, 2, 3, 4, 5]);
-  var m: pvec.PVec[string] = v.map((x: i32) => "n" + x.to_string());
+  let v: pvec.PVec[i32] = pvec.from_array([1, 2, 3, 4, 5]);
+  let m: pvec.PVec[string] = v.map((x: i32) => "n" + x.to_string());
   if (m.len() != 5 || m.get_or(2, "") != "n3") {
     return test.fail("map");
   }
-  var f: pvec.PVec[i32] = v.filter((x: i32) => x % 2 == 1);
+  let f: pvec.PVec[i32] = v.filter((x: i32) => x % 2 == 1);
   if (f.len() != 3 || f.get_or(2, -1) != 5) {
     return test.fail("filter");
   }
@@ -163,20 +163,20 @@ function test_map_filter(): test.TestOutcome {
 }
 
 function test_slice_concat(): test.TestOutcome {
-  var v: pvec.PVec[i32] = pvec.pvec_new();
-  var i: i32 = 0;
+  let v: pvec.PVec[i32] = pvec.pvec_new();
+  let i: i32 = 0;
   while (i < 100) {
     v = v.append(i);
     i = i + 1;
   }
-  var s: pvec.PVec[i32] = v.slice(40, 45);
+  let s: pvec.PVec[i32] = v.slice(40, 45);
   if (s.len() != 5 || s.get_or(0, -1) != 40 || s.last().unwrap_or(-1) != 44) {
     return test.fail("slice");
   }
   if (v.slice(-5, 3).len() != 3 || v.slice(98, 500).len() != 2 || v.slice(50, 40).len() != 0) {
     return test.fail("slice clamping");
   }
-  var c: pvec.PVec[i32] = s.concat(v.slice(0, 2));
+  let c: pvec.PVec[i32] = s.concat(v.slice(0, 2));
   if (c.len() != 7 || c.get_or(5, -1) != 0 || c.get_or(6, -1) != 1 || !c.is_valid()) {
     return test.fail("concat");
   }
@@ -184,13 +184,13 @@ function test_slice_concat(): test.TestOutcome {
 }
 
 function test_strings(): test.TestOutcome {
-  var v: pvec.PVec[string] = pvec.pvec_new();
-  var i: i32 = 0;
+  let v: pvec.PVec[string] = pvec.pvec_new();
+  let i: i32 = 0;
   while (i < 70) {
     v = v.append("s" + i.to_string());
     i = i + 1;
   }
-  var snap: pvec.PVec[string] = v;
+  let snap: pvec.PVec[string] = v;
   v = v.with(3, "changed");
   if (snap.get_or(3, "") != "s3" || v.get_or(3, "") != "changed" || v.get_or(69, "") != "s69") {
     return test.fail("string with");
@@ -199,8 +199,8 @@ function test_strings(): test.TestOutcome {
 }
 
 function test_for_each(): test.TestOutcome {
-  var v: pvec.PVec[i32] = pvec.from_array([3, 1, 2]);
-  var seen: i32 = 0;
+  let v: pvec.PVec[i32] = pvec.from_array([3, 1, 2]);
+  let seen: i32 = 0;
   function visit(x: i32): void {
     seen = seen * 10 + x;
   }
@@ -209,7 +209,7 @@ function test_for_each(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/pvec");
+  let r: test.TestRunner = test.test_new("std/pvec");
   r = r.it("new is empty", test_new_is_empty);
   r = r.it("append + get", test_append_get);
   r = r.it("with is persistent", test_with_is_persistent);

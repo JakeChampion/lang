@@ -25,8 +25,8 @@ func TestStringParamConcatOperandIsCounted(t *testing.T) {
 		{"right operand", `return ("k" + p).len();`},
 		{"left operand", `return (p + "k").len();`},
 		{"chained, both sides", `return (p + "|" + p).len();`},
-		{"into an accumulator local", `var acc: string = "";
-             var i: i32 = 0;
+		{"into an accumulator local", `let acc: string = "";
+             let i: i32 = 0;
              while (i < 3) { acc = acc + p; i = i + 1; }
              return acc.len();`},
 	}
@@ -84,15 +84,15 @@ function main(): i32 { return 0; }`
 // it strands the whole 3 KB buffer on every generation.
 func TestConcatCreditKeepsTheCallersArrayLocalReclaimable(t *testing.T) {
 	src := `function put(reg: string[], key: string, flags: string): string[] {
-    var b: i32 = key.len() % reg.len();
+    let b: i32 = key.len() % reg.len();
     return reg.with(b, reg[b] + key + "|" + flags);
 }
 function build(keys: string[]): string[] {
-    var reg: string[] = [];
-    var i: i32 = 0;
+    let reg: string[] = [];
+    let i: i32 = 0;
     while (i < keys.len()) {
-        var flags: string = "";
-        var f: i32 = 0;
+        let flags: string = "";
+        let f: i32 = 0;
         while (f < 3) { flags = flags + "1"; f = f + 1; }
         reg = put(reg, keys[i], flags);
         i = i + 1;

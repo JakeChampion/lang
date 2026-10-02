@@ -40,7 +40,7 @@ func fnNamed(t *testing.T, ip *ir.Program, name string) *ir.Func {
 // exit sweep's arr_dec meets a null.
 func TestOwnParamWithReceiverNulledAtConsume(t *testing.T) {
 	ip := lowerForTest(t, `function wr(own buf: i32[], at: i32, w: i32): i32[] { return buf.with(at, w); }
-function main(): i32 { var b: i32[] = [1, 2, 3]; b = wr(b, 0, 9); return b.len(); }`)
+function main(): i32 { let b: i32[] = [1, 2, 3]; b = wr(b, 0, 9); return b.len(); }`)
 	wr := fnNamed(t, ip, "wr")
 	if got, want := rcOpTrace(wr), "arr_cow_inplace arr_dec"; got != want {
 		t.Errorf("wr rc trace = %q, want %q", got, want)
@@ -75,7 +75,7 @@ function main(): i32 { var b: i32[] = [1, 2, 3]; b = wr(b, 0, 9); return b.len()
 // path, so the param keeps its own reference and the exit dec is required.
 func TestBorrowedParamWithReceiverStillIncsAndCopies(t *testing.T) {
 	ip := lowerForTest(t, `function wr(buf: i32[], at: i32, w: i32): i32[] { return buf.with(at, w); }
-function main(): i32 { var b: i32[] = [1, 2, 3]; b = wr(b, 0, 9); return b.len(); }`)
+function main(): i32 { let b: i32[] = [1, 2, 3]; b = wr(b, 0, 9); return b.len(); }`)
 	got := rcOpTrace(fnNamed(t, ip, "wr"))
 	if want := "rc_inc arr_cow_inplace"; got != want {
 		t.Errorf("wr rc trace = %q, want %q (the inc is what forces the copy path)", got, want)
@@ -90,7 +90,7 @@ function main(): i32 { var b: i32[] = [1, 2, 3]; b = wr(b, 0, 9); return b.len()
 // Asserted on the WINDOW between the call and the store that consumes it — the
 // overwrite drop is emitted exactly there. A whole-function dec count cannot see
 // it: `step` legitimately holds two other decs (the var-decl re-init drop, a
-// NULL no-op on a once-run `var`, and the exit sweep of the reference `c` ends up
+// NULL no-op on a once-run `let`, and the exit sweep of the reference `c` ends up
 // owning), and both survive the fix.
 func decsBetweenCallAndStore(t *testing.T, fn *ir.Func, callee string) []string {
 	t.Helper()
@@ -127,7 +127,7 @@ func decsBetweenCallAndStore(t *testing.T, fn *ir.Func, callee string) []string 
 func TestSelfReassignIntoOwnParamSkipsOverwriteDrop(t *testing.T) {
 	ip := lowerForTest(t, `function wr(own buf: i32[], at: i32, w: i32): i32[] { return buf.with(at, w); }
 function step(): i32 {
-	var c: i32[] = [1, 2, 3];
+	let c: i32[] = [1, 2, 3];
 	c = wr(c, 0, 9);
 	return c.len();
 }
@@ -145,7 +145,7 @@ function main(): i32 { return step(); }`)
 func TestSelfReassignFromBorrowingCalleeKeepsOverwriteDrop(t *testing.T) {
 	ip := lowerForTest(t, `function wr(buf: i32[], at: i32, w: i32): i32[] { return buf.with(at, w); }
 function step(): i32 {
-	var c: i32[] = [1, 2, 3];
+	let c: i32[] = [1, 2, 3];
 	c = wr(c, 0, 9);
 	return c.len();
 }

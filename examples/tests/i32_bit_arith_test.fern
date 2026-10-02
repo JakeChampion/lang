@@ -56,7 +56,7 @@ function test_ones_plus_zeros(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/i32 bit + arith");
+  let r: test.TestRunner = test.test_new("std/i32 bit + arith");
   r = r.it("abs_diff pos", test_abs_diff_pos);
   r = r.it("abs_diff reversed", test_abs_diff_reversed);
   r = r.it("abs_diff mixed sign", test_abs_diff_mixed_sign);

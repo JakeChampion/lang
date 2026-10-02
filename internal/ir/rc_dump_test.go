@@ -33,20 +33,20 @@ function wrapper(e: Ex): i32 {
 	}
 }
 function mover(): i32 {
-	var a: i32[] = [1, 2, 3];
-	var b: i32[] = a;
+	let a: i32[] = [1, 2, 3];
+	let b: i32[] = a;
 	return b[0];
 }
 function dropper(): i32 {
-	var big: i32[] = [1, 2, 3, 4];
-	var s: i32 = big[0];
+	let big: i32[] = [1, 2, 3, 4];
+	let s: i32 = big[0];
 	return s + 1;
 }
 function nester(n: i32): i32 {
-	var s: i32 = 0;
-	var i: i32 = 0;
+	let s: i32 = 0;
+	let i: i32 = 0;
 	while (i < n) {
-		var row: i32[] = [1, 2, 3, 4];
+		let row: i32[] = [1, 2, 3, 4];
 		s = s + row[0];
 		i = i + 1;
 	}
@@ -57,8 +57,8 @@ function wrapped(): i32 {
 	return wrapper(Leaf { v: [1] });
 }
 function aliaser(): i32 {
-	var a: i32[] = [1, 2, 3];
-	var b: i32[] = a;
+	let a: i32[] = [1, 2, 3];
+	let b: i32[] = a;
 	return a[0] + b[0];
 }`)
 
@@ -82,9 +82,9 @@ function aliaser(): i32 {
 	// TestX86_64UnionThreadedParam). An escaping one is owned by default
 	// instead (the caller's inc balances the dec) and has no line here.
 	check("wrapper", "consumedParams: e")
-	// mover: `var b = a` is a's last use — a moves into b.
+	// mover: `let b = a` is a's last use — a moves into b.
 	check("mover", "movedLocals: a", "moveSites: ")
-	// aliaser: `a` is read again after `var b = a`, so the bind is a true
+	// aliaser: `a` is read again after `let b = a`, so the bind is a true
 	// alias — the transfer inc fires and the bind site lands in
 	// aliasBindIncs (the retain-plan table the self-host diffs against).
 	check("aliaser", "aliasBindIncs: 42:2=b")

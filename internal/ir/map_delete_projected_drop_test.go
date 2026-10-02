@@ -29,7 +29,7 @@ func TestMapDeleteProjectionNamesAGeneratedTupleDrop(t *testing.T) {
 func checkMapDeleteProjectionDrop(t *testing.T, free bool) {
 	p := lowerSourceWith(t, `import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.without("b").0;

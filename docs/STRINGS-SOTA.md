@@ -165,8 +165,8 @@ UTF-8 continuation bytes were classified as though they were Latin-1
 characters. Observable consequences:
 
 ```
-var café = 7;   // error: unexpected character '©'   ← mojibake, mid-codepoint offset
-var cafê = 7;   // ACCEPTED, prints 7
+let café = 7;   // error: unexpected character '©'   ← mojibake, mid-codepoint offset
+let cafê = 7;   // ACCEPTED, prints 7
 ```
 
 `é` is `C3 A9`; `A9` is `©` in Latin-1, not a letter → rejected, with a
@@ -1118,10 +1118,10 @@ explicit ASCII predicates instead of handing raw bytes to
 `unicode.IsLetter`, and reports the real character:
 
 ```
-var café = 7;   // error: identifiers must be ASCII; found 'é'
-var cafê = 7;   // same error — it no longer compiles
+let café = 7;   // error: identifiers must be ASCII; found 'é'
+let cafê = 7;   // same error — it no longer compiles
 x — 1           // error: unexpected character '—'
-var x = \xff;   // error: invalid UTF-8 byte 0xFF
+let x = \xff;   // error: invalid UTF-8 byte 0xFF
 ```
 
 Non-ASCII stays free in string literals and comments. The caret lands on

@@ -1,6 +1,6 @@
 # 2026-09-05 — a MOVED map alias still hands the slot a count
 
-`var (m2, ok) = sm.without(k); sm = m2;` stranded the whole table once per
+`let (m2, ok) = sm.without(k); sm = m2;` stranded the whole table once per
 rebind. The map overwrite site chose its same-pointer release with
 
 ```go
@@ -23,8 +23,8 @@ A twelve-line program, `FERN_RC_TRACE=1 FERN_LEAKCHECK=1`, x86-64:
 
 | shape | allocs | frees | live at exit |
 |---|---|---|---|
-| `var st = sm.without(k); sm = st.0` | 3 | 3 | 0 |
-| `var (m2, ok) = sm.without(k); sm = m2` | 3 | **1** | **224 B** |
+| `let st = sm.without(k); sm = st.0` | 3 | 3 | 0 |
+| `let (m2, ok) = sm.without(k); sm = m2` | 3 | **1** | **224 B** |
 
 Three allocations, one freed: the kv buffer and the key string both survive.
 The trace named the missing op precisely — the clean shape carries a `d` on the

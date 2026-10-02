@@ -64,11 +64,11 @@ function no_fault(): Fault {
 // `"` depends on whether we are inside a comment. Tracking one without the
 // other is the bug the whole test suite is aimed at.
 function strip(src: string): StripR {
-  var out: string = "";
-  var n: i32 = src.len();
-  var i: i32 = 0;
+  let out: string = "";
+  let n: i32 = src.len();
+  let i: i32 = 0;
   while (i < n) {
-    var c: u8 = src[i];
+    let c: u8 = src[i];
 
     // Line comment: consume to the newline, keep the newline itself so
     // line structure survives.
@@ -83,9 +83,9 @@ function strip(src: string): StripR {
     // Block comment: consume to the matching `*/`. C block comments do not
     // nest, so the FIRST `*/` closes it however many `/*` appeared inside.
     if (c == 47 && i + 1 < n && src[i + 1] == 42) {
-      var start: i32 = i;
+      let start: i32 = i;
       i = i + 2;
-      var closed: boolean = false;
+      let closed: boolean = false;
       while (i < n) {
         if (src[i] == 42 && i + 1 < n && src[i + 1] == 47) {
           i = i + 2;
@@ -108,13 +108,13 @@ function strip(src: string): StripR {
     // whatever it is, which is what makes `"a\\"` terminate and `"a\""`
     // not.
     if (c == 34 || c == 39) {
-      var quote: u8 = c;
-      var lit_start: i32 = i;
+      let quote: u8 = c;
+      let lit_start: i32 = i;
       out = out + slice_unchecked(src, i, i + 1).to_owned();
       i = i + 1;
-      var done: boolean = false;
+      let done: boolean = false;
       while (i < n) {
-        var d: u8 = src[i];
+        let d: u8 = src[i];
         if (d == 92 && i + 1 < n) {
           out = out + slice_unchecked(src, i, i + 2).to_owned();
           i = i + 2;
@@ -128,8 +128,8 @@ function strip(src: string): StripR {
         }
       }
       if (!done) {
-        var code: i32 = 2;
-        var what: string = "unterminated string literal";
+        let code: i32 = 2;
+        let what: string = "unterminated string literal";
         if (quote == 39) {
           code = 3;
           what = "unterminated char literal";
@@ -185,12 +185,12 @@ function pool(): Seg[] {
 // stripper. A separator that cannot combine with either neighbour keeps the
 // document's meaning equal to the concatenation of its parts.
 function assemble(idxs: i32[]): Doc {
-  var segs: Seg[] = pool();
-  var src: string = "";
-  var want: string = "";
-  var i: i32 = 0;
+  let segs: Seg[] = pool();
+  let src: string = "";
+  let want: string = "";
+  let i: i32 = 0;
   while (i < idxs.len()) {
-    var s: Seg = segs[idxs[i]];
+    let s: Seg = segs[idxs[i]];
     src = src + s.text + " ";
     want = want + s.keep + " ";
     i = i + 1;
@@ -202,12 +202,12 @@ function assemble(idxs: i32[]): Doc {
 // pair of segment kinds is reached, which is what makes the sweep a real test
 // of state transitions rather than of one arrangement.
 function combos(): i32[][] {
-  var segs: Seg[] = pool();
-  var n: i32 = segs.len();
-  var out: i32[][] = [];
-  var a: i32 = 0;
+  let segs: Seg[] = pool();
+  let n: i32 = segs.len();
+  let out: i32[][] = [];
+  let a: i32 = 0;
   while (a < n) {
-    var b: i32 = 0;
+    let b: i32 = 0;
     while (b < n) {
       out = out.append([a, b]);
       out = out.append([b, a, (a + b) % n]);
@@ -219,8 +219,8 @@ function combos(): i32[][] {
 }
 
 function is_subsequence(sub: string, sup: string): boolean {
-  var i: i32 = 0;
-  var j: i32 = 0;
+  let i: i32 = 0;
+  let j: i32 = 0;
   while (i < sub.len() && j < sup.len()) {
     if (sub[i] == sup[j]) {
       i = i + 1;
@@ -235,11 +235,11 @@ function is_subsequence(sub: string, sup: string): boolean {
 // The generative core: over every assembled document, the output must equal the
 // concatenation of the non-comment segments, exactly.
 function test_exactly_the_comments_are_removed(): test.TestOutcome {
-  var cs: i32[][] = combos();
-  var i: i32 = 0;
+  let cs: i32[][] = combos();
+  let i: i32 = 0;
   while (i < cs.len()) {
-    var d: Doc = assemble(cs[i]);
-    var r: StripR = strip(d.src);
+    let d: Doc = assemble(cs[i]);
+    let r: StripR = strip(d.src);
     if (!r.ok) {
       return test.fail("combo " + i.to_string() + " `" + d.src + "` was rejected: " + r.err.msg);
     }
@@ -253,15 +253,15 @@ function test_exactly_the_comments_are_removed(): test.TestOutcome {
 }
 
 function test_stripping_is_idempotent(): test.TestOutcome {
-  var cs: i32[][] = combos();
-  var i: i32 = 0;
+  let cs: i32[][] = combos();
+  let i: i32 = 0;
   while (i < cs.len()) {
-    var d: Doc = assemble(cs[i]);
-    var once: StripR = strip(d.src);
+    let d: Doc = assemble(cs[i]);
+    let once: StripR = strip(d.src);
     if (!once.ok) {
       return test.fail("combo " + i.to_string() + " rejected: " + once.err.msg);
     }
-    var twice: StripR = strip(once.out);
+    let twice: StripR = strip(once.out);
     if (!twice.ok) {
       return test.fail("combo " + i.to_string() + ": stripped output was rejected: " + twice.err.msg);
     }
@@ -278,11 +278,11 @@ function test_stripping_is_idempotent(): test.TestOutcome {
 // input. A stripper that rewrites a comment to a space, or normalises anything,
 // fails here even when the equality test happens to agree.
 function test_the_output_is_a_subsequence_of_the_input(): test.TestOutcome {
-  var cs: i32[][] = combos();
-  var i: i32 = 0;
+  let cs: i32[][] = combos();
+  let i: i32 = 0;
   while (i < cs.len()) {
-    var d: Doc = assemble(cs[i]);
-    var r: StripR = strip(d.src);
+    let d: Doc = assemble(cs[i]);
+    let r: StripR = strip(d.src);
     if (!r.ok) {
       return test.fail("combo " + i.to_string() + " rejected: " + r.err.msg);
     }
@@ -297,16 +297,16 @@ function test_the_output_is_a_subsequence_of_the_input(): test.TestOutcome {
 
 // The main hazard, stated on its own so a failure names it directly.
 function test_a_comment_marker_inside_a_literal_survives(): test.TestOutcome {
-  var cases: string[][] = [
-    ["var s = \"// not a comment\";", "var s = \"// not a comment\";"],
-    ["var s = \"/* nor this */\";", "var s = \"/* nor this */\";"],
-    ["var c = '/';", "var c = '/';"],
+  let cases: string[][] = [
+    ["let s = \"// not a comment\";", "let s = \"// not a comment\";"],
+    ["let s = \"/* nor this */\";", "let s = \"/* nor this */\";"],
+    ["let c = '/';", "let c = '/';"],
     ["f(\"a//b\", \"c/*d\");", "f(\"a//b\", \"c/*d\");"],
-    ["var s = \"keep\"; // drop\n", "var s = \"keep\"; \n"],
+    ["let s = \"keep\"; // drop\n", "let s = \"keep\"; \n"],
   ];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < cases.len()) {
-    var r: StripR = strip(cases[i][0]);
+    let r: StripR = strip(cases[i][0]);
     if (!r.ok) {
       return test.fail("`" + cases[i][0] + "` rejected: " + r.err.msg);
     }
@@ -321,15 +321,15 @@ function test_a_comment_marker_inside_a_literal_survives(): test.TestOutcome {
 // The mirror hazard: a quote inside a comment must not put the lexer into a
 // string, which would swallow everything up to the next quote in real code.
 function test_a_quote_inside_a_comment_opens_nothing(): test.TestOutcome {
-  var cases: string[][] = [
+  let cases: string[][] = [
     ["a; // it's fine\nb;", "a; \nb;"],
     ["a; /* \" */ b;", "a;  b;"],
     ["a; /* ' */ b;", "a;  b;"],
-    ["a; // \"\nvar s = \"kept\";", "a; \nvar s = \"kept\";"],
+    ["a; // \"\nlet s = \"kept\";", "a; \nlet s = \"kept\";"],
   ];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < cases.len()) {
-    var r: StripR = strip(cases[i][0]);
+    let r: StripR = strip(cases[i][0]);
     if (!r.ok) {
       return test.fail("`" + cases[i][0] + "` rejected: " + r.err.msg);
     }
@@ -344,11 +344,11 @@ function test_a_quote_inside_a_comment_opens_nothing(): test.TestOutcome {
 // A `/` is only a comment when the next byte says so. Division, divide-assign,
 // and a stray `*/` are all ordinary text.
 function test_a_slash_that_starts_nothing_is_kept(): test.TestOutcome {
-  var cases: string[] = ["a / b", "a /= 2;", "*/", "a/b/c", "x = y / z; // gone\n"];
-  var wants: string[] = ["a / b", "a /= 2;", "*/", "a/b/c", "x = y / z; \n"];
-  var i: i32 = 0;
+  let cases: string[] = ["a / b", "a /= 2;", "*/", "a/b/c", "x = y / z; // gone\n"];
+  let wants: string[] = ["a / b", "a /= 2;", "*/", "a/b/c", "x = y / z; \n"];
+  let i: i32 = 0;
   while (i < cases.len()) {
-    var r: StripR = strip(cases[i]);
+    let r: StripR = strip(cases[i]);
     if (!r.ok) {
       return test.fail("`" + cases[i] + "` rejected: " + r.err.msg);
     }
@@ -365,9 +365,9 @@ function test_a_slash_that_starts_nothing_is_kept(): test.TestOutcome {
 // `"a\""` contains a quote and continues. Getting either wrong desynchronises
 // the lexer for the rest of the file.
 function test_escapes_decide_where_a_literal_ends(): test.TestOutcome {
-  var closed: string = "var s = \"a\\\\\"; // gone\n";
-  var want_closed: string = "var s = \"a\\\\\"; \n";
-  var r: StripR = strip(closed);
+  let closed: string = "let s = \"a\\\\\"; // gone\n";
+  let want_closed: string = "let s = \"a\\\\\"; \n";
+  let r: StripR = strip(closed);
   if (!r.ok) {
     return test.fail("escaped-backslash string rejected: " + r.err.msg);
   }
@@ -375,9 +375,9 @@ function test_escapes_decide_where_a_literal_ends(): test.TestOutcome {
     return test.fail("`" + closed + "`\n  got  `" + r.out + "`\n  want `" + want_closed + "`");
   }
 
-  var quoted: string = "var s = \"a\\\"b\"; // gone\n";
-  var want_quoted: string = "var s = \"a\\\"b\"; \n";
-  var q: StripR = strip(quoted);
+  let quoted: string = "let s = \"a\\\"b\"; // gone\n";
+  let want_quoted: string = "let s = \"a\\\"b\"; \n";
+  let q: StripR = strip(quoted);
   if (!q.ok) {
     return test.fail("escaped-quote string rejected: " + q.err.msg);
   }
@@ -391,7 +391,7 @@ function test_escapes_decide_where_a_literal_ends(): test.TestOutcome {
 // file without telling anyone. Both openers are reported, with the position of
 // the OPENER rather than of the end of input.
 function test_unterminated_input_is_reported(): test.TestOutcome {
-  var block: StripR = strip("a;\n/* never closed\nb;\n");
+  let block: StripR = strip("a;\n/* never closed\nb;\n");
   if (block.ok) {
     return test.fail("an unterminated block comment was accepted");
   }
@@ -402,7 +402,7 @@ function test_unterminated_input_is_reported(): test.TestOutcome {
     return test.fail("block comment opener is at 3, reported at " + block.err.at.to_string());
   }
 
-  var str: StripR = strip("var s = \"never closed;\n");
+  let str: StripR = strip("let s = \"never closed;\n");
   if (str.ok) {
     return test.fail("an unterminated string was accepted");
   }
@@ -413,7 +413,7 @@ function test_unterminated_input_is_reported(): test.TestOutcome {
     return test.fail("string opener is at 8, reported at " + str.err.at.to_string());
   }
 
-  var ch: StripR = strip("var c = 'x;\n");
+  let ch: StripR = strip("let c = 'x;\n");
   if (ch.ok) {
     return test.fail("an unterminated char literal was accepted");
   }
@@ -423,7 +423,7 @@ function test_unterminated_input_is_reported(): test.TestOutcome {
 
   // A line comment running to end-of-file with no trailing newline is NOT an
   // error — it is the ordinary last line of a file.
-  var eof: StripR = strip("a; // to the end");
+  let eof: StripR = strip("a; // to the end");
   if (!eof.ok) {
     return test.fail("a line comment at EOF was rejected: " + eof.err.msg);
   }
@@ -436,23 +436,23 @@ function test_unterminated_input_is_reported(): test.TestOutcome {
 function main(): i32 {
   eprint("decomment — strip comments, respect literals");
 
-  var sample: string = "int main() { // entry\n"
+  let sample: string = "int main() { // entry\n"
     + "    printf(\"// not a comment\\n\");\n"
     + "    /* block\n       spanning lines */\n"
     + "    return 0 /* trailing */ ;\n}\n";
-  var r: StripR = strip(sample);
-  var lines: string[] = r.out.split("\n");
-  var i: i32 = 0;
+  let r: StripR = strip(sample);
+  let lines: string[] = r.out.split("\n");
+  let i: i32 = 0;
   while (i < lines.len()) {
     eprint("  |" + lines[i]);
     i = i + 1;
   }
 
-  var bad: StripR = strip("a;\n/* never closed\n");
+  let bad: StripR = strip("a;\n/* never closed\n");
   eprint("  offset " + bad.err.at.to_string() + ": " + bad.err.msg);
   eprint("  generated documents: " + combos().len().to_string());
 
-  var t: test.TestRunner = test.test_new("decomment");
+  let t: test.TestRunner = test.test_new("decomment");
   t = t.it("exactly the comments are removed", test_exactly_the_comments_are_removed);
   t = t.it("stripping is idempotent", test_stripping_is_idempotent);
   t = t.it("the output is a subsequence of the input", test_the_output_is_a_subsequence_of_the_input);

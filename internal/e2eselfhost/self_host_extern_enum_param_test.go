@@ -97,7 +97,7 @@ func TestSelfHostExternEnumParamCustomProvider(t *testing.T) {
 @import("local:test/sink@0.1.0", "pick")
 function pick(c: Color): i32;
 function main(): i32 {
-    var c: Color = Green;
+    let c: Color = Green;
     if (pick(c) == 101) { write("` + want + `"); } else { write("enum-bad"); }
     return 0;
 }`

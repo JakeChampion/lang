@@ -23,10 +23,10 @@ import "core/cmp";
 struct K { bucket: i32, id: i32 }
 impl cmp.Hash for K { function hash(self: K): i32 { return self.bucket; } }
 function main(): i32 {
-    var m: pmap.PMap[K, i32] = pmap.pmap_new();
-    var i: i32 = 0;
+    let m: pmap.PMap[K, i32] = pmap.pmap_new();
+    let i: i32 = 0;
     while (i < 40) { m = m.insert(K { bucket: i % 5, id: i }, i); i = i + 1; }
-    var n: i32 = m.get_or(K { bucket: 3, id: 13 }, -1) * 10 + m.get_or(K { bucket: 3, id: 14 }, -1);
+    let n: i32 = m.get_or(K { bucket: 3, id: 13 }, -1) * 10 + m.get_or(K { bucket: 3, id: 14 }, -1);
     if (m.contains(K { bucket: 1, id: 6 })) { n = n + 1000; }
     return n % 113;
 }
@@ -40,13 +40,13 @@ import "std/i32";
 enum V { Small(i32), Big(i32) }
 function weight(v: V): i32 { match (v) { Small(n) => { return n; }, Big(n) => { return n * 100; } } return 0; }
 function main(): i32 {
-    var m: pmap.PMap[i32, V] = pmap.pmap_new();
-    var i: i32 = 0;
+    let m: pmap.PMap[i32, V] = pmap.pmap_new();
+    let i: i32 = 0;
     while (i < 30) {
         if (i % 3 == 0) { m = m.insert(i, Big(i)); } else { m = m.insert(i, Small(i)); }
         i = i + 1;
     }
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (m.get(9)) { Some(v) => { n = n + weight(v); }, None => { n = n + 1; } }
     match (m.get(10)) { Some(v) => { n = n + weight(v); }, None => { n = n + 1; } }
     match (m.get(99)) { Some(v) => { n = n + weight(v); }, None => { n = n + 7; } }
@@ -69,16 +69,16 @@ function first_eq[T: cmp.Eq](xs: T[], x: T): Option[T] {
     return None;
 }
 function count_eq[T: cmp.Eq](xs: T[], x: T): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for y in xs { if (y.eq(x)) { n = n + 1; } }
     return n;
 }
 function main(): i32 {
-    var ts: T[] = [T { a: 1, b: 2 }, T { a: 3, b: 4 }, T { a: 1, b: 2 }];
-    var t: T = pick(ts, 1);
-    var bx: Box[T] = wrap(T { a: 5, b: 6 });
-    var names: string[] = ["x", "yy", "zzz"];
-    var f: i32 = 0;
+    let ts: T[] = [T { a: 1, b: 2 }, T { a: 3, b: 4 }, T { a: 1, b: 2 }];
+    let t: T = pick(ts, 1);
+    let bx: Box[T] = wrap(T { a: 5, b: 6 });
+    let names: string[] = ["x", "yy", "zzz"];
+    let f: i32 = 0;
     match (first_eq(ts, T { a: 3, b: 4 })) { Some(u) => { f = u.b; }, None => { f = 9; } }
     return (t.a * 10 + t.b + count_eq(ts, T { a: 1, b: 2 }) * 100 + pick(names, 2).len() + bx.get().a + f) % 113;
 }
@@ -89,8 +89,8 @@ function main(): i32 {
 	{"param-named-like-type-param", `function pick[T](T: T[]): i32 { return T.len(); }
 function main(): i32 { return pick([4, 5, 6]) + pick(["a"]) * 10; }
 `, 13},
-	{"local-named-like-type-param", `function first[T](xs: T[]): T { var T: T = xs[0]; return T; }
-function count[T](xs: T[]): i32 { var T: i32 = xs.len(); return T; }
+	{"local-named-like-type-param", `function first[T](xs: T[]): T { let T: T = xs[0]; return T; }
+function count[T](xs: T[]): i32 { let T: i32 = xs.len(); return T; }
 function main(): i32 { return first([7, 8]) + count(["a", "b", "c"]) * 10; }
 `, 37},
 	{"bounded-param-named-like-type-param", `import "core/cmp";
@@ -127,7 +127,7 @@ function main(): i32 { return pick(1); }
 	// Out of the value's scope, `T.default()` names the type variable again.
 	{"type-param-object-after-shadow-scope", `import "core/cmp";
 function mk[T: cmp.Default](x: T): T {
-    if (true) { var T: i32 = 3; }
+    if (true) { let T: i32 = 3; }
     for T in [1, 2] { }
     return T.default();
 }

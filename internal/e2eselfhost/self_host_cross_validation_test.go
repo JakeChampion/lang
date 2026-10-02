@@ -195,21 +195,21 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		{"comparison-true", "if (5 < 10) { return 1; } return 0;", 1},
 		{"comparison-false", "if (10 < 5) { return 1; } return 0;", 0},
 		{"equality-true", "if (7 == 7) { return 1; } return 0;", 1},
-		{"locals", "var x = 5; var y = 10; return x + y;", 15},
-		{"reassign", "var x = 5; x = x + 3; return x;", 8},
-		{"compound-assign", "var x = 1; x *= 6; x += 1; return x;", 7},
-		{"if-then-branch", "var x = 5; if (x < 10) { return 1; } return 2;", 1},
-		{"if-else-branch", "var x = 20; if (x < 10) { return 1; } return 2;", 2},
-		{"while-sum", "var i = 1; var s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15},
-		{"while-early-return", "var i = 0; while (i < 100) { if (i == 7) { return i; } i += 1; } return 0 - 1;", 7},
+		{"locals", "let x = 5; let y = 10; return x + y;", 15},
+		{"reassign", "let x = 5; x = x + 3; return x;", 8},
+		{"compound-assign", "let x = 1; x *= 6; x += 1; return x;", 7},
+		{"if-then-branch", "let x = 5; if (x < 10) { return 1; } return 2;", 1},
+		{"if-else-branch", "let x = 20; if (x < 10) { return 1; } return 2;", 2},
+		{"while-sum", "let i = 1; let s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15},
+		{"while-early-return", "let i = 0; while (i < 100) { if (i == 7) { return i; } i += 1; } return 0 - 1;", 7},
 		{"func-decl-call", "function add(x: i32, y: i32): i32 { return x + y; } function main(): i32 { return add(2, 3); }", 5},
 		{"recursive-factorial", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { return fact(5); }", 120},
 		{"recursive-fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }", 21},
 		{"mutual-recursion", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }", 1},
 		{
 			"prime-count-up-to-30",
-			"function is_prime(n: i32): i32 { if (n < 2) { return 0; } var i = 2; while (i * i <= n) { if (n % i == 0) { return 0; } i = i + 1; } return 1; } " +
-				"function main(): i32 { var count = 0; var i = 2; while (i <= 30) { if (is_prime(i) == 1) { count += 1; } i = i + 1; } return count; }",
+			"function is_prime(n: i32): i32 { if (n < 2) { return 0; } let i = 2; while (i * i <= n) { if (n % i == 0) { return 0; } i = i + 1; } return 1; } " +
+				"function main(): i32 { let count = 0; let i = 2; while (i <= 30) { if (is_prime(i) == 1) { count += 1; } i = i + 1; } return count; }",
 			10,
 		},
 		// Exit codes are clamped to 0..255 by Linux; these
@@ -217,7 +217,7 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		// 256.
 		{
 			"sum-of-squares-1-to-10",
-			"function main(): i32 { var i = 1; var s = 0; while (i <= 10) { s += i * i; i += 1; } return s; }",
+			"function main(): i32 { let i = 1; let s = 0; while (i <= 10) { s += i * i; i += 1; } return s; }",
 			385 % 256, // = 129
 		},
 		{
@@ -233,42 +233,42 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		// fields stay within the engines' common subset.
 		{
 			"struct-update-single-override",
-			"struct P { x: i32, y: i32, z: i32 } function main(): i32 { var p: P = P { x: 1, y: 2, z: 3 }; var q: P = P { ...p, y: 20 }; return q.x + q.y + q.z; }",
+			"struct P { x: i32, y: i32, z: i32 } function main(): i32 { let p: P = P { x: 1, y: 2, z: 3 }; let q: P = P { ...p, y: 20 }; return q.x + q.y + q.z; }",
 			24,
 		},
 		{
 			"struct-update-out-of-order",
-			"struct P { x: i32, y: i32, z: i32 } function main(): i32 { var p: P = P { x: 1, y: 2, z: 3 }; var q: P = P { ...p, z: 7, x: 9 }; return q.x*100 + q.y*10 + q.z; }",
+			"struct P { x: i32, y: i32, z: i32 } function main(): i32 { let p: P = P { x: 1, y: 2, z: 3 }; let q: P = P { ...p, z: 7, x: 9 }; return q.x*100 + q.y*10 + q.z; }",
 			927 % 256, // = 159
 		},
 		{
 			"struct-update-in-return",
-			"struct P { a: i32, b: i32 } function bump(p: P): P { return P { ...p, b: p.b + 100 }; } function main(): i32 { var p: P = P { a: 5, b: 6 }; var q: P = bump(p); return p.b*1000 + q.a*100 + q.b; }",
+			"struct P { a: i32, b: i32 } function bump(p: P): P { return P { ...p, b: p.b + 100 }; } function main(): i32 { let p: P = P { a: 5, b: 6 }; let q: P = bump(p); return p.b*1000 + q.a*100 + q.b; }",
 			6606 % 256, // = 206
 		},
 		// ---- beyond the old i32-only subset (see SUBSET above) ----------
 		// Each row was verified to agree across native interp, self-host interp
 		// and the compiled path before being added; the compiled leg was also
-		// checked on wasm, which shares irlower with the x86 backend.
-		{"string-len", `function main(): i32 { var s: string = "hello"; return s.len(); }`, 5},
-		{"string-concat", `function main(): i32 { var a: string = "ab"; var b: string = "cde"; var c: string = a + b; return c.len(); }`, 5},
-		{"string-index", `function main(): i32 { var s: string = "abc"; return s[1] as i32; }`, 98},
-		{"string-slice", `function main(): i32 { var s: string = "abcdef"; var t: string = slice_unchecked(s, 1, 3) + ""; return t.len(); }`, 2},
-		{"array-for-sum", `function main(): i32 { var xs: i32[] = [1,2,3,4]; var t = 0; for v in xs { t = t + v; } return t; }`, 10},
-		{"string-array-for", `function main(): i32 { var xs: string[] = ["ab","cde"]; var t = 0; for s in xs { t = t + s.len(); } return t; }`, 5},
-		{"struct-field-read", `struct P { x: i32, y: i32 } function main(): i32 { var p: P = P { x: 40, y: 2 }; return p.x + p.y; }`, 42},
-		{"struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { var p: P = P { x: 21 }; return p.dbl(); }`, 42},
-		{"tuple-elements", `function main(): i32 { var t: (i32, i32) = (40, 2); return t.0 + t.1; }`, 42},
-		{"closure-capture", `function main(): i32 { var n: i32 = 40; var f: () => i32 = (): i32 => { return n + 2; }; return f(); }`, 42},
+		// checked on wasm, which shares the lowering with the x86 backend.
+		{"string-len", `function main(): i32 { let s: string = "hello"; return s.len(); }`, 5},
+		{"string-concat", `function main(): i32 { let a: string = "ab"; let b: string = "cde"; let c: string = a + b; return c.len(); }`, 5},
+		{"string-index", `function main(): i32 { let s: string = "abc"; return s[1] as i32; }`, 98},
+		{"string-slice", `function main(): i32 { let s: string = "abcdef"; let t: string = slice_unchecked(s, 1, 3) + ""; return t.len(); }`, 2},
+		{"array-for-sum", `function main(): i32 { let xs: i32[] = [1,2,3,4]; let t = 0; for v in xs { t = t + v; } return t; }`, 10},
+		{"string-array-for", `function main(): i32 { let xs: string[] = ["ab","cde"]; let t = 0; for s in xs { t = t + s.len(); } return t; }`, 5},
+		{"struct-field-read", `struct P { x: i32, y: i32 } function main(): i32 { let p: P = P { x: 40, y: 2 }; return p.x + p.y; }`, 42},
+		{"struct-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { let p: P = P { x: 21 }; return p.dbl(); }`, 42},
+		{"tuple-elements", `function main(): i32 { let t: (i32, i32) = (40, 2); return t.0 + t.1; }`, 42},
+		{"closure-capture", `function main(): i32 { let n: i32 = 40; let f: () => i32 = (): i32 => { return n + 2; }; return f(); }`, 42},
 		// A closure that WRITES its captured scalar. By-reference scalar capture
 		// is a deliberate language feature, and the interpreter got it wrong for
 		// months while the compiled path was correct (SH-057 / #2850) — exactly
 		// the divergence class this suite exists to catch.
-		{"closure-mutates-capture", `function main(): i32 { var n: i32 = 0; var inc: () => i32 = (): i32 => { n = n + 1; return n; }; inc(); inc(); return n + 40; }`, 42},
+		{"closure-mutates-capture", `function main(): i32 { let n: i32 = 0; let inc: () => i32 = (): i32 => { n = n + 1; return n; }; inc(); inc(); return n + 40; }`, 42},
 		{"higher-order-fn", `function ap(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { return ap((n: i32): i32 => { return n + 1; }, 41); }`, 42},
-		{"enum-match", `enum C { A, B } function main(): i32 { var c: C = C.A; match (c) { C.A => { return 3; }, C.B => { return 4; } } }`, 3},
-		{"i64-arith", `function main(): i32 { var n: i64 = 5000000000; return (n % 97) as i32; }`, 73},
-		{"f64-arith", `function main(): i32 { var f: f64 = 2.5; var g: f64 = 1.5; return (f + g) as i32; }`, 4},
+		{"enum-match", `enum C { A, B } function main(): i32 { let c: C = C.A; match (c) { C.A => { return 3; }, C.B => { return 4; } } }`, 3},
+		{"i64-arith", `function main(): i32 { let n: i64 = 5000000000; return (n % 97) as i32; }`, 73},
+		{"f64-arith", `function main(): i32 { let f: f64 = 2.5; let g: f64 = 1.5; return (f + g) as i32; }`, 4},
 		// A float truncated into an UNSIGNED destination saturates, so a
 		// negative source answers 0 rather than its two's-complement bits
 		// (#9912). #9937 gave the two compiled legs that rule; interp.fern
@@ -276,28 +276,28 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		// it disagreed with the output of the compiler it ships beside —
 		// which is the divergence class this suite exists to catch, and the
 		// reason these rows are here rather than only in the u8 fixture.
-		{"f64-to-u8-neg", `function main(): i32 { var f: f64 = 0.0 - 1.0; var u: u8 = f as u8; return u as i32; }`, 0},
-		{"f64-to-u8-wrap", `function main(): i32 { var f: f64 = 300.7; var u: u8 = f as u8; return u as i32; }`, 44},
-		{"f64-to-u32-neg", `function main(): i32 { var f: f64 = 0.0 - 300.0; var u: u32 = f as u32; return (u as i32) & 255; }`, 0},
-		{"f64-to-u32-big", `function main(): i32 { var f: f64 = 10000000000.0; var u: u32 = f as u32; return (u as i32) & 255; }`, 255},
-		{"f64-to-u64-neg", `function main(): i32 { var f: f64 = 0.0 - 1.0; var u: u64 = f as u64; return (u as i32) & 255; }`, 0},
-		{"f64-to-u64-high", `function main(): i32 { var f: f64 = 10000000000000000000.0; var u: u64 = f as u64; return (u as i32) & 255; }`, 0},
+		{"f64-to-u8-neg", `function main(): i32 { let f: f64 = 0.0 - 1.0; let u: u8 = f as u8; return u as i32; }`, 0},
+		{"f64-to-u8-wrap", `function main(): i32 { let f: f64 = 300.7; let u: u8 = f as u8; return u as i32; }`, 44},
+		{"f64-to-u32-neg", `function main(): i32 { let f: f64 = 0.0 - 300.0; let u: u32 = f as u32; return (u as i32) & 255; }`, 0},
+		{"f64-to-u32-big", `function main(): i32 { let f: f64 = 10000000000.0; let u: u32 = f as u32; return (u as i32) & 255; }`, 255},
+		{"f64-to-u64-neg", `function main(): i32 { let f: f64 = 0.0 - 1.0; let u: u64 = f as u64; return (u as i32) & 255; }`, 0},
+		{"f64-to-u64-high", `function main(): i32 { let f: f64 = 10000000000000000000.0; let u: u64 = f as u64; return (u as i32) & 255; }`, 0},
 		{"forward-declared-call", `function outer(n: i32): i32 { return inner(n) + 1; } function inner(n: i32): i32 { return n * 2; } function main(): i32 { return outer(20); }`, 41},
 		// ---- Option / Result (#5990) ------------------------------------
 		// The four builtin constructors are declared nowhere a program can
 		// see, so each engine has to know them. interp.fern did not, and
 		// every row below exited 254 there until #5990.
-		{"option-some-match", `function main(): i32 { var o: Option[i32] = Some(42); match (o) { Some(v) => { return v; }, None => { return 0; } } }`, 42},
-		{"option-none-match", `function main(): i32 { var o: Option[i32] = None; match (o) { Some(v) => { return v; }, None => { return 7; } } }`, 7},
+		{"option-some-match", `function main(): i32 { let o: Option[i32] = Some(42); match (o) { Some(v) => { return v; }, None => { return 0; } } }`, 42},
+		{"option-none-match", `function main(): i32 { let o: Option[i32] = None; match (o) { Some(v) => { return v; }, None => { return 7; } } }`, 7},
 		{"option-string-payload", `function lookup(k: i32): Option[string] { if (k == 1) { return Some("one"); } return None; } function main(): i32 { match (lookup(1)) { Some(s) => { if (s == "one") { return 42; } return 3; }, None => { return 0; } } }`, 42},
-		{"option-struct-payload", `struct P { x: i32 } function main(): i32 { var o: Option[P] = Some(P { x: 42 }); match (o) { Some(p) => { return p.x; }, None => { return 0; } } }`, 42},
+		{"option-struct-payload", `struct P { x: i32 } function main(): i32 { let o: Option[P] = Some(P { x: 42 }); match (o) { Some(p) => { return p.x; }, None => { return 0; } } }`, 42},
 		{"result-err-match", `function f(n: i32): Result[i32, string] { if (n < 0) { return Err("neg"); } return Ok(n * 2); } function main(): i32 { match (f(0 - 1)) { Ok(v) => { return v; }, Err(e) => { if (e == "neg") { return 42; } return 3; } } }`, 42},
 		// `?` — the half that cannot be expressed as a value: on Err/None it
 		// unwinds to the ENCLOSING function's return, so each engine needs a
 		// notion of abrupt completion that stops at exactly one frame.
-		{"try-propagates-err", `function f(n: i32): Result[i32, string] { if (n < 0) { return Err("neg"); } return Ok(n * 2); } function g(n: i32): Result[i32, string] { var v: i32 = f(n)?; return Ok(v + 1); } function main(): i32 { match (g(0 - 5)) { Ok(v) => { return v; }, Err(e) => { if (e == "neg") { return 42; } return 3; } } }`, 42},
-		{"try-unwraps-some", `function h(o: Option[i32]): Option[i32] { var v: i32 = o?; return Some(v * 3); } function main(): i32 { match (h(Some(14))) { Some(v) => { return v; }, None => { return 0; } } }`, 42},
-		{"try-propagates-none", `function h(o: Option[i32]): Option[i32] { var v: i32 = o?; return Some(v * 3); } function main(): i32 { match (h(None)) { Some(v) => { return v; }, None => { return 42; } } }`, 42},
+		{"try-propagates-err", `function f(n: i32): Result[i32, string] { if (n < 0) { return Err("neg"); } return Ok(n * 2); } function g(n: i32): Result[i32, string] { let v: i32 = f(n)?; return Ok(v + 1); } function main(): i32 { match (g(0 - 5)) { Ok(v) => { return v; }, Err(e) => { if (e == "neg") { return 42; } return 3; } } }`, 42},
+		{"try-unwraps-some", `function h(o: Option[i32]): Option[i32] { let v: i32 = o?; return Some(v * 3); } function main(): i32 { match (h(Some(14))) { Some(v) => { return v; }, None => { return 0; } } }`, 42},
+		{"try-propagates-none", `function h(o: Option[i32]): Option[i32] { let v: i32 = o?; return Some(v * 3); } function main(): i32 { match (h(None)) { Some(v) => { return v; }, None => { return 42; } } }`, 42},
 		// A CLOSURE is a function boundary too, so the unwind stops at the
 		// lambda. Found by this corpus: the native interpreter let the None
 		// escape the lambda and exit the whole program 0, while both compiled
@@ -305,7 +305,7 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		// one this suite cannot catch by construction unless a row disagrees
 		// with the other two. Also pinned as a four-backend fixture
 		// (conformance/cases/try_op_in_closure).
-		{"try-in-closure", `function main(): i32 { var f: (Option[i32]) => Option[i32] = (o: Option[i32]): Option[i32] => { var v: i32 = o?; return Some(v + 1); }; match (f(None)) { Some(a) => { return a; }, None => { match (f(Some(41))) { Some(b) => { return b; }, None => { return 0; } } } } }`, 42},
+		{"try-in-closure", `function main(): i32 { let f: (Option[i32]) => Option[i32] = (o: Option[i32]): Option[i32] => { let v: i32 = o?; return Some(v + 1); }; match (f(None)) { Some(a) => { return a; }, None => { match (f(Some(41))) { Some(b) => { return b; }, None => { return 0; } } } } }`, 42},
 	}
 
 	for _, tc := range cases {

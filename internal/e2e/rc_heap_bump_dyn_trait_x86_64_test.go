@@ -35,11 +35,11 @@ impl Shape for Boxed {
     function area(self: Self): i32 { return 1; }
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var d: dyn Shape = Boxed { tag: "a heap-allocated string behind dyn" };
+        let d: dyn Shape = Boxed { tag: "a heap-allocated string behind dyn" };
         sum = sum + d.area();
         i = i + 1;
     }
@@ -76,10 +76,10 @@ impl Shape for Boxed {
     function area(self: Self): i32 { return 1; }
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < 200) {
-        var d: dyn Shape = Boxed { tag: "another heap string for the dyn box" };
+        let d: dyn Shape = Boxed { tag: "another heap string for the dyn box" };
         sum = sum + d.area();
         i = i + 1;
     }
@@ -107,11 +107,11 @@ impl B for Both {
     function b2(self: Self): i32 { return 3; }
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var d: dyn A + B = Both { tag: "string owned behind a multi-trait dyn" };
+        let d: dyn A + B = Both { tag: "string owned behind a multi-trait dyn" };
         sum = sum + d.a1() + d.b1() + d.b2();
         i = i + 1;
     }
@@ -152,10 +152,10 @@ function main(): i32 {
 	}
 	// Underflow check: a borrowed param dropped (the cell freed) by the
 	// callee, then again by the caller, would underflow / double-free.
-	underflow := mk(`var i: i32 = 0;
-    var sum: i32 = 0;
+	underflow := mk(`let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < 200) {
-        var d: dyn Shape = Boxed { tag: "borrowed dyn param string value" };
+        let d: dyn Shape = Boxed { tag: "borrowed dyn param string value" };
         sum = sum + use_it(d);
         i = i + 1;
     }
@@ -166,11 +166,11 @@ function main(): i32 {
 	// Bounded check: the caller's local still reclaims; no leak from the
 	// borrow (and no double-free corrupting the freelist).
 	bumped := func(n string) string {
-		return mk(`var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+		return mk(`let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var d: dyn Shape = Boxed { tag: "borrowed dyn param string value" };
+        let d: dyn Shape = Boxed { tag: "borrowed dyn param string value" };
         sum = sum + use_it(d);
         i = i + 1;
     }

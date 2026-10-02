@@ -82,7 +82,7 @@ function opt_digit(d: i32): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [-WIDTH] [OPTION]... [FILE]...\n";
   out = out + "Reformat each paragraph in the FILE(s), writing to standard output.\n";
   out = out + "The option -WIDTH is an abbreviated form of --width=DIGITS.\n";
@@ -255,10 +255,10 @@ function is_punct(c: i32): boolean {
 // `byte_classes()` — for each byte, which of the tests above it passes:
 // 1 closer, 2 end punctuation, 4 other punctuation, 8 opening bracket.
 function byte_classes(): u8[] {
-  var cls: u8[] = __alloc_u8(256);
-  var c: i32 = 0;
+  let cls: u8[] = __alloc_u8(256);
+  let c: i32 = 0;
   while (c < 256) {
-    var k: i32 = 0;
+    let k: i32 = 0;
     if (is_closer(c)) {
       k = k | 1;
     }
@@ -277,11 +277,11 @@ function byte_classes(): u8[] {
 }
 
 function word_flags(cls: u8[], line: string, lo: i32, hi: i32, gap: i32, at_eol: boolean): i32 {
-  var e: i32 = hi;
+  let e: i32 = hi;
   while (e > lo && (cls[line[e - 1] as i32] as i32 & 1) != 0) {
     e = e - 1;
   }
-  var f: i32 = 0;
+  let f: i32 = 0;
   if (e > lo && (cls[line[e - 1] as i32] as i32 & 2) != 0) {
     f = f_period();
     if (at_eol || gap >= 2) {
@@ -303,8 +303,8 @@ function word_flags(cls: u8[], line: string, lo: i32, hi: i32, gap: i32, at_eol:
 struct Settings { max_width: i32, goal: i32, crown: boolean, tagged: boolean, split: boolean, uniform: boolean, prefix: string, prefix_out: string, prefix_lead: i32, blank: u8[], ink: u8[], cls: u8[] }
 
 function byte_set(members: boolean): u8[] {
-  var set: u8[] = __alloc_u8(256);
-  var c: i32 = 0;
+  let set: u8[] = __alloc_u8(256);
+  let c: i32 = 0;
   while (c < 256) {
     if (is_blank_byte(c) == members) {
       set = set.with(c, 1 as u8);
@@ -335,10 +335,10 @@ function push_spacing(h: usize, col: i32, n: i32, tabs: boolean): void {
   if (n <= 0) {
     return;
   }
-  var target: i32 = col + n;
-  var c: i32 = col;
+  let target: i32 = col + n;
+  let c: i32 = col;
   if (tabs) {
-    var last: i32 = target / tab_width() * tab_width();
+    let last: i32 = target / tab_width() * tab_width();
     if (last - c >= 2) {
       while (c / tab_width() * tab_width() + tab_width() <= last) {
         buf_push_byte(h, 9);
@@ -381,9 +381,9 @@ function para_reset(p: Para): Para {
 // opening bracket outranks the word's own sentence end. Never below 800,
 // which the search in `choose` relies on.
 function base_cost(pos: i64[], meta: i64[], s: i32, sentence_at: i32): i64 {
-  var c: i64 = LINE_COST_BASE;
+  let c: i64 = LINE_COST_BASE;
   if (s > 0) {
-    var pf: i32 = (meta[s - 1] & 255 as i64) as i32;
+    let pf: i32 = (meta[s - 1] & 255 as i64) as i32;
     if (s - 1 == sentence_at) {
       pf = pf | f_sentence();
     }
@@ -397,7 +397,7 @@ function base_cost(pos: i64[], meta: i64[], s: i32, sentence_at: i32): i64 {
       c = c + WIDOW_COST / ((lo32(pos[s - 1]) + 2) as i64);
     }
   }
-  var f: i32 = (meta[s] & 255 as i64) as i32;
+  let f: i32 = (meta[s] & 255 as i64) as i32;
   if (s == sentence_at) {
     f = f | f_sentence();
   }
@@ -426,21 +426,21 @@ function base_cost(pos: i64[], meta: i64[], s: i32, sentence_at: i32): i64 {
 // can win and the rest are skipped. `dq` keeps that cheapest rest for the
 // candidates in reach as a queue whose bottom is the minimum.
 function choose(own ws: Words, n: i32, last: boolean, p: Para, st: Settings, lead: i32): Words {
-  var maxw: i32 = st.max_width - lead;
-  var goal: i32 = st.goal - lead;
-  var lines: string[] = ws.lines;
-  var nl: i32 = ws.nl;
-  var pos: i64[] = ws.pos;
-  var meta: i64[] = ws.meta;
-  var sp: i64[] = ws.sp;
-  var count: i32 = ws.n;
-  var at: i32[] = ws.at;
-  var best: i64[] = ws.best;
-  var link: i64[] = ws.link;
-  var dq: i32[] = ws.dq;
-  var breaks: i32[] = ws.breaks;
-  var costs: i64[] = ws.costs;
-  var sentence_at: i32 = 0 - 1;
+  let maxw: i32 = st.max_width - lead;
+  let goal: i32 = st.goal - lead;
+  let lines: string[] = ws.lines;
+  let nl: i32 = ws.nl;
+  let pos: i64[] = ws.pos;
+  let meta: i64[] = ws.meta;
+  let sp: i64[] = ws.sp;
+  let count: i32 = ws.n;
+  let at: i32[] = ws.at;
+  let best: i64[] = ws.best;
+  let link: i64[] = ws.link;
+  let dq: i32[] = ws.dq;
+  let breaks: i32[] = ws.breaks;
+  let costs: i64[] = ws.costs;
+  let sentence_at: i32 = 0 - 1;
   if (last) {
     sentence_at = n - 1;
   }
@@ -452,8 +452,8 @@ function choose(own ws: Words, n: i32, last: boolean, p: Para, st: Settings, lea
     link = link.append(0 as i64);
   }
   // at[k]: the columns words 0..k-1 take with the space before each.
-  var sum: i32 = 0;
-  var k: i32 = 0;
+  let sum: i32 = 0;
+  let k: i32 = 0;
   while (k < n) {
     sum = sum + (sp[k] >> 32 as i64) as i32 + (pos[k] & 4294967295 as i64) as i32;
     at = at.with(k + 1, sum);
@@ -461,15 +461,15 @@ function choose(own ws: Words, n: i32, last: boolean, p: Para, st: Settings, lea
   }
   // best[w] is the cheapest layout of words w..n-1, and link[w] the word
   // its first line ends before, shifted up 32, over that line's length.
-  var bot: i32 = 0;
-  var top: i32 = 0;
-  var r: i32 = n;
-  var s: i32 = n - 1;
+  let bot: i32 = 0;
+  let top: i32 = 0;
+  let r: i32 = n;
+  let s: i32 = n - 1;
   while (s >= 0) {
     // ln(w), the line [s, w), is `from + at[w]`.
-    var wl: i32 = (pos[s] & 4294967295 as i64) as i32;
-    var from: i32 = p.other_indent + wl - at[s + 1];
-    var rag: i32 = 0;
+    let wl: i32 = (pos[s] & 4294967295 as i64) as i32;
+    let from: i32 = p.other_indent + wl - at[s + 1];
+    let rag: i32 = 0;
     if (s == 0) {
       from = p.first_indent + wl - at[s + 1];
       rag = p.last_len;
@@ -482,7 +482,7 @@ function choose(own ws: Words, n: i32, last: boolean, p: Para, st: Settings, lea
     }
     // Word s + 1 enters the queue; words past r leave it.
     if (s + 1 < n) {
-      var v: i64 = best[s + 1];
+      let v: i64 = best[s + 1];
       while (top > bot && best[dq[top - 1]] >= v) {
         top = top - 1;
       }
@@ -496,30 +496,30 @@ function choose(own ws: Words, n: i32, last: boolean, p: Para, st: Settings, lea
     while (top > bot && dq[bot] > r) {
       bot = bot + 1;
     }
-    var bcost: i64 = COST_INFINITY;
-    var bnext: i32 = n;
-    var blen: i32 = 0;
-    var w: i32 = r;
+    let bcost: i64 = COST_INFINITY;
+    let bnext: i32 = n;
+    let blen: i32 = 0;
+    let w: i32 = r;
     while (w > s) {
-      var ln: i32 = from + at[w];
-      var c: i64 = 0 as i64;
-      var rest: i64 = 0 as i64;
+      let ln: i32 = from + at[w];
+      let c: i64 = 0 as i64;
+      let rest: i64 = 0 as i64;
       if (w != n) {
-        var d: i64 = (goal - ln) as i64;
-        var short: i64 = SHORT * d * d;
+        let d: i64 = (goal - ln) as i64;
+        let short: i64 = SHORT * d * d;
         if (ln <= goal && top > bot && short + best[dq[bot]] > bcost) {
           break;
         }
         c = short;
-        var lk: i64 = link[w];
+        let lk: i64 = link[w];
         if ((lk >> 32 as i64) as i32 != n) {
-          var dr: i64 = (ln - (lk & 4294967295 as i64) as i32) as i64;
+          let dr: i64 = (ln - (lk & 4294967295 as i64) as i32) as i64;
           c = c + RAGGED * dr * dr;
         }
         rest = best[w];
       }
       if (rag > 0) {
-        var df: i64 = (ln + lead - rag) as i64;
+        let df: i64 = (ln + lead - rag) as i64;
         c = c + RAGGED * df * df;
       }
       if (c + rest <= bcost) {
@@ -533,11 +533,11 @@ function choose(own ws: Words, n: i32, last: boolean, p: Para, st: Settings, lea
     link = link.with(s, pair(bnext, blen));
     s = s - 1;
   }
-  var nb: i32 = 0;
-  var i: i32 = 0;
+  let nb: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var j: i32 = hi32(link[i]);
-    var after: i64 = 0 as i64;
+    let j: i32 = hi32(link[i]);
+    let after: i64 = 0 as i64;
     if (j != n) {
       after = best[j];
     }
@@ -557,16 +557,16 @@ function choose(own ws: Words, n: i32, last: boolean, p: Para, st: Settings, lea
 // `emit(o, ws, p, st, upto)` — the lines of the layout in `ws` that start
 // before word `upto`, and the column the last of them ended at.
 function emit(o0: Out, ws: Words, p: Para, st: Settings, upto: i32): (Out, i32) {
-  var col: i32 = o0.col;
-  var tabs: boolean = o0.tabs;
-  var w: io_buffered.BufWriter = o0.w;
-  var h: usize = w.handle();
-  var i: i32 = 0;
-  var b: i32 = 0;
-  var first: boolean = true;
-  var last: i32 = 0;
+  let col: i32 = o0.col;
+  let tabs: boolean = o0.tabs;
+  let w: io_buffered.BufWriter = o0.w;
+  let h: usize = w.handle();
+  let i: i32 = 0;
+  let b: i32 = 0;
+  let first: boolean = true;
+  let last: i32 = 0;
   while (i < upto) {
-    var j: i32 = ws.breaks[b];
+    let j: i32 = ws.breaks[b];
     b = b + 1;
     if (st.prefix.len() > 0 || st.prefix_lead > 0) {
       push_spacing(h, col, p.p_indent, tabs);
@@ -574,7 +574,7 @@ function emit(o0: Out, ws: Words, p: Para, st: Settings, upto: i32): (Out, i32) 
       buf_push(h, st.prefix_out);
       col = col + st.prefix_out.len();
     }
-    var ind: i32 = p.other_indent;
+    let ind: i32 = p.other_indent;
     if (first) {
       ind = p.first_indent;
     }
@@ -582,10 +582,10 @@ function emit(o0: Out, ws: Words, p: Para, st: Settings, upto: i32): (Out, i32) 
       push_spacing(h, col, ind, tabs);
       col = col + ind;
     }
-    var k: i32 = i;
+    let k: i32 = i;
     while (k < j) {
       if (k > i) {
-        var space: i32 = hi32(ws.sp[k]);
+        let space: i32 = hi32(ws.sp[k]);
         if (space == 1) {
           buf_push_byte(h, 32);
         } else {
@@ -593,9 +593,9 @@ function emit(o0: Out, ws: Words, p: Para, st: Settings, upto: i32): (Out, i32) 
         }
         col = col + space;
       }
-      var at: i64 = ws.pos[k];
-      var lo: i32 = hi32(at);
-      var wl: i32 = lo32(at);
+      let at: i64 = ws.pos[k];
+      let lo: i32 = hi32(at);
+      let wl: i32 = lo32(at);
       buf_push_range(h, ws.lines[(ws.meta[k] >> 8 as i64) as i32], lo, lo + wl);
       col = col + wl;
       k = k + 1;
@@ -618,9 +618,9 @@ function emit(o0: Out, ws: Words, p: Para, st: Settings, upto: i32): (Out, i32) 
 // the input column the reader stands at, which under -c or -t becomes
 // the continuation indent, as the reader's column would at a line end.
 function chunk(o0: Out, p0: Para, own ws: Words, n: i32, st: Settings, col: i32): (Out, Para, Words) {
-  var lead: i32 = p0.p_indent + st.prefix_out.len();
-  var first: i32 = p0.first_indent + lead;
-  var other: i32 = first;
+  let lead: i32 = p0.p_indent + st.prefix_out.len();
+  let first: i32 = p0.first_indent + lead;
+  let other: i32 = first;
   if (st.split) {
     other = first;
   } else if (st.crown) {
@@ -639,12 +639,12 @@ function chunk(o0: Out, p0: Para, own ws: Words, n: i32, st: Settings, col: i32)
       }
     }
   }
-  var p: Para = Para { ...p0, other_indent: other - lead, sticky: other };
+  let p: Para = Para { ...p0, other_indent: other - lead, sticky: other };
   ws = choose(ws, n, false, p, st, lead);
-  var split: i32 = n;
-  var best: i64 = COST_MAX;
-  var b: i32 = 1;
-  var w: i32 = ws.breaks[0];
+  let split: i32 = n;
+  let best: i64 = COST_MAX;
+  let b: i32 = 1;
+  let w: i32 = ws.breaks[0];
   while (w != n) {
     if (ws.costs[b] < best) {
       split = w;
@@ -656,38 +656,38 @@ function chunk(o0: Out, p0: Para, own ws: Words, n: i32, st: Settings, col: i32)
     w = ws.breaks[b];
     b = b + 1;
   }
-  var e: (Out, i32) = emit(o0, ws, p, st, split);
+  let e: (Out, i32) = emit(o0, ws, p, st, split);
   return (e.0, Para { ...p, last_len: e.1 }, drop_front(ws, split));
 }
 
 // `drop_front(ws, k)` — the words from `k` on moved to the front, and the
 // lines they are read from with them.
 function drop_front(own ws: Words, k: i32): Words {
-  var lines: string[] = ws.lines;
-  var nl: i32 = ws.nl;
-  var pos: i64[] = ws.pos;
-  var meta: i64[] = ws.meta;
-  var sp: i64[] = ws.sp;
-  var n: i32 = ws.n;
-  var at: i32[] = ws.at;
-  var best: i64[] = ws.best;
-  var link: i64[] = ws.link;
-  var dq: i32[] = ws.dq;
-  var breaks: i32[] = ws.breaks;
-  var costs: i64[] = ws.costs;
+  let lines: string[] = ws.lines;
+  let nl: i32 = ws.nl;
+  let pos: i64[] = ws.pos;
+  let meta: i64[] = ws.meta;
+  let sp: i64[] = ws.sp;
+  let n: i32 = ws.n;
+  let at: i32[] = ws.at;
+  let best: i64[] = ws.best;
+  let link: i64[] = ws.link;
+  let dq: i32[] = ws.dq;
+  let breaks: i32[] = ws.breaks;
+  let costs: i64[] = ws.costs;
   if (k >= n) {
     return Words { lines: lines, nl: 0, pos: pos, meta: meta, sp: sp, n: 0, at: at, best: best, link: link, dq: dq, breaks: breaks, costs: costs, nb: 0 };
   }
-  var l0: i32 = (meta[k] >> 8 as i64) as i32;
-  var shift: i64 = l0 as i64 << 8 as i64;
-  var i: i32 = k;
+  let l0: i32 = (meta[k] >> 8 as i64) as i32;
+  let shift: i64 = l0 as i64 << 8 as i64;
+  let i: i32 = k;
   while (i < n) {
     pos = pos.with(i - k, pos[i]);
     meta = meta.with(i - k, meta[i] - shift);
     sp = sp.with(i - k, sp[i]);
     i = i + 1;
   }
-  var j: i32 = l0;
+  let j: i32 = l0;
   while (j < nl) {
     lines = lines.with(j - l0, lines[j]);
     j = j + 1;
@@ -696,8 +696,8 @@ function drop_front(own ws: Words, k: i32): Words {
 }
 
 function held_bytes(pos: i64[], n: i32): i32 {
-  var total: i32 = 0;
-  var k: i32 = 0;
+  let total: i32 = 0;
+  let k: i32 = 0;
   while (k < n) {
     total = total + lo32(pos[k]);
     k = k + 1;
@@ -709,8 +709,8 @@ function held_bytes(pos: i64[], n: i32): i32 {
 // emptied for the next one to fill. The words are swapped out of the state
 // for `spare` while they are laid out, so no one else holds them.
 function flush_para(own s: State): State {
-  var p: Para = s.p;
-  var st: Settings = s.st;
+  let p: Para = s.p;
+  let st: Settings = s.st;
   if (!p.open) {
     return s;
   }
@@ -724,9 +724,9 @@ function flush_para(own s: State): State {
     // own indent it falls back to column 3 at the margin and to column 0
     // anywhere else. Under -p column 0 sits left of the prefix, which is
     // why such a paragraph's later lines get the whole width to spend.
-    var lead: i32 = p.p_indent + st.prefix_out.len();
-    var first: i32 = p.first_indent + lead;
-    var other: i32 = p.sticky;
+    let lead: i32 = p.p_indent + st.prefix_out.len();
+    let first: i32 = p.first_indent + lead;
+    let other: i32 = p.sticky;
     if (other == first) {
       other = 0;
       if (first == 0) {
@@ -739,12 +739,12 @@ function flush_para(own s: State): State {
   if (s.words.n == 0) {
     return State { ...s, p: para_reset(p) };
   }
-  var ws: Words = s.words;
+  let ws: Words = s.words;
   s = State { ...s, words: s.spare };
-  var lead: i32 = p.p_indent + st.prefix_out.len();
-  var n: i32 = ws.n;
+  let lead: i32 = p.p_indent + st.prefix_out.len();
+  let n: i32 = ws.n;
   ws = choose(ws, n, true, p, st, lead);
-  var e: (Out, i32) = emit(s.o, ws, p, st, n);
+  let e: (Out, i32) = emit(s.o, ws, p, st, n);
   return State { ...s, o: e.0, p: para_reset(p), words: Words { ...ws, nl: 0, n: 0 } };
 }
 
@@ -759,7 +759,7 @@ function starts_with_at(s: string, at: i32, pre: string): boolean {
   if (at + pre.len() > s.len()) {
     return false;
   }
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < pre.len()) {
     if (s[at + k] as i32 != pre[k] as i32) {
       return false;
@@ -770,9 +770,9 @@ function starts_with_at(s: string, at: i32, pre: string): boolean {
 }
 
 function eat_blanks(line: string, i0: i32, col0: i32, tabs0: boolean): (i32, i32, boolean) {
-  var i: i32 = i0;
-  var col: i32 = col0;
-  var tabs: boolean = tabs0;
+  let i: i32 = i0;
+  let col: i32 = col0;
+  let tabs: boolean = tabs0;
   while (i < line.len() && is_blank_byte(line[i] as i32)) {
     if (line[i] as i32 == 9) {
       tabs = true;
@@ -798,9 +798,9 @@ function eat_blanks(line: string, i0: i32, col0: i32, tabs0: boolean): (i32, i32
 // indent. A line with fewer is copied, and one with exactly as many and
 // nothing after them is a plain blank line rather than a prefixed one.
 function scan_head_blank_prefix(line: string, st: Settings, tabs0: boolean): (Head, boolean) {
-  var i: i32 = 0;
-  var col: i32 = 0;
-  var tabs: boolean = tabs0;
+  let i: i32 = 0;
+  let col: i32 = 0;
+  let tabs: boolean = tabs0;
   while (col < st.prefix_lead && i < line.len() && is_blank_byte(line[i] as i32)) {
     if (line[i] as i32 == 9) {
       tabs = true;
@@ -811,7 +811,7 @@ function scan_head_blank_prefix(line: string, st: Settings, tabs0: boolean): (He
     i = i + 1;
   }
   if (col < st.prefix_lead || i >= line.len() && col == st.prefix_lead) {
-    var e: (i32, i32, boolean) = eat_blanks(line, i, col, tabs);
+    let e: (i32, i32, boolean) = eat_blanks(line, i, col, tabs);
     if (e.0 >= line.len()) {
       return (Head { kind: 1, p_indent: 0, indent: 0, at: 0, col: 0, pfx: false }, e.2);
     }
@@ -819,8 +819,8 @@ function scan_head_blank_prefix(line: string, st: Settings, tabs0: boolean): (He
   }
   // The prefix is that many COLUMNS whatever it took to reach them, so a
   // tab straddling the boundary leaves the rest of its width as indent.
-  var lead: i32 = st.prefix_lead;
-  var e2: (i32, i32, boolean) = eat_blanks(line, i, col, tabs);
+  let lead: i32 = st.prefix_lead;
+  let e2: (i32, i32, boolean) = eat_blanks(line, i, col, tabs);
   i = e2.0;
   col = e2.1;
   tabs = e2.2;
@@ -834,10 +834,10 @@ function scan_head(line: string, st: Settings, tabs0: boolean): (Head, boolean) 
   if (st.prefix.len() == 0 && st.prefix_lead > 0) {
     return scan_head_blank_prefix(line, st, tabs0);
   }
-  var e: (i32, i32, boolean) = eat_blanks(line, 0, 0, tabs0);
-  var i: i32 = e.0;
-  var col: i32 = e.1;
-  var tabs: boolean = e.2;
+  let e: (i32, i32, boolean) = eat_blanks(line, 0, 0, tabs0);
+  let i: i32 = e.0;
+  let col: i32 = e.1;
+  let tabs: boolean = e.2;
   if (st.prefix.len() == 0) {
     if (i >= line.len()) {
       return (Head { kind: 1, p_indent: 0, indent: 0, at: 0, col: 0, pfx: false }, tabs);
@@ -850,11 +850,11 @@ function scan_head(line: string, st: Settings, tabs0: boolean): (Head, boolean) 
   if (!starts_with_at(line, i, st.prefix)) {
     return (Head { kind: 0, p_indent: col, indent: 0, at: i, col: col, pfx: false }, tabs);
   }
-  var lead: i32 = col;
+  let lead: i32 = col;
   i = i + st.prefix.len();
   col = col + st.prefix.len();
-  var start: i32 = lead + st.prefix_out.len();
-  var e2: (i32, i32, boolean) = eat_blanks(line, i, col, tabs);
+  let start: i32 = lead + st.prefix_out.len();
+  let e2: (i32, i32, boolean) = eat_blanks(line, i, col, tabs);
   i = e2.0;
   col = e2.1;
   tabs = e2.2;
@@ -884,45 +884,45 @@ function scan_head(line: string, st: Settings, tabs0: boolean): (Head, boolean) 
 // did — with nothing held, the bytes go out as they are and the word
 // goes on from there.
 function scan_body(own s: State, line: string, at: i32, col0: i32): State {
-  var st: Settings = s.st;
-  var o: Out = s.o;
-  var p: Para = s.p;
-  var bytes: i32 = s.bytes;
-  var uniform: boolean = st.uniform;
-  var ws: Words = s.words;
+  let st: Settings = s.st;
+  let o: Out = s.o;
+  let p: Para = s.p;
+  let bytes: i32 = s.bytes;
+  let uniform: boolean = st.uniform;
+  let ws: Words = s.words;
   s = State { ...s, words: s.spare };
-  var lines: string[] = ws.lines;
-  var nl: i32 = ws.nl;
-  var pos: i64[] = ws.pos;
-  var meta: i64[] = ws.meta;
-  var gaps: i64[] = ws.sp;
-  var nw: i32 = ws.n;
-  var tat: i32[] = ws.at;
-  var tbest: i64[] = ws.best;
-  var tlink: i64[] = ws.link;
-  var tdq: i32[] = ws.dq;
-  var tbr: i32[] = ws.breaks;
-  var tco: i64[] = ws.costs;
+  let lines: string[] = ws.lines;
+  let nl: i32 = ws.nl;
+  let pos: i64[] = ws.pos;
+  let meta: i64[] = ws.meta;
+  let gaps: i64[] = ws.sp;
+  let nw: i32 = ws.n;
+  let tat: i32[] = ws.at;
+  let tbest: i64[] = ws.best;
+  let tlink: i64[] = ws.link;
+  let tdq: i32[] = ws.dq;
+  let tbr: i32[] = ws.breaks;
+  let tco: i64[] = ws.costs;
   // The index this line is stored at among `lines`, once it has a word.
-  var li: i32 = 0 - 1;
-  var i: i32 = at;
-  var col: i32 = col0;
-  var n: i32 = line.len();
-  var prev_sentence: boolean = false;
-  var first: boolean = true;
+  let li: i32 = 0 - 1;
+  let i: i32 = at;
+  let col: i32 = col0;
+  let n: i32 = line.len();
+  let prev_sentence: boolean = false;
+  let first: boolean = true;
   if (nw > 0) {
     prev_sentence = (meta[nw - 1] & 2 as i64) != 0 as i64;
   }
   while (i < n) {
-    var j: i32 = __scan_set(line, i, st.blank);
-    var wcol: i32 = col;
+    let j: i32 = __scan_set(line, i, st.blank);
+    let wcol: i32 = col;
     col = col + (j - i);
-    var lo: i32 = i;
+    let lo: i32 = i;
     i = __scan_set(line, j, st.ink);
-    var sp: i32 = i - j;
+    let sp: i32 = i - j;
     if (sp > 1 || sp == 1 && line[j] as i32 == 9) {
       sp = 0;
-      var b: i32 = j;
+      let b: i32 = j;
       while (b < i) {
         if (line[b] as i32 == 9) {
           sp = sp + ((col + sp) / tab_width() * tab_width() + tab_width() - (col + sp));
@@ -933,7 +933,7 @@ function scan_body(own s: State, line: string, at: i32, col0: i32): State {
       }
     }
     col = col + sp;
-    var space: i32 = 1;
+    let space: i32 = 1;
     if (first) {
       if (nw == 0) {
         space = 0;
@@ -952,10 +952,10 @@ function scan_body(own s: State, line: string, at: i32, col0: i32): State {
         buf_push_range(o.w.handle(), line, lo, lo + buffer_bytes());
         lo = lo + buffer_bytes();
       } else {
-        var c: (Out, Para, Words) = chunk(o, p, Words { lines: lines, nl: nl, pos: pos, meta: meta, sp: gaps, n: nw, at: tat, best: tbest, link: tlink, dq: tdq, breaks: tbr, costs: tco, nb: 0 }, nw, st, wcol);
+        let c: (Out, Para, Words) = chunk(o, p, Words { lines: lines, nl: nl, pos: pos, meta: meta, sp: gaps, n: nw, at: tat, best: tbest, link: tlink, dq: tdq, breaks: tbr, costs: tco, nb: 0 }, nw, st, wcol);
         o = c.0;
         p = c.1;
-        var hw: Words = c.2;
+        let hw: Words = c.2;
         tat = hw.at;
         tbest = hw.best;
         tlink = hw.link;
@@ -983,12 +983,12 @@ function scan_body(own s: State, line: string, at: i32, col0: i32): State {
       }
       nl = nl + 1;
     }
-    var f: i32 = word_flags(st.cls, line, lo, j, sp, i >= n);
+    let f: i32 = word_flags(st.cls, line, lo, j, sp, i >= n);
     prev_sentence = (f & f_sentence()) != 0;
     first = false;
-    var wp: i64 = lo as i64 << 32 as i64 | (j - lo) as i64;
-    var wm: i64 = li as i64 << 8 as i64 | f as i64;
-    var wg: i64 = space as i64 << 32 as i64 | sp as i64;
+    let wp: i64 = lo as i64 << 32 as i64 | (j - lo) as i64;
+    let wm: i64 = li as i64 << 8 as i64 | f as i64;
+    let wg: i64 = space as i64 << 32 as i64 | sp as i64;
     if (nw < pos.len()) {
       pos = pos.with(nw, wp);
       meta = meta.with(nw, wm);
@@ -1001,10 +1001,10 @@ function scan_body(own s: State, line: string, at: i32, col0: i32): State {
     nw = nw + 1;
     bytes = bytes + (j - lo);
     if (nw > buffer_words()) {
-      var c1: (Out, Para, Words) = chunk(o, p, Words { lines: lines, nl: nl, pos: pos, meta: meta, sp: gaps, n: nw, at: tat, best: tbest, link: tlink, dq: tdq, breaks: tbr, costs: tco, nb: 0 }, buffer_words(), st, col);
+      let c1: (Out, Para, Words) = chunk(o, p, Words { lines: lines, nl: nl, pos: pos, meta: meta, sp: gaps, n: nw, at: tat, best: tbest, link: tlink, dq: tdq, breaks: tbr, costs: tco, nb: 0 }, buffer_words(), st, col);
       o = c1.0;
       p = c1.1;
-      var hw1: Words = c1.2;
+      let hw1: Words = c1.2;
       tat = hw1.at;
       tbest = hw1.best;
       tlink = hw1.link;
@@ -1039,15 +1039,15 @@ struct State { o: Out, p: Para, words: Words, spare: Words, bytes: i32, st: Sett
 // with it, and the append then copies them, once per line — quadratic
 // in the paragraph.
 function feed(own s: State, line: string, term: boolean): State {
-  var st: Settings = s.st;
-  var r: (Head, boolean) = scan_head(line, st, s.o.tabs);
-  var h: Head = r.0;
-  var o: Out = Out { ...s.o, tabs: r.1 };
+  let st: Settings = s.st;
+  let r: (Head, boolean) = scan_head(line, st, s.o.tabs);
+  let h: Head = r.0;
+  let o: Out = Out { ...s.o, tabs: r.1 };
   if (h.kind == 0) {
     s = flush_para(State { ...s, o: o });
-    var o0: Out = s.o;
-    var h0: usize = o0.w.handle();
-    var col: i32 = o0.col;
+    let o0: Out = s.o;
+    let h0: usize = o0.w.handle();
+    let col: i32 = o0.col;
     push_spacing(h0, col, h.p_indent, o0.tabs);
     col = col + h.p_indent;
     if (h.pfx) {
@@ -1064,14 +1064,14 @@ function feed(own s: State, line: string, term: boolean): State {
   }
   if (h.kind == 1) {
     s = flush_para(State { ...s, o: o });
-    var o1: Out = s.o;
+    let o1: Out = s.o;
     // A blank line the prefix does not carry is copied like any other
     // unmatched line, so an unterminated one ends the output without a
     // newline of its own.
     if (!term && (st.prefix.len() > 0 || st.prefix_lead > 0) && !h.pfx) {
       return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, bytes: 0 };
     }
-    var h1: usize = o1.w.handle();
+    let h1: usize = o1.w.handle();
     if (h.pfx) {
       push_spacing(h1, o1.col, h.p_indent, o1.tabs);
       buf_push(h1, st.prefix_out);
@@ -1079,8 +1079,8 @@ function feed(own s: State, line: string, term: boolean): State {
     buf_push_byte(h1, 10);
     return State { ...s, o: Out { ...o1, w: gnu.settle(o1.w), col: 0 }, bytes: 0 };
   }
-  var p: Para = s.p;
-  var flush: boolean = st.split && p.open;
+  let p: Para = s.p;
+  let flush: boolean = st.split && p.open;
   if (!flush && p.open) {
     if (h.p_indent != p.p_indent) {
       flush = true;
@@ -1119,16 +1119,16 @@ function feed(own s: State, line: string, term: boolean): State {
 // caller's own, `-g` gets xdectoumax's default EOVERFLOW. A usage error
 // here prints one line and NO `Try …` line.
 function width_of(text: string, max: i32, range: boolean): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < text.len() && (text[i] as i32 == 32 || text[i] as i32 >= 9 && text[i] as i32 <= 13)) {
     i = i + 1;
   }
   if (i < text.len() && text[i] as i32 == 43) {
     i = i + 1;
   }
-  var digits: i32 = i;
-  var value: i64 = 0 as i64;
-  var over: boolean = false;
+  let digits: i32 = i;
+  let value: i64 = 0 as i64;
+  let over: boolean = false;
   while (i < text.len() && gnu.is_digit(text[i] as i32)) {
     if (value > 200000000 as i64) {
       over = true;
@@ -1142,7 +1142,7 @@ function width_of(text: string, max: i32, range: boolean): i32 {
     exit(1);
   }
   if (over || value > max as i64) {
-    var why: string = ": " + gnu.eoverflow_text();
+    let why: string = ": " + gnu.eoverflow_text();
     if (range) {
       why = ": " + gnu.erange_text();
     }
@@ -1157,17 +1157,17 @@ function digit_of(id: i32): string {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
+  let argv: string[] = args();
 
   // The obsolete `-WIDTH`: only argv[1], and everything after the `-` is
   // the width text, so `-5x` is an invalid width and not a cluster.
-  var obsolete: string = "";
-  var have_obsolete: boolean = false;
+  let obsolete: string = "";
+  let have_obsolete: boolean = false;
   if (argv.len() > 1 && argv[1].len() >= 2 && argv[1][0] as i32 == 45 && gnu.is_digit(argv[1][1] as i32)) {
     obsolete = slice_unchecked(argv[1], 1, argv[1].len()) + "";
     have_obsolete = true;
-    var rest: string[] = [argv[0]];
-    var k: i32 = 2;
+    let rest: string[] = [argv[0]];
+    let k: i32 = 2;
     while (k < argv.len()) {
       rest = rest.append(argv[k]);
       k = k + 1;
@@ -1175,7 +1175,7 @@ pub function main(): i32 {
     argv = rest;
   }
 
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("c", "crown-margin", opt_crown()));
   opts = opts.append(gnu.valued("p", "prefix", opt_prefix()));
   opts = opts.append(gnu.flag("s", "split-only", opt_split()));
@@ -1183,31 +1183,31 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("u", "uniform-spacing", opt_uniform()));
   opts = opts.append(gnu.valued("w", "width", opt_width()));
   opts = opts.append(gnu.valued("g", "goal", opt_goal()));
-  var d: i32 = 0;
+  let d: i32 = 0;
   while (d < 10) {
     opts = opts.append(gnu.flag(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit(d)));
     d = d + 1;
   }
 
-  var crown: boolean = false;
-  var tagged: boolean = false;
-  var split: boolean = false;
-  var uniform: boolean = false;
-  var prefix: string = "";
-  var width: i32 = 75;
-  var width_text: string = "";
-  var have_width: boolean = false;
-  var goal: i32 = 0;
-  var goal_text: string = "";
-  var have_goal: boolean = false;
+  let crown: boolean = false;
+  let tagged: boolean = false;
+  let split: boolean = false;
+  let uniform: boolean = false;
+  let prefix: string = "";
+  let width: i32 = 75;
+  let width_text: string = "";
+  let have_width: boolean = false;
+  let goal: i32 = 0;
+  let goal_text: string = "";
+  let have_goal: boolean = false;
   if (have_obsolete) {
     width_text = obsolete;
     have_width = true;
   }
 
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "fmt", help_text(), 1);
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "fmt", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -1251,18 +1251,18 @@ pub function main(): i32 {
     goal = width * 187 / 200;
   }
 
-  var lead: i32 = 0;
+  let lead: i32 = 0;
   while (lead < prefix.len() && prefix[lead] as i32 == 32) {
     lead = lead + 1;
   }
-  var text: string = slice_unchecked(prefix, lead, prefix.len()) + "";
-  var last: i32 = text.len();
+  let text: string = slice_unchecked(prefix, lead, prefix.len()) + "";
+  let last: i32 = text.len();
   while (last > 0 && text[last - 1] as i32 == 32) {
     last = last - 1;
   }
-  var st: Settings = Settings { max_width: width, goal: goal, crown: crown && !split, tagged: tagged && !crown && !split, split: split, uniform: uniform, prefix: text, prefix_out: slice_unchecked(text, 0, last) + "", prefix_lead: lead, blank: byte_set(true), ink: byte_set(false), cls: byte_classes() };
+  let st: Settings = Settings { max_width: width, goal: goal, crown: crown && !split, tagged: tagged && !crown && !split, split: split, uniform: uniform, prefix: text, prefix_out: slice_unchecked(text, 0, last) + "", prefix_lead: lead, blank: byte_set(true), ink: byte_set(false), cls: byte_classes() };
 
-  var files: string[] = g.operands();
+  let files: string[] = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
@@ -1273,16 +1273,16 @@ pub function main(): i32 {
 // boundary, so one is flushed at the end of each; a line may span two
 // read blocks, so `carry` holds the part that has no terminator yet.
 function run(files: string[], st: Settings): i32 {
-  var s: State = State { o: Out { w: gnu.out_with(block_size()), col: 0, tabs: false }, p: para_new(), words: words_new(), spare: words_new(), bytes: 0, st: st, ok: true };
+  let s: State = State { o: Out { w: gnu.out_with(block_size()), col: 0, tabs: false }, p: para_new(), words: words_new(), spare: words_new(), bytes: 0, st: st, ok: true };
 
-  var used_stdin: boolean = false;
-  var fi: i32 = 0;
+  let used_stdin: boolean = false;
+  let fi: i32 = 0;
   while (fi < files.len()) {
-    var name: string = files[fi];
+    let name: string = files[fi];
     fi = fi + 1;
-    var is_stdin: boolean = name == "-";
-    var r: Reader = stdin();
-    var opened: boolean = true;
+    let is_stdin: boolean = name == "-";
+    let r: Reader = stdin();
+    let opened: boolean = true;
     if (is_stdin) {
       used_stdin = true;
     }
@@ -1298,10 +1298,10 @@ function run(files: string[], st: Settings): i32 {
       }
     }
     if (opened) {
-      var carry: string = "";
+      let carry: string = "";
       while (true) {
-        var piece: string = "";
-        var more: boolean = true;
+        let piece: string = "";
+        let more: boolean = true;
         match (r.read_chunk(read_size())) {
           Ok(c) => {
             piece = c;
@@ -1309,7 +1309,7 @@ function run(files: string[], st: Settings): i32 {
           Err(e) => {
             // GNU words the two differently: stdin has no name to
             // print, a FILE is named with shell-escape quoting.
-            var why: string = "read error: " + gnu.io_error_text(e);
+            let why: string = "read error: " + gnu.io_error_text(e);
             if (!is_stdin) {
               why = "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e);
             }
@@ -1320,14 +1320,14 @@ function run(files: string[], st: Settings): i32 {
         if (!more || piece.len() == 0) {
           break;
         }
-        var data: string = piece;
+        let data: string = piece;
         if (carry.len() > 0) {
           data = carry + piece;
           carry = "";
         }
-        var i: i32 = 0;
+        let i: i32 = 0;
         while (i < data.len()) {
-          var j: i32 = __memchr(data, 10, i);
+          let j: i32 = __memchr(data, 10, i);
           if (j < 0) {
             carry = slice_unchecked(data, i, data.len()) + "";
             break;

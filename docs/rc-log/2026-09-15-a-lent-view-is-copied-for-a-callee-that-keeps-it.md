@@ -4,7 +4,7 @@ The second half of #9407. With the `own` array boundary fixed
 (`2026-09-15-an-own-array-consumed-across-the-mixed-boundary.md`), the
 sanitized produced compiler compiled `lexer.fern` without an abort — and the
 plain one still emitted `xorl; movq $o, %rcx; subq` for `0 - 1` at the same
-three sites. A seven-line program reproduces it: `var v: i32 = -1;` compiles,
+three sites. A seven-line program reproduces it: `let v: i32 = -1;` compiles,
 through the produced compiler, to `movq $e, %rcx`, and through the sanitized
 produced compiler to the right text.
 

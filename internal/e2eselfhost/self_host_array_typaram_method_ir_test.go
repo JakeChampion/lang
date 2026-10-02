@@ -14,7 +14,7 @@ import (
 // type variable was the receiver's `T`; these also carry an UNBOUNDED extra
 // type variable (`U` / `A`). The self-host erases unbounded type variables under
 // its uniform 8-byte ABI — the result's element width is driven by the CALL
-// SITE's annotation (`var ys: string[] = xs.map(f)`), not by cloning the body —
+// SITE's annotation (`let ys: string[] = xs.map(f)`), not by cloning the body —
 // so the receiver alone fixes the monomorphised `T` and the folded body delegates
 // to the free `map` / `flat_map` / `fold` / `zip`, all of which already lower on
 // IR for any `U`/`A` (incl. a width-changing one, e.g. i32 -> string). This
@@ -29,20 +29,20 @@ var arrayTyparamMethodIRCases = []struct {
 }{
 	// map: i32 -> i32 (same width).
 	{"map", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: i32[] = xs.map((n: i32): i32 => { return n * 10; }); return ys[2]; }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3]; let ys: i32[] = xs.map((n: i32): i32 => { return n * 10; }); return ys[2]; }`},
 	// map: i32 -> string (the result element width changes — erasure + call-site
 	// annotation must drive it).
 	{"map-widen", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 22, 333]; var ys: string[] = xs.map((n: i32): string => { return n.to_string(); }); return ys[2].len() * 10 + ys.len(); }`},
+function main(): i32 { let xs: i32[] = [1, 22, 333]; let ys: string[] = xs.map((n: i32): string => { return n.to_string(); }); return ys[2].len() * 10 + ys.len(); }`},
 	// flat_map: T -> U[] then flatten.
 	{"flat_map", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 2, 3]; var ys: i32[] = xs.flat_map((x: i32): i32[] => { return [x, x * 10]; }); return ys.len() * 100 + ys[1]; }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3]; let ys: i32[] = xs.flat_map((x: i32): i32[] => { return [x, x * 10]; }); return ys.len() * 100 + ys[1]; }`},
 	// fold: string accumulator (A differs from T, and is pointer-width).
 	{"fold-widen", `import "std/array";
-function main(): i32 { var xs: i32[] = [1, 2, 3]; var s: string = xs.fold("", (a: string, n: i32): string => { return a + n.to_string(); }); return s.len(); }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3]; let s: string = xs.fold("", (a: string, n: i32): string => { return a + n.to_string(); }); return s.len(); }`},
 	// zip: pairs into a (T, U)[] tuple array.
 	{"zip", `import "std/array";
-function main(): i32 { var a: i32[] = [1, 2, 3]; var b: i32[] = [9, 8]; var z: (i32, i32)[] = a.zip(b); return z.len() * 10 + z[0].0; }`},
+function main(): i32 { let a: i32[] = [1, 2, 3]; let b: i32[] = [9, 8]; let z: (i32, i32)[] = a.zip(b); return z.len() * 10 + z[0].0; }`},
 }
 
 func TestSelfHostArrayTyparamMethodIR(t *testing.T) {

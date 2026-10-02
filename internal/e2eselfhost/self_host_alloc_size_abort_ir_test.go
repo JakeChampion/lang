@@ -11,9 +11,9 @@ import (
 // formed its total as an i32 product, which wrapped to 0 before its copy ran
 // past the buffer.
 const allocNegativeLengthSrc = `function main(): i32 {
-    var width: i32 = 16;
-    var count: i32 = 268435455;
-    var bs: u8[] = __alloc_u8(width * count);
+    let width: i32 = 16;
+    let count: i32 = 268435455;
+    let bs: u8[] = __alloc_u8(width * count);
     return bs.len();
 }
 `
@@ -22,8 +22,8 @@ const allocNegativeLengthSrc = `function main(): i32 {
 // not refuse.
 const repeatWrapsToZeroSrc = `import "std/string";
 function main(): i32 {
-    var s: string = "abcd";
-    var r: string = s.repeat(1073741824);
+    let s: string = "abcd";
+    let r: string = s.repeat(1073741824);
     return r.len();
 }
 `

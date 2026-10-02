@@ -76,7 +76,7 @@ own reclaim give it back. A short read is copied into an exact-size block with
 `full` still dead. `__fern_read_line` takes the same shape: its 256-byte buffer
 was boxed at the line length (stranding the rest) and lost outright at EOF.
 
-Verified before writing it: a dead `var full: string = __raw_string(p, n)` is
+Verified before writing it: a dead `let full: string = __raw_string(p, n)` is
 credited `"STR:"` and swept — 200 rounds, `allocs=200 frees=200 live_bytes=0` —
 and so is the copy shape with the early return, so the helper degrades to today's
 leak if the credit is ever withdrawn rather than to a dangle.
@@ -109,7 +109,7 @@ fails now if it comes back. `TestSelfHostOwnedPayloadReclaimX86_64` /
 - `__fern_read_all_stdin` allocates 32 MiB and boxes it at the total read, so it
   strands the same way. Left alone deliberately: copying a whole input to fix it
   doubles peak memory, which is a design call rather than a bug fix.
-- The `?` binding form (`var s: string = r.read_chunk(n)?`) is a different site
+- The `?` binding form (`let s: string = r.read_chunk(n)?`) is a different site
   (`try_box_fresh`) with its own credit, `collect_try_str_binding_names`, keyed on
   the OPTFRESH registry of user producers. These builtins are not in it, so that
   shape keeps today's leak; the match form is what #8402 measured and what this

@@ -35,11 +35,11 @@ function build(n: i32): List {
 }
 function main(): i32 {
     // UNIQUE path: fresh build -> step consumes (frees the head box in the
-    // arm, repacks) -> the loop-var reinit drop reclaims l2 next iteration.
-    var total: i32 = 0;
-    var i: i32 = 0;
+    // arm, repacks) -> the loop-let reinit drop reclaims l2 next iteration.
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var l2: List = step(build(5));           // [5..1] -> [6,4,3,2,1]
+        let l2: List = step(build(5));           // [5..1] -> [6,4,3,2,1]
         total = total + sum(l2);                 // 16
         i = i + 1;
     }
@@ -47,10 +47,10 @@ function main(): i32 {
     // SHARED path: keep aliases the box (call-site retain inc -> rc 2), so
     // step's arm takes the dup + flat-dec branch: out shares keep's tail,
     // keep survives the call, and both lists stay readable.
-    var keep: List = build(3);        // [3,2,1]
-    var out: List = step(keep);       // [4,2,1] sharing keep's tail
-    var a: i32 = sum(keep);           // 6
-    var b: i32 = sum(out);            // 7
+    let keep: List = build(3);        // [3,2,1]
+    let out: List = step(keep);       // [4,2,1] sharing keep's tail
+    let a: i32 = sum(keep);           // 6
+    let b: i32 = sum(out);            // 7
     if (a != 6) { return 90; }
     if (b != 7) { return 91; }
     return __rc_underflow_count();
@@ -85,11 +85,11 @@ function step(l: List): List { match (l) { Cons(h, t) => { return Cons(h + 1, t)
 function sum(l: List): i32 { match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } } }
 function build(n: i32): List { if (n == 0) { return Nil; } return Cons(n, build(n - 1)); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) {
-        var l2: List = step(build(8));
-        var unused: i32 = sum(l2);
+        let l2: List = step(build(8));
+        let unused: i32 = sum(l2);
         i = i + 1;
     }
     return (__heap_bump_bytes() as i32) - before;

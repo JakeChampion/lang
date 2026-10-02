@@ -11,7 +11,7 @@
 struct Pool { sites: i32[], vals: i64[], weights: f64[] }
 
 function main(): i32 {
-    var p: Pool = Pool { sites: [], vals: [], weights: [] };
+    let p: Pool = Pool { sites: [], vals: [], weights: [] };
     p = Pool { ...p, sites: p.sites.append(4) };
     p = Pool { ...p, vals: p.vals.append(1234567890123) };
     p = Pool { ...p, weights: p.weights.append(2.5) };

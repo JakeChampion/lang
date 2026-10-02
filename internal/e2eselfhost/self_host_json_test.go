@@ -19,8 +19,8 @@ var jsonCases = []struct {
 	main string
 	exit int
 }{
-	{"encode-number", `var v: JsonValue = JNumber("42"); return json.json_encode(v).len();`, 2},
-	{"encode-string", `var v: JsonValue = JString("hi"); return json.json_encode(v).len();`, 4},
+	{"encode-number", `let v: JsonValue = JNumber("42"); return json.json_encode(v).len();`, 2},
+	{"encode-string", `let v: JsonValue = JString("hi"); return json.json_encode(v).len();`, 4},
 	{"parse-object-ok", `match (json.json_parse("{\"a\":1}")) { Some(v) => { return 7; }, None => { return 0; } }`, 7},
 	{"parse-bad", `match (json.json_parse("{bad")) { Some(v) => { return 1; }, None => { return 9; } }`, 9},
 	{"get-i32", `match (json.json_parse("{\"n\":42}")) { Some(v) => { match (json.json_get_i32(v, "n")) { Some(x) => { return x; }, None => { return 0; } } }, None => { return 0; } } return 0;`, 42},

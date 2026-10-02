@@ -51,15 +51,15 @@ import (
 const arrstructCountedDecl = `struct Inner { xs: i32[], k: i32 }
 struct P { f: Inner[], n: i32 }
 struct Q { e: Inner, n: i32 }
-function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1], k: i }); return o; }
+function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1], k: i }); return o; }
 function seed(): i32 { return 7; }
 `
 
 func arrstructCountedMain(use string) string {
 	return `
 function main(): i32 {
-    var keep: Inner[] = mkv(seed());
-    var t: i32 = 0; var r: i32 = 0;
+    let keep: Inner[] = mkv(seed());
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + ` + use + `; r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -77,7 +77,7 @@ func arrstructCountedCases() []arrenumShareCase {
 			// holder's field drop net to zero and the caller's claim is the only
 			// one left. 104/102 before, 104/104 now.
 			name: "counted_store",
-			src: mk(`function rd(src: Inner[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
+			src: mk(`function rd(src: Inner[], i: i32): i32 { let p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
 				"rd(keep, r)"),
 			want: 6, balance: true,
 		},
@@ -93,7 +93,7 @@ func arrstructCountedCases() []arrenumShareCase {
 			// REFUSED by the use vocabulary: `src[0]` is an element read, and an
 			// array element may BE a reference handed out uncounted.
 			name: "callee_extracts_element",
-			src: mk(`function rd(src: Inner[], i: i32): i32 { var e: Inner = src[0]; return e.xs.len() + i; }`,
+			src: mk(`function rd(src: Inner[], i: i32): i32 { let e: Inner = src[0]; return e.xs.len() + i; }`,
 				"rd(keep, r)"),
 			want: 9,
 		},
@@ -104,7 +104,7 @@ func arrstructCountedCases() []arrenumShareCase {
 			// would admit it and the caller's walk would free a box the holder
 			// still references. Stays refused.
 			name: "callee_stores_element",
-			src: mk(`function rd(src: Inner[], i: i32): i32 { var q: Q = Q { e: src[0], n: i }; return q.e.xs.len() + q.n; }`,
+			src: mk(`function rd(src: Inner[], i: i32): i32 { let q: Q = Q { e: src[0], n: i }; return q.e.xs.len() + q.n; }`,
 				"rd(keep, r)"),
 			want: 9,
 		},

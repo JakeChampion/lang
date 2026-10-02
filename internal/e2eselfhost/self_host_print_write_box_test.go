@@ -34,7 +34,7 @@ import (
 // fd 1, so a lost newline is a failure rather than a silently smaller program.
 func printLoopSrc(payload string, rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) { print("%s"); i = i + 1; }
     return 0;
 }`, rounds, payload)
@@ -44,8 +44,8 @@ func printLoopSrc(payload string, rounds int) string {
 // answer the match consumes.
 func writeLoopSrc(payload string, rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var w: Writer = stdout();
-    var i: i32 = 0;
+    let w: Writer = stdout();
+    let i: i32 = 0;
     while (i < %d) {
         match (w.write("%s")) { Some(_) => { return 9; }, None => {} }
         i = i + 1;
@@ -59,8 +59,8 @@ func writeLoopSrc(payload string, rounds int) string {
 // box must be freed exactly once there, not zero times and not twice.
 func writeGuardedArmSrc(payload string, rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var w: Writer = stdout();
-    var i: i32 = 0;
+    let w: Writer = stdout();
+    let i: i32 = 0;
     while (i < %d) {
         match (w.write("%s")) { Some(_) when i < 0 => { return 9; }, _ => {} }
         i = i + 1;
@@ -75,8 +75,8 @@ func writeGuardedArmSrc(payload string, rounds int) string {
 // that returns, and this probe is what tells the two apart.
 func writeReturningArmSrc(payload string, rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var w: Writer = stdout();
-    var i: i32 = 0;
+    let w: Writer = stdout();
+    let i: i32 = 0;
     while (i < 1000000) {
         match (w.write("%s")) {
             Some(_) => { return 9; },

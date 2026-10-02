@@ -5,7 +5,7 @@ per call on x86-64.
 
 ```fern
 function f(data: string): i32 {
-  var piece: string = data;
+  let piece: string = data;
   return piece.len();
 }
 ```
@@ -38,7 +38,7 @@ and swept like a borrowed view.
 
 ## Change
 
-A third leg, for `var y = p` where p is a borrowed parameter. Its safety
+A third leg, for `let y = p` where p is a borrowed parameter. Its safety
 argument is the for-in leg's, one step stronger: the CALLER owns p across
 the whole call and nothing in this frame releases it — a borrowed parameter
 is not in the exit sweep at all — so y reads through a reference already

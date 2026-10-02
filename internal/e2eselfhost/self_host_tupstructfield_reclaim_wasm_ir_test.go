@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostTupStructFieldReclaimWasmIR is the wasm port of
 // TestSelfHostTupStructFieldReclaimIRX86_64: the field-read lowering and the struct-aware
-// ARRTUP / OPTTUP escape checkers live in shared irlower.fern; on wasm __fern_rc_dec maps
+// ARRTUP / OPTTUP escape checkers live in shared lowering; on wasm __fern_rc_dec maps
 // to $__fern_arr_dec and emit_struct_field_drops emits $__struct_drop_<P> (backend-
 // complete), so the per-element struct-field deep-drop resolves without any dedicated
 // runtime helper. Case table shared with the x86-64 leg.

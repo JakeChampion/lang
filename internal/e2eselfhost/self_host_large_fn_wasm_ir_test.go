@@ -26,7 +26,7 @@ import (
 // the arithmetic — the assertion doesn't have to mirror the computation.
 func largeSingleFnProgram(n int) string {
 	var b strings.Builder
-	b.WriteString("function main(): i32 {\n    var acc: i32 = 0;\n")
+	b.WriteString("function main(): i32 {\n    let acc: i32 = 0;\n")
 	for i := 0; i < n; i++ {
 		s := strconv.Itoa(i)
 		b.WriteString("    acc = acc + " + s + " * 3 - " + s + " + (acc / 2) + (" + s + " % 7);\n")
@@ -40,7 +40,7 @@ func largeSingleFnProgram(n int) string {
 // exit 42. The point is the SIZE: at 240 statements the pre-#4652 quadratic
 // re-lowering needed ≈ 9 GB of bump arena, well past the 3.875 GiB cap, so the
 // driver was OOM-killed and produced no WAT. With the lower-once cache
-// (wasm_ir.lower_all_for, threaded through the gate + every collect pass) the
+// (the gate's `cache`, threaded through every collect pass) the
 // same compile is linear (≈ 0.3 GB), so this is a regression guard: reintroduce
 // the per-pass re-lowering and the driver OOMs (empty output / signal: killed)
 // instead of emitting a valid module.

@@ -26,18 +26,18 @@ const cmpAdaptiveSortProg = `
 import "core/cmp";
 
 function ref_sort(xs: i32[]): i32[] {
-    var a: i32[] = [];
-    var c: i32 = 0;
+    let a: i32[] = [];
+    let c: i32 = 0;
     while (c < xs.len()) { a = a.append(xs[c]); c = c + 1; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < a.len()) {
-        var m: i32 = i;
-        var j: i32 = i + 1;
+        let m: i32 = i;
+        let j: i32 = i + 1;
         while (j < a.len()) {
             if (a[j] < a[m]) { m = j; }
             j = j + 1;
         }
-        var t: i32 = a[i];
+        let t: i32 = a[i];
         a = a.with(i, a[m]);
         a = a.with(m, t);
         i = i + 1;
@@ -47,7 +47,7 @@ function ref_sort(xs: i32[]): i32[] {
 
 function eq_arr(x: i32[], y: i32[]): boolean {
     if (x.len() != y.len()) { return false; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < x.len()) {
         if (x[i] != y[i]) { return false; }
         i = i + 1;
@@ -56,7 +56,7 @@ function eq_arr(x: i32[], y: i32[]): boolean {
 }
 
 function nextr(x: i32): i32 {
-    var v: i32 = x;
+    let v: i32 = x;
     v = v ^ (v << 13);
     v = v ^ (v >> 17);
     v = v ^ (v << 5);
@@ -66,26 +66,26 @@ function nextr(x: i32): i32 {
 }
 
 function main(): i32 {
-    var seed: i32 = 12345;
+    let seed: i32 = 12345;
 
     // Every length from 0 to 80 -- straddling MIN_RUN (32) and the merge
     // rounds -- with only 7 distinct values so ties are dense.
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n <= 80) {
-        var trial: i32 = 0;
+        let trial: i32 = 0;
         while (trial < 4) {
-            var xs: i32[] = [];
-            var k: i32 = 0;
+            let xs: i32[] = [];
+            let k: i32 = 0;
             while (k < n) {
                 seed = nextr(seed);
                 xs = xs.append(seed % 7);
                 k = k + 1;
             }
-            var want: i32[] = ref_sort(xs);
+            let want: i32[] = ref_sort(xs);
             if (!eq_arr(cmp.sort(xs), want)) { return 1; }
 
-            var wantd: i32[] = [];
-            var z: i32 = want.len() - 1;
+            let wantd: i32[] = [];
+            let z: i32 = want.len() - 1;
             while (z >= 0) { wantd = wantd.append(want[z]); z = z - 1; }
             if (!eq_arr(cmp.sort_desc(xs), wantd)) { return 2; }
 
@@ -98,13 +98,13 @@ function main(): i32 {
 
     // The shapes natural-run detection exists for: already sorted, reverse
     // sorted, all equal, and a sorted run followed by a descending tail.
-    var m: i32 = 0;
+    let m: i32 = 0;
     while (m <= 70) {
-        var asc: i32[] = [];
-        var desc: i32[] = [];
-        var same: i32[] = [];
-        var mixed: i32[] = [];
-        var i2: i32 = 0;
+        let asc: i32[] = [];
+        let desc: i32[] = [];
+        let same: i32[] = [];
+        let mixed: i32[] = [];
+        let i2: i32 = 0;
         while (i2 < m) {
             asc = asc.append(i2);
             desc = desc.append(m - i2);
@@ -112,7 +112,7 @@ function main(): i32 {
             mixed = mixed.append(i2);
             i2 = i2 + 1;
         }
-        var i3: i32 = 0;
+        let i3: i32 = 0;
         while (i3 < m) { mixed = mixed.append(m - i3); i3 = i3 + 1; }
         if (!eq_arr(cmp.sort(asc), ref_sort(asc))) { return 4; }
         if (!eq_arr(cmp.sort(desc), ref_sort(desc))) { return 5; }
@@ -122,11 +122,11 @@ function main(): i32 {
     }
 
     // Edges.
-    var empty: i32[] = [];
+    let empty: i32[] = [];
     if (cmp.sort(empty).len() != 0) { return 8; }
-    var one: i32[] = [5];
+    let one: i32[] = [5];
     if (cmp.sort(one)[0] != 5) { return 9; }
-    var negs: i32[] = [3, 0 - 5, 0, 0 - 1, 7];
+    let negs: i32[] = [3, 0 - 5, 0, 0 - 1, 7];
     if (!eq_arr(cmp.sort(negs), ref_sort(negs))) { return 10; }
 
     return 42;
@@ -149,16 +149,16 @@ impl cmp.Ord for P {
 }
 
 function main(): i32 {
-    var xs: P[] = [];
-    var i: i32 = 0;
+    let xs: P[] = [];
+    let i: i32 = 0;
     while (i < 100) {
         xs = xs.append(P { key: (i * 37) % 5, tag: i });
         i = i + 1;
     }
 
-    var s: P[] = cmp.sort(xs);
+    let s: P[] = cmp.sort(xs);
     if (s.len() != 100) { return 1; }
-    var j: i32 = 1;
+    let j: i32 = 1;
     while (j < s.len()) {
         if (s[j - 1].key > s[j].key) { return 2; }
         // Stable: within an equal-key run, input order (tag) is preserved.
@@ -167,8 +167,8 @@ function main(): i32 {
     }
 
     // Descending reverses the groups but keeps input order WITHIN a group.
-    var d: P[] = cmp.sort_desc(xs);
-    var m: i32 = 1;
+    let d: P[] = cmp.sort_desc(xs);
+    let m: i32 = 1;
     while (m < d.len()) {
         if (d[m - 1].key < d[m].key) { return 4; }
         if (d[m - 1].key == d[m].key && d[m - 1].tag > d[m].tag) { return 5; }
@@ -176,11 +176,11 @@ function main(): i32 {
     }
 
     // An all-equal input is one big tie: a stable sort returns it unchanged.
-    var flat: P[] = [];
-    var f: i32 = 0;
+    let flat: P[] = [];
+    let f: i32 = 0;
     while (f < 60) { flat = flat.append(P { key: 7, tag: f }); f = f + 1; }
-    var fs: P[] = cmp.sort(flat);
-    var g: i32 = 0;
+    let fs: P[] = cmp.sort(flat);
+    let g: i32 = 0;
     while (g < 60) {
         if (fs[g].tag != g) { return 6; }
         g = g + 1;

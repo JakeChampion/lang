@@ -29,46 +29,46 @@ var genericNestedRetCases = []struct {
 }{
 	{"enumerate_f64", `import "std/array";
 function main(): i32 {
-    var xs: f64[] = [4.5];
-    var ps = array.enumerate(xs);
-    var (i, v) = ps[0];
+    let xs: f64[] = [4.5];
+    let ps = array.enumerate(xs);
+    let (i, v) = ps[0];
     return (v * 10.0) as i32 + i;
 }`}, // 45; was 255 on x86-64 and 0 on wasm
 	{"tuple_array_ret_local", `function enum2[T](xs: T[]): (i32, T)[] {
-    var out: (i32, T)[] = [];
-    var i: i32 = 0;
+    let out: (i32, T)[] = [];
+    let i: i32 = 0;
     while (i < xs.len()) { out = out.append((i, xs[i])); i = i + 1; }
     return out;
 }
-function main(): i32 { var xs: f64[] = [4.5]; var ps = enum2(xs); return (ps[0].1 * 10.0) as i32; }`}, // 45; was 255
+function main(): i32 { let xs: f64[] = [4.5]; let ps = enum2(xs); return (ps[0].1 * 10.0) as i32; }`}, // 45; was 255
 	{"tuple_array_ret_direct", `function enum2[T](xs: T[]): (i32, T)[] {
-    var out: (i32, T)[] = [];
-    var i: i32 = 0;
+    let out: (i32, T)[] = [];
+    let i: i32 = 0;
     while (i < xs.len()) { out = out.append((i, xs[i])); i = i + 1; }
     return out;
 }
-function main(): i32 { var xs: f64[] = [4.5]; return (enum2(xs)[0].1 * 10.0) as i32; }`}, // 45 — no local at all
+function main(): i32 { let xs: f64[] = [4.5]; return (enum2(xs)[0].1 * 10.0) as i32; }`}, // 45 — no local at all
 	{"tuple_array_ret_string", `function enum2[T](xs: T[]): (i32, T)[] {
-    var out: (i32, T)[] = [];
-    var i: i32 = 0;
+    let out: (i32, T)[] = [];
+    let i: i32 = 0;
     while (i < xs.len()) { out = out.append((i, xs[i])); i = i + 1; }
     return out;
 }
-function main(): i32 { var xs: string[] = ["abcde"]; var (i, s) = enum2(xs)[0]; return s.len() + 40 + i; }`}, // 45
+function main(): i32 { let xs: string[] = ["abcde"]; let (i, s) = enum2(xs)[0]; return s.len() + 40 + i; }`}, // 45
 	{"array_ret_control", `function dup[T](xs: T[]): T[] { return [xs[0], xs[0]]; }
-function main(): i32 { var xs: f64[] = [4.5]; var ys = dup(xs); return (ys[0] * 10.0) as i32; }`}, // 45 — generic, array return: always worked
+function main(): i32 { let xs: f64[] = [4.5]; let ys = dup(xs); return (ys[0] * 10.0) as i32; }`}, // 45 — generic, array return: always worked
 	{"bare_tuple_ret_control", `function pk[T](xs: T[]): (i32, T) { return (0, xs[0]); }
 function xs_of(): f64[] { return [4.5]; }
-function main(): i32 { var t = pk(xs_of()); return (t.1 * 10.0) as i32 + t.0; }`}, // 45 — generic, bare tuple return: always worked
+function main(): i32 { let t = pk(xs_of()); return (t.1 * 10.0) as i32 + t.0; }`}, // 45 — generic, bare tuple return: always worked
 	{"nongeneric_control", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { var ps = mk(); return (ps[0].1 * 10.0) as i32; }`}, // 45 — non-generic tuple-array: always worked
+function main(): i32 { let ps = mk(); return (ps[0].1 * 10.0) as i32; }`}, // 45 — non-generic tuple-array: always worked
 	{"annotated_control", `function enum2[T](xs: T[]): (i32, T)[] {
-    var out: (i32, T)[] = [];
-    var i: i32 = 0;
+    let out: (i32, T)[] = [];
+    let i: i32 = 0;
     while (i < xs.len()) { out = out.append((i, xs[i])); i = i + 1; }
     return out;
 }
-function main(): i32 { var xs: f64[] = [4.5]; var ps: (i32, f64)[] = enum2(xs); return (ps[0].1 * 10.0) as i32; }`}, // 45 — the annotation gave the slot a concrete arrarr_elem, bypassing the tag
+function main(): i32 { let xs: f64[] = [4.5]; let ps: (i32, f64)[] = enum2(xs); return (ps[0].1 * 10.0) as i32; }`}, // 45 — the annotation gave the slot a concrete arrarr_elem, bypassing the tag
 }
 
 // TestSelfHostGenericNestedRetX86_64 asserts values against the interp oracle on
@@ -108,7 +108,7 @@ func TestSelfHostGenericNestedRetX86_64(t *testing.T) {
 			}
 			_ = rcmd.Run()
 			if got := rcmd.ProcessState.ExitCode(); got != want {
-				t.Errorf("%s = %d, want %d (interp oracle) — a generic's return must resolve its type var from the arguments", tc.name, got, want)
+				t.Errorf("%s = %d, want %d (interp oracle) — a generic's return must resolve its type let from the arguments", tc.name, got, want)
 			}
 		})
 	}

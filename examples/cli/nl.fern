@@ -37,13 +37,13 @@ function slurp(path: string): string {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var o: Opts = Opts { body: "t", width: 6, sep: "\t", start: 1, incr: 1 };
-  var inputs: string[] = [];
+  let argv: string[] = args();
+  let o: Opts = Opts { body: "t", width: 6, sep: "\t", start: 1, incr: 1 };
+  let inputs: string[] = [];
 
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "-b" && i + 1 < argv.len()) {
       o = Opts { ...o, body: argv[i + 1] };
       i = i + 1;
@@ -68,15 +68,15 @@ function main(): i32 {
     inputs = inputs.append("-");
   }
 
-  var num: i32 = o.start;
-  var blanks: string = "".pad_start(o.width, " ");
-  var j: i32 = 0;
+  let num: i32 = o.start;
+  let blanks: string = "".pad_start(o.width, " ");
+  let j: i32 = 0;
   while (j < inputs.len()) {
-    var lines: string[] = slurp(inputs[j]).lines();
-    var k: i32 = 0;
+    let lines: string[] = slurp(inputs[j]).lines();
+    let k: i32 = 0;
     while (k < lines.len()) {
-      var line: string = lines[k];
-      var number_it: boolean = false;
+      let line: string = lines[k];
+      let number_it: boolean = false;
       if (o.body == "a") {
         number_it = true;
       } else if (o.body == "t") {

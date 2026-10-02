@@ -1,6 +1,6 @@
 function main(): i32 {
-    var s: string = "abcd";
-    var a: str = slice_unchecked(s, 0, 0);
-    var b: str = slice_unchecked(s, 0, 0);
+    let s: string = "abcd";
+    let a: str = slice_unchecked(s, 0, 0);
+    let b: str = slice_unchecked(s, 0, 0);
     return (a + b).len();
 }

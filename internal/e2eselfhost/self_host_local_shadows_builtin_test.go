@@ -13,14 +13,14 @@ func TestSelfHostLocalShadowsBuiltin(t *testing.T) {
 		expected int
 	}{
 		{"param", `function apply(x: i32, rename: (i32) => string): string {
-    var n: string = "";
+    let n: string = "";
     n = rename(x);
     return n;
 }
 function main(): i32 { return apply(3, (v: i32): string => "abc").len(); }`, 3},
 		{"local_lambda", `function main(): i32 {
-    var rename = (v: i32): string => "ab";
-    var n: string = rename(1);
+    let rename = (v: i32): string => "ab";
+    let n: string = rename(1);
     return n.len();
 }`, 2},
 	}

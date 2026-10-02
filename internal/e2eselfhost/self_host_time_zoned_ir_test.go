@@ -24,22 +24,22 @@ struct Tz { name: string, offset_seconds: i32 }
 struct Zd { instant: Moment, zone: Tz }
 struct DT { date: Civil, time: Clock }
 function civil_from_days(z_in: i32): Civil {
-    var z: i32 = z_in + 719468; var era: i32 = 0; if (z >= 0) { era = z / 146097; } else { era = (z - 146096) / 146097; }
-    var doe: i32 = z - era * 146097; var yoe: i32 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    var y: i32 = yoe + era * 400; var doy: i32 = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    var mp: i32 = (5 * doy + 2) / 153; var d: i32 = doy - (153 * mp + 2) / 5 + 1; var m: i32 = 0;
+    let z: i32 = z_in + 719468; let era: i32 = 0; if (z >= 0) { era = z / 146097; } else { era = (z - 146096) / 146097; }
+    let doe: i32 = z - era * 146097; let yoe: i32 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y: i32 = yoe + era * 400; let doy: i32 = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp: i32 = (5 * doy + 2) / 153; let d: i32 = doy - (153 * mp + 2) / 5 + 1; let m: i32 = 0;
     if (mp < 10) { m = mp + 3; } else { m = mp - 9; } if (m <= 2) { y = y + 1; }
     return Civil { year: y, month: m, day: d };
 }
 function in_zone(i: Moment, z: Tz): Zd { return Zd { instant: i, zone: z }; }
 function to_datetime(z: Zd): DT {
-    var spd: i64 = 86400 as i64;
-    var local_sec: i64 = z.instant.sec + (z.zone.offset_seconds as i64);
-    var days: i64 = local_sec / spd; var sec_in_day: i64 = local_sec - days * spd;
+    let spd: i64 = 86400 as i64;
+    let local_sec: i64 = z.instant.sec + (z.zone.offset_seconds as i64);
+    let days: i64 = local_sec / spd; let sec_in_day: i64 = local_sec - days * spd;
     if (sec_in_day < (0 as i64)) { sec_in_day = sec_in_day + spd; days = days - (1 as i64); }
-    var d: Civil = civil_from_days(days as i32);
-    var sid: i32 = sec_in_day as i32; var h: i32 = sid / 3600; var rem: i32 = sid - h * 3600;
-    var mn: i32 = rem / 60; var s: i32 = rem - mn * 60;
+    let d: Civil = civil_from_days(days as i32);
+    let sid: i32 = sec_in_day as i32; let h: i32 = sid / 3600; let rem: i32 = sid - h * 3600;
+    let mn: i32 = rem / 60; let s: i32 = rem - mn * 60;
     return DT { date: d, time: Clock { hour: h, minute: mn, second: s, nsec: z.instant.nsec } };
 }
 function timezone_iana(name: string): Option[Tz] {
@@ -56,13 +56,13 @@ var timeZonedIRCases = []struct {
 }{
 	// to_datetime wall-clock hour at +09:00 (Tokyo). 1718281496 UTC is
 	// 2024-06-13T12:24:56Z; +9h -> 21:24 local. hour = 21.
-	{"to-datetime-hour", `var m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; var zd: Zd = in_zone(m, Tz { name: "x", offset_seconds: 32400 }); return to_datetime(zd).time.hour;`},
+	{"to-datetime-hour", `let m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; let zd: Zd = in_zone(m, Tz { name: "x", offset_seconds: 32400 }); return to_datetime(zd).time.hour;`},
 	// Same instant, nested date field readout: day rolls to 13 (still 13 here).
-	{"to-datetime-day", `var m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; var zd: Zd = in_zone(m, Tz { name: "x", offset_seconds: 32400 }); return to_datetime(zd).date.day;`},
+	{"to-datetime-day", `let m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; let zd: Zd = in_zone(m, Tz { name: "x", offset_seconds: 32400 }); return to_datetime(zd).date.day;`},
 	// Negative offset (-05:00) pulls wall-clock back across midnight: 12:24Z -> 07:24. hour = 7.
-	{"to-datetime-neg-offset", `var m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; var zd: Zd = in_zone(m, Tz { name: "x", offset_seconds: 0 - 18000 }); return to_datetime(zd).time.hour;`},
+	{"to-datetime-neg-offset", `let m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; let zd: Zd = in_zone(m, Tz { name: "x", offset_seconds: 0 - 18000 }); return to_datetime(zd).time.hour;`},
 	// in_zone preserves the instant: read it back through the nested field.
-	{"in-zone-roundtrip", `var m: Moment = Moment { sec: 90 as i64, nsec: 0 }; var zd: Zd = in_zone(m, Tz { name: "x", offset_seconds: 0 }); return zd.instant.sec as i32;`},
+	{"in-zone-roundtrip", `let m: Moment = Moment { sec: 90 as i64, nsec: 0 }; let zd: Zd = in_zone(m, Tz { name: "x", offset_seconds: 0 }); return zd.instant.sec as i32;`},
 	// timezone_iana hit -> Some; read the nested offset (Tokyo = 32400 / 3600 = 9).
 	{"iana-hit-offset", `match (timezone_iana("Asia/Tokyo")) { Some(z) => { return z.offset_seconds / 3600; }, None => { return 100; }, }`},
 	// timezone_iana UTC -> Some; offset 0.
@@ -70,7 +70,7 @@ var timeZonedIRCases = []struct {
 	// timezone_iana miss -> None -> sentinel 7.
 	{"iana-miss", `match (timezone_iana("Mars/Olympus")) { Some(z) => { return 0; }, None => { return 7; }, }`},
 	// Compose: look up a zone, then use it through in_zone + to_datetime.
-	{"iana-then-datetime", `match (timezone_iana("Asia/Tokyo")) { Some(z) => { var m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; return to_datetime(in_zone(m, z)).time.hour; }, None => { return 100; }, }`},
+	{"iana-then-datetime", `match (timezone_iana("Asia/Tokyo")) { Some(z) => { let m: Moment = Moment { sec: 1718281496 as i64, nsec: 0 }; return to_datetime(in_zone(m, z)).time.hour; }, None => { return 100; }, }`},
 }
 
 func timeZonedIRSrc(mainBody string) string {

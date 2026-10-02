@@ -9,7 +9,7 @@ import (
 // Literal-sized buffer reclamation (scalar-arg taint, docs/RC-PERCEUS-PLAN.md).
 // rhsTainted used to taint EVERY NumberLit (it fell through to the conservative
 // default), so a fresh owned buffer whose only "borrowed" input is a literal
-// size arg — `var b: u8[] = __alloc_u8(8)` — read as ineligible and was not
+// size arg — `let b: u8[] = __alloc_u8(8)` — read as ineligible and was not
 // reclaimed at its last reference. NumberLit/FloatLit/BoolLit are now untainted
 // (they alias nothing), so such a pure temp reclaims, lowering the steady-state
 // heap high-water of hot scratch-buffer code (e.g. int_to_string_radix's
@@ -28,11 +28,11 @@ import (
 
 func literalAllocBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var b: u8[] = __alloc_u8(8);
+        let b: u8[] = __alloc_u8(8);
         b = b.with(0, (i % 200) as u8);
         b = b.with(1, ((i + 1) % 200) as u8);
         acc = acc + (b[0] as i32) + (b[1] as i32);

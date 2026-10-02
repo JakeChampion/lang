@@ -93,8 +93,8 @@ var allocScaleCases = []allocScaleCase{
 		// this is where it shows.
 		name: "array-append",
 		decls: `function churn(n: i32): i32 {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i); i = i + 1; }
     return a.len();
 }`,
@@ -109,8 +109,8 @@ var allocScaleCases = []allocScaleCase{
 		name: "array-append-through-call",
 		decls: `function step(acc: i32[], v: i32): i32[] { return acc.append(v); }
 function churn(n: i32): i32 {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = step(a, i); i = i + 1; }
     return a.len();
 }`,
@@ -124,8 +124,8 @@ function churn(n: i32): i32 {
 		name: "string-parts-join",
 		decls: `import "std/string";
 function churn(n: i32): i32 {
-    var parts: string[] = [];
-    var i: i32 = 0;
+    let parts: string[] = [];
+    let i: i32 = 0;
     while (i < n) { parts = parts.append("item"); i = i + 1; }
     return parts.join(",").len();
 }`,
@@ -139,8 +139,8 @@ function churn(n: i32): i32 {
 		decls: `import "std/i32";
 import "core/map";
 function churn(n: i32): i32 {
-    var m: Map[string, i32] = map_new(8);
-    var i: i32 = 0;
+    let m: Map[string, i32] = map_new(8);
+    let i: i32 = 0;
     while (i < n) { m = m.insert(i.to_string(), i); i = i + 1; }
     return m.len();
 }`,
@@ -155,10 +155,10 @@ function churn(n: i32): i32 {
 		name: "substring-search",
 		decls: `import "std/string";
 function churn(n: i32): i32 {
-    var hay: string[] = [];
-    var i: i32 = 0;
+    let hay: string[] = [];
+    let i: i32 = 0;
     while (i < n) { hay = hay.append("abcab"); i = i + 1; }
-    var s: string = hay.join("");
+    let s: string = hay.join("");
     return s.index_of("abcabx") + s.index_of("bcab") + 2;
 }`,
 		n:        400,
@@ -181,8 +181,8 @@ function churn(n: i32): i32 {
 		decls: `struct P { a: i32, b: i32 }
 struct Box { items: P[], tag: i32 }
 function churn(n: i32): i32 {
-    var b: Box = Box { items: [P { a: 0, b: 0 }, P { a: 0, b: 0 }], tag: 0 };
-    var i: i32 = 0;
+    let b: Box = Box { items: [P { a: 0, b: 0 }, P { a: 0, b: 0 }], tag: 0 };
+    let i: i32 = 0;
     while (i < n) {
         b = Box { ...b, items: b.items.with(i % 2, P { a: i, b: i + 1 }) };
         i = i + 1;
@@ -204,16 +204,16 @@ function churn(n: i32): i32 {
 		name: "string-array-with",
 		decls: `import "std/i32";
 function mks(): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
+    let out: string[] = [];
+    let i: i32 = 0;
     while (i < 8) { out = out.append("kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; }
     return out;
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var a: string[] = mks();
+        let a: string[] = mks();
         a = a.with(3, a[5]);
         t = t + a.len();
         i = i + 1;
@@ -238,13 +238,13 @@ function churn(n: i32): i32 {
 struct P { name: string, f: (i32) => i32 }
 function mkP(n: i32): P { return P { name: "provider" + n.to_string(), f: (x: i32) => x + n }; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < n) {
-        var ps: P[] = [];
-        var i: i32 = 0;
+        let ps: P[] = [];
+        let i: i32 = 0;
         while (i < 8) { ps = ps.append(mkP(i)); i = i + 1; }
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < ps.len()) { t = t + (ps[j].f)(1); j = j + 1; }
         r = r + 1;
     }
@@ -264,13 +264,13 @@ function churn(n: i32): i32 {
 		name: "closure-call-array-arg",
 		decls: `import "std/i32";
 function each(f: (i32[]) => i32, n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + f([1, 2, i]); i = i + 1; }
     return t;
 }
 function churn(n: i32): i32 {
-    var h: (i32[]) => i32 = (xs: i32[]) => xs.len();
+    let h: (i32[]) => i32 = (xs: i32[]) => xs.len();
     return each(h, n) % 7;
 }`,
 		n:        400,
@@ -280,7 +280,7 @@ function churn(n: i32): i32 {
 		// Reading a POINTER field off a call result (#6401) — `mk().items`,
 		// `config().hosts`, `parse(s).body`. The container is a temporary
 		// nobody holds, so nothing released it: 96 B a round, unbounded,
-		// while `var b = mk(); b.items` was flat. The scalar-field form of
+		// while `let b = mk(); b.items` was flat. The scalar-field form of
 		// the same read was already reclaimed; the pointer form was left out
 		// because the loaded value aliases the box, which is exactly what
 		// makes it need a retain before the container's deep drop rather
@@ -294,10 +294,10 @@ struct P { a: i32, b: i32 }
 struct Box { items: P[], tag: i32 }
 function mk_box(i: i32): Box { return Box { items: [P { a: i, b: i }, P { a: i, b: i }], tag: i }; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var a: P[] = mk_box(i).items;
+        let a: P[] = mk_box(i).items;
         t = t + a[0].a;
         i = i + 1;
     }
@@ -319,12 +319,12 @@ function churn(n: i32): i32 {
 		decls: `struct R { tag: string, note: string, n: i32 }
 function mk(): R { return R { tag: "base", note: "", n: 0 }; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var a: R = R { ...mk(), n: i };
-        var b: R = R { ...R { tag: "inner", note: "x", n: 0 }, n: i };
-        var c: R = R { ...R { ...mk(), note: "mid" }, n: i };
+        let a: R = R { ...mk(), n: i };
+        let b: R = R { ...R { tag: "inner", note: "x", n: 0 }, n: i };
+        let c: R = R { ...R { ...mk(), note: "mid" }, n: i };
         t = t + a.n + b.note.len() + c.note.len();
         i = i + 1;
     }
@@ -357,8 +357,8 @@ function mkstruct(k: i32): Option[P] {
     return Some(P { a: k, b: k + 1 });
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         match (mkarr(1)) { Some(a) => { t = t + a[0]; }, None => { }, }
         match (mkstruct(1)) { Some(p) => { t = t + p.b; }, None => { }, }
@@ -406,8 +406,8 @@ function mkr(k: i32): Result[(i32, i32), (i32, i32)] {
     return Ok((k, k + 1));
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         match (mkt(1))  { Some(a) => { t = t + a.0; }, None => { }, }
         match (mkta(1)) { Some(a) => { t = t + a.1; }, None => { }, }
@@ -449,11 +449,11 @@ function mkstruct(k: i32): Option[P] {
     if (k == 0) { return None; }
     return Some(P { a: k, b: k + 1 });
 }
-function total(a: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }
+function total(a: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }
 function pb(p: P): i32 { return p.b; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         match (mkarr(1))    { Some(a) => { t = t + a.len(); }, None => { }, }
         match (mkarr(1))    { Some(a) => { t = t + total(a); }, None => { }, }
@@ -477,7 +477,7 @@ function churn(n: i32): i32 {
 		// Both halves leaked, which is what the payload-size dimension shows:
 		// 3 elements measured 64 B/round (32 box + 32 buffer) and 20 elements
 		// 128 B, so the array is in the figure and not just the box. The
-		// struct payload is the third shape and the `var o = mk(1)` spelling
+		// struct payload is the third shape and the `let o = mk(1)` spelling
 		// is the control that was flat all along — one source line apart from
 		// the leaking one.
 		//
@@ -503,13 +503,13 @@ function facS(o: Option[S2]): i32 {
     match (o) { Some(s) => { return s.a; }, None => { return 0; }, }
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         t = t + fac(mk3(1));
         t = t + fac(mk20(1));
         t = t + facS(mkS(1));
-        var o: Option[i32[]] = mk3(1);
+        let o: Option[i32[]] = mk3(1);
         t = t + fac(o);
         i = i + 1;
     }
@@ -554,8 +554,8 @@ function mk_qbox(k: i32): QBox {
 function sink(ps: P[]): i32 { return ps.len(); }
 function sinks(ns: string[]): i32 { return ns.len(); }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         t = t + sink(mk_box(1).items);
         t = t + sinks(mk_sbox(1).names);
@@ -570,7 +570,7 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
-		// Binding a tuple's STRUCT element to a local — `var q: P = p.1` —
+		// Binding a tuple's STRUCT element to a local — `let q: P = p.1` —
 		// incs at the binding site and was never credited with owning the
 		// reference, so the element leaked once per extraction, unbounded.
 		//
@@ -591,12 +591,12 @@ function churn(n: i32): i32 {
 		decls: `struct P { a: i32, b: i32, c: i32 }
 function pull(s: P): (i32, P) { return (s.a, P { a: s.a + 1, b: s.b, c: s.c }); }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var s: P = P { a: 0, b: 0, c: 0 };
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let s: P = P { a: 0, b: 0, c: 0 };
+    let i: i32 = 0;
     while (i < n) {
-        var p: (i32, P) = pull(s);
-        var q: P = p.1;
+        let p: (i32, P) = pull(s);
+        let q: P = p.1;
         t = t + q.a;
         s = q;
         i = i + 1;
@@ -607,7 +607,7 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
-		// The array half of the family above — `var a: Entry = es[0]` on a
+		// The array half of the family above — `let a: Entry = es[0]` on a
 		// struct-of-strings array (#6499). The binding's exit sweep reclaims
 		// the struct box inline rather than through the generated drop fn,
 		// and its native single-word string arm released each field with a
@@ -629,19 +629,19 @@ function churn(n: i32): i32 {
 struct Entry { key: string, value: string }
 function wide(k: i32): string { return "a-value-well-past-the-inline-threshold-" + k.to_string(); }
 function mk(k: i32): Entry[] {
-    var es: Entry[] = [];
-    var i: i32 = 0;
+    let es: Entry[] = [];
+    let i: i32 = 0;
     while (i < 4) { es = es.append(Entry { key: wide(k + i), value: wide(k + i + 100) }); i = i + 1; }
     return es;
 }
 function probe(k: i32): i32 {
-    var es: Entry[] = mk(k);
-    var a: Entry = es[0];
+    let es: Entry[] = mk(k);
+    let a: Entry = es[0];
     return es.len() + a.key.len();
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + probe(i); i = i + 1; }
     return t % 7;
 }`,
@@ -661,15 +661,15 @@ function churn(n: i32): i32 {
 		// Constant in n: two nodes, each with one array, per round.
 		name: "fresh-array-into-constructor",
 		decls: `struct Node { name: string, deps: string[], mtime: i32, exists: boolean }
-function no_deps(): string[] { var e: string[] = []; return e; }
+function no_deps(): string[] { let e: string[] = []; return e; }
 function node(name: string, deps: string[], mtime: i32): Node {
     return Node { name: name, deps: deps, mtime: mtime, exists: true };
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var out: Node[] = [];
+        let out: Node[] = [];
         out = out.append(node("alpha", no_deps(), i));
         out = out.append(node("beta", no_deps(), i + 1));
         t = t + out.len();
@@ -698,16 +698,16 @@ function churn(n: i32): i32 {
 		name: "param-append-consumed",
 		decls: `function sink(xs: i32[]): i32 { return xs.len(); }
 function walk(path: i32[]): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 8) { t = t + sink(path.append(i)); i = i + 1; }
     return t;
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var seed: i32[] = [0];
+        let seed: i32[] = [0];
         t = t + walk(seed) + sink(seed.append(i));
         i = i + 1;
     }
@@ -728,10 +728,10 @@ function churn(n: i32): i32 {
 		name: "array-element-append-consumed",
 		decls: `function sink(xs: i32[]): i32 { return xs.len(); }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var xs: i32[][] = [[0], [1]];
+        let xs: i32[][] = [[0], [1]];
         t = t + sink(xs[0].append(9)) + sink(xs[1].append(9)) + sink(xs[0]);
         i = i + 1;
     }
@@ -752,10 +752,10 @@ function churn(n: i32): i32 {
 		decls: `struct S { xs: i32[], tag: i32 }
 function mk(): S { return S { xs: [1, 2], tag: 0 }; }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32[] = mk().xs.with(0, i);
+        let b: i32[] = mk().xs.with(0, i);
         t = t + b[0];
         i = i + 1;
     }
@@ -778,19 +778,19 @@ function churn(n: i32): i32 {
 struct W { name: string, n: i32 }
 struct Acc { last: string, total: i32 }
 function mk(k: i32): W {
-    var s: string = "payload-string-" + k.to_string();
+    let s: string = "payload-string-" + k.to_string();
     return W { name: s, n: k };
 }
 function step(a: Acc, k: i32): Acc {
-    var s: string = "acc-payload-" + k.to_string();
+    let s: string = "acc-payload-" + k.to_string();
     return Acc { last: s, total: a.total + k };
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var a: Acc = Acc { last: "", total: 0 };
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let a: Acc = Acc { last: "", total: 0 };
+    let i: i32 = 0;
     while (i < n) {
-        var w: W = mk(i % 8);
+        let w: W = mk(i % 8);
         a = step(a, i % 8);
         t = t + w.name.len() + a.last.len();
         i = i + 1;
@@ -815,15 +815,15 @@ function churn(n: i32): i32 {
 import "std/string";
 function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen);
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var base: string = "long-enough-payload-" + (i % 8).to_string();
+        let base: string = "long-enough-payload-" + (i % 8).to_string();
         t = t + base.tail(2).len() + base.tail(3).to_owned().len();
         i = i + 1;
     }
@@ -845,14 +845,14 @@ function churn(n: i32): i32 {
 		name: "nested-string-array-drop",
 		decls: `import "std/i32";
 function mk(k: i32): string[][] {
-    var inner: string[] = ["alpha-payload-" + k.to_string(), "beta-payload-" + k.to_string()];
+    let inner: string[] = ["alpha-payload-" + k.to_string(), "beta-payload-" + k.to_string()];
     return [inner, ["gamma-payload-" + k.to_string()]];
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var a: string[][] = mk(i % 8);
+        let a: string[][] = mk(i % 8);
         t = t + a[0][0].len() + a[1][0].len();
         i = i + 1;
     }
@@ -878,8 +878,8 @@ function pick(i: i64): i32 {
     match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => { return 0; } }
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + pick(i as i64); i = i + 1; }
     return t % 7;
 }`,
@@ -896,10 +896,10 @@ function pick(m: Map[string, i32], k: string): i32 {
     match (m.get(k)) { Some(v) => { return v + 1; }, None => { return 0; } }
 }
 function churn(n: i32): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a", 1);
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + pick(m, "a"); i = i + 1; }
     return t % 7;
 }`,
@@ -910,7 +910,7 @@ function churn(n: i32): i32 {
 		// A state record threaded through a CHAIN OF DISTINCT LOCALS, each
 		// link appending to an array field — the shape every lowering and
 		// emit function in the self-host compiler is written in
-		// (`var s1 = sc.emit(op); var s2 = lower_block(body, s1);`).
+		// (`let s1 = sc.emit(op); let s2 = lower_block(body, s1);`).
 		//
 		// It was quadratic, at 4x per doubling, and the reason was entirely
 		// caller-side. #4873's containment bracket incs an argument's field
@@ -933,15 +933,15 @@ function (s: St) emit(op: Op): St {
     return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };
 }
 function step(s: St, k: i32): St {
-    var a: St = s.emit(Op { tag: k, note: "" });
-    var b: St = a.emit(Op { tag: k + 1, note: "" });
-    var c: St = b.emit(Op { tag: k + 2, note: "" });
-    var d: St = c.emit(Op { tag: k + 3, note: "" });
+    let a: St = s.emit(Op { tag: k, note: "" });
+    let b: St = a.emit(Op { tag: k + 1, note: "" });
+    let c: St = b.emit(Op { tag: k + 2, note: "" });
+    let d: St = c.emit(Op { tag: k + 3, note: "" });
     return d;
 }
 function churn(n: i32): i32 {
-    var s: St = St { ops: [], names: [], ctrl: 0, who: "x" };
-    var i: i32 = 0;
+    let s: St = St { ops: [], names: [], ctrl: 0, who: "x" };
+    let i: i32 = 0;
     while (i < n) { s = step(s, i * 4); i = i + 1; }
     return s.ops.len() + s.ctrl;
 }`,
@@ -958,8 +958,8 @@ function churn(n: i32): i32 {
 		name: "string-concat-fold",
 		decls: `import "std/string";
 function churn(n: i32): i32 {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < n) { s = s + "x"; i = i + 1; }
     return s.len();
 }`,
@@ -979,9 +979,9 @@ func (c allocScaleCase) volumeSrc(n int) string {
 	return fmt.Sprintf(`import "std/i64";
 %s
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var w: i32 = churn(%d);
-    var b1: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let w: i32 = churn(%d);
+    let b1: i64 = __heap_bump_bytes();
     if (w < 0) { return 251; }
     print("VOLUME " + (b1 - b0).to_string());
     return 0;

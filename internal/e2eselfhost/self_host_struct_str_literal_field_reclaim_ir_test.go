@@ -65,15 +65,15 @@ func TestSelfHostStructStrLiteralFieldReclaimIRX86_64(t *testing.T) {
 	// allocates the struct box plus the literal's string box; both must be
 	// reclaimed, so the churn stays flat.
 	run(t, `struct B { name: string, n: i32 }
-function round(i: i32): i32 { var b: B = B { name: "abc", n: i }; return b.n; }
+function round(i: i32): i32 { let b: B = B { name: "abc", n: i }; return b.n; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { t = t + round(i); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 4000) { t = t + round(j); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (t <= 0) { return 97; }
@@ -85,13 +85,13 @@ function main(): i32 {
 	run(t, `struct B { name: string, n: i32 }
 function step(b: B): B { return B { name: "xy", n: b.n + 1 }; }
 function main(): i32 {
-    var b: B = B { name: "abc", n: 0 };
-    var i: i32 = 0;
+    let b: B = B { name: "abc", n: 0 };
+    let i: i32 = 0;
     while (i < 200) { b = step(b); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 4000) { b = step(b); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (b.name.len() != 2) { return 97; }
@@ -103,8 +103,8 @@ function main(): i32 {
 	run(t, `struct B { name: string, n: i32 }
 function bump(b: B): B { return B { ...b, n: b.n + 1 }; }
 function main(): i32 {
-    var b: B = B { name: "abcd", n: 0 };
-    var i: i32 = 0;
+    let b: B = B { name: "abcd", n: 0 };
+    let i: i32 = 0;
     while (i < 2000) { b = bump(b); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (b.name.len() != 4) { return 97; }
@@ -112,16 +112,16 @@ function main(): i32 {
     return 0;
 }`, "str-literal-field-carried-safe", 0)
 
-	// ALIASED READ: `var t = b.name` is a direct var-init, which the scan treats
+	// ALIASED READ: `let t = b.name` is a direct var-init, which the scan treats
 	// as safe because the read-side alias-inc retains it. It must stay readable
 	// after the rebind releases the replaced literal box.
 	run(t, `struct B { name: string, n: i32 }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 1000) {
-        var b: B = B { name: "abc", n: i };
-        var t: string = b.name;
+        let b: B = B { name: "abc", n: i };
+        let t: string = b.name;
         b = B { name: "wxyz", n: i };
         if (t.len() != 3) { bad = 1; }
         if (b.name.len() != 4) { bad = 1; }
@@ -139,11 +139,11 @@ function main(): i32 {
 	run(t, `struct B { name: string, n: i32 }
 function mk(i: i32): B { return B { name: "leaf", n: i }; }
 function main(): i32 {
-    var acc: string[] = [];
-    var i: i32 = 0;
-    while (i < 200) { var b: B = mk(i); acc = acc.append(b.name); i = i + 1; }
-    var bad: i32 = 0;
-    var k: i32 = 0;
+    let acc: string[] = [];
+    let i: i32 = 0;
+    while (i < 200) { let b: B = mk(i); acc = acc.append(b.name); i = i + 1; }
+    let bad: i32 = 0;
+    let k: i32 = 0;
     while (k < acc.len()) { if (acc[k].len() != 4) { bad = 1; } k = k + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
@@ -155,10 +155,10 @@ function main(): i32 {
 	run(t, `struct B { name: string, n: i32 }
 function take(s: string): i32 { return s.len(); }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 1000) {
-        var b: B = B { name: "abc", n: i };
+        let b: B = B { name: "abc", n: i };
         if (take(b.name) != 3) { bad = 1; }
         b = B { name: "de", n: i + 1 };
         if (take(b.name) != 2) { bad = 1; }
@@ -175,13 +175,13 @@ function main(): i32 {
 	run(t, `struct S { xs: i32[], a: string, b: string, n: i32 }
 function step(s: S): S { return S { xs: [s.n], a: "lit", b: s.b + "x", n: s.n + 1 }; }
 function main(): i32 {
-    var s: S = S { xs: [1], a: "lit", b: "a" + "b", n: 0 };
-    var i: i32 = 0;
+    let s: S = S { xs: [1], a: "lit", b: "a" + "b", n: 0 };
+    let i: i32 = 0;
     while (i < 200) { s = step(s); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 2000) { s = S { xs: [1], a: "lit", b: "a" + "b", n: 0 }; var k: i32 = 0; while (k < 3) { s = step(s); k = k + 1; } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 2000) { s = S { xs: [1], a: "lit", b: "a" + "b", n: 0 }; let k: i32 = 0; while (k < 3) { s = step(s); k = k + 1; } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (s.a.len() != 3) { return 97; }

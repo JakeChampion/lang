@@ -27,27 +27,27 @@ var deriveStdlibCases = []struct {
 	{"hash-struct", `import "core/cmp";
 @derive(cmp.Hash)
 struct P { x: i32, y: i32 }
-function main(): i32 { var a = P { x: 3, y: 5 }; var b = P { x: 3, y: 5 }; var c = P { x: 3, y: 6 }; if (a.hash() == b.hash() && a.hash() != c.hash()) { return 42; } return 0; }`},
+function main(): i32 { let a = P { x: 3, y: 5 }; let b = P { x: 3, y: 5 }; let c = P { x: 3, y: 6 }; if (a.hash() == b.hash() && a.hash() != c.hash()) { return 42; } return 0; }`},
 	{"hash-string-field", `import "core/cmp";
 @derive(cmp.Hash)
 struct S { name: string, n: i32 }
-function main(): i32 { var a = S { name: "hi", n: 1 }; var b = S { name: "hi", n: 1 }; if (a.hash() == b.hash()) { return 7; } return 0; }`},
+function main(): i32 { let a = S { name: "hi", n: 1 }; let b = S { name: "hi", n: 1 }; if (a.hash() == b.hash()) { return 7; } return 0; }`},
 	{"json-struct", `import "std/json";
 @derive(json.Json)
 struct P { x: i32, name: string }
-function main(): i32 { var a = P { x: 7, name: "hi" }; return a.to_json().len(); }`},
+function main(): i32 { let a = P { x: 7, name: "hi" }; return a.to_json().len(); }`},
 	// `@derive(json.FromJson)` synthesises the decoder `from_json_value(v)`
 	// and its text-taking companion `from_json(s): Result[Self, string]` —
 	// the self-host twin of native's synthFromJsonValue. Each case exercises
 	// a distinct way the associated call `User.from_json(...)` is consumed,
 	// all of which must route IR (the associated-call Option/Result
-	// return-type recovery in irlower's four scrutinee/binding sites) and
+	// return-type recovery in the lowering's scrutinee/binding sites) and
 	// match the interpreter. A direct `match (User.from_json(...))` over
 	// valid / missing-field / invalid-JSON inputs → 9 + 7 + 5 = 21.
 	{"json-from-struct", `import "std/json";
 @derive(json.FromJson) struct User { id: i32, name: string }
 function main(): i32 {
-    var sum: i32 = 0;
+    let sum: i32 = 0;
     match (User.from_json("{\"id\":9,\"name\":\"x\"}")) { Ok(u) => { sum = sum + u.id; }, Err(e) => { sum = sum + 100; } }
     match (User.from_json("{\"id\":1}")) { Ok(u2) => { sum = sum + 100; }, Err(e) => { sum = sum + 7; } }
     match (User.from_json("nope")) { Ok(u3) => { sum = sum + 100; }, Err(e) => { sum = sum + 5; } }
@@ -68,17 +68,17 @@ function main(): i32 {
 	{"json-roundtrip-bool", `import "std/json";
 @derive(json.Json, json.FromJson) struct Flag { id: i32, on: boolean, off: boolean }
 function main(): i32 {
-    var f = Flag { id: 5, on: true, off: false };
-    match (Flag.from_json(f.to_json())) { Ok(g) => { var r = g.id; if (g.on) { r = r + 10; } if (!g.off) { r = r + 100; } return r; }, Err(e) => { return 1; } }
+    let f = Flag { id: 5, on: true, off: false };
+    match (Flag.from_json(f.to_json())) { Ok(g) => { let r = g.id; if (g.on) { r = r + 10; } if (!g.off) { r = r + 100; } return r; }, Err(e) => { return 1; } }
 }`},
-	// The `var r = User.from_json(...)` binding form AND `?`-propagation of an
+	// The `let r = User.from_json(...)` binding form AND `?`-propagation of an
 	// associated-call Result through a helper → 8 + 3 = 11.
 	{"json-from-var-try", `import "std/json";
 @derive(json.FromJson) struct User { id: i32, name: string }
-function pick(s: string): Result[i32, string] { var u: User = User.from_json(s)?; return Ok(u.id); }
+function pick(s: string): Result[i32, string] { let u: User = User.from_json(s)?; return Ok(u.id); }
 function main(): i32 {
-    var r = User.from_json("{\"id\":8,\"name\":\"y\"}");
-    var a = 0;
+    let r = User.from_json("{\"id\":8,\"name\":\"y\"}");
+    let a = 0;
     match (r) { Ok(u) => { a = u.id; }, Err(e) => { a = 100; } }
     match (pick("{\"id\":3,\"name\":\"z\"}")) { Ok(n) => { a = a + n; }, Err(e) => { a = a + 100; } }
     return a;
@@ -87,18 +87,18 @@ function main(): i32 {
 	{"json-roundtrip", `import "std/json";
 @derive(json.Json, json.FromJson) struct P { x: i32, name: string }
 function main(): i32 {
-    var p = P { x: 7, name: "hi" };
+    let p = P { x: 7, name: "hi" };
     match (P.from_json(p.to_json())) { Ok(q) => { return q.x; }, Err(e) => { return 1; } }
 }`},
 	{"ord-string-key", `import "core/cmp";
 @derive(cmp.Ord)
 struct S { name: string, id: i32 }
-function main(): i32 { var a = S { name: "abc", id: 1 }; var b = S { name: "abd", id: 1 }; if (a.cmp(b) < 0 && b.cmp(a) > 0 && a.cmp(a) == 0) { return 42; } return 0; }`},
+function main(): i32 { let a = S { name: "abc", id: 1 }; let b = S { name: "abd", id: 1 }; if (a.cmp(b) < 0 && b.cmp(a) > 0 && a.cmp(a) == 0) { return 42; } return 0; }`},
 	{"combined-all", `import "core/cmp";
 import "std/json";
 @derive(cmp.Eq, cmp.Ord, cmp.Hash, json.Json)
 struct Rec { name: string, id: i32 }
-function main(): i32 { var a = Rec { name: "x", id: 1 }; var b = Rec { name: "y", id: 2 }; var n = 0; if (a.eq(a)) { n = n + 1; } if (a.cmp(b) < 0) { n = n + 1; } if (a.hash() != b.hash()) { n = n + 1; } if (a.to_json().len() > 0) { n = n + 1; } return n; }`},
+function main(): i32 { let a = Rec { name: "x", id: 1 }; let b = Rec { name: "y", id: 2 }; let n = 0; if (a.eq(a)) { n = n + 1; } if (a.cmp(b) < 0) { n = n + 1; } if (a.hash() != b.hash()) { n = n + 1; } if (a.to_json().len() > 0) { n = n + 1; } return n; }`},
 }
 
 func TestSelfHostDeriveStdlibIR(t *testing.T) {

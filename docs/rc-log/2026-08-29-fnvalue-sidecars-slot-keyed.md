@@ -18,7 +18,7 @@ seeds parameters before body locals — so it answers with the **outermost**.
 Both are used in one expression, at the indirect call:
 
 ```
-var icslot: i32 = s.slot_of(cid.name);        // the innermost binding
+let icslot: i32 = s.slot_of(cid.name);        // the innermost binding
 …
 op_call_indirect_sig(c.args.len(), s.fn_value_sig(cid.name, false))  // the outermost
 ```
@@ -28,7 +28,7 @@ no shape in which they can both be right, and the two sites are five lines apart
 
 ## Why no probe could reach it, and how long that took to notice
 
-Three programs — a nested `var g` shadowing a top-level fn-typed local, one per
+Three programs — a nested `let g` shadowing a top-level fn-typed local, one per
 sidecar — each diverged from the interpreter, each with a one-token rename
 control that did not:
 
@@ -77,16 +77,16 @@ binding site stamps the slot it creates. Parameters need no hand-off — their
 slots are the frame layout `lower_func` has just built, so they are stamped into
 `locals0` directly.
 
-Two binding paths consume the seed, because two paths bind a fn-typed `var`:
+Two binding paths consume the seed, because two paths bind a fn-typed `let`:
 `bind_var_slot` and `lower_stmt_var_closure`, which does not route through it.
 Missing the second would have silently unseeded every annotated
-`var f: (i64) => boolean = |x| …` — the shape #6862 exists for.
+`let f: (i64) => boolean = |x| …` — the shape #6862 exists for.
 
 ## The admission is deliberately unchanged
 
 Only the KEY moved. The pre-pass still walks the function's TOP LEVEL only, so a
 fn-typed local declared inside a block is still unseeded and still falls back to
 the arity-keyed `$fn<N>` funcref type. That fallback is correct for an all-i32
-signature and wrong for a wide one, so a nested `var g: (i64) => i64` is a
+signature and wrong for a wide one, so a nested `let g: (i64) => i64` is a
 separate open gap — reachable, not fixed here, and now at least not able to
 inherit an unrelated binding's answer.

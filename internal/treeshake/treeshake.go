@@ -255,7 +255,7 @@ func nominalKeyName(t ast.Type) string {
 
 // Run mutates `prog.Funcs` to retain only functions reachable
 // from the program's entry points. Function-typed values
-// (e.g. `var f = some_func; ... f();`) keep `some_func` alive
+// (e.g. `let f = some_func; ... f();`) keep `some_func` alive
 // since the Ident reference appears in the body of the
 // containing function.
 //

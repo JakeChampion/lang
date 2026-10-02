@@ -46,7 +46,7 @@ var p3EchoStringCore = []byte{
 // data:
 //
 //	@import("test:dep/d","echo") async function echo(s: string): string;
-//	async function run(): i32 { var r: string = echo("hello"); return r.len(); }
+//	async function run(): i32 { let r: string = echo("hello"); return r.len(); }
 //
 // The wasmbin async-import wrapper (the generalised buildExternAsyncMemParamWrapper)
 // marshals the "hello" argument to a canonical (ptr, len) in the consumer's
@@ -63,7 +63,7 @@ func TestWasmP3AsyncImportStringParamStringResultFromFern(t *testing.T) {
 	skipIfPreview2Missing(t) // ensures wasmtime on PATH
 
 	src := `@import("test:dep/d", "echo") async function echo(s: string): string;
-async function run(): i32 { var r: string = echo("hello"); return r.len(); }
+async function run(): i32 { let r: string = echo("hello"); return r.len(); }
 function main(): i32 { return 0; }
 `
 	dir := t.TempDir()

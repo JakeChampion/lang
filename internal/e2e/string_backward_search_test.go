@@ -33,14 +33,14 @@ import "std/i32";
 
 // The exact body last_index_of had before the change, as the oracle.
 function ref_rfind(s: string, needle: string): i32 {
-    var n: i32 = s.len();
-    var m: i32 = needle.len();
+    let n: i32 = s.len();
+    let m: i32 = needle.len();
     if (m == 0) { return n; }
     if (m > n) { return 0 - 1; }
-    var i: i32 = n - m;
+    let i: i32 = n - m;
     while (i >= 0) {
-        var k: i32 = 0;
-        var ok: boolean = true;
+        let k: i32 = 0;
+        let ok: boolean = true;
         while (k < m) {
             if (s[i + k] != needle[k]) { ok = false; k = m; } else { k = k + 1; }
         }
@@ -51,8 +51,8 @@ function ref_rfind(s: string, needle: string): i32 {
 }
 
 function rep(c: string, n: i32): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) { out = out + c; i = i + 1; }
     return out;
 }
@@ -81,12 +81,12 @@ function main(): i32 {
     // ADVERSARIAL: needle "aaa...ab" against "aaa...a". Every position walks
     // the whole needle before mismatching, which is what exhausts the budget and
     // hands the search to the reverse Two-Way. Absent.
-    var big: string = rep("a", 900);
+    let big: string = rep("a", 900);
     if (!chk(big, rep("a", 60) + "b")) { return 14; }
     // Present, but near the FRONT -- so the backward scan spends its whole
     // budget before it could ever reach the match, and the escalated search
     // has to find it.
-    var hay: string = rep("a", 400) + "b" + rep("a", 400);
+    let hay: string = rep("a", 400) + "b" + rep("a", 400);
     if (!chk(hay, rep("a", 50) + "b")) { return 15; }
     // Present near the END -- found while still inside the budget, so this one
     // must NOT escalate and must still be right.
@@ -98,11 +98,11 @@ function main(): i32 {
 
     // Exhaustive: every substring of a small periodic haystack, against
     // itself. Covers needle lengths 0..len and both tiers.
-    var alphabet: string = "abab bcab abab cbab";
-    var L: i32 = alphabet.len();
-    var a: i32 = 0;
+    let alphabet: string = "abab bcab abab cbab";
+    let L: i32 = alphabet.len();
+    let a: i32 = 0;
     while (a < L) {
-        var b: i32 = a;
+        let b: i32 = a;
         while (b <= L) {
             if (!chk(alphabet, slice_unchecked(alphabet, a, b).to_owned())) { return 19; }
             b = b + 1;
@@ -117,11 +117,11 @@ function main(): i32 {
     }
     match ("abc".rsplit_once(".")) { Some(p) => { return 22; }, None => { } }
     match ("".rsplit_once(".")) { Some(p) => { return 23; }, None => { } }
-    var rp = "a.b.c".rpartition(".");
+    let rp = "a.b.c".rpartition(".");
     if (rp.0 != "a.b" || rp.1 != "." || rp.2 != "c") { return 24; }
-    var rp2 = "abc".rpartition(".");
+    let rp2 = "abc".rpartition(".");
     if (rp2.0 != "" || rp2.1 != "" || rp2.2 != "abc") { return 25; }
-    var rp3 = "abc".rpartition("");
+    let rp3 = "abc".rpartition("");
     if (rp3.0 != "" || rp3.1 != "" || rp3.2 != "abc") { return 26; }
 
     // And through the ESCALATION path, so the callers are covered on both

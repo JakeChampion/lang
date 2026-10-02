@@ -11,7 +11,7 @@ import (
 // An array-method call the monomorphiser did NOT rewrite must refuse, not
 // dispatch as `i32.<method>`.
 //
-// irlower dispatches a method call as `<receiver-type>.<field>`, and
+// The AST lowering dispatched a method call as `<receiver-type>.<field>`, and
 // `expr_recv_prim_type` used to end by falling through to `expr_scalar_type`,
 // whose last resort is `return "i32"`. An array receiver that reached there —
 // which happens whenever the `__arrm_<m>` fold declines the method — therefore
@@ -47,7 +47,7 @@ function (xs: T[]) pow[T: cmp.Ord, U: cmp.Ord](u: U): i32 {
 }
 
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
+    let xs: i32[] = [1, 2, 3];
     return xs.pow(2);
 }
 `

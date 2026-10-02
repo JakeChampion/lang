@@ -139,7 +139,7 @@ function opt_context_short(): i32 {
 }
 
 function option_table(): gnu.Opt[] {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.optional_long("", "backup", opt_backup()));
   opts = opts.append(gnu.flag("C", "compare", opt_compare()));
   opts = opts.append(gnu.optional_long("", "context", opt_context()));
@@ -165,7 +165,7 @@ function option_table(): gnu.Opt[] {
 }
 
 function help_text(): string {
-  var out: string = "Usage: " + gnu.prog() + " [OPTION]... [-T] SOURCE DEST\n";
+  let out: string = "Usage: " + gnu.prog() + " [OPTION]... [-T] SOURCE DEST\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... SOURCE... DIRECTORY\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... -t DIRECTORY SOURCE...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... -d DIRECTORY...\n";
@@ -304,10 +304,10 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
 }
 
 function scan_options(argv: string[]): (Scan, string[]) {
-  var s: Scan = scan_new();
-  var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "install", help_text(), 1);
+  let s: Scan = scan_new();
+  let g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "install", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -348,7 +348,7 @@ function resolve_mode(spec: string, is_dir: boolean): Option[i32] {
       return None;
     },
     Some(changes) => {
-      var adjusted: mode.Adjusted = changes.adjust(0, is_dir, 0);
+      let adjusted: mode.Adjusted = changes.adjust(0, is_dir, 0);
       return Some(adjusted.mode);
     }
   }
@@ -364,18 +364,18 @@ function resolve_mode(spec: string, is_dir: boolean): Option[i32] {
 struct Ids { uid: i64, gid: i64, err: string }
 
 function lookup_ids(s: Scan): Ids {
-  var uid: i64 = 0 - 1;
-  var gid: i64 = 0 - 1;
-  var db: owner.Db = owner.db_load();
+  let uid: i64 = 0 - 1;
+  let gid: i64 = 0 - 1;
+  let db: owner.Db = owner.db_load();
   if (s.have_owner) {
-    var p: owner.Parsed = owner.parse(db, s.owner_spec);
+    let p: owner.Parsed = owner.parse(db, s.owner_spec);
     if (!p.ok || !p.spec.has_uname && p.spec.uid < 0) {
       return Ids { uid: 0 - 1, gid: 0 - 1, err: "invalid user " + gnu.quote(s.owner_spec) };
     }
     uid = p.spec.uid;
   }
   if (s.have_group) {
-    var pg: owner.Parsed = owner.parse_group_only(db, s.group_spec);
+    let pg: owner.Parsed = owner.parse_group_only(db, s.group_spec);
     if (!pg.ok || pg.spec.gid < 0) {
       return Ids { uid: 0 - 1, gid: 0 - 1, err: "invalid group " + gnu.quote(s.group_spec) };
     }
@@ -409,7 +409,7 @@ function created_directory(s: Scan, path: string, o: io_buffered.BufWriter): io_
 struct DirOut { status: i32, out: io_buffered.BufWriter }
 
 function make_one_dir(s: Scan, path: string, want: i32, ids: Ids, o: io_buffered.BufWriter): DirOut {
-  var w: io_buffered.BufWriter = o;
+  let w: io_buffered.BufWriter = o;
   match (lstat(path)) {
     Ok(info) => {
       if (info.is_dir) {
@@ -420,7 +420,7 @@ function make_one_dir(s: Scan, path: string, want: i32, ids: Ids, o: io_buffered
     },
     Err(_) => {}
   }
-  var initial: i32 = want;
+  let initial: i32 = want;
   if (ids.uid >= 0 || ids.gid >= 0) {
     // Keep other users out until ownership and final permissions agree.
     initial = want & 448;  // 0700
@@ -439,10 +439,10 @@ function make_one_dir(s: Scan, path: string, want: i32, ids: Ids, o: io_buffered
 // Ownership must succeed before final permissions are exposed. chown can
 // also clear set-id bits, so chmod belongs last even on the success path.
 function apply_attributes(path: string, want: i32, ids: Ids, directory: boolean, o: io_buffered.BufWriter): DirOut {
-  var w: io_buffered.BufWriter = o;
-  var mode_error: string = "cannot change permissions of ";
+  let w: io_buffered.BufWriter = o;
+  let mode_error: string = "cannot change permissions of ";
   if (ids.uid >= 0 || ids.gid >= 0) {
-    var owner_error: string = "cannot change ownership of ";
+    let owner_error: string = "cannot change ownership of ";
     if (directory) {
       owner_error = "cannot change owner and permissions of ";
       mode_error = owner_error;
@@ -469,37 +469,37 @@ function apply_attributes(path: string, want: i32, ids: Ids, directory: boolean,
 // above it, the last one with `last_mode` and the rest with install's
 // default.
 function make_path(s: Scan, path: string, last_mode: i32, ids: Ids, o: io_buffered.BufWriter): DirOut {
-  var w: io_buffered.BufWriter = o;
+  let w: io_buffered.BufWriter = o;
   // The components come from `lib/fts.fern`, which `mkdir -p` walks the
   // same way: `.` and `..` and an empty component (a doubled slash) are
   // stepped through rather than created, and `last` marks the final name
   // so `-m` can reach it and nothing above it.
-  var last: i32 = fts.last_component_end(path);
+  let last: i32 = fts.last_component_end(path);
   if (last < 0) {
     // Nothing but slashes, which is a root that already exists.
     return DirOut { status: 0, out: w };
   }
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i <= last) {
     if (i == last || fts.is_slash(path, i)) {
       if (!fts.is_traversed(path, start, i)) {
-        var want: i32 = default_mode();
+        let want: i32 = default_mode();
         if (i == last) {
           want = last_mode;
         }
         // The final component is named as the operand was WRITTEN:
         // measured, `-d a/b/` says `creating directory 'a/b/'` with the
         // slash, where every component above it is a bare prefix.
-        var name: string = slice_unchecked(path, 0, i) + "";
+        let name: string = slice_unchecked(path, 0, i) + "";
         if (i == last) {
           name = path;
         }
-        var component_ids: Ids = Ids { uid: 0 - 1, gid: 0 - 1, err: "" };
+        let component_ids: Ids = Ids { uid: 0 - 1, gid: 0 - 1, err: "" };
         if (i == last) {
           component_ids = ids;
         }
-        var r: DirOut = make_one_dir(s, name, want, component_ids, w);
+        let r: DirOut = make_one_dir(s, name, want, component_ids, w);
         w = r.out;
         if (r.status != 0) {
           return DirOut { status: r.status, out: w };
@@ -516,7 +516,7 @@ function make_path(s: Scan, path: string, last_mode: i32, ids: Ids, o: io_buffer
 // `dest` EXCEPT the last. Its directories get install's default mode,
 // never `-m`'s, because `-m` is the file's.
 function make_leading(s: Scan, dest: string, ids: Ids, o: io_buffered.BufWriter): DirOut {
-  var parent: string = gnu.dir_name(dest);
+  let parent: string = gnu.dir_name(dest);
   if (parent == "." || parent == "/") {
     return DirOut { status: 0, out: o };
   }
@@ -582,7 +582,7 @@ function same_bytes(a: string, b: string): boolean {
     Ok(ra) => {
       match (open_reader(b)) {
         Ok(rb) => {
-          var same: boolean = compare_streams(ra, rb);
+          let same: boolean = compare_streams(ra, rb);
           ra.close();
           rb.close();
           return same;
@@ -658,11 +658,11 @@ struct StripOut { status: i32, out: io_buffered.BufWriter }
 // oracle: `--strip-program=/nosuch/prog` and `/bin/true`, which macOS does
 // not have, both print "strip process terminated abnormally".
 function run_strip(s: Scan, dest: string, o: io_buffered.BufWriter): StripOut {
-  var w: io_buffered.BufWriter = o;
+  let w: io_buffered.BufWriter = o;
   if (target_os() != "darwin") {
     match (spawnable(s.strip_program)) {
       Some(why) => {
-        var what: string = "cannot run strip program ";
+        let what: string = "cannot run strip program ";
         if (s.strip_program == "strip") {
           what = "cannot run ";
         }
@@ -672,9 +672,9 @@ function run_strip(s: Scan, dest: string, o: io_buffered.BufWriter): StripOut {
       None => {}
     }
   }
-  var pid: i32 = proc_fork();
+  let pid: i32 = proc_fork();
   if (pid == 0) {
-    var argv: string[] = [s.strip_program, dest];
+    let argv: string[] = [s.strip_program, dest];
     proc_exec(s.strip_program, argv);
     exit(127);
   }
@@ -682,7 +682,7 @@ function run_strip(s: Scan, dest: string, o: io_buffered.BufWriter): StripOut {
     w = gnu.error_out(w, "fork system call failed");
     return StripOut { status: 1, out: w };
   }
-  var status: i32 = proc_waitpid(pid);
+  let status: i32 = proc_waitpid(pid);
   if (status == 0) {
     return StripOut { status: 0, out: w };
   }
@@ -710,7 +710,7 @@ function spawnable(name: string): Option[string] {
   if (name.index_of("/") >= 0) {
     return executable(name);
   }
-  var path: string = "";
+  let path: string = "";
   match (env("PATH")) {
     Some(v) => {
       path = v;
@@ -720,14 +720,14 @@ function spawnable(name: string): Option[string] {
       path = "/bin:/usr/bin";
     }
   }
-  var why: string = "No such file or directory";
-  var from: i32 = 0;
+  let why: string = "No such file or directory";
+  let from: i32 = 0;
   while (true) {
-    var end: i32 = from;
+    let end: i32 = from;
     while (end < path.len() && path[end] as i32 != 58) {
       end = end + 1;
     }
-    var dir: string = slice_unchecked(path, from, end) + "";
+    let dir: string = slice_unchecked(path, from, end) + "";
     if (dir.len() == 0) {
       dir = ".";
     }
@@ -770,7 +770,7 @@ function executable(path: string): Option[string] {
 struct FileOut { status: i32, out: io_buffered.BufWriter }
 
 function engine_cfg(s: Scan): copy.Cfg {
-  var attrs: copy.Attrs = copy.attrs_none();
+  let attrs: copy.Attrs = copy.attrs_none();
   if (s.preserve_timestamps) {
     attrs = copy.Attrs { ...attrs, timestamps: true };
   }
@@ -778,7 +778,7 @@ function engine_cfg(s: Scan): copy.Cfg {
 }
 
 function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, o: io_buffered.BufWriter): FileOut {
-  var w: io_buffered.BufWriter = o;
+  let w: io_buffered.BufWriter = o;
   match (lstat(src)) {
     Ok(info) => {
       if (info.is_dir) {
@@ -797,19 +797,19 @@ function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, o
     // Nothing at all, not even a timestamp: measured across a second run.
     return FileOut { status: 0, out: w };
   }
-  var cst: copy.State = copy.copy_one(engine_cfg(s), copy.state_new(w), src, dest, true);
+  let cst: copy.State = copy.copy_one(engine_cfg(s), copy.state_new(w), src, dest, true);
   w = cst.out;
   if (cst.status != 0) {
     return FileOut { status: cst.status, out: w };
   }
   if (s.strip) {
-    var rs: StripOut = run_strip(s, dest, w);
+    let rs: StripOut = run_strip(s, dest, w);
     w = rs.out;
     if (rs.status != 0) {
       return FileOut { status: rs.status, out: w };
     }
   }
-  var changed: DirOut = apply_attributes(dest, want, ids, false, w);
+  let changed: DirOut = apply_attributes(dest, want, ids, false, w);
   return FileOut { status: changed.status, out: changed.out };
 }
 
@@ -817,7 +817,7 @@ function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, o
 // SIMPLE_BACKUP_SUFFIX and VERSION_CONTROL, exactly as `cp` reads them.
 // Both are consulted only when backups were asked for at all.
 function from_environment(s0: Scan): Scan {
-  var s: Scan = s0;
+  let s: Scan = s0;
   if (!s.backups) {
     return s;
   }
@@ -831,7 +831,7 @@ function from_environment(s0: Scan): Scan {
       None => {}
     }
   }
-  var control: i32 = gnu.backup_existing();
+  let control: i32 = gnu.backup_existing();
   if (s.control_given) {
     if (s.control_text.len() > 0) {
       control = gnu.argmatch_valued(s.control_text, gnu.backup_names(), gnu.backup_values(), "backup type");
@@ -859,9 +859,9 @@ function finish(status: i32, o: io_buffered.BufWriter): i32 {
 }
 
 pub function main(): i32 {
-  var scanned: (Scan, string[]) = scan_options(args());
-  var s: Scan = scanned.0;
-  var operands: string[] = scanned.1;
+  let scanned: (Scan, string[]) = scan_options(args());
+  let s: Scan = scanned.0;
+  let operands: string[] = scanned.1;
   s = from_environment(s);
   // The warnings are the option scan's, not an operand's, so they come
   // before anything is copied. The two casings are GNU's own and not a
@@ -885,7 +885,7 @@ pub function main(): i32 {
   if (operands.len() == 0) {
     gnu.die_usage("missing file operand", 1);
   }
-  var ids: Ids = lookup_ids(s);
+  let ids: Ids = lookup_ids(s);
   if (ids.err.len() > 0) {
     // No `Try …` line, unlike the operand-count errors above.
     gnu.error(ids.err);
@@ -895,7 +895,7 @@ pub function main(): i32 {
   // `-d` is its own form: every operand is a directory to create, and
   // `-m` reaches the last component of each.
   if (s.directory) {
-    var dir_mode: i32 = default_mode();
+    let dir_mode: i32 = default_mode();
     if (s.have_mode) {
       match (resolve_mode(s.mode_spec, true)) {
         None => {
@@ -907,11 +907,11 @@ pub function main(): i32 {
         }
       }
     }
-    var w: io_buffered.BufWriter = gnu.out_new();
-    var status: i32 = 0;
-    var i: i32 = 0;
+    let w: io_buffered.BufWriter = gnu.out_new();
+    let status: i32 = 0;
+    let i: i32 = 0;
     while (i < operands.len()) {
-      var r: DirOut = make_path(s, operands[i], dir_mode, ids, w);
+      let r: DirOut = make_path(s, operands[i], dir_mode, ids, w);
       w = r.out;
       if (r.status != 0) {
         status = 1;
@@ -921,7 +921,7 @@ pub function main(): i32 {
     return finish(status, w);
   }
 
-  var file_mode: i32 = default_mode();
+  let file_mode: i32 = default_mode();
   if (s.have_mode) {
     match (resolve_mode(s.mode_spec, false)) {
       None => {
@@ -934,12 +934,12 @@ pub function main(): i32 {
     }
   }
 
-  var out: io_buffered.BufWriter = gnu.out_new();
-  var status: i32 = 0;
+  let out: io_buffered.BufWriter = gnu.out_new();
+  let status: i32 = 0;
 
   if (s.have_target_dir) {
     if (s.create_leading) {
-      var lead: DirOut = make_path(s, s.target_dir, default_mode(), ids, out);
+      let lead: DirOut = make_path(s, s.target_dir, default_mode(), ids, out);
       out = lead.out;
       if (lead.status != 0) {
         return finish(1, out);
@@ -957,10 +957,10 @@ pub function main(): i32 {
         return finish(1, out);
       }
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < operands.len()) {
-      var into: string = gnu.join_path(s.target_dir, gnu.base_name(operands[j]));
-      var fr: FileOut = install_file(s, operands[j], into, file_mode, ids, out);
+      let into: string = gnu.join_path(s.target_dir, gnu.base_name(operands[j]));
+      let fr: FileOut = install_file(s, operands[j], into, file_mode, ids, out);
       out = fr.out;
       if (fr.status != 0) {
         status = 1;
@@ -978,37 +978,37 @@ pub function main(): i32 {
       gnu.die_usage("extra operand " + gnu.quotea(operands[2]), 1);
     }
     if (s.create_leading) {
-      var lead2: DirOut = make_leading(s, operands[1], ids, out);
+      let lead2: DirOut = make_leading(s, operands[1], ids, out);
       out = lead2.out;
       if (lead2.status != 0) {
         return finish(1, out);
       }
     }
-    var one: FileOut = install_file(s, operands[0], operands[1], file_mode, ids, out);
+    let one: FileOut = install_file(s, operands[0], operands[1], file_mode, ids, out);
     return finish(one.status, one.out);
   }
 
-  var last: string = operands[operands.len() - 1];
-  var into_dir: boolean = is_directory(last);
+  let last: string = operands[operands.len() - 1];
+  let into_dir: boolean = is_directory(last);
   if (operands.len() == 2 && !into_dir) {
     if (s.create_leading) {
-      var lead3: DirOut = make_leading(s, last, ids, out);
+      let lead3: DirOut = make_leading(s, last, ids, out);
       out = lead3.out;
       if (lead3.status != 0) {
         return finish(1, out);
       }
     }
-    var two: FileOut = install_file(s, operands[0], last, file_mode, ids, out);
+    let two: FileOut = install_file(s, operands[0], last, file_mode, ids, out);
     return finish(two.status, two.out);
   }
   if (!into_dir) {
     gnu.error("target " + gnu.quotea(last) + ": Not a directory");
     return finish(1, out);
   }
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < operands.len() - 1) {
-    var dst: string = gnu.join_path(last, gnu.base_name(operands[k]));
-    var fr2: FileOut = install_file(s, operands[k], dst, file_mode, ids, out);
+    let dst: string = gnu.join_path(last, gnu.base_name(operands[k]));
+    let fr2: FileOut = install_file(s, operands[k], dst, file_mode, ids, out);
     out = fr2.out;
     if (fr2.status != 0) {
       status = 1;

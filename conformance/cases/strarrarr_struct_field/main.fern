@@ -29,10 +29,10 @@ struct Scalar { rows: i32[][], n: i32 }
 
 // The bail shape: a `string[][]`-carrying struct as a PARAMETER.
 function total_len(t: Table): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < t.rows.len()) {
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < t.rows[i].len()) { n = n + t.rows[i][j].len(); j = j + 1; }
         i = i + 1;
     }
@@ -42,48 +42,48 @@ function total_len(t: Table): i32 {
 function row_count(t: Table): i32 { return t.rows.len(); }
 
 function pass_through(i: i32): i32 {
-    var t: Table = Table { rows: [["ab", "cde"], ["f"]], n: i };
+    let t: Table = Table { rows: [["ab", "cde"], ["f"]], n: i };
     return total_len(t) + row_count(t);
 }
 
 // A two-level read through the parameter, and the outer length.
 function nested_read(i: i32): i32 {
-    var t: Table = Table { rows: [["xy"], ["z", "wv"]], n: i };
+    let t: Table = Table { rows: [["xy"], ["z", "wv"]], n: i };
     if (t.rows[1][1].len() != 2) { return 253; }
     return total_len(t);
 }
 
 // An empty outer array and an empty row — the degenerate shapes.
 function empty_rows(i: i32): i32 {
-    var e: Table = Table { rows: [], n: i };
-    var r: Table = Table { rows: [[]], n: i };
+    let e: Table = Table { rows: [], n: i };
+    let r: Table = Table { rows: [[]], n: i };
     return total_len(e) + total_len(r) + row_count(r);
 }
 
 // Control: the flat `string[]` field, which lowered before this change.
 function flat_field(i: i32): i32 {
-    var f: Flat = Flat { rows: ["gh", "ijk"], n: i };
+    let f: Flat = Flat { rows: ["gh", "ijk"], n: i };
     return flat_len(f);
 }
 
 function flat_len(f: Flat): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < f.rows.len()) { n = n + f.rows[i].len(); i = i + 1; }
     return n;
 }
 
 // Control: the nested SCALAR array field, the other spelling that already worked.
 function scalar_field(i: i32): i32 {
-    var s: Scalar = Scalar { rows: [[1, 2], [3]], n: i };
+    let s: Scalar = Scalar { rows: [[1, 2], [3]], n: i };
     return scalar_sum(s);
 }
 
 function scalar_sum(s: Scalar): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < s.rows.len()) {
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < s.rows[i].len()) { n = n + s.rows[i][j]; j = j + 1; }
         i = i + 1;
     }
@@ -91,8 +91,8 @@ function scalar_sum(s: Scalar): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         acc = acc + pass_through(i) + nested_read(i) + empty_rows(i)
             + flat_field(i) + scalar_field(i);

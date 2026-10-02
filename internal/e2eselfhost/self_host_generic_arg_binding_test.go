@@ -18,14 +18,14 @@ function inner[E: Answer](r: Result[i32, E]): i32 {
 var genericArgBindingCases = []struct{ name, src string }{
 	{"tuple-element", answerPrelude + `function outer[E: Answer](p: (i32, Result[i32, E])): i32 { return inner(p.1); }
 function main(): i32 {
-    var p: (i32, Result[i32, Boom]) = (1, Err(Boom { n: 7 }));
+    let p: (i32, Result[i32, Boom]) = (1, Err(Boom { n: 7 }));
     if (outer(p) != 7) { return 1; }
     return 0;
 }
 `},
 	{"err-construction", answerPrelude + `function outer[S, E: Answer](s: S, r: Result[i32, E]): (S, i32) { return (s, inner(r)); }
 function main(): i32 {
-    var o: (string, i32) = outer("s", Err(Boom { n: 7 }));
+    let o: (string, i32) = outer("s", Err(Boom { n: 7 }));
     if (o.1 != 7) { return 1; }
     return 0;
 }

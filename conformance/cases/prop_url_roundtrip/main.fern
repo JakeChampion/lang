@@ -36,9 +36,9 @@ function alphabet(): string[] {
 }
 
 function gen_bytes(seed: i32, n: i32): u8[] {
-    var buf: u8[] = __alloc_u8(n);
-    var state: i32 = seed;
-    var i: i32 = 0;
+    let buf: u8[] = __alloc_u8(n);
+    let state: i32 = seed;
+    let i: i32 = 0;
     while (i < n) {
         state = lcg_next(state);
         buf = buf.with(i, ((state / 7) % 256) as u8);
@@ -48,9 +48,9 @@ function gen_bytes(seed: i32, n: i32): u8[] {
 }
 
 function gen_text(seed: i32, n: i32, alpha: string[]): string {
-    var out: string = "";
-    var state: i32 = seed;
-    var i: i32 = 0;
+    let out: string = "";
+    let state: i32 = seed;
+    let i: i32 = 0;
     while (i < n) {
         state = lcg_next(state);
         out = out + alpha[(state / 7) % alpha.len()];
@@ -63,7 +63,7 @@ function same_bytes(a: u8[], b: u8[]): boolean {
     if (a.len() != b.len()) {
         return false;
     }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < a.len()) {
         if (a[i] != b[i]) {
             return false;
@@ -74,14 +74,14 @@ function same_bytes(a: u8[], b: u8[]): boolean {
 }
 
 function main(): i32 {
-    var alpha: string[] = alphabet();
-    var state: i32 = 305419896;
-    var trial: i32 = 0;
+    let alpha: string[] = alphabet();
+    let state: i32 = 305419896;
+    let trial: i32 = 0;
     while (trial < 300) {
         state = lcg_next(state);
-        var n: i32 = state % 48;
-        var s: string = gen_text(state, n, alpha);
-        var enc: string = url.url_encode(s);
+        let n: i32 = state % 48;
+        let s: string = gen_text(state, n, alpha);
+        let enc: string = url.url_encode(s);
 
         if (url.url_decode(enc) != s) {
             print("url roundtrip FAILED at trial " + trial.to_string());
@@ -96,9 +96,9 @@ function main(): i32 {
     trial = 0;
     while (trial < 300) {
         state = lcg_next(state);
-        var n: i32 = state % 48;
-        var raw: u8[] = gen_bytes(state, n);
-        var s: string = string_from_bytes_unchecked(raw);
+        let n: i32 = state % 48;
+        let raw: u8[] = gen_bytes(state, n);
+        let s: string = string_from_bytes_unchecked(raw);
 
         if (!same_bytes(url.url_decode_bytes(url.url_encode(s)), raw)) {
             print("url byte roundtrip FAILED at byte trial " + trial.to_string());

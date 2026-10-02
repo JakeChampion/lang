@@ -24,17 +24,17 @@ var dedupCases = []struct {
 }{
 	// [1,1,2,2,1] -> [1,2,1]; encode r[0]*100 + r[1]*10 + r[2] = 121 (in byte
 	// range, and requires len >= 3 or the r[2] index traps).
-	{"runs", `function dedup(xs: i32[]): i32[] { var out: i32[] = []; var i: i32 = 0; while (i < xs.len()) { if (i == 0 || !(xs[i] == xs[i - 1])) { out = out.append(xs[i]); } i = i + 1; } return out; }
-function main(): i32 { var r = dedup([1, 1, 2, 2, 1]); return r[0] * 100 + r[1] * 10 + r[2]; }`, 121},
+	{"runs", `function dedup(xs: i32[]): i32[] { let out: i32[] = []; let i: i32 = 0; while (i < xs.len()) { if (i == 0 || !(xs[i] == xs[i - 1])) { out = out.append(xs[i]); } i = i + 1; } return out; }
+function main(): i32 { let r = dedup([1, 1, 2, 2, 1]); return r[0] * 100 + r[1] * 10 + r[2]; }`, 121},
 	// all-equal collapses to one: [7,7,7,7] -> [7]; len 1, elem 7 -> 17.
-	{"all-equal", `function dedup(xs: i32[]): i32[] { var out: i32[] = []; var i: i32 = 0; while (i < xs.len()) { if (i == 0 || !(xs[i] == xs[i - 1])) { out = out.append(xs[i]); } i = i + 1; } return out; }
-function main(): i32 { var r = dedup([7, 7, 7, 7]); return r.len() * 10 + r[0]; }`, 17},
+	{"all-equal", `function dedup(xs: i32[]): i32[] { let out: i32[] = []; let i: i32 = 0; while (i < xs.len()) { if (i == 0 || !(xs[i] == xs[i - 1])) { out = out.append(xs[i]); } i = i + 1; } return out; }
+function main(): i32 { let r = dedup([7, 7, 7, 7]); return r.len() * 10 + r[0]; }`, 17},
 	// sorted with runs behaves like distinct: [1,1,2,3,3,3,4] -> [1,2,3,4]; len 4.
-	{"sorted-like-distinct", `function dedup(xs: i32[]): i32[] { var out: i32[] = []; var i: i32 = 0; while (i < xs.len()) { if (i == 0 || !(xs[i] == xs[i - 1])) { out = out.append(xs[i]); } i = i + 1; } return out; }
-function main(): i32 { var r = dedup([1, 1, 2, 3, 3, 3, 4]); return r.len(); }`, 4},
+	{"sorted-like-distinct", `function dedup(xs: i32[]): i32[] { let out: i32[] = []; let i: i32 = 0; while (i < xs.len()) { if (i == 0 || !(xs[i] == xs[i - 1])) { out = out.append(xs[i]); } i = i + 1; } return out; }
+function main(): i32 { let r = dedup([1, 1, 2, 3, 3, 3, 4]); return r.len(); }`, 4},
 	// empty -> empty (len 0); no-dup input unchanged.
-	{"empty-and-nodup", `function dedup(xs: i32[]): i32[] { var out: i32[] = []; var i: i32 = 0; while (i < xs.len()) { if (i == 0 || !(xs[i] == xs[i - 1])) { out = out.append(xs[i]); } i = i + 1; } return out; }
-function main(): i32 { var e: i32[] = []; if (dedup(e).len() != 0) { return 0; } return dedup([1, 2, 3]).len(); }`, 3},
+	{"empty-and-nodup", `function dedup(xs: i32[]): i32[] { let out: i32[] = []; let i: i32 = 0; while (i < xs.len()) { if (i == 0 || !(xs[i] == xs[i - 1])) { out = out.append(xs[i]); } i = i + 1; } return out; }
+function main(): i32 { let e: i32[] = []; if (dedup(e).len() != 0) { return 0; } return dedup([1, 2, 3]).len(); }`, 3},
 }
 
 // TestNativeArrayDedup runs the inline programs on interp / x86-64 / wasm /
@@ -68,16 +68,16 @@ func TestNativeArrayDedup(t *testing.T) {
 // consecutive-vs-all distinction and the empty case.
 func TestNativeArrayDedupModule(t *testing.T) {
 	src := `import "std/array" as arr;
-function same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } var i = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }
+function same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } let i = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }
 function main(): i32 {
-    var r = 0;
+    let r = 0;
     if (same(arr.dedup([1, 1, 2, 2, 1]), [1, 2, 1])) { r = r + 1; }
     if (same([1, 1, 1].dedup(), [1])) { r = r + 2; }
     if (same([1, 2, 3].dedup(), [1, 2, 3])) { r = r + 4; }
-    var e: i32[] = [];
+    let e: i32[] = [];
     if (e.dedup().len() == 0) { r = r + 8; }
-    var ss: string[] = ["a", "a", "b", "a"];
-    var sr = ss.dedup();
+    let ss: string[] = ["a", "a", "b", "a"];
+    let sr = ss.dedup();
     if (sr.len() == 3 && sr[0] == "a" && sr[1] == "b" && sr[2] == "a") { r = r + 16; }
     return r;
 }

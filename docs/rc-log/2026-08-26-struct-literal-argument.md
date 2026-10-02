@@ -13,11 +13,11 @@ position is a single `__fern_rc_dec`:
 | a discarded STATEMENT | clean | clean |
 | a call ARGUMENT, scalar-only `S{a,b}` | **100 allocs / 0 frees** | 100/100 |
 | a call ARGUMENT, array field `A{xs,k}` | **200/0** | 200/200 |
-| bound first: `var p: S = S { … }` | clean | clean |
+| bound first: `let p: S = S { … }` | clean | clean |
 
 It leaks per EVALUATION rather than once, which is what separates it from the
 construction-retain matrix's remaining cells — and it is invisible to that
-matrix, because all 35 of its cells bind the literal to `var p` first. That is
+matrix, because all 35 of its cells bind the literal to `let p` first. That is
 the one position which already worked.
 
 ## Two missing pieces, and either alone is a no-op

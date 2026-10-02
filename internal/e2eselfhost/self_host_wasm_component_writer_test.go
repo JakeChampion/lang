@@ -25,22 +25,22 @@ func TestSelfHostWasmComponentWriter(t *testing.T) {
 	}
 	cases := []struct{ name, src string }{
 		{"stdout", `function main(): i32 {
-    var w: Writer = stdout();
+    let w: Writer = stdout();
     match (w.write("ok\n")) { Some(_) => { return 3; }, None => {} }
     return 0;
 }
 `},
 		{"stderr", `function main(): i32 {
-    var w: Writer = stderr();
+    let w: Writer = stderr();
     w.write("err\n");
     return 7;
 }
 `},
 		{"mixed", `function main(): i32 {
-    var w: Writer = stdout();
+    let w: Writer = stdout();
     w.write("one\n");
     print("two");
-    var e: Writer = stderr();
+    let e: Writer = stderr();
     e.write("three\n");
     return 0;
 }

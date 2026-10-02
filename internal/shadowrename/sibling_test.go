@@ -16,9 +16,9 @@ import (
 // It is a miscompile, not a cosmetic collision: the name-keyed type lookups
 // (isArrayTypeOfLocal / localArrayType / structOrEnumTypeOfLocal) answer with
 // whichever declaration they reach first, so one branch's value gets the
-// other's drop plan. The self-host compiler's irlower.alias_names_in_stmt is
+// other's drop plan. The self-host AST lowering's alias_names_in_stmt was
 // exactly this shape — a `parser.StmtAssign(a)` match payload binding beside
-// a `var a: string[]` in the StmtIf / StmtMatch arms — and it over-released
+// a `let a: string[]` in the StmtIf / StmtMatch arms — and it over-released
 // one refcount for every assignment statement in every program the compiler
 // compiled, which the rc detector reports and nothing else did.
 
@@ -28,16 +28,16 @@ import (
 func TestRenameUnshadowedSiblingBlocksGetDistinctNames(t *testing.T) {
 	prog := runRename(t, `function f(): i32 {
 		{
-			var x: i32 = 1;
+			let x: i32 = 1;
 		}
 		{
-			var x: i32 = 2;
+			let x: i32 = 2;
 		}
 		return 0;
 	}`)
 	names := collectVarNames(prog.Funcs[0].Body)
 	if len(names) != 2 {
-		t.Fatalf("expected 2 var decls, got %d (%v)", len(names), names)
+		t.Fatalf("expected 2 let decls, got %d (%v)", len(names), names)
 	}
 	if names[0] == names[1] {
 		t.Errorf("sibling declarations of x both kept %q — they collapse onto one IR slot", names[0])
@@ -46,7 +46,7 @@ func TestRenameUnshadowedSiblingBlocksGetDistinctNames(t *testing.T) {
 
 // TestRenameSiblingMatchArmBindingAndLocalGetDistinctNames — the shape that
 // miscompiled: a match payload binding named `a` in one arm and a
-// differently-TYPED `var a` in another. The types are what make the collision
+// differently-TYPED `let a` in another. The types are what make the collision
 // a miscompile rather than merely confusing.
 func TestRenameSiblingMatchArmBindingAndLocalGetDistinctNames(t *testing.T) {
 	prog := runRename(t, `struct Asg { k: i32 }
@@ -55,7 +55,7 @@ function walk(st: St, acc: string[]): string[] {
 	match (st) {
 		SAssign(a) => { return acc; },
 		SIf(n) => {
-			var a: string[] = acc;
+			let a: string[] = acc;
 			return a;
 		}
 	}

@@ -15,17 +15,17 @@ const mapStrKeySrc = `import "core/map";
 import "std/i32";
 function count(m: Map[str, i32], k: str): Map[str, i32] { return m.insert(k, m.get_or(k, 0) + 1); }
 function main(): i32 {
-    var src: string = "one two one three two one";
-    var m: Map[str, i32] = map_new(4);
+    let src: string = "one two one three two one";
+    let m: Map[str, i32] = map_new(4);
     for w in src.split(" ") { m = count(m, w); }
-    var owned: string = "th" + "ree";
+    let owned: string = "th" + "ree";
     m = m.insert(owned, 10);
-    var shared: Map[str, i32] = m;
-    var other: Map[str, i32] = shared.insert("four", 4);
-    var r: (Map[str, i32], boolean) = m.without("two");
-    var out: string = m.len().to_string() + other.len().to_string() + r.0.len().to_string() + ":";
-    var ks: str[] = m.keys();
-    var i: i32 = 0;
+    let shared: Map[str, i32] = m;
+    let other: Map[str, i32] = shared.insert("four", 4);
+    let r: (Map[str, i32], boolean) = m.without("two");
+    let out: string = m.len().to_string() + other.len().to_string() + r.0.len().to_string() + ":";
+    let ks: str[] = m.keys();
+    let i: i32 = 0;
     while (i < ks.len()) { out = out + ks[i] + "=" + m.get_or(ks[i], 0).to_string() + ","; i = i + 1; }
     for (k, v) in other { if (k == "four") { out = out + k + v.to_string(); } }
     print(out);

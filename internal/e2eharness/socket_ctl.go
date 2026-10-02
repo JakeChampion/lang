@@ -20,22 +20,22 @@ function fail(n: i32): i32 {
 }
 
 function main(): i32 {
-    var any: u8[] = [0u8, 0u8, 0u8, 0u8];
-    var ln: i32 = tcp_listen_with(any, 0, 4, true);
+    let any: u8[] = [0u8, 0u8, 0u8, 0u8];
+    let ln: i32 = tcp_listen_with(any, 0, 4, true);
     if (ln < 0) { return fail(1); }
-    var port: i32 = tcp_local_port(ln);
+    let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
     // Linux lets a second SO_REUSEPORT listener share the port; it is closed
     // again before the dial so the one accept below is on the first.
     if (target_os() == "linux") {
-        var ln2: i32 = tcp_listen_with(any, port, 4, true);
+        let ln2: i32 = tcp_listen_with(any, port, 4, true);
         if (ln2 < 0) { return fail(3); }
         tcp_close(ln2);
     }
     // 127.0.0.1 packed in network order: 127 | 1 << 24.
-    var c: i32 = tcp_connect(16777343, port);
+    let c: i32 = tcp_connect(16777343, port);
     if (c < 0) { return fail(4); }
-    var a: i32 = tcp_accept(ln);
+    let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(5); }
     if (tcp_socket_ctl(a, 2, 1) != 0) { return fail(7); }
     if (target_os() == "wasi") {
@@ -45,15 +45,15 @@ function main(): i32 {
     } else {
         if (tcp_socket_ctl(a, 1, 1) != 0) { return fail(6); }
         if (tcp_socket_ctl(c, 3, 1) != 0) { return fail(8); }
-        var nothing: u8[] = tcp_recv(c, 16);
+        let nothing: u8[] = tcp_recv(c, 16);
         if (nothing.len() != 0) { return fail(9); }
         if (tcp_socket_ctl(c, 3, 0) != 0) { return fail(10); }
     }
     if (tcp_send(a, "hi") != 2) { return fail(11); }
     if (tcp_socket_ctl(a, 4, 1) != 0) { return fail(12); }
-    var got: u8[] = tcp_recv(c, 16);
+    let got: u8[] = tcp_recv(c, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(13); }
-    var eof: u8[] = tcp_recv(c, 16);
+    let eof: u8[] = tcp_recv(c, 16);
     if (eof.len() != 0) { return fail(14); }
     if (tcp_socket_ctl(a, 11, 0) >= 0) { return fail(15); }
     // Op 9 is the local address as 16-bit groups and the port: the
@@ -77,7 +77,7 @@ function main(): i32 {
     // Linux (-ENOPROTOOPT where the host lacks the option, as qemu-user
     // does), -ENOTSUP on Darwin and on wasm.
     if (target_os() == "linux") {
-        var steered: i32 = tcp_socket_ctl(ln, 8, 0);
+        let steered: i32 = tcp_socket_ctl(ln, 8, 0);
         if (steered != 0 && steered != 0 - 92) { return fail(16); }
     } else if (target_os() == "wasi") {
         if (tcp_socket_ctl(ln, 8, 0) != 0 - 58) { return fail(16); }
@@ -123,17 +123,17 @@ function unsupported(r: Result[(), net.NetError]): boolean {
 }
 
 function main(): i32 {
-    var opts: net.ListenOptions = net.ListenOptions { ...net.listen_options(), backlog: 4, reuse_port: true };
-    var ln: i32 = 0;
+    let opts: net.ListenOptions = net.ListenOptions { ...net.listen_options(), backlog: 4, reuse_port: true };
+    let ln: i32 = 0;
     match (net.listen_with(0, opts)) {
         Ok(fd) => { ln = fd; },
         Err(e) => { return fail(1); },
     }
-    var port: i32 = tcp_local_port(ln);
+    let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
-    var c: i32 = tcp_connect(16777343, port);
+    let c: i32 = tcp_connect(16777343, port);
     if (c < 0) { return fail(3); }
-    var a: i32 = tcp_accept(ln);
+    let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(4); }
     if (!ok(net.set_keepalive(a, true))) { return fail(5); }
     if (target_os() == "wasi") {
@@ -142,7 +142,7 @@ function main(): i32 {
     } else {
         if (!ok(net.set_nodelay(a, true))) { return fail(6); }
         if (!ok(net.set_nonblocking(c, true))) { return fail(7); }
-        var nothing: u8[] = tcp_recv(c, 16);
+        let nothing: u8[] = tcp_recv(c, 16);
         if (nothing.len() != 0) { return fail(8); }
         if (!ok(net.set_nonblocking(c, false))) { return fail(9); }
     }
@@ -156,9 +156,9 @@ function main(): i32 {
         Err(e) => { return fail(19); },
     }
     if (!ok(net.shutdown(a, net.Write))) { return fail(11); }
-    var got: u8[] = tcp_recv(c, 16);
+    let got: u8[] = tcp_recv(c, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(12); }
-    var eof: u8[] = tcp_recv(c, 16);
+    let eof: u8[] = tcp_recv(c, 16);
     if (eof.len() != 0) { return fail(13); }
     match (net.listen_with(port, net.listen_options())) {
         Ok(fd) => { return fail(14); },
@@ -169,7 +169,7 @@ function main(): i32 {
     tcp_close(ln);
     // Nothing listens on the port now, so a dial is refused, and the errno
     // the builtin answers names it.
-    var refused: i32 = tcp_connect(16777343, port);
+    let refused: i32 = tcp_connect(16777343, port);
     if (refused >= 0) { return fail(16); }
     if (!net.error_from_errno(refused).eq(net.ConnectionRefused)) { return fail(17); }
     print("ok");

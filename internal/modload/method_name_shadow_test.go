@@ -29,7 +29,7 @@ pub function lookup(b: Box, name: string): Option[string] {
 }`,
 		"main.fern": `import "wrap";
 function main(): i32 {
-    var b: wrap.Box = wrap.Box { v: 1 };
+    let b: wrap.Box = wrap.Box { v: 1 };
     match (wrap.lookup(b, "PATH")) { Some(v) => { return v.len(); }, None => { return 0; } }
 }`,
 	})

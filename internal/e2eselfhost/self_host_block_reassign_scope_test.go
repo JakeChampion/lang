@@ -61,40 +61,40 @@ func TestSelfHostBlockReassignScopeX86_64(t *testing.T) {
 	// An unmatched Option[string] declared in a loop body
 	// (collect_unmatched_optstr_names).
 	const optStrAlone = `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = Some("v" + "x");
+        let v: Option[string] = Some("v" + "x");
         acc = acc + i;
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
 
 	const optStrSiblingAssignsTheSpelling = `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[string] = Some("v" + "x");
+        let v: Option[string] = Some("v" + "x");
         acc = acc + i;
         i = i + 1;
     }
     if (r % 2 == 0) {
-        var v: i32 = 0;
+        let v: i32 = 0;
         v = r + 1;
         acc = acc + v;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -106,18 +106,18 @@ function main(): i32 {
     return Some([i, i + 1]);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[i32[]] = mk(i);
+        let v: Option[i32[]] = mk(i);
         acc = acc + i;
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -127,23 +127,23 @@ function main(): i32 {
     return Some([i, i + 1]);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[i32[]] = mk(i);
+        let v: Option[i32[]] = mk(i);
         acc = acc + i;
         i = i + 1;
     }
     if (r % 2 == 0) {
-        var v: i32 = 0;
+        let v: i32 = 0;
         v = r + 1;
         acc = acc + v;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`

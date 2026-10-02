@@ -10,7 +10,7 @@ import (
 // On the single-word string ABI computeFreeEligible taints a string local
 // passed to a user function unless the counted-retain summary clears the
 // position, and the summary had no arm for the plainest thing a callee can
-// do with a string parameter: bind it to a local. `var x: string = src`
+// do with a string parameter: bind it to a local. `let x: string = src`
 // refused `src`, and the refusal reached every caller, so the argument was
 // never reclaimed — O(1) retention became O(input) (#9549).
 //
@@ -39,7 +39,7 @@ func TestFrameBoundStringAliasKeepsTheCallersReclaim(t *testing.T) {
 		{
 			name: "read through the alias",
 			ret:  "i32",
-			callee: `var x: string = src;
+			callee: `let x: string = src;
     return x.len() + i;`,
 			free: true,
 			why:  "an alias read for a scalar retains nothing past the return",
@@ -47,8 +47,8 @@ func TestFrameBoundStringAliasKeepsTheCallersReclaim(t *testing.T) {
 		{
 			name: "alias chain",
 			ret:  "i32",
-			callee: `var a: string = src;
-    var b: string = a;
+			callee: `let a: string = src;
+    let b: string = a;
     return b.len() + i;`,
 			free: true,
 			why:  "each link names the same buffer under the same ownership",
@@ -56,8 +56,8 @@ func TestFrameBoundStringAliasKeepsTheCallersReclaim(t *testing.T) {
 		{
 			name: "alias concatenated",
 			ret:  "i32",
-			callee: `var x: string = src;
-    var j: string = x + "!";
+			callee: `let x: string = src;
+    let j: string = x + "!";
     return j.len() + i;`,
 			free: true,
 			why:  "__fern_strcat copies both operands into a fresh buffer",
@@ -65,7 +65,7 @@ func TestFrameBoundStringAliasKeepsTheCallersReclaim(t *testing.T) {
 		{
 			name: "alias into a returned struct field",
 			ret:  "Box",
-			callee: `var x: string = src;
+			callee: `let x: string = src;
     return Box { s: x, n: i };`,
 			free: true,
 			why:  "a StructLit field is a COUNTED store, so the box owns a reference of its own",
@@ -73,7 +73,7 @@ func TestFrameBoundStringAliasKeepsTheCallersReclaim(t *testing.T) {
 		{
 			name: "alias returned whole",
 			ret:  "string",
-			callee: `var x: string = src;
+			callee: `let x: string = src;
     if (i % 2 == 0) { return x; }
     return "short";`,
 			free: false,
@@ -82,8 +82,8 @@ func TestFrameBoundStringAliasKeepsTheCallersReclaim(t *testing.T) {
 		{
 			name: "alias captured by a closure",
 			ret:  "i32",
-			callee: `var x: string = src;
-    var f: (i32) => i32 = (k: i32) => x.len() + k;
+			callee: `let x: string = src;
+    let f: (i32) => i32 = (k: i32) => x.len() + k;
     return f(i);`,
 			free: true,
 			why:  "a capture is a counted store: MakeEnv retains it and the closure's drop releases it (#10112)",
@@ -91,7 +91,7 @@ func TestFrameBoundStringAliasKeepsTheCallersReclaim(t *testing.T) {
 		{
 			name: "alias handed to a callee that returns it",
 			ret:  "string",
-			callee: `var x: string = src;
+			callee: `let x: string = src;
     return keep(x, i);`,
 			free: true,
 			why: "keep's position is credited by this summary's creditBareReturn, " +
@@ -114,10 +114,10 @@ function tag(src: string, i: i32): ` + c.ret + ` {
     ` + c.callee + `
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var line: string = mkstr("a string long enough to defeat the small-string optimisation");
+        let line: string = mkstr("a string long enough to defeat the small-string optimisation");
         ` + use + `
         i = i + 1;
     }
@@ -147,15 +147,15 @@ function main(): i32 {
 func TestReassignedStringSeedKeepsItsOwnCredit(t *testing.T) {
 	src := `function mkstr(a: string): string { return a + "!"; }
 function tag(src: string, i: i32): i32 {
-    var cur: string = src;
+    let cur: string = src;
     cur = cur + "!";
     return cur.len() + i;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var line: string = mkstr("a string long enough to defeat the small-string optimisation");
+        let line: string = mkstr("a string long enough to defeat the small-string optimisation");
         acc = (acc + tag(line, i)) % 101;
         i = i + 1;
     }
@@ -181,7 +181,7 @@ function main(): i32 {
 //
 // One shape is deliberately NOT in the table: returning the alias whole.
 // `return src` is credited (this summary passes creditBareReturn) while
-// `var x = src; return x` is refused, so the two still disagree there. The
+// `let x = src; return x` is refused, so the two still disagree there. The
 // refusal is the conservative direction — a leak — and lifting it is a
 // separate question: when the alias escapes, the builder declines the
 // cancellation and emits a real transfer inc, so the returned reference is
@@ -196,27 +196,27 @@ func TestStringAliasSpellingMatchesTheDirectOne(t *testing.T) {
 		{
 			"scalar read", "i32",
 			`return src.len() + i;`,
-			`var x: string = src;
+			`let x: string = src;
     return x.len() + i;`,
 		},
 		{
 			"concatenated", "i32",
-			`var j: string = src + "!";
+			`let j: string = src + "!";
     return j.len() + i;`,
-			`var x: string = src;
-    var j: string = x + "!";
+			`let x: string = src;
+    let j: string = x + "!";
     return j.len() + i;`,
 		},
 		{
 			"into a returned struct field", "Box",
 			`return Box { s: src, n: i };`,
-			`var x: string = src;
+			`let x: string = src;
     return Box { s: x, n: i };`,
 		},
 		{
 			"forwarded to a callee that returns it", "string",
 			`return keep(src, i);`,
-			`var x: string = src;
+			`let x: string = src;
     return keep(x, i);`,
 		},
 	} {
@@ -236,10 +236,10 @@ function tag(src: string, i: i32): ` + c.ret + ` {
     ` + body + `
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var line: string = mkstr("a string long enough to defeat the small-string optimisation");
+        let line: string = mkstr("a string long enough to defeat the small-string optimisation");
         ` + use + `
         i = i + 1;
     }
@@ -270,7 +270,7 @@ function main(): i32 {
 // extra parameter away would silently widen the strong one.
 func TestFrameBoundAliasCreditIsWithheldFromTheStrongSummary(t *testing.T) {
 	src := `function keep(p: string): i32 {
-    var s: string = p;
+    let s: string = p;
     return s.len();
 }
 function main(): i32 { return 0; }`
@@ -319,7 +319,7 @@ function tag(src: string, i: i32): i32 {
     ` + body + `
 }
 function main(): i32 {
-    var line: string = mk("a string long enough to defeat the small-string optimisation");
+    let line: string = mk("a string long enough to defeat the small-string optimisation");
     return tag(line, 1) % 7;
 }`
 		dumps := map[string]string{}
@@ -331,23 +331,23 @@ function main(): i32 {
 	for _, c := range []struct{ name, shadowed, control string }{
 		{
 			"arm reads the binder",
-			`var x: string = src;
-    var n: i32 = 0;
+			`let x: string = src;
+    let n: i32 = 0;
     match (mkopt(i)) { Got(x) => { n = x.len(); }, Nope => {} }
     return x.len() + n + i;`,
-			`var x: string = src;
-    var n: i32 = 0;
+			`let x: string = src;
+    let n: i32 = 0;
     match (mkopt(i)) { Got(y) => { n = y.len(); }, Nope => {} }
     return x.len() + n + i;`,
 		},
 		{
 			"arm assigns the binder to an outer local",
-			`var x: string = src;
-    var out: string = "";
+			`let x: string = src;
+    let out: string = "";
     match (mkopt(i)) { Got(x) => { out = x; }, Nope => {} }
     return x.len() + out.len() + i;`,
-			`var x: string = src;
-    var out: string = "";
+			`let x: string = src;
+    let out: string = "";
     match (mkopt(i)) { Got(y) => { out = y; }, Nope => {} }
     return x.len() + out.len() + i;`,
 		},

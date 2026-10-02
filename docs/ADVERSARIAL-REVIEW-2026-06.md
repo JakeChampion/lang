@@ -94,10 +94,10 @@ above).
   import "core/no_prelude";
   struct P { x: i32, y: i32 }
   function main(): i32 {
-    var base: P = P { x: 1, y: 2 };
+    let base: P = P { x: 1, y: 2 };
     {
-      var base: P = P { x: 100, y: 200 };   // shadows outer base
-      var updated: P = P { ...base, y: 999 };
+      let base: P = P { x: 100, y: 200 };   // shadows outer base
+      let updated: P = P { ...base, y: 999 };
       return updated.x;                       // should be 100
     }
   }
@@ -119,7 +119,7 @@ above).
 
 - **Subsystem:** interpreter vs compiled runtime
 - **Location:** `internal/interp/interp.go:104-116` (`Map` is a pointer,
-  `var m2 = m1` aliases) and `interp.go:879-894` (`builtinMapSet` mutates
+  `let m2 = m1` aliases) and `interp.go:879-894` (`builtinMapSet` mutates
   in place); vs `internal/stdlib/core/map.fern:174-188`,`:371-372`
   (`__map_cow_inplace` does real COW when rc > 1).
 - **Scenario** (this is the backends' own `wasm_cow_test.go` `map_set` case):
@@ -127,9 +127,9 @@ above).
   import "core/no_prelude";
   import "core/map";
   function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.set("a", 1);
-    var n = m;
+    let n = m;
     n = n.set("a", 999);
     if (m.get_or("a", -1) != 1)   { return 1; }  // interp FAILS here
     if (n.get_or("a", -1) != 999) { return 2; }
@@ -152,7 +152,7 @@ above).
 - **Subsystem:** backend (x86-64) — parity gap vs arm64/wasm
 - **Location:** `internal/codegen/x86_64/x86_64.go:1978`
   (`emitIntDivRem`, dispatched from `OpDivS`/`OpRemS`, lines 958-961)
-- **Scenario:** `var x: usize = 5_000_000_000; var y = x / 3;` compiled
+- **Scenario:** `let x: usize = 5_000_000_000; let y = x / 3;` compiled
   `-target x86-64-linux`.
 - **Why it's wrong:** `w64 := op.Width == 64`. For `usize` the checker
   stamps `Width == ir.WidthPtr (-1)`, so `w64` is false and the 32-bit
@@ -173,7 +173,7 @@ above).
 - **Scenario:**
   ```fern
   function main(): i32 {
-    var x = 2000000000 + 2000000000;   // i32 add
+    let x = 2000000000 + 2000000000;   // i32 add
     if (x < 0) { return 1; }           // runtime: true (wraps negative)
     return 0;
   }
@@ -201,7 +201,7 @@ above).
 - **Location:** `internal/parser/parser.go:3252-3255` —
   `n = n*10 + int64(c-'0')` with no overflow detection (the hex path at
   3247 correctly uses `strconv.ParseInt(...,64)`).
-- **Scenario:** `var x: i64 = 99999999999999999999999999;` (26 digits)
+- **Scenario:** `let x: i64 = 99999999999999999999999999;` (26 digits)
   wraps to `-2537764290115403777`, which *fits* i64 and slips past the
   checker's E047 range check (it only sees the already-wrapped value).
   Program type-checks and runs with a garbage value, no diagnostic.
@@ -235,14 +235,14 @@ above).
   `usize`/pointer relaxations)
 - **Scenario** (both type-check with zero errors):
   ```fern
-  var big: i64 = 5000000000i64;
-  var ptr: usize = big;     // i64 -> usize
-  var small: i32 = ptr;     // usize -> i32  (silently truncates)
+  let big: i64 = 5000000000i64;
+  let ptr: usize = big;     // i64 -> usize
+  let small: i32 = ptr;     // usize -> i32  (silently truncates)
 
   struct Big { a: i64, b: i64, c: i64 }
-  var s: string = "hi";
-  var p: usize = s;         // pointer-shaped -> usize
-  var b: Big = p;           // usize -> arbitrary struct (reinterprets bytes)
+  let s: string = "hi";
+  let p: usize = s;         // pointer-shaped -> usize
+  let b: Big = p;           // usize -> arbitrary struct (reinterprets bytes)
   ```
 - **Why it's wrong:** the checker correctly forbids the direct `i64→i32`
   assignment, but `assignable` makes `usize` assignable to/from any
@@ -297,7 +297,7 @@ above).
 - **Location:** `internal/ssa/dce.go:52-67` (`isDeadOp`) via
   `internal/ssa/opkind.go:29-42` (`IsPure`, which returns true for
   `OpDiv/OpDivU/OpRem/OpRemU`).
-- **Scenario:** `var unused = 10 / get_zero();` where `unused` is never
+- **Scenario:** `let unused = 10 / get_zero();` where `unused` is never
   read — should trap at runtime; DCE deletes it and the program completes.
 - **Why it's wrong:** integer div/rem trap on a zero divisor; LICM
   already refuses to hoist them for this exact reason
@@ -336,7 +336,7 @@ above).
 
 - **Location:** `internal/ir/ir.go:7699-7708` (cast lowering, the
   `srcIsFloat && dstIsInt` branch) — shared IR, affects arm64 + x86-64.
-- **Scenario:** `var f: f64 = 5_000_000_000.0; var u = f as usize;` on a
+- **Scenario:** `let f: f64 = 5_000_000_000.0; let u = f as usize;` on a
   native target loses the high bits.
 - **Why it's wrong:** `realW := dstInt.NormalWidth()` returns `-1` for
   usize; the clamp `if dw < 32 { dw = 32 }` turns `-1` into `32`, never

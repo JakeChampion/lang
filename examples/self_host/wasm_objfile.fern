@@ -58,8 +58,8 @@ pub struct StrsAt { items: string[], pos: i32 }
 pub struct IntsAt { items: i32[], pos: i32 }
 
 function enc_strs(tag: string, xs: string[]): string {
-  var out: string = tag + util.i32_to_string(xs.len()) + "\n";
-  var i: i32 = 0;
+  let out: string = tag + util.i32_to_string(xs.len()) + "\n";
+  let i: i32 = 0;
   while (i < xs.len()) {
     out = out + util.i32_to_string(xs[i].len()) + "\n" + xs[i];
     i = i + 1;
@@ -101,8 +101,8 @@ pub function encode(u: UnitObj): string {
 // the position just past it. Every count and length in the format is read this
 // way, so the decoder never has to search for a delimiter inside payload bytes.
 function scan_int(s: string, pos: i32): IntsAt {
-  var p: i32 = pos;
-  var v: i32 = 0;
+  let p: i32 = pos;
+  let v: i32 = 0;
   while (p < s.len() && s[p] != b'\n') {
     if (s[p] as i32 >= 48 && s[p] as i32 <= 57) {
       v = v * 10 + (s[p] as i32 - 48);
@@ -115,14 +115,14 @@ function scan_int(s: string, pos: i32): IntsAt {
 // dec_strs reads one length-prefixed string section. `pos` must point at the
 // section's count (i.e. just past its tag byte).
 function dec_strs(s: string, pos: i32): StrsAt {
-  var hdr: IntsAt = scan_int(s, pos);
-  var n: i32 = hdr.items[0];
-  var p: i32 = hdr.pos;
-  var out: string[] = [];
-  var i: i32 = 0;
+  let hdr: IntsAt = scan_int(s, pos);
+  let n: i32 = hdr.items[0];
+  let p: i32 = hdr.pos;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < n) {
-    var lh: IntsAt = scan_int(s, p);
-    var len: i32 = lh.items[0];
+    let lh: IntsAt = scan_int(s, p);
+    let len: i32 = lh.items[0];
     out = out.append(slice_unchecked(s, lh.pos, lh.pos + len) + "");
     p = lh.pos + len;
     i = i + 1;
@@ -135,16 +135,16 @@ function dec_strs(s: string, pos: i32): StrsAt {
 // or truncated file therefore yields wrong spans rather than a wrong-but-
 // plausible unit, which the round-trip test catches.
 pub function decode(s: string): UnitObj {
-  var p: i32 = magic().len();  // past the magic
-  var st: StrsAt = dec_strs(s, p + 1);
-  var kg: StrsAt = dec_strs(s, st.pos + 1);
-  var fn: StrsAt = dec_strs(s, kg.pos + 1);
-  var nd: StrsAt = dec_strs(s, fn.pos + 1);
-  var ar: StrsAt = dec_strs(s, nd.pos + 1);
-  var r: StrsAt = dec_strs(s, ar.pos + 1);
-  var d: StrsAt = dec_strs(s, r.pos + 1);
-  var e: StrsAt = dec_strs(s, d.pos + 1);
-  var tl: IntsAt = scan_int(s, e.pos + 1);
+  let p: i32 = magic().len();  // past the magic
+  let st: StrsAt = dec_strs(s, p + 1);
+  let kg: StrsAt = dec_strs(s, st.pos + 1);
+  let fn: StrsAt = dec_strs(s, kg.pos + 1);
+  let nd: StrsAt = dec_strs(s, fn.pos + 1);
+  let ar: StrsAt = dec_strs(s, nd.pos + 1);
+  let r: StrsAt = dec_strs(s, ar.pos + 1);
+  let d: StrsAt = dec_strs(s, r.pos + 1);
+  let e: StrsAt = dec_strs(s, d.pos + 1);
+  let tl: IntsAt = scan_int(s, e.pos + 1);
   return UnitObj {
     strs: st.items,
     caggs: kg.items,

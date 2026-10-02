@@ -8,11 +8,11 @@ covers beyond the construction-retain matrix.
 
 ```fern
 function make(i: i32): P {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = P { f: q.f, n: i };      // f: string[]
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = P { f: q.f, n: i };      // f: string[]
     return p;
 }
-function round(i: i32): i32 { var p: P = make(i); … churn … read p.f back … }
+function round(i: i32): i32 { let p: P = make(i); … churn … read p.f back … }
 ```
 
 3000 allocs / 2200 frees, 43 200 live over 200 rounds, against native's
@@ -29,10 +29,10 @@ The difference is in `round`:
 
 | spelling | `round` emits |
 |---|---|
-| bind (`var tt = q.f; P { f: tt }`) | `__field_reclaim_P`, `__struct_drop_P` ×3 (one per return path) |
+| bind (`let tt = q.f; P { f: tt }`) | `__field_reclaim_P`, `__struct_drop_P` ×3 (one per return path) |
 | inline (`P { f: q.f }`) | **neither** |
 
-`var p: P = make(i)` earns its reclaim through `return_fresh_struct_ret_fns`,
+`let p: P = make(i)` earns its reclaim through `return_fresh_struct_ret_fns`,
 and `make` joins that registry only when `return_value_is_strictfresh_struct`
 admits the returned literal. Its array-field arm admits a literal, a producer
 call, a frame-built local, or any bare ident when the literal's type routes
@@ -77,7 +77,7 @@ every row re-run under `FERN_SANITIZE=1` with `FERN_RC_UNDERFLOW_TRAP=1` and
 | `escaping_holder_source_returned` — `return q` on one path | 8, 3000/3000 | 8, 3000/2000 | unchanged, leaking |
 | `escaping_holder_param_source` — `make(q: P)`, caller reads `q.f` after | 76, 3000/3000 | 76, 3000/2200 | unchanged, leaking |
 | `escaping_holder_shadowed_holder` — local `q` shadows param `q` | 76, 4000/4000 | 76, 4000/3200 | unchanged, refused |
-| `escaping_holder_element_bound` — `var e = q.f[0]` before the share | 8, 3000/3000 | 8, 3000/2200 | unchanged, refused |
+| `escaping_holder_element_bound` — `let e = q.f[0]` before the share | 8, 3000/3000 | 8, 3000/2200 | unchanged, refused |
 
 `param_source` leaks the CALLER's `q`, not the returned holder: `make(q, i)` is
 a non-borrowable argument (the callee stores a field of it), so `q` earns no
@@ -106,7 +106,7 @@ threaded through `s = step(s)`):
 | `return x.name` from a callee | 1600/1600 | 1600/1000 | **still excluded** — the read is an uncounted alias handed out of the frame; lifting it wants a return-side retain paired with a release at the caller's binding |
 | `keep(s.name)`, non-borrowable | 1600/1600 | 1600/1000 | **still excluded** — same alias, through a call that stores it |
 | `t = s.name` reassign alias | 2000/2000 | 2000/1200 | **still excluded** — the assign does not retain; the bind does |
-| `var t = s.name` bind, then rebind `s` | 2000/2000 | 2000/1800 | **admitted and leaking one block a round**: the #4768 read-side retain fires and `t` is never released — the bind is counted but no credit family sweeps it. Tractable: a "retained field-read" string credit under the two ordinary gates (non-escape, not reassigned) |
+| `let t = s.name` bind, then rebind `s` | 2000/2000 | 2000/1800 | **admitted and leaking one block a round**: the #4768 read-side retain fires and `t` is never released — the bind is counted but no credit family sweeps it. Tractable: a "retained field-read" string credit under the two ordinary gates (non-escape, not reassigned) |
 | `[s.name]` array element | 2200/2200 | 2200/2000 | leaking, sound — the element store is a move, and the walk does not enter `ExprArray` |
 | `(s.name, i)` tuple element | 2200/2200 | 2200/1800 | leaking, sound — same |
 | lambda capturing `s.name` | **2400/1200** | 2000/2000 | self-host clean; **native leaks** 67 200 bytes over 200 rounds — a native closure-capture leak, not this issue's |
@@ -115,7 +115,7 @@ threaded through `s = step(s)`):
 
 | position | native | self-host | verdict |
 |---|---|---|---|
-| `var e = q.f[0]` element bind | **2800/2600** | 2800/2200 | refused, sound — and native leaks 48 bytes a round on the same shape |
+| `let e = q.f[0]` element bind | **2800/2600** | 2800/2200 | refused, sound — and native leaks 48 bytes a round on the same shape |
 | `for s in q.f` | 2800/2800 | 2800/2200 | **refused, tractable**: the bind spelling (`for s in tt`) is admitted when the binder is transient (`body_unsafe_for` on the binder); the direct field read is walked as a read before the loop is considered. Admitting it needs the binder-transient test at the `StmtFor` arm plus a refusal when the holder is assigned inside the body |
 | `keep(q.f)`, storing callee | 2800/2800 | 2800/2200 | refused, sound |
 | `peek(q.f)`, read-only callee | 2800/2800 | 2800/2200 | **refused, tractable**: the scan marks every call argument because the borrowable registry is not visible when it runs; the `string` walk parks a `?callee#idx:field` record and settles it against the registry afterwards (`strfld_defer_arg` / `strfld_resolve_deferred`), and the same two steps fit here. The open question before doing it is whether `borrowable_params_of` refuses `return xs[0]` — an element escape, which a buffer-level borrow verdict may not see |
@@ -145,6 +145,6 @@ The lifting itself: the four `string`-field positions above are the
 escaping-read exclusions the issue was opened for, and the parent's diagnosis
 still holds for three of them — a read handed out of the frame is an uncounted
 alias until something retains it at the read and releases it at the consumer.
-The fourth (`var t = s.name` never released) is the retain half done without
+The fourth (`let t = s.name` never released) is the retain half done without
 the release half. On the `string[]` side two refusals are widenings of walks
 that already exist, named above.

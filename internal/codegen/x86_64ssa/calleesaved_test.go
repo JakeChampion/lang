@@ -81,12 +81,12 @@ func emitAsm(t *testing.T, src string) string {
 func TestCalleeSavedCoverage(t *testing.T) {
 	srcs := map[string]string{
 		"leaf":        `function f(a: i32): i32 { return a + 1; } function main(): i32 { return f(7); }`,
-		"loop":        `function f(xs: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; } function main(): i32 { var a: i32[] = [1,2,3]; return f(a); }`,
+		"loop":        `function f(xs: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; } function main(): i32 { let a: i32[] = [1,2,3]; return f(a); }`,
 		"calls":       `function g(a: i32, b: i32): i32 { return a * b; } function f(a: i32): i32 { return g(a, 2) + g(a, 3); } function main(): i32 { return f(5); }`,
 		"nested_if":   `function f(x: i32): i32 { if (x < 10) { return x*x; } if (x < 100) { return x + 7; } return x - 3; } function main(): i32 { return f(42); }`,
-		"many_locals": `function f(a: i32): i32 { var b = a+1; var c = b+2; var d = c+3; var e = d+4; var g = e+5; var h = g+6; var i = h+7; var j = i+8; return a+b+c+d+e+g+h+i+j; } function main(): i32 { return f(1); }`,
+		"many_locals": `function f(a: i32): i32 { let b = a+1; let c = b+2; let d = c+3; let e = d+4; let g = e+5; let h = g+6; let i = h+7; let j = i+8; return a+b+c+d+e+g+h+i+j; } function main(): i32 { return f(1); }`,
 		"option":      `function pick(n: i32): Option[i32] { if (n == 0) { return None; } return Some(n + 1); } function main(): i32 { match (pick(41)) { Some(v) => { return v; }, None => { return 0; } } return 99; }`,
-		"strings":     `function f(a: string, b: string): i32 { var c: string = a + b; return c.len(); } function main(): i32 { return f("ab", "cd"); }`,
+		"strings":     `function f(a: string, b: string): i32 { let c: string = a + b; return c.len(); } function main(): i32 { return f("ab", "cd"); }`,
 	}
 
 	// A prologue save is a bare `push`. A call site's save set is filtered to
@@ -197,9 +197,9 @@ func TestCodeSizeMarginalPerFunction(t *testing.T) {
 	gen := func(n int) string {
 		var b strings.Builder
 		for i := 0; i < n; i++ {
-			fmt.Fprintf(&b, "function fn%d(xs: i32[]): i32 { var s: i32 = %d; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }\n", i, i)
+			fmt.Fprintf(&b, "function fn%d(xs: i32[]): i32 { let s: i32 = %d; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }\n", i, i)
 		}
-		b.WriteString("function main(): i32 { var xs: i32[] = [1,2,3]; var s: i32 = 0;\n")
+		b.WriteString("function main(): i32 { let xs: i32[] = [1,2,3]; let s: i32 = 0;\n")
 		for i := 0; i < n; i++ {
 			fmt.Fprintf(&b, "  s = s + fn%d(xs);\n", i)
 		}

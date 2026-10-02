@@ -23,21 +23,21 @@ function emit(prog: I[], n: N): I[] {
     match (n) {
         C(c) => { return prog.append(IC(c)); },
         S(xs) => {
-            var ps: I[] = prog;
-            var k: i32 = 0;
+            let ps: I[] = prog;
+            let k: i32 = 0;
             while (k < xs.len()) { ps = emit(ps, xs[k]); k = k + 1; }
             return ps;
         },
         W(inner) => {
-            var pg: I[] = prog.append(IC(0));
+            let pg: I[] = prog.append(IC(0));
             pg = emit(pg, inner);
             return pg;
         },
     }
 }
 function main(): i32 {
-    var start: I[] = [];
-    var out: I[] = emit(start, W(S([C(1), C(2)])));
+    let start: I[] = [];
+    let out: I[] = emit(start, W(S([C(1), C(2)])));
     return out.len();
 }`, 3},
 		{"callee-returns-its-argument", `enum N { C(string), Same, W(N), S(N[]) }
@@ -46,13 +46,13 @@ function emit(prog: string[], n: N): string[] {
         C(s) => { return prog.append(s); },
         Same => { return prog; },
         W(inner) => {
-            var pg: string[] = prog.append(mk("a string long enough to live on the heap"));
+            let pg: string[] = prog.append(mk("a string long enough to live on the heap"));
             pg = emit(pg, inner);
             return pg;
         },
         S(xs) => {
-            var ps: string[] = prog;
-            var k: i32 = 0;
+            let ps: string[] = prog;
+            let k: i32 = 0;
             while (k < xs.len()) { ps = emit(ps, xs[k]); k = k + 1; }
             return ps;
         },
@@ -60,12 +60,12 @@ function emit(prog: string[], n: N): string[] {
 }
 function mk(a: string): string { return a + "!"; }
 function main(): i32 {
-    var total: i32 = 0;
-    var r: i32 = 0;
+    let total: i32 = 0;
+    let r: i32 = 0;
     while (r < 5) {
-        var start: string[] = [];
-        var t: N = W(S([W(Same), Same, W(C(mk("another string long enough for the heap"))), W(W(Same))]));
-        var out: string[] = emit(start, t);
+        let start: string[] = [];
+        let t: N = W(S([W(Same), Same, W(C(mk("another string long enough for the heap"))), W(W(Same))]));
+        let out: string[] = emit(start, t);
         total = total + out.len();
         r = r + 1;
     }

@@ -32,7 +32,7 @@ convention, `2` means a usage error.
   code={`import "std/i32";
 
 function main(): i32 {
-    var argv: string[] = args();
+    let argv: string[] = args();
     print("got " + argv.len().to_string() + " arg(s)");
     return 0;
 }`}
@@ -74,9 +74,9 @@ immutably — structs are immutable, so an update produces a new value.
 struct Opts { ignore_case: boolean, show_num: boolean }
 
 // ... inside the argv loop, for an argument like "-in":
-var f: i32 = 1;
+let f: i32 = 1;
 while (f < a.len()) {
-    var c: i32 = a[f] as i32;              // a byte, compared by code point
+    let c: i32 = a[f] as i32;              // a byte, compared by code point
     if (c == 105) {                 // 'i'
         o = Opts { ...o, ignore_case: true };
     } else if (c == 110) {          // 'n'
@@ -93,7 +93,7 @@ while (f < a.len()) {
 Indexing a `string` yields a **`u8`** — one byte, not a one-character
 string. There are no implicit numeric conversions, so compare it against
 an ASCII code point by casting first: `a[f] as i32 == 105` (`'i'`), which
-is what the `var c: i32 = a[f] as i32;` above does. Use `a[f:f+1]` to
+is what the `let c: i32 = a[f] as i32;` above does. Use `a[f:f+1]` to
 slice out a one-byte substring when you need a `string`.
 :::
 
@@ -117,17 +117,17 @@ function matches(line: string, pat: string, ci: boolean): boolean {
 }
 
 function run(argv: string[]): i32 {
-    var o: Opts = Opts { ignore_case: false, show_num: false };
-    var pat: string = "";
-    var have_pat: boolean = false;
+    let o: Opts = Opts { ignore_case: false, show_num: false };
+    let pat: string = "";
+    let have_pat: boolean = false;
 
-    var i: i32 = 1;
+    let i: i32 = 1;
     while (i < argv.len()) {
-        var a: string = argv[i];
+        let a: string = argv[i];
         if (a.starts_with("-") && a.len() > 1 && !have_pat) {
-            var f: i32 = 1;
+            let f: i32 = 1;
             while (f < a.len()) {
-                var c: i32 = a[f] as i32;
+                let c: i32 = a[f] as i32;
                 if (c == 105) { o = Opts { ...o, ignore_case: true }; }
                 else if (c == 110) { o = Opts { ...o, show_num: true }; }
                 else { eprint("grep: invalid option"); return 2; }
@@ -143,9 +143,9 @@ function run(argv: string[]): i32 {
 
     match (io.read_input("-")) {
         Ok(text) => {
-            var any: boolean = false;
-            var lines: string[] = text.lines();
-            var ln: i32 = 0;
+            let any: boolean = false;
+            let lines: string[] = text.lines();
+            let ln: i32 = 0;
             while (ln < lines.len()) {
                 if (matches(lines[ln], pat, o.ignore_case)) {
                     any = true;
@@ -166,7 +166,7 @@ function run(argv: string[]): i32 {
 function main(): i32 {
     // In the playground there's no real argv, so we simulate one.
     // On the command line this would just be: return run(args());
-    var fake_argv: string[] = ["grep", "-n", "fern"];
+    let fake_argv: string[] = ["grep", "-n", "fern"];
     return run(fake_argv);
 }`}
   autoRun={false}

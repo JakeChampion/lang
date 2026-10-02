@@ -104,7 +104,7 @@ struct Outer { l: Mid, r: Mid }
 function sum_outer(o: Outer): i32;
 
 function main(): i32 {
-	var o: Outer = Outer { l: Mid { p: Point { x: 1, y: 2 }, n: 3 }, r: Mid { p: Point { x: 4, y: 5 }, n: 6 } };
+	let o: Outer = Outer { l: Mid { p: Point { x: 1, y: 2 }, n: 3 }, r: Mid { p: Point { x: 4, y: 5 }, n: 6 } };
 	// 1 + 2*10 + 3*100 + 4*1000 + 5*10000 + 6*100000 = 654321
 	if (sum_outer(o) == 654321) { write("` + want + `"); } else { write("od-bad"); }
 	return 0;

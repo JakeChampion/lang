@@ -17,7 +17,7 @@ import "testing"
 // against the interpreter. Mirrors self_host_nested_array_ir_test.go.
 //
 // NOTE: the fix is scoped to RETURN position (the expected payload type is the
-// current function's return type). An annotated let-binding (`var r:
+// current function's return type). An annotated let-binding (`let r:
 // Result[i64,_] = Ok(40)`) and the match-arm READ width for an Option[i64] *local*
 // are a separate, entangled inconsistency tracked as a follow-up.
 var optMakeI64IRCases = []struct {
@@ -37,26 +37,26 @@ var optMakeI64IRCases = []struct {
 	{"ok-u64-literal", `function g(): Result[u64, i32] { return Ok(99); } function main(): i32 { match (g()) { Ok(v) => { return (v / 9) as i32; }, Err(e) => { return e; } } }`},
 	// The unwrapped i64 payload flows through the try-operator (offset-8 read) and is
 	// re-wrapped (offset-8 construction) before the final match reads it. 40/8 = 5.
-	{"try-roundtrip-i64", `function g(): Result[i64, i32] { return Ok(40); } function f(): Result[i64, i32] { var x: i64 = g()?; return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return (v / 8) as i32; }, Err(e) => { return e; } } }`},
+	{"try-roundtrip-i64", `function g(): Result[i64, i32] { return Ok(40); } function f(): Result[i64, i32] { let x: i64 = g()?; return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return (v / 8) as i32; }, Err(e) => { return e; } } }`},
 
-	// Annotated let-binding construction: `var r: Result[i64,_] = Ok(40)` /
-	// `var o: Option[i64] = Some(40)` with a bare i32 literal must build the 8-byte
+	// Annotated let-binding construction: `let r: Result[i64,_] = Ok(40)` /
+	// `let o: Option[i64] = Some(40)` with a bare i32 literal must build the 8-byte
 	// box AND record the annotation as the slot's opt_type so the later `match` reads
 	// offset-8 — both sides must agree or the read truncates. (let-ok-i64-literal was
 	// a silent miscompile: wasm read 0. let-some-i64-literal was only accidentally
 	// correct — i32 construct + i32 read both at offset 4 — and truncated large i64s.)
-	{"let-ok-i64-literal", `function main(): i32 { var r: Result[i64, i32] = Ok(40); match (r) { Ok(v) => { return (v / 8) as i32; }, Err(e) => { return e; } } }`},
-	{"let-some-i64-literal", `function main(): i32 { var o: Option[i64] = Some(40); match (o) { Some(v) => { return (v / 8) as i32; }, None => { return 0; } } }`},
-	{"let-err-i64-literal", `function main(): i32 { var r: Result[i32, i64] = Err(40); match (r) { Ok(v) => { return v; }, Err(e) => { return (e / 8) as i32; } } }`},
+	{"let-ok-i64-literal", `function main(): i32 { let r: Result[i64, i32] = Ok(40); match (r) { Ok(v) => { return (v / 8) as i32; }, Err(e) => { return e; } } }`},
+	{"let-some-i64-literal", `function main(): i32 { let o: Option[i64] = Some(40); match (o) { Some(v) => { return (v / 8) as i32; }, None => { return 0; } } }`},
+	{"let-err-i64-literal", `function main(): i32 { let r: Result[i32, i64] = Err(40); match (r) { Ok(v) => { return v; }, Err(e) => { return (e / 8) as i32; } } }`},
 	// i32-variable arg in an annotated let (Result only — the Option[i64] = Some(i32var)
 	// form is a checker type error). The i32 value is widened to 8 bytes (op_int_extend).
-	{"let-ok-i64-i32var", `function g(n: i32): i32 { var r: Result[i64, i32] = Ok(n); match (r) { Ok(v) => { return (v / 8) as i32; }, Err(e) => { return e; } } } function main(): i32 { return g(40); }`},
-	{"let-some-u64-literal", `function main(): i32 { var o: Option[u64] = Some(99); match (o) { Some(v) => { return (v / 9) as i32; }, None => { return 0; } } }`},
+	{"let-ok-i64-i32var", `function g(n: i32): i32 { let r: Result[i64, i32] = Ok(n); match (r) { Ok(v) => { return (v / 8) as i32; }, Err(e) => { return e; } } } function main(): i32 { return g(40); }`},
+	{"let-some-u64-literal", `function main(): i32 { let o: Option[u64] = Some(99); match (o) { Some(v) => { return (v / 9) as i32; }, None => { return 0; } } }`},
 	// LARGE i64 values: a genuine 8-byte round-trip, NOT the accidental i32
 	// cancellation (5000000000 truncated to i32 would not divide to 5). Proves the
 	// match-read uses offset-8 for both Option and Result locals. 5e9 / 1e9 = 5.
-	{"let-some-i64-large", `function main(): i32 { var o: Option[i64] = Some(5000000000); match (o) { Some(v) => { return (v / 1000000000) as i32; }, None => { return 0; } } }`},
-	{"let-ok-i64-large", `function main(): i32 { var r: Result[i64, i32] = Ok(5000000000); match (r) { Ok(v) => { return (v / 1000000000) as i32; }, Err(e) => { return e; } } }`},
+	{"let-some-i64-large", `function main(): i32 { let o: Option[i64] = Some(5000000000); match (o) { Some(v) => { return (v / 1000000000) as i32; }, None => { return 0; } } }`},
+	{"let-ok-i64-large", `function main(): i32 { let r: Result[i64, i32] = Ok(5000000000); match (r) { Ok(v) => { return (v / 1000000000) as i32; }, Err(e) => { return e; } } }`},
 }
 
 // TestSelfHostOptMakeI64IR compiles each case with the self-host CLI for

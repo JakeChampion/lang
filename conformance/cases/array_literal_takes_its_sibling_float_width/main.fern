@@ -5,9 +5,9 @@ function half(x: f32): f32 { return x / 2.0; }
 function id[T](x: T): T { return x; }
 
 function main(): i32 {
-    var xs: f32[] = id([2.5, half(3.0), 1.5]);
-    var ys: f32[] = id([4, half(1.0), 0.5]);
-    var zs = [0.25, half(0.5)];
-    var s: f32 = xs[0] + xs[1] + xs[2] + ys[0] + ys[1] + ys[2] + zs[0] + zs[1];
+    let xs: f32[] = id([2.5, half(3.0), 1.5]);
+    let ys: f32[] = id([4, half(1.0), 0.5]);
+    let zs = [0.25, half(0.5)];
+    let s: f32 = xs[0] + xs[1] + xs[2] + ys[0] + ys[1] + ys[2] + zs[0] + zs[1];
     return (s * 4.0) as i32;
 }

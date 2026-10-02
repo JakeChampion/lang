@@ -17,7 +17,7 @@ import (
 func TestPollStubInterpWasm(t *testing.T) {
 	bin := buildFernCLI(t)
 	const src = `function main(): i32 {
-    var fds: i32[] = [];
+    let fds: i32[] = [];
     return poll(fds, 0);
 }`
 

@@ -98,18 +98,18 @@ func TestSelfHostBlockScopedClassesX86_64(t *testing.T) {
 		{
 			name: "arrarr_declared_in_loop",
 			src: `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var g: i32[][] = [[i, i + 1], [i + 2]];
+        let g: i32[][] = [[i, i + 1], [i + 2]];
         acc = acc + g.len() + g[0][0];
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -118,18 +118,18 @@ function main(): i32 {
 		{
 			name: "strarr_declared_in_loop",
 			src: `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var xs: string[] = ["alpha", "beta"];
+        let xs: string[] = ["alpha", "beta"];
         acc = acc + xs.len();
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -139,18 +139,18 @@ function main(): i32 {
 			name: "scalar_field_struct_array_declared_in_loop",
 			src: `struct S { a: i32, b: i32 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var xs: S[] = [S { a: i, b: 1 }, S { a: i, b: 2 }];
+        let xs: S[] = [S { a: i, b: 1 }, S { a: i, b: 2 }];
         acc = acc + xs.len();
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -159,18 +159,18 @@ function main(): i32 {
 		{
 			name: "optaarr_declared_in_loop",
 			src: `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var xs: Option[i32[]][] = [Some([i, i + 1]), None];
+        let xs: Option[i32[]][] = [Some([i, i + 1]), None];
         acc = acc + xs.len();
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -182,18 +182,18 @@ function main(): i32 {
 			// its unfixed 8000, which is why it has its own case.
 			name: "rc_tuple_declared_in_loop",
 			src: `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var t: (i32, i32[]) = (i, [i, i + 1]);
+        let t: (i32, i32[]) = (i, [i, i + 1]);
         acc = acc + t.0 + t.1.len();
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -206,18 +206,18 @@ function main(): i32 {
 			name: "rc_payload_enum_in_loop_stays_balanced",
 			src: `enum E { Full(i32[]), Nil }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var b: E = E.Full([i, i + 1]);
+        let b: E = E.Full([i, i + 1]);
         match (b) { E.Full(xs) => { acc = acc + xs.len(); }, E.Nil => {} }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -227,18 +227,18 @@ function main(): i32 {
 			// The Option sibling of the case above, same reason, same double-free risk.
 			name: "flat_option_in_loop_stays_balanced",
 			src: `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var o: Option[i32[]] = Some([i, i + 1]);
+        let o: Option[i32[]] = Some([i, i + 1]);
         match (o) { Some(a) => { acc = acc + a.len() + a[0]; }, None => {} }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -255,18 +255,18 @@ function main(): i32 {
 			name: "arrstruct_len_declared_in_loop",
 			src: `struct P { xs: i32[], n: i32 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var ps: P[] = [P { xs: [i, i + 1], n: i }, P { xs: [i + 2], n: 1 }];
+        let ps: P[] = [P { xs: [i, i + 1], n: i }, P { xs: [i + 2], n: 1 }];
         acc = acc + ps.len();
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -277,18 +277,18 @@ function main(): i32 {
 			// and closed by the same commit. Same reason for the `.len()`.
 			name: "arrtup_len_declared_in_loop",
 			src: `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var ts: (i32[], i32)[] = [([i, i + 1], i), ([i + 2], 1)];
+        let ts: (i32[], i32)[] = [([i, i + 1], i), ([i + 2], 1)];
         acc = acc + ts.len();
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -320,21 +320,21 @@ func TestSelfHostBlockScopedClassesHazardsX86_64(t *testing.T) {
 			// loop and is read after it.
 			name: "arr_escapes_into_an_outer_container",
 			src: `function round(r: i32): i32 {
-    var keep: i32[][] = [];
-    var i: i32 = 0;
+    let keep: i32[][] = [];
+    let i: i32 = 0;
     while (i < 4) {
-        var g: i32[] = [i, i + 1];
+        let g: i32[] = [i, i + 1];
         keep = keep.append(g);
         i = i + 1;
     }
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < keep.len()) { acc = acc + keep[j][0]; j = j + 1; }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -345,11 +345,11 @@ function main(): i32 {
 			name: "strarr_aliased_and_passed_to_a_call",
 			src: `function keepit(xs: string[]): i32 { return xs.len(); }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var held: string[] = [];
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let held: string[] = [];
+    let i: i32 = 0;
     while (i < 4) {
-        var xs: string[] = ["alpha", "beta"];
+        let xs: string[] = ["alpha", "beta"];
         held = xs;
         acc = acc + keepit(xs);
         i = i + 1;
@@ -357,8 +357,8 @@ function round(r: i32): i32 {
     return acc + held.len() + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -369,11 +369,11 @@ function main(): i32 {
 			// both the option boxes and their payload buffers.
 			name: "optaarr_aliased_to_an_outer_local",
 			src: `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var held: Option[i32[]][] = [];
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let held: Option[i32[]][] = [];
+    let i: i32 = 0;
     while (i < 4) {
-        var xs: Option[i32[]][] = [Some([i, i + 1]), None];
+        let xs: Option[i32[]][] = [Some([i, i + 1]), None];
         held = xs;
         acc = acc + xs.len();
         i = i + 1;
@@ -381,8 +381,8 @@ function main(): i32 {
     return acc + held.len() + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,

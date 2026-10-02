@@ -39,7 +39,7 @@ var pathIRCases = []stdlibConcatCase{
 }
 
 var mathIRCases = []stdlibConcatCase{
-	{"range-sum", `var a = range(0, 10); var s = 0; for x in a { s = s + x; } return s - 35;`}, // 45-35=10
+	{"range-sum", `let a = range(0, 10); let s = 0; for x in a { s = s + x; } return s - 35;`}, // 45-35=10
 	{"range-step-len", `return range_step(0, 20, 5).len();`},                                   // [0,5,10,15] = 4
 	{"pack-rgb-low", `return pack_rgb(255, 128, 64) & 255;`},                                   // 64
 	{"i32-max", `return i32_max() - 2147483527;`},                                              // 120

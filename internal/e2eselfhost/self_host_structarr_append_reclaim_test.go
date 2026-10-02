@@ -7,7 +7,7 @@ import (
 
 // --- Append-built struct-array element reclaim (#6127) -------------
 //
-// irlower's "STRUCTARR:" credit routes a fresh, non-escaping scalar-field
+// The lowering's "STRUCTARR:" credit routes a fresh, non-escaping scalar-field
 // struct array to __fern_arrarr_free, which frees each element STRUCT BOX and
 // then the outer buffer. Like the arr-of-arr class before #6092, that credit
 // was refused for any REASSIGNED name — and `ps = ps.append(P { .. })` is a
@@ -41,15 +41,15 @@ import (
 const structArrAppendChurnSrc = `struct P { x: i32, y: i32 }
 
 function round(): i32 {
-    var ps: P[] = [];
-    var i: i32 = 0;
+    let ps: P[] = [];
+    let i: i32 = 0;
     while (i < 8) { ps = ps.append(P { x: i, y: i }); i = i + 1; }
     return ps.len();
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t / 100;
 }`
@@ -100,15 +100,15 @@ func TestSelfHostStructArrAppendReclaimX86_64(t *testing.T) {
 const structArrAppendStrFieldSrc = `struct N { s: string, n: i32 }
 
 function round(i: i32): i32 {
-    var xs: N[] = [];
-    var k: i32 = 0;
+    let xs: N[] = [];
+    let k: i32 = 0;
     while (k < 4) { xs = xs.append(N { s: "ab", n: i }); k = k + 1; }
     return xs.len();
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     return t / 100;
 }`
@@ -116,13 +116,13 @@ function main(): i32 {
 const structArrLiteralStrFieldSrc = `struct N { s: string, n: i32 }
 
 function round(i: i32): i32 {
-    var xs: N[] = [N { s: "ab", n: i }, N { s: "cd", n: i }, N { s: "ef", n: i }, N { s: "gh", n: i }];
+    let xs: N[] = [N { s: "ab", n: i }, N { s: "cd", n: i }, N { s: "ef", n: i }, N { s: "gh", n: i }];
     return xs.len();
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     return t / 100;
 }`
@@ -184,15 +184,15 @@ const structArrAppendCallElemSrc = `struct P { x: i32, y: i32 }
 function mk(i: i32): P { return P { x: i, y: i }; }
 
 function round(): i32 {
-    var ps: P[] = [];
-    var i: i32 = 0;
+    let ps: P[] = [];
+    let i: i32 = 0;
     while (i < 8) { ps = ps.append(mk(i)); i = i + 1; }
     return ps.len();
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t / 100;
 }`
@@ -256,10 +256,10 @@ func TestSelfHostStructArrAppendHazardsX86_64(t *testing.T) {
 			name: "element_alias",
 			src: `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var ps: P[] = [];
-    var i: i32 = 0;
+    let ps: P[] = [];
+    let i: i32 = 0;
     while (i < 3) { ps = ps.append(P { x: i, y: i }); i = i + 1; }
-    var q: P = ps[1];
+    let q: P = ps[1];
     return q.x + ps.len();
 }`,
 			want: 4,
@@ -270,9 +270,9 @@ function main(): i32 {
 			name: "ident_element",
 			src: `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var shared: P = P { x: 5, y: 6 };
-    var ps: P[] = [];
-    var i: i32 = 0;
+    let shared: P = P { x: 5, y: 6 };
+    let ps: P[] = [];
+    let i: i32 = 0;
     while (i < 3) { ps = ps.append(shared); i = i + 1; }
     return ps[0].x + shared.y;
 }`,
@@ -284,9 +284,9 @@ function main(): i32 {
 			name: "base_copy_element",
 			src: `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var base: P = P { x: 2, y: 3 };
-    var ps: P[] = [];
-    var i: i32 = 0;
+    let base: P = P { x: 2, y: 3 };
+    let ps: P[] = [];
+    let i: i32 = 0;
     while (i < 3) { ps = ps.append(P { ...base, x: i }); i = i + 1; }
     return ps[2].x + base.y;
 }`,
@@ -297,10 +297,10 @@ function main(): i32 {
 			name: "rebound_to_other",
 			src: `struct P { x: i32, y: i32 }
 function main(): i32 {
-    var ps: P[] = [];
-    var i: i32 = 0;
+    let ps: P[] = [];
+    let i: i32 = 0;
     while (i < 2) { ps = ps.append(P { x: 4, y: 4 }); i = i + 1; }
-    var qs: P[] = [P { x: 9, y: 9 }];
+    let qs: P[] = [P { x: 9, y: 9 }];
     ps = qs;
     return ps[0].x + qs.len();
 }`,
@@ -311,12 +311,12 @@ function main(): i32 {
 			name: "escaping_return",
 			src: `struct P { x: i32, y: i32 }
 function build(): P[] {
-    var ps: P[] = [];
-    var i: i32 = 0;
+    let ps: P[] = [];
+    let i: i32 = 0;
     while (i < 3) { ps = ps.append(P { x: i, y: i }); i = i + 1; }
     return ps;
 }
-function main(): i32 { var r: P[] = build(); return r[2].x + r.len(); }`,
+function main(): i32 { let r: P[] = build(); return r[2].x + r.len(); }`,
 			want: 5,
 		},
 		{
@@ -328,8 +328,8 @@ function main(): i32 { var r: P[] = build(); return r[2].x + r.len(); }`,
 			name: "string_field_admitted",
 			src: `struct N { name: string, n: i32 }
 function main(): i32 {
-    var ns: N[] = [];
-    var i: i32 = 0;
+    let ns: N[] = [];
+    let i: i32 = 0;
     while (i < 3) { ns = ns.append(N { name: "abc", n: i }); i = i + 1; }
     return ns[2].n + ns[0].name.len();
 }`,
@@ -342,10 +342,10 @@ function main(): i32 {
 			name: "string_field_element_alias",
 			src: `struct N { name: string, n: i32 }
 function main(): i32 {
-    var ns: N[] = [];
-    var i: i32 = 0;
+    let ns: N[] = [];
+    let i: i32 = 0;
     while (i < 3) { ns = ns.append(N { name: "wxyz", n: i }); i = i + 1; }
-    var q: N = ns[1];
+    let q: N = ns[1];
     return q.n + q.name.len() + ns.len();
 }`,
 			want: 8,
@@ -360,9 +360,9 @@ function main(): i32 {
 			src: `struct N { name: string, n: i32 }
 function passthru(p: N): N { return p; }
 function main(): i32 {
-    var shared: N = N { name: "pq", n: 5 };
-    var ns: N[] = [];
-    var i: i32 = 0;
+    let shared: N = N { name: "pq", n: 5 };
+    let ns: N[] = [];
+    let i: i32 = 0;
     while (i < 3) { ns = ns.append(passthru(shared)); i = i + 1; }
     return ns[0].n + shared.name.len();
 }`,
@@ -378,9 +378,9 @@ function main(): i32 {
 struct Src { base: i32 }
 function (s: Src) make(i: i32): N { return N { name: "zz", n: s.base + i }; }
 function main(): i32 {
-    var src: Src = Src { base: 10 };
-    var ns: N[] = [];
-    var i: i32 = 0;
+    let src: Src = Src { base: 10 };
+    let ns: N[] = [];
+    let i: i32 = 0;
     while (i < 3) { ns = ns.append(src.make(i)); i = i + 1; }
     return ns[2].n + ns[0].name.len();
 }`,
@@ -394,8 +394,8 @@ function main(): i32 {
 			name: "closure_field_admitted",
 			src: `struct C { name: string, f: (i32) => i32 }
 function main(): i32 {
-    var cs: C[] = [];
-    var i: i32 = 0;
+    let cs: C[] = [];
+    let i: i32 = 0;
     while (i < 3) { cs = cs.append(C { name: "ab", f: (x: i32) => x + 1 }); i = i + 1; }
     return (cs[2].f)(3) + cs[0].name.len();
 }`,
@@ -408,9 +408,9 @@ function main(): i32 {
 			name: "string_field_ident_element",
 			src: `struct N { name: string, n: i32 }
 function main(): i32 {
-    var shared: N = N { name: "pq", n: 5 };
-    var ns: N[] = [];
-    var i: i32 = 0;
+    let shared: N = N { name: "pq", n: 5 };
+    let ns: N[] = [];
+    let i: i32 = 0;
     while (i < 3) { ns = ns.append(shared); i = i + 1; }
     return ns[0].n + shared.name.len();
 }`,

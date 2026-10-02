@@ -17,7 +17,7 @@
 //   filter_chain — the bail shape: unannotated filter result into a generic.
 //   map_chain    — the sibling that always worked, so a regression on the
 //                  existing return-position recovery is visible too.
-//   annotated    — `var ys: i32[] = iter.filter(...)`, the workaround that
+//   annotated    — `let ys: i32[] = iter.filter(...)`, the workaround that
 //                  lowered before this change; it must keep working.
 //   strings      — a non-i32 element, so the fix is not i32-shaped.
 //   floats       — an f64 element, where an unresolved element type is not
@@ -41,59 +41,59 @@ import "core/cmp" as cmp;
 
 // The bail shape: filter's result, unannotated, feeding a generic consumer.
 function filter_chain(i: i32): i32 {
-    var xs: i32[] = [5, 2, 8, 1, 4];
-    var evens = iter.filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
-    var asc = cmp.sort(evens);
+    let xs: i32[] = [5, 2, 8, 1, 4];
+    let evens = iter.filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
+    let asc = cmp.sort(evens);
     if (asc.len() != 3) { return 253; }
     return asc[0];
 }
 
 // The sibling that always worked — U comes from the lambda's declared return.
 function map_chain(i: i32): i32 {
-    var xs: i32[] = [3, 1, 2];
-    var dbl = iter.map(iter.of(xs), (x: i32): i32 => { return x * 2; });
-    var asc = cmp.sort(dbl);
+    let xs: i32[] = [3, 1, 2];
+    let dbl = iter.map(iter.of(xs), (x: i32): i32 => { return x * 2; });
+    let asc = cmp.sort(dbl);
     if (asc.len() != 3) { return 253; }
     return asc[0];
 }
 
 // The annotated workaround, which lowered before this change.
 function annotated(i: i32): i32 {
-    var xs: i32[] = [5, 2, 8];
-    var evens: i32[] = iter.filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
-    var asc = cmp.sort(evens);
+    let xs: i32[] = [5, 2, 8];
+    let evens: i32[] = iter.filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; });
+    let asc = cmp.sort(evens);
     return asc[0];
 }
 
 // A non-i32 element, so the recovery is not i32-shaped.
 function strings(i: i32): i32 {
-    var ss: string[] = ["pear", "fig", "plum"];
-    var keep = iter.filter(iter.of(ss), (s: string): boolean => { return s.len() > 3; });
-    var asc = cmp.sort(keep);
+    let ss: string[] = ["pear", "fig", "plum"];
+    let keep = iter.filter(iter.of(ss), (s: string): boolean => { return s.len() > 3; });
+    let asc = cmp.sort(keep);
     if (asc.len() != 2) { return 252; }
     return asc[0].len();
 }
 
 // An f64 element: the width an untyped read gets wrong, on every backend.
 function floats(i: i32): i32 {
-    var xs: f64[] = [5.5, 2.25, 8.5, 1.75, 4.5];
-    var big = iter.filter(iter.of(xs), (x: f64): boolean => { return x > 3.0; });
+    let xs: f64[] = [5.5, 2.25, 8.5, 1.75, 4.5];
+    let big = iter.filter(iter.of(xs), (x: f64): boolean => { return x > 3.0; });
     if (big.len() != 3) { return 253; }
     return (big[0] as i32) + (big[1] as i32) + (big[2] as i32);
 }
 
 // The predicate bound to a local: the call site sees a name, not a lambda.
 function env_lambda(i: i32): i32 {
-    var xs: f64[] = [5.5, 2.25, 8.5, 1.75, 4.5];
-    var keep = (x: f64): boolean => { return x > 3.0; };
-    var big = iter.filter(iter.of(xs), keep);
+    let xs: f64[] = [5.5, 2.25, 8.5, 1.75, 4.5];
+    let keep = (x: f64): boolean => { return x > 3.0; };
+    let big = iter.filter(iter.of(xs), keep);
     if (big.len() != 3) { return 253; }
     return big[0] as i32;
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         acc = acc + filter_chain(i) + map_chain(i) + annotated(i) + strings(i) + floats(i) + env_lambda(i);
         i = i + 1;

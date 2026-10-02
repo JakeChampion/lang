@@ -46,7 +46,7 @@ func findVarStmt(blk *ast.Block, name string) *ast.Var {
 
 // TestConvertHoistsSimpleLocalFunc — a nested function with no
 // captures becomes a top-level decl. The def site is replaced
-// with a `var <name> = MakeClosure{...}`. The hoisted decl's
+// with a `let <name> = MakeClosure{...}`. The hoisted decl's
 // name is generated (`__closure_<orig>_<N>`), not the same as
 // the source-level name.
 func TestConvertHoistsSimpleLocalFunc(t *testing.T) {
@@ -74,14 +74,14 @@ func TestConvertHoistsSimpleLocalFunc(t *testing.T) {
 		t.Error("hoisted clone `__closure_bump_*` not found in prog.Funcs")
 	}
 	// Original `function bump(...)` statement should be
-	// replaced with `var bump = MakeClosure{...}`.
+	// replaced with `let bump = MakeClosure{...}`.
 	mainFn := findFuncByName(prog, "main")
 	if mainFn == nil {
 		t.Fatal("main vanished")
 	}
 	bumpDef := findVarStmt(mainFn.Body, "bump")
 	if bumpDef == nil {
-		t.Fatal("def site `var bump = ...` not found in main's body")
+		t.Fatal("def site `let bump = ...` not found in main's body")
 	}
 	if _, ok := bumpDef.Init.(*ast.MakeClosure); !ok {
 		t.Errorf("bump's def init: expected *ast.MakeClosure, got %T", bumpDef.Init)
@@ -94,7 +94,7 @@ func TestConvertHoistsSimpleLocalFunc(t *testing.T) {
 // the env arg.
 func TestConvertRewritesCapturedRefsAsCaptureRef(t *testing.T) {
 	src := `function main(): i32 {
-		var n: i32 = 100;
+		let n: i32 = 100;
 		function bump(x: i32): i32 { return x + n; }
 		return bump(5);
 	}`
@@ -126,13 +126,13 @@ func TestConvertRewritesCapturedRefsAsCaptureRef(t *testing.T) {
 	}
 }
 
-// TestConvertLambdaExpression — `var f = (x): T => { ... }`
+// TestConvertLambdaExpression — `let f = (x): T => { ... }`
 // is a Lambda expression form; closureconv should hoist it to
 // a top-level decl just like a named local function.
 func TestConvertLambdaExpression(t *testing.T) {
 	src := `function main(): i32 {
-		var k: i32 = 7;
-		var mul: (i32) => i32 = (x: i32): i32 => { return x * k; };
+		let k: i32 = 7;
+		let mul: (i32) => i32 = (x: i32): i32 => { return x * k; };
 		return mul(6);
 	}`
 	prog := runConvert(t, src)
@@ -155,7 +155,7 @@ func TestConvertLambdaExpression(t *testing.T) {
 	}
 	mulDef := findVarStmt(mainFn.Body, "mul")
 	if mulDef == nil {
-		t.Fatal("def site `var mul = ...` not found")
+		t.Fatal("def site `let mul = ...` not found")
 	}
 	mc, ok := mulDef.Init.(*ast.MakeClosure)
 	if !ok {

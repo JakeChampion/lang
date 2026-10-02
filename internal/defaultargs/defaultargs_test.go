@@ -43,7 +43,7 @@ func TestDefaultMustBeConstantExpression(t *testing.T) {
 		{
 			name: "reads-another-parameter",
 			src: `function f(a: i32, b: i32 = a * 2): i32 { return a + b; }
-function main(): i32 { var a: i32 = 100; return f(1); }`,
+function main(): i32 { let a: i32 = 100; return f(1); }`,
 			wantName: "a",
 		},
 		{
@@ -76,38 +76,38 @@ function main(): i32 { return f(1); }`,
 			name: "field-access",
 			src: `struct Config { timeout: i32 }
 function f(a: i32, b: i32 = config.timeout): i32 { return a + b; }
-function main(): i32 { var config: Config = Config { timeout: 41 }; return f(1); }`,
+function main(): i32 { let config: Config = Config { timeout: 41 }; return f(1); }`,
 			wantName: "a field access",
 		},
 		{
 			name: "index",
 			src: `function f(a: i32, b: i32 = xs[0]): i32 { return a + b; }
-function main(): i32 { var xs: i32[] = [41, 9]; return f(1); }`,
+function main(): i32 { let xs: i32[] = [41, 9]; return f(1); }`,
 			wantName: "an index",
 		},
 		{
 			name: "cast",
 			src: `function f(a: i32, b: i32 = n as i32): i32 { return a + b; }
-function main(): i32 { var n: i64 = 41; return f(1); }`,
+function main(): i32 { let n: i64 = 41; return f(1); }`,
 			wantName: "a cast",
 		},
 		{
 			name: "lambda",
 			src: `function f(a: i32, g: (i32) => i32 = (x: i32) => x + n): i32 { return g(a); }
-function main(): i32 { var n: i32 = 41; return f(1); }`,
+function main(): i32 { let n: i32 = 41; return f(1); }`,
 			wantName: "a lambda",
 		},
 		{
 			name: "struct-literal",
 			src: `struct P { v: i32 }
 function f(a: i32, p: P = P { v: n }): i32 { return a + p.v; }
-function main(): i32 { var n: i32 = 41; return f(1); }`,
+function main(): i32 { let n: i32 = 41; return f(1); }`,
 			wantName: "a struct literal",
 		},
 		{
 			name: "array-literal",
 			src: `function f(a: i32, xs: i32[] = [n]): i32 { return a + xs[0]; }
-function main(): i32 { var n: i32 = 41; return f(1); }`,
+function main(): i32 { let n: i32 = 41; return f(1); }`,
 			wantName: "an array literal",
 		},
 		// Nesting one inside arithmetic must not carry it past either.
@@ -115,7 +115,7 @@ function main(): i32 { var n: i32 = 41; return f(1); }`,
 			name: "field-access-under-arithmetic",
 			src: `struct Config { timeout: i32 }
 function f(a: i32, b: i32 = 1 + config.timeout): i32 { return a + b; }
-function main(): i32 { var config: Config = Config { timeout: 41 }; return f(1); }`,
+function main(): i32 { let config: Config = Config { timeout: 41 }; return f(1); }`,
 			wantName: "a field access",
 		},
 	}
@@ -150,7 +150,7 @@ function main(): i32 { return listen(80); }`,
 		{
 			name: "string-literal",
 			src: `function greet(name: string, greeting: string = "hello"): string { return greeting + name; }
-function main(): i32 { var s: string = greet("x"); return 0; }`,
+function main(): i32 { let s: string = greet("x"); return 0; }`,
 			wantArgs: 2,
 		},
 		{

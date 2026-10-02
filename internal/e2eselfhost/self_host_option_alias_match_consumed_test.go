@@ -33,14 +33,14 @@ func optionAliasMatchConsumedCases() []tupleAliasParamCase {
 			// source matched, both borrow-only.
 			name: "alias_and_source_matched",
 			src: `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
-    var t: i32 = 0;
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
+    let t: i32 = 0;
     match (x) { Some(xs) => { t = t + xs.len(); }, None => {} }
     match (src) { Some(ys) => { t = (t + ys.len()) % 101; }, None => {} }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 68,
 		},
 		{
@@ -49,13 +49,13 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			// Kept so a regression distinguishes the two halves.
 			name: "dead_alias_source_matched",
 			src: `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
-    var t: i32 = 0;
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
+    let t: i32 = 0;
     match (src) { Some(ys) => { t = (t + ys.len()) % 101; }, None => {} }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 34,
 		},
 		{
@@ -63,13 +63,13 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			name: "alias_to_borrowing_callee",
 			src: `function peek(o: Option[i32[]]): i32 { match (o) { Some(v) => { return v.len(); }, None => {} } return 0; }
 function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
-    var t: i32 = peek(x);
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
+    let t: i32 = peek(x);
     match (src) { Some(ys) => { t = (t + ys.len()) % 101; }, None => {} }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 68,
 		},
 		{
@@ -79,47 +79,47 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			// census, so the exit is what guards it.
 			name: "payload_out_via_alias_refused",
 			src: `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
-    var out: i32[] = [0];
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
+    let out: i32[] = [0];
     match (x) { Some(xs) => { out = xs; }, None => {} }
     match (src) { Some(ys) => { return (out.len() + ys.len()) % 101; }, None => {} }
     return out.len();
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 68,
 		},
 		{
 			// The alias ESCAPES the frame.
 			name: "returned_alias_refused",
 			src: `function mk(i: i32): Option[i32[]] {
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
     match (src) { Some(ys) => { if (ys.len() == 99) { return None; } }, None => {} }
     return x;
 }
 function round(i: i32): i32 {
-    var v: Option[i32[]] = mk(i);
-    var t: i32 = 0;
+    let v: Option[i32[]] = mk(i);
+    let t: i32 = 0;
     match (v) { Some(zs) => { t = zs.len(); }, None => {} }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 34,
 		},
 		{
 			// A REASSIGNED alias is not confined.
 			name: "reassigned_alias_refused",
 			src: `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
-    var t: i32 = 0;
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
+    let t: i32 = 0;
     x = Some([i, i + 2, i + 3]);
     match (src) { Some(ys) => { t = (t + ys.len()) % 101; }, None => {} }
     match (x) { Some(xs) => { t = (t + xs.len()) % 101; }, None => {} }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 2,
 		},
 	}

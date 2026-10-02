@@ -25,7 +25,7 @@ Eight of the 52 programs (seeds 115, 120, 128, 174, 180, 388, 419 and the
 bound to it only when the annotation was `i64` or `u64`, on the grounds that
 the tag only had to stop contradicting a wide body and was "never meant to
 carry" a spelling like `Option[i32]`. A `None` arm shows why it has to:
-`var v: Option[i32] = (if (c) { None } else { None })` has no arm the
+`let v: Option[i32] = (if (c) { None } else { None })` has no arm the
 classifier can read, and the body inference in `semsource.result_type` has
 nothing either — the checker types a bare `None` as `Option` with no
 payload — so the block kept its i32 label and the module was refused for
@@ -41,12 +41,12 @@ pins that under strict IR on both natives.
 The checker had to follow. It types a value block from its arms and fell
 back to the lambda's tag when they disagreed, which was harmless while the
 tag was a guess the arms had nothing to do with. Stamped, the tag is what
-the parser's float settle reads: in `var x: f64 = if (c) { n } else { 2 }`
+the parser's float settle reads: in `let x: f64 = if (c) { n } else { 2 }`
 the `2` settles to f64, the `n` arm stays i32, the mixed pair fell to the
 f64 tag and the E003 native reports was gone (`settle-value-if-i32-arm`).
 The fallback now reads the arm that did not settle — the first non-literal
 arm whose type is not the tag's, since an integer literal adapts to the
-binding's width and `var n: i64 = if (c) { 1234567890123 } else { 0 }` is
+binding's width and `let n: i64 = if (c) { 1234567890123 } else { 0 }` is
 two of them — and stays untyped when the arms fail the E031 rule, so that
 mismatch is reported once, as native does. The fixture corpus through the
 self-host compiler (`FERN_SELFHOST_FIXTURES=1`) is the gate that caught
@@ -66,14 +66,14 @@ annotation stands. Seeds 198, 225, 234 and 382 produce whole on this.
 
 ## The returned lambda's slot
 
-`return <lambda>` is desugared to `var $lamret$N = <lambda>; return
+`return <lambda>` is desugared to `let $lamret$N = <lambda>; return
 $lamret$N;` so the lambda lift boxes it like any closure local. The slot
 carried no type, and once the lift replaced its initialiser with a
 `__mkclo$…` box constructor nothing could type it: `unresolved type of
 binding $lamret$0`, on every capturing lambda returned from a local
 function (seeds 010, 204). The slot is now declared as the enclosing
 declaration's return signature — the coarse tag plus its sidecars, the same
-triple a hand-written `var f: (P) => R` carries — and a lambda spelling no
+triple a hand-written `let f: (P) => R` carries — and a lambda spelling no
 result of its own takes the signature's. An if/match-expression IIFE has
 empty sidecars, so a lambda returned from one of its arms is still typed
 from the arm alone (seeds 298, 427 — the `declared fn` bucket).

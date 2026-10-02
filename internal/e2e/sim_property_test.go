@@ -45,6 +45,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 const simImports = `import "std/async";
@@ -63,8 +69,8 @@ func genSimProgram(r *rand.Rand) string {
 	var b strings.Builder
 	b.WriteString(simImports)
 	b.WriteString("function main(): i32 {\n")
-	fmt.Fprintf(&b, "    var d: sim.Sim = sim.new(%d as i64);\n", 1+r.Int63n(1<<30))
-	b.WriteString("    var n: sim.Net = sim.net(d);\n")
+	fmt.Fprintf(&b, "    let d: sim.Sim = sim.new(%d as i64);\n", 1+r.Int63n(1<<30))
+	b.WriteString("    let n: sim.Net = sim.net(d);\n")
 
 	bodies := []string{"alpha", "x", "abcdefghij", "the-quick-brown-fox", "payload-0123456789"}
 	nEp := 1 + r.Intn(3)
@@ -99,7 +105,7 @@ func genSimProgram(r *rand.Rand) string {
 	nStages := 1 + r.Intn(3)
 	for s := 0; s < nStages; s++ {
 		nf := 2 + r.Intn(3)
-		fmt.Fprintf(&b, "    var fs%d: async.Future[string][] = [\n", s)
+		fmt.Fprintf(&b, "    let fs%d: async.Future[string][] = [\n", s)
 		for k := 0; k < nf; k++ {
 			sep := ","
 			if k == nf-1 {
@@ -122,19 +128,19 @@ func genSimProgram(r *rand.Rand) string {
 		b.WriteString("    ];\n")
 		switch r.Intn(3) {
 		case 0:
-			fmt.Fprintf(&b, "    var g%d: string[] = async.gather_on(d, fs%d, \"!\");\n", s, s)
+			fmt.Fprintf(&b, "    let g%d: string[] = async.gather_on(d, fs%d, \"!\");\n", s, s)
 			fmt.Fprintf(&b, "    print(\"g%d.len=\" + g%d.len().to_string());\n", s, s)
-			fmt.Fprintf(&b, "    var i%d: i32 = 0;\n", s)
+			fmt.Fprintf(&b, "    let i%d: i32 = 0;\n", s)
 			fmt.Fprintf(&b, "    while (i%d < g%d.len()) {\n", s, s)
 			fmt.Fprintf(&b, "        print(\"g%d[\" + i%d.to_string() + \"]=\" + g%d[i%d]);\n", s, s, s, s)
 			fmt.Fprintf(&b, "        i%d = i%d + 1;\n    }\n", s, s)
 		case 1:
-			fmt.Fprintf(&b, "    var (w%d, v%d) = async.race_on(d, fs%d, \"!\");\n", s, s, s)
+			fmt.Fprintf(&b, "    let (w%d, v%d) = async.race_on(d, fs%d, \"!\");\n", s, s, s)
 			fmt.Fprintf(&b, "    print(\"r%d=\" + w%d.to_string() + \":\" + v%d);\n", s, s, s)
 		default:
-			fmt.Fprintf(&b, "    var o%d: Option[string][] = async.with_deadline_on(d, time.duration_millis(%d), fs%d);\n",
+			fmt.Fprintf(&b, "    let o%d: Option[string][] = async.with_deadline_on(d, time.duration_millis(%d), fs%d);\n",
 				s, pick(r, []int{5, 15, 30, 60}), s)
-			fmt.Fprintf(&b, "    var j%d: i32 = 0;\n", s)
+			fmt.Fprintf(&b, "    let j%d: i32 = 0;\n", s)
 			fmt.Fprintf(&b, "    while (j%d < o%d.len()) {\n", s, s)
 			fmt.Fprintf(&b, "        match (o%d[j%d]) {\n", s, s)
 			fmt.Fprintf(&b, "            Some(v) => { print(\"d%d[\" + j%d.to_string() + \"]=Some:\" + v); },\n", s, s)
@@ -195,7 +201,7 @@ func assertSimProgramAgrees(t *testing.T, src string) {
 		}
 	})
 	t.Run("wasm32-wasi", func(t *testing.T) {
-		comp := buildNumComponent(t, src)
+		comp := buildSimComponentNative(t, src)
 		got, stderr, ec := runComponent(t, comp, runOpts{})
 		if ec != 0 {
 			t.Fatalf("wasmtime exit = %d\nstdout: %s\nstderr: %s\nsrc:\n%s", ec, got, stderr, src)
@@ -204,6 +210,43 @@ func assertSimProgramAgrees(t *testing.T, src string) {
 			t.Errorf("wasm = %q, interp = %q\nsrc:\n%s", trimOut(got), want, src)
 		}
 	})
+}
+
+// buildSimComponentNative builds src with the native wasm backend. std/sim
+// drives the async poll host, which the self-host's wasm component does not
+// import (`poll is not supported in a wasm component`), so this leg stays
+// native until the wasm async decision on #4451.
+func buildSimComponentNative(t *testing.T, src string) string {
+	t.Helper()
+	skipIfPreview2Missing(t)
+	srcPath := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	prog, _, err := modload.Load(srcPath)
+	if err != nil {
+		t.Fatalf("modload: %v", err)
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		ForceMemorySection: true,
+		Preview2WASI:       true,
+		SynthCliRun:        true,
+		CliRunResult:       true,
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+	return finishComponentFromCoreBytes(t, bin)
 }
 
 // TestSimProperty is the deterministic seeded sweep — bounded for CI,
@@ -294,19 +337,19 @@ import "std/i32";
 import "std/i64";
 
 function main(): i32 {
-    var d: sim.Sim = sim.new(538118593 as i64);
-    var n: sim.Net = sim.net(d);
+    let d: sim.Sim = sim.new(538118593 as i64);
+    let n: sim.Net = sim.net(d);
     n = n.serve(1, 80, "/e0", "payload-0123456789", time.duration_nanos(10000000 as i64));
     n = n.fault_stall(1, 80, "/e0");
     n = n.serve(2, 80, "/e1", "x", time.duration_nanos(25000000 as i64));
     n = n.fault_partial(2, 80, "/e1", 0);
     n = n.fault_flaky(2, 80, "/e1", 75);
-    var fs0: async.Future[string][] = [
+    let fs0: async.Future[string][] = [
         n.fetch_future(9, 80, "/nope"),
         sim.future_chain(d, 8000000 as i64, 6000000 as i64, 2, "c0_1")
     ];
-    var o0: Option[string][] = async.with_deadline_on(d, time.duration_millis(60), fs0);
-    var j0: i32 = 0;
+    let o0: Option[string][] = async.with_deadline_on(d, time.duration_millis(60), fs0);
+    let j0: i32 = 0;
     while (j0 < o0.len()) {
         match (o0[j0]) {
             Some(v) => { print("d0[" + j0.to_string() + "]=Some:" + v); },
@@ -314,20 +357,20 @@ function main(): i32 {
         }
         j0 = j0 + 1;
     }
-    var fs1: async.Future[string][] = [
+    let fs1: async.Future[string][] = [
         n.fetch_future(2, 80, "/e1"),
         n.fetch_future(2, 80, "/e1"),
         n.fetch_future(1, 80, "/e0")
     ];
-    var (w1, v1) = async.race_on(d, fs1, "!");
+    let (w1, v1) = async.race_on(d, fs1, "!");
     print("r1=" + w1.to_string() + ":" + v1);
-    var fs2: async.Future[string][] = [
+    let fs2: async.Future[string][] = [
         sim.future_at(d, 3000000 as i64, "a2_0"),
         sim.future_at(d, 58000000 as i64, "a2_1"),
         n.fetch_future(2, 80, "/e1")
     ];
-    var o2: Option[string][] = async.with_deadline_on(d, time.duration_millis(30), fs2);
-    var j2: i32 = 0;
+    let o2: Option[string][] = async.with_deadline_on(d, time.duration_millis(30), fs2);
+    let j2: i32 = 0;
     while (j2 < o2.len()) {
         match (o2[j2]) {
             Some(v) => { print("d2[" + j2.to_string() + "]=Some:" + v); },
@@ -350,30 +393,30 @@ import "std/i32";
 import "std/i64";
 
 function main(): i32 {
-    var d: sim.Sim = sim.new(88997876 as i64);
-    var n: sim.Net = sim.net(d);
+    let d: sim.Sim = sim.new(88997876 as i64);
+    let n: sim.Net = sim.net(d);
     n = n.serve_chunked(1, 80, "/e0", "the-quick-brown-fox", time.duration_nanos(1000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(19, 3));
     n = n.fault_stall(1, 80, "/e0");
     n = n.fault_flaky(1, 80, "/e0", 75);
-    var fs0: async.Future[string][] = [
+    let fs0: async.Future[string][] = [
         sim.future_chain(d, 32000000 as i64, 1000000 as i64, 0, "c0_0"),
         n.fetch_future(1, 80, "/e0"),
         n.fetch_future(1, 80, "/e0"),
         sim.future_chain(d, 4000000 as i64, 8000000 as i64, 1, "c0_3")
     ];
-    var g0: string[] = async.gather_on(d, fs0, "!");
+    let g0: string[] = async.gather_on(d, fs0, "!");
     print("g0.len=" + g0.len().to_string());
-    var i0: i32 = 0;
+    let i0: i32 = 0;
     while (i0 < g0.len()) {
         print("g0[" + i0.to_string() + "]=" + g0[i0]);
         i0 = i0 + 1;
     }
-    var fs1: async.Future[string][] = [
+    let fs1: async.Future[string][] = [
         sim.future_at(d, 14000000 as i64, "a1_0"),
         n.fetch_future(1, 80, "/e0"),
         n.fetch_future(1, 80, "/e0")
     ];
-    var (w1, v1) = async.race_on(d, fs1, "!");
+    let (w1, v1) = async.race_on(d, fs1, "!");
     print("r1=" + w1.to_string() + ":" + v1);
     print("now=" + d.now_ns().to_string());
     print("rng=" + d.rng_state().to_string());
@@ -389,28 +432,28 @@ import "std/i32";
 import "std/i64";
 
 function main(): i32 {
-    var d: sim.Sim = sim.new(338788670 as i64);
-    var n: sim.Net = sim.net(d);
+    let d: sim.Sim = sim.new(338788670 as i64);
+    let n: sim.Net = sim.net(d);
     n = n.serve_chunked(1, 80, "/e0", "the-quick-brown-fox", time.duration_nanos(1000000 as i64), time.duration_nanos(2000000 as i64), sim.chunks_of(19, 4));
     n = n.fault_stall(1, 80, "/e0");
     n = n.fault_flaky(1, 80, "/e0", 75);
-    var fs0: async.Future[string][] = [
+    let fs0: async.Future[string][] = [
         n.fetch_future(1, 80, "/e0"),
         sim.future_at(d, 60000000 as i64, "a0_1")
     ];
-    var g0: string[] = async.gather_on(d, fs0, "!");
+    let g0: string[] = async.gather_on(d, fs0, "!");
     print("g0.len=" + g0.len().to_string());
-    var i0: i32 = 0;
+    let i0: i32 = 0;
     while (i0 < g0.len()) {
         print("g0[" + i0.to_string() + "]=" + g0[i0]);
         i0 = i0 + 1;
     }
-    var fs1: async.Future[string][] = [
+    let fs1: async.Future[string][] = [
         sim.future_at(d, 21000000 as i64, "a1_0"),
         n.fetch_future(1, 80, "/e0")
     ];
-    var o1: Option[string][] = async.with_deadline_on(d, time.duration_millis(5), fs1);
-    var j1: i32 = 0;
+    let o1: Option[string][] = async.with_deadline_on(d, time.duration_millis(5), fs1);
+    let j1: i32 = 0;
     while (j1 < o1.len()) {
         match (o1[j1]) {
             Some(v) => { print("d1[" + j1.to_string() + "]=Some:" + v); },
@@ -418,13 +461,13 @@ function main(): i32 {
         }
         j1 = j1 + 1;
     }
-    var fs2: async.Future[string][] = [
+    let fs2: async.Future[string][] = [
         n.fetch_future(1, 80, "/e0"),
         n.fetch_future(1, 80, "/e0"),
         sim.future_chain(d, 24000000 as i64, 7000000 as i64, 2, "c2_2"),
         n.fetch_future(1, 80, "/e0")
     ];
-    var (w2, v2) = async.race_on(d, fs2, "!");
+    let (w2, v2) = async.race_on(d, fs2, "!");
     print("r2=" + w2.to_string() + ":" + v2);
     print("now=" + d.now_ns().to_string());
     print("rng=" + d.rng_state().to_string());
@@ -440,17 +483,17 @@ import "std/i32";
 import "std/i64";
 
 function main(): i32 {
-    var d: sim.Sim = sim.new(477987043 as i64);
-    var n: sim.Net = sim.net(d);
+    let d: sim.Sim = sim.new(477987043 as i64);
+    let n: sim.Net = sim.net(d);
     n = n.serve_chunked(1, 80, "/e0", "the-quick-brown-fox", time.duration_nanos(2000000 as i64), time.duration_nanos(2000000 as i64), sim.chunks_of(19, 5));
     n = n.serve(2, 80, "/e1", "x", time.duration_nanos(10000000 as i64));
     n = n.fault_fail(2, 80, "/e1");
-    var fs0: async.Future[string][] = [
+    let fs0: async.Future[string][] = [
         sim.future_at(d, 47000000 as i64, "a0_0"),
         sim.future_at(d, 9000000 as i64, "a0_1"),
         n.fetch_future(2, 80, "/e1")
     ];
-    var (w0, v0) = async.race_on(d, fs0, "!");
+    let (w0, v0) = async.race_on(d, fs0, "!");
     print("r0=" + w0.to_string() + ":" + v0);
     print("now=" + d.now_ns().to_string());
     print("rng=" + d.rng_state().to_string());
@@ -468,20 +511,20 @@ import "std/i32";
 import "std/i64";
 
 function main(): i32 {
-    var d: sim.Sim = sim.new(193102384 as i64);
-    var n: sim.Net = sim.net(d);
+    let d: sim.Sim = sim.new(193102384 as i64);
+    let n: sim.Net = sim.net(d);
     n = n.serve(1, 80, "/e0", "abcdefghij", time.duration_nanos(40000000 as i64));
     n = n.fault_stall(1, 80, "/e0");
     n = n.fault_flaky(1, 80, "/e0", 25);
-    var fs0: async.Future[string][] = [
+    let fs0: async.Future[string][] = [
         sim.future_chain(d, 26000000 as i64, 1000000 as i64, 0, "c0_0"),
         sim.future_chain(d, 36000000 as i64, 1000000 as i64, 1, "c0_1"),
         n.fetch_future(1, 80, "/e0"),
         sim.future_chain(d, 14000000 as i64, 3000000 as i64, 2, "c0_3")
     ];
-    var g0: string[] = async.gather_on(d, fs0, "!");
+    let g0: string[] = async.gather_on(d, fs0, "!");
     print("g0.len=" + g0.len().to_string());
-    var i0: i32 = 0;
+    let i0: i32 = 0;
     while (i0 < g0.len()) {
         print("g0[" + i0.to_string() + "]=" + g0[i0]);
         i0 = i0 + 1;

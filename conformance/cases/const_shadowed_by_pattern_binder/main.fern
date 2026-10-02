@@ -17,8 +17,8 @@ const N: i32 = 5;
 
 // The loop variable is introduced by the header's PATTERN, not by Var.
 function shadow_for_each_pattern(): i32 {
-    var xs: (i32, i32)[] = [(7, 1), (8, 2)];
-    var t: i32 = 0;
+    let xs: (i32, i32)[] = [(7, 1), (8, 2)];
+    let t: i32 = 0;
     for (N, v) in xs {
         t = t + N;
     }
@@ -27,16 +27,16 @@ function shadow_for_each_pattern(): i32 {
 
 // A binder one level down in the pattern.
 function shadow_nested_destructure(): i32 {
-    var t: ((i32, i32), i32) = ((7, 1), 2);
-    var ((a, N), c) = t;
+    let t: ((i32, i32), i32) = ((7, 1), 2);
+    let ((a, N), c) = t;
     return N + c;
 }
 
 // Assigning to a pattern binder is a legal assignment to a local. Reported
 // as `cannot assign to const N` while the binder was invisible.
 function assign_to_pattern_binder(): i32 {
-    var xs: (i32, i32)[] = [(7, 1)];
-    var t: i32 = 0;
+    let xs: (i32, i32)[] = [(7, 1)];
+    let t: i32 = 0;
     for (N, v) in xs {
         N = 9;
         t = t + N;
@@ -51,7 +51,7 @@ function unshadowed(): i32 {
 }
 
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (shadow_for_each_pattern() == 15) { r = r + 1; }
     if (shadow_nested_destructure() == 3) { r = r + 2; }
     if (assign_to_pattern_binder() == 9) { r = r + 4; }

@@ -102,7 +102,7 @@ that two independent rules close the hazard from both ends:
 - No element can be out **uncounted**. The tier refuses `ExprIndex` for array
   params, so the callee can neither extract an element nor pass the array onward
   to a callee that does; and the caller's own element-hazard rules still exclude
-  `var t = xs[0]` — the alias case in the same suite, still pinned as an
+  `let t = xs[0]` — the alias case in the same suite, still pinned as an
   exclusion and still passing.
 
 Worth flagging honestly: `param_counted_of`'s header reasons about a caller

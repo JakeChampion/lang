@@ -6,10 +6,10 @@ impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other
 @derive(Ord) struct P { x: i32, y: i32 }
 
 function main(): i32 {
-    var a: P = P { x: 1, y: 2 };
-    var b: P = P { x: 1, y: 5 };   // a < b on the y field
-    var c: P = P { x: 1, y: 2 };   // a == c structurally
-    var r: i32 = 0;
+    let a: P = P { x: 1, y: 2 };
+    let b: P = P { x: 1, y: 5 };   // a < b on the y field
+    let c: P = P { x: 1, y: 2 };   // a == c structurally
+    let r: i32 = 0;
     if (a < b)  { r = r + 1; }
     if (b > a)  { r = r + 2; }
     if (a <= c) { r = r + 4; }

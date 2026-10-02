@@ -12,7 +12,7 @@ import (
 const HTTPByteSerializationProgram = `import "std/http";
 import "std/stream";
 function emit(data: u8[]): void {
-    var w = stdout();
+    let w = stdout();
     match (w.write_bytes(data)) { Some(_) => { assert(false); }, None => {} }
 }
 function producer(data: u8[]): HttpResponse {
@@ -24,9 +24,9 @@ function producer(data: u8[]): HttpResponse {
     });
 }
 function main(): i32 {
-    var all: u8[] = [];
+    let all: u8[] = [];
     for i in 0..256 { all = all.append(i as u8); }
-    var binary = http.bytes(200, all);
+    let binary = http.bytes(200, all);
     emit(http.http_serialize_response_bytes(binary));
     emit(http.http_serialize_response_conn_bytes(binary, true));
     emit(http.http_serialize_response_to_bytes("HEAD", binary, false));
@@ -34,17 +34,17 @@ function main(): i32 {
     emit(http.http_serialize_response_bytes(http.stream(200, Stream { data: all, pos: 1 })));
     emit(http.http_serialize_response_bytes(producer(all)));
     emit(http.http_serialize_response_to_bytes("HEAD", producer(all), false));
-    var empty: u8[] = [];
+    let empty: u8[] = [];
     emit(http.http_serialize_response_bytes(http.bytes(200, empty)));
     emit(http.http_serialize_response_bytes(http.file("/must-not-be-read")));
-    var headers = binary.with_header("Content-Length", "999").with_header("Transfer-Encoding", "chunked").with_header("Connection", "wrong").with_header("X-Proof", "ok");
+    let headers = binary.with_header("Content-Length", "999").with_header("Transfer-Encoding", "chunked").with_header("Connection", "wrong").with_header("X-Proof", "ok");
     emit(http.http_serialize_response_bytes(headers));
     for status in [101, 204, 304] {
-        var no_body = HttpResponse { ...producer(all), status: status };
+        let no_body = HttpResponse { ...producer(all), status: status };
         emit(http.http_serialize_response_bytes(no_body));
         emit(http.http_serialize_response(no_body).bytes());
     }
-    var bad = http.bytes(200, [255 as u8, 65 as u8, 128 as u8]);
+    let bad = http.bytes(200, [255 as u8, 65 as u8, 128 as u8]);
     emit(http.http_serialize_response(bad).bytes());
     emit(http.http_serialize_response_conn(bad, true).bytes());
     emit(http.http_serialize_response_to("HEAD", bad, false).bytes());

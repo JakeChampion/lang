@@ -42,13 +42,13 @@ func TestUnknownMethodListsOnlyApplicableMethods(t *testing.T) {
 	// without it the list is just the three builtins and proves nothing.
 	const intRecv = `import "std/i32";
 function main(): i32 {
-    var a: i32[] = [3, 1, 2];
+    let a: i32[] = [3, 1, 2];
     return a.no_such_method_at_all();
 }`
 	const strRecv = `import "std/i32";
 function main(): i32 {
-    var a: string[] = ["b", "a"];
-    var n: i32 = a.no_such_method_at_all();
+    let a: string[] = ["b", "a"];
+    let n: i32 = a.no_such_method_at_all();
     return n;
 }`
 
@@ -126,8 +126,8 @@ func listed(msg, method string) bool {
 func TestUnknownMethodDoesNotSuggestAnInapplicableMethod(t *testing.T) {
 	msg := e043Message(t, `import "std/i32";
 function main(): i32 {
-    var a: i32[] = [3, 1, 2];
-    var s: string = a.joim(",");
+    let a: i32[] = [3, 1, 2];
+    let s: string = a.joim(",");
     return s.len();
 }`)
 	if strings.Contains(msg, `did you mean "join"`) {
@@ -140,7 +140,7 @@ function main(): i32 {
 func TestUnknownMethodStillSuggestsAnApplicableMethod(t *testing.T) {
 	msg := e043Message(t, `import "std/i32";
 function main(): i32 {
-    var a: i32[] = [3, 1, 2];
+    let a: i32[] = [3, 1, 2];
     return a.lenn();
 }`)
 	if !strings.Contains(msg, `did you mean "len"`) {

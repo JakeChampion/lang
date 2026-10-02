@@ -42,7 +42,7 @@ The arm now tests `parser.is_value_block_origin(lm.origin)` and walks a value
 block's body with the ordinary strict walker instead of the blanket capture
 test. Inside an inlined block the same borrow rules apply as outside it. The
 walker's own `StmtReturn` arm still flags the block's VALUE, which is the one
-way a name really does leave one (`var y = match (k) { A => p, … }`), so the
+way a name really does leave one (`let y = match (k) { A => p, … }`), so the
 narrowing gives up no soundness. A real lambda keeps the blanket test.
 
 `if` expressions, plain block expressions and the comprehensions ride the

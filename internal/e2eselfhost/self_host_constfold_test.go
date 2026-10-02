@@ -9,9 +9,9 @@ import (
 // pass in the port. `constfold.fern` walks a parser.Module and
 // rewrites every constant sub-expression to its folded form:
 //
-//   var a = 1 + 2 * 3;        →  var a = 7;
-//   var b = "hi " + "there";  →  var b = "hi there";
-//   var c = !true;            →  var c = false;
+//   let a = 1 + 2 * 3;        →  let a = 7;
+//   let b = "hi " + "there";  →  let b = "hi there";
+//   let c = !true;            →  let c = false;
 //
 // Up to now every layer (checker, interp, printer) was an AST
 // consumer. constfold is the first that rebuilds the tree —

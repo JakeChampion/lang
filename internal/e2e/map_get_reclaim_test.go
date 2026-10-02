@@ -39,10 +39,10 @@ import "core/map";
 struct Q { a: i32, xs: i32[] }
 
 function arr_stmt_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 1]);
         match (m.get(1)) {
             Some(g) => { acc = (acc + g[0]) % 251; },
@@ -54,10 +54,10 @@ function arr_stmt_churn(n: i32): i32 {
 }
 
 function arr_expr_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 1]);
         acc = (acc + match (m.get(1)) { Some(g) => g[0], None => 0 }) % 251;
         i = i + 1;
@@ -66,10 +66,10 @@ function arr_expr_churn(n: i32): i32 {
 }
 
 function struct_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, Q] = map_new(4);
+        let m: Map[i32, Q] = map_new(4);
         m = m.insert(1, Q { a: i, xs: [i, i + 1] });
         match (m.get(1)) {
             Some(g) => { acc = (acc + g.a + g.xs[1]) % 251; },
@@ -85,10 +85,10 @@ function struct_churn(n: i32): i32 {
 // through mapValHasDrop rather than through the array short-circuit, and a
 // string KEY puts the lookup on the boxed-key path.
 function opt_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, Option[i32]] = map_new(4);
+        let m: Map[i32, Option[i32]] = map_new(4);
         m = m.insert(1, Some(i));
         match (m.get(1)) {
             Some(g) => { match (g) { Some(v) => { acc = (acc + v) % 251; }, None => {} } },
@@ -100,10 +100,10 @@ function opt_churn(n: i32): i32 {
 }
 
 function tuple_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, (i32, i32)] = map_new(4);
+        let m: Map[i32, (i32, i32)] = map_new(4);
         m = m.insert(1, (i, i + 1));
         match (m.get(1)) {
             Some(g) => { acc = (acc + g.0) % 251; },
@@ -115,10 +115,10 @@ function tuple_churn(n: i32): i32 {
 }
 
 function strkey_churn(n: i32, s: string): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[string, i32[]] = map_new(4);
+        let m: Map[string, i32[]] = map_new(4);
         m = m.insert(s, [i, i + 1]);
         match (m.get(s)) {
             Some(g) => { acc = (acc + g[1]) % 251; },
@@ -130,10 +130,10 @@ function strkey_churn(n: i32, s: string): i32 {
 }
 
 function structarr_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, Q[]] = map_new(4);
+        let m: Map[i32, Q[]] = map_new(4);
         m = m.insert(1, [Q { a: i, xs: [i] }]);
         match (m.get(1)) {
             Some(g) => { acc = (acc + g[0].a) % 251; },
@@ -147,10 +147,10 @@ function structarr_churn(n: i32): i32 {
 // A MISS leaves the shared None sentinel in the scrutinee slot: the reclaim's
 // is_unique gate must decline it rather than walk a payload that is not there.
 function miss_churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 1]);
         match (m.get(99)) {
             Some(g) => { acc = (acc + g[0]) % 251; },
@@ -162,54 +162,54 @@ function miss_churn(n: i32): i32 {
 }
 
 function main(): i32 {
-    var s: string = "a-key-past-the-inline-threshold-abcdefghi";
+    let s: string = "a-key-past-the-inline-threshold-abcdefghi";
 
     if (arr_stmt_churn(1000) < 0) { return 11; }
-    var a1: i64 = __heap_bump_bytes();
+    let a1: i64 = __heap_bump_bytes();
     if (arr_stmt_churn(2000) < 0) { return 11; }
-    var a2: i64 = __heap_bump_bytes();
+    let a2: i64 = __heap_bump_bytes();
     if ((a2 - a1) / 2000 != 0) { return 1; }
 
     if (arr_expr_churn(1000) < 0) { return 12; }
-    var b1: i64 = __heap_bump_bytes();
+    let b1: i64 = __heap_bump_bytes();
     if (arr_expr_churn(2000) < 0) { return 12; }
-    var b2: i64 = __heap_bump_bytes();
+    let b2: i64 = __heap_bump_bytes();
     if ((b2 - b1) / 2000 != 0) { return 2; }
 
     if (struct_churn(1000) < 0) { return 13; }
-    var c1: i64 = __heap_bump_bytes();
+    let c1: i64 = __heap_bump_bytes();
     if (struct_churn(2000) < 0) { return 13; }
-    var c2: i64 = __heap_bump_bytes();
+    let c2: i64 = __heap_bump_bytes();
     if ((c2 - c1) / 2000 != 0) { return 3; }
 
     if (opt_churn(1000) < 0) { return 14; }
-    var d1: i64 = __heap_bump_bytes();
+    let d1: i64 = __heap_bump_bytes();
     if (opt_churn(2000) < 0) { return 14; }
-    var d2: i64 = __heap_bump_bytes();
+    let d2: i64 = __heap_bump_bytes();
     if ((d2 - d1) / 2000 != 0) { return 4; }
 
     if (tuple_churn(1000) < 0) { return 15; }
-    var e1: i64 = __heap_bump_bytes();
+    let e1: i64 = __heap_bump_bytes();
     if (tuple_churn(2000) < 0) { return 15; }
-    var e2: i64 = __heap_bump_bytes();
+    let e2: i64 = __heap_bump_bytes();
     if ((e2 - e1) / 2000 != 0) { return 5; }
 
     if (strkey_churn(1000, s) < 0) { return 16; }
-    var f1: i64 = __heap_bump_bytes();
+    let f1: i64 = __heap_bump_bytes();
     if (strkey_churn(2000, s) < 0) { return 16; }
-    var f2: i64 = __heap_bump_bytes();
+    let f2: i64 = __heap_bump_bytes();
     if ((f2 - f1) / 2000 != 0) { return 6; }
 
     if (structarr_churn(1000) < 0) { return 17; }
-    var g1: i64 = __heap_bump_bytes();
+    let g1: i64 = __heap_bump_bytes();
     if (structarr_churn(2000) < 0) { return 17; }
-    var g2: i64 = __heap_bump_bytes();
+    let g2: i64 = __heap_bump_bytes();
     if ((g2 - g1) / 2000 != 0) { return 7; }
 
     if (miss_churn(1000) < 0) { return 18; }
-    var h1: i64 = __heap_bump_bytes();
+    let h1: i64 = __heap_bump_bytes();
     if (miss_churn(2000) < 0) { return 18; }
-    var h2: i64 = __heap_bump_bytes();
+    let h2: i64 = __heap_bump_bytes();
     if ((h2 - h1) / 2000 != 0) { return 8; }
 
     if (s.len() != 41) { return 19; }
@@ -252,10 +252,10 @@ import "core/map";
 import "std/string";
 
 function with_get(n: i32, s: string): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, string] = map_new(4);
+        let m: Map[i32, string] = map_new(4);
         m = m.insert(1, s + "x");
         match (m.get(1)) {
             Some(g) => { acc = (acc + g.len()) % 251; },
@@ -267,10 +267,10 @@ function with_get(n: i32, s: string): i32 {
 }
 
 function no_get(n: i32, s: string): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var m: Map[i32, string] = map_new(4);
+        let m: Map[i32, string] = map_new(4);
         m = m.insert(1, s + "x");
         acc = (acc + m.len()) % 251;
         i = i + 1;
@@ -279,19 +279,19 @@ function no_get(n: i32, s: string): i32 {
 }
 
 function main(): i32 {
-    var s: string = "a-string-past-the-inline-threshold-abcdefgh";
+    let s: string = "a-string-past-the-inline-threshold-abcdefgh";
 
     if (no_get(1000, s) < 0) { return 11; }
-    var a1: i64 = __heap_bump_bytes();
+    let a1: i64 = __heap_bump_bytes();
     if (no_get(2000, s) < 0) { return 11; }
-    var a2: i64 = __heap_bump_bytes();
-    var plainPer: i64 = (a2 - a1) / 2000;
+    let a2: i64 = __heap_bump_bytes();
+    let plainPer: i64 = (a2 - a1) / 2000;
 
     if (with_get(1000, s) < 0) { return 12; }
-    var b1: i64 = __heap_bump_bytes();
+    let b1: i64 = __heap_bump_bytes();
     if (with_get(2000, s) < 0) { return 12; }
-    var b2: i64 = __heap_bump_bytes();
-    var getPer: i64 = (b2 - b1) / 2000;
+    let b2: i64 = __heap_bump_bytes();
+    let getPer: i64 = (b2 - b1) / 2000;
 
     if (getPer > plainPer) { return 1; }
     if (__rc_underflow_count() != 0) { return 2; }
@@ -333,10 +333,10 @@ import "std/array";
 struct Q { a: i32, xs: i32[] }
 
 function churn(k: i32): i32 {
-    var s: i32 = 0;
-    var j: i32 = 0;
+    let s: i32 = 0;
+    let j: i32 = 0;
     while (j < k) {
-        var t: i32[] = [j, j + 1, j + 2, j + 3];
+        let t: i32[] = [j, j + 1, j + 2, j + 3];
         s = (s + t[3]) % 251;
         j = j + 1;
     }
@@ -346,15 +346,15 @@ function churn(k: i32): i32 {
 // The binding escapes into an outer local and is read on the NEXT round, after
 // its map has been dropped.
 function escape_outer(n: i32): i32 {
-    var keep: i32[] = [0, 0];
-    var bad: i32 = 0;
-    var i: i32 = 1;
+    let keep: i32[] = [0, 0];
+    let bad: i32 = 0;
+    let i: i32 = 1;
     while (i < n) {
         if (i > 1) {
             if (keep[0] != i - 1) { bad = bad + 1; }
             if (keep[1] != i) { bad = bad + 1; }
         }
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 1]);
         match (m.get(1)) {
             Some(g) => { keep = g; },
@@ -370,15 +370,15 @@ function escape_outer(n: i32): i32 {
 // The strictest one: the binding escapes AND the owning map is destroyed inside
 // the same arm, so the reclaim runs with the lookup's count as the only one left.
 function escape_map_dies(n: i32): i32 {
-    var keep: i32[] = [0, 0];
-    var bad: i32 = 0;
-    var i: i32 = 1;
+    let keep: i32[] = [0, 0];
+    let bad: i32 = 0;
+    let i: i32 = 1;
     while (i < n) {
         if (i > 1) {
             if (keep[0] != i - 1) { bad = bad + 1; }
             if (keep[1] != i) { bad = bad + 1; }
         }
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 1]);
         match (m.get(1)) {
             Some(g) => { keep = g; m = map_new(4); },
@@ -401,12 +401,12 @@ function pick(m: Map[i32, i32[]], k: i32): i32[] {
     return [0, 0];
 }
 function escape_return(n: i32): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 1;
+    let bad: i32 = 0;
+    let i: i32 = 1;
     while (i < n) {
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 1]);
-        var got: i32[] = pick(m, 1);
+        let got: i32[] = pick(m, 1);
         if (churn(8) < 0) { return 0 - 1; }
         if (got[0] != i) { bad = bad + 1; }
         if (got[1] != i + 1) { bad = bad + 1; }
@@ -417,12 +417,12 @@ function escape_return(n: i32): i32 {
 
 // The binding is stored into a struct that outlives the arm.
 function escape_into_struct(n: i32): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 1;
+    let bad: i32 = 0;
+    let i: i32 = 1;
     while (i < n) {
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 1]);
-        var q: Q = Q { a: 0, xs: [0, 0] };
+        let q: Q = Q { a: 0, xs: [0, 0] };
         match (m.get(1)) {
             Some(g) => { q = Q { a: i, xs: g }; },
             None => {}
@@ -436,10 +436,10 @@ function escape_into_struct(n: i32): i32 {
 
 // The binding is put BACK into the map it came from, then read through it.
 function escape_reinsert(n: i32): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 1;
+    let bad: i32 = 0;
+    let i: i32 = 1;
     while (i < n) {
-        var m: Map[i32, i32[]] = map_new(4);
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, [i, i + 1]);
         match (m.get(1)) {
             Some(g) => { m = m.insert(2, g.append(7)); },
@@ -456,11 +456,11 @@ function escape_reinsert(n: i32): i32 {
 // A live local array is ALSO the map's value: the reclaim must leave the local
 // readable.
 function alias_local(n: i32): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 1;
+    let bad: i32 = 0;
+    let i: i32 = 1;
     while (i < n) {
-        var live: i32[] = [i, i + 1];
-        var m: Map[i32, i32[]] = map_new(4);
+        let live: i32[] = [i, i + 1];
+        let m: Map[i32, i32[]] = map_new(4);
         m = m.insert(1, live);
         match (m.get(1)) {
             Some(g) => { if (g[0] != i) { bad = bad + 1; } },

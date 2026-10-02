@@ -20,21 +20,21 @@ var largeIntLiteralIRCases = []struct {
 }{
 	// u64 literal ~9e18 (> i32 and > 2^31, < 2^63): big % 1000 = 123.
 	{"u64-literal-mod", `function main(): i32 {
-    var big: u64 = 9000000000000000123 as u64;
+    let big: u64 = 9000000000000000123 as u64;
     return (big % 1000 as u64) as i32;
 }`},
 	// i64 literal ~5e18 round-trips through an i64.const: a 32-bit truncation
 	// would not compare equal. (`% 1000` would be 457 > 126, so a round-trip is
 	// used instead to keep the exit code in range.)
 	{"i64-literal-roundtrip", `function main(): i32 {
-    var n: i64 = 5000000000000000457 as i64;
+    let n: i64 = 5000000000000000457 as i64;
     if (n == 5000000000000000457 as i64) { return 77; }
     return 0;
 }`},
 	// Large u64 literal feeding an unsigned compare (literal + #2917 path):
 	// 9e18 > 1 is true → 7.
 	{"u64-literal-compare", `function main(): i32 {
-    var big: u64 = 9000000000000000000 as u64;
+    let big: u64 = 9000000000000000000 as u64;
     if (big > 1 as u64) { return 7; }
     return 0;
 }`},

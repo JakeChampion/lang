@@ -35,8 +35,8 @@ func TestAllocSizeOverflowAborts(t *testing.T) {
 		// 8 x 300000000 = 2.4e9, which wraps to -1894967296 in i32.
 		assertAbortsWithCause(t, `import "std/string";
 function main(): i32 {
-  var s: string = "abcdefgh";
-  var r: string = s.repeat(300000000);
+  let s: string = "abcdefgh";
+  let r: string = s.repeat(300000000);
   return r.len();
 }
 `, "allocation size out of range")
@@ -47,10 +47,10 @@ function main(): i32 {
 		// INLINE path and memcpy'd a gigabyte into an 8-byte stack buffer.
 		assertAbortsWithCause(t, `import "std/string";
 function main(): i32 {
-  var a: string = "x";
-  var i: i32 = 0;
+  let a: string = "x";
+  let i: i32 = 0;
   while (i < 30) { a = a + a; i = i + 1; }
-  var b: string = a + a;
+  let b: string = a + a;
   return b.len();
 }
 `, "allocation size out of range")
@@ -69,8 +69,8 @@ func TestAllocSizeWrappingToZeroStillAborts(t *testing.T) {
 	// 4 x 2^30 = 2^32, which wraps to exactly 0.
 	assertAbortsWithCause(t, `import "std/string";
 function main(): i32 {
-  var s: string = "abcd";
-  var r: string = s.repeat(1073741824);
+  let s: string = "abcd";
+  let r: string = s.repeat(1073741824);
   return r.len();
 }
 `, "allocation size out of range")
@@ -84,8 +84,8 @@ func TestLargeButRepresentableAllocationStillWorks(t *testing.T) {
 	}
 	src := `import "std/string";
 function main(): i32 {
-  var a: string = "x";
-  var i: i32 = 0;
+  let a: string = "x";
+  let i: i32 = 0;
   while (i < 20) { a = a + a; i = i + 1; }
   if (a.len() != 1048576) { return 7; }
   return 0;
@@ -148,7 +148,7 @@ func TestArrayGrowSizeOverflowAborts(t *testing.T) {
 		t.Skip("skipping allocation-size e2e in -short mode")
 	}
 	src := `function main(): i32 {
-  var a: u8[] = __alloc_u8(1073741824);
+  let a: u8[] = __alloc_u8(1073741824);
   a = a.append(7 as u8);
   return a.len();
 }
@@ -180,7 +180,7 @@ func TestLargeButRepresentableArrayGrowStillWorks(t *testing.T) {
 		t.Skip("skipping allocation-size e2e in -short mode")
 	}
 	src := `function main(): i32 {
-  var a: u8[] = __alloc_u8(300000000);
+  let a: u8[] = __alloc_u8(300000000);
   a = a.append(7 as u8);
   if (a.len() != 300000001) { return 1; }
   return (a[300000000] as i32) - 7;

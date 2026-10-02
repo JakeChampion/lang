@@ -159,27 +159,27 @@ pub function (lg: Logger) error_(): LogEntry {
 // `entry.str(key, val)` — attach a string-valued field (JSON-quoted in
 // JSON mode).
 pub function (e: LogEntry) str(key: string, val: string): LogEntry {
-  var t: string = e.text + " " + key + "=" + val;
-  var j: string = e.json + ",\"" + json.json_escape(key) + "\":\"" + json.json_escape(val) + "\"";
+  let t: string = e.text + " " + key + "=" + val;
+  let j: string = e.json + ",\"" + json.json_escape(key) + "\":\"" + json.json_escape(val) + "\"";
   return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j };
 }
 
 // `entry.int(key, val)` — attach an integer-valued field (bare number
 // in JSON mode).
 pub function (e: LogEntry) int(key: string, val: i32): LogEntry {
-  var t: string = e.text + " " + key + "=" + val.to_string();
-  var j: string = e.json + ",\"" + json.json_escape(key) + "\":" + val.to_string();
+  let t: string = e.text + " " + key + "=" + val.to_string();
+  let j: string = e.json + ",\"" + json.json_escape(key) + "\":" + val.to_string();
   return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j };
 }
 
 // `entry.bool(key, val)` — attach a boolean-valued field.
 pub function (e: LogEntry) bool(key: string, val: boolean): LogEntry {
-  var vs: string = "false";
+  let vs: string = "false";
   if (val) {
     vs = "true";
   }
-  var t: string = e.text + " " + key + "=" + vs;
-  var j: string = e.json + ",\"" + json.json_escape(key) + "\":" + vs;
+  let t: string = e.text + " " + key + "=" + vs;
+  let j: string = e.json + ",\"" + json.json_escape(key) + "\":" + vs;
   return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j };
 }
 
@@ -199,7 +199,7 @@ pub function (e: LogEntry) render(msg: string): string {
 // `entry.emit(msg)` — render and write to stderr (nothing when
 // filtered out by the threshold).
 pub function (e: LogEntry) emit(msg: string): void {
-  var line: string = e.render(msg);
+  let line: string = e.render(msg);
   if (line.len() > 0) {
     eprint(line);
   }

@@ -9,7 +9,7 @@ import (
 )
 
 // fnptrArrayRebindCases pin a whole-literal REBIND of a function-array local —
-// `var a: (() => i32)[] = [seven]; a = [nine];` — which SIGSEGV'd on the x86-64
+// `let a: (() => i32)[] = [seven]; a = [nine];` — which SIGSEGV'd on the x86-64
 // IR path (and trapped on wasm) while the interpreter returned the right answer.
 //
 // Every element of a function array is an env box, whatever built it (#10076),
@@ -25,28 +25,28 @@ var fnptrArrayRebindCases = []struct {
 	exit int
 }{
 	// The base shape: rebind, then call element 0.
-	{"rebind", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { var a: (() => i32)[] = [seven]; a = [nine]; return a[0](); }", 9},
+	{"rebind", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { let a: (() => i32)[] = [seven]; a = [nine]; return a[0](); }", 9},
 	// Two elements, order swapped — pins per-element pointer identity rather
 	// than "the whole buffer happens to be right".
-	{"rebind-multi", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { var a: (() => i32)[] = [seven, nine]; a = [nine, seven]; return a[0]() * 10 + a[1](); }", 97},
+	{"rebind-multi", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { let a: (() => i32)[] = [seven, nine]; a = [nine, seven]; return a[0]() * 10 + a[1](); }", 97},
 	// The rebind is inside a branch that does NOT run: the declaration's buffer
 	// is the one called. Representation-preserving lowering means this needs no
 	// dominance reasoning.
-	{"rebind-in-branch", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; if (n > 100) { a = [nine]; } return a[0](); }", 7},
+	{"rebind-in-branch", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { let n: i32 = 5; let a: (() => i32)[] = [seven]; if (n > 100) { a = [nine]; } return a[0](); }", 7},
 	// …and inside a loop that runs twice, so the rebind is re-executed.
-	{"rebind-in-loop", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { var a: (() => i32)[] = [seven]; var i: i32 = 0; while (i < 2) { a = [nine]; i = i + 1; } return a[0](); }", 9},
+	{"rebind-in-loop", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { let a: (() => i32)[] = [seven]; let i: i32 = 0; while (i < 2) { a = [nine]; i = i + 1; } return a[0](); }", 9},
 	// Rebind then grow: the `.append` path must agree with the buffer the
 	// rebind just built.
-	{"rebind-then-append", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { var a: (() => i32)[] = [seven]; a = [nine]; a = a.append(seven); return a[0]() * 10 + a[1](); }", 97},
+	{"rebind-then-append", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction main(): i32 { let a: (() => i32)[] = [seven]; a = [nine]; a = a.append(seven); return a[0]() * 10 + a[1](); }", 97},
 	// A rebind from named functions to a capturing lambda, the reverse, and the
 	// first inside a branch that runs.
-	{"rebind-named-to-lambda", "function seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; a = [() => n]; return a[0](); }", 5},
-	{"rebind-lambda-to-named", "function seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [() => n]; a = [seven]; return a[0](); }", 7},
-	{"rebind-named-to-lambda-in-branch", "function seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; if (n > 1) { a = [() => n]; } return a[0](); }", 5},
+	{"rebind-named-to-lambda", "function seven(): i32 { return 7; }\nfunction main(): i32 { let n: i32 = 5; let a: (() => i32)[] = [seven]; a = [() => n]; return a[0](); }", 5},
+	{"rebind-lambda-to-named", "function seven(): i32 { return 7; }\nfunction main(): i32 { let n: i32 = 5; let a: (() => i32)[] = [() => n]; a = [seven]; return a[0](); }", 7},
+	{"rebind-named-to-lambda-in-branch", "function seven(): i32 { return 7; }\nfunction main(): i32 { let n: i32 = 5; let a: (() => i32)[] = [seven]; if (n > 1) { a = [() => n]; } return a[0](); }", 5},
 	// Repeated rebinds in a loop: the superseded buffer is released by
 	// emit_arr_store's cow-guarded dec, so the heap must not grow without bound
 	// and nothing may be released twice.
-	{"rebind-rc-soundness", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction churn(n: i32): i32 { var a: (() => i32)[] = [seven]; var i: i32 = 0; var s: i32 = 0; while (i < n) { a = [nine]; s = a[0](); i = i + 1; } return s; }\nfunction main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return w; }", 9},
+	{"rebind-rc-soundness", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction churn(n: i32): i32 { let a: (() => i32)[] = [seven]; let i: i32 = 0; let s: i32 = 0; while (i < n) { a = [nine]; s = a[0](); i = i + 1; } return s; }\nfunction main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return w; }", 9},
 }
 
 // TestSelfHostFnptrArrayRebindIRX86_64 — the x86-64 leg, through the production
@@ -79,7 +79,7 @@ func TestSelfHostFnptrArrayRebindIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostFnptrArrayRebindIRArm64 — CI-gated arm64 counterpart. The fix is
-// in the shared irlower.fern, so the arm64 IR backend picks it up; this pins it.
+// in the shared lowering, so the arm64 IR backend picks it up; this pins it.
 func TestSelfHostFnptrArrayRebindIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

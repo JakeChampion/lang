@@ -13,15 +13,15 @@ import "testing"
 const arrayViewLendProgram = `struct Sink { base: i32 }
 
 function sum_u8(bs: [u8]): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < bs.len()) { t = t + (bs[i] as i32); i = i + 1; }
     return t;
 }
 
 function sum_i32(xs: [i32]): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { t = t + xs[i]; i = i + 1; }
     return t;
 }
@@ -43,8 +43,8 @@ function (s: Sink) take(xs: [i32]): i32 {
 }
 
 function main(): i32 {
-    var bytes: u8[] = [1, 2, 3];
-    var ints: i32[] = [10, 20, 30];
+    let bytes: u8[] = [1, 2, 3];
+    let ints: i32[] = [10, 20, 30];
 
     if (sum_u8(bytes) != 6) { return 1; }
     if (sum_i32(ints) != 60) { return 2; }
@@ -61,7 +61,7 @@ function main(): i32 {
     if (relend(bytes) != 6) { return 9; }
     if (tail_sum(bytes) != 5) { return 10; }
 
-    var s = Sink { base: 5 };
+    let s = Sink { base: 5 };
     if (s.take(ints) != 65) { return 11; }
 
     // Lending does not consume: the array is still owned by the caller

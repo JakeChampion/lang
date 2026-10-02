@@ -26,7 +26,7 @@ import "std/string";
 
 function ref_eq(a: string, b: string): boolean {
     if (a.len() != b.len()) { return false; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < a.len()) {
         if (a[i] != b[i]) { return false; }
         i = i + 1;
@@ -35,12 +35,12 @@ function ref_eq(a: string, b: string): boolean {
 }
 
 function main(): i32 {
-    var alpha: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDE";
-    var n: i32 = 0;
+    let alpha: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDE";
+    let n: i32 = 0;
     while (n <= 41) {
-        var a: string = slice_unchecked(alpha, 0, n).to_owned();
-        var b: string = "";
-        var i: i32 = 0;
+        let a: string = slice_unchecked(alpha, 0, n).to_owned();
+        let b: string = "";
+        let i: i32 = 0;
         while (i < n) { b = b + slice_unchecked(alpha, i, i + 1).to_owned(); i = i + 1; }
         if (a.len() != n) { return 1; }
         if (b.len() != n) { return 2; }
@@ -50,9 +50,9 @@ function main(): i32 {
         // Differ at exactly one position, walked across the whole string so
         // the mismatch lands in the first word, a middle word, and the
         // overlapping tail in turn.
-        var p: i32 = 0;
+        let p: i32 = 0;
         while (p < n) {
-            var c: string = slice_unchecked(alpha, 0, p).to_owned() + "!" + slice_unchecked(alpha, p + 1, n).to_owned();
+            let c: string = slice_unchecked(alpha, 0, p).to_owned() + "!" + slice_unchecked(alpha, p + 1, n).to_owned();
             if (c.len() != n) { return 6; }
             if (ref_eq(a, c)) { return 7; }
             if (a == c) { return 8; }
@@ -61,7 +61,7 @@ function main(): i32 {
         }
         // Length mismatch, both operand orders.
         if (n > 0) {
-            var shorter: string = slice_unchecked(alpha, 0, n - 1).to_owned();
+            let shorter: string = slice_unchecked(alpha, 0, n - 1).to_owned();
             if (a == shorter) { return 10; }
             if (shorter == a) { return 11; }
         }

@@ -12,7 +12,7 @@ import (
 // inline string's tag bit, the heap floor and a negative count skip it, a
 // count above one is decremented in place, and only a count of one or zero
 // calls __fern_str_free. `g` releases the concatenation it built.
-const strReleaseProg = `@noinline function g(a: string): i32 { var t: string = a + "x"; return t.len(); }
+const strReleaseProg = `@noinline function g(a: string): i32 { let t: string = a + "x"; return t.len(); }
 function main(): i32 { return g("abc" + "") + g("") * 10; }
 `
 

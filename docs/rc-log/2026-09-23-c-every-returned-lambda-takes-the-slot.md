@@ -2,7 +2,7 @@
 
 ## What it was
 
-A `return <lambda>` is rewritten to `var $lamret$N = <lambda>; return
+A `return <lambda>` is rewritten to `let $lamret$N = <lambda>; return
 $lamret$N;` so the closure lift boxes the lambda through its local binding.
 Source functions got that everywhere. A LIFTED body (`__lam_N`, `$cloN`) and a
 body spliced out of a sole `return (…)()` IIFE got it on every return except a

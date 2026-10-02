@@ -11,7 +11,7 @@ import (
 
 // deferValueBlockCases pin a `defer` written inside a value-position `{ … }`
 // block through the self-host IR path (#6857). The self-host parses such a
-// block into an immediately-invoked zero-parameter lambda that irlower inlines,
+// block into an immediately-invoked zero-parameter lambda that the lowering inlines,
 // so the parse-time defer rewrite — which walked statements only — never reached
 // the defer and the whole module refused to lower.
 //
@@ -23,23 +23,23 @@ var deferValueBlockCases = []struct {
 	name string
 	src  string
 }{
-	// The main shape: a defer in a `var` initialiser's value block runs at
+	// The main shape: a defer in a `let` initialiser's value block runs at
 	// the enclosing function's exit, so the return expression still reads the
 	// pre-cleanup value.
 	{"var_value_block", `function g(a: Cell[i32]): i32 {
-    var x: i32 = { defer a.set(a.get() + 1); 3 };
+    let x: i32 = { defer a.set(a.get() + 1); 3 };
     return x * 10 + a.get();
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var inside: i32 = g(a);
+    let a: Cell[i32] = cell_new(0);
+    let inside: i32 = g(a);
     return inside + a.get();
 }`},
 	// A value block in a loop body: the defer is lexically inside that body, so
 	// it fires per iteration and its flag is cleared at each iteration's end.
 	{"loop_body_value_block", `function g(a: Cell[i32]): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         t = t + { defer a.set(a.get() + 1); i };
         i = i + 1;
@@ -47,29 +47,29 @@ function main(): i32 {
     return t * 100 + a.get();
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     return g(a) + a.get();
 }`},
 	// A `return` INSIDE the value block is a real function return and has to
 	// replay the cleanup in front of it.
 	{"return_inside_value_block", `function g(a: Cell[i32], c: boolean): i32 {
     defer a.set(a.get() + 5);
-    var x: i32 = { if (c) { return 7; } 3 };
+    let x: i32 = { if (c) { return 7; } 3 };
     return x;
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var e: i32 = g(a, true);
-    var s1: i32 = a.get();
-    var b: Cell[i32] = cell_new(0);
-    var f: i32 = g(b, false);
+    let a: Cell[i32] = cell_new(0);
+    let e: i32 = g(a, true);
+    let s1: i32 = a.get();
+    let b: Cell[i32] = cell_new(0);
+    let f: i32 = g(b, false);
     return e * 1000 + s1 * 100 + f * 10 + b.get();
 }`},
 	// A `break` inside a value block is an edge out of the iteration, so the
 	// per-iteration cleanup runs before it.
 	{"break_inside_value_block", `function g(a: Cell[i32]): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 5) {
         defer a.set(a.get() + 1);
         t = t + { if (i == 2) { break; } i };
@@ -78,37 +78,37 @@ function main(): i32 {
     return t * 100 + a.get();
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     return g(a) + a.get();
 }`},
 	// A match-EXPRESSION arm desugars to the same zero-parameter IIFE, so an
 	// arm's defer takes the same path.
 	{"match_expression_arm", `function g(a: Cell[i32], n: i32): i32 {
-    var x: i32 = match (n) {
+    let x: i32 = match (n) {
         0 => { defer a.set(a.get() + 1); 10 },
         _ => { defer a.set(a.get() + 2); 20 }
     };
     return x + a.get();
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var p: i32 = g(a, 0);
-    var b: Cell[i32] = cell_new(0);
-    var q: i32 = g(b, 1);
+    let a: Cell[i32] = cell_new(0);
+    let p: i32 = g(a, 0);
+    let b: Cell[i32] = cell_new(0);
+    let q: i32 = g(b, 1);
     return p * 1000 + a.get() * 100 + q + b.get();
 }`},
 	// An errdefer inside a value block fires only on the failure return.
 	{"errdefer_in_value_block", `function g(a: Cell[i32], ok: boolean): Option[i32] {
-    var x: i32 = { errdefer a.set(a.get() + 1); 3 };
+    let x: i32 = { errdefer a.set(a.get() + 1); 3 };
     if (ok) { return Some(x); }
     return None;
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var r: Option[i32] = g(a, true);
-    var b: Cell[i32] = cell_new(0);
-    var s: Option[i32] = g(b, false);
-    var got: i32 = 0;
+    let a: Cell[i32] = cell_new(0);
+    let r: Option[i32] = g(a, true);
+    let b: Cell[i32] = cell_new(0);
+    let s: Option[i32] = g(b, false);
+    let got: i32 = 0;
     match (r) { Some(v) => { got = v; }, None => { got = 9; } }
     match (s) { Some(_) => { got = got + 90; }, None => { got = got + 40; } }
     return got * 100 + a.get() * 10 + b.get();
@@ -125,32 +125,32 @@ func deferValueBlockBindingCases(t *testing.T) []struct{ name, src string } {
 	return []struct{ name, src string }{
 		{"captured_array_value_block", string(source)},
 		{"sibling_value_block_bindings", `function main(): i32 {
-    var seen: i32 = 0;
+    let seen: i32 = 0;
     loop {
-        var first: i32 = { var items: i32[] = [3]; defer seen = seen * 10 + items[0]; 1 };
-        var second: i32 = { var items: i32[] = [5]; defer seen = seen * 10 + items[0]; 1 };
+        let first: i32 = { let items: i32[] = [3]; defer seen = seen * 10 + items[0]; 1 };
+        let second: i32 = { let items: i32[] = [5]; defer seen = seen * 10 + items[0]; 1 };
         break;
     }
     return seen;
 }`},
 		{"shadowed_value_block_binding", `function main(): i32 {
-    var items: i32[] = [1];
-    var seen: i32 = 0;
-    var before: i32 = 0;
+    let items: i32[] = [1];
+    let seen: i32 = 0;
+    let before: i32 = 0;
     loop {
-        var value: i32 = { var items: i32[] = [9]; defer seen = items[0]; 1 };
+        let value: i32 = { let items: i32[] = [9]; defer seen = items[0]; 1 };
         before = items[0];
         break;
     }
     return before * 10 + seen;
 }`},
 		{"nested_value_block_bindings", `function main(): i32 {
-    var seen: i32 = 0;
+    let seen: i32 = 0;
     loop {
-        var first: i32 = {
-            var items: i32[] = [3];
+        let first: i32 = {
+            let items: i32[] = [3];
             defer seen = seen * 10 + items[0];
-            var second: i32 = { var items: i32[] = [5]; defer seen = seen * 10 + items[0]; 1 };
+            let second: i32 = { let items: i32[] = [5]; defer seen = seen * 10 + items[0]; 1 };
             items[0]
         };
         break;
@@ -158,23 +158,23 @@ func deferValueBlockBindingCases(t *testing.T) []struct{ name, src string } {
     return seen;
 }`},
 		{"function_value_block_binding", `function f(a: Cell[i32]): i32 {
-    var value: i32 = { var items: i32[] = [3]; defer a.set(items[0]); 1 };
-    var items: i32[] = [9];
+    let value: i32 = { let items: i32[] = [3]; defer a.set(items[0]); 1 };
+    let items: i32[] = [9];
     return items[0];
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var value: i32 = f(a);
+    let a: Cell[i32] = cell_new(0);
+    let value: i32 = f(a);
     return value * 10 + a.get();
 }`},
 		// A lifted binding whose type has no zero the source can spell: it
 		// starts at the zero word and the block's assignment overwrites it.
 		{"record_block_binding", `struct P { a: i32 }
 function main(): i32 {
-    var seen: i32 = 1;
+    let seen: i32 = 1;
     loop {
         if (seen == 1) {
-            var v: P = P { a: 2 };
+            let v: P = P { a: 2 };
             defer seen = v.a;
             v = P { a: 9 };
         }
@@ -185,10 +185,10 @@ function main(): i32 {
 		// No value block at all: a plain `if` body is a block the replay
 		// leaves, and the binding it declares is lifted the same way.
 		{"conditional_block_binding", `function main(): i32 {
-    var seen: i32 = 1;
+    let seen: i32 = 1;
     loop {
         if (seen == 1) {
-            var items: i32[] = [2];
+            let items: i32[] = [2];
             defer seen = items[0];
             items = [9];
         }
@@ -199,30 +199,30 @@ function main(): i32 {
 		// The expansion's shared return temp carries a reference type here,
 		// not the i32 its untyped declaration used to give it.
 		{"array_return_through_the_defer_temp", `function snapshot(): i32[] {
-    var items: i32[] = [7];
+    let items: i32[] = [7];
     defer items = [9];
     return items;
 }
 function main(): i32 {
-    var got: i32[] = snapshot();
+    let got: i32[] = snapshot();
     return got[0];
 }`},
 		{"lambda_registration_namespace", `function f(a: Cell[i32]): i32 {
     if (true) {
-        var items: i32[] = [3];
+        let items: i32[] = [3];
         defer a.set(a.get() * 10 + items[0]);
-        var run = (b: Cell[i32]): i32 => {
-            var items: i32[] = [5];
+        let run = (b: Cell[i32]): i32 => {
+            let items: i32[] = [5];
             defer b.set(b.get() * 10 + items[0]);
             return 1;
         };
-        var value: i32 = { run(a) };
+        let value: i32 = { run(a) };
     }
     return 1;
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var value: i32 = f(a);
+    let a: Cell[i32] = cell_new(0);
+    let value: i32 = f(a);
     return a.get();
 }`},
 	}

@@ -13,10 +13,10 @@ import "testing"
 // reference interpreter (cf. the hardcoded-expectation gap in #2908).
 // FEATURE-AUDIT std/format row.
 const formatStringIRPrelude = `function fmt_format(fmt: string, args: string[]): string {
-    var n: i32 = fmt.len();
-    var out: string = "";
-    var i: i32 = 0;
-    var argi: i32 = 0;
+    let n: i32 = fmt.len();
+    let out: string = "";
+    let i: i32 = 0;
+    let argi: i32 = 0;
     while (i < n) {
         if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 123) {
             out = out + "{";
@@ -46,22 +46,22 @@ var formatStringIRCases = []struct {
 	main string
 }{
 	// "a{}b{}c" + ["x","yy"] -> "axbyyc" (6).
-	{"two-args", `var a: string[] = ["x", "yy"]; return fmt_format("a{}b{}c", a).len();`},
+	{"two-args", `let a: string[] = ["x", "yy"]; return fmt_format("a{}b{}c", a).len();`},
 	// underflow: "{}{}" + ["x"] -> "x{}" (3) — the missing arg stays literal.
-	{"underflow", `var a: string[] = ["x"]; return fmt_format("{}{}", a).len();`},
+	{"underflow", `let a: string[] = ["x"]; return fmt_format("{}{}", a).len();`},
 	// no placeholder: "hello" + [] -> "hello" (5).
-	{"no-placeholder", `var a: string[] = []; return fmt_format("hello", a).len();`},
+	{"no-placeholder", `let a: string[] = []; return fmt_format("hello", a).len();`},
 	// trailing text after a placeholder: "{}-end" + ["ab"] -> "ab-end" (6).
-	{"trailing-text", `var a: string[] = ["ab"]; return fmt_format("{}-end", a).len();`},
+	{"trailing-text", `let a: string[] = ["ab"]; return fmt_format("{}-end", a).len();`},
 	// escaped braces (Python/Rust convention): "{{}}" + [] -> "{}" (2); the
 	// `{{`/`}}` are NOT consumed as a placeholder.
-	{"escaped-empty", `var a: string[] = []; return fmt_format("{{}}", a).len();`},
+	{"escaped-empty", `let a: string[] = []; return fmt_format("{{}}", a).len();`},
 	// `{{` -> literal "{" amid text: "a{{b" + [] -> "a{b" (3).
-	{"escaped-open", `var a: string[] = []; return fmt_format("a{{b", a).len();`},
+	{"escaped-open", `let a: string[] = []; return fmt_format("a{{b", a).len();`},
 	// escape + placeholder: "{{{}}}" + ["X"] -> "{X}" (3).
-	{"escape-then-arg", `var a: string[] = ["X"]; return fmt_format("{{{}}}", a).len();`},
+	{"escape-then-arg", `let a: string[] = ["X"]; return fmt_format("{{{}}}", a).len();`},
 	// `}}` -> literal "}": "x}}y" + [] -> "x}y" (3).
-	{"escaped-close", `var a: string[] = []; return fmt_format("x}}y", a).len();`},
+	{"escaped-close", `let a: string[] = []; return fmt_format("x}}y", a).len();`},
 }
 
 func formatStringIRSrc(mainBody string) string {

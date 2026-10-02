@@ -17,15 +17,15 @@ var f64ArrayAppendIRCases = []struct {
 	main string
 }{
 	// Append to a non-empty f64[], then read the length.
-	{"f64-append-len", `function main(): i32 { var a: f64[] = [1.0]; a = a.append(2.0); a = a.append(3.0); return a.len(); }`},
+	{"f64-append-len", `function main(): i32 { let a: f64[] = [1.0]; a = a.append(2.0); a = a.append(3.0); return a.len(); }`},
 	// Append to a non-empty f64[], then index the appended element (value round-trip).
-	{"f64-append-index", `function main(): i32 { var a: f64[] = [1.5]; a = a.append(2.5); return a[1] as i32; }`},
+	{"f64-append-index", `function main(): i32 { let a: f64[] = [1.5]; a = a.append(2.5); return a[1] as i32; }`},
 	// Append onto an EMPTY f64[] literal (the geometric-growth first-alloc path).
-	{"f64-append-empty-sum", `function main(): i32 { var a: f64[] = []; a = a.append(1.5); a = a.append(2.5); var s = 0.0; for x in a { s = s + x; } return s as i32; }`},
+	{"f64-append-empty-sum", `function main(): i32 { let a: f64[] = []; a = a.append(1.5); a = a.append(2.5); let s = 0.0; for x in a { s = s + x; } return s as i32; }`},
 	// Repeated appends past the initial capacity (forces the grow-and-copy path).
-	{"f64-append-grow-many", `function main(): i32 { var a: f64[] = []; var i = 0; while (i < 10) { a = a.append((i as f64) + 0.5); i = i + 1; } return a[7] as i32; }`},
+	{"f64-append-grow-many", `function main(): i32 { let a: f64[] = []; let i = 0; while (i < 10) { a = a.append((i as f64) + 0.5); i = i + 1; } return a[7] as i32; }`},
 	// i64[] append regression — must stay on the IR path (shares __fern_arr_push).
-	{"i64-append-regress", `function main(): i32 { var a: i64[] = [1]; a = a.append(2); return a[1] as i32; }`},
+	{"i64-append-regress", `function main(): i32 { let a: i64[] = [1]; a = a.append(2); return a[1] as i32; }`},
 }
 
 // TestSelfHostF64ArrayAppendIR compiles each case with the self-host CLI for

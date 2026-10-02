@@ -51,7 +51,7 @@ Two natural groupings, and both are bigger than one cell:
 
   **The store is not the thing to fix.** Measured after the arrstruct slice, on
   both flavours: give the callee a LOCAL source instead of a param and the same
-  store is already flat — `var src = mkv(i); var p = P { f: src, n: i }` runs
+  store is already flat — `let src = mkv(i); let p = P { f: src, n: i }` runs
   500/500 at live 0, and the string twin 400/400. So the store retains and the
   holder's drop releases; the callee is balanced every round. Swap the source to
   a param and it is 104/102 (80 bytes) and 103/101 (32 bytes) — a constant two

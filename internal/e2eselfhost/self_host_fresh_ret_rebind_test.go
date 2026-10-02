@@ -10,24 +10,24 @@ import (
 
 // --- The REBOUND fresh-ret-call struct local ---------------------------------
 //
-// `var s: S = mk(i); s = mk(i + 1);` — a struct local bound from a producer call
+// `let s: S = mk(i); s = mk(i + 1);` — a struct local bound from a producer call
 // and then reassigned. collect_fresh_ret_call_names used to drop every name in
 // body_assign_targets, so this local earned no credit at all: `round` emitted no
 // dec of any kind, and the box plus its rc fields leaked on every rebind
 // (800 allocs / 0 frees over 200 rounds, against native's 800/800).
 //
 // The exclusion deferred to the snapshot-LOCAL path, which claims only the
-// locals threaded and MOVED OUT (`var st = f(x); st = st.emit(..); return st`).
+// locals threaded and MOVED OUT (`let st = f(x); st = st.emit(..); return st`).
 // A rebound local that simply goes dead fell between the two.
 //
 // The INIT spelling is what decided it, not the rebind: the literal-bound
 // sibling (collect_fresh_struct_names) never carried the exclusion, so
-// `var s: S = S { .. }` was already clean under the identical rebind. That
+// `let s: S = S { .. }` was already clean under the identical rebind. That
 // asymmetry is why `literal_init_control` sits here — it passed before the fix
 // and pins the half that was never broken.
 //
 // It is also why no cell of the generated leak matrix could see this: every
-// kind there inits from a literal (`var x: P = P { xs: [i, i + 1], k: i }`),
+// kind there inits from a literal (`let x: P = P { xs: [i, i + 1], k: i }`),
 // so its `rebind` scope exercises only the clean spelling. A row added there
 // would not have caught it either.
 //
@@ -35,7 +35,7 @@ import (
 // rebind, so releasing at the rebind would free a box the container still
 // points at; its exit code guards that. On the typed lowering it balances.
 //
-// `field_moved_out` balances: `var held: string = s.name` takes its own count
+// `field_moved_out` balances: `let held: string = s.name` takes its own count
 // on the field (#10371), so the deep drop of the orphaned box leaves `held`
 // live, and its readback after `churn` proves it.
 //
@@ -54,8 +54,8 @@ const freshRetRebindDecl = `struct S { name: string, n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mk(i: i32): S { return S { name: w("k"), n: i }; }
 function churn(i: i32): i32 {
-    var a: string = w("chunkA");
-    var b: string = w("chunkB");
+    let a: string = w("chunkA");
+    let b: string = w("chunkB");
     return a.len() + b.len() + i;
 }
 `
@@ -63,7 +63,7 @@ function churn(i: i32): i32 {
 // The plain driver: 200 rounds, no readback assertion.
 const freshRetRebindMain = `
 function main(): i32 {
-    var acc: i32 = 0; var r: i32 = 0;
+    let acc: i32 = 0; let r: i32 = 0;
     while (r < 200) { acc = acc + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -73,8 +73,8 @@ function main(): i32 {
 // answers 100, so an over-release is a wrong ANSWER and not just a count.
 const freshRetRebindCheckedMain = `
 function main(): i32 {
-    var acc: i32 = 0; var r: i32 = 0; var bad: i32 = 0;
-    while (r < 200) { var v: i32 = round(r); if (v < 0) { bad = bad + 1; } acc = acc + v; r = r + 1; }
+    let acc: i32 = 0; let r: i32 = 0; let bad: i32 = 0;
+    while (r < 200) { let v: i32 = round(r); if (v < 0) { bad = bad + 1; } acc = acc + v; r = r + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -92,7 +92,7 @@ func freshRetRebindCases() []freshRetRebindCase {
 			// The shape: producer-call init, producer-call rebind.
 			name: "call_init_rebind",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
-    var s: S = mk(i);
+    let s: S = mk(i);
     s = mk(i + 1);
     return (s.name.len() + s.n) % 101;
 }` + freshRetRebindMain,
@@ -103,7 +103,7 @@ func freshRetRebindCases() []freshRetRebindCase {
 			// was excluded, so both rebind spellings leaked identically.
 			name: "call_init_literal_rebind",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
-    var s: S = mk(i);
+    let s: S = mk(i);
     s = S { name: w("z"), n: i + 1 };
     return (s.name.len() + s.n) % 101;
 }` + freshRetRebindMain,
@@ -115,7 +115,7 @@ func freshRetRebindCases() []freshRetRebindCase {
 			// this change touched rather than to the shared gate below it.
 			name: "literal_init_control",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
-    var s: S = S { name: w("k"), n: i };
+    let s: S = S { name: w("k"), n: i };
     s = S { name: w("z"), n: i + 1 };
     return (s.name.len() + s.n) % 101;
 }` + freshRetRebindMain,
@@ -128,9 +128,9 @@ func freshRetRebindCases() []freshRetRebindCase {
 			name: "scalar_struct_rebind",
 			src: `struct N { a: i32, n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
-function mkn(i: i32): N { var junk: string = w("x"); return N { a: junk.len(), n: i }; }
+function mkn(i: i32): N { let junk: string = w("x"); return N { a: junk.len(), n: i }; }
 function round(i: i32): i32 {
-    var s: N = mkn(i);
+    let s: N = mkn(i);
     s = mkn(i + 1);
     return (s.a + s.n) % 101;
 }` + freshRetRebindMain,
@@ -142,12 +142,12 @@ function round(i: i32): i32 {
 			name: "arr_field_rebind",
 			src: `struct A { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
-function mka(i: i32): A { var o: string[] = []; o = o.append(w("a")); return A { f: o, n: i }; }
-function churn(i: i32): i32 { var a: string = w("chunkA"); var b: string = w("chunkB"); return a.len() + b.len() + i; }
+function mka(i: i32): A { let o: string[] = []; o = o.append(w("a")); return A { f: o, n: i }; }
+function churn(i: i32): i32 { let a: string = w("chunkA"); let b: string = w("chunkB"); return a.len() + b.len() + i; }
 function round(i: i32): i32 {
-    var s: A = mka(i);
+    let s: A = mka(i);
     s = mka(i + 1);
-    var j: i32 = churn(i);
+    let j: i32 = churn(i);
     if (s.f[0].len() != 31) { return 0 - 1; }
     return (s.f.len() + s.n + j) % 101;
 }` + freshRetRebindCheckedMain,
@@ -158,10 +158,10 @@ function round(i: i32): i32 {
 			// the previous iteration produced rather than on the init's.
 			name: "loop_rebind",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
-    var s: S = mk(i);
-    var k: i32 = 0;
+    let s: S = mk(i);
+    let k: i32 = 0;
     while (k < 3) { s = mk(i + k); k = k + 1; }
-    var j: i32 = churn(i);
+    let j: i32 = churn(i);
     if (s.name.len() != 31) { return 0 - 1; }
     return (s.name.len() + j) % 101;
 }` + freshRetRebindCheckedMain,
@@ -173,11 +173,11 @@ function round(i: i32): i32 {
 			// the readback is what proves the refusal is required.
 			name: "alias_into_container",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
-    var s: S = mk(i);
-    var keep: S[] = [];
+    let s: S = mk(i);
+    let keep: S[] = [];
     keep = keep.append(s);
     s = mk(i + 1);
-    var j: i32 = churn(i);
+    let j: i32 = churn(i);
     if (keep[0].name.len() != 31) { return 0 - 1; }
     return (s.name.len() + j) % 101;
 }` + freshRetRebindCheckedMain,
@@ -188,10 +188,10 @@ function round(i: i32): i32 {
 			// count, so the deep drop leaves the buffer `held` still reads.
 			name: "field_moved_out",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
-    var s: S = mk(i);
-    var held: string = s.name;
+    let s: S = mk(i);
+    let held: string = s.name;
     s = mk(i + 1);
-    var j: i32 = churn(i);
+    let j: i32 = churn(i);
     if (held.len() != 31) { return 0 - 1; }
     return (s.name.len() + j) % 101;
 }` + freshRetRebindCheckedMain,
@@ -204,13 +204,13 @@ function round(i: i32): i32 {
 			// over-release, since both read allocs == frees.
 			name: "rebind_then_return",
 			src: freshRetRebindDecl + `function build(i: i32): S {
-    var s: S = mk(i);
+    let s: S = mk(i);
     s = mk(i + 1);
     return s;
 }
 function round(i: i32): i32 {
-    var p: S = build(i);
-    var j: i32 = churn(i);
+    let p: S = build(i);
+    let j: i32 = churn(i);
     if (p.name.len() != 31) { return 0 - 1; }
     return (p.name.len() + j) % 101;
 }` + freshRetRebindCheckedMain,

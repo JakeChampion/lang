@@ -21,7 +21,7 @@ function fixup(own a: Asm, at: i32): Asm {
 
 function bcond(own a: Asm, word: i32): Asm {
     a = Asm { ...a, code: a.code.append(word) };
-    var at: i32 = a.code.len() - 1;
+    let at: i32 = a.code.len() - 1;
     return fixup(a, at);
 }
 
@@ -32,10 +32,10 @@ function emit(own a: Asm, mnem: string): Asm {
 }
 
 function main(): i32 {
-    var a: Asm = Asm { code: [], fixups: [] };
+    let a: Asm = Asm { code: [], fixups: [] };
     // 4+ rounds: a freed-then-reused block still holds its old bytes, so a
     // two-call probe reads correct values even when the box was double-freed.
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 16) {
         a = emit(a, "bcond");
         a = emit(a, "ret");

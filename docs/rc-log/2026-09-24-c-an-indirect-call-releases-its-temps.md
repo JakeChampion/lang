@@ -7,12 +7,12 @@ struct C { value: i32 }
 struct S { name: string, run: (C) => i32 }
 function val(c: C): i32 { return c.value; }
 ...
-    var st: S = S { name: "s", run: val };
+    let st: S = S { name: "s", run: val };
     acc = acc + st.run(C { value: i });
 ```
 
 Each call leaked the `C { value: i }` argument. The same call through a
-function-typed local, `var f = val; f(C { value: i })`, released it.
+function-typed local, `let f = val; f(C { value: i })`, released it.
 
 ## Cause
 

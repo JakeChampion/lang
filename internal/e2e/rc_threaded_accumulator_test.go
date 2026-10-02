@@ -20,14 +20,14 @@ const threadedStringArrayAccumulatorSrc = `import "std/i32";
 function cb(xs: string[], i: i32): string[] { return xs.append("p-a-wide-payload-past-any-inline-threshold" + i.to_string()); }
 @noinline
 function round(): i32 {
-    var g: string[] = [];
-    var i: i32 = 0;
+    let g: string[] = [];
+    let i: i32 = 0;
     while (i < 16) { g = cb(g, i); i = i + 1; }
     return g.len() - 16;
 }
 function main(): i32 {
-    var r: i32 = 0;
-    var acc: i32 = 0;
+    let r: i32 = 0;
+    let acc: i32 = 0;
     while (r < 200) { acc = acc + round(); r = r + 1; }
     return acc;
 }`
@@ -38,15 +38,15 @@ func threadedStringArrayAccumulatorBumpSrc(n string) string {
 function cb(xs: string[], i: i32): string[] { return xs.append("p-a-wide-payload-past-any-inline-threshold" + i.to_string()); }
 @noinline
 function round(): i32 {
-    var g: string[] = [];
-    var i: i32 = 0;
+    let g: string[] = [];
+    let i: i32 = 0;
     while (i < 16) { g = cb(g, i); i = i + 1; }
     return g.len() - 16;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var r: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let r: i32 = 0;
+    let acc: i32 = 0;
     while (r < ` + n + `) { acc = acc + round(); r = r + 1; }
     if (acc != 0) { return 99; }
     return (__heap_bump_bytes() as i32) - before;

@@ -34,13 +34,13 @@ or a reference.
 
 ```
 function make_counter(): () => i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     return function (): i32 { n = n + 1; return n; };   // OK — shared cell
 }
 
 function main(): i32 {
-    var n: i32 = 1;
-    var f = function (): i32 { return n; };
+    let n: i32 = 1;
+    let f = function (): i32 { return n; };
     n = 99;
     return f();          // 99 — one cell, so the outer write is visible
 }
@@ -68,8 +68,8 @@ outer variable (capture copies the *pointer*, not the pointee). So:
 
 ```
 function f(): i32 {
-    var s: string = "hi";
-    var g = function (): i32 { s = "bye"; return 0; };   // E049
+    let s: string = "hi";
+    let g = function (): i32 { s = "bye"; return 0; };   // E049
     return g();
 }
 ```
@@ -85,8 +85,8 @@ close `box -> closure -> env -> box`:
 
 ```
 function main(): i32 {
-    var g: () => i32 = (): i32 => { return 1; };
-    var f: () => i32 = (): i32 => { return g(); };   // f's env holds g's box
+    let g: () => i32 = (): i32 => { return 1; };
+    let f: () => i32 = (): i32 => { return g(); };   // f's env holds g's box
     g = f;                                           // error[E049]
     return 0;
 }
@@ -101,8 +101,8 @@ be the closure, so the by-reference rebinds this document exists to describe
 stay legal:
 
 ```
-var s: string = "a";
-var f = (): i32 => { return s.len(); };
+let s: string = "a";
+let f = (): i32 => { return s.len(); };
 s = "bb";                    // OK — a string reaches no closure
 ```
 
@@ -112,9 +112,9 @@ target nor anything whose type could hold a closure has no edge back to the
 cell, so swapping a captured callback on a flag stays legal:
 
 ```
-var g = (): (string, i32) => { return ("abcd", 4); };
+let g = (): (string, i32) => { return ("abcd", 4); };
 if (flip) { g = (): (string, i32) => { return ("z", 1); }; }   // OK
-var h = () => g().1 + 38;
+let h = () => g().1 + 38;
 ```
 
 Every other spelling — an identifier, a call result, a container holding one —
@@ -127,10 +127,10 @@ sources, the rule refuses nothing that was accepted before. The blunter rule
 (refuse EVERY store into a boxed pointer capture) refuses 28 of those 1128,
 `examples/self_host/fern.fern` among them, so it would break the bootstrap.
 
-Only a `var`-declared local gets a box, so only a `var` can close a cycle. A
+Only a `let`-declared local gets a box, so only a `let` can close a cycle. A
 captured **parameter**, a `let (a, b) = …` destructuring binding and a
 match-arm binding are captured BY VALUE (`collectBoxedCaptures` requires a
-`var` declaration), so rebinding one leaves the closure reading the value it
+`let` declaration), so rebinding one leaves the closure reading the value it
 snapshotted — confirmed by running each: after `g = f` the call `g()` returns
 the original closure's answer instead of diverging. They are not cycle vectors
 and the rule does not touch them.
@@ -161,9 +161,9 @@ type-name classifier that mirrors `ast.IsPointerType`).
 The self-host `E049` pass is a lightweight standalone walk that does not
 thread the full type environment, so it infers an **unannotated**
 capture's type only from an obvious pointer-shaped *literal* init
-(`var s = "x"`, `= [..]`, `= P {..}`, `= (..)`). An unannotated var bound
+(`let s = "x"`, `= [..]`, `= P {..}`, `= (..)`). An unannotated let bound
 to a pointer-shaped **non-literal** init — a call or another identifier,
-e.g. `var s = mk();` where `mk` returns `string` — is conservatively
+e.g. `let s = mk();` where `mk` returns `string` — is conservatively
 treated as scalar, so a write-back capture of it is **not** flagged even
 though native (with full inference) flags it. This is a soundness-safe
 under-approximation (it never over-flags), and closing it needs the
@@ -176,7 +176,7 @@ self-host's (`e049_cell_stores`) judges the variable's DECLARED type, where
 native judges the stored value's; a value is assignable to the slot, so a
 declared type that reaches no function holds none, and both refuse the same
 spellings in `conformance/cases/diag_e049_enclosing_cycle`. An unannotated
-`var` is typed only when its initialiser is a closure literal, the same
+`let` is typed only when its initialiser is a closure literal, the same
 under-approximation as the paragraph above.
 
 ## Related

@@ -17,7 +17,7 @@ you want. `for x in …` walks an array, a slice, a range, or anything
 implementing `Iterator`, and binds each element directly:
 
 ```fern
-var trees: string[] = ["ash", "beech", "elm"];
+let trees: string[] = ["ash", "beech", "elm"];
 for name in trees {
     print(name);
 }
@@ -31,12 +31,12 @@ for i in 0..xs.len() { total = total + xs[i]; }
 for n in 1..=100    { sum = sum + n; }
 ```
 
-The binder is a pattern — the same irrefutable tuple pattern `var (a, b) =
+The binder is a pattern — the same irrefutable tuple pattern `let (a, b) =
 e;` takes, nested elements and `_` discards included — so a sequence of
 tuples unpacks in the head rather than on the body's first line:
 
 ```fern
-var readings: (string, i32)[] = [("ash", 3), ("elm", 7)];
+let readings: (string, i32)[] = [("ash", 3), ("elm", 7)];
 for (species, count) in readings {
     print(f"{species}={count}");
 }
@@ -49,7 +49,7 @@ accident:
 ```fern
 import "core/map";
 
-var stock: Map[string, i32] = Map { "frond": 3, "spore": 7 };
+let stock: Map[string, i32] = Map { "frond": 3, "spore": 7 };
 for (species, count) in stock {
     print(f"{species}={count}");
 }
@@ -81,7 +81,7 @@ first-out** order — so cleanup unwinds in the reverse of acquisition.
 
 ```fern
 function read(path: string): Result[string, IoError] {
-    var r: Reader = open(path)?;
+    let r: Reader = open(path)?;
     defer r.close();          // runs on every exit path below
     return r.read_all();
 }
@@ -95,7 +95,7 @@ its own iteration left:
 
 ```fern
 for path in paths {
-    var r: Reader = open(path)?;
+    let r: Reader = open(path)?;
     defer r.close();          // closes this iteration's reader, before the next
     consume(r.read_all());
 }
@@ -124,8 +124,9 @@ errdefer rollback();         // only if we bail with an error
 
 ## Refutable bindings — `let … else` and `if let`
 
-`var` binds an irrefutable value. `let` binds a **pattern** that might
-not match, and forces you to handle the miss with a diverging `else`:
+A plain `let name = expr;` always binds. `let` can also bind a **pattern**
+that might not match, and then forces you to handle the miss with a
+diverging `else`:
 
 ```fern
 let Some(user) = lookup(id) else {
@@ -203,8 +204,8 @@ unbound, as in a match arm. A lambda takes the same grammar, whether its
 body is a block or a bare expression:
 
 ```fern
-var verbose = (Point { x, y }: Point): i32 => { return x + y; };
-var arrow = (Point { x, y }: Point) => x + y;
+let verbose = (Point { x, y }: Point): i32 => { return x + y; };
+let arrow = (Point { x, y }: Point) => x + y;
 ```
 
 A parameter binds unconditionally — there is no else branch to run on a
@@ -239,8 +240,8 @@ transforms flows in the order it runs instead of nesting inside-out:
 
 ```fern
 // These two are identical — the pipe form just reads forward.
-var body: string = json.json_encode(describe(u.path, q));
-var body: string = describe(u.path, q) |> json.json_encode;
+let body: string = json.json_encode(describe(u.path, q));
+let body: string = describe(u.path, q) |> json.json_encode;
 ```
 
 It's a parse-time desugar with no runtime cost.
@@ -251,8 +252,8 @@ A string literal with an `f` prefix interpolates `{expr}` holes. Each hole
 is stringified — numbers go through `.to_string()` automatically.
 
 ```fern
-var name: string = "world";
-var n: i32 = 42;
+let name: string = "world";
+let n: i32 = 42;
 print(f"hello, {name} — the answer is {n}");
 ```
 
@@ -267,7 +268,7 @@ string, a locale table), reach for
 `while (true)`. Exit it with `break` (or `return`):
 
 ```fern
-var n: i32 = 0;
+let n: i32 = 0;
 loop {
     n = n + 1;
     if (n * n > 100) { break; }

@@ -37,8 +37,8 @@ func helperBody(asm, sym string) string {
 // if any regresses to a bare __fern_alloc for the string payload.
 func TestTwoWordStringRuntimesUseRcHeaderedAlloc(t *testing.T) {
 	src := `function main(): i32 {
-    var a: string = string_from_bytes_unchecked([65 as u8, 66 as u8]);
-    var n: i32 = a.len();
+    let a: string = string_from_bytes_unchecked([65 as u8, 66 as u8]);
+    let n: i32 = a.len();
     match (env("FERN_X")) { Some(v) => { n = n + v.len(); }, None => {} }
     match (read_line()) { Some(l) => { n = n + l.len(); }, None => {} }
     return n;

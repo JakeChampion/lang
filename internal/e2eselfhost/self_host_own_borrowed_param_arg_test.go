@@ -16,7 +16,7 @@ import (
 // `own` position anyway (`h = absorb(h, …)` inside a plain-receiver method
 // kills THIS binding, not the caller's), so the callee's
 // __fern_rc_is_unique gate read the caller's sole count as its own and rewrote
-// the caller's box in place. `var keep = h; var forked = h.update(c)` left
+// the caller's box in place. `let keep = h; let forked = h.update(c)` left
 // keep == forked on the self-host while `-interp` and native forked correctly.
 //
 // The lowering now buys the reference the callee is about to spend
@@ -40,8 +40,8 @@ var ownBorrowedParamArgCases = []struct {
 	{name: "receiver-fork-under-alias", expected: 100, src: `struct S { buf: u8[], n: i32 }
 @noinline
 function zero(n: i32): u8[] {
-    var a: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
+    let a: u8[] = __alloc_u8(n);
+    let i: i32 = 0;
     while (i < n) { a = a.with(i, 0 as u8); i = i + 1; }
     return a;
 }
@@ -49,9 +49,9 @@ function zero(n: i32): u8[] {
 function bump(own s: S): S { s = S { ...s, n: s.n + 1 }; return s; }
 function (s: S) mbump(): S { s = bump(s); return s; }
 function main(): i32 {
-    var a: S = S { buf: zero(4), n: 0 };
-    var keep: S = a;
-    var b: S = a.mbump();
+    let a: S = S { buf: zero(4), n: 0 };
+    let keep: S = a;
+    let b: S = a.mbump();
     return b.n * 100 + keep.n * 10 + a.n + __rc_underflow_count();
 }`},
 
@@ -61,8 +61,8 @@ function main(): i32 {
 	{name: "receiver-fork-single-name", expected: 10, src: `struct S { buf: u8[], n: i32 }
 @noinline
 function zero(n: i32): u8[] {
-    var a: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
+    let a: u8[] = __alloc_u8(n);
+    let i: i32 = 0;
     while (i < n) { a = a.with(i, 0 as u8); i = i + 1; }
     return a;
 }
@@ -70,8 +70,8 @@ function zero(n: i32): u8[] {
 function bump(own s: S): S { s = S { ...s, n: s.n + 1 }; return s; }
 function (s: S) mbump(): S { s = bump(s); return s; }
 function main(): i32 {
-    var a: S = S { buf: zero(4), n: 0 };
-    var b: S = a.mbump();
+    let a: S = S { buf: zero(4), n: 0 };
+    let b: S = a.mbump();
     return b.n * 10 + a.n + __rc_underflow_count();
 }`},
 
@@ -81,8 +81,8 @@ function main(): i32 {
 	{name: "hasher-state-fork", expected: 7, src: `struct St { a: u32, buf: u8[], buf_len: i32, total: u64 }
 @noinline
 function zero(n: i32): u8[] {
-    var a: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
+    let a: u8[] = __alloc_u8(n);
+    let i: i32 = 0;
     while (i < n) { a = a.with(i, 0 as u8); i = i + 1; }
     return a;
 }
@@ -93,11 +93,11 @@ function absorb(own h: St, n: i32): St {
 }
 function (h: St) update(n: i32): St { h = absorb(h, n); return h; }
 function main(): i32 {
-    var h: St = St { a: 1, buf: zero(64), buf_len: 0, total: 0 as u64 };
-    var i: i32 = 0;
+    let h: St = St { a: 1, buf: zero(64), buf_len: 0, total: 0 as u64 };
+    let i: i32 = 0;
     while (i < 100) { h = h.update(7); i = i + 1; }
-    var keep: St = h;
-    var forked: St = h.update(7);
+    let keep: St = h;
+    let forked: St = h.update(7);
     return (forked.total as i32) - (keep.total as i32) + __rc_underflow_count();
 }`},
 
@@ -110,8 +110,8 @@ function main(): i32 {
 	{name: "array-field-struct-fork", expected: 0, src: `struct P { xs: i32[], k: i32 }
 @noinline
 function mk(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(0); i = i + 1; }
     return a;
 }
@@ -119,9 +119,9 @@ function mk(n: i32): i32[] {
 function grow(own p: P): P { p = P { ...p, k: p.k + 1 }; return p; }
 function (p: P) g(): P { p = grow(p); return p; }
 function main(): i32 {
-    var a: P = P { xs: mk(3), k: 0 };
-    var keep: P = a;
-    var b: P = a.g();
+    let a: P = P { xs: mk(3), k: 0 };
+    let keep: P = a;
+    let b: P = a.g();
     if (b.k != 1 || keep.k != 0 || a.k != 0 || keep.xs.len() != 3 || __rc_underflow_count() != 0) { return 1; }
     return 0;
 }`},
@@ -137,9 +137,9 @@ function cat(own s: string, x: string): string { s = s + x; return s; }
 function bump(own t: T): T { t = T { ...t, name: cat(t.name, "b"), n: t.n + 1 }; return t; }
 function (t: T) mb(): T { t = bump(t); return t; }
 function main(): i32 {
-    var a: T = T { name: "a", n: 0 };
-    var keep: T = a;
-    var b: T = a.mb();
+    let a: T = T { name: "a", n: 0 };
+    let keep: T = a;
+    let b: T = a.mb();
     if (b.n != 1 || keep.n != 0 || a.n != 0 || keep.name != "a" || a.name != "a" || b.name != "ab" || __rc_underflow_count() != 0) { return 1; }
     return 0;
 }`},
@@ -151,8 +151,8 @@ function main(): i32 {
 	{name: "rebind-loop-no-alias", expected: 50, src: `struct S { buf: u8[], n: i32, total: u64 }
 @noinline
 function zero(n: i32): u8[] {
-    var a: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
+    let a: u8[] = __alloc_u8(n);
+    let i: i32 = 0;
     while (i < n) { a = a.with(i, 0 as u8); i = i + 1; }
     return a;
 }
@@ -160,8 +160,8 @@ function zero(n: i32): u8[] {
 function absorb(own s: S, k: i32): S { s = S { ...s, n: s.n + k, total: s.total + (k as u64) }; return s; }
 function (s: S) upd(k: i32): S { s = absorb(s, k); return s; }
 function main(): i32 {
-    var h: S = S { buf: zero(8), n: 0, total: 0 as u64 };
-    var i: i32 = 0;
+    let h: S = S { buf: zero(8), n: 0, total: 0 as u64 };
+    let i: i32 = 0;
     while (i < 50) { h = h.upd(1); i = i + 1; }
     return h.n + (h.total as i32) - 50 + __rc_underflow_count();
 }`},
@@ -175,7 +175,7 @@ function bump(own s: S): S { return S { ...s, n: s.n + 1 }; }
 @noinline
 function step(own s: S): S { s = bump(s); return s; }
 function main(): i32 {
-    var a: S = S { xs: [1], n: 0 };
+    let a: S = S { xs: [1], n: 0 };
     a = step(a);
     a = step(a);
     return a.n + a.xs.len() * 10 + __rc_underflow_count();
@@ -188,7 +188,7 @@ function main(): i32 {
 @noinline
 function bump(own s: S): S { return S { ...s, n: s.n + 1 }; }
 function main(): i32 {
-    var a: S = S { xs: [1], n: 0 };
+    let a: S = S { xs: [1], n: 0 };
     a = bump(a);
     a = bump(a);
     return a.n + a.xs.len() * 10 + __rc_underflow_count();
@@ -196,14 +196,14 @@ function main(): i32 {
 
 	// Control: a SCALAR parameter at an `own` position. Nothing rc-tracked is
 	// handed over, and a retain on an i32 is a compiler bug that SIGSEGVs
-	// rather than no-opping (see the rc_inc guard note in irlower).
+	// rather than no-opping.
 	{name: "scalar-own-param-control", expected: 3, src: `struct S { xs: i32[], n: i32 }
 @noinline
 function twice(own n: i32): i32 { n = n * 2; return n; }
 function (n: i32) t(): i32 { n = twice(n); return n; }
 function main(): i32 {
-    var a: S = S { xs: [1], n: 3 };
-    var k: i32 = a.n;
+    let a: S = S { xs: [1], n: 3 };
+    let k: i32 = a.n;
     return k.t() - 4 + a.xs.len() + __rc_underflow_count();
 }`},
 }
@@ -243,7 +243,7 @@ func TestSelfHostOwnBorrowedParamArgX86_64(t *testing.T) {
 }
 
 // TestSelfHostOwnBorrowedParamArgArm64 — the same cases through the arm64 emit.
-// The retain comes out of shared irlower analysis rather than per-backend
+// The retain comes out of shared lowering analysis rather than per-backend
 // emission, so this leg is what catches it landing on one register backend.
 func TestSelfHostOwnBorrowedParamArgArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

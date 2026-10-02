@@ -130,7 +130,7 @@ function main(): i32 { return 0; }`
 function iota(): i32[];
 
 function main(): i32 {
-	var xs: i32[] = iota();
+	let xs: i32[] = iota();
 	if (xs.len() == 4 && xs[0] == 10 && xs[3] == 40) { write("` + want + `"); } else { write("iota-bad"); }
 	return 0;
 }`

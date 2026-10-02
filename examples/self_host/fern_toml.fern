@@ -67,7 +67,7 @@ pub struct Manifest {
 // index_of returns the first index of the single-char needle `c` in `s`
 // at or after `from`, or -1.
 function index_of(s: string, c: u8, from: i32): i32 {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i < s.len()) {
     if (s[i] == c) {
       return i;
@@ -82,7 +82,7 @@ function index_of_str(s: string, sub: string): i32 {
   if (sub.len() == 0) {
     return 0;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i + sub.len() <= s.len()) {
     if (slice_unchecked(s, i, i + sub.len()) == sub) {
       return i;
@@ -95,11 +95,11 @@ function index_of_str(s: string, sub: string): i32 {
 // quoted_value extracts the first double-quoted string's contents that
 // appears at or after `from` in `s`, or None.
 function quoted_value(s: string, from: i32): Option[string] {
-  var q1: i32 = index_of(s, b'"', from);
+  let q1: i32 = index_of(s, b'"', from);
   if (q1 < 0) {
     return None;
   }
-  var q2: i32 = index_of(s, b'"', q1 + 1);
+  let q2: i32 = index_of(s, b'"', q1 + 1);
   if (q2 < 0) {
     return None;
   }
@@ -108,9 +108,9 @@ function quoted_value(s: string, from: i32): Option[string] {
 
 // split_lines splits `src` on '\n'.
 function split_lines(src: string): string[] {
-  var out: string[] = [];
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i < src.len()) {
     if (src[i] == b'\n') {
       out = out.append(slice_unchecked(src, start, i) + "");
@@ -127,18 +127,18 @@ function split_lines(src: string): string[] {
 // dependency forms (url/workspace/version) are skipped here — the loader
 // handles those natively or falls back to on-disk resolution.
 pub function parse(src: string): Manifest {
-  var name: string = "";
-  var lib: string = "lib.fern";
-  var index: string = "";
-  var deps: Dep[] = [];
-  var members: string[] = [];
-  var excl_pkg: string[] = [];
-  var excl_ver: string[] = [];
-  var section: string = "";
-  var lines: string[] = split_lines(src);
-  var li: i32 = 0;
+  let name: string = "";
+  let lib: string = "lib.fern";
+  let index: string = "";
+  let deps: Dep[] = [];
+  let members: string[] = [];
+  let excl_pkg: string[] = [];
+  let excl_ver: string[] = [];
+  let section: string = "";
+  let lines: string[] = split_lines(src);
+  let li: i32 = 0;
   while (li < lines.len()) {
-    var line: string = util.trim(lines[li]);
+    let line: string = util.trim(lines[li]);
     li = li + 1;
     if (line.len() == 0) {
       continue;
@@ -147,18 +147,18 @@ pub function parse(src: string): Manifest {
       continue;
     }
     if (line[0] == b'[') {  // section header
-      var close: i32 = index_of(line, b']', 0);
+      let close: i32 = index_of(line, b']', 0);
       if (close > 0) {
         section = slice_unchecked(line, 1, close) + "";
       }
       continue;
     }
-    var eq: i32 = index_of(line, b'=', 0);
+    let eq: i32 = index_of(line, b'=', 0);
     if (eq < 0) {
       continue;
     }
-    var key: string = util.trim(slice_unchecked(line, 0, eq));
-    var val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
+    let key: string = util.trim(slice_unchecked(line, 0, eq));
+    let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
     if (section == "package") {
       if (key == "name") {
         match (quoted_value(val, 0)) {
@@ -193,8 +193,8 @@ pub function parse(src: string): Manifest {
       continue;
     }
     if (section == "exclude") {
-      var banned: string[] = parse_str_array(val);
-      var bi: i32 = 0;
+      let banned: string[] = parse_str_array(val);
+      let bi: i32 = 0;
       while (bi < banned.len()) {
         excl_pkg = excl_pkg.append(key + "");
         excl_ver = excl_ver.append(banned[bi] + "");
@@ -229,20 +229,20 @@ pub struct HashResult {
 // Mirrors native pkgcache.ValidateHash, message included: the two compilers
 // must agree on what a hash is, or a lock one accepts is one the other refuses.
 pub function validate_hash(hash: string): HashResult {
-  var bad: string = "must be `sha256:` + 64 lowercase hex digits of the archive bytes, got \""
+  let bad: string = "must be `sha256:` + 64 lowercase hex digits of the archive bytes, got \""
     + hash + "\"";
   if (hash.len() < 7 || slice_unchecked(hash, 0, 7) != "sha256:") {
     return HashResult { hex: "", err: bad };
   }
-  var hex: string = slice_unchecked(hash, 7, hash.len()) + "";
+  let hex: string = slice_unchecked(hash, 7, hash.len()) + "";
   if (hex.len() != 64) {
     return HashResult { hex: "", err: bad };
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < hex.len()) {
-    var c: u8 = hex[i];
-    var digit: boolean = c >= b'0' && c <= b'9';
-    var lower: boolean = c >= b'a' && c <= b'f';
+    let c: u8 = hex[i];
+    let digit: boolean = c >= b'0' && c <= b'9';
+    let lower: boolean = c >= b'a' && c <= b'f';
     if (!digit && !lower) {
       return HashResult { hex: "", err: bad };
     }
@@ -257,13 +257,13 @@ pub function validate_hash(hash: string): HashResult {
 // is a path dep. Anything else (url/hash) parses to kind "" (native-only;
 // the loader falls back to on-disk resolution).
 function parse_dep(name: string, val: string): Dep {
-  var governed: boolean = false;
-  var caps: string[] = [];
-  var cp: i32 = index_of_str(val, "capabilities");
+  let governed: boolean = false;
+  let caps: string[] = [];
+  let cp: i32 = index_of_str(val, "capabilities");
   if (cp >= 0) {
-    var open: i32 = index_of(val, b'[', cp);  // after the key
+    let open: i32 = index_of(val, b'[', cp);  // after the key
     if (open >= 0) {
-      var close: i32 = index_of(val, b']', open);
+      let close: i32 = index_of(val, b']', open);
       if (close > open) {
         governed = true;
         caps = parse_str_array(slice_unchecked(val, open, close) + "");
@@ -272,7 +272,7 @@ function parse_dep(name: string, val: string): Dep {
   }
   // Bare quoted string ⇒ version dep.
   if (val.len() > 0 && val[0] == b'"') {
-    var bare: string = "";
+    let bare: string = "";
     match (quoted_value(val, 0)) {
       Some(v) => {
         bare = v;
@@ -289,10 +289,10 @@ function parse_dep(name: string, val: string): Dep {
   // VALUE can contain either word (".../versions/x.tar.gz"); requiring
   // the `hash` key + a well-formed hash value keeps a stray "url" inside
   // a path value from misclassifying (that value has no hash key).
-  var up: i32 = index_of_str(val, "url");
-  var hp: i32 = index_of_str(val, "hash");
+  let up: i32 = index_of_str(val, "url");
+  let hp: i32 = index_of_str(val, "hash");
   if (up >= 0 && hp >= 0) {
-    var heq: i32 = index_of(val, b'=', hp);  // after hash
+    let heq: i32 = index_of(val, b'=', hp);  // after hash
     if (heq >= 0) {
       match (quoted_value(val, heq)) {
         Some(hv) => {
@@ -304,10 +304,10 @@ function parse_dep(name: string, val: string): Dep {
       }
     }
   }
-  var vp: i32 = index_of_str(val, "version");
+  let vp: i32 = index_of_str(val, "version");
   if (vp >= 0) {
-    var veq: i32 = index_of(val, b'=', vp);  // after version
-    var vv: string = "";
+    let veq: i32 = index_of(val, b'=', vp);  // after version
+    let vv: string = "";
     if (veq >= 0) {
       match (quoted_value(val, veq)) {
         Some(v) => {
@@ -318,9 +318,9 @@ function parse_dep(name: string, val: string): Dep {
     }
     return Dep { name: name, kind: "version", path: "", hash: "", version: vv, governed: governed, caps: caps };
   }
-  var p: i32 = index_of_str(val, "path");
+  let p: i32 = index_of_str(val, "path");
   if (p >= 0) {
-    var eq2: i32 = index_of(val, b'=', p);  // after path
+    let eq2: i32 = index_of(val, b'=', p);  // after path
     if (eq2 >= 0) {
       match (quoted_value(val, eq2)) {
         Some(pv) => {
@@ -336,11 +336,11 @@ function parse_dep(name: string, val: string): Dep {
 // parse_str_array parses a single-line inline array of quoted strings:
 // `["a", "b/c"]` → ["a", "b/c"].
 function parse_str_array(val: string): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < val.len()) {
     if (val[i] == b'"') {
-      var j: i32 = index_of(val, b'"', i + 1);
+      let j: i32 = index_of(val, b'"', i + 1);
       if (j < 0) {
         return out;
       }
@@ -359,7 +359,7 @@ function parse_str_array(val: string): string[] {
 // subset, so returning the primitive Option[string] keeps this module
 // per-module-IR-eligible.
 pub function dep_path(m: Manifest, name: string): Option[string] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name && m.deps[i].kind == "path") {
       return Some(m.deps[i].path + "");
@@ -373,7 +373,7 @@ pub function dep_path(m: Manifest, name: string): Option[string] {
 // from dep_kind, which answers "" both for an undeclared dependency and for a
 // declared one whose form this reader does not recognise.
 pub function has_dep(m: Manifest, name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name) {
       return true;
@@ -387,7 +387,7 @@ pub function has_dep(m: Manifest, name: string): boolean {
 // "version"/""), or "" when undeclared. Iterates m.deps directly (see
 // dep_path on why no Option[Dep] intermediary).
 pub function dep_kind(m: Manifest, name: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name) {
       return m.deps[i].kind + "";
@@ -399,8 +399,8 @@ pub function dep_kind(m: Manifest, name: string): string {
 
 // dep_names lists every declared dependency, in manifest order.
 pub function dep_names(m: Manifest): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < m.deps.len()) {
     out = out.append(m.deps[i].name + "");
     i = i + 1;
@@ -412,7 +412,7 @@ pub function dep_names(m: Manifest): string[] {
 // `capabilities` key — the question that decides whether reaching outside
 // the grant is an error or a warning (#6634).
 pub function dep_governed(m: Manifest, name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name) {
       return m.deps[i].governed;
@@ -425,14 +425,14 @@ pub function dep_governed(m: Manifest, name: string): boolean {
 // dep_caps returns the capabilities granted to dependency `name`, empty
 // when undeclared or ungoverned. Same primitive-return shape as dep_kind.
 pub function dep_caps(m: Manifest, name: string): string[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name) {
       return m.deps[i].caps;
     }
     i = i + 1;
   }
-  var empty: string[] = [];
+  let empty: string[] = [];
   return empty;
 }
 
@@ -440,7 +440,7 @@ pub function dep_caps(m: Manifest, name: string): string[] {
 // or None (undeclared, or not a url dep). Same primitive-Option shape as
 // dep_path.
 pub function dep_hash(m: Manifest, name: string): Option[string] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name && m.deps[i].kind == "url" && m.deps[i].hash.len() > 0) {
       return Some(m.deps[i].hash + "");
@@ -475,16 +475,16 @@ pub struct LockResult {
 // parse_lock reads a fern.lock's `[[package]]` entries, keeping the name
 // plus the `path` directory (path-sourced) or the `hash` (url-sourced).
 pub function parse_lock(src: string): LockResult {
-  var out: LockEntry[] = [];
-  var name: string = "";
-  var version: string = "";
-  var path: string = "";
-  var hash: string = "";
-  var have: boolean = false;
-  var lines: string[] = split_lines(src);
-  var li: i32 = 0;
+  let out: LockEntry[] = [];
+  let name: string = "";
+  let version: string = "";
+  let path: string = "";
+  let hash: string = "";
+  let have: boolean = false;
+  let lines: string[] = split_lines(src);
+  let li: i32 = 0;
   while (li < lines.len()) {
-    var line: string = util.trim(lines[li]);
+    let line: string = util.trim(lines[li]);
     li = li + 1;
     if (line.len() == 0) {
       continue;
@@ -503,12 +503,12 @@ pub function parse_lock(src: string): LockResult {
       have = true;
       continue;
     }
-    var eq: i32 = index_of(line, b'=', 0);
+    let eq: i32 = index_of(line, b'=', 0);
     if (eq < 0) {
       continue;
     }
-    var key: string = util.trim(slice_unchecked(line, 0, eq));
-    var val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
+    let key: string = util.trim(slice_unchecked(line, 0, eq));
+    let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
     if (key == "name") {
       match (quoted_value(val, 0)) {
         Some(v) => {
@@ -536,9 +536,9 @@ pub function parse_lock(src: string): LockResult {
     if (key == "hash") {
       match (quoted_value(val, 0)) {
         Some(v) => {
-          var hr: HashResult = validate_hash(v);
+          let hr: HashResult = validate_hash(v);
           if (hr.err.len() > 0) {
-            var none: LockEntry[] = [];
+            let none: LockEntry[] = [];
             return LockResult { entries: none, err: "fern.lock line "
               + util.i32_to_string(li) + ": hash " + hr.err };
           }
@@ -558,7 +558,7 @@ pub function parse_lock(src: string): LockResult {
 // question "is this dependency resolved?", which lock_path_of / lock_hash_of
 // cannot answer on their own (each is None for the other's source form).
 pub function lock_has(entries: LockEntry[], name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < entries.len()) {
     if (entries[i].name == name) {
       return true;
@@ -570,7 +570,7 @@ pub function lock_has(entries: LockEntry[], name: string): boolean {
 
 // lock_version_of returns the version pinned for `name`, or "".
 pub function lock_version_of(entries: LockEntry[], name: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < entries.len()) {
     if (entries[i].name == name) {
       return entries[i].version + "";
@@ -584,7 +584,7 @@ pub function lock_version_of(entries: LockEntry[], name: string): string {
 // dependency `name`, or None (undeclared, or a url source the self-host
 // can't reach).
 pub function lock_path_of(entries: LockEntry[], name: string): Option[string] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < entries.len()) {
     if (entries[i].name == name && entries[i].path.len() > 0) {
       return Some(entries[i].path + "");
@@ -598,7 +598,7 @@ pub function lock_path_of(entries: LockEntry[], name: string): Option[string] {
 // dependency `name`, or None — the store-resolution counterpart of
 // lock_path_of (#4949).
 pub function lock_hash_of(entries: LockEntry[], name: string): Option[string] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < entries.len()) {
     if (entries[i].name == name && entries[i].hash.len() > 0) {
       return Some(entries[i].hash + "");

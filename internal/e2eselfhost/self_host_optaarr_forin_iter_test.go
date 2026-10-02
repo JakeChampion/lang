@@ -47,15 +47,15 @@ var optaarrForInCases = []struct {
 	// single count cannot tell "reclaimed" from "reclaimed less often".
 	{"forin-repro-50", optaarrProg(50, `
 function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
-    var t: i32 = 0;
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + p[0]; }, None => {} } }
     return t + keep.len();
 }`), 10},
 	{"forin-repro-200", optaarrProg(200, `
 function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
-    var t: i32 = 0;
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + p[0]; }, None => {} } }
     return t + keep.len();
 }`), 10},
@@ -63,8 +63,8 @@ function round(i: i32): i32 {
 	// payload: the walk must handle the tag-1 box and the borrow alike.
 	{"forin-none-mixed", optaarrProg(150, `
 function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), None, Some([i + 2, i + 3])];
-    var t: i32 = 0;
+    let keep: Option[i32[]][] = [Some([i, i + 1]), None, Some([i + 2, i + 3])];
+    let t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + p[0] + p.len(); }, None => { t = t + 1; } } }
     return t + keep.len();
 }`), 16},
@@ -72,8 +72,8 @@ function round(i: i32): i32 {
 	// is not pinned on i32[] alone.
 	{"forin-f64-payload", optaarrProg(150, `
 function round(i: i32): i32 {
-    var keep: Option[f64[]][] = [Some([1.0, 2.0]), Some([3.0, 4.0])];
-    var t: i32 = 0;
+    let keep: Option[f64[]][] = [Some([1.0, 2.0]), Some([3.0, 4.0])];
+    let t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + p.len(); }, None => {} } }
     return t + keep.len() + i - i;
 }`), 6},
@@ -81,7 +81,7 @@ function round(i: i32): i32 {
 	// move — the widening touches the iteration, nothing else.
 	{"len-only-control", optaarrProg(150, `
 function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
     return keep.len();
 }`), 2},
 	// CONTROL: `match (xs[i])` already balanced before the widening
@@ -89,8 +89,8 @@ function round(i: i32): i32 {
 	// still must.
 	{"index-match-control", optaarrProg(150, `
 function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
-    var t: i32 = 0;
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let t: i32 = 0;
     match (keep[0]) { Some(p) => { t = t + p[0]; }, None => {} }
     return t + keep.len();
 }`), 5},
@@ -102,8 +102,8 @@ function round(i: i32): i32 {
 	// arm ran is not syntactic and this admission's proof is per-arm.
 	{"guarded-arm-refused", optaarrProg(150, `
 function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
-    var t: i32 = 0;
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let t: i32 = 0;
     for e in keep { match (e) { Some(p) when p[0] > 100000 => { t = t + 7; }, Some(q) => { t = t + q[0]; }, None => {} } }
     return t + keep.len();
 }`), 10},
@@ -111,8 +111,8 @@ function round(i: i32): i32 {
 	// so nothing may free the buffer it names.
 	{"payload-escapes-arm-refused", optaarrProg(150, `
 function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
-    var held: i32[] = [0];
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let held: i32[] = [0];
     for e in keep { match (e) { Some(p) => { held = p; }, None => {} } }
     return held[0] + keep.len();
 }`), 7},
@@ -122,8 +122,8 @@ function round(i: i32): i32 {
 	{"payload-to-call-refused", optaarrProg(150, `
 function sink(xs: i32[]): i32 { return xs.len(); }
 function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
-    var t: i32 = 0;
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + sink(p); }, None => {} } }
     return t + keep.len();
 }`), 6},
@@ -132,25 +132,25 @@ function round(i: i32): i32 {
 	// sweep already freed, which the recycling allocations then overwrite.
 	{"box-escapes-loop-uaf", `
 function pick(i: i32): Option[i32[]] {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
-    var last: Option[i32[]] = None;
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let last: Option[i32[]] = None;
     for e in keep { last = e; }
     return last;
 }
 
 function round(i: i32): i32 {
-    var o: Option[i32[]] = pick(i);
-    var a: i32[] = [7777, 7777];
-    var b: i32[] = [7777, 7777];
-    var c: i32[] = [7777, 7777];
-    var t: i32 = 0 - 9;
+    let o: Option[i32[]] = pick(i);
+    let a: i32[] = [7777, 7777];
+    let b: i32[] = [7777, 7777];
+    let c: i32[] = [7777, 7777];
+    let t: i32 = 0 - 9;
     match (o) { Some(p) => { t = p[0]; }, None => { t = 0 - 5; } }
     return t - i - 2 + a[0] - b[0] + c[0] - 7777;
 }
 
 function main(): i32 {
-    var i: i32 = 0;
-    var bad: i32 = 0;
+    let i: i32 = 0;
+    let bad: i32 = 0;
     while (i < 150) { if (round(i) != 0) { bad = bad + 1; } i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -161,9 +161,9 @@ function main(): i32 {
 	// bound box is a borrow the sweep would dangle.
 	{"elem-bind-refused", optaarrProg(150, `
 function round(i: i32): i32 {
-    var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
-    var o = keep[0];
-    var t: i32 = 0;
+    let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
+    let o = keep[0];
+    let t: i32 = 0;
     match (o) { Some(p) => { t = t + p[0]; }, None => {} }
     return t + keep.len();
 }`), 5},
@@ -174,16 +174,16 @@ function round(i: i32): i32 {
 	// ANNOTATION cannot land silently on shapes this proof never covered.
 	{"string-payload-out-of-class", optaarrProg(150, `
 function round(i: i32): i32 {
-    var pre: string = "abcdefgh";
-    var keep: Option[string[]][] = [Some([pre + "x", pre + "y"]), Some([pre + "z"])];
-    var t: i32 = 0;
+    let pre: string = "abcdefgh";
+    let keep: Option[string[]][] = [Some([pre + "x", pre + "y"]), Some([pre + "z"])];
+    let t: i32 = 0;
     for e in keep { match (e) { Some(p) => { t = t + p.len(); }, None => {} } }
     return t + keep.len() + i - i;
 }`), 5},
 	{"nested-option-out-of-class", optaarrProg(150, `
 function round(i: i32): i32 {
-    var keep: Option[Option[i32[]]][] = [Some(Some([i, i + 1])), Some(None)];
-    var t: i32 = 0;
+    let keep: Option[Option[i32[]]][] = [Some(Some([i, i + 1])), Some(None)];
+    let t: i32 = 0;
     for e in keep { match (e) { Some(inner) => { match (inner) { Some(p) => { t = t + p[0]; }, None => { t = t + 1; } } }, None => {} } }
     return t + keep.len();
 }`), 6},
@@ -197,8 +197,8 @@ func optaarrProg(rounds int, round string) string {
 	n := strconv.Itoa(rounds)
 	return round + `
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + n + `) { acc = (acc + round(i)) % 251; i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
@@ -243,7 +243,7 @@ func TestSelfHostOptaarrForInIterX86_64(t *testing.T) {
 }
 
 // TestSelfHostOptaarrForInIterArm64 — the credit and its release helper are
-// shared irlower.fern / Fern-source IR, so this leg exists to catch a backend
+// shared lowering / Fern-source IR, so this leg exists to catch a backend
 // that lowers the widened element walk into something that computes differently,
 // not to re-measure the leak (no detector here).
 func TestSelfHostOptaarrForInIterArm64(t *testing.T) {

@@ -14,13 +14,13 @@ import (
 // then a subprocess, whose own scratch was already returned, to prove the
 // shared copy routine still builds a working argv.
 const procExecReclaimSrc = `function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) {
         if (proc_exec("/nonexistent/x", ["a", "bb"]) >= 0) { return 99; }
         if (proc_exec_as("/nonexistent/y", ["y", "c"], ["K=V", "L=W"]) >= 0) { return 98; }
         i = i + 1;
     }
-    var r = subprocess("echo", ["hello", "world"], "");
+    let r = subprocess("echo", ["hello", "world"], "");
     return r.stdout.len();
 }
 `

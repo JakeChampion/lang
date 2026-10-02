@@ -24,12 +24,12 @@ var ownReceiverCases = []struct {
 }{
 	{"own-recv-local-churn", `struct Acc { out: i32[], n: i32 }
 pub function (own s: Acc) emit(x: i32): Acc {
-    var ys = s.out.append(x);
+    let ys = s.out.append(x);
     return Acc { out: ys, n: s.n + 1 };
 }
 function main(): i32 {
-    var s = Acc { out: [], n: 0 };
-    var i: i32 = 0;
+    let s = Acc { out: [], n: 0 };
+    let i: i32 = 0;
     while (i < 40) { s = s.emit(i); i = i + 1; }
     if (s.out.len() != 40) { return 1; }
     if (s.out[39] != 39) { return 2; }
@@ -37,7 +37,7 @@ function main(): i32 {
 }`, 40},
 	{"own-recv-threaded", `struct Acc { out: i32[], n: i32 }
 pub function (own s: Acc) emit(x: i32): Acc {
-    var ys = s.out.append(x);
+    let ys = s.out.append(x);
     return Acc { out: ys, n: s.n + 1 };
 }
 function emit_two(s: Acc, a: i32, b: i32): Acc {
@@ -46,8 +46,8 @@ function emit_two(s: Acc, a: i32, b: i32): Acc {
     return s;
 }
 function main(): i32 {
-    var s = Acc { out: [], n: 0 };
-    var i: i32 = 0;
+    let s = Acc { out: [], n: 0 };
+    let i: i32 = 0;
     while (i < 10) { s = emit_two(s, i, i + 1); i = i + 1; }
     if (s.out.len() != 20) { return 1; }
     return s.n + s.out[19];
@@ -55,7 +55,7 @@ function main(): i32 {
 	{"receiver-named-own", `struct Box { v: i32 }
 pub function (own: Box) get(): i32 { return own.v; }
 function main(): i32 {
-    var b = Box { v: 7 };
+    let b = Box { v: 7 };
     return b.get();
 }`, 7},
 }

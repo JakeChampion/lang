@@ -21,8 +21,8 @@ import (
 const genericFnArgWidthProgram = `import "core/iter" as iter;
 
 function main(): i32 {
-    var xs: f64[] = [5.5, 2.25, 8.5, 1.75, 4.5];
-    var big = iter.filter(iter.of(xs), (x: f64): boolean => { return x > 3.0; });
+    let xs: f64[] = [5.5, 2.25, 8.5, 1.75, 4.5];
+    let big = iter.filter(iter.of(xs), (x: f64): boolean => { return x > 3.0; });
     if (big.len() != 3) { return 99; }
     return (big[0] as i32) + (big[1] as i32) + (big[2] as i32);
 }

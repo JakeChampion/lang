@@ -95,7 +95,7 @@ function block(h: i32);
 function ready(h: i32): boolean;
 
 function main(): i32 {
-	var p: i32 = subscribe(0 as u64);
+	let p: i32 = subscribe(0 as u64);
 	block(p);
 	if (ready(p)) { write("` + want + `"); } else { write("poll-bad"); }
 	return 0;
@@ -201,7 +201,7 @@ function block(h: borrow Pollable);
 function ready(h: borrow Pollable): boolean;
 
 function main(): i32 {
-	var p: own Pollable = subscribe(0 as u64);
+	let p: own Pollable = subscribe(0 as u64);
 	block(p);
 	if (ready(p)) { write("` + want + `"); } else { write("poll-bad"); }
 	return 0;
@@ -306,7 +306,7 @@ function ready(h: borrow Pollable): boolean;
 function drop_pollable(h: own Pollable): void;
 
 function main(): i32 {
-	var p: own Pollable = subscribe(0 as u64);
+	let p: own Pollable = subscribe(0 as u64);
 	block(p);
 	if (ready(p)) { write("` + want + `"); } else { write("poll-bad"); }
 	drop_pollable(p);
@@ -406,7 +406,7 @@ function block(h: borrow Pollable);
 function ready(h: borrow Pollable): boolean;
 
 function main(): i32 {
-	var p: own Pollable = subscribe(0 as u64);
+	let p: own Pollable = subscribe(0 as u64);
 	block(p);
 	if (ready(p)) { write("` + want + `"); } else { write("poll-bad"); }
 	return 0;

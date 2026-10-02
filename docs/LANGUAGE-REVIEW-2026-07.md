@@ -115,7 +115,7 @@ RC without a cycle collector, latest-OS-only support policy
    the only thing that teaches the user about their own language").
 
 **Historical influences.** The surface began as a TypeScript subset
-(`function`, `var`, `T[]`, `x: T`, `if/else`, `//` comments) — the project
+(`function`, `let`, `T[]`, `x: T`, `if/else`, `//` comments) — the project
 grew out of Keleshev's *Compiling to Assembly from Scratch*. That heritage
 is now explicitly repudiated: *"The historical TS-flavoured surface was a
 starting point, not a constraint. From here we look at Roc, MoonBit, Rust,
@@ -183,7 +183,7 @@ match (s) {
   verbose form with annotations is common:
 
   ```fern
-  var evens = iter.filter(iter.of(xs), function(x: i32): boolean { return x % 2 == 0; });
+  let evens = iter.filter(iter.of(xs), function(x: i32): boolean { return x % 2 == 0; });
   ```
 
 - Enum variant names are globally unique (#15): `Color { Red }` and
@@ -211,8 +211,8 @@ matches idiomatically:
 
 ```fern
 function extract_text(v: JsonValue): Option[string] {
-    var JObject(m) = v?;
-    var JString(t) = m.get("text")??;
+    let JObject(m) = v?;
+    let JString(t) = m.get("text")??;
     return Some(t);
 }
 ```
@@ -277,9 +277,9 @@ slice-escape E063).
 explicit `as`. No null — `Option[T]` is the only absence type. No
 exceptions — `Result[T,E]` is the only error type.
 
-**Inference.** Local only, and modest: `var` initializers, generic call
+**Inference.** Local only, and modest: `let` initializers, generic call
 type-argument unification, and contextual settling of numeric literals
-(`var x: i64 = 1` works). Lambdas do not infer return types. There is no
+(`let x: i64 = 1` works). Lambdas do not infer return types. There is no
 Hindley–Milner global inference. The pressure valves are all in place, so
 under-inference is an annoyance rather than a wall: explicit type arguments
 on a call (`f[i32](x)`), on a method (`h.make[i32]()`), and on a struct

@@ -36,8 +36,8 @@ type crmCell struct {
 
 // crmMain is the shared driver: 100 rounds, checksum, underflow guard.
 const crmMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -50,8 +50,8 @@ const crmMain = `function main(): i32 {
 func crmMainKeep(keepInit, keepRead string) string {
 	return `function main(): i32 {
     ` + keepInit + `
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(keep, r); t = t + 0; r = r + 1; }
     t = (t + ` + keepRead + `) % 97;
     if (__rc_underflow_count() != 0) { return 99; }
@@ -75,18 +75,18 @@ func constructionRetainCells() []crmCell {
 		{
 			name: "str", field: "string",
 			decls: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
-function mkv(i: i32): string { var s: string = w("k"); return s; }`,
+function mkv(i: i32): string { let s: string = w("k"); return s; }`,
 			fresh: `w("f")`, mk: "mkv", read: "p.f.len()",
 		},
 		{
 			name: "str_arr", field: "string[]",
 			decls: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
-function mkv(i: i32): string[] { var o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }`,
+function mkv(i: i32): string[] { let o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }`,
 			fresh: `[w("x"), w("y")]`, mk: "mkv", read: "p.f.len() + p.f[0].len()",
 		},
 		{
 			name: "arr_i32", field: "i32[]",
-			decls: `function mkv(i: i32): i32[] { var o: i32[] = [i, i + 1]; return o; }`,
+			decls: `function mkv(i: i32): i32[] { let o: i32[] = [i, i + 1]; return o; }`,
 			fresh: `[i, i + 2]`, mk: "mkv", read: "p.f.len() + p.f[0]",
 		},
 		{
@@ -105,13 +105,13 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }`,
 		{
 			name: "enum_arr", field: "E[]",
 			decls: `enum E { A(i32[]), B }
-function mkv(i: i32): E[] { var o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }`,
+function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }`,
 			fresh: `[E.A([i, i + 5])]`, mk: "mkv", read: "p.f.len()",
 		},
 		{
 			name: "struct_arr", field: "Inner[]",
 			decls: `struct Inner { xs: i32[], k: i32 }
-function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1], k: i }); return o; }`,
+function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1], k: i }); return o; }`,
 			fresh: `[Inner { xs: [i, i + 6], k: i }]`, mk: "mkv", read: "p.f.len() + p.f[0].k",
 		},
 	}
@@ -125,7 +125,7 @@ function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i
 		cells = append(cells, crmCell{
 			name: k.name + "__fresh",
 			src: decls + `function round(i: i32): i32 {
-    var p: P = P { f: ` + k.fresh + `, n: i };
+    let p: P = P { f: ` + k.fresh + `, n: i };
     return (` + k.read + ` + p.n) % 101;
 }
 ` + crmMain,
@@ -136,14 +136,14 @@ function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i
 		cells = append(cells, crmCell{
 			name: k.name + "__local",
 			src: decls + `function round(i: i32): i32 {
-    var src: ` + k.field + ` = mkv(i);
-    var t: i32 = 0;
+    let src: ` + k.field + ` = mkv(i);
+    let t: i32 = 0;
     if (i % 2 == 0) {
-        var p: P = P { f: src, n: i };
+        let p: P = P { f: src, n: i };
         t = (` + k.read + ` + p.n) % 101;
     }
-    var q: P = P { f: mkv(i + 1), n: i };
-    var p: P = q;
+    let q: P = P { f: mkv(i + 1), n: i };
+    let p: P = q;
     t = (t + p.n) % 101;
     return t;
 }
@@ -155,10 +155,10 @@ function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i
 		cells = append(cells, crmCell{
 			name: k.name + "__param",
 			src: decls + `function round(src: ` + k.field + `, i: i32): i32 {
-    var p: P = P { f: src, n: i };
+    let p: P = P { f: src, n: i };
     return (` + k.read + ` + p.n) % 101;
 }
-` + crmMainKeep("var keep: "+k.field+" = mkv(7);", "0"),
+` + crmMainKeep("let keep: "+k.field+" = mkv(7);", "0"),
 		})
 
 		// fieldread: `q.f` off a live sibling holder — the RewriteCtx shape.
@@ -169,8 +169,8 @@ function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i
 		cells = append(cells, crmCell{
 			name: k.name + "__fieldread",
 			src: decls + `function round(i: i32): i32 {
-    var q: P = P { f: mkv(i), n: i };
-    var p: P = P { f: q.f, n: i };
+    let q: P = P { f: mkv(i), n: i };
+    let p: P = P { f: q.f, n: i };
     return (` + k.read + ` + p.n + q.n) % 101;
 }
 ` + crmMain,
@@ -180,7 +180,7 @@ function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i
 		cells = append(cells, crmCell{
 			name: k.name + "__call",
 			src: decls + `function round(i: i32): i32 {
-    var p: P = P { f: mkv(i), n: i };
+    let p: P = P { f: mkv(i), n: i };
     return (` + k.read + ` + p.n) % 101;
 }
 ` + crmMain,

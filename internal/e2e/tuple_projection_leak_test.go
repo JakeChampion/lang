@@ -91,9 +91,9 @@ function step(n: i32): Option[(i32, u8[])] {
     return None;
 }
 function main(): i32 {
-    var cur: u8[] = [0];
-    var i: i32 = 0;
-    var go: boolean = true;
+    let cur: u8[] = [0];
+    let i: i32 = 0;
+    let go: boolean = true;
     while (go) {
         match (step(i)) {
             Some(t) => { i = t.0; cur = t.1; },
@@ -114,7 +114,7 @@ function step(n: i32): Option[(i32, u8[])] {
     return None;
 }
 function main(): i32 {
-    var i: i32 = 0; var go: boolean = true;
+    let i: i32 = 0; let go: boolean = true;
     while (go) { match (step(i)) { Some(t) => { i = i + 1; }, None => { go = false; }, } }
     return i;
 }
@@ -125,7 +125,7 @@ function step(n: i32): Option[(i32, u8[])] {
     return None;
 }
 function main(): i32 {
-    var i: i32 = 0; var go: boolean = true;
+    let i: i32 = 0; let go: boolean = true;
     while (go) { match (step(i)) { Some(t) => { i = t.0; }, None => { go = false; }, } }
     return i;
 }
@@ -136,7 +136,7 @@ function step(n: i32): Option[(i32, i32)] {
     return None;
 }
 function main(): i32 {
-    var i: i32 = 0; var go: boolean = true;
+    let i: i32 = 0; let go: boolean = true;
     while (go) { match (step(i)) { Some(t) => { i = t.0; }, None => { go = false; }, } }
     return i;
 }

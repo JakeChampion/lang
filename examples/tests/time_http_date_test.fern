@@ -13,19 +13,19 @@ import "std/time" as time;
 // The RFC 9110 canonical example: 784111777 = 1994-11-06T08:49:37Z,
 // a Sunday. (verified: 784111777 / 86400 = 9075 days after 1970-01-01.)
 function test_format_canonical(): test.TestOutcome {
-  var i = time.instant_from_unix(784111777 as i64);
+  let i = time.instant_from_unix(784111777 as i64);
   return test.assert_eq(i.format_http_date(), "Sun, 06 Nov 1994 08:49:37 GMT");
 }
 
 function test_format_epoch(): test.TestOutcome {
   // The Unix epoch itself: 1970-01-01T00:00:00Z was a Thursday.
-  var i = time.instant_from_unix(0 as i64);
+  let i = time.instant_from_unix(0 as i64);
   return test.assert_eq(i.format_http_date(), "Thu, 01 Jan 1970 00:00:00 GMT");
 }
 
 function test_format_drops_subsecond(): test.TestOutcome {
   // HTTP-date is second-resolution; a half-second offset must not leak in.
-  var i = time.instant_from_unix(784111777 as i64).add_duration(time.duration_millis(500 as i64));
+  let i = time.instant_from_unix(784111777 as i64).add_duration(time.duration_millis(500 as i64));
   return test.assert_eq(i.format_http_date(), "Sun, 06 Nov 1994 08:49:37 GMT");
 }
 
@@ -42,7 +42,7 @@ function test_parse_canonical(): test.TestOutcome {
 
 function test_round_trip(): test.TestOutcome {
   // format then parse recovers the same second count.
-  var i = time.instant_from_unix(1720000000 as i64);
+  let i = time.instant_from_unix(1720000000 as i64);
   match (time.http_date_parse(i.format_http_date())) {
     Some(j) => {
       return test.assert_true(j.sec == 1720000000 as i64);
@@ -134,7 +134,7 @@ function test_weekday_name(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/time http-date");
+  let r: test.TestRunner = test.test_new("std/time http-date");
   r = r.it("format canonical", test_format_canonical);
   r = r.it("format epoch", test_format_epoch);
   r = r.it("format drops subsecond", test_format_drops_subsecond);

@@ -10,26 +10,26 @@ import (
 
 var effectFlowCases = []struct{ name, source, want string }{
 	{"effect-block-return", `function pilot(): string { action(); return "block"; }
-function action(): void { return { var items = [["temporary"]]; inspect(items[0]) }; }
-function inspect(items: string[]): void { var item = items[0]; }`, "block\n"},
+function action(): void { return { let items = [["temporary"]]; inspect(items[0]) }; }
+function inspect(items: string[]): void { let item = items[0]; }`, "block\n"},
 	{"effect-block-scope", `function pilot(): string {
-  var items = ["outer"]; ({ var items = ["inner"]; inspect(items) }); return items[0];
+  let items = ["outer"]; ({ let items = ["inner"]; inspect(items) }); return items[0];
 }
-function inspect(items: string[]): void { var item = items[0]; }`, "outer\n"},
+function inspect(items: string[]): void { let item = items[0]; }`, "outer\n"},
 	{"effect-if-true", `function pilot(): string { return choose(true); }
 function choose(flag: boolean): string {
-  var items = ["before"]; (if (flag) { items = ["yes"]; noop() } else { items = ["no"]; noop() }); return items[0];
+  let items = ["before"]; (if (flag) { items = ["yes"]; noop() } else { items = ["no"]; noop() }); return items[0];
 }
 function noop(): void {}`, "yes\n"},
 	{"effect-if-false", `function pilot(): string { return choose(false); }
 function choose(flag: boolean): string {
-  var items = ["before"]; (if (flag) { items = ["yes"]; noop() } else { items = ["no"]; noop() }); return items[0];
+  let items = ["before"]; (if (flag) { items = ["yes"]; noop() } else { items = ["no"]; noop() }); return items[0];
 }
 function noop(): void {}`, "no\n"},
 	{"effect-if-skipped-fault", `function pilot(): string { action(true); return "skipped"; }
 function action(flag: boolean): void { return if (flag) { noop() } else { fault() }; }
 function noop(): void {}
-function fault(): void { var empty: i32[] = []; var bad = empty[0]; }`, "skipped\n"},
+function fault(): void { let empty: i32[] = []; let bad = empty[0]; }`, "skipped\n"},
 	{"effect-if-arm-return", `function pilot(): string {
   (if (true) { return "arm exit"; } else { noop() }); return "wrong";
 }
@@ -42,19 +42,19 @@ function noop(): void {}`, "condition exit\n"},
   (if (false) { return "wrong"; } else { return "all exit"; }); return "dead";
 }`, "all exit\n"},
 	{"effect-match-guard-state", `function pilot(): string {
-  var items = ["before"];
+  let items = ["before"];
   (match (1i32) { 1i32 when { items = ["guard"]; false } => noop(), _ => noop() }); return items[0];
 }
 function noop(): void {}`, "guard\n"},
 	{"effect-match-tuple-escape", `function pilot(): string {
-  var held = ["before"];
+  let held = ["before"];
   (match ((true, (["held"], 1i32))) { (true, (child, _)) => { held = child; noop() }, _ => noop() });
-  var i = 0i32; while (i < 64i32) { var churn = ((["churn"], false), 2i32); i = i + 1i32; }
+  let i = 0i32; while (i < 64i32) { let churn = ((["churn"], false), 2i32); i = i + 1i32; }
   return held[0];
 }
 function noop(): void {}`, "held\n"},
 	{"effect-match-scrutinee-once", `function pilot(): string {
-  var count = 0i32;
+  let count = 0i32;
   (match ({ count = count + 1i32; count }) { 0i32 => noop(), 1i32 => noop(), _ => noop() });
   if (count == 1i32) { return "once"; } return "wrong";
 }
@@ -64,16 +64,16 @@ function noop(): void {}`, "once\n"},
 }
 function noop(): void {}`, "guard exit\n"},
 	{"effect-match-original-scrutinee", `function pilot(): string {
-  var pair = (["old"], true);
+  let pair = (["old"], true);
   (match (pair) {
     (items, _) when { pair = (["new"], false); false } => inspect(items),
     (items, _) => inspect(items)
   });
   let (items, _) = pair; return items[0];
 }
-function inspect(items: string[]): void { var item = items[0]; }`, "new\n"},
+function inspect(items: string[]): void { let item = items[0]; }`, "new\n"},
 	{"effect-match-continue", `function pilot(): string {
-  var i = 0i32; var items = ["before"];
+  let i = 0i32; let items = ["before"];
   while (i < 2i32) {
     i = i + 1i32;
     (match (i) { 1i32 => { items = ["continued"]; continue; }, _ => noop() });
@@ -86,15 +86,15 @@ function noop(): void {}`, "continued\n"},
 function action(pair: (boolean, string[])): void {
   return match (pair) { (true, items) => inspect(items), _ => noop() };
 }
-function inspect(items: string[]): void { var item = items[0]; }
+function inspect(items: string[]): void { let item = items[0]; }
 function noop(): void {}`, "returned\n"},
 	{"effect-discard-aggregate-if", `function pilot(): string {
-  var i = 0i32;
+  let i = 0i32;
   while (i < 64i32) { (if (i == 0i32) { [["first"]] } else { [["later"]] }); i = i + 1i32; }
   return "discarded";
 }`, "discarded\n"},
 	{"effect-discard-aggregate-match", `function pilot(): string {
-  var i = 0i32;
+  let i = 0i32;
   while (i < 64i32) { (match ((i, true)) { (0i32, _) => [["first"]], _ => [["later"]] }); i = i + 1i32; }
   return "discarded";
 }`, "discarded\n"},

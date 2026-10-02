@@ -25,7 +25,7 @@ function main(): i32 { return 0; }`
 
 func TestStringParamPushedThenReturnedBareStaysUncredited(t *testing.T) {
 	src := `function keep(xs: string[], nm: string): string {
-    var ys: string[] = xs.append(nm);
+    let ys: string[] = xs.append(nm);
     if (ys.len() > 99) { return "x"; }
     return nm;
 }
@@ -39,7 +39,7 @@ function main(): i32 { return 0; }`
 
 func TestStringParamForwardedToAPushingCalleeIsCounted(t *testing.T) {
 	src := `function keep(s: string): string[] {
-    var out: string[] = [];
+    let out: string[] = [];
     out = out.append(s);
     return out;
 }

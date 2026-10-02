@@ -25,14 +25,14 @@ function valid(s: Scope, names: i32, values: i32): boolean {
         && s.tables.values.len() == values && s.tables.values[0] == 7;
 }
 function main(): i32 {
-    var s = Scope { names: ["seed"], tables: Tables { keys: ["key"], values: [7] } };
-    var a = grow_names(s);
+    let s = Scope { names: ["seed"], tables: Tables { keys: ["key"], values: [7] } };
+    let a = grow_names(s);
     if (!valid(s, 1, 1) || !valid(a, 2, 1) || a.names[1] != "new") { return 1; }
-    var b = grow_tables(s);
+    let b = grow_tables(s);
     if (!valid(s, 1, 1) || !valid(b, 1, 2) || b.tables.values[1] != 9) { return 2; }
-    var c = grow_tables_forward(s);
+    let c = grow_tables_forward(s);
     if (!valid(s, 1, 1) || !valid(c, 1, 2) || c.tables.values[1] != 9) { return 3; }
-    var d = grow_names(c);
+    let d = grow_names(c);
     if (!valid(c, 1, 2) || !valid(d, 2, 2) || d.names[1] != "new") { return 4; }
     return 0;
 }

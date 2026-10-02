@@ -26,22 +26,22 @@ function main(): i32 {
         None => { print("none"); }
     }
 
-    var s: string = "world";
+    let s: string = "world";
     match (s[:]) {
         Some(w) => { print(w); },
         None => { print("none"); }
     }
 
-    var lo: i32 = 1;
+    let lo: i32 = 1;
     match (s[lo:]) {
         Some(v) => { print(v); },
         None => { print("none"); }
     }
 
-    var xs: [i32] = mka()[2:];
+    let xs: [i32] = mka()[2:];
     if (xs.len() == 2 && xs[0] == 3 && xs[1] == 4) { print("arr-ok"); }
 
-    var ys: [i32] = xs[:];
+    let ys: [i32] = xs[:];
     if (ys.len() == 2) { print("arr-full-ok"); }
 
     return 0;

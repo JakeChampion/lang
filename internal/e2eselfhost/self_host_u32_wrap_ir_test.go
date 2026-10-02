@@ -29,73 +29,73 @@ function __crypto_h0(): u32[] {
 }
 function __rotr(x: u32, n: u32): u32 { return (x >> n) | (x << (32 - n)); }
 function __zeros32(n: i32): u32[] {
-    var a: u32[] = [];
-    var i: i32 = 0;
+    let a: u32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(0); i = i + 1; }
     return a;
 }
 function __sha256_compress(h: u32[], k: u32[], msg: u8[], off: i32): u32[] {
-    var w: u32[] = __zeros32(64);
-    var t: i32 = 0;
+    let w: u32[] = __zeros32(64);
+    let t: i32 = 0;
     while (t < 16) {
-        var b: i32 = off + t * 4;
-        var word: u32 = ((msg[b] as u32) << 24) | ((msg[b + 1] as u32) << 16) | ((msg[b + 2] as u32) << 8) | (msg[b + 3] as u32);
+        let b: i32 = off + t * 4;
+        let word: u32 = ((msg[b] as u32) << 24) | ((msg[b + 1] as u32) << 16) | ((msg[b + 2] as u32) << 8) | (msg[b + 3] as u32);
         w = w.with(t, word);
         t = t + 1;
     }
     t = 16;
     while (t < 64) {
-        var w15: u32 = w[t - 15];
-        var w2: u32 = w[t - 2];
-        var s0: u32 = __rotr(w15, 7) ^ __rotr(w15, 18) ^ (w15 >> 3);
-        var s1: u32 = __rotr(w2, 17) ^ __rotr(w2, 19) ^ (w2 >> 10);
+        let w15: u32 = w[t - 15];
+        let w2: u32 = w[t - 2];
+        let s0: u32 = __rotr(w15, 7) ^ __rotr(w15, 18) ^ (w15 >> 3);
+        let s1: u32 = __rotr(w2, 17) ^ __rotr(w2, 19) ^ (w2 >> 10);
         w = w.with(t, w[t - 16] + s0 + w[t - 7] + s1);
         t = t + 1;
     }
-    var a: u32 = h[0]; var bb: u32 = h[1]; var c: u32 = h[2]; var d: u32 = h[3];
-    var e: u32 = h[4]; var f: u32 = h[5]; var g: u32 = h[6]; var hh: u32 = h[7];
+    let a: u32 = h[0]; let bb: u32 = h[1]; let c: u32 = h[2]; let d: u32 = h[3];
+    let e: u32 = h[4]; let f: u32 = h[5]; let g: u32 = h[6]; let hh: u32 = h[7];
     t = 0;
     while (t < 64) {
-        var bs1: u32 = __rotr(e, 6) ^ __rotr(e, 11) ^ __rotr(e, 25);
-        var ch: u32 = (e & f) ^ ((e ^ 0xffffffff) & g);
-        var t1: u32 = hh + bs1 + ch + k[t] + w[t];
-        var bs0: u32 = __rotr(a, 2) ^ __rotr(a, 13) ^ __rotr(a, 22);
-        var maj: u32 = (a & bb) ^ (a & c) ^ (bb & c);
-        var t2: u32 = bs0 + maj;
+        let bs1: u32 = __rotr(e, 6) ^ __rotr(e, 11) ^ __rotr(e, 25);
+        let ch: u32 = (e & f) ^ ((e ^ 0xffffffff) & g);
+        let t1: u32 = hh + bs1 + ch + k[t] + w[t];
+        let bs0: u32 = __rotr(a, 2) ^ __rotr(a, 13) ^ __rotr(a, 22);
+        let maj: u32 = (a & bb) ^ (a & c) ^ (bb & c);
+        let t2: u32 = bs0 + maj;
         hh = g; g = f; f = e; e = d + t1; d = c; c = bb; bb = a; a = t1 + t2;
         t = t + 1;
     }
-    var out: u32[] = __zeros32(8);
+    let out: u32[] = __zeros32(8);
     out = out.with(0, h[0] + a); out = out.with(1, h[1] + bb); out = out.with(2, h[2] + c); out = out.with(3, h[3] + d);
     out = out.with(4, h[4] + e); out = out.with(5, h[5] + f); out = out.with(6, h[6] + g); out = out.with(7, h[7] + hh);
     return out;
 }
 function __sha256_core(msg: u8[]): u8[] {
-    var ml: i32 = msg.len();
-    var total: i32 = ml + 1 + 8;
-    var plen: i32 = total;
+    let ml: i32 = msg.len();
+    let total: i32 = ml + 1 + 8;
+    let plen: i32 = total;
     if (total % 64 != 0) { plen = total + (64 - (total % 64)); }
-    var m: u8[] = __alloc_u8(plen);
-    var z: i32 = 0;
+    let m: u8[] = __alloc_u8(plen);
+    let z: i32 = 0;
     while (z < plen) { m = m.with(z, 0 as u8); z = z + 1; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < ml) { m = m.with(i, msg[i]); i = i + 1; }
     m = m.with(ml, 0x80 as u8);
-    var bits: i64 = (ml as i64) * 8;
-    var j: i32 = 0;
+    let bits: i64 = (ml as i64) * 8;
+    let j: i32 = 0;
     while (j < 8) {
-        var shift: i64 = (j * 8) as i64;
+        let shift: i64 = (j * 8) as i64;
         m = m.with(plen - 1 - j, ((bits >> shift) & 255) as u8);
         j = j + 1;
     }
-    var k: u32[] = __crypto_k();
-    var h: u32[] = __crypto_h0();
-    var off: i32 = 0;
+    let k: u32[] = __crypto_k();
+    let h: u32[] = __crypto_h0();
+    let off: i32 = 0;
     while (off < plen) { h = __sha256_compress(h, k, m, off); off = off + 64; }
-    var digest: u8[] = __alloc_u8(32);
-    var wi: i32 = 0;
+    let digest: u8[] = __alloc_u8(32);
+    let wi: i32 = 0;
     while (wi < 8) {
-        var word: u32 = h[wi];
+        let word: u32 = h[wi];
         digest = digest.with(wi * 4, ((word >> 24) & 255) as u8);
         digest = digest.with(wi * 4 + 1, ((word >> 16) & 255) as u8);
         digest = digest.with(wi * 4 + 2, ((word >> 8) & 255) as u8);
@@ -105,9 +105,9 @@ function __sha256_core(msg: u8[]): u8[] {
     return digest;
 }
 function __str_to_bytes(s: string): u8[] {
-    var n: i32 = s.len();
-    var b: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
+    let n: i32 = s.len();
+    let b: u8[] = __alloc_u8(n);
+    let i: i32 = 0;
     while (i < n) { b = b.with(i, s[i] as u8); i = i + 1; }
     return b;
 }
@@ -171,48 +171,48 @@ func TestSelfHostU32WrapIR(t *testing.T) {
 	}{
 		// u32 add overflow: 0x80000000 + 0x80000000 wraps to 0; the >>28 brings
 		// the would-be carry bit (bit 32) into the low byte if unmasked.
-		{"add-wrap", `function main(): i32 { var x: u32 = 0x80000000; var s: u32 = x + x; return ((s >> 28) & 255) as i32; }`},
+		{"add-wrap", `function main(): i32 { let x: u32 = 0x80000000; let s: u32 = x + x; return ((s >> 28) & 255) as i32; }`},
 		// A u32 var initialised with a DECIMAL literal > i32-max (`4000000000`,
 		// width-infers 64) must stay a 32-bit u32, not get i64-backed — otherwise
 		// its arithmetic runs at full 64-bit width and skips the 2^32 wrap. The
 		// >>28 reveals the unmasked carry bit if the add didn't wrap. (Forms:
-		// reassign-to-self, fresh `var z`, and a function-local that's compared.)
-		{"large-lit-reassign", `function main(): i32 { var x: u32 = 4000000000; x = x + 1000000000; return ((x >> 28) & 255) as i32; }`},
-		{"large-lit-var-z", `function main(): i32 { var x: u32 = 4000000000; var y: u32 = 1000000000; var z = x + y; return ((z >> 28) & 255) as i32; }`},
+		// reassign-to-self, fresh `let z`, and a function-local that's compared.)
+		{"large-lit-reassign", `function main(): i32 { let x: u32 = 4000000000; x = x + 1000000000; return ((x >> 28) & 255) as i32; }`},
+		{"large-lit-var-z", `function main(): i32 { let x: u32 = 4000000000; let y: u32 = 1000000000; let z = x + y; return ((z >> 28) & 255) as i32; }`},
 		// Unsigned COMPARE of a wrapped large-literal u32: after wrap x is
 		// 705032704 (< 1e9); i64-backed it would be 5e9 (> 1e9). Signed-compare on
 		// the bit-31-set value would also flip the answer.
-		{"large-lit-compare", `function main(): i32 { var x: u32 = 4000000000; x = x + 1000000000; if (x < 1000000000) { return 7; } return 0; }`},
+		{"large-lit-compare", `function main(): i32 { let x: u32 = 4000000000; x = x + 1000000000; if (x < 1000000000) { return 7; } return 0; }`},
 		// Division of a wrapped large-literal u32 (truncation-on-store can't mask
 		// this — the quotient differs by the unwrapped high bits).
-		{"large-lit-div", `function main(): i32 { var x: u32 = 4000000000; x = x + 1000000000; return ((x / 1000000) % 100) as i32; }`},
+		{"large-lit-div", `function main(): i32 { let x: u32 = 4000000000; x = x + 1000000000; return ((x / 1000000) % 100) as i32; }`},
 		// 5-term wrapping add (the SHA round shape).
-		{"add5-wrap", `function main(): i32 { var a: u32 = 0xffffffff; var s: u32 = a + a + a + a + a; return ((s >> 24) & 255) as i32; }`},
+		{"add5-wrap", `function main(): i32 { let a: u32 = 0xffffffff; let s: u32 = a + a + a + a + a; return ((s >> 24) & 255) as i32; }`},
 		{"bare-hex-context", `function mask(): u32 { return 0XFFFFFFFF; }
-function main(): i32 { var a: u32 = 1; var b: u32 = a + (0xfffffffe + 1); var c: u32 = a + (0xfffffffe | 1); a = 0xffffffff; if (a == mask() && b == 0u32 && c == 0u32 && 0xffffffff > b) { return 42; } return 0; }`},
+function main(): i32 { let a: u32 = 1; let b: u32 = a + (0xfffffffe + 1); let c: u32 = a + (0xfffffffe | 1); a = 0xffffffff; if (a == mask() && b == 0u32 && c == 0u32 && 0xffffffff > b) { return 42; } return 0; }`},
 		// u32 mul overflow.
-		{"mul-wrap", `function main(): i32 { var a: u32 = 0x10001; var s: u32 = a * a * a; return ((s >> 16) & 255) as i32; }`},
+		{"mul-wrap", `function main(): i32 { let a: u32 = 0x10001; let s: u32 = a * a * a; return ((s >> 16) & 255) as i32; }`},
 		// u32 left-shift past bit 31 must drop the high bits.
-		{"shl-wrap", `function main(): i32 { var a: u32 = 0xff; var s: u32 = a << 28; return ((s >> 24) & 255) as i32; }`},
+		{"shl-wrap", `function main(): i32 { let a: u32 = 0xff; let s: u32 = a << 28; return ((s >> 24) & 255) as i32; }`},
 		// Logical right shift of a bit-31-set u32 (must NOT sign-fill).
-		{"shr-logical", `function main(): i32 { var a: u32 = 0x80000000; return ((a >> 24) & 255) as i32; }`},
+		{"shr-logical", `function main(): i32 { let a: u32 = 0x80000000; return ((a >> 24) & 255) as i32; }`},
 		// __rotr: x << (32-n) overflows; the rotate must wrap. Inline use (no u32
 		// local) is the form that miscompiled in the SHA schedule.
-		{"rotr-inline", `function __rotr(x: u32, n: u32): u32 { return (x >> n) | (x << (32 - n)); } function main(): i32 { var x: u32 = 0x7da86405; var r: u32 = __rotr(x, 17) ^ __rotr(x, 19) ^ (x >> 10); return ((r >> 24) & 255) as i32; }`},
+		{"rotr-inline", `function __rotr(x: u32, n: u32): u32 { return (x >> n) | (x << (32 - n)); } function main(): i32 { let x: u32 = 0x7da86405; let r: u32 = __rotr(x, 17) ^ __rotr(x, 19) ^ (x >> 10); return ((r >> 24) & 255) as i32; }`},
 		// SHA-256("abc") — byte 0 (0xba) of ba7816bf… The whole schedule +
 		// compression depend on u32 wrapping; the interpreter computes the
 		// reference vector.
-		{"sha256-abc-b0", shaCoreSrc + `function main(): i32 { var d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[0] as i32; }`},
+		{"sha256-abc-b0", shaCoreSrc + `function main(): i32 { let d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[0] as i32; }`},
 		// SHA-256("abc") byte 31 (0xad) — exercises the last state word.
-		{"sha256-abc-b31", shaCoreSrc + `function main(): i32 { var d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[31] as i32; }`},
+		{"sha256-abc-b31", shaCoreSrc + `function main(): i32 { let d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[31] as i32; }`},
 		// SHA-256("") byte 0 (0xe3) — the single-block padding path.
-		{"sha256-empty-b0", shaCoreSrc + `function main(): i32 { var d: u8[] = __sha256_core(__str_to_bytes("")); return d[0] as i32; }`},
+		{"sha256-empty-b0", shaCoreSrc + `function main(): i32 { let d: u8[] = __sha256_core(__str_to_bytes("")); return d[0] as i32; }`},
 		// __alloc_u8 + .with + u8-element read, and string_from_bytes_unchecked. (Not in the
 		// IR≡AST differential test: the legacy asm_ir_run AST fallback referenced
 		// __fern_alloc_u8 without emitting it, so its link failed there; the IR
 		// path compiles them, validated here against the interpreter.)
-		{"alloc-u8", `function main(): i32 { var m: u8[] = __alloc_u8(3); m = m.with(0, 65); m = m.with(2, 67); return (m[0] as i32) + (m[2] as i32); }`},
-		{"str-from-bytes", `function main(): i32 { var m: u8[] = __alloc_u8(2); m = m.with(0, 72); m = m.with(1, 73); var s: string = string_from_bytes_unchecked(m); return s.len() * 100 + (s[0] as i32); }`},
+		{"alloc-u8", `function main(): i32 { let m: u8[] = __alloc_u8(3); m = m.with(0, 65); m = m.with(2, 67); return (m[0] as i32) + (m[2] as i32); }`},
+		{"str-from-bytes", `function main(): i32 { let m: u8[] = __alloc_u8(2); m = m.with(0, 72); m = m.with(1, 73); let s: string = string_from_bytes_unchecked(m); return s.len() * 100 + (s[0] as i32); }`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

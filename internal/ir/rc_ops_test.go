@@ -15,9 +15,9 @@ import "testing"
 //     keys off Str.
 func TestRcOpsCarryCallPayload(t *testing.T) {
 	p := lowerSource(t, `function work(k: i32): i32 {
-    var x: i32[][] = [[k, k + 1]];
-    var e: i32[] = x[0];
-    var y: i32[][] = x;
+    let x: i32[][] = [[k, k + 1]];
+    let e: i32[] = x[0];
+    let y: i32[][] = x;
     return e[0] + y[0][1] + x[0][0];
 }`)
 	wantStr := map[OpKind]string{

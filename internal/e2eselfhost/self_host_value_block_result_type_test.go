@@ -18,13 +18,13 @@ func TestSelfHostValueBlockResultTypesIR(t *testing.T) {
 		name, source string
 		want         int
 	}{
-		{"option-string", `function main(): i32 { var o: Option[string] = Some("hi"); var s = match (o) { Some(v) => v, None => "" }; return s.len(); }`, 2},
-		{"option-none", `function main(): i32 { var o: Option[string] = None; var s = match (o) { Some(v) => v, None => "none" }; return s.len(); }`, 4},
-		{"result-string", `function main(): i32 { var r: Result[string, i32] = Ok("abcd"); var s = match (r) { Ok(v) => v, Err(e) => "" }; return s.len(); }`, 4},
-		{"result-error", `function main(): i32 { var r: Result[string, i32] = Err(1); var s = match (r) { Ok(v) => v, Err(e) => "error" }; return s.len(); }`, 5},
-		{"shadowed-payload", `function main(): i32 { var v = "outer"; var o: Option[string] = Some("hi"); var s = match (o) { Some(v) => v, None => "" }; return s.len() * 10 + v.len(); }`, 25},
-		{"sibling-payloads", `function main(): i32 { var a: Option[string] = Some("hi"); var b: Option[string] = Some("abcd"); var s = match (a) { Some(v) => v, None => "" }; var t = match (b) { Some(v) => v, None => "" }; return (s + t).len(); }`, 6},
-		{"numeric-control", `function main(): i32 { var o: Option[i32] = Some(7); var n = match (o) { Some(v) => v, None => 0 }; return n + 1; }`, 8},
+		{"option-string", `function main(): i32 { let o: Option[string] = Some("hi"); let s = match (o) { Some(v) => v, None => "" }; return s.len(); }`, 2},
+		{"option-none", `function main(): i32 { let o: Option[string] = None; let s = match (o) { Some(v) => v, None => "none" }; return s.len(); }`, 4},
+		{"result-string", `function main(): i32 { let r: Result[string, i32] = Ok("abcd"); let s = match (r) { Ok(v) => v, Err(e) => "" }; return s.len(); }`, 4},
+		{"result-error", `function main(): i32 { let r: Result[string, i32] = Err(1); let s = match (r) { Ok(v) => v, Err(e) => "error" }; return s.len(); }`, 5},
+		{"shadowed-payload", `function main(): i32 { let v = "outer"; let o: Option[string] = Some("hi"); let s = match (o) { Some(v) => v, None => "" }; return s.len() * 10 + v.len(); }`, 25},
+		{"sibling-payloads", `function main(): i32 { let a: Option[string] = Some("hi"); let b: Option[string] = Some("abcd"); let s = match (a) { Some(v) => v, None => "" }; let t = match (b) { Some(v) => v, None => "" }; return (s + t).len(); }`, 6},
+		{"numeric-control", `function main(): i32 { let o: Option[i32] = Some(7); let n = match (o) { Some(v) => v, None => 0 }; return n + 1; }`, 8},
 	}
 	for _, target := range []string{"x86-64", "arm64", "wasm"} {
 		t.Run(target, func(t *testing.T) {

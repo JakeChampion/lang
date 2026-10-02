@@ -1,7 +1,7 @@
 // spec: AL-01
 //
 // A struct literal that consumes an owned STRING local at the local's
-// last use — `var s = …; W { name: s }` — moves the string into the
+// last use — `let s = …; W { name: s }` — moves the string into the
 // field, exactly as it already did for an array / struct / enum / tuple
 // / closure field. It did not: the move analysis excluded string fields,
 // so the field-init retained while the local's exit-sweep release was
@@ -24,26 +24,26 @@ struct W { name: string, n: i32 }
 struct Acc { last: string, total: i32 }
 
 function mk(k: i32): W {
-    var s: string = "payload-string-" + k.to_string();
+    let s: string = "payload-string-" + k.to_string();
     return W { name: s, n: k };
 }
 
 function step(a: Acc, k: i32): Acc {
-    var s: string = "acc-payload-" + k.to_string();
+    let s: string = "acc-payload-" + k.to_string();
     return Acc { last: s, total: a.total + k };
 }
 
 function keep(k: i32): i32 {
-    var s: string = "kept-payload-" + k.to_string();
-    var w: W = W { name: s, n: k };
+    let s: string = "kept-payload-" + k.to_string();
+    let w: W = W { name: s, n: k };
     return w.name.len() + s.len();
 }
 
 function rounds(n: i32): i32 {
-    var acc: Acc = Acc { last: "", total: 0 };
-    var t: i32 = 0;
+    let acc: Acc = Acc { last: "", total: 0 };
+    let t: i32 = 0;
     for i in 0..n {
-        var w: W = mk(i % 8);
+        let w: W = mk(i % 8);
         acc = step(acc, i % 8);
         t = t + w.name.len() + acc.last.len();
     }
@@ -51,11 +51,11 @@ function rounds(n: i32): i32 {
 }
 
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(50);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(100);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds(50);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = rounds(100);
+    let b2: i64 = __heap_bump_bytes();
 
     print(x.to_string());
     print(y.to_string());

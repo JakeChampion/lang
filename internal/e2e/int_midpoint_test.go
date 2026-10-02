@@ -23,7 +23,7 @@ function main(): i32 {
     // i64
     if ((4 as i64).midpoint(6 as i64) != (5 as i64)) { return 8; }
     if (((0 as i64) - 100).midpoint(50 as i64) != ((0 as i64) - 25)) { return 9; }
-    var mx: i64 = (9223372036854775807 as i64);
+    let mx: i64 = (9223372036854775807 as i64);
     if (mx.midpoint(mx - (2 as i64)) != (mx - (1 as i64))) { return 10; }   // near i64::MAX
     if ((5000000000 as i64).midpoint(5000000000 as i64) != (5000000000 as i64)) { return 11; }
     return 42;

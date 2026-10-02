@@ -9,11 +9,11 @@ import "testing"
 // program exits 42 when the result is whole and the loop allocated fewer than
 // 1,000 times.
 const stringAppendInPlaceSrc = `function main(): i32 {
-    var s: string = "";
-    var a1: i64 = __heap_alloc_count();
-    var i: i32 = 0;
+    let s: string = "";
+    let a1: i64 = __heap_alloc_count();
+    let i: i32 = 0;
     while (i < 20000) { s = s + "abcdefgh"; i = i + 1; }
-    var a2: i64 = __heap_alloc_count();
+    let a2: i64 = __heap_alloc_count();
     if (s.len() != 160000) { return 1; }
     if (s[159999] as i32 != 104 || s[80000] as i32 != 97) { return 2; }
     if (a2 - a1 >= 1000) { return 3; }

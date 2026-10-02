@@ -11,7 +11,7 @@ import (
 // failed in practice: a loop body that conditionally stores
 // to a local. Should not trip phi dominance.
 //
-//	var x = 0;
+//	let x = 0;
 //	loop {
 //	    if (cond) { x = 1; }
 //	    br_if 1 0   // exit if some other cond

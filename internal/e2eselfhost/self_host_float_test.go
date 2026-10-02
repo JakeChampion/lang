@@ -30,14 +30,14 @@ func TestSelfHostFloatX86_64(t *testing.T) {
 		src  string
 		exit int
 	}{
-		{"add-cast", "function main(): i32 { var x: f64 = 3.5 + 2.5; return x as i32; }", 6},
-		{"trunc", "function main(): i32 { var x: f64 = 7.9; return x as i32; }", 7},
-		{"int-to-float-mul", "function main(): i32 { var n: i32 = 5; var x: f64 = n as f64; return (x * 2.0) as i32; }", 10},
-		{"div", "function main(): i32 { var x: f64 = 10.0; var y: f64 = 3.0; return (x / y) as i32; }", 3},
+		{"add-cast", "function main(): i32 { let x: f64 = 3.5 + 2.5; return x as i32; }", 6},
+		{"trunc", "function main(): i32 { let x: f64 = 7.9; return x as i32; }", 7},
+		{"int-to-float-mul", "function main(): i32 { let n: i32 = 5; let x: f64 = n as f64; return (x * 2.0) as i32; }", 10},
+		{"div", "function main(): i32 { let x: f64 = 10.0; let y: f64 = 3.0; return (x / y) as i32; }", 3},
 		{"cmp-gt", "function main(): i32 { if (1.5 + 2.5 > 3.9) { return 1; } return 0; }", 1},
 		{"cmp-eq", "function main(): i32 { if (2.0 * 3.0 == 6.0) { return 1; } return 0; }", 1},
 		{"cmp-lt-false", "function main(): i32 { if (5.0 < 1.0) { return 1; } return 0; }", 0},
-		{"neg", "function main(): i32 { var x: f64 = 0.0 - 2.5; if (x < 0.0) { return 1; } return 0; }", 1},
+		{"neg", "function main(): i32 { let x: f64 = 0.0 - 2.5; if (x < 0.0) { return 1; } return 0; }", 1},
 		{"square", "function main(): i32 { return (3.0 * 3.0) as i32; }", 9},
 		{"cast-in-expr", "function main(): i32 { return (2.5 as i32) + 40; }", 42},
 	}
@@ -78,14 +78,14 @@ func TestSelfHostFloatArm64(t *testing.T) {
 		src  string
 		exit int
 	}{
-		{"add-cast", "function main(): i32 { var x: f64 = 3.5 + 2.5; return x as i32; }", 6},
-		{"trunc", "function main(): i32 { var x: f64 = 7.9; return x as i32; }", 7},
-		{"int-to-float-mul", "function main(): i32 { var n: i32 = 5; var x: f64 = n as f64; return (x * 2.0) as i32; }", 10},
-		{"div", "function main(): i32 { var x: f64 = 10.0; var y: f64 = 3.0; return (x / y) as i32; }", 3},
+		{"add-cast", "function main(): i32 { let x: f64 = 3.5 + 2.5; return x as i32; }", 6},
+		{"trunc", "function main(): i32 { let x: f64 = 7.9; return x as i32; }", 7},
+		{"int-to-float-mul", "function main(): i32 { let n: i32 = 5; let x: f64 = n as f64; return (x * 2.0) as i32; }", 10},
+		{"div", "function main(): i32 { let x: f64 = 10.0; let y: f64 = 3.0; return (x / y) as i32; }", 3},
 		{"cmp-gt", "function main(): i32 { if (1.5 + 2.5 > 3.9) { return 1; } return 0; }", 1},
 		{"cmp-eq", "function main(): i32 { if (2.0 * 3.0 == 6.0) { return 1; } return 0; }", 1},
 		{"cmp-lt-false", "function main(): i32 { if (5.0 < 1.0) { return 1; } return 0; }", 0},
-		{"neg", "function main(): i32 { var x: f64 = 0.0 - 2.5; if (x < 0.0) { return 1; } return 0; }", 1},
+		{"neg", "function main(): i32 { let x: f64 = 0.0 - 2.5; if (x < 0.0) { return 1; } return 0; }", 1},
 		{"square", "function main(): i32 { return (3.0 * 3.0) as i32; }", 9},
 	}
 	for _, tc := range cases {

@@ -1,6 +1,6 @@
 # A `string[]` in a struct field is only accidentally reclaimed
 
-`var src: string[] = mkv(i); if (..) { var p: P = P { f: src, n: i }; .. }` freed
+`let src: string[] = mkv(i); if (..) { let p: P = P { f: src, n: i }; .. }` freed
 450 of 650 boxes over 100 rounds. Native freed all 450 of its own.
 
 ## Not #7557 one type over

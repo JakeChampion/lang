@@ -73,10 +73,10 @@ const STDLIB_EXT: string = ".fern";
 // Non-`.fern` assets are skipped. They are not modules, and an embed root can
 // legitimately hold other things.
 function embedded_stdlib(): modloader.Overlay {
-  var paths: string[] = [];
-  var srcs: string[] = [];
+  let paths: string[] = [];
+  let srcs: string[] = [];
   for a in __fern_assets() {
-    var name: string = a.0;
+    let name: string = a.0;
     if (name.len() > STDLIB_EXT.len()
       && slice_unchecked(name, name.len() - STDLIB_EXT.len(), name.len()) == STDLIB_EXT) {
       paths = paths.append(slice_unchecked(name, 0, name.len() - STDLIB_EXT.len()) + "");
@@ -120,7 +120,7 @@ const EMIT_FLAG: string = "-emit";
 // checker still leaves on some paths.
 function report_diags(diags: util.Diag[], files: string[]): boolean {
   for d in diags {
-    var tag: string = "";
+    let tag: string = "";
     if (d.code.len() > 0) {
       tag = "error[" + d.code + "]: ";
     }
@@ -191,14 +191,14 @@ function interpret(merged: parser.Module): i32 {
 }
 
 function run(): i32 {
-  var mode_check: boolean = false;
-  var mode_interp: boolean = false;
-  var target: string = "wasm32-wasi";
-  var form: string = "";
-  var av: string[] = args();
-  var ai: i32 = 0;
+  let mode_check: boolean = false;
+  let mode_interp: boolean = false;
+  let target: string = "wasm32-wasi";
+  let form: string = "";
+  let av: string[] = args();
+  let ai: i32 = 0;
   while (ai < av.len()) {
-    var a: string = av[ai];
+    let a: string = av[ai];
     if (a == CHECK_FLAG) {
       mode_check = true;
     }
@@ -231,9 +231,9 @@ function run(): i32 {
     eprint("fern: -emit " + form + " is a wasm output form; -target " + target + " emits assembly text");
     return 2;
   }
-  var src: string = io.read_all_stdin();
-  var entry: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
-  var missing_handle: string = emitforms.http_entry_missing(entry, target);
+  let src: string = io.read_all_stdin();
+  let entry: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
+  let missing_handle: string = emitforms.http_entry_missing(entry, target);
   if (missing_handle.len() > 0) {
     eprint(missing_handle);
     return 1;
@@ -242,13 +242,13 @@ function run(): i32 {
   // The entry came from stdin, so it is named `stdin` and has no directory.
   // With a sealed overlay that is inert: nothing below resolve_module ever sees
   // the empty root.
-  var ov: modloader.Overlay = embedded_stdlib();
+  let ov: modloader.Overlay = embedded_stdlib();
   let (loaded, files, missing) = modloader.load_imports_with_files(ov, "stdin", entry);
   if (modloader.report_unresolved(missing, "playground")) {
     return 1;
   }
 
-  var merged: parser.Module = flatten.bundle(entry, loaded, target);
+  let merged: parser.Module = flatten.bundle(entry, loaded, target);
   merged = parser.fill_default_args_module(merged);
   merged = parser.resolve_variant_fields_module(merged);
 
@@ -275,7 +275,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   if (report_diags(asmcore.parse_unknown_errors_module(merged), files)) {
     return 1;
   }
-  var errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(merged));
+  let errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(merged));
   errs = util.append_diags(errs, asmcore.check_map_new_chain(merged));
   errs = util.append_diags(errs, asmcore.check_undefined_calls(merged));
   errs = util.append_diags(errs, asmcore.check_decl_names(merged));
@@ -289,7 +289,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   // the annotated module, as in fern.fern: the checker's Display rewrite
   // (`print(q)` to `q.to_string()`, docs/TRAITS.md §3a) is what roots the
   // method the shake would otherwise drop.
-  var desc: platforms.Descriptor = platforms.for_target(target);
+  let desc: platforms.Descriptor = platforms.for_target(target);
   merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
   merged = constfold.fold_module(merged);
   merged = checker.annotate_module(merged);
@@ -297,17 +297,17 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   // Judged on the shaken module, as the CLI's E066 pass is: a builtin only
   // unreachable stdlib code names is not a refusal.
   if (platforms.for_target(target).isa == "wasm32") {
-    var unsupported: string = wasm_ir.wasm_unsupported_builtin(merged);
+    let unsupported: string = wasm_ir.wasm_unsupported_builtin(merged);
     if (unsupported.len() > 0) {
       eprint(wasm_ir.wasm_unsupported_message(unsupported));
       return 1;
     }
   }
 
-  var typed: parser.Module = parser.module_with_builtins_typed(merged);
-  var full: parser.Module = parser.erase_view_module(typed);
-  var sub: ircore.Sub = semlower.target_substitution(typed, target);
-  var out: string = "";
+  let typed: parser.Module = parser.module_with_builtins_typed(merged);
+  let full: parser.Module = parser.erase_view_module(typed);
+  let sub: ircore.Sub = semlower.target_substitution(typed, target);
+  let out: string = "";
   if (target == "x86-64-linux") {
     out = asm_ir.emit_module_or_error_sub(full, sub);
   } else if (target == "arm64-linux") {
@@ -318,13 +318,13 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
     if (form == "wat") {
       out = emitforms.wasm_http_core(full, sub);
     } else if (form == "core-module") {
-      var hwat: string = emitforms.wasm_http_core(full, sub);
+      let hwat: string = emitforms.wasm_http_core(full, sub);
       if (hwat.len() == 0) {
         return 2;
       }
       out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
     } else {
-      var hc: wit_compose.Composed = emitforms.wasm_http_component(full, sub);
+      let hc: wit_compose.Composed = emitforms.wasm_http_component(full, sub);
       if (hc.bytes.len() == 0) {
         if (hc.refused.len() > 0) {
           eprint(emitforms.http_refused(hc.refused));
@@ -338,7 +338,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   } else if (form == "core-module") {
     out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));
   } else {
-    var comp: wit_compose.Composed = emitforms.wasm_component(full, sub);
+    let comp: wit_compose.Composed = emitforms.wasm_component(full, sub);
     if (comp.bytes.len() == 0) {
       if (comp.refused.len() > 0) {
         eprint(comp.refused);

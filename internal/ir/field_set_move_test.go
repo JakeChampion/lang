@@ -15,8 +15,8 @@ function stepOwn(own h: H, b: u8): H { h = H { ...h, buf: h.buf.with(h.n, b), n:
 function stepRet(own h: H, b: u8): H { return H { ...h, buf: h.buf.with(h.n, b), n: h.n + 1 }; }
 function stepParam(h: H, b: u8): H { h = H { ...h, buf: h.buf.with(h.n, b), n: h.n + 1 }; return h; }
 function stepChain(own h: H, b: u8): H { return H { ...h, buf: h.buf.with(0, b).with(1, b), n: 2 }; }
-function stepLocal(b: u8): i32 { var h: H = H { buf: __alloc_u8(4), n: 0 }; h = H { ...h, buf: h.buf.with(0, b), n: 1 }; return h.n; }
-function main(): i32 { var h: H = H { buf: __alloc_u8(4), n: 0 }; h = stepOwn(h, 1 as u8); h = stepRet(h, 2 as u8); h = stepParam(h, 3 as u8); h = stepChain(h, 4 as u8); return h.n + stepLocal(5 as u8); }`
+function stepLocal(b: u8): i32 { let h: H = H { buf: __alloc_u8(4), n: 0 }; h = H { ...h, buf: h.buf.with(0, b), n: 1 }; return h.n; }
+function main(): i32 { let h: H = H { buf: __alloc_u8(4), n: 0 }; h = stepOwn(h, 1 as u8); h = stepRet(h, 2 as u8); h = stepParam(h, 3 as u8); h = stepChain(h, 4 as u8); return h.n + stepLocal(5 as u8); }`
 
 func TestFieldSetMoveTestsUniquenessBeforeCow(t *testing.T) {
 	ip := lowerForTest(t, fieldSetMoveSrc)
@@ -33,9 +33,9 @@ func TestFieldSetMoveTestsUniquenessBeforeCow(t *testing.T) {
 // evaluates against the pre-store box. Both keep the projection inc.
 func TestFieldSetMoveRefusesReadableBox(t *testing.T) {
 	ip := lowerForTest(t, `struct H { buf: u8[], n: i32 }
-function bindNew(own h: H, b: u8): i32 { var g: H = H { ...h, buf: h.buf.with(0, b) }; return (h.buf[0] as i32) + (g.buf[0] as i32); }
+function bindNew(own h: H, b: u8): i32 { let g: H = H { ...h, buf: h.buf.with(0, b) }; return (h.buf[0] as i32) + (g.buf[0] as i32); }
 function readTwice(own h: H, b: u8): H { return H { ...h, buf: h.buf.with(0, b), n: h.buf.len() }; }
-function main(): i32 { var h: H = H { buf: __alloc_u8(4), n: 0 }; h = readTwice(h, 1 as u8); return h.n + bindNew(H { buf: __alloc_u8(4), n: 0 }, 2 as u8); }`)
+function main(): i32 { let h: H = H { buf: __alloc_u8(4), n: 0 }; h = readTwice(h, 1 as u8); return h.n + bindNew(H { buf: __alloc_u8(4), n: 0 }, 2 as u8); }`)
 	for _, fn := range []string{"bindNew", "readTwice"} {
 		f := fnNamed(t, ip, fn)
 		if uniqueTestBeforeCall(f, "__fern_arr_cow_inplace") {

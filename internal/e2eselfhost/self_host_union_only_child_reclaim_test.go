@@ -31,21 +31,21 @@ var unionOnlyChildReclaimCases = []struct {
 	want int
 }{
 	{"option-only-rc-child-reclaimed", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, Option[i32]) = (i, Some(i));
-        var r: i32 = t.0;
+        let t: (i32, Option[i32]) = (i, Some(i));
+        let r: i32 = t.0;
         acc = (acc + r) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -54,21 +54,21 @@ function main(): i32 {
 	// `Option[` / `Result[` prefixes, so it is a separate path from the row above.
 	{"user-enum-only-rc-child-reclaimed", `enum Tag { Num(i32), Nil }
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, Tag) = (i, Tag.Num(i));
-        var r: i32 = t.0;
+        let t: (i32, Tag) = (i, Tag.Num(i));
+        let r: i32 = t.0;
         acc = (acc + r) % 91;
         i = i + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -78,12 +78,12 @@ function main(): i32 {
 	// is read after the tuple's reclaim point. Crediting here would free a live
 	// local's box: an over-release, not a leak.
 	{"ident-union-elem-not-credited", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var o: Option[i32] = Some(i);
-        var t: (i32, Option[i32]) = (i, o);
-        var r: i32 = t.0;
+        let o: Option[i32] = Some(i);
+        let t: (i32, Option[i32]) = (i, o);
+        let r: i32 = t.0;
         match (o) { Some(v) => { r = r + v; }, None => {} }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -91,8 +91,8 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;

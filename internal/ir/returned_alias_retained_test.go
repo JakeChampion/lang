@@ -18,11 +18,11 @@ const retainedSrc = `
 struct Reg { names: string[] }
 function pick_index(r: Reg, i: i32): string { return r.names[i]; }
 function pick_field(r: Reg): string[] { return r.names; }
-function pick_local(r: Reg, i: i32): string { var t: string = r.names[i]; return t; }
+function pick_local(r: Reg, i: i32): string { let t: string = r.names[i]; return t; }
 function pick_param(s: string): string { return s; }
 function scalar_param(n: i32): i32 { return n; }
 function main(): i32 {
-    var r: Reg = Reg { names: ["aa", "bb"] };
+    let r: Reg = Reg { names: ["aa", "bb"] };
     return pick_index(r, 0).len() + pick_field(r).len() +
         pick_local(r, 0).len() + pick_param("z").len() + scalar_param(1);
 }`
@@ -56,7 +56,7 @@ function walk(t: Node): Node {
 }
 function thread(m: Map[i32, i32], k: i32): Map[i32, i32] { m = m.insert(k, 1); return m; }
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
+    let m: Map[i32, i32] = map_new(4);
     match (walk(Bin(Tip, 1, Tip))) {
         Tip => { return 1; },
         Bin(l, k, r) => { return thread(m, k).len() - 1; }

@@ -2,8 +2,10 @@ package e2eharness
 
 import (
 	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"strconv"
 	"strings"
@@ -112,6 +114,53 @@ func (up *FetchUpstream) serve(c net.Conn) {
 		// Interim responses past the header budget before any final one:
 		// 2000 of 25 bytes each is 50 000 bytes, past 32 KiB.
 		resp = append(bytes.Repeat([]byte("HTTP/1.1 100 Continue\r\n\r\n"), 2000), "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"...)
+	case target == "/gzip":
+		z := gzipped([]byte("hello gzip"))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\nX-Up: 1\r\n\r\n", len(z))), z...)
+	case target == "/gzip-body-chunked":
+		z := gzipped([]byte("hello gzip"))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n%x\r\n", len(z))), z...)
+		resp = append(resp, "\r\n0\r\n\r\n"...)
+	case target == "/gzip-identity-coding":
+		z := gzipped([]byte("hello gzip"))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: identity, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/x-gzip":
+		z := gzipped([]byte("hello gzip"))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: x-gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/gzip-floor":
+		// 60 000 zero bytes: a few dozen bytes encoded, far past a
+		// hundredfold growth, under the 64 KiB the ratio never refuses.
+		z := gzipped(make([]byte, 60000))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/gzip-wide":
+		// 100 000 bytes past that floor, from 2 000 seeded random bytes
+		// repeated: the first copy is incompressible, so the growth stays
+		// well under a hundredfold and the ratio admits the body.
+		z := gzipped(bytes.Repeat(wideBlock(), 50))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/gzip-bad":
+		resp = []byte("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 15\r\n\r\nnot gzip at all")
+	case target == "/gzip-bomb":
+		// 200 000 zero bytes: a few hundred bytes encoded, past a
+		// hundredfold growth, within the 1 MiB body cap.
+		z := gzipped(make([]byte, 200000))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/gzip-double":
+		z := gzipped(gzipped([]byte("twice")))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/gzip-double-wide":
+		// The /gzip-wide body under two codings: past the floor, within
+		// the ratio, so depth 2 is judged at a size the floor does not
+		// decide.
+		z := gzipped(gzipped(bytes.Repeat(wideBlock(), 50)))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/gzip-double-bomb":
+		// 100 000 zero bytes under two codings: past the floor and the
+		// ratio, so the whole-response verdict shows at depth 2.
+		z := gzipped(gzipped(make([]byte, 100000)))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/br":
+		resp = []byte("HTTP/1.1 200 OK\r\nContent-Encoding: br\r\nContent-Length: 3\r\n\r\nraw")
 	case target == "/truncated":
 		resp = []byte("HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\nonly a little")
 	case strings.HasPrefix(target, "http://"):
@@ -120,7 +169,7 @@ func (up *FetchUpstream) serve(c net.Conn) {
 		text := proxyLine(method, target, host, body, headerValue(head, "x-trace"), headerValue(head, "proxy-authorization"))
 		resp = []byte(fmt.Sprintf("HTTP/1.1 201 Created\r\nContent-Length: %d\r\n\r\n%s", len(text), text))
 	case strings.HasPrefix(target, "/echo"):
-		text := echoLine(method, target, host, body, headerValue(head, "x-trace"), headerValue(head, "authorization"), headerValue(head, "cookie"))
+		text := echoLine(method, target, host, body, headerValue(head, "x-trace"), headerValue(head, "authorization"), headerValue(head, "cookie"), headerValue(head, "accept-encoding"))
 		resp = []byte(fmt.Sprintf("HTTP/1.1 201 Created\r\nContent-Length: %d\r\n\r\n%s", len(text), text))
 	case target == "/redir":
 		resp = redirect(302, "/plain")
@@ -167,8 +216,25 @@ func (up *FetchUpstream) serve(c net.Conn) {
 
 // echoLine is what the /echo target answers: the request as the origin
 // saw it.
-func echoLine(method, target, host, body, trace, auth, cookie string) string {
-	return fmt.Sprintf("%s %s host=%s len=%d body=%s trace=%s auth=%s cookie=%s", method, target, host, len(body), body, trace, auth, cookie)
+func echoLine(method, target, host, body, trace, auth, cookie, accept string) string {
+	return fmt.Sprintf("%s %s host=%s len=%d body=%s trace=%s auth=%s cookie=%s accept=%s", method, target, host, len(body), body, trace, auth, cookie, accept)
+}
+
+// wideBlock is 2 000 seeded random bytes: incompressible on its own,
+// so a body of repeats grows far less than a hundredfold when decoded.
+func wideBlock() []byte {
+	block := make([]byte, 2000)
+	rand.New(rand.NewSource(7)).Read(block)
+	return block
+}
+
+// gzipped is data as one gzip member.
+func gzipped(data []byte) []byte {
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	_, _ = w.Write(data)
+	_ = w.Close()
+	return buf.Bytes()
 }
 
 // proxyLine is what an absolute-form target answers: the request as the
@@ -244,6 +310,19 @@ func headerValue(head, name string) string {
 // absolute-form target, the origin's `Host` and the proxy credentials; the
 // `plat.http` request for a global literal is proxied, the one for the
 // metadata address is refused before the proxy sees it.
+// The gzip cases pin a `Content-Encoding: gzip` body decoded (with a
+// length, chunked, beside an `identity` coding, and named `x-gzip`) and
+// its encoding and length fields dropped, a HEAD answer naming a coding
+// left alone, a body that is not gzip, a body past a hundredfold growth
+// refused with its allowance named and two admitted (one under the
+// 64 KiB the ratio never refuses, one past it but within the ratio), the
+// body cap applied to the decoded bytes, two codings refused at the
+// default depth and undone at depth 2 (a few bytes, then a body past the
+// floor admitted and one past the ratio refused), a
+// caller's own `Accept-Encoding` and `Decoding { depth: 0 }` each leaving
+// the body as it came, a coding the client never asks for left alone,
+// and the `Accept-Encoding: gzip` the client writes (every echo line
+// carries it; `noencoding` carries the caller's).
 // `closedPort` is a port nothing listens on.
 func FetchClientSource(port, closedPort int) string {
 	return fmt.Sprintf(`import "std/fetch";
@@ -258,18 +337,18 @@ function base(): string {
 function show(name: string, answer: Result[HttpResponse, fetch.FetchError]): void {
     match (answer) {
         Ok(resp) => {
-            var text: string = "<not utf-8>";
+            let text: string = "<not utf-8>";
             match (resp.body_text()) {
                 Some(s) => { text = s; },
                 None => {}
             }
-            var fields: string = "";
-            var i: i32 = 0;
+            let fields: string = "";
+            let i: i32 = 0;
             while (i < resp.headers.names.len()) {
                 fields = fields + " " + resp.headers.names[i] + "=" + resp.headers.values[i];
                 i = i + 1;
             }
-            var trailers: string = "";
+            let trailers: string = "";
             i = 0;
             while (i < resp.trailers.names.len()) {
                 trailers = trailers + " " + resp.trailers.names[i] + "=" + resp.trailers.values[i];
@@ -288,7 +367,7 @@ function main(): i32 {
     show("nobody", fetch.send(fetch.get(base() + "/nobody")));
     show("head", fetch.send(fetch.request("HEAD", base() + "/plain")));
     show("echo", fetch.send(fetch.request("POST", base() + "/echo?q=1").with_header("X-Trace", "t1").with_text("payload")));
-    var raw: u8[] = "raw".bytes();
+    let raw: u8[] = "raw".bytes();
     show("put", fetch.send(fetch.request("PUT", base() + "/echo").with_bytes(raw)));
     show("blocked", platform.platform_new().http(fetch.get(base() + "/echo")));
     show("numeric", fetch.send(fetch.get("http://2130706433/")));
@@ -299,8 +378,8 @@ function main(): i32 {
     show("platproxiedblocked", platform.platform_new().http(fetch.get("http://169.254.169.254/via")));
     match (fetch.send(fetch.get(base() + "/binary"))) {
         Ok(resp) => {
-            var bs: u8[] = resp.body_bytes();
-            var text: string = "<not utf-8>";
+            let bs: u8[] = resp.body_bytes();
+            let text: string = "<not utf-8>";
             match (resp.body_text()) {
                 Some(s) => { text = s; },
                 None => {}
@@ -313,7 +392,7 @@ function main(): i32 {
         Ok(resp) => { print("big: " + resp.body_bytes().len().to_string()); },
         Err(e) => { print("big: error " + e.message()); }
     }
-    var small: http.HttpLimits = http.http_limits();
+    let small: http.HttpLimits = http.http_limits();
     show("limit", fetch.send(fetch.get(base() + "/big").with_limits(http.HttpLimits { ...small, body: 1024 })));
     show("garbage", fetch.send(fetch.get(base() + "/garbage")));
     show("bighead", fetch.send(fetch.get(base() + "/bighead")));
@@ -322,6 +401,33 @@ function main(): i32 {
     show("flood", fetch.send(fetch.get(base() + "/flood")));
     show("switch", fetch.send(fetch.get(base() + "/switch")));
     show("truncated", fetch.send(fetch.get(base() + "/truncated")));
+    show("gzip", fetch.send(fetch.get(base() + "/gzip")));
+    show("gzipbodychunked", fetch.send(fetch.get(base() + "/gzip-body-chunked")));
+    show("gzipidentitycoding", fetch.send(fetch.get(base() + "/gzip-identity-coding")));
+    show("gzipx", fetch.send(fetch.get(base() + "/x-gzip")));
+    match (fetch.send(fetch.get(base() + "/gzip-floor"))) {
+        Ok(resp) => { print("gzipfloor: " + resp.body_bytes().len().to_string()); },
+        Err(e) => { print("gzipfloor: error " + e.message()); }
+    }
+    match (fetch.send(fetch.get(base() + "/gzip-wide"))) {
+        Ok(resp) => { print("gzipwide: " + resp.body_bytes().len().to_string()); },
+        Err(e) => { print("gzipwide: error " + e.message()); }
+    }
+    show("gziphead", fetch.send(fetch.request("HEAD", base() + "/gzip")));
+    show("gzipbad", fetch.send(fetch.get(base() + "/gzip-bad")));
+    show("gzipbomb", fetch.send(fetch.get(base() + "/gzip-bomb")));
+    show("gzipcap", fetch.send(fetch.get(base() + "/gzip-bomb").with_limits(http.HttpLimits { ...small, body: 4096 })));
+    show("gzipdouble", fetch.send(fetch.get(base() + "/gzip-double")));
+    show("gzipdeep", fetch.send(fetch.get(base() + "/gzip-double").with_decoding(fetch.Decoding { depth: 2, ratio: 100 })));
+    match (fetch.send(fetch.get(base() + "/gzip-double-wide").with_decoding(fetch.Decoding { depth: 2, ratio: 100 }))) {
+        Ok(resp) => { print("gzipdeepwide: " + resp.body_bytes().len().to_string()); },
+        Err(e) => { print("gzipdeepwide: error " + e.message()); }
+    }
+    show("gzipdeepbomb", fetch.send(fetch.get(base() + "/gzip-double-bomb").with_decoding(fetch.Decoding { depth: 2, ratio: 100 })));
+    show("gzipidentity", fetch.send(fetch.get(base() + "/gzip").with_header("Accept-Encoding", "identity")));
+    show("gzipoff", fetch.send(fetch.get(base() + "/gzip").with_decoding(fetch.Decoding { depth: 0, ratio: 100 })));
+    show("br", fetch.send(fetch.get(base() + "/br")));
+    show("noencoding", fetch.send(fetch.request("POST", base() + "/echo").with_header("Accept-Encoding", "identity").with_text("x")));
     show("refused", fetch.send(fetch.get("http://127.0.0.1:%d/")));
     show("badurl", fetch.send(fetch.get("not a url")));
     show("noscheme", fetch.send(fetch.get("ftp://127.0.0.1/")));
@@ -384,6 +490,24 @@ h2: error protocol: an HTTP version other than 1
 flood: error protocol: interim responses past the header budget
 switch: error protocol: a protocol switch the client did not ask for
 truncated: error protocol: the connection closed before the response ended
+gzip: 200 [hello gzip] headers: x-up=1 trailers:
+gzipbodychunked: 200 [hello gzip] headers: trailers:
+gzipidentitycoding: 200 [hello gzip] headers: trailers:
+gzipx: 200 [hello gzip] headers: trailers:
+gzipfloor: 60000
+gzipwide: 100000
+gziphead: 200 [] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
+gzipbad: error decode: a gzip body that does not decode: unsupported compressed data: not gzip
+gzipbomb: error decode: a body of 200000 bytes from ONEBOMB encoded, past the 65536 allowed
+gzipcap: error response body past its limit
+gzipdouble: error decode: content codings past the depth of 1
+gzipdeep: 200 [twice] headers: trailers:
+gzipdeepwide: 100000
+gzipdeepbomb: error decode: a body of 100000 bytes from TWOBOMB encoded, past the 65536 allowed
+gzipidentity: 200 [<not utf-8>] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
+gzipoff: 200 [<not utf-8>] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
+br: 200 [raw] headers: content-encoding=br content-length=3 trailers:
+noencoding: 201 [NOENC] headers: content-length=NOENCLEN trailers:
 refused: error connect: Connection refused
 badurl: error invalid URL: no scheme in not a url
 noscheme: error invalid URL: scheme ftp is not http
@@ -417,16 +541,20 @@ func CheckFetchClient(t *testing.T, up *FetchUpstream, stdout string, exit int) 
 	host := "127.0.0.1:" + strconv.Itoa(up.Port)
 	host2 := "127.0.0.1:" + strconv.Itoa(up.Port2)
 	want := FetchClientWant
+	want = strings.ReplaceAll(want, "GZLEN", strconv.Itoa(len(gzipped([]byte("hello gzip")))))
+	want = strings.ReplaceAll(want, "ONEBOMB", strconv.Itoa(len(gzipped(make([]byte, 200000)))))
+	want = strings.ReplaceAll(want, "TWOBOMB", strconv.Itoa(len(gzipped(gzipped(make([]byte, 100000))))))
 	for name, line := range map[string]string{
-		"ECHO":       echoLine("POST", "/echo?q=1", host, "payload", "t1", "", ""),
-		"PUT":        echoLine("PUT", "/echo", host, "raw", "", "", ""),
+		"ECHO":       echoLine("POST", "/echo?q=1", host, "payload", "t1", "", "", "gzip"),
+		"PUT":        echoLine("PUT", "/echo", host, "raw", "", "", "", "gzip"),
 		"VIAPOST":    proxyLine("POST", "http://origin.invalid:81/via?x=1", "origin.invalid:81", "body", "p1", "Basic dTo="),
 		"VIAGET":     proxyLine("GET", "http://8.8.8.8/via", "8.8.8.8", "", "", "Basic dTo="),
-		"POST303":    echoLine("GET", "/echo", host, "", "", "", ""),
-		"POST302":    echoLine("GET", "/echo", host, "", "", "", ""),
-		"POST307":    echoLine("POST", "/echo", host, "payload", "", "", ""),
-		"XORIGIN":    echoLine("GET", "/echo", host2, "", "kept", "", ""),
-		"SAMEORIGIN": echoLine("GET", "/echo", host, "", "", "Bearer t", "a=1"),
+		"POST303":    echoLine("GET", "/echo", host, "", "", "", "", "gzip"),
+		"POST302":    echoLine("GET", "/echo", host, "", "", "", "", "gzip"),
+		"POST307":    echoLine("POST", "/echo", host, "payload", "", "", "", "gzip"),
+		"XORIGIN":    echoLine("GET", "/echo", host2, "", "kept", "", "", "gzip"),
+		"SAMEORIGIN": echoLine("GET", "/echo", host, "", "", "Bearer t", "a=1", "gzip"),
+		"NOENC":      echoLine("POST", "/echo", host, "x", "", "", "", "identity"),
 	} {
 		want = strings.ReplaceAll(want, "["+name+"]", "["+line+"]")
 		want = strings.ReplaceAll(want, name+"LEN", strconv.Itoa(len(line)))

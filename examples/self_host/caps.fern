@@ -217,8 +217,8 @@ pub function frontend_ungated(): string[] {
 // capability_of returns the capability a builtin reaches, or "" when the name
 // is not tagged (ungated, or not a builtin at all).
 pub function capability_of(name: string): string {
-  var bs: BuiltinCap[] = builtin_caps();
-  var i: i32 = 0;
+  let bs: BuiltinCap[] = builtin_caps();
+  let i: i32 = 0;
   while (i < bs.len()) {
     if (bs[i].builtin == name) {
       return bs[i].capability;
@@ -273,7 +273,7 @@ pub struct Pkg {
 // pkg_of names the package owning a bundle module prefix, or "" for a
 // fold-through module.
 pub function pkg_of(pkgs: Pkg[], module: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < pkgs.len()) {
     if (pkgs[i].module == module) {
       return pkgs[i].name;
@@ -285,7 +285,7 @@ pub function pkg_of(pkgs: Pkg[], module: string): string {
 
 // pkg_index finds a package by NAME (several modules can share one), or -1.
 function pkg_index(pkgs: Pkg[], name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < pkgs.len()) {
     if (pkgs[i].name == name) {
       return i;
@@ -300,11 +300,11 @@ function pkg_index(pkgs: Pkg[], name: string): i32 {
 // skipped: there is no dependency to enforce or warn about, which is the
 // common single-package compile.
 pub function enforceable(mod: parser.Module, pkgs: Pkg[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
-    var p: string = pkg_of(pkgs, util.mangled_module(mod.funcs[i].name));
+    let p: string = pkg_of(pkgs, util.mangled_module(mod.funcs[i].name));
     if (p.len() > 0) {
-      var k: i32 = pkg_index(pkgs, p);
+      let k: i32 = pkg_index(pkgs, p);
       if (k >= 0 && !pkgs[k].root) {
         return true;
       }
@@ -326,7 +326,7 @@ pub struct Use { capability: string, chain: string[] }
 pub struct Row { pkg: string, uses: Use[] }
 
 function has_i32(xs: i32[], v: i32): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (xs[i] == v) {
       return true;
@@ -341,7 +341,7 @@ function has_i32(xs: i32[], v: i32): boolean {
 // method_edges instead, which is why this returns the first match rather than
 // pretending the name is unique.
 function func_index(mod: parser.Module, name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (mod.funcs[i].name == name) {
       return i;
@@ -357,17 +357,17 @@ function func_index(mod: parser.Module, name: string): i32 {
 // method dispatch during emit rather than rewriting the call to its hoisted
 // name in the AST, so the walk has to do the resolution itself.
 function analysis_want(mod: parser.Module): string[] {
-  var want: string[] = [];
-  var bs: BuiltinCap[] = builtin_caps();
-  var i: i32 = 0;
+  let want: string[] = [];
+  let bs: BuiltinCap[] = builtin_caps();
+  let i: i32 = 0;
   while (i < bs.len()) {
     want = want.append(bs[i].builtin);
     i = i + 1;
   }
-  var fi: i32 = 0;
+  let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
     if (mod.funcs[fi].receiver_type.len() > 0) {
-      var sn: string = util.mangled_name(mod.funcs[fi].name);
+      let sn: string = util.mangled_name(mod.funcs[fi].name);
       if (!util.has_str(want, sn)) {
         want = want.append(sn);
       }
@@ -380,14 +380,14 @@ function analysis_want(mod: parser.Module): string[] {
 // chain_of renders the call chain reaching `builtin` at BFS position `at`:
 // the path back to the package function the walk started from, in call order.
 function chain_of(mod: parser.Module, order: i32[], parent: i32[], at: i32, builtin: string): string[] {
-  var rev: string[] = [];
-  var p: i32 = at;
+  let rev: string[] = [];
+  let p: i32 = at;
   while (p >= 0) {
     rev = rev.append(mod.funcs[order[p]].name);
     p = parent[p];
   }
-  var out: string[] = [];
-  var i: i32 = rev.len() - 1;
+  let out: string[] = [];
+  let i: i32 = rev.len() - 1;
   while (i >= 0) {
     out = out.append(rev[i]);
     i = i - 1;
@@ -409,9 +409,9 @@ function chain_of(mod: parser.Module, order: i32[], parent: i32[], at: i32, buil
 // dependency packages (enforceable() is the gate) or on an explicit
 // -capabilities request, never on the ordinary single-package compile.
 function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
-  var order: i32[] = [];
-  var parent: i32[] = [];
-  var ri: i32 = 0;
+  let order: i32[] = [];
+  let parent: i32[] = [];
+  let ri: i32 = 0;
   while (ri < roots.len()) {
     if (!has_i32(order, roots[ri])) {
       order = order.append(roots[ri]);
@@ -420,28 +420,28 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
     ri = ri + 1;
   }
 
-  var found_cap: string[] = [];
-  var found_at: i32[] = [];
-  var found_builtin: string[] = [];
+  let found_cap: string[] = [];
+  let found_at: i32[] = [];
+  let found_builtin: string[] = [];
 
-  var qi: i32 = 0;
+  let qi: i32 = 0;
   while (qi < order.len()) {
-    var fd: parser.FuncDecl = mod.funcs[order[qi]];
+    let fd: parser.FuncDecl = mod.funcs[order[qi]];
 
     // Calls: a tagged builtin is a direct use, a method call is an edge to
     // every method of that simple name. Builtins count only in call
     // position (they are free functions and cannot be taken as values), so
     // a local shadowing a builtin name never misreports a capability.
-    var calls: astwalk.CallSite[] = [];
-    var bi: i32 = 0;
+    let calls: astwalk.CallSite[] = [];
+    let bi: i32 = 0;
     while (bi < fd.body.len()) {
       calls = astwalk.collect_calls_stmt(fd.body[bi], want, calls);
       bi = bi + 1;
     }
-    var ci: i32 = 0;
+    let ci: i32 = 0;
     while (ci < calls.len()) {
       if (calls[ci].method) {
-        var mi: i32 = 0;
+        let mi: i32 = 0;
         while (mi < mod.funcs.len()) {
           if (mod.funcs[mi].receiver_type.len() > 0 && util.mangled_name(mod.funcs[mi].name) == calls[ci].name) {
             if (!has_i32(order, mi)) {
@@ -452,7 +452,7 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
           mi = mi + 1;
         }
       } else {
-        var cap: string = capability_of(calls[ci].name);
+        let cap: string = capability_of(calls[ci].name);
         if (cap.len() > 0 && !util.has_str(found_cap, cap)) {
           found_cap = found_cap.append(cap);
           found_at = found_at.append(qi);
@@ -467,15 +467,15 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
     // passed to higher-order code. A lambda's body is walked as part of
     // the enclosing function, so a callback package A hands to package B
     // stays A's usage even though B invokes it.
-    var ids: string[] = [];
-    var si: i32 = 0;
+    let ids: string[] = [];
+    let si: i32 = 0;
     while (si < fd.body.len()) {
       ids = astwalk.collect_idents_stmt(fd.body[si], ids);
       si = si + 1;
     }
-    var ii: i32 = 0;
+    let ii: i32 = 0;
     while (ii < ids.len()) {
-      var fx: i32 = func_index(mod, ids[ii]);
+      let fx: i32 = func_index(mod, ids[ii]);
       if (fx >= 0 && !has_i32(order, fx)) {
         order = order.append(fx);
         parent = parent.append(qi);
@@ -488,11 +488,11 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
   // Emit in vocabulary order — which is sorted, so the row is deterministic
   // without a comparator, and a capability outside the vocabulary would
   // simply never render (caps_run.fern pins the two tables together).
-  var uses: Use[] = [];
-  var vocab: string[] = capabilities();
-  var vi: i32 = 0;
+  let uses: Use[] = [];
+  let vocab: string[] = capabilities();
+  let vi: i32 = 0;
   while (vi < vocab.len()) {
-    var k: i32 = util.index_of_str(found_cap, vocab[vi]);
+    let k: i32 = util.index_of_str(found_cap, vocab[vi]);
     if (k >= 0) {
       uses = uses.append(Use { capability: vocab[vi], chain: chain_of(mod, order, parent, found_at[k], found_builtin[k]) });
     }
@@ -504,17 +504,17 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
 // sort_rows orders rows by package name (selection sort — one row per package
 // in the program, so the list is short).
 function sort_rows(rows: Row[]): Row[] {
-  var taken: i32[] = [];
-  var i: i32 = 0;
+  let taken: i32[] = [];
+  let i: i32 = 0;
   while (i < rows.len()) {
     taken = taken.append(0);
     i = i + 1;
   }
-  var out: Row[] = [];
-  var k: i32 = 0;
+  let out: Row[] = [];
+  let k: i32 = 0;
   while (k < rows.len()) {
-    var best: i32 = 0 - 1;
-    var j: i32 = 0;
+    let best: i32 = 0 - 1;
+    let j: i32 = 0;
     while (j < rows.len()) {
       if (taken[j] == 0) {
         if (best < 0 || util.str_less(rows[j].pkg, rows[best].pkg)) {
@@ -539,22 +539,22 @@ function sort_rows(rows: Row[]): Row[] {
 //
 // Rows come back sorted by package name, uses by capability.
 pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
-  var want: util.NameIndex = util.name_index(analysis_want(mod));
-  var names: string[] = [];
-  var fi: i32 = 0;
+  let want: util.NameIndex = util.name_index(analysis_want(mod));
+  let names: string[] = [];
+  let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
-    var p: string = pkg_of(pkgs, util.mangled_module(mod.funcs[fi].name));
+    let p: string = pkg_of(pkgs, util.mangled_module(mod.funcs[fi].name));
     if (p.len() > 0 && !util.has_str(names, p)) {
       names = names.append(p);
     }
     fi = fi + 1;
   }
 
-  var rows: Row[] = [];
-  var pi: i32 = 0;
+  let rows: Row[] = [];
+  let pi: i32 = 0;
   while (pi < names.len()) {
-    var roots: i32[] = [];
-    var fj: i32 = 0;
+    let roots: i32[] = [];
+    let fj: i32 = 0;
     while (fj < mod.funcs.len()) {
       if (pkg_of(pkgs, util.mangled_module(mod.funcs[fj].name)) == names[pi]) {
         roots = roots.append(fj);
@@ -569,8 +569,8 @@ pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
 
 // join renders a chain as `a → b → c`.
 function join_chain(chain: string[]): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < chain.len()) {
     if (i > 0) {
       out = out + " → ";
@@ -588,14 +588,14 @@ function join_chain(chain: string[]): string {
 // with the example chain belonging to the row's first (alphabetical)
 // capability, and `-` for a package that reaches none.
 pub function format_rows(rows: Row[]): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < rows.len()) {
     if (rows[i].uses.len() == 0) {
       out = out + rows[i].pkg + "  -\n";
     } else {
-      var names: string = "";
-      var u: i32 = 0;
+      let names: string = "";
+      let u: i32 = 0;
       while (u < rows[i].uses.len()) {
         if (u > 0) {
           names = names + ",";
@@ -628,17 +628,17 @@ pub struct Violation {
 // order (package, then capability); the caller splits them by `governed`,
 // which is the severity.
 pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
-  var out: Violation[] = [];
-  var ri: i32 = 0;
+  let out: Violation[] = [];
+  let ri: i32 = 0;
   while (ri < rows.len()) {
-    var k: i32 = pkg_index(pkgs, rows[ri].pkg);
-    var is_root: boolean = k >= 0 && pkgs[k].root;
+    let k: i32 = pkg_index(pkgs, rows[ri].pkg);
+    let is_root: boolean = k >= 0 && pkgs[k].root;
     if (!is_root) {
-      var governed: boolean = k >= 0 && pkgs[k].governed;
-      var ui: i32 = 0;
+      let governed: boolean = k >= 0 && pkgs[k].governed;
+      let ui: i32 = 0;
       while (ui < rows[ri].uses.len()) {
-        var u: Use = rows[ri].uses[ui];
-        var granted: boolean = false;
+        let u: Use = rows[ri].uses[ui];
+        let granted: boolean = false;
         if (governed) {
           granted = util.has_str(pkgs[k].grants, u.capability);
         }
@@ -661,11 +661,11 @@ pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
 // violation_message renders the diagnostic's text, without the
 // `error[E070]:` / `warning:` label — the caller owns severity rendering.
 pub function violation_message(v: Violation): string {
-  var builtin: string = "";
+  let builtin: string = "";
   if (v.chain.len() > 0) {
     builtin = v.chain[v.chain.len() - 1];
   }
-  var head: string = "package \"" + v.pkg + "\" reaches '" + v.capability + "' (" + builtin + ")";
+  let head: string = "package \"" + v.pkg + "\" reaches '" + v.capability + "' (" + builtin + ")";
   if (v.governed) {
     return head + " without a capability grant: " + join_chain(v.chain)
       + "; add \"" + v.capability + "\" to its capabilities in fern.toml or remove the call";

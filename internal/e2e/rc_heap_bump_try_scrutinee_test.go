@@ -33,11 +33,11 @@ import (
 // Scalar Result payload through `?` — pair-form inner, rebox freed.
 func tryScrutScalarBumpSrc(n string) string {
 	return `function mk(pre: string): Result[i32, i32] { return Ok(pre.len()); }
-function go(pre: string): Result[i32, i32] { var v: i32 = mk(pre)?; return Ok(v + 1); }
+function go(pre: string): Result[i32, i32] { let v: i32 = mk(pre)?; return Ok(v + 1); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
         match (go("ab")) { Ok(v) => { acc = acc + v; }, Err(e) => { acc = acc + e; }, }
         i = i + 1;
@@ -51,11 +51,11 @@ function main(): i32 {
 // propagation) — both edges must stay bounded.
 func tryScrutOptionBumpSrc(n string) string {
 	return `function mko(pre: string, k: i32): Option[i32] { if (k > 0) { return None; } return Some(pre.len()); }
-function go(pre: string, k: i32): Option[i32] { var v: i32 = mko(pre, k)?; return Some(v + 1); }
+function go(pre: string, k: i32): Option[i32] { let v: i32 = mko(pre, k)?; return Some(v + 1); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
         match (go("ab", i % 2)) { Some(v) => { acc = acc + v; }, None => { acc = acc + 1; }, }
         i = i + 1;
@@ -67,7 +67,7 @@ function main(): i32 {
 
 // STRING success payload through `?` — on the natives (x86-64 / arm64) a
 // pointer payload forces the callee HEAP-form: the box is freed shallow at
-// the consume edge and the payload's reference MOVES to the `var s: string`
+// the consume edge and the payload's reference MOVES to the `let s: string`
 // binding (rhsTainted TryOp case → owned → exit-sweep dec). The Err leg
 // (pair-form enclosing) copies (tag, payload) out and frees the source box
 // with the Err variant's size.
@@ -81,11 +81,11 @@ function main(): i32 {
 // and pins this shape as correctness + detector only.
 func tryScrutStringBumpSrc(n string) string {
 	return `function mk(pre: string, k: i32): Result[string, i32] { if (k > 2) { return Err(7); } return Ok(pre + "abc"); }
-function go(pre: string, k: i32): Result[i32, i32] { var s: string = mk(pre, k)?; return Ok(s.len()); }
+function go(pre: string, k: i32): Result[i32, i32] { let s: string = mk(pre, k)?; return Ok(s.len()); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
         match (go("ab", i % 4)) { Ok(v) => { acc = acc + v; }, Err(e) => { acc = acc + e; }, }
         i = i + 1;
@@ -100,11 +100,11 @@ function main(): i32 {
 // both consume edges, and the literal payload is .rodata (nothing to free).
 func tryScrutStrLitBumpSrc(n string) string {
 	return `function mk(pre: string, k: i32): Result[string, i32] { if (k > 2) { return Err(7); } return Ok("abcde"); }
-function go(pre: string, k: i32): Result[i32, i32] { var s: string = mk(pre, k)?; return Ok(s.len()); }
+function go(pre: string, k: i32): Result[i32, i32] { let s: string = mk(pre, k)?; return Ok(s.len()); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
         match (go("ab", i % 4)) { Ok(v) => { acc = acc + v; }, Err(e) => { acc = acc + e; }, }
         i = i + 1;
@@ -119,14 +119,14 @@ function main(): i32 {
 // fresh string payload, each through its own literal.
 func tryScrutLiteralBumpSrc(n string) string {
 	return `function go(pre: string, k: i32): Option[i32] {
-    var f: f64 = Some(0.5 + (k as f64))?;
-    var s: string = Some(pre + "abc")?;
+    let f: f64 = Some(0.5 + (k as f64))?;
+    let s: string = Some(pre + "abc")?;
     return Some((f as i32) + s.len());
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
         match (go("ab", i % 3)) { Some(v) => { acc = acc + v; }, None => { acc = acc + 1; }, }
         i = i + 1;
@@ -140,10 +140,10 @@ function main(): i32 {
 // tryScrutStringBumpSrc doc): values stay right and nothing over-releases;
 // the concat payload itself keeps the documented pair-form leak.
 const tryScrutStringWasmSound = `function mk(pre: string, k: i32): Result[string, i32] { if (k > 2) { return Err(7); } return Ok(pre + "abc"); }
-function go(pre: string, k: i32): Result[i32, i32] { var s: string = mk(pre, k)?; return Ok(s.len()); }
+function go(pre: string, k: i32): Result[i32, i32] { let s: string = mk(pre, k)?; return Ok(s.len()); }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 2000) {
         match (go("ab", i % 4)) { Ok(v) => { acc = acc + v; }, Err(e) => { acc = acc + e; }, }
         i = i + 1;
@@ -157,10 +157,10 @@ function main(): i32 {
 // The extracted string must stay valid and nothing may over-release.
 const tryScrutAliasedBoxSafe = `function mk(pre: string): Result[string, i32] { return Ok(pre + "abc"); }
 function id2(r: Result[string, i32]): Result[string, i32] { return r; }
-function go(pre: string): Result[i32, i32] { var s: string = id2(mk(pre))?; return Ok(s.len()); }
+function go(pre: string): Result[i32, i32] { let s: string = id2(mk(pre))?; return Ok(s.len()); }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
         match (go("ab")) { Ok(v) => { acc = acc + v; }, Err(e) => { acc = acc + e; }, }
         i = i + 1;
@@ -174,11 +174,11 @@ function main(): i32 {
 // one counted reference; keep must remain readable after every iteration and
 // nothing may double-free.
 const tryScrutAliasedPayloadSafe = `function mk(pre: string): Result[string, i32] { return Ok(pre); }
-function go(pre: string): Result[i32, i32] { var s: string = mk(pre)?; return Ok(s.len()); }
+function go(pre: string): Result[i32, i32] { let s: string = mk(pre)?; return Ok(s.len()); }
 function main(): i32 {
-    var keep: string = "abc" + "def";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let keep: string = "abc" + "def";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
         match (go(keep)) { Ok(v) => { acc = acc + v; }, Err(e) => { acc = acc + e; }, }
         i = i + 1;
@@ -190,11 +190,11 @@ function main(): i32 {
 
 // A literal carrying the caller's live string: construction counts the alias,
 // the binding takes that reference, and keep survives every iteration.
-const tryScrutLiteralAliasedPayloadSafe = `function go(pre: string): Option[i32] { var s: string = Some(pre)?; return Some(s.len()); }
+const tryScrutLiteralAliasedPayloadSafe = `function go(pre: string): Option[i32] { let s: string = Some(pre)?; return Some(s.len()); }
 function main(): i32 {
-    var keep: string = "abc" + "def";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let keep: string = "abc" + "def";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
         match (go(keep)) { Some(v) => { acc = acc + v; }, None => {}, }
         i = i + 1;

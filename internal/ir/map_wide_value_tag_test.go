@@ -42,7 +42,7 @@ func TestMapValTagCarriesBoxedCellSize(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			p := lowerSourceWith(t, `function build(): i32 {
-    var m: Map[i32, `+c.vType+`] = map_new(8);
+    let m: Map[i32, `+c.vType+`] = map_new(8);
     return 0;
 }`, c.ptrW)
 			if got := mapNewValTag(t, p, "build"); got != c.want {

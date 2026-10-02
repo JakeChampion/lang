@@ -1,5 +1,5 @@
 // An Option[i32[]] ALIASED and then consumed by a match. The alias bind alone
-// used to void the credit: name_escapes_outside_stmt reads `var x = src` as an
+// used to void the credit: name_escapes_outside_stmt reads `let x = src` as an
 // escape of src, the per-block consuming-match free is declined, and nothing
 // else covers the shape — Option[<flat scalar array>] has only a reassigned
 // class and a non-match-consumed one, and this falls between them. It leaked
@@ -20,44 +20,44 @@
 // Sentinels are 251-253, above the `% 113` the success path returns: a sentinel
 // inside that range is indistinguishable from a correct answer landing on it.
 function both(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
-    var t: i32 = 0;
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
+    let t: i32 = 0;
     match (x) { Some(xs) => { t = t + xs.len(); }, None => {} }
     match (src) { Some(ys) => { t = (t + ys.len()) % 101; }, None => {} }
     return t;
 }
 
 function unused(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 2]);
-    var x: Option[i32[]] = src;
-    var t: i32 = 0;
+    let src: Option[i32[]] = Some([i, i + 2]);
+    let x: Option[i32[]] = src;
+    let t: i32 = 0;
     match (src) { Some(ys) => { t = t + ys.len(); }, None => {} }
     return t;
 }
 
 function escapes(i: i32): Option[i32[]] {
-    var src: Option[i32[]] = Some([i, i + 3]);
-    var x: Option[i32[]] = src;
+    let src: Option[i32[]] = Some([i, i + 3]);
+    let x: Option[i32[]] = src;
     match (src) { Some(ys) => { if (ys.len() == 0) { return None; } }, None => {} }
     return x;
 }
 
 function twofresh(i: i32): i32 {
-    var a: Option[i32[]] = Some([i, i + 4]);
-    var b: Option[i32[]] = Some([i, i + 5]);
-    var t: i32 = 0;
+    let a: Option[i32[]] = Some([i, i + 4]);
+    let b: Option[i32[]] = Some([i, i + 5]);
+    let t: i32 = 0;
     match (a) { Some(p) => { t = t + p.len(); }, None => {} }
     match (b) { Some(q) => { t = t + q.len(); }, None => {} }
     return t;
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         acc = acc + both(i) + unused(i) + twofresh(i);
-        var e: Option[i32[]] = escapes(i);
+        let e: Option[i32[]] = escapes(i);
         match (e) { Some(v) => { acc = acc + v.len(); }, None => { return 253; } }
         i = i + 1;
     }

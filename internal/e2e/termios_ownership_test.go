@@ -25,8 +25,8 @@ const termiosOwnershipSource = `function round(): i32 {
 }
 function main(): i32 {
     if (round() != 0) { return 90; }
-    var before: i64 = __heap_bump_bytes();
-    var i: i32 = 0;
+    let before: i64 = __heap_bump_bytes();
+    let i: i32 = 0;
     while (i < 100) {
         if (round() != 0) { return 91; }
         i = i + 1;

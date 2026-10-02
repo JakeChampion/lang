@@ -20,7 +20,7 @@ import "testing"
 // struct's type instead, so `k + 1` dispatched to a `Boxed.add` method that
 // does not exist.
 //
-// The resolution is in irlower, ahead of instruction selection, so one backend
+// The resolution is in the lowering, ahead of instruction selection, so one backend
 // carries the signal for all of them.
 //
 // 31 + 35 + 6 + 8 + 3 + 7 = 90, and the same program is 90 under the
@@ -49,8 +49,8 @@ enum Wrap { Empty, Tagged(i32) }
 @noinline function tagged_v(t: Tagged): i32 { return t.v; }
 
 function main(): i32 {
-    var h: Held = Held.Boxed(5, 30);
-    var w: Wrap = Wrap.Tagged(4);
+    let h: Held = Held.Boxed(5, 30);
+    let w: Wrap = Wrap.Tagged(4);
     return held_n(h) + held_q(h) + held_n(Bare(6)) + wrap_n(w)
         + boxed_d(Boxed { d: 1, s: 2 }) + tagged_v(Tagged { v: 7 });
 }`

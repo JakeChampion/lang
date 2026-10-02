@@ -12,7 +12,7 @@ import (
 // tuple's tags are recorded on the array slot's arrarr_elem (#4365) — the
 // direct-index `ps[i].N` reads them there — but the FOR-LOOP var `p` needs its
 // own mark_tuple_elems, which the loop lowering omitted. So `p.N` had no element
-// tag: an INFERRED `var s = p.1` (a string element) typed it wrong and `s.len()`
+// tag: an INFERRED `let s = p.1` (a string element) typed it wrong and `s.len()`
 // mis-read the length — a SILENT MISCOMPILE (p.1 itself printed fine; only its
 // derived length was wrong), on the IR path. The loop var carries the tuple
 // tags, so `p.N` resolves — pointer elements (string / struct) included. Found by
@@ -25,39 +25,39 @@ var foreachTupleElemIRCases = []struct {
 	// The original miscompile: `p.1.len()` over an (i32, string) tuple array —
 	// 1 + 2 + 3 = 6. (`p.1` is a pointer element; the i32 element p.0 was fine.)
 	{"i32_string_p1_len", `function main(): i32 {
-    var ps: (i32, string)[] = [(1, "a"), (2, "bb"), (3, "ccc")];
-    var s = 0;
+    let ps: (i32, string)[] = [(1, "a"), (2, "bb"), (3, "ccc")];
+    let s = 0;
     for p in ps { s = s + p.1.len(); }
     return s;
 }`},
 	// Both elements read: p.0 (i32) + p.1.len() → (1+1)+(2+2)+(3+3) = 12.
 	{"i32_string_both", `function main(): i32 {
-    var ps: (i32, string)[] = [(1, "a"), (2, "bb"), (3, "ccc")];
-    var s = 0;
+    let ps: (i32, string)[] = [(1, "a"), (2, "bb"), (3, "ccc")];
+    let s = 0;
     for p in ps { s = s + p.0 + p.1.len(); }
     return s;
 }`},
 	// (string, string): reading the SECOND string element specifically → 2 + 3 = 5.
 	{"string_string_p1", `function main(): i32 {
-    var ps: (string, string)[] = [("a", "xx"), ("bb", "yyy")];
-    var s = 0;
+    let ps: (string, string)[] = [("a", "xx"), ("bb", "yyy")];
+    let s = 0;
     for p in ps { s = s + p.1.len(); }
     return s;
 }`},
-	// Inferred local off the element: `var str = p.1` (no annotation) — the exact
-	// path the miscompile took (an annotated `var str: string = p.1` masked it) → 6.
+	// Inferred local off the element: `let str = p.1` (no annotation) — the exact
+	// path the miscompile took (an annotated `let str: string = p.1` masked it) → 6.
 	{"inferred_local", `function main(): i32 {
-    var ps: (i32, string)[] = [(1, "a"), (2, "bb"), (3, "ccc")];
-    var s = 0;
-    for p in ps { var str = p.1; s = s + str.len(); }
+    let ps: (i32, string)[] = [(1, "a"), (2, "bb"), (3, "ccc")];
+    let s = 0;
+    for p in ps { let str = p.1; s = s + str.len(); }
     return s;
 }`},
 	// A STRUCT tuple element: `p.1.name.len()` + `p.1.age` resolve through the
 	// element tuple tag → (1 + 2 + 30) + (2 + 3 + 40) = 78.
 	{"struct_elem", `struct Rec { name: string, age: i32 }
 function main(): i32 {
-    var ps: (i32, Rec)[] = [(1, Rec { name: "ab", age: 30 }), (2, Rec { name: "cde", age: 40 })];
-    var s = 0;
+    let ps: (i32, Rec)[] = [(1, Rec { name: "ab", age: 30 }), (2, Rec { name: "cde", age: 40 })];
+    let s = 0;
     for p in ps { s = s + p.0 + p.1.name.len() + p.1.age; }
     return s;
 }`},

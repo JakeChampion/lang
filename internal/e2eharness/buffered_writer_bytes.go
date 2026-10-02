@@ -11,9 +11,9 @@ func BufferedWriterBytesOutput() []byte {
 
 const BufferedWriterBytesProgram = `import "std/io_buffered" as io;
 function main(): i32 {
-  var b = io.buf_writer_new(stdout(), 4);
+  let b = io.buf_writer_new(stdout(), 4);
   b = b.write_string("directé");
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 256) { b = b.write_byte(i); i = i + 1; }
   b = b.write_range("é", 0, 1);
   b = b.flush();
@@ -28,7 +28,7 @@ function main(): i32 {
   match (b.error()) { Some(_) => { return 2; }, None => {} }
   buf_free(b.handle());
   // An existing error discards pending bytes but survives each flush.
-  var failed = io.BufWriter { w: stdout(), buf: buf_new(1), cap: 1, err: Some(Other("first", "failure")) };
+  let failed = io.BufWriter { w: stdout(), buf: buf_new(1), cap: 1, err: Some(Other("first", "failure")) };
   failed = failed.write_byte(255);
   failed = failed.write_string("discarded");
   if (failed.buffered() != 0) { return 3; }

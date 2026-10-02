@@ -16,11 +16,11 @@ import (
 // slots were paired, each spilled one was copied slot to slot through %rcx on
 // every turn.
 const spillSlotMatesProg = `@noinline function carry(n: i64, x: i64): i64 {
-    var a: i64 = 1i64; var b: i64 = 2i64; var c: i64 = 3i64; var d: i64 = 4i64;
-    var e: i64 = 5i64; var f: i64 = 6i64; var g: i64 = 7i64; var h: i64 = 8i64;
-    var p: i64 = 9i64; var q: i64 = 10i64; var r: i64 = 11i64; var s: i64 = 12i64;
-    var t: i64 = 13i64; var u: i64 = 14i64; var w: i64 = 15i64; var y: i64 = 16i64;
-    var i: i64 = 0i64;
+    let a: i64 = 1i64; let b: i64 = 2i64; let c: i64 = 3i64; let d: i64 = 4i64;
+    let e: i64 = 5i64; let f: i64 = 6i64; let g: i64 = 7i64; let h: i64 = 8i64;
+    let p: i64 = 9i64; let q: i64 = 10i64; let r: i64 = 11i64; let s: i64 = 12i64;
+    let t: i64 = 13i64; let u: i64 = 14i64; let w: i64 = 15i64; let y: i64 = 16i64;
+    let i: i64 = 0i64;
     while (i < n) {
         a = a + x; b = b + a; c = c + b; d = d + c; e = e + d; f = f + e; g = g + f; h = h + g;
         p = p + h; q = q + p; r = r + q; s = s + r; t = t + s; u = u + t; w = w + u; y = y + w;
@@ -38,12 +38,12 @@ function main(): i32 { return (carry(1000i64, 3i64) % 200i64) as i32; }
 // placed would otherwise take the slot a later one's operand leaves.
 const spillSlotNestedProg = `@noinline function flush(x: i64): i64 { return x * 3i64 + 1i64; }
 @noinline function carry(n: i64, x: i64): i64 {
-    var a: i64 = 1i64; var b: i64 = 2i64; var c: i64 = 3i64; var d: i64 = 4i64;
-    var e: i64 = 5i64; var f: i64 = 6i64; var g: i64 = 7i64; var h: i64 = 8i64;
-    var p: i64 = 9i64; var q: i64 = 10i64; var r: i64 = 11i64; var s: i64 = 12i64;
-    var t: i64 = 13i64; var u: i64 = 14i64; var w: i64 = 15i64; var y: i64 = 16i64;
-    var i: i64 = 0i64;
-    var acc: i64 = 0i64;
+    let a: i64 = 1i64; let b: i64 = 2i64; let c: i64 = 3i64; let d: i64 = 4i64;
+    let e: i64 = 5i64; let f: i64 = 6i64; let g: i64 = 7i64; let h: i64 = 8i64;
+    let p: i64 = 9i64; let q: i64 = 10i64; let r: i64 = 11i64; let s: i64 = 12i64;
+    let t: i64 = 13i64; let u: i64 = 14i64; let w: i64 = 15i64; let y: i64 = 16i64;
+    let i: i64 = 0i64;
+    let acc: i64 = 0i64;
     while (i < n) {
         acc = acc + x;
         while (acc > 1000i64) {

@@ -15,7 +15,7 @@ import (
 // type. The `alias` case below is what that closes.
 //
 // The essential detail is that the lift runs BEFORE lowering: by the time
-// `var f = <lambda>` reaches irlower its init is a `__mkclo$<cloname>` marker
+// `let f = <lambda>` reaches the lowering its init is a `__mkclo$<cloname>` marker
 // call, whose callee ident is not itself a module function — `<cloname>`, after
 // the 8-char prefix, is. Reading the callee name directly recovers nothing and
 // the whole recovery goes inert.
@@ -35,8 +35,8 @@ var closureLocalOptRetCases = []struct {
 	// recorded return type.
 	{"alias", `
 function main(): i32 {
-    var f: () => Option[i32] = (): Option[i32] => { return Some(7); };
-    var g: () => Option[i32] = f;
+    let f: () => Option[i32] = (): Option[i32] => { return Some(7); };
+    let g: () => Option[i32] = f;
     match (g()) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 7},
@@ -52,22 +52,22 @@ function main(): i32 { return call((): Option[i32] => { return Some(6); }); }
 	{"named-fn-init", `
 function g(): Option[i32] { return Some(5); }
 function main(): i32 {
-    var f: () => Option[i32] = g;
+    let f: () => Option[i32] = g;
     match (f()) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 5},
 	// A lambda bound straight to the local, matched on the call.
 	{"direct", `
 function main(): i32 {
-    var f: () => Option[i32] = (): Option[i32] => { return Some(5); };
+    let f: () => Option[i32] = (): Option[i32] => { return Some(5); };
     match (f()) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 5},
 	// Guard: splitting the call out of the scrutinee.
 	{"split-call", `
 function main(): i32 {
-    var f: () => Option[i32] = (): Option[i32] => { return Some(5); };
-    var o: Option[i32] = f();
+    let f: () => Option[i32] = (): Option[i32] => { return Some(5); };
+    let o: Option[i32] = f();
     match (o) { Some(v) => { return v; }, None => { return 1; } }
 }
 `, 5},
@@ -75,14 +75,14 @@ function main(): i32 {
 	// the Option recovery.
 	{"non-option-closure-array", `
 function main(): i32 {
-    var fs: (() => i32)[] = [(): i32 => { return 9; }];
+    let fs: (() => i32)[] = [(): i32 => { return 9; }];
     return fs[0]();
 }
 `, 9},
 	// Guard: a closure local returning a non-Option composite.
 	{"string-closure-local", `
 function main(): i32 {
-    var f: () => string = (): string => { return "abcde"; };
+    let f: () => string = (): string => { return "abcde"; };
     return f().len();
 }
 `, 5},

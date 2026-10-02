@@ -61,7 +61,7 @@ import "./lib/tz";
 import "./lib/utmp";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
   out = out + "Print the current time, the length of time the system has been up,\n";
   out = out + "the number of users on the system, and the average number of jobs\n";
@@ -97,11 +97,11 @@ function pad2(v: i32): string {
 function load_averages(): Option[string] {
   match (read_file("/proc/loadavg")) {
     Ok(text) => {
-      var f: string[] = text.fields();
+      let f: string[] = text.fields();
       if (f.len() < 3) {
         return None;
       }
-      var out: string = ",  load average: " + two_places(f[0]);
+      let out: string = ",  load average: " + two_places(f[0]);
       out = out + ", " + two_places(f[1]);
       out = out + ", " + two_places(f[2]);
       return Some(out);
@@ -116,12 +116,12 @@ function load_averages(): Option[string] {
 // the identity on every value it produces; a shorter fraction is padded
 // and a longer one truncated rather than rounded, which no kernel emits.
 function two_places(s: string): string {
-  var whole: string = "";
-  var frac: string = "";
-  var seen_dot: boolean = false;
-  var i: i32 = 0;
+  let whole: string = "";
+  let frac: string = "";
+  let seen_dot: boolean = false;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c == 46 && !seen_dot) {
       seen_dot = true;
     } else if (seen_dot) {
@@ -144,8 +144,8 @@ function two_places(s: string): string {
 // Returns the line and the exit status, which is 1 when a field had to
 // be filled in with question marks.
 function report(read: Result[utmp.Entry[], IoError], now: i64): (string, i32) {
-  var entries: utmp.Entry[] = [];
-  var why: string = "";
+  let entries: utmp.Entry[] = [];
+  let why: string = "";
   match (read) {
     Ok(v) => {
       entries = v;
@@ -157,10 +157,10 @@ function report(read: Result[utmp.Entry[], IoError], now: i64): (string, i32) {
       why = ": " + gnu.io_error_text(e);
     }
   }
-  var status: i32 = 0;
-  var boot: i64 = 0 as i64;
-  var sessions: i32 = 0;
-  var i: i32 = 0;
+  let status: i32 = 0;
+  let boot: i64 = 0 as i64;
+  let sessions: i32 = 0;
+  let i: i32 = 0;
   while (i < entries.len()) {
     if (entries[i].is_login()) {
       sessions = sessions + 1;
@@ -170,22 +170,22 @@ function report(read: Result[utmp.Entry[], IoError], now: i64): (string, i32) {
     }
     i = i + 1;
   }
-  var out: string = "";
+  let out: string = "";
   if (boot == 0 as i64) {
     gnu.error("couldn't get boot time" + why);
     status = 1;
   }
   out = out + timefmt.strftime(" %H:%M:%S  ", tz.local_zone(), now, 0 as i64);
-  var elapsed: i64 = now - boot;
+  let elapsed: i64 = now - boot;
   if (boot == 0 as i64 || elapsed < 0 as i64) {
     out = out + "up ???? days ??:??,  ";
     status = 1;
   } else {
-    var days: i64 = elapsed / (86400 as i64);
-    var hours: i32 = (elapsed % (86400 as i64) / (3600 as i64)) as i32;
-    var mins: i32 = (elapsed % (3600 as i64) / (60 as i64)) as i32;
+    let days: i64 = elapsed / (86400 as i64);
+    let hours: i32 = (elapsed % (86400 as i64) / (3600 as i64)) as i32;
+    let mins: i32 = (elapsed % (3600 as i64) / (60 as i64)) as i32;
     if (days > 0 as i64) {
-      var unit: string = " days ";
+      let unit: string = " days ";
       if (days == 1 as i64) {
         unit = " day ";
       }
@@ -208,7 +208,7 @@ function report(read: Result[utmp.Entry[], IoError], now: i64): (string, i32) {
 }
 
 pub function main(): i32 {
-  var operands: string[] = gnu.parse_standard_options_only(args(), "uptime", help_text(), 1);
+  let operands: string[] = gnu.parse_standard_options_only(args(), "uptime", help_text(), 1);
   // After the option scan, so `--help` and `--version` answer on every
   // target and only a run that would have to produce the load averages
   // is refused.
@@ -219,12 +219,12 @@ pub function main(): i32 {
   if (operands.len() > 1) {
     gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
   }
-  var path: string = utmp.default_path();
+  let path: string = utmp.default_path();
   if (operands.len() == 1) {
     path = operands[0];
   }
-  var r: (string, i32) = report(utmp.read_all_result(path), now_unix_ms() / (1000 as i64));
-  var o: io_buffered.BufWriter = gnu.put(gnu.out_new(), r.0);
+  let r: (string, i32) = report(utmp.read_all_result(path), now_unix_ms() / (1000 as i64));
+  let o: io_buffered.BufWriter = gnu.put(gnu.out_new(), r.0);
   gnu.finish(o);
   return r.1;
 }

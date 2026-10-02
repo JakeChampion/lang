@@ -18,23 +18,23 @@ var sortByCases = []struct {
 	want int
 }{
 	// descending i32 sort via a comparator closure → [9,5,2,1]; 9*10+1 = 91.
-	{"sort-by-desc", `function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] { var out: T[] = arr; var n = out.len(); var i = 1; while (i < n) { var j = i; while (j > 0 && cmp(out[j], out[j - 1]) < 0) { var tmp: T = out[j]; out = out.with(j, out[j - 1]); out = out.with(j - 1, tmp); j = j - 1; } i = i + 1; } return out; }
-function main(): i32 { var xs: i32[] = [5, 1, 9, 2]; var s = sort_by(xs, (a: i32, b: i32): i32 => { if (a > b) { return 0 - 1; } if (a < b) { return 1; } return 0; }); return s[0] * 10 + s[3]; }`, 91},
+	{"sort-by-desc", `function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] { let out: T[] = arr; let n = out.len(); let i = 1; while (i < n) { let j = i; while (j > 0 && cmp(out[j], out[j - 1]) < 0) { let tmp: T = out[j]; out = out.with(j, out[j - 1]); out = out.with(j - 1, tmp); j = j - 1; } i = i + 1; } return out; }
+function main(): i32 { let xs: i32[] = [5, 1, 9, 2]; let s = sort_by(xs, (a: i32, b: i32): i32 => { if (a > b) { return 0 - 1; } if (a < b) { return 1; } return 0; }); return s[0] * 10 + s[3]; }`, 91},
 	// ascending i32 sort via a comparator closure → [1,2,3]; 1*100+2*10+3 = 123.
-	{"sort-by-asc", `function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] { var out: T[] = arr; var n = out.len(); var i = 1; while (i < n) { var j = i; while (j > 0 && cmp(out[j], out[j - 1]) < 0) { var tmp: T = out[j]; out = out.with(j, out[j - 1]); out = out.with(j - 1, tmp); j = j - 1; } i = i + 1; } return out; }
-function main(): i32 { var xs: i32[] = [3, 1, 2]; var s = sort_by(xs, (a: i32, b: i32): i32 => { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }); return s[0] * 100 + s[1] * 10 + s[2]; }`, 123},
+	{"sort-by-asc", `function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] { let out: T[] = arr; let n = out.len(); let i = 1; while (i < n) { let j = i; while (j > 0 && cmp(out[j], out[j - 1]) < 0) { let tmp: T = out[j]; out = out.with(j, out[j - 1]); out = out.with(j - 1, tmp); j = j - 1; } i = i + 1; } return out; }
+function main(): i32 { let xs: i32[] = [3, 1, 2]; let s = sort_by(xs, (a: i32, b: i32): i32 => { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }); return s[0] * 100 + s[1] * 10 + s[2]; }`, 123},
 	// is_sorted_by under an ascending comparator. sorted→+5, unsorted→+2 → 7.
-	{"is-sorted-by", `function is_sorted_by[T](arr: T[], cmp: (T, T) => i32): boolean { var i = 1; var n = arr.len(); while (i < n) { if (cmp(arr[i], arr[i - 1]) < 0) { return false; } i = i + 1; } return true; }
+	{"is-sorted-by", `function is_sorted_by[T](arr: T[], cmp: (T, T) => i32): boolean { let i = 1; let n = arr.len(); while (i < n) { if (cmp(arr[i], arr[i - 1]) < 0) { return false; } i = i + 1; } return true; }
 function asc(a: i32, b: i32): i32 { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }
-function main(): i32 { var a: i32[] = [1, 2, 3]; var b: i32[] = [3, 1]; var r = 0; if (is_sorted_by(a, asc)) { r = r + 5; } if (!is_sorted_by(b, asc)) { r = r + 2; } return r; }`, 7},
+function main(): i32 { let a: i32[] = [1, 2, 3]; let b: i32[] = [3, 1]; let r = 0; if (is_sorted_by(a, asc)) { r = r + 5; } if (!is_sorted_by(b, asc)) { r = r + 2; } return r; }`, 7},
 	// The shipped `sort_by` body is a stable bottom-up merge sort (#4387 item 3),
 	// not insertion sort — verify its exact shape lowers + runs on every backend
 	// AND the self-host IR path over a 10-element input with duplicates:
 	// [8,3,3,9,1,7,2,5,0,6] asc → [0,1,2,3,3,5,6,7,8,9]; s[0]*100+s[5]*10+s[9] =
 	// 0 + 50 + 9 = 59. Larger than the min two-run case, so it drives the
 	// width=1→2→4→8 pass loop and the tail (odd, short) runs.
-	{"sort-by-merge", `function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] { var n = arr.len(); if (n < 2) { return arr; } var src: T[] = arr; var width = 1; while (width < n) { var dst: T[] = src; var lo = 0; while (lo < n) { var mid = lo + width; if (mid > n) { mid = n; } var hi = lo + width + width; if (hi > n) { hi = n; } var i = lo; var j = mid; var k = lo; while (i < mid && j < hi) { if (cmp(src[j], src[i]) < 0) { dst = dst.with(k, src[j]); j = j + 1; } else { dst = dst.with(k, src[i]); i = i + 1; } k = k + 1; } while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; } while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; } lo = lo + width + width; } src = dst; width = width + width; } return src; }
-function main(): i32 { var xs: i32[] = [8, 3, 3, 9, 1, 7, 2, 5, 0, 6]; var s = sort_by(xs, (a: i32, b: i32): i32 => { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }); return s[0] * 100 + s[5] * 10 + s[9]; }`, 59},
+	{"sort-by-merge", `function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] { let n = arr.len(); if (n < 2) { return arr; } let src: T[] = arr; let width = 1; while (width < n) { let dst: T[] = src; let lo = 0; while (lo < n) { let mid = lo + width; if (mid > n) { mid = n; } let hi = lo + width + width; if (hi > n) { hi = n; } let i = lo; let j = mid; let k = lo; while (i < mid && j < hi) { if (cmp(src[j], src[i]) < 0) { dst = dst.with(k, src[j]); j = j + 1; } else { dst = dst.with(k, src[i]); i = i + 1; } k = k + 1; } while (i < mid) { dst = dst.with(k, src[i]); i = i + 1; k = k + 1; } while (j < hi) { dst = dst.with(k, src[j]); j = j + 1; k = k + 1; } lo = lo + width + width; } src = dst; width = width + width; } return src; }
+function main(): i32 { let xs: i32[] = [8, 3, 3, 9, 1, 7, 2, 5, 0, 6]; let s = sort_by(xs, (a: i32, b: i32): i32 => { if (a < b) { return 0 - 1; } if (a > b) { return 1; } return 0; }); return s[0] * 100 + s[5] * 10 + s[9]; }`, 59},
 }
 
 // TestNativeSortBy runs the inline sort_by programs on interp / x86-64 / wasm.
@@ -81,8 +81,8 @@ func TestNativeSortByModule(t *testing.T) {
 	src := `import "std/sort" as sort;
 function desc(a: i32, b: i32): i32 { if (a > b) { return 0 - 1; } if (a < b) { return 1; } return 0; }
 function main(): i32 {
-    var s = sort.sort_by([5, 1, 9, 2], desc); // [9,5,2,1]
-    var ok = 0;
+    let s = sort.sort_by([5, 1, 9, 2], desc); // [9,5,2,1]
+    let ok = 0;
     if (sort.is_sorted_by(s, desc)) { ok = 1; } // 1
     return s[0] * 10 + s[3] + ok;               // 91 + 1 = 92
 }
@@ -141,8 +141,8 @@ func TestSelfHostSortByIRX86_64(t *testing.T) {
 const sortByI32KeyProg = `import "std/sort" as sort;
 struct P { k: i32, tag: i32 }
 function main(): i32 {
-    var xs: P[] = [P { k: 3, tag: 0 }, P { k: 1, tag: 0 }, P { k: 2, tag: 0 }];
-    var s = sort.sort_by_i32_key(xs, (p: P): i32 => { return p.k; });
+    let xs: P[] = [P { k: 3, tag: 0 }, P { k: 1, tag: 0 }, P { k: 2, tag: 0 }];
+    let s = sort.sort_by_i32_key(xs, (p: P): i32 => { return p.k; });
     return s[0].k * 100 + s[1].k * 10 + s[2].k;
 }
 `
@@ -191,18 +191,18 @@ func TestSelfHostSortByI32Key(t *testing.T) {
 	// `import "std/sort"`); same body as the shipped sort_by_i32_key.
 	prog := `struct P { k: i32, tag: i32 }
 function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
-    var out: T[] = arr;
-    var keys: i32[] = [];
+    let out: T[] = arr;
+    let keys: i32[] = [];
     for x in out { keys = keys.append(key(x)); }
-    var n: i32 = out.len();
-    var i: i32 = 1;
+    let n: i32 = out.len();
+    let i: i32 = 1;
     while (i < n) {
-        var j: i32 = i;
+        let j: i32 = i;
         while (j > 0 && keys[j] < keys[j - 1]) {
-            var tv: T = out[j];
+            let tv: T = out[j];
             out = out.with(j, out[j - 1]);
             out = out.with(j - 1, tv);
-            var tk: i32 = keys[j];
+            let tk: i32 = keys[j];
             keys = keys.with(j, keys[j - 1]);
             keys = keys.with(j - 1, tk);
             j = j - 1;
@@ -212,8 +212,8 @@ function sort_by_i32_key[T](arr: T[], key: (T) => i32): T[] {
     return out;
 }
 function main(): i32 {
-    var xs: P[] = [P { k: 3, tag: 0 }, P { k: 1, tag: 0 }, P { k: 2, tag: 0 }];
-    var s = sort_by_i32_key(xs, (p: P): i32 => { return p.k; });
+    let xs: P[] = [P { k: 3, tag: 0 }, P { k: 1, tag: 0 }, P { k: 2, tag: 0 }];
+    let s = sort_by_i32_key(xs, (p: P): i32 => { return p.k; });
     return s[0].k * 100 + s[1].k * 10 + s[2].k;
 }
 `

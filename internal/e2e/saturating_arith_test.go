@@ -20,9 +20,9 @@ import (
 // literal is rejected (E047: the magnitude is checked before the unary minus).
 const saturatingArithProgram = `
 function main(): i32 {
-    var i32min: i32 = 0 - 2147483647 - 1;
-    var a: i32 = 2147483647;
-    var b: i32 = 1;
+    let i32min: i32 = 0 - 2147483647 - 1;
+    let a: i32 = 2147483647;
+    let b: i32 = 1;
     if ((a +| b) != 2147483647) { return 1; }
     if ((i32min -| b) != i32min) { return 2; }
     if ((a +| (0 - 1)) != 2147483646) { return 3; }
@@ -35,24 +35,24 @@ function main(): i32 {
     if ((0 *| i32min) != 0) { return 10; }
     if ((i32min +| i32min) != i32min) { return 11; }
 
-    var u: u8 = 250;
-    var v: u8 = 10;
+    let u: u8 = 250;
+    let v: u8 = 10;
     if ((u +| v) != 255) { return 20; }
     if ((v -| u) != 0) { return 21; }
     if ((u *| v) != 255) { return 22; }
     if ((v *| 2) != 20) { return 23; }
     if ((u -| v) != 240) { return 24; }
 
-    var p: u32 = 4294967290;
-    var q: u32 = 10;
+    let p: u32 = 4294967290;
+    let q: u32 = 10;
     if ((p +| q) != 4294967295) { return 30; }
     if ((q -| p) != 0) { return 31; }
     if ((p *| q) != 4294967295) { return 32; }
     if ((q *| q) != 100) { return 33; }
 
-    var i64min: i64 = 0 - 9223372036854775807 - 1;
-    var x: i64 = 9223372036854775807;
-    var y: i64 = 5;
+    let i64min: i64 = 0 - 9223372036854775807 - 1;
+    let x: i64 = 9223372036854775807;
+    let y: i64 = 5;
     if ((x +| y) != 9223372036854775807) { return 40; }
     if ((x *| y) != 9223372036854775807) { return 41; }
     if ((i64min -| y) != i64min) { return 42; }
@@ -61,7 +61,7 @@ function main(): i32 {
     if ((y *| y) != 25) { return 45; }
     if ((x -| x) != 0) { return 46; }
 
-    var m: u64 = 18446744073709551615;
+    let m: u64 = 18446744073709551615;
     if ((m +| 1) != 18446744073709551615) { return 50; }
     if ((m *| 2) != 18446744073709551615) { return 51; }
     if ((m -| m) != 0) { return 52; }

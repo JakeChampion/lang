@@ -30,7 +30,7 @@ now produces 3 of 3 and runs. Re-derive before trusting any figure above.
 
 ```fern
 function main(): i32 {
-    var v0: ((i32) => i32)[] = [((x: i32) => x)];
+    let v0: ((i32) => i32)[] = [((x: i32) => x)];
     return v0[0](42);
 }
 ```
@@ -40,7 +40,7 @@ get, and the containers do not agree:
 
 | position | verdict |
 |---|---|
-| `var f: (i32) => i32 = lambda` | produces |
+| `let f: (i32) => i32 = lambda` | produces |
 | `apply(lambda, 42)` — call argument | produces |
 | `Box { f: lambda }` — struct field | produces |
 | `[lambda]` — array element | `function address is not a closure value` |

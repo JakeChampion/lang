@@ -551,7 +551,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	// ================ Build HttpRequest (28 bytes + 8-byte rc header) ================
 	// Phase 1e-runtime: HttpRequest carries a static-sentinel
 	// rc header at `[req - 8]` so user code that aliases the
-	// request via `var r = req;` or `req.body_string()` can
+	// request via `let r = req;` or `req.body_string()` can
 	// safely run through __fern_rc_inc/dec (Phase 1e-struct-ii
 	// widened the inc predicate to include struct types). Alloc
 	// is 28 + 8; sentinel at base+0; data = base+8. All

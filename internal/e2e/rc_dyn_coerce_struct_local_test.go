@@ -18,7 +18,7 @@ package e2e
 
 import "testing"
 
-// dynCoerceLocalSrc: n iterations of `var d: dyn Shape = s`, with `s` read
+// dynCoerceLocalSrc: n iterations of `let d: dyn Shape = s`, with `s` read
 // again after the coercion so the source local stays live. Returns the
 // accumulated area, so a wrong ANSWER (not just a crash) fails the test.
 // Each iteration contributes side*side + side = 9 + 3.
@@ -27,11 +27,11 @@ func dynCoerceLocalSrc(n string) string {
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + n + `) {
-        var s: Square = Square { side: 3 };
-        var d: dyn Shape = s;
+        let s: Square = Square { side: 3 };
+        let d: dyn Shape = s;
         acc = acc + d.area() + s.side;
         i = i + 1;
     }
@@ -45,8 +45,8 @@ const dynCoerceLocalNoLoopSrc = `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
 function main(): i32 {
-    var s: Square = Square { side: 3 };
-    var d: dyn Shape = s;
+    let s: Square = Square { side: 3 };
+    let d: dyn Shape = s;
     return d.area();
 }`
 
@@ -66,8 +66,8 @@ function main(): i32 {
 func dynCoerceLocalBumpSrc(n, wider string) string {
 	churn := func(bound string) string {
 		return `    while (i < ` + bound + `) {
-        var s: Boxed = Boxed { tag: "a heap string owned by the concrete behind dyn" };
-        var d: dyn Shape = s;
+        let s: Boxed = Boxed { tag: "a heap string owned by the concrete behind dyn" };
+        let d: dyn Shape = s;
         sum = sum + d.area() + s.tag.len();
         i = i + 1;
     }
@@ -78,13 +78,13 @@ trait Shape { function area(self: Self): i32; }
 struct Boxed { tag: string }
 impl Shape for Boxed { function area(self: Self): i32 { return self.tag.len(); } }
 function main(): i32 {
-    var sum: i32 = 0;
-    var i: i32 = 0;
-    var base: i32 = (__heap_bump_bytes() as i32);
-` + churn(n) + `    var first: i32 = (__heap_bump_bytes() as i32) - base;
-    var mid: i32 = (__heap_bump_bytes() as i32);
+    let sum: i32 = 0;
+    let i: i32 = 0;
+    let base: i32 = (__heap_bump_bytes() as i32);
+` + churn(n) + `    let first: i32 = (__heap_bump_bytes() as i32) - base;
+    let mid: i32 = (__heap_bump_bytes() as i32);
     i = 0;
-` + churn(wider) + `    var second: i32 = (__heap_bump_bytes() as i32) - mid;
+` + churn(wider) + `    let second: i32 = (__heap_bump_bytes() as i32) - mid;
     if (second > first) { return 1; }
     return sum - sum;
 }`

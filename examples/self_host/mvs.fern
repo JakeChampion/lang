@@ -102,11 +102,11 @@ pub struct State {
 
 // parse_version parses "MAJOR.MINOR.PATCH", returning ok=false otherwise.
 pub function parse_version(s: string): Version {
-  var parts: string[] = split_char(s, b'.');
+  let parts: string[] = split_char(s, b'.');
   if (parts.len() != 3) {
     return Version { major: 0, minor: 0, patch: 0, ok: false };
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 3) {
     if (!util.is_all_digits(parts[i])) {
       return Version { major: 0, minor: 0, patch: 0, ok: false };
@@ -170,12 +170,12 @@ function ver_cmp_s(a: string, b: string): i32 {
 // to an Index carrying `err`; entries before the bad line are discarded by
 // the caller, which reports `err` and stops.
 pub function parse_index(src: string): Index {
-  var entries: Entry[] = [];
-  var pkg: string = "";
-  var lines: string[] = split_char(src, b'\n');
-  var ln: i32 = 0;
+  let entries: Entry[] = [];
+  let pkg: string = "";
+  let lines: string[] = split_char(src, b'\n');
+  let ln: i32 = 0;
   while (ln < lines.len()) {
-    var line: string = util.trim(lines[ln]);
+    let line: string = util.trim(lines[ln]);
     ln = ln + 1;
     if (line.len() == 0) {
       continue;
@@ -196,20 +196,20 @@ pub function parse_index(src: string): Index {
     if (pkg.len() == 0) {
       return index_err(entries, "line " + util.i32_to_string(ln) + ": version entry outside a [package] section");
     }
-    var eq: i32 = index_of_char(line, b'=', 0);
+    let eq: i32 = index_of_char(line, b'=', 0);
     if (eq < 0) {
       return index_err(entries, "line " + util.i32_to_string(ln) + ": expected `\"VERSION\" = { … }`");
     }
-    var key: string = util.trim(slice_unchecked(line, 0, eq) + "");
+    let key: string = util.trim(slice_unchecked(line, 0, eq) + "");
     if (!is_quoted(key)) {
       return index_err(entries, "line " + util.i32_to_string(ln) + ": version key: " + unquote_error(key));
     }
-    var ver: string = slice_unchecked(key, 1, key.len() - 1) + "";
+    let ver: string = slice_unchecked(key, 1, key.len() - 1) + "";
     if (!parse_version(ver).ok) {
       return index_err(entries, "line " + util.i32_to_string(ln) + ": " + version_error(ver));
     }
-    var val: string = util.trim(slice_unchecked(line, eq + 1, line.len()) + "");
-    var src_res: SourceResult = parse_source(val);
+    let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()) + "");
+    let src_res: SourceResult = parse_source(val);
     if (src_res.err.len() > 0) {
       return index_err(entries, "line " + util.i32_to_string(ln) + ": " + ver + ": " + src_res.err);
     }
@@ -225,37 +225,37 @@ struct SourceResult {
 }
 
 function parse_source(val: string): SourceResult {
-  var none: Source = Source { path: "", url: "", hash: "" };
+  let none: Source = Source { path: "", url: "", hash: "" };
   if (val.len() < 2 || val[0] != b'{' || val[val.len() - 1] != b'}') {
     return SourceResult { src: none, err: "expected an inline table { path = … } or { url = …, hash = … }" };
   }
-  var path: string = "";
-  var url: string = "";
-  var hash: string = "";
-  var parts: string[] = split_char(util.trim(slice_unchecked(val, 1, val.len() - 1) + ""), b',');
-  var i: i32 = 0;
+  let path: string = "";
+  let url: string = "";
+  let hash: string = "";
+  let parts: string[] = split_char(util.trim(slice_unchecked(val, 1, val.len() - 1) + ""), b',');
+  let i: i32 = 0;
   while (i < parts.len()) {
-    var part: string = util.trim(parts[i]);
+    let part: string = util.trim(parts[i]);
     i = i + 1;
     if (part.len() == 0) {
       continue;
     }
-    var eq: i32 = index_of_char(part, b'=', 0);
+    let eq: i32 = index_of_char(part, b'=', 0);
     if (eq < 0) {
       return SourceResult { src: none, err: "expected `key = value`, got " + quoted(part) };
     }
-    var k: string = util.trim(slice_unchecked(part, 0, eq) + "");
-    var raw: string = util.trim(slice_unchecked(part, eq + 1, part.len()) + "");
+    let k: string = util.trim(slice_unchecked(part, 0, eq) + "");
+    let raw: string = util.trim(slice_unchecked(part, eq + 1, part.len()) + "");
     if (!is_quoted(raw)) {
       return SourceResult { src: none, err: k + ": " + unquote_error(raw) };
     }
-    var v: string = slice_unchecked(raw, 1, raw.len() - 1) + "";
+    let v: string = slice_unchecked(raw, 1, raw.len() - 1) + "";
     if (k == "path") {
       path = v;
     } else if (k == "url") {
       url = v;
     } else if (k == "hash") {
-      var hr: fern_toml.HashResult = fern_toml.validate_hash(v);
+      let hr: fern_toml.HashResult = fern_toml.validate_hash(v);
       if (hr.err.len() > 0) {
         return SourceResult { src: none, err: k + " " + hr.err };
       }
@@ -288,8 +288,8 @@ pub function with_dir(ix: Index, dir: string): Index {
 
 // index_versions returns pkg's available versions, ascending.
 pub function index_versions(ix: Index, pkg: string): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < ix.entries.len()) {
     if (ix.entries[i].pkg == pkg) {
       out = out.append(ix.entries[i].ver + "");
@@ -298,17 +298,17 @@ pub function index_versions(ix: Index, pkg: string): string[] {
   }
   // Sorted by precedence: the index file's order is the author's, and
   // "the next higher version" must not depend on it.
-  var taken: i32[] = [];
-  var t: i32 = 0;
+  let taken: i32[] = [];
+  let t: i32 = 0;
   while (t < out.len()) {
     taken = taken.append(0);
     t = t + 1;
   }
-  var sorted: string[] = [];
-  var k: i32 = 0;
+  let sorted: string[] = [];
+  let k: i32 = 0;
   while (k < out.len()) {
-    var best: i32 = 0 - 1;
-    var j: i32 = 0;
+    let best: i32 = 0 - 1;
+    let j: i32 = 0;
     while (j < out.len()) {
       if (taken[j] == 0) {
         if (best < 0 || ver_cmp_s(out[j], out[best]) < 0) {
@@ -326,7 +326,7 @@ pub function index_versions(ix: Index, pkg: string): string[] {
 
 // index_has reports whether the index carries (pkg, ver).
 pub function index_has(ix: Index, pkg: string, ver: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ix.entries.len()) {
     if (ix.entries[i].pkg == pkg && ix.entries[i].ver == ver) {
       return true;
@@ -340,10 +340,10 @@ pub function index_has(ix: Index, pkg: string, ver: string): boolean {
 // resolved against the index's own directory. An absent entry yields the
 // empty source; callers check index_has first.
 pub function index_source(ix: Index, pkg: string, ver: string): Source {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ix.entries.len()) {
     if (ix.entries[i].pkg == pkg && ix.entries[i].ver == ver) {
-      var s: Source = ix.entries[i].src;
+      let s: Source = ix.entries[i].src;
       if (s.path.len() > 0 && !is_abs(s.path)) {
         return Source { path: join_path(ix.dir, s.path), url: s.url, hash: s.hash };
       }
@@ -359,8 +359,8 @@ function vers_list(vs: string[]): string {
   if (vs.len() == 0) {
     return "none";
   }
-  var s: string = "";
-  var i: i32 = 0;
+  let s: string = "";
+  let i: i32 = 0;
   while (i < vs.len()) {
     if (i > 0) {
       s = s + ", ";
@@ -378,13 +378,13 @@ function vers_list(vs: string[]): string {
 // MVS, preserving determinism). The returned state either carries an `err`,
 // or names the first package whose dependencies the caller must supply.
 pub function begin(roots: Req[], bans: Ban[], ix: Index): State {
-  var st: State = State {
+  let st: State = State {
     ix: ix, bans: bans,
     names: [], vers: [], qpkg: [], qver: [], qhead: 0,
     need_pkg: "", need_ver: "", err: "",
   };
-  var sorted: Req[] = sort_reqs(roots);
-  var i: i32 = 0;
+  let sorted: Req[] = sort_reqs(roots);
+  let i: i32 = 0;
   while (i < sorted.len()) {
     st = raise(st, sorted[i].pkg, sorted[i].min, "");
     if (st.err.len() > 0) {
@@ -401,11 +401,11 @@ pub function supply(st: State, deps: Req[]): State {
   if (st.err.len() > 0 || st.need_pkg.len() == 0) {
     return st;
   }
-  var pkg: string = st.need_pkg;
-  var ver: string = st.need_ver;
-  var via: string = "via " + pkg + "@" + ver + ": ";
-  var sorted: Req[] = sort_reqs(deps);
-  var i: i32 = 0;
+  let pkg: string = st.need_pkg;
+  let ver: string = st.need_ver;
+  let via: string = "via " + pkg + "@" + ver + ": ";
+  let sorted: Req[] = sort_reqs(deps);
+  let i: i32 = 0;
   while (i < sorted.len()) {
     // A version raised above `ver` since this entry was enqueued
     // supersedes this pass; the higher version is (or will be) its own
@@ -437,17 +437,17 @@ pub function done(st: State): boolean {
 // selected returns the resolved set, sorted by package name — the order
 // fern.lock is written in.
 pub function selected(st: State): Sel[] {
-  var taken: i32[] = [];
-  var t: i32 = 0;
+  let taken: i32[] = [];
+  let t: i32 = 0;
   while (t < st.names.len()) {
     taken = taken.append(0);
     t = t + 1;
   }
-  var names: string[] = [];
-  var n: i32 = 0;
+  let names: string[] = [];
+  let n: i32 = 0;
   while (n < st.names.len()) {
-    var best: i32 = 0 - 1;
-    var j: i32 = 0;
+    let best: i32 = 0 - 1;
+    let j: i32 = 0;
     while (j < st.names.len()) {
       if (taken[j] == 0) {
         if (best < 0 || util.str_less(st.names[j], st.names[best])) {
@@ -460,10 +460,10 @@ pub function selected(st: State): Sel[] {
     names = names.append(st.names[best] + "");
     n = n + 1;
   }
-  var out: Sel[] = [];
-  var k: i32 = 0;
+  let out: Sel[] = [];
+  let k: i32 = 0;
   while (k < names.len()) {
-    var v: string = selected_version(st, names[k]);
+    let v: string = selected_version(st, names[k]);
     out = out.append(Sel { name: names[k], ver: v, src: index_source(st.ix, names[k], v) });
     k = k + 1;
   }
@@ -473,18 +473,18 @@ pub function selected(st: State): Sel[] {
 // raise records a demand for `pkg` at `min`, keeping the maximum of the
 // minimums seen so far and enqueueing the package when its selection moves.
 function raise(st: State, pkg: string, min: string, via: string): State {
-  var v: Version = parse_version(min);
+  let v: Version = parse_version(min);
   if (!v.ok) {
     return with_err(st, via + "dependency " + quoted(pkg) + ": " + version_error(min));
   }
-  var ver: string = version_string(v);
+  let ver: string = version_string(v);
   if (banned(st, pkg, ver)) {
     // Round up to the next higher non-excluded indexed version (Go's
     // exclude semantics) — the minimum-only constraint language cannot
     // express an upper bound, so [exclude] is how "1.9 is broken" is said.
-    var avail: string[] = index_versions(st.ix, pkg);
-    var up: string = "";
-    var i: i32 = 0;
+    let avail: string[] = index_versions(st.ix, pkg);
+    let up: string = "";
+    let i: i32 = 0;
     while (i < avail.len()) {
       if (ver_cmp_s(avail[i], ver) > 0 && !banned(st, pkg, avail[i])) {
         up = avail[i];
@@ -504,12 +504,12 @@ function raise(st: State, pkg: string, min: string, via: string): State {
     return with_err(st, via + "dependency " + quoted(pkg) + " has no version " + ver
       + " in the index (available: " + vers_list(index_versions(st.ix, pkg)) + ")");
   }
-  var cur: string = selected_version(st, pkg);
+  let cur: string = selected_version(st, pkg);
   if (cur.len() > 0 && ver_cmp_s(ver, cur) <= 0) {
     return st;
   }
-  var names: string[] = st.names;
-  var vers: string[] = st.vers;
+  let names: string[] = st.names;
+  let vers: string[] = st.vers;
   if (cur.len() == 0) {
     names = names.append(pkg + "");
     vers = vers.append(ver + "");
@@ -528,10 +528,10 @@ function raise(st: State, pkg: string, min: string, via: string): State {
 // advance pops queue entries until one is still current — an entry whose
 // package has since been raised higher is dead — and parks on it.
 function advance(st: State): State {
-  var head: i32 = st.qhead;
+  let head: i32 = st.qhead;
   while (head < st.qpkg.len()) {
-    var pkg: string = st.qpkg[head];
-    var ver: string = st.qver[head];
+    let pkg: string = st.qpkg[head];
+    let ver: string = st.qver[head];
     head = head + 1;
     if (selected_version(st, pkg) == ver) {
       return State {
@@ -558,7 +558,7 @@ function with_err(st: State, msg: string): State {
 
 // selected_version is the version currently selected for `pkg`, or "".
 function selected_version(st: State, pkg: string): string {
-  var i: i32 = util.index_of_str(st.names, pkg);
+  let i: i32 = util.index_of_str(st.names, pkg);
   if (i < 0) {
     return "";
   }
@@ -566,10 +566,10 @@ function selected_version(st: State, pkg: string): string {
 }
 
 function banned(st: State, pkg: string, ver: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < st.bans.len()) {
     if (st.bans[i].pkg == pkg) {
-      var b: Version = parse_version(st.bans[i].ver);
+      let b: Version = parse_version(st.bans[i].ver);
       if (b.ok && version_string(b) == ver) {
         return true;
       }
@@ -582,17 +582,17 @@ function banned(st: State, pkg: string, ver: string): boolean {
 // sort_reqs orders demands by package name, so a resolution failure names
 // the same dependency whichever order the manifest listed them in.
 function sort_reqs(rs: Req[]): Req[] {
-  var taken: i32[] = [];
-  var t: i32 = 0;
+  let taken: i32[] = [];
+  let t: i32 = 0;
   while (t < rs.len()) {
     taken = taken.append(0);
     t = t + 1;
   }
-  var out: Req[] = [];
-  var k: i32 = 0;
+  let out: Req[] = [];
+  let k: i32 = 0;
   while (k < rs.len()) {
-    var best: i32 = 0 - 1;
-    var j: i32 = 0;
+    let best: i32 = 0 - 1;
+    let j: i32 = 0;
     while (j < rs.len()) {
       if (taken[j] == 0) {
         if (best < 0 || util.str_less(rs[j].pkg, rs[best].pkg)) {
@@ -615,8 +615,8 @@ function sort_reqs(rs: Req[]): Req[] {
 // resolution SNAPSHOT that can drift — it records the chosen (name, version,
 // source) so builds are reproducible and offline without re-resolving.
 pub function lock_text(sel: Sel[]): string {
-  var out: string = "# generated by `fern -resolve`; do not edit by hand\n";
-  var i: i32 = 0;
+  let out: string = "# generated by `fern -resolve`; do not edit by hand\n";
+  let i: i32 = 0;
   while (i < sel.len()) {
     out = out + "\n[[package]]\n";
     out = out + "name = " + quoted(sel[i].name) + "\n";
@@ -636,9 +636,9 @@ pub function lock_text(sel: Sel[]): string {
 
 // split_char splits `s` on the byte `c`, keeping empty fields.
 pub function split_char(s: string, c: u8): string[] {
-  var out: string[] = [];
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] == c) {
       out = out.append(slice_unchecked(s, start, i) + "");
@@ -651,7 +651,7 @@ pub function split_char(s: string, c: u8): string[] {
 }
 
 function index_of_char(s: string, c: u8, from: i32): i32 {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i < s.len()) {
     if (s[i] == c) {
       return i;
@@ -672,8 +672,8 @@ function is_quoted(s: string): boolean {
   if (s.len() < 2 || s[0] != b'"' || s[s.len() - 1] != b'"') {
     return false;
   }
-  var inner: string = slice_unchecked(s, 1, s.len() - 1) + "";
-  var i: i32 = 0;
+  let inner: string = slice_unchecked(s, 1, s.len() - 1) + "";
+  let i: i32 = 0;
   while (i < inner.len()) {
     if (inner[i] == b'"' || inner[i] == b'\\') {
       return false;
@@ -698,12 +698,12 @@ pub function is_abs(p: string): boolean {
 // native's filepath.Join does — a lock file records the resolved directory,
 // so `../foo-1.0.0` must come out the same under either compiler.
 pub function join_path(dir: string, rel: string): string {
-  var abs: boolean = is_abs(dir);
-  var segs: string[] = [];
-  var parts: string[] = split_char(dir + "/" + rel, b'/');
-  var i: i32 = 0;
+  let abs: boolean = is_abs(dir);
+  let segs: string[] = [];
+  let parts: string[] = split_char(dir + "/" + rel, b'/');
+  let i: i32 = 0;
   while (i < parts.len()) {
-    var p: string = parts[i];
+    let p: string = parts[i];
     i = i + 1;
     if (p.len() == 0 || p == ".") {
       continue;
@@ -719,8 +719,8 @@ pub function join_path(dir: string, rel: string): string {
     }
     segs = segs.append(p + "");
   }
-  var out: string = "";
-  var k: i32 = 0;
+  let out: string = "";
+  let k: i32 = 0;
   while (k < segs.len()) {
     if (k > 0) {
       out = out + "/";
@@ -738,8 +738,8 @@ pub function join_path(dir: string, rel: string): string {
 }
 
 function drop_last(xs: string[]): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i + 1 < xs.len()) {
     out = out.append(xs[i] + "");
     i = i + 1;

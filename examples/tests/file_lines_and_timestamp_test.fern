@@ -13,7 +13,7 @@ function test_file_lines_pass(r: test.TestRunner): test.TestRunner {
   if (dir == "") {
     return rr;
   }
-  var path: string = dir + "/output.txt";
+  let path: string = dir + "/output.txt";
   match (write_file(path, "alpha\nbeta\ngamma\n")) {
     Err(_) => {
       return rr.it("write fixture", () => test.fail("io"));
@@ -36,7 +36,7 @@ function test_file_lines_no_trailing_newline(r: test.TestRunner): test.TestRunne
   if (dir == "") {
     return rr;
   }
-  var path: string = dir + "/output.txt";
+  let path: string = dir + "/output.txt";
   // No trailing newline — `.lines()` still returns 3 lines.
   match (write_file(path, "one\ntwo\nthree")) {
     Err(_) => {
@@ -56,7 +56,7 @@ function test_file_lines_mismatch_reports(r: test.TestRunner): test.TestRunner {
   if (dir == "") {
     return rr;
   }
-  var path: string = dir + "/output.txt";
+  let path: string = dir + "/output.txt";
   match (write_file(path, "alpha\nWRONG\ngamma\n")) {
     Err(_) => {
       return rr.it("write fixture", () => test.fail("io"));
@@ -88,7 +88,7 @@ function test_file_line_count_wrong_reports(r: test.TestRunner): test.TestRunner
   if (dir == "") {
     return rr;
   }
-  var path: string = dir + "/output.txt";
+  let path: string = dir + "/output.txt";
   match (write_file(path, "a\nb\n")) {
     Err(_) => {
       return rr.it("write fixture", () => test.fail("io"));
@@ -133,14 +133,14 @@ function test_file_lines_missing_file(): test.TestOutcome {
 function test_close_to_now_ms_now_passes(): test.TestOutcome {
   // A timestamp captured "right now" should be within
   // 5s of now_unix_ms() under any sane runtime.
-  var t: i64 = now_unix_ms();
+  let t: i64 = now_unix_ms();
   return test.assert_close_to_now_ms(t, 5000 as i64);
 }
 
 function test_close_to_now_ms_old_fails(): test.TestOutcome {
   // A timestamp from 1 hour ago must NOT be considered
   // recent.
-  var t: i64 = now_unix_ms() - 3600000 as i64;
+  let t: i64 = now_unix_ms() - 3600000 as i64;
   match (test.assert_close_to_now_ms(t, 1000 as i64)) {
     Pass => {
       return test.fail("old timestamp should fail");
@@ -156,7 +156,7 @@ function test_close_to_now_ms_old_fails(): test.TestOutcome {
 
 function test_close_to_now_ms_future_skew_fails(): test.TestOutcome {
   // Future-skewed (negative signed skew) must also fail.
-  var t: i64 = now_unix_ms() + 3600000 as i64;
+  let t: i64 = now_unix_ms() + 3600000 as i64;
   match (test.assert_close_to_now_ms(t, 1000 as i64)) {
     Pass => {
       return test.fail("future timestamp should fail");
@@ -168,7 +168,7 @@ function test_close_to_now_ms_future_skew_fails(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("file-lines + timestamp recency");
+  let r: test.TestRunner = test.test_new("file-lines + timestamp recency");
   r = test_file_lines_pass(r);
   r = test_file_lines_no_trailing_newline(r);
   r = test_file_lines_mismatch_reports(r);

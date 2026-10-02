@@ -19,32 +19,30 @@ func testBuilderComponents(t *testing.T, compiler string, runner []string, stdli
 		{"take", e2eharness.BuilderBytesProgram},
 		{"range", e2eharness.BufByteRangeProgram},
 	} {
-		for _, mode := range []string{"0", "1"} {
-			for _, output := range []bool{false, true} {
-				name := tc.name + "/typed=" + mode + "/pure"
-				source, want := tc.src, ""
-				if output {
-					name = tc.name + "/typed=" + mode + "/stdout"
-					source = strings.Replace(source, "function main(): i32", "function byte_check(): i32", 1)
-					source += "\nfunction main(): i32 { var code = byte_check(); if (code == 0) { print(\"ok\"); } return code; }\n"
-					want = "ok\n"
-				}
-				t.Run(name, func(t *testing.T) {
-					dir := t.TempDir()
-					src, bin := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wasm")
-					if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
-						t.Fatal(err)
-					}
-					cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", src, stdlib, "-o", bin)
-					cmd.Env = append(os.Environ(), "FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_STRICT_IR=1")
-					if out, err := cmd.CombinedOutput(); err != nil {
-						t.Fatalf("component compile: %v\n%s", err, out)
-					}
-					if out, err := exec.Command("wasmtime", "run", bin).CombinedOutput(); err != nil || string(out) != want {
-						t.Fatalf("component run: %v, output %q, want %q", err, out, want)
-					}
-				})
+		for _, output := range []bool{false, true} {
+			name := tc.name + "/pure"
+			source, want := tc.src, ""
+			if output {
+				name = tc.name + "/stdout"
+				source = strings.Replace(source, "function main(): i32", "function byte_check(): i32", 1)
+				source += "\nfunction main(): i32 { let code = byte_check(); if (code == 0) { print(\"ok\"); } return code; }\n"
+				want = "ok\n"
 			}
+			t.Run(name, func(t *testing.T) {
+				dir := t.TempDir()
+				src, bin := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wasm")
+				if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", src, stdlib, "-o", bin)
+				cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("component compile: %v\n%s", err, out)
+				}
+				if out, err := exec.Command("wasmtime", "run", bin).CombinedOutput(); err != nil || string(out) != want {
+					t.Fatalf("component run: %v, output %q, want %q", err, out, want)
+				}
+			})
 		}
 	}
 }

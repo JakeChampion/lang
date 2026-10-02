@@ -57,11 +57,11 @@ func TestFormatKeepsFunctionModifiers(t *testing.T) {
 // (2^32-1)^2, and u64::MAX.
 func TestFormatUnsignedLargeLiteral(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
-		{`function main(): i32 { var a: u64 = 9223372036854775808 as u64; return 0; }`,
+		{`function main(): i32 { let a: u64 = 9223372036854775808 as u64; return 0; }`,
 			"9223372036854775808 as u64"},
-		{`function main(): i32 { var a: u64 = 18446744065119617025 as u64; return 0; }`,
+		{`function main(): i32 { let a: u64 = 18446744065119617025 as u64; return 0; }`,
 			"18446744065119617025 as u64"},
-		{`function main(): i32 { var a: u64 = 18446744073709551615 as u64; return 0; }`,
+		{`function main(): i32 { let a: u64 = 18446744073709551615 as u64; return 0; }`,
 			"18446744073709551615 as u64"},
 	} {
 		got := formatSrc(t, tc.in)
@@ -203,7 +203,7 @@ function (p: Point) sum(): i32 { return p.x + p.y; }`)
 func TestFormatPathSep(t *testing.T) {
 	got := formatSrc(t, `import "./helpers";
 function main(): i32 {
-    var a: i32 = Point::origin().x;
+    let a: i32 = Point::origin().x;
     return a + helpers::add5(10) + helpers::BONUS;
 }`)
 	for _, want := range []string{"Point::origin()", "helpers::add5(10)", "helpers::BONUS"} {
@@ -222,11 +222,11 @@ function main(): i32 {
 // the Var/ExprStmt, step has no trailing `;`.
 func TestFormatForLoop(t *testing.T) {
 	got := formatSrc(t, `function f(): i32 {
-		var sum = 0;
-		for (var i = 0; i < 3; i = i + 1) { sum = sum + i; }
+		let sum = 0;
+		for (let i = 0; i < 3; i = i + 1) { sum = sum + i; }
 		return sum;
 	}`)
-	if !strings.Contains(got, "for (var i = 0; i < 3; i = i + 1) {") {
+	if !strings.Contains(got, "for (let i = 0; i < 3; i = i + 1) {") {
 		t.Errorf("for-header shape lost:\n%s", got)
 	}
 }
@@ -249,7 +249,7 @@ func TestFormatForEachFormsKeepTheirSugar(t *testing.T) {
 		{"labelled-array", "each: for x in a {\n    break each;\n  }"},
 		{"nested", "for x in a {\n    for y in a {\n      t = t + x * y;\n    }\n  }"},
 	} {
-		src := "function lo(): i32 {\n  return 0;\n}\n\nfunction hi(): i32 {\n  return 4;\n}\n\nfunction f(a: i32[]): i32 {\n  var t: i32 = 0;\n  " +
+		src := "function lo(): i32 {\n  return 0;\n}\n\nfunction hi(): i32 {\n  return 4;\n}\n\nfunction f(a: i32[]): i32 {\n  let t: i32 = 0;\n  " +
 			tc.loop + "\n  return t;\n}\n"
 		if got := formatSrc(t, src); got != src {
 			t.Errorf("%s: formatted output differs from source\n--- got ---\n%s\n--- want ---\n%s", tc.name, got, src)
@@ -268,7 +268,7 @@ func TestFormatPatternForEachKeepsItsSugar(t *testing.T) {
 		{"discard", "for (a, _) in xs {\n    t = t + a;\n  }"},
 		{"labelled", "each: for (a, b, c) in xs {\n    break each;\n  }"},
 	} {
-		src := "function f(m: map[string, i32], xs: (i32, i32, i32)[], ys: ((i32, i32), i32)[]): i32 {\n  var t: i32 = 0;\n  " +
+		src := "function f(m: map[string, i32], xs: (i32, i32, i32)[], ys: ((i32, i32), i32)[]): i32 {\n  let t: i32 = 0;\n  " +
 			tc.loop + "\n  return t;\n}\n"
 		if got := formatSrc(t, src); got != src {
 			t.Errorf("%s: formatted output differs from source\n--- got ---\n%s\n--- want ---\n%s", tc.name, got, src)
@@ -319,7 +319,7 @@ func TestFormatKeepsOrPatternsInExpressionForm(t *testing.T) {
 	src := `enum Col { R, G, B }
 
 function f(c: Col): i32 {
-  var v: i32 = match (c) { Col.R | Col.G => 1, Col.B => 2 };
+  let v: i32 = match (c) { Col.R | Col.G => 1, Col.B => 2 };
   return v;
 }
 `
@@ -333,9 +333,9 @@ function f(c: Col): i32 {
 // the innermost loop.
 func TestFormatKeepsLoopLabels(t *testing.T) {
 	src := `function f(a: i32[]): i32 {
-  var t: i32 = 0;
+  let t: i32 = 0;
   outer: while (t < 10) {
-    inner: for (var i: i32 = 0; i < 3; i = i + 1) {
+    inner: for (let i: i32 = 0; i < 3; i = i + 1) {
       if (i == 2) {
         continue outer;
       }
@@ -365,7 +365,7 @@ function factorial(n: i32, acc: i32): i32 {
 	return factorial(n - 1, acc * n);
 }
 function main(): i32 {
-	var origin = Point { x: 3, y: 4 };
+	let origin = Point { x: 3, y: 4 };
 	return origin.magnitude() + factorial(5, 1);
 }`
 	first := formatSrc(t, src)
@@ -385,11 +385,11 @@ func TestFormatBlockExprBranches(t *testing.T) {
 		t.Errorf("single-expr if-branch changed:\n%s", got)
 	}
 	// Block-expr `if`-branch — leading stmt + tail, no double braces.
-	if got := formatSrc(t, `function f(e: i32): i32 { return if (e > 0) { var k = e + 1; k } else { 0 }; }`); !strings.Contains(got, "if (e > 0) { var k = e + 1; k } else { 0 }") {
+	if got := formatSrc(t, `function f(e: i32): i32 { return if (e > 0) { let k = e + 1; k } else { 0 }; }`); !strings.Contains(got, "if (e > 0) { let k = e + 1; k } else { 0 }") {
 		t.Errorf("block-expr if-branch mis-rendered:\n%s", got)
 	}
 	// Block-expr `match`-arm body; bare wildcard arm unchanged.
-	if got := formatSrc(t, `function f(tag: i32): i32 { return match (tag) { 0 => { var s = tag + 5; s }, _ => 99 }; }`); !strings.Contains(got, "0 => { var s = tag + 5; s }, _ => 99") {
+	if got := formatSrc(t, `function f(tag: i32): i32 { return match (tag) { 0 => { let s = tag + 5; s }, _ => 99 }; }`); !strings.Contains(got, "0 => { let s = tag + 5; s }, _ => 99") {
 		t.Errorf("block-expr match-arm mis-rendered:\n%s", got)
 	}
 }
@@ -415,14 +415,14 @@ func TestFormatRoundTripsThroughParser(t *testing.T) {
 		`function f(): i32 { return 1 + 2 * 3; }`,
 		`function f(a: i32, b: i32): i32 { return if (a < b) { a } else { b }; }`,
 		// Block-expression branches (slice 1): leading statement + tail.
-		`function f(e: i32): i32 { return if (e > 0) { var k = e + 1; k } else { 0 }; }`,
-		`function f(tag: i32): i32 { return match (tag) { 0 => { var s = tag + 5; s }, _ => 99 }; }`,
+		`function f(e: i32): i32 { return if (e > 0) { let k = e + 1; k } else { 0 }; }`,
+		`function f(tag: i32): i32 { return match (tag) { 0 => { let s = tag + 5; s }, _ => 99 }; }`,
 		// Typed numeric literal suffixes — formatter must round-trip.
 		`function f(): i64 { return 42i64; }`,
 		`function f(): u8 { return 7u8; }`,
 		`function f(): f64 { return 1.5f64; }`,
 		`function f(s: string): boolean { return s == "x"; }`,
-		`function f(): i32 { var a: i32[] = [1, 2, 3]; return a[1]; }`,
+		`function f(): i32 { let a: i32[] = [1, 2, 3]; return a[1]; }`,
 		`function f(n: i32): i32 {
 			if (n == 0) { return 1; }
 			while (n > 0) { n = n - 1; }
@@ -833,8 +833,8 @@ defer w.close();
 // the format is idempotent.
 func TestFormatDeferBlockRoundTrip(t *testing.T) {
 	srcs := []string{
-		`function f(): void { var x = 0; defer { x = x + 1; } }`,
-		`function f(): Result[i32, i32] { var x = 0; errdefer { x = x + 2; } return Ok(x); }`,
+		`function f(): void { let x = 0; defer { x = x + 1; } }`,
+		`function f(): Result[i32, i32] { let x = 0; errdefer { x = x + 2; } return Ok(x); }`,
 	}
 	for _, src := range srcs {
 		got := formatSrc(t, src)
@@ -890,9 +890,9 @@ func TestFormatLambdaArgumentRoundTrip(t *testing.T) {
 		// last-argument lambda — the dangling-comma case
 		`function f(): Option[string] { return check([1, 2, 3], (n: i32): boolean => { return n > 0; }); }`,
 		// lambda bound to a local
-		`function f(): i32 { var g = (x: i32): i32 => { return x + 1; }; return g(41); }`,
+		`function f(): i32 { let g = (x: i32): i32 => { return x + 1; }; return g(41); }`,
 		// multi-statement body (block form, not inlined)
-		`function f(): i32 { var g = (x: i32): i32 => { var y = x * 2; return y + 1; }; return g(20); }`,
+		`function f(): i32 { let g = (x: i32): i32 => { let y = x * 2; return y + 1; }; return g(20); }`,
 	}
 	for _, src := range srcs {
 		got := formatSrc(t, src)
@@ -965,7 +965,7 @@ func TestFormatQualifiedVariantsRoundTrip(t *testing.T) {
 	got := formatSrc(t, `enum A { Foo(i32), Bar }
 enum B { Foo(i32), Baz }
 function main(): i32 {
-	var a: A = A.Foo(11);
+	let a: A = A.Foo(11);
 	match (a) {
 		A.Foo(x) => { return x; },
 		A.Bar => { return 0; }
@@ -973,7 +973,7 @@ function main(): i32 {
 	return 0;
 }`)
 	for _, want := range []string{
-		"var a: A = A.Foo(11);",
+		"let a: A = A.Foo(11);",
 		"A.Foo(x) =>",
 		"A.Bar =>",
 	} {
@@ -1039,12 +1039,12 @@ function main(): i32 { return 0; }`)
 // the opening brace is dropped, and no blank is invented where the
 // source had none.
 func TestFormatPreservesBlankLines(t *testing.T) {
-	src := "function f(): i32 {\n\n  var x = 1;\n  var y = 2;\n\n\n  return x + y;\n}\n"
+	src := "function f(): i32 {\n\n  let x = 1;\n  let y = 2;\n\n\n  return x + y;\n}\n"
 	got := formatSrc(t, src)
 	want := strings.Join([]string{
 		"function f(): i32 {",
-		"  var x = 1;", // leading blank after `{` dropped
-		"  var y = 2;",
+		"  let x = 1;", // leading blank after `{` dropped
+		"  let y = 2;",
 		"", // the author's separator (two source blanks collapsed to one)
 		"  return x + y;",
 		"}",
@@ -1062,11 +1062,11 @@ func TestFormatPreservesBlankLines(t *testing.T) {
 // A blank line above a leading comment counts as the separator for the
 // statement the comment introduces.
 func TestFormatBlankLineAboveComment(t *testing.T) {
-	src := "function f(): i32 {\n  var x = 1;\n\n  // next group\n  return x;\n}\n"
+	src := "function f(): i32 {\n  let x = 1;\n\n  // next group\n  return x;\n}\n"
 	got := formatSrc(t, src)
 	want := strings.Join([]string{
 		"function f(): i32 {",
-		"  var x = 1;",
+		"  let x = 1;",
 		"",
 		"  // next group",
 		"  return x;",
@@ -1126,8 +1126,8 @@ func checkRejects(t *testing.T, src string) bool {
 // only a proxy for the property that matters.
 func TestFormatMustConsumeAttr(t *testing.T) {
 	for _, src := range []string{
-		"@must_consume struct Res { code: i32 } function main(): i32 { var r: Res = Res { code: 7 }; return r.code; }",
-		"@must_consume enum R { Ok, Bad } function main(): i32 { var r: R = Ok; return 0; }",
+		"@must_consume struct Res { code: i32 } function main(): i32 { let r: Res = Res { code: 7 }; return r.code; }",
+		"@must_consume enum R { Ok, Bad } function main(): i32 { let r: R = Ok; return 0; }",
 	} {
 		out := formatSrc(t, src)
 		if !strings.Contains(out, "@must_consume") {
@@ -1182,11 +1182,11 @@ func TestFormatPipeHoleRoundTrip(t *testing.T) {
 		src  string
 		want string
 	}{
-		{`function main(): i32 { var x: i32 = 3; return x |> sub(10, _); }`, `x |> sub(10, _)`},
-		{`function main(): i32 { var x: i32 = 3; return x |> sub(_, 1); }`, `x |> sub(_, 1)`},
-		{`function main(): i32 { var x: i32 = 3; return 20 |> sub(_, x |> sub(5, _)); }`, `20 |> sub(_, x |> sub(5, _))`},
+		{`function main(): i32 { let x: i32 = 3; return x |> sub(10, _); }`, `x |> sub(10, _)`},
+		{`function main(): i32 { let x: i32 = 3; return x |> sub(_, 1); }`, `x |> sub(_, 1)`},
+		{`function main(): i32 { let x: i32 = 3; return 20 |> sub(_, x |> sub(5, _)); }`, `20 |> sub(_, x |> sub(5, _))`},
 		// No hole: the existing prepended rendering is unchanged.
-		{`function main(): i32 { var x: i32 = 3; return x |> sub(10); }`, `x |> sub(10)`},
+		{`function main(): i32 { let x: i32 = 3; return x |> sub(10); }`, `x |> sub(10)`},
 	}
 	for _, c := range cases {
 		got := formatSrc(t, c.src)
@@ -1307,9 +1307,9 @@ func TestFormatKeepsDiscardBindingAsUnderscore(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"tuple_destructure", "function t(): (i32, i32) { return (1, 2); }\nfunction f(): i32 { let (_, x) = t(); return x; }", "let (_, x) = t();"},
 		{"both_discarded", "function t(): (i32, i32) { return (1, 2); }\nfunction f(): i32 { let (_, _) = t(); return 0; }", "let (_, _) = t();"},
-		{"var", "function f(): i32 { var _ = 1; return 0; }", "var _ = 1;"},
+		{"let", "function f(): i32 { let _ = 1; return 0; }", "let _ = 1;"},
 		{"param", "function f(_: i32): i32 { return 0; }", "function f(_: i32): i32 {"},
-		{"lambda_param", "function f(): i32 { var g = (_: i32): i32 => { return 0; }; return g(1); }", "(_: i32): i32 =>"},
+		{"lambda_param", "function f(): i32 { let g = (_: i32): i32 => { return 0; }; return g(1); }", "(_: i32): i32 =>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := formatSrc(t, tc.src)
@@ -1564,23 +1564,23 @@ func TestFormatKeepsListInteriorComments(t *testing.T) {
 	src := `struct S { a: i32, b: i32 }
 function g(a: i32, b: i32): i32 { return a + b; }
 function f(): i32 {
-  var xs: i32[] = [
+  let xs: i32[] = [
     // group one
     1, 2,
     // group two
     3,  // just three
   ];
-  var s: S = S {
+  let s: S = S {
     // the a field
     a: 1,
     b: 2,  // trailing
   };
-  var t: S = S { ...s,
+  let t: S = S { ...s,
     // override
     a: 3 };
-  var plain: i32[] = [1,
+  let plain: i32[] = [1,
     2];
-  var flat: i32[] = [1, 2];
+  let flat: i32[] = [1, 2];
   return g(
     xs[0],  // first
     // second
@@ -1588,27 +1588,27 @@ function f(): i32 {
   );
 }
 `
-	want := `  var xs: i32[] = [
+	want := `  let xs: i32[] = [
     // group one
     1, 2,
     // group two
     3,  // just three
   ];
-  var s: S = S {
+  let s: S = S {
     // the a field
     a: 1,
     b: 2,  // trailing
   };
-  var t: S = S {
+  let t: S = S {
     ...s,
     // override
     a: 3,
   };
-  var plain: i32[] = [
+  let plain: i32[] = [
     1,
     2,
   ];
-  var flat: i32[] = [1, 2];
+  let flat: i32[] = [1, 2];
   return g(
     xs[0],  // first
     // second
@@ -1629,12 +1629,12 @@ function f(): i32 {
 // broke; a chain written on one line stays on one line.
 func TestFormatKeepsBinaryLineBreaks(t *testing.T) {
 	src := `function f(a: i32, b: i32): boolean {
-  var s: string = "x"
+  let s: string = "x"
       + "y" + a.to_string()
       + "z";
-  var t: i32 = a +
+  let t: i32 = a +
       b;
-  var u: i32 = a + b;
+  let u: i32 = a + b;
   if (a > 0 &&
       b > 0) { return s.len() > t + u; }
   return g(a,
@@ -1642,12 +1642,12 @@ func TestFormatKeepsBinaryLineBreaks(t *testing.T) {
       || b == 2);
 }
 `
-	want := `  var s: string = "x"
+	want := `  let s: string = "x"
     + "y" + a.to_string()
     + "z";
-  var t: i32 = a
+  let t: i32 = a
     + b;
-  var u: i32 = a + b;
+  let u: i32 = a + b;
   if (a > 0
     && b > 0) {
     return s.len() > t + u;
@@ -1764,13 +1764,13 @@ func TestFormatKeepsUseSugar(t *testing.T) {
 			"  // bind the doubled value\n" +
 			"  use a <- maybe_double(start);  // trailing\n" +
 			"\n" +
-			"  var k: i32 = a * 2;\n" +
+			"  let k: i32 = a * 2;\n" +
 			"  use b <- maybe_double(k);\n" +
 			"  return Some(b + 1);\n" +
 			"}\n"},
 		{"in-lambda-body", prelude +
 			"function chain(start: i32): Option[i32] {\n" +
-			"  var f = (n: i32): Option[i32] => {\n" +
+			"  let f = (n: i32): Option[i32] => {\n" +
 			"    use a <- maybe_double(n);\n" +
 			"    return Some(a);\n" +
 			"  };\n" +

@@ -39,7 +39,7 @@ import "./util";
 // dispatches to, so `a <op> b` keeps that method even before the operator-
 // overload desugar rewrites it to an explicit call. "" for non-overloadable.
 function ts_op_method(op: string): string {
-  var named: string = ast.operator_method(op);
+  let named: string = ast.operator_method(op);
   if (named != "") {
     return named;
   }
@@ -101,7 +101,7 @@ function ts_named_tag(tag: string): boolean {
   if (tag.len() == 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < tag.len()) {
     if (!lexer.is_alnum(tag[i] as i32)) {
       return false;
@@ -141,6 +141,9 @@ function ts_routed_map_roots(): string[] {
     "__map_string_column", "__map_box_column", "__map_key_of", "__map_lookup_val",
     "__map_drop_strcols_impl", "__map_drop_boxes_impl", "__map_u8_column", "__map_cell", "__map_cell_load",
     "__map_cell_free", "__map_get_cell_impl", "__map_get_cell_f64_impl", "__map_cell_column", "__map_cell_f64_column",
+    "__map_set_keyed_impl", "__map_has_keyed_impl", "__map_get_keyed_impl", "__map_get_or_keyed_impl",
+    "__map_delete_keyed_impl", "__map_lookup_val_keyed", "__map_key_of_keyed", "__map_drop_keyed_impl",
+    "__map_get_cell_keyed_impl", "__map_get_cell_f64_keyed_impl",
   ];
 }
 
@@ -155,13 +158,13 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       return acc.append(ts_free_root(id.name));
     },
     ast.ExprBinary(b) => {
-      var m: string = ts_op_method(b.op);
+      let m: string = ts_op_method(b.op);
       if (m.len() == 0) {
         return acc;
       }
       // Qualified where the tag identifies the impl, bare otherwise.
       if (ts_op_overloads(b.op)) {
-        var bt: string = ts_recv_tag(b.left);
+        let bt: string = ts_recv_tag(b.left);
         if (bt.len() > 0) {
           return acc.append(ts_qualified_root(bt, m));
         }
@@ -177,7 +180,7 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       if (u.op != "-") {
         return acc;
       }
-      var ut: string = ts_recv_tag(u.operand);
+      let ut: string = ts_recv_tag(u.operand);
       if (ut.len() > 0) {
         return acc.append(ts_qualified_root(ut, "neg"));
       }
@@ -199,7 +202,7 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       // `print(q)` — keeps Q's method and not every type's. A receiver with no
       // stamp, or a composite one (`dyn Display`, `Map[…]`), stays bare.
       if (ts_recv_rooted(fa.field)) {
-        var ft: string = util.base_type_name(ts_recv_tag(fa.obj));
+        let ft: string = util.base_type_name(ts_recv_tag(fa.obj));
         if (ts_named_tag(ft)) {
           return acc.append(ts_qualified_root(ft, fa.field));
         }
@@ -265,7 +268,7 @@ function ts_names_stmt(st: ast.Stmt, own acc: string[]): string[] {
 
 // ts_func_names appends every name function `fd`'s body references to `acc`.
 function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fd.body.len()) {
     acc = ts_names_stmt(fd.body[i], acc);
     i = i + 1;
@@ -285,11 +288,11 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
 // string concatenation at every field access in the program, and the bare `<m>`
 // the concatenation was appended alongside is already in `refs`.
 function ts_array_method_name(name: string): string {
-  var marker: string = "__method_Array_";
+  let marker: string = "__method_Array_";
   if (name.len() < marker.len()) {
     return "";
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i <= name.len() - marker.len()) {
     if (slice_unchecked(name, i, i + marker.len()) == marker) {
       return slice_unchecked(name, i + marker.len(), name.len()) + "";
@@ -311,8 +314,8 @@ function ts_array_method_name(name: string): string {
 // ordinary name cannot be mistaken for one: module mangling joins with `__`,
 // and a `.` reaches a FuncDecl name only from claim_method_name.
 function ts_interposed_method_name(name: string): string {
-  var last_dot: i32 = 0 - 1;
-  var i: i32 = 0;
+  let last_dot: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < name.len()) {
     if (name[i] == b'.') {
       last_dot = i;
@@ -340,7 +343,7 @@ function ts_recv_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
   if (fd.receiver_type.len() == 0) {
     return false;
   }
-  var base: string = util.base_type_name(fd.receiver_type);
+  let base: string = util.base_type_name(fd.receiver_type);
   if (base.len() == 0) {
     return false;
   }
@@ -363,7 +366,7 @@ pub struct RefSet { names: string[], head: i32[], next: i32[] }
 // they reach — the two halves of the shake's reachability, for a caller walking
 // a call graph function by function (ambient.fern). A method is reached only by
 // a method or operator spelling: a bare name is a local or a free function, as
-// native's call graph reads it, so `var close` does not reach a `close` method.
+// native's call graph reads it, so `let close` does not reach a `close` method.
 // A bare name `fd`'s own parameters, receiver or declarations bind reaches
 // nothing: a local spelled like a free function is not a reference to it. A
 // method spelled on a receiver of known declared type reaches that type's
@@ -372,35 +375,35 @@ pub struct RefSet { names: string[], head: i32[], next: i32[] }
 pub struct BodyRefs { any: RefSet, methods: RefSet }
 
 pub function body_refs(fd: parser.FuncDecl): BodyRefs {
-  var lt: LocalTypes = local_types(fd);
+  let lt: LocalTypes = local_types(fd);
   function method_of(e: ast.Expr, own acc: string[]): string[] {
     return method_name_of(e, lt, acc);
   }
-  var methods: string[] = [];
+  let methods: string[] = [];
   // The bare spellings too: an array-method helper (`__method_Array_join`)
   // and an interposed trait method (`B.scale`) are reached by `.join` and
   // `.scale` alone, which no qualified root names.
-  var bare: string[] = [];
-  var i: i32 = 0;
+  let bare: string[] = [];
+  let i: i32 = 0;
   while (i < fd.body.len()) {
     methods = astwalk.fold_stmt(fd.body[i], methods, method_of);
     bare = astwalk.fold_stmt(fd.body[i], bare, ts_method_name_of);
     i = i + 1;
   }
-  var bound: string[] = [];
+  let bound: string[] = [];
   if (fd.receiver_name.len() > 0) {
     bound = bound.append(fd.receiver_name);
   }
-  var pi: i32 = 0;
+  let pi: i32 = 0;
   while (pi < fd.params.len()) {
     bound = bound.append(fd.params[pi].name);
     pi = pi + 1;
   }
-  var any: string[] = [];
+  let any: string[] = [];
   any = util.append_all(any, methods);
   any = util.append_all(any, bare);
-  var free: string[] = astwalk.collect_free_idents(bound, fd.body, []);
-  var fi: i32 = 0;
+  let free: string[] = astwalk.collect_free_idents(bound, fd.body, []);
+  let fi: i32 = 0;
   while (fi < free.len()) {
     any = any.append(ts_free_root(free[fi]));
     fi = fi + 1;
@@ -409,12 +412,12 @@ pub function body_refs(fd: parser.FuncDecl): BodyRefs {
 }
 
 // LocalTypes pairs the names a function binds with a declared type — its
-// receiver, its parameters and every annotated `var` — with that type. A
+// receiver, its parameters and every annotated `let` — with that type. A
 // type parameter, and a name bound again under another spelling, map to "".
 struct LocalTypes { names: string[], types: string[] }
 
 function lt_bind(own lt: LocalTypes, name: string, ty: string): LocalTypes {
-  var k: i32 = util.index_of_str(lt.names, name);
+  let k: i32 = util.index_of_str(lt.names, name);
   if (k < 0) {
     return LocalTypes { names: lt.names.append(name), types: lt.types.append(ty) };
   }
@@ -440,13 +443,13 @@ function lt_stmt(st: ast.Stmt, own lt: LocalTypes): LocalTypes {
 }
 
 function local_types(fd: parser.FuncDecl): LocalTypes {
-  var lt: LocalTypes = LocalTypes { names: [], types: [] };
+  let lt: LocalTypes = LocalTypes { names: [], types: [] };
   if (fd.receiver_name.len() > 0) {
     lt = lt_bind(lt, fd.receiver_name, fd.receiver_type);
   }
-  var pi: i32 = 0;
+  let pi: i32 = 0;
   while (pi < fd.params.len()) {
-    var ty: string = fd.params[pi].type_name;
+    let ty: string = fd.params[pi].type_name;
     if (util.base_type_name(ty) == "Self") {
       ty = fd.receiver_type;
     }
@@ -456,7 +459,7 @@ function local_types(fd: parser.FuncDecl): LocalTypes {
     lt = lt_bind(lt, fd.params[pi].name, ty);
     pi = pi + 1;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fd.body.len()) {
     lt = astwalk.fold_stmt_spine(fd.body[i], lt, lt_stmt);
     i = i + 1;
@@ -470,9 +473,9 @@ function local_types(fd: parser.FuncDecl): LocalTypes {
 function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[] {
   if let ast.ExprFieldAccess(fa) = e {
     if let ast.ExprIdent(id) = fa.obj {
-      var k: i32 = util.index_of_str(lt.names, id.name);
+      let k: i32 = util.index_of_str(lt.names, id.name);
       if (k >= 0) {
-        var base: string = util.base_type_name(lt.types[k]);
+        let base: string = util.base_type_name(lt.types[k]);
         if (ts_named_tag(base)) {
           return acc.append(ts_qualified_root(base, fa.field));
         }
@@ -484,8 +487,8 @@ function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[
 
 // free_names is the receiver-less functions `br` names.
 pub function free_names(br: BodyRefs): string[] {
-  var out: string[] = [];
-  var root: string = ts_free_root("");
+  let out: string[] = [];
+  let root: string = ts_free_root("");
   for n in br.any.names {
     if (util.str_has_prefix(n, root)) {
       out = out.append(slice_unchecked(n, root.len(), n.len()) + "");
@@ -502,7 +505,7 @@ pub function refs_name(br: BodyRefs, fd: parser.FuncDecl): boolean {
     if (refset_has(br.methods, ts_qualified_root(util.base_type_name(fd.receiver_type), fd.name))) {
       return true;
     }
-    var im: string = ts_interposed_method_name(fd.name);
+    let im: string = ts_interposed_method_name(fd.name);
     return im.len() > 0 && refset_has(br.any, im);
   }
   // A free function is named by a bare identifier: `plat.log` is a method
@@ -511,11 +514,11 @@ pub function refs_name(br: BodyRefs, fd: parser.FuncDecl): boolean {
   if (refset_has(br.any, ts_free_root(fd.name))) {
     return true;
   }
-  var m: string = ts_array_method_name(fd.name);
+  let m: string = ts_array_method_name(fd.name);
   if (m.len() > 0 && refset_has(br.any, m)) {
     return true;
   }
-  var im: string = ts_interposed_method_name(fd.name);
+  let im: string = ts_interposed_method_name(fd.name);
   return im.len() > 0 && refset_has(br.any, im);
 }
 
@@ -531,17 +534,17 @@ function ts_buckets(): i32 {
 }
 
 function refset_of(names: string[]): RefSet {
-  var head: i32[] = [];
-  var b: i32 = 0;
-  var nb: i32 = ts_buckets();
+  let head: i32[] = [];
+  let b: i32 = 0;
+  let nb: i32 = ts_buckets();
   while (b < nb) {
     head = head.append(0 - 1);
     b = b + 1;
   }
-  var next: i32[] = [];
-  var k: i32 = 0;
+  let next: i32[] = [];
+  let k: i32 = 0;
   while (k < names.len()) {
-    var bk: i32 = util.hash_bucket(names[k], nb);
+    let bk: i32 = util.hash_bucket(names[k], nb);
     next = next.append(head[bk]);
     head = head.with(bk, k);
     k = k + 1;
@@ -550,7 +553,7 @@ function refset_of(names: string[]): RefSet {
 }
 
 function refset_has(rs: RefSet, name: string): boolean {
-  var i: i32 = rs.head[util.hash_bucket(name, rs.head.len())];
+  let i: i32 = rs.head[util.hash_bucket(name, rs.head.len())];
   while (i >= 0) {
     if (rs.names[i] == name) {
       return true;
@@ -561,10 +564,10 @@ function refset_has(rs: RefSet, name: string): boolean {
 }
 
 function refset_add(rs: RefSet, name: string): RefSet {
-  var bk: i32 = util.hash_bucket(name, rs.head.len());
-  var names: string[] = rs.names.append(name);
-  var next: i32[] = rs.next.append(rs.head[bk]);
-  var head: i32[] = rs.head.with(bk, names.len() - 1);
+  let bk: i32 = util.hash_bucket(name, rs.head.len());
+  let names: string[] = rs.names.append(name);
+  let next: i32[] = rs.next.append(rs.head[bk]);
+  let head: i32[] = rs.head.with(bk, names.len() - 1);
   return RefSet { names: names, head: head, next: next };
 }
 
@@ -579,11 +582,11 @@ function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
   if (fd.receiver_type.len() == 0 && refset_has(refs, ts_free_root(fd.name))) {
     return true;
   }
-  var m: string = ts_array_method_name(fd.name);
+  let m: string = ts_array_method_name(fd.name);
   if (m.len() > 0 && refset_has(refs, m)) {
     return true;
   }
-  var im: string = ts_interposed_method_name(fd.name);
+  let im: string = ts_interposed_method_name(fd.name);
   if (im.len() > 0 && refset_has(refs, im)) {
     return true;
   }
@@ -615,18 +618,18 @@ struct TsGrown { rs: RefSet, pending: i32[] }
 // and leaves `pending`. The names a body references do not change between
 // rounds, so each function contributes once.
 function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
-  var rs: RefSet = rs0;
-  var pending: i32[] = pending0;
-  var changed: boolean = true;
+  let rs: RefSet = rs0;
+  let pending: i32[] = pending0;
+  let changed: boolean = true;
   while (changed) {
     changed = false;
-    var still: i32[] = [];
-    var pi: i32 = 0;
+    let still: i32[] = [];
+    let pi: i32 = 0;
     while (pi < pending.len()) {
-      var fi: i32 = pending[pi];
+      let fi: i32 = pending[pi];
       if (ts_kept_name(mod.funcs[fi], rs)) {
-        var body_names: string[] = ts_func_names(mod.funcs[fi], []);
-        var bi: i32 = 0;
+        let body_names: string[] = ts_func_names(mod.funcs[fi], []);
+        let bi: i32 = 0;
         while (bi < body_names.len()) {
           if (!refset_has(rs, body_names[bi])) {
             rs = refset_add(rs, body_names[bi]);
@@ -654,7 +657,7 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
     || refset_has(rs, "__map_new_i32") || refset_has(rs, ts_free_root("__map_new_i32"))) {
     return true;
   }
-  var map_types: string[] = ts_map_types(mod.structs);
+  let map_types: string[] = ts_map_types(mod.structs);
   for fd in mod.funcs {
     if (ts_kept_name(fd, rs) && ts_mentions_any(ts_sig_types(fd), map_types)) {
       return true;
@@ -667,12 +670,12 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
       }
     }
   }
-  var all: parser.StructDecl[] = parser.inject_builtin_enums(mod.structs);
-  var bi: i32 = mod.structs.len();
+  let all: parser.StructDecl[] = parser.inject_builtin_enums(mod.structs);
+  let bi: i32 = mod.structs.len();
   while (bi < all.len()) {
-    var variant: parser.StructDecl = all[bi];
+    let variant: parser.StructDecl = all[bi];
     bi = bi + 1;
-    var owner: string = variant.enum_owner;
+    let owner: string = variant.enum_owner;
     if (owner.len() == 0) {
       owner = variant.name;
     }
@@ -691,13 +694,13 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
 // enum a variant of which holds one. Those variants are injected after this
 // pass (parser.inject_builtin_enums), so `mod.structs` does not show them.
 function ts_map_types(declared: parser.StructDecl[]): string[] {
-  var out: string[] = ["Map["];
-  var all: parser.StructDecl[] = parser.inject_builtin_enums(declared);
-  var i: i32 = declared.len();
+  let out: string[] = ["Map["];
+  let all: parser.StructDecl[] = parser.inject_builtin_enums(declared);
+  let i: i32 = declared.len();
   while (i < all.len()) {
-    var st: parser.StructDecl = all[i];
+    let st: parser.StructDecl = all[i];
     i = i + 1;
-    var owner: string = st.enum_owner;
+    let owner: string = st.enum_owner;
     if (owner.len() == 0) {
       owner = st.name;
     }
@@ -724,7 +727,7 @@ function ts_mentions_any(types: string[], names: string[]): boolean {
 // ts_sig_types are the parameter and return types of a function and of every
 // lambda or nested function in its body.
 function ts_sig_types(fd: parser.FuncDecl): string[] {
-  var types: string[] = [fd.ret_type];
+  let types: string[] = [fd.ret_type];
   for p in fd.params {
     types = types.append(p.type_name);
   }
@@ -748,13 +751,13 @@ function ts_lambda_sig_types(e: ast.Expr, own acc: string[]): string[] {
 
 pub function treeshake(mod: parser.Module): parser.Module {
   // Seed the reachable-name set from the roots.
-  var refs: string[] = ["main"];
-  var ti: i32 = 0;
+  let refs: string[] = ["main"];
+  let ti: i32 = 0;
   while (ti < mod.top_stmts.len()) {
     refs = ts_names_stmt(mod.top_stmts[ti], refs);
     ti = ti + 1;
   }
-  var ei: i32 = 0;
+  let ei: i32 = 0;
   while (ei < mod.exports.len()) {
     refs = refs.append(mod.exports[ei].func_name);
     ei = ei + 1;
@@ -767,10 +770,10 @@ pub function treeshake(mod: parser.Module): parser.Module {
   // it on whether a live function can hold a `C` is type reachability this
   // pass does not compute. `trait_name` is already the simple name here, so
   // `impl mem.Drop for W` matches without demangling.
-  var di: i32 = 0;
+  let di: i32 = 0;
   while (di < mod.impls.len()) {
     if (mod.impls[di].trait_name == "Drop") {
-      var dm: i32 = 0;
+      let dm: i32 = 0;
       while (dm < mod.impls[di].method_names.len()) {
         refs = refs.append(mod.impls[di].method_names[dm]);
         dm = dm + 1;
@@ -796,14 +799,14 @@ pub function treeshake(mod: parser.Module): parser.Module {
   // synthesise take the ENUM as their receiver, so a variant roots the
   // methods of its owner: `Tag.hash` on `@derive(cmp.Hash) enum Tag` was
   // shaken away whenever nothing else in the program spelled a `.hash()`.
-  var si: i32 = 0;
+  let si: i32 = 0;
   while (si < mod.structs.len()) {
     if (mod.structs[si].derives.len() > 0) {
-      var owner: string = mod.structs[si].name;
+      let owner: string = mod.structs[si].name;
       if (mod.structs[si].enum_owner.len() > 0) {
         owner = mod.structs[si].enum_owner;
       }
-      var fj: i32 = 0;
+      let fj: i32 = 0;
       while (fj < mod.funcs.len()) {
         if (mod.funcs[fj].receiver_type == owner) {
           refs = refs.append(mod.funcs[fj].name);
@@ -818,7 +821,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
   // component-level export the wasm path lifts it as. A body-less
   // `@import(...) async` declaration is an import instead, and is excluded by
   // the same `import_iface` test native uses.
-  var ai: i32 = 0;
+  let ai: i32 = 0;
   while (ai < mod.funcs.len()) {
     if (mod.funcs[ai].async && mod.funcs[ai].import_iface.len() == 0) {
       refs = refs.append(mod.funcs[ai].name);
@@ -839,16 +842,16 @@ pub function treeshake(mod: parser.Module): parser.Module {
   // rather than one in total. On the compiler compiling itself (6,259
   // functions) that was 26 s of the 82 s compile; contributing once takes the
   // pass to under a second and leaves the result identical.
-  var pending: i32[] = [];
-  var pi0: i32 = 0;
+  let pending: i32[] = [];
+  let pi0: i32 = 0;
   while (pi0 < mod.funcs.len()) {
     pending = pending.append(pi0);
     pi0 = pi0 + 1;
   }
 
-  var grown: TsGrown = ts_grow(mod, refset_of(refs), pending);
+  let grown: TsGrown = ts_grow(mod, refset_of(refs), pending);
   if (ts_reaches_map(mod, grown.rs)) {
-    var rs0: RefSet = grown.rs;
+    let rs0: RefSet = grown.rs;
     for root in ts_routed_map_roots() {
       if (!refset_has(rs0, root)) {
         rs0 = refset_add(rs0, root);
@@ -856,11 +859,11 @@ pub function treeshake(mod: parser.Module): parser.Module {
     }
     grown = ts_grow(mod, rs0, grown.pending);
   }
-  var rs: RefSet = grown.rs;
+  let rs: RefSet = grown.rs;
 
   // Keep only the reachable functions.
-  var kept: parser.FuncDecl[] = [];
-  var ki: i32 = 0;
+  let kept: parser.FuncDecl[] = [];
+  let ki: i32 = 0;
   while (ki < mod.funcs.len()) {
     if (ts_kept_name(mod.funcs[ki], rs)) {
       kept = kept.append(mod.funcs[ki]);

@@ -15,7 +15,7 @@ import "testing"
 const stringOrderingProgram = `import "std/string";
 
 function main(): i32 {
-    var abc: string = "abc";
+    let abc: string = "abc";
     // First differing byte decides.
     if (!(abc < "abd")) { return 1; }
     if (!("abd" > abc)) { return 2; }
@@ -38,8 +38,8 @@ function main(): i32 {
     if (!("a" < "\xc3\xa9")) { return 14; }
     // Long operands exercise the heap form on both sides, past whatever
     // small-string threshold the target uses.
-    var long1: string = "the quick brown fox jumps over the lazy dog";
-    var long2: string = "the quick brown fox jumps over the lazy dogs";
+    let long1: string = "the quick brown fox jumps over the lazy dog";
+    let long2: string = "the quick brown fox jumps over the lazy dogs";
     if (!(long1 < long2)) { return 15; }
     if (!(long2 > long1)) { return 16; }
     if (long1 < "the quick brown fox jumps over the lazy doa") { return 17; }
@@ -49,15 +49,15 @@ function main(): i32 {
     if (!("abb" < ("ab" + "c"))) { return 19; }
     if (!(("ab" + "c") <= ("ab" + "c"))) { return 20; }
     // A str view compares by contents on either side, same as ` + "`==`" + `.
-    var v: str = abc;
+    let v: str = abc;
     if (!(v < "abd")) { return 21; }
     if (!("ab" < v)) { return 22; }
     if (!(v <= abc)) { return 23; }
     // Ordering in a loop, driving the comparison through non-constant
     // operands so no constant fold can stand in for the runtime helper.
-    var words: string[] = ["delta", "alpha", "charlie", "bravo"];
-    var sorted: i32 = 0;
-    var i: i32 = 1;
+    let words: string[] = ["delta", "alpha", "charlie", "bravo"];
+    let sorted: i32 = 0;
+    let i: i32 = 1;
     while (i < words.len()) {
         if (words[i - 1] < words[i]) { sorted = sorted + 1; }
         i = i + 1;

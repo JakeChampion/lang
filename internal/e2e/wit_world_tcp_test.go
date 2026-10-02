@@ -52,12 +52,12 @@ func TestComposeTcpFromWorld(t *testing.T) {
 	dir := t.TempDir()
 
 	src := strings.Replace(`function main(): i32 {
-    var sock = tcp_listen(__PORT__);
+    let sock = tcp_listen(__PORT__);
     if (sock < 0) { return 1; }
-    var conn = tcp_accept(sock);
+    let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    var msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
-    var sent = tcp_send(conn, msg);
+    let msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
+    let sent = tcp_send(conn, msg);
     if (sent < 0) { return 3; }
     tcp_close(conn);
     tcp_close(sock);

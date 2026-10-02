@@ -33,7 +33,7 @@ func TestSelfHostDeferTryOpBailsRatherThanRecursing(t *testing.T) {
     return None;
 }
 function build(): Option[i32] {
-    var n: i32 = 0;
+    let n: i32 = 0;
     defer n = g(n)?;
     return Some(n);
 }

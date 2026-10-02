@@ -40,7 +40,7 @@ import (
 // platforms.fern withholds both builtins on `sched`.
 func prioritySelfHostSource() string {
 	return `function main(): i32 {
-    var orig: i32 = priority();
+    let orig: i32 = priority();
     match (set_priority(19)) {
         Ok(_) => {},
         Err(_) => { return 2; }

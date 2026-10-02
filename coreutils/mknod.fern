@@ -66,7 +66,7 @@ function s_ifblk(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... NAME TYPE [MAJOR MINOR]\n";
   out = out + "Create the special file NAME of the given TYPE.\n";
   out = out + "\n";
@@ -106,17 +106,17 @@ function security_context(named: boolean): void {
 struct Scan { mode_text: string, mode_given: boolean }
 
 function scan_options(): (Scan, string[]) {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   // Declaration order is visible: `mknod --=x` lists the long options in
   // it, and `--context` stands first.
   opts = opts.append(gnu.optional("", "context", opt_context()));
   opts = opts.append(gnu.valued("m", "mode", opt_mode()));
   opts = opts.append(gnu.flag("Z", "", opt_z()));
 
-  var s: Scan = Scan { mode_text: "", mode_given: false };
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "mknod", help_text(), 1);
+  let s: Scan = Scan { mode_text: "", mode_given: false };
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "mknod", help_text(), 1);
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -141,9 +141,9 @@ function scan_options(): (Scan, string[]) {
 function compile_mode(text: string): i32 {
   match (mode.compile(text)) {
     Some(c) => {
-      var mask: i32 = umask(0);
+      let mask: i32 = umask(0);
       umask(mask);
-      var a: mode.Adjusted = c.adjust(438, false, mask);
+      let a: mode.Adjusted = c.adjust(438, false, mask);
       if ((a.mode & mode.complement(mode.s_irwxugo())) != 0) {
         gnu.error("mode must specify only file permission bits");
         exit(1);
@@ -165,25 +165,25 @@ function compile_mode(text: string): i32 {
 // whole string has to be consumed. `what` is the half of the pair being
 // read, which is the only difference between the two diagnostics.
 function parse_dev(s: string, what: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
     i = i + 1;
   }
   if (i < s.len() && s[i] as i32 == 43) {
     i = i + 1;
   }
-  var base: i32 = 10;
+  let base: i32 = 10;
   if (i + 1 < s.len() && s[i] as i32 == 48 && (s[i + 1] as i32 == 120 || s[i + 1] as i32 == 88)) {
     base = 16;
     i = i + 2;
   } else if (i < s.len() && s[i] as i32 == 48) {
     base = 8;
   }
-  var start: i32 = i;
-  var v: u64 = 0 as u64;
-  var over: boolean = false;
+  let start: i32 = i;
+  let v: u64 = 0 as u64;
+  let over: boolean = false;
   while (i < s.len()) {
-    var d: i32 = digit_value(s[i] as i32);
+    let d: i32 = digit_value(s[i] as i32);
     if (d < 0 || d >= base) {
       break;
     }
@@ -252,7 +252,7 @@ function node_type(t: string): i32 {
   if (t.len() == 0) {
     return 0 - 1;
   }
-  var c: i32 = t[0] as i32;
+  let c: i32 = t[0] as i32;
   if (c == 98) {
     return s_ifblk();
   }
@@ -315,28 +315,28 @@ function make_special(op: string[], perm: i32): void {
   if (op.len() > 4) {
     gnu.die_usage("extra operand " + gnu.quote(op[4]), 1);
   }
-  var kind: i32 = node_type(op[1]);
+  let kind: i32 = node_type(op[1]);
   if (kind < 0) {
     gnu.die_usage("invalid device type " + gnu.quote(op[1]), 1);
   }
-  var major: i32 = parse_dev(op[2], "major");
-  var minor: i32 = parse_dev(op[3], "minor");
+  let major: i32 = parse_dev(op[2], "major");
+  let minor: i32 = parse_dev(op[3], "minor");
   make(op[0], perm | kind, major, minor);
 }
 
 pub function main(): i32 {
-  var scanned: (Scan, string[]) = scan_options();
-  var s: Scan = scanned.0;
+  let scanned: (Scan, string[]) = scan_options();
+  let s: Scan = scanned.0;
 
   // The MODE is read before the operand count, so `mknod -m bogus` is
   // the bad mode rather than the missing operand — which is the other
   // way round from mkfifo.
-  var perm: i32 = 438;
+  let perm: i32 = 438;
   if (s.mode_given) {
     perm = compile_mode(s.mode_text);
   }
 
-  var op: string[] = scanned.1;
+  let op: string[] = scanned.1;
   if (op.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }

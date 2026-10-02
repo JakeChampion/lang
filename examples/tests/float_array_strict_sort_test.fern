@@ -11,22 +11,22 @@ import "std/test";
 //     monotonic (sorted AND unique in one helper).
 
 function test_f64_array_pass(): test.TestOutcome {
-  var actual: f64[] = [1.0, 2.5, 3.7];
-  var expected: f64[] = [1.0, 2.5, 3.7];
+  let actual: f64[] = [1.0, 2.5, 3.7];
+  let expected: f64[] = [1.0, 2.5, 3.7];
   return test.assert_eq_f64_array_near(actual, expected, 0.0001);
 }
 
 function test_f64_array_within_tolerance(): test.TestOutcome {
   // Cumulative-rounding-style drift the tolerance must
   // absorb.
-  var actual: f64[] = [1.0 + 0.0001, 2.5, 3.7 - 0.0001];
-  var expected: f64[] = [1.0, 2.5, 3.7];
+  let actual: f64[] = [1.0 + 0.0001, 2.5, 3.7 - 0.0001];
+  let expected: f64[] = [1.0, 2.5, 3.7];
   return test.assert_eq_f64_array_near(actual, expected, 0.001);
 }
 
 function test_f64_array_outside_tolerance(): test.TestOutcome {
-  var actual: f64[] = [1.0, 5.0, 3.0];
-  var expected: f64[] = [1.0, 2.5, 3.0];
+  let actual: f64[] = [1.0, 5.0, 3.0];
+  let expected: f64[] = [1.0, 2.5, 3.0];
   match (test.assert_eq_f64_array_near(actual, expected, 0.1)) {
     Pass => {
       return test.fail("expected mismatch");
@@ -41,8 +41,8 @@ function test_f64_array_outside_tolerance(): test.TestOutcome {
 }
 
 function test_f64_array_length_mismatch(): test.TestOutcome {
-  var actual: f64[] = [1.0, 2.0];
-  var expected: f64[] = [1.0, 2.0, 3.0];
+  let actual: f64[] = [1.0, 2.0];
+  let expected: f64[] = [1.0, 2.0, 3.0];
   match (test.assert_eq_f64_array_near(actual, expected, 0.001)) {
     Pass => {
       return test.fail("expected length-mismatch fail");
@@ -57,10 +57,10 @@ function test_f64_array_length_mismatch(): test.TestOutcome {
 }
 
 function test_f64_array_nan_fails(): test.TestOutcome {
-  var z: f64 = 0.0;
-  var nan: f64 = z / z;
-  var actual: f64[] = [1.0, nan, 3.0];
-  var expected: f64[] = [1.0, 2.0, 3.0];
+  let z: f64 = 0.0;
+  let nan: f64 = z / z;
+  let actual: f64[] = [1.0, nan, 3.0];
+  let expected: f64[] = [1.0, 2.0, 3.0];
   match (test.assert_eq_f64_array_near(actual, expected, 100.0)) {
     Pass => {
       return test.fail("NaN should fail array compare");
@@ -75,8 +75,8 @@ function test_f64_array_nan_fails(): test.TestOutcome {
 }
 
 function test_f32_array_pass(): test.TestOutcome {
-  var actual: f32[] = [1.0 as f32, 2.0 as f32];
-  var expected: f32[] = [1.0 as f32, 2.0 as f32];
+  let actual: f32[] = [1.0 as f32, 2.0 as f32];
+  let expected: f32[] = [1.0 as f32, 2.0 as f32];
   return test.assert_eq_f32_array_near(actual, expected, 0.0001 as f32);
 }
 
@@ -127,7 +127,7 @@ function test_strict_asc_i32_fails_on_dupe(): test.TestOutcome {
 }
 
 function test_strict_asc_i32_empty_vacuous(): test.TestOutcome {
-  var empty: i32[] = [];
+  let empty: i32[] = [];
   return test.assert_strictly_sorted_asc(empty);
 }
 
@@ -147,7 +147,7 @@ function test_strict_asc_string_fails_on_dupe(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("float arrays + strict / desc sort");
+  let r: test.TestRunner = test.test_new("float arrays + strict / desc sort");
   r = r.it("f64 array near pass", test_f64_array_pass);
   r = r.it("f64 array within tolerance", test_f64_array_within_tolerance);
   r = r.it("f64 array outside tolerance + idx", test_f64_array_outside_tolerance);

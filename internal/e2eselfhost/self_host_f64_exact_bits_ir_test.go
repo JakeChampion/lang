@@ -90,21 +90,21 @@ func f64ExactBitsCases() []struct {
 		// The tie: 2^53+1 rounds to 2^53 (even), so it equals 2^53. GNU as's
 		// half-up rounding of `.double` got this wrong; exact bits get it right.
 		{"tie-2p53",
-			`function main(): i32 { var x: f64 = 9007199254740993.0; var y: f64 = 9007199254740992.0; if (x == y) { return 42; } return 1; }`},
+			`function main(): i32 { let x: f64 = 9007199254740993.0; let y: f64 = 9007199254740992.0; if (x == y) { return 42; } return 1; }`},
 		// A neighbouring tie one binade up: 2^54+2 rounds to 2^54 (even).
 		{"tie-2p54",
-			`function main(): i32 { var x: f64 = 18014398509481986.0; var y: f64 = 18014398509481984.0; if (x == y) { return 42; } return 1; }`},
+			`function main(): i32 { let x: f64 = 18014398509481986.0; let y: f64 = 18014398509481984.0; if (x == y) { return 42; } return 1; }`},
 		// 17-significant-digit round-trip spelling of 0.1 must equal 0.1.
 		{"rt-0p1",
-			`function main(): i32 { var x: f64 = 0.10000000000000001; var y: f64 = 0.1; if (x == y) { return 42; } return 1; }`},
+			`function main(): i32 { let x: f64 = 0.10000000000000001; let y: f64 = 0.1; if (x == y) { return 42; } return 1; }`},
 		// Sanity: ordinary literals still compute correctly through the new path.
 		{"ordinary",
-			`function main(): i32 { var a: f64 = 1.5; var b: f64 = 2.5; return (a + b) as i32; }`},
+			`function main(): i32 { let a: f64 = 1.5; let b: f64 = 2.5; return (a + b) as i32; }`},
 		// A constant whose LOW 32-bit half is exactly 0x80000000 (1 + 2^-21 =
 		// bits 0x3FF0000080000000). util.i32_to_string's generic sign flip
 		// wraps on INT32_MIN and rendered the half as a bare "-", so the emit
 		// produced `.long -, 1072693248` and gcc rejected the .s outright.
 		{"int32min-low-half",
-			`function main(): i32 { var x: f64 = 1.000000476837158203125; if (x > 1.0) { return 42; } return 1; }`},
+			`function main(): i32 { let x: f64 = 1.000000476837158203125; if (x > 1.0) { return 42; } return 1; }`},
 	}
 }

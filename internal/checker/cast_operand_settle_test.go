@@ -21,23 +21,23 @@ func TestCastSettlesPolymorphicOperandAtSignedI32(t *testing.T) {
 		decl      string
 		wantWidth int
 	}{
-		{"subtract to f64", "var v: f64 = (3 - 4) as f64;", 32},
-		{"subtract to f32", "var v: f32 = (3 - 4) as f32;", 32},
-		{"negative divide narrowed to u8", "var v: u8 = ((0 - 7) / 2) as u8;", 32},
-		{"arithmetic to char", "var v: char = (0 - 7 + 72) as char;", 32},
+		{"subtract to f64", "let v: f64 = (3 - 4) as f64;", 32},
+		{"subtract to f32", "let v: f32 = (3 - 4) as f32;", 32},
+		{"negative divide narrowed to u8", "let v: u8 = ((0 - 7) / 2) as u8;", 32},
+		{"arithmetic to char", "let v: char = (0 - 7 + 72) as char;", 32},
 		// A committed operand keeps its own type; the i32 stand-in is only
 		// for one that nothing has settled yet.
-		{"i64 operand stays i64", "var v: f64 = (x - 4611686018427387904) as f64;", 64},
+		{"i64 operand stays i64", "let v: f64 = (x - 4611686018427387904) as f64;", 64},
 		// An unsettled operand holding a literal past i32 range takes the
-		// i64 default instead — the reading `var t = 3 - 4611686018427387904`
+		// i64 default instead — the reading `let t = 3 - 4611686018427387904`
 		// gets (#8668) — rather than an E047 the bare `4611686018427387904 as
 		// f64` never got.
-		{"wide literal widens the operand", "var v: f64 = (3 - 4611686018427387904) as f64;", 64},
-		{"wide literal widens a narrowing operand", "var v: u8 = (4611686018427387904 % 256) as u8;", 64},
+		{"wide literal widens the operand", "let v: f64 = (3 - 4611686018427387904) as f64;", 64},
+		{"wide literal widens a narrowing operand", "let v: u8 = (4611686018427387904 % 256) as u8;", 64},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			prog, err := parser.Parse("function main(): i32 {\n    var x: i64 = 3;\n    " + c.decl + "\n    return 0;\n}\n")
+			prog, err := parser.Parse("function main(): i32 {\n    let x: i64 = 3;\n    " + c.decl + "\n    return 0;\n}\n")
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
@@ -60,7 +60,7 @@ func TestCastSettlesPolymorphicOperandAtSignedI32(t *testing.T) {
 // literal only i64 can hold is an E047 naming i32 — never u32, and never a
 // silent widening of the variable.
 func TestCastOperandLiteralRangeIsJudgedAtI32(t *testing.T) {
-	err := checkSource(t, "function main(): i32 {\n    var a: i32 = 3;\n    var v: f64 = (a - 4611686018427387904) as f64;\n    return 0;\n}\n")
+	err := checkSource(t, "function main(): i32 {\n    let a: i32 = 3;\n    let v: f64 = (a - 4611686018427387904) as f64;\n    return 0;\n}\n")
 	if err == nil {
 		t.Fatal("accepted, want E047")
 	}
@@ -69,7 +69,7 @@ func TestCastOperandLiteralRangeIsJudgedAtI32(t *testing.T) {
 	}
 }
 
-// castOperandBinary finds `var <name> = (<binary>) as T;` in main and returns
+// castOperandBinary finds `let <name> = (<binary>) as T;` in main and returns
 // the binary the cast wraps.
 func castOperandBinary(t *testing.T, prog *ast.Program, name string) *ast.Binary {
 	t.Helper()
@@ -84,15 +84,15 @@ func castOperandBinary(t *testing.T, prog *ast.Program, name string) *ast.Binary
 			}
 			cast, ok := v.Init.(*ast.CastExpr)
 			if !ok {
-				t.Fatalf("var %s: init is %T, want *ast.CastExpr", name, v.Init)
+				t.Fatalf("let %s: init is %T, want *ast.CastExpr", name, v.Init)
 			}
 			bin, ok := cast.Inner.(*ast.Binary)
 			if !ok {
-				t.Fatalf("var %s: cast operand is %T, want *ast.Binary", name, cast.Inner)
+				t.Fatalf("let %s: cast operand is %T, want *ast.Binary", name, cast.Inner)
 			}
 			return bin
 		}
 	}
-	t.Fatalf("no `var %s` in main", name)
+	t.Fatalf("no `let %s` in main", name)
 	return nil
 }

@@ -49,10 +49,10 @@ func TestSelfHostPerModuleArm64MapDeleteLinks(t *testing.T) {
 	mustWrite(t, proj, "leaf.fern", `import "core/map";
 
 pub function leaf_val(): i32 {
-  var m: Map[string, i32] = map_new(4);
+  let m: Map[string, i32] = map_new(4);
   m = m.insert("a", 40);
   m = m.insert("b", 99);
-  var d: (Map[string, i32], boolean) = m.without("b");
+  let d: (Map[string, i32], boolean) = m.without("b");
   m = d.0;
   return m.get_or("a", 0) + m.len();
 }

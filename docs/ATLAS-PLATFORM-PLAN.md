@@ -113,7 +113,7 @@ is entered and left inside a single op:
   (i+1)*8]`… Always 8-byte."
 
 This is not merely how the comments read; it is what the backend emits. For
-`var c: f64 = a * b + a`, `fern -target x86-64-linux` produces:
+`let c: f64 = a * b + a`, `fern -target x86-64-linux` produces:
 
 ```
     movabs $0x400c000000000000,%rax   ; f64 bit pattern in a GPR
@@ -1361,7 +1361,7 @@ paying for a closure.
 
 **The factor does not have to be written in the source.** Step 4's first slice
 read a literal out of the element function's body, which left the spelling a
-reader reaches for as soon as the factor has a name — `var k: f64 = 2.5;
+reader reaches for as soon as the factor has a name — `let k: f64 = 2.5;
 xs.map((x: f64): f64 => x * k)` — running the scalar loop and paying the
 indirect call. It reaches the kernel too, and costs nothing to emit: closure
 conversion pushes each captured value immediately before the build that packs

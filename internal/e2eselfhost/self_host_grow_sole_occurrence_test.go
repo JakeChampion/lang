@@ -57,13 +57,13 @@ var growSoleCases = []growSoleCase{
 
 	// The shape #6048 is about: the call result is materialised into a local and
 	// handed back, so `b` is read exactly once and dies at that call.
-	{"H_call_result_into_local", `function g(b: i32[], v: i32): i32[] { var t: i32[] = f(b, v); return t; }`, 1, 0},
+	{"H_call_result_into_local", `function g(b: i32[], v: i32): i32[] { let t: i32[] = f(b, v); return t; }`, 1, 0},
 
 	// The argument-temp class, where native copies: the inner call's result is
 	// a link of `b`, so the outer append finds the caller's count alone.
 	{"J_nested_call_arg", `function g(b: i32[], v: i32): i32[] { return f(f(b, v), v + 1); }`, 2, 0},
-	{"K_two_calls_via_local", `function g(b: i32[], v: i32): i32[] { var t: i32[] = f(b, v); return f(t, v + 1); }`, 2, 0},
-	{"M_call_then_inline_append", `function g(b: i32[], v: i32): i32[] { var t: i32[] = f(b, v); return t.append(v + 1); }`, 2, 0},
+	{"K_two_calls_via_local", `function g(b: i32[], v: i32): i32[] { let t: i32[] = f(b, v); return f(t, v + 1); }`, 2, 0},
+	{"M_call_then_inline_append", `function g(b: i32[], v: i32): i32[] { let t: i32[] = f(b, v); return t.append(v + 1); }`, 2, 0},
 
 	// LOOP negative: `b` is textually read once, but the read sits inside a loop, so
 	// it is many DYNAMIC reads and the next iteration would observe the previous
@@ -72,7 +72,7 @@ var growSoleCases = []growSoleCase{
 	// deliberately rejects. The 254/253 contents guards are what this row exists
 	// for, because the wrong answer here is a wrong array, not a copy tally.
 	{"N_param_read_inside_loop", `function g(b: i32[], v: i32): i32[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 1) { b = f(b, v); i = i + 1; }
     return b;
 }`, 1, 0},
@@ -84,8 +84,8 @@ func (c growSoleCase) src() string {
 	return fmt.Sprintf(`function f(b: i32[], v: i32): i32[] { return b.append(v); }
 %s
 function main(): i32 {
-    var acc: i32[] = [];
-    var i: i32 = 0;
+    let acc: i32[] = [];
+    let i: i32 = 0;
     while (i < 50) { acc = g(acc, i); i = i + 1; }
     if (acc.len() != %d) { return 254; }
     if (acc[0] != 0 || acc[%d] != %d) { return 253; }

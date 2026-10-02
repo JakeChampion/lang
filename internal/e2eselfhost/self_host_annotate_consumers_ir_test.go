@@ -33,36 +33,36 @@ var annotateConsumerCases = []struct {
 	// gap g00 — was: wrong-output (bool-arms)
 	{"bool_call_closure_local", `import "core/cmp";
 function main(): i32 {
-    var flip: boolean = false;
-    var g = (): boolean => { return true; };
+    let flip: boolean = false;
+    let g = (): boolean => { return true; };
     if (flip) { g = (): boolean => { return false; }; }
-    var n: i32 = g().to_string().len();
+    let n: i32 = g().to_string().len();
     if (n == 4) { return 42; }
     return n;
 }`},
 	{"bool_call_closure_local_control", `import "core/cmp";
 function main(): i32 {
-    var flip: boolean = false;
-    var g = (): boolean => { return true; };
+    let flip: boolean = false;
+    let g = (): boolean => { return true; };
     if (flip) { g = (): boolean => { return false; }; }
-    var b: boolean = g();
-    var n: i32 = b.to_string().len();
+    let b: boolean = g();
+    let n: i32 = b.to_string().len();
     if (n == 4) { return 42; }
     return n;
 }`},
 	// gap g01 — was: wrong-output (bool-arms)
 	{"bool_tuple_elem_to_string", `import "core/cmp";
 function main(): i32 {
-    var t: (boolean, i32) = (true, 1);
-    var n: i32 = t.0.to_string().len();
+    let t: (boolean, i32) = (true, 1);
+    let n: i32 = t.0.to_string().len();
     if (n == 4) { return 42; }
     return n;
 }`},
 	{"bool_tuple_elem_to_string_control", `import "core/cmp";
 function main(): i32 {
-    var t: (boolean, i32) = (true, 1);
-    var b: boolean = t.0;
-    var n: i32 = b.to_string().len();
+    let t: (boolean, i32) = (true, 1);
+    let b: boolean = t.0;
+    let n: i32 = b.to_string().len();
     if (n == 4) { return 42; }
     return n;
 }`},
@@ -71,9 +71,9 @@ function main(): i32 {
 struct V { b: boolean }
 function (a: V) neg(): boolean { return !a.b; }
 function main(): i32 {
-    var v: V = V { b: false };
-    var r = -v;
-    var n: i32 = r.to_string().len();
+    let v: V = V { b: false };
+    let r = -v;
+    let n: i32 = r.to_string().len();
     if (n == 4) { return 42; }
     return n;
 }`},
@@ -81,9 +81,9 @@ function main(): i32 {
 struct V { b: boolean }
 function (a: V) neg(): boolean { return !a.b; }
 function main(): i32 {
-    var v: V = V { b: false };
-    var r: boolean = -v;
-    var n: i32 = r.to_string().len();
+    let v: V = V { b: false };
+    let r: boolean = -v;
+    let n: i32 = r.to_string().len();
     if (n == 4) { return 42; }
     return n;
 }`},
@@ -95,7 +95,7 @@ function f(): (string, Color) {
 }
 
 function main(): i32 {
-    var n: i32 = f().0.len();
+    let n: i32 = f().0.len();
     if (n == 5) { return 42; }
     return 1;
 }`},
@@ -104,7 +104,7 @@ function main(): i32 {
 }
 
 function main(): i32 {
-    var n: i32 = f().0.len();
+    let n: i32 = f().0.len();
     if (n == 5) { return 42; }
     return 1;
 }`},
@@ -116,8 +116,8 @@ function (a: W) neg(): string {
 }
 
 function main(): i32 {
-    var w: W = W { s: "hello" };
-    var n: i32 = (-w).len();
+    let w: W = W { s: "hello" };
+    let n: i32 = (-w).len();
     if (n == 5) { return 42; }
     return 1;
 }`},
@@ -128,8 +128,8 @@ function (a: W) neg(): string {
 }
 
 function main(): i32 {
-    var w: W = W { s: "hello" };
-    var n: i32 = w.neg().len();
+    let w: W = W { s: "hello" };
+    let n: i32 = w.neg().len();
     if (n == 5) { return 42; }
     return 1;
 }`},
@@ -147,7 +147,7 @@ function main(): i32 {
 }
 
 function main(): i32 {
-    var xs: u32[] = mk();
+    let xs: u32[] = mk();
     if ((xs[0] >> 1u32) == 1073742263u32) { return 42; }
     return 1;
 }`},
@@ -159,8 +159,8 @@ function (a: U) neg(): u32 {
 }
 
 function main(): i32 {
-    var u1: U = U { v: 2147483649u32 };
-    var u2: U = U { v: 5u32 };
+    let u1: U = U { v: 2147483649u32 };
+    let u2: U = U { v: 5u32 };
     if ((-u1) > (-u2)) { return 42; }
     return 1;
 }`},
@@ -171,8 +171,8 @@ function (a: U) neg(): u32 {
 }
 
 function main(): i32 {
-    var u1: U = U { v: 2147483649u32 };
-    var u2: U = U { v: 5u32 };
+    let u1: U = U { v: 2147483649u32 };
+    let u2: U = U { v: 5u32 };
     if (u1.neg() > u2.neg()) { return 42; }
     return 1;
 }`},
@@ -185,8 +185,8 @@ function (a: U) neg(): u32 {
 }
 
 function main(): i32 {
-    var u1: U = U { v: 7u32 };
-    var u2: U = U { v: 5u32 };
+    let u1: U = U { v: 7u32 };
+    let u2: U = U { v: 5u32 };
     if ((-u1) > (-u2)) { return 42; }
     return 1;
 }`},
@@ -194,26 +194,26 @@ function main(): i32 {
 	{"struct_elem_of_sliced_array", `struct P { x: i32 }
 function (p: P) get(): i32 { return p.x; }
 function main(): i32 {
-    var ps: P[] = [P { x: 40 }, P { x: 2 }];
+    let ps: P[] = [P { x: 40 }, P { x: 2 }];
     return ps[1:][0].get();
 }`},
 	{"struct_elem_of_sliced_array_control", `struct P { x: i32 }
 function (p: P) get(): i32 { return p.x; }
 function main(): i32 {
-    var ps: P[] = [P { x: 40 }, P { x: 2 }];
-    var q: P = ps[1:][0];
+    let ps: P[] = [P { x: 40 }, P { x: 2 }];
+    let q: P = ps[1:][0];
     return q.get();
 }`},
 	// gap g09 — was: bail (arr-opt-tuple)
 	{"opt_scrutinee_sliced_base", `function main(): i32 {
-    var xs: Option[i32][] = [Some(1), None, Some(3)];
+    let xs: Option[i32][] = [Some(1), None, Some(3)];
     match (xs[1:][1]) {
         Some(v) => { return v + 39; },
         None => { return 9; }
     }
 }`},
 	{"opt_scrutinee_sliced_base_control", `function main(): i32 {
-    var xs: Option[i32][] = [Some(1), None, Some(3)];
+    let xs: Option[i32][] = [Some(1), None, Some(3)];
     match (xs[2]) {
         Some(v) => { return v + 39; },
         None => { return 9; }
@@ -222,24 +222,24 @@ function main(): i32 {
 	// gap g10 — was: wrong-output (struct-composite)
 	{"map_array_elem_tuple", `import "core/map";
 function main(): i32 {
-    var m1: Map[i32, i32] = Map { 1: 10 };
-    var ms: Map[i32, i32][] = [m1];
-    var t = (ms[0], 7);
+    let m1: Map[i32, i32] = Map { 1: 10 };
+    let ms: Map[i32, i32][] = [m1];
+    let t = (ms[0], 7);
     return t.0.len() + t.1;
 }`},
 	{"map_array_elem_tuple_control", `import "core/map";
 function main(): i32 {
-    var m1: Map[i32, i32] = Map { 1: 10 };
-    var ms: Map[i32, i32][] = [m1];
-    var t = (m1, 7);
+    let m1: Map[i32, i32] = Map { 1: 10 };
+    let ms: Map[i32, i32][] = [m1];
+    let t = (m1, 7);
     return t.0.len() + t.1;
 }`},
 	// gap g11 — was: bail (arr-opt-tuple)
 	{"opt_tuple_elem_method_call", `struct S { n: i32 }
 function (a: S) find(k: i32): Option[i32] { return Some(a.n + k); }
 function main(): i32 {
-    var st: S = S { n: 3 };
-    var t = (st.find(4), 35);
+    let st: S = S { n: 3 };
+    let t = (st.find(4), 35);
     match (t.0) {
         Some(v) => { return v + t.1; },
         None => { return 9; }
@@ -248,8 +248,8 @@ function main(): i32 {
 	{"opt_tuple_elem_method_call_control", `struct S { n: i32 }
 function find_free(a: S, k: i32): Option[i32] { return Some(a.n + k); }
 function main(): i32 {
-    var st: S = S { n: 3 };
-    var t = (find_free(st, 4), 35);
+    let st: S = S { n: 3 };
+    let t = (find_free(st, 4), 35);
     match (t.0) {
         Some(v) => { return v + t.1; },
         None => { return 9; }
@@ -257,15 +257,15 @@ function main(): i32 {
 }`},
 	// gap g12 — was: bail (arr-opt-tuple)
 	{"tuple_elem_nested_fieldaccess", `function main(): i32 {
-    var big: i64 = 4294967338i64;
-    var x: i64 = ((big, 2i64), 3).0.0;
+    let big: i64 = 4294967338i64;
+    let x: i64 = ((big, 2i64), 3).0.0;
     if (x == big) { return 42; }
     return 7;
 }`},
 	{"tuple_elem_nested_fieldaccess_control", `function main(): i32 {
-    var big: i64 = 4294967338i64;
-    var t = ((big, 2i64), 3);
-    var x: i64 = t.0.0;
+    let big: i64 = 4294967338i64;
+    let t = ((big, 2i64), 3);
+    let x: i64 = t.0.0;
     if (x == big) { return 42; }
     return 7;
 }`},
@@ -274,18 +274,18 @@ function main(): i32 {
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
 enum E { A(V), B(V) }
 function main(): i32 {
-    var w: V = V { x: 10 };
-    var e: E = A(V { x: 32 });
-    var r = match (e) { A(q) => { q + w }, B(p) => { p + w } };
+    let w: V = V { x: 10 };
+    let e: E = A(V { x: 32 });
+    let r = match (e) { A(q) => { q + w }, B(p) => { p + w } };
     return r.x;
 }`},
 	{"struct_overload_iife_operand_control", `struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
 enum E { A(V), B(V) }
 function main(): i32 {
-    var w: V = V { x: 10 };
-    var e: E = A(V { x: 32 });
-    var r = match (e) { A(q) => { q.add(w) }, B(p) => { p.add(w) } };
+    let w: V = V { x: 10 };
+    let e: E = A(V { x: 32 });
+    let r = match (e) { A(q) => { q.add(w) }, B(p) => { p.add(w) } };
     return r.x;
 }`},
 	// gap g14 — was: wrong-output (lift-detector)
@@ -294,11 +294,11 @@ function mk(n: i32): R {
     return R { hs: [(x: i32): i32 => { return x + n; }] };
 }
 function pick(): (i32) => i32 {
-    var r = mk(41);
+    let r = mk(41);
     return r.hs[0];
 }
 function main(): i32 {
-    var g = pick();
+    let g = pick();
     return g(1);
 }`},
 	{"lift_detector_unannotated_local_control", `struct R { hs: ((i32) => i32)[] }
@@ -306,11 +306,11 @@ function mk(n: i32): R {
     return R { hs: [(x: i32): i32 => { return x + n; }] };
 }
 function pick(): (i32) => i32 {
-    var r: R = mk(41);
+    let r: R = mk(41);
     return r.hs[0];
 }
 function main(): i32 {
-    var g = pick();
+    let g = pick();
     return g(1);
 }`},
 	// gap g15 — was: wrong-output (lift-detector)
@@ -322,11 +322,11 @@ function load(): H[] {
     return [mkh(41)];
 }
 function pick(): (i32) => i32 {
-    var kvs = load();
+    let kvs = load();
     return kvs[0].f;
 }
 function main(): i32 {
-    var g = pick();
+    let g = pick();
     return g(1);
 }`},
 	{"lift_detector_index_elem_control", `struct H { f: (i32) => i32 }
@@ -337,11 +337,11 @@ function load(): H[] {
     return [mkh(41)];
 }
 function pick(): (i32) => i32 {
-    var kvs: H[] = load();
+    let kvs: H[] = load();
     return kvs[0].f;
 }
 function main(): i32 {
-    var g = pick();
+    let g = pick();
     return g(1);
 }`},
 	// gap g16 — was: wrong-output (lift-detector)
@@ -353,7 +353,7 @@ function pick(): (i32) => i32 {
     return mk(41).hs[0];
 }
 function main(): i32 {
-    var g = pick();
+    let g = pick();
     return g(1);
 }`},
 	{"lift_detector_call_chain_control", `struct R { hs: ((i32) => i32)[] }
@@ -361,19 +361,19 @@ function mk(n: i32): R {
     return R { hs: [(x: i32): i32 => { return x + n; }] };
 }
 function pick(): (i32) => i32 {
-    var r: R = mk(41);
+    let r: R = mk(41);
     return r.hs[0];
 }
 function main(): i32 {
-    var g = pick();
+    let g = pick();
     return g(1);
 }`},
 	// gap g18 — was: bail (lift-captype)
 	{"lift_cap_module_const", `const LIMIT: i32 = 41;
 
 function f(): i32 {
-    var k = LIMIT;
-    var g = () => k + 1;
+    let k = LIMIT;
+    let g = () => k + 1;
     return g();
 }
 
@@ -383,8 +383,8 @@ function main(): i32 {
 	{"lift_cap_module_const_control", `const LIMIT: i32 = 41;
 
 function f(): i32 {
-    var k: i32 = LIMIT;
-    var g = () => k + 1;
+    let k: i32 = LIMIT;
+    let g = () => k + 1;
     return g();
 }
 
@@ -393,8 +393,8 @@ function main(): i32 {
 }`},
 	// gap g19 — was: bail (lift-captype)
 	{"lift_cap_wide_arith", `function f(a: i64, b: i64): i64 {
-    var k = a * b;
-    var g = () => k + 1i64;
+    let k = a * b;
+    let g = () => k + 1i64;
     return g();
 }
 
@@ -402,8 +402,8 @@ function main(): i32 {
     return f(5i64, 8i64) as i32;
 }`},
 	{"lift_cap_wide_arith_control", `function f(a: i64, b: i64): i64 {
-    var k: i64 = a * b;
-    var g = () => k + 1i64;
+    let k: i64 = a * b;
+    let g = () => k + 1i64;
     return g();
 }
 
@@ -412,8 +412,8 @@ function main(): i32 {
 }`},
 	// gap g20 — was: bail (lift-captype)
 	{"lift_cap_builtin_call", `function f(s: string): i32 {
-    var n = s.len();
-    var g = () => n + 1;
+    let n = s.len();
+    let g = () => n + 1;
     return g();
 }
 
@@ -421,8 +421,8 @@ function main(): i32 {
     return f("fortyone!");
 }`},
 	{"lift_cap_builtin_call_control", `function f(s: string): i32 {
-    var n: i32 = s.len();
-    var g = () => n + 1;
+    let n: i32 = s.len();
+    let g = () => n + 1;
     return g();
 }
 
@@ -432,31 +432,30 @@ function main(): i32 {
 	// gap g21 — was: bail (mono-survival)
 	{"mono_arrm_fold_tuple_ty", `// Gap 21: generic ARRAY-method fold (parser.fern:9034) rebuilds xs.stats()
 // as __arrm_stats__u32(xs) with ty:"" — dropping the checker's "(f64, i32)"
-// stamp that expr_tuple_elem_tag's ExprCall arm (irlower.fern:2394) needs.
+// stamp the lowering needs to width the .0 read.
 function (xs: T[]) stats(): (f64, i32) {
     return (xs.len() as f64 + 0.25, 7);
 }
 
 function main(): i32 {
-    var xs: u32[] = [5u32, 6u32];
+    let xs: u32[] = [5u32, 6u32];
     return (xs.stats().0 * 4.0) as i32;
 }`},
 	{"mono_arrm_fold_tuple_ty_control", `// Control for gap 21: same tuple-returning call read at .0, but through a
 // FREE function — no __arrm_ fold, so the mono fallthrough (parser.fern:9096)
-// carries ty: c.ty and the stamp reaches irlower.
+// carries ty: c.ty and the stamp reaches the lowering.
 function stats(xs: u32[]): (f64, i32) {
     return (xs.len() as f64 + 0.25, 7);
 }
 
 function main(): i32 {
-    var xs: u32[] = [5u32, 6u32];
+    let xs: u32[] = [5u32, 6u32];
     return (stats(xs).0 * 4.0) as i32;
 }`},
 	// gap g22 — was: bail (mono-survival)
 	{"mono_mapm_fold_tuple_ty", `// Gap 22: generic MAP-method fold (parser.fern:9060) rebuilds m.stats()
 // as __mapm_stats__string;i32(m) with ty:"" — dropping the checker's
-// "(f64, i32)" stamp that expr_tuple_elem_tag's ExprCall arm
-// (irlower.fern:2394) needs to width the .0 read.
+// "(f64, i32)" stamp the lowering needs to width the .0 read.
 import "core/map";
 
 function (m: Map[K, V]) stats(): (f64, i32) {
@@ -464,12 +463,12 @@ function (m: Map[K, V]) stats(): (f64, i32) {
 }
 
 function main(): i32 {
-    var m: Map[string, i32] = Map { "a": 1, "b": 2 };
+    let m: Map[string, i32] = Map { "a": 1, "b": 2 };
     return (m.stats().0 * 4.0) as i32;
 }`},
 	{"mono_mapm_fold_tuple_ty_control", `// Control for gap 22: same tuple-returning call read at .0, but through a
 // FREE function — no __mapm_ fold, so the mono fallthrough (parser.fern:9096)
-// carries ty: c.ty and the stamp reaches irlower.
+// carries ty: c.ty and the stamp reaches the lowering.
 import "core/map";
 
 function stats(m: Map[string, i32]): (f64, i32) {
@@ -477,7 +476,7 @@ function stats(m: Map[string, i32]): (f64, i32) {
 }
 
 function main(): i32 {
-    var m: Map[string, i32] = Map { "a": 1, "b": 2 };
+    let m: Map[string, i32] = Map { "a": 1, "b": 2 };
     return (stats(m).0 * 4.0) as i32;
 }`},
 	// gap g24 — was: wrong-output (registry-siblings)
@@ -490,14 +489,14 @@ impl HasStart for Counter {
 }
 
 function main(): i32 {
-    var t: i64 = Counter.start();
+    let t: i64 = Counter.start();
     if (t == 5000000000i64) { return 42; }
     return 1;
 }`},
 	{"assoc_method_i64_width_control", `function start_c(): i64 { return 5000000000i64; }
 
 function main(): i32 {
-    var t: i64 = start_c();
+    let t: i64 = start_c();
     if (t == 5000000000i64) { return 42; }
     return 1;
 }`},
@@ -507,7 +506,7 @@ function main(): i32 {
 }
 
 function main(): i32 {
-    var t = mk()[0];
+    let t = mk()[0];
     return t.1.len() + 38;
 }`},
 	{"tuple_bind_from_call_array_control", `function mk(): (i32, string)[] {
@@ -525,7 +524,7 @@ function main(): i32 {
 function f(s: S): i32 {
     match (s.o) {
         Some(v) => {
-            var g = () => v + 1;
+            let g = () => v + 1;
             return g();
         },
         None => { return 9; }
@@ -539,10 +538,10 @@ function main(): i32 {
 	{"lift_cap_match_scrutinee_field_control", `struct S { o: Option[i32] }
 
 function f(s: S): i32 {
-    var so: Option[i32] = s.o;
+    let so: Option[i32] = s.o;
     match (so) {
         Some(v) => {
-            var g = () => v + 1;
+            let g = () => v + 1;
             return g();
         },
         None => { return 9; }
@@ -557,43 +556,43 @@ function main(): i32 {
 	// TypeFunc return; these pin the fn-value shape that stamped before the
 	// fn_ret widening gave the param/field siblings (below) the same footing.
 	{"fnvalue_local_strarr_index", `function main(): i32 {
-    var flip: boolean = false;
-    var g = (): string[] => { return ["ab", "c"]; };
+    let flip: boolean = false;
+    let g = (): string[] => { return ["ab", "c"]; };
     if (flip) { g = (): string[] => { return ["zz", "y"]; }; }
-    var n: i32 = g()[0].len();
+    let n: i32 = g()[0].len();
     if (n == 2) { return 42; }
     return 1;
 }`},
 	{"fnvalue_local_option_unwrap", `import "std/option";
 
 function main(): i32 {
-    var flip: boolean = false;
-    var g = (n: i32): Option[i32] => { return Some(n + 41); };
+    let flip: boolean = false;
+    let g = (n: i32): Option[i32] => { return Some(n + 41); };
     if (flip) { g = (n: i32): Option[i32] => { return Some(n); }; }
     return g(1).unwrap_or(9);
 }`},
 	{"fnvalue_local_tuple_elem", `function main(): i32 {
-    var flip: boolean = false;
-    var g = (): (string, i32) => { return ("abcd", 7); };
+    let flip: boolean = false;
+    let g = (): (string, i32) => { return ("abcd", 7); };
     if (flip) { g = (): (string, i32) => { return ("zz", 1); }; }
-    var t = g();
+    let t = g();
     return t.0.len() + 38;
 }`},
 	{"fnvalue_local_map_get_or", `import "core/map";
 
 function main(): i32 {
-    var flip: boolean = false;
-    var g = (): Map[string, i32] => {
-        var m: Map[string, i32] = Map { "k": 1 };
+    let flip: boolean = false;
+    let g = (): Map[string, i32] => {
+        let m: Map[string, i32] = Map { "k": 1 };
         return m;
     };
     if (flip) {
         g = (): Map[string, i32] => {
-            var m: Map[string, i32] = Map { "k": 2 };
+            let m: Map[string, i32] = Map { "k": 2 };
             return m;
         };
     }
-    var m = g();
+    let m = g();
     return m.get_or("k", 7) + 41;
 }`},
 	// The fn-typed PARAM / FIELD shapes: the parser coarsens fn types to
@@ -604,8 +603,8 @@ function main(): i32 {
 	{"fnparam_field_strarr_index", `struct H { f: () => string[] }
 
 function main(): i32 {
-    var h: H = H { f: (): string[] => { return ["ab", "c"]; } };
-    var n: i32 = h.f()[0].len();
+    let h: H = H { f: (): string[] => { return ["ab", "c"]; } };
+    let n: i32 = h.f()[0].len();
     if (n == 2) { return 42; }
     return 1;
 }`},
@@ -627,7 +626,7 @@ function main(): i32 {
 }
 
 function apply(f: () => (string, i32)): i32 {
-    var t = f();
+    let t = f();
     return t.0.len() + 38;
 }
 
@@ -637,12 +636,12 @@ function main(): i32 {
 	{"fnparam_map_get_or", `import "core/map";
 
 function mk(): Map[string, i32] {
-    var m: Map[string, i32] = Map { "k": 1 };
+    let m: Map[string, i32] = Map { "k": 1 };
     return m;
 }
 
 function apply(f: () => Map[string, i32]): i32 {
-    var m = f();
+    let m = f();
     return m.get_or("k", 7) + 41;
 }
 
@@ -656,25 +655,25 @@ function main(): i32 {
 	// live x86-64 miscompile (annotated tuple-returning fn var). w2/w4 pin
 	// the shapes that already worked through the same paths.
 	{"fnwiden_funcref_width", `function pick(f: (i64) => i32[]): i32 {
-    var xs: i32[] = f(5000000042i64);
+    let xs: i32[] = f(5000000042i64);
     return xs[0];
 }
 function mk(n: i64): i32[] { return [(n % 100i64) as i32, 7]; }
 function main(): i32 { return pick(mk); }`},
 	{"fnwiden_tuple_ret_capture", `function main(): i32 {
-    var flip: boolean = false;
-    var g = (): (string, i32) => { return ("abcd", 4); };
+    let flip: boolean = false;
+    let g = (): (string, i32) => { return ("abcd", 4); };
     if (flip) { g = (): (string, i32) => { return ("z", 1); }; }
-    var h = () => g().1 + 38;
+    let h = () => g().1 + 38;
     return h();
 }`},
 	{"fnwiden_annotated_tuple_fn", `function main(): i32 {
-    var f: () => (string, i32) = () => ("abcd", 4);
-    var t = f();
+    let f: () => (string, i32) = () => ("abcd", 4);
+    let t = f();
     return t.0.len() + t.1 + 34;
 }`},
 	{"fnwiden_annotated_arr_fn", `function main(): i32 {
-    var f: (i32) => string[] = (n: i32) => ["ab", "c"];
+    let f: (i32) => string[] = (n: i32) => ["ab", "c"];
     return f(1)[0].len() + 40;
 }`},
 }

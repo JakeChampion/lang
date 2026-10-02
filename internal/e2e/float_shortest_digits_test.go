@@ -85,7 +85,7 @@ func TestFloatShortestDigits(t *testing.T) {
 // l2 itself. Every entry is checked, both ends of the range included.
 func TestFloatPow10Table(t *testing.T) {
 	var b strings.Builder
-	b.WriteString("import \"std/float\";\nfunction main(): i32 {\n    var k: i32 = 0 - 292;\n    while (k <= 326) {\n")
+	b.WriteString("import \"std/float\";\nfunction main(): i32 {\n    let k: i32 = 0 - 292;\n    while (k <= 326) {\n")
 	b.WriteString("        write(float.pow10_hi(k).to_string()); write(\" \"); write(float.pow10_lo(k).to_string()); write(\" \"); write(float.pow10_log2(k).to_string()); write(\"\\n\");\n")
 	b.WriteString("        k = k + 1;\n    }\n    return 0;\n}\n")
 	out, code := compileAndRunX86_64(t, b.String())

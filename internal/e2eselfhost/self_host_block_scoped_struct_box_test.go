@@ -26,7 +26,7 @@ import (
 //
 // The why, from a stack trace rather than a fourth theory: gen1 faulted in
 // `asmcore.EmitState.has_need` -> `__fern_str_eq` on a freed string. The shape is
-// `var lo: StringLitOut = add_string_lit(s, ..); s = lo.state;` — `lo` is
+// `let lo: StringLitOut = add_string_lit(s, ..); s = lo.state;` — `lo` is
 // block-scoped and its `EmitState` FIELD is moved into the live threaded `s`, so
 // the deep walk freed that state's arrays out from under it.
 //
@@ -83,18 +83,18 @@ func TestSelfHostBlockScopedStructBoxX86_64(t *testing.T) {
 	t.Run("struct_declared_in_a_loop", func(t *testing.T) {
 		src := `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var s: S = S { xs: [i, i + 1], n: i };
+        let s: S = S { xs: [i, i + 1], n: i };
         acc = acc + s.n + s.xs.len();
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -119,18 +119,18 @@ function main(): i32 {
 	t.Run("scalar_only_struct_in_a_loop_reaches_zero", func(t *testing.T) {
 		src := `struct S { a: i32, b: i32 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var s: S = S { a: i, b: i + 1 };
+        let s: S = S { a: i, b: i + 1 };
         acc = acc + s.a + s.b;
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -174,15 +174,15 @@ func TestSelfHostBlockScopedStructBoxHazardsX86_64(t *testing.T) {
 			name: "boxes_escape_into_an_outer_container",
 			body: `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
-    var keep: S[] = [];
-    var i: i32 = 0;
+    let keep: S[] = [];
+    let i: i32 = 0;
     while (i < 4) {
-        var s: S = S { xs: [i, i + 1], n: i };
+        let s: S = S { xs: [i, i + 1], n: i };
         keep = keep.append(s);
         i = i + 1;
     }
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < keep.len()) { acc = acc + keep[j].xs[0] + keep[j].n; j = j + 1; }
     return acc + r;
 }`,
@@ -196,11 +196,11 @@ function round(r: i32): i32 {
 			name: "aliased_to_an_outer_local",
 			body: `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
-    var held: S = S { xs: [0], n: 0 };
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let held: S = S { xs: [0], n: 0 };
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var s: S = S { xs: [i, i + 1], n: i };
+        let s: S = S { xs: [i, i + 1], n: i };
         held = s;
         acc = acc + s.n;
         i = i + 1;
@@ -217,16 +217,16 @@ function round(r: i32): i32 {
 			name: "returned_from_inside_the_block",
 			body: `struct S { xs: i32[], n: i32 }
 function build(r: i32): S {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var s: S = S { xs: [i, i + 1], n: i + r };
+        let s: S = S { xs: [i, i + 1], n: i + r };
         if (i == 3) { return s; }
         i = i + 1;
     }
     return S { xs: [0], n: 0 };
 }
 function round(r: i32): i32 {
-    var g: S = build(r);
+    let g: S = build(r);
     return g.n + g.xs[1];
 }`,
 			want:      6,
@@ -238,11 +238,11 @@ function round(r: i32): i32 {
 			body: `struct S { xs: i32[], n: i32 }
 function keepit(s: S): S { return s; }
 function round(r: i32): i32 {
-    var held: S = S { xs: [0], n: 0 };
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let held: S = S { xs: [0], n: 0 };
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var s: S = S { xs: [i, i + 1], n: i };
+        let s: S = S { xs: [i, i + 1], n: i };
         held = keepit(s);
         acc = acc + s.n;
         i = i + 1;
@@ -258,11 +258,11 @@ function round(r: i32): i32 {
 			name: "field_extracted_out_of_the_block",
 			body: `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
-    var held: i32[] = [];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let held: i32[] = [];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var s: S = S { xs: [i, i + 1], n: i };
+        let s: S = S { xs: [i, i + 1], n: i };
         held = s.xs;
         acc = acc + s.n;
         i = i + 1;
@@ -276,8 +276,8 @@ function round(r: i32): i32 {
 		t.Run(tc.name, func(t *testing.T) {
 			tail := `
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -307,8 +307,8 @@ function main(): i32 {
 
 			ufAsm := hevCompile(t, runner, driverBin, tc.body+`
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();

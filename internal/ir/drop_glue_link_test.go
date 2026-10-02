@@ -33,7 +33,7 @@ function patch(prog: Inst[], at: i32, v: Inst): Inst[] {
     return prog.with(at, v);
 }
 function main(): i32 {
-    var prog: Inst[] = [IChar(97), IMatch];
+    let prog: Inst[] = [IChar(97), IMatch];
     prog = patch(prog, 1, IClass("x"));
     return prog.len() - 2;
 }`

@@ -29,8 +29,8 @@ import (
 // (mirrors the diff-oracle's skip behaviour).
 func TestFloatSemantics_PortableSubset(t *testing.T) {
 	src := `function main(): i32 {
-		var a: f32 = 3.5;
-		var b: f32 = 1.5;
+		let a: f32 = 3.5;
+		let b: f32 = 1.5;
 		if ((a + b) * 2.0 > 9.0) {
 			return 7;
 		}
@@ -77,7 +77,7 @@ func TestFloatDefaultWidthF64(t *testing.T) {
 	src := `import "std/float";
 function main(): i32 {
 	if ((1.0 / 3.0).to_string() != "0.3333333333333333") { return 1; }
-	var x: float = 1.0;
+	let x: float = 1.0;
 	if ((x / 3.0).to_string() != "0.3333333333333333") { return 2; }
 	if ((1.0 as f32 / 3.0 as f32).to_string() != "0.33333334") { return 3; }
 	return 0;

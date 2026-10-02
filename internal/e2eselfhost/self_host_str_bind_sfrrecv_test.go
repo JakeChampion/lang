@@ -3,7 +3,7 @@ package e2eselfhost
 import "testing"
 
 // strBindSfrrecvCases pin the release of a FRESH-OR-RECEIVER method result in
-// BINDING position — `var v: str = base.drop(2)`, the half of #6544 the receiver
+// BINDING position — `let v: str = base.drop(2)`, the half of #6544 the receiver
 // position already had.
 //
 // SFRRECV admits a method whose every return is fresh, the bare RECEIVER, or a
@@ -25,7 +25,7 @@ import "std/string";
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen);
 }
@@ -41,14 +41,14 @@ function (s: string) ident2(): string { return s; }
 // bound result was stranded; 4096 sits 2.3x under the smallest measured leak
 // (9600 over 400 rounds) and far above the 0 a released binding produces.
 func strBindHeap(round string) string {
-	return strBindPrelude + `function round(pre: string): i32 { var base: string = w(pre); ` + round + ` }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+	return strBindPrelude + `function round(pre: string): i32 { let base: string = w(pre); ` + round + ` }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -63,29 +63,29 @@ var strBindSfrrecvCases = []struct {
 }{
 	// The issue's shape. `tail(4)` returns a 24-byte view box over base's bytes
 	// that nothing else names; 24 B/round before, flat after.
-	{"str-bind-sfrrecv-view-flat", strBindHeap(`var v: str = base.tail(4); return v.len();`), 0},
+	{"str-bind-sfrrecv-view-flat", strBindHeap(`let v: str = base.tail(4); return v.len();`), 0},
 	// The same admission carrying a box that owns its data: `pad2`'s non-identity
 	// return is a concat. The view-aware free takes __fern_str_free's path on it,
 	// which is what makes one release right for both shapes.
-	{"str-bind-sfrrecv-owned-flat", strBindHeap(`var v: string = base.pad2(4); return v.len();`), 0},
+	{"str-bind-sfrrecv-owned-flat", strBindHeap(`let v: string = base.pad2(4); return v.len();`), 0},
 	// The BINDING carries no annotation. Only the RECEIVER's declared type is
 	// consulted, so this is admitted exactly like the annotated form.
-	{"str-bind-sfrrecv-unannotated-flat", strBindHeap(`var v = base.tail(4); return v.len();`), 0},
+	{"str-bind-sfrrecv-unannotated-flat", strBindHeap(`let v = base.tail(4); return v.len();`), 0},
 	// CONTROL: an outer link whose every return is fresh is already credited by
 	// str_method_ret_is_fresh ("SFRFRESHNAME:"), so this was flat before. It pins
 	// that the new credit does not stack a second release onto that one.
-	{"str-bind-fresh-name-chain-control", strBindHeap(`var v: string = base.tail(4).to_owned2(); return v.len();`), 0},
-	// A PARAM root: params carry no `var` in the body, and the declared-name/type
+	{"str-bind-fresh-name-chain-control", strBindHeap(`let v: string = base.tail(4).to_owned2(); return v.len();`), 0},
+	// A PARAM root: params carry no `let` in the body, and the declared-name/type
 	// pair has to reach them or every `function f(p: str)` is refused.
-	{"str-bind-sfrrecv-param-root-flat", strBindPrelude + `function inner(p: string): i32 { var v: str = p.tail(4); return v.len(); }
-function round(pre: string): i32 { var base: string = w(pre); return inner(base); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+	{"str-bind-sfrrecv-param-root-flat", strBindPrelude + `function inner(p: string): i32 { let v: str = p.tail(4); return v.len(); }
+function round(pre: string): i32 { let base: string = w(pre); return inner(base); }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -98,18 +98,18 @@ function main(): i32 {
 	// double-frees. Verified: 99 (rc underflow) on x86-64 and on wasm with the
 	// compare removed, 0 with it.
 	{"str-bind-sfrrecv-identity-guarded", strBindPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var c: str = base.tail(0);
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let base: string = w(pre);
+    let c: str = base.tail(0);
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (has_sub(base, "XXXX")) { return 0 - 1; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 2; }
     if (!has_prefix(c, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// A two-link CHAIN, and the same witness one link deeper: the walk has to see
 	// through the inner call to reach base, the inner link takes its identity path
 	// and the outer allocates over base's bytes, so the result is NOT base's box
@@ -120,49 +120,49 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// The inner link is `tail(0)` rather than `tail(4)` because an inner link that
 	// ALLOCATES strands its own box either way: releasing an intermediate needs
 	// the outer callee proven borrowing, which is a separate slice.
-	{"str-bind-sfrrecv-chain-identity-link-flat", strBindHeap(`var v: str = base.tail(0).tail(2); return v.len();`), 0},
+	{"str-bind-sfrrecv-chain-identity-link-flat", strBindHeap(`let v: str = base.tail(0).tail(2); return v.len();`), 0},
 	// REFUSED: a FIELD root. The credit needs a slot the frame still holds to
 	// compare against, and `h.name` is not one — crediting it anyway would free
 	// the field's own box on the identity path, which the reads below catch.
 	{"str-bind-sfrrecv-field-root-refused", strBindPrelude + `function round(pre: string): i32 {
-    var h: Holder = Holder { name: w(pre) };
-    var c: str = h.name.tail(0);
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
+    let h: Holder = Holder { name: w(pre) };
+    let c: str = h.name.tail(0);
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
     if (!has_prefix(h.name, "abcdefgh-a-wide")) { return 0 - 2; }
     if (!has_prefix(c, "abcdefgh-a-wide")) { return 0 - 3; }
     return h.name.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// REFUSED: the method hands its receiver back on EVERY path, so it is not in
 	// the registry at all and the binding is a plain borrow. Pins that the credit
 	// is keyed on the whole-program proof, not on the shape of the call.
 	{"str-bind-identity-method-refused", strBindPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var c: string = base.ident2();
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
+    let base: string = w(pre);
+    let c: string = base.ident2();
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 2; }
     if (!has_prefix(c, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// LIVENESS for the released shape: the view has to read correctly after the
 	// call and after unrelated allocations, and base has to survive the release of
 	// a box built over its bytes.
 	{"str-bind-sfrrecv-view-liveness", strBindPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var v: str = base.tail(9);
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
+    let base: string = w(pre);
+    let v: str = base.tail(9);
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 2; }
     if (!has_prefix(v, "a-wide-payload")) { return 0 - 3; }
     return base.len() + v.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 203) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 203) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// A STATIC root and the empty-literal return path in one round: `tail(9999)`
 	// hands back `""`, whose box is in .rodata and whose pointer differs from the
 	// root, so the compare admits it and the release runs on a static. That is
@@ -170,41 +170,41 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// inside the arena. The view over the literal's bytes is the other half — the
 	// data pointer is below heap_base and must survive the box release.
 	{"str-bind-sfrrecv-literal-root-liveness", strBindPrelude + `function round(): i32 {
-    var base: string = "abcdefgh-a-static-literal-in-rodata-0123456789";
-    var v: str = base.tail(2);
-    var e: str = base.tail(9999);
+    let base: string = "abcdefgh-a-static-literal-in-rodata-0123456789";
+    let v: str = base.tail(2);
+    let e: str = base.tail(9999);
     if (!has_prefix(base, "abcdefgh")) { return 0 - 1; }
     if (!has_prefix(v, "cdefgh")) { return 0 - 2; }
     if (e.len() != 0) { return 0 - 3; }
     return v.len() + base.len();
 }
-function main(): i32 { var i: i32 = 0; while (i < 4000) { var r: i32 = round(); if (r != 90) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// The credit is keyed by NAME, so a second `var v` in another block shares it
+function main(): i32 { let i: i32 = 0; while (i < 4000) { let r: i32 = round(); if (r != 90) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+	// The credit is keyed by NAME, so a second `let v` in another block shares it
 	// while holding a plain alias — here a struct FIELD, which no slot compare can
 	// name. Both the alias and the field it reads have to survive the sweep.
 	{"str-bind-sfrrecv-same-name-alias-liveness", strBindPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var h: Holder = Holder { name: w(pre) };
-    var total: i32 = 0;
-    if (base.len() > 0) { var v: str = base.tail(2); total = total + v.len(); }
-    if (base.len() > 0) { var v: str = h.name; total = total + v.len(); }
+    let base: string = w(pre);
+    let h: Holder = Holder { name: w(pre) };
+    let total: i32 = 0;
+    if (base.len() > 0) { let v: str = base.tail(2); total = total + v.len(); }
+    if (base.len() > 0) { let v: str = h.name; total = total + v.len(); }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 1; }
     if (!has_prefix(h.name, "abcdefgh-a-wide")) { return 0 - 2; }
     return total;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 210) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 210) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// REFUSED: the binding ESCAPES (it is returned), so the shared escape gate
 	// withholds the credit and the caller keeps a live box.
-	{"str-bind-sfrrecv-escaping-refused", strBindPrelude + `function mk(pre: string): string { var base: string = w(pre); var v: string = base.pad2(4); return v; }
+	{"str-bind-sfrrecv-escaping-refused", strBindPrelude + `function mk(pre: string): string { let base: string = w(pre); let v: string = base.pad2(4); return v; }
 function round(pre: string): i32 {
-    var r: string = mk(pre);
-    var p1: string = w("ZZZZZZZZ");
+    let r: string = mk(pre);
+    let p1: string = w("ZZZZZZZZ");
     if (p1.len() < 0) { return 0; }
     if (!has_prefix(r, "abcdefgh-a-wide")) { return 0 - 2; }
     if (!has_suffix(r, "0123456789abcdef")) { return 0 - 3; }
     return r.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 154) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 154) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrBindSfrrecvIRX86_64 drives the cases through the self-hosted
@@ -246,18 +246,18 @@ func strBindStdlibMain(call string) string {
 	return `import "std/string";
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 {
-    var base: string = w(pre);
-    var v: str = ` + call + `;
+    let base: string = w(pre);
+    let v: str = ` + call + `;
     if (!base.starts_with("abcdefgh-a-wide")) { return 0 - 1; }
     return v.len();
 }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -280,7 +280,7 @@ func TestSelfHostStrBindSfrrecvStdlibX86_64(t *testing.T) {
 }
 
 // TestSelfHostStrBindSfrrecvIRArm64 is the arm64 leg; the admission and the
-// pointer compare are shared irlower, the release a per-backend transcription.
+// pointer compare are in the shared lowering, the release a per-backend transcription.
 func TestSelfHostStrBindSfrrecvIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	cli := newStrictCLI(t)

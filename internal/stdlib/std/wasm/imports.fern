@@ -66,7 +66,7 @@ pub function import_desc_func(typeidx: u32): u8[] {
 
 // Global: valtype byte + mut byte.
 pub function import_desc_global(vt: u8, is_mut: u8): u8[] {
-  var out: u8[] = [];
+  let out: u8[] = [];
   out = out.append(vt);
   out = out.append(is_mut);
   return out;
@@ -75,7 +75,7 @@ pub function import_desc_global(vt: u8, is_mut: u8): u8[] {
 // Memory: a `limits` record (same shape memtype uses in the
 // memory section). `max_pages = -1` means "no maximum".
 pub function import_desc_memory(min_pages: u32, max_pages: i32): u8[] {
-  var out: u8[] = [];
+  let out: u8[] = [];
   if (max_pages < 0) {
     out = out.append(0u8);
     out = leb128.uleb_u32(out, min_pages);
@@ -99,7 +99,7 @@ pub function reftype_externref(): u8 {  // 0x6F
 }
 
 pub function import_desc_table(reftype: u8, min: u32, max: i32): u8[] {
-  var out: u8[] = [];
+  let out: u8[] = [];
   out = out.append(reftype);
   if (max < 0) {
     out = out.append(0u8);
@@ -121,9 +121,9 @@ pub function import_desc_table(reftype: u8, min: u32, max: i32): u8[] {
 // the descriptor body that the matching import_desc_* helper
 // produced.
 pub function encode_import_section(buf: u8[], modules: string[], names: string[], kinds: u8[], desc_bodies: u8[][]): u8[] {
-  var n: i32 = modules.len();
-  var body: u8[] = leb128.uleb_u32([], n as u32);
-  var i: i32 = 0;
+  let n: i32 = modules.len();
+  let body: u8[] = leb128.uleb_u32([], n as u32);
+  let i: i32 = 0;
   while (i < n) {
     body = encode.put_name(body, modules[i]);
     body = encode.put_name(body, names[i]);
@@ -142,9 +142,9 @@ pub function encode_import_section(buf: u8[], modules: string[], names: string[]
 // typical shape is `i32.const N ; end` (3 bytes for small N),
 // produced by inst.inst_i32_const followed by inst.inst_end.
 pub function encode_global_section(buf: u8[], valtypes: u8[], muts: u8[], init_exprs: u8[][]): u8[] {
-  var n: i32 = valtypes.len();
-  var body: u8[] = leb128.uleb_u32([], n as u32);
-  var i: i32 = 0;
+  let n: i32 = valtypes.len();
+  let body: u8[] = leb128.uleb_u32([], n as u32);
+  let i: i32 = 0;
   while (i < n) {
     body = body.append(valtypes[i]);
     body = body.append(muts[i]);

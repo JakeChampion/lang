@@ -193,7 +193,7 @@ the platform's lifecycle.
 
   // user.fern
   function handle(req: HttpRequest, plat: Platform): HttpResponse {
-      var maybe_session = plat.kv.get("session:" + req.cookie).await;
+      let maybe_session = plat.kv.get("session:" + req.cookie).await;
       // …
   }
   ```
@@ -456,8 +456,8 @@ won't work for streaming responses or for >1 MiB requests.
 
   ```
   function handle(req: HttpRequest, plat: Platform): () {
-      var body = req.body.read_all()?;          // eager
-      var resp = plat.response(200);
+      let body = req.body.read_all()?;          // eager
+      let resp = plat.response(200);
       resp.header("Content-Type", "text/plain");
       resp.write(body);                          // streaming
       resp.finish();
@@ -683,10 +683,10 @@ native binaries. `tcp_serve` is roughly:
 
 ```
 loop {
-    var conn = tcp_accept(socket);
-    var arena = arena_save();
-    var req = http_parse_request(conn);
-    var resp = handle(req);
+    let conn = tcp_accept(socket);
+    let arena = arena_save();
+    let req = http_parse_request(conn);
+    let resp = handle(req);
     write_response(conn, resp);
     arena_restore(arena);
 }
@@ -706,8 +706,8 @@ check on every invocation).
   // Runs once, in the per-process arena (which is
   // permanent for the process's lifetime).
   function init(): InitState {
-      var db = pg_connect(__env("DATABASE_URL"));
-      var routes = build_router();
+      let db = pg_connect(__env("DATABASE_URL"));
+      let routes = build_router();
       return InitState { db: db, routes: routes };
   }
 
@@ -715,7 +715,7 @@ check on every invocation).
   // init's return value by reference.
   function handle(req: HttpRequest, st: InitState,
                   plat: Platform): HttpResponse {
-      var conn = st.db.borrow();
+      let conn = st.db.borrow();
       …
   }
   ```
@@ -882,7 +882,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 
 // Explicit streaming.
 function handle(req: HttpRequest, plat: Platform): () {
-    var resp = plat.response(200);
+    let resp = plat.response(200);
     resp.header("Content-Type", "text/event-stream");
     for line in req.body.lines() {
         resp.write(line + "\n");
@@ -931,11 +931,11 @@ effect call and returns canned responses:
 
 ```
 function test_user_fetch() {
-    var plat = mock_platform_new();
+    let plat = mock_platform_new();
     plat.kv_set("user:42", "{\"name\":\"Alice\"}");
 
-    var req = http_request_get("/users/42");
-    var resp = handle(req, plat);
+    let req = http_request_get("/users/42");
+    let resp = handle(req, plat);
 
     assert_eq_i32(resp.status, 200);
     assert_eq_string(plat.calls()[0].name, "kv.get");
@@ -1084,7 +1084,7 @@ back caches, async logging, metrics export. WASI Preview 2's
   via Roc-style Task or Kyo-style effects is preferable to
   bare async/await colouring.
 
-- **In-handler global state (top-level `var` shared across
+- **In-handler global state (top-level `let` shared across
   requests).** The arena model relies on per-request
   isolation. Cross-request state goes through the `init`
   phase (Rec §3); attempts to allocate cross-request from

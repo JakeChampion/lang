@@ -36,8 +36,8 @@ func TestExternImportWithBuiltinWallClockViaCLI(t *testing.T) {
 function rand_bytes(n: u64): u8[];
 
 function main(): i32 {
-	var b: u8[] = rand_bytes(4 as u64);
-	var t: i64 = now_ns();
+	let b: u8[] = rand_bytes(4 as u64);
+	let t: i64 = now_ns();
 	if (b.len() == 4 && t > 0) { write("` + want + `"); } else { write("bad"); }
 	return 0;
 }`

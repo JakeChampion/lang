@@ -6,7 +6,7 @@ import (
 )
 
 // A fresh-ret struct local bound from a borrowed parameter carries that
-// parameter's field buffers uncounted: `var st: Buf = se.add_local(1)` copies
+// parameter's field buffers uncounted: `let st: Buf = se.add_local(1)` copies
 // se.ops into st's box. Its first rebind replaced ops and released the old one
 // — se.ops, the CALLER's buffer — because the rebind release compared the
 // superseded box against the new value only. The binding now snapshots the box
@@ -19,19 +19,19 @@ function (s: Buf) emit(v: i32): Buf { return Buf { ...s, ops: s.ops.append(v) };
 function (s: Buf) add_local(v: i32): Buf { return Buf { ...s, locals: s.locals.append(v) }; }
 
 function step(se: Buf): Buf {
-    var st: Buf = se.add_local(1);
+    let st: Buf = se.add_local(1);
     st = st.emit(2);
     st = st.emit(3);
     return st;
 }
 
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var b: Buf = Buf { ops: [1, 2, 3], locals: [], n: 0 };
-        var r: Buf = step(b);
-        var k: i32 = 0;
+        let b: Buf = Buf { ops: [1, 2, 3], locals: [], n: 0 };
+        let r: Buf = step(b);
+        let k: i32 = 0;
         while (k < b.ops.len()) { total = total + b.ops[k]; k = k + 1; }
         total = total + r.ops.len() + r.locals.len();
         i = i + 1;

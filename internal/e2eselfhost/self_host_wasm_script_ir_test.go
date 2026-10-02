@@ -42,13 +42,13 @@ func TestSelfHostWasmScriptRoutesIR(t *testing.T) {
 		{"bare-return", "return 42;\n", 42},
 		// Top-level locals + a call, then a return: the shape synth_script_main
 		// moves wholesale into the synthesized main.
-		{"locals-and-call", "var x: i32 = 8;\nvar y: i32 = 34;\nprint_int(x + y);\nreturn x + y;\n", 42},
+		{"locals-and-call", "let x: i32 = 8;\nlet y: i32 = 34;\nprint_int(x + y);\nreturn x + y;\n", 42},
 		// No trailing return: synth_script_main appends `return 0;`, matching the
 		// exit-0 epilogue the AST emitter wrote after the inlined statements.
-		{"no-trailing-return", "var x: i32 = 1;\nprint_int(x);\n", 0},
+		{"no-trailing-return", "let x: i32 = 1;\nprint_int(x);\n", 0},
 		// A script that defines functions AND has top-level statements — still
 		// script-shaped, because none of them is `main`.
-		{"funcs-plus-toplevel", "function double(n: i32): i32 { return n * 2; }\nvar v: i32 = double(21);\nreturn v;\n", 42},
+		{"funcs-plus-toplevel", "function double(n: i32): i32 { return n * 2; }\nlet v: i32 = double(21);\nreturn v;\n", 42},
 		// Control: a module that already has `main` is NOT a script, and must be
 		// untouched by the normalisation.
 		{"has-main-control", "function main(): i32 { return 7; }\n", 7},

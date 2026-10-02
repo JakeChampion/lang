@@ -22,8 +22,8 @@ type leakRow struct {
 
 const structArrRebindInst = `struct Inst { name: string, depth: i32 }
 function mk(n: i32): Inst[] {
-    var out: Inst[] = [];
-    var i: i32 = 0;
+    let out: Inst[] = [];
+    let i: i32 = 0;
     while (i < n) { out = out.append(Inst { name: "g" + "", depth: i }); i = i + 1; }
     return out;
 }
@@ -32,33 +32,33 @@ function mk(n: i32): Inst[] {
 var structArrProducerRebindRows = []leakRow{
 	{"issue", `struct Inst { name: string, depth: i32 }
 function mk(n: i32): Inst[] {
-    var out: Inst[] = [];
+    let out: Inst[] = [];
     out = out.append(Inst { name: "g" + "", depth: n });
     return out;
 }
 function main(): i32 {
-    var pending: Inst[] = [];
+    let pending: Inst[] = [];
     pending = mk(1);
     return pending.len();
 }
 `, true},
 	{"producer_seed", structArrRebindInst + `function main(): i32 {
-    var pending: Inst[] = mk(2);
+    let pending: Inst[] = mk(2);
     pending = mk(3);
     return pending.len() + pending[2].depth;
 }
 `, true},
 	{"literal_seed", structArrRebindInst + `function main(): i32 {
-    var pending: Inst[] = [Inst { name: "q" + "", depth: 7 }];
-    var t: i32 = pending[0].depth;
+    let pending: Inst[] = [Inst { name: "q" + "", depth: 7 }];
+    let t: i32 = pending[0].depth;
     pending = mk(2);
     return t + pending.len();
 }
 `, true},
 	{"loop_with_append", structArrRebindInst + `function main(): i32 {
-    var pending: Inst[] = [];
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let pending: Inst[] = [];
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 6) {
         pending = mk(r);
         for p in pending { t = t + p.depth; }
@@ -71,23 +71,23 @@ function main(): i32 {
 `, true},
 	{"array_field_elem", `struct Node { name: string, kids: i32[] }
 function mk(n: i32): Node[] {
-    var out: Node[] = [];
+    let out: Node[] = [];
     out = out.append(Node { name: "g" + "", kids: [n, n + 1] });
     return out;
 }
 function main(): i32 {
-    var pending: Node[] = [];
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let pending: Node[] = [];
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 4) { pending = mk(r); t = t + pending[0].kids[1]; r = r + 1; }
     return t + pending.len();
 }
 `, true},
 	// An element bound out of the old array keeps it from the credit.
 	{"bound_elem", structArrRebindInst + `function main(): i32 {
-    var pending: Inst[] = [];
+    let pending: Inst[] = [];
     pending = mk(3);
-    var keep: Inst = pending[1];
+    let keep: Inst = pending[1];
     pending = mk(4);
     return keep.depth + pending[3].depth;
 }

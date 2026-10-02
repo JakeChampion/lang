@@ -165,7 +165,7 @@ function update_skips(u: i32): boolean {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [-T] SOURCE DEST\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... SOURCE... DIRECTORY\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... -t DIRECTORY SOURCE...\n";
@@ -257,14 +257,14 @@ function dest_path(dest: string): string {
 // what makes `mv -n a b/` say `not replacing 'b/'` and `mv -n a b/x` say
 // `cannot stat 'b/x'`.
 function dest_present(dest: string): boolean {
-  var st: StatInfo = lstat_info(dest);
+  let st: StatInfo = lstat_info(dest);
   if (st.ok) {
     return true;
   }
   if (st.err != "Not a directory") {
     return false;
   }
-  var bare: string = gnu.strip_slashes(dest);
+  let bare: string = gnu.strip_slashes(dest);
   if (bare == dest) {
     return false;
   }
@@ -290,8 +290,8 @@ function same_entry(a: string, b: string): boolean {
   if (gnu.base_name(a) != gnu.base_name(b)) {
     return false;
   }
-  var ad: StatInfo = stat_info(gnu.dir_name(a));
-  var bd: StatInfo = stat_info(gnu.dir_name(b));
+  let ad: StatInfo = stat_info(gnu.dir_name(a));
+  let bd: StatInfo = stat_info(gnu.dir_name(b));
   return ad.ok && bd.ok && ad.dev == bd.dev && ad.ino == bd.ino;
 }
 
@@ -359,13 +359,13 @@ struct Move { raw_src: string, raw_dest: string, src: string, dest: string }
 // `mv a deep` with `deep/a` a directory is `cannot overwrite directory
 // 'deep/a' with non-directory 'a'`, not a second descent.
 function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWriter): MoveOut {
-  var w: io_buffered.BufWriter = o;
-  var m: Move = m0;
-  var present: boolean = dest_present(m.raw_dest);
+  let w: io_buffered.BufWriter = o;
+  let m: Move = m0;
+  let present: boolean = dest_present(m.raw_dest);
   if (present && allow_into && stat_info(m.raw_dest).is_dir) {
     // Only that first rename saw the names as typed: the retry inside
     // the directory is already past the stripping.
-    var into: string = gnu.join_path(m.dest, gnu.base_name(m.src));
+    let into: string = gnu.join_path(m.dest, gnu.base_name(m.src));
     return do_move(cfg, Move { raw_src: m.src, raw_dest: into, src: m.src, dest: into }, false, w);
   }
   if (cfg.exchange) {
@@ -376,7 +376,7 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
   // errno is kept rather than acted on: a destination that turns out to
   // exist goes through the whole replace path below and renames again,
   // and one that does not is this errno and nothing more.
-  var rename_err: string = "File exists";
+  let rename_err: string = "File exists";
   if (!present) {
     match (rename(m.raw_src, m.raw_dest)) {
       Ok(_) => {
@@ -390,19 +390,19 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
       rename_err = "File exists";
     }
   } else {
-    var skipped: MoveOut = refuse_existing(cfg, m.dest, w);
+    let skipped: MoveOut = refuse_existing(cfg, m.dest, w);
     if (skipped.status >= 0) {
       return skipped;
     }
     w = skipped.out;
   }
 
-  var s: StatInfo = lstat_info(m.src);
+  let s: StatInfo = lstat_info(m.src);
   if (!s.ok) {
     w = gnu.error_out(w, "cannot stat " + gnu.quotea(m.src) + ": " + s.err);
     return MoveOut { status: 1, out: w };
   }
-  var d: StatInfo = lstat_info(dest_path(m.dest));
+  let d: StatInfo = lstat_info(dest_path(m.dest));
   if (!d.ok) {
     if (d.err != "No such file or directory") {
       w = gnu.error_out(w, "cannot stat " + gnu.quotea(m.dest) + ": " + d.err);
@@ -420,7 +420,7 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
   // The empty destination reaches here having been invisible to
   // `dest_present`, so the two skips are asked again now that the stat
   // has found it.
-  var skipped2: MoveOut = refuse_existing(cfg, m.dest, w);
+  let skipped2: MoveOut = refuse_existing(cfg, m.dest, w);
   if (skipped2.status >= 0) {
     return skipped2;
   }
@@ -433,7 +433,7 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
 // type refusals, so `mv -i -T a d` asks before it says the destination is
 // a directory.
 function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffered.BufWriter): MoveOut {
-  var w: io_buffered.BufWriter = o;
+  let w: io_buffered.BufWriter = o;
   if (same_file(cfg, m.src, m.dest, s, d)) {
     w = gnu.error_out(w, gnu.quotea(m.src) + " and " + gnu.quotea(m.dest) + " are the same file");
     return MoveOut { status: 1, out: w };
@@ -455,7 +455,7 @@ function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffere
     w = gnu.error_out(w, "cannot overwrite directory " + gnu.quotea(m.dest) + " with non-directory " + gnu.quotea(m.src));
     return MoveOut { status: 1, out: w };
   }
-  var backup: string = "";
+  let backup: string = "";
   if (cfg.backups) {
     backup = gnu.backup_name(m.dest, cfg.control, cfg.suffix);
     match (rename(dest_path(m.dest), backup)) {
@@ -469,7 +469,7 @@ function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffere
   match (rename(m.src, dest_path(m.dest))) {
     Ok(_) => {},
     Err(e2) => {
-      var text: string = gnu.io_error_text(e2);
+      let text: string = gnu.io_error_text(e2);
       if (is_exdev(text) && !cfg.no_copy) {
         return move_across(cfg, m, backup, w);
       }
@@ -503,7 +503,7 @@ function inter_device_failure(src: string, dest: string, text: string): string {
 // it rather than merging into it, which is the whole difference between a
 // move and a `cp -a`. `None` when there is nothing there or it went.
 function clear_target(dest: string): Option[string] {
-  var info: StatInfo = lstat_info(dest);
+  let info: StatInfo = lstat_info(dest);
   if (!info.ok) {
     return None;
   }
@@ -534,14 +534,14 @@ function clear_target(dest: string): Option[string] {
 // a directory holding `x` and `sub` copies `sub` first and removes `x`
 // first.
 function drop_source(cfg: Cfg, path: string, o: io_buffered.BufWriter): MoveOut {
-  var w: io_buffered.BufWriter = o;
-  var info: StatInfo = lstat_info(path);
+  let w: io_buffered.BufWriter = o;
+  let info: StatInfo = lstat_info(path);
   if (!info.ok) {
     w = gnu.error_out(w, "cannot remove " + gnu.quotea(path) + ": " + info.err);
     return MoveOut { status: 1, out: w };
   }
   if (info.is_dir) {
-    var names: string[] = [];
+    let names: string[] = [];
     match (read_dir(path)) {
       Ok(es) => {
         names = es;
@@ -551,10 +551,10 @@ function drop_source(cfg: Cfg, path: string, o: io_buffered.BufWriter): MoveOut 
         return MoveOut { status: 1, out: w };
       }
     }
-    var i: i32 = 0;
-    var status: i32 = 0;
+    let i: i32 = 0;
+    let status: i32 = 0;
     while (i < names.len()) {
-      var below: MoveOut = drop_source(cfg, gnu.join_path(path, names[i]), w);
+      let below: MoveOut = drop_source(cfg, gnu.join_path(path, names[i]), w);
       w = below.out;
       if (below.status != 0) {
         status = 1;
@@ -588,9 +588,9 @@ function drop_source(cfg: Cfg, path: string, o: io_buffered.BufWriter): MoveOut 
 // The removal half's two `-v` lines, which are `rm -v`'s and not the
 // copy's.
 function removed_line(cfg: Cfg, path: string, is_dir: boolean, o: io_buffered.BufWriter): MoveOut {
-  var w: io_buffered.BufWriter = o;
+  let w: io_buffered.BufWriter = o;
   if (cfg.verbose) {
-    var what: string = "removed ";
+    let what: string = "removed ";
     if (is_dir) {
       what = "removed directory ";
     }
@@ -604,7 +604,7 @@ function removed_line(cfg: Cfg, path: string, is_dir: boolean, o: io_buffered.Bu
 // arrived. `backup` is the name mv already renamed the destination to, so
 // the copy's own backup machinery stays off and the name is only quoted.
 function move_across(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter): MoveOut {
-  var w: io_buffered.BufWriter = o;
+  let w: io_buffered.BufWriter = o;
   match (clear_target(dest_path(m.dest))) {
     Some(text) => {
       w = gnu.error_out(w, inter_device_failure(m.src, m.dest, text));
@@ -612,8 +612,8 @@ function move_across(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter
     },
     None => {}
   }
-  var ccfg: copy.Cfg = copy.Cfg { ...copy.cfg_new(), attrs: copy.attrs_all(), recursive: true, deref: copy.deref_never(), verbose: cfg.verbose, verbose_style: copy.vstyle_move(), announced_backup: backup };
-  var cst: copy.State = copy.copy_one(ccfg, copy.state_new(w), m.src, dest_path(m.dest), true);
+  let ccfg: copy.Cfg = copy.Cfg { ...copy.cfg_new(), attrs: copy.attrs_all(), recursive: true, deref: copy.deref_never(), verbose: cfg.verbose, verbose_style: copy.vstyle_move(), announced_backup: backup };
+  let cst: copy.State = copy.copy_one(ccfg, copy.state_new(w), m.src, dest_path(m.dest), true);
   w = cst.out;
   if (cst.status != 0) {
     // Part of the operand did not arrive, so none of the source goes —
@@ -627,9 +627,9 @@ function move_across(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter
 // The `-v` line a move that worked prints, naming the operands the way
 // the rest of the run does rather than the way the first rename saw them.
 function verbose(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter): MoveOut {
-  var w: io_buffered.BufWriter = o;
+  let w: io_buffered.BufWriter = o;
   if (cfg.verbose) {
-    var line: string = "renamed " + gnu.quotea(m.src) + " -> " + gnu.quotea(m.dest);
+    let line: string = "renamed " + gnu.quotea(m.src) + " -> " + gnu.quotea(m.dest);
     if (backup.len() > 0) {
       line = line + " (backup: " + gnu.quotea(backup) + ")";
     }
@@ -647,17 +647,17 @@ function verbose(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter): M
 // the renames leaves the temporary name in the source's directory.
 // docs/COREUTILS.md carries the difference.
 function exchange_pair(cfg: Cfg, m: Move, o: io_buffered.BufWriter): MoveOut {
-  var w: io_buffered.BufWriter = o;
-  var s: StatInfo = lstat_info(m.src);
+  let w: io_buffered.BufWriter = o;
+  let s: StatInfo = lstat_info(m.src);
   if (!s.ok) {
     return MoveOut { status: 1, out: gnu.error_out(w, "cannot stat " + gnu.quotea(m.src) + ": " + s.err) };
   }
-  var dest: string = dest_path(m.dest);
-  var d: StatInfo = lstat_info(dest);
+  let dest: string = dest_path(m.dest);
+  let d: StatInfo = lstat_info(dest);
   if (same_file(cfg, m.src, m.dest, s, d)) {
     return MoveOut { status: 1, out: gnu.error_out(w, gnu.quotea(m.src) + " and " + gnu.quotea(m.dest) + " are the same file") };
   }
-  var tmp: string = scratch_name(m.src);
+  let tmp: string = scratch_name(m.src);
   match (rename(m.src, tmp)) {
     Ok(_) => {},
     Err(e) => {
@@ -667,7 +667,7 @@ function exchange_pair(cfg: Cfg, m: Move, o: io_buffered.BufWriter): MoveOut {
   match (rename(dest, m.src)) {
     Ok(_) => {},
     Err(e) => {
-      var why: string = gnu.io_error_text(e);
+      let why: string = gnu.io_error_text(e);
       // Put the source back before reporting, so a failure here leaves
       // the tree exactly as it was found.
       match (rename(tmp, m.src)) {
@@ -697,10 +697,10 @@ function exchange_failure(m: Move, why: string): string {
 // cross a filesystem. Only `--exchange` needs one, and only for the
 // moment between its first rename and its last.
 function scratch_name(path: string): string {
-  var dir: string = gnu.dir_name(path);
-  var i: i32 = 0;
+  let dir: string = gnu.dir_name(path);
+  let i: i32 = 0;
   while (true) {
-    var name: string = gnu.join_path(dir, ".mv_exchange." + i.to_string());
+    let name: string = gnu.join_path(dir, ".mv_exchange." + i.to_string());
     if (!lstat_info(name).ok) {
       return name;
     }
@@ -719,7 +719,7 @@ function refuse_existing(cfg: Cfg, dest: string, o: io_buffered.BufWriter): Move
     return MoveOut { status: 1, out: gnu.error_out(o, "not replacing " + gnu.quotea(dest)) };
   }
   if (cfg.update == update_none()) {
-    var w: io_buffered.BufWriter = o;
+    let w: io_buffered.BufWriter = o;
     if (cfg.debug) {
       w = gnu.put(w, "skipped " + gnu.quotea(dest) + "\n");
     }
@@ -745,7 +745,7 @@ function newer(s: StatInfo, d: StatInfo): boolean {
 // that exists but is not a directory is ENOTDIR, worded as the errno.
 // `what` is the noun the two callers differ by.
 function require_directory(what: string, dir: string): void {
-  var st: StatInfo = stat_info(dir);
+  let st: StatInfo = stat_info(dir);
   if (!st.ok) {
     gnu.error(what + " " + gnu.quotea(dir) + ": " + st.err);
     exit(1);
@@ -758,7 +758,7 @@ function require_directory(what: string, dir: string): void {
 
 // ---- main ------------------------------------------------------------------
 function option_table(): gnu.Opt[] {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.optional_long("b", "backup", opt_backup()));
   opts = opts.append(gnu.flag("Z", "context", opt_context()));
   opts = opts.append(gnu.flag("", "debug", opt_debug()));
@@ -782,11 +782,11 @@ function option_table(): gnu.Opt[] {
 struct Scan { cfg: Cfg, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, target_dir: string, have_target_dir: boolean, no_target_dir: boolean }
 
 function scan_options(argv: string[]): (Scan, string[]) {
-  var cfg: Cfg = Cfg { ask: ask_yes(), update: update_all(), strip: false, verbose: false, debug: false, exchange: false, backups: false, control: gnu.backup_existing(), suffix: "~", no_copy: false };
-  var s: Scan = Scan { cfg: cfg, backup_given: false, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
-  var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "mv", help_text(), 1);
+  let cfg: Cfg = Cfg { ask: ask_yes(), update: update_all(), strip: false, verbose: false, debug: false, exchange: false, backups: false, control: gnu.backup_existing(), suffix: "~", no_copy: false };
+  let s: Scan = Scan { cfg: cfg, backup_given: false, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
+  let g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "mv", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -801,7 +801,7 @@ function scan_options(argv: string[]): (Scan, string[]) {
 }
 
 function apply_option(s: Scan, m: gnu.OptMatch): Scan {
-  var c: Cfg = s.cfg;
+  let c: Cfg = s.cfg;
   if (m.id == opt_backup()) {
     // `-b` turns backups on and says nothing about the control;
     // `--backup=CONTROL` says both, and `--backup` alone is `-b`.
@@ -843,7 +843,7 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
   if (m.id == opt_suffix()) {
     // A suffix turns backups on by itself, and an unusable one leaves
     // the default `~` in place rather than being refused.
-    var suf: string = c.suffix;
+    let suf: string = c.suffix;
     if (gnu.usable_suffix(m.value)) {
       suf = m.value;
     }
@@ -875,7 +875,7 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
 // mv a b` renames without complaint; an empty value of either means the
 // default rather than an empty one.
 function from_environment(s: Scan): Cfg {
-  var c: Cfg = s.cfg;
+  let c: Cfg = s.cfg;
   if (!c.backups) {
     return c;
   }
@@ -889,7 +889,7 @@ function from_environment(s: Scan): Cfg {
       None => {}
     }
   }
-  var control: i32 = gnu.backup_existing();
+  let control: i32 = gnu.backup_existing();
   if (s.control_given) {
     if (s.control_text.len() > 0) {
       control = gnu.argmatch_valued(s.control_text, gnu.backup_names(), gnu.backup_values(), "backup type");
@@ -911,13 +911,13 @@ function from_environment(s: Scan): Cfg {
 }
 
 pub function main(): i32 {
-  var scanned: (Scan, string[]) = scan_options(args());
-  var s: Scan = scanned.0;
-  var operands: string[] = scanned.1;
+  let scanned: (Scan, string[]) = scan_options(args());
+  let s: Scan = scanned.0;
+  let operands: string[] = scanned.1;
 
   // The operand count is checked before either conflict: `mv -t d -T`
   // is `missing file operand`, where `mv -T -t d a` is the conflict.
-  var least: i32 = 2;
+  let least: i32 = 2;
   if (s.have_target_dir) {
     least = 1;
   }
@@ -937,16 +937,16 @@ pub function main(): i32 {
   // and the backup conflict are settled before the environment is
   // read, so `-b -n` under a bogus VERSION_CONTROL reports the
   // conflict rather than the variable.
-  var settled: Scan = s;
+  let settled: Scan = s;
   if (settled.cfg.ask == ask_never()) {
     settled = Scan { ...settled, cfg: Cfg { ...settled.cfg, update: update_none() } };
   }
   if (settled.backup_given && (settled.cfg.exchange || update_skips(settled.cfg.update))) {
     gnu.die_usage("cannot combine --backup with --exchange, -n, or --update=none-fail", 1);
   }
-  var cfg: Cfg = from_environment(settled);
+  let cfg: Cfg = from_environment(settled);
 
-  var o: io_buffered.BufWriter = gnu.out_new();
+  let o: io_buffered.BufWriter = gnu.out_new();
   if (s.have_target_dir) {
     require_directory("target directory", s.target_dir);
     return finish(move_into(cfg, operands, operands.len(), s.target_dir, o));
@@ -960,7 +960,7 @@ pub function main(): i32 {
   if (operands.len() == 2) {
     return finish(do_move(cfg, pair(cfg, operands[0], operands[1]), true, o));
   }
-  var dir: string = operands[operands.len() - 1];
+  let dir: string = operands[operands.len() - 1];
   require_directory("target", dir);
   return finish(move_into(cfg, operands, operands.len() - 1, dir, o));
 }
@@ -985,15 +985,15 @@ function pair(cfg: Cfg, src: string, dest: string): Move {
 // `operands[0 .. count)` moved inside `dir`, each under its own last
 // component. A failed operand costs the exit status and not the run.
 function move_into(cfg: Cfg, operands: string[], count: i32, dir: string, o: io_buffered.BufWriter): MoveOut {
-  var w: io_buffered.BufWriter = o;
-  var status: i32 = 0;
-  var i: i32 = 0;
+  let w: io_buffered.BufWriter = o;
+  let status: i32 = 0;
+  let i: i32 = 0;
   while (i < count) {
     // The stripping is already done by the time any rename is tried in
     // this form, so both spellings are the same string.
-    var src: string = stripped(cfg, operands[i]);
-    var dest: string = gnu.join_path(dir, gnu.base_name(src));
-    var r: MoveOut = do_move(cfg, Move { raw_src: src, raw_dest: dest, src: src, dest: dest }, false, w);
+    let src: string = stripped(cfg, operands[i]);
+    let dest: string = gnu.join_path(dir, gnu.base_name(src));
+    let r: MoveOut = do_move(cfg, Move { raw_src: src, raw_dest: dest, src: src, dest: dest }, false, w);
     w = r.out;
     if (r.status != 0) {
       status = 1;

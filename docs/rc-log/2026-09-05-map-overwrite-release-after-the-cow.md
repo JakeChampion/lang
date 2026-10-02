@@ -1,6 +1,6 @@
 # 2026-09-05 — the overwrite release moves to the far side of the COW
 
-`var snap = m; m = m.insert(k, v2)` leaked the value the set replaced. The
+`let snap = m; m = m.insert(k, v2)` leaked the value the set replaced. The
 release was in the IR, emitted just before the set — and the set's first act is
 `m = __map_cow_inplace(m)`, so the release ran while the buffer was still
 shared. That ordering leaves only two options at the site, and both are wrong:

@@ -8,7 +8,7 @@ the Fern language. Provides:
   cross-module references.
 - Go-to-definition (jumps across files in workspace mode).
 - Completion + signature help.
-- Inlay hints for unannotated `var x = …` declarations.
+- Inlay hints for unannotated `let x = …` declarations.
 - Document symbols ("Outline" view + Cmd-Shift-O).
 - Semantic tokens (type-aware highlighting on top of the
   TextMate-grammar fallback).

@@ -34,12 +34,12 @@ func tryMarkerCases() []tryMarkerCase {
 		{"build_ok", `
 @try
 enum Flag { On(i32), Off }
-function pick(f: Flag): Flag { var v: i32 = f?; return On(v + 1); }
+function pick(f: Flag): Flag { let v: i32 = f?; return On(v + 1); }
 function main(): i32 { match (pick(On(7))) { On(v) => { return v; }, Off => { return 0; } } }`, 8},
 		{"build_fail", `
 @try
 enum Flag { On(i32), Off }
-function pick(f: Flag): Flag { var v: i32 = f?; return On(v + 1); }
+function pick(f: Flag): Flag { let v: i32 = f?; return On(v + 1); }
 function main(): i32 { match (pick(Off)) { On(v) => { return v; }, Off => { return 5; } } }`, 5},
 
 		// Forward shape: the failure variant carries a payload, so the failure
@@ -48,12 +48,12 @@ function main(): i32 { match (pick(Off)) { On(v) => { return v; }, Off => { retu
 		{"forward_ok", `
 @try
 enum Outcome { Good(i32), Bad(i32) }
-function step(o: Outcome): Outcome { var v: i32 = o?; return Good(v * 2); }
+function step(o: Outcome): Outcome { let v: i32 = o?; return Good(v * 2); }
 function main(): i32 { match (step(Good(6))) { Good(v) => { return v; }, Bad(e) => { return e + 10; } } }`, 12},
 		{"forward_fail", `
 @try
 enum Outcome { Good(i32), Bad(i32) }
-function step(o: Outcome): Outcome { var v: i32 = o?; return Good(v * 2); }
+function step(o: Outcome): Outcome { let v: i32 = o?; return Good(v * 2); }
 function main(): i32 { match (step(Bad(3))) { Good(v) => { return v; }, Bad(e) => { return e + 10; } } }`, 13},
 
 		// A direct CALL scrutinee (`mk(n)?`), not a local — the scrutinee-type
@@ -62,7 +62,7 @@ function main(): i32 { match (step(Bad(3))) { Good(v) => { return v; }, Bad(e) =
 @try
 enum Outcome { Good(i32), Bad(i32) }
 function mk(n: i32): Outcome { if (n > 0) { return Good(n); } return Bad(9); }
-function step(n: i32): Outcome { var v: i32 = mk(n)?; return Good(v * 2); }
+function step(n: i32): Outcome { let v: i32 = mk(n)?; return Good(v * 2); }
 function main(): i32 { match (step(4)) { Good(v) => { return v; }, Bad(e) => { return e; } } }`, 8},
 
 		// Payload shapes. Each reads through struct_get at the field's own
@@ -70,49 +70,49 @@ function main(): i32 { match (step(4)) { Good(v) => { return v; }, Bad(e) => { r
 		{"payload_string", `
 @try
 enum Str { Got(string), Missing }
-function up(s: Str): Str { var v: string = s?; return Got(v + "!"); }
+function up(s: Str): Str { let v: string = s?; return Got(v + "!"); }
 function main(): i32 { match (up(Got("hi"))) { Got(v) => { return v.len(); }, Missing => { return 0; } } }`, 3},
 		{"payload_string_inferred", `
 @try
 enum Str { Got(string), Missing }
-function up(s: Str): Str { var v = s?; return Got(v + "!"); }
+function up(s: Str): Str { let v = s?; return Got(v + "!"); }
 function main(): i32 { match (up(Got("hi"))) { Got(v) => { return v.len(); }, Missing => { return 0; } } }`, 3},
 		{"payload_i64", `
 @try
 enum Big { Val(i64), Nope }
-function dbl(b: Big): Big { var v: i64 = b?; return Val(v * 2); }
+function dbl(b: Big): Big { let v: i64 = b?; return Val(v * 2); }
 function main(): i32 { match (dbl(Val(21))) { Val(v) => { return (v as i32); }, Nope => { return 1; } } }`, 42},
 		{"payload_struct", `
 struct P { x: i32, y: i32 }
 @try
 enum Pt { Here(P), Nowhere }
-function sx(p: Pt): Pt { var v: P = p?; return Here(P { x: v.x + 1, y: v.y }); }
+function sx(p: Pt): Pt { let v: P = p?; return Here(P { x: v.x + 1, y: v.y }); }
 function main(): i32 { match (sx(Here(P { x: 4, y: 9 }))) { Here(v) => { return v.x + v.y; }, Nowhere => { return 0; } } }`, 14},
 		{"payload_tuple", `
 @try
 enum Tup { Pair((i32, i32)), NoPair }
-function sw(t: Tup): Tup { var v: (i32, i32) = t?; return Pair((v.1, v.0)); }
+function sw(t: Tup): Tup { let v: (i32, i32) = t?; return Pair((v.1, v.0)); }
 function main(): i32 { match (sw(Pair((3, 9)))) { Pair(p) => { return p.0 * 10 + p.1; }, NoPair => { return 0; } } }`, 93},
 
-		// UNANNOTATED bindings. `var x = inner?` types its slot from the
+		// UNANNOTATED bindings. `let x = inner?` types its slot from the
 		// operand alone, so the width, str-tracking and slot-typing paths each
 		// have to resolve a marked enum's payload the same way the lowering
 		// does — an i64 read at width 32 is a miscompile, not a bail.
 		{"inferred_i64", `
 @try
 enum Big { Val(i64), Nope }
-function dbl(b: Big): Big { var v = b?; return Val(v * 2); }
+function dbl(b: Big): Big { let v = b?; return Val(v * 2); }
 function main(): i32 { match (dbl(Val(4000000000))) { Val(v) => { if (v == 8000000000) { return 7; } return 1; }, Nope => { return 2; } } }`, 7},
 		{"inferred_struct", `
 struct P { x: i32, y: i32 }
 @try
 enum Pt { Here(P), Nowhere }
-function sx(p: Pt): Pt { var v = p?; return Here(P { x: v.x + 1, y: v.y }); }
+function sx(p: Pt): Pt { let v = p?; return Here(P { x: v.x + 1, y: v.y }); }
 function main(): i32 { match (sx(Here(P { x: 4, y: 9 }))) { Here(v) => { return v.x + v.y; }, Nowhere => { return 0; } } }`, 14},
 		{"inferred_tuple", `
 @try
 enum Tup { Pair((i32, i32)), NoPair }
-function sw(t: Tup): Tup { var v = t?; return Pair((v.1, v.0)); }
+function sw(t: Tup): Tup { let v = t?; return Pair((v.1, v.0)); }
 function main(): i32 { match (sw(Pair((3, 9)))) { Pair(p) => { return p.0 * 10 + p.1; }, NoPair => { return 0; } } }`, 93},
 
 		// An enum that satisfies the `?` shape by ACCIDENT and is never marked.
@@ -128,13 +128,13 @@ function main(): i32 { return depth(Node(Node(Leaf(5)))); }`, 7},
 		{"method_receiver", `
 @try
 enum Flag { On(i32), Off }
-function (f: Flag) bump(): Flag { var v: i32 = f?; return On(v + 1); }
-function main(): i32 { var a: Flag = On(4); match (a.bump()) { On(v) => { return v; }, Off => { return 0; } } }`, 5},
+function (f: Flag) bump(): Flag { let v: i32 = f?; return On(v + 1); }
+function main(): i32 { let a: Flag = On(4); match (a.bump()) { On(v) => { return v; }, Off => { return 0; } } }`, 5},
 		{"nested", `
 @try
 enum Flag { On(i32), Off }
-function inner(f: Flag): Flag { var v: i32 = f?; return On(v + 1); }
-function outer(f: Flag): Flag { var v: i32 = inner(f)?; var w: i32 = inner(On(v))?; return On(w); }
+function inner(f: Flag): Flag { let v: i32 = f?; return On(v + 1); }
+function outer(f: Flag): Flag { let v: i32 = inner(f)?; let w: i32 = inner(On(v))?; return On(w); }
 function main(): i32 { match (outer(On(1))) { On(v) => { return v; }, Off => { return 99; } } }`, 3},
 
 		// A GENERIC marked enum, instantiated at two payload types in one
@@ -144,8 +144,8 @@ function main(): i32 { match (outer(On(1))) { On(v) => { return v; }, Off => { r
 		{"generic_two_instantiations", `
 @try
 enum Maybe[T] { Yes(T), No }
-function bumpi(m: Maybe[i32]): Maybe[i32] { var v: i32 = m?; return Yes(v + 1); }
-function bumps(m: Maybe[string]): Maybe[string] { var v: string = m?; return Yes(v + "!"); }
+function bumpi(m: Maybe[i32]): Maybe[i32] { let v: i32 = m?; return Yes(v + 1); }
+function bumps(m: Maybe[string]): Maybe[string] { let v: string = m?; return Yes(v + "!"); }
 function ai(): i32 { match (bumpi(Yes(7))) { Yes(v) => { return v; }, No => { return 0; } } }
 function bi(): i32 { match (bumpi(No)) { Yes(v) => { return v; }, No => { return 50; } } }
 function cs(): i32 { match (bumps(Yes("ab"))) { Yes(v) => { return v.len(); }, No => { return 0; } } }
@@ -156,9 +156,9 @@ function main(): i32 { return ai() + bi() + cs() + ds(); }`, 70},
 		// must not have disturbed it.
 		{"option_result_unchanged", `
 function f(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; }
-function g(n: i32): Option[i32] { var v: i32 = f(n)?; return Some(v * 3); }
+function g(n: i32): Option[i32] { let v: i32 = f(n)?; return Some(v * 3); }
 function h(n: i32): Result[i32, i32] { if (n > 0) { return Ok(n); } return Err(7); }
-function k(n: i32): Result[i32, i32] { var v: i32 = h(n)?; return Ok(v + 1); }
+function k(n: i32): Result[i32, i32] { let v: i32 = h(n)?; return Ok(v + 1); }
 function ga(): i32 { match (g(2)) { Some(v) => { return v; }, None => { return 0; } } }
 function gb(): i32 { match (g(0 - 1)) { Some(v) => { return v; }, None => { return 100; } } }
 function kc(): i32 { match (k(5)) { Ok(v) => { return v; }, Err(e) => { return e; } } }
@@ -223,7 +223,7 @@ enum Flag { On(i32), Off }
 function step(f: Flag): Flag {
     defer { print("d"); }
     errdefer { print("e"); }
-    var v: i32 = f?;
+    let v: i32 = f?;
     return On(v);
 }
 function main(): i32 {

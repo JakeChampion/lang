@@ -144,7 +144,7 @@ Each with `__rc_underflow()` reading 0 — leaks, not over-releases. The two
 self-host ones reproduce identically under `FERN_SELFHOST_NO_REUSE=1`, so
 neither is the reuse layer's.
 
-- **A mixed rc tuple is never released at all** — #7281. `var t: (i32[], i32[])
+- **A mixed rc tuple is never released at all** — #7281. `let t: (i32[], i32[])
   = (xs, [i + 2, i + 3])` earns `"TUPRC:"` (the rebind path) but not
   `"TUPRCS:"`, because `tuple_arg_payload_fresh` requires *every* rc position to
   be a fresh literal, and position 0 is a live local. So a single-bind tuple of
@@ -152,7 +152,7 @@ neither is the reuse layer's.
   12000 bytes over 100 rounds. Make either position rc-free and it balances;
   only the mix falls between the two classes. The all-or-nothing gate is the
   cause — the class needs the per-position kinds list `"TUP:"` already has.
-- **A tuple bound from another tuple local releases nothing** — #7282. `var v:
+- **A tuple bound from another tuple local releases nothing** — #7282. `let v:
   (i32, i32[]) = t;` — `allocs=200 frees=0`, 8000 over 100 rounds. The alias
   escape-flags `t`, so this is a credit denial rather than a missing release
   site, and `v`'s own bind is in neither collection.

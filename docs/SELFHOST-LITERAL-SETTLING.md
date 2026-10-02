@@ -19,7 +19,7 @@ parser.ExprNumber(n) => {
 
 No magnitude test, no context sensitivity. Consequences observed:
 
-- `var v: i64 = (if (c) { [7000000000, 9000000000] } else { … })[1]` bails the
+- `let v: i64 = (if (c) { [7000000000, 9000000000] } else { … })[1]` bails the
   IR path, while the interpreter — the semantic oracle — evaluates it to the
   right answer. The `ExprIndex.ty` carrier stamps `i32` for that read, which is
   not a hole the carrier can fill; it is a wrong answer the carrier faithfully
@@ -39,7 +39,7 @@ settled from context.
   for an unsuffixed literal. Only `42i64` / `7u8` / … pin a width at parse time.
 - `internal/checker/checker.go`:
   - `settleNumeric(e, hint)` — the entry point, driven from **66 call sites**,
-    each one a place where context supplies an expected type (a declared var
+    each one a place where context supplies an expected type (a declared let
     type, a parameter, a return position, a struct-field initialiser, both arms
     of a comparison, an `Option`/`Result` payload through `?`, …).
   - `settleInt(e, hn)` / `settleFloat(e, hf)` — recurse through `Unary` and
@@ -56,8 +56,8 @@ through the checker's whole expression walk, plus a diagnostic.
 The work is **not** "add a magnitude test to `check_expr`'s `ExprNumber` arm."
 That would type `7000000000` as `i64` and fix the observed case, but it gets
 the general problem backwards: it makes the literal's type depend on its own
-text rather than on its use, so `var x: u64 = 3;` and `var y: f32 = 3;` stay
-wrong, and `var z: i32 = 3000000000;` silently becomes an i64 assigned to an
+text rather than on its use, so `let x: u64 = 3;` and `let y: f32 = 3;` stay
+wrong, and `let z: i32 = 3000000000;` silently becomes an i64 assigned to an
 i32 instead of the E047 diagnostic native gives.
 
 A faithful port needs, in order:

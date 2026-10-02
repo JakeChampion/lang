@@ -15,15 +15,15 @@ function cell_len(c: Slot): i32 {
 }
 
 function main(): i32 {
-    var xs: Slot[] = [Text("aaaa"), Num(2), Text("cc"), Empty];
+    let xs: Slot[] = [Text("aaaa"), Num(2), Text("cc"), Empty];
     // Replace a string-carrying element (drops the old "aaaa").
     xs = xs.with(0, Text("z"));
     // Replace a scalar element with a string-carrying one.
     xs = xs.with(1, Text("bbb"));
     // Replace a string-carrying element with another (drops old "cc").
     xs = xs.with(2, Text("dddddd"));
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
         total = total + cell_len(xs[i]);   // 1 + 3 + 6 + 0 = 10
         i = i + 1;

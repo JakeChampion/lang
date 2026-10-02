@@ -97,10 +97,10 @@ Scope (current `irlower.fern`):
 2. **emit.** `s = s.emit(op)` → `ops = ops.append(op)` (sole-owner
    self-reassign → in-place amortised append). `emit`'s ctrl-depth
    bookkeeping moves to a tiny `(s, op) → s` helper or inlines.
-3. **Threading.** Every `var s = f(…, s)` becomes
-   `var (s, ops) = f(…, s, ops)`; the callee moves `ops` in (last use)
+3. **Threading.** Every `let s = f(…, s)` becomes
+   `let (s, ops) = f(…, s, ops)`; the callee moves `ops` in (last use)
    so it stays rc==1 and appends in place.
-4. **Finalisation.** `lower_func` seeds `var ops: ir.Op[] = []`, threads
+4. **Finalisation.** `lower_func` seeds `let ops: ir.Op[] = []`, threads
    it, and puts it straight into `LowerResult.ops` (no flatten needed —
    it is already a forward-order `ir.Op[]`).
 5. **Validate** (every step is meaningless until the whole thing

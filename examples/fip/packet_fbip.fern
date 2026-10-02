@@ -106,9 +106,9 @@ fip function st_bad_checksum(): i32 {
 // where a plain sum does not. Cheap enough that it is not what any variant's
 // throughput is measuring.
 fip function checksum(bytes: u8[], from: i32, n: i32): i32 {
-  var a: i32 = 0;
-  var b: i32 = 0;
-  var i: i32 = 0;
+  let a: i32 = 0;
+  let b: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     a = (a + bytes[from + i] as i32) % 255;
     b = (b + a) % 255;
@@ -133,8 +133,8 @@ fip function known_type(t: i32): boolean {
 }
 
 fip function pow256(k: i32): i64 {
-  var p: i64 = 1 as i64;
-  var i: i32 = 0;
+  let p: i64 = 1 as i64;
+  let i: i32 = 0;
   while (i < k) {
     p = p * (256 as i64);
     i = i + 1;
@@ -195,7 +195,7 @@ fbip function parse_into(own c: Codec, wire: u8[], wire_len: i32): Codec {
   }
   c = Codec { ...c, mtype: wire[3] as i32 };
   c = Codec { ...c, rid: read_u32(wire, 6) };
-  var n: i32 = read_u16(wire, 10);
+  let n: i32 = read_u16(wire, 10);
   if (n > max_payload()) {
     return reject(c, st_oversize());
   }
@@ -216,7 +216,7 @@ fbip function parse_into(own c: Codec, wire: u8[], wire_len: i32): Codec {
 // Each of these writes bytes into `c.out` one reconstruction at a time. That is
 // the shape the annotation permits and the honest spelling of "hold the buffer
 // in a record": the buffer cannot be lifted into a local first, because
-// `var b = c.out` while `c` is still live leaves `b` SHARED and `.with` on it
+// `let b = c.out` while `c` is still live leaves `b` SHARED and `.with` on it
 // copies — which E053 says, correctly. `packet_fip.fern` threads the same
 // buffer as its own `own` parameter and pays the store instead.
 fbip function put(own c: Codec, at: i32, v: u8): Codec {
@@ -224,9 +224,9 @@ fbip function put(own c: Codec, at: i32, v: u8): Codec {
 }
 
 fbip function write_echo(own c: Codec, wire: u8[]): Codec {
-  var at: i32 = c.at;
-  var n: i32 = c.plen;
-  var i: i32 = 0;
+  let at: i32 = c.at;
+  let n: i32 = c.plen;
+  let i: i32 = 0;
   while (i < n) {
     c = put(c, header_len() + i, wire[at + i]);
     i = i + 1;
@@ -235,9 +235,9 @@ fbip function write_echo(own c: Codec, wire: u8[]): Codec {
 }
 
 fbip function write_reverse(own c: Codec, wire: u8[]): Codec {
-  var at: i32 = c.at;
-  var n: i32 = c.plen;
-  var i: i32 = 0;
+  let at: i32 = c.at;
+  let n: i32 = c.plen;
+  let i: i32 = 0;
   while (i < n) {
     c = put(c, header_len() + i, wire[at + n - 1 - i]);
     i = i + 1;
@@ -246,11 +246,11 @@ fbip function write_reverse(own c: Codec, wire: u8[]): Codec {
 }
 
 fbip function write_upper(own c: Codec, wire: u8[]): Codec {
-  var at: i32 = c.at;
-  var n: i32 = c.plen;
-  var i: i32 = 0;
+  let at: i32 = c.at;
+  let n: i32 = c.plen;
+  let i: i32 = 0;
   while (i < n) {
-    var ch: i32 = wire[at + i] as i32;
+    let ch: i32 = wire[at + i] as i32;
     if (ch >= 97 && ch <= 122) {
       ch = ch - 32;
     }
@@ -261,15 +261,15 @@ fbip function write_upper(own c: Codec, wire: u8[]): Codec {
 }
 
 fbip function write_sum(own c: Codec, wire: u8[]): Codec {
-  var at: i32 = c.at;
-  var n: i32 = c.plen;
-  var total: i64 = 0 as i64;
-  var s: i32 = 0;
+  let at: i32 = c.at;
+  let n: i32 = c.plen;
+  let total: i64 = 0 as i64;
+  let s: i32 = 0;
   while (s < n) {
     total = total + wire[at + s] as i64;
     s = s + 1;
   }
-  var b: i32 = 0;
+  let b: i32 = 0;
   while (b < 8) {
     c = put(c, header_len() + b, (total / pow256(b) % (256 as i64)) as u8);
     b = b + 1;
@@ -294,18 +294,18 @@ fbip function encode_header(own c: Codec): Codec {
   // Every field this writes is read out first: a field read in the same
   // expression that consumes the state is E050, since the argument is
   // evaluated after the move.
-  var plen: i32 = c.out_len;
-  var mt: i32 = c.mtype;
-  var status: i32 = c.st;
-  var rid: i64 = c.rid;
-  var ck: i32 = checksum(c.out, header_len(), plen);
+  let plen: i32 = c.out_len;
+  let mt: i32 = c.mtype;
+  let status: i32 = c.st;
+  let rid: i64 = c.rid;
+  let ck: i32 = checksum(c.out, header_len(), plen);
   c = put(c, 0, magic0() as u8);
   c = put(c, 1, magic1() as u8);
   c = put(c, 2, version() as u8);
   c = put(c, 3, mt as u8);
   c = put(c, 4, status as u8);
   c = put(c, 5, 0 as u8);
-  var idb: i32 = 0;
+  let idb: i32 = 0;
   while (idb < 4) {
     c = put(c, 6 + idb, (rid / pow256(idb) % (256 as i64)) as u8);
     idb = idb + 1;
@@ -341,8 +341,8 @@ fbip function tally(own c: Codec): Codec {
 }
 
 fbip function absorb(own c: Codec, n: i32): Codec {
-  var d: i64 = c.digest;
-  var i: i32 = 0;
+  let d: i64 = c.digest;
+  let i: i32 = 0;
   while (i < n) {
     d = mix(d, c.out[i] as i32);
     i = i + 1;
@@ -357,7 +357,7 @@ fbip function serve(own c: Codec, wire: u8[], n: i64): Codec {
     c = transform(c, wire);
   }
   c = encode_header(c);
-  var framed: i32 = header_len() + c.out_len;
+  let framed: i32 = header_len() + c.out_len;
   c = absorb(c, framed);
   c = tally(c);
   // Bytes moved: the transform's write into the response buffer, and the
@@ -402,18 +402,18 @@ fip function corruption(n: i64): i32 {
 // is the harness, not the codec, and a borrowed `wire` would copy all 256
 // bytes on each `.with` — charging every variant for the instrument.
 fip function build_request(own wire: u8[], n: i64): u8[] {
-  var t: i32 = 1 + (n % (4 as i64)) as i32;
-  var plen: i32 = gen_payload_len(n);
-  var corrupt: i32 = corruption(n);
-  var i: i32 = 0;
+  let t: i32 = 1 + (n % (4 as i64)) as i32;
+  let plen: i32 = gen_payload_len(n);
+  let corrupt: i32 = corruption(n);
+  let i: i32 = 0;
   while (i < plen) {
     wire = wire.with(header_len() + i, gen_byte(n, i));
     i = i + 1;
   }
-  var ck: i32 = checksum(wire, header_len(), plen);
-  var m0: i32 = magic0();
-  var ver: i32 = version();
-  var wire_plen: i32 = plen;
+  let ck: i32 = checksum(wire, header_len(), plen);
+  let m0: i32 = magic0();
+  let ver: i32 = version();
+  let wire_plen: i32 = plen;
   if (corrupt == 0) {
     m0 = 1;
   }
@@ -435,7 +435,7 @@ fip function build_request(own wire: u8[], n: i64): u8[] {
   wire = wire.with(3, t as u8);
   wire = wire.with(4, 0 as u8);
   wire = wire.with(5, 0 as u8);
-  var idb: i32 = 0;
+  let idb: i32 = 0;
   while (idb < 4) {
     wire = wire.with(6 + idb, (n / pow256(idb) % (256 as i64)) as u8);
     idb = idb + 1;
@@ -449,7 +449,7 @@ fip function build_request(own wire: u8[], n: i64): u8[] {
 }
 
 fip function wire_len_for(n: i64): i32 {
-  var plen: i32 = gen_payload_len(n);
+  let plen: i32 = gen_payload_len(n);
   if (corruption(n) == 4) {
     return header_len() + plen - 1;
   }
@@ -460,7 +460,7 @@ fip function wire_len_for(n: i64): i32 {
 // agree only if this agrees, which is what makes the comparison a differential
 // test rather than three unrelated benchmarks.
 fip function mix(d: i64, b: i32): i64 {
-  var x: i64 = d ^ b as i64;
+  let x: i64 = d ^ b as i64;
   x = x * (1099511628211 as i64);
   x = x ^ x >> 29 as i64;
   if (x < 0 as i64) {
@@ -470,8 +470,8 @@ fip function mix(d: i64, b: i32): i64 {
 }
 
 function zeros_u8(n: i32): u8[] {
-  var xs: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let xs: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     xs = xs.with(i, 0 as u8);
     i = i + 1;
@@ -490,36 +490,36 @@ function new_codec(): Codec {
 }
 
 function main(): i32 {
-  var batch: i32 = 64;
+  let batch: i32 = 64;
   // 4000 rounds is 256,000 requests, which holds the per-request medians steady
   // while keeping this program the same weight as experiment 1's — it is run
   // under both backends, under qemu, by the SSA differential sweep over
   // examples/, and five times that was 5x the cost for no more signal.
-  var rounds: i32 = 4000;
-  var wire: u8[] = zeros_u8(max_packet());
-  var c: Codec = new_codec();
-  var w: i32 = 0;
+  let rounds: i32 = 4000;
+  let wire: u8[] = zeros_u8(max_packet());
+  let c: Codec = new_codec();
+  let w: i32 = 0;
   while (w < batch) {
     wire = build_request(wire, w as i64);
     c = serve(c, wire, w as i64);
     w = w + 1;
   }
   c = reset(c);
-  var samples: i64[] = [];
-  var p: i32 = 0;
+  let samples: i64[] = [];
+  let p: i32 = 0;
   while (p < rounds) {
     samples = samples.append(0 as i64);
     p = p + 1;
   }
-  var at_allocs: i64 = bench.alloc_count();
-  var at_fresh: i64 = bench.bump_bytes();
-  var started_ns: i64 = monotonic_ns();
-  var r: i32 = 0;
+  let at_allocs: i64 = bench.alloc_count();
+  let at_fresh: i64 = bench.bump_bytes();
+  let started_ns: i64 = monotonic_ns();
+  let r: i32 = 0;
   while (r < rounds) {
-    var t0: i64 = monotonic_ns();
-    var k: i32 = 0;
+    let t0: i64 = monotonic_ns();
+    let k: i32 = 0;
     while (k < batch) {
-      var n: i64 = r as i64 * (batch as i64) + k as i64;
+      let n: i64 = r as i64 * (batch as i64) + k as i64;
       wire = build_request(wire, n);
       c = serve(c, wire, n);
       k = k + 1;
@@ -527,11 +527,11 @@ function main(): i32 {
     samples = samples.with(r, monotonic_ns() - t0);
     r = r + 1;
   }
-  var elapsed_ns: i64 = monotonic_ns() - started_ns;
-  var allocs: i64 = bench.allocs_after(at_allocs);
-  var fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  var requests: i64 = rounds as i64 * (batch as i64);
-  var rep: bench.Report = bench.Report {
+  let elapsed_ns: i64 = monotonic_ns() - started_ns;
+  let allocs: i64 = bench.allocs_after(at_allocs);
+  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
+  let requests: i64 = rounds as i64 * (batch as i64);
+  let rep: bench.Report = bench.Report {
     name: "fbip",
     iterations: rounds,
     wall_ns: elapsed_ns,

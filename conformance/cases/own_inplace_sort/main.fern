@@ -5,12 +5,12 @@
 import "std/sort";
 
 function main(): i32 {
-    var a: i32[] = sort.sort_i32_inplace_asc([5, 3, 8, 1, 9, 2, 7]);
+    let a: i32[] = sort.sort_i32_inplace_asc([5, 3, 8, 1, 9, 2, 7]);
     // sorted ascending: [1,2,3,5,7,8,9]
     if (a[0] != 1) { return 1; }
     if (a[6] != 9) { return 2; }
     if (a[3] != 5) { return 3; }
-    var b: i32[] = sort.sort_i32_inplace_desc([5, 3, 8, 1, 9, 2, 7]);
+    let b: i32[] = sort.sort_i32_inplace_desc([5, 3, 8, 1, 9, 2, 7]);
     if (b[0] != 9) { return 4; }
     if (b[6] != 1) { return 5; }
     return 0;

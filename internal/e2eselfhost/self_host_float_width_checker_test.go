@@ -41,17 +41,17 @@ func TestSelfHostFloatWidthCheckerX86_64(t *testing.T) {
 		{"option payload width", `function f(o: Option[f32]): f64 { match (o) { Some(x) => { return x; }, None => { return 0.5; } } }`, "E002"},
 		{"result error width", `function f(r: Result[f32, f64]): f32 { match (r) { Ok(x) => { return x; }, Err(e) => { return e; } } }`, "E002"},
 		{"payload guard type", `function f(o: Option[f32]): i32 { match (o) { Some(x) when x => { return 1; }, _ => { return 0; } } }`, "E027"},
-		{"branch local width", `function f(c: boolean, a: f32): f32 { return if (c) { var x = a; x } else { var x = a; x }; }`, ""},
-		{"branch local conflict", `function f(c: boolean, a: f32, b: f64): i32 { var v = if (c) { var x = a; x } else { var x = b; x }; return 0; }`, "E031"},
-		{"match local conflict", `function f(c: i32, a: f32, b: f64): i32 { var v = match(c) { 0 => { var x = a; x }, _ => { var x = b; x } }; return 0; }`, "E031"},
+		{"branch local width", `function f(c: boolean, a: f32): f32 { return if (c) { let x = a; x } else { let x = a; x }; }`, ""},
+		{"branch local conflict", `function f(c: boolean, a: f32, b: f64): i32 { let v = if (c) { let x = a; x } else { let x = b; x }; return 0; }`, "E031"},
+		{"match local conflict", `function f(c: i32, a: f32, b: f64): i32 { let v = match(c) { 0 => { let x = a; x }, _ => { let x = b; x } }; return 0; }`, "E031"},
 		{"arithmetic", `function f(a: f32): f32 { return -(a + 0.5); }`, ""},
 		{"assignment", `function f(a: f32): f32 { a = 0.5; return a; }`, ""},
 		{"comparison", `function f(a: f32): boolean { return a < 0.5; }`, ""},
 		{"equality", `function f(a: f32): boolean { return a == 0.5; }`, ""},
-		{"declared local", `function f(): f32 { var a: f32 = 0.5; return a; }`, ""},
+		{"declared local", `function f(): f32 { let a: f32 = 0.5; return a; }`, ""},
 		{"return width", `function f(a: f32): f64 { return a; }`, "E002"},
-		{"local width", `function f(a: f32): i32 { var b: f64 = a; return 0; }`, "E003"},
-		{"arithmetic width", `function f(a: f32, b: f64): i32 { var c = a + b; return 0; }`, "E009"},
+		{"local width", `function f(a: f32): i32 { let b: f64 = a; return 0; }`, "E003"},
+		{"arithmetic width", `function f(a: f32, b: f64): i32 { let c = a + b; return 0; }`, "E009"},
 		{"comparison width", `function f(a: f32, b: f64): boolean { return a < b; }`, "E009"},
 		{"equality width", `function f(a: f32, b: f64): boolean { return a == b; }`, "E041"},
 		{"call width", `function g(a: f64): i32 { return 0; } function f(a: f32): i32 { return g(a); }`, "E038"},
@@ -61,9 +61,9 @@ func TestSelfHostFloatWidthCheckerX86_64(t *testing.T) {
 		{"explicit narrowing", `function f(a: f64): f32 { return a as f32; }`, ""},
 		{"nested callable width", `function f(t: ((f32) => i32, i32), a: f64): i32 { return t.0(a); }`, "E038"},
 		{"if literal join", `function f(c: boolean, a: f32): f32 { return if (c) { 0.5 } else { a }; }`, ""},
-		{"if concrete join", `function f(c: boolean, a: f32, b: f64): i32 { var v = if (c) { a } else { b }; return 0; }`, "E031"},
-		{"match concrete join", `function f(c: i32, a: f32, b: f64): i32 { var v = match(c) { 0 => a, _ => b }; return 0; }`, "E031"},
-		{"match literal first", `function f(c: i32, a: f32, b: f64): i32 { var v = match(c) { 0 => 0.5, 1 => a, _ => b }; return 0; }`, "E031"},
+		{"if concrete join", `function f(c: boolean, a: f32, b: f64): i32 { let v = if (c) { a } else { b }; return 0; }`, "E031"},
+		{"match concrete join", `function f(c: i32, a: f32, b: f64): i32 { let v = match(c) { 0 => a, _ => b }; return 0; }`, "E031"},
+		{"match literal first", `function f(c: i32, a: f32, b: f64): i32 { let v = match(c) { 0 => 0.5, 1 => a, _ => b }; return 0; }`, "E031"},
 		{"tuple literal join", `function f(c: boolean, a: f32): (f32, i32) { return if (c) { (0.5, 1) } else { (a, 2) }; }`, ""},
 	}
 	for i, arms := range [][3]string{
@@ -79,7 +79,7 @@ func TestSelfHostFloatWidthCheckerX86_64(t *testing.T) {
 			}
 			cases = append(cases, struct{ name, src, code string }{
 				fmt.Sprintf("commitment-order-%d-nested-%t", i, nested),
-				fmt.Sprintf(`function f(c: i32, a: f32, b: f64): i32 { var v = match(c) { 0 => %s, 1 => %s, _ => %s }; return 0; }`, values[0], values[1], values[2]),
+				fmt.Sprintf(`function f(c: i32, a: f32, b: f64): i32 { let v = match(c) { 0 => %s, 1 => %s, _ => %s }; return 0; }`, values[0], values[1], values[2]),
 				"E031",
 			})
 		}

@@ -7,7 +7,7 @@
 // operation is value-returning:
 //
 //   import "std/ordset";
-//   var s: ordset.OrdSet[i32] = ordset.ordset_of([3, 1, 2, 3]);
+//   let s: ordset.OrdSet[i32] = ordset.ordset_of([3, 1, 2, 3]);
 //   s = s.add(0);
 //   s.to_array();       // [0, 1, 2, 3]  (always ascending)
 //   s.contains(2);      // true
@@ -27,16 +27,16 @@ import "std/ordmap";
 pub struct OrdSet[T] { root: ordmap.OrdNode[T, i32] }
 
 // `ordset_new()` — the empty set. The element type is fixed by the
-// annotation at the binding (`var s: OrdSet[string] = ordset_new();`).
+// annotation at the binding (`let s: OrdSet[string] = ordset_new();`).
 pub function ordset_new[T](): OrdSet[T] {
-  var e: ordmap.OrdNode[T, i32] = ordmap.__om_empty();
+  let e: ordmap.OrdNode[T, i32] = ordmap.__om_empty();
   return OrdSet { root: e };
 }
 
 // `ordset_of(xs)` — the set of the distinct values in `xs`.
 pub function ordset_of[T: cmp.Ord](xs: T[]): OrdSet[T] {
-  var s: OrdSet[T] = ordset_new();
-  var i: i32 = 0;
+  let s: OrdSet[T] = ordset_new();
+  let i: i32 = 0;
   while (i < xs.len()) {
     s = s.add(xs[i]);
     i = i + 1;
@@ -66,25 +66,25 @@ pub function (s: OrdSet[T]) remove[T: cmp.Ord](x: T): OrdSet[T] {
 
 // `contains(x)` — is `x` a member?
 pub function (s: OrdSet[T]) contains[T: cmp.Ord](x: T): boolean {
-  var hit: ordmap.OrdNode[T, i32] = ordmap.__om_find(s.root, x);
+  let hit: ordmap.OrdNode[T, i32] = ordmap.__om_find(s.root, x);
   return ordmap.__om_holds(hit);
 }
 
 // `min()` / `max()` — the smallest / largest element. O(log n).
 pub function (s: OrdSet[T]) min(): Option[T] {
-  var node: ordmap.OrdNode[T, i32] = ordmap.__om_min_node(s.root);
+  let node: ordmap.OrdNode[T, i32] = ordmap.__om_min_node(s.root);
   return ordmap.__om_key(node);
 }
 
 pub function (s: OrdSet[T]) max(): Option[T] {
-  var node: ordmap.OrdNode[T, i32] = ordmap.__om_max_node(s.root);
+  let node: ordmap.OrdNode[T, i32] = ordmap.__om_max_node(s.root);
   return ordmap.__om_key(node);
 }
 
 // `at(i)` — the element of rank `i` (0-based, ascending); `None` when
 // out of range. O(log n).
 pub function (s: OrdSet[T]) at(i: i32): Option[T] {
-  var node: ordmap.OrdNode[T, i32] = ordmap.__om_at(s.root, i);
+  let node: ordmap.OrdNode[T, i32] = ordmap.__om_at(s.root, i);
   return ordmap.__om_key(node);
 }
 
@@ -95,7 +95,7 @@ pub function (s: OrdSet[T]) index_of[T: cmp.Ord](x: T): i32 {
 
 // `to_array()` — the elements in ascending order.
 pub function (s: OrdSet[T]) to_array(): T[] {
-  var acc: T[] = [];
+  let acc: T[] = [];
   acc = ordmap.__om_keys_into(s.root, acc);
   return acc;
 }
@@ -119,7 +119,7 @@ pub function (s: OrdSet[T]) is_subset[T: cmp.Ord](other: OrdSet[T]): boolean {
   if (s.len() > other.len()) {
     return false;
   }
-  var d: ordmap.OrdNode[T, i32] = ordmap.__om_difference(s.root, other.root);
+  let d: ordmap.OrdNode[T, i32] = ordmap.__om_difference(s.root, other.root);
   return ordmap.__om_size(d) == 0;
 }
 

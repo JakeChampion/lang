@@ -49,8 +49,8 @@ func spliceToSource(dir string, spliced bool) string {
 	return fmt.Sprintf(`// copy moves r to w: 1 when some bytes went by splice, 0 when every byte
 // was read and written, negative on a failure.
 function copy(r: Reader, w: Writer): i32 {
-    var spliced: i32 = 0;
-    var more: boolean = true;
+    let spliced: i32 = 0;
+    let more: boolean = true;
     while (more) {
         match (r.splice_to(w, 65536)) {
             Ok(n) => {
@@ -77,24 +77,24 @@ function copy(r: Reader, w: Writer): i32 {
 }
 
 function main(): i32 {
-    var data: string = "splice me through a pipe\n";
-    var k: i32 = 0;
+    let data: string = "splice me through a pipe\n";
+    let k: i32 = 0;
     while (k < 13) {
         data = data + data;
         k = k + 1;
     }
     match (write_file(%[1]q, data)) { Ok(_) => {}, Err(_) => { return 10; } }
 
-    var r: Reader = match (open_reader(%[1]q)) { Ok(h) => h, Err(_) => { return 11; } };
-    var w: Writer = match (open_writer(%[2]q)) { Ok(h) => h, Err(_) => { return 12; } };
-    var how: i32 = copy(r, w);
+    let r: Reader = match (open_reader(%[1]q)) { Ok(h) => h, Err(_) => { return 11; } };
+    let w: Writer = match (open_writer(%[2]q)) { Ok(h) => h, Err(_) => { return 12; } };
+    let how: i32 = copy(r, w);
     r.close();
     w.close();
     if (how < 0) { return 13; }
     if (how != %[3]d) { return 14; }
 
-    var r2: Reader = match (open_reader(%[1]q)) { Ok(h) => h, Err(_) => { return 20; } };
-    var a: Writer = match (open_appender(%[2]q)) { Ok(h) => h, Err(_) => { return 21; } };
+    let r2: Reader = match (open_reader(%[1]q)) { Ok(h) => h, Err(_) => { return 20; } };
+    let a: Writer = match (open_appender(%[2]q)) { Ok(h) => h, Err(_) => { return 21; } };
     match (r2.splice_to(a, 4096)) {
         Ok(_) => { return 22; },
         Err(e) => {
@@ -111,8 +111,8 @@ function main(): i32 {
     r2.close();
     a.close();
 
-    var r3: Reader = match (open_reader(%[1]q)) { Ok(h) => h, Err(_) => { return 30; } };
-    var how3: i32 = copy(r3, stdout());
+    let r3: Reader = match (open_reader(%[1]q)) { Ok(h) => h, Err(_) => { return 30; } };
+    let how3: i32 = copy(r3, stdout());
     r3.close();
     if (how3 < 0) { return 31; }
     if (how3 != %[3]d) { return 32; }

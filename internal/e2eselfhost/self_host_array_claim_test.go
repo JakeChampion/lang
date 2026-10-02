@@ -15,13 +15,13 @@ function take(e: E): i32[] {
 }
 @noinline
 function inspect(e: E): i32 {
-    var xs = take(e);
+    let xs = take(e);
     return xs[0];
 }
 @noinline
-function churn(): i32 { var xs = [91, 92]; return xs[0]; }
+function churn(): i32 { let xs = [91, 92]; return xs[0]; }
 function main(): i32 {
-    var e = E.Full([7, 8]);
+    let e = E.Full([7, 8]);
     if (inspect(e) != 7) { return 1; }
     if (churn() != 91) { return 2; }
     match (e) { Full(xs) => { if (xs[0] != 7 || xs[1] != 8) { return 3; } }, Empty => { return 4; } }
@@ -70,17 +70,17 @@ func arrayClaimCases() []arrayClaimCase {
 			fmt.Sprintf(`@noinline
 function grow(own xs: %[1]s[], v: %[1]s): %[1]s[] { return xs.append(v); }
 function exercise(): i32 {
-    var xs: %[1]s[] = [%[2]s as %[1]s, %[3]s as %[1]s];
-    var old = xs;
+    let xs: %[1]s[] = [%[2]s as %[1]s, %[3]s as %[1]s];
+    let old = xs;
     xs = grow(xs, %[4]s as %[1]s);
     if (old.len() != 2 || old[0] != %[2]s as %[1]s || old[1] != %[3]s as %[1]s) { return 1; }
-    var i = 0;
+    let i = 0;
     while (i < 32) { xs = grow(xs, %[5]s as %[1]s); i = i + 1; }
     if (xs.len() != 35 || xs[2] != %[4]s as %[1]s || xs[34] != %[5]s as %[1]s) { return 2; }
     return 0;
 }
 function main(): i32 {
-    var result = exercise();
+    let result = exercise();
     if (__rc_underflow_count() != 0) { return 99; }
     return result;
 }`, values.ty, values.a, values.b, values.c, values.d), true,
@@ -89,23 +89,23 @@ function main(): i32 {
 	cases = append(cases, arrayClaimCase{"owned-append-reads-receiver", `@noinline
 function grow(own xs: i32[]): i32[] { return xs.append(xs[0]); }
 function exercise(): i32 {
-    var xs = [7, 8];
+    let xs = [7, 8];
     xs = grow(xs);
     if (xs.len() != 3 || xs[0] != 7 || xs[1] != 8 || xs[2] != 7) { return 1; }
     return 0;
 }
-function main(): i32 { var r = exercise(); if (__rc_underflow_count() != 0) { return 99; } return r; }`, true})
+function main(): i32 { let r = exercise(); if (__rc_underflow_count() != 0) { return 99; } return r; }`, true})
 	cases = append(cases, arrayClaimCase{"conditional-payload-return", `enum E { A(i32[]), B }
 @noinline
 function take(i: i32): i32[] {
-    var e = E.A([i, i + 1]);
+    let e = E.A([i, i + 1]);
     match (e) { A(xs) => { if (i % 2 == 0) { return xs; } }, B => { } }
     return [7];
 }
 @noinline
 function check(i: i32): i32 {
-    var xs = take(i);
-    var churn = [91, 92];
+    let xs = take(i);
+    let churn = [91, 92];
     if (i % 2 == 0) {
         if (xs.len() != 2 || xs[0] != i || xs[1] != i + 1) { return 1; }
     } else { if (xs.len() != 1 || xs[0] != 7) { return 2; } }
@@ -113,8 +113,8 @@ function check(i: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var i = 0;
-    while (i < 32) { var r = check(i); if (r != 0) { return r; } i = i + 1; }
+    let i = 0;
+    while (i < 32) { let r = check(i); if (r != 0) { return r; } i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, true})

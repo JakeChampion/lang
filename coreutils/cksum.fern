@@ -204,8 +204,8 @@ function plain_count(p: Plain): u64 {
 // `plain_fields(sel, p)` — the part of the line before the name. bsd's
 // two fields are `%05u %5u`, which is what `sum -r` prints.
 function plain_fields(sel: i32, p: Plain): string {
-  var v: u32 = plain_value(p);
-  var n: u64 = plain_count(p);
+  let v: u32 = plain_value(p);
+  let n: u64 = plain_count(p);
   if (sel == sel_bsd()) {
     return pad_left(v.to_string(), 5, "0") + " " + pad_left(n.to_string(), 5, " ");
   }
@@ -213,8 +213,8 @@ function plain_fields(sel: i32, p: Plain): string {
 }
 
 function pad_left(s: string, width: i32, fill: string): string {
-  var out: string = "";
-  var i: i32 = s.len();
+  let out: string = "";
+  let i: i32 = s.len();
   while (i < width) {
     out = out + fill;
     i = i + 1;
@@ -225,8 +225,8 @@ function pad_left(s: string, width: i32, fill: string): string {
 // `plain_raw(sel, p)` — `--raw`: the checksum big-endian, four bytes for
 // the CRC and two for the two 16-bit sums.
 function plain_raw(sel: i32, p: Plain): u8[] {
-  var v: u32 = plain_value(p);
-  var out: u8[] = [];
+  let v: u32 = plain_value(p);
+  let out: u8[] = [];
   if (sel == sel_crc() || sel == sel_crc32b()) {
     out = out.append((v >> 24 & 255) as u8);
     out = out.append((v >> 16 & 255) as u8);
@@ -243,7 +243,7 @@ function plain_raw(sel: i32, p: Plain): u8[] {
 struct PlainSum { fields: string, raw: u8[], err: Option[IoError], failed: boolean }
 
 function plain_reader(r: Reader, sel: i32, owned: boolean): PlainSum {
-  var p: Plain = plain_new(sel);
+  let p: Plain = plain_new(sel);
   while (true) {
     match (r.read_chunk(65536)) {
       Ok(chunk) => {
@@ -367,7 +367,7 @@ function opt_text(): i32 {
 // `--=x` names all sixteen in the order below. `--binary` and `--text`
 // are not in the help text and are options all the same.
 function options(): gnu.Opt[] {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("l", "length", opt_length()));
   opts = opts.append(gnu.flag("c", "check", opt_check()));
   opts = opts.append(gnu.flag("", "ignore-missing", opt_ignore_missing()));
@@ -392,7 +392,7 @@ function apply(c: Conf, m: gnu.OptMatch): Conf {
     return Conf { ...c, sel: gnu.argmatch_exact(m.value, algo_names(), "--algorithm"), specified: true };
   }
   if (m.id == opt_length()) {
-    var bits: i32 = digest.parse_bits_value(m.value);
+    let bits: i32 = digest.parse_bits_value(m.value);
     return Conf { ...c, bits: bits, named_bits: bits != 0, bits_text: m.value };
   }
   if (m.id == opt_check()) {
@@ -518,7 +518,7 @@ function validate(c: Conf, operands: i32): void {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "Print or verify checksums.\n";
   out = out + "By default use the 32 bit CRC algorithm.\n";
@@ -593,10 +593,10 @@ function plain_line(c: Conf, fields: string, name: string, named: boolean): stri
 
 // One operand summed and printed.
 function compute_one(c: Conf, name: string, named: boolean, o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
-  var out: io_buffered.BufWriter = o;
+  let out: io_buffered.BufWriter = o;
   if (is_digest(c.sel)) {
-    var a: digest.Algo = digest_algo(c.sel, c.s.bits);
-    var sum: digest.Sum = digest.digest_path(name, a.kind, c.s.bits);
+    let a: digest.Algo = digest_algo(c.sel, c.s.bits);
+    let sum: digest.Sum = digest.digest_path(name, a.kind, c.s.bits);
     if (sum.failed) {
       return (false, gnu.error_out(out, gnu.quotef(name) + ": " + digest.sum_error_text(sum)));
     }
@@ -605,7 +605,7 @@ function compute_one(c: Conf, name: string, named: boolean, o: io_buffered.BufWr
     }
     return (true, gnu.put(out, digest.sum_line(a, c.s, digest_text(c, sum.bin), name)));
   }
-  var p: PlainSum = plain_path(name, c.sel);
+  let p: PlainSum = plain_path(name, c.sel);
   if (p.failed) {
     return (false, gnu.error_out(out, gnu.quotef(name) + ": " + plain_error_text(p)));
   }
@@ -616,11 +616,11 @@ function compute_one(c: Conf, name: string, named: boolean, o: io_buffered.BufWr
 }
 
 function compute(c: Conf, names: string[], named: boolean, o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
-  var out: io_buffered.BufWriter = o;
-  var ok: boolean = true;
-  var i: i32 = 0;
+  let out: io_buffered.BufWriter = o;
+  let ok: boolean = true;
+  let i: i32 = 0;
   while (i < names.len()) {
-    var r: (boolean, io_buffered.BufWriter) = compute_one(c, names[i], named, out);
+    let r: (boolean, io_buffered.BufWriter) = compute_one(c, names[i], named, out);
     // Line buffering, as GNU sets stdout to be: a failure is named on
     // the line that met it rather than at the close.
     out = gnu.flush(r.1);
@@ -633,7 +633,7 @@ function compute(c: Conf, names: string[], named: boolean, o: io_buffered.BufWri
 }
 
 function verify(c: Conf, names: string[], o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
-  var a: digest.Algo = digest.algo_crc();
+  let a: digest.Algo = digest.algo_crc();
   if (c.specified) {
     // `-a sha2` stays the family name when checking: each line's own tag
     // picks the member, whatever `-l` said. Computing has no line to
@@ -644,11 +644,11 @@ function verify(c: Conf, names: string[], o: io_buffered.BufWriter): (boolean, i
       a = digest_algo(c.sel, c.s.bits);
     }
   }
-  var out: io_buffered.BufWriter = o;
-  var ok: boolean = true;
-  var i: i32 = 0;
+  let out: io_buffered.BufWriter = o;
+  let ok: boolean = true;
+  let i: i32 = 0;
   while (i < names.len()) {
-    var r: (boolean, io_buffered.BufWriter) = digest.check_file(a, c.s, names[i], out);
+    let r: (boolean, io_buffered.BufWriter) = digest.check_file(a, c.s, names[i], out);
     out = r.1;
     if (!r.0) {
       ok = false;
@@ -659,12 +659,12 @@ function verify(c: Conf, names: string[], o: io_buffered.BufWriter): (boolean, i
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var c: Conf = Conf { s: digest.settings_new(0), sel: sel_crc(), specified: false, bits: 0, named_bits: false, bits_text: "", raw: false, b64: false, tag_given: false };
+  let argv: string[] = args();
+  let c: Conf = Conf { s: digest.settings_new(0), sel: sel_crc(), specified: false, bits: 0, named_bits: false, bits_text: "", raw: false, b64: false, tag_given: false };
   c = Conf { ...c, s: digest.Settings { ...c.s, tag: true, cksum: true } };
-  var g: gnu.Getopt = gnu.getopt_new(argv, options(), "cksum", help_text(), 1);
+  let g: gnu.Getopt = gnu.getopt_new(argv, options(), "cksum", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -676,8 +676,8 @@ pub function main(): i32 {
     }
   }
 
-  var names: string[] = g.operands();
-  var named: boolean = names.len() > 0;
+  let names: string[] = g.operands();
+  let named: boolean = names.len() > 0;
   validate(c, names.len());
   // Neither `-b` nor `-t` given is TEXT mode, which is the separator an
   // untagged line carries; `--tag` no longer decides it, so
@@ -691,7 +691,7 @@ pub function main(): i32 {
   // The digest length the output carries: `-l` when it named one, and
   // the algorithm's own otherwise. `detect` is check mode with no `-a`,
   // where each line's tag chooses.
-  var bits: i32 = 0;
+  let bits: i32 = 0;
   if (is_digest(c.sel)) {
     bits = digest_algo(c.sel, c.bits).bits;
     if (c.named_bits) {
@@ -700,14 +700,14 @@ pub function main(): i32 {
   }
   c = Conf { ...c, s: digest.Settings { ...c.s, bits: bits, detect: c.s.check && !c.specified } };
 
-  var out: io_buffered.BufWriter = gnu.out_new();
-  var ok: boolean = true;
+  let out: io_buffered.BufWriter = gnu.out_new();
+  let ok: boolean = true;
   if (c.s.check) {
-    var rv: (boolean, io_buffered.BufWriter) = verify(c, names, out);
+    let rv: (boolean, io_buffered.BufWriter) = verify(c, names, out);
     ok = rv.0;
     out = rv.1;
   } else {
-    var rc: (boolean, io_buffered.BufWriter) = compute(c, names, named, out);
+    let rc: (boolean, io_buffered.BufWriter) = compute(c, names, named, out);
     ok = rc.0;
     out = rc.1;
   }

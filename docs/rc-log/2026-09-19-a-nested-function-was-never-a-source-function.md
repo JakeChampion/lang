@@ -10,13 +10,13 @@ Two programs differing only in where `pick` is written:
 
 ```fern
 function pick(b: i32): (i32) => i32 { return (x: i32) => x + 1; }
-function mk(): i32 { var g: (i32) => i32 = pick(3); return g(4); }
+function mk(): i32 { let g: (i32) => i32 = pick(3); return g(4); }
 ```
 
 ```fern
 function mk(): i32 {
     function pick(b: i32): (i32) => i32 { return (x: i32) => x + 1; }
-    var g: (i32) => i32 = pick(3);
+    let g: (i32) => i32 = pick(3);
     return g(4);
 }
 ```
@@ -105,7 +105,7 @@ and for a nested `function`; admitting `ORIGIN_USE` added a third syntax to it.
 
 The rule asks what a lambda CAPTURES now: `astwalk.collect_lambda_idents`, the
 shadow-aware free-variable walk the capture consumers already share, which binds
-params and threads `var` declarations in source order. Three more corpus rows,
+params and threads `let` declarations in source order. Three more corpus rows,
 one per syntax. A false positive that rejects valid code outranks the widening
 that surfaced it, so the fix is the walk rather than the admission.
 

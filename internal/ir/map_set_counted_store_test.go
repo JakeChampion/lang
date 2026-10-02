@@ -63,10 +63,10 @@ func countCallPrefix(p *Program, fnName, prefix string) int {
 func TestMapSetSourceFreeEligible(t *testing.T) {
 	p := lowerImportsWith(t, `import "core/map";
 function work(k: i32): i32 {
-    var stem: string = "alpha";
-    var key: string = stem + "-key-long";
-    var src: i32[][] = [[k, k + 1], [k + 2]];
-    var m: Map[string, i32[]] = map_new(4);
+    let stem: string = "alpha";
+    let key: string = stem + "-key-long";
+    let src: i32[][] = [[k, k + 1], [k + 2]];
+    let m: Map[string, i32[]] = map_new(4);
     m = m.insert(key, src[0]);
     return m.len();
 }
@@ -113,10 +113,10 @@ function main(): i32 { return 0; }`, 8)
 func TestMapLitSourceFreeEligible(t *testing.T) {
 	p := lowerImportsWith(t, `import "core/map";
 function work(k: i32): i32 {
-    var stem: string = "alpha";
-    var key: string = stem + "-key-long";
-    var src: i32[][] = [[k, k + 1], [k + 2]];
-    var m: Map[string, i32[]] = Map { key: src[0] };
+    let stem: string = "alpha";
+    let key: string = stem + "-key-long";
+    let src: i32[][] = [[k, k + 1], [k + 2]];
+    let m: Map[string, i32[]] = Map { key: src[0] };
     return m.len();
 }
 function main(): i32 { return 0; }`, 8)
@@ -142,8 +142,8 @@ import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
 struct Pt { x: i32, y: i32 }
 function work(k: i32): i32 {
-    var p: Pt = Pt { x: k, y: k + 1 };
-    var m: Map[Pt, i32] = map_new(4);
+    let p: Pt = Pt { x: k, y: k + 1 };
+    let m: Map[Pt, i32] = map_new(4);
     m = m.insert(p, k);
     return m.len();
 }
@@ -153,9 +153,9 @@ function main(): i32 { return 0; }`, 8)
 	}
 	p2 := lowerImportsWith(t, `import "core/map";
 function work(k: i32): i32 {
-    var inner: Map[i32, i32] = map_new(2);
+    let inner: Map[i32, i32] = map_new(2);
     inner = inner.insert(k, k);
-    var outer: Map[i32, Map[i32, i32]] = map_new(2);
+    let outer: Map[i32, Map[i32, i32]] = map_new(2);
     outer = outer.insert(k, inner);
     return outer.len();
 }

@@ -16,7 +16,7 @@ import (
 // reclamation" — this is the dominant real-code source ("the real win").
 //
 // Safety mirror: dec'ing the inline arg is exactly the shipped exit-sweep
-// dec of `var t = <shape>; foo(t)` (computeFreeEligible marks the bound temp
+// dec of `let t = <shape>; foo(t)` (computeFreeEligible marks the bound temp
 // freeEligible). Retain-sink callees (Map_set / Array_push MOVE a fresh arg
 // into a container) are excluded — their bound-equivalent is escape-tainted.
 //
@@ -31,9 +31,9 @@ function slen(s: string): i32 { return s.len(); }
 
 func callArgTempBumpSrc(n string) string {
 	return callArgTempProlog + `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
         acc = acc + sum3([i, i + 1, i + 2]);
         i = i + 1;
@@ -48,8 +48,8 @@ func callArgTempBumpSrc(n string) string {
 // (the call's result drives `acc`, so an early free / corruption shows up
 // as a wrong sum (999) or a non-zero underflow count).
 const callArgTempArrUnderflowSrc = callArgTempProlog + `function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
         acc = acc + sum3([i, i + 1, i + 2]);
         i = i + 1;
@@ -63,10 +63,10 @@ const callArgTempArrUnderflowSrc = callArgTempProlog + `function main(): i32 {
 // keep short concats SSO-inline). The borrowed `a + b` must be reclaimed
 // after the call without disturbing `a` / `b`, reused every iteration.
 const callArgTempStrUnderflowSrc = callArgTempProlog + `function main(): i32 {
-    var a: string = "hello";
-    var b: string = "world";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let a: string = "hello";
+    let b: string = "world";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
         acc = acc + slen(a + b);
         i = i + 1;
@@ -77,11 +77,11 @@ const callArgTempStrUnderflowSrc = callArgTempProlog + `function main(): i32 {
 
 func callArgTempStrBumpSrc(n string) string {
 	return callArgTempProlog + `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var a: string = "hello there friend";
-    var b: string = "general kenobi!!!";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let a: string = "hello there friend";
+    let b: string = "general kenobi!!!";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
         acc = acc + slen(a + b);
         i = i + 1;

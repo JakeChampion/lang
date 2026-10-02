@@ -7,7 +7,7 @@ import (
 )
 
 // Regression for #4376: a string accumulator initialised from a bare string
-// LITERAL (`var s = ""`) must be freeEligible so the dec-on-overwrite reclaims
+// LITERAL (`let s = ""`) must be freeEligible so the dec-on-overwrite reclaims
 // each intermediate. rhsTainted had *ast.NumberLit/FloatLit/BoolLit cases but
 // NO *ast.StringLit case, so a plain `""` init fell to `default: return true`,
 // tainted the local forever, and every reassignment leaked the prior buffer
@@ -29,8 +29,8 @@ func TestLowerStrLiteralAccumEmitsOverwriteDec(t *testing.T) {
 	// `p` is a borrowed param (not reclaimed here); `s` is the literal-init
 	// accumulator overwritten with a fresh constant-size concat each iteration.
 	src := `function acc(p: string): i32 {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < 3) { s = p + "!"; i = i + 1; }
     return i;
 }
@@ -40,7 +40,7 @@ function main(): i32 { return acc("hi"); }`
 		prog := lowerSourceWith(t, src, ptrW)
 		decs := countStringDecs(prog, "acc")
 		if decs == 0 {
-			t.Errorf("ptrW=%d: literal-init string accumulator emitted no string dec in acc (freeEligible regressed — the `var s = \"\"` init is RC-tainted again, leaking every intermediate)", ptrW)
+			t.Errorf("ptrW=%d: literal-init string accumulator emitted no string dec in acc (freeEligible regressed — the `let s = \"\"` init is RC-tainted again, leaking every intermediate)", ptrW)
 		}
 	}
 }

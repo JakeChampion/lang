@@ -29,10 +29,10 @@ import (
 // separators. The first byte is checked too, so a join that returned an empty
 // or truncated buffer of the right length would still fail.
 const arrStrJoinScaleSrc = `function main(): i32 {
-    var parts: string[] = [];
-    var i: i32 = 0;
+    let parts: string[] = [];
+    let i: i32 = 0;
     while (i < 100000) { parts = parts.append("item"); i = i + 1; }
-    var j: string = parts.join(",");
+    let j: string = parts.join(",");
     if (j.len() != 499999) { return 1; }
     if (j[0] as i32 != 105) { return 2; }
     if (j[4] as i32 != 44) { return 3; }

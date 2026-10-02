@@ -35,30 +35,30 @@ var selfHostHandbackRebindCases = []struct {
 }{
 	// The reported shape, at its smallest: an `own` callee that returns its
 	// parameter unchanged.
-	{"own-handback-self-rebind", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    return a;\n}\nfunction main(): i32 {\n    var a: Asm = Asm { bad: [1], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
+	{"own-handback-self-rebind", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [1], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
 	// The same with the callee superseding a field first. The supersede was in
 	// every row of the original #8527 report and is irrelevant to the defect —
 	// this row is what says so.
-	{"own-handback-supersede", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    a = Asm { ...a, bad: [v] };\n    return a;\n}\nfunction main(): i32 {\n    var a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
+	{"own-handback-supersede", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    a = Asm { ...a, bad: [v] };\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
 	// Two rounds, so a per-round leak accumulates rather than resting on one
 	// missed release.
-	{"own-handback-twice", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    a = Asm { ...a, bad: [v] };\n    return a;\n}\nfunction main(): i32 {\n    var a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.bad.len() + __rc_underflow_count();\n}"},
+	{"own-handback-twice", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    a = Asm { ...a, bad: [v] };\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
 	// A BORROWED parameter handed back. The caller never moved its claim, so it
 	// still holds exactly one and still owes one release — the same arithmetic,
 	// reached without `own`.
-	{"borrowed-handback-self-rebind", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction keepit(a: Asm, v: i32): Asm {\n    return a;\n}\nfunction main(): i32 {\n    var a: Asm = Asm { bad: [1], n: 0 };\n    a = keepit(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
+	{"borrowed-handback-self-rebind", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction keepit(a: Asm, v: i32): Asm {\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [1], n: 0 };\n    a = keepit(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: the callee returns a FRESH box instead of its parameter, so no
 	// handback is involved and the credit was never in question. Clean before
 	// and after.
-	{"fresh-return-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    return Asm { bad: [v], n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
+	{"fresh-return-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    return Asm { bad: [v], n: a.n };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: no call at all. The in-body rebind reclaims correctly, which is
 	// what says the defect is the handback rather than the rebind.
-	{"no-call-control", "struct Asm { bad: i32[], n: i32 }\nfunction main(): i32 {\n    var a: Asm = Asm { bad: [], n: 0 };\n    a = Asm { ...a, bad: [1] };\n    a = Asm { ...a, bad: [1, 2] };\n    return a.bad.len() + __rc_underflow_count();\n}"},
+	{"no-call-control", "struct Asm { bad: i32[], n: i32 }\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = Asm { ...a, bad: [1] };\n    a = Asm { ...a, bad: [1, 2] };\n    return a.bad.len() + __rc_underflow_count();\n}"},
 }
 
 // TestSelfHostHandbackRebindLeakCheck is the gate: every case clean under
@@ -126,7 +126,7 @@ func TestSelfHostHandbackRebindX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostHandbackRebindArm64 — the credit is shared irlower analysis, so
+// TestSelfHostHandbackRebindArm64 — the credit is shared lowering analysis, so
 // this leg is what would catch the added release landing on one register
 // backend.
 func TestSelfHostHandbackRebindArm64(t *testing.T) {

@@ -11,8 +11,9 @@ A single language feature lands in a lot of places today:
 
 - native `internal/ir` (+ the three native backends `codegen/{arm64,x86_64,wasmbin}`)
 - native `internal/interp`
-- self-host `examples/self_host/irlower.fern` (+ the three self-host backends
-  `asm.fern` / `asm_arm64.fern` / `wasm.fern`)
+- the self-host typed lowering, `examples/self_host/semsource.fern` and
+  `ssarc.fern` (+ the three self-host backends
+  `asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern`)
 - self-host interp
 
 That double maintenance is the dominant tax on the project. Worse, it is

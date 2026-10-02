@@ -3,7 +3,7 @@
 // A destructure used to bind one flat level of one tuple box, so reaching an
 // inner tuple meant naming it and destructuring it on the next line. The
 // pattern now nests to any depth, at both binding sites the shared grammar
-// serves: the `let`/`var` statement and a destructuring PARAMETER.
+// serves: the `let` statement and a destructuring PARAMETER.
 //
 // The lowering keeps one temp PER LEVEL rather than flattening the levels into
 // extra offset hops off a single temp. That is not an implementation
@@ -22,7 +22,7 @@
 // appears as its own parenthesised list ("a,(b,c)"), lower_stmt_var splits on
 // TOP-LEVEL commas, and a parenthesised position binds a temp that the same
 // function destructures again. The second level already had to work — a tuple
-// element marks its slot's element tags so `var (s, b) = p` resolves — so the
+// element marks its slot's element tags so `let (s, b) = p` resolves — so the
 // recursion reuses it rather than adding a path.
 
 import "std/i32";
@@ -36,8 +36,8 @@ function pair(): ((string, i32[]), (i32, string)) {
 // Fresh boxes every iteration: the per-level loop-body reclaim has to release
 // the previous iteration's INNER box, not only the outer one.
 function loops(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         let (a, (b, c)) = (i, (i * 2, i * 3));
         acc = acc + a + b + c;

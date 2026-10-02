@@ -9,14 +9,14 @@ import "testing"
 func TestSelfHostReturnedLocalTupleReleasesItsChild(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct{ name, body string }{
-		{"local", "var xs: i32[] = [n];\n    var t: (i32, i32[]) = (n, xs);\n    var c: i32 = t.1[0];\n    return t;"},
+		{"local", "let xs: i32[] = [n];\n    let t: (i32, i32[]) = (n, xs);\n    let c: i32 = t.1[0];\n    return t;"},
 		{"literal", "return (n, [n, n + 1]);"},
 	} {
 		src := writeEnumMapSrc(t, "returned_tuple_"+tc.name, `function pair(n: i32): (i32, i32[]) {
     `+tc.body+`
 }
 function main(): i32 {
-    var p: (i32, i32[]) = pair(3);
+    let p: (i32, i32[]) = pair(3);
     return p.1[0];
 }
 `)

@@ -61,7 +61,7 @@ function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-
 `
 
 func ownParamReleaseMain(body string) string {
-	return "\nfunction main(): i32 { var x: i32 = 0; var i: i32 = 0; " +
+	return "\nfunction main(): i32 { let x: i32 = 0; let i: i32 = 0; " +
 		"while (i < 100) { " + body + " i = i + 1; } " +
 		"if (__rc_underflow_count() != 0) { return 99; } return x % 83; }"
 }
@@ -89,7 +89,7 @@ function flush(own p: P, k: i32): P {
     if (k < 2) { return p; }
     return P { ...p, s: w(k), n: 0 };
 }` +
-				ownParamReleaseMain(`var q: P = flush(P { s: w(i), n: i }, i % 4); x = x + q.n + q.s.len();`),
+				ownParamReleaseMain(`let q: P = flush(P { s: w(i), n: i }, i % 4); x = x + q.n + q.s.len();`),
 			want: 63,
 		},
 		{
@@ -98,7 +98,7 @@ function flush(own p: P, k: i32): P {
 			name: "borrowed_spread_string",
 			src: ownParamReleaseHead + `@noinline
 function bump(p: P): P { return P { ...p, n: p.n + 1 }; }` +
-				ownParamReleaseMain(`var q: P = bump(P { s: w(i), n: i }); x = x + q.n + q.s.len();`),
+				ownParamReleaseMain(`let q: P = bump(P { s: w(i), n: i }); x = x + q.n + q.s.len();`),
 			want: 78,
 		},
 		{
@@ -107,7 +107,7 @@ function bump(p: P): P { return P { ...p, n: p.n + 1 }; }` +
 			name: "own_spread_string",
 			src: ownParamReleaseHead + `@noinline
 function bump(own p: P): P { return P { ...p, n: p.n + 1 }; }` +
-				ownParamReleaseMain(`var q: P = bump(P { s: w(i), n: i }); x = x + q.n + q.s.len();`),
+				ownParamReleaseMain(`let q: P = bump(P { s: w(i), n: i }); x = x + q.n + q.s.len();`),
 			want: 78,
 		},
 		{
@@ -118,7 +118,7 @@ function bump(own p: P): P { return P { ...p, n: p.n + 1 }; }` +
 struct Q { e: E, n: i32 }
 @noinline
 function bumpq(own p: Q): Q { return Q { ...p, n: p.n + 1 }; }` +
-				ownParamReleaseMain(`var q: Q = bumpq(Q { e: A(i), n: i }); x = x + q.n; match (q.e) { A(v) => { x = x + v; }, B(v) => { x = x + v * 2; } }`),
+				ownParamReleaseMain(`let q: Q = bumpq(Q { e: A(i), n: i }); x = x + q.n; match (q.e) { A(v) => { x = x + v; }, B(v) => { x = x + v * 2; } }`),
 			want: 40,
 		},
 		{
@@ -129,7 +129,7 @@ function bumpq(own p: Q): Q { return Q { ...p, n: p.n + 1 }; }` +
 			src: `struct N { m: i32, n: i32 }
 @noinline
 function bump(own p: N): N { return N { ...p, n: p.n + 1 }; }` +
-				ownParamReleaseMain(`var q: N = bump(N { m: i, n: i }); x = x + q.n + q.m;`),
+				ownParamReleaseMain(`let q: N = bump(N { m: i, n: i }); x = x + q.n + q.m;`),
 			want: 40,
 		},
 		{
@@ -139,7 +139,7 @@ function bump(own p: N): N { return N { ...p, n: p.n + 1 }; }` +
 			src: `struct N { m: i32, n: i32 }
 @noinline
 function bump(p: N): N { return N { ...p, n: p.n + 1 }; }` +
-				ownParamReleaseMain(`var q: N = bump(N { m: i, n: i }); x = x + q.n + q.m;`),
+				ownParamReleaseMain(`let q: N = bump(N { m: i, n: i }); x = x + q.n + q.m;`),
 			want: 40,
 		},
 		{
@@ -159,7 +159,7 @@ function sink(own p: P): i32 { return p.n + p.s.len(); }` +
 			src: ownParamReleaseHead + `@noinline
 function sink(own p: P): i32 { return p.n + p.s.len(); }
 @noinline
-function pass_on(own p: P): i32 { var k: i32 = p.n; return sink(p) + k; }` +
+function pass_on(own p: P): i32 { let k: i32 = p.n; return sink(p) + k; }` +
 				ownParamReleaseMain(`x = x + pass_on(P { s: w(i), n: i });`),
 			want: 31,
 		},
@@ -169,7 +169,7 @@ function pass_on(own p: P): i32 { var k: i32 = p.n; return sink(p) + k; }` +
 			// void functions leaked every local there, own params included.
 			name: "own_void_fallthrough",
 			src: ownParamReleaseHead + `@noinline
-function sink_void(own p: P): void { var k: i32 = p.n; if (k < 0) { return; } }` +
+function sink_void(own p: P): void { let k: i32 = p.n; if (k < 0) { return; } }` +
 				ownParamReleaseMain(`sink_void(P { s: w(i), n: i }); x = x + i;`),
 			want: 53,
 		},
@@ -180,7 +180,7 @@ function sink_void(own p: P): void { var k: i32 = p.n; if (k < 0) { return; } }`
 			name: "own_returned_bare",
 			src: ownParamReleaseHead + `@noinline
 function id(own p: P): P { if (p.n < 0) { return P { ...p, n: 0 }; } return p; }` +
-				ownParamReleaseMain(`var q: P = id(P { s: w(i), n: i }); x = x + q.n + q.s.len();`),
+				ownParamReleaseMain(`let q: P = id(P { s: w(i), n: i }); x = x + q.n + q.s.len();`),
 			want: 61,
 		},
 		{
@@ -195,7 +195,7 @@ struct A { xs: i32[], s: string, n: i32 }
 function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-" + i.to_string(); }
 @noinline
 function relabel(own p: A, t: string): A { return A { ...p, s: t }; }` +
-				ownParamReleaseMain(`var t: string = w(i + 1); var q: A = relabel(A { xs: [i, i + 1], s: w(i), n: i }, t); x = x + q.n + q.s.len() + q.xs[1] + t.len();`),
+				ownParamReleaseMain(`let t: string = w(i + 1); let q: A = relabel(A { xs: [i, i + 1], s: w(i), n: i }, t); x = x + q.n + q.s.len() + q.xs[1] + t.len();`),
 			want: 60,
 		},
 		{
@@ -206,7 +206,7 @@ function relabel(own p: A, t: string): A { return A { ...p, s: t }; }` +
 			src: ownParamReleaseHead + `struct H { s: string, k: i32 }
 @noinline
 function bump(own p: P): P { return P { ...p, s: "override-payload-wide-enough-to-heap-" + w(p.n), n: p.n + 1 }; }` +
-				ownParamReleaseMain(`var h: H = H { s: w(i), k: i }; var q: P = bump(P { s: h.s, n: i }); x = x + q.n + q.s.len() + h.s.len();`),
+				ownParamReleaseMain(`let h: H = H { s: w(i), k: i }; let q: P = bump(P { s: h.s, n: i }); x = x + q.n + q.s.len() + h.s.len();`),
 			want: 51,
 		},
 		{
@@ -218,7 +218,7 @@ function bump(own p: P): P { return P { ...p, s: "override-payload-wide-enough-t
 			src: ownParamReleaseHead + `struct H { s: string, k: i32 }
 @noinline
 function bump(own p: P): P { return P { ...p, s: "override-payload-wide-enough-to-heap-" + w(p.n), n: p.n + 1 }; }` +
-				ownParamReleaseMain(`var h: H = H { s: w(i), k: i }; var q: P = bump(P { s: h.s, n: i }); var z: P = P { ...q, n: 0 }; x = x + q.n + q.s.len() + h.s.len() + z.n;`),
+				ownParamReleaseMain(`let h: H = H { s: w(i), k: i }; let q: P = bump(P { s: h.s, n: i }); let z: P = P { ...q, n: 0 }; x = x + q.n + q.s.len() + h.s.len() + z.n;`),
 			want: 51,
 		},
 		{
@@ -235,8 +235,8 @@ function bump(own p: P): P { return P { ...p, s: "override-payload-wide-enough-t
 @noinline
 function get(x: P): string { return x.s; }
 @noinline
-function churn(i: i32): i32 { var a: string = w(i) + w(i + 1); var b: string = w(i + 2) + w(i + 3); return a.len() + b.len(); }` +
-				ownParamReleaseMain(`var h: H = H { s: w(i), k: i }; var want: i32 = h.s.len(); var q: P = bump(P { s: h.s, n: i }); x = x + churn(i); if (h.s.len() != want) { return 77; } if (h.s[0] != b's') { return 78; } var g: string = get(q); x = x + q.n + g.len() + h.s.len();`),
+function churn(i: i32): i32 { let a: string = w(i) + w(i + 1); let b: string = w(i + 2) + w(i + 3); return a.len() + b.len(); }` +
+				ownParamReleaseMain(`let h: H = H { s: w(i), k: i }; let want: i32 = h.s.len(); let q: P = bump(P { s: h.s, n: i }); x = x + churn(i); if (h.s.len() != want) { return 77; } if (h.s[0] != b's') { return 78; } let g: string = get(q); x = x + q.n + g.len() + h.s.len();`),
 			want: 12,
 		},
 		{
@@ -247,11 +247,11 @@ function churn(i: i32): i32 { var a: string = w(i) + w(i + 1); var b: string = w
 			name: "self_update_then_return_update",
 			src: ownParamReleaseHead + `@noinline
 function bump(own p: P): P {
-    var s2: string = p.s;
+    let s2: string = p.s;
     p = P { ...p, s: "override-payload-wide-enough-to-heap-" + w(p.n) };
     return P { ...p, n: p.n + s2.len() };
 }` +
-				ownParamReleaseMain(`var q: P = bump(P { s: w(i), n: i }); x = x + q.n + q.s.len();`),
+				ownParamReleaseMain(`let q: P = bump(P { s: w(i), n: i }); x = x + q.n + q.s.len();`),
 			want: 34,
 		},
 		{
@@ -263,10 +263,10 @@ function bump(own p: P): P {
 struct Q { e: E, n: i32 }
 @noinline
 function round(i: i32): i32 {
-    var d: Q = Q { e: A(i), n: i };
-    var e2: E = d.e;
-    var c: Q = Q { ...d, e: B(i + 1) };
-    var r: i32 = c.n;
+    let d: Q = Q { e: A(i), n: i };
+    let e2: E = d.e;
+    let c: Q = Q { ...d, e: B(i + 1) };
+    let r: i32 = c.n;
     match (e2) { A(v) => { r = r + v; }, B(v) => { r = r + v * 2; } }
     match (c.e) { A(v) => { r = r + v; }, B(v) => { r = r + v * 3; } }
     return r;
@@ -285,10 +285,10 @@ function round(i: i32): i32 {
 			src: `struct H { id: i32, xs: i32[] }
 struct Hold { items: H[], n: i32 }
 @noinline
-function keep(h: H, k: i32): Hold { var items: H[] = []; items = items.append(h); return Hold { items: items, n: k }; }
+function keep(h: H, k: i32): Hold { let items: H[] = []; items = items.append(h); return Hold { items: items, n: k }; }
 @noinline
 function churn(i: i32): H { return H { id: i, xs: [900, 901, 902] }; }` +
-				ownParamReleaseMain(`var hd: Hold = keep(H { id: i, xs: [i, i + 1, i + 2] }, i); var c: H = churn(i); if (hd.items[0].xs[2] != i + 2) { return 77; } x = x + hd.n + hd.items[0].xs.len() + hd.items[0].xs[2] + c.xs.len();`),
+				ownParamReleaseMain(`let hd: Hold = keep(H { id: i, xs: [i, i + 1, i + 2] }, i); let c: H = churn(i); if (hd.items[0].xs[2] != i + 2) { return 77; } x = x + hd.n + hd.items[0].xs.len() + hd.items[0].xs[2] + c.xs.len();`),
 			want: 76,
 		},
 		{
@@ -299,8 +299,8 @@ function churn(i: i32): H { return H { id: i, xs: [900, 901, 902] }; }` +
 			src: ownParamReleaseHead + `@noinline
 function get(x: P): string { return x.s; }
 @noinline
-function churn(i: i32): i32 { var a: string = w(i) + w(i + 1); var b: string = w(i + 2) + w(i + 3); return a.len() + b.len(); }` +
-				ownParamReleaseMain(`var g: string = get(P { s: w(i), n: i }); x = x + churn(i); if (g[0] != b's') { return 78; } x = x + g.len();`),
+function churn(i: i32): i32 { let a: string = w(i) + w(i + 1); let b: string = w(i + 2) + w(i + 3); return a.len() + b.len(); }` +
+				ownParamReleaseMain(`let g: string = get(P { s: w(i), n: i }); x = x + churn(i); if (g[0] != b's') { return 78; } x = x + g.len();`),
 			want: 52,
 		},
 	}
@@ -388,8 +388,8 @@ func TestSelfHostOwnParamReleaseIRArm64(t *testing.T) {
 // Expected values agree with `bin/fern -interp`.
 const ownHandbackReturnHead = `@noinline
 function pass(own xs: string[]): string[] {
-    var n: i32 = 0;
-    var k: i32 = 0;
+    let n: i32 = 0;
+    let k: i32 = 0;
     while (k < xs.len()) { n = n + xs[k].len(); k = k + 1; }
     if (n > 100000) { print("big"); }
     return xs;
@@ -400,21 +400,21 @@ function swap(own xs: string[], i: i32): string[] {
     return ["cd", "cd", "cd"];
 }
 @noinline
-function churn(i: i32): string[] { var c: string[] = []; c = c.append("zz"); c = c.append("zzz"); return c; }
+function churn(i: i32): string[] { let c: string[] = []; c = c.append("zz"); c = c.append("zzz"); return c; }
 `
 
 func ownHandbackBuild(ret string) string {
 	return `@noinline
 function build(i: i32): string[] {
-    var xs: string[] = [];
-    var k: i32 = 0;
+    let xs: string[] = [];
+    let k: i32 = 0;
     while (k < i % 5 + 2) { xs = xs.append("ab"); k = k + 1; }
     return ` + ret + `;
 }
 `
 }
 
-const ownHandbackReturnMain = `var ys: string[] = build(i); var c: string[] = churn(i); if (ys[1].len() != 2) { return 77; } x = x + ys[1].len() + ys.len() + c.len();`
+const ownHandbackReturnMain = `let ys: string[] = build(i); let c: string[] = churn(i); if (ys[1].len() != 2) { return 77; } x = x + ys[1].len() + ys.len() + c.len();`
 
 func ownHandbackReturnCases() []ownParamReleaseCase {
 	return []ownParamReleaseCase{
@@ -459,13 +459,13 @@ function pass(own xs: i32[][]): i32[][] {
     return xs;
 }
 @noinline
-function churn(i: i32): i32[][] { var c: i32[][] = [[i]]; return c; }
+function churn(i: i32): i32[][] { let c: i32[][] = [[i]]; return c; }
 @noinline
 function build(i: i32): i32[][] {
-    var xs: i32[][] = [];
+    let xs: i32[][] = [];
     return pass(xs);
 }
-` + ownParamReleaseMain(`var ys: i32[][] = build(i); var c: i32[][] = churn(i); if (ys.len() != 0) { return 77; } x = x + ys.len() + c.len() + 1;`),
+` + ownParamReleaseMain(`let ys: i32[][] = build(i); let c: i32[][] = churn(i); if (ys.len() != 0) { return 77; } x = x + ys.len() + c.len() + 1;`),
 			want: 34,
 		},
 	}
@@ -496,8 +496,8 @@ function rpick(own xs: i32[][], i: i32): i32[][] {
 func ownHandbackHeapStrBuild(tail string) string {
 	return `@noinline
 function build(i: i32): string[] {
-    var xs: string[] = [];
-    var k: i32 = 0;
+    let xs: string[] = [];
+    let k: i32 = 0;
     while (k < i % 3 + 2) { xs = xs.append(w(i + k)); k = k + 1; }
     ` + tail + `
 }
@@ -507,17 +507,17 @@ function build(i: i32): string[] {
 func ownHandbackHeapRowsBuild(tail string) string {
 	return `@noinline
 function build(i: i32): i32[][] {
-    var xs: i32[][] = [];
-    var k: i32 = 0;
+    let xs: i32[][] = [];
+    let k: i32 = 0;
     while (k < i % 3 + 2) { xs = xs.append([k, k + i]); k = k + 1; }
     ` + tail + `
 }
 `
 }
 
-const ownHandbackHeapStrMain = `var ys: string[] = build(i); if (ys[1].len() < 40) { return 77; } x = x + ys.len() + ys[1].len();`
+const ownHandbackHeapStrMain = `let ys: string[] = build(i); if (ys[1].len() < 40) { return 77; } x = x + ys.len() + ys[1].len();`
 
-const ownHandbackHeapRowsMain = `var ys: i32[][] = build(i); if (ys[1].len() == 0) { return 77; } x = x + ys.len() + ys[1][0];`
+const ownHandbackHeapRowsMain = `let ys: i32[][] = build(i); if (ys[1].len() == 0) { return 77; } x = x + ys.len() + ys[1][0];`
 
 func ownHandbackHeapCases() []ownParamReleaseCase {
 	return []ownParamReleaseCase{
@@ -527,7 +527,7 @@ func ownHandbackHeapCases() []ownParamReleaseCase {
 		{name: "strings_rebound_from_producer", src: ownHandbackHeapHead + ownHandbackHeapStrBuild("if (i % 2 == 1) { xs = smk(i); } return xs;") + ownParamReleaseMain(ownHandbackHeapStrMain), want: 11},
 		{name: "rows_literal_handed_back", src: ownHandbackHeapHead + `@noinline
 function build(i: i32): i32[][] {
-    var xs: i32[][] = [[i, 1], [2, i], [3, 3]];
+    let xs: i32[][] = [[i, 1], [2, i], [3, 3]];
     return rpass(xs);
 }
 ` + ownParamReleaseMain(ownHandbackHeapRowsMain), want: 2},
@@ -549,18 +549,18 @@ func closureCaptureReturnCases() []ownParamReleaseCase {
 			name: "closure_returns_captured_arrarr",
 			src: `@noinline
 function usr(f: (i32) => i32[][], i: i32): i32 {
-    var g: i32[][] = f(i);
+    let g: i32[][] = f(i);
     return g.len() + g[0][0];
 }
 @noinline
 function round(keep: i32[][], i: i32): i32 {
-    var f = (j: i32): i32[][] => keep;
+    let f = (j: i32): i32[][] => keep;
     return usr(f, i);
 }
 function main(): i32 {
-    var keep: i32[][] = [[5], [6], [7]];
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let keep: i32[][] = [[5], [6], [7]];
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round(keep, i); i = i + 1; }
     if (keep[1][0] != 6) { return 77; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -575,19 +575,19 @@ function main(): i32 {
 function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-" + i.to_string(); }
 @noinline
 function usr(hb: (string[]) => string[], i: i32): i32 {
-    var xs: string[] = ["ab", "cd"];
+    let xs: string[] = ["ab", "cd"];
     xs = hb(xs);
     return xs.len() + xs[1].len();
 }
 @noinline
 function round(keep: string[], i: i32): i32 {
-    var hb = (a: string[]): string[] => keep;
+    let hb = (a: string[]): string[] => keep;
     return usr(hb, i);
 }
 function main(): i32 {
-    var keep: string[] = [w(1), w(2)];
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let keep: string[] = [w(1), w(2)];
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round(keep, i); i = i + 1; }
     if (keep[1].len() != 44) { return 77; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -601,17 +601,17 @@ function main(): i32 {
 			name: "closure_returns_captured_own_arrarr",
 			src: `@noinline
 function usr(f: (i32) => i32[][], i: i32): i32 {
-    var g: i32[][] = f(i);
+    let g: i32[][] = f(i);
     return g.len() + g[0][0];
 }
 @noinline
 function round(own keep: i32[][], i: i32): i32 {
-    var f = (j: i32): i32[][] => keep;
+    let f = (j: i32): i32[][] => keep;
     return usr(f, i);
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         x = x + round([[5], [6]], i);
         i = i + 1;
@@ -629,19 +629,19 @@ function main(): i32 {
 function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-" + i.to_string(); }
 @noinline
 function usr(f: (i32) => string[], i: i32): i32 {
-    var g: string[] = f(i);
+    let g: string[] = f(i);
     return g.len() + g[1].len();
 }
 @noinline
 function round(own keep: string[], i: i32): i32 {
-    var f = (j: i32): string[] => keep;
+    let f = (j: i32): string[] => keep;
     return usr(f, i);
 }
 @noinline
 function plain(own keep: string[]): i32 { return keep[0].len(); }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round([w(i), w(i + 1)], i) + plain([w(i)]); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return x % 83;

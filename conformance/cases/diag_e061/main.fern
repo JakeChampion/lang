@@ -3,8 +3,8 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 function main(): i32 {
-var x: i32 = {
-    var a: i32 = 1;
+let x: i32 = {
+    let a: i32 = 1;
     a + 1;               // error[E061]: trailing `;` makes this a statement, so the block has no value
 };
 

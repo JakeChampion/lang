@@ -15,7 +15,7 @@ import "./lib/duration";
 import "./lib/ld";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " NUMBER[SUFFIX]...\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
   out = out + "Pause for NUMBER seconds.  SUFFIX may be 's' for seconds (the default),\n";
@@ -29,17 +29,17 @@ function help_text(): string {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
+  let argv: string[] = args();
   // The missing operand is judged on argv, not on what the option scan
   // left: `sleep --` has nothing to sleep for and still exits 0.
   if (argv.len() <= 1) {
     gnu.die_usage("missing operand", 1);
   }
-  var operands: string[] = gnu.parse_standard_options_only(argv, "sleep", help_text(), 1);
-  var f: ld.Format = ld.format();
-  var total: ld.LD = f.from_i64(0 as i64);
-  var bad: boolean = false;
-  var i: i32 = 0;
+  let operands: string[] = gnu.parse_standard_options_only(argv, "sleep", help_text(), 1);
+  let f: ld.Format = ld.format();
+  let total: ld.LD = f.from_i64(0 as i64);
+  let bad: boolean = false;
+  let i: i32 = 0;
   while (i < operands.len()) {
     match (duration.parse(f, operands[i])) {
       Some(v) => {

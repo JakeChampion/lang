@@ -26,9 +26,9 @@ func fieldOfFreshStructBump(n string) string {
 	return `struct P { x: i32, data: i32[] }
 function mk(v: i32): P { return P { x: v, data: [v, v + 1, v + 2] }; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < ` + n + `) { var v: i32 = mk(i).x; acc = acc + v; i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < ` + n + `) { let v: i32 = mk(i).x; acc = acc + v; i = i + 1; }
     if (acc < 0) { return -1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -37,9 +37,9 @@ function main(): i32 {
 func fieldOfFreshTupleBump(n string) string {
 	return `function mk(v: i32): (i32, i32[]) { return (v, [v, v + 1]); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < ` + n + `) { var v: i32 = mk(i).0; acc = acc + v; i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < ` + n + `) { let v: i32 = mk(i).0; acc = acc + v; i = i + 1; }
     if (acc < 0) { return -1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -52,9 +52,9 @@ function main(): i32 {
 const fieldOfFreshAliasedSafe = `struct P { x: i32, y: i32 }
 function pass(p: P): P { return p; }
 function main(): i32 {
-    var s: P = P { x: 10, y: 20 };
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < 200) { var v: i32 = pass(s).x; acc = acc + v + s.y; i = i + 1; }
+    let s: P = P { x: 10, y: 20 };
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < 200) { let v: i32 = pass(s).x; acc = acc + v + s.y; i = i + 1; }
     if (acc != 6000) { return 99; }
     return __rc_underflow_count();
 }`
@@ -65,8 +65,8 @@ function main(): i32 {
 const fieldOfFreshPtrField = `struct P { x: i32, data: i32[] }
 function mk(v: i32): P { return P { x: v, data: [v, v + 1, v + 2] }; }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < 200) { var d: i32[] = mk(i).data; acc = acc + d[0]; i = i + 1; }
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < 200) { let d: i32[] = mk(i).data; acc = acc + d[0]; i = i + 1; }
     if (acc != 19900) { return 99; }
     return __rc_underflow_count();
 }`

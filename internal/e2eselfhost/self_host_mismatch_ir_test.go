@@ -36,17 +36,17 @@ import (
 // A failure returns a small distinct code rather than a count, so the exit
 // status says WHICH shape disagreed. 42 means every comparison matched.
 const mismatchIRProg = `function ref(a: string, ao: i32, b: string, bo: i32, n: i32): i32 {
-    var xa: i32 = ao;
+    let xa: i32 = ao;
     if (xa < 0) { xa = 0; }
     if (xa > a.len()) { xa = a.len(); }
-    var xb: i32 = bo;
+    let xb: i32 = bo;
     if (xb < 0) { xb = 0; }
     if (xb > b.len()) { xb = b.len(); }
-    var m: i32 = n;
+    let m: i32 = n;
     if (m > a.len() - xa) { m = a.len() - xa; }
     if (m > b.len() - xb) { m = b.len() - xb; }
     if (m < 0) { m = 0; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < m) {
         if (a[xa + i] != b[xb + i]) { return i; }
         i = i + 1;
@@ -54,24 +54,24 @@ const mismatchIRProg = `function ref(a: string, ao: i32, b: string, bo: i32, n: 
     return m;
 }
 function rep(n: i32): string {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < n) { s = s + "a"; i = i + 1; }
     return s;
 }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n <= 40) {
-        var a: string = rep(n);
+        let a: string = rep(n);
         if (__mismatch(a, 0, a, 0, n) != ref(a, 0, a, 0, n)) { return 1; }
-        var d: i32 = 0;
+        let d: i32 = 0;
         while (d < n) {
-            var b: string = rep(d) + "z" + rep(n - d - 1);
+            let b: string = rep(d) + "z" + rep(n - d - 1);
             if (__mismatch(a, 0, b, 0, n) != ref(a, 0, b, 0, n)) { return 2; }
             if (__mismatch(b, 0, a, 0, n) != ref(b, 0, a, 0, n)) { return 3; }
             if (__mismatch(a, 0, b, 0, d) != ref(a, 0, b, 0, d)) { return 4; }
-            var pa: string = "q" + a;
-            var pb: string = "q" + b;
+            let pa: string = "q" + a;
+            let pb: string = "q" + b;
             if (__mismatch(pa, 1, pb, 1, n) != ref(pa, 1, pb, 1, n)) { return 5; }
             d = d + 1;
         }

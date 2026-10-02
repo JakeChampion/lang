@@ -44,7 +44,7 @@ func TestDeriveHintsSpellWhatCompiles(t *testing.T) {
 			bad: `import "core/map";
 struct Key { a: i32, b: string }
 function main(): i32 {
-    var m: Map[Key, i32] = Map {};
+    let m: Map[Key, i32] = Map {};
     m = m.insert(Key { a: 1, b: "x" }, 10);
     return 0;
 }`,
@@ -54,7 +54,7 @@ import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
 struct Key { a: i32, b: string }
 function main(): i32 {
-    var m: Map[Key, i32] = Map {};
+    let m: Map[Key, i32] = Map {};
     m = m.insert(Key { a: 1, b: "x" }, 10);
     return 0;
 }`},
@@ -64,7 +64,7 @@ function main(): i32 {
 			bad: `import "core/map";
 enum K { A, B(i32) }
 function main(): i32 {
-    var m: Map[K, i32] = Map {};
+    let m: Map[K, i32] = Map {};
     m = m.insert(B(1), 10);
     return 0;
 }`,
@@ -74,7 +74,7 @@ import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
 enum K { A, B(i32) }
 function main(): i32 {
-    var m: Map[K, i32] = Map {};
+    let m: Map[K, i32] = Map {};
     m = m.insert(B(1), 10);
     return 0;
 }`},
@@ -83,8 +83,8 @@ function main(): i32 {
 			name: "E041 structural equality",
 			bad: `struct P { x: i32 }
 function main(): i32 {
-    var a: P = P { x: 1 };
-    var b: P = P { x: 1 };
+    let a: P = P { x: 1 };
+    let b: P = P { x: 1 };
     if (a == b) { return 1; }
     return 0;
 }`,
@@ -93,8 +93,8 @@ function main(): i32 {
 @derive(cmp.Eq)
 struct P { x: i32 }
 function main(): i32 {
-    var a: P = P { x: 1 };
-    var b: P = P { x: 1 };
+    let a: P = P { x: 1 };
+    let b: P = P { x: 1 };
     if (a == b) { return 1; }
     return 0;
 }`, `import "core/cmp";
@@ -103,8 +103,8 @@ impl cmp.Eq for P {
     function eq(self: Self, other: Self): boolean { return self.x == other.x; }
 }
 function main(): i32 {
-    var a: P = P { x: 1 };
-    var b: P = P { x: 1 };
+    let a: P = P { x: 1 };
+    let b: P = P { x: 1 };
     if (a == b) { return 1; }
     return 0;
 }`},
@@ -113,8 +113,8 @@ function main(): i32 {
 			name: "E041 structural ordering",
 			bad: `struct P { x: i32 }
 function main(): i32 {
-    var a: P = P { x: 1 };
-    var b: P = P { x: 2 };
+    let a: P = P { x: 1 };
+    let b: P = P { x: 2 };
     if (a < b) { return 1; }
     return 0;
 }`,
@@ -123,8 +123,8 @@ function main(): i32 {
 @derive(cmp.Ord)
 struct P { x: i32 }
 function main(): i32 {
-    var a: P = P { x: 1 };
-    var b: P = P { x: 2 };
+    let a: P = P { x: 1 };
+    let b: P = P { x: 2 };
     if (a < b) { return 1; }
     return 0;
 }`, `import "core/cmp";
@@ -133,8 +133,8 @@ impl cmp.Ord for P {
     function cmp(self: Self, other: Self): i32 { return self.x - other.x; }
 }
 function main(): i32 {
-    var a: P = P { x: 1 };
-    var b: P = P { x: 2 };
+    let a: P = P { x: 1 };
+    let b: P = P { x: 2 };
     if (a < b) { return 1; }
     return 0;
 }`},
@@ -143,7 +143,7 @@ function main(): i32 {
 			name: "E038 print needs Display",
 			bad: `struct P { x: i32 }
 function main(): i32 {
-    var a: P = P { x: 1 };
+    let a: P = P { x: 1 };
     print(a);
     return 0;
 }`,
@@ -152,7 +152,7 @@ function main(): i32 {
 @derive(cmp.Display)
 struct P { x: i32 }
 function main(): i32 {
-    var a: P = P { x: 1 };
+    let a: P = P { x: 1 };
     print(a);
     return 0;
 }`, `import "core/cmp";
@@ -161,13 +161,13 @@ impl cmp.Display for P {
     function to_string(self: Self): string { return "P"; }
 }
 function main(): i32 {
-    var a: P = P { x: 1 };
+    let a: P = P { x: 1 };
     print(a);
     return 0;
 }`, `struct P { x: i32 }
 function (p: P) to_string(): string { return "P"; }
 function main(): i32 {
-    var a: P = P { x: 1 };
+    let a: P = P { x: 1 };
     print(a);
     return 0;
 }`},
@@ -200,7 +200,7 @@ function main(): i32 {
 func TestMapKeyFallbackHintNamesQualifiedDerive(t *testing.T) {
 	err := checkModuleSource(t, `import "core/map";
 function main(): i32 {
-    var m: Map[f64, i32] = Map { 1.5: 10 };
+    let m: Map[f64, i32] = Map { 1.5: 10 };
     return 0;
 }`)
 	if err == nil {
@@ -216,7 +216,7 @@ import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
 struct Key { a: i32 }
 function main(): i32 {
-    var m: Map[Key, i32] = Map { Key { a: 1 }: 10 };
+    let m: Map[Key, i32] = Map { Key { a: 1 }: 10 };
     return 0;
 }`); err != nil {
 		t.Fatalf("the suggested key spelling must check clean: %v", err)
@@ -251,13 +251,13 @@ func TestUnknownTypeHintOnlyFiresForUnknownNames(t *testing.T) {
 	// The real types the table must never offer to replace, alongside
 	// every spelling it does suggest.
 	if err := checkSource(t, `function main(): i32 {
-    var a: boolean = true;
-    var b: i32 = 1;
-    var c: u32 = 2 as u32;
-    var d: f64 = 1.5;
-    var e: string = "hello";
-    var g: u8 = 3;
-    var h: str = slice_unchecked(e, 1, 3);
+    let a: boolean = true;
+    let b: i32 = 1;
+    let c: u32 = 2 as u32;
+    let d: f64 = 1.5;
+    let e: string = "hello";
+    let g: u8 = 3;
+    let h: str = slice_unchecked(e, 1, 3);
     return h.len();
 }`); err != nil {
 		t.Fatalf("str / u8 and every suggested spelling must check clean: %v", err)
@@ -315,7 +315,7 @@ function main(): i32 { return 0; }`,
 		local: `import "std/regex";
 pub function (m: regex.RMatch) to_string(): string { return "m"; }
 function main(): i32 {
-    var a: regex.RMatch = regex.RMatch { found: true, start: 0, end: 0 };
+    let a: regex.RMatch = regex.RMatch { found: true, start: 0, end: 0 };
     print(a);
     return 0;
 }`,
@@ -325,7 +325,7 @@ function main(): i32 {
 		bad: `import "std/regex";
 import "core/map";
 function main(): i32 {
-    var m: Map[regex.RMatch, i32] = Map {};
+    let m: Map[regex.RMatch, i32] = Map {};
     m = m.insert(regex.RMatch { found: true, start: 0, end: 0 }, 1);
     return 0;
 }`,
@@ -336,8 +336,8 @@ function main(): i32 {
 func foreignProg(body string) string {
 	return `import "std/regex";
 function main(): i32 {
-    var a: regex.RMatch = regex.RMatch { found: true, start: 0, end: 0 };
-    var b: regex.RMatch = regex.RMatch { found: true, start: 0, end: 0 };
+    let a: regex.RMatch = regex.RMatch { found: true, start: 0, end: 0 };
+    let b: regex.RMatch = regex.RMatch { found: true, start: 0, end: 0 };
 ` + body + `
 }`
 }
@@ -397,7 +397,7 @@ func TestDeriveHintsForForeignTypesNameAWritableFix(t *testing.T) {
 // program it describes has to check clean.
 func TestMapHintNamesAnImportThatWorks(t *testing.T) {
 	err := checkModuleSource(t, `function main(): i32 {
-    var m: Map[string, i32] = Map {};
+    let m: Map[string, i32] = Map {};
     return 0;
 }`)
 	if err == nil {
@@ -408,7 +408,7 @@ func TestMapHintNamesAnImportThatWorks(t *testing.T) {
 	}
 	if err := checkModuleSource(t, `import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = Map {};
+    let m: Map[string, i32] = Map {};
     return 0;
 }`); err != nil {
 		t.Fatalf("the import the hint names must make the program check: %v", err)

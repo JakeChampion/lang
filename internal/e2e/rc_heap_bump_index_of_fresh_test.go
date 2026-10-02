@@ -23,9 +23,9 @@ import (
 func indexFreshBumpSrc(n string) string {
 	return `function mk(v: i32): i32[] { return [v, v + 1, v + 2]; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < ` + n + `) { var v: i32 = mk(i)[1]; acc = acc + v; i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < ` + n + `) { let v: i32 = mk(i)[1]; acc = acc + v; i = i + 1; }
     if (acc < 0) { return -1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -37,9 +37,9 @@ function main(): i32 {
 // x200 == 6000.
 const indexFreshAliasedSafe = `function pass(p: i32[]): i32[] { return p; }
 function main(): i32 {
-    var arr: i32[] = [10, 20, 30];
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < 200) { var v: i32 = pass(arr)[1]; acc = acc + v + arr[0]; i = i + 1; }
+    let arr: i32[] = [10, 20, 30];
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < 200) { let v: i32 = pass(arr)[1]; acc = acc + v + arr[0]; i = i + 1; }
     if (acc != 6000) { return 99; }
     return __rc_underflow_count();
 }`
@@ -49,8 +49,8 @@ function main(): i32 {
 // path. "alpha"==5, x200 == 1000.
 const indexFreshPtrElem = `function mks(): string[] { return ["alpha", "beta", "gamma"]; }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < 200) { var s: string = mks()[0]; acc = acc + s.len(); i = i + 1; }
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < 200) { let s: string = mks()[0]; acc = acc + s.len(); i = i + 1; }
     if (acc != 1000) { return 99; }
     return __rc_underflow_count();
 }`

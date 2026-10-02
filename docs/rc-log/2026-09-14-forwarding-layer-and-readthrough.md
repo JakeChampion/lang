@@ -36,7 +36,7 @@ where `Big.id_or_make` carries both `CNTRECVRET:` and `RECVIDENT:`.
 list, and `moves_fields_expr` marks a method RECEIVER unconditionally when the
 callee is not in that list. So `return a.id_or_make(k)` marked `a` as moving a
 field, which gated off both tiers at once. The caller read no exemption,
-dropped the receiver box-only, and the count the inner callee's `var mag =
+dropped the receiver box-only, and the count the inner callee's `let mag =
 a.mag` had added was never given back.
 
 Adding a bare `return a` to the layer earns `CNTRECVRET:` and still leaks:

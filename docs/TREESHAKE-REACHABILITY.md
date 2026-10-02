@@ -46,7 +46,7 @@ impl method, and everything that method called, into the artifact:
 
 ```fern
 function dead_coercion(): i32 {     // nothing calls this
-    var g: dyn Greet = Loud { n: 1 };
+    let g: dyn Greet = Loud { n: 1 };
     return g.hello();
 }
 function main(): i32 { return 7; }  // the whole program

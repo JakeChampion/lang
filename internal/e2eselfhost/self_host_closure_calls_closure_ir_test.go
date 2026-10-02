@@ -10,7 +10,7 @@ import (
 )
 
 // closureCallsClosureIRCases exercise a local closure whose body CALLS another
-// local, capture-free closure (`var add = fn(a){…}; var twice = fn(a){
+// local, capture-free closure (`let add = fn(a){…}; let twice = fn(a){
 // add(add(a)) }`). `subst_fcall_expr` has to rewrite the hoisted `add`'s call
 // sites that sit INSIDE `twice`'s body; otherwise `add` stays referenced, its
 // lift declines, and the whole module bails to the
@@ -29,66 +29,66 @@ var closureCallsClosureIRCases = []struct {
 }{
 	// nested call `add(add(a))` — the canonical shape.
 	{"nested", `function main(): i32 {
-    var add = (a: i32): i32 => { return a + 10; };
-    var twice = (a: i32): i32 => { return add(add(a)); };
+    let add = (a: i32): i32 => { return a + 10; };
+    let twice = (a: i32): i32 => { return add(add(a)); };
     return twice(1);
 }`, 21},
 	// binary call `mk(a) + mk(a)` — two separate call sites in one expression.
 	{"binary", `function main(): i32 {
-    var mk = (a: i32): i32 => { return a * 3; };
-    var combine = (a: i32): i32 => { return mk(a) + mk(a); };
+    let mk = (a: i32): i32 => { return a * 3; };
+    let combine = (a: i32): i32 => { return mk(a) + mk(a); };
     return combine(4);
 }`, 24},
 	// a three-deep chain: f -> dbl -> inc, each a capture-free local closure.
 	{"chain", `function main(): i32 {
-    var inc = (a: i32): i32 => { return a + 1; };
-    var dbl = (a: i32): i32 => { return inc(a) * 2; };
-    var f = (a: i32): i32 => { return dbl(a) + inc(a); };
+    let inc = (a: i32): i32 => { return a + 1; };
+    let dbl = (a: i32): i32 => { return inc(a) * 2; };
+    let f = (a: i32): i32 => { return dbl(a) + inc(a); };
     return f(3);
 }`, 12},
 	// control flow inside the calling closure (if + the called closure twice).
 	{"if_body", `function main(): i32 {
-    var pos = (a: i32): i32 => { if (a < 0) { return 0; } return a; };
-    var clamp = (a: i32): i32 => { return pos(a) + pos(0 - 5); };
+    let pos = (a: i32): i32 => { if (a < 0) { return 0; } return a; };
+    let clamp = (a: i32): i32 => { return pos(a) + pos(0 - 5); };
     return clamp(7);
 }`, 7},
 	// a loop in the calling closure calling the other closure each iteration.
 	{"loop_body", `function main(): i32 {
-    var sq = (a: i32): i32 => { return a * a; };
-    var sumsq = (n: i32): i32 => { var s = 0; var i = 1; while (i <= n) { s = s + sq(i); i = i + 1; } return s; };
+    let sq = (a: i32): i32 => { return a * a; };
+    let sumsq = (n: i32): i32 => { let s = 0; let i = 1; while (i <= n) { s = s + sq(i); i = i + 1; } return s; };
     return sumsq(3);
 }`, 14},
 	// the inner closure CAPTURES an outer variable (`add` captures `x`): the
 	// injected capture arg flows through as the calling closure's own capture.
 	{"capturing_inner", `function main(): i32 {
-    var x = 10;
-    var add = (a: i32): i32 => { return a + x; };
-    var twice = (a: i32): i32 => { return add(a) + add(a); };
+    let x = 10;
+    let add = (a: i32): i32 => { return a + x; };
+    let twice = (a: i32): i32 => { return add(a) + add(a); };
     return twice(1);
 }`, 22},
 	// the inner closure captures TWO variables.
 	{"capturing_two", `function main(): i32 {
-    var x = 3;
-    var y = 7;
-    var f = (a: i32): i32 => { return a * x + y; };
-    var g = (a: i32): i32 => { return f(a) + f(a); };
+    let x = 3;
+    let y = 7;
+    let f = (a: i32): i32 => { return a * x + y; };
+    let g = (a: i32): i32 => { return f(a) + f(a); };
     return g(2);
 }`, 26},
 	// two closures share a capture; a third calls both. (Return kept <= 125 for
 	// the WASI proc_exit range — base 50 → (1+50)+(50+1) = 102.)
 	{"shared_capture", `function main(): i32 {
-    var base = 50;
-    var f = (a: i32): i32 => { return a + base; };
-    var g = (a: i32): i32 => { return base + a; };
-    var h = (a: i32): i32 => { return f(a) + g(a); };
+    let base = 50;
+    let f = (a: i32): i32 => { return a + base; };
+    let g = (a: i32): i32 => { return base + a; };
+    let h = (a: i32): i32 => { return f(a) + g(a); };
     return h(1);
 }`, 102},
 	// the calling closure both CALLS the capturing inner closure and uses the
 	// captured variable directly.
 	{"direct_and_call", `function main(): i32 {
-    var x = 5;
-    var add = (a: i32): i32 => { return a + x; };
-    var combo = (a: i32): i32 => { return add(a) + x; };
+    let x = 5;
+    let add = (a: i32): i32 => { return a + x; };
+    let combo = (a: i32): i32 => { return add(a) + x; };
     return combo(10);
 }`, 20},
 	// The called closure's binding SPELLS ITS TYPE OUT. That spelling is what
@@ -99,8 +99,8 @@ var closureCallsClosureIRCases = []struct {
 	// trapped (`undefined element`) and the register backends took a bus
 	// error, both with the compiler reporting success.
 	{"annotated_inner_called", `function main(): i32 {
-    var add: (i32) => i32 = (a: i32): i32 => { return a + 10; };
-    var twice = (a: i32): i32 => { return add(add(a)); };
+    let add: (i32) => i32 = (a: i32): i32 => { return a + 10; };
+    let twice = (a: i32): i32 => { return add(add(a)); };
     return twice(1);
 }`, 21},
 }
@@ -150,7 +150,7 @@ func TestSelfHostClosureCallsClosureX86IR(t *testing.T) {
 }
 
 // TestSelfHostClosureCallsClosureWasmIR is the wasm sibling: the lift lives in
-// the target-independent irlower, so the wasm IR backend gets it for free.
+// the target-independent lift.fern, so the wasm IR backend gets it for free.
 func TestSelfHostClosureCallsClosureWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host closure-calls-closure wasm IR e2e")

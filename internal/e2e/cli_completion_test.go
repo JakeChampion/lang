@@ -18,9 +18,9 @@ func TestCliBashCompletionParses(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "comp.fern")
 	prog := `import "std/cli" as cli;
 function main(): i32 {
-    var deploy: cli.CliSpec = cli.cli_new("deploy", "push the build");
+    let deploy: cli.CliSpec = cli.cli_new("deploy", "push the build");
     deploy = deploy.option("env", "e", "target environment (it's \"quoted\")");
-    var s: cli.CliSpec = cli.cli_new("my-tool", "ship things");
+    let s: cli.CliSpec = cli.cli_new("my-tool", "ship things");
     s = s.flag("verbose", "v", "explain what's happening");
     s = s.option("name", "", "who to ship as");
     s = s.command(deploy);

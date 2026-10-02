@@ -95,7 +95,7 @@ lambda's parameter and return annotations too.
 ## Consequence, measured later
 
 `TestSelfHostGrowSoleOccurrenceX86_64` had pinned four shapes at zero copies
-where native reads 49: a result bound to a new name (`var t = f(b, v);
+where native reads 49: a result bound to a new name (`let t = f(b, v);
 return f(t, v + 1)`), nested as an argument (`f(f(b, v), v + 1)`), pushed
 inline (`t.append(v + 1)`), or returned through a second call after a rebind.
 Under this convention the in-place push's result arrives at rc 2 — the

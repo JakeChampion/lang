@@ -45,7 +45,7 @@ import "./modloader";
 
 // is_array_type reports whether a type string denotes an array (ends "[]").
 function is_array_type(t: string): boolean {
-  var n: i32 = t.len();
+  let n: i32 = t.len();
   if (n < 2) {
     return false;
   }
@@ -118,7 +118,7 @@ function is_rc_helper(name: string): boolean {
     // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
     // when its cap matches, else freelists it and allocs fresh — so a reuse
     // site guarded by __fern_rc_is_unique degrades instead of corrupting.
-    // Never user-callable — only irlower's reuse emitters emit it.
+    // Never user-callable — only ssarc's reuse emitters emit it.
     || name == "__fern_alloc_reuse"
     || name == "__fern_rc_underflow_get"
     // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
@@ -133,7 +133,7 @@ function is_release_helper(name: string): boolean {
   // string RC reclaim (#2649): frees a fresh, non-escaping heap string's
   // data buffer + 16-byte box. Default ir_helper_symbol maps it to
   // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
-  // only the irlower reclaim sites emit the call.
+  // only the lowering's reclaim sites emit the call.
   return name == "__fern_str_free"
     // string VIEW reclaim (#6544): __fern_str_free plus the one case it
     // must skip — a `s[a:b]` box, which carries the immortal rc sentinel
@@ -141,7 +141,7 @@ function is_release_helper(name: string): boolean {
     // view is dead this returns the 24-byte box alone to the freelist.
     // Default ir_helper_symbol maps it to __fn___fern_str_view_free; wasm
     // routes it to $__fern_arr_dec (its slices copy, so there is no view
-    // box). Never user-callable — only the irlower reclaim sites emit it.
+    // box). Never user-callable — only the lowering's reclaim sites emit it.
     || name == "__fern_str_view_free"
     // string[] ELEMENT reclaim (#4355): the element-walking sibling of the
     // shallow array dec — at rc==1 it __fern_str_free's every element box,
@@ -151,13 +151,13 @@ function is_release_helper(name: string): boolean {
     // routes it to $__fern_arr_dec_ptr (the wasm AST path's pointer-element
     // walk — wasm strings are single inline rc-headered blocks, so the plain
     // per-element $__fern_arr_dec IS the wasm string free). Never
-    // user-callable — only the irlower exit sweep emits it.
+    // user-callable — only the lowering's exit sweep emits it.
     || name == "__fern_str_arr_free"
     // arr-of-arr reclaim (#4355 slice 9): __fern_arrarr_free walks a fresh
     // arr-of-arr's elements (each a scalar-element inner buffer, one
     // rc-guarded __fern_arr_dec apiece) then frees the outer buffer;
     // __fern_strarrarr_free is the string[][] sibling (each element a
-    // string[] released fully by __fern_str_arr_free). Only the irlower
+    // string[] released fully by __fern_str_arr_free). Only the lowering's
     // exit sweep / rebind emits them.
     || name == "__fern_arrarr_free"
     || name == "__fern_strarrarr_free"
@@ -170,7 +170,7 @@ function is_map_release_helper(name: string): boolean {
   // local's keys + values buffers AND the raw 16-byte mapbox. Default
   // ir_helper_symbol maps it to __fn___fern_map_free; wasm_helper_symbol
   // routes it to $__fern_map_release (which additionally deep-drops string
-  // K/V). Never user-callable — only irlower's emit_map_buffers_free emits it.
+  // K/V). Never user-callable — only the lowering emits it.
   return name == "__fern_map_free"
     // #4353: string-VALUE-column deep-release variant — frees the vals
     // column via __fern_str_arr_free (each fresh value box + the buffer)
@@ -241,7 +241,7 @@ function is_text_helper(name: string): boolean {
     // exact-size block, so the heap is its only runtime dep. Body under
     // __fn___fern_arr_str_join,
     // emitted in each native backend's runtime block. Only
-    // irlower's lower_arr_str_join emits the call. wasm emits a matching
+    // ssarc emits the call. wasm emits a matching
     // $__fern_arr_str_join shim over the hand-written $__fern_str_join WAT
     // (wasm.arr_str_join_helper).
     || name == "__fern_arr_str_join";
@@ -296,11 +296,11 @@ pub function is_c_call(name: string): boolean {
   if (slice_unchecked(name, 0, 8) != "__c_call") {
     return false;
   }
-  var d: str = slice_unchecked(name, 8, 9);
+  let d: str = slice_unchecked(name, 8, 9);
   if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") {
     return false;
   }
-  var rest: str = slice_unchecked(name, 9, name.len());
+  let rest: str = slice_unchecked(name, 9, name.len());
   return rest == "" || rest == "_f32" || rest == "_f64";
 }
 
@@ -425,7 +425,7 @@ pub function ssa_block_id_collision(name: string, id: i32): i32 {
 // bodies the substitution defines beside the declarations. Built once per
 // module, since the eligibility walk asks per call op.
 function defined_reg(mod: parser.Module, extra: irtables.LowerResult[]): irtables.SigReg {
-  var rows: string[] = [];
+  let rows: string[] = [];
   for fd in mod.funcs {
     rows = rows.append(fd.name);
     if (fd.receiver_type.len() > 0) {
@@ -531,7 +531,7 @@ pub function flip_int_cmp_kind(id: i32): i32 {
 // answers a different type than it takes, so `__arrm_map__f64` alone does not
 // say the result is f64. The lambda's own signature is what settles that.
 pub function scale_f64_maps_module(mod: parser.Module): parser.Module {
-  var out: parser.FuncDecl[] = [];
+  let out: parser.FuncDecl[] = [];
   for fd in mod.funcs {
     out = out.append(parser.FuncDecl { ...fd, body: astwalk.map_stmts(fd.body, scale_map_call) });
   }
@@ -563,7 +563,7 @@ function scale_map_call(e: ast.Expr): ast.Expr {
         return e;
       }
       if let ast.ExprLambda(lm) = c.args[1] {
-        var got: ScaleFactor = scale_lambda_factor(lm);
+        let got: ScaleFactor = scale_lambda_factor(lm);
         if (!got.ok) {
           return e;
         }
@@ -592,7 +592,7 @@ function scale_map_call(e: ast.Expr): ast.Expr {
 // wants its own change, because moving it out of the lambda moves WHERE it is
 // evaluated, which is only sound for an expression that cannot observe when.
 function scale_lambda_factor(lm: ast.ExprLambda): ScaleFactor {
-  var no: ScaleFactor = ScaleFactor { ok: false, k: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+  let no: ScaleFactor = ScaleFactor { ok: false, k: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
   if (lm.params.len() != 1) {
     return no;
   }
@@ -884,7 +884,7 @@ pub struct Sub {
 }
 
 pub function no_sub(): Sub {
-  var none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [] };
+  let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [] };
   return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [] };
 }
 
@@ -915,7 +915,7 @@ pub function produced(bodies: irtables.LowerResult[], i: i32, fd: parser.FuncDec
   if (i < bodies.len() && bodies[i].ok) {
     return bodies[i];
   }
-  var name: string = fd.name;
+  let name: string = fd.name;
   if (fd.receiver_type.len() > 0) {
     name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
@@ -941,14 +941,14 @@ pub struct Lowered {
 // helper calls all pass is_fern_helper). The cache it returns is the one the
 // emit reads.
 pub function gate(mod: parser.Module, sub: Sub): Lowered {
-  var cache: irtables.LowerResult[] = [];
-  var freg: irtables.SigReg = defined_reg(mod, sub.extra);
-  var i: i32 = 0;
+  let cache: irtables.LowerResult[] = [];
+  let freg: irtables.SigReg = defined_reg(mod, sub.extra);
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
-    var r: irtables.LowerResult = produced(sub.bodies, i, mod.funcs[i]);
-    var j: i32 = 0;
+    let r: irtables.LowerResult = produced(sub.bodies, i, mod.funcs[i]);
+    let j: i32 = 0;
     while (j < r.ops.len()) {
-      var o: ir.Op = r.ops[j];
+      let o: ir.Op = r.ops[j];
       if (o.kind_tag == 149) {  // call_direct
         if (!is_fern_helper(o.str) && !is_c_call(o.str) && !irtables.sig_reg_has_exact(freg, o.str)) {
           if (strict_ir_on()) {
@@ -989,9 +989,9 @@ pub struct Gated {
 // what a per-module build cuts into units (split_units). `lifted` is the
 // lambda-lifted module (sub_lifted).
 pub function gate_program(lifted: parser.Module, sub: Sub): Gated {
-  var im: parser.Module = with_records(parser.infer_ret_types_module(script_normalized(lifted)), sub);
-  var stab: irtables.StructTab = irtables.struct_tab(im.structs);
-  var g: Lowered = gate(im, sub);
+  let im: parser.Module = with_records(parser.infer_ret_types_module(script_normalized(lifted)), sub);
+  let stab: irtables.StructTab = irtables.struct_tab(im.structs);
+  let g: Lowered = gate(im, sub);
   return Gated { ok: g.ok, im: im, stab: stab, base: sub.sigs, cache: g.cache };
 }
 
@@ -1010,15 +1010,15 @@ pub struct Units { mods: parser.Module[], caches: irtables.LowerResult[][], loos
 // that to the entry. A leaf seminline spliced into a caller in another module
 // keeps its body in its own unit, for the callers that still call it.
 pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
-  var declared: i32[] = declared_owners(g, parts);
-  var owner: i32[] = unit_owners(g, declared, entry);
-  var mods: parser.Module[] = [];
-  var caches: irtables.LowerResult[][] = [];
-  var k: i32 = 0;
+  let declared: i32[] = declared_owners(g, parts);
+  let owner: i32[] = unit_owners(g, declared, entry);
+  let mods: parser.Module[] = [];
+  let caches: irtables.LowerResult[][] = [];
+  let k: i32 = 0;
   while (k < parts.len()) {
-    var funcs: parser.FuncDecl[] = [];
-    var cache: irtables.LowerResult[] = [];
-    var i: i32 = 0;
+    let funcs: parser.FuncDecl[] = [];
+    let cache: irtables.LowerResult[] = [];
+    let i: i32 = 0;
     while (i < g.im.funcs.len()) {
       if (owner[i] == k) {
         funcs = funcs.append(g.im.funcs[i]);
@@ -1036,8 +1036,8 @@ pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
     caches = caches.append(cache);
     k = k + 1;
   }
-  var loose: parser.FuncDecl[] = [];
-  var i: i32 = 0;
+  let loose: parser.FuncDecl[] = [];
+  let i: i32 = 0;
   while (i < declared.len()) {
     if (declared[i] < 0) {
       loose = loose.append(g.im.funcs[i]);
@@ -1057,9 +1057,9 @@ function owner_key(fd: parser.FuncDecl): string {
 // receiver type, or -1.
 function declared_owners(g: Gated, parts: parser.Module[]): i32[] {
   // Part indexes are stored plus one, so a missing key's 0 means "none".
-  var declared: Map[string, i32] = map_new(g.im.funcs.len() + 1);
-  var types: Map[string, i32] = map_new(64);
-  var p: i32 = 0;
+  let declared: Map[string, i32] = map_new(g.im.funcs.len() + 1);
+  let types: Map[string, i32] = map_new(64);
+  let p: i32 = 0;
   while (p < parts.len()) {
     for fd in parts[p].funcs {
       declared = declared.insert(owner_key(fd), p + 1);
@@ -1072,9 +1072,9 @@ function declared_owners(g: Gated, parts: parser.Module[]): i32[] {
     }
     p = p + 1;
   }
-  var owner: i32[] = [];
+  let owner: i32[] = [];
   for fd in g.im.funcs {
-    var at: i32 = declared.get_or(owner_key(fd), 0);
+    let at: i32 = declared.get_or(owner_key(fd), 0);
     if (at == 0 && fd.receiver_type.len() > 0) {
       at = types.get_or(util.base_type_name(fd.receiver_type), 0);
     }
@@ -1086,10 +1086,10 @@ function declared_owners(g: Gated, parts: parser.Module[]): i32[] {
 // unit_owners gives each function `declared` leaves at -1 the owner of the
 // first function whose body names it, and failing that the entry.
 function unit_owners(g: Gated, declared: i32[], entry: i32): i32[] {
-  var owner: i32[] = declared;
-  var unowned: Map[string, i32] = map_new(64);
-  var queue: i32[] = [];
-  var i: i32 = 0;
+  let owner: i32[] = declared;
+  let unowned: Map[string, i32] = map_new(64);
+  let queue: i32[] = [];
+  let i: i32 = 0;
   while (i < owner.len()) {
     if (owner[i] >= 0) {
       queue = queue.append(i);
@@ -1098,12 +1098,12 @@ function unit_owners(g: Gated, declared: i32[], entry: i32): i32[] {
     }
     i = i + 1;
   }
-  var q: i32 = 0;
+  let q: i32 = 0;
   while (q < queue.len()) {
-    var from: i32 = queue[q];
+    let from: i32 = queue[q];
     // What the body spells, and what its lowering calls: a spliced leaf
     // is named only by the first, an instance or helper only by the second.
-    var refs: string[] = treeshake.free_names(treeshake.body_refs(g.im.funcs[from]));
+    let refs: string[] = treeshake.free_names(treeshake.body_refs(g.im.funcs[from]));
     for o in g.cache[from].ops {
       if (o.str == "") {
         continue;
@@ -1115,7 +1115,7 @@ function unit_owners(g: Gated, declared: i32[], entry: i32): i32[] {
       }
     }
     for ref in refs {
-      var at: i32 = unowned.get_or(ref, 0) - 1;
+      let at: i32 = unowned.get_or(ref, 0) - 1;
       if (at >= 0 && owner[at] < 0) {
         owner = owner.with(at, owner[from]);
         queue = queue.append(at);
@@ -1149,17 +1149,17 @@ pub function no_unit_keys(): UnitKeys {
 // the verdicts fnsigs.wp_fact_rows derives from `base`, for a target whose emit
 // reads that registry (the register backends' does; wasm's does not).
 pub function unit_keys(u: Units, funcs: parser.FuncDecl[], stab: irtables.StructTab, base: fnsigs.FnSigs, facts: boolean): UnitKeys {
-  var sigmods: parser.Module[] = [];
-  var none: string[] = [];
+  let sigmods: parser.Module[] = [];
+  let none: string[] = [];
   for m in u.mods {
     sigmods = sigmods.append(parser.Module { ...m, structs: [] });
     none = none.append("");
   }
-  var fh: modloader.FactHashes = modloader.FactHashes { per_mod: none, global: "" };
+  let fh: modloader.FactHashes = modloader.FactHashes { per_mod: none, global: "" };
   if (facts) {
     fh = modloader.module_fact_hashes(sigmods, fnsigs.wp_fact_rows(base, funcs, stab));
   }
-  var loose: string = modloader.module_sig_string(parser.Module { ...sigmods[0], funcs: u.loose });
+  let loose: string = modloader.module_sig_string(parser.Module { ...sigmods[0], funcs: u.loose });
   return UnitKeys { sighashes: modloader.fact_sig_hashes(sigmods, fh), facts: fh, view: util.hash_key(loose + struct_table_text(stab.decls)) };
 }
 
@@ -1172,21 +1172,24 @@ pub function unit_cache_key(parts: flatten.PerModule[], u: Units, k: UnitKeys, i
   if (k.sighashes.len() == 0) {
     return "";
   }
-  var khi: i32 = hi;
+  let khi: i32 = hi;
   if (lo == 0 && khi >= u.mods[idx].funcs.len()) {
     khi = 0 - 1;
   }
-  var key: string = modloader.module_unit_cache_key(parts, u.mods, k.sighashes, idx, src_hash, extra, lo, khi, k.facts);
+  let key: string = modloader.module_unit_cache_key(parts, u.mods, k.sighashes, idx, src_hash, extra, lo, khi, k.facts);
   if (key.len() == 0) {
     return "";
   }
-  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view;
+  // Runtime layouts can change without changing a unit's source or lowered
+  // operations. Old native slice bodies create immortal descriptors; they
+  // must not be reused with callers that depend on counted view descriptors.
+  return key + "|ir" + lowered_digest(u.caches[idx]) + ":" + k.view + "|runtime=counted-string-views-1";
 }
 
 // struct_table_text spells every struct decl in table order, with each part
 // the lowering or the emit can read.
 function struct_table_text(structs: parser.StructDecl[]): string {
-  var parts: string[] = [];
+  let parts: string[] = [];
   for sd in structs {
     parts = parts.append("st " + sd.name + "<" + list_text(sd.type_params) + ">" + sd.enum_owner
       + "|" + list_text(sd.derives) + "|" + list_text(sd.variant_field_names) + "|");
@@ -1203,7 +1206,7 @@ function struct_table_text(structs: parser.StructDecl[]): string {
 }
 
 function list_text(xs: string[]): string {
-  var parts: string[] = [];
+  let parts: string[] = [];
   for x in xs {
     parts = parts.append(x + ",");
   }
@@ -1214,7 +1217,7 @@ function list_text(xs: string[]): string {
 // per-module cache keyed on it moves whenever a unit's lowering does, including
 // when that lowering depends on another module's body.
 pub function lowered_digest(cache: irtables.LowerResult[]): string {
-  var d: Digest = Digest { a: 208357, b: 5381 };
+  let d: Digest = Digest { a: 208357, b: 5381 };
   for r in cache {
     d = roll(roll(roll(roll(d, r.n_locals), r.n_params), r.result_kind), r.ops.len());
     d = roll_text(roll(roll(d, digest_flags(r.superseded, r.erased_wide)), digest_flags(r.ok, false)), r.name);
@@ -1232,8 +1235,8 @@ struct Digest { a: i32, b: i32 }
 
 // Each word rolls its low 30 bits and then its top two.
 function roll(d: Digest, w: i32): Digest {
-  var a: i32 = d.a * 31 + (w & 1073741823) + 1 & 1073741823;
-  var b: i32 = d.b * 131 + (w & 1073741823) + 7 & 1073741823;
+  let a: i32 = d.a * 31 + (w & 1073741823) + 1 & 1073741823;
+  let b: i32 = d.b * 131 + (w & 1073741823) + 7 & 1073741823;
   a = a * 31 + (w >> 30 & 3) + 1 & 1073741823;
   b = b * 131 + (w >> 30 & 3) + 7 & 1073741823;
   return Digest { a: a, b: b };
@@ -1246,8 +1249,8 @@ function roll_wide(d: Digest, v: i64): Digest {
 // A string rolls its length and then its bytes, so adjacent strings cannot
 // trade bytes and roll the same.
 function roll_text(d: Digest, s: string): Digest {
-  var out: Digest = roll(d, s.len());
-  var i: i32 = 0;
+  let out: Digest = roll(d, s.len());
+  let i: i32 = 0;
   while (i < s.len()) {
     out = roll(out, s[i] as i32);
     i = i + 1;
@@ -1256,8 +1259,8 @@ function roll_text(d: Digest, s: string): Digest {
 }
 
 function roll_slots(d: Digest, xs: i32[]): Digest {
-  var out: Digest = roll(d, xs.len());
-  var i: i32 = 0;
+  let out: Digest = roll(d, xs.len());
+  let i: i32 = 0;
   while (i < xs.len()) {
     out = roll(out, xs[i]);
     i = i + 1;
@@ -1266,7 +1269,7 @@ function roll_slots(d: Digest, xs: i32[]): Digest {
 }
 
 function digest_flags(x: boolean, y: boolean): i32 {
-  var v: i32 = 0;
+  let v: i32 = 0;
   if (x) {
     v = v + 1;
   }
@@ -1301,10 +1304,10 @@ function inline_leaf_ops(): i32 {
 }
 
 pub function inline_tiny_leaves(mod: parser.Module, cache: irtables.LowerResult[]): irtables.LowerResult[] {
-  var names: string[] = [];
-  var at: i32[] = [];
-  var unit: i32 = 0;
-  var i: i32 = 0;
+  let names: string[] = [];
+  let at: i32[] = [];
+  let unit: i32 = 0;
+  let i: i32 = 0;
   while (i < cache.len() && i < mod.funcs.len()) {
     unit = unit + cache[i].ops.len();
     if (inline_leaf(mod.funcs[i], cache[i])) {
@@ -1316,26 +1319,26 @@ pub function inline_tiny_leaves(mod: parser.Module, cache: irtables.LowerResult[
   if (names.len() == 0) {
     return cache;
   }
-  var reg: irtables.SigReg = irtables.sig_reg_of(names);
+  let reg: irtables.SigReg = irtables.sig_reg_of(names);
   // Only a unit over native's inlineMaxUnitOps has its growth budgeted.
-  var budget: i32 = 2147483647;
+  let budget: i32 = 2147483647;
   if (unit > 20000) {
     budget = unit / 10;
   }
-  var out: irtables.LowerResult[] = [];
+  let out: irtables.LowerResult[] = [];
   i = 0;
   while (i < cache.len()) {
-    var r: irtables.LowerResult = cache[i];
-    var claims: boolean = i < mod.funcs.len() && (mod.funcs[i].fip || mod.funcs[i].fbip);
+    let r: irtables.LowerResult = cache[i];
+    let claims: boolean = i < mod.funcs.len() && (mod.funcs[i].fip || mod.funcs[i].fbip);
     if (r.ok && !r.superseded && !claims && budget > 0) {
-      var self: string = r.name;
+      let self: string = r.name;
       if (i < mod.funcs.len()) {
         self = inline_label(mod.funcs[i]);
       }
-      var sp: Spliced = splice_leaves(r, self, reg, names, at, cache, budget);
+      let sp: Spliced = splice_leaves(r, self, reg, names, at, cache, budget);
       budget = sp.budget;
       if (sp.changed) {
-        var opt: ir.OptimizedOps = ir.optimize_ops(sp.r.ops, sp.r.n_params, sp.r.n_locals);
+        let opt: ir.OptimizedOps = ir.optimize_ops(sp.r.ops, sp.r.n_params, sp.r.n_locals);
         r = irtables.LowerResult { ...sp.r, ops: opt.ops, n_locals: opt.n_locals };
       }
     }
@@ -1352,11 +1355,11 @@ pub function inline_tiny_leaves(mod: parser.Module, cache: irtables.LowerResult[
 // reference in the ops — and never `main`, an import or an export. Dropping is marking it
 // superseded, which no emit writes.
 function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], names: string[], at: i32[]): irtables.LowerResult[] {
-  var dead: boolean[] = [];
-  var k: i32 = 0;
+  let dead: boolean[] = [];
+  let k: i32 = 0;
   while (k < names.len()) {
-    var fd: parser.FuncDecl = mod.funcs[at[k]];
-    var exported: boolean = false;
+    let fd: parser.FuncDecl = mod.funcs[at[k]];
+    let exported: boolean = false;
     for x in mod.exports {
       if (x.func_name == fd.name) {
         exported = true;
@@ -1365,7 +1368,7 @@ function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], 
     dead = dead.append(fd.receiver_type.len() == 0 && fd.name != "main" && !util.str_has_prefix(fd.name, "__") && fd.import_iface == "" && !exported);
     k = k + 1;
   }
-  var reg: irtables.SigReg = irtables.sig_reg_of(names);
+  let reg: irtables.SigReg = irtables.sig_reg_of(names);
   for r in cache {
     if (r.superseded) {
       continue;
@@ -1374,7 +1377,7 @@ function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], 
       if (o.str == "") {
         continue;
       }
-      var ref: string = o.str;
+      let ref: string = o.str;
       if (o.kind_tag == ir.kind_id("const_struct")) {
         ref = ir.const_struct_fn_body(o.str);
       }
@@ -1383,7 +1386,7 @@ function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], 
       }
     }
   }
-  var out: irtables.LowerResult[] = cache;
+  let out: irtables.LowerResult[] = cache;
   k = 0;
   while (k < names.len()) {
     if (dead[k]) {
@@ -1406,17 +1409,17 @@ function inline_leaf(fd: parser.FuncDecl, r: irtables.LowerResult): boolean {
   if (!r.ok || r.superseded || fd.no_inline || r.n_params > r.n_locals) {
     return false;
   }
-  var k_calld: i32 = ir.kind_id("call_direct");
-  var k_load: i32 = ir.kind_id("load_local");
-  var k_store: i32 = ir.kind_id("store_local");
-  var k_tee: i32 = ir.kind_id("tee_local");
-  var k_calli: i32 = ir.kind_id("call_indirect");
-  var k_callc: i32 = ir.kind_id("call_closure_direct");
-  var k_const_func: i32 = ir.kind_id("const_func");
-  var k_dyn: i32 = ir.kind_id("dyn_dispatch");
-  var work: i32 = 0;
+  let k_calld: i32 = ir.kind_id("call_direct");
+  let k_load: i32 = ir.kind_id("load_local");
+  let k_store: i32 = ir.kind_id("store_local");
+  let k_tee: i32 = ir.kind_id("tee_local");
+  let k_calli: i32 = ir.kind_id("call_indirect");
+  let k_callc: i32 = ir.kind_id("call_closure_direct");
+  let k_const_func: i32 = ir.kind_id("const_func");
+  let k_dyn: i32 = ir.kind_id("dyn_dispatch");
+  let work: i32 = 0;
   for o in r.ops {
-    var k: i32 = o.kind_tag;
+    let k: i32 = o.kind_tag;
     if (k != k_load && k != k_store && k != k_tee) {
       work = work + 1;
     }
@@ -1439,38 +1442,38 @@ struct Spliced { r: irtables.LowerResult, changed: boolean, budget: i32 }
 // returns (every function returns one, irverifystack) parked in one more
 // fresh slot and loaded after the block.
 function splice_leaves(r: irtables.LowerResult, self: string, reg: irtables.SigReg, names: string[], at: i32[], cache: irtables.LowerResult[], budget: i32): Spliced {
-  var k_calld: i32 = ir.kind_id("call_direct");
-  var out: ir.Op[] = [];
-  var n_locals: i32 = r.n_locals;
-  var changed: boolean = false;
+  let k_calld: i32 = ir.kind_id("call_direct");
+  let out: ir.Op[] = [];
+  let n_locals: i32 = r.n_locals;
+  let changed: boolean = false;
   for o in r.ops {
     if (o.kind_tag != k_calld || o.str == self || !irtables.sig_reg_has_exact(reg, o.str)) {
       out = out.append(o);
       continue;
     }
-    var li: i32 = at[util.index_of_str(names, o.str)];
-    var leaf: irtables.LowerResult = cache[li];
+    let li: i32 = at[util.index_of_str(names, o.str)];
+    let leaf: irtables.LowerResult = cache[li];
     if (o.i32_imm != leaf.n_params || leaf.ops.len() > budget) {
       out = out.append(o);
       continue;
     }
-    var base: i32 = n_locals;
-    var ret: i32 = base + leaf.n_locals;
-    var p: i32 = leaf.n_params - 1;
+    let base: i32 = n_locals;
+    let ret: i32 = base + leaf.n_locals;
+    let p: i32 = leaf.n_params - 1;
     while (p >= 0) {
       out = out.append(ir.op_store_local(base + p));
       p = p - 1;
     }
-    var z: i32 = leaf.n_params;
+    let z: i32 = leaf.n_params;
     while (z < leaf.n_locals) {
       out = out.append(ir.op_const_i32(0));
       out = out.append(ir.op_store_local(base + z));
       z = z + 1;
     }
     out = out.append(ir.op_block(0));
-    var depth: i32 = 0;
+    let depth: i32 = 0;
     for b in leaf.ops {
-      var k: i32 = b.kind_tag;
+      let k: i32 = b.kind_tag;
       if (k == ir.kind_id("load_local") || k == ir.kind_id("store_local") || k == ir.kind_id("tee_local")) {
         out = out.append(ir.Op { ...b, i32_imm: b.i32_imm + base });
       } else if (k == ir.kind_id("return")) {
@@ -1518,12 +1521,12 @@ function splice_leaves(r: irtables.LowerResult, self: string, reg: irtables.SigR
 // The unannotated early return is what keeps this free: one boolean pair per
 // function, before any op is examined.
 pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache: irtables.LowerResult[]): void {
-  var diags: util.Diag[] = [];
-  var hh: i32 = hi;
+  let diags: util.Diag[] = [];
+  let hh: i32 = hi;
   if (hh < 0 || hh > funcs.len()) {
     hh = funcs.len();
   }
-  var i: i32 = lo;
+  let i: i32 = lo;
   while (i < hh) {
     if (funcs[i].fip || funcs[i].fbip) {
       diags = fip_claim_diags(funcs[i], produced(cache, i, funcs[i]), diags);
@@ -1539,11 +1542,11 @@ pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache:
 
 // fip_claim_diags appends this function's E068 verdicts.
 function fip_claim_diags(fn: parser.FuncDecl, r: irtables.LowerResult, acc: util.Diag[]): util.Diag[] {
-  var claim: irfipverify.FipClaim = irfipverify.FipClaim {
+  let claim: irfipverify.FipClaim = irfipverify.FipClaim {
     fn_name: fn.name, is_fip: fn.fip, is_fbip: fn.fbip, allowance: fn.fip_allowance,
   };
-  var res: irfipverify.FipResult = irfipverify.verify_fip_fn(claim, r.ops);
-  var out: util.Diag[] = acc;
+  let res: irfipverify.FipResult = irfipverify.verify_fip_fn(claim, r.ops);
+  let out: util.Diag[] = acc;
   for p in res.problems {
     out = out.append(util.Diag { code: "E068", message: irverify.problem_str(p), line: fn.line, col: fn.col });
   }

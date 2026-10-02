@@ -8,7 +8,7 @@ import (
 
 // Match-expression owned-result reclamation. `rhsTainted` classified an
 // `IfExpr` by its arms but had no `MatchExpr` case, so it fell through to the
-// tainted default: `var s = match (k) { 0 => a + b, _ => b + a }` (all arms
+// tainted default: `let s = match (k) { 0 => a + b, _ => b + a }` (all arms
 // fresh concats) was read as borrowed, left ineligible, and leaked the
 // concat buffer every iteration (240000 -> 2400000 in a loop). Adding the
 // MatchExpr case (owned iff every arm body is owned — the exact IfExpr
@@ -21,11 +21,11 @@ import (
 
 func matchExprBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var a: string = "hello there "; var b: string = "world friend ";
-    var i: i32 = 0; var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let a: string = "hello there "; let b: string = "world friend ";
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < ` + n + `) {
-        var s: string = match (i % 2) { 0 => a + b, _ => b + a };
+        let s: string = match (i % 2) { 0 => a + b, _ => b + a };
         acc = acc + s.len();
         i = i + 1;
     }
@@ -37,10 +37,10 @@ func matchExprBumpSrc(n string) string {
 // Value + over-release for the all-fresh-arm case: a(12) + b(13) == 25 either
 // way, x200 == 5000.
 const matchExprFreshCheck = `function main(): i32 {
-    var a: string = "hello there "; var b: string = "world friend ";
-    var i: i32 = 0; var acc: i32 = 0;
+    let a: string = "hello there "; let b: string = "world friend ";
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        var s: string = match (i % 2) { 0 => a + b, _ => b + a };
+        let s: string = match (i % 2) { 0 => a + b, _ => b + a };
         acc = acc + s.len();
         i = i + 1;
     }
@@ -53,10 +53,10 @@ const matchExprFreshCheck = `function main(): i32 {
 // frees the still-live `a`. a == 19, s == a == 19, acc += s.len() + a.len()
 // == 38 per iter, x200 == 7600.
 const matchExprAliasedSafe = `function main(): i32 {
-    var a: string = "hello there friend ";
-    var i: i32 = 0; var acc: i32 = 0;
+    let a: string = "hello there friend ";
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        var s: string = match (i % 2) { 0 => a, _ => a };
+        let s: string = match (i % 2) { 0 => a, _ => a };
         acc = acc + s.len() + a.len();
         i = i + 1;
     }

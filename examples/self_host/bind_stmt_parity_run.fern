@@ -42,7 +42,7 @@ function scope_diff(want: checker.Scope, got: checker.Scope): string {
   if (want.loop_depth != got.loop_depth) {
     return "check_stmt left loop_depth " + util.i32_to_string(want.loop_depth) + ", bind_stmt " + util.i32_to_string(got.loop_depth);
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < want.names.len()) {
     if (want.names[i] != got.names[i]) {
       return "binding " + util.i32_to_string(i) + " is `" + want.names[i] + "` under check_stmt and `" + got.names[i] + "` under bind_stmt";
@@ -110,8 +110,8 @@ struct Walked { diffs: string[], compared: i32, forms: string[] }
 // starting scope on both sides and one divergence cannot cascade into the
 // rest of the body.
 function walk(body: ast.Stmt[], s: checker.Scope, where: string, acc: Walked): Walked {
-  var out: Walked = acc;
-  var cur: checker.Scope = s;
+  let out: Walked = acc;
+  let cur: checker.Scope = s;
   for st in body {
     match (st) {
       ast.StmtIf(f) => {
@@ -130,19 +130,19 @@ function walk(body: ast.Stmt[], s: checker.Scope, where: string, acc: Walked): W
         }
       },
       ast.StmtDefer(d) => {
-        var one: ast.Stmt[] = [d.action];
+        let one: ast.Stmt[] = [d.action];
         out = walk(one, cur, where, out);
       },
       _ => {}
     }
-    var want: checker.Scope = checker.check_stmt(st, cur).scope;
-    var diff: string = scope_diff(want, checker.bind_stmt(st, cur));
-    var found: string[] = out.diffs;
+    let want: checker.Scope = checker.check_stmt(st, cur).scope;
+    let diff: string = scope_diff(want, checker.bind_stmt(st, cur));
+    let found: string[] = out.diffs;
     if (diff.len() > 0) {
       found = found.append(where + ": " + diff);
     }
-    var seen: string[] = out.forms;
-    var form: string = form_of(st);
+    let seen: string[] = out.forms;
+    let form: string = form_of(st);
     if (!util.has_str(seen, form)) {
       seen = seen.append(form);
     }
@@ -153,23 +153,23 @@ function walk(body: ast.Stmt[], s: checker.Scope, where: string, acc: Walked): W
 }
 
 function main(): i32 {
-  var mod: parser.Module = rundriver.parse_stdin("bind_stmt_parity_run");
-  var scopes: checker.Scope[] = checker.module_scopes(mod);
-  var acc: Walked = Walked { diffs: [], compared: 0, forms: [] };
-  var i: i32 = 0;
+  let mod: parser.Module = rundriver.parse_stdin("bind_stmt_parity_run");
+  let scopes: checker.Scope[] = checker.module_scopes(mod);
+  let acc: Walked = Walked { diffs: [], compared: 0, forms: [] };
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
     acc = walk(mod.funcs[i].body, scopes[i], "function " + mod.funcs[i].name, acc);
     i = i + 1;
   }
   acc = walk(mod.top_stmts, scopes[mod.funcs.len()], "top level", acc);
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < acc.diffs.len()) {
     print(acc.diffs[j]);
     j = j + 1;
   }
   print("# compared " + util.i32_to_string(acc.compared));
-  var forms: string = "";
-  var k: i32 = 0;
+  let forms: string = "";
+  let k: i32 = 0;
   while (k < acc.forms.len()) {
     if (k > 0) {
       forms = forms + ",";

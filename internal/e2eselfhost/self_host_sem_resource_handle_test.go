@@ -74,7 +74,7 @@ function block(h: borrow Pollable);
 function ready(h: borrow Pollable): boolean;
 
 function main(): i32 {
-    var p: own Pollable = subscribe(0 as u64);
+    let p: own Pollable = subscribe(0 as u64);
     block(p);
     if (ready(p)) { write("poll-ok"); } else { write("poll-bad"); }
     return 0;
@@ -95,7 +95,7 @@ function block(h: borrow Pollable);
 function ready(h: borrow Pollable): boolean;
 
 function main(): i32 {
-    var p: Pollable = subscribe(0 as u64);
+    let p: Pollable = subscribe(0 as u64);
     block(p);
     if (ready(p)) { write("poll-ok"); } else { write("poll-bad"); }
     return 0;
@@ -120,7 +120,7 @@ function ready(h: borrow Pollable): boolean;
 function drop_pollable(h: own Pollable): void;
 
 function main(): i32 {
-    var p: own Pollable = subscribe(0 as u64);
+    let p: own Pollable = subscribe(0 as u64);
     block(p);
     if (ready(p)) { write("poll-ok"); } else { write("poll-bad"); }
     drop_pollable(p);
@@ -144,7 +144,7 @@ function gate(): boolean { return true; }
 
 function main(): i32 {
     if (gate()) {
-        var p: own Pollable = subscribe(0 as u64);
+        let p: own Pollable = subscribe(0 as u64);
         block(p);
         if (ready(p)) { write("poll-ok"); } else { write("poll-bad"); }
     }
@@ -169,8 +169,8 @@ function ready(h: borrow Pollable): boolean;
 function drop_pollable(h: own Pollable): void;
 
 function main(): i32 {
-    var p: own Pollable = subscribe(0 as u64);
-    var q: own Pollable = p;
+    let p: own Pollable = subscribe(0 as u64);
+    let q: own Pollable = p;
     block(q);
     if (ready(q)) { write("poll-ok"); } else { write("poll-bad"); }
     drop_pollable(q);
@@ -205,7 +205,7 @@ function settle(h: borrow Pollable): boolean {
 function finish(h: own Pollable): void { drop_pollable(h); }
 
 function main(): i32 {
-    var p: own Pollable = open();
+    let p: own Pollable = open();
     if (settle(p)) { write("poll-ok"); } else { write("poll-bad"); }
     finish(p);
     return 0;
@@ -231,7 +231,7 @@ function wait(h: own Pollable): boolean {
 }
 
 function main(): i32 {
-    var p: own Pollable = subscribe(0 as u64);
+    let p: own Pollable = subscribe(0 as u64);
     if (wait(p)) { write("poll-ok"); } else { write("poll-bad"); }
     return 0;
 }
@@ -246,7 +246,7 @@ function new_thing(): own Thing;
 
 @export("local:test/handler@0.1.0", "handle")
 function on_request(t: borrow Thing): void {
-	var local: own Thing = new_thing();
+	let local: own Thing = new_thing();
 	return;
 }
 `},
@@ -267,9 +267,9 @@ function ready(h: borrow Pollable): boolean;
 function pass[T](x: T): T { return x; }
 
 function main(): i32 {
-    var p: own Pollable = pass(subscribe(0 as u64));
+    let p: own Pollable = pass(subscribe(0 as u64));
     block(p);
-    var ok: boolean = pass(ready(p));
+    let ok: boolean = pass(ready(p));
     if (ok) { write("poll-ok"); } else { write("poll-bad"); }
     return 0;
 }`},

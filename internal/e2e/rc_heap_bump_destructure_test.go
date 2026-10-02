@@ -7,7 +7,7 @@ import (
 )
 
 // Destructure-binding reclamation (RC-Perceus) — the follow-up to tuple
-// reclamation (rc_heap_bump_tuple_test.go). A `var (a, b) = p` inside a
+// reclamation (rc_heap_bump_tuple_test.go). A `let (a, b) = p` inside a
 // loop reuses the synthetic destructure temp slot AND each binding slot
 // across iterations. Before this slice neither got a per-iteration
 // dec-on-reinit, so every iteration but the last leaked the tuple box
@@ -25,12 +25,12 @@ import (
 // __fern_arr_dec.
 func destructureBumpGrowthSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var p: (i32[], i32) = ([i, i + 1, i + 2], i);
-        var (a, b) = p;
+        let p: (i32[], i32) = ([i, i + 1, i + 2], i);
+        let (a, b) = p;
         sum = sum + a[0] + b;
         i = i + 1;
     }
@@ -42,11 +42,11 @@ func destructureBumpGrowthSrc(n string) string {
 // returns the over-release counter — must be 0 (no double-free of a
 // box/element shared between the temp's deep-drop and a binding).
 const destructureUnderflowSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < 200) {
-        var p: (i32[], i32) = ([i, i + 1, i + 2], i);
-        var (a, b) = p;
+        let p: (i32[], i32) = ([i, i + 1, i + 2], i);
+        let (a, b) = p;
         sum = sum + a[0] + b;
         i = i + 1;
     }
@@ -105,12 +105,12 @@ func TestWASMDestructureHeapBumpBounded(t *testing.T) {
 // last, and the growth would scale with N.
 func nestedDestructureBumpGrowthSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var p: (i32, (i32[], i32)) = (i, ([i, i + 1, i + 2], i));
-        var (x, (a, b)) = p;
+        let p: (i32, (i32[], i32)) = (i, ([i, i + 1, i + 2], i));
+        let (x, (a, b)) = p;
         sum = sum + x + a[0] + b;
         i = i + 1;
     }
@@ -122,11 +122,11 @@ func nestedDestructureBumpGrowthSrc(n string) string {
 // reachable from both the outer temp's deep-drop and the inner temp's, so a
 // missing alias-inc on the inner level would double-free it.
 const nestedDestructureUnderflowSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < 200) {
-        var p: (i32, (i32[], i32)) = (i, ([i, i + 1, i + 2], i));
-        var (x, (a, b)) = p;
+        let p: (i32, (i32[], i32)) = (i, ([i, i + 1, i + 2], i));
+        let (x, (a, b)) = p;
         sum = sum + x + a[0] + b;
         i = i + 1;
     }

@@ -22,15 +22,15 @@ func WasiSocketStorageProbe(expr string, closeSocket bool) string {
 		close = "if (h >= 0) { result = tcp_close(h); }"
 	}
 	return `function main(): i32 {
-    var i: i32 = 0;
-    var stable: i64 = 0;
-    var result: i32 = 0;
+    let i: i32 = 0;
+    let stable: i64 = 0;
+    let result: i32 = 0;
     while (i < 32) {
-        var allocations: i64 = __heap_alloc_count();
-        var h: i32 = ` + expr + `;
+        let allocations: i64 = __heap_alloc_count();
+        let h: i32 = ` + expr + `;
         result = h;
         ` + close + `
-        var used: i64 = __heap_bump_bytes();
+        let used: i64 = __heap_bump_bytes();
         if (i == 0) { stable = used; }
         if (used != stable) { return -1000; }
         if (__heap_alloc_count() - allocations != 1) { return -1001; }
@@ -44,18 +44,18 @@ func WasiSocketStorageProbe(expr string, closeSocket bool) string {
 // buffers. Normalize successful byte counts for the host ownership oracle.
 func WasiUDPStorageProbe(host, data string) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var host: string = %q;
-    var data: string = %q;
-    var i: i32 = 0;
-    var stable: i64 = 0;
-    var result: i32 = 0;
+    let host: string = %q;
+    let data: string = %q;
+    let i: i32 = 0;
+    let stable: i64 = 0;
+    let result: i32 = 0;
     while (i < 32) {
         result = udp_send(host, 1, data);
         if (result >= 0) {
             if (result != data.len()) { return -1002; }
             result = 1;
         }
-        var used: i64 = __heap_bump_bytes();
+        let used: i64 = __heap_bump_bytes();
         if (i == 0) { stable = used; }
         if (used != stable) { return -1000; }
         if (host != %q || data != %q) { return -1003; }
@@ -71,8 +71,8 @@ func WasiStreamSendStorageProbe(data string) string {
 
 func WasiStreamRecvStorageProbe(max int) string {
 	return fmt.Sprintf(`function read(): i32 {
-    var data: u8[] = tcp_recv(0, %d);
-    var i: i32 = 0;
+    let data: u8[] = tcp_recv(0, %d);
+    let i: i32 = 0;
     while (i < data.len()) {
         if (data[i] != 120) { return -1002; }
         i = i + 1;
@@ -80,12 +80,12 @@ func WasiStreamRecvStorageProbe(max int) string {
     return data.len();
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var stable: i64 = 0;
-    var result: i32 = 0;
+    let i: i32 = 0;
+    let stable: i64 = 0;
+    let result: i32 = 0;
     while (i < 32) {
         result = read();
-        var used: i64 = __heap_bump_bytes();
+        let used: i64 = __heap_bump_bytes();
         if (i == 0) { stable = used; }
         if (used != stable) { return -1000; }
         i = i + 1;

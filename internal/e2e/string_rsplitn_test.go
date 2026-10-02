@@ -11,22 +11,22 @@ import "testing"
 const stringRsplitnProg = `
 import "std/string";
 function main(): i32 {
-    var r2: string[] = "a.b.c.d".rsplitn(".", 2);
+    let r2: string[] = "a.b.c.d".rsplitn(".", 2);
     if (r2.len() != 2 || r2[0] != "d" || r2[1] != "a.b.c") { return 1; }
-    var r3: string[] = "a.b.c.d".rsplitn(".", 3);
+    let r3: string[] = "a.b.c.d".rsplitn(".", 3);
     if (r3.len() != 3 || r3[0] != "d" || r3[1] != "c" || r3[2] != "a.b") { return 2; }
-    var r1: string[] = "a.b.c.d".rsplitn(".", 1);
+    let r1: string[] = "a.b.c.d".rsplitn(".", 1);
     if (r1.len() != 1 || r1[0] != "a.b.c.d") { return 3; }
     // Fewer pieces than the cap behaves as a full rsplit.
-    var few: string[] = "a.b".rsplitn(".", 5);
+    let few: string[] = "a.b".rsplitn(".", 5);
     if (few.len() != 2 || few[0] != "b" || few[1] != "a") { return 4; }
     // n <= 0 -> empty.
     if ("x.y".rsplitn(".", 0).len() != 0) { return 5; }
     // No separator: one piece.
-    var none: string[] = "hello".rsplitn(".", 3);
+    let none: string[] = "hello".rsplitn(".", 3);
     if (none.len() != 1 || none[0] != "hello") { return 6; }
     // Empty middle field survives ("a,,b" from the right, n=3).
-    var mid: string[] = "a,,b".rsplitn(",", 3);
+    let mid: string[] = "a,,b".rsplitn(",", 3);
     if (mid.len() != 3 || mid[0] != "b" || mid[1] != "" || mid[2] != "a") { return 7; }
     return 42;
 }

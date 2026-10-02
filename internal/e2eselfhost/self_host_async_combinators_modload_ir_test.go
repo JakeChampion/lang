@@ -40,8 +40,8 @@ func TestSelfHostAsyncCombinatorsModloadIRX86_64(t *testing.T) {
 		// race: first ready wins (index 0, value 40) -> (0, 40) -> 0 + 40 = 40.
 		{"race", `import "std/async";
 function main(): i32 {
-    var fs: async.Future[i32][] = [Ready(40), Ready(2)];
-    var r: (i32, i32) = async.race(fs, -1);
+    let fs: async.Future[i32][] = [Ready(40), Ready(2)];
+    let r: (i32, i32) = async.race(fs, -1);
     return r.0 + r.1;
 }
 `},
@@ -49,8 +49,8 @@ function main(): i32 {
 		{"with_deadline", `import "std/async";
 import "std/time";
 function main(): i32 {
-    var fs: async.Future[i32][] = [Ready(7)];
-    var ds: Option[i32][] = async.with_deadline(time.duration_millis(100), fs);
+    let fs: async.Future[i32][] = [Ready(7)];
+    let ds: Option[i32][] = async.with_deadline(time.duration_millis(100), fs);
     match (ds[0]) { Some(v) => { return v; }, None => { return 0; } }
     return 9;
 }

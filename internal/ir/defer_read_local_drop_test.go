@@ -26,10 +26,10 @@ func TestDeferReadLocalBailoutIsScoped(t *testing.T) {
 	// whether the defer names them.
 	lowerForTest(t, `function sink(v: i32): i32 { return v; }
 function both(): i32 {
-	var read: i32[] = [1, 2, 3];
-	var other: i32[] = [4, 5, 6];
+	let read: i32[] = [1, 2, 3];
+	let other: i32[] = [4, 5, 6];
 	defer sink(read[1]);
-	var s: i32 = other[0];
+	let s: i32 = other[0];
 	return s;
 }
 function main(): i32 { return both(); }

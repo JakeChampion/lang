@@ -1,6 +1,6 @@
 # A variant's MOVED struct payload gets its release, and both spellings agree
 
-`variant__moved` on the container-sink matrix: `var e: E = E.A(p);` with `p` not
+`variant__moved` on the container-sink matrix: `let e: E = E.A(p);` with `p` not
 mentioned again. The enum family already had the whole release protocol —
 `emit_enum_variant_drops_gated` puts the payload walk under `__fern_rc_is_unique`
 with the box dec unconditional, and `emit_enum_variant_payload_drops` has both a

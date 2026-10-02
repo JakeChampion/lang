@@ -29,15 +29,15 @@ var resultStructErrIRCases = []struct {
 	want int
 }{
 	// happy path: step(1)? unwraps Ok(5), +1 = 6.
-	{"ok-prop", `function run(): Result[i32, Ferr] { var v = step(1)?; return Ok(v + 1); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 6},
+	{"ok-prop", `function run(): Result[i32, Ferr] { let v = step(1)?; return Ok(v + 1); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 6},
 	// error path: step(0)? propagates Err(Ferr); the handler reads e.code = 9.
-	{"err-prop-code", `function run(): Result[i32, Ferr] { var v = step(0)?; return Ok(v + 1); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 9},
+	{"err-prop-code", `function run(): Result[i32, Ferr] { let v = step(0)?; return Ok(v + 1); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 9},
 	// two `?` in a row, both Ok: 5 + 5 = 10.
-	{"two-ok", `function run(): Result[i32, Ferr] { var a = step(1)?; var b = step(1)?; return Ok(a + b); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 10},
+	{"two-ok", `function run(): Result[i32, Ferr] { let a = step(1)?; let b = step(1)?; return Ok(a + b); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 10},
 	// the second `?` short-circuits on Err; e.code = 9 from the propagated error.
-	{"second-errs", `function run(): Result[i32, Ferr] { var a = step(1)?; var b = step(0)?; return Ok(a + b); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 9},
+	{"second-errs", `function run(): Result[i32, Ferr] { let a = step(1)?; let b = step(0)?; return Ok(a + b); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 9},
 	// read TWO fields of the struct error: e.code + e.detail = 9 + 2 = 11.
-	{"two-field-err", `function run(): Result[i32, Ferr] { var v = step(0)?; return Ok(v); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code + e.detail; } } }`, 11},
+	{"two-field-err", `function run(): Result[i32, Ferr] { let v = step(0)?; return Ok(v); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code + e.detail; } } }`, 11},
 }
 
 func resultStructErrIRSrc(mainBody string) string {

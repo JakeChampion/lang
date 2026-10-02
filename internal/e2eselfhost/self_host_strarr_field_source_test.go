@@ -10,7 +10,7 @@ import (
 
 // --- A struct-literal `string[]` field costs the SOURCE its element walk -----
 //
-// `var src: string[] = mkv(i); if (..) { var p: P = P { f: src, n: i }; .. }`
+// `let src: string[] = mkv(i); if (..) { let p: P = P { f: src, n: i }; .. }`
 // freed 450 of 650 boxes over 100 rounds where native freed all 450 of its own.
 //
 // THIS IS NOT #7557 ONE TYPE OVER, and the grid is what says so. For `string`
@@ -64,12 +64,12 @@ type strArrFieldSourceCase struct {
 
 const safsPrelude = `struct P { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
-function mkv(i: i32): string[] { var o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
+function mkv(i: i32): string[] { let o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
 `
 
 const safsMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -81,9 +81,9 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
 			// THE REPRO: the holder is built on half the rounds. Base 650/450.
 			name: "conditional_holder",
 			src: safsPrelude + `function round(i: i32): i32 {
-    var src: string[] = mkv(i);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var p: P = P { f: src, n: i }; t = (p.f.len() + p.f[0].len() + p.n) % 101; }
+    let src: string[] = mkv(i);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let p: P = P { f: src, n: i }; t = (p.f.len() + p.f[0].len() + p.n) % 101; }
     return (t + i) % 101;
 }
 ` + safsMain,
@@ -95,9 +95,9 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
 			// Base 650/450, identical to the row above.
 			name: "conditional_holder_source_read_after",
 			src: safsPrelude + `function round(i: i32): i32 {
-    var src: string[] = mkv(i);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var p: P = P { f: src, n: i }; t = (p.f.len() + p.f[0].len() + p.n) % 101; }
+    let src: string[] = mkv(i);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let p: P = P { f: src, n: i }; t = (p.f.len() + p.f[0].len() + p.n) % 101; }
     return (t + src.len() + src[0].len() + i) % 101;
 }
 ` + safsMain,
@@ -112,11 +112,11 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
 			// and the answer stops matching native's. Base 1850/1650.
 			name: "elements_read_back_after_churn",
 			src: safsPrelude + `function round(i: i32): i32 {
-    var src: string[] = mkv(i);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var p: P = P { f: src, n: i }; t = (p.f.len() + p.f[0].len() + p.n) % 101; }
-    var c1: string[] = mkv(i + 7);
-    var c2: string[] = mkv(i + 9);
+    let src: string[] = mkv(i);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let p: P = P { f: src, n: i }; t = (p.f.len() + p.f[0].len() + p.n) % 101; }
+    let c1: string[] = mkv(i + 7);
+    let c2: string[] = mkv(i + 9);
     return (t + src.len() + src[0].len() + src[1].len() + c1[0].len() - c1[0].len() + c2[1].len() - c2[1].len() + i) % 101;
 }
 ` + safsMain,
@@ -129,8 +129,8 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
 			// forgiveness has reached a store whose retain was elided.
 			name: "unconditional_holder_unchanged",
 			src: safsPrelude + `function round(i: i32): i32 {
-    var src: string[] = mkv(i);
-    var p: P = P { f: src, n: i };
+    let src: string[] = mkv(i);
+    let p: P = P { f: src, n: i };
     return (p.f.len() + p.f[0].len() + p.n) % 101;
 }
 ` + safsMain,
@@ -142,9 +142,9 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
 			// — which is what rules out "it is the StmtIf arm" as the cause.
 			name: "always_entered_if_unchanged",
 			src: safsPrelude + `function round(i: i32): i32 {
-    var src: string[] = mkv(i);
-    var t: i32 = 0;
-    if (i >= 0) { var p: P = P { f: src, n: i }; t = (p.f.len() + p.f[0].len() + p.n) % 101; }
+    let src: string[] = mkv(i);
+    let t: i32 = 0;
+    if (i >= 0) { let p: P = P { f: src, n: i }; t = (p.f.len() + p.f[0].len() + p.n) % 101; }
     return (t + src.len() + i) % 101;
 }
 ` + safsMain,
@@ -157,13 +157,13 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
 			// up as frees running ABOVE 700 rather than passing unnoticed.
 			name: "escaping_holder_unchanged",
 			src: safsPrelude + `function mk(i: i32): P {
-    var src: string[] = mkv(i);
-    var p: P = P { f: src, n: i };
+    let src: string[] = mkv(i);
+    let p: P = P { f: src, n: i };
     if (src.len() > 1) { return p; }
     return p;
 }
 function round(i: i32): i32 {
-    var p: P = mk(i);
+    let p: P = mk(i);
     return (p.f.len() + p.f[0].len() + p.n) % 101;
 }
 ` + safsMain,

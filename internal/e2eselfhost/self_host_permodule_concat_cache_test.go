@@ -22,7 +22,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 		t.Skip("file-loading driver test runs only natively (argv paths)")
 	}
 	dir, mmr := buildConcatDriver(t, gcc)
-	entryPath, nMod := writeConcatFixture(t, dir)
+	entryPath, nMod := writeFlatConcatFixture(t, dir)
 	proj := filepath.Dir(entryPath)
 	cacheDir := filepath.Join(proj, "cache")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
@@ -117,7 +117,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 		t.Fatalf("write lib3: %v", err)
 	}
 	concat("keep")
-	edit("lib3.fern", "{ return xs.len(); }", "{ var h: i32[][] = [xs]; return h[0].len(); }")
+	edit("lib3.fern", "{ return xs.len(); }", "{ let h: i32[][] = [xs]; return h[0].len(); }")
 	hits, misses = concat("fact")
 	pmWantSets(t, "fact", hits, misses, reHits, []string{"__entry", "lib3"})
 

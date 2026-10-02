@@ -2,7 +2,7 @@
 
 The named burn-down from the Option-family routing: `rc_fe_rhs_tainted`'s
 user-call arm tainted a call result on ANY tainted argument, and every
-non-own param is taint-seeded regardless of type — so `var v = mk(r)` with
+non-own param is taint-seeded regardless of type — so `let v = mk(r)` with
 a scalar `r` was plan-tainted through its own init while native untaints
 it via `returnsNoParamEscape` (#4357's rule).
 

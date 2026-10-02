@@ -7,12 +7,12 @@ import (
 
 // --- Block-local scalar-payload enum reclaim (#6127) ------------------------
 //
-// consumed_scalar_enum_frees is run by lower_func over the fn's TOP-LEVEL
+// consumed_scalar_enum_frees was run by lower_func over the fn's TOP-LEVEL
 // statements only, so a scalar-payload enum declared inside a loop or an if was
 // reclaimed nowhere and leaked its box per iteration — the same top-level-only
 // gap #4357 closed for rc-payload options and rc-payload enums, never mirrored
-// for the scalar half. lower_block now runs the same classifier over its own
-// statement list and frees at the consuming match.
+// for the scalar half. The fix had lower_block run the same classifier over its
+// own statement list and free at the consuming match.
 //
 // Releasing at the match rather than at a scope exit is not a preference: a
 // nested block retires its names to "!retired!" before the function-exit sweep
@@ -27,10 +27,10 @@ import (
 const scalarEnumLoopSrc = `enum E { Box(i32, i32), Nil }
 
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 4) {
-        var e: E = Box(k, 2);
+        let e: E = Box(k, 2);
         match (e) { Box(a, b) => { acc = acc + a + b; }, Nil => {} }
         k = k + 1;
     }
@@ -38,25 +38,23 @@ function round(i: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     return t / 100;
 }`
 
-// A function holding BOTH a top-level candidate (owned by lower_func's
-// consumed_scalar_enum_frees) and a nested one (owned by lower_block's): the
-// box counts must balance exactly. If the two analyses both claimed the
-// top-level candidate, its box would be dec'd twice.
+// A function holding BOTH a top-level candidate and a nested one: the box
+// counts must balance exactly, or one of the two boxes is dec'd twice.
 const scalarEnumMixedSrc = `enum E { Box(i32, i32), Nil }
 
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var top: E = Box(i, 1);
+    let acc: i32 = 0;
+    let top: E = Box(i, 1);
     match (top) { Box(a, b) => { acc = a + b; }, Nil => {} }
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) {
-        var inner: E = Box(k, 2);
+        let inner: E = Box(k, 2);
         match (inner) { Box(c, d) => { acc = acc + c + d; }, Nil => {} }
         k = k + 1;
     }
@@ -64,8 +62,8 @@ function round(i: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { t = t + round(r); r = r + 1; }
     return t % 101;
 }`
@@ -120,16 +118,16 @@ func TestSelfHostScalarEnumBlockReclaimX86_64(t *testing.T) {
 		// reclaim this one, which is exactly what a function-exit sweep missed.
 		src := `enum E { Box(i32, i32), Nil }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     if (i > 0) {
-        var e: E = Box(i, 3);
+        let e: E = Box(i, 3);
         match (e) { Box(a, b) => { acc = a + b; }, Nil => {} }
     }
     return acc;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { t = t + round(r); r = r + 1; }
     return t % 83;
 }`
@@ -151,16 +149,16 @@ function main(): i32 {
 		// separate pre-existing gap this case is not about.
 		src := `enum E { Box(i32, i32), Nil }
 function round(): i32 {
-    var e: E = Nil;
-    var i: i32 = 0;
+    let e: E = Nil;
+    let i: i32 = 0;
     while (i < 4) { e = Box(i, i); i = i + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (e) { Box(a, b) => { t = a + b; }, Nil => { t = 0; } }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t % 7;
 }`
@@ -180,16 +178,16 @@ function main(): i32 {
 		// the assignment rather than once per iteration.
 		src := `enum E { Box(i32, i32), Nil }
 function round(n: i32): i32 {
-    var e: E = Box(0, 0);
-    var i: i32 = 0;
+    let e: E = Box(0, 0);
+    let i: i32 = 0;
     while (i < 4) { if (i % 2 == 0) { e = Box(i, n); } i = i + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (e) { Box(a, b) => { t = a + b; }, Nil => { t = 0; } }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     return t % 97;
 }`
@@ -209,8 +207,8 @@ function main(): i32 {
 		if allocs != frees {
 			t.Errorf("allocs=%d frees=%d — a function holding a TOP-LEVEL and a nested "+
 				"candidate must free exactly what it allocates; frees > allocs means "+
-				"lower_func's and lower_block's analyses both claimed one box "+
-				"(double free), frees < allocs means one is unclaimed", allocs, frees)
+				"one box was released twice (double free), frees < allocs means one "+
+				"was never released", allocs, frees)
 		}
 		if live != 0 {
 			t.Errorf("live_bytes=%d, want 0", live)
@@ -241,18 +239,18 @@ function tag(m: M): i32 {
     return 0;
 }
 function round(n: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 4) {
-        var m: M = A(k + n);
+        let m: M = A(k + n);
         acc = acc + tag(m);
         k = k + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     return t / 100;
 }`
@@ -272,16 +270,16 @@ function main(): i32 {
 		// sweep can reclaim it.
 		src := `enum M { A(i32), B(i32) }
 function round(n: i32): i32 {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 4) {
-        var m: M = A(k + n);
+        let m: M = A(k + n);
         k = k + 1;
     }
     return k;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     return t / 100;
 }`
@@ -309,14 +307,14 @@ function tag(m: M): i32 {
     return 0;
 }
 function round(n: i32): i32 {
-    var m: M = A(n);
-    var i: i32 = 0;
+    let m: M = A(n);
+    let i: i32 = 0;
     while (i < 4) { if (i % 2 == 0) { m = B(i); } else { m = A(i); } i = i + 1; }
     return tag(m);
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     return t / 100;
 }`
@@ -337,7 +335,7 @@ function main(): i32 {
 		// an over-release, not just a byte count.
 		src := `enum M { A(i32), B(i32) }
 function mk(n: i32): M {
-    var m: M = A(n);
+    let m: M = A(n);
     return m;
 }
 function tag(m: M): i32 {
@@ -345,9 +343,9 @@ function tag(m: M): i32 {
     return 0;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
-    while (r < 100) { var e: M = mk(r); t = t + tag(e); r = r + 1; }
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { let e: M = mk(r); t = t + tag(e); r = r + 1; }
     return t / 100;
 }`
 		allocs, _, _ := counts(t, "scalar_enum_escape", src, 49)
@@ -369,18 +367,18 @@ function main(): i32 {
 	t.Run("rc_payload_loop_local", func(t *testing.T) {
 		src := `enum T { Text(string), Nil }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 4) {
-        var t: T = Text("aa" + "bb");
+        let t: T = Text("aa" + "bb");
         match (t) { Text(s) => { acc = acc + s.len(); }, Nil => {} }
         k = k + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x / 100;
 }`
@@ -400,16 +398,16 @@ function main(): i32 {
 		// so only the consuming-match free reclaims it.
 		src := `enum T { Text(string), Nil }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     if (i > 0) {
-        var t: T = Text("pq" + "rs");
+        let t: T = Text("pq" + "rs");
         match (t) { Text(s) => { acc = s.len(); }, Nil => {} }
     }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 89;
 }`
@@ -420,27 +418,25 @@ function main(): i32 {
 	})
 
 	t.Run("rc_payload_top_level_and_nested_balance", func(t *testing.T) {
-		// The double-free guard for this half: lower_func's rcenumfrees owns the
-		// top-level candidate, lower_block's owns the nested one. Zeroing the slot
-		// after the block free is what also keeps it disjoint from the RCENUM
-		// loop-rebind reclaim — without it the next iteration's
-		// emit_enum_deep_reinit_store would deep-drop the box just released.
+		// The double-free guard for this half: a top-level and a nested
+		// candidate in one function, the nested one rebound every iteration,
+		// each released exactly once.
 		src := `enum T { Text(string), Nil }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var top: T = Text("xy" + "z");
+    let acc: i32 = 0;
+    let top: T = Text("xy" + "z");
     match (top) { Text(s) => { acc = s.len(); }, Nil => {} }
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) {
-        var inner: T = Text("aa" + "bb");
+        let inner: T = Text("aa" + "bb");
         match (inner) { Text(u) => { acc = acc + u.len(); }, Nil => {} }
         k = k + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 101;
 }`
@@ -476,18 +472,18 @@ func TestSelfHostScalarEnumBlockHazardsX86_64(t *testing.T) {
 			src: `enum E { Box(i32, i32), Nil }
 function take(e: E): i32 { match (e) { Box(a, b) => { return a + b; }, Nil => { return 0; } } return 0; }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) {
-        var e: E = Box(k, i);
+        let e: E = Box(k, i);
         acc = acc + take(e);
         k = k + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { t = t + round(r); r = r + 1; }
     return t % 97;
 }`,
@@ -501,18 +497,18 @@ function main(): i32 {
 			name: "rebound_value_escapes_to_container",
 			src: `enum E { Box(i32, i32), Nil }
 function round(): i32 {
-    var keep: E[] = [];
-    var e: E = Nil;
-    var i: i32 = 0;
+    let keep: E[] = [];
+    let e: E = Nil;
+    let i: i32 = 0;
     while (i < 4) { e = Box(i, i); keep = keep.append(e); i = i + 1; }
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < keep.len()) { match (keep[k]) { Box(a, b) => { t = t + a + b; }, Nil => {} } k = k + 1; }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t % 97;
 }`,
@@ -524,15 +520,15 @@ function main(): i32 {
 			src: `enum E { Box(i32, i32), Nil }
 function sink(x: E): i32 { match (x) { Box(a, b) => { return a + b; }, Nil => { return 0; } } return 0; }
 function round(): i32 {
-    var e: E = Nil;
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let e: E = Nil;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { e = Box(i, i); t = t + sink(e); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t % 97;
 }`,
@@ -544,17 +540,17 @@ function main(): i32 {
 			name: "rebound_value_aliased_to_local",
 			src: `enum E { Box(i32, i32), Nil }
 function round(): i32 {
-    var e: E = Box(1, 1);
-    var keep: E = e;
+    let e: E = Box(1, 1);
+    let keep: E = e;
     e = Box(2, 2);
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (keep) { Box(a, b) => { t = t + a + b; }, Nil => {} }
     match (e) { Box(a, b) => { t = t + a + b; }, Nil => {} }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t % 97;
 }`,
@@ -566,10 +562,10 @@ function main(): i32 {
 			name: "used_after_match",
 			src: `enum E { Box(i32, i32), Nil }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) {
-        var e: E = Box(k, i);
+        let e: E = Box(k, i);
         match (e) { Box(a, b) => { acc = acc + a + b; }, Nil => {} }
         match (e) { Box(c, _) => { acc = acc + c; }, Nil => {} }
         k = k + 1;
@@ -577,8 +573,8 @@ function round(i: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { t = t + round(r); r = r + 1; }
     return t % 89;
 }`,
@@ -589,19 +585,19 @@ function main(): i32 {
 			name: "escaping_return",
 			src: `enum E { Box(i32, i32), Nil }
 function pick(i: i32): E {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 2) {
-        var e: E = Box(k, i);
+        let e: E = Box(k, i);
         if (k == 1) { return e; }
         k = k + 1;
     }
     return Nil;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) {
-        var got: E = pick(r);
+        let got: E = pick(r);
         match (got) { Box(a, b) => { acc = acc + a + b; }, Nil => {} }
         r = r + 1;
     }
@@ -617,16 +613,16 @@ function main(): i32 {
 			name: "rc_payload_reassigned",
 			src: `enum T { Text(string), Nil }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var t: T = Text("aa" + "bb");
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let t: T = Text("aa" + "bb");
+    let k: i32 = 0;
     while (k < 3) { t = Text("cc" + "dd"); k = k + 1; }
     match (t) { Text(s) => { acc = s.len(); }, Nil => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 79;
 }`,
@@ -641,18 +637,18 @@ function main(): i32 {
 			src: `enum T { Text(string), Nil }
 function len_of(t: T): i32 { match (t) { Text(s) => { return s.len(); }, Nil => { return 0; } } return 0; }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) {
-        var t: T = Text("aa" + "bb");
+        let t: T = Text("aa" + "bb");
         acc = acc + len_of(t);
         k = k + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 73;
 }`,

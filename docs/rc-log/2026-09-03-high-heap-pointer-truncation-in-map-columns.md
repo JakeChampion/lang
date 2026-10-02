@@ -102,10 +102,10 @@ pointer-width K/V. It does — but so does the array it feeds.
 whose keys exceed 2^32 loses the high half of every one, on the DEFAULT heap:
 
 ```fern
-var big: usize = 4294967296 as usize;
-var m: Map[usize, usize] = map_new(8);
+let big: usize = 4294967296 as usize;
+let m: Map[usize, usize] = map_new(8);
 m = m.insert(big + 5, big + 50);
-var ks = m.keys();          // ks[0] != big + 5
+let ks = m.keys();          // ks[0] != big + 5
 ```
 
 `get` / `get_or` / `set` round-trip such values correctly; only the array does

@@ -48,7 +48,7 @@ function hex_digit(b: i32): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [SHORT-OPTION]... [STRING]...\n";
   out = out + "  or:  " + gnu.prog() + " LONG-OPTION\n";
   out = out + "Write the STRINGs to standard output, separated by spaces.\n";
@@ -66,17 +66,17 @@ function help_text(): string {
 // Append the bytes of `s` to `out` with escapes expanded. The boolean
 // is true when `\c` was reached, which ends the program's output.
 function expand_into(out: u8[], s: string): (u8[], boolean) {
-  var bs: u8[] = out;
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let bs: u8[] = out;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b != 92 || i + 1 >= n) {
       bs = bs.append(b as u8);
       i = i + 1;
       continue;
     }
-    var c: i32 = s[i + 1] as i32;
+    let c: i32 = s[i + 1] as i32;
     i = i + 2;
     if (c == 97) {
       bs = bs.append(7 as u8);
@@ -102,12 +102,12 @@ function expand_into(out: u8[], s: string): (u8[], boolean) {
       // Octal: `\0` takes up to three more digits, `\1`..`\7` is
       // itself the first of at most three. Both wrap at a byte, so
       // `\0777` is 255 and `\400` is 0.
-      var oct: i32 = c - 48;
-      var more: i32 = 2;
+      let oct: i32 = c - 48;
+      let more: i32 = 2;
       if (c == 48) {
         more = 3;
       }
-      var taken: i32 = 0;
+      let taken: i32 = 0;
       while (taken < more && i < n && is_octal_digit(s[i] as i32)) {
         oct = oct * 8 + (s[i] as i32 - 48);
         i = i + 1;
@@ -115,8 +115,8 @@ function expand_into(out: u8[], s: string): (u8[], boolean) {
       }
       bs = bs.append((oct % 256) as u8);
     } else if (c == 120) {
-      var hex: i32 = 0;
-      var digits: i32 = 0;
+      let hex: i32 = 0;
+      let digits: i32 = 0;
       while (digits < 2 && i < n && hex_digit(s[i] as i32) >= 0) {
         hex = hex * 16 + hex_digit(s[i] as i32);
         i = i + 1;
@@ -138,8 +138,8 @@ function expand_into(out: u8[], s: string): (u8[], boolean) {
 }
 
 function append_raw(out: u8[], s: string): u8[] {
-  var bs: u8[] = out;
-  var i: i32 = 0;
+  let bs: u8[] = out;
+  let i: i32 = 0;
   while (i < s.len()) {
     bs = bs.append(s[i]);
     i = i + 1;
@@ -153,9 +153,9 @@ function is_flag_token(a: string): boolean {
   if (a.len() < 2 || a[0] as i32 != 45) {
     return false;
   }
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < a.len()) {
-    var b: i32 = a[i] as i32;
+    let b: i32 = a[i] as i32;
     if (b != 101 && b != 69 && b != 110) {
       return false;
     }
@@ -165,28 +165,28 @@ function is_flag_token(a: string): boolean {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var posix: boolean = false;
+  let argv: string[] = args();
+  let posix: boolean = false;
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
       posix = true;
     },
     None => {}
   }
-  var allow_options: boolean = !posix || argv.len() > 1 && argv[1] == "-n";
+  let allow_options: boolean = !posix || argv.len() > 1 && argv[1] == "-n";
   if (allow_options) {
     gnu.sole_help_version(argv, "echo", help_text(), 0);
   }
 
-  var i: i32 = 1;
-  var newline: boolean = true;
-  var do_v9: boolean = false;
+  let i: i32 = 1;
+  let newline: boolean = true;
+  let do_v9: boolean = false;
   if (allow_options) {
     while (i < argv.len() && is_flag_token(argv[i])) {
-      var a: string = argv[i];
-      var j: i32 = 1;
+      let a: string = argv[i];
+      let j: i32 = 1;
       while (j < a.len()) {
-        var b: i32 = a[j] as i32;
+        let b: i32 = a[j] as i32;
         if (b == 101) {
           do_v9 = true;
         } else if (b == 69) {
@@ -200,12 +200,12 @@ pub function main(): i32 {
     }
   }
 
-  var escapes: boolean = do_v9 || posix;
-  var out: u8[] = [];
-  var stopped: boolean = false;
+  let escapes: boolean = do_v9 || posix;
+  let out: u8[] = [];
+  let stopped: boolean = false;
   while (i < argv.len() && !stopped) {
     if (escapes) {
-      var r: (u8[], boolean) = expand_into(out, argv[i]);
+      let r: (u8[], boolean) = expand_into(out, argv[i]);
       out = r.0;
       stopped = r.1;
     } else {

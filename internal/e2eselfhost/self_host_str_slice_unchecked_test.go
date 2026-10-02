@@ -19,16 +19,16 @@ const strSliceUncheckedSelfHostProg = `import "std/string";
 
 // h(104) é(195,169) l l o — 6 bytes, 5 code points.
 function mk(): string {
-    var b: u8[] = [104 as u8, 195 as u8, 169 as u8, 108 as u8, 108 as u8, 111 as u8];
+    let b: u8[] = [104 as u8, 195 as u8, 169 as u8, 108 as u8, 108 as u8, 111 as u8];
     return string_from_bytes_unchecked(b);
 }
 
 function main(): i32 {
-    var s: string = mk();
+    let s: string = mk();
     if (s.len() != 6) { return 1; }
 
     // Byte-exact: the cut lands mid-é and keeps the lead byte.
-    var cut: str = slice_unchecked(s, 0, 2);
+    let cut: str = slice_unchecked(s, 0, 2);
     if (cut.len() != 2) { return 2; }
     if (cut[0] != 104) { return 3; }
     if (cut[1] != 195) { return 4; }
@@ -49,12 +49,12 @@ function main(): i32 {
 
     // Owned-temp source in a loop: the concat result is a temporary the
     // view borrows, so the lowering must keep it alive per iteration.
-    var a: string = "ab";
-    var c: string = "cd";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let a: string = "ab";
+    let c: string = "cd";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var t: str = slice_unchecked(a + c, 0, 2);
+        let t: str = slice_unchecked(a + c, 0, 2);
         if (t != "ab") { return 15; }
         acc = acc + t.len();
         i = i + 1;

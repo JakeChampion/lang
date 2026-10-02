@@ -29,7 +29,7 @@ func TestWorkspace_CrossModuleStructDefinition(t *testing.T) {
 	mainPath := filepath.Join(dir, "main.fern")
 	mainSrc := "import \"./util\";\n" +
 		"function origin(): util.Point { return util.Point { x: 0, y: 0 }; }\n" +
-		"function main(): i32 { var p: util.Point = origin(); return p.x; }\n"
+		"function main(): i32 { let p: util.Point = origin(); return p.x; }\n"
 	writeFile(t, mainPath, mainSrc)
 
 	s := NewServer()
@@ -50,7 +50,7 @@ func TestWorkspace_CrossModuleStructDefinition(t *testing.T) {
 	})
 	s.HandleMessage(open)
 
-	// `function main(): i32 { var p: util.Point = ...` — `util`
+	// `function main(): i32 { let p: util.Point = ...` — `util`
 	// starts at 1-based col 31, so the TypeRef spans cols [31, 41)
 	// for the spelling "util.Point". Cursor at LSP (line 2, col 35)
 	// = 1-based (line 3, col 36) is on the `P` of `Point`.
@@ -371,7 +371,7 @@ func collidingVariantWorkspace(t *testing.T) variantCollision {
 		"pub function kb(): Kind { return Text; }\n"
 	mainSrc := "import \"./a\";\n" +
 		"import \"./b\";\n" +
-		"function main(): i32 { var x: a.Kind = a.ka(); var y: b.Kind = b.kb(); return 0; }\n"
+		"function main(): i32 { let x: a.Kind = a.ka(); let y: b.Kind = b.kb(); return 0; }\n"
 	aPath := filepath.Join(dir, "a.fern")
 	bPath := filepath.Join(dir, "b.fern")
 	mainPath := filepath.Join(dir, "main.fern")

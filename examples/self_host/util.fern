@@ -29,14 +29,14 @@ pub function i32_to_string(n: i32): string {
   if (n < 0 && 0 - n == n) {
     return "-2147483648";
   }
-  var neg: boolean = n < 0;
+  let neg: boolean = n < 0;
   if (neg) {
     n = 0 - n;
   }
   // The digits are written into a buffer of their exact count, so the text
   // is one allocation rather than one per digit.
-  var len: i32 = 0;
-  var m: i32 = n;
+  let len: i32 = 0;
+  let m: i32 = n;
   while (m > 0) {
     len = len + 1;
     m = m / 10;
@@ -44,8 +44,8 @@ pub function i32_to_string(n: i32): string {
   if (neg) {
     len = len + 1;
   }
-  var buf: u8[] = __alloc_u8(len);
-  var at: i32 = len;
+  let buf: u8[] = __alloc_u8(len);
+  let at: i32 = len;
   while (n > 0) {
     at = at - 1;
     buf = buf.with(at, (48 + n % 10) as u8);
@@ -69,12 +69,12 @@ pub function i64_to_string(n: i64): string {
   if (n < 0 && 0 - n == n) {
     return "-9223372036854775808";
   }
-  var neg: boolean = n < 0;
+  let neg: boolean = n < 0;
   if (neg) {
     n = 0 - n;
   }
-  var len: i32 = 0;
-  var m: i64 = n;
+  let len: i32 = 0;
+  let m: i64 = n;
   while (m > 0) {
     len = len + 1;
     m = m / 10;
@@ -82,8 +82,8 @@ pub function i64_to_string(n: i64): string {
   if (neg) {
     len = len + 1;
   }
-  var buf: u8[] = __alloc_u8(len);
-  var at: i32 = len;
+  let buf: u8[] = __alloc_u8(len);
+  let at: i32 = len;
   while (n > 0) {
     at = at - 1;
     buf = buf.with(at, (48 + (n % 10) as i32) as u8);
@@ -105,11 +105,11 @@ pub function i64_to_string(n: i64): string {
 // Masking to 0x3FFFFFFF keeps each roll non-negative so i32_to_string renders
 // it without a sign, and makes the result independent of i32 overflow wrap.
 pub function hash_key(s: string): string {
-  var a: i32 = 208357;
-  var b: i32 = 5381;
-  var i: i32 = 0;
+  let a: i32 = 208357;
+  let b: i32 = 5381;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     a = a * 31 + c + 1 & 1073741823;
     b = b * 131 + c + 7 & 1073741823;
     i = i + 1;
@@ -134,9 +134,9 @@ pub function hash_bucket(s: string, n: i32): i32 {
   if (n <= 1) {
     return 0;
   }
-  var a: i32 = 208357;
-  var len: i32 = s.len();
-  var i: i32 = 0;
+  let a: i32 = 208357;
+  let len: i32 = s.len();
+  let i: i32 = 0;
   while (i + 4 <= len) {
     // 31^4, 31^3, 31^2, 31, 1.
     a = a * 923521 + s[i] as i32 * 29791 + s[i + 1] as i32 * 961 + s[i + 2] as i32 * 31 + s[i + 3] as i32;
@@ -158,18 +158,18 @@ pub struct NameIndex { names: string[], head: i32[], next: i32[] }
 
 // name_index indexes `names`, built backward so each chain ends up ascending.
 pub function name_index(names: string[]): NameIndex {
-  var nb: i32 = names.len() * 2 + 1;
-  var head: i32[] = [];
+  let nb: i32 = names.len() * 2 + 1;
+  let head: i32[] = [];
   while (head.len() < nb) {
     head = head.append(0 - 1);
   }
-  var next: i32[] = [];
+  let next: i32[] = [];
   while (next.len() < names.len()) {
     next = next.append(0 - 1);
   }
-  var k: i32 = names.len() - 1;
+  let k: i32 = names.len() - 1;
   while (k >= 0) {
-    var b: i32 = hash_bucket(names[k], nb);
+    let b: i32 = hash_bucket(names[k], nb);
     next = next.with(k, head[b]);
     head = head.with(b, k);
     k = k - 1;
@@ -184,7 +184,7 @@ pub function (ix: NameIndex) chain(name: string): i32 {
 
 // find is the first index of `name`, or -1.
 pub function (ix: NameIndex) find(name: string): i32 {
-  var i: i32 = ix.chain(name);
+  let i: i32 = ix.chain(name);
   while (i >= 0) {
     if (ix.names[i] == name) {
       return i;
@@ -202,18 +202,18 @@ pub function (ix: NameIndex) has(name: string): boolean {
 // so chains stay ascending, and re-bucketed once the names outnumber the
 // buckets, which keeps a growing set at the load name_index builds.
 pub function (ix: NameIndex) added(name: string): NameIndex {
-  var names: string[] = ix.names.append(name);
+  let names: string[] = ix.names.append(name);
   if (names.len() > ix.head.len()) {
     return name_index(names);
   }
-  var k: i32 = names.len() - 1;
-  var b: i32 = hash_bucket(name, ix.head.len());
-  var head: i32[] = ix.head;
-  var next: i32[] = ix.next.append(0 - 1);
+  let k: i32 = names.len() - 1;
+  let b: i32 = hash_bucket(name, ix.head.len());
+  let head: i32[] = ix.head;
+  let next: i32[] = ix.next.append(0 - 1);
   if (head[b] < 0) {
     head = head.with(b, k);
   } else {
-    var t: i32 = head[b];
+    let t: i32 = head[b];
     while (next[t] >= 0) {
       t = next[t];
     }
@@ -240,18 +240,18 @@ pub function lit_to_i32(s: string): i32 {
   if (s.len() == 0) {
     return 0;
   }
-  var neg: boolean = false;
-  var start: i32 = 0;
+  let neg: boolean = false;
+  let start: i32 = 0;
   if (s[0] == b'-') {
     neg = true;
     start = 1;
   }
   if (start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'x' || s[start + 1] == b'X')) {
-    var acc: i32 = 0;
-    var i: i32 = start + 2;
+    let acc: i32 = 0;
+    let i: i32 = start + 2;
     while (i < s.len()) {
-      var b: i32 = s[i] as i32;
-      var d: i32 = 0 - 1;
+      let b: i32 = s[i] as i32;
+      let d: i32 = 0 - 1;
       if (b >= 48 && b <= 57) {
         d = b - 48;
       } else if (b >= 97 && b <= 102) {
@@ -271,10 +271,10 @@ pub function lit_to_i32(s: string): i32 {
     return acc;
   }
   if (start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'b' || s[start + 1] == b'B')) {
-    var bacc: i32 = 0;
-    var bi: i32 = start + 2;
+    let bacc: i32 = 0;
+    let bi: i32 = start + 2;
     while (bi < s.len()) {
-      var bb: i32 = s[bi] as i32;
+      let bb: i32 = s[bi] as i32;
       if (bb != 48 && bb != 49) {
         break;
       }
@@ -299,18 +299,18 @@ pub function lit_to_i64(s: string): i64 {
   if (s.len() == 0) {
     return 0;
   }
-  var neg: boolean = false;
-  var start: i32 = 0;
+  let neg: boolean = false;
+  let start: i32 = 0;
   if (s[0] == b'-') {
     neg = true;
     start = 1;
   }
   if (start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'x' || s[start + 1] == b'X')) {
-    var acc: i64 = 0;
-    var i: i32 = start + 2;
+    let acc: i64 = 0;
+    let i: i32 = start + 2;
     while (i < s.len()) {
-      var b: i32 = s[i] as i32;
-      var d: i32 = 0 - 1;
+      let b: i32 = s[i] as i32;
+      let d: i32 = 0 - 1;
       if (b >= 48 && b <= 57) {
         d = b - 48;
       } else if (b >= 97 && b <= 102) {
@@ -330,10 +330,10 @@ pub function lit_to_i64(s: string): i64 {
     return acc;
   }
   if (start + 1 < s.len() && s[start] == b'0' && (s[start + 1] == b'b' || s[start + 1] == b'B')) {
-    var bacc: i64 = 0;
-    var bi: i32 = start + 2;
+    let bacc: i64 = 0;
+    let bi: i32 = start + 2;
     while (bi < s.len()) {
-      var bb: i32 = s[bi] as i32;
+      let bb: i32 = s[bi] as i32;
       if (bb != 48 && bb != 49) {
         break;
       }
@@ -352,16 +352,16 @@ pub function digits_to_i32(s: string): i32 {
   if (s.len() == 0) {
     return 0;
   }
-  var neg: boolean = false;
-  var start: i32 = 0;
+  let neg: boolean = false;
+  let start: i32 = 0;
   if (s[0] == b'-') {
     neg = true;
     start = 1;
   }
-  var acc: i32 = 0;
-  var i: i32 = start;
+  let acc: i32 = 0;
+  let i: i32 = start;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b < 48 || b > 57) {
       if (neg) {
         return 0 - acc;
@@ -392,15 +392,15 @@ pub function is_decimal_i64(s: string): boolean {
 // without a sign and `neg` one with it, each written out so a number of the
 // bound's length compares digit by digit.
 function decimal_within(s: string, pos: string, neg: string): boolean {
-  var start: i32 = 0;
+  let start: i32 = 0;
   if (s.len() > 0 && s[0] == b'-') {
     start = 1;
   }
-  var n: i32 = s.len() - start;
+  let n: i32 = s.len() - start;
   if (n == 0) {
     return false;
   }
-  var i: i32 = start;
+  let i: i32 = start;
   while (i < s.len()) {
     if (s[i] < b'0' || s[i] > b'9') {
       return false;
@@ -410,7 +410,7 @@ function decimal_within(s: string, pos: string, neg: string): boolean {
   if (s[start] == b'0') {
     return n == 1 && start == 0;
   }
-  var limit: string = pos;
+  let limit: string = pos;
   if (start == 1) {
     limit = neg;
   }
@@ -435,16 +435,16 @@ pub function digits_to_i64(s: string): i64 {
   if (s.len() == 0) {
     return 0;
   }
-  var neg: boolean = false;
-  var start: i32 = 0;
+  let neg: boolean = false;
+  let start: i32 = 0;
   if (s[0] == b'-') {
     neg = true;
     start = 1;
   }
-  var acc: i64 = 0;
-  var i: i32 = start;
+  let acc: i64 = 0;
+  let i: i32 = start;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b < 48 || b > 57) {
       if (neg) {
         return 0 - acc;
@@ -466,9 +466,9 @@ pub function is_all_digits(s: string): boolean {
   if (s.len() == 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b < 48 || b > 57) {
       return false;
     }
@@ -481,7 +481,7 @@ pub function is_all_digits(s: string): boolean {
 // (linear scan). The single home for the membership helper that
 // existed as has_str / name_in / name_in_list / contains_name.
 pub function has_str(xs: string[], s: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (xs[i] == s) {
       return true;
@@ -495,7 +495,7 @@ pub function has_str(xs: string[], s: string): boolean {
 // suffix stripped — i.e. the prefix before the first `[`. The single
 // home for what was base_type_name / type_base / strip_generic_args.
 pub function base_type_name(t: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < t.len()) {
     if (t[i] == b'[') {
       return slice_unchecked(t, 0, i) + "";
@@ -521,7 +521,7 @@ pub function is_tuple_type_name(t: string): boolean {
 // (`io__read_all` -> `io`), or "" for an unmangled entry-module name. A
 // leading `__` (a lifted lambda, `__lam_0`) is not a module prefix.
 pub function mangled_module(name: string): string {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
       return slice_unchecked(name, 0, i) + "";
@@ -534,7 +534,7 @@ pub function mangled_module(name: string): string {
 // mangled_name returns a mangled name's own half (`io__read_all` ->
 // `read_all`), or the name unchanged when it carries no module prefix.
 pub function mangled_name(name: string): string {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
       return slice_unchecked(name, i + 2, name.len()) + "";
@@ -548,11 +548,11 @@ pub function mangled_name(name: string): string {
 // capability report and its diagnostics are compared on. A prefix sorts
 // before what extends it.
 pub function str_less(a: string, b: string): boolean {
-  var n: i32 = a.len();
+  let n: i32 = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (a[i] != b[i]) {
       return a[i] < b[i];
@@ -566,7 +566,7 @@ pub function str_less(a: string, b: string): boolean {
 // Canonical -1-on-miss (ssa_wasm previously returned 0, which silently
 // resolved a missing funcaddr to table slot 0 — SH-007).
 pub function index_of_str(xs: string[], s: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (xs[i] == s) {
       return i;
@@ -579,7 +579,7 @@ pub function index_of_str(xs: string[], s: string): i32 {
 // index_of_i32 returns the index of `n` in `xs`, or -1 if absent. The integer
 // sibling of index_of_str, and -1 on a miss for the same reason.
 pub function index_of_i32(xs: i32[], n: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (xs[i] == n) {
       return i;
@@ -596,7 +596,7 @@ pub function str_has_prefix(s: string, prefix: string): boolean {
   if (s.len() < prefix.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < prefix.len()) {
     if (s[i] != prefix[i]) {
       return false;
@@ -608,11 +608,11 @@ pub function str_has_prefix(s: string, prefix: string): boolean {
 
 // str_has_suffix is str_has_prefix at the other end.
 pub function str_has_suffix(s: string, suffix: string): boolean {
-  var at: i32 = s.len() - suffix.len();
+  let at: i32 = s.len() - suffix.len();
   if (at < 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < suffix.len()) {
     if (s[at + i] != suffix[i]) {
       return false;
@@ -639,10 +639,10 @@ pub function index_of_sub(haystack: string, needle: string): i32 {
   if (haystack.len() < needle.len()) {
     return 0 - 1;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i <= haystack.len() - needle.len()) {
-    var j: i32 = 0;
-    var hit: boolean = true;
+    let j: i32 = 0;
+    let hit: boolean = true;
     while (hit && j < needle.len()) {
       if (haystack[i + j] != needle[j]) {
         hit = false;
@@ -687,25 +687,25 @@ pub function index_of_sub(haystack: string, needle: string): i32 {
 // x86_gas_parse_f64, arm64_parse_f64) because they are deliberately
 // import-free; TestSelfHostParseF64MirrorsAgree holds all four identical.
 pub function parse_f64_bits(s: string): i64 {
-  var i: i32 = 0;
-  var neg: boolean = false;
+  let i: i32 = 0;
+  let neg: boolean = false;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
   } else if (s.len() > 0 && s[0] == b'+') {
     i = 1;
   }
-  var signbit: i64 = 0;
+  let signbit: i64 = 0;
   if (neg) {
-    var one: i64 = 1;
+    let one: i64 = 1;
     signbit = one << 63;
   }
-  var digits: i32[] = [];
-  var dp: i32 = 0;
-  var sticky: boolean = false;
-  var started: boolean = false;
+  let digits: i32[] = [];
+  let dp: i32 = 0;
+  let sticky: boolean = false;
+  let started: boolean = false;
   while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-    var d: i32 = s[i] as i32 - 48;
+    let d: i32 = s[i] as i32 - 48;
     if (started || d != 0) {
       started = true;
       if (digits.len() < 800) {
@@ -722,7 +722,7 @@ pub function parse_f64_bits(s: string): i64 {
   if (i < s.len() && s[i] == b'.') {
     i = i + 1;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-      var fd: i32 = s[i] as i32 - 48;
+      let fd: i32 = s[i] as i32 - 48;
       if (started || fd != 0) {
         started = true;
         if (digits.len() < 800) {
@@ -740,14 +740,14 @@ pub function parse_f64_bits(s: string): i64 {
   }
   if (i < s.len() && (s[i] == b'e' || s[i] == b'E')) {
     i = i + 1;
-    var eneg: boolean = false;
+    let eneg: boolean = false;
     if (i < s.len() && s[i] == b'-') {
       eneg = true;
       i = i + 1;
     } else if (i < s.len() && s[i] == b'+') {
       i = i + 1;
     }
-    var exp: i32 = 0;
+    let exp: i32 = 0;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
       if (exp < 100000) {
         exp = exp * 10 + (s[i] as i32 - 48);
@@ -767,15 +767,15 @@ pub function parse_f64_bits(s: string): i64 {
     return signbit;
   }
   if (dp > 310) {
-    var inf: i64 = 2047;
+    let inf: i64 = 2047;
     return signbit | inf << 52;
   }
   if (dp < 0 - 350) {
     return signbit;
   }
-  var bexp: i32 = 0;
+  let bexp: i32 = 0;
   while (dp > 0) {
-    var hb: i32[] = pf64_div2(digits);
+    let hb: i32[] = pf64_div2(digits);
     if (hb.len() > 0 && hb[0] == 0) {
       digits = pf64_sub(hb, 1, hb.len());
       dp = dp - 1;
@@ -788,7 +788,7 @@ pub function parse_f64_bits(s: string): i64 {
     }
   }
   while (dp < 0 || digits.len() > 0 && digits[0] < 5) {
-    var db: i32[] = pf64_mul2(digits);
+    let db: i32[] = pf64_mul2(digits);
     if (db[0] != 0) {
       digits = db;
       dp = dp + 1;
@@ -803,47 +803,47 @@ pub function parse_f64_bits(s: string): i64 {
       return signbit;
     }
   }
-  var e: i32 = bexp + 1022;
+  let e: i32 = bexp + 1022;
   if (e >= 2047) {
-    var inf2: i64 = 2047;
+    let inf2: i64 = 2047;
     return signbit | inf2 << 52;
   }
-  var nbits: i32 = 53;
+  let nbits: i32 = 53;
   if (e <= 0) {
     nbits = 52 + e;
   }
   if (nbits < 0) {
     return signbit;
   }
-  var mant: i64 = 0;
-  var k2: i32 = 0;
+  let mant: i64 = 0;
+  let k2: i32 = 0;
   while (k2 < nbits) {
-    var mb: i32[] = pf64_mul2(digits);
+    let mb: i32[] = pf64_mul2(digits);
     mant = mant * 2 + mb[0] as i64;
     digits = pf64_sub(mb, 1, mb.len());
     k2 = k2 + 1;
   }
-  var rb: i32[] = pf64_mul2(digits);
-  var roundbit: i32 = rb[0];
-  var rest: i32[] = pf64_sub(rb, 1, rb.len());
-  var st: boolean = sticky || !pf64_all_zero(rest);
+  let rb: i32[] = pf64_mul2(digits);
+  let roundbit: i32 = rb[0];
+  let rest: i32[] = pf64_sub(rb, 1, rb.len());
+  let st: boolean = sticky || !pf64_all_zero(rest);
   if (roundbit == 1 && (st || (mant & 1) == 1)) {
     mant = mant + 1;
   }
   if (e <= 0) {
     return signbit | mant;
   }
-  var full: i64 = 1;
+  let full: i64 = 1;
   full = full << 53;
   if (mant == full) {
     mant = mant / 2;
     e = e + 1;
     if (e >= 2047) {
-      var inf3: i64 = 2047;
+      let inf3: i64 = 2047;
       return signbit | inf3 << 52;
     }
   }
-  var hidden: i64 = 1;
+  let hidden: i64 = 1;
   hidden = hidden << 52;
   return signbit | e as i64 << 52 | mant - hidden;
 }
@@ -860,7 +860,7 @@ pub function f64_lit_out_of_range(s: string): boolean {
   if (!f64_lit_reaches_1e309(s)) {
     return false;
   }
-  var expmask: i64 = 2047;
+  let expmask: i64 = 2047;
   return (parse_f64_bits(s) >> 52 & expmask) == expmask;
 }
 
@@ -870,14 +870,14 @@ pub function f64_lit_out_of_range(s: string): boolean {
 // builds digit arrays. Every float literal in every parsed module runs this
 // one, and only the handful that could actually overflow run that one.
 function f64_lit_reaches_1e309(s: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   if (i < s.len() && (s[i] == b'-' || s[i] == b'+')) {
     i = i + 1;
   }
   while (i < s.len() && s[i] == b'0') {  // leading zeros add no magnitude
     i = i + 1;
   }
-  var intdigits: i32 = 0;
+  let intdigits: i32 = 0;
   while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
     intdigits = intdigits + 1;
     i = i + 1;
@@ -888,10 +888,10 @@ function f64_lit_reaches_1e309(s: string): boolean {
       i = i + 1;
     }
   }
-  var exp: i32 = 0;
+  let exp: i32 = 0;
   if (i < s.len() && (s[i] == b'e' || s[i] == b'E')) {
     i = i + 1;
-    var eneg: boolean = false;
+    let eneg: boolean = false;
     if (i < s.len() && s[i] == b'-') {
       eneg = true;
       i = i + 1;
@@ -931,17 +931,17 @@ pub function is_f64_range_kind(kind: string): boolean {
 }
 
 pub function f64_range_message(kind: string): string {
-  var pre: string = f64_range_prefix();
+  let pre: string = f64_range_prefix();
   return "invalid float literal \"" + slice_unchecked(kind, pre.len(), kind.len()) + "\": value out of range";
 }
 
 // pf64_div2 halves the fraction buffer 0.B (grade-school left-to-right).
 function pf64_div2(b: i32[]): i32[] {
-  var out: i32[] = [];
-  var r: i32 = 0;
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let r: i32 = 0;
+  let i: i32 = 0;
   while (i < b.len()) {
-    var cur: i32 = r * 10 + b[i];
+    let cur: i32 = r * 10 + b[i];
     out = out.append(cur / 2);
     r = cur % 2;
     i = i + 1;
@@ -955,22 +955,22 @@ function pf64_div2(b: i32[]): i32[] {
 // pf64_mul2 doubles the fraction buffer 0.B; the carry out of the front
 // (0 or 1) is prepended as the first element for the caller to split off.
 function pf64_mul2(b: i32[]): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < b.len()) {
     out = out.append(0);
     i = i + 1;
   }
-  var carry: i32 = 0;
-  var j: i32 = b.len() - 1;
+  let carry: i32 = 0;
+  let j: i32 = b.len() - 1;
   while (j >= 0) {
-    var cur: i32 = b[j] * 2 + carry;
+    let cur: i32 = b[j] * 2 + carry;
     out = out.with(j, cur % 10);
     carry = cur / 10;
     j = j - 1;
   }
-  var res: i32[] = [carry];
-  var k: i32 = 0;
+  let res: i32[] = [carry];
+  let k: i32 = 0;
   while (k < out.len()) {
     res = res.append(out[k]);
     k = k + 1;
@@ -980,8 +980,8 @@ function pf64_mul2(b: i32[]): i32[] {
 
 // pf64_sub returns b[from : upto) as a fresh array.
 function pf64_sub(b: i32[], from: i32, upto: i32): i32[] {
-  var out: i32[] = [];
-  var i: i32 = from;
+  let out: i32[] = [];
+  let i: i32 = from;
   while (i < upto) {
     out = out.append(b[i]);
     i = i + 1;
@@ -991,7 +991,7 @@ function pf64_sub(b: i32[], from: i32, upto: i32): i32[] {
 
 // pf64_all_zero reports whether every digit in b is zero.
 function pf64_all_zero(b: i32[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < b.len()) {
     if (b[i] != 0) {
       return false;
@@ -1027,7 +1027,7 @@ pub const RC_UNDERFLOW_EXIT: i32 = 120;
 // a branch), and no output change — the message only ever appears on a build
 // that is already broken.
 pub function rc_underflow_guard(who: string, code: i32): i32 {
-  var n: i32 = __rc_underflow_count();
+  let n: i32 = __rc_underflow_count();
   if (n == 0) {
     return code;
   }
@@ -1062,7 +1062,7 @@ pub function rc_underflow_guard(who: string, code: i32): i32 {
 pub function arr_push_cliff_report(who: string, code: i32): i32 {
   match (env("FERN_CLIFF_REPORT")) {
     Some(_) => {
-      var copied: i64 = __arr_push_shared_bytes();
+      let copied: i64 = __arr_push_shared_bytes();
       eprint(who + ": arr_push_shared_count=" + i32_to_string(__arr_push_shared_count())
         + " arr_push_shared_bytes=" + i64_to_string(copied)
         + " heap_bump_bytes=" + i64_to_string(__heap_bump_bytes()));
@@ -1081,14 +1081,14 @@ pub function arr_push_cliff_report(who: string, code: i32): i32 {
 // overall. (Array push is amortised O(1), but string concat is O(len), so the
 // emit hot path collects chunks in a string[] and joins once through here.)
 pub function str_join_range(parts: string[], lo: i32, hi: i32): string {
-  var n: i32 = hi - lo;
+  let n: i32 = hi - lo;
   if (n <= 0) {
     return "";
   }
   if (n == 1) {
     return parts[lo];
   }
-  var mid: i32 = lo + n / 2;
+  let mid: i32 = lo + n / 2;
   return str_join_range(parts, lo, mid) + str_join_range(parts, mid, hi);
 }
 
@@ -1114,13 +1114,13 @@ pub function is_diagnostic_code(code: string): boolean {
   if (code.len() != 4) {
     return false;
   }
-  var head: i32 = code[0] as i32;
+  let head: i32 = code[0] as i32;
   if (head != 69 && head != 80) {
     return false;
   }
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < 4) {
-    var b: i32 = code[i] as i32;
+    let b: i32 = code[i] as i32;
     if (b < 48 || b > 57) {
       return false;
     }
@@ -1145,7 +1145,7 @@ pub function pos_line(line: i32): i32 {
 // pos_file is the display path of the module `line` falls in, or "" for the
 // entry. `files[k]` is the module tokenized from line_base(k).
 pub function pos_file(files: string[], line: i32): string {
-  var k: i32 = line / LINE_SPAN - 1;
+  let k: i32 = line / LINE_SPAN - 1;
   if (k < 0 || k >= files.len()) {
     return "";
   }
@@ -1155,8 +1155,8 @@ pub function pos_file(files: string[], line: i32): string {
 // pos_str renders a position as native does: `path:line:col`, with the path
 // omitted for the entry.
 pub function pos_str(files: string[], line: i32, col: i32): string {
-  var at: string = i32_to_string(pos_line(line)) + ":" + i32_to_string(col);
-  var f: string = pos_file(files, line);
+  let at: string = i32_to_string(pos_line(line)) + ":" + i32_to_string(col);
+  let f: string = pos_file(files, line);
   if (f.len() == 0) {
     return at;
   }
@@ -1172,11 +1172,11 @@ pub function format_diags(diags: Diag[]): string {
 }
 
 pub function format_diags_in(diags: Diag[], files: string[]): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < diags.len()) {
-    var d: Diag = diags[i];
-    var tag: string = "";
+    let d: Diag = diags[i];
+    let tag: string = "";
     if (d.code.len() > 0) {
       tag = "error[" + d.code + "]: ";
     }
@@ -1191,7 +1191,7 @@ pub function format_diags_in(diags: Diag[], files: string[]): string {
 
 // append_diags concatenates two diagnostic lists.
 pub function append_diags(a: Diag[], b: Diag[]): Diag[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < b.len()) {
     a = a.append(b[i]);
     i = i + 1;
@@ -1203,7 +1203,7 @@ pub function append_diags(a: Diag[], b: Diag[]): Diag[] {
 // Index 0 never counts: a leading `__` marks a compiler-internal name, not
 // a module prefix.
 pub function dunder_at(name: string): i32 {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i + 1 < name.len()) {
     if (name[i] == b'_' && name[i + 1] == b'_') {
       return i;
@@ -1217,11 +1217,11 @@ pub function dunder_at(name: string): i32 {
 // written as: the parser spells one `0_<name>` (parser.tvar_spelling), which
 // is not a spelling anyone can type.
 pub function show_type_vars(text: string): string {
-  var out: string = "";
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: string = "";
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i + 2 < text.len()) {
-    var boundary: boolean = i == 0 || !(ident_start_byte(text[i - 1]) || text[i - 1] >= b'0' && text[i - 1] <= b'9');
+    let boundary: boolean = i == 0 || !(ident_start_byte(text[i - 1]) || text[i - 1] >= b'0' && text[i - 1] <= b'9');
     if (boundary && text[i] == b'0' && text[i + 1] == b'_' && ident_start_byte(text[i + 2])) {
       out = out + slice_unchecked(text, start, i);
       start = i + 2;
@@ -1244,7 +1244,7 @@ function ident_start_byte(c: u8): boolean {
 // wrote. `mod__Name` is not a spelling anyone can type, so a hint carrying
 // one names a fix that does not compile.
 pub function demangle(name: string): string {
-  var cut: i32 = dunder_at(name);
+  let cut: i32 = dunder_at(name);
   if (cut < 0) {
     return name;
   }
@@ -1262,15 +1262,15 @@ pub function demangle(name: string): string {
 // lockstep with the native checker's deriveHint, which the message-text
 // differential compares against.
 pub function derive_hint(tn: string, derive: string, trait_name: string): string {
-  var cut: i32 = dunder_at(tn);
-  var routes: string = "`@derive(" + derive + ")`";
+  let cut: i32 = dunder_at(tn);
+  let routes: string = "`@derive(" + derive + ")`";
   if (cut < 0) {
     if (trait_name.len() > 0) {
       routes = routes + " (or `impl " + trait_name + " for " + tn + "`)";
     }
     return "add " + routes + ", which requires `import \"core/cmp\";`";
   }
-  var orphan: string = "";
+  let orphan: string = "";
   if (trait_name.len() > 0) {
     routes = routes + " (or `impl " + trait_name + " for " + slice_unchecked(tn, cut + 2, tn.len()) + "`)";
     orphan = " (an impl written here instead would be an orphan impl)";
@@ -1292,8 +1292,8 @@ pub function derive_hint(tn: string, derive: string, trait_name: string): string
 
 // last_slash returns the index of the final '/' in p, or -1.
 pub function last_slash(p: string): i32 {
-  var i: i32 = 0;
-  var last: i32 = 0 - 1;
+  let i: i32 = 0;
+  let last: i32 = 0 - 1;
   while (i < p.len()) {
     if (p[i] == b'/') {
       last = i;
@@ -1306,7 +1306,7 @@ pub function last_slash(p: string): i32 {
 // dir_of returns the directory portion of a path ("" if none), WITHOUT a
 // trailing slash — `a/b/c.fern` -> `a/b`.
 pub function dir_of(p: string): string {
-  var ls: i32 = last_slash(p);
+  let ls: i32 = last_slash(p);
   if (ls < 0) {
     return "";
   }
@@ -1316,7 +1316,7 @@ pub function dir_of(p: string): string {
 // module_name maps an import path to its bundle name: the final path
 // segment (`./a/lexer` → `lexer`, `./parser` → `parser`).
 pub function module_name(import_path: string): string {
-  var ls: i32 = last_slash(import_path);
+  let ls: i32 = last_slash(import_path);
   if (ls >= 0) {
     return slice_unchecked(import_path, ls + 1, import_path.len()) + "";
   }
@@ -1337,11 +1337,11 @@ pub function module_name(import_path: string): string {
 // stdlib module and all but one file in the tree, so no existing program's
 // symbols move.
 pub function mangle_prefix(name: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < name.len()) {
-    var c: i32 = name[i] as i32;
-    var ok: boolean = c >= 97 && c <= 122 || c >= 65 && c <= 90 || c == 95;
+    let c: i32 = name[i] as i32;
+    let ok: boolean = c >= 97 && c <= 122 || c >= 65 && c <= 90 || c == 95;
     if (ok) {
       out = out + slice_unchecked(name, i, i + 1);
     } else {
@@ -1435,7 +1435,7 @@ pub function is_dir(path: string): boolean {
 // `<root>/std/math.fern`).
 pub function resolve_path(import_path: string, entry_dir: string, root: string): string {
   if (is_local(import_path)) {
-    var rel: string = import_path;
+    let rel: string = import_path;
     if (rel.len() >= 2 && slice_unchecked(rel, 0, 2) == "./") {
       rel = slice_unchecked(rel, 2, rel.len()) + "";
     }
@@ -1453,8 +1453,8 @@ pub function resolve_path(import_path: string, entry_dir: string, root: string):
 // exact-match comparison downstream would reject (a CRLF fern.lock
 // parsed to zero entries before this was shared — SH-020).
 pub function trim(s: string): string {
-  var a: i32 = 0;
-  var b: i32 = s.len();
+  let a: i32 = 0;
+  let b: i32 = s.len();
   while (a < b && (s[a] == b' ' || s[a] == b'\t' || s[a] == b'\r')) {
     a = a + 1;
   }
@@ -1477,22 +1477,22 @@ pub function levenshtein(a: string, b: string): i32 {
   if (b.len() == 0) {
     return a.len();
   }
-  var prev: i32[] = [];
-  var j: i32 = 0;
+  let prev: i32[] = [];
+  let j: i32 = 0;
   while (j <= b.len()) {
     prev = prev.append(j);
     j = j + 1;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
-    var cur: i32[] = [i + 1];
-    var k: i32 = 0;
+    let cur: i32[] = [i + 1];
+    let k: i32 = 0;
     while (k < b.len()) {
-      var cost: i32 = 1;
+      let cost: i32 = 1;
       if (a[i] == b[k]) {
         cost = 0;
       }
-      var best: i32 = prev[k] + cost;
+      let best: i32 = prev[k] + cost;
       if (cur[k] + 1 < best) {
         best = cur[k] + 1;
       }
@@ -1517,16 +1517,16 @@ pub function suggest(name: string, candidates: string[]): string {
   if (name.len() == 0 || candidates.len() == 0) {
     return "";
   }
-  var budget: i32 = 2;
+  let budget: i32 = 2;
   if (name.len() <= 3) {
     budget = 1;
   }
-  var best: string = "";
-  var best_dist: i32 = budget + 1;
-  var i: i32 = 0;
+  let best: string = "";
+  let best_dist: i32 = budget + 1;
+  let i: i32 = 0;
   while (i < candidates.len()) {
     if (candidates[i] != name) {
-      var d: i32 = levenshtein(name, candidates[i]);
+      let d: i32 = levenshtein(name, candidates[i]);
       if (d < best_dist) {
         best = candidates[i];
         best_dist = d;
@@ -1543,7 +1543,7 @@ pub function suggest(name: string, candidates: string[]): string {
 // append_all concatenates two lists of any element type — the generic that
 // replaced six byte-identical per-type concat helpers in flatten and modloader.
 pub function append_all[T](into: T[], more: T[]): T[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < more.len()) {
     into = into.append(more[i]);
     i = i + 1;
@@ -1554,8 +1554,8 @@ pub function append_all[T](into: T[], more: T[]): T[] {
 // to_u8 narrows each element to a byte, for a binary the emitters build as an
 // i32[] of 0..255 and write through a string.
 pub function to_u8(b: i32[]): u8[] {
-  var o: u8[] = [];
-  var i: i32 = 0;
+  let o: u8[] = [];
+  let i: i32 = 0;
   while (i < b.len()) {
     o = o.append(b[i] as u8);
     i = i + 1;

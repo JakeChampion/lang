@@ -15,7 +15,7 @@ const arrayBinarySearchProg = `
 import "std/array" as array;
 function idx(o: Option[i32]): i32 { match (o) { Some(v) => { return v; }, None => { return 0 - 1; } } }
 function main(): i32 {
-    var xs: i32[] = [1, 3, 5, 7, 9, 11];
+    let xs: i32[] = [1, 3, 5, 7, 9, 11];
     if (idx(xs.binary_search(7)) != 3) { return 1; }
     if (idx(xs.binary_search(1)) != 0) { return 2; }     // first
     if (idx(xs.binary_search(11)) != 5) { return 3; }    // last
@@ -23,13 +23,13 @@ function main(): i32 {
     if (idx(xs.binary_search(0)) != 0 - 1) { return 5; } // below
     if (idx(xs.binary_search(20)) != 0 - 1) { return 6; }// above
     if (idx(array.binary_search(xs, 5)) != 2) { return 7; } // free fn
-    var e: i32[] = [];
+    let e: i32[] = [];
     if (idx(e.binary_search(1)) != 0 - 1) { return 8; }  // empty
-    var one: i32[] = [42];
+    let one: i32[] = [42];
     if (idx(one.binary_search(42)) != 0) { return 9; }
     if (idx(one.binary_search(1)) != 0 - 1) { return 10; }
     // string elements, sorted lexicographically
-    var ss: string[] = ["apple", "banana", "cherry", "date"];
+    let ss: string[] = ["apple", "banana", "cherry", "date"];
     if (idx(ss.binary_search("cherry")) != 2) { return 11; }
     if (idx(ss.binary_search("apple")) != 0) { return 12; }
     if (idx(ss.binary_search("fig")) != 0 - 1) { return 13; }

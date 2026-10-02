@@ -35,7 +35,7 @@
 // resolve) and returns `Result[Grammar, string]`. Matching:
 //
 //   let Ok(g) = peg.peg_grammar(rules, "line") else { … };
-//   var r: peg.PegResult = peg.peg_match(g, input);
+//   let r: peg.PegResult = peg.peg_match(g, input);
 //   if (r.ok) { … r.pos … r.caps.get("key") … }
 //
 // `peg_match` anchors at position 0 and succeeds as soon as the
@@ -136,11 +136,11 @@ function __peg_merge_furthest(keep: PegState, from: PegState): PegState {
 function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState, depth: i32, seen_n: string[], seen_p: i32[]): (i32, PegState) {
   match (p) {
     PLit(s) => {
-      var n: i32 = s.len();
+      let n: i32 = s.len();
       if (pos + n > input.len()) {
         return __peg_fail(st, pos);
       }
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < n) {
         if (input[pos + i] != s[i]) {
           return __peg_fail(st, pos);
@@ -159,7 +159,7 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       if (pos >= input.len()) {
         return __peg_fail(st, pos);
       }
-      var c: i32 = input[pos] as i32;
+      let c: i32 = input[pos] as i32;
       if (c < lo || c > hi) {
         return __peg_fail(st, pos);
       }
@@ -169,8 +169,8 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       if (pos >= input.len()) {
         return __peg_fail(st, pos);
       }
-      var c: i32 = input[pos] as i32;
-      var i: i32 = 0;
+      let c: i32 = input[pos] as i32;
+      let i: i32 = 0;
       while (i < cs.len()) {
         if (cs[i] as i32 == c) {
           return (pos + 1, st);
@@ -183,8 +183,8 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       if (pos >= input.len()) {
         return __peg_fail(st, pos);
       }
-      var c: i32 = input[pos] as i32;
-      var i: i32 = 0;
+      let c: i32 = input[pos] as i32;
+      let i: i32 = 0;
       while (i < cs.len()) {
         if (cs[i] as i32 == c) {
           return __peg_fail(st, pos);
@@ -194,9 +194,9 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       return (pos + 1, st);
     },
     PSeq(ps) => {
-      var cur: i32 = pos;
-      var s2: PegState = st;
-      var i: i32 = 0;
+      let cur: i32 = pos;
+      let s2: PegState = st;
+      let i: i32 = 0;
       while (i < ps.len()) {
         let (r, s3) = __peg_run(g, ps[i], input, cur, s2, depth, seen_n, seen_p);
         if (r < 0) {
@@ -209,8 +209,8 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       return (cur, s2);
     },
     PChoice(ps) => {
-      var s2: PegState = st;
-      var i: i32 = 0;
+      let s2: PegState = st;
+      let i: i32 = 0;
       while (i < ps.len()) {
         let (r, s3) = __peg_run(g, ps[i], input, pos, s2, depth, seen_n, seen_p);
         if (r >= 0) {
@@ -224,8 +224,8 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       return __peg_fail(s2, pos);
     },
     PStar(sub) => {
-      var cur: i32 = pos;
-      var s2: PegState = st;
+      let cur: i32 = pos;
+      let s2: PegState = st;
       while (true) {
         let (r, s3) = __peg_run(g, sub, input, cur, s2, depth, seen_n, seen_p);
         if (r < 0) {
@@ -277,7 +277,7 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       if (depth >= 2048) {
         return __peg_fail(st, pos);
       }
-      var si: i32 = 0;
+      let si: i32 = 0;
       while (si < seen_n.len()) {
         if (seen_p[si] == pos && seen_n[si] == name) {
           return __peg_fail(st, pos);
@@ -320,9 +320,9 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
 function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): string {
   match (p) {
     PSeq(ps) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < ps.len()) {
-        var bad: string = __peg_check_refs(ps[i], rules);
+        let bad: string = __peg_check_refs(ps[i], rules);
         if (bad.len() > 0) {
           return bad;
         }
@@ -331,9 +331,9 @@ function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): string {
       return "";
     },
     PChoice(ps) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < ps.len()) {
-        var bad: string = __peg_check_refs(ps[i], rules);
+        let bad: string = __peg_check_refs(ps[i], rules);
         if (bad.len() > 0) {
           return bad;
         }
@@ -379,12 +379,12 @@ pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Gra
   if (!rules.has(start)) {
     return Err("unknown rule: " + start);
   }
-  var names: string[] = rules.keys();
-  var i: i32 = 0;
+  let names: string[] = rules.keys();
+  let i: i32 = 0;
   while (i < names.len()) {
     match (rules.get(names[i])) {
       Some(p) => {
-        var bad: string = __peg_check_refs(p, rules);
+        let bad: string = __peg_check_refs(p, rules);
         if (bad.len() > 0) {
           return Err("unknown rule: " + bad);
         }
@@ -401,11 +401,11 @@ pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Gra
 // same-name captures overwrite earlier ones); on failure caps is
 // empty and pos is the furthest watermark.
 function __peg_result(r: i32, st: PegState, input: string): PegResult {
-  var caps: Map[string, string] = map_new(8);
+  let caps: Map[string, string] = map_new(8);
   if (r < 0) {
     return PegResult { ok: false, pos: st.furthest, caps: caps };
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < st.tn.len()) {
     // Each capture is materialised with `+ ""`: a bare slice views `input`,
     // which the PegResult this map rides out in outlives.
@@ -417,10 +417,10 @@ function __peg_result(r: i32, st: PegState, input: string): PegResult {
 
 // peg_match runs the grammar's start rule anchored at position 0.
 pub function peg_match(g: Grammar, input: string): PegResult {
-  var tn: string[] = [];
-  var ts: i32[] = [];
-  var te: i32[] = [];
-  var st: PegState = PegState { tn: tn, ts: ts, te: te, furthest: 0 };
+  let tn: string[] = [];
+  let ts: i32[] = [];
+  let te: i32[] = [];
+  let st: PegState = PegState { tn: tn, ts: ts, te: te, furthest: 0 };
   let (r, s2) = __peg_run(g, PRef(g.start), input, 0, st, 0, [], []);
   return __peg_result(r, s2, input);
 }
@@ -428,9 +428,9 @@ pub function peg_match(g: Grammar, input: string): PegResult {
 // peg_match_pattern matches a standalone pattern (no rule table —
 // a PRef inside fails the match) anchored at position 0.
 pub function peg_match_pattern(p: Pattern, input: string): PegResult {
-  var rules: Map[string, Pattern] = map_new(2);
+  let rules: Map[string, Pattern] = map_new(2);
   rules = rules.insert("__start", p);
-  var g: Grammar = Grammar { rules: rules, start: "__start" };
+  let g: Grammar = Grammar { rules: rules, start: "__start" };
   return peg_match(g, input);
 }
 

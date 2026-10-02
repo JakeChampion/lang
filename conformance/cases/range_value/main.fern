@@ -5,12 +5,12 @@
 // iterator. (`for i in LOW..HIGH` keeps its own optimized counted-loop form.)
 import "core/iter";
 function main(): i32 {
-    var s: i32 = iter.sum(0..10);        // 0+…+9   = 45
+    let s: i32 = iter.sum(0..10);        // 0+…+9   = 45
     s = s + iter.sum(0..=10);            // 0+…+10  = 55  -> 100
     s = s + iter.count(2..7);            // 5 elems = 5   -> 105
-    var n: i32 = 3;
+    let n: i32 = 3;
     s = s + iter.sum(0..n+1);            // `..` < `+`: 0..4 = 6 -> 111
-    var r = 1..5;                        // range bound to a var, used as a value
+    let r = 1..5;                        // range bound to a var, used as a value
     s = s + iter.sum(r);                 // 1+2+3+4 = 10  -> 121
     return s;                            // 121
 }

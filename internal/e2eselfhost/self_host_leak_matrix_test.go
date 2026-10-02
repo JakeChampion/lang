@@ -60,7 +60,7 @@ import (
 // merely CHANGES under quarantine is the same signal: the un-quarantined run
 // was reading recycled bytes.
 
-// A leakKind is one value shape: decls it needs, an initializer for `var x`,
+// A leakKind is one value shape: decls it needs, an initializer for `let x`,
 // an optional second initializer (the rebind scope), a borrow-read expression
 // over x contributing to the checksum, and whether a consuming match exists.
 type leakKind struct {
@@ -71,7 +71,7 @@ type leakKind struct {
 	read  string // expression over x yielding i32; "" = kind has no bare read
 	match string // full match statement consuming x into t; "" = no match form
 	// Origin-axis metadata (#7253's probe-audit requirement): ptype is the
-	// type spelling for a param of this kind, fixedInit a `var keep: T = …;`
+	// type spelling for a param of this kind, fixedInit a `let keep: T = …;`
 	// main can build ONCE and keep live across every call — the two
 	// conditions an origin probe must meet (the source outlives the callee
 	// and is genuinely released elsewhere). A kind whose fixedInit cannot
@@ -85,8 +85,8 @@ type leakKind struct {
 var leakKinds = []leakKind{
 	{
 		name: "arr_i32",
-		init: "var x: i32[] = [i, i + 1];", init2: "x = [i + 2, i + 3, i + 4];",
-		read: "x.len()", ptype: "i32[]", fixedInit: "var keep: i32[] = [7, 8, 9];",
+		init: "let x: i32[] = [i, i + 1];", init2: "x = [i + 2, i + 3, i + 4];",
+		read: "x.len()", ptype: "i32[]", fixedInit: "let keep: i32[] = [7, 8, 9];",
 	},
 	{
 		// mkstr is the importless fresh producer both pipelines accept: string
@@ -101,47 +101,47 @@ var leakKinds = []leakKind{
 		// The str alias_param rows' notes carry the real native verdict.
 		name:  "str",
 		decls: "function mkstr(a: string): string { return a + \"!\"; }",
-		init:  "var x: string = mkstr(\"x\");", init2: "x = mkstr(\"yz\");",
-		read: "x.len()", ptype: "string", fixedInit: "var keep: string = mkstr(\"kk\");",
+		init:  "let x: string = mkstr(\"x\");", init2: "x = mkstr(\"yz\");",
+		read: "x.len()", ptype: "string", fixedInit: "let keep: string = mkstr(\"kk\");",
 	},
 	{
 		name:  "str_arr",
 		decls: "function mkstr(a: string): string { return a + \"!\"; }",
-		init:  "var x: string[] = [mkstr(\"x\")];", init2: "x = [mkstr(\"y\"), mkstr(\"z\")];",
-		read: "x.len()", ptype: "string[]", fixedInit: "var keep: string[] = [mkstr(\"k\")];",
+		init:  "let x: string[] = [mkstr(\"x\")];", init2: "x = [mkstr(\"y\"), mkstr(\"z\")];",
+		read: "x.len()", ptype: "string[]", fixedInit: "let keep: string[] = [mkstr(\"k\")];",
 	},
 	{
 		name:  "struct_arr_field",
 		decls: "struct P { xs: i32[], k: i32 }",
-		init:  "var x: P = P { xs: [i, i + 1], k: i };", init2: "x = P { xs: [i + 2], k: i + 1 };",
-		read: "x.xs.len()", ptype: "P", fixedInit: "var keep: P = P { xs: [7, 8], k: 3 };",
+		init:  "let x: P = P { xs: [i, i + 1], k: i };", init2: "x = P { xs: [i + 2], k: i + 1 };",
+		read: "x.xs.len()", ptype: "P", fixedInit: "let keep: P = P { xs: [7, 8], k: 3 };",
 	},
 	{
 		name:  "enum_rc_payload",
 		decls: "enum E { Full(i32[]), None }",
-		init:  "var x: E = E.Full([i, i + 1]);", init2: "x = E.Full([i + 2, i + 3, i + 4]);",
+		init:  "let x: E = E.Full([i, i + 1]);", init2: "x = E.Full([i + 2, i + 3, i + 4]);",
 		match: "match (x) { E.Full(xs) => { t = t + xs.len(); }, E.None => {} }",
 	},
 	{
 		name:  "enum_str_payload",
 		decls: "enum G { Full(string), None }\nfunction mkstr(a: string): string { return a + \"!\"; }",
-		init:  "var x: G = G.Full(mkstr(\"x\"));", init2: "x = G.Full(mkstr(\"yz\"));",
+		init:  "let x: G = G.Full(mkstr(\"x\"));", init2: "x = G.Full(mkstr(\"yz\"));",
 		match: "match (x) { G.Full(s) => { t = t + s.len(); }, G.None => {} }",
 	},
 	{
 		name:  "enum_scalar",
 		decls: "enum S { V(i32), W }",
-		init:  "var x: S = S.V(i);", init2: "x = S.V(i + 1);",
+		init:  "let x: S = S.V(i);", init2: "x = S.V(i + 1);",
 		match: "match (x) { S.V(k) => { t = t + k; }, S.W => {} }",
 	},
 	{
 		name: "tuple_mixed",
-		init: "var x: (i32, i32[]) = (i, [i + 1, i + 2]);", init2: "x = (i + 1, [i + 3]);",
-		read: "x.0 + x.1.len()", ptype: "(i32, i32[])", fixedInit: "var keep: (i32, i32[]) = (5, [6, 7]);",
+		init: "let x: (i32, i32[]) = (i, [i + 1, i + 2]);", init2: "x = (i + 1, [i + 3]);",
+		read: "x.0 + x.1.len()", ptype: "(i32, i32[])", fixedInit: "let keep: (i32, i32[]) = (5, [6, 7]);",
 	},
 	{
 		name: "opt_arr",
-		init: "var x: Option[i32[]] = Some([i, i + 1]);", init2: "x = Some([i + 2, i + 3, i + 4]);",
+		init: "let x: Option[i32[]] = Some([i, i + 1]);", init2: "x = Some([i + 2, i + 3, i + 4]);",
 		match: "match (x) { Some(xs) => { t = t + xs.len(); }, None => {} }",
 	},
 }
@@ -172,7 +172,7 @@ var leakScopes = []leakScope{
 	{
 		name: "loop_local",
 		wrap: func(b string) string {
-			return "var j: i32 = 0;\n    while (j < 2) {\n    " + strings.ReplaceAll(b, "\n", "\n    ") + "\n    j = j + 1;\n    }\n    t = t + 1;"
+			return "let j: i32 = 0;\n    while (j < 2) {\n    " + strings.ReplaceAll(b, "\n", "\n    ") + "\n    j = j + 1;\n    }\n    t = t + 1;"
 		},
 	},
 	{
@@ -235,11 +235,11 @@ func leakMatrixCells() []leakCell {
 				if k.decls != "" {
 					src = k.decls + "\n"
 				}
-				src += "function round(i: i32): i32 {\n    var t: i32 = 0;\n    " +
+				src += "function round(i: i32): i32 {\n    let t: i32 = 0;\n    " +
 					strings.ReplaceAll(body, "\n", "\n    ") +
 					"\n    return t;\n}\n" +
 					"function main(): i32 {\n" +
-					"    var acc: i32 = 0;\n    var i: i32 = 0;\n" +
+					"    let acc: i32 = 0;\n    let i: i32 = 0;\n" +
 					"    while (i < 100) { acc = acc + round(i); i = i + 1; }\n" +
 					"    if (__rc_underflow_count() != 0) { return 99; }\n" +
 					"    return acc % 83;\n}\n"
@@ -265,7 +265,7 @@ func leakMatrixCells() []leakCell {
 		if k.ptype == "" || k.read == "" {
 			continue
 		}
-		srcInit := strings.Replace(k.init, "var x:", "var src:", 1)
+		srcInit := strings.Replace(k.init, "let x:", "let src:", 1)
 		readX := "t = (t + " + k.read + ") % 101;"
 		readSrc := "t = (t + " + strings.ReplaceAll(k.read, "x.", "src.") + ") % 101;"
 		readKeep := strings.ReplaceAll(k.read, "x.", "keep.")
@@ -274,35 +274,35 @@ func leakMatrixCells() []leakCell {
 			decls = k.decls + "\n"
 		}
 		mainTail := "function main(): i32 {\n" +
-			"    var acc: i32 = 0;\n    var i: i32 = 0;\n" +
+			"    let acc: i32 = 0;\n    let i: i32 = 0;\n" +
 			"    while (i < 100) { acc = acc + round(i); i = i + 1; }\n" +
 			"    if (__rc_underflow_count() != 0) { return 99; }\n" +
 			"    return acc % 83;\n}\n"
 		for _, sc := range []struct{ name, body string }{
-			{"fnscope", "    var x: " + k.ptype + " = src;\n    " + readX},
-			{"if_block", "    if (i % 2 == 0) {\n        var x: " + k.ptype + " = src;\n        " + readX + "\n        t = t + 1;\n    }"},
+			{"fnscope", "    let x: " + k.ptype + " = src;\n    " + readX},
+			{"if_block", "    if (i % 2 == 0) {\n        let x: " + k.ptype + " = src;\n        " + readX + "\n        t = t + 1;\n    }"},
 		} {
 			src := decls +
 				"function round(i: i32): i32 {\n" +
 				"    " + srcInit + "\n" +
-				"    var t: i32 = 0;\n" +
+				"    let t: i32 = 0;\n" +
 				sc.body + "\n" +
 				"    " + readSrc + "\n" +
 				"    return t;\n}\n" + mainTail
 			cells = append(cells, leakCell{name: k.name + "__" + sc.name + "__alias_local", src: src})
 		}
 		for _, sc := range []struct{ name, body string }{
-			{"fnscope", "    var x: " + k.ptype + " = src;\n    " + readX},
-			{"if_block", "    if (i % 2 == 0) {\n        var x: " + k.ptype + " = src;\n        " + readX + "\n        t = t + 1;\n    }"},
+			{"fnscope", "    let x: " + k.ptype + " = src;\n    " + readX},
+			{"if_block", "    if (i % 2 == 0) {\n        let x: " + k.ptype + " = src;\n        " + readX + "\n        t = t + 1;\n    }"},
 		} {
 			src := decls +
 				"function round(src: " + k.ptype + ", i: i32): i32 {\n" +
-				"    var t: i32 = 0;\n" +
+				"    let t: i32 = 0;\n" +
 				sc.body + "\n" +
 				"    return t;\n}\n" +
 				"function main(): i32 {\n" +
 				"    " + k.fixedInit + "\n" +
-				"    var acc: i32 = 0;\n    var i: i32 = 0;\n" +
+				"    let acc: i32 = 0;\n    let i: i32 = 0;\n" +
 				"    while (i < 100) { acc = acc + round(keep, i); i = i + 1; }\n" +
 				"    acc = (acc + " + readKeep + ") % 83;\n" +
 				"    if (__rc_underflow_count() != 0) { return 99; }\n" +
@@ -316,12 +316,12 @@ func leakMatrixCells() []leakCell {
 		// collector ever credited it; each iteration aliases a live element.
 		leakCell{name: "for_in_str_elem__loop__read", src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var names: string[] = [mkstr("a"), mkstr("b")];
-    var t: i32 = 0;
+    let names: string[] = [mkstr("a"), mkstr("b")];
+    let t: i32 = 0;
     for s in names { t = (t + s.len()) % 101; }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		// The struct-array twin of the binder cell, and its returning sibling
 		// (#8178): a body that returns a scalar read through the element is a
@@ -329,12 +329,12 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 		leakCell{name: "for_in_struct_elem__loop__read", src: `struct S { name: string, fields: string[] }
 function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var xs: S[] = [S{ name: mkstr("a"), fields: [mkstr("f")] }, S{ name: mkstr("bb"), fields: [] }];
-    var t: i32 = 0;
+    let xs: S[] = [S{ name: mkstr("a"), fields: [mkstr("f")] }, S{ name: mkstr("bb"), fields: [] }];
+    let t: i32 = 0;
     for sd in xs { t = (t + sd.name.len() + sd.fields.len()) % 101; }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		leakCell{name: "for_in_struct_elem__loop__return_scalar", src: `struct S { name: string, fields: string[] }
 function mkstr(a: string): string { return a + "!"; }
@@ -343,31 +343,31 @@ function count(xs: S[], k: i32): i32 {
     return 0 - 1;
 }
 function round(i: i32): i32 {
-    var xs: S[] = [S{ name: mkstr("a"), fields: [mkstr("f")] }, S{ name: mkstr("bb"), fields: [] }];
+    let xs: S[] = [S{ name: mkstr("a"), fields: [mkstr("f")] }, S{ name: mkstr("bb"), fields: [] }];
     return (count(xs, 2) + count(xs, 3) + 2) % 101;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		// A FIELD READ as the origin — the #7343 "stolen" shape: a second
 		// reference to a buffer the owner's deep drop also releases.
 		leakCell{name: "field_read_arr__fnscope__read", src: `struct P { xs: i32[], k: i32 }
 function round(i: i32): i32 {
-    var src: P = P { xs: [i, i + 1], k: i };
-    var x: i32[] = src.xs;
-    var t: i32 = (x.len() + src.k) % 101;
+    let src: P = P { xs: [i, i + 1], k: i };
+    let x: i32[] = src.xs;
+    let t: i32 = (x.len() + src.k) % 101;
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		// A field read from a PARAM the caller keeps — over-release direction.
 		leakCell{name: "field_read_arr__fnscope__alias_param", src: `struct P { xs: i32[], k: i32 }
 function round(src: P, i: i32): i32 {
-    var x: i32[] = src.xs;
+    let x: i32[] = src.xs;
     return (x.len() + i) % 101;
 }
 function main(): i32 {
-    var keep: P = P { xs: [7, 8], k: 3 };
-    var acc: i32 = 0; var i: i32 = 0;
+    let keep: P = P { xs: [7, 8], k: 3 };
+    let acc: i32 = 0; let i: i32 = 0;
     while (i < 100) { acc = acc + round(keep, i); i = i + 1; }
     acc = (acc + keep.xs.len()) % 83;
     if (__rc_underflow_count() != 0) { return 99; }
@@ -378,25 +378,25 @@ function main(): i32 {
 		// #7253 thread's collision shape, in its admissible form.
 		leakCell{name: "enum_rc_payload__fnscope__alias_match", src: `enum E { Full(i32[]), None }
 function round(i: i32): i32 {
-    var src: E = E.Full([i, i + 1]);
-    var x: E = src;
-    var t: i32 = 0;
+    let src: E = E.Full([i, i + 1]);
+    let x: E = src;
+    let t: i32 = 0;
     match (x) { E.Full(xs) => { t = t + xs.len(); }, E.None => {} }
     match (src) { E.Full(ys) => { t = (t + ys.len()) % 101; }, E.None => {} }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		// The Option sibling of the same alias-then-consume shape.
 		leakCell{name: "opt_arr__fnscope__alias_match", src: `function round(i: i32): i32 {
-    var src: Option[i32[]] = Some([i, i + 1]);
-    var x: Option[i32[]] = src;
-    var t: i32 = 0;
+    let src: Option[i32[]] = Some([i, i + 1]);
+    let x: Option[i32[]] = src;
+    let t: i32 = 0;
     match (x) { Some(xs) => { t = t + xs.len(); }, None => {} }
     match (src) { Some(ys) => { t = (t + ys.len()) % 101; }, None => {} }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		// A LOOP-scoped dead-alias-cancelled pair (#4402 opt 1): both slots
 		// rebind each iteration, so the alias bind must store WITHOUT the
@@ -405,17 +405,17 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 		// census cannot see (the double free balances it); the sanitize leg
 		// is the instrument that catches it.
 		leakCell{name: "str__loop_local__alias_local", src: `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var j: i32 = 0;
+    let t: i32 = 0;
+    let j: i32 = 0;
     while (j < 3) {
-        var s: string = "hi" + "!";
-        var v: string = s;
+        let s: string = "hi" + "!";
+        let v: string = s;
         t = (t + v.len() + s.len()) % 101;
         j = j + 1;
     }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		// A cancelled pair with a LATER same-type construction while the
 		// alias is live: the reuse donor gate must refuse the source (its
@@ -424,30 +424,30 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 		// witness that the donor vetting holds under cancellation (rc==1).
 		leakCell{name: "struct_arr_field__fnscope__alias_reuse", src: `struct P { xs: i32[], k: i32 }
 function round(i: i32): i32 {
-    var p: P = P { xs: [i, i + 1], k: i };
-    var v: P = p;
-    var t: i32 = v.k + p.xs.len();
-    var q: P = P { xs: [i, i + 2], k: t };
+    let p: P = P { xs: [i, i + 1], k: i };
+    let v: P = p;
+    let t: i32 = v.k + p.xs.len();
+    let q: P = P { xs: [i, i + 2], k: t };
     return q.k + p.k;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		// The struct flavor of the same loop-scoped cancelled pair — the
 		// alias's box-only "NODEEP:" release is what the cancellation
 		// elides; the rebind store must not fire the box dec either.
 		leakCell{name: "struct_arr_field__loop_local__alias_local", src: `struct P { xs: i32[], k: i32 }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var j: i32 = 0;
+    let t: i32 = 0;
+    let j: i32 = 0;
     while (j < 3) {
-        var p: P = P { xs: [i, j], k: j };
-        var v: P = p;
+        let p: P = P { xs: [i, j], k: j };
+        let v: P = p;
         t = (t + v.k + p.xs.len()) % 101;
         j = j + 1;
     }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		// The plan-routing instrument for the tuple release families: a
 		// tuple local passed to a READ-ONLY callee. The credit gate reads a
@@ -459,8 +459,8 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 		// moves THIS row and nothing else.
 		leakCell{name: "tuple_mixed__callarg__read", src: `function peek(t: (i32, i32[])): i32 { return t.0 + t.1.len(); }
 function main(): i32 {
-    var keep: (i32, i32[]) = (5, [6, 7]);
-    var acc: i32 = peek(keep) + keep.0;
+    let keep: (i32, i32[]) = (5, [6, 7]);
+    let acc: i32 = peek(keep) + keep.0;
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }
@@ -481,13 +481,13 @@ function main(): i32 {
 		// pair (docs/rc-log/2026-08-28-tuple-structfield-counted-store.md).
 		leakCell{name: "tuple_mixed__structfield__local_store", src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
-    var k: (i32, i32[]) = (i, [i, i + 1]);
-    var h: Hold = Hold { t: k, n: i };
+    let k: (i32, i32[]) = (i, [i, i + 1]);
+    let h: Hold = Hold { t: k, n: i };
     return h.n + k.0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -509,9 +509,9 @@ function main(): i32 {
 		leakCell{name: "tuple_mixed__callarg__stored_struct", src: `struct Hold { t: (i32, i32[]), n: i32 }
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: 1 }; }
 function main(): i32 {
-    var keep: (i32, i32[]) = (5, [6, 7]);
-    var h: Hold = keepit(keep);
-    var acc: i32 = h.n + keep.0;
+    let keep: (i32, i32[]) = (5, [6, 7]);
+    let h: Hold = keepit(keep);
+    let acc: i32 = h.n + keep.0;
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }
@@ -525,12 +525,12 @@ function main(): i32 {
 		// its dup-at-extract convention — a recorded floor, not a hazard.
 		leakCell{name: "tuple_mixed__elemret__payload_refused", src: `function get(src: (i32, i32[])): i32[] { return src.1; }
 function make(): i32[] {
-    var keep: (i32, i32[]) = (5, [6, 7]);
+    let keep: (i32, i32[]) = (5, [6, 7]);
     return get(keep);
 }
 function main(): i32 {
-    var r: i32[] = make();
-    var acc: i32 = r.len();
+    let r: i32[] = make();
+    let acc: i32 = r.len();
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }
@@ -544,12 +544,12 @@ function main(): i32 {
 		leakCell{name: "tuple_mixed__elemret__box_tier_only", src: `function maketup(): (i32, i32[]) { return (5, [6, 7]); }
 function get(src: (i32, i32[])): i32[] { return src.1; }
 function make(): i32[] {
-    var t: (i32, i32[]) = maketup();
+    let t: (i32, i32[]) = maketup();
     return get(t);
 }
 function main(): i32 {
-    var r: i32[] = make();
-    var acc: i32 = r.len();
+    let r: i32[] = make();
+    let acc: i32 = r.len();
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }
@@ -561,14 +561,14 @@ function main(): i32 {
 		// control leaks identically" finding, closed. The rcplan tables agree
 		// either way, so this cell is the instrument.
 		leakCell{name: "tuple_mixed__fnscope__borrowed_arg", src: `function round(src: (i32, i32[]), i: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     t = (t + src.0 + src.1.len()) % 101;
     return t;
 }
 function main(): i32 {
-    var keep: (i32, i32[]) = (5, [6, 7]);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: (i32, i32[]) = (5, [6, 7]);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(keep, i); i = i + 1; }
     acc = (acc + keep.0 + keep.1.len()) % 83;
     if (__rc_underflow_count() != 0) { return 99; }
@@ -583,60 +583,60 @@ function main(): i32 {
 		// instrument pinning the release.
 		leakCell{name: "tuple_mixed__callprod__alias_local", src: `function mk(i: i32): (i32, i32[]) { return (i, [i, i + 1]); }
 function round(i: i32): i32 {
-    var t: (i32, i32[]) = mk(i);
-    var v: (i32, i32[]) = t;
+    let t: (i32, i32[]) = mk(i);
+    let v: (i32, i32[]) = t;
     return v.0 + t.1.len();
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		// An ALIASED producer local: the owned-return admission walks with
-		// empty alias lists, so `var a = t` refuses the whole callee — no
+		// empty alias lists, so `let a = t` refuses the whole callee — no
 		// registry entry, no caller credit, the leak floor. Pinned because
 		// this is the admission boundary most tempting to widen next, and a
 		// careless widening (forgiving aliases) flips it to over-release,
 		// not just a leak.
 		leakCell{name: "tuple_mixed__ownedret_alias__bind_local", src: `function mk(i: i32): (i32, i32[]) {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var a: (i32, i32[]) = t;
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let a: (i32, i32[]) = t;
     if (a.0 < 0) { return (0, [0]); }
     return t;
 }
 function round(i: i32): i32 {
-    var r: (i32, i32[]) = mk(i);
+    let r: (i32, i32[]) = mk(i);
     return r.0 + r.1.len();
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		// The tuple flavor of the same loop-scoped cancelled pair — the
 		// alias's shallow "TUP:" box dec is what the cancellation elides;
 		// the rebind store must not fire it either.
 		leakCell{name: "tuple_mixed__loop_local__alias_local", src: `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var j: i32 = 0;
+    let t: i32 = 0;
+    let j: i32 = 0;
     while (j < 3) {
-        var p: (i32, i32[]) = (j, [i, j]);
-        var v: (i32, i32[]) = p;
+        let p: (i32, i32[]) = (j, [i, j]);
+        let v: (i32, i32[]) = p;
         t = (t + v.0 + p.1.len()) % 101;
         j = j + 1;
     }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		// The array flavor of the same loop-scoped cancelled pair — the
 		// #7455 limb's instance of the identical rebind double free.
 		leakCell{name: "arr_i32__loop_local__alias_local", src: `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var j: i32 = 0;
+    let t: i32 = 0;
+    let j: i32 = 0;
     while (j < 3) {
-        var s: i32[] = [i, i + 1];
-        var v: i32[] = s;
+        let s: i32[] = [i, i + 1];
+        let v: i32[] = s;
         t = (t + v.len() + s.len()) % 101;
         j = j + 1;
     }
     return t;
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
 		// The three SCENUMS plan-routing witnesses (promotion step 2): the
 		// escape gate for all-scalar enums is the plan's free_eligible_of
@@ -650,10 +650,10 @@ function get(e: E, i: i32): i32 {
     match (e) { A(x) => { return x + i; }, B(y) => { return y; } }
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var e: E = A(i);
+        let e: E = A(i);
         acc = acc + get(e, i);
         i = i + 1;
     }
@@ -665,11 +665,11 @@ function main(): i32 {
 struct H { e: E, n: i32 }
 function wrap(e: E, i: i32): H { return H { e: e, n: i, }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var e: E = A(i);
-        var h: H = wrap(e, i);
+        let e: E = A(i);
+        let h: H = wrap(e, i);
         match (h.e) { A(x) => { acc = acc + x; }, B(y) => { acc = acc + y; } }
         i = i + 1;
     }
@@ -680,11 +680,11 @@ function main(): i32 {
 		leakCell{name: "enum_scalar__callarg__stored_arr", src: `enum E { A(i32), B(i32) }
 function box(e: E): E[] { return [e]; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var e: E = A(i);
-        var xs: E[] = box(e);
+        let e: E = A(i);
+        let xs: E[] = box(e);
         match (xs[0]) { A(x) => { acc = acc + x; }, B(y) => { acc = acc + y; } }
         i = i + 1;
     }
@@ -700,12 +700,12 @@ function main(): i32 {
     match (o) { Some(xs) => { return xs.len() + i; }, None => { return 0; } }
 }
 function round(i: i32): i32 {
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let o: Option[i32[]] = Some([i, i + 1]);
     return peek(o, i) % 101;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -716,12 +716,12 @@ function peek(o: Option[string]): i32 {
     match (o) { Some(s) => { return s.len(); }, None => { return 0; } }
 }
 function round(i: i32): i32 {
-    var o: Option[string] = Some(mk("abc"));
+    let o: Option[string] = Some(mk("abc"));
     return peek(o) + i % 3;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -729,12 +729,12 @@ function main(): i32 {
 `},
 		leakCell{name: "opt_aarr__callarg__read", src: `function count(xs: Option[i32[]][]) : i32 { return xs.len(); }
 function round(i: i32): i32 {
-    var xs: Option[i32[]][] = [Some([i, i + 1]), None];
+    let xs: Option[i32[]][] = [Some([i, i + 1]), None];
     return count(xs) + i % 3;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;

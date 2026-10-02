@@ -34,22 +34,22 @@ func TestSelfHostRcEnumCallInitWasmIR(t *testing.T) {
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
 function main(): i32 {
-    var base: string = "a";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let base: string = "a";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var e: E = mk(base, i);
+        let e: E = mk(base, i);
         match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 1500) {
-        var e2: E = mk(base, j);
+        let e2: E = mk(base, j);
         match (e2) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -60,11 +60,11 @@ function main(): i32 {
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm, n: n }, n); }
 function main(): i32 {
-    var keep: string = "aa" + "bb";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: string = "aa" + "bb";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var e: E = mk(keep, i);
+        let e: E = mk(keep, i);
         match (e) { A(s, k) => { acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
@@ -77,14 +77,14 @@ function main(): i32 {
 		{"rcenum-struct-payload-detector-zero-wasm", `struct Inner { items: i32[] }
 enum Box { Full(Inner), Empty }
 function readit(): i32 {
-    var b: Box = Full(Inner { items: [1,2,3,4] });
-    var r: i32 = 0;
+    let b: Box = Full(Inner { items: [1,2,3,4] });
+    let r: i32 = 0;
     match (b) { Full(inner) => { r = inner.items[0]; }, Empty => { r = 0; } }
     return r;
 }
 function main(): i32 {
-    var s: i32 = 0;
-    var f: i32 = 0;
+    let s: i32 = 0;
+    let f: i32 = 0;
     while (f < 1500) { s = s + readit(); f = f + 1; }
     if (s != 1500) { return 97; }
     return __rc_underflow_count();

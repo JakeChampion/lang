@@ -6,7 +6,7 @@ import (
 )
 
 // strFreshRetIRCases pin the fresh-string-return-CALL reclaim on the self-hosted
-// stack-IR path (#2649). A `var r = f(..)` whose callee f ALWAYS returns a freshly
+// stack-IR path (#2649). A `let r = f(..)` whose callee f ALWAYS returns a freshly
 // allocated string (str_fresh_ret_fns_of: every return is a concat / string method
 // / named producer) means r solely owns the box f moved out — so r is reclaimed at
 // scope exit (and per loop-rebind), closing the caller-side leak the returned
@@ -20,24 +20,24 @@ var strFreshRetIRCases = []struct {
 	// f returns a concat (fresh); r = fmt(42) reclaimed. "n=42" len 4.
 	{"freshret-concat",
 		`import "std/i32";
-function fmt(n: i32): string { return "n=" + n.to_string(); } function main(): i32 { var r: string = fmt(42); return r.len(); }`,
+function fmt(n: i32): string { return "n=" + n.to_string(); } function main(): i32 { let r: string = fmt(42); return r.len(); }`,
 		4},
 	// Un-annotated binding of a fresh-string-returning method-forwarder. len 3.
 	{"freshret-unannotated",
 		`import "std/string";
-function up(s: string): string { return s.to_ascii_upper(); } function main(): i32 { var r = up("abc"); return r.len(); }`,
+function up(s: string): string { return s.to_ascii_upper(); } function main(): i32 { let r = up("abc"); return r.len(); }`,
 		3},
 	// Memory-safety at scale: r = build() reclaimed every iteration (flat heap). A
 	// double-free would corrupt the freelist and crash / return garbage. exit 0.
 	{"freshret-churn-safe",
 		`import "std/i32";
-function build(n: i32): string { return "x=" + n.to_string(); } function main(): i32 { var t: i32 = 0; var k: i32 = 0; while (k < 3000000) { var r: string = build(k); if (r.len() < 3) { t = 1; } k = k + 1; } return t; }`,
+function build(n: i32): string { return "x=" + n.to_string(); } function main(): i32 { let t: i32 = 0; let k: i32 = 0; while (k < 3000000) { let r: string = build(k); if (r.len() < 3) { t = 1; } k = k + 1; } return t; }`,
 		0},
 	// NEGATIVE: id() returns its PARAM (an alias of the caller's arg), so it is not
 	// fresh-returning — r must NOT be reclaimed (freeing it could double-free the
 	// caller-owned box). No __fern_str_free; value stays correct. len 2.
 	{"freshret-return-param-not-reclaimed",
-		`function id(s: string): string { return s; } function main(): i32 { var r: string = id("xy"); return r.len(); }`,
+		`function id(s: string): string { return s; } function main(): i32 { let r: string = id("xy"); return r.len(); }`,
 		2},
 }
 

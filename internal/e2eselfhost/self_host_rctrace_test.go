@@ -37,15 +37,15 @@ import (
 // hevBalancedSrc allocates and drops: every box it makes is dead before main
 // returns, so a correct trace pairs completely and live_bytes is 0.
 const hevBalancedSrc = `function sum(xs: i32[]): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { t = t + xs[i]; i = i + 1; }
     return t;
 }
 
 function main(): i32 {
-    var a: i32 = sum([1, 2].append(3));
-    var s: string = "ab" + "cd";
+    let a: i32 = sum([1, 2].append(3));
+    let s: string = "ab" + "cd";
     return a + s.len();
 }`
 
@@ -58,10 +58,10 @@ function main(): i32 {
 // enough: a local dead before the call is released before it.
 const hevExitLeakSrc = `function bail(n: i32): i32 { exit(n); return 0; }
 function main(): i32 {
-    var keep: i32[][] = [];
-    var i: i32 = 0;
+    let keep: i32[][] = [];
+    let i: i32 = 0;
     while (i < 3) { keep = keep.append([i, 2, 3, 4]); i = i + 1; }
-    var r: i32 = bail(keep.len());
+    let r: i32 = bail(keep.len());
     return r + keep.len();
 }`
 
@@ -494,19 +494,19 @@ func (e errSummary) Error() string { return string(e) }
 // field looks useless — a walk of fixed depth cannot reach user code through
 // every path, and this pins the depth that the leaking path needs.
 const hevTwoAppendSrc = `function grow_local(n: i32): i32[] {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(i); i = i + 1; }
     return xs;
 }
 function grow_param(ys: i32[], n: i32): i32[] {
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < n) { ys = ys.append(j * 2); j = j + 1; }
     return ys;
 }
 function main(): i32 {
-    var a: i32[] = grow_local(40);
-    var b: i32[] = grow_param(a, 40);
+    let a: i32[] = grow_local(40);
+    let b: i32[] = grow_param(a, 40);
     exit(b.len());
     return 0;
 }`

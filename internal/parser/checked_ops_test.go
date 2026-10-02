@@ -44,9 +44,9 @@ func TestCheckedOperatorPrecedence(t *testing.T) {
 // `?` or the compound assignments.
 func TestPostfixTryStillLexesBesideChecked(t *testing.T) {
 	for _, src := range []string{
-		`function f(): Option[i32] { var a: Option[i32] = Some(1); var b: i32 = a?; return Some(b); }`,
-		`function main(): i32 { var a: i32 = 1; a += 2; return a; }`,
-		`function main(): i32 { var a: i32 = 1; var b: i32 = 2; return a * b; }`,
+		`function f(): Option[i32] { let a: Option[i32] = Some(1); let b: i32 = a?; return Some(b); }`,
+		`function main(): i32 { let a: i32 = 1; a += 2; return a; }`,
+		`function main(): i32 { let a: i32 = 1; let b: i32 = 2; return a * b; }`,
 	} {
 		if _, err := Parse(src); err != nil {
 			t.Errorf("parse %q: %v", src, err)

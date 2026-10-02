@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostStructMultiLevelDropIRArm64 is the arm64 port of the MULTI-LEVEL
 // deep-drop (the x86 sibling is TestSelfHostStructMultiLevelDropIRX86_64). The
-// reclaim decision lives in the shared irlower `nested_field_deep_drop_ok` (now an
+// reclaim decision lives in the shared `irtables.nested_field_deep_drop_ok` (now an
 // acyclic-closure gate, not leaf-only), so arm64 inherits multi-level deep-drop
 // through the same generic k_struct emission arm — `bl __fn___struct_drop_B` for a
 // non-leaf inner B, which the old leaf gate never emitted.
@@ -36,8 +36,8 @@ func TestSelfHostStructMultiLevelDropIRArm64(t *testing.T) {
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
 function main(): i32 {
-    var a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
-    var sum: i32 = 0; var j: i32 = 0;
+    let a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
+    let sum: i32 = 0; let j: i32 = 0;
     while (j < 16) { sum = sum + a.b.c.items[j]; j = j + 1; }
     return sum + a.b.bt + a.at;
 }`, "struct_multilevel_drop_arm64_value", 145)
@@ -48,11 +48,11 @@ function main(): i32 {
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
 function mk(): i32 {
-    var a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
+    let a: A = A { b: B { c: C { items: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16] }, bt: 2 }, at: 7 };
     return a.b.c.items[0] + a.b.c.items[15] + a.b.bt + a.at;
 }
 function main(): i32 {
-    var s: i32 = 0; var f: i32 = 0;
+    let s: i32 = 0; let f: i32 = 0;
     while (f < 200000) { s = mk(); f = f + 1; }
     return s - 26;
 }`, "struct_multilevel_drop_arm64_churn", 0)

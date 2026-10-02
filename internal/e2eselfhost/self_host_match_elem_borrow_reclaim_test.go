@@ -34,11 +34,11 @@ var matchElemBorrowReclaimCases = []struct {
 	want int
 }{
 	{"match-on-option-only-child", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, Option[i32]) = (i, Some(i));
-        var r: i32 = 0;
+        let t: (i32, Option[i32]) = (i, Some(i));
+        let r: i32 = 0;
         match (t.1) { Some(v) => { r = t.0 + v; }, None => {} }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -46,10 +46,10 @@ var matchElemBorrowReclaimCases = []struct {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -57,11 +57,11 @@ function main(): i32 {
 	// The array sibling shows the cost is the WHOLE tuple, not the union box:
 	// this shape is flat without the match and 128 B/round with it.
 	{"match-on-union-elem-beside-array", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], Option[i32]) = (i, [i, i + 1], Some(i));
-        var r: i32 = t.0 + t.1[0];
+        let t: (i32, i32[], Option[i32]) = (i, [i, i + 1], Some(i));
+        let r: i32 = t.0 + t.1[0];
         match (t.2) { Some(v) => { r = r + v; }, None => {} }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -69,10 +69,10 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var x: i32 = churn(1000);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let w: i32 = churn(1000);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let x: i32 = churn(1000);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
@@ -80,11 +80,11 @@ function main(): i32 {
 	// POINTER-PAYLOAD safety: the arm binds an i32[] out of the union. The
 	// reclaim now runs on this tuple, so the binding must still be readable.
 	{"pointer-payload-bound-safe", `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], Option[i32[]]) = (i, [i, i + 1], Some([i, i + 2]));
-        var r: i32 = t.0 + t.1[0];
+        let t: (i32, i32[], Option[i32[]]) = (i, [i, i + 1], Some([i, i + 2]));
+        let r: i32 = t.0 + t.1[0];
         match (t.2) { Some(v) => { r = r + v[0] + v[1]; }, None => {} }
         acc = (acc + r) % 91;
         i = i + 1;
@@ -92,8 +92,8 @@ function main(): i32 {
     return acc;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;
@@ -101,11 +101,11 @@ function main(): i32 {
 	// The sharper version: the arm CARRIES the pointer payload out to a local
 	// read after the loop, so it outlives every reclaim point.
 	{"pointer-payload-carried-out-safe", `function churn(n: i32): i32 {
-    var keep: i32[] = [0, 0];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: i32[] = [0, 0];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], Option[i32[]]) = (i, [i, i + 1], Some([i, i + 2]));
+        let t: (i32, i32[], Option[i32[]]) = (i, [i, i + 1], Some([i, i + 2]));
         match (t.2) { Some(v) => { keep = v; }, None => {} }
         acc = (acc + t.0) % 91;
         i = i + 1;
@@ -113,8 +113,8 @@ function main(): i32 {
     return (acc + keep[0] + keep[1]) % 91;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;
@@ -123,22 +123,22 @@ function main(): i32 {
 	// match, which is the shape the escape walk is really for. It must stay
 	// refused — the borrow only covers a scrutinee that is exactly `name.<i>`.
 	{"extracted-elem-still-refused", `function churn(n: i32): i32 {
-    var keep: Option[i32] = None;
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: Option[i32] = None;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var t: (i32, i32[], Option[i32]) = (i, [i, i + 1], Some(i));
+        let t: (i32, i32[], Option[i32]) = (i, [i, i + 1], Some(i));
         keep = t.2;
         acc = (acc + t.0 + t.1[0]) % 91;
         i = i + 1;
     }
-    var r: i32 = 0;
+    let r: i32 = 0;
     match (keep) { Some(v) => { r = v % 91; }, None => {} }
     return (acc + r + 7) % 91;
 }
 function main(): i32 {
-    var w: i32 = churn(1000);
-    var x: i32 = churn(1000);
+    let w: i32 = churn(1000);
+    let x: i32 = churn(1000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;

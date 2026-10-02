@@ -56,7 +56,7 @@ func prepared(t *testing.T, src string, httpDropMain bool) *ast.Program {
 // message says so instead of listing zero providers.
 func TestEnforceSubprocessRejectedOnCompiledTargets(t *testing.T) {
 	src := `function main(): i32 {
-    var r = subprocess("/bin/echo", ["hi"], "");
+    let r = subprocess("/bin/echo", ["hi"], "");
     return r.exit_code;
 }`
 	for _, target := range []string{"wasm32-wasi", "x86-64-linux", "arm64-linux", "arm64-darwin", "arm64-android"} {
@@ -87,7 +87,7 @@ func TestEnforceSubprocessRejectedOnCompiledTargets(t *testing.T) {
 // proc_fork returns -38/ENOSYS so callers degrade at runtime instead.
 func TestEnforceProcByTarget(t *testing.T) {
 	src := `function main(): i32 {
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid == 0) {
         return proc_exec("/bin/true", []);
     }
@@ -131,7 +131,7 @@ func TestEnforceProcByTarget(t *testing.T) {
 // all, so it refuses, the same way it refuses `args` and `env`.
 func TestEnforceHostByTarget(t *testing.T) {
 	src := `function main(): i32 {
-    var h: string = hostname();
+    let h: string = hostname();
     return 0;
 }`
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin", "arm64-android", "wasm32-wasi"} {
@@ -149,7 +149,7 @@ func TestEnforceHostByTarget(t *testing.T) {
 // violation under wasi-http.
 func TestEnforceFsByTarget(t *testing.T) {
 	src := `function main(): i32 {
-    var r = read_file("/etc/config");
+    let r = read_file("/etc/config");
     return 0;
 }`
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi", "arm64-linux"} {
@@ -185,11 +185,11 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // still caught, and the violation names the containing function.
 func TestEnforceTransitiveReach(t *testing.T) {
 	src := `function helper(): string {
-    var r = read_file("/etc/x");
+    let r = read_file("/etc/x");
     return "y";
 }
 function main(): i32 {
-    var s = helper();
+    let s = helper();
     return 0;
 }`
 	vs := platforms.Enforce(prepared(t, src, false), "wasm32-wasi-http")
@@ -213,7 +213,7 @@ function main(): i32 {
 // descriptor are genuine typos.
 func TestEnforceUnknownTargetSkips(t *testing.T) {
 	src := `function main(): i32 {
-    var r = subprocess("/bin/echo", [], "");
+    let r = subprocess("/bin/echo", [], "");
     return r.exit_code;
 }`
 	if vs := platforms.Enforce(prepared(t, src, false), "no-such-target"); vs != nil {
@@ -231,7 +231,7 @@ func TestEnforceUnknownTargetSkips(t *testing.T) {
 // cursor works on every target, only rewinding it is native.
 func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 	src := `function main(): i32 {
-    var m: i64 = __heap_mark();
+    let m: i64 = __heap_mark();
     __heap_release_to(m);
     return (__heap_bump_bytes() as i32);
 }`
@@ -289,15 +289,15 @@ func TestEnforceWasmInexpressibleBuiltins(t *testing.T) {
 	}{
 		{"timer_fd", "pollfd", `function main(): i32 { return timer_fd(50); }`},
 		{"write_file_exec", "fsmode", `function main(): i32 {
-    var r = write_file_exec("/tmp/x", "#!/bin/sh\n");
+    let r = write_file_exec("/tmp/x", "#!/bin/sh\n");
     return 0;
 }`},
 		{"__c_call2_f64", "cabi", `function main(): i32 {
-    var v: f64 = __c_call2_f64((0 as usize), (0 as usize), (0 as usize));
+    let v: f64 = __c_call2_f64((0 as usize), (0 as usize), (0 as usize));
     return 0;
 }`},
 		{"access", "fsmode", `function main(): i32 {
-    var r = access("/tmp/x", 4);
+    let r = access("/tmp/x", 4);
     return 0;
 }`},
 		{"geteuid", "userid", `function main(): i32 { return (geteuid() as i32); }`},
@@ -305,7 +305,7 @@ func TestEnforceWasmInexpressibleBuiltins(t *testing.T) {
 		{"getuid", "userid", `function main(): i32 { return (getuid() as i32); }`},
 		{"getgid", "userid", `function main(): i32 { return (getgid() as i32); }`},
 		{"getgroups", "userid", `function main(): i32 {
-    var g: i64[] = getgroups();
+    let g: i64[] = getgroups();
     return (g.len() as i32);
 }`},
 	}
@@ -369,7 +369,7 @@ func TestEnforceStdoutStreamByTarget(t *testing.T) {
 	srcs := map[string]string{
 		"write":   `function main(): i32 { write("hi"); return 0; }`,
 		"putchar": `function main(): i32 { putchar(65); return 0; }`,
-		"handle":  `function main(): i32 { var w = stdout(); return 0; }`,
+		"handle":  `function main(): i32 { let w = stdout(); return 0; }`,
 	}
 	for name, src := range srcs {
 		for _, target := range []string{"arm64-linux", "arm64-darwin", "arm64-android", "x86-64-linux", "wasm32-wasi"} {
@@ -431,8 +431,8 @@ func TestClassificationCoversCheckerRegistry(t *testing.T) {
 // the other; this is the same shape as the stdout finding in #6507.
 func TestEnforceArgsAndEnvNotOnProxyWorld(t *testing.T) {
 	srcs := map[string]string{
-		"args": `function main(): i32 { var a: string[] = args(); return 0; }`,
-		"env":  `function main(): i32 { var v = env("HOME"); return 0; }`,
+		"args": `function main(): i32 { let a: string[] = args(); return 0; }`,
+		"env":  `function main(): i32 { let v = env("HOME"); return 0; }`,
 	}
 	for capability, src := range srcs {
 		for _, target := range []string{"arm64-linux", "arm64-darwin", "arm64-android", "x86-64-linux", "wasm32-wasi"} {
@@ -483,10 +483,10 @@ func TestEnforceFreestandingGrantsNoHost(t *testing.T) {
 	srcs := map[string]string{
 		"print":  `function main(): i32 { print("hi"); return 0; }`,
 		"clock":  `function main(): i32 { return (now_unix_ms() as i32); }`,
-		"env":    `function main(): i32 { var v = env("HOME"); return 0; }`,
-		"args":   `function main(): i32 { var a: string[] = args(); return 0; }`,
+		"env":    `function main(): i32 { let v = env("HOME"); return 0; }`,
+		"args":   `function main(): i32 { let a: string[] = args(); return 0; }`,
 		"random": `function main(): i32 { return random_i32(); }`,
-		"fs":     `function main(): i32 { var r = read_file("/etc/x"); return 0; }`,
+		"fs":     `function main(): i32 { let r = read_file("/etc/x"); return 0; }`,
 	}
 	for name, src := range srcs {
 		t.Run(name, func(t *testing.T) {
@@ -504,7 +504,7 @@ func TestEnforceFreestandingGrantsNoHost(t *testing.T) {
 // reachable.
 func TestEnforceFreestandingAllowsCore(t *testing.T) {
 	src := `function main(): i32 {
-    var b: i64 = f64_bits(1.5);
+    let b: i64 = f64_bits(1.5);
     return ((b + 1) as i32);
 }`
 	if vs := platforms.Enforce(prepared(t, src, false), "arm64-freestanding"); len(vs) != 0 {
@@ -600,7 +600,7 @@ function logs_a_line(): i32 {
 }
 
 function dead_coercion(): i32 {
-    var g: dyn Greet = Loud { n: 1 };
+    let g: dyn Greet = Loud { n: 1 };
     return g.hello();
 }
 

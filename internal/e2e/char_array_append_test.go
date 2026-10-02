@@ -9,18 +9,18 @@ import "testing"
 // checked too. `s.chars()` is that loop.
 const charArrayAppendSrc = `import "std/string";
 function mk(n: i32): char[] {
-    var out: char[] = [];
-    var i: i32 = 0;
+    let out: char[] = [];
+    let i: i32 = 0;
     while (i < n) { out = out.append((65 + i) as char); i = i + 1; }
     return out;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var cs: char[] = mk(3 + i);
+        let cs: char[] = mk(3 + i);
         if (cs[2] as i32 != 67 || cs[cs.len() - 1] as i32 != 65 + cs.len() - 1) { return 1; }
-        var ds: char[] = "héllo".chars();
+        let ds: char[] = "héllo".chars();
         if (ds.len() != 5 || ds[1] as i32 != 233) { return 2; }
         t = t + cs.len() + ds.len();
         i = i + 1;

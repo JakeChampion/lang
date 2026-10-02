@@ -17,7 +17,7 @@ function main(): i32 {
     if ([1, 2, 3].all_equal()) { return 2; }        // all distinct
     if ([1, 1, 2].all_equal()) { return 3; }        // last differs
     if ([2, 1, 1].all_equal()) { return 4; }        // first differs
-    var e: i32[] = [];
+    let e: i32[] = [];
     if (!e.all_equal()) { return 5; }               // empty -> vacuously true
     if (![5].all_equal()) { return 6; }             // single -> true
     if (!array.all_equal([9, 9])) { return 7; }     // free fn

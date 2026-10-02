@@ -58,8 +58,8 @@ func runCommandModule(t *testing.T, path string) (stdout, stderr string, code in
 // command module exists to carry.
 func TestCommandModuleLeakCensusReportsLeak(t *testing.T) {
 	path := buildCommandModule(t, "function main(): i32 {\n"+
-		"  var a: usize = __alloc(64);\n"+
-		"  var b: usize = __alloc(64);\n"+
+		"  let a: usize = __alloc(64);\n"+
+		"  let b: usize = __alloc(64);\n"+
 		"  print(\"ran\");\n"+
 		"  if (a == 0 || b == 0) { return 1; }\n"+
 		"  return 42;\n}\n", "FERN_LEAKCHECK=1")
@@ -86,9 +86,9 @@ func TestCommandModuleLeakCensusReportsLeak(t *testing.T) {
 // same program says nothing at all.
 func TestCommandModuleLeakCensusBalancesAndIsOptIn(t *testing.T) {
 	const src = "function main(): i32 {\n" +
-		"  var i: i32 = 0;\n" +
+		"  let i: i32 = 0;\n" +
 		"  while (i < 100) {\n" +
-		"    var a: usize = __alloc(64);\n" +
+		"    let a: usize = __alloc(64);\n" +
 		"    __free(a, 64);\n" +
 		"    i = i + 1;\n" +
 		"  }\n  return 0;\n}\n"

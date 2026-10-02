@@ -40,7 +40,7 @@ function mode_file_system(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION] [FILE]...\n";
   out = out + "Synchronize cached writes to persistent storage\n";
   out = out + "\n";
@@ -80,7 +80,7 @@ function flush_writer(w: Writer, mode: i32): Option[IoError] {
 // `report(name, flushed, closed)` — the two per-operand diagnostics
 // after an open, each costing the status.
 function report(name: string, flushed: Option[IoError], closed: Option[IoError]): boolean {
-  var ok: boolean = true;
+  let ok: boolean = true;
   match (flushed) {
     Some(e) => {
       gnu.error("error syncing " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
@@ -121,16 +121,16 @@ function sync_arg(name: string, mode: i32): boolean {
 }
 
 pub function main(): i32 {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   // Declaration order is visible in the ambiguity list: `sync --=x`
   // names these two, then help and version.
   opts = opts.append(gnu.flag("d", "data", opt_data()));
   opts = opts.append(gnu.flag("f", "file-system", opt_file_system()));
-  var data: boolean = false;
-  var file_system: boolean = false;
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "sync", help_text(), 1);
+  let data: boolean = false;
+  let file_system: boolean = false;
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "sync", help_text(), 1);
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -149,7 +149,7 @@ pub function main(): i32 {
     gnu.error("cannot specify both --data and --file-system");
     exit(1);
   }
-  var operands: string[] = g.operands();
+  let operands: string[] = g.operands();
   if (operands.len() == 0) {
     if (data) {
       gnu.error("--data needs at least one argument");
@@ -158,14 +158,14 @@ pub function main(): i32 {
     sync();
     return 0;
   }
-  var mode: i32 = mode_file();
+  let mode: i32 = mode_file();
   if (data) {
     mode = mode_data();
   } else if (file_system) {
     mode = mode_file_system();
   }
-  var ok: boolean = true;
-  var i: i32 = 0;
+  let ok: boolean = true;
+  let i: i32 = 0;
   while (i < operands.len()) {
     if (!sync_arg(operands[i], mode)) {
       ok = false;

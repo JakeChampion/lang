@@ -35,7 +35,7 @@ func TestParseCharAndByteLiterals(t *testing.T) {
 		{`b'\xFF'`, 0xFF, true},
 	}
 	for _, c := range cases {
-		init := varInit(t, `function main(): i32 { var v = `+c.expr+`; return 0; }`)
+		init := varInit(t, `function main(): i32 { let v = `+c.expr+`; return 0; }`)
 		lit, ok := init.(*ast.CharLit)
 		if !ok {
 			t.Errorf("%s parsed to %T, want *ast.CharLit", c.expr, init)
@@ -88,10 +88,10 @@ func TestParseCharLiteralMatchArm(t *testing.T) {
 // escape the author chose is part of what they wrote.
 func TestFormatCharLiteralRoundTrip(t *testing.T) {
 	src := "function main(): i32 {\n" +
-		"  var a: char = 'x';\n" +
-		"  var b: char = '\\u{1F600}';\n" +
-		"  var c: u8 = b'\\x1B';\n" +
-		"  var d: u8 = b'[';\n" +
+		"  let a: char = 'x';\n" +
+		"  let b: char = '\\u{1F600}';\n" +
+		"  let c: u8 = b'\\x1B';\n" +
+		"  let d: u8 = b'[';\n" +
 		"  return 0;\n" +
 		"}\n"
 	prog, err := Parse(src)

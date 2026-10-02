@@ -13,7 +13,7 @@ import (
 // A bare no-op `as f32` therefore FAILED to round to single precision: a value
 // that is not f32-representable (e.g. 16777217.0 = 2^24+1, or a large int)
 // stayed at full f64 precision, diverging from native — which gives f32 a true
-// 4-byte slot and rounds at the cast (cvtsd2ss / fcvt s,d). irlower now emits
+// 4-byte slot and rounds at the cast (cvtsd2ss / fcvt s,d). The lowering now emits
 // the f32_bits/f32_from_bits round-trip (demote to f32, promote back) on an
 // `as f32` cast, applying single-precision rounding while keeping the value in
 // the f64 slot. These tests pin that behaviour against the native
@@ -30,17 +30,17 @@ var f32CastCases = []struct {
 	expected int
 }{
 	// float literal cast: 16777217.0 as f32 rounds to 16777216.0 -> 1
-	{"lit-round", `function main(): i32 { var x: f32 = 16777217.0 as f32; if ((x as f64) == 16777216.0) { return 1; } return 0; }`, 1},
+	{"lit-round", `function main(): i32 { let x: f32 = 16777217.0 as f32; if ((x as f64) == 16777216.0) { return 1; } return 0; }`, 1},
 	// int cast: 16777217 as f32 rounds to 16777216.0 -> 1
-	{"int-round", `function main(): i32 { var x: f32 = 16777217 as f32; if ((x as f64) == 16777216.0) { return 1; } return 0; }`, 1},
+	{"int-round", `function main(): i32 { let x: f32 = 16777217 as f32; if ((x as f64) == 16777216.0) { return 1; } return 0; }`, 1},
 	// cast in a non-binding (argument) position also rounds -> 1
 	{"nonbind-round", `function chk(v: f64): i32 { if (v == 16777216.0) { return 1; } return 0; } function main(): i32 { return chk((16777217.0 as f32) as f64); }`, 1},
 	// a small f32-representable value round-trips exactly: 2.5 -> 2
-	{"exact-small", `function main(): i32 { var a: f32 = 2.5 as f32; return a as i32; }`, 2},
+	{"exact-small", `function main(): i32 { let a: f32 = 2.5 as f32; return a as i32; }`, 2},
 	// a small exact int cast to f32 is unchanged: 5 -> 5
-	{"exact-int", `function main(): i32 { var a: f32 = 5 as f32; return a as i32; }`, 5},
+	{"exact-int", `function main(): i32 { let a: f32 = 5 as f32; return a as i32; }`, 5},
 	// `as f64` / `as float` stay identity (no spurious rounding): 3.5 -> 3
-	{"f64-identity", `function main(): i32 { var x: f64 = 3.5 as f64; return x as i32; }`, 3},
+	{"f64-identity", `function main(): i32 { let x: f64 = 3.5 as f64; return x as i32; }`, 3},
 }
 
 // TestSelfHostF32CastWasmIR pins f32 cast rounding on the wasm IR backend

@@ -136,7 +136,7 @@ function shaped_payloads(ts: typeinfo.Type[]): boolean {
 // releases its argument and one that borrows it promise opposite things of the
 // same call, so neither may stand in for the other.
 function own_masks_equal(a: typeinfo.TypeFunc, b: typeinfo.TypeFunc): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.param_types.len()) {
     if (typeinfo.fn_own_at(a, i) != typeinfo.fn_own_at(b, i)) {
       return false;
@@ -189,7 +189,7 @@ function equal_list(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
     if (!equal(a[i], b[i])) {
       return false;
@@ -289,11 +289,11 @@ pub function env_body(t: typeinfo.Type): string {
 }
 
 function prefixed(name: string, prefix: string): boolean {
-  var n: i32 = prefix.len();
+  let n: i32 = prefix.len();
   if (name.len() <= n) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (name[i] != prefix[i]) {
       return false;

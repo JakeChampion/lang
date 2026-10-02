@@ -109,9 +109,9 @@ function mk(n: i32): Flag;
 function rd(f: Flag): i32;
 
 function main(): i32 {
-	var f: Flag = mk(41);
-	var a: i32 = rd(Flag { on: true, n: 5 });
-	var b: i32 = rd(Flag { on: false, n: 5 });
+	let f: Flag = mk(41);
+	let a: i32 = rd(Flag { on: true, n: 5 });
+	let b: i32 = rd(Flag { on: false, n: 5 });
 	if (f.on && f.n == 41 && a == 5 && b == 0 - 5) { write("` + want + `"); } else { write("flag-bad"); }
 	return 0;
 }`
