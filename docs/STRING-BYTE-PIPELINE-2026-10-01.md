@@ -65,10 +65,9 @@ The repaired compiler's Darwin bootstrap stages 1, 2 and 3 are identical at
 That direct check also found a Reader overflow guard emitted as flat
 `unreachable` inside a folded WAT branch. Wasmtime accepted it, but the
 primary binary assembler exited while encoding it. The guard now uses folded
-syntax. A regression builds and runs the pipeline with `-emit core-module`;
+syntax. A regression builds and runs the pipeline with `-emit core-module`.
 It passes with the primary Linux compiler and the actual Darwin stage 2.
 The full Linux target matrix and `make lint-all` pass after the repair.
-Final full-unit validation is pending.
 
 The Darwin Go harness is currently blocked before tests by a host `ENFILE`
 linker failure. Docker's shared mount also returned `ENFILE` during the full

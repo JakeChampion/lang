@@ -372,7 +372,7 @@ func TestCITestWeightsWritesJobSummary(t *testing.T) {
 
 // A bad invocation must not pass vacuously.
 func TestCITestWeightsBadUsage(t *testing.T) {
-	for _, args := range [][]string{{}, {"nonsense"}, {"check"}, {"check", "/nonexistent-dir", "/nonexistent-weights"}} {
+	for _, args := range [][]string{{}, {"nonsense"}, {"check"}, {"check", "/nonexistent-dir", "/nonexistent-weights"}, {"merge"}, {"merge", "a", "b"}, {"merge", "/nonexistent-dir"}} {
 		code, out := runWeights(t, nil, args...)
 		if code == 0 {
 			t.Errorf("args %q exited 0: %s", args, out)
