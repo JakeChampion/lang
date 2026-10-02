@@ -154,6 +154,27 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
+// httpBodyCap is std/http's `http_limits().body`, the request body a serve
+// loop accepts before it answers 413.
+const httpBodyCap = 1 << 20
+
+// synthResponse stores a fresh HttpResponse with `status`, no body and no
+// headers into local 18.
+func synthResponse(body []byte, alloc uint32, status int32) []byte {
+	body = inst.InstI32Const(body, 12)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 18)
+	body = inst.InstI32Const(body, status)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 18)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 4)
+	body = inst.InstLocalGet(body, 18)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 8)
+	return body
+}
+
 // buildHttpEntryBody assembles `__http_entry`, the wrapper
 // exported as `wasi:http/incoming-handler@0.2.0#handle`.
 //
@@ -257,27 +278,6 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 // __bytes_to_lang_string for every method; the result is
 // functionally equivalent but loses the SSO compare seam. Track
 // in the wasi-http parity PR (next in the series).
-// httpBodyCap is std/http's `http_limits().body`, the request body a serve
-// loop accepts before it answers 413.
-const httpBodyCap = 1 << 20
-
-// synthResponse stores a fresh HttpResponse with `status`, no body and no
-// headers into local 18.
-func synthResponse(body []byte, alloc uint32, status int32) []byte {
-	body = inst.InstI32Const(body, 12)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 18)
-	body = inst.InstI32Const(body, status)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 18)
-	body = inst.InstI32Const(body, 0)
-	body = memory.InstI32Store(body, 2, 4)
-	body = inst.InstLocalGet(body, 18)
-	body = inst.InstI32Const(body, 0)
-	body = memory.InstI32Store(body, 2, 8)
-	return body
-}
-
 func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	allocU8 := idxs["__alloc_u8"]
@@ -1073,7 +1073,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, idxs["__fern_arr_dec"])
 	body = inst.InstDrop(body)
 
-	// 47 i32 locals after the 2 params (slots 2..48). Slot 24
+	// 48 i32 locals after the 2 params (slots 2..49). Slot 24
 	// (formerly $arena_handle) is now unused: per-request memory
 	// is reclaimed by reference counting, not a bump-cursor reset.
 	// Kept allocated to avoid renumbering slots 25..48.
