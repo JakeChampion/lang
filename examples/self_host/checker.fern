@@ -2814,21 +2814,24 @@ function e021_bound_call_diag(pbound: string, at: typeinfo.Type, s: Scope, ln: i
 // method in scope applies to every array receiver — no element match to make,
 // whether the element is a type variable or a concrete `i32[]` / `string[]`.
 // A receiver whose element does not fit is caught against the method's own
-// signature. A slice receiver (`[T]`) is a different namespace and must not
-// match, hence the leading-`[` exclusion.
+// signature. A view receiver (`[T]`) has a separate namespace; the caller
+// selects that namespace from the checked receiver type.
 //
-// Resolution accepts a concrete element; LOWERING does not yet. One
-// `(arr: i32[]) name()` declaration anywhere in a bundle costs an unrelated
-// generic its type-parameter substitution — `num.sum`'s `T.zero()` lowers to
-// a `const_func "T"` and the module is refused as not IR-eligible. That gap is
-// why std/array still declares its concrete-element verbs as
-// `__method_Array_<name>` free functions.
-function (s: Scope) array_recv_method(field: string): MethodSig {
+// Lowering folds concrete methods into free functions keyed by the receiver
+// element and namespace before view erasure, retaining their own type params.
+function array_receiver_matches(rt: string, view: boolean): boolean {
+  if (view) {
+    return parser.spelling_is_view(rt);
+  }
+  return rt.len() > 2 && slice_unchecked(rt, 0, 1) != "[" && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]";
+}
+
+function (s: Scope) array_recv_method(field: string, view: boolean): MethodSig {
   var i: i32 = s.methods.head[sig_name_bucket(field)];
   while (i >= 0) {
     var method: MethodSig = s.methods.methods[i];
     var rt: string = method.receiver_type;
-    if (method.name == field && rt.len() > 2 && slice_unchecked(rt, 0, 1) != "[" && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]") {
+    if (method.name == field && array_receiver_matches(rt, view)) {
       return method;
     }
     i = s.methods.next[i];
@@ -2847,7 +2850,10 @@ function (s: Scope) array_recv_method(field: string): MethodSig {
 //
 // An array-RECEIVER method (`(xs: T[]) <field>`) counts too — same surface,
 // declared the other way round.
-function (s: Scope) has_array_method(field: string): boolean {
+function (s: Scope) has_array_method(field: string, view: boolean): boolean {
+  if (view) {
+    return s.has_array_recv_method(field, true);
+  }
   var target: string = "__method_Array_" + field;
   var tn: i32 = target.len();
   var i: i32 = s.sigs.am_head[sig_name_bucket(target)];
@@ -2861,7 +2867,7 @@ function (s: Scope) has_array_method(field: string): boolean {
     }
     i = s.sigs.am_next[i];
   }
-  return s.has_array_recv_method(field);
+  return s.has_array_recv_method(field, false);
 }
 
 // try_array_method_type resolves the result type of an array method call
@@ -2878,7 +2884,7 @@ function (s: Scope) has_array_method(field: string): boolean {
 // itself (the receiver type), short-circuited ahead of the sig scan.
 function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string): typeinfo.Type {
   match (recv_ty) {
-    typeinfo.TypeArray(_) => {
+    typeinfo.TypeArray(array) => {
       if (field == "append" || field == "with") {
         return recv_ty;
       }
@@ -2888,6 +2894,9 @@ function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string)
       // the "isn't a typed value" arm and the statement types unknown.
       if (field == "len") {
         return t_i32();
+      }
+      if (array.view) {
+        return s.arr_recv_ret_type(recv_ty, s.array_recv_method(field, true));
       }
       var target: string = "__method_Array_" + field;
       var tn: i32 = target.len();
@@ -2902,7 +2911,7 @@ function (s: Scope) array_method_ret_type(recv_ty: typeinfo.Type, field: string)
         }
         i = s.sigs.am_next[i];
       }
-      var arm: MethodSig = s.array_recv_method(field);
+      var arm: MethodSig = s.array_recv_method(field, false);
       if (arm.name.len() > 0) {
         return s.arr_recv_ret_type(recv_ty, arm);
       }
@@ -2937,7 +2946,7 @@ function (s: Scope) arr_recv_ret_type(recv_ty: typeinfo.Type, arm: MethodSig): t
   if (rt.len() <= 2) {
     return arm.ret_type;
   }
-  var elem_param: string = slice_unchecked(rt, 0, rt.len() - 2) + "";
+  var elem_param: string = parser.array_method_element(rt);
   match (recv_ty) {
     typeinfo.TypeArray(ra) => {
       var tps: string[] = [elem_param];
@@ -3635,12 +3644,12 @@ function method_namespace_of(t: typeinfo.Type): string {
   return "";
 }
 
-function (s: Scope) has_array_recv_method(field: string): boolean {
+function (s: Scope) has_array_recv_method(field: string, view: boolean): boolean {
   var i: i32 = s.methods.head[sig_name_bucket(field)];
   while (i >= 0) {
     var method: MethodSig = s.methods.methods[i];
     var rt: string = method.receiver_type;
-    if (method.name == field && rt.len() > 2 && slice_unchecked(rt, 0, 1) != "[" && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]") {
+    if (method.name == field && array_receiver_matches(rt, view)) {
       return true;
     }
     i = s.methods.next[i];
@@ -5574,12 +5583,15 @@ function param_exprs(tr: parser.TypeRef, tp: string, es: ast.Expr[], s: Scope): 
   if (es.len() == 0) {
     return out;
   }
-  if (tr.array_depth > 0) {
+  if (tr.array_depth > 0 || tr.is_view) {
     var elems: ast.Expr[] = [];
     for e in es {
       if let ast.ExprArray(ea) = e {
         elems = util.append_all(elems, ea.elements);
       }
+    }
+    if (tr.is_view) {
+      return param_exprs(tr.args[0], tp, elems, s);
     }
     return param_exprs(parser.elem_type_ref(tr), tp, elems, s);
   }
@@ -6751,17 +6763,12 @@ function check_program(prog: ast.Stmt[]): ProgramTypes {
 // to Types via type_from_name. The table is built in one pass and
 // then passed to check_module's per-function body walk so calls
 // (including recursive / mutually-recursive ones) can resolve.
-// func_ret_type resolves a FuncDecl's declared return type, re-entering the
-// `[T]` view-ness the parse-time erasure recorded on ret_slice (#9944).
+// func_ret_type resolves a FuncDecl's declared return type.
 function func_ret_type(fd: parser.FuncDecl, tn: TypeNames): typeinfo.Type {
   if (fd.ret_fn_ret.len() > 0 && (fd.ret_type == "fn" || fd.ret_type == "fn[]")) {
     return declared_callable_type(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, fd.type_params, tn);
   }
-  var rt: typeinfo.Type = type_from_name_erasing_tparams(fd.ret_type, fd.type_params, tn);
-  if (fd.ret_slice) {
-    return as_view(rt);
-  }
-  return rt;
+  return type_from_name_erasing_tparams(fd.ret_type, fd.type_params, tn);
 }
 
 // A lambda's own function type, as a binding of its name sees it.
@@ -6806,14 +6813,10 @@ function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   return s.resolve_type(lm.ret_type);
 }
 
-// var_declared_type resolves a StmtVar's annotation, re-entering the `[T]`
-// view-ness the parse-time erasure recorded on is_view (#9944).
+// var_declared_type resolves a StmtVar's annotation.
 function var_declared_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
   if (v.fn_ret.len() > 0 && (v.type_name == "fn" || v.type_name == "fn[]")) {
     return declared_callable_type(v.type_name, v.fn_ret, v.fn_param_types, s.tparams, s.type_names());
-  }
-  if (v.is_view) {
-    return as_view(s.resolve_type(v.type_name));
   }
   return s.resolve_type(v.type_name);
 }
@@ -7200,6 +7203,9 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
     var elem: parser.TypeRef = parser.elem_type_ref(r);
     return t_array(type_from_ref_names(elem, tn));
   }
+  if (r.is_view) {
+    return t_view(type_from_ref_names(r.args[0], tn));
+  }
   // array_depth == 0 below. `name` is this node's canonical spelling — the
   // primitive / struct / union key and the unknown-reason text.
   var name: string = parser.render_type_ref(r);
@@ -7416,6 +7422,9 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
     var elem: parser.TypeRef = parser.elem_type_ref(r);
     return t_array(type_from_ref_subst(elem, tparams, targs, tn));
   }
+  if (r.is_view) {
+    return t_view(type_from_ref_subst(r.args[0], tparams, targs, tn));
+  }
   if (!r.is_tuple && r.args.len() == 0) {
     var tpi: i32 = util.index_of_str(tparams, r.base);
     if (tpi >= 0 && tpi < targs.len()) {
@@ -7535,11 +7544,13 @@ function gc_is_typevar_name(n: string, tparams: string[], tn: TypeNames): boolea
 function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], tn: TypeNames, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
   var ns: string[] = names;
   var ts: typeinfo.Type[] = types;
-  if (r.array_depth > 0) {
+  if (r.array_depth > 0 || r.is_view) {
     match (at) {
       typeinfo.TypeArray(a) => {
-        var elem: parser.TypeRef = parser.elem_type_ref(r);
-        return gc_bind_param(elem, a.elem, tparams, tn, ns, ts);
+        if (r.array_depth > 0) {
+          return gc_bind_param(parser.elem_type_ref(r), a.elem, tparams, tn, ns, ts);
+        }
+        return gc_bind_param(r.args[0], a.elem, tparams, tn, ns, ts);
       },
       _ => {
         return (ns, ts);
@@ -7751,14 +7762,11 @@ function split_fn_param_spellings(csv: string): string[] {
 // Parameters use the same retained scalar/array callable contract as locals,
 // fields and results. No recorded result means an opaque tag, not zero arity.
 // param_decl_type is a declared parameter's type: its sidecar type, else its
-// resolved name, re-entering the `[T]` view-ness the parser erased (#9944).
+// resolved name.
 function param_decl_type(p: ast.ParamDecl, tparams: string[], tn: TypeNames): typeinfo.Type {
   var t: typeinfo.Type = fn_param_decl_type(p, tparams, tn);
   if (is_unknown(t)) {
     t = type_from_name_erasing_tparams(p.type_name, tparams, tn);
-  }
-  if (p.is_view) {
-    return as_view(t);
   }
   return t;
 }
@@ -7776,9 +7784,6 @@ function (s: Scope) resolve_param(p: ast.ParamDecl): typeinfo.Type {
   var ty = fn_param_decl_type(p, s.tparams, s.type_names());
   if (!is_unknown(ty)) {
     return ty;
-  }
-  if (p.is_view) {
-    return as_view(s.resolve_type(p.type_name));
   }
   return s.resolve_type(p.type_name);
 }
@@ -8591,7 +8596,7 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
 function slice_escape_diags(fn: parser.FuncDecl, s: Scope, sums: ViewSum[], vix: ViewIndex): SlcWalk {
   var localarr: string[] = [];
   var tainted: string[] = [];
-  return slc_walk(fn.body, fn.name, s, view_positions(fn), localarr, tainted, sums, vix, fn.ret_slice);
+  return slc_walk(fn.body, fn.name, s, view_positions(fn), localarr, tainted, sums, vix, parser.spelling_is_view(fn.ret_type));
 }
 
 // ---------------------------------------------------------------------------
@@ -10483,7 +10488,7 @@ function loop_diags(stmts: ast.Stmt[], in_loop: boolean, labels: string[]): util
 // this feeds; the fixpoints confirm the arity diagnostics are unchanged).
 pub function count_type_args(t: string): i32 {
   var r: parser.TypeRef = parser.parse_type_ref(t);
-  if (r.is_tuple || r.array_depth > 0 || r.args.len() == 0) {
+  if (r.is_tuple || r.is_view || r.array_depth > 0 || r.args.len() == 0) {
     return 0 - 1;
   }
   return r.args.len();
@@ -13788,8 +13793,8 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
     typeinfo.TypeString(_) => {
       return field != "len" && field != "as_bytes" && s.lookup_method(field, "string").name.len() == 0;
     },
-    typeinfo.TypeArray(_) => {
-      return field != "append" && field != "with" && field != "len" && !s.has_array_method(field);
+    typeinfo.TypeArray(array) => {
+      return field != "append" && field != "with" && field != "len" && !s.has_array_method(field, array.view);
     },
     typeinfo.TypeMap(_) => {
       return !util.has_str(s.methods_in_namespace("Map"), field);
@@ -14997,7 +15002,7 @@ function redeclares(funcs: parser.FuncDecl[], di: i32): boolean {
     if (f2.receiver_type.len() == 0 && pe.receiver_type.len() == 0 && pe.name == f2.name) {
       earlier = true;
     }
-    if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && parser.receiver_base(pe.receiver_type) == parser.receiver_base(f2.receiver_type)) {
+    if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type)) {
       earlier = true;
     }
     ej = ej + 1;
@@ -15045,7 +15050,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
   }
   // E006: a free function redeclared (same name, both receiver-less), or
-  // a method redeclared (same name AND receiver type). The redeclaration
+  // a method redeclared (same name AND receiver namespace). The redeclaration
   // SITE — the second + occurrences — is flagged, matching the Go
   // checker.
   var di: i32 = 0;
@@ -15055,7 +15060,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else {
-        out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + parser.receiver_base(f2.receiver_type) + " redeclared", f2.line, f2.col));
+        out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + parser.receiver_namespace(f2.receiver_type) + " redeclared", f2.line, f2.col));
       }
     }
     // E021: a method whose receiver type isn't a known struct / enum /
@@ -17880,6 +17885,9 @@ function e064_unknown_name_tref(tr: parser.TypeRef, tn: TypeNames, extra_known: 
   if (tr.array_depth > 0) {
     var elem: parser.TypeRef = parser.elem_type_ref(tr);
     return e064_unknown_name_tref(elem, tn, extra_known);
+  }
+  if (tr.is_view) {
+    return e064_unknown_name_tref(tr.args[0], tn, extra_known);
   }
   // Tuple: out of scope for the array/generic-arg widening.
   if (tr.is_tuple) {
@@ -20822,9 +20830,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     // caller, so it cannot dangle. Reporting on both flags every
     // `T[]`-returning function that hands a local array back — a move,
     // and legal — which is what bigint / sort / cmp / unicode do.
-    // The flag comes from the parser rather than ret_type because
-    // parse_type_name erases `[T]` to `T[]`.
-    if (mod.funcs[i].ret_slice) {
+    if (parser.spelling_is_view(mod.funcs[i].ret_type)) {
       body_diags = util.append_diags(body_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums, slc_ix).diags);
     }
     // E067: a value of a @must_consume struct/enum type must be consumed
@@ -22144,6 +22150,9 @@ function type_to_irtag(t: typeinfo.Type): string {
       if (elem.len() == 0) {
         return "";
       }
+      if (a.view) {
+        return "[" + elem + "]";
+      }
       return elem + "[]";
     },
     typeinfo.TypeFunc(_) => {
@@ -22263,6 +22272,9 @@ function type_to_arrtag(t: typeinfo.Type): string {
       var et: string = type_to_irtag(a.elem);
       if (et == "") {
         return "";
+      }
+      if (a.view) {
+        return "[" + et + "]";
       }
       return et + "[]";
     },
@@ -23184,8 +23196,9 @@ function vb_annotation_of(t: typeinfo.Type): string {
       if (type_label(a.elem) == "str") {
         return "";
       }
-      // A spelling, not a message: lowering reads a view as the owned array.
-      return type_label(t_array(a.elem));
+      // Keep the checked namespace until method calls have been resolved.
+      // The AST lowering erases views only after the typed module is built.
+      return typeinfo.spelling(t);
     },
     typeinfo.TypeUnion(u) => {
       if (u.args.len() == 0) {

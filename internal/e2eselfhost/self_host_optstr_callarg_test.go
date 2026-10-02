@@ -16,10 +16,7 @@ import (
 //
 // Exits confirmed against BOTH oracles (bin/fern -interp and native x86-64).
 // Each case re-runs under FERN_SANITIZE=1 (identical exit, no over-release /
-// use-after-free), and the flipped cell also re-compiles with
-// FERN_SELFHOST_RC_PLAN=0, where the escape gate reverts to body_unsafe_for
-// and the cell must fall back to its old safe leak — same exit, never a
-// polarity change.
+// use-after-free).
 
 func optstrCallargCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
@@ -113,27 +110,4 @@ func TestSelfHostOptStrCallargX86_64(t *testing.T) {
 			}
 		})
 	}
-
-	// Plan-off leg on the flipped cell: the escape gate reverts to
-	// body_unsafe_for, which reads the call arg as an escape, so the credit
-	// is withheld and the cell reverts to its old safe leak — the exit must
-	// not move and nothing may over-release. The knob is the AST lowering's,
-	// so this leg compiles on it.
-	t.Run("callarg_plan_off_reverts_to_leak", func(t *testing.T) {
-		src := optstrCallargCases()[0].src
-		asm := hevCompile(t, runner, driverBin, src, []string{"FERN_SEM_IR=", "FERN_LEAKCHECK=1", "FERN_SELFHOST_RC_PLAN=0"})
-		progBin := buildBin(t, gcc, dir, "optstrcallarg_planoff", asm)
-		stderr, exit := hevRun(t, runner, progBin)
-		if exit != 14 {
-			t.Fatalf("plan-off exited %d, want 14 — the fallback must change counts, never answers", exit)
-		}
-		summary := leakSummaryLine(stderr)
-		var allocs, frees, live int64
-		if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
-			t.Fatalf("parse %q: %v", summary, err)
-		}
-		if live == 0 {
-			t.Fatalf("plan-off unexpectedly clean (%s) — the off-plan gate widened; that belongs to its own change", summary)
-		}
-	})
 }

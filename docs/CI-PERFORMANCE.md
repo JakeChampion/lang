@@ -492,11 +492,6 @@ lane's floor is now the per-seed type-check cost itself.
 - Per-job setup (checkout, toolchain, `go test -c`) is 29 of the 328
   job-minutes of a suite, a mean of 28 s per job. Merging small jobs would
   not repay the longer critical path it creates.
-- `test-e2e-selfhost-x86_64-shard0` is 11 minutes because
-  `TestSelfHostAssumeEligibleByteIdenticalX86_64` is 503 s of it: 346 s in
-  the checked per-process route (83 driver processes, each paying a ~10 s
-  parse floor) and 123 s in emit-all. The per-process route is the thing
-  under test, so that cost is the guarantee's.
 - `test-units-x86_64` is bounded by three serial packages, `internal/ir`
   (392 s), `internal/ssa` (351 s) and `internal/printer` (349 s), which
   run concurrently with each other. None can take `t.Parallel`: `ir`'s
@@ -872,6 +867,13 @@ x86 directory is ~105 MB uncompressed (the rows of
 `.github/selfhost-driver-sizes.txt`), stored zstd-compressed by
 actions/cache; with three savers, up to three directories per tree.
 
+Measured on the change's own first run (36917972646), before any cache had
+been saved, so from the shared disk directory alone: `diff-selfhost-x86_64`
+17.3 to 5.4 minutes and `diff-selfhost-arm64` 14.5 to 5.7, the three
+`go test` invocations of each job no longer each rebuilding the drivers.
+Splitting those jobs into seed shards was prepared and dropped on that
+number: two more runner slots for about two minutes.
+
 What it cannot do: the first run on a tree whose self-host sources or
 stdlib changed builds cold on every shard as before, and saves; the next
 run at that tree (a merge-main push, the main validation when it is not
@@ -879,6 +881,90 @@ adopted) hits. A pull request's run restores caches saved on its own
 branch and on main; main's cache is refreshed only by a main run that
 runs the lane. Branch-scoped caches and the 10 GB repository limit are
 why the shards do not save.
+
+## Eleventh change: the arm64 gate is three shards
+
+The main ruleset requires two checks, `Lint / lint` and
+`Full suite / Test e2e arm64 / test-e2e-arm64`, and pull requests here merge
+when those two are green. Lint is 3.5-4.7 minutes. The arm64 job was one
+job running ~690 `TestArm64*` tests in two worker processes: 8.0-9.1 minutes
+of wall on the three green runs of the ninth measurement, after 7-10 minutes
+queued for an arm64 runner. So the merge gate was that one job.
+
+It is now three shards of equal count (`scripts/shard-tests` with no weights
+file), each in two workers, behind a leaf job that keeps the required check's
+exact name and fails unless every shard succeeded, a vanished runner
+included. Three arm64 runner slots instead of one, for a gate of roughly a
+third of the wall plus the leaf's queue wait. The `test-e2e-other` aarch64
+leg, one shard of 9.9-12.2 minutes and the longest job outside the self-host
+lane, is two shards by the same arithmetic.
+
+`selfhost-fixpoints-x86_64` ran four whole-compiler proofs in one job, 2.0,
+2.4, 2.6 and 3.6 minutes of them after a shared fern.fern build: two jobs of
+two proofs each now, the build coming from the driver cache in both.
+
+`test-e2e-wasm` ran its 9.0-9.8 minutes in one serial process per host
+while every test waited on a wasmtime subprocess; it runs in two isolated
+worker processes now, as the other e2e lanes do. The self-host lane's single
+aarch64 shard (8.5 minutes) is two.
+
+Lint, the other required check, spent 2.0 of its 4.7 minutes in
+`fern -check sources`, and 146 of those seconds locally were
+`tools/selfhost_driver_check.sh` type-checking 47 drivers one after another,
+each reading the compiler's closure again. The loop runs one check per core
+now (`xargs -P`): 44 s on the 4-core container, and the stdlib loop beside it
+16 s to 5 s. The `fern test cache` step (1.2 minutes) stays serial: its two
+probes edit sources and read `go test`'s cache verdicts, so running them at
+once would have each probe invalidating the other's cached result.
+
+Sharding it found a bug in `scripts/shard-tests`: with an empty weights file
+(the `/dev/null` fallback a lane without weights gets, or a file of comments)
+awk's `NR == FNR` idiom read every test name as a weight row, and every shard
+printed nothing. The self-host lane's shard step then exited 0 on an empty
+selection, which would have been thirteen green shards running no tests.
+The weights are now read in `BEGIN`, the partition is unchanged when the
+weights file has rows (checked on the live self-host list), the empty
+selection exits 1 in every lane, and `TestShardTestsCoversTheListWithAndWithoutWeights`
+runs the script with an empty, a comment-only, a missing and a real weights
+file and checks the buckets partition the input.
+
+## Twelfth change: the remaining single long jobs, and the gate's other half
+
+With the self-host shards shortened, the next long poles were single jobs:
+`test-e2e-x86_64` at 13.3 minutes (two shards now, like the arm64 gate),
+`test-units-x86_64` at 10.4 (two jobs per host: `internal/ir`, `ssa` and
+`printer`, each 350-390 s of serial tests that cannot t.Parallel, apart from
+the other 75 packages they were sharing four cores with), and the self-host
+lane's shard 0, whose `TestSelfHostAssumeEligibleByteIdenticalX86_64` is
+503 s of CPU-bound work already running four wide (83 checked per-process
+emits, each paying the whole-program parse floor). No weight can place a
+test that size without making its shard the longest, so it runs in a job of
+its own and leaves the shard partition. The test, and its job, went with
+`-assume-eligible` when the typed lowering lost its off switch (#10980).
+
+Lint, the gate's other half, ran twelve steps one after another. The eight
+cheap, read-only ones (`vet`, `gofmt-check`, `fmt-check`, `deadcode`,
+`actionlint`, `testnames`, `ci-selftest`, `digest-check`) are one
+`make -j -k lint-fast` step now, 85 s on the 4-core container for all of
+them; `check-sources` and `fern-test-cache` keep their steps, the first
+because it is the long one and the second because its probe edits a source
+file while it runs.
+
+### A failed test is readable without its log
+
+Every test job now ends its test steps with `scripts/ci-annotate-failures`
+on the test2json streams gotestsum writes (`GOTESTSUM_JSONFILE`, set once
+per workflow) and the `worker-*.jsonl` files `cmd/ci-test-workers` leaves
+behind. It runs only after a failure and prints one `::error` annotation
+per failed test, with the last lines of that test's output, up to the ten
+GitHub keeps per step. The annotations are what the Checks tab shows and
+what the REST API serves without a redirect to blob storage, so a failure
+is readable from the places a job log is not: a cancelled run after the
+failure reaper, a network that refuses the log redirect, a phone. Before
+this, the coreutils lane's red on main could be seen but not read from
+here, and root-causing it meant reproducing locally against a different
+coreutils oracle. `TestTestRunningJobsAnnotateTheirFailures` pins one step
+per test-running job, after its last test step.
 
 ### Next measurements
 

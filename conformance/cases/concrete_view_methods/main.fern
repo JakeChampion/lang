@@ -1,0 +1,21 @@
+// No generic declarations: concrete method folding must run on its own.
+function (xs: [u8]) back(): u8 {
+  return xs[xs.len() - 1];
+}
+
+function (xs: u8[]) back(): u8 {
+  return xs[0];
+}
+
+function main(): i32 {
+  var source: string = "az";
+  var bytes = source.as_bytes();
+  var owned: u8[] = [97 as u8, 122 as u8];
+  if (bytes.back() != 122 as u8 || owned.back() != 97 as u8) {
+    return 1;
+  }
+  if (source.as_bytes().back() != 122 as u8) {
+    return 2;
+  }
+  return 0;
+}

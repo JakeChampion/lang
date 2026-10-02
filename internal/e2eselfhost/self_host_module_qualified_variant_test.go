@@ -69,7 +69,7 @@ func checkSelfHostModuleQualifiedVariant(t *testing.T, targets []string) {
 				cmd = runX86_64Bin(q, bin)
 			}
 			compile := exec.Command(driver, args...)
-			compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR=1", "FERN_SEM_IR_REPORT=1")
+			compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR_REPORT=1")
 			report, err := compile.CombinedOutput()
 			if err != nil {
 				t.Fatalf("compile: %v\n%s", err, report)

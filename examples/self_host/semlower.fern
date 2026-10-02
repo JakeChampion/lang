@@ -8,30 +8,13 @@
 //
 // The substitution is whole: every declaration produced, and
 // `ircore.lower_gated` reads the produced bodies in place of lowering them. A
-// refusal fails the compile with exit 3, after a line naming each one. With
-// FERN_SEM_IR empty, a backend receives the AST lowering, op for op.
+// refusal fails the compile with exit 3, after a line naming each one.
 //
 // The result is handed to the emit path as a VALUE (`ircore.Sub`) rather than
 // produced inside it, so that only a driver that wants the path links the
 // pipeline behind it. Linking it everywhere cost the eight backend-carrying
 // drivers 6.7-10.2% of their bytes for a flag they never read.
-//
-// Only the bisect knobs (FERN_SEM_IR_ONLY / FERN_SEM_IR_SKIP) build a mixed
-// module, and two contracts hold it together, one per direction:
-//
-//   - An AST-lowered CALLER of a produced callee reads registries derived from
-//     that callee's SYNTAX, which disagree with the contract a produced body
-//     honours. `ssarc.caller_sigs` rewrites them from the verified result and
-//     parameter types, and the AST lowering runs with the rewritten set.
-//   - A produced CALLER of an AST-lowered callee has no such repair — the
-//     callee's parameter modes are whatever the interprocedural fixpoints
-//     concluded, not what its declaration says — so such a body keeps the AST
-//     lowering instead, and so does anything that called it. `prune` is that
-//     fixpoint.
-import "./ast";
-import "./astwalk";
 import "./asmcore";
-import "./ir";
 import "./ircore";
 import "./checker";
 import "./constfold";
@@ -50,18 +33,13 @@ import "./util";
 // Every body the substitution is considering, declarations first (aligned with
 // mod.funcs) and then the instances the declarations asked for. `n1` is the
 // symbol a body defines and `n2` the receiver-qualified spelling a method's
-// call op names instead; `keep` is whether the body is still going to be
-// emitted, which `prune` only ever turns off.
+// call op names instead; `keep` is whether the body is emitted.
 struct Rows {
   body: irlower.LowerResult[],
   n1: string[],
   n2: string[],
   keep: boolean[],
   grows: ssaunits.GrowRow[],
-  // The type of every function value each body calls, one entry per
-  // indirect call; `prune` reads it against the values the AST lowering
-  // builds.
-  called: typeinfo.Type[][],
   // Each row's unit plan, kept so a second lowering can take the plan back
   // rather than computing it again for a row the ownership inference did not
   // move (#9969).
@@ -70,30 +48,8 @@ struct Rows {
   why: string[],
 }
 
-// sem_ir_on reports whether the semantic lowering runs: it does unless
-// FERN_SEM_IR is set EMPTY, which is the AST lowering unchanged.
-//
-// The empty value is the off spelling, which is DELIBERATELY not what the
-// flags beside it do — `ircore.strict_ir_on` and its neighbours read presence
-// alone — so do not "fix" it back. `FERN_SEM_IR=` is how a differential
-// harness spells the control leg, and reading it as "set, therefore on" made
-// one compare the semantic path against itself: green, and measuring nothing.
-// A flag whose whole job is to have an off column has to have one, and now
-// that the path is the default the empty value is that column.
-pub function sem_ir_on(): boolean {
-  match (env("FERN_SEM_IR")) {
-    Some(v) => {
-      return v.len() > 0;
-    },
-    None => {
-      return true;
-    }
-  }
-}
-
 // sem_report_on reports whether FERN_SEM_IR_REPORT asks for the per-module
-// tally, and for a line per declaration when a bisect knob keeps a mixed
-// module. Nothing about the emitted program changes with it.
+// tally. Nothing about the emitted program changes with it.
 pub function sem_report_on(): boolean {
   match (env("FERN_SEM_IR_REPORT")) {
     Some(v) => {
@@ -105,47 +61,12 @@ pub function sem_report_on(): boolean {
   }
 }
 
-// sem_ir_only is the bisect knob: a comma-separated list of name prefixes, and
-// only a declaration matching one of them is produced. Everything else keeps
-// the AST lowering, and `prune` carries the consequences — so a run under it is
-// a mixed module built the same way any other is. Empty (or unset) produces
-// everything. It exists because a defect this path introduces shows up as a
-// wrong answer from a WHOLE PROGRAM, and halving the produced set is the only
-// way to walk in on it: the conformance corpus agrees with the AST path on 496
-// of 498 cases and the compiler it builds still segfaults.
-function sem_ir_only(): string {
-  match (env("FERN_SEM_IR_ONLY")) {
-    Some(v) => {
-      return v;
-    },
-    None => {
-      return "";
-    }
-  }
-}
-
-// FERN_SEM_IR_SKIP is the other half of the knob: the same prefix list, read as
-// an exclusion. Halving the produced set with FERN_SEM_IR_ONLY cannot isolate a
-// defect that needs a produced CALLER and a produced CALLEE, because either
-// half prunes the call between them; removing one prefix at a time from the
-// whole set can.
-function sem_ir_skip(): string {
-  match (env("FERN_SEM_IR_SKIP")) {
-    Some(v) => {
-      return v;
-    },
-    None => {
-      return "";
-    }
-  }
-}
-
 // sem_reuse_on reports whether the second lowering the ownership inference
 // asks for takes back the rows the inference did not move, instead of planning
 // and lowering every row again (#9969).
 //
-// `FERN_SEM_REUSE=` is the off column, spelled the way `sem_ir_on` spells
-// its own: set-but-empty re-lowers everything. It is what
+// `FERN_SEM_REUSE=` (set but empty) is the off column: it re-lowers
+// everything. It is what
 // TestSelfHostInferredReuseIsIdentical compares the reuse against, and the
 // reason the reuse can be held to byte equality rather than argued for — a
 // fast path with no slow path to check is a fast path nothing checks.
@@ -160,43 +81,10 @@ function sem_reuse_on(): boolean {
   }
 }
 
-function has_prefix_in(list: string, name: string): boolean {
-  var at: i32 = 0;
-  var field: string = irlower.csv_nth(list, at);
-  while (field.len() > 0) {
-    if (util.str_has_prefix(name, field)) {
-      return true;
-    }
-    at = at + 1;
-    field = irlower.csv_nth(list, at);
-  }
-  return false;
-}
-
-// selected reports whether the bisect knobs admit this declaration.
-function selected(only: string, skip: string, name: string): boolean {
-  if (skip.len() > 0 && has_prefix_in(skip, name)) {
-    return false;
-  }
-  if (only.len() == 0) {
-    return true;
-  }
-  return has_prefix_in(only, name);
-}
-
-// bisecting reports whether a bisect knob is set, the one case where a
-// refusal keeps the AST lowering for what it covers rather than failing the
-// compile.
-function bisecting(): boolean {
-  return sem_ir_only() != "" || sem_ir_skip() != "";
-}
-
-// report names a refusal on stderr. Outside the bisect knobs every refusal
-// fails the compile, and the line is the error's detail.
+// report names a refusal on stderr: the detail of the error the refusal
+// fails the compile with.
 function report(what: string, why: string): i32 {
-  if (sem_report_on() || !bisecting()) {
-    eprint("FERN_SEM_IR: " + what + ": " + why);
-  }
+  eprint("FERN_SEM_IR: " + what + ": " + why);
   return 0;
 }
 
@@ -208,9 +96,8 @@ function tally(what: string, why: string): i32 {
   return 0;
 }
 
-// declined is the cache entry for a function this boundary is not emitting:
-// `ok: false` is what the substitution reads as "keep the AST body", and
-// nothing emits from it, so the partial-op shape ircore.lower_failed_refuse
+// declined is the cache entry for a function this boundary is not emitting.
+// Nothing emits from it, so the partial-op shape ircore.lower_failed_refuse
 // guards against cannot arise.
 function declined(why: string): irlower.LowerResult {
   return irlower.LowerResult {
@@ -234,11 +121,10 @@ function superseded(): irlower.LowerResult {
 }
 
 // produced_plan plans one function's units. A refusal at either stage yields a
-// plan that is not ok, and the body it would have lowered keeps the AST one.
+// plan that is not ok.
 function produced_plan(p: semsource.Produced): ssaunits.Plan {
   // A template's erased body is not a body this boundary has: its instances
-  // are separate symbols of their own, and the erased symbol keeps the AST
-  // lowering that its own AST callers name.
+  // are separate symbols of their own.
   if (p.template) {
     return ssaunits.refused("generic template");
   }
@@ -249,10 +135,10 @@ function produced_plan(p: semsource.Produced): ssaunits.Plan {
 }
 
 // refusal is why a row's body is not emitted, or "" where nothing refused it:
-// the body was produced, a template's instances stand for it, it is an
-// `@import` extern, or a bisect knob left it out (`considered` false).
-function refusal(p: semsource.Produced, body: irlower.LowerResult, considered: boolean): string {
-  if (!considered || body.ok || p.bodyless) {
+// the body was produced, a template's instances stand for it, or it is an
+// `@import` extern.
+function refusal(p: semsource.Produced, body: irlower.LowerResult): string {
+  if (body.ok || p.bodyless) {
     return "";
   }
   if (p.template) {
@@ -291,387 +177,6 @@ function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irlo
   return r;
 }
 
-// A per-type drop or release helper is emitted alongside whichever bodies
-// need it, so it is a provided body during the scan rather than a call that
-// escapes.
-function is_drop_helper(name: string): boolean {
-  return util.str_has_prefix(name, "__sem_drop_") || util.str_has_prefix(name, "__sem_release_");
-}
-
-function live_reg(r: Rows): irlower.SigReg {
-  var rows: string[] = [];
-  var i: i32 = 0;
-  while (i < r.body.len()) {
-    if (r.keep[i]) {
-      rows = rows.append(r.n1[i]);
-      if (r.n2[i].len() > 0) {
-        rows = rows.append(r.n2[i]);
-      }
-    }
-    i = i + 1;
-  }
-  return irlower.sig_reg_of(rows);
-}
-
-// escaping_callee names the first direct call or function value in a produced
-// body that reaches a symbol no surviving produced body defines. The runtime
-// helpers, the C calls and the `@import` externs are provided bodies with a
-// fixed ABI — the extern's the contract its declaration spells, which the
-// wasm bridge emits it to — so they are not it.
-// A dyn dispatch reaches every implementation its chain names, so each is a
-// callee the same way.
-function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg, externs: irlower.SigReg, funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): string {
-  for o in r.ops {
-    if (o.kind_tag == 147) {  // dyn_dispatch
-      for arm in semsource.dyn_arms(funcs, impls, ir.dyn_dispatch_method(o.str), ir.dyn_dispatch_traits(o.str)) {
-        if (!irlower.sig_reg_has_exact(reg, arm)) {
-          return arm;
-        }
-      }
-    }
-    if (o.kind_tag == 149 || o.kind_tag == 6) {  // call_direct, const_func
-      if (!ircore.is_fern_helper(o.str) && !ircore.is_c_call(o.str)
-        && !is_drop_helper(o.str) && !irlower.sig_reg_has_exact(externs, o.str) && !irlower.sig_reg_has_exact(reg, o.str)) {
-        return o.str;
-      }
-    }
-  }
-  return "";
-}
-
-// extern_reg indexes the names of the `@import` externs among `funcs`, so a
-// callee is tested against them by bucket rather than by a scan of every
-// declaration per call.
-function extern_reg(funcs: parser.FuncDecl[]): irlower.SigReg {
-  var names: string[] = [];
-  for fd in funcs {
-    if (fd.import_iface.len() > 0) {
-      names = names.append(fd.name);
-    }
-  }
-  return irlower.sig_reg_of(names);
-}
-
-// The types of the function values a body calls: the callee value's own type
-// at each indirect call.
-function called_values(f: ssasem.Func): typeinfo.Type[] {
-  var out: typeinfo.Type[] = [];
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      if (ins.kind_tag == ssasem.call_value() && ins.args.len() > 0) {
-        out = out.append(f.values[ins.args[0]]);
-      }
-    }
-  }
-  return out;
-}
-
-// A function value the AST lowering builds: the type the box hands out where
-// the declaration has a contract to read it from, else its arity alone.
-struct AstValue { ty: typeinfo.Type, arity: i32, typed: boolean }
-
-// The hoisted bodies a function value names: a no-capture lambda or a bare
-// function name's trampoline, a capturing lambda's body, an immediately
-// invoked one (irlower.lift_lambdas).
-function hoisted(name: string): boolean {
-  return util.contains(name, "$wrap") || util.contains(name, "$clo") || util.contains(name, "$iife");
-}
-
-// The function values the AST lowering builds: every hoisted body this
-// substitution is not emitting. An array such a body builds holds elements
-// it never retained, since the AST lowering's push leaks the buffer instead,
-// and a produced body that called the value would release those elements
-// as its own. A direct call to such a body is what `escaping_callee` refuses;
-// the box that names it reaches a produced body through any caller, so the
-// produced side is refused by the value's type instead.
-function ast_values(mod: parser.Module, built: semsource.Built, r: Rows): AstValue[] {
-  var out: AstValue[] = [];
-  var i: i32 = 0;
-  while (i < r.keep.len()) {
-    if (ast_lowered(built, r, i)) {
-      var key: string = r.n1[i];
-      var params: i32 = 0;
-      if (i < mod.funcs.len()) {
-        key = semsource.decl_key(mod.funcs[i]);
-        params = mod.funcs[i].params.len();
-      } else {
-        var template: i32 = util.index_of_str(r.n2, built.instances[i - mod.funcs.len()].key);
-        key = built.instances[i - mod.funcs.len()].key;
-        if (template >= 0 && template < mod.funcs.len()) {
-          params = mod.funcs[template].params.len();
-        }
-      }
-      if (hoisted(key) && params > 0) {
-        var at: i32 = ssasem.find_contract(built.contracts, key);
-        var v: AstValue = AstValue { ty: typeinfo.unchecked(), arity: params - 1, typed: false };
-        if (i < mod.funcs.len() && at >= 0 && ssasem.closure_env(built.contracts.list[at])) {
-          var ty: typeinfo.Type = ssasem.closure_type(built.contracts.list[at]);
-          v = AstValue { ty: ty, arity: ssasem.func_params(ty).len(), typed: semtypes.concrete(ty, true) };
-        }
-        out = out.append(v);
-      }
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
-// Whether row `i` is a body the AST lowering emits. A template's row is not
-// kept, but in a module produced whole its instances stand for it and no body
-// is emitted in its name; under the bisect knobs its erased body stands.
-function ast_lowered(built: semsource.Built, r: Rows, i: i32): boolean {
-  if (r.keep[i]) {
-    return false;
-  }
-  if (i >= built.decls.len() || !built.decls[i].template) {
-    return true;
-  }
-  return bisecting();
-}
-
-// Whether a function type carries a reference: a parameter or the result
-// whose value is a box. A scalar-only callback has nothing either side could
-// release, so the two lowerings agree on it whichever built the value.
-function carries_reference(t: typeinfo.Type): boolean {
-  for p in ssasem.func_params(t) {
-    if (ssasem.reference(p)) {
-      return true;
-    }
-  }
-  return ssasem.reference(ssasem.func_result(t));
-}
-
-// Whether a value of type `t` may be one the AST lowering built: the same
-// type, or the same arity where either side's type is not in hand.
-function ast_value_call(called: typeinfo.Type[], values: AstValue[]): string {
-  for t in called {
-    if (!carries_reference(t)) {
-      continue;
-    }
-    var arity: i32 = ssasem.func_params(t).len();
-    for v in values {
-      if (v.arity != arity) {
-        continue;
-      }
-      if (v.typed && semtypes.concrete(t, true) && !semtypes.equal(v.ty, t)) {
-        continue;
-      }
-      return "calls a function value of " + util.i32_to_string(arity) + " arguments, a type the AST lowering builds a value of";
-    }
-  }
-  return "";
-}
-
-// The declaration a hoisted body was lifted out of: the name before the last
-// marker. The lift names the box `__mkclo$<creator>$wrapN`, built in the
-// creator's body, so the creator is the one that hands the value out; a body
-// lifted out of a lifted body is `<creator>$wrapN$wrapM`.
-function creator_of(name: string): string {
-  var at: i32 = 0 - 1;
-  for m in ["$wrap", "$clo", "$iife"] {
-    var i: i32 = util.last_index_of_sub(name, m);
-    if (i > at) {
-      at = i;
-    }
-  }
-  if (at <= 0) {
-    return "";
-  }
-  return slice_unchecked(name, 0, at) + "";
-}
-
-// A produced hoisted body whose value an AST-lowered creator builds is
-// called by the AST lowering through that box, under the AST convention:
-// the mirror of `ast_value_call`. Such a body keeps the AST lowering, and
-// what it calls directly is reached through the direct-call contracts
-// (ssarc.caller_sigs, irlower.consume_sigs) instead. A creator no row
-// names is read as AST-lowered.
-function ast_built_value(r: Rows, mod: parser.Module, built: semsource.Built, i: i32): string {
-  if (i >= mod.funcs.len()) {
-    return instance_built_value(r, mod, built, i);
-  }
-  var creator: string = creator_of(r.n1[i]);
-  if (creator.len() == 0) {
-    return "";
-  }
-  var at: i32 = util.index_of_str(r.n1, creator);
-  if (at < 0) {
-    at = util.index_of_str(r.n2, creator);
-  }
-  if (at >= 0 && !ast_lowered(built, r, at)) {
-    return "";
-  }
-  return "is a function value " + creator + " builds, which the AST lowering defines";
-}
-
-// An instance of a hoisted body is built by the instances of its creator that
-// request it. The instance binds only the variables its own contract mentions,
-// so its name does not say which creator instances those are.
-function instance_built_value(r: Rows, mod: parser.Module, built: semsource.Built, i: i32): string {
-  var creator: string = creator_of(built.instances[i - mod.funcs.len()].key);
-  if (creator.len() == 0) {
-    return "";
-  }
-  var found: boolean = false;
-  var j: i32 = mod.funcs.len();
-  while (j < r.n1.len()) {
-    var p: semsource.Produced = produced_at(built, mod, j);
-    if (j != i && p.key == creator && requests_name(p, r.n1[i])) {
-      if (!r.keep[j]) {
-        return "is a function value " + r.n1[j] + " builds, which the AST lowering defines";
-      }
-      found = true;
-    }
-    j = j + 1;
-  }
-  if (found) {
-    return "";
-  }
-  return "is a function value " + creator + " builds, which the AST lowering defines";
-}
-
-function requests_name(p: semsource.Produced, name: string): boolean {
-  for q in p.requests {
-    if (q.name == name) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// The names a body calls directly, as written: a bare callee, or a method's
-// field name with a leading dot, which `rows_of_name` matches against every
-// receiver-qualified spelling that ends in it.
-function called_name(e: ast.Expr, own acc: string[]): string[] {
-  if let ast.ExprCall(c) = e {
-    if let ast.ExprIdent(id) = c.callee {
-      if (parser.mkclo_body(id.name).len() == 0) {
-        return acc.append(id.name);
-      }
-    }
-    if let ast.ExprFieldAccess(fa) = c.callee {
-      return acc.append("." + fa.field);
-    }
-  }
-  return acc;
-}
-
-function direct_callees(mod: parser.Module, built: semsource.Built, i: i32): string[] {
-  var out: string[] = [];
-  if (i < mod.funcs.len()) {
-    for st in mod.funcs[i].body {
-      out = astwalk.fold_stmt(st, out, called_name);
-    }
-    return out;
-  }
-  for c in built.instances[i - mod.funcs.len()].func.calls {
-    out = out.append(c.name);
-  }
-  return out;
-}
-
-// The rows a called name may reach: the declaration or instance of that name,
-// or every method whose receiver-qualified spelling ends in the dotted field.
-function rows_of_name(r: Rows, name: string): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
-  while (i < r.n1.len()) {
-    if (r.n1[i] == name || r.n2[i] == name) {
-      out = out.append(i);
-    } else if (name.len() > 0 && name[0] == b'.' && r.n2[i].len() > name.len()
-      && slice_unchecked(r.n2[i], r.n2[i].len() - name.len(), r.n2[i].len()) == name) {
-      out = out.append(i);
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
-// Every body an AST-lowered hoisted body reaches by direct call, through any
-// AST-lowered body on the way, keeps the AST lowering. A hoisted body is
-// called through its box, and the AST lowering's ownership analysis cannot
-// see through an indirect call: the AST caller of the box takes nothing
-// below it to consume an `own` reference it lent, and releases it after, so
-// a produced consumer anywhere in that cone frees it first.
-function ast_indirect_cone(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
-  var pending: i32[] = [];
-  var i: i32 = 0;
-  while (i < r.body.len()) {
-    if (ast_lowered(built, r, i) && hoisted(r.n1[i])) {
-      pending = pending.append(i);
-    }
-    i = i + 1;
-  }
-  var seen: i32[] = [];
-  var at: i32 = 0;
-  while (at < pending.len()) {
-    var row: i32 = pending[at];
-    at = at + 1;
-    if (util.index_of_i32(seen, row) >= 0) {
-      continue;
-    }
-    seen = seen.append(row);
-    for name in direct_callees(mod, built, row) {
-      for callee in rows_of_name(r, name) {
-        if (r.keep[callee]) {
-          r = dropped(r, callee, "is reached by a direct call from " + r.n1[row] + ", which the AST lowering calls through a box");
-        }
-        // A template never seeds, but an AST-lowered caller calls its
-        // erased body, so the cone continues through it.
-        pending = pending.append(callee);
-      }
-    }
-  }
-  return r;
-}
-
-// prune turns off every produced body that calls one this boundary is not
-// emitting, to a fixpoint: dropping a body takes its symbol out of the live
-// set, so the next round reaches whatever called it, and may make it a
-// function value the AST lowering builds, so the next round reaches whatever
-// calls a value of its type, and whatever an AST-lowered hoisted body reaches.
-// A round that turns nothing off is the fixpoint, and `keep` only ever
-// shrinks, so there is one.
-function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
-  var externs: irlower.SigReg = extern_reg(mod.funcs);
-  var changed: boolean = true;
-  while (changed) {
-    changed = false;
-    var reg: irlower.SigReg = live_reg(r);
-    var values: AstValue[] = ast_values(mod, built, r);
-    var i: i32 = 0;
-    while (i < r.body.len()) {
-      if (r.keep[i]) {
-        var bad: string = escaping_callee(r.body[i], reg, externs, mod.funcs, mod.impls);
-        if (bad.len() > 0) {
-          bad = "calls " + bad + ", which the AST lowering defines";
-        } else {
-          bad = ast_value_call(r.called[i], values);
-        }
-        if (bad.len() == 0) {
-          bad = ast_built_value(r, mod, built, i);
-        }
-        if (bad.len() > 0) {
-          r = dropped(r, i, bad);
-          changed = true;
-        }
-      }
-      i = i + 1;
-    }
-    var before: i32 = kept_count(r);
-    r = ast_indirect_cone(r, mod, built);
-    if (kept_count(r) != before) {
-      changed = true;
-    }
-  }
-  return r;
-}
-
-// dropped turns row `i` off, recording why.
-function dropped(r: Rows, i: i32, why: string): Rows {
-  return Rows { ...r, keep: r.keep.with(i, false), why: r.why.with(i, why) };
-}
-
 // report_rows names every refused row on stderr (`report`).
 function report_rows(r: Rows, prefix: string): i32 {
   var i: i32 = 0;
@@ -682,16 +187,6 @@ function report_rows(r: Rows, prefix: string): i32 {
     i = i + 1;
   }
   return 0;
-}
-
-function kept_count(r: Rows): i32 {
-  var n: i32 = 0;
-  for k in r.keep {
-    if (k) {
-      n = n + 1;
-    }
-  }
-  return n;
 }
 
 // The produced body at row `i`: a declaration first, then an instance.
@@ -705,7 +200,7 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
 // No rows to take back: what the FIRST lowering of a module is handed, and
 // what makes `rows_of` compute every plan and every body.
 function no_reuse(): Rows {
-  return Rows { body: [], n1: [], n2: [], keep: [], grows: [], called: [], plans: [], why: [] };
+  return Rows { body: [], n1: [], n2: [], keep: [], grows: [], plans: [], why: [] };
 }
 
 // Whether row `i` can be taken from `prev` unchanged. `changed` is
@@ -731,8 +226,6 @@ function row_reusable(prev: Rows, changed: boolean[], i: i32): boolean {
 // which they need not, since a moved row can grow a callee's mask and change
 // how every caller of it brackets.
 function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.StructTab, prev: Rows, changed: boolean[]): Rows {
-  var only: string = sem_ir_only();
-  var skip: string = sem_ir_skip();
   // `FERN_SEM_REUSE=` (set but empty) turns the reuse off; an empty `prev`
   // is how a lowering reuses nothing.
   var base: Rows = prev;
@@ -741,52 +234,44 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
   }
   var r: Rows = no_reuse();
   var plans: ssaunits.Plan[] = [];
-  var considered: boolean[] = [];
   var keys: string[] = [];
   var funcs: ssasem.Func[] = [];
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     var fd: parser.FuncDecl = mod.funcs[i];
-    var plan: ssaunits.Plan = ssaunits.refused("not selected");
-    if (row_reusable(base, changed, i)) {
-      plan = base.plans[i];
-    } else if (selected(only, skip, fd.name)) {
-      plan = produced_plan(built.decls[i]);
-    }
-    plans = plans.append(plan);
-    considered = considered.append(row_reusable(base, changed, i) || selected(only, skip, fd.name));
+    plans = plans.append(base_plan(base, changed, i, built.decls[i]));
     keys = keys.append(semsource.decl_key(fd));
     funcs = funcs.append(built.decls[i].func);
-    r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(semsource.decl_key(fd)), called: r.called.append(called_values(built.decls[i].func)) };
+    r = Rows { ...r, n1: r.n1.append(fd.name), n2: r.n2.append(semsource.decl_key(fd)) };
     i = i + 1;
   }
   var at: i32 = mod.funcs.len();
   for p in built.instances {
-    // An instance is named after the template it came from, so the bisect
-    // knob reaches it through the same prefix test.
     // A refused instance has no graph to name it; its symbol is the one requested.
     var name: string = built.names[at];
-    var plan: ssaunits.Plan = ssaunits.refused("not selected");
-    if (row_reusable(base, changed, at)) {
-      plan = base.plans[at];
-    } else if (selected(only, skip, name)) {
-      plan = produced_plan(p);
-    }
-    plans = plans.append(plan);
-    considered = considered.append(row_reusable(base, changed, at) || selected(only, skip, name));
+    plans = plans.append(base_plan(base, changed, at, p));
     keys = keys.append(name);
     funcs = funcs.append(p.func);
-    r = Rows { ...r, n1: r.n1.append(name), n2: r.n2.append(""), called: r.called.append(called_values(p.func)) };
+    r = Rows { ...r, n1: r.n1.append(name), n2: r.n2.append("") };
     at = at + 1;
   }
   r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), plans: plans };
   i = 0;
   while (i < plans.len()) {
     var body: irlower.LowerResult = reused_or_lowered(built, mod, structs, r, base, changed, i);
-    r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(body.ok), why: r.why.append(refusal(produced_at(built, mod, i), body, considered[i])) };
+    r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(body.ok), why: r.why.append(refusal(produced_at(built, mod, i), body)) };
     i = i + 1;
   }
   return r;
+}
+
+// Row `i`'s plan: `prev`'s where the inference moved neither the row nor a
+// contract it calls, planned afresh otherwise.
+function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced): ssaunits.Plan {
+  if (row_reusable(prev, changed, i)) {
+    return prev.plans[i];
+  }
+  return produced_plan(p);
 }
 
 // Row `i`'s body: `prev`'s where the inference moved neither the row nor the
@@ -806,8 +291,7 @@ function reused_or_lowered(built: semsource.Built, mod: parser.Module, structs: 
 // line up with `mod.funcs` position for position.
 //
 // `base` is the pre-`append_dyn` registry set the emitters read; the rows
-// caller_sigs rewrites are returned in the Sub, and the emit and the AST
-// lowering of what is left both read them.
+// caller_sigs rewrites are returned in the Sub, and the emit reads them.
 struct Inference { built: semsource.Built, rows: Rows, records: parser.StructDecl[] }
 
 // Whether the typed pipeline lowers EVERY body of this module. A template's
@@ -829,23 +313,11 @@ function lowers_whole_module(built: semsource.Built, r: Rows): boolean {
   return true;
 }
 
-// The ownership inference, applied only where it is sound to.
-//
-// A mode `semsource.with_inferred_modes` infers is invisible to the AST
-// lowering, which reads `own` off the declaration and nothing else. In a MIXED
-// module an AST-lowered caller therefore hands a borrowed argument to a callee
-// that now releases one, and the count goes under — a segfault building the
-// compiler, and `field-append` answering 3 where it answers 199. A declared
-// `own` is safe there precisely because it is a source fact both lowerings
-// read.
-//
-// So the inference runs only when this pass lowers the whole module, which is
-// what `prune` has just decided. The second lowering is what that costs, and
-// it is never paid where it would hurt: a module with anything left to the AST
-// lowering fails the test on the FIRST pass and never reaches here. The second
-// pass is checked as well as the first — a mode can refuse a plan
-// (`ssaunits.mode_error`), and a module that stops lowering whole under the
-// inference keeps the modes it declared.
+// The ownership inference, run when the first pass lowers the whole module: a
+// module with a refusal fails on the first pass and never pays the second
+// lowering. The second pass is checked as well as the first — a mode can
+// refuse a plan (`ssaunits.mode_error`), and a module that stops lowering
+// whole under the inference keeps the modes it declared.
 function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, structs: irlower.StructTab): Inference {
   var same: Inference = Inference { built: built, rows: r, records: [] };
   if (!lowers_whole_module(built, r)) {
@@ -856,15 +328,15 @@ function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, stru
   if (!semsource.any_row_changed(changed)) {
     return same;
   }
-  var r2: Rows = prune(rows_of(mod, widened, structs, r, changed), mod, widened);
+  var r2: Rows = rows_of(mod, widened, structs, r, changed);
   if (!lowers_whole_module(widened, r2)) {
     return same;
   }
   return Inference { built: widened, rows: r2, records: [] };
 }
 
-// The module built, lowered, pruned and, when it lowers whole, lowered again
-// under the inferred modes.
+// The module built, lowered and, when it lowers whole, lowered again under the
+// inferred modes.
 function produced_rows(mod: parser.Module, structs: irlower.StructTab): Inference {
   var built: semsource.Built = semsource.build_module(mod);
   util.arr_push_cliff_report("sem:built", 0);
@@ -872,10 +344,8 @@ function produced_rows(mod: parser.Module, structs: irlower.StructTab): Inferenc
   if (records.len() > 0) {
     structs = irlower.struct_tab(util.append_all(structs.decls, records));
   }
-  var rows: Rows = rows_of(mod, built, structs, no_reuse(), []);
+  var r: Rows = rows_of(mod, built, structs, no_reuse(), []);
   util.arr_push_cliff_report("sem:lowered", 0);
-  var r: Rows = prune(rows, mod, built);
-  util.arr_push_cliff_report("sem:pruned", 0);
   return Inference { ...inferred_pass(mod, built, r, structs), records: records };
 }
 
@@ -923,9 +393,6 @@ function field_spelling(t: typeinfo.Type): string {
 
 // lowered is mod.funcs as the AST lowering reads them, with each `str` erased.
 pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
-  if (!sem_ir_on()) {
-    return ircore.no_sub();
-  }
   var inf: Inference = produced_rows(mod, structs);
   var built: semsource.Built = inf.built;
   var r: Rows = inf.rows;
@@ -967,7 +434,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
       bodies = bodies.append(superseded());
       n = n + 1;
     } else {
-      bodies = bodies.append(declined("kept the AST lowering"));
+      bodies = bodies.append(declined(r.why[i]));
     }
     i = i + 1;
   }
@@ -991,12 +458,9 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
     sigs = irlower.consume_sigs(sigs, lowered, consumed);
   }
   util.arr_push_cliff_report("sem:substituted", 0);
-  // A refused declaration or instance fails the compile. The bisect knobs
-  // keep the mixed module, which is what they exist to halve: a produced body
-  // beside an AST-lowered one is two memory conventions on one module, sound
-  // only where the contracts `prune` reads cover every crossing.
+  // A refused declaration or instance fails the compile.
   var refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len();
-  if (refused_n > 0 && !bisecting()) {
+  if (refused_n > 0) {
     eprint("FERN_SEM_IR: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each");
     exit(3);
   }
@@ -1005,16 +469,13 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
     + util.i32_to_string(instances.len()) + " of "
     + util.i32_to_string(built.instances.len()) + " instances");
   // A module produced whole calls no template's erased body: every caller
-  // is produced and calls an instance. Under the bisect knobs an AST-lowered
-  // caller may still call it, so there the AST lowering stands.
-  if (n == mod.funcs.len() && !bisecting()) {
-    var i2: i32 = 0;
-    while (i2 < mod.funcs.len()) {
-      if (!bodies[i2].ok && built.decls[i2].template) {
-        bodies = bodies.with(i2, superseded());
-      }
-      i2 = i2 + 1;
+  // is produced and calls an instance.
+  var i2: i32 = 0;
+  while (i2 < mod.funcs.len()) {
+    if (!bodies[i2].ok && built.decls[i2].template) {
+      bodies = bodies.with(i2, superseded());
     }
+    i2 = i2 + 1;
   }
   // The declaration-less bodies are merged by symbol here, where the rule
   // lives, so the emit path's tail is a plain append.
@@ -1027,12 +488,8 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
 
 // runtime_bodies is the typed lowering of a Fern-source runtime helper
 // (asmcore.rt_src_*), one body per function the source defines and in its
-// order. A refusal, including a source that does not type-check, exits 3;
-// under the bisect knobs it returns none and the AST lowering stands.
+// order. A refusal, including a source that does not type-check, exits 3.
 pub function runtime_bodies(src: string): irlower.LowerResult[] {
-  if (!sem_ir_on()) {
-    return [];
-  }
   var parsed: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   // The builtin enums' variants (IoError's NotFound, …), which a program's
   // module carries from module_with_builtins.
@@ -1042,7 +499,7 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
     return runtime_refused(first_name(mod), "does not type-check: " + diags[0].message);
   }
   var im: parser.Module = gated_module(checker.annotate_module(mod));
-  var inf: Inference = produced_rows(im, irlower.struct_tab(parser.erase_str_structs(im.structs)));
+  var inf: Inference = produced_rows(im, irlower.struct_tab(parser.erase_view_structs(im.structs)));
   if (inf.built.instances.len() > 0) {
     return runtime_refused(first_name(im), "instantiates a generic");
   }
@@ -1051,11 +508,7 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
   var i: i32 = 0;
   while (i < im.funcs.len()) {
     if (!inf.rows.keep[i]) {
-      var why: string = inf.rows.why[i];
-      if (why.len() == 0) {
-        why = "kept the AST lowering";
-      }
-      return runtime_refused(im.funcs[i].name, why);
+      return runtime_refused(im.funcs[i].name, inf.rows.why[i]);
     }
     out = out.append(inf.rows.body[i]);
     helpers = ssarc.with_drop_helpers(helpers, inf.built.decls[i].func);
@@ -1076,10 +529,8 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
 
 function runtime_refused(name: string, why: string): irlower.LowerResult[] {
   report("runtime " + name, why);
-  if (!bisecting()) {
-    eprint("FERN_SEM_IR: the typed lowering refused runtime helper " + name);
-    exit(3);
-  }
+  eprint("FERN_SEM_IR: the typed lowering refused runtime helper " + name);
+  exit(3);
   return [];
 }
 
@@ -1103,11 +554,8 @@ pub function gated_module(mod: parser.Module): parser.Module {
 // gates on. The register backends take the lifted module back (Sub.lifted) so
 // their emit entries read it erased rather than lifting again: lifting an
 // already-lifted body renames its locals, so what was produced would not be the
-// bodies the emit path lowers. Off (FERN_SEM_IR set empty) it produces nothing.
+// bodies the emit path lowers.
 pub function target_substitution(typed: parser.Module, target: string): ircore.Sub {
-  if (!sem_ir_on()) {
-    return ircore.no_sub();
-  }
   if (is_wasm(target)) {
     return substitution_of(wasm_gated(typed));
   }
@@ -1126,7 +574,7 @@ function wasm_gated(typed: parser.Module): parser.Module {
 
 function substitution_of(im: parser.Module): ircore.Sub {
   // The typed lowering reads im; the AST lowering's tables read its erasure.
-  var lowered: parser.Module = parser.erase_str_module(im);
+  var lowered: parser.Module = parser.erase_view_module(im);
   var stab: irlower.StructTab = irlower.struct_tab(lowered.structs);
   util.arr_push_cliff_report("sem:gated", 0);
   var sub: ircore.Sub = substitution(im, lowered.funcs, stab, ircore.wp_fn_sigs(lowered.funcs, stab));
@@ -1138,9 +586,6 @@ function substitution_of(im: parser.Module): ircore.Sub {
 pub struct Driven { full: parser.Module, sub: ircore.Sub }
 
 pub function driven(mod: parser.Module, target: string): Driven {
-  if (!sem_ir_on()) {
-    return Driven { full: parser.module_with_builtins(mod), sub: ircore.no_sub() };
-  }
   return driven_annotated(checker.annotate_module(mod), target);
 }
 
@@ -1148,20 +593,14 @@ pub function driven(mod: parser.Module, target: string): Driven {
 // `target_os()` / `target_arch()` are folded to the target's names first, as
 // the CLI folds them: no backend emits a body for either.
 pub function driven_annotated(annotated: parser.Module, target: string): Driven {
-  if (!sem_ir_on()) {
-    return Driven { full: parser.module_with_builtins(annotated), sub: ircore.no_sub() };
-  }
   var typed: parser.Module = checked_typed(annotated, target);
-  return Driven { full: parser.erase_str_module(typed), sub: target_substitution(typed, target) };
+  return Driven { full: parser.erase_view_module(typed), sub: target_substitution(typed, target) };
 }
 
 // driven_module is driven's `full` without the typed lowering, for a driver
 // step that reads the module but lowers nothing.
 pub function driven_module(mod: parser.Module, target: string): parser.Module {
-  if (!sem_ir_on()) {
-    return parser.module_with_builtins(mod);
-  }
-  return parser.erase_str_module(checked_typed(checker.annotate_module(mod), target));
+  return parser.erase_view_module(checked_typed(checker.annotate_module(mod), target));
 }
 
 function checked_typed(annotated: parser.Module, target: string): parser.Module {
@@ -1182,7 +621,7 @@ function typed_for(annotated: parser.Module, target: string): Typed {
   var desc: platforms.Descriptor = platforms.for_target(target);
   var folded: parser.Module = constfold.fold_target_name(annotated, desc.environment, desc.isa);
   var typed: parser.Module = parser.module_with_builtins_typed(folded);
-  return Typed { mod: typed, errs: asmcore.entry_check_errors(checker.ensure_annotated(parser.erase_str_module(typed))) };
+  return Typed { mod: typed, errs: asmcore.entry_check_errors(checker.ensure_annotated(parser.erase_view_module(typed))) };
 }
 
 // Verdict is the typed lowering's answer for a program, without emitting it
@@ -1216,7 +655,7 @@ pub function verdict_annotated(annotated: parser.Module, target: string): Verdic
   } else {
     im = gated_module(ircore.lift_lambdas_typed(t.mod));
   }
-  var inf: Inference = produced_rows(im, irlower.struct_tab(parser.erase_str_module(im).structs));
+  var inf: Inference = produced_rows(im, irlower.struct_tab(parser.erase_view_module(im).structs));
   var rows: VerdictRow[] = [];
   var ok: boolean = true;
   var i: i32 = 0;
@@ -1246,11 +685,7 @@ function verdict_row(im: parser.Module, inf: Inference, i: i32): VerdictRow {
   if (p.bodyless) {
     return VerdictRow { name: name, state: "extern", why: "" };
   }
-  if (p.template) {
-    return VerdictRow { name: name, state: "template", why: "" };
-  }
-  // A bisect knob left it out, so the AST lowering stands for it.
-  return VerdictRow { name: name, state: "refused", why: "kept the AST lowering" };
+  return VerdictRow { name: name, state: "template", why: "" };
 }
 
 // verdict_text is a verdict as the drivers' `-ir-probe` prints it: the

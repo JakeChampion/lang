@@ -29,7 +29,7 @@ func TestDriverBuildingJobsRestoreTheDriverCache(t *testing.T) {
 	// green while two jobs race for one key and another is never written.
 	savers := map[string]string{
 		"test-e2e-selfhost.yml/driver-sizes": `save: "true"`,
-		"test-e2e-selfhost.yml/test":         "matrix.host == 'aarch64' && 'true'",
+		"test-e2e-selfhost.yml/test":         "matrix.host == 'aarch64' && matrix.shard == 0 && 'true'",
 		"macos.yml/test-arm64-darwin":        "matrix.shard == 0 && 'true'",
 	}
 	seenSavers := map[string]bool{}

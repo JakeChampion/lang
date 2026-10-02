@@ -90,7 +90,7 @@ func TestSelfHostEnumMapPayloadTypedReleaseX86_64(t *testing.T) {
 	} {
 		src := writeEnumMapSrc(t, "enum_map_"+sc.name, sc.src)
 		t.Run(sc.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", "FERN_SEM_IR=1")
+			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1")
 			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
 			if exit != sc.want {
 				t.Fatalf("exit = %d, want %d\n%s", exit, sc.want, stderr)
@@ -98,11 +98,6 @@ func TestSelfHostEnumMapPayloadTypedReleaseX86_64(t *testing.T) {
 			assertBalancedCensus(t, stderr)
 		})
 	}
-}
-
-var enumMapLowerings = []struct{ name, env string }{
-	{"semantic", "FERN_SEM_IR=1"},
-	{"ast", "FERN_SEM_IR="},
 }
 
 func writeEnumMapSrc(t *testing.T, name, src string) string {
@@ -117,16 +112,12 @@ func writeEnumMapSrc(t *testing.T, name, src string) string {
 func TestSelfHostEnumMapPayloadReleaseX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeEnumMapSrc(t, "enum_map_declared", enumMapDeclaredSrc)
-	for _, lw := range enumMapLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env)
-			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-			if exit != 25 {
-				t.Fatalf("exit = %d, want 25\n%s", exit, stderr)
-			}
-			assertBalancedCensus(t, stderr)
-		})
+	bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1")
+	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+	if exit != 25 {
+		t.Fatalf("exit = %d, want 25\n%s", exit, stderr)
 	}
+	assertBalancedCensus(t, stderr)
 }
 
 func TestSelfHostEnumMapPayloadSanitizeX86_64(t *testing.T) {
@@ -140,20 +131,18 @@ func TestSelfHostEnumMapPayloadSanitizeX86_64(t *testing.T) {
 	}
 	for _, sc := range srcs {
 		src := writeEnumMapSrc(t, "enum_map_"+sc.name, sc.src)
-		for _, lw := range enumMapLowerings {
-			t.Run(sc.name+"/"+lw.name, func(t *testing.T) {
-				bin := cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env)
-				stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-				if exit != sc.want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, sc.want, stderr)
+		t.Run(sc.name, func(t *testing.T) {
+			bin := cli.x86Binary(t, src, "FERN_SANITIZE=1")
+			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+			if exit != sc.want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, sc.want, stderr)
+			}
+			for _, bad := range []string{"use-after-free", "double free", "over-release", "underflow"} {
+				if strings.Contains(stderr, bad) {
+					t.Fatalf("sanitizer reports %s\n%s", bad, stderr)
 				}
-				for _, bad := range []string{"use-after-free", "double free", "over-release", "underflow"} {
-					if strings.Contains(stderr, bad) {
-						t.Fatalf("sanitizer reports %s\n%s", bad, stderr)
-					}
-				}
-			})
-		}
+			}
+		})
 	}
 }
 
@@ -161,22 +150,18 @@ func TestSelfHostEnumMapPayloadReleaseArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
 	src := writeEnumMapSrc(t, "enum_map_declared", enumMapDeclaredSrc)
-	for _, lw := range enumMapLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1", lw.env))
-			if err != nil {
-				t.Fatal(err)
-			}
-			cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), "enum_map", string(asm)))
-			var eb strings.Builder
-			cmd.Stderr = &eb
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 25 {
-				t.Fatalf("exit = %d, want 25\n%s", code, eb.String())
-			}
-			assertBalancedCensus(t, eb.String())
-		})
+	asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), "enum_map", string(asm)))
+	var eb strings.Builder
+	cmd.Stderr = &eb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 25 {
+		t.Fatalf("exit = %d, want 25\n%s", code, eb.String())
+	}
+	assertBalancedCensus(t, eb.String())
 }
 
 func TestSelfHostEnumMapPayloadReleaseWasm(t *testing.T) {
@@ -185,14 +170,10 @@ func TestSelfHostEnumMapPayloadReleaseWasm(t *testing.T) {
 	}
 	cli := buildSelfHostCLI(t)
 	src := writeEnumMapSrc(t, "enum_map_declared", enumMapDeclaredSrc)
-	for _, lw := range enumMapLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", lw.env)
-			stderr, exit := runWasmCensus(t, wat)
-			if exit != 25 {
-				t.Fatalf("exit = %d, want 25\n%s", exit, stderr)
-			}
-			assertBalancedCensus(t, stderr)
-		})
+	wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1")
+	stderr, exit := runWasmCensus(t, wat)
+	if exit != 25 {
+		t.Fatalf("exit = %d, want 25\n%s", exit, stderr)
 	}
+	assertBalancedCensus(t, stderr)
 }

@@ -28,10 +28,9 @@ import (
 // TestSelfHostMonomorphisedFloatKeyStillRefusesToLower, which needs no
 // oracle because native refuses the program outright.
 //
-// The refusal is the AST lowering's, so it is pinned with the typed lowering
-// off (FERN_SEM_IR=). `-decide` gives the typed lowering's verdict
-// (semlower.verdict), which lowers the i64 and u64 keys through a column of
-// their own and so produces those rows; `typed` is that verdict.
+// `-decide` gives the typed lowering's verdict (semlower.verdict), which lowers
+// the i64 and u64 keys through a column of their own and so produces those
+// rows; `typed` is that verdict.
 //
 // Each case isolates one surface. The three parameter cases pass a bare
 // `map_new(2)` rather than a binding, so the construction gate cannot fire
@@ -41,15 +40,8 @@ import (
 var noColumnMapKeyCases = []struct {
 	name   string
 	src    string
-	wantIR bool
 	typed  string
 	oracle int
-	// key is the key type the refusal must name, for the rows that refuse.
-	// Before #10032 the bail carried no description at all, so the message
-	// said only which statement it unwound to — and for a tuple key it never
-	// got that far: map_key_eqfn read `(i32` as a struct name and the program
-	// died in the x86 assembler on an unencodable `leaq`.
-	key string
 }{
 	// Construction ALONE, with no method on the map and no loop over it — the
 	// only shape that isolates the construction gate. `construct-and-insert`
@@ -61,14 +53,14 @@ function main(): i32 {
     var m: Map[i64, i32] = map_new(2);
     return 7;
 }
-`, false, "ir", 7, "i64"},
+`, "ir", 7},
 	{"construct-and-insert", `import "core/map";
 function main(): i32 {
     var m: Map[i64, i32] = map_new(2);
     m = m.insert(7, 3);
     return m.len() + 7;
 }
-`, false, "ir", 8, "i64"},
+`, "ir", 8},
 	{"pair-iteration-of-a-parameter", `import "core/map";
 function total(m: Map[i64, i32]): i32 {
     var s: i32 = 0;
@@ -76,7 +68,7 @@ function total(m: Map[i64, i32]): i32 {
     return s + 7;
 }
 function main(): i32 { return total(map_new(2)); }
-`, false, "ir", 7, "i64"},
+`, "ir", 7},
 	{"keys-of-a-parameter", `import "core/map";
 function total(m: Map[u64, i32]): i32 {
     var s: i32 = 0;
@@ -84,11 +76,11 @@ function total(m: Map[u64, i32]): i32 {
     return s + 7;
 }
 function main(): i32 { return total(map_new(2)); }
-`, false, "ir", 7, "u64"},
+`, "ir", 7},
 	{"method-on-a-parameter", `import "core/map";
 function total(m: Map[usize, i32]): i32 { return m.len() + 7; }
 function main(): i32 { return total(map_new(2)); }
-`, false, "refused", 7, "usize"},
+`, "refused", 7},
 	// The COMPOSITE keys, refused for the opposite reason to the scalars
 	// above: not too wide for the column, but with no hash or equality to
 	// dispatch at all. A tuple is a struct without a name, so there is nowhere
@@ -106,14 +98,14 @@ function main(): i32 {
     m = m.insert((1, 2), 5);
     return m.get_or((1, 2), 0) + 9;
 }
-`, false, "refused", 14, "(i32, i32)"},
+`, "refused", 14},
 	{"array-key", `import "core/map";
 function main(): i32 {
     var m: Map[i32[], i32] = map_new(8);
     m = m.insert([1, 2], 5);
     return m.get_or([1, 2], 0) + 9;
 }
-`, false, "refused", 14, "i32[]"},
+`, "refused", 14},
 	// The control: the same iteration over a key that DOES fit the column.
 	{"pair-iteration-of-an-i32-parameter", `import "core/map";
 function total(m: Map[i32, i32]): i32 {
@@ -122,7 +114,7 @@ function total(m: Map[i32, i32]): i32 {
     return s + 7;
 }
 function main(): i32 { return total(map_new(2)); }
-`, true, "ir", 7, ""},
+`, "ir", 7},
 }
 
 func TestSelfHostMapKeyWithNoColumnRefusesEverySurface(t *testing.T) {
@@ -153,24 +145,6 @@ func TestSelfHostMapKeyWithNoColumnRefusesEverySurface(t *testing.T) {
 			route, _ := exec.Command(driver, entry, root, "-decide").Output()
 			if got := strings.TrimSpace(string(route)); got != tc.typed {
 				t.Errorf("-decide = %q, want %q from the typed lowering", got, tc.typed)
-			}
-			if tc.wantIR {
-				return
-			}
-			// The route alone is only half of it. A refusal a reader cannot
-			// act on is the state #10032 reported: the whole-module message
-			// says to set FERN_STRICT_IR=1, and what that then printed named
-			// the statement the bail unwound to and nothing about the key.
-			// The message is irlower's, so the compile runs on the AST lowering.
-			cmd := exec.Command(driver, entry, root)
-			cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR=")
-			var stderr strings.Builder
-			cmd.Stderr = &stderr
-			_ = cmd.Run()
-			want := "a Map keyed by `" + tc.key + "` has no key column"
-			if !strings.Contains(stderr.String(), want) {
-				t.Errorf("the strict refusal does not say %q, so it does not tell its reader which "+
-					"key to change:\n%s", want, stderr.String())
 			}
 		})
 	}

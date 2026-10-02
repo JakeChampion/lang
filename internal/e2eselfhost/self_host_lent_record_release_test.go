@@ -53,13 +53,6 @@ function main(): i32 {
 // Interpreter-confirmed.
 const lentRecordWant = 44
 
-var lentRecordLowerings = []struct{ name, env string }{
-	{"semantic", "FERN_SEM_IR=1"},
-	{"ast", "FERN_SEM_IR="},
-	{"ast_main", "FERN_SEM_IR_SKIP=main"},
-	{"ast_caller", "FERN_SEM_IR_SKIP=use_rec"},
-}
-
 func writeLentRecordSrc(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "lent_record.fern")
@@ -72,29 +65,21 @@ func writeLentRecordSrc(t *testing.T) string {
 func TestSelfHostLentRecordReleaseX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeLentRecordSrc(t)
-	for _, lw := range lentRecordLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env)
-			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-			if exit != lentRecordWant {
-				t.Fatalf("exit = %d, want %d\n%s", exit, lentRecordWant, stderr)
-			}
-			assertBalancedCensus(t, stderr)
-		})
+	bin := cli.x86Binary(t, src, "FERN_LEAKCHECK=1")
+	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+	if exit != lentRecordWant {
+		t.Fatalf("exit = %d, want %d\n%s", exit, lentRecordWant, stderr)
 	}
+	assertBalancedCensus(t, stderr)
 }
 
 func TestSelfHostLentRecordReleaseSanitizeX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := writeLentRecordSrc(t)
-	for _, lw := range lentRecordLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env)
-			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-			if exit != lentRecordWant || strings.Contains(stderr, "fern-sanitizer:") {
-				t.Fatalf("exit = %d, want %d, and the sanitizer silent\n%s", exit, lentRecordWant, stderr)
-			}
-		})
+	bin := cli.x86Binary(t, src, "FERN_SANITIZE=1")
+	stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+	if exit != lentRecordWant || strings.Contains(stderr, "fern-sanitizer:") {
+		t.Fatalf("exit = %d, want %d, and the sanitizer silent\n%s", exit, lentRecordWant, stderr)
 	}
 }
 
@@ -102,22 +87,18 @@ func TestSelfHostLentRecordReleaseArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
 	src := writeLentRecordSrc(t)
-	for _, lw := range lentRecordLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1", lw.env))
-			if err != nil {
-				t.Fatal(err)
-			}
-			cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), "lent_record", string(asm)))
-			var eb strings.Builder
-			cmd.Stderr = &eb
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != lentRecordWant {
-				t.Fatalf("exit = %d, want %d\n%s", code, lentRecordWant, eb.String())
-			}
-			assertBalancedCensus(t, eb.String())
-		})
+	asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), "lent_record", string(asm)))
+	var eb strings.Builder
+	cmd.Stderr = &eb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != lentRecordWant {
+		t.Fatalf("exit = %d, want %d\n%s", code, lentRecordWant, eb.String())
+	}
+	assertBalancedCensus(t, eb.String())
 }
 
 func TestSelfHostLentRecordReleaseWasm(t *testing.T) {
@@ -126,14 +107,10 @@ func TestSelfHostLentRecordReleaseWasm(t *testing.T) {
 	}
 	cli := buildSelfHostCLI(t)
 	src := writeLentRecordSrc(t)
-	for _, lw := range lentRecordLowerings {
-		t.Run(lw.name, func(t *testing.T) {
-			wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", lw.env)
-			stderr, exit := runWasmCensus(t, wat)
-			if exit != lentRecordWant {
-				t.Fatalf("exit = %d, want %d\n%s", exit, lentRecordWant, stderr)
-			}
-			assertBalancedCensus(t, stderr)
-		})
+	wat := cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1")
+	stderr, exit := runWasmCensus(t, wat)
+	if exit != lentRecordWant {
+		t.Fatalf("exit = %d, want %d\n%s", exit, lentRecordWant, stderr)
 	}
+	assertBalancedCensus(t, stderr)
 }

@@ -33,9 +33,6 @@ import (
 // `iter` is deliberately not admitted: its MapIter box holds a raw pointer into
 // the mapbox, which a tuple slot would outlive.
 func TestSelfHostMapMethodTupleElem(t *testing.T) {
-	// These programs pin the AST lowering's built-in map runtime; the typed lowering
-	// takes maps from core/map.
-	t.Setenv("FERN_SEM_IR", "")
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")

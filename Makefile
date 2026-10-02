@@ -229,6 +229,12 @@ gofmt-check:
 #
 # Keeps going after a failure and reports the set at the end: ten gates run
 # as one job must not hide the seventh failure behind the second.
+# The cheap, read-only gates the Lint workflow runs as one step, in parallel
+# (`make -j -k lint-fast`): each is seconds of work and independent of the
+# others. check-sources and fern-test-cache stay apart: the cache probe appends
+# to a source file while it runs, which a concurrent source check would read.
+lint-fast: vet gofmt-check fmt-check deadcode actionlint testnames ci-selftest digest-check
+
 lint-all:
 	@status=0; \
 	for gate in "go build ./..." "go vet ./..." "$(MAKE) gofmt-check" "$(MAKE) fmt-check" \

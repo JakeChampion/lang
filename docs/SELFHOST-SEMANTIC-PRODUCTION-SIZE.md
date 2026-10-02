@@ -2,8 +2,7 @@
 
 Measured on 2026-09-15 at `4c006c860`, against the last baseline refresh
 `5f4cb2400`. The CLI now includes the typed semantic producer and ownership
-lowering introduced by #9321. That implementation is reachable through
-`FERN_SEM_IR`, including when the environment flag is unset at build time.
+lowering introduced by #9321.
 
 ## Exact linked sizes
 

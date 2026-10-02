@@ -645,27 +645,6 @@ func parseProvidedTally(out string) (int, int) {
 	return checked, calls
 }
 
-// providedCorpusExpectedDirty are the conformance fixtures the resolution pass
-// reports, and is a list rather than a tolerance because each entry is the
-// pass being RIGHT about a program that is deliberately wrong.
-//
-// This driver runs the front end and the lowerer, not the checker — that is
-// what makes it a verifier of the lowering rather than a second compiler. So a
-// fixture whose whole point is a program the checker rejects reaches the
-// lowerer anyway, and a program that calls a function it never declares
-// genuinely does emit a call to a symbol nothing defines: diag_p004 calls
-// `add()`, which it never defines.
-//
-// An entry leaves this list when its fixture stops calling an undefined
-// function. diag_e065 was here until it gained the `name()` it had only ever
-// called (#9601): its E065 is about the lifetime of a `str` view, and the
-// missing declaration was incidental damage, not the thing under test.
-//
-// Every other fixture in the corpus resolves clean.
-var providedCorpusExpectedDirty = map[string]bool{
-	"diag_p004": true,
-}
-
 // TestSelfHostIRVerifyProvidedCorpusClean sweeps the conformance corpus.
 //
 // It runs the MODLOAD driver rather than irlower_run, and that is the whole
@@ -692,9 +671,16 @@ func TestSelfHostIRVerifyProvidedCorpusClean(t *testing.T) {
 func testProvidedCorpus(t *testing.T, bin string) {
 	t.Helper()
 	stdRoot := langSrcAbs(t, filepath.Join("internal", "stdlib"))
-	mains, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*", "main.fern"))
+	all, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*", "main.fern"))
 	if err != nil {
 		t.Fatalf("globbing conformance cases: %v", err)
+	}
+	// A fixture the checker rejects has no lowering to verify.
+	var mains []string
+	for _, main := range all {
+		if _, err := os.Stat(filepath.Join(filepath.Dir(main), "expected.error")); err != nil {
+			mains = append(mains, main)
+		}
 	}
 	if len(mains) < 400 {
 		t.Fatalf("found %d conformance cases, expected the full corpus: a silently shrunken sweep proves nothing", len(mains))
@@ -716,11 +702,6 @@ func testProvidedCorpus(t *testing.T, bin string) {
 				results[i].ran = true
 				stage := stageProvidedFixture(t, stdRoot, filepath.Dir(main))
 				cmd := exec.Command(bin, filepath.Join(stage, "main.fern"), "-verifyprovided")
-				// A fixture the checker rejects has no typed lowering; only the
-				// AST lowering lowers it.
-				if _, err := os.Stat(filepath.Join(filepath.Dir(main), "expected.error")); err == nil {
-					cmd.Env = append(os.Environ(), "FERN_SEM_IR=")
-				}
 				var out []byte
 				// The verifier lowers a whole imported program. Share the
 				// existing process-wide memory budget with driver builds.
@@ -732,7 +713,7 @@ func testProvidedCorpus(t *testing.T, bin string) {
 				if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 					t.Fatalf("resolution driver did not exit normally: %v\n%s", err, out)
 				}
-				results[i].calls, err = validateProvidedCorpusVerdict(providedCorpusExpectedDirty[name], cmd.ProcessState.ExitCode(), string(out))
+				results[i].calls, err = validateProvidedCorpusVerdict(cmd.ProcessState.ExitCode(), string(out))
 				if err != nil {
 					t.Errorf("invalid resolution verdict: %v\n%s", err, out)
 				}
@@ -757,9 +738,9 @@ func testProvidedCorpus(t *testing.T, bin string) {
 
 var providedCorpusVerdict = regexp.MustCompile(`^irverifyprovided: (clean|[1-9][0-9]* problem\(s\)) \(checked ([0-9]+) functions, ([0-9]+) direct calls\)$`)
 
-func validateProvidedCorpusVerdict(expectedDirty bool, exitCode int, out string) (int, error) {
-	// An arena trap or another driver error must never satisfy an expected
-	// invalid fixture. Only the verifier's own exit 1 plus diagnostic counts.
+func validateProvidedCorpusVerdict(exitCode int, out string) (int, error) {
+	// An arena trap or another driver error is never a verdict. Only the
+	// verifier's own exit 1 plus diagnostic counts.
 	if exitCode != 0 && exitCode != 1 {
 		return 0, fmt.Errorf("driver exited %d, want verifier status 0 or 1", exitCode)
 	}
@@ -777,8 +758,8 @@ func validateProvidedCorpusVerdict(expectedDirty bool, exitCode int, out string)
 	if dirty != (exitCode == 1) {
 		return 0, fmt.Errorf("verifier header disagrees with exit %d", exitCode)
 	}
-	if dirty != expectedDirty {
-		return 0, fmt.Errorf("dirty=%t, expected dirty=%t", dirty, expectedDirty)
+	if dirty {
+		return 0, fmt.Errorf("the verifier reported unresolved callees")
 	}
 	return calls, nil
 }

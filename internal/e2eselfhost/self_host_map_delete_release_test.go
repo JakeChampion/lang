@@ -1,11 +1,8 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -168,88 +165,4 @@ func TestSelfHostMapDeleteReleaseWasm(t *testing.T) {
 		t.Skip("wasmtime not on PATH")
 	}
 	runMapChurnTyped(t, nil, "wasm32-wasi", mapDeleteReleasePrograms)
-}
-
-// The AST lowering's wasm leg takes the same runtime delete, and its maps own
-// their columns per insert on wasm as the typed path's do, so a delete there
-// now releases too. That leg leaks the delete's own tuple and the map through
-// it, so the pin is RELATIVE, between two deletes: one of a key that is
-// present and one of a key that is absent. Both lose the map the same way;
-// only the present key's entry is released, so deleting it must grow the heap
-// STRICTLY less than missing it. Measured at 400,000 against 432,000 bytes
-// over the 1000 rounds — the entry's two boxes a round — where before the fix
-// both read 432,000. The register backends' AST maps own their columns only
-// under a credit the delete does not read, so they keep the release-nothing
-// delete and are not measured here.
-func TestSelfHostMapDeleteReleaseWasmAST(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
-	hostGcc, hostRunner := x86_64Tooling(t)
-	if len(hostRunner) != 0 {
-		t.Skip("the CLI driver takes host filesystem paths as argv")
-	}
-	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, hostGcc, dir, "fern.fern", "fern")
-
-	const head = `import "core/map";
-import "core/cmp";
-function build(n: i32): i32 {
-    var m: Map[string, string] = map_new(2);
-    var i: i32 = 0;
-    while (i < 6) { m = m.insert("k" + i.to_string(), "v" + i.to_string()); i = i + 1; }
-`
-	const tail = `}
-function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 100) { acc = acc + build(w); w = w + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 1000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
-    print((s2 - s1).to_string());
-    if (__rc_underflow_count() != 0) { return 99; }
-    return 0;
-}
-`
-	bump := func(name, body string) int {
-		t.Helper()
-		work := t.TempDir()
-		src := filepath.Join(work, name+".fern")
-		if err := os.WriteFile(src, []byte(head+body+tail), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		wat := filepath.Join(work, name+".wat")
-		cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", src, stdlibRoot, "-o", wat)
-		cmd.Env = append(os.Environ(), "FERN_SEM_IR=")
-		var cerr strings.Builder
-		cmd.Stderr = &cerr
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("compile %s: %v\n%s", name, err, cerr.String())
-		}
-		run := exec.Command("wasmtime", "run", wat)
-		var errBuf strings.Builder
-		run.Stderr = &errBuf
-		out, _ := run.Output()
-		if code := run.ProcessState.ExitCode(); code != 0 {
-			t.Fatalf("%s exited %d, want 0 (99 = over-release)\n%s", name, code, strings.TrimSpace(errBuf.String()))
-		}
-		n, err := strconv.Atoi(strings.TrimSpace(string(out)))
-		if err != nil {
-			t.Fatalf("%s printed %q, want the heap bump", name, out)
-		}
-		return n
-	}
-	absent := bump("absent", "    var (m2, gone) = m.without(\"z\" + \"z\");\n    if (gone) { return 0 - 1; }\n    return m2.len() + n - n;\n")
-	present := bump("present", "    var (m2, gone) = m.without(\"k\" + \"3\");\n    if (!gone) { return 0 - 1; }\n    return m2.len() + 1 + n - n;\n")
-	if present >= absent {
-		t.Fatalf("deleting a present key grows the heap by %d bytes over 1000 rounds against %d for an absent one: "+
-			"the deleted entry's key and value are stranded rather than released", present, absent)
-	}
 }

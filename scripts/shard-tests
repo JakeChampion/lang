@@ -40,14 +40,21 @@ fi
 # 2. order by weight desc, then name asc (stable, deterministic)
 # 3. greedily assign to the least-loaded bucket (lowest index on ties);
 #    print the tests landing in bucket SHARD. mawk-compatible (no asort).
-awk -v OFS='\t' '
-  NR == FNR {
-    if ($0 ~ /^[ \t]*(#|$)/) next
-    w[$1] = $2 + 0
-    next
+# The weights are read in BEGIN rather than as a first input file: with the
+# `NR == FNR` idiom an EMPTY weights file (the /dev/null fallback above, or a
+# file with only comments) makes every line of the test list read as a weight
+# row, and every shard prints nothing.
+awk -v OFS='\t' -v weights="$WEIGHTS" '
+  BEGIN {
+    while ((getline line < weights) > 0) {
+      if (line ~ /^[ \t]*(#|$)/) continue
+      n = split(line, f, /[ \t]+/)
+      if (n >= 2) w[f[1]] = f[2] + 0
+    }
+    close(weights)
   }
   NF { print ($1 in w ? w[$1] : 1), $1 }
-' "$WEIGHTS" - |
+' - |
   sort -k1,1nr -k2,2 |
   awk -v nshard="$NSHARD" -v shard="$SHARD" '
     {

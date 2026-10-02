@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -283,42 +282,23 @@ func TestSelfHostMapLiteralComputedKeyIR_X86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapLiteralComputedKeyWasmIR is the wasm leg of the same corpus.
-// Not a duplicate of the x86-64 one: the key kind goes through op_map_new as well as
-// op_map_set, and on wasm that op picks between two DIFFERENT map
-// representations ($__fern_map_new vs $__fern_map_new_str), where the register
-// backends share one constructor and read the kind only at the compare. A
-// constructor that disagrees with its inserts is invisible on x86-64 and fatal
-// here.
+// TestSelfHostMapLiteralComputedKeyWasmIR is the wasm leg of the same corpus,
+// through asm_load_run's wasm32-wasi leg with the stdlib root. Not a duplicate
+// of the x86-64 one: the wasm map runtime is a different representation, so a
+// constructor that disagrees with its inserts on key kind can be invisible on
+// x86-64 and fatal here.
 func TestSelfHostMapLiteralComputedKeyWasmIR(t *testing.T) {
-	// These programs pin the AST lowering's built-in map runtime; the typed lowering
-	// takes maps from core/map.
-	t.Setenv("FERN_SEM_IR", "")
 	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host map-literal key-kind wasm IR e2e")
+		t.Skip("wasmtime not on PATH; skipping self-host map-literal key-kind wasm e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	l := newWasmStdlibLoader(t)
 
 	for _, tc := range mapLiteralComputedKeyCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "maplitkey_"+tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+			watFile := filepath.Join(t.TempDir(), "maplitkey_"+tc.name+".wat")
+			if err := os.WriteFile(watFile, l.emit(t, tc.src), 0o644); err != nil {
 				t.Fatalf("write wat: %v", err)
 			}
 			rcmd := exec.Command("wasmtime", "run", watFile)

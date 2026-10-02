@@ -13,14 +13,11 @@ import (
 // element box. A producer rebind now keeps the credit, and the rebind store
 // frees the superseded array whole. Answers are the interpreter's.
 
-// leakRow is one program held to the census on every lowering. balanced false
-// holds it to the sanitizer only: a leak is allowed, any other report is not.
-// A nonzero refused pins such a row's AST-lowering census to the shallow
-// fallback's allocs and frees.
+// leakRow is one program held to the census. balanced false holds it to the
+// sanitizer only: a leak is allowed, any other report is not.
 type leakRow struct {
 	name, src string
 	balanced  bool
-	refused   [2]int64
 }
 
 const structArrRebindInst = `struct Inst { name: string, depth: i32 }
@@ -44,20 +41,20 @@ function main(): i32 {
     pending = mk(1);
     return pending.len();
 }
-`, true, [2]int64{}},
+`, true},
 	{"producer_seed", structArrRebindInst + `function main(): i32 {
     var pending: Inst[] = mk(2);
     pending = mk(3);
     return pending.len() + pending[2].depth;
 }
-`, true, [2]int64{}},
+`, true},
 	{"literal_seed", structArrRebindInst + `function main(): i32 {
     var pending: Inst[] = [Inst { name: "q" + "", depth: 7 }];
     var t: i32 = pending[0].depth;
     pending = mk(2);
     return t + pending.len();
 }
-`, true, [2]int64{}},
+`, true},
 	{"loop_with_append", structArrRebindInst + `function main(): i32 {
     var pending: Inst[] = [];
     var t: i32 = 0;
@@ -71,7 +68,7 @@ function main(): i32 {
     }
     return t;
 }
-`, true, [2]int64{}},
+`, true},
 	{"array_field_elem", `struct Node { name: string, kids: i32[] }
 function mk(n: i32): Node[] {
     var out: Node[] = [];
@@ -85,7 +82,7 @@ function main(): i32 {
     while (r < 4) { pending = mk(r); t = t + pending[0].kids[1]; r = r + 1; }
     return t + pending.len();
 }
-`, true, [2]int64{}},
+`, true},
 	// An element bound out of the old array keeps it from the credit.
 	{"bound_elem", structArrRebindInst + `function main(): i32 {
     var pending: Inst[] = [];
@@ -94,21 +91,7 @@ function main(): i32 {
     pending = mk(4);
     return keep.depth + pending[3].depth;
 }
-`, false, [2]int64{}},
-}
-
-var semanticAndAST = []ownAliasLowering{
-	{"semantic", "FERN_SEM_IR=1"},
-	{"ast", "FERN_SEM_IR="},
-}
-
-func checkLeakRowCensus(t *testing.T, stderr string, row leakRow, lw ownAliasLowering) {
-	t.Helper()
-	if row.balanced {
-		assertBalancedCensus(t, stderr)
-	} else if row.refused != ([2]int64{}) && lw.name == "ast" {
-		assertRefusedCensus(t, stderr, row.refused)
-	}
+`, false},
 }
 
 func runLeakRowsX86_64(t *testing.T, rows []leakRow) {
@@ -117,19 +100,19 @@ func runLeakRowsX86_64(t *testing.T, rows []leakRow) {
 	for _, tc := range rows {
 		src := writeOwnAliasSrc(t, tc.name, tc.src)
 		want := ownAliasOracle(t, interp, src)
-		for _, lw := range semanticAndAST {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1", lw.env), nil)
-				if exit != want {
-					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, want, stderr)
-				}
-				checkLeakRowCensus(t, stderr, tc, lw)
-				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
-				if exit != want || forArrStructSanitizerFault(stderr, tc.balanced) {
-					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, want, stderr)
-				}
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1"), nil)
+			if exit != want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, want, stderr)
+			}
+			if tc.balanced {
+				assertBalancedCensus(t, stderr)
+			}
+			stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1"), nil)
+			if exit != want || forArrStructSanitizerFault(stderr, tc.balanced) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, want, stderr)
+			}
+		})
 	}
 }
 
@@ -140,22 +123,22 @@ func runLeakRowsArm64(t *testing.T, rows []leakRow) {
 	for _, tc := range rows {
 		src := writeOwnAliasSrc(t, tc.name, tc.src)
 		want := ownAliasOracle(t, interp, src)
-		for _, lw := range semanticAndAST {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1", lw.env))
-				if err != nil {
-					t.Fatal(err)
-				}
-				cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), tc.name, string(asm)))
-				var eb strings.Builder
-				cmd.Stderr = &eb
-				_ = cmd.Run()
-				if code := cmd.ProcessState.ExitCode(); code != want {
-					t.Fatalf("exit = %d, want %d\n%s", code, want, eb.String())
-				}
-				checkLeakRowCensus(t, eb.String(), tc, lw)
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", "FERN_LEAKCHECK=1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), tc.name, string(asm)))
+			var eb strings.Builder
+			cmd.Stderr = &eb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != want {
+				t.Fatalf("exit = %d, want %d\n%s", code, want, eb.String())
+			}
+			if tc.balanced {
+				assertBalancedCensus(t, eb.String())
+			}
+		})
 	}
 }
 
@@ -168,15 +151,15 @@ func runLeakRowsWasm(t *testing.T, rows []leakRow) {
 	for _, tc := range rows {
 		src := writeOwnAliasSrc(t, tc.name, tc.src)
 		want := ownAliasOracle(t, interp, src)
-		for _, lw := range semanticAndAST {
-			t.Run(tc.name+"/"+lw.name, func(t *testing.T) {
-				stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", lw.env))
-				if exit != want {
-					t.Fatalf("exit = %d, want %d\n%s", exit, want, stderr)
-				}
-				checkLeakRowCensus(t, stderr, tc, lw)
-			})
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1"))
+			if exit != want {
+				t.Fatalf("exit = %d, want %d\n%s", exit, want, stderr)
+			}
+			if tc.balanced {
+				assertBalancedCensus(t, stderr)
+			}
+		})
 	}
 }
 

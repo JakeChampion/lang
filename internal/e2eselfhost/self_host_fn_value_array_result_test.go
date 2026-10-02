@@ -42,19 +42,17 @@ func TestSelfHostFnValueArrayResult(t *testing.T) {
 	if err := os.WriteFile(src, []byte(fnValueArrayResultSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, lw := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
-		t.Run("wasm32-wasi/"+lw.name, func(t *testing.T) {
-			stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", lw.env))
-			if exit != 118 {
-				t.Fatalf("exit=%d, want 118\n%s", exit, stderr)
-			}
-		})
-		t.Run("x86-64/"+lw.name, func(t *testing.T) {
-			bin := cli.x86Binary(t, src, lw.env)
-			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
-			if exit != 118 {
-				t.Fatalf("exit=%d, want 118 (stderr %q)", exit, stderr)
-			}
-		})
-	}
+	t.Run("wasm32-wasi", func(t *testing.T) {
+		stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi"))
+		if exit != 118 {
+			t.Fatalf("exit=%d, want 118\n%s", exit, stderr)
+		}
+	})
+	t.Run("x86-64", func(t *testing.T) {
+		bin := cli.x86Binary(t, src)
+		stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+		if exit != 118 {
+			t.Fatalf("exit=%d, want 118 (stderr %q)", exit, stderr)
+		}
+	})
 }

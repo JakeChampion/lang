@@ -24,6 +24,14 @@ Choose at least two successful runs with comparable runner types, toolchains,
 cache warmth and source workload. Confirm their success from CI: timing rows
 alone do not prove it. Download each run's complete shard timing artifacts to
 its own directory, with the `*.timings` files directly inside that directory.
+When the artifacts are out of reach (they are kept for a day, and the blob
+store they live in is not reachable from every network), the self-host lane's
+`verify` job prints the same evidence into its log: the group "measured
+durations" holds `scripts/ci-test-weights merge` over that run's artifacts,
+the slowest observation of each test. Save the group's rows as the run
+directory's single `run.timings` file. The table is complete only when that
+`verify` job is green: a shard whose artifact is missing fails its first step,
+and the group still prints, short.
 
 ```sh
 scripts/ci-test-weights refresh .github/selfhost-test-weights.txt \

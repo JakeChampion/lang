@@ -51,12 +51,21 @@ jobs:
       # been queued, run and uploaded, and under the account-wide concurrent-
       # job ceiling that queue wait ran 5-10 minutes for ~30 s of compile.
       - name: compile test binary (go test -c)
-        run: go test -c -o e2e.test ./internal/e2e/
-      - name: go test (wasm e2e, prebuilt)
+        run: |
+          go test -c -o e2e.test ./internal/e2e/
+          go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
+      # Two isolated worker processes (cmd/ci-test-workers), as the other e2e
+      # lanes run: the tests cannot t.Parallel (several flip compiler-wide
+      # globals), and one serial process left the runner's other cores idle
+      # while each test waited on its wasmtime subprocess.
+      - name: go test (wasm e2e, prebuilt, two workers)
         run: |
           set -euo pipefail
           chmod +x e2e.test
           BIN="$PWD/e2e.test"
           cd internal/e2e
-          gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2e "$BIN" -test.run '^Test(WASM|Wasm)' -test.v -test.timeout 18m
+          "$RUNNER_TEMP/ci-test-workers" -binary "$BIN" -output "$RUNNER_TEMP/wasm-test-results" \
+            -format standard-verbose -workers 2 -timeout 18m -run '^Test(WASM|Wasm)'
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$RUNNER_TEMP"/wasm-test-results/worker-*.jsonl

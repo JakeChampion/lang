@@ -12,22 +12,15 @@ import (
 // TestSelfHostModloadX86_64 exercises the import-driven self-host driver
 // (asm_modload_run.fern): instead of the `///MODULE`-marker stdin bundle
 // and the synthetic builtin-type table, it reads an ENTRY file off argv,
-// follows its `import "./x"` graph to sibling files on disk, and loads the
-// built-in TYPES from a real builtins.fern module.
+// follows its `import "./x"` graph to sibling files on disk, and takes the
+// built-in TYPES from module_with_builtins' injection.
 //
-// Three program trees prove the contract:
+// The first two program trees:
 //   - "real-builtins": a 2-module program using the built-in IoError enum
-//     (declared nowhere in the program) — real multi-file loading + the
-//     vendored builtins module.
-//   - "custom-builtins": a builtins.fern declaring an enum (Color) that
-//     the synthetic injection has NEVER heard of, used bare in the
-//     program. It can only compile if the driver actually read+merged
-//     builtins.fern — the decisive proof that real modules supply the
-//     built-in types. Only the AST lowering reads builtins.fern; the typed
-//     path injects the built-in types, as the CLI does.
+//     (declared nowhere in the program), with the vendored builtins.fern in
+//     the tree — real multi-file loading.
 //   - "no-builtins": the same IoError program with NO builtins.fern in the
-//     tree, confirming module_with_builtins' idempotent injection still
-//     fills the types in (the legacy path is untouched).
+//     tree, confirming the injection fills the types in.
 func TestSelfHostModloadX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
@@ -65,8 +58,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 		entryRel string            // entry file relative to the program dir (default main.fern)
 		lockDeps map[string]string // dep name → target dir (rel to progDir), written into fern.lock with abs paths
 		cacheDir bool              // point FERN_CACHE_DIR at <progDir>/cache (url-dep store cases, #4949)
-		// ast compiles on the AST lowering, the only one that reads builtins.fern.
-		ast      bool
 		wantExit int
 	}{
 		{
@@ -76,26 +67,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 				"builtins.fern": string(builtinsSrc),
 				"main.fern":     ioErrMain,
 			},
-			wantExit: 42,
-		},
-		{
-			name: "custom-builtins",
-			files: map[string]string{
-				// An enum the synthetic injection has never heard of — so
-				// the program only compiles if builtins.fern was loaded.
-				"builtins.fern": "enum Color { Red, Green, Blue }\n",
-				"main.fern": "" +
-					"function main(): i32 {\n" +
-					"    var c: Color = Green;\n" +
-					"    match (c) {\n" +
-					"        Red => { return 10; },\n" +
-					"        Green => { return 42; },\n" +
-					"        Blue => { return 30; },\n" +
-					"    }\n" +
-					"    return 0;\n" +
-					"}\n",
-			},
-			ast:      true,
 			wantExit: 42,
 		},
 		{
@@ -232,9 +203,6 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			progDir := t.TempDir()
-			if tc.ast {
-				t.Setenv("FERN_SEM_IR", "")
-			}
 			if tc.cacheDir {
 				// The driver inherits the test process env, so the
 				// self-host loader's env("FERN_CACHE_DIR") sees the

@@ -86,9 +86,7 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 		// The Map{…} literal desugars to the SAME chain shape with a
 		// kind-consistent ctor (__map_new_i32 for number keys) — it must stay
 		// accepted and correct (the chain gate flags only mismatched kinds).
-		// The chain is the built-in map runtime's, which only the AST lowering
-		// calls.
-		out, errOut, code := run(t, `function main(): i32 { var m: Map[i32, i32] = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }`, "FERN_SEM_IR=")
+		out, errOut, code := run(t, `function main(): i32 { var m: Map[i32, i32] = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }`)
 		if code != 0 {
 			t.Fatalf("driver exited %d (stderr %q), want 0 — Map literal desugar false-positived the chain gate", code, errOut)
 		}

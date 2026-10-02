@@ -32,9 +32,11 @@ func TestSelfHostStage2Bootstrap(t *testing.T) {
 	entry := "import \"./lexer\";\n" +
 		"import \"./parser\";\n" +
 		"import \"./asm_ir\";\n" +
+		"import \"./semlower\";\n" +
 		"function main(): i32 {\n" +
 		"    var src: string = \"function main(): i32 { return 7; }\";\n" +
-		"    var out: string = asm_ir.emit_module_or_error(parser.parse_module(lexer.tokenize(src)));\n" +
+		"    var d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), \"x86-64-linux\");\n" +
+		"    var out: string = asm_ir.emit_module_or_error_sub(d.full, d.sub);\n" +
 		"    print(out);\n" +
 		"    return 0;\n" +
 		"}\n"

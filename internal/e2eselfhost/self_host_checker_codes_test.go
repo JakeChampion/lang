@@ -179,6 +179,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		{"view-receiver-method", "function (xs: [T]) head(): T { return xs[0]; } function main(): i32 { var a = [3]; var v: [i32] = a[:]; return v.head(); }", nil},
+		{"view-method-on-owned-array", "function (xs: [T]) head(): T { return xs[0]; } function main(): i32 { var a = [3]; return a.head(); }", []string{"E043"}},
+		{"owned-method-on-view", "function (xs: T[]) first(): T { return xs[0]; } function main(): i32 { var a = [3]; var v: [i32] = a[:]; return v.first(); }", []string{"E043"}},
 		// A literal local takes ONE integer type: its first width-fixing use
 		// decides it, i32 when none does (#10123). The self-host held it at i32
 		// from its binding and native let each use pick a width, so the same
@@ -1044,6 +1047,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"clean-struct-and-func", "struct Q { a: i32, b: string }\nfunction h(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"func-redeclared", "function f(): i32 { return 1; }\nfunction f(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"method-redeclared", "struct P { x: i32 }\nfunction (p: P) m(): i32 { return 1; }\nfunction (p: P) m(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		// Array and view receivers are two namespaces, each shared by every
+		// element type, as native keys them.
+		{"view-and-array-method-same-name-ok", "function (xs: [u8]) m(): u8 { return xs[0]; }\nfunction (xs: u8[]) m(): u8 { return xs[0]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"view-method-redeclared-across-elements", "function (xs: [u8]) m(): u8 { return xs[0]; }\nfunction (xs: [i32]) m(): i32 { return xs[0]; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"array-method-redeclared-across-elements", "function (xs: u8[]) m(): u8 { return xs[0]; }\nfunction (xs: i32[]) m(): i32 { return xs[0]; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"free-and-method-same-name-ok", "struct P { x: i32 }\nfunction m(): i32 { return 1; }\nfunction (p: P) m(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-mismatch", "function main(): i32 { var s: string = \"x\"; return s; }\n", []string{"E002"}},
 		// A written `return` inside a value block leaves the ENCLOSING function,

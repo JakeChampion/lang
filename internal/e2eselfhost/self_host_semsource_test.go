@@ -226,6 +226,14 @@ function (n: i32) doubled(): i32 { return n * 2; }
 function via_arrm(a: i32[]): i32 { return a.second_or(0); }
 function via_smm(h: Holder[string]): i32 { return h.tagged(true); }
 function via_prim(k: i32): i32 { return k.doubled(); }
+// A concrete receiver's own type variable that no argument binds (the empty
+// literal infers nothing at mono time, #10991) leaves the call on its
+// receiver, and the refusal names the written target rather than the folded
+// template the lowering would never find.
+trait ByteOffset { function offset(self: Self): i32; }
+impl ByteOffset for u8 { function offset(self: u8): i32 { return self as i32; } }
+function (xs: [u8]) take[T: ByteOffset](values: T[]): u8 { return xs[0]; }
+function via_cviewm_unbound(s: string): u8 { return s.as_bytes().take([]); }
 // The eleven string methods the AST lowering emits an OP for rather than a
 // call. The receiver is lent to every one; the three that answer text and the
 // two that answer an array hand back a fresh box of the caller's own, and the
@@ -535,10 +543,9 @@ function inferred_plain(n: i32): i32 { return apply_int((x: i32) => x + 1, n); }
 // literal is.
 function float_binding(n: i32): i32 { var f = 2.5; var g = f + 1.5; if (g > 3.0) { return n; } return 0; }
 function inferred_ret(k: i32, n: i32): i32 { return apply_int((x: i32) => { var m: i32 = x * k; return m + 1; }, n); }
-// A function value is lent, never handed over: a parameter that would take
-// its box and release it here has no contract, since only the frame that
-// built the box knows the captures its release must walk.
-function refused_own_fn(own f: (i32) => i32, n: i32): i32 { return f(n); }
+// An own function value is this frame's to release, from a box another
+// frame built (#10958).
+function own_fn(own f: (i32) => i32, n: i32): i32 { return f(n); }
 // A closure TAKES a captured function value, like every other reference it
 // holds, so the box's release walks that field. The capture is a parameter
 // here and a local closure below, and neither is a special case.
@@ -3982,7 +3989,7 @@ const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa"; import "./ssasem";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
 import "./ircore"; import "./checker"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./util";
-import "./modloader"; import "./flatten"; import "./treeshake";
+import "./modloader"; import "./flatten"; import "./treeshake"; import "./semlower";
 function main(): i32 {
     var av = args();
     var src: string = "";
@@ -4006,7 +4013,7 @@ function main(): i32 {
     // The pipeline the CLI runs before it lowers. The typed lowering reads
     // typed; the AST lowering reads its erasure.
     var typed = irlower.lift_lambdas_typed(parser.module_with_builtins_typed(treeshake.treeshake(checker.annotate_module(merged))));
-    var mod = parser.erase_str_module(typed);
+    var mod = parser.erase_view_module(typed);
     var tab = irlower.struct_tab(mod.structs);
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
     var built = semsource.build_module(typed);
@@ -4105,11 +4112,11 @@ function main(): i32 {
     cache = ssarc.merge_helpers(cache, instances);
     cache = ssarc.merge_helpers(cache, helpers.rows);
     if (av[1] == "x86-64-linux") {
-        print(asm_ir.emit_module_ir_unit_flat(mod, true, false, "", [], mod.funcs, tab, 0, 0 - 1, cache, base, asmcore.no_rt_lower));
+        print(asm_ir.emit_module_ir_unit_flat(mod, true, false, "", [], mod.funcs, tab, 0, 0 - 1, cache, base, semlower.runtime_bodies));
     } else if (av[1] == "arm64-linux") {
         strbuf_reset();
         var state = asmcore.new_state();
-        state = asmcore.EmitState { ...state, struct_decls: tab, funcs: mod.funcs };
+        state = asmcore.EmitState { ...state, struct_decls: tab, funcs: mod.funcs, rt_lower: semlower.runtime_bodies };
         state = asm_arm64_ir.emit_body(mod, state, false, cache, base);
         // The per-type __field_reclaim_<T> / __struct_drop_<T> bodies this unit
         // needs, in the order the real arm64 module emit uses them. Without it a

@@ -2427,8 +2427,13 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
     return refused(s, "unsupported call target");
   }
   var prefix: string = "";
-  if let typeinfo.TypeArray(_) = s.values[recv.id] {
+  // Dispatch by the checked surface receiver, before physical view erasure.
+  var receiver_type: typeinfo.Type = checked(fa.obj, s);
+  if let typeinfo.TypeArray(a) = receiver_type {
     prefix = "__arrm_";
+    if (a.view) {
+      prefix = "__viewm_";
+    }
   }
   if (ssasem.is_map(s.values[recv.id])) {
     prefix = "__mapm_";
@@ -2442,7 +2447,10 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
   if (prefix == "") {
     return primitive_method(c, fa, recv, s, statement);
   }
-  var at: i32 = ssasem.find_contract(s.contracts, prefix + fa.field);
+  var at: i32 = ssasem.find_contract(s.contracts, parser.concrete_array_method_name(typeinfo.spelling(receiver_type), fa.field));
+  if (at < 0) {
+    at = ssasem.find_contract(s.contracts, prefix + fa.field);
+  }
   if (at < 0 && prefix == "__arrm_") {
     at = array_module_method(s.contracts, fa.field);
   }
@@ -2504,7 +2512,7 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
     return builtin_length(recv, s);
   }
   if ((fa.field == "bytes" || fa.field == "as_bytes") && c.args.len() == 0 && ssasem.is_text(s.values[recv.id])) {
-    return define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: false });
+    return define(s, ssasem.str_bytes(), [recv.id], 0, "", typeinfo.TypeArray { elem: t_u8(), view: fa.field == "as_bytes" });
   }
   if (fa.field == "append" && c.args.len() == 1) {
     return builtin_append(c, recv, s);
@@ -5429,14 +5437,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
     if (!semtypes.concrete(ty, true)) {
       return fail(s, "unresolved parameter type");
     }
-    // A function value is lent across a call, never handed over: its box
-    // is walked by the frame that built it, the only one whose schema
-    // names the captures, so a parameter that would take the unit and
-    // release the box here has no contract.
     var m: i32 = decl_param_mode(fd, at, ty);
-    if (ssasem.is_func(ty) && m == ssaunits.counted_mode()) {
-      return fail(s, "owning function parameter");
-    }
     var p: Value = define(s, 6, [], at, "", ty);
     s = bind(State { ...p.s, modes: p.s.modes.append(m) }, names[at], p.id);
     at = at + 1;
@@ -6516,16 +6517,29 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.C
   return ssasem.Contract { name: decl_key(fd), params: params, modes: modes, result: result };
 }
 
-// Whether a contract name is a method of this field name — `Type.field`.
-function method_is(key: string, field: string): boolean {
+// The method name of a contract key, `Type.field` giving `field`, or "" for
+// a free function's.
+function method_name_of(key: string): string {
   var at: i32 = key.len() - 1;
   while (at >= 0 && key[at] != b'.') {
     at = at - 1;
   }
   if (at < 0) {
-    return false;
+    return "";
   }
-  return slice_unchecked(key, at + 1, key.len()) == field;
+  return slice_unchecked(key, at + 1, key.len()) + "";
+}
+
+// The declarations known to hand an argument out, by contract key, and the
+// method names among them, for a callee the receiver's type does not name.
+struct Handers { keys: util.NameIndex, methods: util.NameIndex }
+
+function handers_with(h: Handers, key: string): Handers {
+  var m: string = method_name_of(key);
+  if (m.len() > 0 && !h.methods.has(m)) {
+    return Handers { keys: h.keys.added(key), methods: h.methods.added(m) };
+  }
+  return Handers { ...h, keys: h.keys.added(key) };
 }
 
 function return_exprs(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
@@ -6542,7 +6556,7 @@ function return_exprs(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
 // the set below. Nothing else does: `s + ""` and `s.len()` read the value and
 // build something of their own, which is why `copied()` and `view_len()` keep
 // reclaiming the views they are lent.
-function escapes_in(e: ast.Expr, names: string[], known: util.NameIndex): boolean {
+function escapes_in(e: ast.Expr, names: string[], known: Handers): boolean {
   if let ast.ExprIdent(id) = e {
     return util.index_of_str(names, id.name) >= 0;
   }
@@ -6616,20 +6630,12 @@ function stores_argument(name: string): boolean {
 // A call that hands its arguments on: one whose target is already in the set —
 // by plain name, or, since the receiver's type is not in hand here, by method
 // name alone — or one of the builtins that stores what it is given.
-function known_callee(c: ast.ExprCall, known: util.NameIndex): boolean {
+function known_callee(c: ast.ExprCall, known: Handers): boolean {
   if let ast.ExprIdent(id) = c.callee {
-    return stores_argument(id.name) || known.has(id.name);
+    return stores_argument(id.name) || known.keys.has(id.name);
   }
   if let ast.ExprFieldAccess(fa) = c.callee {
-    if (stores_argument(fa.field)) {
-      return true;
-    }
-    for k in known.names {
-      if (method_is(k, fa.field)) {
-        return true;
-      }
-    }
-    return false;
+    return stores_argument(fa.field) || known.methods.has(fa.field);
   }
   return false;
 }
@@ -6653,7 +6659,7 @@ function bound_exprs(st: ast.Stmt, own acc: Bound[]): Bound[] {
 // inside `st`. So the names that carry a parameter close over the body's
 // bindings first — a local bound from an expression that hands one of them
 // out carries it too — and the returns are read against that set.
-function hands_back(fd: parser.FuncDecl, known: util.NameIndex): boolean {
+function hands_back(fd: parser.FuncDecl, known: Handers): boolean {
   var names: string[] = decl_param_names(fd);
   var binds: Bound[] = [];
   var outs: ast.Expr[] = [];
@@ -6686,19 +6692,19 @@ function hands_back(fd: parser.FuncDecl, known: util.NameIndex): boolean {
 // the caller may release first.
 function handers(mod: parser.Module): util.NameIndex {
   var none: string[] = [];
-  var found: util.NameIndex = util.name_index(none);
+  var found: Handers = Handers { keys: util.name_index(none), methods: util.name_index(none) };
   var changed: boolean = true;
   while (changed) {
     changed = false;
     for fd in mod.funcs {
       var key: string = decl_key(fd);
-      if (!found.has(key) && hands_back(fd, found)) {
-        found = found.added(key);
+      if (!found.keys.has(key) && hands_back(fd, found)) {
+        found = handers_with(found, key);
         changed = true;
       }
     }
   }
-  return found;
+  return found.keys;
 }
 
 // To a fixpoint: a synthesised declaration's result may be another's, read

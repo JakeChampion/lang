@@ -51,10 +51,7 @@ func TestSelfHostSemScalarContracts(t *testing.T) {
 	for _, tc := range wasm {
 		t.Run(tc.name+"/wasm", func(t *testing.T) {
 			if got, _ := runWasm(t, c.emit(t, "wasm32-wasi", tc.src)); got != tc.want {
-				t.Errorf("typed lowering: exit %d, want %d", got, tc.want)
-			}
-			if got, _ := runWasm(t, c.emit(t, "wasm32-wasi", tc.src, "FERN_SEM_IR=")); got != tc.want {
-				t.Errorf("AST lowering: exit %d, want %d", got, tc.want)
+				t.Errorf("exit %d, want %d", got, tc.want)
 			}
 		})
 	}

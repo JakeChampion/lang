@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -79,21 +78,11 @@ func TestSelfHostStructDropArrArrFreeIRX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
-	run := func(t *testing.T, prog, name string, want int, wantCalls int) {
+	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
 		asm := string(runCapture(t, gcc, runner, driverBin, []byte(prog)))
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host compiler emitted 0 bytes", name)
-		}
-		// The helper calls counted are the AST lowering's drop helpers'.
-		astAsm := string(runCaptureAST(t, runner, driverBin, []byte(prog)))
-		if got := strings.Count(astAsm, "call __fn___fern_arrarr_free"); got != wantCalls {
-			t.Errorf("%s: %d `call __fn___fern_arrarr_free`, want %d — the struct-array field release is not going through the shared helper", name, got, wantCalls)
-		}
-		for _, walk := range []string{".Lstd_Bag_loop", ".Lfr_Bag_loop"} {
-			if strings.Contains(astAsm, walk) {
-				t.Errorf("%s: emitted asm still has %s — the open-coded element walk came back beside the helper call", name, walk)
-			}
 		}
 		bin := buildBin(t, gcc, dir, name, asm)
 		var cmd *exec.Cmd
@@ -110,10 +99,10 @@ func TestSelfHostStructDropArrArrFreeIRX86_64(t *testing.T) {
 
 	// Scope-exit drop + rebind reclaim: __struct_drop_Bag and __field_reclaim_Bag
 	// each release `es`, so both call sites are in one program.
-	run(t, structDropArrArrFreeProg, "struct_drop_arrarr_free", 0, 2)
+	run(t, structDropArrArrFreeProg, "struct_drop_arrarr_free", 0)
 	// A live second owner across the drop: the helper's rc>1 arm must decrement
 	// without touching the elements `c` still reads.
-	run(t, structDropArrArrSharedProg, "struct_drop_arrarr_free_shared", 0, 1)
+	run(t, structDropArrArrSharedProg, "struct_drop_arrarr_free_shared", 0)
 }
 
 // TestSelfHostStructDropArrArrFreeIRArm64 runs both programs on the arm64

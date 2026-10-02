@@ -24,9 +24,6 @@ import (
 // incoming key, which the map must free ($kconsume) rather than leak, while an
 // aliased recurring key must be left untouched.
 func TestSelfHostMapKsReclaimWasmIR(t *testing.T) {
-	// These programs pin the AST lowering's built-in map runtime; the typed lowering
-	// takes maps from core/map.
-	t.Setenv("FERN_SEM_IR", "")
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host map-ks-reclaim wasm IR e2e")
 	}

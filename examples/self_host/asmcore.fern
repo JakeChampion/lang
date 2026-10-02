@@ -149,9 +149,8 @@ pub struct EmitState {
   // take its operands in registers.
   capture: usize,
   // The typed lowering of a runtime helper's source: one body per function it
-  // defines, then the drop helpers those bodies carry, or none to keep the
-  // AST lowering (the typed path off, or a bisect knob). The CLI supplies it (semlower.runtime_bodies); a backend
-  // never links that pipeline itself.
+  // defines, then the drop helpers those bodies carry. The CLI supplies it
+  // (semlower.runtime_bodies); a backend never links that pipeline itself.
   rt_lower: (string) => irlower.LowerResult[],
   // The symbols this file already defines as named bodies (the drop helpers
   // a substitution or a runtime helper's lowering carries), so a second
@@ -170,8 +169,11 @@ pub function (s: EmitState) with_named(name: string): EmitState {
   return EmitState { ...s, named: s.named.append(name) };
 }
 
-// no_rt_lower keeps every runtime helper on the AST lowering.
+// no_rt_lower is the runtime-helper lowering of an emit no driver handed the
+// typed one (semlower.runtime_bodies): appending a helper there is a bug.
 pub function no_rt_lower(src: string): irlower.LowerResult[] {
+  eprint("internal error: a runtime helper was appended with no typed lowering to lower it");
+  exit(3);
   return [];
 }
 
@@ -7941,7 +7943,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
     name: "main", receiver_name: "", receiver_type: "", type_params: [],
     params: [], ret_type: "i32", body: body, line: 0, col: 0,
     import_iface: "", import_wit: "", all_type_params: [],
-    bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false,
+    bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
     is_pub: true,
     is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "",
   };
