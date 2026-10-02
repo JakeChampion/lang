@@ -29,21 +29,22 @@ import (
 // "every test program runs identically before/after" gate, applied
 // to the fixture corpus.
 
-// fixtureFreeOnRunner emits `mainPath` with ast.RcFreeEnabled set,
-// using the same per-backend pipeline as the normal fixture runner.
-func runFixtureX86_64FreeOn(t *testing.T, mainPath, stdin string) (string, int) {
+// runFixtureX86_64Native builds `mainPath` with the native x86-64 backend
+// with ast.RcFreeEnabled set to `free`. The rc flag differentials compare two
+// native builds, so neither leg can go through the self-host.
+func runFixtureX86_64Native(t *testing.T, mainPath, stdin string, free bool) (string, int) {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	info, prog := loadCheckMono(t, mainPath)
 	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
+	ast.RcFreeEnabled = free
+	defer func() { ast.RcFreeEnabled = prev }()
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := x86_64.Emit(prog, info)
-	ast.RcFreeEnabled = prev
 	if err != nil {
-		t.Fatalf("x86_64 emit (free-on): %v", err)
+		t.Fatalf("x86_64 emit (free=%v): %v", free, err)
 	}
 	bin := linkAsm(t, gcc, asm, "-static", "-nostdlib", "-no-pie")
 	var cmd *exec.Cmd
@@ -55,19 +56,20 @@ func runFixtureX86_64FreeOn(t *testing.T, mainPath, stdin string) (string, int) 
 	return runBin(cmd, stdin)
 }
 
-func runFixtureArm64FreeOn(t *testing.T, mainPath, stdin string) (string, int) {
+// runFixtureArm64Native is runFixtureX86_64Native for the native arm64 backend.
+func runFixtureArm64Native(t *testing.T, mainPath, stdin string, free bool) (string, int) {
 	t.Helper()
 	gcc, qemu := arm64Tooling(t)
 	info, prog := loadCheckMono(t, mainPath)
 	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
+	ast.RcFreeEnabled = free
+	defer func() { ast.RcFreeEnabled = prev }()
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := arm64codegen.Emit(prog, info)
-	ast.RcFreeEnabled = prev
 	if err != nil {
-		t.Fatalf("arm64 emit (free-on): %v", err)
+		t.Fatalf("arm64 emit (free=%v): %v", free, err)
 	}
 	bin := linkAsm(t, gcc, asm, "-static", "-nostdlib")
 	cmd := runArm64Bin(qemu, bin)
@@ -164,31 +166,16 @@ func checkFreeToggle(t *testing.T, f *fixtureSpec, outOff string, exitOff int, o
 
 func TestX86_64FixturesFreeMatchesNoFree(t *testing.T) {
 	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
-		// Restore via t.Cleanup, not straight-line code: runFixtureX86_64
-		// t.Fatal's on a compile/link failure, and an inline restore after
-		// it would never run — leaking RcFreeEnabled=false into every
-		// subsequent test in the package (which is how one broken fixture
-		// used to cascade into unrelated dyn/StdError failures).
-		prev := ast.RcFreeEnabled
-		defer func() { ast.RcFreeEnabled = prev }()
-		t.Cleanup(func() { ast.RcFreeEnabled = prev })
-		ast.RcFreeEnabled = false
-		outOff, exitOff := runFixtureX86_64(t, f.mainPath, f.stdin)
-		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
+		outOff, exitOff := runFixtureX86_64Native(t, f.mainPath, f.stdin, false)
+		outOn, exitOn := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
 		checkFreeToggle(t, f, outOff, exitOff, outOn, exitOn)
 	})
 }
 
 func TestArm64FixturesFreeMatchesNoFree(t *testing.T) {
 	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
-		// t.Cleanup restore: see the x86_64 variant — a t.Fatal inside
-		// runFixtureArm64 must not leak RcFreeEnabled=false package-wide.
-		prev := ast.RcFreeEnabled
-		defer func() { ast.RcFreeEnabled = prev }()
-		t.Cleanup(func() { ast.RcFreeEnabled = prev })
-		ast.RcFreeEnabled = false
-		outOff, exitOff := runFixtureArm64(t, f.mainPath, f.stdin)
-		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
+		outOff, exitOff := runFixtureArm64Native(t, f.mainPath, f.stdin, false)
+		outOn, exitOn := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
 		checkFreeToggle(t, f, outOff, exitOff, outOn, exitOn)
 	})
 }
@@ -216,12 +203,12 @@ func TestWASMFixturesFreeMatchesNoFree(t *testing.T) {
 // same helpers; only RcReuseEnabled flips (free stays on for both runs).
 func TestX86_64ReuseMatchesNoReuse(t *testing.T) {
 	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
-		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
+		outOn, exitOn := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
 		prev := ast.RcReuseEnabled
 		defer func() { ast.RcReuseEnabled = prev }()
 		t.Cleanup(func() { ast.RcReuseEnabled = prev })
 		ast.RcReuseEnabled = false
-		outOff, exitOff := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
+		outOff, exitOff := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("reuse-on diverged from reuse-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
@@ -230,12 +217,12 @@ func TestX86_64ReuseMatchesNoReuse(t *testing.T) {
 
 func TestArm64ReuseMatchesNoReuse(t *testing.T) {
 	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
-		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
+		outOn, exitOn := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
 		prev := ast.RcReuseEnabled
 		defer func() { ast.RcReuseEnabled = prev }()
 		t.Cleanup(func() { ast.RcReuseEnabled = prev })
 		ast.RcReuseEnabled = false
-		outOff, exitOff := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
+		outOff, exitOff := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("reuse-on diverged from reuse-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
