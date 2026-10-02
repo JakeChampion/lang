@@ -25,8 +25,9 @@ import (
 // The parser knows which one it built, so the fix marks the desugar
 // (parser.ORIGIN_BLOCK / _MATCH_EXPR / _IF_EXPR / _ARR_COMP / _MAP_COMP) and
 // every consumer tests the marker instead of the shape. There were five such
-// consumers, not one: parser.is_value_block, irlower's is_iife_callee and
-// call_bail_tag, and the two lower_iife dispatch sites.
+// consumers, not one: parser.is_value_block, irlower's is_iife_callee (now
+// irtables.is_iife_callee) and call_bail_tag, and the two lower_iife dispatch
+// sites.
 //
 // The unmarked IIFE then needs something to call: the lift hoists it to a
 // direct `__lam_N` call, with any captures as trailing arguments

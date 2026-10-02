@@ -1,5 +1,5 @@
-// examples/self_host/tuple_elem_tag_run.fern — byte-identity guard for irlower's
-// tuple element-tag decoder (irlower.fern's tuple_type_elem_tag, SH-021 slice —
+// examples/self_host/tuple_elem_tag_run.fern — byte-identity guard for the
+// tuple element-tag decoder (irtables.fern's tuple_type_elem_tag, SH-021 slice —
 // docs/SELF-HOST-AUDIT.md T2).
 //
 // tuple_type_elem_tag now extracts element n of a tuple type spelling
