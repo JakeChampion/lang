@@ -457,7 +457,7 @@ function canon_trait_set(traits: string): string {
 // which is an owned handle. Only a declared resource makes `own R` a handle;
 // elsewhere `own T` is a consuming parameter's spelling.
 function names_resource_handle(name: string, tn: TypeNames): boolean {
-  return tn.resources.has(handle_resource(name));
+  return tn.resources.names.len() > 0 && tn.resources.has(handle_resource(name));
 }
 
 function handle_resource(name: string): string {
