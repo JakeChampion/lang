@@ -586,11 +586,14 @@ pub function tid_globals_section(structs: irtables.StructTab): string {
   return util.str_join_chunks(parts);
 }
 
+// Every literal starts on a four-byte boundary. Applying the same padding
+// within each unit and in the linked region preserves relative offsets, and
+// leaves the low two pointer bits available to distinguish byte-view storage.
 pub function str_offset(vals: string[], idx: i32): i32 {
   let off: i32 = str_region_base();
   let i: i32 = 0;
   while (i < idx) {
-    off = off + 4 + vals[i].len();
+    off = (off + 4 + vals[i].len() + 3) / 4 * 4;
     i = i + 1;
   }
   return off;
