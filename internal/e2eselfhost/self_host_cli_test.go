@@ -2695,6 +2695,20 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("wasm-component-refuses-extern-outside-world", func(t *testing.T) {
+		// An extern to an interface the fern world does not declare cannot be
+		// composed; the CLI refuses it by naming the interface.
+		refused := filepath.Join(dir, "comp_refused.fern")
+		if err := os.WriteFile(refused, []byte("@import(\"local:test/sink@0.1.0\", \"pick\")\nfunction pick(c: i32): i32;\nfunction main(): i32 { return pick(1); }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", filepath.Join(dir, "comp_refused.wasm"), refused)
+		out, _ := cmd.CombinedOutput()
+		if code := cmd.ProcessState.ExitCode(); code != 2 || !strings.Contains(string(out), "local:test/sink@0.1.0") {
+			t.Errorf("exit %d, output %q; want 2 naming the interface", code, out)
+		}
+	})
+
 	// #6946: a builtin with no wasm meaning must be named by the diagnostic on
 	// the CLI's wasm path too. The pre-emit gate lived only in the standalone
 	// wasm drivers, which the CLI does not go through, so `-target wasm32-wasi`

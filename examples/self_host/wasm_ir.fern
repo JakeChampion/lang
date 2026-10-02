@@ -4641,7 +4641,7 @@ pub function indirect_fn_sigs(cache: irlower.LowerResult[]): string[] {
 }
 
 // wasm_type_of_char maps one width char of a signature key to its WAT value
-// type. The inverse of irlower.wasm_width_char, kept next to its only consumer.
+// type, kept next to its only consumer.
 function wasm_type_of_char(c: string): string {
   if (c == "l") {
     return "i64";
@@ -14716,30 +14716,28 @@ pub function extern_record_ret_direct(mod: parser.Module, t: string): boolean {
     && extern_field_is_scalar(struct_field_type_at(stab, t, 0));
 }
 
-// parameter (P4c): a sum type whose arm payload(s) are i32/u32. A self-host
-// Option/Result is a heap box `[tag:i32 @0][payload:i32 @4]`; the canonical
-// option/result flattens to (disc, payload).
+// parameter (P4c): a non-array sum type whose arm payloads are each one i32
+// (extern_i32_payload). A self-host Option/Result is a heap box
+// `[tag:i32 @0][payload:i32 @4]`; the canonical option/result flattens to
+// (disc, payload).
 pub function extern_sum_param_supported(t: string): boolean {
-  // Decode via the structured TypeRef (SH-021 — parser.parse_type_ref) instead
-  // of the magic-byte `Option[` / `Result[` prefix + top-level-comma depth scan.
-  // A flat sum param is a NON-array Option[i32|u32] or Result[i32|u32, i32|u32];
-  // an array (array_depth != 0) or any other shape is unsupported. Byte-identical
-  // to the former scan across the whole type grammar (verified old-vs-new over a
-  // corpus incl. arrays, nested-generic payloads, malformed fn_sigs, bare names).
   var r: parser.TypeRef = parser.parse_type_ref(t);
   if (r.array_depth != 0) {
     return false;
   }
   if (r.base == "Option" && r.args.len() == 1) {
-    var p: string = parser.render_type_ref(r.args[0]);
-    return p == "i32" || p == "u32";
+    return extern_i32_payload(parser.render_type_ref(r.args[0]));
   }
   if (r.base == "Result" && r.args.len() == 2) {
-    var ok: string = parser.render_type_ref(r.args[0]);
-    var er: string = parser.render_type_ref(r.args[1]);
-    return (ok == "i32" || ok == "u32") && (er == "i32" || er == "u32");
+    return extern_i32_payload(parser.render_type_ref(r.args[0])) && extern_i32_payload(parser.render_type_ref(r.args[1]));
   }
   return false;
+}
+
+// extern_i32_payload is true for a sum payload the canonical ABI carries as
+// one i32: an i32, a u32, or an owned resource handle.
+function extern_i32_payload(p: string): boolean {
+  return p == "i32" || p == "u32" || parser.spelling_is_own(p);
 }
 
 // extern_sum_param_is_option reports whether t is an Option[...] — its
@@ -14763,10 +14761,31 @@ pub function extern_sum_param_is_option(t: string): boolean {
 // by its discriminant, whatever wider payload it carries left in the return
 // area (which is why the area is floored at 64 bytes).
 pub function extern_sum_result_supported(t: string): boolean {
-  if (extern_sum_param_supported(t)) {
+  if (extern_sum_param_supported(t) || extern_sum_wide_payload(t)) {
     return true;
   }
   return extern_sum_heap_payload(t).len() > 0;
+}
+
+// extern_sum_wide_payload is true for an Option / Result result whose every
+// payload is 64-bit. Its canonical return area and its self-host box agree:
+// the discriminant at 0, the payload at 8.
+function extern_sum_wide_payload(t: string): boolean {
+  var r: parser.TypeRef = parser.parse_type_ref(t);
+  if (r.array_depth != 0) {
+    return false;
+  }
+  if (r.base == "Option" && r.args.len() == 1) {
+    return extern_i64_payload(parser.render_type_ref(r.args[0]));
+  }
+  if (r.base == "Result" && r.args.len() == 2) {
+    return extern_i64_payload(parser.render_type_ref(r.args[0])) && extern_i64_payload(parser.render_type_ref(r.args[1]));
+  }
+  return false;
+}
+
+function extern_i64_payload(p: string): boolean {
+  return p == "i64" || p == "u64";
 }
 
 // extern_sum_heap_payload is the heap payload kind ("string" / "u8[]") of a
@@ -15426,21 +15445,29 @@ function extern_sum_result_locals(): string {
 // Ok=0/Err=1 matches). A flat payload is the i32 at +4. A heap payload is
 // copied out of the (ptr, len) at +4/+8 only when the discriminant selects
 // its arm; the other arm keeps Result's i32 at +4 (an Err code) or None's 0.
+// A 64-bit payload (extern_sum_wide_payload) is the i64 at +8, in a 16-byte box.
 // The area is floored at 64 bytes: the Fern type reads a host error variant
 // by its discriminant, but the host writes the whole variant.
 function extern_sum_result_tail(fname: string, ret: string, slot: i32, callargs: string): string {
   var heap: string = extern_sum_heap_payload(ret);
   var opt: boolean = extern_sum_param_is_option(ret);
+  var wide: boolean = extern_sum_wide_payload(ret);
   var o: string = "";
   o = o + "    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const 71)) (i32.const 7)) (i32.const -8)))\n";
   o = o + "    (call $" + fname + "__import" + callargs + " (local.get $rb))\n";
-  o = o + "    (local.set $s " + xbox_new(slot, 8) + ")\n";
+  if (wide) {
+    o = o + "    (local.set $s " + xbox_new(slot, 16) + ")\n";
+  } else {
+    o = o + "    (local.set $s " + xbox_new(slot, 8) + ")\n";
+  }
   if (opt) {
     o = o + "    (i32.store (local.get $s) (i32.sub (i32.const 1) (i32.load8_u (local.get $rb))))\n";
   } else {
     o = o + "    (i32.store (local.get $s) (i32.load8_u (local.get $rb)))\n";
   }
-  if (heap.len() == 0) {
+  if (wide) {
+    o = o + "    (i64.store offset=8 (local.get $s) (i64.load offset=8 (local.get $rb)))\n";
+  } else if (heap.len() == 0) {
     o = o + "    (i32.store offset=4 (local.get $s) (i32.load offset=4 (local.get $rb)))\n";
   } else {
     var sel: string = "0";
@@ -16899,7 +16926,7 @@ function emit_wasm_struct_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32
   // (i64/u64) stores via i64.store; an 8-byte FLOAT field (f64/f32/float —
   // f32 is f64-backed) via f64.store through the f64 scratch; others via
   // i32.store. The width classification mirrors struct_set / struct_get
-  // and irlower.struct_field_width exactly: f32/float and u64 must NOT
+  // exactly: f32/float and u64 must NOT
   // fall to the 4-byte i32.store, or only the low half of the 8-byte slot
   // is written and the f64.load/i64.load read-back returns garbage.
   // $arrtmp holds the base across the field pops.
