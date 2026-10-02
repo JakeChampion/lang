@@ -27,6 +27,8 @@ function main(): i32 { let h: H = H { s: "abc", n: 1 }; return h.n + h.s.len(); 
 function mk(t: string): H { return H { s: slice_unchecked(t, 0, 3), n: 1 }; }
 function main(): i32 { let h: H = mk("abcde"); return h.n + h.s.len(); }
 `, 4},
+	{"array_view", `function main(): i32 { let xs: str[] = [slice_unchecked("abcde", 0, 3)]; return xs[0].len(); }
+`, 3},
 	{"tuple_view", `function main(): i32 { let t: string = "abcde"; let p: (str, i32) = (slice_unchecked(t, 0, 3), 4); return p.0.len() + p.1; }
 `, 7},
 }
