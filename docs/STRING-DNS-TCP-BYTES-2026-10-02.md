@@ -26,9 +26,9 @@ owning streams and sockets are closed.
 
 This refresh integrates main `da4dd43be`, including the checked text producers,
 TCP and UDP byte sinks, bounded byte-read storage and `let` syntax. The pinned
-Darwin bootstrap reaches identical stage-2 and stage-3 binaries of
-12,990,081 bytes, SHA-256
-`aef288ad5137eb49df0c1b10fc316b87a718afc28e24da74c4b1501902cc9ce9`.
+Darwin bootstrap, including the release-entry CI fix described below,
+reaches identical stage-2 and stage-3 binaries of 12,296,625 bytes, SHA-256
+`bdd20b690a2d2b9e5c6c724138db0ebdf4832337cf674de6fb64f065bc0018ad`.
 The seed is `stage0-20261001-c891ebc`.
 
 The send-loop fixture extracts the production function and replaces only
@@ -50,15 +50,20 @@ The deadline comparison executes WASI output from this stage-2 compiler
 against a compiler built from parent `da4dd43be` using the same generator.
 It checks the silent peer's connection cleanup as well as the result.
 
-The same stage-2 compiler builds the parent compiler to 12,990,065 bytes
-and this candidate to 12,990,081, an increase of 16 bytes. Code grows from
+Before the release-entry CI fix, the same generator built the parent compiler
+to 12,990,065 bytes and the DNS candidate to 12,990,081, an increase of
+16 bytes. Code grew from
 11,244,868 to 11,245,804 bytes, and data from 950,296 to 950,808 bytes.
 The additional branches, import strings and emitted WAT select readiness
 according to the socket kind. They fit in the existing segments; unwind
-data remains 590,188 bytes. No size baseline changes.
+data remained 590,188 bytes. This comparison isolates the DNS change at
+the published `4468195ad` checkpoint; it is not the final compiler size.
+The subsequent [shared release-entry guards](RELEASE-ENTRY-GUARDS-2026-10-02.md)
+remove repeated code and bring the x86 compiler within the unchanged size
+gate. The final stage-2 DNS fault and network cases above have been rerun.
 
-The refreshed Go and primary target suites, all lint gates and async-fetch
-caller checks pass. The target matrix covers DNS exchange, paired
+The refreshed Go and primary target suites, full unit suite, all lint gates
+and async-fetch caller checks pass. The target matrix covers DNS exchange, paired
 queries, NAT64, dial, send faults, TCP connect/stream/listener cases, receive
 deadlines, reactors, SocketCtl/SocketV6 and WASI resource-lifetime tests.
 The full suite will run in CI under the project's early-publication policy;
