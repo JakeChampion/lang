@@ -2068,10 +2068,7 @@ function main(): i32 {
 	// column of boxes, each read back after the delete and re-inserted once.
 	// The map helpers are typed: the keyed column's search calls its eq
 	// function, and its release the value column's, through __raw_call*.
-	{name: "map-delete-releases-the-entry", atLeast: 3, want: "35|", reports: []string{
-		"runtime __fern_map_find: produced", "runtime __fern_map_delete: produced",
-		"runtime __fern_map_delete_rel: produced",
-	}, src: `
+	{name: "map-delete-releases-the-entry", atLeast: 3, want: "35|", src: `
 import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)

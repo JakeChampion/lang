@@ -983,6 +983,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// bound by `var` calling that var, directly or one lambda deeper, is E001.
 		{"rec-local-arrow-e001", "function main(): i32 { var f = (n: i32): i32 => { if (n <= 0) { return 0; } return f(n - 1); }; return f(3); }\n", []string{"E001"}},
 		{"rec-local-arrow-nested-e001", "function main(): i32 { var f = (): i32 => { var g = (): i32 => { return f(); }; return g(); }; return f(); }\n", []string{"E001"}},
+		// Nested functions calling one another around a cycle see each other
+		// whatever their order (native's checkBlock pre-binds the SCC). A
+		// forward reference that closes no cycle, or one between arrow
+		// lambdas, stays E001.
+		{"rec-local-mutual-ok", "function main(): i32 {\n  function isEven(n: i32): boolean { if (n == 0) { return true; } return isOdd(n - 1); }\n  function isOdd(n: i32): boolean { if (n == 0) { return false; } return isEven(n - 1); }\n  if (isEven(10) && !isEven(11) && isOdd(7) && !isOdd(8)) { return 0; }\n  return 1;\n}\n", nil},
+		{"rec-local-three-way-cycle-ok", "function main(): i32 {\n  function a(n: i32): i32 { if (n <= 0) { return 0; } return 1 + b(n - 1); }\n  function b(n: i32): i32 { if (n <= 0) { return 0; } return 2 + c(n - 1); }\n  function c(n: i32): i32 { if (n <= 0) { return 0; } return 3 + a(n - 1); }\n  return a(6);\n}\n", nil},
+		{"rec-local-mutual-capture-ok", "function main(): i32 {\n  var step: i32 = 1;\n  function down(n: i32): i32 { if (n <= 0) { return 0; } return up(n - step) + 1; }\n  function up(n: i32): i32 { if (n <= 0) { return 0; } return down(n - step) + step; }\n  return down(5);\n}\n", nil},
+		{"rec-local-mutual-in-nested-ok", "function main(): i32 {\n  function outer(x: i32): i32 {\n    function ping(n: i32): i32 { if (n <= 0) { return x; } return pong(n - 1) + 1; }\n    function pong(n: i32): i32 { if (n <= 0) { return 0; } return ping(n - 1) + 2; }\n    return ping(4);\n  }\n  return outer(30);\n}\n", nil},
+		{"rec-local-forward-no-cycle-e001", "function main(): i32 {\n  function first(n: i32): i32 { return second(n) + 1; }\n  function second(n: i32): i32 { return n * 2; }\n  return first(3);\n}\n", []string{"E001"}},
+		{"rec-local-arrow-mutual-e001", "function main(): i32 { var f = (n: i32): i32 => { return g(n); }; var g = (n: i32): i32 => { return f(n); }; return 0; }\n", []string{"E001"}},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
 		// var is an i32 over the half-open interval. A clean program draws no
 		// codes from EITHER checker — the differential proves the self-host
@@ -1767,6 +1777,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"settle-tuple-bad-element", "function main(): i32 { var t: (f64, i32) = (1, \"x\"); return 0; }\n", []string{"E003"}},
 		{"settle-array-bad-element", "function main(): i32 { var xs: f64[] = [1, \"x\"]; return 0; }\n", []string{"E034"}},
 		{"settle-not-a-string", "function main(): i32 { var x: f64 = \"a\"; return 0; }\n", []string{"E003"}},
+		// An unsuffixed integer literal beside a concrete float operand reads at
+		// that float, on either side and for comparisons too (native's
+		// settleNumeric before requireFloat). An i32 operand is not a literal.
+		{"settle-binary-sub-f64-ok", "function main(): i32 { var x: f64 = 100.5f64; var y: f64 = x - 100; if (y == 0.5f64) { return 0; } return 1; }\n", nil},
+		{"settle-binary-mul-f32-ok", "function main(): i32 { var r: f32 = 1.5f32; var s: f32 = r * 2; if (s == 3.0f32) { return 0; } return 1; }\n", nil},
+		{"settle-binary-left-literal-ok", "function main(): i32 { var r: f64 = 1.5f64; var s: f64 = 3 - r; if (s > 1) { return 0; } return 1; }\n", nil},
+		{"settle-binary-guard-compare-ok", "enum Shape { Circle(f32), Square(f32) }\nfunction classify(s: Shape): i32 { match (s) { Circle(r) when r <= 0 => { return 1; }, Circle(_) => { return 2; }, Square(_) => { return 3; } } return 0; }\nfunction main(): i32 { if (classify(Circle(0.0f32)) != 1) { return 1; } if (classify(Circle(2.0f32)) != 2) { return 2; } return 0; }\n", nil},
+		{"settle-binary-not-an-ident", "function main(): i32 { var n: i32 = 2; var r: f64 = 1.5f64; var s: f64 = r * n; return 0; }\n", []string{"E009"}},
 		{"field-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n", []string{"E048"}},
 		{"field-compound-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x += 5; return p.x; }\n", []string{"E048"}},
 		{"nested-field-assign", "struct Q { a: i32 }\nstruct P { q: Q }\nfunction main(): i32 { var p: P = P { q: Q { a: 1 } }; p.q.a = 9; return 0; }\n", []string{"E048"}},
