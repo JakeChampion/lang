@@ -2365,6 +2365,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// param row is the precision control.
 		{"e063-callee-launder", "function idsl(x: [i32]): [i32] { return x; }\nfunction f(): [i32] { let a: i32[] = [1, 2, 3]; return idsl(a[0:2]); }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-callee-two-hop", "function idsl(x: [i32]): [i32] { return x; }\nfunction hop(x: [i32]): [i32] { return idsl(x); }\nfunction f(): [i32] { let a: i32[] = [1, 2, 3]; return hop(a[0:2]); }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		// The caller is declared FIRST and the chain runs through METHODS, so
+		// the summary fixpoint needs a second round, reached only through the
+		// call names a method call contributes to the worklist.
+		{"e063-callee-method-chain-caller-first", "struct Box { n: i32 }\nfunction g(): [i32] { let a: i32[] = [1, 2, 3]; let b: Box = Box { n: 0 }; return b.pick(a[0:2]); }\nfunction (b: Box) pick(x: [i32]): [i32] { return b.launder(x); }\nfunction (b: Box) launder(x: [i32]): [i32] { return x; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-callee-owned-array-arg", "function idarr(x: i32[]): i32[] { return x; }\nfunction f(): [i32] { let a: i32[] = [1, 2, 3]; return idarr(a)[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-callee-other-arg-ok", "function second(a: [i32], b: [i32]): [i32] { return b; }\nfunction f(p: i32[]): [i32] { let a: i32[] = [1, 2, 3]; return second(a[0:2], p[0:1]); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-callee-param-ok", "function idsl(x: [i32]): [i32] { return x; }\nfunction f(p: i32[]): [i32] { return idsl(p[0:2]); }\nfunction main(): i32 { return 0; }\n", nil},
