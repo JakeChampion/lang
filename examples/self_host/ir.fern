@@ -6685,7 +6685,7 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
 // Where native scans for the `const.i32 0 ; store_local N` its prologue emits,
 // this needs no such evidence: body slots [n_params, n_locals) are zero at
 // entry by the BACKEND prologue (asm_ir's `rep stosq`, asm_arm64_ir's store
-// loop, wasm's spec-zeroed locals, irexec's zeroed frame), which is not an op
+// loop, wasm's spec-zeroed locals), which is not an op
 // in this list. Params are excluded — they arrive with the caller's values.
 
 // zg_mark records `at` as slot `sl`'s first non-zero write, when the slot is in
@@ -8136,9 +8136,8 @@ pub function do_branch(ops: Op[], pc: i32, d: i32): i32 {
 // self-host has no such split — wasm_ir.fern carries a string as a single
 // block pointer, so every value is one slot on every target and
 // irverifystack.fern reads none of these lists (#6639 slice 2). What does
-// need them is any pass asking what a value IS: the wasm signature emit reads
-// i64_slots / f64_slots to type its params and locals, and irlower_run's
-// `-slots` dump prints all four.
+// need them is any pass asking what a value IS: the wasm signature emit
+// reads i64_slots / f64_slots to type its params and locals.
 //
 // Each list is one VALUE kind, params included — what the slot holds, not
 // whether the exit sweep owns it. The sweep answers that itself, from
@@ -8157,8 +8156,6 @@ pub struct LoweredFn {
   // ("i32", "string", "" for void) — the type the ops must leave on the
   // stack at the end of the function.
   ret_type: string,
-  // alias_incs: the var-bind alias retains lowering decided
-  // (`line:col=name`), read only by irlower_run's `-rc-plan` mode for the
-  // aliasBindIncs table (#4482). Nothing on the emit path reads it.
+  // alias_incs: the var-bind alias retains lowering decided (`line:col=name`).
   alias_incs: string[],
 }
