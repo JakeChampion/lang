@@ -1481,6 +1481,7 @@ func New() *Interp {
 	i.Builtins["tcp_socket_ctl"] = &Builtin{Fn: builtinTcpSocketCtl}
 	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
 	i.Builtins["tcp_send"] = &Builtin{Fn: builtinTcpSend}
+	i.Builtins["tcp_send_bytes"] = &Builtin{Fn: builtinTcpSendBytes}
 	i.Builtins["tcp_sendfile"] = &Builtin{Fn: builtinTcpSendfile}
 	i.Builtins["tcp_connect_with"] = &Builtin{Fn: builtinTcpConnectWith}
 	i.Builtins["unix_listen"] = &Builtin{Fn: builtinUnixListen}
@@ -1651,13 +1652,36 @@ func builtinTcpSend(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_send: expected string data arg, got %T", args[1])
 	}
+	return tcpSendData(i, id, []byte(data))
+}
+
+func builtinTcpSendBytes(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("tcp_send_bytes: expected 2 args, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_send_bytes: expected number fd arg, got %T", args[0])
+	}
+	data, ok := args[1].(Array)
+	if !ok {
+		return nil, fmt.Errorf("tcp_send_bytes: expected u8[] data arg, got %T", args[1])
+	}
+	bytes := make([]byte, len(data.E))
+	for n, value := range data.E {
+		bytes[n] = byte(value.(Number))
+	}
+	return tcpSendData(i, id, bytes)
+}
+
+func tcpSendData(i *Interp, id Number, data []byte) (Value, error) {
 	conn, ok := i.tcpConns[int64(id)]
 	if !ok {
 		return Number(-1), nil
 	}
 	// A non-blocking socket takes what the kernel has room for and
 	// answers -EAGAIN when it has none, as a native send does.
-	n, err := writeSocket(conn, []byte(data), i.tcpNonblocking[int64(id)])
+	n, err := writeSocket(conn, data, i.tcpNonblocking[int64(id)])
 	if err != nil {
 		if n > 0 {
 			return Number(n), nil

@@ -278,10 +278,18 @@ pub function env_body(t: typeinfo.Type): string {
 }
 
 function prefixed(name: string, prefix: string): boolean {
-  if (name.len() <= prefix.len()) {
+  var n: i32 = prefix.len();
+  if (name.len() <= n) {
     return false;
   }
-  return slice_unchecked(name, 0, prefix.len()) == prefix;
+  var i: i32 = 0;
+  while (i < n) {
+    if (name[i] != prefix[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 // Cell[T] is the language's one mutable slot (docs/CELL-TYPE-PLAN.md): a

@@ -66,6 +66,13 @@ pub function lambda_captures(lm: ast.ExprLambda, outer: EmitState): string[] {
 pub struct EmitState {
   out: string,
   label_n: i32,
+  // builtin_i32 / builtin_string: the builtins whose call result is an i32 or
+  // a string (builtin_i32_names / builtin_string_names), indexed once.
+  builtin_i32: util.NameIndex,
+  builtin_string: util.NameIndex,
+  // funcs_ix indexes `funcs` by name, one entry per declaration in order;
+  // with_funcs keeps the two together.
+  funcs_ix: util.NameIndex,
   local_names: string[],
   in_function: boolean,
   string_lits: string[],
@@ -244,6 +251,9 @@ pub function new_state(): EmitState {
   return EmitState {
     out: "",
     label_n: 0,
+    builtin_i32: util.name_index(builtin_i32_names()),
+    builtin_string: util.name_index(builtin_string_names()),
+    funcs_ix: util.name_index(ns),
     local_names: ns,
     in_function: false,
     string_lits: sl,
@@ -330,6 +340,15 @@ pub function rc_free_debug_on(): boolean {
 // for `name` in every unit — is what struct_make / variant_is / dyn dispatch leaq
 // instead of a unit-local string label; emit_module_ir_unit emits each recorded
 // shape once as `.weak __fern_shp_<sanitized>` so the linker merges the copies.
+// with_funcs: the state over `funcs`, indexed by name.
+pub function with_funcs(s: EmitState, funcs: parser.FuncDecl[]): EmitState {
+  var names: string[] = [];
+  for fd in funcs {
+    names = names.append(fd.name);
+  }
+  return EmitState { ...s, funcs: funcs, funcs_ix: util.name_index(names) };
+}
+
 pub function add_shape_lit(s: EmitState, name: string): EmitState {
   var i: i32 = 0;
   while (i < s.shape_lits.len()) {
@@ -2989,6 +3008,18 @@ pub function rt_src_tcp_send(t: string): string {
   return "function __fern_tcp_send(fd: i32, s: string): i32 { return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(s) as i64, s.len() as i64, " + flags + ", 0, 0) as i32; }";
 }
 
+pub function rt_src_tcp_send_bytes(t: string, packed: boolean): string {
+  var flags: string = "16384";
+  if (t == "arm64-darwin") {
+    flags = "524288";
+  }
+  var prep: string = "var p: usize = __raw_addr(__raw_arr_ptr(bytes), 8);";
+  if (!packed) {
+    prep = "var raw: usize = __raw_arr_box(n / 8 + 1); var scratch: i32[] = __raw_array(raw); var p: usize = __raw_addr(__raw_arr_ptr(scratch), 8); var j: i32 = 0; while (j < n) { __raw_store8(p, j, bytes[j]); j = j + 1; }";
+  }
+  return "function __fern_tcp_send_bytes" + packed_suffix(packed) + "(fd: i32, bytes: i32[]): i32 { var n: i32 = bytes.len(); " + prep + " return __syscall6(" + sysno(t, "sendto") + ", fd as i64, p as i64, n as i64, " + flags + ", 0, 0) as i32; }";
+}
+
 // rt_src_tcp_recv backs `tcp_recv(fd, max)` (#5714, syscall-leaf) → a fresh
 // `u8[]` of up to `max` bytes, spread one-per-slot like rt_src_random_bytes. A
 // short read, EOF and -errno all come back as the empty array: the op has no
@@ -3076,14 +3107,19 @@ pub function rt_src_reader_read_chunk(t: string): string {
   return "function __fern_reader_read_chunk(fd: i32, n: i32): Result[string, IoError] { var p: usize = __raw_alloc(n); var r: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (r == n) { return Ok(__raw_string(p, n)); } if (r <= 0) { var short: string = __raw_string(p, n); if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(\"\"); } var q: usize = __raw_alloc(r); __memcpy(q, p, r); var full: string = __raw_string(p, n); return Ok(__raw_string(q, r)); }";
 }
 
-// Scratch is owned as an array throughout, including the error path. Packed
-// results retain their physical reserve; legacy results expand byte slots.
+// Scratch is owned as an array throughout, including the error path. Full
+// packed reads transfer it; short reads copy only the bytes actually read so
+// retained pipe chunks cannot each pin the full requested reserve.
 pub function rt_src_reader_read_chunk_bytes(t: string, packed: boolean): string {
+  var copy: string = "";
   var finish: string = "var b: usize = __raw_arr_box(got); var j: i32 = 0; while (j < got) { __raw_store_ptr(b, j + 1, __raw_load8(p, j) as usize); j = j + 1; } return Ok(__raw_array(b));";
   if (packed) {
-    finish = "__store_i64(raw, got as i64); return Ok(scratch);";
+    // Borrow the array through the copy call. Its raw address does not itself
+    // own the storage, so the caller must retain scratch until the call ends.
+    copy = "function __fern_reader_short_bytes(scratch: i32[], got: i32): i32[] { var short: usize = __raw_arr_box(got / 8 + 1); __memcpy(__raw_addr(short, 8), __raw_addr(__raw_arr_ptr(scratch), 8), got); __store_i64(short, got as i64); return __raw_array(short); } ";
+    finish = "if (got == n) { __store_i64(raw, got as i64); return Ok(scratch); } if (got == 0) { return Ok([]); } return Ok(__fern_reader_short_bytes(scratch, got));";
   }
-  return "function __fern_reader_read_chunk_bytes" + packed_suffix(packed) + "(fd: i32, n: i32): Result[i32[], IoError] { if (n < 0) { return Err(__fern_io_error(22, \"\")); } var raw: usize = __raw_arr_box(n / 8 + 1); var scratch: i32[] = __raw_array(raw); var p: usize = __raw_addr(raw, 8); var got: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (got < 0) { return Err(__fern_io_error(0 - got, \"\")); } " + finish + " }";
+  return copy + "function __fern_reader_read_chunk_bytes" + packed_suffix(packed) + "(fd: i32, n: i32): Result[i32[], IoError] { if (n < 0) { return Err(__fern_io_error(22, \"\")); } var raw: usize = __raw_arr_box(n / 8 + 1); var scratch: i32[] = __raw_array(raw); var p: usize = __raw_addr(raw, 8); var got: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (got < 0) { return Err(__fern_io_error(0 - got, \"\")); } " + finish + " }";
 }
 
 // rt_src_reader_close backs `r.close()` and `w.close()` → close(fd), Some on a
@@ -6625,6 +6661,7 @@ function builtin_i32_names(): string[] {
     "reactor_wait",
     "tcp_recv_into",
     "tcp_send",
+    "tcp_send_bytes",
     "tcp_close",
     "tcp_pollable",
     // sleep_ms(ms) / sleep_ns(ns) are void to a caller, but their op
@@ -6827,7 +6864,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "write_file_exec") {
     return ty_result(ty_unknown());
   }
-  if (util.index_of_str(builtin_i32_names(), id.name) >= 0) {
+  if (s.builtin_i32.has(id.name)) {
     return ty_i32();
   }
   // tcp_recv(fd, max) -> u8[] box; the rest -> i32 (fd /
@@ -6961,7 +6998,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "read_line") {
     return ty_option(ty_string());
   }
-  if (util.index_of_str(builtin_string_names(), id.name) >= 0) {
+  if (s.builtin_string.has(id.name)) {
     return ty_string();
   }
   if (id.name == "__raw_array") {
@@ -7048,12 +7085,12 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "str_split") {
     return ty_array_string();
   }
-  var fi: i32 = 0;
-  while (fi < s.funcs.len()) {
+  var fi: i32 = s.funcs_ix.chain(id.name);
+  while (fi >= 0) {
     if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
       return ty_from_name(s.funcs[fi].ret_type);
     }
-    fi = fi + 1;
+    fi = s.funcs_ix.next[fi];
   }
   return ty_unknown();
 }
@@ -8553,7 +8590,7 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
 // checks with; `tm` is the module as the checker annotated it.
 pub function entry_check_errors(tm: parser.Module): util.Diag[] {
   var s: EmitState = new_state();
-  s = EmitState { ...s, struct_decls: irlower.struct_tab(tm.structs), funcs: tm.funcs };
+  s = with_funcs(EmitState { ...s, struct_decls: irlower.struct_tab(tm.structs) }, tm.funcs);
   return check_module(tm, s);
 }
 
@@ -8825,7 +8862,7 @@ pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
 // CallGate is the shared walk's parameter block: the free-function arity table
 // (`names` / `argc`, parallel arrays), the undefined rule's admit list
 // (`known`), and which of the two rules are live.
-struct CallGate { names: string[], argc: i32[], known: string[], check_arity: boolean, check_undef: boolean }
+struct CallGate { names: string[], names_ix: util.NameIndex, argc: i32[], known: string[], check_arity: boolean, check_undef: boolean }
 
 function callgate_name_in(names: string[], name: string): boolean {
   var i: i32 = 0;
@@ -8920,7 +8957,7 @@ function callgate_ns_present(pfx: string, names: string[]): boolean {
   var i: i32 = 0;
   while (i < names.len()) {
     var nm: string = names[i];
-    if (nm.len() > pfx.len() && slice_unchecked(nm, 0, pfx.len()) == pfx) {
+    if (nm.len() > pfx.len() && util.has_prefix(nm, pfx)) {
       return true;
     }
     i = i + 1;
@@ -8947,23 +8984,15 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
       match (c.callee) {
         ast.ExprIdent(id) => {
           if (!callgate_name_in(bound, id.name)) {
-            var found: boolean = false;
-            var ti: i32 = 0;
-            while (ti < g.names.len()) {
-              if (g.names[ti] == id.name) {
-                found = true;
-                if (g.check_arity && c.args.len() != g.argc[ti]) {
-                  errs = errs.append(util.Diag {
-                    code: "E004", message: "function '" + id.name
-                      + "' expects " + util.i32_to_string(g.argc[ti])
-                      + " argument(s), got " + util.i32_to_string(c.args.len()),
-                    line: id.line, col: id.col,
-                  });
-                }
-                ti = g.names.len();
-              } else {
-                ti = ti + 1;
-              }
+            var ti: i32 = g.names_ix.find(id.name);
+            var found: boolean = ti >= 0;
+            if (found && g.check_arity && c.args.len() != g.argc[ti]) {
+              errs = errs.append(util.Diag {
+                code: "E004", message: "function '" + id.name
+                  + "' expects " + util.i32_to_string(g.argc[ti])
+                  + " argument(s), got " + util.i32_to_string(c.args.len()),
+                line: id.line, col: id.col,
+              });
             }
             if (g.check_undef && !found && !callgate_known_callee(id.name, g.known)) {
               errs = errs.append(callgate_undefined_error(g, where, id.name, id.line, id.col));
@@ -9165,8 +9194,9 @@ function callgate_run(mod: parser.Module, g: CallGate): util.Diag[] {
 }
 
 pub function check_call_arity(mod: parser.Module): util.Diag[] {
+  var names: string[] = callgate_free_names(mod);
   return callgate_run(mod, CallGate {
-    names: callgate_free_names(mod), argc: callgate_free_argc(mod), known: [],
+    names: names, names_ix: util.name_index(names), argc: callgate_free_argc(mod), known: [],
     check_arity: true, check_undef: false,
   });
 }
@@ -9362,8 +9392,9 @@ pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
   // `g.argc[ti]` under an `&&` with check_arity, and a parallel table is
   // cheaper than depending on short-circuit evaluation to keep an empty
   // array unindexed.
+  var names: string[] = callgate_free_names(mod);
   return callgate_run(mod, CallGate {
-    names: callgate_free_names(mod), argc: callgate_free_argc(mod),
+    names: names, names_ix: util.name_index(names), argc: callgate_free_argc(mod),
     known: callgate_known_names(mod), check_arity: false, check_undef: true,
   });
 }
@@ -9651,6 +9682,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_wasm_block", "__fern_wasm_poll",
     "__fn___fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
     "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept", "__fn___fern_tcp_local_port",
+    "__fn___fern_tcp_send_bytes", "__fn___fern_tcp_send_bytes_u8",
     "__fn___fern_udp_bind", "__fn___fern_udp_connect", "__fn___fern_udp_sendto", "__fn___fern_udp_recvfrom",
     "__fn___fern_tcp_connect_with", "__fn___fern_unix_listen", "__fn___fern_unix_connect",
     "__fn___fern_reactor_new", "__fn___fern_reactor_ctl", "__fn___fern_reactor_wait", "__fn___fern_tcp_recv_into", "__fn___fern_tcp_sendfile",

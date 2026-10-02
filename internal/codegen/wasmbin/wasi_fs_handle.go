@@ -245,6 +245,9 @@ func buildReaderSeekBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 8)
+		body = inst.InstCall(body, idxs["__free"])
 		body = emitHandleResultErr(body, buildIoErr, allocRc1, 3, 5, 6)
 	}
 	body = inst.InstEnd(body)
@@ -253,6 +256,9 @@ func buildReaderSeekBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 4)
 	body = memory.InstI64Load(body, 3, 0)
 	body = inst.InstLocalSet(body, 1)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, 8)
+	body = inst.InstCall(body, idxs["__free"])
 	body = emitHandleResultOkI64(body, allocRc1, 1, 6)
 
 	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
@@ -319,6 +325,15 @@ func buildReaderSeekBodyP2(idxs map[string]uint32) []byte {
 	// EINVAL where `lseek(pipe, 0, 0)` is ESPIPE.
 	body = emitWhenceGuardP2(body, idxs, 2, 3, 5, 6)
 	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI64Load(body, 3, readerPosOff)
+	body = inst.InstI64Const(body, -1)
+	body = numeric.InstI64Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 8) // WASI EBADF, before borrowing a dropped resource.
+	body = inst.InstLocalSet(body, 3)
+	body = emitHandleResultErr(body, buildIoErr, allocRc1, 3, 5, 6)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalTee(body, 7)
 	body = inst.InstI32Const(body, noDescriptor)
@@ -364,6 +379,9 @@ func buildReaderSeekBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
 			body = appendErrnoFromErrorCodeAt(body, idxs, 4, 3, statAtTypeOff)
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstI32Const(body, statAtRetBytes)
+			body = inst.InstCall(body, idxs["__free"])
 			body = emitHandleResultErr(body, buildIoErr, allocRc1, 3, 5, 6)
 		}
 		body = inst.InstEnd(body)
@@ -372,6 +390,9 @@ func buildReaderSeekBodyP2(idxs map[string]uint32) []byte {
 		body = memory.InstI64Load(body, 3, statAtSizeOff)
 		body = numeric.InstI64Add(body)
 		body = inst.InstLocalSet(body, 9)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, statAtRetBytes)
+		body = inst.InstCall(body, idxs["__free"])
 	}
 	body = inst.InstEnd(body)
 	// target < 0 → EINVAL.
@@ -400,12 +421,18 @@ func buildReaderSeekBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = appendErrnoFromErrorCode(body, idxs, 4, 3)
+		body = inst.InstLocalGet(body, 4)
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, idxs["__free"])
 		body = emitHandleResultErr(body, buildIoErr, allocRc1, 3, 5, 6)
 	}
 	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 4)
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalSet(body, 8)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, idxs["__free"])
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstCall(body, streamDrop)

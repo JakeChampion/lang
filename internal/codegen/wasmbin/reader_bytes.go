@@ -8,7 +8,8 @@ import (
 )
 
 // Preview 1 reads directly into the packed array. Locals after (reader, n):
-// scratch, fd, data, count, box, error, errno. Capacity remains the request.
+// scratch, fd, data, count, box, error, errno. Partial reads copy into compact
+// storage; the error local holds the replacement array on the success path.
 func buildReaderReadChunkBytesBody(idxs map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstLocalGet(body, 1)
@@ -54,6 +55,26 @@ func buildReaderReadChunkBytesBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load(body, 2, 8)
 	body = inst.InstLocalSet(body, 5)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 1)
+	body = numeric.InstI32LtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, idxs["__alloc_u8"])
+	body = inst.InstLocalTee(body, 7)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
+	body = memory.InstMemoryCopy(body)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, arrHeaderBytes)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, arrHeaderBytes)
+	body = numeric.InstI32Add(body)
+	body = inst.InstCall(body, idxs["__free"])
+	body = inst.InstLocalGet(body, 7)
+	body = inst.InstLocalSet(body, 4)
+	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 4)
 	body = inst.InstI32Const(body, 4)
 	body = numeric.InstI32Sub(body)

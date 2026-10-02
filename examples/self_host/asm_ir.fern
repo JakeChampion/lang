@@ -8726,7 +8726,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_tcp_socket_ctl\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("tcp_socket_ctl");
-  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346) {  // tcp_listen_with, udp_bind .. udp_recvfrom, tcp_connect_with, unix_*, reactor_*, tcp_recv_into, tcp_sendfile
+  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353) {  // socket calls, including the byte send
     // [args] with the last on top; pop and re-push reversed, as udp_send
     // does. recvfrom spreads the datagram into the caller's array from a
     // raw buffer, so it needs the heap.
@@ -8744,7 +8744,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
       k = k - 1;
     }
     s = s.write("    call __fn___fern_" + udp_name + "\n    addq $" + util.i32_to_string(8 * udp_argc) + ", %rsp\n    pushq %rax\n");
-    if (o.kind_tag == 337 || o.kind_tag == 343 || o.kind_tag == 344) {
+    if (o.kind_tag == 337 || o.kind_tag == 343 || o.kind_tag == 344 || o.kind_tag == 353) {
       s = s.need("heap");
     }
     s = s.need(udp_name);
@@ -10514,7 +10514,7 @@ function emit_named_bodies(cache: irlower.LowerResult[], from: i32, s: asmcore.E
 pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, cache: irlower.LowerResult[], base: irlower.FnSigs): string[] {
   strbuf_reset();
   var s: asmcore.EmitState = asmcore.new_state();
-  s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: all_funcs };
+  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs }, all_funcs);
   s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, false);
   s = s.close_needs();
   strbuf_reset();
@@ -10587,7 +10587,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   var s: asmcore.EmitState = asmcore.new_state();
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891).
-  s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: all_funcs, str_ns: str_ns, rt_lower: rt };
+  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt }, all_funcs);
   // A unit never passes emit_module_or_error_sub's check, so the Display gate
   // runs here: a `print(xs)` nothing gives a `to_string` would otherwise hand
   // the string-only runtime helper a raw pointer (#9945).
@@ -11551,6 +11551,12 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("tcp_send")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send("x86_64"), s);
+  }
+  if (s.has_need("tcp_send_bytes")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes("x86_64", false), s);
+  }
+  if (s.has_need("tcp_send_bytes_u8")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes("x86_64", true), s);
   }
   if (s.has_need("tcp_listen")) {
     s = s.write("    .text\n");

@@ -2207,6 +2207,34 @@ function stmt_is_single_line(st: ast.Stmt): boolean {
 // assigns the innermost target first and copies leftwards — so the written
 // targets are the assignment targets read back to front, and the written value
 // is the first assignment's right-hand side.
+// print_assert reprints an `assert` desugar, `if (!cond) { eprint(…); exit(1); }`,
+// as the `assert(cond[, msg]);` it was written as: the condition is the `!`'s
+// operand, and a message is the right side of the eprint's
+// `"assertion failed: " + msg`.
+function print_assert(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
+  var cond: ast.Expr = ifs.cond;
+  if let ast.ExprUnary(u) = ifs.cond {
+    cond = u.operand;
+  }
+  let (cs, cf) = print_expr_c(cond, prec_lowest(), depth, f);
+  var out: string = "assert(" + cs;
+  var g: Fmt = cf;
+  if (ifs.then_body.len() > 0) {
+    if let ast.StmtExpr(se) = ifs.then_body[0] {
+      if let ast.ExprCall(c) = se.value {
+        if (c.args.len() > 0) {
+          if let ast.ExprBinary(b) = c.args[0] {
+            let (ms, mf) = print_expr_c(b.right, prec_lowest(), depth, g);
+            out = out + ", " + ms;
+            g = mf;
+          }
+        }
+      }
+    }
+  }
+  return (out + ");", g);
+}
+
 function print_chain_assign(stmts: ast.Stmt[], depth: i32): string {
   var out: string = "";
   var i: i32 = stmts.len() - 1;
@@ -2963,6 +2991,9 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       // assignment per target.
       if (ifs.origin == "chain_assign") {
         return (print_chain_assign(ifs.then_body, depth), f);
+      }
+      if (ifs.origin == parser.ORIGIN_ASSERT) {
+        return print_assert(ifs, depth, f);
       }
       return print_if_chain(ifs, depth, f);
     },

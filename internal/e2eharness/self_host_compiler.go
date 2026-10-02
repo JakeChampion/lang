@@ -310,7 +310,7 @@ func compileSelfHostProgram(t testing.TB, target, src string, env []string) stri
 		out += ".wasm"
 		args = append(args, "-emit", "core-module")
 	}
-	cmd := exec.Command(currentSelfHostCLI(t), append(args, "-o", out, srcPath, SelfHostStdlibRoot(t))...)
+	cmd := exec.Command(SelfHostCLI(t), append(args, "-o", out, srcPath, SelfHostStdlibRoot(t))...)
 	cmd.Env = append(os.Environ(), env...)
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("SELFHOST-COMPILE-FAIL -target %s: %v\n%s\nsrc:\n%s", target, err, msg, src)
@@ -321,14 +321,22 @@ func compileSelfHostProgram(t testing.TB, target, src string, env []string) stri
 	return out
 }
 
+// SelfHostCompileCmd is the current self-host compiler compiling the entry
+// file to out for target, with the stdlib root its `std/` imports resolve
+// against.
+func SelfHostCompileCmd(t testing.TB, target, entry, out string) *exec.Cmd {
+	t.Helper()
+	return exec.Command(SelfHostCLI(t), "-target", target, "-o", out, entry, SelfHostStdlibRoot(t))
+}
+
 var (
 	currentCLIOnce sync.Once
 	currentCLIPath string
 )
 
-// currentSelfHostCLI is the current self-host compiler (fern.fern) built by
+// SelfHostCLI is the current self-host compiler (fern.fern) built by
 // the pin for the host, shared by every program compile in the process.
-func currentSelfHostCLI(t testing.TB) string {
+func SelfHostCLI(t testing.TB) string {
 	t.Helper()
 	host := hostSelfHostTarget()
 	if host == "" {

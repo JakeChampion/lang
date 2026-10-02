@@ -9539,7 +9539,7 @@ function recv_nomove_methods_of(prev: string[], sty: string): string[] {
   var out: string[] = recv_borrow_methods_of(prev, sty);
   var pfx: string = "RECVIDENT:" + sty + ".";
   for row in prev {
-    if (row.len() > pfx.len() && slice_unchecked(row, 0, pfx.len()) == pfx) {
+    if (row.len() > pfx.len() && util.has_prefix(row, pfx)) {
       out = push_str_unique(out, slice_unchecked(row, pfx.len(), row.len()) + "");
     }
   }
@@ -13705,19 +13705,22 @@ function thread_row_name(row: string): string {
   return slice_unchecked(row, i + 1, row.len()) + "";
 }
 
-// without_thread_rows_through: `rows` with every threader row dropped when
-// `name` is a threader. The other rows were proved through its body, which a
-// produced callee no longer lowers from.
-pub function without_thread_rows_through(rows: string[], name: string): string[] {
-  var named: boolean = false;
+// thread_row_names: the functions the "THREAD<k>:" rows of `rows` name.
+pub function thread_row_names(rows: string[]): string[] {
+  var out: string[] = [];
   for row in rows {
-    if (thread_row_name(row) == name) {
-      named = true;
+    var name: string = thread_row_name(row);
+    if (name.len() > 0) {
+      out = out.append(name);
     }
   }
-  if (!named) {
-    return rows;
-  }
+  return out;
+}
+
+// without_thread_rows: `rows` with every threader row dropped. The other rows
+// were proved through a threader's body, which a produced callee no longer
+// lowers from.
+pub function without_thread_rows(rows: string[]): string[] {
   var out: string[] = [];
   for row in rows {
     if (thread_row_name(row) == "") {
@@ -21725,9 +21728,23 @@ function strarr_decl_count_step(st: ast.Stmt, own acc: StrarrDeclCount): StrarrD
 // value is the caller's argument for the whole body ("" otherwise); `owned`
 // (in `src`) holds the locals whose every element is theirs. `stores` is the second pass's
 // parameter-store registry, empty on the first.
-struct StrarrOwnFrame { fnkey: string, params: string[], src: StrarrOwnSrc, stores: string[], store_fns: string[] }
+// store_keys indexes `stores` by the key before each row's '|', so a call
+// asks whether a parameter position has a store without a prefix scan.
+struct StrarrOwnFrame { fnkey: string, params: string[], src: StrarrOwnSrc, stores: string[], store_keys: util.NameIndex, store_fns: string[] }
 
-function strarr_own_frame_of(fn: parser.FuncDecl, structs: StructTab, str_fresh: string[], producers: string[], stores: string[], store_fns: string[]): StrarrOwnFrame {
+function strarr_store_keys(stores: string[]): util.NameIndex {
+  var keys: string[] = [];
+  for row in stores {
+    var bar: i32 = 0;
+    while (bar < row.len() && row[bar] != b'|') {
+      bar = bar + 1;
+    }
+    keys = keys.append(slice_unchecked(row, 0, bar) + "");
+  }
+  return util.name_index(keys);
+}
+
+function strarr_own_frame_of(fn: parser.FuncDecl, structs: StructTab, str_fresh: string[], producers: string[], stores: string[], store_keys: util.NameIndex, store_fns: string[]): StrarrOwnFrame {
   var vis: string[] = strarr_visible_producers(fn, producers);
   var bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
   var assigned: string[] = body_assign_targets(fn.body);
@@ -21741,7 +21758,7 @@ function strarr_own_frame_of(fn: parser.FuncDecl, structs: StructTab, str_fresh:
   }
   var src: StrarrOwnSrc = StrarrOwnSrc { str_fresh: str_fresh, producers: vis, owned: [], binds: strarr_frame_binds(fn, structs), structs: structs };
   src = StrarrOwnSrc { ...src, owned: strarr_owned_locals(fn, bound, src) };
-  return StrarrOwnFrame { fnkey: fn.name, params: params, src: src, stores: stores, store_fns: store_fns };
+  return StrarrOwnFrame { fnkey: fn.name, params: params, src: src, stores: stores, store_keys: store_keys, store_fns: store_fns };
 }
 
 // strarr_frame_binds: strarrfld_fn_binds plus every struct-typed local of `fn`,
@@ -21913,7 +21930,7 @@ function strarr_own_call(c: ast.ExprCall, fr: StrarrOwnFrame, own a: string[]): 
       if (pk.len() > 0) {
         a = a.append("ln:" + ck + "|" + pk);
       }
-    } else if (pk.len() == 0 && !strarr_owned_value(c.args[i], fr.src) && strarr_keyed_any(fr.stores, ck + "|")) {
+    } else if (pk.len() == 0 && !strarr_owned_value(c.args[i], fr.src) && fr.store_keys.has(ck)) {
       a = a.append("bd:" + ck);
     }
     i = i + 1;
@@ -21945,7 +21962,7 @@ function strarr_own_stmts(stmts: ast.Stmt[], fr: StrarrOwnFrame, out: string[]):
 // strarr_keyed_any: some entry of `rows` starts with `pfx`.
 function strarr_keyed_any(rows: string[], pfx: string): boolean {
   for r in rows {
-    if (r.len() >= pfx.len() && slice_unchecked(r, 0, pfx.len()) == pfx) {
+    if (r.len() >= pfx.len() && bytes_at(r, 0, pfx)) {
       return true;
     }
   }
@@ -21957,7 +21974,7 @@ function strarr_keyed_any(rows: string[], pfx: string): boolean {
 function strarr_keyed_values(rows: string[], pfx: string): string[] {
   var out: string[] = [];
   for r in rows {
-    if (r.len() >= pfx.len() && slice_unchecked(r, 0, pfx.len()) == pfx) {
+    if (r.len() >= pfx.len() && bytes_at(r, 0, pfx)) {
       out = out.append(slice_unchecked(r, pfx.len(), r.len()) + "");
     }
   }
@@ -22002,11 +22019,13 @@ function strarr_param_stores(direct: string[], links: string[]): string[] {
 // "arrbuf:".
 function strarrfld_borrowed_elem_marks(funcs: parser.FuncDecl[], structs: StructTab, str_fresh: string[], producers: string[], acc: string[]): string[] {
   var none: string[] = [];
+  var no_keys: util.NameIndex = util.name_index(none);
   var first: string[] = [];
   for fn in funcs {
-    first = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, none, none), first);
+    first = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, none, no_keys, none), first);
   }
   var stores: string[] = strarr_param_stores(strarr_keyed_values(first, "st:"), strarr_keyed_values(first, "ln:"));
+  var store_keys: util.NameIndex = strarr_store_keys(stores);
   var a: string[] = acc;
   for tf in strarr_keyed_values(first, "mk:") {
     a = push_str_unique(a, tf);
@@ -22017,7 +22036,7 @@ function strarrfld_borrowed_elem_marks(funcs: parser.FuncDecl[], structs: Struct
   var store_fns: string[] = strarr_store_fns(stores);
   var second: string[] = [];
   for fn in funcs {
-    second = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, stores, store_fns), second);
+    second = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, stores, store_keys, store_fns), second);
   }
   for bk in strarr_keyed_values(second, "bd:") {
     for tf in strarr_keyed_values(stores, bk + "|") {
@@ -23653,8 +23672,11 @@ function payload_type_at(structs: StructTab, ptype: string, variant: string, k: 
 // table. The whole key is hashed instead.
 //
 // A prime count keeps unrelated hash strides from aliasing onto the same bucket.
+// Sized to the table: the compiler's own registry holds some 11 k keys across
+// its tiers, and a lookup walks its bucket's records byte by byte, so 251
+// buckets cost about 9.7 k instructions per lookup.
 function borrow_reg_buckets(): i32 {
-  return 251;
+  return 4093;
 }
 
 pub function borrow_reg_new(): string[] {
@@ -23683,17 +23705,12 @@ function borrow_reg_put(own reg: string[], key: string, flags: string): string[]
 // record of a name in its bucket, so the old one is dropped rather than
 // shadowed — and an empty `flags` leaves the key with no record, which the
 // lookup reads as nothing borrowable. An empty registry is given its buckets.
-// `reg` stays borrowed, as borrow_reg_with_counted's does: copied once, and
-// the copy own-threaded through the one store.
+// `reg` stays borrowed, as borrow_reg_with_counted's does; the one store is a
+// `with`, which copies the bucket array once when the registry is shared.
 pub function borrow_reg_set(reg: string[], key: string, flags: string): string[] {
-  var out: string[] = [];
+  var out: string[] = reg;
   if (reg.len() == 0) {
     out = borrow_reg_new();
-  }
-  var c: i32 = 0;
-  while (c < reg.len()) {
-    out = out.append(reg[c]);
-    c = c + 1;
   }
   var b: i32 = util.hash_bucket(key, out.len());
   var bucket: string = out[b];
@@ -25925,25 +25942,26 @@ function noesc_set_has(s: NoescSet, pfx: string, name: string): boolean {
 // row — the pair the fixpoint seeds and retires together. Every matching row
 // goes, not the first: the seed can hold a function name and a same-named
 // variant struct, and the scan this replaces removed both.
-function noesc_set_kill(s: NoescSet, name: string): NoescSet {
+function noesc_set_kill(own s: NoescSet, name: string): NoescSet {
+  var reg: SigReg = s.reg;
   var live: boolean[] = s.live;
-  var i: i32 = s.reg.head[sig_key_bucket("", name, s.reg.head.len())];
+  var i: i32 = reg.head[sig_key_bucket("", name, reg.head.len())];
   while (i >= 0) {
-    if (s.reg.rows[i] == name) {
+    if (reg.rows[i] == name) {
       live = live.with(i, false);
     }
-    i = s.reg.next[i];
+    i = reg.next[i];
   }
   var nl: i32 = name.len() + 3;
-  var j: i32 = s.reg.head[sig_key_bucket("fn:", name, s.reg.head.len())];
+  var j: i32 = reg.head[sig_key_bucket("fn:", name, reg.head.len())];
   while (j >= 0) {
-    var e: string = s.reg.rows[j];
+    var e: string = reg.rows[j];
     if (e.len() == nl && bytes_at(e, 0, "fn:") && bytes_at(e, 3, name)) {
       live = live.with(j, false);
     }
-    j = s.reg.next[j];
+    j = reg.next[j];
   }
-  return NoescSet { reg: s.reg, live: live };
+  return NoescSet { reg: reg, live: live };
 }
 
 function noesc_ret_expr_ok(e: ast.Expr, scalars: string[], q: NoescSet, builders: string[]): boolean {
@@ -26549,7 +26567,7 @@ function struct_ret_key(fn: parser.FuncDecl): string {
 function prefixed_names_of(rows: string[], pfx: string): string[] {
   var out: string[] = [];
   for r in rows {
-    if (r.len() > pfx.len() && slice_unchecked(r, 0, pfx.len()) == pfx) {
+    if (r.len() > pfx.len() && util.has_prefix(r, pfx)) {
       out = out.append(slice_unchecked(r, pfx.len(), r.len()) + "");
     }
   }

@@ -4133,6 +4133,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_signal_default"
 		case "tcp_send":
 			target = "__fern_tcp_send"
+		case "tcp_send_bytes":
+			target = "__fern_tcp_send_bytes"
 		case "udp_send":
 			target = "__fern_udp_send"
 		case "tcp_connect":

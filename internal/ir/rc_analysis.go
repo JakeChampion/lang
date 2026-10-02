@@ -1538,6 +1538,7 @@ var copyingBuiltinArgs = map[string][]int{
 	// loop's serialised response, a local passed to a helper that sends
 	// it, lost its release: one response per request stranded.
 	"tcp_send":         {1},
+	"tcp_send_bytes":   {1},
 	"udp_send":         {0, 2},
 	"udp_sendto":       {1, 3},
 	"udp_bind":         {0},
