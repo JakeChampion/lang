@@ -1793,6 +1793,24 @@ function imm_use(ins: SInst, a: i32, konst: boolean[], right: string[], left: st
   return false;
 }
 
+// literal_first_bytes is, per value, the first byte of the string literal
+// the value is the address of (kind 47), or -1: for every other value, and
+// for the empty literal, which has no byte to read.
+pub function literal_first_bytes(f: SFunc): i32[] {
+  var out: i32[] = [];
+  while (out.len() < f.nvals) {
+    out = out.append(0 - 1);
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 47 && ins.str.len() > 0) {
+        out = out.with(ins.result, ins.str[0] as i32);
+      }
+    }
+  }
+  return out;
+}
+
 // use_counts is how many instruction operands and terminators read each
 // value; a value read once by the branch that ends its block can be
 // consumed as flags rather than materialised.

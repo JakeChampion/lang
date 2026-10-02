@@ -1827,7 +1827,10 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // ssa_str_eq answers unequal lengths inline, the answer to almost every
 // comparison a compiler makes, and calls the helper's register entry only for
 // equal ones, its operands moved into x0 / x9 as the entry reads them.
-function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+// The lengths are compared inline, and against a literal operand so is the
+// first byte: a chain of same-length literals (a mnemonic table, a keyword
+// list) then rejects most arms without the call.
+function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   s = s.mark_str_eq();
   s = ssa_read(reg_of, ins.args[0], "x4", s);
@@ -1836,6 +1839,13 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
   var b: string = ssa_src(reg_of, ins.args[1], "x5");
   var n: string = util.i32_to_string(ins.result);
   s = s.write("    ldr x6, [" + a + ", #8]\n    ldr x7, [" + b + ", #8]\n    cmp x6, x7\n    b.ne " + lp + "streqn" + n + "\n");
+  var lit_a: i32 = fr.lit0[ins.args[0]];
+  var lit_b: i32 = fr.lit0[ins.args[1]];
+  if (lit_b >= 0) {
+    s = s.write("    ldr x6, [" + a + "]\n    ldrb w6, [x6]\n    cmp w6, #" + util.i32_to_string(lit_b) + "\n    b.ne " + lp + "streqn" + n + "\n");
+  } else if (lit_a >= 0) {
+    s = s.write("    ldr x6, [" + b + "]\n    ldrb w6, [x6]\n    cmp w6, #" + util.i32_to_string(lit_a) + "\n    b.ne " + lp + "streqn" + n + "\n");
+  }
   s = ssa_parallel_moves([reg_of[ins.args[0]], reg_of[ins.args[1]]], [0, 1], s);
   s = s.write("    bl __fn___fern_str_eq.r\n    b " + lp + "streqd" + n + "\n");
   s = s.write(lp + "streqn" + n + ":\n    mov x0, #0\n" + lp + "streqd" + n + ":\n");
@@ -2151,7 +2161,7 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
 // SsaFrame is the frame below the values: three words per frame-resident
 // string view after the values. ssa_view_off is the offset of a view's lowest
 // word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, epilogue: string, imm: ssa.Imms }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, epilogue: string, imm: ssa.Imms, lit0: i32[] }
 
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
@@ -2330,7 +2340,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     return ssa_addr_inst(ins, reg_of, s);
   }
   if (k == 49 && ins.str == "str_eq") {
-    return ssa_str_eq(ins, reg_of, lp, s);
+    return ssa_str_eq(ins, reg_of, lp, fr, s);
   }
   if (k == 49) {
     return ssa_str_call(ins, reg_of, s);
@@ -2784,7 +2794,7 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irlow
   var save: i32 = ssa_save_bytes(saved);
   s = s.write(ssa_save_asm(saved));
   var views: i32[] = ssa_view_slots(f);
-  var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: ssa_block_index(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved), imm: imm };
+  var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: ssa_block_index(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved), imm: imm, lit0: ssa.literal_first_bytes(f) };
   var frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
   if (frame % 16 != 0) {
     frame = frame + 8;

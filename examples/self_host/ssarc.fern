@@ -6441,9 +6441,10 @@ function without_rows(rows: string[], ks: util.NameIndex, barred: boolean): stri
 function place_views(own r: irlower.LowerResult): irlower.LowerResult {
   var ops: ir.Op[] = r.ops;
   var next: i32 = r.n_locals;
+  var k_str_slice: i32 = ir.kind_id("str_slice");
   var i: i32 = 0;
   while (i < ops.len()) {
-    if (ops[i].kind_tag == ir.op_str_slice().kind_tag && ops[i].i32_imm > 0) {
+    if (ops[i].kind_tag == k_str_slice && ops[i].i32_imm > 0) {
       ops = ops.with(i, ir.op_str_slice_frame(next));
       next = next + 3;
     }
