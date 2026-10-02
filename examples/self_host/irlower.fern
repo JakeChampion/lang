@@ -16677,7 +16677,7 @@ function socket_call_arity(name: string): i32 {
   if (util.has_str(["tcp_close", "tcp_pollable", "tcp_listen", "tcp_accept", "tcp_local_port", "unix_connect"], name)) {
     return 1;
   }
-  if (util.has_str(["tcp_connect", "tcp_send", "tcp_recv", "udp_bind", "unix_listen", "tcp_recv_into"], name)) {
+  if (util.has_str(["tcp_connect", "tcp_send", "tcp_send_bytes", "tcp_recv", "udp_bind", "unix_listen", "tcp_recv_into"], name)) {
     return 2;
   }
   if (util.has_str(["udp_send", "tcp_socket_ctl", "udp_connect", "udp_recvfrom", "tcp_connect_with", "reactor_wait", "tcp_sendfile"], name)) {
@@ -16732,6 +16732,9 @@ function lower_call_socket(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): 
   }
   if (cid.name == "tcp_send") {
     return a1.emit(ir.op_tcp_send());
+  }
+  if (cid.name == "tcp_send_bytes") {
+    return a1.emit(ir.op_tcp_send_bytes());
   }
   if (cid.name == "tcp_recv") {
     return a1.emit(ir.op_tcp_recv());

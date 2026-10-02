@@ -2562,7 +2562,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_io_blocking_read")
 		in.add("wasi_io_error_drop")
 	}
-	if helpers.set["__fern_tcp_send"] {
+	if helpers.set["__fern_tcp_send"] || helpers.set["__fern_tcp_send_bytes"] {
 		in.add("wasi_blocking_write_and_flush_p2")
 		in.add("wasi_io_error_drop")
 	}

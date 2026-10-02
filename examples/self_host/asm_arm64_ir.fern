@@ -3165,7 +3165,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
     s = s.need("tcp_socket_ctl");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_tcp_socket_ctl\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346) {  // tcp_listen_with, udp_bind .. udp_recvfrom, tcp_connect_with, unix_*, reactor_*, tcp_recv_into, tcp_sendfile
+  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353) {  // socket calls, including the byte send
     // [args] with the last on top; pop and re-push reversed, as udp_send
     // does. recvfrom spreads the datagram into the caller's array from a
     // raw buffer, so it needs the heap.
@@ -3183,7 +3183,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
       k = k - 1;
     }
     s = s.write("    bl __fn___fern_" + udp_name + "\n    add sp, sp, #" + util.i32_to_string(16 * udp_argc) + "\n    str x0, [sp, #-16]!\n");
-    if (o.kind_tag == 337 || o.kind_tag == 343 || o.kind_tag == 344) {
+    if (o.kind_tag == 337 || o.kind_tag == 343 || o.kind_tag == 344 || o.kind_tag == 353) {
       s = s.need("heap");
     }
     s = s.need(udp_name);
@@ -10263,6 +10263,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   // tcp_send: sendto(2) with MSG_NOSIGNAL from the string's buffer, via __raw_data.
   if (s.has_need("tcp_send")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send(tgt), s);
+  }
+  if (s.has_need("tcp_send_bytes")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes(tgt, false), s);
+  }
+  if (s.has_need("tcp_send_bytes_u8")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes(tgt, true), s);
   }
   // proc_exec: execve over an argv built from the args array.
   if (s.has_need("proc_exec")) {

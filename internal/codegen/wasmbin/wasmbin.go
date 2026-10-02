@@ -2859,6 +2859,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"tcp_pollable":    "__fern_tcp_pollable",
 	"tcp_recv":        "__fern_tcp_recv",
 	"tcp_send":        "__fern_tcp_send",
+	"tcp_send_bytes":  "__fern_tcp_send_bytes",
 	"tcp_close":       "__fern_tcp_close",
 	"tcp_listen_with": "__fern_tcp_listen_with",
 	"tcp_socket_ctl":  "__fern_tcp_socket_ctl",
