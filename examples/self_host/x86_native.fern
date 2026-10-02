@@ -1376,14 +1376,13 @@ pub struct X86Asm {
   fix_idx: i32[],
   // Branch relaxation state. br_long[k] pins the k-th relaxable branch
   // (jcc / jmp to a label, in emission order) to its rel32 form; br_n is
-  // the ordinal handed to the next one. x86_gas_assemble re-emits with a
-  // grow-only br_long until it stops changing, so a pass reads the
-  // PREVIOUS pass's decisions and records what this one needs.
+  // the ordinal handed to the next one. x86_gas_assemble emits once with
+  // every branch short, settles br_long on that layout, and emits again.
   // relaxing is set only on the x86_gas_assemble path. The raw encoder
   // API (x86_jcc_label and friends, used directly by drivers and the
   // encode self-tests) keeps its original contract: rel32 always, and a
   // backward branch patched on the spot. Relaxation needs the whole text
-  // and several passes, neither of which a single API call has.
+  // and two rounds, neither of which a single API call has.
   relaxing: boolean,
   br_long: boolean[],
   br_n: i32,
@@ -1756,11 +1755,8 @@ function x86_queue_fixup_at(own a: X86Asm, at: i32, width: i32, name: string, id
 }
 
 // x86_branch_long reports whether the next relaxable branch must take its
-// rel32 form, per the previous pass's decisions. An ordinal past the end is
-// a branch this pass reached and the last one did not (the first pass
-// reaches them all with no decisions at all), and starts SHORT: the fixpoint
-// only ever grows, so an optimistic start is the one that converges downward
-// onto the layout gas picks.
+// rel32 form. The first round has no decisions yet, so every branch past the
+// end of br_long starts short.
 function x86_branch_long(a: X86Asm, k: i32): boolean {
   if (k >= a.br_long.len()) {
     return false;
