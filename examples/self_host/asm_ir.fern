@@ -6343,7 +6343,8 @@ function ssa_read_rhs(fr: SsaFrame, reg_of: i32[], v: i32, scratch: string, s: a
 // overwritten by that move, so the operands swap for a commutative op or a
 // flipped comparison; a subtraction in that shape computes in the scratch
 // and is stored after. A constant on the left is only ever one the op can
-// take on the right, so it swaps the same way.
+// take on the right, so it swaps the same way. A multiply by a constant reads
+// its operand where it lives, through imul's three-operand form.
 function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
   let tag: i32 = ir.kind_id(ins.str);
   let a: i32 = ins.args[0];
@@ -6362,6 +6363,10 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     let t: i32 = a;
     a = b;
     b = t;
+  }
+  if (tag == 23 && fr.imm.is_imm[b] && reg_of[a] >= 0) {
+    s = s.write("    imulq $" + util.i64_to_string(fr.imm.value[b]) + ", " + ssa_reg(reg_of[a]) + ", " + dh + "\n");
+    return ssa_store(reg_of, ins.result, dh, s);
   }
   s = ssa_read_rhs(fr, reg_of, b, "%rcx", s);
   s = ssa_load(reg_of, a, dh, s);
