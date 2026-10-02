@@ -226,6 +226,14 @@ function (n: i32) doubled(): i32 { return n * 2; }
 function via_arrm(a: i32[]): i32 { return a.second_or(0); }
 function via_smm(h: Holder[string]): i32 { return h.tagged(true); }
 function via_prim(k: i32): i32 { return k.doubled(); }
+// A concrete receiver's own type variable that no argument binds (the empty
+// literal infers nothing at mono time, #10991) leaves the call on its
+// receiver, and the refusal names the written target rather than the folded
+// template the lowering would never find.
+trait ByteOffset { function offset(self: Self): i32; }
+impl ByteOffset for u8 { function offset(self: u8): i32 { return self as i32; } }
+function (xs: [u8]) take[T: ByteOffset](values: T[]): u8 { return xs[0]; }
+function via_cviewm_unbound(s: string): u8 { return s.as_bytes().take([]); }
 // The eleven string methods the AST lowering emits an OP for rather than a
 // call. The receiver is lent to every one; the three that answer text and the
 // two that answer an array hand back a fresh box of the caller's own, and the
