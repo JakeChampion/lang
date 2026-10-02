@@ -30,8 +30,8 @@ import (
 // so the exit status says WHICH shape disagreed. 42 means every comparison
 // matched.
 const scaleF64IRProg = `function build(n: i32, seed: f64): f64[] {
-    var xs: f64[] = [];
-    var i: i32 = 0;
+    let xs: f64[] = [];
+    let i: i32 = 0;
     while (i < n) {
         xs = xs.append(seed + (i as f64) * 1.25 - 7.0);
         i = i + 1;
@@ -43,9 +43,9 @@ function same(a: f64, b: f64): boolean {
     return a != a && b != b;
 }
 function check(xs: f64[], k: f64): i32 {
-    var got: f64[] = __scale_f64(xs, k);
+    let got: f64[] = __scale_f64(xs, k);
     if (got.len() != xs.len()) { return 1; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
         if (!same(got[i], xs[i] * k)) { return 2; }
         i = i + 1;
@@ -53,31 +53,31 @@ function check(xs: f64[], k: f64): i32 {
     return 0;
 }
 function main(): i32 {
-    var ks: f64[] = [2.5, 0.0 - 0.5, 0.0, 1.0, 3.0e300, 0.0 / 0.0];
-    var n: i32 = 0;
+    let ks: f64[] = [2.5, 0.0 - 0.5, 0.0, 1.0, 3.0e300, 0.0 / 0.0];
+    let n: i32 = 0;
     while (n <= 40) {
-        var xs: f64[] = build(n, 0.5);
-        var j: i32 = 0;
+        let xs: f64[] = build(n, 0.5);
+        let j: i32 = 0;
         while (j < ks.len()) {
-            var code: i32 = check(xs, ks[j]);
+            let code: i32 = check(xs, ks[j]);
             if (code != 0) { return 10 + code; }
             j = j + 1;
         }
         n = n + 1;
     }
-    var big: i32[] = [63, 64, 65, 129, 1000];
-    var b: i32 = 0;
+    let big: i32[] = [63, 64, 65, 129, 1000];
+    let b: i32 = 0;
     while (b < big.len()) {
-        var code: i32 = check(build(big[b], 0.0 - 100.0), 2.5);
+        let code: i32 = check(build(big[b], 0.0 - 100.0), 2.5);
         if (code != 0) { return 20 + code; }
         b = b + 1;
     }
     // The input is borrowed: it reads the same after the call, and the
     // result is a different buffer.
-    var v: f64[] = build(5, 1.0);
-    var w: f64[] = __scale_f64(v, 3.0);
+    let v: f64[] = build(5, 1.0);
+    let w: f64[] = __scale_f64(v, 3.0);
     if (!same(v[2], 1.0 + 2.5 - 7.0) || !same(w[2], (1.0 + 2.5 - 7.0) * 3.0)) { return 30; }
-    var w2: f64[] = w.with(0, 99.0);
+    let w2: f64[] = w.with(0, 99.0);
     if (!same(v[0], 1.0 - 7.0) || w2[0] != 99.0) { return 31; }
     return 42;
 }

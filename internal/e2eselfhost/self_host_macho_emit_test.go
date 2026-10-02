@@ -72,9 +72,9 @@ func TestSelfHostMachO(t *testing.T) {
 //	536 LC_LOAD_DYLIB(56)  592 LC_MAIN(24)  616 LC_CODE_SIGNATURE(16)
 const machoSelfTestMain = `
 function main(): i32 {
-    var text: i32[] = [1, 2, 3, 4];
-    var none: i32[] = [];
-    var bin: i32[] = macho_executable(text, none, none, "fern", 0, 0, none);
+    let text: i32[] = [1, 2, 3, 4];
+    let none: i32[] = [];
+    let bin: i32[] = macho_executable(text, none, none, "fern", 0, 0, none);
 
     // total = code_limit (16384) + sig_len (241).
     if (bin.len() != 16625) { return 1; }
@@ -135,8 +135,8 @@ function main(): i32 {
 
     // No LC_UNIXTHREAD anywhere: a static, dyld-free thread-state entry is
     // exactly what made every emitted binary unlaunchable on Apple Silicon.
-    var off: i32 = 32;
-    var ci: i32 = 0;
+    let off: i32 = 32;
+    let ci: i32 = 0;
     while (ci < 11) {
         if (bin[off] == 5 && bin[off + 1] == 0 && bin[off + 2] == 0 && bin[off + 3] == 0) { return 30; }
         off = off + bin[off + 4] + bin[off + 5] * 256;
@@ -155,22 +155,22 @@ function main(): i32 {
 
     // ---- SHA-256 test vectors (FIPS 180-4) ----
     // sha256("abc") = ba7816bf 8f01cfea ... f20015ad.
-    var abc: i32[] = [97, 98, 99];
-    var ha: i32[] = sha256_bytes(abc, 0, 3);
+    let abc: i32[] = [97, 98, 99];
+    let ha: i32[] = sha256_bytes(abc, 0, 3);
     if (ha.len() != 32) { return 35; }
     if (ha[0] != 186 || ha[1] != 120 || ha[2] != 22 || ha[3] != 191) { return 36; }
     if (ha[31] != 173) { return 37; }
     // sha256("") = e3b0c442 98fc1c14 ... 7852b855.
-    var empty: i32[] = [];
-    var he: i32[] = sha256_bytes(empty, 0, 0);
+    let empty: i32[] = [];
+    let he: i32[] = sha256_bytes(empty, 0, 0);
     if (he[0] != 227 || he[1] != 176 || he[2] != 196 || he[3] != 66) { return 38; }
     if (he[31] != 85) { return 39; }
 
     // ---- data variant: text (5 bytes) + data (2 bytes) ----
     // __DATA adds a 152-byte segment+section, so text_off = 32 + 800 = 832.
-    var t2: i32[] = [1, 2, 3, 4, 5];
-    var d2: i32[] = [9, 9];
-    var b2: i32[] = macho_executable(t2, none, d2, "fern", 0, 0, none);
+    let t2: i32[] = [1, 2, 3, 4, 5];
+    let d2: i32[] = [9, 9];
+    let b2: i32[] = macho_executable(t2, none, d2, "fern", 0, 0, none);
     // ncmds = 12 @16 (now with __DATA).
     if (b2[16] != 12) { return 40; }
     // sizeofcmds = 752 (0x2f0) @20.
@@ -195,7 +195,7 @@ function main(): i32 {
     // the difference) so a .bss symbol at data_vaddr + data.len() + off is
     // inside the mapped segment. 2 + 20000 rounds to two pages = 32768,
     // against one page (16384) of file bytes.
-    var b3: i32[] = macho_executable(t2, none, d2, "fern", 8, 20000, none);
+    let b3: i32[] = macho_executable(t2, none, d2, "fern", 8, 20000, none);
     if (b3[752] != 72 || b3[753] != 3 || b3[754] != 0 || b3[755] != 0) { return 48; }
     if (b3[289] != 128 || b3[288] != 0) { return 49; }
     if (b3[305] != 64 || b3[304] != 0) { return 50; }
@@ -208,8 +208,8 @@ function main(): i32 {
     // it to be rebased. b2/b3 above pass no slots, so their streams are empty
     // and their lengths (33137) are the proof that costs nothing when there is
     // nothing to rebase. Here two slots are named.
-    var offs: i32[] = [8, 200];
-    var b4: i32[] = macho_executable(t2, none, d2, "fern", 0, 0, offs);
+    let offs: i32[] = [8, 200];
+    let b4: i32[] = macho_executable(t2, none, d2, "fern", 0, 0, offs);
     // rebase_off @488, rebase_size @492 in LC_DYLD_INFO_ONLY (@480 for a
     // data-carrying image: 32 + __PAGEZERO 72 + __TEXT 152 + __DATA 152 +
     // __LINKEDIT 72). off = 32768, where __LINKEDIT starts.

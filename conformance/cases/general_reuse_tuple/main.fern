@@ -3,12 +3,12 @@
 // construction each iteration. D's old array freed at C, C's retained.
 // Differentially pinned reuse-off == reuse-on, free-off == free-on.
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var a: (i32, i32[]) = (i, [i, i + 1]);
-        var s: i32 = a.0 + a.1[0] + a.1[1];   // a's last use
-        var b: (i32, i32[]) = (s, [i + 2, i + 3]);   // reuses a's box
+        let a: (i32, i32[]) = (i, [i, i + 1]);
+        let s: i32 = a.0 + a.1[0] + a.1[1];   // a's last use
+        let b: (i32, i32[]) = (s, [i + 2, i + 3]);   // reuses a's box
         acc = acc + b.0 + b.1[0] + b.1[1];
         i = i + 1;
     }

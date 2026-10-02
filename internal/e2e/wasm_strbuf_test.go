@@ -37,7 +37,7 @@ func TestWASMStrbufBuildMixesInlineAndHeapStrings(t *testing.T) {
 func TestWASMStrbufEmptyTake(t *testing.T) {
 	src := `function main(): i32 {
     strbuf_reset();
-    var empty: string = strbuf_take();
+    let empty: string = strbuf_take();
     if (empty.len() != 0) { return 1; }
     strbuf_append("after");
     if (strbuf_take() != "after") { return 2; }
@@ -69,9 +69,9 @@ func TestWASMStrbufTakeIntoVar(t *testing.T) {
 	src := `function main(): i32 {
     strbuf_reset();
     strbuf_append("hello");
-    var s: string = strbuf_take();
+    let s: string = strbuf_take();
     strbuf_append("overwrite");
-    var t: string = strbuf_take();
+    let t: string = strbuf_take();
     if (s != "hello") { return 1; }
     if (s.len() != 5) { return 2; }
     if (t != "overwrite") { return 3; }
@@ -89,12 +89,12 @@ func TestWASMStrbufTakeIntoVar(t *testing.T) {
 func TestWASMStrbufGrowsPastInitialCapacity(t *testing.T) {
 	src := `function main(): i32 {
     strbuf_reset();
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         strbuf_append("xyz");
         i = i + 1;
     }
-    var s: string = strbuf_take();
+    let s: string = strbuf_take();
     if (s.len() != 300) { return 1; }
     if (s[0] as i32 != 120) { return 2; }
     if (s[250] as i32 != 121) { return 3; }
@@ -112,15 +112,15 @@ func TestWASMStrbufGrowsPastInitialCapacity(t *testing.T) {
 func TestWASMStrbufReusesGrownBufferAcrossTakes(t *testing.T) {
 	src := `function main(): i32 {
     strbuf_reset();
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         strbuf_append("ab");
         i = i + 1;
     }
-    var first: string = strbuf_take();
+    let first: string = strbuf_take();
     if (first.len() != 400) { return 1; }
     strbuf_append("second");
-    var second: string = strbuf_take();
+    let second: string = strbuf_take();
     if (second != "second") { return 2; }
     if (first[399] as i32 != 98) { return 3; }
     return 0;

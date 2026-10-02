@@ -6,6 +6,6 @@
 // lives instead.
 import "std/string";
 function main(): i32 {
-    var s: string = "".to_lower();
+    let s: string = "".to_lower();
     return s.len();
 }

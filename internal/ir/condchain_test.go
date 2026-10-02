@@ -34,7 +34,7 @@ func TestChainConditionsInlinedPredicate(t *testing.T) {
 		{"and in if", `function is_digit(c: i32): boolean { return c >= 48 && c <= 57; }
 function f(c: i32): i32 { if (is_digit(c)) { return 1; } return 2; }`, 2},
 		{"and in if with else", `function is_digit(c: i32): boolean { return c >= 48 && c <= 57; }
-function f(c: i32): i32 { var n: i32 = 0; if (is_digit(c)) { n = 1; } else { n = 2; } return n; }`, 2},
+function f(c: i32): i32 { let n: i32 = 0; if (is_digit(c)) { n = 1; } else { n = 2; } return n; }`, 2},
 		{"or in if", `function is_space(c: i32): boolean { return c == 32 || c == 9; }
 function f(c: i32): i32 { if (is_space(c)) { return 1; } return 2; }`, 2},
 		{"negated", `function is_space(c: i32): boolean { return c == 32 || c == 9; }
@@ -42,7 +42,7 @@ function f(c: i32): i32 { if (!is_space(c)) { return 1; } return 2; }`, 2},
 		{"three operands", `function ok(c: i32): boolean { return c > 0 && c < 10 && c != 5; }
 function f(c: i32): i32 { if (ok(c)) { return 1; } return 2; }`, 3},
 		{"loop condition", `function is_digit(c: i32): boolean { return c >= 48 && c <= 57; }
-function f(s: string): i32 { var i: i32 = 0; while (i < s.len() && is_digit(s[i] as i32)) { i = i + 1; } return i; }`, 3},
+function f(s: string): i32 { let i: i32 = 0; while (i < s.len() && is_digit(s[i] as i32)) { i = i + 1; } return i; }`, 3},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -60,7 +60,7 @@ function f(s: string): i32 { var i: i32 = 0; while (i < s.len() && is_digit(s[i]
 // A boolean that is stored rather than branched on keeps its value form.
 func TestChainConditionsLeavesStoredBooleans(t *testing.T) {
 	p := optimised(t, `function is_digit(c: i32): boolean { return c >= 48 && c <= 57; }
-function f(c: i32): boolean { var d: boolean = is_digit(c); return d; }`)
+function f(c: i32): boolean { let d: boolean = is_digit(c); return d; }`)
 	if n := countIn(p, "f", OpIf); n != 1 {
 		t.Errorf("want the `&&` value kept as one typed if, got %d:\n%s", n, p)
 	}
@@ -208,7 +208,7 @@ func TestChainStackEffectCountsEveryCallShape(t *testing.T) {
 	return add;
 }
 function main(): i32 {
-	var f = makeAdder(7);
+	let f = makeAdder(7);
 	return f(35);
 }`, ptrW)
 		Inline(p)

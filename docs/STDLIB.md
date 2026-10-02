@@ -653,7 +653,7 @@ sets, not for large collections.
 A persistent, ordered map with structural sharing: `OrdMap[K: cmp.Ord, V]`,
 a weight-balanced tree (Adams / Hirai–Yamamoto, delta 3, ratio 2 — the shape
 behind Haskell's `Data.Map`). Every operation returns a new map; a snapshot
-(`var old = m;`) costs one pointer and shares every node, and an update
+(`let old = m;`) costs one pointer and shares every node, and an update
 rebuilds only the O(log n) path to the key. When the input is not shared
 (`m = m.insert(k, v)`), the compiler's reuse pass writes the new path into the
 old nodes in place, so the same source line allocates nothing. Keys are
@@ -913,13 +913,13 @@ rebound in the cursor style (docs/CURSOR-IDIOM.md) so the pending block and
 the state box are reused in place rather than copied per call:
 
 ```fern
-var h: crypto.Sha256 = crypto.sha256_new();
+let h: crypto.Sha256 = crypto.sha256_new();
 h = h.update(chunk);              // a string of any length (a read_chunk piece)
 h = h.update_bytes(arr[a:b]);     // a [u8] view: a u8[] lends itself, or a slice
-var hex: string = h.final_hex();  // or h.final_bytes(): u8[]
+let hex: string = h.final_hex();  // or h.final_bytes(): u8[]
 ```
 
-A state can be forked (`var h2 = h.update("x")` while `h` stays live); each
+A state can be forked (`let h2 = h.update("x")` while `h` stays live); each
 side then owns its own copy. `final_*` reads the state without consuming it.
 
 - Constructors: `md5_new(): Md5`, `sha1_new(): Sha1`, `sha256_new(): Sha256`,
@@ -1100,7 +1100,7 @@ serializer.
   (`req.body.data`, a `u8[]`); `(req).body_string(): Result[string,
   BodyError]` is the body as text, `Err(NotUtf8)` when it is not well-formed
   UTF-8, so a handler declared as `Result[HttpResponse, http.BodyError]`
-  reads `var text: string = req.body_string()?;`.
+  reads `let text: string = req.body_string()?;`.
 - **Typed JSON body:** `body_json[T](req): Result[T, BodyError]` decodes the
   body as a `T: json.FromJson` and tells the failures apart:
   `UnsupportedMediaType(ct)` when the `Content-Type` is not
@@ -1109,7 +1109,7 @@ serializer.
   `JsonError`, `WrongShape(why)` naming the field. `BodyError` is
   `ToResponse` (415 / 400 / 400 / 422, as RFC 9457 problems), so a handler
   declared as `Result[HttpResponse, http.BodyError]` reads
-  `var item: Item = http.body_json[Item](req)?;`.
+  `let item: Item = http.body_json[Item](req)?;`.
 - **Header methods:** `(resp).with_header(name, value)` (set) /
   `(resp).with_appended_header(name, value)` (append) /
   `(resp).with_content_type(ct)`, and `(resp).with_trailer(name, value)`
@@ -1957,8 +1957,8 @@ handler a bag over the mock's own sink, so every capability call it makes
 lands in `m`'s log and nothing reaches the host:
 
 ```fern
-var m: MockPlatform = mock_platform.mock_platform_new();
-var resp: HttpResponse = handle(req, m.as_platform());
+let m: MockPlatform = mock_platform.mock_platform_new();
+let resp: HttpResponse = handle(req, m.as_platform());
 assert_eq(m.calls()[0].name, "log");
 ```
 
@@ -2001,7 +2001,7 @@ function test_addition(): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("arithmetic");
+    let r: test.TestRunner = test.test_new("arithmetic");
     r = r.it("addition", test_addition);
     return r.finish();
 }
@@ -2334,7 +2334,7 @@ function check_to_upper_idempotent(input: string): Option[string] {
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("fuzz");
+    let r: TestRunner = test_new("fuzz");
     r = r.fuzz("to_upper idempotent",
                ["", "abc", "Hello"], 100,
                check_to_upper_idempotent);
@@ -2560,7 +2560,7 @@ function block_bytes(): i32 {
 ```
 
 Compare the call itself, as above. A string held in a local is not
-propagated into a comparison, so `var os: string = target_os(); if (os == …)`
+propagated into a comparison, so `let os: string = target_os(); if (os == …)`
 evaluates the comparison at runtime — correctly, just not for free.
 
 Under `fern -interp` the program runs where the compiler runs, so the value

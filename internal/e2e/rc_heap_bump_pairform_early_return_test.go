@@ -30,14 +30,14 @@ import (
 func pairFormEarlyReturnBody(take string) string {
 	return take + `
 function main(): i32 {
-    var b0: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let b0: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) { acc = acc + take(i % 3); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + take(j % 3); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (acc < 0) { return 97; }
     if ((b2 - b1) > (b1 - b0)) { return 98; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -71,9 +71,9 @@ function take(v: i32): i32 { match (mk(v)) { Some(a) => { return 1; }, None => {
 const pairFormReturningArmAliasedSafe = `function wrap(s: string): Option[string] { return Some(s); }
 function take(s: string): i32 { match (wrap(s)) { Some(t) => { return t.len(); }, None => { return 0; } } return 0; }
 function main(): i32 {
-    var b: string = "shared-" + "payload";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let b: string = "shared-" + "payload";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
         acc = acc + take(b);
         i = i + 1;

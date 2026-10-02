@@ -32,7 +32,7 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			// One operand comes from args(): two literals fold to a constant and
 			// emit no comparison, which quietly made this case vacuous.
 			"str_eq",
-			`function main(): i32 { var xs: string[] = args(); if (xs[0] == "ab") { return 1; } return 0; }`,
+			`function main(): i32 { let xs: string[] = args(); if (xs[0] == "ab") { return 1; } return 0; }`,
 			"__fn___fern_str_eq",
 			[]string{"\n__fern_str_eq:", ".Lstreq_loop"},
 		},
@@ -79,7 +79,7 @@ function main(): i32 { return "abc".bytes().len(); }`,
 			// body (__fern_str_concat: / .Lstrconcat_a_loop) must be gone. One
 			// operand comes from args() so the concat is not folded to a constant.
 			"str_concat",
-			`function main(): i32 { var xs: string[] = args(); var s: string = xs[0] + "cd"; return s.len(); }`,
+			`function main(): i32 { let xs: string[] = args(); let s: string = xs[0] + "cd"; return s.len(); }`,
 			"__fn___fern_str_concat",
 			[]string{"\n__fern_str_concat:", ".Lstrconcat_a_loop"},
 		},
@@ -125,7 +125,7 @@ function main(): i32 { return "a.b".replace(".", "-").len(); }`,
 			// hand-written IR body (__fern_string_from_bytes: / .Lir_sfb_loop) must
 			// be gone; op_str_from_bytes now calls __fn___fern_string_from_bytes_u8.
 			"string_from_bytes_unchecked",
-			`function main(): i32 { var b: u8[] = [104 as u8, 105 as u8]; return string_from_bytes_unchecked(b).len(); }`,
+			`function main(): i32 { let b: u8[] = [104 as u8, 105 as u8]; return string_from_bytes_unchecked(b).len(); }`,
 			"__fn___fern_string_from_bytes_u8",
 			[]string{"\n__fern_string_from_bytes:", ".Lir_sfb_loop"},
 		},
@@ -146,7 +146,7 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 			// __fn___fern_random_bytes_u8 via the stack ABI, whose body does the
 			// getrandom syscall through the raw `syscall` the __syscall3 op emits.
 			"random_bytes",
-			`function main(): i32 { var b: u8[] = random_bytes(8); return b.len(); }`,
+			`function main(): i32 { let b: u8[] = random_bytes(8); return b.len(); }`,
 			"__fn___fern_random_bytes_u8",
 			[]string{"\n__fern_random_bytes:"},
 		},
@@ -156,19 +156,19 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 			// IR body (__fern_monotonic_ns:) must be gone; op_monotonic_ns now
 			// calls __fn___fern_monotonic_ns.
 			"monotonic_ns",
-			`function main(): i32 { var a: i64 = monotonic_ns(); if (a > (0 as i64)) { return 1; } return 0; }`,
+			`function main(): i32 { let a: i64 = monotonic_ns(); if (a > (0 as i64)) { return 1; } return 0; }`,
 			"__fn___fern_monotonic_ns",
 			[]string{"\n__fern_monotonic_ns:"},
 		},
 		{
 			"now_unix_ms",
-			`function main(): i32 { var a: i64 = now_unix_ms(); if (a > (0 as i64)) { return 1; } return 0; }`,
+			`function main(): i32 { let a: i64 = now_unix_ms(); if (a > (0 as i64)) { return 1; } return 0; }`,
 			"__fn___fern_now_unix_ms",
 			[]string{"\n__fern_now_unix_ms:"},
 		},
 		{
 			"now_ns",
-			`function main(): i32 { var a: i64 = now_ns(); if (a > (0 as i64)) { return 1; } return 0; }`,
+			`function main(): i32 { let a: i64 = now_ns(); if (a > (0 as i64)) { return 1; } return 0; }`,
 			"__fn___fern_now_ns",
 			[]string{"\n__fern_now_ns:"},
 		},
@@ -297,7 +297,7 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 			// __fn___fern_reader_read_chunk. Migrating it also gave the Some box a
 			// real refcount header, which the bare-__fern_alloc hand-asm never wrote.
 			"reader_read_chunk",
-			`function main(): i32 { var r: Reader = stdin(); return match (r.read_chunk(4096)) { Ok(c) => c.len(), Err(e) => 0 }; }`,
+			`function main(): i32 { let r: Reader = stdin(); return match (r.read_chunk(4096)) { Ok(c) => c.len(), Err(e) => 0 }; }`,
 			"__fn___fern_reader_read_chunk",
 			[]string{"\n__fern_reader_read_chunk:", ".Lirc_none", ".Lirc_ret"},
 		},
@@ -306,7 +306,7 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 			// (__fern_reader_close:) carried no local labels at all; the symbol
 			// itself is the whole marker.
 			"reader_close",
-			`function main(): i32 { var r: Reader = stdin(); r.close(); return 7; }`,
+			`function main(): i32 { let r: Reader = stdin(); r.close(); return 7; }`,
 			"__fn___fern_reader_close",
 			[]string{"\n__fern_reader_close:"},
 		},
@@ -350,7 +350,7 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 	// inline the variant construction — so no fs-helper body names PermissionDenied.
 	t.Run("io_error_shared", func(t *testing.T) {
 		const prog = `function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     match (stat("/nope")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
     match (read_file("/nope")) { Ok(_) => {}, Err(_) => { r = r + 1; } }
     match (remove_file("/nope")) { Err(_) => { r = r + 1; }, Ok(_) => {} }

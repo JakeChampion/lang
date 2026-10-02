@@ -25,7 +25,7 @@ function tag(p: (string, i32)): i32 {
 
 function main(): i32 {
     // classify: 1 + 7 + 30 + 5 + 7 = 50
-    var t = classify((0, 0)) + classify((0, 7)) + classify((3, 0)) + classify((9, 4)) + classify((2, 5));
+    let t = classify((0, 0)) + classify((0, 7)) + classify((3, 0)) + classify((9, 4)) + classify((2, 5));
     // tag: 2 + 14 + 40 = 56;  50 + 56 - 64 = 42
     return t + tag(("a", 2)) + tag(("z", 7)) + tag(("z", 1)) - 64;
 }

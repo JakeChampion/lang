@@ -56,11 +56,11 @@ func TestSelfHostFnValueEnumScrutineeIRX86_64(t *testing.T) {
 		// The local closure still bails the module, but the fix
 		// restores the correct value there.
 		{"fn-local-generic-enum-scrutinee",
-			`enum Opt[T] { Non, Has(T) } function main(): i32 { var f: (i32) => Opt[i32] = (k: i32): Opt[i32] => { if (k > 0) { return Has(k * 6); } return Non; }; match (f(7)) { Has(v) => { return v; }, Non => { return 0; } } }`,
+			`enum Opt[T] { Non, Has(T) } function main(): i32 { let f: (i32) => Opt[i32] = (k: i32): Opt[i32] => { if (k > 0) { return Has(k * 6); } return Non; }; match (f(7)) { Has(v) => { return v; }, Non => { return 0; } } }`,
 			42, false},
 		// Regression: var-bind the closure result then match.
 		{"fn-value-result-var-bound",
-			`enum Opt[T] { Non, Has(T) } function main(): i32 { var f: (i32) => Opt[i32] = (k: i32): Opt[i32] => { return Has(k * 6); }; var r: Opt[i32] = f(7); match (r) { Has(v) => { return v; }, Non => { return 0; } } }`,
+			`enum Opt[T] { Non, Has(T) } function main(): i32 { let f: (i32) => Opt[i32] = (k: i32): Opt[i32] => { return Has(k * 6); }; let r: Opt[i32] = f(7); match (r) { Has(v) => { return v; }, Non => { return 0; } } }`,
 			42, false},
 	}
 	for _, tc := range cases {

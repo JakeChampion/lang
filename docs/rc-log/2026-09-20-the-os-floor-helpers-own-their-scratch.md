@@ -34,7 +34,7 @@ is now allocated at the string's length.
 ## The fix
 
 The idiom that entry established, and no new intrinsic: a dead
-`var x_own: string = __raw_string(block, TRUE_SIZE)` right after the syscall
+`let x_own: string = __raw_string(block, TRUE_SIZE)` right after the syscall
 that reads the block names its owner, the frame's reclaim returns it, and an
 error path copies the bytes through `__fern_path_copy` rather than boxing
 the block twice. `poll` had returns inside its scan loop, so it now records

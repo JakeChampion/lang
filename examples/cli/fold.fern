@@ -33,13 +33,13 @@ function fold_line(line: string, width: i32, at_spaces: boolean): void {
     print(line);
     return;
   }
-  var rest: str = line;
+  let rest: str = line;
   while (rest.len() > width) {
-    var brk: i32 = width;
+    let brk: i32 = width;
     if (at_spaces) {
       // Prefer the last space within the first `width` columns.
-      var head: str = rest.take(width);
-      var sp: i32 = head.last_index_of(" ");
+      let head: str = rest.take(width);
+      let sp: i32 = head.last_index_of(" ");
       if (sp > 0) {
         brk = sp + 1;
       }
@@ -51,14 +51,14 @@ function fold_line(line: string, width: i32, at_spaces: boolean): void {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var width: i32 = 80;
-  var at_spaces: boolean = false;
-  var inputs: string[] = [];
+  let argv: string[] = args();
+  let width: i32 = 80;
+  let at_spaces: boolean = false;
+  let inputs: string[] = [];
 
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "-w" && i + 1 < argv.len()) {
       width = argv[i + 1].parse_int_or(width);
       i = i + 1;
@@ -75,10 +75,10 @@ function main(): i32 {
     inputs = inputs.append("-");
   }
 
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < inputs.len()) {
-    var lines: string[] = slurp(inputs[j]).lines();
-    var k: i32 = 0;
+    let lines: string[] = slurp(inputs[j]).lines();
+    let k: i32 = 0;
     while (k < lines.len()) {
       fold_line(lines[k], width, at_spaces);
       k = k + 1;

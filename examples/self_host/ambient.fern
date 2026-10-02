@@ -54,7 +54,7 @@ pub function bag_param(fd: parser.FuncDecl): string {
   if (is_bag_method(fd)) {
     return "";
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fd.params.len()) {
     if (is_platform(fd.params[i].type_name)) {
       return fd.params[i].name;
@@ -67,14 +67,14 @@ pub function bag_param(fd: parser.FuncDecl): string {
 // gated_calls lists the gated builtins `fd`'s body calls directly, in source
 // order, each once. A same-named METHOD on a user type is a different callee.
 function gated_calls(fd: parser.FuncDecl, wanted: util.NameIndex): string[] {
-  var calls: astwalk.CallSite[] = [];
-  var bi: i32 = 0;
+  let calls: astwalk.CallSite[] = [];
+  let bi: i32 = 0;
   while (bi < fd.body.len()) {
     calls = astwalk.collect_calls_stmt(fd.body[bi], wanted, calls);
     bi = bi + 1;
   }
-  var out: string[] = [];
-  var ci: i32 = 0;
+  let out: string[] = [];
+  let ci: i32 = 0;
   while (ci < calls.len()) {
     if (!calls[ci].method && !util.has_str(out, calls[ci].name)) {
       out = out.append(calls[ci].name);
@@ -86,14 +86,14 @@ function gated_calls(fd: parser.FuncDecl, wanted: util.NameIndex): string[] {
 
 // chain_of walks the parent pointers back from `at` to the handler.
 function chain_of(mod: parser.Module, parent: i32[], at: i32): string[] {
-  var rev: string[] = [];
-  var n: i32 = at;
+  let rev: string[] = [];
+  let n: i32 = at;
   while (n >= 0) {
     rev = rev.append(mod.funcs[n].name);
     n = parent[n];
   }
-  var out: string[] = [];
-  var i: i32 = rev.len() - 1;
+  let out: string[] = [];
+  let i: i32 = rev.len() - 1;
   while (i >= 0) {
     out = out.append(rev[i]);
     i = i - 1;
@@ -105,24 +105,24 @@ function chain_of(mod: parser.Module, parent: i32[], at: i32): string[] {
 // breadth-first walk from it, one violation per capability, the chain being
 // the first path the walk found.
 function handler_violations(mod: parser.Module, hi: i32, bag: string, wanted: util.NameIndex, own out: Violation[]): Violation[] {
-  var parent: i32[] = [];
-  var pi: i32 = 0;
+  let parent: i32[] = [];
+  let pi: i32 = 0;
   while (pi < mod.funcs.len()) {
     parent = parent.append(0 - 2);
     pi = pi + 1;
   }
   parent = parent.with(hi, 0 - 1);
-  var queue: i32[] = [hi];
-  var seen_caps: string[] = [];
-  var qi: i32 = 0;
+  let queue: i32[] = [hi];
+  let seen_caps: string[] = [];
+  let qi: i32 = 0;
   while (qi < queue.len()) {
-    var cur: i32 = queue[qi];
+    let cur: i32 = queue[qi];
     qi = qi + 1;
-    var fd: parser.FuncDecl = mod.funcs[cur];
-    var calls: string[] = gated_calls(fd, wanted);
-    var ci: i32 = 0;
+    let fd: parser.FuncDecl = mod.funcs[cur];
+    let calls: string[] = gated_calls(fd, wanted);
+    let ci: i32 = 0;
     while (ci < calls.len()) {
-      var cap: string = platforms.gated_capability(calls[ci]);
+      let cap: string = platforms.gated_capability(calls[ci]);
       if (!util.has_str(seen_caps, cap)) {
         seen_caps = seen_caps.append(cap);
         out = out.append(Violation {
@@ -138,8 +138,8 @@ function handler_violations(mod: parser.Module, hi: i32, bag: string, wanted: ut
       }
       ci = ci + 1;
     }
-    var rs: treeshake.BodyRefs = treeshake.body_refs(fd);
-    var fi: i32 = 0;
+    let rs: treeshake.BodyRefs = treeshake.body_refs(fd);
+    let fi: i32 = 0;
     while (fi < mod.funcs.len()) {
       if (parent[fi] == 0 - 2 && !is_bag_method(mod.funcs[fi]) && treeshake.refs_name(rs, mod.funcs[fi])) {
         parent = parent.with(fi, cur);
@@ -154,15 +154,15 @@ function handler_violations(mod: parser.Module, hi: i32, bag: string, wanted: ut
 // by_capability orders one handler's violations by capability name, the
 // order native reports them in (its rows are a sorted vocabulary).
 function by_capability(vs: Violation[]): Violation[] {
-  var order: i32[] = [];
-  var i: i32 = 0;
+  let order: i32[] = [];
+  let i: i32 = 0;
   while (i < vs.len()) {
-    var at: i32 = order.len();
+    let at: i32 = order.len();
     while (at > 0 && util.str_less(vs[i].capability, vs[order[at - 1]].capability)) {
       at = at - 1;
     }
-    var shifted: i32[] = [];
-    var j: i32 = 0;
+    let shifted: i32[] = [];
+    let j: i32 = 0;
     while (j < at) {
       shifted = shifted.append(order[j]);
       j = j + 1;
@@ -175,8 +175,8 @@ function by_capability(vs: Violation[]): Violation[] {
     order = shifted;
     i = i + 1;
   }
-  var out: Violation[] = [];
-  var k: i32 = 0;
+  let out: Violation[] = [];
+  let k: i32 = 0;
   while (k < order.len()) {
     out = out.append(vs[order[k]]);
     k = k + 1;
@@ -189,21 +189,21 @@ function by_capability(vs: Violation[]): Violation[] {
 // Runs on the bundle before the tree-shake: a handler is judged on what its
 // body reaches, whether or not this program serves it.
 pub function enforce(mod: parser.Module): Violation[] {
-  var gates: platforms.Gate[] = platforms.gated_builtins();
-  var names: string[] = [];
-  var gi: i32 = 0;
+  let gates: platforms.Gate[] = platforms.gated_builtins();
+  let names: string[] = [];
+  let gi: i32 = 0;
   while (gi < gates.len()) {
     names = names.append(gates[gi].builtin);
     gi = gi + 1;
   }
-  var wanted: util.NameIndex = util.name_index(names);
-  var out: Violation[] = [];
-  var hi: i32 = 0;
+  let wanted: util.NameIndex = util.name_index(names);
+  let out: Violation[] = [];
+  let hi: i32 = 0;
   while (hi < mod.funcs.len()) {
-    var bag: string = bag_param(mod.funcs[hi]);
+    let bag: string = bag_param(mod.funcs[hi]);
     if (bag.len() > 0 && mod.funcs[hi].body.len() > 0) {
-      var mine: Violation[] = by_capability(handler_violations(mod, hi, bag, wanted, []));
-      var vi: i32 = 0;
+      let mine: Violation[] = by_capability(handler_violations(mod, hi, bag, wanted, []));
+      let vi: i32 = 0;
       while (vi < mine.len()) {
         out = out.append(mine[vi]);
         vi = vi + 1;
@@ -242,17 +242,17 @@ pub function bag_method(builtin: string): string {
 
 // violation_message renders E080's text, the way native's Message does.
 pub function violation_message(v: Violation): string {
-  var where: string = "";
+  let where: string = "";
   if (v.fn_module.len() > 0) {
     where = " (declared in module \"" + v.fn_module + "\")";
   }
-  var fix: string = "nothing on the bag stands in for it";
-  var m: string = bag_method(v.builtin);
+  let fix: string = "nothing on the bag stands in for it";
+  let m: string = bag_method(v.builtin);
   if (m.len() > 0) {
     fix = "call `" + v.bag + "." + m + "(…)` (`import \"std/platform\";`) so the effect comes from the platform the handler was handed";
   }
-  var chain: string = "";
-  var i: i32 = 0;
+  let chain: string = "";
+  let i: i32 = 0;
   while (i < v.chain.len()) {
     if (i > 0) {
       chain = chain + " -> ";

@@ -15,7 +15,7 @@ rounds through a `@noinline` callee (without `@noinline` the callee is inlined
 away and there is no call boundary left to probe):
 
 ```fern
-@noinline function f(data: i32[]): i32 { var piece: i32[] = data; return piece[0] + data[1]; }
+@noinline function f(data: i32[]): i32 { let piece: i32[] = data; return piece[0] + data[1]; }
 ```
 
 ```
@@ -53,7 +53,7 @@ selfhost: allocs=2816 frees=2816 live_bytes=0
 ```
 
 at 256 rounds of a 1024-element array — and that is NOT this leg. The same
-shape with no alias at all measures identically: `var w = xs.with(0, 99)`
+shape with no alias at all measures identically: `let w = xs.with(0, 99)`
 inside a callee whose receiver is a borrowed param strands the whole copy on
 native, one buffer per call. `computeFreeEligible` declines a `.with` result
 outright because `__fern_arr_cow_inplace` can hand the receiver back

@@ -5,8 +5,8 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 function main(): i32 {
-    var name: string = "a";
-    var f = (): i32 => {
+    let name: string = "a";
+    let f = (): i32 => {
         name = "b";          // error[E049]: cannot assign to captured string "name"
         return name.len();
     };

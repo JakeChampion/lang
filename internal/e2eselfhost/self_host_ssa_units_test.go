@@ -16,7 +16,7 @@ function find(p: ssaunits.Plan, block: i32, point: i32, target: i32): ssaunits.S
     return ssaunits.Step { block: 0 - 1, point: 0 - 1, target: 0 - 1, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
 }
 function replace(p: ssaunits.Plan, replacement: ssaunits.Step): ssaunits.Plan {
-    var steps: ssaunits.Step[] = [];
+    let steps: ssaunits.Step[] = [];
     for s in p.steps {
         if (s.block == replacement.block && s.point == replacement.point && s.target == replacement.target) {
             steps = steps.append(replacement);
@@ -26,19 +26,19 @@ function replace(p: ssaunits.Plan, replacement: ssaunits.Step): ssaunits.Plan {
 }
 function supply(s: ssaunits.Step, at: i32, value: i32, slot: i32, mode: i32): boolean {
     if (at < 0 || at >= s.supplies.len()) { return false; }
-    var item = s.supplies[at];
+    let item = s.supplies[at];
     return item.value == value && item.slot == slot && item.mode == mode;
 }
 function drops(s: ssaunits.Step, expected: i32[]): boolean {
     if (s.drops.len() != expected.len()) { return false; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < expected.len()) { if (s.drops[i] != expected[i]) { return false; } i = i + 1; }
     return true;
 }
 `
 
 const unitDuplicate = `
-var stored: typeinfo.Type = typeinfo.TypeTuple { elements: [sa, sa] };
+let stored: typeinfo.Type = typeinfo.TypeTuple { elements: [sa, sa] };
 params = [sa]; types = [sa, stored]; result = types[1]; modes = [3];
 graph = ssa.SFunc { name: "duplicate", nparams: 1, nvals: 2, entry: 7, takes_env: false, blocks: [
     ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.tuple_new(), 1, [0, 0], 0)], term: ret(1) }
@@ -59,7 +59,7 @@ graph = ssa.SFunc { name: "loop", nparams: 2, nvals: 3, entry: 7, takes_env: fal
 // argument is supplied like a construction operand, the borrowed one is only
 // read, and the result is a unit of this function's own.
 const unitCall = `
-var callee: ssasem.Contract = contract("g", [sa, sa], [2, 3], sa);
+let callee: ssasem.Contract = contract("g", [sa, sa], [2, 3], sa);
 calls = [callee];
 params = [sa, sa]; types = [sa, sa, sa, sa]; result = sa; modes = [3, 3];
 graph = ssa.SFunc { name: "call", nparams: 2, nvals: 4, entry: 7, takes_env: false, blocks: [
@@ -80,7 +80,7 @@ graph = ssa.SFunc { name: "concat", nparams: 1, nvals: 3, entry: 7, takes_env: f
 // takes a unit of its own, so the array moves into the write and the tuple
 // built afterwards takes both without a retain.
 const unitHeld = `
-var pt: typeinfo.Type = typeinfo.TypeTuple { elements: [sa, st] };
+let pt: typeinfo.Type = typeinfo.TypeTuple { elements: [sa, st] };
 params = [sa, st, i32t]; types = [sa, st, i32t, st, sa, pt]; result = pt; modes = [3, 3, 1];
 graph = ssa.SFunc { name: "held", nparams: 3, nvals: 6, entry: 7, takes_env: false, blocks: [
     ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2), inst(ssasem.array_get(), 3, [0, 2], 0), inst(ssasem.with(), 4, [0, 2, 1], 0), inst(ssasem.tuple_new(), 5, [4, 3], 0)], term: ret(5) }
@@ -128,23 +128,23 @@ type unitCase struct{ name, setup, check, mutate, want string }
 func unitCases() []unitCase {
 	base := []unitCase{
 		{"nested-projections", "", `
-var r = find(p, 7, ssaunits.return_point(), 0 - 1);
+let r = find(p, 7, ssaunits.return_point(), 0 - 1);
 if (!supply(r, 0, 5, 0, ssaunits.retain_unit()) || !drops(r, [0])) { return 11; }
-var created = find(p, 7, 6, 0 - 1);
+let created = find(p, 7, 6, 0 - 1);
 if (!supply(created, 0, 5, 0, ssaunits.retain_unit()) || !drops(created, [6])) { return 12; }
 if (!drops(find(p, 7, 9, 0 - 1), [8])) { return 13; }
 `, "", ""},
 		{"borrowed-root", "modes = [2, 1];", `
-var r = find(p, 7, ssaunits.return_point(), 0 - 1);
+let r = find(p, 7, ssaunits.return_point(), 0 - 1);
 if (!supply(r, 0, 5, 0, ssaunits.retain_unit()) || !drops(r, [])) { return 14; }
 `, "", ""},
 		{"duplicate-store", unitDuplicate, `
-var s = find(p, 7, 1, 0 - 1);
+let s = find(p, 7, 1, 0 - 1);
 if (!supply(s, 0, 0, 0, ssaunits.retain_unit()) || !supply(s, 1, 0, 1, ssaunits.move_unit()) || !drops(s, [])) { return 15; }
 if (!supply(find(p, 7, ssaunits.return_point(), 0 - 1), 0, 1, 0, ssaunits.move_unit())) { return 16; }
 `, "", ""},
 		{"borrowed-store", unitDuplicate + "modes = [2];", `
-var s = find(p, 7, 1, 0 - 1);
+let s = find(p, 7, 1, 0 - 1);
 if (!supply(s, 0, 0, 0, ssaunits.retain_unit()) || !supply(s, 1, 0, 1, ssaunits.retain_unit())) { return 17; }
 `, "", ""},
 		{"branch-phis", semanticPhi + "modes = [1, 3, 3];", `
@@ -167,56 +167,56 @@ if (!supply(find(p, 7, ssaunits.edge_point(), 17), 0, 1, 0, ssaunits.retain_unit
 if (!supply(find(p, 27, ssaunits.edge_point(), 17), 0, 4, 0, ssaunits.retain_unit())) { return 62; }
 `, "", ""},
 		{"unused-parameter", unitDuplicate + `result = typeinfo.TypeVoid { tag: 0 }; graph = ssa.SFunc { ...graph, nvals: 1, blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0 - 1) }] }; types = [sa];`, `if (!drops(find(p, 7, ssaunits.entry_point(), 0 - 1), [0])) { return 23; }`, "", ""},
-		{"missing-supply", unitDuplicate, "", `var s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, supplies: [] });`, "unit supply arity"},
-		{"wrong-slot", unitDuplicate, "", `var s = find(p, 7, 1, 0 - 1); var a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, slot: 1 }, s.supplies[1]] });`, "unit supply identity or slot"},
-		{"double-move", unitDuplicate, "", `var s = find(p, 7, 1, 0 - 1); var a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
-		{"borrowed-move", unitDuplicate + "modes = [2];", "", `var s = find(p, 7, 1, 0 - 1); var a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
-		{"invalid-mode", unitDuplicate, "", `var s = find(p, 7, 1, 0 - 1); var a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 0 }, s.supplies[1]] });`, "invalid unit supply mode"},
-		{"premature-parent-drop", "", "", `var s = find(p, 7, 2, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [0] });`, "borrow outlives container unit"},
-		{"leaked-parent", "", "", `var s = find(p, 7, ssaunits.return_point(), 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "counted unit leaks at return"},
-		{"drop-moved-value", unitDuplicate, "", `var s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [0] });`, "drop without counted unit"},
-		{"missing-return", unitDuplicate, "", `var steps: ssaunits.Step[] = []; for s in p.steps { if (s.point != ssaunits.return_point()) { steps = steps.append(s); } } p = ssaunits.Plan { ...p, steps: steps };`, "missing or duplicate return step"},
+		{"missing-supply", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, supplies: [] });`, "unit supply arity"},
+		{"wrong-slot", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, slot: 1 }, s.supplies[1]] });`, "unit supply identity or slot"},
+		{"double-move", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
+		{"borrowed-move", unitDuplicate + "modes = [2];", "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
+		{"invalid-mode", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 0 }, s.supplies[1]] });`, "invalid unit supply mode"},
+		{"premature-parent-drop", "", "", `let s = find(p, 7, 2, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [0] });`, "borrow outlives container unit"},
+		{"leaked-parent", "", "", `let s = find(p, 7, ssaunits.return_point(), 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "counted unit leaks at return"},
+		{"drop-moved-value", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [0] });`, "drop without counted unit"},
+		{"missing-return", unitDuplicate, "", `let steps: ssaunits.Step[] = []; for s in p.steps { if (s.point != ssaunits.return_point()) { steps = steps.append(s); } } p = ssaunits.Plan { ...p, steps: steps };`, "missing or duplicate return step"},
 		{"duplicate-step", unitDuplicate, "", `p = ssaunits.Plan { ...p, steps: p.steps.append(p.steps[0]) };`, "missing or duplicate operation step"},
 		{"extra-step", unitDuplicate, "", `p = ssaunits.Plan { ...p, steps: p.steps.append(ssaunits.Step { block: 999, point: 0, target: 0 - 1, supplies: [], drops: [], hand_roots: [], hand_fields: [] }) };`, "extra unit plan steps"},
-		{"broken-edge-invariant", semanticPhi + "modes = [1, 3, 3];", "", `var s = find(p, 7, ssaunits.edge_point(), 17); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "edge unit invariant mismatch"},
-		{"edge-drops-live-unit", semanticPhi + "modes = [1, 3, 3];", "", `var s = find(p, 7, ssaunits.edge_point(), 17); p = replace(p, ssaunits.Step { ...s, drops: [1, 2] });`, "edge unit invariant mismatch"},
+		{"broken-edge-invariant", semanticPhi + "modes = [1, 3, 3];", "", `let s = find(p, 7, ssaunits.edge_point(), 17); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "edge unit invariant mismatch"},
+		{"edge-drops-live-unit", semanticPhi + "modes = [1, 3, 3];", "", `let s = find(p, 7, ssaunits.edge_point(), 17); p = replace(p, ssaunits.Step { ...s, drops: [1, 2] });`, "edge unit invariant mismatch"},
 		{"changed-parameter-contract", unitDuplicate, "", `modes = [2];`, "move without counted unit"},
-		{"missing-entry", unitDuplicate, "", `var steps: ssaunits.Step[] = []; for s in p.steps { if (s.point != ssaunits.entry_point()) { steps = steps.append(s); } } p = ssaunits.Plan { ...p, steps: steps };`, "missing or duplicate entry step"},
-		{"invalid-drop-id", unitDuplicate, "", `var s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [99] });`, "drop value out of range"},
+		{"missing-entry", unitDuplicate, "", `let steps: ssaunits.Step[] = []; for s in p.steps { if (s.point != ssaunits.entry_point()) { steps = steps.append(s); } } p = ssaunits.Plan { ...p, steps: steps };`, "missing or duplicate entry step"},
+		{"invalid-drop-id", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [99] });`, "drop value out of range"},
 		{"call-supplies", unitCall, `
-var first = find(p, 7, 2, 0 - 1);
+let first = find(p, 7, 2, 0 - 1);
 if (first.supplies.len() != 1 || !supply(first, 0, 1, 1, ssaunits.move_unit()) || !drops(first, [2])) { return 24; }
-var second = find(p, 7, 3, 0 - 1);
+let second = find(p, 7, 3, 0 - 1);
 if (second.supplies.len() != 1 || !supply(second, 0, 0, 1, ssaunits.move_unit()) || !drops(second, [])) { return 25; }
 if (!supply(find(p, 7, ssaunits.return_point(), 0 - 1), 0, 3, 0, ssaunits.move_unit())) { return 26; }
 `, "", ""},
 		{"call-borrowed-argument", unitCall + "modes = [2, 3];", `
-var second = find(p, 7, 3, 0 - 1);
+let second = find(p, 7, 3, 0 - 1);
 if (!supply(second, 0, 0, 1, ssaunits.retain_unit()) || !drops(second, [])) { return 27; }
 `, "", ""},
 		{"changed-call-contract", unitCall, "", `f = ssasem.Func { ...f, calls: [contract("g", [sa, sa], [2, 2], sa)] };`, "unit supply arity"},
 		{"call-contract-mode", unitCall, "", `f = ssasem.Func { ...f, calls: [contract("g", [sa, sa], [1, 3], sa)] };`, "reference parameter mode"},
 		{"dropped-call-contract", unitCall, "", `f = ssasem.Func { ...f, calls: [] };`, "missing call contract"},
 		{"call-lent-operand-owner", unitLentOwner, `
-var c = find(p, 7, 3, 0 - 1);
+let c = find(p, 7, 3, 0 - 1);
 if (c.supplies.len() != 1 || !supply(c, 0, 0, 1, ssaunits.retain_unit()) || !drops(c, [0])) { return 56; }
 `, "", ""},
-		{"call-moves-lent-owner", unitLentOwner, "", `var c = find(p, 7, 3, 0 - 1); var a = c.supplies[0]; p = replace(p, ssaunits.Step { ...c, supplies: [ssaunits.Supply { ...a, mode: 2 }], drops: [] });`, "a lent call operand borrows from a unit moved into the call"},
+		{"call-moves-lent-owner", unitLentOwner, "", `let c = find(p, 7, 3, 0 - 1); let a = c.supplies[0]; p = replace(p, ssaunits.Step { ...c, supplies: [ssaunits.Supply { ...a, mode: 2 }], drops: [] });`, "a lent call operand borrows from a unit moved into the call"},
 		{"held-element", unitHeld, `
 if (!p.held[3] || p.held[4]) { return 35; }
-var w = find(p, 7, 4, 0 - 1);
+let w = find(p, 7, 4, 0 - 1);
 if (!supply(w, 0, 0, 0, ssaunits.move_unit()) || !supply(w, 1, 1, 2, ssaunits.move_unit()) || !drops(w, [])) { return 36; }
-var t = find(p, 7, 5, 0 - 1);
+let t = find(p, 7, 5, 0 - 1);
 if (!supply(t, 0, 4, 0, ssaunits.move_unit()) || !supply(t, 1, 3, 1, ssaunits.move_unit()) || !drops(t, [])) { return 37; }
 `, "", ""},
 		{"element-read-dies-first", unitHeldDies, `
 if (p.held[2]) { return 38; }
-var w = find(p, 7, 3, 0 - 1);
+let w = find(p, 7, 3, 0 - 1);
 if (!supply(w, 0, 0, 0, ssaunits.move_unit()) || !supply(w, 1, 2, 2, ssaunits.retain_unit()) || !drops(w, [])) { return 39; }
 `, "", ""},
 		{"changed-hold", unitHeld, "", `p = ssaunits.Plan { ...p, held: p.held.with(3, false) };`, "element hold disagrees with the plan"},
 		{"string-units", unitString, `
-var s = find(p, 7, 2, 0 - 1);
+let s = find(p, 7, 2, 0 - 1);
 // The append counts its left operand, which the frame still reads at the
 // return, so the plan supplies a retain of it; the lowering then defers that
 // retain and lends the operand to a plain concatenation (ssarc.deferred_retain),
@@ -237,23 +237,23 @@ func unitSource(indices []int) (string, string) {
 	main.WriteString("function main(): i32 {\n")
 	for _, i := range indices {
 		tc := unitCases()[i]
-		fmt.Fprintf(&source, "function unit_case_%d(): i32 {\n%s\nvar modes: i32[] = [3, 1];\n%s\n", i, semanticFixture, tc.setup)
+		fmt.Fprintf(&source, "function unit_case_%d(): i32 {\n%s\nlet modes: i32[] = [3, 1];\n%s\n", i, semanticFixture, tc.setup)
 		source.WriteString(`
-var f = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
-var p = ssaunits.plan(f, modes);
+let f = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
+let p = ssaunits.plan(f, modes);
 if (!p.ok) { print(p.why); return 1; }
 `)
 		if i == 0 {
 			source.WriteString(`
-var bad = ssaunits.plan(f, []);
+let bad = ssaunits.plan(f, []);
 if (bad.ok || bad.steps.len() != 0 || bad.why != "parameter mode dimensions") { return 31; }
 bad = ssaunits.plan(f, [1, 1]);
 if (bad.ok || bad.steps.len() != 0 || bad.why != "reference parameter mode") { return 32; }
 bad = ssaunits.plan(f, [3, 3]);
 if (bad.ok || bad.steps.len() != 0 || bad.why != "scalar parameter mode") { return 33; }
-var opaque_types: typeinfo.Type[] = [typeinfo.TypeStruct { name: "Box", args: [] }];
+let opaque_types: typeinfo.Type[] = [typeinfo.TypeStruct { name: "Box", args: [] }];
 for opaque in opaque_types {
-    var g = ssa.SFunc { name: "opaque", nparams: 1, nvals: 1, entry: 7, takes_env: false, blocks: [
+    let g = ssa.SFunc { name: "opaque", nparams: 1, nvals: 1, entry: 7, takes_env: false, blocks: [
         ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }
     ] };
     bad = ssaunits.plan(ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, graph: g, values: [opaque], params: [opaque], result: opaque, records: semrecords.no_records(), enums: [], calls: [] }, [3]);

@@ -125,7 +125,7 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"kp_text: const_i32_text 7 ; store_local 0 ; call_direct side/0 ; drop ; const_i32_text 7\n" +
 		"kp_hex_refused: const_i32_text 0x10 ; store_local 0 ; call_direct side/0 ; drop ; load_local 0\n" +
 		// The binding source is the rewritten list, so the substituted load at slot 0
-		// is itself the constant that binds slot 1 — one walk carries `var b = a`.
+		// is itself the constant that binds slot 1 — one walk carries `let b = a`.
 		"kp_chain: const_i32 7 ; store_local 0 ; const_i32 7 ; store_local 1 ; const_i32 7 ; return\n" +
 		// str_slice_frame is the only op that writes a local without being a store —
 		// three slots at `i32_imm - 1` — so a binding on one ends there, while the

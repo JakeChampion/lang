@@ -21,7 +21,7 @@ import (
 const arrayStructuralVerbsProgram = `
 import "std/array";
 function main(): i32 {
-    var a: i32[] = [1, 2, 3, 4, 5];
+    let a: i32[] = [1, 2, 3, 4, 5];
     if (array.reverse(a)[0] != 5) { return 1; }
     if (array.reverse(a).len() != 5) { return 2; }
     if (array.take(a, 2).len() != 2 || array.take(a, 2)[1] != 2) { return 3; }
@@ -31,10 +31,10 @@ function main(): i32 {
     if (array.drop(a, 99).len() != 0) { return 7; }
     if (array.drop(a, 0).len() != 5) { return 8; }
     // take(n) ++ drop(n) == a
-    var split: i32[] = array.concat(array.take(a, 2), array.drop(a, 2));
+    let split: i32[] = array.concat(array.take(a, 2), array.drop(a, 2));
     if (split.len() != 5 || split[0] != 1 || split[4] != 5) { return 9; }
     // concat with an empty operand copies the other side.
-    var e: i32[] = [];
+    let e: i32[] = [];
     if (array.concat(e, a).len() != 5) { return 10; }
     // receiver-method form of concat.
     if (a.concat(a).len() != 10) { return 11; }

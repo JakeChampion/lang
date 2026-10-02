@@ -26,17 +26,17 @@ impl Iterator for Range {
     }
 }
 pub function sum[I: Iterator](it: I): i32 {
-    var total = 0; var cur = it; var go = true;
+    let total = 0; let cur = it; let go = true;
     while (go) { match (cur.next()) { Some(t) => { total = total + t.0; cur = t.1; }, None => { go = false; }, } }
     return total;
 }
 pub function count[I: Iterator](it: I): i32 {
-    var n = 0; var cur = it; var go = true;
+    let n = 0; let cur = it; let go = true;
     while (go) { match (cur.next()) { Some(t) => { n = n + 1; cur = t.1; }, None => { go = false; }, } }
     return n;
 }
 pub function to_array[I: Iterator](it: I): i32[] {
-    var out: i32[] = []; var cur = it; var go = true;
+    let out: i32[] = []; let cur = it; let go = true;
     while (go) { match (cur.next()) { Some(t) => { out = out.append(t.0); cur = t.1; }, None => { go = false; }, } }
     return out;
 }
@@ -52,7 +52,7 @@ var iterTraitCases = []struct {
 	// count of [2,9) = 7
 	{"count-range", `function main(): i32 { return count(range(2, 9)); }`, 7},
 	// to_array([0,4)) = [0,1,2,3]; sum-via-for 6 + len 4 = 10
-	{"to-array", `function main(): i32 { var xs = to_array(range(0, 4)); var t = 0; for x in xs { t = t + x; } return t + xs.len(); }`, 10},
+	{"to-array", `function main(): i32 { let xs = to_array(range(0, 4)); let t = 0; for x in xs { t = t + x; } return t + xs.len(); }`, 10},
 	// empty ranges yield nothing: sum 0 + count 0 + 9 = 9
 	{"empty", `function main(): i32 { return sum(range(7, 7)) + count(range(3, 3)) + 9; }`, 9},
 	// two drivers over two fresh ranges in one program (two monomorphic call sites)
@@ -111,10 +111,10 @@ func TestNativeIteratorTraitArm64(t *testing.T) {
 func TestNativeIteratorTraitModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    var s = iter.sum(iter.range(0, 5));            // 10
-    var c = iter.count(iter.range(2, 9));          // 7
-    var xs = iter.to_array(iter.range(0, 4));      // [0,1,2,3]
-    var t = 0;
+    let s = iter.sum(iter.range(0, 5));            // 10
+    let c = iter.count(iter.range(2, 9));          // 7
+    let xs = iter.to_array(iter.range(0, 4));      // [0,1,2,3]
+    let t = 0;
     for x in xs { t = t + x; }                     // 6
     return s + c + t + xs.len();                   // 10+7+6+4 = 27
 }
@@ -137,20 +137,20 @@ function main(): i32 {
 func TestNativeIteratorTraitModuleAdapters(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    var a = 0;
+    let a = 0;
     match (iter.nth(iter.range(0, 9), 4)) { Some(v) => { a = v; }, None => {} }   // 4
-    var c = 0;
+    let c = 0;
     match (iter.min(iter.range(3, 7))) { Some(v) => { c = v; }, None => {} }       // 3
-    var d = 0;
+    let d = 0;
     match (iter.max(iter.range(3, 7))) { Some(v) => { d = v; }, None => {} }       // 6
-    var e = iter.product(iter.range(1, 5));                                        // 24
-    var f = 0;
+    let e = iter.product(iter.range(1, 5));                                        // 24
+    let f = 0;
     match (iter.last(iter.range(0, 5))) { Some(v) => { f = v; }, None => {} }       // 4
-    var g = 0;
+    let g = 0;
     match (iter.position(iter.range(0, 9), 7)) { Some(v) => { g = v; }, None => {} } // 7
-    var h = 0;
+    let h = 0;
     if (iter.contains(iter.range(0, 5), 3)) { h = 1; }                             // 1
-    var k = iter.count_value(iter.range(0, 5), 2);                                 // 1
+    let k = iter.count_value(iter.range(0, 5), 2);                                 // 1
     return a + c + d + e + f + g + h + k;                                         // 48+1+1 = 50
 }
 `
@@ -177,11 +177,11 @@ func TestNativeIteratorTraitModuleGeneric(t *testing.T) {
 struct BoolSeq { n: i32 }
 impl iter.Iterator[boolean] for BoolSeq { function next(self: Self): Option[(boolean, Self)] { if (self.n <= 0) { return None; } return Some((true, BoolSeq { n: self.n - 1 })); } }
 function main(): i32 {
-    var c = iter.count(BoolSeq { n: 3 });           // 3
-    var bs = iter.to_array(BoolSeq { n: 2 });        // [true, true]
-    var k = 0;
+    let c = iter.count(BoolSeq { n: 3 });           // 3
+    let bs = iter.to_array(BoolSeq { n: 2 });        // [true, true]
+    let k = 0;
     for b in bs { if (b) { k = k + 1; } }            // 2
-    var f = iter.fold(iter.range(1, 5), 1, (a: i32, x: i32): i32 => { return a * x; });  // 1*1*2*3*4 = 24
+    let f = iter.fold(iter.range(1, 5), 1, (a: i32, x: i32): i32 => { return a * x; });  // 1*1*2*3*4 = 24
     return c + k + bs.len() + f - 24;                // 3+2+2+24-24 = 7
 }
 `
@@ -206,17 +206,17 @@ function main(): i32 {
 func TestNativeIteratorTraitModulePredicates(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
-    var a = 0;
+    let a = 0;
     if (iter.any(iter.range(0, 5), (x: i32): boolean => { return x == 3; })) { a = 1; }      // 1
-    var b = 0;
+    let b = 0;
     if (!iter.any(iter.range(0, 5), (x: i32): boolean => { return x > 9; })) { b = 2; }       // 2
-    var c = 0;
+    let c = 0;
     if (iter.all(iter.range(0, 5), (x: i32): boolean => { return x < 10; })) { c = 4; }       // 4
-    var d = 0;
+    let d = 0;
     if (!iter.all(iter.range(0, 5), (x: i32): boolean => { return x % 2 == 0; })) { d = 8; }   // 8
-    var e = 0;
+    let e = 0;
     match (iter.find(iter.range(0, 9), (x: i32): boolean => { return x >= 2 && x % 2 == 0; })) { Some(v) => { e = v; }, None => {} }  // 2
-    var f = 0;
+    let f = 0;
     match (iter.find(iter.range(0, 3), (x: i32): boolean => { return x > 100; })) { Some(v) => { f = v; }, None => { f = 16; } }      // 16
     return a + b + c + d + e + f;                                                                   // 1+2+4+8+2+16 = 33
 }

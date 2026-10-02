@@ -31,11 +31,11 @@ func TestSelfHostStructArrElemDropWasm(t *testing.T) {
 	prog := `struct Inner { items: i32[] }
 struct S { elems: Inner[], tag: i32 }
 function mk(): i32 {
-    var s: S = S { elems: [Inner { items: [1,2,3,4,5,6,7,8] }, Inner { items: [9,10,11,12,13,14,15,16] }], tag: 3 };
+    let s: S = S { elems: [Inner { items: [1,2,3,4,5,6,7,8] }, Inner { items: [9,10,11,12,13,14,15,16] }], tag: 3 };
     return s.elems[0].items[0] + s.elems[1].items[7] + s.tag;
 }
 function main(): i32 {
-    var acc: i32 = 0; var k: i32 = 0;
+    let acc: i32 = 0; let k: i32 = 0;
     while (k < 400000) { acc = mk(); k = k + 1; }
     return acc - 20;
 }`

@@ -7,14 +7,14 @@
 import "std/http";
 
 function main(): i32 {
-  var wire: string = "GET /hello HTTP/1.1\r\nHost: bench\r\nUser-Agent: perf-bench\r\nAccept: */*\r\n\r\n";
-  var total: i64 = 0i64;
-  var i: i32 = 0;
+  let wire: string = "GET /hello HTTP/1.1\r\nHost: bench\r\nUser-Agent: perf-bench\r\nAccept: */*\r\n\r\n";
+  let total: i64 = 0i64;
+  let i: i32 = 0;
   while (i < 4000) {
     match (http.http_parse_request(wire)) {
       Some(req) => {
-        var resp: HttpResponse = http.ok("hello " + req.path);
-        var out: string = http.http_serialize_response(resp);
+        let resp: HttpResponse = http.ok("hello " + req.path);
+        let out: string = http.http_serialize_response(resp);
         total = total + (out.len() + req.headers.len()) as i64;
       },
       None => {

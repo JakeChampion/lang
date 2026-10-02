@@ -5,9 +5,9 @@ import "std/utf8" as utf8;
 import "std/string";
 
 function body_bytes(): u8[] {
-  var one: string = "{\"id\":1042,\"name\":\"Ada Lovelace\",\"email\":\"ada@example.com\",\"tags\":[\"engineer\",\"analyst\",\"pioneer\"],\"active\":true,\"score\":99.5,\"note\":\"café — naïve résumé, 中文, 𝄞\"}";
-  var out: string = "";
-  var i: i32 = 0;
+  let one: string = "{\"id\":1042,\"name\":\"Ada Lovelace\",\"email\":\"ada@example.com\",\"tags\":[\"engineer\",\"analyst\",\"pioneer\"],\"active\":true,\"score\":99.5,\"note\":\"café — naïve résumé, 中文, 𝄞\"}";
+  let out: string = "";
+  let i: i32 = 0;
   while (i < 24) {
     out = out + one;
     i = i + 1;
@@ -16,9 +16,9 @@ function body_bytes(): u8[] {
 }
 
 function main(): i32 {
-  var b: u8[] = body_bytes();
-  var acc: i32 = 0;
-  var round: i32 = 0;
+  let b: u8[] = body_bytes();
+  let acc: i32 = 0;
+  let round: i32 = 0;
   while (round < 200) {
     match (Some(string_from_bytes_unchecked(b))) {
       Some(s) => {

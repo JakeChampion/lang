@@ -24,8 +24,8 @@ function bound_at(bt: string[], i: i32): string {
 }
 
 function pairs_of(fd: parser.FuncDecl): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < fd.type_params.len()) {
     if (i > 0) {
       out = out + ",";
@@ -40,11 +40,11 @@ function pairs_of(fd: parser.FuncDecl): string {
 }
 
 function main(): i32 {
-  var mod: parser.Module = rundriver.parse_stdin("impl_bounds_run");
-  var i: i32 = 0;
+  let mod: parser.Module = rundriver.parse_stdin("impl_bounds_run");
+  let i: i32 = 0;
   while (i < mod.funcs.len()) {
-    var fd: parser.FuncDecl = mod.funcs[i];
-    var label: string = fd.name;
+    let fd: parser.FuncDecl = mod.funcs[i];
+    let label: string = fd.name;
     if (fd.receiver_type.len() > 0) {
       label = fd.receiver_type + "." + fd.name;
     }

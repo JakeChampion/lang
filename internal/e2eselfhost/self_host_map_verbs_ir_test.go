@@ -59,19 +59,19 @@ func TestSelfHostMapVerbsIR(t *testing.T) {
 			wantClone: "__mapm_merge__i32__i32",
 			src: `import "core/map";
 function main(): i32 {
-    var a: Map[i32, i32] = map_new(4);
+    let a: Map[i32, i32] = map_new(4);
     a = a.insert(1, 10);
     a = a.insert(2, 20);
-    var b: Map[i32, i32] = map_new(4);
+    let b: Map[i32, i32] = map_new(4);
     b = b.insert(2, 99);
     b = b.insert(3, 30);
-    var m: Map[i32, i32] = a.merge(b);
+    let m: Map[i32, i32] = a.merge(b);
     if (m.len() != 3) { return 1; }
     if (m.get_or(1, 0) != 10) { return 2; }
     if (m.get_or(2, 0) != 99) { return 3; }
-    var e: Map[i32, i32] = a.extend(b);
+    let e: Map[i32, i32] = a.extend(b);
     if (e.get_or(3, 0) != 30) { return 4; }
-    var r: (Map[i32, i32], i32) = m.get_or_insert(5, 50);
+    let r: (Map[i32, i32], i32) = m.get_or_insert(5, 50);
     if (r.1 != 50) { return 5; }
     if (r.0.get_or(5, 0) != 50) { return 6; }
     // chained map op directly on the merge result (no intermediate var)
@@ -86,11 +86,11 @@ function main(): i32 {
 			wantClone: "__mapm_merge__string__i32",
 			src: `import "core/map";
 function main(): i32 {
-    var a: Map[string, i32] = map_new(4);
+    let a: Map[string, i32] = map_new(4);
     a = a.insert("x", 1);
-    var b: Map[string, i32] = map_new(4);
+    let b: Map[string, i32] = map_new(4);
     b = b.insert("y", 2);
-    var m: Map[string, i32] = a.merge(b);
+    let m: Map[string, i32] = a.merge(b);
     if (m.get_or("x", 0) != 1) { return 1; }
     if (m.get_or("y", 0) != 2) { return 2; }
     return 0;

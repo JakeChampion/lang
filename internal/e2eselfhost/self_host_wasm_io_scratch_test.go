@@ -26,21 +26,21 @@ func TestSelfHostWasmIOScratchReleased(t *testing.T) {
 	}{
 		{"strbuf_grows", `function main(): i32 {
     strbuf_reset();
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { strbuf_append("0123456789"); i = i + 1; }
-    var t: string = strbuf_take();
+    let t: string = strbuf_take();
     strbuf_append("again");
-    var u: string = strbuf_take();
+    let u: string = strbuf_take();
     return (t.len() + u.len()) % 101;
 }`, "", (1000 + 5) % 101, nil},
 		{"read_line", `function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (read_line()) { Some(l) => { n = l.len(); }, None => { n = 50; } }
     match (read_line()) { Some(l) => { n = n + 100; }, None => { n = n + 1; } }
     return n;
 }`, "hello\n", 7, nil},
 		{"stat", `function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (stat("present.txt")) { Ok(st) => { n = n + 1; }, Err(e) => { n = n + 10; } }
     match (stat("absent.txt")) { Ok(st) => { n = n + 100; }, Err(e) => { n = n + 2; } }
     return n;

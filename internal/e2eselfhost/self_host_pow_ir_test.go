@@ -33,7 +33,7 @@ func TestSelfHostPowIRWasm(t *testing.T) {
 
 	// `check` returns true when |pow(x,y) - expected| <= 1e-6 * |expected|.
 	const src = `function check(x: f64, y: f64, expected: f64): boolean {
-    var got: f64 = __pow_f64(x, y);
+    let got: f64 = __pow_f64(x, y);
     return __abs_f64(got - expected) <= (__abs_f64(expected) * 0.000001);
 }
 function main(): i32 {

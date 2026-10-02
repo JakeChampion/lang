@@ -23,7 +23,7 @@ var binderScopeCases = []struct {
 }{
 	// A lambda inside an `n @ Tag(x)` arm reading the @-binding. The whole-value
 	// binder is carried on the PATTERN and lower_stmt_match only materialises it as a
-	// `var` later, so every AST-level capture pass ran before it existed:
+	// `let` later, so every AST-level capture pass ran before it existed:
 	// collect_bound_stmt did not report `n` as bound, the free-variable filter
 	// then declined to treat it as an enclosing local, and the lambda took the
 	// no-capture lift with a bare `n` in its body —
@@ -39,7 +39,7 @@ function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { r
 function f(b: Box): i32 {
   match (b) {
     n @ Full(v) => {
-      var g: (i32) => i32 = (d: i32): i32 => { return total(n) + d; };
+      let g: (i32) => i32 = (d: i32): i32 => { return total(n) + d; };
       return g(1);
     },
     Empty => { return 0; },
@@ -48,7 +48,7 @@ function f(b: Box): i32 {
 }
 
 function main(): i32 { return f(Full(5)); }`},
-	// A tuple destructure binds its names comma-joined (`var (g, h)` arrives as
+	// A tuple destructure binds its names comma-joined (`let (g, h)` arrives as
 	// the single name "g,h"), so a walk that does not split it reports neither
 	// `g` nor `h` as bound. asmcore's call gate carried its own binder walk that
 	// did not split, and rejected a valid program:
@@ -60,7 +60,7 @@ function main(): i32 { return f(Full(5)); }`},
 function dbl(n: i32): i32 { return n * 2; }
 function pair(): ((i32) => i32, (i32) => i32) { return (inc, dbl); }
 function main(): i32 {
-  var (g, h) = pair();
+  let (g, h) = pair();
   return g(1) + h(2);
 }`},
 }

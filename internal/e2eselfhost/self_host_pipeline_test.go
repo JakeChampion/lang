@@ -20,10 +20,10 @@ import (
 //
 // main() runs five sub-checks:
 //   1. Mutual recursion + const-fold opportunity: fact(2+3) = 120.
-//   2. Constfold visible in the AST: var c = 2 + 3 → ExprNumber "5".
+//   2. Constfold visible in the AST: let c = 2 + 3 → ExprNumber "5".
 //   3. Ill-typed program — checker rejects, the interpreter is never called.
 //   4. Array + while: sum of [3,5,7,9] = 24 via main().
-//   5. No-function top-level: var x = 7; var y = 11; return x+y → 18.
+//   5. No-function top-level: let x = 7; let y = 11; return x+y → 18.
 
 func writeSelfHostPipelineProject(t *testing.T) string {
 	t.Helper()

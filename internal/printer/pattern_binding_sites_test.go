@@ -10,7 +10,7 @@ import (
 // A destructuring pattern renders through one function at every binding site
 // (#5356). Rendering it site-locally is how a struct pattern came to reprint
 // as the positional tuple form, silently rebinding by field position (#6374) —
-// so the `for` header and the `let` / `var` destructure, which only reached
+// so the `for` header and the `let` destructure, which only reached
 // the shared grammar once the pattern-head lookahead was unified, are pinned
 // here in the same shape a parameter already was.
 func TestFormatPatternBindingSites(t *testing.T) {
@@ -20,13 +20,13 @@ func TestFormatPatternBindingSites(t *testing.T) {
 			// reads as bind-by-position over a different set of names.
 			name: "for_struct_shorthand",
 			src: `struct Point { x: i32, y: i32 }
-function f(ps: Point[]): i32 { var acc = 0; for Point { x, y } in ps { acc = acc + x + y; } return acc; }`,
+function f(ps: Point[]): i32 { let acc = 0; for Point { x, y } in ps { acc = acc + x + y; } return acc; }`,
 			want: "for Point { x, y } in ps {",
 		},
 		{
 			name: "for_struct_rename",
 			src: `struct Point { x: i32, y: i32 }
-function f(ps: Point[]): i32 { var acc = 0; for Point { x: a, y: b } in ps { acc = acc + a + b; } return acc; }`,
+function f(ps: Point[]): i32 { let acc = 0; for Point { x: a, y: b } in ps { acc = acc + a + b; } return acc; }`,
 			want: "for Point { x: a, y: b } in ps {",
 		},
 		{
@@ -34,23 +34,23 @@ function f(ps: Point[]): i32 { var acc = 0; for Point { x: a, y: b } in ps { acc
 			// makes the formatted program stop compiling.
 			name: "for_at_struct",
 			src: `struct Point { x: i32, y: i32 }
-function f(ps: Point[]): i32 { var acc = 0; for w @ Point { x, y } in ps { acc = acc + w.x + x + y; } return acc; }`,
+function f(ps: Point[]): i32 { let acc = 0; for w @ Point { x, y } in ps { acc = acc + w.x + x + y; } return acc; }`,
 			want: "for w @ Point { x, y } in ps {",
 		},
 		{
 			name: "for_at_tuple",
-			src:  `function f(ts: (i32, i32)[]): i32 { var acc = 0; for w @ (a, b) in ts { acc = acc + w.0 + a + b; } return acc; }`,
+			src:  `function f(ts: (i32, i32)[]): i32 { let acc = 0; for w @ (a, b) in ts { acc = acc + w.0 + a + b; } return acc; }`,
 			want: "for w @ (a, b) in ts {",
 		},
 		{
 			name: "for_tuple_stays_tuple",
-			src:  `function f(ts: (i32, i32)[]): i32 { var acc = 0; for (a, b) in ts { acc = acc + a + b; } return acc; }`,
+			src:  `function f(ts: (i32, i32)[]): i32 { let acc = 0; for (a, b) in ts { acc = acc + a + b; } return acc; }`,
 			want: "for (a, b) in ts {",
 		},
 		{
 			name: "destructure_at_struct",
 			src: `struct Point { x: i32, y: i32 }
-function f(p: Point): i32 { var w @ Point { x, y } = p; return w.x + x + y; }`,
+function f(p: Point): i32 { let w @ Point { x, y } = p; return w.x + x + y; }`,
 			want: "let w @ Point { x, y } = p;",
 		},
 		{
@@ -60,13 +60,13 @@ function f(p: Point): i32 { var w @ Point { x, y } = p; return w.x + x + y; }`,
 			// author wrote, at every site that takes a struct pattern.
 			name: "for_struct_rest",
 			src: `struct Point { x: i32, y: i32, z: i32 }
-function f(ps: Point[]): i32 { var acc = 0; for Point { x, .. } in ps { acc = acc + x; } return acc; }`,
+function f(ps: Point[]): i32 { let acc = 0; for Point { x, .. } in ps { acc = acc + x; } return acc; }`,
 			want: "for Point { x, .. } in ps {",
 		},
 		{
 			name: "destructure_rest",
 			src: `struct Point { x: i32, y: i32, z: i32 }
-function f(p: Point): i32 { var Point { x, .. } = p; return x; }`,
+function f(p: Point): i32 { let Point { x, .. } = p; return x; }`,
 			want: "let Point { x, .. } = p;",
 		},
 		{
@@ -90,7 +90,7 @@ function f(p: Point): i32 { return match (p) { Point { x, .. } => x }; }`,
 		{
 			name: "at_with_rest",
 			src: `struct Point { x: i32, y: i32, z: i32 }
-function f(p: Point): i32 { var w @ Point { x, .. } = p; return w.y + x; }`,
+function f(p: Point): i32 { let w @ Point { x, .. } = p; return w.y + x; }`,
 			want: "let w @ Point { x, .. } = p;",
 		},
 		{
@@ -98,12 +98,12 @@ function f(p: Point): i32 { var w @ Point { x, .. } = p; return w.y + x; }`,
 			// grow one.
 			name: "no_rest_stays_absent",
 			src: `struct Point { x: i32, y: i32 }
-function f(p: Point): i32 { var Point { x, y } = p; return x + y; }`,
+function f(p: Point): i32 { let Point { x, y } = p; return x + y; }`,
 			want: "let Point { x, y } = p;",
 		},
 		{
 			name: "destructure_at_tuple",
-			src:  `function f(t: (i32, i32)): i32 { var w @ (a, b) = t; return w.0 + a + b; }`,
+			src:  `function f(t: (i32, i32)): i32 { let w @ (a, b) = t; return w.0 + a + b; }`,
 			want: "let w @ (a, b) = t;",
 		},
 	} {

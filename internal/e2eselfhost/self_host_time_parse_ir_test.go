@@ -21,10 +21,10 @@ import "testing"
 const timeParseIRPrelude = `struct Civil { year: i32, month: i32, day: i32 }
 function parse_digits(s: string, start: i32, end: i32): i32 {
     if (start >= end) { return -1; }
-    var acc: i32 = 0;
-    var i: i32 = start;
+    let acc: i32 = 0;
+    let i: i32 = start;
     while (i < end) {
-        var b: i32 = s[i] as i32;
+        let b: i32 = s[i] as i32;
         if (b < 48 || b > 57) { return -1; }
         acc = acc * 10 + (b - 48);
         i = i + 1;
@@ -34,9 +34,9 @@ function parse_digits(s: string, start: i32, end: i32): i32 {
 function date_parse_iso(s: string): Option[Civil] {
     if (s.len() != 10) { return None; }
     if (s[4] != 45 || s[7] != 45) { return None; }
-    var y: i32 = parse_digits(s, 0, 4);
-    var m: i32 = parse_digits(s, 5, 7);
-    var d: i32 = parse_digits(s, 8, 10);
+    let y: i32 = parse_digits(s, 0, 4);
+    let m: i32 = parse_digits(s, 5, 7);
+    let d: i32 = parse_digits(s, 8, 10);
     if (y < 0 || m < 0 || d < 0) { return None; }
     return Some(Civil { year: y, month: m, day: d });
 }

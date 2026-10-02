@@ -11,7 +11,7 @@ import (
 
 // --- Binding an rc-tuple ELEMENT to a local kept its credit (#7766) ----------
 //
-// `var e: T = t.1` refused `"TUPRC:"` AND `"TUPRCS:"` together, so the local got
+// `let e: T = t.1` refused `"TUPRC:"` AND `"TUPRCS:"` together, so the local got
 // no release at all and the tuple box and its element buffer both leaked:
 //
 //	rounds   native        self-host (before)
@@ -47,15 +47,15 @@ type tupleElemBindCase struct {
 }
 
 func tupleElemBindMain(rounds string) string {
-	return "\nfunction main(): i32 { var x: i32 = 0; var r: i32 = 0; " +
+	return "\nfunction main(): i32 { let x: i32 = 0; let r: i32 = 0; " +
 		"while (r < " + rounds + ") { x = x + round(r); r = r + 1; } " +
 		"if (__rc_underflow_count() != 0) { return 99; } return x % 83; }"
 }
 
 func tupleElemBindCases() []tupleElemBindCase {
 	const bindElem = `function round(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var e: i32[] = t.1;
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let e: i32[] = t.1;
     return e.len() + i;
 }`
 	return []tupleElemBindCase{
@@ -79,8 +79,8 @@ func tupleElemBindCases() []tupleElemBindCase {
 			name: "string_elem_bound",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: (i32, string) = (i, w("ab"));
-    var e: string = t.1;
+    let t: (i32, string) = (i, w("ab"));
+    let e: string = t.1;
     return e.len() + i;
 }` + tupleElemBindMain("100"),
 			want: 21,
@@ -91,9 +91,9 @@ function round(i: i32): i32 {
 			// still finished before the exit sweep.
 			name: "elem_bound_used_then_dead",
 			src: `function round(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var e: i32[] = t.1;
-    var n: i32 = e.len() + e[0];
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let e: i32[] = t.1;
+    let n: i32 = e.len() + e[0];
     return n + i;
 }` + tupleElemBindMain("100"),
 			want: 57,
@@ -105,8 +105,8 @@ function round(i: i32): i32 {
 			name: "three_elem_tuple_one_bound",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: (i32, i32[], string) = (i, [i, i + 1], w("ab"));
-    var e: i32[] = t.1;
+    let t: (i32, i32[], string) = (i, [i, i + 1], w("ab"));
+    let e: i32[] = t.1;
     return e.len() + i;
 }` + tupleElemBindMain("100"),
 			want: 4,
@@ -117,9 +117,9 @@ function round(i: i32): i32 {
 			// Was 600/0 live 24000.
 			name: "elem_bound_in_a_loop",
 			src: `function round(i: i32): i32 {
-    var n: i32 = 0;
-    var k: i32 = 0;
-    while (k < 3) { var t: (i32, i32[]) = (i, [i, k]); var e: i32[] = t.1; n = (n + e.len()) % 101; k = k + 1; }
+    let n: i32 = 0;
+    let k: i32 = 0;
+    while (k < 3) { let t: (i32, i32[]) = (i, [i, k]); let e: i32[] = t.1; n = (n + e.len()) % 101; k = k + 1; }
     return n + i;
 }` + tupleElemBindMain("100"),
 			want: 72,
@@ -128,9 +128,9 @@ function round(i: i32): i32 {
 			// The bind is in an IF ARM while the tuple outlives it.
 			name: "elem_bound_in_a_conditional",
 			src: `function round(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var n: i32 = 0;
-    if (i % 2 == 0) { var e: i32[] = t.1; n = e.len(); }
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let n: i32 = 0;
+    if (i % 2 == 0) { let e: i32[] = t.1; n = e.len(); }
     return n + i;
 }` + tupleElemBindMain("100"),
 			want: 70,
@@ -139,7 +139,7 @@ function round(i: i32): i32 {
 			// The element is RETURNED, so it outlives the frame and a deep
 			// free would release it under the caller.
 			name: "refuses_elem_returned",
-			src: `function esc(i: i32): i32[] { var t: (i32, i32[]) = (i, [i, i + 1]); return t.1; }
+			src: `function esc(i: i32): i32[] { let t: (i32, i32[]) = (i, [i, i + 1]); return t.1; }
 function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("100"),
 			want: 4,
 		},
@@ -149,9 +149,9 @@ function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("1
 			name: "refuses_elem_stored",
 			src: `function sink(xs: i32[][]): i32 { return xs.len(); }
 function round(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var e: i32[] = t.1;
-    var held: i32[][] = [e];
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let e: i32[] = t.1;
+    let held: i32[][] = [e];
     return sink(held) + i;
 }` + tupleElemBindMain("100"),
 			want: 70,
@@ -161,8 +161,8 @@ function round(i: i32): i32 {
 			// element bound.
 			name: "refuses_elem_reassigned",
 			src: `function round(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var e: i32[] = t.1;
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let e: i32[] = t.1;
     e = [i];
     return e.len() + i;
 }` + tupleElemBindMain("100"),
@@ -179,9 +179,9 @@ function round(i: i32): i32 {
 			// shape for a leaking one, which is why it was not done.
 			name: "elem_bound_through_alias",
 			src: `function round(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var v: (i32, i32[]) = t;
-    var e: i32[] = v.1;
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let v: (i32, i32[]) = t;
+    let e: i32[] = v.1;
     return e.len() + i;
 }` + tupleElemBindMain("100"),
 			want: 4,
@@ -190,7 +190,7 @@ function round(i: i32): i32 {
 			// Through the alias: the element escapes the frame by the
 			// alias's own return.
 			name: "refuses_elem_returned_through_alias",
-			src: `function esc(i: i32): i32[] { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; return v.1; }
+			src: `function esc(i: i32): i32[] { let t: (i32, i32[]) = (i, [i, i + 1]); let v: (i32, i32[]) = t; return v.1; }
 function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("100"),
 			want: 4,
 		},
@@ -200,7 +200,7 @@ function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("1
 			// which the gate ever refused.
 			name: "elem_borrow_unchanged",
 			src: `function round(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
+    let t: (i32, i32[]) = (i, [i, i + 1]);
     return t.1.len() + i;
 }` + tupleElemBindMain("100"),
 			want: 4,
@@ -208,8 +208,8 @@ function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("1
 		{
 			name: "scalar_elem_bind_unchanged",
 			src: `function round(i: i32): i32 {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var e: i32 = t.0;
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let e: i32 = t.0;
     return e + t.1.len() + i;
 }` + tupleElemBindMain("100"),
 			want: 57,

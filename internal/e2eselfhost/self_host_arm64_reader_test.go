@@ -32,8 +32,8 @@ func TestSelfHostReaderArm64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	echoSrc := "function main(): i32 {\n" +
-		"    var r: Reader = stdin();\n" +
-		"    var out: string = \"\";\n" +
+		"    let r: Reader = stdin();\n" +
+		"    let out: string = \"\";\n" +
 		"    while (true) {\n" +
 		"        match (r.read_chunk(4096)) {\n" +
 		"            Ok(chunk) => {\n" +
@@ -100,7 +100,7 @@ func TestSelfHostReadFileArm64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	catSrc := "function main(): i32 {\n" +
-		"    var path: string = args()[1];\n" +
+		"    let path: string = args()[1];\n" +
 		"    match (read_file(path)) {\n" +
 		"        Ok(contents) => { write(contents); return 0; },\n" +
 		"        Err(e) => { return 7; },\n" +

@@ -9,10 +9,10 @@
 enum EAW { EAWNum(i32), EAWTxt(string) }
 
 function main(): i32 {
-    var xs: EAW[] = [EAWNum(1), EAWTxt("two"), EAWNum(3)];
+    let xs: EAW[] = [EAWNum(1), EAWTxt("two"), EAWNum(3)];
     xs = xs.with(1, EAWNum(2));
     xs = xs.with(0, EAWTxt("zero"));
-    var r: i32 = 0;
+    let r: i32 = 0;
     match (xs[1]) {
         EAWNum(n) => { r = 40 + n; },
         EAWTxt(_) => { r = 1; }

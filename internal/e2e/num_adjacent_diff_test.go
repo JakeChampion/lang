@@ -12,25 +12,25 @@ import "testing"
 const numAdjacentDiffProg = `
 import "std/num";
 function main(): i32 {
-    var xs: i32[] = [1, 3, 6, 10];
-    var d: i32[] = num.adjacent_diff(xs);
+    let xs: i32[] = [1, 3, 6, 10];
+    let d: i32[] = num.adjacent_diff(xs);
     if (d.len() != 3 || d[0] != 2 || d[1] != 3 || d[2] != 4) { return 1; }
     // Negative deltas.
-    var ns: i32[] = [10, 3, 8, 8];
-    var nd: i32[] = num.adjacent_diff(ns);
+    let ns: i32[] = [10, 3, 8, 8];
+    let nd: i32[] = num.adjacent_diff(ns);
     if (nd[0] != (0 - 7) || nd[1] != 5 || nd[2] != 0) { return 2; }
     // Inverse of cumsum: adjacent_diff(cumsum(v)) == v (for len >= 1).
-    var v: i32[] = [4, 1, 7, 2, 9];
-    var round: i32[] = num.adjacent_diff(num.cumsum(v));
+    let v: i32[] = [4, 1, 7, 2, 9];
+    let round: i32[] = num.adjacent_diff(num.cumsum(v));
     // cumsum(v) = [4,5,12,14,23]; adjacent_diff = [1,7,2,9] == v[1..].
     if (round.len() != 4 || round[0] != 1 || round[1] != 7 || round[2] != 2 || round[3] != 9) { return 3; }
     // Empty / single -> empty.
-    var e: i32[] = [];
-    var one: i32[] = [42];
+    let e: i32[] = [];
+    let one: i32[] = [42];
     if (num.adjacent_diff(e).len() != 0 || num.adjacent_diff(one).len() != 0) { return 4; }
     // i64 width.
-    var ls: i64[] = [1000000000000, 1000000000003, 1000000000001];
-    var ld: i64[] = num.adjacent_diff(ls);
+    let ls: i64[] = [1000000000000, 1000000000003, 1000000000001];
+    let ld: i64[] = num.adjacent_diff(ls);
     if (ld[0] != 3 || ld[1] != (0 - 2)) { return 5; }
     return 42;
 }

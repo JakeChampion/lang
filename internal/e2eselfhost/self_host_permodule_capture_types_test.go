@@ -22,7 +22,7 @@ pub function make(): Node { return Node { value: 7 }; }
 		{"callable", `import "./types";
 function apply(node: types.Node, callback: (types.Node) => types.Node): types.Node { return callback(node); }
 pub function run(callback: (types.Node) => types.Node): i32 {
-    var node = apply(types.Node { value: 7 }, (n: types.Node): types.Node => callback(n));
+    let node = apply(types.Node { value: 7 }, (n: types.Node): types.Node => callback(n));
     return node.value;
 }`, `import "./api"; import "./types";
 function main(): i32 { return api.run((n: types.Node): types.Node => n); }`},
@@ -33,7 +33,7 @@ pub function run(nodes: types.Node[]): i32 { return apply((): i32 => nodes[0].va
 function main(): i32 { return api.run([types.Node { value: 7 }]); }`},
 		{"inferred-call-result", `import "./types";
 function apply(callback: () => i32): i32 { return callback(); }
-pub function run(): i32 { var node = types.make(); return apply((): i32 => node.value); }
+pub function run(): i32 { let node = types.make(); return apply((): i32 => node.value); }
 `, `import "./api"; function main(): i32 { return api.run(); }`},
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {

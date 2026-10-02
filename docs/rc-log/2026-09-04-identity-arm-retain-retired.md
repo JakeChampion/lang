@@ -89,7 +89,7 @@ field read, which it reads as a borrow:
 ```fern
 function f(s: St, v: i32): St { return St { ops: s.ops.append(v), n: 1 }; }
 function mk(n: i32): St {
-    var a: St = St { ops: [], n: 0 };
+    let a: St = St { ops: [], n: 0 };
     …
     return f(a, 999);        // return-position death: no bracket
 }                            // exit sweep: __struct_drop_St(a) frees a.ops

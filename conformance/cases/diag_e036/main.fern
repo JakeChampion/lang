@@ -6,8 +6,8 @@ enum Color { Red, Green, Blue }
 enum Status { Ok, Err(string) }
 
 function main(): i32 {
-    var c = Red(1);                   // error[E036]: variant Red expects 0 argument(s), got 1
-    var s = Err();                    // error[E036]: variant Err expects 1 argument(s), got 0
-    var bad = Status.Pending;         // error[E036]: enum Status has no variant "Pending"
+    let c = Red(1);                   // error[E036]: variant Red expects 0 argument(s), got 1
+    let s = Err();                    // error[E036]: variant Err expects 1 argument(s), got 0
+    let bad = Status.Pending;         // error[E036]: enum Status has no variant "Pending"
     return 0;
 }

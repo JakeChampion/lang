@@ -30,12 +30,12 @@ import (
 const blkStructNestedSrc = `import "core/int";
 struct P { xs: i32[], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var o: Option[P] = Some(P { xs: [k, k + 1], n: k });
+            let o: Option[P] = Some(P { xs: [k, k + 1], n: k });
             if (k >= 0) {
                 match (o) { Some(p) => { acc = acc + p.n + p.xs.len(); }, None => { acc = acc + 1; } }
             }
@@ -51,12 +51,12 @@ function main(): i32 {
 const blkStructFlatSrc = `import "core/int";
 struct P { xs: i32[], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var o: Option[P] = Some(P { xs: [k, k + 1], n: k });
+            let o: Option[P] = Some(P { xs: [k, k + 1], n: k });
             match (o) { Some(p) => { acc = acc + p.n + p.xs.len(); }, None => { acc = acc + 1; } }
             k = k + 1;
         }
@@ -72,13 +72,13 @@ function main(): i32 {
 // than as a byte count — hence the oracle.
 const blkStructFieldMovedSrc = `struct P { xs: i32[], n: i32 }
 function main(): i32 {
-    var held: i32[] = [0, 0];
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let held: i32[] = [0, 0];
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var o: Option[P] = Some(P { xs: [k, k + 1], n: k });
+            let o: Option[P] = Some(P { xs: [k, k + 1], n: k });
             if (k >= 0) {
                 match (o) { Some(p) => { held = p.xs; acc = acc + p.n; }, None => { acc = acc + 1; } }
             }

@@ -26,7 +26,7 @@ var annotateOptCases = []struct {
 function main(): i32 { match (pick(4)) { Some(v) => { return v; }, None => { return 0; } } }`}, // 40
 	// `?` propagation through Result-returning calls.
 	{"try_result", `function half(n: i32): Result[i32, i32] { if (n % 2 == 0) { return Ok(n / 2); } return Err(1); }
-function run(): Result[i32, i32] { var x: i32 = half(8)?; var y: i32 = half(4)?; return Ok(x + y); }
+function run(): Result[i32, i32] { let x: i32 = half(8)?; let y: i32 = half(4)?; return Ok(x + y); }
 function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return 99; } } }`}, // 4 + 2 = 6
 	// Option[string] payload used as a string (v.len()).
 	{"match_option_string", `function name_of(n: i32): Option[string] { if (n == 1) { return Some("hello"); } return None; }

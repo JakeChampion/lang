@@ -73,7 +73,7 @@ func TestSelfHostIRExportBridgeInert(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasm_ir_run")
 
 	const plain = "struct P { x: i32, y: i32 }\n" +
-		"function main(): i32 { var p = P { x: 40, y: 2 }; var a = [p.x, p.y]; var s = \"hi\"; return a[0] + a[1] + s.len(); }\n"
+		"function main(): i32 { let p = P { x: 40, y: 2 }; let a = [p.x, p.y]; let s = \"hi\"; return a[0] + a[1] + s.len(); }\n"
 	pout, pstderr, pcode := runDriver(t, runner, driverBin, []byte(plain), false, "-ir")
 	if pcode != 0 {
 		t.Fatalf("IR emit failed (exit %d): %s", pcode, pstderr)

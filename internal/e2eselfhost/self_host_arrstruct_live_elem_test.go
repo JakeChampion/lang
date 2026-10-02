@@ -51,8 +51,8 @@ type arrstructLiveElemCase struct {
 }
 
 const alelMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -68,8 +68,8 @@ func arrstructLiveElemCases() []arrstructLiveElemCase {
 			// stranded.
 			name: "read_after_push",
 			src: decl + `function round(i: i32): i32 {
-    var p: P = P { xs: [i, i + 1], n: i };
-    var ps: P[] = [];
+    let p: P = P { xs: [i, i + 1], n: i };
+    let ps: P[] = [];
     ps = ps.append(p);
     return (ps.len() + p.xs.len() + p.n) % 101;
 }
@@ -83,13 +83,13 @@ func arrstructLiveElemCases() []arrstructLiveElemCase {
 			// the retain this is exit 99, not a leak.
 			name: "param_element",
 			src: decl + `function take(p: P): i32 {
-    var ps: P[] = [];
+    let ps: P[] = [];
     ps = ps.append(p);
     return ps.len();
 }
 function round(i: i32): i32 {
-    var p: P = P { xs: [i, i + 1], n: i };
-    var t: i32 = take(p);
+    let p: P = P { xs: [i, i + 1], n: i };
+    let t: i32 = take(p);
     return (t + p.xs.len() + p.n) % 101;
 }
 ` + alelMain,
@@ -103,9 +103,9 @@ function round(i: i32): i32 {
 			// zero times against four decs. Base: 400 / 200.
 			name: "repeated_push_same_box",
 			src: decl + `function round(i: i32): i32 {
-    var p: P = P { xs: [i, i + 1], n: i };
-    var ps: P[] = [];
-    var k: i32 = 0;
+    let p: P = P { xs: [i, i + 1], n: i };
+    let ps: P[] = [];
+    let k: i32 = 0;
     while (k < 4) { ps = ps.append(p); k = k + 1; }
     return (ps.len() + p.xs[0] + p.xs[1] + p.n) % 101;
 }
@@ -120,15 +120,15 @@ function round(i: i32): i32 {
 			// structure.
 			name: "moved_element_unchanged",
 			src: decl + `function round(i: i32): i32 {
-    var keep: P[] = [];
-    var k: i32 = 0;
+    let keep: P[] = [];
+    let k: i32 = 0;
     while (k < 4) {
-        var p: P = P { xs: [k, k + i], n: k };
+        let p: P = P { xs: [k, k + i], n: k };
         keep = keep.append(p);
         k = k + 1;
     }
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < keep.len()) { acc = acc + keep[j].xs[0] + keep[j].n; j = j + 1; }
     return acc % 101;
 }
@@ -142,8 +142,8 @@ function round(i: i32): i32 {
 			// the deep work. Base: 600 allocs / 200 frees.
 			name: "rebound_source",
 			src: decl + `function round(i: i32): i32 {
-    var p: P = P { xs: [i, i + 1], n: i };
-    var ps: P[] = [];
+    let p: P = P { xs: [i, i + 1], n: i };
+    let ps: P[] = [];
     ps = ps.append(p);
     p = P { xs: [i + 2, i + 3], n: i + 1 };
     return (ps.len() + p.n) % 101;
@@ -159,12 +159,12 @@ function round(i: i32): i32 {
 			// P values.
 			name: "rebound_source_element_still_readable",
 			src: decl + `function round(i: i32): i32 {
-    var p: P = P { xs: [7, 8], n: i };
-    var ps: P[] = [];
+    let p: P = P { xs: [7, 8], n: i };
+    let ps: P[] = [];
     ps = ps.append(p);
     p = P { xs: [111, 222], n: i + 1 };
-    var junk: i32[] = [333, 444];
-    var junk2: i32[] = [555, 666];
+    let junk: i32[] = [333, 444];
+    let junk2: i32[] = [555, 666];
     return ps[0].xs[0] + ps[0].xs[1] + junk[0] - junk[0] + junk2[0] - junk2[0];
 }
 ` + alelMain,

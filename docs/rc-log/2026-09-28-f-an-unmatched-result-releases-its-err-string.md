@@ -38,9 +38,9 @@ All in `examples/self_host/irlower.fern`.
 of it, and `and` does the same with the Err string. So in
 
 ```fern
-var s: Result[string, string] = Err("x");
+let s: Result[string, string] = Err("x");
 while (i < 3) {
-    var r: Result[string, string] = Ok((i + 100).to_string());
+    let r: Result[string, string] = Ok((i + 100).to_string());
     if (i == 0) { s = r.or(Err("z")); }
     i = i + 1;
 }

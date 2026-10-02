@@ -10,7 +10,7 @@ import (
 
 // TestSelfHostDynArrReclaimIRX86_64 pins the #4351 slice-3 surface: a
 // dyn-Trait ARRAY local built from an all-literal array literal
-// (`var xs: dyn T[] = [41, "s", Dot{..}]`). Every element is an rc-headered
+// (`let xs: dyn T[] = [41, "s", Dot{..}]`). Every element is an rc-headered
 // box (a prim/string op_dyn_box cell — slice 2 — or a scalar-only leak-safe
 // struct box), sole-owned by the buffer, so the exit sweep releases each
 // element by its recorded kind ('s' first frees the sole-owned inner string
@@ -60,9 +60,9 @@ impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
 impl Show for Dot { function show(self: Self): i32 { return self.r * 2; } }
 impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } }
-function go(k: i32): i32 { var xs: dyn Show[] = [41, "hello", Dot { r: k }, Add(7)]; return xs[0].show() + xs[1].show() + xs[2].show() + xs[3].show(); }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function go(k: i32): i32 { let xs: dyn Show[] = [41, "hello", Dot { r: k }, Add(7)]; return xs[0].show() + xs[1].show() + xs[2].show() + xs[3].show(); }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-arr-mixed-reclaim-flat", 0)
 
 	// BLOCK-SCOPED, reclaimed (#7253): the identical literal declared inside an
@@ -79,9 +79,9 @@ function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_byte
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
-function go(k: i32): i32 { var t: i32 = 0; if (k >= 0) { var xs: dyn Show[] = [41, "hello"]; t = xs[0].show() + xs[1].show(); } return t; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function go(k: i32): i32 { let t: i32 = 0; if (k >= 0) { let xs: dyn Show[] = [41, "hello"]; t = xs[0].show() + xs[1].show(); } return t; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-arr-block-scoped-reclaim-flat", 0)
 
 	// INDEXED-LOOP dispatch: `while (j < xs.len()) { acc + xs[j].show() }` —
@@ -90,44 +90,44 @@ function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_byte
 	// stays uncredited/sound-leak; the literal-only gate is the slice.)
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function go(k: i32): i32 { var xs: dyn Show[] = [4, 5, 7]; var t: i32 = 0; var j: i32 = 0; while (j < xs.len()) { t = t + xs[j].show(); j = j + 1; } return t + k; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function go(k: i32): i32 { let xs: dyn Show[] = [4, 5, 7]; let t: i32 = 0; let j: i32 = 0; while (j < xs.len()) { t = t + xs[j].show(); j = j + 1; } return t + k; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-arr-idx-loop-reclaim-flat", 0)
 
-	// ELEMENT BINDING excluded: `var e = xs[0]` is a lasting element alias —
+	// ELEMENT BINDING excluded: `let e = xs[0]` is a lasting element alias —
 	// darr_expr_unsafe rejects the candidate; values + detector stay clean
 	// (the array leaks, sound).
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function go(k: i32): i32 { var xs: dyn Show[] = [k, 5]; var e = xs[0]; return e.show() + xs[1].show(); }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 10) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function go(k: i32): i32 { let xs: dyn Show[] = [k, 5]; let e = xs[0]; return e.show() + xs[1].show(); }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 10) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-arr-elem-binding-excluded", 0)
 
 	// FOR-IN excluded: the loop var is a lasting element binding this slice
 	// doesn't track — candidate rejected, values + detector clean.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function go(k: i32): i32 { var xs: dyn Show[] = [k, 5]; var t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 10) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function go(k: i32): i32 { let xs: dyn Show[] = [k, 5]; let t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 10) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-arr-forin-excluded", 0)
 
-	// ALIASED excluded: `var ys = xs` — a bare-ident alias rejects the
+	// ALIASED excluded: `let ys = xs` — a bare-ident alias rejects the
 	// candidate (both names see live elements through frame exit; the array
 	// leaks, sound). Values + detector stay clean.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function go(k: i32): i32 { var xs: dyn Show[] = [41, 5]; var ys = xs; return ys[0].show() + xs[1].show() + k; }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 51) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function go(k: i32): i32 { let xs: dyn Show[] = [41, 5]; let ys = xs; return ys[0].show() + xs[1].show() + k; }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 51) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-arr-aliased-excluded", 0)
 
 	// RETURNED `dyn T[]` dispatches in the caller (#4780): struct_ret_fns_of
 	// now records the coarse "dyn <Trait>" ELEMENT type for a `dyn Trait[]`
 	// return (exactly as the literal-binding and param paths tag it), so an
-	// unannotated `var ys = mk()` — and the annotated form — recover the
+	// unannotated `let ys = mk()` — and the annotated form — recover the
 	// trait and route `ys[i].m()` through op_dyn_dispatch. Pre-fix this
 	// mis-dispatched (returned 74 for a want-10 program). The returned array
 	// itself is escaping → excluded from the DARR sweep (leaks, sound):
@@ -136,10 +136,10 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0
 struct Dot { r: i32 }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 impl Show for Dot { function show(self: Self): i32 { return self.r * 2; } }
-function mk(k: i32): dyn Show[] { var xs: dyn Show[] = [k, Dot { r: 5 }]; return xs; }
-function go(k: i32): i32 { var ys: dyn Show[] = mk(k); var zs = mk(k + 1); return ys[0].show() + ys[1].show() + zs[0].show(); }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 19) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function mk(k: i32): dyn Show[] { let xs: dyn Show[] = [k, Dot { r: 5 }]; return xs; }
+function go(k: i32): i32 { let ys: dyn Show[] = mk(k); let zs = mk(k + 1); return ys[0].show() + ys[1].show() + zs[0].show(); }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 19) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-arr-returned-dispatch", 0)
 }
 
@@ -163,28 +163,28 @@ struct Dot { r: i32 }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
 impl Show for Dot { function show(self: Self): i32 { return self.r * 2; } }
-function go(k: i32): i32 { var xs: dyn Show[] = [41, "hello", Dot { r: k }]; return xs[0].show() + xs[1].show() + xs[2].show(); }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function go(k: i32): i32 { let xs: dyn Show[] = [41, "hello", Dot { r: k }]; return xs[0].show() + xs[1].show() + xs[2].show(); }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(2000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 		{"dyn-arr-block-scoped-reclaim-flat-wasm", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
-function go(k: i32): i32 { var t: i32 = 0; if (k >= 0) { var xs: dyn Show[] = [41, "hello"]; t = xs[0].show() + xs[1].show(); } return t; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function go(k: i32): i32 { let t: i32 = 0; if (k >= 0) { let xs: dyn Show[] = [41, "hello"]; t = xs[0].show() + xs[1].show(); } return t; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(2000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 		{"dyn-arr-returned-dispatch-wasm", `trait Show { function show(self: Self): i32; }
 struct Dot { r: i32 }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 impl Show for Dot { function show(self: Self): i32 { return self.r * 2; } }
-function mk(k: i32): dyn Show[] { var xs: dyn Show[] = [k, Dot { r: 5 }]; return xs; }
-function go(k: i32): i32 { var ys: dyn Show[] = mk(k); var zs = mk(k + 1); return ys[0].show() + ys[1].show() + zs[0].show(); }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 19) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+function mk(k: i32): dyn Show[] { let xs: dyn Show[] = [k, Dot { r: 5 }]; return xs; }
+function go(k: i32): i32 { let ys: dyn Show[] = mk(k); let zs = mk(k + 1); return ys[0].show() + ys[1].show() + zs[0].show(); }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 19) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 		{"dyn-arr-forin-excluded-wasm", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function go(k: i32): i32 { var xs: dyn Show[] = [k, 5]; var t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 10) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+function go(k: i32): i32 { let xs: dyn Show[] = [k, 5]; let t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 10) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -228,9 +228,9 @@ struct Dot { r: i32 }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
 impl Show for Dot { function show(self: Self): i32 { return self.r * 2; } }
-function go(k: i32): i32 { var xs: dyn Show[] = [41, "hello", Dot { r: k }]; return xs[0].show() + xs[1].show() + xs[2].show(); }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`
+function go(k: i32): i32 { let xs: dyn Show[] = [41, "hello", Dot { r: k }]; return xs[0].show() + xs[1].show() + xs[2].show(); }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(2000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`
 	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatalf("self-host arm64 compiler emitted 0 bytes")

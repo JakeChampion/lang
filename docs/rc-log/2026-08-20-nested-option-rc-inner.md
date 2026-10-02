@@ -57,8 +57,8 @@ is a COPY that cannot outlive its arm, which is why the scalar half needed
 nothing more. For an rc inner it is a POINTER:
 
 ```fern
-var held: i32[] = [];
-var o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
+let held: i32[] = [];
+let o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
 match (o) {
     Some(inner) => { match (inner) { Some(v) => { held = v; }, ... } },
     ...

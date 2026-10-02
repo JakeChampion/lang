@@ -29,11 +29,11 @@ import (
 // every key and value a freshly allocated (non-inline) buffer.
 const mapStringColumnSrc = `import "core/map";
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 500) {
-        var stem: string = "alpha";
-        var m: Map[string, string] = map_new(4);
+        let stem: string = "alpha";
+        let m: Map[string, string] = map_new(4);
         m = m.insert(stem + "-key-long", stem + "-value-long");
         match (m.get(stem + "-key-long")) { Some(v) => { acc = acc + v.len(); }, None => {} }
         if (m.has(stem + "-key-long")) { acc = acc + 1; }
@@ -50,12 +50,12 @@ function main(): i32 {
 func mapStringColumnBumpSrc(n string) string {
 	return `import "core/map";
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var stem: string = "alpha";
-        var m: Map[string, string] = map_new(4);
+        let stem: string = "alpha";
+        let m: Map[string, string] = map_new(4);
         m = m.insert(stem + "-key-long", stem + "-value-long");
         match (m.get(stem + "-key-long")) { Some(v) => { acc = acc + v.len(); }, None => {} }
         acc = acc + m.get_or(stem + "-key-long", stem + "-fallback!").len();
@@ -71,13 +71,13 @@ function main(): i32 {
 // leakcheck cannot see.
 const mapStringColumnUnderflowSrc = `import "core/map";
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var stem: string = "alpha";
-        var m: Map[string, string] = map_new(4);
+        let stem: string = "alpha";
+        let m: Map[string, string] = map_new(4);
         m = m.insert(stem + "-key-long", stem + "-value-long");
-        var got: string = m.get_or(stem + "-key-long", "");
+        let got: string = m.get_or(stem + "-key-long", "");
         acc = acc + got.len();
         match (m.get(stem + "-key-long")) { Some(v) => { acc = acc + v.len(); }, None => { acc = acc + 100; } }
         i = i + 1;
@@ -92,10 +92,10 @@ function main(): i32 {
 // per-lookup leak, 8 B a time.
 const mapWideValueFallbackSrc = `import "core/map";
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i64 = 0;
+    let i: i32 = 0;
+    let acc: i64 = 0;
     while (i < 500) {
-        var m: Map[i32, i64] = map_new(4);
+        let m: Map[i32, i64] = map_new(4);
         m = m.insert(7, 1234567890123);
         acc = acc + m.get_or(7, 0);
         i = i + 1;
@@ -123,13 +123,13 @@ function main(): i32 {
 // its own claim (#8354).
 const mapAliasedOverwriteSrc = `import "core/map";
 function mk(): i32 {
-    var stem: string = "a";
-    var m: Map[string, string] = map_new(8);
-    var k: string = stem + "-key-long-one";
+    let stem: string = "a";
+    let m: Map[string, string] = map_new(8);
+    let k: string = stem + "-key-long-one";
     m = m.insert(k, stem + "-value-long-one");
-    var snap: Map[string, string] = m;
+    let snap: Map[string, string] = m;
     m = m.insert(k, stem + "-value-long-two");
-    var ok: i32 = 0;
+    let ok: i32 = 0;
     if (snap.get_or(k, "") == "a-value-long-one") { ok = ok + 1; }
     if (m.get_or(k, "") == "a-value-long-two") { ok = ok + 2; }
     if (snap.len() == 1) { ok = ok + 4; }
@@ -137,8 +137,8 @@ function mk(): i32 {
     return ok;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { t = t + mk(); i = i + 1; }
     if (t != 200 * 15) { return 97; }
     return __rc_underflow_count();
@@ -156,15 +156,15 @@ function main(): i32 {
 // two-key baseline below.
 const mapAliasedTwoEntrySrc = `import "core/map";
 function mk(): i32 {
-    var stem: string = "a";
-    var m: Map[string, string] = map_new(8);
-    var k1: string = stem + "-key-long-one";
-    var k2: string = stem + "-key-long-two";
+    let stem: string = "a";
+    let m: Map[string, string] = map_new(8);
+    let k1: string = stem + "-key-long-one";
+    let k2: string = stem + "-key-long-two";
     m = m.insert(k1, stem + "-value-long-one");
     m = m.insert(k2, stem + "-value-long-untouched");
-    var snap: Map[string, string] = m;
+    let snap: Map[string, string] = m;
     m = m.insert(k1, stem + "-value-long-two");
-    var ok: i32 = 0;
+    let ok: i32 = 0;
     if (snap.get_or(k1, "") == "a-value-long-one") { ok = ok + 1; }
     if (m.get_or(k1, "") == "a-value-long-two") { ok = ok + 2; }
     if (snap.get_or(k2, "") == "a-value-long-untouched") { ok = ok + 4; }
@@ -172,14 +172,14 @@ function mk(): i32 {
     return ok;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { t = t + mk(); i = i + 1; }
     if (t != 200 * 15) { return 97; }
     return __rc_underflow_count();
 }`
 
-// #8277's own shape: a Map READ with an ALIASED key — a `var k` the caller
+// #8277's own shape: a Map READ with an ALIASED key — a `let k` the caller
 // still owns, rather than a fresh concat at the call. On the native
 // single-word ABI the escape analysis used to treat every string argument of
 // a `__method_` call as possibly retained by the callee, which suppressed
@@ -203,17 +203,17 @@ func mapAliasedKeyReadSrc(verb string) string {
 	}
 	return `import "core/map";
 function mk(): i32 {
-    var stem: string = "a";
-    var m: Map[string, string] = map_new(8);
-    var k: string = stem + "-key-long-one";
+    let stem: string = "a";
+    let m: Map[string, string] = map_new(8);
+    let k: string = stem + "-key-long-one";
     m = m.insert(k, stem + "-value-long-one");
-    var ok: i32 = 0;
+    let ok: i32 = 0;
 ` + read + `
     return ok;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { t = t + mk(); i = i + 1; }
     if (t != 200) { return 97; }
     return __rc_underflow_count();
@@ -357,10 +357,10 @@ function mk(i: i32, sfx: string): Option[Item] {
     return Some(Item { name: "item-with-a-long-name" + sfx, v: i });
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 500) {
-        var sfx: string = "s";
+        let sfx: string = "s";
         match (mk(i, sfx)) {
             Some(it) => { acc = acc + it.v + it.name.len(); },
             None => {},
@@ -374,11 +374,11 @@ function main(): i32 {
 const nestedNonUniformFieldLeakSrc = `struct Inner { data: i32[], tag: string }
 struct Outer { inner: Inner, id: i32 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 500) {
-        var stem: string = "tag";
-        var o: Outer = Outer { inner: Inner { data: [1, 2, 3], tag: stem + "-of-this-inner" }, id: i };
+        let stem: string = "tag";
+        let o: Outer = Outer { inner: Inner { data: [1, 2, 3], tag: stem + "-of-this-inner" }, id: i };
         acc = acc + o.inner.data.len() + o.inner.tag.len();
         i = i + 1;
     }

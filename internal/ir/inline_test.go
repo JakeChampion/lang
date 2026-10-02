@@ -194,7 +194,7 @@ func TestInlineKeepsStructuredCFBalanced(t *testing.T) {
 // caller's continuation picks up the value off the operand stack.
 func TestInlineControlFlowWithoutEarlyReturn(t *testing.T) {
 	p := loweredAndInlined(t, `function abs(n: i32): i32 {
-		var v: i32 = n;
+		let v: i32 = n;
 		if (v < 0) { v = 0 - v; }
 		return v;
 	}
@@ -267,7 +267,7 @@ function main(): i32 { return dbl(7); }`)
 // substitutes. The body is a long straight-line accumulator chain that
 // comfortably exceeds the cap; without the hint it stays a call.
 func TestInlineHintAlwaysLiftsSizeCap(t *testing.T) {
-	body := "var a: i32 = x;\n"
+	body := "let a: i32 = x;\n"
 	for i := 0; i < 60; i++ {
 		body += "a = a + x;\na = a - 1;\n"
 	}
@@ -298,7 +298,7 @@ func TestInlineHintAlwaysLiftsSizeCap(t *testing.T) {
 // cap (80) and the loop cap (160) inlines at a call site inside a loop
 // but stays a call at top level — the same candidate, decided per site.
 func TestInlineLoopDepthBoostsSizeCap(t *testing.T) {
-	body := "var a: i32 = x;\n"
+	body := "let a: i32 = x;\n"
 	for i := 0; i < 8; i++ {
 		body += "a = a + x;\na = a - 1;\n"
 	}
@@ -310,10 +310,10 @@ func TestInlineLoopDepthBoostsSizeCap(t *testing.T) {
 	src := "@noinline\nfunction seed(k: i32): i32 { return k + 1; }\n" +
 		"function mid(x: i32): i32 {\n" + body + "return a;\n}\n" +
 		"function main(): i32 {\n" +
-		"var base: i32 = seed(9);\n" +
-		"var s: i32 = mid(base);\n" + // top-level call 1: must stay a call
-		"var u: i32 = mid(base + 1);\n" + // top-level call 2: keeps refs >= 2
-		"var i: i32 = 0;\n" +
+		"let base: i32 = seed(9);\n" +
+		"let s: i32 = mid(base);\n" + // top-level call 1: must stay a call
+		"let u: i32 = mid(base + 1);\n" + // top-level call 2: keeps refs >= 2
+		"let i: i32 = 0;\n" +
 		"while (i < 3) { s = s + mid(i); i = i + 1; }\n" + // loop site: inlines
 		"return s + u;\n}"
 	p := loweredAndInlined(t, src)
@@ -361,7 +361,7 @@ func TestInlineLoopDepthBoostsSizeCap(t *testing.T) {
 // when an argument is non-constant. Same candidate, same top-level
 // depth, decided by argument constness.
 func TestInlineConstArgsBoostsSizeCap(t *testing.T) {
-	body := "var a: i32 = x + y;\n"
+	body := "let a: i32 = x + y;\n"
 	for i := 0; i < 8; i++ {
 		body += "a = a + x;\na = a - y;\n"
 	}
@@ -391,7 +391,7 @@ func TestInlineConstArgsBoostsSizeCap(t *testing.T) {
 
 	// Non-constant args (a param) at both sites: they stay calls (flat
 	// cap, no const boost, and refs == 2 so no single-use boost either).
-	pVar := loweredAndInlined(t, mid+"function main(): i32 { var k: i32 = 3; return mid(2, k + 1) + mid(k, 5); }")
+	pVar := loweredAndInlined(t, mid+"function main(): i32 { let k: i32 = 3; return mid(2, k + 1) + mid(k, 5); }")
 	if main := findFunc(pVar, "main"); main != nil {
 		calls := 0
 		for _, op := range main.Ops {
@@ -412,7 +412,7 @@ func TestInlineConstArgsBoostsSizeCap(t *testing.T) {
 // so code size is net-neutral. A second reference removes the guarantee
 // and the same body stays a call.
 func TestInlineSingleUseLiftsSizeCap(t *testing.T) {
-	body := "var a: i32 = x;\n"
+	body := "let a: i32 = x;\n"
 	for i := 0; i < 8; i++ {
 		body += "a = a + x;\na = a - 1;\n"
 	}
@@ -421,7 +421,7 @@ func TestInlineSingleUseLiftsSizeCap(t *testing.T) {
 		"function big(x: i32): i32 {\n" + body + "return a;\n}\n"
 
 	// Premise: big is over the flat cap but within the loop cap.
-	probe := loweredAndInlined(t, defs+"function main(): i32 { var k: i32 = seed(9); return big(k); }")
+	probe := loweredAndInlined(t, defs+"function main(): i32 { let k: i32 = seed(9); return big(k); }")
 	if fn := findFunc(probe, "big"); fn != nil {
 		if n := len(fn.Ops); n <= inlineSizeLimit || n > inlineLoopSizeLimit {
 			t.Fatalf("test premise broken: big has %d ops, need %d < n <= %d", n, inlineSizeLimit, inlineLoopSizeLimit)
@@ -441,7 +441,7 @@ func TestInlineSingleUseLiftsSizeCap(t *testing.T) {
 
 	// Two references: no single-use guarantee, non-const args, no loop —
 	// both stay calls.
-	pTwo := loweredAndInlined(t, defs+"function main(): i32 { var k: i32 = seed(9); return big(k) + big(k + 1); }")
+	pTwo := loweredAndInlined(t, defs+"function main(): i32 { let k: i32 = seed(9); return big(k) + big(k + 1); }")
 	if main := findFunc(pTwo, "main"); main != nil {
 		calls := 0
 		for _, op := range main.Ops {
@@ -520,7 +520,7 @@ func programOps(p *Program) int {
 // move a program across the unit ceiling without introducing a call.
 func padStmts(stmts int) string {
 	var b strings.Builder
-	b.WriteString("var acc: i32 = 0;\n")
+	b.WriteString("let acc: i32 = 0;\n")
 	for i := 0; i < stmts; i++ {
 		fmt.Fprintf(&b, "acc = acc + %d; acc = acc * 3;\n", i%7)
 	}
@@ -532,7 +532,7 @@ func padStmts(stmts int) string {
 // stmts, for sizing a callee against inlineTinyLeafOps.
 func leafArith(stmts int) string {
 	var b strings.Builder
-	b.WriteString("var a: i32 = x;\n")
+	b.WriteString("let a: i32 = x;\n")
 	for i := 0; i < stmts; i++ {
 		fmt.Fprintf(&b, "a = a + %d; a = a * 3;\n", i%7)
 	}
@@ -614,8 +614,8 @@ func TestInlineOverCeilingRefusesAnOversizedLeafInALoop(t *testing.T) {
 			return acc;
 		}
 		function main(): i32 {
-			var t: i32 = 0;
-			var i: i32 = 0;
+			let t: i32 = 0;
+			let i: i32 = 0;
 			while (i < 10) { t = t + mid(i); i = i + 1; }
 			return t + bulk();
 		}`)
@@ -715,7 +715,7 @@ func TestInlineOverCeilingHonoursHintNever(t *testing.T) {
 func TestInlineTinyLeafStopsAtTheGrowthBudget(t *testing.T) {
 	const sites = 6000
 	var b strings.Builder
-	b.WriteString("var acc: i32 = 0;\n")
+	b.WriteString("let acc: i32 = 0;\n")
 	for i := 0; i < sites; i++ {
 		b.WriteString("acc = acc + tiny(acc);\n")
 	}
@@ -768,7 +768,7 @@ func TestInlineRefusesARecursiveCalleeInOtherCallers(t *testing.T) {
 // admits the same callees with them as without (#10019).
 func TestInlineSizeIgnoresLineMarkers(t *testing.T) {
 	src := `function leaf(x: i32): i32 {
-			var a: i32 = x + 1;
+			let a: i32 = x + 1;
 			a = a * 3;
 			a = a + 2;
 			a = a * 5;
@@ -808,7 +808,7 @@ func TestInlineSizeIgnoresLineMarkers(t *testing.T) {
 func TestInlineHintHoldsOverUnitCeiling(t *testing.T) {
 	p := lowerSource(t, `function bump(x: i32): i32 { return x + 1; }
 		@inline function big(x: i32): i32 {
-			var a: i32 = bump(x);
+			let a: i32 = bump(x);
 			a = a * 3 + 1; a = a * 5 + 2; a = a * 7 + 3; a = a * 11 + 4;
 			a = a * 13 + 5; a = a * 17 + 6; a = a * 19 + 7;
 			return a;

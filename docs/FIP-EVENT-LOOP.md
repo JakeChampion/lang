@@ -157,7 +157,7 @@ formatting helper from a library that is not annotated.
 An intermediate local handed over at its last use used to be E051:
 
 ```fern
-var t: i64[] = s.with(0, 1i64);
+let t: i64[] = s.with(0, 1i64);
 return bump(t);                  // was E051; a move now
 ```
 
@@ -181,7 +181,7 @@ events — about one per ten — and every one was a whole-array copy:
 s = State { ...s, vals: s.vals.with(at, s.vals[at] + delta), ... };
 
 // 0 allocations: the same computation, read hoisted one line.
-var current: i64 = s.vals[at];
+let current: i64 = s.vals[at];
 s = State { ...s, vals: s.vals.with(at, current + delta), ... };
 ```
 

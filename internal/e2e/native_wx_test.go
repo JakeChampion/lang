@@ -46,15 +46,15 @@ function main(): i32 { return factorial(5); }`, 120, ""},
 	{"string", `function main(): i32 { print("hello W^X"); return 0; }`, 0, "hello W^X\n"},
 	{"concat", `import "std/i32"; function main(): i32 { print("x=" + (42).to_string()); return 0; }`, 0, "x=42\n"},
 	{"closure", `function makeAdder(n: i32): (i32) => i32 { function add(x: i32): i32 { return x + n; } return add; }
-function main(): i32 { var add5 = makeAdder(5); return add5(37); }`, 42, ""},
+function main(): i32 { let add5 = makeAdder(5); return add5(37); }`, 42, ""},
 	{"map", `import "core/map";
 function main(): i32 {
-  var m: Map[i32, i32] = map_new(8);
+  let m: Map[i32, i32] = map_new(8);
   m = m.insert(7, 40);
   m = m.insert(7, 42);
   match (m.get(7)) { Some(v) => { return v; }, None => { return 3; } }
 }`, 42, ""},
-	{"float", `function main(): i32 { var a: f64 = 84.0; var b: f64 = 2.0; return ((a / b) as i32); }`, 42, ""},
+	{"float", `function main(): i32 { let a: f64 = 84.0; let b: f64 = 2.0; return ((a / b) as i32); }`, 42, ""},
 }
 
 // TestX86_64NativeWX builds each wxCase with the x86-64 code generator and

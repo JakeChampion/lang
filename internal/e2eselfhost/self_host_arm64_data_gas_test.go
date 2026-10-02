@@ -59,21 +59,21 @@ func TestSelfHostArm64DarwinMachOSymbolRuns(t *testing.T) {
 const arm64DataGasSelfTestMain = `
 function main(): i32 {
     // .quad in __const: 8 bytes, symbol at offset 0.
-    var p1: Arm64GasProg = arm64_gas_program(".section __TEXT,__const\nanswer:\n.quad 42\n");
+    let p1: Arm64GasProg = arm64_gas_program(".section __TEXT,__const\nanswer:\n.quad 42\n");
     if (p1.data.len() != 8) { return 1; }
     if (p1.data[0] != 42 || p1.data[1] != 0) { return 2; }
     if (arm64_gas_dlabel_off(p1, "answer") != 0) { return 3; }
     // .byte + .4byte (258 = 0x102 -> 02 01 00 00).
-    var p2: Arm64GasProg = arm64_gas_program(".data\n.byte 7\n.4byte 258\n");
+    let p2: Arm64GasProg = arm64_gas_program(".data\n.byte 7\n.4byte 258\n");
     if (p2.data[0] != 7 || p2.data[1] != 2 || p2.data[2] != 1 || p2.data[3] != 0 || p2.data[4] != 0) { return 4; }
     // .asciz "hi" -> 68 69 00.
-    var p3: Arm64GasProg = arm64_gas_program(".data\nmsg:\n.asciz \"hi\"\n");
+    let p3: Arm64GasProg = arm64_gas_program(".data\nmsg:\n.asciz \"hi\"\n");
     if (p3.data[0] != 104 || p3.data[1] != 105 || p3.data[2] != 0) { return 5; }
     // @PAGE/@PAGEOFF queue two fixups, then link patches adrp + ldr.
-    var p4: Arm64GasProg = arm64_gas_program("adrp x1, answer@PAGE\nldr x0, [x1, answer@PAGEOFF]\nmov x16, #1\nsvc #0x80\n.section __TEXT,__const\nanswer:\n.quad 42\n");
+    let p4: Arm64GasProg = arm64_gas_program("adrp x1, answer@PAGE\nldr x0, [x1, answer@PAGEOFF]\nmov x16, #1\nsvc #0x80\n.section __TEXT,__const\nanswer:\n.quad 42\n");
     if (p4.pf_sites.len() != 2) { return 6; }
     p4 = arm64_gas_link(p4, 0x100000310, 0x100004000);
-    var as4: Arm64Asm = p4.asm;
+    let as4: Arm64Asm = p4.asm;
     // adrp x1, #4 -> 0x90000021 -> 21 00 00 90
     if (as4.code[0] != 33 || as4.code[1] != 0 || as4.code[2] != 0 || as4.code[3] != 144) { return 7; }
     // ldr x0, [x1, #0] -> 0xF9400020 -> 20 00 40 F9
@@ -86,7 +86,7 @@ function main(): i32 {
 // `.quad 42` by name (adrp/ldr @PAGE/@PAGEOFF) and exits with it.
 const arm64MachOSymbolDriverMain = "\n" +
 	"function main(): i32 {\n" +
-	"    var asm: string = \"\";\n" +
+	"    let asm: string = \"\";\n" +
 	"    asm = asm + \"_main:\\n\";\n" +
 	"    asm = asm + \"    adrp x1, answer@PAGE\\n\";\n" +
 	"    asm = asm + \"    ldr x0, [x1, answer@PAGEOFF]\\n\";\n" +
@@ -95,14 +95,14 @@ const arm64MachOSymbolDriverMain = "\n" +
 	"    asm = asm + \".section __TEXT,__const\\n\";\n" +
 	"    asm = asm + \"answer:\\n\";\n" +
 	"    asm = asm + \"    .quad 42\\n\";\n" +
-	"    var p: Arm64GasProg = arm64_gas_program(asm);\n" +
-	"    var pa: Arm64Asm = p.asm;\n" +
-	"    var tvaddr: i64 = macho_text_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);\n" +
-	"    var dvaddr: i64 = macho_data_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);\n" +
+	"    let p: Arm64GasProg = arm64_gas_program(asm);\n" +
+	"    let pa: Arm64Asm = p.asm;\n" +
+	"    let tvaddr: i64 = macho_text_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);\n" +
+	"    let dvaddr: i64 = macho_data_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);\n" +
 	"    p = arm64_gas_link(p, tvaddr, dvaddr);\n" +
-	"    var pa2: Arm64Asm = p.asm;\n" +
-	"    var none: i32[] = [];\n" +
-	"    var bin: i32[] = macho_executable(pa2.code, none, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n" +
+	"    let pa2: Arm64Asm = p.asm;\n" +
+	"    let none: i32[] = [];\n" +
+	"    let bin: i32[] = macho_executable(pa2.code, none, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n" +
 	"    write(string_from_bytes_unchecked(to_u8(bin)));\n" +
 	"    return 0;\n" +
 	"}\n"

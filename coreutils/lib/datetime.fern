@@ -206,8 +206,8 @@ function month_or_day(w: string, abbrev: boolean): Option[Tok] {
   if (abbrev) {
     return month_or_day_abbrev(w[0] as i32 * 65536 + w[1] as i32 * 256 + w[2] as i32);
   }
-  var k: string = w;
-  var c: i32 = k[0] as i32;
+  let k: string = w;
+  let c: i32 = k[0] as i32;
   if (c == 74) {
     if (k == "JAN" || k == "JANUARY") {
       return Some(tok(t_month(), 1));
@@ -301,15 +301,15 @@ function month_or_day(w: string, abbrev: boolean): Option[Tok] {
 // `month_or_day_abbrev(key)` — the three-letter abbreviations, keyed
 // on their bytes packed into one number.
 function month_or_day_abbrev(key: i32): Option[Tok] {
-  var months: i32[] = [4866382, 4605250, 5062994, 4280402, 5063001, 4871502, 4871500, 4281671, 5457232, 5194580, 5132118, 4474179];
-  var i: i32 = 0;
+  let months: i32[] = [4866382, 4605250, 5062994, 4280402, 5063001, 4871502, 4871500, 4281671, 5457232, 5194580, 5132118, 4474179];
+  let i: i32 = 0;
   while (i < 12) {
     if (key == months[i]) {
       return Some(tok(t_month(), (i + 1) as i64));
     }
     i = i + 1;
   }
-  var days: i32[] = [5461326, 5066574, 5526853, 5719364, 5523541, 4608585, 5456212];
+  let days: i32[] = [5461326, 5066574, 5526853, 5719364, 5523541, 4608585, 5456212];
   i = 0;
   while (i < 7) {
     if (key == days[i]) {
@@ -331,7 +331,7 @@ function dayzone(off: i32): Option[Tok] {
 // `fixed_zone(w)` — the abbreviation table: seconds east, a daylight
 // entry adding an hour. Dispatched on the first letter.
 function fixed_zone(w: string): Option[Tok] {
-  var c: i32 = w[0] as i32;
+  let c: i32 = w[0] as i32;
   if (c == 87) {
     if (w == "WET") {
       return zone(0);
@@ -512,7 +512,7 @@ function fixed_zone(w: string): Option[Tok] {
 // `unit(w)` — a time unit: year, month, fortnight, week, day, hour,
 // minute, min, second, sec.
 function unit(w: string): Option[Tok] {
-  var c: i32 = w[0] as i32;
+  let c: i32 = w[0] as i32;
   if (c == 89 && w == "YEAR") {
     return Some(tok(t_year_unit(), 1));
   }
@@ -545,7 +545,7 @@ function unit(w: string): Option[Tok] {
 
 // `relative(w)` — the day shifts, ordinals and AGO / HENCE.
 function relative(w: string): Option[Tok] {
-  var c: i32 = w[0] as i32;
+  let c: i32 = w[0] as i32;
   if (c == 84) {
     if (w == "TOMORROW") {
       return Some(tok(t_day_shift(), 1));
@@ -648,11 +648,11 @@ function military(c: i32): Tok {
 // `lookup_zone(w, lt)` — GMT, UT and UTC first, then the local zone's
 // own names, then the fixed table.
 function lookup_zone(w: string, lt: LocalTable): Option[Tok] {
-  var c: i32 = w[0] as i32;
+  let c: i32 = w[0] as i32;
   if (c == 71 && w == "GMT" || c == 85 && (w == "UT" || w == "UTC")) {
     return Some(tok(t_zone(), 0));
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < lt.names.len()) {
     if (w == lt.names[i]) {
       return Some(tok(t_local_zone(), lt.isdst[i] as i64));
@@ -663,9 +663,9 @@ function lookup_zone(w: string, lt: LocalTable): Option[Tok] {
 }
 
 function strip_periods(w: string): (string, boolean) {
-  var out: u8[] = [];
-  var found: boolean = false;
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let found: boolean = false;
+  let i: i32 = 0;
   while (i < w.len()) {
     if (w[i] as i32 == 46) {
       found = true;
@@ -681,11 +681,11 @@ function strip_periods(w: string): (string, boolean) {
 // word no table knows answers `t_bad` and its spelling as the walk
 // left it, periods dropped, which is what the trace names.
 function lookup_word(w: string, lt: LocalTable): (Tok, string) {
-  var m: i32 = meridian_value(w);
+  let m: i32 = meridian_value(w);
   if (m != 0) {
     return (tok(t_meridian(), m as i64), "");
   }
-  var abbrev: boolean = w.len() == 3 || w.len() == 4 && w[3] as i32 == 46;
+  let abbrev: boolean = w.len() == 3 || w.len() == 4 && w[3] as i32 == 46;
   match (month_or_day(w, abbrev)) {
     Some(t) => {
       return (t, "");
@@ -724,7 +724,7 @@ function lookup_word(w: string, lt: LocalTable): (Tok, string) {
   if (w.len() == 1 && is_alpha(w[0] as i32)) {
     return (military(w[0] as i32), "");
   }
-  var stripped: (string, boolean) = strip_periods(w);
+  let stripped: (string, boolean) = strip_periods(w);
   if (stripped.1 && stripped.0.len() > 0) {
     match (lookup_zone(stripped.0, lt)) {
       Some(t) => {
@@ -740,10 +740,10 @@ function lookup_word(w: string, lt: LocalTable): (Tok, string) {
 // `upper(s, start, end)` — the bytes of `s` from `start` to `end`,
 // uppercased, as one string.
 function upper(s: string, start: i32, end: i32): string {
-  var h: usize = buf_new(end - start);
-  var i: i32 = start;
+  let h: usize = buf_new(end - start);
+  let i: i32 = start;
   while (i < end) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c >= 97 && c <= 122) {
       c = c - 32;
     }
@@ -763,14 +763,14 @@ function with_end(t: Tok, end: i32): Tok {
 // comment that runs to its matching `)`; one that never closes
 // swallows the rest of the string silently.
 function lex(s: string, lt: LocalTable): (Tok[], string) {
-  var out: Tok[] = [];
-  var i: i32 = 0;
-  var n: i32 = s.len();
+  let out: Tok[] = [];
+  let i: i32 = 0;
+  let n: i32 = s.len();
   // Set when a number's fraction turned out to hold a second `.`, and
   // read by the next number, which is then the month of a dotted date.
-  var not_decimal: boolean = false;
+  let not_decimal: boolean = false;
   while (true) {
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (i < n) {
       c = s[i] as i32;
       if (c == 32 || c >= 9 && c <= 13) {
@@ -783,8 +783,8 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
       return (out.append(with_end(tok(t_eof(), 0), n)), "");
     }
     if (c >= 48 && c <= 57 || c == 45 || c == 43) {
-      var p: i32 = i;
-      var sign: i32 = 0;
+      let p: i32 = i;
+      let sign: i32 = 0;
       if (c == 45 || c == 43) {
         sign = 1;
         if (c == 45) {
@@ -799,10 +799,10 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
           continue;
         }
       }
-      var start: i32 = p;
-      var value: i64 = 0;
-      var overflow: boolean = false;
-      var digit: i32 = 0;
+      let start: i32 = p;
+      let value: i64 = 0;
+      let overflow: boolean = false;
+      let digit: i32 = 0;
       while (p < n) {
         digit = s[p] as i32 - 48;
         if (digit < 0 || digit > 9) {
@@ -811,7 +811,7 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
         // The sign is applied to each DIGIT, as the original applies it,
         // so that the most negative number there is — `@-9223372036854775808`
         // — is a number and not an overflow.
-        var d: i64 = digit as i64;
+        let d: i64 = digit as i64;
         if (sign < 0) {
           d = 0 as i64 - d;
           if (value < 0 as i64 - 922337203685477580 as i64 || value == 0 as i64 - 922337203685477580 as i64 && d < 0 as i64 - 8 as i64) {
@@ -828,20 +828,20 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
       if (overflow) {
         return (out.append(with_end(tok(t_bad(), 0), start)), "");
       }
-      var fraction: boolean = p + 1 < n && (s[p] as i32 == 46 || s[p] as i32 == 44) && is_digit(s[p + 1] as i32);
+      let fraction: boolean = p + 1 < n && (s[p] as i32 == 46 || s[p] as i32 == 44) && is_digit(s[p + 1] as i32);
       if (fraction && not_decimal) {
         not_decimal = false;
         out = out.append(Tok { kind: t_unumber_dotted(), value: value, digits: p - start, negative: sign < 0, nsec: 0, end: p });
         i = p;
         continue;
       }
-      var decimal: boolean = fraction;
+      let decimal: boolean = fraction;
       if (fraction) {
-        var dot: i32 = p;
+        let dot: i32 = p;
         p = p + 1;
-        var ns: i64 = (s[p] as i32 - 48) as i64;
+        let ns: i64 = (s[p] as i32 - 48) as i64;
         p = p + 1;
-        var digits: i32 = 2;
+        let digits: i32 = 2;
         while (digits <= 9) {
           ns = ns * (10 as i64);
           if (p < n && s[p] as i32 == 46) {
@@ -872,12 +872,12 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
           while (p < n && is_digit(s[p] as i32)) {
             p = p + 1;
           }
-          var whole: i64 = value;
+          let whole: i64 = value;
           if (sign < 0 && ns != 0 as i64) {
             whole = whole - 1 as i64;
             ns = 1000000000 as i64 - ns;
           }
-          var kind: i32 = t_udecimal();
+          let kind: i32 = t_udecimal();
           if (sign != 0) {
             kind = t_sdecimal();
           }
@@ -888,7 +888,7 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
       } else {
         not_decimal = false;
       }
-      var kind: i32 = t_unumber();
+      let kind: i32 = t_unumber();
       if (sign != 0) {
         kind = t_snumber();
       }
@@ -897,17 +897,17 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
       continue;
     }
     if (c >= 65 && c <= 90 || c >= 97 && c <= 122) {
-      var start: i32 = i;
-      var more: boolean = true;
+      let start: i32 = i;
+      let more: boolean = true;
       while (i < n && more) {
-        var b: i32 = s[i] as i32;
+        let b: i32 = s[i] as i32;
         if (b >= 65 && b <= 90 || b >= 97 && b <= 122 || b == 46) {
           i = i + 1;
         } else {
           more = false;
         }
       }
-      var found: (Tok, string) = lookup_word(upper(s, start, i), lt);
+      let found: (Tok, string) = lookup_word(upper(s, start, i), lt);
       out = out.append(with_end(found.0, i));
       if (found.0.kind == t_bad()) {
         return (out, found.1);
@@ -915,12 +915,12 @@ function lex(s: string, lt: LocalTable): (Tok[], string) {
       continue;
     }
     if (c == 40) {
-      var depth: i32 = 0;
+      let depth: i32 = 0;
       while (true) {
         if (i >= n) {
           return (out.append(with_end(tok(t_eof(), 0), n)), "");
         }
-        var b: i32 = s[i] as i32;
+        let b: i32 = s[i] as i32;
         i = i + 1;
         if (b == 40) {
           depth = depth + 1;
@@ -958,7 +958,7 @@ function rel_zero(): Rel {
 // `rel_unit(kind, n, unit_value)` — the relative offset a count of
 // one unit means.
 function rel_unit(kind: i32, n: i64, unit_value: i64): Rel {
-  var r: Rel = rel_zero();
+  let r: Rel = rel_zero();
   if (kind == t_year_unit()) {
     return Rel { ...r, year: n };
   }
@@ -978,7 +978,7 @@ function rel_unit(kind: i32, n: i64, unit_value: i64): Rel {
 }
 
 function apply_relative(pc: Pc, r: Rel, factor: i64): Pc {
-  var acc: Rel = pc.rel;
+  let acc: Rel = pc.rel;
   acc = Rel { year: acc.year + r.year * factor, month: acc.month + r.month * factor, day: acc.day + r.day * factor, hour: acc.hour + r.hour * factor, minutes: acc.minutes + r.minutes * factor, seconds: acc.seconds + r.seconds * factor, ns: acc.ns + r.ns * factor };
   return Pc { ...pc, rel: acc, rels_seen: true };
 }
@@ -991,12 +991,12 @@ function set_hhmmss(pc: Pc, hour: i64, minutes: i64, sec: i64, nsec: i64): Pc {
 // `pad(v, width)` — C's `%0Nd`: zero-padded to `width`, the sign
 // counted in the width.
 function pad(v: i64, width: i32): string {
-  var neg: boolean = v < 0 as i64;
-  var mag: string = v.to_string();
+  let neg: boolean = v < 0 as i64;
+  let mag: string = v.to_string();
   if (neg) {
     mag = slice_unchecked(mag, 1, mag.len()) + "";
   }
-  var want: i32 = width;
+  let want: i32 = width;
   if (neg) {
     want = want - 1;
   }
@@ -1019,19 +1019,19 @@ function signed(v: i64): string {
 // `time_zone_str(tz)` — `+HH`, `+HH:MM` or `+HH:MM:SS`, as short as the
 // offset allows.
 pub function time_zone_str(t: i64): string {
-  var sign: string = "+";
+  let sign: string = "+";
   if (t < 0 as i64) {
     sign = "-";
   }
-  var hour: i64 = t / (3600 as i64);
+  let hour: i64 = t / (3600 as i64);
   if (hour < 0 as i64) {
     hour = 0 as i64 - hour;
   }
-  var rest: i64 = t % (3600 as i64);
+  let rest: i64 = t % (3600 as i64);
   if (rest < 0 as i64) {
     rest = 0 as i64 - rest;
   }
-  var out: string = sign + pad(hour, 2);
+  let out: string = sign + pad(hour, 2);
   if (rest != 0 as i64) {
     out = out + ":" + pad(rest / (60 as i64), 2);
     if (rest % (60 as i64) != 0 as i64) {
@@ -1051,9 +1051,9 @@ function dline(pc: Pc, s: string): Pc {
 // `str_days(pc)` — the weekday item as the trace names it, `last wed`
 // or `thu`, the ordinal spelled out where the table has a word for it.
 function str_days(pc: Pc): string {
-  var ordinals: string[] = ["last", "this", "next/first", "(SECOND)", "third", "fourth", "fifth", "sixth", "seventh", "eight", "ninth", "tenth", "eleventh", "twelfth"];
-  var days: string[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  var out: string = "";
+  let ordinals: string[] = ["last", "this", "next/first", "(SECOND)", "third", "fourth", "fifth", "sixth", "seventh", "eight", "ninth", "tenth", "eleventh", "twelfth"];
+  let days: string[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  let out: string = "";
   if (pc.d_ordinal) {
     if (pc.day_ordinal >= -(1 as i64) && pc.day_ordinal <= 12 as i64) {
       out = ordinals[(pc.day_ordinal + 1 as i64) as i32];
@@ -1076,9 +1076,9 @@ function trace_current(pc: Pc, item: string): Pc {
   if (!pc.debug) {
     return pc;
   }
-  var p: Pc = pc;
-  var out: string = "parsed " + item + " part: ";
-  var space: boolean = false;
+  let p: Pc = pc;
+  let out: string = "parsed " + item + " part: ";
+  let space: boolean = false;
   if (p.dates_seen != 0 && !p.d_dates) {
     out = out + "(Y-M-D) " + pad(p.year, 4) + "-" + pad(p.month, 2) + "-" + pad(p.day, 2);
     p = Pc { ...p, d_dates: true };
@@ -1156,11 +1156,11 @@ function trace_relative(pc: Pc, item: string): Pc {
   if (!pc.debug) {
     return pc;
   }
-  var r: Rel = pc.rel;
+  let r: Rel = pc.rel;
   if (r.year == 0 as i64 && r.month == 0 as i64 && r.day == 0 as i64 && r.hour == 0 as i64 && r.minutes == 0 as i64 && r.seconds == 0 as i64 && r.ns == 0 as i64) {
     return dline(pc, "parsed " + item + " part: today/this/now");
   }
-  var out: string = "";
+  let out: string = "";
   out = rel_part(out, r.year, "year(s)");
   out = rel_part(out, r.month, "month(s)");
   out = rel_part(out, r.day, "day(s)");
@@ -1176,11 +1176,11 @@ function trace_relative(pc: Pc, item: string): Pc {
 // or two digits are hours, more are HHMM, and `:MM` after it is
 // minutes carrying the number's sign.
 function time_zone_hhmm(pc: Pc, s: Tok, mm: i64): Pc {
-  var v: i64 = s.value;
+  let v: i64 = s.value;
   if (s.digits <= 2 && mm < 0 as i64) {
     v = v * (100 as i64);
   }
-  var n: i64 = 0;
+  let n: i64 = 0;
   if (mm < 0 as i64) {
     n = v / (100 as i64) * (60 as i64) + v % (100 as i64);
   } else {
@@ -1210,8 +1210,8 @@ function digits_to_date_time(pc: Pc, n: Tok): Pc {
   if (4 < n.digits) {
     return Pc { ...pc, dates_seen: pc.dates_seen + 1, day: n.value % (100 as i64), month: n.value / (100 as i64) % (100 as i64), year: n.value / (10000 as i64), year_digits: n.digits - 4 };
   }
-  var hour: i64 = n.value;
-  var minutes: i64 = 0;
+  let hour: i64 = n.value;
+  let minutes: i64 = 0;
   if (n.digits > 2) {
     hour = n.value / (100 as i64);
     minutes = n.value % (100 as i64);
@@ -1246,7 +1246,7 @@ function fail_at(pc: Pc, i: i32): Pc {
 // the failure index being the token after the colon.
 function colon_minutes(toks: Tok[], i: i32): (boolean, i64, i32) {
   if (is_char(at(toks, i), 58)) {
-    var m: Tok = at(toks, i + 1);
+    let m: Tok = at(toks, i + 1);
     if (m.kind != t_unumber()) {
       return (false, 0, i + 1);
     }
@@ -1258,12 +1258,12 @@ function colon_minutes(toks: Tok[], i: i32): (boolean, i64, i32) {
 // `zone_offset(pc, toks, i)` — `tSNUMBER o_colon_minutes` at `i`,
 // counted as a zone.
 function zone_offset(pc: Pc, toks: Tok[], i: i32): Pc {
-  var s: Tok = at(toks, i);
-  var cm: (boolean, i64, i32) = colon_minutes(toks, i + 1);
+  let s: Tok = at(toks, i);
+  let cm: (boolean, i64, i32) = colon_minutes(toks, i + 1);
   if (!cm.0) {
     return fail_at(pc, cm.2);
   }
-  var r: Pc = time_zone_hhmm(pc, s, cm.1);
+  let r: Pc = time_zone_hhmm(pc, s, cm.1);
   if (!r.ok) {
     return fail_at(pc, cm.2);
   }
@@ -1290,8 +1290,8 @@ function unsigned_seconds(t: Tok): (boolean, i64, i64) {
 struct RelUnit { ok: boolean, r: Rel, next: i32 }
 
 function relunit(toks: Tok[], i: i32): RelUnit {
-  var a: Tok = at(toks, i);
-  var b: Tok = at(toks, i + 1);
+  let a: Tok = at(toks, i);
+  let b: Tok = at(toks, i + 1);
   if (is_unit(a.kind)) {
     return RelUnit { ok: true, r: rel_unit(a.kind, 1, a.value), next: i + 1 };
   }
@@ -1299,7 +1299,7 @@ function relunit(toks: Tok[], i: i32): RelUnit {
     return RelUnit { ok: true, r: rel_unit(b.kind, a.value, b.value), next: i + 2 };
   }
   if ((a.kind == t_udecimal() || a.kind == t_sdecimal()) && b.kind == t_sec_unit()) {
-    var r: Rel = rel_zero();
+    let r: Rel = rel_zero();
     return RelUnit { ok: true, r: Rel { ...r, seconds: a.value, ns: a.nsec }, next: i + 2 };
   }
   return RelUnit { ok: false, r: rel_zero(), next: i + 1 };
@@ -1307,13 +1307,13 @@ function relunit(toks: Tok[], i: i32): RelUnit {
 
 // `rel_item(pc, toks, i)` — a relunit and an optional AGO or HENCE.
 function rel_item(pc: Pc, toks: Tok[], i: i32): Pc {
-  var r: RelUnit = relunit(toks, i);
+  let r: RelUnit = relunit(toks, i);
   if (!r.ok) {
     return fail_at(pc, r.next);
   }
-  var j: i32 = r.next;
-  var factor: i64 = 1;
-  var la: boolean = true;
+  let j: i32 = r.next;
+  let factor: i64 = 1;
+  let la: boolean = true;
   if (at(toks, j).kind == t_ago()) {
     factor = at(toks, j).value;
     j = j + 1;
@@ -1335,26 +1335,26 @@ function snumber_unit(toks: Tok[], i: i32): RelUnit {
 // date-time: hours with a zone, or hours, minutes and optional
 // seconds with an optional zone.
 function iso_time(pc: Pc, toks: Tok[], i: i32): Pc {
-  var h: Tok = at(toks, i);
+  let h: Tok = at(toks, i);
   if (h.kind != t_unumber()) {
     return fail_at(pc, i);
   }
-  var a: Tok = at(toks, i + 1);
+  let a: Tok = at(toks, i + 1);
   if (a.kind == t_snumber()) {
     return zone_offset(Pc { ...set_hhmmss(pc, h.value, 0, 0, 0), meridian: 0 }, toks, i + 1);
   }
   if (!is_char(a, 58)) {
     return fail_at(pc, i + 1);
   }
-  var m: Tok = at(toks, i + 2);
+  let m: Tok = at(toks, i + 2);
   if (m.kind != t_unumber()) {
     return fail_at(pc, i + 2);
   }
-  var j: i32 = i + 3;
-  var sec: i64 = 0;
-  var ns: i64 = 0;
+  let j: i32 = i + 3;
+  let sec: i64 = 0;
+  let ns: i64 = 0;
   if (is_char(at(toks, j), 58)) {
-    var s: (boolean, i64, i64) = unsigned_seconds(at(toks, j + 1));
+    let s: (boolean, i64, i64) = unsigned_seconds(at(toks, j + 1));
     if (!s.0) {
       return fail_at(pc, j + 1);
     }
@@ -1362,7 +1362,7 @@ function iso_time(pc: Pc, toks: Tok[], i: i32): Pc {
     ns = s.2;
     j = j + 2;
   }
-  var p: Pc = Pc { ...set_hhmmss(pc, h.value, m.value, sec, ns), meridian: 0 };
+  let p: Pc = Pc { ...set_hhmmss(pc, h.value, m.value, sec, ns), meridian: 0 };
   if (at(toks, j).kind == t_snumber()) {
     return zone_offset(p, toks, j);
   }
@@ -1372,20 +1372,20 @@ function iso_time(pc: Pc, toks: Tok[], i: i32): Pc {
 // `time_item(pc, toks, i)` — a clock time starting with the number at
 // `i`, which is followed by a colon or a meridian.
 function time_item(pc: Pc, toks: Tok[], i: i32): Pc {
-  var h: Tok = at(toks, i);
-  var a: Tok = at(toks, i + 1);
+  let h: Tok = at(toks, i);
+  let a: Tok = at(toks, i + 1);
   if (a.kind == t_meridian()) {
     return done(trace_current(Pc { ...set_hhmmss(pc, h.value, 0, 0, 0), meridian: a.value as i32, times_seen: pc.times_seen + 1 }, "time"), i + 2, false);
   }
-  var m: Tok = at(toks, i + 2);
+  let m: Tok = at(toks, i + 2);
   if (m.kind != t_unumber()) {
     return fail_at(pc, i + 2);
   }
-  var j: i32 = i + 3;
-  var sec: i64 = 0;
-  var ns: i64 = 0;
+  let j: i32 = i + 3;
+  let sec: i64 = 0;
+  let ns: i64 = 0;
   if (is_char(at(toks, j), 58)) {
-    var s: (boolean, i64, i64) = unsigned_seconds(at(toks, j + 1));
+    let s: (boolean, i64, i64) = unsigned_seconds(at(toks, j + 1));
     if (!s.0) {
       return fail_at(pc, j + 1);
     }
@@ -1393,13 +1393,13 @@ function time_item(pc: Pc, toks: Tok[], i: i32): Pc {
     ns = s.2;
     j = j + 2;
   }
-  var p: Pc = Pc { ...set_hhmmss(pc, h.value, m.value, sec, ns), meridian: 0, times_seen: pc.times_seen + 1 };
-  var e: Tok = at(toks, j);
+  let p: Pc = Pc { ...set_hhmmss(pc, h.value, m.value, sec, ns), meridian: 0, times_seen: pc.times_seen + 1 };
+  let e: Tok = at(toks, j);
   if (e.kind == t_meridian()) {
     return done(trace_current(Pc { ...p, meridian: e.value as i32 }, "time"), j + 1, false);
   }
   if (e.kind == t_snumber()) {
-    var z: Pc = zone_offset(p, toks, j);
+    let z: Pc = zone_offset(p, toks, j);
     if (!z.ok) {
       return z;
     }
@@ -1411,19 +1411,19 @@ function time_item(pc: Pc, toks: Tok[], i: i32): Pc {
 // `slash_date(pc, toks, i)` — `M/D` or `M/D/Y`, the last read as
 // `Y/M/D` when the first number has four digits or more.
 function slash_date(pc: Pc, toks: Tok[], i: i32): Pc {
-  var n: Tok = at(toks, i);
-  var b: Tok = at(toks, i + 2);
+  let n: Tok = at(toks, i);
+  let b: Tok = at(toks, i + 2);
   if (b.kind != t_unumber()) {
     return fail_at(pc, i + 2);
   }
   if (!is_char(at(toks, i + 3), 47)) {
     return done(trace_current(Pc { ...pc, month: n.value, day: b.value, dates_seen: pc.dates_seen + 1 }, "date"), i + 3, true);
   }
-  var c: Tok = at(toks, i + 4);
+  let c: Tok = at(toks, i + 4);
   if (c.kind != t_unumber()) {
     return fail_at(pc, i + 4);
   }
-  var p: Pc = pc;
+  let p: Pc = pc;
   if (4 <= n.digits) {
     p = dline(p, "warning: value " + n.value.to_string() + " has " + n.digits.to_string() + " digits. Assuming YYYY/MM/DD");
     p = Pc { ...p, year: n.value, year_digits: n.digits, month: b.value, day: c.value };
@@ -1439,19 +1439,19 @@ function slash_date(pc: Pc, toks: Tok[], i: i32): Pc {
 // what tells the two apart: `1.2.3` is the first of February in the
 // year 3, `1.2` a second and a fraction.
 function dot_date(pc: Pc, toks: Tok[], i: i32): Pc {
-  var b: Tok = at(toks, i + 2);
+  let b: Tok = at(toks, i + 2);
   if (b.kind != t_unumber() && b.kind != t_unumber_dotted()) {
     return fail_at(pc, i + 2);
   }
   if (!is_char(at(toks, i + 3), 46)) {
     return fail_at(pc, i + 3);
   }
-  var n: Tok = at(toks, i);
-  var p: Pc = Pc { ...pc, day: n.value, month: b.value, dates_seen: pc.dates_seen + 1 };
+  let n: Tok = at(toks, i);
+  let p: Pc = Pc { ...pc, day: n.value, month: b.value, dates_seen: pc.dates_seen + 1 };
   if (b.kind != t_unumber_dotted()) {
     return done(trace_current(p, "date"), i + 4, false);
   }
-  var y: Tok = at(toks, i + 4);
+  let y: Tok = at(toks, i + 4);
   if (y.kind != t_unumber()) {
     return fail_at(pc, i + 4);
   }
@@ -1461,17 +1461,17 @@ function dot_date(pc: Pc, toks: Tok[], i: i32): Pc {
 // `number_item(pc, toks, i)` — every item that opens with an unsigned
 // number, chosen by the token after it.
 function number_item(pc: Pc, toks: Tok[], i: i32): Pc {
-  var n: Tok = at(toks, i);
-  var a: Tok = at(toks, i + 1);
+  let n: Tok = at(toks, i);
+  let a: Tok = at(toks, i + 1);
   if (is_char(a, 58) || a.kind == t_meridian()) {
     return time_item(pc, toks, i);
   }
   if (a.kind == t_snumber()) {
-    var b: Tok = at(toks, i + 2);
+    let b: Tok = at(toks, i + 2);
     if (b.kind == t_snumber()) {
-      var p: Pc = Pc { ...pc, year: n.value, year_digits: n.digits, month: 0 as i64 - a.value, day: 0 as i64 - b.value, dates_seen: pc.dates_seen + 1 };
+      let p: Pc = Pc { ...pc, year: n.value, year_digits: n.digits, month: 0 as i64 - a.value, day: 0 as i64 - b.value, dates_seen: pc.dates_seen + 1 };
       if (at(toks, i + 3).kind == t_tsep()) {
-        var t: Pc = iso_time(p, toks, i + 4);
+        let t: Pc = iso_time(p, toks, i + 4);
         if (!t.ok) {
           return t;
         }
@@ -1480,10 +1480,10 @@ function number_item(pc: Pc, toks: Tok[], i: i32): Pc {
       return done(trace_current(p, "date"), i + 3, true);
     }
     if (is_unit(b.kind)) {
-      var r: RelUnit = relunit(toks, i + 1);
+      let r: RelUnit = relunit(toks, i + 1);
       return done(trace_relative(apply_relative(digits_to_date_time(pc, n), r.r, 1), "hybrid"), r.next, false);
     }
-    var z: Pc = zone_offset(Pc { ...set_hhmmss(pc, n.value, 0, 0, 0), meridian: 0, times_seen: pc.times_seen + 1 }, toks, i + 1);
+    let z: Pc = zone_offset(Pc { ...set_hhmmss(pc, n.value, 0, 0, 0), meridian: 0, times_seen: pc.times_seen + 1 }, toks, i + 1);
     if (!z.ok) {
       return z;
     }
@@ -1496,8 +1496,8 @@ function number_item(pc: Pc, toks: Tok[], i: i32): Pc {
     return dot_date(pc, toks, i);
   }
   if (a.kind == t_month()) {
-    var b: Tok = at(toks, i + 2);
-    var p: Pc = Pc { ...pc, day: n.value, month: a.value, dates_seen: pc.dates_seen + 1 };
+    let b: Tok = at(toks, i + 2);
+    let p: Pc = Pc { ...pc, day: n.value, month: a.value, dates_seen: pc.dates_seen + 1 };
     if (b.kind == t_unumber()) {
       return done(trace_current(Pc { ...p, year: b.value, year_digits: b.digits }, "date"), i + 3, false);
     }
@@ -1516,12 +1516,12 @@ function number_item(pc: Pc, toks: Tok[], i: i32): Pc {
 }
 
 function month_item(pc: Pc, toks: Tok[], i: i32): Pc {
-  var m: Tok = at(toks, i);
-  var a: Tok = at(toks, i + 1);
+  let m: Tok = at(toks, i);
+  let a: Tok = at(toks, i + 1);
   if (a.kind == t_unumber()) {
-    var p: Pc = Pc { ...pc, month: m.value, day: a.value, dates_seen: pc.dates_seen + 1 };
+    let p: Pc = Pc { ...pc, month: m.value, day: a.value, dates_seen: pc.dates_seen + 1 };
     if (is_char(at(toks, i + 2), 44)) {
-      var y: Tok = at(toks, i + 3);
+      let y: Tok = at(toks, i + 3);
       if (y.kind != t_unumber()) {
         return fail_at(pc, i + 3);
       }
@@ -1530,7 +1530,7 @@ function month_item(pc: Pc, toks: Tok[], i: i32): Pc {
     return done(trace_current(p, "date"), i + 2, true);
   }
   if (a.kind == t_snumber()) {
-    var b: Tok = at(toks, i + 2);
+    let b: Tok = at(toks, i + 2);
     if (b.kind != t_snumber()) {
       return fail_at(pc, i + 2);
     }
@@ -1540,22 +1540,22 @@ function month_item(pc: Pc, toks: Tok[], i: i32): Pc {
 }
 
 function zone_item(pc: Pc, toks: Tok[], i: i32): Pc {
-  var z: Tok = at(toks, i);
-  var a: Tok = at(toks, i + 1);
-  var p: Pc = Pc { ...pc, time_zone: z.value, zones_seen: pc.zones_seen + 1 };
+  let z: Tok = at(toks, i);
+  let a: Tok = at(toks, i + 1);
+  let p: Pc = Pc { ...pc, time_zone: z.value, zones_seen: pc.zones_seen + 1 };
   if (a.kind == t_dst()) {
     return done(trace_current(Pc { ...p, time_zone: z.value + 3600 as i64 }, "zone"), i + 2, false);
   }
   if (a.kind == t_snumber()) {
-    var r: RelUnit = snumber_unit(toks, i + 1);
+    let r: RelUnit = snumber_unit(toks, i + 1);
     if (r.ok) {
       return done(trace_current(trace_relative(apply_relative(p, r.r, 1), "relative"), "zone"), r.next, false);
     }
-    var cm: (boolean, i64, i32) = colon_minutes(toks, i + 2);
+    let cm: (boolean, i64, i32) = colon_minutes(toks, i + 2);
     if (!cm.0) {
       return fail_at(pc, cm.2);
     }
-    var h: Pc = time_zone_hhmm(p, a, cm.1);
+    let h: Pc = time_zone_hhmm(p, a, cm.1);
     if (!h.ok) {
       return fail_at(pc, cm.2);
     }
@@ -1565,8 +1565,8 @@ function zone_item(pc: Pc, toks: Tok[], i: i32): Pc {
 }
 
 function tsep_item(pc: Pc, toks: Tok[], i: i32): Pc {
-  var q: Pc = Pc { ...pc, time_zone: -25200, zones_seen: pc.zones_seen + 1 };
-  var u: RelUnit = snumber_unit(toks, i + 1);
+  let q: Pc = Pc { ...pc, time_zone: -25200, zones_seen: pc.zones_seen + 1 };
+  let u: RelUnit = snumber_unit(toks, i + 1);
   if (u.ok) {
     return done(trace_current(trace_relative(apply_relative(q, u.r, 1), "relative"), "zone"), u.next, false);
   }
@@ -1574,7 +1574,7 @@ function tsep_item(pc: Pc, toks: Tok[], i: i32): Pc {
 }
 
 function ordinal_item(pc: Pc, toks: Tok[], i: i32): Pc {
-  var t: Tok = at(toks, i);
+  let t: Tok = at(toks, i);
   if (at(toks, i + 1).kind == t_day()) {
     return done(trace_current(Pc { ...pc, day_ordinal: t.value, day_number: at(toks, i + 1).value as i32, days_seen: pc.days_seen + 1, d_ordinal: true }, "day"), i + 2, false);
   }
@@ -1582,9 +1582,9 @@ function ordinal_item(pc: Pc, toks: Tok[], i: i32): Pc {
 }
 
 function day_item(pc: Pc, toks: Tok[], i: i32): Pc {
-  var t: Tok = at(toks, i);
-  var j: i32 = i + 1;
-  var la: boolean = true;
+  let t: Tok = at(toks, i);
+  let j: i32 = i + 1;
+  let la: boolean = true;
   if (is_char(at(toks, j), 44)) {
     j = j + 1;
     la = false;
@@ -1593,8 +1593,8 @@ function day_item(pc: Pc, toks: Tok[], i: i32): Pc {
 }
 
 function local_zone_item(pc: Pc, toks: Tok[], i: i32): Pc {
-  var t: Tok = at(toks, i);
-  var q: Pc = Pc { ...pc, local_isdst: t.value as i32, local_zones_seen: pc.local_zones_seen + 1 };
+  let t: Tok = at(toks, i);
+  let q: Pc = Pc { ...pc, local_isdst: t.value as i32, local_zones_seen: pc.local_zones_seen + 1 };
   if (at(toks, i + 1).kind == t_dst()) {
     return done(trace_current(Pc { ...q, local_isdst: 1, dsts_seen: q.dsts_seen + 1 }, "local_zone"), i + 2, false);
   }
@@ -1602,8 +1602,8 @@ function local_zone_item(pc: Pc, toks: Tok[], i: i32): Pc {
 }
 
 function item(pc: Pc, toks: Tok[], i: i32): Pc {
-  var t: Tok = at(toks, i);
-  var k: i32 = t.kind;
+  let t: Tok = at(toks, i);
+  let k: i32 = t.kind;
   if (k == t_unumber()) {
     return number_item(pc, toks, i);
   }
@@ -1620,7 +1620,7 @@ function item(pc: Pc, toks: Tok[], i: i32): Pc {
     return day_item(pc, toks, i);
   }
   if (k == t_day_shift()) {
-    var d: Rel = rel_zero();
+    let d: Rel = rel_zero();
     return done(trace_relative(apply_relative(pc, Rel { ...d, day: t.value }, 1), "relative"), i + 1, false);
   }
   if (k == t_local_zone()) {
@@ -1655,8 +1655,8 @@ function unknown_word(pc: Pc, t: Tok, word: string): Pc {
 // the grammar stopped at.
 function parse_items(pc: Pc, toks: Tok[], bad_word: string): Pc {
   if (is_char(at(toks, 0), 64)) {
-    var s: Tok = at(toks, 1);
-    var p: Pc = pc;
+    let s: Tok = at(toks, 1);
+    let p: Pc = pc;
     if (s.kind == t_unumber() || s.kind == t_snumber()) {
       p = Pc { ...pc, timespec_seen: true, ts_sec: s.value, ts_nsec: 0 };
     } else if (s.kind == t_udecimal() || s.kind == t_sdecimal()) {
@@ -1670,8 +1670,8 @@ function parse_items(pc: Pc, toks: Tok[], bad_word: string): Pc {
     }
     return done(p, 2, false);
   }
-  var i: i32 = 0;
-  var p: Pc = pc;
+  let i: i32 = 0;
+  let p: Pc = pc;
   while (at(toks, i).kind != t_eof()) {
     if (!pc.debug) {
       p = item(p, toks, i);
@@ -1681,9 +1681,9 @@ function parse_items(pc: Pc, toks: Tok[], bad_word: string): Pc {
       i = p.next;
       continue;
     }
-    var before: string = p.dbg;
-    var r: Pc = item(Pc { ...p, dbg: "" }, toks, i);
-    var lines: string = r.dbg;
+    let before: string = p.dbg;
+    let r: Pc = item(Pc { ...p, dbg: "" }, toks, i);
+    let lines: string = r.dbg;
     p = Pc { ...r, dbg: before };
     if (!r.ok) {
       p = Pc { ...p, dbg: p.dbg + lines };
@@ -1731,34 +1731,34 @@ function big(v: i64): boolean {
 // side for up to eight years, lends its offset; when there is none,
 // the requested flag is taken to mean an hour's difference.
 function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64, sec: i64, isdst: i32, hint: i64): Mk {
-  var q: i64 = tz.floor_div(mon, 12 as i64);
-  var m: i32 = (mon - q * (12 as i64)) as i32 + 1;
-  var y: i64 = year + q;
+  let q: i64 = tz.floor_div(mon, 12 as i64);
+  let m: i32 = (mon - q * (12 as i64)) as i32 + 1;
+  let y: i64 = year + q;
   if (!year_ok(y) || big(mday) || big(hour) || big(min) || big(sec)) {
     return mk_fail();
   }
-  var sec_clamped: i64 = sec;
+  let sec_clamped: i64 = sec;
   if (sec_clamped < 0 as i64) {
     sec_clamped = 0;
   }
   if (sec_clamped > 59 as i64) {
     sec_clamped = 59;
   }
-  var days: i64 = tz.days_from_civil(y, m, 1) + mday - 1 as i64;
-  var local: i64 = days * (86400 as i64) + hour * (3600 as i64) + min * (60 as i64) + sec_clamped;
-  var t: i64 = local - hint;
-  var prev: i64 = t;
-  var prev_off: i64 = 0;
-  var found: boolean = false;
-  var n: i32 = 0;
+  let days: i64 = tz.days_from_civil(y, m, 1) + mday - 1 as i64;
+  let local: i64 = days * (86400 as i64) + hour * (3600 as i64) + min * (60 as i64) + sec_clamped;
+  let t: i64 = local - hint;
+  let prev: i64 = t;
+  let prev_off: i64 = 0;
+  let found: boolean = false;
+  let n: i32 = 0;
   while (n < 64 && !found) {
-    var off: i64 = z.offset_at(t) as i64;
-    var t1: i64 = local - off;
+    let off: i64 = z.offset_at(t) as i64;
+    let t1: i64 = local - off;
     if (t1 == t) {
       found = true;
     } else if (n > 0 && t1 == prev) {
       // A gap: the two offsets take turns. The earlier one wins.
-      var lo: i64 = off;
+      let lo: i64 = off;
       if (prev_off < lo) {
         lo = prev_off;
       }
@@ -1772,13 +1772,13 @@ function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64,
     n = n + 1;
   }
   if (isdst >= 0 && isdst != 0 != z.is_dst_at(t)) {
-    var want: boolean = isdst != 0;
-    var delta: i64 = 601200;
-    var settled: boolean = false;
+    let want: boolean = isdst != 0;
+    let delta: i64 = 601200;
+    let settled: boolean = false;
     while (delta < 268828200 as i64 && !settled) {
-      var dir: i32 = 0;
+      let dir: i32 = 0;
       while (dir < 2 && !settled) {
-        var ot: i64 = t - delta;
+        let ot: i64 = t - delta;
         if (dir == 1) {
           ot = t + delta;
         }
@@ -1801,8 +1801,8 @@ function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64,
   if (sec_clamped != sec) {
     t = t + sec - sec_clamped;
   }
-  var e: tz.Entry = z.entry_at(t);
-  var f: tz.Civil = tz.civil_at(t + e.off as i64);
+  let e: tz.Entry = z.entry_at(t);
+  let f: tz.Civil = tz.civil_at(t + e.off as i64);
   return Mk { ok: year_ok(f.year), t: t, f: f, isdst: e.dst, gmtoff: e.off as i64 };
 }
 
@@ -1868,7 +1868,7 @@ function fields_tz(pc: Pc, s: string): string {
 }
 
 function right(s: string, width: i32): string {
-  var out: string = s;
+  let out: string = s;
   while (out.len() < width) {
     out = " " + out;
   }
@@ -1889,13 +1889,13 @@ function trace_not_ok(pc: Pc, year: i64, mon: i64, mday: i64, hour: i64, min: i6
   if (!pc.debug) {
     return pc;
   }
-  var p: Pc = dline(pc, "error: invalid date/time value:");
+  let p: Pc = dline(pc, "error: invalid date/time value:");
   p = dline(p, "    user provided time: '" + fields_tz(pc, fields_text(year, mon, mday, hour, min, sec)) + "'");
   if (r.ok) {
     p = dline(p, "       normalized time: '" + fields_tz(pc, civil_text(r.f)) + "'");
-    var f: tz.Civil = r.f;
-    var line: string = right(mark(f.year == year, "----"), 37) + " " + right(mark((f.month - 1) as i64 == mon, "--"), 2) + " " + right(mark(f.day as i64 == mday, "--"), 2) + " " + right(mark(f.hour as i64 == hour, "--"), 2) + " " + right(mark(f.min as i64 == min, "--"), 2) + " " + right(mark(f.sec as i64 == sec, "--"), 2);
-    var end: i32 = line.len();
+    let f: tz.Civil = r.f;
+    let line: string = right(mark(f.year == year, "----"), 37) + " " + right(mark((f.month - 1) as i64 == mon, "--"), 2) + " " + right(mark(f.day as i64 == mday, "--"), 2) + " " + right(mark(f.hour as i64 == hour, "--"), 2) + " " + right(mark(f.min as i64 == min, "--"), 2) + " " + right(mark(f.sec as i64 == sec, "--"), 2);
+    let end: i32 = line.len();
     while (end > 0 && line[end - 1] as i32 == 32) {
       end = end - 1;
     }
@@ -1922,7 +1922,7 @@ function trace_not_ok(pc: Pc, year: i64, mon: i64, mday: i64, hour: i64, min: i6
 // through mktime again; the written zone's offset; then the relative
 // hours, minutes, seconds and nanoseconds, which are plain arithmetic.
 function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
-  var pc: Pc = pc_in;
+  let pc: Pc = pc_in;
   if (pc.timespec_seen) {
     return Result { ok: true, sec: pc.ts_sec, nsec: pc.ts_nsec, hint: hint, dbg: pc.dbg };
   }
@@ -1944,7 +1944,7 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
     }
     return fail(pc, hint);
   }
-  var year: i64 = pc.year;
+  let year: i64 = pc.year;
   // The original computes tm_year as -1900 - year for a negative year,
   // which is the year negated.
   if (year < 0 as i64) {
@@ -1967,16 +1967,16 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
     pc = dline(pc, "error: year, month, or day overflow");
     return fail(pc, hint);
   }
-  var mon: i64 = pc.month - 1 as i64;
-  var mday: i64 = pc.day;
-  var hour: i64 = 0;
-  var min: i64 = 0;
-  var sec: i64 = 0;
-  var nsec: i64 = 0;
+  let mon: i64 = pc.month - 1 as i64;
+  let mday: i64 = pc.day;
+  let hour: i64 = 0;
+  let min: i64 = 0;
+  let sec: i64 = 0;
+  let nsec: i64 = 0;
   if (pc.times_seen != 0 || pc.rels_seen && pc.dates_seen == 0 && pc.days_seen == 0) {
     hour = to_hour(pc.hour, pc.meridian);
     if (hour < 0 as i64) {
-      var mrd: string = "";
+      let mrd: string = "";
       if (pc.meridian == 1) {
         mrd = "am";
       } else if (pc.meridian == 2) {
@@ -1990,7 +1990,7 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
     min = pc.minutes;
     sec = pc.sec;
     nsec = pc.nsec;
-    var how: string = "using current time as starting value: '";
+    let how: string = "using current time as starting value: '";
     if (pc.times_seen != 0) {
       how = "using specified time as starting value: '";
     }
@@ -2000,7 +2000,7 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
   } else {
     pc = dline(pc, "warning: using midnight as starting time: 00:00:00");
   }
-  var isdst: i32 = 0;
+  let isdst: i32 = 0;
   if (now_isdst) {
     isdst = 1;
   }
@@ -2010,8 +2010,8 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
   if (pc.local_zones_seen != 0) {
     isdst = pc.local_isdst;
   }
-  var h: i64 = hint;
-  var r: Mk = mktime(z, year, mon, mday, hour, min, sec, isdst, h);
+  let h: i64 = hint;
+  let r: Mk = mktime(z, year, mon, mday, hour, min, sec, isdst, h);
   if (r.ok) {
     h = local_of(r) - r.t;
   }
@@ -2030,17 +2030,17 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
       return fail(trace_not_ok(pc, year, mon, mday, hour, min, sec, r, true), h);
     }
   }
-  var start: i64 = r.t;
+  let start: i64 = r.t;
   if (pc.days_seen != 0 && pc.dates_seen == 0) {
-    var wday: i64 = r.f.wday as i64;
-    var dn: i64 = pc.day_number as i64;
-    var skip: i64 = 0;
+    let wday: i64 = r.f.wday as i64;
+    let dn: i64 = pc.day_number as i64;
+    let skip: i64 = 0;
     if (0 as i64 < pc.day_ordinal && wday != dn) {
       skip = 1;
     }
-    var ok: boolean = !big(pc.day_ordinal);
+    let ok: boolean = !big(pc.day_ordinal);
     if (ok) {
-      var dayincr: i64 = (dn - wday + 7 as i64) % (7 as i64) + 7 as i64 * (pc.day_ordinal - skip);
+      let dayincr: i64 = (dn - wday + 7 as i64) % (7 as i64) + 7 as i64 * (pc.day_ordinal - skip);
       r = mktime(z, r.f.year, (r.f.month - 1) as i64, r.f.day as i64 + dayincr, r.f.hour as i64, r.f.min as i64, r.f.sec as i64, -1, h);
       ok = r.ok;
     }
@@ -2069,7 +2069,7 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
   if (pc.debug) {
     pc = dline(pc, "starting date/time: '" + fields_tz(pc, civil_text(r.f)) + "'");
   }
-  var tm0_isdst: i32 = isdst;
+  let tm0_isdst: i32 = isdst;
   if (pc.rel.year != 0 as i64 || pc.rel.month != 0 as i64 || pc.rel.day != 0 as i64) {
     if ((pc.rel.year != 0 as i64 || pc.rel.month != 0 as i64) && r.f.day != 15) {
       pc = dline(pc, "warning: when adding relative months/years, it is recommended to specify the 15th of the months");
@@ -2077,9 +2077,9 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
     if (pc.rel.day != 0 as i64 && r.f.hour != 12) {
       pc = dline(pc, "warning: when adding relative days, it is recommended to specify noon");
     }
-    var ry: i64 = r.f.year + pc.rel.year;
-    var rm: i64 = (r.f.month - 1) as i64 + pc.rel.month;
-    var rd: i64 = r.f.day as i64 + pc.rel.day;
+    let ry: i64 = r.f.year + pc.rel.year;
+    let rm: i64 = (r.f.month - 1) as i64 + pc.rel.month;
+    let rd: i64 = r.f.day as i64 + pc.rel.day;
     if (!year_ok(ry) || rm > 2147483647 as i64 || rm < 0 as i64 - 2147483648 as i64 || rd > 2147483647 as i64 || rd < 0 as i64 - 2147483648 as i64) {
       pc = dline(pc, "error: parse-datetime.y:2179");
       return fail(pc, h);
@@ -2113,7 +2113,7 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
     }
   }
   if (pc.zones_seen != 0) {
-    var delta: i64 = pc.time_zone - r.gmtoff;
+    let delta: i64 = pc.time_zone - r.gmtoff;
     if (!add_ok(start, 0 as i64 - delta)) {
       if (pc.debug) {
         pc = dline(pc, "error: timezone " + pc.time_zone.to_string() + " caused time_t overflow");
@@ -2125,15 +2125,15 @@ function resolve(pc_in: Pc, z: tz.Zone, now_isdst: boolean, hint: i64): Result {
   if (pc.debug) {
     pc = dline(pc, "'" + fields_tz(pc, civil_text(r.f)) + "' = " + start.to_string() + " epoch-seconds");
   }
-  var sum_ns: i64 = nsec + pc.rel.ns;
-  var norm_ns: i64 = tz.floor_mod(sum_ns, 1000000000 as i64);
-  var norm_sec: i64 = (sum_ns - norm_ns) / (1000000000 as i64);
+  let sum_ns: i64 = nsec + pc.rel.ns;
+  let norm_ns: i64 = tz.floor_mod(sum_ns, 1000000000 as i64);
+  let norm_sec: i64 = (sum_ns - norm_ns) / (1000000000 as i64);
   if (pc.rel.minutes > 153722867280912930 as i64 || pc.rel.minutes < 0 as i64 - 153722867280912930 as i64 || pc.rel.hour > 2562047788015215 as i64 || pc.rel.hour < 0 as i64 - 2562047788015215 as i64) {
     pc = dline(pc, "error: adding relative time caused an overflow");
     return fail(pc, h);
   }
-  var parts: i64[] = [pc.rel.hour * (3600 as i64), pc.rel.minutes * (60 as i64), pc.rel.seconds, norm_sec];
-  var i: i32 = 0;
+  let parts: i64[] = [pc.rel.hour * (3600 as i64), pc.rel.minutes * (60 as i64), pc.rel.seconds, norm_sec];
+  let i: i32 = 0;
   while (i < parts.len()) {
     if (!add_ok(start, parts[i])) {
       pc = dline(pc, "error: adding relative time caused an overflow");
@@ -2168,18 +2168,18 @@ function local_of(r: Mk): i64 {
 // other half of the year, that one too. A zone naming both halves the
 // same way makes the word mean "local, either", which is -1.
 function local_table(z: tz.Zone, now: i64): LocalTable {
-  var names: string[] = [];
-  var flags: i32[] = [];
-  var e0: tz.Entry = z.entry_at(now);
+  let names: string[] = [];
+  let flags: i32[] = [];
+  let e0: tz.Entry = z.entry_at(now);
   if (e0.abbrev.len() > 0) {
     names = [e0.abbrev];
     flags = [dst_flag(e0.dst)];
   }
-  var q: i32 = 1;
+  let q: i32 = 1;
   while (q <= 3) {
-    var probe: i64 = now + (q * 90 * 24 * 60 * 60) as i64;
-    var pe: tz.Entry = z.entry_at(probe);
-    var pdst: i32 = dst_flag(pe.dst);
+    let probe: i64 = now + (q * 90 * 24 * 60 * 60) as i64;
+    let pe: tz.Entry = z.entry_at(probe);
+    let pdst: i32 = dst_flag(pe.dst);
     if (names.len() == 0 || pdst != flags[0]) {
       if (pe.abbrev.len() > 0) {
         names = names.append(pe.abbrev);
@@ -2213,10 +2213,10 @@ function tz_prefix(s: string): (boolean, string, string) {
   if (!(s.len() >= 4 && s[0] as i32 == 84 && s[1] as i32 == 90 && s[2] as i32 == 61 && s[3] as i32 == 34)) {
     return (false, "", s);
   }
-  var name: u8[] = [];
-  var i: i32 = 4;
+  let name: u8[] = [];
+  let i: i32 = 4;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c == 92) {
       i = i + 1;
       if (i >= s.len() || !(s[i] as i32 == 92 || s[i] as i32 == 34)) {
@@ -2234,7 +2234,7 @@ function tz_prefix(s: string): (boolean, string, string) {
 }
 
 function trim_left(s: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len() && is_space(s[i] as i32)) {
     i = i + 1;
   }
@@ -2254,12 +2254,12 @@ pub function parse(text: string, now_sec: i64, now_nsec: i64, hint: i64): Result
 // TZ=UTC0), the TZ value the trace names, and the trace itself when
 // `debug` is set.
 pub function parse_full(text: string, z: tz.Zone, tzstring: string, has_tz: boolean, now_sec: i64, now_nsec: i64, hint: i64, debug: boolean): Result {
-  var zone: tz.Zone = z;
-  var s: string = trim_left(text);
-  var tzs: string = tzstring;
-  var has: boolean = has_tz;
-  var prefixed: boolean = false;
-  var pre: (boolean, string, string) = tz_prefix(s);
+  let zone: tz.Zone = z;
+  let s: string = trim_left(text);
+  let tzs: string = tzstring;
+  let has: boolean = has_tz;
+  let prefixed: boolean = false;
+  let pre: (boolean, string, string) = tz_prefix(s);
   if (pre.0) {
     zone = tz.zone_from_tz(pre.1);
     s = trim_left(pre.2);
@@ -2270,14 +2270,14 @@ pub function parse_full(text: string, z: tz.Zone, tzstring: string, has_tz: bool
   if (s.len() == 0) {
     s = "0";
   }
-  var now_entry: tz.Entry = zone.entry_at(now_sec);
-  var f: tz.Civil = tz.civil_at(now_sec + now_entry.off as i64);
-  var pc: Pc = Pc { ok: true, next: 0, year: f.year, year_digits: 0, month: f.month as i64, day: f.day as i64, hour: f.hour as i64, minutes: f.min as i64, sec: f.sec as i64, nsec: now_nsec, meridian: 0, time_zone: 0, local_isdst: 0, day_ordinal: 0, day_number: 0, rels_seen: false, timespec_seen: false, ts_sec: 0, ts_nsec: 0, dates_seen: 0, days_seen: 0, times_seen: 0, local_zones_seen: 0, zones_seen: 0, j_zones_seen: 0, dsts_seen: 0, year_seen: false, rel: rel_zero(), la: false, debug: debug, dbg: "", d_dates: false, d_days: false, d_times: false, d_local: false, d_zones: false, d_year: false, d_ordinal: false };
-  var lexed: (Tok[], string) = lex(s, local_table(zone, now_sec));
-  var toks: Tok[] = lexed.0;
+  let now_entry: tz.Entry = zone.entry_at(now_sec);
+  let f: tz.Civil = tz.civil_at(now_sec + now_entry.off as i64);
+  let pc: Pc = Pc { ok: true, next: 0, year: f.year, year_digits: 0, month: f.month as i64, day: f.day as i64, hour: f.hour as i64, minutes: f.min as i64, sec: f.sec as i64, nsec: now_nsec, meridian: 0, time_zone: 0, local_isdst: 0, day_ordinal: 0, day_number: 0, rels_seen: false, timespec_seen: false, ts_sec: 0, ts_nsec: 0, dates_seen: 0, days_seen: 0, times_seen: 0, local_zones_seen: 0, zones_seen: 0, j_zones_seen: 0, dsts_seen: 0, year_seen: false, rel: rel_zero(), la: false, debug: debug, dbg: "", d_dates: false, d_days: false, d_times: false, d_local: false, d_zones: false, d_year: false, d_ordinal: false };
+  let lexed: (Tok[], string) = lex(s, local_table(zone, now_sec));
+  let toks: Tok[] = lexed.0;
   pc = parse_items(pc, toks, lexed.1);
   if (!pc.ok) {
-    var stop: i32 = at(toks, pc.next).end;
+    let stop: i32 = at(toks, pc.next).end;
     if (stop >= s.len()) {
       pc = dline(pc, "error: parsing failed");
     } else {
@@ -2288,7 +2288,7 @@ pub function parse_full(text: string, z: tz.Zone, tzstring: string, has_tz: bool
     return fail(pc, hint);
   }
   if (debug) {
-    var line: string = "input timezone: ";
+    let line: string = "input timezone: ";
     if (pc.timespec_seen) {
       line = line + "'@timespec' - always UTC";
     } else if (pc.zones_seen != 0) {
@@ -2312,11 +2312,11 @@ pub function parse_full(text: string, z: tz.Zone, tzstring: string, has_tz: bool
     }
     pc = dline(pc, line);
   }
-  var r: Result = resolve(pc, zone, now_entry.dst, hint);
+  let r: Result = resolve(pc, zone, now_entry.dst, hint);
   if (!r.ok || !debug) {
     return r;
   }
-  var out: string = r.dbg;
+  let out: string = r.dbg;
   if (!has) {
     out = out + "date: timezone: system default\n";
   } else if (tzs == "UTC0") {
@@ -2340,11 +2340,11 @@ pub function parse_full(text: string, z: tz.Zone, tzstring: string, has_tz: bool
 // next minute's first second; anything else mktime moves is refused.
 // Answers (ok, instant, hint).
 pub function posixtime(s: string, bits: i32, z: tz.Zone, now: i64, hint: i64): (boolean, i64, i64) {
-  var n: i32 = s.len();
-  var len: i32 = n;
-  var dot: i32 = -1;
+  let n: i32 = s.len();
+  let len: i32 = n;
+  let dot: i32 = -1;
   if ((bits & 8) != 0) {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n && dot < 0) {
       if (s[i] as i32 == 46) {
         dot = i;
@@ -2361,24 +2361,24 @@ pub function posixtime(s: string, bits: i32, z: tz.Zone, now: i64, hint: i64): (
   if (!(8 <= len && len <= 12 && len % 2 == 0)) {
     return (false, 0, hint);
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < len) {
     if (!is_digit(s[i] as i32)) {
       return (false, 0, hint);
     }
     i = i + 1;
   }
-  var pairs: i32[] = [];
+  let pairs: i32[] = [];
   i = 0;
   while (i < len) {
     pairs = pairs.append((s[i] as i32 - 48) * 10 + (s[i + 1] as i32 - 48));
     i = i + 2;
   }
-  var p: i32 = 0;
-  var year: i64 = 0;
-  var have_year: boolean = false;
-  var ycount: i32 = pairs.len() - 4;
-  var y: (boolean, i64) = (false, 0);
+  let p: i32 = 0;
+  let year: i64 = 0;
+  let have_year: boolean = false;
+  let ycount: i32 = pairs.len() - 4;
+  let y: (boolean, i64) = (false, 0);
   if ((bits & 2) == 0) {
     y = posix_year(pairs, 0, ycount, bits, z, now);
     if (!y.0) {
@@ -2386,10 +2386,10 @@ pub function posixtime(s: string, bits: i32, z: tz.Zone, now: i64, hint: i64): (
     }
     p = ycount;
   }
-  var mon: i64 = (pairs[p] - 1) as i64;
-  var mday: i64 = pairs[p + 1] as i64;
-  var hour: i64 = pairs[p + 2] as i64;
-  var min: i64 = pairs[p + 3] as i64;
+  let mon: i64 = (pairs[p] - 1) as i64;
+  let mday: i64 = pairs[p + 1] as i64;
+  let hour: i64 = pairs[p + 2] as i64;
+  let min: i64 = pairs[p + 3] as i64;
   if ((bits & 2) != 0) {
     y = posix_year(pairs, 4, ycount, bits, z, now);
     if (!y.0) {
@@ -2397,17 +2397,17 @@ pub function posixtime(s: string, bits: i32, z: tz.Zone, now: i64, hint: i64): (
     }
   }
   year = y.1;
-  var sec: i64 = 0;
+  let sec: i64 = 0;
   if (dot >= 0) {
     if (!(is_digit(s[dot + 1] as i32) && is_digit(s[dot + 2] as i32))) {
       return (false, 0, hint);
     }
     sec = ((s[dot + 1] as i32 - 48) * 10 + (s[dot + 2] as i32 - 48)) as i64;
   }
-  var leap: i64 = 0;
-  var h: i64 = hint;
+  let leap: i64 = 0;
+  let h: i64 = hint;
   while (true) {
-    var r: Mk = mktime(z, year, mon, mday, hour, min, sec, -1, h);
+    let r: Mk = mktime(z, year, mon, mday, hour, min, sec, -1, h);
     if (!r.ok) {
       return (false, 0, h);
     }
@@ -2432,7 +2432,7 @@ function posix_year(pairs: i32[], at: i32, count: i32, bits: i32, z: tz.Zone, no
     return (true, z.local_fields(now).year);
   }
   if (count == 1) {
-    var y: i64 = pairs[at] as i64;
+    let y: i64 = pairs[at] as i64;
     if (pairs[at] <= 68) {
       if ((bits & 16) != 0) {
         return (false, 0);

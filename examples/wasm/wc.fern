@@ -22,9 +22,9 @@ struct Counts { lines: i32, words: i32, bytes: i32 }
 function count_chunk(chunk: string, acc: Counts): Counts {
   // `read_line` strips the trailing '\n'; we count the line
   // ourselves by incrementing once per non-empty chunk.
-  var parts: string[] = chunk.split(" ");
-  var nwords: i32 = 0;
-  var i: i32 = 0;
+  let parts: string[] = chunk.split(" ");
+  let nwords: i32 = 0;
+  let i: i32 = 0;
   while (i < parts.len()) {
     if (!parts[i].is_empty()) {
       nwords = nwords + 1;
@@ -42,7 +42,7 @@ function count_chunk(chunk: string, acc: Counts): Counts {
 }
 
 function count_reader(r: Reader): Counts {
-  var acc: Counts = Counts { lines: 0, words: 0, bytes: 0 };
+  let acc: Counts = Counts { lines: 0, words: 0, bytes: 0 };
   // `r.close()` is best-effort — its Option[IoError] return
   // is dropped here. defer fires even when one of the match
   // arms below short-circuits with `return`.
@@ -65,15 +65,15 @@ function format_counts(label: string, c: Counts): string {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var total: Counts = Counts { lines: 0, words: 0, bytes: 0 };
-  var nfiles: i32 = 0;
-  var i: i32 = 1;  // skip argv[0]
+  let argv: string[] = args();
+  let total: Counts = Counts { lines: 0, words: 0, bytes: 0 };
+  let nfiles: i32 = 0;
+  let i: i32 = 1;  // skip argv[0]
   while (i < argv.len()) {
-    var path: string = argv[i];
+    let path: string = argv[i];
     match (open_reader(path)) {
       Ok(r) => {
-        var got: Counts = count_reader(r);
+        let got: Counts = count_reader(r);
         print(format_counts(path, got));
         total = Counts {
           lines: total.lines + got.lines,
@@ -89,7 +89,7 @@ function main(): i32 {
     i = i + 1;
   }
   if (nfiles == 0) {
-    var stdin_got: Counts = count_reader(stdin());
+    let stdin_got: Counts = count_reader(stdin());
     print(format_counts("-", stdin_got));
   } else if (nfiles > 1) {
     print(format_counts("total", total));

@@ -31,18 +31,18 @@ var tryFromIRCases = []struct {
 }{
 	// Ok path with DIFFERING error types: read(1)? unwraps Ok(8) (no
 	// conversion on the success path), +1 = 9.
-	{"ok-prop", `function run(ok: i32): Result[i32, AppErr] { var v = read(ok)?; return Ok(v + 1); } function main(): i32 { match (run(1)) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 9},
+	{"ok-prop", `function run(ok: i32): Result[i32, AppErr] { let v = read(ok)?; return Ok(v + 1); } function main(): i32 { match (run(1)) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 9},
 	// Error path — THE conversion witness: read(0)? propagates Err(IoErr{42}),
 	// converted to Err(AppErr{92}); the handler reads e.code == 92 (NOT 42).
-	{"err-converts", `function run(ok: i32): Result[i32, AppErr] { var v = read(ok)?; return Ok(v + 1); } function main(): i32 { match (run(0)) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 92},
+	{"err-converts", `function run(ok: i32): Result[i32, AppErr] { let v = read(ok)?; return Ok(v + 1); } function main(): i32 { match (run(0)) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 92},
 	// Convert + arithmetic on the converted error field: 92 + 3 = 95 (pins that
 	// the bound `e` is the converted AppErr, not the source IoErr).
-	{"err-converts-add", `function run(ok: i32): Result[i32, AppErr] { var v = read(ok)?; return Ok(v + 1); } function main(): i32 { match (run(0)) { Ok(v) => { return v; }, Err(e) => { return e.code + 3; } } }`, 95},
+	{"err-converts-add", `function run(ok: i32): Result[i32, AppErr] { let v = read(ok)?; return Ok(v + 1); } function main(): i32 { match (run(0)) { Ok(v) => { return v; }, Err(e) => { return e.code + 3; } } }`, 95},
 	// Two `?` in a row, both Ok across the error-type boundary: 8 + 8 = 16.
-	{"two-ok", `function run(ok: i32): Result[i32, AppErr] { var a = read(ok)?; var b = read(ok)?; return Ok(a + b); } function main(): i32 { match (run(1)) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 16},
+	{"two-ok", `function run(ok: i32): Result[i32, AppErr] { let a = read(ok)?; let b = read(ok)?; return Ok(a + b); } function main(): i32 { match (run(1)) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 16},
 	// The SECOND `?` short-circuits and converts: read(1)?=8 then read(0)?
 	// converts Err(IoErr{42}) -> Err(AppErr{92}); handler reads e.code == 92.
-	{"second-errs", `function run(): Result[i32, AppErr] { var a = read(1)?; var b = read(0)?; return Ok(a + b); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 92},
+	{"second-errs", `function run(): Result[i32, AppErr] { let a = read(1)?; let b = read(0)?; return Ok(a + b); } function main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }`, 92},
 }
 
 func tryFromIRSrc(mainBody string) string {

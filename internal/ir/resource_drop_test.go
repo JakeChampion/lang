@@ -56,7 +56,7 @@ func countDropExterns(ip *ir.Program) (int, *ir.ExternFunc) {
 func TestAutoDropSynthesizesDropImport(t *testing.T) {
 	ip := lowerResourceProg(t, resourcePrelude+`
 function main(): i32 {
-	var p: own Pollable = subscribe(0 as u64);
+	let p: own Pollable = subscribe(0 as u64);
 	if (ready(p)) { write("x"); }
 	return 0;
 }`)
@@ -74,7 +74,7 @@ function main(): i32 {
 func TestAutoDropBareNamedOwnedLocal(t *testing.T) {
 	ip := lowerResourceProg(t, resourcePrelude+`
 function main(): i32 {
-	var p: Pollable = subscribe(0 as u64);
+	let p: Pollable = subscribe(0 as u64);
 	if (ready(p)) { write("x"); }
 	return 0;
 }`)
@@ -85,7 +85,7 @@ function main(): i32 {
 @import("wasi:io/poll@0.2.0", "[resource-drop]pollable")
 function drop_pollable(h: own Pollable): void;
 function main(): i32 {
-	var p: Pollable = subscribe(0 as u64);
+	let p: Pollable = subscribe(0 as u64);
 	drop_pollable(p);
 	return 0;
 }`)
@@ -99,10 +99,10 @@ function main(): i32 {
 func TestAutoDropSkipsMovedHandle(t *testing.T) {
 	ip := lowerResourceProg(t, resourcePrelude+`
 function take(): own Pollable {
-	var p: own Pollable = subscribe(0 as u64);
+	let p: own Pollable = subscribe(0 as u64);
 	return p;
 }
-function main(): i32 { var q: own Pollable = take(); return 0; }`)
+function main(): i32 { let q: own Pollable = take(); return 0; }`)
 	// `take` returns its handle (moved); `main`'s q is kept. So exactly one
 	// drop import is synthesized (for q), and `take` contributes none.
 	n, _ := countDropExterns(ip)
@@ -116,7 +116,7 @@ function main(): i32 { var q: own Pollable = take(); return 0; }`)
 func TestAutoDropIsIdempotent(t *testing.T) {
 	prog, err := parser.Parse(resourcePrelude + `
 function main(): i32 {
-	var p: own Pollable = subscribe(0 as u64);
+	let p: own Pollable = subscribe(0 as u64);
 	if (ready(p)) { write("x"); }
 	return 0;
 }`)

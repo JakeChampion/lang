@@ -37,7 +37,7 @@ var uafPoisonDec = strconv.Itoa(ast.RcPoison)
 // the poison — the inc-side check, which the dec-side double-free test in
 // self_host_sanitizer_test.go does not reach.
 const uafSelfHostIncSrc = `function main(): i32 {
-    var a: u8[] = __alloc_u8(16);
+    let a: u8[] = __alloc_u8(16);
     __rc_dec(a);
     __rc_inc(a);
     return 0;
@@ -102,9 +102,9 @@ func TestSelfHostUafQuarantineAsmContractX86_64(t *testing.T) {
 	src := `import "std/string";
 function mk(a: string): string { return a + "!"; }
 function main(): i32 {
-    var xs: string[] = [mk("x"), mk("y")];
-    var s: string = mk("ab");
-    var n: i32[] = [1, 2, 3];
+    let xs: string[] = [mk("x"), mk("y")];
+    let s: string = mk("ab");
+    let n: i32[] = [1, 2, 3];
     return xs.len() + s.len() + n[0];
 }`
 

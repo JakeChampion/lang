@@ -108,8 +108,8 @@ const WRITE_CHUNK: i32 = 4096;
 // `serve(request, response_out, handle)` — answer one request: the body of
 // the component's incoming-handler export, with the program's `handle`.
 pub function serve(request: i32, response_out: i32, handle: (HttpRequest, Platform) => HttpResponse): void {
-  var method: string = method_name(req_method(request));
-  var target: string = "/";
+  let method: string = method_name(req_method(request));
+  let target: string = "/";
   match (req_path(request)) {
     Some(p) => {
       target = p;
@@ -120,7 +120,7 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, Platfo
   }
   // The path a handler sees is the same on every target: decoded once,
   // its dot segments removed, or refused.
-  var path: string = "";
+  let path: string = "";
   match (http.http_request_target(method, target)) {
     Ok(p) => {
       path = p;
@@ -134,14 +134,14 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, Platfo
   // The header snapshot is taken before the body is consumed; its entries
   // are read after, and the request is dropped last, once its children —
   // the fields and the finished body — are gone.
-  var fields: i32 = req_headers(request);
-  var data: u8[] = read_body(request);
-  var headers: HeaderMap = headers_of(fields);
+  let fields: i32 = req_headers(request);
+  let data: u8[] = read_body(request);
+  let headers: HeaderMap = headers_of(fields);
   req_drop(request);
   // The body's trailers are a future the host settles after the body is
   // finished; nothing reads it yet, so the request's are empty.
-  var req: HttpRequest = HttpRequest { method: method, path: path, body: Stream { data: data, pos: 0 }, headers: headers, trailers: HeaderMap { names: [], values: [] } };
-  var resp: HttpResponse = handle(req, platform.platform_new());
+  let req: HttpRequest = HttpRequest { method: method, path: path, body: Stream { data: data, pos: 0 }, headers: headers, trailers: HeaderMap { names: [], values: [] } };
+  let resp: HttpResponse = handle(req, platform.platform_new());
   send(response_out, resp);
 }
 
@@ -267,8 +267,8 @@ function past(n: i32, cap: Option[i32]): boolean {
 
 // headers_of reads a fields snapshot into a HeaderMap and drops it.
 function headers_of(fields: i32): HeaderMap {
-  var names: string[] = [];
-  var values: string[] = [];
+  let names: string[] = [];
+  let values: string[] = [];
   for entry in fields_entries(fields) {
     let (name, value) = entry;
     names = names.append(name);
@@ -291,7 +291,7 @@ function send(response_out: i32, resp: HttpResponse): void {
     }
     i = i + 1;
   }
-  var response: i32 = response_new(fields);
+  let response: i32 = response_new(fields);
   response_set_status(response, resp.status);
   match (response_body(response)) {
     Ok(body) => {
@@ -324,14 +324,14 @@ function write_body(body: i32, bytes: u8[]): void {
 // The host accepts list<u8>, including bytes that are not UTF-8. Keep the
 // body in that domain through chunking and canonical ABI marshalling.
 function write_all(stream: i32, body: u8[]): void {
-  var off: i32 = 0;
-  var n: i32 = body.len();
+  let off: i32 = 0;
+  let n: i32 = body.len();
   if (n == 0) {
     return;
   }
-  var chunk: usize = buf_new(WRITE_CHUNK);
+  let chunk: usize = buf_new(WRITE_CHUNK);
   while (off < n) {
-    var end: i32 = n;
+    let end: i32 = n;
     if (n - off > WRITE_CHUNK) {
       end = off + WRITE_CHUNK;
     }

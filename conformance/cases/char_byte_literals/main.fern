@@ -17,8 +17,8 @@ const OPEN: u8 = b'[';
 const NEWLINE: char = '\n';
 
 function bracket_depth(s: string): i32 {
-    var depth: i32 = 0;
-    var i: i32 = 0;
+    let depth: i32 = 0;
+    let i: i32 = 0;
     while (i < s.len()) {
         if (s[i] == b'[') { depth = depth + 1; }
         if (s[i] == b']') { depth = depth - 1; }
@@ -39,13 +39,13 @@ function classify(b: u8): i32 {
 }
 
 function upper_ascii(c: char): char {
-    var n: i32 = c as i32;
+    let n: i32 = c as i32;
     if (n >= 97 && n <= 122) { return (n - 32) as char; }
     return c;
 }
 
 function main(): i32 {
-    var s: string = "a[b][c]";
+    let s: string = "a[b][c]";
 
     // A byte literal against a string index — the shape the feature exists
     // for. No `as i32` on either side.
@@ -56,7 +56,7 @@ function main(): i32 {
     if (bracket_depth("[[a") != 2) { return 5; }
 
     // The same read through a `str` view.
-    var v: str = slice_unchecked(s, 0, 4);
+    let v: str = slice_unchecked(s, 0, 4);
     if (v[1] != b'[') { return 6; }
 
     // Byte escapes, including the full 0..255 range `\xNN` reaches.
@@ -71,7 +71,7 @@ function main(): i32 {
 
     // Character literals: ASCII, escapes, `\u{...}`, and a source-encoded
     // scalar beyond the BMP.
-    var c: char = 'x';
+    let c: char = 'x';
     if ((c as i32) != 120) { return 15; }
     if (('\n' as i32) != 10) { return 16; }
     if (('\'' as i32) != 39) { return 17; }
@@ -82,7 +82,7 @@ function main(): i32 {
     if (('é' as i32) != 233) { return 22; }
 
     // char-to-char equality and assignment, no conversion in sight.
-    var d: char = c;
+    let d: char = c;
     if (!(c == d)) { return 23; }
     if (c == 'y') { return 24; }
     if ((upper_ascii('a') as i32) != 65) { return 25; }
@@ -96,9 +96,9 @@ function main(): i32 {
     if (classify(b'z') != 0) { return 31; }
 
     // Arrays keep the element type.
-    var bytes: u8[] = [b'a', b'b', b'c'];
+    let bytes: u8[] = [b'a', b'b', b'c'];
     if (bytes[2] != b'c') { return 32; }
-    var chars: char[] = ['x', '\u{1F600}'];
+    let chars: char[] = ['x', '\u{1F600}'];
     if ((chars[1] as i32) != 128512) { return 33; }
 
     // A literal is a constant expression.

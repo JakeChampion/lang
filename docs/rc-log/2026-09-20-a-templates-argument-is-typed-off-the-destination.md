@@ -2,8 +2,8 @@
 
 After the synthesised-tag work the fuzz census had 33 programs left, and
 two of the root leaves were one thing: a literal handed to a template.
-`var m: Map[i32, i32] = id(Map {})` refused as `unsupported map shape: no
-destination names one` (seeds 000, 075, 098 and four more), and `var fs:
+`let m: Map[i32, i32] = id(Map {})` refused as `unsupported map shape: no
+destination names one` (seeds 000, 075, 098 and four more), and `let fs:
 ((i32) => i32)[] = id([cw3_a, …])` as `unresolved array literal type`
 (seeds 363, 381, 397).
 

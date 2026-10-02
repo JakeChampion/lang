@@ -16,7 +16,7 @@ import (
 // cap-0 grow-leak (#4877). The three legs of the old mutually-compensating
 // balance (keys() aliases the buffer / the ks result's exit-dec frees that
 // alias / the map leaks its own buffers) are flipped together:
-//   - `var ks = m.keys()` is an OWNED fresh copy: the exit sweep reclaims the
+//   - `let ks = m.keys()` is an OWNED fresh copy: the exit sweep reclaims the
 //     copy, later m.insert mutations (including buffer-replacing grows) never
 //     show through it, and the map's own buffers are freed by map_free /
 //     the owned grow — no double free (__rc_underflow_count() == 0) and no leak.
@@ -59,22 +59,22 @@ func TestSelfHostMapKeysSnapshotIRX86_64(t *testing.T) {
 	}
 
 	// SNAPSHOT SEMANTICS (the doc's differential-oracle case, matching the
-	// native compiler): `var ks = m.keys()` must show the PRE-insert length and
+	// native compiler): `let ks = m.keys()` must show the PRE-insert length and
 	// values after later inserts/overwrites — including inserts that GROW the
 	// map (cap 4 -> 8), which now free the superseded buffer the old aliasing
 	// read would have dangled on.
 	run(t, `function main(): i32 {
-    var m: Map[i32, i32] = Map { 1: 10, 2: 20 };
-    var ks = m.keys();
-    var vs: i32[] = m.values();
+    let m: Map[i32, i32] = Map { 1: 10, 2: 20 };
+    let ks = m.keys();
+    let vs: i32[] = m.values();
     m = m.insert(9, 90);
     m = m.insert(10, 100);
     m = m.insert(11, 110);
     m = m.insert(1, 11);
     if (ks.len() != 2) { return 10; }
     if (vs.len() != 2) { return 11; }
-    var sv: i32 = 0;
-    var i: i32 = 0;
+    let sv: i32 = 0;
+    let i: i32 = 0;
     while (i < vs.len()) { sv = sv + vs[i]; i = i + 1; }
     if (sv != 30) { return 12; }
     if (m.len() != 5) { return 13; }
@@ -90,47 +90,47 @@ func TestSelfHostMapKeysSnapshotIRX86_64(t *testing.T) {
 	// is the #4877 grow-leak (48+ B/build) closing: before the coupled change
 	// this churn grew by the abandoned cap-0/4/8 buffers every build.
 	run(t, `function build(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2 };
-    var j: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: 2 };
+    let j: i32 = 0;
     while (j < 12) { m = m.insert(j + 10, j * 2); j = j + 1; }
     if (m.has(15)) { return m.len(); }
     return 0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + build(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
 }`, "map-i32-grow-churn-flat", 0)
 
-	// KEYS-TAKEN CHURN: build + grow + `var ks = m.keys()` per iteration must
+	// KEYS-TAKEN CHURN: build + grow + `let ks = m.keys()` per iteration must
 	// also be flat — the exit sweep frees the snapshot COPY, map_free frees
 	// the map's real buffers exactly once (no underflow), and the owned grow
 	// frees the superseded ones. Under the old alias this shape double-dec'd
 	// the live keys buffer (ks sweep + map_free) and leaked every grow.
 	run(t, `function build(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2 };
-    var j: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: 2 };
+    let j: i32 = 0;
     while (j < 8) { m = m.insert(j + 10, j); j = j + 1; }
-    var ks = m.keys();
-    var vs = m.values();
+    let ks = m.keys();
+    let vs = m.values();
     return ks.len() + vs.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + build(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc < 0) { return 97; }
@@ -145,8 +145,8 @@ function main(): i32 {
 	// runtime iterates the live map — a pre-existing, now-documented
 	// divergence this change does not widen for the non-mutating case).
 	run(t, `function main(): i32 {
-    var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
-    var total: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
+    let total: i32 = 0;
     for (k, v) in m {
         total = total + k + v;
         m = m.insert(k + 100, v);
@@ -163,19 +163,19 @@ function main(): i32 {
 	// repeated iteration stays flat and does not over-release (the map's own
 	// buffers are freed exactly once, by map_free).
 	run(t, `function build(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2, 3: 4, 5: 6 };
-    var t: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: 2, 3: 4, 5: 6 };
+    let t: i32 = 0;
     for (k, v) in m { t = t + k + v; }
     return t;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + build(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc != 2200 * 21) { return 98; }
@@ -186,11 +186,11 @@ function main(): i32 {
 	// after the loop's exit label, so a break still frees the copy — flat
 	// churn, correct partial sum, no over-release.
 	run(t, `function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
-        var s: i32 = 0;
+        let m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
+        let s: i32 = 0;
         for k in m.keys() { if (k == 2) { break; } s = s + k; }
         if (s != 1) { bad = 1; }
         i = i + 1;
@@ -206,11 +206,11 @@ function main(): i32 {
 	// Since #5335 this map is owncols too (both columns snapshot-kind), so the
 	// insert(3, ..) grow frees the superseded buffers under the live ks snapshot.
 	run(t, `function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var m: Map[i32, string] = Map { 1: "a" + "b", 2: "c" + "d" };
-        var ks = m.keys();
+        let m: Map[i32, string] = Map { 1: "a" + "b", 2: "c" + "d" };
+        let ks = m.keys();
         m = m.insert(3, "e" + "f");
         if (ks.len() != 2) { bad = 1; }
         if (m.get_or(2, "").len() != 2) { bad = 1; }
@@ -231,26 +231,26 @@ function main(): i32 {
 	// map-owned key string (rc-aware __fern_str_free decs at rc>1). Keys seen
 	// (correctness).
 	run(t, `function build_iter(n: i32): i32 {
-    var m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
-    var seen: i32 = 0;
+    let m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
+    let seen: i32 = 0;
     for k in m.keys() { seen = seen + k.len(); }
     return seen;
 }
 function build_noiter(n: i32): i32 {
-    var m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
+    let m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
     return m.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + build_iter(i) + build_noiter(i); i = i + 1; }
-    var s0: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s0: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build_iter(j); j = j + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var k: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let k: i32 = 0;
     while (k < 2000) { acc = acc + build_noiter(k); k = k + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s1 - s0) > (s2 - s1) + 8192) { return 1; }
     if (acc < 0) { return 97; }
@@ -260,26 +260,26 @@ function main(): i32 {
 	// String-VALUED map via `for (k, v) in m`: the value column snapshots +
 	// retains + deep-releases. Same flatness + underflow contract.
 	run(t, `function build_iter(n: i32): i32 {
-    var m: Map[i32, string] = Map { 1: "a" + "a", 2: "b" + "b" };
-    var seen: i32 = 0;
+    let m: Map[i32, string] = Map { 1: "a" + "a", 2: "b" + "b" };
+    let seen: i32 = 0;
     for (k, v) in m { seen = seen + v.len(); }
     return seen;
 }
 function build_noiter(n: i32): i32 {
-    var m: Map[i32, string] = Map { 1: "a" + "a", 2: "b" + "b" };
+    let m: Map[i32, string] = Map { 1: "a" + "a", 2: "b" + "b" };
     return m.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + build_iter(i) + build_noiter(i); i = i + 1; }
-    var s0: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s0: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + build_iter(j); j = j + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var k: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let k: i32 = 0;
     while (k < 2000) { acc = acc + build_noiter(k); k = k + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s1 - s0) > (s2 - s1) + 8192) { return 1; }
     if (acc < 0) { return 97; }

@@ -19,16 +19,16 @@ import (
 
 const mapIterReclaimProlog = "import \"core/map\";\n" +
 	"function drain(it: MapIter[string, i32]): i32 {\n" +
-	"    var t: i32 = 0;\n" +
+	"    let t: i32 = 0;\n" +
 	"    while (it.has_next()) { t = t + it.value(); it.advance(); }\n" +
 	"    return t;\n" +
 	"}\n" +
 	"function main(): i32 {\n" +
-	"    var m: Map[string, i32] = map_new(4);\n" +
+	"    let m: Map[string, i32] = map_new(4);\n" +
 	"    m = m.insert(\"a\", 1);\n" +
 	"    m = m.insert(\"bb\", 2);\n" +
-	"    var total: i32 = 0;\n" +
-	"    var i: i32 = 0;\n" +
+	"    let total: i32 = 0;\n" +
+	"    let i: i32 = 0;\n" +
 	"    while (i < 8) { BODY i = i + 1; }\n" +
 	"    return total % 256;\n" +
 	"}\n"
@@ -43,11 +43,11 @@ func mapIterReclaimCases() []mapIterReclaimCase {
 	return []mapIterReclaimCase{
 		{"for_in", "for (k, v) in m { total = total + v + k.len(); }", 48},
 		{"for_in_break", "for (k, v) in m { if (v == 2) { break; } total = total + v; }", 8},
-		{"bound_cursor", "var it = m.iter(); while (it.has_next()) { total = total + it.value(); it.advance(); }", 24},
+		{"bound_cursor", "let it = m.iter(); while (it.has_next()) { total = total + it.value(); it.advance(); }", 24},
 		{"fresh_argument", "total = total + drain(m.iter());", 24},
-		{"aliased_argument", "var it = m.iter(); var alias = it; total = total + drain(alias);", 24},
-		{"tuple_held", "var pair: (MapIter[string, i32], i32) = (m.iter(), 5); var (c, k) = pair; if (c.has_next()) { total = total + c.value() + k; }", 48},
-		{"reassigned", "var it = m.iter(); it = m.iter(); if (it.has_next()) { total = total + it.value(); }", 8},
+		{"aliased_argument", "let it = m.iter(); let alias = it; total = total + drain(alias);", 24},
+		{"tuple_held", "let pair: (MapIter[string, i32], i32) = (m.iter(), 5); let (c, k) = pair; if (c.has_next()) { total = total + c.value() + k; }", 48},
+		{"reassigned", "let it = m.iter(); it = m.iter(); if (it.has_next()) { total = total + it.value(); }", 8},
 	}
 }
 
@@ -101,10 +101,10 @@ func TestSelfHostMapIterAcrossModules(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
 	lib := "import \"core/map\";\npub function drain(it: MapIter[string, i32]): i32 {\n" +
-		"    var t: i32 = 0;\n    while (it.has_next()) { t = t + it.value(); it.advance(); }\n    return t;\n}\n"
+		"    let t: i32 = 0;\n    while (it.has_next()) { t = t + it.value(); it.advance(); }\n    return t;\n}\n"
 	main := "import \"core/map\";\nimport \"./lib\";\nfunction main(): i32 {\n" +
-		"    var m: Map[string, i32] = map_new(4);\n    m = m.insert(\"a\", 1);\n    m = m.insert(\"bb\", 2);\n" +
-		"    var total: i32 = 0;\n    var i: i32 = 0;\n    while (i < 8) { total = total + lib.drain(m.iter()); i = i + 1; }\n" +
+		"    let m: Map[string, i32] = map_new(4);\n    m = m.insert(\"a\", 1);\n    m = m.insert(\"bb\", 2);\n" +
+		"    let total: i32 = 0;\n    let i: i32 = 0;\n    while (i < 8) { total = total + lib.drain(m.iter()); i = i + 1; }\n" +
 		"    return total;\n}\n"
 	if err := os.WriteFile(filepath.Join(dir, "lib.fern"), []byte(lib), 0o644); err != nil {
 		t.Fatal(err)

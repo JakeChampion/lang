@@ -40,7 +40,7 @@ that was settled.
 The divergence was not confined to this boundary. Native rejects
 
 ```fern
-match (s[0:3]) { Some(v) => { var w: string = v; return w.len(); }, ... }
+match (s[0:3]) { Some(v) => { let w: string = v; return w.len(); }, ... }
 ```
 
 with E003, because `v` is a borrowed view of `s`. The self-host compiled it

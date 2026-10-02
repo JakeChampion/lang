@@ -83,12 +83,12 @@ function is_digit(c: u8): boolean {
 // else, INCLUDING the empty string and a lone "-", so a malformed number is
 // never silently a zero.
 function parse_i64(s: string): I64R {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return I64R { ok: false, v: 0 };
   }
-  var neg: boolean = false;
-  var at: i32 = 0;
+  let neg: boolean = false;
+  let at: i32 = 0;
   if (s[0] == 45) {
     neg = true;
     at = 1;
@@ -96,7 +96,7 @@ function parse_i64(s: string): I64R {
   if (at >= n) {
     return I64R { ok: false, v: 0 };
   }
-  var acc: i64 = 0;
+  let acc: i64 = 0;
   while (at < n) {
     if (!is_digit(s[at])) {
       return I64R { ok: false, v: 0 };
@@ -134,7 +134,7 @@ function classify(v: string): ValR {
       code: 0, msg: "",
     };
   }
-  var num: I64R = parse_i64(v);
+  let num: I64R = parse_i64(v);
   if (num.ok) {
     return ValR { ok: true, kind: 0, i: num.v, b: false, s: "", code: 0, msg: "" };
   }
@@ -142,9 +142,9 @@ function classify(v: string): ValR {
 }
 
 function has_key(cfg: Config, section: string, key: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < cfg.entries.len()) {
-    var e: Entry = cfg.entries[i];
+    let e: Entry = cfg.entries[i];
     if (e.section == section && e.key == key) {
       return true;
     }
@@ -157,13 +157,13 @@ function has_key(cfg: Config, section: string, key: string): boolean {
 // `lines`, before any decision about whether the line carries meaning. Skipping
 // a comment must not skip a number.
 function parse(text: string): ParseR {
-  var lines: string[] = text.split("\n");
-  var cfg: Config = Config { entries: [] };
-  var section: string = "";
-  var idx: i32 = 0;
+  let lines: string[] = text.split("\n");
+  let cfg: Config = Config { entries: [] };
+  let section: string = "";
+  let idx: i32 = 0;
   while (idx < lines.len()) {
-    var lineno: i32 = idx + 1;
-    var raw: string = lines[idx].trim().to_owned();
+    let lineno: i32 = idx + 1;
+    let raw: string = lines[idx].trim().to_owned();
     idx = idx + 1;
 
     if (raw.len() == 0) {
@@ -180,7 +180,7 @@ function parse(text: string): ParseR {
           err: Fault { line: lineno, code: 2, msg: "section header is missing its closing ]" },
         };
       }
-      var name: string = raw.drop(1).take(raw.len() - 2).trim().to_owned();
+      let name: string = raw.drop(1).take(raw.len() - 2).trim().to_owned();
       if (name.len() == 0) {
         return ParseR {
           ok: false, cfg: cfg,
@@ -191,21 +191,21 @@ function parse(text: string): ParseR {
       continue;
     }
 
-    var eq: i32 = raw.index_of("=");
+    let eq: i32 = raw.index_of("=");
     if (eq < 0) {
       return ParseR {
         ok: false, cfg: cfg,
         err: Fault { line: lineno, code: 1, msg: "expected `key = value`, found no `=`" },
       };
     }
-    var key: string = raw.take(eq).trim().to_owned();
+    let key: string = raw.take(eq).trim().to_owned();
     if (key.len() == 0) {
       return ParseR {
         ok: false, cfg: cfg,
         err: Fault { line: lineno, code: 3, msg: "empty key before `=`" },
       };
     }
-    var val: ValR = classify(raw.drop(eq + 1).trim().to_owned());
+    let val: ValR = classify(raw.drop(eq + 1).trim().to_owned());
     if (!val.ok) {
       return ParseR {
         ok: false, cfg: cfg,
@@ -218,7 +218,7 @@ function parse(text: string): ParseR {
         err: Fault { line: lineno, code: 5, msg: "duplicate key in this section" },
       };
     }
-    var e: Entry = Entry {
+    let e: Entry = Entry {
       section: section, key: key, kind: val.kind,
       i: val.i, b: val.b, s: val.s,
     };
@@ -230,9 +230,9 @@ function parse(text: string): ParseR {
 // ---------------------------------------------------------- typed lookups ---
 
 function find(cfg: Config, section: string, key: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < cfg.entries.len()) {
-    var e: Entry = cfg.entries[i];
+    let e: Entry = cfg.entries[i];
     if (e.section == section && e.key == key) {
       return i;
     }
@@ -253,11 +253,11 @@ function wrong_type(key: string, want: string): Fault {
 // an error, and so is a bool-typed lookup of `1`. Returning a default here is
 // how a typo in a config file becomes a plausible setting.
 function get_int(cfg: Config, section: string, key: string): IntR {
-  var at: i32 = find(cfg, section, key);
+  let at: i32 = find(cfg, section, key);
   if (at < 0) {
     return IntR { ok: false, v: 0, err: missing(section, key) };
   }
-  var e: Entry = cfg.entries[at];
+  let e: Entry = cfg.entries[at];
   if (e.kind != 0) {
     return IntR { ok: false, v: 0, err: wrong_type(key, "an integer") };
   }
@@ -265,11 +265,11 @@ function get_int(cfg: Config, section: string, key: string): IntR {
 }
 
 function get_bool(cfg: Config, section: string, key: string): BoolR {
-  var at: i32 = find(cfg, section, key);
+  let at: i32 = find(cfg, section, key);
   if (at < 0) {
     return BoolR { ok: false, v: false, err: missing(section, key) };
   }
-  var e: Entry = cfg.entries[at];
+  let e: Entry = cfg.entries[at];
   if (e.kind != 1) {
     return BoolR { ok: false, v: false, err: wrong_type(key, "a boolean") };
   }
@@ -277,11 +277,11 @@ function get_bool(cfg: Config, section: string, key: string): BoolR {
 }
 
 function get_str(cfg: Config, section: string, key: string): StrR {
-  var at: i32 = find(cfg, section, key);
+  let at: i32 = find(cfg, section, key);
   if (at < 0) {
     return StrR { ok: false, v: "", err: missing(section, key) };
   }
-  var e: Entry = cfg.entries[at];
+  let e: Entry = cfg.entries[at];
   if (e.kind != 2) {
     return StrR { ok: false, v: "", err: wrong_type(key, "a string") };
   }
@@ -307,13 +307,13 @@ function render_value(e: Entry): string {
 // strings are re-quoted, so a string whose text is `42` does not come back as
 // an integer. That is the property the round-trip test exists to pin.
 function render(cfg: Config): string {
-  var out: string = "";
-  var sections: string[] = [];
-  var i: i32 = 0;
+  let out: string = "";
+  let sections: string[] = [];
+  let i: i32 = 0;
   while (i < cfg.entries.len()) {
-    var s: string = cfg.entries[i].section;
-    var seen: boolean = false;
-    var k: i32 = 0;
+    let s: string = cfg.entries[i].section;
+    let seen: boolean = false;
+    let k: i32 = 0;
     while (k < sections.len()) {
       if (sections[k] == s) {
         seen = true;
@@ -325,15 +325,15 @@ function render(cfg: Config): string {
     }
     i = i + 1;
   }
-  var si: i32 = 0;
+  let si: i32 = 0;
   while (si < sections.len()) {
-    var sec: string = sections[si];
+    let sec: string = sections[si];
     if (sec.len() > 0) {
       out = out + "[" + sec + "]\n";
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < cfg.entries.len()) {
-      var e: Entry = cfg.entries[j];
+      let e: Entry = cfg.entries[j];
       if (e.section == sec) {
         out = out + e.key + " = " + render_value(e) + "\n";
       }
@@ -348,14 +348,14 @@ function same_entries(a: Config, b: Config): boolean {
   if (a.entries.len() != b.entries.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.entries.len()) {
-    var x: Entry = a.entries[i];
-    var at: i32 = find(b, x.section, x.key);
+    let x: Entry = a.entries[i];
+    let at: i32 = find(b, x.section, x.key);
     if (at < 0) {
       return false;
     }
-    var y: Entry = b.entries[at];
+    let y: Entry = b.entries[at];
     if (x.kind != y.kind) {
       return false;
     }
@@ -376,8 +376,8 @@ function same_entries(a: Config, b: Config): boolean {
 // ------------------------------------------------------------- generators ---
 
 function join_lines(lines: string[]): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < lines.len()) {
     out = out + lines[i] + "\n";
     i = i + 1;
@@ -390,10 +390,10 @@ function join_lines(lines: string[]): string {
 // meaning of the document at all — which is exactly the asymmetry the
 // line-number test needs.
 function valid_lines(pad: i32): string[] {
-  var out: string[] = [];
-  var s: i32 = 0;
+  let out: string[] = [];
+  let s: i32 = 0;
   while (s < 3) {
-    var p: i32 = 0;
+    let p: i32 = 0;
     while (p < pad) {
       if (p % 2 == 0) {
         out = out.append("# a comment");
@@ -403,9 +403,9 @@ function valid_lines(pad: i32): string[] {
       p = p + 1;
     }
     out = out.append("[sec" + s.to_string() + "]");
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) {
-      var key: string = "k" + k.to_string();
+      let key: string = "k" + k.to_string();
       if (k == 0) {
         out = out.append(key + " = " + (s * 10 + k).to_string());
       }
@@ -437,8 +437,8 @@ function bad_codes(): i32[] {
 }
 
 function splice(lines: string[], at: i32, replacement: string): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < lines.len()) {
     if (i == at) {
       out = out.append(replacement);
@@ -457,15 +457,15 @@ function splice(lines: string[], at: i32, replacement: string): string[] {
 // reports where it stopped, or a fixed line, or the count of SIGNIFICANT lines,
 // fails somewhere in this sweep.
 function test_the_reported_line_is_the_malformed_one(): test.TestOutcome {
-  var base: string[] = valid_lines(0);
-  var bads: string[] = bad_lines();
-  var codes: i32[] = bad_codes();
-  var b: i32 = 0;
+  let base: string[] = valid_lines(0);
+  let bads: string[] = bad_lines();
+  let codes: i32[] = bad_codes();
+  let b: i32 = 0;
   while (b < bads.len()) {
-    var at: i32 = 0;
+    let at: i32 = 0;
     while (at < base.len()) {
-      var doc: string[] = splice(base, at, bads[b]);
-      var r: ParseR = parse(join_lines(doc));
+      let doc: string[] = splice(base, at, bads[b]);
+      let r: ParseR = parse(join_lines(doc));
       if (r.ok) {
         return test.fail("line " + (at + 1).to_string() + " `" + bads[b]
           + "` parsed clean; a malformed line must be rejected");
@@ -490,12 +490,12 @@ function test_the_reported_line_is_the_malformed_one(): test.TestOutcome {
 // meaning. The reported number must track the physical position, not the
 // significant-line count.
 function test_comments_and_blanks_do_not_shift_the_line(): test.TestOutcome {
-  var pad: i32 = 0;
+  let pad: i32 = 0;
   while (pad < 5) {
-    var base: string[] = valid_lines(pad);
-    var at: i32 = base.len() - 1;
-    var doc: string[] = splice(base, at, "no equals here");
-    var r: ParseR = parse(join_lines(doc));
+    let base: string[] = valid_lines(pad);
+    let at: i32 = base.len() - 1;
+    let doc: string[] = splice(base, at, "no equals here");
+    let r: ParseR = parse(join_lines(doc));
     if (r.ok) {
       return test.fail("pad=" + pad.to_string() + ": malformed line parsed clean");
     }
@@ -510,9 +510,9 @@ function test_comments_and_blanks_do_not_shift_the_line(): test.TestOutcome {
 }
 
 function test_a_valid_document_parses_clean(): test.TestOutcome {
-  var pad: i32 = 0;
+  let pad: i32 = 0;
   while (pad < 5) {
-    var r: ParseR = parse(join_lines(valid_lines(pad)));
+    let r: ParseR = parse(join_lines(valid_lines(pad)));
     if (!r.ok) {
       return test.fail("pad=" + pad.to_string() + ": valid document rejected at line "
         + r.err.line.to_string() + ": " + r.err.msg);
@@ -527,28 +527,28 @@ function test_a_valid_document_parses_clean(): test.TestOutcome {
 }
 
 function test_typed_lookups_agree_with_the_source(): test.TestOutcome {
-  var r: ParseR = parse(join_lines(valid_lines(2)));
+  let r: ParseR = parse(join_lines(valid_lines(2)));
   if (!r.ok) {
     return test.fail("valid document rejected: " + r.err.msg);
   }
-  var s: i32 = 0;
+  let s: i32 = 0;
   while (s < 3) {
-    var sec: string = "sec" + s.to_string();
-    var iv: IntR = get_int(r.cfg, sec, "k0");
+    let sec: string = "sec" + s.to_string();
+    let iv: IntR = get_int(r.cfg, sec, "k0");
     if (!iv.ok) {
       return test.fail(sec + ".k0: " + iv.err.msg);
     }
     if (iv.v != (s * 10) as i64) {
       return test.fail(sec + ".k0 = " + iv.v.to_string() + ", want " + (s * 10).to_string());
     }
-    var bv: BoolR = get_bool(r.cfg, sec, "k1");
+    let bv: BoolR = get_bool(r.cfg, sec, "k1");
     if (!bv.ok) {
       return test.fail(sec + ".k1: " + bv.err.msg);
     }
     if (bv.v != (s % 2 == 0)) {
       return test.fail(sec + ".k1 has the wrong boolean");
     }
-    var sv: StrR = get_str(r.cfg, sec, "k2");
+    let sv: StrR = get_str(r.cfg, sec, "k2");
     if (!sv.ok) {
       return test.fail(sec + ".k2: " + sv.err.msg);
     }
@@ -563,32 +563,32 @@ function test_typed_lookups_agree_with_the_source(): test.TestOutcome {
 // The plausible-zero test. Every wrong-type lookup must FAIL rather than coerce,
 // including `get_bool` on `1` — truthiness is how the hole reopens.
 function test_a_wrong_type_lookup_is_an_error(): test.TestOutcome {
-  var r: ParseR = parse("[s]\nn = 7\nflag = true\nname = \"x\"\none = 1\nyes = \"true\"\n");
+  let r: ParseR = parse("[s]\nn = 7\nflag = true\nname = \"x\"\none = 1\nyes = \"true\"\n");
   if (!r.ok) {
     return test.fail("setup document rejected: " + r.err.msg);
   }
 
-  var a: IntR = get_int(r.cfg, "s", "flag");
+  let a: IntR = get_int(r.cfg, "s", "flag");
   if (a.ok) {
     return test.fail("get_int on a boolean returned " + a.v.to_string());
   }
-  var b: IntR = get_int(r.cfg, "s", "name");
+  let b: IntR = get_int(r.cfg, "s", "name");
   if (b.ok) {
     return test.fail("get_int on a string returned " + b.v.to_string());
   }
-  var c: BoolR = get_bool(r.cfg, "s", "n");
+  let c: BoolR = get_bool(r.cfg, "s", "n");
   if (c.ok) {
     return test.fail("get_bool on an integer succeeded");
   }
-  var d: BoolR = get_bool(r.cfg, "s", "one");
+  let d: BoolR = get_bool(r.cfg, "s", "one");
   if (d.ok) {
     return test.fail("get_bool on `1` succeeded — truthiness is a coercion");
   }
-  var e: BoolR = get_bool(r.cfg, "s", "yes");
+  let e: BoolR = get_bool(r.cfg, "s", "yes");
   if (e.ok) {
     return test.fail("get_bool on the quoted string \"true\" succeeded");
   }
-  var f: StrR = get_str(r.cfg, "s", "n");
+  let f: StrR = get_str(r.cfg, "s", "n");
   if (f.ok) {
     return test.fail("get_str on an integer returned `" + f.v + "`");
   }
@@ -600,26 +600,26 @@ function test_a_wrong_type_lookup_is_an_error(): test.TestOutcome {
 }
 
 function test_a_missing_key_is_an_error_not_a_default(): test.TestOutcome {
-  var r: ParseR = parse("[s]\nn = 7\n");
+  let r: ParseR = parse("[s]\nn = 7\n");
   if (!r.ok) {
     return test.fail("setup document rejected: " + r.err.msg);
   }
-  var a: IntR = get_int(r.cfg, "s", "absent");
+  let a: IntR = get_int(r.cfg, "s", "absent");
   if (a.ok) {
     return test.fail("a missing key returned " + a.v.to_string() + " instead of failing");
   }
   if (a.err.code != 10) {
     return test.fail("missing key reported code " + a.err.code.to_string());
   }
-  var b: IntR = get_int(r.cfg, "nosuch", "n");
+  let b: IntR = get_int(r.cfg, "nosuch", "n");
   if (b.ok) {
     return test.fail("a key in a missing section returned " + b.v.to_string());
   }
-  var c: BoolR = get_bool(r.cfg, "s", "absent");
+  let c: BoolR = get_bool(r.cfg, "s", "absent");
   if (c.ok) {
     return test.fail("a missing boolean returned false instead of failing");
   }
-  var d: StrR = get_str(r.cfg, "s", "absent");
+  let d: StrR = get_str(r.cfg, "s", "absent");
   if (d.ok) {
     return test.fail("a missing string returned `" + d.v + "` instead of failing");
   }
@@ -630,18 +630,18 @@ function test_a_missing_key_is_an_error_not_a_default(): test.TestOutcome {
 // contains a STRING whose text is a number and a string whose text is `true`,
 // which is where an unquoted render would change the type on the way back in.
 function test_render_round_trips_through_the_parser(): test.TestOutcome {
-  var docs: string[] = [
+  let docs: string[] = [
     join_lines(valid_lines(3)),
     "[s]\nnum_like = \"42\"\nbool_like = \"true\"\nreal = 42\nreal_b = true\n",
     "bare = 1\n[a]\nx = -5\n[b]\ny = \"hi there\"\n",
   ];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < docs.len()) {
-    var first: ParseR = parse(docs[i]);
+    let first: ParseR = parse(docs[i]);
     if (!first.ok) {
       return test.fail("doc " + i.to_string() + " rejected: " + first.err.msg);
     }
-    var again: ParseR = parse(render(first.cfg));
+    let again: ParseR = parse(render(first.cfg));
     if (!again.ok) {
       return test.fail("doc " + i.to_string() + ": rendered output does not parse: "
         + again.err.msg);
@@ -655,7 +655,7 @@ function test_render_round_trips_through_the_parser(): test.TestOutcome {
 }
 
 function test_a_duplicate_key_is_rejected(): test.TestOutcome {
-  var r: ParseR = parse("[s]\nn = 1\nm = 2\nn = 3\n");
+  let r: ParseR = parse("[s]\nn = 1\nm = 2\nn = 3\n");
   if (r.ok) {
     return test.fail("a duplicate key parsed clean");
   }
@@ -666,7 +666,7 @@ function test_a_duplicate_key_is_rejected(): test.TestOutcome {
     return test.fail("duplicate reported code " + r.err.code.to_string());
   }
   // The same key in a DIFFERENT section is not a duplicate.
-  var ok: ParseR = parse("[a]\nn = 1\n[b]\nn = 2\n");
+  let ok: ParseR = parse("[a]\nn = 1\n[b]\nn = 2\n");
   if (!ok.ok) {
     return test.fail("the same key in two sections was rejected: " + ok.err.msg);
   }
@@ -676,18 +676,18 @@ function test_a_duplicate_key_is_rejected(): test.TestOutcome {
 function main(): i32 {
   eprint("inicfg — typed config lookups, and an error that names the line");
 
-  var doc: string = "# server settings\n\n[server]\nport = 8080\ntls = true\nhost = \"localhost\"\n";
-  var r: ParseR = parse(doc);
+  let doc: string = "# server settings\n\n[server]\nport = 8080\ntls = true\nhost = \"localhost\"\n";
+  let r: ParseR = parse(doc);
   eprint("  parsed " + r.cfg.entries.len().to_string() + " entries");
-  var port: IntR = get_int(r.cfg, "server", "port");
+  let port: IntR = get_int(r.cfg, "server", "port");
   eprint("  server.port = " + port.v.to_string());
-  var bad: IntR = get_int(r.cfg, "server", "host");
+  let bad: IntR = get_int(r.cfg, "server", "host");
   eprint("  get_int(server.host) -> " + bad.err.msg);
 
-  var broken: ParseR = parse("[server]\nport = 8080\n# note\n\nthis is not a setting\n");
+  let broken: ParseR = parse("[server]\nport = 8080\n# note\n\nthis is not a setting\n");
   eprint("  line " + broken.err.line.to_string() + ": " + broken.err.msg);
 
-  var t: test.TestRunner = test.test_new("inicfg");
+  let t: test.TestRunner = test.test_new("inicfg");
   t = t.it("the reported line is the malformed one", test_the_reported_line_is_the_malformed_one);
   t = t.it("comments and blanks do not shift the line", test_comments_and_blanks_do_not_shift_the_line);
   t = t.it("a valid document parses clean", test_a_valid_document_parses_clean);

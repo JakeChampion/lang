@@ -17,12 +17,12 @@ var typedFoldCases = []struct {
 	main string
 }{
 	{"nested", `function f(x: i32): i32 { return (x * 2 + 1) * 3; } function main(): i32 { return f(3) + 1; }`},
-	{"chain", `function f(x: i32): i32 { var b: i32 = x * 2; var c: i32 = b + 1; return c * c - b; } function main(): i32 { return f(3); }`},
+	{"chain", `function f(x: i32): i32 { let b: i32 = x * 2; let c: i32 = b + 1; return c * c - b; } function main(): i32 { return f(3); }`},
 	{"i32-wraps-at-32-bits", `function f(x: i32): i32 { return (x + 1) + 0; } function main(): i32 { if (f(2147483647) < 0) { return 11; } return 1; }`},
 	{"u8-masks", `function f(x: u8): u8 { return (x + (10 as u8)) * (3 as u8); } function main(): i32 { return (f(250 as u8) as i32) + 5; }`},
 	{"u32-max-survives", `function f(x: u32): u32 { return (x + (1 as u32)) + (2 as u32); } function main(): i32 { return (f(4294967295 as u32) as i32) + 7; }`},
 	{"i64-extend", `function f(x: i32): i64 { return ((x * 3 + 1) as i64) * (4 as i64); } function main(): i32 { return (f(3) as i32) + 1; }`},
-	{"shl", `function f(x: i32): i32 { var a: i32 = x << 3; return (a << 2) + (a >> 1); } function main(): i32 { return f(1); }`},
+	{"shl", `function f(x: i32): i32 { let a: i32 = x << 3; return (a << 2) + (a >> 1); } function main(): i32 { return f(1); }`},
 }
 
 func TestSelfHostTypedFoldValues(t *testing.T) {

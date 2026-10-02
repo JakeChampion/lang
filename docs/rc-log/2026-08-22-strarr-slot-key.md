@@ -6,8 +6,8 @@ Third class through #7253's step 1, after the tuple family (#7272) and `"STR:"`
 ## The shape
 
 ```fern
-if (i % 2 == 0) { var v: string[] = mk();  t = t + v.len(); }   // earns the credit
-if (i % 2 == 1) { var v: string[] = base;  t = t + v.len(); }   // a bare alias
+if (i % 2 == 0) { let v: string[] = mk();  t = t + v.len(); }   // earns the credit
+if (i % 2 == 1) { let v: string[] = base;  t = t + v.len(); }   // a bare alias
 ```
 
 `slot_is_reclaimable_strarr` resolved `"SARR:"` / `"SARRB:"` through

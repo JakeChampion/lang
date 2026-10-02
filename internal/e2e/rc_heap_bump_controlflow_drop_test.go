@@ -27,7 +27,7 @@ import (
 // sweep: its deep drop dec's each element, and an element aliased OUT across an
 // early drop takes the arm64 two-word heap-string reclamation path the plan
 // still defers (slice 5g) — an early drop there corrupts under allocation-reuse
-// pressure (the self-host driver's `var av: string[] = args()` with
+// pressure (the self-host driver's `let av: string[] = args()` with
 // `entry = av[1]` / `root = av[2]` last-used at `av[2]` inside an `if`). The
 // cfArgsAliasSrc case below pins that this self-host shape is reclaimed
 // correctly (no over-release) with the pointer-element gate in place.
@@ -45,11 +45,11 @@ func cfLit(n int) string {
 func cfUsedInIfSrc() string {
 	l := cfLit(100)
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var big: i32[] = ` + l + `;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let big: i32[] = ` + l + `;
+    let acc: i32 = 0;
     if (before >= 0) { acc = acc + big[0] + big[99]; }
-    var tail: i32[] = ` + l + `;
+    let tail: i32[] = ` + l + `;
     acc = acc + tail[0];
     return ((__heap_bump_bytes() as i32) - before) + acc;
 }`
@@ -59,9 +59,9 @@ func cfUsedInIfSrc() string {
 func cfBothLiveSrc() string {
 	l := cfLit(100)
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var big: i32[] = ` + l + `;
-    var tail: i32[] = ` + l + `;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let big: i32[] = ` + l + `;
+    let tail: i32[] = ` + l + `;
     return ((__heap_bump_bytes() as i32) - before) + big[0] + tail[0];
 }`
 }
@@ -71,18 +71,18 @@ func cfBothLiveSrc() string {
 // on the other (precise drop + zero). Must be value-correct + 0 over-release
 // across many iterations, with a forced interleaved alloc.
 const cfEarlyReturnSrc = `function helper(seed: i32): i32 {
-    var big: i32[] = [seed, seed + 1, seed + 2];
-    var r: i32 = 0;
+    let big: i32[] = [seed, seed + 1, seed + 2];
+    let r: i32 = 0;
     if (seed >= 0) {
         r = big[0] + big[2];
         if (r > 1000000000) { return r; }
     }
-    var junk: i32[] = [9, 9, 9];
+    let junk: i32[] = [9, 9, 9];
     return r + junk[0];
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 300) {
         acc = acc + helper(i);
         i = i + 1;
@@ -96,16 +96,16 @@ function main(): i32 {
 // dead after the loop -> dropped after the while. Value-correct + 0
 // over-release.
 const cfLoopThenDeadSrc = `function sumloop(seed: i32): i32 {
-    var data: i32[] = [seed, seed + 1, seed + 2, seed + 3];
-    var s: i32 = 0;
-    var j: i32 = 0;
+    let data: i32[] = [seed, seed + 1, seed + 2, seed + 3];
+    let s: i32 = 0;
+    let j: i32 = 0;
     while (j < 4) { s = s + data[j]; j = j + 1; }
-    var after: i32[] = [1, 1];
+    let after: i32[] = [1, 1];
     return s + after[0];
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 300) {
         acc = acc + sumloop(i);
         i = i + 1;
@@ -119,13 +119,13 @@ function main(): i32 {
 // the if; the post-if precise drop must only DEC (the struct keeps it).
 const cfAliasedSrc = `struct Holder { items: i32[], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var big: i32[] = [i, i + 1, i + 2];
-        var h: Holder = Holder { items: big, n: 0 };
+        let big: i32[] = [i, i + 1, i + 2];
+        let h: Holder = Holder { items: big, n: 0 };
         if (i >= 0) { acc = acc + big[0]; }
-        var junk: i32[] = [9, 9, 9];
+        let junk: i32[] = [9, 9, 9];
         acc = acc + h.items[2] + junk[0];
         i = i + 1;
     }
@@ -142,14 +142,14 @@ function main(): i32 {
 // release, no corruption (the bug a blanket nested-drop hit on arm64). The
 // 17-char literals escape SSO so the elements are real heap strings.
 const cfArgsAliasSrc = `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var av: string[] = ["aaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbb", "ccccccccccccccccc"];
-        var entry: string = av[0];
-        var root: string = "";
+        let av: string[] = ["aaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbb", "ccccccccccccccccc"];
+        let entry: string = av[0];
+        let root: string = "";
         if (av.len() >= 3) { root = av[2]; }   // av's last use is nested
-        var junk: string[] = ["ddddddddddddddddd", "eeeeeeeeeeeeeeeee"];
+        let junk: string[] = ["ddddddddddddddddd", "eeeeeeeeeeeeeeeee"];
         acc = acc + entry.len() + root.len() + junk[0].len();
         i = i + 1;
     }

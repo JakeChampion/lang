@@ -16,13 +16,13 @@ import "std/i32";
 import "std/array";
 
 function main(): i32 {
-  var argv: string[] = args();
-  var limit: i32 = 0 - 1;  // -1 means "no limit"
-  var words: string[] = [];
+  let argv: string[] = args();
+  let limit: i32 = 0 - 1;  // -1 means "no limit"
+  let words: string[] = [];
 
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "-n" && i + 1 < argv.len()) {
       match (argv[i + 1].parse_int()) {
         Some(n) => {
@@ -37,12 +37,12 @@ function main(): i32 {
     i = i + 1;
   }
 
-  var line: string = "y";
+  let line: string = "y";
   if (words.len() > 0) {
     line = words.join(" ");
   }
 
-  var count: i32 = 0;
+  let count: i32 = 0;
   while (limit < 0 || count < limit) {
     print(line);
     count = count + 1;

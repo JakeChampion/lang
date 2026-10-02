@@ -1,4 +1,4 @@
-// An UNANNOTATED `var it = m.iter()` types the slot as MapIter[K, V] from
+// An UNANNOTATED `let it = m.iter()` types the slot as MapIter[K, V] from
 // the receiver's map type. The annotation used to be required on the
 // self-host IR path: without it the slot stayed untyped and the first
 // `it.has_next()` bailed the whole module — at any value type, an i32-keyed
@@ -6,14 +6,14 @@
 import "core/map";
 
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
 
     // No `: MapIter[i32, i32]` here — that is the point of the fixture.
-    var it = m.iter();
-    var total: i32 = 0;
-    var seen: i32 = 0;
+    let it = m.iter();
+    let total: i32 = 0;
+    let seen: i32 = 0;
     while (it.has_next()) {
         total = total + it.value();
         seen = seen + it.key();
@@ -24,10 +24,10 @@ function main(): i32 {
 
     // Same over a string-keyed, string-valued map: the recovered K and V
     // both have to survive, since key()/value() dispatch on them.
-    var s: Map[string, string] = map_new(4);
+    let s: Map[string, string] = map_new(4);
     s = s.insert("a", "xy");
-    var it2 = s.iter();
-    var chars: i32 = 0;
+    let it2 = s.iter();
+    let chars: i32 = 0;
     while (it2.has_next()) {
         chars = chars + it2.key().len() + it2.value().len();
         it2.advance();

@@ -23,7 +23,7 @@ import "std/i32";
 
 // __esc() — the ESC (0x1B) control byte as a one-character string.
 function __esc(): string {
-  var b: u8[] = [27 as u8];
+  let b: u8[] = [27 as u8];
   return string_from_bytes_unchecked(b);
 }
 
@@ -32,7 +32,7 @@ function __esc(): string {
 // 256-colour (`sgr("38;5;208", s)`) or truecolour
 // (`sgr("38;2;255;128;0", s)`).
 pub function sgr(code: string, s: string): string {
-  var e: string = __esc();
+  let e: string = __esc();
   return e + "[" + code + "m" + s + e + "[0m";
 }
 
@@ -196,9 +196,9 @@ pub function bg_rgb(r: i32, g: i32, b: i32, s: string): string {
 // leaving the plain text. Walks byte-by-byte so multi-byte UTF-8
 // content is copied through untouched (SGR codes are pure ASCII).
 pub function strip(s: string): string {
-  var n: i32 = s.len();
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < n) {
     if (s[i] == 27 && i + 1 < n && s[i + 1] == 91) {  // ESC '['
       i = i + 2;

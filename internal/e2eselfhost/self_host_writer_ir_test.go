@@ -25,10 +25,10 @@ import (
 // the native-shaped `match (w.write(s))` below is exactly the program that used to
 // bail the module for want of an Option type to recover.
 const writerStdoutProg = `function main(): i32 {
-    var w: Writer = stdout();
+    let w: Writer = stdout();
     match (w.write("hello writer\n")) { Some(_) => { return 1; }, None => {} }
     match (w.close()) { Some(_) => { return 2; }, None => {} }
-    var e: Writer = stderr();
+    let e: Writer = stderr();
     match (e.write("err line\n")) { Some(_) => { return 3; }, None => {} }
     match (e.close()) { Some(_) => { return 4; }, None => {} }
     return 0;

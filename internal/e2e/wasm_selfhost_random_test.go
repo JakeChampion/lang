@@ -37,11 +37,11 @@ func TestWasmSelfHostRandom(t *testing.T) {
 		source string
 		exit   int
 	}{
-		{"random-bytes-len", "function main(): i32 { var b = random_bytes(8); return b.len(); }", 8},
-		{"random-bytes-zero", "function main(): i32 { var b = random_bytes(0); return b.len(); }", 0},
-		{"random-bytes-range", "function main(): i32 { var b = random_bytes(100); for x in b { if (x < 0) { return 1; } if (x > 255) { return 2; } } return 42; }", 42},
-		{"random-bytes-index", "function main(): i32 { var b = random_bytes(4); var x = b[0]; if (x >= 0 && x <= 255) { return 7; } return 1; }", 7},
-		{"random-i32-runs", "function main(): i32 { var x = random_i32(); var y = x & 255; if (y >= 0 && y <= 255) { return 9; } return 1; }", 9},
+		{"random-bytes-len", "function main(): i32 { let b = random_bytes(8); return b.len(); }", 8},
+		{"random-bytes-zero", "function main(): i32 { let b = random_bytes(0); return b.len(); }", 0},
+		{"random-bytes-range", "function main(): i32 { let b = random_bytes(100); for x in b { if (x < 0) { return 1; } if (x > 255) { return 2; } } return 42; }", 42},
+		{"random-bytes-index", "function main(): i32 { let b = random_bytes(4); let x = b[0]; if (x >= 0 && x <= 255) { return 7; } return 1; }", 7},
+		{"random-i32-runs", "function main(): i32 { let x = random_i32(); let y = x & 255; if (y >= 0 && y <= 255) { return 9; } return 1; }", 9},
 	}
 
 	for _, tc := range cases {

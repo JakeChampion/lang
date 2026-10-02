@@ -7,12 +7,12 @@ import (
 )
 
 // Regression for #4376: a string accumulator initialised from a bare string
-// LITERAL (`var s = ""`) must be freeEligible so the dec-on-overwrite reclaims
+// LITERAL (`let s = ""`) must be freeEligible so the dec-on-overwrite reclaims
 // each intermediate. `rhsTainted` had *ast.NumberLit/FloatLit/BoolLit cases but
 // NO *ast.StringLit case, so a plain `""` init fell to `default: return true`
 // and tainted the local forever — every reassignment leaked the prior buffer
 // (linear bump growth; O(n²) bytes on the growing `s = s + p` edge-handler
-// pattern). A Binary init (`var s = "a" + ""`) reclaimed fine, so only the
+// pattern). A Binary init (`let s = "a" + ""`) reclaimed fine, so only the
 // literal-init shape was broken. The IR-layer guard (that the overwrite dec is
 // emitted, at both pointer widths) lives in internal/ir; this pins the
 // end-to-end heap benefit on wasm.
@@ -41,10 +41,10 @@ import (
 // (ir.go ~17240) and the accumulator keeps its safe-leak behaviour.
 func heapBumpStrLiteralAccumSrc(n string) string {
 	return `function main(): i32 {
-    var p: string = "0123456789abcdefghij";
-    var s: string = "";
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let p: string = "0123456789abcdefghij";
+    let s: string = "";
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) {
         s = p + "!";
         i = i + 1;

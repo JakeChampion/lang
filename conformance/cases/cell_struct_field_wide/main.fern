@@ -20,7 +20,7 @@ struct Two { clock: Cell[i64], rng: Cell[i64] }
 struct Narrow { r: Cell[i32] }
 
 function bump(h: Holder, n: i32): i32 {
-    var v: i64 = h.r.get();
+    let v: i64 = h.r.get();
     h.r.set(v + 1);
     return (v as i32) + n;
 }
@@ -28,21 +28,21 @@ function bump(h: Holder, n: i32): i32 {
 // The std/sim shape: two wide Cell fields on one struct, read and written
 // through a borrowed param.
 function roll(s: Two): i64 {
-    var x: i64 = s.rng.get();
+    let x: i64 = s.rng.get();
     s.rng.set(x + 1);
     return s.rng.get();
 }
 
 function main(): i32 {
-    var h: Holder = Holder { r: cell_new(1 as i64) };
+    let h: Holder = Holder { r: cell_new(1 as i64) };
     if (bump(h, 40) != 41) { return 1; }
     // The set above must have landed, so the second read sees 2.
     if (h.r.get() != (2 as i64)) { return 2; }
 
-    var u: UHolder = UHolder { r: cell_new(41 as u64) };
+    let u: UHolder = UHolder { r: cell_new(41 as u64) };
     if ((u.r.get() as i32) != 41) { return 3; }
 
-    var t: Two = Two { clock: cell_new(0 as i64), rng: cell_new(40 as i64) };
+    let t: Two = Two { clock: cell_new(0 as i64), rng: cell_new(40 as i64) };
     if ((roll(t) as i32) != 41) { return 4; }
     // The other Cell field must be untouched — two wide fields on one struct
     // have to address separately.
@@ -51,16 +51,16 @@ function main(): i32 {
     // A value past 2^32, so a 4-byte stride would truncate rather than merely
     // bail: this is the case that would read wrong if the stride regressed
     // without the module bailing.
-    var w: Holder = Holder { r: cell_new(1 as i64) };
+    let w: Holder = Holder { r: cell_new(1 as i64) };
     w.r.set(5000000000 as i64);
     if (w.r.get() != (5000000000 as i64)) { return 6; }
 
     // CONTROLS — all of these lowered before the fix and must keep doing so.
-    var nn: Narrow = Narrow { r: cell_new(1) };
+    let nn: Narrow = Narrow { r: cell_new(1) };
     nn.r.set(nn.r.get() + 40);
     if (nn.r.get() != 41) { return 7; }
 
-    var bare: Cell[i64] = cell_new(1 as i64);
+    let bare: Cell[i64] = cell_new(1 as i64);
     if (((bare.get() as i32) + 40) != 41) { return 8; }
 
     return 11;

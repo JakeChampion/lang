@@ -36,14 +36,14 @@ function (s: Shape) area(): i32 {
 
 // `?` unwraps Some and returns None early.
 function parse_pair(a: string, b: string): Option[i32] {
-  var w: i32 = a.parse_int()?;
-  var h: i32 = b.parse_int()?;
+  let w: i32 = a.parse_int()?;
+  let h: i32 = b.parse_int()?;
   return Some(Rect(w, h).area());
 }
 
 function main(): i32 {
-  var shapes: Shape[] = [Circle(2), Rect(3, 4)];
-  var total: i32 = 0;
+  let shapes: Shape[] = [Circle(2), Rect(3, 4)];
+  let total: i32 = 0;
   for s in shapes {
     total = total + s.area();
   }

@@ -24,7 +24,7 @@ import (
 // away and its symbol never emitted, so the bug is invisible. Forty appends is
 // comfortably over the threshold.
 const moduleNameMangleBracket = `function help_text(): string {
-    var out: string = "";
+    let out: string = "";
     out = out + "line 00\n"; out = out + "line 01\n"; out = out + "line 02\n";
     out = out + "line 03\n"; out = out + "line 04\n"; out = out + "line 05\n";
     out = out + "line 06\n"; out = out + "line 07\n"; out = out + "line 08\n";

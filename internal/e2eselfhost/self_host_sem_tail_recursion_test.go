@@ -70,30 +70,30 @@ function view_walk(s: str, i: i32): i32 {
 }
 
 function main(): i32 {
-    var t: string = "ab" + "cde";
-    var keep: i32[] = [7, 8];
+    let t: string = "ab" + "cde";
+    let keep: i32[] = [7, 8];
 
-    var a: i32 = borrowed(t, 400000);
-    var b: i32 = rebuilt(keep, 400000);
-    var c: i32 = both(t, [1], 200);
+    let a: i32 = borrowed(t, 400000);
+    let b: i32 = rebuilt(keep, 400000);
+    let c: i32 = both(t, [1], 200);
 
-    var ticks: Cell[i32] = cell_new(0);
+    let ticks: Cell[i32] = cell_new(0);
     serve(ticks);
 
-    var view: i32 = shrink("abcdefghij" + "klmnopqrst", 0);
+    let view: i32 = shrink("abcdefghij" + "klmnopqrst", 0);
 
-    var lent: string = "abcde" + "fghij";
-    var peek: str = slice_unchecked(lent, 0, 5);
-    var vw: i32 = view_walk(peek, 400000);
+    let lent: string = "abcde" + "fghij";
+    let peek: str = slice_unchecked(lent, 0, 5);
+    let vw: i32 = view_walk(peek, 400000);
     // Churn the allocator, so a box the loop released would be reissued
     // before the read below.
-    var churn: string[] = [];
-    var ci: i32 = 0;
+    let churn: string[] = [];
+    let ci: i32 = 0;
     while (ci < 200) { churn = churn.append("c" + ci.to_string()); ci = ci + 1; }
-    var still: i32 = peek.len();
+    let still: i32 = peek.len();
 
     // The lender reads its own values AFTER the loops had them.
-    var alive: i32 = t.len() + keep.len() + keep[0];
+    let alive: i32 = t.len() + keep.len() + keep[0];
 
     print("a=" + a.to_string() + " b=" + b.to_string() + " c=" + c.to_string()
         + " alive=" + alive.to_string()

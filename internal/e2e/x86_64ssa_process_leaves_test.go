@@ -19,28 +19,28 @@ const x86SSAProcessLeafSrc = `function main(): i32 {
     // what must hold on any host is that the real and effective halves agree
     // when nothing has dropped privilege, and that neither came back as the
     // kernel's -1.
-    var u: u32 = getuid();
-    var eu: u32 = geteuid();
-    var g: u32 = getgid();
-    var eg: u32 = getegid();
+    let u: u32 = getuid();
+    let eu: u32 = geteuid();
+    let g: u32 = getgid();
+    let eg: u32 = getegid();
     if (u != eu || g != eg) { return 10; }
     if (u == 4294967295 as u32) { return 11; }
 
     // umask answers the mask it replaced, so setting it twice reads back.
-    var prev: i32 = umask(18);
+    let prev: i32 = umask(18);
     if (umask(prev) != 18) { return 20; }
 
     // At least one processing unit, and not an implausible number: a mask
     // counted with the wrong width reads far too high.
-    var n: i32 = cpu_count();
+    let n: i32 = cpu_count();
     if (n < 1 || n > 4096) { return 30; }
 
     // now_ns is the realtime clock in nanoseconds — past 2020, and it does not
     // run backwards over a sleep the sleep itself must cover.
-    var t0: i64 = now_ns();
+    let t0: i64 = now_ns();
     if (t0 < 1577836800000000000i64) { return 40; }
     sleep_ns(2000000i64);
-    var t1: i64 = now_ns();
+    let t1: i64 = now_ns();
     if (t1 - t0 < 1000000i64) { return 41; }
     // A non-positive sleep returns without a syscall.
     sleep_ns(0 as i64 - 1 as i64);

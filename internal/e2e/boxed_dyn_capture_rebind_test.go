@@ -22,8 +22,8 @@ struct Ci { r: i32 }
 impl Shape for Ci { function area(self: Self): i32 { return self.r * 3i32; } }
 
 function main(): i32 {
-    var d: dyn Shape = Sq { s: 3i32 };
-    var f: () => i32 = (() => d.area());
+    let d: dyn Shape = Sq { s: 3i32 };
+    let f: () => i32 = (() => d.area());
     d = Ci { r: 5i32 };
     return f();
 }

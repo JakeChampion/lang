@@ -114,7 +114,7 @@ function rmi_sometimes(): i32 {
 // The `--interactive` table, in the order argmatch prints it: three
 // names for never, one for once, two for always.
 function when_names(): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   out = out.append("never");
   out = out.append("no");
   out = out.append("none");
@@ -125,7 +125,7 @@ function when_names(): string[] {
 }
 
 function when_values(): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   out = out.append(rmi_never());
   out = out.append(rmi_never());
   out = out.append(rmi_never());
@@ -165,7 +165,7 @@ struct Settings { interactive: i32, ignore_missing: boolean, one_file_system: bo
 struct St { out: gnu.Stdio, status: i32 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "Remove (unlink) the FILE(s).\n";
   out = out + "\n";
@@ -201,11 +201,11 @@ function help_text(): string {
 // The last component of `p`, trailing slashes ignored: `d/./` is `.`,
 // `..//` is `..`, `//` is empty.
 function base_name(p: string): string {
-  var end: i32 = p.len();
+  let end: i32 = p.len();
   while (end > 0 && p[end - 1] as i32 == 47) {
     end = end - 1;
   }
-  var start: i32 = end;
+  let start: i32 = end;
   while (start > 0 && p[start - 1] as i32 != 47) {
     start = start - 1;
   }
@@ -214,7 +214,7 @@ function base_name(p: string): string {
 
 // The directory `p` lives in, for --preserve-root=all's comparison.
 function parent_name(p: string): string {
-  var end: i32 = p.len();
+  let end: i32 = p.len();
   while (end > 0 && p[end - 1] as i32 == 47) {
     end = end - 1;
   }
@@ -235,7 +235,7 @@ function parent_name(p: string): string {
 // there": `rm -f x/` on a regular file `x` is silent, and so is
 // `rm -rf dangling/`, while ELOOP and ENAMETOOLONG are still reported.
 function nonexistent_errno(e: IoError): boolean {
-  var text: string = gnu.io_error_text(e);
+  let text: string = gnu.io_error_text(e);
   return text == "No such file or directory" || text == "Not a directory";
 }
 
@@ -286,13 +286,13 @@ function confirm(s: Settings, path: string, mode: u32, verb: string, what: strin
   if (s.interactive == rmi_never()) {
     return true;
   }
-  var wp: boolean = write_protected(path, mode);
+  let wp: boolean = write_protected(path, mode);
   if (s.interactive != rmi_always()) {
     if (!wp || !s.tty) {
       return true;
     }
   }
-  var prefix: string = "";
+  let prefix: string = "";
   if (wp) {
     prefix = "write-protected ";
   }
@@ -303,7 +303,7 @@ function verbose(st: St, s: Settings, path: string, is_dir: boolean): St {
   if (!s.verbose) {
     return st;
   }
-  var what: string = "removed ";
+  let what: string = "removed ";
   if (is_dir) {
     what = "removed directory ";
   }
@@ -317,7 +317,7 @@ function verbose(st: St, s: Settings, path: string, is_dir: boolean): St {
 // found BELOW one. `cl_dev` is the device of the operand this entry
 // was reached through.
 function rm_entry(st0: St, s: Settings, path: string, top: boolean, cl_dev: i64): (St, i32) {
-  var st: St = st0;
+  let st: St = st0;
   match (lstat(path)) {
     Err(why) => {
       if (prompt_stats(s, top)) {
@@ -377,20 +377,20 @@ function refuse_dir(st: St, s: Settings, path: string, top: boolean, cl_dev: i64
     return None;
   }
   if (top) {
-    var base: string = base_name(path);
+    let base: string = base_name(path);
     if (base == "." || base == "..") {
       return Some(fail(st, "refusing to remove '.' or '..' directory: skipping " + gnu.quotea(path)));
     }
     if (s.preserve_root && is_root_dir(info)) {
-      var same: string = "";
+      let same: string = "";
       if (path != "/") {
         same = " (same as '/')";
       }
-      var next: St = fail(st, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
+      let next: St = fail(st, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
       return Some(fail(next, "use --no-preserve-root to override this failsafe"));
     }
     if (s.preserve_all && crosses_device(path, info)) {
-      var first: St = fail(st, "skipping " + gnu.quotea(path) + ", since it's on a different device");
+      let first: St = fail(st, "skipping " + gnu.quotea(path) + ", since it's on a different device");
       return Some(fail(first, "and --preserve-root=all is in effect"));
     }
   } else if (s.one_file_system && info.dev != cl_dev) {
@@ -422,9 +422,9 @@ function crosses_device(path: string, info: FileStat): boolean {
 }
 
 function rm_dir(st0: St, s: Settings, path: string, top: boolean, cl_dev: i64, info: FileStat): (St, i32) {
-  var st: St = st0;
-  var unread: Option[IoError] = None;
-  var names: string[] = [];
+  let st: St = st0;
+  let unread: Option[IoError] = None;
+  let names: string[] = [];
   if (s.recursive || s.dir) {
     match (read_dir(path)) {
       Ok(es) => {
@@ -435,7 +435,7 @@ function rm_dir(st0: St, s: Settings, path: string, top: boolean, cl_dev: i64, i
       }
     }
   }
-  var empty: boolean = names.len() == 0;
+  let empty: boolean = names.len() == 0;
   match (refuse_dir(st, s, path, top, cl_dev, info)) {
     Some(next) => {
       return (next, res_mark());
@@ -448,16 +448,16 @@ function rm_dir(st0: St, s: Settings, path: string, top: boolean, cl_dev: i64, i
     },
     None => {}
   }
-  var descended: boolean = s.recursive && !empty;
+  let descended: boolean = s.recursive && !empty;
   if (descended) {
     if (!confirm(s, path, info.mode, "descend into", "directory")) {
       return (st, res_mark());
     }
-    var dev: i64 = cl_dev;
+    let dev: i64 = cl_dev;
     if (top) {
       dev = info.dev;
     }
-    var below: (St, boolean) = rm_children(st, s, path, names, dev);
+    let below: (St, boolean) = rm_children(st, s, path, names, dev);
     st = below.0;
     if (below.1) {
       return (st, res_mark());
@@ -492,11 +492,11 @@ function rm_dir(st0: St, s: Settings, path: string, top: boolean, cl_dev: i64, i
 // marked, which is what makes it go quietly rather than be prompted
 // for and fail.
 function rm_children(st0: St, s: Settings, path: string, names: string[], dev: i64): (St, boolean) {
-  var st: St = st0;
-  var marked: boolean = false;
-  var i: i32 = 0;
+  let st: St = st0;
+  let marked: boolean = false;
+  let i: i32 = 0;
   while (i < names.len()) {
-    var r: (St, i32) = rm_entry(st, s, fts.child_path(path, names[i]), false, dev);
+    let r: (St, i32) = rm_entry(st, s, fts.child_path(path, names[i]), false, dev);
     st = r.0;
     if (r.1 == res_mark()) {
       marked = true;
@@ -513,7 +513,7 @@ function rm_children(st0: St, s: Settings, path: string, names: string[], dev: i
 // nothing to ask about here — rm cannot tell whether the directory is
 // empty — so an interactive run reports the read error instead.
 function rm_unreadable_dir(st: St, s: Settings, path: string, info: FileStat, why: IoError): (St, i32) {
-  var asks: boolean = s.interactive == rmi_always();
+  let asks: boolean = s.interactive == rmi_always();
   if (s.interactive == rmi_sometimes()) {
     asks = s.tty && write_protected(path, info.mode);
   }
@@ -534,9 +534,9 @@ function rm_unreadable_dir(st: St, s: Settings, path: string, info: FileStat, wh
 // element that looks like an option and names something lstat can
 // see, whether or not it is the element that faulted.
 function removable_operand_hint(argv: string[]): string {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a.len() > 1 && a[0] as i32 == 45) {
       match (lstat(a)) {
         Ok(_) => {
@@ -551,7 +551,7 @@ function removable_operand_hint(argv: string[]): string {
 }
 
 function option_table(): gnu.Opt[] {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("f", "force", opt_force()));
   opts = opts.append(gnu.flag("i", "", opt_interactive_always()));
   opts = opts.append(gnu.flag("I", "", opt_interactive_once()));
@@ -568,12 +568,12 @@ function option_table(): gnu.Opt[] {
 }
 
 function parse(argv: string[]): (Settings, gnu.Getopt) {
-  var s: Settings = Settings { interactive: rmi_sometimes(), ignore_missing: false, one_file_system: false, preserve_root: true, preserve_all: false, recursive: false, dir: false, verbose: false, tty: false };
-  var presume: boolean = false;
-  var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "rm", help_text(), 1);
+  let s: Settings = Settings { interactive: rmi_sometimes(), ignore_missing: false, one_file_system: false, preserve_root: true, preserve_all: false, recursive: false, dir: false, verbose: false, tty: false };
+  let presume: boolean = false;
+  let g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "rm", help_text(), 1);
   g = g.fault_hint(removable_operand_hint(argv));
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -584,7 +584,7 @@ function parse(argv: string[]): (Settings, gnu.Getopt) {
         } else if (m.id == opt_interactive_once()) {
           s = Settings { ...s, interactive: rmi_once(), ignore_missing: false };
         } else if (m.id == opt_interactive()) {
-          var mode: i32 = rmi_always();
+          let mode: i32 = rmi_always();
           if (m.has_value) {
             mode = gnu.argmatch_valued(m.value, when_names(), when_values(), "--interactive");
           }
@@ -601,7 +601,7 @@ function parse(argv: string[]): (Settings, gnu.Getopt) {
           }
           s = Settings { ...s, preserve_root: false };
         } else if (m.id == opt_preserve_root()) {
-          var all: boolean = s.preserve_all;
+          let all: boolean = s.preserve_all;
           if (m.has_value) {
             // Not argmatch: `all` exactly, with rm's own wording.
             if (m.value != "all") {
@@ -635,11 +635,11 @@ function prompt_once(s: Settings, n: i32): boolean {
   if (s.interactive != rmi_once() || !(s.recursive || n > 3)) {
     return true;
   }
-  var noun: string = " arguments";
+  let noun: string = " arguments";
   if (n == 1) {
     noun = " argument";
   }
-  var how: string = "";
+  let how: string = "";
   if (s.recursive) {
     how = " recursively";
   }
@@ -647,9 +647,9 @@ function prompt_once(s: Settings, n: i32): boolean {
 }
 
 pub function main(): i32 {
-  var parsed: (Settings, gnu.Getopt) = parse(args());
-  var s: Settings = parsed.0;
-  var files: string[] = parsed.1.operands();
+  let parsed: (Settings, gnu.Getopt) = parse(args());
+  let s: Settings = parsed.0;
+  let files: string[] = parsed.1.operands();
   if (files.len() == 0) {
     if (s.ignore_missing) {
       return 0;
@@ -662,11 +662,11 @@ pub function main(): i32 {
   if (s.interactive == rmi_once()) {
     s = Settings { ...s, interactive: rmi_sometimes() };
   }
-  var st: St = St { out: gnu.stdio_new(), status: 0 };
-  var i: i32 = 0;
+  let st: St = St { out: gnu.stdio_new(), status: 0 };
+  let i: i32 = 0;
   while (i < files.len()) {
-    var path: string = fts.trim(files[i]);
-    var r: (St, i32) = rm_entry(st, s, path, true, 0 as i64);
+    let path: string = fts.trim(files[i]);
+    let r: (St, i32) = rm_entry(st, s, path, true, 0 as i64);
     st = r.0;
     i = i + 1;
   }

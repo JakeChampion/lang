@@ -17,21 +17,21 @@ var compoundAssignWiderIRCases = []struct {
 	main string
 }{
 	// i64 `+=` / `*=`.
-	{"i64-plus-eq", `function main(): i32 { var n = 5 as i64; n += 3 as i64; return n as i32; }`},
-	{"i64-mul-eq", `function main(): i32 { var n = 4 as i64; n *= 3 as i64; return n as i32; }`},
+	{"i64-plus-eq", `function main(): i32 { let n = 5 as i64; n += 3 as i64; return n as i32; }`},
+	{"i64-mul-eq", `function main(): i32 { let n = 4 as i64; n *= 3 as i64; return n as i32; }`},
 	// u32 `+=` -> 120 (<= wasm clamp).
-	{"u32-plus-eq", `function main(): i32 { var n = 100 as u32; n += 20 as u32; return n as i32; }`},
+	{"u32-plus-eq", `function main(): i32 { let n = 100 as u32; n += 20 as u32; return n as i32; }`},
 	// u8 `+=` wraps mod 256: 250 + 10 -> 4.
-	{"u8-wrap-eq", `function main(): i32 { var n = 250 as u8; n += 10 as u8; return n as i32; }`},
+	{"u8-wrap-eq", `function main(): i32 { let n = 250 as u8; n += 10 as u8; return n as i32; }`},
 	// f64 `+=` / `*=`.
-	{"f64-plus-eq", `function main(): i32 { var x = 2.5; x += 1.5; return x as i32; }`},
-	{"f64-mul-eq", `function main(): i32 { var x = 3.0; x *= 4.0; return x as i32; }`},
+	{"f64-plus-eq", `function main(): i32 { let x = 2.5; x += 1.5; return x as i32; }`},
+	{"f64-mul-eq", `function main(): i32 { let x = 3.0; x *= 4.0; return x as i32; }`},
 	// The rest of the i32 operator set: `-=` / `/=` / `%=`.
-	{"i32-minus-eq", `function main(): i32 { var n = 20; n -= 5; return n; }`},
-	{"i32-div-eq", `function main(): i32 { var n = 20; n /= 4; return n; }`},
-	{"i32-mod-eq", `function main(): i32 { var n = 23; n %= 5; return n; }`},
+	{"i32-minus-eq", `function main(): i32 { let n = 20; n -= 5; return n; }`},
+	{"i32-div-eq", `function main(): i32 { let n = 20; n /= 4; return n; }`},
+	{"i32-mod-eq", `function main(): i32 { let n = 23; n %= 5; return n; }`},
 	// Loop accumulation into an i64 via `+=`: 0+1+2+3+4 = 10.
-	{"loop-accum-i64", `function main(): i32 { var s = 0 as i64; var i = 0; while (i < 5) { s += i as i64; i = i + 1; } return s as i32; }`},
+	{"loop-accum-i64", `function main(): i32 { let s = 0 as i64; let i = 0; while (i < 5) { s += i as i64; i = i + 1; } return s as i32; }`},
 }
 
 // TestSelfHostCompoundAssignWiderIR compiles each case with the self-host CLI for

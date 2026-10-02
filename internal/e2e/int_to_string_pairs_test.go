@@ -36,12 +36,12 @@ import "std/string";
 // this replaced, as the oracle.
 function ref_itos(n: i32): string {
     if (n == 0) { return "0"; }
-    var neg: boolean = false;
-    var m: i64 = n as i64;
+    let neg: boolean = false;
+    let m: i64 = n as i64;
     if (m < 0) { neg = true; m = 0 - m; }
-    var out: string = "";
+    let out: string = "";
     while (m > (0 as i64)) {
-        var d: i32 = (m % (10 as i64)) as i32;
+        let d: i32 = (m % (10 as i64)) as i32;
         out = ((d + 48) as u8).to_ascii_string() + out;
         m = m / (10 as i64);
     }
@@ -51,12 +51,12 @@ function ref_itos(n: i32): string {
 
 function ref_itos64(m0: i64): string {
     if (m0 == (0 as i64)) { return "0"; }
-    var neg: boolean = false;
-    var m: i64 = m0;
+    let neg: boolean = false;
+    let m: i64 = m0;
     if (m < (0 as i64)) { neg = true; m = 0 - m; }
-    var out: string = "";
+    let out: string = "";
     while (m > (0 as i64)) {
-        var d: i32 = (m % (10 as i64)) as i32;
+        let d: i32 = (m % (10 as i64)) as i32;
         out = ((d + 48) as u8).to_ascii_string() + out;
         m = m / (10 as i64);
     }
@@ -67,7 +67,7 @@ function ref_itos64(m0: i64): string {
 function main(): i32 {
     // Exhaustive 0..20000, both signs: covers every digit count 1..5 and both
     // parities at each, which is where a two-at-a-time loop goes wrong.
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i <= 20000) {
         if (i.to_string() != ref_itos(i)) { return 1; }
         if ((0 - i).to_string() != ref_itos(0 - i)) { return 2; }
@@ -76,9 +76,9 @@ function main(): i32 {
 
     // Dense around every power of ten -- the digit-count transitions, where
     // the up-front width and the loop's leftover must agree.
-    var p: i64 = 1 as i64;
+    let p: i64 = 1 as i64;
     while (p < (2000000000 as i64)) {
-        var v: i32 = p as i32;
+        let v: i32 = p as i32;
         if (v.to_string() != ref_itos(v)) { return 3; }
         if ((v - 1).to_string() != ref_itos(v - 1)) { return 4; }
         if ((v + 1).to_string() != ref_itos(v + 1)) { return 5; }
@@ -105,14 +105,14 @@ function main(): i32 {
     if ((1234567890123 as i64).to_string() != "1234567890123") { return 18; }
 
     // i64 exhaustive over the small range + both parities.
-    var q: i64 = 0 as i64;
+    let q: i64 = 0 as i64;
     while (q <= (3000 as i64)) {
         if (q.to_string() != ref_itos64(q)) { return 19; }
         if ((0 - q).to_string() != ref_itos64(0 - q)) { return 20; }
         q = q + 1;
     }
     // And dense around each 64-bit power of ten.
-    var e: i64 = 1 as i64;
+    let e: i64 = 1 as i64;
     while (e <= (1000000000000000000 as i64)) {
         if (e.to_string() != ref_itos64(e)) { return 21; }
         if ((e - 1).to_string() != ref_itos64(e - 1)) { return 22; }

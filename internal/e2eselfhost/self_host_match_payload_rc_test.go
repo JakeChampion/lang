@@ -25,28 +25,28 @@ import (
 // rcMatchPayloadUAF are the isolating pair (var-binding vs match-extraction of the
 // SAME append-built array) — both must return 17.
 //
-// rcMatchPayloadWorks: the array is returned directly and bound to a `var` (no
+// rcMatchPayloadWorks: the array is returned directly and bound to a `let` (no
 // enum wrapper). Held across the same allocating `eat` loop, it stays intact.
 // This is the ACTIVE guard — it must keep returning 17.
 const rcMatchPayloadWorks = `function eat(n: i32): i32 {
-    var s: string = "x";
-    var i: i32 = 0;
+    let s: string = "x";
+    let i: i32 = 0;
     while (i < n) { s = s + "yyyyyyyyyy"; i = i + 1; }
     return s.len();
 }
 function build(): string[] {
-    var r: string[] = [];
+    let r: string[] = [];
     r = r.append("alpha");
     r = r.append("bravo");
     r = r.append("charlie");
     return r;
 }
 function main(): i32 {
-    var names: string[] = build();
-    var total: i32 = 0;
-    var j: i32 = 0;
+    let names: string[] = build();
+    let total: i32 = 0;
+    let j: i32 = 0;
     while (j < names.len()) {
-        var junk: i32 = eat(200);
+        let junk: i32 = eat(200);
         total = total + names[j].len();
         j = j + 1;
     }
@@ -58,13 +58,13 @@ function main(): i32 {
 // path (correct answer, matching rcMatchPayloadWorks + native, is 17). Un-skip
 // the subtest below when the self-host match-arm RC gains the ownership transfer.
 const rcMatchPayloadUAF = `function eat(n: i32): i32 {
-    var s: string = "x";
-    var i: i32 = 0;
+    let s: string = "x";
+    let i: i32 = 0;
     while (i < n) { s = s + "yyyyyyyyyy"; i = i + 1; }
     return s.len();
 }
 function build(): Result[string[], i32] {
-    var r: string[] = [];
+    let r: string[] = [];
     r = r.append("alpha");
     r = r.append("bravo");
     r = r.append("charlie");
@@ -73,10 +73,10 @@ function build(): Result[string[], i32] {
 function main(): i32 {
     match (build()) {
         Ok(names) => {
-            var total: i32 = 0;
-            var j: i32 = 0;
+            let total: i32 = 0;
+            let j: i32 = 0;
             while (j < names.len()) {
-                var junk: i32 = eat(200);
+                let junk: i32 = eat(200);
                 total = total + names[j].len();
                 j = j + 1;
             }
@@ -99,28 +99,28 @@ function main(): i32 {
 const rcOptStructPayloadUAF = `struct P { xs: i32[], k: i32 }
 
 function some_of(i: i32): Option[P] {
-    var p: P = P { xs: [i, i + 1], k: i };
-    var o: Option[P] = Some(p);
+    let p: P = P { xs: [i, i + 1], k: i };
+    let o: Option[P] = Some(p);
     return o;
 }
 
 function ok_of(i: i32): Result[P, i32] {
-    var p: P = P { xs: [i, i + 1], k: i };
-    var o: Result[P, i32] = Ok(p);
+    let p: P = P { xs: [i, i + 1], k: i };
+    let o: Result[P, i32] = Ok(p);
     return o;
 }
 
 function clobber(i: i32): i32 {
-    var q: P = P { xs: [9999, 9999], k: 9999 };
+    let q: P = P { xs: [9999, 9999], k: 9999 };
     return q.k + q.xs[0];
 }
 
 function round(i: i32): i32 {
-    var a: Option[P] = some_of(i);
-    var b: Result[P, i32] = ok_of(i);
-    var junk: i32 = clobber(i);
-    var m: i32 = 0;
-    var n: i32 = 0;
+    let a: Option[P] = some_of(i);
+    let b: Result[P, i32] = ok_of(i);
+    let junk: i32 = clobber(i);
+    let m: i32 = 0;
+    let n: i32 = 0;
     match (a) { Some(p2) => { m = p2.k; }, None => { m = 0 - 1; } }
     match (b) { Ok(p3) => { n = p3.k; }, Err(e) => { n = 0 - 1; } }
     if (m != i) { return 1; }
@@ -129,8 +129,8 @@ function round(i: i32): i32 {
 }
 
 function main(): i32 {
-    var bad: i32 = 0;
-    var r: i32 = 0;
+    let bad: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { bad = bad + round(r); r = r + 1; }
     return bad;
 }`
@@ -149,28 +149,28 @@ function main(): i32 {
 const rcQualifiedVariantPayloadUAF = `enum E { A(i32[]), B }
 
 function qual_of(i: i32): E {
-    var items: i32[] = [i, i + 1, i + 2];
-    var e: E = E.A(items);
+    let items: i32[] = [i, i + 1, i + 2];
+    let e: E = E.A(items);
     return e;
 }
 
 function bare_of(i: i32): E {
-    var items: i32[] = [i, i + 1, i + 2];
-    var e: E = A(items);
+    let items: i32[] = [i, i + 1, i + 2];
+    let e: E = A(items);
     return e;
 }
 
 function clobber(i: i32): i32 {
-    var junk: i32[] = [7777, 7777, 7777];
+    let junk: i32[] = [7777, 7777, 7777];
     return junk[0];
 }
 
 function round(i: i32): i32 {
-    var q: E = qual_of(i);
-    var b: E = bare_of(i);
-    var j: i32 = clobber(i);
-    var m: i32 = 0;
-    var n: i32 = 0;
+    let q: E = qual_of(i);
+    let b: E = bare_of(i);
+    let j: i32 = clobber(i);
+    let m: i32 = 0;
+    let n: i32 = 0;
     match (q) { A(xs) => { m = xs[0]; }, B => { m = 0 - 1; } }
     match (b) { A(ys) => { n = ys[0]; }, B => { n = 0 - 1; } }
     if (m != i) { return 1; }
@@ -179,8 +179,8 @@ function round(i: i32): i32 {
 }
 
 function main(): i32 {
-    var bad: i32 = 0;
-    var r: i32 = 0;
+    let bad: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { bad = bad + round(r); r = r + 1; }
     return bad;
 }`
@@ -210,7 +210,7 @@ func compileAndRunSelfHostIR(t *testing.T, gcc string, runner []string, dir, dri
 }
 
 // TestSelfHostMatchPayloadRC pins the working half of the match-payload RC pair
-// (a heap array bound to a `var` and held across an allocating call stays intact)
+// (a heap array bound to a `let` and held across an allocating call stays intact)
 // and documents the broken half (the same array extracted via `match` is freed
 // prematurely — a self-host-only UAF, #2649) as a skipped target for the fix.
 func TestSelfHostMatchPayloadRC(t *testing.T) {

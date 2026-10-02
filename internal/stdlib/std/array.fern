@@ -49,12 +49,12 @@ import "std/num";
 // divide the way the i32 `sum()` does (#2687) — the truncated
 // mean of any i32[] always fits back in i32.
 pub function __method_Array_avg(arr: i32[]): Option[i32] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var s: i64 = 0;
-  var i: i32 = 0;
+  let s: i64 = 0;
+  let i: i32 = 0;
   while (i < n) {
     s = s + arr[i] as i64;
     i = i + 1;
@@ -66,13 +66,13 @@ pub function __method_Array_avg(arr: i32[]): Option[i32] {
 // data. Option[i32] None when empty. Single-element arrays
 // return Some(0). Useful as a quick variance proxy.
 pub function __method_Array_range(arr: i32[]): Option[i32] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var lo: i32 = arr[0];
-  var hi: i32 = arr[0];
-  var i: i32 = 1;
+  let lo: i32 = arr[0];
+  let hi: i32 = arr[0];
+  let i: i32 = 1;
   while (i < n) {
     if (arr[i] < lo) {
       lo = arr[i];
@@ -90,12 +90,12 @@ pub function __method_Array_range(arr: i32[]): Option[i32] {
 // Some(arr[0].abs()). Negative inputs use their magnitude
 // (gcd is sign-invariant).
 pub function __method_Array_gcd_all(arr: i32[]): Option[i32] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var g: i32 = arr[0].abs();
-  var i: i32 = 1;
+  let g: i32 = arr[0].abs();
+  let i: i32 = 1;
   while (i < n) {
     g = g.gcd(arr[i].abs());
     i = i + 1;
@@ -108,12 +108,12 @@ pub function __method_Array_gcd_all(arr: i32[]): Option[i32] {
 // callers handling unbounded ranges should pre-check or
 // widen to i64.
 pub function __method_Array_lcm_all(arr: i32[]): Option[i32] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var l: i32 = arr[0].abs();
-  var i: i32 = 1;
+  let l: i32 = arr[0].abs();
+  let i: i32 = 1;
   while (i < n) {
     l = l.lcm(arr[i].abs());
     i = i + 1;
@@ -126,9 +126,9 @@ pub function __method_Array_lcm_all(arr: i32[]): Option[i32] {
 // to `arr.map(abs)` once first-class higher-order
 // methods land.
 pub function __method_Array_abs_each(arr: i32[]): i32[] {
-  var n: i32 = arr.len();
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(arr[i].abs());
     i = i + 1;
@@ -141,12 +141,12 @@ pub function __method_Array_abs_each(arr: i32[]): i32[] {
 // max(len(arr) - 1, 0). Empty / singleton inputs return
 // empty. Useful for slope / delta computations on samples.
 pub function __method_Array_pairwise_diffs(arr: i32[]): i32[] {
-  var n: i32 = arr.len();
-  var out: i32[] = [];
+  let n: i32 = arr.len();
+  let out: i32[] = [];
   if (n < 2) {
     return out;
   }
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < n) {
     out = out.append(arr[i] - arr[i - 1]);
     i = i + 1;
@@ -158,13 +158,13 @@ pub function __method_Array_pairwise_diffs(arr: i32[]): i32[] {
 // pass. Empty → None. Saves a second iteration when callers
 // need both bounds.
 pub function __method_Array_min_max(arr: i32[]): Option[(i32, i32)] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var lo: i32 = arr[0];
-  var hi: i32 = arr[0];
-  var i: i32 = 1;
+  let lo: i32 = arr[0];
+  let hi: i32 = arr[0];
+  let i: i32 = 1;
   while (i < n) {
     if (arr[i] < lo) {
       lo = arr[i];
@@ -181,8 +181,8 @@ pub function __method_Array_min_max(arr: i32[]): Option[(i32, i32)] {
 // strictly positive (n > 0). Empty → true (vacuous). Useful
 // for input validation on count / size arrays.
 pub function __method_Array_every_positive(arr: i32[]): boolean {
-  var n: i32 = arr.len();
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let i: i32 = 0;
   while (i < n) {
     if (arr[i] <= 0) {
       return false;
@@ -196,10 +196,10 @@ pub function __method_Array_every_positive(arr: i32[]): boolean {
 // of arr[0..=i]. Empty → empty. Overflow wraps silently.
 // Common shape for prefix-sum optimisations.
 pub function __method_Array_cumsum(arr: i32[]): i32[] {
-  var n: i32 = arr.len();
-  var out: i32[] = [];
-  var s: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let out: i32[] = [];
+  let s: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     s = s + arr[i];
     out = out.append(s);
@@ -213,9 +213,9 @@ pub function __method_Array_cumsum(arr: i32[]): i32[] {
 // magnitude calculations. No overflow detection — squares
 // of larger ints will wrap.
 pub function __method_Array_sum_squared(arr: i32[]): i32 {
-  var n: i32 = arr.len();
-  var s: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let s: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     s = s + arr[i] * arr[i];
     i = i + 1;
@@ -228,11 +228,11 @@ pub function __method_Array_sum_squared(arr: i32[]): i32 {
 // (no float averaging since the result type is i32).
 // Option[i32] None on empty.
 pub function __method_Array_median(arr: i32[]): Option[i32] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var sorted: i32[] = cmp.sort(arr);
+  let sorted: i32[] = cmp.sort(arr);
   return Some(sorted[(n - 1) / 2]);
 }
 
@@ -242,15 +242,15 @@ pub function __method_Array_median(arr: i32[]): Option[i32] {
 // naive count; fine for the small-n use cases this
 // module targets.
 pub function __method_Array_mode(arr: i32[]): Option[i32] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var best: i32 = arr[0];
-  var best_count: i32 = 1;
-  var i: i32 = 0;
+  let best: i32 = arr[0];
+  let best_count: i32 = 1;
+  let i: i32 = 0;
   while (i < n) {
-    var c: i32 = arr.count(arr[i]);
+    let c: i32 = arr.count(arr[i]);
     if (c > best_count) {
       best = arr[i];
       best_count = c;
@@ -272,7 +272,7 @@ pub function __method_Array_mode(arr: i32[]): Option[i32] {
 // i32[] surface as a clean type error rather than a missing-
 // method one.
 pub function __method_Array_join(arr: string[], sep: string): string {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return "";
   }
@@ -283,14 +283,14 @@ pub function __method_Array_join(arr: string[], sep: string): string {
   // element and hands its bytes over as the string without copying them
   // — O(total), where the `out = out + …` chain recopies the whole
   // prefix on every step (O(total²), the #4379 hot path).
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     total = total + arr[i].len();
     i = i + 1;
   }
   total = total + sep.len() * (n - 1);
-  var b: usize = buf_new(total);
+  let b: usize = buf_new(total);
   i = 0;
   while (i < n) {
     if (i > 0) {
@@ -299,7 +299,7 @@ pub function __method_Array_join(arr: string[], sep: string): string {
     buf_push(b, arr[i]);
     i = i + 1;
   }
-  var out: string = buf_take(b);
+  let out: string = buf_take(b);
   buf_free(b);
   return out;
 }
@@ -309,9 +309,9 @@ pub function __method_Array_join(arr: string[], sep: string): string {
 // output of `split(sep)` when adjacent separators left empty
 // holes (e.g. `"a,,b".split(",")` → `["a", "", "b"]`).
 pub function __method_Array_filter_non_empty(arr: string[]): string[] {
-  var n: i32 = arr.len();
-  var out: string[] = [];
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < n) {
     if (arr[i].len() > 0) {
       out = out.append(arr[i]);
@@ -325,9 +325,9 @@ pub function __method_Array_filter_non_empty(arr: string[]): string[] {
 // entries. The "how many real values" counterpart to
 // filter_non_empty when callers only need the count.
 pub function __method_Array_count_non_empty(arr: string[]): i32 {
-  var n: i32 = arr.len();
-  var c: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let c: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (arr[i].len() > 0) {
       c = c + 1;
@@ -341,9 +341,9 @@ pub function __method_Array_count_non_empty(arr: string[]): i32 {
 // elements. Same algorithm as `cmp.distinct` but skips
 // building the output array.
 pub function __method_Array_distinct_count(arr: string[]): i32 {
-  var n: i32 = arr.len();
-  var seen: string[] = [];
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let seen: string[] = [];
+  let i: i32 = 0;
   while (i < n) {
     if (!cmp.contains(seen, arr[i])) {
       seen = seen.append(arr[i]);
@@ -357,12 +357,12 @@ pub function __method_Array_distinct_count(arr: string[]): i32 {
 // longest length; Option[string] None on empty. Ties go to
 // the first occurrence.
 pub function __method_Array_max_by_len(arr: string[]): Option[string] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var best: string = arr[0];
-  var i: i32 = 1;
+  let best: string = arr[0];
+  let i: i32 = 1;
   while (i < n) {
     if (arr[i].len() > best.len()) {
       best = arr[i];
@@ -376,12 +376,12 @@ pub function __method_Array_max_by_len(arr: string[]): Option[string] {
 // shortest length; Option[string] None on empty. Ties go
 // to the first occurrence. Counterpart to max_by_len.
 pub function __method_Array_min_by_len(arr: string[]): Option[string] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var best: string = arr[0];
-  var i: i32 = 1;
+  let best: string = arr[0];
+  let i: i32 = 1;
   while (i < n) {
     if (arr[i].len() < best.len()) {
       best = arr[i];
@@ -395,9 +395,9 @@ pub function __method_Array_min_by_len(arr: string[]): Option[string] {
 // element. Useful for capacity-planning a join() output
 // buffer or reporting size statistics.
 pub function __method_Array_sum_lens(arr: string[]): i32 {
-  var n: i32 = arr.len();
-  var s: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let s: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     s = s + arr[i].len();
     i = i + 1;
@@ -410,8 +410,8 @@ pub function __method_Array_sum_lens(arr: string[]): i32 {
 // (vacuously — there are no empty entries). Useful for
 // post-split validation.
 pub function __method_Array_all_non_empty(arr: string[]): boolean {
-  var n: i32 = arr.len();
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let i: i32 = 0;
   while (i < n) {
     if (arr[i].len() == 0) {
       return false;
@@ -425,8 +425,8 @@ pub function __method_Array_all_non_empty(arr: string[]): boolean {
 // contains needle as a substring. Useful for searching a
 // list of values for a common token.
 pub function __method_Array_any_contains(arr: string[], needle: string): boolean {
-  var n: i32 = arr.len();
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let i: i32 = 0;
   while (i < n) {
     if (arr[i].contains(needle)) {
       return true;
@@ -441,8 +441,8 @@ pub function __method_Array_any_contains(arr: string[], needle: string): boolean
 // (vacuous). Empty prefix → true (every string starts
 // with "").
 pub function __method_Array_all_starts_with(arr: string[], prefix: string): boolean {
-  var n: i32 = arr.len();
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let i: i32 = 0;
   while (i < n) {
     if (!arr[i].starts_with(prefix)) {
       return false;
@@ -455,8 +455,8 @@ pub function __method_Array_all_starts_with(arr: string[], prefix: string): bool
 // `(arr: string[]) all_ends_with(suffix)` — true if every
 // element ends with `suffix`. Empty array → true.
 pub function __method_Array_all_ends_with(arr: string[], suffix: string): boolean {
-  var n: i32 = arr.len();
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let i: i32 = 0;
   while (i < n) {
     if (!arr[i].ends_with(suffix)) {
       return false;
@@ -473,7 +473,7 @@ pub function __method_Array_all_ends_with(arr: string[], suffix: string): boolea
 // single-element array → that element; two-element array
 // → joined with `last_sep` only.
 pub function __method_Array_join_with_last(arr: string[], sep: string, last_sep: string): string {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return "";
   }
@@ -488,33 +488,33 @@ pub function __method_Array_join_with_last(arr: string[], sep: string, last_sep:
   // before the final element, so size = sum(elem lens) + sep*(n-2) +
   // last_sep. Replaces the `out = out + …` chain that recopied the whole
   // prefix each step (O(total²)). Byte-for-byte identical output.
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     total = total + arr[i].len();
     i = i + 1;
   }
   total = total + sep.len() * (n - 2) + last_sep.len();
-  var buf: u8[] = __alloc_u8(total);
-  var pos: i32 = 0;
+  let buf: u8[] = __alloc_u8(total);
+  let pos: i32 = 0;
   i = 0;
   while (i < n) {
     if (i > 0) {
-      var sp: string = sep;
+      let sp: string = sep;
       if (i == n - 1) {
         sp = last_sep;
       }
-      var spl: i32 = sp.len();
-      var j: i32 = 0;
+      let spl: i32 = sp.len();
+      let j: i32 = 0;
       while (j < spl) {
         buf = buf.with(pos, sp[j] as u8);
         pos = pos + 1;
         j = j + 1;
       }
     }
-    var e: string = arr[i];
-    var el: i32 = e.len();
-    var k: i32 = 0;
+    let e: string = arr[i];
+    let el: i32 = e.len();
+    let k: i32 = 0;
     while (k < el) {
       buf = buf.with(pos, e[k] as u8);
       pos = pos + 1;
@@ -529,9 +529,9 @@ pub function __method_Array_join_with_last(arr: string[], sep: string, last_sep:
 // Useful for L1 norm / "ignore sign, total magnitude" cases.
 // Empty → 0. Overflow wraps silently.
 pub function __method_Array_sum_abs(arr: i32[]): i32 {
-  var n: i32 = arr.len();
-  var s: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let s: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     s = s + arr[i].abs();
     i = i + 1;
@@ -542,8 +542,8 @@ pub function __method_Array_sum_abs(arr: i32[]): i32 {
 // `(arr: i32[]) all_zero()` — true iff every element is 0.
 // Empty array → true (vacuously).
 pub function __method_Array_all_zero(arr: i32[]): boolean {
-  var n: i32 = arr.len();
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let i: i32 = 0;
   while (i < n) {
     if (arr[i] != 0) {
       return false;
@@ -556,8 +556,8 @@ pub function __method_Array_all_zero(arr: i32[]): boolean {
 // `(arr: string[]) all_eq_str(target)` — true iff every element
 // equals `target`. Empty array → true (vacuously).
 pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
-  var n: i32 = arr.len();
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let i: i32 = 0;
   while (i < n) {
     if (arr[i] != target) {
       return false;
@@ -586,12 +586,12 @@ pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
 // sums, toward zero for negative — Go's int64 division
 // semantics). Returns None on empty.
 pub function avg_i64(arr: i64[]): Option[i64] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var total: i64 = 0;
-  var i: i32 = 0;
+  let total: i64 = 0;
+  let i: i32 = 0;
   while (i < n) {
     total = total + arr[i];
     i = i + 1;
@@ -604,10 +604,10 @@ pub function avg_i64(arr: i64[]): Option[i64] {
 // sibling of the i32 `cumsum`, handy for numeric integration and running
 // totals.
 pub function cumsum_f64(arr: f64[]): f64[] {
-  var n: i32 = arr.len();
-  var out: f64[] = [];
-  var s: f64 = 0.0;
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let out: f64[] = [];
+  let s: f64 = 0.0;
+  let i: i32 = 0;
   while (i < n) {
     s = s + arr[i];
     out = out.append(s);
@@ -620,10 +620,10 @@ pub function cumsum_f64(arr: f64[]): f64[] {
 // is `product(arr[0..=i])`. Same length as the input, the multiplicative
 // counterpart to `cumsum`; empty in, empty out.
 pub function cumprod_f64(arr: f64[]): f64[] {
-  var n: i32 = arr.len();
-  var out: f64[] = [];
-  var p: f64 = 1.0;
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let out: f64[] = [];
+  let p: f64 = 1.0;
+  let i: i32 = 0;
   while (i < n) {
     p = p * arr[i];
     out = out.append(p);
@@ -637,9 +637,9 @@ pub function cumprod_f64(arr: f64[]): f64[] {
 // discrete counterpart to differentiation and the left-inverse of `cumsum`:
 // `diff(cumsum(xs))` recovers `xs` (minus its first element).
 pub function diff_f64(arr: f64[]): f64[] {
-  var n: i32 = arr.len();
-  var out: f64[] = [];
-  var i: i32 = 1;
+  let n: i32 = arr.len();
+  let out: f64[] = [];
+  let i: i32 = 1;
   while (i < n) {
     out = out.append(arr[i] - arr[i - 1]);
     i = i + 1;
@@ -648,12 +648,12 @@ pub function diff_f64(arr: f64[]): f64[] {
 }
 
 pub function avg_f64(arr: f64[]): Option[f64] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var total: f64 = 0.0;
-  var i: i32 = 0;
+  let total: f64 = 0.0;
+  let i: i32 = 0;
   while (i < n) {
     total = total + arr[i];
     i = i + 1;
@@ -666,21 +666,21 @@ pub function avg_f64(arr: f64[]): Option[f64] {
 // two-pass form (compute the mean, then the sum of squared deviations), which
 // is numerically stabler than the one-pass sum-of-squares.
 pub function variance_f64(arr: f64[]): Option[f64] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var msum: f64 = 0.0;
-  var mi: i32 = 0;
+  let msum: f64 = 0.0;
+  let mi: i32 = 0;
   while (mi < n) {
     msum = msum + arr[mi];
     mi = mi + 1;
   }
-  var mean: f64 = msum / (n as f64);
-  var acc: f64 = 0.0;
-  var i: i32 = 0;
+  let mean: f64 = msum / (n as f64);
+  let acc: f64 = 0.0;
+  let i: i32 = 0;
   while (i < n) {
-    var d: f64 = arr[i] - mean;
+    let d: f64 = arr[i] - mean;
     acc = acc + d * d;
     i = i + 1;
   }
@@ -706,28 +706,28 @@ pub function stddev_f64(arr: f64[]): Option[f64] {
 // elements for even-length input, the standard continuous-data convention.
 // `None` for empty. Odd length returns the exact middle element.
 pub function median_f64(arr: f64[]): Option[f64] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var sorted: f64[] = cmp.sort(arr);
+  let sorted: f64[] = cmp.sort(arr);
   if (n % 2 == 1) {
     return Some(sorted[n / 2]);
   }
-  var hi: i32 = n / 2;
+  let hi: i32 = n / 2;
   return Some((sorted[hi - 1] + sorted[hi]) * 0.5);
 }
 
 // `range_f64(arr)` — the spread `max - min` (always `>= 0`). A single element
 // has range 0. `None` for empty. Computed in one pass, so it needs no sort.
 pub function range_f64(arr: f64[]): Option[f64] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n == 0) {
     return None;
   }
-  var lo: f64 = arr[0];
-  var hi: f64 = arr[0];
-  var i: i32 = 1;
+  let lo: f64 = arr[0];
+  let hi: f64 = arr[0];
+  let i: i32 = 1;
   while (i < n) {
     if (arr[i] < lo) {
       lo = arr[i];
@@ -745,13 +745,13 @@ pub function range_f64(arr: f64[]): Option[f64] {
 // to the shorter length); empty inputs give `0`. Returns a plain f64 (no
 // Option) since the natural identity for the empty sum is `0`.
 pub function dot_f64(a: f64[], b: f64[]): f64 {
-  var n: i32 = a.len();
-  var m: i32 = b.len();
+  let n: i32 = a.len();
+  let m: i32 = b.len();
   if (m < n) {
     n = m;
   }
-  var s: f64 = 0.0;
-  var i: i32 = 0;
+  let s: f64 = 0.0;
+  let i: i32 = 0;
   while (i < n) {
     s = s + a[i] * b[i];
     i = i + 1;
@@ -764,9 +764,9 @@ pub function dot_f64(a: f64[], b: f64[]): f64 {
 // magnitudes can overflow before the sqrt — callers near the f64 max should
 // scale first; typical data is fine.
 pub function norm_f64(arr: f64[]): f64 {
-  var n: i32 = arr.len();
-  var s: f64 = 0.0;
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let s: f64 = 0.0;
+  let i: i32 = 0;
   while (i < n) {
     s = s + arr[i] * arr[i];
     i = i + 1;
@@ -778,15 +778,15 @@ pub function norm_f64(arr: f64[]): f64 {
 // `norm(a - b)`. On a length mismatch the sum runs to the shorter length; equal
 // vectors (and empty inputs) give `0`. Returns a plain f64.
 pub function distance_f64(a: f64[], b: f64[]): f64 {
-  var n: i32 = a.len();
-  var m: i32 = b.len();
+  let n: i32 = a.len();
+  let m: i32 = b.len();
   if (m < n) {
     n = m;
   }
-  var s: f64 = 0.0;
-  var i: i32 = 0;
+  let s: f64 = 0.0;
+  let i: i32 = 0;
   while (i < n) {
-    var d: f64 = a[i] - b[i];
+    let d: f64 = a[i] - b[i];
     s = s + d * d;
     i = i + 1;
   }
@@ -798,13 +798,13 @@ pub function distance_f64(a: f64[], b: f64[]): f64 {
 // the empty vector are returned unchanged rather than producing NaNs from a
 // divide-by-zero.
 pub function normalize_f64(arr: f64[]): f64[] {
-  var mag: f64 = norm_f64(arr);
+  let mag: f64 = norm_f64(arr);
   if (mag == 0.0) {
     return arr;
   }
-  var out: f64[] = [];
-  var n: i32 = arr.len();
-  var i: i32 = 0;
+  let out: f64[] = [];
+  let n: i32 = arr.len();
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(arr[i] / mag);
     i = i + 1;
@@ -825,13 +825,13 @@ pub function scale_f64(arr: f64[], k: f64): f64[] {
 // the result runs to the shorter length (the longer tail is dropped); empty in,
 // empty out. The vector-addition companion to `scale_f64`.
 pub function add_f64(a: f64[], b: f64[]): f64[] {
-  var n: i32 = a.len();
-  var m: i32 = b.len();
+  let n: i32 = a.len();
+  let m: i32 = b.len();
   if (m < n) {
     n = m;
   }
-  var out: f64[] = [];
-  var i: i32 = 0;
+  let out: f64[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(a[i] + b[i]);
     i = i + 1;
@@ -883,7 +883,7 @@ pub function first[T](xs: T[]): Option[T] {
 // `last(xs)` — `Some` of the final element, or `None` when empty. The safe
 // alternative to `xs[xs.len() - 1]`.
 pub function last[T](xs: T[]): Option[T] {
-  var n: i32 = xs.len();
+  let n: i32 = xs.len();
   if (n == 0) {
     return None;
   }
@@ -903,7 +903,7 @@ pub function get[T](xs: T[], i: i32): Option[T] {
 // `map(xs, f)` — fresh `U[]` with `f` applied to every element.
 // Empty → empty. The most common transform.
 pub function map[T, U](xs: T[], f: (T) => U): U[] {
-  var out: U[] = [];
+  let out: U[] = [];
   for x in xs {
     out = out.append(f(x));
   }
@@ -913,7 +913,7 @@ pub function map[T, U](xs: T[], f: (T) => U): U[] {
 // `filter(xs, keep)` — fresh `T[]` of the elements for which
 // `keep` returns true, original order preserved. Empty → empty.
 pub function filter[T](xs: T[], keep: (T) => boolean): T[] {
-  var out: T[] = [];
+  let out: T[] = [];
   for x in xs {
     if (keep(x)) {
       out = out.append(x);
@@ -927,7 +927,7 @@ pub function filter[T](xs: T[], keep: (T) => boolean): T[] {
 // final accumulator. The general reduction; `sum` / `product` /
 // `min` / `max` are all special cases.
 pub function fold[T, A](xs: T[], init: A, f: (A, T) => A): A {
-  var acc: A = init;
+  let acc: A = init;
   for x in xs {
     acc = f(acc, x);
   }
@@ -987,7 +987,7 @@ pub function find[T](xs: T[], pred: (T) => boolean): Option[T] {
 // element", `find_last` "the last". Works for any element type via the
 // closure; empty → `None`.
 pub function find_last[T](xs: T[], pred: (T) => boolean): Option[T] {
-  var i: i32 = xs.len() - 1;
+  let i: i32 = xs.len() - 1;
   while (i >= 0) {
     if (pred(xs[i])) {
       return Some(xs[i]);
@@ -1030,11 +1030,11 @@ pub function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  var best: T = xs[0];
-  var best_k: i32 = key(best);
-  var i: i32 = 1;
+  let best: T = xs[0];
+  let best_k: i32 = key(best);
+  let i: i32 = 1;
   while (i < xs.len()) {
-    var k: i32 = key(xs[i]);
+    let k: i32 = key(xs[i]);
     if (k > best_k) {
       best = xs[i];
       best_k = k;
@@ -1050,11 +1050,11 @@ pub function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  var best: T = xs[0];
-  var best_k: i32 = key(best);
-  var i: i32 = 1;
+  let best: T = xs[0];
+  let best_k: i32 = key(best);
+  let i: i32 = 1;
   while (i < xs.len()) {
-    var k: i32 = key(xs[i]);
+    let k: i32 = key(xs[i]);
     if (k < best_k) {
       best = xs[i];
       best_k = k;
@@ -1077,8 +1077,8 @@ pub function max_index[T: cmp.Ord](xs: T[]): Option[i32] {
   if (xs.len() == 0) {
     return None;
   }
-  var best: i32 = 0;
-  var i: i32 = 1;
+  let best: i32 = 0;
+  let i: i32 = 1;
   while (i < xs.len()) {
     if (xs[i].cmp(xs[best]) > 0) {
       best = i;
@@ -1093,8 +1093,8 @@ pub function min_index[T: cmp.Ord](xs: T[]): Option[i32] {
   if (xs.len() == 0) {
     return None;
   }
-  var best: i32 = 0;
-  var i: i32 = 1;
+  let best: i32 = 0;
+  let i: i32 = 1;
   while (i < xs.len()) {
     if (xs[i].cmp(xs[best]) < 0) {
       best = i;
@@ -1111,12 +1111,12 @@ pub function min_index[T: cmp.Ord](xs: T[]): Option[i32] {
 // siblings of `num.cumsum`, useful for high-water marks, drawdowns, and
 // monotone-envelope scans. Empty in, empty out.
 pub function running_max[T: cmp.Ord](xs: T[]): T[] {
-  var out: T[] = [];
+  let out: T[] = [];
   if (xs.len() == 0) {
     return out;
   }
-  var best: T = xs[0];
-  var i: i32 = 0;
+  let best: T = xs[0];
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (xs[i].cmp(best) > 0) {
       best = xs[i];
@@ -1128,12 +1128,12 @@ pub function running_max[T: cmp.Ord](xs: T[]): T[] {
 }
 
 pub function running_min[T: cmp.Ord](xs: T[]): T[] {
-  var out: T[] = [];
+  let out: T[] = [];
   if (xs.len() == 0) {
     return out;
   }
-  var best: T = xs[0];
-  var i: i32 = 0;
+  let best: T = xs[0];
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (xs[i].cmp(best) < 0) {
       best = xs[i];
@@ -1158,8 +1158,8 @@ pub function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  var best: T = xs[0];
-  var i: i32 = 1;
+  let best: T = xs[0];
+  let i: i32 = 1;
   while (i < xs.len()) {
     if (cmp(xs[i], best) > 0) {
       best = xs[i];
@@ -1176,8 +1176,8 @@ pub function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  var best: T = xs[0];
-  var i: i32 = 1;
+  let best: T = xs[0];
+  let i: i32 = 1;
   while (i < xs.len()) {
     if (cmp(xs[i], best) < 0) {
       best = xs[i];
@@ -1193,7 +1193,7 @@ pub function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
 // returns the element): `find` answers "which element", `position` answers
 // "where". Works for any element type via the closure; empty → `None`.
 pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (pred(xs[i])) {
       return Some(i);
@@ -1210,8 +1210,8 @@ pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
 // (which keeps the values) when it is the positions you need — a selection
 // mask, later `swap` / `remove_at` targets, gap analysis.
 pub function find_indices[T](xs: T[], pred: (T) => boolean): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (pred(xs[i])) {
       out = out.append(i);
@@ -1227,7 +1227,7 @@ pub function find_indices[T](xs: T[], pred: (T) => boolean): i32[] {
 // `index_of_last` (which matches by `Eq` value). Works for any element type
 // via the closure; empty → `None`.
 pub function rposition[T](xs: T[], pred: (T) => boolean): Option[i32] {
-  var i: i32 = xs.len() - 1;
+  let i: i32 = xs.len() - 1;
   while (i >= 0) {
     if (pred(xs[i])) {
       return Some(i);
@@ -1242,8 +1242,8 @@ pub function rposition[T](xs: T[], pred: (T) => boolean): Option[i32] {
 // finds the first): `count_where` just tallies, so it avoids `filter(…).len()`'s
 // throwaway allocation. Works for any element type via the closure; empty → 0.
 pub function count_where[T](xs: T[], pred: (T) => boolean): i32 {
-  var c: i32 = 0;
-  var i: i32 = 0;
+  let c: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (pred(xs[i])) {
       c = c + 1;
@@ -1259,8 +1259,8 @@ pub function count_where[T](xs: T[], pred: (T) => boolean): i32 {
 // element type (e.g. total line length over a `string[]`, total price over a
 // `Cart[]`). `key` is evaluated once per element; empty → 0.
 pub function sum_by[T](xs: T[], key: (T) => i32): i32 {
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     total = total + key(xs[i]);
     i = i + 1;
@@ -1274,8 +1274,8 @@ pub function sum_by[T](xs: T[], key: (T) => i32): i32 {
 // fails, a full copy when all pass. Complement of `drop_while`:
 // `take_while(xs, p) ++ drop_while(xs, p) == xs`.
 pub function take_while[T](xs: T[], pred: (T) => boolean): T[] {
-  var out: T[] = [];
-  var i: i32 = 0;
+  let out: T[] = [];
+  let i: i32 = 0;
   while (i < xs.len() && pred(xs[i])) {
     out = out.append(xs[i]);
     i = i + 1;
@@ -1288,11 +1288,11 @@ pub function take_while[T](xs: T[], pred: (T) => boolean): T[] {
 // count-based `drop`. A full copy when the first element fails, `[]` when all
 // pass.
 pub function drop_while[T](xs: T[], pred: (T) => boolean): T[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len() && pred(xs[i])) {
     i = i + 1;
   }
-  var out: T[] = [];
+  let out: T[] = [];
   while (i < xs.len()) {
     out = out.append(xs[i]);
     i = i + 1;
@@ -1305,8 +1305,8 @@ pub function drop_while[T](xs: T[], pred: (T) => boolean): T[] {
 // enumerate(xs)`-style loop carry the index without a manual
 // counter. Empty → empty.
 pub function enumerate[T](xs: T[]): (i32, T)[] {
-  var out: (i32, T)[] = [];
-  var i: i32 = 0;
+  let out: (i32, T)[] = [];
+  let i: i32 = 0;
   for x in xs {
     out = out.append((i, x));
     i = i + 1;
@@ -1318,8 +1318,8 @@ pub function enumerate[T](xs: T[]): (i32, T)[] {
 // Empty → empty. Structural (no element comparison), so it works
 // for any element type, unlike the i32/string-specific reversers.
 pub function reverse[T](xs: T[]): T[] {
-  var out: T[] = [];
-  var i: i32 = xs.len() - 1;
+  let out: T[] = [];
+  let i: i32 = xs.len() - 1;
   while (i >= 0) {
     out = out.append(xs[i]);
     i = i - 1;
@@ -1334,15 +1334,15 @@ pub function reverse[T](xs: T[]): T[] {
 // rotate_right(xs, 1)`. Empty / length-1 / `n % len == 0` → an unchanged copy.
 // Structural (no element comparison), so it works for any element type.
 pub function rotate_left[T](xs: T[], n: i32): T[] {
-  var len: i32 = xs.len();
-  var out: T[] = [];
+  let len: i32 = xs.len();
+  let out: T[] = [];
   if (len == 0) {
     return out;
   }
   // Normalise the shift into [0, len) — `%` can be negative in Fern, so add
   // len and take `%` again to fold negatives back into range.
-  var sh: i32 = (n % len + len) % len;
-  var i: i32 = 0;
+  let sh: i32 = (n % len + len) % len;
+  let i: i32 = 0;
   while (i < len) {
     out = out.append(xs[(i + sh) % len]);
     i = i + 1;
@@ -1362,8 +1362,8 @@ pub function rotate_right[T](xs: T[], n: i32): T[] {
 // Clamped: `n <= 0` → empty, `n >= len` → a full copy. The
 // complement of `drop`: `take(xs, n) ++ drop(xs, n) == xs`.
 pub function take[T](xs: T[], n: i32): T[] {
-  var out: T[] = [];
-  var i: i32 = 0;
+  let out: T[] = [];
+  let i: i32 = 0;
   while (i < n && i < xs.len()) {
     out = out.append(xs[i]);
     i = i + 1;
@@ -1374,8 +1374,8 @@ pub function take[T](xs: T[], n: i32): T[] {
 // `drop(xs, n)` — fresh `T[]` with the first `n` elements removed
 // (the suffix). Clamped: `n <= 0` → a full copy, `n >= len` → empty.
 pub function drop[T](xs: T[], n: i32): T[] {
-  var out: T[] = [];
-  var i: i32 = n;
+  let out: T[] = [];
+  let i: i32 = n;
   if (i < 0) {
     i = 0;
   }
@@ -1395,7 +1395,7 @@ pub function take_last[T](xs: T[], n: i32): T[] {
   if (n <= 0) {
     return [];
   }
-  var start: i32 = xs.len() - n;
+  let start: i32 = xs.len() - n;
   if (start < 0) {
     start = 0;
   }
@@ -1406,7 +1406,7 @@ pub function drop_last[T](xs: T[], n: i32): T[] {
   if (n <= 0) {
     return slice(xs, 0, xs.len());
   }
-  var end: i32 = xs.len() - n;
+  let end: i32 = xs.len() - n;
   if (end < 0) {
     end = 0;
   }
@@ -1419,16 +1419,16 @@ pub function drop_last[T](xs: T[], n: i32): T[] {
 // `slice(xs, -3, 100)` copies the whole array. `take`/`drop` are the
 // one-bound special cases; `slice` is the general window into a range.
 pub function slice[T](xs: T[], start: i32, end: i32): T[] {
-  var lo: i32 = start;
-  var hi: i32 = end;
+  let lo: i32 = start;
+  let hi: i32 = end;
   if (lo < 0) {
     lo = 0;
   }
   if (hi > xs.len()) {
     hi = xs.len();
   }
-  var out: T[] = [];
-  var i: i32 = lo;
+  let out: T[] = [];
+  let i: i32 = lo;
   while (i < hi) {
     out = out.append(xs[i]);
     i = i + 1;
@@ -1442,17 +1442,17 @@ pub function slice[T](xs: T[], start: i32, end: i32): T[] {
 // looping forever) and empty input → empty. The batch-processing verb:
 // `for batch in chunks(rows, 100) { flush(batch); }`.
 pub function chunks[T](xs: T[], size: i32): T[][] {
-  var out: T[][] = [];
+  let out: T[][] = [];
   if (size <= 0) {
     return out;
   }
-  var n: i32 = xs.len();
-  var i: i32 = 0;
+  let n: i32 = xs.len();
+  let i: i32 = 0;
   while (i < n) {
     // Each group is a fresh `slice` return rather than a reused
     // loop-local buffer — the latter is miscompiled by the
     // self-host RC reuse pass (all groups alias the last one).
-    var hi: i32 = i + size;
+    let hi: i32 = i + size;
     if (hi > n) {
       hi = n;
     }
@@ -1471,12 +1471,12 @@ pub function chunks[T](xs: T[], size: i32): T[][] {
 // loop-local buffer is miscompiled by the self-host RC reuse pass — see
 // `chunks`).
 pub function chunks_exact[T](xs: T[], size: i32): T[][] {
-  var out: T[][] = [];
+  let out: T[][] = [];
   if (size <= 0) {
     return out;
   }
-  var n: i32 = xs.len();
-  var i: i32 = 0;
+  let n: i32 = xs.len();
+  let i: i32 = 0;
   while (i + size <= n) {
     out = out.append(slice(xs, i, i + size));
     i = i + size;
@@ -1490,12 +1490,12 @@ pub function chunks_exact[T](xs: T[], size: i32): T[][] {
 // window fits). Unlike `chunks`, windows OVERLAP and each one has
 // exactly `size` elements — the shape pairwise/rolling scans want.
 pub function windows[T](xs: T[], size: i32): T[][] {
-  var out: T[][] = [];
+  let out: T[][] = [];
   if (size <= 0) {
     return out;
   }
-  var n: i32 = xs.len();
-  var i: i32 = 0;
+  let n: i32 = xs.len();
+  let i: i32 = 0;
   while (i + size <= n) {
     // Fresh `slice` return per window (see the note in `chunks`).
     out = out.append(slice(xs, i, i + size));
@@ -1508,7 +1508,7 @@ pub function windows[T](xs: T[], size: i32): T[][] {
 // Neither input is mutated. Empty inputs are fine (`concat([], b)`
 // copies `b`).
 pub function concat[T](a: T[], b: T[]): T[] {
-  var out: T[] = [];
+  let out: T[] = [];
   for x in a {
     out = out.append(x);
   }
@@ -1523,12 +1523,12 @@ pub function concat[T](a: T[], b: T[]): T[] {
 // Structural (no callback / comparison), so it works for any element
 // types. `zip([1,2,3], ["a","b"])` → `[(1,"a"), (2,"b")]`.
 pub function zip[T, U](a: T[], b: U[]): (T, U)[] {
-  var out: (T, U)[] = [];
-  var n: i32 = a.len();
+  let out: (T, U)[] = [];
+  let n: i32 = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     out = out.append((a[i], b[i]));
     i = i + 1;
@@ -1542,7 +1542,7 @@ pub function zip[T, U](a: T[], b: U[]): (T, U)[] {
 // as `map`/`filter`. `flat_map([1,2], dup)` with `dup(x) = [x, x]` →
 // `[1,1,2,2]`.
 pub function flat_map[T, U](xs: T[], f: (T) => U[]): U[] {
-  var out: U[] = [];
+  let out: U[] = [];
   for x in xs {
     for y in f(x) {
       out = out.append(y);
@@ -1555,7 +1555,7 @@ pub function flat_map[T, U](xs: T[], f: (T) => U[]): U[] {
 // preserving order (`flat_map` with the identity callback, but
 // structural — no closure). `flatten([[1,2],[],[3]])` → `[1,2,3]`.
 pub function flatten[T](xss: T[][]): T[] {
-  var out: T[] = [];
+  let out: T[] = [];
   for xs in xss {
     for x in xs {
       out = out.append(x);
@@ -1569,8 +1569,8 @@ pub function flatten[T](xss: T[][]): T[] {
 // rest (in order). `partition([1,2,3,4], is_even)` → `([2,4], [1,3])`.
 // A single pass, so `pred` runs exactly once per element.
 pub function partition[T](xs: T[], pred: (T) => boolean): (T[], T[]) {
-  var kept: T[] = [];
-  var rejected: T[] = [];
+  let kept: T[] = [];
+  let rejected: T[] = [];
   for x in xs {
     if (pred(x)) {
       kept = kept.append(x);
@@ -1587,8 +1587,8 @@ pub function partition[T](xs: T[], pred: (T) => boolean): (T[], T[]) {
 // emitted). `scan([1,2,3], 0, add)` → `[1,3,6]` (a generic `cumsum`).
 // The final element equals `fold(xs, init, f)`.
 pub function scan[T, A](xs: T[], init: A, f: (A, T) => A): A[] {
-  var out: A[] = [];
-  var acc: A = init;
+  let out: A[] = [];
+  let acc: A = init;
   for x in xs {
     acc = f(acc, x);
     out = out.append(acc);
@@ -1602,9 +1602,9 @@ pub function scan[T, A](xs: T[], init: A, f: (A, T) => A): A[] {
 // `intersperse([1,2,3], 0)` → `[1,0,2,0,3]`; a 0- or 1-element input is
 // returned element-for-element (no gap to fill).
 pub function intersperse[T](xs: T[], sep: T): T[] {
-  var out: T[] = [];
-  var i: i32 = 0;
-  var n: i32 = xs.len();
+  let out: T[] = [];
+  let i: i32 = 0;
+  let n: i32 = xs.len();
   while (i < n) {
     if (i > 0) {
       out = out.append(sep);
@@ -1620,11 +1620,11 @@ pub function intersperse[T](xs: T[], sep: T): T[] {
 // empty array (there is no sensible non-positive stride). Mirrors Rust's
 // `Iterator::step_by`, minus its panic on a zero step.
 pub function step_by[T](xs: T[], n: i32): T[] {
-  var out: T[] = [];
+  let out: T[] = [];
   if (n <= 0) {
     return out;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < xs.len()) {
     out = out.append(xs[i]);
     i = i + n;
@@ -1641,8 +1641,8 @@ pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  var acc: T = xs[0];
-  var i: i32 = 1;
+  let acc: T = xs[0];
+  let i: i32 = 1;
   while (i < xs.len()) {
     acc = f(acc, xs[i]);
     i = i + 1;
@@ -1665,11 +1665,11 @@ pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
 // regardless of `T`. Precondition: `xs` must be sorted — on unsorted input the
 // result is unspecified (it won't crash, but may miss a present element).
 pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
-  var lo: i32 = 0;
-  var hi: i32 = xs.len();
+  let lo: i32 = 0;
+  let hi: i32 = xs.len();
   while (lo < hi) {
-    var mid: i32 = lo + (hi - lo) / 2;
-    var c: i32 = xs[mid].cmp(target);
+    let mid: i32 = lo + (hi - lo) / 2;
+    let c: i32 = xs[mid].cmp(target);
     if (c == 0) {
       return Some(mid);
     }
@@ -1710,11 +1710,11 @@ pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
 // bound supplies the compare (the type's structural equality). Useful for "is
 // this column constant" / "did every worker agree" checks.
 pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
-  var n: i32 = xs.len();
+  let n: i32 = xs.len();
   if (n < 2) {
     return true;
   }
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < n) {
     if (!xs[i].eq(xs[0])) {
       return false;
@@ -1731,8 +1731,8 @@ pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
 // single O(n) pass, and on unsorted data it compresses runs while keeping later
 // repeats. Empty → empty. Same `T: cmp.Eq` bound / per-type monomorphisation.
 pub function dedup[T: cmp.Eq](xs: T[]): T[] {
-  var out: T[] = [];
-  var i: i32 = 0;
+  let out: T[] = [];
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (i == 0 || !xs[i].eq(xs[i - 1])) {
       out = out.append(xs[i]);
@@ -1759,7 +1759,7 @@ pub function dedup[T: cmp.Eq](xs: T[]): T[] {
 // receiver methods (which dispatch on the array's element type by name). Empty
 // → 0.
 pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
-  var c: i32 = 0;
+  let c: i32 = 0;
   for x in xs {
     if (x.eq(target)) {
       c = c + 1;
@@ -1772,7 +1772,7 @@ pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
 // elements of `b` not already present. First-seen order across `a` then `b`
 // (equivalent to `cmp.distinct(concat(a, b))`, one pass).
 pub function union[T: cmp.Eq](a: T[], b: T[]): T[] {
-  var out: T[] = [];
+  let out: T[] = [];
   for x in a {
     if (!cmp.contains(out, x)) {
       out = out.append(x);
@@ -1789,7 +1789,7 @@ pub function union[T: cmp.Eq](a: T[], b: T[]): T[] {
 // `intersection(a, b)` — set intersection: the distinct elements of `a` that
 // also appear in `b`, in `a`'s first-seen order.
 pub function intersection[T: cmp.Eq](a: T[], b: T[]): T[] {
-  var out: T[] = [];
+  let out: T[] = [];
   for x in a {
     if (cmp.contains(b, x) && !cmp.contains(out, x)) {
       out = out.append(x);
@@ -1801,7 +1801,7 @@ pub function intersection[T: cmp.Eq](a: T[], b: T[]): T[] {
 // `difference(a, b)` — set difference (`a \ b`): the distinct elements of `a`
 // that do NOT appear in `b`, in `a`'s first-seen order.
 pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
-  var out: T[] = [];
+  let out: T[] = [];
   for x in a {
     if (!cmp.contains(b, x) && !cmp.contains(out, x)) {
       out = out.append(x);
@@ -1818,7 +1818,7 @@ pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
 // equals `target`, else `None`. The reverse-scan companion to `index_of`
 // (first match); the Option keeps "not found" out of band.
 pub function index_of_last[T: cmp.Eq](xs: T[], target: T): Option[i32] {
-  var i: i32 = xs.len() - 1;
+  let i: i32 = xs.len() - 1;
   while (i >= 0) {
     if (xs[i].eq(target)) {
       return Some(i);
@@ -1836,7 +1836,7 @@ pub function starts_with[T: cmp.Eq](xs: T[], prefix: T[]): boolean {
   if (prefix.len() > xs.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < prefix.len()) {
     if (!xs[i].eq(prefix[i])) {
       return false;
@@ -1850,12 +1850,12 @@ pub function starts_with[T: cmp.Eq](xs: T[], prefix: T[]): boolean {
 // `suffix` equals the element of `xs` at the matching tail index. A `suffix`
 // longer than `xs` is false; an empty `suffix` always matches.
 pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
-  var n: i32 = xs.len();
-  var m: i32 = suffix.len();
+  let n: i32 = xs.len();
+  let m: i32 = suffix.len();
   if (m > n) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m) {
     if (!xs[n - m + i].eq(suffix[i])) {
       return false;

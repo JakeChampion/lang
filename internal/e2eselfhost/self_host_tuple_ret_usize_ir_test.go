@@ -28,35 +28,35 @@ var tupleRetUsizeCases = []struct {
 }{
 	// The bail shape itself: return two allocations as a `(usize, usize)`, read
 	// each back through `.N`.
-	{"usize-tuple-ret-dot", `function mk(): (usize, usize) { var a: usize = __alloc(64); var b: usize = __alloc(64); __store_i32(a, 11); __store_i32(b, 22); return (a, b); }
-function main(): i32 { var t = mk(); return __load_i32(t.0) + __load_i32(t.1); }`, 33},
+	{"usize-tuple-ret-dot", `function mk(): (usize, usize) { let a: usize = __alloc(64); let b: usize = __alloc(64); __store_i32(a, 11); __store_i32(b, 22); return (a, b); }
+function main(): i32 { let t = mk(); return __load_i32(t.0) + __load_i32(t.1); }`, 33},
 	// Same return, bound through the DECLARED annotation `base.fern` writes.
-	{"usize-tuple-ret-annotated", `function mk(): (usize, usize) { var a: usize = __alloc(64); __store_i32(a, 6); var b: usize = __alloc(64); __store_i32(b, 7); return (a, b); }
-function main(): i32 { var t: (usize, usize) = mk(); return __load_i32(t.0) + __load_i32(t.1); }`, 13},
+	{"usize-tuple-ret-annotated", `function mk(): (usize, usize) { let a: usize = __alloc(64); __store_i32(a, 6); let b: usize = __alloc(64); __store_i32(b, 7); return (a, b); }
+function main(): i32 { let t: (usize, usize) = mk(); return __load_i32(t.0) + __load_i32(t.1); }`, 13},
 	// Destructured, so the binds take the tuple-tag path rather than `.N`.
-	{"usize-tuple-ret-destructure", `function mk(): (usize, usize) { var a: usize = __alloc(64); var b: usize = __alloc(64); __store_i32(a, 4); __store_i32(b, 5); return (a, b); }
-function main(): i32 { var (p, q) = mk(); return __load_i32(p) * __load_i32(q); }`, 20},
+	{"usize-tuple-ret-destructure", `function mk(): (usize, usize) { let a: usize = __alloc(64); let b: usize = __alloc(64); __store_i32(a, 4); __store_i32(b, 5); return (a, b); }
+function main(): i32 { let (p, q) = mk(); return __load_i32(p) * __load_i32(q); }`, 20},
 	// Mixed widths in one box: a pointer slot beside an i32 slot.
-	{"usize-tuple-ret-mixed", `function mk(n: i32): (usize, i32) { var a: usize = __alloc(64); __store_i32(a, n); return (a, n + 1); }
-function main(): i32 { var t = mk(9); return __load_i32(t.0) + t.1; }`, 19},
+	{"usize-tuple-ret-mixed", `function mk(n: i32): (usize, i32) { let a: usize = __alloc(64); __store_i32(a, n); return (a, n + 1); }
+function main(): i32 { let t = mk(9); return __load_i32(t.0) + t.1; }`, 19},
 	// Address ARITHMETIC off a tuple element — `base.fern`'s `d + (i * 4) as
 	// usize` store loop. A truncated element writes outside its block, so the
 	// read-back guard is what catches it.
-	{"usize-tuple-elem-offset", `function mk(): (usize, usize) { var a: usize = __alloc(256); var b: usize = __alloc(256); return (a, b); }
-function main(): i32 { var t = mk(); __store_i32(t.0 + 32 as usize, 41); __store_i32(t.1 + 64 as usize, 1); if (__load_i32(t.0 + 32 as usize) != 41) { return 90; } if (__load_i32(t.1 + 64 as usize) != 1) { return 91; } return 7; }`, 7},
+	{"usize-tuple-elem-offset", `function mk(): (usize, usize) { let a: usize = __alloc(256); let b: usize = __alloc(256); return (a, b); }
+function main(): i32 { let t = mk(); __store_i32(t.0 + 32 as usize, 41); __store_i32(t.1 + 64 as usize, 1); if (__load_i32(t.0 + 32 as usize) != 41) { return 90; } if (__load_i32(t.1 + 64 as usize) != 1) { return 91; } return 7; }`, 7},
 	// The struct half of the same gap: `Codec`'s two `usize` fields made the
 	// whole struct not leak-safe, which bailed its constructor.
 	{"usize-struct-field", `struct C { p: usize, n: i32, q: usize }
-function mk(): C { var a: usize = __alloc(64); __store_i32(a, 3); var b: usize = __alloc(64); __store_i32(b, 4); return C { p: a, n: 5, q: b }; }
-function main(): i32 { var c = mk(); return __load_i32(c.p) + c.n + __load_i32(c.q); }`, 12},
+function mk(): C { let a: usize = __alloc(64); __store_i32(a, 3); let b: usize = __alloc(64); __store_i32(b, 4); return C { p: a, n: 5, q: b }; }
+function main(): i32 { let c = mk(); return __load_i32(c.p) + c.n + __load_i32(c.q); }`, 12},
 	// `char` was absent from both lists for the same reason and bailed the same
 	// way; it is a code point in the one i32 slot the receiver gate already
 	// classes it as.
-	{"char-tuple-ret", `function mk(): (char, i32) { var c: char = 'A'; return (c, 1); }
-function main(): i32 { var t = mk(); if (t.0 == 'A') { return 6; } return t.1; }`, 6},
+	{"char-tuple-ret", `function mk(): (char, i32) { let c: char = 'A'; return (c, 1); }
+function main(): i32 { let t = mk(); if (t.0 == 'A') { return 6; } return t.1; }`, 6},
 	{"char-struct-field", `struct K { c: char, n: i32 }
 function mk(): K { return K { c: 'z', n: 3 }; }
-function main(): i32 { var k = mk(); if (k.c == 'z') { return k.n + 4; } return 0; }`, 7},
+function main(): i32 { let k = mk(); if (k.c == 'z') { return k.n + 4; } return 0; }`, 7},
 }
 
 // TestSelfHostTupleRetUsizeIRX86_64 drives the cases through the self-hosted

@@ -26,11 +26,11 @@ import (
 
 func lenRecvBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var a: string = "hello there friend, ";
-    var b: string = "general kenobi!!!";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let a: string = "hello there friend, ";
+    let b: string = "general kenobi!!!";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
         acc = acc + (a + b).len();
         i = i + 1;
@@ -45,10 +45,10 @@ func lenRecvBumpSrc(n string) string {
 // 37 chars (20 + 17), so acc == 37*200 == 7400; an over-release of a / b /
 // the concat shows up as a wrong sum (999) or non-zero underflow count.
 const lenRecvUnderflowSrc = `function main(): i32 {
-    var a: string = "hello there friend, ";
-    var b: string = "general kenobi!!!";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let a: string = "hello there friend, ";
+    let b: string = "general kenobi!!!";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
         acc = acc + (a + b).len();
         i = i + 1;
@@ -115,16 +115,16 @@ const lenCallRecvRawTail = `    return g;
 
 func lenCallRecvStrBumpSrc(n, tail string) string {
 	return `function f(k: i32): string {
-    var p: string = "abcdefgh";
+    let p: string = "abcdefgh";
     return "(func $x" + p + " (param i32) (result i32)" + p + " local.get 0" + p + " i32.const 1" + p + " i32.add)" + p;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + f(i).len(); i = i + 1; }
     if (acc < 0) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
 ` + tail
 }
 
@@ -133,12 +133,12 @@ func lenCallRecvArrBumpSrc(n, tail string) string {
     return [k, k + 1, k + 2, k + 3, k + 4, k + 5, k + 6, k + 7, k + 8, k + 9];
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + f(i).len(); i = i + 1; }
     if (acc != ` + n + ` * 10) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
 ` + tail
 }
 
@@ -148,10 +148,10 @@ function main(): i32 {
 const lenCallRecvAliasSrc = `function id(s: string): string { return s; }
 function idarr(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
-    var base: string = "0123456789abcdef" + "-suffix-to-force-heap";
-    var arr: i32[] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let base: string = "0123456789abcdef" + "-suffix-to-force-heap";
+    let arr: i32[] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 5000) {
         acc = acc + id(base).len() + idarr(arr).len();
         i = i + 1;
@@ -172,8 +172,8 @@ function main(): i32 {
 // `random_bytes(32).len()`; 200 reclaimed receivers must neither crash nor
 // underflow.
 const lenCallRecvBuiltinSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) { acc = acc + random_bytes(32).len(); i = i + 1; }
     if (acc != 200 * 32) { return 121; }
     return __rc_underflow_count();

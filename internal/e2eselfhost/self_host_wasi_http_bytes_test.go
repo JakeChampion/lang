@@ -33,17 +33,17 @@ function stream_write(stream: i32, data: u8[]): Result[i32, i32] {
         eprint("rejected");
         return Err(1);
     }
-    var w: Writer = stdout();
+    let w: Writer = stdout();
     match (w.write_bytes(data)) { Some(_) => { assert(false); }, None => {} }
     return Ok(0);
 }
 function main(): i32 {
-    var data: u8[] = [];
+    let data: u8[] = [];
     for i in 0..8193 { data = data.append((i % 251) as u8); }
     write_all(0, data);
     write_all(1, data);
     write_all(2, data);
-    var empty: u8[] = [];
+    let empty: u8[] = [];
     write_all(1, empty);
     return 0;
 }
@@ -94,7 +94,7 @@ import "std/http";
 import "std/stream";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var data: u8[] = req.body_bytes();
+    let data: u8[] = req.body_bytes();
     if (req.path == "/stream") {
         return http.stream(200, Stream { data: data, pos: 1 });
     }

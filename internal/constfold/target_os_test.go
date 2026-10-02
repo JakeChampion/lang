@@ -26,9 +26,9 @@ func targetOSCalls(prog *ast.Program) int {
 func TestFoldWithResolvesTargetOS(t *testing.T) {
 	prog, err := parser.Parse(`function os(): string { return target_os(); }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n < 1) {
-        var here: string = target_os();
+        let here: string = target_os();
         if (target_os() == "darwin" && here == "darwin") { n = n + 1; }
         n = n + 1;
     }

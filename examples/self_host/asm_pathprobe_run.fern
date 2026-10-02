@@ -10,7 +10,7 @@ import "./rundriver";
 import "./semlower";
 
 function main(): i32 {
-  var mod: parser.Module = rundriver.parse_stdin("asm_pathprobe_run");
+  let mod: parser.Module = rundriver.parse_stdin("asm_pathprobe_run");
   if (semlower.verdict(mod, "x86-64-linux").ok) {
     print("ir\n");
   } else {

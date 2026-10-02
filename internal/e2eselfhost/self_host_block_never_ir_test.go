@@ -25,13 +25,13 @@ var blockNeverCases = []struct {
 	// The issue's spelling: an arrow lambda whose block body leaves only
 	// through `return`.
 	{"arrow_lambda_block_return", `function main(): i32 {
-    var f = (n: i32): i32 => { return n; };
+    let f = (n: i32): i32 => { return n; };
     return f(4);
 }`},
-	// A diverging block in a `var` initialiser: the trailing `return 2` is the
+	// A diverging block in a `let` initialiser: the trailing `return 2` is the
 	// FUNCTION's return, not the block's value, so `+ 100` is unreachable.
 	{"var_init_all_paths_return", `function f(c: boolean): i32 {
-    var x: i32 = { if (c) { return 1; } return 2; };
+    let x: i32 = { if (c) { return 1; } return 2; };
     return x + 100;
 }
 function main(): i32 {
@@ -40,7 +40,7 @@ function main(): i32 {
 	// A diverging `if`-EXPRESSION arm: the then arm never yields a value, so the
 	// arm type comes from the else arm alone.
 	{"if_expression_arm_returns", `function pick(c: boolean): i32 {
-    var x: i32 = if (c) { return 1; } else { 2 };
+    let x: i32 = if (c) { return 1; } else { 2 };
     return x + 100;
 }
 function main(): i32 {
@@ -48,7 +48,7 @@ function main(): i32 {
 }`},
 	// A string-typed diverging block — the dead tail must not retype the block.
 	{"string_block_all_paths_return", `function label(c: boolean): string {
-    var s: string = { if (c) { return "yes"; } return "no"; };
+    let s: string = { if (c) { return "yes"; } return "no"; };
     return s + "!";
 }
 function main(): i32 {
@@ -101,7 +101,7 @@ func TestSelfHostBlockValuelessStillRejected(t *testing.T) {
 	_, mmc, stdlibRoot, _, runner, _ := annotateF64ProjDir(t)
 	const src = `function side(): i32 { return 1; }
 function main(): i32 {
-    var x: i32 = { side(); };
+    let x: i32 = { side(); };
     return x;
 }`
 	proj := t.TempDir()

@@ -50,12 +50,12 @@ var genericArityCrashCases = []struct {
 	name string
 	src  string
 }{
-	// Struct, one argument short, at each annotation position. The `var` and
+	// Struct, one argument short, at each annotation position. The `let` and
 	// return positions were the ones the checker did not report E019 for when
 	// this was written, so nothing stopped them reaching the monomorphiser; the
 	// guard stays, since the checker's verdict is not what the driver runs on.
 	{"struct_var", `struct Pair[A, B] { first: A, second: B }
-function main(): i32 { var p: Pair[i32] = Pair { first: 1, second: 2 }; return p.first; }`},
+function main(): i32 { let p: Pair[i32] = Pair { first: 1, second: 2 }; return p.first; }`},
 	{"struct_param", `struct Pair[A, B] { first: A, second: B }
 function f(p: Pair[i32]): i32 { return 0; }
 function main(): i32 { return 0; }`},
@@ -68,19 +68,19 @@ function main(): i32 { return 0; }`},
 	// An array of the under-supplied instantiation, so the mismatch is reached
 	// through mg_ty's recursion rather than at the top of the annotation.
 	{"struct_nested_array", `struct Pair[A, B] { first: A, second: B }
-function main(): i32 { var xs: Pair[i32][] = []; return 0; }`},
+function main(): i32 { let xs: Pair[i32][] = []; return 0; }`},
 	// Two short rather than one, so the guard cannot be an off-by-one that only
 	// happens to cover a single missing argument.
 	{"struct_three_params_one_supplied", `struct T[A, B, C] { a: A, b: B, c: C }
-function main(): i32 { var p: T[i32] = T { a: 1, b: 2, c: 3 }; return p.a; }`},
+function main(): i32 { let p: T[i32] = T { a: 1, b: 2, c: 3 }; return p.a; }`},
 	{"unused_tparam_still_rejected", `struct Pair[A, B] { first: A, second: A }
-function main(): i32 { var p: Pair[i32] = Pair { first: 1, second: 2 }; return p.first; }`},
+function main(): i32 { let p: Pair[i32] = Pair { first: 1, second: 2 }; return p.first; }`},
 
 	// Generic ENUMS take a different route to the same zip: ge_inst_of and
 	// me_collect_anno both build the key through genum_key_from_anno, which is
 	// why the guard lives there rather than on one caller.
 	{"enum_var", `enum E[A, B] { L(A), R(B) }
-function main(): i32 { var e: E[i32] = L(1); return 0; }`},
+function main(): i32 { let e: E[i32] = L(1); return 0; }`},
 	{"enum_param", `enum E[A, B] { L(A), R(B) }
 function f(e: E[i32]): i32 { return 0; }
 function main(): i32 { return 0; }`},
@@ -88,7 +88,7 @@ function main(): i32 { return 0; }`},
 struct H { e: E[i32] }
 function main(): i32 { return 0; }`},
 	{"enum_three_params_one_supplied", `enum E[A, B, C] { L(A), M(B), R(C) }
-function main(): i32 { var e: E[i32] = L(1); return 0; }`},
+function main(): i32 { let e: E[i32] = L(1); return 0; }`},
 }
 
 // genericArityOKCases are the negative controls: correct arity must still
@@ -100,11 +100,11 @@ var genericArityOKCases = []struct {
 	want int
 }{
 	{"struct_correct_arity", `struct Pair[A, B] { first: A, second: B }
-function main(): i32 { var p: Pair[i32, string] = Pair { first: 7, second: "x" }; return p.first; }`, 7},
+function main(): i32 { let p: Pair[i32, string] = Pair { first: 7, second: "x" }; return p.first; }`, 7},
 	{"enum_correct_arity", `enum E[A, B] { L(A), R(B) }
-function main(): i32 { var e: E[i32, string] = L(4); match (e) { L(v) => { return v; }, R(s) => { return 0; } } }`, 4},
+function main(): i32 { let e: E[i32, string] = L(4); match (e) { L(v) => { return v; }, R(s) => { return 0; } } }`, 4},
 	{"enum_single_param", `enum Box2[T] { Wrap(T), Empty }
-function main(): i32 { var b: Box2[i32] = Wrap(5); match (b) { Wrap(v) => { return v; }, Empty => { return 0; } } }`, 5},
+function main(): i32 { let b: Box2[i32] = Wrap(5); match (b) { Wrap(v) => { return v; }, Empty => { return 0; } } }`, 5},
 	{"builtin_option", `function f(): Option[i32] { return Some(3); }
 function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 0; } } }`, 3},
 }

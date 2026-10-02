@@ -23,7 +23,7 @@ function main(): i32 {
     if ((2147483647).bit_length() != 31) { return 10; } // i32::MAX
     // i32::MIN magnitude is 2^31 -> 32 bits (the widen-to-i64 edge). Built as
     // (MAX - 1) since the bare 2147483648 literal is out of i32 range.
-    var min: i32 = (0 - 2147483647) - 1;
+    let min: i32 = (0 - 2147483647) - 1;
     if (min.bit_length() != 32) { return 11; }
     return 42;
 }

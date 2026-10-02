@@ -5,7 +5,7 @@
 import "std/regex";
 
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (regex.regex_match("\\bcat\\b", "the cat sat")) { r = r + 1; }       // whole word
     if (!regex.regex_match("\\bcat\\b", "scatter")) { r = r + 2; }          // inside a word: no
     if (regex.regex_find("\\bcat\\b", "a cat") == 2) { r = r + 4; }         // boundary position
@@ -13,7 +13,7 @@ function main(): i32 {
     if (regex.regex_match("ca\\Bt", "cat")) { r = r + 16; }                 // \B inside a word
     if (!regex.regex_match("cat\\B", "cat ")) { r = r + 32; }               // \B is false at a boundary
 
-    var ms: regex.RMatch[] = regex.regex_find_all("\\b\\w+\\b", "one two three");
+    let ms: regex.RMatch[] = regex.regex_find_all("\\b\\w+\\b", "one two three");
     if (ms.len() == 3) { r = r + 64; }                                      // word tokenisation
 
     if (regex.regex_replace_all("\\bcat\\b", "cat cats category", "X") == "X cats category") { r = r + 128; }

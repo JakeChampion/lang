@@ -18,11 +18,11 @@ struct V { n: i32 }
 struct T { z: i32 }
 
 function main(): i32 {
-    var m: Map[i32, V] = map_new(8);
+    let m: Map[i32, V] = map_new(8);
     m = m.insert(1, V { n: 10 });
     m = m.insert(2, V { n: 32 });
 
-    var total: i32 = 0;
+    let total: i32 = 0;
     match (m.get(1)) {
         Some(v) => { total = total + v.n; },
         None => {},
@@ -34,9 +34,9 @@ function main(): i32 {
 
     // std/array's methods are declared over `T`, so the struct above
     // reaches them the same way.
-    var xs: i32[] = [1, 2, 3, 4];
-    var k: K = K { a: xs.len() };
-    var t: T = T { z: xs.sum() };
+    let xs: i32[] = [1, 2, 3, 4];
+    let k: K = K { a: xs.len() };
+    let t: T = T { z: xs.sum() };
 
     return total + t.z + k.a + m.len();
 }

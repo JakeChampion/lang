@@ -18,8 +18,8 @@
 import "std/i32";
 
 function main(): i32 {
-    var mn: i32 = -2147483648;
-    var mx: i32 = 2147483647;
+    let mn: i32 = -2147483648;
+    let mx: i32 = 2147483647;
 
     // The corner. Not a trap, not a fault, not a different answer per target.
     print((mn / -1).to_string());
@@ -28,8 +28,8 @@ function main(): i32 {
     print((mn % 1).to_string());
 
     // Truncation toward zero, with every sign combination.
-    var xs: i32[] = [7, -7, 7, -7];
-    var ys: i32[] = [3, 3, -3, -3];
+    let xs: i32[] = [7, -7, 7, -7];
+    let ys: i32[] = [3, 3, -3, -3];
     for i in 0..xs.len() {
         print(xs[i].to_string() + "/" + ys[i].to_string() + "="
             + (xs[i] / ys[i]).to_string() + " %=" + (xs[i] % ys[i]).to_string());
@@ -60,8 +60,8 @@ function main(): i32 {
     // inline: the self-host IR path does not lower a cast INSIDE a `!=`
     // (#6394), and this case is about the arithmetic, not about where a
     // cast may appear.
-    var w: i64 = mn as i64;
-    var back: i32 = w as i32;
+    let w: i64 = mn as i64;
+    let back: i32 = w as i32;
     if (back != mn) { return 2; }
     if (w != -2147483648) { return 3; }
     return 0;

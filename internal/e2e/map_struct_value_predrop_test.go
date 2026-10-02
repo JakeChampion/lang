@@ -9,7 +9,7 @@ package e2e
 // leaves the struct value column shared on a COW copy exactly as it leaves the
 // string one.
 //
-// Ungated, `var snap = m; m = m.insert(k, s)` returned the WRONG value on all
+// Ungated, `let snap = m; m = m.insert(k, s)` returned the WRONG value on all
 // three backends over 200 rounds while `FERN_LEAKCHECK=1` reported
 // allocs=2400 frees=2400 live_bytes=0. Every free is at rc 1 and the box is
 // recycled under the reader, so the heap balances exactly and no detector
@@ -25,12 +25,12 @@ import "testing"
 const mapAliasedStructOverwriteSrc = `import "core/map";
 struct Box { name: string }
 function mk(): i32 {
-    var stem: string = "a";
-    var m: Map[i32, Box] = map_new(8);
+    let stem: string = "a";
+    let m: Map[i32, Box] = map_new(8);
     m = m.insert(1, Box { name: stem + "-value-long-one" });
-    var snap: Map[i32, Box] = m;
+    let snap: Map[i32, Box] = m;
     m = m.insert(1, Box { name: stem + "-value-long-two" });
-    var ok: i32 = 0;
+    let ok: i32 = 0;
     match (snap.get(1)) { Some(b) => { if (b.name == "a-value-long-one") { ok = ok + 1; } }, None => {} }
     match (m.get(1)) { Some(b) => { if (b.name == "a-value-long-two") { ok = ok + 2; } }, None => {} }
     if (snap.len() == 1) { ok = ok + 4; }
@@ -38,8 +38,8 @@ function mk(): i32 {
     return ok;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { t = t + mk(); i = i + 1; }
     if (t != 200 * 15) { return 97; }
     return __rc_underflow_count();
@@ -87,13 +87,13 @@ func TestWASMMapAliasedStructOverwrite(t *testing.T) {
 const mapAliasedStructNoOverwriteSrc = `import "core/map";
 struct Box2 { name: string }
 function mk(): i32 {
-    var stem: string = "a";
-    var m: Map[i32, Box2] = map_new(8);
+    let stem: string = "a";
+    let m: Map[i32, Box2] = map_new(8);
     m = m.insert(1, Box2 { name: stem + "-value-long-one" });
     m = m.insert(2, Box2 { name: stem + "-value-long-two" });
-    var snap: Map[i32, Box2] = m;
+    let snap: Map[i32, Box2] = m;
     m = m.insert(3, Box2 { name: stem + "-value-long-three" });
-    var ok: i32 = 0;
+    let ok: i32 = 0;
     match (snap.get(1)) { Some(b) => { if (b.name == "a-value-long-one") { ok = ok + 1; } }, None => {} }
     match (m.get(2)) { Some(b) => { if (b.name == "a-value-long-two") { ok = ok + 2; } }, None => {} }
     match (m.get(3)) { Some(b) => { if (b.name == "a-value-long-three") { ok = ok + 4; } }, None => {} }
@@ -101,8 +101,8 @@ function mk(): i32 {
     return ok;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { t = t + mk(); i = i + 1; }
     if (t != 200 * 15) { return 97; }
     return __rc_underflow_count();
@@ -112,13 +112,13 @@ const mapAliasedDeepStructSrc = `import "core/map";
 struct Inner { tag: string }
 struct Deep { name: string, xs: i32[], inner: Inner }
 function mk(): i32 {
-    var stem: string = "a";
-    var m: Map[i32, Deep] = map_new(8);
+    let stem: string = "a";
+    let m: Map[i32, Deep] = map_new(8);
     m = m.insert(1, Deep { name: stem + "-value-long-one", xs: [1, 2, 3], inner: Inner { tag: stem + "-tag-long-one" } });
     m = m.insert(2, Deep { name: stem + "-value-long-two", xs: [4, 5, 6], inner: Inner { tag: stem + "-tag-long-two" } });
-    var snap: Map[i32, Deep] = m;
+    let snap: Map[i32, Deep] = m;
     m = m.insert(3, Deep { name: stem + "-value-long-three", xs: [7, 8, 9], inner: Inner { tag: stem + "-tag-long-three" } });
-    var ok: i32 = 0;
+    let ok: i32 = 0;
     match (snap.get(1)) { Some(d) => { if (d.name == "a-value-long-one" && d.xs.len() == 3 && d.inner.tag == "a-tag-long-one") { ok = ok + 1; } }, None => {} }
     match (m.get(2)) { Some(d) => { if (d.name == "a-value-long-two" && d.xs.len() == 3 && d.inner.tag == "a-tag-long-two") { ok = ok + 2; } }, None => {} }
     match (m.get(3)) { Some(d) => { if (d.name == "a-value-long-three" && d.xs.len() == 3 && d.inner.tag == "a-tag-long-three") { ok = ok + 4; } }, None => {} }
@@ -126,8 +126,8 @@ function mk(): i32 {
     return ok;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { t = t + mk(); i = i + 1; }
     if (t != 200 * 15) { return 97; }
     return __rc_underflow_count();

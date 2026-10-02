@@ -310,7 +310,7 @@ func loopReadBeforeWithOrdered(src string) bool {
 }
 
 func aliasCowClusterOrdered(src string) bool {
-	for n := 0; strings.Contains(src, fmt.Sprintf("var __cow_s%d:", n)); n++ {
+	for n := 0; strings.Contains(src, fmt.Sprintf("let __cow_s%d:", n)); n++ {
 		alias := strings.Index(src, fmt.Sprintf("= __cow_s%d; ", n))
 		write := strings.Index(src, fmt.Sprintf("__cow_s%d.with(", n))
 		read := strings.Index(src, fmt.Sprintf("= __cow_a%d[", n))
@@ -329,7 +329,7 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"variable reference":           false,
 		"helper-call inside main":      false,
 		"nested call (call as arg)":    false,
-		"main with var declarations":   false,
+		"main with let declarations":   false,
 		"while loop":                   false,
 		"struct decl":                  false,
 		"enum decl":                    false,
@@ -369,13 +369,13 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"Err literal":                  false,
 		"Result match-with-binding":    false,
 		"Result try (?)":               false,
-		"u32 var declaration":          false,
+		"u32 let declaration":          false,
 		"u32 literal above i32::MAX":   false,
 		"unsigned comparison":          false,
 		"unsigned divide or remainder": false,
 		"unsigned shift":               false,
 		"u32 reinterpreted as i32":     false,
-		"u64 var declaration":          false,
+		"u64 let declaration":          false,
 		"u64 literal above i64::MAX":   false,
 		"unsigned 64-bit comparison":   false,
 		"unsigned 64-bit divide/rem":   false,
@@ -391,7 +391,7 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"checked shift":                false,
 		"checked at i64 or u64":        false,
 		"checked None arm taken":       false,
-		"u8 var declaration":           false,
+		"u8 let declaration":           false,
 		"u8 literal at or above 200":   false,
 		"u8 arithmetic":                false,
 		"u8 saturating or checked":     false,
@@ -421,7 +421,7 @@ func TestGenFeatureCoverage(t *testing.T) {
 			want["binary arithmetic"] = true
 		}
 		// Reference to a generated var inside an expression — `v0`
-		// only ever appears as a token after a `var v0` decl.
+		// only ever appears as a token after a `let v0` decl.
 		if strings.Contains(src, "v0") && strings.Count(src, "v0") > 1 {
 			want["variable reference"] = true
 		}
@@ -438,8 +438,8 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Count(src, "gen_f0(") >= 2 || strings.Count(src, "gen_f1(") >= 2 {
 			want["nested call (call as arg)"] = true
 		}
-		if i := strings.Index(src, "function main"); i >= 0 && strings.Contains(src[i:], "var v0") {
-			want["main with var declarations"] = true
+		if i := strings.Index(src, "function main"); i >= 0 && strings.Contains(src[i:], "let v0") {
+			want["main with let declarations"] = true
 		}
 		if strings.Contains(src, "while (__loop_i") {
 			want["while loop"] = true
@@ -643,7 +643,7 @@ func TestGenFeatureCoverage(t *testing.T) {
 		// siblings on an operand with bit 31 set, so the above-i32::MAX
 		// literal is tracked as its own feature.
 		if strings.Contains(src, ": u32 ") {
-			want["u32 var declaration"] = true
+			want["u32 let declaration"] = true
 		}
 		for _, m := range u32LiteralRE.FindAllStringSubmatch(src, -1) {
 			if n, err := strconv.ParseUint(m[1], 10, 64); err == nil && n > math.MaxInt32 {
@@ -674,7 +674,7 @@ func TestGenFeatureCoverage(t *testing.T) {
 		// instructions with a different (6-bit) count mask, so u32
 		// coverage says nothing about them.
 		if strings.Contains(src, ": u64 ") {
-			want["u64 var declaration"] = true
+			want["u64 let declaration"] = true
 		}
 		for _, m := range u64LiteralRE.FindAllStringSubmatch(src, -1) {
 			if n, err := strconv.ParseUint(m[1], 10, 64); err == nil && n > math.MaxInt64 {
@@ -751,7 +751,7 @@ func TestGenFeatureCoverage(t *testing.T) {
 		// surface from the 32- and 64-bit types; the near-255 literal is
 		// tracked separately because only those cross either boundary.
 		if strings.Contains(src, ": u8 ") {
-			want["u8 var declaration"] = true
+			want["u8 let declaration"] = true
 		}
 		for _, m := range u8LiteralRE.FindAllStringSubmatch(src, -1) {
 			if n, err := strconv.ParseUint(m[1], 10, 64); err == nil && n >= 200 {
@@ -810,7 +810,7 @@ func TestGenPrintableFloatCoverage(t *testing.T) {
 	want := map[string]bool{
 		"f32 literal":                   false,
 		"f64 literal":                   false,
-		"f64 var or param":              false,
+		"f64 let or param":              false,
 		"f64 arithmetic":                false,
 		"f64 truncated to i32":          false,
 		"f64 literal past f32 mantissa": false,
@@ -824,7 +824,7 @@ func TestGenPrintableFloatCoverage(t *testing.T) {
 			want["f64 literal"] = true
 		}
 		if strings.Contains(src, ": f64") {
-			want["f64 var or param"] = true
+			want["f64 let or param"] = true
 		}
 		for _, op := range []string{" + ", " - ", " * ", " / "} {
 			if unsignedOperandNear(src, "f64", op, f64LiteralRE) {
@@ -867,7 +867,7 @@ var (
 
 // reFloatAggDecl matches the aggregate the printable profile's mandatory
 // float-aggregate observation declares, capturing its name and its type.
-var reFloatAggDecl = regexp.MustCompile(`var (__fag\d+): (.+?) = `)
+var reFloatAggDecl = regexp.MustCompile(`let (__fag\d+): (.+?) = `)
 
 // floatAggObservation reports which kind of float-bearing aggregate the
 // mandatory observation built in this program, and whether EVERY slot of
@@ -933,7 +933,7 @@ var (
 	// A dynamic enum variant declared with a float payload slot.
 	reDynEnumFloatPayload = regexp.MustCompile(`__E\d+_V\d+\([^)]*f(?:32|64)`)
 	// An ordinary main-level local, as drawn by pickMainVarType.
-	reMainLocalDecl = regexp.MustCompile(`var v\d+: (.+?) = `)
+	reMainLocalDecl = regexp.MustCompile(`let v\d+: (.+?) = `)
 )
 
 // TestGenPrintableFloatsReachAggregates is the non-vacuity gate on the

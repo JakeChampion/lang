@@ -8,10 +8,10 @@ import (
 // --- Rebound rc-payload enum reclaim (#6127) --------------------------------
 //
 // An rc-payload enum local (`Text(string)`) already reclaimed correctly when it
-// was RE-DECLARED each iteration (`while { var e = Text(…); match (e) … }`) —
+// was RE-DECLARED each iteration (`while { let e = Text(…); match (e) … }`) —
 // the StmtVar lowering routes such a slot through emit_enum_deep_reinit_store,
 // which deep-drops the prior chain (payload + box) before the store. A REBOUND
-// local (`var e = Nothing; while { e = Text(…) }`) reached none of that: both
+// local (`let e = Nothing; while { e = Text(…) }`) reached none of that: both
 // collect_fresh_rcenum_names and consumed_rcpayload_enum_frees excluded any
 // reassigned name outright, and the assignment path fell through to
 // emit_arr_store's SHALLOW box dec, which for an rc-payload enum would have
@@ -37,17 +37,17 @@ import (
 const rcenumRebindSrc = `enum T { Text(string), Nothing }
 
 function round(): i32 {
-    var e: T = Nothing;
-    var i: i32 = 0;
+    let e: T = Nothing;
+    let i: i32 = 0;
     while (i < 4) { e = Text("hello"); i = i + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (e) { Text(s) => { t = s.len(); }, Nothing => { t = 0; } }
     return t;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t % 7;
 }`
@@ -124,18 +124,18 @@ func TestSelfHostRcEnumRebindHazardsX86_64(t *testing.T) {
 			name: "escapes_to_container",
 			src: `enum T { Text(string), Nothing }
 function round(): i32 {
-    var keep: T[] = [];
-    var e: T = Nothing;
-    var i: i32 = 0;
+    let keep: T[] = [];
+    let e: T = Nothing;
+    let i: i32 = 0;
     while (i < 4) { e = Text("hello"); keep = keep.append(e); i = i + 1; }
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < keep.len()) { match (keep[k]) { Text(s) => { t = t + s.len(); }, Nothing => {} } k = k + 1; }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t % 97;
 }`,
@@ -147,15 +147,15 @@ function main(): i32 {
 			src: `enum T { Text(string), Nothing }
 function sink(x: T): i32 { match (x) { Text(s) => { return s.len(); }, Nothing => { return 0; } } return 0; }
 function round(): i32 {
-    var e: T = Nothing;
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let e: T = Nothing;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { e = Text("hello"); t = t + sink(e); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t % 97;
 }`,
@@ -167,17 +167,17 @@ function main(): i32 {
 			name: "aliased_to_local",
 			src: `enum T { Text(string), Nothing }
 function round(): i32 {
-    var e: T = Text("aa");
-    var keep: T = e;
+    let e: T = Text("aa");
+    let keep: T = e;
     e = Text("bbbb");
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (keep) { Text(s) => { t = t + s.len(); }, Nothing => {} }
     match (e) { Text(s) => { t = t + s.len(); }, Nothing => {} }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t % 97;
 }`,
@@ -190,18 +190,18 @@ function main(): i32 {
 			name: "arm_moves_payload_out",
 			src: `enum T { Text(string), Nothing }
 function round(): i32 {
-    var out: string[] = [];
-    var e: T = Nothing;
-    var i: i32 = 0;
+    let out: string[] = [];
+    let e: T = Nothing;
+    let i: i32 = 0;
     while (i < 3) { e = Text("hello"); match (e) { Text(s) => { out = out.append(s); }, Nothing => {} } i = i + 1; }
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < out.len()) { t = t + out[k].len(); k = k + 1; }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t % 97;
 }`,
@@ -215,17 +215,17 @@ function main(): i32 {
 			name: "payload_is_param_string",
 			src: `enum T { Text(string), Nothing }
 function build(p: string, n: i32): i32 {
-    var e: T = Nothing;
-    var i: i32 = 0;
+    let e: T = Nothing;
+    let i: i32 = 0;
     while (i < n) { e = Text(p); i = i + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (e) { Text(s) => { t = s.len(); }, Nothing => { t = 0; } }
     return t;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
-    while (r < 100) { var owned: string = "hello" + "!"; t = t + build(owned, 3) + owned.len(); r = r + 1; }
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { let owned: string = "hello" + "!"; t = t + build(owned, 3) + owned.len(); r = r + 1; }
     return t % 97;
 }`,
 			want: 36,

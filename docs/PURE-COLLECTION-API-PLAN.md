@@ -66,9 +66,9 @@ function bump(m: Map[i32, i32]): void {
 }
 
 function main(): i32 {
-    var m = map_new(4);
+    let m = map_new(4);
     m = m.set(1, 10);
-    var snapshot = m;        // alias: rc(m) becomes 2
+    let snapshot = m;        // alias: rc(m) becomes 2
     bump(m);                 // mutation happens on a copy that is discarded
     return m.get_or(42, -1); // -1 — the edit vanished
 }
@@ -189,15 +189,15 @@ already has `map`/`filter`/fold-shaped helpers):
 
 ```fern
 // today
-var out: i32[] = [];
-var i = 0;
+let out: i32[] = [];
+let i = 0;
 while (i < n) { out.push(arr[i].abs()); i = i + 1; }
 
 // after — expression form
-var out = arr.map(|x| x.abs());
+let out = arr.map(|x| x.abs());
 
 // after — pipeline form for maps
-var m = Map.empty()
+let m = Map.empty()
   |> Map.insert("a", 1)
   |> Map.insert("b", 2);
 ```
@@ -217,7 +217,7 @@ or aliased, so it does not reintroduce the cycle vector or the footgun.
 ### 4a. Shape
 
 ```fern
-var out: i32[] = Array.build(|b| {
+let out: i32[] = Array.build(|b| {
     for x in arr {
         b.append(x.abs());   // b is a *builder*, mutated in place
     }
@@ -225,7 +225,7 @@ var out: i32[] = Array.build(|b| {
 ```
 
 ```fern
-var m: Map[string, i32] = Map.build(|b| {
+let m: Map[string, i32] = Map.build(|b| {
     for (k, v) in pairs {
         b.insert(k, v);
     }

@@ -58,10 +58,10 @@ func TestSelfHostWasmUnitsN2(t *testing.T) {
 			name: "buffer_needs_from_both_units",
 			src: `function create(): usize { return buf_new(1); }
 function text_part(h: usize): void { buf_push(h, "a"); }
-function byte_part(h: usize): void { var bytes: u8[] = [255 as u8]; buf_push_bytes_range(h, bytes, 0, 1); }
-function finish(h: usize): u8[] { var bytes = buf_take_bytes(h); buf_free(h); return bytes; }
+function byte_part(h: usize): void { let bytes: u8[] = [255 as u8]; buf_push_bytes_range(h, bytes, 0, 1); }
+function finish(h: usize): u8[] { let bytes = buf_take_bytes(h); buf_free(h); return bytes; }
 function main(): i32 {
-    var h = create(); text_part(h); byte_part(h); var bytes = finish(h);
+    let h = create(); text_part(h); byte_part(h); let bytes = finish(h);
     if (bytes.len() == 2 && bytes[0] == 97 as u8 && bytes[1] == 255 as u8) { return 0; }
     return 1;
 }`,
@@ -100,9 +100,9 @@ function main(): i32 { return useit(); }`,
 			// that declaration (#10827).
 			name: "instance_record_with_a_wide_field",
 			src: `struct Slot[T] { v: T }
-function keep[T](f: () => T): T { var c: Slot[T] = Slot[T] { v: f() }; return c.v; }
-function wide(): i64 { var fs: (() => i64)[] = [(): i64 => 5000000010 as i64]; return keep(fs[0]); }
-function main(): i32 { var gs: (() => string)[] = [(): string => "ab" + "c"]; return ((wide() - (5000000000 as i64)) as i32) + keep(gs[0]).len(); }`,
+function keep[T](f: () => T): T { let c: Slot[T] = Slot[T] { v: f() }; return c.v; }
+function wide(): i64 { let fs: (() => i64)[] = [(): i64 => 5000000010 as i64]; return keep(fs[0]); }
+function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; return ((wide() - (5000000000 as i64)) as i32) + keep(gs[0]).len(); }`,
 			want: 13, // 10 + 3
 		},
 	}

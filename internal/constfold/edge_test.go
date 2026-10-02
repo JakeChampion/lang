@@ -191,8 +191,8 @@ func TestFoldSubstitutesStructAndArray(t *testing.T) {
 	prog := fold(t, `struct Pt { x: i32, y: i32 }
 const N: i32 = 4;
 function main(): i32 {
-	var p: Pt = Pt{ x: N, y: N + 1 };
-	var a: i32[] = [N, N * 2];
+	let p: Pt = Pt{ x: N, y: N + 1 };
+	let a: i32[] = [N, N * 2];
 	return a[0];
 }`)
 	if c := countIdents(prog, "N"); c != 0 {

@@ -5,9 +5,9 @@
 import "std/json";
 @derive(json.Json, json.FromJson) struct User { id: i32, name: string, admin: boolean }
 function main(): i32 {
-    var u: User = User { id: 7, name: "Gloin", admin: true };
-    var s: string = u.to_json();                      // round-trip through to_json
-    var sum: i32 = 0;
+    let u: User = User { id: 7, name: "Gloin", admin: true };
+    let s: string = u.to_json();                      // round-trip through to_json
+    let sum: i32 = 0;
     match (User.from_json(s)) {
         Ok(u2) => { if (u2.id == 7 && u2.name == "Gloin" && u2.admin) { sum = sum + 20; } },
         Err(e) => { sum = sum + 1; },

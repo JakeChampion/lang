@@ -40,13 +40,13 @@ func TestAppendForcedCopyExemptions(t *testing.T) {
     return acc.append(0 - x);
 }
 function selfp(acc: i32[], n: i32): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { acc = acc.append(i); i = i + 1; }
     return acc.len();
 }
 function reused(acc: i32[]): i32 {
-    var a: i32 = acc.append(1).len();
-    var b: i32 = acc.append(2).len();
+    let a: i32 = acc.append(1).len();
+    let b: i32 = acc.append(2).len();
     return a * 10 + b;
 }
 function main(): i32 { return 0; }`

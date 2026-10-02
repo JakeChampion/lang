@@ -36,28 +36,28 @@ var enumArrayFieldIRCases = []struct {
 	// Array-literal field value (already broadly supported; the baseline).
 	{"literal", `enum N { A(i32), B(i32) }
 struct S { items: N[], k: i32 }
-function sum_n(xs: N[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
-function main(): i32 { var s: S = S { items: [A(3), B(4)], k: 2 }; return sum_n(s.items) + s.k; }`, 9},
+function sum_n(xs: N[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
+function main(): i32 { let s: S = S { items: [A(3), B(4)], k: 2 }; return sum_n(s.items) + s.k; }`, 9},
 
 	// Bare-ident enum-array local as the field value (`S { items: one }`).
 	{"bare-ident", `enum N { A(i32), B(i32) }
 struct S { items: N[], k: i32 }
-function sum_n(xs: N[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
-function main(): i32 { var one: N[] = [A(5), B(1)]; var s: S = S { items: one, k: 1 }; return sum_n(s.items) + s.k; }`, 7},
+function sum_n(xs: N[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
+function main(): i32 { let one: N[] = [A(5), B(1)]; let s: S = S { items: one, k: 1 }; return sum_n(s.items) + s.k; }`, 7},
 
 	// `.append` on a borrowed param as the field value (`S { items: items.append(B(v)) }`).
 	{"append-param", `enum N { A(i32), B(i32) }
 struct S { items: N[], k: i32 }
-function sum_n(xs: N[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
+function sum_n(xs: N[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
 function build(items: N[], v: i32): S { return S { items: items.append(B(v)), k: items.len() }; }
-function main(): i32 { var st: N[] = [A(2)]; var s: S = build(st, 5); return sum_n(s.items) + s.k; }`, 8},
+function main(): i32 { let st: N[] = [A(2)]; let s: S = build(st, 5); return sum_n(s.items) + s.k; }`, 8},
 
 	// Field-access copy as the field value (`S { items: a.items }`) — the er.actions shape.
 	{"field-copy", `enum N { A(i32), B(i32) }
 struct S { items: N[], k: i32 }
-function sum_n(xs: N[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
+function sum_n(xs: N[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { match (xs[i]) { A(x) => { s = s + x; }, B(x) => { s = s + x; } } i = i + 1; } return s; }
 function cp(a: S): S { return S { items: a.items, k: a.k }; }
-function main(): i32 { var s0: S = S { items: [A(6), B(0)], k: 3 }; var s1: S = cp(s0); return sum_n(s1.items) + s1.k; }`, 9},
+function main(): i32 { let s0: S = S { items: [A(6), B(0)], k: 3 }; let s1: S = cp(s0); return sum_n(s1.items) + s1.k; }`, 9},
 }
 
 // TestSelfHostEnumArrayFieldIRX86_64 routes each case through the x86-64 IR

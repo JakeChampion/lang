@@ -3,7 +3,7 @@
 2026-09-23. Native. #10103.
 
 ```
-var c: Pick = Pick.First;
+let c: Pick = Pick.First;
 c = Pick.Second(1);
 ```
 

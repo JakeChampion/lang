@@ -2,8 +2,8 @@
 
 ```fern
 struct P { s: string, n: i32 }
-function mk(): P[] { var a: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; return a; }
-function round(i: i32): i32 { var v: P[] = mk(); return v.len(); }
+function mk(): P[] { let a: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; return a; }
+function round(i: i32): i32 { let v: P[] = mk(); return v.len(); }
 ```
 
 **1400 allocs / 200 frees, 32000 bytes live** over 200 rounds, against native's

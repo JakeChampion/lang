@@ -15,11 +15,11 @@ import (
 const lentViewHandbackSrc = `function keep(text: string): string { return text; }
 function dup(text: string): string { return text + "!"; }
 function scan(src: string): string {
-    var v: str = slice_unchecked(src, 0, 3);
+    let v: str = slice_unchecked(src, 0, 3);
     return keep(v);
 }
 function scan_dup(src: string): string {
-    var v: str = slice_unchecked(src, 0, 3);
+    let v: str = slice_unchecked(src, 0, 3);
     return dup(v);
 }
 function main(): i32 { return scan("12345 abc").len() * 10 + scan_dup("12345 abc").len(); }

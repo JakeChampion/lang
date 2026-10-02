@@ -15,7 +15,7 @@ import (
 // sweep's string loop looked the name up with an exact match, so it missed every
 // such slot and released nothing at all:
 //
-//	`{ var s: string = w("ab"); … }`   allocs=200 frees=0     3200 / 100 rounds
+//	`{ let s: string = w("ab"); … }`   allocs=200 frees=0     3200 / 100 rounds
 //	the same in a `while` body         allocs=600 frees=400   3200 / 100 rounds
 //	the same at FUNCTION scope         allocs=200 frees=200   0
 //
@@ -25,7 +25,7 @@ import (
 // — nothing is released, so the count is not "one short", it is all of them.
 //
 // The obvious fix — resolve through `reclaim_slot_name`, as #6127 did for the
-// struct class — closes every row above and OVER-RELEASES: a second `var s` in a
+// struct class — closes every row above and OVER-RELEASES: a second `let s` in a
 // sibling block shares the one name-keyed credit while holding a bare alias, and
 // the exact-match miss was accidentally shielding that collision. The two are one
 // defect seen from opposite ends, so no lookup change alone can be correct.
@@ -41,7 +41,7 @@ import (
 
 const strBlockW = "function w(a: string): string { return a + \"!\"; }\n"
 
-const strBlockMain = "\nfunction main(): i32 { var x: i32 = 0; var r: i32 = 0; " +
+const strBlockMain = "\nfunction main(): i32 { let x: i32 = 0; let r: i32 = 0; " +
 	"while (r < 100) { x = x + round(r); r = r + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return x % 83; }"
 
@@ -57,8 +57,8 @@ func strBlockCases() []strBlockCase {
 			// A plain `{ }` block — the clearest form. Released by nothing before.
 			name: "plain_block",
 			src: strBlockW + `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    { var s: string = w("ab"); acc = acc + s.len(); }
+    let acc: i32 = 0;
+    { let s: string = w("ab"); acc = acc + s.len(); }
     return acc + i;
 }` + strBlockMain,
 			want: 21,
@@ -68,9 +68,9 @@ func strBlockCases() []strBlockCase {
 			// the superseded boxes, so this row moves from n-1-of-n to n-of-n.
 			name: "loop_body",
 			src: strBlockW + `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
-    while (k < 3) { var s: string = w("ab"); acc = acc + s.len(); k = k + 1; }
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 3) { let s: string = w("ab"); acc = acc + s.len(); k = k + 1; }
     return acc + i;
 }` + strBlockMain,
 			want: 40,
@@ -79,9 +79,9 @@ func strBlockCases() []strBlockCase {
 			// An `if` arm — the same rename, reached through different control flow.
 			name: "if_arm",
 			src: strBlockW + `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    if (i % 3 == 0) { var s: string = w("abc"); acc = acc + s.len(); }
-    else { var s: string = w("de"); acc = acc + s.len(); }
+    let acc: i32 = 0;
+    if (i % 3 == 0) { let s: string = w("abc"); acc = acc + s.len(); }
+    else { let s: string = w("de"); acc = acc + s.len(); }
     return acc + i;
 }` + strBlockMain,
 			want: 55,
@@ -92,7 +92,7 @@ func strBlockCases() []strBlockCase {
 			// scoped variant beside it, would move this row too.
 			name: "function_scope_unchanged",
 			src: strBlockW + `function round(i: i32): i32 {
-    var s: string = w("ab");
+    let s: string = w("ab");
     return s.len() + i;
 }` + strBlockMain,
 			want: 21,
@@ -105,8 +105,8 @@ func strBlockCases() []strBlockCase {
 			// leak, is what a regression in that looks like.
 			name: "untaken_branch",
 			src: strBlockW + `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    if (i % 2 == 0) { var s: string = w("ab"); acc = acc + s.len(); }
+    let acc: i32 = 0;
+    if (i % 2 == 0) { let s: string = w("ab"); acc = acc + s.len(); }
     return acc + i;
 }` + strBlockMain,
 			want: 37,
@@ -117,8 +117,8 @@ func strBlockCases() []strBlockCase {
 			// name reference, so a retired slot can never appear in it. Sweeping it
 			// here would free the box just handed back.
 			name: "move_on_return_not_swept",
-			src: strBlockW + `function build(n: i32): string { var acc: string = w("a"); return acc; }
-function round(i: i32): i32 { var s: string = build(i); return s.len() + i; }` + strBlockMain,
+			src: strBlockW + `function build(n: i32): string { let acc: string = w("a"); return acc; }
+function round(i: i32): i32 { let s: string = build(i); return s.len() + i; }` + strBlockMain,
 			want: 4,
 		},
 	}

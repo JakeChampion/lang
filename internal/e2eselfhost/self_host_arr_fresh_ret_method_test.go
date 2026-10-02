@@ -37,7 +37,7 @@ import (
 const arrFreshMethProlog = "struct H { v: i32 }\n" +
 	"function (h: H) mkm(): i32[] { return [h.v, h.v + 1]; }\n"
 
-const arrFreshMethMain = "\nfunction main(): i32 { var hh: H = H { v: 5 }; var t: i32 = 0; var i: i32 = 0; " +
+const arrFreshMethMain = "\nfunction main(): i32 { let hh: H = H { v: 5 }; let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 100) { BODY i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
@@ -82,7 +82,7 @@ func arrFreshMethCases() []arrFreshMethCase {
 			// place turns into an over-release of a live binding, and the
 			// underflow check below is what would show it.
 			name: "method_result_bound",
-			src:  arrFreshMethBody("var a: i32[] = hh.mkm(); t = t + a[0] + a.len();"),
+			src:  arrFreshMethBody("let a: i32[] = hh.mkm(); t = t + a[0] + a.len();"),
 			want: 36,
 		},
 		{
@@ -92,7 +92,7 @@ func arrFreshMethCases() []arrFreshMethCase {
 			name: "method_derived_from_field",
 			src: "struct G { xs: i32[] }\n" +
 				"function (g: G) copy(): i32[] { return [g.xs[0], g.xs[1]]; }\n" +
-				"function main(): i32 { var gg: G = G { xs: [1, 2, 3] }; var t: i32 = 0; var i: i32 = 0; " +
+				"function main(): i32 { let gg: G = G { xs: [1, 2, 3] }; let t: i32 = 0; let i: i32 = 0; " +
 				"while (i < 100) { t = t + gg.copy().len(); i = i + 1; } " +
 				"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }",
 			want: 34,
@@ -162,7 +162,7 @@ func TestSelfHostArrFreshRetMethodRefusedX86_64(t *testing.T) {
 
 	src := "struct H { xs: i32[] }\n" +
 		"function (h: H) get(): i32[] { return h.xs; }\n" +
-		"function main(): i32 { var hh: H = H { xs: [1, 2, 3] }; var t: i32 = 0; var i: i32 = 0; " +
+		"function main(): i32 { let hh: H = H { xs: [1, 2, 3] }; let t: i32 = 0; let i: i32 = 0; " +
 		"while (i < 100) { t = t + hh.get().len(); i = i + 1; } " +
 		"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 

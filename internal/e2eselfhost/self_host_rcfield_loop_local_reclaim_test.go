@@ -8,7 +8,7 @@ import (
 )
 
 // #4357: a reclaimable struct LOOP-LOCAL carrying an rc-array field
-// (`while { var t: P = …; }`, P = `{ x: i32, xs: i32[] }`) was reclaimed by a
+// (`while { let t: P = …; }`, P = `{ x: i32, xs: i32[] }`) was reclaimed by a
 // SHALLOW box-only dec at each loop-rebind (emit_arr_store), leaking its `xs`
 // buffer every iteration — the StmtVar binding path skipped the deep
 // __field_reclaim_<T> the StmtAssign consume-rebind already used. Growth scaled
@@ -26,9 +26,9 @@ import (
 func rcFieldLoopLocalLiteralSrc(n string) string {
 	return `struct P { x: i32, xs: i32[] }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < ` + n + `) { var t: P = P { x: i, xs: [i, i + 1] }; acc = acc + t.x; i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < ` + n + `) { let t: P = P { x: i, xs: [i, i + 1] }; acc = acc + t.x; i = i + 1; }
     if (acc < 0) { return 5; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -38,15 +38,15 @@ func rcFieldLoopLocalCallSrc(n string) string {
 	return `struct P { x: i32, xs: i32[] }
 function f(v: i32): P { return P { x: v, xs: [v, v + 1] }; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < ` + n + `) { var t: P = f(i); acc = acc + t.x; i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < ` + n + `) { let t: P = f(i); acc = acc + t.x; i = i + 1; }
     if (acc < 0) { return 5; }
     return (__heap_bump_bytes() as i32) - before;
 }`
 }
 
-// A SCALAR-only fresh-returning-CALL struct loop-local (`var t = mk(i)`, P = {x,y}
+// A SCALAR-only fresh-returning-CALL struct loop-local (`let t = mk(i)`, P = {x,y}
 // no rc field) leaks its BOX every iteration if collect_fresh_ret_call_names
 // excludes it via the struct_has_reclaim_array_field gate, since it then never
 // reaches reclaimable_names. Without that gate it is admitted (reclaimed by the
@@ -55,9 +55,9 @@ func scalarLoopLocalCallSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
 function mk(v: i32): P { return P { x: v, y: v + 1 }; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < ` + n + `) { var t: P = mk(i); acc = acc + t.x + t.y; i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < ` + n + `) { let t: P = mk(i); acc = acc + t.x + t.y; i = i + 1; }
     if (acc < 0) { return 5; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -69,9 +69,9 @@ function main(): i32 {
 // (i+2) = 4i+3; sum over 0..199 = 4*19900 + 600 = 80200.
 const rcFieldLoopLocalDetectorSrc = `struct P { x: i32, xs: i32[] }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        var t: P = P { x: i, xs: [i, i + 1, i + 2] };
+        let t: P = P { x: i, xs: [i, i + 1, i + 2] };
         acc = acc + t.x + t.xs[0] + t.xs[1] + t.xs[2];
         i = i + 1;
     }

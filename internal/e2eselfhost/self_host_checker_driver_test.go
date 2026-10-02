@@ -31,36 +31,36 @@ func TestSelfHostCheckerDriverX86_64(t *testing.T) {
 		wantDiag string
 	}{
 		{"well-typed-arith", "function main(): i32 { return 1 + 2; }\n", 0, ""},
-		{"well-typed-vars", "function main(): i32 { var a: i32 = 5; var b: i32 = a + 1; return b; }\n", 0, ""},
-		{"return-type-mismatch", "function main(): i32 { var s: string = \"x\"; return s; }\n", 1, "error[E002]"},
-		{"arith-type-mismatch", "function main(): i32 { var s: string = \"x\"; return 1 + s; }\n", 1, "error["},
+		{"well-typed-vars", "function main(): i32 { let a: i32 = 5; let b: i32 = a + 1; return b; }\n", 0, ""},
+		{"return-type-mismatch", "function main(): i32 { let s: string = \"x\"; return s; }\n", 1, "error[E002]"},
+		{"arith-type-mismatch", "function main(): i32 { let s: string = \"x\"; return 1 + s; }\n", 1, "error["},
 		// Immutability rejections surface a formatted diagnostic on stderr.
-		{"field-assign-e048", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n", 1, "error[E048]"},
-		{"subscript-assign-e056", "function main(): i32 { var a: i32[] = [1, 2, 3]; a[0] = 9; return a[0]; }\n", 1, "error[E056]"},
+		{"field-assign-e048", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x = 5; return p.x; }\n", 1, "error[E048]"},
+		{"subscript-assign-e056", "function main(): i32 { let a: i32[] = [1, 2, 3]; a[0] = 9; return a[0]; }\n", 1, "error[E056]"},
 		// A struct destructure carries its bindings comma-joined, exactly as
 		// the tuple form does, and the marker channel is the only thing that
 		// tells them apart. Reading the comma alone made E024 demand a tuple
 		// of every struct destructure — a valid program native accepts,
 		// rejected here.
-		{"struct-destructure", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: 2 }; var P { x, y } = p; return x + y; }\n", 0, ""},
-		{"struct-destructure-single-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: 2 }; var P { x, .. } = p; return x; }\n", 0, ""},
+		{"struct-destructure", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p: P = P { x: 1, y: 2 }; let P { x, y } = p; return x + y; }\n", 0, ""},
+		{"struct-destructure-single-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p: P = P { x: 1, y: 2 }; let P { x, .. } = p; return x; }\n", 0, ""},
 		// #5356: an `@` binding is carried on the destructure's marker channel, so
 		// its `@at:` component reaches the checker in the slot a `: Type`
 		// annotation uses. It must not be read as one — a spurious diagnostic
 		// here would reject a program native accepts.
-		{"at-binding-tuple", "function main(): i32 { var w @ (a, b) = (1, 2); return w.0 + a + b; }\n", 0, ""},
-		{"at-binding-struct", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: 2 }; var w @ P { x, y } = p; return w.x + x + y; }\n", 0, ""},
-		{"for-struct-pattern", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var ps: P[] = [P { x: 1, y: 2 }]; var acc: i32 = 0; for P { x, y } in ps { acc = acc + x + y; } return acc; }\n", 0, ""},
-		{"nested-tuple-destructure", "function main(): i32 { var (a, (b, c)) = (1, (2, 3)); return a + b + c; }\n", 0, ""},
+		{"at-binding-tuple", "function main(): i32 { let w @ (a, b) = (1, 2); return w.0 + a + b; }\n", 0, ""},
+		{"at-binding-struct", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p: P = P { x: 1, y: 2 }; let w @ P { x, y } = p; return w.x + x + y; }\n", 0, ""},
+		{"for-struct-pattern", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let ps: P[] = [P { x: 1, y: 2 }]; let acc: i32 = 0; for P { x, y } in ps { acc = acc + x + y; } return acc; }\n", 0, ""},
+		{"nested-tuple-destructure", "function main(): i32 { let (a, (b, c)) = (1, (2, 3)); return a + b + c; }\n", 0, ""},
 		// The bindings carry their ELEMENT types now, so a misuse of one is a
 		// coded diagnostic rather than the uncoded whole-function rejection
 		// every destructure used to draw.
-		{"destructure-arity-e024", "function main(): i32 { var (a, b, c) = (1, 2); return a; }\n", 1, "error[E024]"},
-		{"destructure-non-tuple-e024", "function main(): i32 { var (a, b) = 5; return a; }\n", 1, "error[E024]"},
+		{"destructure-arity-e024", "function main(): i32 { let (a, b, c) = (1, 2); return a; }\n", 1, "error[E024]"},
+		{"destructure-non-tuple-e024", "function main(): i32 { let (a, b) = 5; return a; }\n", 1, "error[E024]"},
 		// A loop over a value no loop iterates is reported AT the loop, not
 		// later as an uninferable statement in its body.
-		{"for-over-struct-e034", "struct Box { k: i32 }\nfunction main(): i32 {\n  var b: Box = Box { k: 1 };\n  var n: i32 = 0;\n  for it in b {\n    n = n + it.k;\n  }\n  return n;\n}\n", 1, "error[E034]: indexing non-array value of type Box (5:"},
-		{"destructure-field-type-e002", "struct P { x: string }\nfunction main(): i32 { var p: P = P { x: \"s\" }; var P { x } = p; return x; }\n", 1, "error[E002]"},
+		{"for-over-struct-e034", "struct Box { k: i32 }\nfunction main(): i32 {\n  let b: Box = Box { k: 1 };\n  let n: i32 = 0;\n  for it in b {\n    n = n + it.k;\n  }\n  return n;\n}\n", 1, "error[E034]: indexing non-array value of type Box (5:"},
+		{"destructure-field-type-e002", "struct P { x: string }\nfunction main(): i32 { let p: P = P { x: \"s\" }; let P { x } = p; return x; }\n", 1, "error[E002]"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -131,7 +131,7 @@ func TestSelfHostCheckerDriverArm64(t *testing.T) {
 		wantExit int
 	}{
 		{"well-typed", "function main(): i32 { return 1 + 2; }\n", 0},
-		{"mismatch", "function main(): i32 { var s: string = \"x\"; return s; }\n", 1},
+		{"mismatch", "function main(): i32 { let s: string = \"x\"; return s; }\n", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

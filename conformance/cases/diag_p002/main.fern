@@ -3,10 +3,10 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 function main(): i32 {
-    var x = 42i32;       // OK — explicit i32 typing
-    var y = 42f32;       // error[P002]: unexpected numeric suffix "f32" on integer literal
+    let x = 42i32;       // OK — explicit i32 typing
+    let y = 42f32;       // error[P002]: unexpected numeric suffix "f32" on integer literal
                           // (use 42.0f32 if you meant float)
-    var z = 1.5i32;      // error[P002]: unexpected numeric suffix "i32" on float literal
-    var w = 1.e;         // error[P002]: invalid float literal "1.e": ...
+    let z = 1.5i32;      // error[P002]: unexpected numeric suffix "i32" on float literal
+    let w = 1.e;         // error[P002]: invalid float literal "1.e": ...
     return x;
 }

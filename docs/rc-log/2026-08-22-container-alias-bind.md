@@ -1,4 +1,4 @@
-# `var v: T = t` — the alias that owned nothing
+# `let v: T = t` — the alias that owned nothing
 
 #7282, and the first ownership-assignment change in the #7253 sequence rather
 than a resolution one. Everything since #7272 moved a credit to the right key;
@@ -8,7 +8,7 @@ this one had no recorded fact to key on, because no binding took a retain.
 
 | shape | interp / native | before | after |
 | --- | --- | --- | --- |
-| `var t: i32[] = …; var v = t;` | `100/100` 0 | `100/100` **0** | unchanged |
+| `let t: i32[] = …; let v = t;` | `100/100` 0 | `100/100` **0** | unchanged |
 | tuple, bare-ident element | `200/200` 0 | `200/0` **8000** | `200/200` **0** |
 | tuple, fresh-literal element | `200/200` 0 | `200/0` **8000** | `200/200` **0** |
 | scalar tuple | `100/100` 0 | `100/0` **4000** | `100/100` **0** |
@@ -32,7 +32,7 @@ The alternative — leave the source un-swept and let the alias free it — fail
 one shape:
 
 ```fern
-if (c) { var v: T = t; }        // on the else path nothing was transferred
+if (c) { let v: T = t; }        // on the else path nothing was transferred
 ```
 
 Under transfer the source is un-swept on the path where no transfer happened, so
@@ -71,7 +71,7 @@ into the un-forgiving walker, so a function-scope alias worked and a
 block-scoped one did not:
 
 ```
-function scope   200/200  ✅        { var v = t; }   200/100   4000
+function scope   200/200  ✅        { let v = t; }   200/100   4000
 ```
 
 Two dec sites missing from the emitted asm (8 against 6) and nothing else to
@@ -93,7 +93,7 @@ have been indistinguishable from the leaks being fixed.
 
 The retain is `tuple_elems.len() > 0`, not `slot_is_rc_container` — because the
 retain and the credit have to land together, and only the tuple credit is wired
-here. With `is_str` in the predicate, `var sp: string = sep;` inside
+here. With `is_str` in the predicate, `let sp: string = sep;` inside
 `std/array`'s `join_with_last` gained a retain nothing gives back, on every
 program that reaches it.
 
@@ -175,7 +175,7 @@ plus both diff-selfhost shards
 retain reached it through the STDLIB: on that one program it changed nine
 stdlib functions — `u32__pow`, `u32__log2_floor`, `u32__reverse_bits`,
 `array__fold`, `array__scan`, `__fern_i32_to_string`, `string____cmp_big` — and
-added nine `__fern_rc_inc` calls. The first is `var L: bigint.BigInt = Ldig;`
+added nine `__fern_rc_inc` calls. The first is `let L: bigint.BigInt = Ldig;`
 aliasing a struct PARAMETER, a shape no hand-written probe here used.
 
 **The two halves are coupled and had to leave together.** Removing the struct

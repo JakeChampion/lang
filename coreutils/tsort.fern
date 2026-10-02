@@ -32,7 +32,7 @@ import "core/map";
 import "./lib/gnu";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION] [FILE]\n";
   out = out + "Write totally ordered list consistent with the partial ordering in FILE.\n";
   out = out + "\n";
@@ -49,7 +49,7 @@ function is_separator(b: i32): boolean {
 
 // The index of the next `b` at or after `from`, or `n` when there is none.
 function next_at(text: string, b: i32, from: i32, n: i32): i32 {
-  var at: i32 = __memchr(text, b, from);
+  let at: i32 = __memchr(text, b, from);
   if (at < 0) {
     return n;
   }
@@ -63,14 +63,14 @@ function next_at(text: string, b: i32, from: i32, n: i32): i32 {
 // the scan passes it, so a byte is examined by the Fern loop only when
 // it is a separator.
 function intern(text: string): (string[], i32[], Map[string, i32]) {
-  var names: string[] = [];
-  var ids: i32[] = [];
-  var index: Map[string, i32] = map_new(1024);
-  var n: i32 = text.len();
-  var next_sp: i32 = next_at(text, 32, 0, n);
-  var next_nl: i32 = next_at(text, 10, 0, n);
-  var next_tab: i32 = next_at(text, 9, 0, n);
-  var i: i32 = 0;
+  let names: string[] = [];
+  let ids: i32[] = [];
+  let index: Map[string, i32] = map_new(1024);
+  let n: i32 = text.len();
+  let next_sp: i32 = next_at(text, 32, 0, n);
+  let next_nl: i32 = next_at(text, 10, 0, n);
+  let next_tab: i32 = next_at(text, 9, 0, n);
+  let i: i32 = 0;
   while (i < n) {
     if (is_separator(text[i] as i32)) {
       i = i + 1;
@@ -85,15 +85,15 @@ function intern(text: string): (string[], i32[], Map[string, i32]) {
     if (next_tab < i) {
       next_tab = next_at(text, 9, i, n);
     }
-    var j: i32 = next_sp;
+    let j: i32 = next_sp;
     if (next_nl < j) {
       j = next_nl;
     }
     if (next_tab < j) {
       j = next_tab;
     }
-    var view: str = slice_unchecked(text, i, j);
-    var nul: i32 = __memchr(view, 0, 0);
+    let view: str = slice_unchecked(text, i, j);
+    let nul: i32 = __memchr(view, 0, 0);
     if (nul >= 0) {
       view = slice_unchecked(text, i, i + nul);
     }
@@ -102,7 +102,7 @@ function intern(text: string): (string[], i32[], Map[string, i32]) {
         ids = ids.append(id);
       },
       None => {
-        var tok: string = view + "";
+        let tok: string = view + "";
         index = index.insert(tok, names.len());
         ids = ids.append(names.len());
         names = names.append(tok);
@@ -115,9 +115,9 @@ function intern(text: string): (string[], i32[], Map[string, i32]) {
 
 // The indices of `names` in byte order.
 function byte_order(names: string[], index: Map[string, i32]): i32[] {
-  var order: i32[] = [];
-  var sorted: string[] = cmp.sort(names);
-  var s: i32 = 0;
+  let order: i32[] = [];
+  let sorted: string[] = cmp.sort(names);
+  let s: i32 = 0;
   while (s < sorted.len()) {
     order = order.append(index.get_or(sorted[s], 0));
     s = s + 1;
@@ -128,23 +128,23 @@ function byte_order(names: string[], index: Map[string, i32]): i32[] {
 // The graph and both phases live in one function so every array is a
 // local the `.with` updates can take in place.
 function run(text: string, fname: string): i32 {
-  var interned: (string[], i32[], Map[string, i32]) = intern(text);
-  var names: string[] = interned.0;
-  var ids: i32[] = interned.1;
-  var index: Map[string, i32] = interned.2;
+  let interned: (string[], i32[], Map[string, i32]) = intern(text);
+  let names: string[] = interned.0;
+  let ids: i32[] = interned.1;
+  let index: Map[string, i32] = interned.2;
   if (ids.len() % 2 == 1) {
     gnu.error(fname + ": input contains an odd number of tokens");
     return 1;
   }
-  var n: i32 = names.len();
+  let n: i32 = names.len();
 
   // Successor lists: `head[v]` is v's most recent edge, `edge_next`
   // threads back through the earlier ones.
-  var count: i32[] = [];
-  var head: i32[] = [];
-  var chain_next: i32[] = [];
-  var inchain: i32[] = [];
-  var v: i32 = 0;
+  let count: i32[] = [];
+  let head: i32[] = [];
+  let chain_next: i32[] = [];
+  let inchain: i32[] = [];
+  let v: i32 = 0;
   while (v < n) {
     count = count.append(0);
     head = head.append(0 - 1);
@@ -152,12 +152,12 @@ function run(text: string, fname: string): i32 {
     inchain = inchain.append(0);
     v = v + 1;
   }
-  var edge_to: i32[] = [];
-  var edge_next: i32[] = [];
-  var t: i32 = 0;
+  let edge_to: i32[] = [];
+  let edge_next: i32[] = [];
+  let t: i32 = 0;
   while (t < ids.len()) {
-    var a: i32 = ids[t];
-    var b: i32 = ids[t + 1];
+    let a: i32 = ids[t];
+    let b: i32 = ids[t + 1];
     if (a != b) {
       edge_to = edge_to.append(b);
       edge_next = edge_next.append(head[a]);
@@ -169,7 +169,7 @@ function run(text: string, fname: string): i32 {
 
   // Only the seeds need sorting for the queue; the byte order of every
   // name is built the first time a loop has to be found.
-  var seeds: string[] = [];
+  let seeds: string[] = [];
   v = 0;
   while (v < n) {
     if (count[v] == 0) {
@@ -177,28 +177,28 @@ function run(text: string, fname: string): i32 {
     }
     v = v + 1;
   }
-  var sorted_seeds: string[] = cmp.sort(seeds);
-  var queue: i32[] = [];
-  var qh: i32 = 0;
-  var s: i32 = 0;
+  let sorted_seeds: string[] = cmp.sort(seeds);
+  let queue: i32[] = [];
+  let qh: i32 = 0;
+  let s: i32 = 0;
   while (s < sorted_seeds.len()) {
     queue = queue.append(index.get_or(sorted_seeds[s], 0));
     s = s + 1;
   }
-  var order: i32[] = [];
+  let order: i32[] = [];
 
-  var remaining: i32 = n;
-  var status: i32 = 0;
-  var o: io_buffered.BufWriter = gnu.out_new();
+  let remaining: i32 = n;
+  let status: i32 = 0;
+  let o: io_buffered.BufWriter = gnu.out_new();
   while (remaining > 0) {
     while (qh < queue.len()) {
-      var w: i32 = queue[qh];
+      let w: i32 = queue[qh];
       qh = qh + 1;
       o = gnu.put(o, names[w] + "\n");
       remaining = remaining - 1;
-      var e: i32 = head[w];
+      let e: i32 = head[w];
       while (e >= 0) {
-        var to: i32 = edge_to[e];
+        let to: i32 = edge_to[e];
         count = count.with(to, count[to] - 1);
         if (count[to] == 0) {
           queue = queue.append(to);
@@ -215,12 +215,12 @@ function run(text: string, fname: string): i32 {
     if (order.len() == 0) {
       order = byte_order(names, index);
     }
-    var chain_head: i32 = 0 - 1;
-    var found: boolean = false;
+    let chain_head: i32 = 0 - 1;
+    let found: boolean = false;
     while (!found) {
-      var k: i32 = 0;
+      let k: i32 = 0;
       while (k < n && !found) {
-        var node: i32 = order[k];
+        let node: i32 = order[k];
         k = k + 1;
         if (count[node] == 0) {
           continue;
@@ -229,8 +229,8 @@ function run(text: string, fname: string): i32 {
           chain_head = node;
           continue;
         }
-        var e2: i32 = head[node];
-        var prev: i32 = 0 - 1;
+        let e2: i32 = head[node];
+        let prev: i32 = 0 - 1;
         while (e2 >= 0 && edge_to[e2] != chain_head) {
           prev = e2;
           e2 = edge_next[e2];
@@ -244,7 +244,7 @@ function run(text: string, fname: string): i32 {
           chain_head = node;
           continue;
         }
-        var c: i32 = chain_head;
+        let c: i32 = chain_head;
         while (true) {
           gnu.error(names[c]);
           if (c == node) {
@@ -266,9 +266,9 @@ function run(text: string, fname: string): i32 {
     }
     // The chain's links may form a cycle once the seed is pushed
     // twice; clearing each link as it is followed ends the walk.
-    var c2: i32 = chain_head;
+    let c2: i32 = chain_head;
     while (c2 >= 0) {
-      var nx: i32 = chain_next[c2];
+      let nx: i32 = chain_next[c2];
       chain_next = chain_next.with(c2, 0 - 1);
       inchain = inchain.with(c2, 0);
       c2 = nx;
@@ -279,16 +279,16 @@ function run(text: string, fname: string): i32 {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var operands: string[] = gnu.parse_standard_options_only(argv, "tsort", help_text(), 1);
+  let argv: string[] = args();
+  let operands: string[] = gnu.parse_standard_options_only(argv, "tsort", help_text(), 1);
   if (operands.len() > 1) {
     gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
   }
-  var path: string = "-";
+  let path: string = "-";
   if (operands.len() == 1) {
     path = operands[0];
   }
-  var text: string = "";
+  let text: string = "";
   if (path == "-") {
     text = io.read_all_stdin();
   } else {

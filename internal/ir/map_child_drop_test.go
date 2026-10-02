@@ -25,11 +25,11 @@ func TestStructFieldMapDropWalksTheKeyColumn(t *testing.T) {
 	src := `import "core/map";
 struct Tbl { m: Map[string, i32], count: i32 }
 function build(n: i32): Tbl {
-    var mm: Map[string, i32] = map_new(8);
+    let mm: Map[string, i32] = map_new(8);
     mm = mm.insert("k" + "ey", n);
     return Tbl { m: mm, count: n };
 }
-function main(): i32 { var t: Tbl = build(3); return t.count; }`
+function main(): i32 { let t: Tbl = build(3); return t.count; }`
 
 	for _, ptrW := range []int{4, 8} {
 		p := lowerImportsWith(t, src, ptrW)
@@ -50,11 +50,11 @@ function main(): i32 { var t: Tbl = build(3); return t.count; }`
 func TestStructFieldMapDropWalksStringValues(t *testing.T) {
 	src := `struct Tbl { m: Map[string, string], count: i32 }
 function build(n: i32): Tbl {
-    var mm: Map[string, string] = map_new(8);
+    let mm: Map[string, string] = map_new(8);
     mm = mm.insert("k" + "ey", "v" + "al");
     return Tbl { m: mm, count: n };
 }
-function main(): i32 { var t: Tbl = build(3); return t.count; }`
+function main(): i32 { let t: Tbl = build(3); return t.count; }`
 
 	for _, ptrW := range []int{4, 8} {
 		p := lowerSourceWith(t, src, ptrW)
@@ -72,11 +72,11 @@ function main(): i32 { var t: Tbl = build(3); return t.count; }`
 func TestScalarKeyedMapFieldDropSkipsTheKeyWalk(t *testing.T) {
 	src := `struct Tbl { m: Map[i32, i32], count: i32 }
 function build(n: i32): Tbl {
-    var mm: Map[i32, i32] = map_new(8);
+    let mm: Map[i32, i32] = map_new(8);
     mm = mm.insert(n, n);
     return Tbl { m: mm, count: n };
 }
-function main(): i32 { var t: Tbl = build(3); return t.count; }`
+function main(): i32 { let t: Tbl = build(3); return t.count; }`
 
 	for _, ptrW := range []int{4, 8} {
 		p := lowerSourceWith(t, src, ptrW)
@@ -90,11 +90,11 @@ function main(): i32 { var t: Tbl = build(3); return t.count; }`
 func TestTupleElementMapDropWalksTheKeyColumn(t *testing.T) {
 	src := `import "core/map";
 function build(n: i32): (Map[string, i32], i32) {
-    var mm: Map[string, i32] = map_new(8);
+    let mm: Map[string, i32] = map_new(8);
     mm = mm.insert("k" + "ey", n);
     return (mm, n);
 }
-function main(): i32 { var t: (Map[string, i32], i32) = build(3); return t.1; }`
+function main(): i32 { let t: (Map[string, i32], i32) = build(3); return t.1; }`
 
 	for _, ptrW := range []int{4, 8} {
 		p := lowerImportsWith(t, src, ptrW)

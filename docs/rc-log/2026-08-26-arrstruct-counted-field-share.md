@@ -4,7 +4,7 @@
 
 ## What was measured
 
-`var p: P = P { f: src, … }` where `src` is an `Inner[]` local. The construction
+`let p: P = P { f: src, … }` where `src` is an `Inner[]` local. The construction
 RETAINS `src` unconditionally — the `ExprStructLit` ident arm in `lower_expr`
 sets `fav_alias_inc` on any array-of-struct / array-of-enum / leaksafe-array
 field from a bare arr-slot ident, with no dependence on the source's credit — so
@@ -116,7 +116,7 @@ origin has no credit to keep.
   neither an append-built local credit nor a producer registry, so it needs both
   halves the struct side already had.
 - `return P { f: src, … }` from a producer measures 500/400: the credit is
-  granted and the source declines correctly, but the CONSUMER's `var p: P = hold(i)`
+  granted and the source declines correctly, but the CONSUMER's `let p: P = hold(i)`
   is uncredited. A struct-producer question, not this one.
 - `consume(P { f: src, … })` — the literal as a call argument — is still refused
   (450/150). The exception is expressed for a statement whose expression IS the

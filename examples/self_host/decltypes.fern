@@ -21,9 +21,9 @@ pub function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamD
   if (ret.len() == 0) {
     return declined(name);
   }
-  var ptys: string = "";
-  var dyns: string = "";
-  var i: i32 = 0;
+  let ptys: string = "";
+  let dyns: string = "";
+  let i: i32 = 0;
   while (i < tys.len()) {
     if (tys[i].len() == 0) {
       return declined(name);
@@ -44,13 +44,13 @@ pub function fn_param_decl(name: string, tys: string[], ret: string): ast.ParamD
 }
 
 pub function fn_param_from_spelling(name: string, sp: string): ast.ParamDecl {
-  var r: parser.TypeRef = parser.parse_type_ref(sp);
+  let r: parser.TypeRef = parser.parse_type_ref(sp);
   if (!parser.ref_is_fn_value(r)) {
     return declined(name);
   }
-  var f: parser.TypeRef = parser.ref_ungroup(r);
-  var params: string[] = [];
-  var i: i32 = 0;
+  let f: parser.TypeRef = parser.ref_ungroup(r);
+  let params: string[] = [];
+  let i: i32 = 0;
   while (i + 1 < f.args.len()) {
     params = params.append(parser.render_type_ref(f.args[i]));
     i = i + 1;
@@ -63,7 +63,7 @@ pub function fn_param_from_type(name: string, t: typeinfo.Type): ast.ParamDecl {
     if (!f.params_known) {
       return declined(name);
     }
-    var params: string[] = [];
+    let params: string[] = [];
     for param in f.param_types {
       params = params.append(typeinfo.spelling(param));
     }

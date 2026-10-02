@@ -316,8 +316,8 @@ pub function compare(a: Value, b: Value): Result[i32, string] {
   if (is_string(a) || is_string(b)) {
     return Err("cannot order " + type_name(a) + " and " + type_name(b));
   }
-  var x: f64 = as_f64(a);
-  var y: f64 = as_f64(b);
+  let x: f64 = as_f64(a);
+  let y: f64 = as_f64(b);
   if (x < y) {
     return Ok(0 - 1);
   }

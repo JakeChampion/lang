@@ -39,7 +39,7 @@ func TestSelfHostGenericArgMangleIR(t *testing.T) {
 		"lib.fern": `pub struct Flag { long: string, takes_value: boolean }
 
 pub function find(fs: Flag[], n: string): Option[Flag] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < fs.len()) {
         if (fs[i].long == n) { return Some(fs[i]); }
         i = i + 1;
@@ -73,14 +73,14 @@ pub function checked_len(fs: Flag[], n: string): i32 {
 // An ARRAY of the generic: array depth is re-attached after the arguments, so a
 // rewrite that drops it would mis-spell this one specifically.
 pub function firsts(fs: Flag[]): Option[Flag][] {
-    var out: Option[Flag][] = [];
-    var i: i32 = 0;
+    let out: Option[Flag][] = [];
+    let i: i32 = 0;
     while (i < fs.len()) { out = out.append(Some(fs[i])); i = i + 1; }
     return out;
 }
 
 pub function firsts_len(fs: Flag[]): i32 {
-    var os: Option[Flag][] = firsts(fs);
+    let os: Option[Flag][] = firsts(fs);
     match (os[0]) {
         Some(f) => { return f.long.len(); },
         None => { return 0; }
@@ -90,8 +90,8 @@ pub function firsts_len(fs: Flag[]): i32 {
 		"main.fern": `import "./lib";
 
 function main(): i32 {
-    var fs: lib.Flag[] = [lib.Flag { long: "name", takes_value: true }, lib.Flag { long: "v", takes_value: false }];
-    var t: i32 = lib.probe(fs, "name");        // 4  (takes_value -> "name".len())
+    let fs: lib.Flag[] = [lib.Flag { long: "name", takes_value: true }, lib.Flag { long: "v", takes_value: false }];
+    let t: i32 = lib.probe(fs, "name");        // 4  (takes_value -> "name".len())
     t = t + lib.probe(fs, "v");                // +1 (!takes_value -> 1)
     t = t + lib.probe(fs, "zz");               // +0 (None)
     t = t + lib.checked_len(fs, "name");       // +4 (Ok payload)

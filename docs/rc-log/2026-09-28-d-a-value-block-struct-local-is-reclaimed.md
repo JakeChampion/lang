@@ -4,7 +4,7 @@ AST lowering (`FERN_SEM_IR=`) only. The semantic lowering already balanced
 every row here.
 
 ```fern
-var h: Holder = { Holder { x: Inst { name: "w" + "", depth: n } } };
+let h: Holder = { Holder { x: Inst { name: "w" + "", depth: n } } };
 ```
 
 ## Cause
@@ -39,7 +39,7 @@ interpreter's answer under both lowerings, and runs the x86-64 build under
 ## Re-pinned: `elem_value_block`
 
 #10573's refused threader row `elem_value_block` builds exactly this shape
-(`var h: Holder = { Holder { x: acc[0] } }`). Its census moves from 36 / 13 to
+(`let h: Holder = { Holder { x: acc[0] } }`). Its census moves from 36 / 13 to
 36 / 24. The 11 new frees are `h`, released in `walk` on the 11 calls that
 take the branch. The generated asm for `walk` now calls
 `__struct_drop_Holder` as its flat twin `elem_struct_field` does, after the

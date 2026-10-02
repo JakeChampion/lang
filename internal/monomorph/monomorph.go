@@ -1659,11 +1659,11 @@ func collectParamNames(t ast.Type, into map[string]bool) {
 }
 
 // rewriteBlockTypes rewrites every generic instantiation ANNOTATED inside a
-// body — a `var`'s type, and a lambda's or nested function's parameter and
+// body — a `let`'s type, and a lambda's or nested function's parameter and
 // return types — wherever it nests.
 //
 // The hand-rolled statement recursion this replaced descended into statements
-// only, so a `var b: Box[i32]` inside a nested function never had `Box[i32]`
+// only, so a `let b: Box[i32]` inside a nested function never had `Box[i32]`
 // rewritten to its instantiation and the re-check reported an unknown type;
 // inside a LAMBDA it was unreachable twice over, since nothing descended into
 // an expression at all (#7042). ast.Walk forbids restructuring the tree

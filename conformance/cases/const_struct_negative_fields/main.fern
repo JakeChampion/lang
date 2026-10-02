@@ -13,15 +13,15 @@ import "std/i32";
 struct B { a: i32, b: i32, c: i32 }
 
 function main(): i32 {
-    var k: B = B { a: -5, b: -2147483647, c: -2147483648 };
+    let k: B = B { a: -5, b: -2147483647, c: -2147483648 };
     if (k.a != -5) { return 1; }
     if (k.b != -2147483647) { return 2; }
     if (k.c != -2147483648) { return 3; }
 
-    var v0: i32 = -5;
-    var v1: i32 = -2147483647;
-    var v2: i32 = 0 - 2147483647 - 1;
-    var m: B = B { a: v0, b: v1, c: v2 };
+    let v0: i32 = -5;
+    let v1: i32 = -2147483647;
+    let v2: i32 = 0 - 2147483647 - 1;
+    let m: B = B { a: v0, b: v1, c: v2 };
     if (k.a != m.a) { return 4; }
     if (k.b != m.b) { return 5; }
     if (k.c != m.c) { return 6; }

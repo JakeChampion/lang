@@ -1350,7 +1350,7 @@ for the answer.
 ### The emit drivers do not type-check, so a bad probe looks like a bad compiler
 
 `asm_ir_run.fern` is a raw emit harness: it compiles whatever it is handed. It
-accepts `var x: i32 = "hello";` and emits assembly for it. So an ill-typed probe
+accepts `let x: i32 = "hello";` and emits assembly for it. So an ill-typed probe
 driven through it produces a binary that segfaults, which is indistinguishable
 from a codegen bug until you check.
 

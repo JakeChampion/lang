@@ -29,37 +29,37 @@ var numericEdgeIRCases = []struct {
 	want int
 }{
 	// #4329 — non-trapping division.
-	{"div-zero", `var a=100; var b=0; if (a/b == 0) { return 7; } return 1;`, 7},
-	{"mod-zero", `var a=100; var b=0; if (a%b == 100) { return 7; } return 1;`, 7},
-	{"i64-div-zero", `var a: i64 = 9000000000; var b: i64 = 0; if (a / b == 0) { return 7; } return 1;`, 7},
-	{"i64-mod-zero", `var a: i64 = 9000000000; var b: i64 = 0; if (a % b == a) { return 7; } return 1;`, 7},
-	{"intmin-div", `var lo: i32 = -2147483647 - 1; if (lo / -1 < 0) { return 7; } return 1;`, 7},
-	{"intmin-mod", `var lo: i32 = -2147483647 - 1; if (lo % -1 == 0) { return 7; } return 1;`, 7},
-	{"div-normal", `var a=17; var b=5; if (a/b == 3 && a%b == 2) { return 7; } return 1;`, 7},
+	{"div-zero", `let a=100; let b=0; if (a/b == 0) { return 7; } return 1;`, 7},
+	{"mod-zero", `let a=100; let b=0; if (a%b == 100) { return 7; } return 1;`, 7},
+	{"i64-div-zero", `let a: i64 = 9000000000; let b: i64 = 0; if (a / b == 0) { return 7; } return 1;`, 7},
+	{"i64-mod-zero", `let a: i64 = 9000000000; let b: i64 = 0; if (a % b == a) { return 7; } return 1;`, 7},
+	{"intmin-div", `let lo: i32 = -2147483647 - 1; if (lo / -1 < 0) { return 7; } return 1;`, 7},
+	{"intmin-mod", `let lo: i32 = -2147483647 - 1; if (lo % -1 == 0) { return 7; } return 1;`, 7},
+	{"div-normal", `let a=17; let b=5; if (a/b == 3 && a%b == 2) { return 7; } return 1;`, 7},
 	// #4330 — i32 shift-count masking (mod 32).
-	{"shl-hi", `var one=1; if ((one << 40) == 256) { return 7; } return 1;`, 7},
-	{"shr-hi", `var x=256; if ((x >> 34) == 64) { return 7; } return 1;`, 7},
-	{"shl-normal", `var x=255; if ((x << 3) == 2040 && (x >> 1) == 127) { return 7; } return 1;`, 7},
+	{"shl-hi", `let one=1; if ((one << 40) == 256) { return 7; } return 1;`, 7},
+	{"shr-hi", `let x=256; if ((x >> 34) == 64) { return 7; } return 1;`, 7},
+	{"shl-normal", `let x=255; if ((x << 3) == 2040 && (x >> 1) == 127) { return 7; } return 1;`, 7},
 	// #4333 — signed-zero preserving negation (unary `-z`, not `0.0 - z`).
-	{"neg-zero", `var z: f64 = 0.0; var nz = -z; if (1.0 / nz < 0.0) { return 7; } return 1;`, 7},
-	{"neg-normal", `var x: f64 = 3.5; var y = -x; if (y < 0.0 && (0.0 - y) > 3.0) { return 7; } return 1;`, 7},
+	{"neg-zero", `let z: f64 = 0.0; let nz = -z; if (1.0 / nz < 0.0) { return 7; } return 1;`, 7},
+	{"neg-normal", `let x: f64 = 3.5; let y = -x; if (y < 0.0 && (0.0 - y) > 3.0) { return 7; } return 1;`, 7},
 	// #4332 — saturating f64 -> int.
-	{"sat-pos", `var big = 1000000000000.0; if ((big as i32) == 2147483647) { return 7; } return 1;`, 7},
-	{"sat-neg", `var big = 1000000000000.0; var imin: i32 = -2147483647 - 1; if (((0.0 - big) as i32) == imin) { return 7; } return 1;`, 7},
-	{"sat-nan", `var nan = 0.0 / 0.0; if ((nan as i32) == 0) { return 7; } return 1;`, 7},
+	{"sat-pos", `let big = 1000000000000.0; if ((big as i32) == 2147483647) { return 7; } return 1;`, 7},
+	{"sat-neg", `let big = 1000000000000.0; let imin: i32 = -2147483647 - 1; if (((0.0 - big) as i32) == imin) { return 7; } return 1;`, 7},
+	{"sat-nan", `let nan = 0.0 / 0.0; if ((nan as i32) == 0) { return 7; } return 1;`, 7},
 	{"sat-inrange", `if ((42.7 as i32) == 42) { return 7; } return 1;`, 7},
-	{"sat64-huge", `var h = 1000000000000000000000.0; var r: i64 = h as i64; if (r == 9223372036854775807) { return 7; } return 1;`, 7},
-	{"sat64-nan", `var nan = 0.0 / 0.0; var r: i64 = nan as i64; if (r == 0) { return 7; } return 1;`, 7},
+	{"sat64-huge", `let h = 1000000000000000000000.0; let r: i64 = h as i64; if (r == 9223372036854775807) { return 7; } return 1;`, 7},
+	{"sat64-nan", `let nan = 0.0 / 0.0; let r: i64 = nan as i64; if (r == 0) { return 7; } return 1;`, 7},
 	// #4332 (unsigned remainder) — f64 -> u32/u64 saturates over the UNSIGNED
 	// range: the signed lowering clamped `3e9 as u32` at INT32_MAX and
 	// `1e19 as u64` at INT64_MAX, and NaN/negative must still go to 0.
-	{"sat-u32-inrange", `var f = 3000000000.5; var u: u32 = f as u32; if (u == 3000000000u32) { return 7; } return 1;`, 7},
-	{"sat-u32-neg", `var f = 0.0 - 5.5; var u: u32 = f as u32; if (u == 0u32) { return 7; } return 1;`, 7},
-	{"sat-u32-big", `var f = 1000000000000.0; var u: u32 = f as u32; if (u == 4294967295u32) { return 7; } return 1;`, 7},
-	{"sat-u32-nan", `var nan = 0.0 / 0.0; var u: u32 = nan as u32; if (u == 0u32) { return 7; } return 1;`, 7},
-	{"sat-u64-huge", `var f = 10000000000000000000.0; var u: u64 = f as u64; if (u == 10000000000000000000u64) { return 7; } return 1;`, 7},
-	{"sat-u64-neg", `var f = 0.0 - 3.5; var u: u64 = f as u64; if (u == 0u64) { return 7; } return 1;`, 7},
-	{"sat-u64-nan", `var nan = 0.0 / 0.0; var u: u64 = nan as u64; if (u == 0u64) { return 7; } return 1;`, 7},
+	{"sat-u32-inrange", `let f = 3000000000.5; let u: u32 = f as u32; if (u == 3000000000u32) { return 7; } return 1;`, 7},
+	{"sat-u32-neg", `let f = 0.0 - 5.5; let u: u32 = f as u32; if (u == 0u32) { return 7; } return 1;`, 7},
+	{"sat-u32-big", `let f = 1000000000000.0; let u: u32 = f as u32; if (u == 4294967295u32) { return 7; } return 1;`, 7},
+	{"sat-u32-nan", `let nan = 0.0 / 0.0; let u: u32 = nan as u32; if (u == 0u32) { return 7; } return 1;`, 7},
+	{"sat-u64-huge", `let f = 10000000000000000000.0; let u: u64 = f as u64; if (u == 10000000000000000000u64) { return 7; } return 1;`, 7},
+	{"sat-u64-neg", `let f = 0.0 - 3.5; let u: u64 = f as u64; if (u == 0u64) { return 7; } return 1;`, 7},
+	{"sat-u64-nan", `let nan = 0.0 / 0.0; let u: u64 = nan as u64; if (u == 0u64) { return 7; } return 1;`, 7},
 }
 
 func numericEdgeIRSrc(mainBody string) string {

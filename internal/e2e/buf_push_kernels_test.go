@@ -122,7 +122,7 @@ func runBufPushMappedCorpus(t *testing.T, builtin string, run func(t *testing.T,
 		if !ok {
 			name = fmt.Sprintf("tab%d", len(tables))
 			tables[key] = name
-			decls.WriteString(fmt.Sprintf("    var %s: u8[] = %s;\n", name, fernSet(c.table)))
+			decls.WriteString(fmt.Sprintf("    let %s: u8[] = %s;\n", name, fernSet(c.table)))
 		}
 		if c.held != "" {
 			body.WriteString(fmt.Sprintf("    buf_push(b, %s);\n", fernQuote(c.held)))
@@ -143,8 +143,8 @@ func runBufPushMappedCorpus(t *testing.T, builtin string, run func(t *testing.T,
 	out := run(t, `import "std/i32";
 
 function dump(s: string): void {
-    var line: string = "";
-    var i: i32 = 0;
+    let line: string = "";
+    let i: i32 = 0;
     while (i < s.len()) {
         line = line + (s[i] as i32).to_string() + ",";
         i = i + 1;
@@ -153,7 +153,7 @@ function dump(s: string): void {
 }
 
 function main(): i32 {
-    var b: usize = buf_new(4);
+    let b: usize = buf_new(4);
 `+decls.String()+body.String()+`    buf_free(b);
     return 0;
 }
@@ -379,7 +379,7 @@ func runBufPushExpandedCorpus(t *testing.T, run func(t *testing.T, src string) s
 		if !ok {
 			name = fmt.Sprintf("tab%d", len(tables))
 			tables[key] = name
-			decls.WriteString(fmt.Sprintf("    var %s: u8[] = %s;\n", name, fernSet(c.table)))
+			decls.WriteString(fmt.Sprintf("    let %s: u8[] = %s;\n", name, fernSet(c.table)))
 		}
 		if c.held != "" {
 			body.WriteString(fmt.Sprintf("    buf_push(b, %s);\n", fernQuote(c.held)))
@@ -396,8 +396,8 @@ func runBufPushExpandedCorpus(t *testing.T, run func(t *testing.T, src string) s
 	out := run(t, `import "std/i32";
 
 function dump(s: string): void {
-    var line: string = "";
-    var i: i32 = 0;
+    let line: string = "";
+    let i: i32 = 0;
     while (i < s.len()) {
         line = line + (s[i] as i32).to_string() + ",";
         i = i + 1;
@@ -406,7 +406,7 @@ function dump(s: string): void {
 }
 
 function main(): i32 {
-    var b: usize = buf_new(4);
+    let b: usize = buf_new(4);
 `+decls.String()+body.String()+`    buf_free(b);
     return 0;
 }

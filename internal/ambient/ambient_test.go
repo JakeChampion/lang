@@ -46,9 +46,9 @@ func TestReportsEffectsAroundTheBag(t *testing.T) {
 			src: `import "std/http";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     eprint("hit");
-    var a: i64 = now_unix_ms();
-    var b: i64 = monotonic_ns();
-    var c: i32 = random_i32();
+    let a: i64 = now_unix_ms();
+    let b: i64 = monotonic_ns();
+    let c: i32 = random_i32();
     match (env("HOME")) { Some(v) => { }, None => { } }` + handlerTail,
 			want: []string{"env@env", "eprint@log", "now_unix_ms@now", "random_i32@random"},
 		},
@@ -66,7 +66,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 import "std/platform";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     plat.log("hit");
-    var a: i64 = plat.now_ms();
+    let a: i64 = plat.now_ms();
     match (plat.env("HOME")) { Some(v) => { }, None => { } }` + handlerTail,
 			want: nil,
 		},
@@ -92,14 +92,14 @@ function main(): i32 { return helper(); }
 			name: "a builtin with no bag equivalent is still an effect",
 			src: `import "std/http";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var xs: string[] = args();` + handlerTail,
+    let xs: string[] = args();` + handlerTail,
 			want: []string{"args@args"},
 		},
 		{
 			name: "a lambda in the body is walked",
 			src: `import "std/http";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var f: () => void = (): void => { eprint("hit"); };
+    let f: () => void = (): void => { eprint("hit"); };
     f();` + handlerTail,
 			want: []string{"eprint@log"},
 		},
@@ -117,8 +117,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			src: `import "std/http";
 function noisy(): i32 { eprint("hit"); return 1; }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var noisy: i32 = 2;
-    var y: i32 = noisy + 1;` + handlerTail,
+    let noisy: i32 = 2;
+    let y: i32 = noisy + 1;` + handlerTail,
 			want: nil,
 		},
 		{
@@ -126,7 +126,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			src: `import "std/http";
 function noisy(): void { eprint("hit"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var noisy: () => void = (): void => {};
+    let noisy: () => void = (): void => {};
     noisy();` + handlerTail,
 			want: nil,
 		},
@@ -173,7 +173,7 @@ import "std/platform";
 struct Sink { n: i32 }
 function (s: Sink) log(msg: string): void { eprint(msg); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var s: Sink = Sink { n: 1 };
+    let s: Sink = Sink { n: 1 };
     s.log("hit");` + handlerTail,
 			want: []string{"eprint@log"},
 		},
@@ -182,7 +182,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			src: `import "std/http";
 function __method_Array_noisy(arr: i32[]): void { eprint("hit"); }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var xs: i32[] = [1];
+    let xs: i32[] = [1];
     xs.noisy();` + handlerTail,
 			want: []string{"eprint@log"},
 		},
@@ -190,8 +190,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			name: "a value whose target the walk cannot name charges nothing",
 			src: `import "std/http";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var f: (i32) => i32 = (x: i32): i32 => x + 1;
-    var y: i32 = f(1);` + handlerTail,
+    let f: (i32) => i32 = (x: i32): i32 => x + 1;
+    let y: i32 = f(1);` + handlerTail,
 			want: nil,
 		},
 	}
@@ -230,7 +230,7 @@ function handle(req: HttpRequest, bag: Platform): HttpResponse {
 	}
 	vs = enforce(t, `import "std/http";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var xs: string[] = args();`+handlerTail)
+    let xs: string[] = args();`+handlerTail)
 	if msg := vs[0].Message("/__fern_source__/main.fern"); !strings.Contains(msg, "nothing on the bag stands in for it") {
 		t.Errorf("a builtin without a bag equivalent should say so:\n%s", msg)
 	}
@@ -262,7 +262,7 @@ func TestBagMethodsAreNotHandlers(t *testing.T) {
 import "std/platform";
 import "std/fetch";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var answer: Result[HttpResponse, fetch.FetchError] = plat.http(fetch.get("http://127.0.0.1:1/"));`+handlerTail)
+    let answer: Result[HttpResponse, fetch.FetchError] = plat.http(fetch.get("http://127.0.0.1:1/"));`+handlerTail)
 	if len(vs) != 0 {
 		t.Errorf("std/fetch's bag method reported: %+v", vs)
 	}

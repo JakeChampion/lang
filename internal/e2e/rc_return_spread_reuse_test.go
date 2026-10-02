@@ -27,15 +27,15 @@ import (
 // per call and a string + bool carried the whole way.
 const retSpreadThreadingSrc = `struct St { ops: i32[], tag: string, ok: boolean, ctrl: i32 }
 function (s: St) emit(op: i32): St {
-    var nctrl: i32 = s.ctrl;
+    let nctrl: i32 = s.ctrl;
     if (op == 3) { nctrl = s.ctrl + 1; }
     return St { ...s, ops: s.ops.append(op), ctrl: nctrl };
 }
 function main(): i32 {
-    var s: St = St { ops: [], tag: "abc", ok: true, ctrl: 0 };
-    var i: i32 = 0;
+    let s: St = St { ops: [], tag: "abc", ok: true, ctrl: 0 };
+    let i: i32 = 0;
     while (i < 200) { s = s.emit(i); i = i + 1; }
-    var sum: i32 = 0;
+    let sum: i32 = 0;
     for v in s.ops { sum = sum + v; }
     if (s.ops.len() != 200) { return 101; }
     if (sum != 19900) { return 102; }
@@ -51,10 +51,10 @@ function main(): i32 {
 const retSpreadRecvSurvivesSrc = `struct St { ops: i32[], tag: string, ctrl: i32 }
 function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 }; }
 function main(): i32 {
-    var a: St = St { ops: [], tag: "xy", ctrl: 0 };
-    var i: i32 = 0;
+    let a: St = St { ops: [], tag: "xy", ctrl: 0 };
+    let i: i32 = 0;
     while (i < 5) { a = a.emit(i); i = i + 1; }
-    var b: St = a.emit(9);
+    let b: St = a.emit(9);
     if (a.ops.len() != 5) { return 101; }
     if (b.ops.len() != 6) { return 102; }
     if (b.ops[5] != 9) { return 103; }
@@ -68,9 +68,9 @@ function main(): i32 {
 const retSpreadFreeParamSurvivesSrc = `struct St { ops: i32[], ctrl: i32 }
 function bump(s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
 function main(): i32 {
-    var a: St = St { ops: [1, 2], ctrl: 0 };
-    var c: St = bump(a, 7);
-    var d: St = bump(a, 8);
+    let a: St = St { ops: [1, 2], ctrl: 0 };
+    let c: St = bump(a, 7);
+    let d: St = bump(a, 8);
     if (a.ops.len() != 2) { return 101; }
     if (c.ops.len() != 3 || c.ops[2] != 7) { return 102; }
     if (d.ops.len() != 3 || d.ops[2] != 8) { return 103; }
@@ -83,12 +83,12 @@ function main(): i32 {
 // alias reads the ORIGINAL values out of the box that was not repurposed.
 const retSpreadAliasInCalleeSrc = `struct St { ops: i32[], ctrl: i32 }
 function (s: St) emit(op: i32): St {
-    var keep: St = s;
+    let keep: St = s;
     return St { ...s, ops: s.ops.append(op), ctrl: keep.ctrl + 1 };
 }
 function main(): i32 {
-    var s: St = St { ops: [], ctrl: 0 };
-    var i: i32 = 0;
+    let s: St = St { ops: [], ctrl: 0 };
+    let i: i32 = 0;
     while (i < 50) { s = s.emit(i); i = i + 1; }
     if (s.ops.len() != 50) { return 101; }
     if (s.ctrl != 50) { return 102; }
@@ -103,9 +103,9 @@ function main(): i32 {
 const retSpreadReplacedPtrSrc = `struct St { items: i32[], n: i32 }
 function (s: St) reset(v: i32): St { return St { ...s, items: [v, v + 1, v + 2], n: s.n + 1 }; }
 function main(): i32 {
-    var s: St = St { items: [0], n: 0 };
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let s: St = St { items: [0], n: 0 };
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         s = s.reset(i);
         acc = acc + s.items[0] + s.items[2];
@@ -125,8 +125,8 @@ const retSpreadNestedStructSrc = `struct Frame { name: string, depth: i32 }
 struct St { frame: Frame, ops: i32[], ctrl: i32 }
 function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + op }; }
 function main(): i32 {
-    var s: St = St { frame: Frame { name: "f", depth: 3 }, ops: [], ctrl: 0 };
-    var i: i32 = 0;
+    let s: St = St { frame: Frame { name: "f", depth: 3 }, ops: [], ctrl: 0 };
+    let i: i32 = 0;
     while (i < 100) { s = s.emit(i); i = i + 1; }
     if (s.frame.depth != 3) { return 101; }
     if (s.frame.name.len() != 1) { return 102; }
@@ -140,8 +140,8 @@ function main(): i32 {
 const retSpreadOwnParamSrc = `struct St { ops: i32[], ctrl: i32 }
 function eat(own s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
 function main(): i32 {
-    var s: St = St { ops: [], ctrl: 0 };
-    var i: i32 = 0;
+    let s: St = St { ops: [], ctrl: 0 };
+    let i: i32 = 0;
     while (i < 50) { s = eat(s, i); i = i + 1; }
     if (s.ops.len() != 50) { return 101; }
     if (s.ops[49] != 49) { return 102; }
@@ -156,8 +156,8 @@ const retSpreadAddressTakenSrc = `struct St { ops: i32[], ctrl: i32 }
 function bump(s: St): St { return St { ...s, ops: s.ops.append(9), ctrl: s.ctrl + 1 }; }
 function apply(f: (St) => St, s: St): St { return f(s); }
 function main(): i32 {
-    var keep: St = St { ops: [1, 2], ctrl: 0 };
-    var out: St = apply(bump, keep);
+    let keep: St = St { ops: [1, 2], ctrl: 0 };
+    let out: St = apply(bump, keep);
     if (keep.ops.len() != 2) { return 101; }
     if (out.ops.len() != 3 || out.ops[2] != 9) { return 102; }
     if (keep.ctrl != 0 || out.ctrl != 1) { return 103; }
@@ -172,8 +172,8 @@ function (s: St) step(v: i32): St {
     return St { ...s, ctrl: s.ctrl - 1 };
 }
 function main(): i32 {
-    var s: St = St { ops: [], tag: "zz", ctrl: 0 };
-    var i: i32 = 0;
+    let s: St = St { ops: [], tag: "zz", ctrl: 0 };
+    let i: i32 = 0;
     while (i < 60) { s = s.step(i); i = i + 1; }
     if (s.ops.len() != 30) { return 101; }
     if (s.ctrl != 0) { return 102; }

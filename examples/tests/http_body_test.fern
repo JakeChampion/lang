@@ -10,7 +10,7 @@ import "std/string";
 // answered 404 in its place, and the chunks a producer answers.
 
 function test_text_body(): test.TestOutcome {
-  var resp: HttpResponse = http.ok("hello");
+  let resp: HttpResponse = http.ok("hello");
   if (resp.body_len() != 5) {
     return test.fail("len: " + resp.body_len().to_string());
   }
@@ -21,8 +21,8 @@ function test_text_body(): test.TestOutcome {
 }
 
 function test_bytes_body(): test.TestOutcome {
-  var bs: u8[] = [104u8, 105u8];
-  var resp: HttpResponse = http.bytes(201, bs);
+  let bs: u8[] = [104u8, 105u8];
+  let resp: HttpResponse = http.bytes(201, bs);
   if (resp.body_len() != 2) {
     return test.fail("len: " + resp.body_len().to_string());
   }
@@ -33,9 +33,9 @@ function test_bytes_body(): test.TestOutcome {
 }
 
 function test_stream_body_from_its_cursor(): test.TestOutcome {
-  var s: Stream = stream.stream_from_bytes("skip me".bytes());
-  var taken: (u8[], Stream) = s.read_n(5);
-  var resp: HttpResponse = http.stream(200, taken.1);
+  let s: Stream = stream.stream_from_bytes("skip me".bytes());
+  let taken: (u8[], Stream) = s.read_n(5);
+  let resp: HttpResponse = http.stream(200, taken.1);
   if (resp.body_len() != 2) {
     return test.fail("len: " + resp.body_len().to_string());
   }
@@ -55,21 +55,21 @@ function scratch(name: string): string {
 }
 
 function test_file_body_is_read_by_the_loop(): test.TestOutcome {
-  var path: string = scratch("present.txt");
+  let path: string = scratch("present.txt");
   match (write_file(path, "from a file")) {
     Ok(v) => {},
     Err(e) => {
       return test.fail("write_file failed");
     }
   }
-  var resp: HttpResponse = http.file(path);
+  let resp: HttpResponse = http.file(path);
   if (resp.body_len() != 0) {
     return test.fail("a file body has no length before the loop reads it");
   }
   if (resp.body_string() != "") {
     return test.fail("a file body is not read by the handler");
   }
-  var whole: HttpResponse = http.http_materialize(resp);
+  let whole: HttpResponse = http.http_materialize(resp);
   if (whole.status != 200) {
     return test.fail("status: " + whole.status.to_string());
   }
@@ -80,7 +80,7 @@ function test_file_body_is_read_by_the_loop(): test.TestOutcome {
 }
 
 function test_a_missing_file_is_a_404(): test.TestOutcome {
-  var resp: HttpResponse = http.http_materialize(http.file(scratch("missing.txt")));
+  let resp: HttpResponse = http.http_materialize(http.file(scratch("missing.txt")));
   if (resp.status != 404) {
     return test.fail("status: " + resp.status.to_string());
   }
@@ -95,7 +95,7 @@ function three_chunks(i: i32): Option[u8[]] {
 }
 
 function test_a_chunks_body_reads_as_its_chunks_joined(): test.TestOutcome {
-  var resp: HttpResponse = http.chunks(200, three_chunks);
+  let resp: HttpResponse = http.chunks(200, three_chunks);
   if (resp.body_len() != 6) {
     return test.fail("len: " + resp.body_len().to_string());
   }
@@ -106,12 +106,12 @@ function test_a_chunks_body_reads_as_its_chunks_joined(): test.TestOutcome {
 }
 
 function test_other_bodies_pass_through_materialize(): test.TestOutcome {
-  var resp: HttpResponse = http.http_materialize(http.ok("as is"));
+  let resp: HttpResponse = http.http_materialize(http.ok("as is"));
   return test.assert_body(resp, "as is");
 }
 
 function main(): i32 {
-  var t: test.TestRunner = test.test_new("HttpResponse bodies");
+  let t: test.TestRunner = test.test_new("HttpResponse bodies");
   t = t.it("a text body", test_text_body);
   t = t.it("a bytes body", test_bytes_body);
   t = t.it("a stream body is its remainder", test_stream_body_from_its_cursor);

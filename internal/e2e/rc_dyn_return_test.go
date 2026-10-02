@@ -20,7 +20,7 @@ impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
 impl Label for i32 { function a(self: Self): i32 { return self; } }
 impl Label for string { function a(self: Self): i32 { return self.len(); } }
 function pass(l: dyn Label): dyn Label { return l; }
-function viaview(l: dyn Label): dyn Label { var v: dyn Label = l; return v; }
+function viaview(l: dyn Label): dyn Label { let v: dyn Label = l; return v; }
 function other(l: dyn Label): dyn Label { return Box { name: "zz" + "z" }; }
 function show(l: dyn Label): i32 { return l.a(); }
 `
@@ -31,16 +31,16 @@ function show(l: dyn Label): i32 { return l.a(); }
 // 2 + 6 + 2 + 3 + i + 3 + 2 = 18 + i.
 func dynReturnSrc(n string) string {
 	return dynReturnPrelude + `function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    var keep: Box = Box { name: "kept" };
+    let t: i32 = 0;
+    let i: i32 = 0;
+    let keep: Box = Box { name: "kept" };
     while (i < ` + n + `) {
-        var local: Box = Box { name: "b" + "c" };
-        var r: dyn Label = pass(local);
-        var p: dyn Label = pass(Box { name: "fresh" + "x" });
-        var v: dyn Label = viaview(local);
-        var q: dyn Label = other(keep);
-        var k: dyn Label = pass(i);
+        let local: Box = Box { name: "b" + "c" };
+        let r: dyn Label = pass(local);
+        let p: dyn Label = pass(Box { name: "fresh" + "x" });
+        let v: dyn Label = viaview(local);
+        let q: dyn Label = other(keep);
+        let k: dyn Label = pass(i);
         t = t + r.a() + p.a() + v.a() + q.a() + k.a() + show("lit") + local.name.len();
         i = i + 1;
     }
@@ -53,25 +53,25 @@ func dynReturnSrc(n string) string {
 func dynReturnBumpSrc(n, wider string) string {
 	churn := func(bound string) string {
 		return `    while (i < ` + bound + `) {
-        var local: Box = Box { name: "b" + "c" };
-        var r: dyn Label = pass(local);
-        var p: dyn Label = pass(Box { name: "fresh" + "x" });
-        var q: dyn Label = other(keep);
-        var k: dyn Label = pass(i);
+        let local: Box = Box { name: "b" + "c" };
+        let r: dyn Label = pass(local);
+        let p: dyn Label = pass(Box { name: "fresh" + "x" });
+        let q: dyn Label = other(keep);
+        let k: dyn Label = pass(i);
         sum = sum + r.a() + p.a() + q.a() + k.a() + show(i) + show("lit");
         i = i + 1;
     }
 `
 	}
 	return dynReturnPrelude + `function main(): i32 {
-    var sum: i32 = 0;
-    var i: i32 = 0;
-    var keep: Box = Box { name: "kept" };
-    var base: i32 = (__heap_bump_bytes() as i32);
-` + churn(n) + `    var first: i32 = (__heap_bump_bytes() as i32) - base;
-    var mid: i32 = (__heap_bump_bytes() as i32);
+    let sum: i32 = 0;
+    let i: i32 = 0;
+    let keep: Box = Box { name: "kept" };
+    let base: i32 = (__heap_bump_bytes() as i32);
+` + churn(n) + `    let first: i32 = (__heap_bump_bytes() as i32) - base;
+    let mid: i32 = (__heap_bump_bytes() as i32);
     i = 0;
-` + churn(wider) + `    var second: i32 = (__heap_bump_bytes() as i32) - mid;
+` + churn(wider) + `    let second: i32 = (__heap_bump_bytes() as i32) - mid;
     if (second > first) { return 1; }
     return sum - sum;
 }`
@@ -141,12 +141,12 @@ impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
 `
 	const body = `
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var x: Box = Box { name: "ab" + "c" };
-        var y: Box = Box { name: "d" + "e" };
-        var p: dyn Label = pick(i % 2, x, y);
+        let x: Box = Box { name: "ab" + "c" };
+        let y: Box = Box { name: "d" + "e" };
+        let p: dyn Label = pick(i % 2, x, y);
         t = t + p.a() + x.name.len() + y.name.len();
         i = i + 1;
     }
@@ -154,7 +154,7 @@ function main(): i32 {
 }`
 	cases := []struct{ name, pick string }{
 		{"if_returned", `function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { return if (c == 0) { l } else { m }; }`},
-		{"if_bound", `function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { var r: dyn Label = if (c == 0) { l } else { m }; return r; }`},
+		{"if_bound", `function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { let r: dyn Label = if (c == 0) { l } else { m }; return r; }`},
 		{"match_returned", `function pick(c: i32, l: dyn Label, m: dyn Label): dyn Label { return match (c) { 0 => l, _ => m }; }`},
 		{"variant_match_returned", `enum Pick { First, Second(i32) }
 function tag(c: i32): Pick { if (c == 0) { return Pick.First; } return Pick.Second(c); }

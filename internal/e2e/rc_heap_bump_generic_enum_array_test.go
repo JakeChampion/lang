@@ -19,11 +19,11 @@ import (
 
 func genEnumArrBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var xs: Option[i32[]][] = [Some([i, i + 1, i + 2]), None, Some([i + 3])];
+        let xs: Option[i32[]][] = [Some([i, i + 1, i + 2]), None, Some([i + 3])];
         match (xs[0]) {
             Some(a) => { acc = acc + a[0]; },
             None => {},
@@ -38,11 +38,11 @@ func genEnumArrBumpSrc(n string) string {
 // shape) and uses it after building the array — 0 iff value-correct AND no
 // over-release.
 const genEnumArrUnderflowSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var a: i32[] = [i, i + 1, i + 2];
-        var xs: Option[i32[]][] = [Some(a), None, Some([i + 5])];
+        let a: i32[] = [i, i + 1, i + 2];
+        let xs: Option[i32[]][] = [Some(a), None, Some([i + 5])];
         acc = acc + a[0] + a[2];
         match (xs[2]) { Some(b) => { acc = acc + b[0]; }, None => {} }
         i = i + 1;

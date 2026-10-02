@@ -10,7 +10,7 @@ function update(own xs: i32[], n: i32): i32[] {
 
 @noinline
 function forward(xs: i32[], rounds: i32): i32[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < rounds) {
     xs = update(xs, i);
     i = i + 1;
@@ -20,10 +20,10 @@ function forward(xs: i32[], rounds: i32): i32[] {
 
 @noinline
 function churn(calls: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < calls) {
-    var xs: i32[] = [1, 2, 3];
-    var next: i32[] = forward(xs, 32);
+    let xs: i32[] = [1, 2, 3];
+    let next: i32[] = forward(xs, 32);
     if (xs[0] != 1 || xs[1] != 2 || xs[2] != 3) {
       return 1;
     }
@@ -36,13 +36,13 @@ function churn(calls: i32): i32 {
 }
 
 function main(): i32 {
-  var rounds: i32 = 8;
-  var argv: string[] = args();
+  let rounds: i32 = 8;
+  let argv: string[] = args();
   if (argv.len() > 1) {
     rounds = 0;
-    var p: i32 = 0;
+    let p: i32 = 0;
     while (p < argv[1].len()) {
-      var digit: i32 = argv[1][p] as i32 - 48;
+      let digit: i32 = argv[1][p] as i32 - 48;
       if (digit < 0 || digit > 9 || rounds > 10000) {
         return 10;
       }
@@ -56,12 +56,12 @@ function main(): i32 {
   if (churn(rounds) != 0) {
     return 11;
   }
-  var before: i64 = __heap_bump_bytes();
+  let before: i64 = __heap_bump_bytes();
   if (churn(rounds) != 0) {
     return 12;
   }
-  var after: i64 = __heap_bump_bytes();
-  var underflows: i32 = __rc_underflow_count();
+  let after: i64 = __heap_bump_bytes();
+  let underflows: i32 = __rc_underflow_count();
   print((after - before).to_string());
   print((underflows as i64).to_string());
   if (underflows != 0) {

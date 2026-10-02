@@ -42,8 +42,8 @@ func mainOps(t *testing.T, p *ir.Program) []ir.Op {
 
 func TestScaleKernelTakesAConstantMultiply(t *testing.T) {
 	p, n := scaleProgram(t, `function main(): i32 {
-  var xs: f64[] = [1.0, 2.0, 3.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * 2.5);
+  let xs: f64[] = [1.0, 2.0, 3.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * 2.5);
   return (ys[0] + ys[2]) as i32;
 }`)
 	if n != 1 {
@@ -90,8 +90,8 @@ func TestScaleKernelTakesAConstantMultiply(t *testing.T) {
 // compare the scalar loop with itself.
 func TestScaleKernelTakesANegativeFactor(t *testing.T) {
 	p, n := scaleProgram(t, `function main(): i32 {
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * -1.5);
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * -1.5);
   return ys[0] as i32;
 }`)
 	if n != 1 {
@@ -110,8 +110,8 @@ func TestScaleKernelTakesANegativeFactor(t *testing.T) {
 // and the reading must not fold its negate into the factor.
 func TestScaleKernelDeclinesANegatedElement(t *testing.T) {
 	if _, n := scaleProgram(t, `function main(): i32 {
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => (0.0 - x) * 1.5);
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => (0.0 - x) * 1.5);
   return ys[0] as i32;
 }`); n != 0 {
 		t.Errorf("rewrote %d sites where the element itself is negated, want none", n)
@@ -121,8 +121,8 @@ func TestScaleKernelDeclinesANegatedElement(t *testing.T) {
 func TestScaleKernelTakesANamedElementFunction(t *testing.T) {
 	p, n := scaleProgram(t, `function half(x: f64): f64 { return x * 0.5; }
 function main(): i32 {
-  var xs: f64[] = [4.0, 8.0];
-  var ys: f64[] = xs.map(half);
+  let xs: f64[] = [4.0, 8.0];
+  let ys: f64[] = xs.map(half);
   return (ys[0] + ys[1]) as i32;
 }`)
 	if n != 1 {
@@ -143,28 +143,28 @@ func TestScaleKernelDeclines(t *testing.T) {
 		body string
 	}{
 		{"the factor is the element itself", `function main(): i32 {
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * x);
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * x);
   return ys[0] as i32;
 }`},
 		{"the operation is not a multiply", `function main(): i32 {
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x + 2.0);
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x + 2.0);
   return ys[0] as i32;
 }`},
 		{"the body is more than one operation", `function main(): i32 {
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * 2.0 + 1.0);
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * 2.0 + 1.0);
   return ys[0] as i32;
 }`},
 		{"the elements are not f64", `function main(): i32 {
-  var xs: i64[] = [1 as i64];
-  var ys: i64[] = xs.map((x: i64): i64 => x * (2 as i64));
+  let xs: i64[] = [1 as i64];
+  let ys: i64[] = xs.map((x: i64): i64 => x * (2 as i64));
   return ys[0] as i32;
 }`},
 		{"the stage changes the element type", `function main(): i32 {
-  var xs: f64[] = [1.0];
-  var ys: i64[] = xs.map((x: f64): i64 => (x * 2.0) as i64);
+  let xs: f64[] = [1.0];
+  let ys: i64[] = xs.map((x: f64): i64 => (x * 2.0) as i64);
   return ys[0] as i32;
 }`},
 	} {
@@ -186,7 +186,7 @@ func TestR7StillDeclinesF64SoTheOrderIsUntested(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/array";
 function twice(own xs: f64[]): f64[] { return xs.map((x: f64): f64 => x * 2.0); }
 function main(): i32 {
-  var ys: f64[] = twice([1.0, 2.0]);
+  let ys: f64[] = twice([1.0, 2.0]);
   return (ys[0] + ys[1]) as i32;
 }`)
 	if n := ir.MapOwnedArrayInPlace(p, 8); n != 0 {
@@ -203,7 +203,7 @@ function main(): i32 {
 // capture IS the factor reaches the kernel too, and that is the spelling a
 // reader writes as soon as the factor has a name:
 //
-//	var k: f64 = 2.5;
+//	let k: f64 = 2.5;
 //	xs.map((x: f64): f64 => x * k)
 //
 // Closure conversion pushes the captured value immediately before the build
@@ -213,9 +213,9 @@ function main(): i32 {
 // emitted one as well would push two operands for a two-operand call.
 func TestScaleKernelTakesACapturedFactor(t *testing.T) {
 	p, n := scaleProgram(t, `function main(): i32 {
-  var k: f64 = 2.5;
-  var xs: f64[] = [1.0, 2.0, 3.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * k);
+  let k: f64 = 2.5;
+  let xs: f64[] = [1.0, 2.0, 3.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * k);
   return (ys[0] + ys[2]) as i32;
 }`)
 	if n != 1 {
@@ -268,9 +268,9 @@ function main(): i32 {
 // order does not decide the site.
 func TestScaleKernelTakesACapturedFactorOnEitherSide(t *testing.T) {
 	_, n := scaleProgram(t, `function main(): i32 {
-  var k: f64 = 2.5;
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => k * x);
+  let k: f64 = 2.5;
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => k * x);
   return ys[0] as i32;
 }`)
 	if n != 1 {
@@ -287,41 +287,41 @@ func TestScaleKernelDeclinesCaptures(t *testing.T) {
 		body string
 	}{
 		{"two values are captured", `function main(): i32 {
-  var k: f64 = 2.0;
-  var j: f64 = 3.0;
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * k * j);
+  let k: f64 = 2.0;
+  let j: f64 = 3.0;
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * k * j);
   return ys[0] as i32;
 }`},
 		{"the capture is added rather than multiplied", `function main(): i32 {
-  var k: f64 = 2.0;
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x + k);
+  let k: f64 = 2.0;
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x + k);
   return ys[0] as i32;
 }`},
 		{"the capture is negated before the multiply", `function main(): i32 {
-  var k: f64 = 2.0;
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * (0.0 - k));
+  let k: f64 = 2.0;
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * (0.0 - k));
   return ys[0] as i32;
 }`},
 		{"the capture is multiplied by itself rather than the element", `function main(): i32 {
-  var k: f64 = 2.0;
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => k * k);
+  let k: f64 = 2.0;
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => k * k);
   return ys[0] as i32;
 }`},
 		{"the capture is the array, not a scalar", `function main(): i32 {
-  var ks: f64[] = [2.0];
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * ks[0]);
+  let ks: f64[] = [2.0];
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * ks[0]);
   return ys[0] as i32;
 }`},
 		{"a capturing closure is bound to a variable", `function main(): i32 {
-  var k: f64 = 2.0;
-  var f: (f64) => f64 = (x: f64): f64 => x * k;
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map(f);
+  let k: f64 = 2.0;
+  let f: (f64) => f64 = (x: f64): f64 => x * k;
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map(f);
   return ys[0] as i32;
 }`},
 		// Assigning the variable anywhere in the function boxes it, and the
@@ -331,9 +331,9 @@ func TestScaleKernelDeclinesCaptures(t *testing.T) {
 		// the value, and deleting an inc whose matching release went with
 		// the closure would unbalance the refcounts.
 		{"the captured variable is assigned after the map", `function main(): i32 {
-  var k: f64 = 2.0;
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * k);
+  let k: f64 = 2.0;
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * k);
   k = 100.0;
   return (ys[0] + k) as i32;
 }`},
@@ -350,8 +350,8 @@ func TestScaleKernelDeclinesCaptures(t *testing.T) {
 func TestScaleKernelOffSwitch(t *testing.T) {
 	t.Setenv("FERN_NO_SCALE_KERNEL", "1")
 	if _, n := scaleProgram(t, `function main(): i32 {
-  var xs: f64[] = [1.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * 2.0);
+  let xs: f64[] = [1.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * 2.0);
   return ys[0] as i32;
 }`); n != 0 {
 		t.Errorf("rewrote %d sites with the kernel switched off, want none", n)
@@ -370,11 +370,11 @@ function half(x: f64): f64 { return x * 0.5; }
 function scale_named(xs: f64[]): f64[] { return xs.map(half); }
 function scale_cap(xs: f64[], k: f64): f64[] { return xs.map((x: f64): f64 => x * k); }
 function scale_cap_local(xs: f64[]): f64[] {
-  var k: f64 = -0.75;
+  let k: f64 = -0.75;
   return xs.map((x: f64): f64 => k * x);
 }
 function main(): i32 {
-  var xs: f64[] = [1.0, 2.0];
+  let xs: f64[] = [1.0, 2.0];
   return (scale2(xs)[0] + scale_neg(xs)[0] + scale_zero(xs)[0] + scale_named(xs)[0] +
     scale_cap(xs, 3.0)[0] + scale_cap_local(xs)[0]) as i32;
 }`)
@@ -391,8 +391,8 @@ function main(): i32 {
 // the next one can be planned against.
 func TestScaleKernelTakesAChainedReceiver(t *testing.T) {
 	p, n := scaleProgram(t, `function main(): i32 {
-  var xs: f64[] = [1.0, 2.0];
-  var ys: f64[] = xs.map((x: f64): f64 => x * 2.0).map((x: f64): f64 => x * 3.0);
+  let xs: f64[] = [1.0, 2.0];
+  let ys: f64[] = xs.map((x: f64): f64 => x * 2.0).map((x: f64): f64 => x * 3.0);
   return ys[0] as i32;
 }`)
 	if n != 2 {
@@ -409,7 +409,7 @@ func TestScaleKernelTakesAChainedReceiver(t *testing.T) {
 	}
 }
 
-// A closure bound to a variable is built at its `var`, which is before the
+// A closure bound to a variable is built at its `let`, which is before the
 // receiver is evaluated. A range opening at that build would delete the
 // receiver push and land the kernel on an empty stack, leaving the
 // closure's own release behind with nothing to release — a malformed op
@@ -423,22 +423,22 @@ func TestScaleKernelDeclinesAVariableBoundElement(t *testing.T) {
 		body string
 	}{
 		{"the closure is bound to a variable", `function main(): i32 {
-  var f: (f64) => f64 = (x: f64): f64 => x * 2.0;
-  var xs: f64[] = [1.0, 2.0];
-  var ys: f64[] = xs.map(f);
+  let f: (f64) => f64 = (x: f64): f64 => x * 2.0;
+  let xs: f64[] = [1.0, 2.0];
+  let ys: f64[] = xs.map(f);
   return ys[0] as i32;
 }`},
 		{"the bound closure is also called directly", `function main(): i32 {
-  var f: (f64) => f64 = (x: f64): f64 => x * 2.0;
-  var xs: f64[] = [1.0, 2.0];
-  var ys: f64[] = xs.map(f);
+  let f: (f64) => f64 = (x: f64): f64 => x * 2.0;
+  let xs: f64[] = [1.0, 2.0];
+  let ys: f64[] = xs.map(f);
   return (ys[0] + f(5.0)) as i32;
 }`},
 		{"the binding is reassigned before the call", `function main(): i32 {
-  var f: (f64) => f64 = (x: f64): f64 => x * 2.0;
+  let f: (f64) => f64 = (x: f64): f64 => x * 2.0;
   f = (x: f64): f64 => x * 3.0;
-  var xs: f64[] = [1.0, 2.0];
-  var ys: f64[] = xs.map(f);
+  let xs: f64[] = [1.0, 2.0];
+  let ys: f64[] = xs.map(f);
   return ys[0] as i32;
 }`},
 	} {

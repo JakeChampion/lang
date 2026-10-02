@@ -28,22 +28,22 @@ var fnPayloadVariantCases = []struct {
 	{"named-fn", "enum Box { Fn(i32, (i32) => i32), Empty }\n" +
 		"function add(x: i32): i32 { return x + 1; }\n" +
 		"function main(): i32 {\n" +
-		"    var b: Box = Fn(10, add);\n" +
+		"    let b: Box = Fn(10, add);\n" +
 		"    match (b) { Fn(n, f) => { return n + f(31); }, Empty => { return 0; } }\n" +
 		"}\n"},
 	// A CAPTURING closure (bound to a local) as the payload.
 	{"capturing-closure", "enum Box { Fn(i32, (i32) => i32), Empty }\n" +
 		"function main(): i32 {\n" +
-		"    var k: i32 = 5;\n" +
-		"    var g: (i32) => i32 = (x: i32): i32 => x + k;\n" +
-		"    var b: Box = Fn(10, g);\n" +
+		"    let k: i32 = 5;\n" +
+		"    let g: (i32) => i32 = (x: i32): i32 => x + k;\n" +
+		"    let b: Box = Fn(10, g);\n" +
 		"    match (b) { Fn(n, f) => { return n + f(27); }, Empty => { return 0; } }\n" +
 		"}\n"},
 	// The recursive std/task `Step` shape: the payload fn returns the enum itself.
 	{"recursive-step", "enum Step { Done(i32), Wait(i32, (i32) => Step) }\n" +
 		"function resume(tok: i32): Step { return Done(tok + 1); }\n" +
 		"function main(): i32 {\n" +
-		"    var s: Step = Wait(41, resume);\n" +
+		"    let s: Step = Wait(41, resume);\n" +
 		"    match (s) {\n" +
 		"        Wait(tok, cont) => {\n" +
 		"            match (cont(tok)) { Done(v) => { return v; }, Wait(t2, c2) => { return 0; } }\n" +
@@ -55,7 +55,7 @@ var fnPayloadVariantCases = []struct {
 	{"generic-enum", "enum Box[T] { Fn(T, (T) => T), Empty }\n" +
 		"function inc(x: i32): i32 { return x + 1; }\n" +
 		"function main(): i32 {\n" +
-		"    var b: Box[i32] = Fn(41, inc);\n" +
+		"    let b: Box[i32] = Fn(41, inc);\n" +
 		"    match (b) { Fn(n, f) => { return f(n); }, Empty => { return 0; } }\n" +
 		"}\n"},
 	// The canonical Blocker-2 shape (docs/ASYNC-SELFHOST-IR.md): a generic AND
@@ -64,7 +64,7 @@ var fnPayloadVariantCases = []struct {
 	{"future-generic-recursive", "enum Future[T] { Ready(T), Pending(i32, (i32) => Future[T]) }\n" +
 		"function step(tok: i32): Future[i32] { return Ready(tok + 1); }\n" +
 		"function main(): i32 {\n" +
-		"    var f: Future[i32] = Pending(41, step);\n" +
+		"    let f: Future[i32] = Pending(41, step);\n" +
 		"    match (f) {\n" +
 		"        Pending(tok, cont) => {\n" +
 		"            match (cont(tok)) { Ready(v) => { return v; }, Pending(t2, c2) => { return 0; } }\n" +

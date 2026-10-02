@@ -71,7 +71,7 @@ function forward(s: string): string { return keep(s); }`},
 		// occurrence since the #7914 element credit, so the forwarding
 		// frame is credited too.
 		{"callee binds it to a local", `function keep(s: string): i32 {
-    var t: string = s;
+    let t: string = s;
     return t.len();
 }
 function forward(s: string): i32 { return keep(s); }`},
@@ -108,7 +108,7 @@ func TestStringParamForwardingCreditIsInertWithFreeOff(t *testing.T) {
 	src := `function leaf(s: string): i32 { return s.len(); }
 function forward(s: string): i32 { return leaf(s); }
 function caller(): i32 {
-    var b: string = "a-string-past-the-inline-threshold";
+    let b: string = "a-string-past-the-inline-threshold";
     return forward(b);
 }
 function main(): i32 { return 0; }`

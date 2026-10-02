@@ -99,7 +99,7 @@ function main(): i32 { return build()[0]; }`)
 func TestTupleLitBuysItsBoxAfterTheElements(t *testing.T) {
 	wantOperandBeforeAlloc(t, "tuple literal", evalOrderPreamble+`
 function build(): (i32, i32) { return (probe(), 0); }
-function main(): i32 { var t: (i32, i32) = build(); return t.0; }`)
+function main(): i32 { let t: (i32, i32) = build(); return t.0; }`)
 }
 
 func TestVariantCallBuysItsBoxAfterThePayload(t *testing.T) {

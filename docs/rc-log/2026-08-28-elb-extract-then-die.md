@@ -9,10 +9,10 @@ admits an element read `name[i]` in exactly three shapes:
   and the at-binding) confined to its arm by the strict `binding_escapes_arm`
   (`.len()`, indexing, arithmetic-over-reads admit; a bare re-bind or bare
   assign refuses);
-- the whole init of `var e = name[i]`, the local confined by the same proof
+- the whole init of `let e = name[i]`, the local confined by the same proof
   pair the box flag trusts for a param name — `body_unsafe_for_match_borrow`
   plus `param_match_binding_escapes`;
-- a whole-array alias `var x = name`, when the alias itself passes this same
+- a whole-array alias `let x = name`, when the alias itself passes this same
   walk (recursion bounded by the def chain).
 
 Every other position of `name[i]` — a struct-literal slot, an append or call
@@ -28,13 +28,13 @@ off the extracted local, no match) rides the local-confinement proof.
 
 | shape | before | after |
 |---|---|---|
-| `var e = src[0]` then match on e (producer keep) | 4/2, 80 live | **4/4, 0** |
+| `let e = src[0]` then match on e (producer keep) | 4/2, 80 live | **4/4, 0** |
 | same, literal keep | 4/1, 112 live | **4/4, 0** |
 | statement `match (src[0])` direct | 4/2, 80 live | **4/4, 0** |
-| `var x = src` alias, statement match on `x[0]` | 4/2, 80 live | **4/4, 0** |
+| `let x = src` alias, statement match on `x[0]` | 4/2, 80 live | **4/4, 0** |
 | match-EXPRESSION on `src[0]` (the IIFE desugar) | 4/2, 80 live | 4/2, 80 live (held — see next lead) |
 | handout via struct-lit field (`element_handed_out`) | refused | refused (1400/1000, exit 25 = native, no underflow) |
-| handout THROUGH the alias (`var x = src; H { e: x[0] }`) | refused | refused |
+| handout THROUGH the alias (`let x = src; H { e: x[0] }`) | refused | refused |
 | arm binding returned (`E.A(xs) => return xs`) | refused | refused |
 
 Sanitize leg on all four granted shapes: zero findings, exits unmoved. Both

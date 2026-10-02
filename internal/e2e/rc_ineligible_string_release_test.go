@@ -21,47 +21,47 @@ func TestIneligibleStringLocalReleasesItsReference(t *testing.T) {
 		want      int
 	}{
 		{"assigned-in-a-branch", mk + `function tag(src: string, i: i32): i32 {
-    var x: string = src;
-    var out: string = "";
+    let x: string = src;
+    let out: string = "";
     if (i % 2 == 0) { out = x; }
     return out.len() + i;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var line: string = mkstr("a string long enough to defeat the small-string optimisation");
+        let line: string = mkstr("a string long enough to defeat the small-string optimisation");
         acc = acc + tag(line, i);
         i = i + 1;
     }
     return acc - 100;
 }`, 28},
 		{"assigned-at-top-level", mk + `function tag(src: string): i32 {
-    var x: string = src;
-    var out: string = "";
+    let x: string = src;
+    let out: string = "";
     out = x;
     return out.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var line: string = mkstr("another string long enough to live on the heap");
+        let line: string = mkstr("another string long enough to live on the heap");
         acc = acc + tag(line);
         i = i + 1;
     }
     return acc - 100;
 }`, 41},
 		{"returned", mk + `function pick(src: string, i: i32): string {
-    var out: string = "none";
+    let out: string = "none";
     if (i % 2 == 0) { out = src; }
     return out;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var line: string = mkstr("a third string long enough to live on the heap");
+        let line: string = mkstr("a third string long enough to live on the heap");
         acc = acc + pick(line, i).len();
         i = i + 1;
     }
@@ -71,26 +71,26 @@ function main(): i32 {
 		// no reference of its own: releasing it at exit is a use-after-free
 		// once `joined` has freed the buffer.
 		{"bound-to-a-block-tail", mk + `function tail(i: i32): i32 {
-    var a: string = mkstr("a string long enough to live on the heap");
-    var s: string = if (i >= 0) { var joined = a + "?"; joined } else { "" };
+    let a: string = mkstr("a string long enough to live on the heap");
+    let s: string = if (i >= 0) { let joined = a + "?"; joined } else { "" };
     return s.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { acc = acc + tail(i); i = i + 1; }
     return acc - 100;
 }`, 68},
 		{"literals-only", mk + `function label(i: i32): i32 {
-    var out: string = "odd";
+    let out: string = "odd";
     if (i % 2 == 0) { out = "even"; }
     return out.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var line: string = mkstr("a fourth string long enough to live on the heap");
+        let line: string = mkstr("a fourth string long enough to live on the heap");
         acc = acc + label(i) + line.len();
         i = i + 1;
     }

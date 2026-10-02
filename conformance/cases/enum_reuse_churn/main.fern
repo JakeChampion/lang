@@ -13,8 +13,8 @@ function head(b: Bag): i32 {
 }
 
 function churn(n: i32): i32 {
-    var b: Bag = Keep([0, 0]);
-    var i: i32 = 0;
+    let b: Bag = Keep([0, 0]);
+    let i: i32 = 0;
     while (i < n) {
         if (i % 2 == 0) {
             b = Keep([head(b) + 2, i]);

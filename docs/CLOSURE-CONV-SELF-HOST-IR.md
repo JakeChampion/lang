@@ -16,9 +16,9 @@ tuple-element positions) is the remaining extension.
 |---|---|
 | non-capturing lambda as arg (`apply(x, (n) => n*3)`) | **ir** |
 | top-level fn as arg (`apply(x, inc)`) | **ir** |
-| fn-value local (`var f = inc; f(5)`) | **ir** |
+| fn-value local (`let f = inc; f(5)`) | **ir** |
 | fn-pointer array (`[inc, dbl][i](5)`) | **ir** |
-| capturing lambda called **directly** (`var f = (n)=>n*k; f(3)`) | **ir** (param-lift) |
+| capturing lambda called **directly** (`let f = (n)=>n*k; f(3)`) | **ir** (param-lift) |
 | escaping capturing lambda (`return (n)=>n*k`) | **ir** (`$clo` box) |
 | **capturing lambda as arg** (`apply(x, (n)=>n*k)`) | **ast** ← the gap |
 

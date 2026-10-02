@@ -64,7 +64,7 @@ use-after-free, not a leak fix. The cell as written does not observe it
 (`h` dies in the same frame), but this does:
 
 ```fern
-function mk(): Hold { var k: (i32, i32[]) = (5, [6, 7]); return keepit(k); }
+function mk(): Hold { let k: (i32, i32[]) = (5, [6, 7]); return keepit(k); }
 ```
 
 `k` would take its deep free at exit while the returned `Hold.t` still
@@ -76,7 +76,7 @@ points at it — the exit-99 / sanitizer class, not a matrix leak.
    one commit): a tuple arm in `lower_expr_struct_lit`, a `k_tuple` arm in
    `emit_ir_struct_drop_one` and its arm64/wasm twins, and
    `struct_has_reclaim_array_field` admitting a tuple field. Instrument: a
-   CALLER-LOCAL cell (`var k = …; var h = Hold { t: k, n: 1 };`), which
+   CALLER-LOCAL cell (`let k = …; let h = Hold { t: k, n: 1 };`), which
    measures the pair with no interprocedural component, plus a knockout each
    way — retain-only leaks, drop-only exits 99.
 2. **A `"TCNT:"` counted tier** in `param_counted_of`, folded by
@@ -102,8 +102,8 @@ either could come from the store pair OR from the interprocedural verdict.
 This one is caller-local —
 
 ```fern
-var k: (i32, i32[]) = (i, [i, i + 1]);
-var h: Hold = Hold { t: k, n: i };
+let k: (i32, i32[]) = (i, [i, i + 1]);
+let h: Hold = Hold { t: k, n: i };
 ```
 
 — so the only thing that can move it is the retain/drop pair. Measured

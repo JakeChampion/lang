@@ -54,7 +54,7 @@ func TestSelfHostX86ScaleProbe(t *testing.T) {
 		for i := 0; i < nfn; i++ {
 			fmt.Fprintf(&b, "function g%d(): i32 { return 1; }\n", i)
 		}
-		b.WriteString("function main(): i32 { var s: i32 = 0;")
+		b.WriteString("function main(): i32 { let s: i32 = 0;")
 		for i := 0; i < want; i++ {
 			fmt.Fprintf(&b, " s = s + g%d();", i)
 		}

@@ -49,16 +49,16 @@ func TestX86_64SSABackendCLI(t *testing.T) {
 function main(): i32 { return add3(2, 3, 4) - 14; }
 `},
 		{"loop-accumulate", `function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) { t = t + i; i = i + 1; }
     return t - 45;
 }
 `},
 		{"array-index", `function main(): i32 {
-    var xs: i32[] = [3, 1, 4, 1, 5];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let xs: i32[] = [3, 1, 4, 1, 5];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { t = t + xs[i]; i = i + 1; }
     return t - 14;
 }
@@ -68,7 +68,7 @@ function main(): i32 { return add3(2, 3, 4) - 14; }
 		// box.
 		{"enum-match", `enum Shape { Circle, Square }
 function main(): i32 {
-    var s: Shape = Shape.Square;
+    let s: Shape = Shape.Square;
     match (s) { Shape.Circle => { return 1; }, Shape.Square => { return 0; } }
 }
 `},
@@ -83,7 +83,7 @@ function main(): i32 {
 		// the stack machine's 193 — so the smaller-than assertion below covers
 		// the shape that was hardest for it.
 		{"string-array-len", `function main(): i32 {
-    var xs: string[] = ["a", "b"];
+    let xs: string[] = ["a", "b"];
     return xs.len() as i32;
 }
 `},
@@ -94,8 +94,8 @@ function pick(n: i32): Shape {
     return Shape.Triangle;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         match (pick(i)) {
             Shape.Circle => { t = t + 1; },
@@ -157,7 +157,7 @@ function main(): i32 {
 		// argument is folded in the IR and never reaches the backend at all.
 		{"float-reinterpret", `function widen(n: i32): f64 { return n as f64 + 0.5; }
 function main(): i32 {
-    var b: i64 = f64_bits(widen(3));
+    let b: i64 = f64_bits(widen(3));
     return (b % 7) as i32;
 }
 `, "reinterpret_f64_to_i64"},

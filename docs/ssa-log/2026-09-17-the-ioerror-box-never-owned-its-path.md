@@ -19,9 +19,9 @@ freed a buffer the caller still owned. One extra free, and the freed block went
 straight back out of the freelist:
 
 ```fern
-var p: string = mk("abc");
+let p: string = mk("abc");
 match (lstat(p)) { Ok(_) => {}, Err(_) => {} }
-var q: string = mk("XY");
+let q: string = mk("XY");
 // flat:        p=[abc] q=[XY]
 // -backend ssa: p=[XY]  q=[XY]
 ```

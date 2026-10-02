@@ -9,17 +9,18 @@ import FernPlayground from "../../../components/FernPlayground.astro";
 
 ## Variables
 
-`var` declares a mutable binding. Annotate the type, or let the checker
-infer it from the initialiser. (`let` is a separate, refutable
-pattern-binding form — see
-[Language features](../../reference/language-features/#refutable-bindings--let--else-and-if-let).)
+`let` declares a binding, and the binding can be reassigned. Annotate the
+type, or let the checker infer it from the initialiser. The same keyword
+destructures tuples and structs, and with an `else` block binds a pattern
+that can miss — see
+[Language features](../../reference/language-features/#refutable-bindings--let--else-and-if-let).
 
 <FernPlayground
   code={`import "std/i32";
 
 function main(): i32 {
-    var x: i32 = 7;
-    var y = x * 2;       // type inferred as i32
+    let x: i32 = 7;
+    let y = x * 2;       // type inferred as i32
     print(y.to_string());
     return 0;
 }`}
@@ -33,9 +34,9 @@ native pointer-width counts. Two floats: `f32` and `f64` — `float` is
 an alias for `f64`. Mixing widths needs an explicit cast.
 
 ```fern
-var a: i32 = 7;
-var b: i64 = a as i64;   // narrow → wide cast
-var c: i32 = b as i32;   // wide → narrow (may truncate)
+let a: i32 = 7;
+let b: i64 = a as i64;   // narrow → wide cast
+let c: i32 = b as i32;   // wide → narrow (may truncate)
 ```
 
 ## Control flow
@@ -49,12 +50,12 @@ for `for … in` — over an array, or over a range written `start..end`
 import "std/string";
 
 function main(): i32 {
-    var trees: string[] = ["ash", "beech", "elm"];
+    let trees: string[] = ["ash", "beech", "elm"];
     for name in trees {
         print(name);
     }
 
-    var sum: i32 = 0;
+    let sum: i32 = 0;
     for i in 0..10 {
         if (i % 2 == 0) { sum = sum + i; }
     }
@@ -67,7 +68,7 @@ The three-part `for (init; cond; step)` form also exists, for the rare
 loop whose stepping isn't a simple walk:
 
 ```fern
-for (var i: i32 = 0; i < n; i = i * 2) { … }
+for (let i: i32 = 0; i < n; i = i * 2) { … }
 ```
 
 `loop { … }` is an unconditional loop you leave with `break`. Any loop can
@@ -78,7 +79,7 @@ map iteration with `for (k, v) in m`.
 `if` is also an expression, for one-line ternaries.
 
 ```fern
-var max: i32 = if (a > b) { a } else { b };
+let max: i32 = if (a > b) { a } else { b };
 ```
 
 ## Functions

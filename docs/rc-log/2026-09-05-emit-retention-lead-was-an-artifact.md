@@ -237,7 +237,7 @@ spread that overrides an array field never releases the superseded array:
 struct W { src: string, w: i32[], n: i32 }
 function w_flush(own q: W): W {
     if (q.w.len() < 8) { return q; }
-    var keep: i32[] = [];
+    let keep: i32[] = [];
     return W { ...q, w: keep, n: 0 };
 }
 ```
@@ -315,11 +315,11 @@ So the leak is the conservative side of a real trade. Releasing the displaced
 element without clearing (a) frees a box a live binding still points at.
 
 `Peep` is refused by clause (a), and that much is visible in the source:
-`peep_flush` binds `var l: PLine = p.w[i]` and `var m: PLine = p.w[j]`, exactly
+`peep_flush` binds `let l: PLine = p.w[i]` and `let m: PLine = p.w[j]`, exactly
 the element reads the clause names. So recovering the ~20% needs liveness on
 element bindings — those values die almost immediately but the scan is
 syntactic — which is the same shape of work as #8644's gap 1, where a
-syntactically-aliased but dead `var prev = s` forces a copy.
+syntactically-aliased but dead `let prev = s` forces a copy.
 
 WHICH clause refuses the minimal `W` is NOT established, and an attempt to
 settle it failed instructively. Changing the override to an array literal of
@@ -351,7 +351,7 @@ released. They are, when the struct box is unique. The trigger is an alias:
 struct S { ops: i32[], n: i32 }
 function (s: S) emit(op: i32): S { return S { ...s, ops: s.ops.append(op), n: s.n + 1 }; }
 ...
-    var prev: S = s;        // the entire difference
+    let prev: S = s;        // the entire difference
     s = s.emit(i);
 ```
 
@@ -393,7 +393,7 @@ measurement conflated:
 Native's numbers move by 23×; the self-host's do not move at all.
 
 **Gap 1, reuse side:** native drops a never-read alias and the copy never
-happens. The self-host treats `var prev = s` as an alias whether or not it is
+happens. The self-host treats `let prev = s` as an alias whether or not it is
 read, so the box is shared at the `emit` and the fast path cannot fire. This is
 what turns linear work into quadratic work, and it needs liveness rather than
 the syntactic `is_aliased_name` test.

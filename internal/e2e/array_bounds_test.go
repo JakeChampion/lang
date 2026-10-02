@@ -76,19 +76,19 @@ func TestArrayBoundsCheck(t *testing.T) {
 		name, src string
 	}{
 		{"read_i32_past_end", `import "std/i32";
-function main(): i32 { var xs: i32[] = [10, 20, 30]; print(xs[5].to_string()); return 0; }`},
+function main(): i32 { let xs: i32[] = [10, 20, 30]; print(xs[5].to_string()); return 0; }`},
 		{"read_negative", `import "std/i32";
-function main(): i32 { var xs: i32[] = [10, 20, 30]; var i: i32 = 0 - 1; print(xs[i].to_string()); return 0; }`},
+function main(): i32 { let xs: i32[] = [10, 20, 30]; let i: i32 = 0 - 1; print(xs[i].to_string()); return 0; }`},
 		{"write_past_end", `import "std/i32";
-function main(): i32 { var xs: i32[] = [1, 2, 3]; xs = xs.with(7, 9); return 0; }`},
+function main(): i32 { let xs: i32[] = [1, 2, 3]; xs = xs.with(7, 9); return 0; }`},
 		{"read_u8_past_end", `import "std/i32";
-function main(): i32 { var xs: u8[] = [1, 2, 3]; print((xs[9] as i32).to_string()); return 0; }`},
+function main(): i32 { let xs: u8[] = [1, 2, 3]; print((xs[9] as i32).to_string()); return 0; }`},
 		{"read_i64_past_end", `import "std/i64";
-function main(): i32 { var xs: i64[] = [1, 2, 3]; print(xs[5].to_string()); return 0; }`},
+function main(): i32 { let xs: i64[] = [1, 2, 3]; print(xs[5].to_string()); return 0; }`},
 		{"slice_past_end", `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30, 40, 50];
-    var s: [i32] = xs[1:3];
+    let xs: i32[] = [10, 20, 30, 40, 50];
+    let s: [i32] = xs[1:3];
     print((s[5] as i32).to_string());
     return 0;
 }`},
@@ -99,55 +99,55 @@ function main(): i32 {
 		// source.
 		{"slice_construct_high_past_end", `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var s: i32 = 0;
+    let xs: i32[] = [10, 20, 30];
+    let s: i32 = 0;
     for x in xs[0:4] { s = s + x; }
     print(s.to_string());
     return 0;
 }`},
 		{"slice_construct_high_far_past_end", `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var s: i32 = 0;
+    let xs: i32[] = [10, 20, 30];
+    let s: i32 = 0;
     for x in xs[0:100] { s = s + x; }
     print(s.to_string());
     return 0;
 }`},
 		{"slice_construct_reversed", `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var s: [i32] = xs[2:1];
+    let xs: i32[] = [10, 20, 30];
+    let s: [i32] = xs[2:1];
     print(s.len().to_string());
     return 0;
 }`},
 		{"slice_construct_negative_low", `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var lo: i32 = 0 - 1;
-    var s: [i32] = xs[lo:2];
+    let xs: i32[] = [10, 20, 30];
+    let lo: i32 = 0 - 1;
+    let s: [i32] = xs[lo:2];
     print(s.len().to_string());
     return 0;
 }`},
 		{"slice_construct_half_open_low_past_end", `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var s: [i32] = xs[7:];
+    let xs: i32[] = [10, 20, 30];
+    let s: [i32] = xs[7:];
     print(s.len().to_string());
     return 0;
 }`},
 		{"subslice_construct_past_end", `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30, 40, 50];
-    var s: [i32] = xs[1:4];
-    var t: [i32] = s[0:4];
+    let xs: i32[] = [10, 20, 30, 40, 50];
+    let s: [i32] = xs[1:4];
+    let t: [i32] = s[0:4];
     print(t.len().to_string());
     return 0;
 }`},
 		{"slice_construct_i64_past_end", `import "std/i32";
 import "std/i64";
 function main(): i32 {
-    var xs: i64[] = [5000000000, 6000000000];
-    var s: [i64] = xs[0:5];
+    let xs: i64[] = [5000000000, 6000000000];
+    let s: [i64] = xs[0:5];
     print(s.len().to_string());
     return 0;
 }`},
@@ -171,17 +171,17 @@ import "std/string";
 function idx(): i32 { return ` + idx + `; }
 function main(): i32 {
     ` + bind + `
-    var b: u8 = s[idx()];
+    let b: u8 = s[idx()];
     print((b as i32).to_string());
     return 0;
 }`
 	}
 	// "abc" is 3 bytes, so it is SSO-inline; the 24-byte literal is
 	// heap-allocated. Both forms and a view over the heap one.
-	inline := `var s: string = "abc";`
-	heap := `var s: string = "0123456789abcdefghijklmn";`
-	view := `var h: string = "0123456789abcdefghijklmn";
-    var s: str = h.trim();`
+	inline := `let s: string = "abc";`
+	heap := `let s: string = "0123456789abcdefghijklmn";`
+	view := `let h: string = "0123456789abcdefghijklmn";
+    let s: str = h.trim();`
 
 	oob := []struct {
 		name, src string
@@ -214,7 +214,7 @@ func TestStringIndexInBoundsStillWorks(t *testing.T) {
 		{"inline_first_and_last", `import "std/i32";
 function idx(i: i32): i32 { return i; }
 function main(): i32 {
-    var s: string = "abc";
+    let s: string = "abc";
     print((s[idx(0)] as i32).to_string());
     print((s[idx(2)] as i32).to_string());
     return 0;
@@ -222,7 +222,7 @@ function main(): i32 {
 		{"heap_first_and_last", `import "std/i32";
 function idx(i: i32): i32 { return i; }
 function main(): i32 {
-    var s: string = "0123456789abcdefghijklmn";
+    let s: string = "0123456789abcdefghijklmn";
     print((s[idx(0)] as i32).to_string());
     print((s[idx(23)] as i32).to_string());
     return 0;
@@ -231,8 +231,8 @@ function main(): i32 {
 import "std/string";
 function idx(i: i32): i32 { return i; }
 function main(): i32 {
-    var h: string = "0123456789abcdefghijklmn";
-    var s: str = h.trim();
+    let h: string = "0123456789abcdefghijklmn";
+    let s: str = h.trim();
     print((s[idx(0)] as i32).to_string());
     print((s[idx(23)] as i32).to_string());
     return 0;
@@ -240,9 +240,9 @@ function main(): i32 {
 		{"scan_every_byte", `import "std/i32";
 import "std/string";
 function main(): i32 {
-    var s: string = "0123456789abcdefghijklmn";
-    var sum: i32 = 0;
-    for (var i: i32 = 0; i < s.len(); i = i + 1) { sum = sum + (s[i] as i32); }
+    let s: string = "0123456789abcdefghijklmn";
+    let sum: i32 = 0;
+    for (let i: i32 = 0; i < s.len(); i = i + 1) { sum = sum + (s[i] as i32); }
     print(sum.to_string());
     return 0;
 }`},
@@ -265,7 +265,7 @@ func TestArrayInBoundsStillWorks(t *testing.T) {
 	}{
 		{"read_write", `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
+    let xs: i32[] = [10, 20, 30];
     xs = xs.with(1, 99);
     print(xs[0].to_string());
     print(xs[1].to_string());
@@ -274,17 +274,17 @@ function main(): i32 {
 }`},
 		{"loop_sum", `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4, 5];
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let xs: i32[] = [1, 2, 3, 4, 5];
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { sum = sum + xs[i]; i = i + 1; }
     print(sum.to_string());
     return 0;
 }`},
 		{"slice_inbounds", `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30, 40, 50];
-    var s: [i32] = xs[1:4];
+    let xs: i32[] = [10, 20, 30, 40, 50];
+    let s: [i32] = xs[1:4];
     print(s.len().to_string());
     print((s[0] as i32).to_string());
     print((s[2] as i32).to_string());
@@ -294,23 +294,23 @@ function main(): i32 {
 		// an empty slice, and a full-width xs[0:len] is unchanged.
 		{"slice_boundary_forms", `import "std/i32";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var empty: [i32] = xs[3:3];
+    let xs: i32[] = [10, 20, 30];
+    let empty: [i32] = xs[3:3];
     print(empty.len().to_string());
-    var full: [i32] = xs[0:3];
+    let full: [i32] = xs[0:3];
     print(full.len().to_string());
-    var head: [i32] = xs[:2];
+    let head: [i32] = xs[:2];
     print(head.len().to_string());
-    var tail: [i32] = xs[1:];
+    let tail: [i32] = xs[1:];
     print(tail.len().to_string());
     return 0;
 }`},
 		{"u8_and_i64", `import "std/i32";
 import "std/i64";
 function main(): i32 {
-    var b: u8[] = [200, 100, 50];
+    let b: u8[] = [200, 100, 50];
     print((b[0] as i32).to_string());
-    var w: i64[] = [5000000000, 6000000000];
+    let w: i64[] = [5000000000, 6000000000];
     print(w[1].to_string());
     return 0;
 }`},

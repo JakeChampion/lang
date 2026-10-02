@@ -17,11 +17,11 @@ which already types them as the map's key and value.
 ## Measured
 
 ```fern
-var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
+let m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
 m = m.insert(4, 40);
-var (m2, had) = m.without(2);
+let (m2, had) = m.without(2);
 for (k, v) in m2 { t = t + k * v; }
-var names: Map[string, i32] = Map { "a": 1, "bb": 2 };
+let names: Map[string, i32] = Map { "a": 1, "bb": 2 };
 for (k2, v2) in names { n = n + k2.len() * v2; }
 ```
 

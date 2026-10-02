@@ -77,7 +77,7 @@ function test_edges(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/glob");
+  let r: test.TestRunner = test.test_new("std/glob");
   r = r.it("literal", test_literal);
   r = r.it("star no-cross", test_star_no_cross);
   r = r.it("question", test_question);

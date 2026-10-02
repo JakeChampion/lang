@@ -481,7 +481,7 @@ the script against `.github/alloc-baseline.txt` on every PR, but with
 cannot be baselined against whatever runner CI hands you. Read it locally, on
 one machine, A/B.
 
-**It returns i64.** Bind it to an `i64` (`var b: i64 = __heap_bump_bytes();`);
+**It returns i64.** Bind it to an `i64` (`let b: i64 = __heap_bump_bytes();`);
 narrowing to an exit code needs an explicit `as i32`, which is what the existing
 corpus does. It used to be declared i32 while every runtime helper computed the
 offset in 64 bits, and a quadratic sweep read 141 MB / 555 MB / **-2.09 GB** /

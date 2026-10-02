@@ -598,7 +598,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   shared `needs_rc_inc_on_alias` + `ty_is_array_like` predicates to
   `asmcore.fern` (ported from native `needsRcIncOnAlias`, scoped to
   arrays), and emit `__fern_rc_inc` in `asm.fern`'s `StmtVar` general
-  path when `var y = x` binds an array-typed ident alias (a fresh
+  path when `let y = x` binds an array-typed ident alias (a fresh
   literal / call result is already owned at rc=1 and is NOT
   re-incremented). This is the first time the Phase-0c helpers run on
   the Phase-0b rc-headered arrays — proving the three layers integrate.
@@ -639,7 +639,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 - 2026-06-07: **Phase 1d (field/index alias inc), x86-64 — SHIPPED.**
   Extended the shared `needs_rc_inc_on_alias` to also fire on
   `ExprFieldAccess` / `ExprIndex` reads whose inferred type is an array
-  (`var y = h.items`, `var y = m[i]` for an array-of-arrays), using
+  (`let y = h.items`, `let y = m[i]` for an array-of-arrays), using
   `infer_expr_type`. Picked up automatically by both `StmtVar` and
   `StmtAssign` (no backend edits). Robust: a spurious inc on a
   mis-inferred non-array is harmless (the rc-inc guards short-circuit).
@@ -655,7 +655,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `EmitState` (set by `emit_function` after binding params) — the borrow
   model (caller still owns the arg). Two supports make it sound under
   safe-leak: (1) `emit_function` zero-inits the body-local slots
-  (`rep stosq`) so the sweep reads NULL (dec no-op) for a `var` skipped
+  (`rep stosq`) so the sweep reads NULL (dec no-op) for a `let` skipped
   on the current path; (2) `StmtReturn` retains an array result before
   the sweep (and restores it after) so the returned buffer reaches the
   caller at unchanged rc. Combined with the alias/reassign incs +
@@ -738,7 +738,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   struct owns a new reference). This is the **free-readiness gate**: it
   closes the uncounted-alias hole that would become a use-after-free
   once free is on — a struct outliving the source local
-  (`function mk(): H { var xs = [..]; return H{items: xs}; }`) keeps its
+  (`function mk(): H { let xs = [..]; return H{items: xs}; }`) keeps its
   array alive. inc-only (struct drop isn't wired — Phase 1e), so it's
   over-release-detector clean and a safe leak today. A fresh literal /
   call field value is owned and not re-incremented. Tests:
@@ -827,7 +827,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   changes were reverted; the branch stays at the sound free-off state.
   **Before free can flip:** find + fix the residual under-count. The
   prime suspect is an uncounted alias from a CALL result that aliases an
-  argument (e.g. `var z = f(xs)` where `f` returns its param), which the
+  argument (e.g. `let z = f(xs)` where `f` returns its param), which the
   current `needs_rc_inc_on_alias` (ident/field/index only) does not
   retain — this is exactly what the native compiler's
   `inferParamEscapes` / `findReturnsNoParamEscape` analyses handle. The
@@ -1168,7 +1168,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   maps — Phase 1e, all backends) and the liveness-based optimisations
   (drop-on-last-use, FBIP reuse).
 - 2026-06-08: **wasm backend RC — reclaim call-result array locals.** A
-  real (non-inert) extension: `var x = build()` array locals were the main
+  real (non-inert) extension: `let x = build()` array locals were the main
   remaining un-reclaimed array class (only literal/slice/alias inits were
   swept; call results leaked entirely). Now an init that is a direct call
   to a USER free function declared to return an array (new
@@ -1183,12 +1183,12 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `TestSelfHostRcCallResultWasm` — two call results both swept clean,
   aliased call result, the borrowed-return double-free guard, and a
   self-append result that is NOT swept. Full wasm suite (~98 s) green;
-  bootstrap-safe. (Loop-local call results — `var r = build()` re-bound
+  bootstrap-safe. (Loop-local call results — `let r = build()` re-bound
   each iteration — still leak per-iteration; that needs block-scope drops
   / drop-on-last-use, tracked separately.)
 - 2026-06-08: **wasm backend RC — per-iteration release of re-bound array
   locals (StmtVar dec-on-overwrite).** Closes the loop-local leak noted in
-  the previous slice: a `var r = build()` re-run each loop iteration mapped
+  the previous slice: a `let r = build()` re-run each loop iteration mapped
   to one wasm local, and only the final value was swept (at function exit),
   so every prior iteration's buffer leaked. StmtVar of a swept array local
   now does the same cow-guarded dec-on-overwrite as StmtAssign — release
@@ -1207,12 +1207,12 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   re-bound array locals (StmtVar dec-on-overwrite).** Ported the wasm fix
   to the PRIMARY backends, where it was a real leak: `StmtAssign` already
   did cow-guarded dec-on-overwrite, but `StmtVar` did not — so a loop
-  body's `var r = build()` re-bound each iteration leaked every value but
+  body's `let r = build()` re-bound each iteration leaked every value but
   the last (swept only at function exit). `StmtVar` of an array-typed local
   now releases the slot's prior buffer (`__fern_arr_dec`) before storing,
   cow-guarded (`cmp; je/b.eq` skip when the RHS is the same object) and
   balanced with the existing alias-inc. Sound on the bootstrap path:
-  `bind_local_typed` maps a `var` to ONE pre-counted frame slot (emit runs
+  `bind_local_typed` maps a `let` to ONE pre-counted frame slot (emit runs
   once), the frame is zero-init at entry so the FIRST binding releases null
   (a no-op), and intra-loop aliasing stays balanced because both aliasing
   slots get the dec-on-overwrite. Mirror added to `asm.fern` (x86-64,
@@ -1243,7 +1243,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 - 2026-06-08: **wasm backend RC — reclaim user-method array results.** The
   symmetric completion of the user-function call-result reclaim: a
   declared-array local inited from a user METHOD that returns an array
-  (`var r: i32[] = obj.build()`) is now counted/swept. New
+  (`let r: i32[] = obj.build()`) is now counted/swept. New
   `collect_arr_ret_methods` + `init_is_user_arr_method` recognise it; the
   declared-array local type is required at the call site so a same-named
   method on another receiver returning a non-array can't misclassify the
@@ -1348,7 +1348,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 - 2026-06-08: **wasm string RC — reassign / rebind release (reclaim loop
   intermediates).** Completes string reclamation for the build-in-a-loop
   pattern (the dominant string-garbage source). `s = s + x` (StmtAssign)
-  and a re-bound `var s = …` (StmtVar) on a swept string local now do the
+  and a re-bound `let s = …` (StmtVar) on a swept string local now do the
   same cow-guarded dec-on-overwrite as arrays — release the slot's prior
   string (`$__fern_arr_dec`) before storing the new one, so each
   iteration's intermediate is reclaimed instead of leaking all but the
@@ -1356,7 +1356,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `i32.ne` cow-guard skips a same-pointer store, and a bare-ident alias is
   retained. Coverage: `TestSelfHostRcStrBoxWasm` gains
   string-builder-loop-reclaim (`s = s + "x"` × 100k) and
-  string-rebind-loop-reclaim (`var s = a + b` × 100k) — value-correct +
+  string-rebind-loop-reclaim (`let s = a + b` × 100k) — value-correct +
   detector 0. Full wasm suite (~111 s) green; bootstrap-safe. With this,
   wasm heap-string reclamation covers literals (immortal), concats,
   aliases, construction stores, returns (move + retain), AND loop
@@ -1546,7 +1546,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   Move-on-return + the borrowed-return-retain ride unchanged from the counting
   slice. Known sound leaks: an enum local's variant payload and a nested
   struct/tuple's OWN fields aren't reached (one-level release), and a
-  loop-rebound `var`/reassigned struct isn't cow-freed — all over-count
+  loop-rebound `let`/reassigned struct isn't cow-freed — all over-count
   (leak), never over-release. Coverage: `TestSelfHostRcStructBoxWasm` gains
   struct-field-array-released + struct-field-string-released (the source is
   dec'd to 0 by the struct's recursive release), struct-nested-released,
@@ -1637,7 +1637,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   component + binary + shim + interp + cli wasm suites green; bootstrap-safe.
 - 2026-06-09: **wasm struct RC — loop-rebound / reassigned struct RECLAIM
   (cow-dec).** The struct analogue of the array/string `StmtVar`/`StmtAssign`
-  cow-dec-on-overwrite: a swept struct local re-bound (`var p = …` in a loop)
+  cow-dec-on-overwrite: a swept struct local re-bound (`let p = …` in a loop)
   or reassigned (`cx = Ctx{...cx}`, `a = step(a)`) now RELEASES its prior value
   (recursive, via `emit_struct_release`) before storing the new one, instead of
   leaking it. Guarded two ways: an `i32.ne` cow-guard skips an in-place result
@@ -1650,7 +1650,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   (each old `Ctx` + its retained `string[]` fields freed per update; the
   base-copy's construction-inc of the array fields balances the cow-dec's
   recursive release, transferring ownership to the new struct). Coverage:
-  `TestSelfHostRcStructBoxWasm` gains struct-rebind-loop-reclaim (100k `var p`
+  `TestSelfHostRcStructBoxWasm` gains struct-rebind-loop-reclaim (100k `let p`
   re-binds) and struct-reassign-base-copy-reclaim (100k `s = step(s)` with a
   retained `string[]` field — reclaim implied by no growth, detector clean).
   Full RC + component + binary + shim + interp + cli wasm suites green;
@@ -1768,7 +1768,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   on the self-hosted wasm backend.
 - 2026-06-09: **wasm Option/Result RC — loop-rebound / reassigned option
   RECLAIM (cow-dec).** The option analogue of the struct cow-dec-on-overwrite:
-  a swept option local re-bound (`var o = Some(…)` in a loop) or reassigned
+  a swept option local re-bound (`let o = Some(…)` in a loop) or reassigned
   (`o = Some(…)`) now RELEASES its prior value (payload-aware, via
   `emit_option_release`) before storing the new one, instead of leaking it.
   Guarded by an `i32.ne` cow-guard (skips an in-place same-pointer result) and
@@ -2023,7 +2023,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   array-of-tuple deep release, closure-env capture release.
 - 2026-06-09: **wasm transitive reclamation — Stage F: array-of-tuple
   deep-release (native __drop_arr_tuple_).** An array-of-tuple local
-  (`var ps = [(a, b), …]`) now deep-releases each element tuple's
+  (`let ps = [(a, b), …]`) now deep-releases each element tuple's
   pointer-bearing fields before freeing the element box + the buffer, instead
   of the flat one-level `arr_dec` that leaked the inner strings / arrays /
   structs. `collect_tuple_locals` additionally records array-of-tuple locals
@@ -2055,7 +2055,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `$__fern_alloc`, so it carries an rc word at `[box-8]` while `table_idx@0` +
   `captures@4+i*4` (the call_indirect dispatch + the body's `$__env` loads) are
   unchanged. `collect_clos_swept` records closure locals bound directly to a
-  lambda literal (`var f = function(…){…}`) — freshly rc-boxed, owned envs —
+  lambda literal (`let f = function(…){…}`) — freshly rc-boxed, owned envs —
   into `clos_swept` (aliases, closure-returning calls, and bare function-name
   values are excluded: they leak one level, sound). `clos_exit_sweep_excl`
   frees each via the shared `$__fern_arr_dec` at function exit (both the
@@ -2108,7 +2108,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   the value reclaim is balanced. New value-type tracking (`mvs_names` →
   `mvs_types`, inferred from struct-literal insert values via
   `set_chain_val_struct_type` / `map_val_struct_type`) drives the routing AND
-  fixes a coupled, pre-existing VALUE bug: `var p = m.get_or(k, d)` on a
+  fixes a coupled, pre-existing VALUE bug: `let p = m.get_or(k, d)` on a
   struct-valued map now types `p` as that struct, so `p.field` resolves (it read
   0 before — struct-valued maps were effectively unreadable). The per-type
   helper is emitted only when `module_uses_struct_val_map` (any plausibly-
@@ -2132,7 +2132,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   locals get), and map ARRAY values aren't tracked (only string + struct/enum).
 - 2026-06-09: **wasm closure struct-array capture — deep release + the coupled
   capture-typing fix.** Closes a residual: a closure capturing a struct/enum
-  ARRAY (`var f = function(){ … ps[i].field … }` over `ps: Inner[]`) now (1)
+  ARRAY (`let f = function(){ … ps[i].field … }` over `ps: Inner[]`) now (1)
   keeps the captured array's element type inside the lambda body so
   `cap[i].field` resolves — it read 0 before, a capture-typing gap separate from
   RC that made struct-array captures value-unusable — and (2) deep-releases each
@@ -2324,7 +2324,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `mmc`, then reverted:
     1. recognise `name = g(…, name, …)` as a safe consume-rebind in
        `stmt_unsafe_for` / `stmt_unsafe_for_allow_ret` (instead of an escape);
-    2. accept a call/method-bound struct local (`var st = se.emit(op)`) as
+    2. accept a call/method-bound struct local (`let st = se.emit(op)`) as
        reclaim-eligible in `is_fresh_struct_init` (today it accepts only a direct
        struct LITERAL — the comment there already flags "a struct-returning call is
        a move too, … left to leak").
@@ -2342,7 +2342,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
       call). Soundness needs `infer_param_escapes` (native ir.go:1336, analysis #2
       in §5): a param position is consume-safe iff the box neither escapes nor is
       freed by the callee.
-    - relaxation 2 reclaims `var st = f(…)` even when `f` returns its (borrowed)
+    - relaxation 2 reclaims `let st = f(…)` even when `f` returns its (borrowed)
       PARAM — then `st` ALIASES the caller's box and reclaiming `st` double-frees.
       Soundness needs a FRESH-return classification (the result is a freshly
       constructed/updated box, never a bare param ident) — the move/escape side of
@@ -2364,7 +2364,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   almost always a fresh-bound LOCAL that is MOVED OUT:
 
       function lower_X(.., se: LowerState): LowerState {
-          var st: LowerState = se.emit(op);      // bound from a fresh-RET method
+          let st: LowerState = se.emit(op);      // bound from a fresh-RET method
           st = st.emit(op2);                      // 179x `st = st.method(..)` (safe)
           st = lower_Y(arg, st);                  // 25x `st = g(.., st, ..)` (consume-rebind)
           return st;                              // MOVED OUT
@@ -2373,7 +2373,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   Consequences for the design:
   1. `is_fresh_struct_init` (gating `reclaimable_names_of` via
      `collect_fresh_struct_names`) accepts only a struct LITERAL today, so a
-     call/method-bound builder local (`var st = se.emit(op)`) is never collected —
+     call/method-bound builder local (`let st = se.emit(op)`) is never collected —
      the first gap. It must also accept a binding from a FRESH-struct-returning
      call/method.
   2. Soundness of (1) needs a FRESH-struct-return classifier
@@ -2413,7 +2413,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   - `snapshot_local_names_of(fn, structs, borrowable, fresh_ret)` is a NEW detector
     PARALLEL to `snapshot_param_names_of` — it does NOT touch `is_fresh_struct_init`
     / `collect_fresh_struct_names` (those serve the non-returned reclaimable-local
-    path). It collects each `var st: T = <call/method>` where the callee is in
+    path). It collects each `let st: T = <call/method>` where the callee is in
     `fresh_ret`, `T` is a leaf-safe struct with an rc-array field, `st` is reassigned
     (`body_assign_targets`), and `!body_unsafe_for_allow_ret(fn.body, st, borrowable)`.
   - In `lower_func`, append the snapshot-locals to the `reclaim` list as PLAIN names
@@ -2435,7 +2435,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
     `asm_arm64_ir.emit_function_via_ir` (231); `wasm_ir` (671). The three backends
     compute it once in their module-emit (alongside `struct_ret_fns_of`) and pass it
     through `emit_function_via_ir` (one added param each).
-  - Risk note: a method binding `var st = se.emit(op)` is only sound if `emit` is
+  - Risk note: a method binding `let st = se.emit(op)` is only sound if `emit` is
     fresh-ret — a `return self` method would make `st` alias the borrowed receiver
     and the rebind reclaim would free the CALLER's box (UAF). The `fresh_ret`
     classifier is exactly what rules that out; do not admit a call/method binding
@@ -2495,11 +2495,11 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 - 2026-06-22: **Increment "A" (non-reassigned fresh-ret-local reclaim) — ATTEMPTED,
   REVERTED; the convergence blocker has SHIFTED to the #3452 native-emit limit.**
   Targeted the measured eligibility-phase leak (`func_eligible`'s discarded
-  `var r = lower_func(..)`): `lower_func` IS fresh-returning (verified — every real
+  `let r = lower_func(..)`): `lower_func` IS fresh-returning (verified — every real
   `return` is a `LowerResult {..}` literal), so admitting fresh-ret CALL bindings to
   `reclaimable_names_of` (extend `collect_fresh` / `is_fresh_struct_init`, threading
   the already-available `fresh_struct_ret_fns`) would soundly free `r` at scope exit.
-  But the parser has MANY `var r = parse_x(..)` fresh-ret array-field call locals;
+  But the parser has MANY `let r = parse_x(..)` fresh-ret array-field call locals;
   admitting them all emits an `emit_struct_field_drops` walk per local, and the
   per-module emit of the parser unit then exit-137s (OS OOM-kill) — even with the
   admission gated to annotated array-field structs + cheap-checks-first. This is the
@@ -2558,7 +2558,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   the reclaim sites, now routed through the helper, execute), field-reclaim + struct
   RC IR suites; wasm struct / enum / nested-generic RC IR; arm64 rides CI. **Next:**
   with the emit budget freed, re-attempt increment A (admit `func_eligible`'s
-  discarded `var r = lower_func(..)` and the parser's `var r = parse_x(..)` fresh-ret
+  discarded `let r = lower_func(..)` and the parser's `let r = parse_x(..)` fresh-ret
   array-field locals to `reclaimable_names_of`) — now that each such local's exit
   drop is a 3-op call, the parser unit should stay within the #3452 budget.
 - 2026-06-23: **Increment A re-attempted on the freed emit budget — RUNS now, but
@@ -2568,7 +2568,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   this attempt got *past* the budget wall the prior two reverts hit, far enough to
   build the per-module compiler and RUN it. Implementation: a new
   `fresh_ret_call_local_names_of` (the complement of `snapshot_local_names_of`) —
-  a `var r: T = f(..)` that is NEITHER reassigned NOR escaping, where `f` is
+  a `let r: T = f(..)` that is NEITHER reassigned NOR escaping, where `f` is
   fresh-ret (`is_fresh_ret_binding`) and `T` is a leaf-safe struct with an rc-array
   field — appended to lower_func's `reclaim` list so the exit-sweep frees its box +
   deep-drops its fields. **Result:** the byte-identical x86 modload fixpoint PASSED
@@ -2600,7 +2600,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   classifier, and NOT an escape-analysis gap.** Two candidate failure modes for the
   discarded-local deep-drop were on the table: (a) the escape analysis treats
   `r.field` as a borrow (`expr_unsafe_for`'s ExprFieldAccess ident-base arm returns
-  false), so `var x = r.ops` could extract an rc-array field into a lasting alias;
+  false), so `let x = r.ops` could extract an rc-array field into a lasting alias;
   (b) the callee returns a struct whose array field aliases one of its args. A timing
   argument settles it: the discarded-local reclaim fires ONLY in the end-of-scope
   dec-sweep (`emit_dec_sweep_except_list`), which runs AFTER every in-function use of
@@ -2884,7 +2884,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   once those become IR-lowerable.
 - 2026-06-30: **Perceus enum-payload slice — deep-drop a variant's nested-STRUCT
   payload, all three IR backends.** A consume-by-match enum local
-  (`var b = Full(Inner { items: [..] }); match (b) { Full(_/inner) => .., Empty => .. }`)
+  (`let b = Full(Inner { items: [..] }); match (b) { Full(_/inner) => .., Empty => .. }`)
   whose variant carries a deep-drop-ok nested-struct payload is now reclaimed
   recursively at the match: `enum_field_rc_droppable` (now `(structs, t)`) admits a
   `decl_is_struct && nested_field_deep_drop_ok` payload, and emit_enum_variant_drops
@@ -2930,10 +2930,10 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 - 2026-06-30: **Precise drop-on-last-use for fresh SCALAR-ONLY struct locals**
   (native parity: `TestPreciseDropControlFlowStruct`). The self-host precise-drop
   pass (`precise_drop_names`) previously admitted only scalar-element ARRAY locals
-  (`var a = [..]` / a scalar-array-returning free call); a fresh scalar-only struct
-  local (`var p = P { x: 1, y: 2 }`, P all flat scalar fields) fell to the
+  (`let a = [..]` / a scalar-array-returning free call); a fresh scalar-only struct
+  local (`let p = P { x: 1, y: 2 }`, P all flat scalar fields) fell to the
   function-exit dec-sweep even when its last use was an earlier statement. It now
-  qualifies: a `var p = T { ...scalar literals... }` of a `struct_is_scalar_only`
+  qualifies: a `let p = T { ...scalar literals... }` of a `struct_is_scalar_only`
   type, no struct-update base, never reassigned, only borrow-read after, last-used
   at a later top-level statement, is freed (a single shallow `__fern_rc_dec` — the
   box owns no pointer to walk) and its slot zeroed right after that use, so the exit
@@ -2959,7 +2959,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   the earlier fresh-array-ret fixpoint was reverted as INEFFECTIVE, and a churn /
   RSS-under-`ulimit` harness was used to chase it. That harness is NOT a sound
   Perceus signal: the native reference compiler ALSO leaks a discarded
-  `var b = S { items: gen() }` (and a plain discarded fresh-array local) under a
+  `let b = S { items: gen() }` (and a plain discarded fresh-array local) under a
   vmem cap — its emitted binary contains no `__fern_arr_dec` for that pattern at all
   — so it was never a parity gap, and exit-code/RSS conflates allocator policy with
   drop emission. The sound signal is emitted-reclaim inspection + the fixpoint /
@@ -2973,7 +2973,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   before). Tuples were "leak-only by design": `tuple_make` boxed via raw
   `__fern_alloc` on the register backends (x86 asm_ir / arm64 asm_arm64_ir), a
   non-rc-headered block that `__fern_rc_dec` cannot free, so a fresh
-  `var t = (3, 4)` was never reclaimed (0 decs). Native DOES reclaim tuples
+  `let t = (3, 4)` was never reclaimed (0 decs). Native DOES reclaim tuples
   (genTupleDrops / genArrTupleDropFn), so this was a real parity gap + per-call
   leak. Fix, two parts: (1) `tuple_make` now boxes via `__fern_arr_box` (cap=n) on
   x86 + arm64 — rc-headered exactly like `struct_make`, element offsets unchanged
@@ -3001,7 +3001,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   reclaimable-array element would deep-drop that element).
 - 2026-07-01: **Precise drop-on-last-use for early-dead scalar tuples** (the tuple
   sibling of the scalar-struct precise drop; follows the #4158 exit-sweep reclaim).
-  A fresh scalar tuple local (`var t = (3, 4)`, all scalar-literal elements) whose
+  A fresh scalar tuple local (`let t = (3, 4)`, all scalar-literal elements) whose
   last top-level use is an earlier statement is now freed (shallow `__fern_rc_dec`)
   and its slot zeroed right after that use, instead of at the function-exit sweep —
   bounding the live set. Added a tuple candidate to `precise_drop_names`
@@ -3018,7 +3018,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   BOOTSTRAP stay green. Frontend-only (precise_drop_names + the emission site are
   backend-agnostic — every backend that lowers tuples benefits).
 - 2026-07-01: **Reclaim fresh scalar Option locals** (they leaked on the register
-  backends). A scalar `var o: Option[i32] = Some(5)` / `var o = None` routed ir but
+  backends). A scalar `let o: Option[i32] = Some(5)` / `let o = None` routed ir but
   leaked — opt_make/opt_none used raw __fern_alloc(16) on x86 (asm_ir) / arm64
   (asm_arm64_ir), a non-rc-headered block __fern_rc_dec can't free (0 decs). Native
   reclaims Options. Fix: (1) opt_make + opt_none now rc-box via __fern_arr_box(cap=2)
@@ -3048,7 +3048,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   all this work stashed; tracked separately, not caused by this slice.
 - 2026-07-01: **Widen the consume-by-match free to fresh scalar Result locals**
   (the Result[T,E] sibling of the Option slice above). A scalar
-  `var r: Result[i32, i32] = Ok(7)` / `Err(4)` routed ir but leaked: Ok/Err share
+  `let r: Result[i32, i32] = Ok(7)` / `Err(4)` routed ir but leaked: Ok/Err share
   the SAME rc-headered opt_make box as Some (tag 0 = Ok/Some, tag 1 = Err; opt_make
   → __fern_arr_box on x86/arm64, $__fern_str_box on wasm), yet the consume-by-match
   classifier only admitted Some/None, so a fresh Result box was never shallow-freed
@@ -3060,7 +3060,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `is_scalar_type_name(opt_payload_type(v.type_name, kind))` — Ok reads T, Err reads
   E (opt_payload_type is already variant-aware, depth-counting `[`/`(` so a tuple/
   nested-generic T's comma isn't mistaken for the T-E separator). Only the built
-  variant's payload matters: a `var r = Ok(x)` box always holds Ok's payload, so
+  variant's payload matters: a `let r = Ok(x)` box always holds Ok's payload, so
   Err's annotated type is irrelevant to THIS box; the bare scalar-literal gate
   (`Ok(5)`/`Err(true)`) still covers the un-annotated-but-provable case. SOUNDNESS is
   identical to the Option slice — the scalar-payload gate means the box owns no rc
@@ -3068,7 +3068,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   as borrows first; the single-match / dead-after / non-escape gates exclude
   used-after / returned / aliased Results. rc-payload Ok/Err (Ok("x") / Err(struct))
   are NOT admitted (payload leaks — a deep-drop follow-up), never double-freed. NOTE:
-  an un-annotated `var r = Ok(9)` is NOT native-valid (Result has two type params;
+  an un-annotated `let r = Ok(9)` is NOT native-valid (Result has two type params;
   with no Err in context E stays a free variable — `cannot assign E to i32`), so
   although the literal gate would admit it, no valid program reaches lowering that
   way; the test suite only exercises annotated Results. VERIFIED: new `result-*`
@@ -3079,7 +3079,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   (the classifier is backend-agnostic — every backend that lowers Results benefits).
 - 2026-07-01: **RC-payload (scalar-array) Option/Result deep-drop consume-by-match
   free** — the deferred follow-up from the two scalar Option/Result slices. A
-  `var o = Some([1,2,3])` / `var r = Ok([..])` / `Err([..])` whose payload is a
+  `let o = Some([1,2,3])` / `let r = Ok([..])` / `Err([..])` whose payload is a
   leak-safe scalar ARRAY (i32[]/boolean[]/i64[]/f64[]/u32[]/subword) routed ir but
   leaked BOTH the box AND its array: `fresh_scalar_option_init` only admits a SCALAR
   payload, so the array-payload form fell through to leak-only. This widens the
@@ -3116,7 +3116,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   (classifier + emitter are backend-agnostic — every backend that lowers
   Options/Results benefits).
 - 2026-07-01: **Widen the rc-payload Option/Result deep-drop to scalar-only STRUCT
-  payloads** (follow-up to the array-payload slice). A `var o = Some(P{..})` /
+  payloads** (follow-up to the array-payload slice). A `let o = Some(P{..})` /
   `Ok(P{..})` whose payload is a FRESH scalar-only struct literal now frees the
   payload box (shallow — the box holds only inline scalars) then the option box,
   right after its single consuming match — previously the struct payload leaked (the
@@ -3142,7 +3142,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   identical FIXPOINT + BOOTSTRAP + `TestSelfHostIRDiff` all stay green.
 - 2026-07-01: **Precise drop-on-last-use for scalar Option/Result locals** — the
   option sibling of the scalar struct/tuple precise-if drops (#16/#18). A fresh
-  `var o = Some(5)` / `None` / `Ok(4)` whose LAST use is a NESTED block (an if-body
+  `let o = Some(5)` / `None` / `Ok(4)` whose LAST use is a NESTED block (an if-body
   `match (o)`, a `.is_some()` borrow) rather than a top-level consuming match
   previously LEAKED: consumed_scalar_enum_frees only finds a TOP-LEVEL match
   scrutinee, so a conditionally-consumed option box was never freed. precise_drop_
@@ -3240,13 +3240,13 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   FIXPOINT + BOOTSTRAP + TestSelfHostIRDiff all stay green.
 - 2026-07-01: **Precise drop-on-last-use for scalar user-enum locals** (the enum
   sibling of the scalar-option precise-if drop, unlocked by the per-drop kind). A
-  fresh `var x = Circle(7)` of an all-scalar-variant enum whose LAST use is a NESTED
+  fresh `let x = Circle(7)` of an all-scalar-variant enum whose LAST use is a NESTED
   block (an if-body `match (x)`) — not a top-level consuming match — previously
   LEAKED its box: consumed_scalar_enum_frees only finds a TOP-LEVEL match scrutinee.
   precise_drop_names now admits such an enum (fresh_scalar_enum_init, no-top-level-
   match) with kind "box-shallow", and the emission shallow-frees its rc-headered box
   (struct_make → __fern_arr_box). KEY: this was previously blocked because an
-  UN-annotated `var x = Circle(7)` slot carries NO struct_type (expr_struct_type
+  UN-annotated `let x = Circle(7)` slot carries NO struct_type (expr_struct_type
   returns "" for a bare variant ctor, and there's no annotation to fall back on), so
   a slot-type-gated emission couldn't identify it — but the KIND ("box-shallow",
   recorded at precise_drop_names time where the enum ctor IS visible) is itself the
@@ -3264,7 +3264,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   stay green.
 - 2026-07-01: **Precise drop-on-last-use for rc-PAYLOAD user-enum locals in nested
   blocks** (completes the precise-drop parity story — the rc-payload-enum sibling of
-  the rc-payload-option precise drop). A fresh `var x = Poly([..])` / `V(Buf{..})` —
+  the rc-payload-option precise drop). A fresh `let x = Poly([..])` / `V(Buf{..})` —
   a variant carrying a leak-safe array or deep-drop-ok struct payload — whose LAST
   use is a NESTED block (an if-body `match (x)`) previously LEAKED its box + payload
   (consumed_rcpayload_enum_frees only finds a TOP-LEVEL match). precise_drop_names
@@ -3284,7 +3284,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   (top-level) and precise-drop (nested-block).
 - 2026-07-01: **Precise drop-on-last-use for array-FIELD struct locals** (widens the
   scalar-only-struct precise drop #16 — a peak-heap bounding, the struct sibling of
-  the array / tuple precise drops). A fresh `var b = Buf { xs: [..], n }` last-used in
+  the array / tuple precise drops). A fresh `let b = Buf { xs: [..], n }` last-used in
   a NESTED block was reclaimed only by the function-exit sweep; it now deep-drops its
   leak-safe array fields (emit_struct_field_drops) + shallow-frees the box right after
   that statement, bounding the live set. This is EXACTLY the exit-sweep struct free
@@ -3308,7 +3308,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   own array-field struct locals now drop early — the strongest test) + wasm + IR-diff
   gates verified.
 - 2026-07-01: **Map local reclaim — slice 1 (exit-sweep free of the keys/values
-  buffers)**. A fresh `var m = Map { … }` / `map_new()`, used only via read methods
+  buffers)**. A fresh `let m = Map { … }` / `map_new()`, used only via read methods
   (get_or/has/len) and NOT escaping / iterated, now has its KEYS and VALUES buffers
   freed at scope exit — previously every map local leaked entirely. KEY MECHANISM (no
   new runtime helper): the mapbox is a raw __fern_alloc(16) {keys@0, values@8}, but
@@ -3335,7 +3335,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   maps (precise iter-escape tracking), precise-drop for map locals, deep-drop string/
   array VALUES, reclaim the 16-byte mapbox.
 - 2026-07-01: **Map local reclaim — slice 2 (precise drop-on-last-use)**. A fresh
-  `var m = Map { … }` last-used in a NESTED block now has its keys/values buffers
+  `let m = Map { … }` last-used in a NESTED block now has its keys/values buffers
   freed right after that statement (precise_drop_names kind "map-buffers" →
   emit_map_buffers_free), earlier than the function-exit sweep — bounding peak heap,
   the map sibling of the array/tuple/struct/option/enum precise drops. Same gates as
@@ -3375,7 +3375,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   NOT lower on the wasm backend (it fell through to a `;; unsupported bin raw_load_ptr`
   comment), so a reclaimable map local in a wasm module left the operand stack
   imbalanced and wasmtime REJECTED the module ("values remaining on stack at end of
-  block"). i.e. a valid program like `var m = Map{1:2}; return m.get_or(1,0);` failed
+  block"). i.e. a valid program like `let m = Map{1:2}; return m.get_or(1,0);` failed
   to compile on the wasm self-host IR backend. FIX: emit_map_buffers_free now emits a
   single `call_direct("__fern_map_free", 1)` — a fern-helper routed per backend:
   register backends get a new `__fn___fern_map_free` (asm_ir + asm_arm64 emit_runtime)
@@ -3438,7 +3438,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   array-field 3-vs-4 arr_box dead/live pair (proves in-place lowering). Byte-identical FIXPOINT +
   BOOTSTRAP stay green.
 - 2026-07-02: **Perceus — close the enum self-reassign payload-array leak**. A loop-carried
-  array-payload enum `var b: E = V0([..]); while (..) { b = V1([..]); b = V2([..]); }`
+  array-payload enum `let b: E = V0([..]); while (..) { b = V1([..]); b = V2([..]); }`
   shallow-freed each superseded box (box-only arr_dec) but LEAKED the superseded variant's
   payload array on the register backends — an O(n) growth leak (a 50M-iter 8-elem churn
   OOMs on x86; native reuses the box in place, TestEnumReuseFiresAcrossVariants). Fix:
@@ -3490,7 +3490,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   The enum self-reassign reclaim (previous entry) closed the payload leak via FREE+ALLOC
   (emit_enum_reclaim_store: deep-drop the old box, then store the freshly-allocated new box).
   Native instead reuses the box IN PLACE — zero alloc/free churn per reassign. This ports that:
-  a loop-carried array-payload enum `var b = V0([..]); while (..) { b = V1([..]); b = V2([..]); }`
+  a loop-carried array-payload enum `let b = V0([..]); while (..) { b = V1([..]); b = V2([..]); }`
   whose enum has UNIFORM variant layout (enum_all_variants_same_field_count — every variant the
   same box size, so any variant fits b's existing box) now lowers each `b = V(args)` reassign as
   emit_enum_inplace_reassign: (1) release b's OLD variant payload arrays via
@@ -3546,7 +3546,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   exactly one reassignment form is sanctioned — the self-append rebind
   `xs = xs.append(<fresh|literal>)`, whose grow MOVES elements buffer-to-buffer
   while the assign's cow-guarded shallow dec frees only the superseded buffer —
-  and any lasting element alias (a `var t = xs[i]` binding, `return xs[i]`, a
+  and any lasting element alias (a `let t = xs[i]` binding, `return xs[i]`, a
   container/struct/tuple store, a method arg, a non-borrowable call arg, an
   element slice/trim view, `for x in xs`) excludes the array (elements keep the
   sound leak). Transient element reads stay admitted: binary operands
@@ -3616,14 +3616,14 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   VERIFIED: TestSelfHostClosureEnvRcIRX86_64 (+wasm/arm64 siblings) — string
   and scalar-array capture churns flat + underflow 0, capture-used-after and
   param-capture balance. Known pre-existing (NOT this slice): a bare-ident
-  closure alias (`var d = c; d()`) segfaults on the IR path — d is never
+  closure alias (`let d = c; d()`) segfaults on the IR path — d is never
   marked a closure local, so `d()` calls the raw env box; unchanged by this
   slice and excluded from the RC gates (an aliased env's release is rc==1
   gated). Remaining for full slice-5 parity: struct/enum/map/string[]/nested
   capture kinds, closure ARRAYS (`__drop_arr_closure` equivalent), and the
   escaping-closure drop thunk (native `__closure_drop_<name>` dispatch).
 - 2026-07-05: **Landed dyn-Trait STRUCT-payload reclaim on the IR path (#4351
-  v1 — irlower-only, all three backends).** A `var d: dyn T = C { ... }` local
+  v1 — irlower-only, all three backends).** A `let d: dyn T = C { ... }` local
   holds the concrete's rc-headered struct box (structs flow UNBOXED behind the
   dyn coercion), but the coarse "dyn T" slot type kept it out of every reclaim
   class — every such box leaked. Now `collect_dyn_struct_names` credits
@@ -3706,7 +3706,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   emitters still skip defers at `?` (markers are dead code there) — per the
   legacy-gap policy, not blocking.
 - 2026-07-05: **Fixed the bare-ident closure alias segfault (#4557 — irlower
-  StmtVar, all three backends).** `var d = c` where c is a closure local left
+  StmtVar, all three backends).** `let d = c` where c is a closure local left
   d a plain scalar slot, so `d()` called the raw env-box pointer as a
   call-table index — SIGSEGV on the IR path. clo_init's detection now has a
   bare-ident arm gated on is_closure_local: the alias is marked a closure
@@ -3714,7 +3714,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   store, so the exit sweep's two shallow decs balance and the rc==1 gate
   hands the capture release to the LAST owner (the alias name carries no
   capture kinds, so captures keep the documented aliased-env leak). Covers
-  fn-typed-param aliases (`var g = f`) and chains; a REASSIGN alias
+  fn-typed-param aliases (`let g = f`) and chains; a REASSIGN alias
   (`f = d`) dispatches correctly but takes no alias-inc (the rebind-drop
   decs the old box) — same leak-mode class as before, noted not fixed.
   VERIFIED: TestSelfHostClosureAliasIRX86_64 (+wasm/arm64 siblings) — the
@@ -3727,7 +3727,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   tracked fix for that.
 - 2026-07-05: **Fixed the hoisted-closure capture over-dec (#4354 borrow
   slice — irlower, all three backends).** make_clo_func synthesizes capture
-  reads as `var <cap> = __env[1+i]` at the top of a `$clo`/`$wrap` body, so
+  reads as `let <cap> = __env[1+i]` at the top of a `$clo`/`$wrap` body, so
   the lambda's exit dec-sweep treated them as OWNED array locals and
   shallow-dec'd them on EVERY call — but the env box owns those references:
   an rc==1 capture was freed out from under the box's owner on the first
@@ -3758,7 +3758,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   PAIR-FORM inner shape whose emitRepackPairAsHeapBox rebox (a fresh rc=1 box
   per evaluation) leaked at both edges. A STRING success payload's reference
   MOVES to the binding: rhsTainted's new TryOp case (mirroring the same gate,
-  so analysis and lowering can never disagree) credits `var s: string =
+  so analysis and lowering can never disagree) credits `let s: string =
   mk(pre)?` as owned and the exit sweep balances it — construction-side
   alias-incs under EnumRcPayloads keep an `Ok(pre)`-style aliased payload
   safe (rc>=2). NOT covered natively: wasm32 pair-form string payloads (the
@@ -3774,7 +3774,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   the success edge and the Option failure edge (the Result failure edge
   forwards the box). String ownership: producers whose success payloads are
   all static literals / syntactically-fresh strings carry flag "f", and
-  collect_try_str_binding_names credits the `var s: string = mk(..)?` binding
+  collect_try_str_binding_names credits the `let s: string = mk(..)?` binding
   "STR:" (body_unsafe_for escape gate + not-reassigned, exactly like the
   frets path); a bare-ident payload (`Ok(pre)`) flags "a" — box-free only,
   the aliased payload keeps its sound leak (op_opt_make stores payloads
@@ -3802,7 +3802,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   the construction-side retains already ON for every routed type (the
   slit_reclaim-gated #4297 A2 override retain + the base-copy retain), fresh
   fields sole-owned, carried fields cow-skipped. Two supporting changes: (1) a
-  read-side retain for `var t = s.name` (a string field read of a
+  read-side retain for `let t = s.name` (a string field read of a
   reclaimable / snapshot struct local whose type routes through
   __field_reclaim) alias-incs the rc-headered box so the rebind's field free
   can't dangle the alias — arrays already had this via the is_arr alias-inc;
@@ -3819,7 +3819,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   its LowerState/EmitState fields to helpers everywhere — those types are
   exactly the ones excluded), a return, a slice/trim view, a reassign-alias.
   Safe transient borrows (binary operands, byte-index bases, read-only /
-  fresh-copy method receivers, retained `var t = x.f` inits) don't exclude.
+  fresh-copy method receivers, retained `let t = x.f` inits) don't exclude.
   Backends receive the verdict as "strfldok:<T>" needs seeded at the
   whole-program emit orchestrations (all_funcs on the per-module unit paths —
   a unit-local list would under-count reads and re-open the UAF); excluded
@@ -3850,7 +3850,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   applied at every site that previously asked struct_has_reclaim_array_field
   — the snapshot-param routing, the StmtAssign reclaimable-local site, the
   StmtVar loop-rebind site, the slit_reclaim construction retain, and the
-  read-side `var t = b.name` retain arm — so retain and free widen in
+  read-side `let t = b.name` retain arm — so retain and free widen in
   LOCKSTEP (an admitted type gets both; anything else gets neither).
   Admission reuses the slice-2 whole-program read scan
   (strfld_reclaim_ok_types_of), with the array-field candidacy requirement
@@ -3877,7 +3877,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   map string K/V deep reclaim (#4353), wasm pair-form `?` string payloads.
 - 2026-07-11: **Landed the NATIVE half of #4355 slice 4 — exprNoParamEscape
   string-freshness cases (enum-payload-struct string fields; PR #4771).**
-  On the natives, `var e: E = mk(i); match (e)` with
+  On the natives, `let e: E = mk(i); match (e)` with
   `enum E { A(S), B }` / `struct S { name: string, n: i32 }` leaked the
   WHOLE chain (enum box + payload struct box + string) per iteration while
   the scalar-/array-field sibling reclaimed fine. NOT a drop-machinery gap —
@@ -3916,8 +3916,8 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   (1) ADMISSION: the RCENUM enum-local reclaim (loop-rebind / consume
   deep-drop of a fresh, match-consumed enum local via
   emit_enum_deep_reinit_store → emit_enum_variant_drops) only fired for
-  DIRECT variant-ctor inits (`var b = Full([..])`); a factored ctor
-  (`var e: E = mk(i)`) was never credited, so the whole chain (enum box +
+  DIRECT variant-ctor inits (`let b = Full([..])`); a factored ctor
+  (`let e: E = mk(i)`) was never credited, so the whole chain (enum box +
   payload struct box + string/array fields) leaked per iteration.
   opt_fresh_ret_fns_of(funcs, structs) now ALSO emits "RCE:<name>|<Enum>"
   entries — prefix-tagged in the SAME list so the verdict rides the existing
@@ -4020,12 +4020,12 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   emit_enum_variant_drops_moved releases it with a single __fern_rc_dec
   (one flat box, no inner rc fields — the struct sibling of the leak-safe
   array arm). The slice-5 RCE call-init scan picks the widened predicates
-  up automatically, so `var e = mk(i)` factored ctors qualify too.
+  up automatically, so `let e = mk(i)` factored ctors qualify too.
   VERIFIED: scalar-struct-payload churn flat at detector zero (direct +
   call-init), aliased bare-ident payload exclusion (s0 survives), slice
   5/6/7 regressions, per-module whole-compiler self-run.
 - 2026-07-11: **Landed #4355 slice 9 — arr-of-arr local reclaim (i32[][] /
-  string[][]), whole-structure.** An arr-of-arr local (`var g = [[..],[..]]`)
+  string[][]), whole-structure.** An arr-of-arr local (`let g = [[..],[..]]`)
   had NO reclaim at all on the self-host IR path: the init marks is_arrarr
   but the slot is not is_arr, so the exit sweep's array loop never touched it
   and no rebind dec fired — outer buffer + inner buffers + string elements
@@ -4045,11 +4045,11 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   every inner element to be a fresh string ("ARRARRS:", strict — a live
   local stored as an element would dangle; pinned by the ident-element
   exclusion test). Gates: arrarr_unsafe_for and
-  arrarr_row_escapes (a bare `var row = g[i]` single-index read or
+  arrarr_row_escapes (a bare `let row = g[i]` single-index read or
   `for row in g` binds an inner pointer → rejected; transient g[i][j] /
   g[i].len() borrows admissible — pinned by the row-alias test).
   APPEND-BUILT (#6092): the admission above once also required the name to
-  be NOT reassigned, which excluded `var g: T[][] = []` grown by
+  be NOT reassigned, which excluded `let g: T[][] = []` grown by
   `g = g.append(<row literal>)` — the shape leaked one row buffer per
   append, unbounded in a loop (200 rounds x 3 rows = 33600 bytes, against
   native's 0). arrarr_unsafe_for replaces that blunt exclusion with the
@@ -4081,7 +4081,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   exclusions, slice 5-8 probe regressions, per-module whole-compiler
   self-run. Remaining nearby: struct[]-of-arrays and deeper nesting
   (string[][][]) keep the sound leak; arr-of-arr via call results
-  (`var g = mk()`) needs an OPTFRESH-style fn scan.
+  (`let g = mk()`) needs an OPTFRESH-style fn scan.
 
 - 2026-07-11: **Slice-9 CI follow-up — two real fixes, one big diagnosis.**
   (1) HELPER BODIES NEED-GATED on all three backends. The first cut emitted
@@ -4117,7 +4117,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   bigger arena.
 
 - 2026-07-11: **#4355 slice 10 — arr-of-arr CALL-RESULT reclaim + slice-9
-  double-sweep fix.** (1) CALL-INIT ADMISSION: `var g: T[][] = mk(..)` now
+  double-sweep fix.** (1) CALL-INIT ADMISSION: `let g: T[][] = mk(..)` now
   earns the slice-9 credits when mk is provably a fresh-arrarr producer.
   opt_fresh_ret_fns_of registers "AAC:<name>|<flag>" (the RCE: no-new-
   threading trick — same list, distinct tag) for FREE functions whose ret
@@ -4191,7 +4191,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   The earlier entry's "hint 0x04000000" details are superseded by this.
 
 - 2026-07-12: **#4355 — SCALAR-FIELD struct-array element-box reclaim
-  (`var g = [P{…}, P{…}]`, P scalar-only).** The complement to the #4365
+  (`let g = [P{…}, P{…}]`, P scalar-only).** The complement to the #4365
   ARRSTRUCT slice, which landed the DEEP struct-array reclaim
   (`(<struct-with-array-field>)[]` — annotated, per-element `__struct_drop_<T>`
   + box + outer buffer via `emit_arrstruct_deep_free`) but, by design, only
@@ -4209,7 +4209,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   (`structarr_lit_is_fresh` — each box rc=1, solely owned by the buffer); two
   gates — `structarr_unsafe_for` and `structarr_elem_escapes`.
   APPEND-BUILT (#6127): admission once also required the name to be NOT
-  reassigned, which excluded `var ps: P[] = []` grown by
+  reassigned, which excluded `let ps: P[] = []` grown by
   `ps = ps.append(P { .. })` and leaked one element BOX per append —
   measured on the leakcheck differential at 38400 bytes over 100 rounds,
   scaling linearly, against native's 0. `structarr_unsafe_for` replaces the
@@ -4245,7 +4245,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   than the arr-of-arr row gate on purpose: a struct-array admits transient
   iteration `for p in g { … p.field … }` (the box is borrowed only for the loop,
   dead before the free) unless the loop body lets `p` escape; a bare element bind
-  `var q = g[i]` is still rejected conservatively. WIRING: exit-sweep is_arr-loop
+  `let q = g[i]` is still rejected conservatively. WIRING: exit-sweep is_arr-loop
   `else if` branch + `emit_structarr_reclaim_store` (cow-guarded) at the loop
   rebind, both after the ARRSTRUCT/ARRTUP branches. VERIFIED:
   TestSelfHostStructArrReclaim{IRX86_64 (scalar-flat + annotated-flat +
@@ -4255,7 +4255,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   shape this class covers). Rebased onto #4365's ARRSTRUCT/ARRTUP/OPTSTRUCT/
   OPTTUP work; the two struct-array classes are now disjoint siblings.
   Fixpoint stays byte-identical (the self-host's own struct-array literals, e.g.
-  `var nparams: ParamDecl[] = [ParamDecl {…}]`, all escape into a FuncDecl, so
+  `let nparams: ParamDecl[] = [ParamDecl {…}]`, all escape into a FuncDecl, so
   body_unsafe_for excludes them). Remaining nearby: `string[][][]` deep free,
   map string K/V (#4353).
 
@@ -4491,7 +4491,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   a.append(v)`) — DOES close the leak (re-measured: 96 000 → 0, no over-release)
   and mirrors the wasm map's grow-frees-old-buffers. **But it is UNSOUND as-is:**
   register `map_keys` / `map_values` (IR op kinds 131/132) return the RAW `keys@0`
-  / `vals@8` buffer pointer with NO rc-inc — an UNCOUNTED alias (confirmed: `var
+  / `vals@8` buffer pointer with NO rc-inc — an UNCOUNTED alias (confirmed: `let
   ks = m.keys(); m.set(k,v); ks.len()` observably tracks the live buffer, unlike
   the wasm backend which snapshot-copies). So a live `keys()`/`values()` result
   followed by a growing `m.set` would let `arr_push_owned` (seeing the sole box
@@ -4601,7 +4601,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
      on FIRST making register keys/values SNAPSHOT-COPY (alloc + copy; for string
      columns, inc each element so the fresh array genuinely owns them, matching
      irlower's existing "fresh owned array (rc=1)" assumption at
-     `var ks = m.keys()`) — which ALSO fixes the latent aliasing correctness bug
+     `let ks = m.keys()`) — which ALSO fixes the latent aliasing correctness bug
      (a snapshot must not track later mutations; the wasm map already snapshots via
      `$__fern_map_snapshot`). THEN the arr_push_owned swap becomes sound. The
      snapshot needs reclaim-wiring too (today keys() results aren't reclaimed → a
@@ -4623,7 +4623,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   fully-fresh/sole-owned). It compiles and the ownership gate is real, BUT it
   introduces a use-after-free: `m.get_or(k, d)` / `m.get(k)` / `m.values()` /
   `m.iter()` return the STORED value pointer as an UNCOUNTED alias, so
-    `var v = m.get_or(1, ""); m.set(1, "c"+"d"); print(v)`
+    `let v = m.get_or(1, ""); m.set(1, "c"+"d"); print(v)`
   frees the old value at the overwrite while `v` still points at it. Map-ownership
   tracking (the plan's recommended owned-bits, OR the MAPVS gate) does NOT fix this
   — ownership says "the MAP solely owns the slot", but a live get_or/get borrow is a
@@ -4659,7 +4659,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
     return it. Gate on element-scalar (op_map_keys/values are 0-arg ops → add an
     "elem-is-pointer" flag from irlower's map_kv_elem_tag; snapshot only the scalar
     case, leave string columns on the alias path until slice 3).
-  - Reclaim FLIP (irlower reclaimable_names_of): a `var ks = m.keys()` i32[] result is
+  - Reclaim FLIP (irlower reclaimable_names_of): a `let ks = m.keys()` i32[] result is
     currently a BORROW (not credited → not dec'd at exit; that's why the alias doesn't
     double-free today). Once it's a fresh owned snapshot it MUST be credited so the
     exit-sweep arr_dec frees it (else the snapshot buffer leaks). OPEN: pin the exact
@@ -4697,8 +4697,8 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 - 2026-07-12 (CRITICAL addendum to the decomposition — a naive slice 1 DOUBLE-FREES):
   Traced why the current register keys()/values() code is sound despite aliasing, and
   it is a DELICATE LEAK-BALANCE that any slice-1 edit must unwind holistically:
-  `var ks = m.keys()` IS reclaimed — the exit-sweep arr_dec's it like any fresh i32[]
-  (verified: a plain `var a: i32[] = [...]` churn is flat, so scalar arrays DO reclaim)
+  `let ks = m.keys()` IS reclaimed — the exit-sweep arr_dec's it like any fresh i32[]
+  (verified: a plain `let a: i32[] = [...]` churn is flat, so scalar arrays DO reclaim)
   — and since keys() returns the RAW map buffer (alias), that arr_dec frees the MAP's
   keys buffer. This does NOT double-free ONLY because `__fern_map_free`'s arr_dec on the
   keys/vals buffers is a no-op/leak (the very grow-leak of #4877): the map never frees
@@ -4746,7 +4746,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
     masks its vconsume/kconsume reads to bits 0/1 (already frees on grow). The
     arm64 AST insert call site now zeroes x4 explicitly (it previously left the
     shared map_set's kconsume register uninitialised — a latent #4885 hazard).
-  - The exit-sweep needed NO flip: `var ks = m.keys()` was already is_arr +
+  - The exit-sweep needed NO flip: `let ks = m.keys()` was already is_arr +
     swept — under the alias that dec freed the MAP's live buffer and
     `__fern_map_free` then double-dec'd it (a keys()-taken fresh map ticked
     `__rc_underflow`); with the snapshot the sweep frees the COPY and map_free
@@ -4818,7 +4818,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
     after the release; an early `return` in the body skips it (bounded sound
     leak, like every non-swept hidden temp), matching the scalar arm.
   - SCOPE: the snapshot is emitted **only at the loop positions** (self-
-    balanced). The `var ks = m.keys()` / expression `m.keys().len()` sites
+    balanced). The `let ks = m.keys()` / expression `m.keys().len()` sites
     clamp string columns back to the raw-buffer ALIAS (flag 1) — a retaining
     snapshot there would leak (no reclaim); unchanged behaviour, a SARR-
     credited var snapshot is a later follow-up. The map still keeps leak-only
@@ -4848,7 +4848,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
     old value. The WASM `$__fern_map_set` overwrite (wasm.fern ~L8634) already
     `$__fern_arr_dec`s the old value when `vis`.
   - `get_or`/`get` return an **uncounted alias** of the map's stored value on
-    every backend, so a live `var old = m.get_or(k, "")` before a
+    every backend, so a live `let old = m.get_or(k, "")` before a
     `m.set(k, "new")` would DANGLE if the overwrite freed the old value
     (that's why register leaks instead of freeing — leaking is the current
     "safe" choice, exactly the delicate balance slices 1–3 each unwound).
@@ -4867,7 +4867,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
      still-read value rc>1, frees at rc==1 — sound BECAUSE of step 2); wasm's
      existing `arr_dec` is already correct once reads are counted.
   4. **Reclaim gate (THE CRUX — most regression-prone).** A
-     `var v = m.get_or(k, d)` string result must now be credited for STR
+     `let v = m.get_or(k, d)` string result must now be credited for STR
      reclaim (exit-sweep `__fern_str_free`) since it holds an inc'd
      reference — the `reclaimable_names_of` / `collect_fresh_str_names`
      (STR: prefix) gate must recognise a counted get_or/get string result as
@@ -4876,13 +4876,13 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
      the reclaim balances. Get this wrong and every string-map program
      (incl. the compiler's own build via the fixpoint) leaks or double-frees.
   Gates: extend `TestSelfHostMapKeysSnapshotIRX86_64` / `…WasmIR` with a
-  value-overwrite churn case (`var old = m.get_or(k,""); m.set(k,"new"); use(old)`
+  value-overwrite churn case (`let old = m.get_or(k,""); m.set(k,"new"); use(old)`
   in a loop → flat + `__rc_underflow()==0` + `old` still valid after the set),
   plus the modload/load/heap-bump fixpoints. Refs #4353 #4451.
 
 - 2026-07-13 (slice 4 — the reclaim-gate CRUX, code-level findings from a
   deeper trace; read alongside the "sites pinned" entry above BEFORE the
-  focused implementation). Part 4 (crediting `var v = m.get_or(k,d)` /
+  focused implementation). Part 4 (crediting `let v = m.get_or(k,d)` /
   `m.get(k)` string results for STR reclaim) is NOT a one-line addition —
   two concrete interlocks make it the delicate part:
   1. **The fresh-string predicate is SHARED — do not extend it.**
@@ -4911,7 +4911,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   Net: implement part 4 as a new type-aware var-binding credit (get_or/get on
   a string-value map, gated by body_unsafe_for + not-reassigned like the
   other STR: producers), NOT by touching str_local_binding_is_fresh. Validate
-  the concat-operand case (`var v = m.get_or(k,""); var s = v + "x"; use(v)`)
+  the concat-operand case (`let v = m.get_or(k,""); let s = v + "x"; use(v)`)
   explicitly — it is the double-free trap. Refs #4353 #4451.
 
 - 2026-07-13 (slice 4 — COMPLETE implementation-ready design, incl. the
@@ -4942,7 +4942,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
      is already correct once reads are counted.
   5. **Reclaim credit (do NOT touch str_local_binding_is_fresh — trap #1
      above).** A new context-free structural collection credits
-     `var v = m.get_or(k,d)` / `m.get(k)` string-VAR bindings STR: (gated by
+     `let v = m.get_or(k,d)` / `m.get(k)` string-VAR bindings STR: (gated by
      body_unsafe_for + not-reassigned, like the other STR: producers). Rely on
      the `slot_is_reclaimable_str` sweep-site `is_str` interlock so an i32
      get_or credit is inert (verify that interlock). Anonymous expression-
@@ -4952,9 +4952,9 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   Accounting (found path): map holds V rc1 → get_or inc → rc2 → overwrite
   str_free → rc1 (map's ref released) → scope-exit v-reclaim str_free → rc0
   free. No live read: overwrite str_free rc1→0 frees. Balanced both ways.
-  Gates: value-overwrite churn (`var old=m.get_or(k,""); m.set(k,"new"); use(old)`
+  Gates: value-overwrite churn (`let old=m.get_or(k,""); m.set(k,"new"); use(old)`
   loop → flat + underflow==0 + old valid after set), the alias-default case
-  (`var v=m.get_or(k, live); ... use(v); use(live)` → no double-free), fresh-
+  (`let v=m.get_or(k, live); ... use(v); use(live)` → no double-free), fresh-
   default reclaim, plus modload/load/heap-bump fixpoints byte-identical.
   Refs #4353 #4451.
 
@@ -4972,7 +4972,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
     invariant "owned ⇒ every read snapshots" is structural: a new column kind
     added to map_kv_elem_flag as non-1 automatically becomes owned, so it must
     snapshot on read.
-  - The expression-position `var ks = m.keys()` / `m.values()` string-column
+  - The expression-position `let ks = m.keys()` / `m.values()` string-column
     CLAMP (flag 2 → 1, the slice-3 leftover) is REMOVED — required for the
     widening: with owned grow, the old raw-buffer alias dangles the moment a
     later insert grows the map (empirically pinned: the alias probes read
@@ -5026,7 +5026,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   match, and #6448 the rc-payload local that no match consumes.
 
   **#6448 covers the DIRECT init only — measured, because its title reads
-  wider.** `var o: Option[i32[]] = Some([..])` with no match is reclaimed
+  wider.** `let o: Option[i32[]] = Some([..])` with no match is reclaimed
   (`frees=798/800`); the same shape bound from a producer call is untouched
   (`frees=0`, 35200). So "no match" and "call init" are ORTHOGONAL dimensions of
   one class, and only three of their four cells are closed.
@@ -5166,7 +5166,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   **The actual cause is known**, from a stack trace rather than a guess: gen1
   faults in `asmcore.EmitState.has_need` → `__fern_str_eq`, reading a freed
-  string out of `needed`. The shape is `var lo: StringLitOut =
+  string out of `needed`. The shape is `let lo: StringLitOut =
   add_string_lit(s, ..); s = lo.state;` in
   `asm_ir.emit_function_via_ir_pre` — `lo` is block-scoped and its `EmitState`
   FIELD is moved into the live threaded `s`, so the deep drop frees that state's
@@ -5351,7 +5351,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   and the registry's "f" flag for the call form.
 
   **THE EXIT SWEEP ALONE IS NOT ENOUGH, and the half-fix reads as progress.** A
-  loop-declared `var v` re-stores to the SAME slot each iteration, so a
+  loop-declared `let v` re-stores to the SAME slot each iteration, so a
   function-exit sweep releases only the final value and every earlier iteration
   still leaks. Sweep-only took 22400 to 18400 — a plausible-looking improvement
   that is really three quarters of the leak still present. The store is where the
@@ -5576,7 +5576,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   doing BOTH would put two credits on one box.
 
   **Still open, measured on base rather than assumed:** the same shape from a CALL
-  (`var o: Option[i32] = mk(i)`) stays at 4000 — `is_opt` admits only
+  (`let o: Option[i32] = mk(i)`) stays at 4000 — `is_opt` admits only
   `fresh_scalar_option_init`, and `precise_drop_names` takes no `opt_fresh`
   parameter to consult the registry with, so covering it means threading one
   through and re-deriving the disjointness. And the BLOCK-scoped spellings
@@ -5714,7 +5714,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   Two rows stay open, and the table above is what they cost rather than a guess:
 
-  - **A LOCAL-built producer** (`var out = []; out = out.append(x); return out;`)
+  - **A LOCAL-built producer** (`let out = []; out = out.append(x); return out;`)
     earns no `"ARR:"` entry — that registry admits only a direct array-literal
     return. `local-built-producer-still-grows` asserts it AS a leak, with the
     `>` that must become `==` when the admission widens. (CLOSED by the
@@ -5726,7 +5726,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
     the whole mechanism as missing.
 
   The `boxed` residual is NOT this shape: it is 24 B/round of const_str box, the
-  pre-existing `var t: string = "abc"` leak, measured identically on a probe with
+  pre-existing `let t: string = "abc"` leak, measured identically on a probe with
   no container read in it at all. The Box itself is reclaimed.
 
   VERIFIED: `TestSelfHostFreshContainerReadReclaimIRX86_64` (new — 5 rows),
@@ -5791,7 +5791,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   0 skips). Refs #6461 #4451.
 
 - 2026-08-10: **The LOCAL-built scalar-array producer — the pin the entry above
-  left (#6491).** `var out: i32[] = []; … out = out.append(v); … return out;` is
+  left (#6491).** `let out: i32[] = []; … out = out.append(v); … return out;` is
   how a producer is actually written, and the `"ARR:"` rule declined it (direct
   array literal only), so the caller's reclaims left the buffer to leak.
 
@@ -5924,17 +5924,17 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   REBIND (#6170).** `x = x.with(i, v)` lowers to an in-place `arr_set`, which is
   sound only when `x` is the buffer's sole reference. #6158 taught that decision
   about field-read bindings; it still had nothing to say about
-  `var heap = heap_in; heap = heap.with(…)`. `alias_idents_in_value` credits
+  `let heap = heap_in; heap = heap.with(…)`. `alias_idents_in_value` credits
   `heap_in` — the name that ACQUIRED an alias — while the name actually mutated
   is `heap`, so the write landed in the caller's buffer. A third shape,
-  `var b = a; b = b.with(…)` over a still-live local, was broken the same way
+  `let b = a; b = b.with(…)` over a still-live local, was broken the same way
   and was not on any issue.
 
   | shape | interp | self-host before | after |
   |---|---|---|---|
-  | `var heap = heap_in` over a borrowed param | 7 | **77** | **7** |
-  | `var b = a` over a still-live local | 7 | **77** | **7** |
-  | `var x = obj.field` (#6158) | 7 | 7 | 7 |
+  | `let heap = heap_in` over a borrowed param | 7 | **77** | **7** |
+  | `let b = a` over a still-live local | 7 | **77** | **7** |
+  | `let x = obj.field` (#6158) | 7 | 7 | 7 |
   | `own` param, direct | 7 | 7 | 7 |
   | direct borrowed param (#6185) | 7 | **77** | **77** — still open |
 
@@ -5957,7 +5957,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   **The other half is not cloning what it need not clone.** A rebind is credited
   only when its source is a non-`own` array param, is itself borrowed, or is
   used again after the binding. None holding means the rebind is the buffer's
-  only remaining name, so `own heap_in` + `var heap = heap_in` keeps its stores
+  only remaining name, so `own heap_in` + `let heap = heap_in` keeps its stores
   in place — the const-eval VM's shape (`eval_ops`), which is why this was split
   out of #6158. Measured on a 4000-element array, 4000 `.with` writes:
   `own` **12 allocs / 0 bytes**, borrowed **4012 allocs / 128 MB**. An
@@ -6023,7 +6023,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   the follow-up and needs the arm-binding escape analysis ARRTUP grew.
 
   **Separate defect found while gating this, NOT fixed here:** a literal-initialised
-  string local declared INSIDE a loop body (`while (…) { var pre: string = "ab"; … }`)
+  string local declared INSIDE a loop body (`while (…) { let pre: string = "ab"; … }`)
   leaks 24 B per iteration on x86-64 and arm64, and is flat on wasm. It is
   independent of element type — the plain `i32[]` control leaks it identically with
   no rc element anywhere — so it is not an enum-array problem. The bounded-churn
@@ -6039,7 +6039,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
 - 2026-08-10: **A literal-initialised string local declared inside a loop body is now
   reclaimed (#6582).** `str_local_binding_is_fresh` admitted a concat and the string
-  producer methods but not a bare literal, so `var pre: string = "ab"` earned no
+  producer methods but not a bare literal, so `let pre: string = "ab"` earned no
   `STR:` credit and leaked one box per evaluation on the asm backends.
   `is_fresh_str_temp`, twenty lines below it, already documented why the literal IS
   fresh — `const_str` allocates a fresh box per evaluation, the DATA is `.rodata` but
@@ -6050,7 +6050,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   | shape | before | after |
   |---|---|---|
-  | `while (…) { var pre = "ab"; acc += pre.len(); }` | 200/**0**/**4800** | **200/199/24** |
+  | `while (…) { let pre = "ab"; acc += pre.len(); }` | 200/**0**/**4800** | **200/199/24** |
   | the same building an `i32[]` from `pre.len()` | 400/**200**/**4800** | **400/399/24** |
   | `pre` hoisted above the loop *(control)* | 201/200/24 | 201/201/0 |
 
@@ -6144,7 +6144,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `free_eligible_of` has exactly one consumer in the whole self-host —
   `rc_plan_dump` — so the table drives no emission and porting it cannot change
   what any generation reclaims. Measured rather than argued: a
-  `while (…) { var s = i.to_string(); }` loop compiled by the self-host reads
+  `while (…) { let s = i.to_string(); }` loop compiled by the self-host reads
   `allocs=400 frees=0 live_bytes=6400` both before and after the port. The issue
   also says the win "cannot currently be quantified" for want of a self-host
   `FERN_LEAKCHECK`; `FERN_LEAKCHECK=1` on a self-host-COMPILED program measures it
@@ -6240,7 +6240,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   | `Result[string[], string]` | 57600 | 1600/4000 |
 
 - 2026-08-10: **`<scalar>.to_string()` now earns the `STR:` reclaim credit (#6599).**
-  `var s: string = i.to_string()` never freed its box on the self-host, unbounded in a
+  `let s: string = i.to_string()` never freed its box on the self-host, unbounded in a
   loop, while native was flat. It matters out of proportion to the shape because every
   `f"{x}"` desugars to `x.to_string()`.
 
@@ -6327,7 +6327,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   1. `collect_fresh_rcenum_names` required a consuming `match` in the same block,
      so a local with no match at all earned nothing. The reduction is not the
-     helper — `var b = Val([k, k+7]);` declared in a loop and NEVER USED leaked
+     helper — `let b = Val([k, k+7]);` declared in a loop and NEVER USED leaked
      identically. With no match there is nothing for the arm gates to prove, so
      non-escape is the whole condition.
   2. `borrowable_params_interproc` read a bare-ident `match (param)` scrutinee as
@@ -6648,8 +6648,8 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   settles it. Free calls only: method-param borrowability is not in the
   free-function-keyed registry, so a method argument keeps marking.
 
-  **What identified it was the k CURVE, not the count.** `var vv: V = o.v;
-  tagof(vv)` — a `var` init, which the same scan already treats as a borrow —
+  **What identified it was the k CURVE, not the count.** `let vv: V = o.v;
+  tagof(vv)` — a `let` init, which the same scan already treats as a borrow —
   restores the credit and lands on 480 B. Both numbers look like "a leak"; only
   the curve says one is per-iteration and the other per-call.
 
@@ -6658,7 +6658,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   suite's k-sweep holds constant.
 
   Unchanged and deliberately so: a callee that RETAINS its argument. `keep(v: V): V
-  { return v; }` is refused by `borrowable_params_of`, so `var kept = keep(o.v)`
+  { return v; }` is refused by `borrowable_params_of`, so `let kept = keep(o.v)`
   keeps `o` marked — the probe reads `kept` back after the rebind loop, so an
   over-release there is a wrong exit, and it is pinned as a negative row.
 
@@ -6725,7 +6725,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   Unchanged and deliberately so: a callee that RETAINS its argument.
   `keepi(v: I): I { return v; }` is refused by `borrowable_params_of`, so
-  `var p = keepi(o.inner)` keeps the type marked; the probe reads `p`'s scalar AND
+  `let p = keepi(o.inner)` keeps the type marked; the probe reads `p`'s scalar AND
   its array back after the rebind loop, and measures identically on the parent.
 
   VERIFIED: `TestSelfHostPerModuleEmitAllFixpointX86_64` PASS 561.24 s (gen0 ==
@@ -6839,7 +6839,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   Unchanged and deliberately so: a callee that RETAINS its argument.
   `keeps(v: string): string { return v; }` is refused by `borrowable_params_of`,
-  so `var kept = keeps(o.name)` keeps the type marked — measured identically
+  so `let kept = keeps(o.name)` keeps the type marked — measured identically
   before and after at 12160 B, with `kept` read back after the rebind loop so an
   over-release would be a wrong exit, not a byte count.
 
@@ -6964,7 +6964,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   Two refusals, both because the retain is anchored at the direct call site:
   a payload that is not a flat scalar (a shallow free would strand it — the
   `SCons(string, SList)` sibling, byte-identical before and after), and a
-  function whose **address is taken anywhere**. `var f = inc_all; f(keep)` would
+  function whose **address is taken anywhere**. `let f = inc_all; f(keep)` would
   consume with nobody retaining, by a route the call site cannot see, so taking
   the address costs the verdict outright.
 
@@ -7017,8 +7017,8 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   | | interp / native | self-host before | self-host after |
   |---|---|---|---|
-  | `var tmp = first.node; [tmp]` | 102 | **1** | 102 |
-  | `var tmp = first.node; out.append(tmp)` | 102 | 1 | 102 |
+  | `let tmp = first.node; [tmp]` | 102 | **1** | 102 |
+  | `let tmp = first.node; out.append(tmp)` | 102 | 1 | 102 |
 
   Wrong on all three backends before (x86-64, arm64, wasm), correct on all three
   after — the analysis is shared `irlower` so the backends only inherit it.
@@ -7043,7 +7043,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   over-frees.
 
   **Not this defect, and filed as #6758:** the same loop-local struct leaks
-  ~120 B per iteration with *no* field read at all (`var first: P = mkp(i); t = t
+  ~120 B per iteration with *no* field read at all (`let first: P = mkp(i); t = t
   + first.pos` measures the same 120 B as the aliasing spelling), and 88 B for an
   `i32[]` field in place of the enum one. Native is flat on both, so it is a
   self-host struct-local reclaim gap, not an alias one. Measured identical on the
@@ -7113,15 +7113,15 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
 - 2026-08-12: **A struct factory that builds its array field in a LOCAL is
   strict-fresh (#6758).** `return_value_is_strictfresh_struct` admitted an array
-  field only as a direct LITERAL, so `var xs: i32[] = [k, 8]; return Q { xs: xs,
+  field only as a direct LITERAL, so `let xs: i32[] = [k, 8]; return Q { xs: xs,
   pos: 1 };` — the ordinary way to write a factory — never entered
-  `return_fresh_struct_ret_fns`. Every caller's `var q: Q = mkq(i)` then earned no
+  `return_fresh_struct_ret_fns`. Every caller's `let q: Q = mkq(i)` then earned no
   reclaim credit at all, and box plus buffer leaked per call.
 
   | producer, per iteration | before | after | native |
   |---|---|---|---|
-  | `var xs = [k, 8]; return Q { xs: xs, … }` | 88 B | **0** | 0 |
-  | `var xs = []; … xs = xs.append(i); return Q { xs: xs, … }` | 104 B | **0** | 0 |
+  | `let xs = [k, 8]; return Q { xs: xs, … }` | 88 B | **0** | 0 |
+  | `let xs = []; … xs = xs.append(i); return Q { xs: xs, … }` | 104 B | **0** | 0 |
 
   Unbounded before (176 B at 2× the rounds), flat after; identical on arm64, and
   wasm went 56 → 0. The emitted `churn` carried no rc call whatsoever, which is
@@ -7143,7 +7143,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   buffers, so only the ident spelling can express the double free.
   `local_decl_count` guards the third hazard: the literal-init witness answers on
   the first declaration it meets and both escape scans are name-keyed, so a
-  shadowed `var xs = param` in another block would otherwise ride the first
+  shadowed `let xs = param` in another block would otherwise ride the first
   declaration's verdict.
 
   **Not fixed here, and the rest of #6758:** the same loop-local struct with an
@@ -7406,7 +7406,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   defect this sizing merely avoids.
 
   Still leaking the box afterwards, unchanged in complexity class and matching
-  native: a `return` out of an arm, `var o = m.get(k); match (o)`, and
+  native: a `return` out of an arm, `let o = m.get(k); match (o)`, and
   `m.get(k)?`. The first wants the existing `optret_pending` machinery
   (`irlower.fern:531-541`, consumed at `:21917`).
 
@@ -7492,7 +7492,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   **The new bracket SUBSUMES the two statement-level ones #6008 added**, so
   `append_alias_recv_slot` went with them. Checked rather than assumed: the
-  emitted asm for `var x = xs.append(v)` / `x = ys.append(v)` is byte-identical
+  emitted asm for `let x = xs.append(v)` / `x = ys.append(v)` is byte-identical
   before and after, and so is a whole-module compile of `checker.fern`.
 
   **Wasm needed a second half nobody had looked at.** Its 8-byte-slot helpers
@@ -7541,10 +7541,10 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   pointer-element drop where a `string[][]` needs the string-aware walk. It does
   not: `arrarr_free_helper_of` already picks `__fern_strarrarr_free` from the
   slot's `arrarr_elem` kind, and a literal-rows `string[][]`
-  (`var outer = [["a"+k], ["b"+k]]`) measures **flat** on the self-host today.
+  (`let outer = [["a"+k], ["b"+k]]`) measures **flat** on the self-host today.
   What the conformance case actually hits is the CREDIT: `arrarr_lit_is_fresh`
   requires every row to be an array LITERAL, and the case writes
-  `var outer: string[][] = [inner, [...]]` with `inner` a local. An ident row
+  `let outer: string[][] = [inner, [...]]` with `inner` a local. An ident row
   earns no `ARRARR:` credit, so nothing is walked and the exit sweep shallow-decs
   both slots. Closing it means admitting a row that is a bare owned local MOVED
   into the literal, and then keeping that local out of the exit sweep — the sweep
@@ -8008,7 +8008,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   | `TestSelfHostStrAccumIRX86_64/accum-nonfresh-reassign-not-reclaimed` | not reclaimed |
 
   The safety question was probed and came out in the widening's favour: with
-  `var c = a;` making an operand genuinely aliased and both read after the
+  `let c = a;` making an operand genuinely aliased and both read after the
   concat, 100k rounds under `-sanitize` gave NO over-release, `__rc_underflow()`
   0, and leaks only (`allocs=400004 frees=299999`). The escape walker still
   refuses a name with any other escaping use, so the invariant these tests encode
@@ -8086,7 +8086,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `relabel` is `if (t.len() == 0) { return b; }` — an identity return, so
   `body_unsafe_for` refuses it. Admitting one needs a CALLER-side proof the
   registry cannot carry: the result aliases the receiver's box, so a caller that
-  BINDS it (`var c = b.relabel(x)`) holds a live alias past b's death, and
+  BINDS it (`let c = b.relabel(x)`) holds a live alias past b's death, and
   `relabel` is not in any fresh-ret registry so `c` is never separately
   credited. Granting the deep drop there would dangle rather than leak. The next
   slice is that proof — admit an identity-returning method only where every call
@@ -8260,7 +8260,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   | probe | before | after | free-fn control |
   |---|---|---|---|
-  | `var f: string = seed.rename(i).name` — bound | 72 | **0** | 0 |
+  | `let f: string = seed.rename(i).name` — bound | 72 | **0** | 0 |
   | `seed.rename(i).name.len()` — borrowed | 0 | 0 | 0 |
   | `pair.shift(i).a` — scalar, no-`string` struct | 0 | 0 | 0 |
 
@@ -8270,7 +8270,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   VERIFIED: new `method-field-string-bound` in the #6491 read-reclaim file,
   failing at **92** on the parent. The previous slice's two refusals are the
   safety controls for this one as well and needed no change: both already use
-  the BINDING form (`var f: string = keep.me().tag` / `keep.same().tag`), so
+  the BINDING form (`let f: string = keep.me().tag` / `keep.same().tag`), so
   they fail the moment this credit reaches a producer that hands back the
   receiver's box or wraps its string — and both still pass. New conformance case
   `alloc_flat_method_result_field_read` states the whole method-result field
@@ -8355,14 +8355,14 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   | `size(mks(i))` — borrowable position | 70 | **0** |
   | `pick(mks(i))` — callee RETURNS the argument | 70 | 70 (refused) |
   | `keep(mks(i), i)` — callee MOVES it into a struct field | 68 | 68 (refused) |
-  | `var nm = mks(i); size(nm)` — a bound LOCAL, not a temp | 0 | 0 |
+  | `let nm = mks(i); size(nm)` — a bound LOCAL, not a temp | 0 | 0 |
 
   **The ARRAY half is NOT closed, and it is a CALL-SITE widening.** `size(mk(i))`
   with an `i32[]` producer still costs 55. The registry is not the obstacle:
   `return_fresh_struct_ret_fns_of` admits two return shapes, a direct array
   literal OR `body_returns_local_built_arr` — a local with a literal init, only
   ever self-appended, returned bare — which is exactly the
-  `var out: i32[] = []; for … { out = out.append(..) } return out;` producer. The
+  `let out: i32[] = []; for … { out = out.append(..) } return out;` producer. The
   block is the arg-stash arm, which gates on `discardable_scalar_arr_lit` and so
   matches only a `parser.ExprArray` literal. Admitting an `"ARR:"`-registered
   producer CALL there, released with `__fern_rc_dec`, is the same shape as the
@@ -8371,7 +8371,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   Measured rather than read off the source, through the DISCARDED-call reclaim —
   a different consumer of the same `"ARR:"` entry, so it answers the registry
   question on its own: a discarded `mk(i);` is FLAT (registered), while a control
-  whose local is initialised from a call (`var out = seed();`) costs 71
+  whose local is initialised from a call (`let out = seed();`) costs 71
   (correctly not registered). An earlier draft of this entry claimed the registry
   excluded the loop-built shape and that widening it was the work; that was
   reasoned from a source read and is wrong, which is worth keeping because it
@@ -8407,7 +8407,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   | `size(mk(i))` — borrowable position | 55 | **0** |
   | `pick(mk(i))` — callee RETURNS the array | 55 | 55 (refused) |
   | `node(mk(i), i)` — constructor STORES it | 103 | 103 (refused) |
-  | `var live = mk(i); size(live)` — a bound local | 0 | 0 |
+  | `let live = mk(i); size(live)` — a bound local | 0 | 0 |
 
   **`alloc_flat_fresh_array_arg` does NOT move, and the reason is the third
   row.** Its `node(name, deps_of(n), mtime)` stores the array, so the parameter
@@ -8472,7 +8472,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   scalar-result guard is exactly why (forcing `scalar_result` true gives it
   `ACNT:node|10` and the call site does emit the release). The byte count does
   not move because the released reference was never the leak — the leak is the
-  CALLER's `var b: Node = node(…)` binding, which earns no reclaim credit at all.
+  CALLER's `let b: Node = node(…)` binding, which earns no reclaim credit at all.
 
   Two earlier readings of this row were wrong and are kept here because both
   would have sent the next reader at the wrong file. First: "a struct-returning
@@ -8577,10 +8577,10 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   **Because the released reference was never the leak.** `node(mk(i), i)` stores
   the temp in the struct it returns; the post-call dec takes that temp from rc 2
   to rc 1 and the struct owns it — correctly. What leaks is the CALLER's
-  `var b: Node = node(…)`: `node` is param-fed, so it is not strict-fresh, so `b`
+  `let b: Node = node(…)`: `node` is param-fed, so it is not strict-fresh, so `b`
   earns no reclaim credit and box plus buffer die unreleased every iteration. The
   probe that settles it has no array argument at all —
-  `make(k: i32): Node { var d: i32[] = mk(k); return Node { deps: d, k: k }; }` —
+  `make(k: i32): Node { let d: i32[] = mk(k); return Node { deps: d, k: k }; }` —
   and leaked the identical 104 B/round.
 
   **That probe was its own closable gap, and this slice closes it.**
@@ -8602,8 +8602,8 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   | probe | before | after |
   |---|---|---|
-  | `var d: i32[] = mk(k); return Node { deps: d, … }` | 104 | **0** |
-  | `var d: i32[] = [k, …]; return Node { deps: d, … }` (#6758) | 0 | 0 |
+  | `let d: i32[] = mk(k); return Node { deps: d, … }` | 104 | **0** |
+  | `let d: i32[] = [k, …]; return Node { deps: d, … }` (#6758) | 0 | 0 |
   | `return Node { deps: [k, …], … }` | 0 | 0 |
   | `node(mk(i), i)`, the param-fed producer | 104 | 104 |
 
@@ -8645,11 +8645,11 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   | probe | B/round |
   |---|---|
-  | `var b = Box { … }`, no method call at all | 0 |
+  | `let b = Box { … }`, no method call at all | 0 |
   | `b.relabel("")`, the identity path | 24 |
   | `b.relabel("fresh-tag-value")`, the fresh path | 24 |
   | `b.freshonly("…")` — a method with NO identity path | 24 |
-  | `var c: Q = mkq(t, k)` — a plain FREE function, no receiver anywhere | 24 |
+  | `let c: Q = mkq(t, k)` — a plain FREE function, no receiver anywhere | 24 |
   | the same producer building its own field: `Q { tag: "…", k: k }` | 0 |
   | the same, from a fresh concat: `Q { tag: "…" + k.to_string(), k: k }` | 0 |
   | string-FREE struct: `P { k: i32, m: i32 }` from `mkp(k)` | 0 |
@@ -8699,7 +8699,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   argument. A struct result CONTAINS it, which is fine (the callee's counted
   store and the caller's post-call dec net to the one reference the struct owns);
   the unsafe shape is a result of the parameter's OWN type, `both(t: string, k):
-  string { var n = Q { tag: t, k: k }; return n.tag; }`, which the use-vocabulary
+  string { let n = Q { tag: t, k: k }; return n.tag; }`, which the use-vocabulary
   credits and only a result-type test can refuse. Write the string rule that way
   rather than copying the scalar-result guard across.
 
@@ -8795,7 +8795,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   | probe | before | after |
   |---|---|---|
-  | `var c: Q = mkq(t, k)`, free function, literal argument | 24 | **0** |
+  | `let c: Q = mkq(t, k)`, free function, literal argument | 24 | **0** |
   | the same with a FRESH argument | 64 | **0** |
   | `b.relabel("")`, the identity path | 24 | **0** |
   | `b.freshonly("…")`, a fresh-returning method | 24 | 24 |
@@ -8895,15 +8895,15 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   | probe | self-host | native |
   |---|---|---|
-  | `var s: string = wide(n)` — fresh string producer bound | 0 | 0 |
-  | `var d: string[] = deps_of(n)` — fresh string[] producer bound, `.len()` only | **213** | 0 |
+  | `let s: string = wide(n)` — fresh string producer bound | 0 | 0 |
+  | `let d: string[] = deps_of(n)` — fresh string[] producer bound, `.len()` only | **213** | 0 |
   | the same with 6 elements instead of 3 | **428** | 0 |
-  | `var d: i32[] = nums_of(n)` — same shape, scalar elements | 0 | 0 |
-  | `var d: string[] = []` then `d = d.append(wide(n + i))` — no call at all | **213** | 0 |
-  | `var d: string[] = [wide(n), wide(n+1), wide(n+2)]` — a literal | **213** | 0 |
+  | `let d: i32[] = nums_of(n)` — same shape, scalar elements | 0 | 0 |
+  | `let d: string[] = []` then `d = d.append(wide(n + i))` — no call at all | **213** | 0 |
+  | `let d: string[] = [wide(n), wide(n+1), wide(n+2)]` — a literal | **213** | 0 |
   | the same literal with the concats written INLINE | 0 | 0 |
-  | `var p: P = mkp(n, n)` — scalar-only struct from a call | 0 | 0 |
-  | `var s: S1 = mks(wide(n))` — string-field struct from a call | 0 | 0 |
+  | `let p: P = mkp(n, n)` — scalar-only struct from a call | 0 | 0 |
+  | `let s: S1 = mks(wide(n))` — string-field struct from a call | 0 | 0 |
 
   428/213 for 6 elements against 3 is exactly per-element, and the `i32[]` row
   is flat, so the array BUFFER was always reclaimed — only the element boxes
@@ -8922,12 +8922,12 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   duplicated as a second body.
 
   **The second half is the same gap one level up.** `collect_fresh_strarr_names`
-  admitted only an array-LITERAL initialiser, so `var d = deps_of(n)` earned no
+  admitted only an array-LITERAL initialiser, so `let d = deps_of(n)` earned no
   credit even though `deps_of` is already a `"STRARR:"` registry function whose
   admission proved whole-program that every returned element is a box the callee
   allocated at rc=1. The registry's other consumers (the discarded-call and
-  `mk()[i]` read reclaims) had been reading it all along — witness: `var s =
-  deps_of(n)[0]` measured 0 before this change while `var d = deps_of(n)`
+  `mk()[i]` read reclaims) had been reading it all along — witness: `let s =
+  deps_of(n)[0]` measured 0 before this change while `let d = deps_of(n)`
   measured 213. The declaration arm now accepts such a call, refusing a callee
   name the frame shadows (`body_declares_name`).
 
@@ -9007,8 +9007,8 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   Marks are now keyed `"<T>.<field>"` wherever the owning type is known: always
   at a struct-literal store, which names its own type, and at a read whose
-  receiver `fnfld_obj_type` can resolve from a param, an annotated `var`, or a
-  literal-initialised `var` — the bind-tracking the fn-field scan next door
+  receiver `fnfld_obj_type` can resolve from a param, an annotated `let`, or a
+  literal-initialised `let` — the bind-tracking the fn-field scan next door
   already had, seeded with the receiver and parameters. An unresolvable
   receiver still marks the bare name, which the admission reads as poisoning
   that field in every type: the old behaviour, kept as the fallback. The
@@ -9044,8 +9044,8 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   | probe | allocs | frees |
   |---|---|---|
-  | `var c: P = mkp(i, i+1)` — direct | 3 | 3 |
-  | `var c: P = outer(i, i+1)` — one frame between | 3 | **0** |
+  | `let c: P = mkp(i, i+1)` — direct | 3 | 3 |
+  | `let c: P = outer(i, i+1)` — one frame between | 3 | **0** |
 
   48 B a round on `struct P { a: i32, b: i32 }`, native 0. No strings, no arrays;
   the string-bearing variants leak that same 48 plus their field, which is why
@@ -9152,8 +9152,8 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   | binding | calls emitted in the caller |
   |---|---|
-  | `var s: S1 = mks(wide(n))` — string field | `__struct_drop_S1`, `__field_reclaim_S1`, `__fern_str_free`, `__fern_arr_dec` |
-  | `var a: A1 = mka(deps_of(n))` — string[] field | **none at all** |
+  | `let s: S1 = mks(wide(n))` — string field | `__struct_drop_S1`, `__field_reclaim_S1`, `__fern_str_free`, `__fern_arr_dec` |
+  | `let a: A1 = mka(deps_of(n))` — string[] field | **none at all** |
 
   Not a shallower drop — no drop. The type never entered
   `return_fresh_struct_ret_fns`, because `return_value_is_strictfresh_struct`
@@ -9213,7 +9213,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   1. `mka(deps: string[]): A1 { return A1 { deps: deps }; }` is not
      strict-fresh — `return_value_is_strictfresh_struct` refuses a bare-ident
      array field — so `mka` never enters `return_fresh_struct_ret_fns` and the
-     CALLER's `var a: A1 = mka(...)` gets no drop at all (witnessed: `round`
+     CALLER's `let a: A1 = mka(...)` gets no drop at all (witnessed: `round`
      emits no `__struct_drop_A1`, where the `string`-field sibling emits four
      calls);
   2. `A1.deps` is not STRFLDOK-admitted, because `strarrfld_scan`'s store gate
@@ -9327,7 +9327,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `__struct_arr_elems_drop_<E>` first), then decs the buffer.
   `__field_reclaim_<T>` dec'd the buffer only. So the value that goes out of
   scope was reclaimed and every value that was REBOUND leaked its elements —
-  `var b: Bag = Bag { es: [P { .. }, P { .. }], .. }` in a loop stranded one
+  `let b: Bag = Bag { es: [P { .. }, P { .. }], .. }` in a loop stranded one
   element box per element per iteration, on x86-64, arm64 and wasm alike. The
   reclaim body now runs the same walk; `string[]` fields keep the
   `__fern_str_arr_free` arm they already had. Measured on the doubling-rounds
@@ -9475,7 +9475,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `__fern_strarrarr_free` by kind, and the rows-are-literals spelling has been
   flat all along. The leak is in the FRESHNESS proof in front of it. Both
   `arrarr_lit_is_fresh` and its strict string sibling required every row to be
-  an array LITERAL, so `var outer: string[][] = [inner, [..]]` earned no credit
+  an array LITERAL, so `let outer: string[][] = [inner, [..]]` earned no credit
   and fell to a flat `__fern_arr_dec` per level, stranding every element string.
 
   Read off the asm rather than inferred: the all-literal spelling emits two
@@ -9534,13 +9534,13 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   Measured per round on the churn probe (`__heap_bump_bytes()` delta / rounds,
   x86-64 | arm64 | wasm), before → after:
 
-  | `var d: dyn Shape = …` in a called fn | before | after |
+  | `let d: dyn Shape = …` in a called fn | before | after |
   |---|---|---|
   | `mk(k)`, scalar-only concrete | 40 \| 40 \| 24 | 0 |
   | `mk(k)`, concrete with an `i32[]` field | 88 \| 88 \| 56 | 0 |
   | `f.make(k)` (method, annotated local receiver) | 40 \| 40 \| 24 | 0 |
   | `k * 2` (computed primitive) | 40 \| 40 \| 24 | 0 |
-  | `n` where `var n: i32` (primitive from a local) | 80 \| 80 \| 48 | 0 |
+  | `n` where `let n: i32` (primitive from a local) | 80 \| 80 \| 48 | 0 |
   | `Square { … }` inside an `if` body | 40 \| 40 \| 24 | 0 |
 
   1. **A STRICT-FRESH call result now earns the struct credit.**
@@ -9768,9 +9768,9 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   | `Option[E]` | 0 | 120 \| 120 \| 64 | unchanged |
   | `Option[Option[i32[]]]` | 0 | 120 \| 120 \| 56 | unchanged |
   | `Option[Map[i32, i32]]` | 120 | does not lower | unchanged |
-  | `var xs: (i32, i32[])[] = mk(k)` | 0 | 80 \| 80 \| 48 | unchanged |
-  | `var ps: Q[] = mk(k)`, Q a struct with an `i32[]` field | 0 | 80 \| 80 \| 48 | unchanged |
-  | `var xs: string[] = mk(k)` | 0 | 0 | — |
+  | `let xs: (i32, i32[])[] = mk(k)` | 0 | 80 \| 80 \| 48 | unchanged |
+  | `let ps: Q[] = mk(k)`, Q a struct with an `i32[]` field | 0 | 80 \| 80 \| 48 | unchanged |
+  | `let xs: string[] = mk(k)` | 0 | 0 | — |
   | `Map[i32, i32]` / `Map[string, i32]` / `Map[i32, string]` | **120** | 0 | — |
   | `Map[i32, i32[]]` / `Map[i32, Q]` | **120** | 80 \| 80 \| 48 | unchanged |
 
@@ -9809,7 +9809,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   Closed next, from the same measurement: the CALL-BOUND array of tuples and
   array of structs. `collect_fresh_arrtup_names` / `collect_fresh_arrstruct_names`
-  took only a direct array LITERAL initialiser, so `var ps: (i32, i32[])[] = mk(k)`
+  took only a direct array LITERAL initialiser, so `let ps: (i32, i32[])[] = mk(k)`
   leaked buffer, element boxes and inner arrays at 80 B/round (48 on wasm). New
   `"ARRTUPF:"` / `"ARRSTRUCTF:"` registry entries — a free function whose every
   return is a fresh array literal of fresh tuple (resp. struct) literals — give a
@@ -9944,7 +9944,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
 - 2026-08-19: **the nested rc-tuple, and the #4353 re-measurement above named
   the wrong dimension.** Among its deliberately-open items it recorded
-  `var t: ((i32, i32[]), i32) = ((k, [k, k+1]), k+1)` churning at
+  `let t: ((i32, i32[]), i32) = ((k, [k, k+1]), k+1)` churning at
   120 | 120 | 72 B/round "where the un-nested `(i32, i32[])` is flat", and asked for the cause to be located before anything was changed.
   Located: **nesting has nothing to do with it.** The same nested tuple with a
   bare ident in the outer scalar position — `((i, [i, i+1]), i)` — was already
@@ -10298,18 +10298,18 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   since native is what compiles the self-host driver —
   `TestSelfHostInterpDriverX86_64` plus
   `TestSelfHostPerModuleEmitAllFixpointX86_64`. Refs #7122 #4353 #7114 #4451.
-- 2026-08-19: **a `var t: string = <expr>.m()` binding earned no reclaim credit
+- 2026-08-19: **a `let t: string = <expr>.m()` binding earned no reclaim credit
   when `m` was SOURCE-DECLARED, while the builtin spelling beside it was flat.**
   Isolating it needed the source string out of the picture first — with a fresh
   `base` in scope, most of what the earlier five-shape table measured was `base`
   escaping as a bare-ident operand, not the temp it was attributed to:
 
-  | probe (`var b: string = mkfresh(i);` first) | B/round |
+  | probe (`let b: string = mkfresh(i);` first) | B/round |
   | --- | --- |
   | `b.len()` | -1 |
-  | `var t = b.to_ascii_upper(); t.len()` | **-1** (builtin) |
-  | `var t = b.to_owned(); t.len()` | **47** |
-  | `var t = b.to_upper(); t.len()` | **43** |
+  | `let t = b.to_ascii_upper(); t.len()` | **-1** (builtin) |
+  | `let t = b.to_owned(); t.len()` | **47** |
+  | `let t = b.to_upper(); t.len()` | **43** |
 
   One argument, at the `collect_str_fresh_ret_call_names` call of
   `is_fresh_ret_binding`. That predicate has always had a method arm, but the
@@ -10433,7 +10433,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `derived(mkfresh(i)).len()` **46 -> -2**.
 
   One predicate closed the whole argument-position family, including a shape that
-  looks unrelated: `var b = mkfresh(i); var z = freshfree(b);` went 46 -> -1,
+  looks unrelated: `let b = mkfresh(i); let z = freshfree(b);` went 46 -> -1,
   because once `freshfree`'s parameter is borrowable the bare-ident ARGUMENT at a
   borrowable position stops escaping under the Level-2 rule that was already
   there.
@@ -10447,7 +10447,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   | `mkfresh(i).len()` — scalar-returning | -1 |
   | `mkfresh(i).unrel()` — string-returning, receiver absent from every return | **47** |
   | `mkfresh(i).deriv()` — string-returning, `return s + ""` | **46** |
-  | `var u = mkfresh(i).to_ascii_upper()` — string-returning builtin | **46** |
+  | `let u = mkfresh(i).to_ascii_upper()` — string-returning builtin | **46** |
   | `mkfresh(i).to_ascii_upper().len()` — both gaps at once | **95** |
 
   That one is still open and is the next slice.
@@ -10556,9 +10556,9 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   | shape | before | after |
   | --- | --- | --- |
-  | `var u = w(pre).to_ascii_upper(); u.len()` | 46 | **-2** |
+  | `let u = w(pre).to_ascii_upper(); u.len()` | 46 | **-2** |
   | `w(pre).contains("wide")` | 46 | **flat** |
-  | `var u = w(pre).reverse(); u.len()` | 46 | **flat** |
+  | `let u = w(pre).reverse(); u.len()` | 46 | **flat** |
   | `mkfresh(i).to_ascii_upper().len()` | 95 | **46** |
 
   `str_borrowing_method` is LOAD-BEARING at this site, which is worth recording
@@ -10842,8 +10842,8 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   | shape | before | after |
   | --- | --- | --- |
-  | `var u = w(pre).copies(); u.len()` | 46 | **-2** |
-  | `var u = w(pre).unrel(); u.len()` | 47 | **-1** |
+  | `let u = w(pre).copies(); u.len()` | 46 | **-2** |
+  | `let u = w(pre).unrel(); u.len()` | 47 | **-1** |
   | `w(pre).copies().copies().len()` | 272 | **flat** |
   | `mkfresh(i).to_owned().to_owned().len()` | 143 | **-2** |
   | `base.to_owned().to_owned().len()` | 46 | **-2** |
@@ -10978,7 +10978,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
     The concat is released; what leaks is the string a USER FUNCTION returned as
     an operand of it. And it has nothing to do with tuples or unions —
-    `var sv: string = "v" + util_num(i)` as a plain local leaks the same 32,
+    `let sv: string = "v" + util_num(i)` as a plain local leaks the same 32,
     where native is flat. **Closed by the 2026-08-20 entry below**, which found
     the cause one level further out than `is_fresh_str_temp`: `util_num` never
     entered the fresh-ret registry at all, because the registry's freshness
@@ -11061,7 +11061,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 - 2026-08-19: **#6880 — a map insert now retains an ALIASED array VALUE on the
   register backends.** `__fern_map_set` on x86-64 / arm64 stores the value
   pointer with no rc-inc of its own, while `emit_dec_sweep_except_list` releases
-  every `is_arr_slot` local unconditionally. So `var a = [v]; return
+  every `is_arr_slot` local unconditionally. So `let a = [v]; return
   m.insert(k, a);` left the map's value column naming a buffer the sweep freed
   at the helper's exit, and the next allocation of that size class handed the
   block out again underneath the map. Nothing in the rc machinery could see it:
@@ -11264,7 +11264,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   local's own release, and one dec could never close it.** #7168 refused this
   shape and recorded two readings for why, both wrong: first that the release
   arm "is never reached", then that the string local "gets no sweep of its own".
-  The emitted code settles it. `var sv = "v" + i.to_string(); var t = (i,
+  The emitted code settles it. `let sv = "v" + i.to_string(); let t = (i,
   Some(sv))`: `sv` is the `__fern_str_concat` result, `__fern_rc_inc`'d once at
   construction, and stored as the union box's payload. Without the tuple the
   function emits THREE `__fern_str_free` — the literal, the `to_string` temp and
@@ -11362,7 +11362,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   ```
   function util_num(i: i32): string { return i.to_string(); }
   ...
-  var sv: string = util_num(i);      // 32 B/round, ZERO __fern_str_free, native flat
+  let sv: string = util_num(i);      // 32 B/round, ZERO __fern_str_free, native flat
   ```
 
   Isolated by varying only the callee body, so the caller is a constant:
@@ -11370,7 +11370,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   | callee body | before |
   |---|---|
   | `return i.to_string();` | **32** |
-  | `var t = i.to_string(); return t;` | **32** |
+  | `let t = i.to_string(); return t;` | **32** |
   | `return "x" + i.to_string();` | 0 |
   | `return "abc";` | 0 |
 
@@ -11403,15 +11403,15 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
 
   | shape | before | after | native |
   |---|---|---|---|
-  | `var sv = util_num(i)` | 32 \| 32 \| 16 | **0** | 0 |
-  | `var sv = "v" + util_num(i)` | 32 \| 32 \| 16 | **0** | 0 |
+  | `let sv = util_num(i)` | 32 \| 32 \| 16 | **0** | 0 |
+  | `let sv = "v" + util_num(i)` | 32 \| 32 \| 16 | **0** | 0 |
   | callee binds to a local first | 32 \| 32 \| 16 | **0** | 0 |
   | callee returns a concat | 0 | 0 | 0 |
   | struct-receiver `to_string` | 85 (value) | 85 | 85 |
   | string-receiver `to_string` | 45 (value) | 45 | 45 |
 
   A scalar receiver that is a callee LOCAL rather than a param
-  (`var m = n + 1; return m.to_string();`) still refuses — its declared type is
+  (`let m = n + 1; return m.to_string();`) still refuses — its declared type is
   not in the signature. That is the conservative direction (a leak, never an
   over-release) and is the next widening if it shows up in a corpus.
 
@@ -11477,7 +11477,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   Not a leak — a coverage gap. The self-host refused the whole function:
 
   ```
-  var o: Option[Map[string, i32]] = Some(m);
+  let o: Option[Map[string, i32]] = Some(m);
   match (o) { Some(v) => { r = v.get_or("k", 0); }, None => {} }
 
   FERN_STRICT_IR: churn (did not lower: `match`)
@@ -11510,7 +11510,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   second half of this entry.** `Map[K, V][]` prefix-matches `is_map_type_name`,
   so the new predicate is guarded with `!is_array_type_name`. That guard was not
   enough, because the gate never saw the array spelling: for
-  `var o: Option[Map[string, i32][]] = Some(ms)` the recorded slot type was
+  `let o: Option[Map[string, i32][]] = Some(ms)` the recorded slot type was
   `Option[Map[string, i32]]`. The annotation parses correctly — an INFERENCE
   overrode it. A map-array slot records the ELEMENT map type in the map column
   (so `ms[i].get(k)` resolves), so `elem_type_tag(ms)` answers the bare
@@ -11567,7 +11567,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   rather than a bail.
 
   ```
-  var ms: Map[string, i32][] = [m];
+  let ms: Map[string, i32][] = [m];
   return ms.len();          // native 1, self-host SEGFAULT
   ```
 
@@ -11703,7 +11703,7 @@ to balance the retain. Both were needed: fixing `vconsume` alone closed the
 struct column and left the array column untouched.
 
 **The register half exposed a pre-existing use-after-free**, which is the part
-worth remembering. `var v: i32[] = m.get_or(k, d)` binds the column's RAW
+worth remembering. `let v: i32[] = m.get_or(k, d)` binds the column's RAW
 pointer — the register map read hands back an uncounted alias — into a slot the
 exit dec-sweep releases unconditionally. The sweep therefore freed the map's live
 value, and a read after the alias died returned another local's contents:

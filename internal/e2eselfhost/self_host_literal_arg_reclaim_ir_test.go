@@ -42,13 +42,13 @@ func TestSelfHostLiteralArgReclaimIRX86_64(t *testing.T) {
 	// Literal arg at a borrowable position — churn flat at detector zero.
 	run(t, `function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + readit("ab"); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + readit("ab"); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc != 4400) { return 97; }
@@ -61,10 +61,10 @@ function main(): i32 {
 	// sound leak).
 	run(t, `function keepit(nm: string): string { return nm; }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var got: string = keepit("xy");
+        let got: string = keepit("xy");
         if (got.len() != 2) { bad = 1; }
         i = i + 1;
     }
@@ -79,14 +79,14 @@ function main(): i32 {
 	// operand, only read) stays readable; churn flat at detector zero.
 	run(t, `function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
-    var base: string = "a";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let base: string = "a";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + readit(base + "bc"); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + readit(base + "bc"); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (base.len() != 1) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -100,14 +100,14 @@ function main(): i32 {
 	run(t, `import "std/string";
 function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
-    var src: string = "AbC" + "d";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let src: string = "AbC" + "d";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + readit(src.to_ascii_upper()); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + readit(src.to_ascii_upper()); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (src.len() != 4) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -120,9 +120,9 @@ function main(): i32 {
 	// readable across every call at detector zero.
 	run(t, `function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
-    var src: string = "aa" + "bb";
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let src: string = "aa" + "bb";
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
         if (readit(src) != 4) { bad = 1; }
         i = i + 1;
@@ -137,14 +137,14 @@ function main(): i32 {
 	// borrowed read — no stash, no free) and stays readable; churn flat.
 	run(t, `function pick(a: string, b: string): i32 { return a.len() + b.len(); }
 function main(): i32 {
-    var live: string = "aa" + "bb";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let live: string = "aa" + "bb";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + pick("x", live); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + pick("x", live); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (live.len() != 4) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -161,14 +161,14 @@ function main(): i32 {
 	// method callee at all.
 	run(t, `function (s: string) readit(nm: string): i32 { return s.len() + nm.len(); }
 function main(): i32 {
-    var recv: string = "rr";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let recv: string = "rr";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + recv.readit("ab"); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + recv.readit("ab"); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (recv.len() != 2) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -179,13 +179,13 @@ function main(): i32 {
 	// The PRIMITIVE-receiver arm is a separate site from the struct one.
 	run(t, `function (k: i32) tally(nm: string): i32 { return k + nm.len(); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + (i % 4).tally("abc"); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + (j % 4).tally("abc"); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -196,15 +196,15 @@ function main(): i32 {
 	// literal.
 	run(t, `function (s: string) readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
-    var recv: string = "rr";
-    var base: string = "a";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let recv: string = "rr";
+    let base: string = "a";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + recv.readit(base + "bc"); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = acc + recv.readit(base + "bc"); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (base.len() != 1) { return 88; }
     if (recv.len() != 2) { return 88; }
@@ -217,11 +217,11 @@ function main(): i32 {
 	// edge would free what the binding now holds.
 	run(t, `function (s: string) keepit(nm: string): string { return nm; }
 function main(): i32 {
-    var recv: string = "rr";
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let recv: string = "rr";
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var got: string = recv.keepit("xy");
+        let got: string = recv.keepit("xy");
         if (got.len() != 2) { bad = 1; }
         i = i + 1;
     }
@@ -241,11 +241,11 @@ function (b: Box) relabel(t: string): Box {
     return Box { tag: t, n: b.n };
 }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var b: Box = Box { tag: "start", n: i % 8 };
-        var r: Box = b.relabel("fresh-tag-value");
+        let b: Box = Box { tag: "start", n: i % 8 };
+        let r: Box = b.relabel("fresh-tag-value");
         if (r.tag.len() != 15) { bad = 1; }
         if (b.tag.len() != 5) { bad = 1; }
         i = i + 1;
@@ -265,13 +265,13 @@ function main(): i32 {
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function size(s: string): i32 { return s.len(); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = (acc + size(mks(i))) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 3000) { acc = (acc + size(mks(j))) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -286,10 +286,10 @@ function main(): i32 {
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function pick(s: string): string { return s; }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) {
-        var r: string = pick(mks(i));
+        let r: string = pick(mks(i));
         if (r.len() < 41) { bad = 1; }
         if (slice_unchecked(r, 0, 1) != "a") { bad = 1; }
         i = i + 1;
@@ -307,10 +307,10 @@ struct Box { name: string, k: i32 }
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function keep(s: string, k: i32): Box { return Box { name: s, k: k }; }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) {
-        var b: Box = keep(mks(i), i);
+        let b: Box = keep(mks(i), i);
         if (b.name.len() < 41) { bad = 1; }
         if (b.k != i) { bad = 1; }
         i = i + 1;
@@ -327,10 +327,10 @@ function main(): i32 {
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function size(s: string): i32 { return s.len(); }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) {
-        var nm: string = mks(i);
+        let nm: string = mks(i);
         if (size(nm) < 41) { bad = 1; }
         if (nm.len() < 41) { bad = 1; }
         i = i + 1;
@@ -346,16 +346,16 @@ function main(): i32 {
 	// its buffer per evaluation (55 B/round measured). The registry already
 	// admits a loop-built producer (body_returns_local_built_arr), so this is a
 	// call-site widening, not a registry one.
-	run(t, `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function size(d: i32[]): i32 { return d.len(); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = (acc + size(mk(i))) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 3000) { acc = (acc + size(mk(j))) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -364,13 +364,13 @@ function main(): i32 {
 
 	// REFUSED — the callee RETURNS the array, so the result aliases the temp and
 	// is read after. Freeing at the call would be a use-after-free.
-	run(t, `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function pick(d: i32[]): i32[] { return d; }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) {
-        var r: i32[] = pick(mk(i));
+        let r: i32[] = pick(mk(i));
         if (r.len() != 3) { bad = 1; }
         if (r[2] != i + 2) { bad = 1; }
         i = i + 1;
@@ -385,13 +385,13 @@ function main(): i32 {
 	// from; closing it needs native's per-argument counted-retain admission, not
 	// this borrowable-position stash.
 	run(t, `struct Node { deps: i32[], k: i32 }
-function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function node(deps: i32[], k: i32): Node { return Node { deps: deps, k: k }; }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) {
-        var b: Node = node(mk(i), i);
+        let b: Node = node(mk(i), i);
         if (b.deps.len() != 3) { bad = 1; }
         if (b.deps[1] != i + 1) { bad = 1; }
         i = i + 1;
@@ -403,13 +403,13 @@ function main(): i32 {
 
 	// A bound LOCAL at the same position is not a temp — it is read after the
 	// call and its own scope-exit release owns it.
-	run(t, `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function size(d: i32[]): i32 { return d.len(); }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) {
-        var live: i32[] = mk(i);
+        let live: i32[] = mk(i);
         if (size(live) != 3) { bad = 1; }
         if (live[0] != i) { bad = 1; }
         i = i + 1;
@@ -426,16 +426,16 @@ function main(): i32 {
 	// That is native's paramCountedRetain, and it is what admits here. 55 B/round
 	// before.
 	run(t, `struct Node { deps: i32[], k: i32 }
-function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
-function keep(deps: i32[], k: i32): i32 { var n: Node = Node { deps: deps, k: k }; return n.k + n.deps.len(); }
+function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function keep(deps: i32[], k: i32): i32 { let n: Node = Node { deps: deps, k: k }; return n.k + n.deps.len(); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = (acc + keep(mk(i), i)) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 3000) { acc = (acc + keep(mk(j), j)) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -448,13 +448,13 @@ function main(): i32 {
 	// releasing would hand the caller freed memory. The elements are re-read, so
 	// a wrongly admitted release shows as a wrong value rather than a byte count.
 	run(t, `struct Node { deps: i32[], k: i32 }
-function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
-function both(deps: i32[], k: i32): i32[] { var n: Node = Node { deps: deps, k: k }; return n.deps; }
+function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function both(deps: i32[], k: i32): i32[] { let n: Node = Node { deps: deps, k: k }; return n.deps; }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) {
-        var r: i32[] = both(mk(i), i);
+        let r: i32[] = both(mk(i), i);
         if (r.len() != 3) { bad = 1; }
         if (r[0] != i || r[2] != i + 2) { bad = 1; }
         i = i + 1;
@@ -466,11 +466,11 @@ function main(): i32 {
 
 	// REFUSED on the PARAMETER: `hand` returns its argument, so the appearance
 	// in return position is not a counted store and the param is never credited.
-	run(t, `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
-function hand(deps: i32[]): i32 { var keepit: i32[] = deps; return keepit.len() + deps[0]; }
+	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function hand(deps: i32[]): i32 { let keepit: i32[] = deps; return keepit.len() + deps[0]; }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) { if (hand(mk(i)) != 3 + i) { bad = 1; } i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
@@ -486,13 +486,13 @@ function main(): i32 {
 	run(t, `struct Q { tag: string, k: i32 }
 function mkq(t: string, k: i32): Q { return Q { tag: t, k: k }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var c: Q = mkq("a-string-well-past-the-inline-threshold", i); acc = (acc + c.tag.len() + c.k) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 3000) { var d: Q = mkq("a-string-well-past-the-inline-threshold", j); acc = (acc + d.tag.len() + d.k) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let c: Q = mkq("a-string-well-past-the-inline-threshold", i); acc = (acc + c.tag.len() + c.k) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 3000) { let d: Q = mkq("a-string-well-past-the-inline-threshold", j); acc = (acc + d.tag.len() + d.k) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -506,14 +506,14 @@ function main(): i32 {
 	// re-read and a long string is built between the reads so a wrongly freed
 	// block is really recycled first.
 	run(t, `struct Q { tag: string, k: i32 }
-function both(t: string, k: i32): string { var n: Q = Q { tag: t, k: k }; return n.tag; }
+function both(t: string, k: i32): string { let n: Q = Q { tag: t, k: k }; return n.tag; }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 400) {
-        var r: string = both("a-string-well-past-the-inline-threshold", i);
+        let r: string = both("a-string-well-past-the-inline-threshold", i);
         if (r.len() != 39) { bad = 1; }
-        var churn: string = "another-long-string-to-recycle-the-block" + "";
+        let churn: string = "another-long-string-to-recycle-the-block" + "";
         if (churn.len() != 40) { bad = 1; }
         i = i + 1;
     }
@@ -528,13 +528,13 @@ function main(): i32 {
 	run(t, `struct Q { tag: string, k: i32 }
 function mkq(t: string, k: i32): Q { return Q { tag: t, k: k }; }
 function main(): i32 {
-    var bad: i32 = 0;
-    var live: string = "a-string-well-past-the-inline-threshold";
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let live: string = "a-string-well-past-the-inline-threshold";
+    let i: i32 = 0;
     while (i < 400) {
-        var c: Q = mkq(live, i);
+        let c: Q = mkq(live, i);
         if (c.tag.len() != 39) { bad = 1; }
-        var churn: string = "another-long-string-to-recycle-the-block" + "";
+        let churn: string = "another-long-string-to-recycle-the-block" + "";
         if (churn.len() != 40) { bad = 1; }
         i = i + 1;
     }
@@ -554,13 +554,13 @@ function main(): i32 {
 	run(t, `struct Q { tag: string, k: i32 }
 function mkq2(t: string, k: i32): Q { return Q { tag: t, k: k + (t[0] as i32) }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var c: Q = mkq2("tag", i); acc = (acc + c.k + c.tag.len()) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 2000) { var d: Q = mkq2("tag", j); acc = (acc + d.k + d.tag.len()) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let c: Q = mkq2("tag", i); acc = (acc + c.k + c.tag.len()) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 2000) { let d: Q = mkq2("tag", j); acc = (acc + d.k + d.tag.len()) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -576,13 +576,13 @@ function main(): i32 {
 	// SEGFAULTS with that gate removed.
 	run(t, `struct C { name: string, args: string }
 function mk(name: string, args: string): C { return C { name: name, args: args }; }
-function esc(c: C): string[] { var o: string[] = []; return o.append(c.name); }
+function esc(c: C): string[] { let o: string[] = []; return o.append(c.name); }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var a: C = mk("fetch", "GET /a");
-        var e: string[] = esc(a);
+        let a: C = mk("fetch", "GET /a");
+        let e: string[] = esc(a);
         if (e[0].len() != 5) { bad = 1; }
         if (a.args.len() != 6) { bad = 1; }
         if (a.args[0] != 71) { bad = 1; }

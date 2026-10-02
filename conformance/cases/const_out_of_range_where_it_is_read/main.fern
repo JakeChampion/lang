@@ -3,6 +3,6 @@
 const K = 300;
 
 function main(): i32 {
-    var x: u8 = K;
+    let x: u8 = K;
     return x as i32;
 }

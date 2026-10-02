@@ -345,7 +345,7 @@ const (
 // Both sides previously used 0x10000 (64 KiB), carried over from a WASI
 // memory layout whose heap sat above 64 KiB. On the native preview-2
 // layout (heap at ~1024) that silently skipped EVERY rc op: inc never
-// bumped a refcount (so an aliasing `var y = x` left x at rc==1 and
+// bumped a refcount (so an aliasing `let y = x` left x at rc==1 and
 // `y.set(...)` took the mutate-in-place CoW fast path, corrupting x),
 // and dec/free never reclaimed (so the freelist stayed empty and alloc
 // was a pure bump).

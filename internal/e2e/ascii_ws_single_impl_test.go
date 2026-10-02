@@ -18,23 +18,23 @@ import "std/string";
 
 function main(): i32 {
     // SP TAB LF CR VT FF are whitespace under both spellings.
-    var ws: i32[] = [32, 9, 10, 13, 11, 12];
-    var i: i32 = 0;
+    let ws: i32[] = [32, 9, 10, 13, 11, 12];
+    let i: i32 = 0;
     while (i < ws.len()) {
         if (!(ws[i] as u8).is_ascii_white_space()) { return 1; }
         if (!string.__is_ascii_ws(ws[i])) { return 2; }
         i = i + 1;
     }
     // Boundaries either side of the 9..13 run and of SP must be false.
-    var no: i32[] = [0, 8, 14, 31, 33, 48, 65, 97, 127, 255];
-    var j: i32 = 0;
+    let no: i32[] = [0, 8, 14, 31, 33, 48, 65, 97, 127, 255];
+    let j: i32 = 0;
     while (j < no.len()) {
         if ((no[j] as u8).is_ascii_white_space()) { return 3; }
         if (string.__is_ascii_ws(no[j])) { return 4; }
         j = j + 1;
     }
     // Exhaustive: the two spellings agree on every byte value.
-    var b: i32 = 0;
+    let b: i32 = 0;
     while (b < 256) {
         if ((b as u8).is_ascii_white_space() != string.__is_ascii_ws(b)) { return 5; }
         b = b + 1;

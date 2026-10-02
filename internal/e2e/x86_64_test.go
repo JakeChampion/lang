@@ -68,7 +68,7 @@ func TestX86_64Arithmetic(t *testing.T) {
 		{`function main(): i32 { return 100 - 7 * 8; }`, 44},
 		{`function main(): i32 { return 100 / 7; }`, 14},
 		{`function main(): i32 { return 100 % 7; }`, 2},
-		{`function main(): i32 { var x: i32 = 5; var y: i32 = 7; return x * y; }`, 35},
+		{`function main(): i32 { let x: i32 = 5; let y: i32 = 7; return x * y; }`, 35},
 		{`function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 { return add(20, 22); }`, 42},
 		{`function fib(n: i32): i32 {
@@ -94,8 +94,8 @@ func TestX86_64ControlFlow(t *testing.T) {
 		want int
 	}{
 		{`function main(): i32 {
-    var sum: i32 = 0;
-    var i: i32 = 1;
+    let sum: i32 = 0;
+    let i: i32 = 1;
     while (i <= 10) {
         sum = sum + i;
         i = i + 1;
@@ -108,9 +108,9 @@ func TestX86_64ControlFlow(t *testing.T) {
     return 3;
 }
 function main(): i32 {
-    var a: i32 = classify(0 - 5);
-    var b: i32 = classify(0);
-    var c: i32 = classify(7);
+    let a: i32 = classify(0 - 5);
+    let b: i32 = classify(0);
+    let c: i32 = classify(7);
     return a * 100 + b * 10 + c;
 }`, 123},
 	} {
@@ -192,8 +192,8 @@ func TestX86_64StringConcat(t *testing.T) {
 	}{
 		{`function main(): i32 { return ("hello, " + "world!").len(); }`, 13},
 		{`function main(): i32 {
-    var a: string = "foo";
-    var b: string = "barbaz";
+    let a: string = "foo";
+    let b: string = "barbaz";
     return (a + b).len();
 }`, 9},
 		// Triple-concat — each `+` is left-associative so this
@@ -226,9 +226,9 @@ function eval(e: Expr): i32 {
 }
 
 function main(): i32 {
-    var lhs: Expr = Add(Add { l: 2, r: 3 });
-    var rhs: Expr = Lit(Lit { v: 4 });
-    var prod: Expr = Mul(Mul { l: eval(lhs), r: eval(rhs) });
+    let lhs: Expr = Add(Add { l: 2, r: 3 });
+    let rhs: Expr = Lit(Lit { v: 4 });
+    let prod: Expr = Mul(Mul { l: eval(lhs), r: eval(rhs) });
     return eval(prod);
 }`
 	_, code := compileAndRunX86_64(t, src)
@@ -265,9 +265,9 @@ function leafOf(t: Tree[i32]): i32 {
 }
 
 function main(): i32 {
-    var a: Tree[i32] = Tree.Leaf(Leaf[i32] { v: 4 });
-    var b: Tree[i32] = Pair[i32] { a: 5, b: 6 };
-    var c: Tree[i32] = Lit { v: 7 };
+    let a: Tree[i32] = Tree.Leaf(Leaf[i32] { v: 4 });
+    let b: Tree[i32] = Pair[i32] { a: 5, b: 6 };
+    let c: Tree[i32] = Lit { v: 7 };
     return leafOf(a) + leafOf(b) + leafOf(c);
 }`
 	_, code := compileAndRunX86_64(t, src)
@@ -299,10 +299,10 @@ function mk_add(l: i32, r: i32): Expr {
 }
 
 function main(): i32 {
-    var a: Expr = Add { l: 2, r: 3 };
-    var sum: i32 = eval(Lit { v: 5 });
+    let a: Expr = Add { l: 2, r: 3 };
+    let sum: i32 = eval(Lit { v: 5 });
     a = Mul { l: 2, r: sum };
-    var built: Expr = mk_add(1, 2);
+    let built: Expr = mk_add(1, 2);
     return eval(a) + eval(built) + sum;
 }`
 	_, code := compileAndRunX86_64(t, src)
@@ -318,23 +318,23 @@ func TestX86_64StringLines(t *testing.T) {
 	src := `
 import "std/string";
 function main(): i32 {
-    var lf: string[] = "a\nb\nc".lines();
+    let lf: string[] = "a\nb\nc".lines();
     if (lf.len() != 3) { return 1; }
     if (lf[0] != "a") { return 2; }
     if (lf[1] != "b") { return 3; }
     if (lf[2] != "c") { return 4; }
 
-    var crlf: string[] = "a\r\nb\r\nc".lines();
+    let crlf: string[] = "a\r\nb\r\nc".lines();
     if (crlf.len() != 3) { return 5; }
     if (crlf[0] != "a") { return 6; }
     if (crlf[2] != "c") { return 7; }
 
-    var trail: string[] = "a\nb\n".lines();
+    let trail: string[] = "a\nb\n".lines();
     if (trail.len() != 2) { return 8; }
 
     if (("".lines()).len() != 0) { return 9; }
 
-    var solo: string[] = "\n".lines();
+    let solo: string[] = "\n".lines();
     if (solo.len() != 1) { return 10; }
     if (solo[0] != "") { return 11; }
 
@@ -351,16 +351,16 @@ func TestX86_64ArrayLiteral(t *testing.T) {
 		want int
 	}{
 		{`function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
+    let xs: i32[] = [10, 20, 30];
     return xs[1];
 }`, 20},
 		{`function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4, 5];
+    let xs: i32[] = [1, 2, 3, 4, 5];
     return xs.len();
 }`, 5},
 		{`function sum(xs: i32[]): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
         total = total + xs[i];
         i = i + 1;
@@ -390,14 +390,14 @@ func TestX86_64Struct(t *testing.T) {
 	}{
 		{`struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 10, y: 32 };
+    let p: Point = Point { x: 10, y: 32 };
     return p.x + p.y;
 }`, 42},
 		// Struct with a string field — exercises the
 		// ptr-width slot widening from PR #267.
 		{`struct Person { age: i32, name: string }
 function main(): i32 {
-    var p: Person = Person { age: 25, name: "Claude" };
+    let p: Person = Person { age: 25, name: "Claude" };
     return p.age + p.name.len();
 }`, 31},
 	} {
@@ -414,29 +414,29 @@ func TestX86_64Floats(t *testing.T) {
 		want int
 	}{
 		{`function main(): i32 {
-    var a: f32 = 3.5;
-    var b: f32 = 1.5;
+    let a: f32 = 3.5;
+    let b: f32 = 1.5;
     return (a + b) as i32;
 }`, 5},
 		{`function main(): i32 {
-    var a: f32 = 10.0;
-    var b: f32 = 3.0;
+    let a: f32 = 10.0;
+    let b: f32 = 3.0;
     return (a / b) as i32;
 }`, 3},
 		{`function main(): i32 {
-    var pi: f64 = 3.14f64;
-    var two: f64 = 2.0f64;
+    let pi: f64 = 3.14f64;
+    let two: f64 = 2.0f64;
     if (pi * two > 6.0f64) { return 42; }
     return 0;
 }`, 42},
 		{`function main(): i32 {
-    var n: i32 = 7;
-    var f: f64 = (n as f64) * 1.5f64;
+    let n: i32 = 7;
+    let f: f64 = (n as f64) * 1.5f64;
     return f as i32;
 }`, 10},
 		{`function main(): i32 {
-    var x: f32 = 5.5;
-    var y: f32 = 0.0 - x;
+    let x: f32 = 5.5;
+    let y: f32 = 0.0 - x;
     if (y < 0.0) { return 1; }
     return 0;
 }`, 1},
@@ -498,17 +498,17 @@ func TestX86_64Transcendentals(t *testing.T) {
 	}{
 		{"sin_0", "function main(): i32 { return __sin_f64(0.0) as i32; }", 0},
 		{"cos_0", "function main(): i32 { return __cos_f64(0.0) as i32; }", 1},
-		{"sin_halfpi", "function main(): i32 { var r: f64 = __sin_f64(1.5707963267948966); if (r > 0.999 && r < 1.001) { return 7; } return 0; }", 7},
-		{"cos_pi", "function main(): i32 { var r: f64 = __cos_f64(3.141592653589793); if (r > 0.0 - 1.001 && r < 0.0 - 0.999) { return 7; } return 0; }", 7},
+		{"sin_halfpi", "function main(): i32 { let r: f64 = __sin_f64(1.5707963267948966); if (r > 0.999 && r < 1.001) { return 7; } return 0; }", 7},
+		{"cos_pi", "function main(): i32 { let r: f64 = __cos_f64(3.141592653589793); if (r > 0.0 - 1.001 && r < 0.0 - 0.999) { return 7; } return 0; }", 7},
 		{"exp_0", "function main(): i32 { return __exp_f64(0.0) as i32; }", 1},
 		{"exp_2", "function main(): i32 { return __exp_f64(2.0) as i32; }", 7},
-		{"exp_e", "function main(): i32 { var r: f64 = __exp_f64(1.0); if (r > 2.71 && r < 2.72) { return 7; } return 0; }", 7},
-		{"log_e", "function main(): i32 { var r: f64 = __log_f64(2.718281828459045); if (r > 0.999 && r < 1.001) { return 7; } return 0; }", 7},
+		{"exp_e", "function main(): i32 { let r: f64 = __exp_f64(1.0); if (r > 2.71 && r < 2.72) { return 7; } return 0; }", 7},
+		{"log_e", "function main(): i32 { let r: f64 = __log_f64(2.718281828459045); if (r > 0.999 && r < 1.001) { return 7; } return 0; }", 7},
 		{"log_10", "function main(): i32 { return __log_f64(10.0) as i32; }", 2},
-		{"exp_log_roundtrip", "function main(): i32 { var r: f64 = __log_f64(__exp_f64(3.0)); if (r > 2.999 && r < 3.001) { return 7; } return 0; }", 7},
+		{"exp_log_roundtrip", "function main(): i32 { let r: f64 = __log_f64(__exp_f64(3.0)); if (r > 2.999 && r < 3.001) { return 7; } return 0; }", 7},
 		{"pow_int", "function main(): i32 { return __pow_f64(2.0, 5.0) as i32; }", 32},
 		{"pow_3_2", "function main(): i32 { return __pow_f64(3.0, 2.0) as i32; }", 9},
-		{"pow_sqrt", "function main(): i32 { var r: f64 = __pow_f64(2.0, 0.5); if (r > 1.41 && r < 1.42) { return 7; } return 0; }", 7},
+		{"pow_sqrt", "function main(): i32 { let r: f64 = __pow_f64(2.0, 0.5); if (r > 1.41 && r < 1.42) { return 7; } return 0; }", 7},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, code := compileAndRunX86_64(t, c.src)
@@ -672,7 +672,7 @@ func TestX86_64InstantNow(t *testing.T) {
 	_, code := compileAndRunX86_64(t, `
 import "std/time";
 function main(): i32 {
-    var ts: Instant = time.instant_now();
+    let ts: Instant = time.instant_now();
     if (ts.sec < (1700000000 as i64)) { return 1; }
     if (ts.sec > (253402300800 as i64)) { return 2; }
     return 0;
@@ -711,8 +711,8 @@ func TestX86_64Args(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	src := `function main(): i32 {
-    var a: string[] = args();
-    var i: i32 = 0;
+    let a: string[] = args();
+    let i: i32 = 0;
     while (i < a.len()) {
         print(a[i]);
         i = i + 1;
@@ -845,7 +845,7 @@ function main(): i32 {
 // actual entropy).
 func TestX86_64RandomBytes(t *testing.T) {
 	out, code := compileAndRunX86_64(t, `function main(): i32 {
-    var s: u8[] = random_bytes(16);
+    let s: u8[] = random_bytes(16);
     write(string_from_bytes_unchecked(s));
     return s.len();
 }`)
@@ -875,8 +875,8 @@ func TestX86_64RandomBytes(t *testing.T) {
 // is live and varying, exit 0/1 flags a stuck generator.
 func TestX86_64RandomI32(t *testing.T) {
 	_, code := compileAndRunX86_64(t, `function main(): i32 {
-    var a: i32 = random_i32();
-    var b: i32 = random_i32();
+    let a: i32 = random_i32();
+    let b: i32 = random_i32();
     if (a == 0) { return 0; }
     if (a == b) { return 1; }
     return 7;
@@ -895,14 +895,14 @@ func TestX86_64RandomI32(t *testing.T) {
 func TestX86_64StringAsBytes(t *testing.T) {
 	// Inline string: 'A'+'B'+'C' = 65+66+67 = 198.
 	if _, code := compileAndRunX86_64(t, `function main(): i32 {
-    var b = "ABC".as_bytes();
+    let b = "ABC".as_bytes();
     return b.len() + (b[0] as i32) + (b[1] as i32) + (b[2] as i32);
 }`); code != 201 {
 		t.Errorf("inline as_bytes: exit = %d, want 201 (3 + 65+66+67)", code)
 	}
 	// Heap string: len 10 + last byte 'J' (74) = 84.
 	if _, code := compileAndRunX86_64(t, `function main(): i32 {
-    var b = "ABCDEFGHIJ".as_bytes();
+    let b = "ABCDEFGHIJ".as_bytes();
     return b.len() + (b[9] as i32);
 }`); code != 84 {
 		t.Errorf("heap as_bytes: exit = %d, want 84 (10 + 'J')", code)
@@ -1036,14 +1036,14 @@ func TestX86_64ReadLineBuiltin(t *testing.T) {
 	runCase("hello\n", 1) // Some(line)
 }
 
-// Closure factory pattern: `var f = makeAdder(7); f(35)`. The
+// Closure factory pattern: `let f = makeAdder(7); f(35)`. The
 // IR's Defunctionalise pass rewrites `f(35)` into a direct call
 // to the hoisted `add` with env_ptr pulled out of the closure
 // pair at offset +ptrW (=8 on native; was hardcoded to 4 for
 // wasm — see Defunctionalise's pairEnvOffset parameter). The
 // pair allocation itself can't elide here because the slot's
 // writer is OpCallDirect makeAdder, not a direct OpMakeClosure.
-// `var f = nested_fn; f()` crashes with SIGSEGV if
+// `let f = nested_fn; f()` crashes with SIGSEGV if
 // defunctionalize detects only the directly-preceded
 // OpMakeClosure / OpCallDirect-returning-closure source. Going
 // through an intermediate variable (or a chain of them) kept
@@ -1055,14 +1055,14 @@ func TestX86_64ReadLineBuiltin(t *testing.T) {
 // Chained-alias no-capture closures must not heap-allocate.
 // The elide-closure-pair pass rewrites OpMakeClosure → OpMakeEnv
 // even when the closure value flows through an intermediate
-// `var f = nested_fn` slot. Verify at runtime that the chained
+// `let f = nested_fn` slot. Verify at runtime that the chained
 // alias still returns the right value (the no-allocation
 // property itself is covered by the elide-closure-pair IR tests).
 func TestX86_64ClosureChainNoAlloc(t *testing.T) {
 	_, code := compileAndRunX86_64(t, `function main(): i32 {
     function answer(): i32 { return 7; }
-    var f = answer;
-    var x: i32 = f();
+    let f = answer;
+    let x: i32 = f();
     return x;
 }`)
 	if code != 7 {
@@ -1160,7 +1160,7 @@ function main(): i32 {
     return cb(items[0]);
 }
 function main(): i32 {
-    var n: i32 = 10;
+    let n: i32 = 10;
     function addN(x: i32): i32 { return x + n; }
     return each([5], addN);
 }`, 15},
@@ -1175,7 +1175,7 @@ function main(): i32 {
     return cb(items[0]);
 }
 function main(): i32 {
-    var nums: i32[] = [10, 20, 30];
+    let nums: i32[] = [10, 20, 30];
     use n <- each(nums);
     return n + 1;
 }`, 11},
@@ -1193,7 +1193,7 @@ func TestX86_64ClosureFactory(t *testing.T) {
     return add;
 }
 function main(): i32 {
-    var f = makeAdder(7);
+    let f = makeAdder(7);
     return f(35);
 }`
 	if _, code := compileAndRunX86_64(t, src); code != 42 {
@@ -1209,8 +1209,8 @@ func TestX86_64ClosureMultipleInstances(t *testing.T) {
     return add;
 }
 function main(): i32 {
-    var add5 = makeAdder(5);
-    var add10 = makeAdder(10);
+    let add5 = makeAdder(5);
+    let add10 = makeAdder(10);
     return add5(1) + add10(1);
 }`
 	// (5+1) + (10+1) = 17
@@ -1225,7 +1225,7 @@ function main(): i32 {
 // Exercises the OpMakeEnv path.
 func TestX86_64ClosureCapturesParamAndVar(t *testing.T) {
 	src := `function outer(seed: i32): i32 {
-    var bonus: i32 = 100;
+    let bonus: i32 = 100;
     function inner(x: i32): i32 { return x + seed + bonus; }
     return inner(2);
 }
@@ -1260,10 +1260,10 @@ function main(): i32 { return outer("hello"); }`
 // path under x86-64's two-word string ABI.
 func TestX86_64LambdaWithBodyLocals(t *testing.T) {
 	src := `function main(): i32 {
-    var greet = "hi";
-    var f = (n: i32): i32 => {
-        var sq = n * n;
-        var tag = greet + "!";
+    let greet = "hi";
+    let f = (n: i32): i32 => {
+        let sq = n * n;
+        let tag = greet + "!";
         print(tag);
         return sq;
     };
@@ -1288,9 +1288,9 @@ func TestX86_64LambdaCallsMethodOnCapturedString(t *testing.T) {
 	src := `
 import "std/string";
 function main(): i32 {
-    var s: string = "  hi  ";
-    var f = (): string => { return s.trim().to_owned(); };
-    var got = f();
+    let s: string = "  hi  ";
+    let f = (): string => { return s.trim().to_owned(); };
+    let got = f();
     if (got == "hi") { return 0; }
     return 1;
 }`
@@ -1306,12 +1306,12 @@ function main(): i32 {
 // gets incremented).
 func TestX86_64NestedLambdaUniqueNames(t *testing.T) {
 	src := `function main(): i32 {
-    var outer = (): i32 => {
-        var inner = (): i32 => {
-            var x = 21;
+    let outer = (): i32 => {
+        let inner = (): i32 => {
+            let x = 21;
             return x * 2;
         };
-        var y = inner();
+        let y = inner();
         return y;
     };
     return outer();
@@ -1330,7 +1330,7 @@ func TestX86_64ClosureMultiCapture(t *testing.T) {
     return f;
 }
 function main(): i32 {
-    var h = make2(10, 20);
+    let h = make2(10, 20);
     return h(12);
 }`
 	if _, code := compileAndRunX86_64(t, src); code != 42 {
@@ -1361,12 +1361,12 @@ function main(): i32 { return outer("hi", 40); }`
 // `field access on unresolved struct ""` at IR-emit time.
 func TestX86_64ClosureCapturesTuple(t *testing.T) {
 	src := `function build(): () => i64 {
-    var t: (i64, i64) = (1000000000000i64, 2000000000000i64);
+    let t: (i64, i64) = (1000000000000i64, 2000000000000i64);
     function read(): i64 { return t.0 + t.1; }
     return read;
 }
 function main(): i32 {
-    var f = build();
+    let f = build();
     if (f() != 3000000000000i64) { return 1; }
     return 0;
 }`
@@ -1386,7 +1386,7 @@ function makeNamer(name: string): () => string {
     return build;
 }
 function main(): i32 {
-    var f = makeNamer("world");
+    let f = makeNamer("world");
     if (f() != "hello, world!") { return 1; }
     return 0;
 }`
@@ -1399,7 +1399,7 @@ function main(): i32 {
 // captured outer-scope variable now stores into the env block.
 func TestX86_64MutableCapturedVar(t *testing.T) {
 	src := `function makeCounter(): () => i32 {
-    var count: i32 = 0;
+    let count: i32 = 0;
     function tick(): i32 {
         count = count + 1;
         return count;
@@ -1407,10 +1407,10 @@ func TestX86_64MutableCapturedVar(t *testing.T) {
     return tick;
 }
 function main(): i32 {
-    var c = makeCounter();
-    var a: i32 = c();
-    var b: i32 = c();
-    var d: i32 = c();
+    let c = makeCounter();
+    let a: i32 = c();
+    let b: i32 = c();
+    let d: i32 = c();
     return a + b + d;
 }`
 	if _, code := compileAndRunX86_64(t, src); code != 6 {
@@ -1431,8 +1431,8 @@ function makeApplier(f: (i32) => i32): (i32) => i32 {
     return apply;
 }
 function main(): i32 {
-    var a = makeAdder(10);
-    var ap = makeApplier(a);
+    let a = makeAdder(10);
+    let ap = makeApplier(a);
     return ap(5);
 }`
 	if _, code := compileAndRunX86_64(t, src); code != 16 {
@@ -1454,7 +1454,7 @@ func TestX86_64ClosureRecursiveSelfCall(t *testing.T) {
     return fact;
 }
 function main(): i32 {
-    var f = makeFact();
+    let f = makeFact();
     return f(5);
 }`
 	if _, code := compileAndRunX86_64(t, src); code != 120 {
@@ -1477,7 +1477,7 @@ func TestX86_64Map(t *testing.T) {
 		{"basic_set_get", `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
+    let m: Map[i32, i32] = map_new(4);
     m = m.insert(1, 100);
     m = m.insert(2, 200);
     return m.get_or(2, 0);
@@ -1485,14 +1485,14 @@ function main(): i32 {
 		{"iter_after_delete", `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("a", 10);
     m = m.insert("b", 20);
     m = m.insert("c", 30);
     m = m.without("b").0;
     if (m.has("b")) { return 1; }
-    var total: i32 = 0;
-    var it = m.iter();
+    let total: i32 = 0;
+    let it = m.iter();
     while (it.has_next()) {
         total = total + it.value();
         it.advance();
@@ -1515,7 +1515,7 @@ func TestX86_64Defer(t *testing.T) {
 		want int
 	}{
 		{"defer fires after return value computed", `function inner(): i32 {
-    var x: i32 = 1;
+    let x: i32 = 1;
     defer x = 99;
     x = 2;
     return x;
@@ -1528,7 +1528,7 @@ function main(): i32 { return inner(); }`, 2},
     return c.get();
 }
 function main(): i32 {
-    var c: Cell[i32] = cell_new(0);
+    let c: Cell[i32] = cell_new(0);
     check(c);
     return c.get();
 }`, 10},
@@ -1549,15 +1549,15 @@ func TestX86_64FStringInterpolation(t *testing.T) {
 		{"interpolated i32", `
 import "std/i32";
 function main(): i32 {
-    var n: i32 = 42;
-    var s: string = f"n is {n}";
+    let n: i32 = 42;
+    let s: string = f"n is {n}";
     return s.len();
 }`, 7},
 		{"interpolated string", `
 import "std/i32";
 function main(): i32 {
-    var who: string = "world";
-    var s: string = f"hello, {who}!";
+    let who: string = "world";
+    let s: string = f"hello, {who}!";
     return s.len();
 }`, 13},
 	} {
@@ -1600,7 +1600,7 @@ function main(): i32 {
     return a + b;
 }`, 30},
 		{"heterogeneous tuple element access", `function main(): i32 {
-    var t: (i32, string, i32) = (1, "two", 3);
+    let t: (i32, string, i32) = (1, "two", 3);
     return t.0 + t.2;
 }`, 4},
 	} {
@@ -1618,12 +1618,12 @@ func TestX86_64ForEach(t *testing.T) {
 		want int
 	}{
 		{"sum array", `function main(): i32 {
-    var sum: i32 = 0;
+    let sum: i32 = 0;
     for n in [1, 2, 3, 4, 5] { sum = sum + n; }
     return sum;
 }`, 15},
 		{"break exits the loop", `function main(): i32 {
-    var found: i32 = -1;
+    let found: i32 = -1;
     for n in [10, 20, 30, 40] {
         if (n == 30) { found = n; break; }
     }
@@ -1644,12 +1644,12 @@ func TestX86_64IfLet(t *testing.T) {
 		want int
 	}{
 		{"Some matches", `function main(): i32 {
-    var x: Option[i32] = Some(42);
+    let x: Option[i32] = Some(42);
     if let Some(v) = x { return v; }
     return 99;
 }`, 42},
 		{"None falls through", `function main(): i32 {
-    var x: Option[i32] = None;
+    let x: Option[i32] = None;
     if let Some(v) = x { return v; }
     return 99;
 }`, 99},
@@ -1684,8 +1684,8 @@ function main(): i32 {
     // lose the high bit and the low 32 bits would be (base_lo +
     // 4*8) = (0 + 32). With usize-arithmetic the result is
     // 0x100000020 and the low 32 bits are 32 — matches.
-    var heap_ptr: usize = 4294967296 as usize;
-    var elem: usize = offset_compute(heap_ptr, 4, 8);
+    let heap_ptr: usize = 4294967296 as usize;
+    let elem: usize = offset_compute(heap_ptr, 4, 8);
     return (elem as i32);
 }`
 	_, code := compileAndRunX86_64(t, src)
@@ -1706,9 +1706,9 @@ func TestX86_64UsizeDivRem(t *testing.T) {
 	//   64-bit: 5000000000 / 3 = 1666666666, 5000000000 % 3 = 2.
 	//   32-bit (buggy): 705032704 / 3 = 235010901, % 3 = 1.
 	src := `function main(): i32 {
-    var x: usize = 5000000000 as usize;
-    var q: usize = x / 3;
-    var r: usize = x % 3;
+    let x: usize = 5000000000 as usize;
+    let q: usize = x / 3;
+    let r: usize = x % 3;
     if ((q as i32) != 1666666666) { return 1; }
     if ((r as i32) != 2) { return 2; }
     return 7;
@@ -1727,8 +1727,8 @@ func TestX86_64UsizeDivRem(t *testing.T) {
 // arm64 has the matching test).
 func TestX86_64FloatToUsize(t *testing.T) {
 	src := `function main(): i32 {
-    var f: f64 = 5000000000.0;
-    var u: usize = f as usize;
+    let f: f64 = 5000000000.0;
+    let u: usize = f as usize;
     if (u == 5000000000 as usize) { return 7; }
     return 1;
 }`
@@ -1757,48 +1757,48 @@ func TestX86_64WideScalarMap(t *testing.T) {
 		{"Map[i64, i32]", `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(4);
+    let m: Map[i64, i32] = map_new(4);
     m = m.insert(1i64, 100);
     return m.get_or(1i64, 0);
 }`, 100},
 		{"Map[i32, f64]", `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, f64] = map_new(4);
+    let m: Map[i32, f64] = map_new(4);
     m = m.insert(1, 3.14);
     return m.get_or(1, 0.0) as i32;
 }`, 3},
 		{"Map[i64, string]", `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, string] = map_new(4);
+    let m: Map[i64, string] = map_new(4);
     m = m.insert(1i64, "hello");
     return (m.get_or(1i64, "")).len();
 }`, 5},
 		{"Map[string, i64]", `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i64] = map_new(4);
+    let m: Map[string, i64] = map_new(4);
     m = m.insert("hello", 42i64);
     return m.get_or("hello", 0i64) as i32;
 }`, 42},
 		{"Map[u64, i32]", `
 import "core/map";
 function main(): i32 {
-    var m: Map[u64, i32] = map_new(4);
+    let m: Map[u64, i32] = map_new(4);
     m = m.insert(1u64, 100);
     return m.get_or(1u64, 0);
 }`, 100},
 		{"distinct high-bit i64 keys", `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(8);
-    var k1: i64 = 0i64;
-    var k2: i64 = 1i64 << 33i64;
+    let m: Map[i64, i32] = map_new(8);
+    let k1: i64 = 0i64;
+    let k2: i64 = 1i64 << 33i64;
     m = m.insert(k1, 1);
     m = m.insert(k2, 2);
-    var v1: i32 = m.get_or(k1, 99);
-    var v2: i32 = m.get_or(k2, 99);
+    let v1: i32 = m.get_or(k1, 99);
+    let v2: i32 = m.get_or(k2, 99);
     // Sum signals correct separation: v1=1, v2=2 → 3.
     // Coincident-collision would give v1=v2 → 2 or 4.
     return v1 + v2;
@@ -1814,10 +1814,10 @@ function main(): i32 {
 		{"keys() preserves 8-byte values", `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(4);
+    let m: Map[i64, i32] = map_new(4);
     m = m.insert(1i64, 10);
     m = m.insert(1000000000000i64, 20);
-    var keys: i64[] = m.keys();
+    let keys: i64[] = m.keys();
     if (keys.len() != 2) { return 1; }
     if (keys[0] != 1i64 && keys[0] != 1000000000000i64) { return 2; }
     if (keys[1] != 1i64 && keys[1] != 1000000000000i64) { return 3; }
@@ -1839,29 +1839,29 @@ func TestX86_64Usize(t *testing.T) {
 		want int
 	}{
 		{"basic usize round-trip", `function main(): i32 {
-    var x: usize = 42;
+    let x: usize = 42;
     return x as i32;
 }`, 42},
 		{"usize arithmetic", `function main(): i32 {
-    var a: usize = 10;
-    var b: usize = 32;
+    let a: usize = 10;
+    let b: usize = 32;
     return (a + b) as i32;
 }`, 42},
 		{"usize as fn param + return", `function dbl(x: usize): usize { return x + x; }
 function main(): i32 {
-    var n: usize = 21;
+    let n: usize = 21;
     return dbl(n) as i32;
 }`, 42},
 		{"large value survives on native (> 32 bits)", `function main(): i32 {
-    var big: usize = 4294967301 as usize;
-    var rt: i64 = big as i64;
+    let big: usize = 4294967301 as usize;
+    let rt: i64 = big as i64;
     if ((rt >> 32) > 0i64) { return 42; }
     return 1;
 }`, 42},
 		{"string ptr round-trip through usize", `function main(): i32 {
-    var s: string = "hello, " + "world";
-    var ptr: usize = s as usize;
-    var s2: string = ptr as string;
+    let s: string = "hello, " + "world";
+    let ptr: usize = s as usize;
+    let s2: string = ptr as string;
     return s2.len();
 }`, 12},
 	} {
@@ -2101,7 +2101,7 @@ func TestX86_64ReadWriteFileRoundtrip(t *testing.T) {
 	}
 }
 
-// Function-value-in-var: `var f: (i32, i32) => i32 = add; f(20, 22)`
+// Function-value-in-var: `let f: (i32, i32) => i32 = add; f(20, 22)`
 // — exercises OpConstFunc + OpCallIndirect on x86-64. Mirrors
 // TestArm64IndirectCall. The codegen has been in place since PR 2;
 // this test closes the no-coverage gap flagged in
@@ -2109,7 +2109,7 @@ func TestX86_64ReadWriteFileRoundtrip(t *testing.T) {
 func TestX86_64IndirectCall(t *testing.T) {
 	_, code := compileAndRunX86_64(t, `function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 {
-    var f: (i32, i32) => i32 = add;
+    let f: (i32, i32) => i32 = add;
     return f(20, 22);
 }`)
 	if code != 42 {
@@ -2132,23 +2132,23 @@ func TestX86_64SliceMake(t *testing.T) {
 		want int
 	}{
 		{"i32 slice read", `function main(): i32 {
-    var arr: i32[] = [10, 20, 30, 40, 50];
-    var s: [i32] = arr[1:4];
+    let arr: i32[] = [10, 20, 30, 40, 50];
+    let s: [i32] = arr[1:4];
     return s[1];
 }`, 30},
 		{"u8 slice read", `function main(): i32 {
-    var arr: u8[] = [10, 20, 30, 40, 50];
-    var s: [u8] = arr[1:4];
+    let arr: u8[] = [10, 20, 30, 40, 50];
+    let s: [u8] = arr[1:4];
     return s[1] as i32;
 }`, 30},
 		{"i64 slice read", `function main(): i32 {
-    var arr: i64[] = [(1i64 << 40), (1i64 << 41), (1i64 << 42)];
-    var s: [i64] = arr[1:3];
+    let arr: i64[] = [(1i64 << 40), (1i64 << 41), (1i64 << 42)];
+    let s: [i64] = arr[1:3];
     return (s[0] >> 41) as i32;
 }`, 1},
 		{"len(slice)", `function main(): i32 {
-    var arr: i32[] = [1, 2, 3, 4, 5];
-    var s: [i32] = arr[1:4];
+    let arr: i32[] = [1, 2, 3, 4, 5];
+    let s: [i32] = arr[1:4];
     return s.len();
 }`, 3},
 	} {
@@ -2185,16 +2185,16 @@ func TestX86_64FloatBitCast(t *testing.T) {
 		want int
 	}{
 		{"round-trip 1.0", `function main(): i32 {
-    var x: f32 = 1.0;
-    var b: i32 = f32_bits(x);
-    var y: f32 = f32_from_bits(b);
+    let x: f32 = 1.0;
+    let b: i32 = f32_bits(x);
+    let y: f32 = f32_from_bits(b);
     if (y == x) { return 0; }
     return 1;
 }`, 0},
 		{"round-trip 3.14", `function main(): i32 {
-    var x: f32 = 3.14;
-    var b: i32 = f32_bits(x);
-    var y: f32 = f32_from_bits(b);
+    let x: f32 = 3.14;
+    let b: i32 = f32_bits(x);
+    let y: f32 = f32_from_bits(b);
     if (y == x) { return 0; }
     return 1;
 }`, 0},
@@ -2203,9 +2203,9 @@ func TestX86_64FloatBitCast(t *testing.T) {
     return 1;
 }`, 0},
 		{"sign-bit preserved through round-trip", `function main(): i32 {
-    var neg: f32 = 0.0 - 1.0;
-    var b: i32 = f32_bits(neg);
-    var back: f32 = f32_from_bits(b);
+    let neg: f32 = 0.0 - 1.0;
+    let b: i32 = f32_bits(neg);
+    let back: f32 = f32_from_bits(b);
     if (back == neg) { return 0; }
     return 1;
 }`, 0},
@@ -2215,7 +2215,7 @@ func TestX86_64FloatBitCast(t *testing.T) {
 		// preserves negative zero, so `f32_bits(-0.0)` is
 		// the expected 0x80000000.
 		{"-0.0 bits = sign bit", `function main(): i32 {
-    var bits_u: u32 = f32_bits(-0.0) as u32;
+    let bits_u: u32 = f32_bits(-0.0) as u32;
     if (bits_u == 2147483648 as u32) { return 0; }
     return 1;
 }`, 0},
@@ -2269,7 +2269,7 @@ function main(): i32 {
         },
         Err(_) => { return 3; }
     }
-    var p: string = slice_unchecked("x=sso.txt", 2, 9) + "";
+    let p: string = slice_unchecked("x=sso.txt", 2, 9) + "";
     match (open_reader(p)) {
         Ok(r) => {
             match (r.read_chunk(8)) {
@@ -2358,7 +2358,7 @@ function main(): i32 {
     }
     match (stat("mode.txt")) {
         Ok(st) => {
-            var others: i32 = (st.mode & (63 as u32)) as i32;
+            let others: i32 = (st.mode & (63 as u32)) as i32;
             if (others != 0) { return others; }
             write("private");
             return 0;
@@ -2398,8 +2398,8 @@ function inner(trace: Cell[i32]): i32 {
     return 42;
 }
 function main(): i32 {
-    var trace: Cell[i32] = cell_new(0);
-    var r: i32 = inner(trace);
+    let trace: Cell[i32] = cell_new(0);
+    let r: i32 = inner(trace);
     if (r != 42) { return 1; }
     // Body steps 1 and 2, then the defers in LIFO order: 4, then 3.
     if (trace.get() != 1243) { return 2; }
@@ -2408,20 +2408,20 @@ function main(): i32 {
 		{"fstring_interp", `
 import "std/i32";
 function main(): i32 {
-    var x: i32 = 42;
-    var s: string = f"x is {x}";
+    let x: i32 = 42;
+    let s: string = f"x is {x}";
     if (s.len() == 7) { return 0; }
     return 1;
 }`},
 		{"for_each_array", `function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4, 5];
-    var sum: i32 = 0;
+    let xs: i32[] = [1, 2, 3, 4, 5];
+    let sum: i32 = 0;
     for x in xs { sum = sum + x; }
     if (sum == 15) { return 0; }
     return 1;
 }`},
 		{"if_let_match", `function main(): i32 {
-    var o: Option[i32] = Some(42);
+    let o: Option[i32] = Some(42);
     if let Some(x) = o {
         if (x == 42) { return 0; }
         return 1;
@@ -2433,14 +2433,14 @@ function main(): i32 {
     return (a / b, a - (a / b) * b);
 }
 function main(): i32 {
-    var p = divmod(17, 5);
+    let p = divmod(17, 5);
     if (p.0 == 3 && p.1 == 2) { return 0; }
     return 1;
 }`},
 		{"generic_infer_from_arg", `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var a = id(42);
-    var b = id(7);
+    let a = id(42);
+    let b = id(7);
     if (a == 42 && b == 7) { return 0; }
     return 1;
 }`},
@@ -2465,22 +2465,22 @@ func TestX86_64NoPreludeStdlibImports(t *testing.T) {
 		{"i32_string_cycle", `
 import "std/i32";
 function main(): i32 {
-    var s: string = (42).to_string_padded(6);
+    let s: string = (42).to_string_padded(6);
     if (s == "000042") { return 0; }
     return 1;
 }`},
 		{"array_method_chain", `
 import "std/array";
 function main(): i32 {
-    var xs: i32[] = [0 - 3, 4, 0 - 1];
-    var ys = xs.abs_each();
+    let xs: i32[] = [0 - 3, 4, 0 - 1];
+    let ys = xs.abs_each();
     if (ys[0] + ys[1] + ys[2] == 8) { return 0; }
     return 1;
 }`},
 		{"qualified_int_call", `
 import "core/int";
 function main(): i32 {
-    var s: string = int.int_to_string_radix(255, 16);
+    let s: string = int.int_to_string_radix(255, 16);
     if (s == "ff") { return 0; }
     return 1;
 }`},
@@ -2489,10 +2489,10 @@ import "std/i32";
 import "std/string";
 import "std/array";
 function main(): i32 {
-    var s: string = (0 - 42).to_string();
+    let s: string = (0 - 42).to_string();
     if (s != "-42") { return 1; }
-    var strs: string[] = ["b", "a", "c"];
-    var joined: string = strs.join(",");
+    let strs: string[] = ["b", "a", "c"];
+    let joined: string = strs.join(",");
     if (joined != "b,a,c") { return 2; }
     return 0;
 }`},
@@ -2521,7 +2521,7 @@ struct V2 { b: i32 }
 type U = W | V2;
 function mk(): U { return W { a: [1, 2, 3] }; }
 function build(): i32 {
-    var u: U = mk();
+    let u: U = mk();
     match (u) { W(w) => { return w.a[1] + __rc_underflow_count(); }, V2(x) => { return x.b; } }
     return 0 - 1;
 }
@@ -2537,8 +2537,8 @@ function main(): i32 { return build() - 2; }`
 struct V2 { b: i32 }
 type U = W | V2;
 function main(): i32 {
-    var w: W = W { a: 7 };
-    var u: U = w;
+    let w: W = W { a: 7 };
+    let u: U = w;
     return w.a + __rc_underflow_count() - 7;
 }`
 	if _, code := compileAndRunX86_64(t, aliased); code != 0 {
@@ -2550,8 +2550,8 @@ function main(): i32 {
 	// but no over-release.
 	nonUniform := `enum E { Arr(i32[]), Num(i32) }
 function main(): i32 {
-    var e: E = Arr([1, 2, 3]);
-    var f: E = Num(9);
+    let e: E = Arr([1, 2, 3]);
+    let f: E = Num(9);
     match (e) {
         Arr(a) => { return a.len() + __rc_underflow_count() - 3; },
         Num(_) => { return 0 - 1; }
@@ -2568,9 +2568,9 @@ function main(): i32 {
 // silently extend.
 func TestX86_64ArrayPushAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [10, 20];
+    let xs: i32[] = [10, 20];
     xs = xs.append(30);
-    var ys = xs;
+    let ys = xs;
     ys = ys.append(40);
     if (xs.len() != 3) { return 1; }
     if (xs[0] != 10) { return 2; }
@@ -2586,8 +2586,8 @@ func TestX86_64ArrayPushAliasedCopies(t *testing.T) {
 // Mirror of TestArm64ArrayIndexSetAliasedCopies.
 func TestX86_64ArrayIndexSetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var ys = xs;
+    let xs: i32[] = [10, 20, 30];
+    let ys = xs;
     ys = ys.with(0, 999);
     if (xs[0] != 10) { return 1; }
     if (xs[1] != 20) { return 2; }
@@ -2609,7 +2609,7 @@ func TestX86_64ArrayIndexSetAliasedCopies(t *testing.T) {
 // regression parity.
 func TestX86_64ArrayIndexSetU8Stride(t *testing.T) {
 	src := `function main(): i32 {
-    var buf: u8[] = __alloc_u8(4);
+    let buf: u8[] = __alloc_u8(4);
     buf = buf.with(0, 65 as u8);
     buf = buf.with(1, 66 as u8);
     buf = buf.with(2, 67 as u8);
@@ -2625,7 +2625,7 @@ func TestX86_64ArrayIndexSetU8Stride(t *testing.T) {
 func TestX86_64ArrayIndexSetStructField(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
-    var s: State = State{items: [10, 20, 30]};
+    let s: State = State{items: [10, 20, 30]};
     s = State { ...s, items: s.items.with(1, 999) };
     if (s.items[0] != 10) { return 1; }
     if (s.items[1] != 999) { return 2; }
@@ -2641,8 +2641,8 @@ function main(): i32 {
 func TestX86_64ArrayIndexSetStructFieldAliasedCopies(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
-    var arr: i32[] = [10, 20, 30];
-    var s: State = State{items: arr};
+    let arr: i32[] = [10, 20, 30];
+    let s: State = State{items: arr};
     s = State { ...s, items: s.items.with(1, 999) };
     if (arr[0] != 10) { return 1; }
     if (arr[1] != 20) { return 2; }
@@ -2662,7 +2662,7 @@ func TestX86_64ArrayIndexSetNestedStructField(t *testing.T) {
 	src := `struct Inner { items: i32[] }
 struct Outer { inner: Inner }
 function main(): i32 {
-    var o: Outer = Outer{inner: Inner{items: [10, 20, 30]}};
+    let o: Outer = Outer{inner: Inner{items: [10, 20, 30]}};
     o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (o.inner.items[0] != 10) { return 1; }
     if (o.inner.items[1] != 999) { return 2; }
@@ -2679,8 +2679,8 @@ func TestX86_64ArrayIndexSetNestedStructFieldAliasedCopies(t *testing.T) {
 	src := `struct Inner { items: i32[] }
 struct Outer { inner: Inner }
 function main(): i32 {
-    var arr: i32[] = [10, 20, 30];
-    var o: Outer = Outer{inner: Inner{items: arr}};
+    let arr: i32[] = [10, 20, 30];
+    let o: Outer = Outer{inner: Inner{items: arr}};
     o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (arr[1] != 20) { return 1; }
     if (o.inner.items[1] != 999) { return 2; }
@@ -2694,7 +2694,7 @@ function main(): i32 {
 // Mirror of TestArm64ArrayIndexSetMat.
 func TestX86_64ArrayIndexSetMat(t *testing.T) {
 	src := `function main(): i32 {
-    var mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
+    let mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
     mat = mat.with(0, mat[0].with(1, 999));
     if (mat[0][0] != 1) { return 1; }
     if (mat[0][1] != 999) { return 2; }
@@ -2710,8 +2710,8 @@ func TestX86_64ArrayIndexSetMat(t *testing.T) {
 // Mirror of TestArm64ArrayIndexSetMatInnerAliasedCopies.
 func TestX86_64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
-    var mat: i32[][] = [[1, 2], [3, 4]];
-    var inner = mat[0];
+    let mat: i32[][] = [[1, 2], [3, 4]];
+    let inner = mat[0];
     mat = mat.with(0, mat[0].with(1, 999));
     if (inner[1] != 2) { return 1; }
     if (mat[0][1] != 999) { return 2; }
@@ -2727,7 +2727,7 @@ func TestX86_64MapSetReturnsMap(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
@@ -2746,8 +2746,8 @@ function main(): i32 {
 func TestX86_64ArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
 	src := `struct State { mat: i32[][] }
 function main(): i32 {
-    var inner: i32[] = [1, 2, 3];
-    var s: State = State{mat: [inner, [4, 5, 6]]};
+    let inner: i32[] = [1, 2, 3];
+    let s: State = State{mat: [inner, [4, 5, 6]]};
     s = State { ...s, mat: s.mat.with(0, s.mat[0].with(1, 999)) };
     if (inner[1] != 2) { return 1; }
     if (s.mat[0][1] != 999) { return 2; }
@@ -2762,7 +2762,7 @@ function main(): i32 {
 // Mirror of TestArm64ArraySetSelfAssign.
 func TestX86_64ArraySetSelfAssign(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
+    let xs: i32[] = [10, 20, 30];
     xs = xs.with(1, 999);
     if (xs[0] != 10) { return 1; }
     if (xs[1] != 999) { return 2; }
@@ -2777,8 +2777,8 @@ func TestX86_64ArraySetSelfAssign(t *testing.T) {
 // Mirror of TestArm64ArraySetAliasedCopies.
 func TestX86_64ArraySetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var ys = xs;
+    let xs: i32[] = [10, 20, 30];
+    let ys = xs;
     ys = ys.with(0, 999);
     if (xs[0] != 10) { return 1; }
     if (ys[0] != 999) { return 2; }
@@ -2794,15 +2794,15 @@ func TestX86_64MapDeleteReturnsMapBool(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
-    var (mb, hadb) = m.without("b");
+    let (mb, hadb) = m.without("b");
     if (!hadb) { return 1; }
     m = mb;
     if (m.without("z").1)  { return 2; }
-    var (m2, ok) = m.without("a");
+    let (m2, ok) = m.without("a");
     if (!ok) { return 3; }
     if (m2.has("a")) { return 4; }
     if (!m2.has("c")) { return 5; }
@@ -2819,7 +2819,7 @@ func TestX86_64MapClearReturnsMap(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("x", 10);
     m = m.insert("y", 20);
     if (m.len() != 2) { return 1; }
@@ -2837,7 +2837,7 @@ function main(): i32 {
 }
 
 // Phase 2d: Map.set copy-on-write. A local alias of a map
-// (var m2 = m1) bumps the handle rc to 2, so m2.insert(...) must
+// (let m2 = m1) bumps the handle rc to 2, so m2.insert(...) must
 // COPY rather than mutate the shared buffer — m1 stays intact.
 // Mirrors TestX86_64ArraySetAliasedCopies. The seed entry is a
 // statement-form set (no reassign) so m1's rc stays 1 before the
@@ -2846,9 +2846,9 @@ func TestX86_64MapSetAliasedCopies(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m1: Map[string, i32] = map_new(8);
+    let m1: Map[string, i32] = map_new(8);
     m1 = m1.insert("a", 1);                 // in-place (rc==1)
-    var m2 = m1;                    // alias → rc=2
+    let m2 = m1;                    // alias → rc=2
     m2 = m2.insert("a", 999);          // rc>1 → copy; m1 unchanged
     if (m1.get_or("a", 0) != 1)   { return 1; }
     if (m2.get_or("a", 0) != 999) { return 2; }
@@ -2860,24 +2860,24 @@ function main(): i32 {
 }
 
 // Phase 2d: Map.delete / Map.clear copy-on-write. An aliased map
-// (var m2 = m1) has rc=2, so delete/clear copy and leave the
+// (let m2 = m1) has rc=2, so delete/clear copy and leave the
 // source alias intact. The cow is threaded at the IR wrapper so
 // the (bool/void)-returning impls hand the new handle back.
 func TestX86_64MapDeleteClearAliasedCopies(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m1: Map[string, i32] = map_new(8);
+    let m1: Map[string, i32] = map_new(8);
     m1 = m1.insert("a", 1);
     m1 = m1.insert("b", 2);
-    var m2 = m1;                       // alias → rc=2
-    var (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
+    let m2 = m1;                       // alias → rc=2
+    let (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
     if (!ok)            { return 1; }
     if (m1.len() != 2)  { return 2; }  // original keeps "a"
     if (!m1.has("a"))   { return 3; }
     if (m3.len() != 1)  { return 4; }  // copy dropped "a"
     if (m3.has("a"))    { return 5; }
-    var m4 = m1;                       // alias → rc=2
+    let m4 = m1;                       // alias → rc=2
     m4 = m4.cleared();                   // rc>1 → copy; m1 intact
     if (m1.len() != 2)  { return 6; }
     if (m4.len() != 0)  { return 7; }
@@ -2892,9 +2892,9 @@ function main(): i32 {
 func TestX86_64TupleStructElem(t *testing.T) {
 	src := `struct Inner { x: i32, y: i32 }
 function main(): i32 {
-    var t: (i32, Inner) = (1, Inner { x: 2, y: 3 });
+    let t: (i32, Inner) = (1, Inner { x: 2, y: 3 });
     if (t.0 != 1) { return 1; }
-    var inner: Inner = t.1;
+    let inner: Inner = t.1;
     if (inner.x != 2) { return 2; }
     if (inner.y != 3) { return 3; }
     return 0;
@@ -2907,9 +2907,9 @@ function main(): i32 {
 // Mirror of TestArm64TupleArrayElem.
 func TestX86_64TupleArrayElem(t *testing.T) {
 	src := `function main(): i32 {
-    var t: (i32, i32[]) = (1, [10, 20, 30]);
+    let t: (i32, i32[]) = (1, [10, 20, 30]);
     if (t.0 != 1) { return 1; }
-    var arr: i32[] = t.1;
+    let arr: i32[] = t.1;
     if (arr.len() != 3) { return 2; }
     if (arr[0] != 10) { return 3; }
     if (arr[2] != 30) { return 4; }
@@ -2923,10 +2923,10 @@ func TestX86_64TupleArrayElem(t *testing.T) {
 // Mirror of TestArm64TupleNestedTuple.
 func TestX86_64TupleNestedTuple(t *testing.T) {
 	src := `function main(): i32 {
-    var t: (i32, (i32, i32)) = (1, (2, 3));
-    var (a, b) = t;
+    let t: (i32, (i32, i32)) = (1, (2, 3));
+    let (a, b) = t;
     if (a != 1) { return 1; }
-    var (c, d) = b;
+    let (c, d) = b;
     if (c != 2) { return 2; }
     if (d != 3) { return 3; }
     return 0;
@@ -2939,7 +2939,7 @@ func TestX86_64TupleNestedTuple(t *testing.T) {
 // Mirror of TestArm64LexerChainedTupleNumericAccess.
 func TestX86_64LexerChainedTupleNumericAccess(t *testing.T) {
 	src := `function main(): i32 {
-    var t: (i32, (i32, i32)) = (1, (2, 3));
+    let t: (i32, (i32, i32)) = (1, (2, 3));
     if (t.0 != 1) { return 1; }
     if (t.1.0 != 2) { return 2; }
     if (t.1.1 != 3) { return 3; }
@@ -2957,18 +2957,18 @@ import "core/map";
 function take(m: Map[string, i32]): i32 { return m.len(); }
 function mkEmpty(): Map[i32, string] { return Map {}; }
 function main(): i32 {
-    var a: Map[string, i32] = Map {};
+    let a: Map[string, i32] = Map {};
     if (a.len() != 0) { return 1; }
     a = a.insert("k", 42);
     if (a.get_or("k", 0) != 42) { return 2; }
-    var b: Map[i32, string] = Map {};
+    let b: Map[i32, string] = Map {};
     if (b.len() != 0) { return 3; }
     b = b.insert(7, "hello");
     if (!b.has(7)) { return 4; }
     if (take(Map {}) != 0) { return 5; }
-    var r = mkEmpty();
+    let r = mkEmpty();
     if (r.len() != 0) { return 6; }
-    var d: Map[i32, i32] = Map {};
+    let d: Map[i32, i32] = Map {};
     if (d.len() != 0) { return 7; }
     return 0;
 }`
@@ -2981,20 +2981,20 @@ function main(): i32 {
 func TestX86_64EnumVariantInTuple(t *testing.T) {
 	src := `enum Color { Red, Green, Blue }
 function main(): i32 {
-    var t: (i32, Color) = (1, Green);
+    let t: (i32, Color) = (1, Green);
     if (t.0 != 1) { return 1; }
     match (t.1) {
         Red => { return 2; },
         Green => { },
         Blue => { return 3; }
     }
-    var u: (i32, Option[i32]) = (5, Some(42));
+    let u: (i32, Option[i32]) = (5, Some(42));
     if (u.0 != 5) { return 4; }
     match (u.1) {
         Some(v) => { if (v != 42) { return 5; } },
         None => { return 6; }
     }
-    var w: (Color, i32) = (Blue, 99);
+    let w: (Color, i32) = (Blue, 99);
     if (w.1 != 99) { return 7; }
     match (w.0) {
         Blue => { return 0; },
@@ -3013,25 +3013,25 @@ func TestX86_64MapPointerShapedValues(t *testing.T) {
 import "core/map";
 struct P { x: i32, y: i32 }
 function main(): i32 {
-    var mt: Map[string, (i32, i32)] = Map {};
+    let mt: Map[string, (i32, i32)] = Map {};
     mt = mt.insert("a", (3, 4));
     match (mt.get("a")) {
         Some(p) => { if (p.0 + p.1 != 7) { return 1; } },
         None => { return 2; }
     }
-    var ms: Map[string, P] = Map {};
+    let ms: Map[string, P] = Map {};
     ms = ms.insert("a", P { x: 3, y: 4 });
     match (ms.get("a")) {
         Some(s) => { if (s.x + s.y != 7) { return 3; } },
         None => { return 4; }
     }
-    var ma: Map[i32, i32[]] = Map {};
+    let ma: Map[i32, i32[]] = Map {};
     ma = ma.insert(1, [10, 20, 30]);
     match (ma.get(1)) {
         Some(arr) => { if (arr[0] + arr[2] != 40) { return 5; } },
         None => { return 6; }
     }
-    var mi: Map[string, i32] = Map {};
+    let mi: Map[string, i32] = Map {};
     mi = mi.insert("a", 42);
     match (mi.get("a")) {
         Some(v) => { if (v != 42) { return 7; } },
@@ -3049,10 +3049,10 @@ func TestX86_64StructTupleFieldAccess(t *testing.T) {
 	src := `struct Rec { pos: (i32, i32), name: string }
 struct Nested { t: (i32, (i32, i32)) }
 function main(): i32 {
-    var r: Rec = Rec { pos: (3, 4), name: "p" };
+    let r: Rec = Rec { pos: (3, 4), name: "p" };
     if (r.pos.0 != 3) { return 1; }
     if (r.pos.1 != 4) { return 2; }
-    var n: Nested = Nested { t: (1, (2, 3)) };
+    let n: Nested = Nested { t: (1, (2, 3)) };
     if (n.t.0 != 1) { return 3; }
     if (n.t.1.0 != 2) { return 4; }
     if (n.t.1.1 != 3) { return 5; }
@@ -3067,19 +3067,19 @@ function main(): i32 {
 // already correct, but pin it so a future refactor can't regress).
 func TestX86_64UnsignedComparison(t *testing.T) {
 	src := `function main(): i32 {
-    var big: u32 = 4294967295u32;
+    let big: u32 = 4294967295u32;
     if (!(big > 0u32)) { return 1; }
     if (!(big > 1000000u32)) { return 2; }
     if (big < 5u32) { return 3; }
     if (!(big >= 4294967295u32)) { return 4; }
     if (big <= 100u32) { return 5; }
-    var b64: u64 = 18446744073709551615u64;
+    let b64: u64 = 18446744073709551615u64;
     if (!(b64 > 9u64)) { return 6; }
     if (b64 < 9u64) { return 7; }
-    var u: u8 = 200u8;
+    let u: u8 = 200u8;
     if (!(u > 100u8)) { return 8; }
-    var i: u32 = 4294967293u32;
-    var c: i32 = 0;
+    let i: u32 = 4294967293u32;
+    let c: i32 = 0;
     while (i > 4294967290u32) { c = c + 1; i = i - 1u32; }
     if (c != 3) { return 9; }
     return 0;
@@ -3092,17 +3092,17 @@ func TestX86_64UnsignedComparison(t *testing.T) {
 // Mirror of TestArm64UnaryMinusWideTypes.
 func TestX86_64UnaryMinusWideTypes(t *testing.T) {
 	src := `function main(): i32 {
-    var a: i64 = -5i64;
+    let a: i64 = -5i64;
     if (a != 0i64 - 5i64) { return 1; }
-    var b: f64 = -5.0;
+    let b: f64 = -5.0;
     if (!(b < 0.0)) { return 2; }
-    var c: f64 = -b;
+    let c: f64 = -b;
     if (c != 5.0) { return 3; }
-    var f: f32 = -2.5f32;
+    let f: f32 = -2.5f32;
     if (!(f < 0.0f32)) { return 4; }
-    var z: f64 = -0.0;
+    let z: f64 = -0.0;
     if (f64_bits(z) == 0i64) { return 5; }
-    var g: i64 = 10i64 + -3i64;
+    let g: i64 = 10i64 + -3i64;
     if (g != 7i64) { return 6; }
     return 0;
 }`
@@ -3114,19 +3114,19 @@ func TestX86_64UnaryMinusWideTypes(t *testing.T) {
 // Mirror of TestArm64ScientificNotation.
 func TestX86_64ScientificNotation(t *testing.T) {
 	src := `function main(): i32 {
-    var a: f64 = 1e3;
+    let a: f64 = 1e3;
     if (a != 1000.0) { return 1; }
-    var b: f64 = 1.5e3;
+    let b: f64 = 1.5e3;
     if (b != 1500.0) { return 2; }
-    var c: f64 = 1500.0e-3;
+    let c: f64 = 1500.0e-3;
     if (c != 1.5) { return 3; }
-    var d: f64 = 1.5e+3;
+    let d: f64 = 1.5e+3;
     if (d != 1500.0) { return 4; }
-    var e: f64 = 2.5E2;
+    let e: f64 = 2.5E2;
     if (e != 250.0) { return 5; }
-    var f: f32 = 1.5e2f32;
+    let f: f32 = 1.5e2f32;
     if (f != 150.0f32) { return 6; }
-    var big: f64 = 1.8e19;
+    let big: f64 = 1.8e19;
     if (!(big > 1.7e19)) { return 7; }
     return 0;
 }`
@@ -3139,19 +3139,19 @@ func TestX86_64ScientificNotation(t *testing.T) {
 func TestX86_64SubI32ArithmeticWraps(t *testing.T) {
 	src := `struct S { v: u8 }
 function main(): i32 {
-    var a: u8 = 255u8;
+    let a: u8 = 255u8;
     a = a + 1u8;
     if ((a as i32) != 0) { return 1; }
-    var b: u8 = 0u8;
+    let b: u8 = 0u8;
     b = b - 1u8;
     if ((b as i32) != 255) { return 2; }
-    var c: u8 = 16u8;
+    let c: u8 = 16u8;
     c = c * 16u8;
     if ((c as i32) != 0) { return 3; }
-    var s: S = S { v: 200u8 };
-    var h: u8 = s.v + 100u8;
+    let s: S = S { v: 200u8 };
+    let h: u8 = s.v + 100u8;
     if ((h as i32) != 44) { return 4; }
-    var k: u8 = 100u8;
+    let k: u8 = 100u8;
     k = k + 50u8;
     if ((k as i32) != 150) { return 5; }
     return 0;

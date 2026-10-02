@@ -35,13 +35,13 @@ func tupleStructFieldStoreCases() []tupleAliasParamCase {
 			name: "local_store_balances",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
-    var k: (i32, i32[]) = (i, [i, i + 1]);
-    var h: Hold = Hold { t: k, n: i };
+    let k: (i32, i32[]) = (i, [i, i + 1]);
+    let h: Hold = Hold { t: k, n: i };
     return h.n + k.0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -56,14 +56,14 @@ function main(): i32 {
 			name: "two_holders_balances",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
-    var k: (i32, i32[]) = (i, [i, i + 1]);
-    var h1: Hold = Hold { t: k, n: i };
-    var h2: Hold = Hold { t: k, n: i + 1 };
+    let k: (i32, i32[]) = (i, [i, i + 1]);
+    let h1: Hold = Hold { t: k, n: i };
+    let h2: Hold = Hold { t: k, n: i + 1 };
     return h1.n + h2.n + k.0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -76,15 +76,15 @@ function main(): i32 {
 			name: "read_through_both_owners",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
-    var k: (i32, i32[]) = (i, [i, i + 1]);
-    var h: Hold = Hold { t: k, n: i };
-    var a: i32 = h.t.1.len();
-    var b: i32 = k.1.len();
+    let k: (i32, i32[]) = (i, [i, i + 1]);
+    let h: Hold = Hold { t: k, n: i };
+    let a: i32 = h.t.1.len();
+    let b: i32 = k.1.len();
     return a + b + h.n;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -98,12 +98,12 @@ function main(): i32 {
 			name: "fresh_literal_field_balances",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
-    var h: Hold = Hold { t: (i, [i, i + 1]), n: i };
+    let h: Hold = Hold { t: (i, [i, i + 1]), n: i };
     return h.n + h.t.0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -120,16 +120,16 @@ function main(): i32 {
 			name: "returned_holder_balances",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function mk(i: i32): Hold {
-    var k: (i32, i32[]) = (i, [i, i + 1]);
+    let k: (i32, i32[]) = (i, [i, i + 1]);
     return Hold { t: k, n: i };
 }
 function round(i: i32): i32 {
-    var h: Hold = mk(i);
+    let h: Hold = mk(i);
     return h.n + h.t.0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -142,13 +142,13 @@ function main(): i32 {
 			name: "array_of_holders_stays_refused",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
-    var k: (i32, i32[]) = (i, [i, i + 1]);
-    var hs: Hold[] = [Hold { t: k, n: i }, Hold { t: k, n: i + 1 }];
+    let k: (i32, i32[]) = (i, [i, i + 1]);
+    let hs: Hold[] = [Hold { t: k, n: i }, Hold { t: k, n: i + 1 }];
     return hs.len() + hs[0].n;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;

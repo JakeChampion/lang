@@ -70,15 +70,15 @@ import "core/map";
 import "std/i32";
 
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[string, i32] = map_new(4);
+    let i: i32 = 0;
     while (i < 300) {
         m = m.insert("key" + i.to_string(), i * 7);
         i = i + 1;
     }
     if (m.len() != 300) { return 1; }
 
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 300) {
         if (m.get_or("key" + j.to_string(), 0 - 1) != j * 7) { return 2; }
         if (!m.has("key" + j.to_string())) { return 3; }
@@ -94,21 +94,21 @@ function main(): i32 {
 
     // Delete tombstones the bucket and swaps the last entry down, so both the
     // probe and the last-entry rehash must agree with the map's seed.
-    var d: i32 = 0;
+    let d: i32 = 0;
     while (d < 60) {
-        var (md, okd) = m.without("key" + d.to_string());
+        let (md, okd) = m.without("key" + d.to_string());
         if (!okd) { return 8; }
         m = md;
         d = d + 1;
     }
     if (m.len() != 240) { return 9; }
-    var g: i32 = 0;
+    let g: i32 = 0;
     while (g < 60) {
         if (m.has("key" + g.to_string())) { return 10; }
         g = g + 1;
     }
     // Everything the backfill moved must still be reachable.
-    var s: i32 = 60;
+    let s: i32 = 60;
     while (s < 300) {
         if (m.get_or("key" + s.to_string(), 0 - 1) != s * 7) { return 11; }
         s = s + 1;
@@ -154,9 +154,9 @@ func TestMapSeededSemanticsArm64(t *testing.T) {
 // and none may be zero. Exit 42 on success so the interpreter can run it too.
 const mapHashSeedStableProg = `
 function main(): i32 {
-    var a: i32 = __map_hash_seed();
-    var b: i32 = __map_hash_seed();
-    var c: i32 = __map_hash_seed();
+    let a: i32 = __map_hash_seed();
+    let b: i32 = __map_hash_seed();
+    let c: i32 = __map_hash_seed();
     if (a == 0) { return 1; }
     if (b != a) { return 2; }
     if (c != a) { return 3; }
@@ -201,13 +201,13 @@ import "std/i32";
 
 function main(): i32 {
     print(__map_hash_seed().to_string());
-    var m: Map[string, i32] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[string, i32] = map_new(4);
+    let i: i32 = 0;
     while (i < 40) {
         m = m.insert("k" + ((i * 17) % 40).to_string(), i);
         i = i + 1;
     }
-    var line: string = "";
+    let line: string = "";
     for k in m.keys() {
         line = line + k + ",";
     }

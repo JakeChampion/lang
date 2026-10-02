@@ -31,7 +31,7 @@ func TestInterpNegativeExitCodeMatchesNative(t *testing.T) {
 		{"ret-neg-1", `function main(): i32 { return -1; }`, 255},
 		{"ret-neg-128", `function main(): i32 { return -128; }`, 128},
 		// -7 / 2 truncates toward zero to -3.
-		{"neg-div-trunc", `function main(): i32 { var a = -7; var b = 2; return a / b; }`, 253},
+		{"neg-div-trunc", `function main(): i32 { let a = -7; let b = 2; return a / b; }`, 253},
 		// -256 wraps to 0; -257 to 255 (low byte of the two's complement).
 		{"ret-neg-256", `function main(): i32 { return -256; }`, 0},
 		{"ret-neg-257", `function main(): i32 { return -257; }`, 255},

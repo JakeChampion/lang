@@ -116,7 +116,7 @@ struct Line { p: Point, q: Point }
 @import("local:test/src@0.1.0", "make-line")
 function make_line(x0: i32, y0: i32, x1: i32, y1: i32): Line;
 function main(): i32 {
-    var l: Line = make_line(1, 2, 3, 4);
+    let l: Line = make_line(1, 2, 3, 4);
     // p.x + p.y*10 + q.x*100 + q.y*1000 = 1 + 20 + 300 + 4000 = 4321
     if (l.p.x + l.p.y * 10 + l.q.x * 100 + l.q.y * 1000 == 4321) { write("` + want + `"); } else { write("lr-bad"); }
     return 0;

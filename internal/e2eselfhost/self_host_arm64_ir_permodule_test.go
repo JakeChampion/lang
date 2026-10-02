@@ -42,7 +42,7 @@ func TestSelfHostIRPerModuleLinkArm64(t *testing.T) {
 		"pub function mk(): Color { return Blue(7); }\n"
 	mainSrc := "import \"./col\";\n" +
 		"function main(): i32 {\n" +
-		"    var c: col.Color = col.mk();\n" +
+		"    let c: col.Color = col.mk();\n" +
 		"    match (c) {\n" +
 		"        Red(x) => { return x + 100; },\n" +
 		"        Green => { return 200; },\n" +

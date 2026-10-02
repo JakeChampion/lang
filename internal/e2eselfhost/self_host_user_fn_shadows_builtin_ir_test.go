@@ -20,7 +20,7 @@ function len(l: L): i32 {
     match (l) { C(h, t) => { return 1 + len(t); }, N => { return 0; } }
 }
 function main(): i32 {
-    var l: L = C(1, C(2, C(3, N)));
+    let l: L = C(1, C(2, C(3, N)));
     return len(l);   // 3
 }`},
 	// #10344's repro: `chr` is a builtin contract, so the call is only a plain

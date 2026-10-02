@@ -10,7 +10,7 @@
 // from the dyn drop; literals are static sentinels and cost nothing).
 //
 // Also pinned here: move-on-return for a swept `dyn` local. The exit
-// sweep's dyn arm drops unconditionally, so `var d: dyn T = ...; return d;`
+// sweep's dyn arm drops unconditionally, so `let d: dyn T = ...; return d;`
 // handed the CALLER a freed cell — a segfault on the natives and a garbage
 // dispatch on wasm. The Return lowering now excludes a returned bare dyn
 // local from the sweep (a pure move — dyn cells carry no rc header, so
@@ -34,11 +34,11 @@ trait Show {
 impl Show for i32 {
     function show(self: Self): i32 { return self + 1; }
 }
-function go(k: i32): i32 { var d: dyn Show = k; return d.show(); }
+function go(k: i32): i32 { let d: dyn Show = k; return d.show(); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
         sum = (sum + go(41)) % 251;
         i = i + 1;
@@ -58,11 +58,11 @@ trait Show {
 impl Show for string {
     function show(self: Self): i32 { return self.len(); }
 }
-function go(k: i32): i32 { var d: dyn Show = "hello"; return d.show() + k; }
+function go(k: i32): i32 { let d: dyn Show = "hello"; return d.show() + k; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
         sum = (sum + go(3)) % 251;
         i = i + 1;
@@ -87,14 +87,14 @@ impl Show for i32 {
 impl Show for Dot {
     function show(self: Self): i32 { return self.r + 1; }
 }
-function mkprim(): dyn Show { var d: dyn Show = 41; return d; }
-function mkstruct(): dyn Show { var d: dyn Show = Dot { r: 41 }; return d; }
+function mkprim(): dyn Show { let d: dyn Show = 41; return d; }
+function mkstruct(): dyn Show { let d: dyn Show = Dot { r: 41 }; return d; }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var e = mkprim();
+        let e = mkprim();
         if (e.show() != 42) { return 1; }
-        var f = mkstruct();
+        let f = mkstruct();
         if (f.show() != 42) { return 2; }
         i = i + 1;
     }
@@ -170,11 +170,11 @@ enum Op { Add(i32), Neg }
 impl Show for Op {
     function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } }
 }
-function go(k: i32): i32 { var d: dyn Show = Add(41); return d.show() + k; }
+function go(k: i32): i32 { let d: dyn Show = Add(41); return d.show() + k; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
         sum = (sum + go(3)) % 251;
         i = i + 1;
@@ -222,11 +222,11 @@ struct Dot { r: i32 }
 impl Show for Dot {
     function show(self: Self): i32 { return self.r * 2; }
 }
-function go(k: i32): i32 { var d: dyn Show = Dot { r: 41 }; return d.show() + k; }
+function go(k: i32): i32 { let d: dyn Show = Dot { r: 41 }; return d.show() + k; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
         sum = (sum + go(3)) % 251;
         i = i + 1;
@@ -279,11 +279,11 @@ impl Show for i32 {
 impl Show for Dot {
     function show(self: Self): i32 { return self.r * 2; }
 }
-function go(k: i32): i32 { var xs: dyn Show[] = [k, Dot { r: k }, 7]; return xs[0].show() + xs[1].show() + xs[2].show(); }
+function go(k: i32): i32 { let xs: dyn Show[] = [k, Dot { r: k }, 7]; return xs[0].show() + xs[1].show() + xs[2].show(); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
         sum = (sum + go(3)) % 251;
         i = i + 1;
@@ -314,10 +314,10 @@ impl Show for i32 {
 impl Show for Dot {
     function show(self: Self): i32 { return self.r * 2; }
 }
-function go(k: i32): i32 { var xs: dyn Show[] = [k, Dot { r: k }, 7]; return xs[0].show() + xs[1].show() + xs[2].show(); }
+function go(k: i32): i32 { let xs: dyn Show[] = [k, Dot { r: k }, 7]; return xs[0].show() + xs[1].show() + xs[2].show(); }
 function main(): i32 {
-    var i: i32 = 0;
-    var bad: i32 = 0;
+    let i: i32 = 0;
+    let bad: i32 = 0;
     while (i < 500) {
         if (go(3) != 18) { bad = 1; }
         i = i + 1;

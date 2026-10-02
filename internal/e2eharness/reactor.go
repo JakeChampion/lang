@@ -33,10 +33,10 @@ function eagain(): i32 {
 // among its pairs; a host may report a socket ready spuriously, so other
 // pairs are not a failure. Anything else is the failing check.
 function expect_ready(r: i32, want: i32, ready: i32, timeout_ms: i32, check: i32): i32 {
-    var events: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
-    var n: i32 = reactor_wait(r, events, timeout_ms);
+    let events: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
+    let n: i32 = reactor_wait(r, events, timeout_ms);
     if (n < 1 || n > 4) { return fail(check); }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         if (events[i * 2] == want && (events[i * 2 + 1] & ready) == ready) { return 0; }
         i = i + 1;
@@ -45,34 +45,34 @@ function expect_ready(r: i32, want: i32, ready: i32, timeout_ms: i32, check: i32
 }
 
 function main(): i32 {
-    var r: i32 = reactor_new();
+    let r: i32 = reactor_new();
     if (r < 0) { return fail(1); }
     if (reactor_ctl(r, 9, 0, 0) != 0 - einval()) { return fail(2); }
-    var one: i32[] = [0];
+    let one: i32[] = [0];
     if (reactor_wait(r, one, 0) != 0 - einval()) { return fail(3); }
-    var events: i32[] = [0, 0, 0, 0];
+    let events: i32[] = [0, 0, 0, 0];
     if (reactor_wait(r, events, 20) != 0) { return fail(4); }
-    var any: u8[] = [0u8, 0u8, 0u8, 0u8];
-    var ln: i32 = tcp_listen_with(any, 0, 4, false);
+    let any: u8[] = [0u8, 0u8, 0u8, 0u8];
+    let ln: i32 = tcp_listen_with(any, 0, 4, false);
     if (ln < 0) { return fail(5); }
-    var port: i32 = tcp_local_port(ln);
+    let port: i32 = tcp_local_port(ln);
     if (reactor_ctl(r, 1, ln, 1) != 0) { return fail(6); }
     if (reactor_wait(r, events, 20) != 0) { return fail(7); }
     // Interest 4 is EPOLLEXCLUSIVE, which the kernel refuses on a
     // modification: asking it of a descriptor already in the set proves
     // the bit reached epoll_ctl rather than being masked off.
     if (target_os() == "linux" && reactor_ctl(r, 1, ln, 5) != 0 - einval()) { return fail(31); }
-    var c: i32 = tcp_connect(16777343, port);
+    let c: i32 = tcp_connect(16777343, port);
     if (c < 0) { return fail(8); }
     if (expect_ready(r, ln, 1, 2000, 9) != 0) { return 9; }
-    var a: i32 = tcp_accept(ln);
+    let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(10); }
     if (reactor_ctl(r, 1, a, 1) != 0) { return fail(11); }
     if (reactor_ctl(r, 2, ln, 0) != 0) { return fail(12); }
     if (reactor_wait(r, events, 20) != 0) { return fail(13); }
     if (tcp_send(c, "hi") != 2) { return fail(14); }
     if (expect_ready(r, a, 1, 2000, 15) != 0) { return 15; }
-    var buf: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    let buf: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
     if (tcp_recv_into(a, buf) != 2) { return fail(16); }
     if (buf[0] != 104u8 || buf[1] != 105u8) { return fail(17); }
     if (reactor_ctl(r, 1, c, 2) != 0) { return fail(18); }
@@ -92,7 +92,7 @@ function main(): i32 {
     if (reactor_wait(r, events, 20) != 0) { return fail(23); }
     if (tcp_send(a, "yo") != 2) { return fail(29); }
     if (expect_ready(r, c, 1, 2000, 24) != 0) { return 24; }
-    var got: u8[] = tcp_recv(c, 8);
+    let got: u8[] = tcp_recv(c, 8);
     if (got.len() != 2 || got[0] != 121u8) { return fail(25); }
     // A socket is unwatched before it is closed: on wasm the pollables a
     // watch holds are children of the socket's streams.

@@ -48,12 +48,12 @@ function test_negative(): test.TestOutcome {
 }
 
 function test_empty(): test.TestOutcome {
-  var e: i32[] = [];
+  let e: i32[] = [];
   return test.assert_true(array.rotate_left(e, 3).len() == 0);
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/array rotate");
+  let r: test.TestRunner = test.test_new("std/array rotate");
   r = r.it("rotate_left", test_left);
   r = r.it("rotate_right", test_right);
   r = r.it("free fn", test_free_fn);

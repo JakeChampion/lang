@@ -109,7 +109,7 @@ func TestSelfHostExternArrayParamCustomProvider(t *testing.T) {
 	prog := `@import("local:test/sink@0.1.0", "sum-i32")
 function sum_i32(data: i32[]): i32;
 function main(): i32 {
-    var b: i32[] = [10, 20, 30];
+    let b: i32[] = [10, 20, 30];
     if (sum_i32(b) == 60) { write("` + want + `"); } else { write("sum-bad"); }
     return 0;
 }`

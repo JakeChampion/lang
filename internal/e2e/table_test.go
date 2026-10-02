@@ -14,7 +14,7 @@ function main(): i32 {
     if (table.render([["x", "y", "z"], ["1"]]) != "x  y  z\n1     ") { return 2; }
     if (table.render([["café", "x"], ["a", "y"]]) != "café  x\na     y") { return 3; }
     if (table.render([["only"], ["one"]]) != "only\none") { return 4; }
-    var empty: string[][] = [];
+    let empty: string[][] = [];
     if (table.render(empty) != "") { return 5; }
     if (table.render_with_header(["name", "age"], [["ada", "36"], ["bo", "9"]]) != "name  age\n----  ---\nada   36\nbo    9") { return 6; }
     return 42;

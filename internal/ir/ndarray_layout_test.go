@@ -14,10 +14,10 @@ import (
 
 const layoutSrc = `import "std/ndarray";
 function run(): i32 {
-  var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
-  var t: ndarray.NdArray[i32] = a.transpose();
-  var f1: i32[] = a.to_flat();
-  var f2: i32[] = t.to_flat();
+  let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+  let t: ndarray.NdArray[i32] = a.transpose();
+  let f1: i32[] = a.to_flat();
+  let f2: i32[] = t.to_flat();
   return f1[0] + f2[0];
 }
 function main(): i32 { return run(); }`
@@ -82,7 +82,7 @@ function main(): i32 { return run(ndarray.from_flat([1, 2], [2])); }`)
 func TestPackedMakesTheNextToFlatFree(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/ndarray";
 function run(a: ndarray.NdArray[i32]): i32 {
-  var q: ndarray.NdArray[i32] = a.transpose().packed();
+  let q: ndarray.NdArray[i32] = a.transpose().packed();
   return q.to_flat()[0];
 }
 function main(): i32 { return run(ndarray.from_flat([1, 2, 3, 4], [2, 2])); }`)
@@ -107,8 +107,8 @@ function main(): i32 { return run(ndarray.from_flat([1, 2, 3, 4], [2, 2])); }`)
 func TestReshapeIsRowMajorFromAnythingAndPackedOnlyFromPacked(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/ndarray";
 function run(a: ndarray.NdArray[i32]): i32 {
-  var r: ndarray.NdArray[i32] = a.transpose().reshape([4]);
-  var s: ndarray.NdArray[i32] = r.reshape([2, 2]);
+  let r: ndarray.NdArray[i32] = a.transpose().reshape([4]);
+  let s: ndarray.NdArray[i32] = r.reshape([2, 2]);
   return s.to_flat()[0];
 }
 function main(): i32 { return run(ndarray.from_flat([1, 2, 3, 4], [2, 2])); }`)
@@ -135,7 +135,7 @@ function main(): i32 { return run(ndarray.from_flat([1, 2, 3, 4], [2, 2])); }`)
 func TestASlotAssignedTwiceTakesTheWeakerLayout(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/ndarray";
 function run(flip: boolean): i32 {
-  var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
+  let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
   if (flip) { a = a.transpose(); }
   return a.to_flat()[0];
 }
@@ -247,9 +247,9 @@ func TestTheAlgebraSitesCarryTheirReceiversLayout(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/ndarray";
 function add(x: i64, y: i64): i64 { return x + y; }
 function run(a: ndarray.NdArray[i64]): i64 {
-  var packed: ndarray.NdArray[i64] = a.packed();
-  var r1: ndarray.NdArray[i64] = packed.reduce_axis(1, 0 as i64, add);
-  var r2: ndarray.NdArray[i64] = packed.transpose().reduce_axis(1, 0 as i64, add);
+  let packed: ndarray.NdArray[i64] = a.packed();
+  let r1: ndarray.NdArray[i64] = packed.reduce_axis(1, 0 as i64, add);
+  let r2: ndarray.NdArray[i64] = packed.transpose().reduce_axis(1, 0 as i64, add);
   return r1.get([0]) + r2.get([0]);
 }
 function main(): i32 {
@@ -275,7 +275,7 @@ func TestAnAlgebraResultIsPacked(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/ndarray";
 function dbl(x: i64): i64 { return x * (2 as i64); }
 function run(a: ndarray.NdArray[i64]): i64 {
-  var m: ndarray.NdArray[i64] = a.transpose().map(dbl);
+  let m: ndarray.NdArray[i64] = a.transpose().map(dbl);
   return m.to_flat()[0];
 }
 function main(): i32 {

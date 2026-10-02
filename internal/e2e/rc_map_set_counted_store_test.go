@@ -36,32 +36,32 @@ import (
 var mapSetCountedSrcs = map[string]string{
 	"string value": `import "core/map";
 function work(i: i32): i32 {
-    var stem: string = "alpha";
-    var k: string = stem + "-key-long";
-    var v: string = stem + "-value-long";
-    var m: Map[string, string] = map_new(4);
+    let stem: string = "alpha";
+    let k: string = stem + "-key-long";
+    let v: string = stem + "-value-long";
+    let m: Map[string, string] = map_new(4);
     m = m.insert(k, v);
     return m.len() + k.len() + v.len();
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) { acc = acc + work(i); i = i + 1; }
     if (acc != 200 * 31) { return 99; }
     return __rc_underflow_count();
 }`,
 	"array value": `import "core/map";
 function work(i: i32): i32 {
-    var stem: string = "alpha";
-    var k: string = stem + "-key-long";
-    var v: i32[] = [i, i + 1, i + 2];
-    var m: Map[string, i32[]] = map_new(4);
+    let stem: string = "alpha";
+    let k: string = stem + "-key-long";
+    let v: i32[] = [i, i + 1, i + 2];
+    let m: Map[string, i32[]] = map_new(4);
     m = m.insert(k, v);
     return m.len() + k.len() + v.len();
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) { acc = acc + work(i); i = i + 1; }
     if (acc != 200 * 18) { return 99; }
     return __rc_underflow_count();
@@ -69,31 +69,31 @@ function main(): i32 {
 	"struct value": `import "core/map";
 struct Pt { name: string, x: i32 }
 function work(i: i32): i32 {
-    var stem: string = "alpha";
-    var k: string = stem + "-key-long";
-    var v: Pt = Pt { name: stem + "-point-name", x: i };
-    var m: Map[string, Pt] = map_new(4);
+    let stem: string = "alpha";
+    let k: string = stem + "-key-long";
+    let v: Pt = Pt { name: stem + "-point-name", x: i };
+    let m: Map[string, Pt] = map_new(4);
     m = m.insert(k, v);
     return m.len() + k.len() + v.name.len();
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) { acc = acc + work(i); i = i + 1; }
     if (acc != 200 * 31) { return 99; }
     return __rc_underflow_count();
 }`,
 	"map literal": `import "core/map";
 function work(i: i32): i32 {
-    var stem: string = "alpha";
-    var k: string = stem + "-key-long";
-    var v: i32[] = [i, i + 1, i + 2];
-    var m: Map[string, i32[]] = Map { k: v };
+    let stem: string = "alpha";
+    let k: string = stem + "-key-long";
+    let v: i32[] = [i, i + 1, i + 2];
+    let m: Map[string, i32[]] = Map { k: v };
     return m.len() + k.len() + v.len();
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) { acc = acc + work(i); i = i + 1; }
     if (acc != 200 * 18) { return 99; }
     return __rc_underflow_count();
@@ -105,17 +105,17 @@ function main(): i32 {
 func mapSetCountedBumpSrc(n string) string {
 	return `import "core/map";
 function work(i: i32): i32 {
-    var stem: string = "alpha";
-    var k: string = stem + "-key-long";
-    var v: i32[] = [i, i + 1, i + 2];
-    var m: Map[string, i32[]] = map_new(4);
+    let stem: string = "alpha";
+    let k: string = stem + "-key-long";
+    let v: i32[] = [i, i + 1, i + 2];
+    let m: Map[string, i32[]] = map_new(4);
     m = m.insert(k, v);
     return m.len() + k.len() + v.len();
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + work(i); i = i + 1; }
     if (acc != ` + n + ` * 18) { return 99; }
     return (__heap_bump_bytes() as i32) - before;
@@ -128,34 +128,34 @@ function main(): i32 {
 var mapSetReadBackSrcs = map[string]string{
 	"string value": `import "core/map";
 function work(i: i32): i32 {
-    var stem: string = "alpha";
-    var k: string = stem + "-key-long";
-    var v: string = stem + "-value-long";
-    var m: Map[string, string] = map_new(4);
+    let stem: string = "alpha";
+    let k: string = stem + "-key-long";
+    let v: string = stem + "-value-long";
+    let m: Map[string, string] = map_new(4);
     m = m.insert(k, v);
-    var got: string = m.get_or(k, "");
+    let got: string = m.get_or(k, "");
     return got.len() + i - i;
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) { acc = acc + work(i); i = i + 1; }
     if (acc != 200 * 16) { return 99; }
     return __rc_underflow_count();
 }`,
 	"array value": `import "core/map";
 function work(i: i32): i32 {
-    var stem: string = "alpha";
-    var k: string = stem + "-key-long";
-    var v: i32[] = [i, i + 1, i + 2];
-    var m: Map[string, i32[]] = map_new(4);
+    let stem: string = "alpha";
+    let k: string = stem + "-key-long";
+    let v: i32[] = [i, i + 1, i + 2];
+    let m: Map[string, i32[]] = map_new(4);
     m = m.insert(k, v);
-    var got: i32[] = m.get_or(k, []);
+    let got: i32[] = m.get_or(k, []);
     return got[2] - i + v.len();
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) { acc = acc + work(i); i = i + 1; }
     if (acc != 200 * 5) { return 99; }
     return __rc_underflow_count();
@@ -163,17 +163,17 @@ function main(): i32 {
 	"struct value": `import "core/map";
 struct Pt { name: string, x: i32 }
 function work(i: i32): i32 {
-    var stem: string = "alpha";
-    var k: string = stem + "-key-long";
-    var v: Pt = Pt { name: stem + "-point-name", x: i };
-    var m: Map[string, Pt] = map_new(4);
+    let stem: string = "alpha";
+    let k: string = stem + "-key-long";
+    let v: Pt = Pt { name: stem + "-point-name", x: i };
+    let m: Map[string, Pt] = map_new(4);
     m = m.insert(k, v);
-    var got: Pt = m.get_or(k, v);
+    let got: Pt = m.get_or(k, v);
     return got.name.len() + got.x - i;
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) { acc = acc + work(i); i = i + 1; }
     if (acc != 200 * 16) { return 99; }
     return __rc_underflow_count();
@@ -187,22 +187,22 @@ function main(): i32 {
 	// change (docs/rc-log/2026-09-03-map-set-counted-store.md).
 	"nested map value stays live": `import "core/map";
 function build(i: i32): Map[i32, Map[i32, i32]] {
-    var inner: Map[i32, i32] = map_new(2);
+    let inner: Map[i32, i32] = map_new(2);
     inner = inner.insert(i, i + 1);
-    var outer: Map[i32, Map[i32, i32]] = map_new(2);
+    let outer: Map[i32, Map[i32, i32]] = map_new(2);
     outer = outer.insert(i, inner);
     return outer;
 }
 function work(i: i32): i32 {
-    var outer: Map[i32, Map[i32, i32]] = build(i);
+    let outer: Map[i32, Map[i32, i32]] = build(i);
     match (outer.get(i)) {
         Some(inner) => { return inner.get_or(i, -1) - i; },
         None => { return -1000; },
     }
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) { acc = acc + work(i); i = i + 1; }
     if (acc != 200) { return 99; }
     return __rc_underflow_count();

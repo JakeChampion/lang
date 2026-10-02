@@ -27,7 +27,7 @@ var constStringIRCases = []struct {
 	// Regression: a const-i32 reference (no string involvement) still resolves. 8.
 	{"const-i32-ref", `const NAME: i32 = 8; function main(): i32 { return NAME; }`},
 	// Regression: `.len()` on a LOCAL string slot was always correct. 2.
-	{"local-str-len", `function main(): i32 { var s: string = "hi"; return s.len(); }`},
+	{"local-str-len", `function main(): i32 { let s: string = "hi"; return s.len(); }`},
 	// A literal carrying escaped bytes exercises asmcore.escape_for_ascii's
 	// multi-byte-escape branches (\n and \") when the const is emitted as a
 	// `.ascii` directive (#4379 rewrote that escaper to a u8[] buffer). The

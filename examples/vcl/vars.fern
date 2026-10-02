@@ -55,7 +55,7 @@ function deliver_subs(): string[] {
 }
 
 function none_of(): string[] {
-  var e: string[] = [];
+  let e: string[] = [];
 
   return e;
 }
@@ -80,7 +80,7 @@ pub function var_table(): VarSpec[] {
 }
 
 function in_list(s: string, items: string[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < items.len()) {
     if (items[i] == s) {
       return true;
@@ -92,10 +92,10 @@ function in_list(s: string, items: string[]): boolean {
 
 // find_spec resolves a written name to its table entry.
 pub function find_spec(name: string): Option[VarSpec] {
-  var t: VarSpec[] = var_table();
-  var i: i32 = 0;
+  let t: VarSpec[] = var_table();
+  let i: i32 = 0;
   while (i < t.len()) {
-    var s: VarSpec = t[i];
+    let s: VarSpec = t[i];
     if (s.is_prefix) {
       if (name.starts_with(s.name) && name.len() > s.name.len()) {
         return Some(s);
@@ -259,7 +259,7 @@ function write_req(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
   if (name == "req.backend_hint") {
     return runtime.Txn { ...t, backend_hint: value.to_str(v) };
   }
-  var h: runtime.Headers = t.req.headers.set(suffix_of(name, "req.http."), value.to_str(v));
+  let h: runtime.Headers = t.req.headers.set(suffix_of(name, "req.http."), value.to_str(v));
   return runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: h } };
 }
 
@@ -273,7 +273,7 @@ function write_bereq(t: runtime.Txn, name: string, v: value.Value): runtime.Txn 
   if (name == "bereq.proto") {
     return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, proto: value.to_str(v) } };
   }
-  var h: runtime.Headers = t.bereq.headers.set(suffix_of(name, "bereq.http."), value.to_str(v));
+  let h: runtime.Headers = t.bereq.headers.set(suffix_of(name, "bereq.http."), value.to_str(v));
   return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, headers: h } };
 }
 
@@ -347,7 +347,7 @@ function write_beresp(t: runtime.Txn, name: string, v: value.Value): runtime.Txn
   if (name == "beresp.uncacheable") {
     return runtime.Txn { ...t, beresp_uncacheable: value.to_bool(v) };
   }
-  var h: runtime.Headers = t.beresp.headers.set(suffix_of(name, "beresp.http."), value.to_str(v));
+  let h: runtime.Headers = t.beresp.headers.set(suffix_of(name, "beresp.http."), value.to_str(v));
   return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, headers: h } };
 }
 
@@ -361,7 +361,7 @@ function write_resp(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
   if (name == "resp.proto") {
     return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, proto: value.to_str(v) } };
   }
-  var h: runtime.Headers = t.resp.headers.set(suffix_of(name, "resp.http."), value.to_str(v));
+  let h: runtime.Headers = t.resp.headers.set(suffix_of(name, "resp.http."), value.to_str(v));
   return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, headers: h } };
 }
 
@@ -417,7 +417,7 @@ pub function unset(t: runtime.Txn, sub: string, name: string): Result[runtime.Tx
 }
 
 function unset_dispatch(t: runtime.Txn, name: string, prefix: string): runtime.Txn {
-  var key: string = suffix_of(name, prefix);
+  let key: string = suffix_of(name, prefix);
   if (prefix == "req.http.") {
     return runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: t.req.headers.unset(key) } };
   }

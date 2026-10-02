@@ -9,10 +9,10 @@ import "testing"
 // the retain — so the pair's difference is exactly the one removed inc.
 func TestOverwriteMoveDropsTheCopysRetain(t *testing.T) {
 	src := `function plain(s: string): i32 {
-    var a: string = s + "x";
-    var b: string = "";
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let a: string = s + "x";
+    let b: string = "";
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         b = a;
         a = s + "y";
@@ -22,10 +22,10 @@ func TestOverwriteMoveDropsTheCopysRetain(t *testing.T) {
     return n + a.len();
 }
 function readFirst(s: string): i32 {
-    var a: string = s + "x";
-    var b: string = "";
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let a: string = s + "x";
+    let b: string = "";
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         b = a;
         n = n + a.len();
@@ -36,10 +36,10 @@ function readFirst(s: string): i32 {
     return n + a.len();
 }
 function arms(s: string, c: boolean): i32 {
-    var a: string = s + "x";
-    var b: string = "";
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let a: string = s + "x";
+    let b: string = "";
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         b = a;
         if (c) {
@@ -53,10 +53,10 @@ function arms(s: string, c: boolean): i32 {
     return n + a.len();
 }
 function oneArm(s: string, c: boolean): i32 {
-    var a: string = s + "x";
-    var b: string = "";
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let a: string = s + "x";
+    let b: string = "";
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         b = a;
         if (c) {
@@ -70,10 +70,10 @@ function oneArm(s: string, c: boolean): i32 {
     return n + a.len();
 }
 function jumps(s: string, c: boolean): i32 {
-    var a: string = s + "x";
-    var b: string = "";
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let a: string = s + "x";
+    let b: string = "";
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         b = a;
         if (c) {
@@ -112,11 +112,11 @@ function main(): i32 { return plain("a") + readFirst("a") + arms("a", true) + on
 // a borrowed view of `a` still reads it, so both keep the copy's retain.
 func TestScopeDeadMoveDropsTheCopysRetain(t *testing.T) {
 	src := `function tail(s: string): i32 {
-    var b: string = "";
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let b: string = "";
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var a: string = s + "x";
+        let a: string = s + "x";
         b = a;
         n = n + b.len();
         i = i + 1;
@@ -124,11 +124,11 @@ func TestScopeDeadMoveDropsTheCopysRetain(t *testing.T) {
     return n + b.len();
 }
 function readAfter(s: string): i32 {
-    var b: string = "";
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let b: string = "";
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var a: string = s + "x";
+        let a: string = s + "x";
         b = a;
         n = n + b.len() + a.len();
         i = i + 1;
@@ -136,11 +136,11 @@ function readAfter(s: string): i32 {
     return n + b.len();
 }
 function arm(s: string, c: boolean): i32 {
-    var b: string = "";
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let b: string = "";
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var a: string = s + "x";
+        let a: string = s + "x";
         if (c) {
             b = a;
         } else {
@@ -152,11 +152,11 @@ function arm(s: string, c: boolean): i32 {
     return n + b.len();
 }
 function armReadAfter(s: string, c: boolean): i32 {
-    var b: string = "";
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let b: string = "";
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var a: string = s + "x";
+        let a: string = s + "x";
         if (c) {
             b = a;
         } else {
@@ -168,12 +168,12 @@ function armReadAfter(s: string, c: boolean): i32 {
     return n + b.len();
 }
 function inner(s: string): i32 {
-    var b: string = "";
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let b: string = "";
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var a: string = s + "x";
-        var j: i32 = 0;
+        let a: string = s + "x";
+        let j: i32 = 0;
         while (j < 2) {
             b = a;
             j = j + 1;
@@ -184,12 +184,12 @@ function inner(s: string): i32 {
     return n + b.len();
 }
 function innerRead(s: string): i32 {
-    var b: string = "";
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let b: string = "";
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var a: string = s + "x";
-        var j: i32 = 0;
+        let a: string = s + "x";
+        let j: i32 = 0;
         while (j < 2) {
             b = a;
             j = j + a.len();
@@ -200,12 +200,12 @@ function innerRead(s: string): i32 {
     return n + b.len();
 }
 function viewed(s: string): i32 {
-    var b: string = "";
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let b: string = "";
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var a: string = s + "x";
-        var v: string = a;
+        let a: string = s + "x";
+        let v: string = a;
         b = a;
         b = s + "y";
         n = n + b.len() + v.len();

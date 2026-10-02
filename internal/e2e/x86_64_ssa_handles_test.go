@@ -105,7 +105,7 @@ var x86SSAHandleCases = []struct {
   }
   match (open_reader("rc_in.txt")) {
     Ok(r) => {
-      var n1: i32 = 0;
+      let n1: i32 = 0;
       match (r.read_chunk(65536)) {
         Ok(s) => {
           stdout().write("got:" + s + "\n");
@@ -220,7 +220,7 @@ func TestX86_64SSAReadChunkKeepsOnlyWhatItRead(t *testing.T) {
   }
   match (open_reader("rs.txt")) {
     Ok(r) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < 300000) {
         match (r.read_chunk(65536)) {
           Ok(s) => { },

@@ -220,16 +220,16 @@ exit.
 
   ```
   function handle(req: HttpRequest, plat: Platform): HttpResponse {
-      var auth_task: Task[AuthResp];
-      var config_task: Task[ConfigResp];
+      let auth_task: Task[AuthResp];
+      let config_task: Task[ConfigResp];
 
       concurrently {
           auth_task   = plat.fetch(auth_req);
           config_task = plat.fetch(config_req);
       }
       // Both tasks complete (or have cancelled the other).
-      var auth = auth_task.value?;
-      var config = config_task.value?;
+      let auth = auth_task.value?;
+      let config = config_task.value?;
 
       return build_response(auth, config);
   }
@@ -238,7 +238,7 @@ exit.
   Or with sugar:
 
   ```
-  var (auth, config) = concurrent (
+  let (auth, config) = concurrent (
       plat.fetch(auth_req),
       plat.fetch(config_req),
   )?;
@@ -707,8 +707,8 @@ posture forever.**
 
 ```
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var auth: Result[AuthResp, FetchError];
-    var config: Result[ConfigResp, FetchError];
+    let auth: Result[AuthResp, FetchError];
+    let config: Result[ConfigResp, FetchError];
 
     concurrent {
         auth   = plat.fetch(auth_req);
@@ -724,7 +724,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 Equivalent sugar:
 
 ```
-var (auth, config) = concurrent (
+let (auth, config) = concurrent (
     plat.fetch(auth_req),
     plat.fetch(config_req),
 );
@@ -801,7 +801,7 @@ task). Boxed when the task escapes its creation scope
 patterns.**
 
 ```
-var winner = select (
+let winner = select (
     task primary   { … plat.fetch(primary_req)   … },
     task fallback  { … plat.fetch(fallback_req)  … },
 );

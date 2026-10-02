@@ -8,7 +8,7 @@ function probe(o: Option[i32[]]): i32 {
     match (o) { Some(xs) => { return xs[1]; }, None => { return 0; } }
 }
 probe(Some(mk(8)))        // leaks
-var o: Option[i32[]] = Some(mk(8)); probe(o)   // clean
+let o: Option[i32[]] = Some(mk(8)); probe(o)   // clean
 ```
 
 200 rounds, `FERN_LEAKCHECK` at compile time, x86-64:

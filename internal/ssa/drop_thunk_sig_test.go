@@ -29,12 +29,12 @@ struct Node { name: string, n: i32 }
 enum Msg { Text(string), Code(i32) }
 function mknode(s: string): Node { return Node { name: s, n: 1 }; }
 function main(): i32 {
-    var pad: string = "xyzw";
-    var nodes: Node[] = [];
+    let pad: string = "xyzw";
+    let nodes: Node[] = [];
     nodes = nodes.append(mknode(pad + "0123456789abcdef"));
-    var m: Msg = Msg.Text(pad + "fedcba9876543210");
-    var pair: (string, i32) = (pad + "aaaabbbbccccdddd", 2);
-    var got: i32 = 0;
+    let m: Msg = Msg.Text(pad + "fedcba9876543210");
+    let pair: (string, i32) = (pad + "aaaabbbbccccdddd", 2);
+    let got: i32 = 0;
     match (m) { Text(s) => { got = s.len(); }, Code(c) => { got = c; } }
     return nodes.len() + pair.1 + got - 21;
 }

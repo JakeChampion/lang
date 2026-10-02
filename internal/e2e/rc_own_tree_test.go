@@ -28,8 +28,8 @@ function build(d: i32): Tree {
     return Node(build(d - 1), build(d - 1), d);
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         acc = acc + total(inc(build(4)));   // depth-4 full tree, +1 per node, sum = 41
         i = i + 1;
@@ -66,9 +66,9 @@ function inc(own t: Tree): Tree { match (t) { Node(l,r,v) => { return Node(inc(l
 function total(t: Tree): i32 { match (t) { Node(l,r,v) => { return total(l)+total(r)+v; }, Leaf => { return 0; } } }
 function build(d: i32): Tree { if (d == 0) { return Leaf; } return Node(build(d-1), build(d-1), d); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < ` + n + `) { var u: i32 = total(inc(build(5))); i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < ` + n + `) { let u: i32 = total(inc(build(5))); i = i + 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}

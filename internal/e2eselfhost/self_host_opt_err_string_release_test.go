@@ -70,18 +70,18 @@ func TestSelfHostOptErrStringReleaseX86_64(t *testing.T) {
     return Ok([i, i + 1]);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32[], string] = mk(i);
+        let v: Result[i32[], string] = mk(i);
         match (v) { Ok(xs) => { acc = acc + xs[0]; }, Err(e) => { acc = acc + e.len(); } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -98,18 +98,18 @@ function main(): i32 {
     return Err("e" + "rr");
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32[], string] = mk(i);
+        let v: Result[i32[], string] = mk(i);
         match (v) { Ok(xs) => { acc = acc + xs[0]; }, Err(e) => { acc = acc + e.len(); } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -126,18 +126,18 @@ function main(): i32 {
     return Ok([i, i + 1]);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32[], string] = mk(i);
+        let v: Result[i32[], string] = mk(i);
         match (v) { Ok(xs) => { acc = acc + xs[0]; }, Err(e) => { acc = acc + e.len(); } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -157,25 +157,25 @@ function main(): i32 {
     return Ok([i, i + 1]);
 }
 function round(r: i32): i32 {
-    var shared: string = "ab" + "cd";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let shared: string = "ab" + "cd";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32[], string] = mk(i, shared);
+        let v: Result[i32[], string] = mk(i, shared);
         match (v) { Ok(xs) => { acc = acc + xs[0]; }, Err(e) => { acc = acc + e.len(); } }
         i = i + 1;
     }
-    var junk: string = "";
-    var c: i32 = 0;
+    let junk: string = "";
+    let c: i32 = 0;
     while (c < 6) { junk = "zz" + "zz"; c = c + 1; }
-    var sum: i32 = 0;
-    var k: i32 = 0;
+    let sum: i32 = 0;
+    let k: i32 = 0;
     while (k < shared.len()) { sum = sum + (shared[k] as i32); k = k + 1; }
     return acc + sum + junk.len() + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 251;
 }`
@@ -202,18 +202,18 @@ function main(): i32 {
     return Ok([i, i + 1]);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32[], string] = mk(i);
+        let v: Result[i32[], string] = mk(i);
         acc = acc + i;
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`

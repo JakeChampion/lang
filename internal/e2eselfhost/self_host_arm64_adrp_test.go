@@ -60,10 +60,10 @@ func TestSelfHostArm64DarwinMachODataRuns(t *testing.T) {
 const arm64AdrpSelfTestMain = `
 function main(): i32 {
     // adrp x1, #4 -> 0x90000021 -> 21 00 00 90
-    var a: i32[] = arm64_adrp([], arm64_x1(), 4);
+    let a: i32[] = arm64_adrp([], arm64_x1(), 4);
     if (a[0] != 33 || a[1] != 0 || a[2] != 0 || a[3] != 144) { return 1; }
     // adrp x0, #1 -> immlo=1<<29 -> 0xB0000000 -> 00 00 00 B0
-    var b: i32[] = arm64_adrp([], arm64_x0(), 1);
+    let b: i32[] = arm64_adrp([], arm64_x0(), 1);
     if (b[0] != 0 || b[1] != 0 || b[2] != 0 || b[3] != 176) { return 2; }
     // page delta: target 0x100004000, adrp 0x100000310 -> 4.
     if (arm64_page_delta(0x100004000, 0x100000310) != 4) { return 3; }
@@ -72,11 +72,11 @@ function main(): i32 {
     // page off of a 16 KiB-aligned __DATA base is 0.
     if (arm64_page_off(0x100004000) != 0) { return 5; }
     // patch adrp x1, #0 (0x90000001) with delta 4 -> 0x90000021.
-    var c: i32[] = arm64_adrp([], arm64_x1(), 0);
+    let c: i32[] = arm64_adrp([], arm64_x1(), 0);
     c = arm64_patch_adrp(c, 0, 4);
     if (c[0] != 33 || c[1] != 0 || c[2] != 0 || c[3] != 144) { return 6; }
     // patch ldr x0, [x1, #0] (0xF9400020) with off 16 -> 0xF9400820.
-    var d: i32[] = arm64_ldr([], arm64_x0(), arm64_x1(), 0, false);
+    let d: i32[] = arm64_ldr([], arm64_x0(), arm64_x1(), 0, false);
     d = arm64_patch_ldr_off(d, 0, 16);
     if (d[0] != 32 || d[1] != 8 || d[2] != 64 || d[3] != 249) { return 7; }
     return 0;
@@ -89,24 +89,24 @@ function main(): i32 {
 // (macho_text_vaddr / macho_data_vaddr), then patched in.
 const arm64MachODataDriverMain = `
 function main(): i32 {
-    var code: i32[] = [];
+    let code: i32[] = [];
     code = arm64_adrp(code, arm64_x1(), 0);            // adrp x1, answer@PAGE (placeholder)
     code = arm64_ldr(code, arm64_x0(), arm64_x1(), 0, false); // ldr x0, [x1, answer@PAGEOFF] (placeholder)
     code = arm64_movz(code, arm64_x16(), 1, 0, false);        // SYS_exit (Darwin)
     code = arm64_svc(code, 128);                        // svc #0x80
-    var data: i32[] = [42, 0, 0, 0, 0, 0, 0, 0];       // answer: .quad 42
+    let data: i32[] = [42, 0, 0, 0, 0, 0, 0, 0];       // answer: .quad 42
 
-    var tlen: i32 = code.len();
-    var dlen: i32 = data.len();
-    var text_vaddr: i64 = macho_text_vaddr(tlen, 0, dlen, 0);
-    var data_vaddr: i64 = macho_data_vaddr(tlen, 0, dlen, 0);
-    var answer: i64 = data_vaddr;       // answer is at __DATA offset 0
-    var adrp_at: i64 = text_vaddr;      // adrp is at __TEXT offset 0
+    let tlen: i32 = code.len();
+    let dlen: i32 = data.len();
+    let text_vaddr: i64 = macho_text_vaddr(tlen, 0, dlen, 0);
+    let data_vaddr: i64 = macho_data_vaddr(tlen, 0, dlen, 0);
+    let answer: i64 = data_vaddr;       // answer is at __DATA offset 0
+    let adrp_at: i64 = text_vaddr;      // adrp is at __TEXT offset 0
     code = arm64_patch_adrp(code, 0, arm64_page_delta(answer, adrp_at));
     code = arm64_patch_ldr_off(code, 4, arm64_page_off(answer));
 
-    var none: i32[] = [];               // no absolute-address data slots to rebase
-    var bin: i32[] = macho_executable(code, none, data, "fern", 0, 0, none);
+    let none: i32[] = [];               // no absolute-address data slots to rebase
+    let bin: i32[] = macho_executable(code, none, data, "fern", 0, 0, none);
     write(string_from_bytes_unchecked(to_u8(bin)));
     return 0;
 }

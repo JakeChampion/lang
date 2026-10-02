@@ -29,16 +29,16 @@ type movedSkipCase struct {
 }
 
 const mvsMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`
 
 const mvsChurnMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -53,8 +53,8 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// `keep = xs` retains, so the payload has two counted owners.
 			name: "array_payload_stored_out",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = mkv(i);
-    var keep: i32[] = [0];
+    let v: E = mkv(i);
+    let keep: i32[] = [0];
     match (v) { E.A(xs) => { keep = xs; }, E.B => { keep = [0]; } }
     return (keep.len() + keep[0]) % 101;
 }
@@ -69,12 +69,12 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			src: `enum E { A(i32[]), B }
 function mkv(): E { return E.A([7, 8]); }
 function round(i: i32): i32 {
-    var v: E = mkv();
-    var keep: i32[] = [0];
+    let v: E = mkv();
+    let keep: i32[] = [0];
     match (v) { E.A(xs) => { keep = xs; }, E.B => { keep = [0]; } }
-    var j1: i32[] = [111, 222];
-    var j2: i32[] = [333, 444];
-    var j3: i32[] = [555, 666];
+    let j1: i32[] = [111, 222];
+    let j2: i32[] = [333, 444];
+    let j3: i32[] = [555, 666];
     return keep[0] + keep[keep.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0] + j3[0] - j3[0];
 }
 ` + mvsChurnMain,
@@ -86,8 +86,8 @@ function round(i: i32): i32 {
 			name: "array_payload_borrowed_by_callee",
 			src: decls + `function sink(a: i32[]): i32 { return a.len() + a[0]; }
 function round(i: i32): i32 {
-    var v: E = mkv(i);
-    var n: i32 = 0;
+    let v: E = mkv(i);
+    let n: i32 = 0;
     match (v) { E.A(xs) => { n = sink(xs); }, E.B => { n = 0; } }
     return n % 101;
 }
@@ -101,12 +101,12 @@ function round(i: i32): i32 {
 function mkv(): E { return E.A([7, 8]); }
 function sink(a: i32[]): i32 { return a[0] + a[a.len() - 1]; }
 function round(i: i32): i32 {
-    var v: E = mkv();
-    var n: i32 = 0;
+    let v: E = mkv();
+    let n: i32 = 0;
     match (v) { E.A(xs) => { n = sink(xs); }, E.B => { n = 0; } }
-    var j1: i32[] = [111, 222];
-    var j2: i32[] = [333, 444];
-    var j3: i32[] = [555, 666];
+    let j1: i32[] = [111, 222];
+    let j2: i32[] = [333, 444];
+    let j3: i32[] = [555, 666];
     return n + j1[0] - j1[0] + j2[0] - j2[0] + j3[0] - j3[0];
 }
 ` + mvsChurnMain,
@@ -116,8 +116,8 @@ function round(i: i32): i32 {
 			// A guarded arm whose payload is stored out.
 			name: "guarded_arm_store_now_reclaimed",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = mkv(i);
-    var keep: i32[] = [0];
+    let v: E = mkv(i);
+    let keep: i32[] = [0];
     match (v) { E.A(xs) when i % 2 == 0 => { keep = xs; }, E.A(ys) => { keep = [ys.len()]; }, E.B => { keep = [0]; } }
     return (keep.len() + keep[0]) % 101;
 }
@@ -131,12 +131,12 @@ function round(i: i32): i32 {
 			src: `enum E { A(i32[]), B }
 function mkv(): E { return E.A([7, 8]); }
 function round(i: i32): i32 {
-    var v: E = mkv();
-    var keep: i32[] = [0];
+    let v: E = mkv();
+    let keep: i32[] = [0];
     match (v) { E.A(xs) when i % 2 == 0 => { keep = xs; }, E.A(ys) => { keep = [ys[0]]; }, E.B => { keep = [0]; } }
-    var j1: i32[] = [111, 222];
-    var j2: i32[] = [333, 444];
-    var j3: i32[] = [555, 666];
+    let j1: i32[] = [111, 222];
+    let j2: i32[] = [333, 444];
+    let j3: i32[] = [555, 666];
     return keep[0] + keep[keep.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0] + j3[0] - j3[0];
 }
 ` + mvsChurnMain,
@@ -147,12 +147,12 @@ function round(i: i32): i32 {
 			// released the payload would underflow: exit 99.
 			name: "return_escape_keeps_the_skip",
 			src: decls + `function take(i: i32): i32[] {
-    var v: E = mkv(i);
+    let v: E = mkv(i);
     match (v) { E.A(xs) => { return xs; }, E.B => { return [0]; } }
     return [0];
 }
 function round(i: i32): i32 {
-    var r: i32[] = take(i);
+    let r: i32[] = take(i);
     return (r.len() + r[0]) % 101;
 }
 ` + mvsMain,
@@ -163,12 +163,12 @@ function round(i: i32): i32 {
 			// releases it.
 			name: "conditional_return_balances_both_paths",
 			src: decls + `function take(i: i32): i32[] {
-    var v: E = mkv(i);
+    let v: E = mkv(i);
     match (v) { E.A(xs) => { if (i % 2 == 0) { return xs; } }, E.B => { } }
     return [7];
 }
 function round(i: i32): i32 {
-    var r: i32[] = take(i);
+    let r: i32[] = take(i);
     return (r.len() + r[0]) % 101;
 }
 ` + mvsMain,
@@ -180,11 +180,11 @@ function round(i: i32): i32 {
 			name: "string_payload_keeps_the_skip",
 			src: `enum T { W(string), N }
 function round(i: i32): i32 {
-    var v: T = T.W("ab" + "cd");
-    var keep: string = "zz";
+    let v: T = T.W("ab" + "cd");
+    let keep: string = "zz";
     match (v) { T.W(s) => { keep = s; }, T.N => { keep = "q"; } }
-    var j1: string = "pp" + "qq";
-    var j2: string = "rr" + "ss";
+    let j1: string = "pp" + "qq";
+    let j2: string = "rr" + "ss";
     return keep.len() * 10 + (keep[0] as i32) + j1.len() - j1.len() + j2.len() - j2.len();
 }
 ` + mvsChurnMain,
@@ -197,11 +197,11 @@ function round(i: i32): i32 {
 			src: `struct P { xs: i32[] }
 enum S { V(P), N }
 function round(i: i32): i32 {
-    var v: S = S.V(P { xs: [7, 8] });
-    var keep: P = P { xs: [0] };
+    let v: S = S.V(P { xs: [7, 8] });
+    let keep: P = P { xs: [0] };
     match (v) { S.V(p) => { keep = p; }, S.N => { keep = P { xs: [0] }; } }
-    var j1: i32[] = [111, 222];
-    var j2: i32[] = [333, 444];
+    let j1: i32[] = [111, 222];
+    let j2: i32[] = [333, 444];
     return keep.xs[0] + keep.xs[keep.xs.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0];
 }
 ` + mvsChurnMain,
@@ -216,8 +216,8 @@ function round(i: i32): i32 {
 			src: `enum E { A(i32[]), B }
 function mkv(): E { return E.A([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]); }
 function round(i: i32): i32 {
-    var v: E = mkv();
-    var keep: i32[] = [0];
+    let v: E = mkv();
+    let keep: i32[] = [0];
     match (v) { E.A(xs) => { keep = xs; }, E.B => { keep = [0]; } }
     return (keep.len() + keep[0]) % 101;
 }

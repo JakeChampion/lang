@@ -1625,13 +1625,13 @@ function _fld(t: string, i: i32): i32 {
 // ` + "`want_upper`" + `, lowercase otherwise — returning ` + "`cp`" + ` unchanged when it
 // has no mapping. Binary search over 20-character records; no allocation.
 function _case_apply(cp: i32, want_upper: boolean): i32 {
-    var t: string = _case_table();
-    var lo: i32 = 0;
-    var hi: i32 = t.len() / 20 - 1;
+    let t: string = _case_table();
+    let lo: i32 = 0;
+    let hi: i32 = t.len() / 20 - 1;
     while (lo <= hi) {
-        var mid: i32 = lo + (hi - lo) / 2;
-        var base: i32 = mid * 20;
-        var rlo: i32 = _fld(t, base);
+        let mid: i32 = lo + (hi - lo) / 2;
+        let base: i32 = mid * 20;
+        let rlo: i32 = _fld(t, base);
         if (cp < rlo) {
             hi = mid - 1;
         } else if (cp > _fld(t, base + 4)) {
@@ -1641,7 +1641,7 @@ function _case_apply(cp: i32, want_upper: boolean): i32 {
                 if (want_upper) { return cp + _fld(t, base + 12) - 8388608; }
                 return cp + _fld(t, base + 16) - 8388608;
             }
-            var odd: i32 = (cp - rlo) & 1;
+            let odd: i32 = (cp - rlo) & 1;
             if (want_upper) { return cp - odd; }
             return cp + 1 - odd;
         }
@@ -1671,8 +1671,8 @@ function _lower_cp(cp: i32): i32 {
 // _is_ascii reports whether every byte of ` + "`s`" + ` is below 0x80, so the
 // whole string can take the byte-fold fast path.
 function _is_ascii(s: string): boolean {
-    var n: i32 = s.len();
-    var i: i32 = 0;
+    let n: i32 = s.len();
+    let i: i32 = 0;
     while (i < n) {
         if (s[i] >= 128) { return false; }
         i = i + 1;
@@ -1684,11 +1684,11 @@ function _is_ascii(s: string): boolean {
 // at ` + "`to`" + `, leaving every other byte alone. The fast path for
 // to_upper / to_lower on ASCII input.
 function _ascii_fold(s: string, from: i32, to: i32): string {
-    var n: i32 = s.len();
-    var buf: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
+    let n: i32 = s.len();
+    let buf: u8[] = __alloc_u8(n);
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = s[i] as i32;
+        let b: i32 = s[i] as i32;
         if (b >= from && b < from + 26) { b = b + (to - from); }
         buf = buf.with(i, b as u8);
         i = i + 1;
@@ -1701,23 +1701,23 @@ function _ascii_fold(s: string, from: i32, to: i32): string {
 // Binary search over 16-character records; a trailing 0 field means the
 // expansion is shorter than 3 code points.
 function _full_case(cp: i32, want_upper: boolean): string {
-    var t: string = _full_lower_table();
+    let t: string = _full_lower_table();
     if (want_upper) { t = _full_upper_table(); }
-    var lo: i32 = 0;
-    var hi: i32 = t.len() / 16 - 1;
+    let lo: i32 = 0;
+    let hi: i32 = t.len() / 16 - 1;
     while (lo <= hi) {
-        var mid: i32 = lo + (hi - lo) / 2;
-        var base: i32 = mid * 16;
-        var from: i32 = _fld(t, base);
+        let mid: i32 = lo + (hi - lo) / 2;
+        let base: i32 = mid * 16;
+        let from: i32 = _fld(t, base);
         if (cp < from) {
             hi = mid - 1;
         } else if (cp > from) {
             lo = mid + 1;
         } else {
-            var out: string = utf8.utf8_encode((_fld(t, base + 4)) as char);
-            var c2: i32 = _fld(t, base + 8);
+            let out: string = utf8.utf8_encode((_fld(t, base + 4)) as char);
+            let c2: i32 = _fld(t, base + 8);
             if (c2 != 0) { out = out + utf8.utf8_encode((c2) as char); }
-            var c3: i32 = _fld(t, base + 12);
+            let c3: i32 = _fld(t, base + 12);
             if (c3 != 0) { out = out + utf8.utf8_encode((c3) as char); }
             return out;
         }
@@ -1732,11 +1732,11 @@ function _full_case(cp: i32, want_upper: boolean): string {
 // ` + "`ΣΟΦΟΣ`" + ` lowercases to ` + "`σοφος`" + ` and not ` + "`σοφοσ`" + `.
 function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
     // Look BACK for a cased code point, skipping case-ignorables.
-    var before: boolean = false;
-    var k: i32 = at;
+    let before: boolean = false;
+    let k: i32 = at;
     while (k > 0) {
-        var st: i32 = utf8.floor_char_boundary(s, k - 1);
-        var cp: i32 = 65533;
+        let st: i32 = utf8.floor_char_boundary(s, k - 1);
+        let cp: i32 = 65533;
         match (utf8.utf8_decode_at(s, st)) {
             Some(pr) => { cp = pr.0; },
             None => { }
@@ -1749,11 +1749,11 @@ function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
     }
     if (!before) { return false; }
     // Look FORWARD for a cased code point, skipping case-ignorables.
-    var n: i32 = s.len();
-    var i: i32 = at + sigma_len;
+    let n: i32 = s.len();
+    let i: i32 = at + sigma_len;
     while (i < n) {
-        var cp2: i32 = 65533;
-        var w: i32 = 1;
+        let cp2: i32 = 65533;
+        let w: i32 = 1;
         match (utf8.utf8_decode_at(s, i)) {
             Some(pr2) => { cp2 = pr2.0; w = pr2.1; },
             None => { }
@@ -1779,13 +1779,13 @@ function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
 // reaches them, so every such program paid for tables it could not use.
 // Do not merge these back together.
 function _map_upper(s: string): string {
-    var out: string = "";
-    var n: i32 = s.len();
-    var i: i32 = 0;
+    let out: string = "";
+    let n: i32 = s.len();
+    let i: i32 = 0;
     while (i < n) {
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => {
-                var full: string = _full_case(pair.0, true);
+                let full: string = _full_case(pair.0, true);
                 if (full.len() > 0) {
                     out = out + full;
                 } else {
@@ -1803,16 +1803,16 @@ function _map_upper(s: string): string {
 // sigma (U+03A3) becomes final sigma ` + "`ς`" + ` in word-final position and ` + "`σ`" + `
 // elsewhere. The locale tailorings (Turkish, Lithuanian) are not applied.
 function _map_lower(s: string): string {
-    var out: string = "";
-    var n: i32 = s.len();
-    var i: i32 = 0;
+    let out: string = "";
+    let n: i32 = s.len();
+    let i: i32 = 0;
     while (i < n) {
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => {
                 if (pair.0 == 931 && _final_sigma(s, i, pair.1)) {
                     out = out + utf8.utf8_encode((962) as char);
                 } else {
-                    var full: string = _full_case(pair.0, false);
+                    let full: string = _full_case(pair.0, false);
                     if (full.len() > 0) {
                         out = out + full;
                     } else {
@@ -1849,22 +1849,22 @@ pub function to_lower(s: string): string {
 // does. Only the differing code points are tabulated; the rest fall
 // through to the simple lowercase mapping.
 function _fold_cp(cp: i32): string {
-    var t: string = _fold_table();
-    var lo: i32 = 0;
-    var hi: i32 = t.len() / 16 - 1;
+    let t: string = _fold_table();
+    let lo: i32 = 0;
+    let hi: i32 = t.len() / 16 - 1;
     while (lo <= hi) {
-        var mid: i32 = lo + (hi - lo) / 2;
-        var base: i32 = mid * 16;
-        var from: i32 = _fld(t, base);
+        let mid: i32 = lo + (hi - lo) / 2;
+        let base: i32 = mid * 16;
+        let from: i32 = _fld(t, base);
         if (cp < from) {
             hi = mid - 1;
         } else if (cp > from) {
             lo = mid + 1;
         } else {
-            var out: string = utf8.utf8_encode((_fld(t, base + 4)) as char);
-            var c2: i32 = _fld(t, base + 8);
+            let out: string = utf8.utf8_encode((_fld(t, base + 4)) as char);
+            let c2: i32 = _fld(t, base + 8);
             if (c2 != 0) { out = out + utf8.utf8_encode((c2) as char); }
-            var c3: i32 = _fld(t, base + 12);
+            let c3: i32 = _fld(t, base + 12);
             if (c3 != 0) { out = out + utf8.utf8_encode((c3) as char); }
             return out;
         }
@@ -1878,9 +1878,9 @@ function _fold_cp(cp: i32): string {
 // result is for COMPARISON only — it is not meant to be displayed.
 pub function case_fold(s: string): string {
     if (_is_ascii(s)) { return _ascii_fold(s, 65, 97); }
-    var out: string = "";
-    var n: i32 = s.len();
-    var i: i32 = 0;
+    let out: string = "";
+    let n: i32 = s.len();
+    let i: i32 = 0;
     while (i < n) {
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => {
@@ -1900,12 +1900,12 @@ pub function case_fold(s: string): string {
 // walked in lockstep.
 pub function eq_ignore_case(a: string, b: string): boolean {
     if (_is_ascii(a) && _is_ascii(b)) {
-        var na: i32 = a.len();
+        let na: i32 = a.len();
         if (na != b.len()) { return false; }
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < na) {
-            var ca: i32 = a[k] as i32;
-            var cb: i32 = b[k] as i32;
+            let ca: i32 = a[k] as i32;
+            let cb: i32 = b[k] as i32;
             if (ca >= 65 && ca <= 90) { ca = ca + 32; }
             if (cb >= 65 && cb <= 90) { cb = cb + 32; }
             if (ca != cb) { return false; }
@@ -1930,11 +1930,11 @@ function _swap_case_cp(cp: i32): i32 {
 // under simple mapping.
 pub function swap_case(s: string): string {
     if (_is_ascii(s)) {
-        var n: i32 = s.len();
-        var buf: u8[] = __alloc_u8(n);
-        var k: i32 = 0;
+        let n: i32 = s.len();
+        let buf: u8[] = __alloc_u8(n);
+        let k: i32 = 0;
         while (k < n) {
-            var b: i32 = s[k] as i32;
+            let b: i32 = s[k] as i32;
             if (b >= 65 && b <= 90) { b = b + 32; }
             else if (b >= 97 && b <= 122) { b = b - 32; }
             buf = buf.with(k, b as u8);
@@ -1942,9 +1942,9 @@ pub function swap_case(s: string): string {
         }
         return string_from_bytes_unchecked(buf);
     }
-    var out: string = "";
-    var len: i32 = s.len();
-    var i: i32 = 0;
+    let out: string = "";
+    let len: i32 = s.len();
+    let i: i32 = 0;
     while (i < len) {
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => {
@@ -1961,11 +1961,11 @@ pub function swap_case(s: string): string {
 // exactly as they are. Not Python's str.capitalize, which also
 // lowercases the tail; preserving the tail is the less lossy default.
 pub function capitalize(s: string): string {
-    var n: i32 = s.len();
+    let n: i32 = s.len();
     if (n == 0) { return ""; }
     match (utf8.utf8_decode_at(s, 0)) {
         Some(pair) => {
-            var up: i32 = _upper_cp(pair.0);
+            let up: i32 = _upper_cp(pair.0);
             if (up == pair.0) { return s; }
             return utf8.utf8_encode((up) as char) + slice_unchecked(s, pair.1, n);
         },
@@ -1980,14 +1980,14 @@ pub function capitalize(s: string): string {
 // only, so a tab-separated string titles differently between the two.
 // This is a word-BREAK notion, not UAX #29 segmentation (#5633).
 pub function title_case(s: string): string {
-    var out: string = "";
-    var n: i32 = s.len();
-    var i: i32 = 0;
-    var at_start: boolean = true;
+    let out: string = "";
+    let n: i32 = s.len();
+    let i: i32 = 0;
+    let at_start: boolean = true;
     while (i < n) {
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => {
-                var cp: i32 = pair.0;
+                let cp: i32 = pair.0;
                 if (at_start) {
                     out = out + utf8.utf8_encode((_upper_cp(cp)) as char);
                 } else {
@@ -2009,11 +2009,11 @@ pub function title_case(s: string): string {
 // _in_ranges binary-searches an inclusive-range table (8-character
 // lo | hi records, sorted and non-overlapping) for ` + "`cp`" + `.
 function _in_ranges(t: string, cp: i32): boolean {
-    var lo: i32 = 0;
-    var hi: i32 = t.len() / 8 - 1;
+    let lo: i32 = 0;
+    let hi: i32 = t.len() / 8 - 1;
     while (lo <= hi) {
-        var mid: i32 = lo + (hi - lo) / 2;
-        var base: i32 = mid * 8;
+        let mid: i32 = lo + (hi - lo) / 2;
+        let base: i32 = mid * 8;
         if (cp < _fld(t, base)) { hi = mid - 1; }
         else if (cp > _fld(t, base + 4)) { lo = mid + 1; }
         else { return true; }
@@ -2122,12 +2122,12 @@ pub function (c: char) is_lower(): boolean {
 // Malformed bytes decode to U+FFFD, which is in none of the classes, so
 // invalid UTF-8 answers false rather than being skipped.
 function _all_cp(s: string, kind: i32): boolean {
-    var n: i32 = s.len();
+    let n: i32 = s.len();
     if (n == 0) { return false; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var cp: i32 = 65533;
-        var w: i32 = 1;
+        let cp: i32 = 65533;
+        let w: i32 = 1;
         match (utf8.utf8_decode_at(s, i)) {
             Some(pr) => { cp = pr.0; w = pr.1; },
             None => { }
@@ -2163,14 +2163,14 @@ pub function is_numeric(s: string): boolean {
 // starter, 1..254 for a combining mark. Nothing below U+0300 combines,
 // which covers all of ASCII without a search.
 function _ccc_of(cp: char): i32 {
-    var n: i32 = cp as i32;
+    let n: i32 = cp as i32;
     if (n < 768) { return 0; }
-    var t: string = _ccc_ranges();
-    var lo: i32 = 0;
-    var hi: i32 = t.len() / 12 - 1;
+    let t: string = _ccc_ranges();
+    let lo: i32 = 0;
+    let hi: i32 = t.len() / 12 - 1;
     while (lo <= hi) {
-        var mid: i32 = lo + (hi - lo) / 2;
-        var base: i32 = mid * 12;
+        let mid: i32 = lo + (hi - lo) / 2;
+        let base: i32 = mid * 12;
         if (n < _fld(t, base)) { hi = mid - 1; }
         else if (n > _fld(t, base + 4)) { lo = mid + 1; }
         else { return _fld(t, base + 8); }
@@ -2186,30 +2186,30 @@ function _ccc_of(cp: char): i32 {
 // formula wrong is a classic normalization bug, so it is written out
 // once here and pinned by tests.
 function _decomp_append(out: char[], cp: char): char[] {
-    var n: i32 = cp as i32;
+    let n: i32 = cp as i32;
     if (n >= 44032 && n < 55204) {
-        var si: i32 = n - 44032;
+        let si: i32 = n - 44032;
         out = out.append((4352 + si / 588) as char);
         out = out.append((4449 + (si % 588) / 28) as char);
-        var tj: i32 = si % 28;
+        let tj: i32 = si % 28;
         if (tj != 0) { out = out.append((4519 + tj) as char); }
         return out;
     }
-    var t: string = _decomp_table();
-    var lo: i32 = 0;
-    var hi: i32 = t.len() / 20 - 1;
+    let t: string = _decomp_table();
+    let lo: i32 = 0;
+    let hi: i32 = t.len() / 20 - 1;
     while (lo <= hi) {
-        var mid: i32 = lo + (hi - lo) / 2;
-        var base: i32 = mid * 20;
-        var from: i32 = _fld(t, base);
+        let mid: i32 = lo + (hi - lo) / 2;
+        let base: i32 = mid * 20;
+        let from: i32 = _fld(t, base);
         if (n < from) {
             hi = mid - 1;
         } else if (n > from) {
             lo = mid + 1;
         } else {
-            var k: i32 = 1;
+            let k: i32 = 1;
             while (k <= 4) {
-                var c: i32 = _fld(t, base + k * 4);
+                let c: i32 = _fld(t, base + k * 4);
                 if (c == 0) { return out; }
                 out = out.append((c) as char);
                 k = k + 1;
@@ -2225,17 +2225,17 @@ function _decomp_append(out: char[], cp: char): char[] {
 // nice — reordering marks of EQUAL class would change the text. It also
 // runs linearly on already-ordered input, which is the common case.
 function _canon_order(cps: char[]): char[] {
-    var n: i32 = cps.len();
-    var i: i32 = 1;
+    let n: i32 = cps.len();
+    let i: i32 = 1;
     while (i < n) {
-        var c: i32 = _ccc_of(cps[i]);
+        let c: i32 = _ccc_of(cps[i]);
         if (c != 0) {
-            var j: i32 = i;
+            let j: i32 = i;
             while (j > 0) {
                 // A starter has class 0, so this also stops the scan
                 // dead at one: marks never migrate across a starter.
                 if (_ccc_of(cps[j - 1]) <= c) { break; }
-                var tmp: char = cps[j - 1];
+                let tmp: char = cps[j - 1];
                 cps = cps.with(j - 1, cps[j]);
                 cps = cps.with(j, tmp);
                 j = j - 1;
@@ -2250,8 +2250,8 @@ function _canon_order(cps: char[]): char[] {
 // pair does not compose. U+0000 is never a composite, so it is an
 // unambiguous "no".
 function _compose_pair(a: char, b: char): i32 {
-    var x: i32 = a as i32;
-    var y: i32 = b as i32;
+    let x: i32 = a as i32;
+    let y: i32 = b as i32;
     // Hangul L + V, then LV + T — arithmetic again, matching _decomp_append.
     if (x >= 4352 && x < 4371 && y >= 4449 && y < 4470) {
         return 44032 + ((x - 4352) * 21 + (y - 4449)) * 28;
@@ -2260,14 +2260,14 @@ function _compose_pair(a: char, b: char): i32 {
         if ((x - 44032) % 28 == 0) { return x + (y - 4519); }
         return 0;
     }
-    var t: string = _compose_table();
-    var lo: i32 = 0;
-    var hi: i32 = t.len() / 12 - 1;
+    let t: string = _compose_table();
+    let lo: i32 = 0;
+    let hi: i32 = t.len() / 12 - 1;
     while (lo <= hi) {
-        var mid: i32 = lo + (hi - lo) / 2;
-        var base: i32 = mid * 12;
-        var ka: i32 = _fld(t, base);
-        var kb: i32 = _fld(t, base + 4);
+        let mid: i32 = lo + (hi - lo) / 2;
+        let base: i32 = mid * 12;
+        let ka: i32 = _fld(t, base);
+        let kb: i32 = _fld(t, base + 4);
         if (x < ka || (x == ka && y < kb)) { hi = mid - 1; }
         else if (x > ka || (x == ka && y > kb)) { lo = mid + 1; }
         else { return _fld(t, base + 8); }
@@ -2277,9 +2277,9 @@ function _compose_pair(a: char, b: char): i32 {
 
 // _nfd_cps decomposes s into a canonically ordered code-point sequence.
 function _nfd_cps(s: string): char[] {
-    var cps: char[] = utf8.codepoints(s);
-    var out: char[] = [];
-    var i: i32 = 0;
+    let cps: char[] = utf8.codepoints(s);
+    let out: char[] = [];
+    let i: i32 = 0;
     while (i < cps.len()) {
         out = _decomp_append(out, cps[i]);
         i = i + 1;
@@ -2296,20 +2296,20 @@ function _nfd_cps(s: string): char[] {
 // preceding, with -1 meaning "nothing between", which is what lets two
 // adjacent starters (Hangul L + V) compose.
 function _compose(cps: char[]): char[] {
-    var n: i32 = cps.len();
+    let n: i32 = cps.len();
     if (n == 0) { return cps; }
-    var out: char[] = [];
+    let out: char[] = [];
     out = out.append(cps[0]);
-    var starter: i32 = -1;
+    let starter: i32 = -1;
     if (_ccc_of(cps[0]) == 0) { starter = 0; }
-    var prev_cc: i32 = -1;
-    var i: i32 = 1;
+    let prev_cc: i32 = -1;
+    let i: i32 = 1;
     while (i < n) {
-        var cp: char = cps[i];
-        var cc: i32 = _ccc_of(cp);
-        var joined: boolean = false;
+        let cp: char = cps[i];
+        let cc: i32 = _ccc_of(cp);
+        let joined: boolean = false;
         if (starter >= 0 && (prev_cc == -1 || prev_cc < cc)) {
-            var comp: i32 = _compose_pair(out[starter], cp);
+            let comp: i32 = _compose_pair(out[starter], cp);
             if (comp != 0) {
                 out = out.with(starter, (comp) as char);
                 joined = true;
@@ -2352,13 +2352,13 @@ pub function nfc(s: string): string {
 // pass and no allocation.
 pub function is_nfd(s: string): boolean {
     if (_is_ascii(s)) { return true; }
-    var cps: char[] = utf8.codepoints(s);
-    var prev_cc: i32 = 0;
-    var i: i32 = 0;
+    let cps: char[] = utf8.codepoints(s);
+    let prev_cc: i32 = 0;
+    let i: i32 = 0;
     while (i < cps.len()) {
-        var cp: char = cps[i];
+        let cp: char = cps[i];
         if (_in_ranges(_nfd_no_ranges(), cp as i32)) { return false; }
-        var cc: i32 = _ccc_of(cp);
+        let cc: i32 = _ccc_of(cp);
         if (cc != 0 && prev_cc > cc) { return false; }
         prev_cc = cc;
         i = i + 1;
@@ -2385,13 +2385,13 @@ pub function is_nfd(s: string): boolean {
 // escalation and stays cheap on both counts.
 pub function is_nfc(s: string): boolean {
     if (_is_ascii(s)) { return true; }
-    var cps: char[] = utf8.codepoints(s);
-    var prev_cc: i32 = 0;
-    var i: i32 = 0;
+    let cps: char[] = utf8.codepoints(s);
+    let prev_cc: i32 = 0;
+    let i: i32 = 0;
     while (i < cps.len()) {
-        var cp: char = cps[i];
-        var n: i32 = cp as i32;
-        var cc: i32 = _ccc_of(cp);
+        let cp: char = cps[i];
+        let n: i32 = cp as i32;
+        let cc: i32 = _ccc_of(cp);
         if (cc != 0 && prev_cc > cc) { return false; }
         if (_in_ranges(_nfc_no_ranges(), n)) { return false; }
         if (_in_ranges(_nfc_maybe_ranges(), n)) { return nfc(s) == s; }
@@ -2434,13 +2434,13 @@ pub function eq_canonical(a: string, b: string): boolean {
 	).Replace(`// _gcb_of is a code point's Grapheme_Cluster_Break class. Absent
 // code points are Other, which is the overwhelming majority.
 function _gcb_of(cp: char): i32 {
-    var n: i32 = cp as i32;
-    var t: string = _gcb_ranges();
-    var lo: i32 = 0;
-    var hi: i32 = t.len() / 12 - 1;
+    let n: i32 = cp as i32;
+    let t: string = _gcb_ranges();
+    let lo: i32 = 0;
+    let hi: i32 = t.len() / 12 - 1;
     while (lo <= hi) {
-        var mid: i32 = lo + (hi - lo) / 2;
-        var base: i32 = mid * 12;
+        let mid: i32 = lo + (hi - lo) / 2;
+        let base: i32 = mid * 12;
         if (n < _fld(t, base)) { hi = mid - 1; }
         else if (n > _fld(t, base + 4)) { lo = mid + 1; }
         else { return _fld(t, base + 8); }
@@ -2514,23 +2514,23 @@ function _pict_next(pict: i32, cls: i32, cur_pict: boolean): i32 {
 // about clusters at all. Fern keeps ` + "`s.len()`" + ` in BYTES and ` + "`s[i]`" + ` a byte
 // index precisely so that the cheap operations stay visibly cheap.
 pub function graphemes(s: string): string[] {
-    var out: string[] = [];
-    var n: i32 = s.len();
+    let out: string[] = [];
+    let n: i32 = s.len();
     if (n == 0) { return out; }
-    var start: i32 = 0;
-    var i: i32 = 0;
-    var prev: i32 = 0 - 1;
-    var ri: i32 = 0;
-    var pict: i32 = 0;
+    let start: i32 = 0;
+    let i: i32 = 0;
+    let prev: i32 = 0 - 1;
+    let ri: i32 = 0;
+    let pict: i32 = 0;
     while (i < n) {
-        var cp: char = 0 as char;
-        var w: i32 = 1;
+        let cp: char = 0 as char;
+        let w: i32 = 1;
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => { cp = (pair.0) as char; w = pair.1; },
             None => { cp = (s[i]) as char; w = 1; }
         }
-        var cls: i32 = _gcb_of(cp);
-        var cur_pict: boolean = _is_extpict(cp);
+        let cls: i32 = _gcb_of(cp);
+        let cur_pict: boolean = _is_extpict(cp);
         if (prev >= 0) {
             if (_gcb_break(prev, cls, ri, pict, cur_pict)) {
                 out = out.append((slice_unchecked(s, start, i) + ""));
@@ -2549,22 +2549,22 @@ pub function graphemes(s: string): string[] {
 // of them. Deliberately a separate scan rather than ` + "`graphemes(s).len()`" + `:
 // counting should not allocate.
 pub function grapheme_count(s: string): i32 {
-    var n: i32 = s.len();
+    let n: i32 = s.len();
     if (n == 0) { return 0; }
-    var count: i32 = 1;
-    var i: i32 = 0;
-    var prev: i32 = 0 - 1;
-    var ri: i32 = 0;
-    var pict: i32 = 0;
+    let count: i32 = 1;
+    let i: i32 = 0;
+    let prev: i32 = 0 - 1;
+    let ri: i32 = 0;
+    let pict: i32 = 0;
     while (i < n) {
-        var cp: char = 0 as char;
-        var w: i32 = 1;
+        let cp: char = 0 as char;
+        let w: i32 = 1;
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => { cp = (pair.0) as char; w = pair.1; },
             None => { cp = (s[i]) as char; w = 1; }
         }
-        var cls: i32 = _gcb_of(cp);
-        var cur_pict: boolean = _is_extpict(cp);
+        let cls: i32 = _gcb_of(cp);
+        let cur_pict: boolean = _is_extpict(cp);
         if (prev >= 0) {
             if (_gcb_break(prev, cls, ri, pict, cur_pict)) { count = count + 1; }
         }
@@ -2583,9 +2583,9 @@ pub function grapheme_count(s: string): i32 {
 // ` + "`reverse_bytes`" + ` keeps its name and its place: it is the explicit one,
 // carrying the hazard in the name for callers who really do want bytes.
 pub function reverse_graphemes(s: string): string {
-    var gs: string[] = graphemes(s);
-    var out: string = "";
-    var i: i32 = gs.len() - 1;
+    let gs: string[] = graphemes(s);
+    let out: string = "";
+    let i: i32 = gs.len() - 1;
     while (i >= 0) {
         out = out + gs[i];
         i = i - 1;
@@ -2595,13 +2595,13 @@ pub function reverse_graphemes(s: string): string {
 
 // _wb_of — Word_Break class of ` + "`" + `cp` + "`" + `, 0 (Other) when the table omits it.
 function _wb_of(cp: char): i32 {
-    var t: string = _wb_ranges();
-    var n: i32 = cp as i32;
-    var lo: i32 = 0;
-    var hi: i32 = t.len() / 12 - 1;
+    let t: string = _wb_ranges();
+    let n: i32 = cp as i32;
+    let lo: i32 = 0;
+    let hi: i32 = t.len() / 12 - 1;
     while (lo <= hi) {
-        var mid: i32 = lo + (hi - lo) / 2;
-        var base: i32 = mid * 12;
+        let mid: i32 = lo + (hi - lo) / 2;
+        let base: i32 = mid * 12;
         if (n < _fld(t, base)) { hi = mid - 1; }
         else if (n > _fld(t, base + 4)) { lo = mid + 1; }
         else { return _fld(t, base + 8); }
@@ -2627,16 +2627,16 @@ function _wb_needs_next(cls: i32): boolean {
 // _wb_next — class of the first non-ignorable code point at or after
 // byte offset ` + "`" + `i` + "`" + `, or -1 at end of input.
 function _wb_next(s: string, i: i32): i32 {
-    var n: i32 = s.len();
-    var j: i32 = i;
+    let n: i32 = s.len();
+    let j: i32 = i;
     while (j < n) {
-        var cp: char = 0 as char;
-        var w: i32 = 1;
+        let cp: char = 0 as char;
+        let w: i32 = 1;
         match (utf8.utf8_decode_at(s, j)) {
             Some(pair) => { cp = (pair.0) as char; w = pair.1; },
             None => { cp = (s[j]) as char; w = 1; }
         }
-        var cls: i32 = _wb_of(cp);
+        let cls: i32 = _wb_of(cp);
         if (!_wb_ignorable(cls)) { return cls; }
         j = j + w;
     }
@@ -2675,15 +2675,15 @@ function _wb_break(prev2: i32, prev: i32, raw_prev: i32, cur: i32, next: i32, ri
 
     // AHLetter = ALetter | Hebrew_Letter, the two that behave alike
     // everywhere except WB7a/b/c.
-    var ah_prev: boolean = prev == 10 || prev == 9;
-    var ah_prev2: boolean = prev2 == 10 || prev2 == 9;
-    var ah_cur: boolean = cur == 10 || cur == 9;
-    var ah_next: boolean = next == 10 || next == 9;
+    let ah_prev: boolean = prev == 10 || prev == 9;
+    let ah_prev2: boolean = prev2 == 10 || prev2 == 9;
+    let ah_cur: boolean = cur == 10 || cur == 9;
+    let ah_next: boolean = next == 10 || next == 9;
     // MidNumLetQ = MidNumLet | Single_Quote.
-    var mid_letter_q: boolean = cur == 14 || cur == 13 || cur == 11;
-    var prev_mid_letter_q: boolean = prev == 14 || prev == 13 || prev == 11;
-    var mid_num_q: boolean = cur == 15 || cur == 13 || cur == 11;
-    var prev_mid_num_q: boolean = prev == 15 || prev == 13 || prev == 11;
+    let mid_letter_q: boolean = cur == 14 || cur == 13 || cur == 11;
+    let prev_mid_letter_q: boolean = prev == 14 || prev == 13 || prev == 11;
+    let mid_num_q: boolean = cur == 15 || cur == 13 || cur == 11;
+    let prev_mid_num_q: boolean = prev == 15 || prev == 13 || prev == 11;
 
     // WB5: letters run together.
     if (ah_prev && ah_cur) { return false; }
@@ -2724,15 +2724,15 @@ function _wb_break(prev2: i32, prev: i32, raw_prev: i32, cur: i32, next: i32, ri
 // from ` + "`" + `word_segments` + "`" + ` -- spaces, punctuation runs and line breaks are
 // segments of the text but are not words of it.
 function _wb_is_word(s: string, a: i32, b: i32): boolean {
-    var i: i32 = a;
+    let i: i32 = a;
     while (i < b) {
-        var cp: char = 0 as char;
-        var w: i32 = 1;
+        let cp: char = 0 as char;
+        let w: i32 = 1;
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => { cp = (pair.0) as char; w = pair.1; },
             None => { cp = (s[i]) as char; w = 1; }
         }
-        var n: i32 = cp as i32;
+        let n: i32 = cp as i32;
         if (_is_letter_cp(n) || _is_digit_cp(n)) { return true; }
         i = i + w;
     }
@@ -2756,25 +2756,25 @@ function _wb_is_word(s: string, a: i32, b: i32): boolean {
 // UAX #29 says so itself. Han and Hiragana therefore segment per code
 // point, and Katakana runs stay together (WB13).
 pub function word_segments(s: string): string[] {
-    var out: string[] = [];
-    var n: i32 = s.len();
+    let out: string[] = [];
+    let n: i32 = s.len();
     if (n == 0) { return out; }
-    var start: i32 = 0;
-    var i: i32 = 0;
-    var prev2: i32 = 0 - 1;
-    var prev: i32 = 0 - 1;
-    var raw_prev: i32 = 0 - 1;
-    var ri: i32 = 0;
+    let start: i32 = 0;
+    let i: i32 = 0;
+    let prev2: i32 = 0 - 1;
+    let prev: i32 = 0 - 1;
+    let raw_prev: i32 = 0 - 1;
+    let ri: i32 = 0;
     while (i < n) {
-        var cp: char = 0 as char;
-        var w: i32 = 1;
+        let cp: char = 0 as char;
+        let w: i32 = 1;
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => { cp = (pair.0) as char; w = pair.1; },
             None => { cp = (s[i]) as char; w = 1; }
         }
-        var cls: i32 = _wb_of(cp);
+        let cls: i32 = _wb_of(cp);
         if (i > 0) {
-            var nxt: i32 = 0 - 1;
+            let nxt: i32 = 0 - 1;
             if (_wb_needs_next(cls)) { nxt = _wb_next(s, i + w); }
             if (_wb_break(prev2, prev, raw_prev, cls, nxt, ri, _is_extpict(cp))) {
                 out = out.append((slice_unchecked(s, start, i) + ""));
@@ -2800,12 +2800,12 @@ pub function word_segments(s: string): string[] {
 // and ` + "`" + `3.14` + "`" + ` whole, splits ` + "`" + `hello,world` + "`" + ` without a space to help it,
 // and works on text with no ASCII spaces in it at all.
 pub function words(s: string): string[] {
-    var segs: string[] = word_segments(s);
-    var out: string[] = [];
-    var i: i32 = 0;
-    var off: i32 = 0;
+    let segs: string[] = word_segments(s);
+    let out: string[] = [];
+    let i: i32 = 0;
+    let off: i32 = 0;
     while (i < segs.len()) {
-        var w: i32 = segs[i].len();
+        let w: i32 = segs[i].len();
         if (_wb_is_word(s, off, off + w)) { out = out.append(segs[i]); }
         off = off + w;
         i = i + 1;
@@ -2817,25 +2817,25 @@ pub function words(s: string): string[] {
 // A separate scan for the same reason ` + "`" + `grapheme_count` + "`" + ` is one: counting
 // should not allocate.
 pub function word_count(s: string): i32 {
-    var n: i32 = s.len();
+    let n: i32 = s.len();
     if (n == 0) { return 0; }
-    var count: i32 = 0;
-    var start: i32 = 0;
-    var i: i32 = 0;
-    var prev2: i32 = 0 - 1;
-    var prev: i32 = 0 - 1;
-    var raw_prev: i32 = 0 - 1;
-    var ri: i32 = 0;
+    let count: i32 = 0;
+    let start: i32 = 0;
+    let i: i32 = 0;
+    let prev2: i32 = 0 - 1;
+    let prev: i32 = 0 - 1;
+    let raw_prev: i32 = 0 - 1;
+    let ri: i32 = 0;
     while (i < n) {
-        var cp: char = 0 as char;
-        var w: i32 = 1;
+        let cp: char = 0 as char;
+        let w: i32 = 1;
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => { cp = (pair.0) as char; w = pair.1; },
             None => { cp = (s[i]) as char; w = 1; }
         }
-        var cls: i32 = _wb_of(cp);
+        let cls: i32 = _wb_of(cp);
         if (i > 0) {
-            var nxt: i32 = 0 - 1;
+            let nxt: i32 = 0 - 1;
             if (_wb_needs_next(cls)) { nxt = _wb_next(s, i + w); }
             if (_wb_break(prev2, prev, raw_prev, cls, nxt, ri, _is_extpict(cp))) {
                 if (_wb_is_word(s, start, i)) { count = count + 1; }

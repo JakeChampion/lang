@@ -73,7 +73,7 @@ impl b.Leaky for R {
   function tag(self: Self): i32 { return self.n; }
 }
 function main(): i32 {
-  var r: R = R { n: 1 };
+  let r: R = R { n: 1 };
   return r.grab();
 }`,
 				"b/fern.toml": "[package]\nname = \"b\"\n",
@@ -130,7 +130,7 @@ impl b.Leaky for R {
   function tag(self: Self): i32 { return self.n; }
 }
 pub function run(): i32 {
-  var r: R = R { n: 1 };
+  let r: R = R { n: 1 };
   return r.grab();
 }`,
 		"b/fern.toml": "[package]\nname = \"b\"\n",

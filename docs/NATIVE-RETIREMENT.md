@@ -57,7 +57,7 @@ targets).
 | #10767 (closed by #10821 after this measurement) | checker: six rejections native accepts (E009, E015, E038 x2, E042, E064) | 12 |
 | #10756 (closed after this measurement: the mechanics landed in #10821, and the tests check the documented contract, each finalizer once at the value's death, rather than native's release timing) | typed lowering: `impl mem.Drop` finalizers never run | 8 |
 | #10760 (closed by #10821 after this measurement) | typed lowering: a declared `str[]` holds a `string[]` (`graphemes`, `words`) | 6 |
-| #10766 (closed by #10821 after this measurement) | parser: `@` binding with a braceless arm, braceless `if let`, `let … else` in a `var` | 6 |
+| #10766 (closed by #10821 after this measurement) | parser: `@` binding with a braceless arm, braceless `if let`, `let … else` in a `let` | 6 |
 | #10763 (closed by #10828 after this measurement) | typed lowering: empty array literal at a view parameter, `?` on a unit-payload success, a value block with no live edge, a `use` callback wrapper | 6 |
 | #10757 (closed by #10835 after this measurement; the checker typed a suffixed float literal f64) | typed lowering: f32 values typed f64 | 5 |
 | #10768 (closed by #10775 after this measurement) | wasm: the core module exports only `_start`, so a main result of 126 or more is unreadable | 5 |

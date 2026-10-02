@@ -233,7 +233,7 @@ function test_duration_full(): test.TestOutcome {
 // multi-byte UTF-8 literal — the branches that each append to the buffer
 // differently. Pins the byte-for-byte output of the rewrite.
 function test_format_mixed_long(): test.TestOutcome {
-  var got: string = format.format(
+  let got: string = format.format(
     "user={} role={} {{n}}={} cfg={\"k\":1} tail={} name={} done",
     ["alice", "admin", "7", "Þórin"],
   );
@@ -244,7 +244,7 @@ function test_format_mixed_long(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/format");
+  let r: test.TestRunner = test.test_new("std/format");
   r = r.it("format positional", test_format_positional);
   r = r.it("format no placeholders", test_format_no_placeholders);
   r = r.it("format escaped braces", test_format_escaped_braces);

@@ -11,7 +11,7 @@ import (
 // true), so before this slice the outer drop freed only the OUTER buffer
 // — the exit sweep's __fern_drop_arr_ptr flat-rc_dec'd each element and
 // emitVarReinitDropOld's plain __fern_arr_dec ignored them, so every
-// INNER buffer leaked. A `var g = [[..],[..]]` loop grew unbounded (the
+// INNER buffer leaked. A `let g = [[..],[..]]` loop grew unbounded (the
 // profiling probe measured 3264 B → 320064 B). The fix routes an
 // array-of-(primitive-array) drop through the generated
 // __drop_arr_arr_<innerStride> loop (free each inner buffer via
@@ -19,11 +19,11 @@ import (
 
 func nestedArrBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var g: i32[][] = [[i, i + 1], [i + 2, i + 3]];
+        let g: i32[][] = [[i, i + 1], [i + 2, i + 3]];
         acc = acc + g[0][1] + g[1][0];
         i = i + 1;
     }
@@ -34,10 +34,10 @@ func nestedArrBumpSrc(n string) string {
 // Inner buffers must reclaim AND not over-release (a shared inner array
 // is is_unique-gated). Returns 0 iff value-correct and no over-release.
 const nestedArrUnderflowSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var g: i32[][] = [[i, i + 1, i + 2], [i + 3, i + 4]];
+        let g: i32[][] = [[i, i + 1, i + 2], [i + 3, i + 4]];
         acc = acc + g[0][2] + g[1][1];
         i = i + 1;
     }

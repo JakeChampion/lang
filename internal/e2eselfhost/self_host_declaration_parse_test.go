@@ -25,12 +25,12 @@ func TestSelfHostDeclarationParse(t *testing.T) {
 	for i, tc := range cases {
 		program := fmt.Sprintf(`struct Holder { cb: %[1]s }
 enum Task { First(%[1]s), Later(i32, %[1]s), Named { cb: %[1]s } }
-function probe(cb: %[1]s): %[1]s { var f: %[1]s = cb; return f; }`, tc.spelling)
-		fmt.Fprintf(&src, "var m%d = parser.parse_module(lexer.tokenize(%s));\n", i, strconv.Quote(program))
-		fmt.Fprintf(&src, "var p%d = m%d.funcs[0].params[0]; print(p%d.type_name + \"|\" + p%d.fn_param_types + \"|\" + p%d.fn_ret + \"|\" + p%d.fn_param_dyn);\n", i, i, i, i, i, i)
-		fmt.Fprintf(&src, "var f%d = m%d.funcs[0]; print(f%d.ret_type + \"|\" + f%d.ret_fn_param_types + \"|\" + f%d.ret_fn_ret);\n", i, i, i, i, i)
+function probe(cb: %[1]s): %[1]s { let f: %[1]s = cb; return f; }`, tc.spelling)
+		fmt.Fprintf(&src, "let m%d = parser.parse_module(lexer.tokenize(%s));\n", i, strconv.Quote(program))
+		fmt.Fprintf(&src, "let p%d = m%d.funcs[0].params[0]; print(p%d.type_name + \"|\" + p%d.fn_param_types + \"|\" + p%d.fn_ret + \"|\" + p%d.fn_param_dyn);\n", i, i, i, i, i, i)
+		fmt.Fprintf(&src, "let f%d = m%d.funcs[0]; print(f%d.ret_type + \"|\" + f%d.ret_fn_param_types + \"|\" + f%d.ret_fn_ret);\n", i, i, i, i, i)
 		fmt.Fprintf(&src, "match (f%d.body[0]) { ast.StmtVar(v) => { print(v.type_name + \"|\" + v.fn_param_types + \"|\" + v.fn_ret); }, _ => { return 90; } }\n", i)
-		fmt.Fprintf(&src, "for s in m%d.structs { if (s.name == \"Holder\" || s.enum_owner == \"Task\") { var f = s.fields[s.fields.len() - 1]; print(f.type_name + \"|\" + f.fn_param_types + \"|\" + f.fn_ret); } }\n", i)
+		fmt.Fprintf(&src, "for s in m%d.structs { if (s.name == \"Holder\" || s.enum_owner == \"Task\") { let f = s.fields[s.fields.len() - 1]; print(f.type_name + \"|\" + f.fn_param_types + \"|\" + f.fn_ret); } }\n", i)
 	}
 	src.WriteString("return 0; }\n")
 	dir := t.TempDir()

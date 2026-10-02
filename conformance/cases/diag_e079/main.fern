@@ -21,14 +21,14 @@ function g(v: i32): Option[i32] {
 }
 
 function build(out: Cell[i32]): Option[i32] {
-    var n: i32 = 0;
+    let n: i32 = 0;
     defer n = g(n)?;
     out.set(n);
     return Some(n);
 }
 
 function main(): i32 {
-    var c: Cell[i32] = cell_new(0);
+    let c: Cell[i32] = cell_new(0);
     build(c);
     return c.get();
 }

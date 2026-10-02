@@ -55,7 +55,7 @@ and a declaration-bound lambda returned past a defer; 7 of 7, 400 and 400).
 
 ## What it does not reach
 
-The native backend answers the record shape differently: `var p: P = P { a:
+The native backend answers the record shape differently: `let p: P = P { a:
 3 }; defer p = P { a: 9 }; return p;` gives 9 there where the interpreter
 and both self-host legs give 3, and the first production row above segfaults
 under it. Filed as #10027; the rows compare the typed path against the AST

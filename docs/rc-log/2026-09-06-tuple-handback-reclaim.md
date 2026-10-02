@@ -6,7 +6,7 @@ inside a tuple:
 ```
 out = push_str(out, sep);
 out = emit_term(w, out, f, x);
-var d: (io_buffered.BufWriter, Block) = drain(w, out);
+let d: (io_buffered.BufWriter, Block) = drain(w, out);
 w = d.0;
 out = d.1;
 ```
@@ -29,14 +29,14 @@ instrumented verdict named four statements, one at a time:
    local to `flush` or `drain` was refused too. `ret_hands_back` now judges a
    tuple element by element under the rules the other three shapes already
    had.
-2. The handback pair `var d = g(.., out, ..); out = d.f;` was recognised only
+2. The handback pair `let d = g(.., out, ..); out = d.f;` was recognised only
    when the unpack was the very next statement. `handback_unpack_at` scans
    forward over statements that mention neither name nor `d`, or that read a
    DIFFERENT element of `d` whose declared type is not the handed-back
    element's — `w = d.0` — and refuses a second read of the same element.
    `dor_scan` (the `NOFLD:` box-only decision) takes the same pair. The
-   destructure spellings — `var (w, out) = drain(w, out)` and the
-   two-statement `var (w2, o2) = drain(w, out); out = o2;` — are outside
+   destructure spellings — `let (w, out) = drain(w, out)` and the
+   two-statement `let (w2, o2) = drain(w, out); out = o2;` — are outside
    this rule and stay leak-mode: #8734.
 3. `write_overflow(o, out)` in `emit_term`'s `None` arm: a call in statement
    position, result discarded. `expr_consume_transparent` admits it when
@@ -47,7 +47,7 @@ instrumented verdict named four statements, one at a time:
    the registry now says outright; without it `finish(w: i32)`'s `w % 100`
    read as an escape of `w`.
 4. `drain`'s slow path `return flush(w, b)`. `tuple_fresh_ret_fns_of` wanted
-   a direct literal on every path, so `var d = drain(w, out)` earned no
+   a direct literal on every path, so `let d = drain(w, out)` earned no
    "TUP:" box credit and the 40-byte tuple box leaked per iteration. The
    registry is a least fixpoint that also admits a return that is a call to
    a member; a function admitted only that way records no `ARRF:` flags.

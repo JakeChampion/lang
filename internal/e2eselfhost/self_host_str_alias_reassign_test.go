@@ -10,8 +10,8 @@ import (
 
 // --- A string local reassigned from an alias reclaims nothing ----------------
 //
-// `var s: string = "ab" + "cd"; var keep: string = "zz"; keep = s;` freed neither
-// box — 40 allocs / 0 frees over 20 rounds. The BIND form (`var keep: string = s;`)
+// `let s: string = "ab" + "cd"; let keep: string = "zz"; keep = s;` freed neither
+// box — 40 allocs / 0 frees over 20 rounds. The BIND form (`let keep: string = s;`)
 // has been at parity since #7282, so this is the same REASSIGN-vs-BIND split the
 // struct limb had, in the class that has its own reclaim machinery.
 //
@@ -56,8 +56,8 @@ type strAliasReassignCase struct {
 }
 
 const strarMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -69,8 +69,8 @@ func strAliasReassignCases() []strAliasReassignCase {
 			// THE REPRO. Base: 40 allocs / 0 frees.
 			name: "string_alias_reassign",
 			src: `function round(i: i32): i32 {
-    var s: string = "ab" + "cd";
-    var keep: string = "zz";
+    let s: string = "ab" + "cd";
+    let keep: string = "zz";
     keep = s;
     return keep.len() * 10 + (keep[0] as i32);
 }
@@ -84,11 +84,11 @@ func strAliasReassignCases() []strAliasReassignCase {
 			// over-release; this row and the underflow guard are what separate them.
 			name: "reassign_read_back_after_churn",
 			src: `function round(i: i32): i32 {
-    var s: string = "ab" + "cd";
-    var keep: string = "zz";
+    let s: string = "ab" + "cd";
+    let keep: string = "zz";
     keep = s;
-    var j1: string = "pp" + "qq";
-    var j2: string = "rr" + "ss";
+    let j1: string = "pp" + "qq";
+    let j2: string = "rr" + "ss";
     return keep.len() * 10 + (keep[0] as i32) + j1.len() - j1.len() + j2.len() - j2.len();
 }
 ` + strarMain,
@@ -99,8 +99,8 @@ func strAliasReassignCases() []strAliasReassignCase {
 			// difference was the reassign and not the alias.
 			name: "string_alias_bind_unchanged",
 			src: `function round(i: i32): i32 {
-    var s: string = "ab" + "cd";
-    var keep: string = s;
+    let s: string = "ab" + "cd";
+    let keep: string = s;
     return keep.len() * 10 + (keep[0] as i32);
 }
 ` + strarMain,
@@ -115,8 +115,8 @@ func strAliasReassignCases() []strAliasReassignCase {
 			// other three grow it in place (#10960).
 			name: "string_accumulator_unchanged",
 			src: `function round(i: i32): i32 {
-    var s: string = "";
-    var k: i32 = 0;
+    let s: string = "";
+    let k: i32 = 0;
     while (k < 4) { s = s + "ab"; k = k + 1; }
     return s.len();
 }
@@ -129,7 +129,7 @@ func strAliasReassignCases() []strAliasReassignCase {
 			// taking the consume-rebind path rather than the new one.
 			name: "fresh_rhs_reassign_unchanged",
 			src: `function round(i: i32): i32 {
-    var s: string = "ab" + "cd";
+    let s: string = "ab" + "cd";
     s = "ef" + "gh";
     return s.len() * 10 + (s[0] as i32);
 }
@@ -137,7 +137,7 @@ func strAliasReassignCases() []strAliasReassignCase {
 			want: 7, allocs: 40, frees: 40,
 		},
 		{
-			// BORROWED PARAMS, and the gap this row pinned is now closed. `var q:
+			// BORROWED PARAMS, and the gap this row pinned is now closed. `let q:
 			// string = p; q = o;` where p and o are both params used to leave the
 			// CALLER refusing its own release — 80/0, a sound leak — because
 			// aliasing a param marked that param non-borrowable. The param verdict
@@ -160,13 +160,13 @@ func strAliasReassignCases() []strAliasReassignCase {
 			// churn form it leaks 40 boxes of its own where the self-host is clean.
 			name: "borrowed_param_reassign_borrowed",
 			src: `function consume(p: string, o: string): i32 {
-    var q: string = p;
+    let q: string = p;
     q = o;
     return q.len() + p.len();
 }
 function round(i: i32): i32 {
-    var a: string = "ab" + "cd";
-    var b: string = "ef" + "gh";
+    let a: string = "ab" + "cd";
+    let b: string = "ef" + "gh";
     return consume(a, b) + a.len() - a.len();
 }
 ` + strarMain,

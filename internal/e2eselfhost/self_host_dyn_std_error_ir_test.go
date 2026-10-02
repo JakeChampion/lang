@@ -20,12 +20,12 @@ function find(ok: boolean): Result[i32, NotFound] {
     return Err(NotFound { what: "miss" + "ing" });
 }
 function handler(ok: boolean): Result[i32, dyn error.Error] {
-    var v: i32 = find(ok)?;
+    let v: i32 = find(ok)?;
     return Ok(v + 1);
 }
 function main(): i32 {
-    var a: i32 = match (handler(true)) { Ok(v) => v, Err(e) => 0 };
-    var b: string = match (handler(false)) { Ok(v) => "", Err(e) => e.message() };
+    let a: i32 = match (handler(true)) { Ok(v) => v, Err(e) => 0 };
+    let b: string = match (handler(false)) { Ok(v) => "", Err(e) => e.message() };
     print(a.to_string() + ":" + b);
     return 0;
 }

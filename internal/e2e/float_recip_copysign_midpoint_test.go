@@ -11,7 +11,7 @@ import "testing"
 // skips itself when its toolchain is absent.
 const floatRecipCopysignMidpointProg = `
 import "std/float" as float;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
     if (!approx((4.0).recip(), 0.25)) { return 1; }
     if (!approx((2.0).recip(), 0.5)) { return 2; }

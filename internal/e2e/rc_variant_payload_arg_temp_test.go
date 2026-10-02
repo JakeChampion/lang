@@ -47,7 +47,7 @@ function arrlen(t: A): i32 {
 function ins(t: T, k: string): T {
     match (t) {
         Leaf => { return Node(Leaf, k, Leaf); },
-        Node(l, nk, r) => { var nl: T = ins(l, k); return wrap(nl, nk, r); },
+        Node(l, nk, r) => { let nl: T = ins(l, k); return wrap(nl, nk, r); },
     }
 }
 @noinline
@@ -79,18 +79,18 @@ function round(i: i32): i32 { return arrlen(wrapa(ALeaf, mkarr(i), ALeaf)) - 2; 
 // freed memory, caught by the value check and the underflow counter.
 const variantPayloadLiveBody = variantPayloadPrelude + `
 function round(i: i32): i32 {
-    var l: T = mk(i);
-    var t: T = wrap(l, "k", Leaf);
+    let l: T = mk(i);
+    let t: T = wrap(l, "k", Leaf);
     return keylen(t) + keylen(l) - 1;
 }
 `
 
 // The ordered-map insert chain: a recursive insert binds its result to a local
-// and hands it to a node-building helper — the `var nl = __om_insert(l, k, v);
+// and hands it to a node-building helper — the `let nl = __om_insert(l, k, v);
 // return __om_balance(nl, ..)` shape. Four inserts build a left spine of depth 4.
 const variantPayloadInsertBody = variantPayloadPrelude + `
 function round(i: i32): i32 {
-    var t: T = Leaf;
+    let t: T = Leaf;
     t = ins(t, "a");
     t = ins(t, "b");
     t = ins(t, "c");
@@ -101,8 +101,8 @@ function round(i: i32): i32 {
 
 func variantPayloadMain(rounds, want int) string {
 	return `function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < ` + strconv.Itoa(rounds) + `) { acc = acc + round(r); r = r + 1; }
     if (acc != ` + strconv.Itoa(want) + `) { return 1; }
     if (__rc_underflow_count() != 0) { return 2; }
@@ -141,9 +141,9 @@ func TestX86_64VariantPayloadArgTempReclaim(t *testing.T) {
 // signal — one round's working set, equal for 20 and 200 rounds.
 func variantPayloadBumpSrc(body string, rounds int) string {
 	return body + `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var r: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let r: i32 = 0;
+    let sum: i32 = 0;
     while (r < ` + strconv.Itoa(rounds) + `) { sum = sum + round(r); r = r + 1; }
     if (sum != ` + strconv.Itoa(rounds) + `) { return 201; }
     return (__heap_bump_bytes() as i32) - before;

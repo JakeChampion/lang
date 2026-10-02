@@ -26,23 +26,23 @@ var u64MethodCases = []struct {
 	src  string
 }{
 	{"min", `import "std/u64";
-function main(): i32 { var a: u64 = 7 as u64; var b: u64 = 3 as u64; return a.min(b) as i32; }`},
+function main(): i32 { let a: u64 = 7 as u64; let b: u64 = 3 as u64; return a.min(b) as i32; }`},
 	{"max", `import "std/u64";
-function main(): i32 { var a: u64 = 7 as u64; var b: u64 = 3 as u64; return a.max(b) as i32; }`},
+function main(): i32 { let a: u64 = 7 as u64; let b: u64 = 3 as u64; return a.max(b) as i32; }`},
 	// max with a high-bit-set operand (>= 2^63): the internal compare must be
 	// unsigned, so it picks `a`; a.max(b) % 100 = ...007 % 100 = 7.
 	{"max-highbit", `import "std/u64";
-function main(): i32 { var a: u64 = 18000000000000000007 as u64; var b: u64 = 9 as u64; return (a.max(b) % (100 as u64)) as i32; }`},
+function main(): i32 { let a: u64 = 18000000000000000007 as u64; let b: u64 = 9 as u64; return (a.max(b) % (100 as u64)) as i32; }`},
 	// clamp with a high-bit-set hi bound: n (=50) stays within [10, big] → 50,
 	// only if the `n > hi` compare is unsigned.
 	{"clamp-highbit-hi", `import "std/u64";
-function main(): i32 { var hi: u64 = 18000000000000000000 as u64; return (50 as u64).clamp(10 as u64, hi) as i32; }`},
+function main(): i32 { let hi: u64 = 18000000000000000000 as u64; return (50 as u64).clamp(10 as u64, hi) as i32; }`},
 	// to_string just above the u32 range (2^32): 10 digits, all kept.
 	{"to_string-2p32", `import "std/u64";
-function main(): i32 { var n: u64 = 4294967296 as u64; if (n.to_string() == "4294967296") { return 42; } return 0; }`},
+function main(): i32 { let n: u64 = 4294967296 as u64; if (n.to_string() == "4294967296") { return 42; } return 0; }`},
 	// to_string of a high-bit-set value (> 2^63, 20 digits) — exact match.
 	{"to_string-highbit", `import "std/u64";
-function main(): i32 { var n: u64 = 18000000000000000007 as u64; if (n.to_string() == "18000000000000000007") { return 42; } return n.to_string().len(); }`},
+function main(): i32 { let n: u64 = 18000000000000000007 as u64; if (n.to_string() == "18000000000000000007") { return 42; } return n.to_string().len(); }`},
 	// A USER struct method RETURNING u64, chained directly in an unsigned op
 	// where the call is the sole u64 operand (`p.big() >> 57`). expr_is_u64
 	// gained an ExprFieldAccess arm (the method sibling of the concrete-free-fn
@@ -50,7 +50,7 @@ function main(): i32 { var n: u64 = 18000000000000000007 as u64; if (n.to_string
 	// is 124 unsigned, 252 (sign-extended low byte) signed.
 	{"user-method-u64-shift", `struct P { n: u64 }
 impl P { function big(self: Self): u64 { return self.n; } }
-function main(): i32 { var p: P = P { n: 18000000000000000000 as u64 }; return (p.big() >> 57) as i32; }`},
+function main(): i32 { let p: P = P { n: 18000000000000000000 as u64 }; return (p.big() >> 57) as i32; }`},
 }
 
 func TestSelfHostU64MethodsIR(t *testing.T) {

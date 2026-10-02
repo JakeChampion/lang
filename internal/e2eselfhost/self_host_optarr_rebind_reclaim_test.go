@@ -68,16 +68,16 @@ func TestSelfHostOptArrRebindReclaimX86_64(t *testing.T) {
 
 	t.Run("rebound_in_loop", func(t *testing.T) {
 		src := `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32[]] = Some([i, i + 1]);
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
+    let k: i32 = 0;
     while (k < 4) { o = Some([k, k + 1]); k = k + 1; }
     match (o) { Some(a) => { acc = a.len() + a[0]; }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -96,14 +96,14 @@ function main(): i32 {
 		// Owned by consumed_rcpayload_option_frees, NOT by this class. If OPTARR:
 		// also claimed it, its box would be dec'd twice.
 		src := `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
     match (o) { Some(a) => { acc = a.len() + a[0]; }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 97;
 }`
@@ -118,18 +118,18 @@ function main(): i32 {
 		// Owned by the per-block call added in #4357 — same disjointness check one
 		// scope deeper.
 		src := `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let k: i32 = 0;
     while (k < 4) {
-        var o: Option[i32[]] = Some([k, k + 1]);
+        let o: Option[i32[]] = Some([k, k + 1]);
         match (o) { Some(a) => { acc = acc + a.len() + a[0]; }, None => {} }
         k = k + 1;
     }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 89;
 }`
@@ -163,16 +163,16 @@ func TestSelfHostOptArrRebindHazardsX86_64(t *testing.T) {
 			name: "payload_escapes_into_call",
 			src: `function take(a: i32[]): i32 { return a.len(); }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32[]] = Some([i, i + 1]);
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
+    let k: i32 = 0;
     while (k < 3) { o = Some([k, k + 1]); k = k + 1; }
     match (o) { Some(a) => { acc = take(a); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 71;
 }`,
@@ -184,17 +184,17 @@ function main(): i32 {
 			// after the match.
 			name: "rebind_payload_not_fresh",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var shared: i32[] = [i, i + 1];
-    var o: Option[i32[]] = Some([i, i + 1]);
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let shared: i32[] = [i, i + 1];
+    let o: Option[i32[]] = Some([i, i + 1]);
+    let k: i32 = 0;
     while (k < 3) { o = Some(shared); k = k + 1; }
     match (o) { Some(a) => { acc = a.len() + a[0]; }, None => {} }
     return acc + shared[1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 67;
 }`,
@@ -205,17 +205,17 @@ function main(): i32 {
 			// released box in the second.
 			name: "used_after_match",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[i32[]] = Some([i, i + 1]);
-    var k: i32 = 0;
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
+    let k: i32 = 0;
     while (k < 3) { o = Some([k, k + 1]); k = k + 1; }
     match (o) { Some(a) => { acc = a.len(); }, None => {} }
     match (o) { Some(b) => { acc = acc + b[0]; }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 60) { x = x + round(r); r = r + 1; }
     return x % 61;
 }`,
@@ -225,19 +225,19 @@ function main(): i32 {
 			// The option itself escapes by return, so the callee must not free it.
 			name: "escaping_return",
 			src: `function build(i: i32): Option[i32[]] {
-    var o: Option[i32[]] = Some([i, i + 1]);
-    var k: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
+    let k: i32 = 0;
     while (k < 3) { o = Some([k, k + 1]); k = k + 1; }
     return o;
 }
 function round(i: i32): i32 {
-    var r: Option[i32[]] = build(i);
+    let r: Option[i32[]] = build(i);
     match (r) { Some(a) => { return a.len() + a[0]; }, None => { return 0; } }
     return 0;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var q: i32 = 0;
+    let x: i32 = 0;
+    let q: i32 = 0;
     while (q < 60) { x = x + round(q); q = q + 1; }
     return x % 59;
 }`,

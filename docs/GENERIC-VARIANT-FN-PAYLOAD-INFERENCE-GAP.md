@@ -71,7 +71,7 @@ type-param order. A first-pass-seeded substitution keeps payload
 positions that don't pin a parameter (and nested shapes) intact, so
 the legitimate refreshes still work:
 
-- `var o: Option[i64] = Some(1)` — literal widened to i64, `T`
+- `let o: Option[i64] = Some(1)` — literal widened to i64, `T`
   refreshed to i64. ✅
 - `Result[T, E]` `Ok(v)` — `T` refreshed from the settled `v`, `E`
   preserved from the first pass. ✅

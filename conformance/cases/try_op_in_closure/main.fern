@@ -3,8 +3,8 @@
 // program with exit 0, while every compiled backend answered correctly — a
 // divergence in the engine the differential suite uses as its oracle.
 function main(): i32 {
-    var f: (Option[i32]) => Option[i32] = (o: Option[i32]): Option[i32] => {
-        var v: i32 = o?;
+    let f: (Option[i32]) => Option[i32] = (o: Option[i32]): Option[i32] => {
+        let v: i32 = o?;
         return Some(v + 1);
     };
     match (f(None)) {

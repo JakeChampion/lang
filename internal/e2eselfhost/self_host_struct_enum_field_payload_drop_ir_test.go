@@ -20,13 +20,13 @@ const (
 	churnEnumFieldFresh = `enum V { A(i32[]), B }
 struct S { v: V, n: i32 }
 function mk(i: i32): i32 {
-    var s: S = S { v: A([9, 8, 7]), n: i };
-    var got: i32 = 0;
+    let s: S = S { v: A([9, 8, 7]), n: i };
+    let got: i32 = 0;
     match (s.v) { A(p) => { got = p[0]; }, _ => {} }
     return got;
 }
 function drive(n: i32): i32 {
-    var bad: i32 = 0; var i: i32 = 0;
+    let bad: i32 = 0; let i: i32 = 0;
     while (i < n) { if (mk(i) != 9) { bad = 1; } i = i + 1; }
     return bad;
 }
@@ -39,15 +39,15 @@ function drive(n: i32): i32 {
 	churnEnumFieldAliasedBox = `enum V { A(i32[]), B }
 struct S { v: V, n: i32 }
 function mk(i: i32): i32 {
-    var e: V = A([1, 2, 3]);
-    var s: S = S { v: e, n: i };
-    var bad: i32 = 0;
+    let e: V = A([1, 2, 3]);
+    let s: S = S { v: e, n: i };
+    let bad: i32 = 0;
     match (s.v) { A(p) => { if (p.len() != 3) { bad = 1; } }, _ => { bad = 2; } }
     match (e) { A(q) => { if (q[0] != 1) { bad = bad + 4; } }, _ => { bad = bad + 8; } }
     return bad;
 }
 function drive(n: i32): i32 {
-    var bad: i32 = 0; var i: i32 = 0;
+    let bad: i32 = 0; let i: i32 = 0;
     while (i < n) { if (mk(i) != 0) { bad = 1; } i = i + 1; }
     return bad;
 }
@@ -60,15 +60,15 @@ function drive(n: i32): i32 {
 	churnEnumFieldAliasedPayload = `enum V { A(i32[]), B }
 struct S { v: V, n: i32 }
 function mk(i: i32): i32 {
-    var a: i32[] = [4, 5, 6];
-    var s: S = S { v: A(a), n: i };
-    var bad: i32 = 0;
+    let a: i32[] = [4, 5, 6];
+    let s: S = S { v: A(a), n: i };
+    let bad: i32 = 0;
     match (s.v) { A(p) => { if (p.len() != 3) { bad = 1; } }, _ => { bad = 2; } }
     if (a[1] != 5) { bad = bad + 4; }
     return bad;
 }
 function drive(n: i32): i32 {
-    var bad: i32 = 0; var i: i32 = 0;
+    let bad: i32 = 0; let i: i32 = 0;
     while (i < n) { if (mk(i) != 0) { bad = 1; } i = i + 1; }
     return bad;
 }
@@ -81,15 +81,15 @@ function drive(n: i32): i32 {
 	churnEnumFieldBaseCopy = `enum V { A(i32[]), B }
 struct S { v: V, n: i32 }
 function mk(i: i32): i32 {
-    var t1: S = S { v: A([5, 6, 7]), n: i };
-    var t2: S = S { ...t1, n: 2 };
-    var bad: i32 = 0;
+    let t1: S = S { v: A([5, 6, 7]), n: i };
+    let t2: S = S { ...t1, n: 2 };
+    let bad: i32 = 0;
     match (t2.v) { A(p) => { if (p[2] != 7) { bad = 1; } }, _ => { bad = 2; } }
     match (t1.v) { A(q) => { if (q[0] != 5) { bad = bad + 4; } }, _ => { bad = bad + 8; } }
     return bad;
 }
 function drive(n: i32): i32 {
-    var bad: i32 = 0; var i: i32 = 0;
+    let bad: i32 = 0; let i: i32 = 0;
     while (i < n) { if (mk(i) != 0) { bad = 1; } i = i + 1; }
     return bad;
 }
@@ -106,11 +106,11 @@ function drive(n: i32): i32 {
 func heapFlatMain(iters string) string {
 	return `function main(): i32 {
     if (drive(50) != 0) { return 90; }
-    var lo: i32 = (__heap_bump_bytes() as i32);
+    let lo: i32 = (__heap_bump_bytes() as i32);
     if (drive(` + iters + `) != 0) { return 91; }
-    var hi: i32 = (__heap_bump_bytes() as i32);
+    let hi: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
-    var d: i32 = hi - lo;
+    let d: i32 = hi - lo;
     if (d != 0) { return 1; }
     return 0;
 }`

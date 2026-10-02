@@ -66,11 +66,11 @@ function main(): i32 { print("hi"); return 0; }`, 0},
 		// (__fern_heap_ptr etc.) and mmap via svc.
 		{"concat", `
 import "std/string";
-function main(): i32 { var a: string = "foo"; return (a + "bar").len(); }`, 6},
+function main(): i32 { let a: string = "foo"; return (a + "bar").len(); }`, 6},
 		// now_unix_ms — exercises the Darwin gettimeofday port (vs Linux
 		// clock_gettime). A plausible wall-clock value (post-2023) → 7.
 		{"now_unix_ms", `function main(): i32 {
-  var t: i64 = now_unix_ms();
+  let t: i64 = now_unix_ms();
   if (t > 1700000000000) { return 7; }
   return 1;
 }`, 7},
@@ -80,9 +80,9 @@ function main(): i32 { var a: string = "foo"; return (a + "bar").len(); }`, 6},
 		// is still the zero-mapped alloc memory (syscall failed silently).
 		{"random_bytes", `
 function main(): i32 {
-  var b: u8[] = random_bytes(8);
+  let b: u8[] = random_bytes(8);
   if (b.len() != 8) { return 1; }
-  var v: i32 = 0; var i: i32 = 0;
+  let v: i32 = 0; let i: i32 = 0;
   while (i < 8) { v = v | (b[i] as i32); i = i + 1; }
   if (v != 0) { return 7; }
   return 2;
@@ -100,11 +100,11 @@ function main(): i32 {
 		// zero and must follow.
 		{"lstat_nofollow_flag", `
 function main(): i32 {
-  var d: string = "";
+  let d: string = "";
   match (temp_dir("lst")) { Ok(p) => { d = p; }, Err(_) => { return 1; } }
-  var f: string = d + "/f";
+  let f: string = d + "/f";
   match (write_file(f, "x")) { Ok(_) => {}, Err(_) => { return 2; } }
-  var l: string = d + "/l";
+  let l: string = d + "/l";
   match (create_symlink(f, l)) { Ok(_) => {}, Err(_) => { return 3; } }
   match (lstat(f)) { Ok(s) => { if (!s.is_file) { return 4; } }, Err(_) => { return 5; } }
   match (lstat(l)) {
@@ -126,7 +126,7 @@ function main(): i32 {
 		{"map_heap_string_values", `
 import "core/map";
 function main(): i32 {
-  var m: Map[string, string] = map_new(8);
+  let m: Map[string, string] = map_new(8);
   m = m.insert("key" + "_one", "value" + "_one");
   m = m.insert("key" + "_two", "value" + "_two");
   if (m.get_or("key_one", "x") != "value_one") { return 1; }
@@ -157,13 +157,13 @@ function main(): i32 {
 		// failure here is the kqueue port, not the test.
 		{"poll_kqueue_readiness", `
 function main(): i32 {
-  var port: i32 = 18475;
-  var listener: i32 = tcp_listen(port);
+  let port: i32 = 18475;
+  let listener: i32 = tcp_listen(port);
   if (listener < 0) { return 90; }
-  var host_be: i32 = 127 | (0 << 8) | (0 << 16) | (1 << 24);
-  var c: i32 = tcp_connect(host_be, port);
+  let host_be: i32 = 127 | (0 << 8) | (0 << 16) | (1 << 24);
+  let c: i32 = tcp_connect(host_be, port);
   if (c < 0) { return 91; }
-  var fds: i32[] = [0 - 1, listener];
+  let fds: i32[] = [0 - 1, listener];
   if (poll(fds, 2000) != 1) { return 99; }
   return 42;
 }`, 42},
@@ -321,11 +321,11 @@ func TestArm64DarwinMonotonicNs(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
 	prog := "function main(): i32 {\n" +
-		"    var t0: i64 = monotonic_ns();\n" +
+		"    let t0: i64 = monotonic_ns();\n" +
 		"    if (t0 <= (0 as i64)) { return 91; }\n" +
 		"    sleep_ms(50);\n" +
-		"    var t1: i64 = monotonic_ns();\n" +
-		"    var ms: i64 = (t1 - t0) / (1000000 as i64);\n" +
+		"    let t1: i64 = monotonic_ns();\n" +
+		"    let ms: i64 = (t1 - t0) / (1000000 as i64);\n" +
 		"    if (ms < (25 as i64)) { return 92; }\n" +
 		"    if (ms > (5000 as i64)) { return 93; }\n" +
 		"    return 0;\n" +
@@ -373,7 +373,7 @@ func TestArm64DarwinSleepNsCarry(t *testing.T) {
 	// 999_999_500 ns: under a second, and in the window where ceil(rem/1000)
 	// reaches 1_000_000.
 	prog := "function main(): i32 {\n" +
-		"    var t0: i64 = monotonic_ns();\n" +
+		"    let t0: i64 = monotonic_ns();\n" +
 		"    sleep_ns(999999500 as i64);\n" +
 		"    if (monotonic_ns() - t0 < (999999500 as i64)) { return 94; }\n" +
 		"    return 0;\n" +

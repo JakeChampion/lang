@@ -8,7 +8,7 @@ It never reads or writes past the end and never returns a garbage
 value.
 
 ```
-var xs: i32[] = [10, 20, 30];
+let xs: i32[] = [10, 20, 30];
 xs[5]                // aborts: index 5 out of range [0, 3)
 xs[0 - 1]            // aborts: negative index
 xs = xs.with(7, 9)   // aborts: out-of-range write

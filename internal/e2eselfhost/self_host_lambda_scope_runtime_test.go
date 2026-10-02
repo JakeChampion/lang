@@ -19,7 +19,7 @@ func TestSelfHostLambdaScopeRuntime(t *testing.T) {
 	const captureModule = `pub struct Node { value: i32 }
 function apply(node: Node, callback: (Node) => Node): Node { return callback(node); }
 pub function run(callback: (Node) => Node): i32 {
-    var node = apply(Node { value: 7 }, (n: Node): Node => callback(n));
+    let node = apply(Node { value: 7 }, (n: Node): Node => callback(n));
     return node.value;
 }`
 	writeProject := func(src string) string {
@@ -34,28 +34,28 @@ pub function run(callback: (Node) => Node): i32 {
 	}
 	cases := []struct{ name, src string }{
 		{"initializer-reads-outer", `function main(): i32 {
-var n: i32 = 6; var call = (): i32 => { var n = n + 1; return n; }; return call(); }`},
+let n: i32 = 6; let call = (): i32 => { let n = n + 1; return n; }; return call(); }`},
 		{"read-before-local", `function main(): i32 {
-var n: i32 = 7; var call = (): i32 => { var answer = n; var n = 99; return answer; }; return call(); }`},
+let n: i32 = 7; let call = (): i32 => { let answer = n; let n = 99; return answer; }; return call(); }`},
 		{"branch-binder-does-not-escape", `function main(): i32 {
-var n: i32 = 7; var call = (): i32 => { if (false) { var n = 99; } return n; }; return call(); }`},
+let n: i32 = 7; let call = (): i32 => { if (false) { let n = 99; } return n; }; return call(); }`},
 		{"loop-binder-does-not-escape", `function main(): i32 {
-var n: i32 = 7; var call = (): i32 => { for n in [99] { } return n; }; return call(); }`},
+let n: i32 = 7; let call = (): i32 => { for n in [99] { } return n; }; return call(); }`},
 		{"nested-closure-before-local", `function main(): i32 {
-var n: i32 = 7; var call = (): i32 => { var inner = (): i32 => n; var n = 99; return inner(); }; return call(); }`},
+let n: i32 = 7; let call = (): i32 => { let inner = (): i32 => n; let n = 99; return inner(); }; return call(); }`},
 		{"wide-initializer-reads-outer", `function main(): i32 {
-var n: i64 = 5000000000; var call = (): i64 => { var n = n + 7; return n; };
+let n: i64 = 5000000000; let call = (): i64 => { let n = n + 7; return n; };
 if (call() == 5000000007) { return 7; } return 99; }`},
 		{"mutable-capture-before-shadow", `function main(): i32 {
-var n: i32 = 1; var call = (): i32 => { n = 7; var inner = (): i32 => n; var n = 99; return inner(); };
-var result = call(); if (n != 7) { return 98; } return result; }`},
+let n: i32 = 1; let call = (): i32 => { n = 7; let inner = (): i32 => n; let n = 99; return inner(); };
+let result = call(); if (n != 7) { return 98; } return result; }`},
 		{"tuple-capture-before-shadow", `function main(): i32 {
-var (n, other) = (7, 8); var call = (): i32 => { var inner = (): i32 => n; var (n, other) = (99, 98); return inner(); };
+let (n, other) = (7, 8); let call = (): i32 => { let inner = (): i32 => n; let (n, other) = (99, 98); return inner(); };
 return call(); }`},
 		{"guarded-pattern-capture", `enum E { Full(i32), Empty }
 function main(): i32 {
-var answer: i32 = 0;
-match (E.Full(7)) { Full(n) when n == 7 => { var call = (): i32 => n; var n = 99; answer = call(); }, _ => { return 98; } }
+let answer: i32 = 0;
+match (E.Full(7)) { Full(n) when n == 7 => { let call = (): i32 => n; let n = 99; answer = call(); }, _ => { return 98; } }
 return answer; }`},
 		{"imported-callback-capture", `import "./capture_api";
 function main(): i32 { return capture_api.run((n: capture_api.Node): capture_api.Node => n); }`},

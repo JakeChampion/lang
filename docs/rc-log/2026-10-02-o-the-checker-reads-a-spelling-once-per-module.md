@@ -32,7 +32,7 @@ the same signature again at the binding.
   `Scope.type_names` hands it on, and `type_from_spelling` reads a
   spelling it holds instead of parsing. `with_spellings` fills it at
   the three places a module's tables are built, from
-  `module_spellings`: parameters, returns, fields and the `var`
+  `module_spellings`: parameters, returns, fields and the `let`
   annotations on the statement spine (`astwalk.fold_stmt_spine`). A
   spelling the walk does not reach, a lambda's parameters or a `zero`,
   is parsed where it is read, as every spelling was.
@@ -71,7 +71,7 @@ cannot type, which #11066 records.
 The stage0 pin compiles the self-host sources with the gate as it was,
 and the driver builds (`asm_run.fern`, `wasm_ir_run.fern`) go through
 the pin, so `type_from_spelling` reads the memo through a local
-(`var memo: SpellMemo = tn.spellings`), the shape the old gate types
+(`let memo: SpellMemo = tn.spellings`), the shape the old gate types
 right; a pin carrying the fix lets it read the field chain directly.
 
 ## Measured

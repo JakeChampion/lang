@@ -12,19 +12,19 @@ var mapLiteralCases = []struct {
 	src  string
 	exit int
 }{
-	{"i32-keys", "import \"core/map\"; function main(): i32 { var m: Map[i32,i32] = Map { 1: 10, 2: 20, 3: 12 }; match (m.get(2)) { Some(v) => { return v; }, None => { return 0; } } }", 20},
-	{"string-keys", "import \"core/map\"; function main(): i32 { var m: Map[string,i32] = Map { \"a\": 40, \"b\": 2 }; var t: i32 = 0; match (m.get(\"a\")) { Some(x) => { t = t + x; }, None => {} } match (m.get(\"b\")) { Some(x) => { t = t + x; }, None => {} } return t; }", 42},
-	{"len-has", "import \"core/map\"; function main(): i32 { var m: Map[i32,i32] = Map { 7: 1, 8: 2 }; if (m.len() == 2 && m.has(8) && !m.has(9)) { return 9; } return 0; }", 9},
-	{"empty", "import \"core/map\"; function main(): i32 { var m: Map[i32,i32] = Map { }; m = m.insert(5, 42); match (m.get(5)) { Some(v) => { return v; }, None => { return 0; } } }", 42},
+	{"i32-keys", "import \"core/map\"; function main(): i32 { let m: Map[i32,i32] = Map { 1: 10, 2: 20, 3: 12 }; match (m.get(2)) { Some(v) => { return v; }, None => { return 0; } } }", 20},
+	{"string-keys", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = Map { \"a\": 40, \"b\": 2 }; let t: i32 = 0; match (m.get(\"a\")) { Some(x) => { t = t + x; }, None => {} } match (m.get(\"b\")) { Some(x) => { t = t + x; }, None => {} } return t; }", 42},
+	{"len-has", "import \"core/map\"; function main(): i32 { let m: Map[i32,i32] = Map { 7: 1, 8: 2 }; if (m.len() == 2 && m.has(8) && !m.has(9)) { return 9; } return 0; }", 9},
+	{"empty", "import \"core/map\"; function main(): i32 { let m: Map[i32,i32] = Map { }; m = m.insert(5, 42); match (m.get(5)) { Some(v) => { return v; }, None => { return 0; } } }", 42},
 	// A TRAILING comma. parse_map_lit's entry loop consumed the `,` and went
 	// straight back to parse_expr, which then met the `}` — two P001s, where
 	// native, the interpreter, and this same parser's array and struct literals
 	// all accept one. The map literal was the only value literal that did not.
-	{"trailing-comma-i32", "import \"core/map\"; function main(): i32 { var m: Map[i32,i32] = Map { 1: 10, 2: 20, }; return m.len() * 10 + m.get_or(2, 0); }", 40},
-	{"trailing-comma-string", "import \"core/map\"; function main(): i32 { var m: Map[string,i32] = Map { \"a\": 40, \"b\": 2, }; return m.get_or(\"a\", 0) + m.get_or(\"b\", 0); }", 42},
+	{"trailing-comma-i32", "import \"core/map\"; function main(): i32 { let m: Map[i32,i32] = Map { 1: 10, 2: 20, }; return m.len() * 10 + m.get_or(2, 0); }", 40},
+	{"trailing-comma-string", "import \"core/map\"; function main(): i32 { let m: Map[string,i32] = Map { \"a\": 40, \"b\": 2, }; return m.get_or(\"a\", 0) + m.get_or(\"b\", 0); }", 42},
 	// The no-comma spelling must keep working — the new break is reached only
 	// when a `}` FOLLOWS the comma.
-	{"no-trailing-comma-control", "import \"core/map\"; function main(): i32 { var m: Map[i32,i32] = Map { 1: 10, 2: 20 }; return m.len() * 10 + m.get_or(2, 0); }", 40},
+	{"no-trailing-comma-control", "import \"core/map\"; function main(): i32 { let m: Map[i32,i32] = Map { 1: 10, 2: 20 }; return m.len() * 10 + m.get_or(2, 0); }", 40},
 }
 
 // TestSelfHostMapLiteralX86_64 — `Map { … }` literals with the

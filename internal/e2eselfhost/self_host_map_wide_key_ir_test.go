@@ -25,34 +25,34 @@ var wideMapKeyCases = []struct {
 	// column beside an i64 key, and a u64 key at the top of its range.
 	{"wide-keys", `import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(4);
-    var big: i64 = 4294967296 + 7;
+    let m: Map[i64, i32] = map_new(4);
+    let big: i64 = 4294967296 + 7;
     m = m.insert(big, 10);
     m = m.insert(7 as i64, 20);
     m = m.insert(0 - big, 30);
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (m.len() != 3) { return 1; }
     if (m.get_or(big, 0) != 10) { return 2; }
     if (m.get_or(7 as i64, 0) != 20) { return 3; }
     if (m.get_or(0 - big, 0) != 30) { return 4; }
     if (m.has(4294967296 as i64)) { return 5; }
-    var ks: i64[] = m.keys();
+    let ks: i64[] = m.keys();
     if (ks.len() != 3) { return 6; }
     if (ks[0] != big) { return 7; }
-    var s: i64 = 0;
+    let s: i64 = 0;
     for k in ks { s = s + k; }
     if (s != 7 as i64) { return 8; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for (k, v) in m { if (k == big) { t = t + v; } }
     if (t != 10) { return 9; }
-    var w: Map[i64, i64] = map_new(2);
+    let w: Map[i64, i64] = map_new(2);
     w = w.insert(big, big * 2);
     if (w.get_or(big, 0 as i64) != big * 2) { return 11; }
-    var u: Map[u64, i32] = map_new(2);
+    let u: Map[u64, i32] = map_new(2);
     u = u.insert(18446744073709551615 as u64, 3);
     if (u.get_or(18446744073709551615 as u64, 0) != 3) { return 12; }
     match (m.get(big)) { Some(v) => { if (v != 10) { return 13; } }, None => { return 14; } }
-    var m2: Map[i64, i32] = m.without(big).0;
+    let m2: Map[i64, i32] = m.without(big).0;
     if (m2.has(big)) { return 15; }
     if (m2.len() != 2) { return 16; }
     return 42;
@@ -68,20 +68,20 @@ function main(): i32 {
 	// (#10779).
 	{"mixed-width-rebuilds", `import "core/map";
 function main(): i32 {
-    var a: Map[string, u8] = map_new(2);
-    var a2: Map[string, u8] = a;
+    let a: Map[string, u8] = map_new(2);
+    let a2: Map[string, u8] = a;
     a = a.insert("x", 10);
-    var b: Map[string, i64] = map_new(2);
-    var b2: Map[string, i64] = b;
+    let b: Map[string, i64] = map_new(2);
+    let b2: Map[string, i64] = b;
     b = b.insert("y", 4294967296 + 5);
-    var c: Map[i64, i32] = map_new(2);
-    var c2: Map[i64, i32] = c;
+    let c: Map[i64, i32] = map_new(2);
+    let c2: Map[i64, i32] = c;
     c = c.insert(4294967296 + 9, 9);
-    var d: Map[i64, i64] = map_new(2);
-    var d2: Map[i64, i64] = d;
+    let d: Map[i64, i64] = map_new(2);
+    let d2: Map[i64, i64] = d;
     d = d.insert(4294967296 + 11, 4294967296 + 12);
-    var e: Map[string, f64] = map_new(2);
-    var e2: Map[string, f64] = e;
+    let e: Map[string, f64] = map_new(2);
+    let e2: Map[string, f64] = e;
     e = e.insert("z", 2.5);
     if ((a.get_or("x", 0) as i32) != 10) { return 1; }
     if (b.get_or("y", 0 as i64) != 4294967296 + 5) { return 2; }
@@ -94,15 +94,15 @@ function main(): i32 {
 `},
 	{"wide-keys-churn", `import "core/map";
 function fill(n: i32): Map[i64, i32] {
-    var m: Map[i64, i32] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[i64, i32] = map_new(2);
+    let i: i32 = 0;
     while (i < n) { m = m.insert((i as i64) * 4294967296 + (i as i64), i); i = i + 1; }
     return m;
 }
 function main(): i32 {
-    var m: Map[i64, i32] = fill(40);
+    let m: Map[i64, i32] = fill(40);
     if (m.len() != 40) { return 1; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 40) { if (m.get_or((i as i64) * 4294967296 + (i as i64), 0 - 1) != i) { return 2; } i = i + 1; }
     if (m.has(1 as i64)) { return 3; }
     i = 0;
@@ -111,13 +111,13 @@ function main(): i32 {
     i = 0;
     while (i < 40) { m = m.insert((i as i64) * 4294967296 + (i as i64), i * 10); i = i + 2; }
     if (m.len() != 40) { return 5; }
-    var s: i64 = 0;
-    var t: i32 = 0;
+    let s: i64 = 0;
+    let t: i32 = 0;
     for (k, v) in m { s = s + k; t = t + v; }
     if (t != 4200) { return 6; }
     if (s != (0 as i64)) { s = s - s; }
-    var a: Map[i64, i32] = m;
-    var b: Map[i64, i32] = a.insert(99 as i64, 99);
+    let a: Map[i64, i32] = m;
+    let b: Map[i64, i32] = a.insert(99 as i64, 99);
     if (b.len() != 41) { return 7; }
     if (a.len() != 40) { return 8; }
     if (m.len() != 40) { return 9; }
@@ -125,13 +125,13 @@ function main(): i32 {
     b = b.insert(99 as i64, 101);
     if (b.get_or(99 as i64, 0) != 101) { return 10; }
     if (b.len() != 41) { return 11; }
-    var w: Map[u64, i64] = map_new(1);
+    let w: Map[u64, i64] = map_new(1);
     i = 0;
     while (i < 12) { w = w.insert((18446744073709551615 as u64) - (i as u64), (i as i64) * 4294967296); i = i + 1; }
-    var ws: i64 = 0;
+    let ws: i64 = 0;
     for (k, v) in w { ws = ws + v; }
     if (ws != (66 as i64) * 4294967296) { return 12; }
-    var ks: u64[] = w.keys();
+    let ks: u64[] = w.keys();
     if (ks.len() != 12) { return 13; }
     if (ks[11] != (18446744073709551615 as u64) - (11 as u64)) { return 14; }
     match (w.get((18446744073709551615 as u64) - (5 as u64))) { Some(v) => { if (v != (5 as i64) * 4294967296) { return 15; } }, None => { return 16; } }
@@ -146,47 +146,47 @@ function main(): i32 {
 	{"wide-keys-counted-values", `import "core/map";
 struct Item { name: string, n: i32 }
 function w(i: i32): string {
-    var t: string = "x";
+    let t: string = "x";
     if (i % 2 == 0) { t = "yy"; }
     return "v-a-wide-payload-past-any-inline-threshold-" + t;
 }
 function main(): i32 {
-    var big: i64 = 4294967296;
-    var s: Map[i64, string] = map_new(2);
-    var i: i32 = 0;
+    let big: i64 = 4294967296;
+    let s: Map[i64, string] = map_new(2);
+    let i: i32 = 0;
     while (i < 20) { s = s.insert(big * (i as i64) + 1, w(i)); i = i + 1; }
     s = s.insert(big + 1, w(3));
-    var s2: Map[i64, string] = s;
+    let s2: Map[i64, string] = s;
     s = s.insert(big * 99, w(4));
     if (s2.len() != 20) { return 1; }
     if (s.len() != 21) { return 2; }
     s = s.without(big + 1).0;
     if (s.len() != 20) { return 3; }
     if (s.get_or(big * 99, "").len() != w(4).len()) { return 4; }
-    var total: i32 = 0;
+    let total: i32 = 0;
     for (k, v) in s { total = total + v.len(); }
     // Keys 0 and 2..19 keep w(i) and big*99 holds w(4): ten payloads of
     // 45 bytes, nine of 44 and one more of 45.
     if (total != 891) { return 5; }
-    var a: Map[i64, string[]] = map_new(2);
+    let a: Map[i64, string[]] = map_new(2);
     a = a.insert(big * 3, [w(1), w(2)]);
     a = a.insert(big * 3, [w(5)]);
-    var a2: Map[i64, string[]] = a;
+    let a2: Map[i64, string[]] = a;
     a = a.insert(big * 5, [w(6), w(7), w(8)]);
     if (a.get_or(big * 3, []).len() != 1) { return 6; }
     if (a2.len() != 1) { return 7; }
     a = a.without(big * 3).0;
     if (a.len() != 1) { return 8; }
-    var t: Map[i64, Item] = map_new(2);
+    let t: Map[i64, Item] = map_new(2);
     t = t.insert(big * 7, Item { name: w(1), n: 1 });
     t = t.insert(big * 7, Item { name: w(2), n: 2 });
-    var t2: Map[i64, Item] = t;
+    let t2: Map[i64, Item] = t;
     t = t.insert(big * 8, Item { name: w(3), n: 3 });
     match (t.get(big * 7)) { Some(it) => { if (it.n != 2) { return 9; } }, None => { return 10; } }
     t = t.without(big * 8).0;
     if (t.len() != 1) { return 11; }
     if (t2.len() != 1) { return 12; }
-    var f: Map[i64, f64] = map_new(2);
+    let f: Map[i64, f64] = map_new(2);
     f = f.insert(big * 9, 2.5);
     f = f.insert(big * 9, 3.5);
     if (f.get_or(big * 9, 0.0) != 3.5) { return 13; }
@@ -275,7 +275,7 @@ func TestSelfHostMapUsizeKeyRefusedIR(t *testing.T) {
 	cli := newStrictCLI(t)
 	src := `import "core/map";
 function main(): i32 {
-    var m: Map[usize, i32] = map_new(2);
+    let m: Map[usize, i32] = map_new(2);
     m = m.insert(7 as usize, 3);
     return m.get_or(7 as usize, 0) + 39;
 }

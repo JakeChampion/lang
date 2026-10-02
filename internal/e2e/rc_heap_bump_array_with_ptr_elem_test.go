@@ -31,11 +31,11 @@ function upd(r: R, i: i32, v: i32): R {
     return R { ops: r.ops.with(i, Op { a: v, c: 7 }), p: r.p };
 }
 function churn(n: i32): i32 {
-    var ops: Op[] = [];
-    var k: i32 = 0;
+    let ops: Op[] = [];
+    let k: i32 = 0;
     while (k < 8) { ops = ops.append(Op { a: 0, c: 0 }); k = k + 1; }
-    var r: R = R { ops: ops, p: 0 };
-    var i: i32 = 0;
+    let r: R = R { ops: ops, p: 0 };
+    let i: i32 = 0;
     while (i < n) { r = upd(r, i % 8, i); i = i + 1; }
     if (r.ops[0].a == 999999) { return 99; }
     if ((__heap_bump_bytes() as i32) < 1048576) { return 0; }

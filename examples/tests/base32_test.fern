@@ -47,7 +47,7 @@ function test_decode_vectors(): test.TestOutcome {
 }
 
 function test_roundtrip(): test.TestOutcome {
-  var payload: string = "Hello, base32 World! 12345";
+  let payload: string = "Hello, base32 World! 12345";
   return test.assert_eq(text(base32.base32_decode(base32.base32_encode(payload.bytes()))), payload);
 }
 
@@ -102,7 +102,7 @@ function test_decode_strict_rejects(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/base32");
+  let r: test.TestRunner = test.test_new("std/base32");
   r = r.it("encode vectors", test_encode_vectors);
   r = r.it("decode vectors", test_decode_vectors);
   r = r.it("roundtrip", test_roundtrip);

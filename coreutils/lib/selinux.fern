@@ -23,10 +23,10 @@ import "std/array";
 pub function enabled(): boolean {
   match (read_file("/proc/self/mounts")) {
     Ok(text) => {
-      var lines: string[] = text.lines();
-      var i: i32 = 0;
+      let lines: string[] = text.lines();
+      let i: i32 = 0;
       while (i < lines.len()) {
-        var f: string[] = lines[i].fields();
+        let f: string[] = lines[i].fields();
         if (f.len() >= 3 && f[2] == "selinuxfs") {
           return true;
         }
@@ -52,7 +52,7 @@ pub function enabled(): boolean {
 // another file, so the oracle corpus only ever sees what this machine's own
 // kernel wrote.
 pub function trim_context(text: string): string {
-  var n: i32 = text.len();
+  let n: i32 = text.len();
   while (n > 0 && text[n - 1] as i32 == 0) {
     n = n - 1;
   }

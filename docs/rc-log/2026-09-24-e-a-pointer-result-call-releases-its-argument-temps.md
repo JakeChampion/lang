@@ -15,7 +15,7 @@ The inline `caps.with(slot, ti)` leaked on every call. std/regex's
 through a function value whose result is a pointer:
 
 ```
-var f: (C) => Result[C, string] = bump;
+let f: (C) => Result[C, string] = bump;
 match (f(C { value: 3 })) { ... }
 ```
 

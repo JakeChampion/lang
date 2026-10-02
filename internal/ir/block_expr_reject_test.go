@@ -16,8 +16,8 @@ import (
 // tests; here we only guard that the IR layer accepts it.
 func TestBlockExprCompiledLowers(t *testing.T) {
 	src := `function main(): i32 {
-		var e = 5;
-		var x: i32 = if (e > 0) { var k = e + 1; k } else { 0 };
+		let e = 5;
+		let x: i32 = if (e > 0) { let k = e + 1; k } else { 0 };
 		return x;
 	}`
 	prog, err := parser.Parse(src)

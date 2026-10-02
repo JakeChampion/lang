@@ -59,7 +59,7 @@ func arm64SSAPathCopySrc() string {
 	for i, op := range arm64SSAPathCopyOps {
 		fmt.Fprintf(&b, "function op%d(p: string, q: string, d: string): i32 {\n    %s\n    return 0;\n}\n", i, op.body)
 		fmt.Fprintf(&b, "function grow%d(p: string, q: string, d: string): i64 {\n", i)
-		b.WriteString("    var b0: i64 = __heap_bump_bytes();\n    var i: i32 = 0;\n")
+		b.WriteString("    let b0: i64 = __heap_bump_bytes();\n    let i: i32 = 0;\n")
 		fmt.Fprintf(&b, "    while (i < 16) { if (op%d(p, q, d) != 0) { return 0 - 1; } i = i + 1; }\n", i)
 		b.WriteString("    return __heap_bump_bytes() - b0;\n}\n")
 	}
@@ -68,15 +68,15 @@ func arm64SSAPathCopySrc() string {
 	b.WriteString("    match (create_dir(d, 493)) { Ok(_) => {}, Err(_) => { return 1; } }\n")
 	b.WriteString("    return 0;\n}\n")
 	b.WriteString("function main(): i32 {\n")
-	fmt.Fprintf(&b, "    var long: string = %q;\n", long)
+	fmt.Fprintf(&b, "    let long: string = %q;\n", long)
 	b.WriteString("    if (setup(\"f\", \"d\") != 0 || setup(long + \"f\", long + \"d\") != 0) { return 2; }\n")
-	b.WriteString("    var bad: i32 = 0;\n")
+	b.WriteString("    let bad: i32 = 0;\n")
 	for i := range arm64SSAPathCopyOps {
 		// Once untimed per length, so first-use costs (a freelist class
 		// seeded, a handle cached) land outside the measurement.
 		fmt.Fprintf(&b, "    if (grow%d(\"f\", \"q\", \"d\") < 0 || grow%d(long + \"f\", long + \"q\", long + \"d\") < 0) { return %d; }\n", i, i, 40+i)
-		fmt.Fprintf(&b, "    var s%d: i64 = grow%d(\"f\", \"q\", \"d\");\n", i, i)
-		fmt.Fprintf(&b, "    var l%d: i64 = grow%d(long + \"f\", long + \"q\", long + \"d\");\n", i, i)
+		fmt.Fprintf(&b, "    let s%d: i64 = grow%d(\"f\", \"q\", \"d\");\n", i, i)
+		fmt.Fprintf(&b, "    let l%d: i64 = grow%d(long + \"f\", long + \"q\", long + \"d\");\n", i, i)
 		fmt.Fprintf(&b, "    if (s%d < 0 || l%d < 0) { return %d; }\n", i, i, 40+i)
 		fmt.Fprintf(&b, "    if (l%d != s%d) { eprint(\"stranded: %s short=\" + s%d.to_string() + \" long=\" + l%d.to_string() + \"\\n\"); if (bad == 0) { bad = %d; } }\n", i, i, arm64SSAPathCopyOps[i].name, i, i, 10+i)
 		if op := arm64SSAPathCopyOps[i]; op.perCall > 0 {

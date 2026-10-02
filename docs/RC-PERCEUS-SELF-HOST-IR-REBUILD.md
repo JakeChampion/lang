@@ -139,7 +139,7 @@ which is the entire reason for choosing Option A.
   the constructors and asserts `render_op` output — pins the data shape
   and printer the way `ssa.fern` is pinned.
 - **Slice 2 — `irlower.fern` skeleton.** AST→IR for the i32 spine
-  (params, `var`/`=`, literals, binary/unary, `return`) — mirror the
+  (params, `let`/`=`, literals, binary/unary, `return`) — mirror the
   native `builder`'s expression/statement lowering, threaded-state style.
   Validate via an IR interpreter (port native's, or reuse the
   `ssa.fern` interpreter pattern) so lowering is checkable without a
@@ -245,7 +245,7 @@ Same nets as the existing self-host work, plus IR-specific ones:
   (#2598).** Length header `[len, e0, …]`; `.len()` is a header load;
   `arr[i] = v` (`__set_index`) stores in place; `drop` op added.
 - 2026-06-10: **Slice 10 — first RC op (alias-inc) — DONE (#2599).** rc
-  header `[rc, len, …]`; `var b = a` emits `call_direct __fern_rc_inc`;
+  header `[rc, len, …]`; `let b = a` emits `call_direct __fern_rc_inc`;
   `__rc()` observation hook; `LowerState.local_is_arr` tracking. RC now
   lives in the IR, lowered once.
 - 2026-06-10: **Slice 11 — exit dec-sweep + underflow detector — DONE
@@ -692,13 +692,13 @@ AST emitter on a `string[]` return. This composes the two pieces already in the
 IR — array RC (the returned array is an ordinary rc-tracked box: move-on-return
 like any array, via `arr_ret_fns`) and string-element leak-tracking (`string[]`
 locals/params from the typed-string-array slice) — so it needs no new RC
-machinery, only **call-site element typing**: a `var xs = names()` must know `xs`
+machinery, only **call-site element typing**: a `let xs = names()` must know `xs`
 is a `string[]` so `xs[i]` dispatches to `str_len` (not `arr_len`).
 
 - **`irlower.fern`** — a `strarr_ret_fns` list (parallel to `str_ret_fns`),
   collected by `strarr_ret_fns_of` and threaded through `LowerState` /
   `lower_func`. `expr_is_strarr` gains an `ExprCall` arm: a call to a
-  `strarr_ret_fns` member is a `string[]`, so `var xs = f()` marks `xs` as
+  `strarr_ret_fns` member is a `string[]`, so `let xs = f()` marks `xs` as
   string-array and `f()[i]` / `xs[i]` element-type to a string. The array itself
   is still RC'd through `arr_ret_fns` (a `string[]` *is* an array type), so
   move-on-return and the borrow/move accounting are unchanged — the string
@@ -720,7 +720,7 @@ hand-written struct reference counting that surfaces on large struct-and-array-
 heavy programs — notably the arm64-darwin assembler driver run under wasm
 (`TestSelfHostArm64DarwinMachORealAsm`, `TestSelfHostArm64DarwinAssemblesRealRuntime`),
 which trap with an out-of-bounds memory access (freelist corruption). Root cause:
-`var p = p0` (aliasing a struct value) increments the **box** rc but not its
+`let p = p0` (aliasing a struct value) increments the **box** rc but not its
 fields, while a spread `p = SomeStruct { ...p, field: … }` threaded in a loop
 then drops the old box and **deep-releases a field the new box still
 co-references**. The array's own rc (1, one box-field slot) doesn't reflect the
@@ -964,7 +964,7 @@ fixpoint-/std-test-validated follow-up — native's staged `RcFreeEnabled` patte
 
 Two precise-drop slices have landed on the IR (#3054 i32[] literals, #3079
 i32[]-returning builder calls). The **most impactful** next Perceus step is to
-reclaim arrays passed to read-only helpers — today a `var t = [..]; helper(t);`
+reclaim arrays passed to read-only helpers — today a `let t = [..]; helper(t);`
 local is NOT precise-dropped because the escape walker conservatively treats ANY
 call argument as an escape (the callee might retain it). The fix is a **two-level
 borrowability** model that reuses the precise-drop emission entirely (no new
@@ -983,7 +983,7 @@ runtime, no per-backend asm):
 
 - **Level 2 — reclaim.** In the precise-drop escape walker (`expr_unsafe_for`'s
   FREE-call case), a DIRECT bare-ident arg `name` at a borrowable param position
-  is a BORROW (safe), not an escape. So `var t = [literal]; f(t); g(t); …` (f, g
+  is a BORROW (safe), not an escape. So `let t = [literal]; f(t); g(t); …` (f, g
   borrowable) makes `t` a precise-drop candidate, released after its last use via
   the existing dec+zero emission. Method calls stay escapes (a method like
   `.slice()` can return a view). Soundness: a borrowable callee provably doesn't
@@ -1015,12 +1015,12 @@ mirrors `callee_param_is_fn`'s lookup; the `borrowable` registry threads through
 → `lower_func` (new last param, all ~23 call sites across the four IR files).
 Level 1 computes borrowability with an EMPTY registry (every call arg escapes);
 Level 2 admits a direct bare-ident arg at a borrowable free-function param as a
-borrow. Firing proof: the identical `var t=[..]; sum_arr(t); sum_arr(t)` program
+borrow. Firing proof: the identical `let t=[..]; sum_arr(t); sum_arr(t)` program
 emits one MORE array dec than before (3 → 4), and the over-release detector reads
 0. Gates green: `TestSelfHostAsmRunX86_64` (auto-routes to IR), byte-identical
 fixpoint + stage-2, `TestSelfHostStdTestE2E`, the RC suites, and a new
 `TestSelfHostRcPreciseDropX86IR` borrow/escape/transitive case set. Method-call
-args and any aliasing (`var u = t`) stay escapes — conservative and sound. Next:
+args and any aliasing (`let u = t`) stay escapes — conservative and sound. Next:
 the inter-procedural `inferParamEscapes` fixpoint to widen Level 1.
 
 ### Next slice (validated, blocked on a compute-once hoist): inter-procedural fixpoint (2026-06-14)
@@ -1058,7 +1058,7 @@ the self-compile-of-the-whole-compiler tests tipped over.
 
 **The fix (the actual next task):** compute the borrowable registry **once per
 module compile** and reuse it, instead of recomputing per function. Hoist
-`var bparams = irlower.borrowable_params_of(<funcs>);` out of each per-function
+`let bparams = irlower.borrowable_params_of(<funcs>);` out of each per-function
 lowering loop (≈12 loops across `asm_ir` / `asm_arm64_ir` / `wasm_ir` /
 `irlower`) and pass `bparams` into the loop's `lower_func` calls. That drops the
 fixpoint from O(funcs) recomputations to O(passes) (~once per full module walk),
@@ -1248,14 +1248,14 @@ both arches + `TestSelfHostStdTestE2E` + the RC suites + a new reuse e2e with th
 Three FBIP reuse shapes now lower on the self-host IR (all pure-lowering, no backend
 changes, gated by the byte-identical self-compile fixpoint):
 
-1. **Functional-update self-overwrite** (#3177): `var c = T { ...d, f: v }` with `d`
+1. **Functional-update self-overwrite** (#3177): `let c = T { ...d, f: v }` with `d`
    a fresh, non-escaping, never-reassigned same-type struct local dead after the
    statement → reuse `d`'s box; write the overrides, bind `c`, zero `d`'s slot.
 2. **Array / wide-scalar fields** (#3191): widened candidacy from i32/boolean-only to
    any struct whose fields are scalar (i32/boolean/i64/f64/u32/u64) or leaksafe-array
    (i32[]/boolean[]/i64[]/f64[]). An overridden array field's OLD value is released
    (`struct_get` + `__fern_rc_dec`) before the fresh override is written.
-3. **Cross-statement donor pairing** (#3202): a full `var c = T { .. }` (no base)
+3. **Cross-statement donor pairing** (#3202): a full `let c = T { .. }` (no base)
    reuses the box of an earlier dead same-type local; deterministic
    nearest-from-the-front unconsumed-donor pairing (self-overwrite sites excluded),
    each donor consumed once.
@@ -1310,9 +1310,9 @@ direction. Pinned and reproduced on **origin/main**:
   corruption.
 
 - **Reproducible latent over-release on main** (`__rc_underflow()` reads non-zero):
-  - `struct P{x:i32,y:i32} fn compute(){ var d=P{x:3,y:4}; return d.x+d.y }` → detector **1**
+  - `struct P{x:i32,y:i32} fn compute(){ let d=P{x:3,y:4}; return d.x+d.y }` → detector **1**
     (the exit dec-sweep decs d's header-less box).
-  - `struct V{xs:i32[],t:i32} fn use(){ var d=V{xs:[1,2,3],t:9}; return d.xs[0]+d.t }`
+  - `struct V{xs:i32[],t:i32} fn use(){ let d=V{xs:[1,2,3],t:9}; return d.xs[0]+d.t }`
     → detector **1** as well (a SECOND, distinct over-release in the array-field /
     field-drop reclamation path).
   These are masked because no existing green test calls `__rc_underflow()` after a plain
@@ -1361,7 +1361,7 @@ the gcc-link test that catches self-host codegen gaps):
   reader stays byte-identical. Fixed the latent over-release/heap-corruption bug
   (header-less boxes mis-dec'd) and unblocked everything below.
 - **#3232 — consumed scalar-enum free.** `consumed_scalar_enum_frees`: a fresh,
-  sole-owner, dead-after, non-escaping `var x = V(scalars…)` consumed by exactly one
+  sole-owner, dead-after, non-escaping `let x = V(scalars…)` consumed by exactly one
   top-level `match (x)` is freed (dec + zero) right after the match instead of leaking.
 - **#3233 — enum-donor cross-reuse (FBIP).** A consumed-and-dead scalar-enum box is
   DONATED to a later same-size struct literal (`op_struct_set_shape` re-shapes it in
@@ -1375,14 +1375,14 @@ the gcc-link test that catches self-host codegen gaps):
   "reject any arm that binds an rc payload" to "reject only when a bound rc payload
   ESCAPES its arm" (`binding_escapes_arm` reuses the precise-drop `body_unsafe_for` /
   `expr_unsafe_for` with an empty borrowable registry).
-- **#3259 — in-arm consuming-match box reuse (FBIP).** The marquee win: `var y =
+- **#3259 — in-arm consuming-match box reuse (FBIP).** The marquee win: `let y =
   match (x) { … }` over a fresh sole-owner dead-after scalar-enum box where EVERY arm
   builds a same-size variant reuses x's box IN PLACE to construct y (read payloads to
   temps → `op_struct_set_shape` → write fields → bind y), one fewer `__fern_arr_box`
   per arm. An in-arm scrutinee is not a top-level `match (x)`, so the box previously
   leaked — there is no free to suppress; y owns it on every path, freed once.
 
-All of the above gate `var x = V(...)` candidates through `consumed_scalar_enum_frees`'s
+All of the above gate `let x = V(...)` candidates through `consumed_scalar_enum_frees`'s
 fresh/sole-owner/dead-after/non-escape predicate family and emit through the shared
 `op_struct_set_shape` / per-variant `variant_is` dispatch + `op_struct_get/_set`.
 
@@ -1406,7 +1406,7 @@ fresh/sole-owner/dead-after/non-escape predicate family and emit through the sha
 ## LANDED (2026-06-15): in-arm reuse admits leak-safe ARRAY payloads (frontier item 2)
 
 Frontier item 2 (above) is done for the array sub-case. In-arm consuming-match box
-reuse — `var y = match (x) { V(...) => W(...), ... }` over a fresh / sole-owner /
+reuse — `let y = match (x) { V(...) => W(...), ... }` over a fresh / sole-owner /
 dead-after / non-escaping enum box `x` where every arm builds a same-size variant —
 now admits **leak-safe scalar-array payload fields** (`i32[]`/`i64[]`/`f64[]`/
 `boolean[]`, `is_leaksafe_array_field`) on the donor variant **and** the constructed
@@ -1449,7 +1449,7 @@ overwritten (identical to `emit_cross_struct_reuse`).
 
 Implemented in `inarm_reuse_match_ok` + `consumed_inarm_reuse_sites`:
 
-1. **Donor arrays must be fresh literals** (`inarm_donor_arrays_are_fresh`): `var x =
+1. **Donor arrays must be fresh literals** (`inarm_donor_arrays_are_fresh`): `let x =
    V(.., [..])` — every leak-safe-array payload arg is an `ExprArray`, so the box solely
    owns each donor array; the cow-guard dec can't double-free a value aliased elsewhere.
 2. **Per-position array-ness must match** between the arm's pattern variant and its
@@ -1575,7 +1575,7 @@ unblocks it. All gated on the byte-identical self-compile fixpoint + the gcc-lin
 ### Landed
 
 - **#3335 — struct / string / tuple / enum payload bindings in match-EXPRESSIONS.**
-  A `var r = match (e) { V(p) => p.x, … }` (the IIFE form) bound only scalar / array
+  A `let r = match (e) { V(p) => p.x, … }` (the IIFE form) bound only scalar / array
   payloads before; widened to leak-safe-struct / string / tuple / nominal-enum
   payloads, BORROW-only, i32-result (the underlying StmtMatch path already binds them;
   only the IIFE gate `iife_payload_field_bindable` rejected them). Coupled with the
@@ -1617,7 +1617,7 @@ tuple / enum / Option / Result / map (incl. untyped-local) / nested-match / gene
 lambdas / recursion / tuple returns / for-in / break-continue / try `?`.
 
 Genuinely-remaining gaps (niche or large):
-1. **Composite RESULTS from a match-EXPRESSION** (`var p = match(e){ V(q) => q }` returning
+1. **Composite RESULTS from a match-EXPRESSION** (`let p = match(e){ V(q) => q }` returning
    a struct/tuple/enum/array whole) — the IIFE result temp can't carry a composite type.
 2. **i64 / f64 struct-FIELD / tuple-ELEMENT results** in a match-EXPRESSION — the width-64
    field-read → i64-temp store doesn't round-trip (segfaults); also a pre-existing

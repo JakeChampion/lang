@@ -50,7 +50,7 @@ impl Shape for Circle {
     function area(self: Self): i32 { return self.r * self.r; }
 }
 function main(): i32 {
-    var d: dyn Shape = Circle { r: 5 };
+    let d: dyn Shape = Circle { r: 5 };
     print("area=" + d.area().to_string());
     return 0;
 }
@@ -90,8 +90,8 @@ function describe(s: dyn Shape): string {
     return s.name() + "=" + s.area().to_string();
 }
 function main(): i32 {
-    var shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }];
-    var total: i32 = 0;
+    let shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }];
+    let total: i32 = 0;
     for s in shapes {
         print(describe(s));
         total = total + s.area();
@@ -131,7 +131,7 @@ impl Shape for Circle {
     function area(self: Self): i32 { return self.r * self.r; }
 }
 function main(): i32 {
-    var d: dyn Shape = Circle { r: 5 };
+    let d: dyn Shape = Circle { r: 5 };
     print("area=" + d.area().to_string());
     return 0;
 }
@@ -175,8 +175,8 @@ function describe(s: dyn Shape): string {
     return s.name() + "=" + s.area().to_string();
 }
 function main(): i32 {
-    var shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }];
-    var total: i32 = 0;
+    let shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }];
+    let total: i32 = 0;
     for s in shapes {
         print(describe(s));
         total = total + s.area();
@@ -222,7 +222,7 @@ impl Shape for Circle {
     function area(self: Self): i32 { return self.r * self.r; }
 }
 function main(): i32 {
-    var d: dyn Shape = Circle { r: 5 };
+    let d: dyn Shape = Circle { r: 5 };
     print("area=" + d.area().to_string());
     return 0;
 }
@@ -266,8 +266,8 @@ function describe(s: dyn Shape): string {
     return s.name() + "=" + s.area().to_string();
 }
 function main(): i32 {
-    var shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }];
-    var total: i32 = 0;
+    let shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }];
+    let total: i32 = 0;
     for s in shapes {
         print(describe(s));
         total = total + s.area();
@@ -314,7 +314,7 @@ impl Show for i32 {
 }
 function run(s: dyn Show): i32 { return s.show(); }
 function main(): i32 {
-    var x: i32 = 5;
+    let x: i32 = 5;
     print("v=" + run(x).to_string());
     return 0;
 }
@@ -384,7 +384,7 @@ impl Show for i64 {
 }
 function run(s: dyn Show): i64 { return s.show(); }
 function main(): i32 {
-    var x: i64 = 9000000000 as i64;
+    let x: i64 = 9000000000 as i64;
     print("v=" + run(x).to_string());
     return 0;
 }
@@ -404,7 +404,7 @@ impl Show for f64 {
 }
 function run(s: dyn Show): f64 { return s.show(); }
 function main(): i32 {
-    var x: f64 = 4.0;
+    let x: f64 = 4.0;
     print("v=" + run(x).to_string());
     return 0;
 }
@@ -425,7 +425,7 @@ impl Show for string {
 }
 function run(s: dyn Show): i32 { return s.show(); }
 function main(): i32 {
-    var x: string = "hello";
+    let x: string = "hello";
     print("len=" + run(x).to_string());
     return 0;
 }
@@ -448,8 +448,8 @@ impl Show for i32 {
     function show(self: Self): i32 { return self + 100; }
 }
 function main(): i32 {
-    var xs: dyn Show[] = ["hi", 7, "world"];
-    var total: i32 = 0;
+    let xs: dyn Show[] = ["hi", 7, "world"];
+    let total: i32 = 0;
     for x in xs {
         total = total + x.show();
     }
@@ -473,7 +473,7 @@ impl Adder for i32 {
 }
 function run(a: dyn Adder, n: i32): i32 { return a.add(n); }
 function main(): i32 {
-    var x: i32 = 10;
+    let x: i32 = 10;
     print("r=" + run(x, 32).to_string());
     return 0;
 }
@@ -494,7 +494,7 @@ impl Joiner for string {
 }
 function run(j: dyn Joiner, other: string): i32 { return j.joined_len(other); }
 function main(): i32 {
-    var x: string = "abc";
+    let x: string = "abc";
     print("n=" + run(x, "de").to_string());
     return 0;
 }
@@ -528,11 +528,11 @@ impl Shape for Rect {
     function area(self: Self): i32 { return self.w * self.h; }
 }
 function describe(s: dyn Shape): string {
-    var c: Option[Circle] = s as? Circle;
+    let c: Option[Circle] = s as? Circle;
     match (c) {
         Some(x) => { return "circle r=" + x.r.to_string(); },
         None => {
-            var r: Option[Rect] = s as? Rect;
+            let r: Option[Rect] = s as? Rect;
             match (r) {
                 Some(y) => { return "rect a=" + y.area().to_string(); },
                 None => { return "other"; },
@@ -541,9 +541,9 @@ function describe(s: dyn Shape): string {
     }
 }
 function main(): i32 {
-    var d: dyn Shape = Circle { r: 5 };
+    let d: dyn Shape = Circle { r: 5 };
     print(describe(d));
-    var e: dyn Shape = Rect { w: 3, h: 4 };
+    let e: dyn Shape = Rect { w: 3, h: 4 };
     print(describe(e));
     return 0;
 }
@@ -569,11 +569,11 @@ impl Shape for Rect {
     function area(self: Self): i32 { return self.w * self.h; }
 }
 function main(): i32 {
-    var shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }, Rect { w: 1, h: 1 }];
-    var circle_r_sum: i32 = 0;
-    var rects: i32 = 0;
+    let shapes: dyn Shape[] = [Circle { r: 2 }, Rect { w: 3, h: 4 }, Circle { r: 1 }, Rect { w: 1, h: 1 }];
+    let circle_r_sum: i32 = 0;
+    let rects: i32 = 0;
     for s in shapes {
-        var c: Option[Circle] = s as? Circle;
+        let c: Option[Circle] = s as? Circle;
         match (c) {
             Some(x) => { circle_r_sum = circle_r_sum + x.r; },
             None => { rects = rects + 1; },
@@ -610,15 +610,15 @@ impl Describe for Dot {
     function tag(self: Self): i32 { return 100 + self.n; }
 }
 function check(d: dyn Describe): i32 {
-    var c: Option[Box] = d as? Box;
+    let c: Option[Box] = d as? Box;
     match (c) {
         Some(x) => { return x.tag(); },
         None => { return -1; },
     }
 }
 function main(): i32 {
-    var a: dyn Describe = Pair(3, 4);
-    var b: dyn Describe = Dot { n: 7 };
+    let a: dyn Describe = Pair(3, 4);
+    let b: dyn Describe = Dot { n: 7 };
     print("a=" + check(a).to_string());
     print("b=" + check(b).to_string());
     return 0;
@@ -647,13 +647,13 @@ impl Shape for Rect {
     function area(self: Self): i32 { return self.w * self.h; }
 }
 function main(): i32 {
-    var d: dyn Shape = Circle { r: 5 };
-    var r: Option[Rect] = d as? Rect;
+    let d: dyn Shape = Circle { r: 5 };
+    let r: Option[Rect] = d as? Rect;
     match (r) {
         Some(x) => { print("rect=" + x.area().to_string()); },
         None => { print("not a rect"); },
     }
-    var c: Option[Circle] = d as? Circle;
+    let c: Option[Circle] = d as? Circle;
     match (c) {
         Some(x) => { print("circle=" + x.area().to_string()); },
         None => { print("not a circle"); },
@@ -686,7 +686,7 @@ function describe(d: dyn Show + Weigh): string {
 }
 function main(): i32 {
     // order-insensitive: dyn Weigh + Show normalises to the same set/vtable
-    var one: dyn Weigh + Show = Apple { g: 150 };
+    let one: dyn Weigh + Show = Apple { g: 150 };
     print(describe(one));
     return 0;
 }
@@ -712,8 +712,8 @@ function describe(d: dyn Show + Weigh): string {
     return d.show() + "=" + d.weight().to_string();
 }
 function main(): i32 {
-    var items: dyn Show + Weigh[] = [Apple { g: 120 }, Brick { kg: 2 }];
-    var total: i32 = 0;
+    let items: dyn Show + Weigh[] = [Apple { g: 120 }, Brick { kg: 2 }];
+    let total: i32 = 0;
     for it in items {
         print(describe(it));
         total = total + it.weight();
@@ -744,7 +744,7 @@ function sum(d: dyn Aa + Bb + Cc): i32 {
     return d.a1() + d.a2() + d.b1() + d.c1();
 }
 function main(): i32 {
-    var d: dyn Cc + Aa + Bb = S { x: 3 };
+    let d: dyn Cc + Aa + Bb = S { x: 3 };
     print("sum=" + sum(d).to_string());
     return 0;
 }
@@ -775,11 +775,11 @@ impl Weigh for Apple { function weight(self: Self): i32 { return self.g; } }
 impl Show  for Brick { function show(self: Self): string { return "brick"; } }
 impl Weigh for Brick { function weight(self: Self): i32 { return self.kg * 1000; } }
 function describe(d: dyn Show + Weigh): string {
-    var a: Option[Apple] = d as? Apple;
+    let a: Option[Apple] = d as? Apple;
     match (a) {
         Some(x) => { return "apple g=" + x.g.to_string(); },
         None => {
-            var b: Option[Brick] = d as? Brick;
+            let b: Option[Brick] = d as? Brick;
             match (b) {
                 Some(y) => { return "brick kg=" + y.kg.to_string(); },
                 None => { return "other"; },
@@ -788,9 +788,9 @@ function describe(d: dyn Show + Weigh): string {
     }
 }
 function main(): i32 {
-    var one: dyn Weigh + Show = Apple { g: 150 };
+    let one: dyn Weigh + Show = Apple { g: 150 };
     print(describe(one));
-    var two: dyn Show + Weigh = Brick { kg: 2 };
+    let two: dyn Show + Weigh = Brick { kg: 2 };
     print(describe(two));
     return 0;
 }
@@ -817,13 +817,13 @@ impl Show  for Brick { function show(self: Self): string { return "brick"; } }
 impl Weigh for Brick { function weight(self: Self): i32 { return self.kg * 1000; } }
 function main(): i32 {
     // only Apple is ever coerced; Brick appears only as a downcast target
-    var d: dyn Show + Weigh = Apple { g: 7 };
-    var b: Option[Brick] = d as? Brick;
+    let d: dyn Show + Weigh = Apple { g: 7 };
+    let b: Option[Brick] = d as? Brick;
     match (b) {
         Some(x) => { print("brick=" + x.weight().to_string()); },
         None => { print("not a brick"); },
     }
-    var a: Option[Apple] = d as? Apple;
+    let a: Option[Apple] = d as? Apple;
     match (a) {
         Some(x) => { print("apple=" + x.show() + ":" + x.weight().to_string()); },
         None => { print("not an apple"); },
@@ -852,11 +852,11 @@ impl Aa for Tee { function a1(self: Self): i32 { return self.y; } }
 impl Bb for Tee { function b1(self: Self): i32 { return self.y * 10; } }
 impl Cc for Tee { function c1(self: Self): i32 { return self.y * 100; } }
 function check(d: dyn Aa + Bb + Cc): i32 {
-    var s: Option[S] = d as? S;
+    let s: Option[S] = d as? S;
     match (s) {
         Some(v) => { return v.x; },
         None => {
-            var tt: Option[Tee] = d as? Tee;
+            let tt: Option[Tee] = d as? Tee;
             match (tt) {
                 Some(w) => { return -w.y; },
                 None => { return 0; },
@@ -865,8 +865,8 @@ function check(d: dyn Aa + Bb + Cc): i32 {
     }
 }
 function main(): i32 {
-    var d: dyn Cc + Aa + Bb = S { x: 3 };
-    var e: dyn Aa + Bb + Cc = Tee { y: 9 };
+    let d: dyn Cc + Aa + Bb = S { x: 3 };
+    let e: dyn Aa + Bb + Cc = Tee { y: 9 };
     print("d=" + check(d).to_string());
     print("e=" + check(e).to_string());
     return 0;
@@ -897,8 +897,8 @@ func TestDynTraitStdlibDisplay(t *testing.T) {
 	src := `import "core/cmp";
 import "std/i32";
 function render(xs: dyn cmp.Display[]): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < xs.len()) {
         if (i > 0) { out = out + ", "; }
         out = out + xs[i].to_string();
@@ -907,7 +907,7 @@ function render(xs: dyn cmp.Display[]): string {
     return out;
 }
 function main(): i32 {
-    var xs: dyn cmp.Display[] = [42, "hi", true];
+    let xs: dyn cmp.Display[] = [42, "hi", true];
     print(render(xs));
     return 0;
 }
@@ -923,9 +923,9 @@ func TestDynTraitStdlibDisplayByte(t *testing.T) {
 	src := `import "core/cmp";
 import "std/i32";
 function main(): i32 {
-    var s: string = "A";
-    var b: u8 = s[0];
-    var xs: dyn cmp.Display[] = [b, 7];
+    let s: string = "A";
+    let b: u8 = s[0];
+    let xs: dyn cmp.Display[] = [b, 7];
     print(xs[0].to_string() + "/" + xs[1].to_string());
     return 0;
 }

@@ -28,7 +28,7 @@ function test_alternation(): test.TestOutcome {
 }
 
 function test_search_span(): test.TestOutcome {
-  var m: regex.RMatch = regex.regex_search("\\d+", "order 123 shipped");
+  let m: regex.RMatch = regex.regex_search("\\d+", "order 123 shipped");
   return test.assert_true(m.found && m.start == 6 && m.end == 9);
 }
 
@@ -47,7 +47,7 @@ function test_count(): test.TestOutcome {
 }
 
 function test_find_all(): test.TestOutcome {
-  var all: regex.RMatch[] = regex.regex_find_all("\\d+", "a1 b22");
+  let all: regex.RMatch[] = regex.regex_find_all("\\d+", "a1 b22");
   return test.assert_true(all.len() == 2 && all[0].start == 1 && all[1].start == 4);
 }
 
@@ -60,7 +60,7 @@ function test_replace_first(): test.TestOutcome {
 }
 
 function test_split(): test.TestOutcome {
-  var parts: string[] = regex.regex_split("a,b;c", "[,;]");
+  let parts: string[] = regex.regex_split("a,b;c", "[,;]");
   return test.assert_true(parts.len() == 3 && parts[0] == "a" && parts[1] == "b" && parts[2] == "c");
 }
 
@@ -71,41 +71,41 @@ function test_full_match(): test.TestOutcome {
 // --- captures --------------------------------------------------------------
 
 function test_captures_positional(): test.TestOutcome {
-  var m: regex.RCaps = regex.regex_captures("(\\d+)-(\\d+)", "id 12-34 x");
+  let m: regex.RCaps = regex.regex_captures("(\\d+)-(\\d+)", "id 12-34 x");
   return test.assert_true(m.found && m.group_count() == 2
     && m.group(0) == "12-34" && m.group(1) == "12" && m.group(2) == "34"
     && m.group_start(1) == 3 && m.group_end(1) == 5);
 }
 
 function test_captures_optional_group(): test.TestOutcome {
-  var absent: regex.RCaps = regex.regex_captures("a(bc)?d", "ad");
-  var present: regex.RCaps = regex.regex_captures("a(bc)?d", "abcd");
+  let absent: regex.RCaps = regex.regex_captures("a(bc)?d", "ad");
+  let present: regex.RCaps = regex.regex_captures("a(bc)?d", "abcd");
   return test.assert_true(!absent.has_group(1) && absent.group(1) == ""
     && present.has_group(1) && present.group(1) == "bc");
 }
 
 function test_captures_all(): test.TestOutcome {
-  var all: regex.RCaps[] = regex.regex_captures_all("(\\w+)@(\\w+)", "a@b c@d");
+  let all: regex.RCaps[] = regex.regex_captures_all("(\\w+)@(\\w+)", "a@b c@d");
   return test.assert_true(all.len() == 2 && all[0].group(1) == "a" && all[1].group(2) == "d");
 }
 
 function test_captures_quantified_last_iteration(): test.TestOutcome {
   // a group under `+` reports its LAST iteration's span
-  var m: regex.RCaps = regex.regex_captures("(a|b)+", "ab");
+  let m: regex.RCaps = regex.regex_captures("(a|b)+", "ab");
   return test.assert_eq(m.group(1), "b");
 }
 
 // --- named groups ----------------------------------------------------------
 
 function test_named_groups(): test.TestOutcome {
-  var m: regex.RCaps = regex.regex_captures("(?<year>\\d{4})-(?<mon>\\d{2})", "date 2026-07");
+  let m: regex.RCaps = regex.regex_captures("(?<year>\\d{4})-(?<mon>\\d{2})", "date 2026-07");
   return test.assert_true(m.group_named("year") == "2026" && m.group_named("mon") == "07"
     && m.group_index("year") == 1 && m.group_index("mon") == 2
     && m.group(1) == "2026");
 }
 
 function test_named_group_unknown(): test.TestOutcome {
-  var m: regex.RCaps = regex.regex_captures("(?<w>\\w+)", "hi");
+  let m: regex.RCaps = regex.regex_captures("(?<w>\\w+)", "hi");
   return test.assert_true(m.group_named("nope") == "" && m.group_index("nope") == 0 - 1
     && m.has_group_named("w") && !m.has_group_named("nope"));
 }
@@ -127,7 +127,7 @@ function test_replace_groups_escape(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/regex");
+  let r: test.TestRunner = test.test_new("std/regex");
   r = r.it("match anywhere", test_match_anywhere);
   r = r.it("anchors", test_anchors);
   r = r.it("classes + quantifiers", test_classes_and_quantifiers);

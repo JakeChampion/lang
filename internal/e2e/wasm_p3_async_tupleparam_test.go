@@ -22,7 +22,7 @@ import (
 // A real Fern program —
 //
 //	@import("test:dep/d","add") async function add(p: (i32, i32)): i32;
-//	async function run(): i32 { var p: (i32, i32) = (10, 32); return add(p); }
+//	async function run(): i32 { let p: (i32, i32) = (10, 32); return add(p); }
 //
 // — flattens the tuple to its canonical element args `(x, y)` via the shared
 // sync/async marshalling head (emitExternParamMarshal), runs the `canon lower
@@ -37,7 +37,7 @@ func TestWasmP3AsyncImportTupleParamFromFern(t *testing.T) {
 
 	src := `@import("test:dep/d", "add") async function add(p: (i32, i32)): i32;
 async function run(): i32 {
-	var p: (i32, i32) = (10, 32);
+	let p: (i32, i32) = (10, 32);
 	return add(p);
 }
 function main(): i32 { return 0; }

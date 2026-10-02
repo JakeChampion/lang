@@ -10,14 +10,14 @@ import (
 // into a fresh binding), and the copy-on-write helpers behind `.with` on a
 // shared i32[] and a shared string[].
 const arrGrowProgram = `function main(): i32 {
-    var a: i32[] = [];
-    var s: string[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let s: string[] = [];
+    let i: i32 = 0;
     while (i < 5) { a = a.append(i); s = s.append("x"); i = i + 1; }
-    var b: i32[] = a;
+    let b: i32[] = a;
     b = b.with(0, 7);
-    var t: string[] = s.append("y");
-    var u: string[] = t;
+    let t: string[] = s.append("y");
+    let u: string[] = t;
     u = u.with(0, "z");
     return a.len() + b[0] + t.len() + u.len();
 }`

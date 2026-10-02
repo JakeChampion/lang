@@ -333,7 +333,7 @@ impl Ord for string {
 // its callers read only the low bits after masking.
 
 function __hash_mix_i32(x: i32): i32 {
-  var h: i32 = x ^ 61;
+  let h: i32 = x ^ 61;
   h = h ^ (h as u32 >> 16 as u32) as i32;
   h = h + (h << 3);
   h = h ^ (h as u32 >> 4 as u32) as i32;
@@ -362,16 +362,16 @@ impl Hash for u32 {
 
 impl Hash for i64 {
   function hash(self: i64): i32 {
-    var lo: i32 = self as i32;
-    var hi: i32 = (self >> 32 as i64) as i32;
+    let lo: i32 = self as i32;
+    let hi: i32 = (self >> 32 as i64) as i32;
     return __hash_mix_i32(lo ^ hi);
   }
 }
 
 impl Hash for u64 {
   function hash(self: u64): i32 {
-    var lo: i32 = self as i32;
-    var hi: i32 = (self >> 32 as u64) as i32;
+    let lo: i32 = self as i32;
+    let hi: i32 = (self >> 32 as u64) as i32;
     return __hash_mix_i32(lo ^ hi);
   }
 }
@@ -523,11 +523,11 @@ impl Debug for string {
   function to_debug(self: string): string {
     // Byte-level rebuild: the escapes are ASCII and every other
     // byte (multibyte sequences included) passes through byte-exact.
-    var out: u8[] = [];
-    var i: i32 = 0;
-    var n: i32 = self.len();
+    let out: u8[] = [];
+    let i: i32 = 0;
+    let n: i32 = self.len();
     while (i < n) {
-      var b: i32 = self[i] as i32;
+      let b: i32 = self[i] as i32;
       if (b == 34) {  // "
         out = out.append(92 as u8);
         out = out.append(34 as u8);
@@ -601,8 +601,8 @@ pub function max_of[T: Ord](xs: T[]): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  var best: T = xs[0];
-  var i: i32 = 1;
+  let best: T = xs[0];
+  let i: i32 = 1;
   while (i < xs.len()) {
     if (xs[i].cmp(best) > 0) {
       best = xs[i];
@@ -617,8 +617,8 @@ pub function min_of[T: Ord](xs: T[]): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  var best: T = xs[0];
-  var i: i32 = 1;
+  let best: T = xs[0];
+  let i: i32 = 1;
   while (i < xs.len()) {
     if (xs[i].cmp(best) < 0) {
       best = xs[i];
@@ -648,8 +648,8 @@ pub function gte[T: Ord](a: T, b: T): boolean {
 
 // is_sorted reports whether `arr` is in non-decreasing `Ord` order.
 pub function is_sorted[T: Ord](arr: T[]): boolean {
-  var i = 1;
-  var n = arr.len();
+  let i = 1;
+  let n = arr.len();
   while (i < n) {
     if (arr[i].cmp(arr[i - 1]) < 0) {
       return false;
@@ -685,13 +685,13 @@ function __cmp_min_run(): i32 {
 // caller moves in as `a = __cmp_insertion(a, ...)`; a borrowed array would
 // be copied whole on the first `.with`, once per call.
 function __cmp_insertion[T: Ord](own a: T[], lo: i32, hi: i32, desc: boolean): T[] {
-  var i: i32 = lo + 1;
+  let i: i32 = lo + 1;
   while (i < hi) {
-    var v: T = a[i];
-    var j: i32 = i - 1;
-    var moving: boolean = j >= lo;
+    let v: T = a[i];
+    let j: i32 = i - 1;
+    let moving: boolean = j >= lo;
     while (moving) {
-      var o: i32 = a[j].cmp(v);
+      let o: i32 = a[j].cmp(v);
       if (desc) {
         o = 0 - o;
       }
@@ -758,14 +758,14 @@ function __cmp_insertion[T: Ord](own a: T[], lo: i32, hi: i32, desc: boolean): T
 // fixed). `__cmp_insertion(a, i, e, desc)` passes the array, so `T` binds from
 // `T[]` and the call monomorphises normally, inside a loop or not.
 function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (n < 2) {
     return arr;
   }
 
   // Own a copy: the descending-run reversal writes in place.
-  var a: T[] = [];
-  var c: i32 = 0;
+  let a: T[] = [];
+  let c: i32 = 0;
   while (c < n) {
     a = a.append(arr[c]);
     c = c + 1;
@@ -777,24 +777,24 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
   }
 
   // Pass 1 — natural runs. `bounds` holds each run's start, terminated by n.
-  var bounds: i32[] = [];
-  var i: i32 = 0;
+  let bounds: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     bounds = bounds.append(i);
-    var e: i32 = i + 1;
+    let e: i32 = i + 1;
     if (e < n) {
-      var head: i32 = a[i].cmp(a[e]);
+      let head: i32 = a[i].cmp(a[e]);
       if (desc) {
         head = 0 - head;
       }
       if (head > 0) {
         // Strictly descending: extend, then reverse into order.
-        var falling: boolean = true;
+        let falling: boolean = true;
         while (falling) {
           e = e + 1;
           falling = false;
           if (e < n) {
-            var od: i32 = a[e - 1].cmp(a[e]);
+            let od: i32 = a[e - 1].cmp(a[e]);
             if (desc) {
               od = 0 - od;
             }
@@ -803,22 +803,22 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
             }
           }
         }
-        var lo: i32 = i;
-        var hi: i32 = e - 1;
+        let lo: i32 = i;
+        let hi: i32 = e - 1;
         while (lo < hi) {
-          var t: T = a[lo];
+          let t: T = a[lo];
           a = a.with(lo, a[hi]);
           a = a.with(hi, t);
           lo = lo + 1;
           hi = hi - 1;
         }
       } else {
-        var rising: boolean = true;
+        let rising: boolean = true;
         while (rising) {
           e = e + 1;
           rising = false;
           if (e < n) {
-            var oa: i32 = a[e - 1].cmp(a[e]);
+            let oa: i32 = a[e - 1].cmp(a[e]);
             if (desc) {
               oa = 0 - oa;
             }
@@ -833,7 +833,7 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
     // insertion-sorted. On sorted input the run already spans the array, so
     // this never fires and the O(n) path is untouched.
     if (e - i < __cmp_min_run()) {
-      var ext: i32 = i + __cmp_min_run();
+      let ext: i32 = i + __cmp_min_run();
       if (ext > n) {
         ext = n;
       }
@@ -850,19 +850,19 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
   // rebuilds the array by appending merged segments, so the output never
   // aliases the input it is reading.
   while (bounds.len() > 2) {
-    var out: T[] = [];
-    var next: i32[] = [];
-    var r: i32 = 0;
+    let out: T[] = [];
+    let next: i32[] = [];
+    let r: i32 = 0;
     while (r + 1 < bounds.len()) {
-      var mlo: i32 = bounds[r];
+      let mlo: i32 = bounds[r];
       next = next.append(mlo);
       if (r + 2 < bounds.len()) {
-        var mmid: i32 = bounds[r + 1];
-        var mhi: i32 = bounds[r + 2];
-        var p: i32 = mlo;
-        var q: i32 = mmid;
+        let mmid: i32 = bounds[r + 1];
+        let mhi: i32 = bounds[r + 2];
+        let p: i32 = mlo;
+        let q: i32 = mmid;
         while (p < mmid && q < mhi) {
-          var om: i32 = a[p].cmp(a[q]);
+          let om: i32 = a[p].cmp(a[q]);
           if (desc) {
             om = 0 - om;
           }
@@ -885,8 +885,8 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
         r = r + 2;
       } else {
         // Odd run out: carry it forward untouched.
-        var mend: i32 = bounds[r + 1];
-        var mk: i32 = mlo;
+        let mend: i32 = bounds[r + 1];
+        let mk: i32 = mlo;
         while (mk < mend) {
           out = out.append(a[mk]);
           mk = mk + 1;
@@ -956,7 +956,7 @@ pub function contains[T: Eq](xs: T[], target: T): boolean {
 // keeps "not found" out of band rather than leaning on a `-1` sentinel
 // (the modern shape unified from std/array in #5348).
 pub function index_of[T: Eq](xs: T[], target: T): Option[i32] {
-  var i = 0;
+  let i = 0;
   for x in xs {
     if (x.eq(target)) {
       return Some(i);
@@ -971,7 +971,7 @@ pub function index_of[T: Eq](xs: T[], target: T): Option[i32] {
 // (no `Hash` needed) — suited to small / convenience inputs; a
 // `Hash`-backed dedup is the larger-n follow-up.
 pub function distinct[T: Eq](xs: T[]): T[] {
-  var out: T[] = [];
+  let out: T[] = [];
   for x in xs {
     if (!contains(out, x)) {
       out = out.append(x);
@@ -1019,11 +1019,11 @@ impl Debug for bigint.BigInt {
 // eq_arrays reports whether `a` and `b` have the same length and equal
 // elements pairwise under `Eq`.
 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean {
-  var n = a.len();
+  let n = a.len();
   if (n != b.len()) {
     return false;
   }
-  var i = 0;
+  let i = 0;
   while (i < n) {
     if (!a[i].eq(b[i])) {
       return false;

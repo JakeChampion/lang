@@ -119,7 +119,7 @@ function test_log_kv_chains(r: test.TestRunner): test.TestRunner {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("ci-string + log_kv");
+  let r: test.TestRunner = test.test_new("ci-string + log_kv");
   r = r.it("eq_string_ci same case", test_eq_string_ci_same_case);
   r = r.it("eq_string_ci different case", test_eq_string_ci_different_case);
   r = r.it("eq_string_ci mismatch raw quoted", test_eq_string_ci_truly_different_reports);

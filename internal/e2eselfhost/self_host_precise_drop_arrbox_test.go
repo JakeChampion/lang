@@ -6,7 +6,7 @@ import (
 
 // --- The precise drop must not take an array of BOXES down the scalar path ----
 //
-// `var keep: E[] = mkv(7);` leaked its element boxes where the byte-identical
+// `let keep: E[] = mkv(7);` leaked its element boxes where the byte-identical
 // `mkv(seed())` did not — 104 allocs / 102 frees against native's 104/104, the
 // underflow guard 0 on both. Two programs one token apart (#7610).
 //
@@ -45,16 +45,16 @@ import (
 
 const preciseDropArrBoxDecl = `enum E { A(i32[]), B }
 struct P { f: E[], n: i32 }
-function mkv(i: i32): E[] { var o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
+function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
 function seed(): i32 { return 7; }
-function rd(src: E[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }
+function rd(src: E[], i: i32): i32 { let p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }
 `
 
 func preciseDropArrBoxMain(init, tail string) string {
 	return `
 function main(): i32 {
     ` + init + `
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { t = t + rd(keep, r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     ` + tail + `
@@ -71,27 +71,27 @@ func preciseDropArrBoxCases() []arrenumShareCase {
 			// The repro: bare integer literal, no use of `keep` after the loop.
 			// 104/102 before, 104/104 now.
 			name: "literal_arg_precise_drop",
-			src:  mk("var keep: E[] = mkv(7);", ret),
+			src:  mk("let keep: E[] = mkv(7);", ret),
 			want: 6, balance: true,
 		},
 		{
 			// A CALL argument: never precise-dropped, clean before and after.
 			// This is the control that proves the literal is the axis.
 			name: "call_arg_unchanged",
-			src:  mk("var keep: E[] = mkv(seed());", ret),
+			src:  mk("let keep: E[] = mkv(seed());", ret),
 			want: 6, balance: true,
 		},
 		{
 			// A constant EXPRESSION, not a bare literal — also clean before, so
 			// "const-fold" is the wrong name for the axis.
 			name: "const_expr_arg_unchanged",
-			src:  mk("var keep: E[] = mkv(1 + 6);", ret),
+			src:  mk("let keep: E[] = mkv(1 + 6);", ret),
 			want: 6, balance: true,
 		},
 		{
 			// The literal routed through a local: clean before.
 			name: "var_arg_unchanged",
-			src:  mk("var q: i32 = 7; var keep: E[] = mkv(q);", ret),
+			src:  mk("let q: i32 = 7; let keep: E[] = mkv(q);", ret),
 			want: 6, balance: true,
 		},
 		{
@@ -99,7 +99,7 @@ func preciseDropArrBoxCases() []arrenumShareCase {
 			// precise-drop eligible: clean before. Isolates eligibility from
 			// the argument shape.
 			name: "literal_arg_kept_live",
-			src:  mk("var keep: E[] = mkv(7);", "return (t + keep.len()) % 97;"),
+			src:  mk("let keep: E[] = mkv(7);", "return (t + keep.len()) % 97;"),
 			want: 7, balance: true,
 		},
 		{
@@ -111,9 +111,9 @@ func preciseDropArrBoxCases() []arrenumShareCase {
 			name: "struct_array_twin",
 			src: `struct Inner { xs: i32[], k: i32 }
 struct P { f: Inner[], n: i32 }
-function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1], k: i }); return o; }
-function rd(src: Inner[], i: i32): i32 { var p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }
-` + preciseDropArrBoxMain("var keep: Inner[] = mkv(7);", ret),
+function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1], k: i }); return o; }
+function rd(src: Inner[], i: i32): i32 { let p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }
+` + preciseDropArrBoxMain("let keep: Inner[] = mkv(7);", ret),
 			want: 6, balance: true,
 		},
 	}

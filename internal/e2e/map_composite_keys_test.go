@@ -29,7 +29,7 @@ enum Tag { A(i32), B, C(i32) }
 
 function main(): i32 {
     // --- struct keys: distinct value-equal instances hit the same entry ---
-    var sm: Map[Point, i32] = map_new(8);
+    let sm: Map[Point, i32] = map_new(8);
     sm = sm.insert(Point { x: 1, y: 2 }, 10);
     sm = sm.insert(Point { x: 3, y: 4 }, 20);
     if (sm.get_or(Point { x: 1, y: 2 }, -1) != 10) { return 1; }   // fresh instance, same value
@@ -42,7 +42,7 @@ function main(): i32 {
     if (sm.len() != 2 || sm.get_or(Point { x: 1, y: 2 }, -1) != 99) { return 6; }
 
     // --- enum keys (payload-carrying + unit variants) ---
-    var em: Map[Tag, i32] = map_new(8);
+    let em: Map[Tag, i32] = map_new(8);
     em = em.insert(A(1), 100);
     em = em.insert(B, 200);
     em = em.insert(C(1), 300);
@@ -53,7 +53,7 @@ function main(): i32 {
     if (em.len() != 3) { return 12; }                              // A(1) / C(1) distinct despite same payload
 
     // --- tuple keys ---
-    var tm: Map[(i32, i32), i32] = map_new(8);
+    let tm: Map[(i32, i32), i32] = map_new(8);
     tm = tm.insert((1, 2), 5);
     tm = tm.insert((2, 1), 6);
     if (tm.get_or((1, 2), 0) != 5) { return 13; }

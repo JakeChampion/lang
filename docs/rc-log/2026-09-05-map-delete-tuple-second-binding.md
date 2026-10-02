@@ -17,8 +17,8 @@ helped; what was missing was a count.
 
 | shape | x86-64 | arm64 | wasm32 |
 |---|---|---|---|
-| `var st = m.without(k)`, m never rebound | exit 1 (underflow) | **SIGSEGV** | **trap**, OOB |
-| `var m2: Map[…] = st.0` | exit 1 | **SIGSEGV** | **trap** |
+| `let st = m.without(k)`, m never rebound | exit 1 (underflow) | **SIGSEGV** | **trap**, OOB |
+| `let m2: Map[…] = st.0` | exit 1 | **SIGSEGV** | **trap** |
 | `m = st.0` (the reassign idiom) | 0, but 0 frees | 0, but 0 frees | 0, but 0 frees |
 
 Row 3 is why this sat unnoticed. It does not crash — because it leaks. The map
@@ -31,7 +31,7 @@ exit 0 while stranding six figures of bytes.
 Neither half works alone, and each fails in its own direction:
 
 - **The COW-seam retain** (`computeMapCowBindSites`) reached
-  `var (m2, ok) = m.without(k)` but not `var t = m.without(k)` — the spelling
+  `let (m2, ok) = m.without(k)` but not `let t = m.without(k)` — the spelling
   the corpus itself uses. Its doc said `without` "can ONLY be consumed by
   destructuring", which was never true. Granting the retain ALONE removes every
   crash, and doubles the leak: nothing returns the count, the map is pinned
@@ -81,7 +81,7 @@ cases reclaimed there was no clean baseline to see 16 bytes against.
   and leaks, for the pin-above-1 reason above. The fix is that `x = f(x)` must
   not dec the old value when the RHS can alias it — a general Perceus
   assignment question, not a Map one.
-- **`var (m2, ok) = m.without(k)`** — already has the seam retain, so its
+- **`let (m2, ok) = m.without(k)`** — already has the seam retain, so its
   residue is a third thing again.
 - The deleted entry's key cell, above.
 

@@ -117,7 +117,7 @@ native-built compiler — which is what #8179 measured — does not.
 
 ## Next lead
 
-The same box is claimable one position wider: `var t = T { ...p, f: v }` where
+The same box is claimable one position wider: `let t = T { ...p, f: v }` where
 p is dead from that statement on. The emitter already takes a `consume` flag,
 so what is missing is the deadness proof — computeReuseSources' block walk has
 one, but it demands D be dead AT C and here C reads D's every field, so the

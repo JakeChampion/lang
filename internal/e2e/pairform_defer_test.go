@@ -31,8 +31,8 @@ func TestPairFormFuncWithDeferReturnsCorrectly(t *testing.T) {
     return Some(42);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var r: i32 = 0;
+    let a: Cell[i32] = cell_new(0);
+    let r: i32 = 0;
     match (f(a)) {
         Some(v) => { r = v; },
         None => { r = 100; },
@@ -44,8 +44,8 @@ function main(): i32 {
     return Ok(7);
 }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
-    var r: i32 = 0;
+    let a: Cell[i32] = cell_new(0);
+    let r: i32 = 0;
     match (g(a)) {
         Ok(v) => { r = v; },
         Err(e) => { r = 100; },

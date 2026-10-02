@@ -32,14 +32,14 @@ var strSourceMethodReceiverCases = []struct {
 	// 46 B/round before, flat after.
 	{"str-fresh-receiver-source-method-copy-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) copies(): string { return s + ""; }
-function round(pre: string): i32 { var u: string = w(pre).copies(); return u.len(); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function round(pre: string): i32 { let u: string = w(pre).copies(); return u.len(); }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
@@ -50,14 +50,14 @@ function main(): i32 {
 	// is only whether the callee-side proof admits it.
 	{"str-fresh-receiver-source-method-unrelated-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) unrel(): string { if (s.len() > 0) { return "xxxxxxxxxxxxxxxxxxxx"; } return "yyyyyyyyyyyyyyyyyyyy"; }
-function round(pre: string): i32 { var u: string = w(pre).unrel(); return u.len(); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function round(pre: string): i32 { let u: string = w(pre).unrel(); return u.len(); }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
@@ -68,13 +68,13 @@ function main(): i32 {
 	{"str-fresh-receiver-source-method-chained-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) copies(): string { return s + ""; }
 function round(pre: string): i32 { return w(pre).copies().copies().len(); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
@@ -87,16 +87,16 @@ function main(): i32 {
 	{"str-identity-return-method-receiver-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) ident(): string { return s; }
 function round(pre: string): i32 {
-    var t: str = w(pre).ident();
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let t: str = w(pre).ident();
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (has_sub(t, "XXXX")) { return 0 - 2; }
     if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: `return s[2:s.len()]` is a VIEW over the receiver's buffer. Worth
 	// noting that this distinction has a WITNESS here — it exits 97 when admitted —
 	// where the same view question was contract-only at the binding-credit and
@@ -105,34 +105,34 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	{"str-view-return-method-receiver-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) view(): str { return slice_unchecked(s, 2, s.len()); }
 function round(pre: string): i32 {
-    var t: str = w(pre).view();
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let t: str = w(pre).view();
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (has_sub(t, "XXXX")) { return 0 - 2; }
     if (!has_prefix(t, "cdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 104) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 104) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: the receiver is moved into a struct field inside the callee and read
 	// back out. Nothing about the RESULT gives this away — it is a fresh-looking
 	// string — so the escape check is what catches it. Also exits 97 when admitted.
 	{"str-receiver-stored-in-struct-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 struct Hold { v: string }
 function stash(s: string): Hold { return Hold { v: s }; }
-function (s: string) keeps(): string { var h: Hold = stash(s); return h.v; }
+function (s: string) keeps(): string { let h: Hold = stash(s); return h.v; }
 function round(pre: string): i32 {
-    var t: str = w(pre).keeps();
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let t: str = w(pre).keeps();
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (has_sub(t, "XXXX")) { return 0 - 2; }
     if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 const strSourceMethodReceiverFailFmt = "%s = %d, want %d (98 = the receiver was stranded; 99 = over-release; 97 = value corrupted)"

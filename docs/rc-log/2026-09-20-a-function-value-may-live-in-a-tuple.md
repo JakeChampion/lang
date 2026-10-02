@@ -11,8 +11,8 @@ It is two: the arm, and the call.
 
 ```fern
 while (i < 200) {
-    var xs: i32[] = [i, i + 1, i + 2];
-    var p: ((i32) => i32, i32) = (((x: i32) => x + xs[0] + xs[2]), i);
+    let xs: i32[] = [i, i + 1, i + 2];
+    let p: ((i32) => i32, i32) = (((x: i32) => x + xs[0] + xs[2]), i);
     t = t + (p.0)(1) % 3 + p.1 % 2;
     i = i + 1;
 }

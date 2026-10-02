@@ -14,11 +14,11 @@ struct Pair { a: i64[], b: i64[] }
 }
 @noinline function take(own xs: i64[]): i32 { return xs.len() as i32; }
 function threaded(n: i32): i32 {
-  var xs: i64[] = [];
-  var ys: i64[] = [1];
-  var i: i32 = 0;
+  let xs: i64[] = [];
+  let ys: i64[] = [1];
+  let i: i32 = 0;
   while (i < n) {
-    var p: Pair = step(xs, ys, i as i64);
+    let p: Pair = step(xs, ys, i as i64);
     xs = p.a;
     ys = p.b;
     i = i + 1;
@@ -26,9 +26,9 @@ function threaded(n: i32): i32 {
   return xs.len() as i32 + ys.len() as i32;
 }
 function gap(): i32 {
-  var xs: i64[] = [1, 2];
-  var r: i32 = take(xs);
-  var m: i32 = r + 1;
+  let xs: i64[] = [1, 2];
+  let r: i32 = take(xs);
+  let m: i32 = r + 1;
   xs = [3];
   return m + xs.len() as i32;
 }

@@ -39,8 +39,8 @@ import "core/map";
 struct Key { a: i32, b: string }
 
 function main(): i32 {
-    var s: Map[Key, i32] = Map { Key { a: 1, b: "x" }: 10, Key { a: 1, b: "y" }: 20 };
-    var i: Map[Key, i32] = Map { Key { a: 1, b: "x" }: 10, Key { a: 2, b: "x" }: 20 };
+    let s: Map[Key, i32] = Map { Key { a: 1, b: "x" }: 10, Key { a: 1, b: "y" }: 20 };
+    let i: Map[Key, i32] = Map { Key { a: 1, b: "x" }: 10, Key { a: 2, b: "x" }: 20 };
     if (s.len() != 2) { return 90; }
     if (i.len() != 2) { return 91; }
     if (s.get_or(Key { a: 1, b: "y" }, 0) != 20) { return 92; }
@@ -56,7 +56,7 @@ import "core/map";
 struct Key { a: i32, b: string }
 
 function main(): i32 {
-    var m: Map[Key, i32] = Map { Key { a: 1, b: "x" }: 10, Key { a: 2, b: "y" }: 20 };
+    let m: Map[Key, i32] = Map { Key { a: 1, b: "x" }: 10, Key { a: 2, b: "y" }: 20 };
     if (m.get_or(Key { a: 1, b: "x" }, 0) != 10) { return 90; }
     if (m.get_or(Key { a: 3, b: "z" }, 77) != 77) { return 91; }
     if (m.has(Key { a: 9, b: "q" })) { return 92; }
@@ -76,7 +76,7 @@ import "core/map";
 enum Tag { Red, Green, Blue }
 
 function main(): i32 {
-    var e: Map[Tag, i32] = Map { Red: 1, Green: 2, Blue: 3 };
+    let e: Map[Tag, i32] = Map { Red: 1, Green: 2, Blue: 3 };
     if (e.len() != 3) { return 90; }
     if (e.get_or(Green, 0) != 2) { return 91; }
     if (e.get_or(Blue, 0) != 3) { return 92; }
@@ -91,7 +91,7 @@ import "core/map";
 struct Key { a: i32, b: string }
 
 function main(): i32 {
-    var m: Map[Key, i32] = Map {};
+    let m: Map[Key, i32] = Map {};
     m = m.insert(Key { a: 1, b: "x" }, 10);
     m = m.insert(Key { a: 1, b: "y" }, 20);
     if (m.len() != 2) { return 90; }
@@ -103,8 +103,8 @@ function main(): i32 {
 	{"scalar-key-control", `import "core/map";
 
 function main(): i32 {
-    var m: Map[i32, i32] = Map { 1: 10, 2: 20 };
-    var s: Map[string, i32] = Map { "a": 40, "b": 2 };
+    let m: Map[i32, i32] = Map { 1: 10, 2: 20 };
+    let s: Map[string, i32] = Map { "a": 40, "b": 2 };
     if (m.len() != 2 || s.len() != 2) { return 90; }
     if (m.get_or(2, 0) != 20) { return 91; }
     if (s.get_or("a", 0) != 40) { return 92; }

@@ -52,52 +52,52 @@ func TestSelfHostArm64DarwinMachOBitOpsRuns(t *testing.T) {
 // llvm-mc-pinned bytes. Each `return N` is a distinct failing-check id.
 const arm64BitOpsGasSelfTestMain = `
 function badvec(mnem: string, text: string): string {
-    var ops: string[] = arm64_gas_operands(text);
+    let ops: string[] = arm64_gas_operands(text);
     return arm64_gas_bad_vec_token(mnem, ops, arm64_gas_line_mem(ops));
 }
 function main(): i32 {
     // neg x0, x0 (sub x0, xzr, x0) -> 0xCB0003E0 -> E0 03 00 CB
-    var a: Arm64Asm = arm64_gas_assemble("neg x0, x0");
+    let a: Arm64Asm = arm64_gas_assemble("neg x0, x0");
     if (a.code[0] != 224 || a.code[1] != 3 || a.code[2] != 0 || a.code[3] != 203) { return 1; }
     // ubfx x1, x0, #1, #5 -> 0xD3411401 -> 01 14 41 D3
-    var b: Arm64Asm = arm64_gas_assemble("ubfx x1, x0, #1, #5");
+    let b: Arm64Asm = arm64_gas_assemble("ubfx x1, x0, #1, #5");
     if (b.code[0] != 1 || b.code[1] != 20 || b.code[2] != 65 || b.code[3] != 211) { return 2; }
     // tbnz x0, #1, skip (rel +4) -> 0x37080020 -> 20 00 08 37
-    var c: Arm64Asm = arm64_gas_assemble("tbnz x0, #1, skip\nskip:\n");
+    let c: Arm64Asm = arm64_gas_assemble("tbnz x0, #1, skip\nskip:\n");
     if (c.code[0] != 32 || c.code[1] != 0 || c.code[2] != 8 || c.code[3] != 55) { return 3; }
     // tbz x0, #0, skip (rel +4) -> 0x36000020 -> 20 00 00 36
-    var d: Arm64Asm = arm64_gas_assemble("tbz x0, #0, skip\nskip:\n");
+    let d: Arm64Asm = arm64_gas_assemble("tbz x0, #0, skip\nskip:\n");
     if (d.code[0] != 32 || d.code[1] != 0 || d.code[2] != 0 || d.code[3] != 54) { return 4; }
     // b.cc end (cond 3, rel +4) -> 0x54000023 -> 23 00 00 54
-    var e: Arm64Asm = arm64_gas_assemble("b.cc end\nend:\n");
+    let e: Arm64Asm = arm64_gas_assemble("b.cc end\nend:\n");
     if (e.code[0] != 35 || e.code[1] != 0 || e.code[2] != 0 || e.code[3] != 84) { return 5; }
     // b.hi end (cond 8, rel +4) -> 0x54000028 -> 28 00 00 54
-    var f: Arm64Asm = arm64_gas_assemble("b.hi end\nend:\n");
+    let f: Arm64Asm = arm64_gas_assemble("b.hi end\nend:\n");
     if (f.code[0] != 40 || f.code[1] != 0 || f.code[2] != 0 || f.code[3] != 84) { return 6; }
     // condition-code values.
     if (arm64_gas_cond("cc") != 3 || arm64_gas_cond("hs") != 2 || arm64_gas_cond("ls") != 9) { return 7; }
     // rbit x0, x0 -> 0xDAC00000 -> 00 00 C0 DA. The ctz idiom's first half.
-    var g: Arm64Asm = arm64_gas_assemble("rbit x0, x0");
+    let g: Arm64Asm = arm64_gas_assemble("rbit x0, x0");
     if (g.code[0] != 0 || g.code[1] != 0 || g.code[2] != 192 || g.code[3] != 218) { return 8; }
     // rbit w0, w0 -> 0x5AC00000 -> 00 00 C0 5A. The sf clear: without it a
     // 32-bit ctz reverses over 64 bits and counts the empty upper half.
-    var h: Arm64Asm = arm64_gas_assemble("rbit w0, w0");
+    let h: Arm64Asm = arm64_gas_assemble("rbit w0, w0");
     if (h.code[0] != 0 || h.code[1] != 0 || h.code[2] != 192 || h.code[3] != 90) { return 9; }
     // cnt v0.8b, v0.8b -> 0x0E205800 -> 00 58 20 0E
-    var i0: Arm64Asm = arm64_gas_assemble("cnt v0.8b, v0.8b");
+    let i0: Arm64Asm = arm64_gas_assemble("cnt v0.8b, v0.8b");
     if (i0.code[0] != 0 || i0.code[1] != 88 || i0.code[2] != 32 || i0.code[3] != 14) { return 10; }
     // addv b0, v0.8b -> 0x0E31B800 -> 00 B8 31 0E
-    var j0: Arm64Asm = arm64_gas_assemble("addv b0, v0.8b");
+    let j0: Arm64Asm = arm64_gas_assemble("addv b0, v0.8b");
     if (j0.code[0] != 0 || j0.code[1] != 184 || j0.code[2] != 49 || j0.code[3] != 14) { return 11; }
     // The Q bit, on both: cnt v1.16b, v2.16b -> 0x4E205841 -> 41 58 20 4E
-    var k0: Arm64Asm = arm64_gas_assemble("cnt v1.16b, v2.16b");
+    let k0: Arm64Asm = arm64_gas_assemble("cnt v1.16b, v2.16b");
     if (k0.code[0] != 65 || k0.code[1] != 88 || k0.code[2] != 32 || k0.code[3] != 78) { return 12; }
     // addv b3, v5.16b -> 0x4E31B8A3 -> A3 B8 31 4E
-    var l0: Arm64Asm = arm64_gas_assemble("addv b3, v5.16b");
+    let l0: Arm64Asm = arm64_gas_assemble("addv b3, v5.16b");
     if (l0.code[0] != 163 || l0.code[1] != 184 || l0.code[2] != 49 || l0.code[3] != 78) { return 13; }
     // addv h0, v0.8h -> 0x4E71B800 -> 00 B8 71 4E. The across-lanes class: the
     // destination is the scalar class the source arrangement names.
-    var m0: Arm64Asm = arm64_gas_assemble("addv h0, v0.8h");
+    let m0: Arm64Asm = arm64_gas_assemble("addv h0, v0.8h");
     if (m0.code[0] != 0 || m0.code[1] != 184 || m0.code[2] != 113 || m0.code[3] != 78) { return 14; }
     // A shape the encoding has no form for must be REFUSED, not assembled as
     // a different instruction on the same bytes. In order: cnt is byte-lane
@@ -123,7 +123,7 @@ function main(): i32 {
 // bit 0 (42 is even) branches over the poison `mov x0, #99`.
 const arm64MachOBitOpsDriverMain = "\n" +
 	"function main(): i32 {\n" +
-	"    var asm: string = \"\";\n" +
+	"    let asm: string = \"\";\n" +
 	"    asm = asm + \"_main:\\n\";\n" +
 	"    asm = asm + \"    mov x0, #42\\n\";\n" +
 	"    asm = asm + \"    ubfx x1, x0, #1, #5\\n\";\n" +
@@ -135,9 +135,9 @@ const arm64MachOBitOpsDriverMain = "\n" +
 	"    asm = asm + \"even:\\n\";\n" +
 	"    asm = asm + \"    mov x16, #1\\n\";\n" +
 	"    asm = asm + \"    svc #0x80\\n\";\n" +
-	"    var a: Arm64Asm = arm64_gas_assemble(asm);\n" +
-	"    var none: i32[] = [];\n" +
-	"    var bin: i32[] = macho_executable(a.code, none, none, \"fern\", macho_entry_off(a), 0, none);\n" +
+	"    let a: Arm64Asm = arm64_gas_assemble(asm);\n" +
+	"    let none: i32[] = [];\n" +
+	"    let bin: i32[] = macho_executable(a.code, none, none, \"fern\", macho_entry_off(a), 0, none);\n" +
 	"    write(string_from_bytes_unchecked(to_u8(bin)));\n" +
 	"    return 0;\n" +
 	"}\n"

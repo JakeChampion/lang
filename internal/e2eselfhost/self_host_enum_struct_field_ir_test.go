@@ -36,8 +36,8 @@ func TestSelfHostEnumStructFieldIRX86_64(t *testing.T) {
 	prog := `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { s: Shape, n: i32 }
 function use_tagged(): i32 {
-    var t: Tagged = Tagged { s: Rect(7), n: 5 };
-    var r: i32 = 0;
+    let t: Tagged = Tagged { s: Rect(7), n: 5 };
+    let r: i32 = 0;
     match (t.s) {
         Circle => { r = 1; },
         Square => { r = 2; },

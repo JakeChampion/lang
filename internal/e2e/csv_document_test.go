@@ -13,19 +13,19 @@ import "testing"
 const csvDocProg = `
 import "std/csv" as csv;
 function main(): i32 {
-    var r1: string[][] = csv.csv_parse("a,b,c\n1,2,3");
+    let r1: string[][] = csv.csv_parse("a,b,c\n1,2,3");
     if (r1.len() != 2 || r1[0][2] != "c" || r1[1][1] != "2") { return 1; }
-    var r2: string[][] = csv.csv_parse("\"a,b\",\"line1\nline2\",z");
+    let r2: string[][] = csv.csv_parse("\"a,b\",\"line1\nline2\",z");
     if (r2.len() != 1 || r2[0].len() != 3) { return 2; }
     if (r2[0][0] != "a,b" || r2[0][1] != "line1\nline2") { return 3; }
-    var r3: string[][] = csv.csv_parse("\"say \"\"hi\"\"\",x");
+    let r3: string[][] = csv.csv_parse("\"say \"\"hi\"\"\",x");
     if (r3[0][0] != "say \"hi\"") { return 4; }
-    var r4: string[][] = csv.csv_parse("a,b\r\nc,d\r\n");
+    let r4: string[][] = csv.csv_parse("a,b\r\nc,d\r\n");
     if (r4.len() != 2 || r4[1][0] != "c" || r4[1][1] != "d") { return 5; }
     if (csv.csv_parse("a,")[0][1] != "") { return 6; }
     if (csv.csv_parse("").len() != 0) { return 7; }
-    var rows: string[][] = [["x", "y,z"], ["1", "two\nlines"]];
-    var back: string[][] = csv.csv_parse(csv.csv_serialize(rows));
+    let rows: string[][] = [["x", "y,z"], ["1", "two\nlines"]];
+    let back: string[][] = csv.csv_parse(csv.csv_serialize(rows));
     if (back.len() != 2 || back[0][1] != "y,z" || back[1][1] != "two\nlines") { return 8; }
     return 42;
 }

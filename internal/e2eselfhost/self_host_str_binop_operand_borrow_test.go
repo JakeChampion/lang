@@ -37,13 +37,13 @@ var strBinopOperandBorrowCases = []struct {
 	{"str-concat-operand-param-borrowable-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function cat(s: string): string { return s + ""; }
 function round(pre: string): i32 { return cat(w(pre)).len(); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
@@ -54,13 +54,13 @@ function main(): i32 {
 	{"str-compare-operand-param-borrowable-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function cmpsz(s: string): i32 { if (s > "m") { return 3; } return 5; }
 function round(pre: string): i32 { return cmpsz(w(pre)); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
@@ -71,13 +71,13 @@ function main(): i32 {
 	{"str-scalar-callee-temp-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function sz(s: string): i32 { return s.len(); }
 function round(pre: string): i32 { return sz(w(pre)); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
@@ -89,50 +89,50 @@ function main(): i32 {
 	{"str-identity-return-param-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function keep(s: string): string { return s; }
 function round(pre: string): i32 {
-    var t: string = keep(w(pre));
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let t: string = keep(w(pre));
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: the parameter is moved into a struct field that outlives the call.
 	// A struct-literal field value is not a borrow position and must not become one.
 	// Also exits 97 when admitted.
 	{"str-struct-stored-param-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 struct Hold { v: string }
 function stash(s: string): Hold { return Hold { v: s }; }
-function via(s: string): string { var h: Hold = stash(s); return h.v; }
+function via(s: string): string { let h: Hold = stash(s); return h.v; }
 function round(pre: string): i32 {
-    var t: string = via(w(pre));
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let t: string = via(w(pre));
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: concat-read on one path, returned bare on the other. One escaping
 	// path is enough to refuse the parameter — the call site has no way to tell
 	// which path ran. Also exits 97 when admitted.
 	{"str-mixed-path-param-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function mixed(s: string, k: i32): string { if (k > 0) { return s + ""; } return s; }
 function round(pre: string): i32 {
-    var t: string = mixed(w(pre), 0);
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let t: string = mixed(w(pre), 0);
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrBinopOperandBorrowIRX86_64 drives the cases through the

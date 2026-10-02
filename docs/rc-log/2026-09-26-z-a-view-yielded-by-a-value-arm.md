@@ -8,7 +8,7 @@ too, the result's, but the arm's value reached the join's phi as the
 source's own value:
 
 ```fern
-var b: str = if (k > 1) { a } else { slice_unchecked(t, 1, 2) };
+let b: str = if (k > 1) { a } else { slice_unchecked(t, 1, 2) };
 while (n < k) { a = slice_unchecked(t, n, n + 1); n = n + 1; }
 ```
 

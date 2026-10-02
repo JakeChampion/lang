@@ -7,7 +7,7 @@ careless widening buys over-release, not just clean.
 ## The refusal
 
 `tuple_ret_local_is_frame_fresh` passed an empty `alias_ok` to
-`body_unsafe_for_alias_ret_ok`, so the cell's `var a = t` read as a bare-ident
+`body_unsafe_for_alias_ret_ok`, so the cell's `let a = t` read as a bare-ident
 escape of `t`, the callee never entered `tuple_fresh_ret_fns`, and both halves
 were lost at once: no `TUP:`/`ARRF:` credit in the caller, and (through
 `tuple_ret_local_names_of` sharing the predicate) `bare_ret_ok` false at the
@@ -24,8 +24,8 @@ the dead-ended reader alias and nothing else:
 - `return a` — the alias's own init is an ident, not a literal, so it is
   never frame-fresh itself, and the payload scan on `a` reads the return as
   an escape;
-- `var b = a` — a bare-ident escape of `a` under the scan;
-- `var e = a.1` — a non-scalar element extraction;
+- `let b = a` — a bare-ident escape of `a` under the scan;
+- `let e = a.1` — a non-scalar element extraction;
 - `peek(a)` — any call arg under the empty registry.
 
 Each sinks the site, so the admission stays refused wherever a second

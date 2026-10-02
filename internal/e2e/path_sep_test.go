@@ -17,7 +17,7 @@ const pathSepSrc = `struct Point { x: i32, y: i32 }
 trait Make { function make(a: i32, b: i32): Self; }
 impl Make for Point { function make(a: i32, b: i32): Self { return Point { x: a, y: b }; } }
 function main(): i32 {
-    var p: Point = Point::make(20, 22);   // associated function via ::
+    let p: Point = Point::make(20, 22);   // associated function via ::
     return p.x + p.y;                      // 42
 }
 `

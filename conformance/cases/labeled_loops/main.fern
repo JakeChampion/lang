@@ -1,7 +1,7 @@
 // Labeled `break LABEL` / `continue LABEL` target an enclosing loop by
 // name, across for / while / loop nesting.
 function main(): i32 {
-    var sum: i32 = 0;
+    let sum: i32 = 0;
 
     // `continue outer` skips the rest of the inner loop AND advances outer.
     outer: for i in 0..4 {
@@ -13,7 +13,7 @@ function main(): i32 {
     }
 
     // `break scan` from a while nested in a for exits the for entirely.
-    var k: i32 = 0;
+    let k: i32 = 0;
     scan: for a in 0..10 {
         while (true) {
             k = k + 1;
@@ -23,7 +23,7 @@ function main(): i32 {
     sum = sum + k;                             // +5 -> 13
 
     // labeled `loop` + labeled continue/break.
-    var c: i32 = 0;
+    let c: i32 = 0;
     counter: loop {
         c = c + 1;
         for x in 0..3 {

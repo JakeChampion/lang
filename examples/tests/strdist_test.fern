@@ -55,7 +55,7 @@ function test_similarity(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/strdist");
+  let r: test.TestRunner = test.test_new("std/strdist");
   r = r.it("levenshtein basic", test_levenshtein_basic);
   r = r.it("levenshtein reference", test_levenshtein_reference);
   r = r.it("codepoint aware", test_codepoint_aware);

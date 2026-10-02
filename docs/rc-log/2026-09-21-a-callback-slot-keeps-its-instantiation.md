@@ -47,7 +47,7 @@ same callback in.
 
 Seven places rewrite a declaration in that pass, and all seven skipped the
 pair. `ms_func`'s parameters and its own callable return; `ms_expr`'s lambda
-parameters; `ms_stmt`'s `var`; `clone_struct_method`'s parameters and callable
+parameters; `ms_stmt`'s `let`; `clone_struct_method`'s parameters and callable
 return; the struct fields of a non-generic struct; and the fields of a generic
 struct's clone. `mg_ty_list` is `mg_ty` over the comma list, and
 `to_concrete_struct_ty_list` the same for the clone path, which mangles

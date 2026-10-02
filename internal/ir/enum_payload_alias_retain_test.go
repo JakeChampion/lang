@@ -65,7 +65,7 @@ func isMakeSome(op ir.Op) bool { return op.Kind == ir.OpMakeSomeI32 }
 func TestPairFormReturnRetainsAliasedPayload(t *testing.T) {
 	ip := lowerForTest(t, aliasRetainTable+`
 function find(name: string): Option[Unit] {
-    var us: Unit[] = table();
+    let us: Unit[] = table();
     for i in 0..us.len() {
         if (us[i].name == name) { return Some(us[i]); }
     }
@@ -92,8 +92,8 @@ function main(): i32 {
 func TestEnumReuseOverwriteRetainsAliasedPayload(t *testing.T) {
 	ip := lowerForTest(t, aliasRetainTable+`
 function last(name: string): Option[Unit] {
-    var us: Unit[] = table();
-    var found: Option[Unit] = None;
+    let us: Unit[] = table();
+    let found: Option[Unit] = None;
     for i in 0..us.len() {
         if (us[i].name == name) { found = Some(us[i]); }
     }

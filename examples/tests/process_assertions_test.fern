@@ -14,32 +14,32 @@ import "std/test";
 // "")`.
 
 function test_echo_stdout_eq(): test.TestOutcome {
-  var r: ProcessResult = subprocess("echo", ["hello"], "");
+  let r: ProcessResult = subprocess("echo", ["hello"], "");
   return test.assert_stdout_eq(r, "hello\n");
 }
 
 function test_echo_exit_code(): test.TestOutcome {
-  var r: ProcessResult = subprocess("echo", ["x"], "");
+  let r: ProcessResult = subprocess("echo", ["x"], "");
   return test.assert_exit(r, 0);
 }
 
 function test_cat_passthrough(): test.TestOutcome {
-  var r: ProcessResult = subprocess("cat", [], "piped\n");
+  let r: ProcessResult = subprocess("cat", [], "piped\n");
   return test.assert_process(r, 0, "piped");
 }
 
 function test_sh_nonzero_exit(): test.TestOutcome {
-  var r: ProcessResult = subprocess("sh", ["-c", "exit 7"], "");
+  let r: ProcessResult = subprocess("sh", ["-c", "exit 7"], "");
   return test.assert_exit(r, 7);
 }
 
 function test_sh_stderr_contains(): test.TestOutcome {
-  var r: ProcessResult = subprocess("sh", ["-c", "echo err-line 1>&2; exit 0"], "");
+  let r: ProcessResult = subprocess("sh", ["-c", "echo err-line 1>&2; exit 0"], "");
   return test.assert_stderr_contains(r, "err-line");
 }
 
 function test_spawn_missing_binary(): test.TestOutcome {
-  var r: ProcessResult = subprocess("this-binary-definitely-does-not-exist-7349", [], "");
+  let r: ProcessResult = subprocess("this-binary-definitely-does-not-exist-7349", [], "");
   // Spawn failure → exit_code = 127 per POSIX convention,
   // with the OS error message in stderr.
   return test.assert_exit(r, 127);
@@ -48,7 +48,7 @@ function test_spawn_missing_binary(): test.TestOutcome {
 function test_temp_dir_writes_and_reads(): test.TestOutcome {
   match (temp_dir("lang-process-assert")) {
     Ok(dir) => {
-      var path: string = dir + "/fixture.txt";
+      let path: string = dir + "/fixture.txt";
       match (write_file(path, "hello tempdir")) {
         Ok(_) => {},
         Err(_) => {
@@ -56,7 +56,7 @@ function test_temp_dir_writes_and_reads(): test.TestOutcome {
         }
       }
       // Confirm `cat` reads what we just wrote.
-      var r: ProcessResult = subprocess("cat", [path], "");
+      let r: ProcessResult = subprocess("cat", [path], "");
       return test.assert_process(r, 0, "hello tempdir");
     },
     Err(_) => {
@@ -67,14 +67,14 @@ function test_temp_dir_writes_and_reads(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("process assertions");
+  let r: test.TestRunner = test.test_new("process assertions");
 
   // Gate the whole suite on having a POSIX shell — every
   // case here spawns `echo` / `cat` / `sh`. On hosts where
   // those aren't on $PATH (rare for Fern's actual targets,
   // but possible in stripped CI images) the suite skips
   // cleanly instead of cascading false failures.
-  var probe: ProcessResult = subprocess("sh", ["-c", "exit 0"], "");
+  let probe: ProcessResult = subprocess("sh", ["-c", "exit 0"], "");
   if (probe.exit_code == 127) {
     r = r.skip("posix tools probe", "sh / echo / cat not on $PATH");
     return r.finish();

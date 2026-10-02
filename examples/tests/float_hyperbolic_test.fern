@@ -40,8 +40,8 @@ function test_symmetry(): test.TestOutcome {
 
 function test_identity(): test.TestOutcome {
   // cosh² - sinh² == 1 for all x.
-  var c: f64 = 2.0.cosh();
-  var s: f64 = 2.0.sinh();
+  let c: f64 = 2.0.cosh();
+  let s: f64 = 2.0.sinh();
   return test.assert_eq_f64_near(c * c - s * s, 1.0, 0.001);
 }
 
@@ -60,7 +60,7 @@ function test_f32(): test.TestOutcome {
 }
 
 function float_near(a: f64, b: f64): boolean {
-  var d: f64 = a - b;
+  let d: f64 = a - b;
   if (d < 0.0) {
     d = 0.0 - d;
   }
@@ -68,7 +68,7 @@ function float_near(a: f64, b: f64): boolean {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/float sinh/cosh/tanh");
+  let r: test.TestRunner = test.test_new("std/float sinh/cosh/tanh");
   r = r.it("at zero", test_at_zero);
   r = r.it("at one", test_at_one);
   r = r.it("symmetry", test_symmetry);

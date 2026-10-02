@@ -8,10 +8,10 @@ import "testing"
 // inclusive_range_type_max fixture, which the self-host legs run too.
 func TestInclusiveRangeAtTypeMaxEnds(t *testing.T) {
 	assertExitsZeroEverywhere(t, `function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for a in 254u8..=255u8 { n = n + 1; }
     if (n != 2) { return 1; }
-    var last: u8 = 0u8;
+    let last: u8 = 0u8;
     n = 0;
     for b in 0u8..=255u8 { n = n + 1; last = b; }
     if (n != 256 || last != 255u8) { return 2; }

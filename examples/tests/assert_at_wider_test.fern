@@ -12,12 +12,12 @@ import "std/test";
 //     fail; tolerance is mandatory).
 
 function test_at_u32_pass(): test.TestOutcome {
-  var arr: u32[] = [10 as u32, 20 as u32, 30 as u32];
+  let arr: u32[] = [10 as u32, 20 as u32, 30 as u32];
   return test.assert_at(arr, 1, 20 as u32);
 }
 
 function test_at_u32_wrong_value(): test.TestOutcome {
-  var arr: u32[] = [10 as u32, 20 as u32];
+  let arr: u32[] = [10 as u32, 20 as u32];
   match (test.assert_at(arr, 0, 999 as u32)) {
     Pass => {
       return test.fail("wrong-value should fail");
@@ -34,7 +34,7 @@ function test_at_u32_wrong_value(): test.TestOutcome {
 }
 
 function test_at_u32_out_of_bounds(): test.TestOutcome {
-  var arr: u32[] = [10 as u32];
+  let arr: u32[] = [10 as u32];
   match (test.assert_at(arr, 5, 0 as u32)) {
     Pass => {
       return test.fail("OOB should fail");
@@ -49,12 +49,12 @@ function test_at_u32_out_of_bounds(): test.TestOutcome {
 }
 
 function test_at_u64_pass(): test.TestOutcome {
-  var arr: u64[] = [100 as u64, 200 as u64, 300 as u64];
+  let arr: u64[] = [100 as u64, 200 as u64, 300 as u64];
   return test.assert_at(arr, 2, 300 as u64);
 }
 
 function test_at_u64_wrong_value(): test.TestOutcome {
-  var arr: u64[] = [42 as u64];
+  let arr: u64[] = [42 as u64];
   match (test.assert_at(arr, 0, 99 as u64)) {
     Pass => {
       return test.fail("expected mismatch");
@@ -88,8 +88,8 @@ function test_at_f64_outside_tolerance(): test.TestOutcome {
 }
 
 function test_at_f64_nan_actual_fails(): test.TestOutcome {
-  var z: f64 = 0.0;
-  var nan: f64 = z / z;
+  let z: f64 = 0.0;
+  let nan: f64 = z / z;
   match (test.assert_at_f64([1.0, nan, 3.0], 1, 2.0, 100.0)) {
     Pass => {
       return test.fail("NaN element should fail");
@@ -104,8 +104,8 @@ function test_at_f64_nan_actual_fails(): test.TestOutcome {
 }
 
 function test_at_f64_nan_expected_fails(): test.TestOutcome {
-  var z: f64 = 0.0;
-  var nan: f64 = z / z;
+  let z: f64 = 0.0;
+  let nan: f64 = z / z;
   match (test.assert_at_f64([1.0, 2.0], 0, nan, 0.001)) {
     Pass => {
       return test.fail("NaN expected should fail");
@@ -131,12 +131,12 @@ function test_at_f64_out_of_bounds(): test.TestOutcome {
 }
 
 function test_at_f32_pass(): test.TestOutcome {
-  var arr: f32[] = [1.0 as f32, 2.0 as f32];
+  let arr: f32[] = [1.0 as f32, 2.0 as f32];
   return test.assert_at_f32(arr, 0, 1.0 as f32, 0.001 as f32);
 }
 
 function test_at_f32_outside_tolerance(): test.TestOutcome {
-  var arr: f32[] = [1.0 as f32, 5.0 as f32];
+  let arr: f32[] = [1.0 as f32, 5.0 as f32];
   match (test.assert_at_f32(arr, 1, 2.0 as f32, 0.1 as f32)) {
     Pass => {
       return test.fail("outside-tolerance should fail");
@@ -148,7 +148,7 @@ function test_at_f32_outside_tolerance(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("assert_at wider widths");
+  let r: test.TestRunner = test.test_new("assert_at wider widths");
   r = r.it("at_u32 pass", test_at_u32_pass);
   r = r.it("at_u32 wrong value diag", test_at_u32_wrong_value);
   r = r.it("at_u32 out of bounds", test_at_u32_out_of_bounds);

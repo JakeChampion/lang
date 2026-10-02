@@ -24,10 +24,10 @@ var trailingCommaCases = []struct {
 	src  string
 	exit int
 }{
-	{"two-field", "struct P { a: i32, b: i32 } function main(): i32 { var p = P { a: 40, b: 2, }; return p.a + p.b; }", 42},
-	{"one-field", "struct Q { v: i32 } function main(): i32 { var q = Q { v: 42, }; return q.v; }", 42},
-	{"no-trailing-still-works", "struct R { a: i32, b: i32 } function main(): i32 { var r = R { a: 40, b: 2 }; return r.a + r.b; }", 42},
-	{"string-field-trailing", "struct S { name: string, n: i32 } function main(): i32 { var s = S { name: \"hi\", n: 40, }; return s.name.len() + s.n; }", 42},
+	{"two-field", "struct P { a: i32, b: i32 } function main(): i32 { let p = P { a: 40, b: 2, }; return p.a + p.b; }", 42},
+	{"one-field", "struct Q { v: i32 } function main(): i32 { let q = Q { v: 42, }; return q.v; }", 42},
+	{"no-trailing-still-works", "struct R { a: i32, b: i32 } function main(): i32 { let r = R { a: 40, b: 2 }; return r.a + r.b; }", 42},
+	{"string-field-trailing", "struct S { name: string, n: i32 } function main(): i32 { let s = S { name: \"hi\", n: 40, }; return s.name.len() + s.n; }", 42},
 	// PARAMETER lists, which this corpus did not cover and which were broken
 	// the whole time (#6354): the loops appended parse_param's empty sentinel
 	// for the token after the comma, so each of these declared one phantom
@@ -38,10 +38,10 @@ var trailingCommaCases = []struct {
 	// They are here so all three legs pin the parse, and in the wasm leg so one
 	// of them can pin the consequence.
 	{"fn-params-trailing", "function add3(a: i32, b: i32, c: i32,): i32 { return a + b + c; } function main(): i32 { return add3(35, 5, 2); }", 42},
-	{"arrow-lambda-params-trailing", "function main(): i32 { var twice: (i32) => i32 = (n: i32,) => n * 2; return twice(21); }", 42},
-	{"fn-keyword-lambda-params-trailing", "function main(): i32 { var f: (i32) => i32 = (a: i32,): i32 => { return a + 2; }; return f(40); }", 42},
-	{"two-param-lambda-trailing", "function main(): i32 { var add: (i32, i32) => i32 = (a: i32, b: i32,) => a + b; return add(40, 2); }", 42},
-	{"single-param-no-trailing-regress", "function id2(a: i32): i32 { return a; } function main(): i32 { var f: (i32) => i32 = (n: i32) => n; return id2(f(42)); }", 42},
+	{"arrow-lambda-params-trailing", "function main(): i32 { let twice: (i32) => i32 = (n: i32,) => n * 2; return twice(21); }", 42},
+	{"fn-keyword-lambda-params-trailing", "function main(): i32 { let f: (i32) => i32 = (a: i32,): i32 => { return a + 2; }; return f(40); }", 42},
+	{"two-param-lambda-trailing", "function main(): i32 { let add: (i32, i32) => i32 = (a: i32, b: i32,) => a + b; return add(40, 2); }", 42},
+	{"single-param-no-trailing-regress", "function id2(a: i32): i32 { return a; } function main(): i32 { let f: (i32) => i32 = (n: i32) => n; return id2(f(42)); }", 42},
 }
 
 // TestSelfHostTrailingCommaX86_64 — trailing comma in struct literals,

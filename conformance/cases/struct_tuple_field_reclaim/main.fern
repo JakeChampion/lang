@@ -22,27 +22,27 @@
 struct Hold { t: (i32, i32[]), n: i32 }
 
 function moved(i: i32): i32 {
-    var k: (i32, i32[]) = (i, [i, i + 1]);
-    var h: Hold = Hold { t: k, n: i };
+    let k: (i32, i32[]) = (i, [i, i + 1]);
+    let h: Hold = Hold { t: k, n: i };
     return h.n + h.t.1[1];
 }
 
 function alias(i: i32): i32 {
-    var k: (i32, i32[]) = (i, [i, i + 2]);
-    var h: Hold = Hold { t: k, n: i };
-    var viah: i32 = h.t.1[0];
-    var viak: i32 = k.1[1];
+    let k: (i32, i32[]) = (i, [i, i + 2]);
+    let h: Hold = Hold { t: k, n: i };
+    let viah: i32 = h.t.1[0];
+    let viak: i32 = k.1[1];
     if (viak != i + 2) { return 0 - 1; }
     return viah + viak;
 }
 
 function main(): i32 {
-    var keep: Hold = Hold { t: (7, [7, 8]), n: 7 };
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let keep: Hold = Hold { t: (7, [7, 8]), n: 7 };
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         t = t + moved(i);
-        var a: i32 = alias(i);
+        let a: i32 = alias(i);
         if (a < 0) { return 253; }
         t = t + a;
         i = i + 1;

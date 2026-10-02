@@ -30,18 +30,18 @@ var mapInEnumDropCases = []struct {
 	// A local JsonValue bound to a payload variant, dropped at scope exit — the
 	// inline emitEnumSlotDrop path. No `import "core/map"`.
 	{"local-jstring",
-		`function main(): i32 { var j: JsonValue = JString("hi"); match (j) { JString(s) => { return s.len(); }, _ => { return 0; } } }`, 2},
+		`function main(): i32 { let j: JsonValue = JString("hi"); match (j) { JString(s) => { return s.len(); }, _ => { return 0; } } }`, 2},
 	// A JsonValue[] element drop — the genEnumDropFn (__drop_enum_JsonValue)
 	// path, reached through the array-buffer deep drop. No `import "core/map"`.
 	// (This is the TestWASMArrayPushEnum shape; pinned here on x86-64 too.)
 	{"array-jstring",
-		`function main(): i32 { var xs: JsonValue[] = []; xs = xs.append(JString("a")); xs = xs.append(JString("bb")); return match (xs[1]) { JString(s) => s.len(), _ => 0 - 1 }; }`, 2},
+		`function main(): i32 { let xs: JsonValue[] = []; xs = xs.append(JString("a")); xs = xs.append(JString("bb")); return match (xs[1]) { JString(s) => s.len(), _ => 0 - 1 }; }`, 2},
 	// A REAL JObject wrapping a populated map, dropped — exercises the map-payload
 	// arm with an actual map present (import "core/map" IS loaded here, so
 	// __map_drop_values exists, but the enum drop still safe-leaks it). Must build
 	// and return the map length.
 	{"real-jobject-map",
-		"import \"core/map\";\nfunction main(): i32 { var m: Map[string, JsonValue] = map_new(8); m = m.insert(\"k\", JString(\"v\")); var o: JsonValue = JObject(m); match (o) { JObject(mm) => { return mm.len(); }, _ => { return 0; } } }", 1},
+		"import \"core/map\";\nfunction main(): i32 { let m: Map[string, JsonValue] = map_new(8); m = m.insert(\"k\", JString(\"v\")); let o: JsonValue = JObject(m); match (o) { JObject(mm) => { return mm.len(); }, _ => { return 0; } } }", 1},
 }
 
 func TestX86_64MapInEnumDropBuilds(t *testing.T) {

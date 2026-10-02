@@ -42,14 +42,14 @@ func TestSelfHostIRScalarArrayAppendFieldX86_64(t *testing.T) {
 		// Bare-ident scalar-array LOCAL receiver as a struct field value.
 		{"append-local-i32-arr-field", `struct Acc { flags: i32[] }
 function build(n: i32): Acc {
-	var flags: i32[] = [];
-	var i: i32 = 0;
+	let flags: i32[] = [];
+	let i: i32 = 0;
 	while (i < n) { flags = flags.append(i); i = i + 1; }
 	return Acc { flags: flags.append(99) };
 }
 function main(): i32 {
-	var a: Acc = build(4);
-	var sum: i32 = 0; var j: i32 = 0;
+	let a: Acc = build(4);
+	let sum: i32 = 0; let j: i32 = 0;
 	while (j < a.flags.len()) { sum = sum + a.flags[j]; j = j + 1; }
 	return a.flags.len() + sum;
 }`, 5 + (0 + 1 + 2 + 3 + 99)}, // len 5 + sum 105 -> 110
@@ -58,8 +58,8 @@ function main(): i32 {
 		{"with-param-i32-arr-field", `struct Acc { flags: i32[] }
 function rebuild(flags: i32[], v: i32): Acc { return Acc { flags: flags.with(0, v) }; }
 function main(): i32 {
-	var base: i32[] = [10, 20, 30];
-	var a: Acc = rebuild(base, 7);
+	let base: i32[] = [10, 20, 30];
+	let a: Acc = rebuild(base, 7);
 	return a.flags.len() + a.flags[0] + a.flags[1] + a.flags[2];
 }`, 3 + 7 + 20 + 30}, // len 3 + 7+20+30=57 -> 60
 
@@ -75,18 +75,18 @@ struct Acc { stmts: Stm[], actions: Stm[], flags: i32[] }
 function collect(st: Stm, actions: Stm[], flags: i32[]): Acc {
 	match (st) {
 		SDefer(d) => {
-			var one: Stm[] = [d.action];
+			let one: Stm[] = [d.action];
 			return Acc { stmts: one, actions: actions.append(d.action), flags: flags.append(d.on_error) };
 		},
-		_ => { var one: Stm[] = [st]; return Acc { stmts: one, actions: actions, flags: flags }; }
+		_ => { let one: Stm[] = [st]; return Acc { stmts: one, actions: actions, flags: flags }; }
 	}
 }
 function collect_list(stmts: Stm[], actions: Stm[], flags: i32[]): Acc {
-	var acc: Stm[] = actions;
-	var afl: i32[] = flags;
-	var i: i32 = 0;
+	let acc: Stm[] = actions;
+	let afl: i32[] = flags;
+	let i: i32 = 0;
 	while (i < stmts.len()) {
-		var r: Acc = collect(stmts[i], acc, afl);
+		let r: Acc = collect(stmts[i], acc, afl);
 		acc = r.actions;
 		afl = r.flags;
 		i = i + 1;
@@ -94,11 +94,11 @@ function collect_list(stmts: Stm[], actions: Stm[], flags: i32[]): Acc {
 	return Acc { stmts: stmts, actions: acc, flags: afl };
 }
 function main(): i32 {
-	var prog: Stm[] = [];
+	let prog: Stm[] = [];
 	prog = prog.append(SVar { x: 1 });
 	prog = prog.append(SDefer { action: SVar { x: 2 }, on_error: 1 });
 	prog = prog.append(SDefer { action: SVar { x: 3 }, on_error: 0 });
-	var r: Acc = collect_list(prog, [], []);
+	let r: Acc = collect_list(prog, [], []);
 	return r.actions.len() * 10 + r.flags.len();
 }`, 2*10 + 2}, // two SDefers -> actions len 2, flags len 2 -> 22
 	} {

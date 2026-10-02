@@ -206,7 +206,7 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 		}
 		b.WriteByte(';')
 	case *ast.Var:
-		b.WriteString("var ")
+		b.WriteString("let ")
 		b.WriteString(x.Name)
 		if x.Type != nil {
 			b.WriteString(": ")

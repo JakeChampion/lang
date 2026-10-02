@@ -189,7 +189,7 @@ function test_field_bool_wrong_type(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("JSON field extraction");
+  let r: test.TestRunner = test.test_new("JSON field extraction");
   r = r.it("field_string pass", test_field_string_pass);
   r = r.it("field_string wrong value diag", test_field_string_wrong_value);
   r = r.it("field_string wrong type rejected", test_field_string_wrong_type);

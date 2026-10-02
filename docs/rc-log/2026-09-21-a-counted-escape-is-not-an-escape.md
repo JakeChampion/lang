@@ -125,16 +125,16 @@ The residual 0.42 KB/request in the serve loop is untouched. The census names
 and a `strcat` / `str_slice` / `string_from_bytes_unchecked` tail; none of it is
 attributed yet, and the growth is still unbounded, so #8003 stays open on that.
 
-A second leak surfaced beside this one and is NOT this defect: a `var` declared
+A second leak surfaced beside this one and is NOT this defect: a `let` declared
 INSIDE a match arm takes its alias-binding retain and nothing releases it.
 
 ```fern
-match (r) { Some(c) => { var kept: u8[] = c; chunk = kept; }, None => { … } }
+match (r) { Some(c) => { let kept: u8[] = c; chunk = kept; }, None => { … } }
 ```
 
 leaks 90 blocks / 2080 B over 50 rounds, identically before and after this
 change, and identically with the scrutinee BOUND to a local first — so no
-scrutinee reclaim is involved. Hoisting the same `var` out of the arm balances
+scrutinee reclaim is involved. Hoisting the same `let` out of the arm balances
 it. Filed separately; that is why the predicate excuses only the assignment and
-not a `var` init, which could not be given a green gate until the arm-scoped
+not a `let` init, which could not be given a green gate until the arm-scoped
 local is swept.

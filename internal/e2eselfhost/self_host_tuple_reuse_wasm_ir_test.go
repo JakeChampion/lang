@@ -36,21 +36,21 @@ func TestSelfHostTupleReuseWasmIR(t *testing.T) {
 		expected int
 	}{
 		// i32 elements: reused box overwritten with i32.store. (5+7) + (2+3) = 17.
-		{"reuse-i32", `function main(): i32 { var a: (i32, i32) = (5, 7); var s: i32 = a.0 + a.1; var b: (i32, i32) = (2, 3); return s + b.0 + b.1; }`, 17},
+		{"reuse-i32", `function main(): i32 { let a: (i32, i32) = (5, 7); let s: i32 = a.0 + a.1; let b: (i32, i32) = (2, 3); return s + b.0 + b.1; }`, 17},
 		// i64 elements: 8-byte i64.store into the reused box; an i32.store would
 		// truncate and the i64.load read would be garbage. (5+7) + (30+20) = 62.
-		{"reuse-i64", `function main(): i32 { var a: (i64, i64) = (5, 7); var s: i64 = a.0 + a.1; var b: (i64, i64) = (30, 20); return (s + b.0 + b.1) as i32; }`, 62},
+		{"reuse-i64", `function main(): i32 { let a: (i64, i64) = (5, 7); let s: i64 = a.0 + a.1; let b: (i64, i64) = (30, 20); return (s + b.0 + b.1) as i32; }`, 62},
 		// f64 elements: 8-byte f64.store. (1.5+2.5) + (10.0+3.0) = 17.
-		{"reuse-f64", `function main(): i32 { var a: (f64, f64) = (1.5, 2.5); var s: f64 = a.0 + a.1; var b: (f64, f64) = (10.0, 3.0); return (s + b.0 + b.1) as i32; }`, 17},
+		{"reuse-f64", `function main(): i32 { let a: (f64, f64) = (1.5, 2.5); let s: f64 = a.0 + a.1; let b: (f64, f64) = (10.0, 3.0); return (s + b.0 + b.1) as i32; }`, 17},
 		// Mixed i32 + i64: element 0 stored with i32.store, element 1 with i64.store
 		// — each at its own width in the same reused box. (5+7) + (2+30) = 44.
-		{"reuse-mixed", `function main(): i32 { var a: (i32, i64) = (5, 7); var s: i64 = (a.0 as i64) + a.1; var b: (i32, i64) = (2, 30); return (s + (b.0 as i64) + b.1) as i32; }`, 44},
+		{"reuse-mixed", `function main(): i32 { let a: (i32, i64) = (5, 7); let s: i64 = (a.0 as i64) + a.1; let b: (i32, i64) = (2, 30); return (s + (b.0 as i64) + b.1) as i32; }`, 44},
 		// String (pointer) element: i32.store of the pointer into the reused box.
 		// a.1(5) → s=5; b=("yo",9); 5 + 9 + len("yo")=2 = 16.
-		{"reuse-string", `function main(): i32 { var a: (string, i32) = ("hi", 5); var s: i32 = a.1; var b: (string, i32) = ("yo", 9); return s + b.1 + b.0.len(); }`, 16},
+		{"reuse-string", `function main(): i32 { let a: (string, i32) = ("hi", 5); let s: i32 = a.1; let b: (string, i32) = ("yo", 9); return s + b.1 + b.0.len(); }`, 16},
 		// Donor still live (read after b is built): reuse suppressed, both tuples
 		// allocate independently, value stays correct. (5+7) + (2+3) = 17.
-		{"donor-live", `function main(): i32 { var a: (i32, i32) = (5, 7); var b: (i32, i32) = (2, 3); return a.0 + a.1 + b.0 + b.1; }`, 17},
+		{"donor-live", `function main(): i32 { let a: (i32, i32) = (5, 7); let b: (i32, i32) = (2, 3); return a.0 + a.1 + b.0 + b.1; }`, 17},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

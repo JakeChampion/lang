@@ -27,44 +27,44 @@ import (
 const threadedStringAccumulatorCallees = `@noinline
 function put(a: string, s: string): string { a = a + s; return a; }
 @noinline
-function fresh(a: string, s: string): string { var b: string = a + s; return b; }
+function fresh(a: string, s: string): string { let b: string = a + s; return b; }
 @noinline
 function take(own a: string, s: string): string { return a + s; }
 @noinline
 function round_put(): i32 {
-    var acc: string = "";
-    var i: i32 = 0;
+    let acc: string = "";
+    let i: i32 = 0;
     while (i < 16) { acc = put(acc, "12345678"); i = i + 1; }
     return acc.len() - 128;
 }
 @noinline
 function round_fresh(): i32 {
-    var acc: string = "";
-    var i: i32 = 0;
+    let acc: string = "";
+    let i: i32 = 0;
     while (i < 16) { acc = fresh(acc, "12345678"); i = i + 1; }
     return acc.len() - 128;
 }
 @noinline
 function round_take(): i32 {
-    var acc: string = "";
-    var i: i32 = 0;
+    let acc: string = "";
+    let i: i32 = 0;
     while (i < 16) { acc = take(acc, "12345678"); i = i + 1; }
     return acc.len() - 128;
 }
 `
 
 const threadedStringAccumulatorSrc = threadedStringAccumulatorCallees + `function main(): i32 {
-    var r: i32 = 0;
-    var acc: i32 = 0;
+    let r: i32 = 0;
+    let acc: i32 = 0;
     while (r < 200) { acc = acc + round_put() + round_fresh() + round_take(); r = r + 1; }
     return acc;
 }`
 
 func threadedStringAccumulatorBumpSrc(n string) string {
 	return threadedStringAccumulatorCallees + `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var r: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let r: i32 = 0;
+    let acc: i32 = 0;
     while (r < ` + n + `) { acc = acc + round_put() + round_fresh() + round_take(); r = r + 1; }
     if (acc != 0) { return 99; }
     return (__heap_bump_bytes() as i32) - before;

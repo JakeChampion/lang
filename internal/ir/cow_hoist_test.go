@@ -7,16 +7,16 @@ import "testing"
 // bounds-checked store.
 func TestHoistUniquenessGuardOutOfAlwaysWritingLoop(t *testing.T) {
 	p := optimised(t, `@noinline function fill(chunk: string, t: u8[]): string {
-  var n: i32 = chunk.len();
-  var buf: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let n: i32 = chunk.len();
+  let buf: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     buf = buf.with(i, t[chunk[i] as i32]);
     i = i + 1;
   }
   return string_from_bytes_unchecked(buf);
 }
-function main(): i32 { var t: u8[] = __alloc_u8(256); return fill("hi", t).len(); }`)
+function main(): i32 { let t: u8[] = __alloc_u8(256); return fill("hi", t).len(); }`)
 	fn := findFunc(p, "fill")
 	if fn == nil {
 		t.Fatal("no fill")
@@ -33,12 +33,12 @@ function main(): i32 { var t: u8[] = __alloc_u8(256); return fill("hi", t).len()
 // write is, behind a flag the loop clears and the first write sets.
 func TestHoistUniquenessTestKeepsConditionalCopyAtTheSite(t *testing.T) {
 	p := optimised(t, `@noinline function keep(chunk: string, del: u8[]): string {
-  var n: i32 = chunk.len();
-  var buf: u8[] = __alloc_u8(n);
-  var j: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = chunk.len();
+  let buf: u8[] = __alloc_u8(n);
+  let j: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var c: i32 = chunk[i] as i32;
+    let c: i32 = chunk[i] as i32;
     if (del[c] as i32 == 0) {
       buf = buf.with(j, c as u8);
       j = j + 1;
@@ -47,7 +47,7 @@ func TestHoistUniquenessTestKeepsConditionalCopyAtTheSite(t *testing.T) {
   }
   return slice_unchecked(string_from_bytes_unchecked(buf), 0, j) + "";
 }
-function main(): i32 { var d: u8[] = __alloc_u8(256); return keep("hi", d).len(); }`)
+function main(): i32 { let d: u8[] = __alloc_u8(256); return keep("hi", d).len(); }`)
 	fn := findFunc(p, "keep")
 	if n := countOps(fn, OpRcIsUnique); n != 1 {
 		t.Fatalf("keep has %d uniqueness tests, want 1:\n%s", n, p)
@@ -87,8 +87,8 @@ function main(): i32 { var d: u8[] = __alloc_u8(256); return keep("hi", d).len()
 func TestHoistUniquenessGuardLeavesAnEscapingReceiver(t *testing.T) {
 	p := optimised(t, `@noinline function sink(b: u8[]): i32 { return b.len(); }
 @noinline function fill(n: i32): u8[] {
-  var buf: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let buf: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     buf = buf.with(i, 7 as u8);
     i = i + sink(buf);
@@ -105,8 +105,8 @@ function main(): i32 { return fill(3).len(); }`)
 // Element reads and a length read of the receiver keep it owned.
 func TestHoistUniquenessGuardAllowsReadsOfTheReceiver(t *testing.T) {
 	p := optimised(t, `@noinline function bump(n: i32): u8[] {
-  var buf: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let buf: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < buf.len()) {
     buf = buf.with(i, (buf[i] as i32 + 1) as u8);
     i = i + 1;

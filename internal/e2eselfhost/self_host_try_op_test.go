@@ -18,9 +18,9 @@ var tryOpCases = []struct {
 	src  string
 	exit int
 }{
-	{"chain-some", tryDivHelper + "function compute(): Option[i32] { var x: i32 = checked_div(84, 2)?; var y: i32 = checked_div(x, 1)?; return Some(y); } function main(): i32 { match (compute()) { Some(n) => { return n; }, None => { return 1; } } }", 42},
-	{"propagate-none", tryDivHelper + "function compute(): Option[i32] { var x: i32 = checked_div(10, 0)?; return Some(x); } function main(): i32 { match (compute()) { Some(n) => { return n; }, None => { return 7; } } }", 7},
-	{"second-none", tryDivHelper + "function compute(): Option[i32] { var x: i32 = checked_div(40, 2)?; var y: i32 = checked_div(x, 0)?; return Some(y); } function main(): i32 { match (compute()) { Some(n) => { return n; }, None => { return 9; } } }", 9},
+	{"chain-some", tryDivHelper + "function compute(): Option[i32] { let x: i32 = checked_div(84, 2)?; let y: i32 = checked_div(x, 1)?; return Some(y); } function main(): i32 { match (compute()) { Some(n) => { return n; }, None => { return 1; } } }", 42},
+	{"propagate-none", tryDivHelper + "function compute(): Option[i32] { let x: i32 = checked_div(10, 0)?; return Some(x); } function main(): i32 { match (compute()) { Some(n) => { return n; }, None => { return 7; } } }", 7},
+	{"second-none", tryDivHelper + "function compute(): Option[i32] { let x: i32 = checked_div(40, 2)?; let y: i32 = checked_div(x, 0)?; return Some(y); } function main(): i32 { match (compute()) { Some(n) => { return n; }, None => { return 9; } } }", 9},
 }
 
 // TestSelfHostTryOpX86_64 — the `?` operator with the self-hosted

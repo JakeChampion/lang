@@ -74,12 +74,12 @@ func TestSelfHostArrStructLenBorrowX86_64(t *testing.T) {
 			name: "arrstruct_len_is_the_only_use",
 			src: `struct P { xs: i32[] }
 function round(r: i32): i32 {
-    var ps: P[] = [P { xs: [r, r + 1] }];
+    let ps: P[] = [P { xs: [r, r + 1] }];
     return ps.len();
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -92,12 +92,12 @@ function main(): i32 {
 			name: "arrstruct_len_alongside_an_element_read",
 			src: `struct P { xs: i32[] }
 function round(r: i32): i32 {
-    var ps: P[] = [P { xs: [r, r + 1] }];
+    let ps: P[] = [P { xs: [r, r + 1] }];
     return ps.len() + ps[0].xs[0];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -109,13 +109,13 @@ function main(): i32 {
 			name: "arrstruct_len_bound_to_a_local",
 			src: `struct P { xs: i32[] }
 function round(r: i32): i32 {
-    var ps: P[] = [P { xs: [r, r + 1] }];
-    var n: i32 = ps.len();
+    let ps: P[] = [P { xs: [r, r + 1] }];
+    let n: i32 = ps.len();
     return n;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -125,12 +125,12 @@ function main(): i32 {
 			// The tuple sibling, ARRTUP:.
 			name: "arrtup_len_is_the_only_use",
 			src: `function round(r: i32): i32 {
-    var ts: (i32, i32[])[] = [(r, [r, r + 1])];
+    let ts: (i32, i32[])[] = [(r, [r, r + 1])];
     return ts.len();
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -142,18 +142,18 @@ function main(): i32 {
 			name: "arrstruct_len_declared_in_a_loop",
 			src: `struct P { xs: i32[], n: i32 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var ps: P[] = [P { xs: [i, i + 1], n: i }];
+        let ps: P[] = [P { xs: [i, i + 1], n: i }];
         acc = acc + ps.len();
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -163,18 +163,18 @@ function main(): i32 {
 			// The ARRTUP twin of the above — 32000 in #6285.
 			name: "arrtup_len_declared_in_a_loop",
 			src: `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var ts: (i32, i32[])[] = [(i, [i, i + 1])];
+        let ts: (i32, i32[])[] = [(i, [i, i + 1])];
         acc = acc + ts.len();
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -214,14 +214,14 @@ func TestSelfHostArrStructLenBorrowHazardsX86_64(t *testing.T) {
 			name: "len_plus_alias_to_an_outer_local",
 			src: `struct P { xs: i32[] }
 function round(r: i32): i32 {
-    var keep: P[] = [];
-    var ps: P[] = [P { xs: [r, r + 1] }];
+    let keep: P[] = [];
+    let ps: P[] = [P { xs: [r, r + 1] }];
     keep = ps;
     return ps.len() + keep[0].xs[0];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -231,18 +231,18 @@ function main(): i32 {
 			name: "len_plus_return_to_the_caller",
 			src: `struct P { xs: i32[] }
 function build(r: i32): P[] {
-    var ps: P[] = [P { xs: [r, r + 1] }];
+    let ps: P[] = [P { xs: [r, r + 1] }];
     if (ps.len() > 0) { return ps; }
     return [];
 }
 function round(r: i32): i32 {
-    var got: P[] = build(r);
+    let got: P[] = build(r);
     if (got.len() == 0) { return 0; }
     return got[0].xs[0];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -253,14 +253,14 @@ function main(): i32 {
 			name: "len_plus_element_field_extracted",
 			src: `struct P { xs: i32[] }
 function round(r: i32): i32 {
-    var held: i32[] = [];
-    var ps: P[] = [P { xs: [r, r + 1] }];
+    let held: i32[] = [];
+    let ps: P[] = [P { xs: [r, r + 1] }];
     held = ps[0].xs;
     return ps.len() + held[0];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -272,13 +272,13 @@ function main(): i32 {
 			src: `struct P { xs: i32[] }
 function keepit(ps: P[]): P[] { return ps; }
 function round(r: i32): i32 {
-    var ps: P[] = [P { xs: [r, r + 1] }];
-    var held: P[] = keepit(ps);
+    let ps: P[] = [P { xs: [r, r + 1] }];
+    let held: P[] = keepit(ps);
     return ps.len() + held[0].xs[0];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,

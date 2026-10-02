@@ -81,7 +81,7 @@ function canceled(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " CONTEXT COMMAND [args]\n";
   out = out + "  or:  " + gnu.prog() + " [ -c ] [-u USER] [-r ROLE] [-t TYPE] [-l RANGE] COMMAND [args]\n";
   out = out + "Run a program in a different SELinux security context.\n";
@@ -160,18 +160,18 @@ function print_current_context(): i32 {
 }
 
 pub function main(): i32 {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("r", "role", opt_role()));
   opts = opts.append(gnu.valued("t", "type", opt_type()));
   opts = opts.append(gnu.valued("u", "user", opt_user()));
   opts = opts.append(gnu.valued("l", "range", opt_range()));
   opts = opts.append(gnu.flag("c", "compute", opt_compute()));
 
-  var seen: Seen = Seen { role: false, type_: false, user: false, range: false };
-  var compute: boolean = false;
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "runcon", help_text(), canceled()).in_order();
+  let seen: Seen = Seen { role: false, type_: false, user: false, range: false };
+  let compute: boolean = false;
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "runcon", help_text(), canceled()).in_order();
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -187,12 +187,12 @@ pub function main(): i32 {
     }
   }
 
-  var operands: string[] = g.operands();
+  let operands: string[] = g.operands();
   if (operands.len() == 0) {
     return print_current_context();
   }
 
-  var first_command: i32 = 0;
+  let first_command: i32 = 0;
   if (!any(seen) && !compute) {
     // The lone operand is the CONTEXT, which leaves nothing to run.
     first_command = 1;

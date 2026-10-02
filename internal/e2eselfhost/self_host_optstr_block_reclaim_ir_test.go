@@ -8,7 +8,7 @@ import (
 // optStrBlockReclaimCases pin the #4353 item-2 PER-BLOCK consumed-match
 // Option/Result reclaim: the fn-level consumed_rcpayload_option_frees pass
 // scans only top-level fn-body statements, so a LOOP-LOCAL
-// `var o = Some(<fresh rc payload>)` consumed by exactly one match in the
+// `let o = Some(<fresh rc payload>)` consumed by exactly one match in the
 // same nested block leaked the payload AND the option box per iteration
 // (probe p2 in the 2026-07-20 recon on #4353). lower_block now runs the same
 // classifier + gates over each nested block's own statement list and emits
@@ -23,13 +23,13 @@ var optStrBlockReclaimCases = []struct {
 	// payload, consumed by a borrowing match. Flat after the fix.
 	{"optstr-loop-local-churn", `import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var o: Option[string] = Some("v" + w.to_string()); match (o) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var o2: Option[string] = Some("v" + i.to_string()); match (o2) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let o: Option[string] = Some("v" + w.to_string()); match (o) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let o2: Option[string] = Some("v" + i.to_string()); match (o2) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -39,13 +39,13 @@ function main(): i32 {
 	// match (the classifier admits Ok/Err the same way).
 	{"resulterr-loop-local-churn", `import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var r: Result[i32, string] = Err("e" + w.to_string()); match (r) { Ok(v) => { acc = (acc + v) % 251; }, Err(m) => { acc = (acc + m.len()) % 251; } } w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var r2: Result[i32, string] = Err("e" + i.to_string()); match (r2) { Ok(v) => { acc = (acc + v) % 251; }, Err(m) => { acc = (acc + m.len()) % 251; } } i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let r: Result[i32, string] = Err("e" + w.to_string()); match (r) { Ok(v) => { acc = (acc + v) % 251; }, Err(m) => { acc = (acc + m.len()) % 251; } } w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let r2: Result[i32, string] = Err("e" + i.to_string()); match (r2) { Ok(v) => { acc = (acc + v) % 251; }, Err(m) => { acc = (acc + m.len()) % 251; } } i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -54,13 +54,13 @@ function main(): i32 {
 	// Array-payload sibling: loop-local Some([..]) consumed by a borrowing
 	// match — the non-string rc payload uses emit_opt_payload_drop.
 	{"optarr-loop-local-churn", `function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var o: Option[i32[]] = Some([w, w + 1]); match (o) { Some(xs) => { acc = (acc + xs[0]) % 251; }, None => { } } w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var o2: Option[i32[]] = Some([i, i + 1]); match (o2) { Some(xs) => { acc = (acc + xs[0]) % 251; }, None => { } } i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let o: Option[i32[]] = Some([w, w + 1]); match (o) { Some(xs) => { acc = (acc + xs[0]) % 251; }, None => { } } w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let o2: Option[i32[]] = Some([i, i + 1]); match (o2) { Some(xs) => { acc = (acc + xs[0]) % 251; }, None => { } } i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -70,13 +70,13 @@ function main(): i32 {
 	// takes the same reclaim (churned via an outer loop).
 	{"optstr-if-body-churn", `import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { if (w >= 0) { var o: Option[string] = Some("v" + w.to_string()); match (o) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } } w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { if (i >= 0) { var o2: Option[string] = Some("v" + i.to_string()); match (o2) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } } i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { if (w >= 0) { let o: Option[string] = Some("v" + w.to_string()); match (o) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } } w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { if (i >= 0) { let o2: Option[string] = Some("v" + i.to_string()); match (o2) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } } i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -87,10 +87,10 @@ function main(): i32 {
 	// valid (leak-safe, no UAF, detector zero).
 	{"optstr-binding-escape-safe", `import "std/i32";
 function main(): i32 {
-    var keep: string = "";
-    var w: i32 = 0;
+    let keep: string = "";
+    let w: i32 = 0;
     while (w < 100) {
-        var o: Option[string] = Some("k" + w.to_string());
+        let o: Option[string] = Some("k" + w.to_string());
         match (o) { Some(s) => { keep = s; }, None => { } }
         w = w + 1;
     }
@@ -98,16 +98,16 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// ALIAS negative: `var al = o` aliases the option box, and al is matched
+	// ALIAS negative: `let al = o` aliases the option box, and al is matched
 	// AFTER o's consuming match — the escape gate must reject o's credit or
 	// al's match reads a freed box. Values exact, detector zero.
 	{"optstr-alias-after-safe", `import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 100) {
-        var o: Option[string] = Some("k" + w.to_string());
-        var al: Option[string] = o;
+        let o: Option[string] = Some("k" + w.to_string());
+        let al: Option[string] = o;
         match (o) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } }
         match (al) { Some(s2) => { acc = (acc + s2.len()) % 251; }, None => { } }
         w = w + 1;
@@ -119,10 +119,10 @@ function main(): i32 {
 	// credit, both matches read valid data, detector zero.
 	{"optstr-double-match-safe", `import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 100) {
-        var o: Option[string] = Some("k" + w.to_string());
+        let o: Option[string] = Some("k" + w.to_string());
         match (o) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } }
         match (o) { Some(s2) => { acc = (acc + s2.len()) % 251; }, None => { } }
         w = w + 1;
@@ -135,7 +135,7 @@ function main(): i32 {
 	// before op_return. Churned via a caller loop; flat after the fix.
 	{"optstr-return-arms-churn", `import "std/i32";
 function probe(k: i32): i32 {
-    var o: Option[string] = Some("v" + k.to_string());
+    let o: Option[string] = Some("v" + k.to_string());
     match (o) {
         Some(s) => { return s.len(); },
         None => { return 0; }
@@ -143,13 +143,13 @@ function probe(k: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;
@@ -157,7 +157,7 @@ function main(): i32 {
 	// Result sibling (#4353 p3): Err payload with returning arms.
 	{"resulterr-return-arms-churn", `import "std/i32";
 function probe(k: i32): i32 {
-    var r: Result[i32, string] = Err("e" + k.to_string());
+    let r: Result[i32, string] = Err("e" + k.to_string());
     match (r) {
         Ok(v) => { return v; },
         Err(m) => { return m.len(); }
@@ -165,13 +165,13 @@ function probe(k: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;
@@ -182,8 +182,8 @@ function main(): i32 {
 	// trips the underflow detector, a miss trips the bump guard.
 	{"optstr-mixed-arms-churn", `import "std/i32";
 function probe(k: i32): i32 {
-    var o: Option[string] = Some("v" + k.to_string());
-    var acc: i32 = 0;
+    let o: Option[string] = Some("v" + k.to_string());
+    let acc: i32 = 0;
     match (o) {
         Some(s) => { if (s.len() > 100) { return 1; } acc = s.len(); },
         None => { return 0; }
@@ -191,20 +191,20 @@ function probe(k: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},
 	// Array payload with returning arms — the "#a" pending kind.
 	{"optarr-return-arms-churn", `function probe(k: i32): i32 {
-    var o: Option[i32[]] = Some([k, k + 1]);
+    let o: Option[i32[]] = Some([k, k + 1]);
     match (o) {
         Some(xs) => { return xs[0]; },
         None => { return 0; }
@@ -212,13 +212,13 @@ function main(): i32 {
     return 0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;
@@ -228,7 +228,7 @@ function main(): i32 {
 	// drop), the returned string is valid in the caller, detector zero.
 	{"optstr-return-payload-safe", `import "std/i32";
 function pick(k: i32): string {
-    var o: Option[string] = Some("k" + k.to_string());
+    let o: Option[string] = Some("k" + k.to_string());
     match (o) {
         Some(s) => { return s; },
         None => { }
@@ -236,7 +236,7 @@ function pick(k: i32): string {
     return "";
 }
 function main(): i32 {
-    var s = pick(7);
+    let s = pick(7);
     if (s.len() < 2) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -246,7 +246,7 @@ function main(): i32 {
 	{"optstr-nested-return-arm-churn", `import "std/i32";
 function probe(k: i32): i32 {
     if (k >= 0) {
-        var o: Option[string] = Some("v" + k.to_string());
+        let o: Option[string] = Some("v" + k.to_string());
         match (o) {
             Some(s) => { return s.len(); },
             None => { return 0; }
@@ -255,13 +255,13 @@ function probe(k: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { acc = (acc + probe(w)) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;

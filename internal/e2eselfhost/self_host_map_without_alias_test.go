@@ -19,47 +19,47 @@ var mapWithoutAliasCases = []struct {
 }{
 	{"issue", `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
-    var snapshot: Map[i32, i32] = m;
-    var (rest, had) = m.without(2);
+    let snapshot: Map[i32, i32] = m;
+    let (rest, had) = m.without(2);
     return rest.len() * 10 + (if (had) { 1 } else { 0 }) + snapshot.len() * 40 + m.len();
 }
 `, 93},
 	{"snapshot_read", `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
     m = m.insert(3, 30);
-    var snapshot: Map[i32, i32] = m;
-    var (rest, had) = m.without(2);
+    let snapshot: Map[i32, i32] = m;
+    let (rest, had) = m.without(2);
     if (!had || rest.has(2) || rest.get_or(3, -1) != 30) { return 99; }
-    var sum: i32 = 0;
+    let sum: i32 = 0;
     for k in snapshot.keys() { sum = sum + snapshot.get_or(k, 0); }
     return sum + snapshot.get_or(2, -1) + rest.len();
 }
 `, 82},
 	{"through_alias", `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
-    var snapshot: Map[i32, i32] = m;
-    var (rest, had) = snapshot.without(2);
-    var grown: Map[i32, i32] = m;
+    let snapshot: Map[i32, i32] = m;
+    let (rest, had) = snapshot.without(2);
+    let grown: Map[i32, i32] = m;
     grown = grown.insert(3, 30);
     return rest.len() * 10 + m.len() + grown.len() * 30;
 }
 `, 102},
 	{"rebind", `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
     m = m.insert(3, 30);
-    var snapshot: Map[i32, i32] = m;
+    let snapshot: Map[i32, i32] = m;
     m = m.without(1).0;
     m = m.without(3).0;
     return m.len() * 10 + snapshot.len() + snapshot.get_or(1, 0);
@@ -67,14 +67,14 @@ function main(): i32 {
 `, 23},
 	{"loop", `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
-    var i: i32 = 0;
+    let m: Map[i32, i32] = map_new(8);
+    let i: i32 = 0;
     while (i < 5) { m = m.insert(i, i * 2); i = i + 1; }
-    var keep: Map[i32, i32] = map_new(8);
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let keep: Map[i32, i32] = map_new(8);
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 3) {
-        var (rest, had) = m.without(r);
+        let (rest, had) = m.without(r);
         if (had) { acc = acc + rest.len(); }
         keep = m;
         r = r + 1;
@@ -84,11 +84,11 @@ function main(): i32 {
 `, 106},
 	{"string_value", `import "core/map";
 function main(): i32 {
-    var m: Map[string, string] = map_new(8);
+    let m: Map[string, string] = map_new(8);
     m = m.insert("a" + "k", "x" + "y");
     m = m.insert("b" + "k", "p" + "qr");
-    var snapshot: Map[string, string] = m;
-    var (rest, had) = m.without("bk");
+    let snapshot: Map[string, string] = m;
+    let (rest, had) = m.without("bk");
     if (!had || rest.has("bk")) { return 99; }
     return rest.len() * 10 + snapshot.len() + snapshot.get_or("bk", "").len() * 20 + m.get_or("ak", "").len();
 }
@@ -99,10 +99,10 @@ function main(): i32 {
 // place: the only allocation the delete adds is the tuple it returns.
 const mapWithoutUnaliased = `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
-    var (rest, had) = m.without(2);
+    let (rest, had) = m.without(2);
     return rest.len() * 10 + (if (had) { 1 } else { 0 });
 }
 `
@@ -167,7 +167,7 @@ func TestSelfHostMapWithoutAliasWasm(t *testing.T) {
 // with the delete taken out: a copy of the map would add its box and columns.
 func assertWithoutAddsTuple(t *testing.T, allocs func(string, int) int64) {
 	t.Helper()
-	noDelete := strings.Replace(mapWithoutUnaliased, "var (rest, had) = m.without(2);", "var rest: Map[i32, i32] = m;\n    var had: boolean = true;", 1)
+	noDelete := strings.Replace(mapWithoutUnaliased, "let (rest, had) = m.without(2);", "let rest: Map[i32, i32] = m;\n    let had: boolean = true;", 1)
 	with := allocs(mapWithoutUnaliased, mapWithoutUnaliasedWant)
 	without := allocs(noDelete, 21)
 	if with != without+1 {

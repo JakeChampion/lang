@@ -5,8 +5,8 @@ import "std/i32";
 // shared are the cost; the repo carries whole diagnostics for this
 // (__arr_push_shared_bytes, FERN_CLIFF_REPORT) and had no benchmark of it.
 function build(n: i32): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < n) {
     out = out + i.to_string() + ",";
     i = i + 1;
@@ -15,8 +15,8 @@ function build(n: i32): string {
 }
 
 function main(): i32 {
-  var total: i64 = 0i64;
-  var r: i32 = 0;
+  let total: i64 = 0i64;
+  let r: i32 = 0;
   while (r < 900) {
     total = total + build(200).len() as i64;
     r = r + 1;

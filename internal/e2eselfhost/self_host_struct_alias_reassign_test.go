@@ -10,9 +10,9 @@ import (
 
 // --- A struct local reassigned from an alias reclaims nothing ----------------
 //
-// `var p: P = P { xs: [7,8] }; var keep: P = P { xs: [0] }; keep = p;` freed NOT
+// `let p: P = P { xs: [7,8] }; let keep: P = P { xs: [0] }; keep = p;` freed NOT
 // ONE of its four blocks — 80 allocs / 0 frees over 20 rounds against native's
-// 80/80. The BIND form (`var keep: P = p;`) has been at parity all along, so the
+// 80/80. The BIND form (`let keep: P = p;`) has been at parity all along, so the
 // split is REASSIGN vs BIND, not struct-vs-anything.
 //
 // Two gates refused it, each deliberately and each with its reason written down:
@@ -65,8 +65,8 @@ type structAliasReassignCase struct {
 }
 
 const sarMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -79,8 +79,8 @@ func structAliasReassignCases() []structAliasReassignCase {
 			name: "struct_alias_reassign",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
-    var p: P = P { xs: [7, 8] };
-    var keep: P = P { xs: [0] };
+    let p: P = P { xs: [7, 8] };
+    let keep: P = P { xs: [0] };
     keep = p;
     return keep.xs[0] + keep.xs[keep.xs.len() - 1];
 }
@@ -95,11 +95,11 @@ function round(i: i32): i32 {
 			name: "reassign_read_back_after_churn",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
-    var p: P = P { xs: [7, 8] };
-    var keep: P = P { xs: [0] };
+    let p: P = P { xs: [7, 8] };
+    let keep: P = P { xs: [0] };
     keep = p;
-    var j1: i32[] = [111, 222];
-    var j2: i32[] = [333, 444];
+    let j1: i32[] = [111, 222];
+    let j2: i32[] = [333, 444];
     return keep.xs[0] + keep.xs[keep.xs.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0];
 }
 ` + sarMain,
@@ -111,8 +111,8 @@ function round(i: i32): i32 {
 			name: "struct_alias_bind_unchanged",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
-    var p: P = P { xs: [7, 8] };
-    var keep: P = p;
+    let p: P = P { xs: [7, 8] };
+    let keep: P = p;
     return keep.xs[0] + keep.xs[keep.xs.len() - 1];
 }
 ` + sarMain,
@@ -123,8 +123,8 @@ function round(i: i32): i32 {
 			// heap-allocated rather than a static literal.
 			name: "array_reassign_unchanged",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [7, i - i + 8];
-    var keep: i32[] = [0];
+    let xs: i32[] = [7, i - i + 8];
+    let keep: i32[] = [0];
     keep = xs;
     return keep[0] + keep[keep.len() - 1];
 }
@@ -138,7 +138,7 @@ function round(i: i32): i32 {
 			name: "fresh_rhs_reassign_unchanged",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
-    var keep: P = P { xs: [0] };
+    let keep: P = P { xs: [0] };
     keep = P { xs: [7, 8] };
     return keep.xs[0] + keep.xs[keep.xs.len() - 1];
 }
@@ -153,8 +153,8 @@ function round(i: i32): i32 {
 			// other three grow it in place (#10960).
 			name: "string_accumulator_unchanged",
 			src: `function round(i: i32): i32 {
-    var s: string = "";
-    var k: i32 = 0;
+    let s: string = "";
+    let k: i32 = 0;
     while (k < 4) { s = s + "ab"; k = k + 1; }
     return s.len();
 }

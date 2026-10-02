@@ -30,7 +30,7 @@ func TestSelfHostSignalDispositionIRWasm(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	const src = `function main(): i32 {
-    var n: i32 = 7;
+    let n: i32 = 7;
     signal_ignore(13);
     n = n + 1;
     signal_default(13);
@@ -39,9 +39,9 @@ func TestSelfHostSignalDispositionIRWasm(t *testing.T) {
     // A component's blocked set is empty and every disposition sits at its
     // default, so both reads answer 0 — and each wrong stack balance would
     // corrupt the arithmetic around it.
-    var b1: i64 = signal_mask(1, 2 as i64);
+    let b1: i64 = signal_mask(1, 2 as i64);
     n = n + 1;
-    var d1: i32 = signal_disposition(2);
+    let d1: i32 = signal_disposition(2);
     if ((b1 != 0 as i64) || (d1 != 0)) { return 1; }
     n = n + 1;
     if (n != 11) { return 1; }

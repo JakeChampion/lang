@@ -29,20 +29,20 @@ function matches(line: string, pat: string, ci: boolean): boolean {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var o: Opts = Opts { ignore_case: false, invert: false, show_num: false, count_only: false };
-  var pat: string = "";
-  var have_pat: boolean = false;
-  var inputs: string[] = [];
+  let argv: string[] = args();
+  let o: Opts = Opts { ignore_case: false, invert: false, show_num: false, count_only: false };
+  let pat: string = "";
+  let have_pat: boolean = false;
+  let inputs: string[] = [];
 
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a.starts_with("-") && a.len() > 1 && !have_pat) {
       // Bundle of single-char flags, e.g. `-iv`.
-      var f: i32 = 1;
+      let f: i32 = 1;
       while (f < a.len()) {
-        var c: i32 = a[f] as i32;
+        let c: i32 = a[f] as i32;
         if (c == 105) {
           o = Opts { ...o, ignore_case: true };  // i
         } else if (c == 118) {
@@ -74,20 +74,20 @@ function main(): i32 {
     inputs = inputs.append("-");
   }
 
-  var multi: boolean = inputs.len() > 1;
-  var any_match: boolean = false;
-  var status: i32 = 1;  // grep exits 1 when nothing matches
+  let multi: boolean = inputs.len() > 1;
+  let any_match: boolean = false;
+  let status: i32 = 1;  // grep exits 1 when nothing matches
 
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < inputs.len()) {
-    var name: string = inputs[j];
+    let name: string = inputs[j];
     match (io.read_input(name)) {
       Ok(text) => {
-        var lines: string[] = text.lines();
-        var hits: i32 = 0;
-        var ln: i32 = 0;
+        let lines: string[] = text.lines();
+        let hits: i32 = 0;
+        let ln: i32 = 0;
         while (ln < lines.len()) {
-          var hit: boolean = matches(lines[ln], pat, o.ignore_case);
+          let hit: boolean = matches(lines[ln], pat, o.ignore_case);
           if (o.invert) {
             hit = !hit;
           }
@@ -95,7 +95,7 @@ function main(): i32 {
             hits = hits + 1;
             any_match = true;
             if (!o.count_only) {
-              var prefix: string = "";
+              let prefix: string = "";
               if (multi) {
                 prefix = name + ":";
               }

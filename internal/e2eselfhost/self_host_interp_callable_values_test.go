@@ -52,48 +52,48 @@ func TestSelfHostInterpCallableValues(t *testing.T) {
 		src  string
 	}{
 		// The issue's repro: a field closure called straight off a local.
-		{"field-closure-on-local", `struct H { f: (i32) => i32, n: i32 } function main(): i32 { var h: H = H { f: ((x: i32) => x * 3), n: 5 }; return h.f(7) + h.n; }`},
+		{"field-closure-on-local", `struct H { f: (i32) => i32, n: i32 } function main(): i32 { let h: H = H { f: ((x: i32) => x * 3), n: 5 }; return h.f(7) + h.n; }`},
 		// Through an array element — the provider-table shape from #6461, and
 		// the one that kept the fourth capture case out of the interpreter
 		// suite.
-		{"field-closure-through-array", `struct C { f: (i32) => i32, n: i32 } function main(): i32 { var cs: C[] = []; var i: i32 = 0; while (i < 2) { cs = cs.append(C { f: ((x: i32) => x + i), n: i }); i = i + 1; } return (cs[0].f)(0); }`},
+		{"field-closure-through-array", `struct C { f: (i32) => i32, n: i32 } function main(): i32 { let cs: C[] = []; let i: i32 = 0; while (i < 2) { cs = cs.append(C { f: ((x: i32) => x + i), n: i }); i = i + 1; } return (cs[0].f)(0); }`},
 		// A capturing field closure: the captured value has to survive being
 		// stored in the field and fetched back out.
-		{"field-closure-captures", `struct H { f: () => i32 } function main(): i32 { var k: i32 = 11; var h: H = H { f: (() => k + 1) }; return h.f(); }`},
+		{"field-closure-captures", `struct H { f: () => i32 } function main(): i32 { let k: i32 = 11; let h: H = H { f: (() => k + 1) }; return h.f(); }`},
 
 		// CONTROLS.
 		//
 		// A real method must still win. This is the one that would break if the
 		// field lookup ran BEFORE the method walk instead of after it.
-		{"method-wins-over-field", `struct S { go: (i32) => i32 } function (s: S) go(x: i32): i32 { return x + 100; } function main(): i32 { var s: S = S { go: ((x: i32) => x + 1) }; return s.go(5); }`},
+		{"method-wins-over-field", `struct S { go: (i32) => i32 } function (s: S) go(x: i32): i32 { return x + 100; } function main(): i32 { let s: S = S { go: ((x: i32) => x + 1) }; return s.go(5); }`},
 		// An ordinary method on a struct with no fn fields at all — the plain
 		// dispatch path, untouched.
-		{"ordinary-method", `struct S { v: i32 } function (s: S) go(x: i32): i32 { return s.v + x; } function main(): i32 { var s: S = S { v: 10 }; return s.go(5); }`},
+		{"ordinary-method", `struct S { v: i32 } function (s: S) go(x: i32): i32 { return s.v + x; } function main(): i32 { let s: S = S { v: 10 }; return s.go(5); }`},
 		// The two shapes #6611's sibling sweep turned up, which the struct-field
 		// fallback above does NOT reach — same symptom, different causes.
 		//
 		// A fn-valued TUPLE element. `(t.0)(5)` also arrives as method
 		// dispatch, but a tuple has no type name to dispatch ON, so it died
 		// deriving the receiver type rather than in the FuncDecl walk.
-		{"tuple-element-closure", `function main(): i32 { var t: ((i32) => i32, i32) = (((x: i32) => x + 4), 2); return (t.0)(5); }`},
+		{"tuple-element-closure", `function main(): i32 { let t: ((i32) => i32, i32) = (((x: i32) => x + 4), 2); return (t.0)(5); }`},
 		// A top-level function used as a VALUE. Nothing to do with dispatch:
 		// functions live in the env's `funcs`, not its name/value arrays, so
 		// `inc` read as an undefined identifier the moment it appeared outside
 		// call position.
-		{"fn-pointer-field", `function inc(x: i32): i32 { return x + 1; } function dbl(x: i32): i32 { return x * 2; } struct T { hs: ((i32) => i32)[] } function main(): i32 { var t: T = T { hs: [inc, dbl] }; return (t.hs[0])(10) + (t.hs[1])(10); }`},
+		{"fn-pointer-field", `function inc(x: i32): i32 { return x + 1; } function dbl(x: i32): i32 { return x * 2; } struct T { hs: ((i32) => i32)[] } function main(): i32 { let t: T = T { hs: [inc, dbl] }; return (t.hs[0])(10) + (t.hs[1])(10); }`},
 		{"fn-name-as-argument", `function inc(x: i32): i32 { return x + 1; } function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply(inc, 10); }`},
 		// A closure returned by a method and called immediately — the one
 		// sibling that already worked, kept so it stays working.
-		{"method-returned-closure", `struct M { v: i32 } function (m: M) mk(): (i32) => i32 { return ((x: i32) => x + m.v); } function main(): i32 { var m: M = M { v: 7 }; return (m.mk())(3); }`},
+		{"method-returned-closure", `struct M { v: i32 } function (m: M) mk(): (i32) => i32 { return ((x: i32) => x + m.v); } function main(): i32 { let m: M = M { v: 7 }; return (m.mk())(3); }`},
 
 		// CONTROLS for those two.
 		//
 		// A local must still shadow a function of the same name: the funcs
-		// scan runs only on a MISS, so `var inc: i32 = 99` wins.
-		{"local-shadows-fn-name", `function inc(x: i32): i32 { return x + 1; } function main(): i32 { var inc: i32 = 99; return inc; }`},
+		// scan runs only on a MISS, so `let inc: i32 = 99` wins.
+		{"local-shadows-fn-name", `function inc(x: i32): i32 { return x + 1; } function main(): i32 { let inc: i32 = 99; return inc; }`},
 		// A plain tuple read with no closure in sight — the tuple arm must not
 		// disturb ordinary element access.
-		{"plain-tuple-read", `function main(): i32 { var t: (i32, i32) = (3, 4); return t.0 + t.1; }`},
+		{"plain-tuple-read", `function main(): i32 { let t: (i32, i32) = (3, 4); return t.0 + t.1; }`},
 		// CONSTS, which is where naming-a-function-as-a-value collides. The
 		// parser desugars `const N = expr` into a ZERO-ARG FUNCTION, and a bare
 		// `N` is evaluated by calling it — a path reached only because the env
@@ -112,12 +112,12 @@ func TestSelfHostInterpCallableValues(t *testing.T) {
 		{"const-receiver", `const S: string = "abcd"; function main(): i32 { return S.len(); }`},
 		// A const as an ARGUMENT, which always worked — arguments go through
 		// the ordinary evaluator. Kept so the two positions stay in step.
-		{"const-as-argument", `const K: i32 = 3; function main(): i32 { var x: i32 = 4; return x + K; }`},
+		{"const-as-argument", `const K: i32 = 3; function main(): i32 { let x: i32 = 4; return x + K; }`},
 
 		// CONTROLS on that probe. It now classifies FEWER things as variant
 		// constructions, so enum construction is what breaks if it over-reaches.
-		{"enum-variant-nullary", `enum E { Red, Blue } function main(): i32 { var e: E = E.Red; return match (e) { Red => 1i32, Blue => 2i32 }; }`},
-		{"enum-variant-payload", `enum Opt { Some(i32), Nothing } function main(): i32 { var o: Opt = Opt.Some(9); return match (o) { Some(v) => v, Nothing => 0i32 }; }`},
+		{"enum-variant-nullary", `enum E { Red, Blue } function main(): i32 { let e: E = E.Red; return match (e) { Red => 1i32, Blue => 2i32 }; }`},
+		{"enum-variant-payload", `enum Opt { Some(i32), Nothing } function main(): i32 { let o: Opt = Opt.Some(9); return match (o) { Some(v) => v, Nothing => 0i32 }; }`},
 
 		// NOT covered here: calling a NON-fn field (`s.v(1)` for `v: i32`). The
 		// fallback is gated on the field holding a VFunc, so that shape still

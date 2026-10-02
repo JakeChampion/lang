@@ -16,17 +16,17 @@ var mapFieldSpreadCases = []struct {
 	body string
 	want int
 }{
-	{"replace", `var b: Box = Box { m: m, tag: 1 };
-    var m2: Map[i32, i32] = map_new(4);
+	{"replace", `let b: Box = Box { m: m, tag: 1 };
+    let m2: Map[i32, i32] = map_new(4);
     b = Box { ...b, m: m2 };
     return b.m.len();`, 0},
-	{"loop", `var b: Box = Box { m: m, tag: 1 };
-    var k: i32 = 0;
+	{"loop", `let b: Box = Box { m: m, tag: 1 };
+    let k: i32 = 0;
     while (k < 4) { b = Box { ...b, m: b.m.insert(10 + k, k) }; k = k + 1; }
     return b.m.len();`, 5},
-	{"shared", `var b: Box = Box { m: m, tag: 1 };
-    var c: Box = b;
-    var m2: Map[i32, i32] = map_new(4);
+	{"shared", `let b: Box = Box { m: m, tag: 1 };
+    let c: Box = b;
+    let m2: Map[i32, i32] = map_new(4);
     b = Box { ...b, m: m2 };
     return b.m.len() * 10 + c.m.len();`, 1},
 }
@@ -35,7 +35,7 @@ func mapFieldSpreadSrc(body string) string {
 	return `import "core/map";
 struct Box { m: Map[i32, i32], tag: i32 }
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
     ` + body + `
 }`

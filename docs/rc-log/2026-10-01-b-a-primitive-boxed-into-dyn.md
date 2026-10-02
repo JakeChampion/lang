@@ -9,7 +9,7 @@ Two refusals of the typed lowering, each failing the compile under
 
 ## A box of a counted string returned as a view-holding dyn
 
-`function pick(s: string): dyn Size { var t: string = s + "!"; return t; }`,
+`function pick(s: string): dyn Size { let t: string = s + "!"; return t; }`,
 where another concrete of `dyn Size` holds a `str`, was refused as "view
 result escapes its source". `dyn_box` is a construction everywhere else
 (`ssaunits.construction`, `ssarc`), but `gathers_views` left it out, so

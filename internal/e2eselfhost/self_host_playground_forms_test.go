@@ -29,7 +29,7 @@ function fact(n: i32): i32 {
     return n * fact(n - 1);
 }
 function main(): i32 {
-    var f: i32 = fact(5);
+    let f: i32 = fact(5);
     print("5! = " + f.to_string());
     return f;
 }

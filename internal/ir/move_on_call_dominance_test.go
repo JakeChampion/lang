@@ -39,12 +39,12 @@ function branchy(own s: S, v: i32): S {
 	return bump(s, v);
 }
 function straight(own s: S, v: i32): S {
-	var t: S = bump(s, v);
+	let t: S = bump(s, v);
 	return S { ...t, n: t.n + 1 };
 }
 function main(): i32 {
-	var a: S = branchy(S { code: [], n: 0 }, 1);
-	var b: S = straight(S { code: [], n: 0 }, 1);
+	let a: S = branchy(S { code: [], n: 0 }, 1);
+	let b: S = straight(S { code: [], n: 0 }, 1);
 	return a.n + b.n;
 }`)
 

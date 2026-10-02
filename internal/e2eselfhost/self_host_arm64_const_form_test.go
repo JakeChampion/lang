@@ -91,7 +91,7 @@ func TestSelfHostConstOperandReachesImmediateFormArm64(t *testing.T) {
 @noinline function down(x: i32): i32 { return x - 4095; }
 @noinline function less(x: i32): boolean { return x < 7; }
 function main(): i32 {
-    var i: i64 = 0i64; var s: i64 = 0i64;
+    let i: i64 = 0i64; let s: i64 = 0i64;
     while (i < 3i64) { s = s + bump(i); if (less(i as i32)) { s = s + 100i64; } i = i + 1i64; }
     return ((s % 100i64) as i32) + down(4100);
 }`,

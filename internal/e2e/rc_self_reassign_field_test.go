@@ -34,9 +34,9 @@ func selfReassignFieldBumpSrc(n string) string {
 struct St { cur: Blk }
 function (s: St) emit(x: i32): St { return St { cur: Blk { insts: s.cur.insts.append(x) } }; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var s: St = St { cur: Blk { insts: [] } };
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let s: St = St { cur: Blk { insts: [] } };
+    let i: i32 = 0;
     while (i < ` + n + `) { s = s.emit(i); i = i + 1; }
     if (s.cur.insts.len() != ` + n + `) { return 999; }
     return ((__heap_bump_bytes() as i32) - before) / 64;
@@ -48,8 +48,8 @@ const selfReassignFieldSoundSrc = `struct Blk { insts: i32[] }
 struct St { cur: Blk }
 function (s: St) emit(x: i32): St { return St { cur: Blk { insts: s.cur.insts.append(x) } }; }
 function main(): i32 {
-    var s: St = St { cur: Blk { insts: [] } };
-    var i: i32 = 0;
+    let s: St = St { cur: Blk { insts: [] } };
+    let i: i32 = 0;
     while (i < 200) { s = s.emit(i * 2); i = i + 1; }
     if (s.cur.insts.len() != 200) { return 100; }
     if (s.cur.insts[199] != 398) { return 101; }
@@ -66,8 +66,8 @@ const selfReassignStringFieldSoundSrc = `struct Acc { tag: string, xs: i32[] }
 function (a: Acc) step(v: i32): Acc { return Acc { tag: a.tag, xs: a.xs.append(v) }; }
 function tagfor(i: i32): string { if (i % 2 == 0) { return "even-ish-longer"; } return "odd-ish-longer"; }
 function main(): i32 {
-    var a: Acc = Acc { tag: "seed-" + tagfor(0), xs: [] };
-    var i: i32 = 0;
+    let a: Acc = Acc { tag: "seed-" + tagfor(0), xs: [] };
+    let i: i32 = 0;
     while (i < 200) { a = a.step(i); i = i + 1; }
     if (a.xs.len() != 200) { return 100; }
     if (a.tag.len() < 5) { return 101; }
@@ -85,9 +85,9 @@ func selfReassignStringFieldBumpSrc(n string) string {
 	return `struct Acc { tag: string, xs: i32[] }
 function (a: Acc) step(v: i32): Acc { return Acc { tag: a.tag, xs: a.xs.append(v) }; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var a: Acc = Acc { tag: "seed-" + "tag", xs: [] };
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let a: Acc = Acc { tag: "seed-" + "tag", xs: [] };
+    let i: i32 = 0;
     while (i < ` + n + `) { a = a.step(i); i = i + 1; }
     if (a.xs.len() != ` + n + `) { return 999; }
     if (a.tag.len() != 8) { return 998; }
@@ -107,13 +107,13 @@ func ssaAccumBumpSrc(n string) string {
 	return `struct Bld { name: string, insts: i32[] }
 function (s: Bld) emit(x: i32): Bld { return Bld { name: s.name, insts: s.insts.append(x) }; }
 function build(s: Bld, n: i32): Bld {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { s = s.emit(i); i = i + 1; }
     return s;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var s: Bld = build(Bld { name: "fn", insts: [] }, ` + n + `);
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let s: Bld = build(Bld { name: "fn", insts: [] }, ` + n + `);
     if (s.insts.len() != ` + n + `) { return 200; }
     return ((__heap_bump_bytes() as i32) - before) / 64;
 }`
@@ -125,12 +125,12 @@ function main(): i32 {
 const ssaAccumSoundSrc = `struct Bld { name: string, insts: i32[] }
 function (s: Bld) emit(x: i32): Bld { return Bld { name: s.name, insts: s.insts.append(x) }; }
 function build(s: Bld, n: i32): Bld {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { s = s.emit(i * 2); i = i + 1; }
     return s;
 }
 function main(): i32 {
-    var s: Bld = build(Bld { name: "seed", insts: [] }, 200);
+    let s: Bld = build(Bld { name: "seed", insts: [] }, 200);
     if (s.insts.len() != 200) { return 100; }
     if (s.insts[199] != 398) { return 101; }
     return __rc_underflow_count();
@@ -255,7 +255,7 @@ function post(base: Ex): Ex {
 }
 
 function build(seed: i32): Ex {
-    var l: Ex = Leaf { v: [seed, seed + 1, seed + 2] };
+    let l: Ex = Leaf { v: [seed, seed + 1, seed + 2] };
     return post(l);
 }
 
@@ -274,11 +274,11 @@ function payload(e: Ex): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var e: Ex = build(i);
-        var junk: i32[] = [9, 9, 9];
+        let e: Ex = build(i);
+        let junk: i32[] = [9, 9, 9];
         acc = acc + payload(e);
         i = i + 1;
     }

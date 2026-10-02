@@ -5,7 +5,7 @@ larger leak of the two: **32 B/round unbounded**, against the array's 40 bounded
 
 | shape (100 rounds, x86-64) | native | before | after |
 | --- | --- | --- | --- |
-| `var s = w("ab"); var t: (i32, string) = (i, s)` | `live=0` | `300/100` **3200** | `300/300` **0** |
+| `let s = w("ab"); let t: (i32, string) = (i, s)` | `live=0` | `300/100` **3200** | `300/300` **0** |
 | the same at 200 / 400 rounds | `live=0` | **6400** / **12800** | **0** / **0** |
 | two string elements | `live=0` | `500/100` **6400** | `500/500` **0** |
 | a string element AND an array element | `live=0` | `400/200` **3200** | `400/400` **0** |
@@ -17,7 +17,7 @@ Exactly 2.0× per doubling: unbounded, not a constant.
 
 ## Measure it with `w("ab")`, never `"ab" + "c"`
 
-The issue's original table called this row clean. That row used `var s = "ab" +
+The issue's original table called this row clean. That row used `let s = "ab" +
 "c"`, which constant-folds to an **immortal literal** (`constfold.fern:209`, box
 rc = -1) — the probe measured a constant and reported it as flat. Every figure
 above goes through a `function w(a: string): string { return a + "!"; }` call, and
@@ -71,7 +71,7 @@ leak, and the safe direction:
 
 | shape | why | live |
 | --- | --- | --- |
-| `var u: string = t.1` | `rctuple_payload_escapes`: `string` is not a scalar type name, so a bare extraction denies `"TUPELEMOK:"` — and with it the interlock | 3200 |
+| `let u: string = t.1` | `rctuple_payload_escapes`: `string` is not a scalar type name, so a bare extraction denies `"TUPELEMOK:"` — and with it the interlock | 3200 |
 | `return t.1` | the same gate, leaving the frame | 3200 |
 | `(s, s.len())` | `tuple_bare_ident_sole_use` refuses a tuple that mentions the name anywhere but the element position | 7200 |
 | a `.trim()` VIEW element | recorded `.`, see below | contract-only |
@@ -83,7 +83,7 @@ still owns. The tuple's reference to a view leaks; that is the only string shape
 this does not close.
 
 That branch is **contract-only, not witnessed.** The shape that reaches it —
-`var s: string = raw.trim()` — is an E003 on native and interp alike (`str` is a
+`let s: string = raw.trim()` — is an E003 on native and interp alike (`str` is a
 borrowed view; the hint says add `.to_owned()`), so there is no program that both
 oracles will compile and that lands a view in a `string` slot. The self-host
 checker *does* accept it, which is #7293.
@@ -91,12 +91,12 @@ checker *does* accept it, which is #7293.
 ## Two leaks found alongside, neither this path
 
 - **A loop- or block-scoped fresh string local is swept by nothing** — #7292.
-  `while (…) { var s = w("ab"); acc = acc + s.len(); }` measures `600/400`, 3200
+  `while (…) { let s = w("ab"); acc = acc + s.len(); }` measures `600/400`, 3200
   over 100 rounds with **no tuple anywhere**. This is the floor a tuple wrapping
   such a local lands on: the loop-rebind row went 9600 → 3200, and 3200 is this.
   The untaken-branch case in the new suite sits on the same floor, which is why it
   asserts the answer rather than the byte count.
-- **The self-host checker accepts `var s: string = raw.trim()`** — #7293, found
+- **The self-host checker accepts `let s: string = raw.trim()`** — #7293, found
   while trying to build the view probe above.
 
 ## Non-vacuity, and where it does NOT hold

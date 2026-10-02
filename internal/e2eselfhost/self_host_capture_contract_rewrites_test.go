@@ -11,14 +11,14 @@ import (
 
 func TestSelfHostCaptureContractRewritesX86_64(t *testing.T) {
 	cases := []struct{ name, mode, source, want string }{
-		{"elide first capture", "elide", `function f(n: i64, text: str): i32 { var cb = (): i32 => { assert(n > 0); return text.len(); }; return cb(); }`, "text:str;"},
-		{"elide all captures", "elide", `function f(n: i64): i32 { var cb = (): i32 => { assert(n > 0); return 7; }; return cb(); }`, ""},
-		{"elide keeps unknown", "elide", `function f[T](n: i64, opaque: T): i32 { var cb = (): i32 => { assert(n > 0); opaque; return 7; }; return cb(); }`, "opaque:unknown;"},
-		{"cell keeps width", "box", `function f(): i64 { var n: i64 = 7i64; var cb = (): i64 => n; return cb(); }`, "$cell$n:Cell[i64];"},
-		{"cell keeps view", "box", `function f(text: str): i32 { var n: str = text; var cb = (): i32 => n.len(); return cb(); }`, "$cell$n:Cell[str];"},
-		{"cell keeps callable", "box", `function f(): i64 { var n: () => i64 = source; var cb = (): i64 => n(); return cb(); } function source(): i64 { return 7i64; }`, "$cell$n:Cell[(() => i64)];"},
-		{"substitution adds typed capture", "subst", `function f(n: f32, g: () => f32): f32 { var cb = (): f32 => g(); return cb(); }`, "n:f32;"},
-		{"missing injected contract declines", "missing", `function f(n: f32, g: () => f32): f32 { var cb = (): f32 => g(); return cb(); }`, "g:(() => f32);"},
+		{"elide first capture", "elide", `function f(n: i64, text: str): i32 { let cb = (): i32 => { assert(n > 0); return text.len(); }; return cb(); }`, "text:str;"},
+		{"elide all captures", "elide", `function f(n: i64): i32 { let cb = (): i32 => { assert(n > 0); return 7; }; return cb(); }`, ""},
+		{"elide keeps unknown", "elide", `function f[T](n: i64, opaque: T): i32 { let cb = (): i32 => { assert(n > 0); opaque; return 7; }; return cb(); }`, "opaque:unknown;"},
+		{"cell keeps width", "box", `function f(): i64 { let n: i64 = 7i64; let cb = (): i64 => n; return cb(); }`, "$cell$n:Cell[i64];"},
+		{"cell keeps view", "box", `function f(text: str): i32 { let n: str = text; let cb = (): i32 => n.len(); return cb(); }`, "$cell$n:Cell[str];"},
+		{"cell keeps callable", "box", `function f(): i64 { let n: () => i64 = source; let cb = (): i64 => n(); return cb(); } function source(): i64 { return 7i64; }`, "$cell$n:Cell[(() => i64)];"},
+		{"substitution adds typed capture", "subst", `function f(n: f32, g: () => f32): f32 { let cb = (): f32 => g(); return cb(); }`, "n:f32;"},
+		{"missing injected contract declines", "missing", `function f(n: f32, g: () => f32): f32 { let cb = (): f32 => g(); return cb(); }`, "g:(() => f32);"},
 	}
 	var src strings.Builder
 	src.WriteString(`import "./ast";
@@ -35,26 +35,26 @@ function gather(e: ast.Expr, own out: ast.ExprLambda[]): ast.ExprLambda[] {
     return out;
 }
 function report(body: ast.Stmt[]): string {
-    var lambdas: ast.ExprLambda[] = [];
+    let lambdas: ast.ExprLambda[] = [];
     for st in body { lambdas = astwalk.fold_stmt(st, lambdas, gather); }
     if (lambdas.len() != 1 || !lambdas[0].captures_known) { return "invalid lambda contract"; }
-    var out = "";
+    let out = "";
     for cap in lambdas[0].captures {
-        var ty = typeinfo.spelling(cap.ty);
+        let ty = typeinfo.spelling(cap.ty);
         if let typeinfo.TypeUnknown(u) = cap.ty { ty = "unknown"; }
         out = out + cap.name + ":" + ty + ";";
     }
     return out;
 }
 function inspect(source: string, mode: string): string {
-    var checked = checker.annotate_module(parser.parse_module(lexer.tokenize(source)));
-    var body = checked.funcs[0].body;
-    var before = report(body);
-    var result: ast.Stmt[] = body;
+    let checked = checker.annotate_module(parser.parse_module(lexer.tokenize(source)));
+    let body = checked.funcs[0].body;
+    let before = report(body);
+    let result: ast.Stmt[] = body;
     if (mode == "elide") { result = constfold.elide_asserts(checked).funcs[0].body; }
     if (mode == "box") {
-        var sites: string[] = [];
-        var types: string[] = [];
+        let sites: string[] = [];
+        let types: string[] = [];
         for st in body {
             if let ast.StmtVar(v) = st {
                 if (v.name == "n") {
@@ -67,9 +67,9 @@ function inspect(source: string, mode: string): string {
         result = capturebox.box_rewrite_stmts(body, ["n"], types, sites, []);
     }
     if (mode == "subst" || mode == "missing") {
-        var bindings: ast.TypedBinding[] = [];
+        let bindings: ast.TypedBinding[] = [];
         if (mode == "subst") { bindings = bindings.append(ast.TypedBinding { name: "n", ty: typeinfo.TypeFloat { width: 32, polymorphic: false } }); }
-        var args: ast.Expr[] = [ast.ExprIdent { name: "n", line: 0, col: 0, ty: "f32" }];
+        let args: ast.Expr[] = [ast.ExprIdent { name: "n", line: 0, col: 0, ty: "f32" }];
         result = callsubst.subst_fcall_stmts(body, "g", "hoisted", args, bindings);
     }
     if (report(body) != before) { return "mutated checked input"; }

@@ -19,8 +19,8 @@ var withAliasingCases = []struct {
 	{
 		name: "alias through a second local",
 		src: `function main(): i32 {
-			var a: i32[] = [1, 2, 3];
-			var b: i32[] = a;
+			let a: i32[] = [1, 2, 3];
+			let b: i32[] = a;
 			a = a.with(0, 9);
 			return b[0] * 10 + a[0];
 		}`,
@@ -31,8 +31,8 @@ var withAliasingCases = []struct {
 		// be a copy even though only one binding holds the buffer.
 		name: "receiver still live after the call",
 		src: `function main(): i32 {
-			var a: i32[] = [1, 2, 3];
-			var b: i32[] = a.with(0, 9);
+			let a: i32[] = [1, 2, 3];
+			let b: i32[] = a.with(0, 9);
 			return a[0] * 10 + b[0];
 		}`,
 		want: 19,
@@ -40,8 +40,8 @@ var withAliasingCases = []struct {
 	{
 		name: "alias through an array element",
 		src: `function main(): i32 {
-			var a: i32[] = [1, 2, 3];
-			var rows: i32[][] = [a];
+			let a: i32[] = [1, 2, 3];
+			let rows: i32[][] = [a];
 			a = a.with(0, 9);
 			return rows[0][0] * 10 + a[0];
 		}`,
@@ -50,8 +50,8 @@ var withAliasingCases = []struct {
 	{
 		name: "one array twice in a container",
 		src: `function main(): i32 {
-			var inner: i32[] = [1, 2, 3];
-			var rows: i32[][] = [inner, inner];
+			let inner: i32[] = [1, 2, 3];
+			let rows: i32[][] = [inner, inner];
 			inner = inner.with(0, 9);
 			return rows[0][0] * 100 + rows[1][0] * 10 + inner[0];
 		}`,
@@ -61,8 +61,8 @@ var withAliasingCases = []struct {
 		name: "alias through a struct field",
 		src: `struct Box { items: i32[] }
 		function main(): i32 {
-			var a: i32[] = [1, 2, 3];
-			var b: Box = Box { items: a };
+			let a: i32[] = [1, 2, 3];
+			let b: Box = Box { items: a };
 			a = a.with(0, 9);
 			return b.items[0] * 10 + a[0];
 		}`,
@@ -74,11 +74,11 @@ var withAliasingCases = []struct {
 		// retain and release cancel.
 		name: "alias through a map value",
 		src: `function main(): i32 {
-			var a: i32[] = [1, 2, 3];
-			var m: Map[i32, i32[]] = map_new(8);
+			let a: i32[] = [1, 2, 3];
+			let m: Map[i32, i32[]] = map_new(8);
 			m = m.insert(1, a);
 			a = a.with(0, 9);
-			var got: i32[] = m.get_or(1, []);
+			let got: i32[] = m.get_or(1, []);
 			return got[0] * 10 + a[0];
 		}`,
 		want: 19,
@@ -87,10 +87,10 @@ var withAliasingCases = []struct {
 		name: "alias through an enum payload",
 		src: `enum Holder { Wrap(i32[]), Empty }
 		function main(): i32 {
-			var a: i32[] = [1, 2, 3];
-			var h: Holder = Holder.Wrap(a);
+			let a: i32[] = [1, 2, 3];
+			let h: Holder = Holder.Wrap(a);
 			a = a.with(0, 9);
-			var seen: i32 = 0;
+			let seen: i32 = 0;
 			match (h) {
 				Wrap(inner) => { seen = inner[0]; },
 				Empty => { seen = -1; },
@@ -102,8 +102,8 @@ var withAliasingCases = []struct {
 	{
 		name: "alias through a tuple element",
 		src: `function main(): i32 {
-			var a: i32[] = [1, 2, 3];
-			var t: (i32[], i32) = (a, 5);
+			let a: i32[] = [1, 2, 3];
+			let t: (i32[], i32) = (a, 5);
 			a = a.with(0, 9);
 			return t.0[0] * 10 + a[0];
 		}`,
@@ -118,8 +118,8 @@ var withAliasingCases = []struct {
 			return p[0];
 		}
 		function main(): i32 {
-			var a: i32[] = [1, 2, 3];
-			var r: i32 = f(a);
+			let a: i32[] = [1, 2, 3];
+			let r: i32 = f(a);
 			return a[0] * 10 + r;
 		}`,
 		want: 19,
@@ -127,9 +127,9 @@ var withAliasingCases = []struct {
 	{
 		name: "write through a closure parameter",
 		src: `function main(): i32 {
-			var f: (i32[]) => i32 = (p: i32[]): i32 => { p = p.with(0, 9); return p[0]; };
-			var a: i32[] = [1, 2, 3];
-			var r: i32 = f(a);
+			let f: (i32[]) => i32 = (p: i32[]): i32 => { p = p.with(0, 9); return p[0]; };
+			let a: i32[] = [1, 2, 3];
+			let r: i32 = f(a);
 			return a[0] * 10 + r;
 		}`,
 		want: 19,
@@ -137,9 +137,9 @@ var withAliasingCases = []struct {
 	{
 		name: "captured by a closure",
 		src: `function main(): i32 {
-			var a: i32[] = [1, 2, 3];
-			var g: () => i32 = (): i32 => { return a[0]; };
-			var b: i32[] = a;
+			let a: i32[] = [1, 2, 3];
+			let g: () => i32 = (): i32 => { return a[0]; };
+			let b: i32[] = a;
 			a = a.with(0, 9);
 			return b[0] * 10 + g();
 		}`,
@@ -148,12 +148,12 @@ var withAliasingCases = []struct {
 	{
 		name: "alias of a returned array",
 		src: `function make3(): i32[] {
-			var a: i32[] = [1, 2, 3];
+			let a: i32[] = [1, 2, 3];
 			return a;
 		}
 		function main(): i32 {
-			var x: i32[] = make3();
-			var y: i32[] = x;
+			let x: i32[] = make3();
+			let y: i32[] = x;
 			x = x.with(0, 9);
 			return y[0] * 10 + x[0];
 		}`,
@@ -162,9 +162,9 @@ var withAliasingCases = []struct {
 	{
 		name: "two withs off one array",
 		src: `function main(): i32 {
-			var a: i32[] = [1, 2, 3];
-			var x: i32[] = a.with(0, 7);
-			var y: i32[] = a.with(0, 8);
+			let a: i32[] = [1, 2, 3];
+			let x: i32[] = a.with(0, 7);
+			let y: i32[] = a.with(0, 8);
 			return x[0] * 100 + y[0] * 10 + a[0];
 		}`,
 		want: 781,
@@ -174,8 +174,8 @@ var withAliasingCases = []struct {
 		// through the shorter view must not reach the longer one.
 		name: "with after an append off the same buffer",
 		src: `function main(): i32 {
-			var a: i32[] = [1, 2, 3];
-			var b: i32[] = a.append(4);
+			let a: i32[] = [1, 2, 3];
+			let b: i32[] = a.append(4);
 			a = a.with(0, 9);
 			return b[0] * 100 + b[3] * 10 + a[0];
 		}`,
@@ -186,8 +186,8 @@ var withAliasingCases = []struct {
 		// write must not reach it.
 		name: "slice view of the receiver",
 		src: `function main(): i32 {
-			var a: i32[] = [1, 2, 3, 4];
-			var s: [i32] = a[1:3];
+			let a: i32[] = [1, 2, 3, 4];
+			let s: [i32] = a[1:3];
 			a = a.with(1, 9);
 			return s[0] * 10 + a[1];
 		}`,
@@ -198,9 +198,9 @@ var withAliasingCases = []struct {
 		// unshared again.
 		name: "alias then scope exit",
 		src: `function main(): i32 {
-			var a: i32[] = [1, 2, 3];
+			let a: i32[] = [1, 2, 3];
 			if (true) {
-				var b: i32[] = a;
+				let b: i32[] = a;
 				a = a.with(0, 7);
 				if (b[0] != 1) { return 90; }
 			}
@@ -215,8 +215,8 @@ var withAliasingCases = []struct {
 		name: "argument evaluated before a block that reassigns it",
 		src: `function h(p: i32[], q: i32): i32 { return p[0] * 10 + q; }
 		function main(): i32 {
-			var a: i32[] = [1, 2, 3];
-			var r: i32 = h(a, { a = a.with(0, 9); 1 });
+			let a: i32[] = [1, 2, 3];
+			let r: i32 = h(a, { a = a.with(0, 9); 1 });
 			return r * 10 + a[0];
 		}`,
 		want: 119,
@@ -224,13 +224,13 @@ var withAliasingCases = []struct {
 	{
 		name: "self-reassign loop reads back what it wrote",
 		src: `function main(): i32 {
-			var a: i32[] = [];
-			var i: i32 = 0;
+			let a: i32[] = [];
+			let i: i32 = 0;
 			while (i < 32) { a = a.append(0); i = i + 1; }
-			var j: i32 = 0;
+			let j: i32 = 0;
 			while (j < 32) { a = a.with(j, j * 2); j = j + 1; }
-			var sum: i32 = 0;
-			var k: i32 = 0;
+			let sum: i32 = 0;
+			let k: i32 = 0;
 			while (k < 32) { sum = sum + a[k]; k = k + 1; }
 			return sum;
 		}`,
@@ -243,8 +243,8 @@ var withAliasingCases = []struct {
 		// the array holds.
 		name: "map stored by an in-place element write",
 		src: `function main(): i32 {
-			var a: Map[i32, i32][] = [map_new(8), map_new(8)];
-			var m: Map[i32, i32] = map_new(8);
+			let a: Map[i32, i32][] = [map_new(8), map_new(8)];
+			let m: Map[i32, i32] = map_new(8);
 			m = m.insert(1, 5);
 			a = a.with(0, m);
 			m = m.insert(1, 9);
@@ -258,7 +258,7 @@ var withAliasingCases = []struct {
 		name: "reassign through a callee",
 		src: `function setz(w: i32[], i: i32, v: i32): i32[] { w = w.with(i, v); return w; }
 		function main(): i32 {
-			var a: i32[] = [1, 2, 3];
+			let a: i32[] = [1, 2, 3];
 			a = setz(a, 0, 9);
 			return a[0] * 10 + a[2];
 		}`,
@@ -298,10 +298,10 @@ func TestArrayWithIsLinear(t *testing.T) {
 	fill := func(n int) int {
 		t.Helper()
 		src := fmt.Sprintf(`function main(): i32 {
-			var a: i32[] = [];
-			var i: i32 = 0;
+			let a: i32[] = [];
+			let i: i32 = 0;
 			while (i < %d) { a = a.append(0); i = i + 1; }
-			var j: i32 = 0;
+			let j: i32 = 0;
 			while (j < %d) { a = a.with(j, j); j = j + 1; }
 			return a[%d - 1];
 		}`, n, n, n)
@@ -326,10 +326,10 @@ func TestArrayWithIsLinear(t *testing.T) {
 // it. Assert both, so neither can quietly become the other.
 func TestArrayWithModesDiffer(t *testing.T) {
 	src := `function main(): i32 {
-		var a: i32[] = [];
-		var i: i32 = 0;
+		let a: i32[] = [];
+		let i: i32 = 0;
 		while (i < 64) { a = a.append(0); i = i + 1; }
-		var j: i32 = 0;
+		let j: i32 = 0;
 		while (j < 64) { a = a.with(j, j); j = j + 1; }
 		return a[63];
 	}`
@@ -357,13 +357,13 @@ func TestArrayWithChainOuterReadSeesTheOldValue(t *testing.T) {
 		want Number
 	}{
 		{"array", `function main(): i32 {
-			var b: i32[] = [7, 8, 9, 10];
+			let b: i32[] = [7, 8, 9, 10];
 			b = b.with(0, 3).with(1, b[0]);
 			return b[0] * 10 + b[1];
 		}`, 37},
 		{"map", `import "core/map";
 		function main(): i32 {
-			var m: Map[i32, i32] = map_new(4);
+			let m: Map[i32, i32] = map_new(4);
 			m = m.insert(1, 5);
 			m = m.insert(1, 3).insert(2, m.get_or(1, 0));
 			return m.get_or(1, 0) * 10 + m.get_or(2, 0);

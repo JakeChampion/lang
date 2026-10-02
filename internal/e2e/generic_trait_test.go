@@ -20,8 +20,8 @@ trait From[T] { function from(v: T): Self; }
 struct Celsius { deg: i32 }
 impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg: v }; } }
 function main(): i32 {
-    var b: IntBox = IntBox { v: 7 };
-    var c: Celsius = Celsius.from(20);
+    let b: IntBox = IntBox { v: 7 };
+    let c: Celsius = Celsius.from(20);
     return b.get() * 10 + c.deg;
 }
 `

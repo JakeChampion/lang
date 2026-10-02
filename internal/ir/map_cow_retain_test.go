@@ -32,48 +32,48 @@ import "testing"
 // add per-column retains that have nothing to do with the seam.
 func TestMapCowRetainOnlyAtBindingSites(t *testing.T) {
 	src := `function bindvar(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(64);
-    var m2 = m.insert(1, n);
+    let m: Map[i32, i32] = map_new(64);
+    let m2 = m.insert(1, n);
     m = m2;
     return m.len();
 }
 function bindtuple(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(64);
+    let m: Map[i32, i32] = map_new(64);
     m = m.insert(1, n);
-    var (m2, ok) = m.without(1);
+    let (m2, ok) = m.without(1);
     m = m2;
     return m.len();
 }
 function bindclear(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(64);
+    let m: Map[i32, i32] = map_new(64);
     m = m.insert(1, n);
-    var m2 = m.cleared();
+    let m2 = m.cleared();
     m = m2;
     return m.len();
 }
 function direct(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(64);
+    let m: Map[i32, i32] = map_new(64);
     m = m.insert(1, n);
     return m.len();
 }
 function chained(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(64);
+    let m: Map[i32, i32] = map_new(64);
     m = m.insert(1, n).insert(2, n);
     return m.len();
 }
 function sizeof(m: Map[i32, i32]): i32 { return m.len(); }
 function argpos(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(64);
+    let m: Map[i32, i32] = map_new(64);
     return sizeof(m.insert(1, n));
 }
 function projected(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(64);
+    let m: Map[i32, i32] = map_new(64);
     m = m.insert(1, n);
     m = m.without(1).0;
     return m.len();
 }
 function argproj(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(64);
+    let m: Map[i32, i32] = map_new(64);
     m = m.insert(1, n);
     return sizeof(m.without(1).0);
 }

@@ -101,8 +101,8 @@ the user writes:
 
 ```fern
 concurrent {
-    var a = spawn fetch(plat, url_a);   // suspends at the await inside fetch
-    var b = spawn fetch(plat, url_b);
+    let a = spawn fetch(plat, url_a);   // suspends at the await inside fetch
+    let b = spawn fetch(plat, url_b);
     return combine(await a, await b);
 }
 ```
@@ -363,16 +363,16 @@ fan-out); generalize to awaits-in-loops incrementally, each with its
 own test.
 
 **Phase 3a — DONE (the fan-out surface, with inline `await`):**
-`concurrent { var a = spawn f(args); … return combine(await a,
+`concurrent { let a = spawn f(args); … return combine(await a,
 await b); }` is implemented as a parser-time desugar in the Go
 frontend (`internal/lexer` keywords `concurrent`/`spawn`/`await`;
 `parser.parseConcurrent`, dispatched inline from `parseBlock`). The
 whole block desugars to **one scoped `Block`** (the synthetic
 reactor/task/result locals and the join-bound result names stay
 confined to the concurrent scope — structured concurrency): a reactor
-`var`, one `let (task, rx) = f(rx, args)` Destructure per spawn
+`let`, one `let (task, rx) = f(rx, args)` Destructure per spawn
 (reactor injected as the first arg), a `task.run(...)` call, one
-result `var` per binding, then the trailing/join statements. All
+result `let` per binding, then the trailing/join statements. All
 spawns start before `run`, so their I/O overlaps. `await a` (handled
 in `parseUnary`, gated on an `inConcurrent` depth) is a **join
 marker** — `run` has already completed every task before the trailing
@@ -394,9 +394,9 @@ protocol leak) and `await` can sit in arbitrary control flow.
   top-level function body is now a real suspension point (`ast.Await`, produced
   by `parseUnary` for awaits outside the `concurrent` join section). The
   parse-time desugar `desugarTaskFunctionsProgram` rewrites a function shaped
-  `{ pre…; var NAME = await EXPR; post…; return E; }` into the std/task protocol
+  `{ pre…; let NAME = await EXPR; post…; return E; }` into the std/task protocol
   `(task.Reactor, args…) -> (task.Step, task.Reactor)`: the pre-section + a
-  `var (tok, rx2) = rx.register(EXPR)`, a generated `resume(NAME, r)`
+  `let (tok, rx2) = rx.register(EXPR)`, a generated `resume(NAME, r)`
   continuation carrying the post-section (each `return E` → `return (Done(E), r)`),
   and `return (Wait(tok, resume), rx2)`. The emitted AST is exactly the
   hand-written CPS form (so it lowers on every backend). Shapes outside slice 1
@@ -406,7 +406,7 @@ protocol leak) and `await` can sit in arbitrary control flow.
   `examples/tests/async_task_fn_test.fern` (e2e gate `TestRunnerAsyncTaskFnExamplePasses`,
   → 3 passes via interp; fan-out + pre/post-await).
 - **Slice 2 — DONE (multiple sequential awaits):** the split is now recursive
-  (`buildTaskSegment`): each top-level `var NAME = await EXPR;` becomes a
+  (`buildTaskSegment`): each top-level `let NAME = await EXPR;` becomes a
   `register` + a `resume_d(NAME, r_d)` continuation whose body is the next
   segment, so N sequential awaits nest into N continuations (the hand-written
   `start_seq` shape), with per-depth names. The in-scope reactor threads from the
@@ -469,7 +469,7 @@ protocol leak) and `await` can sit in arbitrary control flow.
   rewritten to `init; while (cond) { body; step }` (`rewriteForToWhile`) and
   reuses the while lowering; `init` becomes a lead decl (carried), `step` is
   appended to the body. `buildTaskSegment` also flattens an await-bearing top-level
-  `Block` first (range loops parse to a `Block` wrapping `[var __hi, for]`).
+  `Block` first (range loops parse to a `Block` wrapping `[let __hi, for]`).
   Covered by `start_range` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
 - **Slice loops-3 — DONE (array `for x in xs` loops):** an await-bearing array
   for-in (still an `ast.ForEach` at task-transform time) is lowered to its
@@ -481,7 +481,7 @@ protocol leak) and `await` can sit in arbitrary control flow.
   Covered by `start_arrsum` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
 - **Expression-position awaits — DONE:** an `await` in expression position
   (`acc = acc + await x`, `f(await a)`, `return g(await b)`, `if (await c)`) is
-  hoisted to a preceding `var __await_h_N = await …;` binding by a pre-pass
+  hoisted to a preceding `let __await_h_N = await …;` binding by a pre-pass
   (`hoistTaskExprAwaits` / `rewriteAwaitExpr`) that runs before the CPS transform,
   left-to-right (preserving suspension order). It recurses into nested statement
   bodies but not loop CONDITIONS (re-evaluated per iteration) or nested
@@ -502,7 +502,7 @@ protocol leak) and `await` can sit in arbitrary control flow.
   `if`-condition await (hoisted) + a `break` — both already supported. Covered by
   `start_cond` in `async_task_fn_test.fern` and `TestParseTaskFunctionDesugar`.
 - **Early return before an await — DONE:** a guard like `if (bad) { return e; }
-  var x = await …;` is routed through the conditional-merge (`lowerTaskIfMerge`):
+  let x = await …;` is routed through the conditional-merge (`lowerTaskIfMerge`):
   the merge now triggers not only on an await-bearing `if` but on any `if` whose
   branch TERMINATES (return/break/continue) with await-bearing code after it, so
   the returning branch terminates and the await code flows to the other branch.
@@ -555,7 +555,7 @@ await both — the trigger condition that motivated the whole design
   on interp / x86-64 / arm64(qemu); wasm compiles.
   - **Surface syntax — DONE** (named `race`, since `task.select` is already an
     identifier): `race { spawn f(a); spawn g(b); }` is an EXPRESSION yielding
-    `(winnerIndex, result)`, used as `var (w, v) = race { … };`. The parser
+    `(winnerIndex, result)`, used as `let (w, v) = race { … };`. The parser
     (`parseRaceExpr`, dispatched from `parsePrimary`) desugars it to a
     block-expression — `reactor_new`, one `let (task, rx) = f(rx, args)` per
     `spawn`, then a `task.select([...], rx)` tail — mirroring `concurrent`. All

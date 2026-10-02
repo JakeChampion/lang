@@ -13,19 +13,19 @@ import (
 const strArrayFromOwnedSrc = `import "std/unicode" as unicode;
 import "std/i32";
 function parts(n: i32): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
+    let out: string[] = [];
+    let i: i32 = 0;
     while (i < n) { out = out.append("p" + i.to_string()); i = i + 1; }
     return out;
 }
 function main(): i32 {
-    var gs: str[] = unicode.graphemes("abc");
+    let gs: str[] = unicode.graphemes("abc");
     if (gs.len() != 3) { return 1; }
     if (gs[1] != "b") { return 2; }
-    var ws: str[] = unicode.words("one two");
+    let ws: str[] = unicode.words("one two");
     if (ws.len() != 2) { return 3; }
     if (ws[1] != "two") { return 4; }
-    var ps: str[] = parts(4);
+    let ps: str[] = parts(4);
     if (ps.len() != 4) { return 5; }
     if (ps[3].len() != 2) { return 6; }
     return 42;

@@ -14,7 +14,7 @@ import (
 // and never entered the registry, so every caller's binding leaked the result:
 //
 //	fmt(n) { return n.to_string(); }              allocs=400 frees=398 live=32
-//	fmt(n) { var v: i32 = n*2; return v.to_string(); }  allocs=400 frees=0 live=6400
+//	fmt(n) { let v: i32 = n*2; return v.to_string(); }  allocs=400 frees=0 live=6400
 //
 // against 0 on native for both — 32 B/round for a one-word difference in the
 // helper. The same `.to_string()` written INLINE at the call site was already
@@ -30,9 +30,9 @@ func toStringLocalSrc(helper string, rounds int) string {
 	return fmt.Sprintf(`import "std/i32";
 %s
 function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var s: string = fmt(i); acc = (acc + s.len()) %% 91; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let s: string = fmt(i); acc = (acc + s.len()) %% 91; i = i + 1; }
     return acc;
 }
 function main(): i32 { return churn(%d) + __rc_underflow_count() * 100; }
@@ -53,7 +53,7 @@ var toStringLocalFlatCases = []struct {
 		// The shape: compute into a local, then format it.
 		name: "local_recv",
 		helper: `function fmt(n: i32): string {
-    var v: i32 = n * 2;
+    let v: i32 = n * 2;
     return v.to_string();
 }`,
 		want100: 63,
@@ -64,8 +64,8 @@ var toStringLocalFlatCases = []struct {
 		// str_local_is_fresh_ret and needs the same proof one level in.
 		name: "local_recv_via_binding",
 		helper: `function fmt(n: i32): string {
-    var v: i32 = n * 2;
-    var r: string = v.to_string();
+    let v: i32 = n * 2;
+    let r: string = v.to_string();
     return r;
 }`,
 		want100: 63,
@@ -75,7 +75,7 @@ var toStringLocalFlatCases = []struct {
 		// i64, not just i32 — is_scalar_type_name is the whole test.
 		name: "i64_local_recv",
 		helper: `function fmt(n: i32): string {
-    var v: i64 = (n as i64) * 2;
+    let v: i64 = (n as i64) * 2;
     return v.to_string();
 }`,
 		want100: 63,
@@ -86,8 +86,8 @@ var toStringLocalFlatCases = []struct {
 		// Both are scalar, so both admit; the scan has to find the nested one.
 		name: "nested_block_decls",
 		helper: `function fmt(n: i32): string {
-    if (n % 2 == 0) { var v: i32 = n * 2; return v.to_string(); }
-    var w: i32 = n * 3;
+    if (n % 2 == 0) { let v: i32 = n * 2; return v.to_string(); }
+    let w: i32 = n * 3;
     return w.to_string();
 }`,
 		want100: 71,
@@ -110,8 +110,8 @@ var toStringLocalHazardCases = []struct {
 		// declaration must be scalar or the name refuses.
 		name: "shadowed_by_nonscalar",
 		src: toStringLocalSrc(`function fmt(n: i32): string {
-    var v: i32 = n * 2;
-    if (n > 1000000) { var v: string = "x"; return v; }
+    let v: i32 = n * 2;
+    if (n > 1000000) { let v: string = "x"; return v; }
     return v.to_string();
 }`, 200),
 		want: 90,
@@ -122,7 +122,7 @@ var toStringLocalHazardCases = []struct {
 		// and refusing costs a leak where guessing could cost an over-release.
 		name: "unannotated_local",
 		src: toStringLocalSrc(`function fmt(n: i32): string {
-    var v = n * 2;
+    let v = n * 2;
     return v.to_string();
 }`, 200),
 		want: 90,
@@ -137,7 +137,7 @@ var toStringLocalHazardCases = []struct {
 		src: toStringLocalSrc(`struct P { a: i32 }
 function (p: P) to_string(): string { return "p"; }
 function fmt(n: i32): string {
-    var v: P = P { a: n };
+    let v: P = P { a: n };
     return v.to_string();
 }`, 200),
 		want: 18,

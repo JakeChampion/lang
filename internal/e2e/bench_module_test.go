@@ -60,28 +60,28 @@ import "std/i32";
 import "std/string";
 
 function one_allocation(n: i32): i32 {
-	var s: string = "abcdefgh" + n.to_string();
+	let s: string = "abcdefgh" + n.to_string();
 	return s.len();
 }
 
 function main(): i32 {
-	var acc: i32 = 0;
+	let acc: i32 = 0;
 	// An empty body: the harness's own cost, and it must be nothing.
-	var quiet: bench.Report = bench.run("quiet", 5, 200, () => { acc = acc + 1; });
+	let quiet: bench.Report = bench.run("quiet", 5, 200, () => { acc = acc + 1; });
 	if (acc == 0) { return 90; }
 	if (quiet.allocs != (0 as i64)) { return 91; }
 	// A fixed body, twice: the count must scale exactly, so the harness adds
 	// neither a per-iteration cost nor a per-run one.
-	var a: bench.Report = bench.run("work", 5, 100, () => { acc = acc + one_allocation(3); });
-	var b: bench.Report = bench.run("work", 5, 200, () => { acc = acc + one_allocation(3); });
+	let a: bench.Report = bench.run("work", 5, 100, () => { acc = acc + one_allocation(3); });
+	let b: bench.Report = bench.run("work", 5, 200, () => { acc = acc + one_allocation(3); });
 	if (a.allocs <= (0 as i64)) { return 92; }
 	if (b.allocs != a.allocs * (2 as i64)) { return 93; }
 	if (a.allocs_per_op_milli() != b.allocs_per_op_milli()) { return 94; }
 	// A quiet region after a mark must read clean, and the reads themselves
 	// are scalars, so asking the question cannot change the answer.
-	var mk: i64 = bench.alloc_count();
-	var i: i32 = 0;
-	var sum: i32 = 0;
+	let mk: i64 = bench.alloc_count();
+	let i: i32 = 0;
+	let sum: i32 = 0;
 	while (i < 100000) { sum = sum + i; i = i + 1; }
 	if (sum == 0) { return 95; }
 	if (!bench.no_allocs_after(mk)) { return 96; }
@@ -134,13 +134,13 @@ import "std/i32";
 import "std/string";
 
 function one_allocation(n: i32): i32 {
-	var s: string = "abcdefgh" + n.to_string();
+	let s: string = "abcdefgh" + n.to_string();
 	return s.len();
 }
 
 function main(): i32 {
-	var acc: i32 = 0;
-	var r: bench.Report = bench.run("recycling", 5, 500, () => { acc = acc + one_allocation(3); });
+	let acc: i32 = 0;
+	let r: bench.Report = bench.run("recycling", 5, 500, () => { acc = acc + one_allocation(3); });
 	print(r.allocs.to_string() + " " + r.fresh_bytes.to_string());
 	return 0;
 }

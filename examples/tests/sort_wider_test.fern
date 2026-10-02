@@ -9,9 +9,9 @@ import "std/test";
 // compare for u32 / u64 (a near-u64-max sentinel sorts LAST, not first)
 // and the full-width signed compare for i64.
 function test_i64_asc(): test.TestOutcome {
-  var arr: i64[] = [3 as i64, 1 as i64, 4 as i64, 1 as i64, 5 as i64, 9 as i64, 2 as i64, 6 as i64];
-  var sorted: i64[] = cmp.sort(arr);
-  var i: i32 = 1;
+  let arr: i64[] = [3 as i64, 1 as i64, 4 as i64, 1 as i64, 5 as i64, 9 as i64, 2 as i64, 6 as i64];
+  let sorted: i64[] = cmp.sort(arr);
+  let i: i32 = 1;
   while (i < sorted.len()) {
     if (sorted[i] < sorted[i - 1]) {
       return test.fail("not sorted at " + i.to_string() + ": " + sorted[i - 1].to_string() + " > " + sorted[i].to_string());
@@ -22,9 +22,9 @@ function test_i64_asc(): test.TestOutcome {
 }
 
 function test_i64_desc(): test.TestOutcome {
-  var arr: i64[] = [1 as i64, 5 as i64, 2 as i64, 9 as i64, 3 as i64];
-  var sorted: i64[] = cmp.sort_desc(arr);
-  var i: i32 = 1;
+  let arr: i64[] = [1 as i64, 5 as i64, 2 as i64, 9 as i64, 3 as i64];
+  let sorted: i64[] = cmp.sort_desc(arr);
+  let i: i32 = 1;
   while (i < sorted.len()) {
     if (sorted[i] > sorted[i - 1]) {
       return test.fail("not descending at " + i.to_string());
@@ -35,9 +35,9 @@ function test_i64_desc(): test.TestOutcome {
 }
 
 function test_u32_asc(): test.TestOutcome {
-  var arr: u32[] = [3u32, 1u32, 4u32, 1u32, 5u32];
-  var sorted: u32[] = cmp.sort(arr);
-  var i: i32 = 1;
+  let arr: u32[] = [3u32, 1u32, 4u32, 1u32, 5u32];
+  let sorted: u32[] = cmp.sort(arr);
+  let i: i32 = 1;
   while (i < sorted.len()) {
     if (sorted[i] < sorted[i - 1]) {
       return test.fail("u32 sort wrong at " + i.to_string());
@@ -50,21 +50,21 @@ function test_u32_asc(): test.TestOutcome {
 function test_u64_asc_with_large_values(): test.TestOutcome {
   // Use values near u64-max to make sure unsigned compare
   // (not sign-extended i64) is what drives the order.
-  var arr: u64[] = [18446744073709551615u64, 0u64, 1u64];
-  var sorted: u64[] = cmp.sort(arr);
+  let arr: u64[] = [18446744073709551615u64, 0u64, 1u64];
+  let sorted: u64[] = cmp.sort(arr);
   return test.assert_eq(sorted[0], 0u64);
 }
 
 function test_i64_asc_large(): test.TestOutcome {
   // 100 descending elements — crosses several merge widths
   // (1,2,4,...,64), unlike the short literal arrays above.
-  var arr: i64[] = [];
-  var i: i32 = 0;
+  let arr: i64[] = [];
+  let i: i32 = 0;
   while (i < 100) {
     arr = arr.append((100 - i) as i64);
     i = i + 1;
   }
-  var sorted: i64[] = cmp.sort(arr);
+  let sorted: i64[] = cmp.sort(arr);
   if (sorted.len() != 100) {
     return test.fail("length changed: " + sorted.len().to_string());
   }
@@ -81,13 +81,13 @@ function test_i64_asc_large(): test.TestOutcome {
 function test_i64_desc_large(): test.TestOutcome {
   // Ascending input, descending sort — the desc body is its own copy,
   // so it needs its own multi-width case.
-  var arr: i64[] = [];
-  var i: i32 = 0;
+  let arr: i64[] = [];
+  let i: i32 = 0;
   while (i < 100) {
     arr = arr.append((i + 1) as i64);
     i = i + 1;
   }
-  var sorted: i64[] = cmp.sort_desc(arr);
+  let sorted: i64[] = cmp.sort_desc(arr);
   i = 0;
   while (i < 100) {
     if (sorted[i] != (100 - i) as i64) {
@@ -101,13 +101,13 @@ function test_i64_desc_large(): test.TestOutcome {
 function test_u32_asc_large(): test.TestOutcome {
   // 96 elements from a deterministic stride pattern, crossing merge
   // widths 1..64 with duplicates (values mod 37).
-  var arr: u32[] = [];
-  var i: i32 = 0;
+  let arr: u32[] = [];
+  let i: i32 = 0;
   while (i < 96) {
     arr = arr.append((i * 61 % 37) as u32);
     i = i + 1;
   }
-  var sorted: u32[] = cmp.sort(arr);
+  let sorted: u32[] = cmp.sort(arr);
   if (sorted.len() != 96) {
     return test.fail("length changed: " + sorted.len().to_string());
   }
@@ -124,14 +124,14 @@ function test_u32_asc_large(): test.TestOutcome {
 function test_u64_asc_large(): test.TestOutcome {
   // 80 elements, descending with a near-u64-max sentinel mixed in so
   // unsigned compare drives the multi-width merges too.
-  var arr: u64[] = [];
-  var i: i32 = 0;
+  let arr: u64[] = [];
+  let i: i32 = 0;
   while (i < 79) {
     arr = arr.append((79 - i) as u64);
     i = i + 1;
   }
   arr = arr.append(18446744073709551615u64);
-  var sorted: u64[] = cmp.sort(arr);
+  let sorted: u64[] = cmp.sort(arr);
   if (sorted.len() != 80) {
     return test.fail("length changed: " + sorted.len().to_string());
   }
@@ -152,8 +152,8 @@ function test_u64_asc_large(): test.TestOutcome {
 }
 
 function test_i64_empty(): test.TestOutcome {
-  var arr: i64[] = [];
-  var sorted: i64[] = cmp.sort(arr);
+  let arr: i64[] = [];
+  let sorted: i64[] = cmp.sort(arr);
   if (sorted.len() != 0) {
     return test.fail("empty sort grew: " + sorted.len().to_string());
   }
@@ -161,13 +161,13 @@ function test_i64_empty(): test.TestOutcome {
 }
 
 function test_i64_single(): test.TestOutcome {
-  var arr: i64[] = [42 as i64];
-  var sorted: i64[] = cmp.sort(arr);
+  let arr: i64[] = [42 as i64];
+  let sorted: i64[] = cmp.sort(arr);
   return test.assert_eq(sorted[0], 42 as i64);
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("wider sorts");
+  let r: test.TestRunner = test.test_new("wider sorts");
   r = r.it("sort_i64_asc", test_i64_asc);
   r = r.it("sort_i64_desc", test_i64_desc);
   r = r.it("sort_u32_asc", test_u32_asc);

@@ -106,7 +106,7 @@ pub function real_driver(): RealDriver {
 // The descriptor a watched signal's row holds, -1 when it is not watched.
 function __real_signal_fd(d: RealDriver, sig: i32): i32 {
   for row in d.signals.get().split(";") {
-    var parts: string[] = row.split(":");
+    let parts: string[] = row.split(":");
     if (parts.len() == 2 && parts[0] == int.int_to_string(sig)) {
       match (int.parse_int_radix(parts[1], 10)) {
         Some(v) => {
@@ -122,7 +122,7 @@ function __real_signal_fd(d: RealDriver, sig: i32): i32 {
 }
 
 function __real_reactor(d: RealDriver): i32 {
-  var r: i32 = d.reactor.get();
+  let r: i32 = d.reactor.get();
   if (r >= 0) {
     return r;
   }
@@ -154,32 +154,32 @@ impl Driver for RealDriver {
     return wasm_pollable_drop(tok);
   }
   function watch(self: RealDriver, fd: i32, interest: i32): i32 {
-    var r: i32 = __real_reactor(self);
+    let r: i32 = __real_reactor(self);
     if (r < 0) {
       return r;
     }
     return reactor_ctl(r, 1, fd, interest);
   }
   function unwatch(self: RealDriver, fd: i32): i32 {
-    var r: i32 = self.reactor.get();
+    let r: i32 = self.reactor.get();
     if (r < 0) {
       return 0;
     }
     return reactor_ctl(r, 2, fd, 0);
   }
   function wait(self: RealDriver, max: i32, timeout_ms: i32): i32[] {
-    var none: i32[] = [];
-    var r: i32 = __real_reactor(self);
+    let none: i32[] = [];
+    let r: i32 = __real_reactor(self);
     if (r < 0 || max <= 0) {
       return none;
     }
-    var events: i32[] = [];
-    var i: i32 = 0;
+    let events: i32[] = [];
+    let i: i32 = 0;
     while (i < max * 2) {
       events = events.append(0);
       i = i + 1;
     }
-    var n: i32 = reactor_wait(r, events, timeout_ms);
+    let n: i32 = reactor_wait(r, events, timeout_ms);
     if (n <= 0) {
       return none;
     }
@@ -189,11 +189,11 @@ impl Driver for RealDriver {
     if (__real_signal_fd(self, sig) >= 0) {
       return 0;
     }
-    var r: i32 = __real_reactor(self);
+    let r: i32 = __real_reactor(self);
     if (r < 0) {
       return r;
     }
-    var sfd: i32 = reactor_ctl(r, 4, sig, 0);
+    let sfd: i32 = reactor_ctl(r, 4, sig, 0);
     if (sfd < 0) {
       return sfd;
     }
@@ -201,11 +201,11 @@ impl Driver for RealDriver {
     return 0;
   }
   function unwatch_signal(self: RealDriver, sig: i32): i32 {
-    var sfd: i32 = __real_signal_fd(self, sig);
+    let sfd: i32 = __real_signal_fd(self, sig);
     if (sfd < 0) {
       return 0;
     }
-    var kept: string = "";
+    let kept: string = "";
     for row in self.signals.get().split(";") {
       if (row.len() > 0 && !row.starts_with(int.int_to_string(sig) + ":")) {
         kept = kept + row + ";";
@@ -215,14 +215,14 @@ impl Driver for RealDriver {
     return reactor_ctl(self.reactor.get(), 5, sig, sfd);
   }
   function watch_parent(self: RealDriver): i32 {
-    var watched: i32 = self.watch_signal(15);
+    let watched: i32 = self.watch_signal(15);
     if (watched < 0) {
       return watched;
     }
     return reactor_ctl(__real_reactor(self), 6, 0, 0);
   }
   function close(self: RealDriver): i32 {
-    var r: i32 = self.reactor.get();
+    let r: i32 = self.reactor.get();
     if (r < 0) {
       return 0;
     }
@@ -234,7 +234,7 @@ impl Driver for RealDriver {
 
 // __all_ready(fs) — true once no future is still pending.
 function __all_ready[T](fs: Future[T][]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fs.len()) {
     match (fs[i]) {
       Ready(v) => {},
@@ -262,14 +262,14 @@ pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[] {
 // gather_on(drv, fs, on_incomplete) — gather with the waits routed
 // through an explicit Driver (std/sim substitutes a virtual one).
 pub function gather_on[D: Driver, T](drv: D, fs_in: Future[T][], on_incomplete: T): T[] {
-  var fs: Future[T][] = fs_in;
+  let fs: Future[T][] = fs_in;
   while (true) {
     if (__all_ready(fs)) {
       break;
     }
-    var fds: i32[] = [];
-    var idxs: i32[] = [];
-    var i: i32 = 0;
+    let fds: i32[] = [];
+    let idxs: i32[] = [];
+    let i: i32 = 0;
     while (i < fs.len()) {
       match (fs[i]) {
         Ready(v) => {},
@@ -280,11 +280,11 @@ pub function gather_on[D: Driver, T](drv: D, fs_in: Future[T][], on_incomplete: 
       }
       i = i + 1;
     }
-    var ready: i32 = drv.poll_ready(fds, -1);
+    let ready: i32 = drv.poll_ready(fds, -1);
     if (ready < 0) {
       break;
     }
-    var ti: i32 = idxs[ready];
+    let ti: i32 = idxs[ready];
     match (fs[ti]) {
       Ready(v) => {},
       Pending(fd, resume) => {
@@ -292,8 +292,8 @@ pub function gather_on[D: Driver, T](drv: D, fs_in: Future[T][], on_incomplete: 
       }
     }
   }
-  var out: T[] = [];
-  var k: i32 = 0;
+  let out: T[] = [];
+  let k: i32 = 0;
   while (k < fs.len()) {
     match (fs[k]) {
       Ready(v) => {
@@ -317,13 +317,13 @@ pub function gather_on[D: Driver, T](drv: D, fs_in: Future[T][], on_incomplete: 
 // native/interp (a pollable is just an fd there), so this is portable. Pass
 // `winner = -1` to drop every Pending token (no resumed winner).
 function __drop_losers[D: Driver, T](drv: D, fs: Future[T][], winner: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fs.len()) {
     if (i != winner) {
       match (fs[i]) {
         Ready(v) => {},
         Pending(tok, c) => {
-          var d: i32 = drv.drop_token(tok);
+          let d: i32 = drv.drop_token(tok);
         }
       }
     }
@@ -348,12 +348,12 @@ pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
 // race_on(drv, fs, none_val) — race with the waits routed through an
 // explicit Driver (std/sim substitutes a virtual one).
 pub function race_on[D: Driver, T](drv: D, fs_in: Future[T][], none_val: T): (i32, T) {
-  var fs: Future[T][] = fs_in;
-  var j: i32 = 0;
+  let fs: Future[T][] = fs_in;
+  let j: i32 = 0;
   while (j < fs.len()) {
     match (fs[j]) {
       Ready(v) => {
-        var d0: i32 = __drop_losers(drv, fs, j);
+        let d0: i32 = __drop_losers(drv, fs, j);
         return (j, v);
       },
       Pending(fd, c) => {}
@@ -361,9 +361,9 @@ pub function race_on[D: Driver, T](drv: D, fs_in: Future[T][], none_val: T): (i3
     j = j + 1;
   }
   while (true) {
-    var fds: i32[] = [];
-    var idxs: i32[] = [];
-    var i: i32 = 0;
+    let fds: i32[] = [];
+    let idxs: i32[] = [];
+    let i: i32 = 0;
     while (i < fs.len()) {
       match (fs[i]) {
         Ready(v) => {},
@@ -377,21 +377,21 @@ pub function race_on[D: Driver, T](drv: D, fs_in: Future[T][], none_val: T): (i3
     if (fds.len() == 0) {
       return (-1, none_val);
     }
-    var ready: i32 = drv.poll_ready(fds, -1);
+    let ready: i32 = drv.poll_ready(fds, -1);
     if (ready < 0) {
-      var de: i32 = __drop_losers(drv, fs, -1);
+      let de: i32 = __drop_losers(drv, fs, -1);
       return (-1, none_val);
     }
-    var ti: i32 = idxs[ready];
+    let ti: i32 = idxs[ready];
     match (fs[ti]) {
       Ready(v) => {
         return (ti, v);
       },
       Pending(fd, resume) => {
-        var nx: Future[T] = resume(fd);
+        let nx: Future[T] = resume(fd);
         match (nx) {
           Ready(v) => {
-            var dw: i32 = __drop_losers(drv, fs, ti);
+            let dw: i32 = __drop_losers(drv, fs, ti);
             return (ti, v);
           },
           Pending(nfd, nc) => {
@@ -420,17 +420,17 @@ pub function with_deadline[T](deadline: Duration, fs_in: Future[T][]): Option[T]
 // the waits routed through an explicit Driver (std/sim substitutes a
 // virtual one, making the deadline exact instead of wall-clock).
 pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: Future[T][]): Option[T][] {
-  var fs: Future[T][] = fs_in;
-  var start_ns: i64 = drv.now_ns();
-  var ns_per_ms: i64 = 1000000;
-  var deadline_ns: i64 = deadline.as_nanos();
+  let fs: Future[T][] = fs_in;
+  let start_ns: i64 = drv.now_ns();
+  let ns_per_ms: i64 = 1000000;
+  let deadline_ns: i64 = deadline.as_nanos();
   while (true) {
     if (__all_ready(fs)) {
       break;
     }
-    var fds: i32[] = [];
-    var idxs: i32[] = [];
-    var i: i32 = 0;
+    let fds: i32[] = [];
+    let idxs: i32[] = [];
+    let i: i32 = 0;
     while (i < fs.len()) {
       match (fs[i]) {
         Ready(v) => {},
@@ -441,11 +441,11 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
       }
       i = i + 1;
     }
-    var remaining_ns: i64 = deadline_ns - (drv.now_ns() - start_ns);
+    let remaining_ns: i64 = deadline_ns - (drv.now_ns() - start_ns);
     if (remaining_ns <= 0) {
       break;
     }
-    var remaining_ms: i32 = (remaining_ns / ns_per_ms) as i32;
+    let remaining_ms: i32 = (remaining_ns / ns_per_ms) as i32;
     if (remaining_ms <= 0) {
       remaining_ms = 1;
     }
@@ -454,20 +454,20 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
     // timeout arg, so the real timer pollable in the set is what fires at
     // the deadline. A `ready` of `nfds` (the timer's slot) = deadline hit.
     // wasm_timer_pollable is -1 on native/interp, so this stays portable.
-    var nfds: i32 = fds.len();
-    var timer: i32 = drv.timer(remaining_ns);
-    var pollset: i32[] = fds.append(timer);
-    var ready: i32 = drv.poll_ready(pollset, remaining_ms);
+    let nfds: i32 = fds.len();
+    let timer: i32 = drv.timer(remaining_ns);
+    let pollset: i32[] = fds.append(timer);
+    let ready: i32 = drv.poll_ready(pollset, remaining_ms);
     if (ready < 0) {
-      var dpe: i32 = drv.drop_token(timer);
+      let dpe: i32 = drv.drop_token(timer);
       break;
     }
     if (ready == nfds) {
-      var dpt: i32 = drv.drop_token(timer);
+      let dpt: i32 = drv.drop_token(timer);
       break;
     }
-    var dpr: i32 = drv.drop_token(timer);
-    var ti: i32 = idxs[ready];
+    let dpr: i32 = drv.drop_token(timer);
+    let ti: i32 = idxs[ready];
     match (fs[ti]) {
       Ready(v) => {},
       Pending(fd, resume) => {
@@ -477,11 +477,11 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
   }
   // Drop the pollables of any future that timed out (still Pending) so wasm
   // doesn't trap with "resource has children" — no-op on native/interp.
-  var dd: i32 = __drop_losers(drv, fs, -1);
+  let dd: i32 = __drop_losers(drv, fs, -1);
   // Some(v) for a future that resolved in time; None for one that timed out
   // (no sentinel ambiguity — an empty/zero result is distinct from absent).
-  var out: Option[T][] = [];
-  var k: i32 = 0;
+  let out: Option[T][] = [];
+  let k: i32 = 0;
   while (k < fs.len()) {
     match (fs[k]) {
       Ready(v) => {

@@ -21,36 +21,36 @@ var arrArrAliasCases = []struct {
 	refused bool
 }{
 	{"alias", `function main(): i32 {
-    var g: i32[][] = [[3, 1], [2, 3]];
-    var h: i32[][] = g;
+    let g: i32[][] = [[3, 1], [2, 3]];
+    let h: i32[][] = g;
     return g.len() + h.len();
 }
 `, 4, false},
 	{"alias_chain", `function main(): i32 {
-    var g: i32[][] = [[3, 1], [2, 3]];
-    var h: i32[][] = g;
-    var k: i32[][] = h;
+    let g: i32[][] = [[3, 1], [2, 3]];
+    let h: i32[][] = g;
+    let k: i32[][] = h;
     return g.len() + h.len() + k[1][1];
 }
 `, 7, false},
 	{"field_bind", `struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
-    var r: Bag = Bag { n: 3, grid: [[3, 1], [2, 3]] };
-    var p = r.grid;
+    let r: Bag = Bag { n: 3, grid: [[3, 1], [2, 3]] };
+    let p = r.grid;
     r = Bag { n: 1, grid: [[7]] };
-    var junk: i32[][] = [[8, 8], [8, 8]];
+    let junk: i32[][] = [[8, 8], [8, 8]];
     return r.n + p.len() + p[1][0] + junk.len();
 }
 `, 7, false},
 	{"field_bind_loop", `struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var r: Bag = Bag { n: i, grid: [[i, 1], [2, 3]] };
-        var p: i32[][] = r.grid;
+        let r: Bag = Bag { n: i, grid: [[i, 1], [2, 3]] };
+        let p: i32[][] = r.grid;
         r = Bag { n: 9, grid: [[5]] };
-        var junk: i32[][] = [[8, 8], [8, 8]];
+        let junk: i32[][] = [[8, 8], [8, 8]];
         acc = acc + p[0][0] + p[1][1] + r.grid[0][0] + junk.len();
         i = i + 1;
     }
@@ -60,13 +60,13 @@ function main(): i32 {
 	// A string[][] field bind whose holder is rebound first (#10548).
 	{"field_bind_strings", `struct Names { n: i32, names: string[][] }
 function main(): i32 {
-    var i: i32 = 0;
-    var n: i32 = 0;
+    let i: i32 = 0;
+    let n: i32 = 0;
     while (i < 4) {
-        var r: Names = Names { n: i, names: [["a" + "b", "c"], ["d" + ""]] };
-        var p = r.names;
+        let r: Names = Names { n: i, names: [["a" + "b", "c"], ["d" + ""]] };
+        let p = r.names;
         r = Names { n: 0, names: [["z" + ""]] };
-        var junk: string[][] = [["x" + "y"]];
+        let junk: string[][] = [["x" + "y"]];
         n = n + p.len() + p[0][0].len() + r.names.len() + junk.len();
         i = i + 1;
     }
@@ -74,33 +74,33 @@ function main(): i32 {
 }
 `, 24, false},
 	{"alias_outlives_source", `function main(): i32 {
-    var g: i32[][] = [[3, 1], [2, 3]];
-    var h: i32[][] = g;
-    var n: i32 = g.len();
-    var junk: i32[][] = [[8, 8], [8, 8]];
-    var more: i32[] = [9, 9, 9];
+    let g: i32[][] = [[3, 1], [2, 3]];
+    let h: i32[][] = g;
+    let n: i32 = g.len();
+    let junk: i32[][] = [[8, 8], [8, 8]];
+    let more: i32[] = [9, 9, 9];
     return n + h[1][0] + h[0][1] + junk.len() + more.len();
 }
 `, 10, false},
 	{"alias_takes_last_use", `function main(): i32 {
-    var g: i32[][] = [[3, 1], [2, 3]];
-    var n: i32 = g.len();
-    var h: i32[][] = g;
-    var junk: i32[][] = [[8, 8], [8, 8]];
+    let g: i32[][] = [[3, 1], [2, 3]];
+    let n: i32 = g.len();
+    let h: i32[][] = g;
+    let junk: i32[][] = [[8, 8], [8, 8]];
     return n + h[1][0] + h[0][1] + junk.len();
 }
 `, 7, false},
 	{"alias_returned", `function keep(k: i32): i32[][] {
-    var g: i32[][] = [[k, 1], [2, 3]];
-    var h: i32[][] = g;
+    let g: i32[][] = [[k, 1], [2, 3]];
+    let h: i32[][] = g;
     return h;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var q: i32[][] = keep(i);
-        var junk: i32[][] = [[8, 8], [8, 8]];
+        let q: i32[][] = keep(i);
+        let junk: i32[][] = [[8, 8], [8, 8]];
         acc = acc + q[0][0] + q[1][1] + junk.len();
         i = i + 1;
     }
@@ -108,12 +108,12 @@ function main(): i32 {
 }
 `, 18, false},
 	{"alias_loop_local", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 5) {
-        var g: i32[][] = [[i, 1], [2, 3]];
-        var h: i32[][] = g;
-        var junk: i32[][] = [[8, 8], [8, 8]];
+        let g: i32[][] = [[i, 1], [2, 3]];
+        let h: i32[][] = g;
+        let junk: i32[][] = [[8, 8], [8, 8]];
         acc = acc + h[0][0] + g[1][1] + junk.len() + h.len();
         i = i + 1;
     }
@@ -121,13 +121,13 @@ function main(): i32 {
 }
 `, 45, false},
 	{"alias_rebound_in_loop", `function main(): i32 {
-    var acc: i32 = 0;
-    var h: i32[][] = [[0]];
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let h: i32[][] = [[0]];
+    let i: i32 = 0;
     while (i < 5) {
-        var g: i32[][] = [[i, 1], [2, 3]];
+        let g: i32[][] = [[i, 1], [2, 3]];
         h = g;
-        var junk: i32[][] = [[8, 8], [8, 8]];
+        let junk: i32[][] = [[8, 8], [8, 8]];
         acc = acc + h[0][0] + g[1][1] + junk.len();
         i = i + 1;
     }
@@ -135,15 +135,15 @@ function main(): i32 {
 }
 `, 37, false},
 	{"alias_swap", `function main(): i32 {
-    var acc: i32 = 0;
-    var a: i32[][] = [[1, 2], [3, 4]];
-    var b: i32[][] = [[5, 6]];
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let a: i32[][] = [[1, 2], [3, 4]];
+    let b: i32[][] = [[5, 6]];
+    let i: i32 = 0;
     while (i < 4) {
-        var t: i32[][] = a;
+        let t: i32[][] = a;
         a = b;
         b = t;
-        var junk: i32[][] = [[8, 8], [8, 8]];
+        let junk: i32[][] = [[8, 8], [8, 8]];
         acc = acc + a[0][0] + b[0][1] + junk.len();
         i = i + 1;
     }
@@ -151,16 +151,16 @@ function main(): i32 {
 }
 `, 39, false},
 	{"alias_self_append", `function grow(k: i32): i32 {
-    var g: i32[][] = [[k, 1], [2, 3]];
-    var h: i32[][] = g;
+    let g: i32[][] = [[k, 1], [2, 3]];
+    let h: i32[][] = g;
     h = h.append([k + 7]);
     g = g.append([k + 9]);
-    var junk: i32[][] = [[8, 8], [8, 8]];
+    let junk: i32[][] = [[8, 8], [8, 8]];
     return g.len() + h.len() + junk.len() + h[2][0] + g[2][0] + h[0][0];
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         acc = acc + grow(i);
         i = i + 1;
@@ -169,14 +169,14 @@ function main(): i32 {
 }
 `, 81, false},
 	{"alias_escapes", `function pick(k: i32): i32[][] {
-    var g: i32[][] = [[k, 1], [2, 3]];
-    var h: i32[][] = g;
-    var n: i32 = g.len();
+    let g: i32[][] = [[k, 1], [2, 3]];
+    let h: i32[][] = g;
+    let n: i32 = g.len();
     return h.append([n]);
 }
 function main(): i32 {
-    var r: i32[][] = pick(4);
-    var junk: i32[][] = [[8, 8], [8, 8]];
+    let r: i32[][] = pick(4);
+    let junk: i32[][] = [[8, 8], [8, 8]];
     return r.len() + r[2][0] + r[0][0] + junk.len();
 }
 `, 11, true},

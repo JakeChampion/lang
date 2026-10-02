@@ -50,7 +50,7 @@ Sites that already owned their store:
 
 | Site | Where |
 | --- | --- |
-| `var` / match-arm / `for` / `let` binding | `env.declare` |
+| `let` / match-arm / `for` / `let` binding | `env.declare` |
 | block exit | `env.releaseScope` |
 | `x = v`, `a[i] = v`, `s.f = v` | `evalAssign` via `retainReplacing` |
 | closure parameter bind | `callClosure` (goes through `declare`) |
@@ -84,7 +84,7 @@ Holes — every one of them an under-count for arrays:
 4. **Slice views were invisible.** `a[lo:hi]` produced a second Go slice
    header over the same buffer with no relationship the counter could
    see. This is also a **pre-existing interp/native divergence**, found by
-   this audit and left alone: with `var s: [i32] = a[1:3]` live,
+   this audit and left alone: with `let s: [i32] = a[1:3]` live,
    `a = a.with(1, 9)` prints 2 through the view on the interpreter and 9
    on every backend, because a view is a borrow that holds no reference
    and the owner's write lands in the buffer it is looking at. The

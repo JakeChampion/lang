@@ -575,7 +575,7 @@ item below is a minimum intermediate milestone, not full retirement.
 
 - Correct values, diagnostics, evaluation order and cleanup across targets.
 - No use-after-free, over-release or falsely admitted ownership, including
-  non-var binders, shared containers and retained snapshots.
+  non-let binders, shared containers and retained snapshots.
 - Native and self-host agreement on the semantic representation and ownership
   contracts, with complete compiler fixpoints and integration tests passing.
 - At least one corresponding AST ownership analysis removed from the active

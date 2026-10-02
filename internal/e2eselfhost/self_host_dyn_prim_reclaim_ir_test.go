@@ -10,7 +10,7 @@ import (
 
 // TestSelfHostDynPrimReclaimIRX86_64 pins the #4351 slice-2 surface: a
 // dyn-Trait local holding a PRIMITIVE/STRING literal payload
-// (`var d: dyn T = 41` / `= "lit"`). The payload is heap-boxed into an
+// (`let d: dyn T = 41` / `= "lit"`). The payload is heap-boxed into an
 // op_dyn_box cell — now rc-HEADERED via __fern_arr_box(cap=2) instead of a
 // raw headerless __fern_alloc(16), so the exit sweep can free it. The
 // binding is credited "DYN:<name>|<prim>" by reclaimable_names_of (fresh
@@ -55,9 +55,9 @@ func TestSelfHostDynPrimReclaimIRX86_64(t *testing.T) {
 	// flat. Pre-slice the headerless cell leaked 16 bytes per call.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function go(k: i32): i32 { var d: dyn Show = 41; return d.show() + k; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function go(k: i32): i32 { let d: dyn Show = 41; return d.show() + k; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-prim-i32-reclaim-flat", 0)
 
 	// STRING literal payload: the sweep frees the inner string box
@@ -65,9 +65,9 @@ function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_byte
 	// reclaim, flat churn, no underflow.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
-function go(k: i32): i32 { var d: dyn Show = "hello"; return d.show() + k; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function go(k: i32): i32 { let d: dyn Show = "hello"; return d.show() + k; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-prim-str-reclaim-flat", 0)
 
 	// ESCAPING dyn excluded: `return d` — body_unsafe_for rejects the
@@ -75,10 +75,10 @@ function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_byte
 	// detector 0. The cell leaks — sound.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function mk(k: i32): dyn Show { var d: dyn Show = 41; return d; }
-function go(k: i32): i32 { var e = mk(k); return e.show(); }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 42) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function mk(k: i32): dyn Show { let d: dyn Show = 41; return d; }
+function go(k: i32): i32 { let e = mk(k); return e.show(); }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 42) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-prim-escaping-excluded", 0)
 
 	// REASSIGNED dyn excluded: `d = 41` rebind — the reassigned-names gate
@@ -86,34 +86,34 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0
 	// checked.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function go(k: i32): i32 { var d: dyn Show = 10; d = 41; return d.show(); }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 42) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function go(k: i32): i32 { let d: dyn Show = 10; d = 41; return d.show(); }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 42) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-prim-reassigned-excluded", 0)
 
-	// ENUM payload (#4351 slice 4): `var d: dyn T = V(<args>)` — the variant
+	// ENUM payload (#4351 slice 4): `let d: dyn T = V(<args>)` — the variant
 	// construction is a fresh rc-headered enum box, credited with the ENUM
 	// name as its tag; the sweep's shallow dec frees it (pointer payloads
 	// would leak with it — safe). Flat churn, no underflow. (An enum LOCAL
-	// coerced to dyn — `var e: Op = Add(k); var d: dyn Show = e;` — currently
+	// coerced to dyn — `let e: Op = Add(k); let d: dyn Show = e;` — currently
 	// mis-dispatches on the IR path, a pre-existing gap tracked separately,
 	// so only the direct-construction shape is pinned here.)
 	run(t, `trait Show { function show(self: Self): i32; }
 enum Op { Add(i32), Neg }
 impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } }
-function go(k: i32): i32 { var d: dyn Show = Add(41); return d.show() + k; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function go(k: i32): i32 { let d: dyn Show = Add(41); return d.show() + k; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-enum-payload-reclaim-flat", 0)
 
-	// ALIASED STRING payload excluded: `var d: dyn Show = s` where s is a
+	// ALIASED STRING payload excluded: `let d: dyn Show = s` where s is a
 	// string local — a non-literal init is never credited, so the inner
 	// free can't fire on a box someone else owns. Values + detector.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
-function go(k: i32): i32 { var s: string = "world"; var d: dyn Show = s; return d.show() + s.len(); }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 10) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
+function go(k: i32): i32 { let s: string = "world"; let d: dyn Show = s; return d.show() + s.len(); }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 10) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-prim-aliased-str-excluded", 0)
 }
 
@@ -136,26 +136,26 @@ func TestSelfHostDynPrimReclaimWasmIR(t *testing.T) {
 	}{
 		{"dyn-prim-i32-reclaim-flat-wasm", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function go(k: i32): i32 { var d: dyn Show = 41; return d.show() + k; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function go(k: i32): i32 { let d: dyn Show = 41; return d.show() + k; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(2000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 		{"dyn-prim-str-reclaim-flat-wasm", `trait Show { function show(self: Self): i32; }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
-function go(k: i32): i32 { var d: dyn Show = "hello"; return d.show() + k; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function go(k: i32): i32 { let d: dyn Show = "hello"; return d.show() + k; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(2000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 		{"dyn-enum-payload-reclaim-flat-wasm", `trait Show { function show(self: Self): i32; }
 enum Op { Add(i32), Neg }
 impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } }
-function go(k: i32): i32 { var d: dyn Show = Add(41); return d.show() + k; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function go(k: i32): i32 { let d: dyn Show = Add(41); return d.show() + k; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(2000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 		{"dyn-prim-escaping-excluded-wasm", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function mk(k: i32): dyn Show { var d: dyn Show = 41; return d; }
-function go(k: i32): i32 { var e = mk(k); return e.show(); }
-function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 42) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+function mk(k: i32): dyn Show { let d: dyn Show = 41; return d; }
+function go(k: i32): i32 { let e = mk(k); return e.show(); }
+function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 42) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -202,14 +202,14 @@ func TestSelfHostDynPrimReclaimIRArm64(t *testing.T) {
 	}{
 		{"dyn-prim-i32-reclaim-flat-arm64", `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
-function go(k: i32): i32 { var d: dyn Show = 41; return d.show() + k; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`},
+function go(k: i32): i32 { let d: dyn Show = 41; return d.show() + k; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(2000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`},
 		{"dyn-prim-str-reclaim-flat-arm64", `trait Show { function show(self: Self): i32; }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
-function go(k: i32): i32 { var d: dyn Show = "hello"; return d.show() + k; }
-function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`},
+function go(k: i32): i32 { let d: dyn Show = "hello"; return d.show() + k; }
+function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(2000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`},
 	} {
 		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.prog), "-target", "arm64-linux")
 		if len(asm) == 0 {

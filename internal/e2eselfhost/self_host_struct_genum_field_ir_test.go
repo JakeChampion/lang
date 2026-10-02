@@ -30,29 +30,29 @@ var structGenEnumFieldIRCases = []structGenEnumFieldIRCase{
 	{"field_match_i32", `enum Opt[T] { Sm(T), Nn }
 struct S { o: Opt[i32] }
 function main(): i32 {
-    var s = S { o: Sm(5) };
+    let s = S { o: Sm(5) };
     match (s.o) { Sm(n) => { return n; }, Nn => { return 0; } }
 }`, 5},
 	// string payload, method dispatch on the bound value.
 	{"field_match_string", `enum Opt[T] { Sm(T), Nn }
 struct S { o: Opt[string] }
 function main(): i32 {
-    var s = S { o: Sm("hi") };
+    let s = S { o: Sm("hi") };
     match (s.o) { Sm(n) => { return n.len(); }, Nn => { return 0; } }
 }`, 2},
 	// the field holds the unit variant.
 	{"field_unit", `enum Opt[T] { Sm(T), Nn }
 struct S { o: Opt[i32] }
 function main(): i32 {
-    var s = S { o: Nn };
+    let s = S { o: Nn };
     match (s.o) { Sm(n) => { return n; }, Nn => { return 9; } }
 }`, 9},
 	// two generic-enum-typed fields on one struct.
 	{"two_fields", `enum Opt[T] { Sm(T), Nn }
 struct S { a: Opt[i32], b: Opt[i32] }
 function main(): i32 {
-    var s = S { a: Sm(3), b: Sm(4) };
-    var x: i32 = 0;
+    let s = S { a: Sm(3), b: Sm(4) };
+    let x: i32 = 0;
     match (s.a) { Sm(n) => { x = n; }, Nn => { } }
     match (s.b) { Sm(n) => { x = x + n; }, Nn => { } }
     return x;
@@ -61,7 +61,7 @@ function main(): i32 {
 	{"annotated_binding", `enum Opt[T] { Sm(T), Nn }
 struct S { o: Opt[i32] }
 function main(): i32 {
-    var s: S = S { o: Sm(8) };
+    let s: S = S { o: Sm(8) };
     match (s.o) { Sm(n) => { return n; }, Nn => { return 0; } }
 }`, 8},
 	// the struct arrives as a function PARAMETER (its type comes from the param
@@ -76,8 +76,8 @@ function main(): i32 { return get(S { o: Sm(6) }); }`, 6},
 	{"mixed_instantiations", `enum Opt[T] { Sm(T), Nn }
 struct S { a: Opt[i32], b: Opt[string] }
 function main(): i32 {
-    var s = S { a: Sm(4), b: Sm("xyz") };
-    var x: i32 = 0;
+    let s = S { a: Sm(4), b: Sm("xyz") };
+    let x: i32 = 0;
     match (s.a) { Sm(n) => { x = n; }, Nn => { } }
     match (s.b) { Sm(t) => { x = x + t.len(); }, Nn => { } }
     return x;

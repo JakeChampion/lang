@@ -6,7 +6,7 @@ import (
 
 // --- The struct-literal FIELD share of an array-of-structs local -------------
 //
-// `var p: P = P { f: src, … }` where `src` is a credited `Inner[]` local. The
+// `let p: P = P { f: src, … }` where `src` is a credited `Inner[]` local. The
 // construction RETAINS `src` unconditionally, so the field holds a COUNTED share — but every
 // escape gate on the ARRSTRUCT credit read the bare ident as an escape and sank
 // `src`'s reclaim outright. It then took the generic buffer dec, freeing the
@@ -62,13 +62,13 @@ type arrstructShareCase struct {
 	balance bool // assert allocs == frees at live_bytes 0
 }
 
-const arrstructShareMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
+const arrstructShareMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 100) { t = t + round(i); i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
 const arrstructShareDecl = `struct Inner { xs: i32[], k: i32 }
 struct P { f: Inner[], n: i32 }
-function mkv(i: i32): Inner[] { var o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1], k: i }); return o; }
+function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i, i + 1], k: i }); return o; }
 `
 
 func arrstructShareCases() []arrstructShareCase {
@@ -79,9 +79,9 @@ func arrstructShareCases() []arrstructShareCase {
 			// frees, 4400 bytes over 100 rounds, against native's 450/450.
 			name: "conditional",
 			src: arrstructShareDecl + `function round(i: i32): i32 {
-    var src: Inner[] = mkv(i);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var p: P = P { f: src, n: i }; t = p.f.len() + p.f[0].k + p.n; }
+    let src: Inner[] = mkv(i);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let p: P = P { f: src, n: i }; t = p.f.len() + p.f[0].k + p.n; }
     return t % 101;
 }` + arrstructShareMain,
 			want: 18, balance: true,
@@ -93,8 +93,8 @@ func arrstructShareCases() []arrstructShareCase {
 			// exactly what the buffer gate decides between them.
 			name: "always",
 			src: arrstructShareDecl + `function round(i: i32): i32 {
-    var src: Inner[] = mkv(i);
-    var p: P = P { f: src, n: i };
+    let src: Inner[] = mkv(i);
+    let p: P = P { f: src, n: i };
     return (p.f.len() + p.f[0].k + p.n + src.len()) % 101;
 }` + arrstructShareMain,
 			want: 70, balance: true,
@@ -106,9 +106,9 @@ func arrstructShareCases() []arrstructShareCase {
 			// census flat at 600/600, live_bytes 0, and a double free.
 			name: "respread",
 			src: arrstructShareDecl + `function round(i: i32): i32 {
-    var src: Inner[] = mkv(i);
-    var q: P = P { f: src, n: i };
-    var p: P = P { ...q, n: i + 1 };
+    let src: Inner[] = mkv(i);
+    let q: P = P { f: src, n: i };
+    let p: P = P { ...q, n: i + 1 };
     return (p.f.len() + p.n + q.n) % 101;
 }` + arrstructShareMain,
 			want: 70, balance: true,
@@ -121,9 +121,9 @@ func arrstructShareCases() []arrstructShareCase {
 			name: "holder_escapes",
 			src: arrstructShareDecl + `function keepit(p: P): i32 { return p.f.len() + p.n; }
 function round(i: i32): i32 {
-    var src: Inner[] = mkv(i);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var p: P = P { f: src, n: i }; t = keepit(p); }
+    let src: Inner[] = mkv(i);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let p: P = P { f: src, n: i }; t = keepit(p); }
     return (t + src.len()) % 101;
 }` + arrstructShareMain,
 			want: 27, balance: true,
@@ -137,10 +137,10 @@ function round(i: i32): i32 {
 			// Refused, so this stays the leak it was before the widening.
 			name: "moved_ret",
 			src: arrstructShareDecl + `function hold(i: i32): P {
-    var src: Inner[] = mkv(i);
+    let src: Inner[] = mkv(i);
     return P { f: src, n: i };
 }
-function round(i: i32): i32 { var p: P = hold(i); return (p.f.len() + p.f[0].k + p.n) % 101; }` + arrstructShareMain,
+function round(i: i32): i32 { let p: P = hold(i); return (p.f.len() + p.f[0].k + p.n) % 101; }` + arrstructShareMain,
 			want: 53,
 		},
 		{
@@ -150,9 +150,9 @@ function round(i: i32): i32 { var p: P = hold(i); return (p.f.len() + p.f[0].k +
 			// that did not — 400/300 before, 400/400 now, and never 99.
 			name: "sibling_alias",
 			src: arrstructShareDecl + `function round(i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var src: Inner[] = mkv(i); var p: P = P { f: src, n: i }; t = t + p.f.len() + p.n; }
-    if (i % 2 == 1) { var src: Inner[] = [Inner { xs: [i], k: i }]; t = t + src.len() + src[0].k; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let src: Inner[] = mkv(i); let p: P = P { f: src, n: i }; t = t + p.f.len() + p.n; }
+    if (i % 2 == 1) { let src: Inner[] = [Inner { xs: [i], k: i }]; t = t + src.len() + src[0].k; }
     return t % 101;
 }` + arrstructShareMain,
 			want: 70, balance: true,

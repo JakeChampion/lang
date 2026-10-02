@@ -36,7 +36,7 @@ func TestPollBuiltin(t *testing.T) {
 			name: "single_ready",
 			src: fmt.Sprintf(`function main(): i32 {
     match (open_reader("%s")) {
-        Ok(r) => { var fds: i32[] = [r.fd]; return poll(fds, 0); },
+        Ok(r) => { let fds: i32[] = [r.fd]; return poll(fds, 0); },
         Err(e) => { return 99; }
     }
 }`, fileA),
@@ -48,7 +48,7 @@ func TestPollBuiltin(t *testing.T) {
     match (open_reader("%s")) {
         Ok(ra) => {
             match (open_reader("%s")) {
-                Ok(rb) => { var fds: i32[] = [ra.fd, rb.fd]; return poll(fds, 0); },
+                Ok(rb) => { let fds: i32[] = [ra.fd, rb.fd]; return poll(fds, 0); },
                 Err(e) => { return 98; }
             }
         },
@@ -60,7 +60,7 @@ func TestPollBuiltin(t *testing.T) {
 		{
 			name: "empty_set",
 			src: `function main(): i32 {
-    var fds: i32[] = [];
+    let fds: i32[] = [];
     return poll(fds, 0);
 }`,
 			want: 255, // -1 truncated to the process exit low byte

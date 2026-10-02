@@ -35,8 +35,8 @@ func TestBuildCheckedProjections(t *testing.T) {
 		arrays, tuples, returns int
 	}{
 		{"parameter", `function pilot(items: string[]): string { return items[0]; }`, 1, 0, 1},
-		{"alias", `function pilot(items: string[]): string { var alias = items; return alias[0]; }`, 1, 0, 1},
-		{"constructed", `function pilot(): string { var items = ["aa!", "bb!"]; return items[1]; }`, 1, 0, 1},
+		{"alias", `function pilot(items: string[]): string { let alias = items; return alias[0]; }`, 1, 0, 1},
+		{"constructed", `function pilot(): string { let items = ["aa!", "bb!"]; return items[1]; }`, 1, 0, 1},
 		// The parser gives discards ordinary synthetic binding identities.
 		// Preserve those field projections too; liveness, not name spelling,
 		// decides which values can be eliminated after ownership analysis.
@@ -45,7 +45,7 @@ func TestBuildCheckedProjections(t *testing.T) {
 		{"tuple-constructor", `function pilot(items: string[]): string { let (alias, _) = (items, 9i64); return alias[0]; }`, 1, 2, 1},
 		{"branch", `function pilot(items: string[], other: string[], choose: boolean): string { if (choose) { return items[0]; } else { return other[0]; } }`, 2, 0, 2},
 		{"early-return", `function pilot(items: string[], choose: boolean): string { if (choose) { return "early"; } return items[0]; }`, 1, 0, 2},
-		{"empty-array", `function pilot(): string[] { var items: string[] = []; return items; }`, 0, 0, 1},
+		{"empty-array", `function pilot(): string[] { let items: string[] = []; return items; }`, 0, 0, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			decl, info := checkedFunc(t, tc.source)
@@ -83,7 +83,7 @@ func TestBuildCheckedProjections(t *testing.T) {
 
 func TestBuildShadowedBindings(t *testing.T) {
 	decl, info := checkedFunc(t, `function pilot(items: string[], other: string[], choose: boolean): string {
-  if (choose) { var items = other; var local = items[0]; }
+  if (choose) { let items = other; let local = items[0]; }
   return items[0];
 }`)
 	f, err := BuildFunc(decl, info)

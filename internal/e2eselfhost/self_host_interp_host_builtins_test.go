@@ -23,8 +23,8 @@ func TestSelfHostInterpHostBuiltins(t *testing.T) {
 		{
 			name: "args",
 			src: `function main(): i32 {
-    var a: string[] = args();
-    var i: i32 = 1;
+    let a: string[] = args();
+    let i: i32 = 1;
     while (i < a.len()) {
         print(a[i]);
         i = i + 1;
@@ -42,8 +42,8 @@ import "std/string";
 function main(): i32 {
     match (io.read_input("-")) {
         Ok(text) => {
-            var lines: string[] = text.lines();
-            var i: i32 = 0;
+            let lines: string[] = text.lines();
+            let i: i32 = 0;
             while (i < lines.len()) {
                 print("line: " + lines[i]);
                 i = i + 1;
@@ -78,14 +78,14 @@ function main(): i32 {
 }
 
 function main(): i32 {
-    var n: Cell[i32] = cell_new(5);
+    let n: Cell[i32] = cell_new(5);
     bump(n);
     bump(n);
-    var s: Cell[string] = cell_new("a");
+    let s: Cell[string] = cell_new("a");
     s.set(s.get() + "b");
-    var f: Cell[f64] = cell_new(1.5);
+    let f: Cell[f64] = cell_new(1.5);
     f.set(f.get() * 2.0);
-    var b: Cell[boolean] = cell_new(false);
+    let b: Cell[boolean] = cell_new(false);
     b.set(!b.get());
     print(s.get());
     if (s.get() == "ab" && f.get() == 3.0 && b.get()) { return n.get(); }
@@ -106,7 +106,7 @@ function test_strings(): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("hello");
+    let r: test.TestRunner = test.test_new("hello");
     r = r.it("addition", test_addition);
     r = r.it("strings", test_strings);
     return r.finish();

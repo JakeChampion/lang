@@ -10,7 +10,7 @@ import (
 //
 // Fixpoint contract: growth at N=50 == growth at N=5000, non-zero, under a
 // hard leak guard. The fixed-exit cases pin value-correctness churn and the
-// alias negative (`var x = m.insert(..)` must leave m intact while staying
+// alias negative (`let x = m.insert(..)` must leave m intact while staying
 // value-correct). self_host_map_reclaim_ir_test.go keeps the value-only
 // reclaim cases; these are the bump-scaling twins.
 var mapFixpointIRCases = []struct {
@@ -27,16 +27,16 @@ var mapFixpointIRCases = []struct {
 	{name: "cow-loop-getor", src: func(n string) string {
 		return `import "core/map";
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < ` + n + `) {
-        var m: Map[i32, i32] = map_new(8);
+        let m: Map[i32, i32] = map_new(8);
         m = m.insert(i, i * 2);
         acc = acc + m.get_or(i, 0);
         i = i + 1;
     }
     if (acc < 0) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -44,17 +44,17 @@ function main(): i32 {
 	{name: "straightline-cow-getor", src: func(n string) string {
 		return `import "core/map";
 function step2(k: i32): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(k, k * 2);
     m = m.insert(k + 1, k * 3);
     return m.get_or(k, 0) + m.get_or(k + 1, 0);
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step2(i); i = i + 1; }
     if (acc < 0) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -62,16 +62,16 @@ function main(): i32 {
 	{name: "per-call-getor", src: func(n string) string {
 		return `import "core/map";
 function step(k: i32): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(k, k * 2);
     return m.get_or(k, 7);
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
     if (acc < 0) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -79,20 +79,20 @@ function main(): i32 {
 	{name: "getor-miss-path", src: func(n string) string {
 		return `import "core/map";
 function step(k: i32): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     return m.get_or(k, 7);
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
     if (acc != ` + n + ` * 7) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
 	}},
-	// Bound-from-call: `var m: Map[..] = mk(i)` where mk is a registered
+	// Bound-from-call: `let m: Map[..] = mk(i)` where mk is a registered
 	// builder ("MAPF:" — map_fresh_ret_fns_of) earns the same reclaim credit
 	// as a local map_new, so the loop-reinit drop and end-of-scope free fire
 	// on the binding. A collector that credits only literal map_new inits
@@ -100,20 +100,20 @@ function main(): i32 {
 	{name: "mkcall-loop-getor", src: func(n string) string {
 		return `import "core/map";
 function mk(k: i32): Map[i32, i32] {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(k, k * 2);
     return m;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < ` + n + `) {
-        var m: Map[i32, i32] = mk(i);
+        let m: Map[i32, i32] = mk(i);
         acc = acc + m.get_or(i, 0);
         i = i + 1;
     }
     if (acc != ` + n + ` * (` + n + ` - 1)) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -121,21 +121,21 @@ function main(): i32 {
 	{name: "mkcall-straightline", src: func(n string) string {
 		return `import "core/map";
 function mk2(k: i32): Map[i32, i32] {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(k, k * 2);
     m = m.insert(k + 1, k * 3);
     return m;
 }
 function step(k: i32): i32 {
-    var m: Map[i32, i32] = mk2(k);
+    let m: Map[i32, i32] = mk2(k);
     return m.get_or(k, 0) + m.get_or(k + 1, 0);
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < ` + n + `) { acc = acc + step(i); i = i + 1; }
     if (acc < 0) { return 121; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -148,15 +148,15 @@ function main(): i32 {
 	{name: "mkcall-discard", src: func(n string) string {
 		return `import "core/map";
 function mk(k: i32): Map[i32, i32] {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(k, k * 2);
     return m;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) { mk(i); i = i + 1; }
-    var g: i32 = (__heap_bump_bytes() as i32) - before;
+    let g: i32 = (__heap_bump_bytes() as i32) - before;
     if (g > 900) { return 119; }
     return g / 8;
 }`
@@ -164,9 +164,9 @@ function main(): i32 {
 	{name: "value-churn", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 300) {
-        var m: Map[i32, i32] = map_new(8);
+        let m: Map[i32, i32] = map_new(8);
         m = m.insert(i, i * 2);
         m = m.insert(i + 1, i * 3);
         acc = acc + m.get_or(i, 0) + m.get_or(i + 1, 0);
@@ -181,9 +181,9 @@ function main(): i32 {
 	{name: "alias-negative", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
-    var x: Map[i32, i32] = m.insert(1, 11);
-    var i: i32 = 0; var acc: i32 = 0;
+    let m: Map[i32, i32] = map_new(8);
+    let x: Map[i32, i32] = m.insert(1, 11);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) { acc = acc + x.get_or(1, 0) + m.get_or(1, 0); i = i + 1; }
     if (acc != 200 * 11) { return 121; }
     return 0;
@@ -200,16 +200,16 @@ function feed(m: Map[i32, i32]): Map[i32, i32] {
     return m;
 }
 function grow(m: Map[i32, i32], k: i32): Map[i32, i32] {
-    var t: Map[i32, i32] = m.insert(k, k * 2);
+    let t: Map[i32, i32] = m.insert(k, k * 2);
     return t;
 }
 function main(): i32 {
-    var base: Map[i32, i32] = map_new(8);
+    let base: Map[i32, i32] = map_new(8);
     base = base.insert(1, 11);
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        var x: Map[i32, i32] = feed(base);
-        var y: Map[i32, i32] = grow(base, i + 2);
+        let x: Map[i32, i32] = feed(base);
+        let y: Map[i32, i32] = grow(base, i + 2);
         acc = acc + x.get_or(1, 0) + y.get_or(1, 0);
         i = i + 1;
     }
@@ -226,9 +226,9 @@ function feed(m: Map[i32, i32]): Map[i32, i32] {
     return m;
 }
 function main(): i32 {
-    var base: Map[i32, i32] = map_new(8);
+    let base: Map[i32, i32] = map_new(8);
     base = base.insert(1, 11);
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) { feed(base); acc = acc + base.get_or(1, 0); i = i + 1; }
     if (acc != 200 * 11) { return 121; }
     return 0;
@@ -243,16 +243,16 @@ function main(): i32 {
 		return `import "core/map";
 function pick(p: Map[i32, i32], k: i32): Map[i32, i32] {
     if (k < 0) { return p; }
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(k, k * 2);
     return m;
 }
 function main(): i32 {
-    var base: Map[i32, i32] = map_new(8);
+    let base: Map[i32, i32] = map_new(8);
     base = base.insert(1, 11);
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        var m: Map[i32, i32] = pick(base, 0 - 1);
+        let m: Map[i32, i32] = pick(base, 0 - 1);
         acc = acc + m.get_or(1, 0) + base.get_or(1, 0);
         i = i + 1;
     }

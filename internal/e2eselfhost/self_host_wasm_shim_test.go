@@ -50,7 +50,7 @@ func TestSelfHostWasmShimCore(t *testing.T) {
 const shimCoreSelfTestMain = `
 function shim_eq(got: i32[], want: i32[]): boolean {
     if (got.len() != want.len()) { return false; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < got.len()) {
         if (got[i] != want[i]) { return false; }
         i = i + 1;
@@ -58,14 +58,14 @@ function shim_eq(got: i32[], want: i32[]): boolean {
     return true;
 }
 function main(): i32 {
-    var sig: i32[] = [127, 127, 127, 127];
-    var none: i32[] = [];
-    var want0: i32[] = [0, 97, 115, 109, 1, 0, 0, 0, 1, 8, 1, 96, 4, 127, 127, 127, 127, 0, 3, 2, 1, 0, 4, 5, 1, 112, 1, 1, 1, 7, 16, 2, 1, 48, 0, 0, 8, 36, 105, 109, 112, 111, 114, 116, 115, 1, 0, 10, 17, 1, 15, 0, 32, 0, 32, 1, 32, 2, 32, 3, 65, 0, 17, 0, 0, 11];
-    var t: i32[] = shim_trampoline_core(sig, none);
+    let sig: i32[] = [127, 127, 127, 127];
+    let none: i32[] = [];
+    let want0: i32[] = [0, 97, 115, 109, 1, 0, 0, 0, 1, 8, 1, 96, 4, 127, 127, 127, 127, 0, 3, 2, 1, 0, 4, 5, 1, 112, 1, 1, 1, 7, 16, 2, 1, 48, 0, 0, 8, 36, 105, 109, 112, 111, 114, 116, 115, 1, 0, 10, 17, 1, 15, 0, 32, 0, 32, 1, 32, 2, 32, 3, 65, 0, 17, 0, 0, 11];
+    let t: i32[] = shim_trampoline_core(sig, none);
     if (t.len() != want0.len()) { return 1; }
     if (!shim_eq(t, want0)) { return 2; }
-    var want1: i32[] = [0, 97, 115, 109, 1, 0, 0, 0, 1, 8, 1, 96, 4, 127, 127, 127, 127, 0, 2, 21, 2, 0, 1, 48, 0, 0, 0, 8, 36, 105, 109, 112, 111, 114, 116, 115, 1, 112, 1, 1, 1, 9, 7, 1, 0, 65, 0, 11, 1, 0];
-    var f: i32[] = shim_tablefill_core(sig, none);
+    let want1: i32[] = [0, 97, 115, 109, 1, 0, 0, 0, 1, 8, 1, 96, 4, 127, 127, 127, 127, 0, 2, 21, 2, 0, 1, 48, 0, 0, 0, 8, 36, 105, 109, 112, 111, 114, 116, 115, 1, 112, 1, 1, 1, 9, 7, 1, 0, 65, 0, 11, 1, 0];
+    let f: i32[] = shim_tablefill_core(sig, none);
     if (f.len() != want1.len()) { return 3; }
     if (!shim_eq(f, want1)) { return 4; }
     return 0;
@@ -119,7 +119,7 @@ func TestSelfHostWasmComponentSuffixStdout(t *testing.T) {
 const suffixStdoutSelfTestMain = `
 function suffix_eq(got: i32[], want: i32[]): boolean {
     if (got.len() != want.len()) { return false; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < got.len()) {
         if (got[i] != want[i]) { return false; }
         i = i + 1;
@@ -127,20 +127,20 @@ function suffix_eq(got: i32[], want: i32[]): boolean {
     return true;
 }
 function main(): i32 {
-    var g0: i32[] = component_suffix_stdout();
-    var w0: i32[] = [
+    let g0: i32[] = component_suffix_stdout();
+    let w0: i32[] = [
 ` + suffixStdoutBytes + `
     ];
     if (g0.len() != w0.len()) { return 1; }
     if (!suffix_eq(g0, w0)) { return 2; }
-    var g1: i32[] = component_suffix_eprint();
-    var w1: i32[] = [
+    let g1: i32[] = component_suffix_eprint();
+    let w1: i32[] = [
 ` + suffixEprintBytes + `
     ];
     if (g1.len() != w1.len()) { return 3; }
     if (!suffix_eq(g1, w1)) { return 4; }
-    var g2: i32[] = component_suffix_exit();
-    var w2: i32[] = [
+    let g2: i32[] = component_suffix_exit();
+    let w2: i32[] = [
 ` + suffixExitBytes + `
     ];
     if (g2.len() != w2.len()) { return 5; }

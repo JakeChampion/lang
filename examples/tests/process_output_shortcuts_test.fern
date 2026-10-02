@@ -13,12 +13,12 @@ import "std/test";
 //     cardinality without pinning content.
 
 function test_exit_zero_pass(): test.TestOutcome {
-  var res: ProcessResult = subprocess("true", [], "");
+  let res: ProcessResult = subprocess("true", [], "");
   return test.assert_exit_zero(res);
 }
 
 function test_exit_zero_fail_reports(): test.TestOutcome {
-  var res: ProcessResult = subprocess("false", [], "");
+  let res: ProcessResult = subprocess("false", [], "");
   match (test.assert_exit_zero(res)) {
     Pass => {
       return test.fail("non-zero exit should fail");
@@ -30,12 +30,12 @@ function test_exit_zero_fail_reports(): test.TestOutcome {
 }
 
 function test_exit_nonzero_pass(): test.TestOutcome {
-  var res: ProcessResult = subprocess("false", [], "");
+  let res: ProcessResult = subprocess("false", [], "");
   return test.assert_exit_nonzero(res);
 }
 
 function test_exit_nonzero_zero_fails(): test.TestOutcome {
-  var res: ProcessResult = subprocess("true", [], "");
+  let res: ProcessResult = subprocess("true", [], "");
   match (test.assert_exit_nonzero(res)) {
     Pass => {
       return test.fail("exit 0 should fail nonzero check");
@@ -50,7 +50,7 @@ function test_exit_nonzero_zero_fails(): test.TestOutcome {
 }
 
 function test_stdout_lines_pass(): test.TestOutcome {
-  var res: ProcessResult = subprocess(
+  let res: ProcessResult = subprocess(
     "printf",
     ["alpha\nbeta\ngamma\n"], "",
   );
@@ -58,7 +58,7 @@ function test_stdout_lines_pass(): test.TestOutcome {
 }
 
 function test_stdout_lines_mismatch(): test.TestOutcome {
-  var res: ProcessResult = subprocess(
+  let res: ProcessResult = subprocess(
     "printf",
     ["alpha\nWRONG\ngamma\n"], "",
   );
@@ -78,7 +78,7 @@ function test_stdout_lines_mismatch(): test.TestOutcome {
 
 function test_stderr_lines_pass(): test.TestOutcome {
   // Send something to stderr via sh -c.
-  var res: ProcessResult = subprocess(
+  let res: ProcessResult = subprocess(
     "sh",
     ["-c", "printf 'err1\\nerr2\\n' >&2"], "",
   );
@@ -86,7 +86,7 @@ function test_stderr_lines_pass(): test.TestOutcome {
 }
 
 function test_stdout_line_count_pass(): test.TestOutcome {
-  var res: ProcessResult = subprocess(
+  let res: ProcessResult = subprocess(
     "printf",
     ["x\ny\nz\n"], "",
   );
@@ -94,7 +94,7 @@ function test_stdout_line_count_pass(): test.TestOutcome {
 }
 
 function test_stdout_line_count_wrong_reports(): test.TestOutcome {
-  var res: ProcessResult = subprocess(
+  let res: ProcessResult = subprocess(
     "printf",
     ["x\ny\n"], "",
   );
@@ -112,7 +112,7 @@ function test_stdout_line_count_wrong_reports(): test.TestOutcome {
 }
 
 function test_stderr_line_count_pass(): test.TestOutcome {
-  var res: ProcessResult = subprocess(
+  let res: ProcessResult = subprocess(
     "sh",
     ["-c", "printf 'a\\nb\\nc\\n' >&2"], "",
   );
@@ -120,7 +120,7 @@ function test_stderr_line_count_pass(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("process output shortcuts");
+  let r: test.TestRunner = test.test_new("process output shortcuts");
   r = r.it("exit_zero pass", test_exit_zero_pass);
   r = r.it("exit_zero on non-zero fails", test_exit_zero_fail_reports);
   r = r.it("exit_nonzero pass", test_exit_nonzero_pass);

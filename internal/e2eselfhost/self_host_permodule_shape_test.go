@@ -51,7 +51,7 @@ func testPMModuleShape(t *testing.T, drive func(entry, flag string) (string, err
 		functions  int
 	}{
 		{"plain", "pub function value(): i32 { return 5; }", 1},
-		{"lifted capture", "pub function value(): i32 { var offset = 2; var f = (x: i32): i32 => x + offset; return f(3); }", 2},
+		{"lifted capture", "pub function value(): i32 { let offset = 2; let f = (x: i32): i32 => x + offset; return f(3); }", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			proj := t.TempDir()

@@ -10,13 +10,13 @@ import (
 
 // --- A nested array from a producer that returns a LOCAL (#7335) -------------
 //
-// `collect_fresh_arrarr_names` admits `var g: T[][] = mk(..)` off the "AAC:"
+// `collect_fresh_arrarr_names` admits `let g: T[][] = mk(..)` off the "AAC:"
 // registry, and `opt_fresh_ret_fns_of` builds that registry by proving every
 // return of the callee is a fresh arr-of-arr LITERAL — syntactically. One extra
 // statement inside the callee disqualified it:
 //
 //	function mk(): i32[][] { return [[1,2],[3,4]]; }                       clean
-//	function mk(): i32[][] { var a: i32[][] = [[1,2],[3,4]]; return a; }   leaks
+//	function mk(): i32[][] { let a: i32[][] = [[1,2],[3,4]]; return a; }   leaks
 //
 // Same caller either way. The refused form leaked BOTH inner arrays every round
 // — allocs matched native exactly and frees were exactly one third of them, the
@@ -55,7 +55,7 @@ type arrarrProdCase struct {
 	balance bool // assert allocs == frees at live_bytes 0
 }
 
-const arrarrProdMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
+const arrarrProdMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 200) { t = t + round(i); i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
@@ -64,8 +64,8 @@ func arrarrProdCases() []arrarrProdCase {
 		{
 			// The repro: the producer returns a LOCAL bound from the literal.
 			name: "producer_returns_local",
-			src: `function mk(): i32[][] { var a: i32[][] = [[1,2],[3,4]]; return a; }
-function round(i: i32): i32 { var v: i32[][] = mk(); return v.len(); }` + arrarrProdMain,
+			src: `function mk(): i32[][] { let a: i32[][] = [[1,2],[3,4]]; return a; }
+function round(i: i32): i32 { let v: i32[][] = mk(); return v.len(); }` + arrarrProdMain,
 			want: 68, balance: true,
 		},
 		{
@@ -73,14 +73,14 @@ function round(i: i32): i32 { var v: i32[][] = mk(); return v.len(); }` + arrarr
 			// this change, and the one-statement diff that isolated the cause.
 			name: "producer_returns_literal",
 			src: `function mk(): i32[][] { return [[1,2],[3,4]]; }
-function round(i: i32): i32 { var v: i32[][] = mk(); return v.len(); }` + arrarrProdMain,
+function round(i: i32): i32 { let v: i32[][] = mk(); return v.len(); }` + arrarrProdMain,
 			want: 68, balance: true,
 		},
 		{
 			// No producer at all: the literal bound straight into the local. This
 			// path was always credited and must stay so.
 			name: "literal_init",
-			src:  `function round(i: i32): i32 { var v: i32[][] = [[1,2],[3,4]]; return v.len(); }` + arrarrProdMain,
+			src:  `function round(i: i32): i32 { let v: i32[][] = [[1,2],[3,4]]; return v.len(); }` + arrarrProdMain,
 			want: 68, balance: true,
 		},
 		{
@@ -88,14 +88,14 @@ function round(i: i32): i32 { var v: i32[][] = mk(); return v.len(); }` + arrarr
 			// one a bare alias of a parameter. With the registry widened but the
 			// credit still name-keyed this is 99, and no byte count shows it.
 			name: "sibling_alias",
-			src: `function mk(): i32[][] { var a: i32[][] = [[1,2],[3,4]]; return a; }
+			src: `function mk(): i32[][] { let a: i32[][] = [[1,2],[3,4]]; return a; }
 function round(base: i32[][], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: i32[][] = mk();  t = t + v.len(); }
-    if (i % 2 == 1) { var v: i32[][] = base;  t = t + v.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: i32[][] = mk();  t = t + v.len(); }
+    if (i % 2 == 1) { let v: i32[][] = base;  t = t + v.len(); }
     return t;
 }
-function main(): i32 { var b: i32[][] = [[7,8],[9,10]]; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let b: i32[][] = [[7,8],[9,10]]; let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34,
 		},
 		{
@@ -104,14 +104,14 @@ function main(): i32 { var b: i32[][] = [[7,8],[9,10]]; var t: i32 = 0; var i: i
 			// collision.
 			name: "sibling_alias_strings",
 			src: `function w(a: string): string { return a + "!"; }
-function mk(): string[][] { var a: string[][] = [[w("p")],[w("q")]]; return a; }
+function mk(): string[][] { let a: string[][] = [[w("p")],[w("q")]]; return a; }
 function round(base: string[][], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: string[][] = mk();  t = t + v.len(); }
-    if (i % 2 == 1) { var v: string[][] = base;  t = t + v.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: string[][] = mk();  t = t + v.len(); }
+    if (i % 2 == 1) { let v: string[][] = base;  t = t + v.len(); }
     return t;
 }
-function main(): i32 { var b: string[][] = [[w("a")],[w("b")]]; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let b: string[][] = [[w("a")],[w("b")]]; let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34,
 		},
 		{
@@ -122,7 +122,7 @@ function main(): i32 { var b: string[][] = [[w("a")],[w("b")]]; var t: i32 = 0; 
 			// that the shape must not start OVER-releasing while it waits for its own
 			// fix, which is the direction a careless widening would take it.
 			name: "local_alias_still_leaks",
-			src:  `function round(i: i32): i32 { var a: i32[][] = [[1,2],[3,4]]; var v: i32[][] = a; return v.len(); }` + arrarrProdMain,
+			src:  `function round(i: i32): i32 { let a: i32[][] = [[1,2],[3,4]]; let v: i32[][] = a; return v.len(); }` + arrarrProdMain,
 			want: 68,
 		},
 	}

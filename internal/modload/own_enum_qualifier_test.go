@@ -27,8 +27,8 @@ import (
 const ownEnumQualifierLib = `pub enum Kind { Text, Number(i32) }
 
 pub function pick(): i32 {
-    var t: Kind = Kind.Text;
-    var n: Kind = Kind.Number(41);
+    let t: Kind = Kind.Text;
+    let n: Kind = Kind.Number(41);
     match (n) {
         Kind.Text => { return 1; },
         Kind.Number(v) => { return v + 1; }
@@ -88,7 +88,7 @@ func TestOwnEnumQualifierStillCaughtWhenWrong(t *testing.T) {
 pub enum Other { Text, Blah }
 
 pub function pick(): i32 {
-    var k: Kind = Kind.Text;
+    let k: Kind = Kind.Text;
     match (k) {
         Other.Text => { return 1; },
         Kind.Number => { return 2; }
@@ -97,7 +97,7 @@ pub function pick(): i32 {
 }
 
 pub function nope(): i32 {
-    var k: Kind = Kind.Missing;
+    let k: Kind = Kind.Missing;
     return 0;
 }
 `,

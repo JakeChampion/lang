@@ -26,11 +26,11 @@
 // TestX86_64LeakCheckLoopConstructionMove in internal/e2e/leakcheck_test.go.
 
 function in_loop(): i32 {
-  var s: i32 = 0;
-  var k: i32 = 0;
+  let s: i32 = 0;
+  let k: i32 = 0;
   while (k < 3) {
-    var xs: i32[] = [1, 2, 3];
-    var t = (xs, 99);
+    let xs: i32[] = [1, 2, 3];
+    let t = (xs, 99);
     s = s + t.0[2];
     k = k + 1;
   }
@@ -38,10 +38,10 @@ function in_loop(): i32 {
 }
 
 function fresh(): i32 {
-  var s: i32 = 0;
-  var k: i32 = 0;
+  let s: i32 = 0;
+  let k: i32 = 0;
   while (k < 3) {
-    var t = ([1, 2, 3], 99);
+    let t = ([1, 2, 3], 99);
     s = s + t.0[2];
     k = k + 1;
   }
@@ -49,8 +49,8 @@ function fresh(): i32 {
 }
 
 function toplevel(): i32 {
-  var xs: i32[] = [1, 2, 3];
-  var t = (xs, 99);
+  let xs: i32[] = [1, 2, 3];
+  let t = (xs, 99);
   return t.0[2];
 }
 

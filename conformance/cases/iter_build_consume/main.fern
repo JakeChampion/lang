@@ -9,8 +9,8 @@ function eat(own xs: List): i32 {
     match (xs) { Cons(h, t) => { return h + eat(t); }, Nil => { return 0; } }
 }
 function ib(n: i32): List {
-    var acc: List = Nil;
-    var i: i32 = 0;
+    let acc: List = Nil;
+    let i: i32 = 0;
     while (i < n) { acc = Cons(3, acc); i = i + 1; }
     return acc;
 }

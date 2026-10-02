@@ -11,9 +11,9 @@ import (
 //
 // #5173 taught the lift's cap_type resolver to read a destructure binding's
 // element type, but only for SCALAR/string element tags: a first-level
-// destructure whose element is itself a tuple (`var (p, c) = t` with
+// destructure whose element is itself a tuple (`let (p, c) = t` with
 // t : ((i32,i32), i32), so p : (i32,i32)) resolved "", so the second-level
-// `var (a, b) = p` couldn't resolve p's tuple type and the capture of a/b
+// `let (a, b) = p` couldn't resolve p's tuple type and the capture of a/b
 // declined the lift, dropping the module to the (miscompiling) AST emitter
 // (#5201). The fix returns the tuple (pointer) element tag — gated to all-i32
 // tuples, whose element reads capture soundly via the 32-bit env slot — so the
@@ -30,10 +30,10 @@ var nestedTupleCaptureIRCases = []struct {
 	// a struct fn-field lambda. h.f(1)=1+3+4+5=13, h.id=a=3 → 16.
 	{"nested-2level", `struct H { f: (i32) => i32, id: i32 }
 function g(): i32 {
-	var t: ((i32, i32), i32) = ((3, 4), 5);
-	var (p, c) = t;
-	var (a, b) = p;
-	var h: H = H { f: (x: i32): i32 => { return x + a + b + c; }, id: a };
+	let t: ((i32, i32), i32) = ((3, 4), 5);
+	let (p, c) = t;
+	let (a, b) = p;
+	let h: H = H { f: (x: i32): i32 => { return x + a + b + c; }, id: a };
 	return h.f(1) + h.id;
 }
 function main(): i32 { return g(); }`},
@@ -41,20 +41,20 @@ function main(): i32 { return g(); }`},
 	// stored in the 32-bit env slot). h.f(1)=1+3+4+5=13, h.id=c=5 → 18.
 	{"direct-tuple-capture", `struct H { f: (i32) => i32, id: i32 }
 function g(): i32 {
-	var t: ((i32, i32), i32) = ((3, 4), 5);
-	var (p, c) = t;
-	var h: H = H { f: (x: i32): i32 => { return x + p.0 + p.1 + c; }, id: c };
+	let t: ((i32, i32), i32) = ((3, 4), 5);
+	let (p, c) = t;
+	let h: H = H { f: (x: i32): i32 => { return x + p.0 + p.1 + c; }, id: c };
 	return h.f(1) + h.id;
 }
 function main(): i32 { return g(); }`},
 	// Three-level all-i32 nesting. h.f(1)=1+1+2+3+4=11, h.id=a=1 → 12.
 	{"nested-3level", `struct H { f: (i32) => i32, id: i32 }
 function g(): i32 {
-	var t: (((i32, i32), i32), i32) = (((1, 2), 3), 4);
-	var (q, d) = t;
-	var (p, c) = q;
-	var (a, b) = p;
-	var h: H = H { f: (x: i32): i32 => { return x + a + b + c + d; }, id: a };
+	let t: (((i32, i32), i32), i32) = (((1, 2), 3), 4);
+	let (q, d) = t;
+	let (p, c) = q;
+	let (a, b) = p;
+	let h: H = H { f: (x: i32): i32 => { return x + a + b + c + d; }, id: a };
 	return h.f(1) + h.id;
 }
 function main(): i32 { return g(); }`},

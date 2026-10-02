@@ -6,8 +6,8 @@
 // operation is value-returning:
 //
 //   import "std/pset";
-//   var s: pset.PSet[string] = pset.pset_of(["a", "b", "a"]);
-//   var before: pset.PSet[string] = s;   // O(1) snapshot
+//   let s: pset.PSet[string] = pset.pset_of(["a", "b", "a"]);
+//   let before: pset.PSet[string] = s;   // O(1) snapshot
 //   s = s.add("c");
 //   s.len();            // 3
 //   before.len();       // 2
@@ -25,16 +25,16 @@ import "std/pmap";
 pub struct PSet[T] { root: pmap.HNode[T, i32] }
 
 // `pset_new()` — the empty set. The element type is fixed by the
-// annotation at the binding (`var s: PSet[string] = pset_new();`).
+// annotation at the binding (`let s: PSet[string] = pset_new();`).
 pub function pset_new[T](): PSet[T] {
-  var e: pmap.HNode[T, i32] = pmap.__hm_empty();
+  let e: pmap.HNode[T, i32] = pmap.__hm_empty();
   return PSet { root: e };
 }
 
 // `pset_of(xs)` — the set of the distinct values in `xs`.
 pub function pset_of[T: cmp.Hash + cmp.Eq](xs: T[]): PSet[T] {
-  var s: PSet[T] = pset_new();
-  var i: i32 = 0;
+  let s: PSet[T] = pset_new();
+  let i: i32 = 0;
   while (i < xs.len()) {
     s = s.add(xs[i]);
     i = i + 1;
@@ -64,13 +64,13 @@ pub function (s: PSet[T]) remove[T: cmp.Hash + cmp.Eq](x: T): PSet[T] {
 
 // `contains(x)` — is `x` a member?
 pub function (s: PSet[T]) contains[T: cmp.Hash + cmp.Eq](x: T): boolean {
-  var hit: pmap.HNode[T, i32] = pmap.__hm_find(s.root, pmap.__hm_mix(x.hash()), x);
+  let hit: pmap.HNode[T, i32] = pmap.__hm_find(s.root, pmap.__hm_mix(x.hash()), x);
   return pmap.__hm_holds(hit);
 }
 
 // `to_array()` — the elements, in hash order.
 pub function (s: PSet[T]) to_array(): T[] {
-  var acc: T[] = [];
+  let acc: T[] = [];
   acc = pmap.__hm_keys_into(s.root, acc);
   return acc;
 }
@@ -85,8 +85,8 @@ pub function (s: PSet[T]) union[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
 }
 
 function __ps_add_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T] {
-  var out: PSet[T] = s;
-  var i: i32 = 0;
+  let out: PSet[T] = s;
+  let i: i32 = 0;
   while (i < xs.len()) {
     out = out.add(xs[i]);
     i = i + 1;
@@ -96,9 +96,9 @@ function __ps_add_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T] {
 
 // `intersection(other)` — the elements in both.
 pub function (s: PSet[T]) intersection[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
-  var out: PSet[T] = pset_new();
-  var xs: T[] = s.to_array();
-  var i: i32 = 0;
+  let out: PSet[T] = pset_new();
+  let xs: T[] = s.to_array();
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (other.contains(xs[i])) {
       out = out.add(xs[i]);
@@ -110,9 +110,9 @@ pub function (s: PSet[T]) intersection[T: cmp.Hash + cmp.Eq](other: PSet[T]): PS
 
 // `difference(other)` — this set's elements that are NOT in `other`.
 pub function (s: PSet[T]) difference[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
-  var out: PSet[T] = s;
-  var xs: T[] = other.to_array();
-  var i: i32 = 0;
+  let out: PSet[T] = s;
+  let xs: T[] = other.to_array();
+  let i: i32 = 0;
   while (i < xs.len()) {
     out = out.remove(xs[i]);
     i = i + 1;
@@ -125,8 +125,8 @@ pub function (s: PSet[T]) is_subset[T: cmp.Hash + cmp.Eq](other: PSet[T]): boole
   if (s.len() > other.len()) {
     return false;
   }
-  var xs: T[] = s.to_array();
-  var i: i32 = 0;
+  let xs: T[] = s.to_array();
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (!other.contains(xs[i])) {
       return false;
@@ -143,9 +143,9 @@ pub function (s: PSet[T]) equals[T: cmp.Hash + cmp.Eq](other: PSet[T]): boolean 
 
 // `filter(pred)` — the elements `pred` accepts.
 pub function (s: PSet[T]) filter[T: cmp.Hash + cmp.Eq](pred: (T) => boolean): PSet[T] {
-  var out: PSet[T] = pset_new();
-  var xs: T[] = s.to_array();
-  var i: i32 = 0;
+  let out: PSet[T] = pset_new();
+  let xs: T[] = s.to_array();
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (pred(xs[i])) {
       out = out.add(xs[i]);

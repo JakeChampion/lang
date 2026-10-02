@@ -9,7 +9,7 @@ import "testing"
 // the parent of a sub-slice cut from a temp. Aliasing a header retains it,
 // exactly like a tuple box.
 //
-// Counting note: every `var` of slice type carries TWO releases — the
+// Counting note: every `let` of slice type carries TWO releases — the
 // loop-body re-declaration drop at the binding (emitVarReinitDropOld,
 // null-guarded on the first pass) and the exit sweep's — so a local counts
 // as 2 and a temp as 1.
@@ -27,8 +27,8 @@ func sliceHeaderProgram(t *testing.T, src string, ptrW int) *Func {
 func TestSliceLocalIsReleasedAtExit(t *testing.T) {
 	const src = `
 function main(): i32 {
-    var s: string = "hello world, this is a heap string";
-    var b: [u8] = s.as_bytes();
+    let s: string = "hello world, this is a heap string";
+    let b: [u8] = s.as_bytes();
     return b.len();
 }`
 	for _, ptrW := range []int{4, 8} {
@@ -47,13 +47,13 @@ function main(): i32 {
 func TestSliceArgTempIsReleasedAfterCall(t *testing.T) {
 	const src = `
 function total(b: [u8]): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < b.len()) { t = t + (b[i] as i32); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var s: string = "hello world, this is a heap string";
+    let s: string = "hello world, this is a heap string";
     return total(s.as_bytes());
 }`
 	for _, ptrW := range []int{4, 8} {
@@ -76,8 +76,8 @@ function main(): i32 {
 func TestSliceTempCastToUsizeReleasesHeader(t *testing.T) {
 	const src = `
 function main(): i32 {
-    var s: string = "hello world, this is a heap string";
-    var out: usize = __alloc(64);
+    let s: string = "hello world, this is a heap string";
+    let out: usize = __alloc(64);
     __memcpy(out, s.as_bytes() as usize, s.len());
     return __load_u8(out) as i32;
 }`
@@ -93,9 +93,9 @@ function main(): i32 {
 func TestSliceAliasRetainsHeader(t *testing.T) {
 	const src = `
 function main(): i32 {
-    var s: string = "hello world, this is a heap string";
-    var a: [u8] = s.as_bytes();
-    var b: [u8] = a;
+    let s: string = "hello world, this is a heap string";
+    let a: [u8] = s.as_bytes();
+    let b: [u8] = a;
     return a.len() + b.len();
 }`
 	for _, ptrW := range []int{4, 8} {
@@ -114,8 +114,8 @@ function main(): i32 {
 func TestSubSliceOfTempReleasesParentHeader(t *testing.T) {
 	const src = `
 function main(): i32 {
-    var s: string = "hello world, this is a heap string";
-    var c: [u8] = s.as_bytes()[1:3];
+    let s: string = "hello world, this is a heap string";
+    let c: [u8] = s.as_bytes()[1:3];
     return c.len();
 }`
 	for _, ptrW := range []int{4, 8} {
@@ -131,8 +131,8 @@ function main(): i32 {
 func TestSliceArrayDropWalksHeaders(t *testing.T) {
 	const src = `
 function main(): i32 {
-    var s: string = "hello world, this is a heap string";
-    var arr: [u8][] = [s.as_bytes(), s.as_bytes()];
+    let s: string = "hello world, this is a heap string";
+    let arr: [u8][] = [s.as_bytes(), s.as_bytes()];
     return arr[1].len();
 }`
 	for _, ptrW := range []int{4, 8} {
@@ -170,24 +170,24 @@ func TestLentViewHeaderReleasedThroughHeaderDrop(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"lend of an owned array", `
 function total(src: [u8], n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + (src[i] as i32); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var b: u8[] = __alloc_u8(8);
+    let b: u8[] = __alloc_u8(8);
     return total(b, 8);
 }`},
 		{"as_bytes at an argument position", `
 function total(src: [u8], n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + (src[i] as i32); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var s: string = "hello world, this is a heap string";
+    let s: string = "hello world, this is a heap string";
     return total(s.as_bytes(), 5);
 }`},
 	}

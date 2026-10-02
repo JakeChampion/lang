@@ -178,7 +178,7 @@ function compile_expr(code: Instr[], e: Expr): Instr[] {
       // them back the way they were written. Reversing this is
       // invisible for `+` and `*` and wrong for everything else,
       // which is why the differential runs over `-`, `/` and `%` too.
-      var c: Instr[] = compile_expr(code, l);
+      let c: Instr[] = compile_expr(code, l);
       c = compile_expr(c, r);
       return c.append(BinOp(op));
     }
@@ -186,7 +186,7 @@ function compile_expr(code: Instr[], e: Expr): Instr[] {
 }
 
 function compile_block(code: Instr[], body: Stmt[]): Instr[] {
-  var c: Instr[] = code;
+  let c: Instr[] = code;
   for i in 0..body.len() {
     c = compile_stmt(c, body[i]);
   }
@@ -196,24 +196,24 @@ function compile_block(code: Instr[], body: Stmt[]): Instr[] {
 function compile_stmt(code: Instr[], s: Stmt): Instr[] {
   match (s) {
     Assign(slot, e) => {
-      var c: Instr[] = compile_expr(code, e);
+      let c: Instr[] = compile_expr(code, e);
       return c.append(Store(slot));
     },
     If(cond, then_body, else_body) => {
-      var c: Instr[] = compile_expr(code, cond);
-      var jz_at: i32 = c.len();
+      let c: Instr[] = compile_expr(code, cond);
+      let jz_at: i32 = c.len();
       c = c.append(JumpIfFalse(unpatched()));
       c = compile_block(c, then_body);
-      var jmp_at: i32 = c.len();
+      let jmp_at: i32 = c.len();
       c = c.append(Jump(unpatched()));
       c = c.with(jz_at, JumpIfFalse(c.len()));  // else starts here
       c = compile_block(c, else_body);
       return c.with(jmp_at, Jump(c.len()));  // both arms land here
     },
     While(cond, body) => {
-      var top: i32 = code.len();
-      var c: Instr[] = compile_expr(code, cond);
-      var jz_at: i32 = c.len();
+      let top: i32 = code.len();
+      let c: Instr[] = compile_expr(code, cond);
+      let jz_at: i32 = c.len();
       c = c.append(JumpIfFalse(unpatched()));
       c = compile_block(c, body);
       c = c.append(Jump(top));
@@ -223,7 +223,7 @@ function compile_stmt(code: Instr[], s: Stmt): Instr[] {
 }
 
 function compile(body: Stmt[]): Instr[] {
-  var c: Instr[] = compile_block([], body);
+  let c: Instr[] = compile_block([], body);
   return c.append(Halt);
 }
 
@@ -296,7 +296,7 @@ function step_budget(): i32 {
 // Drop the top `k` values. `std/array`'s `take` would say this, but it is
 // declared for `string[]` only.
 function popped(stack: i32[], k: i32): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for i in 0..stack.len() - k {
     out = out.append(stack[i]);
   }
@@ -304,14 +304,14 @@ function popped(stack: i32[], k: i32): i32[] {
 }
 
 function run(code: Instr[], nvars: i32): Result[Machine, string] {
-  var vars: i32[] = [];
+  let vars: i32[] = [];
   for i in 0..nvars {
     vars = vars.append(0);
   }
-  var stack: i32[] = [];
-  var pc: i32 = 0;
-  var steps: i32 = 0;
-  var max_depth: i32 = 0;
+  let stack: i32[] = [];
+  let pc: i32 = 0;
+  let steps: i32 = 0;
+  let max_depth: i32 = 0;
   while (true) {
     if (steps > step_budget()) {
       return Err("step budget exhausted at pc " + pc.to_string());
@@ -324,7 +324,7 @@ function run(code: Instr[], nvars: i32): Result[Machine, string] {
     if (stack.len() > max_depth) {
       max_depth = stack.len();
     }
-    var next: i32 = pc + 1;
+    let next: i32 = pc + 1;
     match (code[pc]) {
       Push(v) => {
         stack = stack.append(v);
@@ -350,8 +350,8 @@ function run(code: Instr[], nvars: i32): Result[Machine, string] {
           return Err("binary " + op_name(op) + " with "
             + stack.len().to_string() + " values on the stack");
         }
-        var b: i32 = stack[stack.len() - 1];
-        var a: i32 = stack[stack.len() - 2];
+        let b: i32 = stack[stack.len() - 1];
+        let a: i32 = stack[stack.len() - 2];
         stack = popped(stack, 2);
         match (apply_op(op, a, b)) {
           Err(e) => {
@@ -369,7 +369,7 @@ function run(code: Instr[], nvars: i32): Result[Machine, string] {
         if (stack.len() < 1) {
           return Err("branch on an empty stack");
         }
-        var c: i32 = stack[stack.len() - 1];
+        let c: i32 = stack[stack.len() - 1];
         stack = popped(stack, 1);
         if (c == 0) {
           next = t;
@@ -426,7 +426,7 @@ function eval_expr(vars: i32[], e: Expr): Result[i32, string] {
 struct EvalState { vars: i32[], steps: i32 }
 
 function eval_block(st: EvalState, body: Stmt[]): Result[EvalState, string] {
-  var s: EvalState = st;
+  let s: EvalState = st;
   for i in 0..body.len() {
     match (eval_stmt(s, body[i])) {
       Err(e) => {
@@ -444,7 +444,7 @@ function eval_stmt(st: EvalState, s: Stmt): Result[EvalState, string] {
   if (st.steps > step_budget()) {
     return Err("evaluator step budget exhausted");
   }
-  var state: EvalState = EvalState { ...st, steps: st.steps + 1 };
+  let state: EvalState = EvalState { ...st, steps: st.steps + 1 };
   match (s) {
     Assign(slot, e) => {
       match (eval_expr(state.vars, e)) {
@@ -473,7 +473,7 @@ function eval_stmt(st: EvalState, s: Stmt): Result[EvalState, string] {
       }
     },
     While(cond, body) => {
-      var s2: EvalState = state;
+      let s2: EvalState = state;
       while (true) {
         if (s2.steps > step_budget()) {
           return Err("evaluator step budget exhausted");
@@ -504,7 +504,7 @@ function eval_stmt(st: EvalState, s: Stmt): Result[EvalState, string] {
 }
 
 function evaluate(body: Stmt[], nvars: i32): Result[i32[], string] {
-  var vars: i32[] = [];
+  let vars: i32[] = [];
   for i in 0..nvars {
     vars = vars.append(0);
   }
@@ -612,9 +612,9 @@ function slots(): i32 {
 // in the corpus, variable for variable. Neither side is the expected value;
 // their agreement is.
 function test_the_vm_agrees_with_the_evaluator(): test.TestOutcome {
-  var progs: Stmt[][] = corpus();
+  let progs: Stmt[][] = corpus();
   for i in 0..progs.len() {
-    var walked: i32[] = [];
+    let walked: i32[] = [];
     match (evaluate(progs[i], slots())) {
       Err(e) => {
         return test.fail("program " + i.to_string()
@@ -624,7 +624,7 @@ function test_the_vm_agrees_with_the_evaluator(): test.TestOutcome {
         walked = v;
       }
     }
-    var ran: i32[] = [];
+    let ran: i32[] = [];
     match (run(compile(progs[i]), slots())) {
       Err(e) => {
         return test.fail("program " + i.to_string()
@@ -652,7 +652,7 @@ function test_the_vm_agrees_with_the_evaluator(): test.TestOutcome {
 // misconception. sum 1..10 = 55, gcd(1071, 462) = 21, and the 5x5
 // multiplication table sums to (1+..+5)^2 = 225.
 function test_known_answers(): test.TestOutcome {
-  var progs: Stmt[][] = corpus();
+  let progs: Stmt[][] = corpus();
   if (!slot_is(progs[4], 1, 55)) {
     return test.fail("sum 1..10 should be 55");
   }
@@ -696,11 +696,11 @@ function slot_is(prog: Stmt[], slot: i32, want: i32): boolean {
 // the classic backpatch off-by-one, which a VM that tolerates pc == len
 // would turn into a silently truncated program.
 function test_every_jump_target_is_in_range(): test.TestOutcome {
-  var progs: Stmt[][] = corpus();
+  let progs: Stmt[][] = corpus();
   for i in 0..progs.len() {
-    var code: Instr[] = compile(progs[i]);
+    let code: Instr[] = compile(progs[i]);
     for k in 0..code.len() {
-      var t: i32 = jump_target(code[k]);
+      let t: i32 = jump_target(code[k]);
       if (t == -2) {  // not a jump
         continue;
       }
@@ -740,7 +740,7 @@ function jump_target(ins: Instr): i32 {
 // answer — until the loop is long enough — so depth is the only thing that
 // catches it early.
 function test_the_stack_is_disciplined(): test.TestOutcome {
-  var progs: Stmt[][] = corpus();
+  let progs: Stmt[][] = corpus();
   for i in 0..progs.len() {
     match (run(compile(progs[i]), slots())) {
       Err(e) => {
@@ -762,10 +762,10 @@ function test_the_stack_is_disciplined(): test.TestOutcome {
 // Compilation is a pure function of the AST: same program in, byte-identical
 // code out, however many times it runs.
 function test_compilation_is_deterministic(): test.TestOutcome {
-  var progs: Stmt[][] = corpus();
+  let progs: Stmt[][] = corpus();
   for i in 0..progs.len() {
-    var a: Instr[] = compile(progs[i]);
-    var b: Instr[] = compile(progs[i]);
+    let a: Instr[] = compile(progs[i]);
+    let b: Instr[] = compile(progs[i]);
     if (a.len() != b.len()) {
       return test.fail("program " + i.to_string() + ": lengths differ");
     }
@@ -783,21 +783,21 @@ function test_compilation_is_deterministic(): test.TestOutcome {
 // A fault is an error on both sides, with the same reason — not a crash,
 // and not a zero quietly substituted for an undefined answer.
 function test_faults_are_errors_on_both_sides(): test.TestOutcome {
-  var bad: Stmt[][] = [
+  let bad: Stmt[][] = [
     [Assign(0, Bin(op_div(), Num(1), Num(0)))],
     [Assign(0, Bin(op_mod(), Num(1), Num(0)))],
     // A loop that never terminates: both sides must hit their budget.
     [Assign(0, Num(0)), While(Bin(op_eq(), Num(1), Num(1)), [Assign(0, Num(1))])],
   ];
   for i in 0..bad.len() {
-    var walked_err: boolean = false;
+    let walked_err: boolean = false;
     match (evaluate(bad[i], slots())) {
       Err(_) => {
         walked_err = true;
       },
       Ok(_) => {}
     }
-    var ran_err: boolean = false;
+    let ran_err: boolean = false;
     match (run(compile(bad[i]), slots())) {
       Err(_) => {
         ran_err = true;
@@ -831,7 +831,7 @@ function test_faults_are_errors_on_both_sides(): test.TestOutcome {
 // the compiler would never emit — the point is that a corrupted or
 // hand-written program is rejected, not mis-run.
 function test_the_vm_refuses_malformed_code(): test.TestOutcome {
-  var progs: Instr[][] = [
+  let progs: Instr[][] = [
     [BinOp(op_add())],  // binary op, empty stack
     [Push(1), BinOp(op_add())],  // one operand short
     [Store(0)],  // store, empty stack
@@ -857,8 +857,8 @@ function test_the_vm_refuses_malformed_code(): test.TestOutcome {
 
 function main(): i32 {
   eprint("bytecode_vm — a stack machine and its tree-walking oracle");
-  var progs: Stmt[][] = corpus();
-  var gcd: Instr[] = compile(progs[8]);
+  let progs: Stmt[][] = corpus();
+  let gcd: Instr[] = compile(progs[8]);
   eprint("  gcd(1071, 462), " + gcd.len().to_string() + " instructions:");
   for i in 0..gcd.len() {
     eprint("    " + i.to_string() + "  " + instr_str(gcd[i]));
@@ -874,7 +874,7 @@ function main(): i32 {
     }
   }
 
-  var r: test.TestRunner = test.test_new("bytecode_vm");
+  let r: test.TestRunner = test.test_new("bytecode_vm");
   r = r.it("the vm agrees with the evaluator", test_the_vm_agrees_with_the_evaluator);
   r = r.it("known answers", test_known_answers);
   r = r.it("every jump target is in range", test_every_jump_target_is_in_range);
