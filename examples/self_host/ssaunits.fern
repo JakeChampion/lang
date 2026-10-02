@@ -2459,52 +2459,69 @@ function supply_error(state: boolean[], supplies: Supply[], wanted: Supply[], ow
   return "";
 }
 
-function move_supplies(state: boolean[], supplies: Supply[], owned: boolean[]): Ledger {
-  var next: boolean[] = state;
-  for got in supplies {
-    if (got.mode == move_unit()) {
-      if (!owned[got.value] || !next[got.value]) {
-        return rejected("move without counted unit");
-      }
-      next = next.with(got.value, false);
-    }
-  }
-  return Ledger { ok: true, why: "", bits: next };
-}
-
-function drop_units(state: boolean[], drops: i32[], owned: boolean[]): Ledger {
-  var next: boolean[] = state;
-  for value in drops {
-    if (value < 0 || value >= owned.len()) {
-      return rejected("drop value out of range");
-    }
-    if (!owned[value] || !next[value]) {
-      return rejected("drop without counted unit");
-    }
-    next = next.with(value, false);
-  }
-  return Ledger { ok: true, why: "", bits: next };
-}
-
-// Replay checks supplies against freshly derived effect obligations. It does
-// not reuse the planner's last-use sets or chosen move/drop decisions.
-function replay(state: boolean[], s: Step, wanted: Supply[], result: i32, owned: boolean[], deps: i32[][]): Ledger {
+// A step is checked on the row it reads and then applied to the row it
+// owns: replay_error reports every rejection without writing, apply_step
+// writes the moves, the result and the drops in place. The row flows between
+// them as a plain value, never through a record field, which the owned
+// parameter needs.
+function replay_error(state: boolean[], s: Step, wanted: Supply[], result: i32, owned: boolean[], deps: i32[][]): string {
   var why: string = supply_error(state, s.supplies, wanted, owned, deps);
   if (why != "") {
-    return rejected(why);
+    return why;
   }
-  var moved: Ledger = move_supplies(state, s.supplies, owned);
-  if (!moved.ok) {
-    return moved;
-  }
-  var next: boolean[] = moved.bits;
-  if (result >= 0 && owned[result]) {
-    if (next[result]) {
-      return rejected("result unit already present");
+  var cleared: i32[] = [];
+  for got in s.supplies {
+    if (got.mode == move_unit()) {
+      if (!owned[got.value] || !state[got.value] || util.index_of_i32(cleared, got.value) >= 0) {
+        return "move without counted unit";
+      }
+      cleared = cleared.append(got.value);
     }
-    next = next.with(result, true);
   }
-  return drop_units(next, s.drops, owned);
+  var set_result: boolean = false;
+  if (result >= 0 && owned[result]) {
+    if (state[result] && util.index_of_i32(cleared, result) < 0) {
+      return "result unit already present";
+    }
+    set_result = true;
+  }
+  var dropped: i32[] = [];
+  for value in s.drops {
+    if (value < 0 || value >= owned.len()) {
+      return "drop value out of range";
+    }
+    var present: boolean = state[value] && util.index_of_i32(cleared, value) < 0 || set_result && value == result;
+    if (!owned[value] || !present || util.index_of_i32(dropped, value) >= 0) {
+      return "drop without counted unit";
+    }
+    dropped = dropped.append(value);
+  }
+  return "";
+}
+
+// apply_step is the row after a step replay_error accepted.
+function apply_step(own state: boolean[], s: Step, result: i32, owned: boolean[]): boolean[] {
+  for got in s.supplies {
+    if (got.mode == move_unit()) {
+      state = state.with(got.value, false);
+    }
+  }
+  if (result >= 0 && owned[result]) {
+    state = state.with(result, true);
+  }
+  for value in s.drops {
+    state = state.with(value, false);
+  }
+  return state;
+}
+
+// copy_row is a fresh row with `state`'s bits. The receiver is lent, so the
+// write reaches it by retaining and the runtime copies rather than mutates.
+function copy_row(state: boolean[]): boolean[] {
+  if (state.len() == 0) {
+    return state;
+  }
+  return state.with(0, state[0]);
 }
 
 struct ReplayProgress { why: string, state: boolean[], count: i32 }
@@ -2513,8 +2530,18 @@ function progress_error(why: string): ReplayProgress {
   return ReplayProgress { why: why, state: [], count: 0 };
 }
 
-function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: i32[][], state: boolean[], owned: boolean[], deps: i32[][]): ReplayProgress {
-  var next: boolean[] = state;
+// verify_operations replays the entry step and then the block's operations
+// over one row it owns, so each step writes the row in place.
+function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: i32[][], own state: boolean[], owned: boolean[], deps: i32[][]): ReplayProgress {
+  var at0: i32 = find_step(p, idx, b.id, entry_point(), 0 - 1);
+  if (at0 < 0) {
+    return progress_error("missing or duplicate entry step");
+  }
+  var entry_why: string = replay_error(state, p.steps[at0], [], 0 - 1, owned, deps);
+  if (entry_why != "") {
+    return progress_error(entry_why);
+  }
+  var next: boolean[] = apply_step(state, p.steps[at0], 0 - 1, owned);
   var count: i32 = 0;
   var pos: i32 = 0;
   for ins in b.insts {
@@ -2533,11 +2560,11 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: i32[][],
       if (lent != "") {
         return progress_error(lent);
       }
-      var done: Ledger = replay(next, p.steps[at], operation_supplies(f, ins), ins.result, owned, deps);
-      if (!done.ok) {
-        return progress_error(done.why);
+      var why: string = replay_error(next, p.steps[at], operation_supplies(f, ins), ins.result, owned, deps);
+      if (why != "") {
+        return progress_error(why);
       }
-      next = done.bits;
+      next = apply_step(next, p.steps[at], ins.result, owned);
       count = count + 1;
     }
     pos = pos + 1;
@@ -2546,14 +2573,22 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: i32[][],
 }
 
 // A call's lent operand borrows from units that must outlast the call's moves.
+// The units the step's moves clear are listed rather than replayed into a
+// copy of the row; a move the row cannot supply is move_supplies' rejection,
+// reported by the replay that follows, not here.
 function lent_error(state: boolean[], s: Step, f: ssasem.Func, ins: ssa.SInst, owned: boolean[], deps: i32[][]): string {
-  var moved: Ledger = move_supplies(state, s.supplies, owned);
-  if (!moved.ok) {
-    return "";
+  var cleared: i32[] = [];
+  for got in s.supplies {
+    if (got.mode == move_unit()) {
+      if (!owned[got.value] || !state[got.value] || util.index_of_i32(cleared, got.value) >= 0) {
+        return "";
+      }
+      cleared = cleared.append(got.value);
+    }
   }
   for v in lent_operands(f, ins) {
     for dep in deps[v] {
-      if (dep != v && owned[dep] && !moved.bits[dep]) {
+      if (dep != v && owned[dep] && (!state[dep] || util.index_of_i32(cleared, dep) >= 0)) {
         return "a lent call operand borrows from a unit moved into the call";
       }
     }
@@ -2561,6 +2596,18 @@ function lent_error(state: boolean[], s: Step, f: ssasem.Func, ins: ssa.SInst, o
   return "";
 }
 
+// step_clears: the step moves or drops `value`.
+function step_clears(s: Step, value: i32): boolean {
+  for got in s.supplies {
+    if (got.mode == move_unit() && got.value == value) {
+      return true;
+    }
+  }
+  return util.index_of_i32(s.drops, value) >= 0;
+}
+
+// The return step is checked without applying it: a unit it leaves counted is
+// one the row holds that it neither moves nor drops.
 function verify_return(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: i32[][], state: boolean[], owned: boolean[], deps: i32[][]): string {
   if (b.term.kind_tag == 1) {
     var why: string = read_error(state, b.term.value, owned, deps);
@@ -2572,42 +2619,44 @@ function verify_return(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: i32[][], sta
   if (at < 0) {
     return "missing or duplicate return step";
   }
-  var done: Ledger = replay(state, p.steps[at], return_supplies(f, b), 0 - 1, owned, deps);
-  if (!done.ok) {
-    return done.why;
+  var why: string = replay_error(state, p.steps[at], return_supplies(f, b), 0 - 1, owned, deps);
+  if (why != "") {
+    return why;
   }
-  for bit in done.bits {
-    if (bit) {
+  var v: i32 = 0;
+  while (v < state.len()) {
+    if (state[v] && !step_clears(p.steps[at], v)) {
       return "counted unit leaks at return";
     }
+    v = v + 1;
   }
   return "";
 }
 
-function enter_phis(b: ssa.SBlock, state: boolean[], owned: boolean[]): Ledger {
-  var next: boolean[] = state;
+function enter_phis(b: ssa.SBlock, own state: boolean[], owned: boolean[]): Ledger {
   for ins in b.insts {
     if (ins.kind_tag == 8 && owned[ins.result]) {
-      if (next[ins.result]) {
+      if (state[ins.result]) {
         return rejected("phi unit already present");
       }
-      next = next.with(ins.result, true);
+      state = state.with(ins.result, true);
     }
   }
-  return Ledger { ok: true, why: "", bits: next };
+  return Ledger { ok: true, why: "", bits: state };
 }
 
-function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: i32[][], state: boolean[], owned: boolean[], analysis: ssasem.Analysis): string {
+function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: i32[][], own state: boolean[], owned: boolean[], analysis: ssasem.Analysis): string {
   var at: i32 = find_step(p, idx, b.id, edge_point(), target);
   if (at < 0) {
     return "missing or duplicate edge step";
   }
   var si: i32 = ssalive.position(analysis.flow, target);
-  var done: Ledger = replay(state, p.steps[at], edge_supplies(f, b, si, owned), 0 - 1, owned, analysis.dependencies);
-  if (!done.ok) {
-    return done.why;
+  var why: string = replay_error(state, p.steps[at], edge_supplies(f, b, si, owned), 0 - 1, owned, analysis.dependencies);
+  if (why != "") {
+    return why;
   }
-  var entered: Ledger = enter_phis(f.graph.blocks[si], done.bits, owned);
+  var left: boolean[] = apply_step(state, p.steps[at], 0 - 1, owned);
+  var entered: Ledger = enter_phis(f.graph.blocks[si], left, owned);
   if (!entered.ok) {
     return entered.why;
   }
@@ -2617,44 +2666,51 @@ function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: i
   return "";
 }
 
-function verify_block(f: ssasem.Func, bi: i32, p: Plan, idx: i32[][], owned: boolean[], analysis: ssasem.Analysis): ReplayProgress {
+// BlockProgress is a block's verdict: its rejection, or the number of plan
+// steps it accounted for.
+struct BlockProgress { why: string, count: i32 }
+
+// The row a block's operations leave is read by the return step, copied for
+// the first of two successor edges and moved into the last edge.
+function verify_block(f: ssasem.Func, bi: i32, p: Plan, idx: i32[][], owned: boolean[], analysis: ssasem.Analysis): BlockProgress {
   var b: ssa.SBlock = f.graph.blocks[bi];
-  var state: boolean[] = invariant(f, bi, owned, analysis.flow);
-  var at: i32 = find_step(p, idx, b.id, entry_point(), 0 - 1);
-  if (at < 0) {
-    return progress_error("missing or duplicate entry step");
-  }
-  var done: Ledger = replay(state, p.steps[at], [], 0 - 1, owned, analysis.dependencies);
-  if (!done.ok) {
-    return progress_error(done.why);
-  }
-  var operations: ReplayProgress = verify_operations(f, b, p, idx, done.bits, owned, analysis.dependencies);
+  var entry_row: boolean[] = invariant(f, bi, owned, analysis.flow);
+  var operations: ReplayProgress = verify_operations(f, b, p, idx, entry_row, owned, analysis.dependencies);
   if (operations.why != "") {
-    return operations;
+    return BlockProgress { why: operations.why, count: 0 };
   }
-  state = operations.state;
+  var state: boolean[] = operations.state;
   var count: i32 = 1 + operations.count;
   if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
     var why: string = verify_return(f, b, p, idx, state, owned, analysis.dependencies);
     if (why != "") {
-      return progress_error(why);
+      return BlockProgress { why: why, count: 0 };
     }
     count = count + 1;
   }
   if (b.term.kind_tag == 3) {
     var why: string = read_error(state, b.term.cond, owned, analysis.dependencies);
     if (why != "") {
-      return progress_error(why);
+      return BlockProgress { why: why, count: 0 };
     }
   }
-  for target in successors(b) {
-    var why: string = verify_edge(f, b, target, p, idx, state, owned, analysis);
+  var targets: i32[] = successors(b);
+  if (targets.len() == 2) {
+    var first: boolean[] = copy_row(state);
+    var why: string = verify_edge(f, b, targets[0], p, idx, first, owned, analysis);
     if (why != "") {
-      return progress_error(why);
+      return BlockProgress { why: why, count: 0 };
     }
     count = count + 1;
   }
-  return ReplayProgress { why: "", state: state, count: count };
+  if (targets.len() > 0) {
+    var why: string = verify_edge(f, b, targets[targets.len() - 1], p, idx, state, owned, analysis);
+    if (why != "") {
+      return BlockProgress { why: why, count: 0 };
+    }
+    count = count + 1;
+  }
+  return BlockProgress { why: "", count: count };
 }
 
 function same_takes(a: i32[], b: i32[]): boolean {
@@ -2715,7 +2771,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   var bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     if (reachable[bi]) {
-      var done: ReplayProgress = verify_block(f, bi, p, idx, owned, analysis);
+      var done: BlockProgress = verify_block(f, bi, p, idx, owned, analysis);
       if (done.why != "") {
         return done.why;
       }

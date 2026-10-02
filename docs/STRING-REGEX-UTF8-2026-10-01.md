@@ -1,6 +1,14 @@
 # Checked regex text and explicit byte output
 
-Integration checkpoint, October 2: the file-byte parent `7052f1c0c`
+Current integration includes main through `0d7a8d321`. Its pinned bootstrap
+reaches identical stage-2 and stage-3 binaries of 12,114,209 bytes, SHA-256
+`a380f17f030b31c02aaedb68a48d7b83951167b74ee9a98fcc50b286557c1540`.
+Actual stage-2 Darwin, core WASM, Preview 2 and primary interpreter probes
+pass with the allocation counts recorded below. The refreshed Linux target
+matrix, regex fixtures and conformance cases, VCL and `tr` callers, and
+`make lint-all` pass. The full unit gate remains pending.
+
+Earlier integration checkpoint, October 2: the file-byte parent `7052f1c0c`
 passes the refreshed Linux target matrix, existing regex fixtures, VCL
 backend TAP suite, `tr` callers and `make lint-all`. Actual stage-2 Darwin,
 core WASM, Preview 2 and primary interpreter fixtures pass. Native reports
