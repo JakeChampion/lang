@@ -257,16 +257,16 @@ def sha2_rounds(width, rounds, K, bs0, bs1, ss0, ss1):
 
     def body(p):
         for i, n in enumerate(names):
-            p(f"    var {n}: {ty} = st.h{i};")
+            p(f"    let {n}: {ty} = st.h{i};")
         for i in range(16):
-            p(f"    var w{i}: {ty} = {'0' if width == 32 else '(0 as u64)'};")
+            p(f"    let w{i}: {ty} = {'0' if width == 32 else '(0 as u64)'};")
         p("    let off: i32 = from;")
         p("    let blk: i32 = 0;")
         p("    while (blk < nblocks) {")
         for i in range(16):
             p(f"        w{i} = {load_word(i, bpw, True, ty, width)};")
         for n in names:
-            p(f"        var {n}{n}: {ty} = {n};")
+            p(f"        let {n}{n}: {ty} = {n};")
         work = [n + n for n in names]
         for i in range(rounds):
             A, B, C, D, E, F, G, H = [work[(k - i) % 8] for k in range(8)]
@@ -292,16 +292,16 @@ def sha2_rounds(width, rounds, K, bs0, bs1, ss0, ss1):
 def sha1_rounds(p):
     names = list("abcde")
     for i, n in enumerate(names):
-        p(f"    var {n}: u32 = st.h{i};")
+        p(f"    let {n}: u32 = st.h{i};")
     for i in range(16):
-        p(f"    var w{i}: u32 = 0;")
+        p(f"    let w{i}: u32 = 0;")
     p("    let off: i32 = from;")
     p("    let blk: i32 = 0;")
     p("    while (blk < nblocks) {")
     for i in range(16):
         p(f"        w{i} = {load_word(i, 4, True, 'u32', 32)};")
     for n in names:
-        p(f"        var {n}{n}: u32 = {n};")
+        p(f"        let {n}{n}: u32 = {n};")
     work = [n + n for n in names]
     for i in range(80):
         A, B, C, D, E = [work[(k - i) % 5] for k in range(5)]
@@ -329,16 +329,16 @@ def sha1_rounds(p):
 def md5_rounds(p):
     names = list("abcd")
     for i, n in enumerate(names):
-        p(f"    var {n}: u32 = st.h{i};")
+        p(f"    let {n}: u32 = st.h{i};")
     for i in range(16):
-        p(f"    var x{i}: u32 = 0;")
+        p(f"    let x{i}: u32 = 0;")
     p("    let off: i32 = from;")
     p("    let blk: i32 = 0;")
     p("    while (blk < nblocks) {")
     for i in range(16):
         p(f"        x{i} = {load_word(i, 4, False, 'u32', 32)};")
     for n in names:
-        p(f"        var {n}{n}: u32 = {n};")
+        p(f"        let {n}{n}: u32 = {n};")
     work = [n + n for n in names]
     for i in range(64):
         A, B, C, D = [work[(k - i) % 4] for k in range(4)]
@@ -371,9 +371,9 @@ def sm3_rounds(p):
     about to become C and G."""
     names = list("abcdefgh")
     for i, n in enumerate(names):
-        p(f"    var {n}: u32 = st.h{i};")
+        p(f"    let {n}: u32 = st.h{i};")
     for i in range(20):
-        p(f"    var w{i}: u32 = 0;")
+        p(f"    let w{i}: u32 = 0;")
     p("    let sw: u32 = 0;")
     p("    let tt: u32 = 0;")
     p("    let t12: u32 = 0;")
@@ -384,7 +384,7 @@ def sm3_rounds(p):
     for i in range(16):
         p(f"        w{i} = {load_word(i, 4, True, 'u32', 32)};")
     for n in names:
-        p(f"        var {n}{n}: u32 = {n};")
+        p(f"        let {n}{n}: u32 = {n};")
     lo = [n + n for n in names[:4]]
     hi = [n + n for n in names[4:]]
     for j in range(64):
@@ -456,11 +456,11 @@ def emit_blake2b(p):
     p("// locals with the sigma permutation applied at generation time.")
     p("function __blake2b_blocks(st: Blake2b, bs: [u8], from: i32, nblocks: i32, t: u64, last: boolean): Blake2b {")
     for i in range(8):
-        p(f"    var h{i}: u64 = st.h{i};")
+        p(f"    let h{i}: u64 = st.h{i};")
     for i in range(16):
-        p(f"    var m{i}: u64 = 0 as u64;")
+        p(f"    let m{i}: u64 = 0 as u64;")
     for i in range(16):
-        p(f"    var v{i}: u64 = 0 as u64;")
+        p(f"    let v{i}: u64 = 0 as u64;")
     p("    let counter: u64 = t;")
     p("    let off: i32 = from;")
     p("    let blk: i32 = 0;")
