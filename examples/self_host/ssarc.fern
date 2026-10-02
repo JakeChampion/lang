@@ -599,9 +599,10 @@ function receiver_retained(step: ssaunits.Step): boolean {
 // place when it is the box's only reader, and it cannot see the caller's
 // binding to know whether it is — so the caller says so, by holding a count
 // while the call runs. A value this step DROPS is not one the caller reads
-// again, so it needs no bracket and the callee is free to work in place; nor
-// is a buffer the plan HANDS on (ssaunits.hands) — a borrowed parameter, or
-// a field of a record, this frame reads no further.
+// again, so it needs no bracket and the callee is free to work in place,
+// unless it is lent twice: the callee would grow one parameter under the
+// other's reads. Nor is a buffer the plan HANDS on (ssaunits.hands) — a
+// borrowed parameter, or a field of a record, this frame reads no further.
 //
 // An array is bracketed only at a position the callee's grow row says it may
 // grow (ssaunits.grows_buffer). The table answers for every callee a kept body
@@ -641,7 +642,8 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
   var i: i32 = 0;
   while (i < ins.args.len() && i < modes.len()) {
     var v: i32 = ins.args[i];
-    if (modes[i] == ssaunits.borrow_mode() && util.index_of_i32(step.drops, v) < 0) {
+    var last: boolean = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1;
+    if (modes[i] == ssaunits.borrow_mode() && !last) {
       var handed: boolean = i < step.hand_roots.len() && step.hand_roots[i] >= 0;
       if (bracketable(f.values[v]) && !handed && ssaunits.grows_buffer(grows, ins.str, i) && util.index_of_i32(out.arrays, v) < 0) {
         out = Held { ...out, arrays: out.arrays.append(v) };
@@ -1230,9 +1232,9 @@ function drop_record_fields(own r: irlower.LowerResult, slot: i32, fields: semre
   return r;
 }
 
-function drops(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func): irlower.LowerResult {
+function drops(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, links: i32[]): irlower.LowerResult {
   for value in step.drops {
-    r = drop_value(r, value, f.values[value], scratch_base(f), f);
+    r = drop_linked(r, value, links, f);
   }
   return r;
 }
@@ -1241,12 +1243,12 @@ function drops(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func):
 // storage became the result's, so releasing it here would free a live box.
 // `shell` is a box whose payload this step took without emptying its slot
 // (`ssaunits.shell_root`), so its drop releases the box alone.
-function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, taken: i32, took: i32, shell: i32): irlower.LowerResult {
+function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, links: i32[], taken: i32, took: i32, shell: i32): irlower.LowerResult {
   for value in step.drops {
     if (value == shell) {
       r = release(r, value, f.values[value], f);
     } else if (value != taken && value != took) {
-      r = drop_value(r, value, f.values[value], scratch_base(f), f);
+      r = drop_linked(r, value, links, f);
     }
   }
   return r;
@@ -1916,7 +1918,7 @@ function edge(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx:
       r = emit(r, ir.op_load_local(ins.args[pi]));
     }
   }
-  r = drops(r, step, f);
+  r = drops(r, step, f, links);
   var i: i32 = dest.insts.len() - 1;
   while (i >= 0) {
     var ins: ssa.SInst = dest.insts[i];
@@ -4144,17 +4146,21 @@ function append_linked(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 
 // The links of a function, by value: the parameter each link's unit is owed
 // on, -1 for a value that is not one. A link is an append onto the parameter
-// whose retain was deferred, an append onto a link, or a phi whose every
-// input is the parameter or a link of it, which is how a loop carries one.
+// whose retain was deferred, an append onto a link, a phi whose every input is
+// the parameter or a link of it, which is how a loop carries one, or the
+// result of a direct call lent the parameter or a link as the last reader of
+// its box (`call_root`), `b = f(b, v)`.
 //
 // Every use of a link has to understand the encoding, so a candidate stays
 // only while each supply naming it MOVES it into one of three places: the
 // receiver of an append, a link phi, or the return, which takes the unit that
 // is owed. A read that takes no unit is fine, since the box is live either
-// way. A loop's link reaches its phi by move only because `ssalive` counts a
-// phi's inputs on the incoming edge rather than as uses in its block. A drop, a hand-off, a retain or a steal is not, and neither is a
-// parameter the frame reads anywhere else: it is removed, and whatever
-// depended on it goes with it on the next round.
+// way, and so is a drop, which releases only a box of the frame's own
+// (`drop_linked`). A loop's link reaches its phi by move only because
+// `ssalive` counts a phi's inputs on the incoming edge rather than as uses in
+// its block. A retain or a steal is not, and neither is a parameter the frame
+// reads anywhere else: it is removed, and whatever depended on it goes with it
+// on the next round.
 function links_of(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][]): i32[] {
   var top: i32 = 0 - 2;
   var state: i32[] = [];
@@ -4201,6 +4207,9 @@ function link_kind(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
   if (ins.kind_tag == ssasem.append()) {
     return p.grows[ins.result] < 0;
   }
+  if (ins.kind_tag == ssasem.call()) {
+    return is_array_type(f.values[ins.result]) && !dyn_call(ins) && !fern_helper_call(ins.str, ins.args.len());
+  }
   return ins.kind_tag == 8 && is_array_type(f.values[ins.result]);
 }
 
@@ -4245,6 +4254,8 @@ function propagate(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], state: i32[],
         if (ins.args[0] < f.graph.nparams && !deferred_retain(f, p, at(p, idx, b.id, pos, 0 - 1), ins)) {
           root = 0 - 1;
         }
+      } else if (ins.kind_tag == ssasem.call()) {
+        root = call_root(f, at(p, idx, b.id, pos, 0 - 1), state, roots, ins);
       } else {
         for a in ins.args {
           var r0: i32 = input_root(f, state, roots, a);
@@ -4261,6 +4272,39 @@ function propagate(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], state: i32[],
     }
   }
   return out;
+}
+
+// A call's result is a link of the one root among its operands, lent as the
+// last reader of the box: the parameter handed on (ssaunits.hands) or a link
+// dying at the call. The callee may grow that box in place, since nothing in
+// this frame reads it again, and what comes back is either the same box, at
+// the callee's retain, or one the frame holds a unit of.
+function call_root(f: ssasem.Func, step: ssaunits.Step, state: i32[], roots: boolean[], ins: ssa.SInst): i32 {
+  var modes: i32[] = ssaunits.callee_modes(f, ins);
+  var root: i32 = 0 - 1;
+  var i: i32 = 0;
+  while (i < ins.args.len()) {
+    var r0: i32 = input_root(f, state, roots, ins.args[i]);
+    if (r0 != 0 - 1) {
+      if (root != 0 - 1 || !lent_last(f, step, modes, ins, i)) {
+        return 0 - 1;
+      }
+      root = r0;
+    }
+    i = i + 1;
+  }
+  return root;
+}
+
+function lent_last(f: ssasem.Func, step: ssaunits.Step, modes: i32[], ins: ssa.SInst, i: i32): boolean {
+  var a: i32 = ins.args[i];
+  if (i >= modes.len() || modes[i] != ssaunits.borrow_mode() || ssaunits.occurrences(ins.args, a) != 1) {
+    return false;
+  }
+  if (a < f.graph.nparams) {
+    return i < step.hand_roots.len() && step.hand_roots[i] == a;
+  }
+  return util.index_of_i32(step.drops, a) >= 0;
 }
 
 function input_root(f: ssasem.Func, state: i32[], roots: boolean[], a: i32): i32 {
@@ -4280,9 +4324,6 @@ function input_root(f: ssasem.Func, state: i32[], roots: boolean[], a: i32): i32
 function prune(f: ssasem.Func, p: ssaunits.Plan, state: i32[]): i32[] {
   var out: i32[] = state;
   for step in p.steps {
-    for d in step.drops {
-      out = unlink(out, d);
-    }
     for h in step.hand_roots {
       out = unlink(out, h);
     }
@@ -4357,6 +4398,35 @@ function owed_on_entry(step: ssaunits.Step, dest: ssa.SBlock, links: i32[]): ssa
     }
   }
   return ssaunits.Step { ...step, supplies: kept };
+}
+
+// A call result that is a link and still the parameter's box gives the
+// callee's retain back: the caller's count keeps the box live, and the link
+// holds no unit while it is the parameter's.
+function settle_call_link(own r: irlower.LowerResult, f: ssasem.Func, links: i32[], ins: ssa.SInst): irlower.LowerResult {
+  if (ins.kind_tag != ssasem.call() || links[ins.result] < 0) {
+    return r;
+  }
+  r = emit(r, ir.op_load_local(ins.result));
+  r = emit(r, ir.op_load_local(links[ins.result]));
+  r = emit(r, ir.op_bin("eq", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = release(r, ins.result, f.values[ins.result], f);
+  return emit(r, ir.op_end());
+}
+
+// The drop of `value`, which a link owes only when it is a box of the frame's
+// own.
+function drop_linked(own r: irlower.LowerResult, value: i32, links: i32[], f: ssasem.Func): irlower.LowerResult {
+  if (value >= links.len() || links[value] < 0) {
+    return drop_value(r, value, f.values[value], scratch_base(f), f);
+  }
+  r = emit(r, ir.op_load_local(value));
+  r = emit(r, ir.op_load_local(links[value]));
+  r = emit(r, ir.op_bin("ne", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = drop_value(r, value, f.values[value], scratch_base(f), f);
+  return emit(r, ir.op_end());
 }
 
 // The unit a link owes, taken where it leaves the frame: a retain when it is
@@ -5754,7 +5824,7 @@ function builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.Lower
 }
 
 function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[], no_reuse: boolean, uses: i32[]): irlower.LowerResult {
-  r = drops(r, at(p, idx, b.id, ssaunits.entry_point(), 0 - 1), f);
+  r = drops(r, at(p, idx, b.id, ssaunits.entry_point(), 0 - 1), f, links);
   var pos: i32 = 0;
   var pairs: ReusePairs = reuse_pairs(f, p, idx, b, no_reuse);
   var keeps: Keeps = block_keeps(f, p, idx, b, pairs, uses);
@@ -5788,12 +5858,13 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
         r = reuse_construct(r, f, ins, keeps, kb);
       } else if (util.index_of_i32(late, ins.result) < 0) {
         r = instruction(r, f, p, ins, structs, defer0, link_at(f, links, ins), util.index_of_i32(kept, ins.result) >= 0);
+        r = settle_call_link(r, f, links, ins);
       }
       r = bracket_give(r, f, held);
       if (pairs.tokens[pos] >= 0 && !token_kept(keeps, pos)) {
         r = reuse_token(r, f, pairs.tokens[pos]);
       }
-      r = drops_less(r, step, f, pairs.tokens[pos], pairs.selfs[pos], ssaunits.shell_root(f, p, ins));
+      r = drops_less(r, step, f, links, pairs.tokens[pos], pairs.selfs[pos], ssaunits.shell_root(f, p, ins));
     }
     pos = pos + 1;
   }
@@ -5872,7 +5943,7 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
     if (b.term.kind_tag == 1 && b.term.value >= 0 && e.links[b.term.value] >= 0) {
       e = Emit { ...e, r: take_owed(e.r, b.term.value, e.links[b.term.value]) };
     }
-    e = Emit { ...e, r: drops(e.r, ret, f) };
+    e = Emit { ...e, r: drops(e.r, ret, f, e.links) };
     // The unreachable end aborts as a failed bounds check does, then
     // returns a zero the abort never lets the stack shape reach.
     if (b.term.kind_tag == 4) {
@@ -6014,11 +6085,18 @@ pub function caller_sigs(sg: irlower.FnSigs, callees: Callee[]): irlower.FnSigs 
   var handback: string[] = without_rows(sg.cnt_handback_params, row_keys(names, [""]), false);
   var params: string[] = without_rows(sg.param_counted, row_keys(names, tier_prefixes()), true);
   var borrows: string[] = sg.borrowable_params;
+  // A threader lowered here keeps its AST callers on the shallow release
+  // (#10420). The first produced threader drops every threader row, and the
+  // rows appended below are never threader rows, so once is enough.
+  var threaders: util.NameIndex = util.name_index(irlower.thread_row_names(arrays));
+  var threads_dropped: boolean = false;
   for c in callees {
     var name: string = c.name;
     var f: ssasem.Func = c.f;
-    // A threader lowered here keeps its AST callers on the shallow release (#10420).
-    arrays = irlower.without_thread_rows_through(arrays, name);
+    if (!threads_dropped && threaders.has(name)) {
+      arrays = irlower.without_thread_rows(arrays);
+      threads_dropped = true;
+    }
     if let typeinfo.TypeTuple(tup) = f.result {
       tuples = tuples.append(name);
       var flags: string = tuple_flags(tup);

@@ -66,6 +66,13 @@ pub function lambda_captures(lm: ast.ExprLambda, outer: EmitState): string[] {
 pub struct EmitState {
   out: string,
   label_n: i32,
+  // builtin_i32 / builtin_string: the builtins whose call result is an i32 or
+  // a string (builtin_i32_names / builtin_string_names), indexed once.
+  builtin_i32: util.NameIndex,
+  builtin_string: util.NameIndex,
+  // funcs_ix indexes `funcs` by name, one entry per declaration in order;
+  // with_funcs keeps the two together.
+  funcs_ix: util.NameIndex,
   local_names: string[],
   in_function: boolean,
   string_lits: string[],
@@ -244,6 +251,9 @@ pub function new_state(): EmitState {
   return EmitState {
     out: "",
     label_n: 0,
+    builtin_i32: util.name_index(builtin_i32_names()),
+    builtin_string: util.name_index(builtin_string_names()),
+    funcs_ix: util.name_index(ns),
     local_names: ns,
     in_function: false,
     string_lits: sl,
@@ -330,6 +340,15 @@ pub function rc_free_debug_on(): boolean {
 // for `name` in every unit — is what struct_make / variant_is / dyn dispatch leaq
 // instead of a unit-local string label; emit_module_ir_unit emits each recorded
 // shape once as `.weak __fern_shp_<sanitized>` so the linker merges the copies.
+// with_funcs: the state over `funcs`, indexed by name.
+pub function with_funcs(s: EmitState, funcs: parser.FuncDecl[]): EmitState {
+  var names: string[] = [];
+  for fd in funcs {
+    names = names.append(fd.name);
+  }
+  return EmitState { ...s, funcs: funcs, funcs_ix: util.name_index(names) };
+}
+
 pub function add_shape_lit(s: EmitState, name: string): EmitState {
   var i: i32 = 0;
   while (i < s.shape_lits.len()) {
@@ -6887,7 +6906,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "write_file_exec") {
     return ty_result(ty_unknown());
   }
-  if (util.index_of_str(builtin_i32_names(), id.name) >= 0) {
+  if (s.builtin_i32.has(id.name)) {
     return ty_i32();
   }
   // tcp_recv(fd, max) -> u8[] box; the rest -> i32 (fd /
@@ -7021,7 +7040,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "read_line") {
     return ty_option(ty_string());
   }
-  if (util.index_of_str(builtin_string_names(), id.name) >= 0) {
+  if (s.builtin_string.has(id.name)) {
     return ty_string();
   }
   if (id.name == "__raw_array") {
@@ -7108,12 +7127,12 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "str_split") {
     return ty_array_string();
   }
-  var fi: i32 = 0;
-  while (fi < s.funcs.len()) {
+  var fi: i32 = s.funcs_ix.chain(id.name);
+  while (fi >= 0) {
     if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
       return ty_from_name(s.funcs[fi].ret_type);
     }
-    fi = fi + 1;
+    fi = s.funcs_ix.next[fi];
   }
   return ty_unknown();
 }
@@ -8613,7 +8632,7 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
 // checks with; `tm` is the module as the checker annotated it.
 pub function entry_check_errors(tm: parser.Module): util.Diag[] {
   var s: EmitState = new_state();
-  s = EmitState { ...s, struct_decls: irlower.struct_tab(tm.structs), funcs: tm.funcs };
+  s = with_funcs(EmitState { ...s, struct_decls: irlower.struct_tab(tm.structs) }, tm.funcs);
   return check_module(tm, s);
 }
 
@@ -8885,7 +8904,7 @@ pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
 // CallGate is the shared walk's parameter block: the free-function arity table
 // (`names` / `argc`, parallel arrays), the undefined rule's admit list
 // (`known`), and which of the two rules are live.
-struct CallGate { names: string[], argc: i32[], known: string[], check_arity: boolean, check_undef: boolean }
+struct CallGate { names: string[], names_ix: util.NameIndex, argc: i32[], known: string[], check_arity: boolean, check_undef: boolean }
 
 function callgate_name_in(names: string[], name: string): boolean {
   var i: i32 = 0;
@@ -8980,7 +8999,7 @@ function callgate_ns_present(pfx: string, names: string[]): boolean {
   var i: i32 = 0;
   while (i < names.len()) {
     var nm: string = names[i];
-    if (nm.len() > pfx.len() && slice_unchecked(nm, 0, pfx.len()) == pfx) {
+    if (nm.len() > pfx.len() && util.has_prefix(nm, pfx)) {
       return true;
     }
     i = i + 1;
@@ -9007,23 +9026,15 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
       match (c.callee) {
         ast.ExprIdent(id) => {
           if (!callgate_name_in(bound, id.name)) {
-            var found: boolean = false;
-            var ti: i32 = 0;
-            while (ti < g.names.len()) {
-              if (g.names[ti] == id.name) {
-                found = true;
-                if (g.check_arity && c.args.len() != g.argc[ti]) {
-                  errs = errs.append(util.Diag {
-                    code: "E004", message: "function '" + id.name
-                      + "' expects " + util.i32_to_string(g.argc[ti])
-                      + " argument(s), got " + util.i32_to_string(c.args.len()),
-                    line: id.line, col: id.col,
-                  });
-                }
-                ti = g.names.len();
-              } else {
-                ti = ti + 1;
-              }
+            var ti: i32 = g.names_ix.find(id.name);
+            var found: boolean = ti >= 0;
+            if (found && g.check_arity && c.args.len() != g.argc[ti]) {
+              errs = errs.append(util.Diag {
+                code: "E004", message: "function '" + id.name
+                  + "' expects " + util.i32_to_string(g.argc[ti])
+                  + " argument(s), got " + util.i32_to_string(c.args.len()),
+                line: id.line, col: id.col,
+              });
             }
             if (g.check_undef && !found && !callgate_known_callee(id.name, g.known)) {
               errs = errs.append(callgate_undefined_error(g, where, id.name, id.line, id.col));
@@ -9225,8 +9236,9 @@ function callgate_run(mod: parser.Module, g: CallGate): util.Diag[] {
 }
 
 pub function check_call_arity(mod: parser.Module): util.Diag[] {
+  var names: string[] = callgate_free_names(mod);
   return callgate_run(mod, CallGate {
-    names: callgate_free_names(mod), argc: callgate_free_argc(mod), known: [],
+    names: names, names_ix: util.name_index(names), argc: callgate_free_argc(mod), known: [],
     check_arity: true, check_undef: false,
   });
 }
@@ -9422,8 +9434,9 @@ pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
   // `g.argc[ti]` under an `&&` with check_arity, and a parallel table is
   // cheaper than depending on short-circuit evaluation to keep an empty
   // array unindexed.
+  var names: string[] = callgate_free_names(mod);
   return callgate_run(mod, CallGate {
-    names: callgate_free_names(mod), argc: callgate_free_argc(mod),
+    names: names, names_ix: util.name_index(names), argc: callgate_free_argc(mod),
     known: callgate_known_names(mod), check_arity: false, check_undef: true,
   });
 }

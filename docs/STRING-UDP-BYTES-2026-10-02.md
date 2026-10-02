@@ -1,5 +1,11 @@
 # UDP byte sinks
 
+Integration with `4278d1f9d` passes the refreshed Linux target matrix and all
+lint gates, including the measured SSA admission census of 333 operations.
+It includes the merged TCP sink and current formatter behavior. Bootstrap,
+size and full-suite validation remain pending for this integration. The
+completed measurements below describe the earlier checkpoint.
+
 The current refresh integrates TCP checkpoint `788bac08c` and main
 `c83a5855c`, preserving typed-IR-only lowering. Source checks, Linux target
 tests and all lint gates pass. The pinned bootstrap reaches identical

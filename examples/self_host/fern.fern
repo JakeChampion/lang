@@ -2841,16 +2841,17 @@ function run(): i32 {
     // emit verbatim, so the output file is a runnable `.wasm`.
     out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));
   } else if (target == "wasm32-wasi") {
-    // A Component-Model `wasi:cli/run` component, framed from the program's
-    // WASI usage (emitforms.wasm_component). Programs using WASI the
-    // self-host component path doesn't wrap yet are rejected rather than
+    // A Component-Model `wasi:cli/run` component (emitforms.wasm_component).
+    // A program the component path cannot take is rejected rather than
     // emitting a broken component.
-    var comp: i32[] = emitforms.wasm_component(full, sub);
-    if (comp.len() == 0) {
-      eprint(emitforms.COMPONENT_REFUSED);
+    var comp: wit_compose.Composed = emitforms.wasm_component(full, sub);
+    if (comp.bytes.len() == 0) {
+      if (comp.refused.len() > 0) {
+        eprint(comp.refused);
+      }
       return 2;
     }
-    out_asm = string_from_bytes_unchecked(util.to_u8(comp));
+    out_asm = string_from_bytes_unchecked(util.to_u8(comp.bytes));
   } else if (target == "wasm32-wasi-http" && emit_text) {
     out_asm = emitforms.wasm_http_core(full, sub);
   } else if (target == "wasm32-wasi-http" && emit == "core-module") {

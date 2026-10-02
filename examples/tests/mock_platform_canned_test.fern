@@ -7,7 +7,7 @@ import "std/i64";
 // examples/tests/mock_platform_canned_test.fern — a MockPlatform answers
 // what the test canned for each capability (#9854): the handler under
 // test reads a variable, the clock, a random number and an upstream's
-// status through its bag, and the test decides each answer; configuration
+// answer through its bag, and the test decides each answer; configuration
 // and secrets are canned the same way, a secret logged by its name alone.
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
@@ -18,14 +18,22 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     },
     None => {}
   }
-  var upstream: i32 = plat.fetch("10.0.0.1", 8080, "/health");
-  return http.ok(region + " " + plat.now_ms().to_string() + " " + plat.random_i32().to_string() + " " + upstream.to_string());
+  var upstream: string = "unreachable";
+  match (plat.http(fetch.get("http://10.0.0.1:8080/health"))) {
+    Ok(resp) => {
+      upstream = resp.status.to_string() + " " + resp.body_string();
+    },
+    Err(e) => {
+      upstream = e.message();
+    }
+  }
+  return http.ok(region + " " + plat.now_ms().to_string() + " " + plat.random_i32().to_string() + " " + upstream);
 }
 
 function test_defaults_without_canned_answers(): test.TestOutcome {
   var m: MockPlatform = mock_platform.mock_platform_new();
   var resp: HttpResponse = handle(http.request("GET", "/"), m.as_platform());
-  return test.assert_body(resp, "nowhere 0 0 -1");
+  return test.assert_body(resp, "nowhere 0 0 connect: Connection refused");
 }
 
 function test_canned_answers_reach_the_handler(): test.TestOutcome {
@@ -33,16 +41,16 @@ function test_canned_answers_reach_the_handler(): test.TestOutcome {
   m.env_set("REGION", "eu-west");
   m.now_set(1700000000123 as i64);
   m.random_set(42);
-  m.fetch_set("10.0.0.1", 8080, "/health", 204);
+  m.http_set("GET", "http://10.0.0.1:8080/health", 204, "fine");
   var resp: HttpResponse = handle(http.request("GET", "/"), m.as_platform());
-  return test.assert_body(resp, "eu-west 1700000000123 42 204");
+  return test.assert_body(resp, "eu-west 1700000000123 42 204 fine");
 }
 
-function test_a_fetch_of_another_path_still_fails(): test.TestOutcome {
+function test_a_request_of_another_url_still_fails(): test.TestOutcome {
   var m: MockPlatform = mock_platform.mock_platform_new();
-  m.fetch_set("10.0.0.1", 8080, "/other", 200);
+  m.http_set("GET", "http://10.0.0.1:8080/other", 200, "");
   var resp: HttpResponse = handle(http.request("GET", "/"), m.as_platform());
-  return test.assert_body(resp, "nowhere 0 0 -1");
+  return test.assert_body(resp, "nowhere 0 0 connect: Connection refused");
 }
 
 function test_the_last_answer_wins(): test.TestOutcome {
@@ -182,7 +190,7 @@ function main(): i32 {
   var t: test.TestRunner = test.test_new("MockPlatform canned answers");
   t = t.it("without canned answers the fixed values apply", test_defaults_without_canned_answers);
   t = t.it("canned answers reach the handler", test_canned_answers_reach_the_handler);
-  t = t.it("a fetch of another path still fails", test_a_fetch_of_another_path_still_fails);
+  t = t.it("a request of another URL still fails", test_a_request_of_another_url_still_fails);
   t = t.it("the last answer canned wins", test_the_last_answer_wins);
   t = t.it("canned rows are not calls and survive reset", test_canned_rows_are_not_calls_and_survive_reset);
   t = t.it("a value with tabs and newlines round-trips", test_a_value_with_tabs_and_newlines_round_trips);

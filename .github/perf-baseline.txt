@@ -30,9 +30,11 @@
 # rows the count is exact, which `int_loop.ir` measuring identically over six
 # runs is the control for.
 #
-# ADVISORY, IN BOTH DIRECTIONS — see scripts/ci-check-perf. When a number
-# moves on purpose, update it in the same PR; the job summary prints the
-# corrected lines ready to paste. Keep the reason in the PR, not here.
+# STRICT, IN BOTH DIRECTIONS — perf.yml runs this comparison with
+# FERN_CI_PERF_GATE_STRICT=1, so a row outside its tolerance fails the job
+# whether it got worse or better. When a number moves on purpose, update it in
+# the same PR; the job summary prints the corrected lines ready to paste. Keep
+# the reason in the PR, not here.
 #
 # TWO ARCHITECTURES. An instruction count is not comparable across ISAs, so the
 # keys are namespaced by arch and compared independently — and each job compares
