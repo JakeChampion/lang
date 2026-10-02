@@ -530,7 +530,7 @@ function main(): i32 {
     var growPlan = ssaunits.plan(growFunc, [2, 1]);
     if (!growPlan.ok) { eprint(growPlan.why); return 140; }
     if (growPlan.grows[3] != 0 || growPlan.grow_fields[3] != 0) { return 141; }
-    var growRows = ssaunits.grow_rows("grow", growFunc, growPlan, []);
+    var growRows = ssaunits.grow_rows("grow", growFunc, growPlan, [], util.name_index([]));
     if (growRows.len() != 1 || growRows[0].param != 0 || growRows[0].field != 0) { return 142; }
     var growLowered = ssarc.lower(growFunc, [2, 1], growPlan, irlower.struct_tab_empty(), []);
     if (!growLowered.ok) { eprint(growLowered.why); return 144; }
@@ -556,7 +556,7 @@ function main(): i32 {
     var readPlan = ssaunits.plan(readFunc, [2, 1]);
     if (!readPlan.ok) { eprint(readPlan.why); return 146; }
     if (readPlan.grows[3] != 0 - 1) { return 147; }
-    if (ssaunits.grow_rows("grow", readFunc, readPlan, []).len() != 0) { return 148; }
+    if (ssaunits.grow_rows("grow", readFunc, readPlan, [], util.name_index([])).len() != 0) { return 148; }
     var readLowered = ssarc.lower(readFunc, [2, 1], readPlan, irlower.struct_tab_empty(), []);
     if (!readLowered.ok) { eprint(readLowered.why); return 149; }
     var sawReadNull: boolean = false;
@@ -581,7 +581,7 @@ function main(): i32 {
     var fieldWithPlan = ssaunits.plan(fieldWithFunc, [2, 1]);
     if (!fieldWithPlan.ok) { eprint(fieldWithPlan.why); return 160; }
     if (fieldWithPlan.grows[3] != 0 || fieldWithPlan.grow_fields[3] != 0) { return 161; }
-    var fieldWithRows = ssaunits.grow_rows("set", fieldWithFunc, fieldWithPlan, []);
+    var fieldWithRows = ssaunits.grow_rows("set", fieldWithFunc, fieldWithPlan, [], util.name_index([]));
     if (fieldWithRows.len() != 1 || fieldWithRows[0].param != 0 || fieldWithRows[0].field != 0) { return 162; }
     var fieldWithLowered = ssarc.lower(fieldWithFunc, [2, 1], fieldWithPlan, irlower.struct_tab_empty(), []);
     if (!fieldWithLowered.ok) { eprint(fieldWithLowered.why); return 163; }
@@ -606,7 +606,7 @@ function main(): i32 {
     var arrWithFunc = ssasem.Func { ...appendFunc, graph: arrWithGraph };
     var arrWithPlan = ssaunits.plan(arrWithFunc, [2, 1]);
     if (!arrWithPlan.ok) { eprint(arrWithPlan.why); return 165; }
-    if (ssaunits.grow_rows("set_arr", arrWithFunc, arrWithPlan, []).len() != 0) { return 166; }
+    if (ssaunits.grow_rows("set_arr", arrWithFunc, arrWithPlan, [], util.name_index([])).len() != 0) { return 166; }
     var arrWithLowered = ssarc.lower(arrWithFunc, [2, 1], arrWithPlan, irlower.struct_tab_empty(), []);
     if (!arrWithLowered.ok) { eprint(arrWithLowered.why); return 167; }
     var sawArrWithRetain: boolean = false;

@@ -8298,7 +8298,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irlower
 // the backend does not cover.
 function emit_ssa_function(r: irlower.LowerResult, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
   var t_lift: i64 = monotonic_ns();
-  var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(label_name, r.n_params, r.n_locals, r.ops);
+  var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops);
   var why: string = lifted.bail;
   if (lifted.ok) {
     var collision: i32 = ssa.repeated_block_id(lifted.func);
