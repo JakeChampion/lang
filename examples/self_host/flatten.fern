@@ -1464,7 +1464,27 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     });
     k = k + 1;
   }
-  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx) };
+  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
+}
+
+// mangle_trait_reqs rewrites the types a trait's requirement signatures name,
+// as rewrite_module_bodies rewrites every function's, so the requirement and
+// an impl's method are compared (E021) and resolved (a `dyn` call's result) in
+// the one spelling the flattened program has.
+function mangle_trait_reqs(reqs: parser.TraitReq[], ctx: RewriteCtx): parser.TraitReq[] {
+  let out: parser.TraitReq[] = [];
+  for r in reqs {
+    out = out.append(parser.TraitReq { ...r, req_sigs: mangle_sigs(r.req_sigs, ctx), assoc_sigs: mangle_sigs(r.assoc_sigs, ctx) });
+  }
+  return out;
+}
+
+function mangle_sigs(sigs: parser.FuncDecl[], ctx: RewriteCtx): parser.FuncDecl[] {
+  let out: parser.FuncDecl[] = [];
+  for fd in sigs {
+    out = out.append(parser.FuncDecl { ...fd, params: rewrite_params(fd.params, ctx), ret_type: rewrite_type_name(fd.ret_type, ctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, ctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, ctx) });
+  }
+  return out;
 }
 
 // mangle_impls rewrites an impl block's TARGET type the same way every other
