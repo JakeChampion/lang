@@ -121,12 +121,11 @@ pub function hash_key(s: string): string {
   return i32_to_string(a) + "_" + i32_to_string(b);
 }
 
-// hash_bucket maps a string to a bucket index in [0, n). It is hash_key's first
-// polynomial roll, kept numeric: hash_key concatenates two rolls into a string,
-// which is right for a content fingerprint and wrong for an index — a caller
-// that only wants a bucket would pay a string build and a parse per probe.
-// Masking to 0x3FFFFFFF keeps the accumulator non-negative, so the `%` cannot
-// return a negative index.
+// hash_bucket maps a string to a bucket index in [0, n): a polynomial roll
+// over the bytes and the length, four bytes per step, wrapping as it goes and
+// masked to 0x3FFFFFFF once at the end so the `%` cannot return a negative
+// index. Which bucket a name lands in is not observable: every index over it
+// chains in ascending order and finds the first entry of a name.
 pub function hash_bucket(s: string, n: i32): i32 {
   if (n <= 1) {
     return 0;
@@ -134,12 +133,16 @@ pub function hash_bucket(s: string, n: i32): i32 {
   var a: i32 = 208357;
   var len: i32 = s.len();
   var i: i32 = 0;
+  while (i + 4 <= len) {
+    a = a * 923521 + s[i] as i32 * 29791 + s[i + 1] as i32 * 961 + s[i + 2] as i32 * 31 + s[i + 3] as i32;
+    i = i + 4;
+  }
   while (i < len) {
-    a = a * 31 + s[i] as i32 + 1 & 1073741823;
+    a = a * 31 + s[i] as i32;
     i = i + 1;
   }
-  a = a * 31 + len & 1073741823;
-  return a % n;
+  a = a * 31 + len;
+  return (a & 1073741823) % n;
 }
 
 // NameIndex is a list of names with a bucket index over it: head[b] is the
