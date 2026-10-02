@@ -14,9 +14,9 @@
 // malformed op named at the point it was produced.
 //
 // It is deliberately small and depends only on the verifiers and the op type.
-// Taking the scalars rather than an irlower.LowerResult is what keeps it that
+// Taking the scalars rather than an irtables.LowerResult is what keeps it that
 // way: it does not pull irlower in, so the driver that tests it does not
-// either. The callee index is built by irlower.fn_sig_index on the backend
+// either. The callee index is built by irtables.fn_sig_index on the backend
 // side for the same reason — it is an AST question, and answering it here
 // would drag the parser into the gate's closure.
 //
@@ -71,7 +71,7 @@ pub function verify_on(): boolean {
 // everything they found, structure problems first.
 //
 // `sigs` is the callee-arity index for the whole program being emitted, built
-// once per emit loop by irlower.fn_sig_index. A callee it does not carry is
+// once per emit loop by irtables.fn_sig_index. A callee it does not carry is
 // left alone — a runtime helper, a lifted lambda, another unit's function — so
 // the check reports a genuine arity mismatch and never a missing entry.
 //

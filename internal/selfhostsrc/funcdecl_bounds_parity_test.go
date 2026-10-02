@@ -48,7 +48,9 @@ import (
 // shape the code actually uses, and chasing further would need real dataflow.
 var selfHostSources = []string{
 	"../../examples/self_host/parser.fern",
-	"../../examples/self_host/irlower.fern",
+	"../../examples/self_host/irtables.fern",
+	"../../examples/self_host/fnsigs.fern",
+	"../../examples/self_host/lift.fern",
 	"../../examples/self_host/constfold.fern",
 }
 

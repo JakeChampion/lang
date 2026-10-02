@@ -1207,7 +1207,7 @@ func UseTwoWordStrings(ptrW int) bool {
 // (`docs/SSO-NATIVE-FLIP-STATUS.md`). Set to true before
 // `ir.LowerWith` runs; reset after.
 //
-// Concurrent codegen — e.g. `TestDifferential_LangsmithMain`'s
+// Concurrent codegen — e.g. a differential sweep's
 // per-seed parallelism — must serialise its arm64 + x86_64
 // emit calls via `CodegenMu` below. Reads from this flag
 // during a backend's emit body are NOT lock-protected; the

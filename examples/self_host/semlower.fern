@@ -19,7 +19,9 @@ import "./ircore";
 import "./checker";
 import "./constfold";
 import "./lexer";
-import "./irlower";
+import "./irtables";
+import "./fnsigs";
+import "./lift";
 import "./parser";
 import "./platforms";
 import "./semsource";
@@ -35,11 +37,11 @@ import "./util";
 // symbol a body defines and `n2` the receiver-qualified spelling a method's
 // call op names instead; `keep` is whether the body is emitted.
 struct Rows {
-  body: irlower.LowerResult[],
+  body: irtables.LowerResult[],
   n1: string[],
   n2: string[],
   keep: boolean[],
-  grows: ssaunits.GrowRow[],
+  grows: ssaunits.GrowTable,
   // Each row's unit plan, kept so a second lowering can take the plan back
   // rather than computing it again for a row the ownership inference did not
   // move (#9969).
@@ -99,24 +101,24 @@ function tally(what: string, why: string): i32 {
 // declined is the cache entry for a function this boundary is not emitting.
 // Nothing emits from it, so the partial-op shape ircore.lower_failed_refuse
 // guards against cannot arise.
-function declined(why: string): irlower.LowerResult {
-  return irlower.LowerResult {
+function declined(why: string): irtables.LowerResult {
+  return irtables.LowerResult {
     ok: false, why: why, ops: [], n_locals: 0, n_params: 0,
     erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [],
-    alias_incs: [], name: "", result_kind: irlower.result_from_decl(),
+    alias_incs: [], name: "", result_kind: irtables.result_from_decl(),
   };
 }
 
 // The entry for a declaration with no body of its own (an `@import` extern,
 // or a template whose instances stand for it): no ops, and the emit skips it
-// (irlower.LowerResult.superseded). The AST lowering of an erased template
+// (irtables.LowerResult.superseded). The AST lowering of an erased template
 // body would otherwise decline, on wasm, a module nothing in it calls that
 // body from (#9838).
-function superseded(): irlower.LowerResult {
-  return irlower.LowerResult {
+function superseded(): irtables.LowerResult {
+  return irtables.LowerResult {
     ok: true, why: "", ops: [], n_locals: 0, n_params: 0,
     erased_wide: false, superseded: true, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [],
-    alias_incs: [], name: "", result_kind: irlower.result_from_decl(),
+    alias_incs: [], name: "", result_kind: irtables.result_from_decl(),
   };
 }
 
@@ -137,7 +139,7 @@ function produced_plan(p: semsource.Produced): ssaunits.Plan {
 // refusal is why a row's body is not emitted, or "" where nothing refused it:
 // the body was produced, a template's instances stand for it, or it is an
 // `@import` extern.
-function refusal(p: semsource.Produced, body: irlower.LowerResult): string {
+function refusal(p: semsource.Produced, body: irtables.LowerResult): string {
   if (body.ok || p.bodyless) {
     return "";
   }
@@ -166,11 +168,11 @@ function plan_of(p: semsource.Produced): ssaunits.Plan {
 
 // produced_body lowers a planned function. Every plan is made before any body
 // is lowered, because a caller's bracket reads its callees' plans (`grows`).
-function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
+function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable): irtables.LowerResult {
   if (!plan.ok) {
     return declined(plan.why);
   }
-  var r: irlower.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows);
+  var r: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows);
   if (!r.ok) {
     return declined(r.why);
   }
@@ -200,7 +202,7 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
 // No rows to take back: what the FIRST lowering of a module is handed, and
 // what makes `rows_of` compute every plan and every body.
 function no_reuse(): Rows {
-  return Rows { body: [], n1: [], n2: [], keep: [], grows: [], plans: [], why: [] };
+  return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), plans: [], why: [] };
 }
 
 // Whether row `i` can be taken from `prev` unchanged. `changed` is
@@ -225,7 +227,7 @@ function row_reusable(prev: Rows, changed: boolean[], i: i32): boolean {
 // (`ssarc.bracketed`), so it comes back when those callees' rows agree —
 // which they need not, since a moved row can grow a callee's mask and change
 // how every caller of it brackets.
-function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.StructTab, prev: Rows, changed: boolean[]): Rows {
+function rows_of(mod: parser.Module, built: semsource.Built, structs: irtables.StructTab, prev: Rows, changed: boolean[]): Rows {
   // `FERN_SEM_REUSE=` (set but empty) turns the reuse off; an empty `prev`
   // is how a lowering reuses nothing.
   var base: Rows = prev;
@@ -258,7 +260,7 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irlower.St
   r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), plans: plans };
   i = 0;
   while (i < plans.len()) {
-    var body: irlower.LowerResult = reused_or_lowered(built, mod, structs, r, base, changed, i);
+    var body: irtables.LowerResult = reused_or_lowered(built, mod, structs, r, base, changed, i);
     r = Rows { ...r, body: r.body.append(body), keep: r.keep.append(body.ok), why: r.why.append(refusal(produced_at(built, mod, i), body)) };
     i = i + 1;
   }
@@ -276,7 +278,7 @@ function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced
 
 // Row `i`'s body: `prev`'s where the inference moved neither the row nor the
 // grow mask of any callee it names, freshly lowered otherwise.
-function reused_or_lowered(built: semsource.Built, mod: parser.Module, structs: irlower.StructTab, r: Rows, prev: Rows, changed: boolean[], i: i32): irlower.LowerResult {
+function reused_or_lowered(built: semsource.Built, mod: parser.Module, structs: irtables.StructTab, r: Rows, prev: Rows, changed: boolean[], i: i32): irtables.LowerResult {
   var p: semsource.Produced = produced_at(built, mod, i);
   if (row_reusable(prev, changed, i)
     && ssaunits.grow_rows_agree(prev.grows, r.grows, ssasem.called_names(p.func))) {
@@ -318,7 +320,7 @@ function lowers_whole_module(built: semsource.Built, r: Rows): boolean {
 // lowering. The second pass is checked as well as the first — a mode can
 // refuse a plan (`ssaunits.mode_error`), and a module that stops lowering
 // whole under the inference keeps the modes it declared.
-function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, structs: irlower.StructTab): Inference {
+function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, structs: irtables.StructTab): Inference {
   var same: Inference = Inference { built: built, rows: r, records: [] };
   if (!lowers_whole_module(built, r)) {
     return same;
@@ -337,12 +339,12 @@ function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, stru
 
 // The module built, lowered and, when it lowers whole, lowered again under the
 // inferred modes.
-function produced_rows(mod: parser.Module, structs: irlower.StructTab): Inference {
+function produced_rows(mod: parser.Module, structs: irtables.StructTab): Inference {
   var built: semsource.Built = semsource.build_module(mod);
   util.arr_push_cliff_report("sem:built", 0);
   var records: parser.StructDecl[] = instance_records(built);
   if (records.len() > 0) {
-    structs = irlower.struct_tab(util.append_all(structs.decls, records));
+    structs = irtables.struct_tab(util.append_all(structs.decls, records));
   }
   var r: Rows = rows_of(mod, built, structs, no_reuse(), []);
   util.arr_push_cliff_report("sem:lowered", 0);
@@ -391,14 +393,14 @@ function field_spelling(t: typeinfo.Type): string {
   return typeinfo.spelling(t);
 }
 
-pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
+pub function substitution(mod: parser.Module, structs: irtables.StructTab, base: fnsigs.FnSigs): ircore.Sub {
   var inf: Inference = produced_rows(mod, structs);
   var built: semsource.Built = inf.built;
   var r: Rows = inf.rows;
   report_rows(r, "");
-  var sigs: irlower.FnSigs = base;
+  var sigs: fnsigs.FnSigs = base;
   var helpers: ssarc.Helpers = ssarc.no_helpers();
-  var bodies: irlower.LowerResult[] = [];
+  var bodies: irtables.LowerResult[] = [];
   var callees: ssarc.Callee[] = [];
   var n: i32 = 0;
   var i: i32 = 0;
@@ -424,7 +426,7 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
     }
     i = i + 1;
   }
-  var instances: irlower.LowerResult[] = [];
+  var instances: irtables.LowerResult[] = [];
   var at: i32 = 0;
   while (at < built.instances.len()) {
     if (r.keep[mod.funcs.len() + at]) {
@@ -466,7 +468,7 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
   }
   // The declaration-less bodies are merged by symbol here, where the rule
   // lives, so the emit path's tail is a plain append.
-  var extra: irlower.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
+  var extra: irtables.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
   return ircore.Sub { ...ircore.no_sub(), bodies: bodies, extra: extra, sigs: sigs, records: inf.records };
 }
 
@@ -576,7 +578,7 @@ function element_hash(t: typeinfo.Type, x: string, sfx: string): string {
 // runtime_bodies is the typed lowering of a Fern-source runtime helper
 // (asmcore.rt_src_*), one body per function the source defines and in its
 // order. A refusal, including a source that does not type-check, exits 3.
-pub function runtime_bodies(src: string): irlower.LowerResult[] {
+pub function runtime_bodies(src: string): irtables.LowerResult[] {
   var parsed: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   // The builtin enums' variants (IoError's NotFound, …), which a program's
   // module carries from module_with_builtins.
@@ -586,11 +588,11 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
     return runtime_refused(first_name(mod), "does not type-check: " + diags[0].message);
   }
   var im: parser.Module = gated_module(checker.annotate_module(mod));
-  var inf: Inference = produced_rows(im, irlower.struct_tab(parser.erase_view_structs(im.structs)));
+  var inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_structs(im.structs)));
   if (inf.built.instances.len() > 0) {
     return runtime_refused(first_name(im), "instantiates a generic");
   }
-  var out: irlower.LowerResult[] = [];
+  var out: irtables.LowerResult[] = [];
   var helpers: ssarc.Helpers = ssarc.no_helpers();
   var i: i32 = 0;
   while (i < im.funcs.len()) {
@@ -602,7 +604,7 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
     i = i + 1;
   }
   // The drop helpers follow the bodies, deduplicated by symbol.
-  var all: irlower.LowerResult[] = ssarc.merge_helpers(out, helpers.rows);
+  var all: irtables.LowerResult[] = ssarc.merge_helpers(out, helpers.rows);
   for h in all {
     if (!h.ok) {
       return runtime_refused(h.name, h.why);
@@ -614,7 +616,7 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
   return all;
 }
 
-function runtime_refused(name: string, why: string): irlower.LowerResult[] {
+function runtime_refused(name: string, why: string): irtables.LowerResult[] {
   report("runtime " + name, why);
   eprint("FERN_SEM_IR: the typed lowering refused runtime helper " + name);
   exit(3);
@@ -656,13 +658,13 @@ function is_wasm(target: string): boolean {
 
 // The module the wasm emit path gates: it lifts inside its own normalisation.
 function wasm_gated(typed: parser.Module): parser.Module {
-  return irlower.lift_lambdas_typed(ircore.script_normalized(typed));
+  return lift.lift_lambdas_typed(ircore.script_normalized(typed));
 }
 
 function substitution_of(im: parser.Module): ircore.Sub {
   // The typed lowering reads im; the AST lowering's tables read its erasure.
   var lowered: parser.Module = parser.erase_view_module(im);
-  var stab: irlower.StructTab = irlower.struct_tab(lowered.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(lowered.structs);
   util.arr_push_cliff_report("sem:gated", 0);
   var sub: ircore.Sub = substitution(im, stab, ircore.wp_fn_sigs(lowered.funcs, stab));
   return ircore.Sub { ...sub, rt_lower: runtime_bodies };
@@ -742,7 +744,7 @@ pub function verdict_annotated(annotated: parser.Module, target: string): Verdic
   } else {
     im = gated_module(ircore.lift_lambdas_typed(t.mod));
   }
-  var inf: Inference = produced_rows(im, irlower.struct_tab(parser.erase_view_module(im).structs));
+  var inf: Inference = produced_rows(im, irtables.struct_tab(parser.erase_view_module(im).structs));
   var rows: VerdictRow[] = [];
   var ok: boolean = true;
   var i: i32 = 0;

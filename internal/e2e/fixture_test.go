@@ -1,10 +1,10 @@
 // Data-driven end-to-end fixtures. Each directory under
-// `conformance/cases/<name>/` is a self-contained program that is
-// compiled and run across every backend (interp, x86-64, arm64,
-// wasm) and checked against its expected stdout and exit code. This
-// is the declarative counterpart to the inline-source backend tests:
-// to add a case you drop a `.fern` file plus a few sidecar files,
-// no Go code required.
+// `conformance/cases/<name>/` is a self-contained program checked against
+// its expected stdout and exit code: here through the interpreter, and
+// through the self-host compiler on x86-64, arm64 and wasm in
+// fixture_selfhost_test.go. This is the declarative counterpart to the
+// inline-source backend tests: to add a case you drop a `.fern` file plus
+// a few sidecar files, no Go code required.
 //
 // Layout of a fixture directory:
 //
@@ -43,18 +43,6 @@
 // path above can never reach it. Asserting both halves is what stops a
 // program the checker already rejects from masquerading as a lowering
 // rule.
-//
-// Backend exit-code note: native and interp backends propagate main's
-// return value straight to the process exit code (full 0..255). A
-// preview-2 wasm host only surfaces 0/1 through `wasi:cli/exit`, so we
-// build the wasm component with PrintMainResult and recover main's
-// value from the trailing result line (`<n>\n`) it appends to stdout —
-// that gives exit-code parity on wasm too. Two consequences for the
-// wasm leg: a fixture's `main` must return i32 (not void), and
-// `int_to_string` must be reachable so the result line can be
-// formatted — i.e. a wasm-targeting exact-match fixture must
-// `import "core/int";`, or drop "wasm" from the fixture's
-// `backends` file.
 package e2e
 
 import (
@@ -69,16 +57,11 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
-	nativeelf "github.com/jakechampion/lang/internal/native/elf"
-	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
 )
 
 type fixtureSpec struct {
@@ -276,48 +259,21 @@ func TestFernFixtures(t *testing.T) {
 				}
 				return
 			}
-			for _, backend := range allBackends {
-				if !f.backends[backend] {
-					continue
-				}
-				backend := backend
-				t.Run(backend, func(t *testing.T) {
-					stdout, exit := f.run(t, backend)
-					f.check(t, backend, stdout, exit)
+			if f.backends["interp"] {
+				t.Run("interp", func(t *testing.T) {
+					stdout, exit := runFixtureInterp(t, f.mainPath, f.stdin)
+					f.check(t, stdout, exit)
 				})
 			}
 		})
 	}
 }
 
-func (f *fixtureSpec) run(t *testing.T, backend string) (stdout string, exit int) {
-	switch backend {
-	case "interp":
-		return runFixtureInterp(t, f.mainPath, f.stdin)
-	case "x86_64":
-		return runFixtureX86_64(t, f.mainPath, f.stdin)
-	case "arm64":
-		return runFixtureArm64(t, f.mainPath, f.stdin)
-	case "wasm":
-		return runFixtureWasm(t, f.mainPath, f.stdin)
-	default:
-		t.Fatalf("unknown backend %q", backend)
-		return "", 0
-	}
-}
-
-func (f *fixtureSpec) check(t *testing.T, backend, stdout string, exit int) {
+func (f *fixtureSpec) check(t *testing.T, stdout string, exit int) {
 	t.Helper()
 	if f.exact {
-		want := f.wantOut
-		// wasm appends main's i32 result (+newline) to stdout; that
-		// trailing line is how we read the exit code on a host that
-		// only surfaces 0/1, so fold it into the expected stdout.
-		if backend == "wasm" {
-			want = f.wantOut + strconv.Itoa(f.wantExit) + "\n"
-		}
-		if stdout != want {
-			t.Errorf("stdout mismatch\n got: %q\nwant: %q", stdout, want)
+		if stdout != f.wantOut {
+			t.Errorf("stdout mismatch\n got: %q\nwant: %q", stdout, f.wantOut)
 		}
 	} else {
 		for _, sub := range f.contains {
@@ -326,88 +282,30 @@ func (f *fixtureSpec) check(t *testing.T, backend, stdout string, exit int) {
 			}
 		}
 	}
-
-	if backend == "wasm" {
-		// Exit value comes back on stdout (handled above); a non-zero
-		// wasmtime status here means the component trapped.
-		if exit != 0 {
-			t.Errorf("wasm component trapped (exit %d)", exit)
-		}
-		return
-	}
 	if exit != f.wantExit {
 		t.Errorf("exit = %d, want %d\nstdout:\n%s", exit, f.wantExit, stdout)
 	}
 }
 
+// runFixtureArm64 compiles the fixture with the self-host compiler for
+// arm64-linux and runs it under qemu.
 func runFixtureArm64(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
-	gcc, qemu := arm64Tooling(t)
-	info, prog := loadCheckMonoFor(t, mainPath, "arm64-linux")
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := arm64codegen.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("arm64 emit: %v", err)
-	}
-	bin := linkAsm(t, gcc, asm, "-static", "-nostdlib")
-	cmd := runArm64Bin(qemu, bin)
-	return runBin(cmd, stdin)
+	_, qemu := arm64Tooling(t)
+	bin := e2eharness.CompileSelfHostFile(t, e2eharness.TargetArm64Linux, mainPath, nil)
+	return runBin(runArm64Bin(qemu, bin), stdin)
 }
 
+// runFixtureX86_64 compiles the fixture with the self-host compiler for
+// x86-64-linux and runs it.
 func runFixtureX86_64(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
-	gcc, runner := x86_64Tooling(t)
-	info, prog := loadCheckMonoFor(t, mainPath, "x86-64-linux")
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("x86_64 emit: %v", err)
-	}
-	var bin string
-	// FERN_NATIVE_ASM=1 routes the assemble+link step through the pure-Go
-	// x86-64 native backend instead of gcc — used to audit native coverage
-	// across the fixture suite. Default (unset) keeps the gcc path.
-	if os.Getenv("FERN_NATIVE_ASM") != "" {
-		text, rodata, aerr := nativex86.AssembleProgram(asm, nativeelf.TextVAddr)
-		if aerr != nil {
-			t.Fatalf("NATIVE-ASM-FAIL: %v", aerr)
-		}
-		bin = filepath.Join(t.TempDir(), "prog")
-		if werr := os.WriteFile(bin, nativeelf.StaticExecutableDataX86(text, rodata), 0o755); werr != nil {
-			t.Fatalf("write native bin: %v", werr)
-		}
-	} else {
-		bin = linkAsm(t, gcc, asm, "-static", "-nostdlib", "-no-pie")
-	}
-	var cmd *exec.Cmd
+	_, runner := x86_64Tooling(t)
+	bin := e2eharness.CompileSelfHostFile(t, e2eharness.TargetX86_64Linux, mainPath, nil)
 	if len(runner) == 0 {
-		cmd = exec.Command(bin)
-	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+		return runBin(exec.Command(bin), stdin)
 	}
-	return runBin(cmd, stdin)
-}
-
-func runFixtureWasm(t *testing.T, mainPath, stdin string) (string, int) {
-	t.Helper()
-	skipIfPreview2Missing(t)
-	info, prog := loadCheckMonoFor(t, mainPath, "wasm32-wasi")
-	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
-	component := finishComponentFromCoreBytes(t, core)
-	so, _, ec := runComponent(t, component, runOpts{stdin: stdin})
-	return so, ec
+	return runBin(exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...), stdin)
 }
 
 // runFixtureCompileError runs the front-end (modload → constfold →

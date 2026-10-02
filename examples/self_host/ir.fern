@@ -1352,6 +1352,14 @@ pub function op_udp_sendto(): Op {
   return op0(336);
 }
 
+pub function op_udp_send_bytes(): Op {
+  return op0(354);
+}
+
+pub function op_udp_sendto_bytes(): Op {
+  return op0(355);
+}
+
 pub function op_udp_recvfrom(): Op {
   return op0(337);
 }
@@ -4151,6 +4159,9 @@ function kind_id_len13(name: string): i32 {
 }
 
 function kind_id_len14(name: string): i32 {
+  if (name == "udp_send_bytes") {
+    return 354;
+  }
   if (name == "tcp_send_bytes") {
     return 353;
   }
@@ -4230,6 +4241,9 @@ function kind_id_len15(name: string): i32 {
 }
 
 function kind_id_len16(name: string): i32 {
+  if (name == "udp_sendto_bytes") {
+    return 355;
+  }
   if (name == "write_file_bytes") {
     return 352;
   }
@@ -5331,6 +5345,12 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 354) {
+    return "udp_send_bytes";
+  }
+  if (id == 355) {
+    return "udp_sendto_bytes";
+  }
   if (id == 353) {
     return "tcp_send_bytes";
   }
@@ -5517,6 +5537,7 @@ function pops3(t: i32): boolean {
     || t == 177 || t == 208 || t == 225 || t == 234  // subprocess, udp_send, memchr, rmemchr
     || t == 333 || t == 335 || t == 337 || t == 338  // tcp_socket_ctl, udp_connect, udp_recvfrom, tcp_connect_with
     || t == 346  // tcp_sendfile (fd, file, max)
+    || t == 354  // udp_send_bytes (host, port, data)
     || t == 343  // reactor_wait (r, events, timeout_ms)
     || t == 242  // reader_seek (fd, offset, whence)
     || t == 330  // reader_splice (fd, out_fd, max)
@@ -5590,7 +5611,7 @@ pub function op_pops(o: Op): i32 {
   if (t == 332) {  // tcp_listen_with: addr + port + backlog + reuse_port
     return 4;
   }
-  if (t == 336) {  // udp_sendto: fd + addr + port + data
+  if (t == 336 || t == 355) {  // udp_sendto / udp_sendto_bytes: fd + addr + port + data
     return 4;
   }
   if (t == 342) {  // reactor_ctl: r + op + fd + arg
@@ -6623,7 +6644,10 @@ pub function reduce_strength(ops: Op[]): Op[] {
 // would leave the enclosing scope one slot high — a wasm module that fails
 // validation rather than a smaller one.
 pub function eliminate_dead_code(ops: Op[]): Op[] {
+  // `out` is written from the first dropped op on, so a list with nothing dead
+  // comes back as it is.
   var out: Op[] = [];
+  var copying: boolean = false;
   var depth: i32 = 0;
   var dead: boolean = false;
   var dead_depth: i32 = 0;
@@ -6637,36 +6661,33 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
   var i: i32 = 0;
   while (i < ops.len()) {
     var t: i32 = ops[i].kind_tag;
-    if (t == k_block || t == k_loop || t == k_if) {
-      if (!dead) {
+    if (t == k_end || t == k_else) {
+      if (dead && depth == dead_depth) {
+        dead = false;
+      }
+    }
+    if (!dead) {
+      if (copying) {
         out = out.append(ops[i]);
       }
+    } else if (!copying) {
+      out = fold_prefixed(ops, i, []);
+      copying = true;
+    }
+    if (t == k_block || t == k_loop || t == k_if) {
       depth = depth + 1;
     } else if (t == k_end) {
-      if (dead && depth == dead_depth) {
-        dead = false;
-      }
-      if (!dead) {
-        out = out.append(ops[i]);
-      }
       depth = depth - 1;
-    } else if (t == k_else) {
-      if (dead && depth == dead_depth) {
-        dead = false;
-      }
-      if (!dead) {
-        out = out.append(ops[i]);
-      }
-    } else if (!dead) {
-      out = out.append(ops[i]);
-      if (t == k_return || t == k_br) {
-        dead = true;
-        dead_depth = depth;
-      }
+    } else if (!dead && (t == k_return || t == k_br)) {
+      dead = true;
+      dead_depth = depth;
     }
     i = i + 1;
   }
-  return out;
+  if (copying) {
+    return out;
+  }
+  return ops;
 }
 
 // ---- zero-slot uniqueness guards (native internal/ir/zeroslot.go) -------
@@ -7286,16 +7307,32 @@ function cp_max_slot(ops: Op[]): i32 {
 // cp_kill_after unbinds every slot whose last write is later than `at`, which for
 // `at` = the index a scope opened at is exactly the set that scope could have
 // written. Called at an `else` to restore the entry state for the second arm, and
-// at an `end` to reconcile the scope.
-function cp_kill_after(has: boolean[], wrote: i32[], at: i32): boolean[] {
-  var s: i32 = 0;
-  while (s < has.len()) {
+// at an `end` to reconcile the scope. Only a bound slot can need it, and
+// `bound` holds every one, so the walk is over those rather than every slot.
+function cp_kill_after(has: boolean[], wrote: i32[], at: i32, bound: i32[]): boolean[] {
+  var k: i32 = 0;
+  while (k < bound.len()) {
+    var s: i32 = bound[k];
     if (has[s] && wrote[s] > at) {
       has = has.with(s, false);
     }
-    s = s + 1;
+    k = k + 1;
   }
   return has;
+}
+
+// cp_still_bound is `bound` without the slots no longer bound, so a kill walks
+// only what is live.
+function cp_still_bound(bound: i32[], has: boolean[]): i32[] {
+  var out: i32[] = [];
+  var k: i32 = 0;
+  while (k < bound.len()) {
+    if (has[bound[k]]) {
+      out = out.append(bound[k]);
+    }
+    k = k + 1;
+  }
+  return out;
 }
 
 // cp_loop_body_kill unbinds every slot the loop body opened at `at` writes. A
@@ -7368,10 +7405,13 @@ pub function const_propagate(ops: Op[]): Op[] {
   // has[slot] says whether it is live. Carrying the op rather than a value keeps
   // both constant shapes on one path and cannot invent a spelling the backends
   // have not seen. wrote[slot] is the op index of the slot's last write, which
-  // is how a scope's end names the slots it could have written.
+  // is how a scope's end names the slots it could have written. bound lists
+  // every slot has[] is true for, each once, and may also hold slots since
+  // unbound until the next kill drops them.
   var known: Op[] = [];
   var has: boolean[] = [];
   var wrote: i32[] = [];
+  var bound: i32[] = [];
   var z: i32 = 0;
   while (z < nslots) {
     known = known.append(op_const_i32(0));
@@ -7418,7 +7458,8 @@ pub function const_propagate(ops: Op[]): Op[] {
       // The then-arm's bindings do not reach the else-arm; dropping what the
       // arm wrote leaves exactly the state the if opened with.
       if (depth > 0 && fr_kind[depth - 1] == k_if && wc != fr_wc[depth - 1]) {
-        has = cp_kill_after(has, wrote, fr_at[depth - 1]);
+        has = cp_kill_after(has, wrote, fr_at[depth - 1], bound);
+        bound = cp_still_bound(bound, has);
       }
       out = out.append(o);
     } else if (kt == k_end) {
@@ -7427,7 +7468,8 @@ pub function const_propagate(ops: Op[]): Op[] {
         // wrote still holds after it. Every other scope is conditional.
         var straight: boolean = fr_kind[depth - 1] == k_block && !fr_br[depth - 1];
         if (!straight && wc != fr_wc[depth - 1]) {
-          has = cp_kill_after(has, wrote, fr_at[depth - 1]);
+          has = cp_kill_after(has, wrote, fr_at[depth - 1], bound);
+          bound = cp_still_bound(bound, has);
         }
         depth = depth - 1;
       }
@@ -7474,6 +7516,9 @@ pub function const_propagate(ops: Op[]): Op[] {
         wc = wc + 1;
         if (out.len() > 0 && (const_i32_readable(out[out.len() - 1]) || const_i64_readable(out[out.len() - 1]))) {
           known = known.with(sl, out[out.len() - 1]);
+          if (!has[sl]) {
+            bound = bound.append(sl);
+          }
           has = has.with(sl, true);
         } else if (has[sl]) {
           has = has.with(sl, false);
@@ -7533,22 +7578,30 @@ pub function propagate_copies(ops: Op[]): Op[] {
     }
     i = i + 1;
   }
+  // `out` is written from the first dead tee on.
   var out: Op[] = [];
+  var copying: boolean = false;
   i = 0;
   while (i < ops.len()) {
-    var o: Op = ops[i];
     var dead_tee: boolean = false;
-    if (o.kind_tag == k_tee && o.i32_imm >= 0 && o.i32_imm <= maxs) {
-      if (reads[o.i32_imm] == 0 && stores[o.i32_imm] == 0 && tees[o.i32_imm] == 1) {
-        dead_tee = true;
-      }
+    var sl2: i32 = ops[i].i32_imm;
+    if (ops[i].kind_tag == k_tee && sl2 >= 0 && sl2 <= maxs) {
+      dead_tee = reads[sl2] == 0 && stores[sl2] == 0 && tees[sl2] == 1;
     }
     if (!dead_tee) {
-      out = out.append(o);
+      if (copying) {
+        out = out.append(ops[i]);
+      }
+    } else if (!copying) {
+      out = fold_prefixed(ops, i, []);
+      copying = true;
     }
     i = i + 1;
   }
-  return out;
+  if (copying) {
+    return out;
+  }
+  return ops;
 }
 
 pub function fuse_tee(ops: Op[]): Op[] {

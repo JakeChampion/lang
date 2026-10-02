@@ -90,7 +90,7 @@ Unsupported constructs refuse the whole function with a reason.
   truncated on its way out and reads the same either way).
 
 - An i64 or u64 gets a slot of its own, which only wasm spells out: in the
-  function's type for a parameter and a result (`irlower.result_i64`), and in
+  function's type for a parameter and a result (`irtables.result_i64`), and in
   its locals otherwise. Its operators run at width 64 and are already
   full-width, so nothing masks after them; negation pushes its zero at that
   width too, or the subtraction's two sides disagree. A 64-bit literal does not
@@ -122,7 +122,7 @@ Unsupported constructs refuse the whole function with a reason.
 
   An unsigned operand takes the operator forms that read no sign bit — the
   four orderings, the right shift, division and remainder — through
-  `irlower.to_unsigned_kind`, the same remap the AST lowering applies. The
+  `irtables.to_unsigned_kind`, the same remap the AST lowering applies. The
   byte goes through it too, though nothing turns on that: 0..255 is inside the
   signed range at every slot width. Negation is refused at every unsigned
   width, as it is at the byte: its result leaves the range the type names, and
@@ -169,7 +169,7 @@ Unsupported constructs refuse the whole function with a reason.
 - The f64, as a VALUE, a declared field and an array element but never a tuple
   element, for the same reason the i64 is one (`narrow_slot`): it gets a slot
   of its own that only wasm spells
-  out (`irlower.result_f64`, the `f64_slots` a produced body declares). A
+  out (`irtables.result_f64`, the `f64_slots` a produced body declares). A
   literal is an f64 — the checker types it polymorphic and settles it where it
   lands, so a `f32` suffix or an f32 destination makes it an f32, and a
   binding with no annotation settles it at the f64 it is — and it
@@ -746,7 +746,7 @@ Unsupported constructs refuse the whole function with a reason.
   template no produced body reaches is "uninstantiated generic". No produced
   value carries a variable: `ssasem.schema_error` refuses one as unresolved.
   In a module produced whole a template's erased body is SUPERSEDED
-  (`irlower.LowerResult.superseded`): nothing calls it, since every produced
+  (`irtables.LowerResult.superseded`): nothing calls it, since every produced
   caller calls an instance, so no emit writes it and no gate judges it — the
   AST lowering of an erased `__arrm_map__i64` clone carried the wasm route's
   only `erased_wide` verdict and declined the module (#9838).
@@ -927,7 +927,7 @@ graphs.
 
 `internal/e2eselfhost/self_host_semsource_test.go`:
 
-Both drivers run `irlower.lift_lambdas_typed` over the module first, the way the typed
+Both drivers run `lift.lift_lambdas_typed` over the module first, the way the typed
 lowering does. That is what puts a closure in
 front of the boundary at all — the lift is where a lambda becomes a hoisted
 body and a `__mkclo$` box — and it holds the two drivers to the same input the
@@ -1273,7 +1273,7 @@ was probed before building and neither was what its reason read as:
 - The 75 `binding type does not match its semantic value` were every one an
   `ExprIndex` initializer whose declared type is a reference and whose value
   is i32, and the binding NAME is the CAPTURE's (`$binding$1$name`,
-  `$binding$5$mfuncs`), never `__env`. `irlower.make_clo_func` writes
+  `$binding$5$mfuncs`), never `__env`. `lift.make_clo_func` writes
   `var cap: T = __env[1 + i]` with `__env: i32[]`: the declaration carries
   the capture's real type over a box slot the AST lowering treats as an
   untyped word, which is a reinterpretation Fern has no operator for. The

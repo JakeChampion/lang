@@ -19,7 +19,8 @@ func TestSelfHostCountedStrArrReturnProofX86_64(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	const probe = `import "./rundriver";
-import "./irlower";
+import "./irtables";
+import "./fnsigs";
 import "./lexical";
 import "./parser";
 function main(): i32 {
@@ -27,7 +28,7 @@ function main(): i32 {
     // Resolved as the lowering sees them: every binding renamed.
     var funcs: parser.FuncDecl[] = [];
     for f in m.funcs { funcs = funcs.append(lexical.resolve_func(f).func); }
-    var rows = irlower.return_fresh_struct_ret_fns_of(funcs, irlower.struct_tab(m.structs), []);
+    var rows = fnsigs.return_fresh_struct_ret_fns_of(funcs, irtables.struct_tab(m.structs), []);
     for row in rows { print(row); }
     return 0;
 }`

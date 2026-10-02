@@ -466,7 +466,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// (multiple arm64 Emit goroutines) and against
 	// `x86_64.Emit` (which reads `TwoWordOverride` via
 	// ir.LowerWith without setting it). Without the lock,
-	// `TestDifferential_LangsmithMain`'s seed-level
+	// a differential sweep's seed-level
 	// `t.Parallel` lets one arm64 emit's `defer` restore the
 	// flag to false while another arm64 emit was still in
 	// flight — producing single-word string_from_bytes_unchecked /
@@ -20406,6 +20406,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_" + target
 		case "tcp_send_bytes":
 			target = "__fern_tcp_send_bytes"
+		case "udp_send_bytes", "udp_sendto_bytes":
+			target = "__fern_" + target
 		case "wasm_pollable_drop":
 			target = "__fern_wasm_pollable_drop"
 			g.usesWasmPollableDrop = true

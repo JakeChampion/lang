@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -60,14 +60,7 @@ function add(a: i32, b: i32): i32 { return a + b; }`
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
-	info, prog := loadCheckMono(t, mainPath)
-	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
+	core := e2eharness.SelfHostReactorCore(t, mainPath)
 	if !bytes.Contains(core, []byte("local:test/math@0.1.0#add")) {
 		t.Fatalf("core is missing the surfaced @export core export")
 	}
@@ -141,11 +134,7 @@ function add(a: i32, b: i32): i32 { return a + b; }`
 	if err := os.WriteFile(expPath, []byte(expSrc), 0o644); err != nil {
 		t.Fatalf("write exporter prog: %v", err)
 	}
-	expInfo, expProg := loadCheckMono(t, expPath)
-	expCore, err := wasmbin.BuildWithOptions(expProg, expInfo, wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true})
-	if err != nil {
-		t.Fatalf("build exporter core: %v", err)
-	}
+	expCore := e2eharness.SelfHostReactorCore(t, expPath)
 	expComp, err := component.ComposeExportsFromWorld(expCore, expWorld)
 	if err != nil {
 		t.Fatalf("ComposeExportsFromWorld: %v", err)
@@ -195,16 +184,7 @@ function main(): i32 {
 	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
 		t.Fatalf("write consumer prog: %v", err)
 	}
-	userInfo, userProg := loadCheckMono(t, userPath)
-	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
-	if err != nil {
-		t.Fatalf("build consumer core: %v", err)
-	}
+	userCore := e2eharness.SelfHostComponentCore(t, userPath)
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)
@@ -331,16 +311,7 @@ function main(): i32 { write(greet()); return 0; }`
 	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
 		t.Fatalf("write consumer prog: %v", err)
 	}
-	userInfo, userProg := loadCheckMono(t, userPath)
-	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		CliRunResult:       true,
-	})
-	if err != nil {
-		t.Fatalf("build consumer core: %v", err)
-	}
+	userCore := e2eharness.SelfHostComponentCore(t, userPath)
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)
@@ -410,11 +381,7 @@ function greet(): string { return "hi"; }`
 	if err := os.WriteFile(expPath, []byte(expSrc), 0o644); err != nil {
 		t.Fatalf("write exporter prog: %v", err)
 	}
-	expInfo, expProg := loadCheckMono(t, expPath)
-	expCore, err := wasmbin.BuildWithOptions(expProg, expInfo, wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true})
-	if err != nil {
-		t.Fatalf("build exporter core: %v", err)
-	}
+	expCore := e2eharness.SelfHostReactorCore(t, expPath)
 	if !bytes.Contains(expCore, []byte("local:test/strings@0.1.0#greet")) {
 		t.Fatalf("exporter core missing the surfaced @export export")
 	}
@@ -464,16 +431,7 @@ function main(): i32 { write(greet()); return 0; }`
 	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
 		t.Fatalf("write consumer prog: %v", err)
 	}
-	userInfo, userProg := loadCheckMono(t, userPath)
-	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		CliRunResult:       true,
-	})
-	if err != nil {
-		t.Fatalf("build consumer core: %v", err)
-	}
+	userCore := e2eharness.SelfHostComponentCore(t, userPath)
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)
@@ -543,11 +501,7 @@ function len_of(s: string): i32 { return s.len(); }`
 	if err := os.WriteFile(expPath, []byte(expSrc), 0o644); err != nil {
 		t.Fatalf("write exporter prog: %v", err)
 	}
-	expInfo, expProg := loadCheckMono(t, expPath)
-	expCore, err := wasmbin.BuildWithOptions(expProg, expInfo, wasmbin.BuildOptions{ForceMemorySection: true, Preview2WASI: true})
-	if err != nil {
-		t.Fatalf("build exporter core: %v", err)
-	}
+	expCore := e2eharness.SelfHostReactorCore(t, expPath)
 	expComp, err := component.ComposeExportsFromWorld(expCore, expWorld)
 	if err != nil {
 		t.Fatalf("ComposeExportsFromWorld (string param): %v", err)
@@ -597,13 +551,7 @@ function main(): i32 {
 	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
 		t.Fatalf("write consumer prog: %v", err)
 	}
-	userInfo, userProg := loadCheckMono(t, userPath)
-	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
-		ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, CliRunResult: true,
-	})
-	if err != nil {
-		t.Fatalf("build consumer core: %v", err)
-	}
+	userCore := e2eharness.SelfHostComponentCore(t, userPath)
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)

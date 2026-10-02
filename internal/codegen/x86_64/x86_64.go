@@ -4085,6 +4085,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_udp_connect"
 		case "udp_sendto":
 			target = "__fern_udp_sendto"
+		case "udp_sendto_bytes":
+			target = "__fern_udp_sendto_bytes"
 		case "udp_recvfrom":
 			target = "__fern_udp_recvfrom"
 		case "poll":
@@ -4125,6 +4127,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_tcp_send_bytes"
 		case "udp_send":
 			target = "__fern_udp_send"
+		case "udp_send_bytes":
+			target = "__fern_udp_send_bytes"
 		case "tcp_connect":
 			target = "__fern_tcp_connect"
 		case "tcp_pollable":

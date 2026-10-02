@@ -986,6 +986,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// parses the IPv4 host literal, then udp_bind →
 					// udp_sendto → tcp_close, which its edges pull in.
 					needs.add("__fern_udp_send")
+				case "__fern_udp_send_bytes", "__fern_udp_sendto_bytes":
+					needs.add(callDirectAlias(op.Str))
 				case "__fern_udp_bind":
 					// (addr, port) → i32 — a bound datagram socket
 					// record, or -errno.
@@ -1288,6 +1290,8 @@ var unconditionalHelperCalls = map[string][]string{
 	"__fern_tcp_listen_with":  {"__fern_wasi_socket_errno", "__fern_ip_flat"},
 	"__fern_tcp_socket_ctl":   {"__fern_wasi_socket_errno"},
 	"__fern_udp_send":         {"__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte", "__fern_udp_bind", "__fern_udp_sendto", "__fern_udp_close"},
+	"__fern_udp_send_bytes":   {"__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte", "__fern_udp_bind", "__fern_udp_sendto_bytes", "__fern_udp_close"},
+	"__fern_udp_sendto_bytes": {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__fern_ip_flat"},
 	// A bound datagram socket is closed through udp_close, so it comes
 	// with the socket and tcp_close gains its datagram arm.
 	"__fern_udp_bind":      {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__network_handle", "__fern_udp_close", "__fern_ip_flat"},
@@ -3063,6 +3067,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildUdpSendBody,
+	},
+	"__fern_udp_send_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildUdpSendBytesBody,
+	},
+	"__fern_udp_sendto_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildUdpSendtoBytesBody,
 	},
 	"__fern_udp_bind": {
 		// (addr, port) → i32 — a datagram socket record bound to the

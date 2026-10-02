@@ -753,7 +753,7 @@ representative subset splits it three ways:
     What survives from the original bullet: its *observations*. The two stdlib programs (the flagship handler, `http_parse_request`) do route IR on arm64. Why they clear a gate the 701-function fixture does not is **not established** — do not re-derive it from this bullet's reasoning, which is the part that was wrong.
 
     The size note also stands: arm64 emits the whole closure rather than the treeshaken subset (~2.5 MB vs ~430 KB).
-  * A fn value handed to a SIBLING module's function was passed unboxed while the callee always dereferenced a box (#5698) — the caller's boxing decision looked the callee up in `mod.funcs`. `irlower.lift_lambdas_view` threads a whole-program signature view through that lookup; an empty view keeps every other caller byte-identical. Only the single-process concat threaded one, so the other per-module routes went on missing it until a CAPTURING lambda at such a call site dangled a `<fd>$clo` at link (#7215); every per-module route now lifts through `asm_ir.lift_lambdas_parts` / `wasm_ir.lift_lambdas_parts`, which builds the view from the bundle.
+  * A fn value handed to a SIBLING module's function was passed unboxed while the callee always dereferenced a box (#5698) — the caller's boxing decision looked the callee up in `mod.funcs`. `lift.lift_lambdas_view` threads a whole-program signature view through that lookup; an empty view keeps every other caller byte-identical. Only the single-process concat threaded one, so the other per-module routes went on missing it until a CAPTURING lambda at such a call site dangled a `<fd>$clo` at link (#7215); every per-module route now lifts through `asm_ir.lift_lambdas_parts` / `wasm_ir.lift_lambdas_parts`, which builds the view from the bundle.
 
   Net: the flagship edge-handler program (`std/http` + `std/tcp` + a `handle` function, ~925 merged functions) is compiled by the self-hosted compiler and **serves real HTTP** (`TestSelfHostHttpHandlerServesX86_64`).
 
@@ -2992,7 +2992,7 @@ So the split is:
 
 | component | MB | share of peak |
 |---|---:|---:|
-| `irlower.borrowable_params_interproc` | ~848 | 51% |
+| `fnsigs.borrowable_params_interproc` | ~848 | 51% |
 | `irlower.consume_safe_params_interproc` | ~333 | 20% |
 | the other 22 derivations, combined | ~6 | 0.4% |
 | rest of the emit call | ~245 | 15% |
@@ -3999,7 +3999,7 @@ traps on `ud2` at the stale holder).
 
 **The chain, each link measured.**
 
-1. The one function that matters is `irlower.lift_lambdas_view` — established by
+1. The one function that matters is `lift.lift_lambdas_view` — established by
    bisecting the arm itself, not by reading code. `rhsTainted`'s arm was gated on
    a per-function allow-list (`FERN_ARM_LIST`) and the 147 functions whose
    rcPlan the arm changes (an `RcPlanHook` dump of the driver, diffed between

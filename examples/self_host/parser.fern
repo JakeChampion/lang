@@ -72,8 +72,8 @@ struct ParamDestr { names: string, marker: string, synth: string, line: i32, col
 // callee and irlower with no signature to dispatch on. The two sidecars are the
 // FuncDecl-level members of the family ParamDecl, StructFieldDecl and StmtVar
 // already carry, recorded through the same non-consuming lookahead and read
-// through the same fn_sig_of rules, so a call through a returned fn value and a
-// call through a parameter cannot disagree about the signature (#5986).
+// through the same rules, so a call through a returned fn value and a call
+// through a parameter cannot disagree about the signature (#5986).
 pub struct FuncDecl { no_inline: boolean, name: string, receiver_name: string, receiver_type: string, type_params: string[], params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], line: i32, col: i32, import_iface: string, import_wit: string, all_type_params: string[], bound_traits: string[], fip: boolean, fbip: boolean, fip_allowance: i32, async: boolean, is_const: boolean, is_pub: boolean, is_package: boolean, ret_fn_ret: string, ret_fn_param_types: string, module: string }
 
 // Top-level struct decl: `struct Name { field1: T1, field2: T2 }`.
@@ -832,7 +832,7 @@ pub const ORIGIN_MAP_COMP: string = "map_comp";
 // defer machinery into the enclosing function and hoist the cleanup with it.
 //
 // A defer-free IIFE is left unmarked: the lambda lift hoists it to a direct
-// `__lam_N` call either way (irlower.lift_capturing_iife for a capturing one),
+// `__lam_N` call either way (lift.lift_capturing_iife for a capturing one),
 // and only one the lift declines is inlined.
 pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
 
@@ -9414,7 +9414,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     // (c'') a single-typevar fn with a bare-scalar param whose RETURN is fully
     // CONCRETE — `eqf[T](a: T, b: T): boolean`. The value never leaves through
     // the type variable, so neither the widening path nor clause (c) covers it:
-    // erased_widenable requires the return to BE the var (a pass-through) or a
+    // the widening path requires the return to BE the var (a pass-through) or a
     // bare tuple of it, and feeds_wide_container requires the return to CONTAIN
     // it.
     //
@@ -10136,6 +10136,7 @@ pub function builtin_function_names(): string[] {
     "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_send_bytes", "tcp_close",
     "udp_send", "tcp_connect", "tcp_pollable", "tcp_listen_with", "tcp_socket_ctl",
     "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect",
+    "udp_send_bytes", "udp_sendto_bytes",
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
   ];
 }
@@ -10523,7 +10524,7 @@ struct RStmts { rstmts: ast.Stmt[], rins3: Insts }
 // empty bucket.
 //
 // The index travels WITH the decls rather than beside them so the two cannot
-// be built from different arrays. Mirrors irlower.MFuncs, which does the same
+// be built from different arrays. Mirrors lift.MFuncs, which does the same
 // for the closure-lift pass.
 pub struct MFns {
   decls: FuncDecl[],
@@ -10830,10 +10831,27 @@ pub function top_arrow_at(s: string): i32 {
   return 0 - 1;
 }
 
+// plain_type_spelling: no bracket, paren or arrow, so every branch of
+// parse_type_ref below falls through to the plain named type.
+function plain_type_spelling(s: string): boolean {
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var c: u8 = s[i];
+    if (c == b'[' || c == b'(' || c == b'=') {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
 // parse_type_ref decodes a canonical type spelling into a TypeRef tree. It is the
 // single place the "[]" / "(…)" / "Name[…]" / ", " grammar is scanned; every
 // other decoder should call this rather than re-implement the depth tracking.
 pub function parse_type_ref(sin: string): TypeRef {
+  if (plain_type_spelling(sin)) {
+    return TypeRef { base: sin, args: [], array_depth: 0, is_tuple: false, is_fn: false, is_view: false };
+  }
   var s: string = sin;
   var depth: i32 = 0;
   // Function "(P, Q) => R": base "", args are the parameters with the RESULT
@@ -11711,7 +11729,7 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
       var ed: EnumDecl = funcs.enums[owner];
       var own: MEnv = me_variant_binds(ed, vname, c.args, env, funcs.structs, funcs);
       if (str_list_contains(vars, pattern)) {
-        var whole: string = variant_binds_spelling(ed, own);
+        var whole: string = bound_spelling(ed.name, ed.type_params, own);
         if (whole.len() == 0) {
           return binds;
         }
@@ -12226,7 +12244,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       return mono_infer(u.operand, env, funcs);
     },
     ast.ExprStructLit(sl) => {
-      return sl.type_name;
+      return struct_lit_spelling(sl, env, funcs);
     },
     ast.ExprTuple(tu) => {
       // A tuple literal `(e0, e1, …)` → `(T0, T1, …)`, so a `(K, V)[]`
@@ -15221,6 +15239,14 @@ function ms_lambda(lm: ast.ExprLambda, dest: string, env: MEnv, gstructs: Struct
 // field values.
 function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
   var cur: Insts = ins;
+  // A written instantiation (`Stack[i32] { items: [] }`) names the clone the
+  // way an annotation does; the field values need not bind every parameter.
+  var lit_dest: string = dest;
+  if (s.written.len() > 0 && !mono_ty_mentions_var(s.written)) {
+    var wm: TyIns = mg_ty(s.written, gstructs, cur);
+    cur = wm.mins;
+    lit_dest = wm.ty;
+  }
   var vals: ast.Expr[] = [];
   var i: i32 = 0;
   while (i < s.field_values.len()) {
@@ -15240,8 +15266,8 @@ function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: 
   cur = rb.rins;
   var tn: string = s.type_name;
   var gi: i32 = gstruct_index(gstructs, s.type_name);
-  if (gi >= 0 && is_clone_of(dest, s.type_name)) {
-    tn = dest;
+  if (gi >= 0 && is_clone_of(lit_dest, s.type_name)) {
+    tn = lit_dest;
   } else if (gi >= 0) {
     var key: string = infer_lit_key(gstructs[gi], s.field_names, vals, env, funcs);
     if (key.len() > 0) {
@@ -16454,6 +16480,35 @@ function me_variant_binds(ed: EnumDecl, vname: string, args: ast.Expr[], env: ME
   return binds;
 }
 
+// struct_lit_spelling is a struct literal's type: a generic struct written
+// bare has its parameters bound from the field values (`One { v: 7, .. }` is
+// `One[i32]`), and stays bare while one is unbound.
+function struct_lit_spelling(sl: ast.ExprStructLit, env: MEnv, funcs: MFns): string {
+  var si: i32 = gstruct_index(funcs.structs, sl.type_name);
+  if (si < 0 || funcs.structs[si].type_params.len() == 0 || funcs.structs[si].enum_owner.len() > 0) {
+    return sl.type_name;
+  }
+  var sd: StructDecl = funcs.structs[si];
+  var binds: MEnv = MEnv { mnames: [], mtypes: [] };
+  var k: i32 = 0;
+  while (k < sl.field_names.len() && k < sl.field_values.len()) {
+    for f in sd.fields {
+      if (f.name == sl.field_names[k]) {
+        var at: string = mono_infer(sl.field_values[k], env, funcs);
+        if (at.len() > 0) {
+          binds = bind_unify(f.type_name, at, sd.type_params, binds);
+        }
+      }
+    }
+    k = k + 1;
+  }
+  var whole: string = bound_spelling(sd.name, sd.type_params, binds);
+  if (whole.len() == 0) {
+    return sl.type_name;
+  }
+  return whole;
+}
+
 // ctor_variant_name: the variant a call's callee constructs when it names one
 // bare (`Leaf`) or qualified by its generic enum (`Tree.Leaf`); "" otherwise.
 function ctor_variant_name(callee: ast.Expr, enums: EnumDecl[]): string {
@@ -16473,13 +16528,13 @@ function ctor_variant_name(callee: ast.Expr, enums: EnumDecl[]): string {
   return "";
 }
 
-// variant_binds_spelling: `Enum[a, b]` from bindings of every one of the
-// enum's type parameters; "" when any is unbound.
-function variant_binds_spelling(ed: EnumDecl, binds: MEnv): string {
-  var out: string = ed.name + "[";
+// bound_spelling: `Name[a, b]` from bindings of every one of `tparams`; ""
+// when any is unbound.
+function bound_spelling(name: string, tparams: string[], binds: MEnv): string {
+  var out: string = name + "[";
   var j: i32 = 0;
-  while (j < ed.type_params.len()) {
-    var b: string = binds.elook(ed.type_params[j]);
+  while (j < tparams.len()) {
+    var b: string = binds.elook(tparams[j]);
     if (b.len() == 0) {
       return "";
     }
@@ -16505,7 +16560,7 @@ function variant_ctor_spelling(callee: ast.Expr, args: ast.Expr[], env: MEnv, fu
     return "";
   }
   var ed: EnumDecl = funcs.enums[owner];
-  return variant_binds_spelling(ed, me_variant_binds(ed, vname, args, env, funcs.structs, funcs));
+  return bound_spelling(ed.name, ed.type_params, me_variant_binds(ed, vname, args, env, funcs.structs, funcs));
 }
 
 // The spelling a single-param enum's inferred construction binds its type
@@ -16949,7 +17004,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
         vgo = genum_owner_of_variant(enums, vgn);
       }
       if (vgo >= 0 && me_infer_variant_key(enums[vgo], vgn, c.args, "", env, enums, structs, funcs).len() > 0) {
-        return variant_binds_spelling(enums[vgo], me_variant_binds(enums[vgo], vgn, c.args, env, structs, funcs));
+        return bound_spelling(enums[vgo].name, enums[vgo].type_params, me_variant_binds(enums[vgo], vgn, c.args, env, structs, funcs));
       }
       match (c.callee) {
         ast.ExprIdent(cid) => {
@@ -17750,7 +17805,7 @@ pub function is_value_block(c: ast.ExprCall): boolean {
 }
 
 // mkclo_body names the hoisted body a lambda-lift closure marker carries, or
-// "" for any other name. irlower.lift_inline_closures writes the marker as a
+// "" for any other name. lift.lift_inline_closures writes the marker as a
 // call of `__mkclo$<body>`; the checker types the box it builds and the
 // semantic source boundary produces it, so the spelling lives in one place.
 pub function mkclo_body(name: string): string {
@@ -23414,7 +23469,7 @@ function claim_method_name(fd: FuncDecl, tname: string, keys: string[], traits: 
 // These three are the INVERSE of claim_method_name: given the traits a `dyn`
 // spans and the method a call names, they say which of the flat symbols the
 // claim table produced is the one that call means. Every dispatcher needs the
-// same answer — the compiled backends through irlower.dyn_arm_matches, the AST
+// same answer — the compiled backends through irtables.dyn_arm_matches, the AST
 // interpreter through dyn_provider_name — so the rule lives beside the renaming
 // it undoes rather than once per engine.
 

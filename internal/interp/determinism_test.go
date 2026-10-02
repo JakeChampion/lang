@@ -2,8 +2,8 @@ package interp
 
 // Determinism guard for the tree-walking interpreter.
 //
-// The interpreter is the differential oracle: TestDifferential_LangsmithMain
-// (internal/e2e) compares every backend's output against the value the
+// The interpreter is the differential oracle: the TestDifferential_* sweeps
+// (internal/e2e) compare every backend's output against the value the
 // interpreter produces for the same source. That comparison is only
 // sound if the interpreter is itself deterministic — if a program's
 // interpreted result or its stdout could vary run-to-run, the oracle

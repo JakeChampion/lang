@@ -583,7 +583,7 @@ pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.St
 //
 // map_expr_acc / map_stmt_acc / map_stmts_acc are map_expr's state-threading
 // twin: the walk hands back a NEW TREE and an accumulator, for the rewrite
-// passes that also build something as they go — irlower's env-box lift is the
+// passes that also build something as they go — lift's env-box lift is the
 // archetype, accumulating the hoisted `$cloN` functions and the counter that
 // names them.
 //
@@ -1283,10 +1283,10 @@ pub function collect_calls_stmt(st: ast.Stmt, want: util.NameIndex, own acc: Cal
 // parser's desugars flatten both before any consumer sees a pattern — but they
 // are recursed anyway so a pattern that does reach here cannot hide a binder.
 //
-// irlower's fai_pat_binds and sa_pat_binds read this list rather than walking
-// the pattern themselves, which is the point: two answers to "what does this
-// pattern bind" is how at_binding came to be missing from one of them (#6993)
-// and the tuple binders from this one (#8607).
+// Callers read this list rather than walking the pattern themselves, which is
+// the point: two answers to "what does this pattern bind" is how at_binding
+// came to be missing from one of them (#6993) and the tuple binders from this
+// one (#8607).
 pub function pattern_binders(p: ast.Pattern, own acc: string[]): string[] {
   match (p) {
     ast.PatVariant(pv) => {

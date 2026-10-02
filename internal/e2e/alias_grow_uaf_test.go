@@ -18,7 +18,7 @@ import (
 //
 // This is the mechanism behind the `rhsTainted` `__method_Array_push`
 // receiver-only arm's self-host corruption (#3457): the arm makes both halves
-// of exactly this pair — `gfns` / `lgfns` in `irlower.lift_lambdas_view` —
+// of exactly this pair — `gfns` / `lgfns` in `lift.lift_lambdas_view` —
 // reclaimable, and the monomorphised clone names (the only function names with
 // no second owner) hit rc 0 and are recycled, so `emit_function` writes
 // `__fn_` + garbage. See docs/SELFHOST-AST-RETIREMENT.md.

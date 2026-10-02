@@ -47,6 +47,11 @@ var interpEnumCtorCases = []struct {
 	// the union-alias dispatch path, which only sees variants that were built
 	// in the first place.
 	{"enum-method-dispatch", "enum Shape { Circle(i32), Square(i32) }\nfunction (s: Shape) size(): i32 {\n  match (s) { Circle(r) => { return r; }, Square(w) => { return w * 2; } }\n}\nfunction main(): i32 {\n  var a: Shape = Circle(3);\n  var b: Shape = Square(2);\n  return a.size() + b.size();\n}\n"},
+	// A method declared on a BUILTIN enum. Body / JsonValue / IoError reach the
+	// interpreter as injected variant structs and never as EnumDecls, so the
+	// owner has to be read off the variant table for `b.kind()` to dispatch.
+	{"builtin-enum-method-dispatch", "function (b: Body) kind(): i32 {\n  match (b) { BodyText(_) => { return 1; }, BodyBytes(bs) => { return bs.len() + 5; }, _ => { return 2; } }\n}\nfunction main(): i32 {\n  var bs: u8[] = [1 as u8, 2 as u8];\n  var b: Body = BodyBytes(bs);\n  return b.kind();\n}\n"},
+	{"builtin-jsonvalue-method-dispatch", "function (v: JsonValue) tag(): i32 {\n  match (v) { JNull => { return 1; }, JNumber(s) => { if (s == \"42\") { return 7; } return 2; }, _ => { return 3; } }\n}\nfunction main(): i32 {\n  var v: JsonValue = JNumber(\"42\");\n  return v.tag();\n}\n"},
 	// A variant carrying another enum, so the payload is itself a variant.
 	{"nested-variant-payload", "enum Inner { One, Two }\nenum Outer { Wrap(Inner) }\nfunction main(): i32 {\n  var o: Outer = Wrap(Two);\n  match (o) {\n    Wrap(i) => { match (i) { One => { return 1; }, Two => { return 7; } } }\n  }\n}\n"},
 

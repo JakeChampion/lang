@@ -22,7 +22,7 @@ position and stores the dummy. So:
 - `semsource.indirect_call` takes the statement flag its direct-call
   siblings take: a void call through a value stands as a statement and is
   refused in expression position, the rule every void call has.
-- `irlower.make_wrap_named_func`, the lift's trampoline for a bare function
+- `lift.make_wrap_named_func`, the lift's trampoline for a bare function
   name used as a value, wrote `return f(p…)` whatever `f` returned. The
   checker refuses that of a void `f` (E002), and so did the typed producer;
   the trampoline for a void target now calls it as a statement, the way the

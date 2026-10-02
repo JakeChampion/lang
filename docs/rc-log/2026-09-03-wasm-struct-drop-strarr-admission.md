@@ -30,7 +30,7 @@ __fern_arr_dec ← __fern_arr_dec_ptr ← __struct_drop_irlower__FnSigs
 whole-program one it was handed:
 
 ```
-var sg: irlower.FnSigs = irlower.FnSigs { ...irlower.fn_sigs_with_dyn(base, …), … };
+var sg: fnsigs.FnSigs = fnsigs.FnSigs { ...irlower.fn_sigs_with_dyn(base, …), … };
 ```
 
 A base copy hands the new box every array field pointer with NO retain

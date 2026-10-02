@@ -165,7 +165,7 @@ func withLowering(names []string, lowerable map[string]bool) []string {
 func selfHostLoweredIntrinsics(t *testing.T) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
-	for _, f := range []string{"semsource.fern", "ssarc.fern", "irlower.fern", "ir.fern"} {
+	for _, f := range []string{"semsource.fern", "ssarc.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "ir.fern"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", f))
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)

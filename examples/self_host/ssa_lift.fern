@@ -265,8 +265,28 @@ function flat_arm_op(op: ir.Op): boolean {
 // carries its IR kind name and width (`str`, `imm`) rather than the symbol the
 // optimiser reads, and an integer cast carries the cast in `str`, so the
 // emitter selects instructions from the same table the stack machine does.
-pub function lift_from_ir_prod(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
-  return lift_impl(name, nparams, nslots, ops);
+// KindTable is every op kind's name and kind_class by id, built once per
+// module: lift_impl reads it per op instead of classifying each kind it
+// meets per function, which built and scanned the name lists each time.
+pub struct KindTable { names: string[], classes: i32[] }
+
+pub function kind_table(): KindTable {
+  var names: string[] = [];
+  var classes: i32[] = [];
+  // Ids run past kind_count(): the registry's census walks every id below
+  // 1024 and takes the ones kind_name answers for, and so does this.
+  var id: i32 = 0;
+  while (id < 1024) {
+    var k: string = ir.kind_name(id);
+    names = names.append(k);
+    classes = classes.append(kind_class(k));
+    id = id + 1;
+  }
+  return KindTable { names: names, classes: classes };
+}
+
+pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
+  return lift_impl(kt, name, nparams, nslots, ops);
 }
 
 // prod_kind is the op vocabulary lift_from_ir_prod admits.
@@ -289,8 +309,9 @@ function prod_kind(k: string): boolean {
 }
 
 // kind_class packs the classifications lift_impl branches on: bit 0
-// prod_kind, bit 1 prod_mem_kind, bit 2 prod_float_kind, bit 3 a bin_sym. lift_impl works it
-// out once per kind it meets, since each builds and scans its name lists.
+// prod_kind, bit 1 prod_mem_kind, bit 2 prod_float_kind, bit 3 a bin_sym.
+// kind_table works it out once per kind, since each builds and scans its
+// name lists.
 function kind_class(k: string): i32 {
   var c: i32 = 0;
   if (prod_kind(k)) {
@@ -1024,7 +1045,7 @@ function lift_const_text_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cu
   return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
 }
 
-function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
+function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResult {
   var nvals: i32 = 0;
   var next_blk: i32 = 0;
   var bail: string = "";  // the op kind that forced a fall-back (scan diagnostic)
@@ -1123,19 +1144,6 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
   var ep_slot: i32[] = [];
   var ep_val: i32[] = [];
 
-  // Each kind's name and kind_class, filled in the first time it appears.
-  var top_tag: i32 = 0;
-  for o in ops {
-    if (o.kind_tag > top_tag) {
-      top_tag = o.kind_tag;
-    }
-  }
-  var knames: string[] = [];
-  var kcls: i32[] = [];
-  while (kcls.len() <= top_tag) {
-    kcls = kcls.append(0 - 1);
-    knames = knames.append("");
-  }
   var t_block: i32 = ir.kind_id("block");
   var t_br: i32 = ir.kind_id("br");
   var t_brif: i32 = ir.kind_id("brif");
@@ -1164,18 +1172,14 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
   while (i < ops.len() && ok) {
     var op: ir.Op = ops[i];
     var tag: i32 = op.kind_tag;
-    if (tag < 0) {
+    if (tag < 0 || tag >= kt.names.len()) {
       ok = false;
       bail = "invalid#" + util.i32_to_string(tag);
       i = i + 1;
       continue;
     }
-    if (kcls[tag] < 0) {
-      knames = knames.with(tag, ir.kind_name(tag));
-      kcls = kcls.with(tag, kind_class(knames[tag]));
-    }
-    var k: string = knames[tag];
-    var cls: i32 = kcls[tag];
+    var k: string = kt.names[tag];
+    var cls: i32 = kt.classes[tag];
 
     // Skip dead code after a terminator (e.g. ops after a `return`/`br`
     // inside an arm); only else/end/the matching block delimiters act on it.

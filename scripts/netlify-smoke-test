@@ -8,9 +8,9 @@
 # across many machines for tens of minutes; this gets one small container and a
 # single-digit number of minutes shared with the docs build. What it does buy is
 # the fast, broad half of the signal — does the tree compile, do the unit tests
-# pass, does the conformance corpus still run correctly on interp / x86-64 /
-# wasm, does the self-hosted compiler still build and compile a program — in a
-# window where nothing else is reporting.
+# pass, does the conformance corpus still give the interpreter's answers, does
+# the self-hosted compiler still build and compile a program — in a window
+# where nothing else is reporting.
 #
 # ---------------------------------------------------------------------------
 # Design: a deadline, not a wish
@@ -34,12 +34,10 @@
 #      whose tests all t.Skip() exits 0 too, so the natural failure mode of a
 #      misconfigured environment is a silent, instant green.
 #
-#   3. Missing tooling is a failure, not a skip. The conformance corpus runs
-#      every fixture on wasm and each wasm leg t.Skip()s without wasmtime, so a
-#      quietly-failed install costs a quarter of that stage's coverage and says
-#      nothing. .github/actions/setup-fern carries the same preflight for the
-#      same reason; its comment records 36 component tests that skipped
-#      silently for a long stretch of #3457.
+#   3. Missing tooling is a failure, not a skip: a test that t.Skip()s for want
+#      of a tool exits 0 exactly as a pass does. .github/actions/setup-fern
+#      carries the same preflight for the same reason; its comment records 36
+#      component tests that skipped silently for a long stretch of #3457.
 #
 # ---------------------------------------------------------------------------
 # Knobs (set under [build.environment] in netlify.toml, or in the Netlify UI)
@@ -56,8 +54,8 @@
 #                         runs first, see netlify.toml — taking the rest.
 #   FERN_SMOKE_STAGES     comma-separated subset of the stage names below, in
 #                         the order they should run. Default: all of them.
-#   FERN_SMOKE_CACHE      directory for the Go build cache, the self-host driver
-#                         cache and the wasm toolchain. Defaults to Netlify's
+#   FERN_SMOKE_CACHE      directory for the Go build cache and the self-host
+#                         driver cache. Defaults to Netlify's
 #                         persistent build cache when running there, which is
 #                         what makes later deploys fast enough to reach the
 #                         later stages at all.
@@ -68,11 +66,9 @@
 #   build        go build + go vet over every package
 #   units        every Go package except the four slow ones (see
 #                scripts/unit-test-packages)
-#   conformance  the whole conformance/cases corpus on every backend the
-#                container can reach — interp, x86-64 and wasm here; arm64
-#                needs qemu plus a cross-gcc, which an unprivileged Netlify
-#                build cannot install, and is reported as uncovered rather
-#                than passed over quietly
+#   conformance  the whole conformance/cases corpus through the interpreter;
+#                the compiled targets run it in CI's self-host fixture legs,
+#                each far longer than this whole budget
 #   selfhost     the self-hosted compiler's x86-64 IR path: builds the
 #                asm_ir_run driver and compiles + runs programs through it
 #
@@ -122,8 +118,8 @@ logfile() { echo "$logdir/$1.log"; }
 # A dev box already has a warm GOCACHE of its own and would not thank us for
 # being pointed at a cold one, so the redirect only happens where the container
 # is disposable: on Netlify, or when FERN_SMOKE_CACHE names a directory
-# explicitly. Everything else — the self-host driver cache, the wasm toolchain —
-# has no such default and is kept under the repo locally.
+# explicitly. The self-host driver cache has no such default and is kept under
+# the repo locally.
 cache="${FERN_SMOKE_CACHE:-}"
 if [ -n "$cache" ] || [ "${NETLIFY:-}" = "true" ]; then
   [ -n "$cache" ] || cache="${NETLIFY_BUILD_BASE:-/opt/build}/cache/fern-smoke"
@@ -209,52 +205,6 @@ assert_ok_packages() {
   got=${got:-0}
   [ "$got" -ge "$2" ] ||
     fail_last "ran almost nothing: $got packages reported ok, expected at least $2"
-}
-
-# ---------------------------------------------------------------------------
-# The wasm toolchain.
-#
-# mise is not bootstrapped in the deploy sandbox (see scripts/netlify-build),
-# so the smoke lane downloads wasmtime + wasm-tools directly, reading their
-# pinned versions from mise.toml — the one place a version lives. A hand-copied
-# pin here is what buys an opaque `invalid leading byte (0x43)` when it falls
-# behind; a sed of the single source does not.
-mise_ver() {
-  sed -n "s/^$1 = \"\([^\"]*\)\"/\1/p" "$repo/mise.toml" | head -1
-}
-install_wasm_toolchain() {
-  local arch dir base wasmtime_ver wasmtools_ver
-  case "$(uname -m)" in
-    x86_64) arch=x86_64-linux ;;
-    aarch64) arch=aarch64-linux ;;
-    *)
-      echo "smoke: no wasm toolchain build for $(uname -m)" >&2
-      return 1
-      ;;
-  esac
-  wasmtime_ver=$(mise_ver wasmtime)
-  wasmtools_ver=$(mise_ver wasm-tools)
-  [ -n "$wasmtime_ver" ] && [ -n "$wasmtools_ver" ] || {
-    echo "smoke: could not read wasm pins from mise.toml" >&2; return 1; }
-  dir="$cache/wasm-$wasmtime_ver-$wasmtools_ver-$arch"
-  export PATH="$dir:$PATH"
-  export FERN_WASI_ADAPTER="$dir/wasi_snapshot_preview1.command.wasm"
-
-  if [ -x "$dir/wasmtime" ] && [ -x "$dir/wasm-tools" ] && [ -f "$FERN_WASI_ADAPTER" ]; then
-    echo "==> smoke: wasm toolchain cached ($("$dir/wasmtime" --version | head -1))"
-    return 0
-  fi
-
-  echo "==> smoke: installing wasmtime v$wasmtime_ver + wasm-tools $wasmtools_ver"
-  mkdir -p "$dir"
-  base=https://github.com/bytecodealliance
-  curl -sSfL "$base/wasmtime/releases/download/v$wasmtime_ver/wasmtime-v$wasmtime_ver-$arch.tar.xz" |
-    tar -xJ -C "$dir" --strip-components=1 --wildcards '*/wasmtime' || return 1
-  curl -sSfL -o "$FERN_WASI_ADAPTER" \
-    "$base/wasmtime/releases/download/v$wasmtime_ver/wasi_snapshot_preview1.command.wasm" || return 1
-  curl -sSfL "$base/wasm-tools/releases/download/v$wasmtools_ver/wasm-tools-$wasmtools_ver-$arch.tar.gz" |
-    tar -xz -C "$dir" --strip-components=1 --wildcards '*/wasm-tools' || return 1
-  wasmtime --version && wasm-tools --version
 }
 
 # ---------------------------------------------------------------------------
@@ -360,14 +310,10 @@ stage_units() { # ~80s warm, half of it internal/ir's corpus determinism sweep
 }
 
 # `-count=1` — this is the one stage that must not be served from Go's test
-# cache. The cache is content-addressed on the test binary and the inputs the
-# test was seen to read, which does not include "is there a qemu-aarch64 on this
-# host". Caught in the act: with the arm64 toolchain removed, this stage replayed
-# a cached result and reported `arm64=348` — 348 fixtures of coverage that had
-# not run here. The per-backend counts below are stated as fact in the deploy
-# log, so they have to come from a run that actually happened. The other stages
-# make no such claim and keep the cache.
-stage_conformance() { # ~75s for 342 fixtures x 4 backends
+# cache: the fixture count below is stated as fact in the deploy log, so it has
+# to come from a run that actually happened. The other stages make no such
+# claim and keep the cache.
+stage_conformance() {
   go test -count=1 -run '^TestFernFixtures$' -v ./internal/e2e/
 }
 
@@ -399,40 +345,14 @@ stage_selfhost() {
 }
 
 # ---------------------------------------------------------------------------
-# Per-backend accounting for the conformance corpus. Every fixture runs on every
-# backend, so "how many fixtures passed on backend X" is the honest coverage
-# number — and zero for a backend this container CAN reach means the toolchain
-# broke, not that the tests are fine. Reported either way, so the deploy log
-# states its own coverage instead of implying total coverage.
-backend_passes() { # LOG BACKEND
-  local n
-  n=$(grep -c -- "--- PASS: TestFernFixtures/[^/]*/$2 " "$1")
-  echo "${n:-0}"
-}
-
+# The conformance count. Zero passes means the stage tested nothing, which is a
+# break, not a skip, so the deploy log states the count either way.
 check_conformance_coverage() {
-  local log=$1 counts backend reachable=(interp x86_64)
-  [ "$have_wasm" = yes ] && reachable+=(wasm)
-
-  counts=$(grep -oE -- '--- PASS: TestFernFixtures/[^/]+/[a-z0-9_]+' "$log" |
-    awk -F/ '{print $3}' | sort | uniq -c | awk '{printf "%s=%s ", $2, $1}')
-  note_last "${counts% }"
-
-  for backend in "${reachable[@]}"; do
-    if [ "$(backend_passes "$log" "$backend")" -lt 100 ]; then
-      fail_last "the $backend backend passed only $(backend_passes "$log" "$backend") fixtures, and its toolchain is present — that is a break, not a skip"
-      return 0
-    fi
-  done
-
-  # arm64 is judged by its COUNT, not by probing for qemu + a cross-gcc.
-  # A separate probe is a second opinion that can disagree with what actually
-  # ran, and it did: hiding qemu-aarch64 made the probe report "arm64
-  # uncovered" beside a count of 348 passing arm64 fixtures, because the
-  # harness resolves its runner differently. The counts are the authority —
-  # they are the thing that was measured.
-  if [ "$(backend_passes "$log" arm64)" -eq 0 ]; then
-    note_last "${stage_note[${#stage_names[@]} - 1]} (arm64 uncovered: no qemu/cross-gcc)"
+  local log=$1 n
+  n=$(grep -c -- "--- PASS: TestFernFixtures/[^/]*/interp " "$log")
+  note_last "interp=${n:-0}"
+  if [ "${n:-0}" -lt 100 ]; then
+    fail_last "the interpreter passed only ${n:-0} fixtures"
   fi
 }
 
@@ -440,22 +360,6 @@ check_conformance_coverage() {
 
 default_stages="build,units,conformance,selfhost"
 IFS=',' read -r -a selected <<<"${FERN_SMOKE_STAGES:-$default_stages}"
-
-# Install the wasm toolchain only when something asks for it. Conformance is the
-# only stage that runs wasm, and a `FERN_SMOKE_STAGES=build,units` run has no
-# business going red because a GitHub release download blipped.
-have_wasm=no
-if [[ ",${FERN_SMOKE_STAGES:-$default_stages}," == *,conformance,* ]]; then
-  if install_wasm_toolchain; then
-    have_wasm=yes
-  else
-    # A failed stage, not a warning. Without the toolchain a quarter of the
-    # corpus's coverage disappears into t.Skip() and the deploy still goes
-    # green — the exact false green this script exists to prevent.
-    record wasm-toolchain FAIL 0 "install failed; the conformance wasm leg would silently skip"
-    failures=$((failures + 1))
-  fi
-fi
 
 for s in "${selected[@]}"; do
   case "$s" in
@@ -471,9 +375,8 @@ for s in "${selected[@]}"; do
     conformance)
       run_stage conformance 150 stage_conformance
       # No assert_passes here: check_conformance_coverage is strictly stronger.
-      # It demands 100+ passing fixtures on EVERY backend this container can
-      # reach, so a `-run` regex gone stale (0 tests, exit 0) and a lost
-      # toolchain (that backend at 0) both land as a failure.
+      # It demands 100+ passing fixtures, so a `-run` regex gone stale (0
+      # tests, exit 0) lands as a failure.
       [ "${stage_status[-1]}" = PASS ] && check_conformance_coverage "$(logfile conformance)"
       ;;
     selfhost)

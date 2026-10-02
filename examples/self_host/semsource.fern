@@ -3890,7 +3890,10 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
   var after: checker.Scope = checker.bind_stmt(st, s.scope);
   var ty: typeinfo.Type = bound_type(s, v.name, after);
   if (!semtypes.concrete(ty, true)) {
-    ty = closure_slot_type(v.init, s.contracts.list);
+    var cty: typeinfo.Type = closure_slot_type(v.init, s.contracts.list);
+    if (semtypes.concrete(cty, true)) {
+      ty = cty;
+    }
   }
   // A CALL names its own result, in the contract the call reads to produce
   // itself, so an unannotated binding of one needs no type from the checker:
@@ -5182,7 +5185,7 @@ pub function decl_key(fd: parser.FuncDecl): string {
 
 // coarse_fn_tag_without_contract reports a declaration whose result is the
 // coarse callable tag carrying none of the signature that tag drops. The one
-// this exists for is synthesised: the IIFE irlower.hoist_value_iife declares
+// this exists for is synthesised: the IIFE lift.hoist_value_iife declares
 // for an if/match-expression whose arms are UNANNOTATED lambdas, which have a
 // parameter list to report and no result.
 //
@@ -5333,7 +5336,7 @@ function literal_adapts(returned: ast.Expr, declared: typeinfo.Type): boolean {
   return false;
 }
 
-// A declaration the lowering synthesised: a lambda `irlower` lifted to a
+// A declaration the lowering synthesised: a lambda `lift` lifted to a
 // `__lam_N` body, or a value-position if/match it hoisted to a `$iife` one.
 // Its result tag is `parser.if_expr_rt`'s reading of the first arm's SYNTAX,
 // which answers "i32" for any arm it cannot classify — a call, a record
@@ -6938,6 +6941,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "tcp_send", params: [t_i32(), t_string()], modes: [v, b], result: t_i32() },
     ssasem.Contract { name: "tcp_send_bytes", params: [t_i32(), bytes], modes: [v, b], result: t_i32() },
     ssasem.Contract { name: "udp_send", params: [t_string(), t_i32(), t_string()], modes: [b, v, b], result: t_i32() },
+    ssasem.Contract { name: "udp_send_bytes", params: [t_string(), t_i32(), bytes], modes: [b, v, b], result: t_i32() },
     ssasem.Contract { name: "tcp_recv", params: [t_i32(), t_i32()], modes: [v, v], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
     ssasem.Contract { name: "tcp_pollable", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "tcp_listen_with", params: [bytes, t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: t_i32() },
@@ -6946,6 +6950,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "udp_bind", params: [bytes, t_i32()], modes: [b, v], result: t_i32() },
     ssasem.Contract { name: "udp_connect", params: [t_i32(), bytes, t_i32()], modes: [v, b, v], result: t_i32() },
     ssasem.Contract { name: "udp_sendto", params: [t_i32(), bytes, t_i32(), t_string()], modes: [v, b, v, b], result: t_i32() },
+    ssasem.Contract { name: "udp_sendto_bytes", params: [t_i32(), bytes, t_i32(), bytes], modes: [v, b, v, b], result: t_i32() },
     ssasem.Contract { name: "udp_recvfrom", params: [t_i32(), bytes, bytes], modes: [v, b, b], result: t_i32() },
     ssasem.Contract { name: "tcp_connect_with", params: [bytes, t_i32(), t_bool()], modes: [b, v, v], result: t_i32() },
     ssasem.Contract { name: "unix_listen", params: [t_string(), t_i32()], modes: [b, v], result: t_i32() },
