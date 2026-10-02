@@ -3609,7 +3609,7 @@ function counted_key_column(k: typeinfo.Type): boolean {
 // The release of one value a routed column holds: a string's, or a box's
 // through its type's own release helper.
 function value_release(v: typeinfo.Type): string {
-  if (ssasem.is_string(v)) {
+  if (ssasem.is_text(v)) {
     return "__fern_str_free";
   }
   return release_helper_name(v);
