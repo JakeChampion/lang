@@ -69,15 +69,6 @@ pub function large_fl_cells(): i32 {
 // wasm.fern, which owns le32_escape / wat_escape / strcat_helpers) because
 // wasm_ir cannot import wasm without a cycle — same split as the heap runtime.
 
-// lower_all_gated is the whole-program case, judged: the unit IS the program,
-// every function is lowered once with the whole-program registries `base`
-// (plus the dyn rows), and the module's IR-eligibility verdict comes from that lowering
-// (ircore.lower_gated) rather than from a separate gate pass that lowered
-// everything a first time and discarded it.
-pub function lower_all_gated(mod: parser.Module, stab: irlower.StructTab, base: irlower.FnSigs, sub: ircore.Sub): ircore.Lowered {
-  return ircore.lower_gated(mod, stab, irlower.fn_sigs_with_dyn(base, mod.trait_reqs), [], true, sub);
-}
-
 // str_values collects the module's distinct string literals (first-seen order,
 // deduped) from the lowered IR. Both the caller's data-section emission and the
 // per-function const_str offset lookup walk this same list, so offsets agree.
@@ -2982,7 +2973,7 @@ pub function component_io_shims(needs: string[], stderr: boolean): string {
 // lowered with; the RC bodies are seeded from it rather than from a second
 // run of the same fixpoints.
 pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResult[], mode: i32, base: irlower.FnSigs): string {
-  ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), ir_cache, irlower.struct_tab(mod.structs), base, true);
+  ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), ir_cache);
   var sv: string[] = str_values(ir_cache);
   var cv: string[] = const_agg_values(ir_cache);
   var ft: string[] = fn_value_table(ir_cache);
@@ -2998,8 +2989,8 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResu
 }
 
 // ir_route_ok is the wasm routing decision as a PROBE: the use_ir default is
-// on, the module lowers (the fused gate, lower_all_gated, with `sub` in it as
-// the emit entry has it), and ir_route_final admits the lowering.
+// on, the typed lowering `sub` passes the gate (ircore.gate), and
+// ir_route_final admits it.
 // emit_module_mode_or_error_sub makes the same decision
 // inline because it goes on to emit from that lowering; a driver's `-decide`
 // asks here so the probe cannot drift from the emitter it describes.
@@ -3014,10 +3005,8 @@ pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean, sub
   if (!asmcore.new_state().use_ir) {
     return false;
   }
-  var sm: parser.Module = ircore.with_records(lm, sub);
-  var stab: irlower.StructTab = irlower.struct_tab(sm.structs);
-  var g: ircore.Lowered = lower_all_gated(sm, stab, ircore.sub_base(sub, sm.funcs, stab), sub);
-  return g.ok && ir_route_final(ircore.sub_cache(sub, g.cache), component, io);
+  var g: ircore.Lowered = ircore.gate(ircore.with_records(lm, sub), sub);
+  return g.ok && ir_route_final(g.cache, component, io);
 }
 
 // ir_route_final is the half of the decision that needs the lowering: the
@@ -3066,15 +3055,13 @@ pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolea
       mode = 2;
     }
   }
-  // The fused gate (ir_route_ok's decision, inline so the lowering it judged
-  // and the registry base it was derived over feed the emit directly).
+  // The gate (ir_route_ok's decision, inline so the bodies it judged feed the
+  // emit directly).
   if (asmcore.new_state().use_ir) {
-    var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
-    var base: irlower.FnSigs = ircore.sub_base(sub, lm.funcs, stab);
-    var g: ircore.Lowered = lower_all_gated(lm, stab, base, sub);
-    var cache: irlower.LowerResult[] = ircore.sub_cache(sub, g.cache);
+    var g: ircore.Lowered = ircore.gate(lm, sub);
+    var cache: irlower.LowerResult[] = g.cache;
     if (g.ok && ir_route_final(cache, component, io)) {
-      return emit_ir_module_mode(lm, cache, mode, base);
+      return emit_ir_module_mode(lm, cache, mode, sub.sigs);
     }
     // A module the lowering took whole but the component framing cannot
     // import for is not an IR bail, so name the op rather than blame the IR.

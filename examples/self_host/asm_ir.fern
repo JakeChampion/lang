@@ -6,7 +6,7 @@
 // between a push of their operands and a pop of the result (emit_stack_op).
 //
 // This is the only x86-64 emitter — the AST one it grew up beside was deleted
-// (#5972). A module the gate (ircore.lower_gated) refuses is a diagnostic
+// (#5972). A module the gate (ircore.gate) refuses is a diagnostic
 // naming the bail site under FERN_STRICT_IR=1, not a route to some other
 // emitter.
 //
@@ -8337,23 +8337,8 @@ function emit_ssa_function(r: irlower.LowerResult, label_name: string, s: asmcor
   return s;
 }
 
-// emit_function_via_ir lowers one function to the stack IR and emits it
-// through the register path, writing through the global strbuf.
-function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irlower.FnSigs, vsigs: irverify.NameIndex): asmcore.EmitState {
-  var r: irlower.LowerResult = irlower.lower_func(fd, s.struct_decls, sg, false);
-  return emit_function_via_ir_pre(r, fd, s, vsigs);
-}
-
-// emit_function_via_ir_pre is the emit half of emit_function_via_ir, split out at
-// the lower_func boundary so a caller that has ALREADY lowered `fd` can emit from
-// that LowerResult without lowering it a second time (#4394 lever 3 — the fused
-// eligible-and-emit path, emit_module_ir_gated_sub, lowers each function once, checks
-// eligibility on that `r`, then emits from the same one, replacing the driver's
-// former lower-twice: all_eligible_known's gate pass re-lowered every function,
-// then emit_module_ir re-lowered every function again). Everything from the
-// runtime-need detection onward reads only r / fd / s (none of the eighteen
-// side-tables lower_func consumes), so this split is byte-identical to the
-// inlined body.
+// emit_function_via_ir_pre emits declaration `fd`'s lowered body `r` through
+// the register path, writing through the global strbuf.
 function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
   // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
@@ -9805,11 +9790,11 @@ function ir_i2f_rax(width: i32, unsigned: boolean, lb: string, d: string): strin
 // emit_module_ir emits a full all-i32-eligible module via the IR path. The
 // program is self-contained (pure i32 uses no runtime helpers): every
 // function via the IR, then a `_start` that calls __fn_main and exits with
-// its result. The caller has gated the module (ircore.lower_gated).
+// its result. The caller has gated the module (ircore.gate).
 // emit_module_funcs derives the per-module side-tables ONCE and emits every
 // function through the IR (asm into the strbuf), marking each function's runtime
 // needs (the maps/heap op-scan + the str_*/print mark_* calls all live inside
-// emit_function_via_ir). globl_defs marks each `__fn_<label>` `.globl` for
+// emit_function_via_ir_pre). globl_defs marks each `__fn_<label>` `.globl` for
 // per-module linking. Shared by emit_module_ir_unit (which then writes _start /
 // .rodata / the runtime) and module_runtime_needs (which discards the asm and
 // reads the accumulated `needed`). Factoring it out keeps the two callers from
@@ -10419,21 +10404,8 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
 // `check_claims` is false for module_runtime_needs, which runs this whole loop
 // only to read the need-set off the EmitState and discards the text. A probe
 // must answer, so it does not get to refuse the module (#9655).
-function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], base: irlower.FnSigs, check_claims: boolean): asmcore.EmitState {
-  var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-  // #4394 lever 3: when `cache` is non-empty the caller (emit_module_ir_gated_sub)
-  // has ALREADY lowered every function — into cache[i], indexed by mod.funcs
-  // position — during its fused eligibility scan, so emit reuses that lowering
-  // (via emit_function_via_ir_pre) instead of lowering it a second time.
-  //
-  // `base` is the whole-program registry the caller derived once (wp_fn_sigs);
-  // only the per-module tails — this module's trait_reqs folded in, and the two
-  // module-scoped registries — are applied here, and they are cheap.
-  var sg: irlower.FnSigs = irlower.FnSigs {
-    ...irlower.fn_sigs_with_dyn(base, mod.trait_reqs),
-    closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs),
-    fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
-  };
+function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], check_claims: boolean): asmcore.EmitState {
+  // `cache` is the unit's lowered bodies, indexed by mod.funcs position.
   // The IR verify gate's callee-arity index, derived ONCE over the
   // whole-program all_funcs for the reason the registries above are: a
   // per-function rebuild would be O(n^2) on the compiler's own sources.
@@ -10445,20 +10417,21 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     hh = mod.funcs.len();
   }
   if (check_claims) {
-    ircore.check_fip_claims(mod.funcs, lo, hh, cache, s.struct_decls, sg, false);
+    ircore.check_fip_claims(mod.funcs, lo, hh, cache);
   }
   s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: asmcore.unit_leaves(mod, lo, hh, cache) };
   var fi: i32 = lo;
   while (fi < hh) {
+    var r: irlower.LowerResult = ircore.produced(cache, fi, mod.funcs[fi]);
     // A template the substitution superseded has no body: its instances
     // are on the cache tail (emit_named_bodies).
-    if (cache.len() > 0 && cache[fi].superseded) {
+    if (r.superseded) {
       fi = fi + 1;
       continue;
     }
     // Per-module: mark the definition `.globl` so a sibling module's
     // `call __fn_<label>` (an unresolved extern in that module) links
-    // against it. The label is computed exactly as emit_function_via_ir
+    // against it. The label is computed exactly as emit_function_via_ir_pre
     // writes it below (receiver-qualified for methods).
     if (globl_defs) {
       var gname: string = mod.funcs[fi].name;
@@ -10467,11 +10440,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
       }
       s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
     }
-    if (cache.len() == 0) {
-      s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
-    } else {
-      s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s, vsigs);
-    }
+    s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vsigs);
     fi = fi + 1;
   }
   // Cache entries past the declarations are bodies with no FuncDecl, each
@@ -10503,7 +10472,7 @@ pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl
   strbuf_reset();
   var s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: all_funcs };
-  s = emit_module_funcs(mod, all_funcs, all_structs, s, false, 0, 0 - 1, cache, base, false);
+  s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, false);
   s = s.close_needs();
   strbuf_reset();
   return s.needed;
@@ -10536,7 +10505,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
     return "";
   }
   var lm: parser.Module = ircore.sub_lifted(sub, tm);
-  var g: string = emit_module_ir_gated_sub(lm, [], sub);
+  var g: string = emit_module_ir_gated_sub(lm, sub);
   if (g != "") {
     return g;
   }
@@ -10550,10 +10519,10 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
 // ir_const_numeric_run's rebuilt copy of it. "" is an unambiguous
 // "ineligible" sentinel: an eligible module always emits at least
 // `.globl _start\n    .text\n…`, never the empty string.
-pub function emit_module_ir_gated_sub(mod: parser.Module, known: string[], sub: ircore.Sub): string {
+pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub): string {
   // A main-less module is admitted: the unit's `_start` exits 0 instead of
   // calling a __fn_main that does not exist (see its has_main branch).
-  var g: ircore.Gated = ircore.gate_program(mod, known, sub);
+  var g: ircore.Gated = ircore.gate_program(mod, sub);
   if (!g.ok) {
     return "";
   }
@@ -10598,7 +10567,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // emit_module_funcs. The strfldok need seeding below recomputes its column
   // directly (all_funcs is in scope) rather than re-reading a base that was
   // just passed as an arg.
-  s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache, b, true);
+  s = emit_module_funcs(mod, all_funcs, s, globl_defs, lo, hi, cache, true);
   // #4355: admit the replaced-STRING-field arm per type, from the
   // WHOLE-PROGRAM read scan (a unit-local func list would under-count the
   // reads and re-open the UAF the scan exists to prevent; see

@@ -42,17 +42,20 @@ closure. A separate Linux test performs 128 failed writes to `/dev/full`
 under a 64-descriptor limit, then successfully writes another file. It passed
 for both primary targets and both bootstrap native backends.
 
-The official pinned seed produced identical three-stage Darwin bootstrap
-binaries of 14,594,145 bytes after integration with the raw pipeline at
-`282343afb`, SHA-256
-`032aad02696365c5c529c7257d7ad330a7428be1ecccef7a17d22b9991d9ea8f`.
+After integration with main at `c987221a9`, the official pinned seed produces
+identical stage-2 and stage-3 Darwin compiler binaries of 12,097,665 bytes,
+SHA-256
+`d08ac653f4d61d4faeea3382a06e604e76a8feb2e945635d142af9e1d9621bba`.
+Stage 1 has the same size but different code: the seed predates generator
+changes on main. Stages 2 and 3 establish the current compiler's fixed point.
 The actual stage-2 compiler passed the shared fixture on Darwin, core WASM
 and Preview 2. Native allocation counts were 34 allocated and 34 freed;
 core WASM reported 28 and 28. Preview 2 does not expose that census, so its
 successful execution is not evidence of whole-component allocation balance.
 
 The integrated Linux matrix, all fault cases and both IR-registry checks pass.
-The full unit suite and `make lint-all` pass in an isolated Linux snapshot.
+`make lint-all` passes after the latest main integration. The full unit suite
+passed on the raw-pipeline parent; the refreshed full suite is pending.
 The Darwin Go harness is blocked by
 host file-table exhaustion; the integrated Darwin coverage above uses the
 actual bootstrapped compiler directly.
@@ -87,12 +90,13 @@ The component helper adds explicit resource cleanup and stream-error handling
 to the raw write path. The final integration must retain this size comparison;
 no size baseline is increased by this change.
 
-The compiler executable grows by 16,896 bytes from the raw-pipeline parent.
-Mach-O section inspection attributes 14,792 additional bytes to code, 264 to
-unwind data and 8192 to data. The data fits inside the existing data segment;
-the text segment grows by one 16,384-byte alignment unit, and link-edit data
-grows by 512 bytes. This includes the new builtin's compiler routing and
-generated runtime bodies; it is separate from the small program sizes above.
+Compiled with the same stage-2 compiler, main's compiler executable is
+12,064,241 bytes and this revision is 12,097,665 bytes, an increase of 33,424.
+Mach-O section inspection attributes 14,296 additional bytes to code, 232 to
+unwind data and 8192 to data. The text and data segments each cross a
+16,384-byte alignment boundary, and link-edit data grows by 656 bytes.
+This includes the new builtin's compiler routing and generated runtime
+bodies; it is separate from the small program sizes above.
 
 This is part of #10948 and #5714. HTTP/TCP sinks, byte views and remaining
 binary consumers are separate work, so neither issue nor epic #5626 closes

@@ -103366,6 +103366,15 @@ pub function grow_param_flags_seeded(funcs: parser.FuncDecl[], seeds: string[]):
   var e_ck: i32[] = [];
   var e_argi: i32[] = [];
   var e_ppi: i32[] = [];
+  // The callee of every dying pass is found by name; a scan of all the
+  // functions per pass is quadratic in the whole program.
+  var fnames: string[] = [];
+  var fni: i32 = 0;
+  while (fni < funcs.len()) {
+    fnames = fnames.append(funcs[fni].name);
+    fni = fni + 1;
+  }
+  var by_name: util.NameIndex = util.name_index(fnames);
   var fk0: i32 = 0;
   while (fk0 < funcs.len()) {
     var fd0: parser.FuncDecl = funcs[fk0];
@@ -103406,28 +103415,30 @@ pub function grow_param_flags_seeded(funcs: parser.FuncDecl[], seeds: string[]):
         if (meth) {
           bare = slice_unchecked(cname, 1, cname.len()) + "";
         }
-        var ck0: i32 = 0;
-        while (ck0 < funcs.len()) {
+        // The bucket chain is ascending, so the edges land in declaration
+        // order, as a scan would place them.
+        var ck0: i32 = by_name.chain(bare);
+        while (ck0 >= 0) {
           var hit: boolean = false;
-          if (meth) {
-            hit = funcs[ck0].name == bare && funcs[ck0].receiver_type.len() > 0;
-          } else {
-            hit = funcs[ck0].name == cname && funcs[ck0].receiver_type.len() == 0;
+          if (by_name.names[ck0] == bare) {
+            if (meth) {
+              hit = funcs[ck0].receiver_type.len() > 0;
+            } else {
+              hit = funcs[ck0].receiver_type.len() == 0;
+            }
           }
           if (hit) {
             e_fk = e_fk.append(fk0);
             e_ck = e_ck.append(ck0);
             e_argi = e_argi.append(argi);
             e_ppi = e_ppi.append(ppi0);
-            // A free-function name is unique; a method name is not,
-            // so every method so spelled is an edge.
-            if (!meth) {
-              ck0 = funcs.len();
-            } else {
-              ck0 = ck0 + 1;
-            }
+          }
+          // A free-function name is unique; a method name is not, so
+          // every method so spelled is an edge.
+          if (hit && !meth) {
+            ck0 = 0 - 1;
           } else {
-            ck0 = ck0 + 1;
+            ck0 = by_name.next[ck0];
           }
         }
       }
