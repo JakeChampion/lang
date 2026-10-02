@@ -168,6 +168,17 @@ function test_bad_headers(): test.TestOutcome {
   return test.assert_eq(text(deflate.inflate(hex.hex_decode("07"), 1024)), "error: malformed compressed data: a reserved block type");
 }
 
+// Two inputs no encoder writes, each reaching a guard the Python-made
+// vectors above never do: a fixed block whose length code is cut off
+// mid-symbol, and a fixed block whose first pair copies from before the
+// output starts.
+function test_hand_rolled_refusals(): test.TestOutcome {
+  if (text(deflate.inflate(hex.hex_decode("8b24c0"), 1024)) != "error: the compressed data ends early") {
+    return test.fail("cut-off symbol: " + text(deflate.inflate(hex.hex_decode("8b24c0"), 1024)));
+  }
+  return test.assert_eq(text(deflate.inflate(hex.hex_decode("0303"), 1024)), "error: malformed compressed data: a distance before the start of the output");
+}
+
 function main(): i32 {
   var r: test.TestRunner = test.test_new("std/deflate");
   r = r.it("stored block", test_stored_block);
@@ -183,5 +194,6 @@ function main(): i32 {
   r = r.it("truncated", test_truncated);
   r = r.it("bad checksums", test_bad_checksums);
   r = r.it("bad headers", test_bad_headers);
+  r = r.it("hand-rolled refusals", test_hand_rolled_refusals);
   return r.finish();
 }
