@@ -8,7 +8,19 @@ import (
 	"testing"
 )
 
+// tree seeds a source tree defining the named tests, for FERN_WEIGHT_TREE.
+func tree(t *testing.T, names ...string) string {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("package x\n\nimport \"testing\"\n\n")
+	for _, n := range names {
+		b.WriteString("func " + n + "(t *testing.T) {}\n")
+	}
+	return "FERN_WEIGHT_TREE=" + seed(t, map[string]string{"x_test.go": b.String()})
+}
+
 func TestCITestWeightsRefreshUsesIndependentRuns(t *testing.T) {
+	env := []string{tree(t, "TestFaster", "TestSlower", "TestUnseen", "TestOnce", "TestTiny", "TestNew")}
 	weights := weightsFile(t, "TestFaster 600\nTestSlower 3\nTestUnseen 17.25\nTestOnce 40\nTestTiny 8\n")
 	first := seed(t, map[string]string{
 		"shard0.timings": "TestFaster\t100.10\nTestSlower\t12.1\nTestOnce\t2\nTestTiny\t0.1\n",
@@ -19,10 +31,31 @@ func TestCITestWeightsRefreshUsesIndependentRuns(t *testing.T) {
 	})
 	want := "TestFaster 121\nTestNew 10\nTestOnce 40\nTestSlower 13\nTestUnseen 17.25\n"
 	for _, dirs := range [][]string{{first, second}, {second, first}} {
-		code, out := runWeights(t, nil, append([]string{"refresh", weights}, dirs...)...)
+		code, out := runWeights(t, env, append([]string{"refresh", weights}, dirs...)...)
 		if code != 0 || out != want {
 			t.Fatalf("refresh = %d, %q; want %q", code, out, want)
 		}
+	}
+}
+
+// The runs predate the tree the table is for: a measured test deleted since,
+// or a declared one, gets no row (the weights file's lookup is exact and the
+// testname gate rejects a name nothing answers to), and the drop is reported
+// for the rows the table would otherwise have held.
+func TestCITestWeightsRefreshDropsTestsTheTreeNoLongerHas(t *testing.T) {
+	env := []string{tree(t, "TestKept", "TestWeightOne")}
+	weights := weightsFile(t, "TestKept 5\nTestRetired 40\n")
+	first := seed(t, map[string]string{"shard.timings": "TestKept\t7\nTestDeleted\t90\nTestWeightOne\t0.5\nTestGoneFast\t0.5\n"})
+	second := seed(t, map[string]string{"shard.timings": "TestKept\t6\nTestDeleted\t91\nTestGoneFast\t0.4\n"})
+	code, out := runWeights(t, env, "refresh", weights, first, second)
+	want := "ci-test-weights: dropped TestDeleted: not a test function in the tree\n" +
+		"ci-test-weights: dropped TestRetired: not a test function in the tree\n" +
+		"TestKept 7\n"
+	if code != 0 || out != want {
+		t.Fatalf("refresh = %d, %q; want %q", code, out, want)
+	}
+	if code, out := runWeights(t, []string{"FERN_WEIGHT_TREE=" + t.TempDir()}, "refresh", weights, first, second); code == 0 || !strings.Contains(out, "no test functions under") {
+		t.Fatalf("a tree with no tests was accepted: %d, %s", code, out)
 	}
 }
 
@@ -43,7 +76,7 @@ func TestCITestWeightsRefreshRejectsBadEvidence(t *testing.T) {
 			weights := weightsFile(t, tc.weights)
 			first := seed(t, map[string]string{"shard.timings": "TestGood 1\n"})
 			second := seed(t, map[string]string{"shard.timings": tc.timings})
-			code, out := runWeights(t, nil, "refresh", weights, first, second)
+			code, out := runWeights(t, []string{tree(t, "TestGood")}, "refresh", weights, first, second)
 			if code == 0 || !strings.Contains(out, "ci-test-weights:") {
 				t.Fatalf("bad evidence accepted: %d, %s", code, out)
 			}
@@ -55,7 +88,7 @@ func TestCITestWeightsRefreshRequiresDistinctRunDirectories(t *testing.T) {
 	weights := weightsFile(t, "TestGood 5\n")
 	run := seed(t, map[string]string{"shard.timings": "TestGood 1\n"})
 	for _, dirs := range [][]string{{run}, {run, filepath.Join(run, ".")}, {run, t.TempDir()}} {
-		code, out := runWeights(t, nil, append([]string{"refresh", weights}, dirs...)...)
+		code, out := runWeights(t, []string{tree(t, "TestGood")}, append([]string{"refresh", weights}, dirs...)...)
 		if code == 0 {
 			t.Fatalf("incomplete evidence accepted: %s", out)
 		}
@@ -79,7 +112,7 @@ func TestCITestWeightsMergeKeepsTheSlowestObservation(t *testing.T) {
 	weights := weightsFile(t, "TestFaster 600\nTestSlower 3\n")
 	saved := seed(t, map[string]string{"run.timings": out})
 	other := seed(t, map[string]string{"shard0.timings": "TestFaster\t120.9\nTestSlower\t8\n"})
-	code, out = runWeights(t, nil, "refresh", weights, saved, other)
+	code, out = runWeights(t, []string{tree(t, "TestFaster", "TestSlower", "TestNew", "TestOnce")}, "refresh", weights, saved, other)
 	if want := "TestFaster 121\nTestNew 10\nTestOnce 4\nTestSlower 13\n"; code != 0 || out != want {
 		t.Fatalf("refresh over a merged run = %d, %q; want %q", code, out, want)
 	}
