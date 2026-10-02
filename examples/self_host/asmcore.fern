@@ -8217,7 +8217,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
     import_iface: "", import_wit: "", all_type_params: [],
     bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
     is_pub: true,
-    is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "",
+    is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [],
   };
   return parser.Module { ...mod, funcs: mod.funcs.append(entry), top_stmts: [] };
 }
