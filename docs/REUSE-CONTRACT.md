@@ -111,11 +111,17 @@ into the arm bindings, so the construction must NOT drop old
 fields (`consumingMatchReuse` tells `emitEnumNew` to skip the
 release). This is the true `map`-over-unique-list shape: on
 unique data the loop allocates nothing (#4475).
-On the self-host, whose arms see a declared enum with variants of
-different field counts, the pairing reads the donor's count off the
-variant the arm's payload reads name (`ssarc.donor_slots`, #11073).
+The two compilers take different preconditions. Native pairs only
+when every payloadful variant of the enum has one box size
+(`uniformEnumBoxSize`). The self-host pairs per arm: it reads the
+donor's slot count off the variant the arm's payload reads name
+(`ssarc.donor_slots`, #11073), which is sound because the donor and
+the construction are the same variant there. So a ragged enum such as
+`Tree { Tip(i32), Fork(Tree, Tree) }` compiles under `fbip` and runs
+allocation-free on the self-host, while native's E068 refuses it.
 Locked by: `internal/ir/c2_consuming_reuse_test.go`,
-`internal/e2eselfhost/self_host_fip_inplace_reuse_test.go`.
+`internal/e2eselfhost/self_host_fip_inplace_reuse_test.go` (its
+`fbip-ragged-enum-rebuilt-per-arm` case pins the self-host's answer).
 
 ### R5 — consuming owned matches (drop-specialised release)
 

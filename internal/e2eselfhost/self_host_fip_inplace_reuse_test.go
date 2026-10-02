@@ -111,6 +111,35 @@ function main(): i32 {
     return 0;
 }`
 
+// A ragged enum, whose payloadful variants differ in field count, under the
+// same consuming match. The self-host pairs per arm: the box a Fork's payload
+// read names is a Fork's size, so the rebuilt Fork takes it, and the rebuilt
+// Tip takes the matched Tip's. Native's E068 refuses this program, because its
+// pairing requires one payloadful box size for the whole enum (R4 in
+// docs/REUSE-CONTRACT.md). After a first bump builds the 5-cell tree, 100 more
+// must not move the bump cursor (989) and must leave the leaves summing to 306
+// (988).
+const selfHostFbipRaggedSrc = `enum Tree { Tip(i32), Fork(Tree, Tree) }
+fbip function bump(own t: Tree): Tree {
+    match (t) {
+        Tip(v) => { return Tip(v + 1); },
+        Fork(l, r) => { return Fork(bump(l), bump(r)); },
+    }
+}
+function total(t: Tree): i32 {
+    match (t) { Tip(v) => { return v; }, Fork(l, r) => { return total(l) + total(r); } }
+}
+function main(): i32 {
+    let t: Tree = bump(Fork(Tip(0), Fork(Tip(1), Tip(2))));
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 100) { t = bump(t); i = i + 1; }
+    let grew: i32 = (__heap_bump_bytes() as i32) - before;
+    if (total(t) != 306) { return 988; }
+    if (grew != 0) { return 989; }
+    return 0;
+}`
+
 func TestSelfHostFipInPlaceReuse(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
@@ -118,6 +147,7 @@ func TestSelfHostFipInPlaceReuse(t *testing.T) {
 		{"owned-map-zero-alloc-shared-donor-copied", selfHostFipOwnedMapSrc, "90-92 the unique path, 93-95 the shared donor"},
 		{"owned-map-live-receiver-not-written", selfHostOwnedMapReceiverLiveSrc, "1 the receiver was written, 2 the result is wrong"},
 		{"fbip-cons-rebuilt-in-place-shared-copied", selfHostFbipMapSrc, "998 wrong sum, 999 heap grew, 997 the shared list changed"},
+		{"fbip-ragged-enum-rebuilt-per-arm", selfHostFbipRaggedSrc, "988 wrong total, 989 heap grew"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if want := interpExit(t, interpBin, tc.src); want != 0 {

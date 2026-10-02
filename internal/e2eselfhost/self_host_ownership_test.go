@@ -69,7 +69,7 @@ function main(): i32 {
     }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
-}`, 105},
+}`, 24},
 	// A RECEIVER is inferred too, which `decl_param_mode` borrowed
 	// unconditionally before — and the whole chain has to line up for it to
 	// pay, which is what this case pins. `keep` hands its parameter back, so
@@ -243,10 +243,6 @@ function depth(t: Tree): i32 {
     match (t) { Tip(_) => { return 1; }, Fork(l, r) => { return 1 + depth(l) + depth(r); } }
 }
 @noinline
-function bump(t: Tree): Tree {
-    match (t) { Tip(v) => { return Tip(v + 1); }, Fork(l, r) => { return Fork(bump(l), bump(r)); } }
-}
-@noinline
 function pick(a: Tree, b: Tree, k: i32): Tree {
     if (k > 0) { return a; }
     return b;
@@ -286,10 +282,8 @@ function main(): i32 {
     if (seen != 4) { return 3; }
     let t: Tree = Fork(Tip(1), Fork(Tip(2), Tip(3)));
     if (depth(t) != 5) { return 4; }
-    t = bump(t);
-    if (depth(t) != 5) { return 5; }
     t = pick(t, Tip(9), 1);
-    if (depth(t) != 5) { return 7; }
+    if (depth(t) != 5) { return 5; }
     let c: Cursor = Cursor { toks: [Leaf(2), Label("xy" + "")], pos: 0 };
     let w: i32 = 0;
     while (c.pos < 3) { w = w + reads_only(c.peek()); c = c.advance(); }
