@@ -1683,6 +1683,23 @@ answer is `Result[HttpResponse, FetchError]`.
   hop leaves the origin (scheme, host, effective port) `Authorization`,
   `Proxy-Authorization` and `Cookie` are dropped; `Host` is written per
   hop.
+- **Decoding:** the client writes `Accept-Encoding: gzip` unless the
+  caller wrote an `Accept-Encoding` of their own, and undoes the `gzip`
+  (`x-gzip`) codings a response names, from the last applied, under
+  `Decoding { depth, ratio }` (`decoding()` is one coding and a
+  hundredfold growth; `(req).with_decoding(d)`; `depth: 0` asks for none
+  and undoes none) and the body cap, which the decoder never exceeds
+  (`BodyLimit`); `Content-Encoding` and `Content-Length` are dropped from
+  a decoded response. The ratio is judged on the response as a whole once
+  every coding is undone, and a decoded body of 64 KiB or less is never
+  refused on it (a small body compresses far past any plausible ratio,
+  and the cap bounds it; a `ratio` of 0 or less admits only that much).
+  More codings than `depth`, a body that is not gzip, or one grown past
+  what `ratio` allows fail with `Decode(what)`, a refused body naming the
+  allowance that refused it. An empty body (a
+  HEAD or 204 answer may still name a coding), a coding the client did
+  not ask for, and a caller's own `Accept-Encoding` leave the body as it
+  came. Request bodies are never compressed.
 - **Retry:** a request the peer resets before any response byte (a
   reset or abort on the socket, a broken pipe, a close with nothing
   read) is sent once more when its method is idempotent
@@ -1736,7 +1753,8 @@ answer is `Result[HttpResponse, FetchError]`.
   the client did not ask for),
   `Io(NetError)` (a send or read the kernel refused, and a peer that
   closed before any response byte, as `ConnectionReset`), `BodyLimit` (a
-  body past `limits.body`), `Redirect(what)` (more hops than
+  body past `limits.body`, decoded or not), `Decode(what)` (a content
+  coding the client could not undo), `Redirect(what)` (more hops than
   `redirects`, a 3xx without a `Location`, or a `Location` that is not a
   URL), and `Cancelled`, which no path produces yet. `(e).message()`.
 - **Timeouts:** `Timeouts { connect_ms, inactivity_ms, total_ms }`,
