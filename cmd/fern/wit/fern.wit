@@ -50,12 +50,14 @@ world http {
 
 // `proxy` is the world `fern -target wasm32-wasi-http` composes against:
 // the imports a wasi:http proxy host such as `wasmtime serve` grants a
-// handler (stdio for logging, clocks, entropy, and wasi:http/types for the
-// request and response resources), wasi:config/store for deploy-time
-// configuration (`wasmtime serve -S config -S config-var=NAME=VALUE`), and the
-// incoming-handler export the host dispatches each request into. No
-// filesystem, sockets, environment or exit: a proxy host does not provide
-// them, and a component that declared them would fail to instantiate there.
+// handler (stdio for logging, clocks, entropy, wasi:http/types for the
+// request and response resources, and wasi:http/outgoing-handler, the
+// host's HTTP client std/fetch sends through there), wasi:config/store for
+// deploy-time configuration (`wasmtime serve -S config -S
+// config-var=NAME=VALUE`), and the incoming-handler export the host
+// dispatches each request into. No filesystem, sockets, environment or
+// exit: a proxy host does not provide them, and a component that declared
+// them would fail to instantiate there.
 world proxy {
     import wasi:cli/stdout@0.2.0;
     import wasi:cli/stderr@0.2.0;
@@ -66,6 +68,7 @@ world proxy {
     import wasi:clocks/monotonic-clock@0.2.0;
     import wasi:random/random@0.2.0;
     import wasi:http/types@0.2.0;
+    import wasi:http/outgoing-handler@0.2.0;
     import wasi:config/store@0.2.0-rc.1;
     export wasi:http/incoming-handler@0.2.0;
 }

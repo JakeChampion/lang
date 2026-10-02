@@ -1706,6 +1706,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"loop-inner-break-ok", "function f(): i32 { loop { while (true) { break; } } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"loop-lambda-break-ok", "function f(): i32 { loop { let g: () => i32 = (): i32 => { while (true) { break; } return 1; }; let x: i32 = g(); } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-if-else-ok", "function f(c: boolean): i32 { if (c) { return 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
+		// An if on a literal takes one arm, the shape a pruned branch on the
+		// target leaves: `if (true)` exits when its then arm does, `if (false)`
+		// when its else arm does.
+		{"return-if-true-ok", "function f(): i32 { if (true) { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"return-if-false-else-ok", "function f(): i32 { if (false) { let z = 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"missing-return-if-false", "function f(): i32 { if (false) { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		// A bare `{ … }` statement exits when its body does; the self-host
 		// parses it as a scoping `if (true)` with no else.
 		{"return-nested-block-ok", "function f(): i32 { { { return 1; } } }\nfunction main(): i32 { return 0; }\n", nil},

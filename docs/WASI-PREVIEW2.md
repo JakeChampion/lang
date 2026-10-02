@@ -249,6 +249,15 @@ Limitations / follow-ups:
 - The body accumulator copies on grow rather than chaining —
   fine for typical request sizes; revisit if measurable.
 
+The outgoing side (`wasi:http/outgoing-handler`) is the self-host's:
+`std/wasi_http` declares the client as `@import` externs and std/fetch
+sends through it on this target, with the `proxy` world importing the
+handler. The native wasm backend lowers neither std/wasi_http's externs
+nor that import, so a handler that fetches builds with the self-host CLI
+only. A proxy-world core has no `wasi:cli/exit` to import: an `exit`
+there (a program's own, or the bounds trap's) is a trap the host answers
+with a 500.
+
 ### Step 6 — Drop preview-1 emission (shipped)
 
 `-target wasm32-wasi` now always emits a Component Model component;

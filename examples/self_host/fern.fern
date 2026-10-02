@@ -2630,6 +2630,18 @@ function run(): i32 {
     return 1;
   }
 
+  // The target's name first, as native folds it ahead of its gates: its
+  // environment and ISA as string literals, and the branch on them the
+  // target never takes dropped (constfold.prune_literal_branches), so
+  // every gate below and the shake judge the module as built for this
+  // target. An arm that reaches what one target lacks compiles for the
+  // other: std/fetch dials on every target but wasi-http, where it sends
+  // through the host. -check and -interp returned above with the calls
+  // intact.
+  let desc: platforms.Descriptor = platforms.for_target(target);
+  merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
+  merged = constfold.prune_literal_branches(merged);
+
   // Target-capability gate (E066 — platforms.fern): reject, before codegen,
   // a call to a runtime builtin the target's descriptor does not grant
   // (`subprocess` anywhere compiled, `proc_fork` / `__heap_mark` on wasm).
@@ -2665,13 +2677,6 @@ function run(): i32 {
   // Folding is behaviour-preserving — it skips `/` and `%` by zero, leaving
   // the runtime error intact — so it changes only the shape of the emitted
   // code, which is why it needs no flag.
-  //
-  // The target name first: its environment and ISA as string literals, so a
-  // branch on target_os() or target_arch() is pruned by
-  // ir.fold_const_binaries. -check and -interp returned above with the
-  // calls intact.
-  let desc: platforms.Descriptor = platforms.for_target(target);
-  merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
   merged = constfold.fold_module(merged);
 
   // typed-IR (#5531): stamp each call expression with its checker-inferred

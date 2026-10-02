@@ -10435,10 +10435,6 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean): boolean {
       return true;
     },
     ast.StmtIf(f) => {
-      // A bare `{ … }` statement parses as `if (true)` with no else.
-      if (f.origin == "block") {
-        return block_leaves(f.then_body, jumps);
-      }
       // A tuple / struct / literal / nested-variant match is replaced at parse
       // time by a done-flag or if/else chain (build_tuple_match and friends),
       // which falls through by construction — so reading the chain says every
@@ -10461,6 +10457,18 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean): boolean {
           }
         }
         return true;
+      }
+      // An if on a literal takes one arm: `if (true)` leaves when its then
+      // arm does (a bare `{ … }` statement parses as one, and a pruned
+      // branch on the target is one), `if (false)` when its else arm does.
+      match (f.cond) {
+        ast.ExprBool(b) => {
+          if (b.value) {
+            return block_leaves(f.then_body, jumps);
+          }
+          return block_leaves(f.else_body, jumps);
+        },
+        _ => {}
       }
       return block_leaves(f.then_body, jumps) && block_leaves(f.else_body, jumps);
     },

@@ -1,0 +1,11 @@
+package wasi:http@0.2.0;
+
+// Vendored copy of `wasi:http/outgoing-handler@0.2.0`: the host's HTTP
+// client. A `fern -target wasi-http` component IMPORTS it, and std/fetch
+// sends through it on that target (std/wasi_http).
+// Source: https://github.com/WebAssembly/wasi-http/blob/main/wit/handler.wit
+interface outgoing-handler {
+    use types.{outgoing-request, request-options, future-incoming-response, error-code};
+
+    handle: func(request: outgoing-request, options: option<request-options>) -> result<future-incoming-response, error-code>;
+}

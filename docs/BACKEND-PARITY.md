@@ -73,7 +73,7 @@ bare `arm64` meaning arm64-Linux.
 | arm64-android | arm64 | android | ELF (ET_DYN, PIE) | AAPCS64 | same syscalls as arm64-linux |
 | x86-64-linux | x86-64 | linux | ELF | System V AMD64 | newer; some gaps |
 | wasm32-wasi | wasm32 | wasi | wasm32 module | wasm CC + WASI | the "everything" backend |
-| wasm32-wasi-http | wasm32 | wasi-http | component | wasi:http/incoming-handler | proxy world |
+| wasm32-wasi-http | wasm32 | wasi-http | component | wasi:http/incoming-handler | proxy world; std/fetch sends through wasi:http/outgoing-handler, self-host only (docs/WASI-PREVIEW2.md) |
 | arm64-freestanding, x86-64-freestanding | | freestanding | — | — | declared + type-checkable; no emitter yet (#6510) |
 
 Two axes are deliberately NOT in the name: `-backend ssa` selects an alternate
