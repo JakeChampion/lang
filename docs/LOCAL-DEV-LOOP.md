@@ -206,15 +206,17 @@ linked binary with symbols, 3.5 GB peak). Inclusive shares, one pass each:
   each function 12%, `asmcore.check_module` 5.5%.
 - The checker is 9%.
 
-By self cost the top rows were two linear scans, since replaced by name
-indexes with the emitted asm byte-identical: the grow-flags edge
-resolution in `irlower.grow_param_flags_seeded` (4.8%, a scan of all 10.8k
-functions per dying pass) and `semsource.known_callee` (2.3%, 18 M calls of
-`method_is` scanning every known hander per field-access callee). What
-remains spread wide: `util.hash_bucket` plus `__fern_str_eq` 4.7% (the
-registries' probes), the units planner's `anchored_after` / `used_after` /
-`outliving` scans over every value of a function (7%), `ssa_lift.lift_impl`
-2.7%, `asmcore.callgate_expr` 3%.
+By self cost the top rows were whole-table scans, since replaced with the
+emitted asm byte-identical and the emit at 239 G instructions (9% fewer):
+the grow-flags edge resolution in `irlower.grow_param_flags_seeded` (4.8%,
+a scan of all 10.8k functions per dying pass) and `semsource.known_callee`
+(2.3%, 18 M calls of `method_is` scanning every known hander per
+field-access callee) now go through name indexes; the units planner's
+`outliving` and `anchored_after` (7% with the `used_after` tails they
+drove) walk a reverse anchoring index and the rest of the block instead of
+every value of the function. What remains is spread wide:
+`util.hash_bucket` plus `__fern_str_eq` 5% (the registries' probes),
+`ssa_lift.lift_impl` 3%, `asmcore.callgate_expr` 3%, `__fern_alloc` 2%.
 
 To re-measure: build the driver with `-g` through the pinned stage0, run
 `valgrind --tool=callgrind` on `-emit asm`, and resolve
