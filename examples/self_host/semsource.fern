@@ -7347,6 +7347,7 @@ function load_store_contracts(): ssasem.Contract[] {
   let b: i32 = ssaunits.borrow_mode();
   return [
     ssasem.Contract { name: "__load_u8", params: [t_usize()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "__getpwuid_name", params: [t_u32()], modes: [v], result: t_usize() },
     ssasem.Contract { name: "__load_i32", params: [t_usize()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "__load_i64", params: [t_usize()], modes: [v], result: t_i64() },
     ssasem.Contract { name: "__load_ptr", params: [t_usize()], modes: [v], result: t_usize() },

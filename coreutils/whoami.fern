@@ -31,9 +31,9 @@ pub function main(): i32 {
     gnu.die_usage("extra operand " + gnu.quote(operands[0]), 1);
   }
   let uid: i64 = geteuid() as i64;
-  match (pwdb.user_by_uid(uid)) {
-    Some(u) => {
-      gnu.write_out(u.name + "\n");
+  match (pwdb.user_name(uid)) {
+    Some(name) => {
+      gnu.write_out(name + "\n");
       return 0;
     },
     None => {

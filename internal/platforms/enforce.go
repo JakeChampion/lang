@@ -379,6 +379,10 @@ var coreBuiltins = map[string]bool{
 	"isatty":      true,
 	"target_os":   true,
 	"target_arch": true,
+	// Answered on every target: Darwin asks libSystem's getpwuid(3), and
+	// the rest answer 0, meaning use the files, which is the truth there
+	// (#9815).
+	"__getpwuid_name": true,
 
 	"map_new":                     true,
 	"cell_new":                    true,

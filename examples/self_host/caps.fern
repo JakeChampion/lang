@@ -189,6 +189,8 @@ pub function ungated(): string[] {
     "signal_mask", "signal_disposition",
     "priority", "set_priority",
     "geteuid", "getegid", "getuid", "getgid", "getgroups",
+    // The account database's name for a uid (#9815).
+    "__getpwuid_name",
     "rlimit_nofile",
     "strbuf_reset", "strbuf_append", "strbuf_take",
     "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64",
