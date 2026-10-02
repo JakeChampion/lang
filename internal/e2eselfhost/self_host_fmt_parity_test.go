@@ -62,6 +62,20 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	// `assert` desugars to `if (!cond) { eprint(…); exit(1); }` in both
+	// parsers; both formatters print the call it was written as, with and
+	// without a message, and with a condition that needs no parentheses
+	// of its own.
+	{"assert-with-and-without-message", `function check(xs: i32[], n: i32): i32 {
+  assert(xs.len() > 0);
+  assert(n <= 2147483647 - xs.len(), "too long: " + int_to_string(n));
+  assert(!(n < 0));
+  return xs[0] + n;
+}
+function main(): i32 {
+  return check([1, 2], 3);
+}
+`},
 	// `k @` in front of a literal or range, in a match, an `if let` and a
 	// `let … else`, and the braceless `if let` body.
 	{"at-binding-scalar-heads", `function classify(n: i32): i32 {
