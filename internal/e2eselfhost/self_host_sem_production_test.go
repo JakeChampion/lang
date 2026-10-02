@@ -6181,6 +6181,21 @@ function main(): i32 {
 	// the dyn through it, owned by the box: returned from a local, and merged
 	// past a branch-local source (#10908). The dyn's concretes named nothing
 	// for the impl, so its release walked no string box.
+	// The same impl as a dyn's only implementer is the call's one arm: the
+	// arm search keys the method's `str` receiver as `string`, as the impl
+	// list does.
+	{name: "a-str-impl-is-the-only-dyn-arm", atLeast: 3, want: "0|1043 1030\n", src: `
+import "std/i32";
+trait Size { function size(self: Self): i32; }
+impl Size for str { function size(self: str): i32 { return 1000 + self.len() * 10 + (self[0] as i32) - 97; } }
+function pick(s: string): dyn Size { let t: string = s + "!"; return t; }
+function main(): i32 {
+    let lit: dyn Size = "xy";
+    let d: dyn Size = pick("ab");
+    print(lit.size().to_string() + " " + d.size().to_string());
+    return 0;
+}
+`},
 	{name: "a-string-boxed-through-an-impl-for-str-is-produced", atLeast: 6, want: "0|1050 1043 1050 26\n", src: `
 import "std/i32";
 trait Size { function size(self: Self): i32; }
