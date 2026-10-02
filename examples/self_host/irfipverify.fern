@@ -142,13 +142,11 @@ pub function fresh_alloc_what(o: ir.Op): string {
   if (t == 77) {
     return "byte-buffer allocation";
   }
-  // A std/array `map` E053 admitted on an `own` receiver (#9733). Native
-  // writes it through the donor when R7 of docs/REUSE-CONTRACT.md holds and
-  // counts the ones it declines; this compiler has no in-place map at all,
-  // so every one it emits builds a fresh array by append and is counted as
-  // such, with the reason — the honest half of "which compiler checks what".
+  // A std/array `map` E053 admitted on an `own` receiver (#9733). A map R7
+  // of docs/REUSE-CONTRACT.md writes through its donor lowers to a loop
+  // (ssarc.map_in_place), so a combinator call still here is one it declined.
   if (t == ir.kind_id("call_direct") && util.str_has_prefix(o.str, "__arrm_map__")) {
-    return "`map` materialized by the combinator: the self-hosted compiler has no in-place map (R7 is native-only until the reuse port)";
+    return "`map` materialized by the combinator: R7 writes a map in place only over an `own` parameter that dies at the call, with an i64 element it does not change and an element function that captures nothing and reaches no effect";
   }
   return "";
 }

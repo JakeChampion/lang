@@ -15,6 +15,7 @@
 // pipeline behind it. Linking it everywhere cost the eight backend-carrying
 // drivers 6.7-10.2% of their bytes for a flag they never read.
 import "./asmcore";
+import "./caps";
 import "./ircore";
 import "./checker";
 import "./constfold";
@@ -42,6 +43,8 @@ struct Rows {
   n2: string[],
   keep: boolean[],
   grows: ssaunits.GrowTable,
+  // The rows that reach no observable effect (`pure_rows`).
+  pure: util.NameIndex,
   // Each row's unit plan, kept so a second lowering can take the plan back
   // rather than computing it again for a row the ownership inference did not
   // move (#9969).
@@ -168,11 +171,11 @@ function plan_of(p: semsource.Produced): ssaunits.Plan {
 
 // produced_body lowers a planned function. Every plan is made before any body
 // is lowered, because a caller's bracket reads its callees' plans (`grows`).
-function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable): irtables.LowerResult {
+function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex): irtables.LowerResult {
   if (!plan.ok) {
     return declined(plan.why);
   }
-  var r: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows);
+  var r: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows, pure);
   if (!r.ok) {
     return declined(r.why);
   }
@@ -202,7 +205,8 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
 // No rows to take back: what the FIRST lowering of a module is handed, and
 // what makes `rows_of` compute every plan and every body.
 function no_reuse(): Rows {
-  return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), plans: [], why: [] };
+  var no_names: string[] = [];
+  return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), pure: util.name_index(no_names), plans: [], why: [] };
 }
 
 // Whether row `i` can be taken from `prev` unchanged. `changed` is
@@ -257,7 +261,7 @@ function rows_of(mod: parser.Module, built: semsource.Built, structs: irtables.S
     r = Rows { ...r, n1: r.n1.append(name), n2: r.n2.append("") };
     at = at + 1;
   }
-  r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), plans: plans };
+  r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), pure: pure_rows(keys, funcs), plans: plans };
   i = 0;
   while (i < plans.len()) {
     var body: irtables.LowerResult = reused_or_lowered(built, mod, structs, r, base, changed, i);
@@ -284,7 +288,107 @@ function reused_or_lowered(built: semsource.Built, mod: parser.Module, structs: 
     && ssaunits.grow_rows_agree(prev.grows, r.grows, ssasem.called_names(p.func))) {
     return prev.body[i];
   }
-  return produced_body(p, r.plans[i], structs, r.grows);
+  return produced_body(p, r.plans[i], structs, r.grows, r.pure);
+}
+
+// The rows that reach no observable effect, by transitive closure over the
+// direct calls — native's effectfulFuncs. An effect is a call to a builtin in
+// either of caps' tables, gated or ungated, a call through a value, or a call
+// to a name that is neither a row nor a compiler helper (`__`). The in-place
+// map is the only reader (ssarc.in_place_maps), so a module with no `map`
+// call to admit is answered with no rows at all.
+function pure_rows(keys: string[], funcs: ssasem.Func[]): util.NameIndex {
+  var none: string[] = [];
+  if (!any_map_call(funcs)) {
+    return util.name_index(none);
+  }
+  var rows: util.NameIndex = util.name_index(keys);
+  var effects: util.NameIndex = util.name_index(effect_builtins());
+  var bad: boolean[] = [];
+  var callers: i32[][] = [];
+  while (bad.len() < keys.len()) {
+    bad = bad.append(false);
+    callers = callers.append([]);
+  }
+  var i: i32 = 0;
+  while (i < funcs.len()) {
+    for b in funcs[i].graph.blocks {
+      for ins in b.insts {
+        var callee: i32 = 0 - 1;
+        if (ins.kind_tag == ssasem.call_value() || ins.kind_tag == ssasem.call() && ssasem.is_dyn_call(ins.str)) {
+          bad = bad.with(i, true);
+        } else if (ins.kind_tag == ssasem.call()) {
+          callee = rows.find(ins.str);
+          if (effects.has(ins.str) && util.index_of_str(funcs[i].shadows, ins.str) < 0
+            || callee < 0 && !util.str_has_prefix(ins.str, "__")) {
+            bad = bad.with(i, true);
+          }
+        }
+        if (callee >= 0) {
+          callers = callers.with(callee, callers[callee].append(i));
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return util.name_index(unmarked(keys, spread_marks(bad, callers)));
+}
+
+function any_map_call(funcs: ssasem.Func[]): boolean {
+  for f in funcs {
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, "__arrm_map__")) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function effect_builtins(): string[] {
+  var out: string[] = util.append_all(caps.ungated(), caps.frontend_ungated());
+  for c in caps.builtin_caps() {
+    out = out.append(c.builtin);
+  }
+  return out;
+}
+
+// `seed` closed over `callers`: a row calling a marked row is marked.
+function spread_marks(seed: boolean[], callers: i32[][]): boolean[] {
+  var marks: boolean[] = seed;
+  var work: i32[] = [];
+  var i: i32 = 0;
+  while (i < marks.len()) {
+    if (marks[i]) {
+      work = work.append(i);
+    }
+    i = i + 1;
+  }
+  var next: i32 = 0;
+  while (next < work.len()) {
+    for c in callers[work[next]] {
+      if (!marks[c]) {
+        marks = marks.with(c, true);
+        work = work.append(c);
+      }
+    }
+    next = next + 1;
+  }
+  return marks;
+}
+
+function unmarked(keys: string[], marks: boolean[]): string[] {
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < keys.len()) {
+    if (!marks[i]) {
+      out = out.append(keys[i]);
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 // substitution produces every function this boundary admits and hands the

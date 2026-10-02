@@ -23,14 +23,12 @@
 // satisfiable by a `.with` that never copies for anyone, and the reuse would
 // not have been demonstrated to depend on ownership at all.
 //
-// `with_own` is annotated `fip`, so the native compiler's E068 pass is
-// asserting the space claim at compile time rather than the measurement
-// asserting it after the fact. `map_own` is NOT annotated, and could be on the
-// native compiler (internal/e2e/array_inplace_fip_test.go is that program):
-// scripts/array-pipeline-baseline builds this file with both compilers, and
-// the self-hosted one has no in-place map, so it refuses the claim with an
-// E068 saying so — which is the checked contract working, not a file that
-// should be made to compile around it.
+// `with_own` is annotated `fip`, so the E068 pass is asserting the space claim
+// at compile time rather than the measurement asserting it after the fact.
+// `map_own` is NOT annotated, though it could be on either compiler
+// (internal/e2e/array_inplace_fip_test.go is that program): the gate also
+// builds this file with `FERN_NO_ARRAY_INPLACE=1`, and under that switch the
+// claim is false and E068 would refuse it.
 import "core/cmp";
 import "std/bench";
 import "std/string";

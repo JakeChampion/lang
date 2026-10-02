@@ -25,8 +25,8 @@ NATIVE compiler (plan E2', 2026-07-13): annotate a function
 with **E068** unless every constructor site is reuse-paired
 (R1–R4 below) or within the allowance — `fern explain E068` for
 the exact contract, `internal/ir/fip_verify.go` for the pass.
-The self-host compiler parse-tolerates the annotations but does
-not verify them until the reuse analyses port (plan E4). Still
+The self-host compiler runs the same check over its own lowering
+(`examples/self_host/irfipverify.fern`, on every compile path). Still
 open: the drop-guided source selection default (plan E3 —
 evaluated, kept off). Where a shape has known non-firing edges,
 they are listed under "taints".
@@ -221,11 +221,19 @@ un-reused site, naming the call and the taint — so `fip function
 twice(own xs: i64[]): i64[] { return xs.map(f); }` is a checked
 space contract, and a capturing `f` or a type-changing `map`
 under the same annotation is refused by name. The element
-function is inside the claim: what it calls must be `fip`. On the
-SELF-HOST compiler the shape does not exist yet (the E4 reuse
-port), and its E068 says so rather than accepting the annotation:
-its checker admits the same call, its verifier counts every
-`map` it emits as fresh, with the reason.
+function is inside the claim: what it calls must be `fip`.
+
+The SELF-HOST compiler writes the same shape in place
+(`ssarc.in_place_maps` / `map_in_place`, #11073) under the same
+static conditions — a consumed parameter dying at the call, a
+capture-free element function that reaches no effect
+(`semlower.pure_rows`, native's `effectfulFuncs`), an unchanged
+64-bit integer element — and the same once-per-call uniqueness
+test, which copies a shared donor before the first write.
+`FERN_SELFHOST_NO_REUSE=1` turns it off with the rest of that
+compiler's reuse layer. Its E068 counts a `map` it declines as
+fresh, listing the conditions rather than naming the one that
+failed.
 
 Locked by: `internal/ir/array_inplace_test.go` (the rewrite, one
 refusal per condition above, and E068 passing on the shape and
@@ -238,8 +246,12 @@ allocates nothing across 200 maps on every backend, and a donor
 still held by an alias is copied rather than mutated),
 `internal/e2e/array_pipeline_baseline_test.go` (pipeline 3
 reaches the hand-written loop's zero, with the borrowed control
-still paying its copy), `internal/e2eselfhost` (the self-host
-checker admits the call and its E068 refuses the claim).
+still paying its copy),
+`internal/e2eselfhost/self_host_fip_inplace_reuse_test.go` (the
+annotated function allocates nothing on the self-host's three
+targets, a shared donor is copied, and a receiver read after the
+map is not written), `self_host_fip_budget_test.go` (an `i32` map
+the self-host declines is refused by E068).
 
 ### M — the move family (pair cancellation)
 
@@ -306,9 +318,8 @@ the nine `emitAliasInc` call sites is gated on `moveSites`
   remaining `OpAlloc` is a fresh site; the runtime `is_unique`
   fallback inside the paired form deliberately does not count
   (fip/fbip is the SHAPE guarantee — shared inputs may copy).
-  Remaining gap: the SELF-HOST compiler parse-tolerates (and
-  drops) the annotations without verifying — closes with the E4
-  reuse port. For un-annotated code, the rc dump
+  The self-host compiler verifies the same claims
+  (`irfipverify.fern`). For un-annotated code, the rc dump
   (`internal/ir/rc_dump.go`) and the allocation counters in the
   reuse tests remain the inspection tools.
 

@@ -107,7 +107,8 @@ function stage_of(p: semsource.Produced, tab: irtables.StructTab): Stage {
   if (!plan.ok) {
     return Stage { planned: false, lowered: false, plan_why: plan.why, rc_why: "" };
   }
-  var lr: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, ssaunits.no_grows());
+  var no_names: string[] = [];
+  var lr: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, tab, ssaunits.no_grows(), util.name_index(no_names));
   if (!lr.ok) {
     return Stage { planned: true, lowered: false, plan_why: "", rc_why: lr.why };
   }
