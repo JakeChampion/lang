@@ -68,16 +68,9 @@ function main(): i32 { var m: Map[f64, i32] = Map {}; return 0; }`,
 		"map key type f64 is not yet supported",
 	},
 	{
-		// A tuple key is deliberately NOT refused HERE: the interpreter
-		// compares one by value and TestInterpMapCompositeKeys gates it, so
-		// refusing the annotation would take away a spelling the language
-		// supports. The map-literal rule still refuses it, and the compiled
-		// backends refuse to lower it rather than answering the default.
-		// ast.MapKeyDispatchable is the list this carve-out and the IR
-		// refusal share — the map-literal rule refuses through
-		// mapKeyTypeError's own switch and does not consult it. #10020
-		// owns reconciling all three. Pinned here so the carve-out is not
-		// rediscovered by a red corpus.
+		// A tuple or array of scalar keys is compared element by element
+		// (#10020): the interpreter does, and the self-host lowers it
+		// through generated helpers.
 		"tuple key",
 		`import "core/map";
 function take(m: Map[(i32, i32), i32]): i32 { return 0; }
@@ -85,13 +78,39 @@ function main(): i32 { return 0; }`,
 		"",
 	},
 	{
-		// An array key is the same shape: 14 interpreted, 9 compiled —
-		// the lookup misses and reads the default.
 		"array key",
 		`import "core/map";
 function take(m: Map[i32[], i32]): i32 { return 0; }
 function main(): i32 { return 0; }`,
 		"",
+	},
+	{
+		"tuple key in a literal",
+		`import "core/map";
+function main(): i32 { var m = Map { (1, "a"): 5 }; return m.len(); }`,
+		"",
+	},
+	{
+		"nested tuple and array key",
+		`import "core/map";
+function take(m: Map[(boolean, string[], (u8, char)), i32]): i32 { return 0; }
+function main(): i32 { return 0; }`,
+		"",
+	},
+	{
+		"tuple key holding a struct",
+		`import "core/map";
+struct S { a: i32 }
+function take(m: Map[(i32, S), i32]): i32 { return 0; }
+function main(): i32 { return 0; }`,
+		"a tuple or array used as a key may hold only",
+	},
+	{
+		"float array key",
+		`import "core/map";
+function take(m: Map[f64[], i32]): i32 { return 0; }
+function main(): i32 { return 0; }`,
+		"a tuple or array used as a key may hold only",
 	},
 	{
 		// boolean and str are not carve-outs — they are keys that WORK, on

@@ -81,31 +81,6 @@ function main(): i32 { return total(map_new(2)); }
 function total(m: Map[usize, i32]): i32 { return m.len() + 7; }
 function main(): i32 { return total(map_new(2)); }
 `, "refused", 7},
-	// The COMPOSITE keys, refused for the opposite reason to the scalars
-	// above: not too wide for the column, but with no hash or equality to
-	// dispatch at all. A tuple is a struct without a name, so there is nowhere
-	// to hang the derived Eq + Hash a struct key uses — map_key_eqfn named one
-	// regardless, and asked the linker for `__fn_i32[]__eq` (#10032).
-	//
-	// The tuple row is also what pins the type string being split at the
-	// TOP-LEVEL comma: a key of `(i32, i32)` contains the comma the split used
-	// to stop at, which read the key as `(i32` and the value as `i32), i32`.
-	// The refusal names the whole key, so a regression there shows up here as
-	// a truncated name rather than as a wrong column much later.
-	{"tuple-key", `import "core/map";
-function main(): i32 {
-    var m: Map[(i32, i32), i32] = map_new(8);
-    m = m.insert((1, 2), 5);
-    return m.get_or((1, 2), 0) + 9;
-}
-`, "refused", 14},
-	{"array-key", `import "core/map";
-function main(): i32 {
-    var m: Map[i32[], i32] = map_new(8);
-    m = m.insert([1, 2], 5);
-    return m.get_or([1, 2], 0) + 9;
-}
-`, "refused", 14},
 	// The control: the same iteration over a key that DOES fit the column.
 	{"pair-iteration-of-an-i32-parameter", `import "core/map";
 function total(m: Map[i32, i32]): i32 {

@@ -4175,16 +4175,12 @@ no directory mode from 000 to 555 could reach — the FTS_DNR path answers
 first — so rm.fern does not have it.
 
 
-**`X as usize` means different addresses in the two compilers (#8799).**
-Native reads the cast as a counted buffer's DATA pointer, which is what
-`std/string`'s `bytes()` is written against; the self-host reads it as the
-BOX, whose first word is the length. Code that reads or writes through it is
-therefore correct under one compiler and off by a header under the other,
-with no diagnostic either way. Invisible until something compiles such code
-BOTH ways, which nothing did before the self-host leg: `.bytes()` is an
-intrinsic there, so the one stdlib site never reaches the self-host's
-lowering. `base64` wanted it — raw scratch buffers run the encode at 165 ms
-against the 460 ms `u8[]` with `.with()` costs — and ships without it.
+**No portable byte address for a `u8[]` (#8799).** `x as usize` is an
+identity cast, and a self-host `u8[]` holds one word per element, so there is
+no address both compilers could hand out for its bytes
+(`docs/RUNTIME-INTRINSICS.md`, "Addresses of counted values"). `base64`
+wanted raw scratch buffers, which run the encode at 165 ms against the
+460 ms that `u8[]` with `.with()` costs, and ships without them.
 **A process cannot read its own resource limits (#8819).** GNU `sort` caps
 `--batch-size` at what `getrlimit (RLIMIT_NOFILE, …)` reports minus the three
 standard descriptors, and names that number when a value exceeds it:
