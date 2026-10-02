@@ -4323,12 +4323,13 @@ function input_root(f: ssasem.Func, state: i32[], roots: boolean[], a: i32): i32
 // Candidates with a use the encoding cannot reach, removed.
 function prune(f: ssasem.Func, p: ssaunits.Plan, state: i32[]): i32[] {
   var out: i32[] = state;
+  var at: i32[] = ssa.block_positions(f.graph);
   for step in p.steps {
     for h in step.hand_roots {
       out = unlink(out, h);
     }
     for supply in step.supplies {
-      if (supply.value >= 0 && supply.value < state.len() && state[supply.value] != 0 - 1 && !linked_supply(f, p, state, step, supply)) {
+      if (supply.value >= 0 && supply.value < state.len() && state[supply.value] != 0 - 1 && !linked_supply(f, p, at, state, step, supply)) {
         out = unlink(out, supply.value);
       }
     }
@@ -4343,16 +4344,16 @@ function unlink(own state: i32[], v: i32): i32[] {
   return state.with(v, 0 - 1);
 }
 
-function linked_supply(f: ssasem.Func, p: ssaunits.Plan, state: i32[], step: ssaunits.Step, supply: ssaunits.Supply): boolean {
+function linked_supply(f: ssasem.Func, p: ssaunits.Plan, at: i32[], state: i32[], step: ssaunits.Step, supply: ssaunits.Supply): boolean {
   if (supply.mode != ssaunits.move_unit()) {
     return false;
   }
-  var b: ssa.SBlock = f.graph.blocks[block_index(f.graph, step.block)];
+  var b: ssa.SBlock = f.graph.blocks[at[step.block]];
   if (step.point == ssaunits.return_point()) {
     return b.term.kind_tag == 1 && b.term.value == supply.value;
   }
   if (step.point == ssaunits.edge_point()) {
-    var dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, step.target)];
+    var dest: ssa.SBlock = f.graph.blocks[at[step.target]];
     if (supply.slot < 0 || supply.slot >= dest.insts.len()) {
       return false;
     }
