@@ -72,8 +72,8 @@ struct ParamDestr { names: string, marker: string, synth: string, line: i32, col
 // callee and irlower with no signature to dispatch on. The two sidecars are the
 // FuncDecl-level members of the family ParamDecl, StructFieldDecl and StmtVar
 // already carry, recorded through the same non-consuming lookahead and read
-// through the same fn_sig_of rules, so a call through a returned fn value and a
-// call through a parameter cannot disagree about the signature (#5986).
+// through the same rules, so a call through a returned fn value and a call
+// through a parameter cannot disagree about the signature (#5986).
 pub struct FuncDecl { no_inline: boolean, name: string, receiver_name: string, receiver_type: string, type_params: string[], params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], line: i32, col: i32, import_iface: string, import_wit: string, all_type_params: string[], bound_traits: string[], fip: boolean, fbip: boolean, fip_allowance: i32, async: boolean, is_const: boolean, is_pub: boolean, is_package: boolean, ret_fn_ret: string, ret_fn_param_types: string, module: string }
 
 // Top-level struct decl: `struct Name { field1: T1, field2: T2 }`.
@@ -9414,7 +9414,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     // (c'') a single-typevar fn with a bare-scalar param whose RETURN is fully
     // CONCRETE — `eqf[T](a: T, b: T): boolean`. The value never leaves through
     // the type variable, so neither the widening path nor clause (c) covers it:
-    // erased_widenable requires the return to BE the var (a pass-through) or a
+    // the widening path requires the return to BE the var (a pass-through) or a
     // bare tuple of it, and feeds_wide_container requires the return to CONTAIN
     // it.
     //
