@@ -1778,6 +1778,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	c.info.FuncSigs["__memchr_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __ascii_run(s, from) → i32: the index of the first high-bit byte at or
 	// after `from`, or len(s). Same (string, i32) shape as __memchr minus the
 	// needle — the test is the high bit itself.
@@ -11274,7 +11278,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 // (the byte-scan kernels, the bit counts, a constant, the heap counters, the
 // clock). verifyFipAllocs (E068) stays the backstop for what they emit.
 var fipNonAllocBuiltins = map[string]bool{
-	"__memchr": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
+	"__memchr": true, "__memchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
 	"__sum_bytes": true, "__scan_set": true, "__bsd_sum": true, "__count_runs": true,
 	"__crc32_cksum": true,
 	"__clz32":       true, "__ctz32": true, "__popcount32": true,

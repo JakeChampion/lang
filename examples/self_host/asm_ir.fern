@@ -5523,7 +5523,7 @@ function emit_mismatch_x86(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 225) {  // memchr
+  if (o.kind_tag == 225 || o.kind_tag == 356) {  // memchr / memchr_bytes
     // operand stack [box, byte, from] (from on top) -> i32 index or -1.
     //
     // The needle is splat across xmm1 and broadcast to ymm1; then 32
@@ -5562,7 +5562,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     var l_avx_done: string = mlo9.name;
     s = mlo9.state;
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    if (o.kind_tag == 356) {
+      s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+    } else {
+      s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+    }
     // from clamps at 0.
     s = s.write("    cmpq $0, %rdx\n    jge " + l_clamped + "\n    xorq %rdx, %rdx\n");
     s = s.write(l_clamped + ":\n");
@@ -5570,6 +5574,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // both ends: a negative arrives as a huge unsigned and fails it too.
     // Checked once here, so neither loop needs a per-iteration guard.
     s = s.write("    cmpq $255, %rcx\n    ja " + l_none + "\n");
+    if (o.kind_tag == 356 && !ir.is_packed(o)) {
+      s = s.write(l_tail + ":\n    cmpq %r8, %rdx\n    jge " + l_none + "\n");
+      s = s.write("    movzbq (%rax,%rdx,8), %r9\n    cmpq %rcx, %r9\n    je " + l_done + "\n");
+      s = s.write("    addq $1, %rdx\n    jmp " + l_tail + "\n");
+      s = s.write(l_none + ":\n    movq $-1, %rdx\n");
+      return s.write(l_done + ":\n    pushq %rdx\n");
+    }
     // Broadcast the needle byte across xmm1, then ymm1.
     s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
     s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");

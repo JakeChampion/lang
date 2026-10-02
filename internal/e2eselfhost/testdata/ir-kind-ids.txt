@@ -328,3 +328,4 @@ write_bytes=349
 write_some_bytes=350
 buf_push_bytes_range=351
 write_file_bytes=352
+memchr_bytes=356

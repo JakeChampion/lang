@@ -4791,6 +4791,15 @@ func (g *generator) emitMismatchRuntime() {
 }
 
 func (g *generator) emitMemchrRuntime() {
+	// Adapt the packed array's payload and length to the existing kernel.
+	if g.usesMemchrBytes {
+		g.line(".global __fern_memchr_bytes")
+		g.label("__fern_memchr_bytes")
+		g.emit("mov w3, w2")
+		g.emit("mov w2, w1")
+		g.emit("ldur w1, [x0, #-4]")
+		g.emit("b __fern_memchr")
+	}
 	g.line("")
 	g.line(".global __fern_memchr")
 	g.typeDirective("__fern_memchr")
@@ -15536,7 +15545,8 @@ type generator struct {
 	usesStrcmp   bool
 	usesStrord   bool
 	// usesMemchr gates the NEON byte-search kernel (__fern_memchr).
-	usesMemchr bool
+	usesMemchr      bool
+	usesMemchrBytes bool
 	// usesMismatch gates the two-range comparison kernel
 	// (__fern_mismatch), __memchr's kernel over a pair of operand
 	// streams instead of a broadcast needle.
@@ -20239,6 +20249,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__fern_map_hash_seed":
 			g.usesMapHashSeed = true
 			g.usesRandomI32 = true // the lazy first-call draw
+		case "__fern_memchr_bytes":
+			g.usesMemchrBytes = true
+			g.usesMemchr = true
 		case "__fern_memchr":
 			g.usesMemchr = true
 		case "__fern_mismatch":

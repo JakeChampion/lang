@@ -1324,7 +1324,8 @@ type generator struct {
 	// usesAsciiRun gates the SSE2 high-bit scan kernel (__fern_ascii_run).
 	usesAsciiRun bool
 	// usesMemchr gates the SSE2 byte-search kernel (__fern_memchr).
-	usesMemchr bool
+	usesMemchr      bool
+	usesMemchrBytes bool
 	// usesMismatch gates the two-range comparison kernel
 	// (__fern_mismatch), which is __memchr's kernel over a pair of
 	// operands instead of a broadcast needle.
@@ -2012,6 +2013,9 @@ func (g *generator) recordUse(target string) {
 	case "__fern_map_hash_seed":
 		g.usesMapHashSeed = true
 		g.usesRandomI32 = true // the lazy first-call draw
+	case "__fern_memchr_bytes":
+		g.usesMemchrBytes = true
+		g.usesMemchr = true
 	case "__fern_memchr":
 		g.usesMemchr = true
 	case "__fern_mismatch":
@@ -11437,6 +11441,12 @@ func (g *generator) emitAsciiRunRuntime() {
 // 0, past-the-end finds nothing — matching the interpreter reference and the
 // scan loops in std/string this is intended to replace.
 func (g *generator) emitMemchrRuntime() {
+	// Packed arrays use the existing aligned payload/length branch.
+	if g.usesMemchrBytes {
+		g.line(".globl __fern_memchr_bytes")
+		g.label("__fern_memchr_bytes")
+		g.emit("jmp __fern_memchr")
+	}
 	g.line("")
 	g.line(".globl __fern_memchr")
 	g.line(".type __fern_memchr, @function")

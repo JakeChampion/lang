@@ -61,7 +61,7 @@ var providedNeverReachesCodegen = map[string]bool{
 	"f64_bits": true, "f64_from_bits": true,
 	// Byte search and counting — lowered to the `__fern_`-prefixed
 	// helpers, which this table does list and wasmbin does implement.
-	"__memchr": true, "__rmemchr": true, "__count_byte": true,
+	"__memchr": true, "__memchr_bytes": true, "__rmemchr": true, "__count_byte": true,
 	"__scan_set":      true,
 	"__count_runs":    true,
 	"__bsd_sum":       true,

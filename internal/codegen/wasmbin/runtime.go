@@ -304,13 +304,16 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// return-transfer / element-init). Pulls in rc_inc.
 					needs.add("__fern_rc_inc")
 					needs.add("__fern_str_inc")
-				case "__fern_memchr":
+				case "__fern_memchr", "__fern_memchr_bytes":
 					// The v128 byte-search kernel. Its inline-string
 					// branch reads through str_byte, and it asks
 					// str_len for the logical length in both branches.
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_memchr")
+					if op.Str == "__fern_memchr_bytes" {
+						needs.add("__fern_memchr_bytes")
+					}
 				case "__fern_mismatch":
 					// The two-range comparison kernel. Scalar, so it
 					// reads every byte through str_byte and asks
@@ -1714,6 +1717,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildMemchrBody,
+	},
+	"__fern_memchr_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildMemchrBytesBody,
 	},
 	"__fern_mismatch": {
 		// (a_data, a_len, ao, b_data, b_len, bo, n) → i32 offset of the
@@ -6934,6 +6942,19 @@ func buildMismatchBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+func buildMemchrBytesBody(idxs map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, idxs["__fern_memchr"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 // buildMemchrBody assembles wasm bytes for __fern_memchr.
 //
 // Signature: (param $data $len $byte $from i32) (result i32) — the string
@@ -7043,13 +7064,15 @@ func buildMemchrBody(idxs map[string]uint32) []byte {
 
 	// Heap haystack: $data is the byte address, so the vector loop applies.
 	// 16 bytes per iteration while a whole vector fits.
+	// Subtract the nonnegative cursor from length instead of adding 16:
+	// an INT_MAX start must miss without overflowing into a vector load.
 	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLocalGet(body, lI)
-	body = inst.InstI32Const(body, 16)
-	body = numeric.InstI32Add(body)
 	body = inst.InstLocalGet(body, lN)
-	body = numeric.InstI32GtS(body)
+	body = inst.InstLocalGet(body, lI)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32LtS(body)
 	body = inst.InstBrIf(body, 1)
 	// $m = i8x16.bitmask(i8x16.eq(v128.load($data + $i), splat($byte)))
 	body = inst.InstLocalGet(body, pData)

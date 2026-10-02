@@ -16916,7 +16916,7 @@ function lower_call_path_scalars(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSt
 // The ARITY is part of the test, as in is_os_query_call: a call with the wrong
 // number of arguments falls through to the ordinary named-call path.
 function is_byte_kernel_call(name: string, argc: i32): boolean {
-  if (name == "__memchr" || name == "__rmemchr") {
+  if (name == "__memchr" || name == "__memchr_bytes" || name == "__rmemchr") {
     return argc == 3;
   }
   if (name == "__count_byte" || name == "__ascii_run" || name == "__bsd_sum") {
@@ -16979,6 +16979,9 @@ function lower_call_byte_kernel(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerSta
   }
   if (cid.name == "__memchr") {
     return k.emit(ir.op_memchr());
+  }
+  if (cid.name == "__memchr_bytes") {
+    return k.emit(ir.op_memchr_bytes());
   }
   if (cid.name == "__rmemchr") {
     return k.emit(ir.op_rmemchr());
@@ -88242,7 +88245,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // name: the escape walks see no receiver type, so the name alone must settle
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-  var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
+  var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__memchr_bytes", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
   var has_write: boolean = false;
   var has_write_some: boolean = false;
   for fn in funcs {

@@ -717,6 +717,9 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 3 && name == "__memchr") {
     return t_i32();
   }
+  if (argc == 3 && name == "__memchr_bytes") {
+    return t_i32();
+  }
   // The rc helpers core/map calls by name to claim and release the cells it
   // copies, typed as native types them so the two checkers agree. What the
   // self-host EMITS is not uniform: only __fern_rc_inc is a real call that
@@ -870,6 +873,9 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   }
   if (name == "__memchr" || name == "__rmemchr") {
     return ([t_string(), t_i32(), t_i32()], true);
+  }
+  if (name == "__memchr_bytes") {
+    return ([t_array(t_u8()), t_i32(), t_i32()], true);
   }
   if (name == "__fern_rc_inc") {
     return ([t_usize()], true);
@@ -15046,7 +15052,7 @@ function registered_intrinsics(): string[] {
     "__count_runs", "__crc32_cksum", "__ctz32", "__ctz64", "__exp_f64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
     "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
     "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8", "__log_f64",
-    "__map_hash_seed", "__memchr", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
+    "__map_hash_seed", "__memchr", "__memchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__pow_f64", "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__scan_set", "__sin_f64", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
@@ -18725,7 +18731,7 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
 function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
   var out: string[] = [];
   for name in [
-    "__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set",
+    "__memchr", "__memchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set",
     "__bsd_sum", "__count_runs", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
     "__ctz64", "__popcount64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
   ] {

@@ -3835,6 +3835,34 @@ function call_buf_new(args: Value[]): Value {
   return v_buf_handle(buf_new(reserve));
 }
 
+// Borrow the array and find the first matching byte at or after the start.
+function call_memchr_bytes(args: Value[]): Value {
+  if (args.len() != 3) {
+    return v_err("__memchr_bytes: expected 3 args (bytes, byte, from)");
+  }
+  if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) {
+    return v_err("__memchr_bytes: byte and start must be integers");
+  }
+  if let VArr(a) = args[0] {
+    var byte: i32 = vint_bits(args[1]);
+    var at: i32 = vint_bits(args[2]);
+    if (byte < 0 || byte > 255) {
+      return v_int(0 - 1);
+    }
+    if (at < 0) {
+      at = 0;
+    }
+    while (at < a.elements.len()) {
+      if (vint_bits(a.elements[at]) == byte) {
+        return v_int(at);
+      }
+      at = at + 1;
+    }
+    return v_int(0 - 1);
+  }
+  return v_err("__memchr_bytes: first arg must be a byte array");
+}
+
 // Raw byte ranges use clamped bounds, including empty and inverted ranges.
 function call_buf_push_bytes_range(h: usize, args: Value[]): Value {
   if (args.len() != 4) {
@@ -4201,6 +4229,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   }
   if (is_buf_builtin(name)) {
     return call_buf_builtin(name, args);
+  }
+  if (name == "__memchr_bytes") {
+    return call_memchr_bytes(args);
   }
   // `__memchr(s, byte, from)` / `__ascii_run(s, from)` — the two scan
   // kernels the compiled backends vectorise, and the byte-search floor
