@@ -632,7 +632,7 @@ function receiver_retained(step: ssaunits.Step): boolean {
 // wrappers that lend a record on.
 struct Held { arrays: i32[], records: i32[], fields: i32[], gated: i32[], gated_roots: i32[], gated_records: i32[], gated_fields: i32[] }
 
-function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowRow[]): Held {
+function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable): Held {
   var out: Held = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [], gated_records: [], gated_fields: [] };
   if (ins.kind_tag != ssasem.call()) {
     return out;
@@ -5816,7 +5816,7 @@ function builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.Lower
   return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 
-function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[], no_reuse: boolean, uses: i32[]): irlower.LowerResult {
+function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowTable, no_reuse: boolean, uses: i32[]): irlower.LowerResult {
   r = drops(r, at(p, idx, b.id, ssaunits.entry_point(), 0 - 1), f, links);
   var pos: i32 = 0;
   var pairs: ReusePairs = reuse_pairs(f, p, idx, b, no_reuse);
@@ -5987,7 +5987,7 @@ function inner(l: ssalayout.Layout, first: i32, last: i32, looping: boolean, at:
 // Emit layout indices first..last. A looping region is one natural loop:
 // its `loop` label opens first, then a `block` per position inside that no
 // nested loop owns, each closed just before its position is reached.
-function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, first: i32, last: i32, looping: boolean, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): Emit {
+function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, first: i32, last: i32, looping: boolean, structs: irlower.StructTab, grows: ssaunits.GrowTable): Emit {
   if (looping) {
     e = push(e, ir.op_loop(0), first);
   }
@@ -6311,7 +6311,7 @@ function place_views(own r: irlower.LowerResult): irlower.LowerResult {
 // `grows` is the module's table of callee positions whose buffers a produced
 // callee may grow in place (ssaunits.grow_rows over every produced plan), read
 // by the caller-side bracket.
-pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
+pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab, grows: ssaunits.GrowTable): irlower.LowerResult {
   var why: string = validate(f, modes, p, structs);
   if (why != "") {
     return empty(why);

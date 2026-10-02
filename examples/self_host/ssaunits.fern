@@ -81,19 +81,32 @@ struct Ledger { ok: boolean, why: string, bits: boolean[] }
 // (#4873, #8785).
 pub struct GrowRow { callee: string, param: i32, field: i32 }
 
-pub function grow_fields_of(rows: GrowRow[], callee: string, param: i32): i32[] {
+// GrowTable is the module's rows with a name index over their callees kept
+// beside them, one entry per row in order, so a body's bracket asks about a
+// callee along its chain rather than across the table.
+pub struct GrowTable { rows: GrowRow[], by_callee: util.NameIndex }
+
+pub function no_grows(): GrowTable {
+  var no_names: string[] = [];
+  return GrowTable { rows: [], by_callee: util.name_index(no_names) };
+}
+
+pub function grow_fields_of(t: GrowTable, callee: string, param: i32): i32[] {
   var out: i32[] = [];
-  for row in rows {
+  var i: i32 = t.by_callee.chain(callee);
+  while (i >= 0) {
+    var row: GrowRow = t.rows[i];
     if (row.callee == callee && row.param == param && row.field >= 0) {
       out = out.append(row.field);
     }
+    i = t.by_callee.next[i];
   }
   return out;
 }
 
 // Whether the callee may grow the array at `param` in place.
-pub function grows_buffer(rows: GrowRow[], callee: string, param: i32): boolean {
-  return has_row(rows, callee, param, 0 - 1);
+pub function grows_buffer(t: GrowTable, callee: string, param: i32): boolean {
+  return has_row_at(t.rows, t.by_callee, callee, param, 0 - 1);
 }
 
 function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boolean {
@@ -112,14 +125,14 @@ function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boole
 // tables that agree on the callees one body names produce that body
 // identically, however much they differ elsewhere. That is what lets a second
 // lowering keep a body the inference did not move.
-pub function grow_rows_agree(a: GrowRow[], b: GrowRow[], callees: string[]): boolean {
-  for row in a {
-    if (names_has(callees, row.callee) && !has_row(b, row.callee, row.param, row.field)) {
+pub function grow_rows_agree(a: GrowTable, b: GrowTable, callees: string[]): boolean {
+  for row in a.rows {
+    if (names_has(callees, row.callee) && !has_row_at(b.rows, b.by_callee, row.callee, row.param, row.field)) {
       return false;
     }
   }
-  for row in b {
-    if (names_has(callees, row.callee) && !has_row(a, row.callee, row.param, row.field)) {
+  for row in b.rows {
+    if (names_has(callees, row.callee) && !has_row_at(a.rows, a.by_callee, row.callee, row.param, row.field)) {
       return false;
     }
   }
@@ -196,6 +209,7 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
       out = with_row(out, callee, defs[root].imm, field);
     }
   }
+  var partial: GrowTable = GrowTable { rows: table, by_callee: tix };
   for s in p.steps {
     if (s.point < 0) {
       continue;
@@ -209,7 +223,7 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
         if (is_record(f.values[root]) && s.hand_fields[i] < 0) {
           // A whole record handed on: every field the callee may
           // grow, this parameter may grow.
-          for field in grow_fields_of(table, ins.str, i) {
+          for field in grow_fields_of(partial, ins.str, i) {
             out = with_row(out, callee, defs[root].imm, field);
           }
         } else if (has_row_at(table, tix, ins.str, i, 0 - 1)) {
@@ -280,7 +294,7 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
 
 // Every produced body's rows, closed over the buffers handed on: a row only
 // ever gains, so the rounds converge.
-pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): GrowRow[] {
+pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): GrowTable {
   var table: GrowRow[] = [];
   var no_names: string[] = [];
   // tix indexes `table` by callee, one entry per row in order.
@@ -302,7 +316,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
       i = i + 1;
     }
   }
-  return table;
+  return GrowTable { rows: table, by_callee: tix };
 }
 
 function bad(why: string): Plan {
