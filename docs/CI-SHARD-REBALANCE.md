@@ -3,6 +3,34 @@
 Status: successful held-out replays and a successful live comparison with
 identical test binaries. Current-head checks remain required before merge.
 
+## Refresh of 2026-10-02
+
+The weights were refreshed from two green runs of the twelve-shard x86 lane
+in its post-#10970 shape, read from the `verify` job's "measured durations"
+group rather than the artifacts (docs/CI-WEIGHT-REFRESH.md): run
+[36950369759](https://github.com/JakeChampion/lang/actions/runs/36950369759)
+(head fbf3fc5, 2,981 measured tests) and run
+[36955214561](https://github.com/JakeChampion/lang/actions/runs/36955214561)
+(head 098da94, 2,969). `scripts/ci-test-weights refresh` over the two: 278
+weights raised, 98 lowered, 915 tests weighted for the first time (most of
+them 60-100 s driver builds that were partitioned as one second), 18 dropped
+to the one-second fallback. Both runs predate a45fbe06 and the merges after
+it, which deleted tests they had measured; `refresh` gives a test the tree no
+longer defines no row, since the file's lookup is exact and the testname gate
+rejects such a row.
+
+Replay of the partition with `scripts/shard-tests` over the current 2,990-test
+list, summing each shard's observed seconds from each run:
+
+| Weights | Run 36950369759, longest / shortest shard | Run 36955214561, longest / shortest shard |
+| --- | ---: | ---: |
+| previous file | 1211 s / 749 s | 1146 s / 732 s |
+| refreshed | 1037 s / 903 s | 999 s / 869 s |
+
+About three minutes off the longest shard on either run, with the spread
+down from over 400 s to about 130 s. The audit (`check`) of the second run
+against the refreshed file reports no under-weighted or unweighted test.
+
 The old weights include terminal test durations that omit parallel children.
 The corrected collector measures each top-level test's full active lifetime.
 This candidate uses the slower observation from two completed successful
