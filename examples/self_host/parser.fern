@@ -6544,7 +6544,7 @@ function mentions_name(e: ast.Expr, name: string, hit: boolean): boolean {
 
 // stmt_mentions / stmts_mention report whether `name` appears as an
 // identifier anywhere in a statement / statement list. Used to detect a
-// self-recursive local function (whose body references its own name), which
+// recursive nested function (one on a cycle of references), which
 // hl_rewrite lifts to top level. Conservative: any mention counts.
 //
 // Folding these onto astwalk WIDENS them by one node: the hand-written walk's
@@ -18837,59 +18837,176 @@ function hl_collect_var_names(stmts: ast.Stmt[]): string[] {
   return out;
 }
 
-// hl_has_rec_local reports whether a statement list (descending into
-// nested blocks) contains a self-recursive local function — a `var f =
-// <lambda whose body mentions f>` that ast.var_binds_itself admits. hl_rewrite uses this to leave bodies
-// with no recursive local completely untouched, so the rebuild path only
-// runs where it must — and the self-host's own sources (which use none)
-// pass through byte-for-byte, keeping the stage-2 fixpoint intact.
-function hl_has_rec_local(stmts: ast.Stmt[]): boolean {
-  function vs(st: ast.Stmt, own hit: boolean): boolean {
-    if (hit) {
-      return true;
-    }
-    match (st) {
-      ast.StmtVar(v) => {
-        match (v.init) {
-          ast.ExprLambda(lam) => {
-            return ast.var_binds_itself(v) && stmts_mention(lam.body, v.name);
-          },
-          _ => {
-            return false;
-          }
-        }
-        return false;
-      },
-      _ => {
-        return false;
+// NestedFn is a nested `function` declaration and the nested functions of the
+// same statement list its body names.
+pub struct NestedFn { name: string, lam: ast.ExprLambda, refs: string[] }
+
+function hl_add_nested_fn(st: ast.Stmt, own acc: NestedFn[]): NestedFn[] {
+  if let ast.StmtVar(v) = st {
+    if let ast.ExprLambda(lam) = v.init {
+      if (ast.var_binds_itself(v)) {
+        return acc.append(NestedFn { name: v.name, lam: lam, refs: [] });
       }
     }
-    return false;
   }
-  var hit: boolean = false;
-  for st in stmts {
-    hit = astwalk.fold_stmt_spine(st, hit, vs);
-  }
-  return hit;
+  return acc;
 }
 
-// hl_capture_list returns the ordered, de-duplicated list of enclosing
-// names a recursive lambda captures (the same predicate as hl_captures,
-// but collecting the names instead of a boolean) — the extra parameters
-// the lambda-lift appends.
-function hl_capture_list(lam: ast.ExprLambda, own_name: string, enclosing: string[]): string[] {
+function hl_link(found: NestedFn[]): NestedFn[] {
+  var out: NestedFn[] = [];
+  for sb in found {
+    var refs: string[] = [];
+    for other in found {
+      if (!util.has_str(refs, other.name) && stmts_mention(sb.lam.body, other.name)) {
+        refs = refs.append(other.name);
+      }
+    }
+    out = out.append(NestedFn { ...sb, refs: refs });
+  }
+  return out;
+}
+
+// nested_fns returns the nested functions declared directly in `stmts`.
+pub function nested_fns(stmts: ast.Stmt[]): NestedFn[] {
+  var found: NestedFn[] = [];
+  for st in stmts {
+    found = hl_add_nested_fn(st, found);
+  }
+  return hl_link(found);
+}
+
+function hl_refs(sibs: NestedFn[], name: string): string[] {
+  for sb in sibs {
+    if (sb.name == name) {
+      return sb.refs;
+    }
+  }
+  var none: string[] = [];
+  return none;
+}
+
+// hl_reach returns the siblings reachable from `from` through one or more
+// references.
+function hl_reach(sibs: NestedFn[], from: string): string[] {
+  var seen: string[] = hl_refs(sibs, from);
+  var i: i32 = 0;
+  while (i < seen.len()) {
+    for r in hl_refs(sibs, seen[i]) {
+      if (!util.has_str(seen, r)) {
+        seen = seen.append(r);
+      }
+    }
+    i = i + 1;
+  }
+  return seen;
+}
+
+// nested_fn_cycle returns the siblings on a reference cycle through `name`,
+// itself included and in declaration order, or none when no cycle passes
+// through it. A forward reference that closes no cycle stays undefined, as in
+// native's checkBlock (detectMutualRecSCCs).
+pub function nested_fn_cycle(sibs: NestedFn[], name: string): string[] {
+  var out: string[] = [];
+  var reach: string[] = hl_reach(sibs, name);
+  if (!util.has_str(reach, name)) {
+    return out;
+  }
+  for sb in sibs {
+    if (sb.name == name || util.has_str(reach, sb.name) && util.has_str(hl_reach(sibs, sb.name), name)) {
+      out = out.append(sb.name);
+    }
+  }
+  return out;
+}
+
+// hl_has_rec_local reports whether a statement list, or one hl_rewrite reaches
+// from it (a nested block's, or the body of a lambda a `var` holds), holds a
+// nested function on a reference cycle. A body with none is left untouched, so
+// the self-host's own sources (which use none) pass through byte-for-byte,
+// keeping the stage-2 fixpoint intact.
+function hl_has_rec_local(stmts: ast.Stmt[]): boolean {
+  var sibs: NestedFn[] = nested_fns(stmts);
+  for sb in sibs {
+    if (nested_fn_cycle(sibs, sb.name).len() > 0) {
+      return true;
+    }
+  }
+  for st in stmts {
+    if (hl_stmt_has_rec_local(st)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hl_stmt_has_rec_local(st: ast.Stmt): boolean {
+  match (st) {
+    ast.StmtVar(v) => {
+      if let ast.ExprLambda(lam) = v.init {
+        return hl_has_rec_local(lam.body);
+      }
+      return false;
+    },
+    ast.StmtIf(f) => {
+      return hl_has_rec_local(f.then_body) || hl_has_rec_local(f.else_body);
+    },
+    ast.StmtWhile(w) => {
+      return hl_has_rec_local(w.body);
+    },
+    ast.StmtFor(fr) => {
+      return hl_has_rec_local(fr.body);
+    },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        if (hl_has_rec_local(arm.body)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    ast.StmtDefer(d) => {
+      return hl_stmt_has_rec_local(d.action);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// hl_capture_list returns the ordered, de-duplicated list of enclosing names a
+// lifted lambda captures — the extra parameters the lambda-lift appends. The
+// functions lifted with it (`lifted`) are called directly, not captured.
+function hl_capture_list(lam: ast.ExprLambda, lifted: string[], enclosing: string[]): string[] {
   var shadow: string[] = hl_param_names(lam.params);
   shadow = hl_append_str(shadow, hl_collect_var_names(lam.body));
   var caps: string[] = [];
   var i: i32 = 0;
   while (i < enclosing.len()) {
     var e: string = enclosing[i];
-    if (e != own_name && !util.has_str(shadow, e) && !util.has_str(caps, e)) {
+    if (!util.has_str(lifted, e) && !util.has_str(shadow, e) && !util.has_str(caps, e)) {
       if (stmts_mention(lam.body, e)) {
         caps = caps.append(e);
       }
     }
     i = i + 1;
+  }
+  return caps;
+}
+
+// hl_cycle_captures is the union of the captures of every function on a cycle:
+// each one passes all of them along, since any call around the cycle can reach
+// a member that reads one.
+function hl_cycle_captures(sibs: NestedFn[], cycle: string[], enclosing: string[]): string[] {
+  var caps: string[] = [];
+  for sb in sibs {
+    if (util.has_str(cycle, sb.name)) {
+      for c in hl_capture_list(sb.lam, cycle, enclosing) {
+        if (!util.has_str(caps, c)) {
+          caps = caps.append(c);
+        }
+      }
+    }
   }
   return caps;
 }
@@ -18958,6 +19075,14 @@ function rw_call_stmts(stmts: ast.Stmt[], fname: string, caps: string[]): ast.St
 // capture parameter takes that type, "" when nothing is known.
 struct HlScope { names: string[], env: MEnv, fns: MFns }
 
+// The scope a lambda's body sees: the enclosing names and its own.
+function hl_lambda_scope(sc: HlScope, lam: ast.ExprLambda): HlScope {
+  var names: string[] = hl_append_str(hl_append_str(sc.names, hl_param_names(lam.params)), hl_collect_var_names(lam.body));
+  var pe: MEnv = me_env_from_params(lam.params);
+  var env: MEnv = MEnv { mnames: hl_append_str(sc.env.mnames, pe.mnames), mtypes: hl_append_str(sc.env.mtypes, pe.mtypes) };
+  return HlScope { ...sc, names: names, env: env };
+}
+
 function hl_var_type(v: ast.StmtVar, sc: HlScope): string {
   if (v.type_name.len() > 0) {
     return v.type_name;
@@ -18990,8 +19115,8 @@ function hl_rewrite_match(m: ast.StmtMatch, sc: HlScope, hoisted: FuncDecl[]): (
   return ([s_match_at(m.scrutinee, arms, m.line, m.col)], acc, acc_lifts);
 }
 
-// hl_rewrite lifts self-recursive local functions out of a statement
-// list. A body with none is returned verbatim (the precheck) — so only
+// hl_rewrite lifts the nested functions on a reference cycle out of a
+// statement list. A body with none is returned verbatim (the precheck) — so only
 // functions that actually use the feature are ever rebuilt.
 function hl_rewrite(stmts: ast.Stmt[], outer: HlScope, hoisted: FuncDecl[]): (ast.Stmt[], FuncDecl[], CapLift[]) {
   if (!hl_has_rec_local(stmts)) {
@@ -19001,27 +19126,38 @@ function hl_rewrite(stmts: ast.Stmt[], outer: HlScope, hoisted: FuncDecl[]): (as
   var acc: FuncDecl[] = hoisted;
   var acc_lifts: CapLift[] = hl_no_lifts();
   var sc: HlScope = outer;
+  var sibs: NestedFn[] = nested_fns(stmts);
   var i: i32 = 0;
   while (i < stmts.len()) {
     match (stmts[i]) {
       ast.StmtVar(v) => {
-        // A self-recursive local function (`var f = <lambda
-        // mentioning f>`) is lifted out; everything else passes
-        // through as the ORIGINAL stmts[i] (re-wrapping the
-        // unwrapped payload via `[v]` would drop it).
+        // A nested function on a reference cycle (`var f = <lambda
+        // mentioning f>`, or siblings calling each other) is lifted out;
+        // everything else passes through as the ORIGINAL stmts[i]
+        // (re-wrapping the unwrapped payload via `[v]` would drop it).
         var did_lift: boolean = false;
         match (v.init) {
           ast.ExprLambda(lam) => {
-            if (ast.var_binds_itself(v) && stmts_mention(lam.body, v.name)) {
+            var cycle: string[] = nested_fn_cycle(sibs, v.name);
+            if (cycle.len() > 0) {
               did_lift = true;
               // Captured enclosing names become trailing
               // parameters (lambda-lifting); a capture-free
-              // local just keeps its parameter list.
-              var caps: string[] = hl_capture_list(lam, v.name, sc.names);
+              // local just keeps its parameter list. A capture this
+              // function only forwards around the cycle, under a name
+              // its own body rebinds, gets a parameter name of its own.
+              var caps: string[] = hl_cycle_captures(sibs, cycle, sc.names);
+              var own_names: string[] = hl_append_str(hl_param_names(lam.params), hl_collect_var_names(lam.body));
+              var fwd: string[] = [];
               var new_params: ast.ParamDecl[] = lam.params;
               var ci: i32 = 0;
               while (ci < caps.len()) {
-                new_params = new_params.append(ast.ParamDecl { name: caps[ci], type_name: hl_cap_type(sc, caps[ci]), own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+                var pname: string = caps[ci];
+                if (util.has_str(own_names, pname)) {
+                  pname = "__cap_" + pname;
+                }
+                fwd = fwd.append(pname);
+                new_params = new_params.append(ast.ParamDecl { name: pname, type_name: hl_cap_type(sc, caps[ci]), own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
                 ci = ci + 1;
               }
               // Hoist nested recursive locals first; inside the
@@ -19032,10 +19168,12 @@ function hl_rewrite(stmts: ast.Stmt[], outer: HlScope, hoisted: FuncDecl[]): (as
               let (ir_stmts, ir_hoisted, ir_lifts) = hl_rewrite(lam.body, inner, acc);
               acc = ir_hoisted;
               acc_lifts = hl_append_lifts(acc_lifts, ir_lifts);
-              // Thread the captures through the recursive self-calls.
+              // Thread the captures through the calls around the cycle.
               var lifted_body: ast.Stmt[] = ir_stmts;
               if (caps.len() > 0) {
-                lifted_body = rw_call_stmts(lifted_body, v.name, caps);
+                for member in cycle {
+                  lifted_body = rw_call_stmts(lifted_body, member, fwd);
+                }
               }
               var notp: string[] = [];
               acc = acc.append(FuncDecl {
@@ -19055,8 +19193,18 @@ function hl_rewrite(stmts: ast.Stmt[], outer: HlScope, hoisted: FuncDecl[]): (as
           _ => {}
         }
         if (!did_lift) {
+          var kept: ast.Stmt = stmts[i];
+          if let ast.ExprLambda(lam) = v.init {
+            // A lambda left in place still lifts the cycles in its own body.
+            let (lb_stmts, lb_hoisted, lb_lifts) = hl_rewrite(lam.body, hl_lambda_scope(sc, lam), acc);
+            if (lb_hoisted.len() > acc.len()) {
+              kept = ast.StmtVar { ...v, init: ast.ExprLambda { ...lam, body: lb_stmts } };
+            }
+            acc = lb_hoisted;
+            acc_lifts = hl_append_lifts(acc_lifts, lb_lifts);
+          }
           sc = HlScope { ...sc, env: sc.env.ebind(v.name, hl_var_type(v, sc)) };
-          out = out.append(stmts[i]);
+          out = out.append(kept);
         }
       },
       ast.StmtIf(f) => {

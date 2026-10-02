@@ -36,6 +36,19 @@ var recursiveLocalCases = []struct {
 	{"capture-inferred", "function main(): i32 { var base = 7; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }", 10},
 	// A counted capture: the lifted function's parameter is a string.
 	{"capture-string", "function main(): i32 { var s = \"abc\"; function f(n: i32): i32 { if (n <= 0) { return s.len(); } return 1 + f(n - 1); } return f(3); }", 6},
+	// Siblings calling one another around a cycle are lifted together, each
+	// taking every capture of the cycle, since any call can reach a member
+	// that reads one. The Go backend runs the capture-free ones; it calls a
+	// capturing cycle member with a null environment, so the capturing cases'
+	// exits are worked by hand.
+	{"mutual-even-odd", "function main(): i32 { function isEven(n: i32): boolean { if (n == 0) { return true; } return isOdd(n - 1); } function isOdd(n: i32): boolean { if (n == 0) { return false; } return isEven(n - 1); } if (isEven(10) && !isEven(11) && isOdd(7) && !isOdd(8)) { return 0; } return 1; }", 0},
+	{"three-way-cycle", "function main(): i32 { function a(n: i32): i32 { if (n <= 0) { return 0; } return 1 + b(n - 1); } function b(n: i32): i32 { if (n <= 0) { return 0; } return 2 + c(n - 1); } function c(n: i32): i32 { if (n <= 0) { return 0; } return 3 + a(n - 1); } return a(6); }", 12},
+	{"mutual-capture", "function main(): i32 { var step: i32 = 1; var base: i32 = 40; function down(n: i32): i32 { if (n <= 0) { return base; } return up(n - step) + 1; } function up(n: i32): i32 { if (n <= 0) { return 0; } return down(n - step) + step; } return down(5) + down(6); }", 51},
+	// `p` rebinds `k` itself but still forwards the enclosing `k` to `q`.
+	{"mutual-capture-shadowed", "function main(): i32 { var k: i32 = 10; function p(n: i32): i32 { var k: i32 = 100; if (n <= 0) { return k; } return q(n - 1); } function q(n: i32): i32 { if (n <= 0) { return k; } return p(n - 1) + k; } return q(3); }", 120},
+	// Recursive nested functions inside a nested function that is not lifted.
+	{"self-in-nested", "function main(): i32 { function outer(x: i32): i32 { function g(n: i32): i32 { if (n <= 0) { return 0; } return 2 + g(n - 1); } return g(x); } return outer(3); }", 6},
+	{"mutual-in-nested", "function main(): i32 { var bonus: i32 = 1; function outer(x: i32): i32 { function ping(n: i32): i32 { if (n <= 0) { return x; } return pong(n - 1) + bonus; } function pong(n: i32): i32 { if (n <= 0) { return 0; } return ping(n - 1) + 2; } return ping(4); } return outer(30); }", 36},
 }
 
 func TestSelfHostRecursiveLocal(t *testing.T) {

@@ -6844,6 +6844,20 @@ function rec_local_scope(v: ast.StmtVar, s: Scope): Scope {
   return s;
 }
 
+// bind_mutual_siblings binds, ahead of a statement list, the nested functions
+// in it that call one another around a cycle — native's checkBlock pre-pass.
+// A function recursive only through itself binds through rec_local_scope.
+function bind_mutual_siblings(stmts: ast.Stmt[], s: Scope): Scope {
+  var fns: parser.NestedFn[] = parser.nested_fns(stmts);
+  var out: Scope = s;
+  for f in fns {
+    if (parser.nested_fn_cycle(fns, f.name).len() > 1) {
+      out = out.bind(f.name, lambda_fn_type(f.lam, s));
+    }
+  }
+  return out;
+}
+
 // The result of a lambda that spells none, until its body's exits settle it.
 const INFERRED_RESULT: string = "inferred lambda result";
 
@@ -14027,7 +14041,7 @@ function for_iter_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
 
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   var out: util.Diag[] = [];
-  var cur: Scope = s;
+  var cur: Scope = bind_mutual_siblings(stmts, s);
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {

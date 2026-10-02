@@ -983,6 +983,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// bound by `var` calling that var, directly or one lambda deeper, is E001.
 		{"rec-local-arrow-e001", "function main(): i32 { var f = (n: i32): i32 => { if (n <= 0) { return 0; } return f(n - 1); }; return f(3); }\n", []string{"E001"}},
 		{"rec-local-arrow-nested-e001", "function main(): i32 { var f = (): i32 => { var g = (): i32 => { return f(); }; return g(); }; return f(); }\n", []string{"E001"}},
+		// Nested functions calling one another around a cycle see each other
+		// whatever their order (native's checkBlock pre-binds the SCC). A
+		// forward reference that closes no cycle, or one between arrow
+		// lambdas, stays E001.
+		{"rec-local-mutual-ok", "function main(): i32 {\n  function isEven(n: i32): boolean { if (n == 0) { return true; } return isOdd(n - 1); }\n  function isOdd(n: i32): boolean { if (n == 0) { return false; } return isEven(n - 1); }\n  if (isEven(10) && !isEven(11) && isOdd(7) && !isOdd(8)) { return 0; }\n  return 1;\n}\n", nil},
+		{"rec-local-three-way-cycle-ok", "function main(): i32 {\n  function a(n: i32): i32 { if (n <= 0) { return 0; } return 1 + b(n - 1); }\n  function b(n: i32): i32 { if (n <= 0) { return 0; } return 2 + c(n - 1); }\n  function c(n: i32): i32 { if (n <= 0) { return 0; } return 3 + a(n - 1); }\n  return a(6);\n}\n", nil},
+		{"rec-local-mutual-capture-ok", "function main(): i32 {\n  var step: i32 = 1;\n  function down(n: i32): i32 { if (n <= 0) { return 0; } return up(n - step) + 1; }\n  function up(n: i32): i32 { if (n <= 0) { return 0; } return down(n - step) + step; }\n  return down(5);\n}\n", nil},
+		{"rec-local-mutual-in-nested-ok", "function main(): i32 {\n  function outer(x: i32): i32 {\n    function ping(n: i32): i32 { if (n <= 0) { return x; } return pong(n - 1) + 1; }\n    function pong(n: i32): i32 { if (n <= 0) { return 0; } return ping(n - 1) + 2; }\n    return ping(4);\n  }\n  return outer(30);\n}\n", nil},
+		{"rec-local-forward-no-cycle-e001", "function main(): i32 {\n  function first(n: i32): i32 { return second(n) + 1; }\n  function second(n: i32): i32 { return n * 2; }\n  return first(3);\n}\n", []string{"E001"}},
+		{"rec-local-arrow-mutual-e001", "function main(): i32 { var f = (n: i32): i32 => { return g(n); }; var g = (n: i32): i32 => { return f(n); }; return 0; }\n", []string{"E001"}},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
 		// var is an i32 over the half-open interval. A clean program draws no
 		// codes from EITHER checker — the differential proves the self-host
