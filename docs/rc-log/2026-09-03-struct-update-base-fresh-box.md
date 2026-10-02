@@ -9,7 +9,7 @@ un-overridden field into the new box with a retain, and then releases the base
 in the result.
 
 That is far stronger than the release needs, and unreachable for a builder
-function. `irlower.fn_sigs_for_borrow` returns a 40-field registry struct; a
+function. `fnsigs.fn_sigs_for_borrow` returns a 40-field registry struct; a
 `FERN_DBG_NPE` dump over the whole self-host shows **32 of its pointer fields
 refused at once**, because each is a call whose own callee threads a parameter,
 and four are locals shared between fields. The verdict is a single bit per

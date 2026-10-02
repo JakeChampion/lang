@@ -86,6 +86,10 @@ function test_a_block_matches_the_addresses_in_it(): test.TestOutcome {
   return test.assert_eq(routes(skipping("10.0.0.0/8, fd00::/8, 172.16.0.0/12"), ["http://10.1.2.3/", "http://11.0.0.1/", "http://[::ffff:10.9.9.9]/", "http://[fd12::1]/", "http://[fe80::1]/", "http://172.31.0.1/", "http://172.32.0.1/", "http://ten.example/"]), "direct proxy direct direct proxy direct proxy proxy");
 }
 
+function test_a_zone_before_a_block_keeps_the_block(): test.TestOutcome {
+  return test.assert_eq(routes(skipping("fe80::%eth0/10"), ["http://[fe80::1]/", "http://[febf::1]/", "http://[fec0::1]/"]), "direct direct proxy");
+}
+
 function test_entries_are_trimmed_and_empty_ones_skipped(): test.TestOutcome {
   return test.assert_eq(routes(skipping(" a.example , , .b.example ,"), ["http://a.example/", "http://x.b.example/", "http://b.example/"]), "direct direct proxy");
 }
@@ -122,6 +126,7 @@ function main(): i32 {
   r = r.it("a port limits an entry", test_a_port_limits_an_entry);
   r = r.it("an address entry matches that address", test_an_address_entry_matches_that_address);
   r = r.it("a block matches the addresses in it", test_a_block_matches_the_addresses_in_it);
+  r = r.it("a zone before a block keeps the block", test_a_zone_before_a_block_keeps_the_block);
   r = r.it("entries are trimmed and empty ones skipped", test_entries_are_trimmed_and_empty_ones_skipped);
   r = r.it("a bad block or port matches nothing", test_a_bad_block_or_port_matches_nothing);
   r = r.it("only the lowercase variable is read", test_only_the_lowercase_variable_is_read);

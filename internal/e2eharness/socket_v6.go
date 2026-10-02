@@ -205,7 +205,7 @@ function main(): i32 {
         Ok(p) => { pt = p; },
         Err(e) => { return fail(10); },
     }
-    match (net.send_to(s, "ping", lo6(pt))) {
+    match (net.send_to(s, [112u8, 105u8, 110u8, 103u8], lo6(pt))) {
         Ok(n) => { if (n != 4) { return fail(11); } },
         Err(e) => { return fail(12); },
     }
@@ -221,7 +221,7 @@ function main(): i32 {
         Ok(u) => { },
         Err(e) => { return fail(16); },
     }
-    match (net.send(t, "pong")) {
+    match (net.send(t, [112u8, 111u8, 110u8, 103u8])) {
         Ok(n) => { if (n != 4) { return fail(17); } },
         Err(e) => { return fail(18); },
     }

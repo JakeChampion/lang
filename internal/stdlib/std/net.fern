@@ -272,25 +272,104 @@ pub function (a: IpAddr) to_canonical(): IpAddr {
 // 192.0.0.0/24, the documentation blocks (192.0.2/24, 198.51.100/24,
 // 203.0.113/24, 2001:db8::/32), benchmarking 198.18/15, multicast, the
 // reserved 240/4 and broadcast. An IPv6 address carrying an IPv4 one
-// (IPv4-mapped, NAT64's 64:ff9b::/96, 6to4's 2002::/16) answers for the
-// address it carries, so `::ffff:10.0.0.1` reads as `10.0.0.1`.
+// (IPv4-mapped, NAT64's well-known 64:ff9b::/96, 6to4's 2002::/16) answers
+// for the address it carries, so `::ffff:10.0.0.1` reads as `10.0.0.1`;
+// one in NAT64's local-use 64:ff9b:1::/48 (RFC 8215), whose prefix
+// length the operator chooses, is global only when the address it would
+// carry under each length is. A NAT64 address under a network's own
+// prefix is not recognisable here: `dns.nat64_carried` names it.
 pub function (a: IpAddr) is_global(): boolean {
   match (a) {
     V4(b) => {
       return !__v4_special(b);
     },
     V6(b) => {
-      match (__embedded_v4(b)) {
+      match (__carried_v4(b)) {
         Some(inner) => {
           return !__v4_special(inner);
         },
         None => {
+          if (__local_nat64(b)) {
+            return __local_nat64_global(b);
+          }
           return !__v6_special(b);
         }
       }
     }
   }
   return false;
+}
+
+// `embedded_v4(bits)` — the IPv4 address a NAT64 address carries under a
+// prefix of `bits` (32, 40, 48, 56, 64 or 96), in RFC 6052 §2.2's layout:
+// the four bytes after the prefix, skipping byte 8. `None` for an IPv4
+// address or a length the RFC does not define.
+pub function (a: IpAddr) embedded_v4(bits: i32): Option[IpAddr] {
+  match (a) {
+    V4(b) => {
+      return None;
+    },
+    V6(b) => {
+      if (!__nat64_bits(bits)) {
+        return None;
+      }
+      return Some(V4(__nat64_bytes(b, bits)));
+    }
+  }
+  return None;
+}
+
+function __nat64_bits(bits: i32): boolean {
+  return bits == 96 || bits == 64 || bits == 56 || bits == 48 || bits == 40 || bits == 32;
+}
+
+function __nat64_bytes(b: u8[], bits: i32): u8[] {
+  var out: u8[] = [];
+  var at: i32 = bits / 8;
+  while (out.len() < 4) {
+    if (at != 8) {
+      out = out.append(b[at]);
+    }
+    at = at + 1;
+  }
+  return out;
+}
+
+// `64:ff9b:1::/48`, RFC 8215's local-use NAT64 space.
+function __local_nat64(b: u8[]): boolean {
+  return b[0] == 0 && b[1] == 100 && b[2] == 255 && b[3] == 155 && b[4] == 0 && b[5] == 1;
+}
+
+// Whether every address a local-use NAT64 address would carry, under
+// each prefix length an operator may pick inside the /48, is global. A
+// length counts only when the address is laid out as RFC 6052 §2.2 would
+// under it (byte 8 and the bytes after the carried address zero) and
+// carries an address at all, since the unspecified one is no target.
+function __local_nat64_global(b: u8[]): boolean {
+  var lengths: i32[] = [48, 56, 64, 96];
+  var i: i32 = 0;
+  while (i < lengths.len()) {
+    if (__nat64_laid_out(b, lengths[i]) && __v4_special(__nat64_bytes(b, lengths[i]))) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// Whether `b` could be a synthesis under a prefix of `bits`: byte 8 is
+// zero when the carried address straddles it, every byte after the
+// carried address is zero, and the carried address is not 0.0.0.0.
+function __nat64_laid_out(b: u8[], bits: i32): boolean {
+  var start: i32 = bits / 8;
+  var end: i32 = start + 4;
+  if (start <= 8) {
+    end = end + 1;
+    if (b[8] != 0) {
+      return false;
+    }
+  }
+  return __all_zero(b, end, 16) && !__all_zero(__nat64_bytes(b, bits), 0, 4);
 }
 
 // The IPv4 blocks `is_global` refuses.
@@ -345,7 +424,7 @@ function __v6_special(b: u8[]): boolean {
 // IPv4-mapped (`::ffff:a.b.c.d`) or NAT64 well-known-prefix
 // (`64:ff9b::a.b.c.d`) address, bytes 2 to 5 of a 6to4 one
 // (`2002:abcd:ef01::`); `None` for any other.
-function __embedded_v4(b: u8[]): Option[u8[]] {
+function __carried_v4(b: u8[]): Option[u8[]] {
   if (__all_zero(b, 0, 10) && b[10] == 255 && b[11] == 255) {
     return Some([b[12], b[13], b[14], b[15]]);
   }
@@ -1211,14 +1290,14 @@ pub function set_peer(sock: i32, peer: SocketAddr): Result[void, NetError] {
 
 // `send_to(sock, data, to)` — one datagram to `to`: the bytes accepted, or
 // the error the send reported.
-pub function send_to(sock: i32, data: string, to: SocketAddr): Result[i32, NetError] {
-  return __socket_count(udp_sendto(sock, to.ip.bytes(), to.port, data));
+pub function send_to(sock: i32, data: u8[], to: SocketAddr): Result[i32, NetError] {
+  return __socket_count(udp_sendto_bytes(sock, to.ip.bytes(), to.port, data));
 }
 
 // `send(sock, data)` — one datagram to the peer `set_peer` fixed.
-pub function send(sock: i32, data: string): Result[i32, NetError] {
+pub function send(sock: i32, data: u8[]): Result[i32, NetError] {
   var peer: u8[] = [];
-  return __socket_count(udp_sendto(sock, peer, 0, data));
+  return __socket_count(udp_sendto_bytes(sock, peer, 0, data));
 }
 
 // The sender `udp_recvfrom` reports: the family at 0, the address bytes

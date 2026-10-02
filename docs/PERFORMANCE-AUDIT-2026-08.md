@@ -160,7 +160,7 @@ that divergence.
 |---|---|
 | `__fern_strcmp` | 20.5% |
 | `Scope.lookup_sig` / `array_method_ret_type` / `array_recv_method` / `lookup_method` / `lookup` / `lookup_struct` | 17.0% |
-| `irlower.param_is_borrowable` | 10.5% |
+| `fnsigs.param_is_borrowable` | 10.5% |
 | allocator / rc / memcpy helpers | 7.5% |
 
 The top three are one problem. `checker.Scope` holds flat arrays and scans
@@ -217,7 +217,7 @@ presented as though they were.
 | `__fern_rc_inc` | 6.0% | 3.3% | — |
 | `__str_slice` | 5.0% | 3.3% | — |
 | `Scope.*` cluster | 2.5% | 6.0% | **17.0%** |
-| `irlower.param_is_borrowable` | absent | absent | **10.5%** |
+| `fnsigs.param_is_borrowable` | absent | absent | **10.5%** |
 
 **What is safe to act on** — the claims that hold in both runs:
 
@@ -1605,7 +1605,7 @@ measured**, three of them inside fixpoints that re-walk every body per round.
 
 | first non-runtime frame | share | what it scanned, per query |
 |---|---|---|
-| `util.index_of_str` under `irlower.gfns_visible_in` | 11.6% | the module-fn list against every binder of the function, for every function on every round of `closure_ret_fns_of` — for a result read only at a lambda return |
+| `util.index_of_str` under `irtables.gfns_visible_in` | 11.6% | the module-fn list against every binder of the function, for every function on every round of `closure_ret_fns_of` — for a result read only at a lambda return |
 | `util.has_str` under `treeshake` | 8.0% | the reachable-name set §4f said not to index |
 | `checker.view_sum_fresh` + `view_sum_flags` | 6.0% | the E063 / E065 summaries, twice per call expression, per round |
 | `parser.settle_param_types` + `settle_method_param_types` | 5.6% | every decl, once per call expression |
@@ -1639,8 +1639,8 @@ are walkers' own bodies rather than lookups:
 | `astwalk.fold_stmt_nodes` | 5.8% |
 | `checker.check_call_expr` | 4.3% |
 | `asmcore.add_string_lit` | 2.7% |
-| `irlower.param_is_borrowable` | 2.3% |
-| `irlower.decl_is_struct` | 2.2% |
+| `fnsigs.param_is_borrowable` | 2.3% |
+| `irtables.decl_is_struct` | 2.2% |
 
 `__fern_strcmp` as a leaf fell from 16.9% to 8.8% across the three rounds — the
 compares were the scans, not the interning problem §4d.3 declined to scope.

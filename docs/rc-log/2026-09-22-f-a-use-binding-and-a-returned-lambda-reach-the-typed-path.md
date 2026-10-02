@@ -39,7 +39,7 @@ as `fn` with its sidecars (`decltypes.fn_param_from_type`); a type with no
 declaration spelling leaves the binding as written. (`SELFHOST-CHECKER-PORT.md`,
 same date, has the pass.)
 
-`irlower.desugar_lifted_lambda_returns` runs at the top of the worklist drain,
+`lift.desugar_lifted_lambda_returns` runs at the top of the worklist drain,
 so every lifted body gets the `$lamret$N` rewrite a source function got before
 it: a no-op for a source function, whose pass already ran. A CAPTURING tail
 lambda stays for `hoist_escaping_closure`: given the slot instead, the AST

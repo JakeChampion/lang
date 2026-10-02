@@ -1290,9 +1290,12 @@ them. `is_global()` is the one an outbound block list wants: false for
 every block that is not reachable from anywhere (unspecified, loopback,
 private, link-local, shared 100.64/10, the documentation and benchmarking
 nets, multicast, reserved, broadcast, unique-local, 2001:db8::/32), and an
-IPv6 address carrying an IPv4 one (IPv4-mapped, NAT64 64:ff9b::/96, 6to4)
-answers for the address it carries. `packed_v4()` bridges an `IpAddr` to
-the packed IPv4 argument `tcp_connect` takes.
+IPv6 address carrying an IPv4 one (IPv4-mapped, NAT64's well-known
+64:ff9b::/96, 6to4) answers for the address it carries; one in NAT64's
+local-use 64:ff9b:1::/48 is global only under every prefix length the
+operator may pick. `(a).embedded_v4(bits)` is the address a NAT64 address
+carries under a prefix of `bits` in RFC 6052's layout. `packed_v4()`
+bridges an `IpAddr` to the packed IPv4 argument `tcp_connect` takes.
 
 `NetError` is a closed enum (`AddrInUse`, `ConnectionRefused`,
 `WouldBlock`, … and `Other(errno)`); `error_from_errno(n)` maps the errno a
@@ -1348,13 +1351,15 @@ On wasm, `set_nodelay`, `set_nonblocking` and `send_queue` answer
 reading of the queue, and `reuse_port` is ignored there.
 
 The datagram sockets are typed faces over `udp_bind`, `udp_connect`,
-`udp_sendto` and `udp_recvfrom`, on the same descriptors:
+`udp_sendto_bytes` and `udp_recvfrom`, on the same descriptors:
 
 - `udp_socket(addr)` — a socket bound to a `SocketAddr` of either family
   (port 0 lets the host pick), receiving from any peer until
   `set_peer(sock, peer)` fixes one.
-- `send_to(sock, data, to)` and `send(sock, data)` — one datagram to `to`,
-  or to the fixed peer: the bytes accepted.
+- `send_to(sock, data, to)` and `send(sock, data)`: send one `u8[]` datagram
+  to `to` or the fixed peer and return the byte count. Empty arrays send empty
+  datagrams. The payload remains available to the caller. Convert text with
+  `string.bytes(text)` from `std/string` before sending it.
 - `recv_from(sock, buf)` and `recv(sock, buf)` — one datagram into the
   caller's `u8[]`, up to its length: the byte count, with the sender as a
   `SocketAddr` from `recv_from`. A non-blocking socket with nothing queued
@@ -1457,8 +1462,12 @@ for query ids, `now` for the wait and `reactor` for the race.
   literal as it is, then the hosts file, then DNS, the addresses in RFC
   6724 order. On a host with no IPv4 route, IPv4 addresses with no IPv6
   beside them are synthesized under the prefixes the nameservers reveal
-  (RFC 8305 §7.3). `.local` names go to the nameservers like any other
-  (no mDNS).
+  (RFC 8305 §7.3). `resolve_plain(name)` is the same lookup before that
+  synthesis and the ordering, for a policy that judges the addresses as
+  the sources name them, and `synthesized(addrs)` applies both to its
+  answer; `nat64_carried(addr)` is the IPv4 address `addr` carries under
+  a prefix the nameservers reveal. `.local` names go to the nameservers
+  like any other (no mDNS).
 
 `examples/tests/dns_test.fern` covers the codec, the files, the plan, the
 walk and the ordering rules; `TestDnsExchangeX86_64`, `TestDnsPairX86_64`
@@ -1699,7 +1708,10 @@ answer is `Result[HttpResponse, FetchError]`.
   resolved, an address `net.is_global` refuses (loopback, a private or
   link-local block, the cloud metadata address, an IPv4 address carried
   inside an IPv6 one) fails the request with `Blocked` before anything is
-  dialled, so a rebinding record is caught too. `send` has no such rule.
+  dialled, so a rebinding record is caught too. The check reads the
+  addresses as the network names them, before NAT64 synthesis, and an
+  address under a NAT64 prefix the nameservers reveal is judged by the
+  address it carries (`dns.nat64_carried`). `send` has no such rule.
 - **Proxies:** both routes go through the forward proxy the environment
   names, read through `config_get` as `ProxyEnv` (`proxy_env()`,
   `proxy_env_from(...)` for the pure form): the lowercase `http_proxy`
@@ -1711,8 +1723,10 @@ answer is `Result[HttpResponse, FetchError]`.
   loopback are never proxied. `(p).proxy_for(url)` is the pure decision.
   A proxied request carries the absolute-form target, the origin's
   `Host`, and `Proxy-Authorization: Basic` from the proxy URL's
-  credentials; the block list above does not apply to the proxy's
-  address, since the environment is the deployment's.
+  credentials. On the handler's route the origin is still resolved and
+  checked before the request goes to the proxy (the proxy's own address
+  is the deployment's choice and goes unchecked), so a deployment where
+  only the proxy can resolve names reaches it through `send`.
 - **Responses:** the same `HttpResponse` the server side builds, with
   `BodyBytes`, headers case-folded and the hop-by-hop fields stripped, a
   chunked body decoded and its trailers in `trailers`, interim 1xx

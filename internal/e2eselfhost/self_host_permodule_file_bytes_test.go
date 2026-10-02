@@ -39,6 +39,17 @@ func TestSelfHostPerModuleTCPSendBytes(t *testing.T) {
 `, nil)
 }
 
+func TestSelfHostPerModuleUDPSendBytes(t *testing.T) {
+	checkSelfHostPerModuleByteSink(t, `pub function save(): i32 {
+  let data: u8[] = [255u8, 0u8, 128u8];
+  if (udp_send_bytes("invalid", 1, data) >= 0) { return 1; }
+  if (udp_sendto_bytes(-1, [127u8, 0u8, 0u8, 1u8], 1, data) != -9) { return 2; }
+  if (data.len() != 3 || data[0] != 255 || data[1] != 0 || data[2] != 128) { return 3; }
+  return 0;
+}
+`, nil)
+}
+
 func checkSelfHostPerModuleByteSink(t *testing.T, leaf string, check func(*testing.T, string)) {
 	t.Helper()
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -1,5 +1,5 @@
-// examples/self_host/tuple_elem_tag_run.fern — byte-identity guard for irlower's
-// tuple element-tag decoder (irlower.fern's tuple_type_elem_tag, SH-021 slice —
+// examples/self_host/tuple_elem_tag_run.fern — byte-identity guard for the
+// tuple element-tag decoder (irtables.fern's tuple_type_elem_tag, SH-021 slice —
 // docs/SELF-HOST-AUDIT.md T2).
 //
 // tuple_type_elem_tag now extracts element n of a tuple type spelling
@@ -13,7 +13,7 @@
 // for every (type, n). Exits with the mismatch count (0 = byte-identical), so a
 // regression in the TypeRef decode (or in parse_type_ref feeding it) fails here.
 
-import "./irlower";
+import "./irtables";
 import "./util";
 
 // --- frozen reference: the exact depth-tracking scan tuple_type_elem_tag replaced ---
@@ -82,7 +82,7 @@ function main(): i32 {
     // Probe indices -1..4 to cover in-range, out-of-range, and negative.
     var n: i32 = 0 - 1;
     while (n <= 4) {
-      var real: string = irlower.tuple_type_elem_tag(t, n);
+      var real: string = irtables.tuple_type_elem_tag(t, n);
       var ref: string = ref_elem_tag(t, n);
       var mark: string = "ok  ";
       if (real != ref) {

@@ -232,7 +232,7 @@ hoisting/marker pass:
   (`var f = function(x){ … cap … }; … f(a) …`) lower via classic
   **lambda-lifting**: hoist to `__lam_<k>(origparams…, captures…)` and
   rewrite each call to thread the captured values as ordinary arguments —
-  no box, no new op. `irlower.lift_lambdas` (closure_lift_one +
+  no box, no new op. `lift.lift_lambdas` (closure_lift_one +
   lift_stmt). Declines (→ AST) when a capture's type is unresolvable, a
   capture / the closure local is reassigned, or the closure escapes as a
   value.

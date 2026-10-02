@@ -15,14 +15,14 @@ stage1, backtraced four frames and aggregated by the first non-runtime frame
 
 | grows | form | site |
 |---|---|---|
-| 13,166 | plain | `irlower.assign_target_into` |
+| 13,166 | plain | `irtables.assign_target_into` |
 | 8,735 | owned | `irlower.LowerState.emit` |
 | 6,923 | owned | `parser.map_expr_kids` |
 | 6,400 | owned | `checker.Scope.bind` |
 | 2,894 | plain | `astwalk.ident_of` |
 | 1,247 | plain | `astwalk.append_bound_name` |
 | 1,172 | plain | `treeshake.ts_name_of` |
-| 1,079 | plain | `irlower.decl_is_leaksafe_at_d` |
+| 1,079 | plain | `fnsigs.decl_is_leaksafe_at_d` |
 
 `owned` is `__fern_arr_push_owned`, which frees the superseded buffer itself.
 Every `plain` site at the top is the same shape: an accumulator threaded

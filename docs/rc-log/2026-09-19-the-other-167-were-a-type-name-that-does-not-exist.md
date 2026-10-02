@@ -101,7 +101,7 @@ function main(): i32 {
 }
 ```
 
-`irlower.hoist_value_iife` declares the hoisted IIFE `ret_type: "fn"`
+`lift.hoist_value_iife` declares the hoisted IIFE `ret_type: "fn"`
 deliberately — the hoist fires only when the arms yield a fn value, so the
 function IS a higher-order factory and `closure_ret_fns_of` is gated on exactly
 that declaration. The coarse tag is right. What it has no sidecar pair for is

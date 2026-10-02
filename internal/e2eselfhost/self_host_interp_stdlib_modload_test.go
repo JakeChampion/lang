@@ -130,6 +130,12 @@ var interpStdlibModloadCases = []struct {
 	// The same associated call spelled on a concrete type, and reached through
 	// a USER impl rather than a primitive one.
 	{"assoc-fn-user-impl", "import \"std/num\";\nstruct P { x: i32, y: i32 }\nimpl num.Add for P { function add(self: Self, o: Self): Self { return P { x: self.x + o.x, y: self.y + o.y }; } }\nimpl num.Zero for P { function zero(): Self { return P { x: 0, y: 0 }; } }\nfunction main(): i32 {\n  if (i32.zero() != 0) { return 1; }\n  if (P.zero().x != 0) { return 2; }\n  var ps: P[] = [P { x: 1, y: 2 }, P { x: 3, y: 4 }];\n  var t: P = num.sum(ps);\n  if (t.x != 4 || t.y != 6) { return 3; }\n  var none: P[] = [];\n  if (num.sum(none).y != 0) { return 4; }\n  return 7;\n}\n"},
+	// The Display spine: print / write / eprint take any type with a
+	// `to_string(): string` in scope — a scalar's from the stdlib import, a
+	// struct's from its own method. Native's checker rewrites the argument to
+	// `arg.to_string()`; the self-host -interp runs no checker, and refused
+	// every non-string with `print: argument must be a string`.
+	{"print-display-arg", "import \"std/i32\";\nstruct P { x: i32 }\nfunction (p: P) to_string(): string { return \"P(\" + p.x.to_string() + \")\"; }\nfunction main(): i32 {\n  var n: i32 = 42;\n  print(n);\n  write(P { x: 3 });\n  print(\"\");\n  eprint(n + 1);\n  print(\"done\");\n  return 7;\n}\n"},
 }
 
 // TestSelfHostInterpStdlibModload drives `fern -interp <prog> <stdlib-root>`
@@ -168,18 +174,23 @@ func TestSelfHostInterpStdlibModload(t *testing.T) {
 
 	for _, tc := range interpStdlibModloadCases {
 		t.Run(tc.name, func(t *testing.T) {
-			want := interpExit(t, interpBin, tc.src)
-			if want != 7 {
-				t.Fatalf("native interp oracle exited %d, want 7 — the case itself is wrong, not the self-host engine", want)
-			}
 			mainPath := filepath.Join(t.TempDir(), "main.fern")
 			if err := os.WriteFile(mainPath, []byte(tc.src), 0o644); err != nil {
 				t.Fatalf("write main.fern: %v", err)
 			}
-			cmd := exec.Command(fernBin, "-interp", mainPath, stdlibRoot)
-			out, _ := cmd.CombinedOutput()
-			if code := cmd.ProcessState.ExitCode(); code != want {
-				t.Errorf("self-host -interp exited %d, want %d (native interp oracle)\n%s", code, want, out)
+			wantOut, wantErr, want := runInterpCLI(t, exec.Command(interpBin, "-interp", mainPath), "")
+			if want != 7 {
+				t.Fatalf("native interp oracle exited %d, want 7 — the case itself is wrong, not the self-host engine\n%s", want, wantErr)
+			}
+			out, errOut, code := runInterpCLI(t, exec.Command(fernBin, "-interp", mainPath, stdlibRoot), "")
+			if code != want {
+				t.Errorf("self-host -interp exited %d, want %d (native interp oracle)\n%s", code, want, errOut)
+			}
+			if out != wantOut {
+				t.Errorf("self-host -interp stdout = %q, native interp oracle = %q", out, wantOut)
+			}
+			if errOut != wantErr {
+				t.Errorf("self-host -interp stderr = %q, native interp oracle = %q", errOut, wantErr)
 			}
 		})
 	}

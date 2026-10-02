@@ -457,7 +457,7 @@ function canon_trait_set(traits: string): string {
 // which is an owned handle. Only a declared resource makes `own R` a handle;
 // elsewhere `own T` is a consuming parameter's spelling.
 function names_resource_handle(name: string, tn: TypeNames): boolean {
-  return tn.resources.has(handle_resource(name));
+  return tn.resources.names.len() > 0 && tn.resources.has(handle_resource(name));
 }
 
 function handle_resource(name: string): string {
@@ -4450,7 +4450,9 @@ function builtin_sigs(): string[] {
     "udp_connect(i32, u8[], i32): i32",
     "udp_recvfrom(i32, u8[], u8[]): i32",
     "udp_send(string, i32, string): i32",
+    "udp_send_bytes(string, i32, u8[]): i32",
     "udp_sendto(i32, u8[], i32, string): i32",
+    "udp_sendto_bytes(i32, u8[], i32, u8[]): i32",
     "umask(i32): i32",
     "unix_connect(string): i32",
     "unix_listen(string, i32): i32",
@@ -12648,17 +12650,33 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           } else {
             // E038: per-argument type mismatch (only when
             // the arity matches, so indices line up).
+            var cbn: string[] = [];
+            var cbt: typeinfo.Type[] = [];
+            if (sig.all_type_params.len() > 0) {
+              let (bn0, bt0) = call_type_bindings(sig, c, s);
+              cbn = bn0;
+              cbt = bt0;
+            }
             var ai: i32 = 0;
             while (ai < c.args.len()) {
               var at: typeinfo.Type = check_expr(c.args[ai], s);
               // E021 (#4842): generic-bound conformance. When
               // param ai is a bare bounded type param `x: T`
-              // (T: Tr), the argument's concrete type must
-              // provide `impl Tr`. Runs before the E038 skip
-              // because a bounded param's declared type is the
-              // erased-unknown T (E038 itself skips it).
-              if (ai < sig.param_bound.len() && sig.param_bound[ai].len() > 0 && !is_unknown(at)) {
-                out = util.append_diags(out, e021_bound_call_diag(sig.param_bound[ai], at, s, expr_line(c.args[ai]), expr_col(c.args[ai])));
+              // (T: Tr), the type T is bound to must provide
+              // `impl Tr` — the call's binding, not the argument's
+              // own type, which reads an untyped literal at its
+              // default width. Runs before the E038 skip because a
+              // bounded param's declared type is the erased-unknown
+              // T (E038 itself skips it).
+              if (ai < sig.param_bound.len() && sig.param_bound[ai].len() > 0) {
+                var tat: typeinfo.Type = at;
+                var tbi: i32 = util.index_of_str(cbn, sig.param_type_names[ai]);
+                if (tbi >= 0 && !type_contains_unknown(cbt[tbi])) {
+                  tat = cbt[tbi];
+                }
+                if (!is_unknown(tat)) {
+                  out = util.append_diags(out, e021_bound_call_diag(sig.param_bound[ai], tat, s, expr_line(c.args[ai]), expr_col(c.args[ai])));
+                }
               }
               out = util.append_diags(out, int_dest_range_diags(c.args[ai], sig.param_types[ai]));
               out = util.append_diags(out, ctor_payload_diags(c.args[ai], sig.param_types[ai], s));
@@ -20131,7 +20149,7 @@ function e021_object_unsafe_assoc(mod: parser.Module, trait_name: string, dyn_sp
 // e021_dyn_local_at is the statement half of that walk: a `var` whose
 // annotation names a dyn trait contributes that trait. It closes over nothing,
 // so it is a top-level function rather than a nested one — the convention
-// irlower's assign-targets visitors already follow, and what keeps the feature
+// irtables' assign-targets visitors already follow, and what keeps the feature
 // census's closure count measuring closures.
 function e021_dyn_local_at(st: ast.Stmt, own a: string[]): string[] {
   match (st) {
@@ -20461,7 +20479,7 @@ function e060_decl_is_plain_struct(mod: parser.Module, name: string): boolean {
 }
 
 // e060_decl_is_enum: `name` is a declared enum (some decl records it as its
-// enum_owner) — mirrors irlower.decl_is_enum.
+// enum_owner) — mirrors irtables.decl_is_enum.
 function e060_decl_is_enum(mod: parser.Module, name: string): boolean {
   if (name.len() == 0) {
     return false;

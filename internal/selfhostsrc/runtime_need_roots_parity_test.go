@@ -29,7 +29,9 @@ import (
 var needRootSources = []string{
 	"../../examples/self_host/asm_ir.fern",
 	"../../examples/self_host/asm_arm64_ir.fern",
-	"../../examples/self_host/irlower.fern",
+	"../../examples/self_host/irtables.fern",
+	"../../examples/self_host/fnsigs.fern",
+	"../../examples/self_host/lift.fern",
 	"../../examples/self_host/ircore.fern",
 	"../../examples/self_host/asmcore.fern",
 }
