@@ -12563,6 +12563,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
               }
               var name: string = funcs.decls[concrete].name;
               var instances: Insts = receiver.rins;
+              var bound: boolean = true;
               if (funcs.decls[concrete].type_params.len() > 0) {
                 // Infer from the original arguments: a nested generic call
                 // already rewritten in nargs names a clone outside decls.
@@ -12577,9 +12578,16 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                 if (key.len() > 0) {
                   instances = instances.iadd(name, key);
                   name = name + "__" + sanitize_key(key);
+                } else {
+                  // The bare template is dropped before lowering, so a call
+                  // naming it would have no target: the call stays on its
+                  // receiver for the dispatch to refuse by the written name.
+                  bound = false;
                 }
               }
-              return RExpr { rexpr: ast.ExprCall { ...c, callee: ast.ExprIdent { name: name, line: fac.line, col: fac.col, ty: "" }, args: args }, rins: instances };
+              if (bound) {
+                return RExpr { rexpr: ast.ExprCall { ...c, callee: ast.ExprIdent { name: name, line: fac.line, col: fac.col, ty: "" }, args: args }, rins: instances };
+              }
             }
           }
           // Value-receiver generic array method `recv.m(args)` —

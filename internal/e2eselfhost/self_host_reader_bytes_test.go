@@ -15,7 +15,7 @@ import (
 func TestSelfHostReaderBytes(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-		for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
+		for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"default", "FERN_SEM_IR="}} {
 			t.Run(target+"/"+mode.name, func(t *testing.T) {
 				env := []string{mode.env}
 				if mode.name == "semantic" {
@@ -35,8 +35,9 @@ func TestSelfHostReaderBytes(t *testing.T) {
 // and resource lifecycle are implemented; core WASM execution is tested above.
 func testReaderBytesComponentRefusal(t *testing.T, compiler string, runner []string, stdlib string) {
 	t.Helper()
+	// Both legacy flag values must use production typed-IR ownership.
 	for _, mode := range []string{"0", "1"} {
-		t.Run("component/typed="+mode, func(t *testing.T) {
+		t.Run("component/legacy-env="+mode, func(t *testing.T) {
 			dir := t.TempDir()
 			src, bin := filepath.Join(dir, "reader.fern"), filepath.Join(dir, "reader.wasm")
 			if err := os.WriteFile(src, []byte(e2eharness.ReaderBytesProgram), 0o644); err != nil {
@@ -60,9 +61,7 @@ func TestSelfHostReaderBytesOwnership(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
-			// The production semantic lowering owns error payloads. The
-			// diagnostic AST lowering still has the documented #8806 error
-			// payload leak; its byte semantics are checked above.
+			// Require the production ownership lowering to release error payloads.
 			stderr, code := cli.exitOfStdin(t, e2eharness.ReaderBytesProgram, target, e2eharness.ReaderBytesInput(), "FERN_SANITIZE=1", "FERN_LEAKCHECK=1", "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1")
 			if code != 0 || strings.Contains(stderr, "fern-sanitizer:") {
 				t.Fatalf("reader bytes: exit %d\n%s", code, stderr)
@@ -89,7 +88,7 @@ func TestSelfHostArm64DarwinReaderBytes(t *testing.T) {
 	if err := os.WriteFile(src, []byte(e2eharness.ReaderBytesProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
+	for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"default", "FERN_SEM_IR="}} {
 		t.Run(mode.name, func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "reader")
 			compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)

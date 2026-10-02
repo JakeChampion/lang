@@ -10147,7 +10147,7 @@ pub function reader_read_chunk_bytes_func(): string {
   var o: string = "  (func $__fern_reader_read_chunk_bytes (param $fd i32) (param $n i32) (result i32)\n";
   o = o + "    (local $a i32) (local $got i32) (local $box i32) (local $err i32) (local $path i32) (local $i i32)\n";
   o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $err (i32.const 28))) (else\n";
-  o = o + "      (if (i64.gt_u (i64.mul (i64.extend_i32_u (local.get $n)) (i64.const 4)) (i64.const 2147483631)) (then unreachable))\n";
+  o = o + "      (if (i64.gt_u (i64.mul (i64.extend_i32_u (local.get $n)) (i64.const 4)) (i64.const 2147483631)) (then (unreachable)))\n";
   o = o + "      (local.set $a (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
   o = o + "      (i32.store (local.get $a) (i32.const 0)) (i32.store offset=4 (local.get $a) (local.get $n))\n";
   o = o + "      (i32.store (i32.const 0) (i32.add (local.get $a) (i32.const 8)))\n";

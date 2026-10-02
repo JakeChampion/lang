@@ -1161,6 +1161,17 @@ func via_prim {
     ret v1
 }
 
+modes 1 result i32
+v0:u8 v1:i32
+func offset {
+  b0:
+    v0 = param 0
+    v1 = cast v0
+    ret v1
+}
+
+refused uninstantiated generic
+refused unsupported call target: [u8].take
 modes 2 result string
 v0:string v1:string
 func trimmed {
