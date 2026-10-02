@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"net"
 	"os"
 	"os/exec"
@@ -34,11 +35,6 @@ func TestExternImportWithBuiltinUDPViaCLI(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
-
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen udp: %v", err)
@@ -61,8 +57,8 @@ function main(): i32 {
 		t.Fatalf("write prog: %v", err)
 	}
 	compPath := filepath.Join(dir, "prog.wasm")
-	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", compPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+	if out, err := e2eharness.SelfHostCompileCmd(t, "wasm32-wasi", progPath, compPath).CombinedOutput(); err != nil {
+		t.Fatalf("self-host fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	if out, err := exec.Command(wasmtime, "run", "-S", "inherit-network", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasmtime run: %v\n%s", err, out)
