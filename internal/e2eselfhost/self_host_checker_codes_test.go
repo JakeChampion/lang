@@ -2257,16 +2257,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// exactly once, directly, in an `own` position of its OWN
 		// reassignment's RHS is a transfer — admitted by both checkers
 		// (native SelfReassignOwnMoveArg / self-host ow_self_move_admits).
-		// Binding to a different name (old binding kept alive) or a second
-		// read of the local in the same RHS stays E051.
+		// Binding the result to a different name is a move too when nothing
+		// reads the local afterwards (#10864); a second read of the local in
+		// the same RHS stays E051.
 		{"own-self-reassign-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    a = grow(a, 1);\n    a = grow(a, 2);\n    return a.items.len();\n}\n", nil},
-		{"own-kept-alive-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    var c: B = grow(a, 1);\n    return c.items.len();\n}\n", []string{"E051"}},
+		{"own-other-name-last-use-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    var c: B = grow(a, 1);\n    return c.items.len();\n}\n", nil},
 		{"own-second-read-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [7] };\n    a = grow(a, a.items[0]);\n    return a.items.len();\n}\n", []string{"E051"}},
 		// The same three, one nesting level in: the admission is a
 		// STATEMENT-level fact, so a walk that reaches a nested body as one
 		// flat expression loses it and flags the transfer (#7452).
 		{"own-self-reassign-local-func-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    function build(): i32 {\n        var a: B = B { items: [] };\n        a = grow(a, 1);\n        return a.items.len();\n    }\n    return build();\n}\n", nil},
-		{"own-kept-alive-local-func-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    function build(): i32 {\n        var a: B = B { items: [] };\n        var c: B = grow(a, 1);\n        return c.items.len();\n    }\n    return build();\n}\n", []string{"E051"}},
+		{"own-other-name-last-use-local-func-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    function build(): i32 {\n        var a: B = B { items: [] };\n        var c: B = grow(a, 1);\n        return c.items.len();\n    }\n    return build();\n}\n", nil},
 		// A local function's OWN `own` parameter is owned inside its body, so
 		// it transfers onward like a top-level one's.
 		{"own-local-func-param-transfer-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction main(): i32 {\n    function inner(own b: i32[]): i32 { return consume(b); }\n    return inner([1]);\n}\n", nil},
@@ -3276,6 +3277,12 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"e051-last-use-ret-binary-lit", lastUsePrelude + "function f(): i32 { var a: i32[] = [1]; return keep(a, 1) + 1; }\n"},
 		{"e051-last-use-mid-call", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var r: i32 = keep(a, 1); return r; }\n"},
 		{"e051-last-use-mid-lit", lastUsePrelude + "function f(): i32 { var a: i32[] = [1]; var r: i32 = keep(a, 1); return r; }\n"},
+		// A literal-built local is as fresh as a call-bound one (#10864).
+		{"e051-last-use-mid-lit-grown", lastUsePrelude + "function f(): i32 { var a: i32[] = []; a = a.append(1); var r: i32 = keep(a, 1); return r; }\n"},
+		{"e051-last-use-ret-binary-lit-grown", lastUsePrelude + "function f(): i32 { var a: i32[] = []; a = a.append(1); return keep(a, 1) + 0; }\n"},
+		{"e051-last-use-mid-struct-lit", lastUsePrelude + "function f(): i32 { var w: W = W { d: [1], n: 2 }; var r: i32 = eat(w); return r; }\n"},
+		{"e051-last-use-mid-string-lit", lastUsePrelude + "function takes(own s: string): i32 { return s.len(); }\nfunction f(): i32 { var s: string = \"ab\"; s = s + \"c\"; var r: i32 = takes(s); return r; }\n"},
+		{"e051-last-use-spread-lit", lastUsePrelude + "function f(): i32 { var v: W = mkw(1); var w: W = W { ...v, n: 2 }; var r: i32 = eat(w); return r + v.n; }\n"},
 		{"e051-last-use-read-again", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var r: i32 = keep(a, 1); return r + a[0]; }\n"},
 		{"e051-last-use-loop", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var t: i32 = 0; while (t < 3) { t = t + keep(a, 1); } return t; }\n"},
 		{"e051-last-use-loop-nested-reassign", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var t: i32 = 0; while (t < 3) { a = grow(grow(a, t), 1); t = t + 1; } return a.len(); }\n"},

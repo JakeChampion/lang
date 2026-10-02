@@ -15686,9 +15686,11 @@ function lu_is_local(fx: LuFn, name: string): boolean {
   return !util.has_str(fx.params, name) && lu_decl_count(fx, name) > 0;
 }
 
-// lu_call_init: declared once, from a call whose callee is named — a function,
-// or a method, which native has rewritten to one by the time it asks.
-function lu_call_init(fx: LuFn, name: string): boolean {
+// lu_fresh_init: declared once, from a fresh value — a call whose callee is
+// named (a function, or a method, which native has rewritten to one by the time
+// it asks), or an array, string or plain struct literal. A spread literal copies
+// its base's fields, so it is not fresh.
+function lu_fresh_init(fx: LuFn, name: string): boolean {
   var li: LuInit = lu_init_of(fx, name);
   if (!li.ok) {
     return false;
@@ -15701,10 +15703,19 @@ function lu_call_init(fx: LuFn, name: string): boolean {
       return true;
     }
   }
+  if let ast.ExprArray(_) = li.init {
+    return true;
+  }
+  if let ast.ExprString(_) = li.init {
+    return true;
+  }
+  if let ast.ExprStructLit(sl) = li.init {
+    return !sl.has_base;
+  }
   return false;
 }
 
-// lu_unpack_init: declared once as `h.f` of a call-initialised `h`, where that is
+// lu_unpack_init: declared once as `h.f` of a fresh-initialised `h`, where that is
 // the only read of `h.f` and every mention of `h` selects a field.
 function lu_unpack_init(fx: LuFn, name: string): boolean {
   var li: LuInit = lu_init_of(fx, name);
@@ -15713,7 +15724,7 @@ function lu_unpack_init(fx: LuFn, name: string): boolean {
   }
   if let ast.ExprFieldAccess(fa) = li.init {
     var h: string = ow_ident_name(fa.obj);
-    if (h.len() == 0 || !lu_call_init(fx, h)) {
+    if (h.len() == 0 || !lu_fresh_init(fx, h)) {
       return false;
     }
     var reads: i32 = 0;
@@ -15748,7 +15759,7 @@ function lu_rename_source(fx: LuFn, name: string): string {
 // lu_admitted is the binding the last-occurrence shapes admit: one bound from a
 // call, unpacked from one, or a rename of such a binding or of a parameter.
 function lu_admitted(fx: LuFn, name: string): boolean {
-  if (lu_call_init(fx, name) || lu_unpack_init(fx, name)) {
+  if (lu_fresh_init(fx, name) || lu_unpack_init(fx, name)) {
     return true;
   }
   var root: string = lu_rename_source(fx, name);
@@ -15762,7 +15773,7 @@ function lu_admitted(fx: LuFn, name: string): boolean {
     seen = seen.append(next);
     next = lu_rename_source(fx, root);
   }
-  return util.has_str(fx.params, root) || lu_call_init(fx, root) || lu_unpack_init(fx, root);
+  return util.has_str(fx.params, root) || lu_fresh_init(fx, root) || lu_unpack_init(fx, root);
 }
 
 // lu_is_last: no occurrence of the name sits after this one.
@@ -16102,15 +16113,45 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: 
 }
 
 // lu_last_use_args is the E051 admission for `fn`: the keys of the local
-// arguments handed to an `own` parameter where they die.
+// arguments handed to an `own` parameter where they die. A nested function is
+// lowered as a function of its own, so its body is answered by its own walk.
 function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFunc[]): string[] {
   var facts: LuFacts = LuFacts { occ: [], vars: [], escaping: [], sels: [] };
+  var nested: ast.ExprLambda[] = [];
   for st in fn.body {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+    nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, lu_nested_fn, lu_outside_nested_fn);
   }
   var fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), ofuncs: ofuncs };
   var none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
-  return lu_stmts(fn.body, false, false, none, false, fx, []);
+  var out: string[] = lu_stmts(fn.body, false, false, none, false, fx, []);
+  for lm in nested {
+    out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }, ofuncs));
+  }
+  return out;
+}
+
+function lu_skip_stmt(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
+  return acc;
+}
+
+// lu_nested_fn collects the lambdas nested `function` declarations desugar to.
+function lu_nested_fn(e: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
+  if let ast.ExprLambda(lm) = e {
+    if (lm.origin == ast.ORIGIN_NESTED_FN) {
+      return acc.append(lm);
+    }
+  }
+  return acc;
+}
+
+// lu_outside_nested_fn stops the walk at a nested function: the recursive walk
+// over its own body finds the functions nested in it.
+function lu_outside_nested_fn(e: ast.Expr): boolean {
+  if let ast.ExprLambda(lm) = e {
+    return lm.origin != ast.ORIGIN_NESTED_FN;
+  }
+  return true;
 }
 
 // ow_count_ident counts occurrences of `name` as a bare ident anywhere

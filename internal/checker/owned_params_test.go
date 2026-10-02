@@ -294,14 +294,6 @@ function f(): i32 {
     var g = (): i32 => xs.len();
     return consume(xs) + g();
 }`},
-		// A literal-initialised local is admitted at a return, not at an
-		// ordinary last read: CallArgDeaths cannot rule out that it aliases.
-		{"literal-local-not-returned", `
-function f(): i32 {
-    var xs: i32[] = [1, 2];
-    var n: i32 = consume(xs);
-    return n;
-}`},
 	} {
 		wantE051(t, tc.name, ownConsumer+tc.body)
 	}
@@ -574,19 +566,6 @@ function f(): i32 {
 }`); err != nil {
 		t.Errorf("self-reassign own move should check, got: %v", err)
 	}
-}
-
-// The admission is ONLY the self-reassign shape: binding the result to a
-// DIFFERENT name keeps the old binding alive — still E051.
-func TestOwnGuardRejectsKeptAliveLocal(t *testing.T) {
-	wantE051(t, "kept-alive-local", ownConsumer+`
-struct B { items: i32[] }
-function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
-function f(): i32 {
-    var a = B { items: [] };
-    var c = grow(a, 1);
-    return c.items.len();
-}`)
 }
 
 // A SECOND read of the local anywhere in the same RHS would observe the
@@ -889,4 +868,42 @@ function thread(own xs: i32[], k: i32): i32[] {
     return [k];
 }
 function main(): i32 { return consume(thread([1, 2], 3)); }`)
+}
+
+// A local built from a literal is as fresh as a call result, so its last use
+// may be an `own` argument in any position, not only the returned call
+// (#10864). A spread literal copies its base's fields and is not admitted.
+func TestOwnGuardAllowsLiteralBuiltLocalAtLastUse(t *testing.T) {
+	prelude := `struct W { d: i64[], tag: string }
+function take(own xs: i64[]): i32 { return xs.len() as i32; }
+function eat(own w: W): i32 { return w.tag.len() as i32; }
+function takes(own s: string): i32 { return s.len() as i32; }
+`
+	wantOK(t, "grown-array-in-binary", prelude+`function f(): i32 {
+    var xs: i64[] = [];
+    xs = xs.append(1);
+    return take(xs) + 0;
+}`)
+	wantOK(t, "grown-array-in-var", prelude+`function f(): i32 {
+    var xs: i64[] = [];
+    xs = xs.append(1);
+    var r: i32 = take(xs);
+    return r;
+}`)
+	wantOK(t, "struct-literal", prelude+`function f(): i32 {
+    var w: W = W { d: [1], tag: "t" };
+    var r: i32 = eat(w);
+    return r;
+}`)
+	wantOK(t, "string-literal", prelude+`function f(): i32 {
+    var s: string = "ab";
+    s = s + "c";
+    var r: i32 = takes(s);
+    return r;
+}`)
+	wantE051(t, "spread-literal", prelude+`function f(v: W): i32 {
+    var w: W = W { ...v, tag: "u" };
+    var r: i32 = eat(w);
+    return r;
+}`)
 }
