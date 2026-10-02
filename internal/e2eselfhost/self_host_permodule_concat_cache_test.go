@@ -22,7 +22,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 		t.Skip("file-loading driver test runs only natively (argv paths)")
 	}
 	dir, mmr := buildConcatDriver(t, gcc)
-	entryPath, nMod := writeConcatFixture(t, dir)
+	entryPath, nMod := writeFlatConcatFixture(t, dir)
 	proj := filepath.Dir(entryPath)
 	cacheDir := filepath.Join(proj, "cache")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
