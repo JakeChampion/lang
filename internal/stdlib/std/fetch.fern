@@ -97,7 +97,7 @@ pub enum Phase { Connecting, Inactivity, Total }
 // is not a URL; `BodyLimit` for a body past `HttpLimits.body`, decoded or
 // not; `Decode` for a content coding the client could not undo: more
 // codings than `Decoding.depth`, a body that is not gzip, or one grown
-// past `Decoding.ratio`;
+// past what `Decoding.ratio` allows, the message naming the allowance;
 // `Cancelled` for a request abandoned by its caller, part of the sum so a
 // match written today survives the client growing cancellation; this
 // client does not produce it yet.
@@ -224,6 +224,8 @@ pub struct Request { method: string, url: string, headers: HeaderMap, body: Body
 // every coding is undone. A decoded body of 64 KiB or less is never
 // refused on the ratio: a small body compresses far past any plausible
 // ratio (a run of zeros a thousandfold), and the cap already bounds it.
+// A `ratio` of 0 or less admits only that much. A body refused names
+// the allowance that refused it, so a caller sees which bound applied.
 // The decoder never produces more than `limits.body` bytes whatever the
 // ratio says, so the ratio is a policy on a response's shape, not what
 // bounds memory.
@@ -878,15 +880,17 @@ function __decoded(resp: HttpResponse, req: Request): Result[HttpResponse, Fetch
     body = __gunzipped(body, req.limits.body)?;
     left = left - 1;
   }
-  if (body.len() as i64 > __allowed(encoded, req.decoding.ratio)) {
-    return Err(Decode("a body past " + int.int_to_string(req.decoding.ratio) + " times its encoded size"));
+  var allowed: i64 = __allowed(encoded, req.decoding.ratio);
+  if (body.len() as i64 > allowed) {
+    return Err(Decode("a body of " + int.int_to_string(body.len()) + " bytes from " + int.int_to_string(encoded) + " encoded, past the " + int.int_to_string(allowed as i32) + " allowed"));
   }
   return Ok(HttpResponse { ...resp, body: BodyBytes(body), headers: __without(resp.headers, ["content-encoding", "content-length"]) });
 }
 
 // `__allowed(encoded, ratio)` — the most decoded bytes a response of
 // `encoded` bytes may become: `ratio` times that, and never less than
-// `RATIO_FLOOR`.
+// `RATIO_FLOOR`. A refusal fits `i32` since the body it names is under
+// `limits.body`.
 function __allowed(encoded: i32, ratio: i32): i64 {
   var allowed: i64 = encoded as i64 * (ratio as i64);
   if (allowed < RATIO_FLOOR as i64) {

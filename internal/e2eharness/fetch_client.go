@@ -124,6 +124,9 @@ func (up *FetchUpstream) serve(c net.Conn) {
 	case target == "/gzip-identity-coding":
 		z := gzipped([]byte("hello gzip"))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: identity, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/x-gzip":
+		z := gzipped([]byte("hello gzip"))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: x-gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/gzip-floor":
 		// 60 000 zero bytes: a few dozen bytes encoded, far past a
 		// hundredfold growth, under the 64 KiB the ratio never refuses.
@@ -133,9 +136,7 @@ func (up *FetchUpstream) serve(c net.Conn) {
 		// 100 000 bytes past that floor, from 2 000 seeded random bytes
 		// repeated: the first copy is incompressible, so the growth stays
 		// well under a hundredfold and the ratio admits the body.
-		block := make([]byte, 2000)
-		rand.New(rand.NewSource(7)).Read(block)
-		z := gzipped(bytes.Repeat(block, 50))
+		z := gzipped(bytes.Repeat(wideBlock(), 50))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/gzip-bad":
 		resp = []byte("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 15\r\n\r\nnot gzip at all")
@@ -146,6 +147,17 @@ func (up *FetchUpstream) serve(c net.Conn) {
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/gzip-double":
 		z := gzipped(gzipped([]byte("twice")))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/gzip-double-wide":
+		// The /gzip-wide body under two codings: past the floor, within
+		// the ratio, so depth 2 is judged at a size the floor does not
+		// decide.
+		z := gzipped(gzipped(bytes.Repeat(wideBlock(), 50)))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/gzip-double-bomb":
+		// 100 000 zero bytes under two codings: past the floor and the
+		// ratio, so the whole-response verdict shows at depth 2.
+		z := gzipped(gzipped(make([]byte, 100000)))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/br":
 		resp = []byte("HTTP/1.1 200 OK\r\nContent-Encoding: br\r\nContent-Length: 3\r\n\r\nraw")
@@ -206,6 +218,14 @@ func (up *FetchUpstream) serve(c net.Conn) {
 // saw it.
 func echoLine(method, target, host, body, trace, auth, cookie, accept string) string {
 	return fmt.Sprintf("%s %s host=%s len=%d body=%s trace=%s auth=%s cookie=%s accept=%s", method, target, host, len(body), body, trace, auth, cookie, accept)
+}
+
+// wideBlock is 2 000 seeded random bytes: incompressible on its own,
+// so a body of repeats grows far less than a hundredfold when decoded.
+func wideBlock() []byte {
+	block := make([]byte, 2000)
+	rand.New(rand.NewSource(7)).Read(block)
+	return block
 }
 
 // gzipped is data as one gzip member.
@@ -291,12 +311,14 @@ func headerValue(head, name string) string {
 // `plat.http` request for a global literal is proxied, the one for the
 // metadata address is refused before the proxy sees it.
 // The gzip cases pin a `Content-Encoding: gzip` body decoded (with a
-// length, chunked, and beside an `identity` coding) and its encoding and
-// length fields dropped, a HEAD answer naming a coding left alone, a body
-// that is not gzip, a body past a hundredfold growth refused and two
-// admitted (one under the 64 KiB the ratio never refuses, one past it
-// but within the ratio), the body cap applied to the decoded bytes,
-// two codings refused at the default depth and undone at depth 2, a
+// length, chunked, beside an `identity` coding, and named `x-gzip`) and
+// its encoding and length fields dropped, a HEAD answer naming a coding
+// left alone, a body that is not gzip, a body past a hundredfold growth
+// refused with its allowance named and two admitted (one under the
+// 64 KiB the ratio never refuses, one past it but within the ratio), the
+// body cap applied to the decoded bytes, two codings refused at the
+// default depth and undone at depth 2 (a few bytes, then a body past the
+// floor admitted and one past the ratio refused), a
 // caller's own `Accept-Encoding` and `Decoding { depth: 0 }` each leaving
 // the body as it came, a coding the client never asks for left alone,
 // and the `Accept-Encoding: gzip` the client writes (every echo line
@@ -382,6 +404,7 @@ function main(): i32 {
     show("gzip", fetch.send(fetch.get(base() + "/gzip")));
     show("gzipbodychunked", fetch.send(fetch.get(base() + "/gzip-body-chunked")));
     show("gzipidentitycoding", fetch.send(fetch.get(base() + "/gzip-identity-coding")));
+    show("gzipx", fetch.send(fetch.get(base() + "/x-gzip")));
     match (fetch.send(fetch.get(base() + "/gzip-floor"))) {
         Ok(resp) => { print("gzipfloor: " + resp.body_bytes().len().to_string()); },
         Err(e) => { print("gzipfloor: error " + e.message()); }
@@ -396,6 +419,11 @@ function main(): i32 {
     show("gzipcap", fetch.send(fetch.get(base() + "/gzip-bomb").with_limits(http.HttpLimits { ...small, body: 4096 })));
     show("gzipdouble", fetch.send(fetch.get(base() + "/gzip-double")));
     show("gzipdeep", fetch.send(fetch.get(base() + "/gzip-double").with_decoding(fetch.Decoding { depth: 2, ratio: 100 })));
+    match (fetch.send(fetch.get(base() + "/gzip-double-wide").with_decoding(fetch.Decoding { depth: 2, ratio: 100 }))) {
+        Ok(resp) => { print("gzipdeepwide: " + resp.body_bytes().len().to_string()); },
+        Err(e) => { print("gzipdeepwide: error " + e.message()); }
+    }
+    show("gzipdeepbomb", fetch.send(fetch.get(base() + "/gzip-double-bomb").with_decoding(fetch.Decoding { depth: 2, ratio: 100 })));
     show("gzipidentity", fetch.send(fetch.get(base() + "/gzip").with_header("Accept-Encoding", "identity")));
     show("gzipoff", fetch.send(fetch.get(base() + "/gzip").with_decoding(fetch.Decoding { depth: 0, ratio: 100 })));
     show("br", fetch.send(fetch.get(base() + "/br")));
@@ -465,14 +493,17 @@ truncated: error protocol: the connection closed before the response ended
 gzip: 200 [hello gzip] headers: x-up=1 trailers:
 gzipbodychunked: 200 [hello gzip] headers: trailers:
 gzipidentitycoding: 200 [hello gzip] headers: trailers:
+gzipx: 200 [hello gzip] headers: trailers:
 gzipfloor: 60000
 gzipwide: 100000
 gziphead: 200 [] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
 gzipbad: error decode: a gzip body that does not decode: unsupported compressed data: not gzip
-gzipbomb: error decode: a body past 100 times its encoded size
+gzipbomb: error decode: a body of 200000 bytes from ONEBOMB encoded, past the 65536 allowed
 gzipcap: error response body past its limit
 gzipdouble: error decode: content codings past the depth of 1
 gzipdeep: 200 [twice] headers: trailers:
+gzipdeepwide: 100000
+gzipdeepbomb: error decode: a body of 100000 bytes from TWOBOMB encoded, past the 65536 allowed
 gzipidentity: 200 [<not utf-8>] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
 gzipoff: 200 [<not utf-8>] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
 br: 200 [raw] headers: content-encoding=br content-length=3 trailers:
@@ -511,6 +542,8 @@ func CheckFetchClient(t *testing.T, up *FetchUpstream, stdout string, exit int) 
 	host2 := "127.0.0.1:" + strconv.Itoa(up.Port2)
 	want := FetchClientWant
 	want = strings.ReplaceAll(want, "GZLEN", strconv.Itoa(len(gzipped([]byte("hello gzip")))))
+	want = strings.ReplaceAll(want, "ONEBOMB", strconv.Itoa(len(gzipped(make([]byte, 200000)))))
+	want = strings.ReplaceAll(want, "TWOBOMB", strconv.Itoa(len(gzipped(gzipped(make([]byte, 100000))))))
 	for name, line := range map[string]string{
 		"ECHO":       echoLine("POST", "/echo?q=1", host, "payload", "t1", "", "", "gzip"),
 		"PUT":        echoLine("PUT", "/echo", host, "raw", "", "", "", "gzip"),

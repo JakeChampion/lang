@@ -1693,8 +1693,10 @@ answer is `Result[HttpResponse, FetchError]`.
   a decoded response. The ratio is judged on the response as a whole once
   every coding is undone, and a decoded body of 64 KiB or less is never
   refused on it (a small body compresses far past any plausible ratio,
-  and the cap bounds it). More codings than `depth`, a body that is not
-  gzip, or one grown past `ratio` fail with `Decode(what)`. An empty body (a
+  and the cap bounds it; a `ratio` of 0 or less admits only that much).
+  More codings than `depth`, a body that is not gzip, or one grown past
+  what `ratio` allows fail with `Decode(what)`, a refused body naming the
+  allowance that refused it. An empty body (a
   HEAD or 204 answer may still name a coding), a coding the client did
   not ask for, and a caller's own `Accept-Encoding` leave the body as it
   came. Request bodies are never compressed.
