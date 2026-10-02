@@ -1513,6 +1513,73 @@ function main(): i32 {
 	}
 }
 
+// A comparison against a non-empty literal tests the operand's first byte
+// inline after the lengths, so a chain of same-length literals rejects most
+// arms without calling the helper; a comparison of two non-literals, and one
+// against the empty literal, has no byte to test.
+func TestSelfHostSSAStrEqTestsLiteralFirstByteInline(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "streqlit.fern")
+	prog := `function code(s: string): i32 {
+    if (s == "add") { return 1; }
+    if (s == "and") { return 2; }
+    if (s == "sub") { return 3; }
+    if ("xor" == s) { return 4; }
+    if (s == "") { return 5; }
+    return 0;
+}
+function same(a: string, b: string): boolean {
+    return a == b;
+}
+function main(): i32 {
+    var r: i32 = code("add") + code("and") * 2 + code("sub") * 4 + code("xor") * 8 + code("") * 16 + code("sum") * 32 + code("adz") * 64;
+    if (same("ab", "ab") && !same("ab", "ac")) { r = r + 64; }
+    return r;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shapes := map[string]struct {
+		byte  *regexp.Regexp // the inline compare of the operand's first byte with the literal's
+		entry string         // the register-entry call
+	}{
+		"x86-64-linux": {regexp.MustCompile(`(?m)^\s+cmpb \$(97|115|120), \(%rdx\)$`), "call __fn___fern_str_eq.r\n"},
+		"arm64-linux":  {regexp.MustCompile(`(?m)^\s+ldrb w6, \[x6\]\n\s+cmp w6, #(97|115|120)$`), "bl __fn___fern_str_eq.r\n"},
+	}
+	for _, tg := range h.targets {
+		shape, ok := shapes[tg.target]
+		if !ok {
+			continue
+		}
+		asmPath := filepath.Join(dir, "streqlit-"+tg.target+".s")
+		h.compileWith(t, tg, src, asmPath, "-backend", "ssa", "-emit", "asm")
+		asm, err := os.ReadFile(asmPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fn := functionListing(string(asm), "__fn_code")
+		if fn == "" {
+			t.Fatalf("%s: no __fn_code in the listing:\n%s", tg.target, asm)
+		}
+		if n := len(shape.byte.FindAllString(fn, -1)); n != 4 {
+			t.Errorf("%s: code tests %d first bytes inline, want 4 (the four non-empty literals, on either side):\n%s", tg.target, n, fn)
+		}
+		if n := strings.Count(fn, shape.entry); n != 5 {
+			t.Errorf("%s: code calls the helper's register entry %d times, want 5:\n%s", tg.target, n, fn)
+		}
+		if same := functionListing(string(asm), "__fn_same"); same != "" && shape.byte.MatchString(same) {
+			t.Errorf("%s: same tests a first byte inline with no literal operand:\n%s", tg.target, same)
+		}
+		bin := filepath.Join(dir, "streqlit-"+tg.target)
+		h.compileWith(t, tg, src, bin, "-backend", "ssa")
+		if _, code := h.runProduced(t, tg, bin); code != 1+2*2+3*4+4*8+5*16+64 {
+			t.Errorf("%s: exit = %d, want %d: each literal matched, the near misses rejected", tg.target, code, 1+2*2+3*4+4*8+5*16+64)
+		}
+	}
+}
+
 // rcPoisonWord is the value a freed block's count is overwritten with, which
 // the sanitizer's check compares against (asm_ir.san_poison_check). It is
 // ast.RcPoison, and uafPoisonDec derives the same value from the same
