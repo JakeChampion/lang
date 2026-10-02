@@ -1545,6 +1545,25 @@ function main(): i32 {
       || t == 2) + s.len() + u;
 }
 `},
+	// A union written across lines keeps its lines (#10853), continuing with a
+	// leading `|` whether the source broke before the `|` or after it.
+	{"union-written-across-lines", `struct A { n: i32 }
+struct B { n: i32 }
+struct C { n: i32 }
+struct D { n: i32 }
+pub type Lead = A | B
+  | C | D;
+type Trail = A | B |
+  C |
+  D;
+type Flat = A | B | C;
+function main(): i32 {
+  var l: Lead = C { n: 1 };
+  var t: Trail = D { n: 2 };
+  var f: Flat = A { n: 3 };
+  return 0;
+}
+`},
 	{"list-interior-comments", `struct S { a: i32, b: i32 }
 const NAMES: string[] = [
   // group one
