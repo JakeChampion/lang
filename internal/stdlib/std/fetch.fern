@@ -18,9 +18,11 @@
 // checked UTF-8 read of a body that came off the wire, which may hold
 // anything. The name is resolved by `std/dns` (a literal address, the
 // hosts file, then DNS) and the addresses raced the way `dns.connect_race`
-// does. Every phase is bounded by `Timeouts`. No TLS yet (`https` fails
-// with `Tls`), no redirects followed, no pool: each request is one
-// connection sent with `Connection: close`.
+// does. Every phase is bounded by `Timeouts`. A 3xx with a `Location` is
+// followed, ten hops by default, the credentials dropped when a hop
+// leaves the origin; an idempotent request the peer resets before
+// answering is sent once more. No TLS yet (`https` fails with `Tls`), no
+// pool: each request is one connection sent with `Connection: close`.
 //
 // A single `send` is a blocking request; overlapping several upstreams is
 // `std/async`'s job — `fetch_future` returns an `async.Future[u8[]]` you
@@ -66,11 +68,12 @@ pub enum Phase { Connecting, Inactivity, Total }
 // addresses that all failed; `Tls` for `https` (not supported yet);
 // `Timeout` for a bound passed; `Protocol` for a response this client
 // cannot read, with what was wrong; `Io` for a send or read the kernel
-// refused; `Redirect` for a redirect the client would not follow;
-// `BodyLimit` for a body past `HttpLimits.body`; `Cancelled` for a
-// request abandoned by its caller. `Redirect` and `Cancelled` are part of
-// the sum so a match written today survives the client growing redirects
-// and cancellation; this client produces neither yet.
+// refused; `Redirect` for a redirect the client would not follow: more
+// hops than `Request.redirects`, a 3xx without a `Location`, or one that
+// is not a URL; `BodyLimit` for a body past `HttpLimits.body`;
+// `Cancelled` for a request abandoned by its caller, part of the sum so a
+// match written today survives the client growing cancellation; this
+// client does not produce it yet.
 pub enum FetchError {
   InvalidUrl(string),
   InvalidRequest(string),
@@ -172,15 +175,18 @@ pub function timeouts(): Timeouts {
 
 // `Request` — what `send` sends: the method, the URL, the headers
 // (end-to-end ones; the client writes `Host`, `Content-Length` and
-// `Connection` itself), the body, and the bounds on the response
+// `Connection` itself), the body, the bounds on the response
 // (`timeouts`, and `limits` for its size: the body cap is
-// `limits.body`, the status line is capped by `limits.request_line`).
-pub struct Request { method: string, url: string, headers: HeaderMap, body: Body, timeouts: Timeouts, limits: http.HttpLimits }
+// `limits.body`, the status line is capped by `limits.request_line`),
+// and `redirects`, the most 3xx hops `send` follows (0 answers the 3xx
+// as data).
+pub struct Request { method: string, url: string, headers: HeaderMap, body: Body, timeouts: Timeouts, limits: http.HttpLimits, redirects: i32 }
 
-// `request(method, url)` — a request with no headers and no body.
+// `request(method, url)` — a request with no headers and no body, the
+// default bounds, and ten redirects.
 pub function request(method: string, url: string): Request {
   var none: u8[] = [];
-  return Request { method: method, url: url, headers: headers.header_map_new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.http_limits() };
+  return Request { method: method, url: url, headers: headers.header_map_new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.http_limits(), redirects: 10 };
 }
 
 // `get(url)` — `request("GET", url)`.
@@ -218,6 +224,12 @@ pub function (r: Request) with_timeouts(t: Timeouts): Request {
 // `(r: Request).with_limits(l)` — `r` with the response capped by `l`.
 pub function (r: Request) with_limits(l: http.HttpLimits): Request {
   return Request { ...r, limits: l };
+}
+
+// `(r: Request).with_redirects(hops)` — `r` following at most `hops`
+// redirects; 0 answers a 3xx as the response it is.
+pub function (r: Request) with_redirects(hops: i32): Request {
+  return Request { ...r, redirects: hops };
 }
 
 // `(r: HttpResponse).ok_or_status()` — `Ok(r)` for a 2xx status, else
@@ -341,8 +353,139 @@ function __head(req: Request, t: __Target, body_len: i32): string {
 }
 
 // `send(req)` — the request sent and its response read, as the module
-// comment says. Blocking: the connection is closed before it answers.
+// comment says: a 3xx with a `Location` is followed up to
+// `req.redirects` hops, all under the one total bound. Blocking: every
+// connection is closed before it answers.
 pub function send(req: Request): Result[HttpResponse, FetchError] {
+  var started: i64 = monotonic_ns();
+  var cur: Request = req;
+  var hops: i32 = 0;
+  while (true) {
+    var resp: HttpResponse = __send_once(cur, started)?;
+    if (!__redirects(resp.status) || req.redirects == 0) {
+      return Ok(resp);
+    }
+    if (hops >= req.redirects) {
+      return Err(Redirect("more than " + int.int_to_string(req.redirects) + " redirects"));
+    }
+    hops = hops + 1;
+    cur = __next_hop(cur, resp)?;
+  }
+  return Err(Redirect("unreachable"));
+}
+
+// `__redirects(status)` — whether a status sends the client elsewhere:
+// 301, 302, 303, 307 and 308 (RFC 9110 §15.4).
+function __redirects(status: i32): boolean {
+  return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+}
+
+// `__next_hop(cur, resp)` — the request for `resp`'s `Location`: the
+// method and body kept on a 307 and 308, a GET with no body on a 303 and
+// on a 301 or 302 answering a POST (RFC 9110 §15.4), and the credentials
+// (`Authorization`, `Proxy-Authorization`, `Cookie`) dropped when the hop
+// leaves the origin. `Host` is written per hop by the client.
+function __next_hop(cur: Request, resp: HttpResponse): Result[Request, FetchError] {
+  var location: string = "";
+  match (resp.headers.get("location")) {
+    Some(l) => {
+      location = l;
+    },
+    None => {
+      return Err(Redirect("a " + int.int_to_string(resp.status) + " without a Location"));
+    }
+  }
+  var target: string = "";
+  match (url.url_resolve(cur.url, location)) {
+    Some(t) => {
+      target = t;
+    },
+    None => {
+      return Err(Redirect("a Location that is not a URL"));
+    }
+  }
+  var next: Request = Request { ...cur, url: target };
+  if (__rewrites_to_get(resp.status, cur.method)) {
+    var none: u8[] = [];
+    next = Request { ...next, method: "GET", body: BodyBytes(none), headers: __without(next.headers, ["content-type", "content-length"]) };
+  }
+  if (!__same_origin(cur.url, target)) {
+    next = Request { ...next, headers: __without(next.headers, ["authorization", "proxy-authorization", "cookie"]) };
+  }
+  return Ok(next);
+}
+
+// `__rewrites_to_get(status, method)` — whether the hop becomes a GET
+// without the body: a 303 for anything but HEAD, and a 301 or 302
+// answering a POST, as browsers do (RFC 9110 §15.4.2 to §15.4.4).
+function __rewrites_to_get(status: i32, method: string): boolean {
+  if (status == 303) {
+    return method != "HEAD";
+  }
+  return (status == 301 || status == 302) && method == "POST";
+}
+
+// `__without(h, names)` — `h` less the fields named (case-folded names).
+function __without(h: HeaderMap, names: string[]): HeaderMap {
+  var out: HeaderMap = headers.header_map_new();
+  var i: i32 = 0;
+  while (i < h.names.len()) {
+    if (!__holds(names, h.names[i])) {
+      out = out.append(h.names[i], h.values[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function __holds(names: string[], name: string): boolean {
+  for n in names {
+    if (n == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// `__same_origin(a, b)` — whether two URLs share scheme, host (ASCII
+// case-folded) and effective port, the origin a credential is scoped to.
+function __same_origin(a: string, b: string): boolean {
+  var ua: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  var ub: Url = ua;
+  match (url.url_parse(a)) {
+    Some(p) => {
+      ua = p;
+    },
+    None => {
+      return false;
+    }
+  }
+  match (url.url_parse(b)) {
+    Some(p) => {
+      ub = p;
+    },
+    None => {
+      return false;
+    }
+  }
+  return ua.scheme.to_lower() == ub.scheme.to_lower() && ua.host.to_lower() == ub.host.to_lower() && __effective_port(ua) == __effective_port(ub);
+}
+
+function __effective_port(u: Url): i32 {
+  if (u.port != 0) {
+    return u.port;
+  }
+  if (u.scheme == "https") {
+    return 443;
+  }
+  return 80;
+}
+
+// `__send_once(req, started)` — one hop: the request validated, sent
+// and its response read, and sent once more when the peer reset the
+// connection before any response byte and the method is idempotent
+// (RFC 9110 §9.2.2): a reset before an answer says nothing happened.
+function __send_once(req: Request, started: i64): Result[HttpResponse, FetchError] {
   var t: __Target = __target_of(req.url)?;
   match (__request_ok(req)) {
     Ok(_) => {},
@@ -350,7 +493,39 @@ pub function send(req: Request): Result[HttpResponse, FetchError] {
       return Err(e);
     }
   }
-  var started: i64 = monotonic_ns();
+  var first: Result[HttpResponse, FetchError] = __attempt(req, t, started);
+  match (first) {
+    Err(e) => {
+      if (__reset(e) && http.http_method_idempotent(req.method)) {
+        return __attempt(req, t, started);
+      }
+      return Err(e);
+    },
+    Ok(resp) => {
+      return Ok(resp);
+    }
+  }
+  return first;
+}
+
+// `__reset(e)` — whether `e` is the peer dropping the connection before
+// answering: a reset or abort on the socket, a broken pipe, or the close
+// `__read_response` reports when no byte came.
+function __reset(e: FetchError): boolean {
+  match (e) {
+    Io(n) => {
+      return n.eq(net.ConnectionReset) || n.eq(net.ConnectionAborted) || n.eq(net.Other(32));
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// `__attempt(req, t, started)` — one connection: opened, the request
+// written, the response read, and closed.
+function __attempt(req: Request, t: __Target, started: i64): Result[HttpResponse, FetchError] {
   var sock: i32 = __connect(t, req.timeouts)?;
   var body: u8[] = req.body.bytes();
   var sent: Result[void, FetchError] = __send_all(sock, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
@@ -437,7 +612,7 @@ function __read_response(sock: i32, req: Request, started: i64): Result[HttpResp
       },
       Unfinished => {
         if (eof) {
-          return Err(Protocol("the connection closed before the response ended"));
+          return Err(__closed_early(buf.len() - from));
         }
       },
       Rejected(code) => {
@@ -464,6 +639,17 @@ function __append_bytes(own buf: u8[], chunk: u8[]): u8[] {
     i = i + 1;
   }
   return buf;
+}
+
+// `__closed_early(got)` — the peer's close read as the client's error:
+// a reset when no byte of the response came, since the request may not
+// have been read at all and an idempotent one is sent again, and a
+// protocol failure once a response had begun.
+function __closed_early(got: i32): FetchError {
+  if (got == 0) {
+    return Io(net.ConnectionReset);
+  }
+  return Protocol("the connection closed before the response ended");
 }
 
 // `__after_interim(framed, from, limits)` — where the response behind an

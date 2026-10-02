@@ -7615,17 +7615,12 @@ pub struct ConstAggPack { state: EmitState, text: string }
 // of scalars packs as `0|` and its elements, and its length is written into
 // word 0 where the block is emitted. Shared by both register backends and by each one's flat and register arms, so no copy
 // of it can drift from another.
-pub function const_agg_pack(s: EmitState, packed: string): ConstAggPack {
+pub function const_agg_pack(own s: EmitState, packed: string): ConstAggPack {
   var body: string = ir.const_struct_fn_body(packed);
   if (body.len() > 0) {
     return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) };
   }
-  var shp: ShapeRefOut = ShapeRefOut { state: s, label: "0" };
-  if (ir.const_struct_is_bytes(packed)) {
-    shp = ShapeRefOut { state: s, label: "8" };
-  } else if (!ir.const_struct_is_array(packed)) {
-    shp = shape_ref(s, ir.const_struct_type(packed));
-  }
+  var shp: ShapeRefOut = const_agg_shape(s, packed);
   var text: string = shp.label + "|";
   var vals: string[] = ir.const_struct_values(packed);
   var i: i32 = 0;
@@ -7637,6 +7632,18 @@ pub function const_agg_pack(s: EmitState, packed: string): ConstAggPack {
     i = i + 1;
   }
   return ConstAggPack { state: shp.state, text: text };
+}
+
+// const_agg_shape: the shape label of a packed constant aggregate, and the
+// state it interned the shape in.
+function const_agg_shape(own s: EmitState, packed: string): ShapeRefOut {
+  if (ir.const_struct_is_bytes(packed)) {
+    return ShapeRefOut { state: s, label: "8" };
+  }
+  if (!ir.const_struct_is_array(packed)) {
+    return shape_ref(s, ir.const_struct_type(packed));
+  }
+  return ShapeRefOut { state: s, label: "0" };
 }
 
 pub struct StringLitOut { state: EmitState, idx: i32 }
@@ -7655,7 +7662,7 @@ function slit_empty_buckets(): i32[] {
   return out;
 }
 
-pub function add_string_lit(s: EmitState, v: string): StringLitOut {
+pub function add_string_lit(own s: EmitState, v: string): StringLitOut {
   // Dedup: required for shape-pointer dispatch in
   // ExprFieldAccess + StmtMatch. See asm.fern for rationale.
   var b: i32 = util.hash_bucket(v, s.slit_head.len());
@@ -8957,7 +8964,7 @@ function callgate_ns_present(pfx: string, names: string[]): boolean {
   var i: i32 = 0;
   while (i < names.len()) {
     var nm: string = names[i];
-    if (nm.len() > pfx.len() && util.has_prefix(nm, pfx)) {
+    if (nm.len() > pfx.len() && util.str_has_prefix(nm, pfx)) {
       return true;
     }
     i = i + 1;
@@ -9572,7 +9579,7 @@ pub struct DynArg { reg: string, off: i32 }
 // across the module boundary. Without this every cross-module enum `match` (e.g.
 // the parser matching lexer's token variants) silently fails — the self-build
 // miscompile #3451's per-module bootstrap hit.
-pub function shape_ref(s: EmitState, name: string): ShapeRefOut {
+pub function shape_ref(own s: EmitState, name: string): ShapeRefOut {
   if (s.str_ns.len() == 0) {
     var lo: StringLitOut = add_string_lit(s, name);
     return ShapeRefOut { state: lo.state, label: str_lit_label(lo.state, lo.idx) };

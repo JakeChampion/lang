@@ -1,5 +1,8 @@
 # Byte input for tee, head and tail
 
+This validation integrates raw-line checkpoint `72b5f2a12`, including the
+checked stdin and compact short-read prerequisites.
+
 `tee`, `head` and `tail` now read and write raw byte arrays. `head` and
 `tail` also retain and scan bytes directly. Binary input, malformed UTF-8
 and partial scalars no longer pass through strings in these paths. Options,
@@ -27,14 +30,14 @@ scans for unpacked arrays. Neither allocates or constructs text.
 
 ## Current validation
 
-This integration includes storage parent `6bc8a2961`, which bounds retained
-short reads and releases WASI seek scratch. The opcode registry and SSA
+This integration bounds retained short reads and releases WASI seek scratch.
+The opcode registry and SSA
 admission drivers pass through the bootstrap interpreter: 334 registered
 operations, with the same three unsupported operations as the parent.
 
 The pinned bootstrap produces identical stage-2 and stage-3 binaries of
-12,395,377 bytes, SHA-256
-`d3118e69932983b6ef656f04c8bdda3153753488fa504e53ad0236bb28d336f3`.
+12,428,561 bytes, SHA-256
+`adb99adf59b225f4cc5777b9192bc12ebb18e5617bd979edcbaa1dff180bee28`.
 Stage 1 differs because the published seed predates generator changes.
 
 The actual stage-2 compiler passes the three byte-scan fixtures, the buffered
@@ -74,13 +77,14 @@ Every output matches GNU coreutils 9.12 and uutils coreutils 0.12.0.
 
 | Long-record pipe workload, 8 MiB | Before migration: peak resident bytes | Byte version: peak resident bytes |
 | --- | ---: | ---: |
-| head, all but the final line | 55,984,128 | 10,584,064 |
-| tail, final line | 56,000,512 | 10,715,136 |
+| head, all but the final line | 55,967,744 | 10,518,528 |
+| tail, final line | 55,984,128 | 10,518,528 |
 
 These are native Darwin measurements with instrumentation removed. The two
 versions were built by the same final compiler, and all task-owned compiler
 and test jobs had stopped. Desktop activity remained. Five of six timing
-sample ranges overlap; the head long-record ranges are narrowly separated.
+sample ranges overlap; the tail long-record ranges are separated:
+38.351-39.173 ms before and 35.968-36.851 ms after.
 The evidence supports the memory reduction without a general throughput
 claim.
 
@@ -93,8 +97,7 @@ because read boundaries vary between executions.
 ## Measured size
 
 The same final stage-2 compiler builds both sides. The comparison baseline
-is the raw-line parent integrated with the same upstream compiler and
-storage changes through `6bc8a2961`.
+is raw-line parent `72b5f2a12`, built with the same compiler.
 
 | Utility | Before file bytes | After file bytes | Code growth | Unwind growth | Data growth |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -107,7 +110,7 @@ bytes. The added code implements retained block management, byte read and
 range output, ownership cleanup and compact short reads. Tail and tee's
 additions fit within their existing file segments.
 
-The compiler grows from 12,395,249 to 12,395,377 file bytes. Code adds
-11,208 bytes for the byte-scan operations and target routing, unwind data
-adds 504, and data adds 2304. Those sections fit within the existing file
-segments; link-edit data adds 128 bytes. No size baseline changed.
+The compiler grows from 12,411,905 to 12,428,561 file bytes. Code adds
+11,168 bytes for the byte-scan operations and target routing, unwind data
+adds 504, and data adds 2048. The text segment grows by 16,384 bytes;
+link-edit data adds 272 bytes. No size baseline changed.

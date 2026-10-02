@@ -6357,9 +6357,8 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	if b.badMapKey != nil {
 		return nil, fmt.Errorf("%s: a Map keyed by %s cannot be compiled: the runtime hashes and "+
 			"compares a key by value only for an integer, a string, or a struct/enum deriving "+
-			"cmp.Eq and cmp.Hash, and this key is none of those. The interpreter answers such a "+
-			"program correctly; compiling it would read the default out of every lookup instead "+
-			"(#10020)", fn.Name, b.badMapKey.String())
+			"cmp.Eq and cmp.Hash, and this key is none of those. The self-host compiler builds "+
+			"such a map; the native backends do not (#10020)", fn.Name, b.badMapKey.String())
 	}
 	return out, nil
 }

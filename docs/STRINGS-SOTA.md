@@ -938,8 +938,8 @@ The WebAssembly seek helper releases its syscall return buffer on success
 and error; repeated seek tests and the file-input cases check for leaks.
 
 Current target, ownership, bootstrap and performance results are recorded
-in [the byte-line report](STRING-BYTE-LINES-2026-10-02.md). The full-unit gate
-remains pending.
+in [the byte-line report](STRING-BYTE-LINES-2026-10-02.md). The full unit suite
+and all lint gates pass.
 
 The Fern interpreter also supports raw stdin reads; its file-handle opening
 remains unsupported. The existing `Reader.read_chunk` remains text-typed and

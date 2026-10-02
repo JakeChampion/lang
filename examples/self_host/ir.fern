@@ -5848,14 +5848,21 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // readable 32-bit constant and two whether it is a 64-bit one.
       var r32: boolean = const_i32_readable(cur[i]);
       var r64: boolean = const_i64_readable(cur[i]);
-      if (i + 2 < cur.len()) {
-        var a: Op = cur[i];
+      // Every fold below starts at a readable constant or a const_str.
+      if (!r32 && !r64 && cur[i].kind_tag != k_const_str) {
+        if (copying) {
+          out = out.append(cur[i]);
+        }
+        i = i + 1;
+        continue;
+      }
+      if (r32 && i + 2 < cur.len()) {
         var b: Op = cur[i + 1];
         var o: Op = cur[i + 2];
-        if (r32 && const_i32_readable(b)
+        if (const_i32_readable(b)
           && is_foldable_binary_kind(o.kind_tag) && o.width != 64 && !o.unsigned
           && !fold_would_divide_by_zero(o.kind_tag, const_i32_value(b))) {
-          out = out.append(op_const_i32(fold_binary_i32(o.kind_tag, const_i32_value(a), const_i32_value(b))));
+          out = out.append(op_const_i32(fold_binary_i32(o.kind_tag, const_i32_value(cur[i]), const_i32_value(b))));
           i = i + 3;
           changed = true;
           folded = true;

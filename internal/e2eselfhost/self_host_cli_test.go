@@ -2670,18 +2670,28 @@ function main(): i32 {
 		}
 	})
 
-	t.Run("wasm-component-rejects-unsupported", func(t *testing.T) {
-		// A program mixing two WASI categories (env + args) has no single
-		// wrap yet, so it must be rejected with a clear error rather than
-		// emitting a broken component.
+	t.Run("wasm-component-multi-wasi-composes", func(t *testing.T) {
+		// A program mixing WASI categories (env + args) has no fixed
+		// wasi:cli/run framing; it composes against the fern world instead
+		// (#11019), and the component has to read both.
+		wasmtime, err := exec.LookPath("wasmtime")
+		if err != nil {
+			t.Skip("wasmtime not on PATH")
+		}
 		srcPath := filepath.Join(dir, "comp_multi.fern")
-		src := "function main(): i32 { var n = args().len(); match (env(\"X\")) { Some(v) => { return n; }, None => { return n + 1; } } }\n"
+		src := "function main(): i32 { var n = args().len(); match (env(\"X\")) { Some(v) => { if (n == 3) { print(\"set3\"); } return 0; }, None => { if (n == 1) { print(\"unset1\"); } return 0; } } }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		_, code := runDriver(t, "-target", "wasm32-wasi", "-o", filepath.Join(dir, "comp_multi.wasm"), srcPath)
-		if code != 2 {
-			t.Errorf("wasm-component on a multi-WASI program exited %d, want 2 (rejected)", code)
+		comp := filepath.Join(dir, "comp_multi.wasm")
+		if out, code := runDriver(t, "-target", "wasm32-wasi", "-o", comp, srcPath); code != 0 {
+			t.Fatalf("wasm-component on a multi-WASI program exited %d:\n%s", code, out)
+		}
+		if out, err := exec.Command(wasmtime, "run", "--env", "X=1", comp, "a", "b").Output(); err != nil || string(out) != "set3\n" {
+			t.Errorf("with X and two args: stdout = %q (%v), want %q", out, err, "set3\n")
+		}
+		if out, err := exec.Command(wasmtime, "run", comp).Output(); err != nil || string(out) != "unset1\n" {
+			t.Errorf("without X: stdout = %q (%v), want %q", out, err, "unset1\n")
 		}
 	})
 

@@ -9539,7 +9539,7 @@ function recv_nomove_methods_of(prev: string[], sty: string): string[] {
   var out: string[] = recv_borrow_methods_of(prev, sty);
   var pfx: string = "RECVIDENT:" + sty + ".";
   for row in prev {
-    if (row.len() > pfx.len() && util.has_prefix(row, pfx)) {
+    if (row.len() > pfx.len() && util.str_has_prefix(row, pfx)) {
       out = push_str_unique(out, slice_unchecked(row, pfx.len(), row.len()) + "");
     }
   }
@@ -23754,7 +23754,7 @@ function borrow_reg_record(key: string, flags: string): string {
 // name: the escape walks see no receiver type, so the name alone must settle
 // it.
 function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
-  var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__count_byte_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
+  var keys: string[] = ["print", "write", "eprint", "strbuf_append", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "__memchr", "__rmemchr", "__ascii_run", "__scan_set", "__count_runs", "__bsd_sum", "__count_byte", "__sum_bytes", "__mismatch", "__crc32_cksum", "__scale_f64"];
   var has_write: boolean = false;
   var has_write_some: boolean = false;
   for fn in funcs {
@@ -26567,7 +26567,7 @@ function struct_ret_key(fn: parser.FuncDecl): string {
 function prefixed_names_of(rows: string[], pfx: string): string[] {
   var out: string[] = [];
   for r in rows {
-    if (r.len() > pfx.len() && util.has_prefix(r, pfx)) {
+    if (r.len() > pfx.len() && util.str_has_prefix(r, pfx)) {
       out = out.append(slice_unchecked(r, pfx.len(), r.len()) + "");
     }
   }
