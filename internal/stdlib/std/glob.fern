@@ -21,14 +21,14 @@
 // __glob_class tests `ch` against the bracket class starting at `[`
 // (index `start` in `p`), returning (matched, index-just-after-']').
 function __glob_class(p: string, start: i32, ch: i32): (boolean, i32) {
-  var i: i32 = start + 1;  // past '['
-  var negate: boolean = false;
+  let i: i32 = start + 1;  // past '['
+  let negate: boolean = false;
   if (i < p.len() && (p[i] == 33 || p[i] == 94)) {  // '!' or '^'
     negate = true;
     i = i + 1;
   }
-  var matched: boolean = false;
-  var first: boolean = true;
+  let matched: boolean = false;
+  let first: boolean = true;
   while (i < p.len() && (p[i] != 93 || first)) {  // ']' ends unless first
     first = false;
     if (i + 2 < p.len() && p[i + 1] == 45 && p[i + 2] != 93) {  // range a-z
@@ -43,7 +43,7 @@ function __glob_class(p: string, start: i32, ch: i32): (boolean, i32) {
       i = i + 1;
     }
   }
-  var next: i32 = i;
+  let next: i32 = i;
   if (i < p.len()) {  // skip the closing ']'
     next = i + 1;
   }
@@ -56,13 +56,13 @@ function __glob_class(p: string, start: i32, ch: i32): (boolean, i32) {
 // __glob_match is the anchored recursive matcher: does p[i..] match
 // t[j..] in full?
 function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
-  var pi: i32 = i;
-  var tj: i32 = j;
+  let pi: i32 = i;
+  let tj: i32 = j;
   while (pi < p.len()) {
-    var pc: i32 = p[pi] as i32;
+    let pc: i32 = p[pi] as i32;
     if (pc == 42) {  // '*'
       if (pi + 1 < p.len() && p[pi + 1] == 42) {  // '**' — crosses '/'
-        var ni: i32 = pi;
+        let ni: i32 = pi;
         while (ni < p.len() && p[ni] == 42) {
           ni = ni + 1;
         }
@@ -75,7 +75,7 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
             return true;
           }
         }
-        var k: i32 = tj;
+        let k: i32 = tj;
         while (k <= t.len()) {
           if (__glob_match(p, ni, t, k)) {
             return true;
@@ -85,8 +85,8 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
         return false;
       }
       // single '*' — any run of NON-'/' chars
-      var m: i32 = tj;
-      var cont: boolean = true;
+      let m: i32 = tj;
+      let cont: boolean = true;
       while (cont) {
         if (__glob_match(p, pi + 1, t, m)) {
           return true;
@@ -108,7 +108,7 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
       if (tj >= t.len() || t[tj] == 47) {
         return false;
       }
-      var res: (boolean, i32) = __glob_class(p, pi, t[tj] as i32);
+      let res: (boolean, i32) = __glob_class(p, pi, t[tj] as i32);
       if (!res.0) {
         return false;
       }

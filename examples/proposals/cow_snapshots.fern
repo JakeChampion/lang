@@ -49,8 +49,8 @@ function root(): i32 {
 // A snapshot is a fresh empty layer over `at`. No copying: the new layer
 // starts with nothing of its own.
 function snapshot(s: Store, at: i32): (Store, i32) {
-  var l: Layer = Layer { writes: Map { }, deletes: [], parent: at };
-  var next: Store = Store { layers: s.layers.append(l) };
+  let l: Layer = Layer { writes: Map { }, deletes: [], parent: at };
+  let next: Store = Store { layers: s.layers.append(l) };
   return (next, next.layers.len() - 1);
 }
 
@@ -66,29 +66,29 @@ function has_str(xs: string[], k: string): boolean {
 // Write into layer `at`, in place. A write to a layer hides any parent
 // definition and clears a tombstone the same layer may have had.
 function put(s: Store, at: i32, k: string, v: i32): Store {
-  var l: Layer = s.layers[at];
-  var d: string[] = [];
+  let l: Layer = s.layers[at];
+  let d: string[] = [];
   for i in 0..l.deletes.len() {
     if (l.deletes[i] != k) {
       d = d.append(l.deletes[i]);
     }
   }
-  var updated: Layer = Layer { ...l, writes: l.writes.insert(k, v), deletes: d };
+  let updated: Layer = Layer { ...l, writes: l.writes.insert(k, v), deletes: d };
   return Store { ...s, layers: s.layers.with(at, updated) };
 }
 
 // Delete in layer `at`: a tombstone, plus dropping any write this layer had.
 // The parent keeps its own definition — that is the property `del` is for.
 function del(s: Store, at: i32, k: string): Store {
-  var l: Layer = s.layers[at];
-  var w: Map[string, i32] = Map { };
-  var ks: string[] = l.writes.keys();
+  let l: Layer = s.layers[at];
+  let w: Map[string, i32] = Map { };
+  let ks: string[] = l.writes.keys();
   for i in 0..ks.len() {
     if (ks[i] != k) {
       w = w.insert(ks[i], l.writes.get_or(ks[i], 0));
     }
   }
-  var d: string[] = l.deletes;
+  let d: string[] = l.deletes;
   if (!has_str(d, k)) {
     d = d.append(k);
   }
@@ -98,9 +98,9 @@ function del(s: Store, at: i32, k: string): Store {
 // Walk to the nearest definition. A tombstone stops the walk with None —
 // stopping is the whole point, since the parent may still define the key.
 function get(s: Store, at: i32, k: string): Option[i32] {
-  var cur: i32 = at;
+  let cur: i32 = at;
   while (cur >= 0) {
-    var l: Layer = s.layers[cur];
+    let l: Layer = s.layers[cur];
     if (has_str(l.deletes, k)) {
       return None;
     }
@@ -126,23 +126,23 @@ function get_or(s: Store, at: i32, k: string, fallback: i32): i32 {
 // Every key visible from `at`, each once. Collected root-first so a child's
 // tombstone is applied after the parent's write.
 function visible_keys(s: Store, at: i32): string[] {
-  var chain: i32[] = [];
-  var cur: i32 = at;
+  let chain: i32[] = [];
+  let cur: i32 = at;
   while (cur >= 0) {
     chain = chain.append(cur);
     cur = s.layers[cur].parent;
   }
-  var out: string[] = [];
-  var i: i32 = chain.len() - 1;
+  let out: string[] = [];
+  let i: i32 = chain.len() - 1;
   while (i >= 0) {
-    var l: Layer = s.layers[chain[i]];
-    var ks: string[] = l.writes.keys();
+    let l: Layer = s.layers[chain[i]];
+    let ks: string[] = l.writes.keys();
     for j in 0..ks.len() {
       if (!has_str(out, ks[j])) {
         out = out.append(ks[j]);
       }
     }
-    var kept: string[] = [];
+    let kept: string[] = [];
     for j in 0..out.len() {
       if (!has_str(l.deletes, out[j])) {
         kept = kept.append(out[j]);
@@ -157,8 +157,8 @@ function visible_keys(s: Store, at: i32): string[] {
 // Flatten a chain into one layer. The result must answer every lookup the
 // chain did — that equivalence is what makes compaction safe to do.
 function flatten(s: Store, at: i32): Store {
-  var ks: string[] = visible_keys(s, at);
-  var w: Map[string, i32] = Map { };
+  let ks: string[] = visible_keys(s, at);
+  let w: Map[string, i32] = Map { };
   for i in 0..ks.len() {
     w = w.insert(ks[i], get_or(s, at, ks[i], 0));
   }
@@ -168,7 +168,7 @@ function flatten(s: Store, at: i32): Store {
 // Total entries the store holds, across every layer. This is the number the
 // sharing claim is about: it counts what was STORED, not what is reachable.
 function stored_entries(s: Store): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for i in 0..s.layers.len() {
     n = n + s.layers[i].writes.len() + s.layers[i].deletes.len();
   }
@@ -181,19 +181,19 @@ function stored_entries(s: Store): i32 {
 // and to every sibling. Nothing about copy-on-write is interesting if this
 // does not hold.
 function test_a_write_is_invisible_to_older_snapshots(): test.TestOutcome {
-  var s: Store = store_new();
+  let s: Store = store_new();
   s = put(s, root(), "a", 1);
   s = put(s, root(), "b", 2);
 
-  var t: (Store, i32) = snapshot(s, root());
+  let t: (Store, i32) = snapshot(s, root());
   s = t.0;
-  var v1: i32 = t.1;
+  let v1: i32 = t.1;
   s = put(s, v1, "a", 100);
   s = put(s, v1, "c", 3);
 
-  var t2: (Store, i32) = snapshot(s, root());
+  let t2: (Store, i32) = snapshot(s, root());
   s = t2.0;
-  var v2: i32 = t2.1;
+  let v2: i32 = t2.1;
   s = put(s, v2, "a", 200);
 
   if (get_or(s, root(), "a", -1) != 1) {
@@ -224,24 +224,24 @@ function test_a_write_is_invisible_to_older_snapshots(): test.TestOutcome {
 // each adding one key must STORE M + N entries. A copying implementation
 // stores N*M and passes everything else here.
 function test_snapshots_share_the_base(): test.TestOutcome {
-  var bases: i32[] = [4, 16, 64];
-  var counts: i32[] = [4, 16, 64];
+  let bases: i32[] = [4, 16, 64];
+  let counts: i32[] = [4, 16, 64];
   for b in 0..bases.len() {
-    var m: i32 = bases[b];
-    var n: i32 = counts[b];
-    var s: Store = store_new();
+    let m: i32 = bases[b];
+    let n: i32 = counts[b];
+    let s: Store = store_new();
     for i in 0..m {
       s = put(s, root(), "base" + i.to_string(), i);
     }
-    var at: i32 = root();
+    let at: i32 = root();
     for i in 0..n {
-      var t: (Store, i32) = snapshot(s, at);
+      let t: (Store, i32) = snapshot(s, at);
       s = t.0;
       at = t.1;
       s = put(s, at, "own" + i.to_string(), 1000 + i);
     }
-    var want: i32 = m + n;
-    var got: i32 = stored_entries(s);
+    let want: i32 = m + n;
+    let got: i32 = stored_entries(s);
     if (got != want) {
       return test.fail("base " + m.to_string() + " + " + n.to_string()
         + " snapshots stored " + got.to_string() + " entries, wanted "
@@ -261,11 +261,11 @@ function test_snapshots_share_the_base(): test.TestOutcome {
 // writing it again in the child brings it back with the new value — the
 // tombstone must not be permanent.
 function test_a_deletion_is_local_to_its_layer(): test.TestOutcome {
-  var s: Store = store_new();
+  let s: Store = store_new();
   s = put(s, root(), "k", 7);
-  var t: (Store, i32) = snapshot(s, root());
+  let t: (Store, i32) = snapshot(s, root());
   s = t.0;
-  var child: i32 = t.1;
+  let child: i32 = t.1;
 
   s = del(s, child, "k");
   if (get_or(s, child, "k", -1) != -1) {
@@ -300,28 +300,28 @@ function test_a_deletion_is_local_to_its_layer(): test.TestOutcome {
 // Flattening a chain must answer every lookup the chain did, for every key
 // anyone ever wrote — including the ones that are correctly absent.
 function test_flattening_preserves_every_answer(): test.TestOutcome {
-  var s: Store = store_new();
-  var all: string[] = [];
+  let s: Store = store_new();
+  let all: string[] = [];
   for i in 0..12 {
-    var k: string = "k" + i.to_string();
+    let k: string = "k" + i.to_string();
     all = all.append(k);
     s = put(s, root(), k, i);
   }
-  var at: i32 = root();
+  let at: i32 = root();
   for round in 0..5 {
-    var t: (Store, i32) = snapshot(s, at);
+    let t: (Store, i32) = snapshot(s, at);
     s = t.0;
     at = t.1;
     s = put(s, at, "k" + round.to_string(), 100 + round);
     s = del(s, at, "k" + (round + 6).to_string());
-    var extra: string = "extra" + round.to_string();
+    let extra: string = "extra" + round.to_string();
     all = all.append(extra);
     s = put(s, at, extra, 500 + round);
   }
-  var f: Store = flatten(s, at);
+  let f: Store = flatten(s, at);
   for i in 0..all.len() {
-    var a: i32 = get_or(s, at, all[i], -999);
-    var b: i32 = get_or(f, root(), all[i], -999);
+    let a: i32 = get_or(s, at, all[i], -999);
+    let b: i32 = get_or(f, root(), all[i], -999);
     if (a != b) {
       return test.fail("key " + all[i] + ": the chain says " + a.to_string()
         + " but the flattened store says " + b.to_string());
@@ -336,29 +336,29 @@ function test_flattening_preserves_every_answer(): test.TestOutcome {
 // Visible keys are exactly the keys that read as present — no key listed
 // that reads absent, and no key absent from the list that reads present.
 function test_visible_keys_agree_with_lookup(): test.TestOutcome {
-  var s: Store = store_new();
-  var candidates: string[] = [];
+  let s: Store = store_new();
+  let candidates: string[] = [];
   for i in 0..10 {
-    var k: string = "c" + i.to_string();
+    let k: string = "c" + i.to_string();
     candidates = candidates.append(k);
     s = put(s, root(), k, i);
   }
   candidates = candidates.append("never_written");
-  var t: (Store, i32) = snapshot(s, root());
+  let t: (Store, i32) = snapshot(s, root());
   s = t.0;
-  var child: i32 = t.1;
+  let child: i32 = t.1;
   s = del(s, child, "c3");
   s = del(s, child, "c7");
   s = put(s, child, "c9", 99);
 
-  var ks: string[] = visible_keys(s, child);
+  let ks: string[] = visible_keys(s, child);
   for i in 0..ks.len() {
     if (get_or(s, child, ks[i], -1) == -1) {
       return test.fail("listed key " + ks[i] + " reads as absent");
     }
   }
   for i in 0..candidates.len() {
-    var present: boolean = get_or(s, child, candidates[i], -1) != -1;
+    let present: boolean = get_or(s, child, candidates[i], -1) != -1;
     if (present != has_str(ks, candidates[i])) {
       return test.fail("key " + candidates[i] + ": lookup says "
         + bool_str(present) + " but the key list says "
@@ -386,13 +386,13 @@ function bool_str(b: boolean): string {
 // A chain of snapshots with no writes reads exactly like its base, however
 // long it is — the empty overlay must be transparent.
 function test_empty_overlays_are_transparent(): test.TestOutcome {
-  var s: Store = store_new();
+  let s: Store = store_new();
   for i in 0..6 {
     s = put(s, root(), "b" + i.to_string(), i);
   }
-  var at: i32 = root();
+  let at: i32 = root();
   for i in 0..40 {
-    var t: (Store, i32) = snapshot(s, at);
+    let t: (Store, i32) = snapshot(s, at);
     s = t.0;
     at = t.1;
   }
@@ -415,14 +415,14 @@ function test_empty_overlays_are_transparent(): test.TestOutcome {
 // and neither disturbs the parent. This is the shape a version-control
 // history has, and the one where a shared mutable base shows immediately.
 function test_branches_do_not_interfere(): test.TestOutcome {
-  var s: Store = store_new();
+  let s: Store = store_new();
   s = put(s, root(), "shared", 0);
-  var ta: (Store, i32) = snapshot(s, root());
+  let ta: (Store, i32) = snapshot(s, root());
   s = ta.0;
-  var a: i32 = ta.1;
-  var tb: (Store, i32) = snapshot(s, root());
+  let a: i32 = ta.1;
+  let tb: (Store, i32) = snapshot(s, root());
   s = tb.0;
-  var b: i32 = tb.1;
+  let b: i32 = tb.1;
 
   for i in 0..20 {
     s = put(s, a, "shared", i);
@@ -455,15 +455,15 @@ function test_branches_do_not_interfere(): test.TestOutcome {
 
 function main(): i32 {
   eprint("cow_snapshots — a persistent map as a chain of overlays");
-  var s: Store = store_new();
+  let s: Store = store_new();
   for i in 0..8 {
     s = put(s, root(), "base" + i.to_string(), i);
   }
   eprint("  base: 8 keys, " + stored_entries(s).to_string() + " entries stored");
 
-  var at: i32 = root();
+  let at: i32 = root();
   for i in 0..8 {
-    var t: (Store, i32) = snapshot(s, at);
+    let t: (Store, i32) = snapshot(s, at);
     s = t.0;
     at = t.1;
     s = put(s, at, "v" + i.to_string(), 100 + i);
@@ -479,11 +479,11 @@ function main(): i32 {
     + get_or(s, at, "base0", -1).to_string() + " there and "
     + get_or(s, root(), "base0", -1).to_string() + " at the root");
 
-  var f: Store = flatten(s, at);
+  let f: Store = flatten(s, at);
   eprint("  flattened: " + stored_entries(f).to_string() + " entries in "
     + f.layers.len().to_string() + " layer");
 
-  var r: test.TestRunner = test.test_new("cow_snapshots");
+  let r: test.TestRunner = test.test_new("cow_snapshots");
   r = r.it("a write is invisible to older snapshots", test_a_write_is_invisible_to_older_snapshots);
   r = r.it("snapshots share the base", test_snapshots_share_the_base);
   r = r.it("a deletion is local to its layer", test_a_deletion_is_local_to_its_layer);

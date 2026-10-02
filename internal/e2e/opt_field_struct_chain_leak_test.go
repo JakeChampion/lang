@@ -20,8 +20,8 @@ func TestX86_64OptFieldStructChainLeakFree(t *testing.T) {
 function (w: W) put(s: string): W { return W { ...w, buf: w.buf + s }; }
 function id_w(w: W): W { return w; }
 function main(): i32 {
-    var o: W = W { buf: "", err: None };
-    var i: i32 = 0;
+    let o: W = W { buf: "", err: None };
+    let i: i32 = 0;
     while (i < 2000) { o = id_w(o).put("abcdefghij"); i = i + 1; }
     if (o.buf.len() != 20000) { return 1; }
     return 0;
@@ -37,15 +37,15 @@ function (w: W) put(s: string): W {
     return W { ...w, buf: w.buf + s };
 }
 function rep(o: W): W {
-    var out: W = o.put("abcde");
+    let out: W = o.put("abcde");
     out = out.put("fghij");
     return out;
 }
 function main(): i32 {
-    var st: S = S { o: W { buf: "", err: None }, n: 0 };
-    var i: i32 = 0;
+    let st: S = S { o: W { buf: "", err: None }, n: 0 };
+    let i: i32 = 0;
     while (i < 2000) {
-        var r: W = rep(st.o);
+        let r: W = rep(st.o);
         st = S { ...st, o: r };
         i = i + 1;
     }
@@ -61,8 +61,8 @@ function digits(w: W, k: i32): W {
     return digits(w.put("x"), k - 1);
 }
 function main(): i32 {
-    var o: W = W { buf: "", err: None };
-    var i: i32 = 0;
+    let o: W = W { buf: "", err: None };
+    let i: i32 = 0;
     while (i < 2000) { o = digits(o, 5).put(" "); i = i + 1; }
     if (o.buf.len() != 12000) { return 1; }
     return 0;

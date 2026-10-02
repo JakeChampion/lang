@@ -55,7 +55,7 @@ const PLATFORM_MODE_MOCK: i32 = 1;
 // the wasi-http entry wrapper — construct the bag themselves; reaching
 // here for it would put this module's capabilities in their reach.)
 //
-//     var resp: HttpResponse = handle(req, platform_new());
+//     let resp: HttpResponse = handle(req, platform_new());
 //
 // `version` is the bag's ABI version, bumped when a capability field is
 // added, so a handler compiled against an older bag can tell. Version 2
@@ -116,8 +116,8 @@ pub function (plat: Platform) canned(key: string): Option[string] {
   if (plat.mode != PLATFORM_MODE_MOCK) {
     return None;
   }
-  var found: Option[string] = None;
-  var prefix: string = "canned\t" + key + "\t";
+  let found: Option[string] = None;
+  let prefix: string = "canned\t" + key + "\t";
   for line in plat.sink.get().split("\n") {
     if (line.len() >= prefix.len() && slice_unchecked(line, 0, prefix.len()) + "" == prefix) {
       found = Some(__canned_unescape(slice_unchecked(line, prefix.len(), line.len()) + ""));
@@ -127,10 +127,10 @@ pub function (plat: Platform) canned(key: string): Option[string] {
 }
 
 function __canned_escape(v: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < v.len()) {
-    var b: u8 = v[i];
+    let b: u8 = v[i];
     if (b == 92 as u8) {
       out = out + "\\\\";
     } else if (b == 9 as u8) {
@@ -146,12 +146,12 @@ function __canned_escape(v: string): string {
 }
 
 function __canned_unescape(v: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < v.len()) {
-    var b: u8 = v[i];
+    let b: u8 = v[i];
     if (b == 92 as u8 && i + 1 < v.len()) {
-      var n: u8 = v[i + 1];
+      let n: u8 = v[i + 1];
       if (n == 116 as u8) {
         out = out + "\t";
       } else if (n == 110 as u8) {
@@ -182,15 +182,15 @@ function __canned_i64(plat: Platform, key: string, fallback: i64): i64 {
 }
 
 function __parse_i64(s: string): i64 {
-  var n: i64 = 0 as i64;
-  var neg: boolean = false;
-  var i: i32 = 0;
+  let n: i64 = 0 as i64;
+  let neg: boolean = false;
+  let i: i32 = 0;
   if (s.len() > 0 && s[0] == 45 as u8) {
     neg = true;
     i = 1;
   }
   while (i < s.len()) {
-    var d: i32 = s[i] as i32 - 48;
+    let d: i32 = s[i] as i32 - 48;
     if (d < 0 || d > 9) {
       break;
     }

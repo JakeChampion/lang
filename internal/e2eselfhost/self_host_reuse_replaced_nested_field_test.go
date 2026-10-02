@@ -38,25 +38,25 @@ var selfHostReuseReplacedNestedCases = []struct {
 }{
 	// The reported shape: an `own` base superseding its nested-struct field,
 	// then handing itself back.
-	{"own-base-supersede-nested", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    a = Asm { ...a, cfi: CfiState { bad: [v], open: false } };\n    return a;\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"own-base-supersede-nested", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    a = Asm { ...a, cfi: CfiState { bad: [v], open: false } };\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// The hazard `shallow`'s comment named, built on purpose: the NEW inner
 	// carries a child of the OLD inner. The deep walk runs over it now, and the
 	// construction's retain is what keeps that from being an over-release — so
 	// this row fails loudly (exit 99, not a leak) if the retain ever stops.
-	{"own-base-new-inner-shares-child", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var shared: i32[] = a.cfi.bad;\n    a = Asm { ...a, cfi: CfiState { bad: shared, open: true } };\n    return a;\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [7], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"own-base-new-inner-shares-child", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let shared: i32[] = a.cfi.bad;\n    a = Asm { ...a, cfi: CfiState { bad: shared, open: true } };\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [7], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// The BORROWED sibling of the shared-child row. It already took the deep
 	// arm, so it is the control that says the two base modes now agree rather
 	// than that the own mode merely stopped leaking.
-	{"borrowed-base-new-inner-shares-child", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    var shared: i32[] = a.cfi.bad;\n    return Asm { ...a, cfi: CfiState { bad: shared, open: true } };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [7], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"borrowed-base-new-inner-shares-child", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    let shared: i32[] = a.cfi.bad;\n    return Asm { ...a, cfi: CfiState { bad: shared, open: true } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [7], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: an ARRAY field in the same own-base shape. The buffer is the box,
 	// so it never wanted the deep arm and must not have gained one.
-	{"own-base-array-field-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    a = Asm { ...a, bad: [v] };\n    return a;\n}\nfunction main(): i32 {\n    var a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
+	{"own-base-array-field-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    a = Asm { ...a, bad: [v] };\n    return a;\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: the same supersede on a LOCAL, which never took the shallow arm.
-	{"local-base-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = Asm { ...a, cfi: CfiState { bad: [1], open: false } };\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
+	{"local-base-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = Asm { ...a, cfi: CfiState { bad: [1], open: false } };\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 }
 
 // TestSelfHostReuseReplacedNestedLeakCheck is the gate: clean under

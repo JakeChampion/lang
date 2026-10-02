@@ -34,10 +34,10 @@ func boxDead4Src() string {
 	l := bdLit(100)
 	return `struct Box { data: i32[], n: i32 }
 function main(): i32 {
-    var a: Box = Box { data: ` + l + `, n: 1 }; var sa: i32 = a.data[0] + a.n;
-    var b: Box = Box { data: ` + l + `, n: 2 }; var sb: i32 = b.data[0] + b.n;
-    var c: Box = Box { data: ` + l + `, n: 3 }; var sc: i32 = c.data[0] + c.n;
-    var d: Box = Box { data: ` + l + `, n: 4 }; var sd: i32 = d.data[0] + d.n;
+    let a: Box = Box { data: ` + l + `, n: 1 }; let sa: i32 = a.data[0] + a.n;
+    let b: Box = Box { data: ` + l + `, n: 2 }; let sb: i32 = b.data[0] + b.n;
+    let c: Box = Box { data: ` + l + `, n: 3 }; let sc: i32 = c.data[0] + c.n;
+    let d: Box = Box { data: ` + l + `, n: 4 }; let sd: i32 = d.data[0] + d.n;
     return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
 }`
 }
@@ -46,10 +46,10 @@ func boxLive4Src() string {
 	l := bdLit(100)
 	return `struct Box { data: i32[], n: i32 }
 function main(): i32 {
-    var a: Box = Box { data: ` + l + `, n: 1 };
-    var b: Box = Box { data: ` + l + `, n: 2 };
-    var c: Box = Box { data: ` + l + `, n: 3 };
-    var d: Box = Box { data: ` + l + `, n: 4 };
+    let a: Box = Box { data: ` + l + `, n: 1 };
+    let b: Box = Box { data: ` + l + `, n: 2 };
+    let c: Box = Box { data: ` + l + `, n: 3 };
+    let d: Box = Box { data: ` + l + `, n: 4 };
     return (__heap_bump_bytes() as i32) + a.n + b.n + c.n + d.n;
 }`
 }
@@ -59,12 +59,12 @@ function main(): i32 {
 // array (keep survives). Forced interleaved alloc would corrupt a wrong free.
 const boxAliasSrc = `struct Box { data: i32[], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var b: Box = Box { data: [i, i + 1, i + 2], n: i };
-        var keep: i32[] = b.data;
-        var junk: i32[] = [9, 9, 9];
+        let b: Box = Box { data: [i, i + 1, i + 2], n: i };
+        let keep: i32[] = b.data;
+        let junk: i32[] = [9, 9, 9];
         acc = acc + b.n + keep[0] + keep[2] + junk[0];
         i = i + 1;
     }
@@ -78,10 +78,10 @@ func boxEnumDead4Src() string {
 	l := bdLit(100)
 	return `enum E { Wrap(i32[]), Two(i32, i32) }
 function main(): i32 {
-    var a: E = Wrap(` + l + `); var sa: i32 = match (a) { Wrap(x) => x[0], Two(p, q) => p + q };
-    var b: E = Wrap(` + l + `); var sb: i32 = match (b) { Wrap(x) => x[0], Two(p, q) => p + q };
-    var c: E = Wrap(` + l + `); var sc: i32 = match (c) { Wrap(x) => x[0], Two(p, q) => p + q };
-    var d: E = Wrap(` + l + `); var sd: i32 = match (d) { Wrap(x) => x[0], Two(p, q) => p + q };
+    let a: E = Wrap(` + l + `); let sa: i32 = match (a) { Wrap(x) => x[0], Two(p, q) => p + q };
+    let b: E = Wrap(` + l + `); let sb: i32 = match (b) { Wrap(x) => x[0], Two(p, q) => p + q };
+    let c: E = Wrap(` + l + `); let sc: i32 = match (c) { Wrap(x) => x[0], Two(p, q) => p + q };
+    let d: E = Wrap(` + l + `); let sd: i32 = match (d) { Wrap(x) => x[0], Two(p, q) => p + q };
     return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
 }`
 }

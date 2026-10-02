@@ -35,7 +35,7 @@ func TestSelfHostPollIRArm64(t *testing.T) {
 
 	// poll([], 0) → -1 (no fd ready); -1 truncates to exit code 255.
 	prog := `function main(): i32 {
-    var fds: i32[] = [];
+    let fds: i32[] = [];
     return poll(fds, 0);
 }`
 	want := interpExit(t, interpBin, prog) // interp builtinPoll → -1 → 255

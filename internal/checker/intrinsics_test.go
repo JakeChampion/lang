@@ -15,7 +15,7 @@ func TestResolvedArrayAppendIntrinsic(t *testing.T) {
 		{"string", `function pilot(items: string[], item: string): string[] { return items.append(item); }`, ast.StringType{}},
 		{"i64-literal", `function pilot(items: i64[]): i64[] { return items.append(7); }`, ast.NumberType{Width: 64, Signed: true}},
 		{"nested-array", `function pilot(items: string[][], item: string[]): string[][] { return items.append(item); }`, ast.ArrayType{Elem: ast.StringType{}}},
-		{"typed-empty", `function pilot(item: string): string[] { var items: string[] = []; return items.append(item); }`, ast.StringType{}},
+		{"typed-empty", `function pilot(item: string): string[] { let items: string[] = []; return items.append(item); }`, ast.StringType{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog, err := parser.Parse(tc.source + "\nfunction main(): i32 { return 0; }")

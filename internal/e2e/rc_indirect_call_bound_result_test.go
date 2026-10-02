@@ -20,28 +20,28 @@ struct Out { v: i32 }
 struct Stage { name: string, run: (string, Txn) => Out }
 function step(s: string, t: Txn): Out { return Out { v: s.len() + t.id }; }
 function run_with(st: Stage, t: Txn): i32 {
-    var o: Out = st.run(st.name, t);
+    let o: Out = st.run(st.name, t);
     return o.v;
 }
 function main(): i32 {
-    var st: Stage = Stage { name: "abc", run: step };
+    let st: Stage = Stage { name: "abc", run: step };
     return run_with(st, Txn { id: 4 }) * 6;
 }`},
 		{"element-and-call-result", 21, `struct Out { v: i32, tag: string }
 function mk(s: string, k: i32): Out { return Out { v: s.len() + k, tag: "t" }; }
 function pick(): (string, i32) => Out { return mk; }
 function via_element(fs: ((string, i32) => Out)[], s: string, k: i32): i32 {
-    var o: Out = fs[0](s, k);
+    let o: Out = fs[0](s, k);
     return o.v;
 }
 function via_call(s: string, k: i32): i32 {
-    var o: Out = pick()(s, k);
+    let o: Out = pick()(s, k);
     return o.v;
 }
 function main(): i32 {
-    var fs: ((string, i32) => Out)[] = [mk];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let fs: ((string, i32) => Out)[] = [mk];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) { acc = acc + via_element(fs, "ab", i) + via_call("abc", i); i = i + 1; }
     return acc;
 }`},

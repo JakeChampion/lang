@@ -22,37 +22,37 @@ var predVerbCases = []struct {
 	want int
 }{
 	// position: first even in [1,3,4,6,7] is at index 2.
-	{"position", `function position[T](xs: T[], pred: (T) => boolean): Option[i32] { var i: i32 = 0; while (i < xs.len()) { if (pred(xs[i])) { return Some(i); } i = i + 1; } return None; }
+	{"position", `function position[T](xs: T[], pred: (T) => boolean): Option[i32] { let i: i32 = 0; while (i < xs.len()) { if (pred(xs[i])) { return Some(i); } i = i + 1; } return None; }
 function is_even(x: i32): boolean { return x % 2 == 0; }
-function main(): i32 { var a: i32[] = [1, 3, 4, 6, 7]; match (position(a, is_even)) { Some(i) => { return i; }, None => { return 0 - 1; } } }`, 2},
+function main(): i32 { let a: i32[] = [1, 3, 4, 6, 7]; match (position(a, is_even)) { Some(i) => { return i; }, None => { return 0 - 1; } } }`, 2},
 	// position with no match -> None; encode None as 9.
-	{"position-none", `function position[T](xs: T[], pred: (T) => boolean): Option[i32] { var i: i32 = 0; while (i < xs.len()) { if (pred(xs[i])) { return Some(i); } i = i + 1; } return None; }
+	{"position-none", `function position[T](xs: T[], pred: (T) => boolean): Option[i32] { let i: i32 = 0; while (i < xs.len()) { if (pred(xs[i])) { return Some(i); } i = i + 1; } return None; }
 function is_even(x: i32): boolean { return x % 2 == 0; }
-function main(): i32 { var a: i32[] = [1, 3, 5]; match (position(a, is_even)) { Some(i) => { return i; }, None => { return 9; } } }`, 9},
+function main(): i32 { let a: i32[] = [1, 3, 5]; match (position(a, is_even)) { Some(i) => { return i; }, None => { return 9; } } }`, 9},
 	// take_while lt5 on [2,4,1,6,3] -> [2,4,1]; len 3, first+last of prefix = 2+1 = 3; 3*10+3 = 33.
-	{"take-while", `function take_while[T](xs: T[], pred: (T) => boolean): T[] { var out: T[] = []; var i: i32 = 0; while (i < xs.len() && pred(xs[i])) { out = out.append(xs[i]); i = i + 1; } return out; }
+	{"take-while", `function take_while[T](xs: T[], pred: (T) => boolean): T[] { let out: T[] = []; let i: i32 = 0; while (i < xs.len() && pred(xs[i])) { out = out.append(xs[i]); i = i + 1; } return out; }
 function lt5(x: i32): boolean { return x < 5; }
-function main(): i32 { var b: i32[] = [2, 4, 1, 6, 3]; var tw = take_while(b, lt5); return tw.len() * 10 + tw[0] + tw[2]; }`, 33},
+function main(): i32 { let b: i32[] = [2, 4, 1, 6, 3]; let tw = take_while(b, lt5); return tw.len() * 10 + tw[0] + tw[2]; }`, 33},
 	// drop_while lt5 on [2,4,1,6,3] -> [6,3]; len 2, elems 6+3 = 9; 2*10+9 = 29.
-	{"drop-while", `function drop_while[T](xs: T[], pred: (T) => boolean): T[] { var i: i32 = 0; while (i < xs.len() && pred(xs[i])) { i = i + 1; } var out: T[] = []; while (i < xs.len()) { out = out.append(xs[i]); i = i + 1; } return out; }
+	{"drop-while", `function drop_while[T](xs: T[], pred: (T) => boolean): T[] { let i: i32 = 0; while (i < xs.len() && pred(xs[i])) { i = i + 1; } let out: T[] = []; while (i < xs.len()) { out = out.append(xs[i]); i = i + 1; } return out; }
 function lt5(x: i32): boolean { return x < 5; }
-function main(): i32 { var b: i32[] = [2, 4, 1, 6, 3]; var dw = drop_while(b, lt5); return dw.len() * 10 + dw[0] + dw[1]; }`, 29},
+function main(): i32 { let b: i32[] = [2, 4, 1, 6, 3]; let dw = drop_while(b, lt5); return dw.len() * 10 + dw[0] + dw[1]; }`, 29},
 	// The natural inline chain `take_while(b, p).len()` — miscompiled to a
 	// signal crash on the self-host IR path until #4767 (the lift pass never
 	// reached a fn-arg call in method-receiver position); these edge and chain
 	// cases were native-only until that fix and now run everywhere.
-	{"take-while-chained-len", `function take_while[T](xs: T[], pred: (T) => boolean): T[] { var out: T[] = []; var i: i32 = 0; while (i < xs.len() && pred(xs[i])) { out = out.append(xs[i]); i = i + 1; } return out; }
-function drop_while[T](xs: T[], pred: (T) => boolean): T[] { var i: i32 = 0; while (i < xs.len() && pred(xs[i])) { i = i + 1; } var out: T[] = []; while (i < xs.len()) { out = out.append(xs[i]); i = i + 1; } return out; }
+	{"take-while-chained-len", `function take_while[T](xs: T[], pred: (T) => boolean): T[] { let out: T[] = []; let i: i32 = 0; while (i < xs.len() && pred(xs[i])) { out = out.append(xs[i]); i = i + 1; } return out; }
+function drop_while[T](xs: T[], pred: (T) => boolean): T[] { let i: i32 = 0; while (i < xs.len() && pred(xs[i])) { i = i + 1; } let out: T[] = []; while (i < xs.len()) { out = out.append(xs[i]); i = i + 1; } return out; }
 function lt5(x: i32): boolean { return x < 5; }
-function main(): i32 { var b: i32[] = [2, 4, 1, 6, 3]; return take_while(b, lt5).len() * 10 + drop_while(b, lt5).len(); }`, 32},
+function main(): i32 { let b: i32[] = [2, 4, 1, 6, 3]; return take_while(b, lt5).len() * 10 + drop_while(b, lt5).len(); }`, 32},
 	// take_while: first element fails -> empty (0); all pass -> full (3).
-	{"take-while-edges", `function take_while[T](xs: T[], pred: (T) => boolean): T[] { var out: T[] = []; var i: i32 = 0; while (i < xs.len() && pred(xs[i])) { out = out.append(xs[i]); i = i + 1; } return out; }
+	{"take-while-edges", `function take_while[T](xs: T[], pred: (T) => boolean): T[] { let out: T[] = []; let i: i32 = 0; while (i < xs.len() && pred(xs[i])) { out = out.append(xs[i]); i = i + 1; } return out; }
 function lt5(x: i32): boolean { return x < 5; }
-function main(): i32 { var c: i32[] = [9, 1, 2]; var d: i32[] = [1, 2, 3]; var e = take_while(c, lt5); var f = take_while(d, lt5); var r = 0; if (e.len() == 0) { r = r + 1; } if (f.len() == 3) { r = r + 2; } return r; }`, 3},
+function main(): i32 { let c: i32[] = [9, 1, 2]; let d: i32[] = [1, 2, 3]; let e = take_while(c, lt5); let f = take_while(d, lt5); let r = 0; if (e.len() == 0) { r = r + 1; } if (f.len() == 3) { r = r + 2; } return r; }`, 3},
 	// drop_while: first element fails -> full (3); all pass -> empty (0).
-	{"drop-while-edges", `function drop_while[T](xs: T[], pred: (T) => boolean): T[] { var i: i32 = 0; while (i < xs.len() && pred(xs[i])) { i = i + 1; } var out: T[] = []; while (i < xs.len()) { out = out.append(xs[i]); i = i + 1; } return out; }
+	{"drop-while-edges", `function drop_while[T](xs: T[], pred: (T) => boolean): T[] { let i: i32 = 0; while (i < xs.len() && pred(xs[i])) { i = i + 1; } let out: T[] = []; while (i < xs.len()) { out = out.append(xs[i]); i = i + 1; } return out; }
 function lt5(x: i32): boolean { return x < 5; }
-function main(): i32 { var c: i32[] = [9, 1, 2]; var d: i32[] = [1, 2, 3]; var e = drop_while(c, lt5); var f = drop_while(d, lt5); var r = 0; if (e.len() == 3) { r = r + 1; } if (f.len() == 0) { r = r + 2; } return r; }`, 3},
+function main(): i32 { let c: i32[] = [9, 1, 2]; let d: i32[] = [1, 2, 3]; let e = drop_while(c, lt5); let f = drop_while(d, lt5); let r = 0; if (e.len() == 3) { r = r + 1; } if (f.len() == 0) { r = r + 2; } return r; }`, 3},
 }
 
 // TestNativeArrayPredicateVerbs runs the inline programs on interp / x86-64 / wasm.
@@ -84,13 +84,13 @@ func TestNativeArrayPredicateVerbsModule(t *testing.T) {
 function is_even(x: i32): boolean { return x % 2 == 0; }
 function lt5(x: i32): boolean { return x < 5; }
 function main(): i32 {
-    var r = 0;
-    var a: i32[] = [1, 3, 4, 6, 7];
+    let r = 0;
+    let a: i32[] = [1, 3, 4, 6, 7];
     match (arr.position(a, is_even)) { Some(i) => { if (i == 2) { r = r + 1; } }, None => {} }
     match (arr.position([1, 3, 5], is_even)) { Some(i) => {}, None => { r = r + 2; } }
-    var b: i32[] = [2, 4, 1, 6, 3];
-    var tw = arr.take_while(b, lt5);
-    var dw = arr.drop_while(b, lt5);
+    let b: i32[] = [2, 4, 1, 6, 3];
+    let tw = arr.take_while(b, lt5);
+    let dw = arr.drop_while(b, lt5);
     if (tw.len() == 3 && dw.len() == 2 && tw.len() + dw.len() == b.len()) { r = r + 4; }
     if (arr.take_while(b, lt5)[0] == 2 && arr.drop_while(b, lt5)[0] == 6) { r = r + 8; }
     return r;

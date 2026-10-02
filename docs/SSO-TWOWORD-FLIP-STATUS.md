@@ -199,7 +199,7 @@ Concrete IR / codegen changes:
     `ElemSizeBytesFor` branch.
   - **State globals** (`internal/codegen/wasm/wasm.go`,
     `wasm_ir.go`): `emitStateGlobals` emits two `(global …)`
-    declarations per string-typed state var
+    declarations per string-typed state let
     (`$state_<name>_data` + `$state_<name>_len`).
     `OpLoadGlobal` / `OpStoreGlobal` fan out via a new
     `g.stateVarIsString(name)` helper that consults

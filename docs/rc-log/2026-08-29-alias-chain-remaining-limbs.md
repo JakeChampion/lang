@@ -9,7 +9,7 @@ tuple pair is not, for the reason that entry recorded.
 
 x86-64, `FERN_LEAKCHECK=1`, 100 rounds, `__rc_underflow()`-gated, `bin/fern
 -interp` and the native x86-64 backend agreeing on every exit code. Shape is
-`var t = <fresh>; var v = t; var u = v;`.
+`let t = <fresh>; let v = t; let u = v;`.
 
 | limb | shape | native | before | after |
 | --- | --- | --- | --- | --- |
@@ -51,7 +51,7 @@ plus `enum_body_binds_rc_payload`), because the release deep-drops the payload.
 The Option vetting pairs `body_unsafe_for_match_borrow` with
 `!opt_body_binds_rc_payload`: the match-borrow reading is what admits an alias
 that is itself matched, which is the commonest use of one. But that walker had
-no `alias_ok`, so it flagged `var u = v` and refused every chain — the credit
+no `alias_ok`, so it flagged `let u = v` and refused every chain — the credit
 simply did not take, and the first build measured unchanged at `200/0`.
 
 The forgiveness mechanism was already reachable: the walker's `_` fallback arm
@@ -70,7 +70,7 @@ the name was vetted, and now asks it of the whole closure
 Unchanged from the previous entry, and unchanged in reasoning. Both tuple limbs
 perform move-on-alias credit surgery — the deep `"TUPRCS:"` class migrates to the
 alias row at a move — and under a chain credit
-`var t: (i32, i32[]) = …; var v = t; var u = v;` measures `__rc_underflow() != 0`
+`let t: (i32, i32[]) = …; let v = t; let u = v;` measures `__rc_underflow() != 0`
 with a census reading a clean `200/200 live_bytes 0`. `FERN_RC_TRACE=1` shows one
 retain for two links. `tuple_alias_chain_refused` still pins it; #7750 keeps it.
 

@@ -29,7 +29,7 @@ func TestTodo(t *testing.T) {
     todo;
 }
 function main(): i32 {
-    var n: i32 = 2;
+    let n: i32 = 2;
     if (n > 5) {
         return helper();
     }
@@ -49,14 +49,14 @@ function main(): i32 {
 		// diverge (the checker enforces it), and the todo's loop-shaped
 		// desugar satisfies that. The Some path runs normally.
 		{"let_else_diverges", `function main(): i32 {
-    var o: Option[i32] = Some(6);
+    let o: Option[i32] = Some(6);
     let Some(x) = o else { todo("handle None"); };
     return x + 1;
 }`, 7},
 		// `todo` stays usable as an ordinary identifier: only the
 		// statement-position `todo ;` / `todo (` shapes are intercepted.
 		{"identifier_still_usable", `function main(): i32 {
-    var todo: i32 = 5;
+    let todo: i32 = 5;
     todo = todo + 1;
     return todo + 2;
 }`, 8},
@@ -102,7 +102,7 @@ function main(): i32 {
 }`},
 		// Bare form, reached mid-function.
 		{"bare_reached", `function main(): i32 {
-    var n: i32 = 1;
+    let n: i32 = 1;
     if (n == 1) {
         todo;
     }
@@ -110,7 +110,7 @@ function main(): i32 {
 }`},
 		// The `let else` None path lands in the todo.
 		{"let_else_none_path", `function main(): i32 {
-    var o: Option[i32] = None;
+    let o: Option[i32] = None;
     let Some(x) = o else { todo("handle None"); };
     return x;
 }`},

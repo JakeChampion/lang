@@ -11,13 +11,13 @@ except where noted:
 | program | before | after |
 | --- | --- | --- |
 | `match (g(i))`, `g: (i32) -> Option[IoError]` | 3 allocs / **0** frees, 120 B | **3 / 3, 0 B** |
-| the same through a written `var e: Option[IoError] = g(i)` | 3 / **0**, 120 B | **3 / 3, 0 B** |
+| the same through a written `let e: Option[IoError] = g(i)` | 3 / **0**, 120 B | **3 / 3, 0 B** |
 | the identical program over `Option[i32]` | 3 / 3 | 3 / 3 |
-| `var a: Option[i32] = f(i);` never matched | 3 / **0**, 120 B | **3 / 3, 0 B** |
-| `var a: Option[IoError] = g(i);` never matched | 3 / **0**, 120 B | **3 / 3, 0 B** |
+| `let a: Option[i32] = f(i);` never matched | 3 / **0**, 120 B | **3 / 3, 0 B** |
+| `let a: Option[IoError] = g(i);` never matched | 3 / **0**, 120 B | **3 / 3, 0 B** |
 | 200 x `match (env(k))` | 201 / **0** | **201 / 200, 32 B** |
 | 200 x open-and-close rounds | 601 / **0** | **601 / 400** |
-| the same with the open's Result bound to a `var` first | 601 / **0** | **601 / 400** |
+| the same with the open's Result bound to a `let` first | 601 / **0** | **601 / 400** |
 | `conformance/cases/alloc_flat_read_chunk`, self-host | `scales` | **`constant`** |
 
 The last row is the point of the exercise. #8398 rewrote that case's assertion
@@ -42,13 +42,13 @@ zero — was already the release three other sites emit.
   from `builtin_opt_ret_type` and whose name no user function shadows.
   Reading the gates off the call lowering is what keeps this from claiming a
   user `.write()` or a user producer — the latter is `hoist_call_scrutinees`'
-  business, which turns a direct call to one into a `var` first. The builtin
+  business, which turns a direct call to one into a `let` first. The builtin
   table moved out of `LowerState.opt_ret_type` into `builtin_opt_ret_type` so the
   rc side and the type side read ONE table; a second list here would drift from
   what `lower_call` actually intercepts, and the drift is invisible — a release
   emitted for a call that was lowered as something else entirely.
 
-  The same builtin gate also admits the BINDING form (`var r: Result[Reader,
+  The same builtin gate also admits the BINDING form (`let r: Result[Reader,
   IoError] = open_reader(p); match (r)` in `fresh_opt_box_init`): it is the same
   box out of the same helper, and fixing only the spelling that happens to be a
   scrutinee is the partial admission this family already refused once. A BINDING
@@ -69,7 +69,7 @@ zero — was already the release three other sites emit.
 - **A binding nothing looks at had no site to hang a drop on.**
   `precise_drop_names` places its drop after the LAST USE and requires one
   (`last > i`), and every consumed-* analysis requires a consuming match. A
-  local with neither — `var a: Option[i32] = f(1);` and nothing else — was the
+  local with neither — `let a: Option[i32] = f(1);` and nothing else — was the
   cheapest thing a program can do and the one shape that kept its block.
   `consumed_optbox_frees` takes that too, at both function and block level,
   freeing right after the declaration. It admits EVERY payload kind there,
@@ -136,7 +136,7 @@ record that can disagree. Checked anyway: every measurement above is a positive
   irlower admission — filed as **#8813**, deliberately not fixed here. The
   open-close gate names it rather than working around it: it asserts each round
   leaves exactly ONE block, so one unreleased box reads as 2 and both as 3.
-- **A `string` payload reached through a BINDING.** `var r: Result[string,
+- **A `string` payload reached through a BINDING.** `let r: Result[string,
   IoError] = read_file(p); match (r)` keeps its box, because
   `optbox_shallow_payload_ok` refuses a string: the OPTSTR credit owns that
   payload and the box-only free would zero the slot in front of it. The
@@ -144,7 +144,7 @@ record that can disagree. Checked anyway: every measurement above is a positive
   that deep-drops the payload rather than one that stops at the box, which is
   `consumed_rcpayload_option_frees`' shape and wants the freshness proof it
   requires — these builtins are not in the OPTFRESH registry that carries it.
-- The **`?` binding form** (`var s: string = r.read_chunk(n)?`) is a different
+- The **`?` binding form** (`let s: string = r.read_chunk(n)?`) is a different
   site with its own credit, untouched, exactly as #8402 recorded.
 - The **fresh `IoError` a FAILING write / close / open builds inside its box**,
   which the shallow release does not reach: one block per failing call, against

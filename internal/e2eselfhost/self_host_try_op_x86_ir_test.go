@@ -17,8 +17,8 @@ import (
 // the lowering skips the native path's rc/defer/errdefer cleanup. Covers scalar
 // i32/boolean (4-byte) AND i64/u64 (8-byte) payloads: an i64/u64 payload reads
 // through op_opt_payload_w(64) — the same 8-byte read the match-arm payload
-// binding uses — so `var x: i64 = inner?` yields a true i64 (the binding routes
-// through lower_i64, which dispatches back into lower_try; an unannotated `var x =
+// binding uses — so `let x: i64 = inner?` yields a true i64 (the binding routes
+// through lower_i64, which dispatches back into lower_try; an unannotated `let x =
 // inner?` width-tracks i64 via infer_expr_width). string/f64/composite payloads
 // still bail. The eligibility assertion below is the proof that each case
 // reaches the IR path.
@@ -27,13 +27,13 @@ var tryOpIRCases = []struct {
 	src      string
 	expected int
 }{
-	{"opt-some", `function g(): Option[i32] { return Some(5); } function f(): Option[i32] { var x = g()?; return Some(x + 1); } function main(): i32 { match (f()) { Some(n) => { return n; }, None => { return 0; } } }`, 6},
-	{"opt-none-propagates", `function g(): Option[i32] { return None; } function f(): Option[i32] { var x = g()?; return Some(x + 1); } function main(): i32 { match (f()) { Some(n) => { return n; }, None => { return 42; } } }`, 42},
-	{"result-ok", `function g(): Result[i32, string] { return Ok(5); } function f(): Result[i32, string] { var x = g()?; return Ok(x + 1); } function main(): i32 { match (f()) { Ok(n) => { return n; }, Err(e) => { return 0; } } }`, 6},
-	{"result-err-forwards", `function g(): Result[i32, string] { return Err("bad"); } function f(): Result[i32, string] { var x = g()?; return Ok(x + 1); } function main(): i32 { match (f()) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } }`, 3},
-	{"try-local-var", `function g(): Option[i32] { return Some(8); } function f(): Option[i32] { var o = g(); var x = o?; return Some(x); } function main(): i32 { match (f()) { Some(n) => { return n; }, None => { return 0; } } }`, 8},
+	{"opt-some", `function g(): Option[i32] { return Some(5); } function f(): Option[i32] { let x = g()?; return Some(x + 1); } function main(): i32 { match (f()) { Some(n) => { return n; }, None => { return 0; } } }`, 6},
+	{"opt-none-propagates", `function g(): Option[i32] { return None; } function f(): Option[i32] { let x = g()?; return Some(x + 1); } function main(): i32 { match (f()) { Some(n) => { return n; }, None => { return 42; } } }`, 42},
+	{"result-ok", `function g(): Result[i32, string] { return Ok(5); } function f(): Result[i32, string] { let x = g()?; return Ok(x + 1); } function main(): i32 { match (f()) { Ok(n) => { return n; }, Err(e) => { return 0; } } }`, 6},
+	{"result-err-forwards", `function g(): Result[i32, string] { return Err("bad"); } function f(): Result[i32, string] { let x = g()?; return Ok(x + 1); } function main(): i32 { match (f()) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } }`, 3},
+	{"try-local-var", `function g(): Option[i32] { return Some(8); } function f(): Option[i32] { let o = g(); let x = o?; return Some(x); } function main(): i32 { match (f()) { Some(n) => { return n; }, None => { return 0; } } }`, 8},
 	{"try-in-subexpr", `function g(): Option[i32] { return Some(4); } function f(): Option[i32] { return Some(g()? + 10); } function main(): i32 { match (f()) { Some(n) => { return n; }, None => { return 0; } } }`, 14},
-	{"try-boolean-payload", `function g(): Option[boolean] { return Some(true); } function f(): Option[i32] { var b = g()?; if (b) { return Some(1); } return Some(0); } function main(): i32 { match (f()) { Some(n) => { return n; }, None => { return 0; } } }`, 1},
+	{"try-boolean-payload", `function g(): Option[boolean] { return Some(true); } function f(): Option[i32] { let b = g()?; if (b) { return Some(1); } return Some(0); } function main(): i32 { match (f()) { Some(n) => { return n; }, None => { return 0; } } }`, 1},
 	// i64/u64 (8-byte) payloads — the width-64 op_opt_payload_w read. Each arm
 	// READS the unwrapped payload value through to the exit code (not a constant),
 	// so the 8-byte read is genuinely exercised. Producers build a true i64/u64
@@ -41,13 +41,13 @@ var tryOpIRCases = []struct {
 	// fn (`Ok(40)`) still constructs an i32-layout box — a separate, pre-existing
 	// Ok/Some construction-width bug (payload width follows the argument, not the
 	// return type), tracked as a follow-up.
-	{"result-ok-i64", `function g(): Result[i64, i32] { return Ok(40 as i64); } function f(): Result[i64, i32] { var x: i64 = g()?; return Ok(x + 2); } function main(): i32 { match (f()) { Ok(v) => { return (v / 6) as i32; }, Err(e) => { return e; } } }`, 7},
-	{"result-err-i64-forwards", `function g(ok: boolean): Result[i64, i32] { if (ok) { return Ok(40 as i64); } return Err(2); } function f(ok: boolean): Result[i64, i32] { var x: i64 = g(ok)?; return Ok(x); } function main(): i32 { match (f(false)) { Ok(v) => { return 1; }, Err(e) => { return 20 + e; } } }`, 22},
-	{"option-some-i64", `function g(): Option[i64] { return Some(30 as i64); } function f(): Option[i64] { var x: i64 = g()?; return Some(x); } function main(): i32 { match (f()) { Some(v) => { return (v / 5) as i32; }, None => { return 0; } } }`, 6},
-	{"option-none-i64-propagates", `function g(): Option[i64] { return None; } function f(): Option[i64] { var x: i64 = g()?; return Some(x); } function main(): i32 { match (f()) { Some(v) => { return 1; }, None => { return 9; } } }`, 9},
-	{"result-ok-u64", `function g(): Result[u64, i32] { return Ok(99 as u64); } function f(): Result[u64, i32] { var x: u64 = g()?; return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return (v / 9) as i32; }, Err(e) => { return e; } } }`, 11},
-	// Unannotated `var x = inner?` (i64 payload) — width inferred via infer_expr_width.
-	{"unannotated-i64", `function g(): Result[i64, i32] { return Ok(80 as i64); } function f(): Result[i64, i32] { var x = g()?; return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return (v / 10) as i32; }, Err(e) => { return e; } } }`, 8},
+	{"result-ok-i64", `function g(): Result[i64, i32] { return Ok(40 as i64); } function f(): Result[i64, i32] { let x: i64 = g()?; return Ok(x + 2); } function main(): i32 { match (f()) { Ok(v) => { return (v / 6) as i32; }, Err(e) => { return e; } } }`, 7},
+	{"result-err-i64-forwards", `function g(ok: boolean): Result[i64, i32] { if (ok) { return Ok(40 as i64); } return Err(2); } function f(ok: boolean): Result[i64, i32] { let x: i64 = g(ok)?; return Ok(x); } function main(): i32 { match (f(false)) { Ok(v) => { return 1; }, Err(e) => { return 20 + e; } } }`, 22},
+	{"option-some-i64", `function g(): Option[i64] { return Some(30 as i64); } function f(): Option[i64] { let x: i64 = g()?; return Some(x); } function main(): i32 { match (f()) { Some(v) => { return (v / 5) as i32; }, None => { return 0; } } }`, 6},
+	{"option-none-i64-propagates", `function g(): Option[i64] { return None; } function f(): Option[i64] { let x: i64 = g()?; return Some(x); } function main(): i32 { match (f()) { Some(v) => { return 1; }, None => { return 9; } } }`, 9},
+	{"result-ok-u64", `function g(): Result[u64, i32] { return Ok(99 as u64); } function f(): Result[u64, i32] { let x: u64 = g()?; return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return (v / 9) as i32; }, Err(e) => { return e; } } }`, 11},
+	// Unannotated `let x = inner?` (i64 payload) — width inferred via infer_expr_width.
+	{"unannotated-i64", `function g(): Result[i64, i32] { return Ok(80 as i64); } function f(): Result[i64, i32] { let x = g()?; return Ok(x); } function main(): i32 { match (f()) { Ok(v) => { return (v / 10) as i32; }, Err(e) => { return e; } } }`, 8},
 	// `inner?` as a subexpression with i64 arithmetic — the lower_expr path.
 	{"try-in-subexpr-i64", `function g(): Result[i64, i32] { return Ok(40 as i64); } function f(): Result[i64, i32] { return Ok(g()? + 10); } function main(): i32 { match (f()) { Ok(v) => { return (v / 10) as i32; }, Err(e) => { return e; } } }`, 5},
 }

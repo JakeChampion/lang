@@ -39,65 +39,65 @@ var tupleFnZeroArgCases = []struct {
 	exit int
 }{
 	// The two shapes that crashed.
-	{"tuple-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { var t: ((() => i32), i32) = (a1, 4); return t.0() + t.1; }", 7},
-	{"tuple-in-array-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { var xs: ((() => i32), i32)[] = [(a1, 4)]; return xs[0].0() + xs[0].1; }", 7},
+	{"tuple-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { let t: ((() => i32), i32) = (a1, 4); return t.0() + t.1; }", 7},
+	{"tuple-in-array-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { let xs: ((() => i32), i32)[] = [(a1, 4)]; return xs[0].0() + xs[0].1; }", 7},
 	// Both elements fn-typed — the walk must box each independently and hoist a
 	// distinct wrapper per element.
-	{"tuple-two-fn-elems", "function a1(): i32 { return 3; }\nfunction a2(): i32 { return 5; }\nfunction main(): i32 { var t: ((() => i32), (() => i32)) = (a1, a2); return t.0() * 10 + t.1(); }", 35},
+	{"tuple-two-fn-elems", "function a1(): i32 { return 3; }\nfunction a2(): i32 { return 5; }\nfunction main(): i32 { let t: ((() => i32), (() => i32)) = (a1, a2); return t.0() * 10 + t.1(); }", 35},
 	// Already-working shapes: a named fn WITH params, and a lambda. These were
 	// boxed by the ordinary tuple walk before and must not be double-boxed now.
-	{"tuple-onearg", "function a1(x: i32): i32 { return x + 3; }\nfunction main(): i32 { var t: (((i32) => i32), i32) = (a1, 4); return t.0(1) + t.1; }", 8},
-	{"tuple-lambda", "function main(): i32 { var t: ((() => i32), i32) = (() => 3, 4); return t.0() + t.1; }", 7},
+	{"tuple-onearg", "function a1(x: i32): i32 { return x + 3; }\nfunction main(): i32 { let t: (((i32) => i32), i32) = (a1, 4); return t.0(1) + t.1; }", 8},
+	{"tuple-lambda", "function main(): i32 { let t: ((() => i32), i32) = (() => 3, 4); return t.0() + t.1; }", 7},
 
 	// ---- the const-read regression cases ----
 	// `const K` desugars to a zero-arg function, so these are exactly what an
 	// over-eager version of this fix breaks: each must keep reading K as its
 	// VALUE. A wrong implementation boxes K's address and these return garbage
 	// or crash.
-	{"const-in-tuple", "const K: i32 = 9;\nfunction main(): i32 { var t: (i32, i32) = (K, 4); return t.0 + t.1; }", 13},
+	{"const-in-tuple", "const K: i32 = 9;\nfunction main(): i32 { let t: (i32, i32) = (K, 4); return t.0 + t.1; }", 13},
 	{"const-read-plain", "const K: i32 = 9;\nfunction main(): i32 { return K + 1; }", 10},
 	// A const and a fn value in the SAME annotated tuple: element 0 is boxed,
 	// element 1 must not be.
-	{"const-and-fn-mixed", "const K: i32 = 9;\nfunction a1(): i32 { return 3; }\nfunction main(): i32 { var t: ((() => i32), i32) = (a1, K); return t.0() + t.1; }", 12},
+	{"const-and-fn-mixed", "const K: i32 = 9;\nfunction a1(): i32 { return 3; }\nfunction main(): i32 { let t: ((() => i32), i32) = (a1, K); return t.0() + t.1; }", 12},
 	// UNANNOTATED tuple carrying a const — no declared fn segment, so the
 	// pre-pass must not fire at all.
-	{"unannotated-tuple-const", "const K: i32 = 9;\nfunction main(): i32 { var t = (K, 4); return t.0 + t.1; }", 13},
+	{"unannotated-tuple-const", "const K: i32 = 9;\nfunction main(): i32 { let t = (K, 4); return t.0 + t.1; }", 13},
 
 	// ---- the same disagreement one container over: Option / Result payloads ----
 	// `Some(f)` / `Ok(f)` / `Err(f)` are boxed by the variant-constructor walk
 	// when the payload has >= 1 param, and skipped when it is zero-arg, for the
 	// same const reason — while the match-arm bind dispatches the payload
 	// env-first regardless. Same annotation-resolves-it fix.
-	{"option-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { var o: Option[() => i32] = Some(a1); match (o) { Some(f) => { return f(); }, None => { return 0; } } return 9; }", 3},
-	{"result-ok-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { var r: Result[() => i32, string] = Ok(a1); match (r) { Ok(f) => { return f(); }, Err(e) => { return 0; } } return 9; }", 3},
+	{"option-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { let o: Option[() => i32] = Some(a1); match (o) { Some(f) => { return f(); }, None => { return 0; } } return 9; }", 3},
+	{"result-ok-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { let r: Result[() => i32, string] = Ok(a1); match (r) { Ok(f) => { return f(); }, Err(e) => { return 0; } } return 9; }", 3},
 	// Err takes Result's SECOND type arg — a fix that always indexes arg 0 passes
 	// the two rows above and fails this one.
-	{"result-err-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { var r: Result[i32, () => i32] = Err(a1); match (r) { Ok(v) => { return v; }, Err(f) => { return f(); } } return 9; }", 3},
+	{"result-err-zeroarg", "function a1(): i32 { return 3; }\nfunction main(): i32 { let r: Result[i32, () => i32] = Err(a1); match (r) { Ok(v) => { return v; }, Err(f) => { return f(); } } return 9; }", 3},
 	// Already-working payload shapes.
-	{"option-onearg", "function a1(x: i32): i32 { return x + 3; }\nfunction main(): i32 { var o: Option[(i32) => i32] = Some(a1); match (o) { Some(f) => { return f(1); }, None => { return 0; } } return 9; }", 4},
-	{"option-lambda", "function main(): i32 { var o: Option[() => i32] = Some(() => 3); match (o) { Some(f) => { return f(); }, None => { return 0; } } return 9; }", 3},
+	{"option-onearg", "function a1(x: i32): i32 { return x + 3; }\nfunction main(): i32 { let o: Option[(i32) => i32] = Some(a1); match (o) { Some(f) => { return f(1); }, None => { return 0; } } return 9; }", 4},
+	{"option-lambda", "function main(): i32 { let o: Option[() => i32] = Some(() => 3); match (o) { Some(f) => { return f(); }, None => { return 0; } } return 9; }", 3},
 	// A fn-typed Option that is NONE — the pre-pass must not fail on a payloadless
 	// initialiser.
-	{"option-none", "function a1(): i32 { return 3; }\nfunction main(): i32 { var o: Option[() => i32] = None; match (o) { Some(f) => { return f(); }, None => { return 5; } } return 9; }", 5},
+	{"option-none", "function a1(): i32 { return 3; }\nfunction main(): i32 { let o: Option[() => i32] = None; match (o) { Some(f) => { return f(); }, None => { return 5; } } return 9; }", 5},
 	// Const-read regressions for the variant pre-pass, mirroring the tuple ones.
-	{"option-const-payload", "const K: i32 = 9;\nfunction main(): i32 { var o: Option[i32] = Some(K); match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 9},
-	{"result-const-payload", "const K: i32 = 9;\nfunction main(): i32 { var r: Result[i32, string] = Ok(K); match (r) { Ok(v) => { return v; }, Err(e) => { return 0; } } return 9; }", 9},
-	{"option-unannotated-const", "const K: i32 = 9;\nfunction main(): i32 { var o = Some(K); match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 9},
+	{"option-const-payload", "const K: i32 = 9;\nfunction main(): i32 { let o: Option[i32] = Some(K); match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 9},
+	{"result-const-payload", "const K: i32 = 9;\nfunction main(): i32 { let r: Result[i32, string] = Ok(K); match (r) { Ok(v) => { return v; }, Err(e) => { return 0; } } return 9; }", 9},
+	{"option-unannotated-const", "const K: i32 = 9;\nfunction main(): i32 { let o = Some(K); match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 9},
 
 	// ---- two more positions with the same split ----
 	// The declared RETURN type is the annotation: the caller binds the result as a
 	// fn value and dispatches env-first, so a bare zero-arg name must be boxed.
-	{"returned-zeroarg", "function a1(): i32 { return 3; }\nfunction get(): () => i32 { return a1; }\nfunction main(): i32 { var g: () => i32 = get(); return g(); }", 3},
-	{"returned-onearg", "function a1(x: i32): i32 { return x + 3; }\nfunction get(): (i32) => i32 { return a1; }\nfunction main(): i32 { var g: (i32) => i32 = get(); return g(1); }", 4},
-	{"returned-lambda", "function get(): () => i32 { return () => 3; }\nfunction main(): i32 { var g: () => i32 = get(); return g(); }", 3},
+	{"returned-zeroarg", "function a1(): i32 { return 3; }\nfunction get(): () => i32 { return a1; }\nfunction main(): i32 { let g: () => i32 = get(); return g(); }", 3},
+	{"returned-onearg", "function a1(x: i32): i32 { return x + 3; }\nfunction get(): (i32) => i32 { return a1; }\nfunction main(): i32 { let g: (i32) => i32 = get(); return g(1); }", 4},
+	{"returned-lambda", "function get(): () => i32 { return () => 3; }\nfunction main(): i32 { let g: () => i32 = get(); return g(); }", 3},
 	// A USER-enum variant field declared "fn" needs no annotation at all — the
 	// struct decl already says it, which is strictly better evidence. Only the
 	// arity gate was blocking it.
-	{"user-enum-zeroarg", "enum E { Wrap(() => i32), Nil }\nfunction a1(): i32 { return 3; }\nfunction main(): i32 { var e: E = Wrap(a1); match (e) { Wrap(f) => { return f(); }, Nil => { return 0; } } return 9; }", 3},
-	{"user-enum-lambda", "enum E { Wrap(() => i32), Nil }\nfunction main(): i32 { var e: E = Wrap(() => 3); match (e) { Wrap(f) => { return f(); }, Nil => { return 0; } } return 9; }", 3},
+	{"user-enum-zeroarg", "enum E { Wrap(() => i32), Nil }\nfunction a1(): i32 { return 3; }\nfunction main(): i32 { let e: E = Wrap(a1); match (e) { Wrap(f) => { return f(); }, Nil => { return 0; } } return 9; }", 3},
+	{"user-enum-lambda", "enum E { Wrap(() => i32), Nil }\nfunction main(): i32 { let e: E = Wrap(() => 3); match (e) { Wrap(f) => { return f(); }, Nil => { return 0; } } return 9; }", 3},
 	// Const-read regressions for those two positions.
 	{"const-return", "const K: i32 = 9;\nfunction get(): i32 { return K; }\nfunction main(): i32 { return get() + 1; }", 10},
-	{"const-enum-payload", "enum E { Wrap(i32), Nil }\nconst K: i32 = 9;\nfunction main(): i32 { var e: E = Wrap(K); match (e) { Wrap(v) => { return v; }, Nil => { return 0; } } return 9; }", 9},
+	{"const-enum-payload", "enum E { Wrap(i32), Nil }\nconst K: i32 = 9;\nfunction main(): i32 { let e: E = Wrap(K); match (e) { Wrap(v) => { return v; }, Nil => { return 0; } } return 9; }", 9},
 }
 
 func TestSelfHostTupleFnZeroArgIRX86_64(t *testing.T) {

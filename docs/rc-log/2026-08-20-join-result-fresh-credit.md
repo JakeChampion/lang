@@ -54,8 +54,8 @@ flag at emit time. Here the question is settled entirely inside
 
 ## Limit, stated rather than assumed
 
-Declaration-reading sees only annotated `var`s in the body. A `string[]` PARAM
-receiver has no `var` to read, so `function f(xs: string[]) { var s = xs.join(…) }`
+Declaration-reading sees only annotated `let`s in the body. A `string[]` PARAM
+receiver has no `let` to read, so `function f(xs: string[]) { let s = xs.join(…) }`
 is refused and its result still leaks — 131200 on x86-64, measured. Sound, and
 pinned by a correctness case (`strarr-join-param-receiver-live`) with no ceiling,
 so the leak is recorded without becoming a floor.

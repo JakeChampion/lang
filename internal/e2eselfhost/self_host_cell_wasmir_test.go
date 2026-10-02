@@ -19,15 +19,15 @@ var cellWasmIRCases = []struct {
 	src  string
 	want int
 }{
-	{"get", `function main(): i32 { var c: Cell[i32] = cell_new(7); return c.get(); }`, 7},
-	{"set", `function main(): i32 { var c: Cell[i32] = cell_new(1); c.set(9); return c.get(); }`, 9},
-	{"read-modify-write", `function main(): i32 { var c: Cell[i32] = cell_new(0); c.set(c.get() + 5); c.set(c.get() * 2); return c.get(); }`, 10},
+	{"get", `function main(): i32 { let c: Cell[i32] = cell_new(7); return c.get(); }`, 7},
+	{"set", `function main(): i32 { let c: Cell[i32] = cell_new(1); c.set(9); return c.get(); }`, 9},
+	{"read-modify-write", `function main(): i32 { let c: Cell[i32] = cell_new(0); c.set(c.get() + 5); c.set(c.get() * 2); return c.get(); }`, 10},
 	// A Cell passed to a function is shared, not copied — the mutation is
 	// visible to the caller. This is the whole point of the type.
-	{"shared-through-call", `function bump(c: Cell[i32]): void { c.set(c.get() + 1); } function main(): i32 { var c: Cell[i32] = cell_new(10); bump(c); bump(c); bump(c); return c.get(); }`, 13},
+	{"shared-through-call", `function bump(c: Cell[i32]): void { c.set(c.get() + 1); } function main(): i32 { let c: Cell[i32] = cell_new(10); bump(c); bump(c); bump(c); return c.get(); }`, 13},
 	// A Cell living in a struct field: the receiver is a field access rather
 	// than a bare ident.
-	{"struct-field", `struct Box { c: Cell[i32] } function main(): i32 { var b: Box = Box { c: cell_new(5) }; b.c.set(b.c.get() + 1); return b.c.get(); }`, 6},
+	{"struct-field", `struct Box { c: Cell[i32] } function main(): i32 { let b: Box = Box { c: cell_new(5) }; b.c.set(b.c.get() + 1); return b.c.get(); }`, 6},
 	// A WIDE element through that field access. The i32 case above passes on a
 	// 4-byte read either way, so it could not catch the width being taken from
 	// the field's declared spelling: a LOCAL `Cell[f64]` records its element
@@ -39,14 +39,14 @@ var cellWasmIRCases = []struct {
 	//
 	// The local twin is here as the control that already worked, so a
 	// regression tells you which of the two paths broke.
-	{"local-f64", `function main(): i32 { var c: Cell[f64] = cell_new(2.5); return (c.get() * 2.0) as i32; }`, 5},
-	{"struct-field-f64", `struct Box { c: Cell[f64] } function main(): i32 { var b: Box = Box { c: cell_new(2.5) }; return (b.c.get() * 2.0) as i32; }`, 5},
+	{"local-f64", `function main(): i32 { let c: Cell[f64] = cell_new(2.5); return (c.get() * 2.0) as i32; }`, 5},
+	{"struct-field-f64", `struct Box { c: Cell[f64] } function main(): i32 { let b: Box = Box { c: cell_new(2.5) }; return (b.c.get() * 2.0) as i32; }`, 5},
 	// set as well as get: the two took their width from different places —
 	// set consulted the cell's element type, get went through the array
 	// classifiers — so only one of them was wrong.
-	{"struct-field-f64-set", `struct Box { c: Cell[f64] } function main(): i32 { var b: Box = Box { c: cell_new(2.5) }; b.c.set(b.c.get() + 0.5); return (b.c.get() * 2.0) as i32; }`, 6},
+	{"struct-field-f64-set", `struct Box { c: Cell[f64] } function main(): i32 { let b: Box = Box { c: cell_new(2.5) }; b.c.set(b.c.get() + 0.5); return (b.c.get() * 2.0) as i32; }`, 6},
 	// The other 8-byte element, whose classifiers carry the same field arm.
-	{"struct-field-i64", `struct Box { c: Cell[i64] } function main(): i32 { var b: Box = Box { c: cell_new(5000000000 as i64) }; return (b.c.get() / (1000000000 as i64)) as i32; }`, 5},
+	{"struct-field-i64", `struct Box { c: Cell[i64] } function main(): i32 { let b: Box = Box { c: cell_new(5000000000 as i64) }; return (b.c.get() / (1000000000 as i64)) as i32; }`, 5},
 	// A cell as a TUPLE ELEMENT. Two separate gaps met here, which is why both
 	// spellings of the construction are pinned: a cell LOCAL element was already
 	// admitted (its slot is marked is_arr), while a direct `cell_new(v)` element
@@ -55,22 +55,22 @@ var cellWasmIRCases = []struct {
 	// the element to be tagged by its declared `Cell[T]` spelling rather than by
 	// the element's own width, or `t.1.get()` dispatched as a method on the
 	// element type and bailed as the unknown symbol `i32.get`.
-	{"tuple-elem-ctor", `function main(): i32 { var t: (i32, Cell[i32]) = (7, cell_new(5)); return t.1.get() + t.0; }`, 12},
-	{"tuple-elem-local", `function main(): i32 { var c: Cell[i32] = cell_new(5); var t: (i32, Cell[i32]) = (7, c); return t.1.get() + t.0; }`, 12},
-	{"tuple-elem-set", `function main(): i32 { var t: (i32, Cell[i32]) = (7, cell_new(0)); t.1.set(t.1.get() + t.0); return t.1.get(); }`, 7},
+	{"tuple-elem-ctor", `function main(): i32 { let t: (i32, Cell[i32]) = (7, cell_new(5)); return t.1.get() + t.0; }`, 12},
+	{"tuple-elem-local", `function main(): i32 { let c: Cell[i32] = cell_new(5); let t: (i32, Cell[i32]) = (7, c); return t.1.get() + t.0; }`, 12},
+	{"tuple-elem-set", `function main(): i32 { let t: (i32, Cell[i32]) = (7, cell_new(0)); t.1.set(t.1.get() + t.0); return t.1.get(); }`, 7},
 	// The wide element through a tuple element, the twin of struct-field-f64:
 	// an i32 element reads 4-byte either way, so only a wide one can show the
 	// width being taken from the wrong place.
-	{"tuple-elem-f64", `function main(): i32 { var t: (i32, Cell[f64]) = (1, cell_new(2.5)); return (t.1.get() * 2.0) as i32; }`, 5},
+	{"tuple-elem-f64", `function main(): i32 { let t: (i32, Cell[f64]) = (1, cell_new(2.5)); return (t.1.get() * 2.0) as i32; }`, 5},
 	// One cell shared by two tuples: the mutation through one is visible
 	// through the other, which is what says the element is the cell itself and
 	// not a copy.
-	{"tuple-elem-shared", `function main(): i32 { var c: Cell[i32] = cell_new(1); var a: (i32, Cell[i32]) = (1, c); var b: (i32, Cell[i32]) = (2, c); a.1.set(9); return b.1.get(); }`, 9},
+	{"tuple-elem-shared", `function main(): i32 { let c: Cell[i32] = cell_new(1); let a: (i32, Cell[i32]) = (1, c); let b: (i32, Cell[i32]) = (2, c); a.1.set(9); return b.1.get(); }`, 9},
 	// A cell as an ENUM VARIANT PAYLOAD, reached through a match binding. The
-	// bound name needed the same is_cell marking a `var` annotation gives it;
+	// bound name needed the same is_cell marking a `let` annotation gives it;
 	// without it `c.get()` bailed the module exactly as the tuple element did.
-	{"enum-payload", `enum H { Has(Cell[i32]), No } function main(): i32 { var h: H = Has(cell_new(4)); match (h) { Has(c) => { c.set(c.get() + 3); return c.get(); }, No => { return 0; } } }`, 7},
-	{"enum-payload-f64", `enum H { Has(Cell[f64]), No } function main(): i32 { var h: H = Has(cell_new(2.5)); match (h) { Has(c) => { return (c.get() * 2.0) as i32; }, No => { return 0; } } }`, 5},
+	{"enum-payload", `enum H { Has(Cell[i32]), No } function main(): i32 { let h: H = Has(cell_new(4)); match (h) { Has(c) => { c.set(c.get() + 3); return c.get(); }, No => { return 0; } } }`, 7},
+	{"enum-payload-f64", `enum H { Has(Cell[f64]), No } function main(): i32 { let h: H = Has(cell_new(2.5)); match (h) { Has(c) => { return (c.get() * 2.0) as i32; }, No => { return 0; } } }`, 5},
 	// `f32` is the OTHER float spelling, and it occupies the same 8-byte column: a
 	// scalar f32 lowers to a wasm f64 (is_float_array_type_name, #6175). The
 	// sites that learn a cell's element each spelled the ladder themselves and
@@ -83,9 +83,9 @@ var cellWasmIRCases = []struct {
 	// cell_new_elem_tag never answers "f32", so only the payload route was
 	// both drifted and reachable. An f64 case cannot cover any of this, since
 	// f64 was the one spelling every copy of the ladder agreed on.
-	{"tuple-elem-f32", `function main(): i32 { var t: (i32, Cell[f32]) = (1, cell_new(2.5 as f32)); return (t.1.get() * 2.0) as i32; }`, 5},
-	{"enum-payload-f32", `enum H { Has(Cell[f32]), No } function main(): i32 { var h: H = Has(cell_new(2.5 as f32)); match (h) { Has(c) => { return (c.get() * 2.0) as i32; }, No => { return 0; } } }`, 5},
-	{"unannotated-cell-f32", `function main(): i32 { var c = cell_new(2.5 as f32); return (c.get() * 2.0) as i32; }`, 5},
+	{"tuple-elem-f32", `function main(): i32 { let t: (i32, Cell[f32]) = (1, cell_new(2.5 as f32)); return (t.1.get() * 2.0) as i32; }`, 5},
+	{"enum-payload-f32", `enum H { Has(Cell[f32]), No } function main(): i32 { let h: H = Has(cell_new(2.5 as f32)); match (h) { Has(c) => { return (c.get() * 2.0) as i32; }, No => { return 0; } } }`, 5},
+	{"unannotated-cell-f32", `function main(): i32 { let c = cell_new(2.5 as f32); return (c.get() * 2.0) as i32; }`, 5},
 }
 
 // TestSelfHostCellWasmIR runs each case through the self-host CLI on

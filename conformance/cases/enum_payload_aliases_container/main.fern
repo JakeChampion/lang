@@ -27,7 +27,7 @@ function table(): Unit[] {
 }
 
 function find(name: string): Option[Unit] {
-    var us: Unit[] = table();
+    let us: Unit[] = table();
     for i in 0..us.len() {
         if (us[i].name == name) { return Some(us[i]); }
     }
@@ -35,8 +35,8 @@ function find(name: string): Option[Unit] {
 }
 
 function last(name: string): Option[Unit] {
-    var us: Unit[] = table();
-    var found: Option[Unit] = None;
+    let us: Unit[] = table();
+    let found: Option[Unit] = None;
     for i in 0..us.len() {
         if (us[i].name == name) { found = Some(us[i]); }
     }
@@ -60,7 +60,7 @@ function name_of(o: Option[Unit]): string {
 function main(): i32 {
     // Each lookup allocates and frees a whole table, so a payload that was
     // not retained is read back out of a recycled cell.
-    var total: i32 = 0;
+    let total: i32 = 0;
     for i in 0..8 {
         total = total + factor_of(find("km"));
         total = total + factor_of(last("km"));

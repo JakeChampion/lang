@@ -25,22 +25,22 @@ func TestFStringInterpolantPositions(t *testing.T) {
 	}{
 		{
 			name: "single interpolant",
-			src:  `function main(): i32 { var s = f"{zzz}"; return 0; }`,
+			src:  `function main(): i32 { let s = f"{zzz}"; return 0; }`,
 			want: []ast.Position{{Line: 1, Col: 35}},
 		},
 		{
 			name: "two interpolants offset independently",
-			src:  `function main(): i32 { var s = f"a{aaa} b{bbb}"; return 0; }`,
+			src:  `function main(): i32 { let s = f"a{aaa} b{bbb}"; return 0; }`,
 			want: []ast.Position{{Line: 1, Col: 36}, {Line: 1, Col: 43}},
 		},
 		{
 			name: "f-string on a later line",
-			src:  "function main(): i32 {\n    var s = f\"x{yy}\";\n    return 0;\n}",
+			src:  "function main(): i32 {\n    let s = f\"x{yy}\";\n    return 0;\n}",
 			want: []ast.Position{{Line: 2, Col: 17}},
 		},
 		{
 			name: "nested f-string rebases through both levels",
-			src:  `function main(): i32 { var s = f"x{f"y{qqq}"}"; return 0; }`,
+			src:  `function main(): i32 { let s = f"x{f"y{qqq}"}"; return 0; }`,
 			want: []ast.Position{{Line: 1, Col: 36}},
 		},
 	}
@@ -74,7 +74,7 @@ func TestFStringInterpolantPositions(t *testing.T) {
 // only its root — a binary operand or a call argument is what a
 // diagnostic usually points at.
 func TestFStringInterpolantInnerNodePositions(t *testing.T) {
-	prog, err := Parse(`function main(): i32 { var s = f"{a + bb}"; return 0; }`)
+	prog, err := Parse(`function main(): i32 { let s = f"{a + bb}"; return 0; }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

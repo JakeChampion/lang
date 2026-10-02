@@ -64,21 +64,21 @@ const (
 	iterFilterSrc = `
 import "core/iter" as iter;
 function main(): i32 {
-    var xs: i32[] = [5, 2, 8, 1, 4, 9, 6];
+    let xs: i32[] = [5, 2, 8, 1, 4, 9, 6];
     return iter.filter(iter.of(xs), (x: i32): boolean => { return x % 2 == 0; }).len();
 }
 `
 	iterMapSrc = `
 import "core/iter" as iter;
 function main(): i32 {
-    var xs: i32[] = [5, 2, 8, 1, 4, 9, 6];
+    let xs: i32[] = [5, 2, 8, 1, 4, 9, 6];
     return iter.map(iter.of(xs), (x: i32): i32 => { return x + 1; }).len();
 }
 `
 	iterSumSrc = `
 import "core/iter" as iter;
 function main(): i32 {
-    var xs: i32[] = [5, 2, 8, 1, 4, 9, 6];
+    let xs: i32[] = [5, 2, 8, 1, 4, 9, 6];
     return iter.sum(iter.of(xs));
 }
 `
@@ -95,9 +95,9 @@ function wrap(xs: u8[]): Option[(i32, u8[])] {
     return Some((1, xs));
 }
 function main(): i32 {
-    var xs: u8[] = [1, 2, 3];
-    var n = 0;
-    var i = 0;
+    let xs: u8[] = [1, 2, 3];
+    let n = 0;
+    let i = 0;
     while (i < 3) {
         match (wrap(xs)) {
             Some(t) => { n = n + t.1.len(); },
@@ -113,8 +113,8 @@ function main(): i32 {
 	iterOfOnlySrc = `
 import "core/iter" as iter;
 function main(): i32 {
-    var xs: i32[] = [5, 2, 8, 1, 4, 9, 6];
-    var it = iter.of(xs);
+    let xs: i32[] = [5, 2, 8, 1, 4, 9, 6];
+    let it = iter.of(xs);
     return it.idx + xs.len();
 }
 `

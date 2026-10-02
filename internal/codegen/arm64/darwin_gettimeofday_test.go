@@ -23,8 +23,8 @@ import (
 // put there, so a behavioural test would pass on the bug most of the time.
 // What is checkable is the instruction, at every site that issues the call.
 const gettimeofdayClockSrc = `function main(): i32 {
-    var a: i64 = now_unix_ms();
-    var b: i64 = now_ns();
+    let a: i64 = now_unix_ms();
+    let b: i64 = now_ns();
     return (a - b) as i32;
 }`
 

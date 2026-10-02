@@ -8,7 +8,7 @@ two more a slot inside one, `unresolved type of binding $lamret$1`.
 The shape is a value block whose arms are lambdas:
 
 ```fern
-var f: (i32) => i32 = (if (c) { ((x: i32) => x + base) } else { ((x: i32) => x * k) });
+let f: (i32) => i32 = (if (c) { ((x: i32) => x + base) } else { ((x: i32) => x * k) });
 ```
 
 `hoist_value_iife` declares the block a `fn`-tagged `$iife` function and
@@ -42,7 +42,7 @@ admitted goes with this change: `without`, `cleared`, `keys`, `values` and
 record literal handed to a template with a value block among its fields:
 
 ```fern
-var v: Xyz = pick(c, (Xyz { n: 636, valid: (if (d) { pick(true, false, true) } else { false }) }), (Xyz { … }));
+let v: Xyz = pick(c, (Xyz { n: 636, valid: (if (d) { pick(true, false, true) } else { false }) }), (Xyz { … }));
 ```
 
 `record` read the literal's type off the checker, and the checker leaves

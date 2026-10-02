@@ -5,15 +5,15 @@ import "testing"
 func TestClosureBindingIdentityDifferential(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"later-local", `function value(): i32 {
-var n = 7; var call = (): i32 => {
-var inner = (): i32 => n; var n = 99; return inner(); }; return call(); }`},
+let n = 7; let call = (): i32 => {
+let inner = (): i32 => n; let n = 99; return inner(); }; return call(); }`},
 		{"local-function", `function value(): i32 {
-var n = 7; if (true) { function inner(): i32 { return n; }
-var n = 99; return inner(); } return 99; }`},
+let n = 7; if (true) { function inner(): i32 { return n; }
+let n = 99; return inner(); } return 99; }`},
 		{"escaping-array", `function make(xs: i32[]): () => i32[] {
 return (): i32[] => xs; }
-function value(): i32 { var xs = [1]; var f = make(xs); xs = xs.with(0, 9);
-var original = f(); return original[0] * 10 + xs[0]; }`},
+function value(): i32 { let xs = [1]; let f = make(xs); xs = xs.with(0, 9);
+let original = f(); return original[0] * 10 + xs[0]; }`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

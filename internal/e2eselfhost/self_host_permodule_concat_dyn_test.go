@@ -64,11 +64,11 @@ func writeConcatDynFixture(t *testing.T, dir string) string {
 		"    function sides(self: Self): i32 { return 3; }\n" +
 		"}\n" +
 		"function main(): i32 {\n" +
-		fmt.Sprintf("    var t: i32 = %s;\n", calls.String()) +
-		"    var sq: dyn shapes.Shape = Square { side: 3 };\n" +
-		"    var tr: dyn shapes.Shape = Triangle { base: 4, height: 5 };\n" +
+		fmt.Sprintf("    let t: i32 = %s;\n", calls.String()) +
+		"    let sq: dyn shapes.Shape = Square { side: 3 };\n" +
+		"    let tr: dyn shapes.Shape = Triangle { base: 4, height: 5 };\n" +
 		"    // 9*10+4 = 94 and 10*10+3 = 103: both arms, both slots.\n" +
-		"    var d: i32 = shapes.describe(sq) + shapes.describe(tr);\n" +
+		"    let d: i32 = shapes.describe(sq) + shapes.describe(tr);\n" +
 		fmt.Sprintf("    if (t == %d && d == 197) { return 0; }\n", want) +
 		"    if (d != 197) { return 2; }\n" +
 		"    return 1;\n" +

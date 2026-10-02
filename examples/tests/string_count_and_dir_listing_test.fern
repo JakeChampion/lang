@@ -91,7 +91,7 @@ function test_dir_listing_empty_dir(r: test.TestRunner): test.TestRunner {
   if (dir == "") {
     return rr;
   }
-  var empty: string[] = [];
+  let empty: string[] = [];
   return rr.it(
     "empty dir matches empty list",
     () => test.assert_eq_dir_listing(dir, empty),
@@ -147,7 +147,7 @@ function test_dir_listing_missing_dir(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("string count + dir listing");
+  let r: test.TestRunner = test.test_new("string count + dir listing");
   r = r.it("string_count multiple matches", test_string_count_pass);
   r = r.it("string_count zero matches", test_string_count_zero);
   r = r.it("string_count single char", test_string_count_single_char);

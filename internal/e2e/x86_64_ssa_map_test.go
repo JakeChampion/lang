@@ -18,7 +18,7 @@ var x86SSAMapCases = []struct {
 		src: `import "std/i32";
 import "core/map";
 function main(): i32 {
-  var m: Map[string, i32] = map_new(4);
+  let m: Map[string, i32] = map_new(4);
   m = m.insert("one", 1);
   m = m.insert("two", 2);
   m = m.insert("three", 3);
@@ -33,13 +33,13 @@ function main(): i32 {
     None => { stdout().write("four-absent\n"); },
   }
   stdout().write("has-one=" + m.has("one").to_string() + " get_or=" + m.get_or("nine", 9).to_string() + "\n");
-  var d = m.without("one");
+  let d = m.without("one");
   m = d.0;
   stdout().write("deleted=" + d.1.to_string() + " len=" + m.len().to_string() + "\n");
-  var ks: string[] = m.keys();
-  var vs: i32[] = m.values();
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let ks: string[] = m.keys();
+  let vs: i32[] = m.values();
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < vs.len()) { total = total + vs[i]; i = i + 1; }
   stdout().write("keys=" + ks.len().to_string() + " values-sum=" + total.to_string() + "\n");
   m = m.cleared();
@@ -54,16 +54,16 @@ function main(): i32 {
 		src: `import "std/i32";
 import "core/map";
 function main(): i32 {
-  var m: Map[i32, i32] = map_new(2);
-  var i: i32 = 0;
+  let m: Map[i32, i32] = map_new(2);
+  let i: i32 = 0;
   while (i < 500) { m = m.insert(i * 7, i); i = i + 1; }
-  var missing: i32 = 0;
+  let missing: i32 = 0;
   i = 0;
   while (i < 500) { if (m.get_or(i * 7, 0 - 1) != i) { missing = missing + 1; } i = i + 1; }
-  var it = m.iter();
-  var sumk: i64 = 0;
-  var sumv: i64 = 0;
-  var n: i32 = 0;
+  let it = m.iter();
+  let sumk: i64 = 0;
+  let sumv: i64 = 0;
+  let n: i32 = 0;
   while (it.has_next()) { sumk = sumk + (it.key() as i64); sumv = sumv + (it.value() as i64); n = n + 1; it.advance(); }
   stdout().write("len=" + m.len().to_string() + " missing=" + missing.to_string() + " n=" + n.to_string() + "\n");
   if (sumk == 873250 && sumv == 124750) { stdout().write("sums-ok\n"); } else { return 1; }
@@ -77,17 +77,17 @@ function main(): i32 {
 		src: `import "std/i32";
 import "core/map";
 function main(): i32 {
-  var m: Map[string, i32[]] = map_new(4);
+  let m: Map[string, i32[]] = map_new(4);
   m = m.insert("a", [1, 2, 3]);
   m = m.insert("b", [4, 5]);
   m = m.insert("a", [10, 20, 30, 40]);
-  var total: i32 = 0;
+  let total: i32 = 0;
   match (m.get("a")) {
-    Some(xs) => { var i: i32 = 0; while (i < xs.len()) { total = total + xs[i]; i = i + 1; } },
+    Some(xs) => { let i: i32 = 0; while (i < xs.len()) { total = total + xs[i]; i = i + 1; } },
     None => { return 1; },
   }
   stdout().write("a-sum=" + total.to_string() + " len=" + m.len().to_string() + "\n");
-  var s: Map[i32, string] = map_new(4);
+  let s: Map[i32, string] = map_new(4);
   s = s.insert(1, "one");
   s = s.insert(2, "two" + "!");
   stdout().write(s.get_or(2, "none") + " " + s.get_or(3, "none") + "\n");
@@ -101,14 +101,14 @@ function main(): i32 {
 		src: `import "std/i32";
 import "core/map";
 function count(n: i32): i32 {
-  var m: Map[string, i32] = map_new(2);
-  var i: i32 = 0;
+  let m: Map[string, i32] = map_new(2);
+  let i: i32 = 0;
   while (i < n) { m = m.insert("k" + i.to_string(), i); i = i + 1; }
   return m.len();
 }
 function main(): i32 {
-  var total: i32 = 0;
-  var r: i32 = 0;
+  let total: i32 = 0;
+  let r: i32 = 0;
   while (r < 300) { total = total + count(r % 17); r = r + 1; }
   stdout().write("total=" + total.to_string() + "\n");
   return 0;
@@ -121,7 +121,7 @@ function main(): i32 {
 		src: `import "std/i32";
 import "core/map";
 function main(): i32 {
-  var h: usize = map_new_impl(4, 0, 0);
+  let h: usize = map_new_impl(4, 0, 0);
   __store_i32(h - 8, 0);
   __map_drop_impl(h);
   stdout().write("underflows=" + __rc_underflow_count().to_string() + "\n");

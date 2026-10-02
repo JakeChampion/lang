@@ -48,7 +48,7 @@ func TestArm64ExitCode(t *testing.T) {
 }
 
 // Issue #4871 (arm64 arm of the x86 TestX86_64NativeMapFieldStructRebindIndirect):
-// `var m = s.m.insert(...); return ISet { m: m }`, self-reassigned `s = iset_add(s,
+// `let m = s.m.insert(...); return ISet { m: m }`, self-reassigned `s = iset_add(s,
 // x)`, aliased the borrowed receiver's in-place Map buffer and corrupted it on the
 // second wrap-insert (the issue reports arm64 corruption; here it hung). The
 // StructLit clone now covers the var-indirected mutator result, so the shared-IR
@@ -58,12 +58,12 @@ func TestArm64MapFieldStructRebindIndirect(t *testing.T) {
 import "core/map";
 struct ISet { m: Map[i32, i32] }
 function iset_add(s: ISet, x: i32): ISet {
-    var m: Map[i32, i32] = s.m.insert(x, 1);
+    let m: Map[i32, i32] = s.m.insert(x, 1);
     return ISet { m: m };
 }
 function main(): i32 {
-    var m0: Map[i32, i32] = map_new(4);
-    var s: ISet = ISet { m: m0 };
+    let m0: Map[i32, i32] = map_new(4);
+    let s: ISet = ISet { m: m0 };
     s = iset_add(s, 10);
     s = iset_add(s, 20);
     s = iset_add(s, 10);
@@ -87,7 +87,7 @@ func TestArm64Arithmetic(t *testing.T) {
 		{`function main(): i32 { return 100 - 7 * 8; }`, 44},
 		{`function main(): i32 { return 100 / 7; }`, 14},
 		{`function main(): i32 { return 100 % 7; }`, 2},
-		{`function main(): i32 { var x: i32 = 5; var y: i32 = 7; return x * y; }`, 35},
+		{`function main(): i32 { let x: i32 = 5; let y: i32 = 7; return x * y; }`, 35},
 		{`function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 { return add(20, 22); }`, 42},
 		{`function fib(n: i32): i32 {
@@ -112,7 +112,7 @@ func TestArm64StringLiteralLen(t *testing.T) {
 		src  string
 		want int
 	}{
-		{`function main(): i32 { var s: string = "hello"; return s.len(); }`, 5},
+		{`function main(): i32 { let s: string = "hello"; return s.len(); }`, 5},
 		{`function main(): i32 { return ("").len(); }`, 0},
 		{`function main(): i32 { return ("hi\nthere").len(); }`, 8},
 	} {
@@ -137,15 +137,15 @@ func TestArm64Transcendentals(t *testing.T) {
 	}{
 		{"sin_0", "function main(): i32 { return __sin_f64(0.0) as i32; }", 0},
 		{"cos_0", "function main(): i32 { return __cos_f64(0.0) as i32; }", 1},
-		{"sin_halfpi", "function main(): i32 { var r: f64 = __sin_f64(1.5707963267948966); if (r > 0.999 && r < 1.001) { return 7; } return 0; }", 7},
-		{"cos_pi", "function main(): i32 { var r: f64 = __cos_f64(3.141592653589793); if (r > 0.0 - 1.001 && r < 0.0 - 0.999) { return 7; } return 0; }", 7},
+		{"sin_halfpi", "function main(): i32 { let r: f64 = __sin_f64(1.5707963267948966); if (r > 0.999 && r < 1.001) { return 7; } return 0; }", 7},
+		{"cos_pi", "function main(): i32 { let r: f64 = __cos_f64(3.141592653589793); if (r > 0.0 - 1.001 && r < 0.0 - 0.999) { return 7; } return 0; }", 7},
 		{"exp_0", "function main(): i32 { return __exp_f64(0.0) as i32; }", 1},
 		{"exp_2", "function main(): i32 { return __exp_f64(2.0) as i32; }", 7},
 		{"log_10", "function main(): i32 { return __log_f64(10.0) as i32; }", 2},
-		{"exp_log_roundtrip", "function main(): i32 { var r: f64 = __log_f64(__exp_f64(3.0)); if (r > 2.999 && r < 3.001) { return 7; } return 0; }", 7},
+		{"exp_log_roundtrip", "function main(): i32 { let r: f64 = __log_f64(__exp_f64(3.0)); if (r > 2.999 && r < 3.001) { return 7; } return 0; }", 7},
 		{"pow_int", "function main(): i32 { return __pow_f64(2.0, 5.0) as i32; }", 32},
 		{"pow_3_2", "function main(): i32 { return __pow_f64(3.0, 2.0) as i32; }", 9},
-		{"pow_sqrt", "function main(): i32 { var r: f64 = __pow_f64(2.0, 0.5); if (r > 1.41 && r < 1.42) { return 7; } return 0; }", 7},
+		{"pow_sqrt", "function main(): i32 { let r: f64 = __pow_f64(2.0, 0.5); if (r > 1.41 && r < 1.42) { return 7; } return 0; }", 7},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, code := compileAndRunArm64(t, c.src)
@@ -165,12 +165,12 @@ func TestArm64StringConcat(t *testing.T) {
 		want int
 	}{
 		{`function main(): i32 {
-    var s: string = "hello, " + "world!";
+    let s: string = "hello, " + "world!";
     return s.len();
 }`, 13},
 		{`function main(): i32 {
-    var greeting: string = "good ";
-    var name: string = "morning";
+    let greeting: string = "good ";
+    let name: string = "morning";
     return (greeting + name).len();
 }`, 12},
 	} {
@@ -204,9 +204,9 @@ function eval(e: Expr): i32 {
 }
 
 function main(): i32 {
-    var lhs: Expr = Add(Add { l: 2, r: 3 });
-    var rhs: Expr = Lit(Lit { v: 4 });
-    var prod: Expr = Mul(Mul { l: eval(lhs), r: eval(rhs) });
+    let lhs: Expr = Add(Add { l: 2, r: 3 });
+    let rhs: Expr = Lit(Lit { v: 4 });
+    let prod: Expr = Mul(Mul { l: eval(lhs), r: eval(rhs) });
     return eval(prod);
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -236,9 +236,9 @@ function leafOf(t: Tree[i32]): i32 {
 }
 
 function main(): i32 {
-    var a: Tree[i32] = Tree.Leaf(Leaf[i32] { v: 4 });
-    var b: Tree[i32] = Pair[i32] { a: 5, b: 6 };
-    var c: Tree[i32] = Lit { v: 7 };
+    let a: Tree[i32] = Tree.Leaf(Leaf[i32] { v: 4 });
+    let b: Tree[i32] = Pair[i32] { a: 5, b: 6 };
+    let c: Tree[i32] = Lit { v: 7 };
     return leafOf(a) + leafOf(b) + leafOf(c);
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -285,22 +285,22 @@ struct ParseError { message: string, pos: i32 }
 struct EvalError  { message: string }
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha() || b == 95) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) {
                 i = i + 1;
             }
@@ -333,33 +333,33 @@ function peek_ident(toks: Token[], pos: i32): string {
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
-    var pos: i32 = cur.get();
-    var k: i32 = peek_kind(toks, pos);
+    let pos: i32 = cur.get();
+    let k: i32 = peek_kind(toks, pos);
     if (k == 0) {
-        var iv: i32 = peek_int(toks, pos);
+        let iv: i32 = peek_int(toks, pos);
         cur.set(pos + 1);
-        var n: Expr = Num { value: iv };
+        let n: Expr = Num { value: iv };
         return Ok(n);
     }
     if (k == 1) {
-        var name: string = peek_ident(toks, pos);
+        let name: string = peek_ident(toks, pos);
         cur.set(pos + 1);
-        var ve: Expr = Var { name: name };
+        let ve: Expr = Var { name: name };
         return Ok(ve);
     }
     if (k == 3) {
         return Err(ParseError { message: "unexpected end of input", pos: pos });
     }
-    var p: i32 = peek_punct(toks, pos);
+    let p: i32 = peek_punct(toks, pos);
     if (p != 40) {
         return Err(ParseError { message: "expected number, ident, or paren", pos: pos });
     }
     cur.set(pos + 1);
-    var inner_r: Result[Expr, ParseError] = parse_expr(toks, cur);
+    let inner_r: Result[Expr, ParseError] = parse_expr(toks, cur);
     match (inner_r) {
         Err(e) => { return Err(e); },
         Ok(inner_e) => {
-            var ep: i32 = cur.get();
+            let ep: i32 = cur.get();
             if (peek_kind(toks, ep) != 2 || peek_punct(toks, ep) != 41) {
                 return Err(ParseError { message: "missing close paren", pos: ep });
             }
@@ -370,18 +370,18 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
-    var lhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
+    let lhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
     match (lhs_r) {
         Err(e) => { return Err(e); },
         Ok(lhs_e) => {
-            var lhs: Expr = lhs_e;
+            let lhs: Expr = lhs_e;
             while (true) {
-                var pos: i32 = cur.get();
+                let pos: i32 = cur.get();
                 if (peek_kind(toks, pos) != 2) { return Ok(lhs); }
-                var op: i32 = peek_punct(toks, pos);
+                let op: i32 = peek_punct(toks, pos);
                 if (op != 42 && op != 47) { return Ok(lhs); }
                 cur.set(pos + 1);
-                var rhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
+                let rhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
                 match (rhs_r) {
                     Err(e) => { return Err(e); },
                     Ok(rhs_e) => {
@@ -395,18 +395,18 @@ function parse_term(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
 }
 
 function parse_expr(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
-    var lhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
+    let lhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
     match (lhs_r) {
         Err(e) => { return Err(e); },
         Ok(lhs_e) => {
-            var lhs: Expr = lhs_e;
+            let lhs: Expr = lhs_e;
             while (true) {
-                var pos: i32 = cur.get();
+                let pos: i32 = cur.get();
                 if (peek_kind(toks, pos) != 2) { return Ok(lhs); }
-                var op: i32 = peek_punct(toks, pos);
+                let op: i32 = peek_punct(toks, pos);
                 if (op != 43 && op != 45) { return Ok(lhs); }
                 cur.set(pos + 1);
-                var rhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
+                let rhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
                 match (rhs_r) {
                     Err(e) => { return Err(e); },
                     Ok(rhs_e) => {
@@ -420,7 +420,7 @@ function parse_expr(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
 }
 
 function lookup(names: string[], values: i32[], name: string): Result[i32, EvalError] {
-    var i: i32 = names.len() - 1;
+    let i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return Ok(values[i]); }
         i = i - 1;
@@ -433,11 +433,11 @@ function eval_expr(e: Expr, names: string[], values: i32[]): Result[i32, EvalErr
         Num(n) => { return Ok(n.value); },
         Var(v) => { return lookup(names, values, v.name); },
         BinOp(b) => {
-            var lr: Result[i32, EvalError] = eval_expr(b.left, names, values);
+            let lr: Result[i32, EvalError] = eval_expr(b.left, names, values);
             match (lr) {
                 Err(le) => { return Err(le); },
                 Ok(l) => {
-                    var rr: Result[i32, EvalError] = eval_expr(b.right, names, values);
+                    let rr: Result[i32, EvalError] = eval_expr(b.right, names, values);
                     match (rr) {
                         Err(re) => { return Err(re); },
                         Ok(r) => {
@@ -460,9 +460,9 @@ function eval_expr(e: Expr, names: string[], values: i32[]): Result[i32, EvalErr
 // real eval result (a parse error during a self-host test is a
 // test bug, not a thing to surface).
 function parse_and_eval(src: string, names: string[], values: i32[]): Result[i32, EvalError] {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
-    var pr: Result[Expr, ParseError] = parse_expr(toks, cur);
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
+    let pr: Result[Expr, ParseError] = parse_expr(toks, cur);
     match (pr) {
         Err(pe) => { return Err(EvalError { message: "parse failed: " + pe.message }); },
         Ok(e) => { return eval_expr(e, names, values); },
@@ -470,41 +470,41 @@ function parse_and_eval(src: string, names: string[], values: i32[]): Result[i32
 }
 
 function main(): i32 {
-    var names: string[] = ["x", "y", "z"];
-    var values: i32[] = [3, 4, 10];
+    let names: string[] = ["x", "y", "z"];
+    let values: i32[] = [3, 4, 10];
 
     // Bare variable reference: x = 3.
-    var r1: Result[i32, EvalError] = parse_and_eval("x", names, values);
+    let r1: Result[i32, EvalError] = parse_and_eval("x", names, values);
     match (r1) {
         Err(_) => { return 1; },
         Ok(n1) => { if (n1 != 3) { return 2; } },
     }
 
     // Variable + literal with precedence: x + y * 2 = 3 + 8 = 11.
-    var r2: Result[i32, EvalError] = parse_and_eval("x + y * 2", names, values);
+    let r2: Result[i32, EvalError] = parse_and_eval("x + y * 2", names, values);
     match (r2) {
         Err(_) => { return 3; },
         Ok(n2) => { if (n2 != 11) { return 4; } },
     }
 
     // Parenthesised expression with vars: (x + y) * z = 70.
-    var r3: Result[i32, EvalError] = parse_and_eval("(x + y) * z", names, values);
+    let r3: Result[i32, EvalError] = parse_and_eval("(x + y) * z", names, values);
     match (r3) {
         Err(_) => { return 5; },
         Ok(n3) => { if (n3 != 70) { return 6; } },
     }
 
     // Undefined variable surfaces a clean Eval error.
-    var r4: Result[i32, EvalError] = parse_and_eval("missing + 1", names, values);
+    let r4: Result[i32, EvalError] = parse_and_eval("missing + 1", names, values);
     match (r4) {
         Ok(_) => { return 7; },
         Err(ee) => { if (!ee.message.contains("missing")) { return 8; } },
     }
 
     // Shadowing: the latest binding wins.
-    var snames: string[] = ["x", "x"];
-    var svalues: i32[] = [1, 99];
-    var r5: Result[i32, EvalError] = parse_and_eval("x", snames, svalues);
+    let snames: string[] = ["x", "x"];
+    let svalues: i32[] = [1, 99];
+    let r5: Result[i32, EvalError] = parse_and_eval("x", snames, svalues);
     match (r5) {
         Err(_) => { return 9; },
         Ok(n5) => { if (n5 != 99) { return 10; } },
@@ -547,15 +547,15 @@ type Expr = Num | BinOp;
 struct ParseError { message: string, pos: i32 }
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
@@ -585,27 +585,27 @@ function peek_int(toks: Token[], pos: i32): i32 {
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
-    var pos: i32 = cur.get();
-    var k: i32 = peek_kind(toks, pos);
+    let pos: i32 = cur.get();
+    let k: i32 = peek_kind(toks, pos);
     if (k == 0) {
-        var v: i32 = peek_int(toks, pos);
+        let v: i32 = peek_int(toks, pos);
         cur.set(pos + 1);
-        var n: Expr = Num { value: v };
+        let n: Expr = Num { value: v };
         return Ok(n);
     }
     if (k == 2) {
         return Err(ParseError { message: "unexpected end of input", pos: pos });
     }
-    var p: i32 = peek_punct(toks, pos);
+    let p: i32 = peek_punct(toks, pos);
     if (p != 40) {
         return Err(ParseError { message: "expected number or paren", pos: pos });
     }
     cur.set(pos + 1);
-    var inner_r: Result[Expr, ParseError] = parse_expr(toks, cur);
+    let inner_r: Result[Expr, ParseError] = parse_expr(toks, cur);
     match (inner_r) {
         Err(e) => { return Err(e); },
         Ok(inner_e) => {
-            var ep: i32 = cur.get();
+            let ep: i32 = cur.get();
             if (peek_kind(toks, ep) != 1 || peek_punct(toks, ep) != 41) {
                 return Err(ParseError { message: "missing close paren", pos: ep });
             }
@@ -616,18 +616,18 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
-    var lhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
+    let lhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
     match (lhs_r) {
         Err(e) => { return Err(e); },
         Ok(lhs_e) => {
-            var lhs: Expr = lhs_e;
+            let lhs: Expr = lhs_e;
             while (true) {
-                var pos: i32 = cur.get();
+                let pos: i32 = cur.get();
                 if (peek_kind(toks, pos) != 1) { return Ok(lhs); }
-                var op: i32 = peek_punct(toks, pos);
+                let op: i32 = peek_punct(toks, pos);
                 if (op != 42 && op != 47) { return Ok(lhs); }
                 cur.set(pos + 1);
-                var rhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
+                let rhs_r: Result[Expr, ParseError] = parse_factor(toks, cur);
                 match (rhs_r) {
                     Err(e) => { return Err(e); },
                     Ok(rhs_e) => {
@@ -641,18 +641,18 @@ function parse_term(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
 }
 
 function parse_expr(toks: Token[], cur: Cell[i32]): Result[Expr, ParseError] {
-    var lhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
+    let lhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
     match (lhs_r) {
         Err(e) => { return Err(e); },
         Ok(lhs_e) => {
-            var lhs: Expr = lhs_e;
+            let lhs: Expr = lhs_e;
             while (true) {
-                var pos: i32 = cur.get();
+                let pos: i32 = cur.get();
                 if (peek_kind(toks, pos) != 1) { return Ok(lhs); }
-                var op: i32 = peek_punct(toks, pos);
+                let op: i32 = peek_punct(toks, pos);
                 if (op != 43 && op != 45) { return Ok(lhs); }
                 cur.set(pos + 1);
-                var rhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
+                let rhs_r: Result[Expr, ParseError] = parse_term(toks, cur);
                 match (rhs_r) {
                     Err(e) => { return Err(e); },
                     Ok(rhs_e) => {
@@ -669,8 +669,8 @@ function eval_expr(e: Expr): i32 {
     match (e) {
         Num(n) => { return n.value; },
         BinOp(b) => {
-            var l: i32 = eval_expr(b.left);
-            var r: i32 = eval_expr(b.right);
+            let l: i32 = eval_expr(b.left);
+            let r: i32 = eval_expr(b.right);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
@@ -680,9 +680,9 @@ function eval_expr(e: Expr): i32 {
 }
 
 function interp(src: string): Result[i32, ParseError] {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
-    var ast_r: Result[Expr, ParseError] = parse_expr(toks, cur);
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
+    let ast_r: Result[Expr, ParseError] = parse_expr(toks, cur);
     match (ast_r) {
         Err(e) => { return Err(e); },
         Ok(ast) => { return Ok(eval_expr(ast)); },
@@ -690,27 +690,27 @@ function interp(src: string): Result[i32, ParseError] {
 }
 
 function main(): i32 {
-    var ok1: Result[i32, ParseError] = interp("1 + 2 * 3");
+    let ok1: Result[i32, ParseError] = interp("1 + 2 * 3");
     match (ok1) {
         Ok(v) => { if (v != 7) { return 1; } },
         Err(_) => { return 2; },
     }
-    var ok2: Result[i32, ParseError] = interp("(1 + 2) * 3");
+    let ok2: Result[i32, ParseError] = interp("(1 + 2) * 3");
     match (ok2) {
         Ok(v) => { if (v != 9) { return 3; } },
         Err(_) => { return 4; },
     }
-    var err1: Result[i32, ParseError] = interp("");
+    let err1: Result[i32, ParseError] = interp("");
     match (err1) {
         Ok(_) => { return 5; },
         Err(e) => { if (!e.message.contains("unexpected end")) { return 6; } },
     }
-    var err2: Result[i32, ParseError] = interp("(1 + 2");
+    let err2: Result[i32, ParseError] = interp("(1 + 2");
     match (err2) {
         Ok(_) => { return 7; },
         Err(e) => { if (!e.message.contains("close paren")) { return 8; } },
     }
-    var err3: Result[i32, ParseError] = interp("1 + +");
+    let err3: Result[i32, ParseError] = interp("1 + +");
     match (err3) {
         Ok(_) => { return 9; },
         Err(e) => { if (!e.message.contains("expected number")) { return 10; } },
@@ -739,7 +739,7 @@ func TestArm64StructLitWithArrayPush(t *testing.T) {
 	src := `struct State { vals: i32[] }
 
 function main(): i32 {
-    var s: State = State { vals: [10] };
+    let s: State = State { vals: [10] };
     s = State { vals: s.vals.append(42) };
     return s.vals[0] + s.vals[1];
 }`
@@ -800,22 +800,22 @@ type Stmt = VarDecl | Assign | Return | WhileSt | IfSt | ExprSt;
 struct FnDef { name: string, params: string[], body: Stmt[] }
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha() || b == 95) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
@@ -869,18 +869,18 @@ function is_comp_op(op: i32): boolean {
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        var name: string = tok_ident_name(toks[pos]);
+        let name: string = tok_ident_name(toks[pos]);
         cur.set(pos + 1);
         if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 40) {
             cur.set(cur.get() + 1);
-            var args: Expr[] = [];
+            let args: Expr[] = [];
             if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 41) {
                 cur.set(cur.get() + 1);
                 return Call { name: name, args: args };
@@ -896,47 +896,47 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
         return Var { name: name };
     }
     cur.set(pos + 1);
-    var inner: Expr = parse_expr(toks, cur);
+    let inner: Expr = parse_expr(toks, cur);
     cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_arith(toks, cur);
-    var pos: i32 = cur.get();
+    let lhs: Expr = parse_arith(toks, cur);
+    let pos: i32 = cur.get();
     if (tok_kind(toks[pos]) != 2) { return lhs; }
-    var op: i32 = tok_punct_ch(toks[pos]);
+    let op: i32 = tok_punct_ch(toks[pos]);
     if (!is_comp_op(op)) { return lhs; }
     cur.set(pos + 1);
-    var rhs: Expr = parse_arith(toks, cur);
+    let rhs: Expr = parse_arith(toks, cur);
     return BinOp { op: op, left: lhs, right: rhs };
 }
 
@@ -945,10 +945,10 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
 }
 
 function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
-    var name: string = "";
-    var value: Expr = Num { value: 0 };
-    var cond: Expr = Num { value: 0 };
-    var body: Stmt[] = [];
+    let name: string = "";
+    let value: Expr = Num { value: 0 };
+    let cond: Expr = Num { value: 0 };
+    let body: Stmt[] = [];
     if (expect_kw(toks, cur.get(), "var")) {
         cur.set(cur.get() + 1);
         name = tok_ident_name(toks[cur.get()]);
@@ -983,13 +983,13 @@ function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
         cond = parse_expr(toks, cur);
         cur.set(cur.get() + 1);   // )
         cur.set(cur.get() + 1);   // {
-        var thn: Stmt[] = [];
+        let thn: Stmt[] = [];
         while (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 125) {
             thn = thn.append(parse_stmt(toks, cur));
         }
         cur.set(cur.get() + 1);   // }
         // Optional else / else if.
-        var els: Stmt[] = [];
+        let els: Stmt[] = [];
         if (expect_kw(toks, cur.get(), "else")) {
             cur.set(cur.get() + 1);
             if (expect_kw(toks, cur.get(), "if")) {
@@ -1022,15 +1022,15 @@ function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
 struct Program { fns: FnDef[], main_stmts: Stmt[] }
 
 function parse_program(src: string): Program {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
-    var fns: FnDef[] = [];
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
+    let fns: FnDef[] = [];
     while (expect_kw(toks, cur.get(), "fn")) {
         cur.set(cur.get() + 1);
-        var name: string = tok_ident_name(toks[cur.get()]);
+        let name: string = tok_ident_name(toks[cur.get()]);
         cur.set(cur.get() + 1);
         cur.set(cur.get() + 1);
-        var params: string[] = [];
+        let params: string[] = [];
         if (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 41) {
             params = params.append(tok_ident_name(toks[cur.get()]));
             cur.set(cur.get() + 1);
@@ -1042,14 +1042,14 @@ function parse_program(src: string): Program {
         }
         cur.set(cur.get() + 1);
         cur.set(cur.get() + 1);
-        var body: Stmt[] = [];
+        let body: Stmt[] = [];
         while (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
         cur.set(cur.get() + 1);
         fns = fns.append(FnDef { name: name, params: params, body: body });
     }
-    var main_stmts: Stmt[] = [];
+    let main_stmts: Stmt[] = [];
     while (tok_kind(toks[cur.get()]) != 3) {
         main_stmts = main_stmts.append(parse_stmt(toks, cur));
     }
@@ -1059,7 +1059,7 @@ function parse_program(src: string): Program {
 function bool_to_i32(b: boolean): i32 { if (b) { return 1; } return 0; }
 
 function find_fn(fns: FnDef[], name: string): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < fns.len()) {
         if (fns[i].name == name) { return i; }
         i = i + 1;
@@ -1068,7 +1068,7 @@ function find_fn(fns: FnDef[], name: string): i32 {
 }
 
 function env_lookup(names: string[], values: i32[], name: string): i32 {
-    var i: i32 = names.len() - 1;
+    let i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return values[i]; }
         i = i - 1;
@@ -1077,11 +1077,11 @@ function env_lookup(names: string[], values: i32[], name: string): i32 {
 }
 
 function env_assign(names: string[], values: i32[], name: string, v: i32): i32[] {
-    var i: i32 = names.len() - 1;
+    let i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) {
-            var out: i32[] = [];
-            var j: i32 = 0;
+            let out: i32[] = [];
+            let j: i32 = 0;
             while (j < values.len()) {
                 if (j == i) { out = out.append(v); }
                 else { out = out.append(values[j]); }
@@ -1099,8 +1099,8 @@ function eval_expr(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
         Num(n) => { return n.value; },
         Var(v) => { return env_lookup(names, values, v.name); },
         BinOp(b) => {
-            var l: i32 = eval_expr(b.left, names, values, fns);
-            var r: i32 = eval_expr(b.right, names, values, fns);
+            let l: i32 = eval_expr(b.left, names, values, fns);
+            let r: i32 = eval_expr(b.right, names, values, fns);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
@@ -1113,16 +1113,16 @@ function eval_expr(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
             return bool_to_i32(l >= r);
         },
         Call(c) => {
-            var idx: i32 = find_fn(fns, c.name);
-            var fresh_n: string[] = [];
-            var fresh_v: i32[] = [];
-            var i: i32 = 0;
+            let idx: i32 = find_fn(fns, c.name);
+            let fresh_n: string[] = [];
+            let fresh_v: i32[] = [];
+            let i: i32 = 0;
             while (i < c.args.len()) {
                 fresh_n = fresh_n.append(fns[idx].params[i]);
                 fresh_v = fresh_v.append(eval_expr(c.args[i], names, values, fns));
                 i = i + 1;
             }
-            var inner: StepState = run_block(fns[idx].body, fresh_n, fresh_v, fns);
+            let inner: StepState = run_block(fns[idx].body, fresh_n, fresh_v, fns);
             return inner.result;
         },
     }
@@ -1136,8 +1136,8 @@ struct StepState {
 }
 
 function eval_stmt(s: Stmt, state: StepState, fns: FnDef[]): StepState {
-    var v: i32 = 0;
-    var i: i32 = 0;
+    let v: i32 = 0;
+    let i: i32 = 0;
     match (s) {
         VarDecl(vd) => {
             v = eval_expr(vd.value, state.names, state.values, fns);
@@ -1200,13 +1200,13 @@ function eval_stmt(s: Stmt, state: StepState, fns: FnDef[]): StepState {
 }
 
 function run_block(stmts: Stmt[], names: string[], values: i32[], fns: FnDef[]): StepState {
-    var state: StepState = StepState {
+    let state: StepState = StepState {
         names: names,
         values: values,
         done: false,
         result: 0,
     };
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < stmts.len() && !state.done) {
         state = eval_stmt(stmts[i], state, fns);
         i = i + 1;
@@ -1215,9 +1215,9 @@ function run_block(stmts: Stmt[], names: string[], values: i32[], fns: FnDef[]):
 }
 
 function run(src: string): i32 {
-    var p: Program = parse_program(src);
-    var empty_n: string[] = [];
-    var empty_v: i32[] = [];
+    let p: Program = parse_program(src);
+    let empty_n: string[] = [];
+    let empty_v: i32[] = [];
     return run_block(p.main_stmts, empty_n, empty_v, p.fns).result;
 }
 
@@ -1246,7 +1246,7 @@ function main(): i32 {
     if (run("fn fib(n) { if (n == 0) { return 0; } else if (n == 1) { return 1; } else { return fib(n - 1) + fib(n - 2); } } return fib(10);") != 55) { return 10; }
 
     // Empty else body — explicitly testing the els = [] path.
-    if (run("var x = 5; if (x > 0) { x = 100; } else { } return x;") != 100) { return 11; }
+    if (run("let x = 5; if (x > 0) { x = 100; } else { } return x;") != 100) { return 11; }
 
     return 0;
 }`
@@ -1318,22 +1318,22 @@ type Stmt = VarDecl | Assign | Return | WhileSt | IfSt | ExprSt;
 struct FnDef { name: string, params: string[], body: Stmt[] }
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha() || b == 95) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
@@ -1387,19 +1387,19 @@ function is_comp_op(op: i32): boolean {
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        var name: string = tok_ident_name(toks[pos]);
+        let name: string = tok_ident_name(toks[pos]);
         cur.set(pos + 1);
         // Call vs Var disambiguation on '(' lookahead.
         if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 40) {
             cur.set(cur.get() + 1);   // skip '('
-            var args: Expr[] = [];
+            let args: Expr[] = [];
             if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 41) {
                 cur.set(cur.get() + 1);
                 return Call { name: name, args: args };
@@ -1415,47 +1415,47 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
         return Var { name: name };
     }
     cur.set(pos + 1);   // skip '('
-    var inner: Expr = parse_expr(toks, cur);
+    let inner: Expr = parse_expr(toks, cur);
     cur.set(cur.get() + 1);   // skip ')'
     return inner;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_arith(toks, cur);
-    var pos: i32 = cur.get();
+    let lhs: Expr = parse_arith(toks, cur);
+    let pos: i32 = cur.get();
     if (tok_kind(toks[pos]) != 2) { return lhs; }
-    var op: i32 = tok_punct_ch(toks[pos]);
+    let op: i32 = tok_punct_ch(toks[pos]);
     if (!is_comp_op(op)) { return lhs; }
     cur.set(pos + 1);
-    var rhs: Expr = parse_arith(toks, cur);
+    let rhs: Expr = parse_arith(toks, cur);
     return BinOp { op: op, left: lhs, right: rhs };
 }
 
@@ -1464,8 +1464,8 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
 }
 
 function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
-    var name: string = "";
-    var value: Expr = Num { value: 0 };
+    let name: string = "";
+    let value: Expr = Num { value: 0 };
     if (expect_kw(toks, cur.get(), "var")) {
         cur.set(cur.get() + 1);
         name = tok_ident_name(toks[cur.get()]);
@@ -1483,8 +1483,8 @@ function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
     }
     // Hoist cond / body across the while / if arms — wasm
     // rejects sibling-scope duplicate locals.
-    var cond: Expr = Num { value: 0 };
-    var body: Stmt[] = [];
+    let cond: Expr = Num { value: 0 };
+    let body: Stmt[] = [];
     if (expect_kw(toks, cur.get(), "while")) {
         cur.set(cur.get() + 1);
         cur.set(cur.get() + 1);   // skip '('
@@ -1530,15 +1530,15 @@ function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
 struct Program { fns: FnDef[], main_stmts: Stmt[] }
 
 function parse_program(src: string): Program {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
-    var fns: FnDef[] = [];
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
+    let fns: FnDef[] = [];
     while (expect_kw(toks, cur.get(), "fn")) {
         cur.set(cur.get() + 1);
-        var name: string = tok_ident_name(toks[cur.get()]);
+        let name: string = tok_ident_name(toks[cur.get()]);
         cur.set(cur.get() + 1);
         cur.set(cur.get() + 1);   // skip '('
-        var params: string[] = [];
+        let params: string[] = [];
         if (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 41) {
             params = params.append(tok_ident_name(toks[cur.get()]));
             cur.set(cur.get() + 1);
@@ -1550,14 +1550,14 @@ function parse_program(src: string): Program {
         }
         cur.set(cur.get() + 1);   // skip ')'
         cur.set(cur.get() + 1);   // skip '{'
-        var body: Stmt[] = [];
+        let body: Stmt[] = [];
         while (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
         cur.set(cur.get() + 1);   // skip '}'
         fns = fns.append(FnDef { name: name, params: params, body: body });
     }
-    var main_stmts: Stmt[] = [];
+    let main_stmts: Stmt[] = [];
     while (tok_kind(toks[cur.get()]) != 3) {
         main_stmts = main_stmts.append(parse_stmt(toks, cur));
     }
@@ -1567,7 +1567,7 @@ function parse_program(src: string): Program {
 function bool_to_i32(b: boolean): i32 { if (b) { return 1; } return 0; }
 
 function find_fn(fns: FnDef[], name: string): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < fns.len()) {
         if (fns[i].name == name) { return i; }
         i = i + 1;
@@ -1576,7 +1576,7 @@ function find_fn(fns: FnDef[], name: string): i32 {
 }
 
 function env_lookup(names: string[], values: i32[], name: string): i32 {
-    var i: i32 = names.len() - 1;
+    let i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return values[i]; }
         i = i - 1;
@@ -1585,11 +1585,11 @@ function env_lookup(names: string[], values: i32[], name: string): i32 {
 }
 
 function env_assign(names: string[], values: i32[], name: string, v: i32): i32[] {
-    var i: i32 = names.len() - 1;
+    let i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) {
-            var out: i32[] = [];
-            var j: i32 = 0;
+            let out: i32[] = [];
+            let j: i32 = 0;
             while (j < values.len()) {
                 if (j == i) { out = out.append(v); }
                 else { out = out.append(values[j]); }
@@ -1607,8 +1607,8 @@ function eval_expr(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
         Num(n) => { return n.value; },
         Var(v) => { return env_lookup(names, values, v.name); },
         BinOp(b) => {
-            var l: i32 = eval_expr(b.left, names, values, fns);
-            var r: i32 = eval_expr(b.right, names, values, fns);
+            let l: i32 = eval_expr(b.left, names, values, fns);
+            let r: i32 = eval_expr(b.right, names, values, fns);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
@@ -1621,10 +1621,10 @@ function eval_expr(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
             return bool_to_i32(l >= r);
         },
         Call(c) => {
-            var idx: i32 = find_fn(fns, c.name);
-            var fresh_n: string[] = [];
-            var fresh_v: i32[] = [];
-            var i: i32 = 0;
+            let idx: i32 = find_fn(fns, c.name);
+            let fresh_n: string[] = [];
+            let fresh_v: i32[] = [];
+            let i: i32 = 0;
             while (i < c.args.len()) {
                 fresh_n = fresh_n.append(fns[idx].params[i]);
                 fresh_v = fresh_v.append(eval_expr(c.args[i], names, values, fns));
@@ -1635,7 +1635,7 @@ function eval_expr(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
             // fires first; if none fires the function falls off
             // the end and the result is whatever state.result
             // started at (0).
-            var inner: StepState = run_block(fns[idx].body, fresh_n, fresh_v, fns);
+            let inner: StepState = run_block(fns[idx].body, fresh_n, fresh_v, fns);
             return inner.result;
         },
     }
@@ -1649,8 +1649,8 @@ struct StepState {
 }
 
 function eval_stmt(s: Stmt, state: StepState, fns: FnDef[]): StepState {
-    var v: i32 = 0;
-    var i: i32 = 0;   // hoisted: sibling-scope dups in WhileSt / IfSt
+    let v: i32 = 0;
+    let i: i32 = 0;   // hoisted: sibling-scope dups in WhileSt / IfSt
     match (s) {
         VarDecl(vd) => {
             v = eval_expr(vd.value, state.names, state.values, fns);
@@ -1708,13 +1708,13 @@ function eval_stmt(s: Stmt, state: StepState, fns: FnDef[]): StepState {
 }
 
 function run_block(stmts: Stmt[], names: string[], values: i32[], fns: FnDef[]): StepState {
-    var state: StepState = StepState {
+    let state: StepState = StepState {
         names: names,
         values: values,
         done: false,
         result: 0,
     };
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < stmts.len() && !state.done) {
         state = eval_stmt(stmts[i], state, fns);
         i = i + 1;
@@ -1723,9 +1723,9 @@ function run_block(stmts: Stmt[], names: string[], values: i32[], fns: FnDef[]):
 }
 
 function run(src: string): i32 {
-    var p: Program = parse_program(src);
-    var empty_n: string[] = [];
-    var empty_v: i32[] = [];
+    let p: Program = parse_program(src);
+    let empty_n: string[] = [];
+    let empty_v: i32[] = [];
     return run_block(p.main_stmts, empty_n, empty_v, p.fns).result;
 }
 
@@ -1743,7 +1743,7 @@ function main(): i32 {
     if (run("fn fact(n) { if (n == 0) { return 1; } return n * fact(n - 1); } return fact(5);") != 120) { return 4; }
 
     // Iterative factorial — function body uses while + locals.
-    if (run("fn fact(n) { var f = 1; while (n > 0) { f = f * n; n = n - 1; } return f; } return fact(6);") != 720) { return 6; }
+    if (run("fn fact(n) { let f = 1; while (n > 0) { f = f * n; n = n - 1; } return f; } return fact(6);") != 720) { return 6; }
 
     // gcd via Euclidean — two-arg recursion.
     if (run("fn gcd(a, b) { if (b == 0) { return a; } return gcd(b, a - a / b * b); } return gcd(48, 18);") != 6) { return 7; }
@@ -1753,7 +1753,7 @@ function main(): i32 {
     if (run("fn is_even(n) { if (n == 0) { return 1; } return is_odd(n - 1); } fn is_odd(n) { if (n == 0) { return 0; } return is_even(n - 1); } return is_even(10);") != 1) { return 8; }
 
     // Top-level main flow can mix calls with statements.
-    if (run("fn square(x) { return x * x; } var a = 5; var b = square(a); return b + 1;") != 26) { return 9; }
+    if (run("fn square(x) { return x * x; } let a = 5; let b = square(a); return b + 1;") != 26) { return 9; }
 
     // Composition — outer call's arg is itself a call.
     if (run("fn dbl(x) { return x + x; } fn sqr(x) { return x * x; } return dbl(sqr(3));") != 18) { return 10; }
@@ -1830,22 +1830,22 @@ struct WhileSt  { cond: Expr, body: Stmt[] }
 type Stmt = VarDecl | Assign | Return | WhileSt;
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha() || b == 95) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else if (b == 61 && i + 1 < n && src[i + 1] == 61) {
@@ -1899,8 +1899,8 @@ function is_comp_op(op: i32): boolean {
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
@@ -1910,34 +1910,34 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
         return Var { name: tok_ident_name(toks[pos]) };
     }
     cur.set(pos + 1);
-    var inner: Expr = parse_expr(toks, cur);
+    let inner: Expr = parse_expr(toks, cur);
     cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
@@ -1946,13 +1946,13 @@ function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
 // Single comparison layer atop arith. NON-chaining: each comp
 // arm takes one arith on each side.
 function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_arith(toks, cur);
-    var pos: i32 = cur.get();
+    let lhs: Expr = parse_arith(toks, cur);
+    let pos: i32 = cur.get();
     if (tok_kind(toks[pos]) != 2) { return lhs; }
-    var op: i32 = tok_punct_ch(toks[pos]);
+    let op: i32 = tok_punct_ch(toks[pos]);
     if (!is_comp_op(op)) { return lhs; }
     cur.set(pos + 1);
-    var rhs: Expr = parse_arith(toks, cur);
+    let rhs: Expr = parse_arith(toks, cur);
     return BinOp { op: op, left: lhs, right: rhs };
 }
 
@@ -1961,8 +1961,8 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
 }
 
 function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
-    var name: string = "";
-    var value: Expr = Num { value: 0 };
+    let name: string = "";
+    let value: Expr = Num { value: 0 };
     if (expect_kw(toks, cur.get(), "var")) {
         cur.set(cur.get() + 1);
         name = tok_ident_name(toks[cur.get()]);
@@ -1981,10 +1981,10 @@ function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
     if (expect_kw(toks, cur.get(), "while")) {
         cur.set(cur.get() + 1);
         cur.set(cur.get() + 1);   // skip '('
-        var cond: Expr = parse_expr(toks, cur);
+        let cond: Expr = parse_expr(toks, cur);
         cur.set(cur.get() + 1);   // skip ')'
         cur.set(cur.get() + 1);   // skip '{'
-        var body: Stmt[] = [];
+        let body: Stmt[] = [];
         while (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 125) {
             body = body.append(parse_stmt(toks, cur));
         }
@@ -2001,9 +2001,9 @@ function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
 }
 
 function parse_program(src: string): Stmt[] {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
-    var stmts: Stmt[] = [];
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
+    let stmts: Stmt[] = [];
     while (tok_kind(toks[cur.get()]) != 3) {
         stmts = stmts.append(parse_stmt(toks, cur));
     }
@@ -2016,7 +2016,7 @@ function eval_expr(e: Expr, names: string[], values: i32[]): i32 {
     match (e) {
         Num(n) => { return n.value; },
         Var(v) => {
-            var i: i32 = names.len() - 1;
+            let i: i32 = names.len() - 1;
             while (i >= 0) {
                 if (names[i] == v.name) { return values[i]; }
                 i = i - 1;
@@ -2024,8 +2024,8 @@ function eval_expr(e: Expr, names: string[], values: i32[]): i32 {
             return 0;
         },
         BinOp(b) => {
-            var l: i32 = eval_expr(b.left, names, values);
-            var r: i32 = eval_expr(b.right, names, values);
+            let l: i32 = eval_expr(b.left, names, values);
+            let r: i32 = eval_expr(b.right, names, values);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
@@ -2041,11 +2041,11 @@ function eval_expr(e: Expr, names: string[], values: i32[]): i32 {
 }
 
 function env_assign(names: string[], values: i32[], name: string, v: i32): i32[] {
-    var i: i32 = names.len() - 1;
+    let i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) {
-            var out: i32[] = [];
-            var j: i32 = 0;
+            let out: i32[] = [];
+            let j: i32 = 0;
             while (j < values.len()) {
                 if (j == i) { out = out.append(v); }
                 else { out = out.append(values[j]); }
@@ -2066,7 +2066,7 @@ struct StepState {
 }
 
 function eval_stmt(s: Stmt, state: StepState): StepState {
-    var v: i32 = 0;
+    let v: i32 = 0;
     match (s) {
         VarDecl(vd) => {
             v = eval_expr(vd.value, state.names, state.values);
@@ -2101,7 +2101,7 @@ function eval_stmt(s: Stmt, state: StepState): StepState {
             // State threads through iterations same as top-level
             // (state = eval_stmt(s, state) per stmt).
             while (!state.done && eval_expr(w.cond, state.names, state.values) != 0) {
-                var i: i32 = 0;
+                let i: i32 = 0;
                 while (i < w.body.len() && !state.done) {
                     state = eval_stmt(w.body[i], state);
                     i = i + 1;
@@ -2113,14 +2113,14 @@ function eval_stmt(s: Stmt, state: StepState): StepState {
 }
 
 function run(src: string): i32 {
-    var stmts: Stmt[] = parse_program(src);
-    var state: StepState = StepState {
+    let stmts: Stmt[] = parse_program(src);
+    let state: StepState = StepState {
         names: [],
         values: [],
         done: false,
         result: 0,
     };
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < stmts.len() && !state.done) {
         state = eval_stmt(stmts[i], state);
         i = i + 1;
@@ -2139,25 +2139,25 @@ function main(): i32 {
 
     // Sum 1..10 via a while loop. Tests state threading
     // through iterations + reassignment.
-    if (run("var s = 0; var i = 1; while (i <= 10) { s = s + i; i = i + 1; } return s;") != 55) { return 7; }
+    if (run("let s = 0; let i = 1; while (i <= 10) { s = s + i; i = i + 1; } return s;") != 55) { return 7; }
 
     // Factorial 5 via a loop — recursion-free Turing-complete
     // sanity. n! where n=5 → 120.
-    if (run("var n = 5; var f = 1; while (n > 0) { f = f * n; n = n - 1; } return f;") != 120) { return 8; }
+    if (run("let n = 5; let f = 1; while (n > 0) { f = f * n; n = n - 1; } return f;") != 120) { return 8; }
 
     // False initial cond — body never runs, vars from outside
     // are unchanged.
-    if (run("var x = 10; while (x < 0) { x = 999; } return x;") != 10) { return 9; }
+    if (run("let x = 10; while (x < 0) { x = 999; } return x;") != 10) { return 9; }
 
     // Early return inside a loop body. Confirms the done flag
     // short-circuits the inner stmt walk + the outer while.
     // The trailing return 99 is dead code — never fires
     // because the while's first iteration returns 0.
-    if (run("var i = 0; while (i < 100) { return i; i = i + 1; } return 99;") != 0) { return 10; }
+    if (run("let i = 0; while (i < 100) { return i; i = i + 1; } return 99;") != 0) { return 10; }
 
     // Nested while — accumulate i*j for i in 1..3, j in 1..3.
     // Expected: 1 + 2 + 3 + 2 + 4 + 6 + 3 + 6 + 9 = 36.
-    if (run("var s = 0; var i = 1; while (i <= 3) { var j = 1; while (j <= 3) { s = s + i * j; j = j + 1; } i = i + 1; } return s;") != 36) { return 11; }
+    if (run("let s = 0; let i = 1; while (i <= 3) { let j = 1; while (j <= 3) { s = s + i * j; j = j + 1; } i = i + 1; } return s;") != 36) { return 11; }
 
     return 0;
 }`
@@ -2167,7 +2167,7 @@ function main(): i32 {
 	}
 }
 
-// Stmt-interp-in-lang: statement-level constructs — `var`
+// Stmt-interp-in-lang: statement-level constructs — `let`
 // declarations, assignment, and `return`. A FUNDAMENTALLY new
 // shape vs the expression-only spikes. v1..v7 all dealt in
 // single expressions; this spike parses a SEQUENCE of
@@ -2198,16 +2198,16 @@ function main(): i32 {
 //
 // Properties tested:
 //  1. Bare return — `return 5;` → 5.
-//  2. Var + return — `var x = 5; return x;` → 5.
-//  3. Reassignment — `var x = 1; x = x + 1; return x;` → 2.
+//  2. Var + return — `let x = 5; return x;` → 5.
+//  3. Reassignment — `let x = 1; x = x + 1; return x;` → 2.
 //     Confirms the assign path rebinds the existing slot
 //     rather than shadowing.
-//  4. Multi-var arithmetic — `var x = 3; var y = 4; return
+//  4. Multi-var arithmetic — `let x = 3; let y = 4; return
 //     x * 10 + y;` → 34.
-//  5. Early return — `var x = 1; return x; var y = 99; return
+//  5. Early return — `let x = 1; return x; let y = 99; return
 //     y;` → 1. The second return is dead code; the first
 //     fires and the eval stops.
-//  6. Forward dependencies — `var x = 10; var y = x + 5;
+//  6. Forward dependencies — `let x = 10; let y = x + 5;
 //     return y;` → 15. Later declarations see earlier ones.
 func TestArm64StmtInterpInLang(t *testing.T) {
 	src := `
@@ -2229,22 +2229,22 @@ struct Return   { value: Expr }
 type Stmt = VarDecl | Assign | Return;
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha() || b == 95) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
@@ -2275,36 +2275,36 @@ function tok_punct_ch(t: Token): i32 {
 }
 
 function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
@@ -2314,7 +2314,7 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
         return Var { name: tok_ident_name(toks[pos]) };
     }
     cur.set(pos + 1);
-    var inner: Expr = parse_arith(toks, cur);
+    let inner: Expr = parse_arith(toks, cur);
     cur.set(cur.get() + 1);
     return inner;
 }
@@ -2328,8 +2328,8 @@ function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
     // names locals by lang identifier; three sibling-scope
     // var-name / var-value declarations would collide. Same
     // workaround the prelude uses.
-    var name: string = "";
-    var value: Expr = Num { value: 0 };
+    let name: string = "";
+    let value: Expr = Num { value: 0 };
     if (expect_kw(toks, cur.get(), "var")) {
         cur.set(cur.get() + 1);
         name = tok_ident_name(toks[cur.get()]);
@@ -2355,9 +2355,9 @@ function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
 }
 
 function parse_program(src: string): Stmt[] {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
-    var stmts: Stmt[] = [];
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
+    let stmts: Stmt[] = [];
     while (tok_kind(toks[cur.get()]) != 3) {
         stmts = stmts.append(parse_stmt(toks, cur));
     }
@@ -2368,7 +2368,7 @@ function eval_expr(e: Expr, names: string[], values: i32[]): i32 {
     match (e) {
         Num(n) => { return n.value; },
         Var(v) => {
-            var i: i32 = names.len() - 1;
+            let i: i32 = names.len() - 1;
             while (i >= 0) {
                 if (names[i] == v.name) { return values[i]; }
                 i = i - 1;
@@ -2376,8 +2376,8 @@ function eval_expr(e: Expr, names: string[], values: i32[]): i32 {
             return 0;
         },
         BinOp(b) => {
-            var l: i32 = eval_expr(b.left, names, values);
-            var r: i32 = eval_expr(b.right, names, values);
+            let l: i32 = eval_expr(b.left, names, values);
+            let r: i32 = eval_expr(b.right, names, values);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
@@ -2391,12 +2391,12 @@ function eval_expr(e: Expr, names: string[], values: i32[]): i32 {
 // values unchanged — a real type checker would catch this as
 // "unknown identifier", but the spike intentionally stays loose.
 function env_assign(names: string[], values: i32[], name: string, v: i32): i32[] {
-    var i: i32 = names.len() - 1;
+    let i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) {
             // Build a fresh array that differs in slot i.
-            var out: i32[] = [];
-            var j: i32 = 0;
+            let out: i32[] = [];
+            let j: i32 = 0;
             while (j < values.len()) {
                 if (j == i) { out = out.append(v); }
                 else { out = out.append(values[j]); }
@@ -2422,7 +2422,7 @@ struct StepState {
 function eval_stmt(s: Stmt, state: StepState): StepState {
     // Single hoisted v across the three arms — sibling-scope
     // dups would collide on the wasm emitter.
-    var v: i32 = 0;
+    let v: i32 = 0;
     match (s) {
         VarDecl(vd) => {
             v = eval_expr(vd.value, state.names, state.values);
@@ -2455,14 +2455,14 @@ function eval_stmt(s: Stmt, state: StepState): StepState {
 }
 
 function run(src: string): i32 {
-    var stmts: Stmt[] = parse_program(src);
-    var state: StepState = StepState {
+    let stmts: Stmt[] = parse_program(src);
+    let state: StepState = StepState {
         names: [],
         values: [],
         done: false,
         result: 0,
     };
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < stmts.len() && !state.done) {
         state = eval_stmt(stmts[i], state);
         i = i + 1;
@@ -2474,28 +2474,28 @@ function main(): i32 {
     // Bare return.
     if (run("return 5;") != 5) { return 1; }
 
-    // var + return.
-    if (run("var x = 5; return x;") != 5) { return 2; }
+    // let + return.
+    if (run("let x = 5; return x;") != 5) { return 2; }
 
     // Reassignment — confirms env_assign rebinds rather than
     // shadows. After x = x + 1, looking up x must return 2.
-    if (run("var x = 1; x = x + 1; return x;") != 2) { return 3; }
+    if (run("let x = 1; x = x + 1; return x;") != 2) { return 3; }
 
-    // Multi-var arithmetic.
-    if (run("var x = 3; var y = 4; return x * 10 + y;") != 34) { return 4; }
+    // Multi-let arithmetic.
+    if (run("let x = 3; let y = 4; return x * 10 + y;") != 34) { return 4; }
 
     // Early return — the second return is dead code, the
     // first one fires.
-    if (run("var x = 1; return x; var y = 99; return y;") != 1) { return 5; }
+    if (run("let x = 1; return x; let y = 99; return y;") != 1) { return 5; }
 
-    // Forward dependency — later var sees earlier one.
-    if (run("var x = 10; var y = x + 5; return y;") != 15) { return 6; }
+    // Forward dependency — later let sees earlier one.
+    if (run("let x = 10; let y = x + 5; return y;") != 15) { return 6; }
 
     // Cascading reassignments.
-    if (run("var x = 1; x = x * 2; x = x * 2; x = x * 2; return x;") != 8) { return 7; }
+    if (run("let x = 1; x = x * 2; x = x * 2; x = x * 2; return x;") != 8) { return 7; }
 
     // Two vars, swap via temporary.
-    if (run("var a = 10; var b = 20; var t = a; a = b; b = t; return a - b;") != 10) { return 8; }
+    if (run("let a = 10; let b = 20; let t = a; a = b; b = t; return a - b;") != 10) { return 8; }
 
     return 0;
 }`
@@ -2560,22 +2560,22 @@ struct Bin       { op: i32 }
 type Op = PushConst | Load | Bin;
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha() || b == 95) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
@@ -2606,36 +2606,36 @@ function tok_punct_ch(t: Token): i32 {
 }
 
 function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
@@ -2645,14 +2645,14 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
         return Var { name: tok_ident_name(toks[pos]) };
     }
     cur.set(pos + 1);
-    var inner: Expr = parse_arith(toks, cur);
+    let inner: Expr = parse_arith(toks, cur);
     cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_src(src: string): Expr {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
     return parse_arith(toks, cur);
 }
 
@@ -2668,11 +2668,11 @@ function fold(e: Expr): Expr {
         Num(_) => { return e; },
         Var(_) => { return e; },
         BinOp(b) => {
-            var l: Expr = fold(b.left);
-            var r: Expr = fold(b.right);
+            let l: Expr = fold(b.left);
+            let r: Expr = fold(b.right);
             if (is_num(l) && is_num(r)) {
-                var lv: i32 = num_value(l);
-                var rv: i32 = num_value(r);
+                let lv: i32 = num_value(l);
+                let rv: i32 = num_value(r);
                 if (b.op == 43) { return Num { value: lv + rv }; }
                 if (b.op == 45) { return Num { value: lv - rv }; }
                 if (b.op == 42) { return Num { value: lv * rv }; }
@@ -2696,20 +2696,20 @@ function compile(e: Expr, ops: Op[]): Op[] {
             return ops.append(Load { name: v.name });
         },
         BinOp(b) => {
-            var ops1: Op[] = compile(b.left, ops);
-            var ops2: Op[] = compile(b.right, ops1);
+            let ops1: Op[] = compile(b.left, ops);
+            let ops2: Op[] = compile(b.right, ops1);
             return ops2.append(Bin { op: b.op });
         },
     }
 }
 
 function compile_top(e: Expr): Op[] {
-    var ops: Op[] = [];
+    let ops: Op[] = [];
     return compile(e, ops);
 }
 
 function env_lookup(names: string[], values: i32[], name: string): i32 {
-    var i: i32 = names.len() - 1;
+    let i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return values[i]; }
         i = i - 1;
@@ -2721,16 +2721,16 @@ function env_lookup(names: string[], values: i32[], name: string): i32 {
 // push the result. After a well-formed program runs, the stack
 // has exactly one element — the result.
 function execute(ops: Op[], names: string[], values: i32[]): i32 {
-    var stack: i32[] = [];
-    var i: i32 = 0;
+    let stack: i32[] = [];
+    let i: i32 = 0;
     while (i < ops.len()) {
         match (ops[i]) {
             PushConst(p) => { stack = stack.append(p.value); },
             Load(l) => { stack = stack.append(env_lookup(names, values, l.name)); },
             Bin(b) => {
-                var r: i32 = stack[stack.len() - 1];
-                var l: i32 = stack[stack.len() - 2];
-                var out: i32 = 0;
+                let r: i32 = stack[stack.len() - 1];
+                let l: i32 = stack[stack.len() - 2];
+                let out: i32 = 0;
                 if (b.op == 43) { out = l + r; }
                 else if (b.op == 45) { out = l - r; }
                 else if (b.op == 42) { out = l * r; }
@@ -2739,8 +2739,8 @@ function execute(ops: Op[], names: string[], values: i32[]): i32 {
                 // Lang arrays are functional, so building a
                 // fresh stack of length len-1 by slicing is
                 // O(len) but the test loops stay small.
-                var ns: i32[] = [];
-                var j: i32 = 0;
+                let ns: i32[] = [];
+                let j: i32 = 0;
                 while (j < stack.len() - 2) {
                     ns = ns.append(stack[j]);
                     j = j + 1;
@@ -2761,8 +2761,8 @@ function eval(e: Expr, names: string[], values: i32[]): i32 {
         Num(n) => { return n.value; },
         Var(v) => { return env_lookup(names, values, v.name); },
         BinOp(b) => {
-            var l: i32 = eval(b.left, names, values);
-            var r: i32 = eval(b.right, names, values);
+            let l: i32 = eval(b.left, names, values);
+            let r: i32 = eval(b.right, names, values);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
@@ -2772,7 +2772,7 @@ function eval(e: Expr, names: string[], values: i32[]): i32 {
 }
 
 function roundtrip(src: string, names: string[], values: i32[]): boolean {
-    var e: Expr = parse_src(src);
+    let e: Expr = parse_src(src);
     return execute(compile_top(e), names, values) == eval(e, names, values);
 }
 
@@ -2792,22 +2792,22 @@ function op_bin_op(o: Op): i32 {
 }
 
 function main(): i32 {
-    var names: string[] = ["x", "y"];
-    var values: i32[] = [10, 20];
+    let names: string[] = ["x", "y"];
+    let values: i32[] = [10, 20];
 
     // Bare literal — one PushConst, executes to its value.
-    var c1: Op[] = compile_top(parse_src("42"));
+    let c1: Op[] = compile_top(parse_src("42"));
     if (c1.len() != 1) { return 1; }
     if (execute(c1, names, values) != 42) { return 2; }
 
     // Var lookup — one Load op.
-    var c2: Op[] = compile_top(parse_src("x"));
+    let c2: Op[] = compile_top(parse_src("x"));
     if (c2.len() != 1) { return 3; }
     if (op_kind(c2[0]) != 1) { return 4; }
     if (execute(c2, names, values) != 10) { return 5; }
 
     // Simple BinOp — three ops: PushConst, PushConst, Bin.
-    var c3: Op[] = compile_top(parse_src("1 + 2"));
+    let c3: Op[] = compile_top(parse_src("1 + 2"));
     if (c3.len() != 3) { return 6; }
     if (op_kind(c3[0]) != 0 || op_pushconst_value(c3[0]) != 1) { return 7; }
     if (op_kind(c3[1]) != 0 || op_pushconst_value(c3[1]) != 2) { return 8; }
@@ -2820,7 +2820,7 @@ function main(): i32 {
     //   PushConst 3
     //   Bin *           ← pops 2,3 pushes 6
     //   Bin +           ← pops 1,6 pushes 7
-    var c4: Op[] = compile_top(parse_src("1 + 2 * 3"));
+    let c4: Op[] = compile_top(parse_src("1 + 2 * 3"));
     if (c4.len() != 5) { return 11; }
     if (op_kind(c4[3]) != 2 || op_bin_op(c4[3]) != 42) { return 12; }   // *
     if (op_kind(c4[4]) != 2 || op_bin_op(c4[4]) != 43) { return 13; }   // +
@@ -2838,14 +2838,14 @@ function main(): i32 {
     // fold + compile integration — folding first produces
     // shorter bytecode. fold("1 + 2 * 3") → Num(7), which
     // compiles to a SINGLE PushConst op.
-    var c5: Op[] = compile_top(fold(parse_src("1 + 2 * 3")));
+    let c5: Op[] = compile_top(fold(parse_src("1 + 2 * 3")));
     if (c5.len() != 1) { return 21; }
     if (op_pushconst_value(c5[0]) != 7) { return 22; }
 
     // Partial fold + compile — "x + 2 * 3" folds to "x + 6",
     // which compiles to three ops (Load + PushConst + Bin)
     // instead of the five the unfolded form would emit.
-    var c6: Op[] = compile_top(fold(parse_src("x + 2 * 3")));
+    let c6: Op[] = compile_top(fold(parse_src("x + 2 * 3")));
     if (c6.len() != 3) { return 23; }
     if (execute(c6, names, values) != 16) { return 24; }
 
@@ -2898,22 +2898,22 @@ struct BinOp { op: i32, left: Expr, right: Expr }
 type Expr = Num | Var | BinOp;
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha() || b == 95) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
@@ -2944,36 +2944,36 @@ function tok_punct_ch(t: Token): i32 {
 }
 
 function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
@@ -2983,14 +2983,14 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
         return Var { name: tok_ident_name(toks[pos]) };
     }
     cur.set(pos + 1);
-    var inner: Expr = parse_arith(toks, cur);
+    let inner: Expr = parse_arith(toks, cur);
     cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_src(src: string): Expr {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
     return parse_arith(toks, cur);
 }
 
@@ -3011,11 +3011,11 @@ function fold(e: Expr): Expr {
         Num(_) => { return e; },
         Var(_) => { return e; },
         BinOp(b) => {
-            var l: Expr = fold(b.left);
-            var r: Expr = fold(b.right);
+            let l: Expr = fold(b.left);
+            let r: Expr = fold(b.right);
             if (is_num(l) && is_num(r)) {
-                var lv: i32 = num_value(l);
-                var rv: i32 = num_value(r);
+                let lv: i32 = num_value(l);
+                let rv: i32 = num_value(r);
                 if (b.op == 43) { return Num { value: lv + rv }; }
                 if (b.op == 45) { return Num { value: lv - rv }; }
                 if (b.op == 42) { return Num { value: lv * rv }; }
@@ -3033,8 +3033,8 @@ function reduce(e: Expr): Expr {
         Num(_) => { return e; },
         Var(_) => { return e; },
         BinOp(b) => {
-            var l: Expr = reduce(b.left);
-            var r: Expr = reduce(b.right);
+            let l: Expr = reduce(b.left);
+            let r: Expr = reduce(b.right);
             if (b.op == 43) {
                 if (is_num_with(l, 0)) { return r; }
                 if (is_num_with(r, 0)) { return l; }
@@ -3060,7 +3060,7 @@ function eval(e: Expr, names: string[], values: i32[]): i32 {
     match (e) {
         Num(n) => { return n.value; },
         Var(v) => {
-            var i: i32 = names.len() - 1;
+            let i: i32 = names.len() - 1;
             while (i >= 0) {
                 if (names[i] == v.name) { return values[i]; }
                 i = i - 1;
@@ -3068,8 +3068,8 @@ function eval(e: Expr, names: string[], values: i32[]): i32 {
             return 0;
         },
         BinOp(b) => {
-            var l: i32 = eval(b.left, names, values);
-            var r: i32 = eval(b.right, names, values);
+            let l: i32 = eval(b.left, names, values);
+            let r: i32 = eval(b.right, names, values);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
@@ -3114,71 +3114,71 @@ function ast_eq(a: Expr, b: Expr): boolean {
 }
 
 function main(): i32 {
-    var names: string[] = ["x", "y"];
-    var values: i32[] = [10, 20];
+    let names: string[] = ["x", "y"];
+    let values: i32[] = [10, 20];
 
     // x + 0 → x. The BinOp disappears.
-    var r1: Expr = reduce(parse_src("x + 0"));
+    let r1: Expr = reduce(parse_src("x + 0"));
     if (count_binop(r1) != 0) { return 1; }
     if (eval(r1, names, values) != 10) { return 2; }
 
     // 0 + x → x (commutative case).
-    var r2: Expr = reduce(parse_src("0 + x"));
+    let r2: Expr = reduce(parse_src("0 + x"));
     if (count_binop(r2) != 0) { return 3; }
     if (eval(r2, names, values) != 10) { return 4; }
 
     // x * 1 → x.
-    var r3: Expr = reduce(parse_src("x * 1"));
+    let r3: Expr = reduce(parse_src("x * 1"));
     if (count_binop(r3) != 0) { return 5; }
     if (eval(r3, names, values) != 10) { return 6; }
 
     // 1 * x → x.
-    var r4: Expr = reduce(parse_src("1 * x"));
+    let r4: Expr = reduce(parse_src("1 * x"));
     if (count_binop(r4) != 0) { return 7; }
     if (eval(r4, names, values) != 10) { return 8; }
 
     // x * 0 → 0 (absorbing).
-    var r5: Expr = reduce(parse_src("x * 0"));
+    let r5: Expr = reduce(parse_src("x * 0"));
     if (count_binop(r5) != 0) { return 9; }
     if (eval(r5, names, values) != 0) { return 10; }
 
     // x - 0 → x.
-    var r6: Expr = reduce(parse_src("x - 0"));
+    let r6: Expr = reduce(parse_src("x - 0"));
     if (count_binop(r6) != 0) { return 11; }
     if (eval(r6, names, values) != 10) { return 12; }
 
     // x / 1 → x.
-    var r7: Expr = reduce(parse_src("x / 1"));
+    let r7: Expr = reduce(parse_src("x / 1"));
     if (count_binop(r7) != 0) { return 13; }
     if (eval(r7, names, values) != 10) { return 14; }
 
     // Nested — (x + 0) * (y + 0) → x * y. The reduce walks
     // children first, then the parent BinOp sees two Var
     // operands and stays.
-    var r8: Expr = reduce(parse_src("(x + 0) * (y + 0)"));
+    let r8: Expr = reduce(parse_src("(x + 0) * (y + 0)"));
     if (count_binop(r8) != 1) { return 15; }
     if (eval(r8, names, values) != 200) { return 16; }
 
     // 0 - x does NOT collapse — subtraction isn't commutative,
     // so the left-zero rule doesn't apply. Stays as BinOp(-, 0, x).
-    var r9: Expr = reduce(parse_src("0 - x"));
+    let r9: Expr = reduce(parse_src("0 - x"));
     if (count_binop(r9) != 1) { return 17; }
     if (eval(r9, names, values) != -10) { return 18; }
 
     // x / 0 stays as BinOp — runtime trap, not a fold.
-    var r10: Expr = reduce(parse_src("x / 0"));
+    let r10: Expr = reduce(parse_src("x / 0"));
     if (count_binop(r10) != 1) { return 19; }
 
     // Combined pipeline — (2 + 3) + (x * 1):
     //   fold: (5) + (x * 1)
     //   reduce: 5 + x
-    var combined: Expr = reduce(fold(parse_src("(2 + 3) + (x * 1)")));
+    let combined: Expr = reduce(fold(parse_src("(2 + 3) + (x * 1)")));
     if (count_binop(combined) != 1) { return 20; }
     if (eval(combined, names, values) != 15) { return 21; }
 
     // Idempotence — running reduce twice gives the same result.
-    var once: Expr = reduce(parse_src("x + 0 + y * 1"));
-    var twice: Expr = reduce(once);
+    let once: Expr = reduce(parse_src("x + 0 + y * 1"));
+    let twice: Expr = reduce(once);
     if (!ast_eq(once, twice)) { return 22; }
 
     return 0;
@@ -3230,22 +3230,22 @@ struct BinOp { op: i32, left: Expr, right: Expr }
 type Expr = Num | Var | BinOp;
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha() || b == 95) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
@@ -3276,36 +3276,36 @@ function tok_punct_ch(t: Token): i32 {
 }
 
 function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
@@ -3315,14 +3315,14 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
         return Var { name: tok_ident_name(toks[pos]) };
     }
     cur.set(pos + 1);
-    var inner: Expr = parse_arith(toks, cur);
+    let inner: Expr = parse_arith(toks, cur);
     cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_src(src: string): Expr {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
     return parse_arith(toks, cur);
 }
 
@@ -3387,11 +3387,11 @@ function fold(e: Expr): Expr {
         Num(_) => { return e; },
         Var(_) => { return e; },
         BinOp(b) => {
-            var l: Expr = fold(b.left);
-            var r: Expr = fold(b.right);
+            let l: Expr = fold(b.left);
+            let r: Expr = fold(b.right);
             if (is_num(l) && is_num(r)) {
-                var lv: i32 = num_value(l);
-                var rv: i32 = num_value(r);
+                let lv: i32 = num_value(l);
+                let rv: i32 = num_value(r);
                 if (b.op == 43) { return Num { value: lv + rv }; }
                 if (b.op == 45) { return Num { value: lv - rv }; }
                 if (b.op == 42) { return Num { value: lv * rv }; }
@@ -3403,9 +3403,9 @@ function fold(e: Expr): Expr {
 }
 
 function roundtrip_ok(src: string): boolean {
-    var e1: Expr = parse_src(src);
-    var s: string = print_expr(e1);
-    var e2: Expr = parse_src(s);
+    let e1: Expr = parse_src(src);
+    let s: string = print_expr(e1);
+    let e2: Expr = parse_src(s);
     return ast_eq(e1, e2);
 }
 
@@ -3415,15 +3415,15 @@ function main(): i32 {
     if (print_expr(Var { name: "x" }) != "x") { return 2; }
 
     // Simple BinOp.
-    var e1: Expr = parse_src("1 + 2");
+    let e1: Expr = parse_src("1 + 2");
     if (print_expr(e1) != "(1 + 2)") { return 3; }
 
     // Nested BinOp.
-    var e2: Expr = parse_src("1 + 2 * 3");
+    let e2: Expr = parse_src("1 + 2 * 3");
     if (print_expr(e2) != "(1 + (2 * 3))") { return 4; }
 
     // Vars mixed with literals.
-    var e3: Expr = parse_src("x + 1");
+    let e3: Expr = parse_src("x + 1");
     if (print_expr(e3) != "(x + 1)") { return 5; }
 
     // Round-trip property — print(parse(s)) re-parses to the
@@ -3440,16 +3440,16 @@ function main(): i32 {
     // 10 - 3 - 2 means (10 - 3) - 2 = 5. The printer's parens
     // make this explicit: "((10 - 3) - 2)". Without parens around
     // the left subtree the re-parse would group right instead.
-    var assoc: Expr = parse_src("10 - 3 - 2");
+    let assoc: Expr = parse_src("10 - 3 - 2");
     if (print_expr(assoc) != "((10 - 3) - 2)") { return 12; }
 
     // Fold + print integration — full-collapse case prints as a
     // bare number, no parens, since BinOps were all folded out.
-    var folded: Expr = fold(parse_src("1 + 2 * 3"));
+    let folded: Expr = fold(parse_src("1 + 2 * 3"));
     if (print_expr(folded) != "7") { return 13; }
 
     // Partial-fold case keeps the Var-bearing outer BinOp.
-    var partial: Expr = fold(parse_src("x + 2 * 3"));
+    let partial: Expr = fold(parse_src("x + 2 * 3"));
     if (print_expr(partial) != "(x + 6)") { return 14; }
 
     return 0;
@@ -3509,22 +3509,22 @@ struct BinOp { op: i32, left: Expr, right: Expr }
 type Expr = Num | Var | BinOp;
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha() || b == 95) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
@@ -3555,36 +3555,36 @@ function tok_punct_ch(t: Token): i32 {
 }
 
 function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
@@ -3594,14 +3594,14 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
         return Var { name: tok_ident_name(toks[pos]) };
     }
     cur.set(pos + 1);
-    var inner: Expr = parse_arith(toks, cur);
+    let inner: Expr = parse_arith(toks, cur);
     cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_src(src: string): Expr {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
     return parse_arith(toks, cur);
 }
 
@@ -3622,11 +3622,11 @@ function fold(e: Expr): Expr {
         Num(_) => { return e; },
         Var(_) => { return e; },
         BinOp(b) => {
-            var l: Expr = fold(b.left);
-            var r: Expr = fold(b.right);
+            let l: Expr = fold(b.left);
+            let r: Expr = fold(b.right);
             if (is_num(l) && is_num(r)) {
-                var lv: i32 = num_value(l);
-                var rv: i32 = num_value(r);
+                let lv: i32 = num_value(l);
+                let rv: i32 = num_value(r);
                 if (b.op == 43) { return Num { value: lv + rv }; }
                 if (b.op == 45) { return Num { value: lv - rv }; }
                 if (b.op == 42) { return Num { value: lv * rv }; }
@@ -3641,7 +3641,7 @@ function eval(e: Expr, names: string[], values: i32[]): i32 {
     match (e) {
         Num(n) => { return n.value; },
         Var(v) => {
-            var i: i32 = names.len() - 1;
+            let i: i32 = names.len() - 1;
             while (i >= 0) {
                 if (names[i] == v.name) { return values[i]; }
                 i = i - 1;
@@ -3649,8 +3649,8 @@ function eval(e: Expr, names: string[], values: i32[]): i32 {
             return 0;
         },
         BinOp(b) => {
-            var l: i32 = eval(b.left, names, values);
-            var r: i32 = eval(b.right, names, values);
+            let l: i32 = eval(b.left, names, values);
+            let r: i32 = eval(b.right, names, values);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
@@ -3713,12 +3713,12 @@ function ast_eq(a: Expr, b: Expr): boolean {
 }
 
 function main(): i32 {
-    var names: string[] = ["x"];
-    var values: i32[] = [10];
+    let names: string[] = ["x"];
+    let values: i32[] = [10];
 
     // Fully constant — 1 + 2 * 3 folds to Num(7).
-    var e1: Expr = parse_src("1 + 2 * 3");
-    var f1: Expr = fold(e1);
+    let e1: Expr = parse_src("1 + 2 * 3");
+    let f1: Expr = fold(e1);
     if (count_num(f1) != 1) { return 1; }
     if (count_binop(f1) != 0) { return 2; }
     if (eval(f1, names, values) != 7) { return 3; }
@@ -3726,8 +3726,8 @@ function main(): i32 {
     if (eval(e1, names, values) != eval(f1, names, values)) { return 4; }
 
     // Partial fold — x + 2 * 3 folds 2*3 = 6, leaves x + 6.
-    var e2: Expr = parse_src("x + 2 * 3");
-    var f2: Expr = fold(e2);
+    let e2: Expr = parse_src("x + 2 * 3");
+    let f2: Expr = fold(e2);
     if (count_num(f2) != 1) { return 5; }
     if (count_var(f2) != 1) { return 6; }
     if (count_binop(f2) != 1) { return 7; }
@@ -3737,8 +3737,8 @@ function main(): i32 {
     // Recursive fold through nested constant subtrees.
     // (1 + 2) + (3 + 4) → Num(10). Confirms the post-order walk
     // catches subtrees before the parent gets a chance to fold.
-    var e3: Expr = parse_src("(1 + 2) + (3 + 4)");
-    var f3: Expr = fold(e3);
+    let e3: Expr = parse_src("(1 + 2) + (3 + 4)");
+    let f3: Expr = fold(e3);
     if (count_num(f3) != 1) { return 10; }
     if (count_binop(f3) != 0) { return 11; }
     if (eval(f3, names, values) != 10) { return 12; }
@@ -3746,21 +3746,21 @@ function main(): i32 {
     // Idempotence — running fold on already-folded output is
     // a no-op. Real optimization loops run passes to fixpoint;
     // a non-idempotent constfold makes the loop run forever.
-    var f3_again: Expr = fold(f3);
+    let f3_again: Expr = fold(f3);
     if (!ast_eq(f3, f3_again)) { return 13; }
-    var f2_again: Expr = fold(f2);
+    let f2_again: Expr = fold(f2);
     if (!ast_eq(f2, f2_again)) { return 14; }
 
     // Division case — 12 / 4 = 3.
-    var e4: Expr = parse_src("12 / 4");
-    var f4: Expr = fold(e4);
+    let e4: Expr = parse_src("12 / 4");
+    let f4: Expr = fold(e4);
     if (count_num(f4) != 1) { return 15; }
     if (eval(f4, names, values) != 3) { return 16; }
 
     // Subtraction — 10 - 3 - 2 folds left-to-right via the
     // left-associative parser: (10 - 3) - 2 = 5.
-    var e5: Expr = parse_src("10 - 3 - 2");
-    var f5: Expr = fold(e5);
+    let e5: Expr = parse_src("10 - 3 - 2");
+    let f5: Expr = fold(e5);
     if (count_num(f5) != 1) { return 17; }
     if (eval(f5, names, values) != 5) { return 18; }
 
@@ -3820,22 +3820,22 @@ type Expr = Num | Var | BinOp | If | Call;
 struct FnDef { name: string, params: string[], body: Expr }
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha() || b == 95) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
@@ -3870,7 +3870,7 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
 }
 
 function env_lookup(names: string[], values: i32[], name: string): i32 {
-    var i: i32 = names.len() - 1;
+    let i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return values[i]; }
         i = i - 1;
@@ -3879,7 +3879,7 @@ function env_lookup(names: string[], values: i32[], name: string): i32 {
 }
 
 function find_fn(fns: FnDef[], name: string): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < fns.len()) {
         if (fns[i].name == name) { return i; }
         i = i + 1;
@@ -3892,23 +3892,23 @@ function eval(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
         Num(n) => { return n.value; },
         Var(v) => { return env_lookup(names, values, v.name); },
         BinOp(b) => {
-            var l: i32 = eval(b.left, names, values, fns);
-            var r: i32 = eval(b.right, names, values, fns);
+            let l: i32 = eval(b.left, names, values, fns);
+            let r: i32 = eval(b.right, names, values, fns);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
             return l / r;
         },
         If(ie) => {
-            var c: i32 = eval(ie.cond, names, values, fns);
+            let c: i32 = eval(ie.cond, names, values, fns);
             if (c != 0) { return eval(ie.thn, names, values, fns); }
             return eval(ie.els, names, values, fns);
         },
         Call(ce) => {
-            var idx: i32 = find_fn(fns, ce.name);
-            var fresh_n: string[] = [];
-            var fresh_v: i32[] = [];
-            var i: i32 = 0;
+            let idx: i32 = find_fn(fns, ce.name);
+            let fresh_n: string[] = [];
+            let fresh_v: i32[] = [];
+            let i: i32 = 0;
             while (i < ce.args.len()) {
                 fresh_n = fresh_n.append(fns[idx].params[i]);
                 fresh_v = fresh_v.append(eval(ce.args[i], names, values, fns));
@@ -3920,60 +3920,60 @@ function eval(e: Expr, names: string[], values: i32[], fns: FnDef[]): i32 {
 }
 
 function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
+    let pos: i32 = cur.get();
     if (expect_kw(toks, pos, "if")) {
         cur.set(pos + 1);
-        var c: Expr = parse_expr(toks, cur);
+        let c: Expr = parse_expr(toks, cur);
         cur.set(cur.get() + 1);   // skip "then"
-        var thn: Expr = parse_expr(toks, cur);
+        let thn: Expr = parse_expr(toks, cur);
         cur.set(cur.get() + 1);   // skip "else"
-        var els: Expr = parse_expr(toks, cur);
+        let els: Expr = parse_expr(toks, cur);
         return If { cond: c, thn: thn, els: els };
     }
     return parse_arith(toks, cur);
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        var name: string = tok_ident_name(toks[pos]);
+        let name: string = tok_ident_name(toks[pos]);
         cur.set(pos + 1);
         if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 40) {
             cur.set(cur.get() + 1);   // skip '('
-            var args: Expr[] = [];
+            let args: Expr[] = [];
             // Empty arg list — immediate ')'.
             if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 41) {
                 cur.set(cur.get() + 1);
@@ -3990,7 +3990,7 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
         return Var { name: name };
     }
     cur.set(pos + 1);   // skip '('
-    var inner: Expr = parse_expr(toks, cur);
+    let inner: Expr = parse_expr(toks, cur);
     cur.set(cur.get() + 1);   // skip ')'
     return inner;
 }
@@ -3998,15 +3998,15 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
 struct Program { fns: FnDef[], main_expr: Expr }
 
 function parse_program(src: string): Program {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
-    var fns: FnDef[] = [];
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
+    let fns: FnDef[] = [];
     while (expect_kw(toks, cur.get(), "fn")) {
         cur.set(cur.get() + 1);
-        var name: string = tok_ident_name(toks[cur.get()]);
+        let name: string = tok_ident_name(toks[cur.get()]);
         cur.set(cur.get() + 1);
         cur.set(cur.get() + 1);   // skip '('
-        var params: string[] = [];
+        let params: string[] = [];
         if (tok_kind(toks[cur.get()]) != 2 || tok_punct_ch(toks[cur.get()]) != 41) {
             params = params.append(tok_ident_name(toks[cur.get()]));
             cur.set(cur.get() + 1);
@@ -4018,18 +4018,18 @@ function parse_program(src: string): Program {
         }
         cur.set(cur.get() + 1);   // skip ')'
         cur.set(cur.get() + 1);   // skip '='
-        var body: Expr = parse_expr(toks, cur);
+        let body: Expr = parse_expr(toks, cur);
         cur.set(cur.get() + 1);   // skip ';'
         fns = fns.append(FnDef { name: name, params: params, body: body });
     }
-    var main_expr: Expr = parse_expr(toks, cur);
+    let main_expr: Expr = parse_expr(toks, cur);
     return Program { fns: fns, main_expr: main_expr };
 }
 
 function interp(src: string): i32 {
-    var p: Program = parse_program(src);
-    var empty_n: string[] = [];
-    var empty_v: i32[] = [];
+    let p: Program = parse_program(src);
+    let empty_n: string[] = [];
+    let empty_v: i32[] = [];
     return eval(p.main_expr, empty_n, empty_v, p.fns);
 }
 
@@ -4126,22 +4126,22 @@ struct Call  { name: string, arg: Expr }
 type Expr = Num | Var | BinOp | If | Call;
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha() || b == 95) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
@@ -4176,7 +4176,7 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
 }
 
 function env_lookup(names: string[], values: i32[], name: string): i32 {
-    var i: i32 = names.len() - 1;
+    let i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return values[i]; }
         i = i - 1;
@@ -4185,7 +4185,7 @@ function env_lookup(names: string[], values: i32[], name: string): i32 {
 }
 
 function fn_index(fn_names: string[], name: string): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < fn_names.len()) {
         if (fn_names[i] == name) { return i; }
         i = i + 1;
@@ -4198,94 +4198,94 @@ function eval(e: Expr, names: string[], values: i32[], fn_names: string[], fn_pa
         Num(n) => { return n.value; },
         Var(v) => { return env_lookup(names, values, v.name); },
         BinOp(b) => {
-            var l: i32 = eval(b.left, names, values, fn_names, fn_params, fn_bodies);
-            var r: i32 = eval(b.right, names, values, fn_names, fn_params, fn_bodies);
+            let l: i32 = eval(b.left, names, values, fn_names, fn_params, fn_bodies);
+            let r: i32 = eval(b.right, names, values, fn_names, fn_params, fn_bodies);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
             return l / r;
         },
         If(ie) => {
-            var c: i32 = eval(ie.cond, names, values, fn_names, fn_params, fn_bodies);
+            let c: i32 = eval(ie.cond, names, values, fn_names, fn_params, fn_bodies);
             if (c != 0) { return eval(ie.thn, names, values, fn_names, fn_params, fn_bodies); }
             return eval(ie.els, names, values, fn_names, fn_params, fn_bodies);
         },
         Call(ce) => {
-            var av: i32 = eval(ce.arg, names, values, fn_names, fn_params, fn_bodies);
-            var idx: i32 = fn_index(fn_names, ce.name);
+            let av: i32 = eval(ce.arg, names, values, fn_names, fn_params, fn_bodies);
+            let idx: i32 = fn_index(fn_names, ce.name);
             // Lexical scope: function bodies start with a fresh
             // env containing only the param binding, not the
             // caller's locals.
-            var fresh_n: string[] = [fn_params[idx]];
-            var fresh_v: i32[] = [av];
+            let fresh_n: string[] = [fn_params[idx]];
+            let fresh_v: i32[] = [av];
             return eval(fn_bodies[idx], fresh_n, fresh_v, fn_names, fn_params, fn_bodies);
         },
     }
 }
 
 function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
+    let pos: i32 = cur.get();
     if (expect_kw(toks, pos, "if")) {
         cur.set(pos + 1);
-        var c: Expr = parse_expr(toks, cur);
+        let c: Expr = parse_expr(toks, cur);
         cur.set(cur.get() + 1);   // skip "then"
-        var thn: Expr = parse_expr(toks, cur);
+        let thn: Expr = parse_expr(toks, cur);
         cur.set(cur.get() + 1);   // skip "else"
-        var els: Expr = parse_expr(toks, cur);
+        let els: Expr = parse_expr(toks, cur);
         return If { cond: c, thn: thn, els: els };
     }
     return parse_arith(toks, cur);
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
     }
     if (k == 1) {
-        var name: string = tok_ident_name(toks[pos]);
+        let name: string = tok_ident_name(toks[pos]);
         cur.set(pos + 1);
         // Call if next is '(' — single-token lookahead.
         if (tok_kind(toks[cur.get()]) == 2 && tok_punct_ch(toks[cur.get()]) == 40) {
             cur.set(cur.get() + 1);
-            var arg: Expr = parse_expr(toks, cur);
+            let arg: Expr = parse_expr(toks, cur);
             cur.set(cur.get() + 1);   // skip ')'
             return Call { name: name, arg: arg };
         }
         return Var { name: name };
     }
     cur.set(pos + 1);   // skip '('
-    var inner: Expr = parse_expr(toks, cur);
+    let inner: Expr = parse_expr(toks, cur);
     cur.set(cur.get() + 1);   // skip ')'
     return inner;
 }
@@ -4298,27 +4298,27 @@ struct Program {
 }
 
 function parse_program(src: string): Program {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
-    var fn_names: string[] = [];
-    var fn_params: string[] = [];
-    var fn_bodies: Expr[] = [];
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
+    let fn_names: string[] = [];
+    let fn_params: string[] = [];
+    let fn_bodies: Expr[] = [];
     while (expect_kw(toks, cur.get(), "fn")) {
         cur.set(cur.get() + 1);
-        var name: string = tok_ident_name(toks[cur.get()]);
+        let name: string = tok_ident_name(toks[cur.get()]);
         cur.set(cur.get() + 1);
         cur.set(cur.get() + 1);   // skip '('
-        var param: string = tok_ident_name(toks[cur.get()]);
+        let param: string = tok_ident_name(toks[cur.get()]);
         cur.set(cur.get() + 1);
         cur.set(cur.get() + 1);   // skip ')'
         cur.set(cur.get() + 1);   // skip '='
-        var body: Expr = parse_expr(toks, cur);
+        let body: Expr = parse_expr(toks, cur);
         cur.set(cur.get() + 1);   // skip ';'
         fn_names = fn_names.append(name);
         fn_params = fn_params.append(param);
         fn_bodies = fn_bodies.append(body);
     }
-    var main_expr: Expr = parse_expr(toks, cur);
+    let main_expr: Expr = parse_expr(toks, cur);
     return Program {
         fn_names: fn_names,
         fn_params: fn_params,
@@ -4328,9 +4328,9 @@ function parse_program(src: string): Program {
 }
 
 function interp(src: string): i32 {
-    var p: Program = parse_program(src);
-    var empty_n: string[] = [];
-    var empty_v: i32[] = [];
+    let p: Program = parse_program(src);
+    let empty_n: string[] = [];
+    let empty_v: i32[] = [];
     return eval(p.main_expr, empty_n, empty_v, p.fn_names, p.fn_params, p.fn_bodies);
 }
 
@@ -4409,22 +4409,22 @@ struct If    { cond: Expr, thn: Expr, els: Expr }
 type Expr = Num | Var | BinOp | Let | If;
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha()) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && src[i].is_ascii_alnum()) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
@@ -4455,7 +4455,7 @@ function tok_punct_ch(t: Token): i32 {
 }
 
 function env_lookup(names: string[], values: i32[], name: string): i32 {
-    var i: i32 = names.len() - 1;
+    let i: i32 = names.len() - 1;
     while (i >= 0) {
         if (names[i] == name) { return values[i]; }
         i = i - 1;
@@ -4468,21 +4468,21 @@ function eval(e: Expr, names: string[], values: i32[]): i32 {
         Num(n) => { return n.value; },
         Var(v) => { return env_lookup(names, values, v.name); },
         BinOp(b) => {
-            var l: i32 = eval(b.left, names, values);
-            var r: i32 = eval(b.right, names, values);
+            let l: i32 = eval(b.left, names, values);
+            let r: i32 = eval(b.right, names, values);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
             return l / r;
         },
         Let(le) => {
-            var v: i32 = eval(le.value, names, values);
-            var n2: string[] = names.append(le.name);
-            var v2: i32[] = values.append(v);
+            let v: i32 = eval(le.value, names, values);
+            let n2: string[] = names.append(le.name);
+            let v2: i32[] = values.append(v);
             return eval(le.body, n2, v2);
         },
         If(ie) => {
-            var c: i32 = eval(ie.cond, names, values);
+            let c: i32 = eval(ie.cond, names, values);
             if (c != 0) { return eval(ie.thn, names, values); }
             return eval(ie.els, names, values);
         },
@@ -4494,60 +4494,60 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
 }
 
 function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
+    let pos: i32 = cur.get();
     if (expect_kw(toks, pos, "if")) {
         cur.set(pos + 1);
-        var c: Expr = parse_expr(toks, cur);
+        let c: Expr = parse_expr(toks, cur);
         cur.set(cur.get() + 1);
-        var t: Expr = parse_expr(toks, cur);
+        let t: Expr = parse_expr(toks, cur);
         cur.set(cur.get() + 1);
-        var el: Expr = parse_expr(toks, cur);
+        let el: Expr = parse_expr(toks, cur);
         return If { cond: c, thn: t, els: el };
     }
     if (expect_kw(toks, pos, "let")) {
         cur.set(pos + 1);
-        var name: string = tok_ident_name(toks[cur.get()]);
+        let name: string = tok_ident_name(toks[cur.get()]);
         cur.set(cur.get() + 1);
         cur.set(cur.get() + 1);
-        var val: Expr = parse_expr(toks, cur);
+        let val: Expr = parse_expr(toks, cur);
         cur.set(cur.get() + 1);
-        var body: Expr = parse_expr(toks, cur);
+        let body: Expr = parse_expr(toks, cur);
         return Let { name: name, value: val, body: body };
     }
     return parse_arith(toks, cur);
 }
 
 function parse_arith(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 2) { return lhs; }
-        var op: i32 = tok_punct_ch(toks[pos]);
+        let op: i32 = tok_punct_ch(toks[pos]);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
         cur.set(pos + 1);
         return Num { value: tok_int_value(toks[pos]) };
@@ -4557,17 +4557,17 @@ function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
         return Var { name: tok_ident_name(toks[pos]) };
     }
     cur.set(pos + 1);
-    var inner: Expr = parse_expr(toks, cur);
+    let inner: Expr = parse_expr(toks, cur);
     cur.set(cur.get() + 1);
     return inner;
 }
 
 function interp(src: string): i32 {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
-    var ast: Expr = parse_expr(toks, cur);
-    var empty_n: string[] = [];
-    var empty_v: i32[] = [];
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
+    let ast: Expr = parse_expr(toks, cur);
+    let empty_n: string[] = [];
+    let empty_v: i32[] = [];
     return eval(ast, empty_n, empty_v);
 }
 
@@ -4618,15 +4618,15 @@ struct BinOp { op: string, left: Expr, right: Expr }
 type Expr = Num | BinOp;
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
@@ -4668,8 +4668,8 @@ function eval(e: Expr): i32 {
     match (e) {
         Num(n) => { return n.value; },
         BinOp(b) => {
-            var l: i32 = eval(b.left);
-            var r: i32 = eval(b.right);
+            let l: i32 = eval(b.left);
+            let r: i32 = eval(b.right);
             if (b.op == "+") { return l + r; }
             if (b.op == "-") { return l - r; }
             if (b.op == "*") { return l * r; }
@@ -4686,29 +4686,29 @@ function eval(e: Expr): i32 {
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
     if (k == 0) {
-        var v: i32 = tok_int_value(toks[pos]);
+        let v: i32 = tok_int_value(toks[pos]);
         cur.set(pos + 1);
         return Num { value: v };
     }
     cur.set(pos + 1);
-    var inner: Expr = parse_relation(toks, cur);
+    let inner: Expr = parse_relation(toks, cur);
     cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 1) { return lhs; }
-        var ch: i32 = tok_punct_ch(toks[pos]);
+        let ch: i32 = tok_punct_ch(toks[pos]);
         if (ch != 42 && ch != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
-        var op_s: string = "*";
+        let rhs: Expr = parse_factor(toks, cur);
+        let op_s: string = "*";
         if (ch == 47) { op_s = "/"; }
         lhs = BinOp { op: op_s, left: lhs, right: rhs };
     }
@@ -4716,15 +4716,15 @@ function parse_term(toks: Token[], cur: Cell[i32]): Expr {
 }
 
 function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (tok_kind(toks[pos]) != 1) { return lhs; }
-        var ch: i32 = tok_punct_ch(toks[pos]);
+        let ch: i32 = tok_punct_ch(toks[pos]);
         if (ch != 43 && ch != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
-        var op_s: string = "+";
+        let rhs: Expr = parse_term(toks, cur);
+        let op_s: string = "+";
         if (ch == 45) { op_s = "-"; }
         lhs = BinOp { op: op_s, left: lhs, right: rhs };
     }
@@ -4732,13 +4732,13 @@ function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
 }
 
 function parse_relation(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_expr(toks, cur);
-    var pos: i32 = cur.get();
-    var k: i32 = tok_kind(toks[pos]);
-    var rhs: Expr = Num { value: 0 };
-    var op_s: string = "";
+    let lhs: Expr = parse_expr(toks, cur);
+    let pos: i32 = cur.get();
+    let k: i32 = tok_kind(toks[pos]);
+    let rhs: Expr = Num { value: 0 };
+    let op_s: string = "";
     if (k == 1) {
-        var ch: i32 = tok_punct_ch(toks[pos]);
+        let ch: i32 = tok_punct_ch(toks[pos]);
         if (ch == 60 || ch == 62) {
             cur.set(pos + 1);
             rhs = parse_expr(toks, cur);
@@ -4758,9 +4758,9 @@ function parse_relation(toks: Token[], cur: Cell[i32]): Expr {
 }
 
 function interp(src: string): i32 {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
-    var ast: Expr = parse_relation(toks, cur);
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
+    let ast: Expr = parse_relation(toks, cur);
     return eval(ast);
 }
 
@@ -4810,15 +4810,15 @@ struct BinOp { op: i32, left: Expr, right: Expr }
 type Expr = Num | BinOp;
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
@@ -4859,8 +4859,8 @@ function eval(e: Expr): i32 {
     match (e) {
         Num(n) => { return n.value; },
         BinOp(b) => {
-            var l: i32 = eval(b.left);
-            var r: i32 = eval(b.right);
+            let l: i32 = eval(b.left);
+            let r: i32 = eval(b.right);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
@@ -4870,51 +4870,51 @@ function eval(e: Expr): i32 {
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = peek_kind(toks, pos);
+    let pos: i32 = cur.get();
+    let k: i32 = peek_kind(toks, pos);
     if (k == 0) {
-        var v: i32 = peek_int(toks, pos);
+        let v: i32 = peek_int(toks, pos);
         cur.set(pos + 1);
         return Num { value: v };
     }
     cur.set(pos + 1);
-    var inner: Expr = parse_expr(toks, cur);
+    let inner: Expr = parse_expr(toks, cur);
     cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (peek_kind(toks, pos) != 1) { return lhs; }
-        var op: i32 = peek_punct(toks, pos);
+        let op: i32 = peek_punct(toks, pos);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
+        let pos: i32 = cur.get();
         if (peek_kind(toks, pos) != 1) { return lhs; }
-        var op: i32 = peek_punct(toks, pos);
+        let op: i32 = peek_punct(toks, pos);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function interp(src: string): i32 {
-    var toks: Token[] = tokenize(src);
-    var cur: Cell[i32] = cell_new(0);
-    var ast: Expr = parse_expr(toks, cur);
+    let toks: Token[] = tokenize(src);
+    let cur: Cell[i32] = cell_new(0);
+    let ast: Expr = parse_expr(toks, cur);
     return eval(ast);
 }
 
@@ -4997,8 +4997,8 @@ function eval(e: Expr): i32 {
     match (e) {
         Num(n) => { return n.value; },
         BinOp(b) => {
-            var l: i32 = eval(b.left);
-            var r: i32 = eval(b.right);
+            let l: i32 = eval(b.left);
+            let r: i32 = eval(b.right);
             if (b.op == 43) { return l + r; }
             if (b.op == 45) { return l - r; }
             if (b.op == 42) { return l * r; }
@@ -5008,44 +5008,44 @@ function eval(e: Expr): i32 {
 }
 
 function parse_factor(toks: Token[], cur: Cell[i32]): Expr {
-    var pos: i32 = cur.get();
-    var k: i32 = peek(toks, pos);
+    let pos: i32 = cur.get();
+    let k: i32 = peek(toks, pos);
     if (k == 0) {
-        var v: i32 = peek_int(toks, pos);
+        let v: i32 = peek_int(toks, pos);
         cur.set(pos + 1);
         return Num { value: v };
     }
     cur.set(pos + 1);
-    var inner: Expr = parse_expr(toks, cur);
+    let inner: Expr = parse_expr(toks, cur);
     cur.set(cur.get() + 1);
     return inner;
 }
 
 function parse_term(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_factor(toks, cur);
+    let lhs: Expr = parse_factor(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
-        var k: i32 = peek(toks, pos);
+        let pos: i32 = cur.get();
+        let k: i32 = peek(toks, pos);
         if (k != 1) { return lhs; }
-        var op: i32 = peek_punct(toks, pos);
+        let op: i32 = peek_punct(toks, pos);
         if (op != 42 && op != 47) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_factor(toks, cur);
+        let rhs: Expr = parse_factor(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
 }
 
 function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
-    var lhs: Expr = parse_term(toks, cur);
+    let lhs: Expr = parse_term(toks, cur);
     while (true) {
-        var pos: i32 = cur.get();
-        var k: i32 = peek(toks, pos);
+        let pos: i32 = cur.get();
+        let k: i32 = peek(toks, pos);
         if (k != 1) { return lhs; }
-        var op: i32 = peek_punct(toks, pos);
+        let op: i32 = peek_punct(toks, pos);
         if (op != 43 && op != 45) { return lhs; }
         cur.set(pos + 1);
-        var rhs: Expr = parse_term(toks, cur);
+        let rhs: Expr = parse_term(toks, cur);
         lhs = BinOp { op: op, left: lhs, right: rhs };
     }
     return lhs;
@@ -5053,18 +5053,18 @@ function parse_expr(toks: Token[], cur: Cell[i32]): Expr {
 
 function main(): i32 {
     // 1 + 2 * 3 → 7 (precedence)
-    var t1: Token[] = [];
+    let t1: Token[] = [];
     t1 = t1.append(TokInt { value: 1 });
     t1 = t1.append(TokPunct { ch: 43 });
     t1 = t1.append(TokInt { value: 2 });
     t1 = t1.append(TokPunct { ch: 42 });
     t1 = t1.append(TokInt { value: 3 });
     t1 = t1.append(TokEof { _pad: 0 });
-    var c1: Cell[i32] = cell_new(0);
+    let c1: Cell[i32] = cell_new(0);
     if (eval(parse_expr(t1, c1)) != 7) { return 1; }
 
     // (1 + 2) * 3 → 9 (parens override)
-    var t2: Token[] = [];
+    let t2: Token[] = [];
     t2 = t2.append(TokPunct { ch: 40 });
     t2 = t2.append(TokInt { value: 1 });
     t2 = t2.append(TokPunct { ch: 43 });
@@ -5073,18 +5073,18 @@ function main(): i32 {
     t2 = t2.append(TokPunct { ch: 42 });
     t2 = t2.append(TokInt { value: 3 });
     t2 = t2.append(TokEof { _pad: 0 });
-    var c2: Cell[i32] = cell_new(0);
+    let c2: Cell[i32] = cell_new(0);
     if (eval(parse_expr(t2, c2)) != 9) { return 2; }
 
     // 10 - 4 - 2 → 4 (left-associativity)
-    var t3: Token[] = [];
+    let t3: Token[] = [];
     t3 = t3.append(TokInt { value: 10 });
     t3 = t3.append(TokPunct { ch: 45 });
     t3 = t3.append(TokInt { value: 4 });
     t3 = t3.append(TokPunct { ch: 45 });
     t3 = t3.append(TokInt { value: 2 });
     t3 = t3.append(TokEof { _pad: 0 });
-    var c3: Cell[i32] = cell_new(0);
+    let c3: Cell[i32] = cell_new(0);
     if (eval(parse_expr(t3, c3)) != 4) { return 3; }
     return 0;
 }`
@@ -5129,14 +5129,14 @@ struct TokEof   { _pad: i32 }
 type Token = TokInt | TokFloat | TokIdent | TokKw | TokStr | TokPunct | TokEof;
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
-    var numV: i32 = 0;
-    var start: i32 = 0;
-    var isFloat: boolean = false;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
+    let numV: i32 = 0;
+    let start: i32 = 0;
+    let isFloat: boolean = false;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if (b == 47 && i + 1 < n && src[i + 1] == 47) {
             i = i + 2;
             while (i < n && src[i] != 10) { i = i + 1; }
@@ -5178,7 +5178,7 @@ function tokenize(src: string): Token[] {
 
 function main(): i32 {
     // Bare floats — text spelling round-trips byte-exact.
-    var t1: Token[] = tokenize("1.5 2.0 100.001");
+    let t1: Token[] = tokenize("1.5 2.0 100.001");
     if (t1.len() != 4) { return 100 + t1.len(); }
     match (t1[0]) {
         TokFloat(t) => { if (t.text != "1.5") { return 1; } },
@@ -5195,7 +5195,7 @@ function main(): i32 {
 
     // Mixed ints + floats — the int branch leaves untouched
     // tokens before/after a float for the surrounding lexer state.
-    var t2: Token[] = tokenize("3 + 1.5 - 2");
+    let t2: Token[] = tokenize("3 + 1.5 - 2");
     if (t2.len() != 6) { return 200 + t2.len(); }
     match (t2[0]) {
         TokInt(t) => { if (t.value != 3) { return 7; } },
@@ -5212,7 +5212,7 @@ function main(): i32 {
 
     // Disambiguation: 1. must be the int 1 + the . punctuator,
     // not a malformed float. Same for 1.x.
-    var t3: Token[] = tokenize("1.");
+    let t3: Token[] = tokenize("1.");
     if (t3.len() != 3) { return 300 + t3.len(); }
     match (t3[0]) {
         TokInt(t) => { if (t.value != 1) { return 13; } },
@@ -5223,7 +5223,7 @@ function main(): i32 {
         _ => { return 16; },
     }
 
-    var t4: Token[] = tokenize("1.x");
+    let t4: Token[] = tokenize("1.x");
     if (t4.len() != 4) { return 400 + t4.len(); }
     match (t4[0]) {
         TokInt(t) => { if (t.value != 1) { return 17; } },
@@ -5241,7 +5241,7 @@ function main(): i32 {
     // .5 (no leading int digit) lexes as . + int 5 — the
     // float branch never fires because the leading byte isn't
     // a digit.
-    var t5: Token[] = tokenize(".5");
+    let t5: Token[] = tokenize(".5");
     if (t5.len() != 3) { return 500 + t5.len(); }
     match (t5[0]) {
         TokPunct(t) => { if (t.text != ".") { return 23; } },
@@ -5255,7 +5255,7 @@ function main(): i32 {
     // Method-call style on int: 0.to_string() — the dot
     // disambiguation lets the parser see int + dot + ident
     // rather than a malformed float consuming to_string.
-    var t6: Token[] = tokenize("0.to_string");
+    let t6: Token[] = tokenize("0.to_string");
     if (t6.len() != 4) { return 600 + t6.len(); }
     match (t6[0]) {
         TokInt(t) => { if (t.value != 0) { return 27; } },
@@ -5344,14 +5344,14 @@ function escape_byte(b: i32): i32 {
 }
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
-    var numV: i32 = 0;
-    var s: string = "";
-    var start: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
+    let numV: i32 = 0;
+    let s: string = "";
+    let start: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if (b == 47 && i + 1 < n && src[i + 1] == 47) {
             // Line comment — drop bytes through next \n.
             i = i + 2;
@@ -5365,7 +5365,7 @@ function tokenize(src: string): Token[] {
             s = "";
             while (i < n && src[i] != 34) {
                 if (src[i] == 92 && i + 1 < n) {
-                    var bs: u8[] = __alloc_u8(1);
+                    let bs: u8[] = __alloc_u8(1);
                     bs = bs.with(0, escape_byte(src[i + 1] as i32) as u8);
                     s = s + string_from_bytes_unchecked(bs);
                     i = i + 2;
@@ -5388,7 +5388,7 @@ function tokenize(src: string): Token[] {
             while (i < n && (src[i].is_ascii_alnum() || src[i] == 95)) {
                 i = i + 1;
             }
-            var name: str = slice_unchecked(src, start, i);
+            let name: str = slice_unchecked(src, start, i);
             if (is_keyword(name)) {
                 toks = toks.append(TokKw { name: name + "" });
             } else {
@@ -5405,8 +5405,8 @@ function tokenize(src: string): Token[] {
 
 function main(): i32 {
     // Comments, keywords, idents, ints, punct in one program.
-    var src1: string = "function f() {\n    var x = 42; // local\n    return x;\n}";
-    var toks: Token[] = tokenize(src1);
+    let src1: string = "function f() {\n    let x = 42; // local\n    return x;\n}";
+    let toks: Token[] = tokenize(src1);
     if (toks.len() != 15) { return 100 + toks.len(); }
     match (toks[0]) {
         TokKw(t) => { if (t.name != "function") { return 1; } },
@@ -5442,7 +5442,7 @@ function main(): i32 {
     }
 
     // Underscore in idents — __alloc_u8, is_digit lex as one.
-    var t2: Token[] = tokenize("__alloc_u8 is_digit _pad");
+    let t2: Token[] = tokenize("__alloc_u8 is_digit _pad");
     if (t2.len() != 4) { return 200 + t2.len(); }
     match (t2[0]) {
         TokIdent(t) => { if (t.name != "__alloc_u8") { return 16; } },
@@ -5458,20 +5458,20 @@ function main(): i32 {
     }
 
     // String literal with escape sequences — \n, \t, \", \\.
-    var t3: Token[] = tokenize("\"hello\\nworld\\t!\"");
+    let t3: Token[] = tokenize("\"hello\\nworld\\t!\"");
     if (t3.len() != 2) { return 300 + t3.len(); }
     match (t3[0]) {
         TokStr(t) => { if (t.value != "hello\nworld\t!") { return 22; } },
         _ => { return 23; },
     }
-    var t4: Token[] = tokenize("\"a\\\"b\\\\c\"");
+    let t4: Token[] = tokenize("\"a\\\"b\\\\c\"");
     match (t4[0]) {
         TokStr(t) => { if (t.value != "a\"b\\c") { return 24; } },
         _ => { return 25; },
     }
 
     // Comment at EOF (no trailing newline).
-    var t5: Token[] = tokenize("var x // tail");
+    let t5: Token[] = tokenize("let x // tail");
     if (t5.len() != 3) { return 400 + t5.len(); }
     match (t5[0]) {
         TokKw(t) => { if (t.name != "var") { return 26; } },
@@ -5483,7 +5483,7 @@ function main(): i32 {
     }
 
     // Sized numeric type names lex as keywords (i32 / usize etc).
-    var t6: Token[] = tokenize("i32 i64 usize f64 string");
+    let t6: Token[] = tokenize("i32 i64 usize f64 string");
     if (t6.len() != 6) { return 500 + t6.len(); }
     match (t6[0]) {
         TokKw(t) => { if (t.name != "i32") { return 30; } },
@@ -5516,7 +5516,7 @@ function main(): i32 {
 // Numeric accumulators (`numV`, `numSfx`) are HOISTED to
 // function scope. Wasm names locals by lang identifier and
 // rejects sibling-scope duplicates; the hex + decimal arms
-// would each declare `var v` / `var sfx` and collide. The
+// would each declare `let v` / `let sfx` and collide. The
 // hoisting is the recommended workaround the prelude already
 // uses (see `__map_hash`'s "Single shared `h` declaration"
 // comment).
@@ -5543,11 +5543,11 @@ function hex_value(b: i32): i32 {
 }
 
 function read_num_suffix(src: string, i: i32): string {
-    var n: i32 = src.len();
+    let n: i32 = src.len();
     if (i + 3 > n) { return ""; }
-    var a: i32 = src[i] as i32;
-    var b: i32 = src[i + 1] as i32;
-    var c: i32 = src[i + 2] as i32;
+    let a: i32 = src[i] as i32;
+    let b: i32 = src[i + 1] as i32;
+    let c: i32 = src[i + 2] as i32;
     if (!(a == 105 || a == 117 || a == 102)) { return ""; }
     if (b == 51 && c == 50) { return slice_unchecked(src, i, i + 3) + ""; }
     if (b == 54 && c == 52) { return slice_unchecked(src, i, i + 3) + ""; }
@@ -5555,13 +5555,13 @@ function read_num_suffix(src: string, i: i32): string {
 }
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
-    var numV: i32 = 0;
-    var numSfx: string = "";
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
+    let numV: i32 = 0;
+    let numSfx: string = "";
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if (b == 48 && i + 1 < n && (src[i + 1] == 120 || src[i + 1] == 88)) {
@@ -5589,9 +5589,9 @@ function tokenize(src: string): Token[] {
             if (numSfx.len() > 0) { i = i + numSfx.len(); }
             toks = toks.append(TokInt { value: numV, base: 10, suffix: numSfx });
         } else if ((b as u8).is_ascii_alpha()) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && src[i].is_ascii_alnum()) { i = i + 1; }
-            var name: str = slice_unchecked(src, start, i);
+            let name: str = slice_unchecked(src, start, i);
             if (is_keyword(name)) {
                 toks = toks.append(TokKw { name: name + "" });
             } else {
@@ -5607,7 +5607,7 @@ function tokenize(src: string): Token[] {
 }
 
 function main(): i32 {
-    var toks: Token[] = tokenize("0x1F 0xab 0XFF 42 0x10i64");
+    let toks: Token[] = tokenize("0x1F 0xab 0XFF 42 0x10i64");
     if (toks.len() != 6) { return 100 + toks.len(); }
     match (toks[0]) {
         TokInt(t) => {
@@ -5645,7 +5645,7 @@ function main(): i32 {
         },
         _ => { return 16; },
     }
-    var t2: Token[] = tokenize("0x");
+    let t2: Token[] = tokenize("0x");
     if (t2.len() != 3) { return 200 + t2.len(); }
     match (t2[0]) {
         TokInt(t) => { if (t.value != 0) { return 17; } },
@@ -5690,11 +5690,11 @@ function is_keyword(name: string): boolean {
 }
 
 function read_num_suffix(src: string, i: i32): string {
-    var n: i32 = src.len();
+    let n: i32 = src.len();
     if (i + 3 > n) { return ""; }
-    var a: i32 = src[i] as i32;
-    var b: i32 = src[i + 1] as i32;
-    var c: i32 = src[i + 2] as i32;
+    let a: i32 = src[i] as i32;
+    let b: i32 = src[i + 1] as i32;
+    let c: i32 = src[i + 2] as i32;
     if (!(a == 105 || a == 117 || a == 102)) { return ""; } // i / u / f
     if (b == 51 && c == 50) { return slice_unchecked(src, i, i + 3) + ""; }      // 32
     if (b == 54 && c == 52) { return slice_unchecked(src, i, i + 3) + ""; }      // 64
@@ -5702,26 +5702,26 @@ function read_num_suffix(src: string, i: i32): string {
 }
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
-            var sfx: string = read_num_suffix(src, i);
+            let sfx: string = read_num_suffix(src, i);
             if (sfx.len() > 0) { i = i + sfx.len(); }
             toks = toks.append(TokInt { value: v, suffix: sfx });
         } else if ((b as u8).is_ascii_alpha()) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && src[i].is_ascii_alnum()) { i = i + 1; }
-            var name: str = slice_unchecked(src, start, i);
+            let name: str = slice_unchecked(src, start, i);
             if (is_keyword(name)) {
                 toks = toks.append(TokKw { name: name + "" });
             } else {
@@ -5738,7 +5738,7 @@ function tokenize(src: string): Token[] {
 
 function main(): i32 {
     // Full suffix path.
-    var toks: Token[] = tokenize("var x = 42i64; var y = 7u32; var z = 99;");
+    let toks: Token[] = tokenize("let x = 42i64; let y = 7u32; let z = 99;");
     if (toks.len() != 16) { return 100 + toks.len(); }
     match (toks[3]) {
         TokInt(t) => {
@@ -5762,7 +5762,7 @@ function main(): i32 {
         _ => { return 9; },
     }
     // Incomplete suffix: 42i6 → 42 + ident("i6").
-    var t2: Token[] = tokenize("42i6");
+    let t2: Token[] = tokenize("42i6");
     if (t2.len() != 3) { return 200 + t2.len(); }
     match (t2[0]) {
         TokInt(t) => {
@@ -5823,11 +5823,11 @@ function unescape(b: i32): i32 {
 }
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if ((b as u8).is_ascii_white_space()) {
             i = i + 1;
         } else if (b == 47 && i + 1 < n && src[i + 1] == 47) {
@@ -5835,7 +5835,7 @@ function tokenize(src: string): Token[] {
             while (i < n && src[i] != 10) { i = i + 1; }
         } else if (b == 47 && i + 1 < n && src[i + 1] == 42) {
             i = i + 2;
-            var closed: boolean = false;
+            let closed: boolean = false;
             while (i + 1 < n) {
                 if (src[i] == 42 && src[i + 1] == 47) {
                     i = i + 2;
@@ -5849,12 +5849,12 @@ function tokenize(src: string): Token[] {
             // get tokenised as punct.
             if (!closed) { i = n; }
         } else if (b == 34) {
-            var out: string = "";
+            let out: string = "";
             i = i + 1;
             while (i < n && src[i] != 34) {
                 if (src[i] == 92 && i + 1 < n) {
-                    var resolved: i32 = unescape(src[i + 1] as i32);
-                    var buf: u8[] = __alloc_u8(1);
+                    let resolved: i32 = unescape(src[i + 1] as i32);
+                    let buf: u8[] = __alloc_u8(1);
                     buf = buf.with(0, resolved as u8);
                     out = out + string_from_bytes_unchecked(buf);
                     i = i + 2;
@@ -5866,16 +5866,16 @@ function tokenize(src: string): Token[] {
             if (i < n) { i = i + 1; }
             toks = toks.append(TokStr { value: out });
         } else if ((b as u8).is_ascii_digit()) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && src[i].is_ascii_digit()) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if ((b as u8).is_ascii_alpha()) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && src[i].is_ascii_alnum()) { i = i + 1; }
-            var name: str = slice_unchecked(src, start, i);
+            let name: str = slice_unchecked(src, start, i);
             if (is_keyword(name)) {
                 toks = toks.append(TokKw { name: name + "" });
             } else {
@@ -5898,8 +5898,8 @@ function tokenize(src: string): Token[] {
 }
 
 function main(): i32 {
-    var toks: Token[] = tokenize("/* block */ var s = \"a\\nb\";");
-    // var s = "a\nb" ; EOF = 6 tokens
+    let toks: Token[] = tokenize("/* block */ let s = \"a\\nb\";");
+    // let s = "a\nb" ; EOF = 6 tokens
     if (toks.len() != 6) { return 100 + toks.len(); }
     match (toks[0]) {
         TokKw(t) => { if (t.name != "var") { return 1; } },
@@ -5915,7 +5915,7 @@ function main(): i32 {
         _ => { return 7; },
     }
     // Tab + carriage-return + unknown-escape (\Z passes through).
-    var t2: Token[] = tokenize("\"\\t\\r\\Z\"");
+    let t2: Token[] = tokenize("\"\\t\\r\\Z\"");
     match (t2[0]) {
         TokStr(t) => {
             if (t.value.len() != 3) { return 8; }
@@ -5928,7 +5928,7 @@ function main(): i32 {
     // Block comment with a star inside but no closing
     // star-slash keeps the lexer alive past EOF without
     // infinite-looping.
-    var t3: Token[] = tokenize("/* unterminated * comment");
+    let t3: Token[] = tokenize("/* unterminated * comment");
     // Just EOF — the unterminated comment ate everything.
     if (t3.len() != 1) { return 13; }
     return 0;
@@ -5983,18 +5983,18 @@ function is_keyword(name: string): boolean {
 }
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if (is_ws(b)) {
             i = i + 1;
         } else if (b == 47 && i + 1 < n && src[i + 1] == 47) {
             i = i + 2;
             while (i < n && src[i] != 10) { i = i + 1; }
         } else if (b == 34) {
-            var out: string = "";
+            let out: string = "";
             i = i + 1;
             while (i < n && src[i] != 34) {
                 if (src[i] == 92 && i + 1 < n) {
@@ -6008,16 +6008,16 @@ function tokenize(src: string): Token[] {
             if (i < n) { i = i + 1; }
             toks = toks.append(TokStr { value: out });
         } else if (is_digit(b)) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && is_digit(src[i] as i32)) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if (is_alpha(b)) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && is_alnum(src[i] as i32)) { i = i + 1; }
-            var name: str = slice_unchecked(src, start, i);
+            let name: str = slice_unchecked(src, start, i);
             if (is_keyword(name)) {
                 toks = toks.append(TokKw { name: name + "" });
             } else {
@@ -6040,8 +6040,8 @@ function tokenize(src: string): Token[] {
 }
 
 function main(): i32 {
-    var toks: Token[] = tokenize("var x = 42; // a comment\nfunction f() { return \"hi\"; }");
-    // var x = 42 ; function f ( ) { return "hi" ; } EOF = 15 tokens.
+    let toks: Token[] = tokenize("let x = 42; // a comment\nfunction f() { return \"hi\"; }");
+    // let x = 42 ; function f ( ) { return "hi" ; } EOF = 15 tokens.
     if (toks.len() != 15) { return 100 + toks.len(); }
     match (toks[0]) {
         TokKw(t) => { if (t.name != "var") { return 1; } },
@@ -6125,28 +6125,28 @@ func TestArm64SortI32(t *testing.T) {
 	src := `
 import "core/cmp";
 function main(): i32 {
-    var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5];
-    var asc: i32[] = cmp.sort(xs);
+    let xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6, 5];
+    let asc: i32[] = cmp.sort(xs);
     if (asc.len() != 9) { return 1; }
     if (asc[0] != 1) { return 2; }
     if (asc[1] != 1) { return 3; }
     if (asc[8] != 9) { return 4; }
     if (xs[0] != 3) { return 5; }  // input untouched
 
-    var desc: i32[] = cmp.sort_desc(xs);
+    let desc: i32[] = cmp.sort_desc(xs);
     if (desc[0] != 9) { return 6; }
     if (desc[8] != 1) { return 7; }
 
-    var empty: i32[] = [];
+    let empty: i32[] = [];
     if ((cmp.sort(empty)).len() != 0) { return 8; }
 
-    var one: i32[] = [42];
-    var one_sorted: i32[] = cmp.sort(one);
+    let one: i32[] = [42];
+    let one_sorted: i32[] = cmp.sort(one);
     if (one_sorted.len() != 1) { return 9; }
     if (one_sorted[0] != 42) { return 10; }
 
-    var negs: i32[] = [3, 0 - 5, 0, 0 - 1, 2];
-    var n_sorted: i32[] = cmp.sort(negs);
+    let negs: i32[] = [3, 0 - 5, 0, 0 - 1, 2];
+    let n_sorted: i32[] = cmp.sort(negs);
     if (n_sorted[0] != 0 - 5) { return 11; }
     if (n_sorted[4] != 3) { return 12; }
     return 0;
@@ -6190,22 +6190,22 @@ function is_alpha(b: i32): boolean {
 function is_alnum(b: i32): boolean { return is_digit(b) || is_alpha(b); }
 
 function tokenize(src: string): Token[] {
-    var toks: Token[] = [];
-    var n: i32 = src.len();
-    var i: i32 = 0;
+    let toks: Token[] = [];
+    let n: i32 = src.len();
+    let i: i32 = 0;
     while (i < n) {
-        var b: i32 = src[i] as i32;
+        let b: i32 = src[i] as i32;
         if (b == 32 || b == 9 || b == 10 || b == 13) {
             i = i + 1;
         } else if (is_digit(b)) {
-            var v: i32 = 0;
+            let v: i32 = 0;
             while (i < n && is_digit(src[i] as i32)) {
                 v = v * 10 + ((src[i] as i32) - 48);
                 i = i + 1;
             }
             toks = toks.append(TokInt { value: v });
         } else if (is_alpha(b)) {
-            var start: i32 = i;
+            let start: i32 = i;
             while (i < n && is_alnum(src[i] as i32)) { i = i + 1; }
             toks = toks.append(TokIdent { name: slice_unchecked(src, start, i) + "" });
         } else {
@@ -6218,7 +6218,7 @@ function tokenize(src: string): Token[] {
 }
 
 function main(): i32 {
-    var toks: Token[] = tokenize("foo + 42");
+    let toks: Token[] = tokenize("foo + 42");
     if (toks.len() != 4) { return 1; }
     match (toks[0]) {
         TokIdent(t) => { if (t.name != "foo") { return 2; } },
@@ -6275,14 +6275,14 @@ function mk_add(l: i32, r: i32): Expr {
 
 function main(): i32 {
     // Var init: bare struct literal → union.
-    var a: Expr = Add { l: 2, r: 3 };
+    let a: Expr = Add { l: 2, r: 3 };
     // Call-arg: bare literal flows into the Expr param.
-    var sum: i32 = eval(Lit { v: 5 });
+    let sum: i32 = eval(Lit { v: 5 });
     // Assignment: re-bind a different member.
     a = Mul { l: 2, r: sum };
     // Return-site shape — value comes back through mk_add's
     // implicit-wrap path.
-    var built: Expr = mk_add(1, 2);
+    let built: Expr = mk_add(1, 2);
     return eval(a) + eval(built) + sum;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -6325,7 +6325,7 @@ import "std/array";
 function main(): i32 {
     if (["alice", "bob", "ciri"].join(", ") != "alice, bob, ciri") { return 1; }
     if (["a", "b", "c"].join("") != "abc") { return 2; }
-    var empty: string[] = [];
+    let empty: string[] = [];
     if (empty.join(", ") != "") { return 3; }
     if (["solo"].join("|") != "solo") { return 4; }
     if (["x", "y"].join(" -> ") != "x -> y") { return 5; }
@@ -6334,7 +6334,7 @@ function main(): i32 {
     if ("a,b,c".split(",").join(";") != "a;b;c") { return 6; }
 
     // index_of / contains — happy paths
-    var kws: string[] = ["if", "else", "while", "function", "return"];
+    let kws: string[] = ["if", "else", "while", "function", "return"];
     match (kws.index_of("if")) { Some(i) => { if (i != 0) { return 7; } }, None => { return 7; } }
     match (kws.index_of("return")) { Some(i) => { if (i != 4) { return 8; } }, None => { return 8; } }
     if (kws.contains("else") == false) { return 9; }
@@ -6344,12 +6344,12 @@ function main(): i32 {
     if (kws.contains("for")) { return 11; }
 
     // Empty array — index_of(any) = None, contains(any) = false.
-    var none: string[] = [];
+    let none: string[] = [];
     match (none.index_of("x")) { Some(_) => { return 12; }, None => {} }
     if (none.contains("x")) { return 13; }
 
     // reverse — fresh array, original untouched.
-    var xs: string[] = ["a", "b", "c", "d"];
+    let xs: string[] = ["a", "b", "c", "d"];
     if (xs.reverse().join(",") != "d,c,b,a") { return 14; }
     if (xs.join(",") != "a,b,c,d") { return 15; }
     // Single element — reverse is identity.
@@ -6448,7 +6448,7 @@ function main(): i32 {
 
     if (!["foo_a", "foo_b", "foo_c"].all_starts_with("foo")) { return 10; }
     if (["foo", "bar"].all_starts_with("f")) { return 11; }
-    var empty: string[] = [];
+    let empty: string[] = [];
     if (!empty.all_starts_with("x")) { return 12; }
     if (!["abc"].all_starts_with("")) { return 13; }
 
@@ -6468,7 +6468,7 @@ function main(): i32 {
         Some(g) => { if (g != 5) { return 34; } },
         None => { return 35; },
     }
-    var empty_i: i32[] = [];
+    let empty_i: i32[] = [];
     match (empty_i.gcd_all()) { Some(_) => { return 36; }, None => { } }
 
     match ([2, 3, 4].lcm_all()) {
@@ -6501,7 +6501,7 @@ function main(): i32 {
     match ("".longest_word()) { Some(_) => { return 64; }, None => { } }
     match ("  ".longest_word()) { Some(_) => { return 65; }, None => { } }
 
-    var a: i32[] = [0 - 3, 5, 0 - 7].abs_each();
+    let a: i32[] = [0 - 3, 5, 0 - 7].abs_each();
     if (a[0] != 3 || a[1] != 5 || a[2] != 7) { return 70; }
     if ((empty_i.abs_each()).len() != 0) { return 71; }
 
@@ -6563,14 +6563,14 @@ function main(): i32 {
         None => { return 31; },
     }
     match ([3, 1, 4].index_of(99)) { Some(_) => { return 32; }, None => { } }
-    var empty: i32[] = [];
+    let empty: i32[] = [];
     match (empty.index_of(0)) { Some(_) => { return 33; }, None => { } }
 
-    var d: i32[] = [10, 12, 15, 20].pairwise_diffs();
+    let d: i32[] = [10, 12, 15, 20].pairwise_diffs();
     if (d.len() != 3) { return 40; }
     if (d[0] != 2 || d[1] != 3 || d[2] != 5) { return 41; }
     if ((empty.pairwise_diffs()).len() != 0) { return 42; }
-    var single: i32[] = [5].pairwise_diffs();
+    let single: i32[] = [5].pairwise_diffs();
     if (single.len() != 0) { return 43; }
 
     if ((0).factorial() != 1) { return 50; }
@@ -6631,13 +6631,13 @@ function main(): i32 {
         Some(t) => { if (t.0 != 7 || t.1 != 7) { return 3; } },
         None => { return 4; },
     }
-    var emp: i32[] = [];
+    let emp: i32[] = [];
     match (emp.min_max()) { Some(_) => { return 5; }, None => { } }
 
-    var rev: i32[] = [1, 2, 3, 4].reverse();
+    let rev: i32[] = [1, 2, 3, 4].reverse();
     if (rev[0] != 4 || rev[1] != 3 || rev[2] != 2 || rev[3] != 1) { return 10; }
     if ((emp.reverse()).len() != 0) { return 11; }
-    var single: i32[] = [7].reverse();
+    let single: i32[] = [7].reverse();
     if (single[0] != 7) { return 12; }
 
     if ("hello world".without_chars(" lo") != "hewrd") { return 20; }
@@ -6650,15 +6650,15 @@ function main(): i32 {
     if (!"".contains_only("anything")) { return 32; }
     if (!"aaa".contains_only("a")) { return 33; }
 
-    var sp1: (string, string) = "hello world".split_at(5);
+    let sp1: (string, string) = "hello world".split_at(5);
     if (sp1.0 != "hello" || sp1.1 != " world") { return 40; }
-    var sp2: (string, string) = "abc".split_at(0);
+    let sp2: (string, string) = "abc".split_at(0);
     if (sp2.0 != "" || sp2.1 != "abc") { return 41; }
-    var sp3: (string, string) = "abc".split_at(3);
+    let sp3: (string, string) = "abc".split_at(3);
     if (sp3.0 != "abc" || sp3.1 != "") { return 42; }
-    var sp4: (string, string) = "abc".split_at(10);
+    let sp4: (string, string) = "abc".split_at(10);
     if (sp4.0 != "abc" || sp4.1 != "") { return 43; }
-    var sp5: (string, string) = "abc".split_at(0 - 1);
+    let sp5: (string, string) = "abc".split_at(0 - 1);
     if (sp5.0 != "" || sp5.1 != "abc") { return 44; }
 
     if (!(0).is_perfect_square()) { return 50; }
@@ -6703,27 +6703,27 @@ func TestArm64StdlibBundle28(t *testing.T) {
 	src := `
 import "std/array";
 function main(): i32 {
-    var xs: i32[] = [3, 1, 4, 1, 5];
-    var a: i32[] = xs.sorted_asc();
+    let xs: i32[] = [3, 1, 4, 1, 5];
+    let a: i32[] = xs.sorted_asc();
     if (a[0] != 1 || a[1] != 1 || a[2] != 3 || a[3] != 4 || a[4] != 5) { return 1; }
-    var d: i32[] = xs.sorted_desc();
+    let d: i32[] = xs.sorted_desc();
     if (d[0] != 5 || d[1] != 4 || d[2] != 3 || d[3] != 1 || d[4] != 1) { return 2; }
-    var empty_i: i32[] = [];
+    let empty_i: i32[] = [];
     if ((empty_i.sorted_asc()).len() != 0) { return 3; }
     if ((empty_i.sorted_desc()).len() != 0) { return 4; }
 
-    var ss: string[] = ["banana", "apple", "cherry"];
-    var sa: string[] = ss.sorted_asc();
+    let ss: string[] = ["banana", "apple", "cherry"];
+    let sa: string[] = ss.sorted_asc();
     if (sa[0] != "apple" || sa[1] != "banana" || sa[2] != "cherry") { return 10; }
-    var sd: string[] = ss.sorted_desc();
+    let sd: string[] = ss.sorted_desc();
     if (sd[0] != "cherry" || sd[1] != "banana" || sd[2] != "apple") { return 11; }
-    var empty_s: string[] = [];
+    let empty_s: string[] = [];
     if ((empty_s.sorted_asc()).len() != 0) { return 12; }
 
-    var cs: i32[] = [1, 2, 3, 4].cumsum();
+    let cs: i32[] = [1, 2, 3, 4].cumsum();
     if (cs[0] != 1 || cs[1] != 3 || cs[2] != 6 || cs[3] != 10) { return 20; }
     if ((empty_i.cumsum()).len() != 0) { return 21; }
-    var single: i32[] = [7].cumsum();
+    let single: i32[] = [7].cumsum();
     if (single[0] != 7) { return 22; }
 
     if ("hello world".ellipsis(8) != "hello...") { return 30; }
@@ -6792,7 +6792,7 @@ function main(): i32 {
         Some(m) => { if (m != 7) { return 5; } },
         None => { return 6; },
     }
-    var emp: i32[] = [];
+    let emp: i32[] = [];
     match (emp.median()) { Some(_) => { return 7; }, None => { } }
 
     // mode
@@ -6827,7 +6827,7 @@ function main(): i32 {
     if (["a", "b", "c", "d"].join_with_last(", ", " and ") != "a, b, c and d") { return 40; }
     if (["a", "b"].join_with_last(", ", " and ") != "a and b") { return 41; }
     if (["only"].join_with_last(", ", " and ") != "only") { return 42; }
-    var empty: string[] = [];
+    let empty: string[] = [];
     if (empty.join_with_last(", ", " and ") != "") { return 43; }
 
     // to_acronym
@@ -6874,23 +6874,23 @@ function main(): i32 {
     // starts_with_any
     if (!"hello world".starts_with_any(["foo", "hello", "bar"])) { return 1; }
     if ("hello".starts_with_any(["x", "y", "z"])) { return 2; }
-    var nopre: string[] = [];
+    let nopre: string[] = [];
     if ("anything".starts_with_any(nopre)) { return 3; }
     if (!"abc".starts_with_any([""])) { return 4; }
 
     // ends_with_any
     if (!"file.txt".ends_with_any([".png", ".txt", ".jpg"])) { return 10; }
     if ("file.bin".ends_with_any([".png", ".txt"])) { return 11; }
-    var nosuf: string[] = [];
+    let nosuf: string[] = [];
     if ("anything".ends_with_any(nosuf)) { return 12; }
 
     // math.range(i32[])
-    var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6];
+    let xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6];
     match (xs.range()) {
         Some(r) => { if (r != 8) { return 20; } },
         None => { return 21; },
     }
-    var empty32: i32[] = [];
+    let empty32: i32[] = [];
     match (empty32.range()) { Some(_) => { return 22; }, None => { } }
     match ([7].range()) {
         Some(r) => { if (r != 0) { return 23; } },
@@ -6900,17 +6900,17 @@ function main(): i32 {
     // count (i32[])
     if ([1, 2, 3, 2, 4, 2].count(2) != 3) { return 30; }
     if ([1, 2, 3].count(5) != 0) { return 31; }
-    var empty_i: i32[] = [];
+    let empty_i: i32[] = [];
     if (empty_i.count(1) != 0) { return 32; }
 
     // count_str (string[])
     if (["a", "b", "a", "c", "a"].count("a") != 3) { return 40; }
     if (["a", "b"].count("z") != 0) { return 41; }
-    var empty_s: string[] = [];
+    let empty_s: string[] = [];
     if (empty_s.count("x") != 0) { return 42; }
 
     // lines_non_empty
-    var src1: string = "a\n\nb\nc\n";
+    let src1: string = "a\n\nb\nc\n";
     if ((src1.lines_non_empty()).len() != 3) { return 50; }
     if (src1.lines_non_empty()[0] != "a") { return 51; }
     if (src1.lines_non_empty()[1] != "b") { return 52; }
@@ -6918,9 +6918,9 @@ function main(): i32 {
     if (("".lines_non_empty()).len() != 0) { return 54; }
 
     // http builders
-    var r1: HttpResponse = http.redirect("/login");
+    let r1: HttpResponse = http.redirect("/login");
     if (r1.status != 302 || r1.body_string() != "/login") { return 60; }
-    var r2: HttpResponse = http.no_content();
+    let r2: HttpResponse = http.no_content();
     if (r2.status != 204 || r2.body_string() != "") { return 61; }
     return 0;
 }`
@@ -6973,7 +6973,7 @@ function main(): i32 {
         Some(s) => { if (s != "b") { return 40; } },
         None => { return 41; },
     }
-    var empty: string[] = [];
+    let empty: string[] = [];
     match (empty.min_by_len()) { Some(_) => { return 42; }, None => { } }
 
     // percent_of
@@ -6999,7 +6999,7 @@ function main(): i32 {
 // positive inputs (returns None on arm64 / x86-64 for "127").
 //
 // is_email_like binds the (string, string) tuple fields from
-// split_once to local `var`s before passing to `len`. Calling
+// split_once to local `let`s before passing to `len`. Calling
 // `len(p.0)` directly on a tuple-field access crashes the arm64
 // backend (the string-header load folds incorrectly). The
 // workaround round-trips through a regular string local.
@@ -7043,13 +7043,13 @@ function main(): i32 {
     // any_contains
     if (!["apple", "banana", "cherry"].any_contains("an")) { return 40; }
     if (["apple", "banana"].any_contains("xyz")) { return 41; }
-    var empty: string[] = [];
+    let empty: string[] = [];
     if (empty.any_contains("x")) { return 42; }
 
     // HTTP response builders
-    var r1: HttpResponse = http.bad_request("missing field");
+    let r1: HttpResponse = http.bad_request("missing field");
     if (r1.status != 400 || r1.body_string() != "missing field") { return 50; }
-    var r2: HttpResponse = http.internal_error("server boom");
+    let r2: HttpResponse = http.internal_error("server boom");
     if (r2.status != 500 || r2.body_string() != "server boom") { return 51; }
     return 0;
 }`
@@ -7104,7 +7104,7 @@ function main(): i32 {
 
     // all_non_empty
     if (!["a", "b", "c"].all_non_empty()) { return 23; }
-    var empty: string[] = [];
+    let empty: string[] = [];
     if (!empty.all_non_empty()) { return 24; }
     if (["a", "", "c"].all_non_empty()) { return 25; }
     return 0;
@@ -7153,7 +7153,7 @@ function main(): i32 {
     if ((0 - 121).is_palindrome()) { return 22; }
 
     // to_array
-    var a: string[] = "abc".to_array();
+    let a: string[] = "abc".to_array();
     if (a.len() != 3 || a[0] != "a" || a[2] != "c") { return 23; }
     if (("".to_array()).len() != 0) { return 24; }
     return 0;
@@ -7189,12 +7189,12 @@ function main(): i32 {
     if ("".wrap("a", "b") != "ab") { return 11; }
 
     // string[] take / drop
-    var arr: string[] = ["a", "b", "c", "d", "e"];
-    var t: string[] = arr.take(3);
+    let arr: string[] = ["a", "b", "c", "d", "e"];
+    let t: string[] = arr.take(3);
     if (t.len() != 3 || t[0] != "a" || t[2] != "c") { return 12; }
     if ((arr.take(100)).len() != 5) { return 13; }
     if ((arr.take(0)).len() != 0) { return 14; }
-    var d: string[] = arr.drop(2);
+    let d: string[] = arr.drop(2);
     if (d.len() != 3 || d[0] != "c") { return 15; }
     if ((arr.drop(100)).len() != 0) { return 16; }
 
@@ -7229,13 +7229,13 @@ func TestArm64StdlibBundle20(t *testing.T) {
 import "std/http";
 function main(): i32 {
     // divmod — (quotient, remainder)
-    var p1: (i32, i32) = (10).divmod(3);
+    let p1: (i32, i32) = (10).divmod(3);
     if (p1.0 != 3 || p1.1 != 1) { return 1; }
-    var p2: (i32, i32) = (12).divmod(4);
+    let p2: (i32, i32) = (12).divmod(4);
     if (p2.0 != 3 || p2.1 != 0) { return 2; }
     // A zero divisor is the language's total contract, not a
     // special case: 5 / 0 is 0 and 5 % 0 is 5.
-    var p3: (i32, i32) = (5).divmod(0);
+    let p3: (i32, i32) = (5).divmod(0);
     if (p3.0 != 0 || p3.1 != 5) { return 3; }
 
     // escape_shell
@@ -7381,7 +7381,7 @@ function main(): i32 {
         Some(s) => { if (s != "abc") { return 1; } },
         None => { return 2; },
     }
-    var empty: string[] = [];
+    let empty: string[] = [];
     match (empty.max_by_len()) { Some(_) => { return 3; }, None => { } }
     if (["a", "abc", "xy"].sum_lens() != 6) { return 4; }
     if (empty.sum_lens() != 0) { return 5; }
@@ -7453,18 +7453,18 @@ function main(): i32 {
     if ((123).rotate_left(7).rotate_right(7) != 123) { return 13; }
 
     // csv_parse_line
-    var f: string[] = csv.csv_parse_line("a,b,c");
+    let f: string[] = csv.csv_parse_line("a,b,c");
     if (f.len() != 3 || f[0] != "a" || f[2] != "c") { return 14; }
-    var fq: string[] = csv.csv_parse_line("\"a,b\",c");
+    let fq: string[] = csv.csv_parse_line("\"a,b\",c");
     if (fq.len() != 2 || fq[0] != "a,b") { return 15; }
-    var fe: string[] = csv.csv_parse_line("\"a\"\"b\",c");
+    let fe: string[] = csv.csv_parse_line("\"a\"\"b\",c");
     if (fe.len() != 2 || fe[0] != "a\"b") { return 16; }
     if ((csv.csv_parse_line("")).len() != 1) { return 17; }
-    var fmt: string[] = csv.csv_parse_line("a,,b");
+    let fmt: string[] = csv.csv_parse_line("a,,b");
     if (fmt.len() != 3 || fmt[1] != "") { return 18; }
 
     // http_header_value
-    var hdrs: string = "Content-Type: text/html\r\nContent-Length: 42\r\nX-Foo: bar";
+    let hdrs: string = "Content-Type: text/html\r\nContent-Length: 42\r\nX-Foo: bar";
     match (http.http_header_value(hdrs, "content-type")) {
         Some(v) => { if (v != "text/html") { return 19; } },
         None => { return 20; },
@@ -7491,11 +7491,11 @@ func TestArm64StdlibBundle15(t *testing.T) {
 import "std/http";
 function main(): i32 {
     // distinct / distinct_count
-    var d: string[] = ["a", "b", "a", "c", "b"].distinct();
+    let d: string[] = ["a", "b", "a", "c", "b"].distinct();
     if (d.len() != 3) { return 1; }
     if (d[0] != "a" || d[2] != "c") { return 2; }
     if (["a", "b", "a", "c", "b"].distinct_count() != 3) { return 3; }
-    var empty: string[] = [];
+    let empty: string[] = [];
     if ((empty.distinct()).len() != 0) { return 4; }
     if ((["x", "x", "x"].distinct()).len() != 1) { return 5; }
 
@@ -7520,7 +7520,7 @@ function main(): i32 {
     if ("hello".hash_djb2() != "hello".hash_djb2()) { return 18; }
 
     // http_path_segments
-    var ps: string[] = http.http_path_segments("/api/users/42");
+    let ps: string[] = http.http_path_segments("/api/users/42");
     if (ps.len() != 3 || ps[0] != "api" || ps[2] != "42") { return 19; }
     if ((http.http_path_segments("/")).len() != 0) { return 20; }
     if ((http.http_path_segments("")).len() != 0) { return 21; }
@@ -7549,7 +7549,7 @@ function main(): i32 {
     if ("===".trim_start_chars("=") != "") { return 5; }
 
     // random_int — range checks
-    var r: i32 = math.random_int(0, 100);
+    let r: i32 = math.random_int(0, 100);
     if (r < 0 || r >= 100) { return 6; }
     if (math.random_int(10, 11) != 10) { return 7; }
     if (math.random_int(5, 5) != 5) { return 8; }
@@ -7584,13 +7584,13 @@ func TestArm64StdlibBundle13(t *testing.T) {
 import "std/string";
 function main(): i32 {
     // filter_non_empty / count_non_empty
-    var src: string[] = "a,,b,,,c".split(",");
+    let src: string[] = "a,,b,,,c".split(",");
     if (src.len() != 6) { return 1; }
-    var clean: string[] = src.filter_non_empty();
+    let clean: string[] = src.filter_non_empty();
     if (clean.len() != 3 || clean[0] != "a" || clean[2] != "c") { return 2; }
     if (src.count_non_empty() != 3) { return 3; }
 
-    var empty: string[] = [];
+    let empty: string[] = [];
     if ((empty.filter_non_empty()).len() != 0) { return 4; }
     if (empty.count_non_empty() != 0) { return 5; }
 
@@ -7666,11 +7666,11 @@ function main(): i32 {
     if ("\n".count_lines() != 1) { return 20; }
 
     // HTTP response builders
-    var r1: HttpResponse = http.ok("hello");
+    let r1: HttpResponse = http.ok("hello");
     if (r1.status != 200 || r1.body_string() != "hello") { return 21; }
-    var r2: HttpResponse = http.not_found();
+    let r2: HttpResponse = http.not_found();
     if (r2.status != 404 || r2.body_string() != "Not Found") { return 22; }
-    var r3: HttpResponse = http.text(500, "boom");
+    let r3: HttpResponse = http.text(500, "boom");
     if (r3.status != 500 || r3.body_string() != "boom") { return 23; }
 
     // Log helpers — sanity-check they don't crash; output
@@ -7695,15 +7695,15 @@ func TestArm64StdlibBundle11(t *testing.T) {
 import "std/sort";
 function main(): i32 {
     // splitn
-    var s1: string[] = "a=b=c=d".splitn("=", 2);
+    let s1: string[] = "a=b=c=d".splitn("=", 2);
     if (s1.len() != 2 || s1[0] != "a" || s1[1] != "b=c=d") { return 1; }
-    var s3: string[] = "a=b=c=d".splitn("=", 1);
+    let s3: string[] = "a=b=c=d".splitn("=", 1);
     if (s3.len() != 1 || s3[0] != "a=b=c=d") { return 2; }
-    var s4: string[] = "a=b=c=d".splitn("=", 0);
+    let s4: string[] = "a=b=c=d".splitn("=", 0);
     if (s4.len() != 0) { return 3; }
-    var s5: string[] = "a=b".splitn("=", 100);
+    let s5: string[] = "a=b".splitn("=", 100);
     if (s5.len() != 2) { return 4; }
-    var s6: string[] = "no-sep".splitn("=", 5);
+    let s6: string[] = "no-sep".splitn("=", 5);
     if (s6.len() != 1 || s6[0] != "no-sep") { return 5; }
 
     // first / last
@@ -7720,16 +7720,16 @@ function main(): i32 {
     if ("hello".drop(0 - 1) != "hello") { return 16; }
 
     // chunks
-    var c1: string[] = "abcdef".chunks(2);
+    let c1: string[] = "abcdef".chunks(2);
     if (c1.len() != 3 || c1[2] != "ef") { return 17; }
-    var c2: string[] = "abcdef".chunks(4);
+    let c2: string[] = "abcdef".chunks(4);
     if (c2.len() != 2 || c2[1] != "ef") { return 18; }   // short tail
     if (("".chunks(3)).len() != 0) { return 19; }
-    var c4: string[] = "abc".chunks(0);
+    let c4: string[] = "abc".chunks(0);
     if (c4.len() != 1 || c4[0] != "abc") { return 20; }
 
     // case-insensitive sort + cmp
-    var asc: string[] = sort.sort_strings_asc_ci(["Banana", "apple", "Cherry"]);
+    let asc: string[] = sort.sort_strings_asc_ci(["Banana", "apple", "Cherry"]);
     if (asc[0] != "apple" || asc[1] != "Banana" || asc[2] != "Cherry") { return 21; }
     if (sort.string_cmp_ci("APPLE", "apple") != 0) { return 22; }
     if (sort.string_cmp_ci("apple", "banana") != (0 - 1)) { return 23; }
@@ -7788,13 +7788,13 @@ function main(): i32 {
     if (sort.string_cmp("same", "same") != 0) { return 19; }
     if (sort.string_cmp("short", "shorter") != (0 - 1)) { return 20; }   // shorter <
 
-    var unsorted: string[] = ["banana", "apple", "cherry"];
-    var asc: string[] = cmp.sort(unsorted);
+    let unsorted: string[] = ["banana", "apple", "cherry"];
+    let asc: string[] = cmp.sort(unsorted);
     if (asc[0] != "apple" || asc[1] != "banana" || asc[2] != "cherry") { return 21; }
     if (unsorted[0] != "banana") { return 22; }   // original untouched
-    var desc: string[] = cmp.sort_desc(unsorted);
+    let desc: string[] = cmp.sort_desc(unsorted);
     if (desc[0] != "cherry" || desc[2] != "apple") { return 23; }
-    var empty: string[] = [];
+    let empty: string[] = [];
     if ((cmp.sort(empty)).len() != 0) { return 24; }
     return 0;
 }`
@@ -7863,7 +7863,7 @@ function main(): i32 {
     // Saturating add / sub — clamp at MAX / MIN
     if ((100).saturating_add(50) != 150) { return 1; }
     if ((2147483647).saturating_add(1) != 2147483647) { return 2; }
-    var min32: i32 = 0 - 2147483647 - 1;
+    let min32: i32 = 0 - 2147483647 - 1;
     if (min32.saturating_sub(1) != min32) { return 3; }
     if ((100).saturating_sub(50) != 50) { return 4; }
 
@@ -7915,7 +7915,7 @@ import "std/http";
 function main(): i32 {
     // i32[] product / avg
     if ([2, 3, 4].product() != 24) { return 1; }
-    var empty: i32[] = [];
+    let empty: i32[] = [];
     if (empty.product() != 1) { return 2; }    // multiplicative identity
     match ([2, 4, 6].avg()) {
         Some(v) => { if (v != 4) { return 3; } },
@@ -7997,12 +7997,12 @@ function main(): i32 {
     if ((4 as i64).lcm(6 as i64) != (12 as i64)) { return 15; }
 
     // range — half-open
-    var r1: i32[] = math.range(0, 5);
+    let r1: i32[] = math.range(0, 5);
     if (r1.len() != 5 || r1[0] != 0 || r1[4] != 4) { return 16; }
     if ((math.range(5, 5)).len() != 0) { return 17; }   // empty when start >= end
 
     // range_step — step <= 0 returns empty
-    var rs: i32[] = math.range_step(0, 10, 2);
+    let rs: i32[] = math.range_step(0, 10, 2);
     if (rs.len() != 5 || rs[0] != 0 || rs[4] != 8) { return 18; }
     if ((math.range_step(0, 10, 0)).len() != 0) { return 19; }
 
@@ -8147,7 +8147,7 @@ import "std/string";
 import "std/array";
 function main(): i32 {
     // i64 abs / min / max / clamp.
-    var i: i64 = 0 - 42 as i64;
+    let i: i64 = 0 - 42 as i64;
     if (i.abs() != (42 as i64)) { return 1; }
     if ((5 as i64).min(7 as i64) != (5 as i64)) { return 2; }
     if ((5 as i64).max(7 as i64) != (7 as i64)) { return 3; }
@@ -8172,11 +8172,11 @@ function main(): i32 {
 
     // String chars — char[] one element per CODEPOINT, so a multibyte
     // sequence stays one element (the byte layer is bytes() / as_bytes()).
-    var cs: char[] = "abc".chars();
+    let cs: char[] = "abc".chars();
     if (cs.len() != 3) { return 18; }
     if (cs[0] != (97 as char) || cs[1] != (98 as char) || cs[2] != (99 as char)) { return 19; }
     if (("".chars()).len() != 0) { return 20; }
-    var mixed: char[] = "aé😀".chars();
+    let mixed: char[] = "aé😀".chars();
     if (mixed.len() != 3) { return 24; }
     if ((mixed[1] as i32) != 233 || (mixed[2] as i32) != 128512) { return 25; }
     if ("aé😀".bytes().len() != 7) { return 26; }
@@ -8285,13 +8285,13 @@ function main(): i32 {
     if ("aaaa".replace_n("a", "b", 99) != "bbbb") { return 23; }
 
     // i32[] sum / max / min
-    var xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6];
+    let xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6];
     if (xs.sum() != 31) { return 24; }
     match (xs.max()) { Some(v) => { if (v != 9) { return 25; } }, None => { return 26; }, }
     match (xs.min()) { Some(v) => { if (v != 1) { return 27; } }, None => { return 28; }, }
 
     // i32[] empty cases
-    var empty: i32[] = [];
+    let empty: i32[] = [];
     if (empty.sum() != 0) { return 29; }
     match (empty.max()) { Some(_) => { return 30; }, None => { } }
     match (empty.min()) { Some(_) => { return 31; }, None => { } }
@@ -8317,7 +8317,7 @@ function main(): i32 {
     if (path.path_join(["a", "/b"]) != "a/b") { return 6; }
     if (path.path_join(["/", "a"]) != "/a") { return 7; }
     if (path.path_join(["solo"]) != "solo") { return 8; }
-    var empty: string[] = [];
+    let empty: string[] = [];
     if (path.path_join(empty) != "") { return 9; }
 
     // path_parent — handle root and trailing-slash cases.
@@ -8406,7 +8406,7 @@ function bstr(b: boolean): string { if (b) { return "true"; } return "false"; }
 
 function main(): i32 {
     // fields — runs of whitespace as separator, no empties.
-    var fs: string[] = "  hello\tworld\nfoo bar  ".fields();
+    let fs: string[] = "  hello\tworld\nfoo bar  ".fields();
     if (fs.len() != 4) { return 1; }
     if (fs[0] != "hello") { return 2; }
     if (fs[3] != "bar") { return 3; }
@@ -8452,28 +8452,28 @@ func TestArm64StringLines(t *testing.T) {
 	src := `
 import "std/string";
 function main(): i32 {
-    var lf: string[] = "a\nb\nc".lines();
+    let lf: string[] = "a\nb\nc".lines();
     if (lf.len() != 3) { return 1; }
     if (lf[0] != "a") { return 2; }
     if (lf[1] != "b") { return 3; }
     if (lf[2] != "c") { return 4; }
 
-    var crlf: string[] = "a\r\nb\r\nc".lines();
+    let crlf: string[] = "a\r\nb\r\nc".lines();
     if (crlf.len() != 3) { return 5; }
     if (crlf[0] != "a") { return 6; }
     if (crlf[1] != "b") { return 7; }
     if (crlf[2] != "c") { return 8; }
 
-    var trail: string[] = "a\nb\n".lines();
+    let trail: string[] = "a\nb\n".lines();
     if (trail.len() != 2) { return 9; }
 
-    var solo: string[] = "\n".lines();
+    let solo: string[] = "\n".lines();
     if (solo.len() != 1) { return 10; }
     if (solo[0] != "") { return 11; }
 
     if (("".lines()).len() != 0) { return 12; }
 
-    var partial: string[] = "abc".lines();
+    let partial: string[] = "abc".lines();
     if (partial.len() != 1) { return 13; }
     if (partial[0] != "abc") { return 14; }
 
@@ -8491,16 +8491,16 @@ func TestArm64ArrayLiteral(t *testing.T) {
 		want int
 	}{
 		{`function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
+    let xs: i32[] = [10, 20, 30];
     return xs[1];
 }`, 20},
 		{`function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4, 5];
+    let xs: i32[] = [1, 2, 3, 4, 5];
     return xs.len();
 }`, 5},
 		{`function sum(xs: i32[]): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
         total = total + xs[i];
         i = i + 1;
@@ -8531,7 +8531,7 @@ func TestArm64Map(t *testing.T) {
 		{`
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
+    let m: Map[i32, i32] = map_new(4);
     m = m.insert(1, 100);
     m = m.insert(2, 200);
     return m.get_or(2, 0);
@@ -8539,8 +8539,8 @@ function main(): i32 {
 		{`
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[i32, i32] = map_new(4);
+    let i: i32 = 0;
     while (i < 8) {
         m = m.insert(i, i * 10);
         i = i + 1;
@@ -8552,7 +8552,7 @@ function main(): i32 {
 		{`
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(4);
+    let m: Map[string, i32] = map_new(4);
     m = m.insert("alpha", 1);
     m = m.insert("beta", 2);
     m = m.insert("gamma", 3);
@@ -8571,14 +8571,14 @@ func TestArm64MapGetMatchFullPipeline(t *testing.T) {
 import "core/map";
 import "std/array";
 function tokenize(s: string): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
-  var sLen: i32 = s.len();
-  var start: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
+  let sLen: i32 = s.len();
+  let start: i32 = 0;
   while (i <= sLen) {
-    var b: i32 = 0;
+    let b: i32 = 0;
     if (i < sLen) { b = s[i] as i32; }
-    var is_break: boolean = i == sLen || b == 32;
+    let is_break: boolean = i == sLen || b == 32;
     if (is_break) {
       if (i > start) { out = out.append(slice_unchecked(s, start, i).to_owned()); }
       start = i + 1;
@@ -8588,11 +8588,11 @@ function tokenize(s: string): string[] {
   return out;
 }
 function main(): i32 {
-  var words: string[] = tokenize("a b a c b a");
-  var counts: Map[string, i32] = map_new(8);
-  var i: i32 = 0;
+  let words: string[] = tokenize("a b a c b a");
+  let counts: Map[string, i32] = map_new(8);
+  let i: i32 = 0;
   while (i < words.len()) {
-    var w: string = words[i];
+    let w: string = words[i];
     match (counts.get(w)) {
       Some(n) => { counts = counts.insert(w, n + 1); },
       None    => { counts = counts.insert(w, 1); }
@@ -8600,10 +8600,10 @@ function main(): i32 {
     i = i + 1;
   }
   // a → 3, b → 2, c → 1; sum 6.
-  var keys: string[] = counts.keys();
-  var vals: i32[] = counts.values();
-  var sum: i32 = 0;
-  var j: i32 = 0;
+  let keys: string[] = counts.keys();
+  let vals: i32[] = counts.values();
+  let sum: i32 = 0;
+  let j: i32 = 0;
   while (j < vals.len()) {
     sum = sum + vals[j];
     j = j + 1;
@@ -8619,9 +8619,9 @@ func TestArm64UnsignedRightShift(t *testing.T) {
 	src := `
 import "std/u64";
 function main(): i32 {
-    var n: u64 = 18446744073709551615 as u64;
-    var r: u64 = n >> 1;
-    var s: string = r.to_string();
+    let n: u64 = 18446744073709551615 as u64;
+    let r: u64 = n >> 1;
+    let s: string = r.to_string();
     if (s == "9223372036854775807") { return 0; }
     return 1;
 }`
@@ -8632,8 +8632,8 @@ function main(): i32 {
 
 func TestArm64NestedTupleFieldExprType(t *testing.T) {
 	src := `function main(): i32 {
-    var inner: (i64, i32) = (1234567890123, 42);
-    var p: (i64, i32) = (inner.0, inner.1);
+    let inner: (i64, i32) = (1234567890123, 42);
+    let p: (i64, i32) = (inner.0, inner.1);
     if (p.0 == 1234567890123 && p.1 == 42) { return 0; }
     return 1;
 }`
@@ -8662,7 +8662,7 @@ func TestArm64ReturnTupleI64Settle(t *testing.T) {
     return (9999999999999, 0 - 1);
 }
 function main(): i32 {
-    var p = pick(true);
+    let p = pick(true);
     if (p.0 == 1234567890123 && p.1 == 42) { return 0; }
     return 1;
 }`
@@ -8673,7 +8673,7 @@ function main(): i32 {
 
 func TestArm64ArrayIndexTupleFieldAccess(t *testing.T) {
 	src := `function main(): i32 {
-    var arr: (i64, i32)[] = [(1234567890123, 42), (9876543210, 0 - 1)];
+    let arr: (i64, i32)[] = [(1234567890123, 42), (9876543210, 0 - 1)];
     if (arr[0].0 == 1234567890123 && arr[1].0 == 9876543210) {
         if (arr[0].1 == 42 && arr[1].1 == 0 - 1) {
             return 0;
@@ -8688,9 +8688,9 @@ func TestArm64ArrayIndexTupleFieldAccess(t *testing.T) {
 
 func TestArm64UnifyIfArmsPolymorphicNumeric(t *testing.T) {
 	src := `function main(): i32 {
-    var a: i64 = 1000000;
-    var b: i64 = 1234567;
-    var n: i64 = if (true) { a * b } else { 0 };
+    let a: i64 = 1000000;
+    let b: i64 = 1234567;
+    let n: i64 = if (true) { a * b } else { 0 };
     if (n == 1234567000000) { return 0; }
     return 1;
 }`
@@ -8712,10 +8712,10 @@ func TestArm64UnifyIfArmsPolymorphicNumeric(t *testing.T) {
 func TestArm64MatchExprUnifyPolyNumeric(t *testing.T) {
 	src := `enum E { A, B }
 function main(): i32 {
-    var a: i64 = 1234567;
-    var b: i64 = 1000000;
-    var e: E = A;
-    var n: i64 = match (e) {
+    let a: i64 = 1234567;
+    let b: i64 = 1000000;
+    let e: E = A;
+    let n: i64 = match (e) {
         A => a * b,
         B => 0
     };
@@ -8746,7 +8746,7 @@ func TestArm64TryOpI64PayloadOffset(t *testing.T) {
 }
 
 function process(): Option[i64] {
-    var v: i64 = fetch()?;
+    let v: i64 = fetch()?;
     return Some(v + 100);
 }
 
@@ -8766,7 +8766,7 @@ function main(): i32 {
 }
 
 // Regression for variant constructor calls whose payload
-// needed post-settle widening. `var o: Option[(i64, i32)] =
+// needed post-settle widening. `let o: Option[(i64, i32)] =
 // Some((1234567890123, 42));` failed with "cannot assign
 // Option[(i32, i32)] to variable of type Option[(i64, i32)]"
 // because postSettleType returned the pre-settle EnumType
@@ -8784,7 +8784,7 @@ function main(): i32 {
 // argument types.
 func TestArm64PostSettleVariantCall(t *testing.T) {
 	src := `function main(): i32 {
-    var o: Option[(i64, i32)] = Some((1234567890123, 42));
+    let o: Option[(i64, i32)] = Some((1234567890123, 42));
     match (o) {
         Some(p) => {
             if (p.0 == 1234567890123 && p.1 == 42) { return 0; }
@@ -8799,7 +8799,7 @@ func TestArm64PostSettleVariantCall(t *testing.T) {
 	}
 }
 
-// `var arr: Option[i64][] = [Some(1234567890123), None,
+// `let arr: Option[i64][] = [Some(1234567890123), None,
 // Some(9876543210)];` failed with "array element type
 // Option, expected Option[i64]". The ArrayLit check
 // compared elements with raw `ast.Equal`, so a
@@ -8817,9 +8817,9 @@ func TestArm64PostSettleVariantCall(t *testing.T) {
 // settleNumeric walks each element with the right hint.
 func TestArm64ArrayLitOptionMixedSomeNone(t *testing.T) {
 	src := `function main(): i32 {
-    var arr: Option[i64][] = [Some(1234567890123), None, Some(9876543210)];
-    var s: i64 = 0;
-    var i: i32 = 0;
+    let arr: Option[i64][] = [Some(1234567890123), None, Some(9876543210)];
+    let s: i64 = 0;
+    let i: i32 = 0;
     while (i < arr.len()) {
         match (arr[i]) {
             Some(n) => { s = s + n; },
@@ -8835,7 +8835,7 @@ func TestArm64ArrayLitOptionMixedSomeNone(t *testing.T) {
 	}
 }
 
-// `var m: Map[string, i64] = Map { "a": 1234567890123, ... };`
+// `let m: Map[string, i64] = Map { "a": 1234567890123, ... };`
 // rejected with "cannot assign Map[string, i32] to variable
 // of type Map[string, i64]". MapLit's first-entry walk
 // returned `NumberType{Polymorphic: true}` for the bare
@@ -8860,8 +8860,8 @@ func TestArm64MapLitI64ValueSettle(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i64] = Map { "a": 1234567890123, "b": 9876543210 };
-    var v: i64 = m.get_or("a", 0);
+    let m: Map[string, i64] = Map { "a": 1234567890123, "b": 9876543210 };
+    let v: i64 = m.get_or("a", 0);
     if (v == 1234567890123) { return 0; }
     return 1;
 }`
@@ -8873,7 +8873,7 @@ function main(): i32 {
 // Generic-function calls inferred their type-param T from
 // the arguments alone — for a polymorphic NumberLit arg the
 // inferred T was `NumberType{Polymorphic: true}` and the
-// arg's width never settled. `var x: i64 = pick(true,
+// arg's width never settled. `let x: i64 = pick(true,
 // 1234567890123, 0);` against
 // `function pick[T](cond: boolean, a: T, b: T): T`
 // silently truncated to `1912276171` (the literal's lower
@@ -8890,7 +8890,7 @@ func TestArm64SettleGenericCallArgs(t *testing.T) {
     return b;
 }
 function main(): i32 {
-    var x: i64 = pick(true, 1234567890123, 0);
+    let x: i64 = pick(true, 1234567890123, 0);
     if (x == 1234567890123) { return 0; }
     return 1;
 }`
@@ -8901,7 +8901,7 @@ function main(): i32 {
 
 // Sibling to #543. The settleInt Call case widened generic
 // arg widths against an integer destination, but
-// settleFloat had no Call case — so `var x: f64 = pick(true,
+// settleFloat had no Call case — so `let x: f64 = pick(true,
 // 3.14, 0.0);` printed `0` instead of `3.14`. The float
 // literal arguments stayed at the f32 / Polymorphic
 // default, the destination's 8-byte load read the wrong
@@ -8919,7 +8919,7 @@ func TestArm64SettleGenericCallArgsFloat(t *testing.T) {
     return b;
 }
 function main(): i32 {
-    var x: f64 = pick(true, 3.14, 0.0);
+    let x: f64 = pick(true, 3.14, 0.0);
     if (x > 3.0 && x < 4.0) { return 0; }
     return 1;
 }`
@@ -8968,9 +8968,9 @@ func TestArm64SettleMapLitInCondArms(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var cond: boolean = true;
-    var m: Map[string, i64] = if (cond) { Map { "a": 1234567890123 } } else { Map { "a": 0 } };
-    var v: i64 = m.get_or("a", 0);
+    let cond: boolean = true;
+    let m: Map[string, i64] = if (cond) { Map { "a": 1234567890123 } } else { Map { "a": 0 } };
+    let v: i64 = m.get_or("a", 0);
     if (v == 1234567890123) { return 0; }
     return 1;
 }`
@@ -8984,15 +8984,15 @@ function main(): i32 {
 // slot-sizing fell back to the 4-byte default for
 // `(3.14, 42)` against `(f64, i32)` and the f64 store /
 // load mis-aligned its operand-stack slot. Observed:
-// `var p: (f64, i32) = if (true) { (3.14, 42) } else
+// `let p: (f64, i32) = if (true) { (3.14, 42) } else
 // { (0.0, 0) };` printed `0` for p.0 instead of `3.14`.
 //
 // Fix: exprType(*ast.FloatLit) returns `FloatType{Width:
 // x.Width}` once the checker has stamped a width.
 func TestArm64FloatLitInTupleViaIfExpr(t *testing.T) {
 	src := `function main(): i32 {
-    var cond: boolean = true;
-    var p: (f64, i32) = if (cond) { (3.14, 42) } else { (0.0, 0) };
+    let cond: boolean = true;
+    let p: (f64, i32) = if (cond) { (3.14, 42) } else { (0.0, 0) };
     if (p.0 > 3.0 && p.0 < 4.0 && p.1 == 42) { return 0; }
     return 1;
 }`
@@ -9016,8 +9016,8 @@ func TestArm64FloatLitInTupleViaIfExpr(t *testing.T) {
 func TestArm64StructFieldNoneOption(t *testing.T) {
 	src := `struct Wrap { inner: Option[i64] }
 function main(): i32 {
-    var w1: Wrap = Wrap { inner: Some(1234567890123) };
-    var w2: Wrap = Wrap { inner: None };
+    let w1: Wrap = Wrap { inner: Some(1234567890123) };
+    let w2: Wrap = Wrap { inner: None };
     match (w1.inner) {
         Some(v) => {
             if (v != 1234567890123) { return 1; }
@@ -9067,8 +9067,8 @@ function get(o: Option[Node]): i64 {
     };
 }
 function main(): i32 {
-    var n: Node = Node { v: 1234567890123 };
-    var s: i64 = get(Some(n));
+    let n: Node = Node { v: 1234567890123 };
+    let s: i64 = get(Some(n));
     if (s == 1234567890123) { return 0; }
     return 1;
 }`
@@ -9092,8 +9092,8 @@ function get(n: N, cond: boolean): f64 {
     return if (cond) { n.v } else { 0.0 };
 }
 function main(): i32 {
-    var n: N = N { v: 3.14 };
-    var s: f64 = get(n, true);
+    let n: N = N { v: 3.14 };
+    let s: f64 = get(n, true);
     if (s > 3.0 && s < 4.0) { return 0; }
     return 1;
 }`
@@ -9127,7 +9127,7 @@ func TestArm64IfExprI64BlockType(t *testing.T) {
     return if (cond) { a } else { b };
 }
 function main(): i32 {
-    var r: i64 = pickOpt(true, 1234567890123, 0);
+    let r: i64 = pickOpt(true, 1234567890123, 0);
     if (r == 1234567890123) { return 0; }
     return 1;
 }`
@@ -9142,7 +9142,7 @@ func TestArm64WasmI64TailCallReturn(t *testing.T) {
     return fact(n - 1, acc * (n as i64));
 }
 function main(): i32 {
-    var r: i64 = fact(20, 1);
+    let r: i64 = fact(20, 1);
     if (r == 2432902008176640000) { return 0; }
     return 1;
 }`
@@ -9178,7 +9178,7 @@ function fmt(o: Option[i64]): string {
     };
 }
 function main(): i32 {
-    var s: string = fmt(Some(1234567890123));
+    let s: string = fmt(Some(1234567890123));
     if (s == "got 1234567890123") { return 0; }
     return 1;
 }`
@@ -9209,7 +9209,7 @@ func TestArm64UnifyIfArmsTupleElementWiden(t *testing.T) {
     return if (b) { (1234567890123, 3.14) } else { (0 as i64, 0.0) };
 }
 function main(): i32 {
-    var p = pick(true);
+    let p = pick(true);
     if (p.0 == 1234567890123 && p.1 > 3.0) { return 0; }
     return 1;
 }`
@@ -9248,13 +9248,13 @@ func TestArm64ResolveTypeTupleSliceGeneric(t *testing.T) {
 	}{
 		{"tuple_return", `function dup[T](x: T): (T, T) { return (x, x); }
 function main(): i32 {
-    var p = dup(42);
+    let p = dup(42);
     if (p.0 == 42 && p.1 == 42) { return 0; }
     return 1;
 }`},
 		{"pair_two_params", `function pair[A, B](a: A, b: B): (A, B) { return (a, b); }
 function main(): i32 {
-    var p = pair(1234567890123, "hello");
+    let p = pair(1234567890123, "hello");
     if (p.0 == 1234567890123 && p.1 == "hello") { return 0; }
     return 1;
 }`},
@@ -9271,7 +9271,7 @@ function main(): i32 {
 // function's type-param set into local Var declarations,
 // nested FuncDecls, or nested control-flow / Match arms.
 // As a result, a generic function with a local
-// `var m: Map[string, V] = map_new(0)` kept V as
+// `let m: Map[string, V] = map_new(0)` kept V as
 // `StructType{Name:"V"}` (the parser's default for a
 // bare-name type identifier) instead of `ParamType{"V"}`.
 // The Map method dispatch then substituted Map's V with
@@ -9296,13 +9296,13 @@ func TestArm64GenericLocalMapType(t *testing.T) {
 	src := `
 import "core/map";
 function mk[V](v: V): Map[string, V] {
-    var m: Map[string, V] = map_new(0);
+    let m: Map[string, V] = map_new(0);
     m = m.insert("k", v);
     return m;
 }
 function main(): i32 {
-    var m: Map[string, i32] = mk(42);
-    var v: i32 = m.get_or("k", 0);
+    let m: Map[string, i32] = mk(42);
+    let v: i32 = m.get_or("k", 0);
     return v - 42;
 }`
 	if _, code := compileAndRunArm64(t, src); code != 0 {
@@ -9310,7 +9310,7 @@ function main(): i32 {
 	}
 }
 
-// `var b: Box[i64] = Box { v: 1234567890123 };` failed
+// `let b: Box[i64] = Box { v: 1234567890123 };` failed
 // with "cannot assign Box[i32] to variable of type
 // Box[i64]". The StructLit checker's generic inference
 // only saw the literal's pre-settle width — the `T = i32`
@@ -9336,7 +9336,7 @@ function main(): i32 {
 func TestArm64GenericStructLitSettle(t *testing.T) {
 	src := `struct Box[T] { v: T }
 function main(): i32 {
-    var b: Box[i64] = Box { v: 1234567890123 };
+    let b: Box[i64] = Box { v: 1234567890123 };
     if (b.v == 1234567890123) { return 0; }
     return 1;
 }`
@@ -9359,7 +9359,7 @@ function main(): i32 {
 //     was a crash dump in the error message instead of
 //     the actual diagnostic. Same hole in `SliceType`.
 //  2. Even with the formatter fixed, the checker still
-//     rejected `var arr: i64[][] = [[1234567890123],
+//     rejected `let arr: i64[][] = [[1234567890123],
 //     [9876543210, 100], []];` as "array element type
 //     [], expected i64[]". The empty `[]`'s type
 //     doesn't carry an Elem; unifyIfArms had no rule
@@ -9377,7 +9377,7 @@ function main(): i32 {
 // element.
 func TestArm64ArrayLitEmptyInnerUnify(t *testing.T) {
 	src := `function main(): i32 {
-    var arr: i64[][] = [[1234567890123], [9876543210, 100], []];
+    let arr: i64[][] = [[1234567890123], [9876543210, 100], []];
     if (arr.len() == 3 && arr[0][0] == 1234567890123 && arr[1][1] == 100) {
         return 0;
     }
@@ -9395,32 +9395,32 @@ func TestArm64Floats(t *testing.T) {
 	}{
 		// f32 arithmetic
 		{`function main(): i32 {
-    var a: f32 = 3.5;
-    var b: f32 = 1.5;
+    let a: f32 = 3.5;
+    let b: f32 = 1.5;
     return (a + b) as i32;
 }`, 5},
 		{`function main(): i32 {
-    var a: f32 = 10.0;
-    var b: f32 = 3.0;
+    let a: f32 = 10.0;
+    let b: f32 = 3.0;
     return (a / b) as i32;
 }`, 3},
 		// f64 arithmetic + comparison
 		{`function main(): i32 {
-    var pi: f64 = 3.14f64;
-    var two: f64 = 2.0f64;
+    let pi: f64 = 3.14f64;
+    let two: f64 = 2.0f64;
     if (pi * two > 6.0f64) { return 42; }
     return 0;
 }`, 42},
 		// Mixed: i32 → f64 → i32 round trip.
 		{`function main(): i32 {
-    var n: i32 = 7;
-    var f: f64 = (n as f64) * 1.5f64;
+    let n: i32 = 7;
+    let f: f64 = (n as f64) * 1.5f64;
     return f as i32;
 }`, 10},
 		// Float negation.
 		{`function main(): i32 {
-    var x: f32 = 5.5;
-    var y: f32 = 0.0 - x;
+    let x: f32 = 5.5;
+    let y: f32 = 0.0 - x;
     if (y < 0.0) { return 1; }
     return 0;
 }`, 1},
@@ -9439,7 +9439,7 @@ func TestArm64Floats(t *testing.T) {
 func TestArm64IndirectCall(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function add(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 {
-    var f: (i32, i32) => i32 = add;
+    let f: (i32, i32) => i32 = add;
     return f(20, 22);
 }`)
 	if code != 42 {
@@ -9479,8 +9479,8 @@ func TestArm64Args(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 
 	src := `function main(): i32 {
-    var a: string[] = args();
-    var i: i32 = 0;
+    let a: string[] = args();
+    let i: i32 = 0;
     while (i < a.len()) {
         print(a[i]);
         i = i + 1;
@@ -9541,23 +9541,23 @@ func TestArm64SliceMake(t *testing.T) {
 		want int
 	}{
 		{"i32 slice read", `function main(): i32 {
-    var arr: i32[] = [10, 20, 30, 40, 50];
-    var s: [i32] = arr[1:4];
+    let arr: i32[] = [10, 20, 30, 40, 50];
+    let s: [i32] = arr[1:4];
     return s[1];
 }`, 30},
 		{"u8 slice read", `function main(): i32 {
-    var arr: u8[] = [10, 20, 30, 40, 50];
-    var s: [u8] = arr[1:4];
+    let arr: u8[] = [10, 20, 30, 40, 50];
+    let s: [u8] = arr[1:4];
     return s[1] as i32;
 }`, 30},
 		{"i64 slice read", `function main(): i32 {
-    var arr: i64[] = [(1i64 << 40), (1i64 << 41), (1i64 << 42)];
-    var s: [i64] = arr[1:3];
+    let arr: i64[] = [(1i64 << 40), (1i64 << 41), (1i64 << 42)];
+    let s: [i64] = arr[1:3];
     return (s[0] >> 41) as i32;
 }`, 1},
 		{"len(slice)", `function main(): i32 {
-    var arr: i32[] = [1, 2, 3, 4, 5];
-    var s: [i32] = arr[1:4];
+    let arr: i32[] = [1, 2, 3, 4, 5];
+    let s: [i32] = arr[1:4];
     return s.len();
 }`, 3},
 	} {
@@ -9573,7 +9573,7 @@ func TestArm64SliceMake(t *testing.T) {
 // from getrandom + actual entropy).
 func TestArm64RandomBytes(t *testing.T) {
 	out, code := compileAndRunArm64(t, `function main(): i32 {
-    var s: u8[] = random_bytes(16);
+    let s: u8[] = random_bytes(16);
     write(string_from_bytes_unchecked(s));
     return s.len();
 }`)
@@ -9602,8 +9602,8 @@ func TestArm64RandomBytes(t *testing.T) {
 // draws matched (non-varying generator).
 func TestArm64RandomI32(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function main(): i32 {
-    var a: i32 = random_i32();
-    var b: i32 = random_i32();
+    let a: i32 = random_i32();
+    let b: i32 = random_i32();
     if (a == 0) { return 0; }
     if (a == b) { return 1; }
     return 7;
@@ -9622,14 +9622,14 @@ func TestArm64RandomI32(t *testing.T) {
 func TestArm64StringAsBytes(t *testing.T) {
 	// 3 (len) + 65+66+67 = 201.
 	if _, code := compileAndRunArm64(t, `function main(): i32 {
-    var b = "ABC".as_bytes();
+    let b = "ABC".as_bytes();
     return b.len() + (b[0] as i32) + (b[1] as i32) + (b[2] as i32);
 }`); code != 201 {
 		t.Errorf("inline as_bytes: exit = %d, want 201 (3 + 65+66+67)", code)
 	}
 	// 10 (len) + 'J' (74) = 84.
 	if _, code := compileAndRunArm64(t, `function main(): i32 {
-    var b = "ABCDEFGHIJ".as_bytes();
+    let b = "ABCDEFGHIJ".as_bytes();
     return b.len() + (b[9] as i32);
 }`); code != 84 {
 		t.Errorf("heap as_bytes: exit = %d, want 84 (10 + 'J')", code)
@@ -9663,7 +9663,7 @@ func TestArm64EprintExit(t *testing.T) {
 // tcp_serve + parser/serializer composed) is a follow-up.
 func TestArm64TcpListen(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function main(): i32 {
-    var fd: i32 = tcp_listen(0);
+    let fd: i32 = tcp_listen(0);
     if (fd < 0) { return 1; }
     tcp_close(fd);
     return 42;
@@ -9685,7 +9685,7 @@ func TestArm64InstantNow(t *testing.T) {
 	_, code := compileAndRunArm64(t, `
 import "std/time";
 function main(): i32 {
-    var ts: Instant = time.instant_now();
+    let ts: Instant = time.instant_now();
     if (ts.sec < (1700000000 as i64)) { return 1; }
     if (ts.sec > (253402300800 as i64)) { return 2; }
     return 0;
@@ -9879,7 +9879,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
 		// TCP listen + close — exercises socket/bind/listen/close
 		// syscalls (Darwin numbers + svc #0x80 path).
 		{"tcp", `function main(): i32 {
-    var fd: i32 = tcp_listen(0);
+    let fd: i32 = tcp_listen(0);
     if (fd < 0) { return 1; }
     tcp_close(fd);
     return 42;
@@ -9913,7 +9913,7 @@ func TestArm64DarwinBuilds(t *testing.T) {
 import "core/map";
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(4);
+    let m: Map[i32, i32] = map_new(4);
     m = m.insert(1, 100);
     m = m.insert(2, 200);
     return m.get_or(2, 0);
@@ -9965,7 +9965,7 @@ function main(): i32 {
     weight: i32
 }
 function main(): i32 {
-    var p: Person = Person { age: 30, name: "Claude", weight: 100 };
+    let p: Person = Person { age: 30, name: "Claude", weight: 100 };
     return p.name.len() + p.age + p.weight;
 }`, 136},
 		// Array of strings — array literal stride + element
@@ -10083,8 +10083,8 @@ func TestArm64ControlFlow(t *testing.T) {
 		want int
 	}{
 		{`function main(): i32 {
-    var sum: i32 = 0;
-    var i: i32 = 1;
+    let sum: i32 = 0;
+    let i: i32 = 1;
     while (i <= 10) {
         sum = sum + i;
         i = i + 1;
@@ -10097,9 +10097,9 @@ func TestArm64ControlFlow(t *testing.T) {
     return 3;
 }
 function main(): i32 {
-    var a: i32 = classify(0 - 5);
-    var b: i32 = classify(0);
-    var c: i32 = classify(7);
+    let a: i32 = classify(0 - 5);
+    let b: i32 = classify(0);
+    let c: i32 = classify(7);
     return a * 100 + b * 10 + c;
 }`, 123},
 	} {
@@ -10174,7 +10174,7 @@ function main(): i32 {
 	}
 }
 
-// Closure factory pattern: `var f = makeAdder(7); f(35)`. The
+// Closure factory pattern: `let f = makeAdder(7); f(35)`. The
 // IR's Defunctionalise pass rewrites `f(35)` into a direct call
 // to the hoisted `add` with env_ptr pulled out of the closure
 // pair at offset +ptrW (=8 on native).
@@ -10187,8 +10187,8 @@ function main(): i32 {
 func TestArm64ClosureChainNoAlloc(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function main(): i32 {
     function answer(): i32 { return 7; }
-    var f = answer;
-    var x: i32 = f();
+    let f = answer;
+    let x: i32 = f();
     return x;
 }`)
 	if code != 7 {
@@ -10270,7 +10270,7 @@ function main(): i32 {
     return cb(items[0]);
 }
 function main(): i32 {
-    var n: i32 = 10;
+    let n: i32 = 10;
     function addN(x: i32): i32 { return x + n; }
     return each([5], addN);
 }`, 15},
@@ -10285,7 +10285,7 @@ function main(): i32 {
     return cb(items[0]);
 }
 function main(): i32 {
-    var nums: i32[] = [10, 20, 30];
+    let nums: i32[] = [10, 20, 30];
     use n <- each(nums);
     return n + 1;
 }`, 11},
@@ -10303,7 +10303,7 @@ func TestArm64ClosureFactory(t *testing.T) {
     return add;
 }
 function main(): i32 {
-    var f = makeAdder(7);
+    let f = makeAdder(7);
     return f(35);
 }`
 	if _, code := compileAndRunArm64(t, src); code != 42 {
@@ -10319,8 +10319,8 @@ func TestArm64ClosureMultipleInstances(t *testing.T) {
     return add;
 }
 function main(): i32 {
-    var add5 = makeAdder(5);
-    var add10 = makeAdder(10);
+    let add5 = makeAdder(5);
+    let add10 = makeAdder(10);
     return add5(1) + add10(1);
 }`
 	// (5+1) + (10+1) = 17
@@ -10335,7 +10335,7 @@ function main(): i32 {
 // Exercises the OpMakeEnv path.
 func TestArm64ClosureCapturesParamAndVar(t *testing.T) {
 	src := `function outer(seed: i32): i32 {
-    var bonus: i32 = 100;
+    let bonus: i32 = 100;
     function inner(x: i32): i32 { return x + seed + bonus; }
     return inner(2);
 }
@@ -10374,7 +10374,7 @@ func TestArm64ClosureReturnsCapturedString(t *testing.T) {
     return inner();
 }
 function main(): i32 {
-    var got = outer("hello");
+    let got = outer("hello");
     if (got == "hello") { return 0; }
     return 1;
 }`
@@ -10394,9 +10394,9 @@ func TestArm64LambdaCallsMethodOnCapturedString(t *testing.T) {
 	src := `
 import "std/string";
 function main(): i32 {
-    var s: string = "  hi  ";
-    var f = (): string => { return s.trim().to_owned(); };
-    var got = f();
+    let s: string = "  hi  ";
+    let f = (): string => { return s.trim().to_owned(); };
+    let got = f();
     if (got == "hi") { return 0; }
     return 1;
 }`
@@ -10412,12 +10412,12 @@ function main(): i32 {
 // with "symbol already defined". Per-origin counting fixes it.
 func TestArm64NestedLambdaUniqueNames(t *testing.T) {
 	src := `function main(): i32 {
-    var outer = (): i32 => {
-        var inner = (): i32 => {
-            var x = 21;
+    let outer = (): i32 => {
+        let inner = (): i32 => {
+            let x = 21;
             return x * 2;
         };
-        var y = inner();
+        let y = inner();
         return y;
     };
     return outer();
@@ -10437,10 +10437,10 @@ func TestArm64NestedLambdaUniqueNames(t *testing.T) {
 // closures that captured strings.
 func TestArm64LambdaWithBodyLocals(t *testing.T) {
 	src := `function main(): i32 {
-    var greet = "hi";
-    var f = (n: i32): i32 => {
-        var sq = n * n;
-        var tag = greet + "!";
+    let greet = "hi";
+    let f = (n: i32): i32 => {
+        let sq = n * n;
+        let tag = greet + "!";
         print(tag);
         return sq;
     };
@@ -10464,7 +10464,7 @@ func TestArm64ClosureMultiCapture(t *testing.T) {
     return f;
 }
 function main(): i32 {
-    var h = make2(10, 20);
+    let h = make2(10, 20);
     return h(12);
 }`
 	if _, code := compileAndRunArm64(t, src); code != 42 {
@@ -10494,12 +10494,12 @@ function main(): i32 { return outer("hi", 40); }`
 // `field access on unresolved struct ""` at IR-emit time.
 func TestArm64ClosureCapturesTuple(t *testing.T) {
 	src := `function build(): () => i64 {
-    var t: (i64, i64) = (1000000000000i64, 2000000000000i64);
+    let t: (i64, i64) = (1000000000000i64, 2000000000000i64);
     function read(): i64 { return t.0 + t.1; }
     return read;
 }
 function main(): i32 {
-    var f = build();
+    let f = build();
     if (f() != 3000000000000i64) { return 1; }
     return 0;
 }`
@@ -10518,7 +10518,7 @@ func TestArm64LenOfClosureReturningString(t *testing.T) {
     return build;
 }
 function main(): i32 {
-    var f = makeReader();
+    let f = makeReader();
     return (f()).len();
 }`
 	if _, code := compileAndRunArm64(t, src); code != 5 {
@@ -10537,7 +10537,7 @@ function makeNamer(name: string): () => string {
     return build;
 }
 function main(): i32 {
-    var f = makeNamer("world");
+    let f = makeNamer("world");
     if (f() != "hello, world!") { return 1; }
     return 0;
 }`
@@ -10550,7 +10550,7 @@ function main(): i32 {
 // captured outer-scope variable now stores into the env block.
 func TestArm64MutableCapturedVar(t *testing.T) {
 	src := `function makeCounter(): () => i32 {
-    var count: i32 = 0;
+    let count: i32 = 0;
     function tick(): i32 {
         count = count + 1;
         return count;
@@ -10558,10 +10558,10 @@ func TestArm64MutableCapturedVar(t *testing.T) {
     return tick;
 }
 function main(): i32 {
-    var c = makeCounter();
-    var a: i32 = c();
-    var b: i32 = c();
-    var d: i32 = c();
+    let c = makeCounter();
+    let a: i32 = c();
+    let b: i32 = c();
+    let d: i32 = c();
     return a + b + d;
 }`
 	if _, code := compileAndRunArm64(t, src); code != 6 {
@@ -10582,8 +10582,8 @@ function makeApplier(f: (i32) => i32): (i32) => i32 {
     return apply;
 }
 function main(): i32 {
-    var a = makeAdder(10);
-    var ap = makeApplier(a);
+    let a = makeAdder(10);
+    let ap = makeApplier(a);
     return ap(5);
 }`
 	if _, code := compileAndRunArm64(t, src); code != 16 {
@@ -10605,7 +10605,7 @@ func TestArm64ClosureRecursiveSelfCall(t *testing.T) {
     return fact;
 }
 function main(): i32 {
-    var f = makeFact();
+    let f = makeFact();
     return f(5);
 }`
 	if _, code := compileAndRunArm64(t, src); code != 120 {
@@ -10620,7 +10620,7 @@ func TestArm64Defer(t *testing.T) {
 		want int
 	}{
 		{"defer fires after return value computed", `function inner(): i32 {
-    var x: i32 = 1;
+    let x: i32 = 1;
     defer x = 99;
     x = 2;
     return x;
@@ -10633,7 +10633,7 @@ function main(): i32 { return inner(); }`, 2},
     return c.get();
 }
 function main(): i32 {
-    var c: Cell[i32] = cell_new(0);
+    let c: Cell[i32] = cell_new(0);
     check(c);
     return c.get();
 }`, 10},
@@ -10654,15 +10654,15 @@ func TestArm64FStringInterpolation(t *testing.T) {
 		{"interpolated i32", `
 import "std/i32";
 function main(): i32 {
-    var n: i32 = 42;
-    var s: string = f"n is {n}";
+    let n: i32 = 42;
+    let s: string = f"n is {n}";
     return s.len();
 }`, 7},
 		{"interpolated string", `
 import "std/i32";
 function main(): i32 {
-    var who: string = "world";
-    var s: string = f"hello, {who}!";
+    let who: string = "world";
+    let s: string = f"hello, {who}!";
     return s.len();
 }`, 13},
 	} {
@@ -10705,7 +10705,7 @@ function main(): i32 {
     return a + b;
 }`, 30},
 		{"heterogeneous tuple element access", `function main(): i32 {
-    var t: (i32, string, i32) = (1, "two", 3);
+    let t: (i32, string, i32) = (1, "two", 3);
     return t.0 + t.2;
 }`, 4},
 	} {
@@ -10723,12 +10723,12 @@ func TestArm64ForEach(t *testing.T) {
 		want int
 	}{
 		{"sum array", `function main(): i32 {
-    var sum: i32 = 0;
+    let sum: i32 = 0;
     for n in [1, 2, 3, 4, 5] { sum = sum + n; }
     return sum;
 }`, 15},
 		{"break exits the loop", `function main(): i32 {
-    var found: i32 = -1;
+    let found: i32 = -1;
     for n in [10, 20, 30, 40] {
         if (n == 30) { found = n; break; }
     }
@@ -10749,12 +10749,12 @@ func TestArm64IfLet(t *testing.T) {
 		want int
 	}{
 		{"Some matches", `function main(): i32 {
-    var x: Option[i32] = Some(42);
+    let x: Option[i32] = Some(42);
     if let Some(v) = x { return v; }
     return 99;
 }`, 42},
 		{"None falls through", `function main(): i32 {
-    var x: Option[i32] = None;
+    let x: Option[i32] = None;
     if let Some(v) = x { return v; }
     return 99;
 }`, 99},
@@ -10777,8 +10777,8 @@ func TestArm64UsizeAutowiden(t *testing.T) {
     return base + idx * stride;
 }
 function main(): i32 {
-    var heap_ptr: usize = 4294967296 as usize;
-    var elem: usize = offset_compute(heap_ptr, 4, 8);
+    let heap_ptr: usize = 4294967296 as usize;
+    let elem: usize = offset_compute(heap_ptr, 4, 8);
     return (elem as i32);
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -10793,9 +10793,9 @@ function main(): i32 {
 // contract. See docs/ADVERSARIAL-REVIEW-2026-06.md (B1).
 func TestArm64UsizeDivRem(t *testing.T) {
 	src := `function main(): i32 {
-    var x: usize = 5000000000 as usize;
-    var q: usize = x / 3;
-    var r: usize = x % 3;
+    let x: usize = 5000000000 as usize;
+    let q: usize = x / 3;
+    let r: usize = x % 3;
     if ((q as i32) != 1666666666) { return 1; }
     if ((r as i32) != 2) { return 2; }
     return 7;
@@ -10813,7 +10813,7 @@ func TestArm64UsizeDivRem(t *testing.T) {
 // over-wide `mov` before the fix).
 func TestArm64LargeStringLiteral(t *testing.T) {
 	const n = 70000 // > 0xffff
-	src := fmt.Sprintf("function main(): i32 {\n    var s: string = %q;\n    if (s.len() == %d) { return 7; }\n    return 1;\n}", strings.Repeat("a", n), n)
+	src := fmt.Sprintf("function main(): i32 {\n    let s: string = %q;\n    if (s.len() == %d) { return 7; }\n    return 1;\n}", strings.Repeat("a", n), n)
 	_, code := compileAndRunArm64(t, src)
 	if code != 7 {
 		t.Errorf("got exit %d, want 7 (>64KiB literal: assembled and len()==%d?)", code, n)
@@ -10824,8 +10824,8 @@ func TestArm64LargeStringLiteral(t *testing.T) {
 // shared-IR B2 fix. See docs/ADVERSARIAL-REVIEW-2026-06.md.
 func TestArm64FloatToUsize(t *testing.T) {
 	src := `function main(): i32 {
-    var f: f64 = 5000000000.0;
-    var u: usize = f as usize;
+    let f: f64 = 5000000000.0;
+    let u: usize = f as usize;
     if (u == 5000000000 as usize) { return 7; }
     return 1;
 }`
@@ -10849,48 +10849,48 @@ func TestArm64WideScalarMap(t *testing.T) {
 		{"Map[i64, i32]", `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(4);
+    let m: Map[i64, i32] = map_new(4);
     m = m.insert(1i64, 100);
     return m.get_or(1i64, 0);
 }`, 100},
 		{"Map[i32, f64]", `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, f64] = map_new(4);
+    let m: Map[i32, f64] = map_new(4);
     m = m.insert(1, 3.14);
     return m.get_or(1, 0.0) as i32;
 }`, 3},
 		{"Map[i64, string]", `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, string] = map_new(4);
+    let m: Map[i64, string] = map_new(4);
     m = m.insert(1i64, "hello");
     return (m.get_or(1i64, "")).len();
 }`, 5},
 		{"Map[string, i64]", `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i64] = map_new(4);
+    let m: Map[string, i64] = map_new(4);
     m = m.insert("hello", 42i64);
     return m.get_or("hello", 0i64) as i32;
 }`, 42},
 		{"Map[u64, i32]", `
 import "core/map";
 function main(): i32 {
-    var m: Map[u64, i32] = map_new(4);
+    let m: Map[u64, i32] = map_new(4);
     m = m.insert(1u64, 100);
     return m.get_or(1u64, 0);
 }`, 100},
 		{"distinct high-bit i64 keys", `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(8);
-    var k1: i64 = 0i64;
-    var k2: i64 = 1i64 << 33i64;
+    let m: Map[i64, i32] = map_new(8);
+    let k1: i64 = 0i64;
+    let k2: i64 = 1i64 << 33i64;
     m = m.insert(k1, 1);
     m = m.insert(k2, 2);
-    var v1: i32 = m.get_or(k1, 99);
-    var v2: i32 = m.get_or(k2, 99);
+    let v1: i32 = m.get_or(k1, 99);
+    let v2: i32 = m.get_or(k2, 99);
     return v1 + v2;
 }`, 3},
 		// m.keys() on Map[i64, _] needs to materialise an i64[]
@@ -10904,10 +10904,10 @@ function main(): i32 {
 		{"keys() preserves 8-byte values", `
 import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(4);
+    let m: Map[i64, i32] = map_new(4);
     m = m.insert(1i64, 10);
     m = m.insert(1000000000000i64, 20);
-    var keys: i64[] = m.keys();
+    let keys: i64[] = m.keys();
     if (keys.len() != 2) { return 1; }
     if (keys[0] != 1i64 && keys[0] != 1000000000000i64) { return 2; }
     if (keys[1] != 1i64 && keys[1] != 1000000000000i64) { return 3; }
@@ -10929,29 +10929,29 @@ func TestArm64Usize(t *testing.T) {
 		want int
 	}{
 		{"basic usize round-trip", `function main(): i32 {
-    var x: usize = 42;
+    let x: usize = 42;
     return x as i32;
 }`, 42},
 		{"usize arithmetic", `function main(): i32 {
-    var a: usize = 10;
-    var b: usize = 32;
+    let a: usize = 10;
+    let b: usize = 32;
     return (a + b) as i32;
 }`, 42},
 		{"usize as fn param + return", `function dbl(x: usize): usize { return x + x; }
 function main(): i32 {
-    var n: usize = 21;
+    let n: usize = 21;
     return dbl(n) as i32;
 }`, 42},
 		{"large value survives on native (> 32 bits)", `function main(): i32 {
-    var big: usize = 4294967301 as usize;
-    var rt: i64 = big as i64;
+    let big: usize = 4294967301 as usize;
+    let rt: i64 = big as i64;
     if ((rt >> 32) > 0i64) { return 42; }
     return 1;
 }`, 42},
 		{"string ptr round-trip through usize", `function main(): i32 {
-    var s: string = "hello, " + "world";
-    var ptr: usize = s as usize;
-    var s2: string = ptr as string;
+    let s: string = "hello, " + "world";
+    let ptr: usize = s as usize;
+    let s2: string = ptr as string;
     return s2.len();
 }`, 12},
 	} {
@@ -11183,16 +11183,16 @@ func TestArm64FloatBitCast(t *testing.T) {
 		want int
 	}{
 		{"round-trip 1.0", `function main(): i32 {
-    var x: f32 = 1.0;
-    var b: i32 = f32_bits(x);
-    var y: f32 = f32_from_bits(b);
+    let x: f32 = 1.0;
+    let b: i32 = f32_bits(x);
+    let y: f32 = f32_from_bits(b);
     if (y == x) { return 0; }
     return 1;
 }`, 0},
 		{"round-trip 3.14", `function main(): i32 {
-    var x: f32 = 3.14;
-    var b: i32 = f32_bits(x);
-    var y: f32 = f32_from_bits(b);
+    let x: f32 = 3.14;
+    let b: i32 = f32_bits(x);
+    let y: f32 = f32_from_bits(b);
     if (y == x) { return 0; }
     return 1;
 }`, 0},
@@ -11201,9 +11201,9 @@ func TestArm64FloatBitCast(t *testing.T) {
     return 1;
 }`, 0},
 		{"sign-bit preserved through round-trip", `function main(): i32 {
-    var neg: f32 = 0.0 - 1.0;
-    var b: i32 = f32_bits(neg);
-    var back: f32 = f32_from_bits(b);
+    let neg: f32 = 0.0 - 1.0;
+    let b: i32 = f32_bits(neg);
+    let back: f32 = f32_from_bits(b);
     if (back == neg) { return 0; }
     return 1;
 }`, 0},
@@ -11211,7 +11211,7 @@ func TestArm64FloatBitCast(t *testing.T) {
 		// (preserving -0.0); this pins parity with x86_64's
 		// OpFNeg fix in the same PR.
 		{"-0.0 bits = sign bit", `function main(): i32 {
-    var bits_u: u32 = f32_bits(-0.0) as u32;
+    let bits_u: u32 = f32_bits(-0.0) as u32;
     if (bits_u == 2147483648 as u32) { return 0; }
     return 1;
 }`, 0},
@@ -11442,7 +11442,7 @@ func TestArm64ReaderWriter(t *testing.T) {
     }
     match (stat("mode.txt")) {
         Ok(st) => {
-            var others: i32 = (st.mode & (63 as u32)) as i32;
+            let others: i32 = (st.mode & (63 as u32)) as i32;
             if (others != 0) { return others; }
             write("private");
             return 0;
@@ -11485,8 +11485,8 @@ function inner(trace: Cell[i32]): i32 {
     return 42;
 }
 function main(): i32 {
-    var trace: Cell[i32] = cell_new(0);
-    var r: i32 = inner(trace);
+    let trace: Cell[i32] = cell_new(0);
+    let r: i32 = inner(trace);
     if (r != 42) { return 1; }
     // Body steps 1 and 2, then the defers in LIFO order: 4, then 3.
     if (trace.get() != 1243) { return 2; }
@@ -11495,20 +11495,20 @@ function main(): i32 {
 		{"fstring_interp", `
 import "std/i32";
 function main(): i32 {
-    var x: i32 = 42;
-    var s: string = f"x is {x}";
+    let x: i32 = 42;
+    let s: string = f"x is {x}";
     if (s.len() == 7) { return 0; }
     return 1;
 }`},
 		{"for_each_array", `function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4, 5];
-    var sum: i32 = 0;
+    let xs: i32[] = [1, 2, 3, 4, 5];
+    let sum: i32 = 0;
     for x in xs { sum = sum + x; }
     if (sum == 15) { return 0; }
     return 1;
 }`},
 		{"if_let_match", `function main(): i32 {
-    var o: Option[i32] = Some(42);
+    let o: Option[i32] = Some(42);
     if let Some(x) = o {
         if (x == 42) { return 0; }
         return 1;
@@ -11520,14 +11520,14 @@ function main(): i32 {
     return (a / b, a - (a / b) * b);
 }
 function main(): i32 {
-    var p = divmod(17, 5);
+    let p = divmod(17, 5);
     if (p.0 == 3 && p.1 == 2) { return 0; }
     return 1;
 }`},
 		{"generic_infer_from_arg", `function id[T](x: T): T { return x; }
 function main(): i32 {
-    var a = id(42);
-    var b = id(7);
+    let a = id(42);
+    let b = id(7);
     if (a == 42 && b == 7) { return 0; }
     return 1;
 }`},
@@ -11571,22 +11571,22 @@ func TestArm64NoPreludeStdlibImports(t *testing.T) {
 		{"i32_string_cycle", `
 import "std/i32";
 function main(): i32 {
-    var s: string = (42).to_string_padded(6);
+    let s: string = (42).to_string_padded(6);
     if (s == "000042") { return 0; }
     return 1;
 }`},
 		{"array_method_chain", `
 import "std/array";
 function main(): i32 {
-    var xs: i32[] = [0 - 3, 4, 0 - 1];
-    var ys = xs.abs_each();
+    let xs: i32[] = [0 - 3, 4, 0 - 1];
+    let ys = xs.abs_each();
     if (ys[0] + ys[1] + ys[2] == 8) { return 0; }
     return 1;
 }`},
 		{"qualified_int_call", `
 import "core/int";
 function main(): i32 {
-    var s: string = int.int_to_string_radix(255, 16);
+    let s: string = int.int_to_string_radix(255, 16);
     if (s == "ff") { return 0; }
     return 1;
 }`},
@@ -11595,10 +11595,10 @@ import "std/i32";
 import "std/string";
 import "std/array";
 function main(): i32 {
-    var s: string = (0 - 42).to_string();
+    let s: string = (0 - 42).to_string();
     if (s != "-42") { return 1; }
-    var strs: string[] = ["b", "a", "c"];
-    var joined: string = strs.join(",");
+    let strs: string[] = ["b", "a", "c"];
+    let joined: string = strs.join(",");
     if (joined != "b,a,c") { return 2; }
     return 0;
 }`},
@@ -11628,9 +11628,9 @@ function main(): i32 {
 // before the fernsmith corpus does.
 func TestArm64HeapAddressFits32Bits(t *testing.T) {
 	src := `function main(): i32 {
-    var p: usize = __alloc(8);
-    var pi: i64 = p as i64;
-    var hi: i32 = (pi >> (32 as i64)) as i32;
+    let p: usize = __alloc(8);
+    let pi: i64 = p as i64;
+    let hi: i32 = (pi >> (32 as i64)) as i32;
     return hi;
 }`
 	out, code := compileAndRunArm64(t, src)
@@ -11651,7 +11651,7 @@ struct V2 { b: i32 }
 type U = W | V2;
 function mk(): U { return W { a: [1, 2, 3] }; }
 function build(): i32 {
-    var u: U = mk();
+    let u: U = mk();
     match (u) { W(w) => { return w.a[1] + __rc_underflow_count(); }, V2(x) => { return x.b; } }
     return 0 - 1;
 }
@@ -11664,8 +11664,8 @@ function main(): i32 { return build() - 2; }`
 struct V2 { b: i32 }
 type U = W | V2;
 function main(): i32 {
-    var w: W = W { a: 7 };
-    var u: U = w;
+    let w: W = W { a: 7 };
+    let u: U = w;
     return w.a + __rc_underflow_count() - 7;
 }`
 	if _, code := compileAndRunArm64(t, aliased); code != 0 {
@@ -11674,8 +11674,8 @@ function main(): i32 {
 
 	nonUniform := `enum E { Arr(i32[]), Num(i32) }
 function main(): i32 {
-    var e: E = Arr([1, 2, 3]);
-    var f: E = Num(9);
+    let e: E = Arr([1, 2, 3]);
+    let f: E = Num(9);
     match (e) {
         Arr(a) => { return a.len() + __rc_underflow_count() - 3; },
         Num(_) => { return 0 - 1; }
@@ -11692,9 +11692,9 @@ function main(): i32 {
 // corrupt the other holder's view.
 func TestArm64ArrayPushAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [10, 20];
+    let xs: i32[] = [10, 20];
     xs = xs.append(30);          // copy, cap now 6
-    var ys = xs;               // alias, rc=2
+    let ys = xs;               // alias, rc=2
     ys = ys.append(40);          // must COPY (rc>1)
     if (xs.len() != 3) { return 1; }   // xs unchanged
     if (xs[0] != 10) { return 2; }
@@ -11711,8 +11711,8 @@ func TestArm64ArrayPushAliasedCopies(t *testing.T) {
 // otherwise the other holder's view would silently mutate.
 func TestArm64ArrayIndexSetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var ys = xs;            // alias, rc=2
+    let xs: i32[] = [10, 20, 30];
+    let ys = xs;            // alias, rc=2
     ys = ys.with(0, 999);            // must COPY
     if (xs[0] != 10) { return 1; }   // xs unchanged
     if (xs[1] != 20) { return 2; }
@@ -11733,7 +11733,7 @@ func TestArm64ArrayIndexSetAliasedCopies(t *testing.T) {
 // internalised rc bookkeeping.
 func TestArm64ArrayIndexSetU8Stride(t *testing.T) {
 	src := `function main(): i32 {
-    var buf: u8[] = __alloc_u8(4);
+    let buf: u8[] = __alloc_u8(4);
     buf = buf.with(0, 65 as u8);
     buf = buf.with(1, 66 as u8);
     buf = buf.with(2, 67 as u8);
@@ -11752,7 +11752,7 @@ func TestArm64ArrayIndexSetU8Stride(t *testing.T) {
 func TestArm64ArrayIndexSetStructField(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
-    var s: State = State{items: [10, 20, 30]};
+    let s: State = State{items: [10, 20, 30]};
     s = State { ...s, items: s.items.with(1, 999) };
     if (s.items[0] != 10) { return 1; }
     if (s.items[1] != 999) { return 2; }
@@ -11770,8 +11770,8 @@ function main(): i32 {
 func TestArm64ArrayIndexSetStructFieldAliasedCopies(t *testing.T) {
 	src := `struct State { items: i32[] }
 function main(): i32 {
-    var arr: i32[] = [10, 20, 30];
-    var s: State = State{items: arr};
+    let arr: i32[] = [10, 20, 30];
+    let s: State = State{items: arr};
     s = State { ...s, items: s.items.with(1, 999) };
     if (arr[0] != 10) { return 1; }
     if (arr[1] != 20) { return 2; }
@@ -11793,7 +11793,7 @@ func TestArm64ArrayIndexSetNestedStructField(t *testing.T) {
 	src := `struct Inner { items: i32[] }
 struct Outer { inner: Inner }
 function main(): i32 {
-    var o: Outer = Outer{inner: Inner{items: [10, 20, 30]}};
+    let o: Outer = Outer{inner: Inner{items: [10, 20, 30]}};
     o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (o.inner.items[0] != 10) { return 1; }
     if (o.inner.items[1] != 999) { return 2; }
@@ -11812,8 +11812,8 @@ func TestArm64ArrayIndexSetNestedStructFieldAliasedCopies(t *testing.T) {
 	src := `struct Inner { items: i32[] }
 struct Outer { inner: Inner }
 function main(): i32 {
-    var arr: i32[] = [10, 20, 30];
-    var o: Outer = Outer{inner: Inner{items: arr}};
+    let arr: i32[] = [10, 20, 30];
+    let o: Outer = Outer{inner: Inner{items: arr}};
     o = Outer { ...o, inner: Inner { ...o.inner, items: o.inner.items.with(1, 999) } };
     if (arr[1] != 20) { return 1; }  // arr unchanged
     if (o.inner.items[1] != 999) { return 2; }  // o updated
@@ -11829,7 +11829,7 @@ function main(): i32 {
 // rc is 1.
 func TestArm64ArrayIndexSetMat(t *testing.T) {
 	src := `function main(): i32 {
-    var mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
+    let mat: i32[][] = [[1, 2, 3], [4, 5, 6]];
     mat = mat.with(0, mat[0].with(1, 999));
     if (mat[0][0] != 1) { return 1; }
     if (mat[0][1] != 999) { return 2; }
@@ -11843,12 +11843,12 @@ func TestArm64ArrayIndexSetMat(t *testing.T) {
 }
 
 // Phase 2b extension: aliased inner array via Phase 1d-ii inc
-// (`var inner = mat[0]`) makes the inner's rc 2; the write
+// (`let inner = mat[0]`) makes the inner's rc 2; the write
 // must copy and leave the alias unchanged.
 func TestArm64ArrayIndexSetMatInnerAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
-    var mat: i32[][] = [[1, 2], [3, 4]];
-    var inner = mat[0];     // Phase 1d-ii inc: inner.rc = 2
+    let mat: i32[][] = [[1, 2], [3, 4]];
+    let inner = mat[0];     // Phase 1d-ii inc: inner.rc = 2
     mat = mat.with(0, mat[0].with(1, 999));        // CoW the inner; inner alias unchanged
     if (inner[1] != 2) { return 1; }
     if (mat[0][1] != 999) { return 2; }
@@ -11867,7 +11867,7 @@ func TestArm64MapSetReturnsMap(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
@@ -11890,8 +11890,8 @@ function main(): i32 {
 func TestArm64ArrayIndexSetObjMatInnerAliasedCopies(t *testing.T) {
 	src := `struct State { mat: i32[][] }
 function main(): i32 {
-    var inner: i32[] = [1, 2, 3];
-    var s: State = State{mat: [inner, [4, 5, 6]]};
+    let inner: i32[] = [1, 2, 3];
+    let s: State = State{mat: [inner, [4, 5, 6]]};
     s = State { ...s, mat: s.mat.with(0, s.mat[0].with(1, 999)) };
     if (inner[1] != 2) { return 1; }
     if (s.mat[0][1] != 999) { return 2; }
@@ -11908,7 +11908,7 @@ function main(): i32 {
 // would emit, but expression-position so it composes.
 func TestArm64ArraySetSelfAssign(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
+    let xs: i32[] = [10, 20, 30];
     xs = xs.with(1, 999);
     if (xs[0] != 10) { return 1; }
     if (xs[1] != 999) { return 2; }
@@ -11924,8 +11924,8 @@ func TestArm64ArraySetSelfAssign(t *testing.T) {
 // stays unchanged.
 func TestArm64ArraySetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var ys = xs;                    // Phase 1d-i: xs.rc = 2
+    let xs: i32[] = [10, 20, 30];
+    let ys = xs;                    // Phase 1d-i: xs.rc = 2
     ys = ys.with(0, 999);            // rc>1 → copy. xs unchanged.
     if (xs[0] != 10) { return 1; }
     if (ys[0] != 999) { return 2; }
@@ -11942,17 +11942,17 @@ func TestArm64MapDeleteReturnsMapBool(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
-    var (mb, hadb) = m.without("b");
+    let (mb, hadb) = m.without("b");
     if (!hadb) { return 1; }               // "b" present → true
     m = mb;
     // Bool field access on call result.
     if (m.without("z").1)  { return 2; }   // "z" missing → false
     // Tuple destructuring: m2 is the updated map, ok is the found-flag.
-    var (m2, ok) = m.without("a");
+    let (m2, ok) = m.without("a");
     if (!ok) { return 3; }
     if (m2.has("a")) { return 4; }
     if (!m2.has("c")) { return 5; }
@@ -11969,7 +11969,7 @@ func TestArm64MapClearReturnsMap(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("x", 10);
     m = m.insert("y", 20);
     if (m.len() != 2) { return 1; }
@@ -11988,15 +11988,15 @@ function main(): i32 {
 }
 
 // Phase 2d: Map.set copy-on-write — arm64 sibling of
-// TestX86_64MapSetAliasedCopies. An aliased map (var m2 = m1)
+// TestX86_64MapSetAliasedCopies. An aliased map (let m2 = m1)
 // has rc=2, so m2.insert(...) copies and leaves m1 intact.
 func TestArm64MapSetAliasedCopies(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m1: Map[string, i32] = map_new(8);
+    let m1: Map[string, i32] = map_new(8);
     m1 = m1.insert("a", 1);                 // in-place (rc==1)
-    var m2 = m1;                    // alias → rc=2
+    let m2 = m1;                    // alias → rc=2
     m2 = m2.insert("a", 999);          // rc>1 → copy; m1 unchanged
     if (m1.get_or("a", 0) != 1)   { return 1; }
     if (m2.get_or("a", 0) != 999) { return 2; }
@@ -12013,17 +12013,17 @@ func TestArm64MapDeleteClearAliasedCopies(t *testing.T) {
 	src := `
 import "core/map";
 function main(): i32 {
-    var m1: Map[string, i32] = map_new(8);
+    let m1: Map[string, i32] = map_new(8);
     m1 = m1.insert("a", 1);
     m1 = m1.insert("b", 2);
-    var m2 = m1;                       // alias → rc=2
-    var (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
+    let m2 = m1;                       // alias → rc=2
+    let (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
     if (!ok)            { return 1; }
     if (m1.len() != 2)  { return 2; }
     if (!m1.has("a"))   { return 3; }
     if (m3.len() != 1)  { return 4; }
     if (m3.has("a"))    { return 5; }
-    var m4 = m1;                       // alias → rc=2
+    let m4 = m1;                       // alias → rc=2
     m4 = m4.cleared();                   // rc>1 → copy; m1 intact
     if (m1.len() != 2)  { return 6; }
     if (m4.len() != 0)  { return 7; }
@@ -12043,9 +12043,9 @@ function main(): i32 {
 func TestArm64TupleStructElem(t *testing.T) {
 	src := `struct Inner { x: i32, y: i32 }
 function main(): i32 {
-    var t: (i32, Inner) = (1, Inner { x: 2, y: 3 });
+    let t: (i32, Inner) = (1, Inner { x: 2, y: 3 });
     if (t.0 != 1) { return 1; }
-    var inner: Inner = t.1;
+    let inner: Inner = t.1;
     if (inner.x != 2) { return 2; }
     if (inner.y != 3) { return 3; }
     return 0;
@@ -12057,9 +12057,9 @@ function main(): i32 {
 
 func TestArm64TupleArrayElem(t *testing.T) {
 	src := `function main(): i32 {
-    var t: (i32, i32[]) = (1, [10, 20, 30]);
+    let t: (i32, i32[]) = (1, [10, 20, 30]);
     if (t.0 != 1) { return 1; }
-    var arr: i32[] = t.1;
+    let arr: i32[] = t.1;
     if (arr.len() != 3) { return 2; }
     if (arr[0] != 10) { return 3; }
     if (arr[2] != 30) { return 4; }
@@ -12072,10 +12072,10 @@ func TestArm64TupleArrayElem(t *testing.T) {
 
 func TestArm64TupleNestedTuple(t *testing.T) {
 	src := `function main(): i32 {
-    var t: (i32, (i32, i32)) = (1, (2, 3));
-    var (a, b) = t;
+    let t: (i32, (i32, i32)) = (1, (2, 3));
+    let (a, b) = t;
     if (a != 1) { return 1; }
-    var (c, d) = b;
+    let (c, d) = b;
     if (c != 2) { return 2; }
     if (d != 3) { return 3; }
     return 0;
@@ -12093,7 +12093,7 @@ func TestArm64TupleNestedTuple(t *testing.T) {
 // punctuator.
 func TestArm64LexerChainedTupleNumericAccess(t *testing.T) {
 	src := `function main(): i32 {
-    var t: (i32, (i32, i32)) = (1, (2, 3));
+    let t: (i32, (i32, i32)) = (1, (2, 3));
     if (t.0 != 1) { return 1; }
     if (t.1.0 != 2) { return 2; }
     if (t.1.1 != 3) { return 3; }
@@ -12108,7 +12108,7 @@ func TestArm64LexerChainedTupleNumericAccess(t *testing.T) {
 // K / V from the destination rather than defaulting to
 // `Map[i32, i32]`. settleNumeric walking only entries is a no-op
 // for an empty literal, which leaves the surrounding assignable
-// check looking at the pre-settle default and rejecting `var m:
+// check looking at the pre-settle default and rejecting `let m:
 // Map[string, i32] = Map {};` with E003.
 func TestArm64EmptyMapDestinationInference(t *testing.T) {
 	src := `
@@ -12117,22 +12117,22 @@ function take(m: Map[string, i32]): i32 { return m.len(); }
 function mkEmpty(): Map[i32, string] { return Map {}; }
 function main(): i32 {
     // Var declaration: K=string, V=i32
-    var a: Map[string, i32] = Map {};
+    let a: Map[string, i32] = Map {};
     if (a.len() != 0) { return 1; }
     a = a.insert("k", 42);
     if (a.get_or("k", 0) != 42) { return 2; }
     // Var declaration: K=i32, V=string
-    var b: Map[i32, string] = Map {};
+    let b: Map[i32, string] = Map {};
     if (b.len() != 0) { return 3; }
     b = b.insert(7, "hello");
     if (!b.has(7)) { return 4; }
     // Function argument
     if (take(Map {}) != 0) { return 5; }
     // Return statement
-    var r = mkEmpty();
+    let r = mkEmpty();
     if (r.len() != 0) { return 6; }
     // Default Map[i32, i32] still works
-    var d: Map[i32, i32] = Map {};
+    let d: Map[i32, i32] = Map {};
     if (d.len() != 0) { return 7; }
     return 0;
 }`
@@ -12152,7 +12152,7 @@ func TestArm64EnumVariantInTuple(t *testing.T) {
 	src := `enum Color { Red, Green, Blue }
 function main(): i32 {
     // payload-less variant, scalar-first to expose the offset
-    var t: (i32, Color) = (1, Green);
+    let t: (i32, Color) = (1, Green);
     if (t.0 != 1) { return 1; }
     match (t.1) {
         Red => { return 2; },
@@ -12160,14 +12160,14 @@ function main(): i32 {
         Blue => { return 3; }
     }
     // payload-bearing variant constructor
-    var u: (i32, Option[i32]) = (5, Some(42));
+    let u: (i32, Option[i32]) = (5, Some(42));
     if (u.0 != 5) { return 4; }
     match (u.1) {
         Some(v) => { if (v != 42) { return 5; } },
         None => { return 6; }
     }
     // variant first, scalar second
-    var w: (Color, i32) = (Blue, 99);
+    let w: (Color, i32) = (Blue, 99);
     if (w.1 != 99) { return 7; }
     match (w.0) {
         Blue => { return 0; },
@@ -12194,28 +12194,28 @@ import "core/map";
 struct P { x: i32, y: i32 }
 function main(): i32 {
     // tuple value
-    var mt: Map[string, (i32, i32)] = Map {};
+    let mt: Map[string, (i32, i32)] = Map {};
     mt = mt.insert("a", (3, 4));
     match (mt.get("a")) {
         Some(p) => { if (p.0 + p.1 != 7) { return 1; } },
         None => { return 2; }
     }
     // struct value
-    var ms: Map[string, P] = Map {};
+    let ms: Map[string, P] = Map {};
     ms = ms.insert("a", P { x: 3, y: 4 });
     match (ms.get("a")) {
         Some(s) => { if (s.x + s.y != 7) { return 3; } },
         None => { return 4; }
     }
     // array value
-    var ma: Map[i32, i32[]] = Map {};
+    let ma: Map[i32, i32[]] = Map {};
     ma = ma.insert(1, [10, 20, 30]);
     match (ma.get(1)) {
         Some(arr) => { if (arr[0] + arr[2] != 40) { return 5; } },
         None => { return 6; }
     }
     // i32 value (regression guard — must still work after usize fix)
-    var mi: Map[string, i32] = Map {};
+    let mi: Map[string, i32] = Map {};
     mi = mi.insert("a", 42);
     match (mi.get("a")) {
         Some(v) => { if (v != 42) { return 7; } },
@@ -12238,11 +12238,11 @@ func TestArm64StructTupleFieldAccess(t *testing.T) {
 	src := `struct Rec { pos: (i32, i32), name: string }
 struct Nested { t: (i32, (i32, i32)) }
 function main(): i32 {
-    var r: Rec = Rec { pos: (3, 4), name: "p" };
+    let r: Rec = Rec { pos: (3, 4), name: "p" };
     if (r.pos.0 != 3) { return 1; }
     if (r.pos.1 != 4) { return 2; }
     // deeper: struct field tuple containing a tuple
-    var n: Nested = Nested { t: (1, (2, 3)) };
+    let n: Nested = Nested { t: (1, (2, 3)) };
     if (n.t.0 != 1) { return 3; }
     if (n.t.1.0 != 2) { return 4; }
     if (n.t.1.1 != 3) { return 5; }
@@ -12262,20 +12262,20 @@ function main(): i32 {
 // divergence.
 func TestArm64UnsignedComparison(t *testing.T) {
 	src := `function main(): i32 {
-    var big: u32 = 4294967295u32;     // -1 if misread as signed
+    let big: u32 = 4294967295u32;     // -1 if misread as signed
     if (!(big > 0u32)) { return 1; }
     if (!(big > 1000000u32)) { return 2; }
     if (big < 5u32) { return 3; }
     if (!(big >= 4294967295u32)) { return 4; }
     if (big <= 100u32) { return 5; }
-    var b64: u64 = 18446744073709551615u64;
+    let b64: u64 = 18446744073709551615u64;
     if (!(b64 > 9u64)) { return 6; }
     if (b64 < 9u64) { return 7; }
-    var u: u8 = 200u8;
+    let u: u8 = 200u8;
     if (!(u > 100u8)) { return 8; }
     // loop bound driven by unsigned compare
-    var i: u32 = 4294967293u32;
-    var c: i32 = 0;
+    let i: u32 = 4294967293u32;
+    let c: i32 = 0;
     while (i > 4294967290u32) { c = c + 1; i = i - 1u32; }
     if (c != 3) { return 9; }
     return 0;
@@ -12294,19 +12294,19 @@ func TestArm64UnsignedComparison(t *testing.T) {
 // checker, width-tagged OpFNeg / OpSub in the IR.
 func TestArm64UnaryMinusWideTypes(t *testing.T) {
 	src := `function main(): i32 {
-    var a: i64 = -5i64;
+    let a: i64 = -5i64;
     if (a != 0i64 - 5i64) { return 1; }
-    var b: f64 = -5.0;
+    let b: f64 = -5.0;
     if (!(b < 0.0)) { return 2; }
-    var c: f64 = -b;            // negate an f64 value
+    let c: f64 = -b;            // negate an f64 value
     if (c != 5.0) { return 3; }
-    var f: f32 = -2.5f32;
+    let f: f32 = -2.5f32;
     if (!(f < 0.0f32)) { return 4; }
     // -0.0 keeps its sign bit (IEEE-754); f64_bits != 0
-    var z: f64 = -0.0;
+    let z: f64 = -0.0;
     if (f64_bits(z) == 0i64) { return 5; }
     // unary minus inside an arithmetic expression
-    var g: i64 = 10i64 + -3i64;
+    let g: i64 = 10i64 + -3i64;
     if (g != 7i64) { return 6; }
     return 0;
 }`
@@ -12320,19 +12320,19 @@ func TestArm64UnaryMinusWideTypes(t *testing.T) {
 // parse and compute correctly through codegen.
 func TestArm64ScientificNotation(t *testing.T) {
 	src := `function main(): i32 {
-    var a: f64 = 1e3;
+    let a: f64 = 1e3;
     if (a != 1000.0) { return 1; }
-    var b: f64 = 1.5e3;
+    let b: f64 = 1.5e3;
     if (b != 1500.0) { return 2; }
-    var c: f64 = 1500.0e-3;
+    let c: f64 = 1500.0e-3;
     if (c != 1.5) { return 3; }
-    var d: f64 = 1.5e+3;
+    let d: f64 = 1.5e+3;
     if (d != 1500.0) { return 4; }
-    var e: f64 = 2.5E2;
+    let e: f64 = 2.5E2;
     if (e != 250.0) { return 5; }
-    var f: f32 = 1.5e2f32;
+    let f: f32 = 1.5e2f32;
     if (f != 150.0f32) { return 6; }
-    var big: f64 = 1.8e19;
+    let big: f64 = 1.8e19;
     if (!(big > 1.7e19)) { return 7; }
     return 0;
 }`
@@ -12351,20 +12351,20 @@ func TestArm64ScientificNotation(t *testing.T) {
 func TestArm64SubI32ArithmeticWraps(t *testing.T) {
 	src := `struct S { v: u8 }
 function main(): i32 {
-    var a: u8 = 255u8;
+    let a: u8 = 255u8;
     a = a + 1u8;
     if ((a as i32) != 0) { return 1; }          // unsigned add wrap
-    var b: u8 = 0u8;
+    let b: u8 = 0u8;
     b = b - 1u8;
     if ((b as i32) != 255) { return 2; }         // unsigned sub underflow
-    var c: u8 = 16u8;
+    let c: u8 = 16u8;
     c = c * 16u8;
     if ((c as i32) != 0) { return 3; }           // mul (strength-reduced) wrap
-    var s: S = S { v: 200u8 };
-    var h: u8 = s.v + 100u8;
+    let s: S = S { v: 200u8 };
+    let h: u8 = s.v + 100u8;
     if ((h as i32) != 44) { return 4; }          // field operand wrap
     // in-range arithmetic is unaffected
-    var k: u8 = 100u8;
+    let k: u8 = 100u8;
     k = k + 50u8;
     if ((k as i32) != 150) { return 5; }
     return 0;

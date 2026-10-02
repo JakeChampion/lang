@@ -25,22 +25,22 @@ var maxOfCases = []struct {
 	// max of [3,9,1,7,4] is 9; min is 1; 9*10 + 1 = 91.
 	{"i32-max-min", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }
-function max_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
-function min_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) < 0) { best = xs[i]; } i = i + 1; } return Some(best); }
+function max_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
+function min_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) < 0) { best = xs[i]; } i = i + 1; } return Some(best); }
 function unwrap(o: Option[i32]): i32 { match (o) { Some(v) => { return v; }, None => { return 0 - 1; } } }
-function main(): i32 { var a: i32[] = [3, 9, 1, 7, 4]; return unwrap(max_of(a)) * 10 + unwrap(min_of(a)); }`, 91},
+function main(): i32 { let a: i32[] = [3, 9, 1, 7, 4]; return unwrap(max_of(a)) * 10 + unwrap(min_of(a)); }`, 91},
 	// empty array -> None for both; encode None as 5 (2 for max + 3 for min).
 	{"empty-none", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }
-function max_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
-function min_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) < 0) { best = xs[i]; } i = i + 1; } return Some(best); }
-function main(): i32 { var e: i32[] = []; var r = 0; match (max_of(e)) { Some(v) => {}, None => { r = r + 2; } } match (min_of(e)) { Some(v) => {}, None => { r = r + 3; } } return r; }`, 5},
+function max_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
+function min_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) < 0) { best = xs[i]; } i = i + 1; } return Some(best); }
+function main(): i32 { let e: i32[] = []; let r = 0; match (max_of(e)) { Some(v) => {}, None => { r = r + 2; } } match (min_of(e)) { Some(v) => {}, None => { r = r + 3; } } return r; }`, 5},
 	// singleton -> that element is both max and min; 42 via max.
 	{"singleton", `pub trait Ord { function cmp(self: Self, other: Self): i32; }
 impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }
-function max_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } var best: T = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
+function max_of[T: Ord](xs: T[]): Option[T] { if (xs.len() == 0) { return None; } let best: T = xs[0]; let i: i32 = 1; while (i < xs.len()) { if (xs[i].cmp(best) > 0) { best = xs[i]; } i = i + 1; } return Some(best); }
 function unwrap(o: Option[i32]): i32 { match (o) { Some(v) => { return v; }, None => { return 0 - 1; } } }
-function main(): i32 { var s: i32[] = [42]; return unwrap(max_of(s)); }`, 42},
+function main(): i32 { let s: i32[] = [42]; return unwrap(max_of(s)); }`, 42},
 }
 
 // TestNativeCmpMaxOf runs the inline max_of/min_of programs on interp / x86-64 /
@@ -79,17 +79,17 @@ impl cmp.Ord for P {
     }
 }
 function main(): i32 {
-    var r = 0;
-    var a: i32[] = [3, 9, 1, 7, 4];
+    let r = 0;
+    let a: i32[] = [3, 9, 1, 7, 4];
     match (cmp.max_of(a)) { Some(v) => { if (v == 9) { r = r + 1; } }, None => {} }
     match (cmp.min_of(a)) { Some(v) => { if (v == 1) { r = r + 2; } }, None => {} }
-    var ss: string[] = ["pear", "apple", "cherry"];
+    let ss: string[] = ["pear", "apple", "cherry"];
     match (cmp.max_of(ss)) { Some(v) => { if (v == "pear") { r = r + 4; } }, None => {} }
     match (cmp.min_of(ss)) { Some(v) => { if (v == "apple") { r = r + 8; } }, None => {} }
-    var ps: P[] = [P { v: 2 }, P { v: 5 }, P { v: 1 }];
+    let ps: P[] = [P { v: 2 }, P { v: 5 }, P { v: 1 }];
     match (cmp.max_of(ps)) { Some(v) => { if (v.v == 5) { r = r + 16; } }, None => {} }
     match (cmp.min_of(ps)) { Some(v) => { if (v.v == 1) { r = r + 32; } }, None => {} }
-    var e: i32[] = [];
+    let e: i32[] = [];
     match (cmp.max_of(e)) { Some(v) => {}, None => { r = r + 64; } }
     return r;
 }

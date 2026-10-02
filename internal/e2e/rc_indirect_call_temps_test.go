@@ -19,16 +19,16 @@ function pick(): (C) => i32 { return val; }
 `
 	cases := []struct{ name, src string }{
 		{"field-arg", `function main(): i32 {
-    var st: S = S { name: "s", run: val };
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let st: S = S { name: "s", run: val };
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { acc = acc + st.run(C { value: i }); i = i + 1; }
     return acc;
 }`},
 		{"field-result", `function main(): i32 {
-    var r: R = R { name: "r", run: mk };
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let r: R = R { name: "r", run: mk };
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         match (r.run(i)) { Ok(n) => { acc = acc + n.value; }, Err(e) => { acc = acc + 100; } }
         i = i + 1;
@@ -36,25 +36,25 @@ function pick(): (C) => i32 { return val; }
     return acc;
 }`},
 		{"element-arg", `function main(): i32 {
-    var fs: ((C) => i32)[] = [val];
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let fs: ((C) => i32)[] = [val];
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { acc = acc + fs[0](C { value: i }); i = i + 1; }
     return acc;
 }`},
 		{"chained-arg", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { acc = acc + pick()(C { value: i }); i = i + 1; }
     return acc;
 }`},
 		{"captured-arg", `function apply(g: (C) => i32, k: i32): i32 {
-    var h: (i32) => i32 = (x: i32) => g(C { value: x });
+    let h: (i32) => i32 = (x: i32) => g(C { value: x });
     return h(k);
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { acc = acc + apply(val, i); i = i + 1; }
     return acc;
 }`},

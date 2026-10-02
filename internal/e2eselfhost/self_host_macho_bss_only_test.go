@@ -118,7 +118,7 @@ func TestSelfHostArm64DarwinBssOnlyImage(t *testing.T) {
 	// now_unix_ms stages a timeval in __fern_scratch (.bss) and has no
 	// initialized data of its own — the exact shape that lost its segment.
 	t.Run("bss_only_gets_DATA", func(t *testing.T) {
-		bin := build(t, "bssonly", `function main(): i32 { var t: i64 = now_unix_ms(); if (t > 1700000000000) { return 7; } return 1; }`)
+		bin := build(t, "bssonly", `function main(): i32 { let t: i64 = now_unix_ms(); if (t > 1700000000000) { return 7; } return 1; }`)
 		segs := machoSegments(t, bin)
 		data := find(segs, "__DATA")
 		if data == nil {

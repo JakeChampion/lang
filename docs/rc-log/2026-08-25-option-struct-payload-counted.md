@@ -10,13 +10,13 @@ use-after-free.
 struct P { xs: i32[], k: i32 }
 
 function some_of(i: i32): Option[P] {
-    var p: P = P { xs: [i, i + 1], k: i };
-    var o: Option[P] = Some(p);
+    let p: P = P { xs: [i, i + 1], k: i };
+    let o: Option[P] = Some(p);
     return o;                       // p's exit sweep frees the box this points at
 }
 
 function clobber(i: i32): i32 {
-    var q: P = P { xs: [9999, 9999], k: 9999 };
+    let q: P = P { xs: [9999, 9999], k: 9999 };
     return q.k + q.xs[0];           // reuses the freed cell
 }
 ```

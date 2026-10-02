@@ -205,8 +205,8 @@ func DnsExchangeSource(port int) string {
 import "std/net";
 
 function main(): i32 {
-    var ns: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %d);
-    var conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout_ms: 1000, attempts: 1, rotate: false };
+    let ns: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %d);
+    let conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout_ms: 1000, attempts: 1, rotate: false };
     match (dns.lookup_a(conf, "vm.example.com.")) {
         Ok(xs) => { print(xs[0].to_string()); },
         Err(e) => { print(e.message()); return 2; }
@@ -262,11 +262,11 @@ func DnsPairSource(port int) string {
 import "std/net";
 
 function main(): i32 {
-    var ns: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %d);
-    var conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout_ms: 1000, attempts: 1, rotate: false };
+    let ns: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %d);
+    let conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout_ms: 1000, attempts: 1, rotate: false };
     match (dns.lookup_addresses(conf, "vm.example.com.")) {
         Ok(xs) => {
-            var i: i32 = 0;
+            let i: i32 = 0;
             while (i < xs.len()) { print(xs[i].to_string()); i = i + 1; }
             return 0;
         },
@@ -301,10 +301,10 @@ import "std/net";
 import "std/i32";
 
 function main(): i32 {
-    var ns: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %d);
-    var conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout_ms: 1000, attempts: 1, rotate: false };
-    var ps: dns.Nat64Prefix[] = dns.nat64_prefixes(conf);
-    var i: i32 = 0;
+    let ns: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %d);
+    let conf: dns.ResolvConf = dns.ResolvConf { nameservers: [ns], search: [], ndots: 1, timeout_ms: 1000, attempts: 1, rotate: false };
+    let ps: dns.Nat64Prefix[] = dns.nat64_prefixes(conf);
+    let i: i32 = 0;
     while (i < ps.len()) {
         match (net.ipv6(ps[i].bytes)) {
             Some(ip) => { print(ip.to_string() + "/" + ps[i].bits.to_string()); },
@@ -363,16 +363,16 @@ func DnsDialSource(first string, port int) string {
 import "std/net";
 
 function main(): i32 {
-    var first: net.IpAddr = net.ipv4_unspecified();
+    let first: net.IpAddr = net.ipv4_unspecified();
     match (net.ip_parse(%q)) {
         Some(ip) => { first = ip; },
         None => { return 3; }
     }
-    var opts: dns.DialOptions = dns.DialOptions { fallback_ms: 200, timeout_ms: 5000 };
+    let opts: dns.DialOptions = dns.DialOptions { fallback_ms: 200, timeout_ms: 5000 };
     match (dns.connect_race([first, net.ipv4_loopback()], %d, opts)) {
         Ok(sock) => {
             tcp_send(sock, "hi");
-            var got: u8[] = tcp_recv(sock, 16);
+            let got: u8[] = tcp_recv(sock, 16);
             print(string_from_bytes_unchecked(got));
             tcp_close(sock);
             return 0;

@@ -8,7 +8,7 @@ import (
 )
 
 // For-in element borrow (#6888): the desugar's per-iteration element binding
-// `var sd = __foreach_iter_N[idx]` borrows when every use is a read through
+// `let sd = __foreach_iter_N[idx]` borrows when every use is a read through
 // the value — no retain on bind, no per-iteration deep drop, no exit-sweep
 // dec. These tests pin the borrow at the IR layer, guard by guard: the happy
 // path costs the same rc traffic as the hand-written index spelling, and each
@@ -43,13 +43,13 @@ func rcTraffic(ip *ir.Program, fn string) (incs, decs, drops int) {
 func TestForinElemBorrowMatchesIndexSpelling(t *testing.T) {
 	ip := lowerForTest(t, forinScanPrelude+`
 function scan_forin(xs: S[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for sd in xs { n = n + sd.fields.len() + sd.name.len(); }
     return n;
 }
 function scan_index(xs: S[]): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { n = n + xs[i].fields.len() + xs[i].name.len(); i = i + 1; }
     return n;
 }
@@ -75,13 +75,13 @@ function main(): i32 { return scan_forin(mks()) + scan_index(mks()); }`)
 func TestForinElemBorrowLocalAndCallIterands(t *testing.T) {
 	ip := lowerForTest(t, forinScanPrelude+`
 function scan_local(): i32 {
-    var xs: S[] = mks();
-    var n: i32 = 0;
+    let xs: S[] = mks();
+    let n: i32 = 0;
     for sd in xs { n = n + sd.fields.len(); }
     return n;
 }
 function scan_call(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for sd in mks() { n = n + sd.fields.len(); }
     return n;
 }
@@ -103,12 +103,12 @@ func TestForinElemBorrowUserCalleeEscape(t *testing.T) {
 function note(s: S): i32 { return s.fields.len(); }
 function stash(acc: S[], s: S): S[] { return acc.append(s); }
 function scan_note(xs: S[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for sd in xs { n = n + note(sd); }
     return n;
 }
 function scan_stash(xs: S[]): i32 {
-    var acc: S[] = [];
+    let acc: S[] = [];
     for sd in xs { acc = stash(acc, sd); }
     return acc.len();
 }
@@ -130,7 +130,7 @@ function main(): i32 { return scan_note(mks()) + scan_stash(mks()); }`)
 func TestForinElemBorrowNested(t *testing.T) {
 	ip := lowerForTest(t, forinScanPrelude+`
 function scan_nested(xs: S[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for sd in xs {
         for f in sd.fields { n = n + f.len(); }
     }
@@ -166,8 +166,8 @@ func TestForinElemBorrowRefusesEscapes(t *testing.T) {
 	}{
 		{"bound_alias", `
 function esc(xs: S[]): i32 {
-    var n: i32 = 0;
-    for sd in xs { var keep: S = sd; n = n + keep.fields.len(); }
+    let n: i32 = 0;
+    for sd in xs { let keep: S = sd; n = n + keep.fields.len(); }
     return n;
 }`},
 		{"returned", `
@@ -177,7 +177,7 @@ function esc(xs: S[]): S {
 }`},
 		{"stored_into_array", `
 function esc(xs: S[]): i32 {
-    var acc: S[] = [];
+    let acc: S[] = [];
     for sd in xs { acc = acc.append(sd); }
     return acc.len();
 }`},
@@ -185,13 +185,13 @@ function esc(xs: S[]): i32 {
 enum E { Has(S), No }
 function wrap(s: S): E { return Has(s); }
 function esc(xs: S[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for sd in xs { match (sd) { _ => { n = n + 1; } } }
     return n;
 }`},
 		{"reassigned_elem", `
 function esc(xs: S[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for sd in xs { sd = mk("q"); n = n + sd.fields.len(); }
     return n;
 }`},
@@ -200,7 +200,7 @@ function esc(xs: S[]): i32 {
 		t.Run(tc.name, func(t *testing.T) {
 			ip := lowerForTest(t, forinScanPrelude+tc.fn+`
 function scan_ok(xs: S[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for sd in xs { n = n + sd.fields.len() + sd.name.len(); }
     return n;
 }
@@ -240,7 +240,7 @@ function pick_forin(xs: S[], k: string): `+tc.typ+` {
     return `+tc.fallback+`;
 }
 function pick_index(xs: S[], k: string): `+tc.typ+` {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
         if (xs[i].fields.len() == 1) { return `+strings.ReplaceAll(tc.ret, "sd", "xs[i]")+`; }
         i = i + 1;
@@ -248,8 +248,8 @@ function pick_index(xs: S[], k: string): `+tc.typ+` {
     return `+tc.fallback+`;
 }
 function main(): i32 {
-    var a: `+tc.typ+` = pick_forin(mks(), "a");
-    var b: `+tc.typ+` = pick_index(mks(), "a");
+    let a: `+tc.typ+` = pick_forin(mks(), "a");
+    let b: `+tc.typ+` = pick_index(mks(), "a");
     return 0;
 }`)
 			fi, fd, fdr := rcTraffic(ip, "pick_forin")
@@ -272,7 +272,7 @@ function main(): i32 {
 func TestForinElemBorrowReturnsFieldLocalAndCallIterands(t *testing.T) {
 	ip := lowerForTest(t, forinScanPrelude+`
 function pick_local(k: string): string {
-    var xs: S[] = mks();
+    let xs: S[] = mks();
     for sd in xs { if (sd.name == k) { return sd.name; } }
     return "";
 }
@@ -281,8 +281,8 @@ function pick_call(k: string): string {
     return "";
 }
 function pick_index(k: string): string {
-    var xs: S[] = mks();
-    var i: i32 = 0;
+    let xs: S[] = mks();
+    let i: i32 = 0;
     while (i < xs.len()) {
         if (xs[i].name == k) { return xs[i].name; }
         i = i + 1;
@@ -347,7 +347,7 @@ function esc(xs: S[]): [string] {
 		t.Run(tc.name, func(t *testing.T) {
 			ip := lowerForTest(t, forinScanPrelude+tc.fn+`
 function scan_ok(xs: S[]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for sd in xs { n = n + sd.fields.len() + sd.name.len(); }
     return n;
 }

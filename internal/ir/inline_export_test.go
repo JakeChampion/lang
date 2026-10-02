@@ -26,7 +26,7 @@ func exportSizePolicySrc() string {
 		"function opaque(n: i32): i32 { if (n <= 0) { return 2; } return opaque(n - 1); }\n"+
 			"function big(a: i32, b: i32): i32 { return %s; }\n"+
 			"function caller(a: i32, b: i32): i32 { return big(a, b); }\n"+
-			"function main(): i32 { var x: i32 = opaque(3); return caller(x, x); }",
+			"function main(): i32 { let x: i32 = opaque(3); return caller(x, x); }",
 		strings.Join(terms, " + "))
 }
 

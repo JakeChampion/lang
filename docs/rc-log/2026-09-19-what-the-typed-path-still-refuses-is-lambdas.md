@@ -96,7 +96,7 @@ nested function is not the problem. Each of these produces whole —
 
 ```fern
 function main(): i32 {
-    var base: i32 = 41;
+    let base: i32 = 41;
     function inner(x: i32): i32 { return x + base; }   // captures, produced
     return inner(1);
 }
@@ -117,7 +117,7 @@ to four lines. A lambda RETURNED FROM A NESTED function declaration:
 ```fern
 function main(): i32 {
     function mk(): (i32) => i32 { return ((x: i32) => x); }
-    var f: (i32) => i32 = mk();
+    let f: (i32) => i32 = mk();
     return f(42);
 }
 ```

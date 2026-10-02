@@ -68,7 +68,7 @@ class rather than convenience:
 
 ## Why the parameter row is the one that matters
 
-38 of the 72 `var x: string = <ident>;` sites in `examples/self_host` and
+38 of the 72 `let x: string = <ident>;` sites in `examples/self_host` and
 `internal/stdlib` are **parameter**-origin — the majority. A parameter owns
 nothing, so a retain on one is an inc nothing gives back, and an unbalanced
 retain allocates nothing and frees nothing: it is invisible to the census on its
@@ -87,7 +87,7 @@ previous behaviour.
 The change broke three passing tests, and only one of them was about aliasing.
 `aliased-not-reclaimed` was the old invariant itself and is now
 `aliased-reclaimed-once`. The other two — `ident-operands-result-only` and
-`accum-nonfresh-reassign-not-reclaimed` — merely *used* `var ka = a` as a
+`accum-nonfresh-reassign-not-reclaimed` — merely *used* `let ka = a` as a
 technique to make a value un-reclaimable so a whole-program count could isolate
 something else. That technique is now void.
 
@@ -121,7 +121,7 @@ shapes.
   does not close. A view box carries a negative rc, so both `__fern_rc_inc` and
   `__fern_str_free` decline it and only the source's `__fern_str_view_free`
   reclaims — safe, but still leaking. Pinned as measured.
-- The **alias chain** (`var v = t; var u = v;`) stays refused: `v` escapes as a
+- The **alias chain** (`let v = t; let u = v;`) stays refused: `v` escapes as a
   bare ident, so it is not an eligible alias site and `t` keeps no credit either.
   Conservative — it leaks rather than over-releasing.
 - **for-in elements** and **tuple-destructure binders** are origins no `"STR:"`

@@ -13,13 +13,13 @@ import "std/i32";
 struct Q { x: i32 }
 impl cmp.Display for Q { function to_string(self: Self): string { return "Q" + self.x.to_string(); } }
 function render(xs: dyn cmp.Display[]): string {
-    var out: string = "";
+    let out: string = "";
     for x in xs { out = out + x.to_string() + ";"; }
     return out;
 }
 function main(): i32 {
-    var xs: dyn cmp.Display[] = [42, "hi", true, Q { x: 7 }];
-    var d: dyn c.Display = Q { x: 12 };
+    let xs: dyn cmp.Display[] = [42, "hi", true, Q { x: 7 }];
+    let d: dyn c.Display = Q { x: 12 };
     print(render(xs) + " " + d.to_string());
     return 0;
 }
@@ -69,8 +69,8 @@ trait Show { function show(self: Self): string; }
 impl Show for i32 { function show(self: Self): string { return self.to_string(); } }
 impl Show for f32 { function show(self: Self): string { return self.to_string(); } }
 function main(): i32 {
-    var xs: dyn Show[] = [41, 42];
-    var out: string = "";
+    let xs: dyn Show[] = [41, 42];
+    let out: string = "";
     for d in xs { out = out + d.show() + ";"; }
     print(out);
     return 0;

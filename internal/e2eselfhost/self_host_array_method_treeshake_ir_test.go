@@ -46,7 +46,7 @@ func TestSelfHostArrayMethodTreeshakeIR(t *testing.T) {
 
 	const src = `import "std/array";
 function joined(): string {
-    var ss: string[] = ["1", "2", "3"];
+    let ss: string[] = ["1", "2", "3"];
     return ss.join("-");
 }
 function main(): i32 {

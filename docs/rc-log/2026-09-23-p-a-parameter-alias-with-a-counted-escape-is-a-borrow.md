@@ -4,8 +4,8 @@
 
 ```
 function tag(src: string, i: i32): i32 {
-    var x: string = src;
-    var f: (i32) => i32 = (k: i32) => x.len() + k;
+    let x: string = src;
+    let f: (i32) => i32 = (k: i32) => x.len() + k;
     return f(i);
 }
 ```
@@ -15,7 +15,7 @@ On x86-64 `-sanitize` this leaked one string per call.
 ## Cause
 
 The borrowed-parameter leg of `computeBorrowedAliases` (#9244) cancels
-the transfer inc of `var x = src` when `x` only ever reads through the
+the transfer inc of `let x = src` when `x` only ever reads through the
 value. It asked `bindingConfinedToArm`, which counts any other use as an
 escape, and a closure capture is one. So the binding kept its inc, and
 the exit sweep, which skips an ineligible string, never released it.

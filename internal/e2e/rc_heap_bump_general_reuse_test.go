@@ -23,12 +23,12 @@ import (
 // `b`. The returned value is only correct if every reuse wrote the right box.
 const genReuseChurnSrc = `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 300) {
-        var a: Point = Point { x: i, y: i + 1 };
-        var s: i32 = a.x + a.y;          // a's last use
-        var b: Point = Point { x: s + 1, y: i };   // reuses a's box
+        let a: Point = Point { x: i, y: i + 1 };
+        let s: i32 = a.x + a.y;          // a's last use
+        let b: Point = Point { x: s + 1, y: i };   // reuses a's box
         acc = acc + b.x + b.y;
         i = i + 1;
     }
@@ -42,13 +42,13 @@ function main(): i32 {
 // read a's original values; nothing over-releases.
 const genReuseAliasedSrc = `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var a: Point = Point { x: i, y: i + 1 };
-        var keep: Point = a;              // alias -> rc 2, reuse declines
-        var s: i32 = a.x;
-        var b: Point = Point { x: s, y: 7 };
+        let a: Point = Point { x: i, y: i + 1 };
+        let keep: Point = a;              // alias -> rc 2, reuse declines
+        let s: i32 = a.x;
+        let b: Point = Point { x: s, y: 7 };
         acc = acc + keep.x + keep.y + b.y;   // keep sees a's [i, i+1]; b.y=7
         i = i + 1;
     }
@@ -62,11 +62,11 @@ function main(): i32 {
 func genReuseDead2Src() string {
 	return `struct Box { a: i32, b: i32, c: i32, d: i32 }
 function main(): i32 {
-    var p: Box = Box { a: 1, b: 2, c: 3, d: 4 };
-    var s: i32 = p.a + p.d;
-    var q: Box = Box { a: s, b: 0, c: 0, d: 0 };   // reuses p's box
-    var t: i32 = q.a;
-    var r: Box = Box { a: t, b: 0, c: 0, d: 0 };   // reuses q's box
+    let p: Box = Box { a: 1, b: 2, c: 3, d: 4 };
+    let s: i32 = p.a + p.d;
+    let q: Box = Box { a: s, b: 0, c: 0, d: 0 };   // reuses p's box
+    let t: i32 = q.a;
+    let r: Box = Box { a: t, b: 0, c: 0, d: 0 };   // reuses q's box
     return (__heap_bump_bytes() as i32) + r.a;
 }`
 }
@@ -74,9 +74,9 @@ function main(): i32 {
 func genReuseLive2Src() string {
 	return `struct Box { a: i32, b: i32, c: i32, d: i32 }
 function main(): i32 {
-    var p: Box = Box { a: 1, b: 2, c: 3, d: 4 };
-    var q: Box = Box { a: 5, b: 6, c: 7, d: 8 };
-    var r: Box = Box { a: 9, b: 10, c: 11, d: 12 };
+    let p: Box = Box { a: 1, b: 2, c: 3, d: 4 };
+    let q: Box = Box { a: 5, b: 6, c: 7, d: 8 };
+    let r: Box = Box { a: 9, b: 10, c: 11, d: 12 };
     return (__heap_bump_bytes() as i32) + p.a + q.a + r.a;
 }`
 }
@@ -87,12 +87,12 @@ function main(): i32 {
 // store overwrites it (no leak), b's array is retained. Value + 0 over-release.
 const genReusePtrChurnSrc = `struct Holder { id: i32, items: i32[] }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var a: Holder = Holder { id: i, items: [i, i + 1] };
-        var s: i32 = a.id + a.items[0] + a.items[1];   // a's last use
-        var b: Holder = Holder { id: s, items: [i + 2, i + 3] };   // reuses a's box
+        let a: Holder = Holder { id: i, items: [i, i + 1] };
+        let s: i32 = a.id + a.items[0] + a.items[1];   // a's last use
+        let b: Holder = Holder { id: s, items: [i + 2, i + 3] };   // reuses a's box
         acc = acc + b.id + b.items[0] + b.items[1];
         i = i + 1;
     }
@@ -107,10 +107,10 @@ function main(): i32 {
 // box + array intact. Mirrors the self-overwrite `aliased` contract.
 const genReusePtrAliasedSrc = `struct Holder { id: i32, items: i32[] }
 function main(): i32 {
-    var a: Holder = Holder { id: 1, items: [7, 8] };
-    var keep: Holder = a;             // alias -> rc 2, reuse declines
-    var s: i32 = a.id;
-    var b: Holder = Holder { id: s + 1, items: [3, 4] };
+    let a: Holder = Holder { id: 1, items: [7, 8] };
+    let keep: Holder = a;             // alias -> rc 2, reuse declines
+    let s: i32 = a.id;
+    let b: Holder = Holder { id: s + 1, items: [3, 4] };
     if (keep.id != 1) { return 1; }
     if (keep.items[0] != 7) { return 2; }
     if (b.id != 2) { return 3; }
@@ -125,12 +125,12 @@ function main(): i32 {
 const genReuseCrossTypeChurnSrc = `struct Point { x: i32, y: i32 }
 struct Pair { a: i32, b: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 300) {
-        var p: Point = Point { x: i, y: i + 1 };
-        var s: i32 = p.x + p.y;          // p's last use
-        var q: Pair = Pair { a: s, b: i };   // reuses p's box (same class)
+        let p: Point = Point { x: i, y: i + 1 };
+        let s: i32 = p.x + p.y;          // p's last use
+        let q: Pair = Pair { a: s, b: i };   // reuses p's box (same class)
         acc = acc + q.a + q.b;
         i = i + 1;
     }
@@ -145,12 +145,12 @@ function main(): i32 {
 const genReuseCrossTypePtrSrc = `struct Holder { id: i32, items: i32[] }
 struct Bag { tag: i32, data: i32[] }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var a: Holder = Holder { id: i, items: [i, i + 1] };
-        var s: i32 = a.id + a.items[0] + a.items[1];   // a's last use
-        var b: Bag = Bag { tag: s, data: [i + 2, i + 3] };   // reuses a's box
+        let a: Holder = Holder { id: i, items: [i, i + 1] };
+        let s: i32 = a.id + a.items[0] + a.items[1];   // a's last use
+        let b: Bag = Bag { tag: s, data: [i + 2, i + 3] };   // reuses a's box
         acc = acc + b.tag + b.data[0] + b.data[1];
         i = i + 1;
     }
@@ -164,12 +164,12 @@ function main(): i32 {
 // is reused for tuple `b`. Value-correct only if every reuse wrote the right
 // block at the tuple's element offsets.
 const genReuseTupleChurnSrc = `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 300) {
-        var a: (i32, i32) = (i, i + 1);
-        var s: i32 = a.0 + a.1;          // a's last use
-        var b: (i32, i32) = (s + 1, i);   // reuses a's box
+        let a: (i32, i32) = (i, i + 1);
+        let s: i32 = a.0 + a.1;          // a's last use
+        let b: (i32, i32) = (s + 1, i);   // reuses a's box
         acc = acc + b.0 + b.1;
         i = i + 1;
     }
@@ -181,12 +181,12 @@ const genReuseTupleChurnSrc = `function main(): i32 {
 // genReuseTuplePtrSrc: tuple WITH a pointer element. Dead (i32, i32[]) reused
 // for a fresh (i32, i32[]) — D's old array released at D's offset each turn.
 const genReuseTuplePtrSrc = `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var a: (i32, i32[]) = (i, [i, i + 1]);
-        var s: i32 = a.0 + a.1[0] + a.1[1];   // a's last use
-        var b: (i32, i32[]) = (s, [i + 2, i + 3]);   // reuses a's box
+        let a: (i32, i32[]) = (i, [i, i + 1]);
+        let s: i32 = a.0 + a.1[0] + a.1[1];   // a's last use
+        let b: (i32, i32[]) = (s, [i + 2, i + 3]);   // reuses a's box
         acc = acc + b.0 + b.1[0] + b.1[1];
         i = i + 1;
     }
@@ -203,12 +203,12 @@ const genReuseTuplePtrSrc = `function main(): i32 {
 // block.
 const genReuseEnumChurnSrc = `enum Wrapper { Wrap(i32[]) }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var a: Wrapper = Wrap([i, i + 1]);
-        var s: i32 = match (a) { Wrap(xs) => xs[0] + xs[1] };   // a's last use
-        var b: Wrapper = Wrap([s, i]);                          // reuses a's box
+        let a: Wrapper = Wrap([i, i + 1]);
+        let s: i32 = match (a) { Wrap(xs) => xs[0] + xs[1] };   // a's last use
+        let b: Wrapper = Wrap([s, i]);                          // reuses a's box
         acc = acc + match (b) { Wrap(xs) => xs[0] + xs[1] };
         i = i + 1;
     }
@@ -222,12 +222,12 @@ function main(): i32 {
 // old-payload free.
 const genReuseEnumCrossVariantSrc = `enum Bag { Keep(i32[]), Swap(i32[]) }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var a: Bag = Keep([i, i + 1]);
-        var s: i32 = match (a) { Keep(xs) => xs[0], Swap(xs) => xs[1] };   // a dead
-        var b: Bag = Swap([s, i + 2]);                                     // reuses a's box
+        let a: Bag = Keep([i, i + 1]);
+        let s: i32 = match (a) { Keep(xs) => xs[0], Swap(xs) => xs[1] };   // a dead
+        let b: Bag = Swap([s, i + 2]);                                     // reuses a's box
         acc = acc + match (b) { Keep(xs) => xs[0], Swap(xs) => xs[1] };
         i = i + 1;
     }
@@ -242,18 +242,18 @@ function main(): i32 {
 // double-free. `go_` is a param so the branch isn't const-folded.
 const genReuseCrossBlockScalarSrc = `struct Point { x: i32, y: i32 }
 function run(go_: boolean): i32 {
-    var a: Point = Point { x: 10, y: 20 };
-    var s: i32 = a.x + a.y;          // a's last use, before the if
-    var acc: i32 = 0;
+    let a: Point = Point { x: 10, y: 20 };
+    let s: i32 = a.x + a.y;          // a's last use, before the if
+    let acc: i32 = 0;
     if (go_) {
-        var b: Point = Point { x: s + 1, y: 5 };   // reuses a's box on this path
+        let b: Point = Point { x: s + 1, y: 5 };   // reuses a's box on this path
         acc = b.x + b.y;
     }
     return acc;
 }
 function main(): i32 {
-    var t: i32 = run(true);    // s=30; b={31,5} -> 36
-    var f: i32 = run(false);   // a exit-swept, acc=0
+    let t: i32 = run(true);    // s=30; b={31,5} -> 36
+    let f: i32 = run(false);   // a exit-swept, acc=0
     if (t != 36) { return 1; }
     if (f != 0) { return 2; }
     return __rc_underflow_count();
@@ -264,18 +264,18 @@ function main(): i32 {
 // adversarial double-free check for cross-block.
 const genReuseCrossBlockPtrSrc = `struct Holder { id: i32, items: i32[] }
 function runp(go_: boolean): i32 {
-    var a: Holder = Holder { id: 1, items: [7, 8] };
-    var s: i32 = a.id + a.items[0] + a.items[1];   // a's last use
-    var acc: i32 = 0;
+    let a: Holder = Holder { id: 1, items: [7, 8] };
+    let s: i32 = a.id + a.items[0] + a.items[1];   // a's last use
+    let acc: i32 = 0;
     if (go_) {
-        var b: Holder = Holder { id: s, items: [3, 4] };   // reuses a's box; a's [7,8] freed here
+        let b: Holder = Holder { id: s, items: [3, 4] };   // reuses a's box; a's [7,8] freed here
         acc = b.id + b.items[0] + b.items[1];
     }
     return acc;
 }
 function main(): i32 {
-    var t: i32 = runp(true);   // s=16; b={16,[3,4]} -> 23
-    var f: i32 = runp(false);  // a (with [7,8]) exit-swept
+    let t: i32 = runp(true);   // s=16; b={16,[3,4]} -> 23
+    let f: i32 = runp(false);  // a (with [7,8]) exit-swept
     if (t != 23) { return 1; }
     if (f != 0) { return 2; }
     return __rc_underflow_count();
@@ -288,13 +288,13 @@ function main(): i32 {
 // the taken / not-taken alternation), with a pointer field to free.
 const genReuseCrossBlockLoopSrc = `struct Holder { id: i32, items: i32[] }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var a: Holder = Holder { id: i, items: [i, i + 1] };
-        var s: i32 = a.id + a.items[0] + a.items[1];   // a's last use in the loop body
+        let a: Holder = Holder { id: i, items: [i, i + 1] };
+        let s: i32 = a.id + a.items[0] + a.items[1];   // a's last use in the loop body
         if (i % 2 == 0) {
-            var b: Holder = Holder { id: s, items: [i + 2, i + 3] };   // reuses a's box
+            let b: Holder = Holder { id: s, items: [i + 2, i + 3] };   // reuses a's box
             acc = acc + b.id + b.items[0] + b.items[1];
         }
         i = i + 1;

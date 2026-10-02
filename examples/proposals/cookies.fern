@@ -51,12 +51,12 @@ struct Cookie { name: string, value: string }
 // ignored, and the distinction matters: `a` and `a=` must not be the same
 // thing, because the second is a real cookie whose value happens to be empty.
 function parse_pair(seg: string): Option[Cookie] {
-  var at: i32 = seg.index_of("=");
+  let at: i32 = seg.index_of("=");
   if (at < 0) {
     return None;
   }
-  var name: string = seg.take(at).trim().to_owned();
-  var value: string = seg.drop(at + 1).trim().to_owned();
+  let name: string = seg.take(at).trim().to_owned();
+  let value: string = seg.drop(at + 1).trim().to_owned();
   if (name.len() == 0) {
     return None;
   }
@@ -71,9 +71,9 @@ function parse_pair(seg: string): Option[Cookie] {
 // wins. Silently collapsing them here would destroy information the caller
 // needs; `first` and `all` below let the caller pick a policy.
 function parse(header: string): Cookie[] {
-  var out: Cookie[] = [];
-  var segs: string[] = header.split(";");
-  var i: i32 = 0;
+  let out: Cookie[] = [];
+  let segs: string[] = header.split(";");
+  let i: i32 = 0;
   while (i < segs.len()) {
     match (parse_pair(segs[i])) {
       Some(c) => {
@@ -90,7 +90,7 @@ function parse(header: string): Cookie[] {
 // get, matching the order the client sent (most specific path first, per
 // RFC 6265 §5.4 step 2's sort).
 function first(cs: Cookie[], name: string): Option[string] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < cs.len()) {
     if (cs[i].name == name) {
       return Some(cs[i].value);
@@ -101,8 +101,8 @@ function first(cs: Cookie[], name: string): Option[string] {
 }
 
 function all(cs: Cookie[], name: string): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < cs.len()) {
     if (cs[i].name == name) {
       out = out.append(cs[i].value);
@@ -116,8 +116,8 @@ function all(cs: Cookie[], name: string): string[] {
 // separator, no other whitespace. This is what RFC 6265 §4.2.1 shows on the
 // wire, and it is the fixed point the round-trip test uses.
 function serialize(cs: Cookie[]): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < cs.len()) {
     if (i > 0) {
       out = out + "; ";
@@ -136,8 +136,8 @@ function serialize(cs: Cookie[]): string {
 // difference in this string is a real difference in the parse and never an
 // artefact of the delimiter colliding with the data.
 function render(cs: Cookie[]): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < cs.len()) {
     out = out + cs[i].name + "\x1f" + cs[i].value + "\x1e";
     i = i + 1;
@@ -161,37 +161,37 @@ function pads(): string[] {
 // 6 paddings at 4 independent positions is 1 296 spellings per input, over
 // three inputs. Enumerating them by hand is not possible; asserting them is.
 function test_whitespace_is_tolerated_everywhere(): test.TestOutcome {
-  var inputs: string[] = ["a=1;b=2", "sid=abc;theme=dark", "x=1;y=2;z=3"];
-  var p: string[] = pads();
-  var n: i32 = 0;
-  var ii: i32 = 0;
+  let inputs: string[] = ["a=1;b=2", "sid=abc;theme=dark", "x=1;y=2;z=3"];
+  let p: string[] = pads();
+  let n: i32 = 0;
+  let ii: i32 = 0;
   while (ii < inputs.len()) {
-    var want: string = render(parse(inputs[ii]));
-    var segs: string[] = inputs[ii].split(";");
+    let want: string = render(parse(inputs[ii]));
+    let segs: string[] = inputs[ii].split(";");
 
-    var a: i32 = 0;
+    let a: i32 = 0;
     while (a < p.len()) {
-      var b: i32 = 0;
+      let b: i32 = 0;
       while (b < p.len()) {
-        var c: i32 = 0;
+        let c: i32 = 0;
         while (c < p.len()) {
-          var d: i32 = 0;
+          let d: i32 = 0;
           while (d < p.len()) {
             // Rebuild the header with padding at all four spots of
             // every segment.
-            var built: string = "";
-            var s: i32 = 0;
+            let built: string = "";
+            let s: i32 = 0;
             while (s < segs.len()) {
               if (s > 0) {
                 built = built + ";";
               }
-              var at: i32 = segs[s].index_of("=");
-              var nm: string = segs[s].take(at).to_owned();
-              var vl: string = segs[s].drop(at + 1).to_owned();
+              let at: i32 = segs[s].index_of("=");
+              let nm: string = segs[s].take(at).to_owned();
+              let vl: string = segs[s].drop(at + 1).to_owned();
               built = built + p[a] + nm + p[b] + "=" + p[c] + vl + p[d];
               s = s + 1;
             }
-            var got: string = render(parse(built));
+            let got: string = render(parse(built));
             if (got != want) {
               return test.fail("padding changed the parse of \""
                 + inputs[ii] + "\": \"" + built + "\" gave a different result");
@@ -216,7 +216,7 @@ function test_whitespace_is_tolerated_everywhere(): test.TestOutcome {
 // The counterpart to the sweep, and the reason the trim cannot simply be
 // applied to the whole segment: whitespace INSIDE a value is content.
 function test_whitespace_inside_a_value_is_preserved(): test.TestOutcome {
-  var cs: Cookie[] = parse("greeting=hello world; pad=a  b");
+  let cs: Cookie[] = parse("greeting=hello world; pad=a  b");
   match (first(cs, "greeting")) {
     Some(v) => {
       if (v != "hello world") {
@@ -238,7 +238,7 @@ function test_whitespace_inside_a_value_is_preserved(): test.TestOutcome {
     }
   }
   // ... and it survives surrounding padding, which is the whole distinction.
-  var padded: Cookie[] = parse("  greeting  =  hello world  ;  pad = a  b  ");
+  let padded: Cookie[] = parse("  greeting  =  hello world  ;  pad = a  b  ");
   if (render(padded) != render(cs)) {
     return test.fail("padding disturbed an inner-space value: \""
       + render(padded) + "\" vs \"" + render(cs) + "\"");
@@ -248,10 +248,10 @@ function test_whitespace_inside_a_value_is_preserved(): test.TestOutcome {
 
 // Only the first `=` separates. This is the base64 / JWT case.
 function test_only_the_first_equals_separates(): test.TestOutcome {
-  var cases: string[] = ["t=a=b", "t=YWJjZA==", "t====", "t=a=b=c=d"];
-  var i: i32 = 0;
+  let cases: string[] = ["t=a=b", "t=YWJjZA==", "t====", "t=a=b=c=d"];
+  let i: i32 = 0;
   while (i < cases.len()) {
-    var want: string = cases[i].drop(2).to_owned();
+    let want: string = cases[i].drop(2).to_owned();
     match (first(parse(cases[i]), "t")) {
       Some(v) => {
         if (v != want) {
@@ -271,7 +271,7 @@ function test_only_the_first_equals_separates(): test.TestOutcome {
 // An empty value is a cookie; a segment with no `=` is not. Conflating them is
 // the most common shortcut, and it makes `has(name)` unanswerable.
 function test_empty_value_differs_from_no_equals(): test.TestOutcome {
-  var withEq: Cookie[] = parse("a=");
+  let withEq: Cookie[] = parse("a=");
   if (withEq.len() != 1) {
     return test.fail("\"a=\" produced " + withEq.len().to_string() + " cookies, want 1");
   }
@@ -285,7 +285,7 @@ function test_empty_value_differs_from_no_equals(): test.TestOutcome {
       return test.fail("\"a=\" lost its name");
     }
   }
-  var noEq: Cookie[] = parse("a");
+  let noEq: Cookie[] = parse("a");
   if (noEq.len() != 0) {
     return test.fail("\"a\" should be ignored, produced " + noEq.len().to_string());
   }
@@ -302,14 +302,14 @@ function test_empty_value_differs_from_no_equals(): test.TestOutcome {
 // Empty and malformed segments are skipped without disturbing their
 // neighbours — the property that makes a trailing `;` harmless.
 function test_empty_segments_are_skipped(): test.TestOutcome {
-  var want: string = render(parse("a=1;b=2"));
-  var variants: string[] = [
+  let want: string = render(parse("a=1;b=2"));
+  let variants: string[] = [
     "a=1;;b=2", "a=1;b=2;", ";a=1;b=2", "a=1; ;b=2",
     "a=1;;;b=2;;", "a=1;junk;b=2", "  ;a=1;  ;b=2;  ",
   ];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < variants.len()) {
-    var got: string = render(parse(variants[i]));
+    let got: string = render(parse(variants[i]));
     if (got != want) {
       return test.fail("\"" + variants[i] + "\" did not parse as \"a=1;b=2\"");
     }
@@ -321,7 +321,7 @@ function test_empty_segments_are_skipped(): test.TestOutcome {
 // Duplicates are kept in order, and the two accessors implement the two
 // policies a caller might want.
 function test_duplicates_are_kept_in_order(): test.TestOutcome {
-  var cs: Cookie[] = parse("id=first; other=x; id=second; id=third");
+  let cs: Cookie[] = parse("id=first; other=x; id=second; id=third");
   if (cs.len() != 4) {
     return test.fail("wanted 4 cookies, got " + cs.len().to_string());
   }
@@ -335,7 +335,7 @@ function test_duplicates_are_kept_in_order(): test.TestOutcome {
       return test.fail("id missing");
     }
   }
-  var every: string[] = all(cs, "id");
+  let every: string[] = all(cs, "id");
   if (every.len() != 3) {
     return test.fail("all(id) returned " + every.len().to_string() + ", want 3");
   }
@@ -376,14 +376,14 @@ function test_quotes_are_part_of_the_value(): test.TestOutcome {
 // the canonical form canonical, and it is checked on the outputs of the other
 // tests' inputs rather than on hand-built values.
 function test_round_trip_through_the_canonical_form(): test.TestOutcome {
-  var inputs: string[] = [
+  let inputs: string[] = [
     "a=1;b=2", "  a = 1 ;; b = 2  ", "t=YWJjZA==",
     "greeting=hello world", "id=x;id=y", "a=", "solo=1",
   ];
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < inputs.len()) {
-    var once: Cookie[] = parse(inputs[i]);
-    var twice: Cookie[] = parse(serialize(once));
+    let once: Cookie[] = parse(inputs[i]);
+    let twice: Cookie[] = parse(serialize(once));
     if (render(once) != render(twice)) {
       return test.fail("round trip changed \"" + inputs[i] + "\": \""
         + render(once) + "\" -> \"" + render(twice) + "\"");
@@ -401,13 +401,13 @@ function test_round_trip_through_the_canonical_form(): test.TestOutcome {
 // `;` separates and `=` (the first one) divides. Everything else — including
 // bytes above 127 — must survive.
 function test_values_are_byte_transparent(): test.TestOutcome {
-  var vals: string[] = ["a,b", "a b", "{\"j\":1}", "%20", "café", "a/b+c", "\t"];
-  var i: i32 = 0;
+  let vals: string[] = ["a,b", "a b", "{\"j\":1}", "%20", "café", "a/b+c", "\t"];
+  let i: i32 = 0;
   while (i < vals.len()) {
     // A value that is only a tab trims to empty — that is the documented
     // rule, not an exception to it, so the expectation is computed the
     // same way the parser would.
-    var want: string = vals[i].trim().to_owned();
+    let want: string = vals[i].trim().to_owned();
     match (first(parse("k=" + vals[i]), "k")) {
       Some(v) => {
         if (v != want) {
@@ -426,7 +426,7 @@ function test_values_are_byte_transparent(): test.TestOutcome {
 // Order is preserved. A caller relying on RFC 6265 §5.4's most-specific-first
 // ordering gets nothing from a parser that reorders.
 function test_order_is_preserved(): test.TestOutcome {
-  var cs: Cookie[] = parse("z=1; m=2; a=3");
+  let cs: Cookie[] = parse("z=1; m=2; a=3");
   if (cs.len() != 3) {
     return test.fail("wanted 3, got " + cs.len().to_string());
   }
@@ -455,11 +455,11 @@ function test_empty_and_degenerate_headers(): test.TestOutcome {
 function main(): i32 {
   eprint("cookies — RFC 6265 Cookie-header parsing with whitespace tolerance");
 
-  var raw: string = "  sid = abc123 ;; theme=dark ; token=YWJjZA== ; note=hello world ;";
-  var cs: Cookie[] = parse(raw);
+  let raw: string = "  sid = abc123 ;; theme=dark ; token=YWJjZA== ; note=hello world ;";
+  let cs: Cookie[] = parse(raw);
   eprint("input:      " + raw);
   eprint("parsed:     " + cs.len().to_string() + " cookies");
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < cs.len()) {
     eprint("  " + cs[i].name + " => \"" + cs[i].value + "\"");
     i = i + 1;
@@ -468,7 +468,7 @@ function main(): i32 {
   eprint("token:      " + match (first(cs, "token")) { Some(v) => v, None => "(none)" });
   eprint("missing:    " + match (first(cs, "nope")) { Some(v) => v, None => "(none)" });
 
-  var r: test.TestRunner = test.test_new("cookies");
+  let r: test.TestRunner = test.test_new("cookies");
   r = r.it("whitespace is tolerated everywhere", test_whitespace_is_tolerated_everywhere);
   r = r.it("whitespace inside a value is preserved", test_whitespace_inside_a_value_is_preserved);
   r = r.it("only the first equals separates", test_only_the_first_equals_separates);

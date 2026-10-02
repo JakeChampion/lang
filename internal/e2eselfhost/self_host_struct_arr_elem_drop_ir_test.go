@@ -63,11 +63,11 @@ func TestSelfHostStructArrElemDropIRX86_64(t *testing.T) {
 	run(t, `struct Inner { items: i32[] }
 struct S { elems: Inner[], tag: i32 }
 function mk(): i32 {
-    var s: S = S { elems: [Inner { items: [1,2,3,4,5,6,7,8] }, Inner { items: [9,10,11,12,13,14,15,16] }], tag: 3 };
+    let s: S = S { elems: [Inner { items: [1,2,3,4,5,6,7,8] }, Inner { items: [9,10,11,12,13,14,15,16] }], tag: 3 };
     return s.elems[0].items[0] + s.elems[1].items[7] + s.tag;
 }
 function main(): i32 {
-    var acc: i32 = 0; var f: i32 = 0;
+    let acc: i32 = 0; let f: i32 = 0;
     while (f < 50000000) { acc = mk(); f = f + 1; }
     return acc - 20;
 }`, "struct_arr_elem_drop_churn", 0)
@@ -78,10 +78,10 @@ function main(): i32 {
 	run(t, `struct Inner { items: i32[] }
 struct S { elems: Inner[], tag: i32 }
 function main(): i32 {
-    var s: S = S { elems: [Inner { items: [1,2,3,4,5,6,7,8] }, Inner { items: [9,10,11,12,13,14,15,16] }], tag: 3 };
-    var sum: i32 = 0; var e: i32 = 0;
+    let s: S = S { elems: [Inner { items: [1,2,3,4,5,6,7,8] }, Inner { items: [9,10,11,12,13,14,15,16] }], tag: 3 };
+    let sum: i32 = 0; let e: i32 = 0;
     while (e < 2) {
-        var j: i32 = 0;
+        let j: i32 = 0;
         while (j < 8) { sum = sum + s.elems[e].items[j]; j = j + 1; }
         e = e + 1;
     }
@@ -96,11 +96,11 @@ function main(): i32 {
 struct Inner { mid: Mid, it: i32 }
 struct S { elems: Inner[], tag: i32 }
 function mk(): i32 {
-    var s: S = S { elems: [Inner { mid: Mid { items: [1,2,3,4,5,6,7,8] }, it: 4 }], tag: 3 };
+    let s: S = S { elems: [Inner { mid: Mid { items: [1,2,3,4,5,6,7,8] }, it: 4 }], tag: 3 };
     return s.elems[0].mid.items[0] + s.elems[0].it + s.tag;
 }
 function main(): i32 {
-    var acc: i32 = 0; var f: i32 = 0;
+    let acc: i32 = 0; let f: i32 = 0;
     while (f < 40000000) { acc = mk(); f = f + 1; }
     return acc - 8;
 }`, "struct_arr_elem_drop_multilevel", 0)

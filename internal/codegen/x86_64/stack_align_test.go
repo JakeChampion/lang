@@ -214,7 +214,7 @@ function main(): i32 {
 	"odd_fields": `
 struct S { a: i32, b: i32, c: i32, d: i32, e: i32 }
 function mk(n: i32): S { return S { a: n, b: n + 1, c: n + 2, d: n + 3, e: n + 4 }; }
-function main(): i32 { var s = mk(1); return s.a + s.b + s.c + s.d + s.e; }`,
+function main(): i32 { let s = mk(1); return s.a + s.b + s.c + s.d + s.e; }`,
 
 	"nine_args": `
 function g(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, h: i32, i: i32, j: i32): i32 {
@@ -225,35 +225,35 @@ function main(): i32 { return g(1, 2, 3, 4, 5, 6, 7, 8, g(1, 1, 1, 1, 1, 1, 1, 1
 	"closures": `
 function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
 function main(): i32 {
-  var a: i32 = 1;
-  var b: i32 = 2;
-  var c: i32 = 3;
-  var g = (y: i32): i32 => { return y + a + b + c; };
+  let a: i32 = 1;
+  let b: i32 = 2;
+  let c: i32 = 3;
+  let g = (y: i32): i32 => { return y + a + b + c; };
   return apply(g, 4) + apply((z: i32): i32 => { return z + a; }, 5);
 }`,
 
 	"strings": `
 function main(): i32 {
-  var s: string = "ab" + "cd";
-  var t: string = s + "ef" + s;
+  let s: string = "ab" + "cd";
+  let t: string = s + "ef" + s;
   if (t == "abcdefabcd") { return 1; }
   return 0;
 }`,
 
 	"floats": `
 function main(): i32 {
-  var x: f64 = 1.5;
-  var y: f64 = 2.25;
-  var z: f64 = x * y + x / y - x;
+  let x: f64 = 1.5;
+  let y: f64 = 2.25;
+  let z: f64 = x * y + x / y - x;
   if (z > 0.0) { return 1; }
   return 0;
 }`,
 
 	"arrays": `
 function main(): i32 {
-  var a: i32[] = [1, 2, 3, 4, 5];
-  var t: i32 = 0;
-  var i: i32 = 0;
+  let a: i32[] = [1, 2, 3, 4, 5];
+  let t: i32 = 0;
+  let i: i32 = 0;
   while (i < 5) { t = t + a[i]; i = i + 1; }
   return t;
 }`,

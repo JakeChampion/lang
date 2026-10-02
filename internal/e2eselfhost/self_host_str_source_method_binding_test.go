@@ -2,13 +2,13 @@ package e2eselfhost
 
 import "testing"
 
-// strSourceMethodBindingCases pin the reclaim credit a `var t: string = <expr>.m()`
+// strSourceMethodBindingCases pin the reclaim credit a `let t: string = <expr>.m()`
 // binding earns, and which methods must not earn it.
 //
 // is_fresh_ret_binding has always had a method arm, but the string collector
 // passed it an empty receiver type, so the arm returned false for every binding
-// in the program: `var t = b.to_owned()` leaked 47 B/round where the builtin
-// `var t = b.to_ascii_upper()` beside it was flat. The struct collector next to
+// in the program: `let t = b.to_owned()` leaked 47 B/round where the builtin
+// `let t = b.to_ascii_upper()` beside it was flat. The struct collector next to
 // it passes v.type_name and works.
 //
 // The credit reads a STRICT registry class rather than SFRRECV:. SFRRECV admits a
@@ -37,14 +37,14 @@ var strSourceMethodBindingCases = []struct {
 	// spelling beside it was always flat.
 	{"str-source-method-binding-reclaimed", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function (s: string) owned(): string { return s + ""; }
-function round(pre: string): i32 { var b: string = w(pre); var t: string = b.owned(); return t.len(); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function round(pre: string): i32 { let b: string = w(pre); let t: string = b.owned(); return t.len(); }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
@@ -56,14 +56,14 @@ function main(): i32 {
 	{"str-source-method-transitive-binding-reclaimed", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function widen(s: string): string { return s + ""; }
 function (s: string) up(): string { return widen(s); }
-function round(pre: string): i32 { var b: string = w(pre); var t: string = b.up(); return t.len(); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function round(pre: string): i32 { let b: string = w(pre); let t: string = b.up(); return t.len(); }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
@@ -73,14 +73,14 @@ function main(): i32 {
 	// before and after.
 	{"str-builtin-method-binding-reclaimed", `import "std/string";
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
-function round(pre: string): i32 { var b: string = w(pre); var t: string = b.to_ascii_upper(); return t.len(); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function round(pre: string): i32 { let b: string = w(pre); let t: string = b.to_ascii_upper(); return t.len(); }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
@@ -92,17 +92,17 @@ function main(): i32 {
 	{"str-identity-return-method-binding-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function (s: string) same(): string { return s; }
 function round(pre: string): i32 {
-    var b: string = w(pre);
-    var t: string = b.same();
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let b: string = w(pre);
+    let t: string = b.same();
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 113) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 113) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: fresh on one path and the receiver on the other. One non-fresh return
 	// is enough to refuse the whole method — a binding has no runtime discriminator
 	// to tell the two apart, which is exactly what separates this from SFRRECV's
@@ -110,17 +110,17 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	{"str-mixed-path-method-binding-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function (s: string) maybe(k: i32): string { if (k > 0) { return s + "!"; } return s; }
 function round(pre: string): i32 {
-    var b: string = w(pre);
-    var t: string = b.maybe(0);
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let b: string = w(pre);
+    let t: string = b.maybe(0);
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 113) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 113) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: a slice return is a VIEW over the receiver's buffer — an alias with a
 	// different box. Correctness only: freeing an immortal view box is not currently
 	// observable, so unlike the two above this case does not fail when the rule is
@@ -128,17 +128,17 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	{"str-view-return-method-binding-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function (s: string) rest(): str { return slice_unchecked(s, 2, s.len()); }
 function round(pre: string): i32 {
-    var b: string = w(pre);
-    var t: str = b.rest();
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let b: string = w(pre);
+    let t: str = b.rest();
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (!has_prefix(t, "cdefgh-a-wide")) { return 0 - 1; }
     if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 111) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 111) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: a user type declaring a strictly-fresh `trim` must not license the
 	// string BUILTIN of that name, which returns a view. Same correctness-only
 	// standing as the case above.
@@ -146,17 +146,17 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 struct Box { v: string }
 function (x: Box) trim(): string { return x.v + ""; }
 function round(pre: string): i32 {
-    var b: string = w(pre);
-    var t: str = b.trim();
-    var p1: string = w("ZZZZZZZZ");
-    var p2: string = w("YYYYYYYY");
-    var p3: string = w("XXXXXXXX");
+    let b: string = w(pre);
+    let t: str = b.trim();
+    let p1: string = w("ZZZZZZZZ");
+    let p2: string = w("YYYYYYYY");
+    let p3: string = w("XXXXXXXX");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     if (has_sub(t, "XXXX")) { return 0 - 2; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 113) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 113) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 const strSourceMethodBindingExitHint = "98 = the bound box was stranded; 99 = over-release; 97 = value corrupted"

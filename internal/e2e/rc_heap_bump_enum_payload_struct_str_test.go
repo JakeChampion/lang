@@ -8,7 +8,7 @@ import (
 
 // Enum-payload-struct STRING-field reclamation (#4355): a local bound to a
 // fresh constructor result whose payload struct carries a STRING field
-// (`var e: E = mk(i); match (e) { … }` with `enum E { A(S), B }`,
+// (`let e: E = mk(i); match (e) { … }` with `enum E { A(S), B }`,
 // `struct S { name: string, n: i32 }`) leaked the WHOLE chain — enum box +
 // payload struct box + its string — once per iteration, while the identical
 // scalar- or array-field payload reclaimed fine.
@@ -36,11 +36,11 @@ func enumPayloadStructStrLitBumpSrc(n string) string {
 enum E { A(S), B }
 function mk(n: i32): E { return A(S { name: "ab", n: n }); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + n + `) {
-        var e: E = mk(i);
+        let e: E = mk(i);
         match (e) { A(s) => { acc = acc + s.n; }, B => { acc = acc + 0; } }
         i = i + 1;
     }
@@ -58,11 +58,11 @@ func enumPayloadStructStrConcatBumpSrc(n string) string {
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + n + `) {
-        var e: E = mk("a", i);
+        let e: E = mk("a", i);
         match (e) { A(s, k) => { acc = acc + k + s.name.len(); }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
@@ -79,11 +79,11 @@ const enumPayloadStructStrParamEmbedSafe = `struct S { name: string, n: i32 }
 enum E { A(S), B }
 function mk(nm: string, n: i32): E { return A(S { name: nm, n: n }); }
 function main(): i32 {
-    var keep: string = "aa" + "bb";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: string = "aa" + "bb";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var e: E = mk(keep, i);
+        let e: E = mk(keep, i);
         match (e) { A(s) => { acc = acc + s.name.len(); }, B => { acc = acc + 0; } }
         i = i + 1;
     }
@@ -99,11 +99,11 @@ const enumPayloadStructStrAliasedReadSafe = `struct S { name: string, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "xy", n: n }, n); }
 function main(): i32 {
-    var last: string = "";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let last: string = "";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var e: E = mk("a", i);
+        let e: E = mk("a", i);
         match (e) { A(s, k) => { last = s.name; acc = acc + k; }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
@@ -120,10 +120,10 @@ enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
 function id2(e: E): E { return e; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var e: E = id2(mk("a", i));
+        let e: E = id2(mk("a", i));
         match (e) { A(s, k) => { acc = acc + s.name.len(); }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }
@@ -176,10 +176,10 @@ const enumPayloadStructStrConcatWasmSound = `struct S { name: string, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 2000) {
-        var e: E = mk("a", i);
+        let e: E = mk("a", i);
         match (e) { A(s, k) => { acc = acc + s.name.len(); }, B(x, y) => { acc = acc + x + y; } }
         i = i + 1;
     }

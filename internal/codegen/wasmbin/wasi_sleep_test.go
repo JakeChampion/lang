@@ -22,9 +22,9 @@ import (
 // that is right for the wrong reason.
 func TestFsSleepMsBlocks(t *testing.T) {
 	src := `function main(): i32 {
-    var a: i64 = monotonic_ns();
+    let a: i64 = monotonic_ns();
     sleep_ms(120);
-    var b: i64 = monotonic_ns();
+    let b: i64 = monotonic_ns();
     return ((b - a) / (1000000 as i64)) as i32;
 }`
 	start := time.Now()
@@ -98,9 +98,9 @@ function main(): i32 {
 // one that reused the millisecond body outright returns in 120 ns.
 func TestFsSleepNsBlocks(t *testing.T) {
 	src := `function main(): i32 {
-    var a: i64 = monotonic_ns();
+    let a: i64 = monotonic_ns();
     sleep_ns(120000000 as i64);
-    var b: i64 = monotonic_ns();
+    let b: i64 = monotonic_ns();
     return ((b - a) / (1000000 as i64)) as i32;
 }`
 	start := time.Now()

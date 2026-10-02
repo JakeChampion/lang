@@ -90,8 +90,8 @@ var interpIOProgs = []struct {
 	// A string built at runtime rather than a literal, so the argument reaches
 	// the builtin as a VString the evaluator produced.
 	{"a-computed-string", `function main(): i32 {
-  var a: string = "he";
-  var b: string = "llo";
+  let a: string = "he";
+  let b: string = "llo";
   print(a + b);
   return 0;
 }`},
@@ -125,8 +125,8 @@ var interpIOProgs = []struct {
   return 1;
 }
 function main(): i32 {
-  var i: i32 = 0;
-  var n: i32 = 0;
+  let i: i32 = 0;
+  let n: i32 = 0;
   while (i < 3) {
     n = n + shout("line");
     i = i + 1;

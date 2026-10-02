@@ -36,15 +36,15 @@ import (
 const structArrStrFieldSrc = `struct N { name: string, v: i32 }
 
 function round(): i32 {
-    var xs: N[] = [];
-    var i: i32 = 0;
+    let xs: N[] = [];
+    let i: i32 = 0;
     while (i < 4) { xs = xs.append(N { name: "hello", v: i }); i = i + 1; }
     return xs.len();
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(); r = r + 1; }
     return t % 7;
 }`
@@ -119,15 +119,15 @@ func TestSelfHostStructArrStrFieldHazardsX86_64(t *testing.T) {
 			name: "field_extracted_to_container",
 			src: `struct N { name: string, v: i32 }
 function round(i: i32): i32 {
-    var keep: string[] = [];
-    var xs: N[] = [N { name: "hello_world_long", v: i }, N { name: "second_string_val", v: i }];
+    let keep: string[] = [];
+    let xs: N[] = [N { name: "hello_world_long", v: i }, N { name: "second_string_val", v: i }];
     keep = keep.append(xs[0].name);
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < keep.len()) { t = t + keep[k].len(); k = k + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
 			want: 48,
 		},
 		{
@@ -136,27 +136,27 @@ function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t +
 			name: "field_is_param_string",
 			src: `struct N { name: string, v: i32 }
 function build(p: string, n: i32): i32 {
-    var xs: N[] = [N { name: p, v: n }, N { name: p, v: n }];
+    let xs: N[] = [N { name: p, v: n }, N { name: p, v: n }];
     return xs.len();
 }
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
-    while (r < 100) { var owned: string = "hello" + "_suffix"; t = t + build(owned, r) + owned.len(); r = r + 1; }
+    let t: i32 = 0; let r: i32 = 0;
+    while (r < 100) { let owned: string = "hello" + "_suffix"; t = t + build(owned, r) + owned.len(); r = r + 1; }
     return t % 97;
 }`,
 			want: 42,
 		},
 		{
-			// A bound element (`var q = xs[0]`) holds a box the free would dangle —
+			// A bound element (`let q = xs[0]`) holds a box the free would dangle —
 			// structarr_elem_escapes refuses the whole array.
 			name: "element_bound_to_local",
 			src: `struct N { name: string, v: i32 }
 function round(i: i32): i32 {
-    var xs: N[] = [N { name: "hello_world_long", v: i }, N { name: "second_string_val", v: i }];
-    var q: N = xs[0];
+    let xs: N[] = [N { name: "hello_world_long", v: i }, N { name: "second_string_val", v: i }];
+    let q: N = xs[0];
     return q.v + q.name.len();
 }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
 			want: 51,
 		},
 		{
@@ -165,8 +165,8 @@ function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t +
 			name: "array_returned_from_callee",
 			src: `struct N { name: string, v: i32 }
 function mk(i: i32): N[] { return [N { name: "hello_world_long", v: i }]; }
-function round(i: i32): i32 { var xs: N[] = mk(i); return xs[0].v + xs[0].name.len(); }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
+function round(i: i32): i32 { let xs: N[] = mk(i); return xs[0].v + xs[0].name.len(); }
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
 			want: 51,
 		},
 		{
@@ -176,15 +176,15 @@ function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t +
 			name: "fields_read_before_death",
 			src: `struct N { name: string, v: i32 }
 function round(i: i32): i32 {
-    var xs: N[] = [];
-    var k: i32 = 0;
+    let xs: N[] = [];
+    let k: i32 = 0;
     while (k < 4) { xs = xs.append(N { name: "hello_world_long", v: i }); k = k + 1; }
-    var t: i32 = 0;
-    var j: i32 = 0;
+    let t: i32 = 0;
+    let j: i32 = 0;
     while (j < xs.len()) { if (xs[j].name != "hello_world_long") { return 1; } t = t + xs[j].name.len(); j = j + 1; }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
+function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t + round(r); r = r + 1; } return t % 97; }`,
 			want: 95,
 		},
 	} {

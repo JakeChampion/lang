@@ -124,8 +124,8 @@ don't diverge.
 ## 3. Surface
 
 ```fern
-var c: Cell[i32] = cell_new(0);   // construct with an initial value
-var n: i32 = c.get();             // read the slot
+let c: Cell[i32] = cell_new(0);   // construct with an initial value
+let n: i32 = c.get();             // read the slot
 c.set(n + 1);                     // in-place write — a statement, returns void
 ```
 

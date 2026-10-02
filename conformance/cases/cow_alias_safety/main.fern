@@ -6,10 +6,10 @@ import "core/map";
 // through the reassignment form `m = m.insert(...)` updates `m` while
 // leaving the snapshot untouched — copy-on-write isolates them.
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
 
-    var snapshot: Map[i32, i32] = m;   // alias — both reference the same buffer
+    let snapshot: Map[i32, i32] = m;   // alias — both reference the same buffer
 
     // Mutate through the value-returning form while the alias is live.
     m = m.insert(1, 99);               // CoW: copies, snapshot keeps {1:10}

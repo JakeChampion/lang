@@ -15,16 +15,16 @@ func TestSelfHostFormerBailsRun(t *testing.T) {
 		want int
 	}{
 		{"nested-for", `function main(): i32 {
-    var hyper: i32[][][][] = [[[[1]], [[2, 3]]]];
-    var sum = 0;
+    let hyper: i32[][][][] = [[[[1]], [[2, 3]]]];
+    let sum = 0;
     for cube in hyper { for plane in cube { for row in plane { for v in row { sum = sum + v; } } } }
     return sum;
 }
 `, 6},
 		{"iife-value-block", `enum W { Wide(i64[]), Empty }
 function main(): i32 {
-    var w: W = Wide([5i64, 6i64]);
-    var u: i64 = (match (w) { Wide(xs) => xs[0], Empty => 9i64 });
+    let w: W = Wide([5i64, 6i64]);
+    let u: i64 = (match (w) { Wide(xs) => xs[0], Empty => 9i64 });
     return (u as i32) & 255i32;
 }
 `, 5},

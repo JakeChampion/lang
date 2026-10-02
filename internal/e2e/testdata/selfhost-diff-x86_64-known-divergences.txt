@@ -95,7 +95,7 @@
 #
 # s0393 left with the capture side, and it was a decline rather than a miss:
 # `cap_param_for` builds a hoisted IIFE's capture parameter only from an EXACT
-# signature, and `var v0: (i32) => i32 = pick(…)` is neither a lambda initialiser
+# signature, and `let v0: (i32) => i32 = pick(…)` is neither a lambda initialiser
 # nor a `__mkclo$` target. The signature was not unrecoverable, it was DROPPED —
 # the parser read the annotation's return into `v_fn_ret` and then kept only the
 # coarse "fn" tag on the StmtVar. `StmtVar.fn_ret` now carries it, and paired

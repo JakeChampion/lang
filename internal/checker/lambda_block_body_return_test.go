@@ -33,24 +33,24 @@ function run(f: (i32) => void, v: i32): void { f(v); }
 		// The shape that failed: a block body whose only statement returns.
 		{"single return", prelude + `
 function main(): i32 {
-    var g = (x: i32) => { return x * 2; };
+    let g = (x: i32) => { return x * 2; };
     return apply(g, 4);
 }`},
 		{"statements then return", prelude + `
 function main(): i32 {
-    var g = (x: i32) => { var y: i32 = x + 1; return y * 2; };
+    let g = (x: i32) => { let y: i32 = x + 1; return y * 2; };
     return apply(g, 3);
 }`},
 		{"branch returns on every path", prelude + `
 function main(): i32 {
-    var g = (x: i32) => { if (x > 0) { return x; } return 0 - x; };
+    let g = (x: i32) => { if (x > 0) { return x; } return 0 - x; };
     return apply(g, 0 - 5);
 }`},
 		// Already worked, and must keep working: the tail-valued block has a
 		// value of its own, so `never` never enters the unification.
 		{"tail value, no return", prelude + `
 function main(): i32 {
-    var g = (x: i32) => { var y: i32 = x + 1; y * 2 };
+    let g = (x: i32) => { let y: i32 = x + 1; y * 2 };
     return apply(g, 3);
 }`},
 		// The plain expression body, which is the overwhelming majority of
@@ -61,28 +61,28 @@ function main(): i32 { return apply((x: i32) => x * 2, 4); }`},
 		// accepted rather than becoming redundant-and-rejected.
 		{"explicit return type with a block body", prelude + `
 function main(): i32 {
-    var g = (x: i32): i32 => { var y: i32 = x + 1; return y * 2; };
+    let g = (x: i32): i32 => { let y: i32 = x + 1; return y * 2; };
     return apply(g, 3);
 }`},
 		// A body that only runs statements yields nothing, so the lambda is
 		// void rather than a value-less block where a value is required.
 		{"statement-only body is void", prelude + `
 function main(): i32 {
-    var seen: i32 = 0;
-    var g = (x: i32) => { seen = seen + x; };
+    let seen: i32 = 0;
+    let g = (x: i32) => { seen = seen + x; };
     run(g, 4);
     return seen - 4;
 }`},
 		{"empty body is void", prelude + `
 function main(): i32 {
-    var g = (x: i32) => {};
+    let g = (x: i32) => {};
     run(g, 4);
     return 0;
 }`},
 		{"explicit void return type", prelude + `
 function main(): i32 {
-    var seen: i32 = 0;
-    var g = (x: i32): void => { seen = seen + x; };
+    let seen: i32 = 0;
+    let g = (x: i32): void => { seen = seen + x; };
     run(g, 4);
     return seen - 4;
 }`},
@@ -103,7 +103,7 @@ function main(): i32 {
 // incompatible value types are still E002, block body or not.
 func TestArrowLambdaBlockBodyStillReportsRealConflicts(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 {
-    var g = (x: i32) => { if (x > 0) { return x; } return "no"; };
+    let g = (x: i32) => { if (x > 0) { return x; } return "no"; };
     return 0;
 }`)
 	if err != nil {

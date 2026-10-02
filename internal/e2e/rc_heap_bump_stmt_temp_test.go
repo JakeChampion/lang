@@ -21,8 +21,8 @@ import (
 
 func stmtTempArrBumpSrc(n string) string {
 	return `function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) {
         [i, i + 1, i + 2];
         i = i + 1;
@@ -36,11 +36,11 @@ func stmtTempArrBumpSrc(n string) string {
 // loop-variable operands — a wrong "owned" verdict that freed a shared
 // buffer would over-release (>0) or corrupt the sum (999).
 const stmtTempArrUnderflowSrc = `function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
         [i, i + 1];
-        var xs: i32[] = [i, i + 1, i + 2];
+        let xs: i32[] = [i, i + 1, i + 2];
         acc = acc + xs[0] + xs[1] + xs[2];
         i = i + 1;
     }
@@ -55,13 +55,13 @@ const stmtTempArrUnderflowSrc = `function main(): i32 {
 // `a + b;` must reclaim its buffer without over-releasing `a` / `b`, which
 // are reused in the bound `s` concat that drives `acc`.
 const stmtTempStrUnderflowSrc = `function main(): i32 {
-    var a: string = "hello";
-    var b: string = "world";
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let a: string = "hello";
+    let b: string = "world";
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
         a + b;
-        var s: string = a + b;
+        let s: string = a + b;
         acc = acc + s.len();
         i = i + 1;
     }

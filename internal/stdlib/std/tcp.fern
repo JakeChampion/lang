@@ -167,7 +167,7 @@ pub function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest
 // request in flight was answered, or "drain-deadline" when one was cut
 // off at the drain deadline.
 pub function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 {
-  var listener: i32 = __serve_listener(port, opts);
+  let listener: i32 = __serve_listener(port, opts);
   if (listener < 0) {
     return __listen_failed(port, listener);
   }
@@ -179,7 +179,7 @@ pub function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpReq
 // (descriptor 3, the systemd convention, which is also how a restarted
 // server takes over a socket without a gap), else a fresh one on `port`.
 function __serve_listener(port: i32, opts: ServeOptions): i32 {
-  var listener: i32 = __listener_of(port, opts);
+  let listener: i32 = __listener_of(port, opts);
   // Non-blocking: a wake-up over a listener workers share can reach
   // more than one of them, and the one that finds nothing to accept
   // must return to its wait rather than block in accept until the next
@@ -217,7 +217,7 @@ function __listener_of(port: i32, opts: ServeOptions): i32 {
     None => {}
   }
   if (target_os() != "wasi") {
-    var both: i32 = tcp_listen_with(__every_v6(), port, opts.backlog, opts.reuse_port);
+    let both: i32 = tcp_listen_with(__every_v6(), port, opts.backlog, opts.reuse_port);
     if (both >= 0 || !__no_v6(both)) {
       return both;
     }
@@ -229,7 +229,7 @@ function __listener_of(port: i32, opts: ServeOptions): i32 {
 // -EAFNOSUPPORT from socket(2), or -EADDRNOTAVAIL from a bind where the
 // family exists but is switched off.
 function __no_v6(r: i32): boolean {
-  var e: net.NetError = net.error_from_errno(r);
+  let e: net.NetError = net.error_from_errno(r);
   return e.eq(net.AddrNotAvailable) || r == 0 - __eafnosupport();
 }
 
@@ -255,11 +255,11 @@ pub function tcp_serve_deadline(port: i32, handler: (HttpRequest, Platform) => H
 //
 //     function handle(hits: Map[string, i32], req: HttpRequest,
 //                     plat: Platform): (Map[string, i32], HttpResponse) {
-//         var n: i32 = hits.get_or(req.path, 0) + 1;
+//         let n: i32 = hits.get_or(req.path, 0) + 1;
 //         return (hits.insert(req.path, n),
 //                 http.ok(int.int_to_string(n)));
 //     }
-//     var init: Map[string, i32] = map_new(8);
+//     let init: Map[string, i32] = map_new(8);
 //     tcp.tcp_serve_with(8080, init, handle);
 //
 // `init` needs the annotated local when its value comes from a
@@ -292,7 +292,7 @@ pub function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, hand
 // state as the last request left it: where a counter is flushed or a
 // store is closed.
 pub function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
-  var listener: i32 = __serve_listener(port, opts);
+  let listener: i32 = __serve_listener(port, opts);
   if (listener < 0) {
     return __listen_failed(port, listener);
   }
@@ -325,18 +325,18 @@ pub function tcp_serve_with_deadline[S](port: i32, init: S, handler: (S, HttpReq
 // blocking recv — preserving interp behavior at the cost of the
 // deadline.
 pub function tcp_recv_deadline(fd: i32, max: i32, deadline: Duration): Option[u8[]] {
-  var wait_ms: i32 = deadline.as_millis() as i32;
+  let wait_ms: i32 = deadline.as_millis() as i32;
   if (wait_ms < 1) {
     wait_ms = 1;
   }
-  var ns_per_ms: i64 = 1000000;
-  var start_ns: i64 = monotonic_ns();
-  var tok: i32 = tcp_pollable(fd);
-  var timer: i32 = wasm_timer_pollable(wait_ms as i64 * ns_per_ms);
-  var pollset: i32[] = [tok, timer];
-  var ready: i32 = poll(pollset, wait_ms);
-  var dtimer: i32 = wasm_pollable_drop(timer);
-  var dtok: i32 = wasm_pollable_drop(tok);
+  let ns_per_ms: i64 = 1000000;
+  let start_ns: i64 = monotonic_ns();
+  let tok: i32 = tcp_pollable(fd);
+  let timer: i32 = wasm_timer_pollable(wait_ms as i64 * ns_per_ms);
+  let pollset: i32[] = [tok, timer];
+  let ready: i32 = poll(pollset, wait_ms);
+  let dtimer: i32 = wasm_pollable_drop(timer);
+  let dtok: i32 = wasm_pollable_drop(tok);
   if (ready == 0) {
     return Some(tcp_recv(fd, max));
   }
@@ -347,7 +347,7 @@ pub function tcp_recv_deadline(fd: i32, max: i32, deadline: Duration): Option[u8
   // ready < 0: a native poll(2) only reports this after the wait
   // elapsed (timeout); an instant -1 is the interp stub (or EINTR /
   // a poll error), where blocking recv preserves the old behavior.
-  var waited_ns: i64 = monotonic_ns() - start_ns;
+  let waited_ns: i64 = monotonic_ns() - start_ns;
   if (waited_ns * 2i64 >= wait_ms as i64 * ns_per_ms) {
     return None;
   }
@@ -389,8 +389,8 @@ function __enotsup(): i32 {
 // __recv_scratch() — the loop's one read buffer, filled per readable
 // connection and copied out; owned by the loop, never by a request.
 function __recv_scratch(): u8[] {
-  var buf: u8[] = [];
-  var i: i32 = 0;
+  let buf: u8[] = [];
+  let i: i32 = 0;
   while (i < 4096) {
     buf = buf.append(0 as u8);
     i = i + 1;
@@ -441,7 +441,7 @@ struct __Clock { sec: i64, date: string }
 // reformatted only when the second has changed. Read once per wait, so
 // the responses of one event share it.
 function __clock_tick(clk: __Clock): __Clock {
-  var sec: i64 = now_unix_ms() / 1000;
+  let sec: i64 = now_unix_ms() / 1000;
   if (sec == clk.sec && clk.date.len() > 0) {
     return clk;
   }
@@ -457,16 +457,16 @@ function __clock_tick(clk: __Clock): __Clock {
 // transfer coding for an HTTP/1.1 client and close-delimited, the
 // connection ending with it, for an HTTP/1.0 one.
 function __serve_wire(method: string, version: string, answer: HttpResponse, keep_alive: boolean, clk: __Clock): __Wire {
-  var resp: HttpResponse = answer;
+  let resp: HttpResponse = answer;
   if (resp.headers.get_all("date").len() == 0) {
     resp = answer.with_header("Date", clk.date);
   }
-  var headless: boolean = http.http_bodiless(resp.status) || method == "HEAD";
+  let headless: boolean = http.http_bodiless(resp.status) || method == "HEAD";
   match (resp.body) {
     BodyFile(path) => {
       match (open_reader(path)) {
         Ok(r) => {
-          var size: i64 = 0 - 1 as i64;
+          let size: i64 = 0 - 1 as i64;
           match (r.stat()) {
             Ok(st) => {
               size = st.size;
@@ -477,7 +477,7 @@ function __serve_wire(method: string, version: string, answer: HttpResponse, kee
             r.close();
             return __serve_wire(method, version, http.not_found(), keep_alive, clk);
           }
-          var head: string = http.http_serialize_response_head(resp, keep_alive, "Content-Length: " + size.to_string() + "\r\n");
+          let head: string = http.http_serialize_response_head(resp, keep_alive, "Content-Length: " + size.to_string() + "\r\n");
           if (headless || size == 0 as i64) {
             r.close();
             return __Wire { head: head, tail: NoTail, keep: keep_alive };
@@ -497,7 +497,7 @@ function __serve_wire(method: string, version: string, answer: HttpResponse, kee
       if (version == "HTTP/1.0") {
         return __Wire { head: http.http_serialize_response_head(resp, false, ""), tail: ChunkTail(producer, 0, ""), keep: false };
       }
-      var framing: string = "Transfer-Encoding: chunked\r\n";
+      let framing: string = "Transfer-Encoding: chunked\r\n";
       if (resp.trailers.names.len() > 0) {
         framing = framing + "Trailer: " + resp.trailers.names.join(", ") + "\r\n";
       }
@@ -565,7 +565,7 @@ function __tail_piece(c: __Conns, at: i32): (__Conns, string, boolean) {
       return (c, "", true);
     },
     FileTail(r, left) => {
-      var want: i32 = 65536;
+      let want: i32 = 65536;
       if (left < want as i64) {
         want = left as i32;
       }
@@ -574,7 +574,7 @@ function __tail_piece(c: __Conns, at: i32): (__Conns, string, boolean) {
           if (bytes.len() == 0) {
             return (__tail_drop(c, at), "", false);
           }
-          var rest: i64 = left - bytes.len() as i64;
+          let rest: i64 = left - bytes.len() as i64;
           if (rest <= 0 as i64) {
             return (__tail_drop(c, at), bytes, true);
           }
@@ -587,13 +587,13 @@ function __tail_piece(c: __Conns, at: i32): (__Conns, string, boolean) {
       return (c, "", false);
     },
     ChunkTail(producer, index, end) => {
-      var next: (i32) => Option[u8[]] = producer.next;
-      var i: i32 = index;
+      let next: (i32) => Option[u8[]] = producer.next;
+      let i: i32 = index;
       while (true) {
         match (next(i)) {
           Some(chunk) => {
             if (chunk.len() > 0) {
-              var piece: string = string_from_bytes_unchecked(chunk);
+              let piece: string = string_from_bytes_unchecked(chunk);
               if (end.len() > 0) {
                 piece = int.int_to_string_radix(chunk.len(), 16) + "\r\n" + piece + "\r\n";
               }
@@ -613,7 +613,7 @@ function __tail_piece(c: __Conns, at: i32): (__Conns, string, boolean) {
 }
 
 function __conns_index(c: __Conns, fd: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < c.fds.len()) {
     if (c.fds[i] == fd) {
       return i;
@@ -624,13 +624,13 @@ function __conns_index(c: __Conns, fd: i32): i32 {
 }
 
 function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32): __Conns {
-  var empty: u8[] = [];
+  let empty: u8[] = [];
   return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail) };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
 function __conns_from_peer(c: __Conns, peer: i32): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for p in c.peers {
     if (p == peer) {
       n = n + 1;
@@ -640,22 +640,22 @@ function __conns_from_peer(c: __Conns, peer: i32): i32 {
 }
 
 function __conns_remove(c: __Conns, at: i32): __Conns {
-  var fds: i32[] = [];
-  var bufs: u8[][] = [];
-  var offs: i32[] = [];
-  var pending: string[] = [];
-  var deadlines: i64[] = [];
-  var keep: boolean[] = [];
-  var served: i32[] = [];
-  var backlog: boolean[] = [];
-  var continued: boolean[] = [];
-  var rate_since: i64[] = [];
-  var rate_base: i32[] = [];
-  var send_since: i64[] = [];
-  var send_base: i32[] = [];
-  var peers: i32[] = [];
-  var tails: __Tail[] = [];
-  var i: i32 = 0;
+  let fds: i32[] = [];
+  let bufs: u8[][] = [];
+  let offs: i32[] = [];
+  let pending: string[] = [];
+  let deadlines: i64[] = [];
+  let keep: boolean[] = [];
+  let served: i32[] = [];
+  let backlog: boolean[] = [];
+  let continued: boolean[] = [];
+  let rate_since: i64[] = [];
+  let rate_base: i32[] = [];
+  let send_since: i64[] = [];
+  let send_base: i32[] = [];
+  let peers: i32[] = [];
+  let tails: __Tail[] = [];
+  let i: i32 = 0;
   while (i < c.fds.len()) {
     if (i != at) {
       fds = fds.append(c.fds[i]);
@@ -688,7 +688,7 @@ function __conns_timeout(c: __Conns, now: i64): i32 {
       return 0;
     }
   }
-  var best: i64 = -(1 as i64);
+  let best: i64 = -(1 as i64);
   for d in c.deadlines {
     if (best < 0 as i64 || d < best) {
       best = d;
@@ -700,7 +700,7 @@ function __conns_timeout(c: __Conns, now: i64): i32 {
   if (best <= now) {
     return 0;
   }
-  var ms: i64 = (best - now + 999999 as i64) / 1000000;
+  let ms: i64 = (best - now + 999999 as i64) / 1000000;
   if (ms > 2147483647 as i64) {
     return 2147483647;
   }
@@ -712,11 +712,11 @@ function __conns_timeout(c: __Conns, now: i64): i32 {
 // and so does a peer already holding `max_connections_per_ip` of them.
 // wasm has no non-blocking mode to switch on and its reads never block.
 function __serve_accept[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: ServeOptions): __Conns {
-  var fd: i32 = tcp_accept(listener);
+  let fd: i32 = tcp_accept(listener);
   if (fd < 0) {
     return c;
   }
-  var peer: i32 = 0;
+  let peer: i32 = 0;
   if (opts.max_connections_per_ip > 0) {
     peer = tcp_socket_ctl(fd, 7, 0);
     if (peer != 0 && __conns_from_peer(c, peer) >= opts.max_connections_per_ip) {
@@ -749,12 +749,12 @@ function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
 // was waiting under, and the body's clock keeps the deadline no earlier
 // than what the body has delivered buys (`__body_deadline`).
 function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: ServeOptions): (__Conns, boolean) {
-  var buf: u8[] = c.bufs[at];
-  var was_idle: boolean = buf.len() == 0;
+  let buf: u8[] = c.bufs[at];
+  let was_idle: boolean = buf.len() == 0;
   while (true) {
-    var n: i32 = tcp_recv_into(c.fds[at], scratch);
+    let n: i32 = tcp_recv_into(c.fds[at], scratch);
     if (n == 0 - __eagain()) {
-      var deadline: i64 = c.deadlines[at];
+      let deadline: i64 = c.deadlines[at];
       if (was_idle && buf.len() > 0) {
         deadline = monotonic_ns() + opts.recv_deadline.as_nanos();
       }
@@ -778,12 +778,12 @@ function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: ServeOptions): (
 // __bytes_from(buf, from) — buf[from, len) as a fresh array: the bytes
 // behind an answered request, the next pipelined request's or nothing.
 function __bytes_from(buf: u8[], from: i32): u8[] {
-  var n: i32 = buf.len() - from;
+  let n: i32 = buf.len() - from;
   if (n < 0) {
     n = 0;
   }
-  var out: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let out: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     out = out.with(i, buf[from + i]);
     i = i + 1;
@@ -824,10 +824,10 @@ function __tail_persists(tail: http.HttpFraming, eof: boolean): boolean {
 // the bytes behind the request, which the response and the next turn of
 // the loop read rather than parse again.
 function __serve_took(c: __Conns, at: i32, f: http.HttpFramed, opts: ServeOptions, eof: boolean, stop: __Stop): (__Conns, boolean, http.HttpFraming) {
-  var served: i32 = c.served[at] + 1;
-  var keep: boolean = f.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
+  let served: i32 = c.served[at] + 1;
+  let keep: boolean = f.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
   c = __Conns { ...c, offs: c.offs.with(at, c.offs[at] + f.len), served: c.served.with(at, served), backlog: c.backlog.with(at, false), continued: c.continued.with(at, false) };
-  var tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
+  let tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
   if (keep) {
     keep = __tail_persists(tail, eof);
   }
@@ -859,8 +859,8 @@ function __pipeline_burst(): i32 {
 // rather than at its first byte, which may have arrived a burst ago;
 // the body's clock starts over with it.
 function __serve_next(c: __Conns, at: i32, opts: ServeOptions): __Conns {
-  var now: i64 = monotonic_ns();
-  var span: Duration = opts.keep_alive_idle;
+  let now: i64 = monotonic_ns();
+  let span: Duration = opts.keep_alive_idle;
   if (c.bufs[at].len() > c.offs[at]) {
     span = opts.recv_deadline;
   }
@@ -875,9 +875,9 @@ function __serve_next(c: __Conns, at: i32, opts: ServeOptions): __Conns {
 // A body that keeps flowing outlasts the read deadline; one that stalls
 // or trickles does not.
 function __body_deadline(c: __Conns, at: i32, opts: ServeOptions, now: i64): __Conns {
-  var since: i64 = c.rate_since[at];
-  var base: i32 = c.rate_base[at];
-  var buf: u8[] = c.bufs[at];
+  let since: i64 = c.rate_since[at];
+  let base: i32 = c.rate_base[at];
+  let buf: u8[] = c.bufs[at];
   if (since < 0 as i64) {
     if (buf.len() <= c.offs[at] || !http.http_header_block_complete(buf, c.offs[at], opts.limits)) {
       return c;
@@ -885,11 +885,11 @@ function __body_deadline(c: __Conns, at: i32, opts: ServeOptions, now: i64): __C
     since = now;
     base = buf.len();
   }
-  var earned: i64 = since + opts.data_rate_grace.as_nanos();
+  let earned: i64 = since + opts.data_rate_grace.as_nanos();
   if (opts.min_data_rate > 0) {
     earned = earned + (buf.len() - base) as i64 * (1000000000 as i64) / (opts.min_data_rate as i64);
   }
-  var deadline: i64 = c.deadlines[at];
+  let deadline: i64 = c.deadlines[at];
   if (earned > deadline) {
     deadline = earned;
   }
@@ -932,7 +932,7 @@ function __serve_continue[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Se
     return __serve_next(c, at, opts);
   }
   c = __Conns { ...c, continued: c.continued.with(at, true), keep: c.keep.with(at, true) };
-  var sent: (__Conns, __Sent) = __serve_send(drv, c, at, "HTTP/1.1 100 Continue\r\n\r\n", opts);
+  let sent: (__Conns, __Sent) = __serve_send(drv, c, at, "HTTP/1.1 100 Continue\r\n\r\n", opts);
   match (sent.1) {
     Partial => {
       return sent.0;
@@ -953,8 +953,8 @@ function __serve_continue[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Se
 // finished by a later wait, which closes the connection once it has gone
 // out; a refused write closes it now.
 function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i32, opts: ServeOptions, clk: __Clock): __Conns {
-  var wire: __Wire = __serve_wire("GET", "HTTP/1.1", http.text(status, ""), false, clk);
-  var sent: (__Conns, __Sent) = __serve_send(drv, __Conns { ...c, keep: c.keep.with(at, false) }, at, wire.head, opts);
+  let wire: __Wire = __serve_wire("GET", "HTTP/1.1", http.text(status, ""), false, clk);
+  let sent: (__Conns, __Sent) = __serve_send(drv, __Conns { ...c, keep: c.keep.with(at, false) }, at, wire.head, opts);
   match (sent.1) {
     Partial => {
       return sent.0;
@@ -985,14 +985,14 @@ function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i3
 // event's answers leave in one write (`__corks`).
 function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __Wire, opts: ServeOptions, answered: i32, tail: http.HttpFraming, clk: __Clock, corked: string): (__Conns, boolean, string) {
   c = __Conns { ...c, tails: c.tails.with(at, wire.tail), keep: c.keep.with(at, c.keep[at] && wire.keep) };
-  var payload: string = wire.head;
+  let payload: string = wire.head;
   if (corked.len() > 0) {
     payload = corked + wire.head;
   }
   if (__corks(wire, c.keep[at], answered, tail)) {
     return (c, true, payload);
   }
-  var sent: (__Conns, __Sent) = __serve_send(drv, c, at, payload, opts);
+  let sent: (__Conns, __Sent) = __serve_send(drv, c, at, payload, opts);
   c = sent.0;
   match (sent.1) {
     Partial => {
@@ -1003,7 +1003,7 @@ function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __W
     },
     Whole => {}
   }
-  var produced: (__Conns, __Sent) = __serve_produce(drv, c, at, opts);
+  let produced: (__Conns, __Sent) = __serve_produce(drv, c, at, opts);
   c = produced.0;
   match (produced.1) {
     Partial => {
@@ -1017,7 +1017,7 @@ function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __W
   if (!c.keep[at]) {
     return (__serve_close(drv, c, at), false, "");
   }
-  var ready: (__Conns, boolean) = __serve_ready(drv, c, at, opts, tail, clk);
+  let ready: (__Conns, boolean) = __serve_ready(drv, c, at, opts, tail, clk);
   c = ready.0;
   if (!ready.1) {
     return (c, false, "");
@@ -1064,7 +1064,7 @@ function __corks(wire: __Wire, persists: boolean, answered: i32, tail: http.Http
 // failed, the connection does not persist, or the reactor refused to
 // watch it again).
 function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions, clk: __Clock): (__Conns, i32, boolean) {
-  var sent: (__Conns, __Sent) = __serve_send(drv, c, at, c.pending[at], opts);
+  let sent: (__Conns, __Sent) = __serve_send(drv, c, at, c.pending[at], opts);
   c = sent.0;
   match (sent.1) {
     Partial => {
@@ -1075,7 +1075,7 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Serve
     },
     Whole => {}
   }
-  var produced: (__Conns, __Sent) = __serve_produce(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts);
+  let produced: (__Conns, __Sent) = __serve_produce(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts);
   c = produced.0;
   match (produced.1) {
     Partial => {
@@ -1092,8 +1092,8 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Serve
   if (drv.watch(c.fds[at], 1) < 0) {
     return (__serve_close(drv, c, at), -1, false);
   }
-  var tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
-  var ready: (__Conns, boolean) = __serve_ready(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts, tail, clk);
+  let tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits);
+  let ready: (__Conns, boolean) = __serve_ready(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts, tail, clk);
   if (!ready.1) {
     return (ready.0, -1, false);
   }
@@ -1117,14 +1117,14 @@ function __serve_eof[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
 // draining, a connection closed once it drained), and `eof` when the peer
 // has finished sending.
 function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8[], opts: ServeOptions, clk: __Clock): (__Conns, i32, boolean) {
-  var at: i32 = __conns_index(c, fd);
+  let at: i32 = __conns_index(c, fd);
   if (at < 0) {
     return (c, -1, false);
   }
   if (__in_flight(c, at)) {
     return __serve_drain(drv, c, at, opts, clk);
   }
-  var read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
+  let read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
   return (read.0, at, read.1);
 }
 
@@ -1134,7 +1134,7 @@ function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8
 // burst left a request buffered is not closed yet: the backlog answers
 // it on the next wait, whose read sees the end of stream again.
 function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boolean): __Conns {
-  var at: i32 = __conns_index(c, fd);
+  let at: i32 = __conns_index(c, fd);
   if (at < 0) {
     return c;
   }
@@ -1150,8 +1150,8 @@ function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boole
 // not report itself, so the loop answers the backlog on this pass
 // without the peer having to send anything, and once per pass.
 function __with_backlog(c: __Conns, events: i32[]): i32[] {
-  var reported: i32 = events.len();
-  var i: i32 = 0;
+  let reported: i32 = events.len();
+  let i: i32 = 0;
   while (i < c.fds.len()) {
     if (c.backlog[i] && !__reported(events, reported, c.fds[i])) {
       events = events.append(c.fds[i]).append(0);
@@ -1164,7 +1164,7 @@ function __with_backlog(c: __Conns, events: i32[]): i32[] {
 // __reported(events, n, fd) — whether `fd` is among the first `n` entries
 // of the wait's (fd, readiness) pairs.
 function __reported(events: i32[], n: i32, fd: i32): boolean {
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k + 1 < n) {
     if (events[k] == fd) {
       return true;
@@ -1185,19 +1185,19 @@ enum __Sent { Whole, Partial, Failed }
 // finishes the write on later waits. A write the kernel refuses (the
 // peer is gone) leaves the connection to the caller to close.
 function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: string, opts: ServeOptions): (__Conns, __Sent) {
-  var n: i32 = tcp_send(c.fds[at], payload);
+  let n: i32 = tcp_send(c.fds[at], payload);
   if (n >= payload.len()) {
     return (c, Whole);
   }
   if (n < 0 && n != 0 - __eagain()) {
     return (c, Failed);
   }
-  var rest: string = payload;
+  let rest: string = payload;
   if (n > 0) {
     rest = slice_unchecked(payload, n, payload.len()).to_owned();
   }
   drv.watch(c.fds[at], 2);
-  var first: boolean = c.pending[at].len() == 0;
+  let first: boolean = c.pending[at].len() == 0;
   return (__drain_deadline(__Conns { ...c, pending: c.pending.with(at, rest) }, at, opts, first), Partial);
 }
 
@@ -1211,17 +1211,17 @@ function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Ser
   if (!__in_flight(c, at)) {
     return (c, Whole);
   }
-  var moved: (__Conns, __Sent, boolean) = __file_tail_send(drv, c, at, opts);
+  let moved: (__Conns, __Sent, boolean) = __file_tail_send(drv, c, at, opts);
   c = moved.0;
   if (moved.2) {
     return (c, moved.1);
   }
-  var produced: (__Conns, string, boolean) = __tail_piece(c, at);
+  let produced: (__Conns, string, boolean) = __tail_piece(c, at);
   c = produced.0;
   if (!produced.2) {
     return (c, Failed);
   }
-  var sent: (__Conns, __Sent) = __serve_send(drv, c, at, produced.1, opts);
+  let sent: (__Conns, __Sent) = __serve_send(drv, c, at, produced.1, opts);
   c = sent.0;
   match (sent.1) {
     Whole => {},
@@ -1245,11 +1245,11 @@ function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Ser
 function __file_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions): (__Conns, __Sent, boolean) {
   match (c.tails[at]) {
     FileTail(r, left) => {
-      var want: i32 = 65536;
+      let want: i32 = 65536;
       if (left < want as i64) {
         want = left as i32;
       }
-      var n: i32 = tcp_sendfile(c.fds[at], r.fd, want);
+      let n: i32 = tcp_sendfile(c.fds[at], r.fd, want);
       if (n == 0 - __enotsup()) {
         return (c, Whole, false);
       }
@@ -1260,7 +1260,7 @@ function __file_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Se
       if (n <= 0) {
         return (__tail_drop(c, at), Failed, true);
       }
-      var rest: i64 = left - n as i64;
+      let rest: i64 = left - n as i64;
       if (rest <= 0 as i64) {
         return (__tail_drop(c, at), Whole, true);
       }
@@ -1286,19 +1286,19 @@ function __file_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Se
 // from each write. Where the socket cannot report its queue (wasm), the
 // bytes the loop has handed it are the progress.
 function __drain_deadline(c: __Conns, at: i32, opts: ServeOptions, first: boolean): __Conns {
-  var now: i64 = monotonic_ns();
-  var since: i64 = c.send_since[at];
-  var base: i32 = c.send_base[at];
-  var queued: i32 = tcp_socket_ctl(c.fds[at], 6, 0);
+  let now: i64 = monotonic_ns();
+  let since: i64 = c.send_since[at];
+  let base: i32 = c.send_base[at];
+  let queued: i32 = tcp_socket_ctl(c.fds[at], 6, 0);
   if (queued < 0) {
     queued = 0;
   }
-  var outstanding: i32 = c.pending[at].len() + queued + __tail_left(c, at);
+  let outstanding: i32 = c.pending[at].len() + queued + __tail_left(c, at);
   if (first) {
     since = now;
     base = outstanding;
   }
-  var deadline: i64 = now + opts.recv_deadline.as_nanos();
+  let deadline: i64 = now + opts.recv_deadline.as_nanos();
   if (opts.min_data_rate > 0) {
     deadline = since + opts.data_rate_grace.as_nanos() + (base - outstanding) as i64 * (1000000000 as i64) / (opts.min_data_rate as i64);
   }
@@ -1351,7 +1351,7 @@ function __stop_signal(fd: i32): i32 {
 // (until a shutdown, which owns the listener from then), and the
 // shutdown takes its next step. `(conns, stop, accepting, done)`.
 function __serve_pass_end[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: ServeOptions, stop: __Stop, accepting: boolean): (__Conns, __Stop, boolean, boolean) {
-  var now: i64 = monotonic_ns();
+  let now: i64 = monotonic_ns();
   c = __serve_expire(drv, c, opts, now);
   if (!__serve_stopping(stop)) {
     accepting = __serve_gate(drv, listener, c, opts, accepting);
@@ -1381,11 +1381,11 @@ function __stop_timeout(stop: __Stop, opts: ServeOptions, now: i64, timeout: i32
   if (!__serve_stopping(stop)) {
     return timeout;
   }
-  var due: i64 = stop.at + opts.shutdown_grace.as_nanos();
+  let due: i64 = stop.at + opts.shutdown_grace.as_nanos();
   if (stop.closed) {
     due = stop.at + opts.drain_deadline.as_nanos();
   }
-  var ms: i64 = (due - now + 999999 as i64) / 1000000;
+  let ms: i64 = (due - now + 999999 as i64) / 1000000;
   if (ms < 0 as i64) {
     ms = 0 as i64;
   }
@@ -1420,7 +1420,7 @@ function __serve_stop_step[D: async.Driver](drv: D, listener: i32, c: __Conns, o
     stop = __Stop { ...stop, closed: true };
     accepting = false;
   }
-  var swept: (__Conns, __Stop) = __stop_sweep(drv, c, stop, now >= stop.at + opts.drain_deadline.as_nanos());
+  let swept: (__Conns, __Stop) = __stop_sweep(drv, c, stop, now >= stop.at + opts.drain_deadline.as_nanos());
   return (swept.0, swept.1, accepting, swept.0.fds.len() == 0);
 }
 
@@ -1428,9 +1428,9 @@ function __serve_stop_step[D: async.Driver](drv: D, listener: i32, c: __Conns, o
 // in flight closed, and past the drain deadline every connection, the
 // shutdown remembering the ones it cut off.
 function __stop_sweep[D: async.Driver](drv: D, c: __Conns, stop: __Stop, past_drain: boolean): (__Conns, __Stop) {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < c.fds.len()) {
-    var idle: boolean = c.bufs[i].len() == 0 && !__in_flight(c, i) && !c.backlog[i];
+    let idle: boolean = c.bufs[i].len() == 0 && !__in_flight(c, i) && !c.backlog[i];
     if (idle || past_drain) {
       if (!idle) {
         stop = __Stop { ...stop, aborted: true };
@@ -1480,11 +1480,11 @@ function __serve_not_ready(f: http.HttpFramed, opts: ServeOptions, stop: __Stop)
 // closed. A watch the reactor refuses leaves the listener unwatched
 // until the next pass tries again.
 function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: ServeOptions, accepting: boolean): boolean {
-  var cap: i32 = opts.max_connections;
+  let cap: i32 = opts.max_connections;
   if (cap < 1) {
     cap = 1;
   }
-  var full: boolean = c.fds.len() >= cap;
+  let full: boolean = c.fds.len() >= cap;
   if (accepting && full) {
     drv.unwatch(listener);
     return false;
@@ -1503,7 +1503,7 @@ function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: 
 // waiting on the peer: its deadline is stale from the read that filled
 // the backlog, and it stays open for the next wait to answer it.
 function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: ServeOptions, now: i64): __Conns {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < c.fds.len()) {
     if (c.deadlines[i] <= now && !c.backlog[i] && __in_flight(c, i)) {
       c = __drain_deadline(c, i, opts, false);
@@ -1524,7 +1524,7 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: ServeOptions,
 // (std/mock_platform). Built once per loop rather than per request, since
 // no request can change it.
 function __host_platform(reactor: i32): Platform {
-  var handle: i32 = reactor;
+  let handle: i32 = reactor;
   if (handle < 0) {
     handle = 0;
   }
@@ -1549,25 +1549,25 @@ function __init_platform(): Platform {
 // bind. `opts` bounds each connection's request read (see
 // `tcp_serve_deadline`) and its persistence.
 function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: ServeOptions, on_stop: (string) => void): i32 {
-  var drv: async.RealDriver = async.real_driver();
-  var watched: i32 = drv.watch(listener, __listener_interest(opts));
+  let drv: async.RealDriver = async.real_driver();
+  let watched: i32 = drv.watch(listener, __listener_interest(opts));
   if (watched < 0) {
     return watched;
   }
-  var accepting: boolean = true;
-  var stop: __Stop = __serve_stop_sources(drv, opts);
-  var plat: Platform = __host_platform(drv.handle());
-  var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
-  var scratch: u8[] = __recv_scratch();
-  var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
+  let accepting: boolean = true;
+  let stop: __Stop = __serve_stop_sources(drv, opts);
+  let plat: Platform = __host_platform(drv.handle());
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
+  let scratch: u8[] = __recv_scratch();
+  let clk: __Clock = __Clock { sec: 0 as i64, date: "" };
   while (true) {
-    var events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
+    let events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
     clk = __clock_tick(clk);
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k + 1 < events.len()) {
-      var fd: i32 = events[k];
+      let fd: i32 = events[k];
       k = k + 2;
-      var sig: i32 = __stop_signal(fd);
+      let sig: i32 = __stop_signal(fd);
       if (sig != 0) {
         stop = __stop_begin(stop, sig);
         continue;
@@ -1576,28 +1576,28 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
         conns = __serve_accept(drv, listener, conns, opts);
         continue;
       }
-      var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
+      let ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
       conns = ev.0;
-      var at: i32 = ev.1;
+      let at: i32 = ev.1;
       if (at < 0) {
         continue;
       }
-      var more: boolean = true;
-      var count: i32 = 0;
-      var corked: string = "";
-      var framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
+      let more: boolean = true;
+      let count: i32 = 0;
+      let corked: string = "";
+      let framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
       while (more) {
-        var next: http.HttpFraming = http.Incomplete;
+        let next: http.HttpFraming = http.Incomplete;
         match (framing) {
           http.Framed(f) => {
-            var took: (__Conns, boolean, http.HttpFraming) = __serve_took(conns, at, f, opts, ev.2, stop);
+            let took: (__Conns, boolean, http.HttpFraming) = __serve_took(conns, at, f, opts, ev.2, stop);
             conns = took.0;
             count = count + 1;
-            var resp: HttpResponse = http.text(503, "");
+            let resp: HttpResponse = http.text(503, "");
             if (!__serve_not_ready(f, opts, stop)) {
               resp = handler(f.request, plat);
             }
-            var answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, resp, took.1, clk), opts, count, took.2, clk, corked);
+            let answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, resp, took.1, clk), opts, count, took.2, clk, corked);
             conns = answered.0;
             more = answered.1;
             corked = answered.2;
@@ -1619,7 +1619,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
       }
       conns = __serve_finish(drv, conns, fd, ev.2);
     }
-    var ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting);
+    let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting);
     conns = ended.0;
     stop = ended.1;
     accepting = ended.2;
@@ -1643,26 +1643,26 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
 // so it is process-lifetime without any language-level global: each
 // request sees the value the previous one returned.
 function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), opts: ServeOptions, on_stop: (string, S) => void): i32 {
-  var st: S = init;
-  var drv: async.RealDriver = async.real_driver();
-  var watched: i32 = drv.watch(listener, __listener_interest(opts));
+  let st: S = init;
+  let drv: async.RealDriver = async.real_driver();
+  let watched: i32 = drv.watch(listener, __listener_interest(opts));
   if (watched < 0) {
     return watched;
   }
-  var accepting: boolean = true;
-  var stop: __Stop = __serve_stop_sources(drv, opts);
-  var plat: Platform = __host_platform(drv.handle());
-  var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
-  var scratch: u8[] = __recv_scratch();
-  var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
+  let accepting: boolean = true;
+  let stop: __Stop = __serve_stop_sources(drv, opts);
+  let plat: Platform = __host_platform(drv.handle());
+  let conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
+  let scratch: u8[] = __recv_scratch();
+  let clk: __Clock = __Clock { sec: 0 as i64, date: "" };
   while (true) {
-    var events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
+    let events: i32[] = __with_backlog(conns, drv.wait(64, __stop_timeout(stop, opts, monotonic_ns(), __conns_timeout(conns, monotonic_ns()))));
     clk = __clock_tick(clk);
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k + 1 < events.len()) {
-      var fd: i32 = events[k];
+      let fd: i32 = events[k];
       k = k + 2;
-      var sig: i32 = __stop_signal(fd);
+      let sig: i32 = __stop_signal(fd);
       if (sig != 0) {
         stop = __stop_begin(stop, sig);
         continue;
@@ -1671,29 +1671,29 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         conns = __serve_accept(drv, listener, conns, opts);
         continue;
       }
-      var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
+      let ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
       conns = ev.0;
-      var at: i32 = ev.1;
+      let at: i32 = ev.1;
       if (at < 0) {
         continue;
       }
-      var more: boolean = true;
-      var count: i32 = 0;
-      var corked: string = "";
-      var framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
+      let more: boolean = true;
+      let count: i32 = 0;
+      let corked: string = "";
+      let framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
       while (more) {
-        var next: http.HttpFraming = http.Incomplete;
+        let next: http.HttpFraming = http.Incomplete;
         match (framing) {
           http.Framed(f) => {
-            var took: (__Conns, boolean, http.HttpFraming) = __serve_took(conns, at, f, opts, ev.2, stop);
+            let took: (__Conns, boolean, http.HttpFraming) = __serve_took(conns, at, f, opts, ev.2, stop);
             conns = took.0;
             count = count + 1;
-            var stepped: (S, HttpResponse) = (st, http.text(503, ""));
+            let stepped: (S, HttpResponse) = (st, http.text(503, ""));
             if (!__serve_not_ready(f, opts, stop)) {
               stepped = handler(st, f.request, plat);
             }
             st = stepped.0;
-            var answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, stepped.1, took.1, clk), opts, count, took.2, clk, corked);
+            let answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, stepped.1, took.1, clk), opts, count, took.2, clk, corked);
             conns = answered.0;
             more = answered.1;
             corked = answered.2;
@@ -1715,7 +1715,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
       }
       conns = __serve_finish(drv, conns, fd, ev.2);
     }
-    var ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting);
+    let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting);
     conns = ended.0;
     stop = ended.1;
     accepting = ended.2;
@@ -1794,35 +1794,35 @@ function __supervise(port: i32, opts: ServeOptions, run: (i32, ServeOptions) => 
   // workers inheriting this fd rather than owning it. Per-worker
   // listeners are the opt-in that gives that up: each worker binds
   // its own once forked.
-  var listener: i32 = 0 - 1;
+  let listener: i32 = 0 - 1;
   if (!__per_worker_listeners(opts)) {
     listener = __serve_listener(port, opts);
     if (listener < 0) {
       return __listen_failed(port, listener);
     }
   }
-  var workers: i32 = opts.workers;
+  let workers: i32 = opts.workers;
   if (workers < 1) {
     workers = cpu_count();
   }
   if (workers < 1) {
     workers = 1;
   }
-  var resolved: ServeOptions = ServeOptions { ...opts, workers: workers };
-  var sup: __Supervisor = __Supervisor { pids: [], spawned: [], backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
-  var drv: async.RealDriver = async.real_driver();
-  var chld: i32 = drv.watch_signal(17);
+  let resolved: ServeOptions = ServeOptions { ...opts, workers: workers };
+  let sup: __Supervisor = __Supervisor { pids: [], spawned: [], backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
+  let drv: async.RealDriver = async.real_driver();
+  let chld: i32 = drv.watch_signal(17);
   if (chld < 0) {
     return chld;
   }
   drv.watch_signal(15);
   drv.watch_signal(2);
   while (true) {
-    var refork_ms: i32 = -1;
+    let refork_ms: i32 = -1;
     if (!sup.stopping && sup.pids.len() < workers) {
-      var wait_ms: i64 = sup.fork_after - now_unix_ms();
+      let wait_ms: i64 = sup.fork_after - now_unix_ms();
       if (wait_ms <= 0 as i64) {
-        var forked: (__Supervisor, i32) = __supervisor_fork(drv, port, listener, run, resolved, sup);
+        let forked: (__Supervisor, i32) = __supervisor_fork(drv, port, listener, run, resolved, sup);
         sup = forked.0;
         if (forked.1 != 0 - 1) {
           return forked.1;
@@ -1851,11 +1851,11 @@ function __supervise(port: i32, opts: ServeOptions, run: (i32, ServeOptions) => 
 // __supervisor_events(sup, events) — the wait's events acted on: SIGTERM
 // or SIGINT forwarded, SIGCHLD (-17) reaped.
 function __supervisor_events(sup: __Supervisor, events: i32[]): __Supervisor {
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k + 1 < events.len()) {
-    var fd: i32 = events[k];
+    let fd: i32 = events[k];
     k = k + 2;
-    var sig: i32 = __stop_signal(fd);
+    let sig: i32 = __stop_signal(fd);
     if (sig != 0) {
       sup = __supervisor_stop(sup, sig);
     }
@@ -1878,14 +1878,14 @@ function __supervisor_events(sup: __Supervisor, events: i32[]): __Supervisor {
 // across the fork, so the child only closes its copy, since an unwatch
 // would take the parent's signals out of the set the parent waits on.
 function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, run: (i32, ServeOptions) => i32, opts: ServeOptions, sup: __Supervisor): (__Supervisor, i32) {
-  var pid: i32 = proc_fork();
+  let pid: i32 = proc_fork();
   if (pid == -38) {
     eprint("tcp_serve_supervised: supervision unavailable; serving single-process");
     drv.unwatch_signal(17);
     drv.unwatch_signal(15);
     drv.unwatch_signal(2);
     drv.close();
-    var single: i32 = __worker_listener(port, listener, opts);
+    let single: i32 = __worker_listener(port, listener, opts);
     if (single < 0) {
       return (sup, __listen_failed(port, single));
     }
@@ -1896,11 +1896,11 @@ function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, run:
   }
   if (pid == 0) {
     drv.close();
-    var own: i32 = __worker_listener(port, listener, opts);
+    let own: i32 = __worker_listener(port, listener, opts);
     if (own < 0) {
       exit(__listen_failed(port, own));
     }
-    var loop_opts: ServeOptions = ServeOptions { ...opts, stop_with_parent: true };
+    let loop_opts: ServeOptions = ServeOptions { ...opts, stop_with_parent: true };
     if (listener < 0) {
       loop_opts = ServeOptions { ...loop_opts, workers: 1 };
     }
@@ -1942,7 +1942,7 @@ function __worker_listener(port: i32, listener: i32, opts: ServeOptions): i32 {
   if (listener >= 0) {
     return listener;
   }
-  var own: i32 = __serve_listener(port, opts);
+  let own: i32 = __serve_listener(port, opts);
   if (own >= 0) {
     tcp_socket_ctl(own, 8, 0);
   }
@@ -1969,10 +1969,10 @@ function (s: __Supervisor) gave_up(): boolean {
 // up to five seconds for them to drain, then SIGKILL for the rest, every
 // one reaped before the supervisor returns.
 function __supervisor_abandon(drv: async.RealDriver, sup: __Supervisor): void {
-  var s: __Supervisor = __supervisor_stop(sup, 15);
-  var until: i64 = now_unix_ms() + 5000 as i64;
+  let s: __Supervisor = __supervisor_stop(sup, 15);
+  let until: i64 = now_unix_ms() + 5000 as i64;
   while (s.pids.len() > 0) {
-    var left: i64 = until - now_unix_ms();
+    let left: i64 = until - now_unix_ms();
     if (left <= 0 as i64) {
       break;
     }
@@ -2013,9 +2013,9 @@ function __supervisor_stop(sup: __Supervisor, sig: i32): __Supervisor {
 // forks no replacement; a death after SIGTERM is the worker's shutdown,
 // and its code is the worst the shutdown answers.
 function __supervisor_reap(sup: __Supervisor): __Supervisor {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < sup.pids.len()) {
-    var code: i32 = proc_waitpid_nohang(sup.pids[i]);
+    let code: i32 = proc_waitpid_nohang(sup.pids[i]);
     if (code == 0 - 1) {
       i = i + 1;
       continue;
@@ -2023,7 +2023,7 @@ function __supervisor_reap(sup: __Supervisor): __Supervisor {
     if (code < 0) {
       code = 0 - code;
     }
-    var lived_ms: i64 = now_unix_ms() - sup.spawned[i];
+    let lived_ms: i64 = now_unix_ms() - sup.spawned[i];
     sup = __Supervisor { ...sup, pids: __without_index_i32(sup.pids, i), spawned: __without_index_i64(sup.spawned, i) };
     if (sup.stopping) {
       if (code > sup.worst) {
@@ -2042,7 +2042,7 @@ function __supervisor_reap(sup: __Supervisor): __Supervisor {
     } else {
       sup = __Supervisor { ...sup, fast_deaths: 0, backoff_ms: 100 as i64 };
     }
-    var next: i64 = sup.backoff_ms * (2 as i64);
+    let next: i64 = sup.backoff_ms * (2 as i64);
     if (next > 5000 as i64) {
       next = 5000 as i64;
     }
@@ -2052,8 +2052,8 @@ function __supervisor_reap(sup: __Supervisor): __Supervisor {
 }
 
 function __without_index_i32(xs: i32[], at: i32): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (i != at) {
       out = out.append(xs[i]);
@@ -2064,8 +2064,8 @@ function __without_index_i32(xs: i32[], at: i32): i32[] {
 }
 
 function __without_index_i64(xs: i64[], at: i32): i64[] {
-  var out: i64[] = [];
-  var i: i32 = 0;
+  let out: i64[] = [];
+  let i: i32 = 0;
   while (i < xs.len()) {
     if (i != at) {
       out = out.append(xs[i]);
@@ -2088,10 +2088,10 @@ function __without_index_i64(xs: i64[], at: i32): i64[] {
 function __port_from_env(name: string, fallback: i32): i32 {
   match (env(name)) {
     Some(s) => {
-      var n: i32 = 0;
-      var i: i32 = 0;
+      let n: i32 = 0;
+      let i: i32 = 0;
       while (i < s.len()) {
-        var b: i32 = s[i] as i32;
+        let b: i32 = s[i] as i32;
         if (b < 48 || b > 57) {
           return fallback;
         }

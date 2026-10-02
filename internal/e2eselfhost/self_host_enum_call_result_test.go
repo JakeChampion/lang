@@ -7,7 +7,7 @@ import (
 
 // An enum call result carries one count the caller owns when the callee is an
 // "ENUM:" member: every return is a fresh ctor, a forwarding call to a member,
-// a local built by one that escapes only by the return, or a `var g = h.e`
+// a local built by one that escapes only by the return, or a `let g = h.e`
 // field alias, which the return retains when no credit dup'd it (#10365). A
 // binding of such a call is credited like a counted enum-field alias, the
 // struct and array literal consumers take the count over without a retain,
@@ -27,56 +27,56 @@ function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { retur
 function mk_sc_ctor(r: i32): Sc { return SA(k_of(r)); }
 function mk_rc_ctor(r: i32): Rc { return RA([k_of(r), 1]); }
 function mk_sc_local(r: i32): Sc {
-    var m: Sc = SA(k_of(r));
+    let m: Sc = SA(k_of(r));
     return m;
 }
 function mk_rc_local(r: i32): Rc {
-    var m: Rc = RA([k_of(r), 1]);
+    let m: Rc = RA([k_of(r), 1]);
     return m;
 }
 function mk_sc_chain(r: i32): Sc {
-    var m: Sc = mk_sc_local(r);
+    let m: Sc = mk_sc_local(r);
     return m;
 }
 function mk_rc_chain(r: i32): Rc { return mk_rc_local(r); }
 function mk_sc_branch(r: i32): Sc {
     if (r % 3 == 0) { return SB; }
-    var m: Sc = SA(k_of(r));
+    let m: Sc = SA(k_of(r));
     if (r % 3 == 1) { return m; }
-    var h: HS = HS { e: SA(k_of(r + 1)), n: 1 };
-    var g: Sc = h.e;
+    let h: HS = HS { e: SA(k_of(r + 1)), n: 1 };
+    let g: Sc = h.e;
     return g;
 }
 function mk_rc_branch(r: i32): Rc {
     if (r % 2 == 0) {
-        var h: HR = HR { e: RA([k_of(r), 7]), n: 1 };
-        var g: Rc = h.e;
+        let h: HR = HR { e: RA([k_of(r), 7]), n: 1 };
+        let g: Rc = h.e;
         return g;
     }
     return mk_rc_chain(r);
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var a: Sc = mk_sc_ctor(r);
-        var b: Rc = mk_rc_ctor(r);
-        var c = mk_sc_local(r);
-        var d: Rc = mk_rc_local(r);
-        var e: Sc = mk_sc_chain(r);
-        var f: Rc = mk_rc_chain(r);
-        var g: Sc = mk_sc_branch(r);
-        var h: Rc = mk_rc_branch(r);
+        let a: Sc = mk_sc_ctor(r);
+        let b: Rc = mk_rc_ctor(r);
+        let c = mk_sc_local(r);
+        let d: Rc = mk_rc_local(r);
+        let e: Sc = mk_sc_chain(r);
+        let f: Rc = mk_rc_chain(r);
+        let g: Sc = mk_sc_branch(r);
+        let h: Rc = mk_rc_branch(r);
         t = t + sval(a) + rval(b) + sval(c) + rval(d) + sval(e) + rval(f) + sval(g) + rval(h);
-        var hs: HS = HS { e: mk_sc_branch(r + 1), n: 1 };
-        var hr: HR = HR { e: mk_rc_branch(r + 1), n: 1 };
+        let hs: HS = HS { e: mk_sc_branch(r + 1), n: 1 };
+        let hr: HR = HR { e: mk_rc_branch(r + 1), n: 1 };
         t = t + sval(hs.e) + rval(hr.e);
-        var xs: Sc[] = [mk_sc_chain(r), mk_sc_branch(r + 2)];
-        var xr: Rc[] = [mk_rc_branch(r), mk_rc_ctor(r + 3)];
+        let xs: Sc[] = [mk_sc_chain(r), mk_sc_branch(r + 2)];
+        let xr: Rc[] = [mk_rc_branch(r), mk_rc_ctor(r + 3)];
         match (xs[1]) { SA(v) => { t = t + v; }, SB => { t = t + 100; } }
         match (xr[1]) { RA(v) => { t = t + v[0]; }, RB => { t = t + 100; } }
-        var junk: Sc = SA(k_of(1000 + r));
-        var junkr: Rc = RA([k_of(1000 + r), 2]);
+        let junk: Sc = SA(k_of(1000 + r));
+        let junkr: Rc = RA([k_of(1000 + r), 2]);
         t = t + (sval(junk) + rval(junkr)) * 0;
         r = r + 1;
     }
@@ -126,20 +126,20 @@ function hb_sc_field(h: HS): Sc { return h.e; }
 function hb_rc_field(h: HR): Rc { return h.e; }
 function hb_rc_fwd(e: Rc): Rc { return hb_rc_param(e); }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var a0: Sc = SA(k_of(r));
-        var b0: Rc = RA([k_of(r), 1]);
-        var a: Sc = hb_sc_param(a0);
-        var b: Rc = hb_rc_param(b0);
-        var hs: HS = HS { e: SA(k_of(r + 1)), n: 1 };
-        var hr: HR = HR { e: RA([k_of(r + 1), 1]), n: 1 };
-        var c: Sc = hb_sc_field(hs);
-        var d: Rc = hb_rc_field(hr);
-        var f: Rc = hb_rc_fwd(b0);
-        var junk: Sc = SA(k_of(1000 + r));
-        var junkr: Rc = RA([k_of(1000 + r), 2]);
+        let a0: Sc = SA(k_of(r));
+        let b0: Rc = RA([k_of(r), 1]);
+        let a: Sc = hb_sc_param(a0);
+        let b: Rc = hb_rc_param(b0);
+        let hs: HS = HS { e: SA(k_of(r + 1)), n: 1 };
+        let hr: HR = HR { e: RA([k_of(r + 1), 1]), n: 1 };
+        let c: Sc = hb_sc_field(hs);
+        let d: Rc = hb_rc_field(hr);
+        let f: Rc = hb_rc_fwd(b0);
+        let junk: Sc = SA(k_of(1000 + r));
+        let junkr: Rc = RA([k_of(1000 + r), 2]);
         t = t + sval(a) + rval(b) + sval(c) + rval(d) + rval(f) + sval(a0) + rval(b0) + (sval(junk) + rval(junkr)) * 0;
         t = t + sval(hb_sc_param(SA(k_of(r + 2)))) + rval(hb_rc_param(RA([k_of(r + 2), 1])));
         t = t + rval(hb_rc_fwd(RA([k_of(r + 3), 1])));
@@ -147,7 +147,7 @@ function main(): i32 {
         match (hb_sc_field(hs)) { SA(v) => { t = t + v; }, SB => { t = t + 100; } }
         hb_sc_param(a0);
         hb_rc_field(hr);
-        var junk2: Rc = RA([k_of(2000 + r), 2]);
+        let junk2: Rc = RA([k_of(2000 + r), 2]);
         t = t + rval(junk2) * 0;
         r = r + 1;
     }
@@ -186,16 +186,16 @@ function k_of(x: i32): i32 { return x; }
 function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
 function hb_sc_param(e: Sc): Sc { return e; }
 function mk(r: i32): Sc {
-    var a0: Sc = SA(k_of(r));
-    var a: Sc = hb_sc_param(a0);
+    let a0: Sc = SA(k_of(r));
+    let a: Sc = hb_sc_param(a0);
     return a;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var x: Sc = mk(r);
-        var junk: Sc = SA(k_of(1000 + r));
+        let x: Sc = mk(r);
+        let junk: Sc = SA(k_of(1000 + r));
         t = t + sval(x) + sval(junk) * 0;
         r = r + 1;
     }
@@ -239,16 +239,16 @@ function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { retur
 function mk_sc_ctor(r: i32): Sc { return SA(k_of(r)); }
 function mk_rc_ctor(r: i32): Rc { return RA([k_of(r), 1]); }
 function mk_sc_local(r: i32): Sc {
-    var m: Sc = SA(k_of(r));
+    let m: Sc = SA(k_of(r));
     return m;
 }
 function mk_rc_local(r: i32): Rc {
-    var m: Rc = RA([k_of(r), 1]);
+    let m: Rc = RA([k_of(r), 1]);
     return m;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
         t = t + sval(mk_sc_ctor(r)) + rval(mk_rc_ctor(r)) + sval(mk_sc_local(r)) + rval(mk_rc_local(r));
         match (mk_sc_ctor(r + 1)) { SA(v) => { t = t + v; }, SB => { t = t + 100; } }
@@ -259,8 +259,8 @@ function main(): i32 {
         mk_rc_ctor(r);
         mk_sc_local(r);
         mk_rc_local(r);
-        var junk: Sc = SA(k_of(1000 + r));
-        var junkr: Rc = RA([k_of(1000 + r), 2]);
+        let junk: Sc = SA(k_of(1000 + r));
+        let junkr: Rc = RA([k_of(1000 + r), 2]);
         t = t + (sval(junk) + rval(junkr)) * 0;
         r = r + 1;
     }

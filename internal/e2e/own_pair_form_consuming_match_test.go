@@ -30,8 +30,8 @@ function put(own b: Box, i: i32, x: i32): Box {
     match (b) { Full(xs) => { return Full(xs.with(i, x)); }, Empty => { return Empty; } }
 }
 function main(): i32 {
-    var b: Box = Full([1, 2, 3]);
-    var keep: Box = b;
+    let b: Box = Full([1, 2, 3]);
+    let keep: Box = b;
     b = put(b, 0, 9);
     match (keep) { Full(xs) => { print((10 + xs[0]).to_string()); }, Empty => { print("1"); } }
     return 0;
@@ -45,8 +45,8 @@ function put(own b: Box, i: i32, x: i32): Box {
     match (b) { Full(xs) => { return Full(xs.with(i, x)); }, Empty => { return Empty; } }
 }
 function main(): i32 {
-    var b: Box = Full([1, 2, 3]);
-    var holder: Box[] = [b];
+    let b: Box = Full([1, 2, 3]);
+    let holder: Box[] = [b];
     b = put(b, 0, 9);
     match (holder[0]) { Full(xs) => { print((10 + xs[0]).to_string()); }, Empty => { print("1"); } }
     return 0;
@@ -62,7 +62,7 @@ function put(own b: Box, i: i32, x: i32): Box {
     match (b) { Full(xs) => { return Full(xs.with(i, x)); }, Empty => { return Empty; } }
 }
 function main(): i32 {
-    var b: Box = Full([1, 2, 3]);
+    let b: Box = Full([1, 2, 3]);
     b = put(b, 0, 9);
     match (b) { Full(xs) => { print((10 + xs[0]).to_string()); }, Empty => { print("1"); } }
     return 0;
@@ -82,8 +82,8 @@ function put3(own b: Box3, i: i32, x: i32): Box3 {
     }
 }
 function main(): i32 {
-    var b: Box3 = Full([1, 2, 3]);
-    var keep: Box3 = b;
+    let b: Box3 = Full([1, 2, 3]);
+    let keep: Box3 = b;
     b = put3(b, 0, 9);
     match (keep) {
         Full(xs) => { print((10 + xs[0]).to_string()); },
@@ -113,13 +113,13 @@ function put(own b: Box, i: i32, x: i32): Box {
 }
 
 function main(): i32 {
-    var b: Box = Full([1, 2, 3]);
-    var w: i32 = 0;
+    let b: Box = Full([1, 2, 3]);
+    let w: i32 = 0;
     while (w < 200) { b = put(b, 0, w); w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 5000) { b = put(b, 0, i); i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;

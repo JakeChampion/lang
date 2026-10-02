@@ -16,10 +16,10 @@ import (
 // rc-balance / underflow / differential e2e suites; these pin the shape.
 
 func TestRcIncInlinesAtSite(t *testing.T) {
-	// `var b = a; return b` retains the borrowed param before transfer,
+	// `let b = a; return b` retains the borrowed param before transfer,
 	// so g carries an rc inc.
-	asm := compile(t, `@noinline function g(a: i32[]): i32[] { var b: i32[] = a; return b; }
-function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0]; }`, Options{})
+	asm := compile(t, `@noinline function g(a: i32[]): i32[] { let b: i32[] = a; return b; }
+function main(): i32 { let x: i32[] = [1, 2, 3]; let y: i32[] = g(x); return y[0]; }`, Options{})
 	body := fnBody(t, asm, "g")
 	if strings.Contains(body, "bl __fern_rc_inc") {
 		t.Errorf("rc inc must inline, not `bl __fern_rc_inc`, in g:\n%s", body)
@@ -38,12 +38,12 @@ function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0
 }
 
 func TestRcDecInlinesAtSite(t *testing.T) {
-	// Copying a struct that owns a heap field (`var q = p`) retains its
+	// Copying a struct that owns a heap field (`let q = p`) retains its
 	// pointer field, and the copies are dropped at scope exit — a bare
 	// rc dec (distinct from the container-walking `__fern_arr_dec` a
 	// top-level array drop uses).
 	asm := compile(t, `struct P { xs: i32[] }
-function h(p: P): i32 { var q: P = p; return q.xs[0]; }
+function h(p: P): i32 { let q: P = p; return q.xs[0]; }
 function main(): i32 { return h(P { xs: [7, 8] }); }`, Options{})
 	if strings.Contains(asm, "bl __fern_rc_dec") {
 		t.Errorf("rc dec must inline, not `bl __fern_rc_dec`:\n%s", asm)
@@ -72,8 +72,8 @@ func TestRcOpsFallBackToCallInLargeFn(t *testing.T) {
 
 	// Same retain shape as TestRcIncInlinesAtSite; with the ceiling at 0, g's
 	// rc inc must lower to the `bl` call form, not the inline RMW.
-	asm := compile(t, `@noinline function g(a: i32[]): i32[] { var b: i32[] = a; return b; }
-function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0]; }`, Options{})
+	asm := compile(t, `@noinline function g(a: i32[]): i32[] { let b: i32[] = a; return b; }
+function main(): i32 { let x: i32[] = [1, 2, 3]; let y: i32[] = g(x); return y[0]; }`, Options{})
 	body := fnBody(t, asm, "g")
 	if !strings.Contains(body, "bl __fern_rc_inc") {
 		t.Errorf("over-threshold function must call the rc helper, not inline it, in g:\n%s", body)

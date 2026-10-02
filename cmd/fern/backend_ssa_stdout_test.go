@@ -15,7 +15,7 @@ import (
 // hot loop was effectively impossible.
 func TestArm64SSAWritesAsmToStdoutWithoutO(t *testing.T) {
 	bin := buildFernForStdoutTest(t)
-	entry := writeFern(t, "function main(): i32 {\n  var i: i32 = 0;\n  while (i < 3) { i = i + 1; }\n  return i;\n}\n")
+	entry := writeFern(t, "function main(): i32 {\n  let i: i32 = 0;\n  while (i < 3) { i = i + 1; }\n  return i;\n}\n")
 
 	out, err := exec.Command(bin, "-target", "arm64-linux", "-backend", "ssa", entry).Output()
 	if err != nil {

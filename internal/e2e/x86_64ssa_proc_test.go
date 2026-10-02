@@ -19,7 +19,7 @@ import (
 const x86SSAProcSrc = `function main(): i32 {
     // proc_fork / proc_exec: the child replaces its image with /bin/true and
     // the parent reaps its exit code.
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 10; }
     if (pid == 0) {
         proc_exec("/bin/true", []);
@@ -28,7 +28,7 @@ const x86SSAProcSrc = `function main(): i32 {
     if (proc_waitpid(pid) != 0) { return 11; }
 
     // The exit code the child chose reaches the parent unchanged.
-    var p2: i32 = proc_fork();
+    let p2: i32 = proc_fork();
     if (p2 < 0) { return 20; }
     if (p2 == 0) {
         proc_exec("/bin/sh", ["-c", "exit 42"]);
@@ -37,7 +37,7 @@ const x86SSAProcSrc = `function main(): i32 {
     if (proc_waitpid(p2) != 42) { return 21; }
 
     // A death by signal surfaces as 128 + the signal.
-    var p3: i32 = proc_fork();
+    let p3: i32 = proc_fork();
     if (p3 < 0) { return 30; }
     if (p3 == 0) {
         proc_exec("/bin/sh", ["-c", "kill -9 $$"]);
@@ -46,7 +46,7 @@ const x86SSAProcSrc = `function main(): i32 {
     if (proc_waitpid(p3) != 137) { return 31; }
 
     // proc_exec_as passes argv verbatim, argv[0] included, and its own envp.
-    var p4: i32 = proc_fork();
+    let p4: i32 = proc_fork();
     if (p4 < 0) { return 40; }
     if (p4 == 0) {
         proc_exec_as("/bin/sh", ["sh", "-c", "test \"$PROBE\" = yes"], ["PROBE=yes"]);
@@ -56,7 +56,7 @@ const x86SSAProcSrc = `function main(): i32 {
 
     // proc_waitpid_nohang answers -1 while the child is still running, and
     // the exit code once it is not.
-    var p5: i32 = proc_fork();
+    let p5: i32 = proc_fork();
     if (p5 < 0) { return 50; }
     if (p5 == 0) {
         proc_exec("/bin/sh", ["-c", "sleep 1; exit 7"]);
@@ -66,7 +66,7 @@ const x86SSAProcSrc = `function main(): i32 {
     if (proc_waitpid(p5) != 7) { return 52; }
 
     // An exec of a name that is not there returns rather than replacing.
-    var p6: i32 = proc_fork();
+    let p6: i32 = proc_fork();
     if (p6 < 0) { return 60; }
     if (p6 == 0) {
         proc_exec("/no-such-program-here", []);

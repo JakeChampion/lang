@@ -12,7 +12,7 @@ import (
 func recordFixture(t *testing.T) *Program {
 	t.Helper()
 	prog, info := checkedProgram(t, `struct Pair { left: i32[], right: i32[] }
-function pilot(own seed: Pair): i32[] { var next = Pair { ...seed, right: [7i32] }; return next.left; }`)
+function pilot(own seed: Pair): i32[] { let next = Pair { ...seed, right: [7i32] }; return next.left; }`)
 	p, err := BuildProgram(prog, info)
 	if err != nil {
 		t.Fatal(err)

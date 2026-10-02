@@ -9,7 +9,7 @@ import (
 
 // #4357 (enum sibling of the struct/tuple loop-local reclaim #4733/#4735/#4736):
 // a fresh rc-payload enum loop-local consumed by a match in the loop body
-// (`while { var b = Full([i, i+1]); match (b) { Full(xs) => xs[0], … } }`) leaked
+// (`while { let b = Full([i, i+1]); match (b) { Full(xs) => xs[0], … } }`) leaked
 // its payload + box every iteration. The consuming-match reclaim
 // (consumed_rcpayload_enum_frees) scans only the TOP-LEVEL fn body, so a loop-local
 // enum was reclaimed nowhere. The fix collects such an enum "RCENUM:"
@@ -25,10 +25,10 @@ import (
 func rcEnumLoopLocalSrc(n string) string {
 	return `enum Box { Full(i32[]), Empty }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0; var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < ` + n + `) {
-        var b: Box = Full([i, i + 1]);
+        let b: Box = Full([i, i + 1]);
         match (b) { Full(xs) => { acc = acc + xs[0]; }, Empty => {} }
         i = i + 1;
     }
@@ -40,9 +40,9 @@ function main(): i32 {
 // per iter reads xs[0..2] = i + (i+1) + (i+2) = 3i+3; sum 0..199 = 3*19900+600 = 60300.
 const rcEnumLoopLocalDetectorSrc = `enum Box { Full(i32[]), Empty }
 function main(): i32 {
-    var i: i32 = 0; var acc: i32 = 0;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
-        var b: Box = Full([i, i + 1, i + 2]);
+        let b: Box = Full([i, i + 1, i + 2]);
         match (b) { Full(xs) => { acc = acc + xs[0] + xs[1] + xs[2]; }, Empty => {} }
         i = i + 1;
     }
@@ -54,10 +54,10 @@ function main(): i32 {
 // loop-rebind — `keep` still references the payload. __rc_underflow_count == 0 proves it.
 const rcEnumEscapeSafetySrc = `enum Box { Full(i32[]), Empty }
 function main(): i32 {
-    var keep: Box = Empty;
-    var i: i32 = 0; var acc: i32 = 0;
+    let keep: Box = Empty;
+    let i: i32 = 0; let acc: i32 = 0;
     while (i < 100) {
-        var b: Box = Full([i, i + 1]);
+        let b: Box = Full([i, i + 1]);
         keep = b;
         match (b) { Full(xs) => { acc = acc + xs[0]; }, Empty => {} }
         i = i + 1;

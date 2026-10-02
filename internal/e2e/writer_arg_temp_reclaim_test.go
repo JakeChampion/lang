@@ -10,14 +10,14 @@ import "testing"
 // round. So the count this pins is exactly one, whatever the round count —
 // before #8413 the build() results alone made it two per round.
 const writerArgTempSrc = `function build(n: i32): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < 3) { out = out + "abcdefgh"; i = i + 1; }
     return out;
 }
 function main(): i32 {
-    var w: Writer = stdout();
-    var k: i32 = 0;
+    let w: Writer = stdout();
+    let k: i32 = 0;
     while (k < 40) {
         match (w.write(build(k))) { Some(_) => { return 1; }, None => {} }
         k = k + 1;

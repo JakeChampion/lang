@@ -47,7 +47,7 @@ var fnTypeCrossModuleCases = []struct {
 		// rewritten AND the bare name mangles to `lib__three`.
 		name: "xmod-option-zeroarg-payload",
 		lib:  "pub function three(): i32 { return 3; }",
-		main: "import \"lib\";\nfunction main(): i32 {\n    var o: Option[() => i32] = Some(lib.three);\n    match (o) { Some(f) => { return f() + 4; }, None => { return 0; } }\n    return 9;\n}",
+		main: "import \"lib\";\nfunction main(): i32 {\n    let o: Option[() => i32] = Some(lib.three);\n    match (o) { Some(f) => { return f() + 4; }, None => { return 0; } }\n    return 9;\n}",
 		exit: 7,
 	},
 	{
@@ -56,7 +56,7 @@ var fnTypeCrossModuleCases = []struct {
 		// old generic branch dropped along with the arrow.
 		name: "xmod-fn-type-struct-positions",
 		lib:  "pub struct P { a: i32 }\npub function mk(): P { return P { a: 3 }; }\npub function take(p: P): i32 { return p.a * 2; }",
-		main: "import \"lib\";\nfunction main(): i32 {\n    var f: () => lib.P = lib.mk;\n    var g: (lib.P) => i32 = lib.take;\n    return g(f());\n}",
+		main: "import \"lib\";\nfunction main(): i32 {\n    let f: () => lib.P = lib.mk;\n    let g: (lib.P) => i32 = lib.take;\n    return g(f());\n}",
 		exit: 6,
 	},
 	{
@@ -64,7 +64,7 @@ var fnTypeCrossModuleCases = []struct {
 		// the arrow has to survive in that position too.
 		name: "xmod-result-err-zeroarg",
 		lib:  "pub function five(): i32 { return 5; }",
-		main: "import \"lib\";\nfunction main(): i32 {\n    var r: Result[string, () => i32] = Err(lib.five);\n    match (r) { Ok(s) => { return 1; }, Err(f) => { return f(); } }\n    return 9;\n}",
+		main: "import \"lib\";\nfunction main(): i32 {\n    let r: Result[string, () => i32] = Err(lib.five);\n    match (r) { Ok(s) => { return 1; }, Err(f) => { return f(); } }\n    return 9;\n}",
 		exit: 5,
 	},
 }

@@ -22,7 +22,7 @@ function step(e: Node, own f: Facts): Facts {
             return Facts { ...f, occ: f.occ.append(Occ { name: id.name, line: id.line }) };
         },
         NLam(_) => {
-            var esc: string[] = f.esc;
+            let esc: string[] = f.esc;
             return Facts { ...f, esc: esc };
         },
         _ => { return f; }
@@ -30,13 +30,13 @@ function step(e: Node, own f: Facts): Facts {
     return f;
 }
 function sum_lines(fx: Facts): i32 {
-    var d: i32 = 0;
+    let d: i32 = 0;
     for o in fx.occ { d = d + o.line + o.name.len(); }
     return d;
 }
 function run(k: i32): i32 {
-    var facts: Facts = Facts { occ: [], esc: [] };
-    var i: i32 = 0;
+    let facts: Facts = Facts { occ: [], esc: [] };
+    let i: i32 = 0;
     while (i < 9) {
         facts = step(NIdent(Occ { name: "n", line: i + k }), facts);
         i = i + 1;
@@ -44,8 +44,8 @@ function run(k: i32): i32 {
     return sum_lines(facts) + sum_lines(facts);
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) { t = t + run(k); k = k + 1; }
     return t % 256;
 }

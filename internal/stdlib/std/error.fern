@@ -10,8 +10,8 @@
 //     import "std/error" as error;
 //
 //     function handle(req: Request): Result[Response, dyn error.Error] {
-//         var body: string = read_body(req)?;   // boxes a ReadError
-//         var cfg: Config  = parse(body)?;       // boxes a ParseError
+//         let body: string = read_body(req)?;   // boxes a ReadError
+//         let cfg: Config  = parse(body)?;       // boxes a ParseError
 //         return Ok(respond(cfg));
 //     }
 //

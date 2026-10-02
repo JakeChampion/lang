@@ -44,7 +44,7 @@ function block_bytes(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [STRING]...\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
   out = out + "Repeatedly write a line with all the STRINGs on it, or 'y'.\n";
@@ -55,21 +55,21 @@ function help_text(): string {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var operands: string[] = gnu.parse_standard_options_only(argv, "yes", help_text(), 1);
-  var line: string = "y";
+  let argv: string[] = args();
+  let operands: string[] = gnu.parse_standard_options_only(argv, "yes", help_text(), 1);
+  let line: string = "y";
   if (operands.len() > 0) {
     line = operands.join(" ");
   }
   line = line + "\n";
 
-  var copies: i32 = block_bytes() / line.len();
+  let copies: i32 = block_bytes() / line.len();
   if (copies < 1) {
     copies = 1;
   }
-  var block: string = line.repeat(copies);
+  let block: string = line.repeat(copies);
 
-  var w: Writer = stdout();
+  let w: Writer = stdout();
   while (true) {
     match (w.write(block)) {
       Some(e) => {

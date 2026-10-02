@@ -31,7 +31,7 @@ struct Box { name: string, k: i32 }
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 
 function strs(n: i32): string[] {
-    var out: string[] = [];
+    let out: string[] = [];
     for i in 0..4 { out = out.append(wide(n + i)); }
     return out;
 }
@@ -39,14 +39,14 @@ function strs(n: i32): string[] {
 function boxed(n: i32): Box { return Box { name: wide(n), k: n }; }
 
 function round(n: i32): i32 {
-    var bound: string = strs(n)[1];
-    var acc: i32 = bound.len() + strs(n)[0].len();
-    var field: string = boxed(n).name;
+    let bound: string = strs(n)[1];
+    let acc: i32 = bound.len() + strs(n)[0].len();
+    let field: string = boxed(n).name;
     return acc + field.len() + boxed(n).name.len();
 }
 
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     for i in 0..n {
         acc = acc + round(i);
     }
@@ -54,11 +54,11 @@ function rounds(n: i32): i32 {
 }
 
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(50);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(100);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds(50);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = rounds(100);
+    let b2: i64 = __heap_bump_bytes();
 
     print(x.to_string());
     print(y.to_string());

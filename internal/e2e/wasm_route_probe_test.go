@@ -43,9 +43,9 @@ func TestWasmRouteProbe(t *testing.T) {
 	// probe reports the gate boundary, not merely "did it parse".
 	const passthrough = "function pick2[T](a: T, b: T, useA: boolean): T { if (useA) { return a; } return b; }\n" +
 		"function main(): i32 {\n" +
-		"    var x: i64 = 5000000000;\n" +
-		"    var y: i64 = 7;\n" +
-		"    var z: i64 = pick2(x, y, false);\n" +
+		"    let x: i64 = 5000000000;\n" +
+		"    let y: i64 = 7;\n" +
+		"    let z: i64 = pick2(x, y, false);\n" +
 		"    if (z == 7) { return 42; }\n" +
 		"    return 1;\n" +
 		"}\n"
@@ -59,8 +59,8 @@ func TestWasmRouteProbe(t *testing.T) {
 	// promotes the shape so monomorphize_module gives the body a concrete width.
 	const usesTypevar = "function eqf[T](a: T, b: T): boolean { return a == b; }\n" +
 		"function main(): i32 {\n" +
-		"    var x: i64 = 5000000000;\n" +
-		"    var y: i64 = 5000000000;\n" +
+		"    let x: i64 = 5000000000;\n" +
+		"    let y: i64 = 5000000000;\n" +
 		"    if (eqf(x, y)) { return 42; }\n" +
 		"    return 1;\n" +
 		"}\n"
@@ -68,8 +68,8 @@ func TestWasmRouteProbe(t *testing.T) {
 	// and the return is concrete, so nothing is stranded in the clone.
 	const twoTypevars = "function both[T, U](a: T, b: U): boolean { return a == a && b == b; }\n" +
 		"function main(): i32 {\n" +
-		"    var x: i64 = 5000000000;\n" +
-		"    var y: i64 = 5000000000;\n" +
+		"    let x: i64 = 5000000000;\n" +
+		"    let y: i64 = 5000000000;\n" +
 		"    if (both(x, y)) { return 42; }\n" +
 		"    return 1;\n" +
 		"}\n"
@@ -84,10 +84,10 @@ func TestWasmRouteProbe(t *testing.T) {
 	// retired, and now it runs and returns 42. The refusal was the right
 	// intermediate state — a silent wrong answer is worse than a loud one — but
 	// it was never the end state.
-	const foldShape = "function sum_all[T](xs: T[], seed: T): T { var acc: T = seed; for x in xs { acc = x; } return acc; }\n" +
+	const foldShape = "function sum_all[T](xs: T[], seed: T): T { let acc: T = seed; for x in xs { acc = x; } return acc; }\n" +
 		"function main(): i32 {\n" +
-		"    var xs: i64[] = [1, 2, 5000000000];\n" +
-		"    var s: i64 = sum_all(xs, 0 as i64);\n" +
+		"    let xs: i64[] = [1, 2, 5000000000];\n" +
+		"    let s: i64 = sum_all(xs, 0 as i64);\n" +
 		"    if (s == 5000000000) { return 42; }\n" +
 		"    return 1;\n" +
 		"}\n"
@@ -100,14 +100,14 @@ func TestWasmRouteProbe(t *testing.T) {
 	// the i32 stride on wasm32, which is silently wrong rather than a trap, so a
 	// refusal is the correct outcome here and not a placeholder for one.
 	const twoVarArrayShape = "function map2[T, U](xs: T[], f: (T) => U): U[] {\n" +
-		"    var out: U[] = [];\n" +
+		"    let out: U[] = [];\n" +
 		"    for x in xs { out = out.append(f(x)); }\n" +
 		"    return out;\n" +
 		"}\n" +
 		"function half(x: i64): i32 { if (x > 1000000000) { return 42; } return 1; }\n" +
 		"function main(): i32 {\n" +
-		"    var xs: i64[] = [5000000000];\n" +
-		"    var ys: i32[] = map2(xs, half);\n" +
+		"    let xs: i64[] = [5000000000];\n" +
+		"    let ys: i32[] = map2(xs, half);\n" +
 		"    return ys[0];\n" +
 		"}\n"
 
@@ -117,7 +117,7 @@ func TestWasmRouteProbe(t *testing.T) {
 		want string
 	}{
 		{"plain", "function main(): i32 { return 42; }\n", "ir"},
-		{"struct-and-array", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p = P { x: 40, y: 2 }; var a = [p.x, p.y]; return a[0] + a[1]; }\n", "ir"},
+		{"struct-and-array", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p = P { x: 40, y: 2 }; let a = [p.x, p.y]; return a[0] + a[1]; }\n", "ir"},
 		{"erased-wide-passthrough", passthrough, "ir"},
 		{"erased-wide-uses-typevar", usesTypevar, "ir"},
 		{"erased-wide-two-typevars", twoTypevars, "ir"},

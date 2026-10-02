@@ -35,7 +35,7 @@ import (
 // naming the disagreement otherwise.
 func prioritySource() string {
 	return `function main(): i32 {
-    var orig: i32 = priority();
+    let orig: i32 = priority();
 
     // Raising is always permitted, whoever is running.
     match (set_priority(19)) {

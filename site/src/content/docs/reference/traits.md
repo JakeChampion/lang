@@ -44,7 +44,7 @@ impl Display for Point {
 Once a type implements `Display`, its method is callable like any other:
 
 ```fern
-var p: Point = Point { x: 3, y: 4 };
+let p: Point = Point { x: 3, y: 4 };
 print(p.to_string());   // (3, 4)
 ```
 
@@ -162,7 +162,7 @@ a method table alongside its data, and `d.m()` calls through the table.
 ```fern
 import "core/cmp";
 
-var xs: dyn cmp.Display[] = [42, "hi", true];
+let xs: dyn cmp.Display[] = [42, "hi", true];
 for x in xs { print(x.to_string()); }
 ```
 

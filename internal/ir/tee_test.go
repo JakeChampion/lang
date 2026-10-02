@@ -125,7 +125,7 @@ func TestFuseTeeHandlesMultipleSites(t *testing.T) {
 // FuseTee is idempotent — a second pass produces the same op list.
 func TestFuseTeeIsIdempotent(t *testing.T) {
 	p := lowerSource(t, `function f(): i32 {
-		var x: i32 = 5;
+		let x: i32 = 5;
 		return x + 1;
 	}`)
 	FuseTee(p)

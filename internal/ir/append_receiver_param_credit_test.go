@@ -25,7 +25,7 @@ function main(): i32 { return 0; }`},
 		{"chained appends", `function acc(xs: i32[], s: i32): i32[] { return xs.append(s).append(s + 1); }
 function main(): i32 { return 0; }`},
 		{"bound then returned", `function acc(xs: i32[], s: i32): i32[] {
-    var ys: i32[] = xs.append(s);
+    let ys: i32[] = xs.append(s);
     return ys;
 }
 function main(): i32 { return 0; }`},
@@ -84,7 +84,7 @@ const appendRecvRefused = `function acc(xs: i32[], s: i32): i32[] {
 // more array releases than the refused control emits.
 func TestAppendReceiverParamArgTempReleasedAndResultCredited(t *testing.T) {
 	round := `function round(i: i32): i32 {
-    var ys: i32[] = acc([], i);
+    let ys: i32[] = acc([], i);
     return ys.len();
 }`
 	for _, ptrW := range []int{4, 8} {
@@ -115,8 +115,8 @@ func TestAppendReceiverParamArgTempReleasedAndResultCredited(t *testing.T) {
 // bracket inc is what this shape turns on.
 func TestAppendReceiverParamLiveLocalResultCredited(t *testing.T) {
 	round := `function round(i: i32): i32 {
-    var g: i32[] = [1, 2, 3];
-    var a: i32[] = acc(g, i);
+    let g: i32[] = [1, 2, 3];
+    let a: i32[] = acc(g, i);
     return g.len() + a.len();
 }`
 	credited := arrayReleasesIn(t, appendRecvCredited, round, 8)

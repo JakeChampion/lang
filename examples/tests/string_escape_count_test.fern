@@ -105,24 +105,24 @@ function test_center_noop(): test.TestOutcome {
 // ---- prefix / suffix sets ----
 
 function test_starts_with_any(): test.TestOutcome {
-  var xs: string[] = ["xy", "he", "zz"];
-  var no: string[] = ["xy", "zz"];
+  let xs: string[] = ["xy", "he", "zz"];
+  let no: string[] = ["xy", "zz"];
   return test.assert_true("hello".starts_with_any(xs) && !"hello".starts_with_any(no));
 }
 
 function test_ends_with_any(): test.TestOutcome {
-  var xs: string[] = [".md", ".txt"];
-  var no: string[] = [".md", ".rs"];
+  let xs: string[] = [".md", ".txt"];
+  let no: string[] = [".md", ".rs"];
   return test.assert_true("file.txt".ends_with_any(xs) && !"file.txt".ends_with_any(no));
 }
 
 function test_starts_with_any_empty(): test.TestOutcome {
-  var empty: string[] = [];
+  let empty: string[] = [];
   return test.assert_false("hello".starts_with_any(empty));
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/string escape + count");
+  let r: test.TestRunner = test.test_new("std/string escape + count");
   r = r.it("escape_html", test_escape_html);
   r = r.it("escape_html all", test_escape_html_all);
   r = r.it("escape_html empty", test_escape_html_empty);

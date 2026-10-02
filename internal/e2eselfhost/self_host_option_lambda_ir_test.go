@@ -36,7 +36,7 @@ function main(): i32 { match (applyr(7, (x: i32): Result[i32, i32] => { return O
 		// Option-returning lambda to a method on a struct receiver -> 6.
 		{"option-method", `struct W { v: i32 }
 function (w: W) applyo(f: (i32) => Option[i32]): Option[i32] { return f(w.v); }
-function main(): i32 { var w: W = W { v: 5 }; match (w.applyo((x: i32): Option[i32] => { return Some(x + 1); })) { Some(y) => { return y; }, None => { return 0; }, } }`, 6},
+function main(): i32 { let w: W = W { v: 5 }; match (w.applyo((x: i32): Option[i32] => { return Some(x + 1); })) { Some(y) => { return y; }, None => { return 0; }, } }`, 6},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

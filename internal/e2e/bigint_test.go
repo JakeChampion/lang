@@ -262,14 +262,14 @@ function big(s: string): bigint.BigInt {
 function main(): i32 {
     // Ord, through std/sort's adaptive sort — negatives, zero, and values
     // wider than i64 all in one array.
-    var xs: bigint.BigInt[] = [];
+    let xs: bigint.BigInt[] = [];
     xs = xs.append(big("340282366920938463463374607431768211456"));
     xs = xs.append(big("-5"));
     xs = xs.append(big("0"));
     xs = xs.append(big("18446744073709551616"));
     xs = xs.append(big("-340282366920938463463374607431768211456"));
-    var s: bigint.BigInt[] = cmp.sort(xs);
-    var i: i32 = 0;
+    let s: bigint.BigInt[] = cmp.sort(xs);
+    let i: i32 = 0;
     while (i < s.len()) { print(s[i].to_string()); i = i + 1; }
 
     print(show(big("12345")));
@@ -277,7 +277,7 @@ function main(): i32 {
     print(cmp.eq_arrays([big("1")], [big("1")]).to_string());
     print(big("-7").to_debug());
 
-    var z: bigint.BigInt = mk();
+    let z: bigint.BigInt = mk();
     print(z.to_string());
 
     // The Hash law: equal values hash equally. It holds because the
@@ -371,7 +371,7 @@ func TestWasmBigIntDifferential(t *testing.T) {
 				cases[i].expr, cases[i].want, min(i+1, 250)))
 		}
 		groups.WriteString("    return 0;\n}\n")
-		calls.WriteString(fmt.Sprintf("    var r%d: i32 = chk%d();\n    if (r%d != 0) { return r%d; }\n", g, g, g, g))
+		calls.WriteString(fmt.Sprintf("    let r%d: i32 = chk%d();\n    if (r%d != 0) { return r%d; }\n", g, g, g, g))
 	}
 
 	src := bigintPrelude + "\n" + groups.String() + `

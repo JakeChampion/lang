@@ -34,8 +34,8 @@ func TestWASMHeapExhaustionTrapsInTheAllocator(t *testing.T) {
 	// Doubling a string 40 times demands ~8 TB, so the 8 MiB cap below is
 	// reached whatever the growth schedule underneath happens to be.
 	const src = `function main(): i32 {
-    var s: string = "abcdefgh";
-    var i: i32 = 0;
+    let s: string = "abcdefgh";
+    let i: i32 = 0;
     while (i < 40) {
         s = s + s;
         i = i + 1;

@@ -30,23 +30,23 @@ var genStructOfGenEnumIRCases = []genStructOfGenEnumIRCase{
 	{"box_of_opt_i32", `struct Box[T] { v: T }
 enum Opt[U] { Sm(U), Nn }
 function main(): i32 {
-    var b: Box[Opt[i32]] = Box { v: Sm(5) };
+    let b: Box[Opt[i32]] = Box { v: Sm(5) };
     match (b.v) { Sm(n) => { return n; }, Nn => { return 0; } }
 }`, 5},
 	// string payload — method dispatch on the unwrapped string.
 	{"box_of_opt_string", `struct Box[T] { v: T }
 enum Opt[U] { Sm(U), Nn }
 function main(): i32 {
-    var b: Box[Opt[string]] = Box { v: Sm("hey") };
+    let b: Box[Opt[string]] = Box { v: Sm("hey") };
     match (b.v) { Sm(s) => { return s.len(); }, Nn => { return 0; } }
 }`, 3},
 	// two-field struct wrapping the enum, both fields read.
 	{"pair_of_opt", `struct Pair[T] { a: T, b: T }
 enum Opt[U] { Sm(U), Nn }
 function main(): i32 {
-    var p: Pair[Opt[i32]] = Pair { a: Sm(4), b: Sm(6) };
-    var x: i32 = match (p.a) { Sm(n) => n, Nn => 0 };
-    var y: i32 = match (p.b) { Sm(n) => n, Nn => 0 };
+    let p: Pair[Opt[i32]] = Pair { a: Sm(4), b: Sm(6) };
+    let x: i32 = match (p.a) { Sm(n) => n, Nn => 0 };
+    let y: i32 = match (p.b) { Sm(n) => n, Nn => 0 };
     return x + y;
 }`, 10},
 	// built-in Result as the enum error type inside the struct — the source
@@ -54,8 +54,8 @@ function main(): i32 {
 	{"box_of_result", `struct Box[T] { v: T }
 enum Opt[U] { Sm(U), Nn }
 function main(): i32 {
-    var b: Box[Opt[i32]] = Box { v: Sm(40) };
-    var n: i32 = match (b.v) { Sm(x) => x, Nn => 0 };
+    let b: Box[Opt[i32]] = Box { v: Sm(40) };
+    let n: i32 = match (b.v) { Sm(x) => x, Nn => 0 };
     return n + 2;
 }`, 42},
 }

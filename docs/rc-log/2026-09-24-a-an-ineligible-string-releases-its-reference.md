@@ -4,8 +4,8 @@
 
 ```
 function tag(src: string, i: i32): i32 {
-    var x: string = src;
-    var out: string = "";
+    let x: string = src;
+    let out: string = "";
     if (i % 2 == 0) { out = x; }
     return out.len() + i;
 }
@@ -26,7 +26,7 @@ Two halves, one per frame.
   a view (the checker refuses `str` into `string` with E003). But
   ineligible does not imply counted. The sweep skips moved locals and
   borrowed aliases, yet a local bound to a block's tail value
-  (`var s = if (c) { var j = a + b; j } else { "" }`) takes `j`'s buffer
+  (`let s = if (c) { let j = a + b; j } else { "" }`) takes `j`'s buffer
   with no retain. Released at exit after `j` freed that buffer, it is a
   use-after-free. The two-word form was missing too: on arm64 and wasm an
   inline string keeps its bytes in the data word, so a flat dec on `data`

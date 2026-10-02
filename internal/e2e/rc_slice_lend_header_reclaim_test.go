@@ -25,27 +25,27 @@ func TestSliceLendHeaderIsReclaimed(t *testing.T) {
 	src := func(param string) string {
 		return `
 function total(src: ` + param + `, n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + (src[i] as i32); i = i + 1; }
     return t;
 }
 
 function mk(n: i32): u8[] {
-    var a: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
+    let a: u8[] = __alloc_u8(n);
+    let i: i32 = 0;
     while (i < n) { a = a.with(i, (i % 7) as u8); i = i + 1; }
     return a;
 }
 
 function round(i: i32): i32 {
-    var b: u8[] = mk(8);
+    let b: u8[] = mk(8);
     return total(b, 8) + i % 3;
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;

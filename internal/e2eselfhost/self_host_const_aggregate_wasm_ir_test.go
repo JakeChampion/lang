@@ -42,7 +42,7 @@ var constAggWasmCases = []struct {
 	// The idiom: three nullary constructors, three interned blocks, and not one
 	// allocation among them.
 	{"nullary-ctors",
-		`struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean } struct TypeString { tag: i32 } type Type = TypeI32 | TypeString; function t_i32(): Type { return TypeI32 { is_char: false, width: 32, unsigned: false }; } function t_u64(): Type { return TypeI32 { is_char: false, width: 64, unsigned: true }; } function t_str(): Type { return TypeString { tag: 0 }; } function w(t: Type): i32 { match (t) { TypeI32(v) => { return v.width; }, TypeString(_) => { return 7; } } return 0; } function main(): i32 { var a: Type = t_i32(); var b: Type = t_u64(); var c: Type = t_str(); return (w(a) + w(b) + w(c)) % 200; }`,
+		`struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean } struct TypeString { tag: i32 } type Type = TypeI32 | TypeString; function t_i32(): Type { return TypeI32 { is_char: false, width: 32, unsigned: false }; } function t_u64(): Type { return TypeI32 { is_char: false, width: 64, unsigned: true }; } function t_str(): Type { return TypeString { tag: 0 }; } function w(t: Type): i32 { match (t) { TypeI32(v) => { return v.width; }, TypeString(_) => { return 7; } } return 0; } function main(): i32 { let a: Type = t_i32(); let b: Type = t_u64(); let c: Type = t_str(); return (w(a) + w(b) + w(c)) % 200; }`,
 		103, 3, true},
 	// INTERNING: the same literal from two constructors is ONE block.
 	{"identical-literals-intern",
@@ -51,13 +51,13 @@ var constAggWasmCases = []struct {
 	// SOUNDNESS: a record update whose base is a constant must not write through
 	// the shared block — `r` reads it again afterwards and must still see a=5.
 	{"update-does-not-write-through",
-		`struct P { a: i32, b: boolean } function mk(): P { return P { a: 5, b: true }; } function main(): i32 { var p: P = mk(); var q: P = P { ...p, a: p.a + 1 }; var r: P = mk(); var t: i32 = 0; if (p.b) { t = t + 1; } if (q.b) { t = t + 2; } return (p.a * 10 + q.a + r.a + t) % 200; }`,
+		`struct P { a: i32, b: boolean } function mk(): P { return P { a: 5, b: true }; } function main(): i32 { let p: P = mk(); let q: P = P { ...p, a: p.a + 1 }; let r: P = mk(); let t: i32 = 0; if (p.b) { t = t + 1; } if (q.b) { t = t + 2; } return (p.a * 10 + q.a + r.a + t) % 200; }`,
 		64, 1, false},
 	// SOUNDNESS at scale: 100k updates threaded off a constant, then the
 	// constant is read again. One write-through corrupts `fresh`. The exit code
 	// folds p.a into WASI's range: (p.a % 100) + fresh.a * 10 + fresh.b = 93 + 12.
 	{"churn-does-not-corrupt",
-		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 1, b: 2 }; } function main(): i32 { var p: P = mk(); var i: i32 = 0; while (i < 100000) { p = P { ...p, a: (p.a + p.b) % 977 }; i = i + 1; } var fresh: P = mk(); return (p.a % 100) + fresh.a * 10 + fresh.b; }`,
+		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 1, b: 2 }; } function main(): i32 { let p: P = mk(); let i: i32 = 0; while (i < 100000) { p = P { ...p, a: (p.a + p.b) % 977 }; i = i + 1; } let fresh: P = mk(); return (p.a % 100) + fresh.a * 10 + fresh.b; }`,
 		105, 1, false},
 	// A constant moved into a container: the array owns a pointer to the shared
 	// block, and the exit sweep must not free it — here the low-address guard is
@@ -65,18 +65,18 @@ var constAggWasmCases = []struct {
 	// freelist, which would hand it back as a "fresh" box on the next alloc.
 	// The empty `[]` is a static constant as well.
 	{"constant-into-container",
-		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 5, b: 9 }; } function main(): i32 { var ps: P[] = []; var i: i32 = 0; while (i < 4) { ps = ps.append(mk()); i = i + 1; } var s: i32 = 0; var j: i32 = 0; while (j < ps.len()) { s = s + ps[j].a + ps[j].b; j = j + 1; } return s % 200; }`,
+		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 5, b: 9 }; } function main(): i32 { let ps: P[] = []; let i: i32 = 0; while (i < 4) { ps = ps.append(mk()); i = i + 1; } let s: i32 = 0; let j: i32 = 0; while (j < ps.len()) { s = s + ps[j].a + ps[j].b; j = j + 1; } return s % 200; }`,
 		56, 2, false},
 	// A negative field literal: written sign-extended across the whole 8-byte
 	// slot. Division-based byte extraction could not render it (`-1 / 256 % 256`
 	// does not name a byte), which is why le32_escape shifts and masks.
 	{"negative-field-literal",
-		`struct N { v: i32, f: boolean } function neg(): N { return N { v: -7, f: true }; } function main(): i32 { var a: N = neg(); var t: i32 = 0; if (a.f) { t = t + 100; } return t + a.v; }`,
+		`struct N { v: i32, f: boolean } function neg(): N { return N { v: -7, f: true }; } function main(): i32 { let a: N = neg(); let t: i32 = 0; if (a.f) { t = t + 100; } return t + a.v; }`,
 		93, 1, true},
 	// A hex field literal: the packed word carries SOURCE TEXT, so it reaches
 	// the data segment intact rather than being zeroed by a decimal-only parse.
 	{"hex-field-literal",
-		`struct N { v: i32, f: boolean } function hx(): N { return N { v: 0x1f, f: false }; } function main(): i32 { var a: N = hx(); var t: i32 = 0; if (a.f) { t = t + 100; } return t + a.v; }`,
+		`struct N { v: i32, f: boolean } function hx(): N { return N { v: 0x1f, f: false }; } function main(): i32 { let a: N = hx(); let t: i32 = 0; if (a.f) { t = t + 100; } return t + a.v; }`,
 		31, 1, true},
 	// The constant/REUSE interaction: two same-block literals where the second
 	// would otherwise reuse the first's dead box. Both reach static placement,
@@ -86,17 +86,17 @@ var constAggWasmCases = []struct {
 	// silently loses its placement. Shared with the x86-64 suite, which reads the
 	// same shape through the allocation counter.
 	{"reuse-shape-all-constant",
-		`struct P { x: i32, y: i32 } function main(): i32 { var cond: i32 = 1; var r: i32 = 0; if (cond > 0) { var a: P = P { x: 10, y: 20 }; var s: i32 = a.x + a.y; var b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
+		`struct P { x: i32, y: i32 } function main(): i32 { let cond: i32 = 1; let r: i32 = 0; if (cond > 0) { let a: P = P { x: 10, y: 20 }; let s: i32 = a.x + a.y; let b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
 		37, 2, true},
 	// A field computed from literals (`0 - 3`) folds to a constant, so the
 	// literal is static too.
 	{"folded-field-admitted",
-		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 0 - 3, b: 0x10 }; } function main(): i32 { var p: P = mk(); return (p.a + p.b + 100) % 200; }`,
+		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 0 - 3, b: 0x10 }; } function main(): i32 { let p: P = mk(); return (p.a + p.b + 100) % 200; }`,
 		113, 1, false},
 	// NOT admitted: a wide (i64) field. The block writes one 8-byte slot per
 	// field but the admission classifier only vouches for i32-width values.
 	{"wide-field-not-admitted",
-		`struct W { n: i64, k: i32 } function mk(): W { return W { n: 5000000000, k: 3 }; } function main(): i32 { var w: W = mk(); if (w.n > 4000000000) { return w.k + 10; } return 0; }`,
+		`struct W { n: i64, k: i32 } function mk(): W { return W { n: 5000000000, k: 3 }; } function main(): i32 { let w: W = mk(); if (w.n > 4000000000) { return w.k + 10; } return 0; }`,
 		13, 0, false},
 }
 

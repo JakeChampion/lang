@@ -1,5 +1,5 @@
 function process(): Option[f64] {
-    var v: f64 = Some(3.14)?;
+    let v: f64 = Some(3.14)?;
     return Some(v * 2.0);
 }
 function main(): i32 {

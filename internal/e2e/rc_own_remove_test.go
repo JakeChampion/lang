@@ -98,7 +98,7 @@ func (c ownRemoveCase) src(probe string) string {
 	return fmt.Sprintf(`struct P { data: i32[], n: i32 }
 
 function inner(own p: P, k: i32): P {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < k) { p = P { ...p, data: p.data.append(i) }; i = i + 1; }
     return p;
 }
@@ -106,8 +106,8 @@ function inner(own p: P, k: i32): P {
 %s
 
 function main(): i32 {
-    var p: P = P { data: [], n: 0 };
-    var j: i32 = 0;
+    let p: P = P { data: [], n: 0 };
+    let j: i32 = 0;
     while (j < 50) { p = outer(p, j); j = j + 1; }
     if (p.data.len() != 1000) { return 254; }
     if (__rc_underflow_count() != 0) { return 253; }
@@ -173,8 +173,8 @@ function outer(own xs: i32[], k: i32): Option[i32] {
     return None;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var j: i32 = 0;
+    let total: i32 = 0;
+    let j: i32 = 0;
     while (j < 20) {
         match (outer([1, 2, 3], j)) { Some(n) => { total = total + n; }, None => { total = total + 100; } }
         j = j + 1;
@@ -227,7 +227,7 @@ func TestX86_64OwnParamRemoveNoLeakOnUntransferredPath(t *testing.T) {
 		return fmt.Sprintf(`struct P { data: i32[], n: i32 }
 
 function inner(own p: P, k: i32): P {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < k) { p = P { ...p, data: p.data.append(i) }; i = i + 1; }
     return p;
 }
@@ -235,11 +235,11 @@ function inner(own p: P, k: i32): P {
 %s
 
 function main(): i32 {
-    var p: P = P { data: [], n: 0 };
-    var j: i32 = 0;
+    let p: P = P { data: [], n: 0 };
+    let j: i32 = 0;
     while (j < 50) { p = outer(p, j); j = j + 1; }
     if (__rc_underflow_count() != 0) { return 253; }
-    var b: i64 = __heap_bump_bytes();
+    let b: i64 = __heap_bump_bytes();
     return (b / 1000) as i32;
 }`, outer)
 	}

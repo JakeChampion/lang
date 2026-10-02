@@ -36,10 +36,10 @@ import (
 // symlink-evaluated form rather than what t.TempDir handed back.
 func TestArm64DarwinGetcwdValue(t *testing.T) {
 	const prog = `function main(): i32 {
-  var a: string[] = args();
+  let a: string[] = args();
   if (a.len() < 2) { return 97; }
-  var p: string = a[1];
-  var cwd: string = getcwd();
+  let p: string = a[1];
+  let cwd: string = getcwd();
   if (cwd.len() == 0) { return 98; }
   print(cwd);
   print(p);

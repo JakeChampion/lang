@@ -39,9 +39,9 @@ var rcIndirectDispatchCorpus = []struct {
 		name: "two_destructuring_lambdas",
 		src: `
 function main(): i32 {
-    var lam = ((x, y): (i32, i32)): i32 => { return x * 10 + y; };
+    let lam = ((x, y): (i32, i32)): i32 => { return x * 10 + y; };
     if (lam((3, 4)) != 34) { return 1; }
-    var diff = ((p, q): (i32, i32)): i32 => { return p - q; };
+    let diff = ((p, q): (i32, i32)): i32 => { return p - q; };
     if (diff((9, 5)) != 4) { return 2; }
     return __rc_underflow_count();
 }`,
@@ -52,10 +52,10 @@ function main(): i32 {
 		name: "lambda_arg_is_live_local",
 		src: `
 function main(): i32 {
-    var lam = (p: (i32, i32)): i32 => { return p.0 * 10 + p.1; };
-    var t = (3, 4);
-    var a = lam(t);
-    var b = lam(t);
+    let lam = (p: (i32, i32)): i32 => { return p.0 * 10 + p.1; };
+    let t = (3, 4);
+    let a = lam(t);
+    let b = lam(t);
     if (a + b != 68) { return 1; }
     if (t.0 + t.1 != 7) { return 2; }
     return __rc_underflow_count();
@@ -84,7 +84,7 @@ function main(): i32 {
 function sum_pair(p: (i32, i32)): i32 { return p.0 + p.1; }
 function apply(f: ((i32, i32)) => i32, t: (i32, i32)): i32 { return f(t); }
 function main(): i32 {
-    var t = (4, 5);
+    let t = (4, 5);
     if (sum_pair(t) != 9) { return 1; }
     if (apply(sum_pair, t) != 9) { return 2; }
     if (sum_pair((1, 2)) != 3) { return 3; }
@@ -99,9 +99,9 @@ function main(): i32 {
 		src: `
 struct P { x: i32, y: i32 }
 function main(): i32 {
-    var f = (p: P): i32 => { return p.x * 10 + p.y; };
+    let f = (p: P): i32 => { return p.x * 10 + p.y; };
     if (f(P { x: 3, y: 4 }) != 34) { return 1; }
-    var g = (q: P): i32 => { return q.x - q.y; };
+    let g = (q: P): i32 => { return q.x - q.y; };
     if (g(P { x: 9, y: 5 }) != 4) { return 2; }
     return __rc_underflow_count();
 }`,
@@ -116,12 +116,12 @@ function main(): i32 {
 		src: `
 struct Box { t: (i32, i32) }
 function build(f: ((i32, i32)) => Box): Box {
-    var t = (3, 4);
+    let t = (3, 4);
     return f(t);
 }
 function main(): i32 {
-    var mk = (p: (i32, i32)): Box => { return Box { t: p }; };
-    var b = build(mk);
+    let mk = (p: (i32, i32)): Box => { return Box { t: p }; };
+    let b = build(mk);
     if (b.t.0 * 10 + b.t.1 != 34) { return 1; }
     return __rc_underflow_count();
 }`,
@@ -132,8 +132,8 @@ function main(): i32 {
 		name: "lambda_array_param",
 		src: `
 function main(): i32 {
-    var f = (xs: i32[]): i32 => { return xs[0] + xs[1] + xs.len(); };
-    var a = [1, 2];
+    let f = (xs: i32[]): i32 => { return xs[0] + xs[1] + xs.len(); };
+    let a = [1, 2];
     if (f(a) != 5) { return 1; }
     if (f([3, 4]) != 9) { return 2; }
     if (a[0] + a[1] != 3) { return 3; }
@@ -204,11 +204,11 @@ var rcIndirectDispatchDefaultCorpus = []struct {
 		name: "identity_return_lambda",
 		src: `
 function main(): i32 {
-    var id = (p: (i32, i32)): (i32, i32) => { return p; };
-    var t = (3, 4);
-    var u = id(t);
-    var j1 = (91, 92);
-    var j2 = (93, 94);
+    let id = (p: (i32, i32)): (i32, i32) => { return p; };
+    let t = (3, 4);
+    let u = id(t);
+    let j1 = (91, 92);
+    let j2 = (93, 94);
     if (j1.0 + j2.0 != 184) { return 200; }
     if (u.0 * 10 + u.1 != 34) { return 100 + u.0; }
     if (t.0 * 10 + t.1 != 34) { return 150 + t.0; }
@@ -223,10 +223,10 @@ function main(): i32 {
 		src: `
 function pick(p: (i32, i32), q: (i32, i32), c: boolean): (i32, i32) { if (c) { return p; } return q; }
 function apply(f: ((i32,i32), (i32,i32), boolean) => (i32,i32)): i32 {
-    var a = (3, 4);
-    var b = (5, 6);
-    var r = f(a, b, true);
-    var j1 = (91, 92);
+    let a = (3, 4);
+    let b = (5, 6);
+    let r = f(a, b, true);
+    let j1 = (91, 92);
     if (j1.0 != 91) { return 200; }
     return r.0 * 10 + r.1;
 }

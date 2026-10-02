@@ -20,8 +20,8 @@ function di64(t: (i64, boolean), w: i64, f: boolean): boolean { return t.0 == w 
 function du32(t: (u32, boolean), w: u32, f: boolean): boolean { return t.0 == w && t.1 == f; }
 function du64(t: (u64, boolean), w: u64, f: boolean): boolean { return t.0 == w && t.1 == f; }
 function main(): i32 {
-    var min32: i32 = 0 - 2147483647 - 1;
-    var min64: i64 = (0 as i64) - 9223372036854775807 - 1;
+    let min32: i32 = 0 - 2147483647 - 1;
+    let min64: i64 = (0 as i64) - 9223372036854775807 - 1;
     // i32.
     if (!di32((17).overflowing_div(5), 3, false)) { return 1; }
     if (!di32((17).overflowing_rem(5), 2, false)) { return 2; }

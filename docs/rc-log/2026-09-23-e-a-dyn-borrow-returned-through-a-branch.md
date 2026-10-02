@@ -12,7 +12,7 @@ function pick(c: boolean, l: dyn Label, m: dyn Label): dyn Label {
 ```
 
 On x86-64 `-sanitize` this was a use-after-free. So were
-`var r: dyn Label = if … ; return r;` and a literal `match`.
+`let r: dyn Label = if … ; return r;` and a literal `match`.
 
 ## What changed
 
@@ -52,7 +52,7 @@ x86-64 `-sanitize`, three trips over two local records:
 | shape | #10072 alone | now |
 |---|---|---|
 | `return if (…) { l } else { m }` | use-after-free | 15 / 15, 0 live |
-| `var r = if …; return r` | use-after-free | 15 / 15, 0 live |
+| `let r = if …; return r` | use-after-free | 15 / 15, 0 live |
 | `return match (c) { 0 => l, _ => m }` | use-after-free | 15 / 15, 0 live |
 | `return match (tag(c)) { First => l, … }` | 16 B live once the slot was typed | 16 / 16, 0 live |
 | `return match (mk(c)) { Has(d) => d, … }` | 128 B live | 18 / 18, 0 live |

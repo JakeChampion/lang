@@ -12,17 +12,17 @@ import (
 
 const ndScalePacked = `import "std/ndarray";
 function run(k: f64): f64 {
-  var a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0], [2, 2]);
-  var m: ndarray.NdArray[f64] = a.map((x: f64): f64 => x * k);
+  let a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0], [2, 2]);
+  let m: ndarray.NdArray[f64] = a.map((x: f64): f64 => x * k);
   return m.get([0, 0]);
 }
 function main(): i32 { return run(2.0) as i32; }`
 
 const ndScaleStrided = `import "std/ndarray";
 function run(k: f64): f64 {
-  var a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0], [2, 2]);
-  var t: ndarray.NdArray[f64] = a.transpose();
-  var m: ndarray.NdArray[f64] = t.map((x: f64): f64 => x * k);
+  let a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0], [2, 2]);
+  let t: ndarray.NdArray[f64] = a.transpose();
+  let m: ndarray.NdArray[f64] = t.map((x: f64): f64 => x * k);
   return m.get([0, 0]);
 }
 function main(): i32 { return run(2.0) as i32; }`
@@ -91,7 +91,7 @@ func TestNdarrayScaleLeavesOtherProgramsAlone(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/ndarray";
 function add(x: f64, y: f64): f64 { return x + y; }
 function run(): f64 {
-  var a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0], [2]);
+  let a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0], [2]);
   return a.fold_all(0.0, add);
 }
 function main(): i32 { return run() as i32; }`)
@@ -121,8 +121,8 @@ func TestNdarrayScaleTakesANamedElementFunction(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/ndarray";
 function half(x: f64): f64 { return x * 0.5; }
 function run(): f64 {
-  var a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0], [2, 2]);
-  var m: ndarray.NdArray[f64] = a.map(half);
+  let a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0], [2, 2]);
+  let m: ndarray.NdArray[f64] = a.map(half);
   return m.get([0, 0]);
 }
 function main(): i32 { return run() as i32; }`)

@@ -8,7 +8,7 @@ import "core/cmp";
 struct Has { x: i32 }
 
 function main(): i32 {
-    var m: Map[Has, i32] = map_new(8);
+    let m: Map[Has, i32] = map_new(8);
     m = m.insert(Has { x: 1 }, 10);
     return 0;
 }

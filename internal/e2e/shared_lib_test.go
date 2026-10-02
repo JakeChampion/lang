@@ -258,7 +258,7 @@ func TestSharedLibX86ExportDlopen(t *testing.T) {
 	}{
 		{"const", `function answer(): i32 { return 42; }
 function main(): i32 { return answer(); }`, 42},
-		{"arith", `function compute(): i32 { var x = 6; var y = 7; return x * y; }
+		{"arith", `function compute(): i32 { let x = 6; let y = 7; return x * y; }
 function main(): i32 { return compute(); }`, 42},
 		{"recursion", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n-1)+fib(n-2); }
 function fib10(): i32 { return fib(10); }
@@ -919,13 +919,13 @@ func TestAsBytesInSharedLib(t *testing.T) {
 		t.Skip("host is not amd64")
 	}
 	src := `function ab_data(env: usize, cls: usize): usize {
-    var s: string = "hello";
-    var b: [u8] = s.as_bytes();
+    let s: string = "hello";
+    let b: [u8] = s.as_bytes();
     return b as usize;
 }
 function ab_idx(env: usize, cls: usize, i: usize): i32 {
-    var s: string = "the quick brown fox";
-    var b: [u8] = s.as_bytes();
+    let s: string = "the quick brown fox";
+    let b: [u8] = s.as_bytes();
     return (b[i as i32] as i32);
 }
 function main(): i32 { return 0; }`
@@ -1045,7 +1045,7 @@ func TestStdlibInSharedLib(t *testing.T) {
 import "std/base64";
 import "std/hex";
 function check(env: usize, cls: usize): i32 {
-    var ok: i32 = 0;
+    let ok: i32 = 0;
     if (("HELLO").to_lower() == "hello") { ok = ok + 1; }
     if (("hello").to_upper() == "HELLO") { ok = ok + 2; }
     if (base64.base64_encode("Man".bytes()) == "TWFu") { ok = ok + 4; }
@@ -1168,7 +1168,7 @@ func TestStdJNIJvalueFloatArgs(t *testing.T) {
 	}
 	src := `import "std/jni";
 function p(env: usize, cls: usize, j: usize, obj: usize, m: usize): i32 {
-    var a: usize = jni.jvalue_alloc(3);
+    let a: usize = jni.jvalue_alloc(3);
     a = jni.jvalue_set_f64(a, 0, 2.5);
     a = jni.jvalue_set_int(a, 1, 4 as usize);
     a = jni.jvalue_set_f32(a, 2, 1.5 as f32);

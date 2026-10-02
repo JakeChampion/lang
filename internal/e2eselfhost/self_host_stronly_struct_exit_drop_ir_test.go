@@ -27,35 +27,35 @@ var strOnlyStructExitDropCases = []struct {
 }{
 	// Fresh string field, read locally, dies at exit — the core leak shape.
 	{"stronly-exit-flat", `struct P { s: string, n: i32 }
-function go(pre: string): i32 { var p: P = P { s: pre + "x", n: 1 }; return p.n + p.s.len(); }
-function churn(m: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function go(pre: string): i32 { let p: P = P { s: pre + "x", n: 1 }; return p.n + p.s.len(); }
+function churn(m: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 	// The struct passed to a borrow-only helper first — the borrow gate must
 	// keep it credited and the callee must not double-release.
 	{"stronly-borrow-arg-flat", `struct P { s: string, n: i32 }
 function rd(p: P): i32 { return p.n + p.s.len(); }
-function go(pre: string): i32 { var p: P = P { s: pre + "x", n: 1 }; return rd(p); }
-function churn(m: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function go(pre: string): i32 { let p: P = P { s: pre + "x", n: 1 }; return rd(p); }
+function churn(m: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 	// PARAM-EMBED safety: the field aliases the caller's string — the
 	// construction retain (rc 2) balances the k_str dec (→1), the caller's
 	// string stays readable, detector zero.
 	{"stronly-param-embed-safe", `struct P { s: string, n: i32 }
-function go(pre: string): i32 { var p: P = P { s: pre, n: 1 }; return p.n + p.s.len(); }
-function churn(m: i32): i32 { var pre: string = "ab" + "cd"; var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(pre) != 5) { bad = 1; } i = i + 1; } if (pre.len() != 4) { bad = 2; } return bad; }
-function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+function go(pre: string): i32 { let p: P = P { s: pre, n: 1 }; return p.n + p.s.len(); }
+function churn(m: i32): i32 { let pre: string = "ab" + "cd"; let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(pre) != 5) { bad = 1; } i = i + 1; } if (pre.len() != 4) { bad = 2; } return bad; }
+function main(): i32 { let v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 	// Loop-local rebind in one frame: each iteration's box + fresh string field
 	// reclaim at the rebind, flat across the second churn.
 	{"stronly-loop-rebind-flat", `struct P { s: string, n: i32 }
 function main(): i32 {
-    var pre: string = "ab";
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 3000) { var p: P = P { s: pre + "x", n: i }; acc = (acc + p.n + p.s.len()) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 3000) { var p2: P = P { s: pre + "x", n: j }; acc = (acc + p2.n + p2.s.len()) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "ab";
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 3000) { let p: P = P { s: pre + "x", n: i }; acc = (acc + p.n + p.s.len()) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 3000) { let p2: P = P { s: pre + "x", n: j }; acc = (acc + p2.n + p2.s.len()) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -65,12 +65,12 @@ function main(): i32 {
 	// directly-called closure (param-lifted to a borrowing call) now reclaims.
 	{"stronly-closure-capture-flat", `struct P { s: string, n: i32 }
 function go(pre: string): i32 {
-    var p: P = P { s: pre + "x", n: 1 };
-    var c = () => p.n + p.s.len();
+    let p: P = P { s: pre + "x", n: 1 };
+    let c = () => p.n + p.s.len();
     return c();
 }
-function churn(m: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function churn(m: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
+function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 }
 
 // TestSelfHostStrOnlyStructExitDropIRX86_64 drives the cases through the

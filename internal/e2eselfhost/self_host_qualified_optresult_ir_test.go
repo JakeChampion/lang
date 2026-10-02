@@ -19,15 +19,15 @@ var qualifiedOptResultIRCases = []struct {
 	main string
 }{
 	// Option.Some payload round-trips through a match.
-	{"option-some", "function f(): Option[i32] { return Option.Some(42); }\nfunction main(): i32 { var o = f(); match (o) { Some(n) => { return n; }, None => { return 0; } } }"},
+	{"option-some", "function f(): Option[i32] { return Option.Some(42); }\nfunction main(): i32 { let o = f(); match (o) { Some(n) => { return n; }, None => { return 0; } } }"},
 	// Option.None takes the None arm.
-	{"option-none", "function f(): Option[i32] { return Option.None; }\nfunction main(): i32 { var o = f(); match (o) { Some(n) => { return n; }, None => { return 7; } } }"},
+	{"option-none", "function f(): Option[i32] { return Option.None; }\nfunction main(): i32 { let o = f(); match (o) { Some(n) => { return n; }, None => { return 7; } } }"},
 	// Result.Ok payload round-trips.
-	{"result-ok", "function f(): Result[i32, string] { return Result.Ok(13); }\nfunction main(): i32 { var r = f(); match (r) { Ok(n) => { return n; }, Err(e) => { return 0; } } }"},
+	{"result-ok", "function f(): Result[i32, string] { return Result.Ok(13); }\nfunction main(): i32 { let r = f(); match (r) { Ok(n) => { return n; }, Err(e) => { return 0; } } }"},
 	// Result.Err payload (a string) reaches the Err arm.
-	{"result-err", "function f(): Result[i32, string] { return Result.Err(\"bad\"); }\nfunction main(): i32 { var r = f(); match (r) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } }"},
+	{"result-err", "function f(): Result[i32, string] { return Result.Err(\"bad\"); }\nfunction main(): i32 { let r = f(); match (r) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } }"},
 	// Qualified construction composes with the try-operator.
-	{"qual-with-try", "function g(): Result[i32, string] { return Result.Ok(20); }\nfunction f(): Result[i32, string] { var n = g()?; return Result.Ok(n + 5); }\nfunction main(): i32 { var r = f(); match (r) { Ok(n) => { return n; }, Err(e) => { return 0; } } }"},
+	{"qual-with-try", "function g(): Result[i32, string] { return Result.Ok(20); }\nfunction f(): Result[i32, string] { let n = g()?; return Result.Ok(n + 5); }\nfunction main(): i32 { let r = f(); match (r) { Ok(n) => { return n; }, Err(e) => { return 0; } } }"},
 }
 
 // TestSelfHostQualifiedOptResultIR compiles each case with the self-host CLI for

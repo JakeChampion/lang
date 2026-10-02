@@ -27,15 +27,15 @@ import (
 // the rows are not reclaimed the leak scales with the iteration count, so a
 // regression shows up as a large live_bytes rather than a marginal one.
 const arrarrAppendChurnSrc = `function round(): i32 {
-    var keep: i32[][] = [];
-    var i: i32 = 0;
+    let keep: i32[][] = [];
+    let i: i32 = 0;
     while (i < 3) { keep = keep.append([1, 2, 3, 4]); i = i + 1; }
     return keep.len();
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(); r = r + 1; }
     return t / 200;
 }`
@@ -44,15 +44,15 @@ function main(): i32 {
 // LITERALS, so the strict "ARRARRS:" credit applies and the release walks each
 // element box via __fern_str_arr_free before freeing the row.
 const arrarrStrAppendChurnSrc = `function round(): i32 {
-    var keep: string[][] = [];
-    var i: i32 = 0;
+    let keep: string[][] = [];
+    let i: i32 = 0;
     while (i < 3) { keep = keep.append(["ab", "cd"]); i = i + 1; }
     return keep.len();
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(); r = r + 1; }
     return t / 200;
 }`
@@ -63,22 +63,22 @@ function main(): i32 {
 // solely owned, so the consuming arr-of-arr may deep-free it. This was the
 // residue #6092 left behind — and the shape that issue's own repro used.
 const arrarrCallRowChurnSrc = `function make_buf(n: i32): i32[] {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(i); i = i + 1; }
     return xs;
 }
 
 function round(): i32 {
-    var keep: i32[][] = [];
-    var i: i32 = 0;
+    let keep: i32[][] = [];
+    let i: i32 = 0;
     while (i < 3) { keep = keep.append(make_buf(4)); i = i + 1; }
     return keep.len();
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(); r = r + 1; }
     return t / 200;
 }`
@@ -153,10 +153,10 @@ func TestSelfHostArrArrAppendHazardsX86_64(t *testing.T) {
 			// A bound ROW aliases an inner buffer the deep free would release.
 			name: "row_alias",
 			src: `function main(): i32 {
-    var g: i32[][] = [];
-    var i: i32 = 0;
+    let g: i32[][] = [];
+    let i: i32 = 0;
     while (i < 3) { g = g.append([1, 2, 3, 4]); i = i + 1; }
-    var row: i32[] = g[0];
+    let row: i32[] = g[0];
     return row[1] + g.len();
 }`,
 			want: 5,
@@ -166,9 +166,9 @@ func TestSelfHostArrArrAppendHazardsX86_64(t *testing.T) {
 			// freeing it would dangle `r`.
 			name: "ident_row",
 			src: `function main(): i32 {
-    var g: i32[][] = [];
-    var r: i32[] = [7, 8];
-    var i: i32 = 0;
+    let g: i32[][] = [];
+    let r: i32[] = [7, 8];
+    let i: i32 = 0;
     while (i < 3) { g = g.append(r); i = i + 1; }
     return g[0][1] + r[0];
 }`,
@@ -178,22 +178,22 @@ func TestSelfHostArrArrAppendHazardsX86_64(t *testing.T) {
 			// The array ESCAPES by return, so the callee must not free it.
 			name: "escaping_return",
 			src: `function build(): i32[][] {
-    var g: i32[][] = [];
-    var i: i32 = 0;
+    let g: i32[][] = [];
+    let i: i32 = 0;
     while (i < 3) { g = g.append([1, 2]); i = i + 1; }
     return g;
 }
-function main(): i32 { var q: i32[][] = build(); return q[2][1] + q.len(); }`,
+function main(): i32 { let q: i32[][] = build(); return q[2][1] + q.len(); }`,
 			want: 5,
 		},
 		{
 			// A non-append reassignment must still sink the credit outright.
 			name: "rebound_to_other",
 			src: `function main(): i32 {
-    var g: i32[][] = [];
-    var i: i32 = 0;
+    let g: i32[][] = [];
+    let i: i32 = 0;
     while (i < 2) { g = g.append([4, 5]); i = i + 1; }
-    var h: i32[][] = [[9, 9]];
+    let h: i32[][] = [[9, 9]];
     g = h;
     return g[0][0] + h.len();
 }`,
@@ -206,9 +206,9 @@ function main(): i32 { var q: i32[][] = build(); return q[2][1] + q.len(); }`,
 			name: "producer_returns_param",
 			src: `function passthru(src: i32[]): i32[] { return src; }
 function main(): i32 {
-    var shared: i32[] = [3, 4];
-    var g: i32[][] = [];
-    var i: i32 = 0;
+    let shared: i32[] = [3, 4];
+    let g: i32[][] = [];
+    let i: i32 = 0;
     while (i < 3) { g = g.append(passthru(shared)); i = i + 1; }
     return g[0][1] + shared[0];
 }`,
@@ -220,13 +220,13 @@ function main(): i32 {
 			// an array literal, which is what disqualifies it.
 			name: "producer_returns_alias",
 			src: `function alias_row(): i32[] {
-    var a: i32[] = [1, 2];
-    var b: i32[] = a;
+    let a: i32[] = [1, 2];
+    let b: i32[] = a;
     return b;
 }
 function main(): i32 {
-    var g: i32[][] = [];
-    var i: i32 = 0;
+    let g: i32[][] = [];
+    let i: i32 = 0;
     while (i < 2) { g = g.append(alias_row()); i = i + 1; }
     return g[1][1] + g.len();
 }`,
@@ -258,19 +258,19 @@ function row(i: i32): i32[] { return [i, i + 1]; }
 function pick(j: i32): i32[] { return [j * 3, j * 5]; }
 @noinline
 function usr(row: (i32) => i32[], i: i32): i32 {
-    var g: i32[][] = [];
+    let g: i32[][] = [];
     g = g.append(row(i));
     return g.len() + g[0][1];
 }
 @noinline
 function ctl(i: i32): i32 {
-    var g: i32[][] = [];
+    let g: i32[][] = [];
     g = g.append(row(i));
     return g.len() + g[0][1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + usr(pick, i) + ctl(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return x % 83;

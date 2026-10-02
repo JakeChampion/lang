@@ -15,7 +15,7 @@ function main(): i32 {
     if (path.path_extension("z.txt") != "txt") { print("FAIL ext"); return 13; }
 
     // std/i64
-    var big: i64 = 5000000000;
+    let big: i64 = 5000000000;
     if ((0 - big).abs() != big) { print("FAIL i64-abs"); return 14; }
     if (big.max(1) != big || big.min(1) != 1) { print("FAIL i64-minmax"); return 15; }
 

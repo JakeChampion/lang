@@ -10,7 +10,7 @@ import (
 )
 
 // Enum self-reassign payload deep-drop (Perceus): a loop-carried array-payload enum
-// `var b: E = V0([..]); while (..) { b = V1([..]); b = V2([..]); }` whose payload is
+// `let b: E = V0([..]); while (..) { b = V1([..]); b = V2([..]); }` whose payload is
 // NEVER bound (all-`_` matches) has each superseded box DEEP-DROPPED (payload array +
 // box) at the reassign, closing the register-backend per-reassign leak (box-only
 // shallow free left it). enum_only_wildcard_used_rec gates soundness (no payload
@@ -20,8 +20,8 @@ import (
 
 const enumReassignChurn = `enum Bag { Keep(i32[]), Swap(i32[]) }
 function churn(n: i32): i32 {
-    var b: Bag = Keep([0, 0, 0, 0]);
-    var i: i32 = 0;
+    let b: Bag = Keep([0, 0, 0, 0]);
+    let i: i32 = 0;
     while (i < n) {
         b = Keep([i, i, i, i]);
         b = Swap([i, i, i, i]);
@@ -38,8 +38,8 @@ function main(): i32 { return churn(%d); }
 // traps (exit 137). With the deep-drop it stays flat and completes.
 const enumReassignFlatHeap = `enum Big { A(i32[]), B(i32[]) }
 function churn(n: i32): i32 {
-    var b: Big = A([0]);
-    var i: i32 = 0;
+    let b: Big = A([0]);
+    let i: i32 = 0;
     while (i < n) {
         b = A([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         b = B([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
@@ -56,13 +56,13 @@ function main(): i32 { return churn(3000000); }
 // buffer). acc = 10 * (7+8) = 150.
 const enumReassignCorruptionProbe = `enum Bag { Keep(i32[]), Swap(i32[]) }
 function churn(n: i32): i32 {
-    var b: Bag = Keep([9, 9]);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let b: Bag = Keep([9, 9]);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < n) {
         b = Keep([1, 2]);
         b = Swap([3, 4]);
-        var fresh: i32[] = [7, 8];
+        let fresh: i32[] = [7, 8];
         acc = acc + fresh[0] + fresh[1];
         i = i + 1;
     }
@@ -76,8 +76,8 @@ function main(): i32 { return churn(10); }
 // Swap([2,2,2,2,2,2,2,2]) -> a[1] = 2.
 const enumReassignBoundFallback = `enum Bag { Keep(i32[]), Swap(i32[]) }
 function churn(n: i32): i32 {
-    var b: Bag = Keep([0, 0, 0, 0, 0, 0, 0, 0]);
-    var i: i32 = 0;
+    let b: Bag = Keep([0, 0, 0, 0, 0, 0, 0, 0]);
+    let i: i32 = 0;
     while (i < n) {
         b = Keep([i, i, i, i, i, i, i, i]);
         b = Swap([i, i, i, i, i, i, i, i]);

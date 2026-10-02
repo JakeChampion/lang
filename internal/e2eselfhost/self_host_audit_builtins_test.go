@@ -28,31 +28,31 @@ var auditBuiltinCases = []struct {
 	{"compare-chain", `function main(): i32 { if (3 < 4 && 4 >= 4 && 3 != 4) { return 5; } return 0; }`, 5},
 	{"bitwise-and-or-shl", `function main(): i32 { return (6 & 3) + (6 | 1) + (1 << 4); }`, 25},
 	{"bitwise-shr-xor", `function main(): i32 { return (240 >> 4) + (6 ^ 3); }`, 20},
-	{"compound-assign", `function main(): i32 { var c: i32 = 10; c += 5; c *= 2; c -= 4; return c; }`, 26},
-	{"if-expression", `function main(): i32 { var x: i32 = if (true) { 11 } else { 22 }; return x; }`, 11},
-	{"while-loop", `function main(): i32 { var s: i32 = 0; var i: i32 = 1; while (i <= 10) { s = s + i; i = i + 1; } return s; }`, 55},
-	{"for-in-array", `function main(): i32 { var a: i32[] = [2, 3, 4]; var s: i32 = 0; for x in a { s = s + x * x; } return s; }`, 29},
-	{"range-inclusive", `function main(): i32 { var s: i32 = 0; for k in 0..=5 { s = s + k; } return s; }`, 15},
-	{"range-half-open", `function main(): i32 { var s: i32 = 0; for k in 0..4 { s = s + k; } return s; }`, 6},
+	{"compound-assign", `function main(): i32 { let c: i32 = 10; c += 5; c *= 2; c -= 4; return c; }`, 26},
+	{"if-expression", `function main(): i32 { let x: i32 = if (true) { 11 } else { 22 }; return x; }`, 11},
+	{"while-loop", `function main(): i32 { let s: i32 = 0; let i: i32 = 1; while (i <= 10) { s = s + i; i = i + 1; } return s; }`, 55},
+	{"for-in-array", `function main(): i32 { let a: i32[] = [2, 3, 4]; let s: i32 = 0; for x in a { s = s + x * x; } return s; }`, 29},
+	{"range-inclusive", `function main(): i32 { let s: i32 = 0; for k in 0..=5 { s = s + k; } return s; }`, 15},
+	{"range-half-open", `function main(): i32 { let s: i32 = 0; for k in 0..4 { s = s + k; } return s; }`, 6},
 	// break / continue exercised over a foreach loop (not a C-style for —
 	// see the held-out gaps below): break at the 5th element -> 5;
 	// continue skipping evens, summing odds -> 1+3+5 = 9.
-	{"break", `function main(): i32 { var a: i32[] = [0,1,2,3,4,5,6,7]; var n: i32 = 0; for x in a { if (x == 5) { break; } n = n + 1; } return n; }`, 5},
-	{"continue", `function main(): i32 { var a: i32[] = [0,1,2,3,4,5]; var n: i32 = 0; for x in a { if (x % 2 == 0) { continue; } n = n + x; } return n; }`, 9},
+	{"break", `function main(): i32 { let a: i32[] = [0,1,2,3,4,5,6,7]; let n: i32 = 0; for x in a { if (x == 5) { break; } n = n + 1; } return n; }`, 5},
+	{"continue", `function main(): i32 { let a: i32[] = [0,1,2,3,4,5]; let n: i32 = 0; for x in a { if (x % 2 == 0) { continue; } n = n + x; } return n; }`, 9},
 	// Bare nested block `{ ... }` — fixed by #2821 (#2831 added StmtBlock
 	// to the self-host parser). Re-enabled here as a regression guard.
-	{"nested-block", `function main(): i32 { var b: i32 = 1; { var inner: i32 = 40; b = b + inner; } return b; }`, 41},
-	// C-style `for (var i = …; …; …)` — fixed by #2820 (#2841: parser
+	{"nested-block", `function main(): i32 { let b: i32 = 1; { let inner: i32 = 40; b = b + inner; } return b; }`, 41},
+	// C-style `for (let i = …; …; …)` — fixed by #2820 (#2841: parser
 	// desugar to a while-loop with a first-iteration flag so `continue`
 	// re-runs the step). Runs on this AST path too (the desugar is at parse
 	// time). Re-enabled as a regression guard.
-	{"c-style-for", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 1; i <= 10; i = i + 1) { s = s + i; } return s; }`, 55},
+	{"c-style-for", `function main(): i32 { let s: i32 = 0; for (let i: i32 = 1; i <= 10; i = i + 1) { s = s + i; } return s; }`, 55},
 	// `for b in <string>` — iterates the BYTES. Was held out while this
 	// driver routed a string foreach through the AST path's array layout
 	// (len@0, elem*8+8) and answered 2; the lowering desugars it to a
 	// byte-index counted loop (#2822 / #2834), and asm_run is IR-or-error
 	// now, so 'A'+'B' = 131 is what it computes.
-	{"for-in-string", `function main(): i32 { var s: i32 = 0; for b in "AB" { s = s + (b as i32); } return s; }`, 131},
+	{"for-in-string", `function main(): i32 { let s: i32 = 0; for b in "AB" { s = s + (b as i32); } return s; }`, 131},
 }
 
 // Known self-host gaps surfaced by this audit (2026-06-12) — held out of

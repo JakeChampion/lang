@@ -234,8 +234,8 @@ findings. Ranked by leverage.
   constants would have introduced a third spelling alongside the two in use.
 
   What kept the residue numeric was a widening at the binding, not a missing
-  constant: `var ch: i32 = s[i] as i32;` makes `b'['` (a `u8`) untypeable
-  against it. Binding at byte type instead — `var ch: u8 = s[i];` — removes the
+  constant: `let ch: i32 = s[i] as i32;` makes `b'['` (a `u8`) untypeable
+  against it. Binding at byte type instead — `let ch: u8 = s[i];` — removes the
   cast AND the magic number, and the char-naming comment each site carried
   (`// '['`) becomes redundant and goes with it. Converted across `parser`,
   `irlower`, `ir`, `arm64_native` and `x86_native`: **31 commented ASCII
@@ -413,7 +413,7 @@ findings. Ranked by leverage.
     | E008 | 2 | condition checks |
     | E001 / E024 / E044 | 1 each | `vref_stmts` (scope-threaded) / tuple destructure / `e044_stmts` |
 
-    Spot-checked rather than trusted: `var s: string = 1` is E003 in both
+    Spot-checked rather than trusted: `let s: string = 1` is E003 in both
     compilers at top level and native-only inside a lambda. The eight triggers
     happened to land almost entirely on passes that DO descend, which is why a
     small sample read as a closed class. `stmts_assign_diags` is the same
@@ -1368,9 +1368,9 @@ better than a mutating visitor.
 
 ---
 
-## SH-057 — self-host miscompiles a lambda that *writes* a captured outer var (confirmed bug)
+## SH-057 — self-host miscompiles a lambda that *writes* a captured outer let (confirmed bug)
 
-**Repro:** `function main(): i32 { var x = 1; var f = function (): i32 { x = 42; return 7; }; var r = f(); return r + x; }`
+**Repro:** `function main(): i32 { let x = 1; let f = function (): i32 { x = 42; return 7; }; let r = f(); return r + x; }`
 
 | engine | result | |
 |---|---|---|
@@ -1385,13 +1385,13 @@ wasm collector is the only one that collects `a.target`, so the wasm path is the
 lone correct backend here.
 
 **Why CI misses it:** the cross-validation suite's closure cases capture vars they
-*read*; none assign a captured var write-only.
+*read*; none assign a captured let write-only.
 
 **Confirmed semantics (from the authoritative Go reference).** The language has a
 principled, deliberate split — not an undecided one:
 - **Scalar captures (`i32`/`bool`/`f64`) are mutable, by-reference.** A closure may
   read *and* write a captured scalar and the writes persist/propagate — closures-as-
-  counters are a supported feature. Verified: `var x = 0; var inc = function (): i32
+  counters are a supported feature. Verified: `let x = 0; let inc = function (): i32
   { x = x + 1; return x; }; inc(); inc(); return x;` → **2** under the Go reference,
   and `fern -check` accepts it (exit 0). The repro above is **49** (by-ref) in the
   reference.

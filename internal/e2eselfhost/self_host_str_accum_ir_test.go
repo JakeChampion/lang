@@ -9,7 +9,7 @@ import (
 
 // strAccumIRCases pin the string-builder ACCUMULATOR reclaim on the self-hosted
 // stack-IR path (#2649 consume-rebind). The canonical string leak is
-// `var s: string = ""; while (…) { s = s + part; } … use(s)`: each `s = s + part`
+// `let s: string = ""; while (…) { s = s + part; } … use(s)`: each `s = s + part`
 // allocates a fresh box + buffer and orphans the previous one, so the whole growth
 // chain leaks. The reclaim frees the superseded box on each reassignment
 // (emit_str_reclaim_store on the StmtAssign) and the final at scope exit, gated by:
@@ -30,16 +30,16 @@ var strAccumIRCases = []struct {
 	// reclaimed each reassignment. Post-#4262 the "x" operand is ALSO reclaimed by
 	// emit_str_concat_reclaim, so this case now emits reclaims for both.)
 	{"accum-basic",
-		`function main(): i32 { var s: string = ""; var i: i32 = 0; while (i < 4) { s = s + "x"; i = i + 1; } return s.len(); }`,
+		`function main(): i32 { let s: string = ""; let i: i32 = 0; while (i < 4) { s = s + "x"; i = i + 1; } return s.len(); }`,
 		4},
 	// Accumulator with a non-empty literal init and a multi-char part. len 1+3*2=7.
 	{"accum-init-nonempty",
-		`function main(): i32 { var s: string = "a"; var i: i32 = 0; while (i < 3) { s = s + "bc"; i = i + 1; } return s.len(); }`,
+		`function main(): i32 { let s: string = "a"; let i: i32 = 0; while (i < 3) { s = s + "bc"; i = i + 1; } return s.len(); }`,
 		7},
 	// Accumulator over a loop-invariant LOCAL operand `x` (a borrow-read, freed once
 	// at exit): s = s + x. No per-iteration literal temporary. len 3*2 = 6.
 	{"accum-invariant-operand",
-		`function main(): i32 { var x: string = "yy"; var s: string = ""; var i: i32 = 0; while (i < 3) { s = s + x; i = i + 1; } return s.len(); }`,
+		`function main(): i32 { let x: string = "yy"; let s: string = ""; let i: i32 = 0; while (i < 3) { s = s + x; i = i + 1; } return s.len(); }`,
 		6},
 	// Memory-safety at scale: a BOUNDED accumulator (grow, then reset to a fresh 1-char
 	// chr(..) at len > 40) over 5,000,000 iterations, using a loop-invariant operand so
@@ -47,33 +47,33 @@ var strAccumIRCases = []struct {
 	// memory would grow; a double-free would corrupt the freelist and crash / return
 	// garbage. exit 0 (fixed) with the reclaim present proves the balance (flat heap).
 	{"accum-churn-safe",
-		`function main(): i32 { var x: string = "yy"; var s: string = ""; var i: i32 = 0; while (i < 5000000) { s = s + x; if (s.len() > 40) { s = chr(65); } i = i + 1; } return 0; }`,
+		`function main(): i32 { let x: string = "yy"; let s: string = ""; let i: i32 = 0; while (i < 5000000) { s = s + x; if (s.len() > 40) { s = chr(65); } i = i + 1; } return 0; }`,
 		0},
-	// UN-ANNOTATED accumulator (`var s = ""`, no `: string`): reclaimed too — the
+	// UN-ANNOTATED accumulator (`let s = ""`, no `: string`): reclaimed too — the
 	// annotation is not required; the is_str type gate at the reclaim site admits the
 	// actual string accumulator. len 4.
 	{"accum-unannotated",
-		`function main(): i32 { var s = ""; var i: i32 = 0; while (i < 4) { s = s + "x"; i = i + 1; } return s.len(); }`,
+		`function main(): i32 { let s = ""; let i: i32 = 0; while (i < 4) { s = s + "x"; i = i + 1; } return s.len(); }`,
 		4},
 	// UN-ANNOTATED returned builder: intermediates freed, final moved out. len 6.
 	{"accum-unannotated-return",
-		`function build(n: i32): string { var s = ""; var i: i32 = 0; while (i < n) { s = s + "ab"; i = i + 1; } return s; } function main(): i32 { return build(3).len(); }`,
+		`function build(n: i32): string { let s = ""; let i: i32 = 0; while (i < n) { s = s + "ab"; i = i + 1; } return s; } function main(): i32 { return build(3).len(); }`,
 		6},
 	// NEGATIVE: an int accumulator (`n = n + i`) matches the reassign SHAPE but is not
 	// is_str, so it is never reclaimed (no __fern_str_free) and stays correct. 0+1+2+3+4.
 	{"accum-int-not-reclaimed",
-		`function main(): i32 { var n: i32 = 0; var i: i32 = 0; while (i < 5) { n = n + i; i = i + 1; } return n; }`,
+		`function main(): i32 { let n: i32 = 0; let i: i32 = 0; while (i < 5) { n = n + i; i = i + 1; } return n; }`,
 		10},
 	// MOVE-ON-RETURN: a returned string builder. The intermediates are freed by the
 	// consume-rebind inside build(), and the FINAL is moved out (kept from the exit
 	// sweep — freeing it would dangle the box handed to the caller). build(5) → len 5.
 	{"accum-return-builder",
-		`function build(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "x"; i = i + 1; } return s; } function main(): i32 { return build(5).len(); }`,
+		`function build(n: i32): string { let s: string = ""; let i: i32 = 0; while (i < n) { s = s + "x"; i = i + 1; } return s; } function main(): i32 { return build(5).len(); }`,
 		5},
 	// Move-on-return with a loop-invariant operand + a BRANCHY return (early at
 	// len > 8 or the final return) — both return sites move s out. len 9.
 	{"accum-return-branchy",
-		`function build(n: i32): string { var s: string = "start"; var i: i32 = 0; while (i < n) { s = s + "z"; if (s.len() > 8) { return s; } i = i + 1; } return s; } function main(): i32 { return build(100).len(); }`,
+		`function build(n: i32): string { let s: string = "start"; let i: i32 = 0; while (i < n) { s = s + "z"; if (s.len() > 8) { return s; } i = i + 1; } return s; } function main(): i32 { return build(100).len(); }`,
 		9},
 	// NEGATIVE: a NON-FRESH reassignment (`s = "reset"`, a literal alias) must exclude
 	// the accumulator — freeing a later s could double-free the literal-shared box.
@@ -85,13 +85,13 @@ var strAccumIRCases = []struct {
 	// "reset" (5) + x (1) = 6.
 	// The concat source is a PARAMETER so nothing but the accumulator could be
 	// reclaimed here, and the whole-program count therefore isolates it. It was a
-	// local aliased by `var kx = x` before #7282, which suppressed its reclaim only
+	// local aliased by `let kx = x` before #7282, which suppressed its reclaim only
 	// while an alias cost a string its credit; now an alias retains the box and both
 	// slots release it, so that scaffolding freed x as well and the count went
 	// 0 → 4. slot_is_reclaimable_str refuses a parameter outright, which does not
 	// depend on any escape scan. "reset".len() + "x".len() = 6.
 	{"accum-nonfresh-reassign-not-reclaimed",
-		`function acc(x: string): i32 { var s: string = ""; var i: i32 = 0; while (i < 3) { s = s + x; i = i + 1; } s = "reset"; return s.len() + x.len(); } function main(): i32 { return acc("x"); }`,
+		`function acc(x: string): i32 { let s: string = ""; let i: i32 = 0; while (i < 3) { s = s + x; i = i + 1; } s = "reset"; return s.len() + x.len(); } function main(): i32 { return acc("x"); }`,
 		6},
 }
 

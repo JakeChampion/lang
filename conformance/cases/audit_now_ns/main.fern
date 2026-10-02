@@ -5,8 +5,8 @@
 // non-decreasing wall clock satisfy b >= a, so exit 8 proves the
 // runtime is present and well-ordered.
 function main(): i32 {
-    var a: i64 = now_ns();
-    var b: i64 = now_ns();
+    let a: i64 = now_ns();
+    let b: i64 = now_ns();
     if (b >= a) { return 8; }
     return 1;
 }

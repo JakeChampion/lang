@@ -12,7 +12,7 @@ import "std/string";
 import "./lib/gnu";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [ARGUMENT]...\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
   out = out + "Do nothing, successfully. Arguments are ignored.\n";

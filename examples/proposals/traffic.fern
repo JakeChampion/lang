@@ -55,7 +55,7 @@ function flow_permille(f: Flow): i32 {
 }
 
 function xs_next(s: i64): i64 {
-  var x: i64 = s;
+  let x: i64 = s;
   x = x ^ x << 13;
   x = x ^ x >> 7;
   x = x ^ x << 17;
@@ -63,7 +63,7 @@ function xs_next(s: i64): i64 {
 }
 
 function xs_below(s: i64, m: i32): i32 {
-  var v: i64 = s;
+  let v: i64 = s;
   if (v < 0) {
     v = 0 - v;
   }
@@ -72,8 +72,8 @@ function xs_below(s: i64, m: i32): i32 {
 
 // Positions of `cars` vehicles spread as evenly as the ring allows.
 function initial_positions(cells: i32, cars: i32): i32[] {
-  var pos: i32[] = [];
-  var i: i32 = 0;
+  let pos: i32[] = [];
+  let i: i32 = 0;
   while (i < cars) {
     pos = pos.append(i * cells / cars);
     i = i + 1;
@@ -84,12 +84,12 @@ function initial_positions(cells: i32, cars: i32): i32[] {
 // Gap ahead of the car at index i, on a ring. Cars are kept sorted by
 // position, so the next car is the next index, wrapping.
 function gap_ahead(pos: i32[], i: i32, cells: i32): i32 {
-  var n: i32 = pos.len();
+  let n: i32 = pos.len();
   if (n == 1) {
     return cells - 1;
   }
-  var ahead: i32 = pos[(i + 1) % n];
-  var g: i32 = ahead - pos[i] - 1;
+  let ahead: i32 = pos[(i + 1) % n];
+  let g: i32 = ahead - pos[i] - 1;
   if (g < 0) {
     g = g + cells;
   }
@@ -99,21 +99,21 @@ function gap_ahead(pos: i32[], i: i32, cells: i32): i32 {
 // One Nagel-Schreckenberg step. Returns the new positions, the new
 // speeds, the number of cells crossed, and the advanced RNG state.
 function step(cells: i32, pos0: i32[], spd0: i32[], vmax: i32, brake_pct: i32, seed: i64): (i32[], i32[], i32, i64) {
-  var pos: i32[] = pos0;
-  var spd: i32[] = spd0;
-  var s: i64 = seed;
-  var moved: i32 = 0;
-  var n: i32 = pos.len();
+  let pos: i32[] = pos0;
+  let spd: i32[] = spd0;
+  let s: i64 = seed;
+  let moved: i32 = 0;
+  let n: i32 = pos.len();
 
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var v: i32 = spd[i];
+    let v: i32 = spd[i];
     // 1. accelerate
     if (v < vmax) {
       v = v + 1;
     }
     // 2. brake to the gap ahead
-    var g: i32 = gap_ahead(pos, i, cells);
+    let g: i32 = gap_ahead(pos, i, cells);
     if (v > g) {
       v = g;
     }
@@ -128,7 +128,7 @@ function step(cells: i32, pos0: i32[], spd0: i32[], vmax: i32, brake_pct: i32, s
 
   // 4. move — after every speed is settled, so the update is parallel
   // rather than letting a car see its neighbour's new position.
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < n) {
     pos = pos.with(j, (pos[j] + spd[j]) % cells);
     moved = moved + spd[j];
@@ -144,17 +144,17 @@ function simulate(cells: i32, cars: i32, steps: i32, warmup: i32, vmax: i32, bra
   if (cars <= 0) {
     return Flow { cells: cells, cars: 0, steps: steps, moves: 0 };
   }
-  var pos: i32[] = initial_positions(cells, cars);
-  var spd: i32[] = [];
-  var i: i32 = 0;
+  let pos: i32[] = initial_positions(cells, cars);
+  let spd: i32[] = [];
+  let i: i32 = 0;
   while (i < cars) {
     spd = spd.append(0);
     i = i + 1;
   }
 
-  var s: i64 = seed;
-  var total: i32 = 0;
-  var t: i32 = 0;
+  let s: i64 = seed;
+  let total: i32 = 0;
+  let t: i32 = 0;
   sweep: while (t < warmup + steps) {
     let (p2, v2, moved, s2) = step(cells, pos, spd, vmax, brake_pct, s);
     pos = p2;
@@ -187,7 +187,7 @@ function run_at(cars: i32): Flow {
 // A completely full ring cannot move: every gap is zero, so every speed
 // brakes to zero. Flow must be exactly zero, not merely small.
 function test_a_full_ring_has_no_flow(): test.TestOutcome {
-  var f: Flow = gridlock(40);
+  let f: Flow = gridlock(40);
   if (f.moves != 0) {
     return test.fail("a full ring moved " + f.moves.to_string() + " cells");
   }
@@ -199,7 +199,7 @@ function test_a_full_ring_has_no_flow(): test.TestOutcome {
 
 // An empty ring has no cars and therefore no flow — the other endpoint.
 function test_an_empty_ring_has_no_flow(): test.TestOutcome {
-  var f: Flow = run_at(0);
+  let f: Flow = run_at(0);
   if (flow_permille(f) != 0) {
     return test.fail("empty ring reported flow " + flow_permille(f).to_string());
   }
@@ -212,13 +212,13 @@ function test_an_empty_ring_has_no_flow(): test.TestOutcome {
 // Cars are conserved: the ring neither creates nor destroys them, and
 // every position stays on the ring.
 function test_cars_are_conserved_and_stay_on_the_ring(): test.TestOutcome {
-  var cells: i32 = 50;
-  var pos: i32[] = initial_positions(cells, 12);
-  var spd: i32[] = [];
+  let cells: i32 = 50;
+  let pos: i32[] = initial_positions(cells, 12);
+  let spd: i32[] = [];
   for i in 0..12 {
     spd = spd.append(0);
   }
-  var s: i64 = 7;
+  let s: i64 = 7;
   for t in 0..100 {
     let (p2, v2, _, s2) = step(cells, pos, spd, 5, 20, s);
     pos = p2;
@@ -241,16 +241,16 @@ function test_cars_are_conserved_and_stay_on_the_ring(): test.TestOutcome {
 // No car may exceed vmax, and none may move further than the gap it had —
 // that is the collision-freedom property, stated as a speed bound.
 function test_speeds_respect_vmax_and_the_gap(): test.TestOutcome {
-  var cells: i32 = 60;
-  var vmax: i32 = 5;
-  var pos: i32[] = initial_positions(cells, 15);
-  var spd: i32[] = [];
+  let cells: i32 = 60;
+  let vmax: i32 = 5;
+  let pos: i32[] = initial_positions(cells, 15);
+  let spd: i32[] = [];
   for i in 0..15 {
     spd = spd.append(0);
   }
-  var s: i64 = 31337;
+  let s: i64 = 31337;
   for t in 0..80 {
-    var gaps: i32[] = [];
+    let gaps: i32[] = [];
     for k in 0..pos.len() {
       gaps = gaps.append(gap_ahead(pos, k, cells));
     }
@@ -277,14 +277,14 @@ function test_speeds_respect_vmax_and_the_gap(): test.TestOutcome {
 // jams form. A model that got the dynamics wrong but stayed
 // self-consistent would pass every other test here.
 function test_flow_peaks_then_falls(): test.TestOutcome {
-  var ds: i32[] = densities();
-  var flows: i32[] = [];
+  let ds: i32[] = densities();
+  let flows: i32[] = [];
   for i in 0..ds.len() {
     flows = flows.append(flow_permille(run_at(ds[i])));
   }
 
-  var peak: i32 = 0;
-  var peak_at: i32 = 0;
+  let peak: i32 = 0;
+  let peak_at: i32 = 0;
   for i in 0..flows.len() {
     if (flows[i] > peak) {
       peak = flows[i];
@@ -333,8 +333,8 @@ function some_flow(cars: i32): Option[i32] {
 // Determinism: the same seed must reproduce the same run exactly, on
 // every backend. Without it none of the numbers above mean anything.
 function test_runs_are_deterministic(): test.TestOutcome {
-  var a: Flow = run_at(25);
-  var b: Flow = run_at(25);
+  let a: Flow = run_at(25);
+  let b: Flow = run_at(25);
   if (a.moves != b.moves) {
     return test.fail("same seed gave " + a.moves.to_string()
       + " then " + b.moves.to_string());
@@ -348,14 +348,14 @@ function main(): i32 {
   defer eprint("(simulation complete)");
   eprint("traffic — Nagel-Schreckenberg on a one-lane ring");
 
-  var ds: i32[] = densities();
+  let ds: i32[] = densities();
   for i in 0..ds.len() {
-    var f: Flow = run_at(ds[i]);
+    let f: Flow = run_at(ds[i]);
     // `|>` for the render, so the pipe is exercised alongside the trait.
     eprint(f.describe() |> indent_by("  "));
   }
 
-  var r: test.TestRunner = test.test_new("traffic");
+  let r: test.TestRunner = test.test_new("traffic");
   r = r.it("a full ring has no flow", test_a_full_ring_has_no_flow);
   r = r.it("an empty ring has no flow", test_an_empty_ring_has_no_flow);
   r = r.it("cars are conserved and stay on the ring", test_cars_are_conserved_and_stay_on_the_ring);

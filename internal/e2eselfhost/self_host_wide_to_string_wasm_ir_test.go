@@ -16,11 +16,11 @@ import (
 // with its own allocation), and a u64 with the high bit set (which the signed
 // formatter would render as -1).
 const wideToStringProg = `function main(): i32 {
-    var a: i64 = 1234567890123 as i64;
-    var b: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
-    var c: u64 = 18446744073709551615 as u64;
-    var z: i64 = 0 as i64;
-    var s: string = a.to_string() + "|" + b.to_string() + "|" + c.to_string() + "|" + z.to_string();
+    let a: i64 = 1234567890123 as i64;
+    let b: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    let c: u64 = 18446744073709551615 as u64;
+    let z: i64 = 0 as i64;
+    let s: string = a.to_string() + "|" + b.to_string() + "|" + c.to_string() + "|" + z.to_string();
     write(s + "\n");
     return 0;
 }
@@ -67,7 +67,7 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
 	// helper by a different syntactic route.
 	t.Run("fstring", func(t *testing.T) {
 		src := `function main(): i32 {
-    var n: i64 = 42000000000 as i64;
+    let n: i64 = 42000000000 as i64;
     write(f"n={n}\n");
     return 0;
 }
@@ -85,17 +85,17 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
 	}{
 		{
 			name: "i64-only",
-			src:  "function main(): i32 { var n: i64 = 7 as i64; write(n.to_string() + \"\\n\"); return 0; }",
+			src:  "function main(): i32 { let n: i64 = 7 as i64; write(n.to_string() + \"\\n\"); return 0; }",
 			want: "7\n",
 		},
 		{
 			name: "u64-only",
-			src:  "function main(): i32 { var n: u64 = 9 as u64; write(n.to_string() + \"\\n\"); return 0; }",
+			src:  "function main(): i32 { let n: u64 = 9 as u64; write(n.to_string() + \"\\n\"); return 0; }",
 			want: "9\n",
 		},
 		{
 			name: "i32-only",
-			src:  "function main(): i32 { var n: i32 = 5; write(n.to_string() + \"\\n\"); return 0; }",
+			src:  "function main(): i32 { let n: i32 = 5; write(n.to_string() + \"\\n\"); return 0; }",
 			want: "5\n",
 		},
 	} {
@@ -113,11 +113,11 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
 	// corrupted freelist shows up as a trap rather than passing by luck.
 	t.Run("zero-churn", func(t *testing.T) {
 		src := `function main(): i32 {
-    var n: i64 = 0 as i64;
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let n: i64 = 0 as i64;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 20000) {
-        var s: string = n.to_string();
+        let s: string = n.to_string();
         total = (total + s.len()) % 251;
         i = i + 1;
     }

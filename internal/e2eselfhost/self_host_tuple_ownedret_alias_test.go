@@ -8,7 +8,7 @@ import (
 // The owned-return admission learns the #7667 alias forgiveness:
 // tuple_ret_local_is_frame_fresh feeds rctuple_param_alias_bind_sites into
 // the ret-forgiving escape walk, so a producer local read through a
-// dead-ended alias (`var a = t; ... a.0 ...; return t;`) keeps the callee in
+// dead-ended alias (`let a = t; ... a.0 ...; return t;`) keeps the callee in
 // tuple_fresh_ret_fns and the caller its TUP:/ARRF: credit. The vet is the
 // rc-tuple payload scan on the alias's own name — an alias that is itself
 // returned, chains, extracts a payload, or leaves through a call arg still
@@ -25,10 +25,10 @@ import (
 func tupleOwnedretAliasCases() []tupleAliasParamCase {
 	const caller = `
 function round(i: i32): i32 {
-    var r: (i32, i32[]) = mk(i);
+    let r: (i32, i32[]) = mk(i);
     return r.0 + r.1.len();
 }
-function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`
+function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`
 	return []tupleAliasParamCase{
 		{
 			// The matrix cell tuple_mixed__ownedret_alias__bind_local, with a
@@ -36,8 +36,8 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			// so every round's box + element array frees.
 			name: "alias_read_admits",
 			src: `function mk(i: i32): (i32, i32[]) {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var a: (i32, i32[]) = t;
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let a: (i32, i32[]) = t;
     if (a.0 % 7 == 0) { return (0, [0, 0, 0]); }
     return t;
 }` + caller,
@@ -48,8 +48,8 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			// two paths to one box.
 			name: "alias_returned_keeps_refused",
 			src: `function mk(i: i32): (i32, i32[]) {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var a: (i32, i32[]) = t;
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let a: (i32, i32[]) = t;
     if (a.0 % 7 == 0) { return a; }
     return t;
 }` + caller,
@@ -59,21 +59,21 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			// A payload extracted through the alias.
 			name: "alias_elem_out_keeps_refused",
 			src: `function mk(i: i32): (i32, i32[]) {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var a: (i32, i32[]) = t;
-    var e: i32[] = a.1;
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let a: (i32, i32[]) = t;
+    let e: i32[] = a.1;
     if ((e.len() + i) % 7 == 0) { return (0, [0, 0, 0]); }
     return t;
 }` + caller,
 			want: 58,
 		},
 		{
-			// A chained alias: `var b = a`.
+			// A chained alias: `let b = a`.
 			name: "alias_chained_keeps_refused",
 			src: `function mk(i: i32): (i32, i32[]) {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var a: (i32, i32[]) = t;
-    var b: (i32, i32[]) = a;
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let a: (i32, i32[]) = t;
+    let b: (i32, i32[]) = a;
     if (b.0 % 7 == 0) { return (0, [0, 0, 0]); }
     return t;
 }` + caller,
@@ -84,8 +84,8 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			name: "alias_callarg_keeps_refused",
 			src: `function peek(x: (i32, i32[])): i32 { return x.0; }
 function mk(i: i32): (i32, i32[]) {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
-    var a: (i32, i32[]) = t;
+    let t: (i32, i32[]) = (i, [i, i + 1]);
+    let a: (i32, i32[]) = t;
     if (peek(a) % 7 == 0) { return (0, [0, 0, 0]); }
     return t;
 }` + caller,

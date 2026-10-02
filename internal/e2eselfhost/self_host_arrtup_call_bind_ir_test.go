@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// An array-of-tuples local bound from a CALL (`var ps = mk()`) recorded no
+// An array-of-tuples local bound from a CALL (`let ps = mk()`) recorded no
 // `arrarr_elem`, because that slot tag was only derived from an ANNOTATION or an
 // array LITERAL. Every consumer that reads a tuple element tag off the slot then
 // fell through to an untyped 4-byte read.
@@ -28,20 +28,20 @@ var arrtupCallBindCases = []struct {
 	src  string
 }{
 	{"tuple_local_f64", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { var ps = mk(); var t = ps[0]; return (t.1 * 10.0) as i32; }`}, // 45; was 1 on wasm
+function main(): i32 { let ps = mk(); let t = ps[0]; return (t.1 * 10.0) as i32; }`}, // 45; was 1 on wasm
 	{"tuple_local_destructured", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { var ps = mk(); var t = ps[0]; var (a, b) = t; return (b * 10.0) as i32; }`}, // 45; was 0 on wasm
+function main(): i32 { let ps = mk(); let t = ps[0]; let (a, b) = t; return (b * 10.0) as i32; }`}, // 45; was 0 on wasm
 	{"foreach_loop_var", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { var ps = mk(); var acc: f64 = 0.0; for p in ps { acc = acc + p.1; } return (acc * 10.0) as i32; }`}, // 45; was 1 on wasm — no ExprIndex node, so only the upstream fix reaches it
+function main(): i32 { let ps = mk(); let acc: f64 = 0.0; for p in ps { acc = acc + p.1; } return (acc * 10.0) as i32; }`}, // 45; was 1 on wasm — no ExprIndex node, so only the upstream fix reaches it
 	{"tuple_local_i64", `function mk(): (i32, i64)[] { return [(5, 4000000000)]; }
-function main(): i32 { var ps = mk(); var t = ps[0]; return (t.1 / 100000000) as i32 + t.0; }`}, // 45
+function main(): i32 { let ps = mk(); let t = ps[0]; return (t.1 / 100000000) as i32 + t.0; }`}, // 45
 	{"direct_index_control", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { var ps = mk(); return (ps[0].1 * 10.0) as i32; }`}, // 45 — no intermediate local: always worked
+function main(): i32 { let ps = mk(); return (ps[0].1 * 10.0) as i32; }`}, // 45 — no intermediate local: always worked
 	{"annotated_control", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { var ps: (i32, f64)[] = mk(); var t = ps[0]; return (t.1 * 10.0) as i32; }`}, // 45 — annotation supplied arrarr_elem: always worked
+function main(): i32 { let ps: (i32, f64)[] = mk(); let t = ps[0]; return (t.1 * 10.0) as i32; }`}, // 45 — annotation supplied arrarr_elem: always worked
 	{"string_elem_control", `function mk(): (i32, string)[] { return [(5, "abcde")]; }
-function main(): i32 { var ps = mk(); var t = ps[0]; return t.1.len() + 40; }`}, // 45 — a 4-byte pointer survived the untyped read even before the fix
-	{"literal_control", `function main(): i32 { var ps = [(0, 4.5)]; var t = ps[0]; return (t.1 * 10.0) as i32; }`}, // 45 — the literal arm already inferred the tag
+function main(): i32 { let ps = mk(); let t = ps[0]; return t.1.len() + 40; }`}, // 45 — a 4-byte pointer survived the untyped read even before the fix
+	{"literal_control", `function main(): i32 { let ps = [(0, 4.5)]; let t = ps[0]; return (t.1 * 10.0) as i32; }`}, // 45 — the literal arm already inferred the tag
 }
 
 // TestSelfHostArrtupCallBindWasm is the leg the bug was on.

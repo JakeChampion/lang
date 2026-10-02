@@ -1,6 +1,6 @@
 # A call-bound rc-enum earned the credit but never the free — killer-drops slice 13
 
-`var v: E = mkv(i);` followed by a sole top-level consuming match reclaimed
+`let v: E = mkv(i);` followed by a sole top-level consuming match reclaimed
 NOTHING: **200 allocs / 0 frees** over 100 rounds against native's 200/200. The
 byte-identical shape with the constructor written inline was flat.
 

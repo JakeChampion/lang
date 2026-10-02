@@ -68,15 +68,15 @@ function eof_of(line: i32): Tok {
 }
 
 function lex(src: string): Tok[] {
-  var l: Lx = Lx { src: src, i: 0, n: src.len(), line: 1 };
-  var out: Tok[] = [];
+  let l: Lx = Lx { src: src, i: 0, n: src.len(), line: 1 };
+  let out: Tok[] = [];
   while (true) {
     l = skip_ws(l);
     if (l.at_end()) {
       out = out.append(eof_of(l.line));
       return out;
     }
-    var start: i32 = l.i;
+    let start: i32 = l.i;
     while (!l.at_end() && l.src[l.i] != 32) {
       l = l.adv();
     }
@@ -86,10 +86,10 @@ function lex(src: string): Tok[] {
 }
 
 function main(): i32 {
-  var acc: i32 = 0;
-  var r: i32 = 0;
+  let acc: i32 = 0;
+  let r: i32 = 0;
   while (r < 20) {
-    var toks: Tok[] = lex("alpha beta gamma delta epsilon zeta eta theta");
+    let toks: Tok[] = lex("alpha beta gamma delta epsilon zeta eta theta");
     acc = acc + toks.len();
     r = r + 1;
   }

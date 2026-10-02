@@ -58,21 +58,21 @@ function area(s: Shape): i32 {
 	"struct_and_literals": `
 struct Point { x: i32, y: i32 }
 function main(): i32 {
-	var p: Point = Point { x: 3, y: 4 };
+	let p: Point = Point { x: 3, y: 4 };
 	return p.x + p.y;
 }`,
 
 	"expression_precedence": `
 function main(): i32 {
-	var a: i32 = 1 + 2 * 3 - 4 / 5;
-	var b: bool = a > 0 && a < 100 || a == 42;
-	var c: i32 = (a & 0xFF) | (a >> 4);
+	let a: i32 = 1 + 2 * 3 - 4 / 5;
+	let b: bool = a > 0 && a < 100 || a == 42;
+	let c: i32 = (a & 0xFF) | (a >> 4);
 	return c;
 }`,
 
 	"fstring": `
 function main(): i32 {
-	var name: string = "world";
+	let name: string = "world";
 	print(f"hello, {name}!");
 	return 0;
 }`,
@@ -81,7 +81,7 @@ function main(): i32 {
 // top-level doc
 function main(): i32 {
 	// inside-fn comment
-	var x: i32 = 0; // trailing
+	let x: i32 = 0; // trailing
 	return x;
 }`,
 
@@ -93,9 +93,9 @@ function main(): i32 {
 	// in that (i64::MAX, u64::MAX] window.
 	"unsigned_large_literals": `
 function main(): i32 {
-	var a: u64 = 9223372036854775808 as u64;
-	var b: u64 = 18446744065119617025 as u64;
-	var c: u64 = 18446744073709551615 as u64;
+	let a: u64 = 9223372036854775808 as u64;
+	let b: u64 = 18446744065119617025 as u64;
+	let c: u64 = 18446744073709551615 as u64;
 	return 0;
 }`,
 }

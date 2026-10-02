@@ -15,7 +15,7 @@ func TestProgramReinterpretConstantKeepsAllBits(t *testing.T) {
     return ((b >> 60) & 7) as i32;
 }
 function main(): i32 {
-    var s: f64 = f64_from_bits(9218868437227405313);
+    let s: f64 = f64_from_bits(9218868437227405313);
     return hi(f64_bits(s), 1);
 }`
 	for _, n := range []int{1, 8} {

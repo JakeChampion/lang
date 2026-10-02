@@ -17,17 +17,17 @@
 // self-host measures 208 live bytes at 100 and at 200 rounds alike (a
 // bounded safe floor), so the sibling block's credit fires on this shape.
 function main(): i32 {
-    var keep: Option[i32[]][] = [Some([1, 2]), None, Some([3, 4, 5])];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let keep: Option[i32[]][] = [Some([1, 2]), None, Some([3, 4, 5])];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        { var o: Option[i32[]] = Some([i + 7, i + 8]); match (o) { Some(q) => { t = t + q.len(); }, None => {} } }
+        { let o: Option[i32[]] = Some([i + 7, i + 8]); match (o) { Some(q) => { t = t + q.len(); }, None => {} } }
         for o in keep { match (o) { Some(p) => { t = t + p[0]; }, None => {} } }
         i = i + 1;
     }
     if (__rc_underflow_count() != 0) { return 99; }
     // keep's payloads must still be intact after 100 rounds of collisions.
-    var s: i32 = 0;
+    let s: i32 = 0;
     for o in keep { match (o) { Some(p) => { s = s + p.len(); }, None => {} } }
     if (s != 5) { return 98; }
     return t % 113;

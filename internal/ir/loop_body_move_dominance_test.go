@@ -27,10 +27,10 @@ import (
 func pushLoopSrc(pre, mid, post string) string {
 	return fmt.Sprintf(`struct Val { kind: i32, kids: i32[] }
 function build(n: i32): i32 {
-    var vals: Val[] = [];
-    var total: i32 = 0;
+    let vals: Val[] = [];
+    let total: i32 = 0;
     for i in 0..n {
-%s        var v = Val { kind: i, kids: [] };
+%s        let v = Val { kind: i, kids: [] };
 %s        vals = vals.append(v);
 %s        total = total + vals.len();
     }
@@ -97,11 +97,11 @@ function step(i: i32): Option[i32] {
     return Some(i);
 }
 function build(n: i32): Option[i32] {
-    var vals: Val[] = [];
-    var total: i32 = 0;
+    let vals: Val[] = [];
+    let total: i32 = 0;
     for i in 0..n {
-        var v = Val { kind: i, kids: [] };
-        var w: i32 = step(i)?;
+        let v = Val { kind: i, kids: [] };
+        let w: i32 = step(i)?;
         vals = vals.append(v);
         total = total + vals.len() + w;
     }

@@ -20,13 +20,13 @@ import (
 // itself with one field replaced, threaded by the caller.
 const emitLikeSrc = `struct St { ops: i32[], names: string[], ctrl: i32 }
 function (s: St) emit(op: i32): St {
-    var nctrl: i32 = s.ctrl;
+    let nctrl: i32 = s.ctrl;
     if (op == 1) { nctrl = s.ctrl + 1; }
     return St { ...s, ops: s.ops.append(op), ctrl: nctrl };
 }
 function main(): i32 {
-    var s: St = St { ops: [], names: ["a"], ctrl: 0 };
-    var i: i32 = 0;
+    let s: St = St { ops: [], names: ["a"], ctrl: 0 };
+    let i: i32 = 0;
     while (i < 5) { s = s.emit(i); i = i + 1; }
     return s.ops.len() + s.ctrl;
 }`
@@ -86,7 +86,7 @@ func TestReturnSpreadRefusesAddressTakenCallee(t *testing.T) {
 function bump(s: St): St { return St { ...s, ctrl: s.ctrl + 1 }; }
 function apply(f: (St) => St, s: St): St { return f(s); }
 function main(): i32 {
-    var s: St = St { ops: [1], ctrl: 0 };
+    let s: St = St { ops: [1], ctrl: 0 };
     s = apply(bump, s);
     return s.ctrl + s.ops.len();
 }`)
@@ -107,7 +107,7 @@ function (s: St) bump(): St {
 }
 function note(v: i32): i32 { return v; }
 function main(): i32 {
-    var s: St = St { ops: [1], ctrl: 0 };
+    let s: St = St { ops: [1], ctrl: 0 };
     s = s.bump();
     return s.ctrl + s.ops.len();
 }`
@@ -128,7 +128,7 @@ func TestReturnSpreadRefusesReplacedStringField(t *testing.T) {
 	ip := lowerForTest(t, `struct St { tag: string, ctrl: i32 }
 function (s: St) rename(v: string): St { return St { ...s, tag: v }; }
 function main(): i32 {
-    var s: St = St { tag: "a", ctrl: 0 };
+    let s: St = St { tag: "a", ctrl: 0 };
     s = s.rename("bb");
     return s.tag.len() + s.ctrl;
 }`)
@@ -145,7 +145,7 @@ func TestReturnSpreadAdmitsCarriedString(t *testing.T) {
 	ip := lowerForTest(t, `struct St { tag: string, ok: boolean, ctrl: i32 }
 function (s: St) bump(): St { return St { ...s, ctrl: s.ctrl + 1 }; }
 function main(): i32 {
-    var s: St = St { tag: "a", ok: true, ctrl: 0 };
+    let s: St = St { tag: "a", ok: true, ctrl: 0 };
     s = s.bump();
     return s.tag.len() + s.ctrl;
 }`)

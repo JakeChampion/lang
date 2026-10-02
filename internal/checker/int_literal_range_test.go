@@ -25,18 +25,18 @@ func TestIntLiteralRangeCountsTheSign(t *testing.T) {
 		// with `2147483649` — a number not in the source.
 		wantInMsg string
 	}{
-		{"var x: i32 = -2147483648;", true, ""},
-		{"var x: i32 = 2147483647;", true, ""},
-		{"var x: i32 = -1;", true, ""},
-		{"var x: i32 = 0;", true, ""},
+		{"let x: i32 = -2147483648;", true, ""},
+		{"let x: i32 = 2147483647;", true, ""},
+		{"let x: i32 = -1;", true, ""},
+		{"let x: i32 = 0;", true, ""},
 		// Double negation is a positive value again.
-		{"var x: i32 = --5;", true, ""},
-		{"var x: i32 = -2147483649;", false, "-2147483649"},
-		{"var x: i32 = 2147483648;", false, "2147483648"},
-		{"var x: i32 = -4000000000;", false, "-4000000000"},
+		{"let x: i32 = --5;", true, ""},
+		{"let x: i32 = -2147483649;", false, "-2147483649"},
+		{"let x: i32 = 2147483648;", false, "2147483648"},
+		{"let x: i32 = -4000000000;", false, "-4000000000"},
 		// Negating the smallest value overflows in the other direction, and
 		// the two minuses cancel back to a positive out-of-range magnitude.
-		{"var x: i32 = -(-2147483648);", false, "2147483648"},
+		{"let x: i32 = -(-2147483648);", false, "2147483648"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, "function main(): i32 { "+c.src+" return 0; }")
@@ -70,9 +70,9 @@ function take(v: i32): i32 { return v; }
 function main(): i32 { return take(-2147483648); }`,
 		`function smallest(): i32 { return -2147483648; }
 function main(): i32 { return smallest() + 1; }`,
-		`function main(): i32 { var a: i32[] = [-2147483648, 0]; return a[1]; }`,
+		`function main(): i32 { let a: i32[] = [-2147483648, 0]; return a[1]; }`,
 		`struct S { v: i32 }
-function main(): i32 { var s: S = S { v: -2147483648 }; return s.v + 1; }`,
+function main(): i32 { let s: S = S { v: -2147483648 }; return s.v + 1; }`,
 	}
 	for i, src := range sources {
 		if err := checkSource(t, src); err != nil {
@@ -84,16 +84,16 @@ function main(): i32 { var s: S = S { v: -2147483648 }; return s.v + 1; }`,
 // The unsigned side was left open when the signed range check landed ("a
 // negative literal there wraps today, which is a separate question"). It did
 // not wrap consistently: the sign lives on the enclosing unary and the check
-// tested the magnitude alone, so `var a: u8 = -1` was accepted and the
+// tested the magnitude alone, so `let a: u8 = -1` was accepted and the
 // natives stored 0xFFFFFFFF into a u8 slot while the interpreter read 255
 // (#8448). A negative literal has no unsigned reading, so it is rejected.
 func TestIntLiteralRangeRejectsNegativeUnsigned(t *testing.T) {
 	rejected := []string{
-		`var x: u8 = -1;`,
-		`var x: u32 = -5;`,
-		`var x: u64 = -1;`,
-		`var x: usize = -1;`,
-		`var x: u32 = -2147483649;`,
+		`let x: u8 = -1;`,
+		`let x: u32 = -5;`,
+		`let x: u64 = -1;`,
+		`let x: usize = -1;`,
+		`let x: u32 = -2147483649;`,
 	}
 	for _, src := range rejected {
 		err := checkSource(t, "function main(): i32 { "+src+" return 0; }")
@@ -106,13 +106,13 @@ func TestIntLiteralRangeRejectsNegativeUnsigned(t *testing.T) {
 		}
 	}
 	accepted := []string{
-		`var x: u8 = 0;`,
-		`var x: u8 = 255;`,
-		`var x: u32 = 4294967295;`,
-		`var x: u64 = 18446744073709551615;`,
+		`let x: u8 = 0;`,
+		`let x: u8 = 255;`,
+		`let x: u32 = 4294967295;`,
+		`let x: u64 = 18446744073709551615;`,
 		// Zero is spelled with a sign in generated code often enough to
 		// matter, and negating it is still zero.
-		`var x: u32 = -0;`,
+		`let x: u32 = -0;`,
 	}
 	for _, src := range accepted {
 		if err := checkSource(t, "function main(): i32 { "+src+" return 0; }"); err != nil {
@@ -132,12 +132,12 @@ func TestIntLiteral64BitRange(t *testing.T) {
 		accepted  bool
 		wantInMsg string
 	}{
-		{`var x: i64 = 9223372036854775807;`, true, ""},
-		{`var x: i64 = -9223372036854775808;`, true, ""},
-		{`var x: u64 = 18446744073709551615;`, true, ""},
-		{`var x: i64 = 9223372036854775808;`, false, "9223372036854775808"},
-		{`var x: i64 = 18446744073709551615;`, false, "18446744073709551615"},
-		{`var x: i32 = 9223372036854775808;`, false, "9223372036854775808"},
+		{`let x: i64 = 9223372036854775807;`, true, ""},
+		{`let x: i64 = -9223372036854775808;`, true, ""},
+		{`let x: u64 = 18446744073709551615;`, true, ""},
+		{`let x: i64 = 9223372036854775808;`, false, "9223372036854775808"},
+		{`let x: i64 = 18446744073709551615;`, false, "18446744073709551615"},
+		{`let x: i32 = 9223372036854775808;`, false, "9223372036854775808"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, "function main(): i32 { "+c.src+" return 0; }")
@@ -162,10 +162,10 @@ func TestIntLiteral64BitRange(t *testing.T) {
 // spellings reach the same range rules now.
 func TestHexLiteralTopBitSet(t *testing.T) {
 	accepted := []string{
-		`var x: u64 = 0xFFFFFFFFFFFFFFFF;`,
-		`var x: u64 = 0x8000000000000000;`,
-		`var x: i64 = 0x7FFFFFFFFFFFFFFF;`,
-		`var x: u32 = 0xFFFFFFFF;`,
+		`let x: u64 = 0xFFFFFFFFFFFFFFFF;`,
+		`let x: u64 = 0x8000000000000000;`,
+		`let x: i64 = 0x7FFFFFFFFFFFFFFF;`,
+		`let x: u32 = 0xFFFFFFFF;`,
 	}
 	for _, src := range accepted {
 		if err := checkSource(t, "function main(): i32 { "+src+" return 0; }"); err != nil {
@@ -173,7 +173,7 @@ func TestHexLiteralTopBitSet(t *testing.T) {
 		}
 	}
 	// The same value that overflows i64 is still refused for a signed slot.
-	if err := checkSource(t, `function main(): i32 { var x: i64 = 0xFFFFFFFFFFFFFFFF; return 0; }`); err == nil {
+	if err := checkSource(t, `function main(): i32 { let x: i64 = 0xFFFFFFFFFFFFFFFF; return 0; }`); err == nil {
 		t.Error("0xFFFFFFFFFFFFFFFF accepted for i64; it exceeds the signed range")
 	}
 }
@@ -221,27 +221,27 @@ func TestIntLiteralPastU64IsE047(t *testing.T) {
 		wantIn  string
 		wantCol int
 	}{
-		{`var a: u64 = ` + lit + `;`, lit, "u64", 37},
-		{`var a: i64 = ` + lit + `;`, lit, "i64", 37},
-		{`var a: i32 = ` + lit + `;`, lit, "i32", 37},
-		{`var a: u8 = ` + lit + `;`, lit, "u8", 36},
-		{`var a = ` + lit + `;`, lit, "i64", 32},
-		{`var a = -` + lit + `;`, "-" + lit, "i64", 33},
-		{`var b = ` + lit + ` + 1;`, lit, "i64", 32},
-		{`var a = ` + lit + ` as u64;`, lit, "u64", 32},
+		{`let a: u64 = ` + lit + `;`, lit, "u64", 37},
+		{`let a: i64 = ` + lit + `;`, lit, "i64", 37},
+		{`let a: i32 = ` + lit + `;`, lit, "i32", 37},
+		{`let a: u8 = ` + lit + `;`, lit, "u8", 36},
+		{`let a = ` + lit + `;`, lit, "i64", 32},
+		{`let a = -` + lit + `;`, "-" + lit, "i64", 33},
+		{`let b = ` + lit + ` + 1;`, lit, "i64", 32},
+		{`let a = ` + lit + ` as u64;`, lit, "u64", 32},
 		// Typed by its suffix, so it never settles: judged against that type.
-		{`var a = ` + lit + `u64;`, lit, "u64", 32},
+		{`let a = ` + lit + `u64;`, lit, "u64", 32},
 		// A comparison of two literals settles them itself, at the i64 the
 		// wide one selects (#8668).
-		{`var b: boolean = ` + lit + ` > 1;`, lit, "i64", 41},
+		{`let b: boolean = ` + lit + ` > 1;`, lit, "i64", 41},
 		// A composite init settles its elements at the same i64 the wide
 		// literal selects for a scalar one (#8722).
-		{`var t = (` + lit + `, 1);`, lit, "i64", 33},
-		{`var xs = [` + lit + `];`, lit, "i64", 34},
+		{`let t = (` + lit + `, 1);`, lit, "i64", 33},
+		{`let xs = [` + lit + `];`, lit, "i64", 34},
 		// Hex is quoted as written.
-		{`var a: u64 = 0xFFFFFFFFFFFFFFFFFFFF;`, "0xFFFFFFFFFFFFFFFFFFFF", "u64", 37},
+		{`let a: u64 = 0xFFFFFFFFFFFFFFFFFFFF;`, "0xFFFFFFFFFFFFFFFFFFFF", "u64", 37},
 		// Float context has no integer to promote.
-		{`var f: f64 = ` + lit + `;`, lit, "any integer type", 37},
+		{`let f: f64 = ` + lit + `;`, lit, "any integer type", 37},
 	}
 	for _, c := range cases {
 		errs := checkErrors(t, "function main(): i32 { "+c.src+" return 0; }")
@@ -280,10 +280,10 @@ func TestWideIntLiteralLeftUnsettledIsE047(t *testing.T) {
 		wantCol int
 		wantIn  string
 	}{
-		{`var b = 9223372036854775808 + 1;`, 32, "i64"},
-		{`var t = (9223372036854775808, 1);`, 33, "i64"},
-		{`var xs = [18446744073709551615];`, 34, "i64"},
-		{`var b: boolean = 9223372036854775808 > 1;`, 41, "i64"},
+		{`let b = 9223372036854775808 + 1;`, 32, "i64"},
+		{`let t = (9223372036854775808, 1);`, 33, "i64"},
+		{`let xs = [18446744073709551615];`, 34, "i64"},
+		{`let b: boolean = 9223372036854775808 > 1;`, 41, "i64"},
 	}
 	for _, c := range rejected {
 		errs := checkErrors(t, "function main(): i32 { "+c.src+" return 0; }")
@@ -297,11 +297,11 @@ func TestWideIntLiteralLeftUnsettledIsE047(t *testing.T) {
 		}
 	}
 	accepted := []string{
-		`var q: i64 = -9223372036854775808; var t = (q, 1);`,
-		`var u: u64 = 18446744073709551615; var t = (u, 1);`,
-		`var u: u64 = 18446744073709551615 - 1;`,
-		`var f: f64 = 9223372036854775808;`,
-		`var big = 9223372036854775807;`,
+		`let q: i64 = -9223372036854775808; let t = (q, 1);`,
+		`let u: u64 = 18446744073709551615; let t = (u, 1);`,
+		`let u: u64 = 18446744073709551615 - 1;`,
+		`let f: f64 = 9223372036854775808;`,
+		`let big = 9223372036854775807;`,
 	}
 	for _, src := range accepted {
 		if errs := checkErrors(t, "function main(): i32 { "+src+" return 0; }"); len(errs) != 0 {
@@ -312,16 +312,16 @@ func TestWideIntLiteralLeftUnsettledIsE047(t *testing.T) {
 
 // constfold substitutes an untyped negative const as a literal whose Value
 // carries the sign (`const NEG = -5` arrives as a NumberLit holding -5, with
-// no width). Read as a magnitude that is 2^64-5: `var x = NEG` widened to i64
-// and `var y: i32 = NEG` drew E047. The folded sign is judged as a sign.
+// no width). Read as a magnitude that is 2^64-5: `let x = NEG` widened to i64
+// and `let y: i32 = NEG` drew E047. The folded sign is judged as a sign.
 func TestFoldedNegativeConstIsJudgedBySign(t *testing.T) {
 	src := `const NEG = -5;
 const MIN = 0 - 2147483647 - 1;
 function main(): i32 {
-	var x = NEG;
-	var y: i32 = NEG;
-	var m: i32 = MIN;
-	var q: i64 = NEG;
+	let x = NEG;
+	let y: i32 = NEG;
+	let m: i32 = MIN;
+	let q: i64 = NEG;
 	if (x == y && y == 0 - 5 && m < 0 && q < 0) { return 0; }
 	return 1;
 }`
@@ -339,12 +339,12 @@ function main(): i32 {
 	for v, ty := range info.VarTypes {
 		if v.Name == "x" {
 			if n, ok := ty.(ast.NumberType); !ok || n.NormalWidth() != 32 {
-				t.Errorf("var x = NEG has type %v, want the i32 default: a folded -5 is in i32 range", ty)
+				t.Errorf("let x = NEG has type %v, want the i32 default: a folded -5 is in i32 range", ty)
 			}
 		}
 	}
 	// The unsigned refusal still applies to the folded value.
-	prog, err = parser.Parse("const NEG = -5;\nfunction main(): i32 { var z: u8 = NEG; return 0; }")
+	prog, err = parser.Parse("const NEG = -5;\nfunction main(): i32 { let z: u8 = NEG; return 0; }")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -353,7 +353,7 @@ function main(): i32 {
 	}
 	_, err = Check(prog)
 	if err == nil || !strings.Contains(err.Error(), "literal -5 does not fit in u8") {
-		t.Errorf("var z: u8 = NEG: got %v, want E047 naming -5", err)
+		t.Errorf("let z: u8 = NEG: got %v, want E047 naming -5", err)
 	}
 }
 
@@ -370,37 +370,37 @@ func TestSuffixedIntLiteralRange(t *testing.T) {
 		wantInMsg string
 	}{
 		// In range at the boundary, in every suffix the language has.
-		{`var x: u8 = 255u8;`, true, ""},
-		{`var x: u8 = 0u8;`, true, ""},
-		{`var x: u32 = 4294967295u32;`, true, ""},
-		{`var x: u64 = 18446744073709551615u64;`, true, ""},
-		{`var x: i32 = 2147483647i32;`, true, ""},
-		{`var x: i32 = -2147483648i32;`, true, ""},
-		{`var x: i64 = 9223372036854775807i64;`, true, ""},
-		{`var x: i64 = -9223372036854775808i64;`, true, ""},
+		{`let x: u8 = 255u8;`, true, ""},
+		{`let x: u8 = 0u8;`, true, ""},
+		{`let x: u32 = 4294967295u32;`, true, ""},
+		{`let x: u64 = 18446744073709551615u64;`, true, ""},
+		{`let x: i32 = 2147483647i32;`, true, ""},
+		{`let x: i32 = -2147483648i32;`, true, ""},
+		{`let x: i64 = 9223372036854775807i64;`, true, ""},
+		{`let x: i64 = -9223372036854775808i64;`, true, ""},
 		// Two minuses cancel, so the magnitude is judged as positive again.
-		{`var x: i64 = - -9223372036854775807i64;`, true, ""},
+		{`let x: i64 = - -9223372036854775807i64;`, true, ""},
 		// Zero has no sign, so a written one is not an unsigned negative.
-		{`var x: u32 = -0u32;`, true, ""},
+		{`let x: u32 = -0u32;`, true, ""},
 		// Hex spellings reach the same bounds.
-		{`var x: u32 = 0xFFFFFFFFu32;`, true, ""},
-		{`var x: i64 = -0x8000000000000000i64;`, true, ""},
+		{`let x: u32 = 0xFFFFFFFFu32;`, true, ""},
+		{`let x: i64 = -0x8000000000000000i64;`, true, ""},
 		// One past each bound.
-		{`var x: u8 = 300u8;`, false, "literal 300 does not fit in u8"},
-		{`var x: u8 = 256u8;`, false, "literal 256 does not fit in u8"},
-		{`var x: u32 = 4294967296u32;`, false, "literal 4294967296 does not fit in u32"},
-		{`var x: i32 = 2147483648i32;`, false, "literal 2147483648 does not fit in i32"},
-		{`var x: i64 = 9223372036854775808i64;`, false, "literal 9223372036854775808 does not fit in i64"},
-		{`var x: u32 = 0x100000000u32;`, false, "literal 0x100000000 does not fit in u32"},
+		{`let x: u8 = 300u8;`, false, "literal 300 does not fit in u8"},
+		{`let x: u8 = 256u8;`, false, "literal 256 does not fit in u8"},
+		{`let x: u32 = 4294967296u32;`, false, "literal 4294967296 does not fit in u32"},
+		{`let x: i32 = 2147483648i32;`, false, "literal 2147483648 does not fit in i32"},
+		{`let x: i64 = 9223372036854775808i64;`, false, "literal 9223372036854775808 does not fit in i64"},
+		{`let x: u32 = 0x100000000u32;`, false, "literal 0x100000000 does not fit in u32"},
 		// The negated side of each signed width is one further down, and one
 		// past THAT is still refused, quoted as written.
-		{`var x: i32 = -2147483649i32;`, false, "literal -2147483649 does not fit in i32"},
-		{`var x: i64 = -9223372036854775809i64;`, false, "literal -9223372036854775809 does not fit in i64"},
+		{`let x: i32 = -2147483649i32;`, false, "literal -2147483649 does not fit in i32"},
+		{`let x: i64 = -9223372036854775809i64;`, false, "literal -9223372036854775809 does not fit in i64"},
 		// A negative literal has no unsigned reading, suffix or not.
-		{`var x: u8 = -1u8;`, false, "unsigned types have no negative values"},
-		{`var x: u64 = -1u64;`, false, "unsigned types have no negative values"},
+		{`let x: u8 = -1u8;`, false, "unsigned types have no negative values"},
+		{`let x: u64 = -1u64;`, false, "unsigned types have no negative values"},
 		// Double negation is positive, so this one is out of range as written.
-		{`var x: i64 = - -9223372036854775808i64;`, false, "literal 9223372036854775808 does not fit in i64"},
+		{`let x: i64 = - -9223372036854775808i64;`, false, "literal 9223372036854775808 does not fit in i64"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, "function main(): i32 { "+c.src+" return 0; }")
@@ -421,7 +421,7 @@ func TestSuffixedIntLiteralRange(t *testing.T) {
 }
 
 // The suffix rule has to reach every position a literal can be written in, not
-// only a var initialiser: nothing settles a suffixed literal, so there is no
+// only a let initialiser: nothing settles a suffixed literal, so there is no
 // settle path to inherit the coverage from.
 func TestSuffixedIntLiteralRangeInEveryPosition(t *testing.T) {
 	rejected := []string{
@@ -429,13 +429,13 @@ func TestSuffixedIntLiteralRangeInEveryPosition(t *testing.T) {
 function main(): i32 { return take(300u8); }`,
 		`function big(): u8 { return 300u8; }
 function main(): i32 { return 0; }`,
-		`function main(): i32 { var xs = [300u8, 1u8]; return 0; }`,
+		`function main(): i32 { let xs = [300u8, 1u8]; return 0; }`,
 		`struct S { v: u8 }
-function main(): i32 { var s = S { v: 300u8 }; return 0; }`,
-		`function main(): i32 { var t = (300u8, 1); return 0; }`,
-		`function main(): i32 { var x = 300u8 + 1u8; return 0; }`,
+function main(): i32 { let s = S { v: 300u8 }; return 0; }`,
+		`function main(): i32 { let t = (300u8, 1); return 0; }`,
+		`function main(): i32 { let x = 300u8 + 1u8; return 0; }`,
 		// No annotation to settle against at all.
-		`function main(): i32 { var x = 300u8; return 0; }`,
+		`function main(): i32 { let x = 300u8; return 0; }`,
 	}
 	for _, src := range rejected {
 		errs := checkErrors(t, src)

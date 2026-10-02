@@ -102,7 +102,6 @@ func (t Token) String() string {
 
 var keywords = map[string]bool{
 	"function": true,
-	"var":      true,
 	"let":      true,
 	"use":      true,
 	"if":       true,
@@ -114,7 +113,7 @@ var keywords = map[string]bool{
 	"continue": true,
 	"return":   true,
 	// Structured-concurrency surface (docs/ASYNC-IMPLEMENTATION-PLAN.md
-	// Phase 3): `concurrent { var a = spawn f(...); … await a … }` fans
+	// Phase 3): `concurrent { let a = spawn f(...); … await a … }` fans
 	// out tasks; the parser desugars the block onto the std/task runtime.
 	// `race { spawn …; spawn …; }` — race spawned tasks, first-to-finish wins;
 	// an expression yielding (winnerIndex, result). Desugars onto std/task.select.
@@ -679,7 +678,7 @@ func (l *lexer) next() (Token, error) {
 
 // badCharError reports the character the lexer could not use. `r` at the
 // call site is a single BYTE, so reporting it directly would name the
-// Latin-1 character for a UTF-8 continuation byte — `var café` used to
+// Latin-1 character for a UTF-8 continuation byte — `let café` used to
 // fail with `unexpected character '©'`, naming a character absent from
 // the source and pointing mid-character. Decode the whole character
 // instead, and say so plainly when it is a letter, since "identifiers

@@ -98,7 +98,7 @@ func TestExternBoolArrayResultCustomProvider(t *testing.T) {
 function bits(n: u32): boolean[];
 
 function main(): i32 {
-	var xs: boolean[] = bits(4u32);
+	let xs: boolean[] = bits(4u32);
 	if (xs.len() == 4 && xs[0] && !xs[1] && xs[2] && !xs[3]) { write("` + want + `"); } else { write("bits-bad"); }
 	return 0;
 }`

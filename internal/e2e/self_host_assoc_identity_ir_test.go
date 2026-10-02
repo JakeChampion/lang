@@ -16,7 +16,7 @@ import (
 // to an unresolved `i32.zero()` and bailed the whole module to the legacy AST
 // emitter. The monomorphiser now emits the identity literal directly (i32→0/1,
 // f64→0.0/1.0), mirroring the existing `T.default()` scalar-literal lowering,
-// so a generic numeric reducer `sum[T: Add + Zero](xs): T { var acc = T.zero();
+// so a generic numeric reducer `sum[T: Add + Zero](xs): T { let acc = T.zero();
 // … }` lowers through the IR path on every backend. Oracle-checked against the
 // native backend; routing pinned to "ir".
 var assocIdentityCases = []struct {
@@ -40,15 +40,15 @@ function main(): i32 { return o_of(7) + 41; }`, 42},
 pub trait Zero { function zero(): Self; }
 impl Add for i32 { function add(self: Self, o: Self): Self { return self + o; } }
 impl Zero for i32 { function zero(): Self { return 0; } }
-function sum[T: Add + Zero](xs: T[]): T { var acc: T = T.zero(); var i = 0; while (i < xs.len()) { acc = acc.add(xs[i]); i = i + 1; } return acc; }
-function main(): i32 { var xs: i32[] = [10, 20, 12]; return sum(xs); }`, 42},
+function sum[T: Add + Zero](xs: T[]): T { let acc: T = T.zero(); let i = 0; while (i < xs.len()) { acc = acc.add(xs[i]); i = i + 1; } return acc; }
+function main(): i32 { let xs: i32[] = [10, 20, 12]; return sum(xs); }`, 42},
 	// product seeded from T.one(), folding with .mul — 2*3*7 = 42.
 	{"product-mul-one", `pub trait Mul { function mul(self: Self, o: Self): Self; }
 pub trait One { function one(): Self; }
 impl Mul for i32 { function mul(self: Self, o: Self): Self { return self * o; } }
 impl One for i32 { function one(): Self { return 1; } }
-function product[T: Mul + One](xs: T[]): T { var acc: T = T.one(); var i = 0; while (i < xs.len()) { acc = acc.mul(xs[i]); i = i + 1; } return acc; }
-function main(): i32 { var xs: i32[] = [2, 3, 7]; return product(xs); }`, 42},
+function product[T: Mul + One](xs: T[]): T { let acc: T = T.one(); let i = 0; while (i < xs.len()) { acc = acc.mul(xs[i]); i = i + 1; } return acc; }
+function main(): i32 { let xs: i32[] = [2, 3, 7]; return product(xs); }`, 42},
 }
 
 // TestNativeAssocIdentity runs the associated-identity programs through the

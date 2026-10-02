@@ -74,7 +74,7 @@ function test_eq_i32_pass(): test.TestOutcome {
 function test_eq_i32_fail_message(): test.TestOutcome {
   // The message must contain BOTH values, quoted — that's the
   // contract callers will read in CI logs.
-  var o: test.TestOutcome = test.assert_eq(4, 5);
+  let o: test.TestOutcome = test.assert_eq(4, 5);
   match (o) {
     Fail(msg) => {
       if (!msg.contains("expected \"5\"")) {
@@ -95,7 +95,7 @@ function test_eq_fail_quotes_empty_actual(): test.TestOutcome {
   // Unquoted, an empty actual left the message ending after
   // "got " with nothing behind it — a truncated-looking
   // diagnostic instead of a visible empty value.
-  var o: test.TestOutcome = test.assert_eq("", "x");
+  let o: test.TestOutcome = test.assert_eq("", "x");
   match (o) {
     Fail(msg) => {
       if (!msg.contains("expected \"x\"")) {
@@ -168,7 +168,7 @@ function test_eq_string_pass(): test.TestOutcome {
 }
 
 function test_eq_string_fail(): test.TestOutcome {
-  var o: test.TestOutcome = test.assert_eq("a", "b");
+  let o: test.TestOutcome = test.assert_eq("a", "b");
   return expect_fail_containing(o, "assert_eq");
 }
 
@@ -220,7 +220,7 @@ function test_eq_i32_array_pass(): test.TestOutcome {
 function test_eq_i32_array_fail_index(): test.TestOutcome {
   // First mismatch is at index 1 (2 vs 9); the message
   // must localise that index.
-  var o: test.TestOutcome = test.assert_eq_array([1, 2, 3], [1, 9, 3]);
+  let o: test.TestOutcome = test.assert_eq_array([1, 2, 3], [1, 9, 3]);
   return expect_fail_containing(o, "index 1");
 }
 
@@ -265,8 +265,8 @@ function test_in_range_f64_fail(): test.TestOutcome {
 }
 
 function test_in_range_f64_nan_fails(): test.TestOutcome {
-  var nan: f64 = 0.0 / 0.0;
-  var o: test.TestOutcome = expect_fail_containing(
+  let nan: f64 = 0.0 / 0.0;
+  let o: test.TestOutcome = expect_fail_containing(
     test.assert_in_range_f64(nan, 0.0, 1.0), "value is NaN",
   );
   match (o) {
@@ -303,11 +303,11 @@ function test_in_range_f32_fail(): test.TestOutcome {
 }
 
 function test_in_range_f32_nan_fails(): test.TestOutcome {
-  var z: f32 = 0.0 as f32;
-  var nan: f32 = z / z;
-  var one: f32 = 1.0 as f32;
-  var half: f32 = 0.5 as f32;
-  var o: test.TestOutcome = expect_fail_containing(
+  let z: f32 = 0.0 as f32;
+  let nan: f32 = z / z;
+  let one: f32 = 1.0 as f32;
+  let half: f32 = 0.5 as f32;
+  let o: test.TestOutcome = expect_fail_containing(
     test.assert_in_range_f32(nan, z, one), "value is NaN",
   );
   match (o) {
@@ -333,7 +333,7 @@ function test_in_range_f32_nan_fails(): test.TestOutcome {
 }
 
 function test_in_range_inverted_fails(): test.TestOutcome {
-  var o: test.TestOutcome = expect_fail_containing(
+  let o: test.TestOutcome = expect_fail_containing(
     test.assert_in_range_i32(5, 10, 0), "assert_in_range_i32: inverted range",
   );
   match (o) {
@@ -397,7 +397,7 @@ function test_fail_returns_fail(): test.TestOutcome {
 // fail_fast_test.fern uses.
 
 function test_dropped_it_result_still_counts(): test.TestOutcome {
-  var sub: test.TestRunner = test.test_new_quiet("dropped-it");
+  let sub: test.TestRunner = test.test_new_quiet("dropped-it");
   // Both results are DISCARDED — the mistake the runner has to
   // survive. The passing path and the failing path are covered
   // in one child so the stream count has to get both right.
@@ -413,11 +413,11 @@ function test_dropped_it_result_still_counts(): test.TestOutcome {
 }
 
 function test_unused_subsuite_handle_still_counts(): test.TestOutcome {
-  var sub: test.TestRunner = test.test_new_quiet("unused-subsuite");
+  let sub: test.TestRunner = test.test_new_quiet("unused-subsuite");
   sub = sub.it("parent pass", test_pass_returns_pass);
   // A subsuite handle that is never merged back: the child shares
   // the parent's cells, so its cases still reach the parent's plan.
-  var child: test.TestRunner = sub.subsuite("child");
+  let child: test.TestRunner = sub.subsuite("child");
   child = child.it("child pass", test_pass_returns_pass);
   child = child.it("child fail", test_fail_returns_fail_case);
   if (sub.emitted.get() != 3) {
@@ -433,17 +433,17 @@ function test_finish_exits_nonzero_for_dropped_result(): test.TestOutcome {
   // finish() compares the stream against the counters, so a dropped
   // result is exit 1 even when it passed; a dropped failure is exit 1
   // through the fail count as well. An assigned-back child stays 0.
-  var kept: test.TestRunner = test.test_new_quiet("kept");
+  let kept: test.TestRunner = test.test_new_quiet("kept");
   kept = kept.it("kept pass", test_pass_returns_pass);
   if (kept.finish() != 0) {
     return test.fail("assigned all-passing child exited non-zero");
   }
-  var dropped: test.TestRunner = test.test_new_quiet("dropped-exit");
+  let dropped: test.TestRunner = test.test_new_quiet("dropped-exit");
   dropped.it("dropped pass", test_pass_returns_pass);
   if (dropped.finish() != 1) {
     return test.fail("a dropped passing result exited 0");
   }
-  var bad: test.TestRunner = test.test_new_quiet("dropped-exit-fail");
+  let bad: test.TestRunner = test.test_new_quiet("dropped-exit-fail");
   bad.it("dropped fail", test_fail_returns_fail_case);
   return test.assert_eq(bad.finish(), 1);
 }
@@ -455,7 +455,7 @@ function test_finish_exits_nonzero_for_dropped_result(): test.TestOutcome {
 // for any NaN comparison, and 0 satisfies both `<= 0` and `>= 0`.
 
 function nan_f64(): f64 {
-  var z: f64 = 0.0;
+  let z: f64 = 0.0;
   return z / z;
 }
 
@@ -525,7 +525,7 @@ function test_assert_header_pass(): test.TestOutcome {
 }
 
 function test_assert_header_fail(): test.TestOutcome {
-  var wrong: test.TestOutcome = expect_fail_containing(test.assert_header(http_resp(), "X-Kind", "farewell"), "assert_header: X-Kind is \"greeting\", expected \"farewell\"");
+  let wrong: test.TestOutcome = expect_fail_containing(test.assert_header(http_resp(), "X-Kind", "farewell"), "assert_header: X-Kind is \"greeting\", expected \"farewell\"");
   match (wrong) {
     Fail(m) => {
       return test.fail(m);
@@ -552,7 +552,7 @@ function test_assert_body_fail(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("runner self-test");
+  let r: test.TestRunner = test.test_new("runner self-test");
   r = r.it("assert_status pass", test_assert_status_pass);
   r = r.it("assert_status fail names both", test_assert_status_fail);
   r = r.it("assert_header pass", test_assert_header_pass);

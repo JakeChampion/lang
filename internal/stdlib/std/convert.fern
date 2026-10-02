@@ -13,8 +13,8 @@
 //         function into(self: Self): Fahrenheit { … }
 //     }
 //
-//     var c: Celsius     = Celsius.from(20);   // From — associated function
-//     var f: Fahrenheit  = c.into();           // Into — receiver method
+//     let c: Celsius     = Celsius.from(20);   // From — associated function
+//     let f: Fahrenheit  = c.into();           // Into — receiver method
 //
 // By convention prefer implementing `From` (it gives the constructor a
 // home and is the more composable direction); `Into` is for the cases

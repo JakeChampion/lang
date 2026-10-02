@@ -15,7 +15,7 @@ import (
 //
 // It leaks per EVALUATION, not once, which is what separates it from the
 // construction-retain matrix's cells — and it is invisible to that matrix,
-// because all 35 of its cells bind the literal to `var p` first. That is the one
+// because all 35 of its cells bind the literal to `let p` first. That is the one
 // position which already worked.
 //
 // The mechanism was already here and only lacked a dispatch arm.
@@ -59,7 +59,7 @@ struct Box { a: A, n: i32 }
 func structLitArgMain(loopBody string) string {
 	return `
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { ` + loopBody + ` }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -124,21 +124,21 @@ func structLitArgCases() []arrenumShareCase {
 			src: `struct A { xs: i32[], k: i32 }
 function grab(p: A): i32[] { return p.xs; }
 function churn(i: i32): i32 {
-    var a: i32[] = [i, i + 1, i + 2, i + 3];
-    var b: i32[] = [i + 4, i + 5, i + 6, i + 7];
+    let a: i32[] = [i, i + 1, i + 2, i + 3];
+    let b: i32[] = [i + 4, i + 5, i + 6, i + 7];
     return a[0] + b[3];
 }
 function round(i: i32): i32 {
-    var held: i32[] = grab(A { xs: [i, i + 1], k: i });
-    var junk: i32 = churn(i * 7 + 3);
+    let held: i32[] = grab(A { xs: [i, i + 1], k: i });
+    let junk: i32 = churn(i * 7 + 3);
     if (held.len() != 2) { return 0 - 1; }
-    var v: i32 = held[0] + held[1];
+    let v: i32 = held[0] + held[1];
     if (v != i + i + 1) { return 0 - 1; }
     return v % 101;
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;

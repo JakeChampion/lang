@@ -53,11 +53,11 @@ func tupIdentElemCases() []tupIdentElemCase {
 			// The main shape: one bare-ident array element.
 			name: "ident_elem_array",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
     return t.0 + t.1[0] + t.1[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
 			want: 10,
 		},
 		{
@@ -65,12 +65,12 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// per-position list rather than a single flag.
 			name: "two_ident_elems",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var ys: i32[] = [i + 2, i + 3];
-    var t: (i32[], i32[]) = (xs, ys);
+    let xs: i32[] = [i, i + 1];
+    let ys: i32[] = [i + 2, i + 3];
+    let t: (i32[], i32[]) = (xs, ys);
     return t.0[0] + t.1[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
 			want: 74,
 		},
 		{
@@ -79,11 +79,11 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// this is the case a release emitted at construction would corrupt.
 			name: "ident_read_after",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
     return t.1[0] + xs[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
 			want: 40,
 		},
 		{
@@ -94,10 +94,10 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// caller's live array, which the underflow counter would catch.
 			name: "param_ident_elem",
 			src: `function use_it(xs: i32[], i: i32): i32 {
-    var t: (i32, i32[]) = (i, xs);
+    let t: (i32, i32[]) = (i, xs);
     return t.1[0] + t.1[1];
 }
-function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + use_it(xs, r); r = r + 1; } return x % 83; }`,
+function main(): i32 { let xs: i32[] = [7, 11]; let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + use_it(xs, r); r = r + 1; } return x % 83; }`,
 			want: 57,
 		},
 		{
@@ -113,12 +113,12 @@ function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; 
 			// final return reaches it.
 			name: "last_use_before_return",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
-    var acc: i32 = t.1[0];
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
+    let acc: i32 = t.1[0];
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 53,
 		},
 		{
@@ -128,12 +128,12 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// extraction gate as the cause and pins it on the drop site.
 			name: "last_use_scalar_read",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
-    var acc: i32 = t.0;
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
+    let acc: i32 = t.0;
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 53,
 		},
 		{
@@ -147,13 +147,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// owned.
 			name: "same_name_sibling_blocks",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var acc: i32 = 0;
-    { var t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
-    { var t: (i32[], i32) = (xs, i); acc = acc + t.0[1]; }
+    let xs: i32[] = [i, i + 1];
+    let acc: i32 = 0;
+    { let t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
+    { let t: (i32[], i32) = (xs, i); acc = acc + t.0[1]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 40,
 		},
 		{
@@ -163,11 +163,11 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// not a leak, so this case is about surviving at all.
 			name: "untaken_branch_null",
 			src: `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    if (i % 2 == 0) { var xs: i32[] = [i, i + 1]; var t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
+    let acc: i32 = 0;
+    if (i % 2 == 0) { let xs: i32[] = [i, i + 1]; let t: (i32, i32[]) = (i, xs); acc = t.1[0]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
 			want: 43,
 		},
 	}
@@ -176,7 +176,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 // TestSelfHostTupleIdentElemExtractionHazardX86_64 — a tuple whose owned-pointer
 // element is EXTRACTED must not earn the element release.
 //
-// `return t.1` / `var u = t.1` hands the element's reference to a new owner, so
+// `return t.1` / `let u = t.1` hands the element's reference to a new owner, so
 // releasing it at the tuple's scope exit releases a reference the frame no longer
 // holds. The escaping form witnessed this as **exit 99** (rc underflow) against 40
 // on native and interp alike; the fix is the same `rctuple_payload_escapes` gate
@@ -215,18 +215,18 @@ func TestSelfHostTupleIdentElemExtractionHazardX86_64(t *testing.T) {
 			// tripping the counter.
 			name: "elem_extracted_escaping",
 			src: `function grab(i: i32): i32[] {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
     return t.1;
 }
 function decoy(n: i32): i32[] { return [n * 7, n * 11, n * 13]; }
 function round(i: i32): i32 {
-    var u: i32[] = grab(i);
-    var d: i32[] = decoy(i);
+    let u: i32[] = grab(i);
+    let d: i32[] = decoy(i);
     if (d[0] < 0) { return 0; }
     return u[0] + u[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 40,
 		},
 		{
@@ -234,12 +234,12 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// gate is about a second owner existing, not about where it lives.
 			name: "elem_extracted_local",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var t: (i32, i32[]) = (i, xs);
-    var u: i32[] = t.1;
+    let xs: i32[] = [i, i + 1];
+    let t: (i32, i32[]) = (i, xs);
+    let u: i32[] = t.1;
     return u[0] + u[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 40,
 		},
 	} {

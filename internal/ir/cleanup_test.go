@@ -49,7 +49,7 @@ function f(x: i32): i32 {
 	return x * 1000;
 }
 function g(a: i32): i32 {
-	var t: i32 = a * 4 + 0;
+	let t: i32 = a * 4 + 0;
 	return t;
 }`
 	p := lowerSource(t, src)

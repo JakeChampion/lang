@@ -6,7 +6,7 @@ import (
 )
 
 // optTupReclaimCases pin the #4365 Option[<tuple-with-array>] reclaim: a
-// `var o: Option[(i32, i32[])] = Some((i, [i, i+1]))` consumed by a borrow-only
+// `let o: Option[(i32, i32[])] = Some((i, [i, i+1]))` consumed by a borrow-only
 // match leaked its payload array buffer + tuple box + option box per iteration on
 // the self-host IR path (native bounds it). The new "OPTTUP:" reclaim class
 // (annotation-driven, mirroring OPTAARR since Option is not a struct-decl enum)
@@ -27,13 +27,13 @@ var optTupReclaimCases = []struct {
 }{
 	// Core churn: rebuilt per iteration, scalar read only.
 	{"opttup-churn", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(p) => { acc = (acc + p.0) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[(i32, i32[])] = Some((j, [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.0) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(p) => { acc = (acc + p.0) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[(i32, i32[])] = Some((j, [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.0) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -42,13 +42,13 @@ var optTupReclaimCases = []struct {
 	// Full borrow set: scalar field (p.0), indexed array-field (p.1[i]) and
 	// p.1.len() are all admitted — still reclaims (bounded).
 	{"opttup-borrow-full", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(p) => { acc = (acc + p.0 + p.1[0] + p.1[1] + p.1.len()) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[(i32, i32[])] = Some((j, [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.1[1]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Option[(i32, i32[])] = Some((i, [i, i + 1])); match (o) { Some(p) => { acc = (acc + p.0 + p.1[0] + p.1[1] + p.1.len()) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[(i32, i32[])] = Some((j, [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.1[1]) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -59,14 +59,14 @@ var optTupReclaimCases = []struct {
 	// over-released (this exact shape double-freed before opttup_payload_escapes).
 	// Detector zero, value exact.
 	{"opttup-escape-store-safe", `function main(): i32 {
-    var keep: i32[] = [0, 0];
-    var i: i32 = 0;
+    let keep: i32[] = [0, 0];
+    let i: i32 = 0;
     while (i < 50) {
-        var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+        let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
         match (o) { Some(p) => { keep = p.1; }, None => {} }
         i = i + 1;
     }
-    var acc: i32 = keep[0] + keep[1];
+    let acc: i32 = keep[0] + keep[1];
     if (acc < 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -75,10 +75,10 @@ var optTupReclaimCases = []struct {
 	// (a retain) — un-credited, leak-safe, detector zero.
 	{"opttup-escape-call-safe", `function take(xs: i32[]): i32 { return xs[0]; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
+        let o: Option[(i32, i32[])] = Some((i, [i, i + 1]));
         match (o) { Some(p) => { acc = (acc + take(p.1)) % 251; }, None => {} }
         i = i + 1;
     }
@@ -93,8 +93,8 @@ function main(): i32 {
     return [0];
 }
 function main(): i32 {
-    var o: Option[(i32, i32[])] = Some((5, [6, 7]));
-    var a = pick(o);
+    let o: Option[(i32, i32[])] = Some((5, [6, 7]));
+    let a = pick(o);
     if (__rc_underflow_count() != 0) { return 99; }
     return a[0] + a[1];
 }`, 13},
@@ -105,13 +105,13 @@ function main(): i32 {
 	// levels per iteration.
 	{"opttup-string-elem-churn", `import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Option[(i32, string)] = Some((i, "v" + i.to_string())); match (o) { Some(p) => { acc = (acc + p.0 + p.1.len()) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[(i32, string)] = Some((j, "v" + j.to_string())); match (o2) { Some(p) => { acc = (acc + p.1.len()) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Option[(i32, string)] = Some((i, "v" + i.to_string())); match (o) { Some(p) => { acc = (acc + p.0 + p.1.len()) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[(i32, string)] = Some((j, "v" + j.to_string())); match (o2) { Some(p) => { acc = (acc + p.1.len()) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -119,13 +119,13 @@ function main(): i32 {
 }`, 0},
 	// Mixed string + array elements — both freed by the type-driven walk.
 	{"opttup-string-arr-mixed-churn", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Option[(string, i32[])] = Some(("tag", [i, i + 1])); match (o) { Some(p) => { acc = (acc + p.0.len() + p.1[0]) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[(string, i32[])] = Some(("tag", [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.1[1]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Option[(string, i32[])] = Some(("tag", [i, i + 1])); match (o) { Some(p) => { acc = (acc + p.0.len() + p.1[0]) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[(string, i32[])] = Some(("tag", [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.1[1]) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -135,10 +135,10 @@ function main(): i32 {
 	// string position — admission (tuple_arg_payload_fresh) rejects, nothing
 	// freed, s stays valid, detector zero.
 	{"opttup-string-ident-elem-safe", `function main(): i32 {
-    var s: string = "seven";
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 100) { var o: Option[(i32, string)] = Some((i, s)); match (o) { Some(p) => { acc = (acc + p.1.len()) % 251; }, None => {} } i = i + 1; }
+    let s: string = "seven";
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let o: Option[(i32, string)] = Some((i, s)); match (o) { Some(p) => { acc = (acc + p.1.len()) % 251; }, None => {} } i = i + 1; }
     if (s.len() != 5) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -149,10 +149,10 @@ function main(): i32 {
 	// keep stays valid.
 	{"opttup-string-extract-safe", `import "std/i32";
 function main(): i32 {
-    var keep: string = "";
-    var i: i32 = 0;
+    let keep: string = "";
+    let i: i32 = 0;
     while (i < 100) {
-        var o: Option[(i32, string)] = Some((i, "k" + i.to_string()));
+        let o: Option[(i32, string)] = Some((i, "k" + i.to_string()));
         match (o) { Some(p) => { keep = p.1; }, None => {} }
         i = i + 1;
     }

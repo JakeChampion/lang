@@ -15,13 +15,13 @@ import (
 // the request, sends a fixed HTTP/1.1 response, and exits 42 on the full
 // success path (distinct small codes localise a failed step).
 const tcpServerProgram = `function main(): i32 {
-    var fd: i32 = tcp_listen(%d);
+    let fd: i32 = tcp_listen(%d);
     if (fd < 0) { return 91; }
-    var c: i32 = tcp_accept(fd);
+    let c: i32 = tcp_accept(fd);
     if (c < 0) { return 92; }
-    var req: u8[] = tcp_recv(c, 4096);
+    let req: u8[] = tcp_recv(c, 4096);
     if (req.len() == 0) { return 93; }
-    var n: i32 = tcp_send(c, "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nhello-world");
+    let n: i32 = tcp_send(c, "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nhello-world");
     tcp_close(c);
     tcp_close(fd);
     if (n < 0) { return 94; }

@@ -50,7 +50,7 @@ type armReturnDropCase struct {
 	want int
 }
 
-const armReturnDropMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
+const armReturnDropMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 200) { t = t + round(i); i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
@@ -62,7 +62,7 @@ func armReturnDropCases() []armReturnDropCase {
 			name: "optopt_return_in_arm",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var o: Option[Option[string]] = Some(Some(w("ab")));
+    let o: Option[Option[string]] = Some(Some(w("ab")));
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + armReturnDropMain,
@@ -74,8 +74,8 @@ function round(i: i32): i32 {
 			name: "optopt_return_after_match",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var o: Option[Option[string]] = Some(Some(w("ab")));
+    let t: i32 = 0;
+    let o: Option[Option[string]] = Some(Some(w("ab")));
     match (o) { Some(inner) => { match (inner) { Some(v) => { t = v.len(); }, None => { t = 3; } } }, None => { t = 2; } }
     return t;
 }` + armReturnDropMain,
@@ -88,7 +88,7 @@ function round(i: i32): i32 {
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
     if (i >= 0) {
-        var o: Option[Option[string]] = Some(Some(w("ab")));
+        let o: Option[Option[string]] = Some(Some(w("ab")));
         match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
     }
     return 0;
@@ -101,7 +101,7 @@ function round(i: i32): i32 {
 			// __fern_str_free whatever the payload word holds.
 			name: "optopt_none_return_in_arm",
 			src: `function round(i: i32): i32 {
-    var o: Option[Option[string]] = Some(None);
+    let o: Option[Option[string]] = Some(None);
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + armReturnDropMain,
@@ -114,7 +114,7 @@ function round(i: i32): i32 {
 			name: "optstruct_return_in_arm",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { return p.n % 7; }, None => { return 2; } }
     return 0;
 }` + armReturnDropMain,
@@ -124,8 +124,8 @@ function round(i: i32): i32 {
 			name: "optstruct_return_after_match",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let t: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { t = p.n % 7; }, None => { t = 2; } }
     return t;
 }` + armReturnDropMain,
@@ -136,7 +136,7 @@ function round(i: i32): i32 {
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
     if (i >= 0) {
-        var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+        let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
         match (o) { Some(p) => { return p.n % 7; }, None => { return 2; } }
     }
     return 0;
@@ -150,7 +150,7 @@ function round(i: i32): i32 {
 			name: "str_return_in_arm",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var o: Option[string] = Some(w("ab"));
+    let o: Option[string] = Some(w("ab"));
     match (o) { Some(s) => { return s.len(); }, None => { return 2; } }
     return 0;
 }` + armReturnDropMain,
@@ -161,7 +161,7 @@ function round(i: i32): i32 {
 			// element, so a fallback to the plain box dec strands all of them.
 			name: "strarr_return_in_arm",
 			src: `function round(i: i32): i32 {
-    var o: Option[string[]] = Some(["a" + "b", "c" + "d"]);
+    let o: Option[string[]] = Some(["a" + "b", "c" + "d"]);
     match (o) { Some(a) => { return a.len(); }, None => { return 2; } }
     return 0;
 }` + armReturnDropMain,
@@ -174,7 +174,7 @@ function round(i: i32): i32 {
 			name: "tagged_return_in_arm",
 			src: `function mk(i: i32): Option[i32[]] { if (i % 2 == 0) { return None; } return Some([i, i + 1]); }
 function round(i: i32): i32 {
-    var o: Option[i32[]] = mk(i);
+    let o: Option[i32[]] = mk(i);
     match (o) { Some(a) => { return a.len(); }, None => { return 2; } }
     return 0;
 }` + armReturnDropMain,
@@ -185,7 +185,7 @@ function round(i: i32): i32 {
 			// shallow drop after the change.
 			name: "arr_return_in_arm",
 			src: `function round(i: i32): i32 {
-    var o: Option[i32[]] = Some([i, i + 1]);
+    let o: Option[i32[]] = Some([i, i + 1]);
     match (o) { Some(a) => { return a.len(); }, None => { return 2; } }
     return 0;
 }` + armReturnDropMain,

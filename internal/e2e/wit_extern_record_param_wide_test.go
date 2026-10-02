@@ -107,7 +107,7 @@ func TestExternRecordParamWideCustomProvider(t *testing.T) {
 function combine(m: Mix): i64;
 
 function main(): i32 {
-	var m: Mix = Mix { a: 10, b: 32 };
+	let m: Mix = Mix { a: 10, b: 32 };
 	if (combine(m) == 42) { write("` + want + `"); } else { write("mix-bad"); }
 	return 0;
 }`

@@ -123,9 +123,9 @@ func hoistedByPrefix(prog *ast.Program, orig string) *ast.FuncDecl {
 // ptrW because none of the captures is pointer-shaped.
 func TestConvertMultiCaptureScalarOffsets(t *testing.T) {
 	src := `function main(): i32 {
-		var a: i32 = 1;
-		var b: i64 = 2;
-		var c: i32 = 3;
+		let a: i32 = 1;
+		let b: i64 = 2;
+		let c: i32 = 3;
 		function f(x: i32): i64 { return (x as i64) + (a as i64) + b + (c as i64); }
 		return f(0) as i32;
 	}`
@@ -158,8 +158,8 @@ func TestConvertMultiCaptureScalarOffsets(t *testing.T) {
 // offset 0. This is the clean ptrW-sensitivity case.
 func TestConvertPtrWidthArrayCaptureStride(t *testing.T) {
 	src := `function main(): i32 {
-		var arr: i32[] = [1, 2, 3];
-		var n: i32 = 9;
+		let arr: i32[] = [1, 2, 3];
+		let n: i32 = 9;
 		function f(): i32 { return arr[0] + n; }
 		return f();
 	}`
@@ -208,8 +208,8 @@ func TestConvertPtrWidthArrayCaptureStride(t *testing.T) {
 // caught here.
 func TestConvertStringCaptureSlot(t *testing.T) {
 	src := `function main(): i32 {
-		var s: string = "hi";
-		var n: i32 = 5;
+		let s: string = "hi";
+		let n: i32 = 5;
 		function f(): i32 { return s.len() + n; }
 		return f();
 	}`
@@ -265,7 +265,7 @@ func TestConvertZeroCaptureClosure(t *testing.T) {
 	mainFn := findFuncByName(prog, "main")
 	v := findVarStmt(mainFn.Body, "f")
 	if v == nil {
-		t.Fatal("def site `var f = ...` not found")
+		t.Fatal("def site `let f = ...` not found")
 	}
 	mc, ok := v.Init.(*ast.MakeClosure)
 	if !ok {
@@ -290,9 +290,9 @@ func TestConvertZeroCaptureClosure(t *testing.T) {
 // decls, each gaining its own `__env` param.
 func TestConvertNestedClosureCapturesBothScopes(t *testing.T) {
 	src := `function main(): i32 {
-		var a: i32 = 1;
+		let a: i32 = 1;
 		function outer(): i32 {
-			var b: i32 = 2;
+			let b: i32 = 2;
 			function inner(): i32 { return a + b; }
 			return inner();
 		}
@@ -331,7 +331,7 @@ func TestConvertNestedClosureCapturesBothScopes(t *testing.T) {
 func TestConvertTopLevelRefNotRewritten(t *testing.T) {
 	src := `function helper(x: i32): i32 { return x * 2; }
 function main(): i32 {
-	var n: i32 = 5;
+	let n: i32 = 5;
 	function f(x: i32): i32 { return helper(x) + n; }
 	return f(3);
 }`
@@ -380,7 +380,7 @@ function main(): i32 {
 // keep binding against it).
 func TestConvertHoistedSigHasEnvParam(t *testing.T) {
 	src := `function main(): i32 {
-		var k: i32 = 7;
+		let k: i32 = 7;
 		function f(x: i32): i32 { return x + k; }
 		return f(1);
 	}`
@@ -408,8 +408,8 @@ func TestConvertHoistedSigHasEnvParam(t *testing.T) {
 // *ast.Ident nodes naming the captured locals, in capture order.
 func TestConvertMakeClosureCapturesAreOuterNames(t *testing.T) {
 	src := `function main(): i32 {
-		var p: i32 = 1;
-		var q: i32 = 2;
+		let p: i32 = 1;
+		let q: i32 = 2;
 		function f(): i32 { return p + q; }
 		return f();
 	}`
@@ -417,7 +417,7 @@ func TestConvertMakeClosureCapturesAreOuterNames(t *testing.T) {
 	mainFn := findFuncByName(prog, "main")
 	v := findVarStmt(mainFn.Body, "f")
 	if v == nil {
-		t.Fatal("def site `var f = ...` not found")
+		t.Fatal("def site `let f = ...` not found")
 	}
 	mc, ok := v.Init.(*ast.MakeClosure)
 	if !ok {

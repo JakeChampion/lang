@@ -95,7 +95,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		}
 		// Contextual: `async` in any other position stays an identifier.
 		identPath := filepath.Join(dir, "async_ident.fern")
-		identSrc := "function main(): i32 { var async: i32 = 3; return async + 4; }\n"
+		identSrc := "function main(): i32 { let async: i32 = 3; return async + 4; }\n"
 		if err := os.WriteFile(identPath, []byte(identSrc), 0o644); err != nil {
 			t.Fatalf("write: %v", err)
 		}
@@ -175,8 +175,8 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		src := `import "std/u32";
 
 function main(): i32 {
-    var u: u32 = 3000000000 as u32;
-    var s: string = u.to_string();
+    let u: u32 = 3000000000 as u32;
+    let s: string = u.to_string();
     if (s == "3000000000") { return 42; }
     return 7;
 }
@@ -229,8 +229,8 @@ function main(): i32 {
 		src := `import "std/i32";
 
 function main(): i32 {
-    var m: i32 = 10;
-    var bump = (): i32 => { m = m + 1; return m; };
+    let m: i32 = 10;
+    let bump = (): i32 => { m = m + 1; return m; };
     print(bump().to_string());
     print(bump().to_string());
     print(m.to_string());
@@ -289,7 +289,7 @@ impl B for P { function scale(self: Self): i32 { return 100; } }
 function twice[T: A](v: T): i32 { return v.scale() + v.scale(); }
 
 function main(): i32 {
-    var v: P = P { x: 5 };
+    let v: P = P { x: 5 };
     return twice(v);
 }
 `
@@ -396,7 +396,7 @@ impl B for S { function m(self: Self): i32 { return 7; } }
 			{"dyn-a", "dyn A", 3},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				src := decls + "function main(): i32 {\n    var d: " + tc.dyn + " = S { v: 3 };\n    return d.m();\n}\n"
+				src := decls + "function main(): i32 {\n    let d: " + tc.dyn + " = S { v: 3 };\n    return d.m();\n}\n"
 				srcPath := filepath.Join(dir, "dyn_"+tc.name+".fern")
 				if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 					t.Fatalf("write src: %v", err)
@@ -425,7 +425,7 @@ struct S { v: i32 }
 impl A for S { function m(self: Self): i32 { return self.v; } }
 impl B for S { function n(self: Self): i32 { return 7; } }
 function main(): i32 {
-    var d: dyn A + B = S { v: 3 };
+    let d: dyn A + B = S { v: 3 };
     return d.m() + d.n();
 }
 `
@@ -471,7 +471,7 @@ function main(): i32 {
 
 	t.Run("emit-to-file", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "ret7.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var x = 3; var y = 4; return x + y; }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { let x = 3; let y = 4; return x + y; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		outPath := filepath.Join(dir, "ret7.s")
@@ -546,7 +546,7 @@ function main(): i32 {
 	// emitted a runtime __fern_str_concat call where native emitted one literal.
 	t.Run("fold-literal-concat", func(t *testing.T) {
 		foldCase(t, "foldconcat",
-			"function main(): i32 { var s: string = \"ab\" + \"cd\"; return s.len(); }\n",
+			"function main(): i32 { let s: string = \"ab\" + \"cd\"; return s.len(); }\n",
 			4, "call __fn___fern_str_concat")
 	})
 
@@ -557,7 +557,7 @@ function main(): i32 {
 	t.Run("fold-guard-concat", func(t *testing.T) {
 		foldCase(t, "foldguard", "enum E { A(string) }\n"+
 			"function main(): i32 {\n"+
-			"    var e: E = E.A(\"abcd\");\n"+
+			"    let e: E = E.A(\"abcd\");\n"+
 			"    match (e) {\n"+
 			"        E.A(s) when s == (\"ab\" + \"cd\") => { return 7; },\n"+
 			"        _ => { return 9; },\n"+
@@ -631,7 +631,7 @@ function main(): i32 {
 	// function reaches its return. Native answers 1 / 5 on the same program.
 	t.Run("opt-elides-assert", func(t *testing.T) {
 		assertCase(t, "elide", "function main(): i32 {\n"+
-			"    var n: i32 = 3;\n"+
+			"    let n: i32 = 3;\n"+
 			"    assert(n > 100, \"boom\");\n"+
 			"    return 5;\n"+
 			"}\n", 1, 5)
@@ -645,17 +645,17 @@ function main(): i32 {
 		assertCase(t, "elidenest", "enum E { A(i32) }\n"+
 			"function run(f: () => i32): i32 { return f(); }\n"+
 			"function main(): i32 {\n"+
-			"    var n: i32 = 3;\n"+
+			"    let n: i32 = 3;\n"+
 			"    if (n > 0) { assert(n > 100, \"nested-if\"); }\n"+
-			"    var g: i32 = 0;\n"+
+			"    let g: i32 = 0;\n"+
 			"    while (g < 1) { assert(n > 100, \"while\"); g = g + 1; }\n"+
-			"    var r: i32 = run((): i32 => { assert(n > 100, \"lambda\"); return 1; });\n"+
-			"    var e: E = E.A(1);\n"+
+			"    let r: i32 = run((): i32 => { assert(n > 100, \"lambda\"); return 1; });\n"+
+			"    let e: E = E.A(1);\n"+
 			"    match (e) {\n"+
 			"        E.A(v) => { assert(v > 100, \"match-arm\"); },\n"+
 			"        _ => { return 90; }\n"+
 			"    }\n"+
-			"    var r2: i32 = run((): i32 => {\n"+
+			"    let r2: i32 = run((): i32 => {\n"+
 			"        return run((): i32 => { assert(n > 100, \"nested-lambda\"); return 2; });\n"+
 			"    });\n"+
 			"    return r + r2 + 2;\n"+
@@ -711,7 +711,7 @@ function main(): i32 {
 	t.Run("opt-does-not-widen-what-compiles", func(t *testing.T) {
 		for _, tc := range []struct{ name, src, code string }{
 			{"undefined-name", "function main(): i32 {\n    assert(nosuchname > 1);\n    return 0;\n}\n", "E001"},
-			{"unknown-field", "struct P { x: i32 }\nfunction main(): i32 {\n    var p: P = P { x: 1 };\n    assert(p.nofield > 0);\n    return 0;\n}\n", "E043"},
+			{"unknown-field", "struct P { x: i32 }\nfunction main(): i32 {\n    let p: P = P { x: 1 };\n    assert(p.nofield > 0);\n    return 0;\n}\n", "E043"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				srcPath := filepath.Join(dir, "illassert_"+tc.name+".fern")
@@ -740,7 +740,7 @@ function main(): i32 {
 	// rejected every `-O` build would satisfy the agreement assertion alone.
 	t.Run("opt-still-elides-a-well-typed-assert", func(t *testing.T) {
 		assertCase(t, "elidecontrol", "function main(): i32 {\n"+
-			"    var n: i32 = 3;\n"+
+			"    let n: i32 = 3;\n"+
 			"    assert(n > 100, \"control\");\n"+
 			"    return 5;\n"+
 			"}\n", 1, 5)
@@ -778,7 +778,7 @@ function main(): i32 {
 			{"member-widens-in-struct-update", "struct Lf { v: i32 }\nstruct Tw { xs: i32[] }\ntype Node = Lf | Tw;\nstruct Holds { t: Node, n: i32 }\nfunction upd(h: Holds, n: i32): Holds { return Holds { ...h, t: Lf { v: n } }; }\nfunction main(): i32 { return upd(Holds { t: Lf { v: 1 }, n: 2 }, 3).n; }\n"},
 			// The control that isolates it to the literal-field position:
 			// the same value through a local already checked before the fix.
-			{"same-value-via-local", "struct Lf { v: i32 }\nstruct Tw { xs: i32[] }\ntype Node = Lf | Tw;\nstruct Holds { t: Node, n: i32 }\nfunction mk(n: i32): Holds { var t: Node = Lf { v: n }; return Holds { t: t, n: n }; }\nfunction main(): i32 { return mk(1).n; }\n"},
+			{"same-value-via-local", "struct Lf { v: i32 }\nstruct Tw { xs: i32[] }\ntype Node = Lf | Tw;\nstruct Holds { t: Node, n: i32 }\nfunction mk(n: i32): Holds { let t: Node = Lf { v: n }; return Holds { t: t, n: n }; }\nfunction main(): i32 { return mk(1).n; }\n"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				srcPath := filepath.Join(dir, "typed_field.fern")
@@ -803,8 +803,8 @@ function main(): i32 {
 			name string
 			src  string
 		}{
-			{"concrete", "struct Pt { x: i32, y: i32 }\nimpl Pt { function make(a: i32, b: i32): Pt { return Pt { x: a, y: b }; } }\nfunction main(): i32 { var p: Pt = Pt.make(3, 4); return p.x + p.y; }\n"},
-			{"generic", "struct Box[T] { v: T }\nimpl[T] Box[T] {\n    function of(v: T): Box[T] { return Box { v: v }; }\n    function get(self: Self): T { return self.v; }\n}\nfunction main(): i32 { var b: Box[i32] = Box.of(42); return b.get(); }\n"},
+			{"concrete", "struct Pt { x: i32, y: i32 }\nimpl Pt { function make(a: i32, b: i32): Pt { return Pt { x: a, y: b }; } }\nfunction main(): i32 { let p: Pt = Pt.make(3, 4); return p.x + p.y; }\n"},
+			{"generic", "struct Box[T] { v: T }\nimpl[T] Box[T] {\n    function of(v: T): Box[T] { return Box { v: v }; }\n    function get(self: Self): T { return self.v; }\n}\nfunction main(): i32 { let b: Box[i32] = Box.of(42); return b.get(); }\n"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				srcPath := filepath.Join(dir, "inherent_assoc.fern")
@@ -838,7 +838,7 @@ function main(): i32 {
 	// #8739. The parser is permissive: where it cannot read the source it
 	// plants an ExprUnknown and carries on, so every later pass reasons about
 	// the MARKER. `-check` never ran the gate that turns those markers back
-	// into P001/P002, so `var x: i32 = ;` surfaced as the #9053
+	// into P001/P002, so `let x: i32 = ;` surfaced as the #9053
 	// "cannot represent yet" catch-all, and a `= ;` parameter default — which
 	// no walk reached at all — surfaced as E076's non-constant rule, naming a
 	// rule the author had not broken.
@@ -852,7 +852,7 @@ function main(): i32 {
 			name string
 			src  string
 		}{
-			{"body-sentinel", "function main(): i32 { var x: i32 = ;\n  return 0; }\n"},
+			{"body-sentinel", "function main(): i32 { let x: i32 = ;\n  return 0; }\n"},
 			// The default cases are the ones the gate was added for: a
 			// default hangs off the declaration, not off a statement, so
 			// neither the body walk nor the top-level one reached it.
@@ -894,7 +894,7 @@ function main(): i32 {
 	// statements and answers with the top-level `return`. With a `main`,
 	// eval_module calls that and returns before it ever looks at the bucket,
 	// and the compile path drops it: the statements are unreachable, and the
-	// self-host said nothing, so `var g: i32 = 1;` beside a `main` produced a
+	// self-host said nothing, so `let g: i32 = 1;` beside a `main` produced a
 	// clean binary with the initialiser silently discarded.
 	//
 	// Native rejects the source either way, so the accepted-and-dead case is a
@@ -906,7 +906,7 @@ function main(): i32 {
 			name string
 			src  string
 		}{
-			{"var", "var g: i32 = 1;\nfunction main(): i32 { return 0; }\n"},
+			{"var", "let g: i32 = 1;\nfunction main(): i32 { return 0; }\n"},
 			{"call", "print(\"hi\");\nfunction main(): i32 { return 0; }\n"},
 			{"if", "if (1 > 0) { }\nfunction main(): i32 { return 0; }\n"},
 			// The shape #2673's migration turned `function (): i32 {…}` into,
@@ -933,7 +933,7 @@ function main(): i32 {
 		// The control: no `main`, so this IS the script mode, and the gate must
 		// not touch it. `-interp` answers with the top-level return.
 		scriptPath := filepath.Join(dir, "script.fern")
-		if err := os.WriteFile(scriptPath, []byte("var x = 1 + 2 * 3;\nreturn x;\n"), 0o644); err != nil {
+		if err := os.WriteFile(scriptPath, []byte("let x = 1 + 2 * 3;\nreturn x;\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		if out, code := runDriver(t, "-interp", scriptPath); code != 7 {
@@ -954,12 +954,12 @@ function main(): i32 {
 		// passes identically before and after the fix and cannot see this.
 		for _, src := range []string{
 			// through a free call, with the view built inline
-			"function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n",
+			"function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { let t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n",
 			// through a `str`-typed local
-			"function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; var v: str = slice_unchecked(t, 0, 3); return g(v); }\n",
+			"function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { let t: string = \"abcdef\"; let v: str = slice_unchecked(t, 0, 3); return g(v); }\n",
 			// and with the callee itself declared `str`, which the AST
 			// lowering erases to `string` in the signature
-			"function g(x: str): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n",
+			"function g(x: str): i32 { return x.len(); }\nfunction main(): i32 { let t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n",
 		} {
 			srcPath := filepath.Join(dir, "strview_arg.fern")
 			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -973,7 +973,7 @@ function main(): i32 {
 		// The owning sinks must still refuse: this widens argument position
 		// only, and a view stored into an owned `string` is still E003.
 		srcPath := filepath.Join(dir, "strview_owned.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var t: string = \"abcdef\"; var s: string = slice_unchecked(t, 0, 3); return s.len(); }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { let t: string = \"abcdef\"; let s: string = slice_unchecked(t, 0, 3); return s.len(); }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		if _, code := runDriver(t, "-check", srcPath); code != 1 {
@@ -984,7 +984,7 @@ function main(): i32 {
 		// must not reach it. It does not — E051 is raised by the separate
 		// owned-argument walk, which the carve-out never consults.
 		ownPath := filepath.Join(dir, "strview_own_param.fern")
-		if err := os.WriteFile(ownPath, []byte("function g(own x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n"), 0o644); err != nil {
+		if err := os.WriteFile(ownPath, []byte("function g(own x: string): i32 { return x.len(); }\nfunction main(): i32 { let t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		out, code := runDriver(t, "-check", ownPath)
@@ -1065,7 +1065,7 @@ function main(): i32 {
 		// which used to filter the diagnostic set down to the immutability
 		// rules and let this through on every target), and `-interp`.
 		srcPath := filepath.Join(dir, "float_oor.fern")
-		src := "function main(): i32 { var x: f64 = 1e309; if (x > 1.0e308) { return 7; } return 0; }\n"
+		src := "function main(): i32 { let x: f64 = 1e309; if (x > 1.0e308) { return 7; } return 0; }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
@@ -1094,7 +1094,7 @@ function main(): i32 {
 		// The accepted side of the same boundary: underflow is not a range
 		// error on either engine, so this compiles and runs.
 		okPath := filepath.Join(dir, "float_underflow.fern")
-		okSrc := "function main(): i32 { var x: f64 = 1e-400; if (x == 0.0) { return 7; } return 0; }\n"
+		okSrc := "function main(): i32 { let x: f64 = 1e-400; if (x == 0.0) { return 7; } return 0; }\n"
 		if err := os.WriteFile(okPath, []byte(okSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
@@ -1115,7 +1115,7 @@ function main(): i32 {
 
 	t.Run("check-enum-value-ok", func(t *testing.T) {
 		// #4346 piece 2 (enum-value slice): a bare no-payload enum variant used
-		// as a value (`var c: Color = Red;`) types to its enum's union, so this
+		// as a value (`let c: Color = Red;`) types to its enum's union, so this
 		// native-valid program now passes self-host `-check` (exit 0). Before
 		// the slice `Red` typed to unknown, failed `type_assignable` against the
 		// declared `Color`, and `-check` exited 1 (a silent over-reject). Covers
@@ -1123,7 +1123,7 @@ function main(): i32 {
 		srcPath := filepath.Join(dir, "enum_value.fern")
 		src := "enum Color { Red, Green }\n" +
 			"function pick(): Color { return Green; }\n" +
-			"function main(): i32 { var c: Color = Red; var d: Color = pick(); return 0; }\n"
+			"function main(): i32 { let c: Color = Red; let d: Color = pick(); return 0; }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
@@ -1141,10 +1141,10 @@ function main(): i32 {
 		// exited 1 (a silent over-reject).
 		srcPath := filepath.Join(dir, "option_result_value.fern")
 		src := "function main(): i32 {\n" +
-			"    var a: Option[i32] = Some(3);\n" +
-			"    var b: Option[i32] = None;\n" +
-			"    var c: Result[i32, i32] = Ok(3);\n" +
-			"    var d: Result[i32, i32] = Err(9);\n" +
+			"    let a: Option[i32] = Some(3);\n" +
+			"    let b: Option[i32] = None;\n" +
+			"    let c: Result[i32, i32] = Ok(3);\n" +
+			"    let d: Result[i32, i32] = Err(9);\n" +
 			"    return 0;\n" +
 			"}\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -1199,7 +1199,7 @@ function main(): i32 {
 		// (Field access `b.v` still yields unknown — the field's type parameter
 		// isn't substituted yet — so it's deliberately not exercised here.)
 		srcPath := filepath.Join(dir, "generic_struct.fern")
-		if err := os.WriteFile(srcPath, []byte("struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = Box { v: 3 }; return 0; }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("struct Box[T] { v: T }\nfunction main(): i32 { let b: Box[i32] = Box { v: 3 }; return 0; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		if _, code := runDriver(t, "-check", srcPath); code != 0 {
@@ -1214,7 +1214,7 @@ function main(): i32 {
 		// the program passes self-host `-check` (exit 0) where the pre-slice
 		// self-host typed `b.v` as unknown and over-rejected.
 		srcPath := filepath.Join(dir, "generic_struct_field.fern")
-		if err := os.WriteFile(srcPath, []byte("struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = Box { v: 3 }; return b.v; }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("struct Box[T] { v: T }\nfunction main(): i32 { let b: Box[i32] = Box { v: 3 }; return b.v; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		if _, code := runDriver(t, "-check", srcPath); code != 0 {
@@ -1234,8 +1234,8 @@ function main(): i32 {
 		src := "struct Wrapper[T] { items: T[] }\n" +
 			"struct Pair[K, V] { kv: (K, V) }\n" +
 			"function main(): i32 {\n" +
-			"    var w: Wrapper[i32] = Wrapper { items: [1, 2, 3] };\n" +
-			"    var p: Pair[i32, string] = Pair { kv: (7, \"hi\") };\n" +
+			"    let w: Wrapper[i32] = Wrapper { items: [1, 2, 3] };\n" +
+			"    let p: Pair[i32, string] = Pair { kv: (7, \"hi\") };\n" +
 			"    return w.items[0] + p.kv.0;\n" +
 			"}\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -1255,14 +1255,14 @@ function main(): i32 {
 		// element indexes to i32). Both pass self-host `-check` (exit 0) where
 		// the pre-slice self-host typed the call unknown and over-rejected.
 		bare := filepath.Join(dir, "generic_method.fern")
-		if err := os.WriteFile(bare, []byte("struct Box[T] { v: T }\nfunction (b: Box[T]) get(): T { return b.v; }\nfunction main(): i32 { var b: Box[i32] = Box { v: 5 }; return b.get(); }\n"), 0o644); err != nil {
+		if err := os.WriteFile(bare, []byte("struct Box[T] { v: T }\nfunction (b: Box[T]) get(): T { return b.v; }\nfunction main(): i32 { let b: Box[i32] = Box { v: 5 }; return b.get(); }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		if _, code := runDriver(t, "-check", bare); code != 0 {
 			t.Errorf("-check on a generic-method-return program exited %d, want 0", code)
 		}
 		nested := filepath.Join(dir, "generic_method_nested.fern")
-		if err := os.WriteFile(nested, []byte("struct Wrapper[T] { items: T[] }\nfunction (w: Wrapper[T]) all(): T[] { return w.items; }\nfunction main(): i32 { var w: Wrapper[i32] = Wrapper { items: [1, 2] }; return w.all()[0]; }\n"), 0o644); err != nil {
+		if err := os.WriteFile(nested, []byte("struct Wrapper[T] { items: T[] }\nfunction (w: Wrapper[T]) all(): T[] { return w.items; }\nfunction main(): i32 { let w: Wrapper[i32] = Wrapper { items: [1, 2] }; return w.all()[0]; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		if _, code := runDriver(t, "-check", nested); code != 0 {
@@ -1273,7 +1273,7 @@ function main(): i32 {
 	t.Run("check-dyn-bind-ok", func(t *testing.T) {
 		// #4346 piece 2 (dyn Trait representation): a `dyn Trait` annotation now
 		// resolves to a real TypeDyn instead of TypeUnknown, so binding a struct
-		// value into a dyn slot (`var d: dyn Greet = Dog { }`) type-checks
+		// value into a dyn slot (`let d: dyn Greet = Dog { }`) type-checks
 		// (assignment into a dyn slot is lenient) — the program passes self-host
 		// `-check` (exit 0) where the pre-slice self-host bound `d` to unknown
 		// and silently over-rejected. Dispatch through the dyn value is
@@ -1282,7 +1282,7 @@ function main(): i32 {
 		src := "trait Greet { function hi(self: Self): i32; }\n" +
 			"struct Dog { }\n" +
 			"impl Greet for Dog { function hi(self: Self): i32 { return 7; } }\n" +
-			"function main(): i32 { var d: dyn Greet = Dog { }; return 0; }\n"
+			"function main(): i32 { let d: dyn Greet = Dog { }; return 0; }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
@@ -1298,7 +1298,7 @@ function main(): i32 {
 		src := "trait Greet { function hi(self: Self): i32; }\n" +
 			"struct Dog { }\n" +
 			"impl Greet for Dog { function hi(self: Self): i32 { return 7; } }\n" +
-			"function main(): i32 { var d: dyn Greet = Dog { }; return d.hi(); }\n"
+			"function main(): i32 { let d: dyn Greet = Dog { }; return d.hi(); }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
@@ -1385,7 +1385,7 @@ function main(): i32 {
 		// they run through prints neither position. Position is checked only
 		// here, and only for the codes these rows name.
 		srcPath := filepath.Join(dir, "fip_array.fern")
-		src := "fip function f(n: i32): i32 {\n    var a: i32[] = [1];\n    return n + a.len();\n}\nfunction main(): i32 { return f(1); }\n"
+		src := "fip function f(n: i32): i32 {\n    let a: i32[] = [1];\n    return n + a.len();\n}\nfunction main(): i32 { return f(1); }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
@@ -1429,14 +1429,14 @@ function main(): i32 {
 	})
 
 	t.Run("check-position-var", func(t *testing.T) {
-		// Statement-level codes are reported at the `var` keyword: E013
+		// Statement-level codes are reported at the `let` keyword: E013
 		// (dup var) at the redeclaration, E003 (annotated-var mismatch) and
 		// E020 (empty array, no annotation) at the var.
 		for _, c := range []struct{ name, src, want string }{
-			{"dup_var", "function main(): i32 { var x: i32 = 1; var x: i32 = 2; return x; }\n", "1:40: error[E013]"},
-			{"var_mismatch", "function main(): i32 { var x: i32 = \"no\"; return x; }\n", "1:24: error[E003]"},
-			{"empty_array", "function main(): i32 { var z = []; return 0; }\n", "1:24: error[E020]"},
-			{"assign_mismatch", "function main(): i32 { var x: i32 = 1; x = \"no\"; return x; }\n", "1:42: error[E003]"},
+			{"dup_var", "function main(): i32 { let x: i32 = 1; let x: i32 = 2; return x; }\n", "1:40: error[E013]"},
+			{"var_mismatch", "function main(): i32 { let x: i32 = \"no\"; return x; }\n", "1:24: error[E003]"},
+			{"empty_array", "function main(): i32 { let z = []; return 0; }\n", "1:24: error[E020]"},
+			{"assign_mismatch", "function main(): i32 { let x: i32 = 1; x = \"no\"; return x; }\n", "1:42: error[E003]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1453,7 +1453,7 @@ function main(): i32 {
 		// E002 (return-type mismatch) and E012 (return without value) are
 		// reported at the `return` keyword.
 		for _, c := range []struct{ name, src, want string }{
-			{"ret_mismatch", "function main(): i32 { var s: string = \"x\"; return s; }\n", "1:45: error[E002]"},
+			{"ret_mismatch", "function main(): i32 { let s: string = \"x\"; return s; }\n", "1:45: error[E002]"},
 			{"ret_no_value", "function f(): i32 { return; }\nfunction main(): i32 { return 0; }\n", "1:21: error[E012]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
@@ -1470,7 +1470,7 @@ function main(): i32 {
 	t.Run("check-position-tuple-destructure", func(t *testing.T) {
 		// E024 (destructuring a non-tuple) is reported at the destructure.
 		for _, c := range []struct{ name, src, want string }{
-			{"non_tuple", "function main(): i32 { var n = 5; var (a, b) = n; return a + b; }\n", "1:35: error[E024]"},
+			{"non_tuple", "function main(): i32 { let n = 5; let (a, b) = n; return a + b; }\n", "1:35: error[E024]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1504,7 +1504,7 @@ function main(): i32 {
 		// E052 (non-void body can fall off the end) is reported at the
 		// function declaration.
 		for _, c := range []struct{ name, src, want string }{
-			{"falls_off_end", "function f(): i32 { var x = 1; }\nfunction main(): i32 { return 0; }\n", "1:1: error[E052]"},
+			{"falls_off_end", "function f(): i32 { let x = 1; }\nfunction main(): i32 { return 0; }\n", "1:1: error[E052]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1590,7 +1590,7 @@ function main(): i32 {
 		// E043 for a struct-literal field value whose type doesn't match
 		// the declared field type is reported at the value.
 		for _, c := range []struct{ name, src, want string }{
-			{"string_for_i32", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1, y: \"no\" }; return 0; }\n", "2:48: error[E043]"},
+			{"string_for_i32", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p: P = P { x: 1, y: \"no\" }; return 0; }\n", "2:48: error[E043]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1607,7 +1607,7 @@ function main(): i32 {
 		// E038 for a primitive method-argument type mismatch is reported
 		// at the offending argument.
 		for _, c := range []struct{ name, src, want string }{
-			{"string_for_i32", "struct P { x: i32 }\nfunction (p: P) add(a: i32): i32 { return p.x + a; }\nfunction main(): i32 { var p: P = P { x: 1 }; var s: string = \"n\"; return p.add(s); }\n", "3:81: error[E038]"},
+			{"string_for_i32", "struct P { x: i32 }\nfunction (p: P) add(a: i32): i32 { return p.x + a; }\nfunction main(): i32 { let p: P = P { x: 1 }; let s: string = \"n\"; return p.add(s); }\n", "3:81: error[E038]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1624,7 +1624,7 @@ function main(): i32 {
 		// E004 for a method call with the wrong argument count is reported
 		// at the call's opening paren.
 		for _, c := range []struct{ name, src, want string }{
-			{"method_too_few", "struct P { x: i32 }\nfunction (p: P) add(a: i32, b: i32): i32 { return p.x + a + b; }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.add(5); }\n", "3:59: error[E004]"},
+			{"method_too_few", "struct P { x: i32 }\nfunction (p: P) add(a: i32, b: i32): i32 { return p.x + a + b; }\nfunction main(): i32 { let p: P = P { x: 1 }; return p.add(5); }\n", "3:59: error[E004]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1641,7 +1641,7 @@ function main(): i32 {
 		// E035 (variant pattern on a non-enum scrutinee) is reported at
 		// the offending arm.
 		for _, c := range []struct{ name, src, want string }{
-			{"variant_on_i32", "enum E { A, B }\nfunction main(): i32 { var n: i32 = 5; match (n) { A => { return 1; }, _ => { return 0; } } }\n", "2:52: error[E035]"},
+			{"variant_on_i32", "enum E { A, B }\nfunction main(): i32 { let n: i32 = 5; match (n) { A => { return 1; }, _ => { return 0; } } }\n", "2:52: error[E035]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1658,8 +1658,8 @@ function main(): i32 {
 		// E034 (heterogeneous array element) is reported at the offending
 		// element's own position.
 		for _, c := range []struct{ name, src, want string }{
-			{"string_in_i32", "function main(): i32 { var a = [1, \"x\", 3]; return 0; }\n", "1:36: error[E034]"},
-			{"i32_in_string", "function main(): i32 { var a = [\"a\", 1]; return 0; }\n", "1:38: error[E034]"},
+			{"string_in_i32", "function main(): i32 { let a = [1, \"x\", 3]; return 0; }\n", "1:36: error[E034]"},
+			{"i32_in_string", "function main(): i32 { let a = [\"a\", 1]; return 0; }\n", "1:38: error[E034]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1693,8 +1693,8 @@ function main(): i32 {
 		// E026 (non-final wildcard) and E028 (duplicate variant) are
 		// reported at the offending arm (its pattern's first token).
 		for _, c := range []struct{ name, src, want string }{
-			{"wildcard_not_last", "enum E { A, B }\nfunction main(): i32 { var e: E = E.A; match (e) { _ => { return 0; }, A => { return 1; } } }\n", "2:52: error[E026]"},
-			{"dup_variant", "enum E { A, B }\nfunction main(): i32 { var e: E = E.A; match (e) { A => { return 0; }, A => { return 1; }, B => { return 2; } } }\n", "2:72: error[E028]"},
+			{"wildcard_not_last", "enum E { A, B }\nfunction main(): i32 { let e: E = E.A; match (e) { _ => { return 0; }, A => { return 1; } } }\n", "2:52: error[E026]"},
+			{"dup_variant", "enum E { A, B }\nfunction main(): i32 { let e: E = E.A; match (e) { A => { return 0; }, A => { return 1; }, B => { return 2; } } }\n", "2:72: error[E028]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1731,8 +1731,8 @@ function main(): i32 {
 		for _, c := range []struct{ name, src, want string }{
 			{"if_cond", "function main(): i32 { if (5) { return 1; } return 0; }\n", "1:28: error[E008]"},
 			{"while_cond", "function main(): i32 { while (5) { return 1; } return 0; }\n", "1:31: error[E008]"},
-			{"slice_low", "function main(): i32 { var a = [1,2,3]; var s: string = \"x\"; var b = a[s:2]; return 0; }\n", "1:72: error[E037]"},
-			{"slice_high", "function main(): i32 { var a = [1,2,3]; var s: string = \"x\"; var b = a[0:s]; return 0; }\n", "1:74: error[E037]"},
+			{"slice_low", "function main(): i32 { let a = [1,2,3]; let s: string = \"x\"; let b = a[s:2]; return 0; }\n", "1:72: error[E037]"},
+			{"slice_high", "function main(): i32 { let a = [1,2,3]; let s: string = \"x\"; let b = a[0:s]; return 0; }\n", "1:74: error[E037]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1749,8 +1749,8 @@ function main(): i32 {
 		// E033 (invalid cast) is reported at the cast's inner operand,
 		// matching the Go checker's CastExpr position.
 		for _, c := range []struct{ name, src, want string }{
-			{"bool_to_i32", "function main(): i32 { var b: boolean = true; return b as i32; }\n", "1:56: error[E033]"},
-			{"i32_to_bool", "function main(): i32 { var x: i32 = 1; var b: boolean = x as boolean; return 0; }\n", "1:59: error[E033]"},
+			{"bool_to_i32", "function main(): i32 { let b: boolean = true; return b as i32; }\n", "1:56: error[E033]"},
+			{"i32_to_bool", "function main(): i32 { let x: i32 = 1; let b: boolean = x as boolean; return 0; }\n", "1:59: error[E033]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1766,8 +1766,8 @@ function main(): i32 {
 	t.Run("check-position-field-assign", func(t *testing.T) { // E048 (assignment to an immutable field) is reported at the
 		// field-access object, matching the Go checker.
 		for _, c := range []struct{ name, src, want string }{
-			{"field_assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n", "2:48: error[E048]"},
-			{"field_compound", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x += 5; return p.x; }\n", "2:48: error[E048]"},
+			{"field_assign", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x = 5; return p.x; }\n", "2:48: error[E048]"},
+			{"field_compound", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x += 5; return p.x; }\n", "2:48: error[E048]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1792,12 +1792,12 @@ function main(): i32 {
 			src    string
 			reject string // non-empty ⇒ expect rejection with this on stderr
 		}{
-			{"field-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 9; return p.x; }\n", "error[E048]"},
-			{"field-compound", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x += 5; return p.x; }\n", "error[E048]"},
-			{"subscript-assign", "function main(): i32 { var a: i32[] = [1, 2, 3]; a[0] = 9; return a[0]; }\n", "error[E056]"},
+			{"field-assign", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x = 9; return p.x; }\n", "error[E048]"},
+			{"field-compound", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p.x += 5; return p.x; }\n", "error[E048]"},
+			{"subscript-assign", "function main(): i32 { let a: i32[] = [1, 2, 3]; a[0] = 9; return a[0]; }\n", "error[E056]"},
 			// Sanctioned replacements compile cleanly (no rejection).
-			{"functional-update-ok", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p = P { ...p, x: 9 }; return p.x; }\n", ""},
-			{"with-ok", "function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.with(0, 9); return a[0]; }\n", ""},
+			{"functional-update-ok", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; p = P { ...p, x: 9 }; return p.x; }\n", ""},
+			{"with-ok", "function main(): i32 { let a: i32[] = [1, 2, 3]; a = a.with(0, 9); return a[0]; }\n", ""},
 		} {
 			sp := filepath.Join(dir, "compile_"+c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1828,8 +1828,8 @@ function main(): i32 {
 		// E043 (no such struct field) and E046 (bad tuple index) are
 		// reported at the field-access dot.
 		for _, c := range []struct{ name, src, want string }{
-			{"no_field", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.y; }\n", "2:55: error[E043]"},
-			{"bad_tuple_idx", "function main(): i32 { var t = (1, 2); return t.foo; }\n", "1:48: error[E046]"},
+			{"no_field", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; return p.y; }\n", "2:55: error[E043]"},
+			{"bad_tuple_idx", "function main(): i32 { let t = (1, 2); return t.foo; }\n", "1:48: error[E046]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1847,9 +1847,9 @@ function main(): i32 {
 		// reported at the operator token: the binary operator, or the
 		// unary `!`.
 		for _, c := range []struct{ name, src, want string }{
-			{"and_nonbool", "function main(): i32 { var b: boolean = true; var x: boolean = b && 5; return 0; }\n", "1:66: error[E009]"},
-			{"not_nonbool", "function main(): i32 { var x: boolean = !5; return 0; }\n", "1:41: error[E009]"},
-			{"compare_mismatch", "function main(): i32 { var t = (1 == \"x\"); return 0; }\n", "1:35: error[E041]"},
+			{"and_nonbool", "function main(): i32 { let b: boolean = true; let x: boolean = b && 5; return 0; }\n", "1:66: error[E009]"},
+			{"not_nonbool", "function main(): i32 { let x: boolean = !5; return 0; }\n", "1:41: error[E009]"},
+			{"compare_mismatch", "function main(): i32 { let t = (1 == \"x\"); return 0; }\n", "1:35: error[E041]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1866,8 +1866,8 @@ function main(): i32 {
 		// E036 (ambiguous unqualified variant) and the ident-argument
 		// case of E038 are reported at the identifier's own position.
 		for _, c := range []struct{ name, src, want string }{
-			{"ambiguous_variant", "enum A { Foo, Bar }\nenum B { Foo, Baz }\nfunction main(): i32 { var x = Foo; return 0; }\n", "3:32: error[E036]"},
-			{"arg_ident", "function f(a: string): i32 { return 0; }\nfunction main(): i32 { var n: i32 = 5; return f(n); }\n", "2:49: error[E038]"},
+			{"ambiguous_variant", "enum A { Foo, Bar }\nenum B { Foo, Baz }\nfunction main(): i32 { let x = Foo; return 0; }\n", "3:32: error[E036]"},
+			{"arg_ident", "function f(a: string): i32 { return 0; }\nfunction main(): i32 { let n: i32 = 5; return f(n); }\n", "2:49: error[E038]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1885,7 +1885,7 @@ function main(): i32 {
 		// E038 (argument type mismatch) are reported at the numeric
 		// literal's own position.
 		for _, c := range []struct{ name, src, want string }{
-			{"lit_overflow", "function main(): i32 { var x: i32 = 9999999999; return x; }\n", "1:37: error[E047]"},
+			{"lit_overflow", "function main(): i32 { let x: i32 = 9999999999; return x; }\n", "1:37: error[E047]"},
 			{"arg_number", "function f(a: string): i32 { return 0; }\nfunction main(): i32 { return f(5); }\n", "2:33: error[E038]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
@@ -1920,7 +1920,7 @@ function main(): i32 {
 		// E005 (struct literal missing field) is reported at the
 		// struct-literal type name.
 		for _, c := range []struct{ name, src, want string }{
-			{"missing_field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; return p.x; }\n", "2:35: error[E005]"},
+			{"missing_field", "struct P { x: i32, y: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; return p.x; }\n", "2:35: error[E005]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {
@@ -1937,7 +1937,7 @@ function main(): i32 {
 		// -interp evaluates via the tree-walker; the program's i32
 		// result becomes the exit code (mirrors interp_run.fern).
 		srcPath := filepath.Join(dir, "interp_prog.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var x = 5; var y = 8; return x * y - 1; }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { let x = 5; let y = 8; return x * y - 1; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		_, code := runDriver(t, "-interp", srcPath)
@@ -1952,7 +1952,7 @@ function main(): i32 {
 		// output is a fixed point) — validating the formatter is wired
 		// + stable without pinning its exact style.
 		srcPath := filepath.Join(dir, "messy.fern")
-		messy := "function   main( ):i32{var x=1;var y=2;return x+y;}\n"
+		messy := "function   main( ):i32{let x=1;let y=2;return x+y;}\n"
 		if err := os.WriteFile(srcPath, []byte(messy), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
@@ -2243,11 +2243,11 @@ function main(): i32 {
 			// forms use a demote/promote pair, since an f32 travels in an
 			// f64 slot on wasm.
 			{"reinterpret-bits", `function main(): i32 {
-    var x: f32 = 1.0 as f32;
-    var b: i32 = f32_bits(x);
-    var y: f32 = f32_from_bits(b);
-    var d: i64 = f64_bits(2.0);
-    var z: f64 = f64_from_bits(d);
+    let x: f32 = 1.0 as f32;
+    let b: i32 = f32_bits(x);
+    let y: f32 = f32_from_bits(b);
+    let d: i64 = f64_bits(2.0);
+    let z: f64 = f64_from_bits(d);
     if (b == 1065353216 && y == x && z == 2.0 && d == 4611686018427387904) { return 42; }
     return 1;
 }
@@ -2266,8 +2266,8 @@ function main(): i32 {
 import "std/i64";
 
 function main(): i32 {
-    var a: i32 = (16i32).leading_zeros() + (16i32).trailing_zeros() + (255i32).count_ones();
-    var b: i32 = (1099511627776i64).leading_zeros() + (1099511627776i64).trailing_zeros() + (255i64).count_ones();
+    let a: i32 = (16i32).leading_zeros() + (16i32).trailing_zeros() + (255i32).count_ones();
+    let b: i32 = (1099511627776i64).leading_zeros() + (1099511627776i64).trailing_zeros() + (255i64).count_ones();
     if (a == 39 && b == 71) { return 42; }
     return 1;
 }
@@ -2276,9 +2276,9 @@ function main(): i32 {
 			{"bulk-memory-copy", `import "std/string";
 
 function main(): i32 {
-    var b: u8[] = "hello".bytes();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let b: u8[] = "hello".bytes();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < b.len()) { t = t + (b[i] as i32); i = i + 1; }
     if (t == 532 && b.len() == 5) { return 42; }
     return 1;
@@ -2286,7 +2286,7 @@ function main(): i32 {
 `, 42, ""},
 			// 0xFC 11 `memory.fill` — `__memset`, core/map's bucket init.
 			{"bulk-memory-fill", `function main(): i32 {
-    var p: usize = __alloc(8);
+    let p: usize = __alloc(8);
     __memset(p, 65, 8);
     if ((__load_i32(p) & 255) == 65) { return 42; }
     return 1;
@@ -2339,19 +2339,19 @@ function main(): i32 {
 			// reach the import surface it is here to pin.
 			stdlib bool
 		}{
-			{"no-io", "function main(): i32 { var s = 0; var i = 0; while (i < 7) { s = s + i; i = i + 1; } return s - 21; }\n", "", false},
-			{"hex-immediates", "function main(): i32 { var wide = 0xFFFFFFFF; var upper = 0X80000000; var word: u32 = 0xffffffff; if (wide / 65536 == 65535 && upper > 0 && word + 1 == 0u32) { return 0; } return 1; }\n", "", false},
+			{"no-io", "function main(): i32 { let s = 0; let i = 0; while (i < 7) { s = s + i; i = i + 1; } return s - 21; }\n", "", false},
+			{"hex-immediates", "function main(): i32 { let wide = 0xFFFFFFFF; let upper = 0X80000000; let word: u32 = 0xffffffff; if (wide / 65536 == 65535 && upper > 0 && word + 1 == 0u32) { return 0; } return 1; }\n", "", false},
 			{"stdout", "function main(): i32 { print(\"hi from component\"); return 0; }\n", "hi from component\n", false},
 			// core/map seeds its string hash from the same CSPRNG as random_i32,
 			// so a Map pulls wasi:random/random's get-random-u64 into the core
 			// with no random call in the program. The framing has to be chosen
 			// accordingly: wrapped as plain stdout, this component carries a core
 			// import no instantiation argument satisfies and will not load.
-			{"map", "import \"core/map\";\nfunction main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 1); if (!m.has(\"a\")) { return 1; } print(\"map ok\"); return 0; }\n", "map ok\n", true},
+			{"map", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 1); if (!m.has(\"a\")) { return 1; } print(\"map ok\"); return 0; }\n", "map ok\n", true},
 			// A program only the semantic path produces (the AST lowering
 			// refuses a value block over an Option of an array): the no-I/O
 			// framing takes the substituted bodies like every other framing.
-			{"typed-only", "function picked(k: i32): i32 { var rows: i32[] = [k, k]; var some: i32[] = (match (Some(rows)) { Some(r) => r, None => [] }); return some.len(); }\nfunction main(): i32 { return picked(4) - 2; }\n", "", false},
+			{"typed-only", "function picked(k: i32): i32 { let rows: i32[] = [k, k]; let some: i32[] = (match (Some(rows)) { Some(r) => r, None => [] }); return some.len(); }\nfunction main(): i32 { return picked(4) - 2; }\n", "", false},
 			// A std/array combinator over a wide element under the method
 			// spelling (#9838): the erased `__arrm_map__i64` clone is a
 			// superseded template with no body here, so its wasm verdict
@@ -2477,16 +2477,16 @@ function main(): i32 {
 		// failing builtin instead of the marker. Native's counterpart is
 		// TestWASMFileBuiltinsReleaseDescriptors.
 		fdBin := build(t, "fdloop", `function round(): i32 {
-    var s: string = "line\n";
+    let s: string = "line\n";
     match (write_file("f.txt", s)) { Ok(_) => {}, Err(_) => { return 1; } }
     match (read_file("f.txt")) { Ok(t) => { if (t.len() != s.len()) { return 2; } }, Err(_) => { return 2; } }
     match (read_file_bytes("f.txt")) { Ok(b) => { if (b.len() != s.len()) { return 3; } }, Err(_) => { return 3; } }
     return 0;
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 200i32) {
-        var r: i32 = round();
+        let r: i32 = round();
         if (r != 0i32) { write("FAIL"); return r; }
         i = i + 1i32;
     }
@@ -2538,17 +2538,17 @@ function main(): i32 {
 			t.Errorf("args: stdout = %q, want %q (argv0 + 2)", string(out), "3")
 		}
 
-		clockBin := build(t, "clock", "function main(): i32 { var t: i64 = now_unix_ms(); if (t > 0) { write(\"ok\"); return 0; } return 1; }\n")
+		clockBin := build(t, "clock", "function main(): i32 { let t: i64 = now_unix_ms(); if (t > 0) { write(\"ok\"); return 0; } return 1; }\n")
 		if out, _ := exec.Command(wasmtime, "run", clockBin).Output(); string(out) != "ok" {
 			t.Errorf("clock: stdout = %q, want %q", string(out), "ok")
 		}
 
-		monoBin := build(t, "mono", "function main(): i32 { var t: i64 = monotonic_ns(); if (t > 0) { write(\"ok\"); return 0; } return 1; }\n")
+		monoBin := build(t, "mono", "function main(): i32 { let t: i64 = monotonic_ns(); if (t > 0) { write(\"ok\"); return 0; } return 1; }\n")
 		if out, _ := exec.Command(wasmtime, "run", monoBin).Output(); string(out) != "ok" {
 			t.Errorf("clock-mono: stdout = %q, want %q", string(out), "ok")
 		}
 
-		rndBin := build(t, "rnd", "function main(): i32 { var x: i32 = random_i32(); if (x == x) { write(\"ok\"); return 0; } return 1; }\n")
+		rndBin := build(t, "rnd", "function main(): i32 { let x: i32 = random_i32(); if (x == x) { write(\"ok\"); return 0; } return 1; }\n")
 		if out, _ := exec.Command(wasmtime, "run", rndBin).Output(); string(out) != "ok" {
 			t.Errorf("random: stdout = %q, want %q", string(out), "ok")
 		}
@@ -2643,7 +2643,7 @@ function main(): i32 {
 		}
 
 		// random + fs-write: draw a random i32, write a fixed file.
-		rndWrite := build(t, "rnd_write", "function main(): i32 { var x: i32 = random_i32(); if (x != x) { return 9; } match (write_file(\"out.txt\", \"R\")) { Err(e) => { return 1; }, Ok(_) => {} } return 0; }\n")
+		rndWrite := build(t, "rnd_write", "function main(): i32 { let x: i32 = random_i32(); if (x != x) { return 9; } match (write_file(\"out.txt\", \"R\")) { Err(e) => { return 1; }, Ok(_) => {} } return 0; }\n")
 		d3 := t.TempDir()
 		if ec := exec.Command(wasmtime, "run", "--dir", d3+"::/", rndWrite).Run(); ec != nil {
 			t.Fatalf("random+write: run failed: %v", ec)
@@ -2660,7 +2660,7 @@ function main(): i32 {
 		}
 
 		// fs read+write + args: copy in.txt -> out.txt, using args.
-		rwArgs := build(t, "rw_args", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { var n = args().len(); match (write_file(\"out.txt\", s)) { Err(e) => { return 2; }, Ok(_) => {} } return n - n; }, Err(e) => { return 1; } } }\n")
+		rwArgs := build(t, "rw_args", "function main(): i32 { match (read_file(\"in.txt\")) { Ok(s) => { let n = args().len(); match (write_file(\"out.txt\", s)) { Err(e) => { return 2; }, Ok(_) => {} } return n - n; }, Err(e) => { return 1; } } }\n")
 		d5 := mkdir(t)
 		if ec := exec.Command(wasmtime, "run", "--dir", d5+"::/", rwArgs, "x", "y").Run(); ec != nil {
 			t.Fatalf("rw+args: run failed: %v", ec)
@@ -2679,7 +2679,7 @@ function main(): i32 {
 			t.Skip("wasmtime not on PATH")
 		}
 		srcPath := filepath.Join(dir, "comp_multi.fern")
-		src := "function main(): i32 { var n = args().len(); match (env(\"X\")) { Some(v) => { if (n == 3) { print(\"set3\"); } return 0; }, None => { if (n == 1) { print(\"unset1\"); } return 0; } } }\n"
+		src := "function main(): i32 { let n = args().len(); match (env(\"X\")) { Some(v) => { if (n == 3) { print(\"set3\"); } return 0; }, None => { if (n == 1) { print(\"unset1\"); } return 0; } } }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
@@ -2727,8 +2727,8 @@ function main(): i32 {
 			src     string
 			mustSay []string
 		}{
-			{"syscall-floor", "function main(): i32 { var r: i64 = __syscall3(1, 1, 0, 0); return 0; }\n", []string{"__syscall3", "E066", "syscall"}},
-			{"raw-memory-floor", "function main(): i32 { var p: usize = __raw_alloc(64); return 0; }\n", []string{"__raw_alloc", "not supported on the wasm target"}},
+			{"syscall-floor", "function main(): i32 { let r: i64 = __syscall3(1, 1, 0, 0); return 0; }\n", []string{"__syscall3", "E066", "syscall"}},
+			{"raw-memory-floor", "function main(): i32 { let p: usize = __raw_alloc(64); return 0; }\n", []string{"__raw_alloc", "not supported on the wasm target"}},
 			{"timer-fd", "function main(): i32 { return timer_fd(10); }\n", []string{"timer_fd", "E066", "pollfd"}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {

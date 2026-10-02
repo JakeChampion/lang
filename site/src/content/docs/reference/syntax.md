@@ -13,7 +13,7 @@ parser is the source of truth ([`internal/parser`][1]).
 Reserved across all syntactic positions:
 
 ```
-function var let use as
+function let use as
 if else while for loop break continue return
 true false boolean void string
 i32 i64 u8 u32 u64 usize f32 f64
@@ -39,7 +39,7 @@ comment stays with the declaration it documents.
 ```fern
 // Header comment.
 function main(): i32 {
-    var x: i32 = 7;  // Trailing comment.
+    let x: i32 = 7;  // Trailing comment.
     return x;
 }
 ```
@@ -97,7 +97,7 @@ struct literals and declarations, enum declarations, match arms, tuple
 literals, map literals, and the map-foreach binder (`for (k, v,) in m`):
 
 ```fern
-var xs: i32[] = [
+let xs: i32[] = [
     1,
     2,
 ];
@@ -125,7 +125,7 @@ isn't significant.
 - **`for x in expr { ... }`** — foreach over an array, slice, range or
   iterator.
 - **`for Pat in expr { ... }`** — foreach with a destructuring binder,
-  the same irrefutable pattern `var Pat = e;` and a destructuring
+  the same irrefutable pattern `let Pat = e;` and a destructuring
   parameter take: a tuple (nested elements and `_` discards included) or
   a struct pattern (with renaming and `..`), optionally with an `@`
   binding for the whole element. Over an array it binds against each
@@ -144,7 +144,7 @@ isn't significant.
 - **`function f(Pat: T)`** — destructuring parameter, same grammar again
   but irrefutable only (a tuple or struct pattern, optionally with an
   `@` binding for the whole value).
-- **`var Pat = expr;`** / **`let Pat = expr;`** — irrefutable destructure,
+- **`let Pat = expr;`** / **`let Pat = expr;`** — irrefutable destructure,
   the third site taking that same pattern. A refutable head belongs to the
   `let … else` form above, which has a branch for the miss.
 - **`defer expr;`** / **`errdefer expr;`** — schedule expr to run when the
@@ -190,7 +190,7 @@ Double-quoted, escape with `\\`. An `f` prefix introduces an
 f-string with `{expr}` interpolation:
 
 ```fern
-var name: string = "world";
+let name: string = "world";
 print(f"hello, {name}");
 ```
 

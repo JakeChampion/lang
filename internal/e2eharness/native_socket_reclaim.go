@@ -35,12 +35,12 @@ func NativeSocketFailureProbe(operation string, darwin, zero bool, connectErrno 
 	if operation == "socket" {
 		return `function main(): i32 {
     ` + prelude + `
-    var sockets: i32[] = [];
-    var fd: i32 = tcp_listen(0);
+    let sockets: i32[] = [];
+    let fd: i32 = tcp_listen(0);
     while (fd >= 0) { sockets = sockets.append(fd); fd = tcp_listen(0); }
     if (fd != -24 || sockets.len() == 0) { return 91; }
     if (tcp_listen(0) != -24) { return 92; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < sockets.len()) {
         if (tcp_local_port(sockets[i]) <= 0) { return 93; }
         if (tcp_close(sockets[i]) != 0) { return 94; }
@@ -57,19 +57,19 @@ func NativeSocketFailureProbe(operation string, darwin, zero bool, connectErrno 
 		errno, expr = connectErrno, "tcp_connect(-1, 1)"
 	}
 	return fmt.Sprintf(`function main(): i32 {
-    var listener: i32 = tcp_listen(0);
+    let listener: i32 = tcp_listen(0);
     if (listener < 0) { return 90; }
-    var port: i32 = tcp_local_port(listener);
+    let port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 91; }
     %s
     // The kernel must reuse this lowest available descriptor after failures.
-    var before: i32 = tcp_listen(0);
+    let before: i32 = tcp_listen(0);
     if (before < 0 || tcp_close(before) != 0) { return 92; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
-        var failed: i32 = %s;
+        let failed: i32 = %s;
         if (failed != -%d) { return 93; }
-        var after: i32 = tcp_listen(0);
+        let after: i32 = tcp_listen(0);
         if (after != before) { return 94; }
         if (tcp_close(after) != 0) { return 95; }
         i = i + 1;

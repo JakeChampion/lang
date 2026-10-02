@@ -36,16 +36,16 @@ func TestSelfHostErasedWideTupleWasm(t *testing.T) {
 	}{
 		// i64 first element: t.0 occupies the full-width i64 slot; t.1 (i32) reads the
 		// low word at the same 8-byte stride. 5e9/1e9 + 3 = 5 + 3 = 8.
-		{"i64-elem", pair + ` function main(): i32 { var t = pair(5000000000 as i64, 3); return (t.0 / 1000000000) as i32 + t.1; }`, 8},
+		{"i64-elem", pair + ` function main(): i32 { let t = pair(5000000000 as i64, 3); return (t.0 / 1000000000) as i32 + t.1; }`, 8},
 		// f64 first element: reinterpreted into the i64 slot at the call, read back
 		// as f64. 2.5*2.0 + 4 = 5 + 4 = 9.
-		{"f64-elem", pair + ` function main(): i32 { var t = pair(2.5, 4); return (t.0 * 2.0) as i32 + t.1; }`, 9},
+		{"f64-elem", pair + ` function main(): i32 { let t = pair(2.5, 4); return (t.0 * 2.0) as i32 + t.1; }`, 9},
 		// A string (pointer) element still round-trips through the widened i64 slot
 		// (wasm32 pointer in the low word). "xy".len() + 3 = 2 + 3 = 5. Guards that
 		// widening the shared fn does not regress a non-wide tuple caller.
-		{"string-elem", pair + ` function main(): i32 { var t = pair("xy", 3); return t.0.len() + t.1; }`, 5},
-		// Destructure `var (a, b) = pair(...)` recovers both widened elements. 6 + 7 = 13.
-		{"destructure", pair + ` function main(): i32 { var (a, b) = pair(6000000000 as i64, 7); return (a / 1000000000) as i32 + b; }`, 13},
+		{"string-elem", pair + ` function main(): i32 { let t = pair("xy", 3); return t.0.len() + t.1; }`, 5},
+		// Destructure `let (a, b) = pair(...)` recovers both widened elements. 6 + 7 = 13.
+		{"destructure", pair + ` function main(): i32 { let (a, b) = pair(6000000000 as i64, 7); return (a / 1000000000) as i32 + b; }`, 13},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

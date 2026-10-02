@@ -14,8 +14,8 @@ import (
 func NativeTCPCensusCases() []struct{ Name, Source string } {
 	cases := []struct{ Name, Source string }{}
 	read := `function read(c: i32, limit: i32): i32 {
-    var bytes: u8[] = tcp_recv(c, limit);
-    var i: i32 = 0;
+    let bytes: u8[] = tcp_recv(c, limit);
+    let i: i32 = 0;
     while (i < bytes.len()) {
         if (bytes[i] != 120) { return -1; }
         i = i + 1;
@@ -25,27 +25,27 @@ func NativeTCPCensusCases() []struct{ Name, Source string } {
 `
 	for _, n := range []int{0, 1, 7, 4097} {
 		src := read + fmt.Sprintf(`function exercise(): i32 {
-    var listener: i32 = tcp_listen(0);
+    let listener: i32 = tcp_listen(0);
     if (listener < 0) { return 1; }
-    var port: i32 = tcp_local_port(listener);
+    let port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 2; }
-    var client: i32 = tcp_connect(127 + 16777216, port);
+    let client: i32 = tcp_connect(127 + 16777216, port);
     if (client < 0) { return 3; }
-    var server: i32 = tcp_accept(listener);
+    let server: i32 = tcp_accept(listener);
     if (server < 0) { return 4; }
     if (tcp_send(client, %q) != %d) { return 5; }
     if (tcp_close(client) != 0) { return 6; }
-    var total: i32 = 0;
-    var n: i32 = read(server, 4096);
+    let total: i32 = 0;
+    let n: i32 = read(server, 4096);
     while (n > 0) { total = total + n; n = read(server, 4096); }
     if (n < 0 || total != %d) { return 7; }
     if (tcp_close(server) != 0 || tcp_close(listener) != 0) { return 8; }
     return 0;
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
-        var result: i32 = exercise();
+        let result: i32 = exercise();
         if (result != 0) { return result; }
         i = i + 1;
     }
@@ -56,7 +56,7 @@ function main(): i32 {
 	}
 	for _, limit := range []int{4096, 0, -1} {
 		src := read + fmt.Sprintf(`function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 32) {
         if (read(-1, %d) != 0) { return 1; }
         i = i + 1;

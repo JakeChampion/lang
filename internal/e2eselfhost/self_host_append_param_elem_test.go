@@ -58,9 +58,9 @@ const appendParamElemProlog = "struct Op { a: i32, b: i32 }\n" +
 // share. Three appends: the first count at which the freed box is recycled.
 func appendParamElemSrc(inner string) string {
 	return appendParamElemProlog +
-		"function main(): i32 { var t: i32 = 0; var st: St = St { ops: [] }; var j: i32 = 0; " +
+		"function main(): i32 { let t: i32 = 0; let st: St = St { ops: [] }; let j: i32 = 0; " +
 		"while (j < 3) { " + inner + " j = j + 1; } " +
-		"var k: i32 = 0; while (k < st.ops.len()) { t = t * 10 + st.ops[k].a; k = k + 1; } " +
+		"let k: i32 = 0; while (k < st.ops.len()) { t = t * 10 + st.ops[k].a; k = k + 1; } " +
 		"if (__rc_underflow_count() != 0) { return 99; } return t; }"
 }
 
@@ -69,13 +69,13 @@ func appendParamElemCases() []struct{ name, inner string } {
 		// The three rows that answered 212. A free function and a method are
 		// the same defect; so is a local bound from a literal rather than a
 		// producer call.
-		{"freefn_local", "var o: Op = mkop(j); st = emitf(st, o);"},
-		{"method_local", "var o: Op = mkop(j); st = st.emit(o);"},
-		{"lit_local", "var o: Op = Op { a: j, b: j + 1 }; st = st.emit(o);"},
+		{"freefn_local", "let o: Op = mkop(j); st = emitf(st, o);"},
+		{"method_local", "let o: Op = mkop(j); st = st.emit(o);"},
+		{"lit_local", "let o: Op = Op { a: j, b: j + 1 }; st = st.emit(o);"},
 		// The append written in the CALLER. No parameter, so no retain may
 		// fire — the local's own escape already gave the array sole ownership,
 		// and a retain here would leak.
-		{"inline_local", "var o: Op = mkop(j); st = St { ops: st.ops.append(o) };"},
+		{"inline_local", "let o: Op = mkop(j); st = St { ops: st.ops.append(o) };"},
 		// A fresh temp handed to the callee: the "PCNT:" credit's own row. The
 		// retain fires inside the callee, and the caller's post-call release is
 		// what nets it.

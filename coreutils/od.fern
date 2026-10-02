@@ -89,7 +89,7 @@ function trad_base(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "  or:  " + gnu.prog() + " [-abcdfilosx]... [FILE] [[+]OFFSET[.][b]]\n";
   out = out + "  or:  " + gnu.prog() + " --traditional [OPTION]... [FILE] [[+]OFFSET[.][b] [+][LABEL][.][b]]\n";
@@ -169,8 +169,8 @@ function unsigned_dec_digits(n: i32): i32 {
 // The sign costs a column only when the negative range is not already
 // shorter than the unsigned one, which for eight bytes it is.
 function signed_dec_digits(n: i32): i32 {
-  var neg: i32 = bit_digits(n * 8 - 1) + 1;
-  var pos: i32 = unsigned_dec_digits(n);
+  let neg: i32 = bit_digits(n * 8 - 1) + 1;
+  let pos: i32 = unsigned_dec_digits(n);
   if (neg > pos) {
     return neg;
   }
@@ -191,8 +191,8 @@ function prec_bound(f: ld.Format): i32 {
 }
 
 function exp_digits(f: ld.Format): i32 {
-  var e: i32 = f.emax * 30103 / 100000;
-  var d: i32 = 1;
+  let e: i32 = f.emax * 30103 / 100000;
+  let d: i32 = 1;
   while (e >= 10) {
     e = e / 10;
     d = d + 1;
@@ -298,7 +298,7 @@ function print_format(size: i32): ld.Format {
 // The bytes `long double` occupies on the target. x87 is ten bytes of
 // value in sixteen of storage; the IEEE formats are their own width.
 function long_double_size(): i32 {
-  var f: ld.Format = ld.format();
+  let f: ld.Format = ld.format();
   if (f.mant == 53) {
     return 8;
   }
@@ -315,7 +315,7 @@ function new_spec(kind: i32, size: i32, z: boolean): Spec {
 // `-t x1c` is two of them. Each is a letter, an optional size, and an
 // optional `z`.
 function type_error_size(arg: string, size: i32, floating: boolean): void {
-  var what: string = "integral";
+  let what: string = "integral";
   if (floating) {
     what = "floating point";
   }
@@ -378,13 +378,13 @@ function valid_float_size(n: i32): boolean {
 // `parse_type(arg, specs)` — every specification in one `-t` argument,
 // appended to `specs`.
 function parse_type(arg: string, specs: Spec[]): Spec[] {
-  var out: Spec[] = specs;
-  var i: i32 = 0;
+  let out: Spec[] = specs;
+  let i: i32 = 0;
   while (i < arg.len()) {
-    var c: i32 = arg[i] as i32;
+    let c: i32 = arg[i] as i32;
     i = i + 1;
-    var kind: i32 = 0 - 1;
-    var floating: boolean = false;
+    let kind: i32 = 0 - 1;
+    let floating: boolean = false;
     if (c == 97) {
       kind = k_named();
     } else if (c == 99) {
@@ -403,15 +403,15 @@ function parse_type(arg: string, specs: Spec[]): Spec[] {
     } else {
       invalid_type_char(c, arg);
     }
-    var size: i32 = 4;
+    let size: i32 = 4;
     if (floating) {
       size = 8;
     }
     if (kind == k_named() || kind == k_char()) {
       size = 1;
     } else if (i < arg.len() && gnu.is_digit(arg[i] as i32)) {
-      var n: i64 = 0 as i64;
-      var too_big: boolean = false;
+      let n: i64 = 0 as i64;
+      let too_big: boolean = false;
       while (i < arg.len() && gnu.is_digit(arg[i] as i32)) {
         if (!too_big) {
           n = n * (10 as i64) + (arg[i] as i32 - 48) as i64;
@@ -433,7 +433,7 @@ function parse_type(arg: string, specs: Spec[]): Spec[] {
         type_error_size(arg, size, false);
       }
     } else if (i < arg.len()) {
-      var letter: i32 = 0;
+      let letter: i32 = 0;
       if (floating) {
         letter = float_size_letter(arg[i] as i32);
       } else {
@@ -447,7 +447,7 @@ function parse_type(arg: string, specs: Spec[]): Spec[] {
         i = i + 1;
       }
     }
-    var z: boolean = false;
+    let z: boolean = false;
     if (i < arg.len() && arg[i] as i32 == 122) {
       z = true;
       i = i + 1;
@@ -466,7 +466,7 @@ function invalid_type_char(c: i32, arg: string): void {
 }
 
 function byte_str(c: i32): string {
-  var b: u8[] = [];
+  let b: u8[] = [];
   b = b.append(c as u8);
   return string_from_bytes_unchecked(b);
 }
@@ -479,16 +479,16 @@ function byte_str(c: i32): string {
 // is `invalid`, digits followed by a suffix that is not one is
 // `invalid suffix in`.
 function count_arg(value: string, opt: string): u64 {
-  var body: string = value;
-  var mul: u64 = 1 as u64;
+  let body: string = value;
+  let mul: u64 = 1 as u64;
   if (body.starts_with("0x") || body.starts_with("0X")) {
-    var h: (u64, boolean, i32) = parse_hex(body);
+    let h: (u64, boolean, i32) = parse_hex(body);
     if (!h.1) {
       gnu.error("invalid " + opt + " argument " + gnu.quote(value));
       exit(1);
     }
     if (h.2 < body.len()) {
-      var s: (u64, boolean) = suffix_multiplier(slice_unchecked(body, h.2, body.len()) + "");
+      let s: (u64, boolean) = suffix_multiplier(slice_unchecked(body, h.2, body.len()) + "");
       if (!s.1) {
         gnu.error("invalid suffix in " + opt + " argument " + gnu.quote(value));
         exit(1);
@@ -497,7 +497,7 @@ function count_arg(value: string, opt: string): u64 {
     }
     return checked_scale(h.0, mul, value, opt);
   }
-  var r: (u64, i32) = gnu.parse_units(body);
+  let r: (u64, i32) = gnu.parse_units(body);
   if (r.1 == 0) {
     return r.0;
   }
@@ -529,11 +529,11 @@ function checked_scale(v: u64, mul: u64, value: string, opt: string): u64 {
 
 // The hexadecimal body of a `0x` count, and where its digits end.
 function parse_hex(s: string): (u64, boolean, i32) {
-  var i: i32 = 2;
-  var v: u64 = 0 as u64;
-  var any: boolean = false;
+  let i: i32 = 2;
+  let v: u64 = 0 as u64;
+  let any: boolean = false;
   while (i < s.len()) {
-    var d: i32 = hex_value(s[i] as i32);
+    let d: i32 = hex_value(s[i] as i32);
     if (d < 0) {
       break;
     }
@@ -567,7 +567,7 @@ function hex_value(c: i32): i32 {
 // gnulib's multiplier suffixes, for the `0x` path that parses its own
 // digits.
 function suffix_multiplier(s: string): (u64, boolean) {
-  var r: (u64, i32) = gnu.parse_units("1" + s);
+  let r: (u64, i32) = gnu.parse_units("1" + s);
   if (r.1 != 0) {
     return (0 as u64, false);
   }
@@ -617,16 +617,16 @@ function push_address(h: usize, t: Tables, s: Settings, off: u64): void {
 // The bytes of one unit as an unsigned integer, in the byte order the
 // input is being read in.
 function unit_value(block: string, at: i32, size: i32, big: boolean): u64 {
-  var v: u64 = 0 as u64;
+  let v: u64 = 0 as u64;
   if (big) {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < size) {
       v = (v << 8 as u64) + (block[at + i] as i32) as u64;
       i = i + 1;
     }
     return v;
   }
-  var j: i32 = size - 1;
+  let j: i32 = size - 1;
   while (j >= 0) {
     v = (v << 8 as u64) + (block[at + j] as i32) as u64;
     j = j - 1;
@@ -639,8 +639,8 @@ function signed_value(v: u64, size: i32): i64 {
   if (size >= 8) {
     return v as i64;
   }
-  var bits: i32 = size * 8;
-  var sign: u64 = 1 as u64 << (bits - 1) as u64;
+  let bits: i32 = size * 8;
+  let sign: u64 = 1 as u64 << (bits - 1) as u64;
   if ((v & sign) != 0 as u64) {
     return v as i64 - (1 as i64 << bits as i64);
   }
@@ -655,8 +655,8 @@ function is_printable(c: i32): boolean {
 //
 // The unit's bytes as the exact value the format holds.
 function decode_float(block: string, at: i32, f: ld.Format, size: i32, big: boolean): ld.LD {
-  var lo: u64 = 0 as u64;
-  var hi: u64 = 0 as u64;
+  let lo: u64 = 0 as u64;
+  let hi: u64 = 0 as u64;
   if (size <= 8) {
     lo = unit_value(block, at, size, big);
   } else if (big) {
@@ -675,24 +675,24 @@ function decode_float(block: string, at: i32, f: ld.Format, size: i32, big: bool
 // An IEEE interchange format: a sign, a biased exponent, and a
 // significand whose leading bit is implied for a normal value.
 function decode_ieee(f: ld.Format, lo: u64, hi: u64, size: i32): ld.LD {
-  var frac_bits: i32 = f.mant - 1;
-  var mlo: u64 = lo;
-  var mhi: u64 = 0 as u64;
+  let frac_bits: i32 = f.mant - 1;
+  let mlo: u64 = lo;
+  let mhi: u64 = 0 as u64;
   if (frac_bits < 64) {
     mlo = lo & (1 as u64 << frac_bits as u64) - 1 as u64;
   } else if (frac_bits > 64) {
     mhi = hi & (1 as u64 << (frac_bits - 64) as u64) - 1 as u64;
   }
-  var shifted: u64 = 0 as u64;
+  let shifted: u64 = 0 as u64;
   if (frac_bits >= 64) {
     shifted = hi >> (frac_bits - 64) as u64;
   } else {
     shifted = lo >> frac_bits as u64;
   }
-  var exp_bits: i32 = size * 8 - f.mant;
-  var exp: i32 = (shifted & (1 as u64 << exp_bits as u64) - 1 as u64) as i32;
-  var neg: boolean = (shifted >> exp_bits as u64 & 1 as u64) != 0 as u64;
-  var max_exp: i32 = (1 << exp_bits) - 1;
+  let exp_bits: i32 = size * 8 - f.mant;
+  let exp: i32 = (shifted & (1 as u64 << exp_bits as u64) - 1 as u64) as i32;
+  let neg: boolean = (shifted >> exp_bits as u64 & 1 as u64) != 0 as u64;
+  let max_exp: i32 = (1 << exp_bits) - 1;
   if (exp == max_exp) {
     if (mhi == 0 as u64 && mlo == 0 as u64) {
       return ld.inf(neg);
@@ -715,9 +715,9 @@ function decode_ieee(f: ld.Format, lo: u64, hi: u64, size: i32): ld.LD {
 // is the whole low word and a normal value differs from a subnormal only
 // in its exponent field.
 function decode_x87(f: ld.Format, lo: u64, hi: u64): ld.LD {
-  var neg: boolean = (hi >> 15 as u64 & 1 as u64) != 0 as u64;
-  var exp: i32 = (hi & 32767 as u64) as i32;
-  var integer_bit: boolean = lo >> 63 as u64 != 0 as u64;
+  let neg: boolean = (hi >> 15 as u64 & 1 as u64) != 0 as u64;
+  let exp: i32 = (hi & 32767 as u64) as i32;
+  let integer_bit: boolean = lo >> 63 as u64 != 0 as u64;
   if (exp == 32767) {
     if (!integer_bit) {
       return ld.nan(neg);
@@ -740,7 +740,7 @@ function decode_x87(f: ld.Format, lo: u64, hi: u64): ld.LD {
     // the 63-bit FRACTION and normalises that: the stored integer bit
     // does not contribute, and an encoding whose only set bit is that
     // one has nothing to normalise and keeps the value it had.
-    var frac: u64 = lo & 9223372036854775807 as u64;
+    let frac: u64 = lo & 9223372036854775807 as u64;
     if (frac != 0 as u64) {
       return ld.LD { neg: neg, kind: 0, hi: 0 as u64, lo: frac, e: f.min_exp() };
     }
@@ -766,20 +766,20 @@ function ftoa(f: ld.Format, v: ld.LD): string {
     }
     return "inf";
   }
-  var sign: string = "";
+  let sign: string = "";
   if (v.neg) {
     sign = "-";
   }
-  var prec: i32 = f.dig();
+  let prec: i32 = f.dig();
   if (f.is_subnormal(v)) {
     prec = 1;
   }
-  var bound: i32 = prec_bound(f);
+  let bound: i32 = prec_bound(f);
   if ((f.mant == 53 || f.mant == 24) && !v.is_zero()) {
     return sign + ftoa_ieee(f, f.canonical(v), prec, bound);
   }
-  var d: ld.Dec = v.dec();
-  var s: string = "";
+  let d: ld.Dec = v.dec();
+  let s: string = "";
   while (prec <= bound) {
     s = sign + ld.general(d, prec as i64, false, false, 0 as i64).text();
     if (f.strtold(s).v.eq(v)) {
@@ -795,20 +795,20 @@ function ftoa(f: ld.Format, v: ld.LD): string {
 // that can succeed, and each candidate is one exact rounding in
 // `lib/ld.fern` rather than an expansion, a print and a parse.
 function ftoa_ieee(f: ld.Format, v: ld.LD, prec: i32, bound: i32): string {
-  var sd: (i64, i32) = shortest_digits(f, encode_ieee(f, v));
-  var k: i32 = 1;
-  var p10: i64 = 10 as i64;
+  let sd: (i64, i32) = shortest_digits(f, encode_ieee(f, v));
+  let k: i32 = 1;
+  let p10: i64 = 10 as i64;
   while (sd.0 >= p10) {
     p10 = p10 * (10 as i64);
     k = k + 1;
   }
-  var x: i32 = k - 1 + sd.1;
-  var p: i32 = prec;
+  let x: i32 = k - 1 + sd.1;
+  let p: i32 = prec;
   if (k > p) {
     p = k;
   }
   while (p < bound) {
-    var r: (ld.Dec, boolean) = f.round_to(v, x, p);
+    let r: (ld.Dec, boolean) = f.round_to(v, x, p);
     if (r.1) {
       return ld.general(r.0, p as i64, false, false, 0 as i64).text();
     }
@@ -827,9 +827,9 @@ function shortest_digits(f: ld.Format, bits: u64): (i64, i32) {
 // A canonical value's bits in the format's own encoding, without the
 // sign: the inverse of decode_ieee for a value the format holds.
 function encode_ieee(f: ld.Format, v: ld.LD): u64 {
-  var frac_bits: i32 = f.mant - 1;
-  var top: u64 = 1 as u64 << frac_bits as u64;
-  var exp: i32 = 0;
+  let frac_bits: i32 = f.mant - 1;
+  let top: u64 = 1 as u64 << frac_bits as u64;
+  let exp: i32 = 0;
   if ((v.lo & top) != 0 as u64) {
     exp = v.e + f.emax + frac_bits;
   }
@@ -857,15 +857,15 @@ function blank_run(): i32 {
 }
 
 function tables_new(): Tables {
-  var hex: u8[] = __alloc_u8(768);
-  var i: i32 = 0;
+  let hex: u8[] = __alloc_u8(768);
+  let i: i32 = 0;
   while (i < 256) {
     hex = hex.with(i * 3, 32 as u8);
     hex = hex.with(i * 3 + 1, digit_byte(i >> 4));
     hex = hex.with(i * 3 + 2, digit_byte(i & 15));
     i = i + 1;
   }
-  var oct: u8[] = __alloc_u8(2048);
+  let oct: u8[] = __alloc_u8(2048);
   i = 0;
   while (i < 512) {
     oct = oct.with(i * 4, 32 as u8);
@@ -874,15 +874,15 @@ function tables_new(): Tables {
     oct = oct.with(i * 4 + 3, (48 + (i & 7)) as u8);
     i = i + 1;
   }
-  var dec: u8[] = __alloc_u8(200);
+  let dec: u8[] = __alloc_u8(200);
   i = 0;
   while (i < 100) {
     dec = dec.with(i * 2, (48 + i / 10) as u8);
     dec = dec.with(i * 2 + 1, (48 + i % 10) as u8);
     i = i + 1;
   }
-  var chars: u8[] = __alloc_u8(1024);
-  var names: u8[] = __alloc_u8(1024);
+  let chars: u8[] = __alloc_u8(1024);
+  let names: u8[] = __alloc_u8(1024);
   i = 0;
   while (i < 256) {
     chars = right_aligned(chars, i * 4, char_text(i));
@@ -894,12 +894,12 @@ function tables_new(): Tables {
 
 // `text` in the four bytes of `table` at `at`, right-aligned in blanks.
 function right_aligned(own table: u8[], at: i32, text: string): u8[] {
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < 4 - text.len()) {
     table = table.with(at + k, 32 as u8);
     k = k + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < text.len()) {
     table = table.with(at + k + j, text[j]);
     j = j + 1;
@@ -945,7 +945,7 @@ function char_text(c: i32): string {
   if (is_printable(c)) {
     return byte_str(c);
   }
-  var d: u8[] = [];
+  let d: u8[] = [];
   d = d.append((48 + (c >> 6)) as u8);
   d = d.append((48 + (c >> 3 & 7)) as u8);
   d = d.append((48 + (c & 7)) as u8);
@@ -955,19 +955,19 @@ function char_text(c: i32): string {
 // `-t a`: ASCII's own names for the first thirty-three codes and `del`,
 // with the high bit dropped before the lookup, so 0xff is `del`.
 function char_name(c: i32): string {
-  var b: i32 = c % 128;
+  let b: i32 = c % 128;
   if (b == 127) {
     return "del";
   }
   if (b > 32) {
     return byte_str(b);
   }
-  var names: string[] = ["nul", "soh", "stx", "etx", "eot", "enq", "ack", "bel", "bs", "ht", "nl", "vt", "ff", "cr", "so", "si", "dle", "dc1", "dc2", "dc3", "dc4", "nak", "syn", "etb", "can", "em", "sub", "esc", "fs", "gs", "rs", "us", "sp"];
+  let names: string[] = ["nul", "soh", "stx", "etx", "eot", "enq", "ack", "bel", "bs", "ht", "nl", "vt", "ff", "cr", "so", "si", "dle", "dc1", "dc2", "dc3", "dc4", "nak", "syn", "etb", "can", "em", "sub", "esc", "fs", "gs", "rs", "us", "sp"];
   return names[b];
 }
 
 function push_blanks(h: usize, t: Tables, n: i32): void {
-  var k: i32 = n;
+  let k: i32 = n;
   while (k > blank_run()) {
     buf_push_range(h, t.blanks, 0, blank_run());
     k = k - blank_run();
@@ -994,24 +994,24 @@ function push_num(h: usize, t: Tables, neg: boolean, v: u64, base: i32, least: i
 // with a whole pair, which is every number but an address of an odd
 // number of digits.
 function push_hex(h: usize, t: Tables, v: u64, least: i32, width: i32): void {
-  var digits: i32 = least;
+  let digits: i32 = least;
   if (least < 16 && v >> (least * 4) as u64 != 0 as u64) {
     digits = hex_count(v);
   }
-  var blanks: i32 = width - digits;
-  var lead: i32 = 0;
+  let blanks: i32 = width - digits;
+  let lead: i32 = 0;
   if (digits % 2 == 1) {
     push_blanks(h, t, blanks);
-    var d: i32 = (v >> ((digits - 1) * 4) as u64 & 15 as u64) as i32;
+    let d: i32 = (v >> ((digits - 1) * 4) as u64 & 15 as u64) as i32;
     buf_push_range(h, t.hex, d * 3 + 2, d * 3 + 3);
     digits = digits - 1;
   } else if (blanks > 0) {
     push_blanks(h, t, blanks - 1);
     lead = 1;
   }
-  var shift: i32 = (digits - 2) * 4;
+  let shift: i32 = (digits - 2) * 4;
   while (shift >= 0) {
-    var b: i32 = (v >> shift as u64 & 255 as u64) as i32;
+    let b: i32 = (v >> shift as u64 & 255 as u64) as i32;
     buf_push_range(h, t.hex, b * 3 + 1 - lead, b * 3 + 3);
     lead = 0;
     shift = shift - 8;
@@ -1019,8 +1019,8 @@ function push_hex(h: usize, t: Tables, v: u64, least: i32, width: i32): void {
 }
 
 function hex_count(v: u64): i32 {
-  var count: i32 = 1;
-  var rest: u64 = v >> 4 as u64;
+  let count: i32 = 1;
+  let rest: u64 = v >> 4 as u64;
   while (rest != 0 as u64) {
     count = count + 1;
     rest = rest >> 4 as u64;
@@ -1033,7 +1033,7 @@ function hex_count(v: u64): i32 {
 // the width its unit can need, which is where the zero padding comes
 // from; only an address is counted.
 function push_oct(h: usize, t: Tables, v: u64, least: i32, width: i32): void {
-  var digits: i32 = least;
+  let digits: i32 = least;
   if (least < 22 && v >> (least * 3) as u64 != 0 as u64) {
     digits = oct_count(v);
   }
@@ -1052,10 +1052,10 @@ function oct_head(size: i32): i32 {
 }
 
 function push_oct_digits(h: usize, t: Tables, v: u64, digits: i32, head: i32, blanks: i32): void {
-  var lead: i32 = 0;
+  let lead: i32 = 0;
   if (head > 0) {
     push_blanks(h, t, blanks);
-    var top: i32 = (v >> ((digits - head) * 3) as u64 & 63 as u64) as i32;
+    let top: i32 = (v >> ((digits - head) * 3) as u64 & 63 as u64) as i32;
     buf_push_range(h, t.oct, top * 4 + 4 - head, top * 4 + 4);
   } else if (blanks > 0) {
     lead = 1;
@@ -1063,9 +1063,9 @@ function push_oct_digits(h: usize, t: Tables, v: u64, digits: i32, head: i32, bl
       push_blanks(h, t, blanks - 1);
     }
   }
-  var shift: i32 = (digits - head - 3) * 3;
+  let shift: i32 = (digits - head - 3) * 3;
   while (shift >= 0) {
-    var g: i32 = (v >> shift as u64 & 511 as u64) as i32;
+    let g: i32 = (v >> shift as u64 & 511 as u64) as i32;
     buf_push_range(h, t.oct, g * 4 + 1 - lead, g * 4 + 4);
     lead = 0;
     shift = shift - 9;
@@ -1073,8 +1073,8 @@ function push_oct_digits(h: usize, t: Tables, v: u64, digits: i32, head: i32, bl
 }
 
 function oct_count(v: u64): i32 {
-  var count: i32 = 1;
-  var rest: u64 = v >> 3 as u64;
+  let count: i32 = 1;
+  let rest: u64 = v >> 3 as u64;
   while (rest != 0 as u64) {
     count = count + 1;
     rest = rest >> 3 as u64;
@@ -1085,9 +1085,9 @@ function oct_count(v: u64): i32 {
 // The digits come two at a time from the top: `top` is the leading one or
 // two, and `p` the power of a hundred under them.
 function push_dec(h: usize, t: Tables, neg: boolean, v: u64, least: i32, width: i32): void {
-  var top: u64 = v;
-  var p: u64 = 1 as u64;
-  var count: i32 = 1;
+  let top: u64 = v;
+  let p: u64 = 1 as u64;
+  let count: i32 = 1;
   while (top >= 100 as u64) {
     top = top / (100 as u64);
     p = p * (100 as u64);
@@ -1096,11 +1096,11 @@ function push_dec(h: usize, t: Tables, neg: boolean, v: u64, least: i32, width: 
   if (top >= 10 as u64) {
     count = count + 1;
   }
-  var digits: i32 = count;
+  let digits: i32 = count;
   if (least > digits) {
     digits = least;
   }
-  var taken: i32 = digits;
+  let taken: i32 = digits;
   if (neg) {
     taken = taken + 1;
   }
@@ -1108,18 +1108,18 @@ function push_dec(h: usize, t: Tables, neg: boolean, v: u64, least: i32, width: 
   if (neg) {
     buf_push_byte(h, 45);
   }
-  var k: i32 = digits - count;
+  let k: i32 = digits - count;
   while (k > 0) {
     buf_push_byte(h, 48);
     k = k - 1;
   }
-  var q: i32 = top as i32;
+  let q: i32 = top as i32;
   if (q >= 10) {
     buf_push_range(h, t.dec, q * 2, q * 2 + 2);
   } else {
     buf_push_byte(h, 48 + q);
   }
-  var rest: u64 = v - top * p;
+  let rest: u64 = v - top * p;
   while (p > 1 as u64) {
     p = p / (100 as u64);
     q = (rest / p) as i32;
@@ -1149,7 +1149,7 @@ function push_field(h: usize, t: Tables, sp: Spec, block: string, at: i32, width
   } else if (sp.kind == k_unsigned()) {
     push_dec(h, t, false, unit_value(block, at, sp.size, big), 1, width);
   } else if (sp.kind == k_signed()) {
-    var n: i64 = signed_value(unit_value(block, at, sp.size, big), sp.size);
+    let n: i64 = signed_value(unit_value(block, at, sp.size, big), sp.size);
     if (n < 0 as i64) {
       push_dec(h, t, true, negated(n), 1, width);
     } else {
@@ -1176,7 +1176,7 @@ struct Settings { specs: Spec[], base: i32, block: i32, wpb: i32, skip: u64, lim
 // every spec, the first line carrying the address and the rest the same
 // width in spaces.
 function write_block(h: usize, t: Tables, s: Settings, block: string, base: i32, n: i32, off: u64): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.specs.len()) {
     if (i == 0) {
       push_address(h, t, s, off);
@@ -1196,9 +1196,9 @@ function write_block(h: usize, t: Tables, s: Settings, block: string, base: i32,
 // two integer kinds a dump is usually made of have a loop each, with the
 // field written in the loop rather than behind a call.
 function spec_line(h: usize, t: Tables, sp: Spec, s: Settings, block: string, base: i32, n: i32): void {
-  var fields: i32 = s.block / sp.size;
-  var blank: i32 = (s.block - n) / sp.size;
-  var used: i32 = 0;
+  let fields: i32 = s.block / sp.size;
+  let blank: i32 = (s.block - n) / sp.size;
+  let used: i32 = 0;
   if (sp.kind == k_hex()) {
     used = hex_line(h, t, sp, block, base, fields, blank, s.big);
   } else if (sp.kind == k_octal()) {
@@ -1211,8 +1211,8 @@ function spec_line(h: usize, t: Tables, sp: Spec, s: Settings, block: string, ba
   }
   push_blanks(h, t, s.wpb - used);
   buf_push(h, "  >");
-  var from: i32 = base;
-  var i: i32 = 0;
+  let from: i32 = base;
+  let i: i32 = 0;
   while (i < n) {
     if (!is_printable(block[base + i] as i32)) {
       buf_push_range(h, block, from, base + i);
@@ -1229,40 +1229,40 @@ function spec_line(h: usize, t: Tables, sp: Spec, s: Settings, block: string, ba
 // each, so it is read straight from the block; the last blank before it
 // comes with the first byte's entry. Returns the columns written.
 function hex_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, fields: i32, blank: i32, big: boolean): i32 {
-  var hex: string = t.hex;
-  var size: i32 = sp.size;
-  var fw: i32 = sp.fw;
-  var pad: i32 = sp.pad;
-  var w: i32 = fw + 1;
-  var used: i32 = 0;
-  var i: i32 = fields;
-  var at: i32 = base;
+  let hex: string = t.hex;
+  let size: i32 = sp.size;
+  let fw: i32 = sp.fw;
+  let pad: i32 = sp.pad;
+  let w: i32 = fw + 1;
+  let used: i32 = 0;
+  let i: i32 = fields;
+  let at: i32 = base;
   while (i > blank) {
     if (sp.pad > 0) {
-      var next_pad: i32 = sp.pad * (i - 1) / fields;
+      let next_pad: i32 = sp.pad * (i - 1) / fields;
       w = pad - next_pad + fw + 1;
       pad = next_pad;
     }
-    var lead: i32 = 0;
+    let lead: i32 = 0;
     if (w > fw) {
       lead = 1;
       if (w > fw + 1) {
         push_blanks(h, t, w - fw - 1);
       }
     }
-    var end: i32 = at + size;
+    let end: i32 = at + size;
     if (big) {
-      var j: i32 = at;
+      let j: i32 = at;
       while (j < end) {
-        var b: i32 = block[j] as i32;
+        let b: i32 = block[j] as i32;
         buf_push_range(h, hex, b * 3 + 1 - lead, b * 3 + 3);
         lead = 0;
         j = j + 1;
       }
     } else {
-      var k: i32 = end - 1;
+      let k: i32 = end - 1;
       while (k >= at) {
-        var c: i32 = block[k] as i32;
+        let c: i32 = block[k] as i32;
         buf_push_range(h, hex, c * 3 + 1 - lead, c * 3 + 3);
         lead = 0;
         k = k - 1;
@@ -1276,17 +1276,17 @@ function hex_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, field
 }
 
 function oct_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, fields: i32, blank: i32, big: boolean): i32 {
-  var size: i32 = sp.size;
-  var fw: i32 = sp.fw;
-  var pad: i32 = sp.pad;
-  var w: i32 = fw + 1;
-  var used: i32 = 0;
-  var i: i32 = fields;
-  var at: i32 = base;
-  var head: i32 = oct_head(size);
+  let size: i32 = sp.size;
+  let fw: i32 = sp.fw;
+  let pad: i32 = sp.pad;
+  let w: i32 = fw + 1;
+  let used: i32 = 0;
+  let i: i32 = fields;
+  let at: i32 = base;
+  let head: i32 = oct_head(size);
   while (i > blank) {
     if (sp.pad > 0) {
-      var next_pad: i32 = sp.pad * (i - 1) / fields;
+      let next_pad: i32 = sp.pad * (i - 1) / fields;
       w = pad - next_pad + fw + 1;
       pad = next_pad;
     }
@@ -1299,14 +1299,14 @@ function oct_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, field
 }
 
 function other_line(h: usize, t: Tables, sp: Spec, block: string, base: i32, fields: i32, blank: i32, big: boolean): i32 {
-  var pad: i32 = sp.pad;
-  var w: i32 = sp.fw + 1;
-  var used: i32 = 0;
-  var i: i32 = fields;
-  var at: i32 = base;
+  let pad: i32 = sp.pad;
+  let w: i32 = sp.fw + 1;
+  let used: i32 = 0;
+  let i: i32 = fields;
+  let at: i32 = base;
   while (i > blank) {
     if (sp.pad > 0) {
-      var next_pad: i32 = sp.pad * (i - 1) / fields;
+      let next_pad: i32 = sp.pad * (i - 1) / fields;
       w = pad - next_pad + sp.fw + 1;
       pad = next_pad;
     }
@@ -1340,9 +1340,9 @@ function read_size(): i32 {
 // in the exit status; a run where none of them opens writes nothing at
 // all, not even the offset line.
 function src_ensure(s0: Src): Src {
-  var s: Src = s0;
+  let s: Src = s0;
   while (!s.open && s.at < s.files.len()) {
-    var name: string = s.files[s.at];
+    let name: string = s.files[s.at];
     s = Src { ...s, at: s.at + 1 };
     if (name == "-") {
       s = Src { ...s, r: stdin(), open: true, is_stdin: true, opened: true, buf: "", pos: 0 };
@@ -1374,9 +1374,9 @@ function src_close(s: Src): Src {
 // What is held in the buffer counts as part of the operand still to
 // come, so a skip spends it before it reaches for the descriptor.
 function skip_buffered(s0: Src, left0: u64): (u64, Src) {
-  var s: Src = s0;
-  var left: u64 = left0;
-  var have: u64 = (s.buf.len() - s.pos) as u64;
+  let s: Src = s0;
+  let left: u64 = left0;
+  let have: u64 = (s.buf.len() - s.pos) as u64;
   if (have == 0 as u64) {
     return (left, s);
   }
@@ -1388,11 +1388,11 @@ function skip_buffered(s0: Src, left0: u64): (u64, Src) {
 
 // The next block of at most `want` bytes, spanning operands.
 function src_read(s0: Src, want: i32): (string, Src) {
-  var s: Src = s0;
-  var got: string = "";
+  let s: Src = s0;
+  let got: string = "";
   while (true) {
     if (s.pos < s.buf.len()) {
-      var take: i32 = s.buf.len() - s.pos;
+      let take: i32 = s.buf.len() - s.pos;
       if (take > want - got.len()) {
         take = want - got.len();
       }
@@ -1439,15 +1439,15 @@ function src_read(s0: Src, want: i32): (string, Src) {
 // seeked when it can be, which is why `od -j 4 /dev/null` succeeds where
 // the same skip on a pipe cannot; and a pipe is read and discarded.
 function skip_input(s0: Src, n: u64): Src {
-  var s: Src = s0;
-  var left: u64 = n;
+  let s: Src = s0;
+  let left: u64 = n;
   while (left > 0 as u64) {
     s = src_ensure(s);
     if (!s.open) {
       gnu.error("cannot skip past end of combined input");
       exit(1);
     }
-    var r: (u64, Src) = skip_in_file(s, left);
+    let r: (u64, Src) = skip_in_file(s, left);
     left = r.0;
     s = r.1;
     if (left > 0 as u64) {
@@ -1458,17 +1458,17 @@ function skip_input(s0: Src, n: u64): Src {
 }
 
 function skip_in_file(s0: Src, left0: u64): (u64, Src) {
-  var b: (u64, Src) = skip_buffered(s0, left0);
-  var s: Src = b.1;
-  var left: u64 = b.0;
+  let b: (u64, Src) = skip_buffered(s0, left0);
+  let s: Src = b.1;
+  let left: u64 = b.0;
   if (left == 0 as u64) {
     return (0 as u64, s);
   }
   match (s.r.stat()) {
     Ok(st) => {
       if (st.is_file) {
-        var avail: u64 = 0 as u64;
-        var at: i64 = 0 as i64;
+        let avail: u64 = 0 as u64;
+        let at: i64 = 0 as i64;
         match (s.r.seek(0 as i64, 1)) {
           Ok(p) => {
             at = p;
@@ -1498,7 +1498,7 @@ function skip_in_file(s0: Src, left0: u64): (u64, Src) {
     Err(_) => {}
   }
   while (left > 0 as u64) {
-    var want: i32 = read_size();
+    let want: i32 = read_size();
     if (left < want as u64) {
       want = left as i32;
     }
@@ -1526,37 +1526,37 @@ function skip_in_file(s0: Src, left0: u64): (u64, Src) {
 // one just behind it in the same page, so the elision compares two ranges
 // of the page and only carries a copy across the seam between pages.
 function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io_buffered.BufWriter, Src) {
-  var w: io_buffered.BufWriter = w0;
-  var h: usize = w.handle();
-  var src: Src = src0;
-  var fails0: i32 = src.fails;
-  var off: u64 = s.skip;
-  var left: u64 = s.limit;
-  var carry: string = "";
-  var have_prev: boolean = false;
-  var folded: boolean = false;
-  var per_read: i32 = read_size() / s.block * s.block;
+  let w: io_buffered.BufWriter = w0;
+  let h: usize = w.handle();
+  let src: Src = src0;
+  let fails0: i32 = src.fails;
+  let off: u64 = s.skip;
+  let left: u64 = s.limit;
+  let carry: string = "";
+  let have_prev: boolean = false;
+  let folded: boolean = false;
+  let per_read: i32 = read_size() / s.block * s.block;
   if (per_read < s.block) {
     per_read = s.block;
   }
   while (true) {
-    var want: i32 = per_read;
+    let want: i32 = per_read;
     if (s.limited && left < want as u64) {
       want = left as i32;
     }
     if (want == 0) {
       break;
     }
-    var r: (string, Src) = src_read(src, want);
+    let r: (string, Src) = src_read(src, want);
     src = r.1;
-    var chunk: string = r.0;
+    let chunk: string = r.0;
     if (chunk.len() == 0) {
       break;
     }
     left = left - chunk.len() as u64;
-    var at: i32 = 0;
+    let at: i32 = 0;
     while (at + s.block <= chunk.len()) {
-      var repeat: boolean = false;
+      let repeat: boolean = false;
       if (!s.dups && have_prev) {
         if (at >= s.block) {
           repeat = __mismatch(chunk, at - s.block, chunk, at, s.block) == s.block;
@@ -1579,7 +1579,7 @@ function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io
     }
     w = gnu.settle(w);
     if (at < chunk.len()) {
-      var tail: i32 = chunk.len() - at;
+      let tail: i32 = chunk.len() - at;
       write_block(h, t, s, pad_block(chunk, at, s.block), 0, tail, off);
       off = off + tail as u64;
       break;
@@ -1608,8 +1608,8 @@ function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io
 // unit at its end still has a whole unit to print. `__alloc_u8` hands
 // back stale bytes, so the zeros are written.
 function pad_block(chunk: string, at: i32, n: i32): string {
-  var out: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let out: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (at + i < chunk.len()) {
     out = out.with(i, chunk[at + i]);
     i = i + 1;
@@ -1635,24 +1635,24 @@ function pad_block(chunk: string, at: i32, n: i32): string {
 // where it starts — and it only starts a run when more than N bytes are
 // left, so a cut run is printed when it is longer than N.
 function dump_strings(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io_buffered.BufWriter, Src) {
-  var w: io_buffered.BufWriter = w0;
-  var h: usize = w.handle();
-  var src: Src = src0;
-  var off: u64 = s.skip;
-  var left: u64 = s.limit;
-  var start: u64 = off;
-  var held: usize = buf_new(256);
+  let w: io_buffered.BufWriter = w0;
+  let h: usize = w.handle();
+  let src: Src = src0;
+  let off: u64 = s.skip;
+  let left: u64 = s.limit;
+  let start: u64 = off;
+  let held: usize = buf_new(256);
   while (true) {
-    var want: i32 = read_size();
+    let want: i32 = read_size();
     if (s.limited && left < want as u64) {
       want = left as i32;
     }
     if (want == 0) {
       break;
     }
-    var r: (string, Src) = src_read(src, want);
+    let r: (string, Src) = src_read(src, want);
     src = r.1;
-    var block: string = r.0;
+    let block: string = r.0;
     if (block.len() == 0) {
       break;
     }
@@ -1660,10 +1660,10 @@ function dump_strings(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: S
     if (buf_len(held) == 0) {
       start = off;
     }
-    var from: i32 = 0;
-    var i: i32 = 0;
+    let from: i32 = 0;
+    let i: i32 = 0;
     while (i < block.len()) {
-      var c: i32 = block[i] as i32;
+      let c: i32 = block[i] as i32;
       if (c == 0) {
         if ((buf_len(held) + (i - from)) as u64 >= s.min_string) {
           buf_push_range(held, block, from, i);
@@ -1708,7 +1708,7 @@ function push_run(h: usize, t: Tables, s: Settings, at: u64, held: usize): void 
 
 function drop_held(held: usize): void {
   if (buf_len(held) > 0) {
-    var _: string = buf_take(held);
+    let _: string = buf_take(held);
   }
 }
 
@@ -1718,7 +1718,7 @@ function drop_held(held: usize): void {
 // trailing `.`, octal otherwise, and `b` multiplies by 512. Anything
 // else is not an offset, and the operand stays a file name.
 function parse_old_offset(s: string): (u64, boolean) {
-  var i: i32 = 0;
+  let i: i32 = 0;
   if (i < s.len() && s[i] as i32 == 43) {
     i = i + 1;
   }
@@ -1730,23 +1730,23 @@ function parse_old_offset(s: string): (u64, boolean) {
   // else it is not a radix marker at all: the radix stays octal and the
   // point then makes the operand a file name. 9.5 added this; before it
   // a point anywhere chose decimal and the operand was refused.
-  var dot: i32 = dot_at(s, i);
-  var base: i32 = 8;
+  let dot: i32 = dot_at(s, i);
+  let base: i32 = 8;
   if (dot >= 0) {
     base = 10;
   } else if (s.len() > i + 1 && s[i] as i32 == 48 && (s[i + 1] as i32 == 120 || s[i + 1] as i32 == 88)) {
     base = 16;
     i = i + 2;
   }
-  var end: i32 = s.len();
+  let end: i32 = s.len();
   if (dot >= 0) {
     end = dot;
   }
-  var v: u64 = 0 as u64;
-  var any: boolean = false;
-  var over: boolean = false;
+  let v: u64 = 0 as u64;
+  let any: boolean = false;
+  let over: boolean = false;
   while (i < end) {
-    var d: i32 = hex_value(s[i] as i32);
+    let d: i32 = hex_value(s[i] as i32);
     if (d < 0 || d >= base) {
       break;
     }
@@ -1774,7 +1774,7 @@ function parse_old_offset(s: string): (u64, boolean) {
     i = i + 1;
   }
   if (i < s.len()) {
-    var mul: u64 = 0 as u64;
+    let mul: u64 = 0 as u64;
     if (s[i] as i32 == 98) {
       mul = 512 as u64;
     } else if (s[i] as i32 == 66) {
@@ -1811,10 +1811,10 @@ function parse_old_offset(s: string): (u64, boolean) {
 // operand, or the last but one with `b` or `B` after it. -1 when there
 // is none in that position, whether or not the operand holds a point.
 function dot_at(s: string, from: i32): i32 {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i < s.len()) {
     if (s[i] as i32 == 46) {
-      var after: i32 = i + 1;
+      let after: i32 = i + 1;
       if (after < s.len() && (s[after] as i32 == 98 || s[after] as i32 == 66)) {
         after = after + 1;
       }
@@ -1834,8 +1834,8 @@ function dot_at(s: string, from: i32): i32 {
 // straddles two lines: the least common multiple of the sizes, taken up
 // to sixteen when it is smaller.
 function lcm_of(specs: Spec[]): i32 {
-  var l: i32 = 1;
-  var i: i32 = 0;
+  let l: i32 = 1;
+  let i: i32 = 0;
   while (i < specs.len()) {
     l = lcm2(l, specs[i].size);
     i = i + 1;
@@ -1848,10 +1848,10 @@ function lcm2(a: i32, b: i32): i32 {
 }
 
 function gcd(a: i32, b: i32): i32 {
-  var x: i32 = a;
-  var y: i32 = b;
+  let x: i32 = a;
+  let y: i32 = b;
   while (y != 0) {
-    var t: i32 = x % y;
+    let t: i32 = x % y;
     x = y;
     y = t;
   }
@@ -1918,7 +1918,7 @@ function trad_letters(): string {
 }
 
 function declare_options(): gnu.Opt[] {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("j", "skip-bytes", opt_skip()));
   opts = opts.append(gnu.valued("A", "address-radix", opt_radix()));
   opts = opts.append(gnu.valued("N", "read-bytes", opt_read()));
@@ -1928,8 +1928,8 @@ function declare_options(): gnu.Opt[] {
   opts = opts.append(gnu.flag("", "traditional", opt_traditional()));
   opts = opts.append(gnu.optional("w", "width", opt_width()));
   opts = opts.append(gnu.valued("", "endian", opt_endian()));
-  var letters: string = trad_letters();
-  var i: i32 = 0;
+  let letters: string = trad_letters();
+  let i: i32 = 0;
   while (i < letters.len()) {
     opts = opts.append(gnu.flag(slice_unchecked(letters, i, i + 1) + "", "", trad_base() + letters[i] as i32));
     i = i + 1;
@@ -1938,25 +1938,25 @@ function declare_options(): gnu.Opt[] {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var specs: Spec[] = [];
-  var base: i32 = 8;
-  var skip: u64 = 0 as u64;
-  var limit: u64 = 0 as u64;
-  var limited: boolean = false;
-  var dups: boolean = false;
-  var big: boolean = false;
-  var strings: boolean = false;
-  var min_string: u64 = 3 as u64;
-  var width: u64 = 16 as u64;
-  var width_given: boolean = false;
-  var modern: boolean = false;
-  var traditional: boolean = false;
-  var type_given: boolean = false;
+  let argv: string[] = args();
+  let specs: Spec[] = [];
+  let base: i32 = 8;
+  let skip: u64 = 0 as u64;
+  let limit: u64 = 0 as u64;
+  let limited: boolean = false;
+  let dups: boolean = false;
+  let big: boolean = false;
+  let strings: boolean = false;
+  let min_string: u64 = 3 as u64;
+  let width: u64 = 16 as u64;
+  let width_given: boolean = false;
+  let modern: boolean = false;
+  let traditional: boolean = false;
+  let type_given: boolean = false;
 
-  var g: gnu.Getopt = gnu.getopt_new(argv, declare_options(), "od", help_text(), 1);
+  let g: gnu.Getopt = gnu.getopt_new(argv, declare_options(), "od", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -1981,7 +1981,7 @@ pub function main(): i32 {
           modern = true;
           strings = true;
           if (m.has_value) {
-            var n: u64 = count_arg(m.value, strings_name(argv));
+            let n: u64 = count_arg(m.value, strings_name(argv));
             // The buffer is the run plus its terminator, so a length whose
             // successor leaves idx_t is the option's own overflow — worded
             // the way xstrtol_fatal words a value the parse could not hold.
@@ -1998,7 +1998,7 @@ pub function main(): i32 {
           width_given = true;
           width = 32 as u64;
           if (m.has_value) {
-            var w: u64 = count_arg(m.value, width_name(argv));
+            let w: u64 = count_arg(m.value, width_name(argv));
             if (w > 9223372036854775807 as u64) {
               gnu.error(width_name(argv) + " argument " + gnu.quote(m.value) + " too large");
               exit(1);
@@ -2019,12 +2019,12 @@ pub function main(): i32 {
     }
   }
 
-  var operands: string[] = g.operands();
-  var files: string[] = [];
-  var label: u64 = 0 as u64;
-  var labelled: boolean = false;
+  let operands: string[] = g.operands();
+  let files: string[] = [];
+  let label: u64 = 0 as u64;
+  let labelled: boolean = false;
   if (!modern || traditional) {
-    var t: (string[], u64, boolean, u64) = old_operands(operands, traditional);
+    let t: (string[], u64, boolean, u64) = old_operands(operands, traditional);
     files = t.0;
     skip = t.1;
     labelled = t.2;
@@ -2043,11 +2043,11 @@ pub function main(): i32 {
     gnu.error("no type may be specified when dumping strings");
     exit(1);
   }
-  var block: i32 = block_bytes(specs, width, width_given);
-  var wpb: i32 = 0;
-  var i: i32 = 0;
+  let block: i32 = block_bytes(specs, width, width_given);
+  let wpb: i32 = 0;
+  let i: i32 = 0;
   while (i < specs.len()) {
-    var w: i32 = (specs[i].fw + 1) * (block / specs[i].size);
+    let w: i32 = (specs[i].fw + 1) * (block / specs[i].size);
     if (w > wpb) {
       wpb = w;
     }
@@ -2059,20 +2059,20 @@ pub function main(): i32 {
     i = i + 1;
   }
 
-  var s: Settings = Settings { specs: specs, base: base, block: block, wpb: wpb, skip: skip, limit: limit, limited: limited, dups: dups, big: big, strings: strings, min_string: min_string, label: label, labelled: labelled };
+  let s: Settings = Settings { specs: specs, base: base, block: block, wpb: wpb, skip: skip, limit: limit, limited: limited, dups: dups, big: big, strings: strings, min_string: min_string, label: label, labelled: labelled };
 
-  var src: Src = src_ensure(src_new(files));
+  let src: Src = src_ensure(src_new(files));
   if (skip > 0 as u64) {
     src = skip_input(src, skip);
   }
-  var t: Tables = tables_new();
-  var w: io_buffered.BufWriter = gnu.out_with(65536);
+  let t: Tables = tables_new();
+  let w: io_buffered.BufWriter = gnu.out_with(65536);
   if (strings) {
-    var ds: (io_buffered.BufWriter, Src) = dump_strings(w, t, s, src);
+    let ds: (io_buffered.BufWriter, Src) = dump_strings(w, t, s, src);
     w = ds.0;
     src = ds.1;
   } else {
-    var dd: (io_buffered.BufWriter, Src) = dump(w, t, s, src);
+    let dd: (io_buffered.BufWriter, Src) = dump(w, t, s, src);
     w = dd.0;
     src = dd.1;
   }
@@ -2086,8 +2086,8 @@ pub function main(): i32 {
 // `-w`'s block, which is a multiple of every spec's unit: the least
 // common multiple, or the width asked for when that is a multiple of it.
 function block_bytes(specs: Spec[], width: u64, given: boolean): i32 {
-  var l: i32 = lcm_of(specs);
-  var chosen: u64 = l as u64;
+  let l: i32 = lcm_of(specs);
+  let chosen: u64 = l as u64;
   if (!given) {
     if (l < 16) {
       chosen = (l * (16 / l)) as u64;
@@ -2100,7 +2100,7 @@ function block_bytes(specs: Spec[], width: u64, given: boolean): i32 {
   // gnulib's pad_at_overflow: spreading a block's padding over its
   // fields squares their count, so more than 3037000500 of them for any
   // one spec is refused before a byte is allocated for the block.
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < specs.len()) {
     if (chosen / (specs[i].size as u64) > 3037000500 as u64) {
       gnu.error(width.to_string() + " is too large");
@@ -2116,7 +2116,7 @@ function block_bytes(specs: Spec[], width: u64, given: boolean): i32 {
 }
 
 function radix_of(v: string): i32 {
-  var c: i32 = 0;
+  let c: i32 = 0;
   if (v.len() > 0) {
     c = v[0] as i32;
   }
@@ -2154,15 +2154,15 @@ function endian_of(v: string): boolean {
 // The name a count diagnostic gives the option: the short letter when
 // that is how it was typed, the canonical long name when it was not.
 function option_name(argv: string[], short: string, long: string): string {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a.starts_with("--")) {
       if (a.starts_with("--" + long) || long.starts_with(slice_unchecked(a, 2, arg_name_end(a)) + "")) {
         return "--" + long;
       }
     } else if (gnu.is_option(a)) {
-      var k: i32 = 1;
+      let k: i32 = 1;
       while (k < a.len()) {
         if (slice_unchecked(a, k, k + 1) + "" == short) {
           return "-" + short;
@@ -2176,7 +2176,7 @@ function option_name(argv: string[], short: string, long: string): string {
 }
 
 function arg_name_end(a: string): i32 {
-  var eq: i32 = a.index_of("=");
+  let eq: i32 = a.index_of("=");
   if (eq >= 0) {
     return eq;
   }
@@ -2203,14 +2203,14 @@ function width_name(argv: string[]): string {
 // --traditional) a label. An operand that is not an offset stays a file
 // name, which is why `od f 4` and `od -t x1 f 4` differ.
 function old_operands(operands: string[], traditional: boolean): (string[], u64, boolean, u64) {
-  var files: string[] = [];
-  var skip: u64 = 0 as u64;
-  var label: u64 = 0 as u64;
-  var labelled: boolean = false;
-  var n: i32 = operands.len();
+  let files: string[] = [];
+  let skip: u64 = 0 as u64;
+  let label: u64 = 0 as u64;
+  let labelled: boolean = false;
+  let n: i32 = operands.len();
   if (traditional) {
     if (n == 1) {
-      var one: (u64, boolean) = parse_old_offset(operands[0]);
+      let one: (u64, boolean) = parse_old_offset(operands[0]);
       if (one.1) {
         return (files, one.0, false, 0 as u64);
       }
@@ -2218,8 +2218,8 @@ function old_operands(operands: string[], traditional: boolean): (string[], u64,
       return (files, 0 as u64, false, 0 as u64);
     }
     if (n == 2) {
-      var first: (u64, boolean) = parse_old_offset(operands[0]);
-      var second: (u64, boolean) = parse_old_offset(operands[1]);
+      let first: (u64, boolean) = parse_old_offset(operands[0]);
+      let second: (u64, boolean) = parse_old_offset(operands[1]);
       if (first.1 && second.1) {
         return (files, first.0, true, second.0);
       }
@@ -2228,8 +2228,8 @@ function old_operands(operands: string[], traditional: boolean): (string[], u64,
         return (files, second.0, false, 0 as u64);
       }
     } else if (n == 3) {
-      var off: (u64, boolean) = parse_old_offset(operands[1]);
-      var lab: (u64, boolean) = parse_old_offset(operands[2]);
+      let off: (u64, boolean) = parse_old_offset(operands[1]);
+      let lab: (u64, boolean) = parse_old_offset(operands[2]);
       if (off.1 && lab.1) {
         files = files.append(operands[0]);
         return (files, off.0, true, lab.0);
@@ -2245,15 +2245,15 @@ function old_operands(operands: string[], traditional: boolean): (string[], u64,
   // it is: a lone `+N`, or a second operand that starts with `+` or a
   // digit.
   if (n == 1 && operands[0].len() > 0 && operands[0][0] as i32 == 43) {
-    var one: (u64, boolean) = parse_old_offset(operands[0]);
+    let one: (u64, boolean) = parse_old_offset(operands[0]);
     if (one.1) {
       return (files, one.0, false, 0 as u64);
     }
   }
   if (n == 2 && operands[1].len() > 0) {
-    var c: i32 = operands[1][0] as i32;
+    let c: i32 = operands[1][0] as i32;
     if (c == 43 || gnu.is_digit(c)) {
-      var two: (u64, boolean) = parse_old_offset(operands[1]);
+      let two: (u64, boolean) = parse_old_offset(operands[1]);
       if (two.1) {
         files = files.append(operands[0]);
         return (files, two.0, false, 0 as u64);

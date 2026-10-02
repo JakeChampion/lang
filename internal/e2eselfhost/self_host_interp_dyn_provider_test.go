@@ -15,7 +15,7 @@ import (
 // trait's provider is interposed as `<Trait>.<m>` (`parser.claim_method_name`).
 // A dispatcher keyed on the runtime type and the written method name therefore
 // always reaches the FIRST claimant, whatever trait the `dyn` names — which is a
-// wrong answer rather than a failure: `var d: dyn B = S { v: 3 }; d.m()` ran A's
+// wrong answer rather than a failure: `let d: dyn B = S { v: 3 }; d.m()` ran A's
 // method and returned 3 where every other engine returns 7.
 //
 // The interpreter now reads the receiver's DECLARED type out of the scope it is
@@ -68,54 +68,54 @@ impl B for S { function m(self: Self): i32 { return 7; } }
 		// BOTH TRAITS IMPLEMENTED, reached through `dyn`.
 		//
 		// The issue's repro: the interposed provider, through a local binding.
-		{"dyn-second-trait", twoProviders + `function main(): i32 { var d: dyn B = S { v: 3 }; return d.m(); }`},
+		{"dyn-second-trait", twoProviders + `function main(): i32 { let d: dyn B = S { v: 3 }; return d.m(); }`},
 		// The bare-name provider through the same shape — the half that was
 		// already right, and which a fix that always interposes would break.
-		{"dyn-first-trait", twoProviders + `function main(): i32 { var d: dyn A = S { v: 3 }; return d.m(); }`},
+		{"dyn-first-trait", twoProviders + `function main(): i32 { let d: dyn A = S { v: 3 }; return d.m(); }`},
 		// A `dyn` PARAMETER, whose declared type is on the FuncDecl rather than
 		// on a var statement.
 		{"dyn-param", twoProviders + `function via(d: dyn B): i32 { return d.m(); } function main(): i32 { return via(S { v: 3 }); }`},
 		// The heterogeneous-collection shape: the loop var's declared type is
 		// the element type of the iterable's annotation.
-		{"dyn-array-for-loop", twoProviders + `function main(): i32 { var xs: dyn B[] = [S { v: 3 }, S { v: 4 }]; var t: i32 = 0; for x in xs { t = t + x.m(); } return t; }`},
+		{"dyn-array-for-loop", twoProviders + `function main(): i32 { let xs: dyn B[] = [S { v: 3 }, S { v: 4 }]; let t: i32 = 0; for x in xs { t = t + x.m(); } return t; }`},
 		// The same array, indexed rather than iterated.
-		{"dyn-array-index", twoProviders + `function main(): i32 { var xs: dyn B[] = [S { v: 3 }]; return xs[0].m(); }`},
+		{"dyn-array-index", twoProviders + `function main(): i32 { let xs: dyn B[] = [S { v: 3 }]; return xs[0].m(); }`},
 		// Captured by a closure: the lambda snapshots the enclosing scope, so
 		// the declared type has to travel with the captured value.
-		{"dyn-captured-by-closure", twoProviders + `function main(): i32 { var d: dyn B = S { v: 3 }; var f: () => i32 = (() => d.m()); return f(); }`},
+		{"dyn-captured-by-closure", twoProviders + `function main(): i32 { let d: dyn B = S { v: 3 }; let f: () => i32 = (() => d.m()); return f(); }`},
 		// A STRUCT FIELD, whose type is written on the struct declaration
 		// rather than anywhere the receiver expression is bound (#7291).
 		{"dyn-struct-field", twoProviders + `struct Holder { d: dyn B }
-function main(): i32 { var h: Holder = Holder { d: S { v: 3 } }; return h.d.m(); }`},
+function main(): i32 { let h: Holder = Holder { d: S { v: 3 } }; return h.d.m(); }`},
 		{"dyn-nested-struct-field", twoProviders + `struct Holder { d: dyn B }
 struct Outer { h: Holder }
-function main(): i32 { var o: Outer = Outer { h: Holder { d: S { v: 3 } } }; return o.h.d.m(); }`},
+function main(): i32 { let o: Outer = Outer { h: Holder { d: S { v: 3 } } }; return o.h.d.m(); }`},
 		{"dyn-struct-field-array", twoProviders + `struct Holder { ds: dyn B[] }
-function main(): i32 { var h: Holder = Holder { ds: [S { v: 3 }] }; return h.ds[0].m(); }`},
+function main(): i32 { let h: Holder = Holder { ds: [S { v: 3 }] }; return h.ds[0].m(); }`},
 		// A CALL RESULT, whose type the callee's declaration states.
 		{"dyn-call-result", twoProviders + `function mk(): dyn B { return S { v: 3 }; }
 function main(): i32 { return mk().m(); }`},
 		{"dyn-method-call-result", twoProviders + `struct Mk { z: i32 }
 function (k: Mk) make(): dyn B { return S { v: 3 }; }
-function main(): i32 { var k: Mk = Mk { z: 0 }; return k.make().m(); }`},
+function main(): i32 { let k: Mk = Mk { z: 0 }; return k.make().m(); }`},
 		{"dyn-field-of-call-result", twoProviders + `struct Holder { d: dyn B }
 function mk(): Holder { return Holder { d: S { v: 3 } }; }
 function main(): i32 { return mk().d.m(); }`},
 		// An UNANNOTATED binding of a call result: the type is written on the
 		// callee, so the binding carries it rather than losing it.
 		{"dyn-call-result-binding", twoProviders + `function mk(): dyn B { return S { v: 3 }; }
-function main(): i32 { var d = mk(); return d.m(); }`},
+function main(): i32 { let d = mk(); return d.m(); }`},
 
 		// CONTROLS — each trait alone. Nothing is interposed, so the bare name
 		// must answer for whichever trait is the sole provider.
 		{"only-trait-a", `trait A { function m(self: Self): i32; }
 struct S { v: i32 }
 impl A for S { function m(self: Self): i32 { return self.v; } }
-function main(): i32 { var d: dyn A = S { v: 3 }; return d.m(); }`},
+function main(): i32 { let d: dyn A = S { v: 3 }; return d.m(); }`},
 		{"only-trait-b", `trait B { function m(self: Self): i32; }
 struct S { v: i32 }
 impl B for S { function m(self: Self): i32 { return 7; } }
-function main(): i32 { var d: dyn B = S { v: 3 }; return d.m(); }`},
+function main(): i32 { let d: dyn B = S { v: 3 }; return d.m(); }`},
 
 		// THE NON-`dyn` PATH, which must not move.
 		//
@@ -124,39 +124,39 @@ function main(): i32 { var d: dyn B = S { v: 3 }; return d.m(); }`},
 		// receiver holding a T must both reach it.
 		{"concrete-receiver-alongside-collision", twoProviders + `struct T { w: i32 }
 impl B for T { function m(self: Self): i32 { return self.w + 1; } }
-function main(): i32 { var d: dyn B = T { w: 40 }; var t: T = T { w: 5 }; return d.m() + t.m(); }`},
+function main(): i32 { let d: dyn B = T { w: 40 }; let t: T = T { w: 5 }; return d.m() + t.m(); }`},
 		// A plain inherent method on a struct with no traits in sight.
-		{"inherent-method", `struct P { v: i32 } function (p: P) get(x: i32): i32 { return p.v + x; } function main(): i32 { var p: P = P { v: 10 }; return p.get(5); }`},
+		{"inherent-method", `struct P { v: i32 } function (p: P) get(x: i32): i32 { return p.v + x; } function main(): i32 { let p: P = P { v: 10 }; return p.get(5); }`},
 		// A single-trait method called on its CONCRETE receiver — static
 		// dispatch, no trait object involved.
 		{"concrete-single-trait", `trait A { function m(self: Self): i32; }
 struct S { v: i32 }
 impl A for S { function m(self: Self): i32 { return self.v; } }
-function main(): i32 { var s: S = S { v: 3 }; return s.m(); }`},
+function main(): i32 { let s: S = S { v: 3 }; return s.m(); }`},
 
 		// CONTROLS on the binding path itself. A declared type now enters the
 		// scope alongside the value, and the width / precision coercion it has
 		// always driven goes through the same call.
-		{"i64-width-binding", `function main(): i32 { var x: i64 = 100000; var y: i64 = x * 100000; if (y > 4294967296) { return 42; } return 1; }`},
-		{"f32-precision-binding", `function main(): i32 { var f: f32 = 16777217.0; var g: f64 = 16777216.0; if (f as f64 == g) { return 42; } return 1; }`},
-		{"param-width-binding", `function wide(x: i64): i32 { var y: i64 = x * 100000; if (y > 4294967296) { return 42; } return 1; } function main(): i32 { return wide(100000); }`},
+		{"i64-width-binding", `function main(): i32 { let x: i64 = 100000; let y: i64 = x * 100000; if (y > 4294967296) { return 42; } return 1; }`},
+		{"f32-precision-binding", `function main(): i32 { let f: f32 = 16777217.0; let g: f64 = 16777216.0; if (f as f64 == g) { return 42; } return 1; }`},
+		{"param-width-binding", `function wide(x: i64): i32 { let y: i64 = x * 100000; if (y > 4294967296) { return 42; } return 1; } function main(): i32 { return wide(100000); }`},
 		// The same coercion where the type comes from the CALLEE rather than
 		// an annotation. An unannotated binding of a call result used to carry
 		// no declared type at all, which lost i64 width and f32 precision as
 		// well as the dyn provider.
 		{"inferred-i64-from-call", `function big(): i64 { return 100000; }
-function main(): i32 { var x = big(); var y: i64 = x * 100000; if (y > 4294967296) { return 42; } return 1; }`},
+function main(): i32 { let x = big(); let y: i64 = x * 100000; if (y > 4294967296) { return 42; } return 1; }`},
 		{"inferred-f32-from-call", `function narrow(): f32 { return 16777217.0; }
-function main(): i32 { var f = narrow(); var g: f64 = 16777216.0; if (f as f64 == g) { return 42; } return 1; }`},
+function main(): i32 { let f = narrow(); let g: f64 = 16777216.0; if (f as f64 == g) { return 42; } return 1; }`},
 		// A local SHADOWING a top-level function holds a closure, whose return
 		// type is not the shadowed declaration's. Reading the declaration here
 		// widens this multiply to 64 bits and answers 42.
 		{"call-shadowed-by-local", `function pick(): i64 { return 1; }
-function main(): i32 { var pick: () => i32 = (() => 100000); var x = pick(); var y = x * 100000; if (y > 4294967296) { return 42; } return 1; }`},
+function main(): i32 { let pick: () => i32 = (() => 100000); let x = pick(); let y = x * 100000; if (y > 4294967296) { return 42; } return 1; }`},
 		// A closure held in a FIELD is called through the same field-access
 		// callee shape as a method, and matches no method declaration.
 		{"closure-in-field-call", `struct H { f: () => i32 }
-function main(): i32 { var h: H = H { f: (() => 42) }; var x = h.f(); return x; }`},
+function main(): i32 { let h: H = H { f: (() => 42) }; let x = h.f(); return x; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")

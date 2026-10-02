@@ -99,7 +99,7 @@ func genFamily(b *strings.Builder) {
 	b.WriteString("// arm64_gas_family is the index in the table of the family a mnemonic\n")
 	b.WriteString("// belongs to, or -1: length first, then the leading bytes, then the\n")
 	b.WriteString("// spellings left. The predicates below and arm64_gas_known read it.\n")
-	b.WriteString("function arm64_gas_family(mnem: string): i32 {\n    var n: i32 = mnem.len();\n")
+	b.WriteString("function arm64_gas_family(mnem: string): i32 {\n    let n: i32 = mnem.len();\n")
 	for _, n := range lens {
 		fmt.Fprintf(b, "    if (n == %d) { return arm64_gas_family_len%d(mnem); }\n", n, n)
 	}
@@ -138,7 +138,7 @@ func genFamilyGroup(b *strings.Builder, name string, depth int, group []spelling
 		byByte[c] = append(byByte[c], s)
 	}
 	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
-	fmt.Fprintf(b, "    var c: u8 = mnem[%d];\n", depth)
+	fmt.Fprintf(b, "    let c: u8 = mnem[%d];\n", depth)
 	type step struct {
 		name  string
 		group []spelling

@@ -16,8 +16,8 @@ function reference(s: string, n: i32): i32 {
   if (n <= 1) {
     return 0;
   }
-  var a: i32 = 208357;
-  var i: i32 = 0;
+  let a: i32 = 208357;
+  let i: i32 = 0;
   while (i < s.len()) {
     a = a * 31 + s[i] as i32;
     i = i + 1;
@@ -30,8 +30,8 @@ function reference(s: string, n: i32): i32 {
 // stride that depends on `seed`, so neighbouring positions differ and the
 // high bytes are reached.
 function sample(len: i32, seed: i32): string {
-  var buf: u8[] = __alloc_u8(len);
-  var i: i32 = 0;
+  let buf: u8[] = __alloc_u8(len);
+  let i: i32 = 0;
   while (i < len) {
     buf = buf.with(i, ((i * 67 + seed * 131 + 3) % 256) as u8);
     i = i + 1;
@@ -40,18 +40,18 @@ function sample(len: i32, seed: i32): string {
 }
 
 function main(): i32 {
-  var ns: i32[] = [0, 1, 0 - 5, 16, 7, 1073741823];
-  var out: string = "";
-  var checked: i32 = 0;
-  var wrong: i32 = 0;
-  var len: i32 = 0;
+  let ns: i32[] = [0, 1, 0 - 5, 16, 7, 1073741823];
+  let out: string = "";
+  let checked: i32 = 0;
+  let wrong: i32 = 0;
+  let len: i32 = 0;
   while (len <= 41) {
-    var seed: i32 = 0;
+    let seed: i32 = 0;
     while (seed < 4) {
-      var s: string = sample(len, seed);
+      let s: string = sample(len, seed);
       for n in ns {
-        var got: i32 = util.hash_bucket(s, n);
-        var want: i32 = reference(s, n);
+        let got: i32 = util.hash_bucket(s, n);
+        let want: i32 = reference(s, n);
         if (got != want || n > 1 && (got < 0 || got >= n)) {
           out = out + "mismatch len=" + util.i32_to_string(len) + " seed=" + util.i32_to_string(seed) + " n=" + util.i32_to_string(n) + " got=" + util.i32_to_string(got) + " want=" + util.i32_to_string(want) + "\n";
           wrong = wrong + 1;

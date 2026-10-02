@@ -19,15 +19,15 @@ import "./ssa";
 import "./util";
 
 function main(): i32 {
-  var n: i32 = ssa.kind_count();
+  let n: i32 = ssa.kind_count();
 
   // 1. Full-table SInst bijection sweep.
-  var failures: i32 = 0;
-  var ok: i32 = 0;
-  var id: i32 = 1;
+  let failures: i32 = 0;
+  let ok: i32 = 0;
+  let id: i32 = 1;
   while (id <= n) {
-    var name: string = ssa.kind_name(id);
-    var back: i32 = ssa.kind_id(name);
+    let name: string = ssa.kind_name(id);
+    let back: i32 = ssa.kind_id(name);
     if (name == "invalid" || back != id) {
       failures = failures + 1;
     } else {
@@ -36,7 +36,7 @@ function main(): i32 {
     id = id + 1;
   }
 
-  var out: string = "";
+  let out: string = "";
   out = out + "kind_count=" + util.i32_to_string(n) + "\n";
   out = out + "bijection_ok=" + util.i32_to_string(ok) + "\n";
   out = out + "bijection_failures=" + util.i32_to_string(failures) + "\n";
@@ -56,13 +56,13 @@ function main(): i32 {
   out = out + "write_file=" + util.i32_to_string(ssa.kind_id("write_file")) + "\n";
 
   // 4. Full-table STerm bijection sweep + the none sentinel.
-  var tn: i32 = ssa.term_count();
-  var tfailures: i32 = 0;
-  var tok: i32 = 0;
-  var tid: i32 = 1;
+  let tn: i32 = ssa.term_count();
+  let tfailures: i32 = 0;
+  let tok: i32 = 0;
+  let tid: i32 = 1;
   while (tid <= tn) {
-    var tname: string = ssa.term_name(tid);
-    var tback: i32 = ssa.term_id(tname);
+    let tname: string = ssa.term_name(tid);
+    let tback: i32 = ssa.term_id(tname);
     if (tname == "" || tback != tid) {
       tfailures = tfailures + 1;
     } else {
@@ -74,7 +74,7 @@ function main(): i32 {
   out = out + "term_bijection_ok=" + util.i32_to_string(tok) + "\n";
   out = out + "term_bijection_failures=" + util.i32_to_string(tfailures) + "\n";
   out = out + "term_none_id=" + util.i32_to_string(ssa.term_id("")) + "\n";
-  var tnone: string = ssa.term_name(0);
+  let tnone: string = ssa.term_name(0);
   out = out + "term_none_name_len=" + util.i32_to_string(tnone.len()) + "\n";
   out = out + "ret=" + util.i32_to_string(ssa.term_id("ret")) + "\n";
   out = out + "brif=" + util.i32_to_string(ssa.term_id("brif")) + "\n";
@@ -85,7 +85,7 @@ function main(): i32 {
   //    order makes the golden the pin: appending a tag adds a line, while a
   //    shift renames them here rather than drifting a printer golden in some
   //    other test.
-  var sid: i32 = 1;
+  let sid: i32 = 1;
   while (ssa.kind_name(0 - sid) != "invalid") {
     out = out + "semantic" + util.i32_to_string(sid) + "=" + ssa.kind_name(0 - sid) + "\n";
     sid = sid + 1;

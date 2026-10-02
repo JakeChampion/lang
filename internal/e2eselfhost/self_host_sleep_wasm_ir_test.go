@@ -88,9 +88,9 @@ func TestSelfHostSleepWasm(t *testing.T) {
 			// The i64 count is what #9477 got wrong: the helper took an i32.
 			name: "sleep-ms-i64-count",
 			src: `function main(): i32 {
-    var a: i64 = monotonic_ns();
+    let a: i64 = monotonic_ns();
     sleep_ms(1 as i64);
-    var b: i64 = monotonic_ns();
+    let b: i64 = monotonic_ns();
     if (b < a) { return 1; }
     return 7;
 }`,

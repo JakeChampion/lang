@@ -16,7 +16,7 @@ func TestSelfHostWriterBytes(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	// Keep stderr open for the ownership census. These executable entry points
 	// exit with main's result instead of printing it to the closed stdout.
-	source := strings.Replace(e2eharness.WriterBytesProgram, "var closed = stderr();", "var closed = stdout();", 1)
+	source := strings.Replace(e2eharness.WriterBytesProgram, "let closed = stderr();", "let closed = stdout();", 1)
 	src := filepath.Join(t.TempDir(), "writer.fern")
 	if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func testWriterBytesComponents(t *testing.T, compiler string, runner []string, s
 	}
 	// Primary components already provide stdout and stderr writes, but not
 	// descriptor closing. Exercise the raw write contract on those streams.
-	source, _, ok := strings.Cut(e2eharness.WriterBytesProgram, " var closed = stderr();")
+	source, _, ok := strings.Cut(e2eharness.WriterBytesProgram, " let closed = stderr();")
 	if !ok {
 		t.Fatal("missing boundary before closed-descriptor cases")
 	}
@@ -80,7 +80,7 @@ func testWriterBytesComponents(t *testing.T, compiler string, runner []string, s
 		t.Run("component/"+stream, func(t *testing.T) {
 			dir := t.TempDir()
 			src, bin := filepath.Join(dir, "writer.fern"), filepath.Join(dir, "writer.wasm")
-			text := strings.Replace(source, "var w = stdout();", "var w = "+stream+"();", 1)
+			text := strings.Replace(source, "let w = stdout();", "let w = "+stream+"();", 1)
 			if err := os.WriteFile(src, []byte(text), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +123,7 @@ func TestSelfHostArm64DarwinWriterBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := filepath.Join(dir, "writer.fern")
-	if err := os.WriteFile(src, []byte(strings.Replace(e2eharness.WriterBytesProgram, "var closed = stderr();", "var closed = stdout();", 1)), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(strings.Replace(e2eharness.WriterBytesProgram, "let closed = stderr();", "let closed = stdout();", 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, checked := range []bool{true, false} {

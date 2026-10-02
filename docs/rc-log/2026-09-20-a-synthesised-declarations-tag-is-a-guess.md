@@ -34,7 +34,7 @@ main: binding $binding$0$v declared boolean holds a semantic value of i32
 ```fern
 function gen(): boolean { return true; }
 function main(): i32 {
-    var v: boolean = (if (true) { gen() } else { false });
+    let v: boolean = (if (true) { gen() } else { false });
     …
 ```
 
@@ -58,7 +58,7 @@ The `declared fn` leaf reduces to a match-expression whose FIRST arm is
 itself a match-expression, both yielding unannotated lambdas:
 
 ```fern
-var f: (i32) => i32 = (match (v0) {
+let f: (i32) => i32 = (match (v0) {
     Active => (match (v0) { Active => ((d: i32) => d), … }),
     Inactive => ((c: i32) => c * 2),
     …

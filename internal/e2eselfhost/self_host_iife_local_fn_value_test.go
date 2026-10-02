@@ -12,15 +12,15 @@ const iifeLocalFnValueSrc = `import "std/i32";
 function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
-    var k: i32 = 100;
-    var c: boolean = true;
-    var v0: (i32) => i32 = (x: i32) => x + 650;
-    var v1: (i32) => i32 = (x: i32) => x + k;
-    var mixed: i32 = apply(if (c) { v0 } else { (x: i32) => 690 }, 1);
-    var other: i32 = apply(if (!c) { v0 } else { (x: i32) => x * 3 }, 2);
-    var picked: i32 = apply(if (c) { pick(false, v0, v1) } else { (x: i32) => 0 }, 3);
-    var both: i32 = apply(if (c) { pick(true, v0, (x: i32) => x) } else { v1 }, 4);
-    var nested: i32 = apply(if (c) { if (!c) { v1 } else { pick(false, v0, v1) } } else { v0 }, 5);
+    let k: i32 = 100;
+    let c: boolean = true;
+    let v0: (i32) => i32 = (x: i32) => x + 650;
+    let v1: (i32) => i32 = (x: i32) => x + k;
+    let mixed: i32 = apply(if (c) { v0 } else { (x: i32) => 690 }, 1);
+    let other: i32 = apply(if (!c) { v0 } else { (x: i32) => x * 3 }, 2);
+    let picked: i32 = apply(if (c) { pick(false, v0, v1) } else { (x: i32) => 0 }, 3);
+    let both: i32 = apply(if (c) { pick(true, v0, (x: i32) => x) } else { v1 }, 4);
+    let nested: i32 = apply(if (c) { if (!c) { v1 } else { pick(false, v0, v1) } } else { v0 }, 5);
     print(mixed.to_string() + " " + other.to_string() + " " + picked.to_string() + " " + both.to_string() + " " + nested.to_string());
     return 0;
 }

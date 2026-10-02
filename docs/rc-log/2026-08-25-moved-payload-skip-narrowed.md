@@ -105,15 +105,15 @@ The self-host still compiles itself under `FERN_STRICT_IR=1`.
 
   | shape | self | native |
   |---|---|---|
-  | `var keep: P = p;` (bind, struct) | 40/40 | 40/40 |
-  | `var keep: string = s;` (bind, string) | 40/40 | 0/0 |
+  | `let keep: P = p;` (bind, struct) | 40/40 | 40/40 |
+  | `let keep: string = s;` (bind, string) | 40/40 | 0/0 |
   | `keep = p;` onto an existing local (struct) | **80/0** | 80/80 |
   | `keep = s;` onto an existing local (string) | **40/0** | 0/0 |
 
   The alias BIND is counted for both types. Reassigning an rc-typed local
   reclaims NOTHING — neither the new value nor the orphaned old one — and that is
   a distinct shape from anything the construction-retain matrix covers: its
-  `local` rows are compound binds (`var q = P { f: mkv(..) }; var p = q;`), which
+  `local` rows are compound binds (`let q = P { f: mkv(..) }; let p = q;`), which
   is why `struct__local` reads clean while the reassign form here leaks outright.
   (The matrix header warns to measure the halves of a `local` row separately
   before attributing it, and that warning is what caught this.)

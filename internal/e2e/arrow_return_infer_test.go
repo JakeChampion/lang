@@ -24,8 +24,8 @@ import (
 const arrowInferSrc = `function apply_i(f: (i32) => i32, x: i32): i32 { return f(x); }
 function keep(f: (i32) => boolean, x: i32): i32 { if (f(x)) { return 10; } return 0; }
 function main(): i32 {
-    var a: i32 = apply_i((x: i32) => x * 2, 16);
-    var b: i32 = keep((x: i32) => x > 5, 9);
+    let a: i32 = apply_i((x: i32) => x * 2, 16);
+    let b: i32 = keep((x: i32) => x > 5, 9);
     return a + b;
 }
 `

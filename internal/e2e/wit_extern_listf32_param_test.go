@@ -118,7 +118,7 @@ func TestExternListF32ParamCustomProvider(t *testing.T) {
 function sum_f32(data: f32[]): f32;
 
 function main(): i32 {
-	var xs: f32[] = [1.5, 2.5, 4.0];
+	let xs: f32[] = [1.5, 2.5, 4.0];
 	if (sum_f32(xs) == 8.0) { write("` + want + `"); } else { write("sumf-bad"); }
 	return 0;
 }`

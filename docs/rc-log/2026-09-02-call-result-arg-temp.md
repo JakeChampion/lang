@@ -88,7 +88,7 @@ pattern that `2026-09-02-own-struct-update-reuse.md` records as one of the
 eight assembler refusals —
 
 ```
-var bytes: i32[] = s.rule_bytes;
+let bytes: i32[] = s.rule_bytes;
 s = CfiState { ...s, rule_bytes: [] };
 … bytes = bytes.append(…) …
 return CfiState { ...s, rule_bytes: bytes };

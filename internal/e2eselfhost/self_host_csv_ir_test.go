@@ -58,13 +58,13 @@ func TestSelfHostCsvParseLineIR(t *testing.T) {
 	// std/csv's csv_parse_line, verbatim.
 	const parser = `
 function csv_parse_line(s: string): string[] {
-    var out: string[] = [];
-    var n: i32 = s.len();
-    var i: i32 = 0;
-    var field: string = "";
-    var in_quotes: boolean = false;
+    let out: string[] = [];
+    let n: i32 = s.len();
+    let i: i32 = 0;
+    let field: string = "";
+    let in_quotes: boolean = false;
     while (i < n) {
-        var c: i32 = s[i] as i32;
+        let c: i32 = s[i] as i32;
         if (in_quotes) {
             if (c == 34) {
                 if (i + 1 < n && s[i + 1] == 34) { field = field + "\""; i = i + 2; }
@@ -85,7 +85,7 @@ function csv_parse_line(s: string): string[] {
 	}{
 		// 4 fields, a quoted field with an embedded comma ("c,d"), and tail field.
 		{"quoted-comma", parser + `function main(): i32 {
-    var f: string[] = csv_parse_line("a,bb,\"c,d\",e");
+    let f: string[] = csv_parse_line("a,bb,\"c,d\",e");
     if (f.len() != 4) { return 100; }
     if (f[0].len() != 1 || f[1].len() != 2 || f[2].len() != 3 || f[3].len() != 1) { return 101; }
     if (f[2][0] != 99 || f[2][1] != 44 || f[2][2] != 100) { return 102; }
@@ -93,7 +93,7 @@ function csv_parse_line(s: string): string[] {
 }`},
 		// Doubled quote inside a quoted field decodes to one quote: "a""b" -> a"b.
 		{"doubled-quote", parser + `function main(): i32 {
-    var f: string[] = csv_parse_line("\"a\"\"b\",x");
+    let f: string[] = csv_parse_line("\"a\"\"b\",x");
     if (f.len() != 2) { return 100; }
     if (f[0].len() != 3) { return 101; }
     if (f[0][0] != 97 || f[0][1] != 34 || f[0][2] != 98) { return 102; }
@@ -101,7 +101,7 @@ function csv_parse_line(s: string): string[] {
 }`},
 		// Plain unquoted line.
 		{"plain", parser + `function main(): i32 {
-    var f: string[] = csv_parse_line("x,y,z");
+    let f: string[] = csv_parse_line("x,y,z");
     if (f.len() != 3) { return 100; }
     return 42;
 }`},

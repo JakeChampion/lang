@@ -83,7 +83,7 @@ func shapesIn(t *testing.T, p *ir.Program, fn string) []string {
 func TestRecognizeElementwiseReductionChain(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/array";
 function run(xs: i64[]): i64 {
-  var out: Option[i64] = xs
+  let out: Option[i64] = xs
     .map((x: i64): i64 => x + (1 as i64))
     .map((x: i64): i64 => x * (2 as i64))
     .reduce((a: i64, b: i64): i64 => a + b);
@@ -104,7 +104,7 @@ function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }`)
 func TestRecognizeSelectionCardinality(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/array";
 function run(xs: i64[]): i64 {
-  var out: Option[i64] = xs
+  let out: Option[i64] = xs
     .filter((x: i64): boolean => x > (0 as i64))
     .map((x: i64): i64 => x + (1 as i64))
     .reduce((a: i64, b: i64): i64 => a + b);
@@ -149,8 +149,8 @@ function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }`)
 func TestRecognizePrefixScan(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/array";
 function run(xs: i64[]): i64 {
-  var sums: i64[] = array.scan(xs, 0 as i64, (a: i64, b: i64): i64 => a + b);
-  var out: Option[i64] = sums.reduce((a: i64, b: i64): i64 => a + b);
+  let sums: i64[] = array.scan(xs, 0 as i64, (a: i64, b: i64): i64 => a + b);
+  let out: Option[i64] = sums.reduce((a: i64, b: i64): i64 => a + b);
   match (out) { Some(v) => { return v; }, None => { return 0 as i64; } }
 }
 function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }`)
@@ -182,9 +182,9 @@ function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }`)
 func TestRefusesIntermediateUsedTwice(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/array";
 function run(xs: i64[]): i64 {
-  var ys: i64[] = xs.map((x: i64): i64 => x + (1 as i64));
-  var out: Option[i64] = ys.reduce((a: i64, b: i64): i64 => a + b);
-  var total: i64 = 0 as i64;
+  let ys: i64[] = xs.map((x: i64): i64 => x + (1 as i64));
+  let out: Option[i64] = ys.reduce((a: i64, b: i64): i64 => a + b);
+  let total: i64 = 0 as i64;
   match (out) { Some(v) => { total = v; }, None => { total = 0 as i64; } }
   return total + (ys.len() as i64);
 }
@@ -221,7 +221,7 @@ function main(): i32 { return run([1 as i64, 2 as i64]) as i32; }`)
 func TestRefusesCombinatorOutsideTheSet(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/array";
 function run(xs: i64[]): i32 {
-  var chunked: i64[][] = xs
+  let chunked: i64[][] = xs
     .map((x: i64): i64 => x + (1 as i64))
     .windows(2);
   return chunked.len();
@@ -250,8 +250,8 @@ function main(): i32 { return run([1 as i64, 2 as i64, 3 as i64]); }`)
 // not claim it.
 func TestRefusesUserDefinedMap(t *testing.T) {
 	p := lowerPipelineSrc(t, `function map(xs: i64[], f: (i64) => i64): i64[] {
-  var out: i64[] = [];
-  var i: i32 = 0;
+  let out: i64[] = [];
+  let i: i32 = 0;
   while (i < xs.len()) { out = out.append(f(xs[i])); i = i + 1; }
   return out;
 }
@@ -375,7 +375,7 @@ func TestRefusalTagsAreStableAndComplete(t *testing.T) {
 func TestHistogramCountsFusedAndMaterialization(t *testing.T) {
 	p := lowerPipelineSrc(t, `import "std/array";
 function run(xs: i64[]): i64 {
-  var out: Option[i64] = xs
+  let out: Option[i64] = xs
     .map((x: i64): i64 => x + (1 as i64))
     .filter((x: i64): boolean => x > (0 as i64))
     .reduce((a: i64, b: i64): i64 => a + b);

@@ -19,22 +19,22 @@ import (
 // two names for one box would take the pointer-identity fast path without
 // comparing anything.
 const strEqLengthSweepSrc = `function rep(c: string, n: i32): string {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < n) { s = s + c; i = i + 1; }
     return s;
 }
 
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n <= 24) {
-        var a: string = rep("a", n);
+        let a: string = rep("a", n);
         if (a.len() != n) { return 200; }
         if (a != rep("a", n)) { return 60 + n; }
         if (a == rep("a", n + 1)) { return 100 + n; }
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < n) {
-            var b: string = rep("a", k) + "b" + rep("a", n - k - 1);
+            let b: string = rep("a", k) + "b" + rep("a", n - k - 1);
             if (b.len() != n) { return 201; }
             if (a == b) { return 150 + k; }
             k = k + 1;

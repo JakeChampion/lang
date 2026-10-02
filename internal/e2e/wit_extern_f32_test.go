@@ -30,8 +30,8 @@ func TestExternF32CustomProvider(t *testing.T) {
 function scale(x: f32, k: f32): f32;
 
 function main(): i32 {
-	var x: f32 = 1.5;
-	var k: f32 = 4.0;
+	let x: f32 = 1.5;
+	let k: f32 = 4.0;
 	if (scale(x, k) == 6.0) { write("f32-ok"); } else { write("f32-bad"); }
 	return 0;
 }`,
@@ -64,7 +64,7 @@ function main(): i32 {
 function halves(n: u32): f32[];
 
 function main(): i32 {
-	var xs: f32[] = halves(4u32);
+	let xs: f32[] = halves(4u32);
 	if (xs.len() == 4 && xs[1] == 0.5 && xs[3] == 1.5) { write("f32-ok"); } else { write("f32-bad"); }
 	return 0;
 }`,

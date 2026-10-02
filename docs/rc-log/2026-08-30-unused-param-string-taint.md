@@ -12,7 +12,7 @@ Three lines, one allocation, zero frees on x86-64; clean on arm64:
 function two(a: string, b: string): string { return a + b; }
 function ignore(s: string): i32 { return 7; }
 function main(): i32 {
-    var s: string = two("abcd", "efgh");
+    let s: string = two("abcd", "efgh");
     return ignore(s) - 7;
 }
 ```

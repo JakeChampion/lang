@@ -21,31 +21,31 @@ const ndarrayScaleSrc = `import "std/ndarray";
 
 function main(): i32 {
   // Packed, captured factor: the kernel path.
-  var k: f64 = 2.5;
-  var a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3]);
-  var m: ndarray.NdArray[f64] = a.map((x: f64): f64 => x * k);
+  let k: f64 = 2.5;
+  let a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3]);
+  let m: ndarray.NdArray[f64] = a.map((x: f64): f64 => x * k);
   if (m.shape()[0] != 2 || m.shape()[1] != 3) { return 10; }
   if (m.get([0, 0]) != 2.5) { return 11; }
   if (m.get([1, 2]) != 15.0) { return 12; }
   if (!m.is_packed()) { return 13; }
 
   // Packed, literal factor.
-  var b: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0], [2]);
-  var c: ndarray.NdArray[f64] = b.map((x: f64): f64 => x * 3.0);
+  let b: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0], [2]);
+  let c: ndarray.NdArray[f64] = b.map((x: f64): f64 => x * 3.0);
   if (c.get([0]) != 3.0 || c.get([1]) != 6.0) { return 20; }
 
   // STRIDED receiver. The transpose of [[1,2],[3,4]] reads [[1,3],[2,4]],
   // so scaling by 10 reads [[10,30],[20,40]]. Taking the kernel here would
   // scale the storage in order and keep the shape, reading [[10,20],[30,40]]
   // — so these two indices are what a wrong gate fails on.
-  var t: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0], [2, 2]).transpose();
-  var s: ndarray.NdArray[f64] = t.map((x: f64): f64 => x * 10.0);
+  let t: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0], [2, 2]).transpose();
+  let s: ndarray.NdArray[f64] = t.map((x: f64): f64 => x * 10.0);
   if (s.get([0, 1]) != 30.0) { return 30; }
   if (s.get([1, 0]) != 20.0) { return 31; }
 
   // A handle from a helper is packed too, through #9950's return summary,
   // so the kernel reaches the spelling a program actually uses.
-  var h: ndarray.NdArray[f64] = grid().map((x: f64): f64 => x * 2.0);
+  let h: ndarray.NdArray[f64] = grid().map((x: f64): f64 => x * 2.0);
   if (h.get([0, 1]) != 4.0) { return 40; }
   if (h.get([1, 1]) != 12.0) { return 41; }
 
@@ -54,7 +54,7 @@ function main(): i32 {
   // past a closure release. Executed rather than only inspected: a range end
   // that overshoots deletes an op the call still needs, and only running it
   // shows that.
-  var n: ndarray.NdArray[f64] = ndarray.from_flat([2.0, 4.0, 6.0], [3]).map(half);
+  let n: ndarray.NdArray[f64] = ndarray.from_flat([2.0, 4.0, 6.0], [3]).map(half);
   if (n.get([0]) != 1.0 || n.get([2]) != 3.0) { return 60; }
 
   // Every result read once more at the end, so nothing above is released

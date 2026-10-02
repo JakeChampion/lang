@@ -27,8 +27,8 @@ import "std/utf8" as utf8;
 // utf8_decode_at. Kept here rather than in the stdlib so the stdlib
 // carries one scanner and this test still pins the contract.
 function valid_ref(s: string): boolean {
-    var n: i32 = s.len();
-    var i: i32 = 0;
+    let n: i32 = s.len();
+    let i: i32 = 0;
     while (i < n) {
         match (utf8.utf8_decode_at(s, i)) {
             Some(pair) => { i = i + pair.1; },
@@ -59,7 +59,7 @@ function check(s: string, code: i32): i32 {
 function main(): i32 {
     // Every 1-byte sequence: ASCII accepted, everything else a lead
     // byte with no tail.
-    var a: i32 = 0;
+    let a: i32 = 0;
     while (a < 256) {
         if (check(bytes1(a), 1) != 0) { return 1; }
         a = a + 1;
@@ -67,9 +67,9 @@ function main(): i32 {
 
     // Every 2-byte sequence: 65,536 pairs. Catches overlong C0/C1,
     // stray continuations, and truncated 3-/4-byte leads.
-    var p: i32 = 0;
+    let p: i32 = 0;
     while (p < 256) {
-        var q: i32 = 0;
+        let q: i32 = 0;
         while (q < 256) {
             if (check(bytes2(p, q), 2) != 0) { return 2; }
             q = q + 1;
@@ -108,23 +108,23 @@ function main(): i32 {
     // Mixed-width text, and the empty string.
     if (check("", 24) != 0) { return 24; }
     if (check("hello, world", 25) != 0) { return 25; }
-    var mixed: string = string_from_bytes_unchecked([65 as u8, 195 as u8, 169 as u8,
+    let mixed: string = string_from_bytes_unchecked([65 as u8, 195 as u8, 169 as u8,
         226 as u8, 130 as u8, 172 as u8, 240 as u8, 159 as u8, 152 as u8, 128 as u8]);
     if (check(mixed, 26) != 0) { return 26; }
     if (!utf8.is_valid_utf8(mixed)) { return 27; }
 
     // A valid string with one byte corrupted at each position in turn
     // is rejected by both, at every width.
-    var n: i32 = mixed.len();
-    var k: i32 = 0;
+    let n: i32 = mixed.len();
+    let k: i32 = 0;
     while (k < n) {
-        var b: u8[] = [];
-        var j: i32 = 0;
+        let b: u8[] = [];
+        let j: i32 = 0;
         while (j < n) {
             if (j == k) { b = b.append(255 as u8); } else { b = b.append(mixed[j] as u8); }
             j = j + 1;
         }
-        var broken: string = string_from_bytes_unchecked(b);
+        let broken: string = string_from_bytes_unchecked(b);
         if (check(broken, 28) != 0) { return 28; }
         if (utf8.is_valid_utf8(broken)) { return 29; }
         k = k + 1;
@@ -140,24 +140,24 @@ function main(): i32 {
     // offset in it, valid and then corrupted. A skip that overshot its
     // block, stopped one byte early, or mislocated the lane would land the
     // scan on the wrong byte and disagree with the reference here.
-    var run: i32 = 0;
+    let run: i32 = 0;
     while (run <= 40) {
-        var at: i32 = 0;
+        let at: i32 = 0;
         while (at <= run) {
-            var pre: u8[] = [];
-            var p: i32 = 0;
+            let pre: u8[] = [];
+            let p: i32 = 0;
             while (p < run) {
                 if (p < at) { pre = pre.append(97 as u8); } else { pre = pre.append(98 as u8); }
                 p = p + 1;
             }
             // Splice a valid 2-byte codepoint in at the offset, then the rest.
-            var withcp: u8[] = [];
-            var q: i32 = 0;
+            let withcp: u8[] = [];
+            let q: i32 = 0;
             while (q < at) { withcp = withcp.append(pre[q]); q = q + 1; }
             withcp = withcp.append(195 as u8);
             withcp = withcp.append(169 as u8);
             while (q < run) { withcp = withcp.append(pre[q]); q = q + 1; }
-            var good: string = string_from_bytes_unchecked(withcp);
+            let good: string = string_from_bytes_unchecked(withcp);
             if (check(good, 30) != 0) { return 30; }
             if (!utf8.is_valid_utf8(good)) { return 31; }
 
@@ -165,13 +165,13 @@ function main(): i32 {
             // one: the lead byte is still found, but the sequence is now
             // truncated. This is the case a skip that ran PAST the high
             // byte would wrongly accept.
-            var bad: u8[] = [];
-            var r2: i32 = 0;
+            let bad: u8[] = [];
+            let r2: i32 = 0;
             while (r2 < withcp.len()) {
                 if (r2 == at + 1) { bad = bad.append(97 as u8); } else { bad = bad.append(withcp[r2]); }
                 r2 = r2 + 1;
             }
-            var broke: string = string_from_bytes_unchecked(bad);
+            let broke: string = string_from_bytes_unchecked(bad);
             if (check(broke, 32) != 0) { return 32; }
             if (utf8.is_valid_utf8(broke)) { return 33; }
             at = at + 1;

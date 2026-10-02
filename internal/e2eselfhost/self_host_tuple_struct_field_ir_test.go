@@ -27,7 +27,7 @@ func TestSelfHostTupleStructFieldIRX86_64(t *testing.T) {
 
 	prog := `struct Pt { t: (i32, i32), n: i32 }
 function use_pt(): i32 {
-    var p: Pt = Pt { t: (3, 4), n: 5 };
+    let p: Pt = Pt { t: (3, 4), n: 5 };
     return p.t.0 + p.t.1 + p.n;
 }
 function main(): i32 { return use_pt(); }`

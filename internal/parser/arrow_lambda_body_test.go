@@ -36,7 +36,7 @@ func TestArrowLambdaBracedBodyIsSpliced(t *testing.T) {
 	}
 
 	t.Run("statement-only body keeps its statements and adds no return", func(t *testing.T) {
-		l := lambdaOf(t, `function main(): i32 { var f = (x: i32) => { g(x); h(x); }; return 0; }`)
+		l := lambdaOf(t, `function main(): i32 { let f = (x: i32) => { g(x); h(x); }; return 0; }`)
 		if len(l.Body.Stmts) != 2 {
 			t.Fatalf("want the 2 body statements, got %d: %#v", len(l.Body.Stmts), l.Body.Stmts)
 		}
@@ -48,16 +48,16 @@ func TestArrowLambdaBracedBodyIsSpliced(t *testing.T) {
 	})
 
 	t.Run("empty body is an empty block", func(t *testing.T) {
-		l := lambdaOf(t, `function main(): i32 { var f = (x: i32) => {}; return 0; }`)
+		l := lambdaOf(t, `function main(): i32 { let f = (x: i32) => {}; return 0; }`)
 		if len(l.Body.Stmts) != 0 {
 			t.Fatalf("want no body statements, got %d: %#v", len(l.Body.Stmts), l.Body.Stmts)
 		}
 	})
 
 	t.Run("trailing value becomes the returned value", func(t *testing.T) {
-		l := lambdaOf(t, `function main(): i32 { var f = (x: i32) => { var y: i32 = x; y * 2 }; return 0; }`)
+		l := lambdaOf(t, `function main(): i32 { let f = (x: i32) => { let y: i32 = x; y * 2 }; return 0; }`)
 		if len(l.Body.Stmts) != 2 {
-			t.Fatalf("want the var plus a return, got %d: %#v", len(l.Body.Stmts), l.Body.Stmts)
+			t.Fatalf("want the let plus a return, got %d: %#v", len(l.Body.Stmts), l.Body.Stmts)
 		}
 		ret, ok := l.Body.Stmts[1].(*ast.Return)
 		if !ok {
@@ -69,7 +69,7 @@ func TestArrowLambdaBracedBodyIsSpliced(t *testing.T) {
 	})
 
 	t.Run("explicit return is the body's own statement", func(t *testing.T) {
-		l := lambdaOf(t, `function main(): i32 { var f = (x: i32) => { return x * 2; }; return 0; }`)
+		l := lambdaOf(t, `function main(): i32 { let f = (x: i32) => { return x * 2; }; return 0; }`)
 		if len(l.Body.Stmts) != 1 {
 			t.Fatalf("want the single return, got %d: %#v", len(l.Body.Stmts), l.Body.Stmts)
 		}
@@ -87,7 +87,7 @@ func TestArrowLambdaBracedBodyIsSpliced(t *testing.T) {
 	// block's trailing value, so an item followed by neither `;` nor `}` has to
 	// be read again as the statement it is.
 	t.Run("match statement followed by more statements", func(t *testing.T) {
-		l := lambdaOf(t, `function main(): i32 { var f = (x: i32) => {
+		l := lambdaOf(t, `function main(): i32 { let f = (x: i32) => {
 			match (x) { 0 => { return 100; }, _ => {} }
 			return x * 2;
 		}; return f(1); }`)
@@ -100,7 +100,7 @@ func TestArrowLambdaBracedBodyIsSpliced(t *testing.T) {
 	})
 
 	t.Run("if-with-else statement followed by more statements", func(t *testing.T) {
-		l := lambdaOf(t, `function main(): i32 { var f = (x: i32) => {
+		l := lambdaOf(t, `function main(): i32 { let f = (x: i32) => {
 			if (x > 0) { g(x); } else { h(x); }
 			return x * 2;
 		}; return f(1); }`)
@@ -113,12 +113,12 @@ func TestArrowLambdaBracedBodyIsSpliced(t *testing.T) {
 	})
 
 	t.Run("a trailing match is still the block's value", func(t *testing.T) {
-		l := lambdaOf(t, `function main(): i32 { var f = (x: i32) => {
-			var y: i32 = x + 1;
+		l := lambdaOf(t, `function main(): i32 { let f = (x: i32) => {
+			let y: i32 = x + 1;
 			match (y) { 0 => 100, _ => y * 2 }
 		}; return f(1); }`)
 		if len(l.Body.Stmts) != 2 {
-			t.Fatalf("want the var plus a return, got %d: %#v", len(l.Body.Stmts), l.Body.Stmts)
+			t.Fatalf("want the let plus a return, got %d: %#v", len(l.Body.Stmts), l.Body.Stmts)
 		}
 		ret, ok := l.Body.Stmts[1].(*ast.Return)
 		if !ok {
@@ -135,7 +135,7 @@ func TestArrowLambdaBracedBodyIsSpliced(t *testing.T) {
 	t.Run("use binds the rest of the body", func(t *testing.T) {
 		l := lambdaOf(t, `function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }
 function main(): i32 {
-    var f = (): i32 => {
+    let f = (): i32 => {
         use n <- apply(41);
         return n + 1;
     };
@@ -166,8 +166,8 @@ function main(): i32 {
 	t.Run("let-else binds the rest of the body", func(t *testing.T) {
 		l := lambdaOf(t, `enum O { Has(i32), Nil }
 function main(): i32 {
-    var f = (): i32 => {
-        var o: O = Nil;
+    let f = (): i32 => {
+        let o: O = Nil;
         let Has(v) = o else { return 0; };
         return v;
     };
@@ -175,7 +175,7 @@ function main(): i32 {
 }`)
 		// The desugar turns the `let` and everything after it into a match.
 		if len(l.Body.Stmts) != 2 {
-			t.Fatalf("want the var plus the desugared match, got %d: %#v", len(l.Body.Stmts), l.Body.Stmts)
+			t.Fatalf("want the let plus the desugared match, got %d: %#v", len(l.Body.Stmts), l.Body.Stmts)
 		}
 		m, ok := l.Body.Stmts[1].(*ast.Match)
 		if !ok {
@@ -187,7 +187,7 @@ function main(): i32 {
 	})
 
 	t.Run("an expression body still returns that expression", func(t *testing.T) {
-		l := lambdaOf(t, `function main(): i32 { var f = (x: i32) => x * 2; return 0; }`)
+		l := lambdaOf(t, `function main(): i32 { let f = (x: i32) => x * 2; return 0; }`)
 		if len(l.Body.Stmts) != 1 {
 			t.Fatalf("want the single return, got %d: %#v", len(l.Body.Stmts), l.Body.Stmts)
 		}

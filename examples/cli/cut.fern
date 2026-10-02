@@ -21,17 +21,17 @@ import "std/array";
 // A selection is a list of (lo, hi) inclusive 1-based ranges; hi == 0
 // means "open to the end".
 function parse_list(spec: string): (i32, i32)[] {
-  var out: (i32, i32)[] = [];
-  var parts: string[] = spec.split(",");
-  var i: i32 = 0;
+  let out: (i32, i32)[] = [];
+  let parts: string[] = spec.split(",");
+  let i: i32 = 0;
   while (i < parts.len()) {
-    var p: string = parts[i];
+    let p: string = parts[i];
     match (p.split_once("-")) {
       Some(bounds) => {
-        var los: string = bounds.0;
-        var his: string = bounds.1;
-        var lo: i32 = 1;
-        var hi: i32 = 0;  // open
+        let los: string = bounds.0;
+        let his: string = bounds.1;
+        let lo: i32 = 1;
+        let hi: i32 = 0;  // open
         if (!los.is_empty()) {
           match (los.parse_int()) {
             Some(n) => {
@@ -66,11 +66,11 @@ function parse_list(spec: string): (i32, i32)[] {
 
 // Is 1-based position `pos` inside any selected range?
 function selected(pos: i32, ranges: (i32, i32)[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ranges.len()) {
-    var r: (i32, i32) = ranges[i];
-    var lo: i32 = r.0;
-    var hi: i32 = r.1;
+    let r: (i32, i32) = ranges[i];
+    let lo: i32 = r.0;
+    let hi: i32 = r.1;
     if (pos >= lo && (hi == 0 || pos <= hi)) {
       return true;
     }
@@ -85,9 +85,9 @@ function cut_fields(line: string, delim: string, ranges: (i32, i32)[]): string {
   if (!line.contains(delim)) {
     return line;
   }
-  var fields: string[] = line.split(delim);
-  var picked: string[] = [];
-  var i: i32 = 0;
+  let fields: string[] = line.split(delim);
+  let picked: string[] = [];
+  let i: i32 = 0;
   while (i < fields.len()) {
     if (selected(i + 1, ranges)) {
       picked = picked.append(fields[i]);
@@ -98,8 +98,8 @@ function cut_fields(line: string, delim: string, ranges: (i32, i32)[]): string {
 }
 
 function cut_chars(line: string, ranges: (i32, i32)[]): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < line.len()) {
     if (selected(i + 1, ranges)) {
       out = out + slice_unchecked(line, i, i + 1);
@@ -121,15 +121,15 @@ function slurp(path: string): string {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var delim: string = "\t";
-  var spec: string = "";
-  var mode: string = "";  // "f" or "c"
-  var inputs: string[] = [];
+  let argv: string[] = args();
+  let delim: string = "\t";
+  let spec: string = "";
+  let mode: string = "";  // "f" or "c"
+  let inputs: string[] = [];
 
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "-d" && i + 1 < argv.len()) {
       delim = argv[i + 1];
       i = i + 1;
@@ -154,12 +154,12 @@ function main(): i32 {
   if (inputs.len() == 0) {
     inputs = inputs.append("-");
   }
-  var ranges: (i32, i32)[] = parse_list(spec);
+  let ranges: (i32, i32)[] = parse_list(spec);
 
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < inputs.len()) {
-    var lines: string[] = slurp(inputs[j]).lines();
-    var k: i32 = 0;
+    let lines: string[] = slurp(inputs[j]).lines();
+    let k: i32 = 0;
     while (k < lines.len()) {
       if (mode == "f") {
         print(cut_fields(lines[k], delim, ranges));

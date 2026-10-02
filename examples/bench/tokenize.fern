@@ -16,19 +16,19 @@ function is_ident_byte(c: u8): boolean {
 }
 
 function scan(src: string): i32 {
-  var kw: i32 = 0;
-  var i: i32 = 0;
-  var n: i32 = src.len();
+  let kw: i32 = 0;
+  let i: i32 = 0;
+  let n: i32 = src.len();
   while (i < n) {
     if (!is_ident_byte(src[i])) {
       i = i + 1;
       continue;
     }
-    var start: i32 = i;
+    let start: i32 = i;
     while (i < n && is_ident_byte(src[i])) {
       i = i + 1;
     }
-    var word: str = slice_unchecked(src, start, i);
+    let word: str = slice_unchecked(src, start, i);
     // Keyword comparison — the strcmp-bound half.
     if (word == "function" || word == "return" || word == "while" || word == "var" || word == "if" || word == "else") {
       kw = kw + 1;
@@ -38,9 +38,9 @@ function scan(src: string): i32 {
 }
 
 function main(): i32 {
-  var src: string = "function scan(src: string): i32 { var i: i32 = 0; while (i < n) { if (x) { return i; } else { i = i + 1; } } return 0; }";
-  var total: i64 = 0i64;
-  var r: i32 = 0;
+  let src: string = "function scan(src: string): i32 { let i: i32 = 0; while (i < n) { if (x) { return i; } else { i = i + 1; } } return 0; }";
+  let total: i64 = 0i64;
+  let r: i32 = 0;
   while (r < 10000) {
     total = total + scan(src) as i64;
     r = r + 1;

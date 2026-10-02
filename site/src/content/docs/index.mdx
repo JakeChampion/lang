@@ -120,18 +120,18 @@ is the heart of a `grep`. Edit it and press Run.
 import "std/io";
 
 function main(): i32 {
-    var argv: string[] = args();
+    let argv: string[] = args();
     if (argv.len() < 2) {
         eprint("usage: grep PATTERN");
         return 2;
     }
-    var pattern: string = argv[1];
+    let pattern: string = argv[1];
 
     match (io.read_input("-")) {       // "-" means stdin
         Ok(text) => {
-            var found: boolean = false;
-            var lines: string[] = text.lines();
-            var i: i32 = 0;
+            let found: boolean = false;
+            let lines: string[] = text.lines();
+            let i: i32 = 0;
             while (i < lines.len()) {
                 if (lines[i].contains(pattern)) {
                     print(lines[i]);
@@ -186,7 +186,7 @@ Failure travels the same way — as an ordinary value, passed up by `?`:
 import "std/string";
 
 function double(s: string): Option[i32] {
-    var n: i32 = s.parse_int()?;   // returns None early if the parse fails
+    let n: i32 = s.parse_int()?;   // returns None early if the parse fails
     return Some(n * 2);
 }
 ```

@@ -12,13 +12,13 @@ func definitionFor(src string, line, col int) *Location {
 }
 
 func TestDefinition_LocalVar(t *testing.T) {
-	src := "function main(): i32 {\n  var x: i32 = 7;\n  return x;\n}\n"
+	src := "function main(): i32 {\n  let x: i32 = 7;\n  return x;\n}\n"
 	// Cursor on `x` in `return x;` (LSP 0-based line 2, col 9).
-	// The parser stamps Var.P at the start of the `var` keyword
+	// The parser stamps Var.P at the start of the `let` keyword
 	// (LSP col 2), not at the name — close enough to navigate.
 	got := definitionFor(src, 2, 9)
 	if got == nil {
-		t.Fatal("expected definition for local var x, got nil")
+		t.Fatal("expected definition for local let x, got nil")
 	}
 	if got.Range.Start.Line != 1 {
 		t.Errorf("definition start line = %d, want 1", got.Range.Start.Line)
@@ -53,10 +53,10 @@ func TestDefinition_Struct(t *testing.T) {
 }
 
 func TestDefinition_TypeAnnotation(t *testing.T) {
-	// Cursor on `Point` in `var p: Point`. The annotation lives in
+	// Cursor on `Point` in `let p: Point`. The annotation lives in
 	// a positionless ast.Type, so this only works via the parser's
 	// TypeRefs side table.
-	src := "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  var p: Point = Point { x: 0, y: 0 };\n  return p.x;\n}\n"
+	src := "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 0, y: 0 };\n  return p.x;\n}\n"
 	got := definitionFor(src, 2, 9)
 	if got == nil {
 		t.Fatal("expected definition for type annotation Point")
@@ -67,7 +67,7 @@ func TestDefinition_TypeAnnotation(t *testing.T) {
 }
 
 func TestDefinition_FieldAccess(t *testing.T) {
-	src := "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  var p: Point = Point { x: 7, y: 9 };\n  return p.x;\n}\n"
+	src := "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 7, y: 9 };\n  return p.x;\n}\n"
 	got := definitionFor(src, 3, 11) // cursor on `x` in `p.x`
 	if got == nil {
 		t.Fatal("expected definition for field access p.x")
@@ -83,7 +83,7 @@ func TestDefinition_FieldAccess(t *testing.T) {
 func TestDefinition_MethodCall(t *testing.T) {
 	src := "struct Point { x: i32, y: i32 }\n" +
 		"function (p: Point) sum(): i32 { return p.x + p.y; }\n" +
-		"function main(): i32 {\n  var p: Point = Point { x: 3, y: 4 };\n  return p.sum();\n}\n"
+		"function main(): i32 {\n  let p: Point = Point { x: 3, y: 4 };\n  return p.sum();\n}\n"
 	// Cursor on `sum` in `p.sum()` — line 4 (0-based), col 13.
 	got := definitionFor(src, 4, 13)
 	if got == nil {
@@ -120,7 +120,7 @@ func TestHandleMessage_Definition(t *testing.T) {
 		TextDocument: textDocumentItem{
 			URI:        "file:///def.fern",
 			LanguageID: "fern",
-			Text:       "function main(): i32 {\n  var x: i32 = 7;\n  return x;\n}\n",
+			Text:       "function main(): i32 {\n  let x: i32 = 7;\n  return x;\n}\n",
 		},
 	})
 	openMsg, _ := json.Marshal(message{Jsonrpc: "2.0", Method: "textDocument/didOpen", Params: open})

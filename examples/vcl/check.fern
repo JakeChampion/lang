@@ -83,12 +83,12 @@ function actions_for(entry: string): string[] {
   if (entry == "vcl_backend_error") {
     return ["deliver", "retry", "abandon"];
   }
-  var none: string[] = [];
+  let none: string[] = [];
   return none;
 }
 
 function in_list(s: string, items: string[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < items.len()) {
     if (items[i] == s) {
       return true;
@@ -99,8 +99,8 @@ function in_list(s: string, items: string[]): boolean {
 }
 
 function join(items: string[], sep: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < items.len()) {
     if (i > 0) {
       out = out + sep;
@@ -125,7 +125,7 @@ function check_name(c: Ck, name: string, line: i32, col: i32, out: Problem[]): P
     },
     None => {}
   }
-  var ctx: eval.Ctx = eval.Ctx { decls: c.decls };
+  let ctx: eval.Ctx = eval.Ctx { decls: c.decls };
   if (eval.has_backend(ctx, name) || eval.has_acl(ctx, name)) {
     return out;
   }
@@ -149,8 +149,8 @@ function check_call(c: Ck, callee: string, line: i32, col: i32, out: Problem[]):
 
 // ------------------------------------------------------------ expressions
 function check_exprs(c: Ck, es: ast.Expr[], out: Problem[]): Problem[] {
-  var acc: Problem[] = out;
-  var i: i32 = 0;
+  let acc: Problem[] = out;
+  let i: i32 = 0;
   while (i < es.len()) {
     acc = check_expr(c, es[i], acc);
     i = i + 1;
@@ -169,11 +169,11 @@ function check_expr(c: Ck, e: ast.Expr, out: Problem[]): Problem[] {
       return check_name(c, v.name, v.line, v.col, out);
     },
     ECall(call) => {
-      var acc: Problem[] = check_call(c, call.callee, call.line, call.col, out);
+      let acc: Problem[] = check_call(c, call.callee, call.line, call.col, out);
       return check_exprs(c, call.args, acc);
     },
     EBinary(b) => {
-      var acc: Problem[] = check_expr(c, b.lhs, out);
+      let acc: Problem[] = check_expr(c, b.lhs, out);
       return check_expr(c, b.rhs, acc);
     },
     EUnary(u) => {
@@ -190,7 +190,7 @@ function check_expr(c: Ck, e: ast.Expr, out: Problem[]): Problem[] {
 
 // ------------------------------------------------------------- statements
 function check_set(c: Ck, s: ast.SetStmt, out: Problem[]): Problem[] {
-  var acc: Problem[] = check_expr(c, s.value, out);
+  let acc: Problem[] = check_expr(c, s.value, out);
   match (vars.find_spec(s.target)) {
     None => {
       return acc.append(problem(c, "unknown variable '" + s.target + "'", s.line, s.col));
@@ -228,14 +228,14 @@ function check_unset(c: Ck, s: ast.UnsetStmt, out: Problem[]): Problem[] {
 // bare `return;` is how a custom subroutine ends early; in a `vcl_*`
 // subroutine it names no action and is rejected.
 function check_return(c: Ck, s: ast.ReturnStmt, in_custom: boolean, out: Problem[]): Problem[] {
-  var acc: Problem[] = check_exprs(c, s.args, out);
+  let acc: Problem[] = check_exprs(c, s.args, out);
   if (s.action == "") {
     if (in_custom) {
       return acc;
     }
     return acc.append(problem(c, "'return' needs an action in " + c.entry, s.line, s.col));
   }
-  var allowed: string[] = actions_for(c.entry);
+  let allowed: string[] = actions_for(c.entry);
   if (in_list(s.action, allowed)) {
     return acc;
   }
@@ -243,8 +243,8 @@ function check_return(c: Ck, s: ast.ReturnStmt, in_custom: boolean, out: Problem
 }
 
 function check_if(c: Ck, s: ast.IfStmt, in_custom: boolean, depth: i32, out: Problem[]): Problem[] {
-  var acc: Problem[] = out;
-  var i: i32 = 0;
+  let acc: Problem[] = out;
+  let i: i32 = 0;
   while (i < s.arms.len()) {
     acc = check_expr(c, s.arms[i].cond, acc);
     acc = check_block(c, s.arms[i].body, in_custom, depth, acc);
@@ -260,7 +260,7 @@ function check_if(c: Ck, s: ast.IfStmt, in_custom: boolean, depth: i32, out: Pro
 // point's context. The depth guard stops a recursive subroutine pair from
 // walking forever; the evaluator bounds the same cycle at run time.
 function check_call_stmt(c: Ck, s: ast.CallStmt, depth: i32, out: Problem[]): Problem[] {
-  var ctx: eval.Ctx = eval.Ctx { decls: c.decls };
+  let ctx: eval.Ctx = eval.Ctx { decls: c.decls };
   match (eval.find_sub(ctx, s.name)) {
     None => {
       return out.append(problem(c, "call to undefined subroutine '" + s.name + "'", s.line, s.col));
@@ -314,8 +314,8 @@ function check_stmt(c: Ck, s: ast.Stmt, in_custom: boolean, depth: i32, out: Pro
 }
 
 function check_block(c: Ck, b: ast.Block, in_custom: boolean, depth: i32, out: Problem[]): Problem[] {
-  var acc: Problem[] = out;
-  var i: i32 = 0;
+  let acc: Problem[] = out;
+  let i: i32 = 0;
   while (i < b.stmts.len()) {
     acc = check_stmt(c, b.stmts[i], in_custom, depth, acc);
     i = i + 1;
@@ -327,10 +327,10 @@ function check_block(c: Ck, b: ast.Block, in_custom: boolean, depth: i32, out: P
 // check_declarations validates the top level: duplicate subroutines, and a
 // `vcl_`-prefixed name that Varnish will never call.
 function check_declarations(decls: ast.Decl[], out: Problem[]): Problem[] {
-  var acc: Problem[] = out;
-  var seen: string[] = [];
-  var c: Ck = Ck { decls: decls, entry: "" };
-  var i: i32 = 0;
+  let acc: Problem[] = out;
+  let seen: string[] = [];
+  let c: Ck = Ck { decls: decls, entry: "" };
+  let i: i32 = 0;
   while (i < decls.len()) {
     match (decls[i]) {
       DSub(s) => {
@@ -357,15 +357,15 @@ function max_call_depth(): i32 {
 // check validates a whole program: the declarations, then each entry point
 // the program defines, walked in its own scope.
 pub function check(decls: ast.Decl[]): Problem[] {
-  var out: Problem[] = [];
+  let out: Problem[] = [];
   out = check_declarations(decls, out);
-  var ctx: eval.Ctx = eval.Ctx { decls: decls };
-  var entries: string[] = entry_points();
-  var i: i32 = 0;
+  let ctx: eval.Ctx = eval.Ctx { decls: decls };
+  let entries: string[] = entry_points();
+  let i: i32 = 0;
   while (i < entries.len()) {
     match (eval.find_sub(ctx, entries[i])) {
       Some(body) => {
-        var c: Ck = Ck { decls: decls, entry: entries[i] };
+        let c: Ck = Ck { decls: decls, entry: entries[i] };
         out = check_block(c, body, false, max_call_depth(), out);
       },
       None => {}
@@ -379,10 +379,10 @@ pub function check(decls: ast.Decl[]): Problem[] {
 // an error — a policy may keep one deliberately — but worth reporting,
 // since the usual cause is a `call` that was removed or misspelled.
 pub function unreachable_subs(decls: ast.Decl[]): string[] {
-  var reached: string[] = [];
-  var ctx: eval.Ctx = eval.Ctx { decls: decls };
-  var entries: string[] = entry_points();
-  var i: i32 = 0;
+  let reached: string[] = [];
+  let ctx: eval.Ctx = eval.Ctx { decls: decls };
+  let entries: string[] = entry_points();
+  let i: i32 = 0;
   while (i < entries.len()) {
     match (eval.find_sub(ctx, entries[i])) {
       Some(body) => {
@@ -392,8 +392,8 @@ pub function unreachable_subs(decls: ast.Decl[]): string[] {
     }
     i = i + 1;
   }
-  var out: string[] = [];
-  var j: i32 = 0;
+  let out: string[] = [];
+  let j: i32 = 0;
   while (j < decls.len()) {
     match (decls[j]) {
       DSub(s) => {
@@ -409,11 +409,11 @@ pub function unreachable_subs(decls: ast.Decl[]): string[] {
 }
 
 function mark_reached(ctx: eval.Ctx, b: ast.Block, reached: string[], depth: i32): string[] {
-  var acc: string[] = reached;
+  let acc: string[] = reached;
   if (depth <= 0) {
     return acc;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < b.stmts.len()) {
     acc = mark_reached_stmt(ctx, b.stmts[i], acc, depth);
     i = i + 1;
@@ -427,7 +427,7 @@ function mark_reached_stmt(ctx: eval.Ctx, s: ast.Stmt, reached: string[], depth:
       if (in_list(x.name, reached)) {
         return reached;
       }
-      var acc: string[] = reached.append(x.name);
+      let acc: string[] = reached.append(x.name);
       match (eval.find_sub(ctx, x.name)) {
         Some(body) => {
           return mark_reached(ctx, body, acc, depth - 1);
@@ -438,8 +438,8 @@ function mark_reached_stmt(ctx: eval.Ctx, s: ast.Stmt, reached: string[], depth:
       }
     },
     SIf(x) => {
-      var acc: string[] = reached;
-      var i: i32 = 0;
+      let acc: string[] = reached;
+      let i: i32 = 0;
       while (i < x.arms.len()) {
         acc = mark_reached(ctx, x.arms[i].body, acc, depth);
         i = i + 1;

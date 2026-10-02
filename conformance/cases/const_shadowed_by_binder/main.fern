@@ -28,20 +28,20 @@ function shadow_param(N: i32): i32 {
 
 // A local declaration binds N from its own statement onward.
 function shadow_local(): i32 {
-    var N: i32 = 7;
+    let N: i32 = 7;
     return N;
 }
 
 // The assignment TARGET is a binder's reference, not a value position.
 function shadow_assign(): i32 {
-    var N: i32 = 7;
+    let N: i32 = 7;
     N = 9;
     return N;
 }
 
 // A match arm's pattern binds N for that arm's guard and body.
 function shadow_match(): i32 {
-    var e: E = E.A(7);
+    let e: E = E.A(7);
     match (e) {
         A(N) => { return N; },
         B => { return 0; },
@@ -50,7 +50,7 @@ function shadow_match(): i32 {
 
 // A for-each variable binds N for the loop body.
 function shadow_for_each(): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for N in [3, 4] {
         t = t + N;
     }
@@ -59,14 +59,14 @@ function shadow_for_each(): i32 {
 
 // A lambda parameter binds N inside the lambda only.
 function shadow_lambda(): i32 {
-    var f: (i32) => i32 = (N: i32) => N;
+    let f: (i32) => i32 = (N: i32) => N;
     return f(7);
 }
 
 // A destructuring declaration binds every name it introduces.
 function shadow_destructure(): i32 {
-    var p: P = P { x: 7, y: 1 };
-    var P { x: N, y: b } = p;
+    let p: P = P { x: 7, y: 1 };
+    let P { x: N, y: b } = p;
     return N + b;
 }
 
@@ -78,7 +78,7 @@ function unshadowed(): i32 {
 }
 
 function main(): i32 {
-    var r: i32 = 0;
+    let r: i32 = 0;
     if (shadow_param(7) == 7) { r = r + 1; }
     if (shadow_local() == 7) { r = r + 2; }
     if (shadow_assign() == 9) { r = r + 4; }

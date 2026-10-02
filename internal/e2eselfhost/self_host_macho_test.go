@@ -80,25 +80,25 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		// Plain integer return — exercises only the exit syscall.
 		{"exit_42", `function main(): i32 { return 42; }`, 42},
 		// Arithmetic — register ops, no runtime.
-		{"arith", `function main(): i32 { var x = 6; var y = 7; return x * y; }`, 42},
+		{"arith", `function main(): i32 { let x = 6; let y = 7; return x * y; }`, 42},
 		// Control flow + recursion.
 		{"fib", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(10); }`, 55},
 		// String concat — exercises the heap (.bss bump allocator) +
 		// the @PAGE/@PAGEOFF addressing of a runtime-built string.
-		{"concat", `function main(): i32 { var s: string = "hello, " + "world!"; return s.len(); }`, 13},
+		{"concat", `function main(): i32 { let s: string = "hello, " + "world!"; return s.len(); }`, 13},
 		// The string builder assembled IN-PROCESS: __fern_strbuf_grow's
 		// mov-with-hw-select / lsl / b.hs / cbnz must encode, and a 108,000-byte
 		// build grows the 64 KiB buffer twice before the take.
 		{"strbuf_grow", `function main(): i32 {
     strbuf_reset();
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 3000) { strbuf_append("0123456789abcdefghijklmnopqrstuvwxyz"); i = i + 1; }
-    var s: string = strbuf_take();
+    let s: string = strbuf_take();
     if (s.len() != 108000) { return 1; }
     if ((s[65536] as i32) != (s[16] as i32)) { return 2; }
     if ((s[107999] as i32) != (s[35] as i32)) { return 3; }
     strbuf_append("ok");
-    var t: string = strbuf_take();
+    let t: string = strbuf_take();
     if (t.len() != 2) { return 4; }
     return 42;
 }`, 42},
@@ -108,7 +108,7 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		// A literal shaped like the emitter's own `:lo12:` operands: its bytes
 		// must survive darwinize (#8400).
 		{"lo12_literal", `function main(): i32 {
-    var s: string = "    add x9, x9, :lo12:.Lfern_relanchor";
+    let s: string = "    add x9, x9, :lo12:.Lfern_relanchor";
     if (s.len() != 38) { return 1; }
     if ((s[16] as i32) != 58) { return 2; }
     if ((s[21] as i32) != 58) { return 3; }
@@ -116,19 +116,19 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
     return 42;
 }`, 42},
 		// Struct + receiver method dispatch.
-		{"struct_method", `struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }`, 12},
+		{"struct_method", `struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { let x = Box { v: 4 }; return x.scale(3); }`, 12},
 		// Arrays — literal, index, length, loop.
-		{"array_sum", `function main(): i32 { var a = [1, 2, 3, 4, 5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
+		{"array_sum", `function main(): i32 { let a = [1, 2, 3, 4, 5]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
 		// Option payload + match — exercises the enum-box runtime.
 		{"option", `function pick(n: i32): Option[i32] { if (n == 0) { return None; } return Some(n + 1); } function main(): i32 { match (pick(41)) { Some(v) => { return v; }, None => { return 0; } } return 99; }`, 42},
 		// now_unix_ms — the Darwin gettimeofday(116) port (vs Linux
 		// clock_gettime). A plausible post-2023 wall-clock value → 7.
-		{"now_unix_ms", `function main(): i32 { var t: i64 = now_unix_ms(); if (t > 1700000000000) { return 7; } return 1; }`, 7},
+		{"now_unix_ms", `function main(): i32 { let t: i64 = now_unix_ms(); if (t > 1700000000000) { return 7; } return 1; }`, 7},
 		// random_bytes — the Darwin chunked getentropy(500) port (vs
 		// Linux getrandom). Assert the length round-trips AND the bytes
 		// were actually written (OR of 8 bytes != 0 → the syscall filled
 		// the buffer; a zero OR would mean it silently failed).
-		{"random_bytes", `function main(): i32 { var b: u8[] = random_bytes(8); if (b.len() != 8) { return 1; } var v: i32 = 0; var i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
+		{"random_bytes", `function main(): i32 { let b: u8[] = random_bytes(8); if (b.len() != 8) { return 1; } let v: i32 = 0; let i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
 		// The packed-NEON kernels (ATLAS-PLATFORM-PLAN §3), which is the only
 		// path that exercises arm64_native.fern's vector encodings: the CLI
 		// assembles its own emitted text in-process, so an unencodable
@@ -136,8 +136,8 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		// visible here as "self-host emit failed" rather than as a wrong
 		// answer. Each haystack's answer is past the first 16-byte block, so
 		// the vector loop runs on the executing half of this lane too.
-		{"memchr", `function main(): i32 { var s = "aaaaaaaaaaaaaaaaaaaa*aaa"; return __memchr(s, 42, 0) + 22; }`, 42},
-		{"ascii_run", `function main(): i32 { var s = "aaaaaaaaaaaaaaaaaaaaaaaa"; return __ascii_run(s, 0) + 18; }`, 42},
+		{"memchr", `function main(): i32 { let s = "aaaaaaaaaaaaaaaaaaaa*aaa"; return __memchr(s, 42, 0) + 22; }`, 42},
+		{"ascii_run", `function main(): i32 { let s = "aaaaaaaaaaaaaaaaaaaaaaaa"; return __ascii_run(s, 0) + 18; }`, 42},
 		// Static aggregate constant (#6149) — a struct literal of constants is
 		// interned as a __DATA block whose first word is an ABSOLUTE pointer to
 		// the shape string. dyld slides a PIE image, so that word needs an
@@ -150,7 +150,7 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 struct Lit { v: i32 }
 type Expr = Add | Lit;
 function eval(e: Expr): i32 { match (e) { Add(a) => { return a.l + a.r; }, Lit(l) => { return l.v; } } }
-function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42},
+function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42},
 	}
 
 	// darwinKnownGaps names the cases this path does NOT yet handle, each with
@@ -406,7 +406,7 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// not EL0-readable the binary would SIGILL → runCase reports a skip,
 	// not a failure.
 	runCase("monotonic_ns",
-		`function main(): i32 { var a: i64 = monotonic_ns(); var b: i64 = monotonic_ns(); if (b >= a) { if (a > 0) { return 7; } } return 1; }`,
+		`function main(): i32 { let a: i64 = monotonic_ns(); let b: i64 = monotonic_ns(); if (b >= a) { if (a > 0) { return 7; } } return 1; }`,
 		7)
 
 	// temp_dir — builds /tmp/<prefix>-<ns> (ns from monotonic_ns, so this
@@ -518,7 +518,7 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// there. That one is measured rather than merely survived.
 	runCase("sleep_ns",
 		`function main(): i32 { sleep_ns(5000000 as i64); sleep_ns(400 as i64); `+
-			`var t0: i64 = monotonic_ns(); sleep_ns(999999500 as i64); `+
+			`let t0: i64 = monotonic_ns(); sleep_ns(999999500 as i64); `+
 			`if (monotonic_ns() - t0 < (999999500 as i64)) { return 1; } return 7; }`,
 		7)
 
@@ -549,7 +549,7 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// written on — and i64 max is still nine orders of magnitude away.
 	runCase("rlimit_nofile",
 		`function main(): i32 {
-  var n: i64 = rlimit_nofile();
+  let n: i64 = rlimit_nofile();
   if (n < (4 as i64)) { return 90; }
   if (n > (2147483647 as i64)) { return 91; }
   return 7;
@@ -564,7 +564,7 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// exit 0 and 3 bytes of stdout ("hi\n") prove the happy path.
 	runCase("subprocess_echo",
 		`function main(): i32 {
-  var r: ProcessResult = subprocess("echo", ["hi"], "");
+  let r: ProcessResult = subprocess("echo", ["hi"], "");
   if (r.exit_code != 0) { return 90; }
   return r.stdout.len();
 }`,
@@ -574,7 +574,7 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// (WIFEXITED/WEXITSTATUS, status>>8, shared with Linux).
 	runCase("subprocess_exit_code",
 		`function main(): i32 {
-  var r: ProcessResult = subprocess("sh", ["-c", "exit 7"], "");
+  let r: ProcessResult = subprocess("sh", ["-c", "exit 7"], "");
   return r.exit_code;
 }`,
 		7)
@@ -584,7 +584,7 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// (5 bytes back).
 	runCase("subprocess_stdin",
 		`function main(): i32 {
-  var r: ProcessResult = subprocess("cat", [], "piped");
+  let r: ProcessResult = subprocess("cat", [], "piped");
   if (r.exit_code != 0) { return 90; }
   return r.stdout.len();
 }`,
@@ -595,7 +595,7 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// convention), surfaced as exit_code 127.
 	runCase("subprocess_missing",
 		`function main(): i32 {
-  var r: ProcessResult = subprocess("fern-no-such-binary-zzz-7349", [], "");
+  let r: ProcessResult = subprocess("fern-no-such-binary-zzz-7349", [], "");
   return r.exit_code;
 }`,
 		127)
@@ -609,7 +609,7 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// here we just prove the Darwin syscalls don't fault.)
 	runCase("tcp_listen_close",
 		`function main(): i32 {
-  var fd: i32 = tcp_listen(39517);
+  let fd: i32 = tcp_listen(39517);
   if (fd < 0) { return 1; }
   if (tcp_close(fd) < 0) { return 2; }
   return 7;

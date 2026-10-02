@@ -61,26 +61,26 @@ var fnValueCallCases = []struct {
 	{"fnfield_f64", `struct H { f: () => f64 }
 function mkval(): f64 { return 4.5; }
 function main(): i32 {
-    var h: H = H { f: mkval };
+    let h: H = H { f: mkval };
     return (h.f() * 10.0) as i32;
 }`},
 	{"fnfield_f64_local", `struct H { f: () => f64 }
 function mkval(): f64 { return 4.5; }
 function main(): i32 {
-    var h: H = H { f: mkval };
-    var v: f64 = h.f();
+    let h: H = H { f: mkval };
+    let v: f64 = h.f();
     return (v * 10.0) as i32;
 }`},
 	{"fnfield_i64", `struct H { f: () => i64 }
 function mkval(): i64 { return 7000000045i64; }
 function main(): i32 {
-    var h: H = H { f: mkval };
+    let h: H = H { f: mkval };
     return (h.f() % 1000i64) as i32;
 }`},
 	{"fnfield_i32", `struct H { f: () => i32 }
 function mkval(): i32 { return 45; }
 function main(): i32 {
-    var h: H = H { f: mkval };
+    let h: H = H { f: mkval };
     return h.f();
 }`},
 
@@ -88,27 +88,27 @@ function main(): i32 {
 	// nothing about its element, so the checker could not type the call at all.
 	{"fnarray_f64", `function mkval(): f64 { return 4.5; }
 function main(): i32 {
-    var fs: (() => f64)[] = [mkval];
+    let fs: (() => f64)[] = [mkval];
     return (fs[0]() * 10.0) as i32;
 }`},
 	{"fnarray_f64_local", `function mkval(): f64 { return 4.5; }
 function main(): i32 {
-    var fs: (() => f64)[] = [mkval];
-    var v: f64 = fs[0]();
+    let fs: (() => f64)[] = [mkval];
+    let v: f64 = fs[0]();
     return (v * 10.0) as i32;
 }`},
 	{"fnarray_i64", `function mkval(): i64 { return 7000000045i64; }
 function main(): i32 {
-    var fs: (() => i64)[] = [mkval];
+    let fs: (() => i64)[] = [mkval];
     return (fs[0]() % 1000i64) as i32;
 }`},
 	{"fnarray_i32", `function mkval(): i32 { return 45; }
 function main(): i32 {
-    var fs: (() => i32)[] = [mkval];
+    let fs: (() => i32)[] = [mkval];
     return fs[0]();
 }`},
 	{"fnarray_closure_f64", `function main(): i32 {
-    var fs: (() => f64)[] = [(): f64 => { return 4.5; }];
+    let fs: (() => f64)[] = [(): f64 => { return 4.5; }];
     return (fs[0]() * 10.0) as i32;
 }`},
 
@@ -117,23 +117,23 @@ function main(): i32 {
 	// dispatch was missing, and it bailed as a method call on a tuple.
 	{"fntuple_f64", `function mkval(): f64 { return 4.5; }
 function main(): i32 {
-    var t: (() => f64, i32) = (mkval, 1);
+    let t: (() => f64, i32) = (mkval, 1);
     return (t.0() * 10.0) as i32;
 }`},
 	{"fntuple_f64_local", `function mkval(): f64 { return 4.5; }
 function main(): i32 {
-    var t: (() => f64, i32) = (mkval, 1);
-    var v: f64 = t.0();
+    let t: (() => f64, i32) = (mkval, 1);
+    let v: f64 = t.0();
     return (v * 10.0) as i32;
 }`},
 	{"fntuple_i64", `function mkval(): i64 { return 7000000045i64; }
 function main(): i32 {
-    var t: (() => i64, i32) = (mkval, 1);
+    let t: (() => i64, i32) = (mkval, 1);
     return (t.0() % 1000i64) as i32;
 }`},
 	{"fntuple_i32", `function mkval(): i32 { return 45; }
 function main(): i32 {
-    var t: (() => i32, i32) = (mkval, 1);
+    let t: (() => i32, i32) = (mkval, 1);
     return t.0();
 }`},
 
@@ -142,12 +142,12 @@ function main(): i32 {
 	// the local typed as the opaque `fn` tag with an unknown result.
 	{"fnlocal_annotated_f64", `function mkval(): f64 { return 4.5; }
 function main(): i32 {
-    var f: () => f64 = mkval;
+    let f: () => f64 = mkval;
     return (f() * 10.0) as i32;
 }`},
 	{"fnlocal_annotated_i64", `function mkval(): i64 { return 7000000045i64; }
 function main(): i32 {
-    var f: () => i64 = mkval;
+    let f: () => i64 = mkval;
     return (f() % 1000i64) as i32;
 }`},
 	// A fn-typed local was the FIRST shape to carry a full funcref tag with
@@ -158,7 +158,7 @@ function main(): i32 {
 	// nowhere to hold its parameters.
 	{"fnlocal_annotated_arg_f64", `function scale(x: f64): f64 { return x * 10.0; }
 function main(): i32 {
-    var f: (f64) => f64 = scale;
+    let f: (f64) => f64 = scale;
     return f(4.5) as i32;
 }`},
 
@@ -168,37 +168,37 @@ function main(): i32 {
 	{"fnfield_arg_f64", `struct H { f: (f64) => f64 }
 function scale(x: f64): f64 { return x * 10.0; }
 function main(): i32 {
-    var h: H = H { f: scale };
+    let h: H = H { f: scale };
     return h.f(4.5) as i32;
 }`},
 	{"fnfield_arg_mixed", `struct H { f: (i64, f64) => f64 }
 function comb(a: i64, x: f64): f64 { return x * (a as f64); }
 function main(): i32 {
-    var h: H = H { f: comb };
+    let h: H = H { f: comb };
     return h.f(10i64, 4.5) as i32;
 }`},
 	{"fnfield_arg_i64_ret", `struct H { f: (i64) => i64 }
 function id64(x: i64): i64 { return x; }
 function main(): i32 {
-    var h: H = H { f: id64 };
+    let h: H = H { f: id64 };
     return h.f(45i64) as i32;
 }`},
 	{"fnfield_arg_i32_to_i64", `struct H { f: (i32) => i64 }
 function widen(x: i32): i64 { return x as i64; }
 function main(): i32 {
-    var h: H = H { f: widen };
+    let h: H = H { f: widen };
     return h.f(45) as i32;
 }`},
 	{"fnfield_arg_string", `struct H { f: (string) => i32 }
 function slen(s: string): i32 { return s.len(); }
 function main(): i32 {
-    var h: H = H { f: slen };
+    let h: H = H { f: slen };
     return h.f("x") + 44;
 }`},
 	{"fnfield_arg_i32", `struct H { f: (i32) => i32 }
 function add5(x: i32): i32 { return x + 5; }
 function main(): i32 {
-    var h: H = H { f: add5 };
+    let h: H = H { f: add5 };
     return h.f(40);
 }`},
 
@@ -207,27 +207,27 @@ function main(): i32 {
 	// tuple spelling the slot now keeps.
 	{"fntuple_arg_f64", `function scale(x: f64): f64 { return x * 10.0; }
 function main(): i32 {
-    var t: ((f64) => f64, i32) = (scale, 1);
+    let t: ((f64) => f64, i32) = (scale, 1);
     return t.0(4.5) as i32;
 }`},
 	{"fntuple_arg_mixed", `function comb(a: i64, x: f64): f64 { return x * (a as f64); }
 function main(): i32 {
-    var t: ((i64, f64) => f64, i32) = (comb, 1);
+    let t: ((i64, f64) => f64, i32) = (comb, 1);
     return t.0(10i64, 4.5) as i32;
 }`},
 	{"fntuple_arg_i64_ret", `function id64(x: i64): i64 { return x; }
 function main(): i32 {
-    var t: ((i64) => i64, i32) = (id64, 1);
+    let t: ((i64) => i64, i32) = (id64, 1);
     return t.0(45i64) as i32;
 }`},
 	{"fntuple_arg_i32", `function add5(x: i32): i32 { return x + 5; }
 function main(): i32 {
-    var t: ((i32) => i32, i32) = (add5, 1);
+    let t: ((i32) => i32, i32) = (add5, 1);
     return t.0(40);
 }`},
 	{"fntuple_arg_string", `function slen(s: string): i32 { return s.len(); }
 function main(): i32 {
-    var t: ((string) => i32, i32) = (slen, 1);
+    let t: ((string) => i32, i32) = (slen, 1);
     return t.0("x") + 44;
 }`},
 
@@ -238,50 +238,50 @@ function main(): i32 {
 	// carried on the slot as its declared element spelling.
 	{"fnarray_arg_f64", `function scale(x: f64): f64 { return x * 10.0; }
 function main(): i32 {
-    var fs: ((f64) => f64)[] = [scale];
+    let fs: ((f64) => f64)[] = [scale];
     return fs[0](4.5) as i32;
 }`},
 	{"fnarray_arg_mixed", `function comb(a: i64, x: f64): f64 { return x * (a as f64); }
 function main(): i32 {
-    var fs: ((i64, f64) => f64)[] = [comb];
+    let fs: ((i64, f64) => f64)[] = [comb];
     return fs[0](10i64, 4.5) as i32;
 }`},
 	{"fnarray_arg_i64_ret", `function id64(x: i64): i64 { return x; }
 function main(): i32 {
-    var fs: ((i64) => i64)[] = [id64];
+    let fs: ((i64) => i64)[] = [id64];
     return fs[0](45i64) as i32;
 }`},
 	{"fnarray_arg_f64_to_i32", `function pick(x: f64): i32 { return (x as i32) + 1; }
 function main(): i32 {
-    var fs: ((f64) => i32)[] = [pick];
+    let fs: ((f64) => i32)[] = [pick];
     return fs[0](44.5);
 }`},
 	// The all-i32 control: `$fn<N>` already names this signature, so the tag
 	// declines and the emitted bytes are the ones this shape had before.
 	{"fnarray_arg_i32", `function add5(x: i32): i32 { return x + 5; }
 function main(): i32 {
-    var fs: ((i32) => i32)[] = [add5];
+    let fs: ((i32) => i32)[] = [add5];
     return fs[0](40);
 }`},
 	{"fnarray_arg_string", `function slen(s: string): i32 { return s.len(); }
 function main(): i32 {
-    var fs: ((string) => i32)[] = [slen];
+    let fs: ((string) => i32)[] = [slen];
     return fs[0]("x") + 44;
 }`},
 	// The whole-array ALIAS: the element spelling has to travel with the
 	// rebind, or `xs[0]` reaches the call with nothing to name its funcref.
 	{"fnarray_arg_alias", `function scale(x: f64): f64 { return x * 10.0; }
 function main(): i32 {
-    var fs: ((f64) => f64)[] = [scale];
-    var xs = fs;
+    let fs: ((f64) => f64)[] = [scale];
+    let xs = fs;
     return xs[0](4.5) as i32;
 }`},
 	// A CLOSURE element (capturing lambda), which dispatches env-first: the
 	// same declared signature must drive that arm's argument widths and its
 	// funcref tag, with the leading 'w' for the env box.
 	{"fnarray_arg_closure_f64", `function main(): i32 {
-    var k: f64 = 10.0;
-    var fs: ((f64) => f64)[] = [(x: f64) => x * k];
+    let k: f64 = 10.0;
+    let fs: ((f64) => f64)[] = [(x: f64) => x * k];
     return fs[0](4.5) as i32;
 }`},
 	// A function-array struct FIELD with arguments — the field's own two
@@ -289,7 +289,7 @@ function main(): i32 {
 	{"fnarrayfield_arg_f64", `struct Reg { hs: ((f64) => f64)[] }
 function scale(x: f64): f64 { return x * 10.0; }
 function main(): i32 {
-    var r: Reg = Reg { hs: [scale] };
+    let r: Reg = Reg { hs: [scale] };
     return r.hs[0](4.5) as i32;
 }`},
 
@@ -341,19 +341,19 @@ function main(): i32 {
 	{"fnfield_generic_wide", `struct Box[T] { f: (T) => T }
 function id64(x: i64): i64 { return x; }
 function main(): i32 {
-    var b: Box[i64] = Box[i64] { f: id64 };
+    let b: Box[i64] = Box[i64] { f: id64 };
     return b.f(45i64) as i32;
 }`},
 	{"fnfield_generic_i32", `struct Box[T] { f: (T) => T }
 function id32(x: i32): i32 { return x; }
 function main(): i32 {
-    var b: Box[i32] = Box[i32] { f: id32 };
+    let b: Box[i32] = Box[i32] { f: id32 };
     return b.f(45);
 }`},
 	{"fnfield_generic_wide_field_arg", `struct Box[T] { f: (T) => T, seed: T }
 function id64(x: i64): i64 { return x; }
 function main(): i32 {
-    var b: Box[i64] = Box[i64] { f: id64, seed: 45i64 };
+    let b: Box[i64] = Box[i64] { f: id64, seed: 45i64 };
     return b.f(b.seed) as i32;
 }`},
 }

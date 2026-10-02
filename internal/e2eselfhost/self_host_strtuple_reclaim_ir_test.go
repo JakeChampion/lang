@@ -27,13 +27,13 @@ var strTupleReclaimCases = []struct {
 	// concat operand (`"n" + i.to_string()`) leaks its operand TEMP in the
 	// concat lowering itself — a pre-existing gap independent of tuples.
 	{"str-tuple-concat-churn", `function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var t: (i32, string) = (w, "n" + "x"); acc = (acc + t.1.len()) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var t2: (i32, string) = (i, "n" + "x"); acc = (acc + t2.1.len()) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let t: (i32, string) = (w, "n" + "x"); acc = (acc + t.1.len()) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let t2: (i32, string) = (i, "n" + "x"); acc = (acc + t2.1.len()) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -42,13 +42,13 @@ var strTupleReclaimCases = []struct {
 	// Bare `.to_string()` element (the ExprCall producer arm).
 	{"str-tuple-tostring-churn", `import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var t: (i32, string) = (w, w.to_string()); acc = (acc + t.1.len()) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var t2: (i32, string) = (i, i.to_string()); acc = (acc + t2.1.len()) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let t: (i32, string) = (w, w.to_string()); acc = (acc + t.1.len()) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let t2: (i32, string) = (i, i.to_string()); acc = (acc + t2.1.len()) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -58,13 +58,13 @@ function main(): i32 {
 	// drop and the immortal literal is skipped. Rejecting the whole tuple on the
 	// string element leaks all three allocations.
 	{"str-tuple-lit-mixed", `function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var t: (string, i32[]) = ("tag", [w, w + 1]); acc = (acc + t.1[0]) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var t2: (string, i32[]) = ("tag", [i, i + 1]); acc = (acc + t2.1[0]) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let t: (string, i32[]) = ("tag", [w, w + 1]); acc = (acc + t.1[0]) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let t2: (string, i32[]) = ("tag", [i, i + 1]); acc = (acc + t2.1[0]) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -75,13 +75,13 @@ function main(): i32 {
 	// then the box). Rejecting the tuple on its string element leaks every
 	// level per iteration.
 	{"str-tuple-lit-shallow", `function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 200) { var t: (i32, string) = (w, "abc"); acc = (acc + t.0 + t.1.len()) % 251; w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    while (i < 5000) { var t2: (i32, string) = (i, "abc"); acc = (acc + t2.0 + t2.1.len()) % 251; i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 200) { let t: (i32, string) = (w, "abc"); acc = (acc + t.0 + t.1.len()) % 251; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let t2: (i32, string) = (i, "abc"); acc = (acc + t2.0 + t2.1.len()) % 251; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -90,10 +90,10 @@ function main(): i32 {
 	// IDENT-element negative: `(w, s)` aliases a live local — the tuple is
 	// excluded from both classes (leak-safe), s stays valid, detector zero.
 	{"str-tuple-ident-elem-safe", `function main(): i32 {
-    var s: string = "seven";
-    var acc: i32 = 0;
-    var w: i32 = 0;
-    while (w < 100) { var t: (i32, string) = (w, s); acc = (acc + t.1.len()) % 251; w = w + 1; }
+    let s: string = "seven";
+    let acc: i32 = 0;
+    let w: i32 = 0;
+    while (w < 100) { let t: (i32, string) = (w, s); acc = (acc + t.1.len()) % 251; w = w + 1; }
     if (s.len() != 5) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -102,11 +102,11 @@ function main(): i32 {
 	// freed, values exact (no dangle in the caller's reads).
 	{"str-tuple-escape-safe", `import "std/i32";
 function mk(i: i32): (i32, string) {
-    var t: (i32, string) = (i, "v" + i.to_string());
+    let t: (i32, string) = (i, "v" + i.to_string());
     return t;
 }
 function main(): i32 {
-    var t = mk(5);
+    let t = mk(5);
     if (t.0 != 5) { return 97; }
     if (t.1.len() != 2) { return 96; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -117,11 +117,11 @@ function main(): i32 {
 	// the extracted alias stays valid after the rebind (leak-safe, no UAF).
 	{"str-tuple-extract-escape-safe", `import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var keep: string = "";
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let keep: string = "";
+    let w: i32 = 0;
     while (w < 100) {
-        var t: (i32, string) = (w, "k" + w.to_string());
+        let t: (i32, string) = (w, "k" + w.to_string());
         keep = t.1;
         acc = (acc + keep.len()) % 251;
         w = w + 1;
@@ -134,13 +134,13 @@ function main(): i32 {
 	// takes the same deep drop (fresh element copy freed, then the box).
 	// Literal⊕literal concat for the same reason as the churn case.
 	{"str-tuple-discarded", `function main(): i32 {
-    var acc: i32 = 0;
-    var w: i32 = 0;
+    let acc: i32 = 0;
+    let w: i32 = 0;
     while (w < 200) { (w, "x" + "y"); w = w + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 5000) { (i, "x" + "y"); i = i + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }

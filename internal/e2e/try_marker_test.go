@@ -25,17 +25,17 @@ enum MyOpt[T] { Here(T), Gone }
 enum Outcome[T, E] { Good(T), Bad(E) }
 
 function pick(m: MyOpt[i32]): MyOpt[i32] {
-    var v: i32 = m?;
+    let v: i32 = m?;
     return Here(v + 1);
 }
 
 function step(o: Outcome[i32, string]): Outcome[i32, string] {
-    var v: i32 = o?;
+    let v: i32 = o?;
     return Good(v * 2);
 }
 
 function main(): i32 {
-    var a: i32 = 0;
+    let a: i32 = 0;
     match (pick(Here(7)))  { Here(v) => { a = a + v; },  Gone => { a = a + 100; } }   // 8
     match (pick(Gone))     { Here(v) => { a = a + v; },  Gone => { a = a + 10; } }    // 10
     match (step(Good(11))) { Good(v) => { a = a + v; },  Bad(e) => { a = a + 100; } } // 22
@@ -52,7 +52,7 @@ enum MyOpt[T] { Here(T), Gone }
 
 function inner(m: MyOpt[i32]): MyOpt[i32] {
     errdefer { print("rollback"); }
-    var v: i32 = m?;
+    let v: i32 = m?;
     return Here(v);
 }
 

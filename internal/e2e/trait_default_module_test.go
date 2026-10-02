@@ -38,7 +38,7 @@ struct R { n: i32 }
 impl lib.Greet for R {
     function tag(self: Self): i32 { return self.n; }
 }
-function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }`,
+function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }`,
 }
 
 // traitDefaultPrivateHelperProject: the helper the default calls is not
@@ -56,7 +56,7 @@ struct R { n: i32 }
 impl lib.Greet for R {
     function tag(self: Self): i32 { return self.n; }
 }
-function main(): i32 { var r: R = R { n: 1 }; return r.greet(); }`,
+function main(): i32 { let r: R = R { n: 1 }; return r.greet(); }`,
 }
 
 // traitDefaultGenericProject: a generic trait whose defaults call each
@@ -72,7 +72,7 @@ pub trait Conv[T] {
     function seed(self: Self): T;
     function one(self: Self): i32 { return base() + 1; }
     function two(self: Self): i32 { return self.one() + 1; }
-    function boxed(self: Self): i32 { var b: Wrap = Wrap { w: base() }; return b.w; }
+    function boxed(self: Self): i32 { let b: Wrap = Wrap { w: base() }; return b.w; }
     function far(self: Self): i32 { return deep.d(); }
 }`,
 	"main.fern": `import "./lib";
@@ -83,7 +83,7 @@ impl lib.Conv[i32] for R {
     function seed(self: Self): i32 { return self.n; }
 }
 function main(): i32 {
-    var r: R = R { n: 1 };
+    let r: R = R { n: 1 };
     return r.one() + r.two() + r.boxed() + r.far();
 }`,
 }
@@ -100,7 +100,7 @@ pub trait Greet {
 }
 impl Greet for S { function tag(self: Self): i32 { return self.v; } }`,
 	"main.fern": `import "./lib";
-function main(): i32 { var s: lib.S = lib.S { v: 1 }; return s.greet(); }`,
+function main(): i32 { let s: lib.S = lib.S { v: 1 }; return s.greet(); }`,
 }
 
 // traitDefaultParametricImplProject: a PARAMETRIC impl inherits the
@@ -118,7 +118,7 @@ struct Box[T] { v: T }
 impl[T] lib.Sized2 for Box[T] {
     function size(self: Self): i32 { return 1; }
 }
-function main(): i32 { var b: Box[i32] = Box[i32] { v: 7 }; return b.padded(); }`,
+function main(): i32 { let b: Box[i32] = Box[i32] { v: 7 }; return b.padded(); }`,
 }
 
 var traitDefaultProjects = []struct {
@@ -212,7 +212,7 @@ struct R { n: i32 }
 impl b.Leaky for R {
     function tag(self: Self): i32 { return self.n; }
 }
-function main(): i32 { var r: R = R { n: 1 }; return r.grab().len(); }`,
+function main(): i32 { let r: R = R { n: 1 }; return r.grab().len(); }`,
 		"b/fern.toml": "[package]\nname = \"b\"\nlib = \"b.fern\"\n",
 		"b/b.fern": `pub trait Leaky {
     function tag(self: Self): i32;

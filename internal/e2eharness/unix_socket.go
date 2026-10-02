@@ -23,18 +23,18 @@ function enametoolong(): i32 {
 }
 
 function main(): i32 {
-    var path: string = "/tmp/fern-unix-" + int.int_to_string((now_unix_ms() % (1000000 as i64)) as i32);
-    var ln: i32 = unix_listen(path, 4);
+    let path: string = "/tmp/fern-unix-" + int.int_to_string((now_unix_ms() % (1000000 as i64)) as i32);
+    let ln: i32 = unix_listen(path, 4);
     if (ln < 0) { return fail(1); }
-    var c: i32 = unix_connect(path);
+    let c: i32 = unix_connect(path);
     if (c < 0) { return fail(2); }
-    var a: i32 = tcp_accept(ln);
+    let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(3); }
     if (tcp_send(c, "hi") != 2) { return fail(4); }
-    var got: u8[] = tcp_recv(a, 16);
+    let got: u8[] = tcp_recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(5); }
     if (tcp_send(a, "yo") != 2) { return fail(6); }
-    var back: u8[] = tcp_recv(c, 16);
+    let back: u8[] = tcp_recv(c, 16);
     if (back.len() != 2 || back[0] != 121u8) { return fail(7); }
     if (unix_listen(path, 4) >= 0) { return fail(8); }
     tcp_close(a);
@@ -45,7 +45,7 @@ function main(): i32 {
         Err(e) => { return fail(9); },
     }
     if (unix_connect(path) != 0 - 2) { return fail(10); }
-    var long: string = "/tmp/" + "a".repeat(120);
+    let long: string = "/tmp/" + "a".repeat(120);
     if (unix_listen(long, 4) != 0 - enametoolong()) { return fail(11); }
     if (unix_connect(long) != 0 - enametoolong()) { return fail(12); }
     print("ok");
@@ -81,24 +81,24 @@ function errno_of(r: Result[i32, net.NetError]): i32 {
 }
 
 function main(): i32 {
-    var path: string = "/tmp/fern-net-unix-" + int.int_to_string((now_unix_ms() % (1000000 as i64)) as i32);
-    var ln: i32 = 0;
+    let path: string = "/tmp/fern-net-unix-" + int.int_to_string((now_unix_ms() % (1000000 as i64)) as i32);
+    let ln: i32 = 0;
     match (net.listen_unix(path, 4)) {
         Ok(fd) => { ln = fd; },
         Err(e) => { return fail(1); },
     }
-    var c: i32 = 0;
+    let c: i32 = 0;
     match (net.connect_unix(path)) {
         Ok(fd) => { c = fd; },
         Err(e) => { return fail(2); },
     }
-    var a: i32 = 0;
+    let a: i32 = 0;
     match (net.accept(ln)) {
         Ok(fd) => { a = fd; },
         Err(e) => { return fail(3); },
     }
     if (tcp_send(c, "hi") != 2) { return fail(4); }
-    var got: u8[] = tcp_recv(a, 16);
+    let got: u8[] = tcp_recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8) { return fail(5); }
     match (net.listen_unix(path, 4)) {
         Ok(fd) => { return fail(6); },
@@ -112,7 +112,7 @@ function main(): i32 {
         Err(e) => { return fail(8); },
     }
     if (errno_of(net.connect_unix(path)) != 2) { return fail(9); }
-    var long: string = "/tmp/" + "a".repeat(120);
+    let long: string = "/tmp/" + "a".repeat(120);
     if (errno_of(net.listen_unix(long, 4)) != enametoolong()) { return fail(10); }
     print("ok");
     return 42;

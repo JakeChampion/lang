@@ -140,7 +140,7 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "rl.txt"), []byte("a\nbb\n"), 0o644); err != nil {
 			t.Fatalf("seed rl.txt: %v", err)
 		}
-		src := `function main(): i32 { match (open_reader("rl.txt")) { Ok(r) => { var n: i32 = 0; while (true) { match (r.read_line()) { Some(l) => { n = n + l.len(); }, None => { r.close(); return n; } } } r.close(); return n; }, Err(_) => { return 90; } } return 91; }`
+		src := `function main(): i32 { match (open_reader("rl.txt")) { Ok(r) => { let n: i32 = 0; while (true) { match (r.read_line()) { Some(l) => { n = n + l.len(); }, None => { r.close(); return n; } } } r.close(); return n; }, Err(_) => { return 90; } } return 91; }`
 		if code := run(t, src); code != 5 {
 			t.Fatalf("reader-read-line exit %d, want 5 (r.read_line reads the file, not stdin; #7758)", code)
 		}

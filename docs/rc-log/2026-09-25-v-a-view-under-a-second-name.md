@@ -6,13 +6,13 @@ while the release that balances it frees the box. The shape that reached it
 from source was four lines:
 
 ```fern
-var s: str = slice_unchecked(t, 0, 5);
-var v: str = s;
+let s: str = slice_unchecked(t, 0, 5);
+let v: str = s;
 while (i < 3) { v = slice_unchecked(t, 5, 10); i = i + 1; }
 return v.len() + s.len() + u.len();
 ```
 
-`var v: str = s` bound `v` to `s`'s own value. The loop's phi for `v`
+`let v: str = s` bound `v` to `s`'s own value. The loop's phi for `v`
 merges that value with a fresh view and is owned, and `s` stays live past
 the loop, so the entry edge could supply the phi only by retaining `s`. The
 typed path refused the function ("a view is lent, never retained"), and the

@@ -88,7 +88,7 @@ var instantiationRecheckRows = []struct {
 	// f64. One E045 for the copy's return type, one for its local.
 	{"float-key-through-a-generic", `import "core/map";
 function build[T](k: T, v: i32): Map[T, i32] {
-    var m: Map[T, i32] = map_new(2);
+    let m: Map[T, i32] = map_new(2);
     return m.insert(k, v);
 }
 function main(): i32 { return build(2.5, 7).get_or(2.5, 0); }
@@ -97,7 +97,7 @@ function main(): i32 { return build(2.5, 7).get_or(2.5, 0); }
 	// including the one another generic's copy asks for.
 	{"one-copy-per-instantiation", `import "core/map";
 function build[T](k: T, v: i32): Map[T, i32] {
-    var m: Map[T, i32] = map_new(2);
+    let m: Map[T, i32] = map_new(2);
     return m.insert(k, v);
 }
 function wrap[U](k: U): i32 { return build(k, 1).get_or(k, 0); }
@@ -107,24 +107,24 @@ function main(): i32 { return build(2.5, 7).get_or(2.5, 0) + build(1.5, 7).get_o
 	// get nothing.
 	{"each-refused-instantiation", `import "core/map";
 function build[T](k: T, v: i32): Map[T, i32] {
-    var m: Map[T, i32] = map_new(2);
+    let m: Map[T, i32] = map_new(2);
     return m.insert(k, v);
 }
 function main(): i32 {
-    var a: f32 = 1.5;
+    let a: f32 = 1.5;
     return build(2.5, 7).get_or(2.5, 0) + build(a, 1).get_or(a, 0) + build(3, 1).get_or(3, 0) + build("s", 1).get_or("s", 0);
 }
 `, 4},
 	// Reached only through another generic's copy, whose argument type is
 	// the element of a substituted local.
 	{"through-a-generic-copy", `import "core/map";
-function keyed[K](k: K): Map[K, i32] { var m: Map[K, i32] = map_new(2); return m.insert(k, 1); }
-function outer[T](x: T): i32 { var xs: T[] = [x]; return keyed(xs[0]).len(); }
+function keyed[K](k: K): Map[K, i32] { let m: Map[K, i32] = map_new(2); return m.insert(k, 1); }
+function outer[T](x: T): i32 { let xs: T[] = [x]; return keyed(xs[0]).len(); }
 function main(): i32 { return outer(1.5); }
 `, 2},
 	{"accepted-instantiations", `import "core/map";
 function build[T](k: T, v: i32): Map[T, i32] {
-    var m: Map[T, i32] = map_new(2);
+    let m: Map[T, i32] = map_new(2);
     return m.insert(k, v);
 }
 function main(): i32 { return build(3, 1).get_or(3, 0) + build("s", 1).get_or("s", 0); }
@@ -141,13 +141,13 @@ function f(own x: i32): i32 { return g(x); }
 function main(): i32 { return f(1); }
 `, 0},
 	{"scalar-local-into-own", `function g(own y: i32): i32 { return y; }
-function main(): i32 { var n: i32 = 4; var m = 5; return g(n) + g(m); }
+function main(): i32 { let n: i32 = 4; let m = 5; return g(n) + g(m); }
 `, 0},
 	// Scalar by the argument's type, whatever its shape.
 	{"scalar-expressions-into-own", `function g(own y: i32): i32 { return y; }
 function k(own b: boolean): i32 { if (b) { return 1; } return 0; }
 function f(): i32 { return 7; }
-function h(xs: i32[]): i32 { var m = 4 - 2; return g(4 - 2) + g(f()) + g(m) + g(xs[0]) + g(-m) + k(m < 3) + k(!(m > 3)); }
+function h(xs: i32[]): i32 { let m = 4 - 2; return g(4 - 2) + g(f()) + g(m) + g(xs[0]) + g(-m) + k(m < 3) + k(!(m > 3)); }
 function main(): i32 { return h([1]); }
 `, 0},
 	{"string-element-into-own", `function g(own y: string): string { return y; }
@@ -162,21 +162,21 @@ function g(own y: i32): i32 { return y; }
 function a(p: P): i32 { return g(p.n); }
 function b(xs: i32[]): i32 { return g(xs.len()); }
 function c(s: string): i32 { return g(s.len()); }
-function d(xs: i32[]): i32 { var t = 0; for x in xs { t = t + g(x); } return t; }
-function main(): i32 { var p = P { n: 1 }; return a(p) + b([1, 2]) + c("hi") + d([1, 2]); }
+function d(xs: i32[]): i32 { let t = 0; for x in xs { t = t + g(x); } return t; }
+function main(): i32 { let p = P { n: 1 }; return a(p) + b([1, 2]) + c("hi") + d([1, 2]); }
 `, 0},
 	{"checked-op-into-own", `function g(own o: Option[i32]): i32 {
   match (o) { Some(v) => { return v; }, None => { return 0; } }
 }
-function main(): i32 { var a: i32 = 1; var b: i32 = 2; return g(a +? b); }
+function main(): i32 { let a: i32 = 1; let b: i32 = 2; return g(a +? b); }
 `, 1},
 	{"checked-op-local-into-own", `function g(own o: Option[i32]): i32 {
   match (o) { Some(v) => { return v; }, None => { return 0; } }
 }
-function main(): i32 { var a: i32 = 1; var b: i32 = 2; var c = a +? b; var r: i32 = g(c); match (c) { Some(v) => { return r + v; }, None => { return r; } } }
+function main(): i32 { let a: i32 = 1; let b: i32 = 2; let c = a +? b; let r: i32 = g(c); match (c) { Some(v) => { return r + v; }, None => { return r; } } }
 `, 1},
 	{"cast-to-string-into-own", `function g(own s: string): i32 { return s.len(); }
-function main(): i32 { var k: usize = 3; return g(k as string); }
+function main(): i32 { let k: usize = 3; return g(k as string); }
 `, 1},
 	// A borrowed reference still is not an owned argument.
 	{"borrowed-string-into-own", `function g(own y: string): string { return y; }
@@ -187,9 +187,9 @@ function main(): i32 { return f("a").len(); }
 	{"overload-plus-into-own", `struct V { x: i32 }
 impl V { function add(self: V, other: V): V { return V { x: self.x + other.x }; } }
 function g(own s: V): i32 { return s.x; }
-function main(): i32 { var a = V { x: 1 }; var b = V { x: 2 }; return g(a + b); }
+function main(): i32 { let a = V { x: 1 }; let b = V { x: 2 }; return g(a + b); }
 `, 1},
 	{"string-concat-into-own", `function g(own s: string): i32 { return s.len(); }
-function main(): i32 { var a = "x"; var b = "y"; return g(a + b); }
+function main(): i32 { let a = "x"; let b = "y"; return g(a + b); }
 `, 0},
 }

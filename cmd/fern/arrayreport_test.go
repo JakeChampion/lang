@@ -17,7 +17,7 @@ func TestArrayReportCLI(t *testing.T) {
 	src := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(src, []byte(`import "std/array";
 function run(xs: i64[]): i64 {
-  var out: Option[i64] = xs
+  let out: Option[i64] = xs
     .map((x: i64): i64 => x + (1 as i64))
     .filter((x: i64): boolean => x > (0 as i64))
     .reduce((a: i64, b: i64): i64 => a + b);
@@ -72,7 +72,7 @@ func TestArrayReportCLINdarrayProducts(t *testing.T) {
 function mul(x: i64, y: i64): i64 { return x * y; }
 function add(x: i64, y: i64): i64 { return x + y; }
 function main(): i32 {
-  var v: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64], [2]);
+  let v: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64], [2]);
   return v.inner(v, 0 as i64, mul, add).get([]) as i32;
 }
 `), 0o644); err != nil {
@@ -98,7 +98,7 @@ func TestArrayReportCLINdarrayAxis(t *testing.T) {
 	if err := os.WriteFile(src, []byte(`import "std/ndarray";
 function add(x: i64, y: i64): i64 { return x + y; }
 function main(): i32 {
-  var m: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
+  let m: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
   return m.reduce_axis(1, 0 as i64, add).get([0]) as i32;
 }
 `), 0o644); err != nil {
@@ -122,8 +122,8 @@ func TestArrayReportCLINdarrayLayouts(t *testing.T) {
 	src := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(src, []byte(`import "std/ndarray";
 function main(): i32 {
-  var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
-  var t: ndarray.NdArray[i32] = a.transpose();
+  let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+  let t: ndarray.NdArray[i32] = a.transpose();
   return a.to_flat()[0] + t.to_flat()[0];
 }
 `), 0o644); err != nil {

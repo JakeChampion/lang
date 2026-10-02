@@ -255,28 +255,28 @@ func TestWASMReuseMatchesNoReuse(t *testing.T) {
 var freelistReuseSrc = struct{ reuse, wrongClass, lifo string }{
 	reuse: `
 function main(): i32 {
-    var a: usize = __alloc(64);
+    let a: usize = __alloc(64);
     __free(a, 64);
-    var b: usize = __alloc(64);
+    let b: usize = __alloc(64);
     if (a == b) { return 0; }
     return 1;
 }`,
 	wrongClass: `
 function main(): i32 {
-    var a: usize = __alloc(64);
+    let a: usize = __alloc(64);
     __free(a, 64);
-    var b: usize = __alloc(32);
+    let b: usize = __alloc(32);
     if (a == b) { return 1; }
     return 0;
 }`,
 	lifo: `
 function main(): i32 {
-    var a: usize = __alloc(48);
-    var b: usize = __alloc(48);
+    let a: usize = __alloc(48);
+    let b: usize = __alloc(48);
     __free(a, 48);
     __free(b, 48);
-    var c: usize = __alloc(48);
-    var d: usize = __alloc(48);
+    let c: usize = __alloc(48);
+    let d: usize = __alloc(48);
     if (c == b) {
         if (d == a) { return 0; }
         return 1;
@@ -444,12 +444,12 @@ func TestX86_64FreelistReuse(t *testing.T) {
 // 0 over-releases.
 const arrayDropFreeReuseSrc = `struct Foo { v: i32 }
 function consume(n: i32): i32 {
-    var fs: Foo[] = [Foo { v: n }, Foo { v: n + 1 }, Foo { v: n + 2 }];
+    let fs: Foo[] = [Foo { v: n }, Foo { v: n + 1 }, Foo { v: n + 2 }];
     return fs[2].v;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         acc = acc + (consume(i) - (i + 2));
         i = i + 1;
@@ -465,14 +465,14 @@ function main(): i32 {
 // would be wrong; 0 only if every free+reuse is sound. Sum
 // 0..199 = 19900.
 const pushLoopFreeSrc = `function build(): i32 {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < 200) {
         xs = xs.append(i);
         i = i + 1;
     }
-    var sum: i32 = 0;
-    var j: i32 = 0;
+    let sum: i32 = 0;
+    let j: i32 = 0;
     while (j < xs.len()) {
         sum = sum + xs[j];
         j = j + 1;
@@ -498,8 +498,8 @@ function main(): i32 {
 // the exit double-dec of b's shared buffer balanced. w="zz" → a="azz",
 // b="bbzz", a=b ⇒ a.len()+b.len() = 4+4 = 8. Folded to 0 on success.
 const stringReassignFreeSrc = `function build(): i32 {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < 300) {
         s = s + "x";
         i = i + 1;
@@ -507,14 +507,14 @@ const stringReassignFreeSrc = `function build(): i32 {
     return s.len();
 }
 function aliasHeap(w: string): i32 {
-    var a: string = "a" + w;
-    var b: string = "bb" + w;
+    let a: string = "a" + w;
+    let b: string = "bb" + w;
     a = b;
     return a.len() + b.len();
 }
 function main(): i32 {
-    var grown: i32 = build() - 300;
-    var aliased: i32 = aliasHeap("zz") - 8;
+    let grown: i32 = build() - 300;
+    let aliased: i32 = aliasHeap("zz") - 8;
     return grown + aliased + __rc_underflow_count();
 }`
 
@@ -615,9 +615,9 @@ func TestWASMFreelistReuse(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 
 	reuse := `function main(): i32 {
-    var a: usize = __alloc(64);
+    let a: usize = __alloc(64);
     __free(a, 64);
-    var b: usize = __alloc(64);
+    let b: usize = __alloc(64);
     if (a == b) { return 0; }
     return 1;
 }`
@@ -626,9 +626,9 @@ func TestWASMFreelistReuse(t *testing.T) {
 	}
 
 	wrongClass := `function main(): i32 {
-    var a: usize = __alloc(64);
+    let a: usize = __alloc(64);
     __free(a, 64);
-    var b: usize = __alloc(32);
+    let b: usize = __alloc(32);
     if (a == b) { return 1; }
     return 0;
 }`
@@ -637,12 +637,12 @@ func TestWASMFreelistReuse(t *testing.T) {
 	}
 
 	lifo := `function main(): i32 {
-    var a: usize = __alloc(48);
-    var b: usize = __alloc(48);
+    let a: usize = __alloc(48);
+    let b: usize = __alloc(48);
     __free(a, 48);
     __free(b, 48);
-    var c: usize = __alloc(48);
-    var d: usize = __alloc(48);
+    let c: usize = __alloc(48);
+    let d: usize = __alloc(48);
     if (c == b) {
         if (d == a) { return 0; }
         return 1;
@@ -689,26 +689,26 @@ func TestArm64FreelistReuse(t *testing.T) {
 var allocReuseSrc = struct{ sameClass, nullToken, mismatch string }{
 	sameClass: `
 function main(): i32 {
-    var a: usize = __alloc(64);
-    var b: usize = __alloc_reuse(a, 64, 64);
+    let a: usize = __alloc(64);
+    let b: usize = __alloc_reuse(a, 64, 64);
     if (a == b) { return 0; }
     return 1;
 }`,
 	nullToken: `
 function main(): i32 {
-    var z: usize = 0;
-    var a: usize = __alloc(64);
-    var b: usize = __alloc_reuse(z, 0, 64);
+    let z: usize = 0;
+    let a: usize = __alloc(64);
+    let b: usize = __alloc_reuse(z, 0, 64);
     if (b == 0) { return 1; }
     if (b == a) { return 2; }
     return 0;
 }`,
 	mismatch: `
 function main(): i32 {
-    var a: usize = __alloc(64);
-    var b: usize = __alloc_reuse(a, 64, 32);
+    let a: usize = __alloc(64);
+    let b: usize = __alloc_reuse(a, 64, 32);
     if (a == b) { return 1; }
-    var c: usize = __alloc(64);
+    let c: usize = __alloc(64);
     if (a == c) { return 0; }
     return 2;
 }`,
@@ -746,8 +746,8 @@ func TestWASMAllocReuse(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 
 	sameClass := `function main(): i32 {
-    var a: usize = __alloc(64);
-    var b: usize = __alloc_reuse(a, 64, 64);
+    let a: usize = __alloc(64);
+    let b: usize = __alloc_reuse(a, 64, 64);
     if (a == b) { return 0; }
     return 1;
 }`
@@ -756,9 +756,9 @@ func TestWASMAllocReuse(t *testing.T) {
 	}
 
 	nullToken := `function main(): i32 {
-    var z: usize = 0;
-    var a: usize = __alloc(64);
-    var b: usize = __alloc_reuse(z, 0, 64);
+    let z: usize = 0;
+    let a: usize = __alloc(64);
+    let b: usize = __alloc_reuse(z, 0, 64);
     if (b == 0) { return 1; }
     if (b == a) { return 2; }
     return 0;
@@ -768,10 +768,10 @@ func TestWASMAllocReuse(t *testing.T) {
 	}
 
 	mismatch := `function main(): i32 {
-    var a: usize = __alloc(64);
-    var b: usize = __alloc_reuse(a, 64, 32);
+    let a: usize = __alloc(64);
+    let b: usize = __alloc_reuse(a, 64, 32);
     if (a == b) { return 1; }
-    var c: usize = __alloc(64);
+    let c: usize = __alloc(64);
     if (a == c) { return 0; }
     return 2;
 }`
@@ -793,8 +793,8 @@ var structReuseSrc = struct{ churn, aliased, swap string }{
 	// __rc_underflow_count() so any over-release in the reuse path trips.
 	churn: `struct Point { x: i32, y: i32 }
 function churn(n: i32): i32 {
-    var p: Point = Point { x: 0, y: 0 };
-    var i: i32 = 0;
+    let p: Point = Point { x: 0, y: 0 };
+    let i: i32 = 0;
     while (i < n) {
         p = Point { x: p.x + 1, y: p.y };
         i = i + 1;
@@ -809,8 +809,8 @@ function main(): i32 {
 	// the alias q must still see the original {5,7}.
 	aliased: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 5, y: 7 };
-    var q: Point = p;
+    let p: Point = Point { x: 5, y: 7 };
+    let q: Point = p;
     p = Point { x: p.x + 1, y: p.y };
     if (q.x != 5) { return 1; }
     if (p.x != 6) { return 2; }
@@ -821,8 +821,8 @@ function main(): i32 {
 	// field. Even churn → {1,2} (a==1); odd churn → {2,1} (a==2).
 	swap: `struct Pair { a: i32, b: i32 }
 function churn(n: i32): i32 {
-    var p: Pair = Pair { a: 1, b: 2 };
-    var i: i32 = 0;
+    let p: Pair = Pair { a: 1, b: 2 };
+    let i: i32 = 0;
     while (i < n) {
         p = Pair { a: p.b, b: p.a };
         i = i + 1;
@@ -844,8 +844,8 @@ var structPtrReuseSrc = struct{ carried, aliased, replaced string }{
 	// stays [10,20,30] (sum 60), id == n. Any rc drift corrupts items.
 	carried: `struct Holder { id: i32, items: i32[] }
 function churn(n: i32): i32 {
-    var p: Holder = Holder { id: 0, items: [10, 20, 30] };
-    var i: i32 = 0;
+    let p: Holder = Holder { id: 0, items: [10, 20, 30] };
+    let i: i32 = 0;
     while (i < n) {
         p = Holder { id: p.id + 1, items: p.items };
         i = i + 1;
@@ -860,8 +860,8 @@ function main(): i32 {
 	// (both see [7,8]); rc stays balanced.
 	aliased: `struct Holder { id: i32, items: i32[] }
 function main(): i32 {
-    var p: Holder = Holder { id: 1, items: [7, 8] };
-    var q: Holder = p;
+    let p: Holder = Holder { id: 1, items: [7, 8] };
+    let q: Holder = p;
     p = Holder { id: p.id + 1, items: p.items };
     if (q.id != 1) { return 1; }
     if (q.items[0] != 7) { return 2; }
@@ -874,8 +874,8 @@ function main(): i32 {
 	// items == [n, n], id == n.
 	replaced: `struct Holder { id: i32, items: i32[] }
 function churn(n: i32): i32 {
-    var p: Holder = Holder { id: 0, items: [0] };
-    var i: i32 = 0;
+    let p: Holder = Holder { id: 0, items: [0] };
+    let i: i32 = 0;
     while (i < n) {
         p = Holder { id: p.id + 1, items: [p.id + 1, p.id + 1] };
         i = i + 1;
@@ -934,7 +934,7 @@ func TestWASMStructReuse(t *testing.T) {
 
 // --- Phase 4: move-on-construction (FBIP pair-cancellation) -------
 //
-// `var s = Wrap{ inner: x }` at x's last use moves x's reference into
+// `let s = Wrap{ inner: x }` at x's last use moves x's reference into
 // the field — the field-init inc and x's exit dec are both elided. The
 // struct's own field-drop then releases x exactly once. Correctness
 // can't distinguish this from the inc/dec version (same values), so the
@@ -946,8 +946,8 @@ var moveOnConstructionCases = []struct{ name, src string }{
 	// array; x's own dec is elided. sum == 60, 0 over-releases.
 	{"once", `struct Wrap { inner: i32[] }
 function build(): i32 {
-    var x: i32[] = [10, 20, 30];
-    var s: Wrap = Wrap { inner: x };
+    let x: i32[] = [10, 20, 30];
+    let s: Wrap = Wrap { inner: x };
     return s.inner[0] + s.inner[1] + s.inner[2];
 }
 function main(): i32 {
@@ -959,13 +959,13 @@ function main(): i32 {
 	// read-back; folds __rc_underflow_count().
 	{"churn", `struct Wrap { inner: i32[] }
 function once(n: i32): i32 {
-    var x: i32[] = [n, n + 1];
-    var s: Wrap = Wrap { inner: x };
+    let x: i32[] = [n, n + 1];
+    let s: Wrap = Wrap { inner: x };
     return s.inner[0] + s.inner[1];
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         acc = acc + (once(i) - (2 * i + 1));
         i = i + 1;
@@ -976,13 +976,13 @@ function main(): i32 {
 	// drop_arr_ptr dec's the element, balancing the elided inc. 100
 	// build/move/drop/free cycles.
 	{"array_elem", `function once(n: i32): i32 {
-    var x: i32[] = [n, n + 1];
-    var xs: i32[][] = [x];
+    let x: i32[] = [n, n + 1];
+    let xs: i32[][] = [x];
     return xs[0][0] + xs[0][1];
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         acc = acc + (once(i) - (2 * i + 1));
         i = i + 1;
@@ -993,13 +993,13 @@ function main(): i32 {
 	// the element, balancing the elided inc. 100 build/move/drop/free
 	// cycles.
 	{"tuple_elem", `function once(n: i32): i32 {
-    var x: i32[] = [n, n + 2];
-    var t: (i32[], i32) = (x, n);
+    let x: i32[] = [n, n + 2];
+    let t: (i32[], i32) = (x, n);
     return t.0[0] + t.0[1] + t.1;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         acc = acc + (once(i) - (3 * i + 2));
         i = i + 1;
@@ -1010,13 +1010,13 @@ function main(): i32 {
 	// thunk dec's the capture, balancing the elided inc. The closure is
 	// built, called, and dropped each iteration. 100 cycles.
 	{"closure_capture", `function once(n: i32): i32 {
-    var x: i32[] = [n, n + 5];
+    let x: i32[] = [n, n + 5];
     function get(): i32 { return x[0] + x[1]; }
     return get();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         acc = acc + (once(i) - (2 * i + 5));
         i = i + 1;
@@ -1027,12 +1027,12 @@ function main(): i32 {
 	// caller; the caller owns and frees the whole thing.
 	{"returned", `struct Wrap { inner: i32[] }
 function build(n: i32): Wrap {
-    var x: i32[] = [n, n + 1, n + 2];
-    var s: Wrap = Wrap { inner: x };
+    let x: i32[] = [n, n + 1, n + 2];
+    let s: Wrap = Wrap { inner: x };
     return s;
 }
 function main(): i32 {
-    var w: Wrap = build(5);
+    let w: Wrap = build(5);
     return (w.inner[0] + w.inner[1] + w.inner[2] - 18) + __rc_underflow_count();
 }`},
 	// Move-on-destructure: t moved into the destructure temp at its last
@@ -1041,13 +1041,13 @@ function main(): i32 {
 	// build/destructure/drop/free cycles. once(n) reads a[0]+a[1]+b =
 	// n + (n+3) + (n+7) = 3n+10.
 	{"destructure", `function once(n: i32): i32 {
-    var t: (i32[], i32) = ([n, n + 3], n + 7);
-    var (a, b) = t;
+    let t: (i32[], i32) = ([n, n + 3], n + 7);
+    let (a, b) = t;
     return a[0] + a[1] + b;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         acc = acc + (once(i) - (3 * i + 10));
         i = i + 1;

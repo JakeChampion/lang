@@ -6,8 +6,8 @@
 function (xs: T[]) first(): T { return xs[0]; }
 function (xs: [T]) head(): T { return xs[0]; }
 function (xs: T[]) count_where(pred: (T) => boolean): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { if (pred(xs[i])) { n = n + 1; } i = i + 1; }
     return n;
 }
@@ -17,10 +17,10 @@ enum Opt[T] { Nil, Has(T) }
 function (o: Opt[T]) unwrap_or(d: T): T { match (o) { Has(x) => { return x; }, Nil => { return d; } } }
 
 function main(): i32 {
-    var a: i32[] = [3, 0 - 2, 5];
-    var sl: [i32] = a[0:3];
-    var some: Opt[i32] = Has(9);
-    var none: Opt[i32] = Nil;
+    let a: i32[] = [3, 0 - 2, 5];
+    let sl: [i32] = a[0:3];
+    let some: Opt[i32] = Has(9);
+    let none: Opt[i32] = Nil;
     return a.first()                  // 3
          + sl.head()                  // 3
          + a.count_where(is_pos)      // 3,5 -> 2

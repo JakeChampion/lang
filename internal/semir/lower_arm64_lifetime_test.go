@@ -29,7 +29,7 @@ func TestARM64TypedEscapedArraySurvivesAllocatorReuse(t *testing.T) {
 		for _, optimize := range []bool{false, true} {
 			t.Run(fmt.Sprintf("rounds-%d/optimized-%t", rounds, optimize), func(t *testing.T) {
 				out := lowerCheckedARM64(t, `
-function pilot(): i64[] { var box = [[11i64, 22i64, 33i64]]; return box[0]; }
+function pilot(): i64[] { let box = [[11i64, 22i64, 33i64]]; return box[0]; }
 function release(own items: i64[]): i32 { return 0; }
 `)
 				b := harnessBuilder(out)
@@ -96,7 +96,7 @@ func TestARM64TypedIndicesCheckBeforeNarrowing(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", typ, index), func(t *testing.T) {
 				var out *ARM64Program
 				if typ == "i32" {
-					out = lowerCheckedARM64(t, `function pilot(index: i32): i64 { var items = [41i64]; return items[index]; }`)
+					out = lowerCheckedARM64(t, `function pilot(index: i32): i64 { let items = [41i64]; return items[index]; }`)
 				} else {
 					// The current source checker only admits i32 indexing. The
 					// typed operation supports settled integer widths; test that
@@ -137,8 +137,8 @@ func TestARM64TypedBorrowedStringUnitsBalance(t *testing.T) {
 	armLauncher(t)
 	out := lowerCheckedARM64(t, `
 function pilot(item: string): string {
-  var items = [item, item];
-  var box = (items.append(item), [item]);
+  let items = [item, item];
+  let box = (items.append(item), [item]);
   let (grown, _) = box;
   return grown[2];
 }

@@ -28,12 +28,12 @@ import (
 // The row this closes: rc payload, direct ctor, declared in a loop, match nested.
 const blkRcDirectNestedSrc = `import "core/int";
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var v: Option[i32[]] = Some([k, k + 1, k + 2]);
+            let v: Option[i32[]] = Some([k, k + 1, k + 2]);
             if (k >= 0) {
                 match (v) { Some(a) => { acc = acc + a.len(); }, None => { acc = acc + 1; } }
             }
@@ -53,12 +53,12 @@ function make(i: i32): Result[i32[], string] {
     return Ok([i, i + 1, i + 2]);
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var v: Result[i32[], string] = make(k);
+            let v: Result[i32[], string] = make(k);
             if (k >= 0) {
                 match (v) { Ok(a) => { acc = acc + a.len(); }, Err(e) => { acc = acc + e.len(); } }
             }
@@ -73,12 +73,12 @@ function main(): i32 {
 // The FLAT control for the direct ctor — the spelling that always worked.
 const blkRcDirectFlatSrc = `import "core/int";
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var v: Option[i32[]] = Some([k, k + 1, k + 2]);
+            let v: Option[i32[]] = Some([k, k + 1, k + 2]);
             match (v) { Some(a) => { acc = acc + a.len(); }, None => { acc = acc + 1; } }
             k = k + 1;
         }
@@ -92,13 +92,13 @@ function main(): i32 {
 // payload is still reachable where the drop would land and must be refused.
 const blkRcEscapeSrc = `import "core/int";
 function main(): i32 {
-    var held: i32[] = [0, 0];
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let held: i32[] = [0, 0];
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) {
-        var k: i32 = 0;
+        let k: i32 = 0;
         while (k < 4) {
-            var v: Option[i32[]] = Some([k, k + 1, k + 2]);
+            let v: Option[i32[]] = Some([k, k + 1, k + 2]);
             if (k >= 0) {
                 match (v) { Some(a) => { held = a; }, None => { acc = acc + 1; } }
             }

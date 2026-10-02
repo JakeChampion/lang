@@ -22,16 +22,16 @@ import (
 // which is exactly where a static last-use test says the reference may be
 // taken over — the runtime count is what says otherwise.
 const withAliasedLocalSrc = `function mk(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i * 10); i = i + 1; }
     return a;
 }
 function round(): i32 {
-    var a: i32[] = mk(6);
-    var b: i32[] = a;
+    let a: i32[] = mk(6);
+    let b: i32[] = a;
     a = a.with(0, 99);
-    var junk: i32[] = mk(6);
+    let junk: i32[] = mk(6);
     if (junk.len() != 6) { return 1; }
     if (b[0] != 0) { return 2; }
     if (a[0] != 99) { return 3; }
@@ -39,9 +39,9 @@ function round(): i32 {
     return 0;
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var r: i32 = round();
+        let r: i32 = round();
         if (r != 0) { return r; }
         i = i + 1;
     }
@@ -52,8 +52,8 @@ function main(): i32 {
 // write must copy even though the param's own last use is the `.with` and it
 // is reassigned to itself.
 const withBorrowedParamSrc = `function mk(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i * 10); i = i + 1; }
     return a;
 }
@@ -62,18 +62,18 @@ function bump(xs: i32[]): i32[] {
     return xs;
 }
 function round(): i32 {
-    var a: i32[] = mk(6);
-    var b: i32[] = bump(a);
-    var junk: i32[] = mk(6);
+    let a: i32[] = mk(6);
+    let b: i32[] = bump(a);
+    let junk: i32[] = mk(6);
     if (junk.len() != 6) { return 1; }
     if (a[0] != 0) { return 2; }
     if (b[0] != 99) { return 3; }
     return 0;
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var r: i32 = round();
+        let r: i32 = round();
         if (r != 0) { return r; }
         i = i + 1;
     }
@@ -83,7 +83,7 @@ function main(): i32 {
 // A string-element array takes the element-retaining CoW helper rather than
 // the scalar one, so it is a separate arm of the same decision.
 const withAliasedStringElemSrc = `function mk(): string[] {
-    var a: string[] = [];
+    let a: string[] = [];
     a = a.append("v0");
     a = a.append("v1");
     a = a.append("v2");
@@ -92,10 +92,10 @@ const withAliasedStringElemSrc = `function mk(): string[] {
     return a;
 }
 function round(): i32 {
-    var a: string[] = mk();
-    var b: string[] = a;
+    let a: string[] = mk();
+    let b: string[] = a;
     a = a.with(0, "changed");
-    var junk: string[] = mk();
+    let junk: string[] = mk();
     if (junk.len() != 5) { return 1; }
     if (b[0] != "v0") { return 2; }
     if (a[0] != "changed") { return 3; }
@@ -103,9 +103,9 @@ function round(): i32 {
     return 0;
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var r: i32 = round();
+        let r: i32 = round();
         if (r != 0) { return r; }
         i = i + 1;
     }
@@ -117,16 +117,16 @@ function main(): i32 {
 // both the box reuse and the buffer write have to decline.
 const withAliasedFieldSrc = `struct P { xs: i32[], n: i32 }
 function mk(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i * 10); i = i + 1; }
     return a;
 }
 function round(): i32 {
-    var p: P = P { xs: mk(6), n: 1 };
-    var q: P = p;
+    let p: P = P { xs: mk(6), n: 1 };
+    let q: P = p;
     p = P { ...p, xs: p.xs.with(0, 99) };
-    var junk: i32[] = mk(6);
+    let junk: i32[] = mk(6);
     if (junk.len() != 6) { return 1; }
     if (q.xs[0] != 0) { return 2; }
     if (p.xs[0] != 99) { return 3; }
@@ -134,9 +134,9 @@ function round(): i32 {
     return 0;
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var r: i32 = round();
+        let r: i32 = round();
         if (r != 0) { return r; }
         i = i + 1;
     }

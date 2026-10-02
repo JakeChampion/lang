@@ -9,7 +9,7 @@ const builderByteTemporaryProgram = `function inspect(bytes: u8[]): i32 {
 }
 function length(bytes: u8[]): i32 { return bytes.len(); }
 function main(): i32 {
-  var b = buf_new(3);
+  let b = buf_new(3);
   for iteration in 0..64 {
     buf_push_byte(b, 255); buf_push_byte(b, 0); buf_push_byte(b, 128);
     if (inspect(buf_take_bytes(b)) != 0) { return 1; }

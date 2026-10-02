@@ -20,18 +20,18 @@ fip function bits(x: u32, y: u64): i32 {
 }
 
 fip function observe(): i32 {
-    var t: i64 = monotonic_ns();
-    var bumped: i64 = __heap_bump_bytes() - __heap_bump_bytes();
-    var count: i64 = __heap_alloc_count() - __heap_alloc_count();
+    let t: i64 = monotonic_ns();
+    let bumped: i64 = __heap_bump_bytes() - __heap_bump_bytes();
+    let count: i64 = __heap_alloc_count() - __heap_alloc_count();
     if (monotonic_ns() < t) { return 1; }
     return (bumped + count) as i32;
 }
 
 function main(): i32 {
-    var set: u8[] = [44 as u8];
-    var s: string = "a,b,,c";
-    var at: i64 = __heap_alloc_count();
-    var r: i32 = scan(s, set) + bits(12 as u32, 12 as u64) + observe();
+    let set: u8[] = [44 as u8];
+    let s: string = "a,b,,c";
+    let at: i64 = __heap_alloc_count();
+    let r: i32 = scan(s, set) + bits(12 as u32, 12 as u64) + observe();
     if (__heap_alloc_count() - at != (0 as i64)) { return 90; }
     return r % 100;
 }

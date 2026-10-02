@@ -51,8 +51,8 @@ var paramAppendReclaimCases = []struct {
 	{"param-append-recycled-by-return", `
 struct D { code: string, n: i32 }
 function walk(acc: string[], n: i32): D[] {
-    var out: D[] = [];
-    var i: i32 = 0;
+    let out: D[] = [];
+    let i: i32 = 0;
     while (i < n) {
         acc = acc.append("xx");
         out = out.append(D { code: "E065", n: i });
@@ -61,22 +61,22 @@ function walk(acc: string[], n: i32): D[] {
     return out;
 }
 function entry(n: i32): D[] {
-    var seed: string[] = [];
+    let seed: string[] = [];
     return walk(seed, n);
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 30) {
-        var d: D[] = entry(4);
+        let d: D[] = entry(4);
         t = (t + d.len()) % 100;
-        var junk: string[] = ["aaaa", "bbbb"];
+        let junk: string[] = ["aaaa", "bbbb"];
         t = (t + junk.len()) % 100;
         k = k + 1;
     }
-    var ds: D[] = entry(4);
-    var hit: i32 = 0;
-    var j: i32 = 0;
+    let ds: D[] = entry(4);
+    let hit: i32 = 0;
+    let j: i32 = 0;
     while (j < ds.len()) { if (ds[j].code == "E065") { hit = hit + 1; } j = j + 1; }
     return hit;
 }
@@ -86,8 +86,8 @@ function main(): i32 {
 	{"param-append-i32-recycled", `
 struct D { code: string, n: i32 }
 function walk(acc: i32[], n: i32): D[] {
-    var out: D[] = [];
-    var i: i32 = 0;
+    let out: D[] = [];
+    let i: i32 = 0;
     while (i < n) {
         acc = acc.append(i);
         out = out.append(D { code: "E065", n: i });
@@ -96,22 +96,22 @@ function walk(acc: i32[], n: i32): D[] {
     return out;
 }
 function entry(n: i32): D[] {
-    var seed: i32[] = [];
+    let seed: i32[] = [];
     return walk(seed, n);
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 30) {
-        var d: D[] = entry(4);
+        let d: D[] = entry(4);
         t = (t + d.len()) % 100;
-        var junk: i32[] = [1, 2];
+        let junk: i32[] = [1, 2];
         t = (t + junk.len()) % 100;
         k = k + 1;
     }
-    var ds: D[] = entry(4);
-    var hit: i32 = 0;
-    var j: i32 = 0;
+    let ds: D[] = entry(4);
+    let hit: i32 = 0;
+    let j: i32 = 0;
     while (j < ds.len()) { if (ds[j].code == "E065") { hit = hit + 1; } j = j + 1; }
     return hit;
 }
@@ -121,24 +121,24 @@ function main(): i32 {
 	// walk returns 7, the seed still reads "keep" -> 8.
 	{"caller-reads-seed-after-callee-append", `
 function walk(acc: string[], n: i32): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { acc = acc.append("xx"); i = i + 1; }
     return acc.len();
 }
 function entry(): i32 {
-    var seed: string[] = [];
+    let seed: string[] = [];
     seed = seed.append("keep");
-    var r: i32 = walk(seed, 6);
-    var hit: i32 = 0;
+    let r: i32 = walk(seed, 6);
+    let hit: i32 = 0;
     if (seed[0] == "keep") { hit = 1; }
     return r + hit;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 30) {
         t = (t + entry()) % 100;
-        var junk: string[] = ["aaaa", "bbbb"];
+        let junk: string[] = ["aaaa", "bbbb"];
         t = (t + junk.len()) % 100;
         k = k + 1;
     }

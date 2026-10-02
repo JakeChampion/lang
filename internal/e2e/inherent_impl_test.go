@@ -18,21 +18,21 @@ var inherentImplCases = []struct {
 	// Associated constructor: bind, then sum fields. 3 + 4 = 7.
 	{"struct-ctor", `struct Pt { x: i32, y: i32 }
 impl Pt { function make(a: i32, b: i32): Pt { return Pt { x: a, y: b }; } }
-function main(): i32 { var p: Pt = Pt.make(3, 4); return p.x + p.y; }`, 7},
+function main(): i32 { let p: Pt = Pt.make(3, 4); return p.x + p.y; }`, 7},
 	// Associated fn (`Self` return) + a `self` method on the same type. 7.
 	{"assoc-and-method", `struct Pt { x: i32, y: i32 }
 impl Pt {
 	function make(a: i32, b: i32): Self { return Pt { x: a, y: b }; }
 	function sum(self: Self): i32 { return self.x + self.y; }
 }
-function main(): i32 { var p: Pt = Pt.make(3, 4); return p.sum(); }`, 7},
+function main(): i32 { let p: Pt = Pt.make(3, 4); return p.sum(); }`, 7},
 	// Generic inherent impl: Box.of(42).get(). 42.
 	{"generic", `struct Box[T] { v: T }
 impl[T] Box[T] {
 	function of(v: T): Box[T] { return Box { v: v }; }
 	function get(self: Self): T { return self.v; }
 }
-function main(): i32 { var b: Box[i32] = Box.of(42); return b.get(); }`, 42},
+function main(): i32 { let b: Box[i32] = Box.of(42); return b.get(); }`, 42},
 	// Inherent associated fn on an enum returning the enum (nominal). 7.
 	{"enum-ctor", `enum E { A(i32), B }
 impl E { function tag(n: i32): E { if (n > 0) { return A(n); } return B; } }

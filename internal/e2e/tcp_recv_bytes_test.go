@@ -34,20 +34,20 @@ func TestTcpRecvBytesX86_64(t *testing.T) {
 	// 97 = max<=0 sentinel, 93 = short-read len, 8x = byte value,
 	// 86 = EOF sentinel, 42 = all paths held.
 	src := fmt.Sprintf(`function main(): i32 {
-    var fd: i32 = tcp_listen(%d);
+    let fd: i32 = tcp_listen(%d);
     if (fd < 0) { return 91; }
-    var c: i32 = tcp_accept(fd);
+    let c: i32 = tcp_accept(fd);
     if (c < 0) { return 92; }
-    var zero: u8[] = tcp_recv(c, 0);
+    let zero: u8[] = tcp_recv(c, 0);
     if (zero.len() != 0) { return 97; }
-    var req: u8[] = tcp_recv(c, 4096);
+    let req: u8[] = tcp_recv(c, 4096);
     if (req.len() != 5) { return 93; }
     if (req[0] != 0) { return 81; }
     if (req[1] != 255) { return 82; }
     if (req[2] != 128) { return 83; }
     if (req[3] != 10) { return 84; }
     if (req[4] != 65) { return 85; }
-    var eofb: u8[] = tcp_recv(c, 100);
+    let eofb: u8[] = tcp_recv(c, 100);
     if (eofb.len() != 0) { return 86; }
     tcp_close(c);
     tcp_close(fd);

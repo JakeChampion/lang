@@ -25,7 +25,7 @@ import (
 // left unboxed, since by-value and by-reference then coincide.
 //
 // For each top-level function that has at least one such capture, the boxed
-// local's `var x = E` decl becomes `var x: T[] = [E]`, every read/write of `x`
+// local's `let x = E` decl becomes `let x: T[] = [E]`, every read/write of `x`
 // (in the function AND inside the closures) becomes `x[0]` / `x[0] = …`, and
 // every closure's capture entry for `x` is re-typed `T[]` so the closure pass
 // captures the cell POINTER (by reference) instead of the scalar value.
@@ -104,7 +104,7 @@ func closureParts(n ast.Node) ([]ast.Param, *ast.Block) {
 // collectBoxedCaptures finds the boxed set for one function body: a name maps
 // to its cell element type iff some closure captures it (as a boxable type),
 // it is assigned SOMEWHERE in the function (inside the closure OR in an
-// enclosing scope), and it is a `var`-declared local. Returns nil when there is
+// enclosing scope), and it is a `let`-declared local. Returns nil when there is
 // nothing to box.
 //
 // The "assigned anywhere" test — not just "assigned inside the closure" — is
@@ -117,8 +117,8 @@ func closureParts(n ast.Node) ([]ast.Param, *ast.Block) {
 // scalar that is never assigned anywhere is left unboxed — by-value and
 // by-reference coincide, so there is no reason to pay the cell indirection.
 //
-// The `var`-declared guard matters because parameters are reassignable in this
-// language but have no `var` decl for boxDecls to turn into a cell; boxing one
+// The `let`-declared guard matters because parameters are reassignable in this
+// language but have no `let` decl for boxDecls to turn into a cell; boxing one
 // would rewrite its reads/writes to `p[0]` against a scalar slot. Only locals
 // with a real declaration are boxable.
 func collectBoxedCaptures(body *ast.Block) map[string]ast.Type {
@@ -142,7 +142,7 @@ func collectBoxedCaptures(body *ast.Block) map[string]ast.Type {
 	return boxed
 }
 
-// varDeclaredNames collects the names introduced by a `var` declaration
+// varDeclaredNames collects the names introduced by a `let` declaration
 // anywhere in the function (the outer body and every closure body), so
 // collectBoxedCaptures can restrict boxing to locals that boxDecls can actually
 // turn into a cell — never a parameter.
@@ -219,7 +219,7 @@ func closureBlocks(body *ast.Block) []*ast.Block {
 	return out
 }
 
-// boxDecls turns each `var x = E` whose name is boxed into `var x: T[] = [E]`,
+// boxDecls turns each `let x = E` whose name is boxed into `let x: T[] = [E]`,
 // keeping the same *ast.Var pointer (already registered in info.Locals) so the
 // IR's exprType sees the array type; info.VarTypes is updated to match.
 func boxDecls(body *ast.Block, boxed map[string]ast.Type, info *checker.Info) {

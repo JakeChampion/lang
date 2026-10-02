@@ -1706,11 +1706,11 @@ pub function op_map_new(keykind: i32, fns: string): Op {
 // map_op_symbols answers an op_map_set's or op_map_delete's [eq, vrel, krel]
 // (see op_map_set); both carry the key kind in i32_imm and vkind in width.
 pub function map_op_symbols(o: Op): string[] {
-  var parts: string[] = split_pipes(o.str);
+  let parts: string[] = split_pipes(o.str);
   if (parts.len() >= 3) {
     return [parts[0], parts[1], parts[2]];
   }
-  var vkind3: boolean = o.width / 16 % 2 == 1 && o.width / 32 % 2 == 1;
+  let vkind3: boolean = o.width / 16 % 2 == 1 && o.width / 32 % 2 == 1;
   if (parts.len() == 2) {
     if (o.i32_imm == 2) {
       return [parts[0], parts[1], ""];
@@ -1741,9 +1741,9 @@ pub function map_op_packed(eq: string, vrel: string, krel: string): string {
 }
 
 function split_pipes(s: string): string[] {
-  var out: string[] = [];
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] == 124) {  // '|'
       out = out.append(slice_unchecked(s, start, i) + "");
@@ -1758,7 +1758,7 @@ function split_pipes(s: string): string[] {
 }
 
 pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, vretain: boolean, eqfn: string, widekind: i32, vkind: i32): Op {
-  var w: i32 = 0;
+  let w: i32 = 0;
   if (vconsume) {
     w = w + 1;
   }
@@ -1780,7 +1780,7 @@ pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsu
   if (vkind == 3) {
     w = w + 48;
   }
-  var vw: i64 = 0;
+  let vw: i64 = 0;
   if (widekind == 1) {
     vw = 1;
   }
@@ -2335,7 +2335,7 @@ pub function op_proc_exec_as(): Op {
 // widekind 2 (f64) stays deferred (wasm_ir_deferrals_ok). The register backends
 // ignore it. #5253.
 pub function op_map_get(keykind: i32, eqfn: string, widekind: i32): Op {
-  var vw: i64 = 0;
+  let vw: i64 = 0;
   if (widekind == 1) {
     vw = 1;
   }
@@ -2355,7 +2355,7 @@ pub function op_map_has(keykind: i32, eqfn: string): Op {
 // routes to $__fern_map_get_or_w64 (dereferences the boxed 8-byte cell) and
 // widekind 2 (f64) is still refused. #5253.
 pub function op_map_get_or(keykind: i32, eqfn: string, widekind: i32): Op {
-  var vw: i64 = 0;
+  let vw: i64 = 0;
   if (widekind == 1) {
     vw = 1;
   }
@@ -2378,7 +2378,7 @@ pub function op_map_get_or(keykind: i32, eqfn: string, widekind: i32): Op {
 // On wasm every map owns its columns per insert, so its delete releases
 // under the box's own kis/vis whatever `kfree` says.
 pub function op_map_delete(keykind: i32, syms: string, kfree: boolean, vkind: i32): Op {
-  var w: i32 = 0;
+  let w: i32 = 0;
   if (kfree) {
     w = w + 2;
   }
@@ -2427,7 +2427,7 @@ pub function op_map_keys(elemptr: i32, keywide: i32): Op {
 // the boxed 8-byte cells into a fresh i64[] ($__fern_map_values_w64); widekind 2
 // (f64) is still refused via wasm_ir_deferrals_ok. #5253.
 pub function op_map_values(elemptr: i32, widekind: i32): Op {
-  var vw: i64 = 0;
+  let vw: i64 = 0;
   if (widekind == 1) {
     vw = 1;
   }
@@ -2453,7 +2453,7 @@ pub function op_map_values(elemptr: i32, widekind: i32): Op {
 // `mapiter_key` reads its 8-byte element ($__fern_mapiter_key_w64). The
 // register backends ignore it.
 pub function op_map_iter(widekind: i32, keywide: i32): Op {
-  var vw: i64 = 0;
+  let vw: i64 = 0;
   if (widekind == 1) {
     vw = 1;
   }
@@ -2475,7 +2475,7 @@ pub function op_mapiter_key(keywide: i32): Op {
 // wasm the accessor reads the 8-byte element via $__fern_mapiter_value_w64, and
 // reinterprets it for f64. The register backends ignore it. #5253.
 pub function op_mapiter_value(widekind: i32): Op {
-  var vw: i64 = widekind as i64;
+  let vw: i64 = widekind as i64;
   return Op { decl: 0 - 1, kind_tag: 136, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
@@ -2536,7 +2536,7 @@ pub function op_const_struct(type_name: string, nfields: i32, values: string): O
 // handles the base and the unsigned range, where a Fern-side decimal parse
 // would zero every hex literal.
 pub function const_struct_type(packed: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < packed.len() && packed[i] != 124) {  // 124 = '|'
     i = i + 1;
   }
@@ -2544,13 +2544,13 @@ pub function const_struct_type(packed: string): string {
 }
 
 pub function const_struct_values(packed: string): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < packed.len() && packed[i] != 124) {
     i = i + 1;
   }
   i = i + 1;
-  var start: i32 = i;
+  let start: i32 = i;
   while (i < packed.len()) {
     if (packed[i] == b',') {
       out = out.append(slice_unchecked(packed, start, i) + "");
@@ -2611,7 +2611,7 @@ pub function const_struct_is_array(packed: string): boolean {
 // ordinary record constant. The one reader of the sentinel, so the three
 // backends cannot disagree about it.
 pub function const_struct_fn_body(packed: string): string {
-  var t: string = const_struct_type(packed);
+  let t: string = const_struct_type(packed);
   if (t.len() <= 4 || slice_unchecked(t, 0, 4) != "&fn:") {
     return "";
   }
@@ -2755,8 +2755,8 @@ pub function op_call_direct(callee: string, argc: i32): Op {
 // claim_method_name), which a search for a bare `m` would never find. Read the
 // halves back with dyn_dispatch_method / dyn_dispatch_traits.
 pub function op_dyn_dispatch(method: string, traits: string[], base_slot: i32, argc: i32): Op {
-  var tag: string = method;
-  var i: i32 = 0;
+  let tag: string = method;
+  let i: i32 = 0;
   while (i < traits.len()) {
     if (i == 0) {
       tag = tag + "|";
@@ -2771,7 +2771,7 @@ pub function op_dyn_dispatch(method: string, traits: string[], base_slot: i32, a
 
 // dyn_dispatch_method returns the method-name half of an op_dyn_dispatch `str`.
 pub function dyn_dispatch_method(tag: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < tag.len()) {
     if (tag[i] == 124) {  // '|'
       return slice_unchecked(tag, 0, i) + "";
@@ -2784,9 +2784,9 @@ pub function dyn_dispatch_method(tag: string): string {
 // dyn_dispatch_traits returns the trait-set half of an op_dyn_dispatch `str`,
 // empty when the dyn type named no traits the lowerer could resolve.
 pub function dyn_dispatch_traits(tag: string): string[] {
-  var out: string[] = [];
-  var bar: i32 = 0 - 1;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let bar: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < tag.len()) {
     if (tag[i] == 124) {
       bar = i;
@@ -2798,8 +2798,8 @@ pub function dyn_dispatch_traits(tag: string): string[] {
   if (bar < 0) {
     return out;
   }
-  var start: i32 = bar + 1;
-  var k: i32 = start;
+  let start: i32 = bar + 1;
+  let k: i32 = start;
   while (k <= tag.len()) {
     if (k == tag.len() || tag[k] == b',') {
       if (k > start) {
@@ -2973,7 +2973,7 @@ pub function kind_count(): i32 {
 // reasons. Assign ids AND settle the counts against ir_kind_run's own
 // report after merging, never by adding up what each branch claimed.
 pub function kind_id(name: string): i32 {
-  var n: i32 = name.len();
+  let n: i32 = name.len();
   if (n == 2) {
     return kind_id_len2(name);
   }
@@ -3038,7 +3038,7 @@ pub function kind_id(name: string): i32 {
 }
 
 function kind_id_len2(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'b' && name == "br") {
     return 157;
   }
@@ -3058,7 +3058,7 @@ function kind_id_len2(name: string): i32 {
 }
 
 function kind_id_len3(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'a' && name == "add") {
     return 21;
   }
@@ -3121,7 +3121,7 @@ function kind_id_len3_f(name: string): i32 {
 }
 
 function kind_id_len4(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'a' && name == "args") {
     return 180;
   }
@@ -3237,7 +3237,7 @@ function kind_id_len4_l(name: string): i32 {
 }
 
 function kind_id_len5(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'a' && name == "alloc") {
     return 76;
   }
@@ -3297,7 +3297,7 @@ function kind_id_len5_s(name: string): i32 {
 }
 
 function kind_id_len6(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'a' && name == "arr_rc") {
     return 91;
   }
@@ -3376,7 +3376,7 @@ function kind_id_len6_m(name: string): i32 {
 }
 
 function kind_id_len7(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'a') {
     return kind_id_len7_a(name);
   }
@@ -3458,7 +3458,7 @@ function kind_id_len7_m(name: string): i32 {
 }
 
 function kind_id_len8(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'a') {
     return kind_id_len8_a(name);
   }
@@ -3644,7 +3644,7 @@ function kind_id_len8_t(name: string): i32 {
 }
 
 function kind_id_len9(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'a' && name == "arr_slice") {
     return 96;
   }
@@ -3792,7 +3792,7 @@ function kind_id_len9_t(name: string): i32 {
 }
 
 function kind_id_len10(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'c' && name == "const_func") {
     return 6;
   }
@@ -3921,7 +3921,7 @@ function kind_id_len11(name: string): i32 {
   if (name == "write_bytes") {
     return 349;
   }
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'c' && name == "call_direct") {
     return 149;
   }
@@ -4024,7 +4024,7 @@ function kind_id_len11_s(name: string): i32 {
 }
 
 function kind_id_len12(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'a' && name == "arr_push_i64") {
     return 94;
   }
@@ -4115,7 +4115,7 @@ function kind_id_len12_s(name: string): i32 {
 }
 
 function kind_id_len13(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'c' && name == "call_indirect") {
     return 150;
   }
@@ -4168,7 +4168,7 @@ function kind_id_len14(name: string): i32 {
   if (name == "buf_take_bytes") {
     return 347;
   }
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'a' && name == "arr_push_owned") {
     return 93;
   }
@@ -4206,7 +4206,7 @@ function kind_id_len14(name: string): i32 {
 }
 
 function kind_id_len15(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'b' && name == "buf_push_mapped") {
     return 325;
   }
@@ -4253,7 +4253,7 @@ function kind_id_len16(name: string): i32 {
   if (name == "read_chunk_bytes") {
     return 348;
   }
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'h' && name == "heap_alloc_count") {
     return 315;
   }
@@ -4276,7 +4276,7 @@ function kind_id_len16(name: string): i32 {
 }
 
 function kind_id_len17(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b's' && name == "set_process_group") {
     return 284;
   }
@@ -4290,7 +4290,7 @@ function kind_id_len17(name: string): i32 {
 }
 
 function kind_id_len18(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'w' && name == "wasm_pollable_drop") {
     return 161;
   }
@@ -4307,7 +4307,7 @@ function kind_id_len18(name: string): i32 {
 }
 
 function kind_id_len19(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'p' && name == "proc_waitpid_nohang") {
     return 286;
   }
@@ -4321,7 +4321,7 @@ function kind_id_len19(name: string): i32 {
 }
 
 function kind_id_len21(name: string): i32 {
-  var c: u8 = name[0];
+  let c: u8 = name[0];
   if (c == b'a' && name == "arr_push_shared_count") {
     return 216;
   }
@@ -5588,8 +5588,8 @@ function pops_buf(t: i32): i32 {
 }
 
 pub function op_pops(o: Op): i32 {
-  var t: i32 = o.kind_tag;
-  var bufn: i32 = pops_buf(t);
+  let t: i32 = o.kind_tag;
+  let bufn: i32 = pops_buf(t);
   if (bufn >= 0) {
     return bufn;
   }
@@ -5662,7 +5662,7 @@ pub function op_pops(o: Op): i32 {
 // expressions: the two that consume a value outright, and structured control
 // flow, whose scopes are all void.
 pub function op_pushes(o: Op): i32 {
-  var t: i32 = o.kind_tag;
+  let t: i32 = o.kind_tag;
   if (t == 19 || t == 159) {  // store_local, drop
     return 0;
   }
@@ -5750,16 +5750,16 @@ struct IfSpan {
 // depth-0 one — counting the `if` as an opener finds the enclosing scope's `end`
 // instead, which splices the wrong arm and eats a scope.
 function scan_if_block(ops: Op[], if_at: i32): IfSpan {
-  var k_block: i32 = kind_id("block");
-  var k_loop: i32 = kind_id("loop");
-  var k_if: i32 = kind_id("if");
-  var k_else: i32 = kind_id("else");
-  var k_end: i32 = kind_id("end");
-  var else_at: i32 = 0 - 1;
-  var d: i32 = 0;
-  var i: i32 = if_at + 1;
+  let k_block: i32 = kind_id("block");
+  let k_loop: i32 = kind_id("loop");
+  let k_if: i32 = kind_id("if");
+  let k_else: i32 = kind_id("else");
+  let k_end: i32 = kind_id("end");
+  let else_at: i32 = 0 - 1;
+  let d: i32 = 0;
+  let i: i32 = if_at + 1;
   while (i < ops.len()) {
-    var t: i32 = ops[i].kind_tag;
+    let t: i32 = ops[i].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       d = d + 1;
     } else if (t == k_end) {
@@ -5786,16 +5786,16 @@ function scan_if_block(ops: Op[], if_at: i32): IfSpan {
 // every `break` / `continue` inside an `if` is one, and so is the `br depth-1`
 // tco_self_tail leaves in a tail-recursive guard.
 function arm_escapes_scope(ops: Op[], lo: i32, hi: i32): boolean {
-  var k_block: i32 = kind_id("block");
-  var k_loop: i32 = kind_id("loop");
-  var k_if: i32 = kind_id("if");
-  var k_end: i32 = kind_id("end");
-  var k_br: i32 = kind_id("br");
-  var k_brif: i32 = kind_id("brif");
-  var d: i32 = 0;
-  var i: i32 = lo;
+  let k_block: i32 = kind_id("block");
+  let k_loop: i32 = kind_id("loop");
+  let k_if: i32 = kind_id("if");
+  let k_end: i32 = kind_id("end");
+  let k_br: i32 = kind_id("br");
+  let k_brif: i32 = kind_id("brif");
+  let d: i32 = 0;
+  let i: i32 = lo;
   while (i < hi) {
-    var t: i32 = ops[i].kind_tag;
+    let t: i32 = ops[i].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       d = d + 1;
     } else if (t == k_end) {
@@ -5813,27 +5813,27 @@ function arm_escapes_scope(ops: Op[], lo: i32, hi: i32): boolean {
 }
 
 pub function fold_const_binaries(ops: Op[]): Op[] {
-  var k_not: i32 = kind_id("not");
-  var k_if: i32 = kind_id("if");
-  var k_brif: i32 = kind_id("brif");
-  var k_const_str: i32 = kind_id("const_str");
-  var k_str_eq: i32 = kind_id("str_eq");
-  var cur: Op[] = ops;
-  var changed: boolean = true;
+  let k_not: i32 = kind_id("not");
+  let k_if: i32 = kind_id("if");
+  let k_brif: i32 = kind_id("brif");
+  let k_const_str: i32 = kind_id("const_str");
+  let k_str_eq: i32 = kind_id("str_eq");
+  let cur: Op[] = ops;
+  let changed: boolean = true;
   while (changed) {
     changed = false;
     // `out` is written from the first fold on: the ops before it are copied
     // then, and a pass that folds nothing leaves `cur` as it is.
-    var out: Op[] = [];
-    var copying: boolean = false;
-    var i: i32 = 0;
+    let out: Op[] = [];
+    let copying: boolean = false;
+    let i: i32 = 0;
     while (i < cur.len()) {
-      var folded: boolean = false;
-      var at: i32 = i;
+      let folded: boolean = false;
+      let at: i32 = i;
       // Decided once per position: six arms ask whether the op here is a
       // readable 32-bit constant and two whether it is a 64-bit one.
-      var r32: boolean = const_i32_readable(cur[i]);
-      var r64: boolean = const_i64_readable(cur[i]);
+      let r32: boolean = const_i32_readable(cur[i]);
+      let r64: boolean = const_i64_readable(cur[i]);
       // Every fold below starts at a readable constant or a const_str.
       if (!r32 && !r64 && cur[i].kind_tag != k_const_str) {
         if (copying) {
@@ -5843,8 +5843,8 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         continue;
       }
       if (r32 && i + 2 < cur.len()) {
-        var b: Op = cur[i + 1];
-        var o: Op = cur[i + 2];
+        let b: Op = cur[i + 1];
+        let o: Op = cur[i + 2];
         if (const_i32_readable(b)
           && is_foldable_binary_kind(o.kind_tag) && o.width != 64 && !o.unsigned
           && !fold_would_divide_by_zero(o.kind_tag, const_i32_value(b))) {
@@ -5857,7 +5857,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // The same at 64 bits (native foldBinary64): `const_i64 a ;
       // const_i64 b ; <bin> 64`. A comparison yields an i32.
       if (!folded && i + 2 < cur.len() && r64 && const_i64_readable(cur[i + 1])) {
-        var f64r: Fold64 = fold_binary_i64(cur[i + 2], const_i64_value(cur[i]), const_i64_value(cur[i + 1]));
+        let f64r: Fold64 = fold_binary_i64(cur[i + 2], const_i64_value(cur[i]), const_i64_value(cur[i + 1]));
         if (f64r.ok) {
           if (f64r.cmp) {
             out = out.append(op_const_i32(f64r.v as i32));
@@ -5877,7 +5877,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // what they do depends on the target.
       if (!folded && i + 1 < cur.len() && r32
         && cur[i + 1].kind_tag == 7 && cur[i + 1].width == 64) {
-        var xv: i64 = const_i32_value(cur[i]) as i64;
+        let xv: i64 = const_i32_value(cur[i]) as i64;
         if (cur[i + 1].unsigned) {
           xv = xv & 4294967295i64;
         }
@@ -5900,7 +5900,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // is no bitwise complement anywhere in this IR to confuse it with.
       if (!folded && i + 1 < cur.len()
         && r32 && cur[i + 1].kind_tag == k_not) {
-        var nv: i32 = 0;
+        let nv: i32 = 0;
         if (const_i32_value(cur[i]) == 0) {
           nv = 1;
         }
@@ -5916,7 +5916,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       if (!folded && i + 2 < cur.len()
         && cur[i].kind_tag == k_const_str && cur[i + 1].kind_tag == k_const_str
         && cur[i + 2].kind_tag == k_str_eq) {
-        var sv: i32 = 0;
+        let sv: i32 = 0;
         if (cur[i].str == cur[i + 1].str) {
           sv = 1;
         }
@@ -5930,7 +5930,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // constant expression collapse: the pass otherwise sees
       // `const 1 ; const 6 ; int_cast ; add` and stops one step short.
       if (!folded && i + 1 < cur.len() && r32) {
-        var wf: WidthFold = fold_width_op(cur[i + 1], const_i32_value(cur[i]));
+        let wf: WidthFold = fold_width_op(cur[i + 1], const_i32_value(cur[i]));
         if (wf.ok) {
           out = out.append(op_const_i32(wf.v));
           i = i + 2;
@@ -5944,10 +5944,10 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
       // end that deleting the scope would strand.
       if (!folded && i + 1 < cur.len() && r32
         && cur[i + 1].kind_tag == k_if && cur[i + 1].i32_imm == 0) {
-        var span: IfSpan = scan_if_block(cur, i + 1);
+        let span: IfSpan = scan_if_block(cur, i + 1);
         if (span.end_at >= 0) {
-          var lo: i32 = i + 2;
-          var hi: i32 = span.end_at;
+          let lo: i32 = i + 2;
+          let hi: i32 = span.end_at;
           if (const_i32_value(cur[i]) != 0) {
             if (span.else_at >= 0) {
               hi = span.else_at;
@@ -5960,11 +5960,11 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
             // pair is stack-neutral, and the arm was void.
             lo = span.end_at;
           }
-          var wrap: boolean = arm_escapes_scope(cur, lo, hi);
+          let wrap: boolean = arm_escapes_scope(cur, lo, hi);
           if (wrap) {
             out = out.append(op_block(0));
           }
-          var j: i32 = lo;
+          let j: i32 = lo;
           while (j < hi) {
             out = out.append(cur[j]);
             j = j + 1;
@@ -6009,8 +6009,8 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
 
 // fold_prefixed is ops[0, at) followed by tail.
 function fold_prefixed(ops: Op[], at: i32, tail: Op[]): Op[] {
-  var out: Op[] = [];
-  var j: i32 = 0;
+  let out: Op[] = [];
+  let j: i32 = 0;
   while (j < at) {
     out = out.append(ops[j]);
     j = j + 1;
@@ -6207,11 +6207,11 @@ struct Fold64 {
 // separate kinds, and an unsigned compare is left alone). A zero divisor and
 // INT64_MIN / -1 keep the runtime op, which defines them; INT64_MIN % -1 is 0.
 function fold_binary_i64(o: Op, a: i64, b: i64): Fold64 {
-  var no: Fold64 = Fold64 { ok: false, cmp: false, v: 0i64 };
+  let no: Fold64 = Fold64 { ok: false, cmp: false, v: 0i64 };
   if (o.width != 64) {
     return no;
   }
-  var k: i32 = o.kind_tag;
+  let k: i32 = o.kind_tag;
   if (k == kind_id("add")) {
     return Fold64 { ok: true, cmp: false, v: a + b };
   }
@@ -6242,7 +6242,7 @@ function fold_binary_i64(o: Op, a: i64, b: i64): Fold64 {
   if (o.unsigned) {
     return no;
   }
-  var min: i64 = -9223372036854775807i64 - 1i64;
+  let min: i64 = -9223372036854775807i64 - 1i64;
   if (k == kind_id("div_s")) {
     if (b == 0i64 || a == min && b == -1i64) {
       return no;
@@ -6336,12 +6336,12 @@ function strength_del(): StrengthRewrite {
 }
 
 function strength_drop0(): StrengthRewrite {
-  var o: Op[] = [op_drop(), op_const_i32(0)];
+  let o: Op[] = [op_drop(), op_const_i32(0)];
   return StrengthRewrite { ok: true, ops: o };
 }
 
 function strength_pair(a: Op, b: Op): StrengthRewrite {
-  var o: Op[] = [a, b];
+  let o: Op[] = [a, b];
   return StrengthRewrite { ok: true, ops: o };
 }
 
@@ -6354,8 +6354,8 @@ function log2_i32(n: i32): i32 {
   if ((n & n - 1) != 0) {
     return 0 - 1;
   }
-  var r: i32 = 0;
-  var v: i32 = n;
+  let r: i32 = 0;
+  let v: i32 = n;
   while (v > 1) {
     r = r + 1;
     v = v >> 1;
@@ -6416,22 +6416,22 @@ function word_mask(w: i32): u64 {
 
 // derive_magic_s takes d sign-extended to i64; w is 32 or 64.
 pub function derive_magic_s(d: i64, w: i32): MagicS {
-  var mask: u64 = word_mask(w);
-  var ad: u64 = d as u64 & mask;
+  let mask: u64 = word_mask(w);
+  let ad: u64 = d as u64 & mask;
   if (d < 0i64) {
     ad = (0i64 - d) as u64 & mask;
   }
-  var two: u64 = 1u64 << (w - 1) as u64;
+  let two: u64 = 1u64 << (w - 1) as u64;
   // t = 2^(w-1) + (sign bit of d): the bound on |nc| is one larger for a
   // negative divisor, because the negative side of the range is one wider.
-  var t: u64 = two + ((d as u64 & mask) >> (w - 1) as u64);
-  var anc: u64 = t - 1u64 - t % ad;  // |nc|, the largest |x| with x % d == d-1
-  var p: i32 = w - 1;
-  var q1: u64 = two / anc;
-  var r1: u64 = two - q1 * anc;
-  var q2: u64 = two / ad;
-  var r2: u64 = two - q2 * ad;
-  var searching: boolean = true;
+  let t: u64 = two + ((d as u64 & mask) >> (w - 1) as u64);
+  let anc: u64 = t - 1u64 - t % ad;  // |nc|, the largest |x| with x % d == d-1
+  let p: i32 = w - 1;
+  let q1: u64 = two / anc;
+  let r1: u64 = two - q1 * anc;
+  let q2: u64 = two / ad;
+  let r2: u64 = two - q2 * ad;
+  let searching: boolean = true;
   while (searching) {
     p = p + 1;
     q1 = q1 * 2u64 & mask;
@@ -6446,16 +6446,16 @@ pub function derive_magic_s(d: i64, w: i32): MagicS {
       q2 = q2 + 1u64 & mask;
       r2 = r2 - ad;
     }
-    var delta: u64 = ad - r2;
+    let delta: u64 = ad - r2;
     if (q1 > delta || q1 == delta && r1 != 0u64) {
       searching = false;
     }
   }
-  var mu: u64 = q2 + 1u64 & mask;
+  let mu: u64 = q2 + 1u64 & mask;
   if (d < 0i64) {
     mu = 0u64 - mu & mask;
   }
-  var m: i64 = mu as i64;
+  let m: i64 = mu as i64;
   if (w < 64 && mu >= two) {
     m = mu as i64 - (mask as i64 + 1i64);
   }
@@ -6467,16 +6467,16 @@ pub function derive_magic_s(d: i64, w: i32): MagicS {
 
 // derive_magic_u takes d zero-extended to u64; w is 32 or 64.
 pub function derive_magic_u(d: u64, w: i32): MagicU {
-  var mask: u64 = word_mask(w);
-  var two: u64 = 1u64 << (w - 1) as u64;
-  var nc: u64 = mask - (0u64 - d & mask) % d;
-  var p: i32 = w - 1;
-  var q1: u64 = two / nc;
-  var r1: u64 = two - q1 * nc;
-  var q2: u64 = (two - 1u64) / d;
-  var r2: u64 = two - 1u64 - q2 * d;
-  var add: boolean = false;
-  var searching: boolean = true;
+  let mask: u64 = word_mask(w);
+  let two: u64 = 1u64 << (w - 1) as u64;
+  let nc: u64 = mask - (0u64 - d & mask) % d;
+  let p: i32 = w - 1;
+  let q1: u64 = two / nc;
+  let r1: u64 = two - q1 * nc;
+  let q2: u64 = (two - 1u64) / d;
+  let r2: u64 = two - 1u64 - q2 * d;
+  let add: boolean = false;
+  let searching: boolean = true;
   while (searching) {
     p = p + 1;
     if (r1 >= nc - r1) {
@@ -6499,7 +6499,7 @@ pub function derive_magic_u(d: u64, w: i32): MagicU {
       q2 = q2 * 2u64 & mask;
       r2 = r2 * 2u64 + 1u64 & mask;
     }
-    var delta: u64 = d - 1u64 - r2;
+    let delta: u64 = d - 1u64 - r2;
     if (p >= 2 * w || q1 > delta || q1 == delta && r1 != 0u64) {
       searching = false;
     }
@@ -6517,7 +6517,7 @@ function strength_kinds(): StrengthKinds {
 
 // strength_rewrite decides what replaces `const k ; bop`.
 function strength_rewrite(ks: StrengthKinds, k: i32, bop: Op): StrengthRewrite {
-  var t: i32 = bop.kind_tag;
+  let t: i32 = bop.kind_tag;
   if (t == ks.mul) {
     if (k == 1) {
       return strength_del();
@@ -6525,7 +6525,7 @@ function strength_rewrite(ks: StrengthKinds, k: i32, bop: Op): StrengthRewrite {
     if (k == 0) {
       return strength_drop0();
     }
-    var n: i32 = log2_i32(k);
+    let n: i32 = log2_i32(k);
     if (n > 0) {
       return strength_pair(op_const_i32(n), op_bin("shl", 0, false));
     }
@@ -6556,7 +6556,7 @@ function strength_rewrite(ks: StrengthKinds, k: i32, bop: Op): StrengthRewrite {
     if (k == 1) {
       return strength_del();
     }
-    var nd: i32 = log2_i32(k);
+    let nd: i32 = log2_i32(k);
     if (nd > 0) {
       return strength_pair(op_const_i32(nd), op_bin("shr_u", 0, false));
     }
@@ -6572,7 +6572,7 @@ function strength_rewrite(ks: StrengthKinds, k: i32, bop: Op): StrengthRewrite {
     if (k == 1) {
       return strength_drop0();
     }
-    var nr: i32 = log2_i32(k);
+    let nr: i32 = log2_i32(k);
     if (nr > 0) {
       return strength_pair(op_const_i32(k - 1), op_bin("and", 0, false));
     }
@@ -6586,15 +6586,15 @@ function strength_rewrite(ks: StrengthKinds, k: i32, bop: Op): StrengthRewrite {
 // rewrite's output is appended, never rescanned, but the REMAINING input is,
 // so the second site is found in the same pass.
 pub function reduce_strength_ex(ops: Op[]): StrengthResult {
-  var ks: StrengthKinds = strength_kinds();
-  var out: Op[] = [];
-  var changed: boolean = false;
-  var i: i32 = 0;
+  let ks: StrengthKinds = strength_kinds();
+  let out: Op[] = [];
+  let changed: boolean = false;
+  let i: i32 = 0;
   while (i < ops.len()) {
     if (i + 1 < ops.len() && const_i32_readable(ops[i]) && ops[i + 1].width == 0) {
-      var repl: StrengthRewrite = strength_rewrite(ks, const_i32_value(ops[i]), ops[i + 1]);
+      let repl: StrengthRewrite = strength_rewrite(ks, const_i32_value(ops[i]), ops[i + 1]);
       if (repl.ok) {
-        var r: i32 = 0;
+        let r: i32 = 0;
         while (r < repl.ops.len()) {
           out = out.append(repl.ops[r]);
           r = r + 1;
@@ -6644,21 +6644,21 @@ pub function reduce_strength(ops: Op[]): Op[] {
 pub function eliminate_dead_code(ops: Op[]): Op[] {
   // `out` is written from the first dropped op on, so a list with nothing dead
   // comes back as it is.
-  var out: Op[] = [];
-  var copying: boolean = false;
-  var depth: i32 = 0;
-  var dead: boolean = false;
-  var dead_depth: i32 = 0;
-  var k_block: i32 = kind_id("block");
-  var k_loop: i32 = kind_id("loop");
-  var k_if: i32 = kind_id("if");
-  var k_else: i32 = kind_id("else");
-  var k_end: i32 = kind_id("end");
-  var k_br: i32 = kind_id("br");
-  var k_return: i32 = kind_id("return");
-  var i: i32 = 0;
+  let out: Op[] = [];
+  let copying: boolean = false;
+  let depth: i32 = 0;
+  let dead: boolean = false;
+  let dead_depth: i32 = 0;
+  let k_block: i32 = kind_id("block");
+  let k_loop: i32 = kind_id("loop");
+  let k_if: i32 = kind_id("if");
+  let k_else: i32 = kind_id("else");
+  let k_end: i32 = kind_id("end");
+  let k_br: i32 = kind_id("br");
+  let k_return: i32 = kind_id("return");
+  let i: i32 = 0;
   while (i < ops.len()) {
-    var t: i32 = ops[i].kind_tag;
+    let t: i32 = ops[i].kind_tag;
     if (t == k_end || t == k_else) {
       if (dead && depth == dead_depth) {
         dead = false;
@@ -6744,22 +6744,22 @@ function zg_rezero(ops: Op[], i: i32): boolean {
 // models it, so this pass is sound on its own reasoning rather than on the lowering
 // reserving those slots for the view.
 function zg_first_write(ops: Op[], nslots: i32): i32[] {
-  var k_store: i32 = kind_id("store_local");
-  var k_tee: i32 = kind_id("tee_local");
-  var k_str_slice: i32 = kind_id("str_slice");
-  var first: i32[] = [];
-  var z: i32 = 0;
+  let k_store: i32 = kind_id("store_local");
+  let k_tee: i32 = kind_id("tee_local");
+  let k_str_slice: i32 = kind_id("str_slice");
+  let first: i32[] = [];
+  let z: i32 = 0;
   while (z < nslots) {
     first = first.append(ops.len());
     z = z + 1;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ops.len()) {
-    var t: i32 = ops[i].kind_tag;
+    let t: i32 = ops[i].kind_tag;
     if ((t == k_store || t == k_tee) && !zg_rezero(ops, i)) {
       first = zg_mark(first, ops[i].i32_imm, i);
     } else if (t == k_str_slice && ops[i].i32_imm > 0) {
-      var fk: i32 = 0;
+      let fk: i32 = 0;
       while (fk < 3) {
         first = zg_mark(first, ops[i].i32_imm - 1 + fk, i);
         fk = fk + 1;
@@ -6775,16 +6775,16 @@ function zg_first_write(ops: Op[], nslots: i32): i32[] {
 // reach an earlier read. Only the OUTERMOST open loop is tracked: it closes when
 // the depth returns to the one it opened at, which is all "inside any loop" asks.
 function zg_in_loop(ops: Op[]): boolean[] {
-  var k_block: i32 = kind_id("block");
-  var k_loop: i32 = kind_id("loop");
-  var k_if: i32 = kind_id("if");
-  var k_end: i32 = kind_id("end");
-  var marks: boolean[] = [];
-  var depth: i32 = 0;
-  var loop_at: i32 = 0 - 1;
-  var i: i32 = 0;
+  let k_block: i32 = kind_id("block");
+  let k_loop: i32 = kind_id("loop");
+  let k_if: i32 = kind_id("if");
+  let k_end: i32 = kind_id("end");
+  let marks: boolean[] = [];
+  let depth: i32 = 0;
+  let loop_at: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < ops.len()) {
-    var t: i32 = ops[i].kind_tag;
+    let t: i32 = ops[i].kind_tag;
     if (t == k_block || t == k_if) {
       depth = depth + 1;
     } else if (t == k_loop) {
@@ -6813,7 +6813,7 @@ function zg_zero_guard(ops: Op[], i: i32, n_params: i32, first: i32[], k_call: i
   if (ops[i + 1].kind_tag != k_call || ops[i + 1].str != "__fern_rc_is_unique") {
     return false;
   }
-  var sl: i32 = ops[i].i32_imm;
+  let sl: i32 = ops[i].i32_imm;
   if (sl < n_params || sl >= first.len()) {
     return false;
   }
@@ -6830,16 +6830,16 @@ function zg_zero_guard(ops: Op[], i: i32, n_params: i32, first: i32[], k_call: i
 // the call an i32, so rewriting the load alone would leave a pointer where an
 // i32 is expected.
 pub function prune_zero_slot_guards(ops: Op[], n_params: i32): Op[] {
-  var maxs: i32 = cp_max_slot(ops);
+  let maxs: i32 = cp_max_slot(ops);
   if (maxs < n_params) {
     return ops;
   }
-  var first: i32[] = zg_first_write(ops, maxs + 1);
-  var in_loop: boolean[] = zg_in_loop(ops);
-  var k_load: i32 = kind_id("load_local");
-  var k_call: i32 = kind_id("call_direct");
-  var out: Op[] = [];
-  var i: i32 = 0;
+  let first: i32[] = zg_first_write(ops, maxs + 1);
+  let in_loop: boolean[] = zg_in_loop(ops);
+  let k_load: i32 = kind_id("load_local");
+  let k_call: i32 = kind_id("call_direct");
+  let out: Op[] = [];
+  let i: i32 = 0;
   while (i < ops.len()) {
     if (ops[i].kind_tag == k_load && !in_loop[i]
       && zg_zero_guard(ops, i, n_params, first, k_call)) {
@@ -6883,8 +6883,8 @@ pub struct OptimizedOps {
 // the lowering routes every value through a slot (the typed path's `ssarc`
 // does), so strength reduction gets one more pass over its output.
 function finish_ops(cur: Op[], n_locals: i32): OptimizedOps {
-  var done: Op[] = eliminate_dead_code(propagate_fold(fuse_tee(eliminate_dead_code(cur))));
-  var again: StrengthResult = reduce_strength_ex(done);
+  let done: Op[] = eliminate_dead_code(propagate_fold(fuse_tee(eliminate_dead_code(cur))));
+  let again: StrengthResult = reduce_strength_ex(done);
   if (again.changed) {
     done = eliminate_dead_code(propagate_fold(strength_fixpoint(fold_const_binaries(again.ops))));
   }
@@ -6896,8 +6896,8 @@ function finish_ops(cur: Op[], n_locals: i32): OptimizedOps {
 // `const ; store_local` whose loads only the next propagation can replace.
 // Every fold rule shrinks the list, so an unchanged length is the fixpoint.
 function propagate_fold(ops: Op[]): Op[] {
-  var cur: Op[] = propagate_copies(const_propagate(ops));
-  var folded: Op[] = fold_const_binaries(cur);
+  let cur: Op[] = propagate_copies(const_propagate(ops));
+  let folded: Op[] = fold_const_binaries(cur);
   while (folded.len() < cur.len()) {
     cur = propagate_copies(const_propagate(folded));
     folded = fold_const_binaries(cur);
@@ -6909,10 +6909,10 @@ function propagate_fold(ops: Op[]): Op[] {
 // rewrites anything. fold_const_binaries already self-iterates, so a strength
 // pass that rewrote nothing is the fixpoint; the round cap is defensive.
 function strength_fixpoint(ops: Op[]): Op[] {
-  var cur: Op[] = ops;
-  var rounds: i32 = 0;
+  let cur: Op[] = ops;
+  let rounds: i32 = 0;
   while (rounds < 8) {
-    var r: StrengthResult = reduce_strength_ex(cur);
+    let r: StrengthResult = reduce_strength_ex(cur);
     if (!r.changed) {
       return cur;
     }
@@ -6971,14 +6971,14 @@ pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps
 // operand. The cached length lives in a fresh slot past n_locals, which is
 // why the pass returns the grown count (#8247) rather than an op list alone.
 pub function hoist_loop_invariants(ops: Op[], n_locals: i32): OptimizedOps {
-  var k_loop: i32 = kind_id("loop");
-  var cur: OptimizedOps = OptimizedOps { ops: ops, n_locals: n_locals };
+  let k_loop: i32 = kind_id("loop");
+  let cur: OptimizedOps = OptimizedOps { ops: ops, n_locals: n_locals };
   // The slot bound is read once; a hoist's cache slots are past n_locals,
   // so the bound follows the count.
-  var maxs: i32 = cp_max_slot(ops);
+  let maxs: i32 = cp_max_slot(ops);
   // Later loops first: rewriting one shifts every index after it, and
   // walking backwards keeps the indices of the loops still to visit valid.
-  var i: i32 = ops.len() - 1;
+  let i: i32 = ops.len() - 1;
   while (i >= 0) {
     if (cur.ops[i].kind_tag == k_loop) {
       cur = licm_hoist_from_loop(cur, i, maxs);
@@ -6994,28 +6994,28 @@ pub function hoist_loop_invariants(ops: Op[], n_locals: i32): OptimizedOps {
 // licm_hoist_from_loop rewrites the one loop opening at loop_idx; maxs is
 // the highest slot any op names.
 function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32): OptimizedOps {
-  var ops: Op[] = cur.ops;
-  var end: i32 = licm_scope_end(ops, loop_idx);
+  let ops: Op[] = cur.ops;
+  let end: i32 = licm_scope_end(ops, loop_idx);
   if (end < 0) {
     return cur;
   }
-  var hdr_end: i32 = licm_header_end(ops, loop_idx);
-  var stored: boolean[] = licm_stored_locals(ops, loop_idx + 1, end, maxs + 1);
-  var order: i32[] = licm_candidates(ops, loop_idx, hdr_end, stored);
+  let hdr_end: i32 = licm_header_end(ops, loop_idx);
+  let stored: boolean[] = licm_stored_locals(ops, loop_idx + 1, end, maxs + 1);
+  let order: i32[] = licm_candidates(ops, loop_idx, hdr_end, stored);
   if (order.len() == 0) {
     return cur;
   }
   // slot_for[src] is the cache slot for an operand in `order`, -1 otherwise.
   // Only an operand the body never stores to is in it, so a hit already says
   // the read is invariant.
-  var slot_for: i32[] = [];
-  var s: i32 = 0;
+  let slot_for: i32[] = [];
+  let s: i32 = 0;
   while (s < stored.len()) {
     slot_for = slot_for.append(0 - 1);
     s = s + 1;
   }
-  var pre: Op[] = [];
-  var n: i32 = 0;
+  let pre: Op[] = [];
+  let n: i32 = 0;
   while (n < order.len()) {
     slot_for = slot_for.with(order[n], cur.n_locals + n);
     pre = pre.append(op_load_local(order[n]));
@@ -7023,13 +7023,13 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32): Opti
     pre = pre.append(op_store_local(cur.n_locals + n));
     n = n + 1;
   }
-  var out: Op[] = [];
-  var j: i32 = 0;
+  let out: Op[] = [];
+  let j: i32 = 0;
   while (j < loop_idx) {
     out = out.append(ops[j]);
     j = j + 1;
   }
-  var p: i32 = 0;
+  let p: i32 = 0;
   while (p < pre.len()) {
     out = out.append(pre[p]);
     p = p + 1;
@@ -7037,7 +7037,7 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32): Opti
   out = out.append(ops[loop_idx]);
   j = loop_idx + 1;
   while (j < ops.len()) {
-    var slot: i32 = licm_cached_len(ops, j, hdr_end, slot_for);
+    let slot: i32 = licm_cached_len(ops, j, hdr_end, slot_for);
     if (slot >= 0) {
       out = out.append(op_load_local(slot));
       j = j + 2;  // the str_len is consumed with the load
@@ -7053,13 +7053,13 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32): Opti
 // body ever storing to it, in first-read order so the emitted prologue is
 // stable; an operand read twice is listed once.
 function licm_candidates(ops: Op[], loop_idx: i32, hdr_end: i32, stored: boolean[]): i32[] {
-  var k_load: i32 = kind_id("load_local");
-  var k_len: i32 = kind_id("str_len");
-  var order: i32[] = [];
-  var j: i32 = loop_idx + 1;
+  let k_load: i32 = kind_id("load_local");
+  let k_len: i32 = kind_id("str_len");
+  let order: i32[] = [];
+  let j: i32 = loop_idx + 1;
   while (j + 1 < hdr_end) {
     if (ops[j].kind_tag == k_load && ops[j + 1].kind_tag == k_len) {
-      var src: i32 = ops[j].i32_imm;
+      let src: i32 = ops[j].i32_imm;
       if (!stored[src] && !licm_listed(order, src)) {
         order = order.append(src);
       }
@@ -7070,7 +7070,7 @@ function licm_candidates(ops: Op[], loop_idx: i32, hdr_end: i32, stored: boolean
 }
 
 function licm_listed(order: i32[], src: i32): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < order.len()) {
     if (order[i] == src) {
       return true;
@@ -7099,14 +7099,14 @@ function licm_cached_len(ops: Op[], j: i32, hdr_end: i32, slot_for: i32[]): i32 
 // enters the run partway. The typed lowering opens one or more blocks before
 // a `while` condition.
 function licm_header_end(ops: Op[], loop_idx: i32): i32 {
-  var k_brif: i32 = kind_id("brif");
-  var k_if: i32 = kind_id("if");
-  var k_else: i32 = kind_id("else");
-  var k_loop: i32 = kind_id("loop");
-  var k_end: i32 = kind_id("end");
-  var j: i32 = loop_idx + 1;
+  let k_brif: i32 = kind_id("brif");
+  let k_if: i32 = kind_id("if");
+  let k_else: i32 = kind_id("else");
+  let k_loop: i32 = kind_id("loop");
+  let k_end: i32 = kind_id("end");
+  let j: i32 = loop_idx + 1;
   while (j < ops.len()) {
-    var t: i32 = ops[j].kind_tag;
+    let t: i32 = ops[j].kind_tag;
     if (is_terminator_kind(t) || t == k_brif || t == k_if || t == k_else
       || t == k_loop || t == k_end) {
       return j;
@@ -7119,14 +7119,14 @@ function licm_header_end(ops: Op[], loop_idx: i32): i32 {
 // licm_scope_end is the index of the `end` closing the scope opened at
 // `open`, or -1 when nothing closes it.
 function licm_scope_end(ops: Op[], open: i32): i32 {
-  var k_block: i32 = kind_id("block");
-  var k_loop: i32 = kind_id("loop");
-  var k_if: i32 = kind_id("if");
-  var k_end: i32 = kind_id("end");
-  var depth: i32 = 0;
-  var j: i32 = open;
+  let k_block: i32 = kind_id("block");
+  let k_loop: i32 = kind_id("loop");
+  let k_if: i32 = kind_id("if");
+  let k_end: i32 = kind_id("end");
+  let depth: i32 = 0;
+  let j: i32 = open;
   while (j < ops.len()) {
-    var t: i32 = ops[j].kind_tag;
+    let t: i32 = ops[j].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       depth = depth + 1;
     } else if (t == k_end) {
@@ -7144,17 +7144,17 @@ function licm_scope_end(ops: Op[], open: i32): i32 {
 // [0, n), the whole list's slot range. A slot written anywhere in the loop is
 // not invariant, wherever in the body the write sits.
 function licm_stored_locals(ops: Op[], lo: i32, hi: i32, n: i32): boolean[] {
-  var k_store: i32 = kind_id("store_local");
-  var k_tee: i32 = kind_id("tee_local");
-  var stored: boolean[] = [];
-  var s: i32 = 0;
+  let k_store: i32 = kind_id("store_local");
+  let k_tee: i32 = kind_id("tee_local");
+  let stored: boolean[] = [];
+  let s: i32 = 0;
   while (s < n) {
     stored = stored.append(false);
     s = s + 1;
   }
-  var j: i32 = lo;
+  let j: i32 = lo;
   while (j < hi) {
-    var t: i32 = ops[j].kind_tag;
+    let t: i32 = ops[j].kind_tag;
     if (t == k_store || t == k_tee) {
       stored = stored.with(ops[j].i32_imm, true);
     }
@@ -7169,7 +7169,7 @@ function licm_stored_locals(ops: Op[], lo: i32, hi: i32, n: i32): boolean[] {
 // `tee_local X` — the op-list twin of native's internal/ir/tee.go (#6638).
 //
 // The pattern arrives from the closure inliner's arg-bind round trip, from a
-// `var x = …` immediately read, and from the assignment-as-expression lowering.
+// `let x = …` immediately read, and from the assignment-as-expression lowering.
 // wasm is what the pass is FOR: `local.tee` is a byte and a load cheaper than
 // `local.set $X ; local.get $X`. The register backends peek the operand-stack top
 // instead of popping and re-pushing it, which is a wash — native's own header
@@ -7285,13 +7285,13 @@ function licm_stored_locals(ops: Op[], lo: i32, hi: i32, n: i32): boolean[] {
 // them at each store is what lets the scope walk index them without a bounds
 // recheck; propagate_copies computes the same bound the same way.
 function cp_max_slot(ops: Op[]): i32 {
-  var k_load: i32 = kind_id("load_local");
-  var k_store: i32 = kind_id("store_local");
-  var k_tee: i32 = kind_id("tee_local");
-  var maxs: i32 = 0 - 1;
-  var i: i32 = 0;
+  let k_load: i32 = kind_id("load_local");
+  let k_store: i32 = kind_id("store_local");
+  let k_tee: i32 = kind_id("tee_local");
+  let maxs: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < ops.len()) {
-    var kt: i32 = ops[i].kind_tag;
+    let kt: i32 = ops[i].kind_tag;
     if (kt == k_load || kt == k_store || kt == k_tee) {
       if (ops[i].i32_imm > maxs) {
         maxs = ops[i].i32_imm;
@@ -7308,9 +7308,9 @@ function cp_max_slot(ops: Op[]): i32 {
 // at an `end` to reconcile the scope. Only a bound slot can need it, and
 // `bound` holds every one, so the walk is over those rather than every slot.
 function cp_kill_after(has: boolean[], wrote: i32[], at: i32, bound: i32[]): boolean[] {
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < bound.len()) {
-    var s: i32 = bound[k];
+    let s: i32 = bound[k];
     if (has[s] && wrote[s] > at) {
       has = has.with(s, false);
     }
@@ -7322,8 +7322,8 @@ function cp_kill_after(has: boolean[], wrote: i32[], at: i32, bound: i32[]): boo
 // cp_still_bound is `bound` without the slots no longer bound, so a kill walks
 // only what is live.
 function cp_still_bound(bound: i32[], has: boolean[]): i32[] {
-  var out: i32[] = [];
-  var k: i32 = 0;
+  let out: i32[] = [];
+  let k: i32 = 0;
   while (k < bound.len()) {
     if (has[bound[k]]) {
       out = out.append(bound[k]);
@@ -7339,17 +7339,17 @@ function cp_still_bound(bound: i32[], has: boolean[]): i32[] {
 // can change is not assumable inside it. Scanning for the writes rather than
 // dropping the whole table keeps the bindings the body cannot touch.
 function cp_loop_body_kill(ops: Op[], at: i32, has: boolean[]): boolean[] {
-  var k_store: i32 = kind_id("store_local");
-  var k_tee: i32 = kind_id("tee_local");
-  var k_block: i32 = kind_id("block");
-  var k_loop: i32 = kind_id("loop");
-  var k_if: i32 = kind_id("if");
-  var k_end: i32 = kind_id("end");
-  var k_str_slice: i32 = kind_id("str_slice");
-  var d: i32 = 0;
-  var j: i32 = at + 1;
+  let k_store: i32 = kind_id("store_local");
+  let k_tee: i32 = kind_id("tee_local");
+  let k_block: i32 = kind_id("block");
+  let k_loop: i32 = kind_id("loop");
+  let k_if: i32 = kind_id("if");
+  let k_end: i32 = kind_id("end");
+  let k_str_slice: i32 = kind_id("str_slice");
+  let d: i32 = 0;
+  let j: i32 = at + 1;
   while (j < ops.len()) {
-    var t: i32 = ops[j].kind_tag;
+    let t: i32 = ops[j].kind_tag;
     if (t == k_block || t == k_loop || t == k_if) {
       d = d + 1;
     } else if (t == k_end) {
@@ -7358,7 +7358,7 @@ function cp_loop_body_kill(ops: Op[], at: i32, has: boolean[]): boolean[] {
       }
       d = d - 1;
     } else if (t == k_store || t == k_tee) {
-      var sl: i32 = ops[j].i32_imm;
+      let sl: i32 = ops[j].i32_imm;
       if (sl >= 0 && sl < has.len()) {
         has = has.with(sl, false);
       }
@@ -7366,8 +7366,8 @@ function cp_loop_body_kill(ops: Op[], at: i32, has: boolean[]): boolean[] {
       // The same three frame slots the main walk unbinds, on the same
       // reasoning: this scan is the loop's half of the write model, and a
       // write it cannot see is a binding assumed across a back-edge.
-      var fb: i32 = ops[j].i32_imm - 1;
-      var fk: i32 = 0;
+      let fb: i32 = ops[j].i32_imm - 1;
+      let fk: i32 = 0;
       while (fk < 3) {
         if (fb + fk >= 0 && fb + fk < has.len()) {
           has = has.with(fb + fk, false);
@@ -7381,23 +7381,23 @@ function cp_loop_body_kill(ops: Op[], at: i32, has: boolean[]): boolean[] {
 }
 
 pub function const_propagate(ops: Op[]): Op[] {
-  var maxs: i32 = cp_max_slot(ops);
+  let maxs: i32 = cp_max_slot(ops);
   if (maxs < 0) {
     return ops;
   }
-  var nslots: i32 = maxs + 1;
+  let nslots: i32 = maxs + 1;
 
-  var k_load: i32 = kind_id("load_local");
-  var k_store: i32 = kind_id("store_local");
-  var k_tee: i32 = kind_id("tee_local");
-  var k_block: i32 = kind_id("block");
-  var k_loop: i32 = kind_id("loop");
-  var k_if: i32 = kind_id("if");
-  var k_else: i32 = kind_id("else");
-  var k_end: i32 = kind_id("end");
-  var k_br: i32 = kind_id("br");
-  var k_brif: i32 = kind_id("brif");
-  var k_str_slice: i32 = kind_id("str_slice");
+  let k_load: i32 = kind_id("load_local");
+  let k_store: i32 = kind_id("store_local");
+  let k_tee: i32 = kind_id("tee_local");
+  let k_block: i32 = kind_id("block");
+  let k_loop: i32 = kind_id("loop");
+  let k_if: i32 = kind_id("if");
+  let k_else: i32 = kind_id("else");
+  let k_end: i32 = kind_id("end");
+  let k_br: i32 = kind_id("br");
+  let k_brif: i32 = kind_id("brif");
+  let k_str_slice: i32 = kind_id("str_slice");
 
   // known[slot] holds the tracked constant OP, re-emitted verbatim at a load;
   // has[slot] says whether it is live. Carrying the op rather than a value keeps
@@ -7406,11 +7406,11 @@ pub function const_propagate(ops: Op[]): Op[] {
   // is how a scope's end names the slots it could have written. bound lists
   // every slot has[] is true for, each once, and may also hold slots since
   // unbound until the next kill drops them.
-  var known: Op[] = [];
-  var has: boolean[] = [];
-  var wrote: i32[] = [];
-  var bound: i32[] = [];
-  var z: i32 = 0;
+  let known: Op[] = [];
+  let has: boolean[] = [];
+  let wrote: i32[] = [];
+  let bound: i32[] = [];
+  let z: i32 = 0;
   while (z < nslots) {
     known = known.append(op_const_i32(0));
     has = has.append(false);
@@ -7423,18 +7423,18 @@ pub function const_propagate(ops: Op[]): Op[] {
   // fr_at is the op index the scope opened at, fr_wc the write count then (an
   // end whose count still matches wrote nothing, so it can skip the kill scan),
   // fr_br whether a branch targets it.
-  var fr_kind: i32[] = [];
-  var fr_at: i32[] = [];
-  var fr_wc: i32[] = [];
-  var fr_br: boolean[] = [];
-  var depth: i32 = 0;
-  var wc: i32 = 0;
+  let fr_kind: i32[] = [];
+  let fr_at: i32[] = [];
+  let fr_wc: i32[] = [];
+  let fr_br: boolean[] = [];
+  let depth: i32 = 0;
+  let wc: i32 = 0;
 
-  var out: Op[] = [];
-  var i: i32 = 0;
+  let out: Op[] = [];
+  let i: i32 = 0;
   while (i < ops.len()) {
-    var o: Op = ops[i];
-    var kt: i32 = o.kind_tag;
+    let o: Op = ops[i];
+    let kt: i32 = o.kind_tag;
     if (kt == k_block || kt == k_loop || kt == k_if) {
       if (depth < fr_kind.len()) {
         fr_kind = fr_kind.with(depth, kt);
@@ -7464,7 +7464,7 @@ pub function const_propagate(ops: Op[]): Op[] {
       if (depth > 0) {
         // A block nothing branches to runs straight through, so what it
         // wrote still holds after it. Every other scope is conditional.
-        var straight: boolean = fr_kind[depth - 1] == k_block && !fr_br[depth - 1];
+        let straight: boolean = fr_kind[depth - 1] == k_block && !fr_br[depth - 1];
         if (!straight && wc != fr_wc[depth - 1]) {
           has = cp_kill_after(has, wrote, fr_at[depth - 1], bound);
           bound = cp_still_bound(bound, has);
@@ -7476,7 +7476,7 @@ pub function const_propagate(ops: Op[]): Op[] {
       // A branch makes its target scope's writes conditional. Depth is
       // relative and 0 is the innermost open scope; a depth past the stack
       // leaves the function, where there is no scope end to reconcile.
-      var tgt: i32 = depth - 1 - o.i32_imm;
+      let tgt: i32 = depth - 1 - o.i32_imm;
       if (o.i32_imm >= 0 && tgt >= 0) {
         fr_br = fr_br.with(tgt, true);
       }
@@ -7490,10 +7490,10 @@ pub function const_propagate(ops: Op[]): Op[] {
       // makes this pass sound by a convention in another file rather than by
       // its own reasoning. Modelling the write costs three unbinds and keeps
       // the next frame-form op from arriving into a silent stale binding.
-      var fb: i32 = o.i32_imm - 1;
-      var fk: i32 = 0;
+      let fb: i32 = o.i32_imm - 1;
+      let fk: i32 = 0;
       while (fk < 3) {
-        var fs: i32 = fb + fk;
+        let fs: i32 = fb + fk;
         if (fs >= 0 && fs < nslots) {
           wrote = wrote.with(fs, i);
           wc = wc + 1;
@@ -7507,8 +7507,8 @@ pub function const_propagate(ops: Op[]): Op[] {
     } else if (kt == k_store || kt == k_tee) {
       // A store binds the slot to the constant that produced it, read off the
       // REWRITTEN list so a load this pass just replaced counts as a constant
-      // source — that is what carries a value through `var b = a`.
-      var sl: i32 = o.i32_imm;
+      // source — that is what carries a value through `let b = a`.
+      let sl: i32 = o.i32_imm;
       if (sl >= 0 && sl < nslots) {
         wrote = wrote.with(sl, i);
         wc = wc + 1;
@@ -7534,13 +7534,13 @@ pub function const_propagate(ops: Op[]): Op[] {
 }
 
 pub function propagate_copies(ops: Op[]): Op[] {
-  var k_load: i32 = kind_id("load_local");
-  var k_store: i32 = kind_id("store_local");
-  var k_tee: i32 = kind_id("tee_local");
-  var maxs: i32 = 0 - 1;
-  var i: i32 = 0;
+  let k_load: i32 = kind_id("load_local");
+  let k_store: i32 = kind_id("store_local");
+  let k_tee: i32 = kind_id("tee_local");
+  let maxs: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < ops.len()) {
-    var kt: i32 = ops[i].kind_tag;
+    let kt: i32 = ops[i].kind_tag;
     if (kt == k_load || kt == k_store || kt == k_tee) {
       if (ops[i].i32_imm > maxs) {
         maxs = ops[i].i32_imm;
@@ -7551,10 +7551,10 @@ pub function propagate_copies(ops: Op[]): Op[] {
   if (maxs < 0) {
     return ops;
   }
-  var reads: i32[] = [];
-  var stores: i32[] = [];
-  var tees: i32[] = [];
-  var z: i32 = 0;
+  let reads: i32[] = [];
+  let stores: i32[] = [];
+  let tees: i32[] = [];
+  let z: i32 = 0;
   while (z <= maxs) {
     reads = reads.append(0);
     stores = stores.append(0);
@@ -7563,8 +7563,8 @@ pub function propagate_copies(ops: Op[]): Op[] {
   }
   i = 0;
   while (i < ops.len()) {
-    var kt2: i32 = ops[i].kind_tag;
-    var sl: i32 = ops[i].i32_imm;
+    let kt2: i32 = ops[i].kind_tag;
+    let sl: i32 = ops[i].i32_imm;
     if (sl >= 0 && sl <= maxs) {
       if (kt2 == k_load) {
         reads = reads.with(sl, reads[sl] + 1);
@@ -7577,12 +7577,12 @@ pub function propagate_copies(ops: Op[]): Op[] {
     i = i + 1;
   }
   // `out` is written from the first dead tee on.
-  var out: Op[] = [];
-  var copying: boolean = false;
+  let out: Op[] = [];
+  let copying: boolean = false;
   i = 0;
   while (i < ops.len()) {
-    var dead_tee: boolean = false;
-    var sl2: i32 = ops[i].i32_imm;
+    let dead_tee: boolean = false;
+    let sl2: i32 = ops[i].i32_imm;
     if (ops[i].kind_tag == k_tee && sl2 >= 0 && sl2 <= maxs) {
       dead_tee = reads[sl2] == 0 && stores[sl2] == 0 && tees[sl2] == 1;
     }
@@ -7603,10 +7603,10 @@ pub function propagate_copies(ops: Op[]): Op[] {
 }
 
 pub function fuse_tee(ops: Op[]): Op[] {
-  var k_store: i32 = kind_id("store_local");
-  var k_load: i32 = kind_id("load_local");
-  var out: Op[] = [];
-  var i: i32 = 0;
+  let k_store: i32 = kind_id("store_local");
+  let k_load: i32 = kind_id("load_local");
+  let out: Op[] = [];
+  let i: i32 = 0;
   while (i < ops.len()) {
     if (i + 1 < ops.len()
       && ops[i].kind_tag == k_store
@@ -7646,7 +7646,7 @@ pub function ops_equal(a: Op[], b: Op[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
     if (!op_equal(a[i], b[i])) {
       return false;
@@ -7790,7 +7790,7 @@ pub function render_op(o: Op): string {
     // capture-free function value's body (#9839). Printed apart, because
     // a bare `const_struct` in a dump cannot be told from the other and
     // a reader chasing a function value would not find it.
-    var cfb: string = const_struct_fn_body(o.str);
+    let cfb: string = const_struct_fn_body(o.str);
     if (cfb.len() > 0) {
       return "const_closure " + cfb;
     }

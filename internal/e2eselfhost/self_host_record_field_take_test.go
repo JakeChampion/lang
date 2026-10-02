@@ -24,20 +24,20 @@ struct State { words: Words, spare: Words, bytes: i32, o: i32 }
   return Words { ...w, n: 0, nl: 0 };
 }
 @noinline function scan(own s: State, line: string): State {
-  var ws: Words = s.words;
+  let ws: Words = s.words;
   s = State { ...s, words: s.spare };
-  var lines: string[] = ws.lines;
-  var nl: i32 = ws.nl;
-  var pos: i64[] = ws.pos;
-  var meta: i64[] = ws.meta;
-  var nw: i32 = ws.n;
-  var tat: i32[] = ws.at;
-  var tbest: i64[] = ws.best;
-  var li: i32 = 0 - 1;
-  var i: i32 = 0;
+  let lines: string[] = ws.lines;
+  let nl: i32 = ws.nl;
+  let pos: i64[] = ws.pos;
+  let meta: i64[] = ws.meta;
+  let nw: i32 = ws.n;
+  let tat: i32[] = ws.at;
+  let tbest: i64[] = ws.best;
+  let li: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < line.len()) {
     if (nw > 100000) {
-      var c: Words = chunk(Words { lines: lines, nl: nl, pos: pos, meta: meta, n: nw, at: tat, best: tbest }, nw);
+      let c: Words = chunk(Words { lines: lines, nl: nl, pos: pos, meta: meta, n: nw, at: tat, best: tbest }, nw);
       lines = c.lines;
       nl = c.nl;
       pos = c.pos;
@@ -64,17 +64,17 @@ struct State { words: Words, spare: Words, bytes: i32, o: i32 }
   return State { ...s, words: Words { lines: lines, nl: nl, pos: pos, meta: meta, n: nw, at: tat, best: tbest } };
 }
 @noinline function feed(own s: State, line: string): State {
-  var o: i32 = s.o + 1;
+  let o: i32 = s.o + 1;
   return scan(State { ...s, o: o }, line);
 }
 function empty(): Words { return Words { lines: [], nl: 0, pos: [], meta: [], n: 0, at: [], best: [] }; }
 function main(): i32 {
-  var s: State = State { words: empty(), spare: empty(), bytes: 0, o: 0 };
-  var k: i32 = 0;
+  let s: State = State { words: empty(), spare: empty(), bytes: 0, o: 0 };
+  let k: i32 = 0;
   while (k < 50) { s = feed(s, "abcdefgh"); k = k + 1; }
-  var a1: i64 = __heap_alloc_count();
+  let a1: i64 = __heap_alloc_count();
   while (k < 150) { s = feed(s, "abcdefgh"); k = k + 1; }
-  var a2: i64 = __heap_alloc_count();
+  let a2: i64 = __heap_alloc_count();
   if (s.words.n != 1200 || s.words.pos[1199] != 7 as i64 || s.words.lines.len() != 150) { return 100; }
   return ((a2 - a1) / 100 as i64) as i32;
 }
@@ -88,16 +88,16 @@ const recordFieldTakeAcrossProg = `struct Pair { a: i32[], b: i32[] }
 @noinline function id(x: i32): i32 { return x; }
 @noinline
 function left(own p: Pair, x: i32): Pair {
-    var a: i32[] = p.a;
-    var b: i32[] = p.b;
+    let a: i32[] = p.a;
+    let b: i32[] = p.b;
     return Pair { a: a.with(0, x), b: b };
 }
 function main(): i32 {
-    var p: Pair = Pair { a: [id(1), 2], b: [id(5), 6] };
-    var i: i32 = 0;
+    let p: Pair = Pair { a: [id(1), 2], b: [id(5), 6] };
+    let i: i32 = 0;
     while (i < 20) { p = left(p, i); i = i + 1; }
-    var a: i32[] = p.a;
-    var b: i32[] = p.b;
+    let a: i32[] = p.a;
+    let b: i32[] = p.b;
     if (a[0] != 19 || a[1] != 2 || b[0] != 5 || b[1] != 6) { return 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -174,9 +174,9 @@ function keep(xs: i32[]): B {
 }
 @noinline
 function f(own r: R): i32 {
-  var a: i32[] = r.a;
-  var m: i32 = r.n;
-  var b: B = keep(a);
+  let a: i32[] = r.a;
+  let m: i32 = r.n;
+  let b: B = keep(a);
   return b.xs.len() + a[0] + m;
 }
 @noinline
@@ -185,11 +185,11 @@ function cost(a: i64[], b: i64[], s: i32): i64 {
 }
 @noinline
 function step(own w: W, n: i32): W {
-  var a: i64[] = w.a;
-  var b: i64[] = w.b;
-  var c: i64[] = w.c;
-  var m: i32 = w.n;
-  var s: i32 = n - 1;
+  let a: i64[] = w.a;
+  let b: i64[] = w.b;
+  let c: i64[] = w.c;
+  let m: i32 = w.n;
+  let s: i32 = n - 1;
   while (s >= 0) {
     c = c.with(s, cost(a, b, s));
     s = s - 1;
@@ -197,12 +197,12 @@ function step(own w: W, n: i32): W {
   return W { a: a, b: b, c: c, n: m };
 }
 function main(): i32 {
-  var xs: i32[] = [];
-  var i: i32 = 0;
+  let xs: i32[] = [];
+  let i: i32 = 0;
   while (i < 5) { xs = xs.append(i + 10); i = i + 1; }
-  var got: i32 = f(R { a: xs, n: 1 });
-  var w: W = W { a: [1 as i64, 2 as i64, 3 as i64], b: [4 as i64, 5 as i64, 6 as i64], c: [0 as i64, 0 as i64, 0 as i64], n: 3 };
-  var k: i32 = 0;
+  let got: i32 = f(R { a: xs, n: 1 });
+  let w: W = W { a: [1 as i64, 2 as i64, 3 as i64], b: [4 as i64, 5 as i64, 6 as i64], c: [0 as i64, 0 as i64, 0 as i64], n: 3 };
+  let k: i32 = 0;
   while (k < 3) { w = step(w, 3); k = k + 1; }
   if (__rc_underflow_count() != 0) { return 99; }
   return got + (w.c[2] as i32);

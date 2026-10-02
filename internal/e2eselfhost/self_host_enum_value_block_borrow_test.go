@@ -10,7 +10,7 @@ import (
 
 // --- An enum read through a match EXPRESSION keeps its release ---------------
 //
-// `var v: E = E.A([i, i + 1]); consume(v);` reclaimed NOTHING — 200 allocs / 0
+// `let v: E = E.A([i, i + 1]); consume(v);` reclaimed NOTHING — 200 allocs / 0
 // frees over 100 rounds against native's 200/200, the box and its payload every
 // round. The same code with the match written as a STATEMENT was already flat.
 //
@@ -24,7 +24,7 @@ import (
 //     that reads its param through a match expression had that param marked
 //     non-borrowable, so every CALLER refused its own enum local's release.
 //   - ef_unsafe_expr, the enum-field fork, which is the caller's own
-//     `var t = match (v) { … }` read.
+//     `let t = match (v) { … }` read.
 //
 // The reading is carried explicitly now (expr_unsafe_for_vb), through the
 // borrowing-binop operand path too — `+` and the comparisons hand their operands
@@ -49,8 +49,8 @@ type enumValueBlockCase struct {
 }
 
 const evbMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -65,7 +65,7 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// THE REPRO, caller side. Base: 200 allocs / 0 frees.
 			name: "match_expr_read",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = E.A([i, i + 1]);
+    let v: E = E.A([i, i + 1]);
     return (match (v) { E.A(xs) => xs.len(), E.B => 0 }) % 101;
 }
 ` + evbMain,
@@ -77,8 +77,8 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// not the match.
 			name: "match_stmt_read",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = E.A([i, i + 1]);
-    var n: i32 = 0;
+    let v: E = E.A([i, i + 1]);
+    let n: i32 = 0;
     match (v) { E.A(xs) => { n = xs.len(); }, E.B => { n = 0; } }
     return n % 101;
 }
@@ -92,7 +92,7 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			name: "helper_reads_param_by_match_expr",
 			src: decls + `function consume(e: E): i32 { return match (e) { E.A(xs) => xs.len(), E.B => 0 }; }
 function round(i: i32): i32 {
-    var v: E = mkv(i);
+    let v: E = mkv(i);
     return consume(v) % 101;
 }
 ` + evbMain,
@@ -102,9 +102,9 @@ function round(i: i32): i32 {
 			// The same helper with a match STATEMENT — already flat, and the
 			// control for the callee half.
 			name: "helper_reads_param_by_match_stmt",
-			src: decls + `function consume(e: E): i32 { var n: i32 = 0; match (e) { E.A(xs) => { n = xs.len(); }, E.B => { n = 0; } } return n; }
+			src: decls + `function consume(e: E): i32 { let n: i32 = 0; match (e) { E.A(xs) => { n = xs.len(); }, E.B => { n = 0; } } return n; }
 function round(i: i32): i32 {
-    var v: E = mkv(i);
+    let v: E = mkv(i);
     return consume(v) % 101;
 }
 ` + evbMain,
@@ -120,7 +120,7 @@ function round(i: i32): i32 {
 			name: "helper_wraps_match_expr_in_binary",
 			src: decls + `function consume(e: E, k: i32): i32 { return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + k; }
 function round(i: i32): i32 {
-    var v: E = mkv(i);
+    let v: E = mkv(i);
     return consume(v, i) % 101;
 }
 ` + evbMain,
@@ -131,9 +131,9 @@ function round(i: i32): i32 {
 			// about value blocks, not about `match` specifically.
 			name: "match_expr_then_if_expr",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = E.A([i, i + 1]);
-    var n: i32 = match (v) { E.A(xs) => xs.len(), E.B => 0 };
-    var u: i32 = if (n > 0) { n } else { 0 };
+    let v: E = E.A([i, i + 1]);
+    let n: i32 = match (v) { E.A(xs) => xs.len(), E.B => 0 };
+    let u: i32 = if (n > 0) { n } else { 0 };
     return u % 101;
 }
 ` + evbMain,
@@ -145,8 +145,8 @@ function round(i: i32): i32 {
 			// exit code guards the value read through it.
 			name: "value_block_yields_the_enum_refused",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = E.A([i, i + 1]);
-    var y: E = if (i % 2 == 0) { v } else { mkv(i + 1) };
+    let v: E = E.A([i, i + 1]);
+    let y: E = if (i % 2 == 0) { v } else { mkv(i + 1) };
     return (match (y) { E.A(xs) => xs.len(), E.B => 0 }) % 101;
 }
 ` + evbMain,

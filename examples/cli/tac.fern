@@ -16,9 +16,9 @@ import "std/string";
 import "std/io";
 
 function main(): i32 {
-  var argv: string[] = args();
-  var inputs: string[] = [];
-  var i: i32 = 1;
+  let argv: string[] = args();
+  let inputs: string[] = [];
+  let i: i32 = 1;
   while (i < argv.len()) {
     inputs = inputs.append(argv[i]);
     i = i + 1;
@@ -27,14 +27,14 @@ function main(): i32 {
     inputs = inputs.append("-");
   }
 
-  var all: string[] = [];
-  var status: i32 = 0;
-  var j: i32 = 0;
+  let all: string[] = [];
+  let status: i32 = 0;
+  let j: i32 = 0;
   while (j < inputs.len()) {
     match (io.read_input(inputs[j])) {
       Ok(text) => {
-        var lines: string[] = text.lines();
-        var k: i32 = 0;
+        let lines: string[] = text.lines();
+        let k: i32 = 0;
         while (k < lines.len()) {
           all = all.append(lines[k]);
           k = k + 1;
@@ -48,7 +48,7 @@ function main(): i32 {
     j = j + 1;
   }
 
-  var idx: i32 = all.len() - 1;
+  let idx: i32 = all.len() - 1;
   while (idx >= 0) {
     print(all[idx]);
     idx = idx - 1;

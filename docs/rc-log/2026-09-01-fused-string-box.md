@@ -74,7 +74,7 @@ buffer at `ceil(len/8)`.
 | probe | native x86-64 | self-host before | self-host after |
 |---|---|---|---|
 | `struct N { n: i32 }` | 1 | 1 | 1 |
-| `var xs: i32[] = [i, i+1]` | 1 | 1 | 1 |
+| `let xs: i32[] = [i, i+1]` | 1 | 1 | 1 |
 | `struct A { xs: i32[] }` | 2 | 2 | 2 |
 | 21-char concat result | 1 | **2** | **1** |
 | `struct S { s: string }`, 21-char | 2 | **3** | **2** |

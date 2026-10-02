@@ -9,7 +9,7 @@ import (
 func TestBorrowedArrayOwnForwardTracksOwnership(t *testing.T) {
 	ip := lowerForTest(t, `function update(own xs: i32[]): i32[] { return xs.with(0, 9); }
 function forward(xs: i32[]): i32[] { xs = update(xs); return xs; }
-function main(): i32 { var xs = [1, 2, 3]; var next = forward(xs); return xs[0] + next[0]; }`)
+function main(): i32 { let xs = [1, 2, 3]; let next = forward(xs); return xs[0] + next[0]; }`)
 	fn := fnNamed(t, ip, "forward")
 	flag := int32(-1)
 	for i := 0; i+6 < len(fn.Ops); i++ {

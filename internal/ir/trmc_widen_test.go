@@ -53,7 +53,7 @@ func TestDetectTrmcWidenedShapes(t *testing.T) {
 	}{
 		{"setup statements before the match", `
 function f(xs: List, n: i32): List {
-    var lim: i32 = n * 2;
+    let lim: i32 = n * 2;
     if (lim <= 0) { return Nil; }
     match (xs) {
         Cons(h, t) => { return Cons(h + lim, f(t, n - 1)); },
@@ -63,7 +63,7 @@ function f(xs: List, n: i32): List {
 		{"statements before an arm tail", `
 function f(xs: List): List {
     match (xs) {
-        Cons(h, t) => { var d: i32 = h * 2; return Cons(d + 1, f(t)); },
+        Cons(h, t) => { let d: i32 = h * 2; return Cons(d + 1, f(t)); },
         Nil => { return Nil; },
     }
 }`},
@@ -125,7 +125,7 @@ func TestDetectTrmcDeclines(t *testing.T) {
 			`
 function f(xs: List): List {
     match (xs) {
-        Cons(h, t) => { var s: string = "x"; return Cons(h + s.len(), f(t)); },
+        Cons(h, t) => { let s: string = "x"; return Cons(h + s.len(), f(t)); },
         Nil => { return Nil; },
     }
 }`},
@@ -133,7 +133,7 @@ function f(xs: List): List {
 			"same: no exit sweep to discharge it",
 			`
 function f(xs: List): List {
-    var s: string = "x";
+    let s: string = "x";
     match (xs) {
         Cons(h, t) => { return Cons(h + s.len(), f(t)); },
         Nil => { return Nil; },
@@ -156,7 +156,7 @@ function f(xs: List): List {
     match (xs) {
         Cons(h, t) => {
             if (h > 0) { return Cons(h, f(t)); }
-            else { var s: string = "xy"; return Cons(s.len(), f(t)); }
+            else { let s: string = "xy"; return Cons(s.len(), f(t)); }
         },
         Nil => { return Nil; },
     }
@@ -165,7 +165,7 @@ function f(xs: List): List {
 			"only scalar straight-line setup is rc-neutral by construction",
 			`
 function f(xs: List, n: i32): List {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { i = i + 1; }
     match (xs) {
         Cons(h, t) => { return Cons(h + i, f(t, n)); },
@@ -298,7 +298,7 @@ function f(xs: List): List {
 	// Scalar setup that cannot leave the loop early keeps the consume verdict.
 	const scalarSetup = trmcListDecl + `
 function f(xs: List, n: i32): List {
-    var bump: i32 = n + 1;
+    let bump: i32 = n + 1;
     match (xs) {
         Cons(h, t) => { return Cons(h + bump, f(t, n)); },
         Nil => { return Nil; },

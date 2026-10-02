@@ -22,7 +22,7 @@ import (
 // This one ended on 232 on both natives before the fix — a concatenation
 // and a print, the two most ordinary things a void main can do.
 const voidMainExitSource = `function main(): void {
-    var s: string = "abc";
+    let s: string = "abc";
     print(s + "d");
 }
 `

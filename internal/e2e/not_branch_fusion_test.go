@@ -31,12 +31,12 @@ func notBranchMatrix() string {
 	for _, nots := range []int{1, 2, 3} {
 		neg := strings.Repeat("!", nots)
 		// `if (NOT b)`: the then-arm runs when the negated value holds.
-		fmt.Fprintf(&b, "@noinline function fi%d(x: i32): i32 { var b: boolean = src(x); if (%sb) { return 1; } return 0; }\n", id, neg)
+		fmt.Fprintf(&b, "@noinline function fi%d(x: i32): i32 { let b: boolean = src(x); if (%sb) { return 1; } return 0; }\n", id, neg)
 		// `if (NOT b) else`: both arms present, so the else-label is real.
-		fmt.Fprintf(&b, "@noinline function fe%d(x: i32): i32 { var b: boolean = src(x); if (%sb) { return 1; } else { return 0; } }\n", id, neg)
+		fmt.Fprintf(&b, "@noinline function fe%d(x: i32): i32 { let b: boolean = src(x); if (%sb) { return 1; } else { return 0; } }\n", id, neg)
 		// `while (NOT b)`: the guard is the OpBrIf-shaped consumer; the
 		// body clears the condition so the loop runs at most once.
-		fmt.Fprintf(&b, "@noinline function fw%d(x: i32): i32 { var b: boolean = src(x); var n: i32 = 0; while (%sb) { n = n + 1; b = %s; } return n; }\n",
+		fmt.Fprintf(&b, "@noinline function fw%d(x: i32): i32 { let b: boolean = src(x); let n: i32 = 0; while (%sb) { n = n + 1; b = %s; } return n; }\n",
 			id, neg, map[bool]string{true: "true", false: "false"}[nots%2 == 1])
 		// src(1) is false, src(5) is true; an odd run of negations makes
 		// the effective condition the opposite of the source.

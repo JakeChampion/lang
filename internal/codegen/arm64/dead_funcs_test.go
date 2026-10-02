@@ -27,7 +27,7 @@ func TestIRDeadFunctionCullKeepsVtableTargets(t *testing.T) {
 struct NotFound { what: string }
 impl Error for NotFound { function message(self: Self): string { return self.what; } }
 function main(): i32 {
-	var e: dyn Error = NotFound { what: "ab" } as dyn Error;
+	let e: dyn Error = NotFound { what: "ab" } as dyn Error;
 	return e.message().len();
 }`, Options{})
 	if !strings.Contains(asm, "__vtable_Error_NotFound:") {

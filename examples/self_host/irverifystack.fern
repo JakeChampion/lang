@@ -75,7 +75,7 @@ pub struct Coverage {
 }
 
 pub function coverage_new(): Coverage {
-  var none: string[] = [];
+  let none: string[] = [];
   return Coverage { funcs: 0, modelled: 0, skipped_fns: none, skipped_why: none };
 }
 
@@ -95,12 +95,12 @@ pub function coverage_add(c: Coverage, fn_name: string, bail: string): Coverage 
 // empty problem list means nothing without knowing how much was looked at, so
 // this is printed next to the problems rather than behind a flag.
 pub function coverage_str(c: Coverage): string {
-  var out: string = "modelled " + util.i32_to_string(c.modelled) + "/" + util.i32_to_string(c.funcs);
-  var seen: string[] = [];
-  var count: i32[] = [];
-  var i: i32 = 0;
+  let out: string = "modelled " + util.i32_to_string(c.modelled) + "/" + util.i32_to_string(c.funcs);
+  let seen: string[] = [];
+  let count: i32[] = [];
+  let i: i32 = 0;
   while (i < c.skipped_why.len()) {
-    var at: i32 = util.index_of_str(seen, c.skipped_why[i]);
+    let at: i32 = util.index_of_str(seen, c.skipped_why[i]);
     if (at < 0) {
       seen = seen.append(c.skipped_why[i]);
       count = count.append(1);
@@ -109,7 +109,7 @@ pub function coverage_str(c: Coverage): string {
     }
     i = i + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < seen.len()) {
     out = out + "\n    skipped " + util.i32_to_string(count[j]) + ": " + seen[j];
     j = j + 1;
@@ -136,29 +136,29 @@ function fn_result_slots(): i32 {
 // O(1) — an array-slice pop would make the walk quadratic on the compiler's
 // own long functions.
 pub function verify_stack_fn(fn_name: string, ops: ir.Op[]): StackResult {
-  var out: irverify.Problem[] = [];
-  var none: irverify.Problem[] = [];
+  let out: irverify.Problem[] = [];
+  let none: irverify.Problem[] = [];
 
   // The open-scope stack. Frame 0 is the implicit function-body scope: it
   // is never closed by an `end`, and what it must hold when the function
   // ends is the function's result.
-  var fr_kind: i32[] = [0];
-  var fr_at: i32[] = [0 - 1];
-  var fr_height: i32[] = [0];
+  let fr_kind: i32[] = [0];
+  let fr_at: i32[] = [0 - 1];
+  let fr_height: i32[] = [0];
   // 0 / 1 rather than boolean[], matching irverify.fern's parallel-array
   // scope stack.
-  var fr_unreach: i32[] = [0];
-  var fr_else: i32[] = [0];
-  var depth: i32 = 1;
+  let fr_unreach: i32[] = [0];
+  let fr_else: i32[] = [0];
+  let depth: i32 = 1;
 
-  var height: i32 = 0;
+  let height: i32 = 0;
 
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ops.len()) {
-    var o: ir.Op = ops[i];
-    var t: i32 = o.kind_tag;
-    var base: i32 = fr_height[depth - 1];
-    var unreach: boolean = fr_unreach[depth - 1] != 0;
+    let o: ir.Op = ops[i];
+    let t: i32 = o.kind_tag;
+    let base: i32 = fr_height[depth - 1];
+    let unreach: boolean = fr_unreach[depth - 1] != 0;
 
     if (t == 152 || t == 153 || t == 154) {  // block, loop, if
       if (t == 154) {
@@ -234,7 +234,7 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[]): StackResult {
           });
         }
       }
-      var d: i32 = o.i32_imm;
+      let d: i32 = o.i32_imm;
       if (d < 0 || d >= depth) {
         // irverify.fern reports the depth; with no target there is
         // nothing further to say about what the branch carries.
@@ -257,7 +257,7 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[]): StackResult {
         height = base;
       }
     } else {
-      var np: i32 = ir.op_pops(o);
+      let np: i32 = ir.op_pops(o);
       if (np < 0) {
         return StackResult { problems: none, bail: "unmodelled op " + ir.kind_name(t) };
       }

@@ -102,13 +102,13 @@ function test_eq_ignore_case(): test.TestOutcome {
 function test_roundtrip(): test.TestOutcome {
   // lower(upper(x)) == lower(x) holds only where every code point maps
   // 1:1. Greek and Latin without expansions qualify.
-  var s: string = "Gross-Ελλάδα";
+  let s: string = "Gross-Ελλάδα";
   if (unicode.to_lower(unicode.to_upper(s)) != unicode.to_lower(s)) {
     return test.fail("simple-mapping roundtrip");
   }
   // It does NOT hold once an expansion is involved: upper("ß") is "SS",
   // whose lowercase is "ss", not "ß". Full mapping is not reversible.
-  var e: string = "Groß";
+  let e: string = "Groß";
   if (unicode.to_lower(unicode.to_upper(e)) == unicode.to_lower(e)) {
     return test.fail("expansion should break the roundtrip");
   }
@@ -216,12 +216,12 @@ function test_invalid_utf8_replaced(): test.TestOutcome {
   // A malformed byte becomes U+FFFD, the same lossy rule
   // utf8.codepoints uses — checked here because the case path decodes
   // independently of `codepoints`.
-  var bad: u8[] = [65 as u8, 200 as u8, 66 as u8];
+  let bad: u8[] = [65 as u8, 200 as u8, 66 as u8];
   return test.assert_eq(unicode.to_lower(string_from_bytes_unchecked(bad)), "a�b");
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/unicode");
+  let r: test.TestRunner = test.test_new("std/unicode");
   r = r.it("ascii", test_ascii);
   r = r.it("latin-1", test_latin1);
   r = r.it("greek", test_greek);

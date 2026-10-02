@@ -67,7 +67,7 @@ Worth saying because one of them looks exactly like a regression this change
 would cause. An array of arrays of closures called through a double index:
 
 ```fern
-var rows: ((i32) => i32)[][] = [[((x: i32) => x + n)], [((y: i32) => y * 2)]];
+let rows: ((i32) => i32)[][] = [[((x: i32) => x + n)], [((y: i32) => y * 2)]];
 return rows[0][0](35);
 ```
 

@@ -11,7 +11,7 @@
 //   (97 as i64).to_string()   lowered      — recovered by the width check
 //   (97 as f64).to_string()   lowered      — recovered by expr_is_f64
 //   (97 as char).to_upper()   REFUSED
-//   var c: char = 97 as char; c.to_upper()   lowered
+//   let c: char = 97 as char; c.to_upper()   lowered
 //
 // expr_is_char is DISPATCH-ONLY, the same bargain expr_is_bool documents: a char
 // is an i32 value in an i32 slot, and nothing about its storage, width or rc
@@ -39,7 +39,7 @@ function inline_unchanged(i: i32): i32 {
 // The cast bound to an annotated local first — the spelling that already lowered,
 // kept as a control so a regression on either side is visible.
 function bound_local(i: i32): i32 {
-    var c: char = 97 as char;
+    let c: char = 97 as char;
     if ((c.to_upper() as i32) != 65) { return 253; }
     return 1;
 }
@@ -53,8 +53,8 @@ function other_casts(i: i32): i32 {
 }
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         acc = acc + inline_upper(i) + inline_unchanged(i) + bound_local(i) + other_casts(i);
         i = i + 1;

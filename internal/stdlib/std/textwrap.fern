@@ -15,9 +15,9 @@ import "std/array";
 // __tw_words splits a line into its space-separated words, dropping the
 // empty strings that runs of spaces produce.
 function __tw_words(line: string): string[] {
-  var raw: string[] = line.split(" ");
-  var out: string[] = [];
-  var i: i32 = 0;
+  let raw: string[] = line.split(" ");
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < raw.len()) {
     if (raw[i].len() > 0) {
       out = out.append(raw[i]);
@@ -30,13 +30,13 @@ function __tw_words(line: string): string[] {
 // __tw_wrap_line greedily packs `words` into lines of at most `width`
 // code points, joined by newlines.
 function __tw_wrap_line(words: string[], width: i32): string {
-  var lines: string[] = [];
-  var cur: string = "";
-  var curw: i32 = 0;
-  var i: i32 = 0;
+  let lines: string[] = [];
+  let cur: string = "";
+  let curw: i32 = 0;
+  let i: i32 = 0;
   while (i < words.len()) {
-    var w: string = words[i];
-    var ww: i32 = utf8.codepoint_count(w);
+    let w: string = words[i];
+    let ww: i32 = utf8.codepoint_count(w);
     if (curw == 0) {
       cur = w;
       curw = ww;
@@ -62,9 +62,9 @@ pub function word_wrap(text: string, width: i32): string {
   if (width <= 0) {
     return text;
   }
-  var paras: string[] = text.split("\n");
-  var out: string[] = [];
-  var p: i32 = 0;
+  let paras: string[] = text.split("\n");
+  let out: string[] = [];
+  let p: i32 = 0;
   while (p < paras.len()) {
     out = out.append(__tw_wrap_line(__tw_words(paras[p]), width));
     p = p + 1;

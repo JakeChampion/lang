@@ -45,10 +45,10 @@ function main(): i32 { if (int.int_to_string(0) == "0") { return 7; } return 0; 
 	// u32 to_string at the unsigned max (4294967295 → 10 digits): routes through
 	// __int_to_string_u64 via the `(n as i64) & mask` reinterpret.
 	{"u32-max-len", `import "std/u32";
-function main(): i32 { var n: u32 = 4294967295 as u32; return n.to_string().len(); }`},
+function main(): i32 { let n: u32 = 4294967295 as u32; return n.to_string().len(); }`},
 	// u32 to_string content for a mid-range value.
 	{"u32-content", `import "std/u32";
-function main(): i32 { var n: u32 = 305419896 as u32; if (n.to_string() == "305419896") { return 42; } return 0; }`},
+function main(): i32 { let n: u32 = 305419896 as u32; if (n.to_string() == "305419896") { return 42; } return 0; }`},
 }
 
 func TestSelfHostIntToStringIR(t *testing.T) {

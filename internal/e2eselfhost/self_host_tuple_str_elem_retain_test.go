@@ -51,7 +51,7 @@ import (
 
 const tupStrElemW = "function w(a: string): string { return a + \"!\"; }\n"
 
-const tupStrElemMain = "\nfunction main(): i32 { var x: i32 = 0; var r: i32 = 0; " +
+const tupStrElemMain = "\nfunction main(): i32 { let x: i32 = 0; let r: i32 = 0; " +
 	"while (r < 100) { x = x + round(r); r = r + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return x % 83; }"
 
@@ -67,8 +67,8 @@ func tupStrElemCases() []tupStrElemCase {
 			// The main shape.
 			name: "str_elem",
 			src: tupStrElemW + `function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (i32, string) = (i, s);
+    let s: string = w("ab");
+    let t: (i32, string) = (i, s);
     return t.0 + t.1.len();
 }` + tupStrElemMain,
 			want: 21,
@@ -79,8 +79,8 @@ func tupStrElemCases() []tupStrElemCase {
 			// — the local still holds its own, so the read must see live bytes.
 			name: "str_read_after",
 			src: tupStrElemW + `function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (i32, string) = (i, s);
+    let s: string = w("ab");
+    let t: (i32, string) = (i, s);
     return t.1.len() + s.len() + i;
 }` + tupStrElemMain,
 			want: 72,
@@ -89,9 +89,9 @@ func tupStrElemCases() []tupStrElemCase {
 			// Two string positions in one tuple — the release walks a list.
 			name: "two_str_elems",
 			src: tupStrElemW + `function round(i: i32): i32 {
-    var a: string = w("ab");
-    var b: string = w("cd");
-    var t: (string, string) = (a, b);
+    let a: string = w("ab");
+    let b: string = w("cd");
+    let t: (string, string) = (a, b);
     return t.0.len() + t.1.len() + i;
 }` + tupStrElemMain,
 			want: 72,
@@ -103,9 +103,9 @@ func tupStrElemCases() []tupStrElemCase {
 			// that corrupts the heap rather than leaking.
 			name: "mixed_str_and_array",
 			src: tupStrElemW + `function round(i: i32): i32 {
-    var s: string = w("ab");
-    var xs: i32[] = [i, i + 1];
-    var t: (string, i32[]) = (s, xs);
+    let s: string = w("ab");
+    let xs: i32[] = [i, i + 1];
+    let t: (string, i32[]) = (s, xs);
     return t.0.len() + t.1[0] + i;
 }` + tupStrElemMain,
 			want: 74,
@@ -122,8 +122,8 @@ func tupStrElemCases() []tupStrElemCase {
 			// double free rather than as a leak.
 			name: "litstr_elem",
 			src: tupStrElemW + `function round(i: i32): i32 {
-    var s: string = "abcd";
-    var t: (i32, string) = (i, s);
+    let s: string = "abcd";
+    let t: (i32, string) = (i, s);
     return t.1.len() + i;
 }` + tupStrElemMain,
 			want: 38,
@@ -135,9 +135,9 @@ func tupStrElemCases() []tupStrElemCase {
 			// because the list is what both consult.
 			name: "last_use_before_return",
 			src: tupStrElemW + `function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (i32, string) = (i, s);
-    var acc: i32 = t.1.len();
+    let s: string = w("ab");
+    let t: (i32, string) = (i, s);
+    let acc: i32 = t.1.len();
     return acc + i;
 }` + tupStrElemMain,
 			want: 21,
@@ -148,11 +148,11 @@ func tupStrElemCases() []tupStrElemCase {
 			// enumeration reached by a string element.
 			name: "cross_reuse_donor",
 			src: tupStrElemW + `function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (i32, string) = (i, s);
-    var a: i32 = t.1.len();
-    var u: string = w("cde");
-    var v: (i32, string) = (i, u);
+    let s: string = w("ab");
+    let t: (i32, string) = (i, s);
+    let a: i32 = t.1.len();
+    let u: string = w("cde");
+    let v: (i32, string) = (i, u);
     return a + v.1.len() + i;
 }` + tupStrElemMain,
 			want: 6,
@@ -239,9 +239,9 @@ func TestSelfHostTupleStrElemHazardsX86_64(t *testing.T) {
 			// together, which is what keeps them consistent.
 			name: "str_elem_extracted_local",
 			src: tupStrElemW + `function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (i32, string) = (i, s);
-    var u: string = t.1;
+    let s: string = w("ab");
+    let t: (i32, string) = (i, s);
+    let u: string = t.1;
     return u.len() + i;
 }` + tupStrElemMain,
 			want: 21,
@@ -251,11 +251,11 @@ func TestSelfHostTupleStrElemHazardsX86_64(t *testing.T) {
 			// frees a box the caller is about to read.
 			name: "str_elem_extracted_escaping",
 			src: tupStrElemW + `function grab(i: i32): string {
-    var s: string = w("ab");
-    var t: (i32, string) = (i, s);
+    let s: string = w("ab");
+    let t: (i32, string) = (i, s);
     return t.1;
 }
-function round(i: i32): i32 { var g: string = grab(i); return g.len() + i; }` + tupStrElemMain,
+function round(i: i32): i32 { let g: string = grab(i); return g.len() + i; }` + tupStrElemMain,
 			want: 21,
 		},
 		{
@@ -264,8 +264,8 @@ function round(i: i32): i32 { var g: string = grab(i); return g.len() + i; }` + 
 			// — which the interlock cannot see the shape of — is never hidden.
 			name: "ident_used_twice_in_tuple",
 			src: tupStrElemW + `function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (string, i32) = (s, s.len());
+    let s: string = w("ab");
+    let t: (string, i32) = (s, s.len());
     return t.0.len() + t.1 + i;
 }` + tupStrElemMain,
 			want: 72,
@@ -282,8 +282,8 @@ function round(i: i32): i32 { var g: string = grab(i); return g.len() + i; }` + 
 			// Hence the answer-only assertion here.
 			name: "untaken_branch_null",
 			src: tupStrElemW + `function round(i: i32): i32 {
-    var acc: i32 = 0;
-    if (i % 2 == 0) { var s: string = w("ab"); var t: (i32, string) = (i, s); acc = t.1.len(); }
+    let acc: i32 = 0;
+    if (i % 2 == 0) { let s: string = w("ab"); let t: (i32, string) = (i, s); acc = t.1.len(); }
     return acc + i;
 }` + tupStrElemMain,
 			want: 37,

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// tostrScalarReclaimCases pin #6599: `var s: string = i.to_string()` never freed its
+// tostrScalarReclaimCases pin #6599: `let s: string = i.to_string()` never freed its
 // box on the self-host, unbounded in a loop, while native was flat.
 //
 // `str_free_producer_ident` admits the free-function spelling `n.to_string()` by
@@ -21,8 +21,8 @@ import (
 // Measured with FERN_LEAKCHECK=1 (allocs/frees/live_bytes), 200 iterations, self-host
 // x86-64 — `__heap_bump_bytes()` deltas cannot see this, see #5474's retraction:
 //
-//	var s = i.to_string()   400/398/32     bounded, before and after (control)
-//	var s = i.to_string()      400/0/6400  -> 400/398/32
+//	let s = i.to_string()   400/398/32     bounded, before and after (control)
+//	let s = i.to_string()      400/0/6400  -> 400/398/32
 //
 // Identical allocation counts in both spellings, which is what proves int_to_string's
 // own `__alloc_u8` buffer and string_from_bytes_unchecked are not involved: the whole
@@ -46,33 +46,33 @@ var tostrScalarReclaimCases = []struct {
 	// The reproducer: a scalar receiver, re-declared per iteration, borrow-only use.
 	{"tostr-scalar-loop-local", `import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var s: string = i.to_string(); acc = (acc + s.len()) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var t: string = j.to_string(); acc = (acc + t.len()) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let s: string = i.to_string(); acc = (acc + s.len()) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let t: string = j.to_string(); acc = (acc + t.len()) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 2048) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
 	// A scalar PARAM receiver. The receiver-type test reads declared types, and a
-	// parameter is a declaration that never appears as a `var` in the body — so
+	// parameter is a declaration that never appears as a `let` in the body — so
 	// until the harvesters were seeded with the function's ParamDecl[] this shape
 	// was refused and leaked (12800 over 400 rounds on x86-64, 9600 on wasm).
 	{"tostr-scalar-param-receiver", `import "std/i32";
 function fmt(n: i32): i32 {
-    var s: string = n.to_string();
+    let s: string = n.to_string();
     return s.len();
 }
-function churn(k: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < k) { acc = (acc + fmt(1234567 + i)) % 251; i = i + 1; } return acc; }
+function churn(k: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < k) { acc = (acc + fmt(1234567 + i)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var a: i32 = churn(400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let a: i32 = churn(400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 2048) { return 98; }
@@ -87,11 +87,11 @@ function main(): i32 {
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 struct Holder { name: string, tag: string }
 function (h: Holder) to_string(): string { return h.tag; }
-function shown(h: Holder): i32 { var s: string = h.to_string(); return s.len() % 251; }
-function churn(pre: string): i32 { var a: string = w(pre + "1"); var b: string = w(pre + "2"); return a.len() + b.len(); }
+function shown(h: Holder): i32 { let s: string = h.to_string(); return s.len() % 251; }
+function churn(pre: string): i32 { let a: string = w(pre + "1"); let b: string = w(pre + "2"); return a.len() + b.len(); }
 function main(): i32 {
-    var keep: Holder = Holder { name: w("aaaa"), tag: w("bbbb") };
-    var i: i32 = 0;
+    let keep: Holder = Holder { name: w("aaaa"), tag: w("bbbb") };
+    let i: i32 = 0;
     while (i < 2000) {
         if (shown(keep) < 0) { return 96; }
         if (churn("QQQQQQQQ") < 0) { return 95; }
@@ -106,13 +106,13 @@ function main(): i32 {
 	// so a regression here means the shared gates moved rather than this class.
 	{"tostr-freefn-control", `import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var s: string = i.to_string(); acc = (acc + s.len()) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var t: string = j.to_string(); acc = (acc + t.len()) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let s: string = i.to_string(); acc = (acc + s.len()) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let t: string = j.to_string(); acc = (acc + t.len()) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 2048) { return 98; }
     if (acc < 0) { return 97; }
@@ -122,10 +122,10 @@ function main(): i32 {
 	// of len("0".."199") = 10*1 + 90*2 + 100*3 = 490, %251 = 239.
 	{"tostr-scalar-value-exact", `import "std/i32";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var s: string = i.to_string();
+        let s: string = i.to_string();
         if (s.len() < 1) { return 97; }
         acc = (acc + s.len()) % 251;
         i = i + 1;
@@ -142,11 +142,11 @@ function main(): i32 {
 	{"tostr-string-recv-uncredited", `import "std/i32";
 import "std/string";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var base: string = "ab";
-        var s: string = base.to_string();
+        let base: string = "ab";
+        let s: string = base.to_string();
         if (base.len() != 2) { return 97; }
         if (s.len() != 2) { return 97; }
         acc = (acc + s.len()) % 251;
@@ -164,17 +164,17 @@ function main(): i32 {
 import "std/string";
 struct Rec { name: string }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
     while (i < 5000) {
-        var s: string = i.to_string();
-        var r: Rec = Rec { name: s };
+        let s: string = i.to_string();
+        let r: Rec = Rec { name: s };
         if (r.name.len() != s.len()) { return 97; }
         acc = (acc + r.name.len()) % 251;
         i = i + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 2048) { return 98; }
     return 0;
@@ -184,18 +184,18 @@ function main(): i32 {
 	{"tostr-scalar-alias-reassign", `import "std/i32";
 import "std/string";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    var b1: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
     while (i < 5000) {
-        var s: string = i.to_string();
-        var t: string = "";
+        let s: string = i.to_string();
+        let t: string = "";
         t = s;
         if (t.len() != s.len()) { return 97; }
         acc = (acc + t.len()) % 251;
         i = i + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 2048) { return 98; }
     return 0;
@@ -207,15 +207,15 @@ function main(): i32 {
 import "std/string";
 struct Rec { name: string }
 function main(): i32 {
-    var acc: i32 = 0;
-    var first: string = (7 * 1000).to_string();
-    var keep: Rec = Rec { name: first };
-    var i: i32 = 0;
-    while (i < 200) { var s: string = i.to_string(); var r: Rec = Rec { name: s }; acc = (acc + r.name.len()) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var s: string = j.to_string(); var r: Rec = Rec { name: s }; acc = (acc + r.name.len()) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let first: string = (7 * 1000).to_string();
+    let keep: Rec = Rec { name: first };
+    let i: i32 = 0;
+    while (i < 200) { let s: string = i.to_string(); let r: Rec = Rec { name: s }; acc = (acc + r.name.len()) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let s: string = j.to_string(); let r: Rec = Rec { name: s }; acc = (acc + r.name.len()) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 2048) { return 98; }
     if (keep.name != "7000") { return 97; }
@@ -229,13 +229,13 @@ function main(): i32 {
 import "std/string";
 struct Rec { name: string }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var base: string = "ab";
-        var s: string = base.to_string();
-        var r: Rec = Rec { name: s };
-        var t: string = "";
+        let base: string = "ab";
+        let s: string = base.to_string();
+        let r: Rec = Rec { name: s };
+        let t: string = "";
         t = s;
         if (base != "ab" || r.name != "ab") { return 97; }
         acc = (acc + r.name.len() + t.len()) % 251;
@@ -250,21 +250,21 @@ function main(): i32 {
 	{"join-strarr-field-and-reassign", `import "std/array";
 struct Rec { name: string }
 function main(): i32 {
-    var acc: i32 = 0;
-    var b1: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let b1: i32 = 0;
+    let i: i32 = 0;
     while (i < 5200) {
         if (i == 200) { b1 = (__heap_bump_bytes() as i32); }
-        var xs: string[] = ["ab", "cd"];
-        var s: string = xs.join("-");
-        var r: Rec = Rec { name: s };
-        var t: string = "";
+        let xs: string[] = ["ab", "cd"];
+        let s: string = xs.join("-");
+        let r: Rec = Rec { name: s };
+        let t: string = "";
         t = s;
         if (r.name != "ab-cd" || t != "ab-cd") { return 97; }
         acc = (acc + r.name.len() + t.len()) % 251;
         i = i + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 2048) { return 98; }
     return 0;
@@ -272,32 +272,32 @@ function main(): i32 {
 	{"trim-local-field-and-reassign", `import "std/string";
 struct Rec { name: string }
 function main(): i32 {
-    var acc: i32 = 0;
-    var b1: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let b1: i32 = 0;
+    let i: i32 = 0;
     while (i < 5200) {
         if (i == 200) { b1 = (__heap_bump_bytes() as i32); }
-        var base: string = "  ab-cd  ";
-        var s: string = base.trim();
-        var r: Rec = Rec { name: s };
-        var t: string = "";
+        let base: string = "  ab-cd  ";
+        let s: string = base.trim();
+        let r: Rec = Rec { name: s };
+        let t: string = "";
         t = s;
         if (r.name != "ab-cd" || t != "ab-cd" || base.len() != 9) { return 97; }
         acc = (acc + r.name.len() + t.len()) % 251;
         i = i + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 2048) { return 98; }
     return 0;
 }`, 0},
 	// ESCAPE negative: the credited local is returned, so it must NOT be freed.
 	{"tostr-scalar-escape-return-safe", `import "std/i32";
-function mk(n: i32): string { var s: string = n.to_string(); return s; }
+function mk(n: i32): string { let s: string = n.to_string(); return s; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var r: string = mk(i); acc = (acc + r.len()) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let r: string = mk(i); acc = (acc + r.len()) % 251; i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (acc != 239) { return 97; }
     return 0;
@@ -312,19 +312,19 @@ function main(): i32 {
 	{"tostr-scalar-then-string-recv", `import "std/i32";
 import "std/string";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var s: string = i.to_string();
-        var t: string = s.to_string();
+        let s: string = i.to_string();
+        let t: string = s.to_string();
         if (s.len() != t.len()) { return 97; }
         acc = (acc + s.len() + t.len()) % 251;
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var u: string = j.to_string(); var v: string = u.to_string(); acc = (acc + v.len()) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let u: string = j.to_string(); let v: string = u.to_string(); acc = (acc + v.len()) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 2048) { return 98; }
     if (acc != 41) { return 97; }

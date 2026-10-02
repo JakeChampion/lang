@@ -42,7 +42,7 @@ function h(): i32 { return 0; }`)
 func TestFipUsableAsIdentifier(t *testing.T) {
 	// `fip` is contextual: as a local variable / parameter name it must still
 	// parse fine (no keyword reservation).
-	if _, err := Parse(`function f(): i32 { var fip: i32 = 3; return fip + 1; }`); err != nil {
+	if _, err := Parse(`function f(): i32 { let fip: i32 = 3; return fip + 1; }`); err != nil {
 		t.Errorf("`fip` as a local name should parse: %v", err)
 	}
 }
@@ -129,7 +129,7 @@ func TestFbipUsableAsIdentifier(t *testing.T) {
 	// (no keyword reservation), including a CALL `fbip(2)` that looks like
 	// the graded modifier shape but is not followed by `function`.
 	if _, err := Parse(`function fbip(x: i32): i32 { return x + 1; }
-function f(): i32 { var fbip: i32 = 3; return fbip + 1; }
+function f(): i32 { let fbip: i32 = 3; return fbip + 1; }
 function main(): i32 { return fbip(2); }`); err != nil {
 		t.Errorf("`fbip` as an ordinary identifier should parse: %v", err)
 	}

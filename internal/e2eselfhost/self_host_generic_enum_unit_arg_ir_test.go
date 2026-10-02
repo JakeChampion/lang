@@ -66,7 +66,7 @@ func TestSelfHostGenericEnumUnitArgIRX86_64(t *testing.T) {
 			42},
 		// Regression: generic enum via annotated var bind.
 		{"var-annotated-unit-variant",
-			`enum Opt[T] { Non, Has(T) } function get(o: Opt[i32]): i32 { match (o) { Has(v) => { return v; }, Non => { return 42; } } } function main(): i32 { var e: Opt[i32] = Non; return get(e); }`,
+			`enum Opt[T] { Non, Has(T) } function get(o: Opt[i32]): i32 { match (o) { Has(v) => { return v; }, Non => { return 42; } } } function main(): i32 { let e: Opt[i32] = Non; return get(e); }`,
 			42},
 	}
 	for _, tc := range cases {

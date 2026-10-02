@@ -13,49 +13,49 @@ import "testing"
 var structAliasRebindCases = []struct{ name, src string }{
 	{"loop-alias-array-override", `struct S { ops: i32[], n: i32 }
 function run(x: i32): i32 {
-    var s: S = S { ops: [1, 2, 3], n: 0 };
-    var i: i32 = 0;
+    let s: S = S { ops: [1, 2, 3], n: 0 };
+    let i: i32 = 0;
     while (i < 200) {
-        var prev: S = s;
+        let prev: S = s;
         s = S { ...s, ops: [4, 5, 6], n: s.n + 1 };
         i = i + 1;
     }
     return s.n;
 }
-function main(): i32 { var t: i32 = 0; var k: i32 = 0; while (k < 100) { t = t + run(k); k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 100; }`},
+function main(): i32 { let t: i32 = 0; let k: i32 = 0; while (k < 100) { t = t + run(k); k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 100; }`},
 	{"loop-alias-scalar-override", `struct S { ops: i32[], n: i32 }
 function run(x: i32): i32 {
-    var s: S = S { ops: [1, 2, 3], n: 0 };
-    var i: i32 = 0;
+    let s: S = S { ops: [1, 2, 3], n: 0 };
+    let i: i32 = 0;
     while (i < 200) {
-        var prev: S = s;
+        let prev: S = s;
         s = S { ...s, n: s.n + 1 };
         i = i + 1;
     }
     return s.n;
 }
-function main(): i32 { var t: i32 = 0; var k: i32 = 0; while (k < 100) { t = t + run(k); k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 100; }`},
+function main(): i32 { let t: i32 = 0; let k: i32 = 0; while (k < 100) { t = t + run(k); k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 100; }`},
 	// The alias is read after the rebind, so the old box's fields must survive
 	// until the alias's release.
 	{"alias-read-after-rebind", `struct P { xs: i32[], n: i32 }
 function f(k: i32): i32 {
-    var t: P = P { xs: [k, k + 1], n: k };
-    var keep: P = t;
+    let t: P = P { xs: [k, k + 1], n: k };
+    let keep: P = t;
     t = P { xs: [9, 9, 9], n: 1 };
     return keep.xs[1] + t.xs.len();
 }
-function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 100) { s = s + f(k); k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } return s % 100; }`},
+function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 100) { s = s + f(k); k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } return s % 100; }`},
 	{"plain-alias", `struct P { xs: i32[], n: i32 }
-function f(k: i32): i32 { var t: P = P { xs: [k, k + 1], n: k }; var v: P = t; return v.xs.len() + t.xs[1]; }
-function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 100) { s = s + f(k); k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } return s % 100; }`},
+function f(k: i32): i32 { let t: P = P { xs: [k, k + 1], n: k }; let v: P = t; return v.xs.len() + t.xs[1]; }
+function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 100) { s = s + f(k); k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } return s % 100; }`},
 	{"alias-in-a-conditional", `struct P { xs: i32[], n: i32 }
 function f(k: i32): i32 {
-    var t: P = P { xs: [k, k + 1], n: k };
-    var r: i32 = 0;
-    if (k % 2 == 0) { var v: P = t; r = v.xs.len() + v.n; }
+    let t: P = P { xs: [k, k + 1], n: k };
+    let r: i32 = 0;
+    if (k % 2 == 0) { let v: P = t; r = v.xs.len() + v.n; }
     return r + t.xs[0];
 }
-function main(): i32 { var s: i32 = 0; var k: i32 = 0; while (k < 100) { s = s + f(k); k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } return s % 100; }`},
+function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 100) { s = s + f(k); k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } return s % 100; }`},
 }
 
 func TestSelfHostStructAliasRebindX86_64(t *testing.T) {

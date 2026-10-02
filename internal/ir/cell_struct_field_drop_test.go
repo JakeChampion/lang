@@ -18,7 +18,7 @@ import (
 func TestStructFieldCellDropsThroughArrayMachinery(t *testing.T) {
 	const src = `struct Box { c: Cell[string] }
 function build(): i32 {
-    var b: Box = Box { c: cell_new("") };
+    let b: Box = Box { c: cell_new("") };
     b.c.set(b.c.get() + "one;");
     return b.c.get().len();
 }`
@@ -48,7 +48,7 @@ function build(): i32 {
 func TestStructFieldScalarCellDropsThroughArrayMachinery(t *testing.T) {
 	const src = `struct Box { c: Cell[i32] }
 function build(): i32 {
-    var b: Box = Box { c: cell_new(0) };
+    let b: Box = Box { c: cell_new(0) };
     b.c.set(b.c.get() + 7);
     return b.c.get();
 }`

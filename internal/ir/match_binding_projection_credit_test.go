@@ -26,7 +26,7 @@ function rebuild(t: Node): Node {
 function stash(t: Node, reg: Reg): i32 {
     match (t) {
         Tip => { return 0; },
-        Bin(l, k, r) => { var m2: Map[i32, Node] = reg.m.insert(k, l); return m2.len(); }
+        Bin(l, k, r) => { let m2: Map[i32, Node] = reg.m.insert(k, l); return m2.len(); }
     }
 }
 function tail_at(v: Vec, i: i32): i32 {
@@ -35,9 +35,9 @@ function tail_at(v: Vec, i: i32): i32 {
 }
 function call_it(f: (i32) => i32, x: i32): i32 { return f(x); }
 function main(): i32 {
-    var m: Map[i32, Node] = map_new(4);
-    var reg: Reg = Reg { m: m };
-    var t: Node = Bin(Tip, 1, Tip);
+    let m: Map[i32, Node] = map_new(4);
+    let reg: Reg = Reg { m: m };
+    let t: Node = Bin(Tip, 1, Tip);
     return depth(t) + depth(rebuild(t)) + stash(t, reg) + tail_at(Vec { len: 1, tail: [7] }, 0) +
         call_it((n: i32) => n + 1, 2);
 }`
@@ -87,7 +87,7 @@ function retitle(r: R, n: string): R {
     return R { ...r, headers: H { names: r.headers.names.append(n), values: r.headers.values.append(n) } };
 }
 function has(h: H, key: string): boolean {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < h.names.len()) {
         if (h.names[i] == key) { return true; }
         i = i + 1;
@@ -107,8 +107,8 @@ function tail_len(c: Conns, at: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var t: string[] = [];
-    var r: R = R { status: 1, headers: H { names: t, values: [] } };
+    let t: string[] = [];
+    let r: R = R { status: 1, headers: H { names: t, values: [] } };
     if (has(retitle(r, "x").headers, "x")) { return label(r, ":").len(); }
     return tail_len(Conns { fds: [1], tails: [Some_("t")] }, 0);
 }`
@@ -144,7 +144,7 @@ func TestClosureArgumentTempIsReleasedAfterTheCall(t *testing.T) {
 @noinline
 function apply(x: i32, f: (i32) => i32): i32 { return f(x); }
 function main(): i32 {
-    var i: i32 = 3;
+    let i: i32 = 3;
     return apply(i, (v: i32) => v + i);
 }`
 	p := lowerSourceWith(t, src, 8)

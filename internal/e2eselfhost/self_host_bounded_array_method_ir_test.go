@@ -37,42 +37,42 @@ var boundedArrayMethodIRCases = []struct {
 	{"i32-peak", `import "core/cmp";
 pub function (xs: T[]) peak[T: cmp.Ord](): Option[T] {
     if (xs.len() == 0) { return None; }
-    var m: T = xs[0];
-    var i: i32 = 1;
+    let m: T = xs[0];
+    let i: i32 = 1;
     while (i < xs.len()) { if (xs[i].cmp(m) > 0) { m = xs[i]; } i = i + 1; }
     return Some(m);
 }
-function main(): i32 { var a: i32[] = [3, 7, 2]; match (a.peak()) { Some(v) => { return v; }, None => { return 0; } } }`},
+function main(): i32 { let a: i32[] = [3, 7, 2]; match (a.peak()) { Some(v) => { return v; }, None => { return 0; } } }`},
 	// f64: the bound resolves f64.cmp; Some arm returns 1.
 	{"f64-peak", `import "core/cmp";
 pub function (xs: T[]) peak[T: cmp.Ord](): Option[T] {
     if (xs.len() == 0) { return None; }
-    var m: T = xs[0];
-    var i: i32 = 1;
+    let m: T = xs[0];
+    let i: i32 = 1;
     while (i < xs.len()) { if (xs[i].cmp(m) > 0) { m = xs[i]; } i = i + 1; }
     return Some(m);
 }
-function main(): i32 { var b: f64[] = [1.5, 2.5, 0.5]; match (b.peak()) { Some(v) => { return 1; }, None => { return 0; } } }`},
+function main(): i32 { let b: f64[] = [1.5, 2.5, 0.5]; match (b.peak()) { Some(v) => { return 1; }, None => { return 0; } } }`},
 	// string: lexicographic max of ["pear","apple","zed"] is "zed", len 3.
 	{"string-peak", `import "core/cmp";
 pub function (xs: T[]) peak[T: cmp.Ord](): Option[T] {
     if (xs.len() == 0) { return None; }
-    var m: T = xs[0];
-    var i: i32 = 1;
+    let m: T = xs[0];
+    let i: i32 = 1;
     while (i < xs.len()) { if (xs[i].cmp(m) > 0) { m = xs[i]; } i = i + 1; }
     return Some(m);
 }
-function main(): i32 { var s: string[] = ["pear", "apple", "zed"]; match (s.peak()) { Some(v) => { return v.len(); }, None => { return 0; } } }`},
+function main(): i32 { let s: string[] = ["pear", "apple", "zed"]; match (s.peak()) { Some(v) => { return v.len(); }, None => { return 0; } } }`},
 	// empty input takes the None arm.
 	{"empty-none", `import "core/cmp";
 pub function (xs: T[]) peak[T: cmp.Ord](): Option[T] {
     if (xs.len() == 0) { return None; }
-    var m: T = xs[0];
-    var i: i32 = 1;
+    let m: T = xs[0];
+    let i: i32 = 1;
     while (i < xs.len()) { if (xs[i].cmp(m) > 0) { m = xs[i]; } i = i + 1; }
     return Some(m);
 }
-function main(): i32 { var e: i32[] = []; match (e.peak()) { Some(v) => { return 1; }, None => { return 42; } } }`},
+function main(): i32 { let e: i32[] = []; match (e.peak()) { Some(v) => { return 1; }, None => { return 42; } } }`},
 }
 
 // TestSelfHostBoundedArrayMethodIR — bounded-receiver generic array methods

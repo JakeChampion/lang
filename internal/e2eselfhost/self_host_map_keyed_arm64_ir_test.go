@@ -54,7 +54,7 @@ import "core/cmp";
 struct Name { first: string, rank: i32 }
 
 function main(): i32 {
-    var m: Map[Name, i32] = map_new(8);
+    let m: Map[Name, i32] = map_new(8);
     m = m.insert(Name { first: "ada", rank: 1 }, 10);
     m = m.insert(Name { first: "bob", rank: 2 }, 20);
     if (m.get_or(Name { first: "a" + "da", rank: 1 }, -1) != 10) { return 1; }   // map_get
@@ -64,7 +64,7 @@ function main(): i32 {
     m = m.insert(Name { first: "a" + "da", rank: 1 }, 99);                       // map_set overwrite
     if (m.len() != 2) { return 5; }
     if (m.get_or(Name { first: "ada", rank: 1 }, -1) != 99) { return 6; }
-    var (m2, gone) = m.without(Name { first: "a" + "da", rank: 1 });             // map_delete
+    let (m2, gone) = m.without(Name { first: "a" + "da", rank: 1 });             // map_delete
     if (!gone) { return 7; }
     if (m2.has(Name { first: "ada", rank: 1 })) { return 8; }
     if (m2.len() != 1) { return 9; }
@@ -82,7 +82,7 @@ import "core/cmp";
 struct P { a: i32, b: i32 }
 
 function main(): i32 {
-    var m: Map[P, i32] = map_new(8);
+    let m: Map[P, i32] = map_new(8);
     m = m.insert(P { a: 1, b: 2 }, 10);
     m = m.insert(P { a: 3, b: 4 }, 20);
     if (m.get_or(P { a: 1, b: 2 }, -1) != 10) { return 1; }
@@ -101,7 +101,7 @@ import "core/cmp";
 enum Tag { A(i32), B, C(string) }
 
 function main(): i32 {
-    var m: Map[Tag, i32] = map_new(8);
+    let m: Map[Tag, i32] = map_new(8);
     m = m.insert(A(1), 100);
     m = m.insert(B, 200);
     m = m.insert(C("x" + "y"), 300);

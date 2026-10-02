@@ -40,7 +40,7 @@ function test_lt_false(): test.TestOutcome {
 }
 
 function test_sort(): test.TestOutcome {
-  var s = cmp.sort([3, 1, 2]);
+  let s = cmp.sort([3, 1, 2]);
   return test.assert_true(s[0] == 1 && s[1] == 2 && s[2] == 3);
 }
 
@@ -79,7 +79,7 @@ function test_index_of_absent(): test.TestOutcome {
 }
 
 function test_distinct(): test.TestOutcome {
-  var d = cmp.distinct([1, 1, 2, 3, 3, 3]);
+  let d = cmp.distinct([1, 1, 2, 3, 3, 3]);
   return test.assert_true(d.len() == 3 && d[0] == 1 && d[1] == 2 && d[2] == 3);
 }
 
@@ -93,19 +93,19 @@ function test_eq_arrays_false(): test.TestOutcome {
 
 // String works too (lexicographic Ord + Eq).
 function test_string_sort(): test.TestOutcome {
-  var s = cmp.sort(["b", "a", "c"]);
+  let s = cmp.sort(["b", "a", "c"]);
   return test.assert_true(s[0] == "a" && s[2] == "c");
 }
 
 // Debug for string escapes the ASCII specials and passes multibyte
 // content through byte-exact.
 function test_string_debug_multibyte(): test.TestOutcome {
-  var s: string = "a\"é\nb";
+  let s: string = "a\"é\nb";
   return test.assert_eq(s.to_debug(), "\"a\\\"é\\nb\"");
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("core/cmp helpers");
+  let r: test.TestRunner = test.test_new("core/cmp helpers");
   r = r.it("min", test_min);
   r = r.it("max", test_max);
   r = r.it("clamp above hi", test_clamp_hi);

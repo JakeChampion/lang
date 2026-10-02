@@ -7,7 +7,7 @@ import (
 )
 
 // arrDecCount counts __fern_arr_dec calls a function lowers — the
-// owned-array buffer-free helper. A loop-body `var` of array type that
+// owned-array buffer-free helper. A loop-body `let` of array type that
 // fires the Phase 5h dec-on-reinit emits one inside the loop, on top of
 // the single function-exit sweep dec.
 func arrDecCount(fn *ir.Func) int {
@@ -20,7 +20,7 @@ func arrDecCount(fn *ir.Func) int {
 	return n
 }
 
-// Phase 5h: a loop-body `var row` of an owned array type releases the
+// Phase 5h: a loop-body `let row` of an owned array type releases the
 // prior iteration's buffer before the re-init store. The dec-on-reinit
 // (__fern_arr_dec inside the loop) is in addition to the one the exit
 // sweep emits for the function-scoped slot.
@@ -33,10 +33,10 @@ func arrDecCount(fn *ir.Func) int {
 // null-guard to no-ops.
 func TestLoopVarDropFiresForArray(t *testing.T) {
 	ip := lowerForTest(t, `function churn(n: i32): i32 {
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var row: i32[] = [i, i + 1, i + 2];
+        let row: i32[] = [i, i + 1, i + 2];
         sum = sum + row[0] + row[2];
         i = i + 1;
     }
@@ -48,7 +48,7 @@ function main(): i32 { return churn(3); }`)
 		t.Fatal("no func churn")
 	}
 	if got := arrDecCount(f); got != 3 {
-		t.Errorf("loop-body array var should lower 3 __fern_arr_dec (1 precise drop at its last use + 1 dec-on-reinit + 1 exit sweep), got %d", got)
+		t.Errorf("loop-body array let should lower 3 __fern_arr_dec (1 precise drop at its last use + 1 dec-on-reinit + 1 exit sweep), got %d", got)
 	}
 }
 
@@ -60,10 +60,10 @@ function main(): i32 { return churn(3); }`)
 // OpMakeEnv — which only happens when the writer/reader shape is intact.
 func TestLoopVarDropSkipsClosure(t *testing.T) {
 	ip := lowerForTest(t, `function churn(n: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var f: (i32) => i32 = (x: i32): i32 => { return x + 1; };
+        let f: (i32) => i32 = (x: i32): i32 => { return x + 1; };
         acc = acc + f(i);
         i = i + 1;
     }
@@ -79,7 +79,7 @@ function main(): i32 { return churn(3); }`)
 	// would block the elide pass and leave an OpMakeClosure behind.
 	for _, op := range f.Ops {
 		if op.Kind == ir.OpRcDec {
-			t.Errorf("closure loop-body var must not lower a dec-on-reinit __fern_rc_dec")
+			t.Errorf("closure loop-body let must not lower a dec-on-reinit __fern_rc_dec")
 		}
 	}
 }

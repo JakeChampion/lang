@@ -27,10 +27,10 @@ import (
 // `break` at v==3 must exit the WHILE loop. If break only fell out of
 // the match (the bug), `count` would keep incrementing to 100.
 const matchBreakSrc = `function main(): i32 {
-    var count: i32 = 0;
-    var i: i32 = 0;
+    let count: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var o: Option[i32] = Some(i);
+        let o: Option[i32] = Some(i);
         match (o) {
             Some(v) => {
                 if (v == 3) { break; }
@@ -46,11 +46,11 @@ const matchBreakSrc = `function main(): i32 {
 // `continue` skips even values; only odds in 1..=10 are counted (5).
 // A broken continue (falling out of the match) would count all 10.
 const matchContinueSrc = `function main(): i32 {
-    var odds: i32 = 0;
-    var i: i32 = 0;
+    let odds: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
         i = i + 1;
-        var o: Option[i32] = Some(i);
+        let o: Option[i32] = Some(i);
         match (o) {
             Some(v) => {
                 if (v - v / 2 * 2 == 0) { continue; }
@@ -111,8 +111,8 @@ func TestWASMMatchBreakContinue(t *testing.T) {
 // pre-fix x86-64 backend returned Some(EFAULT) for the SSO write. The
 // stdout content is checked too.
 const writerSSOSrc = `function main(): i32 {
-    var w: Writer = stdout();
-    var rc: i32 = 0;
+    let w: Writer = stdout();
+    let rc: i32 = 0;
     match (w.write("hi\n")) { Some(_) => { rc = 1; }, None => {}, }
     match (w.write("longer than seven\n")) { Some(_) => { rc = rc + 2; }, None => {}, }
     return rc;

@@ -70,8 +70,8 @@ function response_new(headers: own Fields): own OutgoingResponse;
 
 @export("wasi:http/incoming-handler@0.2.0", "handle")
 function on_request(request: own IncomingRequest, response_out: own ResponseOutparam): void {
-	var headers: own Fields = fields_new();
-	var resp: own OutgoingResponse = response_new(headers);
+	let headers: own Fields = fields_new();
+	let resp: own OutgoingResponse = response_new(headers);
 	return;
 }`
 	mainPath := filepath.Join(dir, "handler.fern")

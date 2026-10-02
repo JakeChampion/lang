@@ -16,15 +16,15 @@ var nestedTupleRetIRCases = []struct {
 	main string
 }{
 	// Return a right-nested tuple, read the inner element.
-	{"ret-right-nest", "function f(): (i32, (i32, i32)) { return (1, (2, 3)); }\nfunction main(): i32 { var t = f(); return t.1.1; }"},
+	{"ret-right-nest", "function f(): (i32, (i32, i32)) { return (1, (2, 3)); }\nfunction main(): i32 { let t = f(); return t.1.1; }"},
 	// Return + sum across the nesting boundary.
-	{"ret-sum-across", "function f(): (i32, (i32, i32)) { return (1, (2, 3)); }\nfunction main(): i32 { var t = f(); return t.0 + t.1.0 + t.1.1; }"},
+	{"ret-sum-across", "function f(): (i32, (i32, i32)) { return (1, (2, 3)); }\nfunction main(): i32 { let t = f(); return t.0 + t.1.0 + t.1.1; }"},
 	// Left-nested return with a string sibling (both pointer elements).
-	{"ret-left-nest-str", "function f(): ((i32, i32), string) { return ((4, 5), \"ab\"); }\nfunction main(): i32 { var t = f(); return t.0.0 + t.0.1 + t.1.len(); }"},
+	{"ret-left-nest-str", "function f(): ((i32, i32), string) { return ((4, 5), \"ab\"); }\nfunction main(): i32 { let t = f(); return t.0.0 + t.0.1 + t.1.len(); }"},
 	// A nested tuple in PARAM position.
 	{"param-nested", "function f(t: (i32, (i32, i32))): i32 { return t.0 + t.1.1; }\nfunction main(): i32 { return f((1, (2, 3))); }"},
 	// Flat-tuple return regression (must stay on the IR path).
-	{"ret-flat", "function f(): (i32, i32) { return (3, 4); }\nfunction main(): i32 { var t = f(); return t.0 + t.1; }"},
+	{"ret-flat", "function f(): (i32, i32) { return (3, 4); }\nfunction main(): i32 { let t = f(); return t.0 + t.1; }"},
 }
 
 // TestSelfHostNestedTupleRetIR compiles each case with the self-host CLI for

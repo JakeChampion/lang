@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// TestSelfHostCStyleForIR covers the C-style `for (var i = INIT; COND; STEP)`
+// TestSelfHostCStyleForIR covers the C-style `for (let i = INIT; COND; STEP)`
 // loop through the self-hosted x86-64 compiler on the IR path. The self-host
 // Stmt union has no C-style-for node, so `for (` must not misparse as the
 // `for (k, v) in m` map form and segfault (#2820). The parser desugars a
-// `var`-init C-style for to a scoped `while (true)` with a first-iteration
+// `let`-init C-style for to a scoped `while (true)` with a first-iteration
 // flag, so `continue` re-runs STEP (matching C semantics) instead of skipping
 // it — reusing if / while / break (no new node).
 func TestSelfHostCStyleForIR(t *testing.T) {
@@ -60,18 +60,18 @@ func TestSelfHostCStyleForIR(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"reproducer-sum", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 1; i <= 10; i = i + 1) { s = s + i; } return s; }`, 55},
+		{"reproducer-sum", `function main(): i32 { let s: i32 = 0; for (let i: i32 = 1; i <= 10; i = i + 1) { s = s + i; } return s; }`, 55},
 		// continue must run STEP (sum 0+1+3+4 = 8, skipping 2) — proves the
 		// first-iteration-flag desugar, not a naive while-rewrite (which would
 		// infinite-loop or give 10).
-		{"continue-runs-step", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 0; i < 5; i = i + 1) { if (i == 2) { continue; } s = s + i; } return s; }`, 8},
-		{"break", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 0; i < 100; i = i + 1) { if (i == 4) { break; } s = s + i; } return s; }`, 6},
-		{"nested", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 0; i < 3; i = i + 1) { for (var j: i32 = 0; j < 3; j = j + 1) { s = s + 1; } } return s; }`, 9},
-		{"decrement", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 10; i > 0; i = i - 1) { s = s + 1; } return s; }`, 10},
-		{"step-by-two", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 0; i < 6; i = i + 2) { s = s + i; } return s; }`, 6},
-		{"compound-step", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 0; i < 5; i += 1) { s += i; } return s; }`, 10},
+		{"continue-runs-step", `function main(): i32 { let s: i32 = 0; for (let i: i32 = 0; i < 5; i = i + 1) { if (i == 2) { continue; } s = s + i; } return s; }`, 8},
+		{"break", `function main(): i32 { let s: i32 = 0; for (let i: i32 = 0; i < 100; i = i + 1) { if (i == 4) { break; } s = s + i; } return s; }`, 6},
+		{"nested", `function main(): i32 { let s: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { for (let j: i32 = 0; j < 3; j = j + 1) { s = s + 1; } } return s; }`, 9},
+		{"decrement", `function main(): i32 { let s: i32 = 0; for (let i: i32 = 10; i > 0; i = i - 1) { s = s + 1; } return s; }`, 10},
+		{"step-by-two", `function main(): i32 { let s: i32 = 0; for (let i: i32 = 0; i < 6; i = i + 2) { s = s + i; } return s; }`, 6},
+		{"compound-step", `function main(): i32 { let s: i32 = 0; for (let i: i32 = 0; i < 5; i += 1) { s += i; } return s; }`, 10},
 		// zero-iteration (condition false at entry).
-		{"zero-iter", `function main(): i32 { var s: i32 = 7; for (var i: i32 = 5; i < 5; i = i + 1) { s = s + 1; } return s; }`, 7},
+		{"zero-iter", `function main(): i32 { let s: i32 = 7; for (let i: i32 = 5; i < 5; i = i + 1) { s = s + 1; } return s; }`, 7},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

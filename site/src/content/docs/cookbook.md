@@ -28,7 +28,7 @@ import "std/string";
 import "std/io";
 
 function main(): i32 {
-    var text: string = io.read_all_stdin();
+    let text: string = io.read_all_stdin();
     for line in text.lines() {
         print(line);
     }
@@ -79,7 +79,7 @@ function save_into(dir: string, name: string, body: string): Result[(), IoError]
 
 ```fern
 function main(): i32 {
-    var level: string = "info";
+    let level: string = "info";
     match (env("LOG_LEVEL")) {
         Some(v) => { level = v; },
         None    => {}
@@ -98,15 +98,15 @@ for you.
 import "std/cli";
 
 function main(): i32 {
-    var spec: cli.CliSpec = cli.cli_new("greet", "Say hello")
+    let spec: cli.CliSpec = cli.cli_new("greet", "Say hello")
         .option("name", "n", "who to greet")
         .flag("loud", "l", "shout it");
-    var parsed: cli.CliArgs = spec.parse(args());
+    let parsed: cli.CliArgs = spec.parse(args());
     if (parsed.is_error()) {
         eprint(parsed.error_text());
         return 2;
     }
-    var who: string = parsed.value_or("name", "world");
+    let who: string = parsed.value_or("name", "world");
     if (parsed.is_set("loud")) {
         print("HELLO, " + who + "!");
     } else {
@@ -122,8 +122,8 @@ function main(): i32 {
 import "std/string";
 
 function main(): i32 {
-    var raw: string = "  frond, spore ,rhizome ";
-    var cleaned: string[] = [];
+    let raw: string = "  frond, spore ,rhizome ";
+    let cleaned: string[] = [];
     for part in raw.split(",") {
         cleaned = cleaned.append(part.trim());
     }
@@ -143,9 +143,9 @@ import "std/set";
 import "std/string";
 
 function main(): i32 {
-    var names: string[] = ["elm", "ash", "elm", "beech"];
-    var unique: string[] = set.set_of(names).to_array();
-    var sorted: string[] = sort.sort_by(unique, sort.string_cmp);
+    let names: string[] = ["elm", "ash", "elm", "beech"];
+    let unique: string[] = set.set_of(names).to_array();
+    let sorted: string[] = sort.sort_by(unique, sort.string_cmp);
     print(sorted.join(", "));   // ash, beech, elm
     return 0;
 }
@@ -161,7 +161,7 @@ import "std/string";
 import "std/i32";
 
 function main(): i32 {
-    var counts: Map[string, i32] = Map {};
+    let counts: Map[string, i32] = Map {};
     for word in "the quick the lazy the dog".split(" ") {
         counts = counts.insert(word, counts.get_or(word, 0) + 1);
     }
@@ -180,7 +180,7 @@ import "std/option";
 import "std/i32";
 
 function main(): i32 {
-    var text: string = "{\"name\": \"fern\", \"stars\": 42}";
+    let text: string = "{\"name\": \"fern\", \"stars\": 42}";
     match (json.json_parse(text)) {
         Some(doc) => {
             print(json.json_get_string(doc, "name").unwrap_or("(anonymous)"));
@@ -201,7 +201,7 @@ import "std/json";
 import "core/map";
 
 function main(): i32 {
-    var doc: JsonValue = JObject(Map {
+    let doc: JsonValue = JObject(Map {
         "name": JString("fern"),
         "stars": JNumber("42"),
         "tags": JArray([JString("cli"), JString("wasm")]),
@@ -242,7 +242,7 @@ rather than at runtime.
 
 ```fern
 function main(): i32 {
-    var r = subprocess("git", ["rev-parse", "--short", "HEAD"], "");
+    let r = subprocess("git", ["rev-parse", "--short", "HEAD"], "");
     if (r.exit_code != 0) {
         eprint(r.stderr);
         return r.exit_code;
@@ -325,7 +325,7 @@ function test_slugify(): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("slug");
+    let r: test.TestRunner = test.test_new("slug");
     r = r.it("lowercases and hyphenates", test_slugify);
     return r.finish();
 }

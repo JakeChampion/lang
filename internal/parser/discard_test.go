@@ -13,8 +13,8 @@ import (
 // never in scope.
 //
 // It was already a wildcard in match patterns, in `for (k, _) in m`, and in
-// a single parameter position — only `var` bindings, destructure elements
-// and repeated parameters treated it as a real name. `var (a, _) = t(); var
+// a single parameter position — only `let` bindings, destructure elements
+// and repeated parameters treated it as a real name. `let (a, _) = t(); var
 // (b, _) = t();` failed with `variable "_" already declared in this scope`,
 // which describes the implementation rather than the mistake: nobody
 // declared a variable, they wrote a discard twice.
@@ -24,16 +24,16 @@ func TestDiscardsMayRepeatInOneScope(t *testing.T) {
 		src  string
 	}{
 		{"two tuple destructures", `function t(): (i32, i32) { return (1, 2); }
-function main(): i32 { var (a, _) = t(); var (b, _) = t(); return a + b; }`},
+function main(): i32 { let (a, _) = t(); let (b, _) = t(); return a + b; }`},
 		{"every element discarded", `function t(): (i32, i32) { return (1, 2); }
-function main(): i32 { var (_, _) = t(); return 0; }`},
+function main(): i32 { let (_, _) = t(); return 0; }`},
 		{"discard in either position", `function t(): (i32, i32) { return (1, 2); }
-function main(): i32 { var (a, _) = t(); var (_, b) = t(); return a + b; }`},
-		{"repeated plain binding", `function main(): i32 { var _ = 5; var _ = 6; return 0; }`},
+function main(): i32 { let (a, _) = t(); let (_, b) = t(); return a + b; }`},
+		{"repeated plain binding", `function main(): i32 { let _ = 5; let _ = 6; return 0; }`},
 		{"repeated parameter", `function f(_: i32, _: i32): i32 { return 7; }
 function main(): i32 { return f(1, 2); }`},
 		{"repeated lambda parameter", `function main(): i32 {
-    var f: (i32, i32) => i32 = (_: i32, _: i32) => 7;
+    let f: (i32, i32) => i32 = (_: i32, _: i32) => 7;
     return f(1, 2);
 }`},
 	}
@@ -54,7 +54,7 @@ function main(): i32 { return f(1, 2); }`},
 func TestDiscardIsRenamedNotBound(t *testing.T) {
 	src := `function t(): (i32, i32) { return (1, 2); }
 function f(_: i32): i32 { return 0; }
-function main(): i32 { var (a, _) = t(); var _ = 9; return a; }`
+function main(): i32 { let (a, _) = t(); let _ = 9; return a; }`
 	prog, err := Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -96,7 +96,7 @@ function main(): i32 { var (a, _) = t(); var _ = 9; return a; }`
 // would not notice because it only checks the prefix.
 func TestDiscardNamesAreDistinct(t *testing.T) {
 	prog, err := Parse(`function t(): (i32, i32) { return (1, 2); }
-function main(): i32 { var (_, _) = t(); return 0; }`)
+function main(): i32 { let (_, _) = t(); return 0; }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

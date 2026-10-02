@@ -31,26 +31,26 @@ type splitAppendDedupCase struct {
 var splitAppendDedupCases = []splitAppendDedupCase{
 	// split + self-reassign append (op_arr_push_owned) — the original repro.
 	{"split-owned-append", `function main(): i32 {
-    var s: string = "a,b,c";
-    var parts: string[] = s.split(",");
-    var xs: i32[] = [];
+    let s: string = "a,b,c";
+    let parts: string[] = s.split(",");
+    let xs: i32[] = [];
     xs = xs.append(1);
     xs = xs.append(2);
     return parts.len() * 10 + xs.len();
 }`, 32},
 	// split + plain (non-reassign) append (op_arr_push).
 	{"split-plain-append", `function main(): i32 {
-    var s: string = "a,b,c,d";
-    var parts: string[] = s.split(",");
-    var xs: i32[] = [];
-    var ys: i32[] = xs.append(7);
+    let s: string = "a,b,c,d";
+    let parts: string[] = s.split(",");
+    let xs: i32[] = [];
+    let ys: i32[] = xs.append(7);
     return parts.len() * 10 + ys.len();
 }`, 41},
 	// lines + append — str_lines pulls str_split_helper in via the same gate.
 	{"lines-append", `function main(): i32 {
-    var s: string = "x\ny\nz";
-    var ls: string[] = s.lines();
-    var xs: i32[] = [];
+    let s: string = "x\ny\nz";
+    let ls: string[] = s.lines();
+    let xs: i32[] = [];
     xs = xs.append(1);
     return ls.len() * 10 + xs.len();
 }`, 31},

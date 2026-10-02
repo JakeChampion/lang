@@ -6,7 +6,7 @@ import (
 )
 
 // The RUNTIME half of the borrowed-parameter leg (#9291, landed by #9298):
-// `var v = p` where p is an array parameter this frame only borrows takes no
+// `let v = p` where p is an array parameter this frame only borrows takes no
 // reference of its own, because the caller owns p across the whole call and
 // the callee never releases it.
 //
@@ -28,16 +28,16 @@ func borrowedParamAliasCancelCases() []tupleAliasParamCase {
 			// emitted. xs is read after v, on the same borrowed reference.
 			name: "read_through_alias",
 			src: `function g(xs: i32[]): i32 {
-    var v: i32[] = xs;
+    let v: i32[] = xs;
     return v[0] + v[1] + xs[2] + v.len();
 }
 function round(i: i32): i32 {
-    var buf: i32[] = [i, i + 1, i + 2, i + 3];
+    let buf: i32[] = [i, i + 1, i + 2, i + 3];
     return g(buf);
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -54,20 +54,20 @@ function main(): i32 {
 			// census move.
 			name: "with_receiver_refused",
 			src: `function g(xs: i32[]): i32 {
-    var v: i32[] = xs;
-    var w: i32[] = v.with(0, 99);
+    let v: i32[] = xs;
+    let w: i32[] = v.with(0, 99);
     return w[0] - v[0];
 }
 function round(i: i32): i32 {
-    var buf: i32[] = [i, i + 1, i + 2, i + 3];
-    var d: i32 = g(buf);
+    let buf: i32[] = [i, i + 1, i + 2, i + 3];
+    let d: i32 = g(buf);
     if (d != 99 - i) { return 1000; }
     if (buf[0] != i) { return 1000; }
     return 1;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -81,17 +81,17 @@ function main(): i32 {
 			// comes back, and the retain that pays for it must stand.
 			name: "returned_alias_refused",
 			src: `function g(xs: i32[]): i32[] {
-    var v: i32[] = xs;
+    let v: i32[] = xs;
     return v;
 }
 function round(i: i32): i32 {
-    var buf: i32[] = [i, i + 1, i + 2, i + 3];
-    var out: i32[] = g(buf);
+    let buf: i32[] = [i, i + 1, i + 2, i + 3];
+    let out: i32[] = g(buf);
     return out[1] + buf[1];
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;

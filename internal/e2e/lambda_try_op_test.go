@@ -21,7 +21,7 @@ function h(v: i32): Result[i32, string] {
 }
 `
 
-const lambdaTryBody = `    var a: i32 = 0;
+const lambdaTryBody = `    let a: i32 = 0;
     match (f(1)) { Some(v) => { a = v; }, None => { a = 99; } }
     match (f(500)) { Some(v) => { a = a + v; }, None => { a = a + 100; } }
     match (r(3)) { Ok(v) => { a = a + v; }, Err(e) => { a = a + 1000; } }
@@ -31,13 +31,13 @@ const lambdaTryBody = `    var a: i32 = 0;
 `
 
 const lambdaTryUnannotatedSrc = lambdaTryHelpers + `function main(): i32 {
-    var f = (x: i32) => { var y: i32 = g(x)?; return Some(y + 10); };
-    var r = (x: i32) => { var y: i32 = h(x)?; return Ok(y + 1); };
+    let f = (x: i32) => { let y: i32 = g(x)?; return Some(y + 10); };
+    let r = (x: i32) => { let y: i32 = h(x)?; return Ok(y + 1); };
 ` + lambdaTryBody
 
 const lambdaTryAnnotatedSrc = lambdaTryHelpers + `function main(): i32 {
-    var f: (i32) => Option[i32] = (x: i32) => { var y: i32 = g(x)?; return Some(y + 10); };
-    var r: (i32) => Result[i32, string] = (x: i32) => { var y: i32 = h(x)?; return Ok(y + 1); };
+    let f: (i32) => Option[i32] = (x: i32) => { let y: i32 = g(x)?; return Some(y + 10); };
+    let r: (i32) => Result[i32, string] = (x: i32) => { let y: i32 = h(x)?; return Ok(y + 1); };
 ` + lambdaTryBody
 
 // 12 (Some(2) + 10), then +100 for g(500)'s None, +7 for Ok(6) + 1, +3 for "big".

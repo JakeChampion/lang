@@ -21,8 +21,8 @@ import "testing"
 const i64HelpersProg = `
 import "std/i64";
 function main(): i32 {
-    var MAX: i64 = 9223372036854775807 as i64;
-    var MIN: i64 = (0 as i64) - 9223372036854775807 - 1;
+    let MAX: i64 = 9223372036854775807 as i64;
+    let MIN: i64 = (0 as i64) - 9223372036854775807 - 1;
     if ((5 as i64).signum() != (1 as i64)) { return 1; }
     if (((0 as i64) - 5).signum() != (0 as i64) - 1) { return 2; }
     if ((0 as i64).signum() != (0 as i64)) { return 3; }
@@ -46,8 +46,8 @@ function opt(o: Option[i64], fallback: i64): i64 {
     match (o) { Some(v) => { return v; }, None => { return fallback; } }
 }
 function main(): i32 {
-    var MAX: i64 = 9223372036854775807 as i64;
-    var MIN: i64 = (0 as i64) - 9223372036854775807 - 1;
+    let MAX: i64 = 9223372036854775807 as i64;
+    let MIN: i64 = (0 as i64) - 9223372036854775807 - 1;
     if (opt(MAX.checked_add(1 as i64), (0 as i64) - 99) != (0 as i64) - 99) { return 1; }
     if (opt((3 as i64).checked_add(4 as i64), (0 as i64) - 99) != (7 as i64)) { return 2; }
     if (opt(MIN.checked_sub(1 as i64), (0 as i64) - 99) != (0 as i64) - 99) { return 3; }

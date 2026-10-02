@@ -49,7 +49,7 @@ pub struct Open { a: i32 }
 struct Secret { b: i32 }
 pub enum Shown { One, Two(i32) }
 enum Hidden { Alpha, Beta }
-pub function own_secret(): i32 { var s: Secret = Secret { b: 5 }; return s.b; }
+pub function own_secret(): i32 { let s: Secret = Secret { b: 5 }; return s.b; }
 @must_consume
 struct Guarded { d: i32 }
 @must_consume
@@ -104,7 +104,7 @@ pub const SHOWN_N: i32 = 9;
 	// reported at the dot; asserting it beside the call form is what pins the
 	// two to one rule rather than to two that happen to agree today.
 	check(t, "private_ref_value_position",
-		"import \"./lib\";\nfunction main(): i32 { var f: () => i32 = lib.hidden; return f(); }\n",
+		"import \"./lib\";\nfunction main(): i32 { let f: () => i32 = lib.hidden; return f(); }\n",
 		1, "2:46: lib.hidden is not exported")
 
 	// ACCEPT: the exported member. If a rebuild site dropped `is_pub`, this is
@@ -145,25 +145,25 @@ pub const SHOWN_N: i32 = 9;
 
 	// REJECT: a private struct, named in a type position AND as a literal.
 	check(t, "private_type",
-		"import \"./lib\";\nfunction main(): i32 { var s: lib.Secret = lib.Secret { b: 7 }; return s.b - 7; }\n",
+		"import \"./lib\";\nfunction main(): i32 { let s: lib.Secret = lib.Secret { b: 7 }; return s.b - 7; }\n",
 		1, "lib.Secret is not exported (declare it as `pub struct Secret …` to make it accessible from other modules)")
 
 	// ACCEPT: the exported struct, same two positions.
 	check(t, "public_type",
-		"import \"./lib\";\nfunction main(): i32 { var s: lib.Open = lib.Open { a: 3 }; return s.a - 3; }\n",
+		"import \"./lib\";\nfunction main(): i32 { let s: lib.Open = lib.Open { a: 3 }; return s.a - 3; }\n",
 		0, "")
 
 	// REJECT: a private ENUM. The message must name the right keyword — a
 	// reader told to write `pub struct Hidden` on an enum is sent nowhere.
 	check(t, "private_enum",
-		"import \"./lib\";\nfunction main(): i32 { var h: lib.Hidden = lib.Alpha; return 0; }\n",
+		"import \"./lib\";\nfunction main(): i32 { let h: lib.Hidden = lib.Alpha; return 0; }\n",
 		1, "is not exported (declare it as `pub enum Hidden …`")
 
 	// ACCEPT: an exported enum's VARIANT. A variant carries no `pub` of its
 	// own, so a rule keyed on the variant's flag rather than its enum's would
 	// reject every qualified variant construction in the stdlib.
 	check(t, "public_enum_variant",
-		"import \"./lib\";\nfunction main(): i32 { var s: lib.Shown = lib.Two(4); match (s) { Two(v) => { return v - 4; }, _ => { return 9; } } }\n",
+		"import \"./lib\";\nfunction main(): i32 { let s: lib.Shown = lib.Two(4); match (s) { Two(v) => { return v - 4; }, _ => { return 9; } } }\n",
 		0, "")
 
 	// ACCEPT: a module using its OWN private type through a public function —

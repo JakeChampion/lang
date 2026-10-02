@@ -111,7 +111,7 @@ func TestRunDiagnostics_NoCodeWhenNoneAssigned(t *testing.T) {
 
 func TestRunDiagnostics_PositionsAreZeroBased(t *testing.T) {
 	// Force a checker error on line 3.
-	src := "function main(): i32 {\n  var x: i32 = 1;\n  return undeclared;\n}\n"
+	src := "function main(): i32 {\n  let x: i32 = 1;\n  return undeclared;\n}\n"
 	got := diagnosticsFor(src)
 	if len(got) == 0 {
 		t.Fatal("expected diagnostic")

@@ -12,12 +12,12 @@ import (
 //
 // `slot_is_reclaimable_struct` resolved its credit with a bare-NAME lookup into
 // `reclaimable_names` — the one class whose entries carry no "TAG:" prefix at
-// all. A name has no scope, so two `var v` in sibling blocks are two slots under
+// all. A name has no scope, so two `let v` in sibling blocks are two slots under
 // one key, and when only one of them was proven fresh the other inherited its
 // verdict:
 //
-//	if (i % 2 == 0) { var v: P = P { xs: [i, i + 1], s: w("p") }; … }   // credited
-//	if (i % 2 == 1) { var v: P = base;                            … }   // an alias
+//	if (i % 2 == 0) { let v: P = P { xs: [i, i + 1], s: w("p") }; … }   // credited
+//	if (i % 2 == 1) { let v: P = base;                            … }   // an alias
 //
 // The alias holds the CALLER's box. Releasing it frees memory a live parameter
 // still owns, which the rc detector reports at exit 99; the byte census cannot
@@ -43,30 +43,30 @@ function w(a: string): string { return a + "!"; }
 
 const structKeyMainB = `
 function main(): i32 {
-    var b: P = P { xs: [7, 8], s: w("b") };
-    var t: i32 = 0; var i: i32 = 0;
+    let b: P = P { xs: [7, 8], s: w("b") };
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(b, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`
 
 const structKeyMain = `
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; ` +
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; ` +
 	`while (i < 100) { t = t + round(i); i = i + 1; } ` +
 	`if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`
 
 func structKeyCases() []structKeyCase {
 	return []structKeyCase{
 		{
-			// Two `var v` in sibling `if` arms: the first is a fresh struct
+			// Two `let v` in sibling `if` arms: the first is a fresh struct
 			// literal, the second aliases a param. The census cannot see a
 			// collision here; the underflow guard (exit 99) is what pins
 			// it.
 			name: "collide_literal",
 			src: structKeyP + `function round(base: P, i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
-    if (i % 2 == 1) { var v: P = base;  t = t + v.xs.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
+    if (i % 2 == 1) { let v: P = base;  t = t + v.xs.len(); }
     return t;
 }` + structKeyMainB,
 			want: 34, allocs: 152, frees: 152,
@@ -77,9 +77,9 @@ func structKeyCases() []structKeyCase {
 			// to it, exit code and census alike.
 			name: "collide_literal_renamed",
 			src: structKeyP + `function round(base: P, i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
-    if (i % 2 == 1) { var u: P = base;  t = t + u.xs.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
+    if (i % 2 == 1) { let u: P = base;  t = t + u.xs.len(); }
     return t;
 }` + structKeyMainB,
 			want: 34, allocs: 152, frees: 152,
@@ -90,11 +90,11 @@ func structKeyCases() []structKeyCase {
 			// different iterations.
 			name: "collide_loop",
 			src: structKeyP + `function round(base: P, i: i32): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 2) {
-        if (k == 0) { var v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
-        if (k == 1) { var v: P = base; t = t + v.xs.len(); }
+        if (k == 0) { let v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
+        if (k == 1) { let v: P = base; t = t + v.xs.len(); }
         k = k + 1;
     }
     return t;
@@ -110,8 +110,8 @@ func structKeyCases() []structKeyCase {
 			// unchanged.
 			name: "block_scoped",
 			src: structKeyP + `function round(i: i32): i32 {
-    var t: i32 = 0;
-    { var v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
+    let t: i32 = 0;
+    { let v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
     return t;
 }` + structKeyMain,
 			want: 34, allocs: 300, frees: 300,
@@ -126,7 +126,7 @@ func structKeyCases() []structKeyCase {
 			// segfaulting the gen1 self-compile.
 			name: "fn_scoped",
 			src: structKeyP + `function round(i: i32): i32 {
-    var v: P = P { xs: [i, i + 1], s: w("p") };
+    let v: P = P { xs: [i, i + 1], s: w("p") };
     return v.xs.len();
 }` + structKeyMain,
 			want: 34, allocs: 300, frees: 300,
@@ -138,7 +138,7 @@ func structKeyCases() []structKeyCase {
 			name: "producer_literal",
 			src: structKeyP + `function mk(i: i32): P { return P { xs: [i, i + 1], s: w("p") }; }
 function round(i: i32): i32 {
-    var v: P = mk(i);
+    let v: P = mk(i);
     return v.xs.len();
 }` + structKeyMain,
 			want: 34, allocs: 300, frees: 300,
@@ -154,9 +154,9 @@ function round(i: i32): i32 {
 			// It is still worth having, one direction over: it is now the row that
 			// fails if that credit is ever withdrawn.
 			name: "producer_local_now_credited",
-			src: structKeyP + `function mk(i: i32): P { var p: P = P { xs: [i, i + 1], s: w("p") }; return p; }
+			src: structKeyP + `function mk(i: i32): P { let p: P = P { xs: [i, i + 1], s: w("p") }; return p; }
 function round(i: i32): i32 {
-    var v: P = mk(i);
+    let v: P = mk(i);
     return v.xs.len();
 }` + structKeyMain,
 			want: 34, allocs: 300, frees: 300,
@@ -179,7 +179,7 @@ function round(i: i32): i32 {
 			src: `struct B { ops: i32[] }
 function (b: B) emit(x: i32): B { return B { ops: b.ops.append(x) }; }
 function round(i: i32): i32 {
-    var s: B = B { ops: [1] };
+    let s: B = B { ops: [1] };
     s = s.emit(i);
     s = s.emit(i + 1);
     return s.ops.len();

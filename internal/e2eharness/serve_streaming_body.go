@@ -27,7 +27,7 @@ function chunk(i: i32): Option[u8[]] {
 }
 
 function sparse(i: i32): Option[u8[]] {
-    if (i == 0) { var none: u8[] = []; return Some(none); }
+    if (i == 0) { let none: u8[] = []; return Some(none); }
     if (i == 1) { return Some("after an empty chunk\n".bytes()); }
     return None;
 }

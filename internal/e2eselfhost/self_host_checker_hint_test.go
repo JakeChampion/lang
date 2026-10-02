@@ -41,28 +41,28 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		source   string
 		fallback int
 	}{
-		{"enum", `enum Color { Red, Blue } function main(): i32 { var c: Color = Red; return match (c) { Red => 0, Blue => 1 }; }`, 0},
+		{"enum", `enum Color { Red, Blue } function main(): i32 { let c: Color = Red; return match (c) { Red => 0, Blue => 1 }; }`, 0},
 		{"generic", `function ident[T](v: T): T { return v; } function main(): i32 { return ident(0); }`, 0},
-		{"option", `function main(): i32 { var o: Option[i32] = Some(3); return match (o) { Some(n) => n, None => 0 }; }`, 0},
-		{"result", `function main(): i32 { var r: Result[i32, string] = Ok(3); return match (r) { Ok(n) => n, Err(_) => 0 }; }`, 0},
+		{"option", `function main(): i32 { let o: Option[i32] = Some(3); return match (o) { Some(n) => n, None => 0 }; }`, 0},
+		{"result", `function main(): i32 { let r: Result[i32, string] = Ok(3); return match (r) { Ok(n) => n, Err(_) => 0 }; }`, 0},
 		// A match STATEMENT on a built-in enum: Option's and Result's variants
 		// have no struct sig, and JsonValue is in no union table.
 		{"option-match-stmt", `function f(o: Option[i32]): i32 { match (o) { Some(n) => { return n; }, None => { return 0; } } } function main(): i32 { return f(Some(3)); }`, 0},
 		{"result-match-stmt", `function f(r: Result[i32, string]): i32 { match (r) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } } function main(): i32 { return f(Ok(3)); }`, 0},
 		// A user generic enum's payload is its spelling with the enum's
 		// parameters replaced by the scrutinee's arguments.
-		{"generic-enum-match-stmt", `enum Box[T, E] { Full(T), Blank(E) } function f(b: Box[i32, string]): i32 { match (b) { Full(n) => { return n; }, Blank(s) => { return s.len(); } } } function main(): i32 { var b: Box[i32, string] = Full(5); return f(b); }`, 0},
+		{"generic-enum-match-stmt", `enum Box[T, E] { Full(T), Blank(E) } function f(b: Box[i32, string]): i32 { match (b) { Full(n) => { return n; }, Blank(s) => { return s.len(); } } } function main(): i32 { let b: Box[i32, string] = Full(5); return f(b); }`, 0},
 		{"json-value-match-stmt", `function f(v: JsonValue): i32 { match (v) { JNull => { return 1; }, JBool(b) => { return 2; }, _ => { return 0; } } } function main(): i32 { return f(JNull); }`, 0},
-		{"map-iter-cursor", `import "core/map"; function f(m: Map[string, i32]): i32 { var it: MapIter[string, i32] = m.iter(); var n: i32 = 0; while (it.has_next()) { n = n + it.key().len() + it.value(); it.advance(); } return n; } function main(): i32 { return 0; }`, 0},
+		{"map-iter-cursor", `import "core/map"; function f(m: Map[string, i32]): i32 { let it: MapIter[string, i32] = m.iter(); let n: i32 = 0; while (it.has_next()) { n = n + it.key().len() + it.value(); it.advance(); } return n; } function main(): i32 { return 0; }`, 0},
 		{"option-literal-scrutinee", `function main(): i32 { match (Some(4)) { Some(v) => { return v + 1; }, None => { return 0; } } }`, 0},
-		{"option-inferred-local", `function main(): i32 { var o = Some("ab"); match (o) { Some(v) => { return v.len(); }, None => { return 0; } } }`, 0},
-		{"dyn-binding", dynPrelude + `function main(): i32 { var d: dyn Greet = Dog {}; return 0; }`, 0},
-		{"dyn-method", dynPrelude + `function main(): i32 { var d: dyn Greet = Dog {}; return d.hi(); }`, 0},
+		{"option-inferred-local", `function main(): i32 { let o = Some("ab"); match (o) { Some(v) => { return v.len(); }, None => { return 0; } } }`, 0},
+		{"dyn-binding", dynPrelude + `function main(): i32 { let d: dyn Greet = Dog {}; return 0; }`, 0},
+		{"dyn-method", dynPrelude + `function main(): i32 { let d: dyn Greet = Dog {}; return d.hi(); }`, 0},
 		{"iife", `function main(): i32 { return ((x: i32): i32 => { return x * 2; })(4); }`, 1},
 		// Inside a loop the hint names the statement in the body, not the
 		// loop that encloses it.
 		{"iife-in-loop", `function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n < 3) {
         n = n + ((x: i32): i32 => { return x; })(1);
     }
@@ -72,7 +72,7 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		// checker cannot type: the hint checks the module check_module typed,
 		// builtins included, so it names the second (#10752).
 		{"builtin-struct-before-fallback", `function isdir(p: string): boolean {
-    var d: boolean = false;
+    let d: boolean = false;
     match (stat(p)) { Ok(st) => { d = st.is_dir; }, Err(e) => { } }
     return d;
 }
@@ -81,13 +81,13 @@ function main(): i32 { if (isdir(".")) { return 0; } return ((x: i32): i32 => { 
 		// value beside it, so iterating the result types its elements.
 		{"generic-empty-literal-and-fn-value", `function fold[T](n: i32, acc: T, visit: (i32, T) => T): T { return visit(n, acc); }
 function add(n: i32, acc: i32[]): i32[] { return acc.append(n); }
-function main(): i32 { var t = 0; for u in fold(3, [], add) { t = t + u; } return t; }`, 0},
+function main(): i32 { let t = 0; for u in fold(3, [], add) { t = t + u; } return t; }`, 0},
 		// A variant assigned to a union-typed local widens, as it does in a
 		// declaration or a return.
 		{"union-variant-reassign", `struct Circle { r: i32 }
 struct Square { s: i32 }
 type Shape = Circle | Square;
-function main(): i32 { var sh: Shape = Circle { r: 1 }; sh = Square { s: 2 }; return 0; }`, 0},
+function main(): i32 { let sh: Shape = Circle { r: 1 }; sh = Square { s: 2 }; return 0; }`, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(dir, tc.name+".fern")

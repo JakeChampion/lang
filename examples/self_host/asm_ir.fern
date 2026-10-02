@@ -251,9 +251,9 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
 // registered as `need("ccall:<name>")` by the generic call_direct emit). The
 // body depends only on the arity n; the _f32/_f64 suffixes share it verbatim.
 function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
-  var arity: i32 = 0;
+  let arity: i32 = 0;
   while (arity <= 4) {
-    var base: string = "__c_call" + util.i32_to_string(arity);
+    let base: string = "__c_call" + util.i32_to_string(arity);
     if (s.has_need("ccall:" + base)) {
       s = emit_ccall_shim1(s, base, arity);
     }
@@ -271,9 +271,9 @@ function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
 // any_ccall_need reports whether the module referenced any __c_call variant, so
 // the emit dispatch knows to switch to .text and emit the shim block.
 function any_ccall_need(s: asmcore.EmitState): boolean {
-  var arity: i32 = 0;
+  let arity: i32 = 0;
   while (arity <= 4) {
-    var base: string = "__c_call" + util.i32_to_string(arity);
+    let base: string = "__c_call" + util.i32_to_string(arity);
     if (s.has_need("ccall:" + base)) {
       return true;
     }
@@ -526,7 +526,7 @@ function emit_ir_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: s
 // shared box (rc>1) skips the payload — another owner still reads it — and the
 // box's own arr_dec does the decrement.
 function optarrarr_elem(): string {
-  var e: string = "    testq %rax, %rax\n    jz .Loaf_next\n";
+  let e: string = "    testq %rax, %rax\n    jz .Loaf_next\n";
   e = e + "    cmpq $0x10000, %rax\n    jb .Loaf_next\n";
   e = e + "    pushq %rax\n    call __fn___fern_rc_is_unique\n    addq $8, %rsp\n";
   e = e + "    testq %rax, %rax\n    jz .Loaf_box\n";
@@ -604,7 +604,7 @@ function emit_ir_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: s
 // %rbx/%r12/%r13/%r14 hold the box, the column, the release and the index
 // across the calls.
 function emit_ir_map_free_fn_variant(s: asmcore.EmitState, suffix: string, krel: boolean, kfree: string, vrel: boolean, vfree: string, lbl: string): asmcore.EmitState {
-  var nargs: i32 = 1;
+  let nargs: i32 = 1;
   if (krel) {
     nargs = nargs + 1;
   }
@@ -614,8 +614,8 @@ function emit_ir_map_free_fn_variant(s: asmcore.EmitState, suffix: string, krel:
   // The arguments as seen after the four saves below: the box is the
   // deepest, the value release (when passed) on top, the key release
   // (when passed) directly under it.
-  var vrel_at: i32 = 40;
-  var krel_at: i32 = 40;
+  let vrel_at: i32 = 40;
+  let krel_at: i32 = 40;
   if (vrel) {
     krel_at = 48;
   }
@@ -701,7 +701,7 @@ function freelist_push(s: asmcore.EmitState, ptr: string, words: string, tmp: st
 // words the class is the count itself, so only a larger block pays for the
 // call.
 function capw_class(s: asmcore.EmitState, words: string): asmcore.EmitState {
-  var l: asmcore.LabelOut = asmcore.fresh_label(s);
+  let l: asmcore.LabelOut = asmcore.fresh_label(s);
   s = l.state.write("    cmpq $256, " + words + "\n");
   s = s.write("    jbe " + l.name + "\n");
   s = s.write("    pushq " + words + "\n");
@@ -716,7 +716,7 @@ function capw_class(s: asmcore.EmitState, words: string): asmcore.EmitState {
 // 512 KiB through 44 for 1 GiB. Alloc and free both derive the class here, so
 // a block returns to the class it was bumped at. Clobbers %rcx.
 function large_class(s: asmcore.EmitState): asmcore.EmitState {
-  var l: asmcore.LabelOut = asmcore.fresh_label(s);
+  let l: asmcore.LabelOut = asmcore.fresh_label(s);
   s = l.state.write("    cmpq $524288, %rax\n");
   s = s.write("    jae " + l.name + "\n");
   s = s.write("    movl $524288, %eax\n");
@@ -840,7 +840,7 @@ function arr_push_fast_u8(slow: string): string {
   if (asmcore.rc_free_debug_on()) {
     return "";
   }
-  var ok: string = slow + "_ok";
+  let ok: string = slow + "_ok";
   return "    movq (%rdi), %rdx\n    movq -16(%rdi), %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %rdx\n    jge " + slow + "\n"
     + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + ok + "\n"
     + "    btq $31, %rcx\n    jnc " + slow + "\n"
@@ -857,7 +857,7 @@ function arr_push_fast(slow: string): string {
   if (asmcore.rc_free_debug_on()) {
     return "";
   }
-  var ok: string = slow + "_ok";
+  let ok: string = slow + "_ok";
   return "    movq (%rdi), %rdx\n    cmpq -16(%rdi), %rdx\n    jge " + slow + "\n"
     + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + ok + "\n"
     + "    btq $31, %rcx\n    jnc " + slow + "\n"
@@ -1391,7 +1391,7 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 function rt_x86_str_eq(): string {
   // The stack entry loads both boxes into %rax/%rsi, where the register
   // entry `.r` takes them; equality is symmetric, so their order is not.
-  var s: string = "__fn___fern_str_eq:\n";
+  let s: string = "__fn___fern_str_eq:\n";
   s = s + "    movq 8(%rsp), %rax\n    movq 16(%rsp), %rsi\n";
   s = s + "__fn___fern_str_eq.r:\n";
   s = s + "    pushq %rbp\n    movq %rsp, %rbp\n";
@@ -2165,9 +2165,9 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
 // Borrow a byte range and reserve once. Packed arrays copy in bulk; the legacy
 // array layout contributes the low byte of each eight-byte slot.
 function emit_buf_push_bytes_range(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
-  var suffix: string = asmcore.packed_suffix(packed);
-  var sym: string = "__fern_buf_push_bytes_range" + suffix;
-  var label: string = ".Lbufbyterange" + suffix;
+  let suffix: string = asmcore.packed_suffix(packed);
+  let sym: string = "__fern_buf_push_bytes_range" + suffix;
+  let label: string = ".Lbufbyterange" + suffix;
   s = s.write(".globl " + sym + "\n.type " + sym + ", @function\n" + sym + ":\n");
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n");
   s = s.write("    movq %rdi, %rbx\n    movq %rsi, %r14\n    movslq %edx, %r12\n    movslq %ecx, %r13\n");
@@ -2185,10 +2185,10 @@ function emit_buf_push_bytes_range(s: asmcore.EmitState, packed: boolean): asmco
 
 // Copy raw builder storage into a fresh array in the requested layout.
 function emit_buf_take_bytes(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
-  var suffix: string = asmcore.packed_suffix(packed);
-  var sym: string = "__fern_buf_take_bytes" + suffix;
-  var done: string = ".Lbufbytes_done" + suffix;
-  var copy_loop: string = ".Lbufbytes_loop" + suffix;
+  let suffix: string = asmcore.packed_suffix(packed);
+  let sym: string = "__fern_buf_take_bytes" + suffix;
+  let done: string = ".Lbufbytes_done" + suffix;
+  let copy_loop: string = ".Lbufbytes_loop" + suffix;
   s = s.write(".globl " + sym + "\n.type " + sym + ", @function\n" + sym + ":\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
@@ -2218,13 +2218,13 @@ function emit_buf_take_bytes(s: asmcore.EmitState, packed: boolean): asmcore.Emi
 // 8 + i*8, a packed one (the `_u8` helpers) at byte 8 + i. An expanded
 // table's record c is eight entries from entry c*8 either way.
 function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
-  var sfx: string = asmcore.packed_suffix(packed);
-  var lm: string = ".Lbufmap" + sfx;
-  var lf: string = ".Lbuffilt" + sfx;
-  var le: string = ".Lbufexp" + sfx;
-  var sc: string = ",8";
-  var rshift: string = "6";
-  var rbyte: string = "16(%r10,%r8,8), %rax";
+  let sfx: string = asmcore.packed_suffix(packed);
+  let lm: string = ".Lbufmap" + sfx;
+  let lf: string = ".Lbuffilt" + sfx;
+  let le: string = ".Lbufexp" + sfx;
+  let sc: string = ",8";
+  let rshift: string = "6";
+  let rbyte: string = "16(%r10,%r8,8), %rax";
   if (packed) {
     sc = "";
     rshift = "3";
@@ -4749,7 +4749,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // (i64/f64/struct/generic view) keep the LEAK-ONLY __fern_arr_push: their
     // keys()/values() still return the RAW keys@0 / vals@8 buffer (an
     // uncounted alias), and arr_push_owned would free the buffer a live
-    // `var vs = m.values()` still points to (use-after-free).
+    // `let vs = m.values()` still points to (use-after-free).
     s = s.write("    movq -40(%rbp), %rax\n");  // reload flag bits
     s = s.write("    testq $2, %rax\n");  // bit 1 = owncols
     s = s.write("    jnz .Lms_append_owned\n");
@@ -4968,8 +4968,8 @@ function ir_bin_asm(tag: i32, width: i32, d: string, r: string): string {
 // holds (when_true) or its inverse. `cmpq %rcx, %rax` has already set the flags,
 // so the signed/unsigned split is the same one ir_bin_asm's setcc family makes.
 function ir_cmp_jcc(tag: i32, when_true: boolean): string {
-  var direct: string = "";
-  var neg: string = "";
+  let direct: string = "";
+  let neg: string = "";
   if (tag == 35) {
     direct = "je";
     neg = "jne";
@@ -5011,11 +5011,11 @@ function ir_cmp_jcc(tag: i32, when_true: boolean): string {
 // the immediate at the operand's width; the count comes from the allocator's
 // immediate table.
 function shift_imm_asm(tag: i32, width: i32, count: i64, d: string): string {
-  var k: i32 = count as i32 & 31;
+  let k: i32 = count as i32 & 31;
   if (width == 64) {
     k = count as i32 & 63;
   }
-  var imm: string = " $" + util.i32_to_string(k) + ", " + d + "\n";
+  let imm: string = " $" + util.i32_to_string(k) + ", " + d + "\n";
   if (tag == 31) {
     return "    shlq" + imm;
   }
@@ -5051,12 +5051,12 @@ function div_regs(w64: boolean): DivRegs {
 // native emitIntDivRem. `lb` is a per-op-unique label base (loop prefix + op
 // index). (#4329)
 function ir_div_guarded(tag: i32, width: i32, lb: string): string {
-  var r: DivRegs = div_regs(width == 64);
-  var s: string = "    test" + r.sfx + " " + r.c + ", " + r.c + "\n";
+  let r: DivRegs = div_regs(width == 64);
+  let s: string = "    test" + r.sfx + " " + r.c + ", " + r.c + "\n";
   if (tag == 25 || tag == 27) {
     // Unsigned (u32/u64, #2904): only the divide-by-zero fault to guard —
     // unsigned division has no overflow case.
-    var divide: string = "    xorl %edx, %edx\n    div" + r.sfx + " " + r.c + "\n";
+    let divide: string = "    xorl %edx, %edx\n    div" + r.sfx + " " + r.c + "\n";
     if (tag == 25) {
       s = s + "    jz " + lb + "_dz\n" + divide;
       s = s + "    jmp " + lb + "_dn\n";
@@ -5067,11 +5067,11 @@ function ir_div_guarded(tag: i32, width: i32, lb: string): string {
     }
     return s + lb + "_dn:\n";
   }
-  var idivide: string = "    cqto\n    idivq %rcx\n";
+  let idivide: string = "    cqto\n    idivq %rcx\n";
   if (width != 64) {
     idivide = "    cltd\n    idivl %ecx\n";
   }
-  var cmp_neg1: string = "    cmp" + r.sfx + " $-1, " + r.c + "\n";
+  let cmp_neg1: string = "    cmp" + r.sfx + " $-1, " + r.c + "\n";
   if (tag == 24) {
     s = s + "    jz " + lb + "_dz\n";  // /0 -> 0
     s = s + cmp_neg1 + "    je " + lb + "_ng\n" + idivide;  // /-1 -> -dividend (wraps at INT_MIN)
@@ -5106,7 +5106,7 @@ function pow2_shift_i64(mag: i64): i32 {
   if (mag == 0i64 || (mag & mag - 1i64) != 0i64) {
     return 0 - 1;
   }
-  var sh: i32 = 0;
+  let sh: i32 = 0;
   while (1i64 << sh != mag) {
     sh = sh + 1;
   }
@@ -5116,9 +5116,9 @@ function pow2_shift_i64(mag: i64): i32 {
 // ir_div_const renders `dividend / k` or `dividend % k` for the literal k
 // (dividend in %rax, result in %rax); tag is div_s / div_u / rem_s / rem_u.
 function ir_div_const(tag: i32, width: i32, k: i64): string {
-  var w64: boolean = width == 64;
-  var uns: boolean = tag == 25 || tag == 27;
-  var body: string = ir_div_const_body(w64, uns, tag == 26 || tag == 27, k);
+  let w64: boolean = width == 64;
+  let uns: boolean = tag == 25 || tag == 27;
+  let body: string = ir_div_const_body(w64, uns, tag == 26 || tag == 27, k);
   // An i32 result is stored sign-extended in its 64-bit slot; the l-forms
   // zero-extend, which is already the u32 convention.
   if (!w64 && !uns) {
@@ -5128,22 +5128,22 @@ function ir_div_const(tag: i32, width: i32, k: i64): string {
 }
 
 function ir_div_const_body(w64: boolean, uns: boolean, is_rem: boolean, k: i64): string {
-  var r: DivRegs = div_regs(w64);
+  let r: DivRegs = div_regs(w64);
   // Normalise the divisor's magnitude. Unsigned reads the literal's bit
   // pattern at the operand width; signed keeps the sign for the negation a
   // negative divisor's quotient needs at the end.
-  var mag: i64 = k;
-  var neg: boolean = false;
+  let mag: i64 = k;
+  let neg: boolean = false;
   if (uns) {
     if (!w64) {
       mag = (k as i32) as i64 & 4294967295i64;
     }
   } else {
-    var v: i64 = k;
+    let v: i64 = k;
     if (!w64) {
       v = (k as i32) as i64;
     }
-    var min: i64 = -2147483648i64;
+    let min: i64 = -2147483648i64;
     if (w64) {
       min = -9223372036854775808i64;
     }
@@ -5177,10 +5177,10 @@ function ir_div_const_body(w64: boolean, uns: boolean, is_rem: boolean, k: i64):
     }
     return "";
   }
-  var sh: i32 = pow2_shift_i64(mag);
+  let sh: i32 = pow2_shift_i64(mag);
   // Signed stops one short of the sign bit: the bias needs 2^sh to be a
   // positive value at the operand width.
-  var max_sh: i32 = r.bits - 2;
+  let max_sh: i32 = r.bits - 2;
   if (uns) {
     max_sh = r.bits - 1;
   }
@@ -5196,14 +5196,14 @@ function ir_div_const_body(w64: boolean, uns: boolean, is_rem: boolean, k: i64):
 // than 0. Biasing the dividend by 2^sh-1 when it is negative — what the
 // sar/shr pair computes branchlessly — makes the shift round the right way.
 function ir_div_const_pow2(r: DivRegs, uns: boolean, is_rem: boolean, neg: boolean, sh: i32): string {
-  var shs: string = util.i32_to_string(sh);
+  let shs: string = util.i32_to_string(sh);
   if (uns) {
     if (is_rem) {
       return mask_low_bits(r, r.a, sh, true);
     }
     return "    shr" + r.sfx + " $" + shs + ", " + r.a + "\n";
   }
-  var s: string = "    mov" + r.sfx + " " + r.a + ", " + r.c + "\n";
+  let s: string = "    mov" + r.sfx + " " + r.a + ", " + r.c + "\n";
   s = s + "    sar" + r.sfx + " $" + util.i32_to_string(r.bits - 1) + ", " + r.c + "\n";  // all ones iff negative
   s = s + "    shr" + r.sfx + " $" + util.i32_to_string(r.bits - sh) + ", " + r.c + "\n";  // 2^sh-1 iff negative
   s = s + "    add" + r.sfx + " " + r.a + ", " + r.c + "\n";  // biased dividend
@@ -5227,13 +5227,13 @@ function mask_low_bits(r: DivRegs, reg: string, sh: i32, keep: boolean): string 
     return "    and" + r.sfx + " $" + util.i64_to_string((1i64 << sh) - 1i64) + ", " + reg + "\n";
   }
   if (keep) {
-    var back: string = util.i32_to_string(r.bits - sh);
+    let back: string = util.i32_to_string(r.bits - sh);
     return "    shl" + r.sfx + " $" + back + ", " + reg + "\n    shr" + r.sfx + " $" + back + ", " + reg + "\n";
   }
   if (sh <= 31) {
     return "    and" + r.sfx + " $" + util.i64_to_string(0i64 - (1i64 << sh)) + ", " + reg + "\n";
   }
-  var shs: string = util.i32_to_string(sh);
+  let shs: string = util.i32_to_string(sh);
   return "    shr" + r.sfx + " $" + shs + ", " + reg + "\n    shl" + r.sfx + " $" + shs + ", " + reg + "\n";
 }
 
@@ -5248,19 +5248,19 @@ function mask_low_bits(r: DivRegs, reg: string, sh: i32, keep: boolean): string 
 // the dividend intact in %ecx for the fixup and for a remainder's
 // multiply-back.
 function ir_div_const_magic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64): string {
-  var x: string = r.sfx;
-  var s: string = "    mov" + x + " " + r.a + ", " + r.c + "\n";
-  var load: string = "    movl $";
+  let x: string = r.sfx;
+  let s: string = "    mov" + x + " " + r.a + ", " + r.c + "\n";
+  let load: string = "    movl $";
   if (r.bits == 64) {
     load = "    movabsq $";
   }
-  var d: i64 = k;
+  let d: i64 = k;
   if (r.bits == 32) {
     d = (k as i32) as i64;
   }
   if (uns) {
-    var mu: ir.MagicU = ir.derive_magic_u(k as u64 & 0u64 - 1u64 >> (64 - r.bits) as u64, r.bits);
-    var m: i64 = mu.m as i64;
+    let mu: ir.MagicU = ir.derive_magic_u(k as u64 & 0u64 - 1u64 >> (64 - r.bits) as u64, r.bits);
+    let m: i64 = mu.m as i64;
     if (r.bits == 32) {
       m = ((mu.m as u32) as i32) as i64;
     }
@@ -5276,7 +5276,7 @@ function ir_div_const_magic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64): 
       s = s + "    shr" + x + " $" + util.i32_to_string(mu.s - 1) + ", " + r.a + "\n";
     }
   } else {
-    var ms: ir.MagicS = ir.derive_magic_s(d, r.bits);
+    let ms: ir.MagicS = ir.derive_magic_s(d, r.bits);
     s = s + load + util.i64_to_string(ms.m) + ", " + r.a + "\n    imul" + x + " " + r.c + "\n";
     if (ms.add) {
       s = s + "    add" + x + " " + r.c + ", " + r.d + "\n";
@@ -5309,7 +5309,7 @@ function ir_div_const_magic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64): 
 // sequence with both guards and all four labels gone, since the divisor is
 // neither zero nor -1.
 function ir_div_const_generic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64): string {
-  var s: string = "    movl $" + util.i64_to_string(k) + ", %ecx\n";
+  let s: string = "    movl $" + util.i64_to_string(k) + ", %ecx\n";
   if (r.bits == 64) {
     s = "    movabsq $" + util.i64_to_string(k) + ", %rcx\n";
   }
@@ -5340,7 +5340,7 @@ function ir_div_const_generic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64)
 // their |x - t| is NaN, which leaves CF set, so the bump is skipped.
 // `lb` is a per-op-unique label base.
 function ir_fround_rax(lb: string, d: string): string {
-  var s: string = "    movq " + d + ", %xmm0\n";  // x
+  let s: string = "    movq " + d + ", %xmm0\n";  // x
   s = s + "    roundsd $3, %xmm0, %xmm1\n";  // t = trunc(x)
   s = s + "    subsd %xmm1, %xmm0\n";  // frac = x - t
   s = s + "    movq %xmm0, %rcx\n    movabsq $0x7fffffffffffffff, %rdx\n    andq %rdx, %rcx\n";
@@ -5365,7 +5365,7 @@ function ir_f2i_sat_rax(width: i32, lb: string, d: string): string {
     // i32: clamp the DOUBLE into [INT32_MIN, INT32_MAX] (as f64 bit
     // patterns) so cvttsd2si never hits its sentinel, after an explicit
     // NaN -> 0. minsd/maxsd here are safe because NaN is already handled.
-    var s: string = "    movq " + d + ", %xmm0\n";
+    let s: string = "    movq " + d + ", %xmm0\n";
     s = s + "    ucomisd %xmm0, %xmm0\n    jp " + lb + "_nan\n";
     s = s + "    movabsq $0x41dfffffffc00000, %rcx\n    movq %rcx, %xmm1\n    minsd %xmm1, %xmm0\n";  // INT32_MAX as f64
     s = s + "    movabsq $0xc1e0000000000000, %rcx\n    movq %rcx, %xmm1\n    maxsd %xmm1, %xmm0\n";  // INT32_MIN as f64
@@ -5378,7 +5378,7 @@ function ir_f2i_sat_rax(width: i32, lb: string, d: string): string {
   // yield the INT64_MIN sentinel. On the sentinel, disambiguate via x:
   // NaN -> 0, x > 0 -> INT64_MAX, else keep INT64_MIN (also the correct
   // answer for the exact -2^63 input).
-  var s64: string = "    movq " + d + ", %xmm0\n    cvttsd2si %xmm0, " + d + "\n";
+  let s64: string = "    movq " + d + ", %xmm0\n    cvttsd2si %xmm0, " + d + "\n";
   s64 = s64 + "    movabsq $0x8000000000000000, %rcx\n    cmpq %rcx, " + d + "\n    jne " + lb + "_done\n";
   s64 = s64 + "    ucomisd %xmm0, %xmm0\n    jp " + lb + "_nan\n";
   s64 = s64 + "    xorpd %xmm1, %xmm1\n    ucomisd %xmm1, %xmm0\n    jbe " + lb + "_done\n";
@@ -5398,7 +5398,7 @@ function ir_f2u_sat_rax(width: i32, lb: string, d: string): string {
     // exactly), then clamp against the ORIGINAL float: x < 0 / NaN -> 0
     // (ucomisd sets CF on less-than AND on unordered, so one jb catches
     // both), x >= 2^32 -> u32::MAX.
-    var s: string = "    movq " + d + ", %xmm0\n    cvttsd2si %xmm0, " + d + "\n";
+    let s: string = "    movq " + d + ", %xmm0\n    cvttsd2si %xmm0, " + d + "\n";
     s = s + "    xorpd %xmm1, %xmm1\n    ucomisd %xmm1, %xmm0\n    jb " + lb + "_zero\n";
     s = s + "    movabsq $0x41f0000000000000, %rcx\n    movq %rcx, %xmm1\n";  // 2^32 as f64
     s = s + "    ucomisd %xmm1, %xmm0\n    jae " + lb + "_max\n    jmp " + lb + "_done\n";
@@ -5411,7 +5411,7 @@ function ir_f2u_sat_rax(width: i32, lb: string, d: string): string {
   // set bit 63 back. The original x is saved in xmm2 (the subtraction
   // mutates xmm0) and the edge clamps compare against it: x < 0 / NaN -> 0,
   // x >= 2^64 -> u64::MAX.
-  var u: string = "    movq " + d + ", %xmm0\n    movaps %xmm0, %xmm2\n";
+  let u: string = "    movq " + d + ", %xmm0\n    movaps %xmm0, %xmm2\n";
   u = u + "    movabsq $0x43e0000000000000, %rcx\n    movq %rcx, %xmm1\n";  // 2^63 as f64
   u = u + "    ucomisd %xmm1, %xmm0\n    jae " + lb + "_big\n";
   u = u + "    cvttsd2si %xmm0, " + d + "\n    jmp " + lb + "_sat\n";
@@ -5462,8 +5462,8 @@ function set_entry_test(o: ir.Op, idx: string): string {
 // clamped n (also the answer on equality) and %rdi is the window offset.
 // This is a leaf body — no call, so every register it touches is free.
 function emit_mismatch_x86(s: asmcore.EmitState): asmcore.EmitState {
-  var mlo: asmcore.LabelOut = asmcore.fresh_label(s);
-  var lb: string = mlo.name;
+  let mlo: asmcore.LabelOut = asmcore.fresh_label(s);
+  let lb: string = mlo.name;
   s = mlo.state;
   s = s.write("    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rax\n");
   s = s.write("    movq 8(%rax), %r9\n    movq (%rax), %rax\n");
@@ -5543,24 +5543,24 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     //
     // No feature detection: AVX2 and popcnt are inside the x86-64-v3
     // baseline, hard requirements rather than a fast path.
-    var mlo: asmcore.LabelOut = asmcore.fresh_label(s);
-    var l_clamped: string = mlo.name;
-    var mlo2: asmcore.LabelOut = asmcore.fresh_label(mlo.state);
-    var l_vec: string = mlo2.name;
-    var mlo3: asmcore.LabelOut = asmcore.fresh_label(mlo2.state);
-    var l_hit: string = mlo3.name;
-    var mlo4: asmcore.LabelOut = asmcore.fresh_label(mlo3.state);
-    var l_tail: string = mlo4.name;
-    var mlo5: asmcore.LabelOut = asmcore.fresh_label(mlo4.state);
-    var l_none: string = mlo5.name;
-    var mlo6: asmcore.LabelOut = asmcore.fresh_label(mlo5.state);
-    var l_done: string = mlo6.name;
-    var mlo7: asmcore.LabelOut = asmcore.fresh_label(mlo6.state);
-    var l_avx: string = mlo7.name;
-    var mlo8: asmcore.LabelOut = asmcore.fresh_label(mlo7.state);
-    var l_hit32: string = mlo8.name;
-    var mlo9: asmcore.LabelOut = asmcore.fresh_label(mlo8.state);
-    var l_avx_done: string = mlo9.name;
+    let mlo: asmcore.LabelOut = asmcore.fresh_label(s);
+    let l_clamped: string = mlo.name;
+    let mlo2: asmcore.LabelOut = asmcore.fresh_label(mlo.state);
+    let l_vec: string = mlo2.name;
+    let mlo3: asmcore.LabelOut = asmcore.fresh_label(mlo2.state);
+    let l_hit: string = mlo3.name;
+    let mlo4: asmcore.LabelOut = asmcore.fresh_label(mlo3.state);
+    let l_tail: string = mlo4.name;
+    let mlo5: asmcore.LabelOut = asmcore.fresh_label(mlo4.state);
+    let l_none: string = mlo5.name;
+    let mlo6: asmcore.LabelOut = asmcore.fresh_label(mlo5.state);
+    let l_done: string = mlo6.name;
+    let mlo7: asmcore.LabelOut = asmcore.fresh_label(mlo6.state);
+    let l_avx: string = mlo7.name;
+    let mlo8: asmcore.LabelOut = asmcore.fresh_label(mlo7.state);
+    let l_hit32: string = mlo8.name;
+    let mlo9: asmcore.LabelOut = asmcore.fresh_label(mlo8.state);
+    let l_avx_done: string = mlo9.name;
     s = mlo9.state;
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
     s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
@@ -5624,28 +5624,28 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // The clamp is memchr's mirrored: a forward scan clamps `from` UP to
     // 0, a backward scan clamps it DOWN to len-1, so a negative `from`
     // finds nothing here.
-    var rlo: asmcore.LabelOut = asmcore.fresh_label(s);
-    var r_ok: string = rlo.name;
-    var rlo2: asmcore.LabelOut = asmcore.fresh_label(rlo.state);
-    var r_vec: string = rlo2.name;
-    var rlo3: asmcore.LabelOut = asmcore.fresh_label(rlo2.state);
-    var r_hit: string = rlo3.name;
-    var rlo4: asmcore.LabelOut = asmcore.fresh_label(rlo3.state);
-    var r_step: string = rlo4.name;
-    var rlo5: asmcore.LabelOut = asmcore.fresh_label(rlo4.state);
-    var r_tail: string = rlo5.name;
-    var rlo6: asmcore.LabelOut = asmcore.fresh_label(rlo5.state);
-    var r_loop: string = rlo6.name;
-    var rlo7: asmcore.LabelOut = asmcore.fresh_label(rlo6.state);
-    var r_none: string = rlo7.name;
-    var rlo8: asmcore.LabelOut = asmcore.fresh_label(rlo7.state);
-    var r_done: string = rlo8.name;
-    var rlo9: asmcore.LabelOut = asmcore.fresh_label(rlo8.state);
-    var r_avx: string = rlo9.name;
-    var rlo10: asmcore.LabelOut = asmcore.fresh_label(rlo9.state);
-    var r_hit32: string = rlo10.name;
-    var rlo11: asmcore.LabelOut = asmcore.fresh_label(rlo10.state);
-    var r_avx_done: string = rlo11.name;
+    let rlo: asmcore.LabelOut = asmcore.fresh_label(s);
+    let r_ok: string = rlo.name;
+    let rlo2: asmcore.LabelOut = asmcore.fresh_label(rlo.state);
+    let r_vec: string = rlo2.name;
+    let rlo3: asmcore.LabelOut = asmcore.fresh_label(rlo2.state);
+    let r_hit: string = rlo3.name;
+    let rlo4: asmcore.LabelOut = asmcore.fresh_label(rlo3.state);
+    let r_step: string = rlo4.name;
+    let rlo5: asmcore.LabelOut = asmcore.fresh_label(rlo4.state);
+    let r_tail: string = rlo5.name;
+    let rlo6: asmcore.LabelOut = asmcore.fresh_label(rlo5.state);
+    let r_loop: string = rlo6.name;
+    let rlo7: asmcore.LabelOut = asmcore.fresh_label(rlo6.state);
+    let r_none: string = rlo7.name;
+    let rlo8: asmcore.LabelOut = asmcore.fresh_label(rlo7.state);
+    let r_done: string = rlo8.name;
+    let rlo9: asmcore.LabelOut = asmcore.fresh_label(rlo8.state);
+    let r_avx: string = rlo9.name;
+    let rlo10: asmcore.LabelOut = asmcore.fresh_label(rlo9.state);
+    let r_hit32: string = rlo10.name;
+    let rlo11: asmcore.LabelOut = asmcore.fresh_label(rlo10.state);
+    let r_avx_done: string = rlo11.name;
     s = rlo11.state;
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
     s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
@@ -5717,18 +5717,18 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     //
     // No cursor to clamp: both degenerate answers are accurate counts
     // rather than sentinels.
-    var clo: asmcore.LabelOut = asmcore.fresh_label(s);
-    var c_vec: string = clo.name;
-    var clo2: asmcore.LabelOut = asmcore.fresh_label(clo.state);
-    var c_tail: string = clo2.name;
-    var clo3: asmcore.LabelOut = asmcore.fresh_label(clo2.state);
-    var c_next: string = clo3.name;
-    var clo4: asmcore.LabelOut = asmcore.fresh_label(clo3.state);
-    var c_done: string = clo4.name;
-    var clo5: asmcore.LabelOut = asmcore.fresh_label(clo4.state);
-    var c_avx: string = clo5.name;
-    var clo6: asmcore.LabelOut = asmcore.fresh_label(clo5.state);
-    var c_avx_done: string = clo6.name;
+    let clo: asmcore.LabelOut = asmcore.fresh_label(s);
+    let c_vec: string = clo.name;
+    let clo2: asmcore.LabelOut = asmcore.fresh_label(clo.state);
+    let c_tail: string = clo2.name;
+    let clo3: asmcore.LabelOut = asmcore.fresh_label(clo2.state);
+    let c_next: string = clo3.name;
+    let clo4: asmcore.LabelOut = asmcore.fresh_label(clo3.state);
+    let c_done: string = clo4.name;
+    let clo5: asmcore.LabelOut = asmcore.fresh_label(clo4.state);
+    let c_avx: string = clo5.name;
+    let clo6: asmcore.LabelOut = asmcore.fresh_label(clo5.state);
+    let c_avx_done: string = clo6.name;
     s = clo6.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
     s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
@@ -5795,12 +5795,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // element i at [arr + 8 + i*8]. Both operands are spilled around
     // that call, since it clobbers the caller-saved set. The float
     // arrives as its bit pattern and moves into %xmm1 with movq.
-    var flo: asmcore.LabelOut = asmcore.fresh_label(s);
-    var sf_loop: string = flo.name;
-    var flo2: asmcore.LabelOut = asmcore.fresh_label(flo.state);
-    var sf_done: string = flo2.name;
-    var flo3: asmcore.LabelOut = asmcore.fresh_label(flo2.state);
-    var sf_vec: string = flo3.name;
+    let flo: asmcore.LabelOut = asmcore.fresh_label(s);
+    let sf_loop: string = flo.name;
+    let flo2: asmcore.LabelOut = asmcore.fresh_label(flo.state);
+    let sf_done: string = flo2.name;
+    let flo3: asmcore.LabelOut = asmcore.fresh_label(flo2.state);
+    let sf_vec: string = flo3.name;
     s = flo3.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
     s = s.write("    pushq %rax\n    pushq %rcx\n");
@@ -5831,26 +5831,26 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // length is at (set) and its byte i in the 8-byte slot 8 + i*8;
     // a byte past that length is not in the set, and a set with an
     // entry for every byte value takes the loop with no length check.
-    var slo: asmcore.LabelOut = asmcore.fresh_label(s);
-    var s_loop: string = slo.name;
-    var slo2: asmcore.LabelOut = asmcore.fresh_label(slo.state);
-    var s_short: string = slo2.name;
-    var slo3: asmcore.LabelOut = asmcore.fresh_label(slo2.state);
-    var s_short_next: string = slo3.name;
-    var slo4: asmcore.LabelOut = asmcore.fresh_label(slo3.state);
-    var s_hit: string = slo4.name;
-    var slo5: asmcore.LabelOut = asmcore.fresh_label(slo4.state);
-    var s_end: string = slo5.name;
-    var slo6: asmcore.LabelOut = asmcore.fresh_label(slo5.state);
-    var s_done: string = slo6.name;
-    var slo7: asmcore.LabelOut = asmcore.fresh_label(slo6.state);
-    var s_from_ok: string = slo7.name;
-    var slo8: asmcore.LabelOut = asmcore.fresh_label(slo7.state);
-    var s_one: string = slo8.name;
-    var hits: string[] = [];
+    let slo: asmcore.LabelOut = asmcore.fresh_label(s);
+    let s_loop: string = slo.name;
+    let slo2: asmcore.LabelOut = asmcore.fresh_label(slo.state);
+    let s_short: string = slo2.name;
+    let slo3: asmcore.LabelOut = asmcore.fresh_label(slo2.state);
+    let s_short_next: string = slo3.name;
+    let slo4: asmcore.LabelOut = asmcore.fresh_label(slo3.state);
+    let s_hit: string = slo4.name;
+    let slo5: asmcore.LabelOut = asmcore.fresh_label(slo4.state);
+    let s_end: string = slo5.name;
+    let slo6: asmcore.LabelOut = asmcore.fresh_label(slo5.state);
+    let s_done: string = slo6.name;
+    let slo7: asmcore.LabelOut = asmcore.fresh_label(slo6.state);
+    let s_from_ok: string = slo7.name;
+    let slo8: asmcore.LabelOut = asmcore.fresh_label(slo7.state);
+    let s_one: string = slo8.name;
+    let hits: string[] = [];
     s = slo8.state;
     while (hits.len() < 4) {
-      var hl: asmcore.LabelOut = asmcore.fresh_label(s);
+      let hl: asmcore.LabelOut = asmcore.fresh_label(s);
       hits = hits.append(hl.name);
       s = hl.state;
     }
@@ -5865,7 +5865,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
     s = s.write("    leaq (%rax,%rcx), %r10\n    leaq (%rax,%r8), %r11\n    leaq -4(%r11), %rcx\n");
     s = s.write(s_loop + ":\n    cmpq %rcx, %r10\n    ja " + s_one + "\n");
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 4) {
       s = s.write("    movzbq " + util.i32_to_string(k) + "(%r10), %r9\n");
       s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[k] + "\n");
@@ -5894,10 +5894,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 329) {  // bsd_sum
     // operand stack [box, sum] (sum on top) -> the BSD checksum continued
     // over the string: per byte a 16-bit rotate right by one and an add.
-    var blo: asmcore.LabelOut = asmcore.fresh_label(s);
-    var b_loop: string = blo.name;
-    var blo2: asmcore.LabelOut = asmcore.fresh_label(blo.state);
-    var b_done: string = blo2.name;
+    let blo: asmcore.LabelOut = asmcore.fresh_label(s);
+    let b_loop: string = blo.name;
+    let blo2: asmcore.LabelOut = asmcore.fresh_label(blo.state);
+    let b_done: string = blo2.name;
     s = blo2.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
     s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
@@ -5917,12 +5917,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // not a member. "Not a member" is kept as 0/1, and a run begins where
     // it drops from 1 to 0: the borrow of the current flag minus the
     // previous one.
-    var clo: asmcore.LabelOut = asmcore.fresh_label(s);
-    var c_loop: string = clo.name;
-    var clo2: asmcore.LabelOut = asmcore.fresh_label(clo.state);
-    var c_flag: string = clo2.name;
-    var clo3: asmcore.LabelOut = asmcore.fresh_label(clo2.state);
-    var c_done: string = clo3.name;
+    let clo: asmcore.LabelOut = asmcore.fresh_label(s);
+    let c_loop: string = clo.name;
+    let clo2: asmcore.LabelOut = asmcore.fresh_label(clo.state);
+    let c_flag: string = clo2.name;
+    let clo3: asmcore.LabelOut = asmcore.fresh_label(clo2.state);
+    let c_done: string = clo3.name;
     s = clo3.state;
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
     s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
@@ -5979,24 +5979,24 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     //
     // Cursor as an index in %rdx, each vector load only with a full block
     // left: see the memchr body above for both.
-    var alo: asmcore.LabelOut = asmcore.fresh_label(s);
-    var a_clamped: string = alo.name;
-    var alo2: asmcore.LabelOut = asmcore.fresh_label(alo.state);
-    var a_vec: string = alo2.name;
-    var alo3: asmcore.LabelOut = asmcore.fresh_label(alo2.state);
-    var a_hit: string = alo3.name;
-    var alo4: asmcore.LabelOut = asmcore.fresh_label(alo3.state);
-    var a_tail: string = alo4.name;
-    var alo5: asmcore.LabelOut = asmcore.fresh_label(alo4.state);
-    var a_none: string = alo5.name;
-    var alo6: asmcore.LabelOut = asmcore.fresh_label(alo5.state);
-    var a_done: string = alo6.name;
-    var alo7: asmcore.LabelOut = asmcore.fresh_label(alo6.state);
-    var a_avx: string = alo7.name;
-    var alo8: asmcore.LabelOut = asmcore.fresh_label(alo7.state);
-    var a_hit32: string = alo8.name;
-    var alo9: asmcore.LabelOut = asmcore.fresh_label(alo8.state);
-    var a_avx_done: string = alo9.name;
+    let alo: asmcore.LabelOut = asmcore.fresh_label(s);
+    let a_clamped: string = alo.name;
+    let alo2: asmcore.LabelOut = asmcore.fresh_label(alo.state);
+    let a_vec: string = alo2.name;
+    let alo3: asmcore.LabelOut = asmcore.fresh_label(alo2.state);
+    let a_hit: string = alo3.name;
+    let alo4: asmcore.LabelOut = asmcore.fresh_label(alo3.state);
+    let a_tail: string = alo4.name;
+    let alo5: asmcore.LabelOut = asmcore.fresh_label(alo4.state);
+    let a_none: string = alo5.name;
+    let alo6: asmcore.LabelOut = asmcore.fresh_label(alo5.state);
+    let a_done: string = alo6.name;
+    let alo7: asmcore.LabelOut = asmcore.fresh_label(alo6.state);
+    let a_avx: string = alo7.name;
+    let alo8: asmcore.LabelOut = asmcore.fresh_label(alo7.state);
+    let a_hit32: string = alo8.name;
+    let alo9: asmcore.LabelOut = asmcore.fresh_label(alo8.state);
+    let a_avx_done: string = alo9.name;
     s = alo9.state;
     s = s.write("    popq %rdx\n    popq %rax\n");
     s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
@@ -6061,7 +6061,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // operand stack [s box]; __fern_str_to_upper/_lower are Fern runtime
     // functions now (#2649): __fn_ stack convention — s already on the stack IS
     // param[0] (at +16), so call directly, pop the arg, push the result.
-    var cfn: string = "__fn___fern_str_to_upper";
+    let cfn: string = "__fn___fern_str_to_upper";
     if (o.kind_tag == 107) {  // str_to_lower
       cfn = "__fn___fern_str_to_lower";
     }
@@ -6172,10 +6172,10 @@ function ssa_slot(v: i32, save: i32): string {
 // ssa_saved_regs is the callee-saved registers a function's allocation uses,
 // lowest first; each takes one 8-byte push.
 function ssa_saved_regs(reg_of: i32[]): i32[] {
-  var used: i32[] = [];
-  var k: i32 = ssa_nregs();
+  let used: i32[] = [];
+  let k: i32 = ssa_nregs();
   while (k < ssa_nregs() + ssa_nsaved()) {
-    var found: boolean = false;
+    let found: boolean = false;
     for h in reg_of {
       if (h == k) {
         found = true;
@@ -6190,7 +6190,7 @@ function ssa_saved_regs(reg_of: i32[]): i32[] {
 }
 
 function ssa_save_asm(saved: i32[]): string {
-  var out: string = "";
+  let out: string = "";
   for k in saved {
     out = out + "    pushq " + ssa_reg(k) + "\n";
   }
@@ -6203,8 +6203,8 @@ function ssa_epilogue_for(saved: i32[]): string {
   if (saved.len() == 0) {
     return ssa_epilogue();
   }
-  var out: string = "    .cfi_remember_state\n    leaq -" + util.i32_to_string(8 * saved.len()) + "(%rbp), %rsp\n";
-  var i: i32 = saved.len() - 1;
+  let out: string = "    .cfi_remember_state\n    leaq -" + util.i32_to_string(8 * saved.len()) + "(%rbp), %rsp\n";
+  let i: i32 = saved.len() - 1;
   while (i >= 0) {
     out = out + "    popq " + ssa_reg(saved[i]) + "\n";
     i = i - 1;
@@ -6223,7 +6223,7 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
   if (reg_of[v] < 0) {
     return s.write("    movq " + ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save) + ", " + reg + "\n");
   }
-  var home: string = ssa_reg(reg_of[v]);
+  let home: string = ssa_reg(reg_of[v]);
   if (home == reg) {
     return s;
   }
@@ -6246,7 +6246,7 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
   if (reg_of[v] < 0) {
     return s.write("    movq " + reg + ", " + ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save) + "\n");
   }
-  var home: string = ssa_reg(reg_of[v]);
+  let home: string = ssa_reg(reg_of[v]);
   if (home == reg) {
     return s;
   }
@@ -6338,11 +6338,11 @@ function ssa_read_rhs(fr: SsaFrame, reg_of: i32[], v: i32, scratch: string, s: a
 // and is stored after. A constant on the left is only ever one the op can
 // take on the right, so it swaps the same way.
 function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
-  var tag: i32 = ir.kind_id(ins.str);
-  var a: i32 = ins.args[0];
-  var b: i32 = ins.args[1];
-  var dh: string = ssa_dst(reg_of, ins.result);
-  var swap: boolean = fr.imm.is_imm[a] && !ssa_shift_tag(tag);
+  let tag: i32 = ir.kind_id(ins.str);
+  let a: i32 = ins.args[0];
+  let b: i32 = ins.args[1];
+  let dh: string = ssa_dst(reg_of, ins.result);
+  let swap: boolean = fr.imm.is_imm[a] && !ssa_shift_tag(tag);
   if (!swap && !fr.imm.is_imm[b] && ssa_src(reg_of, b, "%rcx") == dh) {
     if (ssa_commutative(tag) || ircore.flip_int_cmp_kind(tag) != tag) {
       swap = true;
@@ -6352,7 +6352,7 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
   }
   if (swap) {
     tag = ircore.flip_int_cmp_kind(tag);
-    var t: i32 = a;
+    let t: i32 = a;
     a = b;
     b = t;
   }
@@ -6416,7 +6416,7 @@ function ssa_r8(r: string): string {
 // imm32 movq for a negative one, movabsq for an i64 literal past 32 bits.
 function ssa_const_reg(text: string, wide64: boolean, d: string, s: asmcore.EmitState): asmcore.EmitState {
   if (!const_text_u32(text)) {
-    var wide: string = "movq";
+    let wide: string = "movq";
     if (wide64) {
       wide = "movabsq";
     }
@@ -6438,7 +6438,7 @@ function ssa_unary_known(what: string): boolean {
 
 // ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
 function ssa_funary_known(what: string): boolean {
-  var un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits"];
+  let un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits"];
   for x in un {
     if (x == what) {
       return true;
@@ -6448,7 +6448,7 @@ function ssa_funary_known(what: string): boolean {
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
-  var k: i32 = ins.kind_tag;
+  let k: i32 = ins.kind_tag;
   if (k == 10) {
     return ssa_unary_known(ins.str);
   }
@@ -6482,7 +6482,7 @@ function ssa_block_at(fr: SsaFrame, id: i32): i32 {
 }
 
 function ssa_has_phis(f: ssa.SFunc, fr: SsaFrame, id: i32): boolean {
-  var ti: i32 = ssa_block_at(fr, id);
+  let ti: i32 = ssa_block_at(fr, id);
   if (ti < 0) {
     return false;
   }
@@ -6499,7 +6499,7 @@ function ssa_has_phis(f: ssa.SFunc, fr: SsaFrame, id: i32): boolean {
 // nothing there either. `lb` is a per-op-unique label base for the saturating
 // conversions and fround.
 function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): string {
-  var f: string = ssa_fmath_asm(what, d);
+  let f: string = ssa_fmath_asm(what, d);
   if (f == "") {
     f = ssa_fconv_asm(what, unsigned, lb, d);
   }
@@ -6516,7 +6516,7 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
     return "    testq " + d + ", " + d + "\n    setz " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
   }
   if (util.str_has_prefix(what, "rotr:")) {
-    var n: string = util.i32_to_string(ssa.rotr_count(what));
+    let n: string = util.i32_to_string(ssa.rotr_count(what));
     if (ssa.rotr_width(what) == 64) {
       return "    rorq $" + n + ", " + d + "\n";
     }
@@ -6567,7 +6567,7 @@ function ssa_bits_asm(what: string, d: string): string {
 // ssa_fmath_asm is the single-instruction f64 math on the pattern in %rax,
 // as the stack machine's arms select it; "" for any other op.
 function ssa_fmath_asm(what: string, d: string): string {
-  var xmm: string = "";
+  let xmm: string = "";
   if (what == "fsqrt") {
     xmm = "    sqrtsd %xmm0, %xmm0\n";
   } else if (what == "ffloor") {
@@ -6597,7 +6597,7 @@ function ssa_fconv_asm(what: string, unsigned: boolean, lb: string, d: string): 
     return ir_fround_rax(lb, d);
   }
   if (what == "f64_to_i32" || what == "f64_to_i64") {
-    var w: i32 = 32;
+    let w: i32 = 32;
     if (what == "f64_to_i64") {
       w = 64;
     }
@@ -6625,8 +6625,8 @@ function ssa_fconv_asm(what: string, unsigned: boolean, lb: string, d: string): 
 // (rhs), the result pattern or 0/1 in %rax; "" for an integer op. The
 // compares are the stack machine's NaN-correct ucomisd forms.
 function ssa_fbin_asm(what: string, d: string): string {
-  var ld: string = "    movq " + d + ", %xmm0\n    movq %rcx, %xmm1\n";
-  var arith: string = "";
+  let ld: string = "    movq " + d + ", %xmm0\n    movq %rcx, %xmm1\n";
+  let arith: string = "";
   if (what == "fadd") {
     arith = "addsd";
   } else if (what == "fsub") {
@@ -6639,7 +6639,7 @@ function ssa_fbin_asm(what: string, d: string): string {
   if (arith != "") {
     return ld + "    " + arith + " %xmm1, %xmm0\n    movq %xmm0, " + d + "\n";
   }
-  var cc: string = "";
+  let cc: string = "";
   if (what == "flt") {
     cc = "    setb " + ssa_r8(d) + "\n    setnp %dl\n    andb %dl, " + ssa_r8(d) + "\n";
   } else if (what == "fle") {
@@ -6697,7 +6697,7 @@ function ssa_fcall(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
 // guarded divisions, which idiv fixes there, and the register path's own
 // scratch for everything else.
 function ssa_bin_work(op: string): string {
-  var tag: i32 = ir.kind_id(op);
+  let tag: i32 = ir.kind_id(op);
   if (tag == 24 || tag == 25 || tag == 26 || tag == 27) {
     return "%rax";
   }
@@ -6710,13 +6710,13 @@ function ssa_bin_work(op: string): string {
 // otherwise (a per-op-unique label base), the f64 forms, ir_bin_asm for the
 // rest.
 function ssa_binary(ins: ssa.SInst, fr: SsaFrame, lp: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
-  var fb: string = ssa_fbin_asm(ins.str, d);
+  let fb: string = ssa_fbin_asm(ins.str, d);
   if (fb != "") {
     return s.write(fb);
   }
-  var tag: i32 = ir.kind_id(ins.str);
+  let tag: i32 = ir.kind_id(ins.str);
   if (tag == 24 || tag == 25 || tag == 26 || tag == 27) {
-    var b: i32 = ins.args[1];
+    let b: i32 = ins.args[1];
     if (fr.imm.konst[b]) {
       return s.write(ir_div_const(tag, ins.imm, fr.imm.value[b]));
     }
@@ -6730,8 +6730,8 @@ function ssa_binary(ins: ssa.SInst, fr: SsaFrame, lp: string, d: string, s: asmc
 // the argument homed in %rax first, into its own target, so nothing is read
 // after it is written.
 function ssa_load_abi_args(reg_of: i32[], args: i32[], regs: string[], s: asmcore.EmitState): asmcore.EmitState {
-  var first: i32 = 0 - 1;
-  var i: i32 = 1;
+  let first: i32 = 0 - 1;
+  let i: i32 = 1;
   while (i < args.len() && i < regs.len()) {
     if (reg_of[args[i]] == 0) {
       first = i;
@@ -6781,16 +6781,16 @@ function ssa_push_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): asmcore.
 function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
   s = helper_call_needs(ins.str, s);
   s = ssa_read(reg_of, ins.args[0], "%r11", s);
-  var p: string = ssa_src(reg_of, ins.args[0], "%r11");
-  var done: string = lp + "rcinc" + util.i32_to_string(ins.result);
+  let p: string = ssa_src(reg_of, ins.args[0], "%r11");
+  let done: string = lp + "rcinc" + util.i32_to_string(ins.result);
   if (ins.str == "__fern_rc_is_unique") {
     done = lp + "rcuniq" + util.i32_to_string(ins.result);
   }
-  var rc: string = "-8(" + p + ")";
-  var guard: string = "    testb $1, " + ssa_r8(p) + "\n    jnz " + done + "\n"
+  let rc: string = "-8(" + p + ")";
+  let guard: string = "    testb $1, " + ssa_r8(p) + "\n    jnz " + done + "\n"
     + "    cmpq $0x10000, " + p + "\n    jb " + done + "\n";
   if (ins.str == "__fern_rc_is_unique") {
-    var d: string = ssa_dst(reg_of, ins.result);
+    let d: string = ssa_dst(reg_of, ins.result);
     s = s.write("    xorl %ecx, %ecx\n" + guard);
     s = s.write(ssa_rc_is_one(rc, s.rc_free_debug));
     s = s.write("    jne " + done + "\n");
@@ -6814,9 +6814,9 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
 // ssa_helper_call calls a runtime helper through its register entry.
 function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = helper_call_needs(ins.str, s);
-  var hsrc: i32[] = [];
-  var hdst: i32[] = [];
-  var ha: i32 = 0;
+  let hsrc: i32[] = [];
+  let hdst: i32[] = [];
+  let ha: i32 = 0;
   while (ha < ins.args.len()) {
     hsrc = hsrc.append(reg_of[ins.args[ha]]);
     hdst = hdst.append(ha);
@@ -6836,12 +6836,12 @@ function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
   s = helper_call_needs(ins.str, s);
   s = ssa_read(reg_of, ins.args[0], "%r11", s);
-  var p: string = ssa_src(reg_of, ins.args[0], "%r11");
-  var id: string = util.i32_to_string(ins.result);
-  var dec: string = lp + "rcdecd" + id;
-  var kept: string = lp + "rcdeck" + id;
-  var done: string = lp + "rcdece" + id;
-  var rc: string = "-8(" + p + ")";
+  let p: string = ssa_src(reg_of, ins.args[0], "%r11");
+  let id: string = util.i32_to_string(ins.result);
+  let dec: string = lp + "rcdecd" + id;
+  let kept: string = lp + "rcdeck" + id;
+  let done: string = lp + "rcdece" + id;
+  let rc: string = "-8(" + p + ")";
   if (ins.str == "__fern_str_free") {
     s = s.write("    testb $1, " + ssa_r8(p) + "\n    jnz " + kept + "\n");
   }
@@ -6871,9 +6871,9 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if (ssa_reg_call(ins, s)) {
     // Only this call's own arguments can be in the pool's registers here:
     // anything live across it is callee-saved or in a slot.
-    var srcs: i32[] = [];
-    var dsts: i32[] = [];
-    var a: i32 = 0;
+    let srcs: i32[] = [];
+    let dsts: i32[] = [];
+    let a: i32 = 0;
     while (a < ins.args.len()) {
       srcs = srcs.append(reg_of[ins.args[a]]);
       dsts = dsts.append(a);
@@ -6883,16 +6883,16 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     s = s.write("    call __fn_" + asmcore.sanitize_label(ins.str) + ".r\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
   }
-  var argc: i32 = ins.args.len();
-  var helper: boolean = ircore.is_fern_helper(ins.str);
+  let argc: i32 = ins.args.len();
+  let helper: boolean = ircore.is_fern_helper(ins.str);
   if (helper) {
     s = helper_call_needs(ins.str, s);
   } else if (ircore.is_c_call(ins.str)) {
     s = s.need("ccall:" + ins.str);
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < argc) {
-    var a: i32 = i;
+    let a: i32 = i;
     if (!helper) {
       a = argc - 1 - i;
     }
@@ -6914,15 +6914,15 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
 // with the instructions the stack machine's own arms use, operands in
 // %rax/%rcx/%rdx.
 function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  var k: i32 = ins.kind_tag;
-  var a: string = ssa_src(reg_of, ins.args[0], "%r11");
+  let k: i32 = ins.kind_tag;
+  let a: string = ssa_src(reg_of, ins.args[0], "%r11");
   s = ssa_load(reg_of, ins.args[0], a, s);
-  var d: string = ssa_dst(reg_of, ins.result);
+  let d: string = ssa_dst(reg_of, ins.result);
   if (k == 40) {
     s = s.write("    movq " + util.i32_to_string(ins.imm) + "(" + a + "), " + d + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
-  var b: string = ssa_src(reg_of, ins.args[1], "%rcx");
+  let b: string = ssa_src(reg_of, ins.args[1], "%rcx");
   s = ssa_load(reg_of, ins.args[1], b, s);
   if (k == 41 && ins.str == "i32") {
     return s.write("    movl " + ssa_r32(b) + ", (" + a + ")\n");
@@ -6953,7 +6953,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     s = s.write("    movq (" + a + "), %rdx\n    movzbl (%rdx," + b + "), " + ssa_r32(d) + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
-  var c: string = ssa_src(reg_of, ins.args[2], "%rdx");
+  let c: string = ssa_src(reg_of, ins.args[2], "%rdx");
   s = ssa_load(reg_of, ins.args[2], c, s);
   s = s.need("heap");
   s = s.write("    cmpq (" + a + "), " + b + "\n    jae __fern_oob_abort\n");
@@ -6969,8 +6969,8 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   s = ssa_str_marks(ins.str, s);
-  var argc: i32 = ins.args.len();
-  var i: i32 = argc - 1;
+  let argc: i32 = ins.args.len();
+  let i: i32 = argc - 1;
   while (i >= 0) {
     s = ssa_push_operand(reg_of, ins.args[i], s);
     i = i - 1;
@@ -6993,13 +6993,13 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   s = ssa_x0_forget(s);
   s = s.mark_str_eq();
   s = ssa_read(reg_of, ins.args[0], "%r11", s);
-  var a: string = ssa_src(reg_of, ins.args[0], "%r11");
+  let a: string = ssa_src(reg_of, ins.args[0], "%r11");
   s = ssa_read(reg_of, ins.args[1], "%rcx", s);
-  var b: string = ssa_src(reg_of, ins.args[1], "%rcx");
-  var n: string = util.i32_to_string(ins.result);
+  let b: string = ssa_src(reg_of, ins.args[1], "%rcx");
+  let n: string = util.i32_to_string(ins.result);
   s = s.write("    movq 8(" + a + "), %rdx\n    cmpq 8(" + b + "), %rdx\n    jne " + lp + "streqn" + n + "\n");
-  var lit_a: i32 = fr.lit0[ins.args[0]];
-  var lit_b: i32 = fr.lit0[ins.args[1]];
+  let lit_a: i32 = fr.lit0[ins.args[0]];
+  let lit_b: i32 = fr.lit0[ins.args[1]];
   if (lit_b >= 0) {
     s = s.write("    movq (" + a + "), %rdx\n    cmpb $" + util.i32_to_string(lit_b) + ", (%rdx)\n    jne " + lp + "streqn" + n + "\n");
   } else if (lit_a >= 0) {
@@ -7053,7 +7053,7 @@ function ssa_host_need(op: string): string {
   if (op == "read_chunk_bytes" || op == "read_chunk_bytes_u8" || op == "write_bytes" || op == "write_bytes_u8" || op == "write_some_bytes" || op == "write_some_bytes_u8") {
     return op;
   }
-  var fs: string[] = [
+  let fs: string[] = [
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "remove_file",
     "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat", "subprocess", "writer_write",
   ];
@@ -7125,13 +7125,13 @@ function ssa_host_kind(op: string): boolean {
 function ssa_host_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   if (util.str_has_prefix(ins.str, "syscall")) {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < ins.args.len()) {
       s = ssa_push_operand(reg_of, ins.args[i], s);
       i = i + 1;
     }
-    var regs: string[] = ["%rdi", "%rsi", "%rdx", "%r10", "%r8", "%r9"];
-    var a: i32 = ins.args.len() - 2;
+    let regs: string[] = ["%rdi", "%rsi", "%rdx", "%r10", "%r8", "%r9"];
+    let a: i32 = ins.args.len() - 2;
     while (a >= 0) {
       s = s.write("    popq " + regs[a] + "\n");
       a = a - 1;
@@ -7177,11 +7177,11 @@ function ir_memset_asm(): string {
 // as a call, so nothing live across it is in a caller-saved register.
 function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
-  var args: asmcore.DynArg[] = [];
-  var moved: boolean = false;
+  let args: asmcore.DynArg[] = [];
+  let moved: boolean = false;
   for v in ins.args {
     if (reg_of[v] >= 0) {
-      var home: string = ssa_reg(reg_of[v]);
+      let home: string = ssa_reg(reg_of[v]);
       if (home == "%rax") {
         if (!moved) {
           s = s.write("    movq %rax, %r11\n");
@@ -7207,18 +7207,18 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
     return ssa_buf_call(ins, reg_of, asmcore.buf_table_helper(r.ops[ins.imm].kind_tag, ir.is_packed(r.ops[ins.imm])), s);
   }
   s = ssa_x0_forget(s);
-  var outer: usize = s.capture;
-  var h: usize = buf_new(256);
+  let outer: usize = s.capture;
+  let h: usize = buf_new(256);
   s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, asmcore.EmitState { ...s, capture: h });
-  var arm: string = buf_take(h);
+  let arm: string = buf_take(h);
   s = asmcore.EmitState { ...s, capture: outer };
-  var pops: string[] = ssa_leading_pops(arm, ins.args.len());
-  var moves: SsaArgMoves = ssa_arg_moves(ins, reg_of, pops, s);
+  let pops: string[] = ssa_leading_pops(arm, ins.args.len());
+  let moves: SsaArgMoves = ssa_arg_moves(ins, reg_of, pops, s);
   if (!moves.ok) {
     pops = [];
     moves = ssa_arg_moves(ins, reg_of, pops, s);
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ins.args.len() - pops.len()) {
     s = ssa_push_operand(reg_of, ins.args[i], s);
     i = i + 1;
@@ -7226,8 +7226,8 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   for m in moves.text {
     s = s.write(m);
   }
-  var body: string = slice_unchecked(arm, ssa_pops_len(pops), arm.len()) + "";
-  var result: string = ssa_trailing_push(body);
+  let body: string = slice_unchecked(arm, ssa_pops_len(pops), arm.len()) + "";
+  let result: string = ssa_trailing_push(body);
   if (result != "") {
     s = s.write(slice_unchecked(body, 0, body.len() - ssa_push_line(result).len()) + "");
     return ssa_store(reg_of, ins.result, result, ssa_x0_forget(s));
@@ -7249,7 +7249,7 @@ function ssa_push_line(reg: string): string {
 }
 
 function ssa_pops_len(pops: string[]): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for p in pops {
     n = n + ssa_pop_line(p).len();
   }
@@ -7259,10 +7259,10 @@ function ssa_pops_len(pops: string[]): i32 {
 // ssa_leading_pops lists the registers the arm's first lines pop into, at
 // most `limit` of them.
 function ssa_leading_pops(arm: string, limit: i32): string[] {
-  var out: string[] = [];
-  var at: i32 = 0;
+  let out: string[] = [];
+  let at: i32 = 0;
   while (out.len() < limit) {
-    var reg: string = ssa_line_reg(arm, at, "    popq %");
+    let reg: string = ssa_line_reg(arm, at, "    popq %");
     if (reg == "") {
       return out;
     }
@@ -7275,7 +7275,7 @@ function ssa_leading_pops(arm: string, limit: i32): string[] {
 // ssa_trailing_push is the register a body's last line pushes, "" when its
 // last line is anything else.
 function ssa_trailing_push(body: string): string {
-  var at: i32 = body.len() - 1;
+  let at: i32 = body.len() - 1;
   if (at < 0 || body[at] != 10) {
     return "";
   }
@@ -7283,7 +7283,7 @@ function ssa_trailing_push(body: string): string {
   while (at >= 0 && body[at] != 10) {
     at = at - 1;
   }
-  var reg: string = ssa_line_reg(body, at + 1, "    pushq %");
+  let reg: string = ssa_line_reg(body, at + 1, "    pushq %");
   if (reg == "" || at + 1 + ssa_push_line(reg).len() != body.len()) {
     return "";
   }
@@ -7299,9 +7299,9 @@ function ssa_line_reg(text: string, at: i32, prefix: string): string {
   if (slice_unchecked(text, at, at + prefix.len()) != prefix) {
     return "";
   }
-  var end: i32 = at + prefix.len();
+  let end: i32 = at + prefix.len();
   while (end < text.len() && text[end] != 10) {
-    var c: i32 = text[end] as i32;
+    let c: i32 = text[end] as i32;
     if (!(c >= 97 && c <= 122 || c >= 48 && c <= 57)) {
       return "";
     }
@@ -7319,12 +7319,12 @@ struct SsaArgMoves { ok: boolean, text: string[] }
 // parallel move: a load goes once no pending load still reads its register.
 // A cycle is refused, and the arm then takes every operand from the stack.
 function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore.EmitState): SsaArgMoves {
-  var srcs: string[] = [];
-  var dsts: string[] = [];
-  var k: i32 = 0;
+  let srcs: string[] = [];
+  let dsts: string[] = [];
+  let k: i32 = 0;
   while (k < pops.len()) {
-    var v: i32 = ins.args[ins.args.len() - 1 - k];
-    var src: string = ssa_home_name(reg_of, v);
+    let v: i32 = ins.args[ins.args.len() - 1 - k];
+    let src: string = ssa_home_name(reg_of, v);
     if (src == "") {
       src = ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save);
     }
@@ -7334,15 +7334,15 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
     }
     k = k + 1;
   }
-  var done: boolean[] = [];
+  let done: boolean[] = [];
   for d in dsts {
     done = done.append(false);
   }
-  var out: string[] = [];
-  var left: i32 = dsts.len();
+  let out: string[] = [];
+  let left: i32 = dsts.len();
   while (left > 0) {
-    var progressed: boolean = false;
-    var i: i32 = 0;
+    let progressed: boolean = false;
+    let i: i32 = 0;
     while (i < dsts.len()) {
       if (!done[i] && !ssa_still_read(srcs, done, dsts[i], i)) {
         out = out.append("    movq " + srcs[i] + ", " + dsts[i] + "\n");
@@ -7360,7 +7360,7 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
 }
 
 function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32): boolean {
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < srcs.len()) {
     if (j != self && !done[j] && srcs[j] == reg) {
       return true;
@@ -7380,7 +7380,7 @@ function ssa_arg_regs(): string[] {
 // it is written, or swaps.
 function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
-  var i: i32 = 2;
+  let i: i32 = 2;
   while (i < ins.args.len()) {
     s = ssa_load(reg_of, ins.args[i], ssa_arg_regs()[i], s);
     i = i + 1;
@@ -7389,8 +7389,8 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
     s = ssa_load(reg_of, ins.args[0], "%rdi", s);
   }
   if (ins.args.len() >= 2) {
-    var h0: string = ssa_home_name(reg_of, ins.args[0]);
-    var h1: string = ssa_home_name(reg_of, ins.args[1]);
+    let h0: string = ssa_home_name(reg_of, ins.args[0]);
+    let h1: string = ssa_home_name(reg_of, ins.args[1]);
     if (h0 == "%rsi" && h1 == "%rdi") {
       s = s.write("    xchgq %rdi, %rsi\n");
     } else if (h1 == "%rdi") {
@@ -7449,7 +7449,7 @@ function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (sym_addr_need(ins.str) != "") {
     s = s.need(sym_addr_need(ins.str));
   }
-  var d: string = ssa_dst(reg_of, ins.result);
+  let d: string = ssa_dst(reg_of, ins.result);
   if (ins.imm == 1) {
     s = s.write("    movq " + ins.str + "(%rip), " + d + "\n");
   } else {
@@ -7463,7 +7463,7 @@ function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   s = s.need("heap");
-  var sym: string = "__fern_alloc";
+  let sym: string = "__fern_alloc";
   if (ins.str == "alloc_u8") {
     s = s.need("alloc_u8");
     sym = "__fern_alloc_u8";
@@ -7497,9 +7497,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.mark_arr_push();
     sym = "__fern_arr_push";
   }
-  var srcs: i32[] = [];
-  var dsts: i32[] = [];
-  var a: i32 = 0;
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  let a: i32 = 0;
   while (a < ins.args.len() && a < 2) {
     srcs = srcs.append(reg_of[ins.args[a]]);
     dsts = dsts.append(ssa_rt_arg_reg(a));
@@ -7566,13 +7566,13 @@ function ssa_rt_arg_reg(a: i32): i32 {
 // value; ssa_view_count is how many there are. The words sit after the spill
 // slots.
 function ssa_view_slots(f: ssa.SFunc): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < f.nvals) {
     out = out.append(0 - 1);
     i = i + 1;
   }
-  var n: i32 = 0;
+  let n: i32 = 0;
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 51 && ins.imm == 1) {
@@ -7585,7 +7585,7 @@ function ssa_view_slots(f: ssa.SFunc): i32[] {
 }
 
 function ssa_view_count(views: i32[]): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for v in views {
     if (v >= 0) {
       n = n + 1;
@@ -7642,19 +7642,19 @@ function ssa_no_fuse(): SsaFuse {
 // read only by the branch whose operand is such a compare read only by it. A
 // `not` over anything else is the value test with the edges swapped.
 function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
-  var t: ssa.STerm = blk.term;
+  let t: ssa.STerm = blk.term;
   if (t.kind_tag != 3 || t.t == t.f || blk.insts.len() == 0) {
     return ssa_no_fuse();
   }
-  var last: ssa.SInst = blk.insts[blk.insts.len() - 1];
+  let last: ssa.SInst = blk.insts[blk.insts.len() - 1];
   if (last.result != t.cond || fr.uses[last.result] != 1) {
     return ssa_no_fuse();
   }
-  var cmp: ssa.SInst = last;
-  var n: i32 = 1;
-  var inverted: boolean = false;
+  let cmp: ssa.SInst = last;
+  let n: i32 = 1;
+  let inverted: boolean = false;
   if (last.kind_tag == 10 && last.str == "!") {
-    var value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false };
+    let value_test: SsaFuse = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false };
     if (blk.insts.len() < 2) {
       return value_test;
     }
@@ -7691,19 +7691,19 @@ function ssa_unique_test(ins: ssa.SInst): boolean {
 }
 
 function ssa_view_off(fr: SsaFrame, v: i32): i32 {
-  var first: i32 = fr.nspill + 3 * fr.views[v];
+  let first: i32 = fr.nspill + 3 * fr.views[v];
   return 0 - 8 * (first + 3) - fr.nsave;
 }
 
 // ssa_raw_inst selects the raw memory floor (52..55): unchecked 8-byte and
 // byte loads and stores at base + idx.
 function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  var k: i32 = ins.kind_tag;
-  var a: string = ssa_src(reg_of, ins.args[0], "%r11");
+  let k: i32 = ins.kind_tag;
+  let a: string = ssa_src(reg_of, ins.args[0], "%r11");
   s = ssa_load(reg_of, ins.args[0], a, s);
-  var b: string = ssa_src(reg_of, ins.args[1], "%rcx");
+  let b: string = ssa_src(reg_of, ins.args[1], "%rcx");
   s = ssa_load(reg_of, ins.args[1], b, s);
-  var d: string = ssa_dst(reg_of, ins.result);
+  let d: string = ssa_dst(reg_of, ins.result);
   if (k == 52) {
     s = s.write("    movq (" + a + "," + b + ",8), " + d + "\n");
     return ssa_store(reg_of, ins.result, d, s);
@@ -7712,7 +7712,7 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     s = s.write("    movzbl (" + a + "," + b + "), " + ssa_r32(d) + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
-  var c: string = ssa_src(reg_of, ins.args[2], "%rdx");
+  let c: string = ssa_src(reg_of, ins.args[2], "%rdx");
   s = ssa_load(reg_of, ins.args[2], c, s);
   if (k == 53) {
     return s.write("    movq " + c + ", (" + a + "," + b + ",8)\n");
@@ -7725,8 +7725,8 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // live can occupy at a call.
 function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
-  var argc: i32 = ins.args.len() - 1;
-  var i: i32 = argc;
+  let argc: i32 = ins.args.len() - 1;
+  let i: i32 = argc;
   while (i >= 1) {
     s = ssa_push_operand(reg_of, ins.args[i], s);
     i = i - 1;
@@ -7743,11 +7743,11 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // function-value box the lowering folded whole (ir.const_struct_* /
 // ir.const_closure), interned as the flat arm interns it.
 function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): asmcore.EmitState {
-  var pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, ins.str);
+  let pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, ins.str);
   s = pk.state;
-  var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
+  let kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
   s = kout.state;
-  var d: string = ssa_dst(reg_of, ins.result);
+  let d: string = ssa_dst(reg_of, ins.result);
   s = s.write("    leaq " + asmcore.const_agg_label(s, kout.idx) + "(%rip), " + d + "\n");
   return ssa_store(reg_of, ins.result, d, s);
 }
@@ -7755,16 +7755,16 @@ function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): a
 // ssa_addr_inst selects the label addresses and the box allocation (45..48).
 function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
-  var k: i32 = ins.kind_tag;
-  var label: string = "";
+  let k: i32 = ins.kind_tag;
+  let label: string = "";
   if (k == 45) {
     label = "__fn_" + asmcore.sanitize_label(ins.str);
   } else if (k == 46) {
-    var sh: asmcore.ShapeRefOut = asmcore.shape_ref(s, ins.str);
+    let sh: asmcore.ShapeRefOut = asmcore.shape_ref(s, ins.str);
     s = sh.state;
     label = sh.label;
   } else if (k == 47) {
-    var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, ins.str);
+    let lo: asmcore.StringLitOut = asmcore.add_string_lit(s, ins.str);
     s = lo.state;
     label = asmcore.str_box_label(s, lo.idx);
   } else {
@@ -7772,13 +7772,13 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
     s = s.write("    movq $" + util.i32_to_string(ins.imm) + ", %rdi\n    call __fern_arr_box\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
   }
-  var d: string = ssa_dst(reg_of, ins.result);
+  let d: string = ssa_dst(reg_of, ins.result);
   s = s.write("    leaq " + label + "(%rip), " + d + "\n");
   return ssa_store(reg_of, ins.result, d, s);
 }
 
 function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
-  var k: i32 = ins.kind_tag;
+  let k: i32 = ins.kind_tag;
   if (k == 11) {
     return ssa_call(ins, reg_of, lp, s);
   }
@@ -7827,7 +7827,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
     return s;
   }
-  var d: string = ssa_dst(reg_of, ins.result);
+  let d: string = ssa_dst(reg_of, ins.result);
   if (k == 1) {
     s = ssa_const_reg(util.i32_to_string(ins.imm), false, d, s);
   } else if (k == 3) {
@@ -7867,14 +7867,14 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
 // already sits in its home, or which nothing reads, moves nothing.
 function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, succ: i32, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
-  var ti: i32 = ssa_block_at(fr, succ);
+  let ti: i32 = ssa_block_at(fr, succ);
   if (ti < 0) {
     return s;
   }
-  var tb: ssa.SBlock = f.blocks[ti];
-  var sl: i32 = ssa.pred_slot(tb, pred);
-  var srcs: i32[] = [];
-  var dsts: i32[] = [];
+  let tb: ssa.SBlock = f.blocks[ti];
+  let sl: i32 = ssa.pred_slot(tb, pred);
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
   for ins in tb.insts {
     if (ins.kind_tag == 8 && reg_of[ins.result] != 0 - 1 && reg_of[ins.args[sl]] != reg_of[ins.result]) {
       srcs = srcs.append(reg_of[ins.args[sl]]);
@@ -7894,16 +7894,16 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
 // is parked in %r11 and every move reading it takes it from there, which
 // frees that location to be written.
 function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  var done: boolean[] = [];
+  let done: boolean[] = [];
   for src in srcs {
     done = done.append(false);
   }
-  var parking: boolean = false;
-  var parked: i32 = 0;
-  var left: i32 = srcs.len();
+  let parking: boolean = false;
+  let parked: i32 = 0;
+  let left: i32 = srcs.len();
   while (left > 0) {
-    var progressed: boolean = false;
-    var i: i32 = 0;
+    let progressed: boolean = false;
+    let i: i32 = 0;
     while (i < srcs.len()) {
       if (!done[i] && !ssa_move_blocked(srcs, dsts, done, i, parking, parked)) {
         if (parking && srcs[i] == parked) {
@@ -7918,7 +7918,7 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
       i = i + 1;
     }
     if (!progressed) {
-      var j: i32 = 0;
+      let j: i32 = 0;
       while (done[j]) {
         j = j + 1;
       }
@@ -7933,7 +7933,7 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
 // A move is blocked while another pending move still reads its destination
 // from that location rather than from the parked copy.
 function ssa_move_blocked(srcs: i32[], dsts: i32[], done: boolean[], i: i32, parking: boolean, parked: i32): boolean {
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < srcs.len()) {
     if (k != i && !done[k] && srcs[k] == dsts[i] && !(parking && srcs[k] == parked)) {
       return true;
@@ -7980,29 +7980,29 @@ function ssa_jump(lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore
 // whose target has phis lands on a stub carrying that edge's moves, since
 // the moves of the two edges differ.
 function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
-  var t: ssa.STerm = blk.term;
+  let t: ssa.STerm = blk.term;
   // A value test reads the value where it lives, through %r11 only when spilled.
-  var tv: i32 = t.cond;
+  let tv: i32 = t.cond;
   if (fu.n > 0) {
     tv = fu.a;
   }
   if (fu.n == 0) {
     s = ssa_read(reg_of, t.cond, "%r11", s);
   }
-  var tr: string = ssa_src(reg_of, tv, "%r11");
+  let tr: string = ssa_src(reg_of, tv, "%r11");
   if (t.t == t.f) {
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
     return ssa_jump(lp, t.t, next, s);
   }
-  var fl: string = lp + util.i32_to_string(t.f);
-  var stub: boolean = ssa_has_phis(f, fr, t.f);
+  let fl: string = lp + util.i32_to_string(t.f);
+  let stub: boolean = ssa_has_phis(f, fr, t.f);
   if (stub) {
     fl = lp + "e" + util.i32_to_string(blk.id) + "_" + util.i32_to_string(t.f);
   }
   // When the false target is the next block and neither edge carries phi
   // moves, branch on the condition itself and fall through.
   if (!stub && t.f == next && !ssa_has_phis(f, fr, t.t)) {
-    var tl: string = lp + util.i32_to_string(t.t);
+    let tl: string = lp + util.i32_to_string(t.t);
     if (fu.n > 0 && fu.tag == 0) {
       return s.write("    testq " + tr + ", " + tr + "\n    jz " + tl + "\n");
     }
@@ -8053,7 +8053,7 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
 function ssa_unique_flags(reg_of: i32[], v: i32, join: string, s: asmcore.EmitState): asmcore.EmitState {
   s = helper_call_needs("__fern_rc_is_unique", s);
   s = ssa_read(reg_of, v, "%r11", s);
-  var p: string = ssa_src(reg_of, v, "%r11");
+  let p: string = ssa_src(reg_of, v, "%r11");
   s = s.write("    testb $1, " + ssa_r8(p) + "\n    jnz " + join + "\n    cmpq $0x10000, " + p + "\n    jb " + join + "\n");
   s = s.write(ssa_rc_is_one("-8(" + p + ")", s.rc_free_debug) + join + ":\n");
   return s;
@@ -8075,21 +8075,21 @@ function ssa_rc_is_one(rc: string, debug: boolean): string {
 // neither of its successors has phis, so its branch carries no moves of its
 // own. A loop then costs one branch per iteration rather than two.
 function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
-  var ti: i32 = ssa_block_at(fr, to);
+  let ti: i32 = ssa_block_at(fr, to);
   if (ti < 0 || ti > from) {
     return false;
   }
-  var h: ssa.SBlock = f.blocks[ti];
+  let h: ssa.SBlock = f.blocks[ti];
   if (h.term.kind_tag != 3 || h.term.t == h.term.f) {
     return false;
   }
   if (ssa_has_phis(f, fr, h.term.t) || ssa_has_phis(f, fr, h.term.f)) {
     return false;
   }
-  var n: i32 = 0;
+  let n: i32 = 0;
   for ins in h.insts {
     // A constant the test reads as an immediate is never materialised.
-    var imm: boolean = (ins.kind_tag == 1 || ins.kind_tag == 3) && fr.imm.is_imm[ins.result];
+    let imm: boolean = (ins.kind_tag == 1 || ins.kind_tag == 3) && fr.imm.is_imm[ins.result];
     if (ins.kind_tag != 8 && !imm) {
       n = n + 1;
     }
@@ -8098,7 +8098,7 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
 }
 
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
-  var t: ssa.STerm = blk.term;
+  let t: ssa.STerm = blk.term;
   if (t.kind_tag == 1) {
     s = ssa_load(reg_of, t.value, "%rax", s);
     return s.write(fr.epilogue);
@@ -8106,8 +8106,8 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   if (t.kind_tag == 2) {
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
     if (ssa_rotates(f, fr, ssa_block_at(fr, blk.id), t.target)) {
-      var h: ssa.SBlock = f.blocks[ssa_block_at(fr, t.target)];
-      var hfu: SsaFuse = ssa_fuse(fr, h);
+      let h: ssa.SBlock = f.blocks[ssa_block_at(fr, t.target)];
+      let hfu: SsaFuse = ssa_fuse(fr, h);
       return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, ssa_join(lp, blk.id), s));
     }
     return ssa_jump(lp, t.target, next, s);
@@ -8126,10 +8126,10 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
 // slots. The register moves go first, since a later parameter's home may be a
 // register still holding an earlier one.
 function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  var k: i32 = ssa_reg_params(f);
-  var srcs: i32[] = [];
-  var dsts: i32[] = [];
-  var p: i32 = 0;
+  let k: i32 = ssa_reg_params(f);
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  let p: i32 = 0;
   while (p < k) {
     if (reg_of[p] != 0 - 1) {
       srcs = srcs.append(p);
@@ -8141,7 +8141,7 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
   while (p < f.nparams) {
     // Straight into the home: %rax is an allocatable home now, so staging
     // every parameter through it overwrote whichever parameter had it.
-    var d: string = ssa_dst(reg_of, p);
+    let d: string = ssa_dst(reg_of, p);
     s = s.write("    movq " + util.i32_to_string(16 + p * 8) + "(%rbp), " + d + "\n");
     s = ssa_store(reg_of, p, d, s);
     p = p + 1;
@@ -8163,12 +8163,12 @@ function ssa_reg_params(f: ssa.SFunc): i32 {
 // and falls through into `__fn_<name>.r`, where a register-ABI caller enters
 // with them already there. A function with no parameters has one entry.
 function ssa_entry_shim(f: ssa.SFunc, name: string): string {
-  var k: i32 = ssa_reg_params(f);
+  let k: i32 = ssa_reg_params(f);
   if (k == 0) {
     return "";
   }
-  var out: string = "";
-  var p: i32 = 0;
+  let out: string = "";
+  let p: i32 = 0;
   while (p < k) {
     out = out + "    movq " + util.i32_to_string(8 + 8 * p) + "(%rsp), " + ssa_reg(p) + "\n";
     p = p + 1;
@@ -8190,7 +8190,7 @@ function ssa_reg_helper(sym: string, argc: i32): boolean {
 // registers: the callee has a register entry in this unit and takes between
 // one and ssa_nregs() arguments.
 function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
-  var argc: i32 = ins.args.len();
+  let argc: i32 = ins.args.len();
   if (ins.kind_tag != 11 || argc == 0 || argc > ssa_nregs() || ssa.rc_inlined(ins)) {
     return false;
   }
@@ -8204,27 +8204,27 @@ function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
 // and each register call's argument leaves in, so neither needs a move when
 // the value has nowhere better to be.
 function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
-  var pref: i32[] = [];
-  var i: i32 = 0;
+  let pref: i32[] = [];
+  let i: i32 = 0;
   while (i < f.nvals) {
     pref = pref.append(0 - 1);
     i = i + 1;
   }
-  var p: i32 = 0;
+  let p: i32 = 0;
   while (p < ssa_reg_params(f)) {
     pref = pref.with(p, p);
     p = p + 1;
   }
   for blk in f.blocks {
     for ins in blk.insts {
-      var rt: boolean = ssa_is_rt_call(ins);
+      let rt: boolean = ssa_is_rt_call(ins);
       if (!rt && !ssa_reg_call(ins, s)) {
         continue;
       }
-      var a: i32 = 0;
+      let a: i32 = 0;
       while (a < ins.args.len() && (!rt || a < 2)) {
-        var v: i32 = ins.args[a];
-        var r: i32 = a;
+        let v: i32 = ins.args[a];
+        let r: i32 = a;
         if (rt) {
           r = ssa_rt_arg_reg(a);
         }
@@ -8243,19 +8243,19 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // block behind its label. prune_dead first takes out the zeros the lift gives
 // every declared local and the loop phis nothing reads.
 function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
-  var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted))));
-  var imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
-  var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
-  var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
+  let f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted))));
+  let imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
+  let reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
+  let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n    .cfi_startproc\n");
   s = s.write(ssa_entry_shim(f, asmcore.sanitize_label(label_name)));
   s = s.write("    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n");
-  var saved: i32[] = ssa_saved_regs(reg_of);
-  var save: i32 = 8 * saved.len();
+  let saved: i32[] = ssa_saved_regs(reg_of);
+  let save: i32 = 8 * saved.len();
   s = s.write(ssa_save_asm(saved));
-  var views: i32[] = ssa_view_slots(f);
-  var fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: ssa.block_positions(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved), imm: imm, lit0: ssa.literal_first_bytes(f) };
-  var frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
+  let views: i32[] = ssa_view_slots(f);
+  let fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: ssa.block_positions(f), uses: ssa.use_counts(f), nsave: save, epilogue: ssa_epilogue_for(saved), imm: imm, lit0: ssa.literal_first_bytes(f) };
+  let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
   // %rsp is 16-byte aligned at a call when the pushes and the frame together
   // are a multiple of 16.
   if ((frame + save) % 16 != 0) {
@@ -8266,19 +8266,19 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
   }
   s = asmcore.EmitState { ...s, ssa_save: save };
   s = ssa_load_params(f, reg_of, s);
-  var bi: i32 = 0;
+  let bi: i32 = 0;
   while (bi < f.blocks.len()) {
-    var blk: ssa.SBlock = f.blocks[bi];
-    var next: i32 = 0 - 1;
+    let blk: ssa.SBlock = f.blocks[bi];
+    let next: i32 = 0 - 1;
     if (bi + 1 < f.blocks.len()) {
       next = f.blocks[bi + 1].id;
     }
     s = ssa_x0_forget(s);
     s = s.write(lp + util.i32_to_string(blk.id) + ":\n");
-    var fu: SsaFuse = ssa_fuse(fr, blk);
-    var ii: i32 = 0;
+    let fu: SsaFuse = ssa_fuse(fr, blk);
+    let ii: i32 = 0;
     while (ii < blk.insts.len() - fu.n) {
-      var ins: ssa.SInst = blk.insts[ii];
+      let ins: ssa.SInst = blk.insts[ii];
       if (ins.kind_tag != 6 && ins.kind_tag != 8) {
         s = ssa_inst(ins, reg_of, lp, fr, r, s);
       }
@@ -8298,11 +8298,11 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtable
 // produces has an arm, so a refusal here is a compiler bug, not a program
 // the backend does not cover.
 function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
-  var t_lift: i64 = monotonic_ns();
-  var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops);
-  var why: string = lifted.bail;
+  let t_lift: i64 = monotonic_ns();
+  let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops);
+  let why: string = lifted.bail;
   if (lifted.ok) {
-    var collision: i32 = ssa.repeated_block_id(lifted.func);
+    let collision: i32 = ssa.repeated_block_id(lifted.func);
     if (collision >= 0) {
       ircore.ssa_block_id_collision(label_name, collision);
     }
@@ -8311,13 +8311,13 @@ function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmco
   if (why != "") {
     ircore.ssa_refuse(label_name, why);
   }
-  var lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
-  var t_emit: i64 = monotonic_ns();
+  let lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
+  let t_emit: i64 = monotonic_ns();
   s = emit_ssa_function_x86(ssa.inline_leaves(lifted.func, s.leaves), label_name, r, s);
   // Under the report, a function whose lift or emit took over 200 ms is
   // named with both times: the whole-compiler build is where a phase's
   // cost shows, and this is how a slow one is found.
-  var emit_ms: i64 = (monotonic_ns() - t_emit) / 1000000i64;
+  let emit_ms: i64 = (monotonic_ns() - t_emit) / 1000000i64;
   if (ircore.ssa_report_on() && lift_ms + emit_ms > 200i64) {
     eprint("FERN_SSA: time " + label_name + ": lift " + util.i32_to_string(lift_ms as i32) + " ms, emit " + util.i32_to_string(emit_ms as i32) + " ms, " + util.i32_to_string(r.ops.len()) + " ops, " + util.i32_to_string(r.n_locals) + " slots");
   }
@@ -8329,7 +8329,7 @@ function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmco
 function emit_function_via_ir_pre(r: irtables.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
   // the lowering's dispatch); free functions stay `__fn_<name>`.
-  var label_name: string = fd.name;
+  let label_name: string = fd.name;
   if (fd.receiver_type.len() > 0) {
     label_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
@@ -8351,16 +8351,16 @@ function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string,
   // runtime tail reads the accumulated needs (has_need) rather than lowering
   // the module again to inspect it.
   //
-  // Read `.kind` off the bound Op struct INLINE rather than via a `var dk:
+  // Read `.kind` off the bound Op struct INLINE rather than via a `let dk:
   // string = ...kind` local: a named string local aliasing a struct field and
   // dec'd at each loop-iteration boundary takes arm64's deferred native heap-
   // string reclamation path (RC-PERCEUS slice 5g), which over-releases under
   // allocation pressure and crashed the arm64-compiled driver. The inline read
   // (matching the op-emission loop below, which never binds `.kind` to its own
   // local) keeps the string a transient the comparison consumes immediately.
-  var dop: i32 = 0;
+  let dop: i32 = 0;
   while (dop < r.ops.len()) {
-    var dopop: ir.Op = r.ops[dop];
+    let dopop: ir.Op = r.ops[dop];
     // Every map op EXCEPT keys/values needs the maps runtime block: tags
     // 124..130 are map_new, map_set, map_len, map_get, map_has, map_get_or,
     // map_delete, and each emits a call into it. A range rather than the
@@ -8423,7 +8423,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // [n] IS param[0] (+16); call the Fern-compiled __fn___fern_random_bytes
     // (asmcore.rt_src_random_bytes, #2649) via the stack ABI. Mirrors the
     // str_from_bytes / str_split handlers.
-    var rb: string = "random_bytes" + asmcore.packed_suffix(ir.is_packed(o));
+    let rb: string = "random_bytes" + asmcore.packed_suffix(ir.is_packed(o));
     s = s.write("    call __fn___fern_" + rb + "\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need(rb);
@@ -8562,7 +8562,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // [sig]; __fern_signal_{ignore,default}(%rdi=sig) -> the sigaction
     // return, pushed so the statement-level drop balances. [sig] IS
     // param[0] already; the stack ABI needs no marshalling.
-    var sig_fn: string = "signal_ignore";
+    let sig_fn: string = "signal_ignore";
     if (o.kind_tag == 244) {
       sig_fn = "signal_default";
     }
@@ -8674,10 +8674,10 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // [args] with the last on top; pop and re-push reversed, as udp_send
     // does. recvfrom spreads the datagram into the caller's array from a
     // raw buffer, so it needs the heap.
-    var udp_name: string = ir.kind_name(o.kind_tag) + asmcore.packed_suffix(ir.is_packed(o));
-    var udp_argc: i32 = ir.op_pops(o);
-    var udp_regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx"];
-    var k: i32 = udp_argc - 1;
+    let udp_name: string = ir.kind_name(o.kind_tag) + asmcore.packed_suffix(ir.is_packed(o));
+    let udp_argc: i32 = ir.op_pops(o);
+    let udp_regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx"];
+    let k: i32 = udp_argc - 1;
     while (k >= 0) {
       s = s.write("    popq " + udp_regs[k] + "\n");
       k = k - 1;
@@ -8696,7 +8696,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // [fd, max] with max on top; the stack ABI wants param[0] (fd)
     // lowest, so pop and re-push swapped.
     s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
-    var tr: string = "tcp_recv" + asmcore.packed_suffix(ir.is_packed(o));
+    let tr: string = "tcp_recv" + asmcore.packed_suffix(ir.is_packed(o));
     s = s.write("    call __fn___fern_" + tr + "\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need(tr);
@@ -8744,7 +8744,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // be world-readable while it exists. The imm is the canonical
     // x86-64 flag word — asmcore's helper translates it per target — so
     // 193 identifies the exclusive opener on every one.
-    var open_mode: i32 = 438;
+    let open_mode: i32 = 438;
     if (o.i32_imm == 193) {
       open_mode = 384;
     }
@@ -8756,7 +8756,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // [path box, flags]; __fn___fern_open_with(path, flags, write) ->
     // a fresh Result[Reader|Writer, IoError] box, through open_res,
     // so both needs.
-    var open_write: i32 = 0;
+    let open_write: i32 = 0;
     if (o.kind_tag == 305) {
       open_write = 1;
     }
@@ -9011,12 +9011,12 @@ function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 351) {
     s = s.need("buf_push_bytes_range" + asmcore.packed_suffix(ir.is_packed(o)));
   }
-  var k: i32 = asmcore.buf_arity(o.kind_tag);
+  let k: i32 = asmcore.buf_arity(o.kind_tag);
   while (k > 0) {
     k = k - 1;
     s = s.write("    popq " + ssa_arg_regs()[k] + "\n");
   }
-  var sym: string = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
+  let sym: string = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
   s = s.write("    call " + sym + "\n    pushq %rax\n");
   s = s.need("heap");
   if (o.kind_tag != 347 && o.kind_tag != 351 && sym != asmcore.buf_helper(o.kind_tag)) {
@@ -9046,10 +9046,10 @@ function hex_digits(t: string, from: i32): boolean {
   if (from >= t.len()) {
     return false;
   }
-  var i: i32 = from;
+  let i: i32 = from;
   while (i < t.len()) {
-    var c: i32 = t[i] as i32;
-    var ok: boolean = c >= 48 && c <= 57 || c >= 97 && c <= 102 || c >= 65 && c <= 70;
+    let c: i32 = t[i] as i32;
+    let ok: boolean = c >= 48 && c <= 57 || c >= 97 && c <= 102 || c >= 65 && c <= 70;
     if (!ok) {
       return false;
     }
@@ -9128,8 +9128,8 @@ function emit_ir_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.Emi
   // out the arena base. Releasing is sound only when nothing allocated
   // after the mark is still reachable; the caller owns that invariant,
   // exactly as it owns malloc/free pairing.
-  var hrlo: asmcore.LabelOut = asmcore.fresh_label(s);
-  var hrl_done: string = hrlo.name;
+  let hrlo: asmcore.LabelOut = asmcore.fresh_label(s);
+  let hrl_done: string = hrlo.name;
   s = hrlo.state;
   s = s.write("    popq %rax\n");
   s = s.write("    testq %rax, %rax\n");
@@ -9194,14 +9194,14 @@ function emit_ir_op_map(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asm
 // value kind and the two releases behind the four — the key's and the value's
 // as ir.map_op_symbols splits them, 0 where the op names none.
 function emit_ir_op_map_delete(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  var syms: string[] = ir.map_op_symbols(o);
-  var rel: boolean = ir.map_delete_releases(o);
+  let syms: string[] = ir.map_op_symbols(o);
+  let rel: boolean = ir.map_delete_releases(o);
   s = s.need("map_delete");
   if (rel) {
     s = s.need("map_delete_rel");
   }
   s = s.write("    popq %rsi\n    popq %rdi\n");
-  var argc: i32 = 4;
+  let argc: i32 = 4;
   if (rel) {
     argc = 8;
     s = map_fn_address_rax(s, syms[1]);
@@ -9299,7 +9299,7 @@ function emit_ir_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   // overwrite calls on the value it supersedes; %r11 = the key release of a
   // keyed column, which the overwrite calls on a consumed key it discards
   // (#9962); 0 where the op names none. ir.map_op_symbols splits the three.
-  var syms: string[] = ir.map_op_symbols(o);
+  let syms: string[] = ir.map_op_symbols(o);
   if (o.i32_imm == 2 && syms[0] != "") {
     s = s.write("    leaq __fn_" + asmcore.sanitize_label(syms[0]) + "(%rip), %r8\n");
   } else {
@@ -9333,7 +9333,7 @@ function emit_ir_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   //     released — 1 through __fern_str_free, 2 through __fern_str_arr_free,
   //     3 through the function in %r10.
   //     0 keeps the historical behaviour, which is what the AST path passes.
-  var r9bits: i32 = 0;
+  let r9bits: i32 = 0;
   if (o.width / 2 % 2 == 1) {
     r9bits = r9bits + 1;
   }
@@ -9368,7 +9368,7 @@ function emit_ir_op_map_get_or(o: ir.Op, i: i32, lp: string, s: asmcore.EmitStat
   // a loop). The payload was retained separately (__map_retain_val
   // inside the helper's Fern twin; the asm helper hands out the raw
   // value), so releasing the shell never touches the value.
-  var golbl: string = lp + "go" + util.i32_to_string(i);
+  let golbl: string = lp + "go" + util.i32_to_string(i);
   s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n");
   if (o.str != "") {
     s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n");
@@ -9603,31 +9603,31 @@ function dyn_arg_operand(a: asmcore.DynArg): string {
 // where `args` says they are, calls, and leaves the result in %rax. %rcx
 // and %rdx are scratch.
 function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32, lp: string, own s: asmcore.EmitState): asmcore.EmitState {
-  var dargc: i32 = args.len();
+  let dargc: i32 = args.len();
   s = s.write("    movq " + dyn_arg_operand(args[0]) + ", %rax\n");
   s = s.write("    movq (%rax), %rcx\n");
-  var dend: string = lp + "dynend" + util.i32_to_string(i);
-  var dfi: i32 = 0;
-  var darmn: i32 = 0;
+  let dend: string = lp + "dynend" + util.i32_to_string(i);
+  let dfi: i32 = 0;
+  let darmn: i32 = 0;
   while (dfi < s.funcs.len()) {
-    var dfd: parser.FuncDecl = s.funcs[dfi];
-    var ddbn: string = util.base_type_name(dfd.receiver_type);
+    let dfd: parser.FuncDecl = s.funcs[dfi];
+    let ddbn: string = util.base_type_name(dfd.receiver_type);
     // Dispatch arms: every method named `method` whose receiver is a
     // struct (value carries its shape) OR a primitive/string (value
     // is heap-boxed at coercion — docs/DYN-TRAITS.md §4.2.3). A
     // primitive arm UNBOXES: the receiver holds the box pointer, so
     // arg0 is reloaded from box+8, not pushed directly.
-    var dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
+    let dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
     if (irtables.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
       && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
-      var dbn: string = ddbn;
-      var dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
+      let dbn: string = ddbn;
+      let dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
       s = dlit.state;
-      var dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+      let dnext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
       s = s.write("    leaq " + dlit.label + "(%rip), %rdx\n");
       s = s.write("    cmpq %rdx, %rcx\n");
       s = s.write("    jne " + dnext + "\n");
-      var dk: i32 = dargc - 1;
+      let dk: i32 = dargc - 1;
       while (dk >= 0) {
         if (dk == 0 && dprim) {
           // arg0 is the receiver: unbox the value from box+8.
@@ -9660,13 +9660,13 @@ function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32,
     if (irtables.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
       && !asmcore.recv_is_array(dfd.receiver_type)
       && irtables.decl_is_enum(s.struct_decls, ddbn)) {
-      var dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-      var denext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-      var dvi: i32 = 0;
+      let dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+      let denext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+      let dvi: i32 = 0;
       while (dvi < s.struct_decls.decls.len()) {
         if (s.struct_decls.decls[dvi].enum_owner == ddbn) {
-          var vlit_name: string = s.struct_decls.decls[dvi].name;
-          var vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, vlit_name);
+          let vlit_name: string = s.struct_decls.decls[dvi].name;
+          let vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, vlit_name);
           s = vlit.state;
           s = s.write("    leaq " + vlit.label + "(%rip), %rdx\n");
           s = s.write("    cmpq %rdx, %rcx\n");
@@ -9676,7 +9676,7 @@ function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32,
       }
       s = s.write("    jmp " + denext + "\n");
       s = s.write(dehit + ":\n");
-      var dek: i32 = dargc - 1;
+      let dek: i32 = dargc - 1;
       while (dek >= 0) {
         s = s.write("    pushq " + dyn_arg_operand(args[dek]) + "\n");
         dek = dek - 1;
@@ -9710,7 +9710,7 @@ function emit_ir_op_dyn_box(o: ir.Op, own s: asmcore.EmitState): asmcore.EmitSta
   // i32/i64/f64 scalar OR a string box pointer) is on the operand
   // stack; alloc first (it survives on the machine stack, like
   // opt_make), then store shape + value, push the cell pointer.
-  var dbl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
+  let dbl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
   s = dbl.state;
   s = s.write("    movq $2, %rdi\n    call __fern_arr_box\n");
   s = s.write("    leaq " + dbl.label + "(%rip), %rcx\n");
@@ -9729,10 +9729,10 @@ function emit_ir_op_dyn_downcast(o: ir.Op, i: i32, lp: string, own s: asmcore.Em
   // → None box [tag1@0, 0@8] — the ordinary Option box `match` reads.
   // The dyn value is held on the machine stack across __fern_alloc (like
   // opt_make/dyn_box), so the hit path reuses it as the Some payload.
-  var dcl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
+  let dcl: asmcore.ShapeRefOut = asmcore.shape_ref(s, o.str);
   s = dcl.state;
-  var dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
-  var dcend: string = lp + "dcend" + util.i32_to_string(i);
+  let dcmiss: string = lp + "dcmiss" + util.i32_to_string(i);
+  let dcend: string = lp + "dcend" + util.i32_to_string(i);
   s = s.write("    movq (%rsp), %rax\n");  // peek dyn ptr (left on stack)
   s = s.write("    movq (%rax), %rcx\n");  // shape @0
   s = s.write("    leaq " + dcl.label + "(%rip), %rdx\n");
@@ -9761,7 +9761,7 @@ function emit_ir_op_dyn_downcast(o: ir.Op, i: i32, lp: string, own s: asmcore.Em
 // emitFConvertI64 sequence. `lb` is a per-op-unique label base.
 function ir_i2f_rax(width: i32, unsigned: boolean, lb: string, d: string): string {
   if (width == 64 && unsigned) {
-    var u: string = "    testq " + d + ", " + d + "\n    js " + lb + "_big\n";
+    let u: string = "    testq " + d + ", " + d + "\n    js " + lb + "_big\n";
     u = u + "    cvtsi2sd " + d + ", %xmm0\n    jmp " + lb + "_done\n";
     u = u + lb + "_big:\n";
     u = u + "    movq " + d + ", %rcx\n    shrq $1, %rcx\n    andl $1, " + ssa_r32(d) + "\n    orq " + d + ", %rcx\n";
@@ -9807,9 +9807,9 @@ function ir_i2f_rax(width: i32, unsigned: boolean, lb: string, d: string): strin
 // only those .globl externs — never the .bss freelist directly — and resolves
 // against the entry's single runtime copy.
 function emit_ir_field_reclaims(s: asmcore.EmitState): asmcore.EmitState {
-  var ni: i32 = 0;
+  let ni: i32 = 0;
   while (ni < s.needed.len()) {
-    var nd: string = s.needed[ni];
+    let nd: string = s.needed[ni];
     if (nd.len() > 14 && slice_unchecked(nd, 0, 14) == "field_reclaim:") {
       s = emit_ir_field_reclaim_one(s, slice_unchecked(nd, 14, nd.len()));
     }
@@ -9831,7 +9831,7 @@ function emit_ir_field_reclaims(s: asmcore.EmitState): asmcore.EmitState {
 // The uniq arm's __fn___fern_rc_is_unique touches only rax/rcx/rdx, so it keeps
 // %rsi (the field value) too.
 function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
-  var san: string = asmcore.sanitize_label(sty);
+  let san: string = asmcore.sanitize_label(sty);
   s = s.write(".weak __fn___field_reclaim_" + san + "\n");
   s = s.write("__fn___field_reclaim_" + san + ":\n");
   s = s.write("    movq 24(%rsp), %r11\n");  // new
@@ -9844,12 +9844,12 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
   // cow compare, so it would dec the only reference to a nested box.
   s = s.write("    cmpq %r10, %r11\n");
   s = s.write("    je .Lfr_" + san + "_box\n");
-  var ops: asmcore.RcOp[] = asmcore.field_reclaim_field_ops(s, sty);
-  var oi: i32 = 0;
+  let ops: asmcore.RcOp[] = asmcore.field_reclaim_field_ops(s, sty);
+  let oi: i32 = 0;
   while (oi < ops.len()) {
-    var op: asmcore.RcOp = ops[oi];
-    var off: string = util.i32_to_string((op.idx + 1) * 8);
-    var ks: string = util.i32_to_string(op.idx);
+    let op: asmcore.RcOp = ops[oi];
+    let off: string = util.i32_to_string((op.idx + 1) * 8);
+    let ks: string = util.i32_to_string(op.idx);
     s = s.write("    movq " + off + "(%r10), %rsi\n");  // old.field_k
     if (op.cow) {
       s = s.write("    cmpq " + off + "(%r11), %rsi\n");  // == new.field_k? (cow)
@@ -9876,8 +9876,8 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
     s = s.write(".Lfr_" + san + "_dec" + ks + ":\n");
     if (op.kind == "arrarr_free" || op.kind == "arrarr_free_enum") {
       if (op.ty.len() > 0) {
-        var esan: string = asmcore.sanitize_label(op.ty);
-        var ewalk: string = "struct_arr_elems_drop";
+        let esan: string = asmcore.sanitize_label(op.ty);
+        let ewalk: string = "struct_arr_elems_drop";
         if (op.kind == "arrarr_free_enum") {
           ewalk = "enum_arr_elems_drop";
         }
@@ -9902,7 +9902,7 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
         // payloads for its other owner. Its inner __fern_arr_dec clobbers
         // %rsi on the large-block path, so reload the frame and the field
         // exactly as the nested-struct arm below does.
-        var edsan: string = asmcore.sanitize_label(op.ty);
+        let edsan: string = asmcore.sanitize_label(op.ty);
         s = s.need("enum_drop:" + op.ty);
         s = s.write("    pushq %rsi\n");
         s = s.write("    call __fn___enum_drop_" + edsan + "\n");
@@ -9919,7 +9919,7 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
         // __struct_drop_<T>'s deep_struct_drop arm applies.
         // __fern_rc_is_unique leaves %rsi alone; __struct_drop_<ty>
         // clobbers %r9/%r10/%r11, so reload from the stable frame.
-        var dsan: string = asmcore.sanitize_label(op.ty);
+        let dsan: string = asmcore.sanitize_label(op.ty);
         s = s.need("struct_drop:" + op.ty);
         s = s.write("    pushq %rsi\n");
         s = s.write("    call __fn___fern_rc_is_unique\n");
@@ -9965,9 +9965,9 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
 // both sweep a `T` co-link to one definition; the body references only the shared
 // .globl externs __fn___fern_arr_dec / __fn___fern_rc_is_unique.
 function emit_ir_struct_drops(s: asmcore.EmitState): asmcore.EmitState {
-  var ni: i32 = 0;
+  let ni: i32 = 0;
   while (ni < s.needed.len()) {
-    var nd: string = s.needed[ni];
+    let nd: string = s.needed[ni];
     // struct_arr_elems_drop: must be checked BEFORE struct_drop: (the former is not
     // a prefix of the latter, but both start distinctly — order is not required,
     // yet keep the more specific longer key first for clarity). Each emitter records
@@ -9996,7 +9996,7 @@ function emit_ir_struct_drops(s: asmcore.EmitState): asmcore.EmitState {
 // box is the raw {keys@0, vals@8} pair; the element walk clobbers r11, so the
 // box comes back from the stack arg.
 function emit_ir_map_vals_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
-  var san: string = asmcore.sanitize_label(sty);
+  let san: string = asmcore.sanitize_label(sty);
   s = s.need("struct_arr_elems_drop:" + sty);
   s = s.write(".weak __fn___map_vals_struct_drop_" + san + "\n");
   s = s.write("__fn___map_vals_struct_drop_" + san + ":\n");
@@ -10026,7 +10026,7 @@ function emit_ir_map_vals_struct_drop_one(s: asmcore.EmitState, sty: string): as
 // __struct_arr_elems_drop_*) reload it from the stack arg.
 // Mirrors the IR ops the inline emit_struct_field_drops used to write.
 function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
-  var san: string = asmcore.sanitize_label(sty);
+  let san: string = asmcore.sanitize_label(sty);
   s = s.write(".weak __fn___struct_drop_" + san + "\n");
   s = s.write("__fn___struct_drop_" + san + ":\n");
   s = s.write("    movq 8(%rsp), %r11\n");  // box
@@ -10035,18 +10035,18 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
   s = s.write("    jb .Lstd_" + san + "_ret\n");
   // Which arm each field takes is asmcore.struct_drop_field_ops' call (#7736);
   // this loop is only the x86 selection for each directive it hands back.
-  var ops: asmcore.RcOp[] = asmcore.struct_drop_field_ops(s, sty);
-  var oi: i32 = 0;
+  let ops: asmcore.RcOp[] = asmcore.struct_drop_field_ops(s, sty);
+  let oi: i32 = 0;
   while (oi < ops.len()) {
-    var op: asmcore.RcOp = ops[oi];
-    var off: string = util.i32_to_string((op.idx + 1) * 8);
-    var ks: string = util.i32_to_string(op.idx);
+    let op: asmcore.RcOp = ops[oi];
+    let off: string = util.i32_to_string((op.idx + 1) * 8);
+    let ks: string = util.i32_to_string(op.idx);
     if (op.kind == "elems_drop_struct") {
       // MULTI-LEVEL array-element deep-drop (#2649): release each element's
       // OWN rc fields before the element/buffer decs below free the boxes.
       // The helper calls __struct_drop_X, clobbering r9/r10/r11, so reload
       // box from the frameless stack arg 8(%rsp) afterwards.
-      var esan: string = asmcore.sanitize_label(op.ty);
+      let esan: string = asmcore.sanitize_label(op.ty);
       s = s.need("struct_arr_elems_drop:" + op.ty);
       s = s.write("    movq " + off + "(%r11), %rdi\n");  // buffer
       s = s.write("    pushq %rdi\n");
@@ -10056,7 +10056,7 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
     } else if (op.kind == "elems_drop_enum") {
       // The ENUM-array sibling: shape-dispatch each element and dec its
       // enum_walk_payload_field payloads before the box decs below.
-      var easan: string = asmcore.sanitize_label(op.ty);
+      let easan: string = asmcore.sanitize_label(op.ty);
       s = s.need("enum_arr_elems_drop:" + op.ty);
       s = s.write("    movq " + off + "(%r11), %rdi\n");  // buffer
       s = s.write("    pushq %rdi\n");
@@ -10081,7 +10081,7 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
       // graph is a DAG. __fern_arr_dec / __fern_rc_is_unique preserve %r11,
       // but __struct_drop_<ty> CLOBBERS it, so reload box from the stable
       // stack arg 8(%rsp) after the call.
-      var fsan: string = asmcore.sanitize_label(op.ty);
+      let fsan: string = asmcore.sanitize_label(op.ty);
       s = s.need("struct_drop:" + op.ty);
       s = s.write("    movq " + off + "(%r11), %rax\n");  // inner = box.field_k
       s = s.write("    cmpq $0x10000, %rax\n");  // null / low -> skip field-release
@@ -10101,7 +10101,7 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
       // A direct enum field's live-variant rc payloads; __enum_drop_ applies
       // the rc==1 gate and the null guard itself, and the arr_dec directive
       // that follows frees the enum box. It clobbers %r11, so reload the box.
-      var edsan: string = asmcore.sanitize_label(op.ty);
+      let edsan: string = asmcore.sanitize_label(op.ty);
       s = s.need("enum_drop:" + op.ty);
       s = s.write("    movq " + off + "(%r11), %rax\n");  // enum box = box.field_k
       s = s.write("    pushq %rax\n");
@@ -10153,7 +10153,7 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
 // release, exactly as the direct-field deep-drop does. `.weak`, per-unit, needs
 // __struct_drop_<E> so its body co-emits.
 function emit_ir_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asmcore.EmitState {
-  var san: string = asmcore.sanitize_label(ety);
+  let san: string = asmcore.sanitize_label(ety);
   s = s.need("struct_drop:" + ety);
   s = s.write(".weak __fn___struct_arr_elems_drop_" + san + "\n");
   s = s.write("__fn___struct_arr_elems_drop_" + san + ":\n");
@@ -10222,21 +10222,21 @@ function emit_ir_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string): a
 // Shared by the array element walk and the single-box __enum_drop_ below, so a
 // direct enum field and an enum array element release identically (#8567).
 function emit_ir_enum_variant_payload_decs(own s: asmcore.EmitState, ety: string, reg: string, lp: string, done: string): asmcore.EmitState {
-  var vi: i32 = 0;
-  var vlabel: i32 = 0;
+  let vi: i32 = 0;
+  let vlabel: i32 = 0;
   while (vi < s.struct_decls.decls.len()) {
     if (s.struct_decls.decls[vi].enum_owner == ety) {
-      var offs: i32[] = irtables.enum_walk_payload_offsets(s.struct_decls, s.struct_decls.decls[vi].name);
+      let offs: i32[] = irtables.enum_walk_payload_offsets(s.struct_decls, s.struct_decls.decls[vi].name);
       if (offs.len() > 0) {
-        var vlo_name: string = s.struct_decls.decls[vi].name;
-        var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, vlo_name);
+        let vlo_name: string = s.struct_decls.decls[vi].name;
+        let vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, vlo_name);
         s = vlo.state;
-        var vls: string = util.i32_to_string(vlabel);
+        let vls: string = util.i32_to_string(vlabel);
         s = s.write("    movq (" + reg + "), %rax\n");  // shape ptr @0
         s = s.write("    leaq " + vlo.label + "(%rip), %rcx\n");
         s = s.write("    cmpq %rcx, %rax\n");
         s = s.write("    jne " + lp + "_v" + vls + "\n");
-        var oi: i32 = 0;
+        let oi: i32 = 0;
         while (oi < offs.len()) {
           s = s.write("    movq " + util.i32_to_string(offs[oi]) + "(" + reg + "), %rdi\n");
           s = s.write("    pushq %rdi\n");
@@ -10262,7 +10262,7 @@ function emit_ir_enum_variant_payload_decs(own s: asmcore.EmitState, ety: string
 //
 // %rbx survives the calls; the low-address test doubles as the null guard.
 function emit_ir_enum_drop_one(s: asmcore.EmitState, ety: string): asmcore.EmitState {
-  var san: string = asmcore.sanitize_label(ety);
+  let san: string = asmcore.sanitize_label(ety);
   s = s.write(".weak __fn___enum_drop_" + san + "\n");
   s = s.write("__fn___enum_drop_" + san + ":\n");
   s = s.write("    pushq %rbx\n");
@@ -10283,7 +10283,7 @@ function emit_ir_enum_drop_one(s: asmcore.EmitState, ety: string): asmcore.EmitS
 }
 
 function emit_ir_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asmcore.EmitState {
-  var san: string = asmcore.sanitize_label(ety);
+  let san: string = asmcore.sanitize_label(ety);
   s = s.write(".weak __fn___enum_arr_elems_drop_" + san + "\n");
   s = s.write("__fn___enum_arr_elems_drop_" + san + ":\n");
   s = s.write("    pushq %rbx\n");
@@ -10335,20 +10335,20 @@ function emit_ir_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asm
 // entry-only and gated on the helper's need by the caller; emit_runtime_globls
 // already `.globl`s the symbol so the per-module link resolves it.
 function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.EmitState {
-  var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
-  var fns: parser.FuncDecl[] = m.funcs;
+  let m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
+  let fns: parser.FuncDecl[] = m.funcs;
   // String literals the helper body interns (e.g. "\n" in str_lines's
   // s.split("\n")) land in string_lits AFTER the main .rodata pool was emitted
   // (this runs in the entry block, past the pool), so flush any NEW ones here in
   // their own .rodata block then return to .text. A literal-free helper (the
   // str_eq / str_cmp / str_trim bodies) adds none, so
   // this is a no-op for them. Mirrors the AST emit_runtime_fern_fn flush.
-  var vsigs: irverify.NameIndex = irtables.fn_sig_index(fns);
-  var lit0: i32 = s.string_lits.len();
-  var agg0: i32 = s.const_aggs.len();
-  var sh0: i32 = s.shape_lits.len();
-  var bodies: irtables.LowerResult[] = s.rt_lower(src);
-  var i: i32 = 0;
+  let vsigs: irverify.NameIndex = irtables.fn_sig_index(fns);
+  let lit0: i32 = s.string_lits.len();
+  let agg0: i32 = s.const_aggs.len();
+  let sh0: i32 = s.shape_lits.len();
+  let bodies: irtables.LowerResult[] = s.rt_lower(src);
+  let i: i32 = 0;
   while (i < fns.len()) {
     s = emit_function_via_ir_pre(bodies[i], fns[i], s, vsigs);
     i = i + 1;
@@ -10361,7 +10361,7 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   }
   if (s.string_lits.len() > lit0) {
     s = s.write("    .section .rodata\n");
-    var li: i32 = lit0;
+    let li: i32 = lit0;
     while (li < s.string_lits.len()) {
       s = s.write(asmcore.str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
       li = li + 1;
@@ -10398,10 +10398,10 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   // The IR verify gate's callee-arity index, derived ONCE over the
   // whole-program all_funcs for the reason the registries above are: a
   // per-function rebuild would be O(n^2) on the compiler's own sources.
-  var vsigs: irverify.NameIndex = irtables.fn_sig_index(all_funcs);
+  let vsigs: irverify.NameIndex = irtables.fn_sig_index(all_funcs);
   // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
   // window that overshoots the module length can't index past mod.funcs.
-  var hh: i32 = hi;
+  let hh: i32 = hi;
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
   }
@@ -10409,9 +10409,9 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
     ircore.check_fip_claims(mod.funcs, lo, hh, cache);
   }
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: asmcore.unit_leaves(mod, lo, hh, cache) };
-  var fi: i32 = lo;
+  let fi: i32 = lo;
   while (fi < hh) {
-    var r: irtables.LowerResult = ircore.produced(cache, fi, mod.funcs[fi]);
+    let r: irtables.LowerResult = ircore.produced(cache, fi, mod.funcs[fi]);
     // A template the substitution superseded has no body: its instances
     // are on the cache tail (emit_named_bodies).
     if (r.superseded) {
@@ -10423,7 +10423,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
     // against it. The label is computed exactly as emit_function_via_ir_pre
     // writes it below (receiver-qualified for methods).
     if (globl_defs) {
-      var gname: string = mod.funcs[fi].name;
+      let gname: string = mod.funcs[fi].name;
       if (mod.funcs[fi].receiver_type.len() > 0) {
         gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name;
       }
@@ -10439,7 +10439,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
 }
 
 function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
-  var xi: i32 = from;
+  let xi: i32 = from;
   while (xi < cache.len()) {
     if (!s.has_named(cache[xi].name)) {
       s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vsigs).with_named(cache[xi].name);
@@ -10459,7 +10459,7 @@ function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.
 // need-set is exact, but discards the asm (strbuf_reset) and reads `needed`.
 pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, cache: irtables.LowerResult[], base: fnsigs.FnSigs): string[] {
   strbuf_reset();
-  var s: asmcore.EmitState = asmcore.new_state();
+  let s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs }, all_funcs);
   s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, false);
   s = s.close_needs();
@@ -10476,7 +10476,7 @@ pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl
 // fused gate+emit used to return ahead of the type check, so every IR-eligible
 // module skipped it and an ill-typed one miscompiled silently.
 pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): string {
-  var parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
+  let parse_errs: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
   if (parse_errs.len() > 0) {
     eprint(util.format_diags(parse_errs));
     exit(1);
@@ -10486,15 +10486,15 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
   // the annotate pass, and asmcore's Display gate has to read the module the
   // checker rewrote (`print(q)` to `q.to_string()`, docs/TRAITS.md §3a) or
   // it refuses every non-string argument.
-  var tm: parser.Module = checker.ensure_annotated(mod);
-  var check_errs: util.Diag[] = asmcore.entry_check_errors(tm);
+  let tm: parser.Module = checker.ensure_annotated(mod);
+  let check_errs: util.Diag[] = asmcore.entry_check_errors(tm);
   if (check_errs.len() > 0) {
     eprint(util.format_diags(check_errs));
     exit(1);
     return "";
   }
-  var lm: parser.Module = ircore.sub_lifted(sub, tm);
-  var g: string = emit_module_ir_gated_sub(lm, sub);
+  let lm: parser.Module = ircore.sub_lifted(sub, tm);
+  let g: string = emit_module_ir_gated_sub(lm, sub);
   if (g != "") {
     return g;
   }
@@ -10511,7 +10511,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
 pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub): string {
   // A main-less module is admitted: the unit's `_start` exits 0 instead of
   // calling a __fn_main that does not exist (see its has_main branch).
-  var g: ircore.Gated = ircore.gate_program(mod, sub);
+  let g: ircore.Gated = ircore.gate_program(mod, sub);
   if (!g.ok) {
     return "";
   }
@@ -10529,14 +10529,14 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // ret types before lowering; infer_ret_types_module is idempotent, so this
   // re-infer is a no-op there and the cache indices stay aligned.)
   strbuf_reset();
-  var s: asmcore.EmitState = asmcore.new_state();
+  let s: asmcore.EmitState = asmcore.new_state();
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891).
   s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt }, all_funcs);
   // A unit never passes emit_module_or_error_sub's check, so the Display gate
   // runs here: a `print(xs)` nothing gives a `to_string` would otherwise hand
   // the string-only runtime helper a raw pointer (#9945).
-  var derrs: util.Diag[] = asmcore.display_errs_module(mod, s);
+  let derrs: util.Diag[] = asmcore.display_errs_module(mod, s);
   if (derrs.len() > 0) {
     eprint(util.format_diags(derrs));
     exit(1);
@@ -10570,8 +10570,8 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // the scan (three whole-program passes) once per emitted unit, and it is
   // already the most-repeated analysis in a compile: 7 runs per compile
   // against the nested-struct scan's 1.
-  var sfok: string[] = b.strfld_ok_types;
-  var sfoi: i32 = 0;
+  let sfok: string[] = b.strfld_ok_types;
+  let sfoi: i32 = 0;
   while (sfoi < sfok.len()) {
     s = s.need("strfldok:" + sfok[sfoi]);
     sfoi = sfoi + 1;
@@ -10583,8 +10583,8 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // ran borrowable_params_interproc for. Recomputing it here cost 5.8x on the
   // per-module emit-all's gen0 (129 s -> 745 s): an interproc fixpoint is ~9
   // passes over every function, and this runs once per emitted unit.
-  var nfok: string[] = fnsigs.structfld_reclaim_ok_types_of(all_funcs, all_structs, b.borrowable_params);
-  var nfoi: i32 = 0;
+  let nfok: string[] = fnsigs.structfld_reclaim_ok_types_of(all_funcs, all_structs, b.borrowable_params);
+  let nfoi: i32 = 0;
   while (nfoi < nfok.len()) {
     s = s.need("structfldok:" + nfok[nfoi]);
     nfoi = nfoi + 1;
@@ -10602,7 +10602,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // need-gated argc/argv save below fires even when only a LIBRARY module
   // (not the entry itself) calls args(). For the single-unit path extra_needs
   // is empty, so this is inert there.
-  var en: i32 = 0;
+  let en: i32 = 0;
   while (en < extra_needs.len()) {
     s = s.need(extra_needs[en]);
     en = en + 1;
@@ -10670,25 +10670,25 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // would be undefined (the runtime emits AFTER the pool). Mirrors the
   // retired AST emitters' FileStat pre-intern. Gated on the stat need.
   if (s.has_need("stat") || s.has_need("lstat") || s.has_need("access") || s.has_need("fd_stat")) {
-    var fsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FileStat");
+    let fsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FileStat");
     s = fsPre.state;
   }
   // Pre-intern "FsStat" for __fern_statfs's shape label, same reasoning as
   // FileStat above. Its own gate: a stat-only program has no FsStat to build.
   if (s.has_need("statfs")) {
-    var fvPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FsStat");
+    let fvPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FsStat");
     s = fvPre.state;
   }
   // Pre-intern "WinSize" for __fern_window_size's shape label, same
   // reasoning as FsStat above.
   if (s.has_need("window_size")) {
-    var wsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "WinSize");
+    let wsPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "WinSize");
     s = wsPre.state;
   }
   // Pre-intern "ProcessResult" for the __fern_subprocess runtime's shape label
   // (same reasoning as FileStat above). Gated on the subprocess need.
   if (s.has_need("subprocess")) {
-    var prPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "ProcessResult");
+    let prPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "ProcessResult");
     s = prPre.state;
   }
   // .rodata: each interned string literal as a labelled `.ascii` directive
@@ -10696,7 +10696,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // .S<idx> data pointer resolves. string_lits was populated by const_str.
   if (s.string_lits.len() > 0) {
     s = s.write("    .section .rodata\n");
-    var li: i32 = 0;
+    let li: i32 = 0;
     while (li < s.string_lits.len()) {
       s = s.write(asmcore.str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
       li = li + 1;
@@ -10738,17 +10738,17 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
 // so the runtime is emitted into a capture and emitted again, from the state
 // before it, with the needs it added, until they stop growing.
 function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
-  var s: asmcore.EmitState = s0;
-  var settled: boolean = false;
-  var out: asmcore.EmitState = s0;
+  let s: asmcore.EmitState = s0;
+  let settled: boolean = false;
+  let out: asmcore.EmitState = s0;
   while (!settled) {
     s = s.close_needs();
-    var h: usize = buf_new(65536);
-    var t: asmcore.EmitState = emit_entry_runtime(asmcore.EmitState { ...s, capture: h });
-    var text: string = buf_take(h);
+    let h: usize = buf_new(65536);
+    let t: asmcore.EmitState = emit_entry_runtime(asmcore.EmitState { ...s, capture: h });
+    let text: string = buf_take(h);
     if (t.needed.len() == s.needed.len()) {
       settled = true;
-      var back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture };
+      let back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture };
       out = back.write(text);
     } else {
       s = asmcore.EmitState { ...s0, needed: t.needed };
@@ -11116,7 +11116,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // need-marked by op_temp_dir). Heap-dependent (present above); x86-64-only.
   if (needs_fs_runtime(s)) {
     s = s.write("    .text\n");
-    var fs_src: string = asmcore.rt_src_io_error("x86_64");
+    let fs_src: string = asmcore.rt_src_io_error("x86_64");
     if (s.has_need("stat")) {
       fs_src = fs_src + " " + asmcore.rt_src_stat("x86_64");
     }

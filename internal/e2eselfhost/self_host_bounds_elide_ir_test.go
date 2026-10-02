@@ -22,56 +22,56 @@ var boundsElideCases = []struct {
 }{
 	// Plain while-sum: 3+5+7+11+13 = 39. The canonical elided shape.
 	{"while_sum", `function main(): i32 {
-    var xs: i32[] = [3, 5, 7, 11, 13];
-    var s: i32 = 0;
-    var i: i32 = 0;
+    let xs: i32[] = [3, 5, 7, 11, 13];
+    let s: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { s = s + xs[i]; i = i + 1; }
     return s;
 }`},
 	// Step by 2: indices 0,2,4 of [1,100,2,200,3] = 1+2+3 = 6. Monotonic +2.
 	{"while_step_two", `function main(): i32 {
-    var xs: i32[] = [1, 100, 2, 200, 3];
-    var s: i32 = 0;
-    var i: i32 = 0;
+    let xs: i32[] = [1, 100, 2, 200, 3];
+    let s: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { s = s + xs[i]; i = i + 2; }
     return s;
 }`},
 	// Read nested in an `if` inside the body: evens of [4,9,2,7,6,1] = 12. Marking
 	// descends into the nested block (which does not assign i).
 	{"nested_if_access", `function main(): i32 {
-    var xs: i32[] = [4, 9, 2, 7, 6, 1];
-    var e: i32 = 0;
-    var i: i32 = 0;
+    let xs: i32[] = [4, 9, 2, 7, 6, 1];
+    let e: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { if (xs[i] % 2 == 0) { e = e + xs[i]; } i = i + 1; }
     return e;
 }`},
 	// Two independent len-bounded loops in the same function, each with its own
 	// index: 2+3+4 + 10+20+30+40 = 109. Both elide.
 	{"two_loops", `function main(): i32 {
-    var xs: i32[] = [2, 3, 4];
-    var ys: i32[] = [10, 20, 30, 40];
-    var a: i32 = 0;
-    var i: i32 = 0;
+    let xs: i32[] = [2, 3, 4];
+    let ys: i32[] = [10, 20, 30, 40];
+    let a: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { a = a + xs[i]; i = i + 1; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < ys.len()) { a = a + ys[j]; j = j + 1; }
     return a;
 }`},
 	// i64 elements exercise op_arr_get_i64_nc: 10+20+30+40 = 100.
 	{"i64_elems", `function main(): i32 {
-    var xs: i64[] = [10, 20, 30, 40];
-    var s: i64 = 0;
-    var i: i32 = 0;
+    let xs: i64[] = [10, 20, 30, 40];
+    let s: i64 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { s = s + xs[i]; i = i + 1; }
     return s as i32;
 }`},
 	// arr reassigned in the body → NOT elided; result stays correct (only xs[0]=5
 	// is read before `xs = ys` shrinks the loop). Guards the arr-invariant bail.
 	{"arr_reassigned_not_elided", `function main(): i32 {
-    var xs: i32[] = [5, 6, 7];
-    var ys: i32[] = [9];
-    var s: i32 = 0;
-    var i: i32 = 0;
+    let xs: i32[] = [5, 6, 7];
+    let ys: i32[] = [9];
+    let s: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { s = s + xs[i]; xs = ys; i = i + 1; }
     return s;
 }`},
@@ -81,9 +81,9 @@ var boundsElideCases = []struct {
 	// 2t then +xs[i] per round: 1, 4, 11, 26.
 	{"at_binder_shadow_not_elided", `enum W { One(i32), Two(i32) }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let xs: i32[] = [1, 2, 3, 4];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
         match (W.One(t)) {
             i @ W.One(v) => { t = t + v; },
@@ -100,11 +100,11 @@ function main(): i32 {
 	// the answer is the plain sum, 10.
 	{"destructure_shadow_not_elided", `function pair(): (i32, i32) { return (0, 9); }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let xs: i32[] = [1, 2, 3, 4];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) {
-        if (t > 100) { var (i, y) = pair(); t = t + i + y; }
+        if (t > 100) { let (i, y) = pair(); t = t + i + y; }
         t = t + xs[i];
         i = i + 1;
     }
@@ -168,8 +168,8 @@ func TestSelfHostBoundsElideIRX86_64(t *testing.T) {
 	// Elision-fired differential: the elidable guard drops exactly one bounds
 	// check (one fewer __fern_oob_abort) vs a twin whose bound is a separate `n`.
 	t.Run("elision_fired_differential", func(t *testing.T) {
-		elide := `function main(): i32 { var xs: i32[] = [3, 5, 7, 11, 13]; var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }`
-		noElide := `function main(): i32 { var xs: i32[] = [3, 5, 7, 11, 13]; var n: i32 = xs.len(); var s: i32 = 0; var i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
+		elide := `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }`
+		noElide := `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let n: i32 = xs.len(); let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
 		got := strings.Count(emit(elide), "__fern_oob_abort")
 		base := strings.Count(emit(noElide), "__fern_oob_abort")
 		if got >= base {
@@ -186,7 +186,7 @@ func TestSelfHostBoundsElideIRX86_64(t *testing.T) {
 	// Safety: a read AFTER the increment is NOT marked (i can reach len), so the
 	// checked op still traps (exit 134) instead of reading past the end.
 	t.Run("read_after_increment_stays_checked", func(t *testing.T) {
-		src := `function main(): i32 { var xs: i32[] = [1, 2, 3]; var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { i = i + 1; s = s + xs[i]; } return s; }`
+		src := `function main(): i32 { let xs: i32[] = [1, 2, 3]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { i = i + 1; s = s + xs[i]; } return s; }`
 		bin := buildBin(t, gcc, dir, "belide_after_incr", emit(src))
 		if code := runExit(t, bin); code != 134 {
 			t.Errorf("read-after-increment exited %d, want 134 (bounds check must remain)", code)

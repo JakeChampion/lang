@@ -60,7 +60,7 @@ function pick[T](cond: boolean, a: T, b: T): T { ... }
 function main(): i32 {
     // Type-checks. Monomorph mangles to `pick__Result` with bare-
     // Result clone params; re-check rejects.
-    var r: Result[i32, i32] = pick(true, Ok(1), Err(2));
+    let r: Result[i32, i32] = pick(true, Ok(1), Err(2));
     return 0;
 }
 ```
@@ -78,7 +78,7 @@ the inner args, so the re-check fails with
 `TypeArgs` is computed but before it's returned, refine using the
 destination type when present:
 
-- `var x: T_dest = call(...)` → unify `T_dest` against the call's
+- `let x: T_dest = call(...)` → unify `T_dest` against the call's
   declared return type with the call's `sub` map, then re-stamp
   `TypeArgs`.
 - Similarly for `return call(...)` against the enclosing fn's

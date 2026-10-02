@@ -29,15 +29,15 @@ var tryFailCleanupIRCases = []struct {
 	// Owned i32[] live across a failing `?` — reclaimed => extra growth ~0.
 	{"try-fail-array-reclaimed",
 		`function fails(): Option[i32] { return None; }
-function step_bare(): Option[i32] { var x: i32 = fails()?; return Some(x); }
-function step_owned(): Option[i32] { var owned: i32[] = [1, 2, 3, 4, 5]; var x: i32 = fails()?; return Some(x + owned[0]); }
+function step_bare(): Option[i32] { let x: i32 = fails()?; return Some(x); }
+function step_owned(): Option[i32] { let owned: i32[] = [1, 2, 3, 4, 5]; let x: i32 = fails()?; return Some(x + owned[0]); }
 function main(): i32 {
-    var b0: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b0: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 20000) { match (step_bare()) { Some(_) => {}, None => {} } i = i + 1; }
-    var base: i32 = (__heap_bump_bytes() as i32) - b0;
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let base: i32 = (__heap_bump_bytes() as i32) - b0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 20000) { match (step_owned()) { Some(_) => {}, None => {} } j = j + 1; }
     if ((__heap_bump_bytes() as i32) - b1 - base < 100000) { return 7; }
     return 1;
@@ -46,15 +46,15 @@ function main(): i32 {
 	// the sweep.
 	{"try-fail-string-reclaimed",
 		`function fails(): Option[i32] { return None; }
-function step_bare(): Option[i32] { var x: i32 = fails()?; return Some(x); }
-function step_owned(): Option[i32] { var owned: string = "abcdefghijklmnop" + "!"; var x: i32 = fails()?; return Some(x + owned.len()); }
+function step_bare(): Option[i32] { let x: i32 = fails()?; return Some(x); }
+function step_owned(): Option[i32] { let owned: string = "abcdefghijklmnop" + "!"; let x: i32 = fails()?; return Some(x + owned.len()); }
 function main(): i32 {
-    var b0: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let b0: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < 20000) { match (step_bare()) { Some(_) => {}, None => {} } i = i + 1; }
-    var base: i32 = (__heap_bump_bytes() as i32) - b0;
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let base: i32 = (__heap_bump_bytes() as i32) - b0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 20000) { match (step_owned()) { Some(_) => {}, None => {} } j = j + 1; }
     if ((__heap_bump_bytes() as i32) - b1 - base < 100000) { return 7; }
     return 1;
@@ -64,7 +64,7 @@ function main(): i32 {
 	// the failure block, under the return value already on the operand stack).
 	{"try-success-value",
 		`function ok(): Option[i32] { return Some(41); }
-function step(): Option[i32] { var owned: i32[] = [1]; var x: i32 = ok()?; return Some(x + owned[0]); }
+function step(): Option[i32] { let owned: i32[] = [1]; let x: i32 = ok()?; return Some(x + owned[0]); }
 function main(): i32 { match (step()) { Some(v) => { return v - 35; }, None => { return 1; } } }`, 7},
 }
 

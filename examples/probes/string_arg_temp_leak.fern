@@ -17,7 +17,7 @@
 //    dec fires immediately. `pad_start` really can hand its receiver back:
 //
 //        pub function (s: string) pad_start(n: i32, ch: string): string {
-//            var sl: i32 = s.len();
+//            let sl: i32 = s.len();
 //            if (sl >= n) { return s; }        // <-- result IS the argument
 //
 //    But that alias is COUNTED: `return <param>` emits the return-transfer inc,
@@ -58,11 +58,11 @@ import "std/i32";
 import "std/string";
 
 function temp(): i32 {
-  var acc: i32 = 0;
-  var k: i32 = 1;
+  let acc: i32 = 0;
+  let k: i32 = 1;
   while (k < 40) {
-    var s: string = (k * 66049).to_binary().pad_start(40, "0");
-    var i: i32 = 0;
+    let s: string = (k * 66049).to_binary().pad_start(40, "0");
+    let i: i32 = 0;
     while (i < s.len()) {
       acc = (acc * 31 + s[i] as i32) % 100003;
       i = i + 1;
@@ -73,12 +73,12 @@ function temp(): i32 {
 }
 
 function bound(): i32 {
-  var acc: i32 = 0;
-  var k: i32 = 1;
+  let acc: i32 = 0;
+  let k: i32 = 1;
   while (k < 40) {
-    var h: string = (k * 66049).to_binary();
-    var s: string = h.pad_start(40, "0");
-    var i: i32 = 0;
+    let h: string = (k * 66049).to_binary();
+    let s: string = h.pad_start(40, "0");
+    let i: i32 = 0;
     while (i < s.len()) {
       acc = (acc * 31 + s[i] as i32) % 100003;
       i = i + 1;

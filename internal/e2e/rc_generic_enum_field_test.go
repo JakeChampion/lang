@@ -58,8 +58,8 @@ function (a: Acc) grow(piece: string): Acc {
 }
 
 function main(): i32 {
-    var a: Acc = fresh();
-    var i: i32 = 0;
+    let a: Acc = fresh();
+    let i: i32 = 0;
     while (i < 2000) {
         a = a.grow("ab");
         i = i + 1;
@@ -93,8 +93,8 @@ const genericEnumFieldAliasSrc = `struct B { buf: string, tag: Option[string], n
 function heap(s: string): string { return s + ""; }
 
 function main(): i32 {
-    var b: B = B { buf: heap("0123456789abcdefghij"), tag: Some("t"), n: 1 };
-    var al: B = b;
+    let b: B = B { buf: heap("0123456789abcdefghij"), tag: Some("t"), n: 1 };
+    let al: B = b;
     b = B { ...b, buf: b.buf + "X", n: b.n + 1 };
     print(al.buf);
     print(b.buf);
@@ -236,10 +236,10 @@ function (h: H) grow(s: string): H {
 }
 
 function main(): i32 {
-    var mm: Map[string, i32] = map_new(8);
+    let mm: Map[string, i32] = map_new(8);
     mm = mm.insert("k", 3);
-    var h: H = H { buf: "", m: Some(mm), n: 0 };
-    var i: i32 = 0;
+    let h: H = H { buf: "", m: Some(mm), n: 0 };
+    let i: i32 = 0;
     while (i < %d) { h = h.grow("cccc"); i = i + 1; }
     if (h.buf.len() != %d) { return 1; }
     if (h.n != %d) { return 2; }

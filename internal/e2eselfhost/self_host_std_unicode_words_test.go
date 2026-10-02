@@ -19,7 +19,7 @@ import "testing"
 // `uniseg` oracle the table data does.
 const unicodeWordsModMain = `import "std/unicode" as unicode;
 function main(): i32 {
-    var s: string = "Hello, world! 42 times.";
+    let s: string = "Hello, world! 42 times.";
     return unicode.word_count(s) * 10 + unicode.word_segments(s).len();
 }
 `

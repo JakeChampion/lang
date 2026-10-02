@@ -35,9 +35,9 @@ func TestSelfHostStreqHelperGap(t *testing.T) {
 function mk(c: i32): string { return string_from_bytes_unchecked([c as u8]); }
 function streq(a: string, b: string): boolean { return a == b; }
 function main(): i32 {
-    var a: string = mk(120);
-    var b: string = mk(120);
-    var d: string = mk(121);
+    let a: string = mk(120);
+    let b: string = mk(120);
+    let d: string = mk(121);
     if (!streq(a, b)) { return 1; }
     if (streq(a, d)) { return 2; }
     if (a == d) { return 3; }

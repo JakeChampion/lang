@@ -48,7 +48,7 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 		"    }\n" +
 		"}\n" +
 		"function main(): i32 {\n" +
-		"    var e: IoError = NotFound(\"x\");\n" +
+		"    let e: IoError = NotFound(\"x\");\n" +
 		"    return helper.add(classify(e), 41);\n" +
 		"}\n"
 

@@ -17,7 +17,7 @@ import (
 // mapOverReleaseSrc drops a handle whose count is already zero.
 const mapOverReleaseSrc = `import "core/map";
 function main(): i32 {
-    var h: usize = map_new_impl(4, 0, 0);
+    let h: usize = map_new_impl(4, 0, 0);
     __store_i32(h - 8, 0);
     __map_drop_impl(h);
     return __rc_underflow_count();
@@ -26,7 +26,7 @@ function main(): i32 {
 // mapDoubleDropSrc drops the same handle twice; the first drop frees it.
 const mapDoubleDropSrc = `import "core/map";
 function main(): i32 {
-    var h: usize = map_new_impl(4, 0, 0);
+    let h: usize = map_new_impl(4, 0, 0);
     __map_drop_impl(h);
     __map_drop_impl(h);
     return 7;

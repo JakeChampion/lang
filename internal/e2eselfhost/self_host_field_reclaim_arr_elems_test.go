@@ -13,7 +13,7 @@ import (
 // about a struct's ARRAY field whose ELEMENTS are pointer-shaped.
 // __struct_drop_<T> (scope exit) is_unique-gates the buffer, walks it dec'ing each
 // element box, then decs the buffer; __field_reclaim_<T> (the consume-rebind path)
-// dec'd the buffer only. So `var b: Bag = Bag { es: [P { .. }, P { .. }], .. }`
+// dec'd the buffer only. So `let b: Bag = Bag { es: [P { .. }, P { .. }], .. }`
 // inside a loop stranded one element box per element on every iteration but the
 // last — the value that goes out of scope is reclaimed, every value that is
 // REBOUND leaks. The reclaim body now runs the same walk (and, for a deep-drop-ok
@@ -38,21 +38,21 @@ var fieldReclaimArrElemsCases = []struct {
 	{"structarr-field-rebind", `struct P { x: i32, y: i32 }
 struct Bag { es: P[], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var b: Bag = Bag { es: [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }], n: i };
+        let b: Bag = Bag { es: [P { x: i, y: i + 1 }, P { x: i + 2, y: i + 3 }], n: i };
         acc = (acc + b.n + b.es.len()) % 251;
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var b: Bag = Bag { es: [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }], n: j };
+        let b: Bag = Bag { es: [P { x: j, y: j + 1 }, P { x: j + 2, y: j + 3 }], n: j };
         acc = (acc + b.n + b.es.len()) % 251;
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -66,21 +66,21 @@ function main(): i32 {
 	{"structarr-field-rebind-elem-fields", `struct P { xs: i32[], a: i32 }
 struct Bag { es: P[], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var b: Bag = Bag { es: [P { xs: [i, i + 1], a: i }, P { xs: [i + 2], a: i + 3 }], n: i };
+        let b: Bag = Bag { es: [P { xs: [i, i + 1], a: i }, P { xs: [i + 2], a: i + 3 }], n: i };
         acc = (acc + b.n + b.es.len()) % 251;
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var b: Bag = Bag { es: [P { xs: [j, j + 1], a: j }, P { xs: [j + 2], a: j + 3 }], n: j };
+        let b: Bag = Bag { es: [P { xs: [j, j + 1], a: j }, P { xs: [j + 2], a: j + 3 }], n: j };
         acc = (acc + b.n + b.es.len()) % 251;
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -94,13 +94,13 @@ function main(): i32 {
 	{"structarr-field-append-carry-safe", `struct Val { kind: i32, kids: i32[] }
 struct Doc { vals: Val[], root: i32 }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var d: Doc = Doc { vals: [], root: i };
-        var j: i32 = 0;
+        let d: Doc = Doc { vals: [], root: i };
+        let j: i32 = 0;
         while (j < 4) {
-            var v: Val = Val { kind: j, kids: [j, j + 1] };
+            let v: Val = Val { kind: j, kids: [j, j + 1] };
             d = Doc { ...d, vals: d.vals.append(v) };
             j = j + 1;
         }
@@ -120,21 +120,21 @@ function main(): i32 {
 	{"enumarr-field-rebind", `enum Shape { Circle(i32), Square(i32) }
 struct Bag { es: Shape[], n: i32 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var b: Bag = Bag { es: [Shape.Circle(i), Shape.Square(i + 1)], n: i };
+        let b: Bag = Bag { es: [Shape.Circle(i), Shape.Square(i + 1)], n: i };
         acc = (acc + b.n + b.es.len()) % 251;
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) {
-        var b: Bag = Bag { es: [Shape.Circle(j), Shape.Square(j + 1)], n: j };
+        let b: Bag = Bag { es: [Shape.Circle(j), Shape.Square(j + 1)], n: j };
         acc = (acc + b.n + b.es.len()) % 251;
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }

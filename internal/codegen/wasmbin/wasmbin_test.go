@@ -149,7 +149,7 @@ func TestEmitI32Arithmetic(t *testing.T) {
 }
 
 // TestEmitParamsAndLocals — `function add(a: i32, b: i32): i32 {
-// var t: i32 = a + b; return t }`. Exercises param indexing,
+// let t: i32 = a + b; return t }`. Exercises param indexing,
 // local declaration, OpStoreLocal/OpLoadLocal, and the function-
 // section / type-section path with non-empty params.
 func TestEmitParamsAndLocals(t *testing.T) {
@@ -389,7 +389,7 @@ func TestEmitIfElse(t *testing.T) {
 }
 
 //	TestEmitLoopBr — `function sum(n: i32): i32 {
-//	  var acc = 0; var i = 0;
+//	  let acc = 0; let i = 0;
 //	  loop {
 //	    if !(i < n) break;
 //	    acc = acc + i;

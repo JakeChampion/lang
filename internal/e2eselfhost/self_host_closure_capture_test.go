@@ -16,12 +16,12 @@ func closureArgBoxCases() []ownParamReleaseCase {
 function apply(f: (i32) => i32, i: i32): i32 { return f(i); }
 @noinline
 function round(i: i32): i32 {
-    var keep: i32[] = [5 + i, 6];
+    let keep: i32[] = [5 + i, 6];
     return apply((j: i32): i32 => j + keep[1], i);
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return x % 83;
@@ -34,19 +34,19 @@ function main(): i32 {
 function apply2(n: i32, f: (i32) => i32): i32 { return f(n) + f(n + 1); }
 @noinline
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var k: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) {
-        var keep: i32[] = [i, k, 7];
-        var more: i32[] = [k * 2];
+        let keep: i32[] = [i, k, 7];
+        let more: i32[] = [k * 2];
         t = t + apply2(k, (j: i32): i32 => j + keep[2] + more[0]);
         k = k + 1;
     }
     return t;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return x % 83;
@@ -72,13 +72,13 @@ function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-
 function usr(f: (i32) => i32, i: i32): i32 { return f(i); }
 @noinline
 function round(i: i32): i32 {
-    var keep: string[] = [w(i), w(i + 1)];
-    var f = (j: i32): i32 => j + keep[1].len();
+    let keep: string[] = [w(i), w(i + 1)];
+    let f = (j: i32): i32 => j + keep[1].len();
     return usr(f, i);
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return x % 83;
@@ -92,13 +92,13 @@ function main(): i32 {
 function usr(f: (i32) => i32, i: i32): i32 { return f(i); }
 @noinline
 function round(i: i32): i32 {
-    var keep: i32[][] = [[5 + i], [6], [7]];
-    var f = (j: i32): i32 => j + keep[1][0] + keep.len();
+    let keep: i32[][] = [[5 + i], [6], [7]];
+    let f = (j: i32): i32 => j + keep[1][0] + keep.len();
     return usr(f, i);
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return x % 83;
@@ -115,14 +115,14 @@ function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-
 function usr(f: (i32) => i32, i: i32): i32 { return f(i); }
 @noinline
 function round(keep: string[], i: i32): i32 {
-    var f = (j: i32): i32 => j + keep[0].len();
+    let f = (j: i32): i32 => j + keep[0].len();
     return usr(f, i);
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var keep: string[] = [w(i), w(i + 1)];
+        let keep: string[] = [w(i), w(i + 1)];
         x = x + round(keep, i);
         i = i + 1;
     }
@@ -141,13 +141,13 @@ function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-
 function apply(f: (i32) => i32, i: i32): i32 { return f(i); }
 @noinline
 function round(i: i32): i32 {
-    var s: string = w(i);
-    var rows: i32[][] = [[i], [2]];
+    let s: string = w(i);
+    let rows: i32[][] = [[i], [2]];
     return apply((j: i32): i32 => j + s.len() + rows[1][0], i);
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return x % 83;
@@ -160,18 +160,18 @@ function main(): i32 {
 			name: "captured_arrarr_param_row_returned",
 			src: `@noinline
 function usr(f: (i32) => i32[], i: i32): i32 {
-    var g: i32[] = f(i);
+    let g: i32[] = f(i);
     return g.len() + g[0];
 }
 @noinline
 function round(keep: i32[][], i: i32): i32 {
-    var f = (j: i32): i32[] => keep[0];
+    let f = (j: i32): i32[] => keep[0];
     return usr(f, i);
 }
 function main(): i32 {
-    var keep: i32[][] = [[5], [6], [7]];
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let keep: i32[][] = [[5], [6], [7]];
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round(keep, i); i = i + 1; }
     if (keep[1][0] != 6) { return 77; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -197,9 +197,9 @@ function usr(f: (i32) => i32[], i: i32): i32 {
 @noinline
 function keepref(keep: i32[], i: i32): i32 { return usr((j: i32): i32[] => keep, i); }
 function main(): i32 {
-    var keep: i32[] = [7, 8];
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let keep: i32[] = [7, 8];
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         x = x + usr((j: i32): i32[] => [j, j + 1], i) + keepref(keep, i);
         i = i + 1;
@@ -229,9 +229,9 @@ function over(g: (i32[]) => i32[], xs: i32[]): i32 {
     return g(xs).len();
 }
 function main(): i32 {
-    var keep: i32[] = [7, 8];
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let keep: i32[] = [7, 8];
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
         x = x + usr(pair, i) + over(same, keep);
         i = i + 1;
@@ -256,18 +256,18 @@ func closureOwnedCaptureCases() []ownParamReleaseCase {
 			name: "returned_closure_array_capture",
 			src: `@noinline
 function mk(i: i32): (i32) => i32 {
-    var keep: i32[] = [i, i + 1];
-    var f = (j: i32): i32 => keep[j];
+    let keep: i32[] = [i, i + 1];
+    let f = (j: i32): i32 => keep[j];
     return f;
 }
 @noinline
-function churn(i: i32): i32 { var z: i32[] = [i * 7, i * 9]; return z[0] + z[1]; }
+function churn(i: i32): i32 { let z: i32[] = [i * 7, i * 9]; return z[0] + z[1]; }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var g = mk(i);
-        var t: i32[] = [555, 666];
+        let g = mk(i);
+        let t: i32[] = [555, 666];
         if (g(1) != i + 1) { bad = bad + 1; }
         if (t[0] != 555) { bad = bad + 1; }
         i = i + 1;
@@ -285,19 +285,19 @@ function main(): i32 {
 function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-" + i.to_string(); }
 @noinline
 function mk(i: i32): (i32) => i32 {
-    var names: string[] = [w(i), w(i + 1)];
-    var rows: i32[][] = [[i], [i + 1]];
-    var tag: string = w(i + 2);
+    let names: string[] = [w(i), w(i + 1)];
+    let rows: i32[][] = [[i], [i + 1]];
+    let tag: string = w(i + 2);
     return (j: i32): i32 => names[j].len() + rows[j][0] + tag.len();
 }
 @noinline
-function churn(i: i32): i32 { var z: string[] = [w(i * 7), w(i * 9)]; return z[0].len() + z[1].len(); }
+function churn(i: i32): i32 { let z: string[] = [w(i * 7), w(i * 9)]; return z[0].len() + z[1].len(); }
 function main(): i32 {
-    var bad: i32 = 0;
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var g = mk(i);
+        let g = mk(i);
         x = x + churn(i);
         if (g(1) != w(i + 1).len() + i + 1 + w(i + 2).len()) { bad = bad + 1; }
         i = i + 1;
@@ -320,20 +320,20 @@ function main(): i32 {
 			// The two-closure shape #9657 was filed with.
 			name: "returned_closures_in_one_loop",
 			src: `function array_capture(n: i32): (i32) => i32 {
-    var xs: i32[] = [n, n + 1, n + 2];
+    let xs: i32[] = [n, n + 1, n + 2];
     return (x: i32): i32 => { return x + xs[0] + xs[2]; };
 }
 function two_captures(n: i32): (i32) => i32 {
-    var xs: i32[] = [n, n];
-    var ys: i32[] = [n, n];
+    let xs: i32[] = [n, n];
+    let ys: i32[] = [n, n];
     return (x: i32): i32 => { return x + xs[0] + ys[1]; };
 }
 function churn(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var f: (i32) => i32 = array_capture(i);
-        var g: (i32) => i32 = two_captures(i);
+        let f: (i32) => i32 = array_capture(i);
+        let g: (i32) => i32 = two_captures(i);
         t = t + f(0) % 3 + g(0) % 3;
         i = i + 1;
     }
@@ -362,16 +362,16 @@ function apply(f: (i32) => i32, i: i32): i32 { return f(i); }
 function keepit(f: (i32) => i32): Box { return Box { f: f }; }
 @noinline
 function round(i: i32): i32 {
-    var s: string = w(i);
-    var xs: i32[] = [i, 2];
-    var a: i32 = xs[1];
-    var f = (j: i32): i32 => j + s.len();
-    var b: Box = keepit(f);
+    let s: string = w(i);
+    let xs: i32[] = [i, 2];
+    let a: i32 = xs[1];
+    let f = (j: i32): i32 => j + s.len();
+    let b: Box = keepit(f);
     return a + b.f(1);
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return x % 83;
@@ -391,15 +391,15 @@ function apply(f: (i32) => i32, i: i32): i32 { return f(i); }
 function keepit(f: (i32) => i32): Box { return Box { f: f }; }
 @noinline
 function round(i: i32): i32 {
-    var s: string = w(i);
-    var xs: i32[] = [i, 2];
-    var a: i32 = xs[1];
-    var b: Box = keepit((j: i32): i32 => j + s.len());
+    let s: string = w(i);
+    let xs: i32[] = [i, 2];
+    let a: i32 = xs[1];
+    let b: Box = keepit((j: i32): i32 => j + s.len());
     return a + b.f(1);
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return x % 83;
@@ -414,14 +414,14 @@ function main(): i32 {
 function keepit(f: (i32) => i32): Box { return Box { f: f }; }
 @noinline
 function round(i: i32): i32 {
-    var xs: i32[] = [i, 2];
-    var f = (j: i32): i32 => j + xs[1];
-    var b: Box = keepit(f);
+    let xs: i32[] = [i, 2];
+    let f = (j: i32): i32 => j + xs[1];
+    let b: Box = keepit(f);
     return b.f(1);
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return x % 83;
@@ -436,13 +436,13 @@ function main(): i32 {
 function keepit(f: (i32) => i32): Box { return Box { f: f }; }
 @noinline
 function round(i: i32): i32 {
-    var xs: i32[] = [i, 2];
-    var f = (j: i32): i32 => j + xs[1];
+    let xs: i32[] = [i, 2];
+    let f = (j: i32): i32 => j + xs[1];
     return keepit(f).f(1);
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var i: i32 = 0;
+    let x: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { x = x + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return x % 83;
@@ -454,15 +454,15 @@ function main(): i32 {
 
 const closureUsizeCaptureSrc = `@noinline
 function mk(n: usize): (i32) => i32 {
-    var u: usize = n;
+    let u: usize = n;
     return (x: i32): i32 => x + ((u / 1000000) as i32);
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var g = mk(3000000000 as usize);
-        var h = mk(5000000017 as usize);
+        let g = mk(3000000000 as usize);
+        let h = mk(5000000017 as usize);
         t = (t + g(i) % 97 + h(i) % 89) % 1000;
         i = i + 1;
     }

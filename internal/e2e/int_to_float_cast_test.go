@@ -46,10 +46,10 @@ func TestIntExprCastToFloatConvertsTheResult(t *testing.T) {
 			lit := expand(c.expr, c.p, c.q)
 			vars := expand(c.expr, "p", "q")
 			src := "function main(): i32 {\n" +
-				"    var fromLiterals: " + c.ft + " = (" + lit + ") as " + c.ft + ";\n" +
-				"    var p: i32 = " + c.p + ";\n" +
-				"    var q: i32 = " + c.q + ";\n" +
-				"    var fromVars: " + c.ft + " = (" + vars + ") as " + c.ft + ";\n" +
+				"    let fromLiterals: " + c.ft + " = (" + lit + ") as " + c.ft + ";\n" +
+				"    let p: i32 = " + c.p + ";\n" +
+				"    let q: i32 = " + c.q + ";\n" +
+				"    let fromVars: " + c.ft + " = (" + vars + ") as " + c.ft + ";\n" +
 				"    if (fromLiterals != fromVars) { return 7; }\n" +
 				"    if (fromLiterals != " + c.want + ") { return 8; }\n" +
 				"    return 0;\n}\n"
@@ -65,9 +65,9 @@ func TestIntExprCastToFloatConvertsTheResult(t *testing.T) {
 // variable. Both forms in one program, exit non-zero on a disagreement.
 func TestNarrowingCastComputesAtI32(t *testing.T) {
 	src := `function main(): i32 {
-    var fromLiterals: u8 = ((0 - 7) / 2) as u8;
-    var z: i32 = 0;
-    var fromVars: u8 = ((z - 7) / 2) as u8;
+    let fromLiterals: u8 = ((0 - 7) / 2) as u8;
+    let z: i32 = 0;
+    let fromVars: u8 = ((z - 7) / 2) as u8;
     if (fromLiterals != fromVars) { return 7; }
     if (fromLiterals != 253) { return 8; }
     return 0;
@@ -83,9 +83,9 @@ func TestConstOperandCastToFloatIsSigned(t *testing.T) {
 	src := `const P: i32 = 3;
 const Q = 4;
 function main(): i32 {
-    var declared: f64 = (P - Q) as f64;
+    let declared: f64 = (P - Q) as f64;
     if (declared != 0.0 - 1.0) { return 7; }
-    var undeclared: f64 = (Q - P - 5) as f64;
+    let undeclared: f64 = (Q - P - 5) as f64;
     if (undeclared != 0.0 - 4.0) { return 8; }
     return 0;
 }
@@ -98,11 +98,11 @@ function main(): i32 {
 // fix, because the fix is precisely a carve-out from that rule.
 func TestBareLiteralCastToFloatStillSettlesAtTarget(t *testing.T) {
 	src := `function main(): i32 {
-    var a: f64 = 7 as f64;
+    let a: f64 = 7 as f64;
     if (a != 7.0) { return 7; }
-    var b: f64 = -7 as f64;
+    let b: f64 = -7 as f64;
     if (b != 0.0 - 7.0) { return 8; }
-    var c: f64 = 4611686018427387904 as f64;
+    let c: f64 = 4611686018427387904 as f64;
     if (c != 4611686018427387904.0) { return 9; }
     return 0;
 }

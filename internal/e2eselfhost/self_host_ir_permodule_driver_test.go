@@ -34,7 +34,7 @@ func TestSelfHostIRPerModuleDriver(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
 
-	greetSrc := "function greeting_len(): i32 { var s = \"hello\"; return s.len(); }\n"
+	greetSrc := "function greeting_len(): i32 { let s = \"hello\"; return s.len(); }\n"
 	mainSrc := "import \"./greet\";\nfunction main(): i32 { return greet.greeting_len() + 1; }\n"
 	if err := os.WriteFile(filepath.Join(dir, "greet.fern"), []byte(greetSrc), 0o644); err != nil {
 		t.Fatalf("write greet.fern: %v", err)
@@ -140,7 +140,7 @@ func TestSelfHostIRPerModuleCrossStruct(t *testing.T) {
 	pointSrc := "pub struct Point { x: i32, y: i32 }\n" +
 		"pub function mk(a: i32, b: i32): Point { return Point { x: a, y: b }; }\n"
 	mainSrc := "import \"./point\";\n" +
-		"function main(): i32 { var p: point.Point = point.mk(3, 4); return p.x + p.y; }\n"
+		"function main(): i32 { let p: point.Point = point.mk(3, 4); return p.x + p.y; }\n"
 	if err := os.WriteFile(filepath.Join(dir, "point.fern"), []byte(pointSrc), 0o644); err != nil {
 		t.Fatalf("write point.fern: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestSelfHostIRPerModuleCrossEnum(t *testing.T) {
 		"pub function mk(): Color { return Blue(7); }\n"
 	mainSrc := "import \"./col\";\n" +
 		"function main(): i32 {\n" +
-		"    var c: col.Color = col.mk();\n" +
+		"    let c: col.Color = col.mk();\n" +
 		"    match (c) {\n" +
 		"        Red(x) => { return x + 100; },\n" +
 		"        Green => { return 200; },\n" +

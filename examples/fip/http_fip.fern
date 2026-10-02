@@ -101,7 +101,7 @@ fip function lower(b: u8): u8 {
 // find_crlf is the index of the first CRLF at or after `from` and before
 // `end`, or -1.
 fip function find_crlf(buf: u8[], from: i32, end: i32): i32 {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i + 1 < end) {
     if (buf[i] == cr() && buf[i + 1] == lf()) {
       return i;
@@ -113,7 +113,7 @@ fip function find_crlf(buf: u8[], from: i32, end: i32): i32 {
 
 // find_byte is the index of the first `b` in [from, end), or -1.
 fip function find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i < end) {
     if (buf[i] == b) {
       return i;
@@ -129,7 +129,7 @@ fip function name_is(buf: u8[], from: i32, end: i32, lit: string): boolean {
   if (end - from != lit.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < lit.len()) {
     if (lower(buf[from + i]) != lit[i]) {
       return false;
@@ -144,7 +144,7 @@ fip function bytes_are(buf: u8[], from: i32, end: i32, lit: string): boolean {
   if (end - from != lit.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < lit.len()) {
     if (buf[from + i] != lit[i]) {
       return false;
@@ -159,7 +159,7 @@ fip function starts_with(buf: u8[], from: i32, end: i32, lit: string): boolean {
   if (end - from < lit.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < lit.len()) {
     if (buf[from + i] != lit[i]) {
       return false;
@@ -176,7 +176,7 @@ fip function is_space(b: u8): boolean {
 }
 
 fip function trim_start(buf: u8[], from: i32, end: i32): i32 {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i < end && is_space(buf[i])) {
     i = i + 1;
   }
@@ -184,7 +184,7 @@ fip function trim_start(buf: u8[], from: i32, end: i32): i32 {
 }
 
 fip function trim_end(buf: u8[], from: i32, end: i32): i32 {
-  var e: i32 = end;
+  let e: i32 = end;
   while (e > from && is_space(buf[e - 1])) {
     e = e - 1;
   }
@@ -195,19 +195,19 @@ fip function trim_end(buf: u8[], from: i32, end: i32): i32 {
 // same acceptance as std/http: digits only, non-empty, no i32 overflow;
 // -1 refuses.
 fip function parse_length(buf: u8[], from: i32, end: i32): i32 {
-  var s: i32 = trim_start(buf, from, end);
-  var e: i32 = trim_end(buf, s, end);
+  let s: i32 = trim_start(buf, from, end);
+  let e: i32 = trim_end(buf, s, end);
   if (e <= s) {
     return 0 - 1;
   }
-  var acc: i32 = 0;
-  var i: i32 = s;
+  let acc: i32 = 0;
+  let i: i32 = s;
   while (i < e) {
-    var b: i32 = buf[i] as i32;
+    let b: i32 = buf[i] as i32;
     if (b < 48 || b > 57) {
       return 0 - 1;
     }
-    var digit: i32 = b - 48;
+    let digit: i32 = b - 48;
     if (acc > 214748364 || acc == 214748364 && digit > 7) {
       return 0 - 1;
     }
@@ -219,7 +219,7 @@ fip function parse_length(buf: u8[], from: i32, end: i32): i32 {
 
 // put_str writes `lit` at `at` and returns the position after it.
 fip function put_str(own out: u8[], at: i32, lit: string): u8[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < lit.len()) {
     out = out.with(at + i, lit[i]);
     i = i + 1;
@@ -229,7 +229,7 @@ fip function put_str(own out: u8[], at: i32, lit: string): u8[] {
 
 // put_bytes copies src[from, from + n) to `at`.
 fip function put_bytes(own out: u8[], at: i32, src: u8[], from: i32, n: i32): u8[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     out = out.with(at + i, src[from + i]);
     i = i + 1;
@@ -239,8 +239,8 @@ fip function put_bytes(own out: u8[], at: i32, src: u8[], from: i32, n: i32): u8
 
 // digits is how many decimal digits `n` prints as.
 fip function digits(n: i32): i32 {
-  var d: i32 = 1;
-  var v: i32 = n;
+  let d: i32 = 1;
+  let v: i32 = n;
   while (v >= 10) {
     v = v / 10;
     d = d + 1;
@@ -250,9 +250,9 @@ fip function digits(n: i32): i32 {
 
 // put_int writes `n` in decimal at `at`, `digits(n)` bytes.
 fip function put_int(own out: u8[], at: i32, n: i32): u8[] {
-  var d: i32 = digits(n);
-  var v: i32 = n;
-  var i: i32 = d - 1;
+  let d: i32 = digits(n);
+  let v: i32 = n;
+  let i: i32 = d - 1;
   while (i >= 0) {
     out = out.with(at + i, (48 + v % 10) as u8);
     v = v / 10;
@@ -285,7 +285,7 @@ fip function put_reason(own out: u8[], at: i32, status: i32): u8[] {
 // request id header when there is one, the length, `Connection: close` and
 // the blank line.
 fip function head_len(status: i32, rid_len: i32, body_len: i32): i32 {
-  var n: i32 = 9 + 3 + 1 + reason_len(status) + 2 + 16 + digits(body_len) + 23;
+  let n: i32 = 9 + 3 + 1 + reason_len(status) + 2 + 16 + digits(body_len) + 23;
   if (rid_len > 0) {
     n = n + 14 + rid_len + 2;
   }
@@ -296,7 +296,7 @@ fip function head_len(status: i32, rid_len: i32, body_len: i32): i32 {
 // line, the request id header when the request carried one (HeaderMap
 // folds the name to lower case), the length and `Connection: close`.
 fip function put_head(own out: u8[], status: i32, src: u8[], rid_at: i32, rid_len: i32, body_len: i32): u8[] {
-  var at: i32 = out_base();
+  let at: i32 = out_base();
   out = put_str(out, at, "HTTP/1.1 ");
   at = at + 9;
   out = put_int(out, at, status);
@@ -339,7 +339,7 @@ fip function seal(own out: u8[], class: i32, n: i32): u8[] {
 // frame is a response whose body is copied from src[body_from, body_from +
 // body_len): the echo and the user id.
 fip function frame(own out: u8[], class: i32, status: i32, src: u8[], rid_at: i32, rid_len: i32, body_from: i32, body_len: i32): u8[] {
-  var h: i32 = head_len(status, rid_len, body_len);
+  let h: i32 = head_len(status, rid_len, body_len);
   out = put_head(out, status, src, rid_at, rid_len, body_len);
   out = put_bytes(out, out_base() + h, src, body_from, body_len);
   return seal(out, class, h + body_len);
@@ -348,7 +348,7 @@ fip function frame(own out: u8[], class: i32, status: i32, src: u8[], rid_at: i3
 // frame_lit is a response whose body is a literal: `ok`, `not found`,
 // `bad request`.
 fip function frame_lit(own out: u8[], class: i32, status: i32, src: u8[], rid_at: i32, rid_len: i32, body: string): u8[] {
-  var h: i32 = head_len(status, rid_len, body.len());
+  let h: i32 = head_len(status, rid_len, body.len());
   out = put_head(out, status, src, rid_at, rid_len, body.len());
   out = put_str(out, out_base() + h, body);
   return seal(out, class, h + body.len());
@@ -366,8 +366,8 @@ fip function reject(own out: u8[], class: i32, src: u8[]): u8[] {
 fip function serve(own out: u8[], wire: u8[], wire_len: i32): u8[] {
   // The header block ends at the first CRLFCRLF; the generator always
   // terminates one, and a request without it cannot be framed yet.
-  var hend: i32 = 0 - 1;
-  var i: i32 = 0;
+  let hend: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i + 3 < wire_len) {
     if (wire[i] == cr() && wire[i + 1] == lf() && wire[i + 2] == cr() && wire[i + 3] == lf()) {
       hend = i;
@@ -378,32 +378,32 @@ fip function serve(own out: u8[], wire: u8[], wire_len: i32): u8[] {
   if (hend < 0) {
     return reject(out, cl_truncated(), wire);
   }
-  var body_at: i32 = hend + 4;
-  var line_end: i32 = find_crlf(wire, 0, wire_len);
+  let body_at: i32 = hend + 4;
+  let line_end: i32 = find_crlf(wire, 0, wire_len);
 
   // The headers first, as std/http does: a Content-Length problem is
   // refused before the request line is looked at.
-  var cl: i32 = 0;
-  var cl_seen: i32 = 0;
-  var te_seen: boolean = false;
-  var bad_cl: boolean = false;
-  var rid_at: i32 = 0;
-  var rid_len: i32 = 0;
-  var rid_seen: boolean = false;
-  var at: i32 = line_end + 2;
+  let cl: i32 = 0;
+  let cl_seen: i32 = 0;
+  let te_seen: boolean = false;
+  let bad_cl: boolean = false;
+  let rid_at: i32 = 0;
+  let rid_len: i32 = 0;
+  let rid_seen: boolean = false;
+  let at: i32 = line_end + 2;
   if (at > hend) {
     at = hend;
   }
   while (at < hend) {
-    var e: i32 = find_crlf(wire, at, hend);
+    let e: i32 = find_crlf(wire, at, hend);
     if (e < 0) {
       e = hend;
     }
-    var c: i32 = find_byte(wire, at, e, colon());
+    let c: i32 = find_byte(wire, at, e, colon());
     if (c > at) {
       if (name_is(wire, at, c, "content-length")) {
         cl_seen = cl_seen + 1;
-        var v: i32 = parse_length(wire, c + 1, e);
+        let v: i32 = parse_length(wire, c + 1, e);
         if (v < 0) {
           bad_cl = true;
         }
@@ -437,11 +437,11 @@ fip function serve(own out: u8[], wire: u8[], wire_len: i32): u8[] {
   }
 
   // The request line: method, a space, the path, a space, the rest.
-  var sp1: i32 = find_byte(wire, 0, line_end, sp());
+  let sp1: i32 = find_byte(wire, 0, line_end, sp());
   if (sp1 < 0) {
     return reject(out, cl_bad_request_line(), wire);
   }
-  var sp2: i32 = find_byte(wire, sp1 + 1, line_end, sp());
+  let sp2: i32 = find_byte(wire, sp1 + 1, line_end, sp());
   if (sp2 < 0) {
     return reject(out, cl_no_version(), wire);
   }
@@ -578,16 +578,16 @@ fip function put_length(own w: u8[], at: i32, cl: i32): u8[] {
 // it back with the length in its last four bytes. It takes the buffer `own`
 // in both variants: generating the input is the harness, not the codec.
 fip function build_request(own w: u8[], n: i64): u8[] {
-  var id: i32 = n as i32;
-  var m: i32 = method_of(n);
-  var p: i32 = path_of(n);
-  var corrupt: i32 = corruption(n);
-  var has_body: boolean = m == 1 || m == 2;
-  var blen: i32 = 0;
+  let id: i32 = n as i32;
+  let m: i32 = method_of(n);
+  let p: i32 = path_of(n);
+  let corrupt: i32 = corruption(n);
+  let has_body: boolean = m == 1 || m == 2;
+  let blen: i32 = 0;
   if (has_body) {
     blen = gen_body_len(n);
   }
-  var at: i32 = 0;
+  let at: i32 = 0;
   w = put_method(w, at, m);
   at = at + method_len(m);
   if (corrupt != 0) {
@@ -608,8 +608,8 @@ fip function build_request(own w: u8[], n: i64): u8[] {
   at = at + 2;
   w = put_str(w, at, "Host: example.test\r\nUser-Agent: bench/");
   at = at + 38;
-  var ua: i32 = (n % (61 as i64)) as i32;
-  var j: i32 = 0;
+  let ua: i32 = (n % (61 as i64)) as i32;
+  let j: i32 = 0;
   while (j < ua) {
     w = w.with(at + j, 97 as u8);
     j = j + 1;
@@ -629,7 +629,7 @@ fip function build_request(own w: u8[], n: i64): u8[] {
     w = put_str(w, at, "Content-Length: 12a\r\n");
     at = at + 21;
   } else if (has_body || corrupt == 3 || corrupt == 5) {
-    var declared: i32 = blen;
+    let declared: i32 = blen;
     if (corrupt == 5) {
       declared = blen + 7;
     }
@@ -642,7 +642,7 @@ fip function build_request(own w: u8[], n: i64): u8[] {
   }
   w = put_crlf(w, at);
   at = at + 2;
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < blen) {
     w = w.with(at + k, gen_byte(n, k));
     k = k + 1;
@@ -666,7 +666,7 @@ fip function out_len_of(o: u8[]): i32 {
 // codec agree only if this agrees, which is what makes the comparison a
 // differential test rather than two unrelated benchmarks.
 fip function mix(d: i64, b: i32): i64 {
-  var x: i64 = d ^ b as i64;
+  let x: i64 = d ^ b as i64;
   x = x * (1099511628211 as i64);
   x = x ^ x >> 29 as i64;
   if (x < 0 as i64) {
@@ -676,8 +676,8 @@ fip function mix(d: i64, b: i32): i64 {
 }
 
 function zeros_u8(n: i32): u8[] {
-  var xs: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let xs: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     xs = xs.with(i, 0 as u8);
     i = i + 1;
@@ -692,50 +692,50 @@ function zeros_u8(n: i32): u8[] {
 // where a caller would read them anyway.
 
 function main(): i32 {
-  var batch: i32 = 64;
-  var rounds: i32 = 2000;
-  var wire: u8[] = zeros_u8(max_wire());
-  var out: u8[] = zeros_u8(max_out());
+  let batch: i32 = 64;
+  let rounds: i32 = 2000;
+  let wire: u8[] = zeros_u8(max_wire());
+  let out: u8[] = zeros_u8(max_out());
 
-  var ok: i64 = 0 as i64;
-  var c1: i64 = 0 as i64;
-  var c2: i64 = 0 as i64;
-  var c3: i64 = 0 as i64;
-  var c4: i64 = 0 as i64;
-  var c5: i64 = 0 as i64;
-  var c6: i64 = 0 as i64;
-  var digest: i64 = 1469598103934665603 as i64;
-  var written: i64 = 0 as i64;
+  let ok: i64 = 0 as i64;
+  let c1: i64 = 0 as i64;
+  let c2: i64 = 0 as i64;
+  let c3: i64 = 0 as i64;
+  let c4: i64 = 0 as i64;
+  let c5: i64 = 0 as i64;
+  let c6: i64 = 0 as i64;
+  let digest: i64 = 1469598103934665603 as i64;
+  let written: i64 = 0 as i64;
 
-  var samples: i64[] = [];
-  var p: i32 = 0;
+  let samples: i64[] = [];
+  let p: i32 = 0;
   while (p < rounds) {
     samples = samples.append(0 as i64);
     p = p + 1;
   }
 
   // One warm round before the mark.
-  var w: i32 = 0;
+  let w: i32 = 0;
   while (w < batch) {
     wire = build_request(wire, w as i64);
     out = serve(out, wire, wire_len_of(wire));
     w = w + 1;
   }
 
-  var at_allocs: i64 = bench.alloc_count();
-  var at_fresh: i64 = bench.bump_bytes();
-  var started_ns: i64 = monotonic_ns();
-  var r: i32 = 0;
+  let at_allocs: i64 = bench.alloc_count();
+  let at_fresh: i64 = bench.bump_bytes();
+  let started_ns: i64 = monotonic_ns();
+  let r: i32 = 0;
   while (r < rounds) {
-    var t0: i64 = monotonic_ns();
-    var k: i32 = 0;
+    let t0: i64 = monotonic_ns();
+    let k: i32 = 0;
     while (k < batch) {
-      var n: i64 = r as i64 * (batch as i64) + k as i64;
+      let n: i64 = r as i64 * (batch as i64) + k as i64;
       wire = build_request(wire, n);
       out = serve(out, wire, wire_len_of(wire));
-      var len: i32 = out_len_of(out);
-      var class: i32 = out[4] as i32;
-      var i: i32 = 0;
+      let len: i32 = out_len_of(out);
+      let class: i32 = out[4] as i32;
+      let i: i32 = 0;
       while (i < len) {
         digest = mix(digest, out[out_base() + i] as i32);
         i = i + 1;
@@ -767,11 +767,11 @@ function main(): i32 {
     samples = samples.with(r, monotonic_ns() - t0);
     r = r + 1;
   }
-  var elapsed_ns: i64 = monotonic_ns() - started_ns;
-  var allocs: i64 = bench.allocs_after(at_allocs);
-  var fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  var requests: i64 = rounds as i64 * (batch as i64);
-  var rep: bench.Report = bench.Report {
+  let elapsed_ns: i64 = monotonic_ns() - started_ns;
+  let allocs: i64 = bench.allocs_after(at_allocs);
+  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
+  let requests: i64 = rounds as i64 * (batch as i64);
+  let rep: bench.Report = bench.Report {
     name: "fip",
     iterations: rounds,
     wall_ns: elapsed_ns,

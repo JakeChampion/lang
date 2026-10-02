@@ -15,8 +15,8 @@ import (
 // core/bigint's `__bi_mul_small` and `BigInt.to_string`.
 //
 // Both shapes the compiler-sized case exercises are here: a local bound from a
-// struct FIELD read (to_string's `var cur = a.mag`) and one bound from a
-// borrowed array PARAM (mul_small's `var out = a`). Each source is read back
+// struct FIELD read (to_string's `let cur = a.mag`) and one bound from a
+// borrowed array PARAM (mul_small's `let out = a`). Each source is read back
 // after the loop, so a release that freed the live buffer, or a clone that
 // wrote through to it, is an answer this program reports rather than a leak
 // the census alone would have to catch.
@@ -24,8 +24,8 @@ const withCloneReclaimSrc = `struct Box { mag: u64[] }
 
 @noinline
 function churn_field(b: Box, n: i32): u64 {
-    var cur: u64[] = b.mag;
-    var i: i32 = 0;
+    let cur: u64[] = b.mag;
+    let i: i32 = 0;
     while (i < n) {
         cur = cur.with(i % 4, (i as u64) + (1 as u64));
         i = i + 1;
@@ -35,8 +35,8 @@ function churn_field(b: Box, n: i32): u64 {
 
 @noinline
 function churn_param(a: u64[], n: i32): u64 {
-    var cur: u64[] = a;
-    var i: i32 = 0;
+    let cur: u64[] = a;
+    let i: i32 = 0;
     while (i < n) {
         cur = cur.with(i % 4, (i as u64) + (1 as u64));
         i = i + 1;
@@ -45,19 +45,19 @@ function churn_param(a: u64[], n: i32): u64 {
 }
 
 function seed(): u64[] {
-    var m: u64[] = [];
-    var i: i32 = 0;
+    let m: u64[] = [];
+    let i: i32 = 0;
     while (i < 4) { m = m.append(7 as u64); i = i + 1; }
     return m;
 }
 
 function main(): i32 {
-    var mf: u64[] = seed();
-    var b: Box = Box { mag: mf };
-    var sf: u64 = churn_field(b, 100);
+    let mf: u64[] = seed();
+    let b: Box = Box { mag: mf };
+    let sf: u64 = churn_field(b, 100);
     if (b.mag[0] + b.mag[1] + b.mag[2] + b.mag[3] != (28 as u64)) { return 1; }
-    var mp: u64[] = seed();
-    var sp: u64 = churn_param(mp, 100);
+    let mp: u64[] = seed();
+    let sp: u64 = churn_param(mp, 100);
     if (mp[0] + mp[1] + mp[2] + mp[3] != (28 as u64)) { return 2; }
     if (sf != sp) { return 3; }
     if (__rc_underflow_count() != 0) { return 99; }

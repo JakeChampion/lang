@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// closureAliasIRCases pin #4557: `var d = c` where c is a closure local left
+// closureAliasIRCases pin #4557: `let d = c` where c is a closure local left
 // d a plain scalar slot, so `d()` called the raw env-box pointer as a
 // call-table index — SIGSEGV on the self-host IR path (all backends).
 // The fix gives StmtVar's clo_init detection a bare-ident arm gated on
@@ -31,39 +31,39 @@ var closureAliasIRCases = []struct {
 	// The filed repro: scalar-capture closure, aliased, called via the alias.
 	{"bare-alias-call",
 		`function main(): i32 {
-    var k: i32 = 3;
-    var c = () => k + 1;
-    var d = c;
+    let k: i32 = 3;
+    let c = () => k + 1;
+    let d = c;
     return d();
 }`, 4},
 	// Array capture, called through BOTH names — same env box, same values.
 	{"alias-both-names-array-capture",
 		`function go(k: i32): i32 {
-    var xs: i32[] = [k, k + 1];
-    var c = () => xs[0] + xs[1];
-    var d = c;
-    var a: i32 = c();
-    var b: i32 = d();
+    let xs: i32[] = [k, k + 1];
+    let c = () => xs[0] + xs[1];
+    let d = c;
+    let a: i32 = c();
+    let b: i32 = d();
     if (a != b) { return 98; }
     return a;
 }
 function main(): i32 { return go(3); }`, 7},
-	// fn-typed PARAM alias: params are closure locals too — `var g = f`
+	// fn-typed PARAM alias: params are closure locals too — `let g = f`
 	// inside the callee segfaulted the same way pre-fix.
 	{"param-alias",
-		`function apply1(f: (i32) => i32): i32 { var g = f; return g(4); }
-function main(): i32 { var k: i32 = 5; var c = (x: i32) => x * k; return apply1(c); }`, 20},
+		`function apply1(f: (i32) => i32): i32 { let g = f; return g(4); }
+function main(): i32 { let k: i32 = 5; let c = (x: i32) => x * k; return apply1(c); }`, 20},
 	// Chained aliases (e = d = c) and a REASSIGN alias in a branch: every
 	// name dispatches env-first and yields the same closure.
 	{"chained-and-branch-alias",
 		`function main(): i32 {
-    var k: i32 = 2;
-    var c = () => k + 5;
-    var d = c;
-    var e = d;
-    var r1: i32 = e();
-    var pick: boolean = true;
-    var f = c;
+    let k: i32 = 2;
+    let c = () => k + 5;
+    let d = c;
+    let e = d;
+    let r1: i32 = e();
+    let pick: boolean = true;
+    let f = c;
     if (pick) { f = d; }
     return r1 * 10 + f();
 }`, 77},

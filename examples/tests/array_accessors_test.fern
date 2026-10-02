@@ -26,7 +26,7 @@ function uw(o: Option[i32]): i32 {
 }
 
 function test_is_empty_true(): test.TestOutcome {
-  var e: i32[] = [];
+  let e: i32[] = [];
   return test.assert_true(e.is_empty());
 }
 
@@ -43,7 +43,7 @@ function test_last(): test.TestOutcome {
 }
 
 function test_first_empty_none(): test.TestOutcome {
-  var e: i32[] = [];
+  let e: i32[] = [];
   match (array.first(e)) {
     Some(v) => {
       return test.fail("expected None for empty first");
@@ -55,7 +55,7 @@ function test_first_empty_none(): test.TestOutcome {
 }
 
 function test_last_empty_none(): test.TestOutcome {
-  var e: i32[] = [];
+  let e: i32[] = [];
   match (array.last(e)) {
     Some(v) => {
       return test.fail("expected None for empty last");
@@ -94,7 +94,7 @@ function test_get_negative(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/array accessors");
+  let r: test.TestRunner = test.test_new("std/array accessors");
   r = r.it("is_empty true", test_is_empty_true);
   r = r.it("is_empty false", test_is_empty_false);
   r = r.it("first", test_first);

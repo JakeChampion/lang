@@ -6,7 +6,7 @@ import (
 
 // --- A string[] local REBUILT by a rebind ------------------------------------
 //
-// `var x: string[] = [mk("x")]; x = [mk("y"), mk("z")];` measured 800 allocs /
+// `let x: string[] = [mk("x")]; x = [mk("y"), mk("z")];` measured 800 allocs /
 // 200 frees on the self-host against native's 200/200. It is
 // `str_arr__rebind__{read,unused}` on both leak-matrix arches (#5338).
 //
@@ -23,7 +23,7 @@ import (
 // 800/600 and stayed leaking, because lower_stmt_assign had no branch for the
 // class at all: a rebound reclaimable string[] fell through to emit_arr_store's
 // SHALLOW arr_dec, which frees the buffer and leaves its element pointers
-// unreleased. The `var` re-declaration has driven emit_strarr_reclaim_store all
+// unreleased. The `let` re-declaration has driven emit_strarr_reclaim_store all
 // along; the assign path is the sibling the rc-tuple and rc-enum rebinds each
 // had to open for themselves, one element kind over. Both halves are needed and
 // neither alone moves the row.
@@ -48,14 +48,14 @@ import (
 // quarantine hit.
 
 const strarrRebuildDecl = `function mkstr(a: string): string { return a + "-long-enough-to-heap-allocate"; }
-function mkarr(i: i32): string[] { var o: string[] = []; o = o.append(mkstr("a")); o = o.append(mkstr("b")); return o; }
-function churn(i: i32): i32 { var a: string[] = mkarr(i); var b: string[] = mkarr(i + 1); return a[0].len() + b[1].len(); }
+function mkarr(i: i32): string[] { let o: string[] = []; o = o.append(mkstr("a")); o = o.append(mkstr("b")); return o; }
+function churn(i: i32): i32 { let a: string[] = mkarr(i); let b: string[] = mkarr(i + 1); return a[0].len() + b[1].len(); }
 `
 
 const strarrRebuildChurnMain = `
 function main(): i32 {
-    var acc: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } acc = acc + r; i = i + 1; }
+    let acc: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } acc = acc + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -63,7 +63,7 @@ function main(): i32 {
 
 const strarrRebuildPlainMain = `
 function main(): i32 {
-    var acc: i32 = 0; var i: i32 = 0;
+    let acc: i32 = 0; let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
@@ -76,8 +76,8 @@ func strarrRebuildCases() []arrenumShareCase {
 			name: "literal_rebuild",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: string[] = [mkstr("x")];
+    let t: i32 = 0;
+    let x: string[] = [mkstr("x")];
     x = [mkstr("y"), mkstr("z")];
     t = (t + x.len()) % 101;
     t = t + 1;
@@ -90,8 +90,8 @@ function round(i: i32): i32 {
 			// already admitted through the whole-program "STRARR:" registry.
 			name: "producer_rebuild",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: string[] = mkarr(i);
+    let t: i32 = 0;
+    let x: string[] = mkarr(i);
     x = mkarr(i + 1);
     t = (t + x.len()) % 101;
     return t + 1;
@@ -105,8 +105,8 @@ function round(i: i32): i32 {
 			name: "rebuild_to_empty",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: string[] = [mkstr("x")];
+    let t: i32 = 0;
+    let x: string[] = [mkstr("x")];
     x = [];
     t = (t + x.len()) % 101;
     return t + 1;
@@ -117,10 +117,10 @@ function round(i: i32): i32 {
 			// Three superseded buffers per round, each freed at its own store.
 			name: "loop_rebuild",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
-    var x: string[] = [mkstr("x")];
-    var j: i32 = 0;
+    let x: string[] = [mkstr("x")];
+    let j: i32 = 0;
     while (j < 3) { x = [mkstr("y"), mkstr("z")]; j = j + 1; }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (x.len() != 2) { return 0 - 1; }
     return (x[0].len() + junk) % 101;
 }` + strarrRebuildChurnMain,
@@ -131,9 +131,9 @@ function round(i: i32): i32 {
 			// declaration's value to the exit sweep.
 			name: "conditional_rebuild",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
-    var x: string[] = [mkstr("x")];
+    let x: string[] = [mkstr("x")];
     if (i % 2 == 0) { x = [mkstr("y"), mkstr("z")]; }
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (x.len() < 1) { return 0 - 1; }
     return (x[0].len() + junk) % 101;
 }` + strarrRebuildChurnMain,
@@ -146,11 +146,11 @@ function round(i: i32): i32 {
 			// runs once at whichever owner reaches rc 1.
 			name: "alias_before_rebind",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
-    var want: i32 = mkstr("x").len();
-    var x: string[] = [mkstr("x")];
-    var ys: string[] = x;
+    let want: i32 = mkstr("x").len();
+    let x: string[] = [mkstr("x")];
+    let ys: string[] = x;
     x = [mkstr("y"), mkstr("z")];
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (ys[0].len() != want) { return 0 - 1; }
     return (ys.len() + x.len() + junk) % 101;
 }` + strarrRebuildChurnMain,
@@ -162,8 +162,8 @@ function round(i: i32): i32 {
 			name: "self_append_unchanged",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    var x: string[] = [mkstr("x")];
+    let t: i32 = 0;
+    let x: string[] = [mkstr("x")];
     x = x.append(mkstr("y"));
     t = (t + x.len()) % 101;
     return t + 1;
@@ -174,11 +174,11 @@ function round(i: i32): i32 {
 			// A local returned bare after its rebuild (#10721): the rebind releases
 			// the superseded array and the return moves the rebuilt one out.
 			name: "returned_after_rebuild",
-			src: strarrRebuildDecl + `function grab(i: i32): string[] { var x: string[] = [mkstr("x")]; x = [mkstr("y"), mkstr("z")]; return x; }
+			src: strarrRebuildDecl + `function grab(i: i32): string[] { let x: string[] = [mkstr("x")]; x = [mkstr("y"), mkstr("z")]; return x; }
 function round(i: i32): i32 {
-    var want: i32 = mkstr("y").len();
-    var xs: string[] = grab(i);
-    var junk: i32 = churn(i);
+    let want: i32 = mkstr("y").len();
+    let xs: string[] = grab(i);
+    let junk: i32 = churn(i);
     if (xs.len() != 2) { return 0 - 1; }
     if (xs[0].len() != want) { return 0 - 2; }
     return (xs[1].len() + junk) % 101;
@@ -190,11 +190,11 @@ function round(i: i32): i32 {
 			// element walk would free a box the local still reads.
 			name: "refused_element_bound",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
-    var want: i32 = mkstr("x").len();
-    var x: string[] = [mkstr("x")];
-    var e: string = x[0];
+    let want: i32 = mkstr("x").len();
+    let x: string[] = [mkstr("x")];
+    let e: string = x[0];
     x = [mkstr("y"), mkstr("z")];
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (e.len() != want) { return 0 - 1; }
     return (e.len() + x.len() + junk) % 101;
 }` + strarrRebuildChurnMain,
@@ -204,10 +204,10 @@ function round(i: i32): i32 {
 			// The rebind value is another LIVE local, not a rebuild.
 			name: "refused_nonfresh_rebind",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
-    var other: string[] = [mkstr("o")];
-    var x: string[] = [mkstr("x")];
+    let other: string[] = [mkstr("o")];
+    let x: string[] = [mkstr("x")];
     x = other;
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (x.len() != other.len()) { return 0 - 1; }
     return (x.len() + junk) % 101;
 }` + strarrRebuildChurnMain,
@@ -218,9 +218,9 @@ function round(i: i32): i32 {
 			// the value shares a box with what the store is about to free.
 			name: "refused_self_element",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
-    var x: string[] = [mkstr("x"), mkstr("q")];
+    let x: string[] = [mkstr("x"), mkstr("q")];
     x = [x[0]];
-    var junk: i32 = churn(i);
+    let junk: i32 = churn(i);
     if (x.len() != 1) { return 0 - 1; }
     if (x[0].len() < 10) { return 0 - 2; }
     return (x[0].len() + junk) % 101;
@@ -232,10 +232,10 @@ function round(i: i32): i32 {
 			// outlives the sweep.
 			name: "refused_container_store",
 			src: strarrRebuildDecl + `function round(i: i32): i32 {
-    var x: string[] = [mkstr("x")];
+    let x: string[] = [mkstr("x")];
     x = [mkstr("y"), mkstr("z")];
-    var boxes: string[][] = [x];
-    var junk: i32 = churn(i);
+    let boxes: string[][] = [x];
+    let junk: i32 = churn(i);
     if (boxes[0].len() != x.len()) { return 0 - 1; }
     return (boxes[0].len() + junk) % 101;
 }` + strarrRebuildChurnMain,

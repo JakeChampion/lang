@@ -31,13 +31,13 @@ function existing(path: string): string {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var append: boolean = false;
-  var files: string[] = [];
+  let argv: string[] = args();
+  let append: boolean = false;
+  let files: string[] = [];
 
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "-a" || a == "--append") {
       append = true;
     } else {
@@ -46,15 +46,15 @@ function main(): i32 {
     i = i + 1;
   }
 
-  var data: string = io.read_all_stdin();
+  let data: string = io.read_all_stdin();
   // Always echo to stdout first.
   write(data);
 
-  var status: i32 = 0;
-  var j: i32 = 0;
+  let status: i32 = 0;
+  let j: i32 = 0;
   while (j < files.len()) {
-    var path: string = files[j];
-    var payload: string = data;
+    let path: string = files[j];
+    let payload: string = data;
     if (append) {
       payload = existing(path) + data;
     }

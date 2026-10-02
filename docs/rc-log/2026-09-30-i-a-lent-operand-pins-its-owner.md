@@ -6,7 +6,7 @@ A call that is the last use of a value the frame owns, and that also lends the
 callee a borrow of that value, moved the value's unit into the call:
 
 ```fern
-var recv: Ty = make(k, v);
+let recv: Ty = make(k, v);
 match (recv) {
   TM(mt) => { return columns(done, mt, recv); },
   _ => {}

@@ -117,7 +117,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 		t.Fatalf("write lib3: %v", err)
 	}
 	concat("keep")
-	edit("lib3.fern", "{ return xs.len(); }", "{ var h: i32[][] = [xs]; return h[0].len(); }")
+	edit("lib3.fern", "{ return xs.len(); }", "{ let h: i32[][] = [xs]; return h[0].len(); }")
 	hits, misses = concat("fact")
 	pmWantSets(t, "fact", hits, misses, reHits, []string{"__entry", "lib3"})
 

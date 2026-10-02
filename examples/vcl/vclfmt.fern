@@ -16,7 +16,7 @@ import "./parser";
 import "./printer";
 
 function report(path: string, diags: diag.Diag[]): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < diags.len()) {
     eprint(diags[i].render(path));
     i = i + 1;
@@ -25,19 +25,19 @@ function report(path: string, diags: diag.Diag[]): void {
 
 function main(): i32 {
   // args()[0] is the program name, as in C.
-  var argv: string[] = args();
+  let argv: string[] = args();
   if (argv.len() < 2) {
     eprint("usage: vclfmt FILE.vcl");
     return 2;
   }
-  var path: string = argv[1];
+  let path: string = argv[1];
   match (io.read_input(path)) {
     Err(e) => {
       eprint("vclfmt: " + path + ": cannot read");
       return 2;
     },
     Ok(src) => {
-      var r: parser.ParseResult = parser.parse(src);
+      let r: parser.ParseResult = parser.parse(src);
       if (r.diags.len() > 0) {
         report(path, r.diags);
         return 1;

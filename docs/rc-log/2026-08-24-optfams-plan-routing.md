@@ -5,7 +5,7 @@ small Option families: each collector's `body_unsafe_for` escape conjunct
 becomes the plan's `free_eligible_of` verdict under `FERN_SELFHOST_RC_PLAN`,
 with the family knowledge kept — kind annotation, fresh-init proof,
 not-reassigned, OPTAARR's element-alias and payload gates (a bound
-`var o = xs[i]` takes no counted retain here; native's Index-shape dup is
+`let o = xs[i]` takes no counted retain here; native's Index-shape dup is
 not ported, so the name-level plan cannot license element reads).
 
 One invariant became explicit that was implicit before: `body_unsafe_for`
@@ -38,7 +38,7 @@ form's sweep elsewhere — a bounded leak, recorded, not a hazard.
 
 Shard 7 failed two want-exact-balance suites in the LEAK direction:
 `optarr_from_call_no_match` and `unmatched_err_string_is_released` — a
-`var v: Result[i32[], string] = mk(r)` local the credit gate granted (no
+`let v: Result[i32[], string] = mk(r)` local the credit gate granted (no
 bare mention anywhere) turned plan-refused: `rc_fe_rhs_tainted`'s user-call
 arm taints on ANY tainted argument, every non-own param is taint-seeded
 regardless of type, so the scalar `r` tainted `v` through its own init.
@@ -57,7 +57,7 @@ divergences well beyond these two suites (the self-compile RSS driver's
 
 ## CI-caught twice more: the alias polarity and the shadow collision
 
-The old-head run also failed the site-key collision suite: `var xs = keep`
+The old-head run also failed the site-key collision suite: `let xs = keep`
 is a bare-ident ALIAS bind, and the plan's fixpoint deliberately forgives an
 alias whose own binding is untainted — #7282's arithmetic, sound only where
 the alias bind RETAINS, which the arr/str/struct/tuple kinds do and the

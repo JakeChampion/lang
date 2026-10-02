@@ -815,7 +815,7 @@ think they're free additions to make.
   apply to other sub-i32 polymorphic literals, i.e. `u8`.)
   Adding any `function foo[T](...)` to the prelude trips the
   `TestWASMSubI32Widths` family — the `-7` in
-  `var s: i8 = -7;` re-fails as "operator '-' requires
+  `let s: i8 = -7;` re-fails as "operator '-' requires
   i32, got i8" during the post-monomorph type re-check.
   Root cause not pinned down yet; the re-check inference
   seems to settle polymorphic numeric literals differently
@@ -877,7 +877,7 @@ think they're free additions to make.
   load appears to fold incorrectly when the receiver is a
   tuple-field expression rather than a plain identifier or
   struct-field access. interp and x86-64 both handle it.
-  Workaround: bind the field to a `var s: string = p.0;`
+  Workaround: bind the field to a `let s: string = p.0;`
   local first, then call `len(s)`. Applied in prelude's
   `is_email_like`. Likely a missing pointer-deref step in
   the load path for tuple-element string values on arm64;

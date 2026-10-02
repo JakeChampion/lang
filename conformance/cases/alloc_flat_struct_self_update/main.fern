@@ -32,8 +32,8 @@ struct Inner { tag: i32, data: i32[] }
 struct Nest { xs: i32[], inner: Inner, n: i32 }
 
 function scalar_only(k: i32): i32 {
-    var p: Pt = Pt { x: 0, y: 0 };
-    var i: i32 = 0;
+    let p: Pt = Pt { x: 0, y: 0 };
+    let i: i32 = 0;
     while (i < k) {
         p = Pt { ...p, x: p.x + 1 };
         i = i + 1;
@@ -42,8 +42,8 @@ function scalar_only(k: i32): i32 {
 }
 
 function with_string(k: i32): i32 {
-    var s: Named = Named { tag: "seed", n: 0 };
-    var i: i32 = 0;
+    let s: Named = Named { tag: "seed", n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         s = Named { ...s, n: s.n + 1 };
         i = i + 1;
@@ -52,14 +52,14 @@ function with_string(k: i32): i32 {
 }
 
 function with_array(k: i32): i32 {
-    var b: Buf = Buf { xs: [], n: 0 };
-    var i: i32 = 0;
+    let b: Buf = Buf { xs: [], n: 0 };
+    let i: i32 = 0;
     while (i < k) {
         b = Buf { ...b, xs: b.xs.append(i) };
         i = i + 1;
     }
-    var sum: i32 = b.xs.len();
-    var j: i32 = 0;
+    let sum: i32 = b.xs.len();
+    let j: i32 = 0;
     while (j < b.xs.len()) { sum = sum + b.xs[j]; j = j + 1; }
     return sum;
 }
@@ -67,9 +67,9 @@ function with_array(k: i32): i32 {
 // The base is a DIFFERENT local, and it stays live: `a` still owns nothing
 // exclusively once its fields are copied out, so only its box may be freed.
 function fork_base(k: i32): i32 {
-    var a: Buf = Buf { xs: [k, k + 1], n: k };
-    var b: Buf = Buf { ...a, n: a.n + 1 };
-    var c: Buf = Buf { ...a, n: a.n + 2 };
+    let a: Buf = Buf { xs: [k, k + 1], n: k };
+    let b: Buf = Buf { ...a, n: a.n + 1 };
+    let c: Buf = Buf { ...a, n: a.n + 2 };
     return a.n + b.n + c.n + a.xs[0] + b.xs[1] + c.xs[0];
 }
 
@@ -84,9 +84,9 @@ function fork_base(k: i32): i32 {
 // `keep` aliases the inner box and is read AFTER the loop, so releasing it one
 // time too many prints a wrong number here instead of failing silently.
 function nested_struct(k: i32): i32 {
-    var o: Nest = Nest { xs: [1, 2], inner: Inner { tag: 3, data: [9] }, n: 0 };
-    var keep: Inner = o.inner;
-    var i: i32 = 0;
+    let o: Nest = Nest { xs: [1, 2], inner: Inner { tag: 3, data: [9] }, n: 0 };
+    let keep: Inner = o.inner;
+    let i: i32 = 0;
     while (i < k) {
         o = Nest { ...o, xs: o.xs.append(i) };
         i = i + 1;
@@ -95,7 +95,7 @@ function nested_struct(k: i32): i32 {
 }
 
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     for i in 0..n {
         acc = acc + scalar_only(8) + with_string(8) + with_array(8) + fork_base(i)
             + nested_struct(8);
@@ -104,11 +104,11 @@ function rounds(n: i32): i32 {
 }
 
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(50);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(100);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds(50);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = rounds(100);
+    let b2: i64 = __heap_bump_bytes();
 
     print(x.to_string());
     print(y.to_string());

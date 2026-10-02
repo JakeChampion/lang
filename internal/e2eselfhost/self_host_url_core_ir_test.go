@@ -39,7 +39,7 @@ var urlCoreIRCases = []struct {
 	// parse + port field. :42 -> 42.
 	{"port", "import \"std/url\";\nfunction main(): i32 { match (url.url_parse(\"http://x.com:42/p\")) { Some(u) => { return u.port; }, None => { return 0; }, } }\n"},
 	// query_parse (Map-backed). "a=1&b=2" -> 2 keys.
-	{"query", "import \"std/url\";\nfunction main(): i32 { var m = url.query_parse(\"a=1&b=2\"); return m.len(); }\n"},
+	{"query", "import \"std/url\";\nfunction main(): i32 { let m = url.query_parse(\"a=1&b=2\"); return m.len(); }\n"},
 }
 
 // TestSelfHostUrlCoreIRX86_64 compiles real `import "std/url"` programs

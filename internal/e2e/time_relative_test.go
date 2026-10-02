@@ -12,7 +12,7 @@ const timeRelativeProg = `
 import "std/time" as time;
 function at(sec: i64): Instant { return time.instant_from_unix(sec); }
 function main(): i32 {
-    var now: Instant = at(1000000 as i64);
+    let now: Instant = at(1000000 as i64);
     if (at(1000000 as i64).relative_to(now) != "just now") { return 1; }
     if (at(999997 as i64).relative_to(now) != "just now") { return 2; }
     if (at(999990 as i64).relative_to(now) != "10 seconds ago") { return 3; }

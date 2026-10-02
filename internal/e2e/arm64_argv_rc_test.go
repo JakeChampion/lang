@@ -33,9 +33,9 @@ import (
 // class-boundary bands (59..65, 79..81) the original failures landed in.
 func TestArm64ArgvStringsRcSafe(t *testing.T) {
 	bin, qemu := compileArm64Bin(t, `function main(): i32 {
-    var av: string[] = args();
+    let av: string[] = args();
     if (av.len() < 2) { return 2; }
-    var entry: string = av[1];
+    let entry: string = av[1];
     match (read_file(entry)) {
         Ok(src) => { return 0; },
         Err(e) => { return 1; }

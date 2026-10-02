@@ -31,8 +31,8 @@ import "std/i64";
 struct UF { parent: i32[] }
 
 function uf_new(n: i32): UF {
-  var p: i32[] = [];
-  var i: i32 = 0;
+  let p: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     p = p.append(i);
     i = i + 1;
@@ -43,7 +43,7 @@ function uf_new(n: i32): UF {
 // Root of x, without compression — the read-only half, used where the
 // caller has no UF to thread back.
 function uf_root(u: UF, x: i32): i32 {
-  var r: i32 = x;
+  let r: i32 = x;
   while (u.parent[r] != r) {
     r = u.parent[r];
   }
@@ -53,11 +53,11 @@ function uf_root(u: UF, x: i32): i32 {
 // find with path compression: returns the root AND the updated structure,
 // since flattening the path is a write.
 function uf_find(u: UF, x: i32): (i32, UF) {
-  var r: i32 = uf_root(u, x);
-  var p: i32[] = u.parent;
-  var cur: i32 = x;
+  let r: i32 = uf_root(u, x);
+  let p: i32[] = u.parent;
+  let cur: i32 = x;
   while (p[cur] != r) {
-    var next: i32 = p[cur];
+    let next: i32 = p[cur];
     p = p.with(cur, r);
     cur = next;
   }
@@ -84,8 +84,8 @@ function uf_connected(u: UF, a: i32, b: i32): boolean {
 struct Grid { n: i32, open: boolean[], uf: UF }
 
 function grid_new(n: i32): Grid {
-  var o: boolean[] = [];
-  var i: i32 = 0;
+  let o: boolean[] = [];
+  let i: i32 = 0;
   while (i < n * n) {
     o = o.append(false);
     i = i + 1;
@@ -108,10 +108,10 @@ function grid_open(g: Grid, r: i32, c: i32): Grid {
   if (is_open(g, r, c)) {
     return g;
   }
-  var n: i32 = g.n;
-  var i: i32 = idx(n, r, c);
-  var o: boolean[] = g.open.with(i, true);
-  var u: UF = g.uf;
+  let n: i32 = g.n;
+  let i: i32 = idx(n, r, c);
+  let o: boolean[] = g.open.with(i, true);
+  let u: UF = g.uf;
 
   if (r == 0) {
     u = uf_union(u, i, n * n);
@@ -140,8 +140,8 @@ function percolates(g: Grid): boolean {
 }
 
 function open_count(g: Grid): i32 {
-  var c: i32 = 0;
-  var i: i32 = 0;
+  let c: i32 = 0;
+  let i: i32 = 0;
   while (i < g.open.len()) {
     if (g.open[i]) {
       c = c + 1;
@@ -155,7 +155,7 @@ function open_count(g: Grid): i32 {
 
 // xorshift64*, deterministic. Returns the next state; callers thread it.
 function xs_next(s: i64): i64 {
-  var x: i64 = s;
+  let x: i64 = s;
   x = x ^ x << 13;
   x = x ^ x >> 7;
   x = x ^ x << 17;
@@ -164,7 +164,7 @@ function xs_next(s: i64): i64 {
 
 // A value in [0, m) from the state's low bits.
 function xs_below(s: i64, m: i32): i32 {
-  var v: i64 = s;
+  let v: i64 = s;
   if (v < 0) {
     v = 0 - v;
   }
@@ -174,14 +174,14 @@ function xs_below(s: i64, m: i32): i32 {
 // Open uniformly random sites until the grid percolates; return how many
 // were opened. That count over n*n is one sample of the threshold.
 function sites_to_percolate(n: i32, seed: i64): i32 {
-  var g: Grid = grid_new(n);
-  var s: i64 = seed;
-  var guard: i32 = 0;
+  let g: Grid = grid_new(n);
+  let s: i64 = seed;
+  let guard: i32 = 0;
   while (!percolates(g) && guard < n * n * 40) {
     s = xs_next(s);
-    var r: i32 = xs_below(s, n);
+    let r: i32 = xs_below(s, n);
     s = xs_next(s);
-    var c: i32 = xs_below(s, n);
+    let c: i32 = xs_below(s, n);
     g = grid_open(g, r, c);
     guard = guard + 1;
   }
@@ -192,15 +192,15 @@ function sites_to_percolate(n: i32, seed: i64): i32 {
 
 // A grid with nothing open cannot percolate; one with everything open must.
 function test_empty_and_full_grids(): test.TestOutcome {
-  var empty: Grid = grid_new(5);
+  let empty: Grid = grid_new(5);
   if (percolates(empty)) {
     return test.fail("an empty grid percolated");
   }
 
-  var full: Grid = grid_new(5);
-  var r: i32 = 0;
+  let full: Grid = grid_new(5);
+  let r: i32 = 0;
   while (r < 5) {
-    var c: i32 = 0;
+    let c: i32 = 0;
     while (c < 5) {
       full = grid_open(full, r, c);
       c = c + 1;
@@ -220,8 +220,8 @@ function test_empty_and_full_grids(): test.TestOutcome {
 // stop percolation. This is the test that would catch a union-find that
 // connects everything to everything.
 function test_a_single_channel_is_enough_and_necessary(): test.TestOutcome {
-  var g: Grid = grid_new(5);
-  var r: i32 = 0;
+  let g: Grid = grid_new(5);
+  let r: i32 = 0;
   while (r < 5) {
     g = grid_open(g, r, 2);
     r = r + 1;
@@ -231,8 +231,8 @@ function test_a_single_channel_is_enough_and_necessary(): test.TestOutcome {
   }
 
   // The same column with the middle cell never opened.
-  var b: Grid = grid_new(5);
-  var k: i32 = 0;
+  let b: Grid = grid_new(5);
+  let k: i32 = 0;
   while (k < 5) {
     if (k != 2) {
       b = grid_open(b, k, 2);
@@ -248,15 +248,15 @@ function test_a_single_channel_is_enough_and_necessary(): test.TestOutcome {
 // Monotonicity: opening sites never un-percolates a grid. Once it
 // connects, it stays connected however many more sites open.
 function test_percolation_is_monotone(): test.TestOutcome {
-  var g: Grid = grid_new(6);
-  var s: i64 = 12345;
-  var seen: boolean = false;
-  var step: i32 = 0;
+  let g: Grid = grid_new(6);
+  let s: i64 = 12345;
+  let seen: boolean = false;
+  let step: i32 = 0;
   while (step < 200) {
     s = xs_next(s);
-    var r: i32 = xs_below(s, 6);
+    let r: i32 = xs_below(s, 6);
     s = xs_next(s);
-    var c: i32 = xs_below(s, 6);
+    let c: i32 = xs_below(s, 6);
     g = grid_open(g, r, c);
     if (percolates(g)) {
       seen = true;
@@ -276,7 +276,7 @@ function test_percolation_is_monotone(): test.TestOutcome {
 // transitive after unions, and a union of already-connected nodes is a
 // no-op.
 function test_union_find_contracts(): test.TestOutcome {
-  var u: UF = uf_new(10);
+  let u: UF = uf_new(10);
   if (!uf_connected(u, 3, 3)) {
     return test.fail("not reflexive");
   }
@@ -296,7 +296,7 @@ function test_union_find_contracts(): test.TestOutcome {
     return test.fail("connected unrelated nodes");
   }
 
-  var before: i32 = uf_root(u, 1);
+  let before: i32 = uf_root(u, 1);
   u = uf_union(u, 1, 3);
   if (uf_root(u, 1) != before) {
     return test.fail("re-union of connected nodes moved the root");
@@ -309,16 +309,16 @@ function test_union_find_contracts(): test.TestOutcome {
 // land in a band around it. A simulation that agrees only with itself
 // would pass every other test in this file.
 function test_threshold_is_near_the_known_value(): test.TestOutcome {
-  var n: i32 = 12;
-  var seeds: i64[] = [1, 7, 99, 12345, 424242];
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = 12;
+  let seeds: i64[] = [1, 7, 99, 12345, 424242];
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < seeds.len()) {
     total = total + sites_to_percolate(n, seeds[i]);
     i = i + 1;
   }
   // Mean fraction, in percent, to stay in integer arithmetic.
-  var pct: i32 = total * 100 / (seeds.len() * n * n);
+  let pct: i32 = total * 100 / (seeds.len() * n * n);
   if (pct < 45 || pct > 75) {
     return test.fail("threshold estimate " + pct.to_string()
       + "% is outside the plausible band around 59%");
@@ -331,12 +331,12 @@ function test_threshold_is_near_the_known_value(): test.TestOutcome {
 function main(): i32 {
   eprint("percolation — site percolation on a square lattice, union-find");
 
-  var n: i32 = 12;
-  var seeds: i64[] = [1, 7, 99, 12345, 424242];
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = 12;
+  let seeds: i64[] = [1, 7, 99, 12345, 424242];
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < seeds.len()) {
-    var k: i32 = sites_to_percolate(n, seeds[i]);
+    let k: i32 = sites_to_percolate(n, seeds[i]);
     total = total + k;
     eprint("  seed " + seeds[i].to_string() + ": percolated after "
       + k.to_string() + " of " + (n * n).to_string() + " sites");
@@ -348,15 +348,15 @@ function main(): i32 {
   // Allocation shape of the union-find churn. `arr.with(i, v)` on a
   // uniquely-referenced array should reuse its storage; if it copies,
   // this doubles superlinearly with n.
-  var base: i64 = __heap_bump_bytes();
-  var a: i32 = sites_to_percolate(8, 2024);
-  var m1: i64 = __heap_bump_bytes();
-  var b: i32 = sites_to_percolate(16, 2024);
-  var m2: i64 = __heap_bump_bytes();
+  let base: i64 = __heap_bump_bytes();
+  let a: i32 = sites_to_percolate(8, 2024);
+  let m1: i64 = __heap_bump_bytes();
+  let b: i32 = sites_to_percolate(16, 2024);
+  let m2: i64 = __heap_bump_bytes();
   eprint("bump n=8  (" + a.to_string() + " opens): " + (m1 - base).to_string());
   eprint("bump n=16 (" + b.to_string() + " opens): " + (m2 - m1).to_string());
 
-  var r: test.TestRunner = test.test_new("percolation");
+  let r: test.TestRunner = test.test_new("percolation");
   r = r.it("empty and full grids", test_empty_and_full_grids);
   r = r.it("a single channel is enough and necessary", test_a_single_channel_is_enough_and_necessary);
   r = r.it("percolation is monotone", test_percolation_is_monotone);

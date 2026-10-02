@@ -62,7 +62,7 @@ function test_parse_iso_bad_sep(): test.TestOutcome {
 
 function test_iso_round_trip(): test.TestOutcome {
   // format then parse must recover the same fields.
-  var s: string = time.date_make(2024, 12, 31).format_iso();
+  let s: string = time.date_make(2024, 12, 31).format_iso();
   match (time.date_parse_iso(s)) {
     Some(d) => {
       return test.assert_true(d.year == 2024 && d.month == 12 && d.day == 31);
@@ -76,36 +76,36 @@ function test_iso_round_trip(): test.TestOutcome {
 // ---- Span arithmetic ----
 
 function test_add_span_days(): test.TestOutcome {
-  var d = time.date_make(2024, 1, 1).add_span(time.span_days(10));
+  let d = time.date_make(2024, 1, 1).add_span(time.span_days(10));
   return test.assert_true(d.year == 2024 && d.month == 1 && d.day == 11);
 }
 
 function test_add_span_weeks(): test.TestOutcome {
-  var d = time.date_make(2024, 1, 1).add_span(time.span_weeks(2));
+  let d = time.date_make(2024, 1, 1).add_span(time.span_weeks(2));
   return test.assert_true(d.year == 2024 && d.month == 1 && d.day == 15);
 }
 
 function test_add_span_months_clamp_leap(): test.TestOutcome {
   // Jan 31 + 1 month → Feb; day clamps to 29 in leap-year 2024.
-  var d = time.date_make(2024, 1, 31).add_span(time.span_months(1));
+  let d = time.date_make(2024, 1, 31).add_span(time.span_months(1));
   return test.assert_true(d.year == 2024 && d.month == 2 && d.day == 29);
 }
 
 function test_add_span_months_clamp_plain(): test.TestOutcome {
   // Jan 31 + 1 month → Feb; day clamps to 28 in non-leap 2023.
-  var d = time.date_make(2023, 1, 31).add_span(time.span_months(1));
+  let d = time.date_make(2023, 1, 31).add_span(time.span_months(1));
   return test.assert_true(d.year == 2023 && d.month == 2 && d.day == 28);
 }
 
 function test_add_span_years_clamp(): test.TestOutcome {
   // Feb 29 2024 + 1 year → Feb 28 2025 (2025 not a leap year).
-  var d = time.date_make(2024, 2, 29).add_span(time.span_years(1));
+  let d = time.date_make(2024, 2, 29).add_span(time.span_years(1));
   return test.assert_true(d.year == 2025 && d.month == 2 && d.day == 28);
 }
 
 function test_add_span_months_rollover(): test.TestOutcome {
   // Nov + 3 months crosses the year boundary into Feb.
-  var d = time.date_make(2024, 11, 15).add_span(time.span_months(3));
+  let d = time.date_make(2024, 11, 15).add_span(time.span_months(3));
   return test.assert_true(d.year == 2025 && d.month == 2 && d.day == 15);
 }
 
@@ -132,7 +132,7 @@ function test_duration_to_string_negative(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/time iso + span");
+  let r: test.TestRunner = test.test_new("std/time iso + span");
   r = r.it("format_iso", test_format_iso);
   r = r.it("format_iso pad year", test_format_iso_pad_year);
   r = r.it("parse_iso ok", test_parse_iso_ok);

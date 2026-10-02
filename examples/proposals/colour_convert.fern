@@ -47,17 +47,17 @@ function hex_digit_of(b: i32): i32 {
 // `#rrggbb` or `#rgb`, with the `#` optional and hex case-insensitive.
 // Anything else is None — a malformed colour is not a black one.
 function parse_hex(s: string): Option[Rgb] {
-  var start: i32 = 0;
+  let start: i32 = 0;
   if (s.len() > 0 && s[0] as i32 == 35) {
     start = 1;
   }
-  var n: i32 = s.len() - start;
+  let n: i32 = s.len() - start;
   if (n != 6 && n != 3) {
     return None;
   }
-  var digits: i32[] = [];
+  let digits: i32[] = [];
   for i in 0..n {
-    var d: i32 = hex_digit_of(s[start + i] as i32);
+    let d: i32 = hex_digit_of(s[start + i] as i32);
     if (d < 0) {
       return None;
     }
@@ -75,7 +75,7 @@ function parse_hex(s: string): Option[Rgb] {
 }
 
 function hex_char(v: i32): string {
-  var d: string = "0123456789abcdef";
+  let d: string = "0123456789abcdef";
   return "" + slice_unchecked(d, v, v + 1);
 }
 
@@ -100,7 +100,7 @@ function rdiv(n: i32, d: i32): i32 {
 }
 
 function max3(a: i32, b: i32, c: i32): i32 {
-  var m: i32 = a;
+  let m: i32 = a;
   if (b > m) {
     m = b;
   }
@@ -111,7 +111,7 @@ function max3(a: i32, b: i32, c: i32): i32 {
 }
 
 function min3(a: i32, b: i32, c: i32): i32 {
-  var m: i32 = a;
+  let m: i32 = a;
   if (b < m) {
     m = b;
   }
@@ -125,20 +125,20 @@ function min3(a: i32, b: i32, c: i32): i32 {
 // when the wheel has no radius. This picks 0 and says so, because the
 // alternative is a formula that divides by zero somewhere far from here.
 function rgb_to_hsl(c: Rgb): Hsl {
-  var mx: i32 = max3(c.r, c.g, c.b);
-  var mn: i32 = min3(c.r, c.g, c.b);
-  var l: i32 = rdiv((mx + mn) * 1000, 2 * 255);
+  let mx: i32 = max3(c.r, c.g, c.b);
+  let mn: i32 = min3(c.r, c.g, c.b);
+  let l: i32 = rdiv((mx + mn) * 1000, 2 * 255);
   if (mx == mn) {
     return Hsl { h: 0, s: 0, l: l };
   }
-  var d: i32 = mx - mn;
-  var s: i32 = 0;
+  let d: i32 = mx - mn;
+  let s: i32 = 0;
   if (mx + mn <= 255) {
     s = rdiv(d * 1000, mx + mn);
   } else {
     s = rdiv(d * 1000, 2 * 255 - mx - mn);
   }
-  var h: i32 = 0;
+  let h: i32 = 0;
   if (mx == c.r) {
     h = (c.g - c.b) * 600 / d;
   } else if (mx == c.g) {
@@ -157,7 +157,7 @@ function rgb_to_hsl(c: Rgb): Hsl {
 
 // The standard helper, in tenths. `t` is a hue offset in [0, 3600).
 function hue_to_channel(p: i32, q: i32, t_in: i32): i32 {
-  var t: i32 = t_in;
+  let t: i32 = t_in;
   if (t < 0) {
     t = t + 3600;
   }
@@ -178,20 +178,20 @@ function hue_to_channel(p: i32, q: i32, t_in: i32): i32 {
 
 function hsl_to_rgb(c: Hsl): Rgb {
   if (c.s == 0) {
-    var v: i32 = rdiv(c.l * 255, 1000);
+    let v: i32 = rdiv(c.l * 255, 1000);
     return Rgb { r: v, g: v, b: v };
   }
   // Work in thousandths of full scale, converting to 0..255 at the end.
-  var q: i32 = 0;
+  let q: i32 = 0;
   if (c.l < 500) {
     q = rdiv(c.l * (1000 + c.s), 1000);
   } else {
     q = c.l + c.s - rdiv(c.l * c.s, 1000);
   }
-  var p: i32 = 2 * c.l - q;
-  var r: i32 = hue_to_channel(p, q, c.h + 1200);
-  var g: i32 = hue_to_channel(p, q, c.h);
-  var b: i32 = hue_to_channel(p, q, c.h - 1200);
+  let p: i32 = 2 * c.l - q;
+  let r: i32 = hue_to_channel(p, q, c.h + 1200);
+  let g: i32 = hue_to_channel(p, q, c.h);
+  let b: i32 = hue_to_channel(p, q, c.h - 1200);
   return Rgb {
     r: clamp255(rdiv(r * 255, 1000)), g: clamp255(rdiv(g * 255, 1000)),
     b: clamp255(rdiv(b * 255, 1000)),
@@ -237,17 +237,17 @@ function palette(): Named[] {
 // Squared euclidean distance in RGB. Squared, so no square root and no
 // float — and the ordering it induces is identical to the unsquared one.
 function dist2(a: Rgb, b: Rgb): i32 {
-  var dr: i32 = a.r - b.r;
-  var dg: i32 = a.g - b.g;
-  var db: i32 = a.b - b.b;
+  let dr: i32 = a.r - b.r;
+  let dg: i32 = a.g - b.g;
+  let db: i32 = a.b - b.b;
   return dr * dr + dg * dg + db * db;
 }
 
 // First match wins on a tie, so the answer is a single well-defined name
 // rather than "some nearest one".
 function nearest_named(c: Rgb): Named {
-  var ps: Named[] = palette();
-  var best: i32 = 0;
+  let ps: Named[] = palette();
+  let best: i32 = 0;
   for i in 0..ps.len() {
     if (dist2(c, ps[i].c) < dist2(c, ps[best].c)) {
       best = i;
@@ -272,8 +272,8 @@ function tenths(v: i32): string {
 // levels per channel, which walks all six hue sectors and both sides of the
 // lightness split.
 function sweep(): Rgb[] {
-  var levels: i32[] = [0, 1, 31, 64, 127, 128, 191, 224, 254, 255];
-  var out: Rgb[] = [];
+  let levels: i32[] = [0, 1, 31, 64, 127, 128, 191, 224, 254, 255];
+  let out: Rgb[] = [];
   for i in 0..levels.len() {
     for j in 0..levels.len() {
       out = out.append(Rgb {
@@ -291,14 +291,14 @@ function sweep(): Rgb[] {
 // channel back within one unit. A formula that is right on the primaries
 // and wrong in one hue sector fails here and nowhere else.
 function test_the_round_trip_is_lossless_to_one_unit(): test.TestOutcome {
-  var cs: Rgb[] = sweep();
-  var worst: i32 = 0;
+  let cs: Rgb[] = sweep();
+  let worst: i32 = 0;
   for i in 0..cs.len() {
-    var back: Rgb = hsl_to_rgb(rgb_to_hsl(cs[i]));
-    var dr: i32 = abs_i(back.r - cs[i].r);
-    var dg: i32 = abs_i(back.g - cs[i].g);
-    var db: i32 = abs_i(back.b - cs[i].b);
-    var m: i32 = max3(dr, dg, db);
+    let back: Rgb = hsl_to_rgb(rgb_to_hsl(cs[i]));
+    let dr: i32 = abs_i(back.r - cs[i].r);
+    let dg: i32 = abs_i(back.g - cs[i].g);
+    let db: i32 = abs_i(back.b - cs[i].b);
+    let m: i32 = max3(dr, dg, db);
     if (m > worst) {
       worst = m;
     }
@@ -326,18 +326,18 @@ function abs_i(v: i32): i32 {
 // units this one uses. Pure primaries, grey, and the two lightness
 // extremes — where saturation and hue are at their most degenerate.
 function test_the_reference_colours_are_exact(): test.TestOutcome {
-  var names: string[] = ["red", "lime", "blue", "white", "black", "mid grey", "yellow"];
-  var ins: Rgb[] = [
+  let names: string[] = ["red", "lime", "blue", "white", "black", "mid grey", "yellow"];
+  let ins: Rgb[] = [
     Rgb { r: 255, g: 0, b: 0 }, Rgb { r: 0, g: 255, b: 0 },
     Rgb { r: 0, g: 0, b: 255 }, Rgb { r: 255, g: 255, b: 255 },
     Rgb { r: 0, g: 0, b: 0 }, Rgb { r: 128, g: 128, b: 128 },
     Rgb { r: 255, g: 255, b: 0 },
   ];
-  var want_h: i32[] = [0, 1200, 2400, 0, 0, 0, 600];
-  var want_s: i32[] = [1000, 1000, 1000, 0, 0, 0, 1000];
-  var want_l: i32[] = [500, 500, 500, 1000, 0, 502, 500];
+  let want_h: i32[] = [0, 1200, 2400, 0, 0, 0, 600];
+  let want_s: i32[] = [1000, 1000, 1000, 0, 0, 0, 1000];
+  let want_l: i32[] = [500, 500, 500, 1000, 0, 502, 500];
   for i in 0..ins.len() {
-    var got: Hsl = rgb_to_hsl(ins[i]);
+    let got: Hsl = rgb_to_hsl(ins[i]);
     if (got.h != want_h[i] || got.s != want_s[i] || got.l != want_l[i]) {
       return test.fail(names[i] + ": got " + hsl_str(got) + " (h=" + got.h.to_string()
         + " s=" + got.s.to_string() + " l=" + got.l.to_string()
@@ -352,7 +352,7 @@ function test_the_reference_colours_are_exact(): test.TestOutcome {
 // convention this file picks, stated as a test so it cannot drift.
 function test_greys_have_no_hue(): test.TestOutcome {
   for v in 0..256 {
-    var g: Hsl = rgb_to_hsl(Rgb { r: v, g: v, b: v });
+    let g: Hsl = rgb_to_hsl(Rgb { r: v, g: v, b: v });
     if (g.s != 0) {
       return test.fail("grey " + v.to_string() + " has saturation "
         + g.s.to_string());
@@ -360,7 +360,7 @@ function test_greys_have_no_hue(): test.TestOutcome {
     if (g.h != 0) {
       return test.fail("grey " + v.to_string() + " has hue " + g.h.to_string());
     }
-    var back: Rgb = hsl_to_rgb(g);
+    let back: Rgb = hsl_to_rgb(g);
     if (abs_i(back.r - v) > 1 || back.r != back.g || back.g != back.b) {
       return test.fail("grey " + v.to_string() + " came back as " + rgb_str(back));
     }
@@ -372,13 +372,13 @@ function test_greys_have_no_hue(): test.TestOutcome {
 // nothing to this file. Both must accept the same strings and agree on the
 // value, and both must reject the same malformed ones.
 function test_hex_agrees_with_the_stdlib(): test.TestOutcome {
-  var good: string[] = [
+  let good: string[] = [
     "#ff8800", "ff8800", "#FF8800", "#f80", "f80",
     "#000000", "#ffffff", "#000", "#fff", "#123456",
   ];
   for i in 0..good.len() {
-    var mine: Option[Rgb] = parse_hex(good[i]);
-    var theirs: Option[i32] = math.parse_rgb_hex(good[i]);
+    let mine: Option[Rgb] = parse_hex(good[i]);
+    let theirs: Option[i32] = math.parse_rgb_hex(good[i]);
     match (mine) {
       None => {
         return test.fail("rejected \"" + good[i] + "\", which is valid");
@@ -390,7 +390,7 @@ function test_hex_agrees_with_the_stdlib(): test.TestOutcome {
               + "\" but this file accepted it");
           },
           Some(packed) => {
-            var want: i32 = math.pack_rgb(c.r, c.g, c.b);
+            let want: i32 = math.pack_rgb(c.r, c.g, c.b);
             if (packed != want) {
               return test.fail("\"" + good[i] + "\": std/math says "
                 + packed.to_string() + ", this file says "
@@ -401,7 +401,7 @@ function test_hex_agrees_with_the_stdlib(): test.TestOutcome {
       }
     }
   }
-  var bad: string[] = [
+  let bad: string[] = [
     "", "#", "#ff", "#ff880", "#ff88000", "#gg8800",
     "ff88 0", "#ff-800", "12345",
   ];
@@ -419,9 +419,9 @@ function test_hex_agrees_with_the_stdlib(): test.TestOutcome {
 // Formatting is a function: two spellings of one colour format identically,
 // and parse(format(c)) is c exactly — no tolerance, because hex is lossless.
 function test_hex_formatting_is_canonical(): test.TestOutcome {
-  var cs: Rgb[] = sweep();
+  let cs: Rgb[] = sweep();
   for i in 0..cs.len() {
-    var s: string = to_hex(cs[i]);
+    let s: string = to_hex(cs[i]);
     if (s.len() != 7 || s[0] as i32 != 35) {
       return test.fail("formatted " + rgb_str(cs[i]) + " as \"" + s + "\"");
     }
@@ -438,7 +438,7 @@ function test_hex_formatting_is_canonical(): test.TestOutcome {
     }
   }
   // Case and shorthand normalise to one spelling.
-  var spellings: string[] = ["#FF8800", "#ff8800", "ff8800", "#F80", "#f80", "f80"];
+  let spellings: string[] = ["#FF8800", "#ff8800", "ff8800", "#F80", "#f80", "f80"];
   for i in 0..spellings.len() {
     match (parse_hex(spellings[i])) {
       None => {
@@ -458,9 +458,9 @@ function test_hex_formatting_is_canonical(): test.TestOutcome {
 // beat that. This is the property that catches a lookup comparing the wrong
 // channels, which otherwise returns a plausible neighbour.
 function test_a_named_colour_finds_itself(): test.TestOutcome {
-  var ps: Named[] = palette();
+  let ps: Named[] = palette();
   for i in 0..ps.len() {
-    var got: Named = nearest_named(ps[i].c);
+    let got: Named = nearest_named(ps[i].c);
     if (got.name != ps[i].name) {
       return test.fail(ps[i].name + " " + rgb_str(ps[i].c)
         + " looked up as " + got.name);
@@ -470,10 +470,10 @@ function test_a_named_colour_finds_itself(): test.TestOutcome {
     }
   }
   // And the answer really is nearest: nothing in the palette is closer.
-  var probes: Rgb[] = sweep();
+  let probes: Rgb[] = sweep();
   for i in 0..probes.len() {
-    var got: Named = nearest_named(probes[i]);
-    var d: i32 = dist2(probes[i], got.c);
+    let got: Named = nearest_named(probes[i]);
+    let d: i32 = dist2(probes[i], got.c);
     for k in 0..ps.len() {
       if (dist2(probes[i], ps[k].c) < d) {
         return test.fail(rgb_str(probes[i]) + " -> " + got.name
@@ -487,9 +487,9 @@ function test_a_named_colour_finds_itself(): test.TestOutcome {
 // Lightness is monotone in the grey ramp, and the two extremes are exact.
 // A conversion that saturates early looks fine on the primaries.
 function test_lightness_is_monotone(): test.TestOutcome {
-  var prev: i32 = -1;
+  let prev: i32 = -1;
   for v in 0..256 {
-    var l: i32 = rgb_to_hsl(Rgb { r: v, g: v, b: v }).l;
+    let l: i32 = rgb_to_hsl(Rgb { r: v, g: v, b: v }).l;
     if (l < prev) {
       return test.fail("lightness fell from " + prev.to_string() + " to "
         + l.to_string() + " at grey " + v.to_string());
@@ -509,26 +509,26 @@ function test_lightness_is_monotone(): test.TestOutcome {
 
 function main(): i32 {
   eprint("colour_convert — hex, HSL and the nearest name");
-  var samples: string[] = ["#ff8800", "#3366cc", "#f80", "#808080", "#00ff7f"];
+  let samples: string[] = ["#ff8800", "#3366cc", "#f80", "#808080", "#00ff7f"];
   for i in 0..samples.len() {
     match (parse_hex(samples[i])) {
       None => {
         eprint("  " + samples[i] + " -> malformed");
       },
       Some(c) => {
-        var h: Hsl = rgb_to_hsl(c);
-        var back: Rgb = hsl_to_rgb(h);
+        let h: Hsl = rgb_to_hsl(c);
+        let back: Rgb = hsl_to_rgb(h);
         eprint("  " + samples[i] + " -> " + rgb_str(c) + " " + hsl_str(h)
           + " -> " + rgb_str(back)
           + "  nearest: " + nearest_named(c).name);
       }
     }
   }
-  var worst: i32 = 0;
-  var cs: Rgb[] = sweep();
+  let worst: i32 = 0;
+  let cs: Rgb[] = sweep();
   for i in 0..cs.len() {
-    var back: Rgb = hsl_to_rgb(rgb_to_hsl(cs[i]));
-    var m: i32 = max3(
+    let back: Rgb = hsl_to_rgb(rgb_to_hsl(cs[i]));
+    let m: i32 = max3(
       abs_i(back.r - cs[i].r), abs_i(back.g - cs[i].g),
       abs_i(back.b - cs[i].b),
     );
@@ -539,7 +539,7 @@ function main(): i32 {
   eprint("  worst round-trip error over " + cs.len().to_string()
     + " swept colours: " + worst.to_string() + " per channel");
 
-  var t: test.TestRunner = test.test_new("colour_convert");
+  let t: test.TestRunner = test.test_new("colour_convert");
   t = t.it("the round trip is lossless to one unit", test_the_round_trip_is_lossless_to_one_unit);
   t = t.it("the reference colours are exact", test_the_reference_colours_are_exact);
   t = t.it("greys have no hue", test_greys_have_no_hue);

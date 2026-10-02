@@ -15,10 +15,10 @@ function label(n: i32): Option[string] {
 function shift(label: string): string { return label + "!"; }
 function pick(c: boolean, n: i32): string {
     if (c) {
-        var label: string = "local";
+        let label: string = "local";
         return label;
     } else {
-        var f: (i32) => Option[string] = label;
+        let f: (i32) => Option[string] = label;
         match (f(n)) {
             Some(s) => { return s; },
             None => { return "none"; }
@@ -27,8 +27,8 @@ function pick(c: boolean, n: i32): string {
     return "";
 }
 function main(): i32 {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < 50) {
         match (label(i)) {
             Some(s) => { out = shift(s); },

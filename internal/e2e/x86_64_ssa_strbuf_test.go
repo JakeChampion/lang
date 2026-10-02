@@ -18,19 +18,19 @@ func TestX86_64SSAStrbufBuildsAndTakes(t *testing.T) {
   strbuf_append("Hello, ");
   strbuf_append("Fern");
   strbuf_append("!");
-  var s: string = strbuf_take();
+  let s: string = strbuf_take();
   if (s != "Hello, Fern!") { return 1; }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 5) { strbuf_append("ab"); i = i + 1; }
-  var t: string = strbuf_take();
+  let t: string = strbuf_take();
   if (t != "ababababab") { return 2; }
   i = 0;
   while (i < 100000) { strbuf_append("0123456789"); i = i + 1; }
-  var big: string = strbuf_take();
+  let big: string = strbuf_take();
   if (big.len() != 1000000) { return 3; }
   if (big[0] != 48 || big[999999] != 57) { return 4; }
   strbuf_append("tail");
-  var after: string = strbuf_take();
+  let after: string = strbuf_take();
   if (after != "tail") { return 5; }
   stdout().write(s + " " + t + " " + after + "\n");
   return 0;

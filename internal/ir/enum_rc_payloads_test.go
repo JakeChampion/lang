@@ -36,7 +36,7 @@ func TestEnumRcPayloadsInc(t *testing.T) {
 	// under the flag, not under the move model.
 	const list = `enum L{C(i32,L),N}
 function len(l:L):i32{match(l){C(h,x)=>{return 1+len(x);},N=>{return 0;}}}
-function f(t:L):i32{var e:L=C(0,t);return len(t)+len(e);}
+function f(t:L):i32{let e:L=C(0,t);return len(t)+len(e);}
 function main():i32{return 0;}`
 	ast.EnumRcPayloads = false
 	off := incCountInFn(lowerForTest(t, list), "f")

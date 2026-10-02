@@ -22,7 +22,7 @@ import (
 //     const-CALLED each element and `fns[0]()` called an integer as a code
 //     pointer: the self-host binary SIGSEGVs (139) where native answers 42.
 //     The `fn[]` annotation must be ABSENT for this to fail — writing
-//     `var fns: (() => i32)[]` compiles correctly even unfixed, so an annotated
+//     `let fns: (() => i32)[]` compiles correctly even unfixed, so an annotated
 //     probe proves nothing.
 //
 //  2. settle_block — descended into a lambda but passed empty name/type lists,
@@ -51,7 +51,7 @@ function mk2(): i32 { return 7; }
 
 function main(): i32 {
     if (true) {
-        var fns = [mk, mk2];
+        let fns = [mk, mk2];
         if (fns[0]() != 42) { return 90; }
         if (fns[1]() != 7) { return 91; }
         return 0;
@@ -64,7 +64,7 @@ function main(): i32 {
 
 function main(): i32 {
     if (true) {
-        var f = mk;
+        let f = mk;
         if (f() != 42) { return 90; }
         return 0;
     }
@@ -76,8 +76,8 @@ function main(): i32 {
 function mk2(): i32 { return 7; }
 
 function main(): i32 {
-    var g: () => i32 = (): i32 => {
-        var fns = [mk, mk2];
+    let g: () => i32 = (): i32 => {
+        let fns = [mk, mk2];
         return fns[0]() + fns[1]();
     };
     if (g() != 49) { return 90; }
@@ -88,10 +88,10 @@ function main(): i32 {
 	{"fn-local-in-while-if", `function mk(): i32 { return 42; }
 
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 1) {
         if (true) {
-            var f = mk;
+            let f = mk;
             if (f() != 42) { return 90; }
             return 0;
         }
@@ -102,7 +102,7 @@ function main(): i32 {
 `},
 	// settle: a literal assigned to the lambda's own f64 PARAM.
 	{"lambda-f64-param-literal", `function main(): i32 {
-    var f: (f64) => i32 = (x: f64): i32 => {
+    let f: (f64) => i32 = (x: f64): i32 => {
         x = 3;
         if (x > 2.5) { return 0; }
         return 90;
@@ -113,8 +113,8 @@ function main(): i32 {
 	// settle control: an annotated LOCAL in the same lambda was always correct,
 	// so this passes either side of the fix and isolates the param scope.
 	{"lambda-f64-local-control", `function main(): i32 {
-    var f: () => i32 = (): i32 => {
-        var y: f64 = 3;
+    let f: () => i32 = (): i32 => {
+        let y: f64 = 3;
         if (y > 2.5) { return 0; }
         return 90;
     };
@@ -129,9 +129,9 @@ function main(): i32 {
 function (a: Acc) bump(d: f64): f64 { return a.v + d; }
 
 function main(): i32 {
-    var acc: Acc = Acc { v: 1.0 };
-    var f: () => f64 = (): f64 => { return acc.bump(2); };
-    var r: f64 = f();
+    let acc: Acc = Acc { v: 1.0 };
+    let f: () => f64 = (): f64 => { return acc.bump(2); };
+    let r: f64 = f();
     if (r > 2.5 && r < 3.5) { return 0; }
     return 90;
 }
@@ -143,12 +143,12 @@ function main(): i32 {
 function (a: Acc) bump(d: f64): f64 { return a.v + d; }
 
 function main(): i32 {
-    var acc: Acc = Acc { v: 1.0 };
-    var f: () => f64 = (): f64 => {
-        var g: () => f64 = (): f64 => { return acc.bump(2); };
+    let acc: Acc = Acc { v: 1.0 };
+    let f: () => f64 = (): f64 => {
+        let g: () => f64 = (): f64 => { return acc.bump(2); };
         return g();
     };
-    var r: f64 = f();
+    let r: f64 = f();
     if (r > 2.5 && r < 3.5) { return 0; }
     return 90;
 }
@@ -168,18 +168,18 @@ function (c: Ctr) bump(d: i32): i32 { return c.n + d; }
 function run(f: (Ctr) => i32): i32 { return f(Ctr { n: 40 }); }
 
 function main(): i32 {
-    var acc: Acc = Acc { v: 1.0 };
-    var r: i32 = run((acc: Ctr): i32 => { return acc.bump(2); });
+    let acc: Acc = Acc { v: 1.0 };
+    let r: i32 = run((acc: Ctr): i32 => { return acc.bump(2); });
     if (r != 42) { return 90; }
-    var q: f64 = acc.bump(1);
+    let q: f64 = acc.bump(1);
     if (q > 1.5 && q < 2.5) { return 0; }
     return 91;
 }
 `},
 	// resolve_labels regression guard: `break outer` must leave the OUTER loop.
 	{"labeled-break-in-lambda", `function main(): i32 {
-    var f: () => i32 = (): i32 => {
-        var n: i32 = 0;
+    let f: () => i32 = (): i32 => {
+        let n: i32 = 0;
         outer: while (n < 100) {
             inner: while (true) {
                 n = n + 1;
@@ -199,7 +199,7 @@ function main(): i32 {
 function mk2(): i32 { return 7; }
 
 function main(): i32 {
-    var fns = [mk, mk2];
+    let fns = [mk, mk2];
     if (fns[0]() != 42) { return 90; }
     if (fns[1]() != 7) { return 91; }
     return 0;

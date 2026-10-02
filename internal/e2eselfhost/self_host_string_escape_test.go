@@ -65,8 +65,8 @@ var escapeCases = []struct {
 // wrong byte names itself instead of showing up as a garbled string.
 func escapeProbeSource(lit string) string {
 	return `function main(): i32 {
-    var b: string = "` + lit + `";
-    var i: i32 = 0;
+    let b: string = "` + lit + `";
+    let i: i32 = 0;
     while (i < b.len()) {
         print(int_str(b[i] as i32));
         i = i + 1;
@@ -75,8 +75,8 @@ func escapeProbeSource(lit string) string {
 }
 function int_str(n: i32): string {
     if (n == 0) { return "0"; }
-    var s: string = "";
-    var v: i32 = n;
+    let s: string = "";
+    let v: i32 = n;
     while (v > 0) { s = digit(v % 10) + s; v = v / 10; }
     return s;
 }

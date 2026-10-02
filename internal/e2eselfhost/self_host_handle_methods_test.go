@@ -22,7 +22,7 @@ import (
 // arm for a mixed-width subtraction.
 func selfHostHandleMethodSource(path string, out string, app string) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var minus2: i64 = (0 as i64) - (2 as i64);
+    let minus2: i64 = (0 as i64) - (2 as i64);
     match (open_reader(%[1]q)) {
         Err(_) => { return 30; },
         Ok(r) => {
@@ -233,7 +233,7 @@ func TestSelfHostHandleStatSeekWasmIR(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	src := `function main(): i32 {
-    var minus2: i64 = (0 as i64) - (2 as i64);
+    let minus2: i64 = (0 as i64) - (2 as i64);
     match (open_reader("hello.txt")) {
         Err(_) => { return 30; },
         Ok(r) => {

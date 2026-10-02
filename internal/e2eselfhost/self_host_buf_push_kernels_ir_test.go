@@ -26,10 +26,10 @@ import (
 // small distinct code saying which shape disagreed; 42 means every
 // comparison matched.
 const bufPushKernelsIRProg = `function ref(s: string, table: u8[]): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < s.len()) {
-        var c: i32 = s[i] as i32;
+        let c: i32 = s[i] as i32;
         if (c < table.len()) { c = table[c] as i32; }
         out = out + chr(c);
         i = i + 1;
@@ -37,18 +37,18 @@ const bufPushKernelsIRProg = `function ref(s: string, table: u8[]): string {
     return out;
 }
 function ref_filtered(s: string, drop: u8[]): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < s.len()) {
-        var c: i32 = s[i] as i32;
+        let c: i32 = s[i] as i32;
         if (c >= drop.len() || drop[c] as i32 == 0) { out = out + chr(c); }
         i = i + 1;
     }
     return out;
 }
 function alternate_table(): u8[] {
-    var t: u8[] = __alloc_u8(256);
-    var z: i32 = 0;
+    let t: u8[] = __alloc_u8(256);
+    let z: i32 = 0;
     while (z < 256) { t = t.with(z, (z % 2) as u8); z = z + 1; }
     return t;
 }
@@ -58,16 +58,16 @@ function check_filtered(b: usize, held: string, s: string, drop: u8[]): boolean 
     return buf_take(b) == held + ref_filtered(s, drop);
 }
 function ref_expanded(s: string, t: u8[]): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < s.len()) {
-        var c: i32 = s[i] as i32;
+        let c: i32 = s[i] as i32;
         if (c * 8 + 8 > t.len()) {
             out = out + chr(c);
         } else {
-            var n: i32 = t[c * 8] as i32;
+            let n: i32 = t[c * 8] as i32;
             if (n > 7) { n = 7; }
-            var k: i32 = 0;
+            let k: i32 = 0;
             while (k < n) { out = out + chr(t[c * 8 + 1 + k] as i32); k = k + 1; }
         }
         i = i + 1;
@@ -77,13 +77,13 @@ function ref_expanded(s: string, t: u8[]): string {
 // Byte c becomes c % 8 copies of 'a' + c % 26; every fifth record claims a
 // length past seven, which counts as seven.
 function expand_table(): u8[] {
-    var t: u8[] = __alloc_u8(2048);
-    var c: i32 = 0;
+    let t: u8[] = __alloc_u8(2048);
+    let c: i32 = 0;
     while (c < 256) {
-        var n: i32 = c % 8;
+        let n: i32 = c % 8;
         if (c % 5 == 0) { n = 9 + c % 100; }
         t = t.with(c * 8, n as u8);
-        var k: i32 = 1;
+        let k: i32 = 1;
         while (k < 8) { t = t.with(c * 8 + k, (97 + c % 26) as u8); k = k + 1; }
         c = c + 1;
     }
@@ -95,8 +95,8 @@ function check_expanded(b: usize, held: string, s: string, t: u8[]): boolean {
     return buf_take(b) == held + ref_expanded(s, t);
 }
 function rot_table(): u8[] {
-    var t: u8[] = __alloc_u8(256);
-    var z: i32 = 0;
+    let t: u8[] = __alloc_u8(256);
+    let z: i32 = 0;
     while (z < 256) { t = t.with(z, ((z + 13) % 256) as u8); z = z + 1; }
     return t;
 }
@@ -106,14 +106,14 @@ function check(b: usize, held: string, s: string, table: u8[]): boolean {
     return buf_take(b) == held + ref(s, table);
 }
 function main(): i32 {
-    var b: usize = buf_new(4);
-    var rot: u8[] = rot_table();
-    var short: u8[] = [120 as u8, 121 as u8, 122 as u8];
-    var none: u8[] = [];
-    var alt: u8[] = alternate_table();
-    var ex: u8[] = expand_table();
-    var n: i32 = 0;
-    var s: string = "";
+    let b: usize = buf_new(4);
+    let rot: u8[] = rot_table();
+    let short: u8[] = [120 as u8, 121 as u8, 122 as u8];
+    let none: u8[] = [];
+    let alt: u8[] = alternate_table();
+    let ex: u8[] = expand_table();
+    let n: i32 = 0;
+    let s: string = "";
     while (n <= 40) {
         if (!check(b, "", s, rot)) { return 1; }
         if (!check(b, "ab", s, short)) { return 2; }
@@ -129,13 +129,13 @@ function main(): i32 {
     }
     if (!check(b, "held", "\x00\x01\x02\x03", short)) { return 4; }
     if (!check(b, "", "\x00\x01\x02\x03", short) || buf_len(b) != 0) { return 5; }
-    var big: string = "";
-    var k: i32 = 0;
+    let big: string = "";
+    let k: i32 = 0;
     while (k < 300) { big = big + "9z"; k = k + 1; }
     if (!check(b, "", big, rot)) { return 6; }
     if (!check_filtered(b, "", big, alt)) { return 11; }
     if (!check_expanded(b, "", big, ex)) { return 14; }
-    var every: string = "";
+    let every: string = "";
     k = 0;
     while (k < 384) { every = every + chr(k % 128); k = k + 1; }
     if (!check_expanded(b, "gh", every, ex)) { return 15; }

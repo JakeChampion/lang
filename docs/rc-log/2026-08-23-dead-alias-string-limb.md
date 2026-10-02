@@ -1,6 +1,6 @@
 # Dead-alias cancellation, string limb — and the loop-rebind third release site
 
-The #4402 opt 1 port's second limb: `var v = s` on a credited string source is
+The #4402 opt 1 port's second limb: `let v = s` on a credited string source is
 now cancelled like the array limb (#7455) — retain elided in the ladder, alias
 sweep dec elided via `note_moved_elided`, both through the one predicate
 `str_dead_alias_bind`. Strings have no precise-drop class, so the
@@ -23,7 +23,7 @@ sweep dec elided via `note_moved_elided`, both through the one predicate
 ## The trap: the pair has THREE release sites, not two
 
 The elision covered the ladder retain and the exit sweep. A LOOP-scoped pair
-(`while { var s = "hi" + "!"; var v = s; … }`) rebinds both slots each
+(`while { let s = "hi" + "!"; let v = s; … }`) rebinds both slots each
 iteration, and the alias slot's rebind store (`emit_str_reclaim_store` /
 `emit_arr_store`'s dec-on-overwrite) is a third release the sweep-only elision
 left armed: iteration 2 frees the prior box out of the source's slot at rc 1,

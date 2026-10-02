@@ -24,7 +24,7 @@ function main(): i32 { return pick([[18000000000000000000, 1]]); }`, 7},
 	{"u64-method-param", `struct Picker { tag: i32 }
 function (p: Picker) pick(m: u64[][]): i32 { return (m[0][0] >> 58) as i32; }
 function main(): i32 {
-    var p: Picker = Picker { tag: 0 };
+    let p: Picker = Picker { tag: 0 };
     return p.pick([[18000000000000000000, 1]]);
 }`, 62},
 	{"u64-foreach", `function pick(m: u64[][]): i32 {
@@ -33,24 +33,24 @@ function main(): i32 {
 }
 function main(): i32 { return pick([[18000000000000000000, 1]]); }`, 62},
 	{"u64-local-foreach", `function main(): i32 {
-    var m: u64[][] = [[18000000000000000000, 1]];
+    let m: u64[][] = [[18000000000000000000, 1]];
     for row in m { for x in row { return (x >> 58) as i32; } }
     return 1;
 }`, 62},
 	{"string-foreach", `function pick(m: string[][]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for row in m { for x in row { n = n + x.len(); } }
     return n;
 }
 function main(): i32 { return pick([["abc", "defgh"], ["ij"]]); }`, 10},
 	{"string-local-foreach", `function main(): i32 {
-    var m: string[][] = [["abc", "defgh"], ["ij"]];
-    var n: i32 = 0;
+    let m: string[][] = [["abc", "defgh"], ["ij"]];
+    let n: i32 = 0;
     for row in m { for x in row { n = n + x.len(); } }
     return n;
 }`, 10},
 	{"i32-three-deep", `function pick(m: i32[][][]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for plane in m { for row in plane { for x in row { n = n + x; } } }
     return n;
 }
@@ -61,7 +61,7 @@ function main(): i32 { return pick([[[1, 2], [3]], [[4]]]); }`, 10},
 }
 function main(): i32 { return pick([[4294967296, 2]]); }`, 1},
 	{"f64-width-control", `function pick(m: f64[][]): i32 {
-    var n: f64 = 0.0;
+    let n: f64 = 0.0;
     for row in m { for x in row { n = n + x; } }
     return n as i32;
 }

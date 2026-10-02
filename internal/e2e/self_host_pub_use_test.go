@@ -13,7 +13,7 @@ import (
 //   - helpers defines the real symbols (a struct, two functions),
 //   - facade re-exports them via `pub use "./helpers".{…}`,
 //   - main imports facade and uses the re-exported names through the
-//     facade: a re-exported TYPE in a `var` annotation (facade.Point,
+//     facade: a re-exported TYPE in a `let` annotation (facade.Point,
 //     facade.Shape) and re-exported VALUES in qualified calls
 //     (facade.make_point / facade.area / facade.add5).
 //
@@ -43,8 +43,8 @@ var pubUseSelfHostProgram = map[string]string{
 	"main.fern": "" +
 		"import \"./facade\";\n" +
 		"function main(): i32 {\n" +
-		"    var p: facade.Point = facade.make_point(6, 7);\n" +
-		"    var s: facade.Shape = Sq(p);\n" +
+		"    let p: facade.Point = facade.make_point(6, 7);\n" +
+		"    let s: facade.Shape = Sq(p);\n" +
 		"    match (s) {\n" +
 		"        Sq(q) => { return facade.add5(facade.area(q)); },\n" +
 		"        _ => { return 0; }\n" +

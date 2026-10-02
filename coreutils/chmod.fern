@@ -163,7 +163,7 @@ struct Target { changes: mode.Changes, fixed: i32, has_fixed: boolean, mask: i32
 struct St { out: gnu.Stdio, status: i32 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... MODE[,MODE]... FILE...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... OCTAL-MODE FILE...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... --reference=RFILE FILE...\n";
@@ -201,7 +201,7 @@ function help_text(): string {
 // ambiguity list prints candidates in it, so `--r` names '--recursive' before
 // '--reference'. `--help` and `--version` are appended by getopt_new.
 function option_table(): gnu.Opt[] {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("c", "changes", opt_changes()));
   opts = opts.append(gnu.flag("", "dereference", opt_dereference()));
   opts = opts.append(gnu.flag("R", "recursive", opt_recursive()));
@@ -215,8 +215,8 @@ function option_table(): gnu.Opt[] {
   opts = opts.append(gnu.flag("H", "", opt_comfollow()));
   opts = opts.append(gnu.flag("L", "", opt_logical()));
   opts = opts.append(gnu.flag("P", "", opt_physical()));
-  var i: i32 = 0;
-  var letters: string = "rwxXstugoa,+=01234567";
+  let i: i32 = 0;
+  let letters: string = "rwxXstugoa,+=01234567";
   while (i < letters.len()) {
     opts = opts.append(gnu.optional(slice_unchecked(letters, i, i + 1) + "", "", opt_mode()));
     i = i + 1;
@@ -227,14 +227,14 @@ function option_table(): gnu.Opt[] {
 struct Parsed { s: Settings, mode: string, has_mode: boolean, reference: string, has_reference: boolean, files: string[] }
 
 function parse(argv: string[]): Parsed {
-  var s: Settings = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false, deref: deref_unset(), traverse: trav_command_line() };
-  var mode: string = "";
-  var has_mode: boolean = false;
-  var reference: string = "";
-  var has_reference: boolean = false;
-  var g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "chmod", help_text(), 1);
+  let s: Settings = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false, deref: deref_unset(), traverse: trav_command_line() };
+  let mode: string = "";
+  let has_mode: boolean = false;
+  let reference: string = "";
+  let has_reference: boolean = false;
+  let g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "chmod", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -267,7 +267,7 @@ function parse(argv: string[]): Parsed {
           // The WHOLE argv element is the mode, however much of it getopt
           // already consumed as options: `-vRw` is the mode `-vRw`, and a
           // fault. A later element is joined on with a comma.
-          var token: string = argv[g.index() - 1];
+          let token: string = argv[g.index() - 1];
           if (has_mode) {
             mode = mode + "," + token;
           } else {
@@ -310,7 +310,7 @@ function say(st: St, s: Settings, line: string): St {
 // The entry could not be reached at all. `-v` adds its own line after the
 // diagnostic, which is why the two are written in this order.
 function unreachable(st0: St, s: Settings, path: string, msg: string): St {
-  var st: St = fail_quiet(st0, s, msg);
+  let st: St = fail_quiet(st0, s, msg);
   return say(st, s, gnu.quotea(path) + " could not be accessed\n");
 }
 
@@ -329,11 +329,11 @@ function is_root_dir(info: FileStat): boolean {
 }
 
 function refuse_root(st0: St, path: string): St {
-  var same: string = "";
+  let same: string = "";
   if (path != "/") {
     same = " (same as '/')";
   }
-  var st: St = fail_loud(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
+  let st: St = fail_loud(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
   return fail_loud(st, "use --no-preserve-root to override this failsafe");
 }
 
@@ -345,11 +345,11 @@ function target_mode(t: Target, old: i32, is_dir: boolean): (i32, i32, boolean) 
   if (t.has_fixed) {
     return (t.fixed, t.fixed, false);
   }
-  var masked: mode.Adjusted = t.changes.adjust(old, is_dir, t.mask);
+  let masked: mode.Adjusted = t.changes.adjust(old, is_dir, t.mask);
   if (!t.from_option) {
     return (masked.mode, masked.mode, false);
   }
-  var naive: mode.Adjusted = t.changes.adjust(old, is_dir, 0);
+  let naive: mode.Adjusted = t.changes.adjust(old, is_dir, 0);
   return (masked.mode, naive.mode, (masked.mode & mode.complement(naive.mode)) != 0);
 }
 
@@ -364,8 +364,8 @@ function target_mode(t: Target, old: i32, is_dir: boolean): (i32, i32, boolean) 
 // on, so `-hv` on one prints the referent's old mode on Darwin, as GNU's
 // fts entry does.
 function change_one(st0: St, s: Settings, t: Target, path: string, info: FileStat, link: Option[FileStat], follows: boolean): St {
-  var st: St = st0;
-  var on_link: boolean = false;
+  let st: St = st0;
+  let on_link: boolean = false;
   match (link) {
     Some(_) => {
       if (!follows) {
@@ -374,10 +374,10 @@ function change_one(st0: St, s: Settings, t: Target, path: string, info: FileSta
     },
     None => {}
   }
-  var old: i32 = info.mode as i32 & mode.all_bits();
-  var is_dir: boolean = filetype.is_dir(info.mode);
-  var r: (i32, i32, boolean) = target_mode(t, old, is_dir);
-  var wanted: i32 = r.0;
+  let old: i32 = info.mode as i32 & mode.all_bits();
+  let is_dir: boolean = filetype.is_dir(info.mode);
+  let r: (i32, i32, boolean) = target_mode(t, old, is_dir);
+  let wanted: i32 = r.0;
   match (chmod_at(path, wanted, !on_link)) {
     Ok(_) => {
       if (s.verbosity == v_all() || s.verbosity == v_changes() && wanted != old) {
@@ -406,7 +406,7 @@ function change_one(st0: St, s: Settings, t: Target, path: string, info: FileSta
 // strerror text rather than the number, so the text is what there is to
 // ask.
 function link_has_no_mode(e: IoError): boolean {
-  var text: string = gnu.io_error_text(e);
+  let text: string = gnu.io_error_text(e);
   return text == "Operation not supported" || text == "Function not implemented";
 }
 
@@ -425,11 +425,11 @@ function describe(path: string, old: i32, wanted: i32): string {
 // command-line operand, which is the level -H follows at and the only
 // one the root failsafe is asked about.
 function process(st0: St, s: Settings, t: Target, path: string, top: boolean): St {
-  var st: St = st0;
+  let st: St = st0;
   // What the walk sees: the target's type when this link is one it
   // follows, and the link itself otherwise.
-  var followed: boolean = s.traverse == trav_logical() || top && s.traverse != trav_physical();
-  var lands: boolean = s.deref == 1 || s.deref == deref_unset() && top;
+  let followed: boolean = s.traverse == trav_logical() || top && s.traverse != trav_physical();
+  let lands: boolean = s.deref == 1 || s.deref == deref_unset() && top;
   if (followed) {
     match (stat(path)) {
       Ok(info) => {
@@ -501,7 +501,7 @@ function link_stat(path: string): Option[FileStat] {
 // is one. The directory is chmod'ed BEFORE its children are read, which is
 // the order GNU's pre-order walk imposes.
 function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, link: Option[FileStat], follows: boolean, top: boolean): St {
-  var st: St = st0;
+  let st: St = st0;
   if (top && s.recursive && s.preserve_root && filetype.is_dir(info.mode) && is_root_dir(info)) {
     return refuse_root(st, path);
   }
@@ -511,7 +511,7 @@ function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, li
   }
   match (read_dir(path)) {
     Ok(names) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < names.len()) {
         st = process(st, s, t, fts.child_path(path, names[i]), false);
         i = i + 1;
@@ -530,14 +530,14 @@ function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, li
 // The process umask, read the only way POSIX offers: set zero, take the
 // answer, put it back.
 function current_umask(): i32 {
-  var mask: i32 = umask(0);
-  var back: i32 = umask(mask);
+  let mask: i32 = umask(0);
+  let back: i32 = umask(mask);
   return mask & mode.all_bits();
 }
 
 pub function main(): i32 {
-  var p: Parsed = parse(args());
-  var s: Settings = p.s;
+  let p: Parsed = parse(args());
+  let s: Settings = p.s;
   // A recursive walk that follows no link cannot reach a referent, so
   // asking it to change one is refused; asking it nothing settles on the
   // link. And a walk that follows every link changes every referent.
@@ -551,8 +551,8 @@ pub function main(): i32 {
   if (s.deref == deref_unset() && s.traverse == trav_logical()) {
     s = Settings { ...s, deref: 1 };
   }
-  var files: string[] = p.files;
-  var mode_spec: string = p.mode;
+  let files: string[] = p.files;
+  let mode_spec: string = p.mode;
   // A mode that arrived through the option letters and a --reference are the
   // one combination chmod refuses outright, ahead of the operand count.
   if (p.has_reference && p.has_mode) {
@@ -570,8 +570,8 @@ pub function main(): i32 {
   } else if (files.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
-  var st: St = St { out: gnu.stdio_new(), status: 0 };
-  var t: Target = Target { changes: mode.Changes { list: [] }, fixed: 0, has_fixed: false, mask: current_umask(), from_option: p.has_mode };
+  let st: St = St { out: gnu.stdio_new(), status: 0 };
+  let t: Target = Target { changes: mode.Changes { list: [] }, fixed: 0, has_fixed: false, mask: current_umask(), from_option: p.has_mode };
   if (p.has_reference) {
     match (stat(p.reference)) {
       Ok(info) => {
@@ -592,7 +592,7 @@ pub function main(): i32 {
       }
     }
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < files.len()) {
     st = process(st, s, t, fts.trim(files[i]), true);
     i = i + 1;

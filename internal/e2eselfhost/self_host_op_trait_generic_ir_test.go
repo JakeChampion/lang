@@ -35,8 +35,8 @@ function ng[T: num.Neg](a: T): T { return -a; }
 function main(): i32 { return ng(0 - 5); }`},
 	// generic accumulate over an array with the `+` operator in a loop.
 	{"accumulate", `import "std/num";
-function tot[T: num.Num](xs: T[], z: T): T { var acc: T = z; for x in xs { acc = acc + x; } return acc; }
-function main(): i32 { var xs: i32[] = [3, 4, 5, 6]; return tot(xs, 0); }`},
+function tot[T: num.Num](xs: T[], z: T): T { let acc: T = z; for x in xs { acc = acc + x; } return acc; }
+function main(): i32 { let xs: i32[] = [3, 4, 5, 6]; return tot(xs, 0); }`},
 }
 
 func TestSelfHostOpTraitGenericIR(t *testing.T) {

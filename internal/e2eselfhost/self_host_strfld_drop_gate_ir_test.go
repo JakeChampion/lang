@@ -33,17 +33,17 @@ var strFldDropGateCases = []struct {
 struct Outer { rs: Rec[], m: i32 }
 function esc(r: Rec): string { return r.tag; }
 function go(shared: string): i32 {
-    var rs: Rec[] = [];
-    var i: i32 = 0;
+    let rs: Rec[] = [];
+    let i: i32 = 0;
     while (i < 3) { rs = rs.append(Rec { tag: shared, n: i }); i = i + 1; }
-    var o: Outer = Outer { rs: rs, m: 7 };
-    var t: string = esc(o.rs[0]);
+    let o: Outer = Outer { rs: rs, m: 7 };
+    let t: string = esc(o.rs[0]);
     return o.m + t.len();
 }
 function main(): i32 {
-    var shared: string = "ab" + "cd";
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let shared: string = "ab" + "cd";
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 2000) { acc = (acc + go(shared)) % 251; i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (shared.len() != 4) { return 98; }
@@ -58,16 +58,16 @@ function main(): i32 {
 	{"admitted-string-field-still-reclaims", `struct Rec { tag: string, n: i32 }
 struct Outer { rs: Rec[], m: i32 }
 function go(pre: string): i32 {
-    var rs: Rec[] = [];
-    var i: i32 = 0;
+    let rs: Rec[] = [];
+    let i: i32 = 0;
     while (i < 3) { rs = rs.append(Rec { tag: pre + "x", n: i }); i = i + 1; }
-    var o: Outer = Outer { rs: rs, m: 7 };
+    let o: Outer = Outer { rs: rs, m: 7 };
     return o.m + o.rs[0].n;
 }
-function churn(m: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
+function churn(m: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var w: i32 = churn(2000);
-    var x: i32 = churn(2000);
+    let w: i32 = churn(2000);
+    let x: i32 = churn(2000);
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return 0;

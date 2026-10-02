@@ -21,14 +21,14 @@ impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
 struct Holder { l: dyn Label }
 function hold(l: dyn Label): Holder { return Holder { l: l }; }
 function pair(l: dyn Label): dyn Label[] { return [l, l]; }
-function alias(l: dyn Label): i32 { var v: dyn Label = l; var w: dyn Label = v; return w.a(); }
+function alias(l: dyn Label): i32 { let v: dyn Label = l; let w: dyn Label = v; return w.a(); }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + n + `) {
-        var local: Box = Box { name: "b" + "c" };
-        var h: Holder = hold(local);
-        var xs: dyn Label[] = pair(local);
+        let local: Box = Box { name: "b" + "c" };
+        let h: Holder = hold(local);
+        let xs: dyn Label[] = pair(local);
         t = t + h.l.a() + xs[0].a() + xs[1].a() + alias(local) + local.name.len();
         i = i + 1;
     }
@@ -42,10 +42,10 @@ function main(): i32 {
 func dynAliasBumpSrc(n, wider string) string {
 	churn := func(bound string) string {
 		return `    while (i < ` + bound + `) {
-        var local: Box = Box { name: "b" + "c" };
-        var h: Holder = hold(local);
-        var xs: dyn Label[] = pair(local);
-        var f: () => i32 = later(local);
+        let local: Box = Box { name: "b" + "c" };
+        let h: Holder = hold(local);
+        let xs: dyn Label[] = pair(local);
+        let f: () => i32 = later(local);
         sum = sum + h.l.a() + xs[1].a() + alias(local) + f();
         i = i + 1;
     }
@@ -57,16 +57,16 @@ impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
 struct Holder { l: dyn Label }
 function hold(l: dyn Label): Holder { return Holder { l: l }; }
 function pair(l: dyn Label): dyn Label[] { return [l, l]; }
-function alias(l: dyn Label): i32 { var v: dyn Label = l; var w: dyn Label = v; return w.a(); }
+function alias(l: dyn Label): i32 { let v: dyn Label = l; let w: dyn Label = v; return w.a(); }
 function later(l: dyn Label): () => i32 { return () => l.a(); }
 function main(): i32 {
-    var sum: i32 = 0;
-    var i: i32 = 0;
-    var base: i32 = (__heap_bump_bytes() as i32);
-` + churn(n) + `    var first: i32 = (__heap_bump_bytes() as i32) - base;
-    var mid: i32 = (__heap_bump_bytes() as i32);
+    let sum: i32 = 0;
+    let i: i32 = 0;
+    let base: i32 = (__heap_bump_bytes() as i32);
+` + churn(n) + `    let first: i32 = (__heap_bump_bytes() as i32) - base;
+    let mid: i32 = (__heap_bump_bytes() as i32);
     i = 0;
-` + churn(wider) + `    var second: i32 = (__heap_bump_bytes() as i32) - mid;
+` + churn(wider) + `    let second: i32 = (__heap_bump_bytes() as i32) - mid;
     if (second > first) { return 1; }
     return sum - sum;
 }`
@@ -109,11 +109,11 @@ struct Box { name: string }
 impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
 function later(l: dyn Label): () => i32 { return () => l.a(); }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var local: Box = Box { name: "b" + "c" };
-        var f: () => i32 = later(local);
+        let local: Box = Box { name: "b" + "c" };
+        let f: () => i32 = later(local);
         t = t + f() + local.name.len();
         i = i + 1;
     }
@@ -144,24 +144,24 @@ func TestDynOnlyCaptureDroppedLocallyBounded(t *testing.T) {
 struct Box { name: string }
 impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
 function run(n: i32): i32 {
-    var sum: i32 = 0;
-    var i: i32 = 0;
+    let sum: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var local: Box = Box { name: "b" + "c" };
-        var l: dyn Label = local;
-        var f: () => i32 = () => l.a();
+        let local: Box = Box { name: "b" + "c" };
+        let l: dyn Label = local;
+        let f: () => i32 = () => l.a();
         sum = sum + f();
         i = i + 1;
     }
     return sum;
 }
 function main(): i32 {
-    var base: i32 = (__heap_bump_bytes() as i32);
-    var s1: i32 = run(500);
-    var first: i32 = (__heap_bump_bytes() as i32) - base;
-    var mid: i32 = (__heap_bump_bytes() as i32);
-    var s2: i32 = run(2000);
-    var second: i32 = (__heap_bump_bytes() as i32) - mid;
+    let base: i32 = (__heap_bump_bytes() as i32);
+    let s1: i32 = run(500);
+    let first: i32 = (__heap_bump_bytes() as i32) - base;
+    let mid: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = run(2000);
+    let second: i32 = (__heap_bump_bytes() as i32) - mid;
     if (second > first) { return 1; }
     if (s1 != 1000 || s2 != 4000) { return 2; }
     return 0;
@@ -196,12 +196,12 @@ function later(l: dyn Label, k: i32, s: string, m: dyn Label): () => i32 {
     return () => l.a() * 1000 + k * 100 + s.len() * 10 + m.a();
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var x: Box = Box { name: "b" + "c" };
-        var y: Box = Box { name: "d" + "ef" };
-        var f: () => i32 = later(x, 4, "q" + "rs" + "t", y);
+        let x: Box = Box { name: "b" + "c" };
+        let y: Box = Box { name: "d" + "ef" };
+        let f: () => i32 = later(x, 4, "q" + "rs" + "t", y);
         t = t + f() - 2443;
         i = i + 1;
     }
@@ -252,16 +252,16 @@ function bump(w: Two): Two { return Two { ...w, n: w.n + 1 }; }
 
 func dynFieldBody(bound string) string {
 	return `    while (i < ` + bound + `) {
-        var local: Box = Box { name: "b" + "c" };
-        var f: Holder = Holder { l: Box { name: "x" + "y" } };
-        var l: Holder = Holder { l: local };
-        var p: Holder = Holder { l: i };
-        var h: Holder = hold(local);
-        var w: Two = Two { n: 0, l: local, s: "k" + "lm" };
-        var v: Two = Two { ...w, n: 1 };
-        var u: Two = bump(w);
+        let local: Box = Box { name: "b" + "c" };
+        let f: Holder = Holder { l: Box { name: "x" + "y" } };
+        let l: Holder = Holder { l: local };
+        let p: Holder = Holder { l: i };
+        let h: Holder = hold(local);
+        let w: Two = Two { n: 0, l: local, s: "k" + "lm" };
+        let v: Two = Two { ...w, n: 1 };
+        let u: Two = bump(w);
         let Holder { l: d } = hold(local);
-        var tp: (dyn Label, i32) = (d, 1);
+        let tp: (dyn Label, i32) = (d, 1);
         let (x, n) = tp;
         t = t + f.l.a() + l.l.a() + p.l.a() + h.l.a() + v.l.a() + u.l.a() + v.n + u.s.len() + d.a() + x.a() + n;
         i = i + 1;
@@ -271,21 +271,21 @@ func dynFieldBody(bound string) string {
 
 func dynFieldSrc(n string) string {
 	return dynFieldPrelude + `function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
 ` + dynFieldBody(n) + `    return t;
 }`
 }
 
 func dynFieldBumpSrc(n, wider string) string {
 	return dynFieldPrelude + `function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    var base: i32 = (__heap_bump_bytes() as i32);
-` + dynFieldBody(n) + `    var first: i32 = (__heap_bump_bytes() as i32) - base;
-    var mid: i32 = (__heap_bump_bytes() as i32);
+    let t: i32 = 0;
+    let i: i32 = 0;
+    let base: i32 = (__heap_bump_bytes() as i32);
+` + dynFieldBody(n) + `    let first: i32 = (__heap_bump_bytes() as i32) - base;
+    let mid: i32 = (__heap_bump_bytes() as i32);
     i = 0;
-` + dynFieldBody(wider) + `    var second: i32 = (__heap_bump_bytes() as i32) - mid;
+` + dynFieldBody(wider) + `    let second: i32 = (__heap_bump_bytes() as i32) - mid;
     if (second > first) { return 1; }
     return t - t;
 }`

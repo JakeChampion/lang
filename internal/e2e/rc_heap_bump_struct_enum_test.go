@@ -9,8 +9,8 @@ import (
 // Struct / enum loop-body deep reclamation (RC-Perceus). Before this
 // slice emitVarReinitDropOld flat-dec'd a struct / enum loop var on
 // re-declaration — which neither frees the box (rc_dec has no free path)
-// nor recurses into rc-tracked fields / payloads. So a `var b = Box{
-// data: [...] }` or `var e = Arr([...])` re-declared in a loop leaked
+// nor recurses into rc-tracked fields / payloads. So a `let b = Box{
+// data: [...] }` or `let e = Arr([...])` re-declared in a loop leaked
 // its box AND its nested heap field every iteration but the last. The
 // fix routes the reinit drop through the generated __drop_struct_<N> /
 // __drop_enum_<N> fn (is_unique-gated deep drop + box_free), matching
@@ -19,11 +19,11 @@ import (
 func structFieldBumpSrc(n string) string {
 	return `struct Box { data: i32[], tag: i32 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var b: Box = Box { data: [i, i + 1, i + 2], tag: i };
+        let b: Box = Box { data: [i, i + 1, i + 2], tag: i };
         sum = sum + b.data[0] + b.tag;
         i = i + 1;
     }
@@ -34,11 +34,11 @@ function main(): i32 {
 func enumPayloadBumpSrc(n string) string {
 	return `enum E { Arr(i32[]), Empty }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var e: E = Arr([i, i + 1, i + 2]);
+        let e: E = Arr([i, i + 1, i + 2]);
         match (e) {
             Arr(xs) => { sum = sum + xs[0]; },
             Empty => { sum = sum + 1; },
@@ -55,11 +55,11 @@ function main(): i32 {
 const structEnumUnderflowSrc = `struct Box { data: i32[], tag: i32 }
 enum E { Arr(i32[]), Empty }
 function main(): i32 {
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < 200) {
-        var b: Box = Box { data: [i, i + 1, i + 2], tag: i };
-        var e: E = Arr([i, i + 5]);
+        let b: Box = Box { data: [i, i + 1, i + 2], tag: i };
+        let e: E = Arr([i, i + 5]);
         match (e) {
             Arr(xs) => { sum = sum + b.data[0] + b.tag + xs[1]; },
             Empty => { sum = sum + 1; },

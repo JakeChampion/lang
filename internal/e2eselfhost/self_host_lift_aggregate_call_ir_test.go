@@ -24,46 +24,46 @@ var liftAggregateCallIRCases = []struct {
 }{
 	// The minimal repro: the call is an array ELEMENT.
 	{"call-in-array-literal", `function main(): i32 {
-    var v0: (i32) => i32 = ((x: i32) => (x * x));
-    var v3: i32[] = [v0(2i32)];
+    let v0: (i32) => i32 = ((x: i32) => (x * x));
+    let v3: i32[] = [v0(2i32)];
     return v3[0i32] & 63i32;
 }`, 4},
 	// The array is itself a call ARGUMENT — the shape the corpus seeds carry.
 	{"call-in-array-call-arg", `function take(a: i32[], b: i32[]): i32[] { return a; }
 function main(): i32 {
-    var v0: (i32) => i32 = ((x: i32) => (x * x));
-    var v3: i32[] = take([474i32], [v0(2i32)]);
+    let v0: (i32) => i32 = ((x: i32) => (x * x));
+    let v3: i32[] = take([474i32], [v0(2i32)]);
     return v3[0i32] & 63i32;
 }`, 26},
 	// A tuple element.
 	{"call-in-tuple-literal", `function main(): i32 {
-    var v0: (i32) => i32 = ((x: i32) => (x * x));
-    var t: (i32, i32) = (v0(2i32), 1i32);
+    let v0: (i32) => i32 = ((x: i32) => (x * x));
+    let t: (i32, i32) = (v0(2i32), 1i32);
     return (t.0 + t.1) & 63i32;
 }`, 5},
 	// A struct field value.
 	{"call-in-struct-literal", `struct Box { n: i32, m: i32 }
 function main(): i32 {
-    var v0: (i32) => i32 = ((x: i32) => (x * x));
-    var b: Box = Box { n: v0(3i32), m: 1i32 };
+    let v0: (i32) => i32 = ((x: i32) => (x * x));
+    let b: Box = Box { n: v0(3i32), m: 1i32 };
     return (b.n + b.m) & 63i32;
 }`, 10},
 	// A struct literal with a BASE spread — the base is a separate expression
 	// slot from the field values and is walked separately.
 	{"call-in-struct-literal-with-base", `struct Box { n: i32, m: i32 }
 function main(): i32 {
-    var v0: (i32) => i32 = ((x: i32) => (x * x));
-    var base: Box = Box { n: 1i32, m: 2i32 };
-    var b: Box = Box { ...base, n: v0(3i32) };
+    let v0: (i32) => i32 = ((x: i32) => (x * x));
+    let base: Box = Box { n: 1i32, m: 2i32 };
+    let b: Box = Box { ...base, n: v0(3i32) };
     return (b.n + b.m) & 63i32;
 }`, 11},
 	// Control: the same call hoisted to a temp before the literal. That already
-	// compiled — the substitution reached it through the plain `var` init — so
+	// compiled — the substitution reached it through the plain `let` init — so
 	// it isolates the aggregate literal as the variable rather than the call.
 	{"hoisted-to-temp-control", `function main(): i32 {
-    var v0: (i32) => i32 = ((x: i32) => (x * x));
-    var t: i32 = v0(2i32);
-    var v3: i32[] = [t];
+    let v0: (i32) => i32 = ((x: i32) => (x * x));
+    let t: i32 = v0(2i32);
+    let v3: i32[] = [t];
     return v3[0i32] & 63i32;
 }`, 4},
 }

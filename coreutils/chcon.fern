@@ -143,7 +143,7 @@ function walk_logical(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... CONTEXT FILE...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... [-u USER] [-r ROLE] [-l RANGE] [-t TYPE] FILE...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... --reference=RFILE FILE...\n";
@@ -215,7 +215,7 @@ function fail(st: St, msg: string): St {
 // last-one-wins, and the two are independent: which one a `-R` run needs
 // is decided after the scan, not during it.
 function scan_options(): (Settings, string[], boolean, string) {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("R", "recursive", opt_recursive()));
   opts = opts.append(gnu.flag("", "dereference", opt_dereference()));
   opts = opts.append(gnu.flag("h", "no-dereference", opt_no_dereference()));
@@ -230,12 +230,12 @@ function scan_options(): (Settings, string[], boolean, string) {
   opts = opts.append(gnu.flag("H", "", opt_comfollow()));
   opts = opts.append(gnu.flag("L", "", opt_logical()));
   opts = opts.append(gnu.flag("P", "", opt_physical()));
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "chcon", help_text(), 1);
-  var s: Settings = Settings { recursive: false, preserve_root: false, verbose: false, walk: walk_physical(), deref: 0 - 1, referent: true, context: "", component: false };
-  var has_reference: boolean = false;
-  var reference: string = "";
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "chcon", help_text(), 1);
+  let s: Settings = Settings { recursive: false, preserve_root: false, verbose: false, walk: walk_physical(), deref: 0 - 1, referent: true, context: "", component: false };
+  let has_reference: boolean = false;
+  let reference: string = "";
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -276,7 +276,7 @@ function scan_options(): (Settings, string[], boolean, string) {
 // `-h` / `--dereference`, decides whether the symlinks met are followed
 // — and two of the combinations are refused rather than resolved.
 function resolve_traversal(s0: Settings): Settings {
-  var s: Settings = s0;
+  let s: Settings = s0;
   if (s.recursive) {
     if (s.walk == walk_physical()) {
       if (s.deref == 1) {
@@ -309,11 +309,11 @@ function is_root_dir(info: FileStat): boolean {
 }
 
 function refuse_root(st0: St, path: string): St {
-  var same: string = "";
+  let same: string = "";
   if (path != "/") {
     same = " (same as '/')";
   }
-  var st: St = fail(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
+  let st: St = fail(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
   return fail(st, "use --no-preserve-root to override this failsafe");
 }
 
@@ -326,7 +326,7 @@ function is_dir_mode(m: u32): boolean {
 // hand libselinux, which is the path relative to the directory fts is
 // sitting in; `path` is the whole one, which is what this process needs.
 function change_one(st0: St, s: Settings, path: string, shown: string): St {
-  var st: St = st0;
+  let st: St = st0;
   if (s.verbose) {
     st = St { ...st, out: st.out.fwrite("changing security context of " + gnu.quotea(path) + "\n") };
   }
@@ -341,9 +341,9 @@ function change_one(st0: St, s: Settings, path: string, shown: string): St {
 // symlink. `shown` is what a change names, which is the basename below
 // the top except under `-L`, where fts holds no directory descriptor.
 function process(st0: St, s: Settings, path: string, shown: string, top: boolean): St {
-  var st: St = st0;
-  var follow: boolean = s.walk == walk_logical() || top && s.walk == walk_comfollow();
-  var looked: Result[FileStat, IoError] = lstat(path);
+  let st: St = st0;
+  let follow: boolean = s.walk == walk_logical() || top && s.walk == walk_comfollow();
+  let looked: Result[FileStat, IoError] = lstat(path);
   if (follow) {
     looked = stat(path);
   }
@@ -360,10 +360,10 @@ function process(st0: St, s: Settings, path: string, shown: string, top: boolean
       }
       match (read_dir(path)) {
         Ok(names) => {
-          var i: i32 = 0;
+          let i: i32 = 0;
           while (i < names.len()) {
-            var child: string = fts.child_path(path, names[i]);
-            var child_shown: string = names[i];
+            let child: string = fts.child_path(path, names[i]);
+            let child_shown: string = names[i];
             if (s.walk == walk_logical()) {
               child_shown = child;
             }
@@ -386,13 +386,13 @@ function process(st0: St, s: Settings, path: string, shown: string, top: boolean
 }
 
 pub function main(): i32 {
-  var scanned: (Settings, string[], boolean, string) = scan_options();
-  var s: Settings = resolve_traversal(scanned.0);
-  var operands: string[] = scanned.1;
-  var has_reference: boolean = scanned.2;
-  var reference: string = scanned.3;
+  let scanned: (Settings, string[], boolean, string) = scan_options();
+  let s: Settings = resolve_traversal(scanned.0);
+  let operands: string[] = scanned.1;
+  let has_reference: boolean = scanned.2;
+  let reference: string = scanned.3;
 
-  var need: i32 = 2;
+  let need: i32 = 2;
   if (has_reference || s.component) {
     need = 1;
   }
@@ -418,10 +418,10 @@ pub function main(): i32 {
     gnu.die_usage("conflicting security context specifiers given", 1);
   }
 
-  var st: St = St { out: gnu.stdio_new(), status: 0 };
-  var i: i32 = 0;
+  let st: St = St { out: gnu.stdio_new(), status: 0 };
+  let i: i32 = 0;
   while (i < operands.len()) {
-    var name: string = fts.trim(operands[i]);
+    let name: string = fts.trim(operands[i]);
     st = process(st, s, name, name, true);
     i = i + 1;
   }

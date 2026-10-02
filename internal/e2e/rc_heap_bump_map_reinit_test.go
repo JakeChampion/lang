@@ -6,7 +6,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 )
 
-// Map loop-var reclamation (RC-Perceus). A `var m = map_new(8)`
+// Map loop-var reclamation (RC-Perceus). A `let m = map_new(8)`
 // re-declared in a loop reuses one slot per iteration. The exit sweep
 // already reclaims an owned Map (value column + string-key column + buf
 // + handle via __map_drop_values / __drop_map_str_* / __map_drop_impl),
@@ -20,11 +20,11 @@ import (
 func mapReinitBumpSrc(n string) string {
 	return `import "core/map";
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < ` + n + `) {
-        var m: Map[i32, i32] = map_new(8);
+        let m: Map[i32, i32] = map_new(8);
         m = m.insert(i, i * 2);
         m = m.insert(i + 1, i * 3);
         acc = acc + m.get_or(i, 0);
@@ -38,10 +38,10 @@ function main(): i32 {
 // Returns 0 iff value-correct AND no over-release over 200 iterations.
 const mapReinitUnderflowSrc = `import "core/map";
 function main(): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < 200) {
-        var m: Map[string, i32] = map_new(8);
+        let m: Map[string, i32] = map_new(8);
         m = m.insert("alpha", i);
         m = m.insert("beta", i + 1);
         acc = acc + m.get_or("alpha", 0) + m.get_or("beta", 0);
@@ -55,7 +55,7 @@ func TestX86_64MapReinitReclaim(t *testing.T) {
 	small := mustRunX86_64FreeOn(t, mapReinitBumpSrc("50"))
 	large := mustRunX86_64FreeOn(t, mapReinitBumpSrc("5000"))
 	if small != large {
-		t.Errorf("map loop-var bump should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
+		t.Errorf("map loop-let bump should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
 	}
 	if small == 0 {
 		t.Errorf("expected a non-zero bounded high-water, got 0")
@@ -69,7 +69,7 @@ func TestArm64MapReinitReclaim(t *testing.T) {
 	small := mustRunArm64FreeOn(t, mapReinitBumpSrc("50"))
 	large := mustRunArm64FreeOn(t, mapReinitBumpSrc("5000"))
 	if small != large {
-		t.Errorf("map loop-var bump should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
+		t.Errorf("map loop-let bump should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
 	}
 	if small == 0 {
 		t.Errorf("expected a non-zero bounded high-water, got 0")
@@ -86,7 +86,7 @@ func TestWASMMapReinitReclaim(t *testing.T) {
 	small := runWasm(t, mapReinitBumpSrc("50"))
 	large := runWasm(t, mapReinitBumpSrc("5000"))
 	if small != large {
-		t.Errorf("map loop-var bump should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
+		t.Errorf("map loop-let bump should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
 	}
 	if small == 0 {
 		t.Errorf("expected a non-zero bounded high-water, got 0")

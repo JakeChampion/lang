@@ -36,12 +36,12 @@ function call(c: Closure, name: string): i32 {
 }
 
 function main(): i32 {
-    var outer: Env = Bind("x", 1, Empty);
-    var c: Closure = make(outer);
+    let outer: Env = Bind("x", 1, Empty);
+    let c: Closure = make(outer);
 
     // Rebinding x AFTER the closure was made must not reach it: under
     // dynamic scoping this next lookup would return 20.
-    var shadowed: Env = Bind("x", 20, outer);
+    let shadowed: Env = Bind("x", 20, outer);
     if (call(c, "x") != 1) { return 1; }
     if (lookup(shadowed, "x") != 20) { return 2; }
 
@@ -51,14 +51,14 @@ function main(): i32 {
     if (lookup(shadowed, "absent") != -1) { return 5; }
 
     // Two closures over different environments do not share bindings.
-    var a: Closure = make(Bind("v", 10, Empty));
-    var b: Closure = make(Bind("v", 100, Empty));
+    let a: Closure = make(Bind("v", 10, Empty));
+    let b: Closure = make(Bind("v", 100, Empty));
     if (call(a, "v") != 10) { return 6; }
     if (call(b, "v") != 100) { return 7; }
 
     // Deep chain: the outermost binding survives 100 frames.
-    var deep: Env = Bind("root", 42, Empty);
-    var i: i32 = 0;
+    let deep: Env = Bind("root", 42, Empty);
+    let i: i32 = 0;
     while (i < 100) {
         deep = Bind("f", i, deep);
         i = i + 1;

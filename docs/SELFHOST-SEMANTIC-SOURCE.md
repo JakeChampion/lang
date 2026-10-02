@@ -195,7 +195,7 @@ Unsupported constructs refuse the whole function with a reason.
 - Integer literals in both bases the lexer writes, decimal and hexadecimal.
   A suffix names the type outright, which is how a byte literal (`b'x'`)
   carries its width; an unsuffixed literal has none of its own and takes the
-  integer type of what it is written against, so `var b: u8 = 65` binds a byte
+  integer type of what it is written against, so `let b: u8 = 65` binds a byte
   and `65` in an i32 position an i32. For an operator, that width is decided
   BEFORE either operand is produced — from the checker's type for the whole
   expression, or from whichever operand bears one — so a literal takes it on
@@ -514,7 +514,7 @@ Unsupported constructs refuse the whole function with a reason.
 
   The captures are named by the body's ENVIRONMENT RECORD. The lift hoists a
   capturing body with `__env: i32[]` first and reads each capture at the top
-  of the body as `var cap: T = __env[1 + i]`, one per slot in slot order, so
+  of the body as `let cap: T = __env[1 + i]`, one per slot in slot order, so
   those leading reads say what the box holds: the producer types the `__env`
   parameter as `__env$<body>` with the capture types as its arguments
   (`semtypes.is_env`), a record whose fields are the address word and then
@@ -647,7 +647,7 @@ Unsupported constructs refuse the whole function with a reason.
   and copies the entries into a fresh box first when it is shared, so a
   `snapshot = m` still reads what it held. The receiver's retain is never
   held back the way an array append's is (`deferred_retain`): a map the frame
-  still reads counts as shared, and `var n = m.insert(k, v)` leaves `m` as it
+  still reads counts as shared, and `let n = m.insert(k, v)` leaves `m` as it
   was, which is what E055 promises. Native, the interpreter and the AST
   lowering borrow the receiver and write a sole-held box in place instead
   (#9834); the production row `a-map-the-frame-still-reads-is-not-written`
@@ -701,7 +701,7 @@ Unsupported constructs refuse the whole function with a reason.
   its box is released like an array's and its slot, when the element is a
   reference, walked by the same element loop. The element decides what a cell
   may hold: whatever this boundary can drop. A cell with no element — what an
-  unannotated `var c = cell_new(0)` carries, since the destination names T —
+  unannotated `let c = cell_new(0)` carries, since the destination names T —
   has no layout and is refused. The cell's own vocabulary, `cell_new` and
   `get` and `set`, is NOT here: a body naming one is refused at the callee, so
   a produced function receives, stores, projects and drops cells but never
@@ -1274,7 +1274,7 @@ was probed before building and neither was what its reason read as:
   `ExprIndex` initializer whose declared type is a reference and whose value
   is i32, and the binding NAME is the CAPTURE's (`$binding$1$name`,
   `$binding$5$mfuncs`), never `__env`. `lift.make_clo_func` writes
-  `var cap: T = __env[1 + i]` with `__env: i32[]`: the declaration carries
+  `let cap: T = __env[1 + i]` with `__env: i32[]`: the declaration carries
   the capture's real type over a box slot the AST lowering treats as an
   untyped word, which is a reinterpretation Fern has no operator for. The
   declared type is the truth and the READ is the lie, so the fix is a typed
@@ -1640,7 +1640,7 @@ With a real control, four defects showed, and three of them were one cause:
   that had been silently zeroed.
 - **A mutable capture is a `Cell[T]`**, on both lowerings (#9320). `capturebox`
   rewrites a captured local the closure or its creator reassigns into
-  `var $cell$x: Cell[T] = cell_new(init)`, every read into `$cell$x.get()` and
+  `let $cell$x: Cell[T] = cell_new(init)`, every read into `$cell$x.get()` and
   every write into `$cell$x.set(v)`, and the lambda captures the cell. The
   box is the one-element array box a cell already is, so nothing changed in
   the representation; what changed is that the write is the cell's in-place
@@ -1736,7 +1736,7 @@ release one box twice. Four lines reproduce the smallest shape:
 ```fern
 function keep(text: string): string { return text; }
 function scan(src: string): string {
-    var v: str = slice_unchecked(src, 0, 3);
+    let v: str = slice_unchecked(src, 0, 3);
     return keep(v);
 }
 function main(): i32 { return scan("12345 abc").len(); }
@@ -1780,9 +1780,9 @@ separates "keeps the argument" from "builds something new" — only the body doe
 `return` as itself, inside an aggregate the return builds, or as an argument of
 a call to a declaration that already escapes its own, closed to a fixpoint over
 the module. A local carries a parameter the same way once it is bound from an
-expression that hands one out — `var st = s; st = st.emit(ir.op_call_direct(freefn,
+expression that hands one out — `let st = s; st = st.emit(ir.op_call_direct(freefn,
 1)); return st;` returns `freefn` inside `st` — so `hands_back` closes the body's
-`var` and assignment bindings over the names first and reads the returns against
+`let` and assignment bindings over the names first and reads the returns against
 that set; reading the returns alone left `emit_opt_payload_drop_via` out of the
 set, and the self-host-built compiler stored a frame-resident view of a callee
 name in an `ir.Op` that outlived the frame (#10680). `escapes_in` is the
@@ -1879,8 +1879,8 @@ to work against rather than the 7-minute rebuild:
 ```fern
 function push(buf: i32[], v: i32): i32[] { return buf.append(v); }
 function build(n: i32): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
+    let out: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { out = push(out, i); i = i + 1; }
     return out;
 }
@@ -1930,10 +1930,10 @@ reorder:
 ```fern
 function set0(buf: i32[], v: i32): i32[] { return buf.with(0, v); }
 function main(): i32 {
-    var a: i32[] = [];
+    let a: i32[] = [];
     a = a.append(1);
     a = a.append(2);
-    var b: i32[] = set0(a, 99);
+    let b: i32[] = set0(a, 99);
     return a[0] * 100 + b[0];
 }
 ```
@@ -2055,7 +2055,7 @@ would not:
 - **The produced compiler's ANSWER on `lexer.fern` is wrong**, and was
   before either change: the semantic build of main at `b15a016` emits the
   same 150-line divergence from the AST build, at three sites: the two
-  `var b: i32 = 0 - 1;` in `match_multipunct` and the `return -1;` in
+  `let b: i32 = 0 - 1;` in `match_multipunct` and the `return -1;` in
   `test_mixed`, each lowered as zero minus one, which the AST build folds
   to `movq $-1` and the produced build emits as `xorl; movq $o, %rcx; subq`.
   The constant op's `str` field is the literal's text, a view the constant
@@ -2229,7 +2229,7 @@ leaves of the same kind: a `str` result escaping its source
 (`alloc_flat_method_identity_return`), a view lent past its frame
 (`string_slice_option`), and a `dyn Trait` call (`dyn_trait_dispatch`). A
 fn-typed local holding a function whose parameter is itself callable
-(`var t = taker; t(lambda)`) produced nothing when this section was written
+(`let t = taker; t(lambda)`) produced nothing when this section was written
 (`function signature slot`); it produces since #10024, which admits a
 function type nested in a function value's signature.
 

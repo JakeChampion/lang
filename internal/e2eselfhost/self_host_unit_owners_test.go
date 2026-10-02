@@ -36,14 +36,14 @@ pub function pick[T](a: T, b: T, first: boolean): T {
 }
 
 pub function scaled(k: i32): i32 {
-    var f = (x: i32): i32 => x * k;
+    let f = (x: i32): i32 => x * k;
     return f(3);
 }
 `,
 		"main.fern": `import "./leaf";
 
 function main(): i32 {
-    var s: str = "ab";
+    let s: str = "ab";
     return s.shout() + leaf.pick(1, 2, true) + leaf.scaled(2);
 }
 `,

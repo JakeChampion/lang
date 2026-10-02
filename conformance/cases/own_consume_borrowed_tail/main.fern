@@ -40,15 +40,15 @@ function sum(l: List): i32 {
 }
 
 function main(): i32 {
-    var shared: List = build(3);
+    let shared: List = build(3);
 
-    var ys: List = inc_all(Cons(7, shared));
+    let ys: List = inc_all(Cons(7, shared));
     print((sum(ys)).to_string());
     print((sum(shared)).to_string());
 
-    var t: i32 = 0;
+    let t: i32 = 0;
     for r in 0..20 {
-        var zs: List = inc_all(Cons(9, shared));
+        let zs: List = inc_all(Cons(9, shared));
         t = t + sum(zs) + sum(shared);
     }
     print(t.to_string());

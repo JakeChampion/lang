@@ -18,22 +18,22 @@ const stringFieldStoreSrc = `import "std/i32";
 struct Box { s: string }
 struct Bag { s: string[] }
 function top(i: i32): i32 {
-    var t: string = "t" + i.to_string();
-    var x: Box = Box { s: t };
+    let t: string = "t" + i.to_string();
+    let x: Box = Box { s: t };
     return x.s.len();
 }
 function main(): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var a: string = "a" + i.to_string();
-        var x: Box = Box { s: a };
+        let a: string = "a" + i.to_string();
+        let x: Box = Box { s: a };
         n = n + x.s.len();
-        var b: string = "b" + i.to_string();
-        var y: Box = Box { s: b };
+        let b: string = "b" + i.to_string();
+        let y: Box = Box { s: b };
         n = n + y.s.len() + b.len();
-        var c: string[] = ["c" + i.to_string()];
-        var z: Bag = Bag { s: c };
+        let c: string[] = ["c" + i.to_string()];
+        let z: Bag = Bag { s: c };
         n = n + z.s.len();
         n = n + top(i);
         i = i + 1;

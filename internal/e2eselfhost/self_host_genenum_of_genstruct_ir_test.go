@@ -31,27 +31,27 @@ var genEnumOfGenStructIRCases = []genEnumOfGenStructIRCase{
 	{"user_enum_i32", `enum Opt[T] { Sm(T), Nn }
 struct Box[U] { v: U }
 function main(): i32 {
-    var o: Opt[Box[i32]] = Sm(Box { v: 7 });
+    let o: Opt[Box[i32]] = Sm(Box { v: 7 });
     match (o) { Sm(b) => { return b.v; }, Nn => { return 0; } }
 }`, 7},
 	// string payload, method dispatch on the inner struct's field.
 	{"user_enum_string", `enum Opt[T] { Sm(T), Nn }
 struct Box[U] { v: U }
 function main(): i32 {
-    var o: Opt[Box[string]] = Sm(Box { v: "hi" });
+    let o: Opt[Box[string]] = Sm(Box { v: "hi" });
     match (o) { Sm(b) => { return b.v.len(); }, Nn => { return 0; } }
 }`, 2},
 	// the unit variant pinned from the annotation (no payload to infer from).
 	{"user_enum_unit", `enum Opt[T] { Sm(T), Nn }
 struct Box[U] { v: U }
 function main(): i32 {
-    var o: Opt[Box[i32]] = Nn;
+    let o: Opt[Box[i32]] = Nn;
     match (o) { Sm(b) => { return b.v; }, Nn => { return 9; } }
 }`, 9},
 	// built-in Option of a generic struct.
 	{"option_of_struct", `struct Box[U] { v: U }
 function main(): i32 {
-    var o: Option[Box[i32]] = Some(Box { v: 5 });
+    let o: Option[Box[i32]] = Some(Box { v: 5 });
     match (o) { Some(b) => { return b.v; }, None => { return 0; } }
 }`, 5},
 	// built-in Result of a generic struct, propagated across a call boundary.
@@ -64,7 +64,7 @@ function main(): i32 {
 	{"struct_two_fields", `enum Opt[T] { Sm(T), Nn }
 struct Pt[U] { x: U, y: U }
 function main(): i32 {
-    var o: Opt[Pt[i32]] = Sm(Pt { x: 3, y: 4 });
+    let o: Opt[Pt[i32]] = Sm(Pt { x: 3, y: 4 });
     match (o) { Sm(p) => { return p.x + p.y; }, Nn => { return 0; } }
 }`, 7},
 }

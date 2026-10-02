@@ -176,13 +176,13 @@ func ParentGoneProbe() string {
 	return `import "std/async";
 import "core/int";
 function main(): i32 {
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid != 0) {
         print(int.int_to_string(pid));
         return 0;
     }
     sleep_ms(500 as i64);
-    var drv: async.RealDriver = async.real_driver();
+    let drv: async.RealDriver = async.real_driver();
     print(int.int_to_string(drv.watch_parent()));
     return 0;
 }

@@ -45,7 +45,7 @@ func TestSelfHostF64ParamCoerceIR(t *testing.T) {
 		// A float argument at the same param must be unaffected by the new arm.
 		{"float-arg-unchanged", `function addhalf(x: f64): f64 { return x + 0.5; } function main(): i32 { return addhalf(3.25) as i32; }`, 3},
 		// An f64-typed local, likewise unaffected.
-		{"f64-local-arg", `function addhalf(x: f64): f64 { return x + 0.5; } function main(): i32 { var v: f64 = 2.5; return addhalf(v) as i32; }`, 3},
+		{"f64-local-arg", `function addhalf(x: f64): f64 { return x + 0.5; } function main(): i32 { let v: f64 = 2.5; return addhalf(v) as i32; }`, 3},
 		// Mixed signature: the coercion must apply per-parameter, not to the
 		// whole call — b stays an i32. 1 + 3 + 2 == 6.
 		{"mixed-params", `function m(a: f64, b: i32, c: f64): f64 { return a + c + (b as f64); } function main(): i32 { return m(1, 2, 3) as i32; }`, 6},

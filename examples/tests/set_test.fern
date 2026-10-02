@@ -12,7 +12,7 @@ import "std/set" as set;
 
 function test_set_of_dedup(): test.TestOutcome {
   // Duplicates collapse; first occurrence order is kept.
-  var s: set.Set[i32] = set.set_of([1, 2, 2, 3, 1]);
+  let s: set.Set[i32] = set.set_of([1, 2, 2, 3, 1]);
   if (s.len() != 3) {
     return test.fail("len " + s.len().to_string() + " != 3");
   }
@@ -20,12 +20,12 @@ function test_set_of_dedup(): test.TestOutcome {
 }
 
 function test_contains(): test.TestOutcome {
-  var s: set.Set[i32] = set.set_of([10, 20, 30]);
+  let s: set.Set[i32] = set.set_of([10, 20, 30]);
   return test.assert_true(s.contains(20) && !s.contains(25));
 }
 
 function test_add(): test.TestOutcome {
-  var s: set.Set[i32] = set.set_new();
+  let s: set.Set[i32] = set.set_new();
   s = s.add(1);
   s = s.add(2);
   s = s.add(1);  // dup — no-op
@@ -36,8 +36,8 @@ function test_add(): test.TestOutcome {
 // untouched. Regression guard for in-place mutation of a shared array
 // field (the copy-on-write aliasing hazard).
 function test_add_is_pure(): test.TestOutcome {
-  var a: set.Set[i32] = set.set_of([1, 2]);
-  var b: set.Set[i32] = a.add(3);
+  let a: set.Set[i32] = set.set_of([1, 2]);
+  let b: set.Set[i32] = a.add(3);
   if (a.len() != 2) {
     return test.fail("add mutated receiver: a.len = " + a.len().to_string());
   }
@@ -48,8 +48,8 @@ function test_add_is_pure(): test.TestOutcome {
 }
 
 function test_remove(): test.TestOutcome {
-  var s: set.Set[i32] = set.set_of([1, 2, 3, 4]);
-  var r: set.Set[i32] = s.remove(2);
+  let s: set.Set[i32] = set.set_of([1, 2, 3, 4]);
+  let r: set.Set[i32] = s.remove(2);
   if (s.len() != 4) {
     return test.fail("remove mutated receiver");
   }
@@ -61,32 +61,32 @@ function test_remove(): test.TestOutcome {
 
 function test_remove_absent(): test.TestOutcome {
   // Removing an absent element is a no-op that returns an equal set.
-  var s: set.Set[i32] = set.set_of([1, 2]);
+  let s: set.Set[i32] = set.set_of([1, 2]);
   return test.assert_eq_array(s.remove(9).to_array(), [1, 2]);
 }
 
 function test_union(): test.TestOutcome {
-  var a: set.Set[i32] = set.set_of([1, 2, 3]);
-  var b: set.Set[i32] = set.set_of([3, 4, 5]);
+  let a: set.Set[i32] = set.set_of([1, 2, 3]);
+  let b: set.Set[i32] = set.set_of([3, 4, 5]);
   // a's order first, then b's new elements.
   return test.assert_eq_array(a.union(b).to_array(), [1, 2, 3, 4, 5]);
 }
 
 function test_intersect(): test.TestOutcome {
-  var a: set.Set[i32] = set.set_of([1, 2, 3, 4]);
-  var b: set.Set[i32] = set.set_of([2, 4, 6]);
+  let a: set.Set[i32] = set.set_of([1, 2, 3, 4]);
+  let b: set.Set[i32] = set.set_of([2, 4, 6]);
   return test.assert_eq_array(a.intersect(b).to_array(), [2, 4]);
 }
 
 function test_difference(): test.TestOutcome {
-  var a: set.Set[i32] = set.set_of([1, 2, 3, 4]);
-  var b: set.Set[i32] = set.set_of([2, 4]);
+  let a: set.Set[i32] = set.set_of([1, 2, 3, 4]);
+  let b: set.Set[i32] = set.set_of([2, 4]);
   return test.assert_eq_array(a.difference(b).to_array(), [1, 3]);
 }
 
 function test_subset_and_equals(): test.TestOutcome {
-  var a: set.Set[i32] = set.set_of([1, 2, 3]);
-  var sub: set.Set[i32] = set.set_of([3, 1]);
+  let a: set.Set[i32] = set.set_of([1, 2, 3]);
+  let sub: set.Set[i32] = set.set_of([3, 1]);
   if (!sub.is_subset(a)) {
     return test.fail("expected subset");
   }
@@ -101,8 +101,8 @@ function test_subset_and_equals(): test.TestOutcome {
 }
 
 function test_empty(): test.TestOutcome {
-  var e: set.Set[i32] = set.set_new();
-  var a: set.Set[i32] = set.set_of([1, 2]);
+  let e: set.Set[i32] = set.set_new();
+  let a: set.Set[i32] = set.set_of([1, 2]);
   if (!e.is_empty()) {
     return test.fail("new set not empty");
   }
@@ -114,7 +114,7 @@ function test_empty(): test.TestOutcome {
 }
 
 function test_string_elems(): test.TestOutcome {
-  var s: set.Set[string] = set.set_of(["a", "b", "a", "c"]);
+  let s: set.Set[string] = set.set_of(["a", "b", "a", "c"]);
   if (s.len() != 3) {
     return test.fail("string dedup len " + s.len().to_string());
   }
@@ -126,9 +126,9 @@ function test_string_elems(): test.TestOutcome {
 }
 
 function test_superset_and_disjoint(): test.TestOutcome {
-  var a: set.Set[i32] = set.set_of([1, 2, 3]);
-  var sub: set.Set[i32] = set.set_of([2, 3]);
-  var e: set.Set[i32] = set.set_new();
+  let a: set.Set[i32] = set.set_of([1, 2, 3]);
+  let sub: set.Set[i32] = set.set_of([2, 3]);
+  let e: set.Set[i32] = set.set_new();
   // is_superset is the mirror of is_subset.
   if (!a.is_superset(sub) || sub.is_superset(a)) {
     return test.fail("superset");
@@ -144,25 +144,25 @@ function test_superset_and_disjoint(): test.TestOutcome {
 }
 
 function test_symmetric_difference(): test.TestOutcome {
-  var a: set.Set[i32] = set.set_of([1, 2, 3]);
-  var b: set.Set[i32] = set.set_of([2, 3, 4]);
+  let a: set.Set[i32] = set.set_of([1, 2, 3]);
+  let b: set.Set[i32] = set.set_of([2, 3, 4]);
   // (a-b) ∪ (b-a) = {1} ∪ {4}, a's uniques first.
-  var sd: set.Set[i32] = a.symmetric_difference(b);
+  let sd: set.Set[i32] = a.symmetric_difference(b);
   if (!sd.equals(set.set_of([1, 4]))) {
     return test.fail("sym diff value");
   }
-  var arr: i32[] = sd.to_array();
+  let arr: i32[] = sd.to_array();
   if (arr[0] != 1 || arr[1] != 4) {
     return test.fail("sym diff order");
   }
   // Symmetric difference with self is empty; with empty is identity.
-  var e: set.Set[i32] = set.set_new();
+  let e: set.Set[i32] = set.set_new();
   return test.assert_true(a.symmetric_difference(a).is_empty()
     && a.symmetric_difference(e).equals(a));
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/set");
+  let r: test.TestRunner = test.test_new("std/set");
   r = r.it("set_of dedup + order", test_set_of_dedup);
   r = r.it("contains", test_contains);
   r = r.it("add dedup", test_add);

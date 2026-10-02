@@ -49,13 +49,13 @@ import "./store";
 // is the one function that separates the proxy from the mock origin the
 // tests use; everything above it is the same code.
 function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
-  var empty: runtime.Headers = runtime.headers_new();
-  var host: string = b.host;
+  let empty: runtime.Headers = runtime.headers_new();
+  let host: string = b.host;
   if (host.index_of(":") >= 0) {
     host = "[" + host + "]";
   }
-  var req: fetch.Request = wire.request_of(t.bereq, "http://" + host + ":" + b.port.to_string());
-  var resp: HttpResponse = http.ok("");
+  let req: fetch.Request = wire.request_of(t.bereq, "http://" + host + ":" + b.port.to_string());
+  let resp: HttpResponse = http.ok("");
   match (fetch.send(req)) {
     Ok(r) => {
       resp = r;
@@ -67,7 +67,7 @@ function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
   // The proxy's messages hold text, so a non-UTF-8 origin response is a
   // backend error here rather than something to reinterpret. A proxy
   // that must pass binary bodies through needs byte-bodied messages.
-  var body: string = "";
+  let body: string = "";
   match (resp.body_text()) {
     Some(text) => {
       body = text;
@@ -76,10 +76,10 @@ function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
       return machine.FetchOut { status: 0, reason: "", headers: empty, body: "", ttl: 0.0 - 1.0, ok: false, err: "backend '" + b.name + "' returned a response that is not valid UTF-8" };
     }
   }
-  var h: runtime.Headers = wire.headers_of(resp.headers);
+  let h: runtime.Headers = wire.headers_of(resp.headers);
   // An origin's Cache-Control is what decides how long its answer may be
   // kept; without one the built-in default applies.
-  var ttl: f64 = 0.0 - 1.0;
+  let ttl: f64 = 0.0 - 1.0;
   match (resp.headers.get("Cache-Control")) {
     Some(cc) => {
       match (wire.max_age(cc)) {
@@ -99,7 +99,7 @@ function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
 function client_ip_of(h: HeaderMap): string {
   match (h.get("X-Forwarded-For")) {
     Some(v) => {
-      var comma: i32 = v.index_of(",");
+      let comma: i32 = v.index_of(",");
       if (comma > 0) {
         return slice_unchecked(v, 0, comma).to_owned().trim().to_owned();
       }
@@ -115,16 +115,16 @@ function client_ip_of(h: HeaderMap): string {
 // wire. `Content-Length` and `Connection` are added by the serialiser, so
 // forwarding the origin's copies would duplicate them.
 function to_response(o: machine.Outcome): HttpResponse {
-  var h: HeaderMap = headers.header_map_new();
-  var i: i32 = 0;
+  let h: HeaderMap = headers.header_map_new();
+  let i: i32 = 0;
   while (i < o.txn.resp.headers.names.len()) {
-    var n: string = o.txn.resp.headers.names[i];
+    let n: string = o.txn.resp.headers.names[i];
     if (!n.eq_ignore_ascii_case("content-length") && !n.eq_ignore_ascii_case("connection")) {
       h = h.set(n, o.txn.resp.headers.values[i]);
     }
     i = i + 1;
   }
-  var status: i32 = o.txn.resp.status as i32;
+  let status: i32 = o.txn.resp.status as i32;
   if (status == 0) {
     status = 200;
   }
@@ -135,13 +135,13 @@ function to_response(o: machine.Outcome): HttpResponse {
 // failing subroutine named, because a proxy that silently 200s on a broken
 // policy is worse than one that says so.
 function error_response(o: machine.Outcome): HttpResponse {
-  var h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.header_map_new();
   h = h.set("Content-Type", "text/plain");
   return HttpResponse { status: 503, body: BodyText("VCL error: " + o.err + "\n"), headers: h, trailers: headers.header_map_new() };
 }
 
 function report_diags(path: string, diags: diag.Diag[]): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < diags.len()) {
     eprint(diags[i].render(path));
     i = i + 1;
@@ -149,7 +149,7 @@ function report_diags(path: string, diags: diag.Diag[]): void {
 }
 
 function report_problems(path: string, ps: check.Problem[]): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ps.len()) {
     eprint(path + ":" + ps[i].line.to_string() + ":" + ps[i].col.to_string() + ": [" + ps[i].entry + "] " + ps[i].msg);
     i = i + 1;
@@ -160,15 +160,15 @@ function report_problems(path: string, ps: check.Problem[]): void {
 // created HERE, before the accept loop, so it survives the per-request
 // arena and every request sees what earlier ones stored.
 function serve(decls: ast.Decl[], port: i32): i32 {
-  var d: machine.Driver = machine.Driver { run_sub: machine.interpreting(decls).run_sub, backends: machine.backends_of(decls), fetch: real_fetch };
+  let d: machine.Driver = machine.Driver { run_sub: machine.interpreting(decls).run_sub, backends: machine.backends_of(decls), fetch: real_fetch };
   // The cache outlives each request as a STRING: `Cell` holds a scalar or
   // a string and nothing composite, so the cache is encoded on the way out
   // and decoded on the way in. See store.fern for why, and for the cost.
-  var cache: Cell[string] = cell_new("");
-  var handler: (HttpRequest, Platform) => HttpResponse = (req: HttpRequest, plat: Platform): HttpResponse => {
-    var names: string[] = req.headers.names;
-    var values: string[] = req.headers.values;
-    var body: string = "";
+  let cache: Cell[string] = cell_new("");
+  let handler: (HttpRequest, Platform) => HttpResponse = (req: HttpRequest, plat: Platform): HttpResponse => {
+    let names: string[] = req.headers.names;
+    let values: string[] = req.headers.values;
+    let body: string = "";
     match (req.body_string()) {
       Ok(text) => {
         body = text;
@@ -177,7 +177,7 @@ function serve(decls: ast.Decl[], port: i32): i32 {
         return e.to_response();
       }
     }
-    var o: machine.Outcome = machine.run_request(d, req.method, req.path, client_ip_of(req.headers), names, values, body, store.decode(cache.get()));
+    let o: machine.Outcome = machine.run_request(d, req.method, req.path, client_ip_of(req.headers), names, values, body, store.decode(cache.get()));
     if (!o.ok) {
       eprint("vclproxy: " + o.err);
       return error_response(o);
@@ -189,13 +189,13 @@ function serve(decls: ast.Decl[], port: i32): i32 {
 }
 
 function main(): i32 {
-  var argv: string[] = args();
+  let argv: string[] = args();
   if (argv.len() < 2) {
     eprint("usage: vclproxy FILE.vcl [PORT]");
     return 2;
   }
-  var path: string = argv[1];
-  var port: i32 = 8080;
+  let path: string = argv[1];
+  let port: i32 = 8080;
   if (argv.len() > 2) {
     match (argv[2].parse_int()) {
       Some(n) => {
@@ -213,14 +213,14 @@ function main(): i32 {
       return 2;
     },
     Ok(src) => {
-      var p: parser.ParseResult = parser.parse(src);
+      let p: parser.ParseResult = parser.parse(src);
       if (p.diags.len() > 0) {
         report_diags(path, p.diags);
         return 2;
       }
       // Checked at load time, as varnishd does: a policy with a scoping
       // error never reaches the accept loop.
-      var problems: check.Problem[] = check.check(p.decls);
+      let problems: check.Problem[] = check.check(p.decls);
       if (problems.len() > 0) {
         report_problems(path, problems);
         return 1;

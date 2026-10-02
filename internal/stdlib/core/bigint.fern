@@ -57,7 +57,7 @@ pub struct BigInt {
 }
 
 // 2^32 - 1, 2^32, and the limb shift. Functions rather than constants because
-// a module-level `var` is not the idiom here.
+// a module-level `let` is not the idiom here.
 function __bi_mask(): u64 {
   return 4294967295 as u64;
 }
@@ -74,15 +74,15 @@ function __bi_sh32(): u64 {
 // is `[0]` rather than the empty array. Every magnitude-producing helper ends
 // with this, which is what lets `__bi_cmp_mag` compare lengths first.
 function __bi_trim(a: u64[]): u64[] {
-  var n: i32 = a.len();
+  let n: i32 = a.len();
   while (n > 1 && a[n - 1] == 0 as u64) {
     n = n - 1;
   }
   if (n == a.len()) {
     return a;
   }
-  var out: u64[] = [];
-  var i: i32 = 0;
+  let out: u64[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(a[i]);
     i = i + 1;
@@ -96,7 +96,7 @@ function __bi_is_zero_mag(a: u64[]): boolean {
 
 // __bi_make applies the zero-is-never-negative invariant.
 function __bi_make(neg: boolean, mag: u64[]): BigInt {
-  var m: u64[] = __bi_trim(mag);
+  let m: u64[] = __bi_trim(mag);
   if (__bi_is_zero_mag(m)) {
     return BigInt { neg: false, mag: m };
   }
@@ -114,7 +114,7 @@ function __bi_cmp_mag(a: u64[], b: u64[]): i32 {
   if (a.len() > b.len()) {
     return 1;
   }
-  var i: i32 = a.len() - 1;
+  let i: i32 = a.len() - 1;
   while (i >= 0) {
     if (a[i] < b[i]) {
       return 0 - 1;
@@ -128,19 +128,19 @@ function __bi_cmp_mag(a: u64[], b: u64[]): i32 {
 }
 
 function __bi_add_mag(a: u64[], b: u64[]): u64[] {
-  var mask: u64 = __bi_mask();
-  var sh: u64 = __bi_sh32();
-  var la: i32 = a.len();
-  var lb: i32 = b.len();
-  var n: i32 = la;
+  let mask: u64 = __bi_mask();
+  let sh: u64 = __bi_sh32();
+  let la: i32 = a.len();
+  let lb: i32 = b.len();
+  let n: i32 = la;
   if (lb > n) {
     n = lb;
   }
-  var out: u64[] = [];
-  var carry: u64 = 0 as u64;
-  var i: i32 = 0;
+  let out: u64[] = [];
+  let carry: u64 = 0 as u64;
+  let i: i32 = 0;
   while (i < n) {
-    var s: u64 = carry;
+    let s: u64 = carry;
     if (i < la) {
       s = s + a[i];
     }
@@ -165,14 +165,14 @@ function __bi_add_mag(a: u64[], b: u64[]): u64[] {
 // number, not a detectable negative one. `b[i] + borrow` is at most 2^32 and
 // cannot overflow the slot.
 function __bi_sub_mag(a: u64[], b: u64[]): u64[] {
-  var base: u64 = __bi_base();
-  var la: i32 = a.len();
-  var lb: i32 = b.len();
-  var out: u64[] = [];
-  var borrow: u64 = 0 as u64;
-  var i: i32 = 0;
+  let base: u64 = __bi_base();
+  let la: i32 = a.len();
+  let lb: i32 = b.len();
+  let out: u64[] = [];
+  let borrow: u64 = 0 as u64;
+  let i: i32 = 0;
   while (i < la) {
-    var d: u64 = borrow;
+    let d: u64 = borrow;
     if (i < lb) {
       d = d + b[i];
     }
@@ -191,34 +191,34 @@ function __bi_sub_mag(a: u64[], b: u64[]): u64[] {
 // Schoolbook multiply, O(la*lb). See the header for why every intermediate
 // fits a u64 slot with exactly zero margin.
 function __bi_mul_mag(a: u64[], b: u64[]): u64[] {
-  var mask: u64 = __bi_mask();
-  var sh: u64 = __bi_sh32();
-  var la: i32 = a.len();
-  var lb: i32 = b.len();
+  let mask: u64 = __bi_mask();
+  let sh: u64 = __bi_sh32();
+  let la: i32 = a.len();
+  let lb: i32 = b.len();
   if (__bi_is_zero_mag(a) || __bi_is_zero_mag(b)) {
-    var z: u64[] = [];
+    let z: u64[] = [];
     return z.append(0 as u64);
   }
-  var out: u64[] = [];
-  var i: i32 = 0;
+  let out: u64[] = [];
+  let i: i32 = 0;
   while (i < la + lb) {
     out = out.append(0 as u64);
     i = i + 1;
   }
   i = 0;
   while (i < la) {
-    var carry: u64 = 0 as u64;
-    var ai: u64 = a[i];
-    var j: i32 = 0;
+    let carry: u64 = 0 as u64;
+    let ai: u64 = a[i];
+    let j: i32 = 0;
     while (j < lb) {
-      var cur: u64 = out[i + j] + ai * b[j] + carry;
+      let cur: u64 = out[i + j] + ai * b[j] + carry;
       out = out.with(i + j, cur & mask);
       carry = cur >> sh;
       j = j + 1;
     }
-    var k: i32 = i + lb;
+    let k: i32 = i + lb;
     while (carry > 0 as u64) {
-      var c2: u64 = out[k] + carry;
+      let c2: u64 = out[k] + carry;
       out = out.with(k, c2 & mask);
       carry = c2 >> sh;
       k = k + 1;
@@ -233,13 +233,13 @@ function __bi_mul_mag(a: u64[], b: u64[]): u64[] {
 // 5^13. The product overwrites a copy of `a` limb by limb — one allocation
 // of the right size — and only a final carry appends.
 function __bi_mul_small(a: u64[], k: u64): u64[] {
-  var mask: u64 = __bi_mask();
-  var sh: u64 = __bi_sh32();
-  var out: u64[] = a;
-  var carry: u64 = 0 as u64;
-  var i: i32 = 0;
+  let mask: u64 = __bi_mask();
+  let sh: u64 = __bi_sh32();
+  let out: u64[] = a;
+  let carry: u64 = 0 as u64;
+  let i: i32 = 0;
   while (i < a.len()) {
-    var prod: u64 = a[i] * k + carry;
+    let prod: u64 = a[i] * k + carry;
     out = out.with(i, prod & mask);
     carry = prod >> sh;
     i = i + 1;
@@ -251,13 +251,13 @@ function __bi_mul_small(a: u64[], k: u64): u64[] {
 }
 
 function __bi_add_small(a: u64[], k: u64): u64[] {
-  var mask: u64 = __bi_mask();
-  var sh: u64 = __bi_sh32();
-  var out: u64[] = [];
-  var carry: u64 = k;
-  var i: i32 = 0;
+  let mask: u64 = __bi_mask();
+  let sh: u64 = __bi_sh32();
+  let out: u64[] = [];
+  let carry: u64 = k;
+  let i: i32 = 0;
   while (i < a.len()) {
-    var cur: u64 = a[i] + carry;
+    let cur: u64 = a[i] + carry;
     out = out.append(cur & mask);
     carry = cur >> sh;
     i = i + 1;
@@ -274,19 +274,19 @@ function __bi_add_small(a: u64[], k: u64): u64[] {
 // `rem * 2^32 + limb` must fit the slot, which holds for any divisor below
 // 2^32 — to_string only ever passes 10^9.
 function __bi_divmod_small(a: u64[], d: u64): (u64[], u64) {
-  var mask: u64 = __bi_mask();
-  var sh: u64 = __bi_sh32();
-  var n: i32 = a.len();
-  var q: u64[] = [];
-  var i: i32 = 0;
+  let mask: u64 = __bi_mask();
+  let sh: u64 = __bi_sh32();
+  let n: i32 = a.len();
+  let q: u64[] = [];
+  let i: i32 = 0;
   while (i < n) {
     q = q.append(0 as u64);
     i = i + 1;
   }
-  var rem: u64 = 0 as u64;
+  let rem: u64 = 0 as u64;
   i = n - 1;
   while (i >= 0) {
-    var cur: u64 = rem << sh | a[i] & mask;
+    let cur: u64 = rem << sh | a[i] & mask;
     q = q.with(i, cur / d);
     rem = cur % d;
     i = i - 1;
@@ -297,21 +297,21 @@ function __bi_divmod_small(a: u64[], d: u64): (u64[], u64) {
 // --- construction ---
 
 pub function zero(): BigInt {
-  var z: u64[] = [];
+  let z: u64[] = [];
   return BigInt { neg: false, mag: z.append(0 as u64) };
 }
 
 pub function from_i64(v: i64): BigInt {
-  var mask: u64 = __bi_mask();
-  var sh: u64 = __bi_sh32();
-  var neg: boolean = v < 0;
+  let mask: u64 = __bi_mask();
+  let sh: u64 = __bi_sh32();
+  let neg: boolean = v < 0;
   // Negate through u64 so i64 MIN, whose magnitude has no i64
   // representation, does not wrap back to itself.
-  var u: u64 = v as u64;
+  let u: u64 = v as u64;
   if (neg) {
     u = 0 as u64 - u;
   }
-  var m: u64[] = [];
+  let m: u64[] = [];
   m = m.append(u & mask);
   m = m.append(u >> sh & mask);
   return __bi_make(neg, m);
@@ -325,12 +325,12 @@ pub function from_i64(v: i64): BigInt {
 // 2^32, so `__bi_mul_small` by it keeps every partial product inside the slot.
 // That is ~9x fewer limb passes than folding one digit at a time.
 pub function parse(s: string): Option[BigInt] {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return None;
   }
-  var i: i32 = 0;
-  var neg: boolean = false;
+  let i: i32 = 0;
+  let neg: boolean = false;
   if (s[0] == 45) {
     neg = true;
     i = 1;
@@ -342,14 +342,14 @@ pub function parse(s: string): Option[BigInt] {
   if (i >= n) {
     return None;
   }
-  var mag: u64[] = [];
+  let mag: u64[] = [];
   mag = mag.append(0 as u64);
   while (i < n) {
-    var chunk: u64 = 0 as u64;
-    var scale: u64 = 1 as u64;
-    var taken: i32 = 0;
+    let chunk: u64 = 0 as u64;
+    let scale: u64 = 1 as u64;
+    let taken: i32 = 0;
     while (i < n && taken < 9) {
-      var c: i32 = s[i] as i32;
+      let c: i32 = s[i] as i32;
       if (c < 48 || c > 57) {
         return None;
       }
@@ -379,9 +379,9 @@ pub function (a: BigInt) bit_length(): i32 {
   if (__bi_is_zero_mag(a.mag)) {
     return 0;
   }
-  var top: i32 = a.mag.len() - 1;
-  var v: u64 = a.mag[top];
-  var bits: i32 = 0;
+  let top: i32 = a.mag.len() - 1;
+  let v: u64 = a.mag[top];
+  let bits: i32 = 0;
   while (v > 0 as u64) {
     bits = bits + 1;
     v = v >> 1 as u64;
@@ -396,7 +396,7 @@ pub function (a: BigInt) cmp(b: BigInt): i32 {
   if (!a.neg && b.neg) {
     return 1;
   }
-  var c: i32 = __bi_cmp_mag(a.mag, b.mag);
+  let c: i32 = __bi_cmp_mag(a.mag, b.mag);
   if (a.neg) {
     return 0 - c;
   }
@@ -420,11 +420,11 @@ pub function (a: BigInt) eq(b: BigInt): boolean {
 // i32 arithmetic wraps rather than trapping (docs/INTEGER-SEMANTICS.md), which
 // is what makes the accumulate loop well-defined.
 pub function (a: BigInt) hash(): i32 {
-  var h: i32 = 17;
+  let h: i32 = 17;
   if (a.neg) {
     h = 31;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.mag.len()) {
     h = h * 31 + (a.mag[i] & __bi_mask()) as i32;
     i = i + 1;
@@ -447,7 +447,7 @@ pub function (a: BigInt) add(b: BigInt): BigInt {
     return __bi_make(a.neg, __bi_add_mag(a.mag, b.mag));
   }
   // Opposite signs: the larger magnitude decides the result sign.
-  var c: i32 = __bi_cmp_mag(a.mag, b.mag);
+  let c: i32 = __bi_cmp_mag(a.mag, b.mag);
   if (c == 0) {
     return zero();
   }
@@ -462,7 +462,7 @@ pub function (a: BigInt) sub(b: BigInt): BigInt {
 }
 
 pub function (a: BigInt) mul(b: BigInt): BigInt {
-  var neg: boolean = a.neg != b.neg;
+  let neg: boolean = a.neg != b.neg;
   return __bi_make(neg, __bi_mul_mag(a.mag, b.mag));
 }
 
@@ -473,15 +473,15 @@ pub function (a: BigInt) mul_pow10(k: i32): BigInt {
   if (k <= 0) {
     return a;
   }
-  var mag: u64[] = a.mag;
-  var left: i32 = k;
+  let mag: u64[] = a.mag;
+  let left: i32 = k;
   while (left > 0) {
-    var step: i32 = left;
+    let step: i32 = left;
     if (step > 9) {
       step = 9;
     }
-    var scale: u64 = 1 as u64;
-    var i: i32 = 0;
+    let scale: u64 = 1 as u64;
+    let i: i32 = 0;
     while (i < step) {
       scale = scale * (10 as u64);
       i = i + 1;
@@ -500,15 +500,15 @@ pub function (a: BigInt) mul_pow5(k: i32): BigInt {
   if (k <= 0) {
     return a;
   }
-  var mag: u64[] = a.mag;
-  var left: i32 = k;
+  let mag: u64[] = a.mag;
+  let left: i32 = k;
   while (left > 0) {
-    var step: i32 = left;
+    let step: i32 = left;
     if (step > 13) {
       step = 13;
     }
-    var scale: u64 = 1 as u64;
-    var i: i32 = 0;
+    let scale: u64 = 1 as u64;
+    let i: i32 = 0;
     while (i < step) {
       scale = scale * (5 as u64);
       i = i + 1;
@@ -524,20 +524,20 @@ pub function (a: BigInt) shl(k: i32): BigInt {
   if (k <= 0 || __bi_is_zero_mag(a.mag)) {
     return a;
   }
-  var mask: u64 = __bi_mask();
-  var sh: u64 = __bi_sh32();
-  var limbShift: i32 = k / 32;
-  var bitShift: u64 = (k % 32) as u64;
-  var out: u64[] = [];
-  var i: i32 = 0;
+  let mask: u64 = __bi_mask();
+  let sh: u64 = __bi_sh32();
+  let limbShift: i32 = k / 32;
+  let bitShift: u64 = (k % 32) as u64;
+  let out: u64[] = [];
+  let i: i32 = 0;
   while (i < limbShift) {
     out = out.append(0 as u64);
     i = i + 1;
   }
-  var carry: u64 = 0 as u64;
+  let carry: u64 = 0 as u64;
   i = 0;
   while (i < a.mag.len()) {
-    var cur: u64 = a.mag[i] << bitShift | carry;
+    let cur: u64 = a.mag[i] << bitShift | carry;
     out = out.append(cur & mask);
     carry = cur >> sh;
     i = i + 1;
@@ -551,7 +551,7 @@ pub function (a: BigInt) shl(k: i32): BigInt {
 // from_u64 builds a BigInt from an unsigned 64-bit value, which `from_i64`
 // cannot express above i64 MAX.
 pub function from_u64(v: u64): BigInt {
-  var m: u64[] = [];
+  let m: u64[] = [];
   m = m.append(v & __bi_mask());
   m = m.append(v >> __bi_sh32() & __bi_mask());
   return __bi_make(false, m);
@@ -566,8 +566,8 @@ pub function (a: BigInt) low_u64(): u64 {
 // word64 is 64-bit word `i` of the magnitude, counting from the low end;
 // words past the top are zero.
 pub function (a: BigInt) word64(i: i32): u64 {
-  var lo: i32 = 2 * i;
-  var v: u64 = 0 as u64;
+  let lo: i32 = 2 * i;
+  let v: u64 = 0 as u64;
   if (lo < a.mag.len()) {
     v = a.mag[lo];
   }
@@ -580,8 +580,8 @@ pub function (a: BigInt) word64(i: i32): u64 {
 // has_low_bits reports whether any of the low `k` bits of the magnitude
 // is set — whether `shr(k)` would drop anything.
 pub function (a: BigInt) has_low_bits(k: i32): boolean {
-  var limbs: i32 = k / 32;
-  var i: i32 = 0;
+  let limbs: i32 = k / 32;
+  let i: i32 = 0;
   while (i < limbs && i < a.mag.len()) {
     if (a.mag[i] != 0 as u64) {
       return true;
@@ -591,7 +591,7 @@ pub function (a: BigInt) has_low_bits(k: i32): boolean {
   if (limbs >= a.mag.len() || k % 32 == 0) {
     return false;
   }
-  var mask: u64 = (1 as u64 << (k % 32) as u64) - 1 as u64;
+  let mask: u64 = (1 as u64 << (k % 32) as u64) - 1 as u64;
   return (a.mag[limbs] & mask) != 0 as u64;
 }
 
@@ -600,7 +600,7 @@ pub function (a: BigInt) bit(i: i32): boolean {
   if (i < 0) {
     return false;
   }
-  var limb: i32 = i / 32;
+  let limb: i32 = i / 32;
   if (limb >= a.mag.len()) {
     return false;
   }
@@ -613,17 +613,17 @@ pub function (a: BigInt) shr(k: i32): BigInt {
   if (k <= 0) {
     return a;
   }
-  var mask: u64 = __bi_mask();
-  var limbShift: i32 = k / 32;
-  var bitShift: u64 = (k % 32) as u64;
-  var n: i32 = a.mag.len() - limbShift;
+  let mask: u64 = __bi_mask();
+  let limbShift: i32 = k / 32;
+  let bitShift: u64 = (k % 32) as u64;
+  let n: i32 = a.mag.len() - limbShift;
   if (n <= 0) {
     return zero();
   }
-  var out: u64[] = [];
-  var i: i32 = 0;
+  let out: u64[] = [];
+  let i: i32 = 0;
   while (i < n) {
-    var cur: u64 = a.mag[i + limbShift] >> bitShift;
+    let cur: u64 = a.mag[i + limbShift] >> bitShift;
     if (bitShift > 0 as u64 && i + limbShift + 1 < a.mag.len()) {
       cur = cur | a.mag[i + limbShift + 1] << 32 as u64 - bitShift & mask;
     }
@@ -635,9 +635,9 @@ pub function (a: BigInt) shr(k: i32): BigInt {
 
 // pow raises to a non-negative integer power by square-and-multiply.
 pub function (a: BigInt) pow(n: i32): BigInt {
-  var result: BigInt = from_i64(1 as i64);
-  var base: BigInt = a;
-  var e: i32 = n;
+  let result: BigInt = from_i64(1 as i64);
+  let base: BigInt = a;
+  let e: i32 = n;
   while (e > 0) {
     if (e % 2 == 1) {
       result = result.mul(base);
@@ -659,7 +659,7 @@ pub function (a: BigInt) divmod(b: BigInt): (BigInt, BigInt) {
   if (__bi_is_zero_mag(b.mag)) {
     return (zero(), a);
   }
-  var qr: (u64[], u64[]) = __bi_divmod_mag(a.mag, b.mag);
+  let qr: (u64[], u64[]) = __bi_divmod_mag(a.mag, b.mag);
   return (__bi_make(a.neg != b.neg, qr.0), __bi_make(a.neg, qr.1));
 }
 
@@ -667,39 +667,39 @@ pub function (a: BigInt) divmod(b: BigInt): (BigInt, BigInt) {
 // the divisor is normalised so its top limb has its high bit set, which is
 // what bounds the trial quotient digit to at most two corrections.
 function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
-  var mask: u64 = __bi_mask();
-  var base: u64 = __bi_base();
-  var sh: u64 = __bi_sh32();
+  let mask: u64 = __bi_mask();
+  let base: u64 = __bi_base();
+  let sh: u64 = __bi_sh32();
   if (__bi_cmp_mag(a, b) < 0) {
-    var z: u64[] = [];
+    let z: u64[] = [];
     return (z.append(0 as u64), a);
   }
   if (b.len() == 1) {
-    var dm: (u64[], u64) = __bi_divmod_small(a, b[0]);
-    var r1: u64[] = [];
+    let dm: (u64[], u64) = __bi_divmod_small(a, b[0]);
+    let r1: u64[] = [];
     return (dm.0, r1.append(dm.1));
   }
-  var s: i32 = 0;
-  var top: u64 = b[b.len() - 1];
+  let s: i32 = 0;
+  let top: u64 = b[b.len() - 1];
   while ((top & 2147483648 as u64) == 0 as u64) {
     top = top << 1 as u64;
     s = s + 1;
   }
-  var v: u64[] = __bi_shl_limbs(b, s, false);
-  var u: u64[] = __bi_shl_limbs(a, s, true);
-  var n: i32 = v.len();
-  var m: i32 = u.len() - n;
-  var q: u64[] = [];
-  var k: i32 = 0;
+  let v: u64[] = __bi_shl_limbs(b, s, false);
+  let u: u64[] = __bi_shl_limbs(a, s, true);
+  let n: i32 = v.len();
+  let m: i32 = u.len() - n;
+  let q: u64[] = [];
+  let k: i32 = 0;
   while (k < m) {
     q = q.append(0 as u64);
     k = k + 1;
   }
-  var j: i32 = m - 1;
+  let j: i32 = m - 1;
   while (j >= 0) {
-    var num: u64 = u[j + n] << sh | u[j + n - 1];
-    var qhat: u64 = num / v[n - 1];
-    var rhat: u64 = num % v[n - 1];
+    let num: u64 = u[j + n] << sh | u[j + n - 1];
+    let qhat: u64 = num / v[n - 1];
+    let rhat: u64 = num % v[n - 1];
     while (qhat >= base || qhat * v[n - 2] > (rhat << sh | u[j + n - 2])) {
       qhat = qhat - 1 as u64;
       rhat = rhat + v[n - 1];
@@ -708,13 +708,13 @@ function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
       }
     }
     // u[j .. j+n] -= qhat * v, tracking the borrow by comparison.
-    var carry: u64 = 0 as u64;
-    var borrow: u64 = 0 as u64;
-    var i: i32 = 0;
+    let carry: u64 = 0 as u64;
+    let borrow: u64 = 0 as u64;
+    let i: i32 = 0;
     while (i < n) {
-      var p: u64 = qhat * v[i] + carry;
+      let p: u64 = qhat * v[i] + carry;
       carry = p >> sh;
-      var sub: u64 = (p & mask) + borrow;
+      let sub: u64 = (p & mask) + borrow;
       if (u[i + j] >= sub) {
         u = u.with(i + j, u[i + j] - sub);
         borrow = 0 as u64;
@@ -724,17 +724,17 @@ function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
       }
       i = i + 1;
     }
-    var subTop: u64 = carry + borrow;
+    let subTop: u64 = carry + borrow;
     if (u[j + n] >= subTop) {
       u = u.with(j + n, u[j + n] - subTop);
       q = q.with(j, qhat);
     } else {
       // qhat was one too large: add v back and drop the borrow.
       q = q.with(j, qhat - 1 as u64);
-      var c2: u64 = 0 as u64;
+      let c2: u64 = 0 as u64;
       i = 0;
       while (i < n) {
-        var sum: u64 = u[i + j] + v[i] + c2;
+        let sum: u64 = u[i + j] + v[i] + c2;
         u = u.with(i + j, sum & mask);
         c2 = sum >> sh;
         i = i + 1;
@@ -743,7 +743,7 @@ function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
     }
     j = j - 1;
   }
-  var rem: u64[] = [];
+  let rem: u64[] = [];
   k = 0;
   while (k < n) {
     rem = rem.append(u[k]);
@@ -756,14 +756,14 @@ function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
 // appends the carry limb (even a zero one), which Algorithm D needs so the
 // dividend has one more limb than the divisor's length demands.
 function __bi_shl_limbs(a: u64[], s: i32, extend: boolean): u64[] {
-  var mask: u64 = __bi_mask();
-  var sh: u64 = __bi_sh32();
-  var bs: u64 = s as u64;
-  var out: u64[] = [];
-  var carry: u64 = 0 as u64;
-  var i: i32 = 0;
+  let mask: u64 = __bi_mask();
+  let sh: u64 = __bi_sh32();
+  let bs: u64 = s as u64;
+  let out: u64[] = [];
+  let carry: u64 = 0 as u64;
+  let i: i32 = 0;
   while (i < a.len()) {
-    var cur: u64 = a[i] << bs | carry;
+    let cur: u64 = a[i] << bs | carry;
     out = out.append(cur & mask);
     carry = cur >> sh;
     i = i + 1;
@@ -778,12 +778,12 @@ function __bi_shr_limbs(a: u64[], s: i32): u64[] {
   if (s == 0) {
     return a;
   }
-  var mask: u64 = __bi_mask();
-  var bs: u64 = s as u64;
-  var out: u64[] = [];
-  var i: i32 = 0;
+  let mask: u64 = __bi_mask();
+  let bs: u64 = s as u64;
+  let out: u64[] = [];
+  let i: i32 = 0;
   while (i < a.len()) {
-    var cur: u64 = a[i] >> bs;
+    let cur: u64 = a[i] >> bs;
     if (i + 1 < a.len()) {
       cur = cur | a[i + 1] << 32 as u64 - bs & mask;
     }
@@ -805,17 +805,17 @@ pub function (a: BigInt) to_string(): string {
   if (__bi_is_zero_mag(a.mag)) {
     return "0";
   }
-  var mask: u64 = __bi_mask();
-  var sh: u64 = __bi_sh32();
-  var ten9: u64 = 1000000000 as u64;
-  var cur: u64[] = a.mag;
-  var n: i32 = cur.len();
-  var chunks: u64[] = [];
+  let mask: u64 = __bi_mask();
+  let sh: u64 = __bi_sh32();
+  let ten9: u64 = 1000000000 as u64;
+  let cur: u64[] = a.mag;
+  let n: i32 = cur.len();
+  let chunks: u64[] = [];
   while (n > 0) {
-    var rem: u64 = 0 as u64;
-    var i: i32 = n - 1;
+    let rem: u64 = 0 as u64;
+    let i: i32 = n - 1;
     while (i >= 0) {
-      var c: u64 = rem << sh | cur[i] & mask;
+      let c: u64 = rem << sh | cur[i] & mask;
       cur = cur.with(i, c / ten9);
       rem = c % ten9;
       i = i - 1;
@@ -825,31 +825,31 @@ pub function (a: BigInt) to_string(): string {
       n = n - 1;
     }
   }
-  var top: u64 = chunks[chunks.len() - 1];
-  var lead: i32 = 1;
-  var t: u64 = top / (10 as u64);
+  let top: u64 = chunks[chunks.len() - 1];
+  let lead: i32 = 1;
+  let t: u64 = top / (10 as u64);
   while (t > 0 as u64) {
     lead = lead + 1;
     t = t / (10 as u64);
   }
-  var start: i32 = 0;
+  let start: i32 = 0;
   if (a.neg) {
     start = 1;
   }
-  var total: i32 = start + lead + 9 * (chunks.len() - 1);
-  var out: u8[] = __alloc_u8(total);
+  let total: i32 = start + lead + 9 * (chunks.len() - 1);
+  let out: u8[] = __alloc_u8(total);
   if (a.neg) {
     out = out.with(0, 45 as u8);
   }
-  var pos: i32 = total - 1;
-  var k: i32 = 0;
+  let pos: i32 = total - 1;
+  let k: i32 = 0;
   while (k < chunks.len()) {
-    var v: u64 = chunks[k];
-    var width: i32 = 9;
+    let v: u64 = chunks[k];
+    let width: i32 = 9;
     if (k == chunks.len() - 1) {
       width = lead;
     }
-    var d: i32 = 0;
+    let d: i32 = 0;
     while (d < width) {
       out = out.with(pos, (v % (10 as u64) + 48 as u64) as u8);
       v = v / (10 as u64);

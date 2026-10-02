@@ -65,9 +65,9 @@ func statFieldsNativeSource(file, link, other string, euid, egid int) string {
         ctime: 0 as i64, ctime_nsec: 0 as i64 };
 }
 function main(): i32 {
-    var f: FileStat = st(%[1]q);
-    var l: FileStat = st(%[2]q);
-    var o: FileStat = st(%[3]q);
+    let f: FileStat = st(%[1]q);
+    let l: FileStat = st(%[2]q);
+    let o: FileStat = st(%[3]q);
     // chmod 0640 — the permission bits and the S_IFMT type bits, which is
     // what makes mode answer the kind predicates a shell test needs.
     if ((f.mode & (511 as u32)) != (416 as u32)) { return 1; }

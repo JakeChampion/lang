@@ -113,7 +113,7 @@ function opt_tex(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [INPUT]...   (without -G)\n";
   out = out + "  or:  " + gnu.prog() + " -G [OPTION]... [INPUT [OUTPUT]]\n";
   out = out + "Output a permuted index, including context, of the words in the input files.\n";
@@ -152,16 +152,16 @@ function help_text(): string {
 // an escape, and an unknown escape keeps its backslash. `\0` yields a
 // NUL, which makes a flag string empty.
 function unescape(s: string): string {
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c != 92 || i + 1 >= s.len()) {
       out = out.append(c as u8);
       i = i + 1;
       continue;
     }
-    var d: i32 = s[i + 1] as i32;
+    let d: i32 = s[i + 1] as i32;
     if (d == 97) {
       out = out.append(7 as u8);
       i = i + 2;
@@ -186,9 +186,9 @@ function unescape(s: string): string {
       out = out.append(11 as u8);
       i = i + 2;
     } else if (d == 48) {
-      var j: i32 = i + 2;
-      var val: i32 = 0;
-      var k: i32 = 0;
+      let j: i32 = i + 2;
+      let val: i32 = 0;
+      let k: i32 = 0;
       while (k < 3 && j < s.len() && s[j] as i32 >= 48 && s[j] as i32 <= 55) {
         val = val * 8 + (s[j] as i32 - 48);
         j = j + 1;
@@ -197,9 +197,9 @@ function unescape(s: string): string {
       out = out.append((val % 256) as u8);
       i = j;
     } else if (d == 120) {
-      var j: i32 = i + 2;
-      var val: i32 = 0;
-      var k: i32 = 0;
+      let j: i32 = i + 2;
+      let val: i32 = 0;
+      let k: i32 = 0;
       while (k < 3 && j < s.len() && hex_digit(s[j] as i32) >= 0) {
         val = val * 16 + hex_digit(s[j] as i32);
         j = j + 1;
@@ -225,7 +225,7 @@ function unescape(s: string): string {
 // A flag string is a C string, so a NUL inside it ends it — `-F '\0'`
 // is `-F ''`.
 function cut_at_nul(s: string): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] as i32 == 0) {
       return slice_unchecked(s, 0, i) + "";
@@ -329,16 +329,16 @@ struct Occ { kw_start: i32, kw_end: i32, ctx_start: i32, ctx_end: i32, ref: stri
 // since every cut point is within a half line of it — so the walk is a
 // few steps where a search from scratch was seventeen.
 function word_at(w: Words, p: i32, wi: i32): i64 {
-  var n: i32 = w.starts.len();
-  var k: i32 = wi;
+  let n: i32 = w.starts.len();
+  let k: i32 = wi;
   while (k > 0 && w.starts[k] >= p) {
     k = k - 1;
   }
   while (k + 1 < n && w.starts[k + 1] < p) {
     k = k + 1;
   }
-  var s: i32 = w.starts[k];
-  var e: i32 = w.ends[k];
+  let s: i32 = w.starts[k];
+  let e: i32 = w.ends[k];
   if (s < p && p < e) {
     return s as i64 << 32 as i64 | e as i64;
   }
@@ -361,7 +361,7 @@ function read_size(): i32 {
 // Every byte of `path`; "-" and "" are standard input. A failure is
 // GNU's `ptx: NAME: <strerror>`, exit 1, with nothing written yet.
 function slurp(path: string, w: io_buffered.BufWriter): string {
-  var r: Reader = stdin();
+  let r: Reader = stdin();
   if (path != "-" && path != "") {
     match (open_reader(path)) {
       Ok(f) => {
@@ -372,7 +372,7 @@ function slurp(path: string, w: io_buffered.BufWriter): string {
       }
     }
   }
-  var chunks: string[] = [];
+  let chunks: string[] = [];
   while (true) {
     match (r.read_chunk(read_size())) {
       Ok(chunk) => {
@@ -398,11 +398,11 @@ function slurp(path: string, w: io_buffered.BufWriter): string {
 // A word list: one word per LINE, so a line holding two words is one
 // entry that can never match. Empty lines are dropped.
 function word_list(path: string, w: io_buffered.BufWriter): string[] {
-  var text: string = slurp(path, w);
-  var out: string[] = [];
-  var pos: i32 = 0;
+  let text: string = slurp(path, w);
+  let out: string[] = [];
+  let pos: i32 = 0;
   while (pos < text.len()) {
-    var j: i32 = __memchr(text, 10, pos);
+    let j: i32 = __memchr(text, 10, pos);
     if (j < 0) {
       j = text.len();
     }
@@ -415,8 +415,8 @@ function word_list(path: string, w: io_buffered.BufWriter): string[] {
 }
 
 function fold_case(s: string): string {
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
     out = out.append(upper(s[i] as i32) as u8);
     i = i + 1;
@@ -425,13 +425,13 @@ function fold_case(s: string): string {
 }
 
 function in_list(list: string[], word: string, fold: boolean): boolean {
-  var w: string = word;
+  let w: string = word;
   if (fold) {
     w = fold_case(w);
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < list.len()) {
-    var e: string = list[i];
+    let e: string = list[i];
     if (fold) {
       e = fold_case(e);
     }
@@ -447,16 +447,16 @@ function in_list(list: string[], word: string, fold: boolean): boolean {
 // xstrtoimax in base 0 — decimal, `0` octal, `0x` hex and this glibc's
 // `0b` binary — and the value must be positive and inside intmax_t.
 function parse_num(v: string, what: string): i64 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < v.len() && gnu.is_blank(v[i] as i32)) {
     i = i + 1;
   }
-  var neg: boolean = false;
+  let neg: boolean = false;
   if (i < v.len() && (v[i] as i32 == 43 || v[i] as i32 == 45)) {
     neg = v[i] as i32 == 45;
     i = i + 1;
   }
-  var base: i32 = 10;
+  let base: i32 = 10;
   if (i + 1 < v.len() && v[i] as i32 == 48 && (v[i + 1] as i32 == 120 || v[i + 1] as i32 == 88)) {
     base = 16;
     i = i + 2;
@@ -467,11 +467,11 @@ function parse_num(v: string, what: string): i64 {
     base = 8;
     i = i + 1;
   }
-  var digits: i32 = 0;
-  var mag: u64 = 0 as u64;
-  var over: boolean = false;
+  let digits: i32 = 0;
+  let mag: u64 = 0 as u64;
+  let over: boolean = false;
   while (i < v.len()) {
-    var d: i32 = hex_digit(v[i] as i32);
+    let d: i32 = hex_digit(v[i] as i32);
     if (d < 0 || d >= base) {
       break;
     }
@@ -493,7 +493,7 @@ function parse_num(v: string, what: string): i64 {
     }
     i = i + 1;
   }
-  var bad: boolean = i != v.len() || over || mag > 9223372036854775807 as u64;
+  let bad: boolean = i != v.len() || over || mag > 9223372036854775807 as u64;
   if (base == 8 && digits == 0 && !bad) {
     // A bare `0`: the leading zero was the whole number.
     bad = false;
@@ -504,7 +504,7 @@ function parse_num(v: string, what: string): i64 {
     gnu.error("invalid " + what + ": " + gnu.quote(v));
     exit(1);
   }
-  var val: i64 = mag as i64;
+  let val: i64 = mag as i64;
   if (neg) {
     val = 0 as i64 - val;
   }
@@ -524,7 +524,7 @@ function default_sentence(): string {
 }
 
 function compile(pat: string, w: io_buffered.BufWriter): bre.Bre {
-  var re: bre.Bre = bre.bre_compile_syntax(pat, bre.emacs_syntax());
+  let re: bre.Bre = bre.bre_compile_syntax(pat, bre.emacs_syntax());
   if (re.err.len() > 0) {
     gnu.die(w, re.err + " (for regexp " + gnu.quote(pat) + ")", 1);
   }
@@ -537,12 +537,12 @@ struct Run { buf: string, words: Words, lines: Lines, occs: Occ[], maxword: i32 
 // `find_words` — the occurrences in `buf[lo, hi)`, either every run of
 // non-break bytes or every match of -W's regexp.
 function find_words(buf: string, lo: i32, hi: i32, brk: u8[], re: bre.Bre, have_re: boolean, w: Words): Words {
-  var starts: i32[] = w.starts;
-  var ends: i32[] = w.ends;
+  let starts: i32[] = w.starts;
+  let ends: i32[] = w.ends;
   if (have_re) {
-    var pos: i32 = lo;
+    let pos: i32 = lo;
     while (pos < hi) {
-      var m: (i32, i32) = re.search_from(buf, pos, hi);
+      let m: (i32, i32) = re.search_from(buf, pos, hi);
       if (m.0 < 0) {
         break;
       }
@@ -557,13 +557,13 @@ function find_words(buf: string, lo: i32, hi: i32, brk: u8[], re: bre.Bre, have_
     }
     return Words { starts: starts, ends: ends };
   }
-  var i: i32 = lo;
+  let i: i32 = lo;
   while (i < hi) {
     if (brk[buf[i] as i32] as i32 != 0) {
       i = i + 1;
       continue;
     }
-    var j: i32 = i;
+    let j: i32 = i;
     while (j < hi && brk[buf[j] as i32] as i32 == 0) {
       j = j + 1;
     }
@@ -578,15 +578,15 @@ function find_words(buf: string, lo: i32, hi: i32, brk: u8[], re: bre.Bre, have_
 // reference ends, where its text begins after the blanks that follow
 // the reference, and its 1-based number inside its own file.
 function find_lines(buf: string, lo: i32, hi: i32, l: Lines): Lines {
-  var starts: i32[] = l.starts;
-  var ends: i32[] = l.ends;
-  var ref_end: i32[] = l.ref_end;
-  var text: i32[] = l.text;
-  var nums: i32[] = l.nums;
-  var pos: i32 = lo;
-  var n: i32 = 0;
+  let starts: i32[] = l.starts;
+  let ends: i32[] = l.ends;
+  let ref_end: i32[] = l.ref_end;
+  let text: i32[] = l.text;
+  let nums: i32[] = l.nums;
+  let pos: i32 = lo;
+  let n: i32 = 0;
   while (pos <= hi) {
-    var e: i32 = __memchr(buf, 10, pos);
+    let e: i32 = __memchr(buf, 10, pos);
     if (e < 0 || e > hi) {
       e = hi;
     }
@@ -594,11 +594,11 @@ function find_lines(buf: string, lo: i32, hi: i32, l: Lines): Lines {
       break;
     }
     n = n + 1;
-    var j: i32 = pos;
+    let j: i32 = pos;
     while (j < e && buf[j] as i32 != 32 && buf[j] as i32 != 9) {
       j = j + 1;
     }
-    var k: i32 = j;
+    let k: i32 = j;
     while (k < e && (buf[k] as i32 == 32 || buf[k] as i32 == 9)) {
       k = k + 1;
     }
@@ -616,11 +616,11 @@ function find_lines(buf: string, lo: i32, hi: i32, l: Lines): Lines {
 }
 
 function line_of(l: Lines, p: i32): i32 {
-  var lo: i32 = 0;
-  var hi: i32 = l.starts.len() - 1;
-  var best: i32 = 0;
+  let lo: i32 = 0;
+  let hi: i32 = l.starts.len() - 1;
+  let best: i32 = 0;
   while (lo <= hi) {
-    var mid: i32 = lo + (hi - lo) / 2;
+    let mid: i32 = lo + (hi - lo) / 2;
     if (l.starts[mid] <= p) {
       best = mid;
       lo = mid + 1;
@@ -645,13 +645,13 @@ function line_of(l: Lines, p: i32): i32 {
 // first differing byte of the common span, and the shorter span wins a
 // tie.
 function key_less(kbuf: string, a_start: i32, a_end: i32, b_start: i32, b_end: i32): boolean {
-  var an: i32 = a_end - a_start;
-  var bn: i32 = b_end - b_start;
-  var n: i32 = an;
+  let an: i32 = a_end - a_start;
+  let bn: i32 = b_end - b_start;
+  let n: i32 = an;
   if (bn < n) {
     n = bn;
   }
-  var i: i32 = __mismatch(kbuf, a_start, kbuf, b_start, n);
+  let i: i32 = __mismatch(kbuf, a_start, kbuf, b_start, n);
   if (i < n) {
     return kbuf[a_start + i] as i32 < kbuf[b_start + i] as i32;
   }
@@ -661,9 +661,9 @@ function key_less(kbuf: string, a_start: i32, a_end: i32, b_start: i32, b_end: i
 // `buf` with every lowercase ASCII letter raised, so a folded comparison
 // is a plain one.
 function fold_buf(buf: string): string {
-  var n: i32 = buf.len();
-  var out: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let n: i32 = buf.len();
+  let out: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     out = out.with(i, upper(buf[i] as i32) as u8);
     i = i + 1;
@@ -672,8 +672,8 @@ function fold_buf(buf: string): string {
 }
 
 function scratch(n: i32): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(0);
     i = i + 1;
@@ -682,8 +682,8 @@ function scratch(n: i32): i32[] {
 }
 
 function scratch64(n: i32): i64[] {
-  var out: i64[] = [];
-  var i: i32 = 0;
+  let out: i64[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(i as i64);
     i = i + 1;
@@ -692,38 +692,38 @@ function scratch64(n: i32): i64[] {
 }
 
 function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
-  var n: i32 = occs.len();
-  var ks: i32[] = scratch(n);
-  var ke: i32[] = scratch(n);
-  var i: i32 = 0;
+  let n: i32 = occs.len();
+  let ks: i32[] = scratch(n);
+  let ke: i32[] = scratch(n);
+  let i: i32 = 0;
   while (i < n) {
     ks = ks.with(i, occs[i].kw_start);
     ke = ke.with(i, occs[i].kw_end);
     i = i + 1;
   }
-  var kbuf: string = buf;
+  let kbuf: string = buf;
   if (fold) {
     kbuf = fold_buf(buf);
   }
   // The keyword's first eight bytes, as a word.
-  var words: i64[] = [];
+  let words: i64[] = [];
   if (n >= radix.threshold()) {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < n) {
       words = words.append(radix.bytes_word(kbuf, ks[k], ke[k]));
       k = k + 1;
     }
   }
-  var src: i64[] = scratch64(n);
+  let src: i64[] = scratch64(n);
   if (words.len() > 0) {
     src = radix.by_word(src, words, n, false, false);
   }
-  var dst: i64[] = scratch64(n);
-  var lo: i32 = 0;
+  let dst: i64[] = scratch64(n);
+  let lo: i32 = 0;
   while (lo < n) {
-    var hi: i32 = n;
+    let hi: i32 = n;
     if (words.len() > 0) {
-      var w: i64 = words[src[lo] as i32];
+      let w: i64 = words[src[lo] as i32];
       hi = lo + 1;
       while (hi < n && words[src[hi] as i32] == w) {
         hi = hi + 1;
@@ -733,12 +733,12 @@ function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
     // an odd number of passes leaves the run in dst, and it is copied
     // back so src holds every run. A run already in order, which one
     // word repeated through a text is, costs one comparison an element.
-    var passes: i32 = 0;
-    var width: i32 = hi - lo;
-    var c0: i32 = lo + 1;
+    let passes: i32 = 0;
+    let width: i32 = hi - lo;
+    let c0: i32 = lo + 1;
     while (c0 < hi) {
-      var ic: i32 = src[c0] as i32;
-      var ip: i32 = src[c0 - 1] as i32;
+      let ic: i32 = src[c0] as i32;
+      let ip: i32 = src[c0 - 1] as i32;
       if (key_less(kbuf, ks[ic], ke[ic], ks[ip], ke[ip])) {
         width = 1;
         break;
@@ -746,22 +746,22 @@ function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
       c0 = c0 + 1;
     }
     while (width < hi - lo) {
-      var start: i32 = lo;
-      var at: i32 = lo;
+      let start: i32 = lo;
+      let at: i32 = lo;
       while (start < hi) {
-        var mid: i32 = start + width;
+        let mid: i32 = start + width;
         if (mid > hi) {
           mid = hi;
         }
-        var end: i32 = mid + width;
+        let end: i32 = mid + width;
         if (end > hi) {
           end = hi;
         }
-        var a: i32 = start;
-        var b: i32 = mid;
+        let a: i32 = start;
+        let b: i32 = mid;
         while (a < mid && b < end) {
-          var ib: i32 = src[b] as i32;
-          var ia: i32 = src[a] as i32;
+          let ib: i32 = src[b] as i32;
+          let ia: i32 = src[a] as i32;
           if (key_less(kbuf, ks[ib], ke[ib], ks[ia], ke[ia])) {
             dst = dst.with(at, src[b]);
             b = b + 1;
@@ -783,17 +783,17 @@ function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
         }
         start = end;
       }
-      var swap: i64[] = src;
+      let swap: i64[] = src;
       src = dst;
       dst = swap;
       passes = passes + 1;
       width = width * 2;
     }
     if (passes % 2 == 1) {
-      var swap2: i64[] = src;
+      let swap2: i64[] = src;
       src = dst;
       dst = swap2;
-      var c: i32 = lo;
+      let c: i32 = lo;
       while (c < hi) {
         src = src.with(c, dst[c]);
         c = c + 1;
@@ -801,8 +801,8 @@ function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
     }
     lo = hi;
   }
-  var out: i32[] = scratch(n);
-  var o: i32 = 0;
+  let out: i32[] = scratch(n);
+  let o: i32 = 0;
   while (o < n) {
     out = out.with(o, src[o] as i32);
     o = o + 1;
@@ -817,11 +817,11 @@ function sort_occs(buf: string, occs: Occ[], fold: boolean): i32[] {
 // so a field is a plain span of it: positions are unchanged, and the
 // space tests the cuts make answer the same on either buffer.
 function norm_all(buf: string): string {
-  var n: i32 = buf.len();
-  var out: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let n: i32 = buf.len();
+  let out: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
-    var c: i32 = buf[i] as i32;
+    let c: i32 = buf[i] as i32;
     if (c != 32 && is_space(c)) {
       c = 32;
     }
@@ -835,7 +835,7 @@ function norm_all(buf: string): string {
 // cut_fields computes with no room left comes out inverted, and is the
 // empty span at its start.
 function span(a: i32, b: i32): i64 {
-  var e: i32 = b;
+  let e: i32 = b;
   if (e < a) {
     e = a;
   }
@@ -856,11 +856,11 @@ function span_len(sp: i64): i32 {
 
 // `buf[a, b)` without its leading and trailing whitespace.
 function trim_span(buf: string, a: i32, b: i32): i64 {
-  var i: i32 = a;
+  let i: i32 = a;
   while (i < b && is_space(buf[i] as i32)) {
     i = i + 1;
   }
-  var j: i32 = b;
+  let j: i32 = b;
   while (j > i && is_space(buf[j - 1] as i32)) {
     j = j - 1;
   }
@@ -871,7 +871,7 @@ function trim_span(buf: string, a: i32, b: i32): i64 {
 // a -W that matches whitespace makes the keyword itself a blank, and
 // GNU prints it.
 function rtrim_span(buf: string, a: i32, b: i32): i64 {
-  var j: i32 = b;
+  let j: i32 = b;
   while (j > a && is_space(buf[j - 1] as i32)) {
     j = j - 1;
   }
@@ -879,7 +879,7 @@ function rtrim_span(buf: string, a: i32, b: i32): i64 {
 }
 
 function has_text(buf: string, a: i32, b: i32): boolean {
-  var i: i32 = a;
+  let i: i32 = a;
   while (i < b) {
     if (!is_space(buf[i] as i32)) {
       return true;
@@ -893,17 +893,17 @@ function has_text(buf: string, a: i32, b: i32): boolean {
 struct Fields { tail: i64, before: i64, keyafter: i64, keyword: i64, after: i64, head: i64, tail_flag: boolean, before_flag: boolean, keyafter_flag: boolean, head_flag: boolean, blank_pad: i32 }
 
 function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Fields {
-  var t: i32 = g.tlen;
+  let t: i32 = g.tlen;
   // keyafter: the keyword and what follows, cut at ka_max and moved
   // back out of a word. The keyword itself is never cut.
-  var ka_end: i32 = o.kw_start + g.ka_max;
+  let ka_end: i32 = o.kw_start + g.ka_max;
   if (ka_end < o.kw_end) {
     ka_end = o.kw_end;
   }
   if (ka_end >= o.ctx_end) {
     ka_end = o.ctx_end;
   } else {
-    var ww: i64 = word_at(w, ka_end, o.wi);
+    let ww: i64 = word_at(w, ka_end, o.wi);
     if (ww >= 0 as i64) {
       ka_end = word_start(ww);
       if (ka_end < o.kw_end) {
@@ -911,50 +911,50 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
       }
     }
   }
-  var ka: i64 = rtrim_span(buf, o.kw_start, ka_end);
+  let ka: i64 = rtrim_span(buf, o.kw_start, ka_end);
 
   // before: the last bef_max bytes of what precedes the keyword, moved
   // forward out of a word.
-  var bsrc_end: i32 = o.kw_start;
+  let bsrc_end: i32 = o.kw_start;
   while (bsrc_end > o.ctx_start && is_space(buf[bsrc_end - 1] as i32)) {
     bsrc_end = bsrc_end - 1;
   }
-  var bef_raw: i32 = bsrc_end - g.bef_max;
-  var bef_start: i32 = bef_raw;
-  var lost_before: boolean = false;
+  let bef_raw: i32 = bsrc_end - g.bef_max;
+  let bef_start: i32 = bef_raw;
+  let lost_before: boolean = false;
   if (bef_start <= o.ctx_start) {
     bef_start = o.ctx_start;
   } else {
     lost_before = true;
-    var wb: i64 = word_at(w, bef_start, o.wi);
+    let wb: i64 = word_at(w, bef_start, o.wi);
     if (wb >= 0 as i64) {
       bef_start = word_end(wb);
     }
   }
-  var before: i64 = trim_span(buf, bef_start, bsrc_end);
+  let before: i64 = trim_span(buf, bef_start, bsrc_end);
 
   // tail: what keyafter left behind, cut at what the before field left
   // of the left half.
-  var tail: i64 = span(0, 0);
-  var tail_flag: boolean = false;
-  var rest: boolean = has_text(buf, ka_end, o.ctx_end);
-  var t_start: i32 = ka_end;
+  let tail: i64 = span(0, 0);
+  let tail_flag: boolean = false;
+  let rest: boolean = has_text(buf, ka_end, o.ctx_end);
+  let t_start: i32 = ka_end;
   while (t_start < o.ctx_end && is_space(buf[t_start] as i32)) {
     t_start = t_start + 1;
   }
   // An empty before field puts its truncation flag AT the half-line
   // column rather than left of it, so the tail keeps the column the
   // flag would otherwise have taken.
-  var tail_room: i32 = g.tail_base - span_len(before);
+  let tail_room: i32 = g.tail_base - span_len(before);
   if (lost_before && span_len(before) == 0) {
     tail_room = tail_room + 1;
   }
   if (rest && tail_room > 0) {
-    var t_end: i32 = t_start + tail_room;
+    let t_end: i32 = t_start + tail_room;
     if (t_end >= o.ctx_end) {
       t_end = o.ctx_end;
     } else {
-      var wt: i64 = word_at(w, t_end, o.wi);
+      let wt: i64 = word_at(w, t_end, o.wi);
       if (wt >= 0 as i64) {
         t_end = word_start(wt);
       }
@@ -964,25 +964,25 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
       tail_flag = true;
     }
   }
-  var ka_flag: boolean = rest && span_len(tail) == 0;
+  let ka_flag: boolean = rest && span_len(tail) == 0;
 
   // head: what before left behind, held in the room GNU reserves for
   // the widest keyword, and never wider than what is left of the before
   // field once keyafter has taken its share.
-  var head: i64 = span(0, 0);
-  var head_flag: boolean = false;
+  let head: i64 = span(0, 0);
+  let head_flag: boolean = false;
   if (lost_before) {
-    var head_max: i32 = maxword + g.head_base;
-    var room: i32 = g.half - g.gap - 2 * t - span_len(ka) - g.room_adj;
+    let head_max: i32 = maxword + g.head_base;
+    let room: i32 = g.half - g.gap - 2 * t - span_len(ka) - g.room_adj;
     // Measured from the keyword rather than from the trimmed end of
     // the before field: a blank between the two belongs to the head's
     // share.
-    var h: i32 = o.kw_start - g.bef_max - head_max;
+    let h: i32 = o.kw_start - g.bef_max - head_max;
     if (h - 1 <= o.ctx_start) {
       h = o.ctx_start;
     } else {
       head_flag = true;
-      var wh: i64 = word_at(w, h, o.wi);
+      let wh: i64 = word_at(w, h, o.wi);
       if (wh >= 0 as i64) {
         h = word_end(wh);
       }
@@ -990,7 +990,7 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
     head = trim_span(buf, h, bef_start);
     if (span_len(head) > room) {
       head_flag = true;
-      var h_end: i32 = bef_start;
+      let h_end: i32 = bef_start;
       while (h_end > h && is_space(buf[h_end - 1] as i32)) {
         h_end = h_end - 1;
       }
@@ -998,7 +998,7 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
       if (h < o.ctx_start) {
         h = o.ctx_start;
       }
-      var wh2: i64 = word_at(w, h, o.wi);
+      let wh2: i64 = word_at(w, h, o.wi);
       if (wh2 >= 0 as i64) {
         h = word_end(wh2);
       }
@@ -1011,13 +1011,13 @@ function cut_fields(buf: string, o: Occ, w: Words, g: Geom, maxword: i32): Field
       head_flag = false;
     }
   }
-  var before_flag: boolean = lost_before && span_len(head) == 0;
-  var blank_pad: i32 = 0;
+  let before_flag: boolean = lost_before && span_len(head) == 0;
+  let blank_pad: i32 = 0;
   if (span_len(before) == 0 && !lost_before) {
     blank_pad = o.kw_start - bef_start;
   }
-  var keyword: i64 = span(o.kw_start, o.kw_end);
-  var after: i64 = span(0, 0);
+  let keyword: i64 = span(o.kw_start, o.kw_end);
+  let after: i64 = span(0, 0);
   if (span_len(ka) > span_len(keyword)) {
     after = span(o.kw_end, span_hi(ka));
   }
@@ -1041,8 +1041,8 @@ function flag_of(on: boolean, opts: Opts): string {
 function roff_field(h: usize, text: string, a: i32, n: i32, pre: string, post: string): void {
   buf_push_byte(h, 34);
   buf_push(h, pre);
-  var run: i32 = a;
-  var i: i32 = a;
+  let run: i32 = a;
+  let i: i32 = a;
   while (i < n) {
     if (text[i] as i32 == 34) {
       buf_push_range(h, text, run, i + 1);
@@ -1060,11 +1060,11 @@ function roff_field(h: usize, text: string, a: i32, n: i32, pre: string, post: s
 // underscore, the backslash, and the two braces, which need maths mode.
 // `s[a, n)` with TeX's specials escaped, pushed as the runs between them.
 function tex_quote(h: usize, s: string, a: i32, n: i32): void {
-  var i: i32 = a;
-  var run: i32 = a;
+  let i: i32 = a;
+  let run: i32 = a;
   while (i < n) {
-    var c: i32 = s[i] as i32;
-    var esc: string = "";
+    let c: i32 = s[i] as i32;
+    let esc: string = "";
     if (c == 36 || c == 37 || c == 38 || c == 35 || c == 95) {
       esc = "\\";
     } else if (c == 92) {
@@ -1112,9 +1112,9 @@ const BLANKS: string = "                                                        
 struct Line { h: usize, width: i32, mode: i32, cursor: i32, pending: i32, emitted: i32, e2: i32, ok: boolean, buf: u8[] }
 
 function push_spaces(h: usize, count: i32): void {
-  var n: i32 = count;
+  let n: i32 = count;
   while (n > 0) {
-    var k: i32 = n;
+    let k: i32 = n;
     if (k > BLANKS.len()) {
       k = BLANKS.len();
     }
@@ -1125,11 +1125,11 @@ function push_spaces(h: usize, count: i32): void {
 
 // `s[a, b)` at column `at`.
 function put(own l: Line, at: i32, s: string, a: i32, b: i32): Line {
-  var p: i32 = at;
+  let p: i32 = at;
   if (p < 0) {
     p = 0;
   }
-  var n: i32 = b - a;
+  let n: i32 = b - a;
   if (l.mode == 0) {
     if (p < l.cursor || p + n > l.width) {
       return Line { ...l, ok: false };
@@ -1139,12 +1139,12 @@ function put(own l: Line, at: i32, s: string, a: i32, b: i32): Line {
   if (l.mode == 2) {
     return Line { ...l, buf: put_at(l.buf, p, s, a, b) };
   }
-  var pending: i32 = l.pending + (p - l.cursor);
-  var body: i32 = n;
+  let pending: i32 = l.pending + (p - l.cursor);
+  let body: i32 = n;
   while (body > 0 && s[a + body - 1] as i32 == 32) {
     body = body - 1;
   }
-  var emitted: i32 = l.emitted;
+  let emitted: i32 = l.emitted;
   if (body > 0) {
     push_spaces(l.h, pending);
     buf_push_range(l.h, s, a, a + body);
@@ -1175,10 +1175,10 @@ function put_marked(own l: Line, at: i32, s: string, sp: i64, mark_at: i32, mark
 }
 
 function layout(own l0: Line, text: string, f: Fields, ref: string, g: Geom, opts: Opts): Line {
-  var t: i32 = g.tlen;
-  var tr: string = opts.trunc;
-  var l: Line = l0;
-  var base: i32 = 0;
+  let t: i32 = g.tlen;
+  let tr: string = opts.trunc;
+  let l: Line = l0;
+  let base: i32 = 0;
   if (g.refs_left) {
     base = g.refw;
     l = put(l, 0, ref, 0, ref.len());
@@ -1189,9 +1189,9 @@ function layout(own l0: Line, text: string, f: Fields, ref: string, g: Geom, opt
   if (f.tail_flag) {
     l = put(l, base + g.gap + span_len(f.tail), tr, 0, t);
   }
-  var e: i32 = base + g.col_half;
-  var shift: i32 = 0;
-  var bn: i32 = span_len(f.before);
+  let e: i32 = base + g.col_half;
+  let shift: i32 = 0;
+  let bn: i32 = span_len(f.before);
   if (bn > 0) {
     l = put_marked(l, e - bn, text, f.before, e - bn - t, tr, f.before_flag);
   } else {
@@ -1201,13 +1201,13 @@ function layout(own l0: Line, text: string, f: Fields, ref: string, g: Geom, opt
     }
     shift = shift + f.blank_pad;
   }
-  var p: i32 = base + g.col_half + shift + g.gap;
+  let p: i32 = base + g.col_half + shift + g.gap;
   l = put(l, p, text, span_lo(f.keyafter), span_hi(f.keyafter));
   if (f.keyafter_flag) {
     l = put(l, p + span_len(f.keyafter), tr, 0, t);
   }
-  var e2: i32 = p + g.col_half;
-  var hn: i32 = span_len(f.head);
+  let e2: i32 = p + g.col_half;
+  let hn: i32 = span_len(f.head);
   if (hn > 0) {
     l = put_marked(l, e2 - hn, text, f.head, e2 - hn - t, tr, f.head_flag);
   }
@@ -1217,15 +1217,15 @@ function layout(own l0: Line, text: string, f: Fields, ref: string, g: Geom, opt
 // One output line, through `l0`, which carries only the writer from one
 // line to the next.
 function render_dumb(own l0: Line, text: string, f: Fields, ref: string, g: Geom, opts: Opts): Line {
-  var h: usize = l0.h;
-  var t: i32 = g.tlen;
-  var width: i32 = g.refw + 2 * g.col_half + 4 * g.gap + 4 * t + 8 + span_len(f.tail) + span_len(f.before) + span_len(f.keyafter) + span_len(f.head) + ref.len();
-  var l: Line = layout(Line { ...l0, width: width, mode: 0, cursor: 0, pending: 0, emitted: 0, e2: 0, ok: true }, text, f, ref, g, opts);
+  let h: usize = l0.h;
+  let t: i32 = g.tlen;
+  let width: i32 = g.refw + 2 * g.col_half + 4 * g.gap + 4 * t + 8 + span_len(f.tail) + span_len(f.before) + span_len(f.keyafter) + span_len(f.head) + ref.len();
+  let l: Line = layout(Line { ...l0, width: width, mode: 0, cursor: 0, pending: 0, emitted: 0, e2: 0, ok: true }, text, f, ref, g, opts);
   if (l.ok) {
     l = layout(Line { ...l, mode: 1, cursor: 0 }, text, f, ref, g, opts);
   } else {
     l = layout(Line { ...l, mode: 2, cursor: 0, buf: spaces(width).bytes() }, text, f, ref, g, opts);
-    var out: string = rtrim_bytes(l.buf);
+    let out: string = rtrim_bytes(l.buf);
     buf_push(h, out);
     l = Line { ...l, emitted: out.len() };
   }
@@ -1241,12 +1241,12 @@ function render_dumb(own l0: Line, text: string, f: Fields, ref: string, g: Geom
 }
 
 function put_at(own line: u8[], at: i32, s: string, a: i32, b: i32): u8[] {
-  var p: i32 = at;
+  let p: i32 = at;
   if (p < 0) {
     p = 0;
   }
-  var out: u8[] = line;
-  var i: i32 = a;
+  let out: u8[] = line;
+  let i: i32 = a;
   while (i < b && p < out.len()) {
     out = out.with(p, s[i]);
     i = i + 1;
@@ -1256,7 +1256,7 @@ function put_at(own line: u8[], at: i32, s: string, a: i32, b: i32): u8[] {
 }
 
 function rtrim_bytes(line: u8[]): string {
-  var n: i32 = line.len();
+  let n: i32 = line.len();
   while (n > 0 && line[n - 1] as i32 == 32) {
     n = n - 1;
   }
@@ -1307,8 +1307,8 @@ function render_tex(h: usize, text: string, f: Fields, ref: string, g: Geom, opt
 
 // ---- main -------------------------------------------------------------------
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [];
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("A", "auto-reference", opt_auto()));
   opts = opts.append(gnu.valued("b", "break-file", opt_break()));
   opts = opts.append(gnu.valued("F", "flag-truncation", opt_flag()));
@@ -1328,11 +1328,11 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("O", "", opt_roff()));
   opts = opts.append(gnu.flag("T", "", opt_tex()));
 
-  var o: Opts = Opts { gnu_ext: true, auto_ref: false, input_ref: false, right_ref: false, fold: false, format: 0 - 1, trunc: "/", macro: "xx", width: 72 as i64, gap: 3 as i64, word_pat: "", sent_pat: "", have_word: false, have_sent: false, no_sent: false, break_file: "", have_break: false, ignore_file: "", have_ignore: false, only_file: "", have_only: false };
+  let o: Opts = Opts { gnu_ext: true, auto_ref: false, input_ref: false, right_ref: false, fold: false, format: 0 - 1, trunc: "/", macro: "xx", width: 72 as i64, gap: 3 as i64, word_pat: "", sent_pat: "", have_word: false, have_sent: false, no_sent: false, break_file: "", have_break: false, ignore_file: "", have_ignore: false, only_file: "", have_only: false };
 
-  var g0: gnu.Getopt = gnu.getopt_new(argv, opts, "ptx", help_text(), 1);
+  let g0: gnu.Getopt = gnu.getopt_new(argv, opts, "ptx", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g0.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g0.next();
     g0 = r.1;
     match (r.0) {
       Some(m) => {
@@ -1357,7 +1357,7 @@ pub function main(): i32 {
         } else if (m.id == opt_right()) {
           o = Opts { ...o, right_ref: true };
         } else if (m.id == opt_format()) {
-          var names: string[] = ["roff", "tex"];
+          let names: string[] = ["roff", "tex"];
           o = Opts { ...o, format: gnu.argmatch(m.value, names, "--format") + 1 };
         } else if (m.id == opt_sentence()) {
           o = Opts { ...o, sent_pat: unescape(m.value), have_sent: m.value.len() > 0, no_sent: m.value.len() == 0 };
@@ -1386,9 +1386,9 @@ pub function main(): i32 {
     }
   }
 
-  var files: string[] = g0.operands();
-  var out_name: string = "";
-  var have_out: boolean = false;
+  let files: string[] = g0.operands();
+  let out_name: string = "";
+  let have_out: boolean = false;
   if (!o.gnu_ext && files.len() >= 2) {
     out_name = files[1];
     have_out = true;
@@ -1396,7 +1396,7 @@ pub function main(): i32 {
   // The -G output file is created — and truncated — before every check
   // but the option-parse-time ones, so a run that goes on to report an
   // extra operand or a bad regexp still empties it.
-  var w: io_buffered.BufWriter = gnu.out_new();
+  let w: io_buffered.BufWriter = gnu.out_new();
   if (have_out) {
     match (open_writer(out_name)) {
       Ok(f) => {
@@ -1421,31 +1421,31 @@ pub function main(): i32 {
   }
 
   // Regexps beat every file open.
-  var word_re: bre.Bre = bre.bre_compile_syntax("", bre.emacs_syntax());
+  let word_re: bre.Bre = bre.bre_compile_syntax("", bre.emacs_syntax());
   if (o.have_word) {
     word_re = compile(o.word_pat, w);
   }
-  var sent_src: string = default_sentence();
+  let sent_src: string = default_sentence();
   if (o.have_sent) {
     sent_src = o.sent_pat;
   } else if (o.input_ref || !o.gnu_ext) {
     sent_src = "\n";
   }
-  var sent_re: bre.Bre = compile(sent_src, w);
+  let sent_re: bre.Bre = compile(sent_src, w);
 
   // The break set: -b's bytes, else letters are words without -G and
   // non-whitespace with it. -G adds space, tab and newline to whatever
   // -b named.
-  var brk: u8[] = __alloc_u8(256);
+  let brk: u8[] = __alloc_u8(256);
   if (!o.have_word) {
-    var c: i32 = 0;
+    let c: i32 = 0;
     if (o.have_break) {
-      var bytes: string = slurp(o.break_file, w);
+      let bytes: string = slurp(o.break_file, w);
       while (c < 256) {
         brk = brk.with(c, 0 as u8);
         c = c + 1;
       }
-      var bi: i32 = 0;
+      let bi: i32 = 0;
       while (bi < bytes.len()) {
         brk = brk.with(bytes[bi] as i32, 1 as u8);
         bi = bi + 1;
@@ -1475,24 +1475,24 @@ pub function main(): i32 {
     }
   }
 
-  var ignore: string[] = [];
+  let ignore: string[] = [];
   if (o.have_ignore) {
     ignore = word_list(o.ignore_file, w);
   }
-  var only: string[] = [];
+  let only: string[] = [];
   if (o.have_only) {
     only = word_list(o.only_file, w);
   }
 
   // Every operand is read whole, into one buffer; a context never spans
   // two of them, so each file keeps its own range inside it.
-  var buf: string = "";
-  var fstart: i32[] = [];
-  var fend: i32[] = [];
-  var i: i32 = 0;
-  var parts: string[] = [];
+  let buf: string = "";
+  let fstart: i32[] = [];
+  let fend: i32[] = [];
+  let i: i32 = 0;
+  let parts: string[] = [];
   while (i < files.len()) {
-    var text: string = slurp(files[i], w);
+    let text: string = slurp(files[i], w);
     fstart = fstart.append(buf.len());
     parts = parts.append(text);
     buf = buf + text;
@@ -1500,8 +1500,8 @@ pub function main(): i32 {
     i = i + 1;
   }
 
-  var words: Words = Words { starts: [], ends: [] };
-  var lines: Lines = Lines { starts: [], ends: [], ref_end: [], text: [], nums: [] };
+  let words: Words = Words { starts: [], ends: [] };
+  let lines: Lines = Lines { starts: [], ends: [], ref_end: [], text: [], nums: [] };
   i = 0;
   while (i < files.len()) {
     words = find_words(buf, fstart[i], fend[i], brk, word_re, o.have_word, words);
@@ -1513,27 +1513,27 @@ pub function main(): i32 {
   // words are the ones found inside it, so a word the scan found running
   // past either end is cut there, and the widest word is measured after
   // the cut, reference words included.
-  var occs: Occ[] = [];
-  var maxword: i32 = 0;
-  var maxref: i32 = 0;
-  var wi: i32 = 0;
+  let occs: Occ[] = [];
+  let maxword: i32 = 0;
+  let maxref: i32 = 0;
+  let wi: i32 = 0;
   i = 0;
   while (i < files.len()) {
-    var show: string = files[i];
+    let show: string = files[i];
     if (show == "-") {
       show = "";
     }
-    var pos: i32 = fstart[i];
+    let pos: i32 = fstart[i];
     while (pos < fend[i]) {
-      var cs: i32 = pos;
-      var ce: i32 = fend[i];
-      var m: (i32, i32) = (0 - 1, 0 - 1);
+      let cs: i32 = pos;
+      let ce: i32 = fend[i];
+      let m: (i32, i32) = (0 - 1, 0 - 1);
       if (!o.no_sent) {
         m = sent_re.search_from(buf, pos, fend[i]);
       }
       if (m.0 >= 0) {
         if (m.0 == pos) {
-          var shown: string = sent_src;
+          let shown: string = sent_src;
           gnu.die(w, "error: regular expression has a match of length zero: " + gnu.quote(shown), 1);
         }
         ce = m.1;
@@ -1545,9 +1545,9 @@ pub function main(): i32 {
       while (ce > cs && is_space(buf[ce - 1] as i32)) {
         ce = ce - 1;
       }
-      var start: i32 = cs;
+      let start: i32 = cs;
       if (o.input_ref) {
-        var li0: i32 = line_of(lines, cs);
+        let li0: i32 = line_of(lines, cs);
         if (lines.starts[li0] == cs) {
           start = lines.text[li0];
         }
@@ -1555,28 +1555,28 @@ pub function main(): i32 {
       while (wi < words.starts.len() && words.ends[wi] <= cs) {
         wi = wi + 1;
       }
-      var k: i32 = wi;
+      let k: i32 = wi;
       while (k < words.starts.len() && words.starts[k] < ce) {
-        var ws: i32 = words.starts[k];
+        let ws: i32 = words.starts[k];
         if (ws < cs) {
           ws = cs;
         }
-        var we: i32 = words.ends[k];
+        let we: i32 = words.ends[k];
         if (we > ce) {
           we = ce;
         }
         if (we - ws > maxword) {
           maxword = we - ws;
         }
-        var keep: boolean = we > ws;
+        let keep: boolean = we > ws;
         if (o.input_ref) {
-          var lr: i32 = line_of(lines, ws);
+          let lr: i32 = line_of(lines, ws);
           if (ws < lines.ref_end[lr]) {
             keep = false;
           }
         }
         if (o.have_ignore || o.have_only) {
-          var kw: string = slice_unchecked(buf, ws, we) + "";
+          let kw: string = slice_unchecked(buf, ws, we) + "";
           if (o.have_ignore && in_list(ignore, kw, o.fold)) {
             keep = false;
           }
@@ -1585,11 +1585,11 @@ pub function main(): i32 {
           }
         }
         if (keep) {
-          var refv: string = "";
+          let refv: string = "";
           if (o.auto_ref) {
             refv = show + ":" + lines.nums[line_of(lines, ws)].to_string();
           } else if (o.input_ref) {
-            var li: i32 = line_of(lines, ws);
+            let li: i32 = line_of(lines, ws);
             refv = slice_unchecked(buf, lines.starts[li], lines.ref_end[li]) + "";
           }
           if (refv.len() > maxref) {
@@ -1604,39 +1604,39 @@ pub function main(): i32 {
   }
 
   // The geometry, once.
-  var gap: i32 = clamp_i32(o.gap);
-  var tlen: i32 = o.trunc.len();
-  var has_ref: boolean = o.auto_ref || o.input_ref;
-  var refs_left: boolean = has_ref && !o.right_ref;
-  var refw: i32 = 0;
+  let gap: i32 = clamp_i32(o.gap);
+  let tlen: i32 = o.trunc.len();
+  let has_ref: boolean = o.auto_ref || o.input_ref;
+  let refs_left: boolean = has_ref && !o.right_ref;
+  let refw: i32 = 0;
   if (has_ref) {
     refw = maxref;
   }
-  var eff: i32 = clamp_i32(o.width);
+  let eff: i32 = clamp_i32(o.width);
   if (refs_left) {
     eff = eff - refw - gap;
   }
-  var half: i32 = eff / 2;
-  var col_half: i32 = half;
+  let half: i32 = eff / 2;
+  let col_half: i32 = half;
   if (col_half < gap) {
     col_half = gap;
   }
-  var geom: Geom = Geom { half: half, col_half: col_half, gap: gap, tlen: tlen, ka_max: 0, bef_max: 0, tail_base: 0, head_base: 0, room_adj: 0, refw: refw, refs_left: refs_left, has_ref: has_ref };
+  let geom: Geom = Geom { half: half, col_half: col_half, gap: gap, tlen: tlen, ka_max: 0, bef_max: 0, tail_base: 0, head_base: 0, room_adj: 0, refw: refw, refs_left: refs_left, has_ref: has_ref };
   if (o.gnu_ext) {
     geom = Geom { ...geom, ka_max: half - 2 * tlen, bef_max: max0(half - gap - 2 * tlen), tail_base: half - 2 * tlen - 2 * gap - 1, head_base: gap + 2 * tlen - 1, room_adj: 0 };
   } else {
     geom = Geom { ...geom, ka_max: half - 2 * tlen - 1, bef_max: max0(half - gap), tail_base: half - 2 * gap - 1, head_base: gap - 1, room_adj: 1 };
   }
 
-  var order: i32[] = sort_occs(buf, occs, o.fold);
-  var nbuf: string = norm_all(buf);
-  var h: usize = w.handle();
-  var ln: Line = Line { h: h, width: 0, mode: 0, cursor: 0, pending: 0, emitted: 0, e2: 0, ok: true, buf: [] };
-  var j: i32 = 0;
+  let order: i32[] = sort_occs(buf, occs, o.fold);
+  let nbuf: string = norm_all(buf);
+  let h: usize = w.handle();
+  let ln: Line = Line { h: h, width: 0, mode: 0, cursor: 0, pending: 0, emitted: 0, e2: 0, ok: true, buf: [] };
+  let j: i32 = 0;
   while (j < order.len()) {
-    var oc: Occ = occs[order[j]];
-    var f: Fields = cut_fields(nbuf, oc, words, geom, maxword);
-    var refv2: string = oc.ref;
+    let oc: Occ = occs[order[j]];
+    let f: Fields = cut_fields(nbuf, oc, words, geom, maxword);
+    let refv2: string = oc.ref;
     if (o.auto_ref && refs_left) {
       refv2 = refv2 + ":";
     }

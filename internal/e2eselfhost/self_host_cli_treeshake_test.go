@@ -70,7 +70,7 @@ func TestSelfHostCLIPrunesStdlibImportClosureX86_64(t *testing.T) {
 
 	const src = `import "std/string";
 function main(): i32 {
-    var s: string = "hello world";
+    let s: string = "hello world";
     if (s.starts_with("hello")) { return 0; }
     return 1;
 }
@@ -158,7 +158,7 @@ impl mem.Drop for W {
     function drop(self: Self): void { print("drop " + self.n.to_string()); }
 }
 function main(): i32 {
-    var a: W = W { n: 7 };
+    let a: W = W { n: 7 };
     return a.n - 7;
 }
 `
@@ -219,9 +219,9 @@ struct Sku { code: i32 }
 enum Tag { A(i32), B }
 
 function main(): i32 {
-    var m: Map[Sku, i32] = map_new(8);
+    let m: Map[Sku, i32] = map_new(8);
     m = m.insert(Sku { code: 5 }, 7);
-    var t: Map[Tag, i32] = map_new(8);
+    let t: Map[Tag, i32] = map_new(8);
     t = t.insert(A(1), 2);
     return m.get_or(Sku { code: 5 }, 0) - 7 + t.get_or(A(1), 0) - 2;
 }
@@ -305,10 +305,10 @@ impl num.Add for V { function add(self: Self, o: Self): Self { return V { n: sel
 impl num.Neg for V { function neg(self: Self): V { return V { n: 0 - self.n }; } }
 
 function main(): i32 {
-    var a: V = V { n: 3 };
-    var b: V = V { n: 4 };
-    var c: V = a + b;
-    var d: V = -c;
+    let a: V = V { n: 3 };
+    let b: V = V { n: 4 };
+    let c: V = a + b;
+    let d: V = -c;
     return d.n + 7;
 }
 `
@@ -393,7 +393,7 @@ struct Q { a: i32 }
 function (q: Q) to_string(): string { return "Q!"; }
 
 function main(): i32 {
-    var q: Q = Q { a: 7 };
+    let q: Q = Q { a: 7 };
     write(q);
     return 0;
 }

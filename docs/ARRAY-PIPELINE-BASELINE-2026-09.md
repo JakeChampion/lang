@@ -159,7 +159,7 @@ rounding error.
 
 One thing that is *not* a term: the bounds check. `internal/parser/bounds_elide.go`
 recognises `while (i < xs.len())` syntactically, and a loop bounded by a
-separate local — `var n = xs.len(); while (i < n)`, the reflex optimisation —
+separate local — `let n = xs.len(); while (i < n)`, the reflex optimisation —
 keeps the check. The two spellings emit visibly different code and cost the
 same: over a 100,000-element sum repeated 50 times, 117,001,246 retired
 instructions for the hoisted-and-checked form against 116,997,604 for the

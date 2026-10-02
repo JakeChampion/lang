@@ -37,8 +37,8 @@ function (a: V) mul(b: V): i32 {
 }
 
 function main(): i32 {
-    var x: V = V { v: 6 };
-    var y: V = V { v: 7 };
+    let x: V = V { v: 6 };
+    let y: V = V { v: 7 };
     return x * y;
 }`},
 	{"binary_add_returns_string", `struct S { s: string }
@@ -48,8 +48,8 @@ function (a: S) add(b: S): string {
 }
 
 function main(): i32 {
-    var p: S = S { s: "hello" };
-    var q: S = S { s: "world" };
+    let p: S = S { s: "hello" };
+    let q: S = S { s: "world" };
     if ((p + q).len() == 5) { return 42; }
     return 1;
 }`},
@@ -60,7 +60,7 @@ function (a: N) neg(): i32 {
 }
 
 function main(): i32 {
-    var k: N = N { n: 42 };
+    let k: N = N { n: 42 };
     return -k;
 }`},
 	// The self-returning shape the receiver lookup already handled. It must
@@ -72,8 +72,8 @@ function (a: C) add(b: C): C {
 }
 
 function main(): i32 {
-    var u: C = C { n: 40 };
-    var v: C = C { n: 2 };
+    let u: C = C { n: 40 };
+    let v: C = C { n: 2 };
     return (u + v).n;
 }`},
 }

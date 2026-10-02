@@ -60,14 +60,14 @@
 // Phase 5).
 
 pub function path_join(parts: string[]): string {
-  var n: i32 = parts.len();
+  let n: i32 = parts.len();
   if (n == 0) {
     return "";
   }
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < n) {
-    var p: string = parts[i];
+    let p: string = parts[i];
     if (p.len() == 0) {
       i = i + 1;
     } else {
@@ -81,11 +81,11 @@ pub function path_join(parts: string[]): string {
           out = slice_unchecked(out, 0, out.len() - 1) + "";
         }
         // Strip any leading `/`s from p.
-        var start: i32 = 0;
+        let start: i32 = 0;
         while (start < p.len() && p[start] == 47) {
           start = start + 1;
         }
-        var rest: str = slice_unchecked(p, start, p.len());
+        let rest: str = slice_unchecked(p, start, p.len());
         if (out[out.len() - 1] == 47) {
           out = out + rest;
         } else {
@@ -99,13 +99,13 @@ pub function path_join(parts: string[]): string {
 }
 
 pub function path_parent(p: string): string {
-  var n: i32 = p.len();
+  let n: i32 = p.len();
   if (n == 0) {
     return "";
   }
   // Walk back from the end skipping a trailing `/`, find the
   // last separator, and return everything before it.
-  var i: i32 = n - 1;
+  let i: i32 = n - 1;
   // Special case: a single "/" parents to itself.
   if (n == 1 && p[0] == 47) {
     return "/";
@@ -127,19 +127,19 @@ pub function path_parent(p: string): string {
 }
 
 pub function path_file_name(p: string): string {
-  var n: i32 = p.len();
+  let n: i32 = p.len();
   if (n == 0) {
     return "";
   }
   // Trim trailing slashes — "a/b/" → "b".
-  var end: i32 = n;
+  let end: i32 = n;
   while (end > 0 && p[end - 1] == 47) {
     end = end - 1;
   }
   if (end == 0) {
     return "";
   }
-  var i: i32 = end - 1;
+  let i: i32 = end - 1;
   while (i >= 0 && p[i] != 47) {
     i = i - 1;
   }
@@ -147,12 +147,12 @@ pub function path_file_name(p: string): string {
 }
 
 pub function path_extension(p: string): string {
-  var name: string = path_file_name(p);
-  var n: i32 = name.len();
+  let name: string = path_file_name(p);
+  let n: i32 = name.len();
   if (n == 0) {
     return "";
   }
-  var i: i32 = n - 1;
+  let i: i32 = n - 1;
   while (i > 0 && name[i] != 46) {
     i = i - 1;
   }
@@ -180,9 +180,9 @@ pub function path_extension(p: string): string {
 // std/array's `take` idiom — array slice-assignment yields a distinct
 // slice type, and std/path keeps zero module dependencies.
 function seg_pop(xs: string[]): string[] {
-  var out: string[] = [];
-  var last: i32 = xs.len() - 1;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let last: i32 = xs.len() - 1;
+  let i: i32 = 0;
   while (i < last) {
     out = out.append(xs[i]);
     i = i + 1;
@@ -191,15 +191,15 @@ function seg_pop(xs: string[]): string[] {
 }
 
 pub function path_clean(p: string): string {
-  var n: i32 = p.len();
+  let n: i32 = p.len();
   if (n == 0) {
     return ".";
   }
-  var rooted: boolean = p[0] == 47;  // leading '/'
+  let rooted: boolean = p[0] == 47;  // leading '/'
   // Walk the segments, maintaining a stack. `.` is skipped; `..`
   // pops a real preceding element or (relative only) is pushed.
-  var segs: string[] = [];
-  var i: i32 = 0;
+  let segs: string[] = [];
+  let i: i32 = 0;
   while (i < n) {
     // Skip separator run.
     while (i < n && p[i] == 47) {
@@ -208,14 +208,14 @@ pub function path_clean(p: string): string {
     if (i >= n) {
       i = n;
     } else {
-      var start: i32 = i;
+      let start: i32 = i;
       while (i < n && p[i] != 47) {
         i = i + 1;
       }
-      var seg: str = slice_unchecked(p, start, i);
+      let seg: str = slice_unchecked(p, start, i);
       if (seg == ".") {} else if (seg == "..") {
         // current dir — drop
-        var slen: i32 = segs.len();
+        let slen: i32 = segs.len();
         if (slen > 0 && segs[slen - 1] != "..") {
           segs = seg_pop(segs);  // pop the preceding element
         } else if (!rooted) {
@@ -229,8 +229,8 @@ pub function path_clean(p: string): string {
     }
   }
   // Re-join the surviving segments with single separators.
-  var joined: string = "";
-  var k: i32 = 0;
+  let joined: string = "";
+  let k: i32 = 0;
   while (k < segs.len()) {
     if (k > 0) {
       joined = joined + "/";
@@ -261,12 +261,12 @@ pub function path_is_absolute(p: string): boolean {
 //   ".bashrc"        → ".bashrc"      (a leading-dot file has no ext)
 //   "foo"            → "foo"          (no dot: whole name)
 pub function path_stem(p: string): string {
-  var name: string = path_file_name(p);
-  var n: i32 = name.len();
+  let name: string = path_file_name(p);
+  let n: i32 = name.len();
   if (n == 0) {
     return "";
   }
-  var i: i32 = n - 1;
+  let i: i32 = n - 1;
   while (i > 0 && name[i] != 46) {
     i = i - 1;
   }
@@ -287,9 +287,9 @@ pub function path_stem(p: string): string {
 //   ("archive.tar.gz", "") → "archive.tar"
 //   (".bashrc", "txt")    → ".bashrc.txt"  (hidden file has no ext)
 pub function path_with_extension(p: string, ext: string): string {
-  var n: i32 = p.len();
+  let n: i32 = p.len();
   // Locate the real last component, ignoring any trailing slashes.
-  var end: i32 = n;
+  let end: i32 = n;
   while (end > 0 && p[end - 1] == 47) {
     end = end - 1;
   }
@@ -299,22 +299,22 @@ pub function path_with_extension(p: string, ext: string): string {
     }
     return p + "." + ext;
   }
-  var fs: i32 = end - 1;
+  let fs: i32 = end - 1;
   while (fs >= 0 && p[fs] != 47) {
     fs = fs - 1;
   }
   fs = fs + 1;  // first char of the file name
   // Find the extension dot inside (fs, end); a dot at fs is a
   // hidden-file leading dot, not an extension separator.
-  var dot: i32 = end;
-  var j: i32 = end - 1;
+  let dot: i32 = end;
+  let j: i32 = end - 1;
   while (j > fs && p[j] != 46) {
     j = j - 1;
   }
   if (j > fs && p[j] == 46) {
     dot = j;
   }
-  var base: string = slice_unchecked(p, 0, dot) + "";
+  let base: string = slice_unchecked(p, 0, dot) + "";
   if (ext.len() == 0) {
     return base;
   }

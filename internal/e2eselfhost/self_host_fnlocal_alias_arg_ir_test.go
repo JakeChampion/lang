@@ -11,7 +11,7 @@ import "testing"
 // binding's trampoline into a callee that read slot 0 of a code address.
 // The lift now follows the binding to that function's parameter.
 //
-// The shadowed spelling (`var withRes = taker; use x <- withRes()`) is
+// The shadowed spelling (`let withRes = taker; use x <- withRes()`) is
 // pinned in internal/e2e's shadowed-generic gate; these are the spellings
 // with no shadow to lean on, which failed before #8982 too. Every row is
 // also run through the interpreter here, so the expected values are not
@@ -26,12 +26,12 @@ var fnLocalAliasArgCases = []struct {
 	body string
 	want int
 }{
-	{"bare_fn", "var w = withRes; return w(inc);", 21},
-	{"inline_lambda", "var w = withRes; return w((v: i32): i32 => v + 17);", 21},
-	{"annotated_local", "var w: ((i32) => i32) => i32 = withRes; return w(inc);", 21},
-	{"string_callback", "var t = taker; return t((s: string): i32 => s.len() + 19);", 21},
-	{"shadow_bound_elsewhere", "var withRes = other; return withRes(inc);", 57},
-	{"lambda_bound_first", "var w = withRes; var l = (v: i32): i32 => v + 17; return w(l);", 21},
+	{"bare_fn", "let w = withRes; return w(inc);", 21},
+	{"inline_lambda", "let w = withRes; return w((v: i32): i32 => v + 17);", 21},
+	{"annotated_local", "let w: ((i32) => i32) => i32 = withRes; return w(inc);", 21},
+	{"string_callback", "let t = taker; return t((s: string): i32 => s.len() + 19);", 21},
+	{"shadow_bound_elsewhere", "let withRes = other; return withRes(inc);", 57},
+	{"lambda_bound_first", "let w = withRes; let l = (v: i32): i32 => v + 17; return w(l);", 21},
 }
 
 func TestSelfHostFnLocalAliasArgX86_64(t *testing.T) {

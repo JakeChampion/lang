@@ -17,28 +17,28 @@ var lambdaCaptureLoweringCases = []struct {
 	// the lambda's result comes from unifying it with the `?` operand's
 	// Result[i32, string] (#9515). The annotated spelling is the control.
 	{"try-op-unannotated-lambda", lambdaTryHelpersSrc + `function main(): i32 {
-    var f = (x: i32) => { var y: i32 = g(x)?; return Some(y + 10); };
-    var r = (x: i32) => { var y: i32 = h(x)?; return Ok(y + 1); };
+    let f = (x: i32) => { let y: i32 = g(x)?; return Some(y + 10); };
+    let r = (x: i32) => { let y: i32 = h(x)?; return Ok(y + 1); };
 ` + lambdaTryBodySrc, 122},
 	{"try-op-annotated-lambda-control", lambdaTryHelpersSrc + `function main(): i32 {
-    var f: (i32) => Option[i32] = (x: i32) => { var y: i32 = g(x)?; return Some(y + 10); };
-    var r: (i32) => Result[i32, string] = (x: i32) => { var y: i32 = h(x)?; return Ok(y + 1); };
+    let f: (i32) => Option[i32] = (x: i32) => { let y: i32 = g(x)?; return Some(y + 10); };
+    let r: (i32) => Result[i32, string] = (x: i32) => { let y: i32 = h(x)?; return Ok(y + 1); };
 ` + lambdaTryBodySrc, 122},
 
 	// A written instantiation binds a type parameter no argument spells.
 	{"generic-nullary-written-type-arg", `function pick[T](): T[] {
-    var out: T[] = [];
+    let out: T[] = [];
     return out;
 }
 function main(): i32 {
-    var xs = pick[i32]();
+    let xs = pick[i32]();
     return xs.len();
 }`, 0},
 	{"generic-returns-lambda", `function makeId[T](): (T) => T {
     return (x: T): T => { return x; };
 }
 function main(): i32 {
-    var f = makeId[i32]();
+    let f = makeId[i32]();
     return f(42);
 }`, 42},
 	{"generic-returns-lambda-called-directly", `function makeId[T](): (T) => T {
@@ -54,8 +54,8 @@ function main(): i32 {
     return add;
 }
 function main(): i32 {
-    var arr: ((i32) => i32)[] = [makeAdder(1), makeAdder(2), makeAdder(3)];
-    var sl: [(i32) => i32] = arr[1:3];
+    let arr: ((i32) => i32)[] = [makeAdder(1), makeAdder(2), makeAdder(3)];
+    let sl: [(i32) => i32] = arr[1:3];
     return sl[0](10) + sl[1](10);
 }`, 25},
 	{"view-of-closures-param", `function makeAdder(n: i32): (i32) => i32 {
@@ -63,22 +63,22 @@ function main(): i32 {
     return add;
 }
 function apply_all(fs: [(i32) => i32], x: i32): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     for f in fs {
         total = total + f(x);
     }
     return total;
 }
 function main(): i32 {
-    var arr: ((i32) => i32)[] = [makeAdder(1), makeAdder(2), makeAdder(3)];
+    let arr: ((i32) => i32)[] = [makeAdder(1), makeAdder(2), makeAdder(3)];
     return apply_all(arr[1:3], 10) - 25;
 }`, 0},
 
 	// A capture written by a lambda nested inside the capturing one is boxed
 	// in the frame that declares it, so the write reaches that frame.
 	{"nested-lambda-writes-capture-returned", `function main(): i32 {
-    var seen: i32 = 0;
-    var pick: () => (i32) => void = (): (i32) => void => {
+    let seen: i32 = 0;
+    let pick: () => (i32) => void = (): (i32) => void => {
         return (n: i32): void => { seen = n; };
     };
     pick()(7);
@@ -86,9 +86,9 @@ function main(): i32 {
     return 0;
 }`, 0},
 	{"nested-lambda-writes-capture-direct", `function main(): i32 {
-    var seen: i32 = 0;
-    var outer = (): i32 => {
-        var inner = (n: i32): void => { seen = n; };
+    let seen: i32 = 0;
+    let outer = (): i32 => {
+        let inner = (n: i32): void => { seen = n; };
         inner(7);
         return 0;
     };
@@ -99,7 +99,7 @@ function main(): i32 {
 	// A lambda writing a captured parameter: the parameter's cell is built on
 	// entry.
 	{"lambda-writes-captured-param", `function bump(x: i32): i32 {
-    var g = (): void => { x = x + 1; };
+    let g = (): void => { x = x + 1; };
     g();
     g();
     return x;
@@ -111,7 +111,7 @@ function main(): i32 {
 	// An 8-byte capture the closure writes shares one cell with the frame that
 	// declared it rather than being snapshotted per call.
 	{"mutable-captured-i64", `function makeCounter(): () => i64 {
-    var count: i64 = 0i64;
+    let count: i64 = 0i64;
     function tick(): i64 {
         count = count + 1i64;
         return count;
@@ -119,9 +119,9 @@ function main(): i32 {
     return tick;
 }
 function main(): i32 {
-    var c = makeCounter();
-    var a: i64 = c();
-    var b: i64 = c();
+    let c = makeCounter();
+    let a: i64 = c();
+    let b: i64 = c();
     if (a != 1i64) { return 1; }
     if (b != 2i64) { return 2; }
     return 0;
@@ -134,16 +134,16 @@ function main(): i32 {
     return tick;
 }
 function main(): i32 {
-    var total: i64 = 0i64;
-    var outer = (): () => i64 => {
+    let total: i64 = 0i64;
+    let outer = (): () => i64 => {
         return (): i64 => { total = total + 5i64; return total; };
     };
-    var f = outer();
+    let f = outer();
     f();
     f();
-    var c = makeCounter(10i64);
+    let c = makeCounter(10i64);
     c();
-    var b: i64 = c();
+    let b: i64 = c();
     if (total != 10i64) { return 1; }
     if (b != 12i64) { return 2; }
     return 0;
@@ -152,10 +152,10 @@ function main(): i32 {
 	// reads the count afterwards.
 	{"mutable-captured-i64-called-by-callee", `function apply(f: (i64) => i64, x: i64): i64 { return f(x); }
 function main(): i32 {
-    var count: i64 = 0i64;
-    var g = (x: i64): i64 => { count = count + 1i64; return x; };
-    var a: i64 = apply(g, 5i64);
-    var b: i64 = apply(g, 6i64);
+    let count: i64 = 0i64;
+    let g = (x: i64): i64 => { count = count + 1i64; return x; };
+    let a: i64 = apply(g, 5i64);
+    let b: i64 = apply(g, 6i64);
     if (count != 2i64) { return 40 + (count as i32); }
     return 0;
 }`, 0},
@@ -171,7 +171,7 @@ function h(v: i32): Result[i32, string] {
 }
 `
 
-const lambdaTryBodySrc = `    var a: i32 = 0;
+const lambdaTryBodySrc = `    let a: i32 = 0;
     match (f(1)) { Some(v) => { a = v; }, None => { a = 99; } }
     match (f(500)) { Some(v) => { a = a + v; }, None => { a = a + 100; } }
     match (r(3)) { Ok(v) => { a = a + v; }, Err(e) => { a = a + 1000; } }

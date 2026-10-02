@@ -226,13 +226,13 @@ Status:
   variants, and the i32-to-i64 cast picks `i64.extend_i32_u` for
   unsigned sources / `i64.extend_i32_s` for signed.
 - Polymorphic numeric literals (PR 1 follow-up): integer
-  literals are inferred against the surrounding type — `var x:
+  literals are inferred against the surrounding type — `let x:
   i64 = 1` works without `1 as i64`, `f(x, 0)` resolves the
   `0` against the parameter type, `(x: u32) / 2` settles `2` to
   u32, and `(x: i64) == 0` likewise. The checker stamps a
   resolved `Width` on `*ast.NumberLit` once the context is
   known; the IR picks `i32.const` vs `i64.const` from that
-  field. Out-of-range literals (`var x: i32 = 5_000_000_000`)
+  field. Out-of-range literals (`let x: i32 = 5_000_000_000`)
   are now rejected at the checker rather than silently wrapping.
 - Sub-i32 widths (`i8`, `i16`, `u8`, `u16`) shipped as scalar
   types: variables and arithmetic at sub-i32 precision live in
@@ -336,7 +336,7 @@ Tuples (follow-up status):
   guarded-`_`-first tuple match parses natively but not in the
   self-host compiler), and a tuple pattern in an `if let` head
   does not parse there at all. At the IRREFUTABLE binding sites
-  (`let`/`var` destructure, destructured parameters) a nested
+  (`let` destructure, destructured parameters) a nested
   tuple element is still rejected: a destructure binds one flat
   level of a single tuple box, so bind the inner tuple to a name
   and destructure it on the next line.
@@ -403,8 +403,8 @@ function id[T](x: T): T { return x; }
 function first[T](xs: T[]): T { return xs[0]; }
 
 function main(): i32 {
-    var a = id(42);             // T inferred = i32
-    var s = first(["hi", "hi"]); // T inferred = string
+    let a = id(42);             // T inferred = i32
+    let s = first(["hi", "hi"]); // T inferred = string
     return a;
 }
 ```
@@ -538,7 +538,7 @@ Deferred to a follow-up:
     TypeArgs into the registered method signatures so
     `(m: Map[string, i32]).set(k, v)` type-checks `k` as
     string and `v` as i32. `map_new` return-type inference
-    flows from the destination context (`var m:
+    flows from the destination context (`let m:
     Map[string, i32] = map_new(8)`) so no explicit type-arg
     syntax is needed yet. Map literals infer K / V from
     the first entry's types. Map's struct is excluded from
@@ -668,7 +668,7 @@ Deferred to a follow-up:
   7)` settles the first arg to i64 from the declared payload
   type. Contextual flow from the destination annotation back
   into a generic-enum constructor arg also shipped:
-  `var o: Option[i64] = Some(1);` resolves the literal to i64
+  `let o: Option[i64] = Some(1);` resolves the literal to i64
   via `settleNumeric`'s `EnumType` case, which builds the
   type-param substitution from the destination's `Args`,
   walks each arg with the substituted payload type, and
@@ -858,9 +858,9 @@ to smallest. Status pending unless marked.
 
   ```
   function extract_text(v: JsonValue): Option[string] {
-    var JObject(m) = v else return None;
-    var Some(text_v) = m.get("text") else return None;
-    var JString(t) = text_v else return None;
+    let JObject(m) = v else return None;
+    let Some(text_v) = m.get("text") else return None;
+    let JString(t) = text_v else return None;
     return Some(t);
   }
   ```
@@ -870,8 +870,8 @@ to smallest. Status pending unless marked.
 
   ```
   function extract_text(v: JsonValue): Option[string] {
-    var JObject(m) = v?;
-    var JString(t) = m.get("text")??;
+    let JObject(m) = v?;
+    let JString(t) = m.get("text")??;
     return Some(t);
   }
   ```
@@ -927,7 +927,7 @@ to smallest. Status pending unless marked.
 - **`match` as an expression — shipped.** Concrete shape:
 
   ```
-  var m = match (o) {
+  let m = match (o) {
       Some(x) => x + 1,
       None    => 0
   };
@@ -968,8 +968,8 @@ to smallest. Status pending unless marked.
 - **`for x in arr` / `for (k, v) in map` — shipped.** Both
   shapes desugar in the parser. Map form rewrites to
   `iter() / has_next() / value() / advance()`; array form
-  to a C-style `for (var i = 0; i < len(arr); i = i + 1)`
-  loop with `var x = arr[i]` at the top of the body.
+  to a C-style `for (let i = 0; i < len(arr); i = i + 1)`
+  loop with `let x = arr[i]` at the top of the body.
   Detection happens by lookahead in `parseFor` — a leading
   `IDENT in` or `( IDENT , IDENT ) in` selects the foreach
   shape; everything else falls through to the C-style for.
@@ -1002,7 +1002,7 @@ to smallest. Status pending unless marked.
   use `.push(v)` instead of the per-T helpers.
 
 - **Module-level `state { ... }` block — REMOVED.** Fern briefly
-  shipped a `state { var hits: i32 = 0; ... }` construct for
+  shipped a `state { let hits: i32 = 0; ... }` construct for
   module-global mutable variables that persisted across
   `handle()` calls (process-lifetime state for long-running
   HTTP servers). It was backed by a **two-cursor allocator** — a
@@ -1012,7 +1012,7 @@ to smallest. Status pending unless marked.
   the per-request `arena_restore`.
 
   The whole feature has since been removed: the `state` syntax,
-  the AST node, the checker state-var table, the IR persistent-
+  the AST node, the checker state-let table, the IR persistent-
   mode ops, and (once the arena reset was also dropped) the
   two-cursor allocator itself — both native backends now use a
   single bump cursor reclaimed by reference counting. If it were
@@ -1054,7 +1054,7 @@ to smallest. Status pending unless marked.
   float partner now settles to that float type instead of
   erroring. Concretely, `r <= 0` works when `r: f32` — the
   literal `0` lowers as `f32.const 0.0`, not `i32.const 0`.
-  Same path applies to `var r: f32 = 0`, `f(0)` where `f` takes
+  Same path applies to `let r: f32 = 0`, `f(0)` where `f` takes
   `f32`, and `r * 2` arithmetic.
 
   Implementation: `NumberLit` gained `IsFloat` + `FloatWidth`
@@ -1066,7 +1066,7 @@ to smallest. Status pending unless marked.
   binary-op handler also pre-settles a polymorphic side against
   a concrete-float partner before requireFloat fires.
 
-  Concrete-int **variables** (e.g. `var x: i32; x + 1.5f32`)
+  Concrete-int **variables** (e.g. `let x: i32; x + 1.5f32`)
   still error — no implicit widening. Only literals get the
   promotion.
 
@@ -1092,7 +1092,7 @@ example cleanup. Each item lands as its own PR:
 3. ~~`_` wildcard in match~~ — **shipped.** Both statement
    and expression form;
    `TestWASMMatchExprWildcardArm` covers it.
-4. ~~`?` operator + `var Pat = expr else { ... };` form~~ —
+4. ~~`?` operator + `let Pat = expr else { ... };` form~~ —
    **shipped (Option + Result).** Postfix `?` on the
    `parseCall` postfix loop; `let-else` lives in `parseStmt`.
 5. ~~`for x in arr` / `for (k, v) in map`~~ — **shipped.**
@@ -1130,7 +1130,7 @@ tests.
   source per slot, by far the dominant pattern in
   closureconv'd output for handler / nested-function code
   — now defunctionalises at IR time, including the
-  cross-function closure-factory pattern (`var f =
+  cross-function closure-factory pattern (`let f =
   makeAdder(7); f(35)`). Two flavours of monomorphic flow
   source recognised:
     1. Direct: `OpStoreLocal slot` directly preceded by
@@ -1636,7 +1636,7 @@ pure function can't suspend."
   rule: any `T` is `T <>` (empty row), widens up to any
   superset.
 - *Direct style by default.* This is what we already
-  have — `var s = http_get(url);` doesn't require `.now`
+  have — `let s = http_get(url);` doesn't require `.now`
   / `.map`. Effect tracking should ride on top of the
   existing imperative-looking syntax, not introduce a
   separate `direct { }` block. Gleam's `use` rewrite +
@@ -1692,7 +1692,7 @@ function handle(req: HttpRequest): HttpResponse <io, throws[BadRequest]> {
     if (req.method != "POST") {
         throw BadRequest("method not allowed");
     }
-    var body = read_body(req);  // <io, suspend> bubbles up
+    let body = read_body(req);  // <io, suspend> bubbles up
     return HttpResponse { status: 200, body: BodyText(body) };
 }
 ```
@@ -1760,8 +1760,8 @@ property of the block, not the function signature.
 
 ```fern
 concurrent {
-    var a = spawn fetch(plat, url_a);
-    var b = spawn fetch(plat, url_b);
+    let a = spawn fetch(plat, url_a);
+    let b = spawn fetch(plat, url_b);
     return combine(await a, await b);
 }
 ```

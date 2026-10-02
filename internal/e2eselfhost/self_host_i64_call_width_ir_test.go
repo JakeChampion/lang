@@ -20,17 +20,17 @@ var i64CallWidthIRCases = []struct {
 	main string
 }{
 	// i64 local + i32-returning free function. 30 + 12 = 42.
-	{"call-free", `function g(): i32 { return 12; } function main(): i32 { var s: i64 = 30; return (s + g()) as i32; }`},
+	{"call-free", `function g(): i32 { return 12; } function main(): i32 { let s: i64 = 30; return (s + g()) as i32; }`},
 	// Call with an argument. 30 + (6*2) = 42.
-	{"call-arg", `function g(x: i32): i32 { return x * 2; } function main(): i32 { var s: i64 = 30; return (s + g(6)) as i32; }`},
+	{"call-arg", `function g(x: i32): i32 { return x * 2; } function main(): i32 { let s: i64 = 30; return (s + g(6)) as i32; }`},
 	// Sign-extension: a call returning a NEGATIVE i32 must sign-extend. 50 + (-8) = 42.
-	{"call-neg", `function g(): i32 { return -8; } function main(): i32 { var s: i64 = 50; return (s + g()) as i32; }`},
+	{"call-neg", `function g(): i32 { return -8; } function main(): i32 { let s: i64 = 50; return (s + g()) as i32; }`},
 	// i32-returning METHOD call. 30 + 12 = 42.
-	{"call-method", `struct C { n: i32 } function (c: C) val(): i32 { return c.n; } function main(): i32 { var c: C = C { n: 12 }; var s: i64 = 30; return (s + c.val()) as i32; }`},
+	{"call-method", `struct C { n: i32 } function (c: C) val(): i32 { return c.n; } function main(): i32 { let c: C = C { n: 12 }; let s: i64 = 30; return (s + c.val()) as i32; }`},
 	// Call inside a for-range accumulating into i64. inc(0)+inc(1)+inc(2) = 1+2+3 = 6.
-	{"call-loop", `function inc(x: i32): i32 { return x + 1; } function main(): i32 { var s: i64 = 0; for i in 0..3 { s = s + inc(i); } return s as i32; }`},
+	{"call-loop", `function inc(x: i32): i32 { return x + 1; } function main(): i32 { let s: i64 = 0; for i in 0..3 { s = s + inc(i); } return s as i32; }`},
 	// Regression: an i64-returning call still lowers as a native i64. 0 + 42 = 42.
-	{"call-i64-keep", `function g(): i64 { return 42; } function main(): i32 { var s: i64 = 0; return (s + g()) as i32; }`},
+	{"call-i64-keep", `function g(): i64 { return 42; } function main(): i32 { let s: i64 = 0; return (s + g()) as i32; }`},
 }
 
 // TestSelfHostI64CallWidthIR compiles each case with the self-host CLI for

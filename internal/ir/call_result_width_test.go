@@ -44,7 +44,7 @@ func TestProvidedCalleeResultWidth(t *testing.T) {
 			src: `
 struct P { x: i32 }
 function main(): i32 {
-    var a = [P { x: 1 }, P { x: 2 }];
+    let a = [P { x: 1 }, P { x: 2 }];
     a = a.with(0, P { x: 3 });
     return a[0].x;
 }`,
@@ -53,7 +53,7 @@ function main(): i32 {
 			name: "string as_bytes", callee: "__method_string_as_bytes", want: ir.ResAddr,
 			src: `
 function main(): i32 {
-    var b = "hi".as_bytes();
+    let b = "hi".as_bytes();
     return b.len();
 }`,
 		},
@@ -64,7 +64,7 @@ function main(): i32 {
 			name: "monotonic clock", callee: "monotonic_ns", want: ir.ResWide,
 			src: `
 function main(): i32 {
-    var t: i64 = monotonic_ns();
+    let t: i64 = monotonic_ns();
     return (t / 1000000) as i32;
 }`,
 		},
@@ -72,7 +72,7 @@ function main(): i32 {
 			name: "wall clock", callee: "now_unix_ms", want: ir.ResWide,
 			src: `
 function main(): i32 {
-    var t: i64 = now_unix_ms();
+    let t: i64 = now_unix_ms();
     return (t / 1000) as i32;
 }`,
 		},
@@ -80,7 +80,7 @@ function main(): i32 {
 			name: "heap bump counter", callee: "__fern_heap_bump_bytes", want: ir.ResWide,
 			src: `
 function main(): i32 {
-    var n: i64 = __heap_bump_bytes();
+    let n: i64 = __heap_bump_bytes();
     return n as i32;
 }`,
 		},

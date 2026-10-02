@@ -55,7 +55,7 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 	failSrc := "import \"std/test\";\n" +
 		"function bad(): test.TestOutcome { return test.assert_eq(1, 2); }\n" +
 		"function main(): i32 {\n" +
-		"    var r: test.TestRunner = test.test_new(\"synthetic\");\n" +
+		"    let r: test.TestRunner = test.test_new(\"synthetic\");\n" +
 		"    r = r.it(\"one is two\", bad);\n" +
 		"    return r.finish();\n" +
 		"}\n"
@@ -148,7 +148,7 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 	failSrc := "import \"std/test\";\n" +
 		"function bad(): test.TestOutcome { return test.assert_eq(1, 2); }\n" +
 		"function main(): i32 {\n" +
-		"    var r: test.TestRunner = test.test_new(\"synthetic\");\n" +
+		"    let r: test.TestRunner = test.test_new(\"synthetic\");\n" +
 		"    r = r.it(\"one is two\", bad);\n" +
 		"    return r.finish();\n" +
 		"}\n"

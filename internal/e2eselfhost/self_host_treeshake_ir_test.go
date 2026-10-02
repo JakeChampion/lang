@@ -62,16 +62,16 @@ import "std/time" as time;
 @derive(cmp.Eq, cmp.Ord, cmp.Hash, json.Json)
 struct Rec { name: string, id: i32, tag: string }
 function main(): i32 {
-    var a = Rec { name: "x", id: 1, tag: "p" };
-    var b = Rec { name: "y", id: 2, tag: "q" };
-    var n = 0;
+    let a = Rec { name: "x", id: 1, tag: "p" };
+    let b = Rec { name: "y", id: 2, tag: "q" };
+    let n = 0;
     if (a.eq(a)) { n = n + 1; }
     if (a.cmp(b) < 0) { n = n + 1; }
     if (a.hash() != b.hash()) { n = n + 1; }
     if (a.to_json().len() > 0) { n = n + 1; }
     if (http.http_status_text(200).len() > 0) { n = n + 1; }
     if (regex.regex_match("a", "a")) { n = n + 1; }
-    var d = time.date_make(2026, 6, 28);
+    let d = time.date_make(2026, 6, 28);
     if (d.year == 2026) { n = n + 1; }
     return n;
 }`
@@ -81,7 +81,7 @@ function main(): i32 {
 const treeshakeLightProg = `import "core/cmp";
 @derive(cmp.Eq)
 struct P { x: i32, y: i32 }
-function main(): i32 { var a = P { x: 1, y: 2 }; var b = P { x: 1, y: 2 }; var c = P { x: 1, y: 9 }; if (a.eq(b) && !a.eq(c)) { return 42; } return 0; }`
+function main(): i32 { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 2 }; let c = P { x: 1, y: 9 }; if (a.eq(b) && !a.eq(c)) { return 42; } return 0; }`
 
 func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -193,7 +193,7 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 		const guardProg = `function guard_only(n: i32): boolean { return n > 5; }
 enum E { N(i32), Z }
 function main(): i32 {
-    var e: E = E.N(7);
+    let e: E = E.N(7);
     match (e) { E.N(v) when guard_only(v) => { return 42; }, _ => { return 0; } }
 }`
 		entry := filepath.Join(dir, "ts_guard.fern")

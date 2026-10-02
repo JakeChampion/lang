@@ -12,7 +12,7 @@ import (
 func expandedGuardedFixture(t *testing.T, promoted bool) *Func {
 	t.Helper()
 	f := pendingCleanupSource(t, `function pilot(flag: boolean): void {
-  if (flag) { var items: i32[] = [1]; defer items = [2]; }
+  if (flag) { let items: i32[] = [1]; defer items = [2]; }
 }`)
 	if err := expandCleanups(f); err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func TestGuardedCleanupRejectsEarlyCaptureSnapshot(t *testing.T) {
 
 func TestGuardedCleanupRejectsWrongPromotedInitializerScope(t *testing.T) {
 	f := pendingCleanupSource(t, `function pilot(flag: boolean): void {
-  loop { if (flag) { var items: i32[] = [1]; defer items = [2]; } break; }
+  loop { if (flag) { let items: i32[] = [1]; defer items = [2]; } break; }
 }`)
 	for _, phase := range []func(*Func) error{expandCleanups, promoteBindings, finishFlow} {
 		if err := phase(f); err != nil {

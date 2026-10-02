@@ -22,7 +22,7 @@ func closureArgChurnSelfHostSrc(rounds int, indirect bool) string {
 	body := `        t = t + len([1, 2, i]);`
 	decl := ""
 	if indirect {
-		decl = "    var h: (i32[]) => i32 = (xs: i32[]) => xs.len();\n"
+		decl = "    let h: (i32[]) => i32 = (xs: i32[]) => xs.len();\n"
 		body = `        t = t + h([1, 2, i]);`
 	}
 	return fmt.Sprintf(`import "std/i32";
@@ -30,8 +30,8 @@ func closureArgChurnSelfHostSrc(rounds int, indirect bool) string {
 function len(xs: i32[]): i32 { return xs.len(); }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
 %s    while (i < %d) {
 %s
         i = i + 1;

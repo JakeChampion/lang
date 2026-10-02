@@ -6,7 +6,7 @@ import (
 )
 
 // One pattern grammar at every irrefutable binding site (#5356). The `for`
-// header and the `let` / `var` destructure now take the same pattern heads a
+// header and the `let` destructure now take the same pattern heads a
 // destructured parameter does — a struct pattern, and an `@` binding naming
 // the whole value beside either shape.
 //
@@ -24,50 +24,50 @@ var selfHostPatternBindingSiteCases = []struct {
 }{
 	{"for_struct_pattern", `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var ps: Point[] = [Point { x: 3, y: 4 }, Point { x: 5, y: 6 }];
-    var acc: i32 = 0;
+    let ps: Point[] = [Point { x: 3, y: 4 }, Point { x: 5, y: 6 }];
+    let acc: i32 = 0;
     for Point { x, y } in ps { acc = acc + x * 10 + y; }
     return acc;
 }`},
 	{"for_struct_rename_rest", `struct Point { x: i32, y: i32, z: i32 }
 function main(): i32 {
-    var ps: Point[] = [Point { x: 1, y: 2, z: 3 }, Point { x: 4, y: 5, z: 6 }];
-    var acc: i32 = 0;
+    let ps: Point[] = [Point { x: 1, y: 2, z: 3 }, Point { x: 4, y: 5, z: 6 }];
+    let acc: i32 = 0;
     for Point { x: a, z, .. } in ps { acc = acc + a * 10 + z; }
     return acc;
 }`},
 	{"for_at_struct", `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var ps: Point[] = [Point { x: 2, y: 3 }];
-    var acc: i32 = 0;
+    let ps: Point[] = [Point { x: 2, y: 3 }];
+    let acc: i32 = 0;
     for w @ Point { x, y } in ps { acc = acc + w.x + w.y + x + y; }
     return acc;
 }`},
 	{"for_at_tuple", `function main(): i32 {
-    var ts: (i32, i32)[] = [(3, 4), (5, 6)];
-    var acc: i32 = 0;
+    let ts: (i32, i32)[] = [(3, 4), (5, 6)];
+    let acc: i32 = 0;
     for w @ (a, b) in ts { acc = acc + w.0 + b; }
     return acc;
 }`},
 	{"var_at_struct", `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 6, y: 1 };
-    var w @ Point { x, y } = p;
+    let p: Point = Point { x: 6, y: 1 };
+    let w @ Point { x, y } = p;
     return w.x * 10 + w.y + x + y;
 }`},
 	{"let_at_struct_rename", `struct Point { x: i32, y: i32 }
 function main(): i32 {
-    var p: Point = Point { x: 8, y: 3 };
+    let p: Point = Point { x: 8, y: 3 };
     let w @ Point { x: a, y: b } = p;
     return w.x * 10 + a + b;
 }`},
 	{"var_at_tuple", `function main(): i32 {
-    var w @ (a, b) = (9, 2);
+    let w @ (a, b) = (9, 2);
     return w.0 * 10 + w.1 + a + b;
 }`},
 	{"at_struct_string_field", `struct Named { id: i32, label: string }
 function main(): i32 {
-    var n: Named = Named { id: 30, label: "abcd" };
+    let n: Named = Named { id: 30, label: "abcd" };
     let w @ Named { id, label } = n;
     return id + label.len() + w.label.len();
 }`},

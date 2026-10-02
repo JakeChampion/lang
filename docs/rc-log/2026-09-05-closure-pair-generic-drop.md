@@ -14,8 +14,8 @@ sharper reduction than #8545 had:
 ```fern
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
-    var sink: i32 = 0;
-    var add = (x: i32) => sink + x;
+    let sink: i32 = 0;
+    let add = (x: i32) => sink + x;
     return apply(add, 4) - 4;
 }
 ```

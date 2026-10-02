@@ -2,8 +2,8 @@
 
 ```fern
 function append_raw(out: u8[], s: string): u8[] {
-    var bs: u8[] = out;
-    var i: i32 = 0;
+    let bs: u8[] = out;
+    let i: i32 = 0;
     while (i < s.len()) { bs = bs.append(s[i]); i = i + 1; }
     return bs;
 }

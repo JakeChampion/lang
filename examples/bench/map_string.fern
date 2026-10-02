@@ -6,19 +6,19 @@ import "std/i32";
 // hash) and confirms the hit with a byte compare, so this is the cost model
 // a symbol table pays.
 function main(): i32 {
-  var m: Map[string, i32] = Map { };
-  var keys: string[] = [];
-  var i: i32 = 0;
+  let m: Map[string, i32] = Map { };
+  let keys: string[] = [];
+  let i: i32 = 0;
   while (i < 4000) {
-    var k: string = "checker__symbol_" + i.to_string();
+    let k: string = "checker__symbol_" + i.to_string();
     keys = keys.append(k);
     m = m.insert(k, i);
     i = i + 1;
   }
-  var total: i64 = 0i64;
-  var r: i32 = 0;
+  let total: i64 = 0i64;
+  let r: i32 = 0;
   while (r < 40) {
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < keys.len()) {
       total = total + m.get_or(keys[j], 0) as i64;
       j = j + 1;

@@ -15,14 +15,14 @@ import (
 // i32[] and an i64[]. 10+20 = 30, 9+3 = 12, 30 + 12 = 42.
 const numTraitsSrc = `import "std/num" as num;
 function (a: T[]) total[T: num.Num](init: T): T {
-    var s = init;
-    var i = 0;
+    let s = init;
+    let i = 0;
     while (i < a.len()) { s = s.add(a[i]); i = i + 1; }
     return s;
 }
 function main(): i32 {
-    var i32s: i32[] = [10, 20];
-    var i64s: i64[] = [9, 3];
+    let i32s: i32[] = [10, 20];
+    let i64s: i64[] = [9, 3];
     return i32s.total(0) + (i64s.total(0) as i32);
 }
 `

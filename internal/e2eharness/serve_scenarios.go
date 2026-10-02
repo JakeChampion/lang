@@ -85,7 +85,7 @@ import "std/tcp";
 import "core/int";
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], HttpResponse) {
-    var n: i32 = 1;
+    let n: i32 = 1;
     match (hits.get(req.path)) {
         Some(prev) => { n = prev + 1; },
         None => {}
@@ -95,7 +95,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
 }
 
 function main(): i32 {
-    var init: Map[string, i32] = map_new(8);
+    let init: Map[string, i32] = map_new(8);
     return tcp.tcp_serve_with(%d, init, handle);
 }
 `, port)
@@ -227,9 +227,9 @@ import "std/tcp";
 import "core/int";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/boom") {
-        var a: i32[] = [1, 2, 3];
-        var i: i32 = a.len() + 5;
-        var x: i32 = a[i];
+        let a: i32[] = [1, 2, 3];
+        let i: i32 = a.len() + 5;
+        let x: i32 = a[i];
         return http.ok("unreachable " + int.int_to_string(x));
     }
     return http.ok("ok");
@@ -270,7 +270,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), backlog: 4, reuse_port: true };
+    let opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), backlog: 4, reuse_port: true };
     return tcp.tcp_serve_opts(%d, opts, handle);
 }
 `, port)
@@ -434,10 +434,10 @@ import "std/tcp";
 import "std/platform";
 import "core/int";
 function burn(plat: Platform, ns: i64): i32 {
-    var x: i32 = 12345;
-    var until: i64 = plat.elapsed_ns() + ns;
+    let x: i32 = 12345;
+    let until: i64 = plat.elapsed_ns() + ns;
     while (plat.elapsed_ns() < until) {
-        var i: i32 = 0;
+        let i: i32 = 0;
         while (i < 100000) {
             x = (x * 1103515245 + 12345) & 2147483647;
             i = i + 1;
@@ -447,9 +447,9 @@ function burn(plat: Platform, ns: i64): i32 {
 }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/boom") {
-        var a: i32[] = [1, 2, 3];
-        var i: i32 = a.len() + 5;
-        var x: i32 = a[i];
+        let a: i32[] = [1, 2, 3];
+        let i: i32 = a.len() + 5;
+        let x: i32 = a[i];
         return http.ok("unreachable " + int.int_to_string(x));
     }
     if (req.path == "/slow") {
@@ -535,7 +535,7 @@ function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
 }
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], HttpResponse) {
-    var n: i32 = 1;
+    let n: i32 = 1;
     match (hits.get(req.path)) {
         Some(prev) => { n = prev + 1; },
         None => {}
@@ -595,7 +595,7 @@ function lookup(path: string): Result[string, http.HttpError] {
 }
 
 function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.HttpError] {
-    var name: string = lookup(req.path)?;
+    let name: string = lookup(req.path)?;
     return Ok(http.ok(name));
 }
 `
@@ -632,7 +632,7 @@ function lookup(path: string): Result[string, NotFound] {
 }
 
 function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn ` + q + `.Error] {
-    var name: string = lookup(req.path)?;
+    let name: string = lookup(req.path)?;
     return Ok(http.ok(name));
 }
 `
@@ -681,7 +681,7 @@ function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], Result[HttpResponse, http.HttpError]) {
     if (req.path == "/boom") { return (hits, Err(http.fail(404, "nothing here"))); }
-    var n: i32 = 1;
+    let n: i32 = 1;
     match (hits.get(req.path)) {
         Some(prev) => { n = prev + 1; },
         None => {}
@@ -939,10 +939,10 @@ function message_of(answer: Result[HttpResponse, fetch.FetchError]): string {
     return "";
 }
 function main(): i32 {
-    var silent: string = "http://127.0.0.1:%[1]d/";
-    var idle: fetch.Timeouts = fetch.Timeouts { connect_ms: 5000, inactivity_ms: 400, total_ms: 5000 };
+    let silent: string = "http://127.0.0.1:%[1]d/";
+    let idle: fetch.Timeouts = fetch.Timeouts { connect_ms: 5000, inactivity_ms: 400, total_ms: 5000 };
     if (message_of(fetch.send(fetch.get(silent).with_timeouts(idle))) != "timed out waiting for the response") { return 1; }
-    var whole: fetch.Timeouts = fetch.Timeouts { connect_ms: 5000, inactivity_ms: 5000, total_ms: 300 };
+    let whole: fetch.Timeouts = fetch.Timeouts { connect_ms: 5000, inactivity_ms: 5000, total_ms: 300 };
     if (message_of(fetch.send(fetch.get(silent).with_timeouts(whole))) != "timed out in all") { return 5; }
     match (fetch.send(fetch.get("http://127.0.0.1:%[2]d/"))) {
         Ok(resp) => {
@@ -980,7 +980,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    var limits: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 16, header_fields: 3 };
+    let limits: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 16, header_fields: 3 };
     return tcp.tcp_serve_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), limits: limits }, handle);
 }
 `, port)

@@ -35,14 +35,14 @@ func TestSelfHostTupleStructElemFieldX86_64(t *testing.T) {
 	const src = `struct P { xs: i32[], k: i32 }
 struct Holder { t: (i32, P), n: i32 }
 function round(i: i32): i32 {
-    var p: P = P { xs: [i, i + 1], k: i };
-    var t: (i32, P) = (i, p);
-    var h: Holder = Holder { t: t, n: i };
+    let p: P = P { xs: [i, i + 1], k: i };
+    let t: (i32, P) = (i, p);
+    let h: Holder = Holder { t: t, n: i };
     return h.n + h.t.0;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;

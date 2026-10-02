@@ -14,7 +14,7 @@ import "std/string";
 function main(): i32 {
     match (json.json_parse("{\"name\":\"fern\",\"nums\":[1,2,3],\"nested\":{\"ok\":true},\"e\":{},\"a\":[]}")) {
         Some(v) => {
-            var p: string = json.json_encode_pretty(v, 2);
+            let p: string = json.json_encode_pretty(v, 2);
             if (!p.contains("\n") || !p.contains("  \"name\": \"fern\"")) { return 1; }
             if (!p.contains("    1")) { return 2; }          // nested-array element indent
             if (!p.contains("{}") || !p.contains("[]")) { return 3; }  // empties compact

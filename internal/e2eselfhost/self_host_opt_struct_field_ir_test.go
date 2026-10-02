@@ -27,8 +27,8 @@ func TestSelfHostOptStructFieldIRX86_64(t *testing.T) {
 
 	prog := `struct Box { opt: Option[i32], res: Result[i32, string], n: i32 }
 function use_box(): i32 {
-    var b: Box = Box { opt: Some(7), res: Ok(3), n: 5 };
-    var sum: i32 = b.n;
+    let b: Box = Box { opt: Some(7), res: Ok(3), n: 5 };
+    let sum: i32 = b.n;
     match (b.opt) { Some(x) => { sum = sum + x; }, None => { sum = sum + 100; } }
     match (b.res) { Ok(y) => { sum = sum + y; }, Err(e) => { sum = sum + 200; } }
     return sum;

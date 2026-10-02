@@ -25,36 +25,36 @@ var selfrefStructIRCases = []struct {
 }{
 	// Bind a self-referential struct, read a scalar field.
 	{"bind-scalar", `struct Node { v: i32, next: Node[] }
-function main(): i32 { var n = Node { v: 5, next: [] }; return n.v; }`},
+function main(): i32 { let n = Node { v: 5, next: [] }; return n.v; }`},
 	// Empty self-referential array field length.
 	{"empty-next-len", `struct Node { v: i32, next: Node[] }
-function main(): i32 { var n = Node { v: 5, next: [] }; return n.next.len(); }`},
+function main(): i32 { let n = Node { v: 5, next: [] }; return n.next.len(); }`},
 	// One child: array length + element scalar field read.
 	{"one-child-len", `struct Node { v: i32, next: Node[] }
-function main(): i32 { var leaf = Node { v: 1, next: [] }; var n = Node { v: 5, next: [leaf] }; return n.next.len(); }`},
+function main(): i32 { let leaf = Node { v: 1, next: [] }; let n = Node { v: 5, next: [leaf] }; return n.next.len(); }`},
 	{"one-child-field", `struct Node { v: i32, next: Node[] }
-function main(): i32 { var leaf = Node { v: 7, next: [] }; var n = Node { v: 5, next: [leaf] }; return n.next[0].v; }`},
+function main(): i32 { let leaf = Node { v: 7, next: [] }; let n = Node { v: 5, next: [leaf] }; return n.next[0].v; }`},
 	// Several children: sum element scalar fields in a loop.
 	{"children-sum", `struct Node { v: i32, next: Node[] }
 function main(): i32 {
-    var a = Node { v: 10, next: [] };
-    var b = Node { v: 20, next: [] };
-    var c = Node { v: 30, next: [] };
-    var root = Node { v: 1, next: [a, b, c] };
-    var s = 0;
+    let a = Node { v: 10, next: [] };
+    let b = Node { v: 20, next: [] };
+    let c = Node { v: 30, next: [] };
+    let root = Node { v: 1, next: [a, b, c] };
+    let s = 0;
     for ch in root.next { s = s + ch.v; }
     return s + root.v;
 }`},
 	// Self-referential struct as a function parameter + return.
 	{"as-param", `struct Node { v: i32, next: Node[] }
 function head_val(n: Node): i32 { return n.v; }
-function main(): i32 { var n = Node { v: 42, next: [] }; return head_val(n); }`},
+function main(): i32 { let n = Node { v: 42, next: [] }; return head_val(n); }`},
 	// Mutually-recursive structs: A holds B[], B holds A[].
 	{"mutual-rec", `struct A { tag: i32, bs: B[] }
 struct B { val: i32, peers: A[] }
 function main(): i32 {
-    var b = B { val: 9, peers: [] };
-    var a = A { tag: 3, bs: [b] };
+    let b = B { val: 9, peers: [] };
+    let a = A { tag: 3, bs: [b] };
     return a.bs[0].val + a.tag;
 }`},
 }

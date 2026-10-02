@@ -54,8 +54,8 @@ comes out empty and the template is dropped. That turned a working program into
 a compile error for a predicate held in a LOCAL —
 
 ```fern
-var keep = (x: f64): boolean => { return x > 3.0; };
-var big = iter.filter(iter.of(xs), keep);
+let keep = (x: f64): boolean => { return x > 3.0; };
+let big = iter.filter(iter.of(xs), keep);
 ```
 
 — because the env bound `keep` to the coarse `fn` tag (or, unannotated, to

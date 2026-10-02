@@ -28,8 +28,8 @@ import (
 //     slices either side of 2048 and at the very end catch a grow that
 //     silently stopped copying.
 const strAppendRangeCorrectnessSrc = `function build(s: string, lo: i32, hi: i32, n: i32): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) {
         out = out + slice_unchecked(s, lo, hi);
         i = i + 1;
@@ -38,8 +38,8 @@ const strAppendRangeCorrectnessSrc = `function build(s: string, lo: i32, hi: i32
 }
 
 function sum_bytes(s: string): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < s.len()) {
         t = t + (s[i] as i32);
         i = i + 1;
@@ -48,34 +48,34 @@ function sum_bytes(s: string): i32 {
 }
 
 function main(): i32 {
-    var s: string = "abcdefghijklmnop";
+    let s: string = "abcdefghijklmnop";
     print(build(s, 0, 3, 5));
     print("[" + build(s, 2, 2, 4) + "]");
     print(build(s, 0, 7, 3));
     print(build(s, 0, 12, 2));
-    var d: string = "";
-    var k: i32 = 0;
+    let d: string = "";
+    let k: i32 = 0;
     while (k < 5) {
-        var alias: string = d;
+        let alias: string = d;
         d = d + slice_unchecked(s, 0, 2);
         print(alias + "|" + d);
         k = k + 1;
     }
-    var e: string = "xy";
-    var j: i32 = 0;
+    let e: string = "xy";
+    let j: i32 = 0;
     while (j < 4) {
         e = e + slice_unchecked(e, 0, 2);
         j = j + 1;
     }
     print(e);
-    var c: string = "";
-    var m: i32 = 0;
+    let c: string = "";
+    let m: i32 = 0;
     while (m < 3) {
         c = c + "<" + slice_unchecked(s, 1, 4) + ">";
         m = m + 1;
     }
     print(c);
-    var big: string = build(s, 0, 4, 1200);
+    let big: string = build(s, 0, 4, 1200);
     if (big.len() != 4800) { return 1; }
     if (sum_bytes(big) != 472800) { return 2; }
     if (slice_unchecked(big, 4796, 4800) != "abcd") { return 3; }
@@ -193,9 +193,9 @@ func TestArm64StrAppendRangeAllocsCollapse(t *testing.T) {
 // threshold, so the unfused pair allocates a slice buffer per append on top
 // of the accumulator's own class steps.
 const strAppendRangeAllocSrc = `function main(): i32 {
-    var s: string = "abcdefghijklmnop";
-    var out: string = "";
-    var i: i32 = 0;
+    let s: string = "abcdefghijklmnop";
+    let out: string = "";
+    let i: i32 = 0;
     while (i < 500) {
         out = out + slice_unchecked(s, 0, 12);
         i = i + 1;
@@ -262,10 +262,10 @@ func TestWASMStrAppendRangeAllocsCollapse(t *testing.T) {
 // fused range form and the plain append are exercised, each against its own
 // guard.
 const strAppendWidePieceSrc = `function main(): i32 {
-    var s: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!?";
-    var out: string = "";
-    var guard: string = "";
-    var i: i32 = 0;
+    let s: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!?";
+    let out: string = "";
+    let guard: string = "";
+    let i: i32 = 0;
     while (i < 200) {
         out = out + slice_unchecked(s, 0, 40);
         if (i == 100) { guard = s + "|guard|"; }
@@ -273,16 +273,16 @@ const strAppendWidePieceSrc = `function main(): i32 {
     }
     if (out.len() != 8000) { return 1; }
     if (guard != s + "|guard|") { return 2; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 8000) {
         if (slice_unchecked(out, j, j + 40) != slice_unchecked(s, 0, 40)) { return 3; }
         j = j + 40;
     }
 
-    var acc: string = "";
-    var g2: string = "";
-    var k: i32 = 0;
-    var piece: string = slice_unchecked(s, 8, 56) + "";
+    let acc: string = "";
+    let g2: string = "";
+    let k: i32 = 0;
+    let piece: string = slice_unchecked(s, 8, 56) + "";
     while (k < 200) {
         acc = acc + piece;
         if (k == 100) { g2 = s + "|two|"; }
@@ -290,7 +290,7 @@ const strAppendWidePieceSrc = `function main(): i32 {
     }
     if (acc.len() != 9600) { return 4; }
     if (g2 != s + "|two|") { return 5; }
-    var m: i32 = 0;
+    let m: i32 = 0;
     while (m < 9600) {
         if (slice_unchecked(acc, m, m + 48) != piece) { return 6; }
         m = m + 48;
@@ -344,10 +344,10 @@ func TestStrAppendWidePiece(t *testing.T) {
 // Bounds are carried in vars so constfold cannot pre-judge them.
 var strAppendRangeTrapCases = []struct{ name, src string }{
 	{"high_past_end", `function main(): i32 {
-    var s: string = "hello";
-    var out: string = "";
-    var hi: i32 = 3;
-    var i: i32 = 0;
+    let s: string = "hello";
+    let out: string = "";
+    let hi: i32 = 3;
+    let i: i32 = 0;
     while (i < 10) {
         out = out + slice_unchecked(s, 0, hi);
         i = i + 1;
@@ -356,10 +356,10 @@ var strAppendRangeTrapCases = []struct{ name, src string }{
     return out.len();
 }`},
 	{"negative_low", `function main(): i32 {
-    var s: string = "hello";
-    var out: string = "";
-    var lo: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "hello";
+    let out: string = "";
+    let lo: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
         out = out + slice_unchecked(s, lo, 3);
         i = i + 1;
@@ -368,10 +368,10 @@ var strAppendRangeTrapCases = []struct{ name, src string }{
     return out.len();
 }`},
 	{"inverted", `function main(): i32 {
-    var s: string = "hello";
-    var out: string = "";
-    var lo: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "hello";
+    let out: string = "";
+    let lo: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
         out = out + slice_unchecked(s, lo, 3);
         i = i + 1;

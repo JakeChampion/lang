@@ -81,7 +81,7 @@ const signalSendSource = `function main(): i32 {
 // the only way it reaches the parent's waitpid is the signal; a child that
 // exited on its own would report 0 rather than 128+9.
 const signalSendDeliverySource = `function main(): i32 {
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 1; }
     if (pid == 0) {
         sleep_ms(60000 as i64);
@@ -94,7 +94,7 @@ const signalSendDeliverySource = `function main(): i32 {
         Err(_) => { return 2; }
     }
     // proc_waitpid reports a signal death as 128+signal.
-    var st: i32 = proc_waitpid(pid);
+    let st: i32 = proc_waitpid(pid);
     if (st != 137) { return 3; }
     return 0;
 }

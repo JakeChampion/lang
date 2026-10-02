@@ -13,8 +13,8 @@ function fib(n: i32): i32 {
 }
 
 function main(): i32 {
-  var acc: i64 = 0i64;
-  var i: i64 = 0i64;
+  let acc: i64 = 0i64;
+  let i: i64 = 0i64;
   while (i < 1000000i64) {
     acc = step(acc, i);
     i = i + 1i64;

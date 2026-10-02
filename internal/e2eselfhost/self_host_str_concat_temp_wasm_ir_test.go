@@ -30,7 +30,7 @@ func TestSelfHostStrConcatTempWasmIR(t *testing.T) {
 		// Concat chain `pre + "x" + suf` reclaimed each iteration (intermediate +
 		// final; the "x" literal is a data-section no-op). A double-free of any freed
 		// box would tick the underflow detector → 99. r = "aaxbb" len 5; t stays 0.
-		{"chain-churn", `function churn(n: i32): i32 { var pre: string = "aa"; var suf: string = "bb"; var t: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = pre + "x" + suf; if (r.len() < 5) { t = 1; } i = i + 1; } return t; } function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+		{"chain-churn", `function churn(n: i32): i32 { let pre: string = "aa"; let suf: string = "bb"; let t: i32 = 0; let i: i32 = 0; while (i < n) { let r: string = pre + "x" + suf; if (r.len() < 5) { t = 1; } i = i + 1; } return t; } function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 		// GUARD against widening is_fresh_str_temp to admit a general
 		// string-returning call as a concat operand. That widening is tempting
 		// — `"x" + f(a)` leaks f's box once per evaluation today, because the
@@ -61,13 +61,13 @@ func TestSelfHostStrConcatTempWasmIR(t *testing.T) {
 		// frees immediately after reading. A future attempt needs to explain
 		// that gap before re-widening — the whole-compiler test is the gate
 		// that catches it, not this one.
-		{"call-operand-borrowed-return", `function mk(s: string): string { return s + "!"; } function pick(a: string, b: string): string { if (a.len() > 3) { return a; } return b; } function main(): i32 { var a: string = mk("abcdefg"); var b: string = "xy"; var i: i32 = 0; while (i < 2000) { var r: string = "[" + pick(a, b); if (r.len() != 9) { return 96; } i = i + 1; } if (a != "abcdefg!") { return 97; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+		{"call-operand-borrowed-return", `function mk(s: string): string { return s + "!"; } function pick(a: string, b: string): string { if (a.len() > 3) { return a; } return b; } function main(): i32 { let a: string = mk("abcdefg"); let b: string = "xy"; let i: i32 = 0; while (i < 2000) { let r: string = "[" + pick(a, b); if (r.len() != 9) { return 96; } i = i + 1; } if (a != "abcdefg!") { return 97; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 		// An ARITHMETIC `.to_string()` receiver (`(i % 8).to_string()`) is the
 		// builtin scalar producer just as a bare slot is, so its operand box is
 		// freed each iteration. wasm's $__fern_arr_dec ticks the over-release
 		// detector if that free were ever applied to an alias (#6544).
 		{"arith-tostring-operand-churn", `import "std/i32";
-function churn(n: i32): i32 { var t: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = "n" + (i % 8).to_string(); if (r.len() != 2) { t = 1; } i = i + 1; } return t; } function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
+function churn(n: i32): i32 { let t: i32 = 0; let i: i32 = 0; while (i < n) { let r: string = "n" + (i % 8).to_string(); if (r.len() != 2) { t = 1; } i = i + 1; } return t; } function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

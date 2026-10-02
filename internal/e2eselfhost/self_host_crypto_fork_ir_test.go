@@ -28,9 +28,9 @@ var cryptoForkCases = []struct {
 func cryptoForkSource(constructor, abc, abd string) string {
 	return fmt.Sprintf(`import "std/crypto";
 function exercise(): i32 {
-    var h = crypto.%s;
+    let h = crypto.%s;
     h = h.update("ab");
-    var keep = h;
+    let keep = h;
     h = h.update("c");
     keep = keep.update("d");
     if (h.final_hex() != %q) { return 1; }
@@ -38,7 +38,7 @@ function exercise(): i32 {
     return 0;
 }
 function main(): i32 {
-    var result = exercise();
+    let result = exercise();
     if (result != 0) { return result; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;

@@ -22,13 +22,13 @@ var genericsCases = []struct {
 	exit int
 }{
 	// The two upstream parity cases (conformance/cases).
-	{"generic-id", "function id[T](x: T): T { return x; } function main(): i32 { var a = id(42); var s = id(\"hi\"); if (s == \"hi\") { return a; } return 0; }", 42},
-	{"generic-box", "struct Box[T] { value: T } function unbox[T](b: Box[T]): T { return b.value; } function main(): i32 { var b: Box[i32] = Box { value: 42 }; return unbox(b); }", 42},
+	{"generic-id", "function id[T](x: T): T { return x; } function main(): i32 { let a = id(42); let s = id(\"hi\"); if (s == \"hi\") { return a; } return 0; }", 42},
+	{"generic-box", "struct Box[T] { value: T } function unbox[T](b: Box[T]): T { return b.value; } function main(): i32 { let b: Box[i32] = Box { value: 42 }; return unbox(b); }", 42},
 	// Multiple type params on a function and a struct.
 	{"two-type-params-fn", "function fst[A, B](a: A, b: B): A { return a; } function main(): i32 { return fst(42, 99); }", 42},
-	{"two-type-params-struct", "struct Pair[A, B] { fst: A, snd: B } function main(): i32 { var p = Pair { fst: 40, snd: 2 }; return p.fst + p.snd; }", 42},
+	{"two-type-params-struct", "struct Pair[A, B] { fst: A, snd: B } function main(): i32 { let p = Pair { fst: 40, snd: 2 }; return p.fst + p.snd; }", 42},
 	// One generic body used at two concrete types in the same program.
-	{"mixed-instantiation", "function id[T](x: T): T { return x; } function main(): i32 { var n: i32 = id(40); var s: string = id(\"hi\"); return n + s.len(); }", 42},
+	{"mixed-instantiation", "function id[T](x: T): T { return x; } function main(): i32 { let n: i32 = id(40); let s: string = id(\"hi\"); return n + s.len(); }", 42},
 }
 
 // TestSelfHostGenericsX86_64 — user generics (erasure) with the

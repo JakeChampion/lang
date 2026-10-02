@@ -23,7 +23,7 @@ var structDestructureCases = []struct {
 		name: "shorthand",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-  var p: Point = Point { x: 3, y: 4 };
+  let p: Point = Point { x: 3, y: 4 };
   let Point { x, y } = p;
   return x * 10 + y;
 }`,
@@ -33,8 +33,8 @@ function main(): i32 {
 		name: "var_keyword",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-  var p: Point = Point { x: 7, y: 2 };
-  var Point { x, y } = p;
+  let p: Point = Point { x: 7, y: 2 };
+  let Point { x, y } = p;
   return x - y;
 }`,
 		want: 5,
@@ -43,7 +43,7 @@ function main(): i32 {
 		name: "rename",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-  var p: Point = Point { x: 8, y: 1 };
+  let p: Point = Point { x: 8, y: 1 };
   let Point { x: a, y: b } = p;
   return a * 10 + b;
 }`,
@@ -53,7 +53,7 @@ function main(): i32 {
 		name: "rest_partial",
 		src: `struct Point { x: i32, y: i32, z: i32 }
 function main(): i32 {
-  var p: Point = Point { x: 5, y: 6, z: 7 };
+  let p: Point = Point { x: 5, y: 6, z: 7 };
   let Point { x, z, .. } = p;
   return x * 10 + z;
 }`,
@@ -65,7 +65,7 @@ function main(): i32 {
 		name: "string_field",
 		src: `struct Named { id: i32, label: string }
 function main(): i32 {
-  var n: Named = Named { id: 40, label: "abc" };
+  let n: Named = Named { id: 40, label: "abc" };
   let Named { id, label } = n;
   return id + label.len();
 }`,
@@ -89,7 +89,7 @@ function main(): i32 {
 		src: `struct Inner { a: i32, b: i32 }
 struct Outer { tag: i32, inner: Inner }
 function main(): i32 {
-  var o: Outer = Outer { tag: 1, inner: Inner { a: 20, b: 3 } };
+  let o: Outer = Outer { tag: 1, inner: Inner { a: 20, b: 3 } };
   let Outer { tag, inner } = o;
   return tag + inner.a + inner.b;
 }`,
@@ -141,12 +141,12 @@ func TestStructDestructureRejected(t *testing.T) {
 		// wrong struct name
 		`struct P { x: i32 }
 struct Q { x: i32 }
-function main(): i32 { var p: P = P { x: 1 }; let Q { x } = p; return x; }`,
+function main(): i32 { let p: P = P { x: 1 }; let Q { x } = p; return x; }`,
 		// unknown field
 		`struct P { x: i32 }
-function main(): i32 { var p: P = P { x: 1 }; let P { z } = p; return z; }`,
+function main(): i32 { let p: P = P { x: 1 }; let P { z } = p; return z; }`,
 		// non-struct scrutinee
-		`function main(): i32 { var t = (1, 2); let Foo { a, b } = t; return a + b; }`,
+		`function main(): i32 { let t = (1, 2); let Foo { a, b } = t; return a + b; }`,
 	}
 	for _, src := range cases {
 		prog, _, err := modload.LoadSource(src)

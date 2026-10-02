@@ -28,31 +28,31 @@ var fnptrArrayFieldCases = []struct {
 	// A LOCAL-BUILT array stored into the field — the literal form with one
 	// binding removed. It crashed while the representation depended on how the
 	// field was constructed (#5790).
-	{"local-built", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { var a: (() => i32)[] = [seven]; var r: R = R { hs: a }; return r.hs[0](); }", 7},
+	{"local-built", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { let a: (() => i32)[] = [seven]; let r: R = R { hs: a }; return r.hs[0](); }", 7},
 	// The local is REBOUND from named functions to a capturing lambda before the
 	// store; both are boxes, so the field's representation does not change.
-	{"rebind-retracts-proof", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { var n: i32 = 5; var a: (() => i32)[] = [seven]; a = [() => n]; var r: R = R { hs: a }; return r.hs[0](); }", 5},
-	// var f = r.hs[0]; f() — named functions.
-	{"bind-named", "function inc(): i32 { return 40; } function dbl(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function main(): i32 { var r = Reg { hs: [inc, dbl] }; var f = r.hs[0]; return f(); }", 40},
+	{"rebind-retracts-proof", "struct R { hs: (() => i32)[] }\nfunction seven(): i32 { return 7; }\nfunction main(): i32 { let n: i32 = 5; let a: (() => i32)[] = [seven]; a = [() => n]; let r: R = R { hs: a }; return r.hs[0](); }", 5},
+	// let f = r.hs[0]; f() — named functions.
+	{"bind-named", "function inc(): i32 { return 40; } function dbl(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function main(): i32 { let r = Reg { hs: [inc, dbl] }; let f = r.hs[0]; return f(); }", 40},
 	// Second element, to prove per-element identity.
-	{"bind-named-second", "function inc(): i32 { return 40; } function dbl(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function main(): i32 { var r = Reg { hs: [inc, dbl] }; var f = r.hs[1]; return f(); }", 2},
-	// var f = r.hs[0]; f() — a NON-capturing lambda.
-	{"bind-lambda", "struct Reg { hs: (() => i32)[] } function main(): i32 { var r = Reg { hs: [() => 7] }; var f = r.hs[0]; return f(); }", 7},
-	// var xs = r.hs; xs[0]() — whole-array alias, then indexed call.
-	{"alias", "function inc(): i32 { return 40; } function dbl(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function main(): i32 { var r = Reg { hs: [inc, dbl] }; var xs = r.hs; return xs[0](); }", 40},
+	{"bind-named-second", "function inc(): i32 { return 40; } function dbl(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function main(): i32 { let r = Reg { hs: [inc, dbl] }; let f = r.hs[1]; return f(); }", 2},
+	// let f = r.hs[0]; f() — a NON-capturing lambda.
+	{"bind-lambda", "struct Reg { hs: (() => i32)[] } function main(): i32 { let r = Reg { hs: [() => 7] }; let f = r.hs[0]; return f(); }", 7},
+	// let xs = r.hs; xs[0]() — whole-array alias, then indexed call.
+	{"alias", "function inc(): i32 { return 40; } function dbl(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function main(): i32 { let r = Reg { hs: [inc, dbl] }; let xs = r.hs; return xs[0](); }", 40},
 	// return r.hs[0]() — direct inline call, no binding.
-	{"direct", "function inc(): i32 { return 40; } function dbl(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function main(): i32 { var r = Reg { hs: [inc, dbl] }; return r.hs[0](); }", 40},
+	{"direct", "function inc(): i32 { return 40; } function dbl(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function main(): i32 { let r = Reg { hs: [inc, dbl] }; return r.hs[0](); }", 40},
 	// Named functions that take an argument, bound then called.
-	{"bind-arg", "function twice(x: i32): i32 { return x * 2; } function inc1(x: i32): i32 { return x + 1; } struct Reg { hs: ((i32) => i32)[] } function main(): i32 { var r = Reg { hs: [twice, inc1] }; var f = r.hs[0]; return f(21); }", 42},
+	{"bind-arg", "function twice(x: i32): i32 { return x * 2; } function inc1(x: i32): i32 { return x + 1; } struct Reg { hs: ((i32) => i32)[] } function main(): i32 { let r = Reg { hs: [twice, inc1] }; let f = r.hs[0]; return f(21); }", 42},
 	// Same, direct inline call with an argument.
-	{"direct-arg", "function twice(x: i32): i32 { return x * 2; } struct Reg { hs: ((i32) => i32)[] } function main(): i32 { var r = Reg { hs: [twice] }; return r.hs[0](21); }", 42},
+	{"direct-arg", "function twice(x: i32): i32 { return x * 2; } struct Reg { hs: ((i32) => i32)[] } function main(): i32 { let r = Reg { hs: [twice] }; return r.hs[0](21); }", 42},
 	// RC soundness / drop: build a Reg per iteration and let it go out of scope N
 	// times, exercising __struct_drop_Reg on a function-array field. Probe for
 	// over-release (__rc_underflow_count) and unbounded heap growth (__heap_bump_bytes):
 	// struct-drop walks the field as a box array and frees the buffer once (a
 	// `$wrap` box of a named function is a static block, so its dec is a no-op),
 	// and the whole-array alias's read-inc is balanced by its exit sweep.
-	{"rc-soundness", "function f0(): i32 { return 1; } function f1(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function one(): i32 { var r = Reg { hs: [f0, f1] }; var f = r.hs[0]; var acc: i32 = f(); var xs = r.hs; acc = acc + xs[1](); acc = acc + r.hs[0](); return acc; } function churn(n: i32): i32 { var i: i32 = 0; var s: i32 = 0; while (i < n) { s = one(); i = i + 1; } return s; } function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return 0; }", 0},
+	{"rc-soundness", "function f0(): i32 { return 1; } function f1(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function one(): i32 { let r = Reg { hs: [f0, f1] }; let f = r.hs[0]; let acc: i32 = f(); let xs = r.hs; acc = acc + xs[1](); acc = acc + r.hs[0](); return acc; } function churn(n: i32): i32 { let i: i32 = 0; let s: i32 = 0; while (i < n) { s = one(); i = i + 1; } return s; } function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return 0; }", 0},
 }
 
 // TestSelfHostFnptrArrayFieldIRX86_64 — the x86-64 leg, through the production

@@ -25,18 +25,18 @@ function main(): i32 {
     // t outside [0,1] extrapolates
     if ((0.0).lerp(10.0, 2.0) != 20.0) { return 8; }
     // ---- to_radians / to_degrees f64 (tolerance bands) ----
-    var r: f64 = (180.0).to_radians();
+    let r: f64 = (180.0).to_radians();
     if (r < 3.14 || r > 3.15) { return 9; }
-    var d: f64 = (3.141592653589793).to_degrees();
+    let d: f64 = (3.141592653589793).to_degrees();
     if (d < 179.9 || d > 180.1) { return 10; }
     // round trip recovers the input closely
-    var rt: f64 = (90.0).to_radians().to_degrees();
+    let rt: f64 = (90.0).to_radians().to_degrees();
     if (rt < 89.99 || rt > 90.01) { return 11; }
     // ---- f32 mirrors ----
     if ((5.0 as f32).signum() != (1.0 as f32)) { return 12; }
     if ((0.0 as f32).signum() != (0.0 as f32)) { return 13; }
     if ((10.0 as f32).lerp(20.0 as f32, 0.5 as f32) != (15.0 as f32)) { return 14; }
-    var r32: f32 = (180.0 as f32).to_radians();
+    let r32: f32 = (180.0 as f32).to_radians();
     if (r32 < (3.14 as f32) || r32 > (3.15 as f32)) { return 15; }
     return 42;
 }
