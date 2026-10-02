@@ -4641,7 +4641,7 @@ pub function indirect_fn_sigs(cache: irlower.LowerResult[]): string[] {
 }
 
 // wasm_type_of_char maps one width char of a signature key to its WAT value
-// type. The inverse of irlower.wasm_width_char, kept next to its only consumer.
+// type, kept next to its only consumer.
 function wasm_type_of_char(c: string): string {
   if (c == "l") {
     return "i64";
@@ -16926,7 +16926,7 @@ function emit_wasm_struct_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32
   // (i64/u64) stores via i64.store; an 8-byte FLOAT field (f64/f32/float —
   // f32 is f64-backed) via f64.store through the f64 scratch; others via
   // i32.store. The width classification mirrors struct_set / struct_get
-  // and irlower.struct_field_width exactly: f32/float and u64 must NOT
+  // exactly: f32/float and u64 must NOT
   // fall to the 4-byte i32.store, or only the low half of the 8-byte slot
   // is written and the f64.load/i64.load read-back returns garbage.
   // $arrtmp holds the base across the field pops.
