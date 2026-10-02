@@ -4272,9 +4272,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Result: ast.VoidType{},
 	}
 	// `__alloc_u8(n)` returns a fresh `u8[]` of length n,
-	// zero-initialised. Pairs with `__memcpy` / `__memset` /
-	// the `[u8] → i32` data-pointer cast so stdlib code can
-	// build a single-pass byte buffer.
+	// zero-initialised.
 	c.info.FuncSigs["__alloc_u8"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
