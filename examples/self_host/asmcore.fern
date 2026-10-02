@@ -8827,7 +8827,7 @@ pub function check_map_new_chain(mod: parser.Module): util.Diag[] {
 // CallGate is the shared walk's parameter block: the free-function arity table
 // (`names` / `argc`, parallel arrays), the undefined rule's admit list
 // (`known`), and which of the two rules are live.
-struct CallGate { names: string[], argc: i32[], known: string[], check_arity: boolean, check_undef: boolean }
+struct CallGate { names: string[], names_ix: util.NameIndex, argc: i32[], known: string[], check_arity: boolean, check_undef: boolean }
 
 function callgate_name_in(names: string[], name: string): boolean {
   var i: i32 = 0;
@@ -8949,23 +8949,15 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
       match (c.callee) {
         ast.ExprIdent(id) => {
           if (!callgate_name_in(bound, id.name)) {
-            var found: boolean = false;
-            var ti: i32 = 0;
-            while (ti < g.names.len()) {
-              if (g.names[ti] == id.name) {
-                found = true;
-                if (g.check_arity && c.args.len() != g.argc[ti]) {
-                  errs = errs.append(util.Diag {
-                    code: "E004", message: "function '" + id.name
-                      + "' expects " + util.i32_to_string(g.argc[ti])
-                      + " argument(s), got " + util.i32_to_string(c.args.len()),
-                    line: id.line, col: id.col,
-                  });
-                }
-                ti = g.names.len();
-              } else {
-                ti = ti + 1;
-              }
+            var ti: i32 = g.names_ix.find(id.name);
+            var found: boolean = ti >= 0;
+            if (found && g.check_arity && c.args.len() != g.argc[ti]) {
+              errs = errs.append(util.Diag {
+                code: "E004", message: "function '" + id.name
+                  + "' expects " + util.i32_to_string(g.argc[ti])
+                  + " argument(s), got " + util.i32_to_string(c.args.len()),
+                line: id.line, col: id.col,
+              });
             }
             if (g.check_undef && !found && !callgate_known_callee(id.name, g.known)) {
               errs = errs.append(callgate_undefined_error(g, where, id.name, id.line, id.col));
@@ -9167,8 +9159,9 @@ function callgate_run(mod: parser.Module, g: CallGate): util.Diag[] {
 }
 
 pub function check_call_arity(mod: parser.Module): util.Diag[] {
+  var names: string[] = callgate_free_names(mod);
   return callgate_run(mod, CallGate {
-    names: callgate_free_names(mod), argc: callgate_free_argc(mod), known: [],
+    names: names, names_ix: util.name_index(names), argc: callgate_free_argc(mod), known: [],
     check_arity: true, check_undef: false,
   });
 }
@@ -9364,8 +9357,9 @@ pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
   // `g.argc[ti]` under an `&&` with check_arity, and a parallel table is
   // cheaper than depending on short-circuit evaluation to keep an empty
   // array unindexed.
+  var names: string[] = callgate_free_names(mod);
   return callgate_run(mod, CallGate {
-    names: callgate_free_names(mod), argc: callgate_free_argc(mod),
+    names: names, names_ix: util.name_index(names), argc: callgate_free_argc(mod),
     known: callgate_known_names(mod), check_arity: false, check_undef: true,
   });
 }

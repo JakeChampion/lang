@@ -13705,19 +13705,22 @@ function thread_row_name(row: string): string {
   return slice_unchecked(row, i + 1, row.len()) + "";
 }
 
-// without_thread_rows_through: `rows` with every threader row dropped when
-// `name` is a threader. The other rows were proved through its body, which a
-// produced callee no longer lowers from.
-pub function without_thread_rows_through(rows: string[], name: string): string[] {
-  var named: boolean = false;
+// thread_row_names: the functions the "THREAD<k>:" rows of `rows` name.
+pub function thread_row_names(rows: string[]): string[] {
+  var out: string[] = [];
   for row in rows {
-    if (thread_row_name(row) == name) {
-      named = true;
+    var name: string = thread_row_name(row);
+    if (name.len() > 0) {
+      out = out.append(name);
     }
   }
-  if (!named) {
-    return rows;
-  }
+  return out;
+}
+
+// without_thread_rows: `rows` with every threader row dropped. The other rows
+// were proved through a threader's body, which a produced callee no longer
+// lowers from.
+pub function without_thread_rows(rows: string[]): string[] {
   var out: string[] = [];
   for row in rows {
     if (thread_row_name(row) == "") {
