@@ -19,6 +19,7 @@ import (
 // No trailing escape on the print: `print` ends the line itself, and adding
 // one makes the answer carry a blank line the expectation does not.
 const selfHostTailRecursionSource = `import "std/i32";
+import "std/string";
 
 function borrowed(s: string, i: i32): i32 {
     if (i == 0) { return s.len(); }
@@ -69,6 +70,16 @@ function view_walk(s: str, i: i32): i32 {
     return view_walk(s, i - 1);
 }
 
+// A str parameter recursing on a fresh view OF ITSELF (#9794). The view the
+// call passes is anchored only to the caller's bytes, which outlive the loop,
+// so the jump strands nothing; the loop owns each round's box and releases
+// the one it replaces. The entry edge passes a fresh box of the caller's view
+// rather than the view itself, so the phi is owned on every edge.
+function view_shrink(s: str, n: i32): i32 {
+    if (s.len() == 0) { return n; }
+    return view_shrink(slice_unchecked(s, 1, s.len()), n + 1);
+}
+
 function main(): i32 {
     let t: string = "ab" + "cde";
     let keep: i32[] = [7, 8];
@@ -92,6 +103,11 @@ function main(): i32 {
     while (ci < 200) { churn = churn.append("c" + ci.to_string()); ci = ci + 1; }
     let still: i32 = peek.len();
 
+    let long: string = "x".repeat(300000);
+    let whole: str = slice_unchecked(long, 0, long.len());
+    let vs: i32 = view_shrink(whole, 0);
+    let wlen: i32 = whole.len();
+
     // The lender reads its own values AFTER the loops had them.
     let alive: i32 = t.len() + keep.len() + keep[0];
 
@@ -100,12 +116,13 @@ function main(): i32 {
         + " ticks=" + ticks.get().to_string()
         + " view=" + view.to_string()
         + " vw=" + vw.to_string() + " still=" + still.to_string()
+        + " vs=" + vs.to_string() + " wlen=" + wlen.to_string()
         + " underflow=" + __rc_underflow_count().to_string());
     return __rc_underflow_count();
 }
 `
 
-const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 ticks=300000 view=19 vw=5 still=5 underflow=0\n"
+const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 ticks=300000 view=19 vw=5 still=5 vs=300000 wlen=300000 underflow=0\n"
 
 // TestSelfHostSemanticTailRecursion is the reference-typed half of #9692.
 //

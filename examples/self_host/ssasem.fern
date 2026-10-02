@@ -4519,8 +4519,16 @@ function without_cons(kinds: i32[]): i32[] {
 //
 // This declines the ONE block, not the function: a call that stays a call
 // keeps holding what it holds.
+//
+// A fresh slice whose every anchor is a view PARAMETER does cross: those read
+// the caller's bytes, which outlive the loop, so the jump strands nothing
+// (#9794). The loop owns each round's box, and `spliced` hands the entry edge
+// a box of its own so the phi owns one on every edge.
 function crosses_jump(f: Func, a: i32, parents: i32[][], defs: ssa.SInst[]): boolean {
   if (a < 0 || a >= parents.len() || parents[a].len() == 0) {
+    return true;
+  }
+  if (sliced_view_param(f, a, parents, defs)) {
     return true;
   }
   let t: typeinfo.Type = f.values[a];
@@ -4529,6 +4537,18 @@ function crosses_jump(f: Func, a: i32, parents: i32[][], defs: ssa.SInst[]): boo
   }
   let k: i32 = defs[a].kind_tag;
   return k == variant_get() || k == record_get() || k == tuple_get() || k == array_get();
+}
+
+function sliced_view_param(f: Func, a: i32, parents: i32[][], defs: ssa.SInst[]): boolean {
+  if (!is_view(f.values[a]) || defs[a].kind_tag != slice()) {
+    return false;
+  }
+  for p in parents[a] {
+    if (p >= f.graph.nparams || !is_view(f.values[p])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function args_cross(f: Func, args: i32[], parents: i32[][], defs: ssa.SInst[]): boolean {
@@ -4728,13 +4748,27 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: strin
   // `param` instruction anywhere else as a malformed graph, and they are also
   // what the entry edge's phi operands name.
   let entry_insts: ssa.SInst[] = kind_6(entry.insts);
+  let firsts: i32[] = [];
+  p = 0;
+  while (p < nparams) {
+    firsts = firsts.append(p);
+    if (sliced_on_back_edge(f, s.rows, p)) {
+      let at: i32 = s.values.len();
+      entry_insts = entry_insts.append(ssa.SInst { kind_tag: 1, result: at, args: [], imm: 0, str: "" });
+      entry_insts = entry_insts.append(ssa.SInst { kind_tag: length(), result: at + 1, args: [p], imm: 0, str: "" });
+      entry_insts = entry_insts.append(ssa.SInst { kind_tag: slice(), result: at + 2, args: [p, at, at + 1], imm: 0, str: "" });
+      s = Splice { ...s, values: s.values.append(i32_type()).append(i32_type()).append(f.values[p]) };
+      firsts = firsts.with(p, at + 2);
+    }
+    p = p + 1;
+  }
   if (hole >= 0) {
     entry_insts = entry_insts.append(ssa.SInst { kind_tag: zero(), result: ch.r0, args: [], imm: 0, str: "" });
     entry_insts = entry_insts.append(ssa.SInst { kind_tag: zero(), result: ch.h0, args: [], imm: 0, str: "" });
   }
   let blocks: ssa.SBlock[] = [ssa.SBlock { id: entry.id, insts: entry_insts, term: branch_to(header), preds: [] }];
   let built: ssa.SBlock = s.blocks[0];
-  let head_insts: ssa.SInst[] = phis(map, s.rows, nparams, hole, ch, name);
+  let head_insts: ssa.SInst[] = phis(map, firsts, s.rows, nparams, hole, ch, name);
   for ins in built.insts {
     head_insts = head_insts.append(ins);
   }
@@ -4750,6 +4784,24 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: strin
   }
   let graph: ssa.SFunc = ssa.SFunc { ...f.graph, nvals: s.values.len(), blocks: blocks };
   return Func { ...f, graph: graph, values: s.values };
+}
+
+// A view parameter some tail call replaces with a fresh slice of the
+// parameters (`crosses_jump`): its phi owns a box on that edge, so the entry
+// edge passes a box of its own, `slice(p, 0, p.len())`, rather than lending
+// the caller's.
+function sliced_on_back_edge(f: Func, rows: i32[][], p: i32): boolean {
+  if (!is_view(f.values[p])) {
+    return false;
+  }
+  let defs: ssa.SInst[] = definitions(f);
+  for row in rows {
+    let v: i32 = row[p];
+    if (v >= 0 && v < defs.len() && defs[v].kind_tag == slice()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function branch_to(header: i32): ssa.STerm {
@@ -4863,11 +4915,11 @@ function rewritten(map: i32[], insts: ssa.SInst[]): ssa.SInst[] {
 // for, so the ownership inference reads the loop as the recursion it was
 // (`ownership.slot_carried`). Under modulo cons the chain and its hole follow,
 // entering empty.
-function phis(map: i32[], rows: i32[][], nparams: i32, hole: i32, ch: Chain, name: string): ssa.SInst[] {
+function phis(map: i32[], firsts: i32[], rows: i32[][], nparams: i32, hole: i32, ch: Chain, name: string): ssa.SInst[] {
   let out: ssa.SInst[] = [];
   let p: i32 = 0;
   while (p < nparams) {
-    out = out.append(ssa.SInst { ...phi_over(map[p], p, rows, p), imm: p, str: name });
+    out = out.append(ssa.SInst { ...phi_over(map[p], firsts[p], rows, p), imm: p, str: name });
     p = p + 1;
   }
   if (hole >= 0) {
