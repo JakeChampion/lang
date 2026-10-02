@@ -535,7 +535,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     params: [], ret_type: "i32", body: body, line: 0, col: 0,
     import_iface: "", import_wit: "", all_type_params: [],
     bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
-    is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: "", module: "",
+    is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: "", module: "", impl_trait: "", dyn_traits: [],
   };
   return parser.Module { ...entry, funcs: entry.funcs.append(main) };
 }
@@ -1747,8 +1747,9 @@ struct MethodDedup { mod: parser.Module, keys: string[] }
 // `<Type>.<name>` key keeps it — that is the definition every call site
 // resolves to — and a later module's method is interposed with its namespace
 // (`i32.num.add`). parse_module already made each module injective on its own,
-// so a claim never has to be attributed back to an ImplInfo here. `claimed` is
-// threaded across the whole bundle, entry included.
+// and a renamed method keeps the impl_trait it was claimed for, which is what
+// `dyn` dispatch reads instead of the name. `claimed` is threaded across the
+// whole bundle, entry included.
 //
 // Collisions are tested against EARLIER modules only (`claimed`), never against
 // keys this module itself contributes: two methods of ONE module that still
@@ -1967,7 +1968,7 @@ pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: stri
     trait_decls: trait_decls,
     inferred_consts: inferred,
   };
-  return parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred)));
+  return parser.resolve_dyn_traits(parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred))));
 }
 
 // mangled_inferred_consts names every const written without a type, across
