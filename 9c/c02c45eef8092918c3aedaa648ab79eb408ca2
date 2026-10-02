@@ -59,3 +59,7 @@ aarch64/utf8_ingest_unchecked.text	29373
 aarch64/utf8_ingest_unchecked.ir	12997934
 aarch64/utf8_ingest_validated.text	29953
 aarch64/utf8_ingest_validated.ir	18703934
+
+# lane: append-cliff-x86_64
+x86_64/checker.cliff_bytes	289443592
+x86_64/checker.cliff_count	753270
