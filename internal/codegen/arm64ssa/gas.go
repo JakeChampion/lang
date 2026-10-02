@@ -1430,6 +1430,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"args":                             emitArgsHelper,
 	"env":                              emitEnvHelper,
 	"write_file":                       emitWriteFileHelperMode("write_file", "", 0o644, 0),
+	"write_file_bytes":                 emitWriteFileHelperMode("write_file_bytes", "_b", 0o644, 0),
 	"write_file_exec":                  emitWriteFileHelperMode("write_file_exec", "_x", 0o755, 0o755),
 	"read_file":                        emitReadFileHelper,
 	"read_file_bytes":                  emitReadFileBytesHelper,
@@ -4263,6 +4264,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_cow_inplace_ptr":       {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_str":       {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"write_file":                       {"__fern_io_error", "__fern_rc_inc"},
+	"write_file_bytes":                 {"__fern_io_error", "__fern_rc_inc"},
 	"write_file_exec":                  {"__fern_io_error", "__fern_rc_inc"},
 	"read_file":                        {"__fern_io_error", "__fern_utf8_valid", "__free", "__fern_rc_inc"},
 	"stat":                             {"__fern_io_error", "__fern_rc_inc"},
@@ -4384,6 +4386,7 @@ var heapUsingHelpers = map[string]bool{
 	"strbuf_take":                      true,
 	"env":                              true,
 	"write_file":                       true,
+	"write_file_bytes":                 true,
 	"write_file_exec":                  true,
 	"environ":                          true,
 	"getgroups":                        true,
@@ -6592,6 +6595,19 @@ func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int
 	w("\tstp x21, x22, [sp, #32]")
 	w("\tmov x19, x0") // path
 	w("\tmov x20, x1") // content
+	if name == "write_file_bytes" {
+		w("\tldur w9, [x19, #-4]")
+		w("\tmov x10, #0")
+		w(".Lssa_wf_path%s:", sfx)
+		w("\tcmp x10, x9")
+		w("\tb.ge .Lssa_wf_path_ok%s", sfx)
+		w("\tldrb w11, [x19, x10]")
+		w("\tadd x10, x10, #1")
+		w("\tcbnz w11, .Lssa_wf_path%s", sfx)
+		w("\tmov x0, #-22")
+		w("\tb .Lssa_wf_err%s", sfx)
+		w(".Lssa_wf_path_ok%s:", sfx)
+	}
 	emitSsaPathz(w, "x21", "x19", "wf"+sfx)
 	// openat(AT_FDCWD, path_nul, O_WRONLY|O_CREAT|O_TRUNC, 0644).
 	w("\tmov x0, #100")
@@ -6621,6 +6637,13 @@ func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int
 	w("\tsub x2, x9, x10")
 	w("\tmov x8, #64") // write
 	w("\tsvc #0")
+	if name == "write_file_bytes" {
+		w("\tcmn x0, #4")
+		w("\tb.eq .Lssa_wf_loop%s", sfx)
+		w("\tcmp x0, #0")
+		w("\tmov x11, #-5")
+		w("\tcsel x0, x11, x0, eq")
+	}
 	w("\ttbnz x0, #63, .Lssa_wf_werr%s", sfx)
 	w("\tadd x10, x10, x0")
 	w("\tb .Lssa_wf_loop%s", sfx)
@@ -6635,6 +6658,9 @@ func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int
 	w("\tmov x0, x22")
 	w("\tmov x8, #57") // close
 	w("\tsvc #0")
+	if name == "write_file_bytes" {
+		w("\ttbnz x0, #63, .Lssa_wf_err%s", sfx)
+	}
 	// return Ok(()): a box of {rc=1, tag=0, unit payload}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)

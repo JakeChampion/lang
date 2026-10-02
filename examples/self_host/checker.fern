@@ -4438,6 +4438,7 @@ function builtin_sigs(): string[] {
     "window_size(i32): Result[WinSize, IoError]",
     "write(string): void",
     "write_file(string, string): Result[void, IoError]",
+    "write_file_bytes(string, u8[]): Result[void, IoError]",
     "write_file_exec(string, string): Result[void, IoError]",
   ];
 }

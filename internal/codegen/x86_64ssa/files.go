@@ -77,6 +77,13 @@ func ssaIoErr(w func(string, ...any)) {
 // openat with O_WRONLY|O_CREAT|O_TRUNC and mode 0644, write(2) in a loop until
 // every byte is out (a short write is not an error), close. rbx = path,
 // r12 = pathz then bytes written, r13 = fd, r14 = content.
+// SSA strings and packed byte arrays both lend a data pointer with their byte
+// length at -4. The byte entry shares the syscall loop without boxing a string.
+func emitWriteFileBytesHelper(w func(string, ...any)) {
+	w("%s:", fnLabel("write_file_bytes"))
+	w("\tjmp %s", fnLabel("write_file"))
+}
+
 func emitWriteFileHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("write_file"))
@@ -87,6 +94,19 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tsub rsp, 8") // four pushes past the return address: one slot realigns
 	w("\tmov rbx, rdi")
 	w("\tmov r14, rsi")
+	w("\tmov ecx, [rbx - 4]")
+	w("\txor edx, edx")
+	w(".Lssa_wf_path:")
+	w("\tcmp edx, ecx")
+	w("\tjae .Lssa_wf_path_ok")
+	w("\tcmp byte ptr [rbx + rdx], 0")
+	w("\tje .Lssa_wf_path_bad")
+	w("\tinc edx")
+	w("\tjmp .Lssa_wf_path")
+	w(".Lssa_wf_path_bad:")
+	w("\tmov rax, -22")
+	w("\tjmp .Lssa_wf_err")
+	w(".Lssa_wf_path_ok:")
 	ssaPathz(w, "wf")
 	w("\tmov edi, -100") // AT_FDCWD
 	w("\tmov rsi, r12")
@@ -108,6 +128,12 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tsub edx, r12d")
 	w("\tmov eax, 1") // write
 	w("\tsyscall")
+	w("\tcmp rax, -4")
+	w("\tje .Lssa_wf_loop")
+	w("\ttest rax, rax")
+	w("\tjnz .Lssa_wf_progress")
+	w("\tmov rax, -5")
+	w(".Lssa_wf_progress:")
 	w("\ttest rax, rax")
 	w("\tjs .Lssa_wf_err_close")
 	w("\tadd r12d, eax")
@@ -116,6 +142,8 @@ func emitWriteFileHelper(w func(string, ...any)) {
 	w("\tmov edi, r13d")
 	w("\tmov eax, 3") // close
 	w("\tsyscall")
+	w("\ttest rax, rax")
+	w("\tjs .Lssa_wf_err")
 	ssaOptionBox(w, 0, "")
 	w("\tjmp .Lssa_wf_ret")
 	w(".Lssa_wf_err_close:")

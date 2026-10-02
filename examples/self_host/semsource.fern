@@ -7289,6 +7289,7 @@ function outcome_contracts(): ssasem.Contract[] {
   var done: typeinfo.Type = t_io_result(t_void());
   return [
     ssasem.Contract { name: "write_file", params: [t_string(), t_string()], modes: written, result: done },
+    ssasem.Contract { name: "write_file_bytes", params: [t_string(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: written, result: done },
     ssasem.Contract { name: "write_file_exec", params: [t_string(), t_string()], modes: written, result: done },
     ssasem.Contract { name: "create_dir_all", params: [t_string()], modes: path, result: done },
     ssasem.Contract { name: "remove_dir_all", params: [t_string()], modes: path, result: done },

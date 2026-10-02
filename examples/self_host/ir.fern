@@ -1917,6 +1917,11 @@ pub function op_write_file(): Op {
   return op0(170);
 }
 
+// Borrows an owned byte array; the packed bit selects its element layout.
+pub function op_write_file_bytes(): Op {
+  return op0(352);
+}
+
 // op_write_file_exec is op_write_file with the executable bit — see
 // asmcore.rt_src_write_file_exec for why it is a separate op (#6133).
 pub function op_write_file_exec(): Op {
@@ -4308,6 +4313,9 @@ function kind_id_len15(name: string): i32 {
 }
 
 function kind_id_len16(name: string): i32 {
+  if (name == "write_file_bytes") {
+    return 352;
+  }
   if (name == "write_some_bytes") {
     return 350;
   }
@@ -5406,6 +5414,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 352) {
+    return "write_file_bytes";
+  }
   if (id == 347) {
     return "buf_take_bytes";
   }
@@ -5562,7 +5573,7 @@ function pops2_mem(t: i32): boolean {
 }
 
 function pops2_io(t: i32): boolean {
-  return t == 170 || t == 226  // write_file, write_file_exec
+  return t == 170 || t == 226 || t == 352  // write_file, write_file_exec, write_file_bytes
     || t == 237  // access (path, mode)
     || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
     || t == 273  // truncate (path, length)
@@ -7869,7 +7880,7 @@ pub function op_needs_heap(o: Op): boolean {
 }
 
 pub function op_allocates(tag: i32): boolean {
-  if (tag == 348 || tag == 349 || tag == 350) {  // byte array plus Result wrapper
+  if (tag == 348 || tag == 349 || tag == 350 || tag == 352) {  // byte array plus Result wrapper
     return true;
   }
   // const_struct (#6149) allocates NOTHING — its box is static data — but the

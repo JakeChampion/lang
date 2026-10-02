@@ -2326,6 +2326,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	c.info.FuncSigs["write_file_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{ast.VoidType{}, ast.EnumType{Name: "IoError"}}},
+	}
 	// write_file_exec(path, content): Result[void, IoError] —
 	// write_file, but the file is created EXECUTABLE (0755 rather
 	// than 0644).

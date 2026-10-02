@@ -2144,8 +2144,11 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_close")
 		}
 	}
-	if helpers.set["__fern_write_file"] {
+	if helpers.set["__fern_write_file"] || helpers.set["__fern_write_file_bytes"] {
 		if opts.Preview2WASI {
+			if helpers.set["__fern_write_file_bytes"] {
+				in.add("wasi_io_error_drop")
+			}
 			in.add("wasi_get_directories_p2")
 			in.add("wasi_descriptor_open_at_p2")
 			in.add("wasi_descriptor_write_via_stream_p2")
@@ -3041,6 +3044,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_read_file":               buildReadFileBodyP2,
 	"__fern_read_file_bytes":         buildReadFileBytesBodyP2,
 	"__fern_write_file":              buildWriteFileBodyP2,
+	"__fern_write_file_bytes":        buildWriteFileBytesBodyP2,
 	"__fern_stdin":                   buildStdinBodyP2,
 	"__fern_reader_read_line_fd":     buildReaderReadLineFdBodyP2,
 	"__fern_reader_read_chunk":       buildReaderReadChunkBodyP2,

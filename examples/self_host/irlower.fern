@@ -15918,6 +15918,17 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
       }
       return wfs.emit(ir.op_write_file());
     }
+    if (cid.name == "write_file_bytes" && c.args.len() == 2) {
+      var wfb: LowerState = lower_expr(c.args[0], s);
+      if (!wfb.ok) {
+        return wfb;
+      }
+      wfb = lower_expr(c.args[1], wfb);
+      if (!wfb.ok) {
+        return wfb;
+      }
+      return wfb.emit(ir.op_write_file_bytes());
+    }
     // write_file_exec(path, contents) — write_file with the executable bit, so
     // a compiler emitting a finished binary can produce a runnable one (#6133).
     if (cid.name == "write_file_exec" && c.args.len() == 2) {
@@ -96552,7 +96563,7 @@ function builtin_opt_ret_type(name: string): string {
   if (name == "read_file_bytes") {
     return "Result[u8[], IoError]";
   }
-  if (name == "write_file") {
+  if (name == "write_file" || name == "write_file_bytes") {
     return "Result[void, IoError]";
   }
   if (name == "write_file_exec") {

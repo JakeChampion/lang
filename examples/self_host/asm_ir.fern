@@ -2136,7 +2136,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
-    "umask", "write_file", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
+    "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority",
   ]);
@@ -2150,7 +2150,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "heap", "i32_to_string", "u32_to_string", "chr",
     "str_read_line", "strbuf", "buf", "reader",
-    "write_file", "write_file_exec", "remove_dir_all", "temp_dir",
+    "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
     "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
@@ -7067,7 +7067,7 @@ function ssa_host_need(op: string): string {
     return op;
   }
   var fs: string[] = [
-    "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_exec", "remove_dir_all", "remove_file",
+    "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "remove_file",
     "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat", "subprocess", "writer_write",
   ];
   for x in fs {
@@ -11267,6 +11267,12 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("write_file")) {
       fs_src = fs_src + " " + asmcore.rt_src_write_file("x86_64");
+    }
+    if (s.has_need("write_file_bytes")) {
+      fs_src = fs_src + " " + asmcore.rt_src_write_file_bytes("x86_64", false);
+    }
+    if (s.has_need("write_file_bytes_u8")) {
+      fs_src = fs_src + " " + asmcore.rt_src_write_file_bytes("x86_64", true);
     }
     if (s.has_need("write_file_exec")) {
       fs_src = fs_src + " " + asmcore.rt_src_write_file_exec("x86_64");

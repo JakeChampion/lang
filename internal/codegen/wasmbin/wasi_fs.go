@@ -1062,6 +1062,14 @@ func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, 
 //	15: $err_ptr        (IoError pointer for Some wrapping)
 //	16: $result         (heap-form Option pointer)
 func buildWriteFileBody(idxs map[string]uint32) []byte {
+	return buildWriteFileSpanBody(idxs, false)
+}
+
+func buildWriteFileBytesBody(idxs map[string]uint32) []byte {
+	return buildWriteFileSpanBody(idxs, true)
+}
+
+func buildWriteFileSpanBody(idxs map[string]uint32, raw bool) []byte {
 	alloc := idxs["__fern_alloc"]
 	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
@@ -1086,7 +1094,17 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 	// Normalize path: locals 0/1 → bufLocal=7, byteLenLocal=8, iLocal=9.
 	body = emitStrNormalize(body, idxs, 0, 1, 7, 8, 9)
 	// Normalize content: locals 2/3 → bufLocal=10, byteLenLocal=11, iLocal=12.
-	body = emitStrNormalize(body, idxs, 2, 3, 10, 11, 12)
+	if raw {
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalSet(body, 10)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 11)
+	} else {
+		body = emitStrNormalize(body, idxs, 2, 3, 10, 11, 12)
+	}
 
 	// errno = path_open(dirfd=3, dirflags=1, path_buf, path_byte_len,
 	//                    oflags=CREATE|TRUNCATE, fs_rights_base=WRITE+seek,
@@ -1177,6 +1195,14 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 		body = numeric.InstI32Add(body)
 		body = inst.InstCall(body, fdWrite)
 		body = inst.InstLocalTee(body, 5) // $errno
+		if raw {
+			body = inst.InstDrop(body)
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstI32Const(body, 27) // WASI EINTR
+			body = numeric.InstI32Eq(body)
+			body = inst.InstBrIf(body, 0)
+			body = inst.InstLocalGet(body, 5)
+		}
 
 		// if errno != 0 { build Err(IoError); fd_close; return it }
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -1213,7 +1239,18 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 
 		// if nwritten == 0, break (avoid infinite loop on short writes).
 		body = numeric.InstI32Eqz(body)
-		body = inst.InstBrIf(body, 1)
+		if raw {
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstLocalGet(body, 6)
+			body = inst.InstCall(body, fdClose)
+			body = inst.InstDrop(body)
+			body = inst.InstI32Const(body, 29) // WASI EIO: no progress
+			body = inst.InstLocalSet(body, 5)
+			body = buildWriteFileErr(body, buildIoErr, allocRc1, 5)
+			body = inst.InstEnd(body)
+		} else {
+			body = inst.InstBrIf(body, 1)
+		}
 
 		// cur += nwritten
 		body = inst.InstLocalGet(body, 13)
@@ -1228,7 +1265,14 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 	// fd_close(fd) → drop errno
 	body = inst.InstLocalGet(body, 6)
 	body = inst.InstCall(body, fdClose)
-	body = inst.InstDrop(body)
+	if raw {
+		body = inst.InstLocalTee(body, 5)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = buildWriteFileErr(body, buildIoErr, allocRc1, 5)
+		body = inst.InstEnd(body)
+	} else {
+		body = inst.InstDrop(body)
+	}
 
 	// Return Ok(()): 8-byte alloc, tag = 0 @ +0, unit payload @ +4.
 	// The unit occupies a payload slot like any other value — not the
@@ -1246,7 +1290,11 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 16)
 
 	// 13 i32 locals after the 4 params (slots 4..16).
-	locals := inst.PutLocalsOneGroup(nil, 13, encode.ValtypeI32)
+	nlocals := uint32(13)
+	if raw {
+		nlocals++
+	} // preserve local indices with one fewer parameter
+	locals := inst.PutLocalsOneGroup(nil, nlocals, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
@@ -1267,6 +1315,14 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 // 10=fd, 11=stream, 12=cur, 13=chunk_len, 14=strnorm scratch,
 // 15=box, 16=ioerr.
 func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
+	return buildWriteFileSpanBodyP2(idxs, false)
+}
+
+func buildWriteFileBytesBodyP2(idxs map[string]uint32) []byte {
+	return buildWriteFileSpanBodyP2(idxs, true)
+}
+
+func buildWriteFileSpanBodyP2(idxs map[string]uint32, raw bool) []byte {
 	alloc := idxs["__fern_alloc"]
 	allocRc1 := idxs["__fern_alloc_rc1"]
 	buildIoErr := idxs["__build_io_error"]
@@ -1287,7 +1343,17 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 4)
 	body = emitStrNormalize(body, idxs, 0, 1, 5, 6, 14)
-	body = emitStrNormalize(body, idxs, 2, 3, 7, 8, 14)
+	if raw {
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalSet(body, 7)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalSet(body, 8)
+	} else {
+		body = emitStrNormalize(body, idxs, 2, 3, 7, 8, 14)
+	}
 
 	body = emitPreopenCachedP2(body, getDirs, 4, 9)
 	body = emitPreopenMissing(body, 9, func(b []byte) []byte {
@@ -1379,6 +1445,9 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
+			if raw {
+				body = emitStreamErrorDrop(body, idxs, 4)
+			}
 			body = inst.InstLocalGet(body, 11)
 			body = inst.InstCall(body, streamDrop)
 			body = inst.InstLocalGet(body, 10)
@@ -1420,7 +1489,11 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 
 	// 14 i32 locals (4..17): the 13 originals plus local 17 (errno
 	// from the mapped error-code).
-	locals := inst.PutLocalsOneGroup(nil, 14, encode.ValtypeI32)
+	nlocals := uint32(14)
+	if raw {
+		nlocals++
+	}
+	locals := inst.PutLocalsOneGroup(nil, nlocals, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

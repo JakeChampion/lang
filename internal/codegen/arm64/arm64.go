@@ -656,7 +656,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// box constructor is shared with the Reader/Writer family
 	// above; pulled in here for the programs that use file I/O
 	// without the Reader API.
-	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
+	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileBytes || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesReadDirAll || g.usesStat || g.usesLstat ||
 		g.usesFdStat || g.usesReaderSeek || g.usesReaderSplice || g.usesFdFlags || g.usesWriterTruncate ||
 		g.usesAccess || g.usesRemoveDirAll || g.usesCreateDirAll ||
@@ -688,7 +688,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	// The path-taking fs helpers free their NUL-terminated path copies and
 	// working buffers (#9001); remove_dir_all also releases its child paths.
-	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
+	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileBytes || g.usesWriteFileExec ||
 		g.usesRemoveFile || g.usesCreateDirAll || g.usesCreateDir || g.usesChdir || g.usesChroot ||
 		g.usesSetgroups || g.usesRemoveDir ||
 		g.usesCreateLink || g.usesCreateSymlink || g.usesReadLink || g.usesTempDir ||
@@ -1035,6 +1035,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
+	}
+	if g.usesWriteFileBytes {
+		g.emitWriteFileRuntimeMode("__fern_write_file_bytes", "0644", "b", "")
 	}
 	if g.usesWriteFileExec {
 		g.emitWriteFileRuntimeMode("__fern_write_file_exec", "0755", "x", "0755")
@@ -11330,10 +11333,28 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("stp x23, x24, [sp, #48]")
-	g.emit("mov x19, x0")              // x19 = ORIGINAL path string value (for io_error)
-	g.emitStrLen("w22", "x1")          // x22 = content_len (before content materialise)
-	g.emitStrDataPtr("x20", "x1", 72)  // x20 = content byte ptr
+	g.emit("mov x19, x0") // x19 = ORIGINAL path string value (for io_error)
+	if sym == "__fern_write_file_bytes" {
+		g.emit("ldur w22, [x1, #-4]")
+		g.emit("mov x20, x1")
+	} else {
+		g.emitStrLen("w22", "x1")
+		g.emitStrDataPtr("x20", "x1", 72)
+	}
 	g.emitStrDataPtr("x24", "x19", 64) // x24 = path byte ptr (preserves x19 = original)
+	if sym == "__fern_write_file_bytes" {
+		g.emitStrLen("w9", "x19")
+		g.emit("mov x10, #0")
+		g.label(".Lwf_path" + sfx)
+		g.emit("cmp x10, x9")
+		g.emit("b.ge .Lwf_path_ok%s", sfx)
+		g.emit("ldrb w11, [x24, x10]")
+		g.emit("add x10, x10, #1")
+		g.emit("cbnz w11, .Lwf_path%s", sfx)
+		g.emit("mov x0, #-22")
+		g.emit("b .Lwf_err_open%s", sfx)
+		g.label(".Lwf_path_ok" + sfx)
+	}
 
 	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC, mode) — the
 	// flag word is the target's, not a constant; see oflagWrite.
@@ -11354,7 +11375,17 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	g.emit("add x1, x20, x23")
 	g.emit("sub x2, x22, x23")
 	g.syscall("write")
+	if sym == "__fern_write_file_bytes" {
+		g.emit("cmn x0, #4")
+		g.emit("b.eq .Lwf_loop%s", sfx)
+	}
 	g.emit("tbnz x0, #63, .Lwf_err_close%s", sfx)
+	if sym == "__fern_write_file_bytes" {
+		g.emit("cbnz x0, .Lwf_progress%s", sfx)
+		g.emit("mov x0, #-5")
+		g.emit("b .Lwf_err_close%s", sfx)
+		g.label(".Lwf_progress" + sfx)
+	}
 	g.emit("add x23, x23, x0")
 	g.emit("b .Lwf_loop%s", sfx)
 
@@ -11372,6 +11403,9 @@ func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	}
 	g.emit("mov x0, x21")
 	g.syscall("close")
+	if sym == "__fern_write_file_bytes" {
+		g.emit("tbnz x0, #63, .Lwf_err_open%s", sfx)
+	}
 	// Return Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
 	// value occupies a payload slot like any other value — the reader
 	// loads it by the declared layout — so the success arm cannot be
@@ -11436,10 +11470,28 @@ func (g *generator) emitWriteFileRuntime2W(sym, mode, sfx, fixupMode string) {
 	g.emit("mov x21, x2") // content_data
 	g.emit("mov x22, x3") // content_len
 	// content byte length + byte ptr.
-	g.emitStrLen2W("w24", "x22")                // x24 = content byte length
-	g.emitStrDataPtr2W("x23", "x21", "x22", 72) // x23 = content byte ptr; scratch at [x29+72]
+	if sym == "__fern_write_file_bytes" {
+		g.emit("ldur w24, [x21, #-4]")
+		g.emit("mov x23, x21")
+	} else {
+		g.emitStrLen2W("w24", "x22")
+		g.emitStrDataPtr2W("x23", "x21", "x22", 72)
+	}
 	// path byte ptr (separate scratch).
 	g.emitStrDataPtr2W("x25", "x19", "x20", 88) // x25 = path byte ptr; scratch at [x29+88]
+	if sym == "__fern_write_file_bytes" {
+		g.emitStrLen2W("w9", "x20")
+		g.emit("mov x10, #0")
+		g.label(".Lwf2w_path" + sfx)
+		g.emit("cmp x10, x9")
+		g.emit("b.ge .Lwf2w_path_ok%s", sfx)
+		g.emit("ldrb w11, [x25, x10]")
+		g.emit("add x10, x10, #1")
+		g.emit("cbnz w11, .Lwf2w_path%s", sfx)
+		g.emit("mov x0, #-22")
+		g.emit("b .Lwf2w_err_open%s", sfx)
+		g.label(".Lwf2w_path_ok" + sfx)
+	}
 	// NUL-terminate for openat (see emitNulTermPath2W).
 	g.emitNulTermPath2W("x25", "x25", "x20")
 	// openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC, mode) — the
@@ -11464,6 +11516,13 @@ func (g *generator) emitWriteFileRuntime2W(sym, mode, sfx, fixupMode string) {
 	g.emit("add x1, x23, x22") // buf + offset
 	g.emit("sub x2, x24, x22") // remaining
 	g.syscall("write")
+	if sym == "__fern_write_file_bytes" {
+		g.emit("cmn x0, #4")
+		g.emit("b.eq .Lwf2w_loop%s", sfx)
+		g.emit("cmp x0, #0")
+		g.emit("mov x9, #-5")
+		g.emit("csel x0, x9, x0, eq")
+	}
 	g.emit("tbnz x0, #63, .Lwf2w_err_close%s", sfx)
 	g.emit("add x22, x22, x0")
 	g.emit("b .Lwf2w_loop%s", sfx)
@@ -11481,10 +11540,9 @@ func (g *generator) emitWriteFileRuntime2W(sym, mode, sfx, fixupMode string) {
 	}
 	g.emit("mov x0, x21")
 	g.syscall("close")
-	// Return Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
-	// value occupies a payload slot like any other value — the reader
-	// loads it by the declared layout — so the success arm cannot be
-	// the 8-byte tag-only box the Option shape used.
+	if sym == "__fern_write_file_bytes" {
+		g.emit("tbnz x0, #63, .Lwf2w_err_open%s", sfx)
+	}
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("str wzr, [x0]")
@@ -15915,7 +15973,8 @@ type generator struct {
 	// usesWriteFileExec is write_file_exec — write_file with the
 	// executable bit. Its own flag so a program that never asks for
 	// one does not carry the second helper body (#6133).
-	usesWriteFileExec bool
+	usesWriteFileExec  bool
+	usesWriteFileBytes bool
 	// usesRemoveFile / usesTempDir / usesReadDir / usesStat /
 	// usesRemoveDirAll pull in the filesystem-op family (#5372):
 	// unlinkat / mkdirat / getdents64 / fstatat runtimes with the
@@ -20838,6 +20897,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// Same, created 0755 (#6133).
 			target = "__fern_write_file_exec"
 			g.usesWriteFileExec = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "write_file_bytes":
+			target = "__fern_write_file_bytes"
+			g.usesWriteFileBytes = true
 			g.usesAlloc = true
 			g.usesIoError = true
 		case "remove_file":
