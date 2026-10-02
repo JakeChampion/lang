@@ -18,11 +18,14 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// load, store and call_closure_direct are registered kinds no lowering
 	// produces and no backend has an arm for; they stay unmodelled in
 	// op_pops, so the lift cannot bridge them either. syscall6 adds one
-	// registered and admitted kind, with seven inputs and one result.
+	// registered and admitted kind, with seven inputs and one result; the raw
+	// byte pipeline (#10995, #11000) adds six more: buf_push_bytes_range,
+	// buf_take_bytes, read_chunk_bytes, write_bytes, write_file_bytes and
+	// write_some_bytes.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=324 declined=3\n"
+		"registered=330 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()
