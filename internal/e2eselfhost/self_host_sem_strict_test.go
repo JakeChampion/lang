@@ -390,11 +390,11 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const typed = "function __fern_chr(b: i32): string { let p: usize = __raw_alloc(1);"
+	const typed = "{ len = 0; } let p: usize = __raw_alloc(len);"
 	if strings.Count(string(src), typed) != 1 {
 		t.Fatalf("asmcore.fern no longer spells rt_src_chr as %q", typed)
 	}
-	broken := strings.Replace(string(src), typed, "function __fern_chr(b: i32): string { let p: i32 = __raw_alloc(1);", 1)
+	broken := strings.Replace(string(src), typed, "{ len = 0; } let p: i32 = __raw_alloc(len);", 1)
 	if err := os.WriteFile(core, []byte(broken), 0o644); err != nil {
 		t.Fatal(err)
 	}
