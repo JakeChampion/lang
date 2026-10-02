@@ -57,8 +57,12 @@ pub function ipv4(a: i32, b: i32, c: i32, d: i32): i32 {
 pub enum Phase { Connecting, Inactivity, Total }
 
 // `FetchError` — why a request failed, by phase. `InvalidUrl` for a URL
-// `std/url` cannot parse, with no scheme or host, or with a scheme other
-// than `http` and `https`; `Dns` for a name that did not resolve; `Connect` for
+// `std/url` cannot parse, with no scheme or host, with a scheme other
+// than `http` and `https`, or whose path or query cannot stand on a
+// request line; `InvalidRequest` for a method that is not a token, a
+// header that cannot be written as one line, or a file body (a handler
+// reads files through its bag, not through the client); `Dns` for a name
+// that did not resolve; `Connect` for
 // addresses that all failed; `Tls` for `https` (not supported yet);
 // `Timeout` for a bound passed; `Protocol` for a response this client
 // cannot read, with what was wrong; `Io` for a send or read the kernel
@@ -69,6 +73,7 @@ pub enum Phase { Connecting, Inactivity, Total }
 // and cancellation; this client produces neither yet.
 pub enum FetchError {
   InvalidUrl(string),
+  InvalidRequest(string),
   Dns(dns.DnsError),
   Connect(net.NetError),
   Tls,
@@ -99,6 +104,9 @@ pub function (e: FetchError) message(): string {
   match (e) {
     InvalidUrl(what) => {
       return "invalid URL: " + what;
+    },
+    InvalidRequest(what) => {
+      return "invalid request: " + what;
     },
     Dns(d) => {
       return "resolve: " + d.message();
@@ -185,8 +193,9 @@ pub function (r: Request) with_header(name: string, value: string): Request {
   return Request { ...r, headers: r.headers.append(name, value) };
 }
 
-// `(r: Request).with_body(body)` — `r` with `body` as its body, any
-// `Body` a handler can build.
+// `(r: Request).with_body(body)` — `r` with `body` as its body: text,
+// bytes, a stream or chunks. A `BodyFile` is refused by `send` with
+// `InvalidRequest`: the client never reads a file.
 pub function (r: Request) with_body(body: Body): Request {
   return Request { ...r, body: body };
 }
@@ -254,6 +263,12 @@ function __target_of(raw: string): Result[__Target, FetchError] {
   if (port == 0) {
     port = 80;
   }
+  return Ok(__Target { host: u.host, port: port, target: __request_target(u)? });
+}
+
+// `__request_target(u)` — the origin-form request-target of `u`: its
+// path (`/` for none) and query, when they can stand on a request line.
+function __request_target(u: Url): Result[string, FetchError] {
   var target: string = u.path;
   if (target.len() == 0) {
     target = "/";
@@ -261,7 +276,34 @@ function __target_of(raw: string): Result[__Target, FetchError] {
   if (u.query.len() > 0) {
     target = target + "?" + u.query;
   }
-  return Ok(__Target { host: u.host, port: port, target: target });
+  if (!http.http_target_ok(target)) {
+    return Err(InvalidUrl("a path or query that cannot be written on a request line"));
+  }
+  return Ok(target);
+}
+
+// `__request_ok(req)` — the request refused before a byte is written when
+// its method or a header could not be put on the wire as one line, or
+// its body is a file. The messages name the rule and never the value,
+// which may be the injected bytes themselves.
+function __request_ok(req: Request): Result[void, FetchError] {
+  if (!http.http_method_ok(req.method)) {
+    return Err(InvalidRequest("the method is not a token"));
+  }
+  var i: i32 = 0;
+  while (i < req.headers.names.len()) {
+    if (!http.http_field_ok(req.headers.names[i], req.headers.values[i])) {
+      return Err(InvalidRequest("a header has a name that is not a token or a control byte in its value"));
+    }
+    i = i + 1;
+  }
+  match (req.body) {
+    BodyFile(path) => {
+      return Err(InvalidRequest("a file body cannot be sent"));
+    },
+    _ => {}
+  }
+  return Ok(());
 }
 
 // `__host_field(t)` — the `Host` value: the host, bracketed when it is an
@@ -299,6 +341,12 @@ function __head(req: Request, t: __Target, body_len: i32): string {
 // comment says. Blocking: the connection is closed before it answers.
 pub function send(req: Request): Result[HttpResponse, FetchError] {
   var t: __Target = __target_of(req.url)?;
+  match (__request_ok(req)) {
+    Ok(_) => {},
+    Err(e) => {
+      return Err(e);
+    }
+  }
   var started: i64 = monotonic_ns();
   var sock: i32 = __connect(t, req.timeouts)?;
   var body: u8[] = req.body.bytes();
@@ -365,8 +413,11 @@ function __send_all(sock: i32, payload: string): Result[void, FetchError] {
 }
 
 // `__read_response(sock, req, started)` — the response read under the
-// inactivity and total bounds, interim 1xx responses stepped over, and
-// handed back with its hop-by-hop fields stripped.
+// inactivity and total bounds, interim 1xx responses stepped over (within
+// one header budget for all of them, so a peer cannot stream `100
+// Continue` for as long as the timeout allows), and handed back with its
+// hop-by-hop fields stripped. The buffer is uniquely owned and grows in
+// place, so the read stays linear in the response.
 function __read_response(sock: i32, req: Request, started: i64): Result[HttpResponse, FetchError] {
   var buf: u8[] = [];
   var from: i32 = 0;
@@ -374,8 +425,11 @@ function __read_response(sock: i32, req: Request, started: i64): Result[HttpResp
   while (true) {
     match (http.http_parse_response_framed_from(buf, from, req.method, eof, req.limits)) {
       Complete(framed) => {
-        if (framed.response.status >= 100 && framed.response.status < 200) {
+        if (__interim(framed.response.status)) {
           from = from + framed.len;
+          if (from > req.limits.header_bytes) {
+            return Err(Protocol("interim responses past the header budget"));
+          }
           continue;
         }
         return Ok(HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) });
@@ -393,10 +447,28 @@ function __read_response(sock: i32, req: Request, started: i64): Result[HttpResp
     if (chunk.len() == 0) {
       eof = true;
     } else {
-      buf = __join_bytes([buf, chunk]);
+      buf = __append_bytes(buf, chunk);
     }
   }
   return Err(Protocol("unreachable"));
+}
+
+// `__append_bytes(buf, chunk)` — `buf` with `chunk` on its end, grown in
+// place: `buf` is owned here, so each push lands on a unique array and
+// the accumulation over a whole response is one linear pass.
+function __append_bytes(own buf: u8[], chunk: u8[]): u8[] {
+  var i: i32 = 0;
+  while (i < chunk.len()) {
+    buf = buf.append(chunk[i]);
+    i = i + 1;
+  }
+  return buf;
+}
+
+// `__interim(status)` — whether a status is a 1xx, a response before
+// the final one (RFC 9110 §15.2).
+function __interim(status: i32): boolean {
+  return status >= 100 && status < 200;
 }
 
 // `__recv_bounded(sock, timeouts, started)` — the next chunk of the
@@ -493,12 +565,12 @@ function __canned_response(v: string): HttpResponse {
 // __join_bytes(chunks) — the chunk list flattened into one buffer, sized
 // up front so the fill is a single pass over a uniquely-owned array.
 //
-// Every read path here collects `recv` buffers into a list and joins once
-// rather than concatenating onto a growing accumulator. Concatenation is
-// quadratic in the response size whenever the accumulator has a second
-// reference — which it always does inside `__fetch_drain`, where `resume`
-// captures it — and `__arr_push_shared_count()` is what makes that
-// visible: one crossing per chunk, each copying the whole response so far.
+// `__fetch_drain` collects its `recv` buffers into a list and joins once,
+// because its accumulator is captured by `resume`: a second reference
+// makes every append copy the whole response so far, and
+// `__arr_push_shared_count()` is what makes that visible. The blocking
+// client's buffer has no second reference, so it appends in place
+// (`__append_bytes`) instead.
 function __join_bytes(chunks: u8[][]): u8[] {
   var total: i32 = 0;
   var k: i32 = 0;

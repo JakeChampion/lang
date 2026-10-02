@@ -926,29 +926,24 @@ func FetchDeadlineUpstreams(t *testing.T) (silentPort, livePort int) {
 
 // FetchDeadlineSource is a std/fetch client under its timeouts (#4385):
 // against the silent upstream a 400 ms inactivity bound answers
-// `Timeout(Inactivity)` and a 300 ms total bound `Timeout(Total)`, and
-// against the live one the default bounds give a 200 in time. Exit 0 when
-// all three hold.
+// `Timeout(Inactivity)` and a 300 ms total bound `Timeout(Total)`, each
+// checked by the message a caller would print, and against the live one
+// the default bounds give a 200 in time. Exit 0 when all three hold.
 func FetchDeadlineSource(silentPort, livePort int) string {
 	return fmt.Sprintf(`import "std/fetch";
-function phase_of(answer: Result[HttpResponse, fetch.FetchError]): string {
+function message_of(answer: Result[HttpResponse, fetch.FetchError]): string {
     match (answer) {
         Ok(resp) => { return "answered"; },
-        Err(e) => {
-            match (e) {
-                Timeout(p) => { return p.message(); },
-                _ => { return e.message(); }
-            }
-        }
+        Err(e) => { return e.message(); }
     }
     return "";
 }
 function main(): i32 {
     var silent: string = "http://127.0.0.1:%[1]d/";
     var idle: fetch.Timeouts = fetch.Timeouts { connect_ms: 5000, inactivity_ms: 400, total_ms: 5000 };
-    if (phase_of(fetch.send(fetch.get(silent).with_timeouts(idle))) != "waiting for the response") { return 1; }
+    if (message_of(fetch.send(fetch.get(silent).with_timeouts(idle))) != "timed out waiting for the response") { return 1; }
     var whole: fetch.Timeouts = fetch.Timeouts { connect_ms: 5000, inactivity_ms: 5000, total_ms: 300 };
-    if (phase_of(fetch.send(fetch.get(silent).with_timeouts(whole))) != "in all") { return 5; }
+    if (message_of(fetch.send(fetch.get(silent).with_timeouts(whole))) != "timed out in all") { return 5; }
     match (fetch.send(fetch.get("http://127.0.0.1:%[2]d/"))) {
         Ok(resp) => {
             if (resp.status == 200) { return 0; }

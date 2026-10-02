@@ -1108,6 +1108,14 @@ serializer.
   `http_end_to_end(map)` name and strip the fields a connection owns
   (`Connection` and the fields it lists, `Keep-Alive`, `Proxy-Connection`,
   `Transfer-Encoding`, `TE`, `Trailer`, `Upgrade`).
+- **Request writing:** what a client may put on the wire, the parser's
+  refusals turned outward: `http_method_ok(method)` (a token),
+  `http_target_ok(target)` (an origin-form request-target: `/`, `pchar`
+  and `/`, then a query of `pchar`, `/` and `?`, every `%` followed by
+  two hex digits) and `http_field_ok(name, value)` (a token name and a
+  value with no control byte but HTAB and no DEL). `std/fetch` checks
+  each before it connects, so a CRLF in a caller's URL or header cannot
+  split the request it is written into.
 - **Request builder:** `request(method, path)` is a request to hand a
   handler in a test (no headers, no body), and `(req).with_header(name,
   value)`, `(req).with_body(body)` (with the `Content-Length` a client
@@ -1605,13 +1613,18 @@ answer is `Result[HttpResponse, FetchError]`.
 
 - **Requests:** `get(url)` / `request(method, url)`, then
   `(req).with_header(name, value)`, `(req).with_text(s)`,
-  `(req).with_bytes(bs)`, `(req).with_body(body)` (any `Body`),
-  `(req).with_timeouts(t)`, `(req).with_limits(l)`. `std/url` parses
-  the URL; the host is resolved by `std/dns` (a literal, the hosts
+  `(req).with_bytes(bs)`, `(req).with_body(body)` (text, bytes, a stream
+  or chunks; a `BodyFile` is refused, since the client never reads a
+  file), `(req).with_timeouts(t)`, `(req).with_limits(l)`. `std/url`
+  parses the URL; the host is resolved by `std/dns` (a literal, the hosts
   file, then DNS) and its addresses raced as `dns.connect_race` does.
-  The client writes `Host`, `Content-Length` and `Connection: close`
-  itself and strips hop-by-hop fields from what it sends. No TLS yet
-  (`https` fails with `Tls`), no redirects followed, no pool.
+  Before it connects the client checks the method, the path and query
+  and every header against `std/http`'s `http_method_ok` /
+  `http_target_ok` / `http_field_ok`, so a CRLF in a URL or a field
+  cannot split the request on the wire. It writes `Host`,
+  `Content-Length` and `Connection: close` itself and strips hop-by-hop
+  fields from what it sends. No TLS yet (`https` fails with `Tls`), no
+  redirects followed, no pool.
 - **Sending:** `send(req)` from a program with a `main`;
   `(plat: Platform).http(req)` from a handler, the capability-scoped
   route (a recording bag answers what `MockPlatform.http_set` canned).
@@ -1623,11 +1636,17 @@ answer is `Result[HttpResponse, FetchError]`.
   turns anything outside 2xx into `Err(status)`. `(resp).body_text()`
   is the checked UTF-8 read, since an upstream can serve anything.
 - **Errors:** `FetchError` is a closed sum over the phase that failed:
-  `InvalidUrl(what)`, `Dns(DnsError)`, `Connect(NetError)`, `Tls`,
+  `InvalidUrl(what)` (unparseable, no scheme or host, a scheme other than
+  `http` / `https`, or a path or query that cannot stand on a request
+  line), `InvalidRequest(what)` (a method that is not a token, a header
+  that cannot be written as one line, or a file body; `what` names the
+  rule, never the value), `Dns(DnsError)`, `Connect(NetError)`, `Tls`,
   `Timeout(Phase)` with `Phase` one of `Connecting` / `Inactivity` /
-  `Total`, `Protocol(what)` (a response the parser refuses), `Io(NetError)`,
-  `BodyLimit` (a body past `limits.body`), and `Redirect(what)` /
-  `Cancelled`, which no path produces yet. `(e).message()`.
+  `Total`, `Protocol(what)` (a response the parser refuses, or interim
+  1xx responses past one `limits.header_bytes` between them),
+  `Io(NetError)`, `BodyLimit` (a body past `limits.body`), and
+  `Redirect(what)` / `Cancelled`, which no path produces yet.
+  `(e).message()`.
 - **Timeouts:** `Timeouts { connect_ms, inactivity_ms, total_ms }`,
   `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
   whole address race; inactivity is the longest wait for the next byte

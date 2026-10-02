@@ -67,15 +67,17 @@ func nativeBackends() []nativeBackend {
 	}
 }
 
-// Both fetch read paths collect `recv` buffers and join them, because
-// concatenating onto a growing accumulator is quadratic in the response
-// size whenever that accumulator has a second reference. The rc==1 cliff
-// counters are what make the difference observable, so pin them against
-// a 1 MiB body: the blocking client's buffer is a plain local and must
-// never cross the cliff at all, and the drain's chunk list is captured by
-// `resume` so it does cross — but what it copies is a pointer array,
-// kept three orders of magnitude below the ~137 MB a byte-wise
-// accumulator would have copied for the same body.
+// An accumulator with a second reference copies the whole response so
+// far on every append, which the rc==1 cliff counters make observable.
+// Pin them against a 1 MiB body: the blocking client appends each `recv`
+// onto a uniquely owned buffer and must never cross the cliff at all,
+// and the drain's chunk list is captured by `resume` so it does cross,
+// but what it copies is a pointer array, kept three orders of magnitude
+// below the ~137 MB a byte-wise accumulator would have copied for the
+// same body. The counters see only shared-array pushes: a fresh buffer
+// rebuilt from a unique one on every recv is just as quadratic and
+// invisible here, so the client's in-place growth is pinned by reading
+// `__append_bytes`, not by this test.
 func TestFetchAccumulatorStaysLinear(t *testing.T) {
 	bin := buildFernCLI(t)
 
