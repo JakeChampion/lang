@@ -6542,31 +6542,19 @@ function mentions_name(e: ast.Expr, name: string, hit: boolean): boolean {
   return false;
 }
 
-// expr_mentions / stmt_mentions / stmts_mention report whether `name` appears
-// as an identifier anywhere in an expression / statement / statement list. Used
-// to detect a self-recursive local function (whose body references its own
-// name), which hl_rewrite lifts to top level. Conservative: any mention counts.
+// stmt_mentions / stmts_mention report whether `name` appears as an
+// identifier anywhere in a statement / statement list. Used to detect a
+// self-recursive local function (whose body references its own name), which
+// hl_rewrite lifts to top level. Conservative: any mention counts.
 //
 // Folding these onto astwalk WIDENS them by one node: the hand-written walk's
 // `_ =>` tail had no StmtDefer arm, so a name mentioned only inside a defer
 // action read as absent. astwalk enumerates all twelve Stmt cases, so it is
-// seen. Measured on a parsed `defer cleanup(zz)`: before, no mention; after,
-// one. Widening is the safe direction — every caller treats absence as a
-// licence (irlower's `return false` guards, the self-recursion check here) —
-// but no end-to-end consequence has been demonstrated, so this is recorded as
-// coverage gained, not as a fixed miscompile.
+// seen. Widening is the safe direction — every caller treats absence as a
+// licence.
 //
 // The other two nodes the `_ =>` swallowed, ExprFString and ExprMapLit, change
 // nothing: parse_module desugars both to calls before any consumer runs.
-// Checked rather than assumed, because a consumer walking a tree BEFORE that
-// desugar would see a difference.
-pub function expr_mentions(e: ast.Expr, name: string): boolean {
-  function visit(n: ast.Expr, own a: boolean): boolean {
-    return mentions_name(n, name, a);
-  }
-  return astwalk.fold_expr(e, false, visit);
-}
-
 pub function stmt_mentions(st: ast.Stmt, name: string): boolean {
   function visit(n: ast.Expr, own a: boolean): boolean {
     return mentions_name(n, name, a);
@@ -22225,8 +22213,9 @@ struct LenLoopMatch { ok: boolean, idx: string, arr: string }
 struct LenArrRef { ok: boolean, name: string }
 
 // elide_len_bounded_body is the pass entry: it rewrites a function body,
-// returning a copy with in-bounds `arr[i]` reads marked. Called at
-// irlower.lower_func entry — after every AST transform — so no later pass
+// returning a copy with in-bounds `arr[i]` reads marked. Called where
+// semsource builds a declaration's body — after every AST transform — so no
+// later pass
 // clobbers the flag and the transform sites all default it to false.
 pub function elide_len_bounded_body(stmts: ast.Stmt[]): ast.Stmt[] {
   // Recurse into nested statement lists first, so inner loops are handled in

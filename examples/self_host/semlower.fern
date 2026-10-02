@@ -391,8 +391,7 @@ function field_spelling(t: typeinfo.Type): string {
   return typeinfo.spelling(t);
 }
 
-// lowered is mod.funcs as the AST lowering reads them, with each `str` erased.
-pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
+pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
   var inf: Inference = produced_rows(mod, structs);
   var built: semsource.Built = inf.built;
   var r: Rows = inf.rows;
@@ -400,25 +399,12 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
   var sigs: irlower.FnSigs = base;
   var helpers: ssarc.Helpers = ssarc.no_helpers();
   var bodies: irlower.LowerResult[] = [];
-  // The may-grow masks an AST caller brackets by are rebuilt with every
-  // produced declaration's own in place of the one its syntax would give.
-  var seeds: string[] = [];
-  // The `own` array positions the produced bodies consume, which an AST
-  // caller reads as a transfer rather than a borrow it releases after
-  // (irlower.own_consumed_positions). An instance is keyed by its template,
-  // since that is the name an AST caller's call spells.
-  var consumed: string[] = [];
   var callees: ssarc.Callee[] = [];
   var n: i32 = 0;
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (r.keep[i]) {
       callees = callees.append(ssarc.Callee { name: semsource.decl_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], receiver: semsource.has_receiver(mod.funcs[i]) });
-      seeds = seeds.append(semsource.decl_key(mod.funcs[i]) + "|"
-        + ssarc.grow_mask(semsource.decl_key(mod.funcs[i]), built.decls[i].func, r.grows, semsource.has_receiver(mod.funcs[i])));
-      if (mod.funcs[i].receiver_type.len() == 0) {
-        consumed = util.append_all(consumed, ssarc.consumed_array_rows(mod.funcs[i].name, built.decls[i].func, built.decls[i].modes));
-      }
       helpers = ssarc.with_drop_helpers(helpers, built.decls[i].func);
       bodies = bodies.append(r.body[i]);
       n = n + 1;
@@ -444,19 +430,10 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
     if (r.keep[mod.funcs.len() + at]) {
       helpers = ssarc.with_drop_helpers(helpers, built.instances[at].func);
       instances = instances.append(r.body[mod.funcs.len() + at]);
-      if (!util.contains(built.instances[at].key, ".")) {
-        consumed = util.append_all(consumed, ssarc.consumed_array_rows(built.instances[at].key, built.instances[at].func, built.instances[at].modes));
-      }
     }
     at = at + 1;
   }
   sigs = ssarc.caller_sigs(sigs, callees);
-  if (seeds.len() > 0) {
-    sigs = irlower.regrow_sigs(sigs, lowered, structs, seeds);
-  }
-  if (consumed.len() > 0) {
-    sigs = irlower.consume_sigs(sigs, lowered, consumed);
-  }
   util.arr_push_cliff_report("sem:substituted", 0);
   // A refused declaration or instance fails the compile.
   var refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len();
@@ -574,7 +551,7 @@ function substitution_of(im: parser.Module): ircore.Sub {
   var lowered: parser.Module = parser.erase_view_module(im);
   var stab: irlower.StructTab = irlower.struct_tab(lowered.structs);
   util.arr_push_cliff_report("sem:gated", 0);
-  var sub: ircore.Sub = substitution(im, lowered.funcs, stab, ircore.wp_fn_sigs(lowered.funcs, stab));
+  var sub: ircore.Sub = substitution(im, stab, ircore.wp_fn_sigs(lowered.funcs, stab));
   return ircore.Sub { ...sub, rt_lower: runtime_bodies };
 }
 

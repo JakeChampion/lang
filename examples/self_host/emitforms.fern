@@ -142,5 +142,8 @@ pub function wasm_component(full: parser.Module, sub: ircore.Sub): i32[] {
   if (shape == 15) {
     return watbin.component_full_io_fs_args_read(core, true);
   }
+  if (shape == 17) {
+    return watbin.component_full_io_eprint_exit(core, true);
+  }
   return watbin.component_full_io_fs_rw_args(core, true);
 }

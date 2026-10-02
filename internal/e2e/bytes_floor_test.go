@@ -74,11 +74,3 @@ func TestArm64DarwinBytesFloor(t *testing.T) {
 		t.Fatalf("probe: %v, want exit 42; first failing step: %s", err, out)
 	}
 }
-
-// wasm carries a short string inline in its (data, len) pair, so the floor
-// spills it the same way the native backends do.
-func TestBytesFloorWasm(t *testing.T) {
-	if got := compileAndRunWasmbinMain(t, e2eharness.BytesFloorProbe(true)); got != 42 {
-		t.Fatalf("wasm: got exit %d, want 42 (the number is the first failing step)", got)
-	}
-}

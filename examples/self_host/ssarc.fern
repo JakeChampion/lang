@@ -4371,8 +4371,7 @@ function take_owed(own r: irlower.LowerResult, v: i32, root: i32): irlower.Lower
 }
 
 // The push onto a FIELD buffer of a record this frame reads no further
-// through that field (ssaunits.field_grow_root): the semantic form of
-// irlower.lower_field_append_inplace. The record's own count says whether
+// through that field (ssaunits.field_grow_root). The record's own count says whether
 // another holder can still reach the buffer. A shared record holds a second
 // count on the field across the push, so the push copies and the field stays
 // in place; a sole-owned record lets it grow in place, and the identity arm
@@ -4608,7 +4607,7 @@ function cell_write(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst):
 
 // A closure value and the call through one. The value is the env box the
 // lambda lift builds: the body's address in slot 0, then the captures, which
-// is the layout `irlower.lower_call_named` gives the same `__mkclo$` marker.
+// is the layout the `__mkclo$` marker names.
 // The call is environment-first — the box, the written arguments, then the
 // address out of slot 0, which is the order call_indirect pops them in — so a
 // body reaches its captures through the parameter it was hoisted with. The
@@ -4860,8 +4859,7 @@ struct Lowered { found: boolean, r: irlower.LowerResult }
 // AST path pushes.
 // The stream handles: a handle IS its descriptor, so the three standard ones
 // are constants and every method is the free op with the receiver as its
-// first operand — which is how the AST lowering emits them too
-// (irlower.lower_call_method). Writer.close shares Reader.close's op.
+// first operand. Writer.close shares Reader.close's op.
 function handle_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "stdin") {
     return Lowered { found: true, r: emit(r, ir.op_const_i32(0)) };
@@ -5956,65 +5954,6 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
 // is exact for a retained buffer and at worst strands a fresh one's pointer
 // elements, #9187) and a box with no reference field or payload; every other
 // position keeps the AST caller's leak-mode floor.
-// The AST registries' spelling of what ssaunits.grow_rows found for `callee`,
-// for the callers the AST lowering still emits: irlower.grow_param_flags_of's
-// mask — one token per position, the receiver's first and then one per
-// parameter — "0", "1" for an array parameter's own buffer, or "F:<field>,…"
-// naming a record parameter's fields. A function with no receiver, an
-// associated function included, carries "0" in that position.
-pub function grow_mask(callee: string, f: ssasem.Func, rows: ssaunits.GrowRow[], receiver: boolean): string {
-  var mask: string = "";
-  if (!receiver) {
-    mask = "0";
-  }
-  var i: i32 = 0;
-  while (i < f.params.len()) {
-    var tok: string = "0";
-    for row in rows {
-      if (row.callee == callee && row.param == i && row.field < 0) {
-        tok = "1";
-      }
-    }
-    var grown: i32[] = ssaunits.grow_fields_of(rows, callee, i);
-    if (tok == "0" && grown.len() > 0) {
-      var fields: semrecords.Field[] = record_fields(f.params[i], f);
-      for field in grown {
-        if (tok == "0") {
-          tok = "F:" + fields[field].name;
-        } else {
-          tok = tok + "," + fields[field].name;
-        }
-      }
-    }
-    if (mask.len() == 0) {
-      mask = tok;
-    } else {
-      mask = mask + ";" + tok;
-    }
-    i = i + 1;
-  }
-  return mask;
-}
-
-// The `own` array positions of a produced free function, as irlower's
-// own_consumed_positions spells them: a counted array parameter is one the
-// body consumes — a push that supersedes the buffer reclaims it, and the
-// exit releases what is left — where the AST lowering's pointer-element
-// protocol leaves the superseded buffer for the caller's rebind to release.
-// Its AST callers transfer their reference instead (#9407).
-pub function consumed_array_rows(key: string, f: ssasem.Func, modes: i32[]): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
-  while (i < f.params.len() && i < modes.len()) {
-    if (modes[i] == ssaunits.counted_mode()) {
-      if let typeinfo.TypeArray(_) = f.params[i] {
-        out = out.append(key + "|" + util.i32_to_string(i));
-      }
-    }
-    i = i + 1;
-  }
-  return out;
-}
 
 // A produced function whose rows caller_sigs rewrites. `name` is the key an
 // AST caller looks it up by, `<Base>.<name>` for a method. `receiver` says
@@ -6502,9 +6441,10 @@ function without_rows(rows: string[], ks: util.NameIndex, barred: boolean): stri
 function place_views(own r: irlower.LowerResult): irlower.LowerResult {
   var ops: ir.Op[] = r.ops;
   var next: i32 = r.n_locals;
+  var k_str_slice: i32 = ir.kind_id("str_slice");
   var i: i32 = 0;
   while (i < ops.len()) {
-    if (ops[i].kind_tag == ir.op_str_slice().kind_tag && ops[i].i32_imm > 0) {
+    if (ops[i].kind_tag == k_str_slice && ops[i].i32_imm > 0) {
       ops = ops.with(i, ir.op_str_slice_frame(next));
       next = next + 3;
     }

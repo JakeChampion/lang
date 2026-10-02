@@ -232,8 +232,8 @@ r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]
 check("main: docs-only since the last pass runs only perf", running(r), ["perf"]);
 r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["examples/self_host/lexer.fern"]) } }) });
 check("main: a self-host-only change skips the lanes that cannot see it",
-  [r.lanes["test-e2e-x86_64"], r.lanes["test-e2e-differential"], r.lanes["test-units"], r.lanes["test-e2e-selfhost"], r.lanes.bootstrap, r.lanes.macos],
-  [false, false, true, true, true, true]);
+  [r.lanes["test-fernsmith"], r.lanes.examples, r.lanes["test-e2e-x86_64"], r.lanes["test-e2e-differential"], r.lanes["fuzz-diff"], r.lanes["test-units"], r.lanes["test-e2e-selfhost"], r.lanes.bootstrap, r.lanes.macos],
+  [false, false, true, true, true, true, true, true, true]);
 r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["internal/checker/x.go"]) } }) });
 check("main: a compiler change runs the lanes it reaches", [r.lanes["test-units"], r.lanes["test-e2e-x86_64"], r.lanes.macos], [true, true, true]);
 check("main: the log names the base and what changed since", r.infos.some((m) => m.startsWith("last passed at m1 (") && m.endsWith("): 1 file(s) changed since")), true);
