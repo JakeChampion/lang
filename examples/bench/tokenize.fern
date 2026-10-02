@@ -30,7 +30,7 @@ function scan(src: string): i32 {
     }
     let word: str = slice_unchecked(src, start, i);
     // Keyword comparison — the strcmp-bound half.
-    if (word == "function" || word == "return" || word == "while" || word == "var" || word == "if" || word == "else") {
+    if (word == "function" || word == "return" || word == "while" || word == "let" || word == "if" || word == "else") {
       kw = kw + 1;
     }
   }

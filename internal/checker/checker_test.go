@@ -6998,7 +6998,7 @@ func TestCellElemTypeE057AnnotationPosition(t *testing.T) {
 	}{
 		{"field", "struct Point { x: i32 }\nstruct Holder {\n    c: Cell[Point],\n}\nfunction main(): i32 { return 0; }", 3, 5},
 		{"param", "struct Point { x: i32 }\nfunction f(c: Cell[Point]): i32 { return 0; }\nfunction main(): i32 { return 0; }", 2, 12},
-		{"var", "struct Point { x: i32 }\nfunction main(): i32 {\n    let c: Cell[Point] = cell_new(Point { x: 1 });\n    return 0;\n}", 3, 5},
+		{"let", "struct Point { x: i32 }\nfunction main(): i32 {\n    let c: Cell[Point] = cell_new(Point { x: 1 });\n    return 0;\n}", 3, 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

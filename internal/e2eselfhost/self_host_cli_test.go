@@ -906,7 +906,7 @@ function main(): i32 {
 			name string
 			src  string
 		}{
-			{"var", "let g: i32 = 1;\nfunction main(): i32 { return 0; }\n"},
+			{"let", "let g: i32 = 1;\nfunction main(): i32 { return 0; }\n"},
 			{"call", "print(\"hi\");\nfunction main(): i32 { return 0; }\n"},
 			{"if", "if (1 > 0) { }\nfunction main(): i32 { return 0; }\n"},
 			// The shape #2673's migration turned `function (): i32 {…}` into,

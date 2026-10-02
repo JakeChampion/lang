@@ -1307,7 +1307,7 @@ func TestFormatKeepsDiscardBindingAsUnderscore(t *testing.T) {
 	for _, tc := range []struct{ name, src, want string }{
 		{"tuple_destructure", "function t(): (i32, i32) { return (1, 2); }\nfunction f(): i32 { let (_, x) = t(); return x; }", "let (_, x) = t();"},
 		{"both_discarded", "function t(): (i32, i32) { return (1, 2); }\nfunction f(): i32 { let (_, _) = t(); return 0; }", "let (_, _) = t();"},
-		{"var", "function f(): i32 { let _ = 1; return 0; }", "let _ = 1;"},
+		{"let", "function f(): i32 { let _ = 1; return 0; }", "let _ = 1;"},
 		{"param", "function f(_: i32): i32 { return 0; }", "function f(_: i32): i32 {"},
 		{"lambda_param", "function f(): i32 { let g = (_: i32): i32 => { return 0; }; return g(1); }", "(_: i32): i32 =>"},
 	} {

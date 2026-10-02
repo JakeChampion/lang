@@ -949,7 +949,7 @@ function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
     let value: Expr = Num { value: 0 };
     let cond: Expr = Num { value: 0 };
     let body: Stmt[] = [];
-    if (expect_kw(toks, cur.get(), "var")) {
+    if (expect_kw(toks, cur.get(), "let")) {
         cur.set(cur.get() + 1);
         name = tok_ident_name(toks[cur.get()]);
         cur.set(cur.get() + 1);
@@ -1466,7 +1466,7 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
 function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
     let name: string = "";
     let value: Expr = Num { value: 0 };
-    if (expect_kw(toks, cur.get(), "var")) {
+    if (expect_kw(toks, cur.get(), "let")) {
         cur.set(cur.get() + 1);
         name = tok_ident_name(toks[cur.get()]);
         cur.set(cur.get() + 1);
@@ -1963,7 +1963,7 @@ function expect_kw(toks: Token[], pos: i32, kw: string): boolean {
 function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
     let name: string = "";
     let value: Expr = Num { value: 0 };
-    if (expect_kw(toks, cur.get(), "var")) {
+    if (expect_kw(toks, cur.get(), "let")) {
         cur.set(cur.get() + 1);
         name = tok_ident_name(toks[cur.get()]);
         cur.set(cur.get() + 1);
@@ -2177,7 +2177,7 @@ function main(): i32 {
 // Grammar:
 //
 //	program ::= stmt* ;
-//	stmt    ::= "var" name "=" expr ";"     // declaration
+//	stmt    ::= "let" name "=" expr ";"     // declaration
 //	          | "return" expr ";"            // exit
 //	          | name "=" expr ";"            // reassignment
 //	expr    ::= existing arithmetic grammar
@@ -2330,7 +2330,7 @@ function parse_stmt(toks: Token[], cur: Cell[i32]): Stmt {
     // workaround the prelude uses.
     let name: string = "";
     let value: Expr = Num { value: 0 };
-    if (expect_kw(toks, cur.get(), "var")) {
+    if (expect_kw(toks, cur.get(), "let")) {
         cur.set(cur.get() + 1);
         name = tok_ident_name(toks[cur.get()]);
         cur.set(cur.get() + 1);
@@ -5324,7 +5324,7 @@ struct TokEof   { _pad: i32 }
 type Token = TokInt | TokIdent | TokKw | TokStr | TokPunct | TokEof;
 
 function is_keyword(name: string): boolean {
-    return name == "function" || name == "var" || name == "let" ||
+    return name == "function" || name == "let" ||
            name == "if" || name == "else" || name == "while" ||
            name == "for" || name == "break" || name == "continue" ||
            name == "return" || name == "true" || name == "false" ||
@@ -5417,7 +5417,7 @@ function main(): i32 {
         _ => { return 4; },
     }
     match (toks[5]) {
-        TokKw(t) => { if (t.name != "var") { return 5; } },
+        TokKw(t) => { if (t.name != "let") { return 5; } },
         _ => { return 6; },
     }
     match (toks[6]) {
@@ -5474,7 +5474,7 @@ function main(): i32 {
     let t5: Token[] = tokenize("let x // tail");
     if (t5.len() != 3) { return 400 + t5.len(); }
     match (t5[0]) {
-        TokKw(t) => { if (t.name != "var") { return 26; } },
+        TokKw(t) => { if (t.name != "let") { return 26; } },
         _ => { return 27; },
     }
     match (t5[1]) {
@@ -5533,7 +5533,7 @@ struct TokEof   { _pad: i32 }
 type Token = TokInt | TokIdent | TokKw | TokStr | TokPunct | TokEof;
 
 function is_keyword(name: string): boolean {
-    return name == "function" || name == "var" || name == "if";
+    return name == "function" || name == "let" || name == "if";
 }
 
 function hex_value(b: i32): i32 {
@@ -5683,7 +5683,7 @@ struct TokEof   { _pad: i32 }
 type Token = TokInt | TokIdent | TokKw | TokStr | TokPunct | TokEof;
 
 function is_keyword(name: string): boolean {
-    return name == "function" || name == "var" || name == "if" ||
+    return name == "function" || name == "let" || name == "if" ||
            name == "else" || name == "while" || name == "return" ||
            name == "true" || name == "false" || name == "match" ||
            name == "type" || name == "struct" || name == "enum";
@@ -5809,7 +5809,7 @@ struct TokEof   { _pad: i32 }
 type Token = TokInt | TokIdent | TokKw | TokStr | TokPunct | TokEof;
 
 function is_keyword(name: string): boolean {
-    return name == "function" || name == "var" || name == "if" ||
+    return name == "function" || name == "let" || name == "if" ||
            name == "else" || name == "while" || name == "return" ||
            name == "true" || name == "false" || name == "match" ||
            name == "type" || name == "struct" || name == "enum";
@@ -5902,7 +5902,7 @@ function main(): i32 {
     // let s = "a\nb" ; EOF = 6 tokens
     if (toks.len() != 6) { return 100 + toks.len(); }
     match (toks[0]) {
-        TokKw(t) => { if (t.name != "var") { return 1; } },
+        TokKw(t) => { if (t.name != "let") { return 1; } },
         _ => { return 2; },
     }
     match (toks[3]) {
@@ -5976,7 +5976,7 @@ function is_ws(b: i32): boolean {
 }
 
 function is_keyword(name: string): boolean {
-    return name == "function" || name == "var" || name == "if" ||
+    return name == "function" || name == "let" || name == "if" ||
            name == "else" || name == "while" || name == "return" ||
            name == "true" || name == "false" || name == "match" ||
            name == "type" || name == "struct" || name == "enum";
@@ -6044,7 +6044,7 @@ function main(): i32 {
     // let x = 42 ; function f ( ) { return "hi" ; } EOF = 15 tokens.
     if (toks.len() != 15) { return 100 + toks.len(); }
     match (toks[0]) {
-        TokKw(t) => { if (t.name != "var") { return 1; } },
+        TokKw(t) => { if (t.name != "let") { return 1; } },
         _ => { return 2; },
     }
     match (toks[1]) {

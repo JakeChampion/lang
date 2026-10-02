@@ -252,8 +252,8 @@ var censusRows = []censusRow{
 	{"as casts", `\bas\b`, "as"},
 	{"minus-one sentinel returns", `\breturn\s+0\s*-\s*1\b`, "return"},
 	{"method decls", `\bfunction\s*\([^()]*\)\s*[A-Za-z_]`, "function"},
-	{"annotated let decls", `\bvar\s+[A-Za-z_][A-Za-z0-9_]*\s*:`, "var"},
-	{"inferred let decls", `\bvar\s+[A-Za-z_][A-Za-z0-9_]*\s*=`, "var"},
+	{"annotated let decls", `\blet\s+[A-Za-z_][A-Za-z0-9_]*\s*:`, "let"},
+	{"inferred let decls", `\blet\s+[A-Za-z_][A-Za-z0-9_]*\s*=`, "let"},
 }
 
 // incrementRe is the hand-written `x = x + 1` the index-loop dialect is built
