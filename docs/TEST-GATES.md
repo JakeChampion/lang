@@ -73,12 +73,12 @@ masking usize arithmetic to 32 bits; `TestLiftPointerWidthArithmeticIsAnAddress`
 in `internal/ssa` pins the lift half on its own.
 
 `TestBytesFloor` runs `e2eharness.BytesFloorProbe` on the same four native
-legs, `TestArm64DarwinBytesFloor` on Apple Silicon and `TestBytesFloorWasm`
-under wasmtime: a byte array filled through its data pointer and shortened
-by `__arr_set_len`, and an inline and a heap string read through
-`__str_bytes` with scratch to spill into and without. The self-host twins
-are `TestSelfHostBytesFloorX86_64` and `TestSelfHostBytesFloorArm64`, on a
-literal array since the self-host keeps a byte array one word per element.
+legs and `TestArm64DarwinBytesFloor` on Apple Silicon: a byte array filled
+through its data pointer and shortened by `__arr_set_len`, and an inline and
+a heap string read through `__str_bytes` with scratch to spill into and
+without. The self-host twins are `TestSelfHostBytesFloorX86_64` and
+`TestSelfHostBytesFloorArm64`, on a literal array, since the self-host's
+`as usize` on a `u8[]` gives the box rather than its first byte (#8799).
 The bodies written on the floor, `tcp_recv`, `tcp_send` and `udp_send`, are
 gated by every socket, serve, fetch and udp test that was already on the
 builtins, on every backend.

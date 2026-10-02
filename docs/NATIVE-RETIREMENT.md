@@ -89,11 +89,12 @@ floor, not a gap here.
 
 ## The 29 native-instrumentation tests
 
-These assert how the native RC implementation behaves, through probes the
+These asserted how the native RC implementation behaves, through probes the
 self-host either does not have or answers with its own figures. Every
-property they hold has a self-host gate in `internal/e2eselfhost`; the tests
-go with the backends, in the re-point PR, each with the gate that covers it
-named in the commit.
+property they held has a self-host gate in `internal/e2eselfhost`, and they
+were deleted in the re-point (step 3). The x86-64 and wasm twins of the four
+cliff tests stay until the direct-caller PRs: they compile with the Go
+emitters (`compileAndRunX86_64FreeOn`, `runWasm`), not through the helpers.
 
 | tests | probe | self-host gate |
 |---|---|---|
@@ -128,13 +129,18 @@ group is one PR, after the re-point.
    it until then. Nothing in this list is a tracking entry: the re-point
    cannot land with a red test in it, and `CLAUDE.md` forbids an allowlist
    to make it land.
-3. **The re-point PR.** The three helpers compile with the current self-host
-   (the shape is in this doc's history: a `compileSelfHostProgram` that runs
-   `fern -target <t> -o <bin> main.fern <stdlib>` with the CLI from
-   `CachedDriverBinFor(dir, "fern.fern", TargetX86_64Linux)`;
-   `FERN_HIGH_HEAP=1` in the compiler's environment for the high-heap gate).
-   The 29 native-instrumentation tests go in the same PR. The sweep is green
-   before it opens.
+3. **DONE: the re-point.** The three helpers compile with the current
+   self-host: `compileSelfHostProgram` runs
+   `fern -target <t> -o <bin> main.fern <stdlib>` with `fern.fern` built by
+   the pin for the host's own target, and `FERN_HIGH_HEAP=1` in the
+   compiler's environment for the high-heap gate. The 29
+   native-instrumentation tests went with it, and so did three that pin
+   native's reading of `b as usize` on a `u8[]` as the address of its first
+   byte, which #8799 leaves open: `TestBytesFloorWasm` and the x86-64 and
+   arm64 legs of the `__memcpy` size-class test. `TestArrayGrowSizeOverflowAborts`
+   keeps only its wasm leg: the Linux legs pinned native's refusal of a
+   request past 32 bits, where the self-host sizes it in 64 bits and runs
+   the program to its answer.
 4. **The direct-caller PRs**, one per row of the table above, the wit and
    preview-3 measurement first since it is the one with an open question.
 5. **The deletions.** `internal/codegen/{x86_64,arm64,wasmbin,x86_64ssa,arm64ssa}`,
@@ -151,7 +157,7 @@ group is one PR, after the re-point.
 CI lanes keep their names: `test-e2e-x86_64`, `test-e2e-arm64` and
 `test-e2e-wasm` select by target prefix, which stays the right split when the
 target is compiled by the self-host. The "native test runners" wording, the
-`FERN_NATIVE_ASM` fixture leg go in step 5. The `drop-selfhost-sources` step
-and the lane table's `examples/self_host/**` ignore go in step 3: from then
-on every e2e lane builds `fern.fern` once from the driver cache, and a
-self-host change runs them.
+`FERN_NATIVE_ASM` fixture leg go in step 5. Since step 3 every `internal/e2e`
+lane builds `fern.fern` once from the driver cache, and a self-host change
+runs them; `test-fernsmith` and `examples` never read the self-host and keep
+skipping a change to it.
