@@ -23,6 +23,10 @@
 // leaves the origin; an idempotent request the peer resets before
 // answering is sent once more. No TLS yet (`https` fails with `Tls`), no
 // pool: each request is one connection sent with `Connection: close`.
+// The client asks for `gzip` unless the caller wrote an `Accept-Encoding`
+// of their own, and undoes the coding it asked for under `Decoding`'s
+// depth and ratio and the body cap, so a caller sees the bytes the
+// origin meant and a hostile origin cannot inflate past the bounds.
 //
 // The two routes differ in what they may reach. `plat.http` refuses a
 // host that resolves to an address `net.is_global` does not admit
@@ -54,6 +58,7 @@ import "std/url";
 import "std/dns";
 import "std/net";
 import "std/base64";
+import "std/deflate";
 import "core/int";
 
 // ipv4(a, b, c, d) — pack a dotted-quad into the network-byte-order
@@ -85,7 +90,10 @@ pub enum Phase { Connecting, Inactivity, Total }
 // cannot read, with what was wrong; `Io` for a send or read the kernel
 // refused; `Redirect` for a redirect the client would not follow: more
 // hops than `Request.redirects`, a 3xx without a `Location`, or one that
-// is not a URL; `BodyLimit` for a body past `HttpLimits.body`;
+// is not a URL; `BodyLimit` for a body past `HttpLimits.body`, decoded or
+// not; `Decode` for a content coding the client could not undo: more
+// codings than `Decoding.depth`, a body that is not gzip, or one grown
+// past `Decoding.ratio`;
 // `Cancelled` for a request abandoned by its caller, part of the sum so a
 // match written today survives the client growing cancellation; this
 // client does not produce it yet.
@@ -101,6 +109,7 @@ pub enum FetchError {
   Io(net.NetError),
   Redirect(string),
   BodyLimit,
+  Decode(string),
   Cancelled,
 }
 
@@ -163,6 +172,9 @@ function __later_message(e: FetchError): string {
     BodyLimit => {
       return "response body past its limit";
     },
+    Decode(what) => {
+      return "decode: " + what;
+    },
     Cancelled => {
       return "cancelled";
     },
@@ -199,13 +211,25 @@ pub function timeouts(): Timeouts {
 // `limits.body`, the status line is capped by `limits.request_line`),
 // and `redirects`, the most 3xx hops `send` follows (0 answers the 3xx
 // as data).
-pub struct Request { method: string, url: string, headers: HeaderMap, body: Body, timeouts: Timeouts, limits: http.HttpLimits, redirects: i32 }
+pub struct Request { method: string, url: string, headers: HeaderMap, body: Body, timeouts: Timeouts, limits: http.HttpLimits, redirects: i32, decoding: Decoding }
+
+// `Decoding` — what the client undoes in a response body: `depth`, how
+// many content codings it undoes (each one `gzip`), 0 for none, and then
+// it asks for none either; `ratio`, the most a body may grow in decoding,
+// as a multiple of its encoded size. The decoded body is bounded by
+// `limits.body` as any body is.
+pub struct Decoding { depth: i32, ratio: i32 }
+
+// `decoding()` — one coding undone, a body allowed to grow a hundredfold.
+pub function decoding(): Decoding {
+  return Decoding { depth: 1, ratio: 100 };
+}
 
 // `request(method, url)` — a request with no headers and no body, the
-// default bounds, and ten redirects.
+// default bounds, ten redirects and the default decoding.
 pub function request(method: string, url: string): Request {
   var none: u8[] = [];
-  return Request { method: method, url: url, headers: headers.header_map_new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.http_limits(), redirects: 10 };
+  return Request { method: method, url: url, headers: headers.header_map_new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.http_limits(), redirects: 10, decoding: decoding() };
 }
 
 // `get(url)` — `request("GET", url)`.
@@ -249,6 +273,12 @@ pub function (r: Request) with_limits(l: http.HttpLimits): Request {
 // redirects; 0 answers a 3xx as the response it is.
 pub function (r: Request) with_redirects(hops: i32): Request {
   return Request { ...r, redirects: hops };
+}
+
+// `(r: Request).with_decoding(d)` — `r` undoing content codings as `d`
+// says; `Decoding { depth: 0, ... }` asks for none and undoes none.
+pub function (r: Request) with_decoding(d: Decoding): Request {
+  return Request { ...r, decoding: d };
 }
 
 // `(r: HttpResponse).ok_or_status()` — `Ok(r)` for a 2xx status, else
@@ -418,13 +448,32 @@ function __head(req: Request, t: __Target, body_len: i32): string {
     }
     i = i + 1;
   }
+  return out + __client_fields(req, t, body_len) + "Connection: close\r\n\r\n";
+}
+
+// `__client_fields(req, t, body_len)` — the fields the client decides:
+// the body's length (always for a method that usually carries one), the
+// `Accept-Encoding: gzip` it undoes itself, and the proxy's credentials
+// when the caller wrote none.
+function __client_fields(req: Request, t: __Target, body_len: i32): string {
+  var out: string = "";
   if (body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
     out = out + "Content-Length: " + int.int_to_string(body_len) + "\r\n";
   }
-  if (t.proxy_auth.len() > 0 && !__holds(fields.names, "proxy-authorization")) {
+  if (__asks_gzip(req)) {
+    out = out + "Accept-Encoding: gzip\r\n";
+  }
+  if (t.proxy_auth.len() > 0 && !__holds(req.headers.names, "proxy-authorization")) {
     out = out + "Proxy-Authorization: " + t.proxy_auth + "\r\n";
   }
-  return out + "Connection: close\r\n\r\n";
+  return out;
+}
+
+// `__asks_gzip(req)` — whether the client writes `Accept-Encoding: gzip`
+// for `req`, and so undoes the coding: a depth above 0 and no
+// `Accept-Encoding` of the caller's own, whose codings are theirs to undo.
+function __asks_gzip(req: Request): boolean {
+  return req.decoding.depth > 0 && !__holds(req.headers.names, "accept-encoding");
 }
 
 // `send(req)` — the request sent and its response read, as the module
@@ -707,7 +756,7 @@ function __read_response(sock: i32, req: Request, started: i64): Result[HttpResp
       Complete(framed) => {
         var next: i32 = __after_interim(framed, from, req.limits)?;
         if (next < 0) {
-          return Ok(HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) });
+          return __decoded(HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) }, req);
         }
         from = next;
         continue;
@@ -752,6 +801,88 @@ function __closed_early(got: i32): FetchError {
     return Io(net.ConnectionReset);
   }
   return Protocol("the connection closed before the response ended");
+}
+
+// `__decoded(resp, req)` — `resp` with its content codings undone when
+// the client asked for them: a `Content-Encoding` of `gzip` (or
+// `x-gzip`) codings, each undone in turn from the last applied, under
+// `req.decoding.depth`, `req.decoding.ratio` and `req.limits.body`, the
+// `Content-Encoding` and `Content-Length` fields then dropped since
+// neither describes the body any more. A body with no coding, an empty
+// one (a HEAD or 204 answer may still name a coding), and a coding the
+// client did not ask for are handed back as they came.
+function __decoded(resp: HttpResponse, req: Request): Result[HttpResponse, FetchError] {
+  var codings: string[] = __codings(resp.headers);
+  var body: u8[] = resp.body_bytes();
+  if (!__asks_gzip(req) || codings.len() == 0 || body.len() == 0 || !__all_gzip(codings)) {
+    return Ok(resp);
+  }
+  if (codings.len() > req.decoding.depth) {
+    return Err(Decode("content codings past the depth of " + int.int_to_string(req.decoding.depth)));
+  }
+  var left: i32 = codings.len();
+  while (left > 0) {
+    body = __gunzipped(body, req)?;
+    left = left - 1;
+  }
+  return Ok(HttpResponse { ...resp, body: BodyBytes(body), headers: __without(resp.headers, ["content-encoding", "content-length"]) });
+}
+
+// `__codings(h)` — the `Content-Encoding` codings in the order applied,
+// each trimmed and case-folded, `identity` dropped.
+function __codings(h: HeaderMap): string[] {
+  var out: string[] = [];
+  for v in h.get_all("content-encoding") {
+    for c in v.split(",") {
+      var name: string = c.trim().to_lower();
+      if (name.len() > 0 && name != "identity") {
+        out = out.append(name);
+      }
+    }
+  }
+  return out;
+}
+
+// `__all_gzip(codings)` — whether every coding is one the client asked
+// for.
+function __all_gzip(codings: string[]): boolean {
+  for c in codings {
+    if (c != "gzip" && c != "x-gzip") {
+      return false;
+    }
+  }
+  return true;
+}
+
+// `__gunzipped(body, req)` — one gzip coding undone, under the body cap
+// and the ratio.
+function __gunzipped(body: u8[], req: Request): Result[u8[], FetchError] {
+  match (deflate.gunzip(body, req.limits.body)) {
+    Ok(out) => {
+      if (out.len() as i64 > body.len() as i64 * (req.decoding.ratio as i64)) {
+        return Err(Decode("a body past " + int.int_to_string(req.decoding.ratio) + " times its encoded size"));
+      }
+      return Ok(out);
+    },
+    Err(e) => {
+      return Err(__undecodable(e));
+    }
+  }
+  return Ok(body);
+}
+
+// `__undecodable(e)` — the decoder's refusal as a `FetchError`: the
+// output cap is the body cap, anything else is a `Decode`.
+function __undecodable(e: deflate.InflateError): FetchError {
+  match (e) {
+    deflate.OutputLimit => {
+      return BodyLimit;
+    },
+    _ => {
+      return Decode("a gzip body that does not decode: " + e.message());
+    }
+  }
+  return BodyLimit;
 }
 
 // `__after_interim(framed, from, limits)` — where the response behind an
