@@ -135,6 +135,24 @@ pub function (b: BufWriter) write_string(s: string): BufWriter {
   return b.flush();
 }
 
+// Append raw bytes, bypassing the buffer for a full block when it is empty.
+pub function (b: BufWriter) write_bytes(bytes: u8[]): BufWriter {
+  if (buf_len(b.buf) == 0 && bytes.len() >= b.cap) {
+    return __buf_writer_put_bytes(b, bytes);
+  }
+  buf_push_bytes_range(b.buf, bytes, 0, bytes.len());
+  return b.settle();
+}
+
+// Append a clamped raw range without allocating an intermediate array.
+pub function (b: BufWriter) write_bytes_range(bytes: u8[], lo: i32, hi: i32): BufWriter {
+  if (lo <= 0 && hi >= bytes.len()) {
+    return b.write_bytes(bytes);
+  }
+  buf_push_bytes_range(b.buf, bytes, lo, hi);
+  return b.settle();
+}
+
 // `(b).write_range(s, lo, hi)` — append `s[lo:hi]` without building the
 // substring first. The shape every line-oriented utility's output loop is
 // made of, and the reason the builder carries a range push at all.
@@ -265,7 +283,7 @@ pub function (b: BufWriter) flush(): BufWriter {
   }
   // The take rewinds the builder, so a sticky error still discards the
   // bytes the fd has already refused, as it did before.
-  return __buf_writer_put_bytes(b, buf_take_bytes(b.buf));
+  return __buf_writer_flush_bytes(b, buf_take_bytes(b.buf));
 }
 
 // `(b).close()` — flush, then close the Writer: fclose. The error is the
@@ -341,7 +359,7 @@ function __buf_writer_put(b: BufWriter, s: string): BufWriter {
 
 // Buffered content can end inside a scalar or contain arbitrary mapped bytes.
 // Keep it in the byte domain and retain the same first-error behavior.
-function __buf_writer_put_bytes(b: BufWriter, own bytes: u8[]): BufWriter {
+function __buf_writer_put_bytes(b: BufWriter, bytes: u8[]): BufWriter {
   match (b.err) {
     Some(_) => {
       return b;
@@ -356,6 +374,11 @@ function __buf_writer_put_bytes(b: BufWriter, own bytes: u8[]): BufWriter {
       return b;
     }
   }
+}
+
+// Flush transfers an extracted buffer; direct writes only borrow caller data.
+function __buf_writer_flush_bytes(b: BufWriter, own bytes: u8[]): BufWriter {
+  return __buf_writer_put_bytes(b, bytes);
 }
 
 // ---- ByteLineReader --------------------------------------------------------

@@ -881,6 +881,22 @@ the end and byte values outside 0..255 return `-1`. Packed native arrays use
 the existing vector scan kernels. The self-hosted compiler's unpacked arrays
 use a bounded slot scan, including its four-byte WebAssembly element slots.
 
+`__rmemchr_bytes(bytes, byte, from)` searches backward in a borrowed array.
+Oversized starts clamp to the final index; negative starts and invalid
+needles return `-1`. It shares the packed native vector kernels and uses
+bounded slot scans for unpacked arrays.
+
+`__count_byte_bytes(bytes, byte)` counts matches in borrowed byte arrays
+without allocating or constructing text. Invalid byte values return zero.
+Packed native arrays reuse vector kernels; unpacked arrays use bounded
+element-slot scans.
+
+`head` and `tail` use raw byte input, delimiter scans and output. Their
+shared hold retains input blocks with a 64-bit byte count and releases
+consumed blocks without repeatedly copying long records. Target checks and
+allocation censuses pass; the remaining validation and measurement gates are
+recorded in [the byte-stream report](STRING-BYTE-STREAMS-2026-10-02.md).
+
 `Reader.read_chunk_bytes(n): Result[u8[], IoError]` provides owned raw input
 on the bootstrap interpreter and native/wasm backends, and on the self-hosted
 native and wasm command-module backends. It preserves NUL, malformed UTF-8
@@ -939,10 +955,16 @@ writes on those stdio handles. File-handle opening in that interpreter remains
 outside this bridge. They never construct an unchecked string. Borrowed views
 must be materialized before calling this owned-array signature.
 
-`BufWriter.flush()` extracts an owned byte array and consumes it after writing.
+`BufWriter.flush()` extracts an owned byte array and releases it after writing.
 Byte writes, mappings and ranges can therefore flush arbitrary bytes or partial
 scalar encodings without constructing a string. Direct string writes retain
 their fast path; sticky write errors and close-error precedence are unchanged.
+`BufWriter.write_bytes` borrows a raw array and retains the direct-write path
+for a full block when its buffer is empty. `write_bytes_range` appends a
+clamped byte range without constructing a temporary array. The write helper
+borrows its input; a consuming adapter releases flush's extracted buffer
+after the write returns. The shared writer corpus checks both paths,
+clamped/inverted ranges, retained aliases and sticky errors.
 
 The socket TRANSPORT followed. `tcp_recv_deadline` returns
 `Option[u8[]]`, and `std/fetch` is byte-domain end to end —
