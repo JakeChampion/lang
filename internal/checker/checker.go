@@ -2911,6 +2911,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// these answer the separate question `id -r` asks.
 	//
 	// Neither can fail, for the same reason geteuid / getegid cannot.
+	// __getpwuid_name(uid): the account database's name for `uid` as the
+	// address of a NUL-terminated C string, or 0. Only arm64-darwin asks:
+	// there regular accounts live in Directory Services, not /etc/passwd,
+	// and libSystem's getpwuid(3) is the way in (#9815). Every other
+	// target answers 0, which sends the caller to the files.
+	c.info.FuncSigs["__getpwuid_name"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: false}},
+		Result: ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"},
+	}
 	c.info.FuncSigs["getuid"] = &ast.FuncType{
 		Params: nil,
 		Result: ast.NumberType{Width: 32, Signed: false},

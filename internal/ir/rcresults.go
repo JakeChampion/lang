@@ -566,6 +566,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_handle_isatty": true,
 	"process_alive":        true,
 	"geteuid":              true, "getegid": true, "getuid": true, "getgid": true,
+	"__getpwuid_name": true,
 	// The builder's handle is an opaque token indexing its own control
 	// block, not a counted header, and its length is a byte count — the
 	// two cases `rWord` cannot tell apart on its own.

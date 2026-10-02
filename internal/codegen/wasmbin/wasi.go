@@ -2819,6 +2819,12 @@ func buildIsattyBody(idxs map[string]uint32) []byte {
 // it selects plain text, which is right for every embedder that
 // captures the component's output, and `FORCE_COLOR` remains the way to
 // ask for escapes anyway.
+func buildGetpwuidNameBody(map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 func buildIsattyBodyP2(map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstI32Const(body, 0)

@@ -417,7 +417,7 @@ var rcInertBuiltins = map[string]bool{
 	// here under the builtin names.
 	"priority": true, "set_priority": true,
 	"geteuid": true, "getegid": true, "hostname": true,
-	"getuid": true, "getgid": true,
+	"getuid": true, "getgid": true, "__getpwuid_name": true,
 	// `getgroups` has no arguments either, and it is classified here
 	// under the BUILTIN name rather than as `__fern_getgroups`: the
 	// runtime tables are the WASM registry's, and wasm has no users, so
