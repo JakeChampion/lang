@@ -24,7 +24,7 @@ func testComponentLongWrites(t *testing.T, compiler string, runner []string, std
   while (i < 8193) { s = s + "x"; i = i + 1; }
   let w = ` + stream + `();
   match (w.write(s)) { Some(_) => { return 1; }, None => {} }
-  match (w.write_some(s)) { Err(_) => { return 2; }, Ok(n) => { if (n != 8193) { return 3; } } }
+  match (w.write_some(s)) { Err(_) => { return 2; }, Ok(n) => { if (n != 4096) { return 3; } } }
   return 0;
 }`
 			if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
@@ -45,7 +45,8 @@ func testComponentLongWrites(t *testing.T, compiler string, runner []string, std
 			if stream == "stderr" {
 				data, empty = stderr.String(), stdout.String()
 			}
-			if data != strings.Repeat("x", 16386) || empty != "" {
+			// write_some moves one 4096-byte chunk, as native's preview-2 body does.
+			if data != strings.Repeat("x", 8193+4096) || empty != "" {
 				t.Fatalf("output differs: data=%d other=%d", len(data), len(empty))
 			}
 		})

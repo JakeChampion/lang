@@ -24,12 +24,14 @@ func TestSelfHostReaderBytes(t *testing.T) {
 	}
 }
 
-// Primary components do not yet provide stdin, including the existing text
-// Reader operations. Keep the refusal explicit until their Preview 2 imports
-// and resource lifecycle are implemented; core WASM execution is tested above.
-func testReaderBytesComponentRefusal(t *testing.T, compiler string, runner []string, stdlib string) {
+// The same program as a preview-2 component, whose stdin() reads wasi:cli/stdin
+// through the component's handle table (#11110).
+func testReaderBytesComponent(t *testing.T, compiler string, runner []string, stdlib string) {
 	t.Helper()
 	t.Run("component", func(t *testing.T) {
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("requires wasmtime")
+		}
 		dir := t.TempDir()
 		src, bin := filepath.Join(dir, "reader.fern"), filepath.Join(dir, "reader.wasm")
 		if err := os.WriteFile(src, []byte(e2eharness.ReaderBytesProgram), 0o644); err != nil {
@@ -37,15 +39,20 @@ func testReaderBytesComponentRefusal(t *testing.T, compiler string, runner []str
 		}
 		cmd := runX86_64Bin(runner, compiler, "-target", "wasm32-wasi", src, stdlib, "-o", bin)
 		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
-		if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "read_chunk_bytes is not supported in a wasm component") {
-			t.Fatalf("expected explicit unsupported-component diagnostic: %v\n%s", err, out)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("component build: %v\n%s", err, out)
+		}
+		run := exec.Command("wasmtime", "run", bin)
+		run.Stdin = bytes.NewReader(e2eharness.ReaderBytesInput())
+		if out, err := run.CombinedOutput(); err != nil {
+			t.Fatalf("reader bytes component: %v\n%s", err, out)
 		}
 	})
 }
 
-func TestSelfHostReaderBytesComponentRefusal(t *testing.T) {
+func TestSelfHostReaderBytesComponent(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	testReaderBytesComponentRefusal(t, cli.bin, cli.runner, cli.stdlib)
+	testReaderBytesComponent(t, cli.bin, cli.runner, cli.stdlib)
 }
 
 func TestSelfHostReaderBytesOwnership(t *testing.T) {
@@ -101,5 +108,5 @@ func TestSelfHostArm64DarwinReaderBytes(t *testing.T) {
 			}
 		})
 	}
-	testReaderBytesComponentRefusal(t, cli, nil, stdlib)
+	testReaderBytesComponent(t, cli, nil, stdlib)
 }
