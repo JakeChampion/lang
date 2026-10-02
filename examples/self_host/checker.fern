@@ -2502,15 +2502,24 @@ function (s: Scope) with_block_ret(rt: typeinfo.Type): Scope {
   return Scope { ...s, ret_type: rt };
 }
 
-// Linear scan — newest binding wins so shadowing works
-// naturally in a single flat scope.
-function (s: Scope) lookup(name: string): typeinfo.Type {
+// binding_index is the index of `name`'s newest binding, -1 for none: a
+// linear scan from the end, so shadowing works naturally in a single flat
+// scope.
+function (s: Scope) binding_index(name: string): i32 {
   let i: i32 = s.names.len() - 1;
   while (i >= 0) {
     if (s.names[i] == name) {
-      return s.types[i];
+      return i;
     }
     i = i - 1;
+  }
+  return 0 - 1;
+}
+
+function (s: Scope) lookup(name: string): typeinfo.Type {
+  let i: i32 = s.binding_index(name);
+  if (i >= 0) {
+    return s.types[i];
   }
   return t_unknown("undefined identifier:" + name);
 }
@@ -2519,14 +2528,7 @@ function (s: Scope) lookup(name: string): typeinfo.Type {
 // lookup's unknown result conflates "bound opaquely" with "not bound", and
 // the function-value shadowing question needs the difference.
 function (s: Scope) is_bound(name: string): boolean {
-  let i: i32 = s.names.len() - 1;
-  while (i >= 0) {
-    if (s.names[i] == name) {
-      return true;
-    }
-    i = i - 1;
-  }
-  return false;
+  return s.binding_index(name) >= 0;
 }
 
 // lookup_assoc_sig finds the associated function `field` of the type `tyname`:
@@ -5981,9 +5983,9 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
 }
 
 function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
-  let bound: typeinfo.Type = s.lookup(id.name);
-  if (!is_unknown(bound)) {
-    return bound;
+  let bi: i32 = s.binding_index(id.name);
+  if (bi >= 0 && !is_unknown(s.types[bi])) {
+    return s.types[bi];
   }
   // Fallback (#4346 piece 2): a bare no-payload enum variant used as
   // a value types to its enum's union. A local of the same name
@@ -6031,7 +6033,7 @@ function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
   // unknown return conflates the two, and resolving the shadowed name
   // to the function turned `Some(pair) => pair.0` into an E043 inside
   // std the moment a user function was named `pair`.
-  if (csig.name.len() > 0 && !s.is_bound(id.name)) {
+  if (csig.name.len() > 0 && bi < 0) {
     // A generic one is E040 (generic_fn_value_diag); typing it would hand
     // an uninstantiated signature to whatever reads the value.
     if (generic_fn_value(csig)) {
@@ -6039,7 +6041,10 @@ function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
     }
     return t_func_own(csig.param_types, csig.param_own, csig.ret_type);
   }
-  return bound;
+  if (bi >= 0) {
+    return s.types[bi];
+  }
+  return t_unknown("undefined identifier:" + id.name);
 }
 
 function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
