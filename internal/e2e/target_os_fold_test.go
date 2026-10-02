@@ -134,3 +134,24 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		t.Fatalf("-target wasm32-wasi-http: %v\n%s", err, msg)
 	}
 }
+
+// An if-expression on a literal condition is a value: both arms stay for
+// the lowering to read, while a statement `if` inside an arm is pruned to
+// the arm it takes. Both compilers run it (the arm64 lane compiles with the
+// self-host compiler too).
+func TestIfExpressionOnLiteralKeepsItsArms(t *testing.T) {
+	src := `function main(): i32 {
+    var n: i32 = if (false) { 1 } else if (true) {
+        var k: i32 = 0;
+        if (true) { k = 7; } else { k = 8; }
+        var j: i32 = if (false) { k } else { k + 1 };
+        j
+    } else { 4 };
+    var m: i64 = if (true) { 1000000 as i64 * 1234567 as i64 } else { 0 };
+    if (n == 8 && m == 1234567000000) { return 0; }
+    return 1;
+}`
+	if _, code := compileAndRunArm64(t, src); code != 0 {
+		t.Errorf("if-expression chain on literals got %d, want 0", code)
+	}
+}

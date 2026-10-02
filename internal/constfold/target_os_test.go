@@ -132,3 +132,38 @@ func TestFoldWithPrunesTargetBranches(t *testing.T) {
 		}
 	}
 }
+
+// An if-expression is a value, read with both arms: a branch on the
+// target folds the call in its condition and keeps every arm, and only the
+// statements inside an arm are pruned. The self-host prune reads the same
+// rule off the closure the expression desugars to.
+func TestFoldWithKeepsIfExpressionArms(t *testing.T) {
+	prog, err := parser.Parse(`function main(): i32 {
+    var n: i32 = if (target_os() == "linux") { 1 } else { 2 };
+    return n;
+}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := FoldWith(prog, Inputs{TargetOS: "linux"}); err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	found := 0
+	ast.WalkProgram(prog, func(node ast.Node) bool {
+		x, ok := node.(*ast.IfExpr)
+		if !ok {
+			return true
+		}
+		found++
+		if x.Else == nil {
+			t.Error("if-expression lost its else arm")
+		}
+		return true
+	})
+	if found != 1 {
+		t.Fatalf("found %d if-expressions, want 1", found)
+	}
+	if left := targetOSCalls(prog); left != 0 {
+		t.Fatalf("%d target_os() calls survived the fold", left)
+	}
+}

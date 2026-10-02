@@ -369,8 +369,52 @@ function prune_block(body: ast.Stmt[]): ast.Stmt[] {
   return out;
 }
 
+// keep_expr claims the closure an if-expression desugars to (ORIGIN_IF_EXPR):
+// its if-chain is the value, which the typed lowering reads with both arms,
+// so no arm of the chain is dropped; the statements inside the arms are
+// pruned as any block. Every other expression is walked.
 function keep_expr(e: ast.Expr, a: i32): (ast.Expr, i32, boolean) {
+  match (e) {
+    ast.ExprLambda(lm) => {
+      if (lm.origin == parser.ORIGIN_IF_EXPR) {
+        return (ast.ExprLambda { ...lm, body: prune_arm(lm.body) }, a, true);
+      }
+      return (e, a, false);
+    },
+    _ => {
+      return (e, a, false);
+    }
+  }
   return (e, a, false);
+}
+
+// prune_arm prunes one arm of an if-expression: its leading statements as a
+// block, its last — the arm's value, an `else if` chain included — with the
+// chain's conditions folded and every arm kept.
+function prune_arm(body: ast.Stmt[]): ast.Stmt[] {
+  if (body.len() == 0) {
+    return body;
+  }
+  var leading: ast.Stmt[] = [];
+  var i: i32 = 0;
+  while (i < body.len() - 1) {
+    leading = leading.append(body[i]);
+    i = i + 1;
+  }
+  var out: ast.Stmt[] = prune_block(leading);
+  var last: ast.Stmt = body[body.len() - 1];
+  match (last) {
+    ast.StmtIf(f) => {
+      return out.append(ast.StmtIf { ...f, cond: fold_expr(f.cond), then_body: prune_arm(f.then_body), else_body: prune_arm(f.else_body) });
+    },
+    _ => {
+      for st in prune_block([last]) {
+        out = out.append(st);
+      }
+      return out;
+    }
+  }
+  return out;
 }
 
 // prune_stmt claims every `if`: its condition folded, the arm not taken
