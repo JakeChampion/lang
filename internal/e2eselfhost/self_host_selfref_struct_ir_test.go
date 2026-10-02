@@ -6,7 +6,7 @@ import "testing"
 // mutually-recursive) structs — `struct Node { v: i32, next: Node[] }` and the
 // like, the shape behind linked lists / trees / ASTs.
 //
-// The leak-safety gate (irlower.decl_is_leaksafe_d) walks a struct's field type
+// The leak-safety gate (fnsigs.decl_is_leaksafe_d) walks a struct's field type
 // graph to decide whether it can take the IR path in leak mode (no RC; the boxes
 // leak with the struct, matching the AST path's exit codes). It used a depth cap
 // to avoid looping on cyclic type graphs, which also rejected legitimate

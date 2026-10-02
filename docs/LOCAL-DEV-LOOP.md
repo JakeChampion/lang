@@ -227,7 +227,7 @@ indexes as well: 227 G to 216 G with the stage0 pin at c891ebc
 round took the function-table scan of `asmcore.infer_call_named_type`
 (1.5%), the per-kill copy of the escape set in `irlower.noesc_set_kill` and
 the prefix-by-slice compares (`semtypes.is_env` 0.9%) and the
-borrowable registry's 251 buckets (`irlower.param_is_borrowable` 1.7%) with
+borrowable registry's 251 buckets (`fnsigs.param_is_borrowable` 1.7%) with
 it: 214 G to 207 G on the base of 0d7a8d32
 (`docs/rc-log/2026-10-02-g-a-table-scan-a-copied-set-and-sliced-prefixes.md`).
 A fourth round handed the emit state to `asmcore.add_string_lit` owned,

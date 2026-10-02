@@ -15,7 +15,7 @@ import "./util";
 import "./parser";
 import "./rundriver";
 import "./ir";
-import "./irlower";
+import "./irtables";
 import "./ircore";
 import "./semlower";
 import "./asm_ir";
@@ -23,10 +23,10 @@ import "./asm_arm64_ir";
 import "./wasm_ir";
 import "./asmcore";
 
-struct Rebuilt { cache: irlower.LowerResult[], i64s: i32, f64s: i32 }
+struct Rebuilt { cache: irtables.LowerResult[], i64s: i32, f64s: i32 }
 
-function rebuild(cache: irlower.LowerResult[]): Rebuilt {
-  var out: irlower.LowerResult[] = [];
+function rebuild(cache: irtables.LowerResult[]): Rebuilt {
+  var out: irtables.LowerResult[] = [];
   var n64: i32 = 0;
   var nf: i32 = 0;
   for r in cache {
@@ -42,7 +42,7 @@ function rebuild(cache: irlower.LowerResult[]): Rebuilt {
       }
       ops = ops.append(no);
     }
-    out = out.append(irlower.LowerResult { ...r, ops: ops });
+    out = out.append(irtables.LowerResult { ...r, ops: ops });
   }
   return Rebuilt { cache: out, i64s: n64, f64s: nf };
 }

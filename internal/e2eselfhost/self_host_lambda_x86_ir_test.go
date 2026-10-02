@@ -9,7 +9,7 @@ import (
 )
 
 // TestSelfHostLambdaX86IR is the x86-64 gate for closures slice 2a: a no-capture
-// lambda passed directly as a call argument. irlower.lift_lambdas hoists it to a
+// lambda passed directly as a call argument. lift.lift_lambdas hoists it to a
 // top-level __lam_<k> function and rewrites the argument to a bare reference, so
 // it lowers through slice 1's const_func/call_indirect with no new IR ops. Pinned
 // to hardcoded oracle exit codes via the asm_ir_run `-ir` path.

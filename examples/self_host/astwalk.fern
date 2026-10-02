@@ -583,7 +583,7 @@ pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.St
 //
 // map_expr_acc / map_stmt_acc / map_stmts_acc are map_expr's state-threading
 // twin: the walk hands back a NEW TREE and an accumulator, for the rewrite
-// passes that also build something as they go — irlower's env-box lift is the
+// passes that also build something as they go — lift's env-box lift is the
 // archetype, accumulating the hoisted `$cloN` functions and the counter that
 // names them.
 //

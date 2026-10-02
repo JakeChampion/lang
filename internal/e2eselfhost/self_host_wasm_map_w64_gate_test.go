@@ -17,14 +17,14 @@ import (
 // bitmask of the ops whose unit does not record the need, plus the narrow get
 // whose unit must not.
 const mapW64GateDriver = `import "./ir";
-import "./irlower";
+import "./irtables";
 import "./util";
 import "./wasm_ir";
 
-function unit(o: ir.Op): irlower.LowerResult[] {
-    return [irlower.LowerResult { ok: true, why: "", ops: [o], n_locals: 0,
+function unit(o: ir.Op): irtables.LowerResult[] {
+    return [irtables.LowerResult { ok: true, why: "", ops: [o], n_locals: 0,
         n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
-        f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_i32() }];
+        f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irtables.result_i32() }];
 }
 
 function records(o: ir.Op): boolean {
@@ -55,7 +55,7 @@ function main(): i32 {
 func TestSelfHostWasmMapW64GateCountsEveryWideOp(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern")
 	if err := os.WriteFile(filepath.Join(dir, "map_w64_gate.fern"), []byte(mapW64GateDriver), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -92,14 +92,14 @@ func TestSelfHostWasmMapW64GateCountsEveryWideOp(t *testing.T) {
 // key-wide flag on keys, iter and the iterator's key read — has to record
 // @uses_map_k64 on its own unit, and a narrow-keyed get must not.
 const mapK64GateDriver = `import "./ir";
-import "./irlower";
+import "./irtables";
 import "./util";
 import "./wasm_ir";
 
-function unit(o: ir.Op): irlower.LowerResult[] {
-    return [irlower.LowerResult { ok: true, why: "", ops: [o], n_locals: 0,
+function unit(o: ir.Op): irtables.LowerResult[] {
+    return [irtables.LowerResult { ok: true, why: "", ops: [o], n_locals: 0,
         n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
-        f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_i32() }];
+        f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irtables.result_i32() }];
 }
 
 function records(o: ir.Op): boolean {
@@ -133,7 +133,7 @@ function main(): i32 {
 func TestSelfHostWasmMapK64GateCountsEveryWideKeyOp(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern")
 	if err := os.WriteFile(filepath.Join(dir, "map_k64_gate.fern"), []byte(mapK64GateDriver), 0o644); err != nil {
 		t.Fatal(err)
 	}

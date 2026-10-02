@@ -20131,7 +20131,7 @@ function e021_object_unsafe_assoc(mod: parser.Module, trait_name: string, dyn_sp
 // e021_dyn_local_at is the statement half of that walk: a `var` whose
 // annotation names a dyn trait contributes that trait. It closes over nothing,
 // so it is a top-level function rather than a nested one — the convention
-// irlower's assign-targets visitors already follow, and what keeps the feature
+// irtables' assign-targets visitors already follow, and what keeps the feature
 // census's closure count measuring closures.
 function e021_dyn_local_at(st: ast.Stmt, own a: string[]): string[] {
   match (st) {
@@ -20461,7 +20461,7 @@ function e060_decl_is_plain_struct(mod: parser.Module, name: string): boolean {
 }
 
 // e060_decl_is_enum: `name` is a declared enum (some decl records it as its
-// enum_owner) — mirrors irlower.decl_is_enum.
+// enum_owner) — mirrors irtables.decl_is_enum.
 function e060_decl_is_enum(mod: parser.Module, name: string): boolean {
   if (name.len() == 0) {
     return false;

@@ -29,7 +29,8 @@ import "./flatten";
 import "./asm_arm64_ir";
 import "./asm_ir";
 import "./asmcore";
-import "./irlower";
+import "./irtables";
+import "./fnsigs";
 import "./ir";
 import "./irverify";
 import "./irverifyprovided";
@@ -64,10 +65,10 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
   var im: parser.Module = ircore.with_records(parser.infer_ret_types_module(ircore.script_normalized(ircore.sub_lifted(d.sub, d.full))), d.sub);
   var i: i32 = 0;
   while (i < im.funcs.len()) {
-    declared = declared.append(irlower.grow_fn_key(im.funcs[i]));
-    var r: irlower.LowerResult = ircore.produced(d.sub.bodies, i, im.funcs[i]);
+    declared = declared.append(fnsigs.grow_fn_key(im.funcs[i]));
+    var r: irtables.LowerResult = ircore.produced(d.sub.bodies, i, im.funcs[i]);
     if (!r.superseded) {
-      names = names.append(irlower.grow_fn_key(im.funcs[i]));
+      names = names.append(fnsigs.grow_fn_key(im.funcs[i]));
       bodies = bodies.append(r.ops);
     }
     i = i + 1;
@@ -152,9 +153,9 @@ function provided_audit(): i32 {
 struct View {
   u: ircore.Units,
   all_funcs: parser.FuncDecl[],
-  stab: irlower.StructTab,
-  base: irlower.FnSigs,
-  rt: (string) => irlower.LowerResult[],
+  stab: irtables.StructTab,
+  base: fnsigs.FnSigs,
+  rt: (string) => irtables.LowerResult[],
 }
 
 // per_module_view builds the units of `parts`: the typed lowering lowers the

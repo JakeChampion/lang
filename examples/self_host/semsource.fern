@@ -5182,7 +5182,7 @@ pub function decl_key(fd: parser.FuncDecl): string {
 
 // coarse_fn_tag_without_contract reports a declaration whose result is the
 // coarse callable tag carrying none of the signature that tag drops. The one
-// this exists for is synthesised: the IIFE irlower.hoist_value_iife declares
+// this exists for is synthesised: the IIFE lift.hoist_value_iife declares
 // for an if/match-expression whose arms are UNANNOTATED lambdas, which have a
 // parameter list to report and no result.
 //
@@ -5333,7 +5333,7 @@ function literal_adapts(returned: ast.Expr, declared: typeinfo.Type): boolean {
   return false;
 }
 
-// A declaration the lowering synthesised: a lambda `irlower` lifted to a
+// A declaration the lowering synthesised: a lambda `lift` lifted to a
 // `__lam_N` body, or a value-position if/match it hoisted to a `$iife` one.
 // Its result tag is `parser.if_expr_rt`'s reading of the first arm's SYNTAX,
 // which answers "i32" for any arm it cannot classify — a call, a record

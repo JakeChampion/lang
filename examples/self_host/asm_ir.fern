@@ -23,7 +23,8 @@ import "./asmcore";
 import "./checker";
 import "./util";
 import "./ir";
-import "./irlower";
+import "./irtables";
+import "./fnsigs";
 import "./irverify";
 import "./irverifygate";
 import "./ircore";
@@ -4351,8 +4352,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // tempting to push %r12 onto the freelist when its rc==1, but that DOUBLE-
     // FREEs: today's lowering deliberately depends on __fern_arr_push never
     // freeing, because borrow-form appends can hand it an ALIASED (rc>1) buffer
-    // the struct/owner still references (see irlower.fern's note "arr_push's …
-    // returned an ALIASED buffer leaves it rc>1"). Adding the free turns the OOM
+    // the struct/owner still references (see fnsigs.fern's note on arr_push's
+    // un-share of a shared receiver). Adding the free turns the OOM
     // into a SIGSEGV. Reclaim-on-grow is sound only AFTER the lowering routes
     // every non-consume append through the clone form (lower_arr_append_value),
     // leaving op_arr_push for true consumes, and drops the self-consume
@@ -7201,7 +7202,7 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
 // between a push of the operands and a pop of the result. The allocator
 // treats the op as a call, so the registers the arm writes hold nothing live;
 // its labels take the op's index under the SSA function's prefix.
-function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
   if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") {
     return ssa_buf_call(ins, reg_of, asmcore.buf_table_helper(r.ops[ins.imm].kind_tag, ir.is_packed(r.ops[ins.imm])), s);
   }
@@ -7776,7 +7777,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   return ssa_store(reg_of, ins.result, d, s);
 }
 
-function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: irlower.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
+function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
   var k: i32 = ins.kind_tag;
   if (k == 11) {
     return ssa_call(ins, reg_of, lp, s);
@@ -8196,7 +8197,7 @@ function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
   if (ircore.is_fern_helper(ins.str) || ircore.is_c_call(ins.str)) {
     return false;
   }
-  return irlower.sig_reg_has_exact(s.reg_entries, asmcore.sanitize_label(ins.str));
+  return irtables.sig_reg_has_exact(s.reg_entries, asmcore.sanitize_label(ins.str));
 }
 
 // ssa_arg_prefs asks the allocator for the register each parameter arrives in
@@ -8241,7 +8242,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // the parameters loaded from the caller's slots into their homes, and each
 // block behind its label. prune_dead first takes out the zeros the lift gives
 // every declared local and the loop phis nothing reads.
-function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
   var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted))));
   var imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
   var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
@@ -8296,7 +8297,7 @@ function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irlower
 // is refused naming the op (ircore.ssa_refuse). Every op the lowering
 // produces has an arm, so a refusal here is a compiler bug, not a program
 // the backend does not cover.
-function emit_ssa_function(r: irlower.LowerResult, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
+function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
   var t_lift: i64 = monotonic_ns();
   var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops);
   var why: string = lifted.bail;
@@ -8325,7 +8326,7 @@ function emit_ssa_function(r: irlower.LowerResult, label_name: string, s: asmcor
 
 // emit_function_via_ir_pre emits declaration `fd`'s lowered body `r` through
 // the register path, writing through the global strbuf.
-function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+function emit_function_via_ir_pre(r: irtables.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
   // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
   var label_name: string = fd.name;
@@ -8341,7 +8342,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
 // emits through exactly the same path. `weak` marks the definition co-linkable,
 // the way the per-type __struct_drop_<T> bodies are: several per-module units may
 // each emit an identical copy and the linker keeps one.
-function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, weak: boolean, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string, weak: boolean, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
   if (weak) {
     s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n");
   }
@@ -8393,7 +8394,7 @@ function emit_function_via_ir_named(r: irlower.LowerResult, label_name: string, 
 // the byte-buffer builder. An op the lift lowers itself has no arm here.
 // fern-lint: allow cyclomatic-complexity
 // One guard per IR op and no multi-line body left to move: the op table itself.
-function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 79) {  // ptr_width
     // () -> heap-pointer width in bytes. 8 on x86-64.
     s = s.write("    pushq $8\n");
@@ -9617,7 +9618,7 @@ function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32,
     // primitive arm UNBOXES: the receiver holds the box pointer, so
     // arg0 is reloaded from box+8, not pushed directly.
     var dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
-    if (irlower.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
+    if (irtables.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
       && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
       var dbn: string = ddbn;
       var dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
@@ -9656,9 +9657,9 @@ function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32,
     // dispatch to their own impls. recv_is_array excludes an
     // array method's `T[]` receiver (base_type_name strips the
     // `[]`, which would otherwise mis-read as an enum — #2766).
-    if (irlower.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
+    if (irtables.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
       && !asmcore.recv_is_array(dfd.receiver_type)
-      && irlower.decl_is_enum(s.struct_decls, ddbn)) {
+      && irtables.decl_is_enum(s.struct_decls, ddbn)) {
       var dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
       var denext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
       var dvi: i32 = 0;
@@ -10225,7 +10226,7 @@ function emit_ir_enum_variant_payload_decs(own s: asmcore.EmitState, ety: string
   var vlabel: i32 = 0;
   while (vi < s.struct_decls.decls.len()) {
     if (s.struct_decls.decls[vi].enum_owner == ety) {
-      var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls.decls[vi].name);
+      var offs: i32[] = irtables.enum_walk_payload_offsets(s.struct_decls, s.struct_decls.decls[vi].name);
       if (offs.len() > 0) {
         var vlo_name: string = s.struct_decls.decls[vi].name;
         var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, vlo_name);
@@ -10342,11 +10343,11 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   // their own .rodata block then return to .text. A literal-free helper (the
   // str_eq / str_cmp / str_trim bodies) adds none, so
   // this is a no-op for them. Mirrors the AST emit_runtime_fern_fn flush.
-  var vsigs: irverify.NameIndex = irlower.fn_sig_index(fns);
+  var vsigs: irverify.NameIndex = irtables.fn_sig_index(fns);
   var lit0: i32 = s.string_lits.len();
   var agg0: i32 = s.const_aggs.len();
   var sh0: i32 = s.shape_lits.len();
-  var bodies: irlower.LowerResult[] = s.rt_lower(src);
+  var bodies: irtables.LowerResult[] = s.rt_lower(src);
   var i: i32 = 0;
   while (i < fns.len()) {
     s = emit_function_via_ir_pre(bodies[i], fns[i], s, vsigs);
@@ -10392,12 +10393,12 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
 // `check_claims` is false for module_runtime_needs, which runs this whole loop
 // only to read the need-set off the EmitState and discards the text. A probe
 // must answer, so it does not get to refuse the module (#9655).
-function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], check_claims: boolean): asmcore.EmitState {
+function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irtables.LowerResult[], check_claims: boolean): asmcore.EmitState {
   // `cache` is the unit's lowered bodies, indexed by mod.funcs position.
   // The IR verify gate's callee-arity index, derived ONCE over the
   // whole-program all_funcs for the reason the registries above are: a
   // per-function rebuild would be O(n^2) on the compiler's own sources.
-  var vsigs: irverify.NameIndex = irlower.fn_sig_index(all_funcs);
+  var vsigs: irverify.NameIndex = irtables.fn_sig_index(all_funcs);
   // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
   // window that overshoots the module length can't index past mod.funcs.
   var hh: i32 = hi;
@@ -10407,10 +10408,10 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   if (check_claims) {
     ircore.check_fip_claims(mod.funcs, lo, hh, cache);
   }
-  s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: asmcore.unit_leaves(mod, lo, hh, cache) };
+  s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: asmcore.unit_leaves(mod, lo, hh, cache) };
   var fi: i32 = lo;
   while (fi < hh) {
-    var r: irlower.LowerResult = ircore.produced(cache, fi, mod.funcs[fi]);
+    var r: irtables.LowerResult = ircore.produced(cache, fi, mod.funcs[fi]);
     // A template the substitution superseded has no body: its instances
     // are on the cache tail (emit_named_bodies).
     if (r.superseded) {
@@ -10437,7 +10438,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   return emit_named_bodies(cache, mod.funcs.len(), s, vsigs);
 }
 
-function emit_named_bodies(cache: irlower.LowerResult[], from: i32, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
   var xi: i32 = from;
   while (xi < cache.len()) {
     if (!s.has_named(cache[xi].name)) {
@@ -10456,7 +10457,7 @@ function emit_named_bodies(cache: irlower.LowerResult[], from: i32, s: asmcore.E
 // (e.g. str_concat) would reference an undefined symbol at link. It runs the
 // unit's emit over `cache` (its lowered bodies, ircore.split_units) so the
 // need-set is exact, but discards the asm (strbuf_reset) and reads `needed`.
-pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, cache: irlower.LowerResult[], base: irlower.FnSigs): string[] {
+pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, cache: irtables.LowerResult[], base: fnsigs.FnSigs): string[] {
   strbuf_reset();
   var s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs }, all_funcs);
@@ -10519,7 +10520,7 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub): stri
 }
 
 // `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
-pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs, rt: (string) => irlower.LowerResult[]): string {
+pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], b: fnsigs.FnSigs, rt: (string) => irtables.LowerResult[]): string {
   // Infer return types for unannotated functions so the IR path's
   // ret-type-keyed call tagging matches what module_with_builtins supplies.
   // (#4394 lever 3: `cache`, when non-empty, is the caller's pre-lowered
@@ -10558,7 +10559,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // #4355: admit the replaced-STRING-field arm per type, from the
   // WHOLE-PROGRAM read scan (a unit-local func list would under-count the
   // reads and re-open the UAF the scan exists to prevent; see
-  // irlower.strfld_reclaim_ok_types_of). Seeded as "strfldok:<T>" needs so
+  // fnsigs.strfld_reclaim_ok_types_of). Seeded as "strfldok:<T>" needs so
   // emit_ir_field_reclaim_one can gate its string arm; every unit sees the
   // same verdict, so the weak-deduped bodies agree.
   //
@@ -10582,7 +10583,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // ran borrowable_params_interproc for. Recomputing it here cost 5.8x on the
   // per-module emit-all's gen0 (129 s -> 745 s): an interproc fixpoint is ~9
   // passes over every function, and this runs once per emitted unit.
-  var nfok: string[] = irlower.structfld_reclaim_ok_types_of(all_funcs, all_structs, b.borrowable_params);
+  var nfok: string[] = fnsigs.structfld_reclaim_ok_types_of(all_funcs, all_structs, b.borrowable_params);
   var nfoi: i32 = 0;
   while (nfoi < nfok.len()) {
     s = s.need("structfldok:" + nfok[nfoi]);
