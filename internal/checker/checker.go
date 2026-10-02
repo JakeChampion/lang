@@ -2261,6 +2261,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}},
 		Result: ast.NumberType{},
 	}
+	c.info.FuncSigs["udp_send_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{}, u8s},
+		Result: ast.NumberType{},
+	}
 	// The datagram sockets (#9853). udp_bind(addr, port): a socket bound
 	// to addr:port (the unspecified address for every interface, port 0
 	// for one the kernel picks), or -errno. It is closed with tcp_close
@@ -2279,6 +2283,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// the connected peer when addr is empty. The bytes accepted, or -errno.
 	c.info.FuncSigs["udp_sendto"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, u8s, ast.NumberType{}, ast.StringType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["udp_sendto_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, u8s, ast.NumberType{}, u8s},
 		Result: ast.NumberType{},
 	}
 	// udp_recvfrom(fd, buf, from): one datagram read into buf, up to its

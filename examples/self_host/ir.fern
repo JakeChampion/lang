@@ -1429,6 +1429,14 @@ pub function op_udp_sendto(): Op {
   return op0(336);
 }
 
+pub function op_udp_send_bytes(): Op {
+  return op0(354);
+}
+
+pub function op_udp_sendto_bytes(): Op {
+  return op0(355);
+}
+
 pub function op_udp_recvfrom(): Op {
   return op0(337);
 }
@@ -4242,6 +4250,9 @@ function kind_id_len13(name: string): i32 {
 }
 
 function kind_id_len14(name: string): i32 {
+  if (name == "udp_send_bytes") {
+    return 354;
+  }
   if (name == "tcp_send_bytes") {
     return 353;
   }
@@ -4321,6 +4332,9 @@ function kind_id_len15(name: string): i32 {
 }
 
 function kind_id_len16(name: string): i32 {
+  if (name == "udp_sendto_bytes") {
+    return 355;
+  }
   if (name == "write_file_bytes") {
     return 352;
   }
@@ -5422,6 +5436,12 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 354) {
+    return "udp_send_bytes";
+  }
+  if (id == 355) {
+    return "udp_sendto_bytes";
+  }
   if (id == 353) {
     return "tcp_send_bytes";
   }
@@ -5608,6 +5628,7 @@ function pops3(t: i32): boolean {
     || t == 177 || t == 208 || t == 225 || t == 234  // subprocess, udp_send, memchr, rmemchr
     || t == 333 || t == 335 || t == 337 || t == 338  // tcp_socket_ctl, udp_connect, udp_recvfrom, tcp_connect_with
     || t == 346  // tcp_sendfile (fd, file, max)
+    || t == 354  // udp_send_bytes (host, port, data)
     || t == 343  // reactor_wait (r, events, timeout_ms)
     || t == 242  // reader_seek (fd, offset, whence)
     || t == 330  // reader_splice (fd, out_fd, max)
@@ -5681,7 +5702,7 @@ pub function op_pops(o: Op): i32 {
   if (t == 332) {  // tcp_listen_with: addr + port + backlog + reuse_port
     return 4;
   }
-  if (t == 336) {  // udp_sendto: fd + addr + port + data
+  if (t == 336 || t == 355) {  // udp_sendto / udp_sendto_bytes: fd + addr + port + data
     return 4;
   }
   if (t == 342) {  // reactor_ctl: r + op + fd + arg

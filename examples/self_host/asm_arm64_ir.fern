@@ -3165,7 +3165,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
     s = s.need("tcp_socket_ctl");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_tcp_socket_ctl\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353) {  // socket calls, including the byte send
+  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag >= 353 && o.kind_tag <= 355) {  // socket calls, including byte sends
     // [args] with the last on top; pop and re-push reversed, as udp_send
     // does. recvfrom spreads the datagram into the caller's array from a
     // raw buffer, so it needs the heap.
@@ -3183,7 +3183,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
       k = k - 1;
     }
     s = s.write("    bl __fn___fern_" + udp_name + "\n    add sp, sp, #" + util.i32_to_string(16 * udp_argc) + "\n    str x0, [sp, #-16]!\n");
-    if (o.kind_tag == 337 || o.kind_tag == 343 || o.kind_tag == 344 || o.kind_tag == 353) {
+    if (o.kind_tag == 337 || o.kind_tag == 343 || o.kind_tag == 344 || o.kind_tag >= 353 && o.kind_tag <= 355) {
       s = s.need("heap");
     }
     s = s.need(udp_name);
@@ -5415,6 +5415,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
     "proc_waitpid_nohang",
     "timer_fd", "tcp_listen", "tcp_local_port", "tcp_connect", "putchar",
+    "udp_send_bytes", "udp_send_bytes_u8", "udp_sendto_bytes", "udp_sendto_bytes_u8",
     "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
     "tcp_listen_with_u8", "udp_bind_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
     "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
@@ -10269,6 +10270,18 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   if (s.has_need("tcp_send_bytes_u8")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes(tgt, true), s);
+  }
+  if (s.has_need("udp_send_bytes")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send_bytes(tgt, false), s);
+  }
+  if (s.has_need("udp_send_bytes_u8")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send_bytes(tgt, true), s);
+  }
+  if (s.has_need("udp_sendto_bytes")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto_bytes(tgt, false), s);
+  }
+  if (s.has_need("udp_sendto_bytes_u8")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto_bytes(tgt, true), s);
   }
   // proc_exec: execve over an argv built from the args array.
   if (s.has_need("proc_exec")) {

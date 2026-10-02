@@ -237,11 +237,11 @@ pub function need(needs: string[], name: string): boolean {
 
 // The datagram ops that open a socket record, and the ones that send.
 function need_udp_socket(needs: string[]): boolean {
-  return need_any(needs, ["udp_send", "udp_bind", "udp_connect"]);
+  return need_any(needs, ["udp_send", "udp_send_bytes", "udp_bind", "udp_connect"]);
 }
 
 function need_udp_send(needs: string[]): boolean {
-  return need_any(needs, ["udp_send", "udp_sendto"]);
+  return need_any(needs, ["udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes"]);
 }
 
 // The ops that dial: tcp_connect is tcp_connect_with without the flag.
@@ -285,7 +285,7 @@ pub function need_ops(): string[] {
     "truncate", "sleep_ms", "sleep_ns", "stat", "lstat", "str_bytes", "str_from_bytes",
     "str_split", "tcp_accept", "tcp_close", "tcp_connect", "tcp_listen", "tcp_listen_with",
     "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_send", "tcp_send_bytes", "tcp_socket_ctl", "temp_dir",
-    "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto", "tcp_connect_with", "wasm_block",
+    "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes", "tcp_connect_with", "wasm_block",
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
     "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "write_file_bytes", "open_file",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "buf_take_bytes", "buf_push_bytes_range",
@@ -4076,10 +4076,14 @@ pub function udp_connect_func(): string {
 // exceeds the permit, so the permit wait blocks on the stream's pollable;
 // and send may accept fewer datagrams than offered even after a positive
 // permit, so an accepted count of 0 re-enters the wait.
-pub function udp_sendto_func(): string {
+pub function udp_sendto_func(raw: boolean): string {
+  var name: string = "__fern_udp_sendto";
+  if (raw) {
+    name = "__fern_udp_sendto_bytes";
+  }
   var o: string = "";
-  o = o + "  (func $__fern_udp_sendto (param $c i32) (param $addr i32) (param $port i32) (param $data i32) (result i32)\n";
-  o = o + "    (local $ret i32) (local $out i32) (local $p i32) (local $dg i32) (local $sent i32) (local $flat i32) (local $tmp i32) (local $k i32)\n";
+  o = o + "  (func $" + name + " (param $c i32) (param $addr i32) (param $port i32) (param $data i32) (result i32)\n";
+  o = o + "    (local $ret i32) (local $out i32) (local $p i32) (local $dg i32) (local $sent i32) (local $flat i32) (local $tmp i32) (local $k i32) (local $buf i32) (local $len i32)\n";
   o = o + "    (local.set $flat (i32.const " + util.i32_to_string(ip_flat_addr()) + "))\n";
   o = o + "    (if (i32.load (local.get $addr)) (then\n";
   o = o + "      (local.set $tmp (call $__fern_ip_flat (local.get $addr) (local.get $port) (local.get $flat)))\n";
@@ -4087,7 +4091,19 @@ pub function udp_sendto_func(): string {
   o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
   o = o + "    (local.set $out (i32.load offset=8 (local.get $c)))\n";
   o = o + "    (local.set $dg (call $__fern_alloc (i32.const 44)))\n";
-  o = o + "    (i32.store (local.get $dg) (i32.add (local.get $data) (i32.const 4)))\n";
+  o = o + "    (local.set $len (i32.load (local.get $data)))\n";
+  if (raw) {
+    // Pack the entire datagram. Splitting it would change message boundaries.
+    o = o + "    (if (local.get $len) (then\n";
+    o = o + "      (local.set $buf (call $__fern_alloc (local.get $len)))\n";
+    o = o + "      (block $packed (loop $pack\n";
+    o = o + "        (br_if $packed (i32.ge_u (local.get $k) (local.get $len)))\n";
+    o = o + "        (i32.store8 (i32.add (local.get $buf) (local.get $k)) (i32.load offset=8 (i32.add (local.get $data) (i32.mul (local.get $k) (i32.const 4)))))\n";
+    o = o + "        (local.set $k (i32.add (local.get $k) (i32.const 1))) (br $pack)))))\n";
+  } else {
+    o = o + "    (local.set $buf (i32.add (local.get $data) (i32.const 4)))\n";
+  }
+  o = o + "    (i32.store (local.get $dg) (local.get $buf))\n";
   o = o + "    (i32.store offset=4 (local.get $dg) (i32.load (local.get $data)))\n";
   o = o + "    (if (i32.load (local.get $addr))\n";
   o = o + "      (then\n";
@@ -4126,6 +4142,9 @@ pub function udp_sendto_func(): string {
   o = o + "        (br $done)))\n";
   o = o + "    (call $__fern_raw_free (local.get $dg) (i32.const 44))\n";
   o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+  if (raw) {
+    o = o + "    (if (local.get $len) (then (call $__fern_raw_free (local.get $buf) (local.get $len))))\n";
+  }
   o = o + "    (local.get $sent))\n";
   return o;
 }
@@ -4200,9 +4219,13 @@ pub function udp_recvfrom_func(): string {
 // $__fern_udp_send(host, port, data) -> bytes accepted by the host, or -errno
 // (or -EINVAL on a malformed host literal): a socket bound to an ephemeral
 // port, one udp_sendto to host:port, and the socket closed again.
-pub function udp_send_func(): string {
+pub function udp_send_func(raw: boolean): string {
+  var suffix: string = "";
+  if (raw) {
+    suffix = "_bytes";
+  }
   var o: string = "";
-  o = o + "  (func $__fern_udp_send (param $host i32) (param $port i32) (param $data i32) (result i32)\n";
+  o = o + "  (func $__fern_udp_send" + suffix + " (param $host i32) (param $port i32) (param $data i32) (result i32)\n";
   o = o + "    (local $ip i32) (local $ret i32) (local $c i32) (local $sent i32)\n";
   o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
   o = o + "    (if (i32.lt_s (call $__fern_ipv4_parse (local.get $host) (local.get $ret)) (i32.const 0))\n";
@@ -4211,7 +4234,7 @@ pub function udp_send_func(): string {
   o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
   o = o + "    (local.set $c (call $__fern_udp_bind (call $__fern_ip4_box (i32.const 0) (i32.const " + util.i32_to_string(ip_box_addr()) + ")) (i32.const 0)))\n";
   o = o + "    (if (i32.lt_s (local.get $c) (i32.const 0)) (then (return (local.get $c))))\n";
-  o = o + "    (local.set $sent (call $__fern_udp_sendto (local.get $c) (call $__fern_ip4_box (local.get $ip) (i32.const " + util.i32_to_string(ip_box2_addr()) + ")) (local.get $port) (local.get $data)))\n";
+  o = o + "    (local.set $sent (call $__fern_udp_sendto" + suffix + " (local.get $c) (call $__fern_ip4_box (local.get $ip) (i32.const " + util.i32_to_string(ip_box2_addr()) + ")) (local.get $port) (local.get $data)))\n";
   o = o + "    (drop (call $__fern_udp_close (local.get $c)))\n";
   o = o + "    (local.get $sent))\n";
   return o;
@@ -5556,6 +5579,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_tcp_send\n");
   } else if (o.kind_tag == 353) {
     parts = parts.append("    call $__fern_tcp_send_bytes\n");
+  } else if (o.kind_tag == 354) {
+    parts = parts.append("    call $__fern_udp_send_bytes\n");
+  } else if (o.kind_tag == 355) {
+    parts = parts.append("    call $__fern_udp_sendto_bytes\n");
   } else if (o.kind_tag == 115) {  // tcp_recv
     // tcp_recv(conn, max) -> a fresh u8[] array block (empty on error/EOF).
     parts = parts.append("    call $__fern_tcp_recv\n");
@@ -12488,7 +12515,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
     "@allocates", "@uses_maps", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_chr", "@uses_strbuf", "@uses_buf",
     "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_all", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
-    "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_send_bytes", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
+    "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_send_bytes", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_send_bytes", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
   ])) {
     parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count")));
     parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
@@ -12770,21 +12797,21 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // host materialises it in guest memory — as does an export whose signature
   // needs the canonical allocator (export_needs_realloc). Like the heap gate
   // above, these come from the module's declarations, not from `needs`.
-  if (module_has_extern_composite_result(mod) || export_needs_realloc(mod) || need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "tcp_send_bytes") || need(needs, "udp_send") || need(needs, "udp_recvfrom") || need(needs, "reactor_wait") || need(needs, "tcp_recv_into") || mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "read_file") || need(needs, "read_file_bytes") || (need(needs, "write_file") || need(needs, "write_file_bytes")))) {
+  if (module_has_extern_composite_result(mod) || export_needs_realloc(mod) || need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "tcp_send_bytes") || need(needs, "udp_send") || need(needs, "udp_send_bytes") || need(needs, "udp_recvfrom") || need(needs, "reactor_wait") || need(needs, "tcp_recv_into") || mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "read_file") || need(needs, "read_file_bytes") || (need(needs, "write_file") || need(needs, "write_file_bytes")))) {
     parts = parts.append(cabi_realloc_helper());
   }
   // $__fern_network_handle is shared by every socket op; emitted with
   // whichever one pulls it in.
-  if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with", "udp_send", "udp_bind"])) {
+  if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with", "udp_send", "udp_send_bytes", "udp_bind"])) {
     parts = parts.append(network_handle_func());
   }
-  if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom"])) {
+  if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_send_bytes", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom"])) {
     parts = parts.append(wasi_socket_errno_func());
   }
-  if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_listen_with", "udp_send", "udp_bind", "udp_connect", "udp_sendto"])) {
+  if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_listen_with", "udp_send", "udp_send_bytes", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes"])) {
     parts = parts.append(ip_flat_func());
   }
-  if (need_any(needs, ["tcp_connect", "udp_send"])) {
+  if (need_any(needs, ["tcp_connect", "udp_send", "udp_send_bytes"])) {
     parts = parts.append(ip4_box_func());
   }
   if (need_tcp_connect(needs)) {
@@ -12829,20 +12856,29 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need_udp_socket(needs)) {
     parts = parts.append(udp_close_func());
   }
-  if (need_any(needs, ["udp_send", "udp_bind"])) {
+  if (need_any(needs, ["udp_send", "udp_send_bytes", "udp_bind"])) {
     parts = parts.append(udp_bind_func());
   }
   if (need(needs, "udp_connect")) {
     parts = parts.append(udp_connect_func());
   }
-  if (need_udp_send(needs)) {
-    parts = parts.append(udp_sendto_func());
+  if (need_any(needs, ["udp_send", "udp_sendto"])) {
+    parts = parts.append(udp_sendto_func(false));
+  }
+  if (need_any(needs, ["udp_send_bytes", "udp_sendto_bytes"])) {
+    parts = parts.append(udp_sendto_func(true));
   }
   if (need(needs, "udp_recvfrom")) {
     parts = parts.append(udp_recvfrom_func());
   }
+  if (need_any(needs, ["udp_send", "udp_send_bytes"])) {
+    parts = parts.append(ipv4_parse_func());
+  }
   if (need(needs, "udp_send")) {
-    parts = parts.append(ipv4_parse_func() + udp_send_func());
+    parts = parts.append(udp_send_func(false));
+  }
+  if (need(needs, "udp_send_bytes")) {
+    parts = parts.append(udp_send_func(true));
   }
   if (need(needs, "reactor_new")) {
     parts = parts.append(reactor_new_func());

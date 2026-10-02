@@ -5278,6 +5278,9 @@ function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowe
   if (ins.str == "udp_send") {
     return Lowered { found: true, r: emit(r, ir.op_udp_send()) };
   }
+  if (ins.str == "udp_send_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_send_bytes())) };
+  }
   if (ins.str == "tcp_listen_with") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_listen_with())) };
   }
@@ -5295,6 +5298,9 @@ function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowe
   }
   if (ins.str == "udp_sendto") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_sendto())) };
+  }
+  if (ins.str == "udp_sendto_bytes") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_sendto_bytes())) };
   }
   if (ins.str == "udp_recvfrom") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_recvfrom())) };
