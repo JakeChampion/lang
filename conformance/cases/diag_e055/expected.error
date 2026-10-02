@@ -1,1 +1,1 @@
-result of `.append(...)` is unused; assign it back (e.g. `x = x.append(...)`) — collection operations return a new value, they do not mutate in place (use `var _ = …` to discard intentionally)
+result of `.append(...)` is unused; assign it back (e.g. `x = x.append(...)`) — collection operations return a new value, they do not mutate in place (use `let _ = …` to discard intentionally)
