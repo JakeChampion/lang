@@ -2946,7 +2946,7 @@ function bound_call(c: ast.ExprCall, bound: i32, s: State, statement: boolean): 
 // A value-position `{ … }` block is a zero-argument call of a zero-parameter
 // lambda the parser marks with an origin, and every backend INLINES it rather
 // than calling one: the statements run in the enclosing function and only the
-// last is the block's value (irlower.lower_value_block). The shape the parser
+// last is the block's value. The shape the parser
 // desugars an if-EXPRESSION to is one `if` whose arms each `return` that value,
 // so it is produced here as a branch whose arms join at a phi rather than at a
 // terminator. The match-expression desugars that route their value through a
