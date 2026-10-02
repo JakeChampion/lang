@@ -63,6 +63,11 @@ func init() {
 // cases write to stdout alone.
 func teeCases(t *testing.T) []invocation {
 	big := strings.Repeat("line\n", 40000)
+	allBytes := make([]byte, 256)
+	for i := range allBytes {
+		allBytes[i] = byte(i)
+	}
+	raw := strings.Repeat(string(allBytes), 1025) + "\xff\xc0\x80\xed\xa0\x80\xf4\x90\x80\x80"
 	// A directory to hand a case as its stdin. The per-case working
 	// directory is made inside the run, after stdinPath is opened, so
 	// this one is separate and absolute.
@@ -78,6 +83,8 @@ func teeCases(t *testing.T) []invocation {
 		{name: "empty stdin one file", args: []string{"a"}, stdin: "", seedTree: teeSeed},
 		{name: "no trailing newline", args: []string{"a"}, stdin: "x", seedTree: teeSeed},
 		{name: "binary stdin", args: []string{"a"}, stdin: "\x00\x01\xff\xfe\n\x00", seedTree: teeSeed},
+		{name: "raw byte fanout across blocks", args: []string{"a", "b"}, stdin: raw, seedTree: teeSeed},
+		{name: "raw byte append across blocks", args: []string{"-a", "exists", "a"}, stdin: raw, seedTree: teeSeed},
 		{name: "large stdin", args: []string{"a"}, stdin: big, seedTree: teeSeed},
 		{name: "large stdin two files", args: []string{"a", "b"}, stdin: big, seedTree: teeSeed},
 		{name: "large stdin no operands", stdin: big},

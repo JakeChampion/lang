@@ -166,12 +166,12 @@ function fail(c: Copy, i: i32, e: IoError): Copy {
 
 // `put(c, chunk)` — one read block to every output still alive, stdout
 // first, as GNU's descriptor array has it.
-function put(c: Copy, chunk: string): Copy {
+function put(c: Copy, chunk: u8[]): Copy {
   var s: Copy = c;
   var i: i32 = 0;
   while (i < s.outs.len()) {
     if (s.outs[i].live) {
-      match (s.outs[i].w.write(chunk)) {
+      match (s.outs[i].w.write_bytes(chunk)) {
         Some(e) => {
           s = fail(s, i, e);
         },
@@ -282,7 +282,7 @@ pub function main(): i32 {
   var c: Copy = open_outs(g.operands(), append, mode);
   var r: Reader = stdin();
   while (c.live > 0) {
-    match (r.read_chunk(read_size())) {
+    match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
           break;
