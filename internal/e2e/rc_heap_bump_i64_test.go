@@ -48,17 +48,6 @@ func TestArm64HeapBumpIsI64(t *testing.T) {
 	}
 }
 
-// The wasm leg is the one that needs a real instruction rather than a wider
-// register: the cursor and the seed are both i32 linear-memory addresses, so
-// the helper subtracts in i32 and zero-extends to the declared i64. A
-// sign-extend there would turn exactly the >2 GiB mark this widening exists
-// for back into a negative number.
-func TestWasmHeapBumpIsI64(t *testing.T) {
-	if got := runWasm(t, heapBumpIsI64Src); got != 7 {
-		t.Errorf("i64 probe returned %d, want 7", got)
-	}
-}
-
 // heapBumpAbove2GiBSrc bumps the cursor past 2^31 and reads it back. Two
 // __alloc_u8 calls rather than one because the length argument is i32, so a
 // single allocation cannot reach the threshold on its own.

@@ -1687,9 +1687,6 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     return ssa_helper_call(ins, reg_of, s);
   }
   if (ssa_reg_call(ins, s)) {
-    if (util.str_has_prefix(ins.str, "__sem_release_") && ins.args.len() == 1 && !s.rc_free_debug) {
-      return ssa_release_nominal(ins, reg_of, lp, s);
-    }
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(ssa_reg_call_emit(ins, reg_of, s)));
   }
   let argc: i32 = ins.args.len();
@@ -1735,30 +1732,22 @@ function ssa_reg_call_emit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState):
   return s.write("    bl __fn_" + asmcore.sanitize_label(ins.str) + ".r\n");
 }
 
-// ssa_release_nominal renders a record's or union's release
-// (`__sem_release_<T>`, ssarc.release_helper_name) the way ssa_rc_dec renders
-// an array's: a count above one is decremented in w5 and stored back, and
-// nothing is called, and neither is a null or a static box's negative count;
-// a count of one (the free) or zero (the underflow the helper reports) takes
-// the helper, which frees the children and the box. The helper answers 0,
-// and so do the inline arms where the result has a home.
-function ssa_release_nominal(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_read(reg_of, ins.args[0], "x4", s);
-  let p: string = ssa_src(reg_of, ins.args[0], "x4");
-  let id: string = util.i32_to_string(ins.result);
-  let dec: string = lp + "rcreld" + id;
-  let kept: string = lp + "rcrelk" + id;
-  let done: string = lp + "rcrele" + id;
-  s = s.write("    cmp " + p + ", #16, lsl #12\n    blo " + kept + "\n");
-  s = s.write("    ldur w5, [" + p + ", #-8]\n    cmp w5, #1\n    bgt " + dec + "\n");
-  s = s.write("    tbnz w5, #31, " + kept + "\n");
-  s = ssa_reg_call_emit(ins, reg_of, s);
-  s = s.write("    b " + done + "\n" + dec + ":\n    sub w5, w5, #1\n    stur w5, [" + p + ", #-8]\n" + kept + ":\n");
-  if (reg_of[ins.result] != 0 - 1) {
-    s = s.write("    mov x0, #0\n");
+// Shared and static releases finish before allocating a frame. Keeping the
+// guard at the helper entry avoids repeating it at every call site; unique
+// and zero counts continue through the existing destructor/underflow path.
+function ssa_release_entry(r: irtables.LowerResult, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (s.rc_free_debug || !ircore.counted_release_body(r)) {
+    return s;
   }
-  s = s.write(done + ":\n");
-  return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+  let dec: string = lp + "release_dec";
+  let kept: string = lp + "release_kept";
+  let slow: string = lp + "release_slow";
+  s = s.write("    cmp x0, #16, lsl #12\n    blo " + kept + "\n");
+  s = s.write("    ldur w5, [x0, #-8]\n    cmp w5, #1\n    bgt " + dec + "\n");
+  s = s.write("    tbz w5, #31, " + slow + "\n");
+  s = s.write(kept + ":\n    mov x0, #0\n    ret\n");
+  s = s.write(dec + ":\n    sub w5, w5, #1\n    stur w5, [x0, #-8]\n    mov x0, #0\n    ret\n");
+  return s.write(slow + ":\n");
 }
 
 // ssa_mem_inst selects the production lift's memory kinds (ssa.fern 40..44)
@@ -2813,6 +2802,7 @@ function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irtab
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n    .cfi_startproc\n");
   s = s.write(ssa_entry_shim(f, asmcore.sanitize_label(label_name)));
+  s = ssa_release_entry(r, lp, s);
   s = s.write("    stp x29, x30, [sp, #-16]!\n    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n    mov x29, sp\n    .cfi_def_cfa_register x29\n");
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = ssa_save_bytes(saved);
@@ -4181,6 +4171,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_str_grow") {
     s = s.need("str_grow");
   }
+  if (name == "__fern_getpwuid_name") {
+    s = s.need("pwname");
+  }
   // The VIEW-aware string[] element walk (#6544), gated the same way:
   // a binary that never reclaims a builtin string[] must not carry a
   // body whose inner `bl __fn___fern_str_view_free` the negative
@@ -4306,12 +4299,11 @@ function dyn_arg_load(s: asmcore.EmitState, reg: string, a: asmcore.DynArg): asm
 
 // emit_dyn_dispatch_chain is a `dyn Trait` method call: it reads the
 // receiver's shape pointer (x1) and dispatches to the matching
-// `<Type>.<method>` through a compare-branch chain over every module method
-// named `method` with a struct receiver, mirroring asm_arm64.fern. Each
-// matched arm pushes the arguments (arg0/receiver on top, the arm64 ABI)
+// `<Type>.<method>` through a compare-branch chain over the `arms` the
+// op_dyn_dispatch tag carries. Each matched arm pushes the arguments (arg0/receiver on top, the arm64 ABI)
 // from where `args` says they are, calls, and leaves the result in x0. x1
 // and x2 are scratch.
-function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32, lp: string, own s: asmcore.EmitState): asmcore.EmitState {
+function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, lp: string, own s: asmcore.EmitState): asmcore.EmitState {
   let dargc: i32 = args.len();
   s = dyn_arg_load(s, "x0", args[0]);
   s = s.write("    ldr x1, [x0]\n");
@@ -4326,7 +4318,7 @@ function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32,
     // docs/DYN-TRAITS.md §4.2.3). A primitive arm UNBOXES: the receiver
     // holds the box pointer, so arg0 is reloaded from box+8.
     let dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
-    if (irtables.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
+    if (irtables.dyn_arm_matches(dfd, arms) && dfd.receiver_type.len() > 0
       && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
       let dbn: string = ddbn;
       let dlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, dbn);
@@ -4366,7 +4358,7 @@ function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32,
     // excludes an array method's `T[]` receiver (base_type_name
     // strips the `[]`, which would otherwise mis-read as an
     // enum — #2766). Mirrors the x86 asm_ir arm.
-    if (irtables.dyn_arm_matches(dfd, method, s.funcs) && dfd.receiver_type.len() > 0
+    if (irtables.dyn_arm_matches(dfd, arms) && dfd.receiver_type.len() > 0
       && !asmcore.recv_is_array(dfd.receiver_type)
       && irtables.decl_is_enum(s.struct_decls, ddbn)) {
       let dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
@@ -7757,6 +7749,34 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // place, else 0 with nothing written: the arm64 sibling of the x86-64
   // body, with the same fused, rc-1 and same-class tests. Under a leak-check
   // build the growth counts as a free of the old size and an alloc of the new.
+  // __fern_getpwuid_name(uid@[sp]) -> the address of pw_name in the entry
+  // libSystem's getpwuid(3) answers, or 0. Darwin keeps regular accounts in
+  // Directory Services, which only libSystem can ask (#9815): the call goes
+  // through a __DATA slot dyld binds to `_getpwuid` at load, under AAPCS64,
+  // which preserves the callee-saved registers the emitted code relies on.
+  // Linux answers 0 and the caller reads /etc/passwd.
+  if (s.has_need("pwname")) {
+    if (darwin) {
+      s = s.write("    .section .data\n    .align 3\n__fern_got_getpwuid: .quad _getpwuid\n    .text\n");
+    }
+    s = s.write("__fn___fern_getpwuid_name:\n");
+    if (darwin) {
+      s = s.write("    stp x29, x30, [sp, #-16]!\n");
+      s = s.write("    mov x29, sp\n");
+      s = s.write("    ldr w0, [sp, #16]\n");  // uid
+      s = s.write("    adrp x16, __fern_got_getpwuid\n");
+      s = s.write("    add x16, x16, :lo12:__fern_got_getpwuid\n");
+      s = s.write("    ldr x16, [x16]\n");
+      s = s.write("    blr x16\n");
+      s = s.write("    cbz x0, .Lpwname_done\n");
+      s = s.write("    ldr x0, [x0]\n");  // pw_name is the struct's first field
+      s = s.write(".Lpwname_done:\n");
+      s = s.write("    ldp x29, x30, [sp], #16\n");
+    } else {
+      s = s.write("    mov x0, #0\n");
+    }
+    s = s.write("    ret\n");
+  }
   if (s.has_need("str_grow")) {
     s = s.write("__fn___fern_str_grow:\n");
     s = s.write("    ldr x0, [sp, #16]\n");  // a

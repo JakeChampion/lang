@@ -19,7 +19,7 @@ func buildExit(t *testing.T, data []byte) []byte {
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
-	return StaticExecutable(text, nil, data, "fern-test", nil)
+	return StaticExecutable(text, nil, data, "fern-test", nil, nil)
 }
 
 // buildWithSyms assembles a two-function program and wraps it in a Mach-O with
@@ -48,7 +48,7 @@ func buildWithSyms(t *testing.T, data []byte) ([]byte, []Sym) {
 		rodata = data
 	}
 	syms := FuncSyms(a.TextLabelVAddrs(m.Text), m.Text+uint64(len(text)))
-	return StaticExecutableSyms(text, nil, rodata, "fern-test", syms, nil), syms
+	return StaticExecutableSyms(text, nil, rodata, "fern-test", syms, nil, nil), syms
 }
 
 // TestMachOSymtab guards the -g static symbol table (#5537 slice 1 for
@@ -345,9 +345,9 @@ func buildWithCFI(t *testing.T, data []byte, syms bool) (bin []byte, eh []byte, 
 	}
 	if syms {
 		fs := FuncSyms(a.TextLabelVAddrs(m.Text), m.Text+uint64(len(text)))
-		return StaticExecutableSyms(text, eh, rodata, "fern-test", fs, nil), eh, m
+		return StaticExecutableSyms(text, eh, rodata, "fern-test", fs, nil, nil), eh, m
 	}
-	return StaticExecutable(text, eh, rodata, "fern-test", nil), eh, m
+	return StaticExecutable(text, eh, rodata, "fern-test", nil, nil), eh, m
 }
 
 // TestMachOEhFrame is the container half of #7901 on Darwin: the __eh_frame
@@ -438,3 +438,66 @@ func TestMachOEhFrameShiftsTheMap(t *testing.T) {
 }
 
 func alignUp8(v uint64) uint64 { return (v + 7) &^ 7 }
+
+// A `.quad` naming a libSystem symbol becomes a non-lazy bind: the slot is
+// zero in the file, LC_DYLD_INFO_ONLY's bind stream names the symbol, the
+// dylib and the slot, the slot is not also rebased, and the image no longer
+// claims MH_NOUNDEFS. A Fern-internal symbol left undefined is still an
+// error rather than an import.
+func TestMachOBindsLibSystemImports(t *testing.T) {
+	asm := ".text\n_main:\n\tmov x0, #0\n\tret\n" +
+		".section .rodata\n\t.p2align 3\nslots:\n\t.quad _getpwuid\n\t.quad _main\n"
+	a, err := nativearm64.ParseProgram(asm)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	textLen, dataLen := a.MachOTextLen(), a.MachODataLen()
+	m := SegmentMap(textLen, 0, dataLen, false)
+	text, data, err := a.LinkMachO(m.Text, m.Data)
+	if err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	var binds []Bind
+	for _, b := range a.MachODataBinds() {
+		binds = append(binds, Bind{Off: b.Off, Sym: b.Sym})
+	}
+	if len(binds) != 1 || binds[0].Sym != "_getpwuid" || binds[0].Off != 0 {
+		t.Fatalf("binds = %+v, want one _getpwuid at offset 0", binds)
+	}
+	if got := a.MachODataRebaseOffsets(); len(got) != 1 || got[0] != 8 {
+		t.Fatalf("rebases = %v, want only the _main slot at 8", got)
+	}
+	if !bytes.Equal(data[:8], make([]byte, 8)) {
+		t.Errorf("the import slot holds %x, want zero for dyld to fill", data[:8])
+	}
+	bin := StaticExecutable(text, nil, data, "fern-test", a.MachODataRebaseOffsets(), binds)
+	if _, err := macho.NewFile(bytes.NewReader(bin)); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if flags := binary.LittleEndian.Uint32(bin[24:]); flags&mhNoUndefs != 0 {
+		t.Errorf("flags %#x still claim MH_NOUNDEFS", flags)
+	}
+	info := findLoad(t, bin, lcDyldInfoOnly)
+	bindOff := binary.LittleEndian.Uint32(info[8:])
+	bindLen := binary.LittleEndian.Uint32(info[12:])
+	if bindLen == 0 {
+		t.Fatalf("LC_DYLD_INFO_ONLY carries no bind stream")
+	}
+	want := []byte{bindOpSetDylibOrdinalImm | 1, bindOpSetTypeImm | bindTypePointer, bindOpSetSymbolTrailingImm}
+	want = append(want, "_getpwuid\x00"...)
+	want = append(want, bindOpSetSegmentAndOffULEB|2, 0, bindOpDoBind, bindOpDone)
+	if got := bin[bindOff : bindOff+uint32(len(want))]; !bytes.Equal(got, want) {
+		t.Errorf("bind stream = %x, want %x", got, want)
+	}
+	checkSignature(t, bin)
+
+	bad := ".text\n_main:\n\tret\n.section .rodata\n\t.p2align 3\n\t.quad __fern_missing\n"
+	b, err := nativearm64.ParseProgram(bad)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	mb := SegmentMap(b.MachOTextLen(), 0, b.MachODataLen(), false)
+	if _, _, err := b.LinkMachO(mb.Text, mb.Data); err == nil {
+		t.Errorf("an undefined __-prefixed .quad linked; it is Fern's own symbol, not an import")
+	}
+}

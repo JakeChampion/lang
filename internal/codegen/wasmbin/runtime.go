@@ -1073,6 +1073,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_wasm_poll")
 				case "isatty":
 					needs.add("isatty")
+				case "__getpwuid_name":
+					needs.add("__getpwuid_name")
 				case "signal_ignore", "signal_default", "signal_mask", "signal_disposition":
 					needs.add(op.Str)
 				case "hostname":
@@ -2328,6 +2330,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: nil,
 		body:    buildBufFreeBody,
 	},
+	"__getpwuid_name": {
+		// (uid: i32) → usize — 0: a WASI world has no account database
+		// beyond the files the caller reads (#9815).
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildGetpwuidNameBody,
+	},
 	"isatty": {
 		// (fd: i32) → i32 (0 / 1) — is the descriptor a terminal?
 		// Preview 1 asks the fd table via fd_fdstat_get; preview 2 has
@@ -2999,7 +3008,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 	},
 	"__fern_tcp_pollable": {
 		// (conn: i32) → i32 — a wasi:io/poll pollable for the
-		// connection (tcp-socket.subscribe), so std/async can
+		// connection's incoming stream or socket state, so std/async can
 		// multiplex N connections for overlapped outbound fan-out.
 		// See buildTcpPollableBody.
 		params:  []byte{encode.ValtypeI32},

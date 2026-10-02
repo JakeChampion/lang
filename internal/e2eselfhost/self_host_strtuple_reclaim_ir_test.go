@@ -146,6 +146,31 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
+	// A discarded string field of a live tuple is a borrow, not an owned value
+	// to release, and a discarded struct literal is owned and freed (#10533).
+	{"str-tuple-field-discarded", `function main(): i32 {
+    let w: i32 = 0;
+    while (w < 200) { let t: (i32, string) = (w, "x" + "y"); t.1; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { let t2: (i32, string) = (i, "x" + "y"); t2.1; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    return 0;
+}`, 0},
+	{"str-struct-literal-discarded", `struct S { tag: string }
+function main(): i32 {
+    let w: i32 = 0;
+    while (w < 200) { S { tag: "v" + "x" }; w = w + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    while (i < 5000) { S { tag: "v" + "x" }; i = i + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    return 0;
+}`, 0},
 }
 
 // TestSelfHostStrTupleReclaimIRX86_64 drives the cases through the self-hosted

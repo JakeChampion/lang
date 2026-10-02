@@ -673,6 +673,9 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__load_u8") {
     return t_i32();
   }
+  if (argc == 1 && name == "__getpwuid_name") {
+    return t_usize();
+  }
   if (argc == 1 && name == "__load_i32") {
     return t_i32();
   }
@@ -838,6 +841,9 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   }
   if (name == "__store_u8") {
     return ([t_usize(), t_i32()], true);
+  }
+  if (name == "__getpwuid_name") {
+    return ([t_u32()], true);
   }
   if (name == "__str_bytes") {
     return ([t_string(), t_usize()], true);
@@ -2496,15 +2502,24 @@ function (s: Scope) with_block_ret(rt: typeinfo.Type): Scope {
   return Scope { ...s, ret_type: rt };
 }
 
-// Linear scan — newest binding wins so shadowing works
-// naturally in a single flat scope.
-function (s: Scope) lookup(name: string): typeinfo.Type {
+// binding_index is the index of `name`'s newest binding, -1 for none: a
+// linear scan from the end, so shadowing works naturally in a single flat
+// scope.
+function (s: Scope) binding_index(name: string): i32 {
   let i: i32 = s.names.len() - 1;
   while (i >= 0) {
     if (s.names[i] == name) {
-      return s.types[i];
+      return i;
     }
     i = i - 1;
+  }
+  return 0 - 1;
+}
+
+function (s: Scope) lookup(name: string): typeinfo.Type {
+  let i: i32 = s.binding_index(name);
+  if (i >= 0) {
+    return s.types[i];
   }
   return t_unknown("undefined identifier:" + name);
 }
@@ -2513,14 +2528,7 @@ function (s: Scope) lookup(name: string): typeinfo.Type {
 // lookup's unknown result conflates "bound opaquely" with "not bound", and
 // the function-value shadowing question needs the difference.
 function (s: Scope) is_bound(name: string): boolean {
-  let i: i32 = s.names.len() - 1;
-  while (i >= 0) {
-    if (s.names[i] == name) {
-      return true;
-    }
-    i = i - 1;
-  }
-  return false;
+  return s.binding_index(name) >= 0;
 }
 
 // lookup_assoc_sig finds the associated function `field` of the type `tyname`:
@@ -5991,9 +5999,9 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
 }
 
 function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
-  let bound: typeinfo.Type = s.lookup(id.name);
-  if (!is_unknown(bound)) {
-    return bound;
+  let bi: i32 = s.binding_index(id.name);
+  if (bi >= 0 && !is_unknown(s.types[bi])) {
+    return s.types[bi];
   }
   // Fallback (#4346 piece 2): a bare no-payload enum variant used as
   // a value types to its enum's union. A local of the same name
@@ -6041,7 +6049,7 @@ function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
   // unknown return conflates the two, and resolving the shadowed name
   // to the function turned `Some(pair) => pair.0` into an E043 inside
   // std the moment a user function was named `pair`.
-  if (csig.name.len() > 0 && !s.is_bound(id.name)) {
+  if (csig.name.len() > 0 && bi < 0) {
     // A generic one is E040 (generic_fn_value_diag); typing it would hand
     // an uninstantiated signature to whatever reads the value.
     if (generic_fn_value(csig)) {
@@ -6049,7 +6057,10 @@ function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
     }
     return t_func_own(csig.param_types, csig.param_own, csig.ret_type);
   }
-  return bound;
+  if (bi >= 0) {
+    return s.types[bi];
+  }
+  return t_unknown("undefined identifier:" + id.name);
 }
 
 function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
@@ -15319,7 +15330,7 @@ function registered_intrinsics(): string[] {
     "__c_call4", "__c_call4_f32", "__c_call4_f64", "__ceil_f64", "__clz32", "__clz64", "__cos_f64", "__count_byte",
     "__count_runs", "__crc32_cksum", "__ctz32", "__ctz64", "__exp_f64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
     "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
-    "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8", "__log_f64",
+    "__getpwuid_name", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8", "__log_f64",
     "__map_hash_seed", "__memchr", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__pow_f64", "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__scan_set", "__sin_f64", "__sqrt_f64", "__store_i32", "__store_i64",
@@ -15562,8 +15573,10 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
 pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[] }
 
 // OwnFuncs is the module's own-taking free functions with a name index over
-// them, one entry per row in order.
-pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex }
+// them, one entry per row in order, beside the module's declared type names:
+// `structs` holds every struct name and every enum that owns one, `decls` the
+// enum and union-alias names only a whole module carries.
+pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex }
 
 struct MovedEntry { mname: string, mline: i32 }
 
@@ -17185,7 +17198,7 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
       if (sd.name == vname && sd.enum_owner.len() > 0) {
         let i: i32 = 0;
         while (i < binds.len() && i < sd.fields.len()) {
-          if (binds[i].len() > 0 && ow_type_is_pointer_name(sd.fields[i].type_name, ctx.structs)
+          if (binds[i].len() > 0 && ow_type_is_pointer_name(sd.fields[i].type_name, ctx.ofuncs)
             && !util.has_str(names, binds[i])) {
             names = names.append(binds[i]);
           }
@@ -17200,10 +17213,10 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
 
 // collect_own_funcs records every function that has at least one `own`
 // parameter, with a per-parameter owned-flag list (for the E051 guard).
-function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFuncs {
+function collect_own_funcs(mod: parser.Module): OwnFuncs {
   let out: OwnFunc[] = [];
   let names: string[] = [];
-  for func in funcs {
+  for func in mod.funcs {
     let any_own: boolean = false;
     let flags: boolean[] = [];
     let arr: boolean[] = [];
@@ -17221,7 +17234,21 @@ function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFuncs {
       names = names.append(func.name);
     }
   }
-  return OwnFuncs { rows: out, names: util.name_index(names) };
+  let structs: string[] = [];
+  for sd in mod.structs {
+    structs = structs.append(sd.name);
+    if (sd.enum_owner.len() > 0) {
+      structs = structs.append(sd.enum_owner);
+    }
+  }
+  let decls: string[] = [];
+  for ed in mod.enums {
+    decls = decls.append(ed.name);
+  }
+  for alias in mod.aliases {
+    decls = decls.append(alias.name);
+  }
+  return OwnFuncs { rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls) };
 }
 
 // ow_type_is_pointer reports whether a declared type SPELLING is
@@ -17229,7 +17256,7 @@ function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFuncs {
 // strings, arrays / slices, tuples, function values, trait objects, and
 // declared struct / enum names. Every scalar width, `boolean`, `char`, `void`
 // and an unresolved name (an erased type parameter) are not.
-function ow_type_is_pointer_name(tn: string, structs: parser.StructDecl[]): boolean {
+function ow_type_is_pointer_name(tn: string, ofuncs: OwnFuncs): boolean {
   if (tn.len() == 0 || tn == "void") {
     return false;
   }
@@ -17249,32 +17276,16 @@ function ow_type_is_pointer_name(tn: string, structs: parser.StructDecl[]): bool
   if (parser.is_reserved_struct_name(base) || parser.is_reserved_enum_name(base)) {
     return true;
   }
-  for sd in structs {
-    if (sd.name == base || sd.enum_owner == base) {
-      return true;
-    }
-  }
-  return false;
+  return ofuncs.structs.has(base);
 }
 
 // The module form adds the names only a whole module carries: a declared enum
 // with no payload variants, and a union alias.
-function ow_type_is_pointer(tn: string, mod: parser.Module): boolean {
-  if (ow_type_is_pointer_name(tn, mod.structs)) {
+function ow_type_is_pointer(tn: string, ofuncs: OwnFuncs): boolean {
+  if (ow_type_is_pointer_name(tn, ofuncs)) {
     return true;
   }
-  let base: string = util.base_type_name(tn);
-  for ed in mod.enums {
-    if (ed.name == base) {
-      return true;
-    }
-  }
-  for alias in mod.aliases {
-    if (alias.name == base) {
-      return true;
-    }
-  }
-  return false;
+  return ofuncs.decls.has(util.base_type_name(tn));
 }
 
 // The ownership of a call's RESULT, which decides whether passing it into an
@@ -17306,7 +17317,7 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
   let out: string[] = [];
   let i: i32 = 0;
   while (i < fn.params.len()) {
-    if (ow_type_is_pointer(fn.params[i].type_name, mod)) {
+    if (ow_type_is_pointer(fn.params[i].type_name, ofuncs)) {
       if (i >= flags.len() || !flags[i]) {
         out = out.append(fn.params[i].name);
       }
@@ -17505,7 +17516,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
       continue;
     }
-    if (!ow_type_is_pointer(fn.ret_type, mod)) {
+    if (!ow_type_is_pointer(fn.ret_type, ofuncs)) {
       continue;
     }
     let flags: boolean[] = ow_func_flags(ofuncs, fn.name);
@@ -17513,7 +17524,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
     let all_own: boolean = true;
     let i: i32 = 0;
     while (i < fn.params.len()) {
-      if (ow_type_is_pointer(fn.params[i].type_name, mod)) {
+      if (ow_type_is_pointer(fn.params[i].type_name, ofuncs)) {
         any_ptr = true;
         if (i >= flags.len() || !flags[i]) {
           all_own = false;
@@ -17539,7 +17550,7 @@ function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
       continue;
     }
-    if (ow_type_is_pointer(fn.ret_type, mod)) {
+    if (ow_type_is_pointer(fn.ret_type, ofuncs)) {
       pending = pending.append(fn);
     }
   }
@@ -17582,7 +17593,7 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.Na
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
       continue;
     }
-    if (!ow_type_is_pointer(fn.ret_type, mod)) {
+    if (!ow_type_is_pointer(fn.ret_type, ofuncs)) {
       continue;
     }
     if (borrows.has(fn.name)) {
@@ -17606,7 +17617,7 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
     if (fn.receiver_name.len() == 0 || fn.type_params.len() > 0) {
       continue;
     }
-    if (!ow_type_is_pointer(fn.ret_type, mod)) {
+    if (!ow_type_is_pointer(fn.ret_type, ofuncs)) {
       continue;
     }
     if (ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
@@ -17631,7 +17642,7 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
 // ordinary programs are untouched. The result-borrow fixpoint always spans the
 // module; only the bodies `focus` admits (in_focus) are walked.
 pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
-  let ofuncs: OwnFuncs = collect_own_funcs(mod.funcs);
+  let ofuncs: OwnFuncs = collect_own_funcs(mod);
   let builtins: util.NameIndex = util.name_index(ow_fresh_builtins());
   let borrows: util.NameIndex = ow_result_borrows(mod, ofuncs, builtins);
   let fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);

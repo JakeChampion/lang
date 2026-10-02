@@ -68,12 +68,7 @@ function login_uid(): Option[i64] {
 function login_name(): Option[string] {
   match (login_uid()) {
     Some(uid) => {
-      match (pwdb.user_by_uid(uid)) {
-        Some(u) => {
-          return Some(u.name);
-        },
-        None => {}
-      }
+      return pwdb.user_name(uid);
     },
     None => {}
   }

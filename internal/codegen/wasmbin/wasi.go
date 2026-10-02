@@ -2540,6 +2540,10 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	}
 	if helpers.set["__fern_tcp_pollable"] {
 		in.add("wasi_sockets_tcp_subscribe")
+		in.add("wasi_io_input_stream_subscribe")
+		if helpers.set["__fern_udp_bind"] {
+			in.add("wasi_sockets_udp_incoming_subscribe")
+		}
 	}
 	if helpers.set["__fern_reactor_ctl"] {
 		in.add("wasi_sockets_tcp_subscribe")
@@ -2819,6 +2823,12 @@ func buildIsattyBody(idxs map[string]uint32) []byte {
 // it selects plain text, which is right for every embedder that
 // captures the component's output, and `FORCE_COLOR` remains the way to
 // ask for escapes anyway.
+func buildGetpwuidNameBody(map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstI32Const(body, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 func buildIsattyBodyP2(map[string]uint32) []byte {
 	var body []byte
 	body = inst.InstI32Const(body, 0)

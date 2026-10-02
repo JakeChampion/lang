@@ -2745,61 +2745,31 @@ pub function op_call_direct(callee: string, argc: i32): Op {
 // (so every backend can reload them per dispatch arm — wasm can't index a deep
 // operand-stack slot). The backend reads the receiver's runtime shape pointer
 // and dispatches to the matching `<ConcreteType>.<method>` — a compare-branch
-// chain over the trait's impl types, mirroring the AST emitter. `i32_imm` is
-// base_slot; `width` is argc (1 + nargs).
+// chain over the arms. `i32_imm` is base_slot; `width` is argc (1 + nargs).
 //
-// `str` is the method name, followed by the dyn type's TRAIT SET after a `|`
-// (`m|B`, `m|A,B`). The arm search is name-keyed, so it needs the trait set to
-// pick between two traits that each provide the method for one receiver type:
-// the second provider is emitted as `<Type>.<Trait>.<m>` (parser's
-// claim_method_name), which a search for a bare `m` would never find. Read the
-// halves back with dyn_dispatch_method / dyn_dispatch_traits.
-pub function op_dyn_dispatch(method: string, traits: string[], base_slot: i32, argc: i32): Op {
-  let tag: string = method;
+// `str` is the arms, comma-separated: the decl keys (`parser.decl_key`) of the
+// implementations the typed lowering chose and checked against the call's
+// contract (`semsource.dyn_arms`). A type with a same-named method that does
+// not implement the dyn's traits is not an arm. Read them back with
+// dyn_dispatch_arms.
+pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
+  let tag: string = "";
   let i: i32 = 0;
-  while (i < traits.len()) {
-    if (i == 0) {
-      tag = tag + "|";
-    } else {
+  while (i < arms.len()) {
+    if (i > 0) {
       tag = tag + ",";
     }
-    tag = tag + traits[i];
+    tag = tag + arms[i];
     i = i + 1;
   }
   return Op { decl: 0 - 1, kind_tag: 147, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: tag };
 }
 
-// dyn_dispatch_method returns the method-name half of an op_dyn_dispatch `str`.
-pub function dyn_dispatch_method(tag: string): string {
-  let i: i32 = 0;
-  while (i < tag.len()) {
-    if (tag[i] == 124) {  // '|'
-      return slice_unchecked(tag, 0, i) + "";
-    }
-    i = i + 1;
-  }
-  return tag;
-}
-
-// dyn_dispatch_traits returns the trait-set half of an op_dyn_dispatch `str`,
-// empty when the dyn type named no traits the lowerer could resolve.
-pub function dyn_dispatch_traits(tag: string): string[] {
+// dyn_dispatch_arms returns the arms an op_dyn_dispatch `str` carries.
+pub function dyn_dispatch_arms(tag: string): string[] {
   let out: string[] = [];
-  let bar: i32 = 0 - 1;
-  let i: i32 = 0;
-  while (i < tag.len()) {
-    if (tag[i] == 124) {
-      bar = i;
-      i = tag.len();
-    } else {
-      i = i + 1;
-    }
-  }
-  if (bar < 0) {
-    return out;
-  }
-  let start: i32 = bar + 1;
-  let k: i32 = start;
+  let start: i32 = 0;
+  let k: i32 = 0;
   while (k <= tag.len()) {
     if (k == tag.len() || tag[k] == b',') {
       if (k > start) {
