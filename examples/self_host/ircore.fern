@@ -1463,19 +1463,23 @@ function inline_leaf(fd: parser.FuncDecl, r: irlower.LowerResult): boolean {
     return false;
   }
   var k_calld: i32 = ir.kind_id("call_direct");
+  var k_load: i32 = ir.kind_id("load_local");
+  var k_store: i32 = ir.kind_id("store_local");
+  var k_tee: i32 = ir.kind_id("tee_local");
+  var k_calli: i32 = ir.kind_id("call_indirect");
+  var k_callc: i32 = ir.kind_id("call_closure_direct");
+  var k_const_func: i32 = ir.kind_id("const_func");
+  var k_dyn: i32 = ir.kind_id("dyn_dispatch");
   var work: i32 = 0;
   for o in r.ops {
     var k: i32 = o.kind_tag;
-    if (k != ir.kind_id("load_local") && k != ir.kind_id("store_local") && k != ir.kind_id("tee_local")) {
+    if (k != k_load && k != k_store && k != k_tee) {
       work = work + 1;
     }
     if (work > inline_leaf_ops()) {
       return false;
     }
-    if (k == k_calld) {
-      return false;
-    }
-    if (k == ir.kind_id("call_indirect") || k == ir.kind_id("call_closure_direct") || k == ir.kind_id("const_func") || k == ir.kind_id("dyn_dispatch")) {
+    if (k == k_calld || k == k_calli || k == k_callc || k == k_const_func || k == k_dyn) {
       return false;
     }
   }

@@ -6470,10 +6470,18 @@ pub function derive_magic_u(d: u64, w: i32): MagicU {
   return MagicU { m: q2 + 1u64 & mask, s: p - w, add: add };
 }
 
+// StrengthKinds is the kind ids strength_rewrite compares against, decided
+// once per pass rather than once per constant.
+struct StrengthKinds { mul: i32, add: i32, sub: i32, or: i32, xor: i32, shl: i32, shr_s: i32, shr_u: i32, and: i32, div_s: i32, div_u: i32, rem_s: i32, rem_u: i32 }
+
+function strength_kinds(): StrengthKinds {
+  return StrengthKinds { mul: kind_id("mul"), add: kind_id("add"), sub: kind_id("sub"), or: kind_id("or"), xor: kind_id("xor"), shl: kind_id("shl"), shr_s: kind_id("shr_s"), shr_u: kind_id("shr_u"), and: kind_id("and"), div_s: kind_id("div_s"), div_u: kind_id("div_u"), rem_s: kind_id("rem_s"), rem_u: kind_id("rem_u") };
+}
+
 // strength_rewrite decides what replaces `const k ; bop`.
-function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
+function strength_rewrite(ks: StrengthKinds, k: i32, bop: Op): StrengthRewrite {
   var t: i32 = bop.kind_tag;
-  if (t == kind_id("mul")) {
+  if (t == ks.mul) {
     if (k == 1) {
       return strength_del();
     }
@@ -6486,15 +6494,13 @@ function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
     }
     return strength_none();
   }
-  if (t == kind_id("add") || t == kind_id("sub") || t == kind_id("or")
-    || t == kind_id("xor") || t == kind_id("shl")
-    || t == kind_id("shr_s") || t == kind_id("shr_u")) {
+  if (t == ks.add || t == ks.sub || t == ks.or || t == ks.xor || t == ks.shl || t == ks.shr_s || t == ks.shr_u) {
     if (k == 0) {
       return strength_del();
     }
     return strength_none();
   }
-  if (t == kind_id("and")) {
+  if (t == ks.and) {
     if (k == 0) {
       return strength_drop0();
     }
@@ -6503,13 +6509,13 @@ function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
     }
     return strength_none();
   }
-  if (t == kind_id("div_s")) {
+  if (t == ks.div_s) {
     if (k == 1) {
       return strength_del();
     }
     return strength_none();
   }
-  if (t == kind_id("div_u")) {
+  if (t == ks.div_u) {
     if (k == 1) {
       return strength_del();
     }
@@ -6519,13 +6525,13 @@ function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
     }
     return strength_none();
   }
-  if (t == kind_id("rem_s")) {
+  if (t == ks.rem_s) {
     if (k == 1) {
       return strength_drop0();
     }
     return strength_none();
   }
-  if (t == kind_id("rem_u")) {
+  if (t == ks.rem_u) {
     if (k == 1) {
       return strength_drop0();
     }
@@ -6543,12 +6549,13 @@ function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
 // rewrite's output is appended, never rescanned, but the REMAINING input is,
 // so the second site is found in the same pass.
 pub function reduce_strength_ex(ops: Op[]): StrengthResult {
+  var ks: StrengthKinds = strength_kinds();
   var out: Op[] = [];
   var changed: boolean = false;
   var i: i32 = 0;
   while (i < ops.len()) {
     if (i + 1 < ops.len() && const_i32_readable(ops[i]) && ops[i + 1].width == 0) {
-      var repl: StrengthRewrite = strength_rewrite(const_i32_value(ops[i]), ops[i + 1]);
+      var repl: StrengthRewrite = strength_rewrite(ks, const_i32_value(ops[i]), ops[i + 1]);
       if (repl.ok) {
         var r: i32 = 0;
         while (r < repl.ops.len()) {
