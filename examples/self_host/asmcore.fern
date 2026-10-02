@@ -66,6 +66,13 @@ pub function lambda_captures(lm: ast.ExprLambda, outer: EmitState): string[] {
 pub struct EmitState {
   out: string,
   label_n: i32,
+  // builtin_i32 / builtin_string: the builtins whose call result is an i32 or
+  // a string (builtin_i32_names / builtin_string_names), indexed once.
+  builtin_i32: util.NameIndex,
+  builtin_string: util.NameIndex,
+  // funcs_ix indexes `funcs` by name, one entry per declaration in order;
+  // with_funcs keeps the two together.
+  funcs_ix: util.NameIndex,
   local_names: string[],
   in_function: boolean,
   string_lits: string[],
@@ -244,6 +251,9 @@ pub function new_state(): EmitState {
   return EmitState {
     out: "",
     label_n: 0,
+    builtin_i32: util.name_index(builtin_i32_names()),
+    builtin_string: util.name_index(builtin_string_names()),
+    funcs_ix: util.name_index(ns),
     local_names: ns,
     in_function: false,
     string_lits: sl,
@@ -330,6 +340,15 @@ pub function rc_free_debug_on(): boolean {
 // for `name` in every unit — is what struct_make / variant_is / dyn dispatch leaq
 // instead of a unit-local string label; emit_module_ir_unit emits each recorded
 // shape once as `.weak __fern_shp_<sanitized>` so the linker merges the copies.
+// with_funcs: the state over `funcs`, indexed by name.
+pub function with_funcs(s: EmitState, funcs: parser.FuncDecl[]): EmitState {
+  var names: string[] = [];
+  for fd in funcs {
+    names = names.append(fd.name);
+  }
+  return EmitState { ...s, funcs: funcs, funcs_ix: util.name_index(names) };
+}
+
 pub function add_shape_lit(s: EmitState, name: string): EmitState {
   var i: i32 = 0;
   while (i < s.shape_lits.len()) {
@@ -6829,7 +6848,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "write_file_exec") {
     return ty_result(ty_unknown());
   }
-  if (util.index_of_str(builtin_i32_names(), id.name) >= 0) {
+  if (s.builtin_i32.has(id.name)) {
     return ty_i32();
   }
   // tcp_recv(fd, max) -> u8[] box; the rest -> i32 (fd /
@@ -6963,7 +6982,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "read_line") {
     return ty_option(ty_string());
   }
-  if (util.index_of_str(builtin_string_names(), id.name) >= 0) {
+  if (s.builtin_string.has(id.name)) {
     return ty_string();
   }
   if (id.name == "__raw_array") {
@@ -7050,12 +7069,12 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "str_split") {
     return ty_array_string();
   }
-  var fi: i32 = 0;
-  while (fi < s.funcs.len()) {
+  var fi: i32 = s.funcs_ix.chain(id.name);
+  while (fi >= 0) {
     if (s.funcs[fi].name == id.name && s.funcs[fi].receiver_type.len() == 0) {
       return ty_from_name(s.funcs[fi].ret_type);
     }
-    fi = fi + 1;
+    fi = s.funcs_ix.next[fi];
   }
   return ty_unknown();
 }
@@ -8555,7 +8574,7 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
 // checks with; `tm` is the module as the checker annotated it.
 pub function entry_check_errors(tm: parser.Module): util.Diag[] {
   var s: EmitState = new_state();
-  s = EmitState { ...s, struct_decls: irlower.struct_tab(tm.structs), funcs: tm.funcs };
+  s = with_funcs(EmitState { ...s, struct_decls: irlower.struct_tab(tm.structs) }, tm.funcs);
   return check_module(tm, s);
 }
 
@@ -8922,7 +8941,7 @@ function callgate_ns_present(pfx: string, names: string[]): boolean {
   var i: i32 = 0;
   while (i < names.len()) {
     var nm: string = names[i];
-    if (nm.len() > pfx.len() && slice_unchecked(nm, 0, pfx.len()) == pfx) {
+    if (nm.len() > pfx.len() && util.has_prefix(nm, pfx)) {
       return true;
     }
     i = i + 1;

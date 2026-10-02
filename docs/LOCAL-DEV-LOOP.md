@@ -223,10 +223,17 @@ every value of the function. A second round took the callee lookup of
 `asmcore.callgate_expr` (3.6%), the threader-row scan of `ssarc.caller_sigs`
 (1.2%) and the record scan of `semsource.schema_of` (1.1%) through name
 indexes as well: 227 G to 216 G with the stage0 pin at c891ebc
-(`docs/rc-log/2026-10-02-f-three-scans-become-name-lookups.md`). What remains
-is spread wide: `util.hash_bucket` plus `__fern_str_eq` 5.5% (the
-registries' probes), `ssa_lift.lift_impl` 3.3%, `__fern_alloc` 2.3%,
-`__fern_arr_slice` 2%.
+(`docs/rc-log/2026-10-02-f-three-scans-become-name-lookups.md`), and a third
+round took the function-table scan of `asmcore.infer_call_named_type`
+(1.5%), the per-kill copy of the escape set in `irlower.noesc_set_kill` and
+the prefix-by-slice compares (`semtypes.is_env` 0.9%) and the
+borrowable registry's 251 buckets (`irlower.param_is_borrowable` 1.7%) with
+it: 214 G to 207 G on the base of 0d7a8d32
+(`docs/rc-log/2026-10-02-g-a-table-scan-a-copied-set-and-sliced-prefixes.md`).
+What remains is spread wide: `util.hash_bucket` plus `__fern_str_eq` 5.4%
+(the registries' probes), `ssa_lift.lift_impl` 3.4%, `__fern_alloc` 2.3%
+(the literal table copied per interned shape in `asmcore.add_string_lit`
+is the largest single copy, 1.1%).
 
 To re-measure: build the driver with `-g` through the pinned stage0, run
 `valgrind --tool=callgrind` on `-emit asm`, and resolve

@@ -10481,7 +10481,7 @@ function emit_named_bodies(cache: irlower.LowerResult[], from: i32, s: asmcore.E
 pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, cache: irlower.LowerResult[], base: irlower.FnSigs): string[] {
   strbuf_reset();
   var s: asmcore.EmitState = asmcore.new_state();
-  s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: all_funcs };
+  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs }, all_funcs);
   s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, false);
   s = s.close_needs();
   strbuf_reset();
@@ -10554,7 +10554,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   var s: asmcore.EmitState = asmcore.new_state();
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891).
-  s = asmcore.EmitState { ...s, struct_decls: all_structs, funcs: all_funcs, str_ns: str_ns, rt_lower: rt };
+  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt }, all_funcs);
   // A unit never passes emit_module_or_error_sub's check, so the Display gate
   // runs here: a `print(xs)` nothing gives a `to_string` would otherwise hand
   // the string-only runtime helper a raw pointer (#9945).
