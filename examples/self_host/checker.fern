@@ -15857,15 +15857,14 @@ function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
 }
 
 // lu_dies reports whether the argument `aid` (position `i` of `call`) is dead at
-// the call. `outer` is the outermost call enclosing it, when `has_outer`;
-// `is_root` says `call` is the statement's whole expression.
-function lu_dies(fx: LuFn, call: ast.Expr, callee: string, i: i32, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite): boolean {
+// the call. `outer` is the outermost call enclosing it, when `has_outer`.
+function lu_dies(fx: LuFn, call: ast.Expr, callee: string, i: i32, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
   var name: string = aid.name;
   if (!lu_is_local(fx, name) || util.has_str(fx.facts.escaping, name)) {
     return false;
   }
   var once: boolean = astwalk.count_ident_expr(call, name) == 1;
-  if (lu_rebind_site(site, name, once, is_root)) {
+  if (lu_rebind_site(site, name)) {
     return true;
   }
   if (site.in_loop || !once || !lu_admitted(fx, name)) {
@@ -15883,7 +15882,7 @@ function lu_dies(fx: LuFn, call: ast.Expr, callee: string, i: i32, aid: ast.Expr
 
 // lu_rebind_site: the statement holding the call supersedes `name` whatever
 // follows it.
-function lu_rebind_site(site: LuSite, name: string, once: boolean, is_root: boolean): boolean {
+function lu_rebind_site(site: LuSite, name: string): boolean {
   match (site.stmts[site.idx]) {
     ast.StmtAssign(a) => {
       // `x = f(.., x, ..)`, the call anywhere in the value.
@@ -15893,9 +15892,10 @@ function lu_rebind_site(site: LuSite, name: string, once: boolean, is_root: bool
         }
       }
     },
-    ast.StmtReturn(_) => {
-      // `return f(.., x, ..)`.
-      if (is_root && once && !site.in_iife) {
+    ast.StmtReturn(r) => {
+      // `return f(.., x, ..)`, the call anywhere in a value that names x only
+      // there.
+      if (!site.in_iife && astwalk.count_ident_expr(r.value, name) == 1) {
         return true;
       }
     },
@@ -15918,7 +15918,7 @@ function lu_rebind_site(site: LuSite, name: string, once: boolean, is_root: bool
 }
 
 // lu_call collects the keys of `c`'s own-position arguments that die at it.
-function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
+function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   var cname: string = ow_ident_name(c.callee);
   if (cname.len() == 0 || util.has_str(fx.params, cname) || !ow_is_own_func(fx.ofuncs, cname)) {
     return acc;
@@ -15928,7 +15928,7 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
   while (i < c.args.len() && i < flags.len()) {
     if (flags[i]) {
       if let ast.ExprIdent(aid) = c.args[i] {
-        if (lu_dies(fx, e, cname, i, aid, outer, has_outer, is_root, site)) {
+        if (lu_dies(fx, e, cname, i, aid, outer, has_outer, site)) {
           acc = acc.append(lu_key(aid.line, aid.col));
         }
       }
@@ -16018,7 +16018,7 @@ function lu_children(e: ast.Expr): ast.Expr[] {
   return out;
 }
 
-function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
+function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   var o: ast.Expr = outer;
   var ho: boolean = has_outer;
   if let ast.ExprCall(c) = e {
@@ -16030,14 +16030,14 @@ function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: bool
       }
       return lu_stmts(lm.body, site.in_loop, true, outer, has_outer, fx, acc);
     }
-    acc = lu_call(c, e, outer, has_outer, is_root, site, fx, acc);
+    acc = lu_call(c, e, outer, has_outer, site, fx, acc);
     if (!ho) {
       o = e;
       ho = true;
     }
   }
   for child in lu_children(e) {
-    acc = lu_expr(child, o, ho, false, site, fx, acc);
+    acc = lu_expr(child, o, ho, site, fx, acc);
   }
   return acc;
 }
@@ -16046,9 +16046,9 @@ function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: bool
 // into the body of a synthesised IIFE, which native sees as one expression.
 function lu_root(e: ast.Expr, site: LuSite, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {
   if (has_outer) {
-    return lu_expr(e, outer, true, true, site, fx, acc);
+    return lu_expr(e, outer, true, site, fx, acc);
   }
-  return lu_expr(e, e, false, true, site, fx, acc);
+  return lu_expr(e, e, false, site, fx, acc);
 }
 
 function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {

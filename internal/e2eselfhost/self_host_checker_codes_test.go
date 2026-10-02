@@ -375,6 +375,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// reference and builds something new is clean in both, and one that
 		// can hand its borrowed parameter back — directly, through a local, or
 		// through a chain — still draws E051 in both.
+		// A local handed to an `own` parameter inside a returned tuple dies at
+		// the call, loop or not: the return exits (#10679). A second mention in
+		// the returned value withholds it.
+		{"e051-local-moved-inside-a-returned-tuple", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(n: i32): (i32, boolean) {\n    var i: i32 = 0;\n    while (i < n) {\n        var xs: i32[] = [i];\n        if (i > 2) { return (keep(xs), true); }\n        i = i + 1;\n    }\n    return (0, false);\n}\nfunction main(): i32 { var r: (i32, boolean) = f(5); return r.0; }\n", nil},
+		{"e051-local-named-twice-in-a-returned-tuple", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(n: i32): (i32, i32) {\n    var i: i32 = 0;\n    while (i < n) {\n        var xs: i32[] = [i];\n        if (i > 2) { return (keep(xs), xs.len()); }\n        i = i + 1;\n    }\n    return (0, 0);\n}\nfunction main(): i32 { var r: (i32, i32) = f(5); return r.0; }\n", []string{"E051"}},
 		{"e051-fresh-result-from-a-borrowing-factory", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction build(tag: string): i32[] { return [tag.len()]; }\nfunction main(): i32 { return keep(build(\"xy\")); }\n", nil},
 		{"e051-fresh-result-through-a-call-chain", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction sized(xs: i32[]): i32[] { return [xs.len()]; }\nfunction relay(ys: i32[]): i32[] { return sized(ys); }\nfunction main(): i32 { return keep(relay([1, 2])); }\n", nil},
 		{"e051-result-is-the-borrowed-parameter", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction passthru(xs: i32[]): i32[] { return xs; }\nfunction main(): i32 { return keep(passthru([1, 2])); }\n", []string{"E051"}},

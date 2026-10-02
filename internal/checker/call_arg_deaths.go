@@ -157,9 +157,9 @@ type ArgDeaths struct {
 //     call and x occurs in it exactly once, directly as an argument — the
 //     old binding is overwritten by the result (the #5056 move-and-rebind
 //     shape, sans the `own` requirement);
-//   - the return-position `return f(.., x, ..)` under the same
-//     exactly-once rule: a return exits the function (loop or not), so no
-//     later read exists. This is what keeps recursive accumulator tails
+//   - the return-position `return f(.., x, ..)`, the call anywhere in the
+//     returned value, under the same exactly-once rule over that value: a
+//     return exits the function (loop or not), so no later read exists. This is what keeps recursive accumulator tails
 //     (`return walk(acc, …)`) on the in-place fast path — bracketing them
 //     would force one copy per recursion level, the #4838 O(n²) class;
 //   - the SOLE-OCCURRENCE shape (#6036): a PARAMETER read exactly once in
@@ -417,15 +417,28 @@ func CallArgDeathsOwning(fn *ast.FuncDecl, info *Info, owned map[string]bool) Ar
 				}
 				return true
 			}
-			c, ok := st.Value.(*ast.Call)
-			if !ok {
+			// The call need not be the whole returned value: `return (f(x),
+			// true)` exits the function just the same, so any call in it
+			// takes x's last read when the value names x only there (#10679).
+			// A block, if or match expression is its own statement list in
+			// the self-host's E051 port, so the walk stops at one.
+			if st.Value == nil {
 				return true
 			}
-			for _, a := range c.Args {
-				if aid, ok := a.(*ast.Ident); ok {
-					markOnce(c, aid.Name)
+			ast.Walk(st.Value, func(m ast.Node) bool {
+				switch m.(type) {
+				case *ast.BlockExpr, *ast.IfExpr, *ast.MatchExpr, *ast.Lambda:
+					return false
 				}
-			}
+				if c, isCall := m.(*ast.Call); isCall {
+					for _, a := range c.Args {
+						if aid, ok := a.(*ast.Ident); ok {
+							markOnce(st.Value, aid.Name)
+						}
+					}
+				}
+				return true
+			})
 		}
 		return true
 	})
