@@ -70,6 +70,9 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // `held` marks an element read that takes a unit of its own at the read
 // (held_elements); the physical lowering retains what it read.
 // `literal` marks the values that can only hold a string literal (`literals`).
+// `defs` is the definitions table (`definitions`) of the function the plan was
+// planned from, indexed by value; a verifier checking another function
+// derives its own.
 pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[] }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
@@ -2804,8 +2807,9 @@ pub function verify_planned(f: ssasem.Func, modes: i32[], p: Plan): string {
   return verify_analyzed(f, modes, p, p.analysis, false);
 }
 
-// `whole` runs the contract check on `f` as the planner did, for a plan that
-// may be checked against a function other than the one it was planned from.
+// `whole` runs the contract check on `f` as the planner did and derives the
+// definitions table from `f`, for a plan that may be checked against a
+// function other than the one it was planned from.
 function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem.Analysis, whole: boolean): string {
   if (!p.ok || p.why != "") {
     return "missing successful unit plan";
@@ -2815,8 +2819,10 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
     return analysis.why;
   }
   let why: string = "";
+  let defs: ssa.SInst[] = p.defs;
   if (whole) {
     why = contract_error(f, modes);
+    defs = definitions(f);
   } else if (modes.len() != f.params.len()) {
     why = "parameter mode dimensions";
   } else {
@@ -2825,7 +2831,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   if (why != "") {
     return why;
   }
-  let units: Units = units_of(f, owned_values(f, modes, p.defs), analysis, p.defs);
+  let units: Units = units_of(f, owned_values(f, modes, defs), analysis, defs);
   let owned: boolean[] = units.owned;
   if (!same_takes(units.takes, p.takes)) {
     return "tuple take disagrees with the plan";
