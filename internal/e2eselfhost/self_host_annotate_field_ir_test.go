@@ -9,8 +9,8 @@ import (
 
 // annotateFieldCases extend the typed-IR annotation (#5531) from ExprCall to
 // ExprFieldAccess (#5986). checker.annotate_expr now stamps a field / tuple-
-// element read with its inferred tag, and irlower's fa_type_tag is the single
-// leaf every consumer of a field read's type goes through: expr_struct_type,
+// element read with its inferred tag, and the AST lowering's fa_type_tag was the single
+// leaf every consumer of a field read's type went through: expr_struct_type,
 // expr_map_type_tag, infer_expr_width and the four numeric-kind predicates
 // (expr_is_f64 / _f32 / _u32 / _u64). Before this each of those re-derived
 // "what type is obj.field?" on its own — infer_expr_width open-coded a second
@@ -79,7 +79,7 @@ function main(): i32 {
 }
 
 // TestSelfHostAnnotateFieldIR_X86_64 pins the checker-stamped field-read type
-// feeding irlower's fa_type_tag through the self-host x86-64 IR path (#5986).
+// feeding the lowering through the self-host x86-64 IR path (#5986).
 func TestSelfHostAnnotateFieldIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 	for _, tc := range annotateFieldCases {

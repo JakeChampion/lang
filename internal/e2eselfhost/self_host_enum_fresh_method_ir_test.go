@@ -9,7 +9,7 @@ import "testing"
 // work; without it such calls bail (and a unit variant was
 // mis-read as an associated-function TYPE target). The parser now records each
 // variant's owning enum on its desugared StructDecl (`enum_owner`), and
-// irlower's `expr_enum_type` recovers it. Exit codes are the oracle.
+// the lowering recovers it. Exit codes are the oracle.
 var enumFreshMethodIRCases = []struct {
 	name     string
 	src      string

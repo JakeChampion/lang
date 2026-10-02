@@ -8602,7 +8602,7 @@ func stmtDiverges(st ast.Stmt) bool {
 // It exists for the #4873 containment bracket. The bracket protects the value
 // a field buffer holds AT the call from a callee that grows it in place, and a
 // caller whose binding survives the call pays one full-buffer copy for it —
-// which is what puts `irlower.LowerState.emit` at the top of the append-cliff
+// which is what put the AST lowering's `LowerState.emit` at the top of the append-cliff
 // baseline even though the append itself lowers in place. When every surviving
 // use of the argument is a call that provably cannot reach the field, there is
 // nothing to protect and the bracket is pure cost.

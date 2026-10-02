@@ -1876,7 +1876,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-on-union-alias", "struct A { n: i32 }\nstruct B { n: i32 }\ntype Shape = A | B;\nfunction f(x: Shape): i32 { var y: i32 = x?; return y; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-marked-enum-ok", "@try\nenum MyOpt { Got(i32), Nope }\nfunction pick(f: MyOpt): MyOpt { var v: i32 = f?; return Got(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E079 through a VALUE BLOCK (#9553). A value block desugars to a
-		// zero-arg call of a zero-param lambda, and irlower inlines it rather
+		// zero-arg call of a zero-param lambda, and the lowering inlines it rather
 		// than lowering a function, so a `?` inside one still leaves the
 		// ENCLOSING function and is E079 — where the same `?` inside a real
 		// lambda is an ordinary use. The existing e079-defer-try-op row only
@@ -2956,7 +2956,7 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"int-byte-digit-arith", "function main(): i32 { var s: string = \"7\"; var d: u8 = s[0] - b'0'; return d as i32; }\n"},
 		{"int-usize-mixed", "function main(): i32 { var p: usize = 16; var n: i32 = 4; return (p + n) as i32; }\n"},
 		// The compiler-internal intrinsics core/map's bodies call by name. Each
-		// was already LOWERED by irlower — the comment at its lowering says the
+		// was already LOWERED by the lowering — the comment at its lowering says the
 		// point is that core/map compiles and links — but none was registered in
 		// the self-host checker's intrinsic table, so every body calling one
 		// answered the #4451 "could not infer an expression's type" bail while

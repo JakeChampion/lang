@@ -108,7 +108,7 @@ func TestSelfHostTryStructPayloadIR(t *testing.T) {
 	}
 }
 
-// The wasm leg: the fix lives in shared irlower.fern, so the wasm IR backend types
+// The wasm leg: the fix lives in the shared lowering, so the wasm IR backend types
 // the try-payload slot the same way.
 func TestSelfHostTryStructPayloadWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

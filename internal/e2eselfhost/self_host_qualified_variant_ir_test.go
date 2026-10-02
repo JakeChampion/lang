@@ -17,7 +17,7 @@ import (
 // construction that makes the whole module IR-ineligible falls back to the AST
 // emitter, which mis-lowers it (`# unresolved ident: Color`) and
 // produces a binary that crashes — a native-vs-self-host gap and a miscompile.
-// With qualified construction + qualified patterns lowered in irlower.fern, the
+// With qualified construction + qualified patterns lowered, the
 // module is IR-eligible and lowers correctly.
 //
 // use_box builds Box{c: Color.Custom(7), n: 5} and matches on the field with

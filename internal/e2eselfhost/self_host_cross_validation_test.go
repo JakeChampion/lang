@@ -249,7 +249,7 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		// ---- beyond the old i32-only subset (see SUBSET above) ----------
 		// Each row was verified to agree across native interp, self-host interp
 		// and the compiled path before being added; the compiled leg was also
-		// checked on wasm, which shares irlower with the x86 backend.
+		// checked on wasm, which shares the lowering with the x86 backend.
 		{"string-len", `function main(): i32 { var s: string = "hello"; return s.len(); }`, 5},
 		{"string-concat", `function main(): i32 { var a: string = "ab"; var b: string = "cde"; var c: string = a + b; return c.len(); }`, 5},
 		{"string-index", `function main(): i32 { var s: string = "abc"; return s[1] as i32; }`, 98},

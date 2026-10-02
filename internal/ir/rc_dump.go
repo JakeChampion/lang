@@ -147,7 +147,7 @@ func (b *builder) dumpRcPlan() string {
 
 	// Nested-block precise drops key on the statement to drop after rather than
 	// a top-level index, so they render as nodePos "line:col" (like moveSites).
-	// Native-only for now — the self-host's irlower has no counterpart, so the
+	// Native-only for now — the self-host lowering has no counterpart, so the
 	// differential harness ignores this line as a documented port gap.
 	nested := make([]string, 0, len(b.rc.nestedDrops))
 	for st, names := range b.rc.nestedDrops {

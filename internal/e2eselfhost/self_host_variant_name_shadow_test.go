@@ -20,7 +20,7 @@ import "testing"
 // struct's type instead, so `k + 1` dispatched to a `Boxed.add` method that
 // does not exist.
 //
-// The resolution is in irlower, ahead of instruction selection, so one backend
+// The resolution is in the lowering, ahead of instruction selection, so one backend
 // carries the signal for all of them.
 //
 // 31 + 35 + 6 + 8 + 3 + 7 = 90, and the same program is 90 under the

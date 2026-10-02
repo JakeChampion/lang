@@ -163,7 +163,7 @@ pub function is_paired_alloc(o: ir.Op): boolean {
 
 // elided_carried_at counts the carried fields elided by the reuse site whose
 // `__fern_alloc_reuse` call sits at ops[at]. The self-overwrite lowering
-// (irlower's emit_self_overwrite_reuse) is the one family with carried
+// is the one family with carried
 // fields: after the call comes the uniqueness branch, and its FRESH arm opens
 // with the raw shape-word copy (`raw_store_ptr`) and then copies every
 // carried field out of the donor with one `struct_set` each — the stores the

@@ -162,7 +162,7 @@ func TestSelfHostStrChainReceiverIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostStrChainReceiverIRArm64 is the arm64 leg; the admission and the
-// pointer compare are shared irlower, the release a per-backend transcription.
+// pointer compare are in the shared lowering, the release a per-backend transcription.
 func TestSelfHostStrChainReceiverIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

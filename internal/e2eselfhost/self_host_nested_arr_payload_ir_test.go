@@ -122,7 +122,7 @@ func TestSelfHostNestedArrPayloadIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostNestedArrPayloadIRArm64 is the arm64 leg: the fix lives in the
-// shared irlower.fern, so the leg differs only in which backend lowers it.
+// shared lowering, so the leg differs only in which backend lowers it.
 // Case table shared with the x86-64 leg; binaries run under qemu.
 func TestSelfHostNestedArrPayloadIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

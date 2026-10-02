@@ -494,7 +494,7 @@ function main(): i32 {
 `},
 	// The UNANNOTATED arm — what the previous change deliberately left refusing.
 	// An arm lambda's parameter spellings are always written but its result only
-	// when the author annotates it, so irlower yields no contract rather than half
+	// when the author annotates it, so the lowering yields no contract rather than half
 	// of one, and the hoisted IIFE reaches semsource with the coarse "fn" tag and
 	// nothing to resolve. The body still says what it returns, so the result is
 	// inferred the same way an unannotated declaration's already is. Produces
@@ -3346,7 +3346,7 @@ function main(): i32 {
 	// an i64 parameter and an f64 result. Such a slot was refused ("function
 	// signature slot") on the grounds that the untagged indirect call
 	// describes every slot as one word; the call through the value now
-	// carries the signature tag irlower's call sites carry, so wasm
+	// carries a signature tag, so wasm
 	// dispatches it through the funcref type the body was declared with.
 	{name: "sibling-function-with-a-wide-signature", atLeast: 3, want: "28|", src: `
 function main(): i32 {

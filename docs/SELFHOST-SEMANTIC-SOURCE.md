@@ -2257,13 +2257,13 @@ What the typed path produced whole, 2026-09-24:
 (`rc-log/2026-09-24-i-…`), and so does `TestSelfHostStrEqSymbolTypeChecks`
 (`rc-log/2026-09-25-t-…`).
 
-### The runtime helpers never reach the typed path
+### The runtime helpers
 
 The Fern-source runtime functions (#2649, `asmcore.rt_src_*`: file open,
 writes, sockets, process control, the map finder and more) are appended to a
-program on demand. `asm_ir`, `asm_arm64_ir` and `wasm_ir` compile them through
-`emit_ir_runtime_fern_fn`, which calls the AST lowering directly and never
-asks the substitution. They are written on the raw floor: `__raw_alloc`,
+program on demand. `asm_ir` and `asm_arm64_ir` compile them through
+`emit_ir_runtime_fern_fn`, which takes their bodies from the typed lowering
+(below). They are written on the raw floor: `__raw_alloc`,
 `__raw_store8` / `__raw_load8`, `__raw_store_ptr` / `__raw_load_ptr`,
 `__raw_string`, `__raw_data`, `__raw_array`, `__raw_arr_box`, `__raw_addr`,
 `__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__syscall3`–`6`,
@@ -2271,14 +2271,14 @@ asks the substitution. They are written on the raw floor: `__raw_alloc`,
 
 The raw floor is typed and lowered on the typed path: one table,
 `checker.raw_floor_sigs`, gives the checker its signatures and `semsource` its
-contracts, and `ssarc.raw_floor_ops` emits the op `irlower` emits for each.
+contracts, and `ssarc.raw_floor_ops` emits each one's op.
 An address is a `usize`, an offset, byte or length an `i32`, and a syscall's
 operands and result are `i64` words. `__raw_string` and `__raw_array` hand a
 block to a fresh `string` or `i32[]` the caller owns; `__raw_data` is lent its
-string. `TestSelfHostRawFloorIsTypedWhole` fails when `irlower` lowers a
-raw-floor name either table lacks.
+string. `TestSelfHostRawFloorIsTypedWhole` fails when a helper source in
+`asmcore.fern` calls a raw-floor name either table lacks.
 
-The x86-64 and arm64 backends ask for a helper's typed lowering first:
+The x86-64 and arm64 backends take a helper's body from the typed lowering:
 `emit_ir_runtime_fern_fn` calls `EmitState.rt_lower`, which the CLI sets to
 `semlower.runtime_bodies` through `ircore.Sub`, so no backend links the
 pipeline. A source that does not type-check, or that the typed path does not
@@ -2332,7 +2332,9 @@ What is left, in order:
    modload drivers' per-module AST view. The differential legs run the typed
    path only, and the tests' AST legs went with the switch.
 4. Done: the AST lowering is deleted. `irlower.fern` went from 108,028 lines
-   to about 33,700; what it still holds is below.
+   to about 33,700, and what it still held was then split into
+   `irtables.fern`, `fnsigs.fern` and `lift.fern` (#11032); what each holds
+   is below.
 
 ### What deleting the AST lowering touches, 2026-09-26
 
@@ -2405,23 +2407,22 @@ source lines and the typed path adds about 16,600, so once step 3 lands each
 driver is smaller than it is today. A test that exists to inspect the AST
 lowering's own output goes with the lowering.
 
-**`irlower.fern`.** What every driver reaches, computed by tree-shaking each
-driver's program and taking the union, is what stays; everything else went,
+**What survived `irlower.fern`.** What every driver reaches, computed by
+tree-shaking each driver's program and taking the union, is what stayed;
+everything else went,
 `LowerState` and its methods, `lower_expr` / `lower_stmt` and their arms, the
 reuse passes and the dumps among it (1,829 functions and 33 types). What
-stays:
+stayed is now three files:
 
-- the core types and tables (`LowerResult`, `SigReg`, `FnSigs`,
-  `StructTab`, the declaration and field-type lookups);
-- the op builders `ssarc` calls (`sat_binary_ops`, `chk_binary_ops`,
-  `map_fbinop` and similar);
-- the layout and RC-body helpers the backends read;
-- the whole-program registries behind `FnSigs`, of which the emit reads two
-  fields (`borrowable_params`, `strfld_ok_types`) through the field-reclaim
-  admissions; the rest are read only by `wp_fact_rows`, the per-unit cache
-  key's facts;
-- the AST-to-AST lambda lift (`lift_lambdas_typed`), which the typed path
-  runs first.
+- `irtables.fern`: the core types and tables (`LowerResult`, `SigReg`,
+  `StructTab`, the declaration and field-type lookups), the op builders
+  `ssarc` calls (`sat_binary_ops`, `chk_binary_ops`, `map_fbinop` and
+  similar), and the layout and RC-body helpers the backends read;
+- `fnsigs.fern`: `FnSigs`, of which the emit reads two fields
+  (`borrowable_params`, `strfld_ok_types`) through the field-reclaim
+  admissions, and `wp_fact_rows`, the per-unit cache key's facts;
+- `lift.fern`: the AST-to-AST lambda lift (`lift_lambdas_typed`), which the
+  typed path runs first.
 
 `regrow_sigs` and `consume_sigs` rewrote registry rows only an AST-lowered
 caller read, and went with it. `ssarc.caller_sigs` stays: its rewrite of

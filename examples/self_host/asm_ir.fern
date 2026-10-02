@@ -3230,8 +3230,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // __fn___fern_arr_dec's free path does (base = arr-16, class = cap+3).
   // Array layout (__fern_arr_box): cap@[arr-16], rc@[arr-8], len@[arr],
   // element i @ [arr+8+i*8]. Called ONLY on compile-time-proven fresh,
-  // non-escaping string[] locals with fresh/static elements (irlower
-  // slot_is_reclaimable_strarr). Stack-arg ABI (arr at 8(%rsp));
+  // non-escaping string[] locals with fresh/static elements.
+  // Stack-arg ABI (arr at 8(%rsp));
   // %rbx/%r12/%r13 (callee-saved) hold arr/len/i across the per-element
   // calls (__fn___fern_str_free clobbers only %rax/%rcx/%rdx/%rsi/%r8).
   s = emit_ir_arr_deep_free_variant(s, "str_arr_free", "saf", arr_deep_free_call("str_free"));
@@ -3294,7 +3294,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // instead of shallow-dec'ing its buffer: a fresh-string column via
     // __fern_str_arr_free (box + data per element), a fresh one-dec-BOX column —
     // scalar-element arrays / all-scalar structs — via __fern_arrarr_free (one
-    // rc-guarded dec per element). Called ONLY on irlower-proven columns
+    // rc-guarded dec per element). Called ONLY on compile-time-proven columns
     // (MAPVS: / MAPKS: / MAPVA:), where the map is the sole rc=1 owner of every
     // element, so the per-element free cannot dangle a live value.
     s = emit_ir_map_free_variant(s, "_vs", "arr_dec", "str_arr_free", "mapfvs");
@@ -3379,7 +3379,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lshuniq_ret:\n");
   s = s.write("    ret\n");
   // __fern_arr_inc_elems(arr) -> arr: one guarded __fn___fern_rc_inc per
-  // element of a pointer-element array. irlower emits it ahead of a copy of
+  // element of a pointer-element array. The lowering emits it ahead of a copy of
   // a pointer-element buffer (the un-share push of a shared receiver, the
   // clone the value forms take): the copy duplicates every element pointer,
   // so both buffers must hold a count of each element for the last owner's
@@ -3928,7 +3928,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    call __fern_memcpy\n");
     s = s.write(".Lsbtake_box:\n");
     // The result box comes from __fern_str_box, not a bare __fern_alloc(16):
-    // the drained string is an ordinary owned string (irlower's str-tracking
+    // the drained string is an ordinary owned string (the lowering's str-tracking
     // treats `strbuf_take()` as fresh), so a dropped one reaches
     // __fn___fern_str_free, which reads the refcount at box-8. A headerless
     // box makes that read the last word of the PRECEDING allocation — here
@@ -4438,7 +4438,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
   }
 
-  // __fern_arr_push_owned — the sole-owner self-append (irlower's !aliased
+  // __fern_arr_push_owned — the sole-owner self-append (an !aliased
   // `a = a.append(v)`). Identical to __fern_arr_push but reclaims the old buffer
   // when the push GREW (reallocated): a thin wrapper that saves the old ptr,
   // calls __fern_arr_push, and — iff the result differs (grow) — pushes the old
@@ -4634,7 +4634,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %r13\n");
     s = s.write("    pushq %r14\n");
     // %r9 = per-insert flag bits (bit 0 = kconsume: the incoming KEY is a
-    // fresh, sole-owned string temp, from irlower's is_fresh_str_temp; bit 1 =
+    // fresh, sole-owned string temp, set by the lowering; bit 1 =
     // owncols: i32/string-column map whose keys()/values() reads ALL snapshot,
     // so the map solely owns its column buffers — #4353/#5335). Saved to the frame
     // because the __fern_map_find call clobbers caller-saved
@@ -8328,7 +8328,7 @@ function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmco
 // the register path, writing through the global strbuf.
 function emit_function_via_ir_pre(r: irtables.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>` (matching
-  // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
+  // the lowering's dispatch); free functions stay `__fn_<name>`.
   var label_name: string = fd.name;
   if (fd.receiver_type.len() > 0) {
     label_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
@@ -9317,7 +9317,7 @@ function emit_ir_op_map_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   }
   // %r9 = per-insert flag bits:
   //   bit 0 = kconsume: the KEY arg is a fresh sole-owned string temp
-  //     (o.width bit 1, set by irlower's is_fresh_str_temp). map_set
+  //     (o.width bit 1, set by the lowering). map_set
   //     frees the discarded key on an overwrite so a recurring computed
   //     key doesn't leak (the register twin of wasm #4876).
   //   bit 1 = owncols (o.width bit 2, #4353/#5335): every column of the
@@ -10385,7 +10385,7 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
 // A full window (lo=0, hi=mod.funcs.len(), or hi<0 as a "to the end" sentinel)
 // reproduces the whole-module emit byte-for-byte; a partial window emits only
 // that slice's `__fn_*` defs (its own string pool, its weak field-reclaims /
-// struct-drops), so an oversized module (irlower, 511 funcs — #3425) can be
+// struct-drops), so an oversized module (511 funcs — #3425) can be
 // sharded across separate process invocations to keep each emit's peak heap
 // under the leak-mode ceiling. The side-table bases (b_*) are ALWAYS computed
 // over the WHOLE all_funcs (never windowed) so cross-window call tagging is

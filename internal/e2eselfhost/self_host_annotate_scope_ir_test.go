@@ -117,7 +117,7 @@ function main(): i32 {
 }
 
 // TestSelfHostAnnotateScopeIR_X86_64 pins the for-loop / match-arm bindings
-// threaded through the annotate pass, feeding irlower's type predicates through
+// threaded through the annotate pass, feeding the lowering through
 // the self-host x86-64 IR path (#5520 / #5531).
 func TestSelfHostAnnotateScopeIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)

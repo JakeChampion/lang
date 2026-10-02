@@ -42,7 +42,7 @@ var returnMatchPayloadIRCases = []struct {
 	{"nonfn-payload", "enum Box { W(i32) } function pick(b: Box): i32 { match (b) { W(v) => { return v; } } } function main(): i32 { var g = pick(Box.W(42)); return g; }", 42},
 }
 
-// TestSelfHostReturnMatchPayloadIRX86_64 — the x86-64 irlower fix, through the
+// TestSelfHostReturnMatchPayloadIRX86_64 — the x86-64 fix, through the
 // production driver (asm_ir_run `-ir`).
 func TestSelfHostReturnMatchPayloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -72,7 +72,7 @@ func TestSelfHostReturnMatchPayloadIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostReturnMatchPayloadIRArm64 — CI-gated arm64 counterpart. The fix is
-// in the shared irlower.fern, so the arm64 IR backend picks it up.
+// in the shared lowering, so the arm64 IR backend picks it up.
 func TestSelfHostReturnMatchPayloadIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

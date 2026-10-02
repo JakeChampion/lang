@@ -186,7 +186,7 @@ func TestSelfHostStructEnumFieldPayloadDropIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostStructEnumFieldPayloadDropIRArm64 is the arm64 leg of #6696. The
-// reclaim decision is the shared irlower sweep, so arm64 gets it from the same
+// reclaim decision is the shared lowering's sweep, so arm64 gets it from the same
 // change — this proves the emitted arm64 asm actually carries it. The iteration
 // count is cut for qemu; the leak was per CALL, so it is still visible.
 func TestSelfHostStructEnumFieldPayloadDropIRArm64(t *testing.T) {

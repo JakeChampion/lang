@@ -97,7 +97,7 @@ var loopReuseIRCases = []struct {
 	{"loop-struct-array-field-reuse",
 		`struct P { xs: i32[], n: i32 } function main(): i32 { var sum: i32 = 0; var i: i32 = 0; while (i < 4) { var a: P = P { xs: [1, 2, 3], n: i }; var s: i32 = a.n + a.xs[0]; var b: P = P { xs: [4, 5], n: i * 2 }; sum = sum + s + b.xs[1] + b.n; i = i + 1; } return sum; }`,
 		42},
-	// CROSS-BLOCK reuse (irlower xblock_pending): the donor `a` lives at the loop
+	// CROSS-BLOCK reuse: the donor `a` lives at the loop
 	// body's top level and is dead by the nested `if`, whose recipient `b` reuses
 	// a's box — ONE allocation even though a and b are in different blocks. This is
 	// native's cross-block pass (a loop-body value reused by a construction nested

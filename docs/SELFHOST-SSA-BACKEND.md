@@ -13,8 +13,8 @@ measurements are in `docs/ssa-log/` (the entries whose names carry
 
 ## What it is
 
-The self-hosted compiler lowers every function to the stack IR (`irlower`,
-or the semantic lowering's `ssarc`, which produces every module a compile emits).
+The self-hosted compiler lowers every function to the stack IR through the
+typed lowering, whose last stage is `ssarc`.
 On wasm the backend instruction-selects that stream onto the machine's own
 stack and locals. On the native ISAs the register path in `asm_arm64_ir.fern`
 and `asm_ir.fern` is the emitter — the stack machine that used to stand

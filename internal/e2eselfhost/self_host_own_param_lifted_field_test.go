@@ -114,7 +114,7 @@ func TestSelfHostOwnParamLiftedFieldX86_64(t *testing.T) {
 }
 
 // TestSelfHostOwnParamLiftedFieldArm64 — the same cases through the arm64 emit.
-// The retain is inserted by shared irlower analysis rather than per-backend
+// The retain is inserted by shared lowering analysis rather than per-backend
 // emission, so this leg is what would catch it landing on one register backend.
 func TestSelfHostOwnParamLiftedFieldArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

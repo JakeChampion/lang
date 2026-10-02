@@ -605,7 +605,7 @@ function offset_of_value(vals: string[], v: string): i32 {
 
 // ---- static aggregate constants (#6149) -------------------------------------
 // An aggregate literal whose every field is a compile-time scalar literal
-// (irlower's const_struct) is placed in the data section instead of allocated.
+// (ssarc's op_const_struct) is placed in the data section instead of allocated.
 // The wasm placement mirrors the string region: a REGION whose base the link
 // step assigns to a per-unit global, with the unit's own code emitting relative
 // offsets, so a unit stays cacheable independently of its siblings.
@@ -960,7 +960,7 @@ function wasm_binop(tag: i32): string {
   if (tag == 33) {
     return "i32.shr_u";
   }
-  // Unsigned div/rem (#3204+): irlower remaps div_s/rem_s -> div_u/rem_u when
+  // Unsigned div/rem (#3204+): the lowering remaps div_s/rem_s -> div_u/rem_u when
   // an operand is unsigned, so a numerator >= 2^31 divides as unsigned. The
   // helpers give x/0 = 0 and x%0 = x where i32.div_u / rem_u would trap.
   if (tag == 25) {
@@ -988,7 +988,7 @@ function wasm_binop(tag: i32): string {
     return "i32.ge_s";
   }
   // Unsigned u32 compares (#2917): a u32 >= 2^31 is a signed-negative i32, so
-  // lt_s/gt_s give wrong answers — irlower remaps the kind via to_unsigned_kind
+  // lt_s/gt_s give wrong answers — the lowering remaps the kind via irtables.to_unsigned_kind
   // (the same mechanism u64 uses). Mirrors the i64.*_u forms in wasm_binop_w.
   if (tag == 41) {
     return "i32.lt_u";
@@ -1005,8 +1005,8 @@ function wasm_binop(tag: i32): string {
   return ircore.unsupported_op_refuse(tag, "wasm");
 }
 
-// wasm_binop_w selects the i64 instruction variant when the operand width is 64
-// (i64 div/rem is bailed in irlower, so no i64 div/rem helper is needed). A
+// wasm_binop_w selects the i64 instruction variant when the operand width is 64.
+// A
 // comparison still pushes an i32 result — only the operands are i64.
 function wasm_binop_w(tag: i32, width: i32): string {
   if (width != 64) {
@@ -5637,7 +5637,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // stack: arr, val -> $__fern_arr_push(arr, val) -> grown array.
     parts = parts.append("    call $__fern_arr_push\n");
   } else if (o.kind_tag == 93) {  // arr_push_owned
-    // The sole-owner self-append (irlower's !aliased `a = a.append(v)`):
+    // The sole-owner self-append (an !aliased `a = a.append(v)`):
     // reclaims the old buffer on a grow-realloc via $__fern_arr_push_owned
     // (arr_push_owned_helper — wraps $__fern_arr_push + frees the dead old
     // box through $__fern_arr_dec). Sound: the emit site proved the slot
@@ -5971,7 +5971,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = emit_wasm_call_indirect(o, parts);
   } else if (o.kind_tag == 66) {  // fpow
     // x^y: the one binary transcendental. Both f64 operands are on the
-    // stack (x pushed first, y on top — irlower's op_fbin order), matching
+    // stack (x pushed first, y on top — the lowering's operand order), matching
     // $__fern_pow_f64(param x, param y). wasm has no pow instruction, so
     // call the runtime (= exp(y·ln x)); the arm64 backend lowers fpow the
     // same way (bl __fern_pow_f64).
@@ -6127,7 +6127,7 @@ function emit_str_op_wat(o: ir.Op): string {
 // ~13 ret-fn / borrow side-tables that only fed lower_func are gone.
 function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
   // Methods get the receiver-type-qualified name `$<Type>.<name>` (matching
-  // irlower's call_direct dispatch); free functions stay `$<name>`. WAT idents
+  // the lowering's call_direct dispatch); free functions stay `$<name>`. WAT idents
   // allow `.`. r.n_params already counts the receiver as the first param.
   var fn_name: string = fd.name;
   if (fd.receiver_type.len() > 0) {
@@ -8895,7 +8895,7 @@ pub function str_join_helper(): string {
 }
 
 // arr_str_join_helper emits the IR-path $__fern_arr_str_join — the symbol
-// irlower's lower_arr_str_join call_direct targets (register backends emit it as
+// ssarc's call_direct targets (register backends emit it as
 // a Fern runtime fn). It is a thin shim over the shared $__fern_str_join worker
 // (str_join_helper): the __fn_ stack ABI pushes param1 (sep) first then param0
 // (xs) on top, so wasm's natural param binding lands them as (param0=sep,
@@ -10890,7 +10890,7 @@ pub function map_helpers(): string {
   // and the deep post-loop release ($__fern_arr_dec_ptr — dec each element
   // then the buffer) balances exactly. The map keeps its construction-incs.
   // Emitted for every flag-2 (string-column) read: the `for`-loop positions
-  // pair it with irlower's post-loop deep release; a var/expr-position read
+  // pair it with the lowering's post-loop deep release; a var/expr-position read
   // (#5335, the un-clamped `var ks = m.keys()`) leaks the retained copy
   // (bounded per read) until a SARR-credited release lands.
   o = o + "  (func $__fern_map_snapshot_inc (param $box i32) (param $src i32) (result i32)\n";
@@ -11534,7 +11534,7 @@ pub function rc_runtime_helpers(heap_base: i32): string {
   o = o + "    (i32.const 0))\n";
   // __fern_arr_inc_elems(a) -> a: one $__fern_rc_inc per element of a
   // pointer-element array (4-byte slots at [a+8+i*4], len at [a]), the wasm
-  // sibling of the register backends' __fn___fern_arr_inc_elems. irlower
+  // sibling of the register backends' __fn___fern_arr_inc_elems. The lowering
   // emits it ahead of an un-share copy of a SHARED buffer so both buffers
   // hold a count of each element. Same guard chain as $__fern_rc_is_unique;
   // each element goes through rc_inc's own.
@@ -11823,7 +11823,7 @@ pub function map_w64_helpers(): string {
 }
 
 // arr_push_owned_helper emits $__fern_arr_push_owned: the sole-owner self-append
-// (irlower's !aliased `a = a.append(v)`). Wraps $__fern_arr_push and, iff the push
+// (an !aliased `a = a.append(v)`). Wraps $__fern_arr_push and, iff the push
 // GREW (reallocated, result != old), frees the dead old buffer via the shared
 // $__fern_arr_dec — which at rc==1 (sole owner) returns the block to its size-class
 // freelist, and is a no-op on null / low-addr / SSO / static-sentinel / rc!=1, so
@@ -13587,7 +13587,7 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irtables.StructTab
         // a wasm heap string is a single inline rc-headered block, so
         // $__fern_arr_dec IS the wasm string free (it null-/low-/
         // sentinel-guards a literal internally). Balanced by the shared
-        // irlower construction retain, and gated on the whole-program
+        // lowering's construction retain, and gated on the whole-program
         // read scan (str_ok) — see the x86 emit_ir_field_reclaim_one
         // string arm.
         var frk: string = struct_field_kind_char(ft, structs, mr_types);
@@ -17192,7 +17192,7 @@ function emit_wasm_putchar(eltmp: i32, parts: string[]): string[] {
 function emit_wasm_map_set(o: ir.Op, cx: WasmOpCtx, parts: string[]): string[] {
   // stack: map, k, v -> push vis -> map_set -> map. `vis` (value-is-
   // RC-pointer) comes from op_map_set's `unsigned` flag, set by
-  // irlower from the map's VALUE type. A pointer value (string /
+  // the lowering from the map's VALUE type. A pointer value (string /
   // array / struct / …) MUST set vis=1 so __fern_map_set retains it;
   // otherwise the caller's dec frees it under the map → use-after-free
   // / sibling-key aliasing (#3495). i32/scalar values stay vis=0.
@@ -17522,7 +17522,7 @@ function emit_wasm_dyn_downcast(arrtmp: i32, eltmp: i32, o: ir.Op, parts: string
 function emit_wasm_call_indirect(o: ir.Op, parts: string[]): string[] {
   // Indirect call: args + the table index are already on the stack
   // (the index pushed last, on top). Dispatch through the signature the
-  // funcref actually has — `$fn<tag>` when irlower recovered the declared
+  // funcref actually has — `$fn<tag>` when the lowering recovered the declared
   // widths, else the all-i32 `$fn<argc>`. A funcref type is structural in
   // wasm, so the arity alone cannot tell `(i64) => boolean` from
   // `(i32) => i32` and dispatching one through the other is rejected at

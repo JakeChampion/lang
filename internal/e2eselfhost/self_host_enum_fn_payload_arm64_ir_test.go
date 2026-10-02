@@ -7,7 +7,7 @@ import (
 
 // TestSelfHostEnumFnPayloadIRArm64 is the arm64 half of slice 5
 // (docs/ASYNC-SELFHOST-IR.md, Blocker 2). The fix lives in the shared,
-// target-agnostic irlower.fern (mark a user-enum function-typed payload a
+// target-agnostic lowering (mark a user-enum function-typed payload a
 // closure local), so arm64 gets it for free via the existing call_indirect /
 // closure-call machinery. The Future-shaped enum routes the IR path and runs
 // to the interp oracle (42) under qemu.

@@ -611,7 +611,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   }
   // core/map's per-process string-hash seed (#6194). Compiler-internal, so
   // it carries no capability or platform row — the `__` prefix is the
-  // inventory's exemption. irlower already lowers it; only this entry was
+  // inventory's exemption. The lowering already handles it; only this entry was
   // missing, and without it `core/map.map_new_impl` does not type.
   if (argc == 0 && name == "__map_hash_seed") {
     return t_i32();
@@ -722,7 +722,7 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   // self-host EMITS is not uniform: only __fern_rc_inc is a real call that
   // answers its pointer. The 2-arg dec pair drops both arguments and
   // __fern_str_dec does not even lower its one — no-ops still, each pushing a
-  // dummy 0 (irlower, the __fern_arr_dec / __fern_str_dec arms), because the
+  // dummy 0 (ssarc, the __fern_arr_dec / __fern_str_dec arms), because the
   // element deep-drop their stride selects has no self-host equivalent.
   // core/map calls those three in statement position, so nothing may rely on
   // the usize they declare.
@@ -1482,7 +1482,7 @@ function (s: Scope) binop_overload_ret(op: string, lt: typeinfo.Type): typeinfo.
 
 // unop_overload_ret is the unary sibling: `-a` on a composite is `a.neg()`.
 // Written against the same helper so the two operators cannot resolve
-// differently — they are siblings in irlower's lowering too, and the last time
+// differently — they are siblings in the lowering too, and the last time
 // sibling arms here were maintained separately only one of them got fixed.
 function (s: Scope) unop_overload_ret(op: string, ot: typeinfo.Type): typeinfo.Type {
   if (op != "-") {
@@ -2446,8 +2446,7 @@ function is_resolvable_callee(name: string, s: Scope): boolean {
 // for_iter_is_range reports whether a for-loop iter is the synthetic
 // `__range(LOW, HIGH)` / `__range_incl(LOW, HIGH)` call the parser emits
 // for `for i in LOW..HIGH` / `for i in LOW..=HIGH`. The checker binds the
-// loop var from it (range_var_type); irlower carries its own copy (different
-// module) to drive the counted-loop lowering (half-open vs closed).
+// loop var from it (range_var_type).
 function for_iter_is_range(iter: ast.Expr): boolean {
   match (iter) {
     ast.ExprCall(c) => {
@@ -4840,7 +4839,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           },
           typeinfo.TypeUnion(un) => {
             // An enum or struct-union receiver dispatches under the union's
-            // own name, the way irlower keys `<Union>.<method>`. A generic
+            // own name, the way the lowering keys `<Union>.<method>`. A generic
             // union carries its args separately, so the bare name is the key.
             recv_type_name = un.name;
           },
@@ -8128,7 +8127,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
 }
 
 // A written `return` inside a value block leaves the ENCLOSING function:
-// the block is an if- / match-expression desugar irlower inlines, so only
+// the block is an if- / match-expression desugar the lowering inlines, so only
 // the tail of each arm is the block's value. ret_diags stops at a lambda,
 // and a value block's callee is one, so this walks the value blocks one
 // statement's own expressions hold (nested bodies are ret_diags' own
@@ -10415,7 +10414,7 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean): boolean {
 // loopCanBreak: a loop that can break does not diverge, and treating it as
 // divergent accepts a function that falls off its end (#8447). A value
 // block — the desugar of a block-, if- or match-expression — is walked
-// because irlower inlines it, so its `break` targets this loop (#8562); a
+// because the lowering inlines it, so its `break` targets this loop (#8562); a
 // lambda body is not, since its `break` belongs to a loop of its own. A
 // nested loop's header expression runs in this loop's context, so only the
 // nested BODY counts as nested.
@@ -10519,7 +10518,7 @@ function label_in_scope(labels: string[], name: string): boolean {
 // expressions hold, each with the scope it needs. An ordinary lambda is a
 // scope: a label does not cross a function boundary and a `break` inside one is
 // E011, so it recurses with in_loop = false and no labels. A value block is not
-// — it is an if-/match-expression desugar that irlower inlines, so
+// — it is an if-/match-expression desugar that the lowering inlines, so
 // `t = t + { if (c) { break; } i }` breaks the enclosing loop and inherits both.
 //
 // `not_a_scope_root` stops the fold at both node kinds, so a value block's
@@ -10705,7 +10704,7 @@ function dot_index(s: string): i32 {
 // variant_pattern_name is the variant a pattern names, with any ENUM qualifier
 // stripped: `E.Wrap` -> `Wrap`, and in a prefix-mangled module
 // `lib__E.lib__Wrap` -> `lib__Wrap`. That suffix is the name the enum's variant
-// list and the variant struct are both keyed by — the same strip irlower does
+// list and the variant struct are both keyed by — the same strip the lowering does
 // when it lowers the arm. A module qualifier never survives to here (flatten
 // mangles it to `__`), so a dot at this point is always the enum spelling.
 function variant_pattern_name(name: string): string {
@@ -15094,7 +15093,7 @@ function e079_note_try(e: ast.Expr, own acc: E079Probe): E079Probe {
 // it is an ordinary use.
 // A value block is the exception, and it parses to the identical shape (#9553).
 // `(match (k) { … })` and the if-expression / comprehension forms desugar to a
-// zero-arg call of a zero-param lambda, which irlower INLINES rather than
+// zero-arg call of a zero-param lambda, which the lowering INLINES rather than
 // lowering as a function — `lower_defers_body` excludes them from the per-scope
 // defer lowering for that reason. So a `?` inside one leaves the ENCLOSING
 // function after all, which is what makes it E079 rather than an ordinary use.
@@ -22422,7 +22421,7 @@ function type_to_irtag(t: typeinfo.Type): string {
       return st.name;
     },
     typeinfo.TypeMap(m) => {
-      // A map-valued call: the "Map[K, V]" tag irlower's expr_map_type_tag reads
+      // A map-valued call: the "Map[K, V]" tag the lowering reads
       // (its own canonical spelling — see the "Map[" + ktag + ", " + vtag + "]"
       // constructor). Only when both K and V serialise to a scalar/string tag;
       // a composite key/value yields "" (unannotated → structural fallback).
@@ -22435,7 +22434,7 @@ function type_to_irtag(t: typeinfo.Type): string {
     },
     typeinfo.TypeUnion(u) => {
       // A builtin Option/Result-valued call: reconstruct the full "Option[T]" /
-      // "Result[T, E]" tag irlower's try_opt_type keys on, from the union's
+      // "Result[T, E]" tag the lowering keys on, from the union's
       // captured args. "" if any payload/error type isn't scalar/string/struct-
       // serialisable, keeping the tag well-formed.
       if (u.name == "Option" && u.args.len() == 1) {
@@ -22455,9 +22454,9 @@ function type_to_irtag(t: typeinfo.Type): string {
       }
       // A NOMINAL enum-valued expression carries its enum NAME, the sibling of
       // the TypeStruct arm above and read through the same admission helper
-      // (irlower's struct_tag_from_ty, which admits a struct or an enum and
+      // (the lowering's, which admits a struct or an enum and
       // rejects the scalar vocabulary first). A union carrying ARGS is a
-      // generic instantiation whose spelling irlower has no vocabulary for, so
+      // generic instantiation whose spelling the lowering has no vocabulary for, so
       // only the bare form names itself.
       if (u.args.len() == 0) {
         return u.name;
@@ -22465,8 +22464,8 @@ function type_to_irtag(t: typeinfo.Type): string {
       return "";
     },
     typeinfo.TypeTuple(tp) => {
-      // A tuple-valued call: the canonical "(t0, t1, …)" tag irlower's
-      // tuple_type_elem_tag / expr_tuple_elem_tag parse (via parse_type_ref),
+      // A tuple-valued call: the canonical "(t0, t1, …)" tag
+      // irtables.tuple_type_elem_tag parses (via parse_type_ref),
       // so a `f().N` tuple-element read resolves element N's type instead of
       // bailing to the AST path. Every element must serialise to a scalar /
       // string / struct / nested-composite tag; any unserialisable element
@@ -22499,7 +22498,7 @@ function type_to_irtag(t: typeinfo.Type): string {
   return "";
 }
 
-// type_to_arrtag names an ARRAY / slice type as irlower spells it — "f64[]",
+// type_to_arrtag names an ARRAY / slice type as the lowering spells it — "f64[]",
 // "i64[]", "string[]" — or "" for anything else. It is deliberately SEPARATE
 // from type_to_irtag rather than a TypeArray arm added to it: type_to_irtag's
 // result is read by tag-FIRST consumers (expr_is_str / _f64 / _u32 / _u64 all
@@ -23573,7 +23572,7 @@ function vb_store_type(body: ast.Stmt[], name: string, s: Scope): typeinfo.Type 
 // type with no literal zero to declare it with (a struct, an array, a tuple),
 // which keeps the parser's declaration.
 function vb_local_tag(t: typeinfo.Type): string {
-  // A `str` VIEW is spelled "string" by the irlower tag vocabulary but has no
+  // A `str` VIEW is spelled "string" by the lowering's tag vocabulary but has no
   // literal to declare a local with — `""` is an OWNED string — so it keeps the
   // parser's declaration, like the aggregates.
   if (type_label(t) == "str") {

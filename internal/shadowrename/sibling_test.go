@@ -16,7 +16,7 @@ import (
 // It is a miscompile, not a cosmetic collision: the name-keyed type lookups
 // (isArrayTypeOfLocal / localArrayType / structOrEnumTypeOfLocal) answer with
 // whichever declaration they reach first, so one branch's value gets the
-// other's drop plan. The self-host compiler's irlower.alias_names_in_stmt is
+// other's drop plan. The self-host AST lowering's alias_names_in_stmt was
 // exactly this shape — a `parser.StmtAssign(a)` match payload binding beside
 // a `var a: string[]` in the StmtIf / StmtMatch arms — and it over-released
 // one refcount for every assignment statement in every program the compiler

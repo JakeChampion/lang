@@ -5,9 +5,8 @@ import (
 )
 
 // TestSelfHostIRStructReturnEligible locks in the IR-coverage widening for
-// struct-returning functions (the differential gate can't prove the IR path is
-// taken, since irlower emits asm byte-identical to AST for the overlapping
-// subset). It asks the path probe (semlower.verdict, via eligBits) on
+// struct-returning functions.
+// It asks the path probe (semlower.verdict, via eligBits) on
 // struct-returning programs and encodes the per-case results in the exit code.
 // Before struct returns were lowered, lower_func bailed every struct return, so
 // both cases would be ineligible (exit 0).

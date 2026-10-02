@@ -6,7 +6,7 @@ import (
 
 // TestSelfHostStrTupleReclaimWasmIR is the wasm port of
 // TestSelfHostStrTupleReclaimIRX86_64: the string-element tuple admission and
-// deep-drop live in shared irlower.fern; on wasm __fern_str_free maps to
+// deep-drop live in shared lowering; on wasm __fern_str_free maps to
 // $__fern_arr_dec (wasm_helper_symbol — wasm strings are arr-boxed, so the
 // rc-guarded box dec is the whole free) and op_tuple_get reads the 4-byte
 // pointer slots. Case table shared with the x86-64 leg.

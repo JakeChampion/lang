@@ -163,7 +163,7 @@ func TestSelfHostTupleFnIRX86_64(t *testing.T) {
 
 // TestSelfHostTupleFnIRArm64 — CI-gated arm64 counterpart via the arm64 IR
 // path (asm_ir_run `-target arm64-linux -ir`). Shares the fixes in parser.fern +
-// irlower.fern; tuple slots are uniform 8-byte on both register backends.
+// the lowering; tuple slots are uniform 8-byte on both register backends.
 func TestSelfHostTupleFnIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

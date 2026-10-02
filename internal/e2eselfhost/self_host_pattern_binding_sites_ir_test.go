@@ -12,7 +12,7 @@ import (
 //
 // On the self-host a pattern-shaped `for` header desugars to the plain foreach
 // plus a destructure of the element (parse_for_stmt), which is the shape
-// irlower already builds for `for (a, b) in xs`; the `@` binding uses that
+// already built for `for (a, b) in xs`; the `@` binding uses that
 // destructure's marker channel and names the temp holding the whole value.
 // These build the self-host x86-64 IR driver and assert the compiled binary
 // agrees with the interpreter oracle — so a divergence between the self-host's
@@ -107,7 +107,7 @@ func TestSelfHostPatternBindingSitesX86_64(t *testing.T) {
 }
 
 // TestSelfHostPatternBindingSitesArm64 — CI-gated arm64 counterpart. The
-// desugar and the `@` holder naming are shared irlower analysis, so both
+// desugar and the `@` holder naming are shared lowering analysis, so both
 // register backends inherit them; the driver is built x86 and emits arm64 asm.
 func TestSelfHostPatternBindingSitesArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

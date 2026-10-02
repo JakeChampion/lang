@@ -2041,9 +2041,9 @@ func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 // alignment (#8611) 166 of these files came out arranged differently, with both
 // suites green.
 //
-// It is the only gate on the cost, too. examples/self_host/irlower.fern is the
-// one input in the tree that pushes the search at all, and the O(m*n) table
-// this replaced wanted 48 GB for it — a failure here that is a timeout rather
+// It is the only gate on the cost, too. The large self-host sources are the
+// inputs in the tree that push the search at all, and the O(m*n) table
+// this replaced wanted 48 GB for the deleted irlower.fern — a failure here that is a timeout rather
 // than a mismatch is that table coming back.
 func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

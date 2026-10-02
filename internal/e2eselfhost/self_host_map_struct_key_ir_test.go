@@ -10,7 +10,7 @@ import (
 // mapStructKeyIRCases exercise STRUCT / ENUM Map keys through the self-hosted
 // x86-64 IR path (#2671). The self-host map is a linear-scan parallel-array
 // assoc list; a struct/enum key is stored as a pointer in keys[] and compared
-// by VALUE through its `@derive(Eq)`-synthesised `K.eq` method, which irlower
+// by VALUE through its `@derive(Eq)`-synthesised `K.eq` method, which the lowering
 // threads in as the symbol `__fn_<K>__eq` and the four `__fern_map_*` runtime
 // routines dispatch via an indirect `call *` (in place of the i32 / string
 // compare). A struct key carrying a STRING field — and an enum key with a
@@ -20,7 +20,7 @@ import (
 //
 // Scope: x86-64 self-host only. The wasm self-host backend uses a different
 // (hash-map) runtime that still supports scalar/string keys only; struct keys
-// there are a separate slice (it ignores irlower's eq-fn symbol, so this change
+// there are a separate slice (it ignores the lowering's eq-fn symbol, so this change
 // leaves its behaviour byte-identical).
 var mapStructKeyIRCases = []struct {
 	name     string

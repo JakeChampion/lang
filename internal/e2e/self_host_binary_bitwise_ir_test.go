@@ -11,7 +11,7 @@ import (
 
 // binaryBitwiseIRCases pin the plain (non-compound) bitwise / shift binary
 // operators — `& | ^ << >>` — on the IR path. They already lower through
-// irlower's lower_expr (the IR binop set covers and/or/xor/shl/shr_s), and the
+// the typed lowering (the IR binop set covers and/or/xor/shl/shr_s), and the
 // compound forms `&= |= ^= <<= >>=` were pinned separately
 // (self_host_compound_bitwise_ir_test.go); this is the complementary
 // expression-position pin. The signal these isolate that the incidental uses in

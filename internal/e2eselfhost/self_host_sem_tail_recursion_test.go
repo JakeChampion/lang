@@ -49,7 +49,7 @@ function serve(c: Cell[i32]): void {
 // keeps the anchor alive for the callee's frame; a jump re-enters the loop
 // with that anchor already dead, so this one must NOT become a loop — the
 // rewrite declines it, and the answer and the heap have to survive either
-// way. irlower.rc_consumed_drop_wired is this shape, and rewriting it
+// way. irlower.rc_consumed_drop_wired was this shape, and rewriting it
 // corrupted the heap of every compiler built through the path.
 function shrink(t: string, n: i32): i32 {
     if (t.len() <= 1) { return n; }

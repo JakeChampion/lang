@@ -49,7 +49,7 @@ var auditBuiltinCases = []struct {
 	{"c-style-for", `function main(): i32 { var s: i32 = 0; for (var i: i32 = 1; i <= 10; i = i + 1) { s = s + i; } return s; }`, 55},
 	// `for b in <string>` — iterates the BYTES. Was held out while this
 	// driver routed a string foreach through the AST path's array layout
-	// (len@0, elem*8+8) and answered 2; irlower desugars it to a
+	// (len@0, elem*8+8) and answered 2; the lowering desugars it to a
 	// byte-index counted loop (#2822 / #2834), and asm_run is IR-or-error
 	// now, so 'A'+'B' = 131 is what it computes.
 	{"for-in-string", `function main(): i32 { var s: i32 = 0; for b in "AB" { s = s + (b as i32); } return s; }`, 131},

@@ -15,7 +15,7 @@ import (
 // type. The `alias` case below is what that closes.
 //
 // The essential detail is that the lift runs BEFORE lowering: by the time
-// `var f = <lambda>` reaches irlower its init is a `__mkclo$<cloname>` marker
+// `var f = <lambda>` reaches the lowering its init is a `__mkclo$<cloname>` marker
 // call, whose callee ident is not itself a module function — `<cloname>`, after
 // the 8-char prefix, is. Reading the callee name directly recovers nothing and
 // the whole recovery goes inert.

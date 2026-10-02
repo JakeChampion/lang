@@ -159,7 +159,7 @@ func TestSelfHostNestedPassthroughFnValueX86_64(t *testing.T) {
 }
 
 // TestSelfHostNestedPassthroughFnValueWasm is the wasm leg. The boxing decision
-// lives in irlower.fern, which every backend shares, so a case that regresses
+// lives in the lowering, which every backend shares, so a case that regresses
 // only here is a dispatch bug rather than a lift one.
 func TestSelfHostNestedPassthroughFnValueWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

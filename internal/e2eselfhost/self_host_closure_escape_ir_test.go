@@ -129,7 +129,7 @@ func TestSelfHostClosureEscapeIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostClosureEscapeIRArm64 — CI-gated arm64 counterpart via the arm64
-// IR path (asm_ir_run `-target arm64-linux -ir`). Shares the fix in irlower.fern.
+// IR path (asm_ir_run `-target arm64-linux -ir`). Shares the fix in the lowering.
 func TestSelfHostClosureEscapeIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

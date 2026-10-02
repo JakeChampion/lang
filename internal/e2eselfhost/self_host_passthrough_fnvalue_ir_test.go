@@ -102,7 +102,7 @@ func TestSelfHostPassthroughFnValueIRArm64(t *testing.T) {
 }
 
 // TestSelfHostPassthroughFnValueWasmIR — the wasm leg. The lift and the marker
-// live in irlower.fern, which every backend shares.
+// live in the lowering, which every backend shares.
 func TestSelfHostPassthroughFnValueWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host passthrough fn-value wasm IR e2e")

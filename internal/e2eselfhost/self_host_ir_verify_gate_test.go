@@ -275,7 +275,7 @@ func TestSelfHostIRVerifyGateWholeCompiler(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "modload_run")
 
 	// asm_ir_run.fern imports the whole x86 pipeline, so its closure is the
-	// compiler: lexer, parser, ir, irlower, asmcore, asm_ir, asm_arm64_ir. The
+	// compiler: lexer, parser, ir, irtables, fnsigs, asmcore, asm_ir, asm_arm64_ir. The
 	// modload project stages every one of those already; only the entry itself
 	// has to be added.
 	copySelfHostFiles(t, dir, "asm_ir_run.fern")

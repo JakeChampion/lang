@@ -9,7 +9,7 @@ import (
 
 // operatorOverloadIRCase is a self-host composite-operator-overload program
 // whose exit code is pinned against the native interpreter's oracle. Each
-// exercises irlower's #2706 lowering: a binary `a <op> b` (or unary `-a`) on a
+// exercises the #2706 lowering: a binary `a <op> b` (or unary `-a`) on a
 // struct rewrites to the conventionally-named method (`+`→add, `-`→sub, `*`→mul,
 // `/`→div, unary `-`→neg) and lowers through the existing struct-returning
 // method-call path. Before this, the self-host *admitted* `a + b` on a struct
@@ -94,7 +94,7 @@ func TestSelfHostOperatorOverloadIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostOperatorOverloadWasmIR is the wasm sibling: the overload lowering
-// lives in irlower (target-independent), so the wasm IR backend gets it for
+// lives in the lowering (target-independent), so the wasm IR backend gets it for
 // free. Same oracle exit codes through the self-host CLI on wasm32-wasi.
 func TestSelfHostOperatorOverloadWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
