@@ -9,10 +9,10 @@ import (
 	"testing"
 )
 
-// undispatchableKeyPrograms are map keys the INTERPRETER compares by value and
-// no compiled backend can hash: a tuple and an array. Each inserts a key and
-// reads the same value back, so a compiled build that compares the POINTER
-// instead answers the default rather than the value.
+// undispatchableKeyPrograms are map keys the interpreter and the self-host
+// compare by value and the native backends cannot hash: a tuple and an array.
+// Each inserts a key and reads the same value back, so a compiled build that
+// compares the POINTER instead answers the default rather than the value.
 var undispatchableKeyPrograms = []struct{ name, key, src string }{
 	{"tuple", "(i32, i32)", `import "core/map";
 function main(): i32 {
@@ -43,8 +43,9 @@ function main(): i32 {
 //
 // The interpreter half is asserted too. `interp.valuesEqual` deep-compares
 // composite keys and TestInterpMapCompositeKeys gates that, so refusing the
-// COMPILED build must not be mistaken for the language dropping the feature —
-// the refusal exists until the lowering does, which is what #10020 tracks.
+// native build must not be mistaken for the language dropping the feature:
+// the self-host lowers these keys (TestSelfHostMapStructuralKeys), and the
+// native backends are frozen.
 func TestMapUndispatchableKeyIsRefusedNotMiscompiled(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	for _, tc := range undispatchableKeyPrograms {
@@ -77,7 +78,7 @@ func TestMapUndispatchableKeyIsRefusedNotMiscompiled(t *testing.T) {
 					"being compared as a pointer again, which is the silent wrong answer this refuses")
 			}
 			if code == 14 {
-				t.Skipf("a Map keyed by %s compiles and answers correctly now — the lowering landed, "+
+				t.Skipf("a Map keyed by %s compiles and answers correctly on native now, "+
 					"so delete this case and let the key through (#10020)", tc.key)
 			}
 			if !strings.Contains(msg, "cannot be compiled") || !strings.Contains(msg, tc.key) {
