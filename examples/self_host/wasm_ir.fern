@@ -346,6 +346,8 @@ pub function need_ops(): string[] {
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
     "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "open_file",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "buf_take_bytes", "buf_push_bytes_range",
+    "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded",
+    "buf_push_byte", "buf_push_u64", "buf_len", "buf_take", "buf_free",
   ];
 }
 
@@ -2362,6 +2364,10 @@ pub function component_refused_need(needs: string[], io: boolean): string {
       || n == "arr_push_f64" || n == "arr_push_owned_i64" || n == "arr_push_owned_f64"
       || n == "map_iter" || n == "str_split"
       || n == "buf_take_bytes" || n == "buf_push_bytes_range"
+      || n == "buf_new" || n == "buf_push" || n == "buf_push_range"
+      || n == "buf_push_mapped" || n == "buf_push_filtered" || n == "buf_push_expanded"
+      || n == "buf_push_byte" || n == "buf_push_u64" || n == "buf_len"
+      || n == "buf_take" || n == "buf_free"
       || n == "str_bytes" || n == "str_from_bytes" || n == "fexp"
       || n == "flog" || n == "fpow" || n == "fsin" || n == "fcos") {
       i = i + 1;
@@ -9150,9 +9156,8 @@ function buf_take_bytes_helper(): string {
   return o + "    (local.get $a))\n";
 }
 
-// buf_helpers emits the wasm capacity-carrying string builder (#8773) — the
-// multi-instance successor to the single global strbuf above, and the wasm
-// sibling of asm_ir's __fern_buf_* bundle.
+// Emit only the capacity-carrying builder operations the module needs.
+// Push operations also need reserve; reads and takes do not grow storage.
 //
 // A builder handle is the address of a control block. wasm32 words are FOUR
 // bytes, not eight, so the block is four i32s rather than the natives' four
@@ -9165,191 +9170,213 @@ function buf_take_bytes_helper(): string {
 //
 // Both the block and the buffer come from $__fern_str_box, which rc-headers
 // them and records the block size at [ptr-4], so $__fern_arr_dec releases
-// either without being told its size. The buffer is allocated as
-// $__fern_str_box(4 + cap): that IS a wasm string block already — [len@0],
-// [bytes@4] — which is what makes $__fern_buf_take zero-copy. It stamps the
-// length into the block's first word and hands the same pointer back as the
-// string, leaving the builder empty and still armed at its reserve.
-pub function buf_helpers(): string {
+// either without being told its size. The byte storage is allocated as
+// $__fern_str_box(4 + cap), with bytes at +4. Both take operations copy into
+// independently owned results and reset the length while retaining capacity.
+pub function buf_helpers(needs: string[]): string {
   var o: string = "";
   // new(cap) -> H. The floor gives the doubling something to double.
-  o = o + "  (func $__fern_buf_new (param $cap i32) (result i32)\n";
-  o = o + "    (local $h i32)\n";
-  o = o + "    (if (i32.lt_u (local.get $cap) (i32.const 16)) (then (local.set $cap (i32.const 16))))\n";
-  o = o + "    (local.set $h (call $__fern_str_box (i32.const 16)))\n";
-  o = o + "    (i32.store (local.get $h) (call $__fern_str_box (i32.add (i32.const 4) (local.get $cap))))\n";
-  o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.const 0))\n";
-  o = o + "    (i32.store (i32.add (local.get $h) (i32.const 8)) (local.get $cap))\n";
-  o = o + "    (i32.store (i32.add (local.get $h) (i32.const 12)) (local.get $cap))\n";
-  o = o + "    (local.get $h))\n";
+  if (need(needs, "buf_new")) {
+    o = o + "  (func $__fern_buf_new (param $cap i32) (result i32)\n";
+    o = o + "    (local $h i32)\n";
+    o = o + "    (if (i32.lt_u (local.get $cap) (i32.const 16)) (then (local.set $cap (i32.const 16))))\n";
+    o = o + "    (local.set $h (call $__fern_str_box (i32.const 16)))\n";
+    o = o + "    (i32.store (local.get $h) (call $__fern_str_box (i32.add (i32.const 4) (local.get $cap))))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 8)) (local.get $cap))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 12)) (local.get $cap))\n";
+    o = o + "    (local.get $h))\n";
+  }
   // reserve(H, need): replace the buffer with one of at least `need` bytes,
   // doubling from the current capacity (or from the reserve, when a take left
   // the builder unarmed), and carry the live bytes across. Internal — no Fern
   // builtin reaches it.
-  o = o + "  (func $__fern_buf_reserve (param $h i32) (param $need i32)\n";
-  o = o + "    (local $ncap i32) (local $np i32) (local $i i32) (local $len i32) (local $old i32)\n";
-  o = o + "    (local.set $ncap (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
-  o = o + "    (if (i32.eqz (local.get $ncap)) (then (local.set $ncap (i32.load (i32.add (local.get $h) (i32.const 12))))))\n";
-  o = o + "    (if (i32.eqz (local.get $ncap)) (then (local.set $ncap (i32.const 64))))\n";
-  o = o + "    (block $gd (loop $gl (br_if $gd (i32.ge_u (local.get $ncap) (local.get $need))) (local.set $ncap (i32.mul (local.get $ncap) (i32.const 2))) (br $gl)))\n";
-  o = o + "    (local.set $np (call $__fern_str_box (i32.add (i32.const 4) (local.get $ncap))))\n";
-  o = o + "    (local.set $old (i32.load (local.get $h)))\n";
-  o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $cd (loop $cl (br_if $cd (i32.ge_u (local.get $i) (local.get $len)))\n";
-  o = o + "      (i32.store8 (i32.add (i32.add (local.get $np) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $old) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $cl)))\n";
-  o = o + "    (if (local.get $old) (then (drop (call $__fern_arr_dec (local.get $old)))))\n";
-  o = o + "    (i32.store (local.get $h) (local.get $np))\n";
-  o = o + "    (i32.store (i32.add (local.get $h) (i32.const 8)) (local.get $ncap)))\n";
+  if (need_any(needs, ["buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_byte", "buf_push_u64", "buf_push_bytes_range"])) {
+    o = o + "  (func $__fern_buf_reserve (param $h i32) (param $need i32)\n";
+    o = o + "    (local $ncap i32) (local $np i32) (local $i i32) (local $len i32) (local $old i32)\n";
+    o = o + "    (local.set $ncap (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "    (if (i32.eqz (local.get $ncap)) (then (local.set $ncap (i32.load (i32.add (local.get $h) (i32.const 12))))))\n";
+    o = o + "    (if (i32.eqz (local.get $ncap)) (then (local.set $ncap (i32.const 64))))\n";
+    o = o + "    (block $gd (loop $gl (br_if $gd (i32.ge_u (local.get $ncap) (local.get $need))) (local.set $ncap (i32.mul (local.get $ncap) (i32.const 2))) (br $gl)))\n";
+    o = o + "    (local.set $np (call $__fern_str_box (i32.add (i32.const 4) (local.get $ncap))))\n";
+    o = o + "    (local.set $old (i32.load (local.get $h)))\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $cd (loop $cl (br_if $cd (i32.ge_u (local.get $i) (local.get $len)))\n";
+    o = o + "      (i32.store8 (i32.add (i32.add (local.get $np) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $old) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $cl)))\n";
+    o = o + "    (if (local.get $old) (then (drop (call $__fern_arr_dec (local.get $old)))))\n";
+    o = o + "    (i32.store (local.get $h) (local.get $np))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 8)) (local.get $ncap)))\n";
+  }
   // push(H, s): append every byte of the wasm string block s ([s]=len,
   // bytes@[s+4]).
-  o = o + "  (func $__fern_buf_push (param $h i32) (param $s i32)\n";
-  o = o + "    (local $sl i32) (local $i i32) (local $d i32) (local $len i32)\n";
-  o = o + "    (local.set $sl (i32.load (local.get $s)))\n";
-  o = o + "    (if (i32.eqz (local.get $sl)) (then (return)))\n";
-  o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
-  o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $sl)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
-  o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $sl)))))\n";
-  o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $ad (loop $al (br_if $ad (i32.ge_u (local.get $i) (local.get $sl)))\n";
-  o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $al)))\n";
-  o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $sl))))\n";
+  if (need(needs, "buf_push")) {
+    o = o + "  (func $__fern_buf_push (param $h i32) (param $s i32)\n";
+    o = o + "    (local $sl i32) (local $i i32) (local $d i32) (local $len i32)\n";
+    o = o + "    (local.set $sl (i32.load (local.get $s)))\n";
+    o = o + "    (if (i32.eqz (local.get $sl)) (then (return)))\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $sl)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $sl)))))\n";
+    o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $ad (loop $al (br_if $ad (i32.ge_u (local.get $i) (local.get $sl)))\n";
+    o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $al)))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $sl))))\n";
+  }
   // push_range(H, s, lo, hi): append s[lo:hi] with no intermediate string. An
   // empty or inverted range is a no-op; the bounds are the caller's, as with
   // slice_unchecked.
-  o = o + "  (func $__fern_buf_push_range (param $h i32) (param $s i32) (param $lo i32) (param $hi i32)\n";
-  o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32)\n";
-  o = o + "    (local.set $n (i32.sub (local.get $hi) (local.get $lo)))\n";
-  o = o + "    (if (i32.le_s (local.get $n) (i32.const 0)) (then (return)))\n";
-  o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
-  o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
-  o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $n)))))\n";
-  o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $rd (loop $rl (br_if $rd (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (i32.load8_u (i32.add (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $lo)) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $rl)))\n";
-  o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $n))))\n";
+  if (need(needs, "buf_push_range")) {
+    o = o + "  (func $__fern_buf_push_range (param $h i32) (param $s i32) (param $lo i32) (param $hi i32)\n";
+    o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32)\n";
+    o = o + "    (local.set $n (i32.sub (local.get $hi) (local.get $lo)))\n";
+    o = o + "    (if (i32.le_s (local.get $n) (i32.const 0)) (then (return)))\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $n)))))\n";
+    o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $rd (loop $rl (br_if $rd (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (i32.load8_u (i32.add (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $lo)) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $rl)))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $n))))\n";
+  }
   // push_mapped(H, s, table): append table[c] for each byte c of s, or c
   // itself when it is past the table's length at [table]. Entry i is the
   // 4-byte slot at table + 8 + i*4.
-  o = o + "  (func $__fern_buf_push_mapped (param $h i32) (param $s i32) (param $t i32)\n";
-  o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32)\n";
-  o = o + "    (local.set $n (i32.load (local.get $s)))\n";
-  o = o + "    (if (i32.eqz (local.get $n)) (then (return)))\n";
-  o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
-  o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
-  o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $n)))))\n";
-  o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
-  o = o + "    (local.set $m (i32.load (local.get $t)))\n";
-  o = o + "    (block $md (loop $ml (br_if $md (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (if (i32.lt_u (local.get $c) (local.get $m)) (then\n";
-  o = o + "        (local.set $c (i32.load (i32.add (i32.add (local.get $t) (i32.const 8)) (i32.mul (local.get $c) (i32.const 4)))))))\n";
-  o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (local.get $c))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $ml)))\n";
-  o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $n))))\n";
+  if (need(needs, "buf_push_mapped")) {
+    o = o + "  (func $__fern_buf_push_mapped (param $h i32) (param $s i32) (param $t i32)\n";
+    o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $s)))\n";
+    o = o + "    (if (i32.eqz (local.get $n)) (then (return)))\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $n)))))\n";
+    o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
+    o = o + "    (local.set $m (i32.load (local.get $t)))\n";
+    o = o + "    (block $md (loop $ml (br_if $md (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (if (i32.lt_u (local.get $c) (local.get $m)) (then\n";
+    o = o + "        (local.set $c (i32.load (i32.add (i32.add (local.get $t) (i32.const 8)) (i32.mul (local.get $c) (i32.const 4)))))))\n";
+    o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $i)) (local.get $c))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $ml)))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $n))))\n";
+  }
   // push_filtered(H, s, drop): append each byte c of s whose drop entry
   // (the 4-byte slot at drop + 8 + c*4) is zero, or that is past the
   // table's length at [drop]. Room for the whole string is reserved.
-  o = o + "  (func $__fern_buf_push_filtered (param $h i32) (param $s i32) (param $t i32)\n";
-  o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32) (local $j i32)\n";
-  o = o + "    (local.set $n (i32.load (local.get $s)))\n";
-  o = o + "    (if (i32.eqz (local.get $n)) (then (return)))\n";
-  o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
-  o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
-  o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $n)))))\n";
-  o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
-  o = o + "    (local.set $m (i32.load (local.get $t)))\n";
-  o = o + "    (block $fd (loop $fl (br_if $fd (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (if (i32.lt_u (local.get $c) (local.get $m)) (then\n";
-  o = o + "        (br_if $fl (i32.load (i32.add (i32.add (local.get $t) (i32.const 8)) (i32.mul (local.get $c) (i32.const 4)))))))\n";
-  o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $j)) (local.get $c))\n";
-  o = o + "      (local.set $j (i32.add (local.get $j) (i32.const 1))) (br $fl)))\n";
-  o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $j))))\n";
+  if (need(needs, "buf_push_filtered")) {
+    o = o + "  (func $__fern_buf_push_filtered (param $h i32) (param $s i32) (param $t i32)\n";
+    o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32) (local $j i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $s)))\n";
+    o = o + "    (if (i32.eqz (local.get $n)) (then (return)))\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $n)))))\n";
+    o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
+    o = o + "    (local.set $m (i32.load (local.get $t)))\n";
+    o = o + "    (block $fd (loop $fl (br_if $fd (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (if (i32.lt_u (local.get $c) (local.get $m)) (then\n";
+    o = o + "        (br_if $fl (i32.load (i32.add (i32.add (local.get $t) (i32.const 8)) (i32.mul (local.get $c) (i32.const 4)))))))\n";
+    o = o + "      (i32.store8 (i32.add (local.get $d) (local.get $j)) (local.get $c))\n";
+    o = o + "      (local.set $j (i32.add (local.get $j) (i32.const 1))) (br $fl)))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $j))))\n";
+  }
   // push_expanded(H, s, table): append each byte c of s as the record at
   // table[c*8], a length (above 7 counts as 7) and then the bytes, or c
   // itself when its record is not wholly inside the table. Entry i is the
   // 4-byte slot at table + 8 + i*4, so byte c's record starts at
   // table + 8 + c*32.
-  o = o + "  (func $__fern_buf_push_expanded (param $h i32) (param $s i32) (param $t i32)\n";
-  o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32) (local $j i32) (local $r i32) (local $l i32) (local $k i32)\n";
-  o = o + "    (local.set $n (i32.load (local.get $s)))\n";
-  o = o + "    (if (i32.eqz (local.get $n)) (then (return)))\n";
-  o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
-  o = o + "    (if (i32.gt_u (i32.add (local.get $len) (i32.mul (local.get $n) (i32.const 7))) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
-  o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (i32.mul (local.get $n) (i32.const 7))))))\n";
-  o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
-  o = o + "    (local.set $m (i32.shr_u (i32.load (local.get $t)) (i32.const 3)))\n";
-  o = o + "    (block $ed (loop $el (br_if $ed (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (if (i32.lt_u (local.get $c) (local.get $m))\n";
-  o = o + "        (then\n";
-  o = o + "          (local.set $r (i32.add (i32.add (local.get $t) (i32.const 8)) (i32.mul (local.get $c) (i32.const 32))))\n";
-  o = o + "          (local.set $l (i32.load (local.get $r)))\n";
-  o = o + "          (if (i32.gt_u (local.get $l) (i32.const 7)) (then (local.set $l (i32.const 7))))\n";
-  o = o + "          (local.set $k (i32.const 0))\n";
-  o = o + "          (block $bd (loop $bl (br_if $bd (i32.ge_u (local.get $k) (local.get $l)))\n";
-  o = o + "            (i32.store8 (i32.add (local.get $d) (local.get $j)) (i32.load (i32.add (local.get $r) (i32.mul (i32.add (local.get $k) (i32.const 1)) (i32.const 4)))))\n";
-  o = o + "            (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
-  o = o + "            (local.set $k (i32.add (local.get $k) (i32.const 1))) (br $bl))))\n";
-  o = o + "        (else\n";
-  o = o + "          (i32.store8 (i32.add (local.get $d) (local.get $j)) (local.get $c))\n";
-  o = o + "          (local.set $j (i32.add (local.get $j) (i32.const 1)))))\n";
-  o = o + "      (br $el)))\n";
-  o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $j))))\n";
+  if (need(needs, "buf_push_expanded")) {
+    o = o + "  (func $__fern_buf_push_expanded (param $h i32) (param $s i32) (param $t i32)\n";
+    o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32) (local $m i32) (local $c i32) (local $j i32) (local $r i32) (local $l i32) (local $k i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $s)))\n";
+    o = o + "    (if (i32.eqz (local.get $n)) (then (return)))\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.gt_u (i32.add (local.get $len) (i32.mul (local.get $n) (i32.const 7))) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (i32.mul (local.get $n) (i32.const 7))))))\n";
+    o = o + "    (local.set $d (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)))\n";
+    o = o + "    (local.set $m (i32.shr_u (i32.load (local.get $t)) (i32.const 3)))\n";
+    o = o + "    (block $ed (loop $el (br_if $ed (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (if (i32.lt_u (local.get $c) (local.get $m))\n";
+    o = o + "        (then\n";
+    o = o + "          (local.set $r (i32.add (i32.add (local.get $t) (i32.const 8)) (i32.mul (local.get $c) (i32.const 32))))\n";
+    o = o + "          (local.set $l (i32.load (local.get $r)))\n";
+    o = o + "          (if (i32.gt_u (local.get $l) (i32.const 7)) (then (local.set $l (i32.const 7))))\n";
+    o = o + "          (local.set $k (i32.const 0))\n";
+    o = o + "          (block $bd (loop $bl (br_if $bd (i32.ge_u (local.get $k) (local.get $l)))\n";
+    o = o + "            (i32.store8 (i32.add (local.get $d) (local.get $j)) (i32.load (i32.add (local.get $r) (i32.mul (i32.add (local.get $k) (i32.const 1)) (i32.const 4)))))\n";
+    o = o + "            (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "            (local.set $k (i32.add (local.get $k) (i32.const 1))) (br $bl))))\n";
+    o = o + "        (else\n";
+    o = o + "          (i32.store8 (i32.add (local.get $d) (local.get $j)) (local.get $c))\n";
+    o = o + "          (local.set $j (i32.add (local.get $j) (i32.const 1)))))\n";
+    o = o + "      (br $el)))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $j))))\n";
+  }
   // push_byte(H, x): append the low byte of x.
-  o = o + "  (func $__fern_buf_push_byte (param $h i32) (param $x i32)\n";
-  o = o + "    (local $len i32)\n";
-  o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
-  o = o + "    (if (i32.gt_u (i32.add (local.get $len) (i32.const 1)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
-  o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (i32.const 1)))))\n";
-  o = o + "    (i32.store8 (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)) (local.get $x))\n";
-  o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (i32.const 1))))\n";
+  if (need(needs, "buf_push_byte")) {
+    o = o + "  (func $__fern_buf_push_byte (param $h i32) (param $x i32)\n";
+    o = o + "    (local $len i32)\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.gt_u (i32.add (local.get $len) (i32.const 1)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (i32.const 1)))))\n";
+    o = o + "    (i32.store8 (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)) (local.get $x))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (i32.const 1))))\n";
+  }
   // push_u64(H, v): append the eight bytes of v, least significant first.
   // One i64.store where the byte form would be eight calls (#9221). The
   // destination is wherever the builder's length left it, so it is
   // unaligned as often as not, which wasm allows: the alignment immediate
   // is a hint about the address, never a constraint on it.
-  o = o + "  (func $__fern_buf_push_u64 (param $h i32) (param $v i64)\n";
-  o = o + "    (local $len i32)\n";
-  o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
-  o = o + "    (if (i32.gt_u (i32.add (local.get $len) (i32.const 8)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
-  o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (i32.const 8)))))\n";
-  o = o + "    (i64.store (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)) (local.get $v))\n";
-  o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (i32.const 8))))\n";
+  if (need(needs, "buf_push_u64")) {
+    o = o + "  (func $__fern_buf_push_u64 (param $h i32) (param $v i64)\n";
+    o = o + "    (local $len i32)\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (if (i32.gt_u (i32.add (local.get $len) (i32.const 8)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
+    o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (i32.const 8)))))\n";
+    o = o + "    (i64.store (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $len)) (local.get $v))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (i32.const 8))))\n";
+  }
   // len(H) -> the bytes accumulated so far.
-  o = o + "  (func $__fern_buf_len (param $h i32) (result i32)\n";
-  o = o + "    (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+  if (need(needs, "buf_len")) {
+    o = o + "  (func $__fern_buf_len (param $h i32) (result i32)\n";
+    o = o + "    (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+  }
   // take(H) -> string: a fresh string over a COPY of the accumulated bytes,
   // sized to them, so the block frees at the class it was bumped at
   // (#9179); the builder keeps its buffer at full width with nothing in
   // it. An empty build answers a fresh empty string.
-  o = o + "  (func $__fern_buf_take (param $h i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $d i32) (local $i i32) (local $src i32)\n";
-  o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
-  o = o + "    (local.set $d (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
-  o = o + "    (i32.store (local.get $d) (local.get $len))\n";
-  o = o + "    (local.set $src (i32.load (local.get $h)))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $cd (loop $cl (br_if $cd (i32.ge_u (local.get $i) (local.get $len)))\n";
-  o = o + "      (i32.store8 (i32.add (i32.add (local.get $d) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $src) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $cl)))\n";
-  o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.const 0))\n";
-  o = o + "    (local.get $d))\n";
+  if (need(needs, "buf_take")) {
+    o = o + "  (func $__fern_buf_take (param $h i32) (result i32)\n";
+    o = o + "    (local $len i32) (local $d i32) (local $i i32) (local $src i32)\n";
+    o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
+    o = o + "    (local.set $d (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
+    o = o + "    (i32.store (local.get $d) (local.get $len))\n";
+    o = o + "    (local.set $src (i32.load (local.get $h)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $cd (loop $cl (br_if $cd (i32.ge_u (local.get $i) (local.get $len)))\n";
+    o = o + "      (i32.store8 (i32.add (i32.add (local.get $d) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $src) (i32.const 4)) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $cl)))\n";
+    o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.const 0))\n";
+    o = o + "    (local.get $d))\n";
+  }
   // free(H): release the buffer (when the builder still owns one) and the
   // control block. A builder is not refcounted and has no drop, so a handle
   // that is never freed leaks, exactly as an fd that is never closed does.
-  o = o + "  (func $__fern_buf_free (param $h i32)\n";
-  o = o + "    (if (i32.eqz (local.get $h)) (then (return)))\n";
-  o = o + "    (if (i32.load (local.get $h)) (then (drop (call $__fern_arr_dec (i32.load (local.get $h))))))\n";
-  o = o + "    (drop (call $__fern_arr_dec (local.get $h))))\n";
+  if (need(needs, "buf_free")) {
+    o = o + "  (func $__fern_buf_free (param $h i32)\n";
+    o = o + "    (if (i32.eqz (local.get $h)) (then (return)))\n";
+    o = o + "    (if (i32.load (local.get $h)) (then (drop (call $__fern_arr_dec (i32.load (local.get $h))))))\n";
+    o = o + "    (drop (call $__fern_arr_dec (local.get $h))))\n";
+  }
   return o;
 }
 
@@ -12520,7 +12547,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(strbuf_helpers());
   }
   if (need(needs, "@uses_buf")) {
-    parts = parts.append(buf_helpers());
+    parts = parts.append(buf_helpers(needs));
   }
   if (need(needs, "buf_push_bytes_range")) {
     parts = parts.append(buf_push_bytes_range_helper());
