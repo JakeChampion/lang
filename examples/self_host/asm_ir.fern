@@ -7765,7 +7765,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 // ssa_agg_lit is the address of a static record, variant or capture-free
 // function-value box the lowering folded whole (ir.const_struct_* /
 // ir.const_closure), interned as the flat arm interns it.
-function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): asmcore.EmitState {
   var pk: asmcore.ConstAggPack = asmcore.const_agg_pack(s, ins.str);
   s = pk.state;
   var kout: asmcore.ConstAggOut = asmcore.add_const_agg(s, pk.text);
@@ -7776,7 +7776,7 @@ function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
 }
 
 // ssa_addr_inst selects the label addresses and the box allocation (45..48).
-function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   var k: i32 = ins.kind_tag;
   var label: string = "";
@@ -7800,7 +7800,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
   return ssa_store(reg_of, ins.result, d, s);
 }
 
-function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: irlower.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
   var k: i32 = ins.kind_tag;
   if (k == 11) {
     return ssa_call(ins, reg_of, lp, s);
@@ -9625,7 +9625,7 @@ function dyn_arg_operand(a: asmcore.DynArg): string {
 // arm pushes the arguments (arg0/receiver on top, asm.fern's ABI) from
 // where `args` says they are, calls, and leaves the result in %rax. %rcx
 // and %rdx are scratch.
-function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32, lp: string, own s: asmcore.EmitState): asmcore.EmitState {
   var dargc: i32 = args.len();
   s = s.write("    movq " + dyn_arg_operand(args[0]) + ", %rax\n");
   s = s.write("    movq (%rax), %rcx\n");
@@ -9688,7 +9688,8 @@ function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32,
       var dvi: i32 = 0;
       while (dvi < s.struct_decls.decls.len()) {
         if (s.struct_decls.decls[dvi].enum_owner == ddbn) {
-          var vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls.decls[dvi].name);
+          var vlit_name: string = s.struct_decls.decls[dvi].name;
+          var vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, vlit_name);
           s = vlit.state;
           s = s.write("    leaq " + vlit.label + "(%rip), %rdx\n");
           s = s.write("    cmpq %rdx, %rcx\n");
@@ -9718,7 +9719,7 @@ function emit_dyn_dispatch_chain(method: string, args: asmcore.DynArg[], i: i32,
   return s;
 }
 
-function emit_ir_op_dyn_box(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+function emit_ir_op_dyn_box(o: ir.Op, own s: asmcore.EmitState): asmcore.EmitState {
   // Heap-box a primitive/string value coerced into a `dyn Trait` slot
   // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8], 2 words;
   // shape = the interned primitive type name (the SAME .S label struct
@@ -9742,7 +9743,7 @@ function emit_ir_op_dyn_box(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-function emit_ir_op_dyn_downcast(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function emit_ir_op_dyn_downcast(o: ir.Op, i: i32, lp: string, own s: asmcore.EmitState): asmcore.EmitState {
   // `e as? T` downcast (docs/DYN-TRAITS.md §9). The `dyn` value (a heap
   // pointer carrying its concrete shape @0) is on top of the operand
   // (machine) stack. Read its shape and compare to T's interned shape
@@ -10243,14 +10244,15 @@ function emit_ir_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string): a
 //
 // Shared by the array element walk and the single-box __enum_drop_ below, so a
 // direct enum field and an enum array element release identically (#8567).
-function emit_ir_enum_variant_payload_decs(s: asmcore.EmitState, ety: string, reg: string, lp: string, done: string): asmcore.EmitState {
+function emit_ir_enum_variant_payload_decs(own s: asmcore.EmitState, ety: string, reg: string, lp: string, done: string): asmcore.EmitState {
   var vi: i32 = 0;
   var vlabel: i32 = 0;
   while (vi < s.struct_decls.decls.len()) {
     if (s.struct_decls.decls[vi].enum_owner == ety) {
       var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls.decls[vi].name);
       if (offs.len() > 0) {
-        var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls.decls[vi].name);
+        var vlo_name: string = s.struct_decls.decls[vi].name;
+        var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, vlo_name);
         s = vlo.state;
         var vls: string = util.i32_to_string(vlabel);
         s = s.write("    movq (" + reg + "), %rax\n");  // shape ptr @0
