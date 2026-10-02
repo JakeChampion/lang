@@ -1,25 +1,5 @@
 # Checked regex text and explicit byte output
 
-Current integration includes main through `0d7a8d321`. Its pinned bootstrap
-reaches identical stage-2 and stage-3 binaries of 12,114,209 bytes, SHA-256
-`a380f17f030b31c02aaedb68a48d7b83951167b74ee9a98fcc50b286557c1540`.
-Actual stage-2 Darwin, core WASM, Preview 2 and primary interpreter probes
-pass with the allocation counts recorded below. The refreshed Linux target
-matrix, regex fixtures and conformance cases, VCL and `tr` callers, and
-`make lint-all` pass. The full unit gate remains pending.
-
-Earlier integration checkpoint, October 2: the file-byte parent `7052f1c0c`
-passes the refreshed Linux target matrix, existing regex fixtures, VCL
-backend TAP suite, `tr` callers and `make lint-all`. Actual stage-2 Darwin,
-core WASM, Preview 2 and primary interpreter fixtures pass. Native reports
-5172 allocations and 5172 frees; core WASM reports 5224 and 5224. Stage 2
-and stage 3 are identical, SHA-256
-`bf57540e6d87a899384a14f556e89b78f435c43c560180533b64532de6164f17`.
-The stage-2 and stage-3 executables occupy 12,097,649 bytes. Stage 1 differs
-because the seed predates generator changes on main. The full unit gate
-on this integration remains pending. Earlier
-measurements below retain their original revision and validation context.
-
 `std/regex` matches bytes. For example, `.` consumes one byte of `é`,
 and replacing that match with `X` leaves `0xa9` behind. The previous
 implementation returned those malformed bytes as a string. Captures and
@@ -58,66 +38,71 @@ output is intentional. Repository examples and fixtures are migrated.
 VCL `regsub` and `regsuball` report an evaluation error when output would
 be malformed text. Their existing valid replacements keep their behavior.
 
-## Validation
+## Current validation
 
-The shared fixture covers two-, three- and four-byte scalars, combining
+The integration includes main `cede3aaf3` and uses its production typed-IR
+lowering. Refreshed bootstrap and primary Linux/WASM target matrices pass,
+including regex conformance, seeded random bytes, ASCII conversion, VCL
+callers, GNU tr parity, opcode inventories and all lint gates.
+
+The pinned seed `stage0-20261001-c891ebc` produces identical stage-2 and
+stage-3 binaries of 12,411,809 bytes, SHA-256
+`1ceb7758111680f0138ba6f346c3f113ee35bb61c7b8c2e0c76938c8f582599f`.
+Stage 1 differs because the seed predates generator changes.
+
+The actual stage-2 compiler passes the regex, RNG and ASCII fixtures on
+Darwin, core WASM and Preview 2. The public APIs also pass in the primary
+interpreter. Legacy `chr` is a compiled-runtime entry rather than an
+interpreter API, so that fixture runs only on compiled targets.
+
+| Fixture | Native allocations/frees | Core-WASM allocations/frees |
+| --- | ---: | ---: |
+| Regex UTF-8 | 5130 / 5130 | 5182 / 5182 |
+| Seeded random bytes | 354 / 354 | 354 / 354 |
+| ASCII byte method | 512 / 512 | 512 / 512 |
+| Legacy ASCII constructor | 262 / 262 | 262 / 262 |
+
+Every instrumented fixture ends with zero live bytes. Preview 2 checks
+behavior only.
+
+The shared regex fixture covers two-, three- and four-byte scalars, combining
 text, partial captures, named and numbered templates, capture recombination,
 zero-width matches, empty output, missing captures and raw output ownership.
-Bootstrap interpreter/native/WASM and primary Darwin interpreter/native
-checks pass. Primary Linux and WASM checks pass in both lowering modes;
-production semantic allocation counts balance. Legacy AST runs are checked
-for results separately; they do not establish leak-free ownership.
+The primary conformance runner compares each fixture's expected result
+inside the program, so WASI's exit-code limit cannot hide a failing bitmask.
 
-The fixture uses explicit `Option` matches because the primary interpreter
-cannot dispatch `is_none` on `None`. A standalone probe reproduces that
-limitation with the unchanged stdlib too. It is separate from regex.
-
-All existing regex fixtures pass on the bootstrap backends. The generic
-self-host fixture lane requires a native x86-64 host and skips on this
-arm64 machine. A dedicated primary-CLI test runs the regex corpus on each
-target and compares each fixture's expected result inside the program,
-so WASI's process exit-code limit cannot hide a failing bitmask assertion.
-The expanded primary corpus passes. A standalone current-compiler probe
-also runs all 16 programs on the four targets and the primary interpreter,
-with balanced semantic allocation counts on the compiled core targets.
-Template-reference parsing and byte assembly are separate to stay within
-the existing complexity limit. The integrated full unit suite, all lint
-gates, existing regex fixtures and VCL caller checks pass. The primary
-Darwin compiler also runs all 42 VCL backend TAP tests successfully.
-
-The 2026-10-02 integration with raw I/O and concrete view dispatch was
-rechecked across the RNG, ASCII and regex matrices. Darwin passed in
-8.353 seconds for bootstrap tests and 50.577 seconds for primary tests;
-Linux/WASM passed in 3.880 and 158.167 seconds respectively. These are
-validation durations, not performance comparisons. The fresh published-seed
-bootstrap took 38, 37 and 34 seconds, with stages two and three identical:
-14,610,337 bytes, SHA-256
-`710ae976e3d8e7f91741bc13bb48fb60e1500a7b946570b223c8a954e37739c4`.
-The final unit suite and every lint gate for this integration also passed.
+After the target pass, duplicate runs under retired lowering-mode flags
+were replaced with one production-path run per target. Assertions and target
+coverage remain. The final Darwin bootstrap and primary matrices, revised
+Linux tests, full unit suite and all lint gates pass.
 
 ## Native measurements
 
-Measured on arm64 macOS on 2026-10-01 with strict semantic lowering and
-the same compiler/runtime selection for both versions. Each process runs
-20 checked replacements. A 16-repeat pilot precedes 4,096 repeats; only
-the repeat count changes. Two warmups precede seven samples, alternating
-version order. Other validation jobs were active.
+Measured on arm64 macOS on 2026-10-02. The same final stage-2 compiler builds
+both versions; the baseline uses main `cede3aaf3`'s stdlib. Each process
+checks the exact result of 20 replacements. A 16-repeat pilot precedes
+4096 repeats, changing only the repeat count. Two warmups precede seven
+samples, alternating version order. Task-owned compiler and test jobs had
+stopped; desktop activity remained.
 
 | Workload | Before median | After median | Before range | After range |
 | --- | ---: | ---: | ---: | ---: |
-| ASCII literal replacement | 11.370 ms | 8.762 ms | 10.394-18.870 ms | 8.484-10.081 ms |
-| Unicode literal replacement | 18.811 ms | 12.588 ms | 18.327-19.480 ms | 12.400-13.941 ms |
-| Unicode capture templates | 93.179 ms | 79.421 ms | 90.776-95.120 ms | 78.540-112.019 ms |
-| No match | 10.092 ms | 9.977 ms | 9.659-10.152 ms | 9.870-11.602 ms |
+| ASCII literal replacement | 10.544 ms | 8.379 ms | 9.828-11.634 ms | 7.831-9.004 ms |
+| Unicode literal replacement | 17.157 ms | 11.126 ms | 16.739-17.421 ms | 10.622-11.269 ms |
+| Unicode capture templates | 92.687 ms | 77.729 ms | 91.742-107.696 ms | 75.024-79.788 ms |
+| No match | 8.183 ms | 8.430 ms | 8.035-8.676 ms | 8.156-8.771 ms |
 
-The ASCII and Unicode literal replacements have nonoverlapping ranges.
-Capture-template and no-match ranges overlap, so this run does not establish
-a speed change for those workloads.
+The three replacement workloads have separated sample ranges in this run.
+No-match ranges overlap. These measurements are specific to these workloads
+and this host.
 
-Native text falls from 58,432 to 57,784 bytes. Object text falls from
-58,388 to 57,736 bytes, with all 652 bytes attributed to symbol changes.
-Direct span assembly removes temporary captured strings, replacement arrays
-and the old join helper; this more than pays for UTF-8 validation and the
-checked-result handling. Object constants shrink by one byte; compact unwind
-grows by 128 bytes and EH unwind by 392. Object data/BSS and linked data are
-unchanged. No size baseline was raised.
+Both fixture executables occupy 99,505 bytes. Native code falls from
+59,160 to 58,504 bytes; unwind data grows from 5732 to 6124 bytes, and
+data stays at 2440 bytes. Direct span assembly removes temporary captures,
+replacement arrays and the old join helper while adding checked output.
+
+Building both compiler sources with the same final compiler yields
+12,411,809-byte executables on both sides. Code grows by 80 bytes, unwind
+data by 72 and data by 256, all within the existing file segments. The
+integration includes ASCII validation and the ARM64 byte-alignment fix;
+no size baseline changed. These figures supersede older integration results.

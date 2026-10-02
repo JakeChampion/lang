@@ -24,8 +24,8 @@
 // as a binding (Rec §7) rather than through envp.
 //
 // Outbound HTTP is the one capability that lives elsewhere:
-// `(plat: Platform).fetch(host, port, path)` is in `std/fetch`, next to
-// the socket machinery that implements it.
+// `(plat: Platform).http(req)` is in `std/fetch`, next to the socket
+// machinery that implements it.
 //
 // A bag is either a host bag or a recording one. Every method here asks
 // which before it acts: a recording bag appends the call to its sink and
@@ -78,7 +78,7 @@ pub function platform_mock(sink: Cell[string]): Platform {
 }
 
 // `.is_mock()` — is this a recording bag? Each capability method below asks
-// before performing its effect, and so does `.fetch`, the one capability that
+// before performing its effect, and so does `.http`, the one capability that
 // lives next to the socket machinery in std/fetch rather than here.
 pub function (plat: Platform) is_mock(): boolean {
   return plat.mode == PLATFORM_MODE_MOCK;

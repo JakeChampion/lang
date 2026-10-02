@@ -300,7 +300,7 @@ func TestRunnerUrlExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/url", "# pass 28", "# fail 0", "1..28"} {
+	for _, w := range []string{"# Suite: std/url", "# pass 33", "# fail 0", "1..33"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -3898,7 +3898,7 @@ func TestRunnerHttpBodyExample(t *testing.T) {
 }
 
 // `examples/tests/mock_platform_canned_test.fern` pins the mock's canned
-// answers (#9854): `env_set`, `now_set`, `random_set` and `fetch_set` reach
+// answers (#9854): `env_set`, `now_set`, `random_set` and `http_set` reach
 // the handler through the bag, the fixed values apply without them, a
 // canned row is not a call and survives `reset`, and a value with tabs and
 // newlines round-trips.

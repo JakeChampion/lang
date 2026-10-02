@@ -960,6 +960,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc")
 					needs.add("__alloc_u8")
 					needs.add("__fern_tcp_recv")
+				case "__fern_tcp_send_bytes":
+					needs.add("__free")
+					needs.add("__fern_alloc")
+					needs.add("__fern_tcp_send_bytes")
 				case "__fern_tcp_send":
 					needs.add("__free")
 					// (conn, data) → i32 — bytes sent, -1 on
@@ -1302,7 +1306,8 @@ var unconditionalHelperCalls = map[string][]string{
 	"__build_io_error": {"__fern_alloc_rc1", "__fern_alloc_box"},
 	"__http_entry": {
 		"__fern_alloc", "__alloc_u8", "__bytes_to_lang_string",
-		// emitStrNormalize, for the outgoing body's SSO pair.
+		"__fern_arr_dec", "__free",
+		// emitStrNormalize, for outgoing header names and values.
 		"__fern_str_len", "__fern_str_byte",
 	},
 	"__bytes_to_lang_string": {"__fern_alloc"},
@@ -1367,8 +1372,8 @@ var preview2HelperCalls = map[string][]string{
 	"__fern_handle_termios_get":      {"__wasi_errno_of_code"},
 	"__fern_handle_termios_set":      {"__wasi_errno_of_code"},
 	"__fern_reader_splice":           {"__wasi_errno_of_code"},
-	"__fern_reader_seek":             {"__wasi_errno_of_code"},
-	"__fern_writer_seek":             {"__wasi_errno_of_code"},
+	"__fern_reader_seek":             {"__wasi_errno_of_code", "__free"},
+	"__fern_writer_seek":             {"__wasi_errno_of_code", "__free"},
 	"__fern_reader_flags":            {"__wasi_errno_of_code"},
 	"__fern_writer_flags":            {"__wasi_errno_of_code"},
 	"__fern_writer_truncate":         {"__wasi_errno_of_code"},
@@ -3038,6 +3043,11 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpSendBody,
+	},
+	"__fern_tcp_send_bytes": {
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpSendBytesBody,
 	},
 	"__fern_tcp_close": {
 		// (conn: i32) → i32 (always 0). Drops streams +

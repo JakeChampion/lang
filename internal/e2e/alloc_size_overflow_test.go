@@ -139,10 +139,10 @@ func checkAbort(t *testing.T, backend, out string, code int, cause, src string) 
 // under a length of ~1e9, and the copy memcpy'd a gibibyte into a 20-byte
 // block — a silent heap overrun on the natives, an out-of-bounds trap on wasm.
 //
-// The request is now computed in 64 bits (checked in i64 on wasm) and refused
-// before anything is allocated, so the run holds only the 1 GiB `__alloc_u8`
-// zero-fill, never the copy. That footprint is still budgeted against
-// concurrent heavy builds.
+// wasm's 32-bit address space cannot hold the grown array, so its request is
+// checked in i64 and refused before anything is allocated. The self-host sizes
+// the request in 64 bits on the Linux targets and runs the program to its
+// answer, so wasm is the one target where this is an abort.
 func TestArrayGrowSizeOverflowAborts(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping allocation-size e2e in -short mode")
@@ -153,9 +153,6 @@ func TestArrayGrowSizeOverflowAborts(t *testing.T) {
   return a.len();
 }
 `
-	holdingMemoryMB(t, 1200, func() {
-		assertAbortsWithCause(t, src, "allocation size out of range")
-	})
 	t.Run("wasm32-wasi", func(t *testing.T) {
 		holdingMemoryMB(t, 1200, func() {
 			out, stderr, code := runComponent(t, buildNumComponent(t, src), runOpts{})

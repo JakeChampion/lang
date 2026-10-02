@@ -2026,12 +2026,8 @@ pub function (s: string) bytes(): u8[] {
       i = i + 1;
     }
   } else {
-    // Use `as usize`, not `as i32`: native 64-bit targets
-    // (arm64-linux on AWS Graviton / Ampere Altra) place
-    // heap mmap regions above 4 GiB, so `pointer as i32`
-    // silently truncates and __memcpy traps on the bad
-    // address. See `int_to_string` in core/int.fern for
-    // the same fix in context.
+    // Native layout: a native `u8[]` value is its packed data pointer. The
+    // self-host never compiles this body; `.bytes()` is an intrinsic there.
     __memcpy(out as usize, data, n);
   }
   return out;

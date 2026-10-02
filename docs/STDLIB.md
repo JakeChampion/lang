@@ -1014,6 +1014,13 @@ Percent-encoding, URL parsing, query parsing.
   an escape that does not spell UTF-8 decodes to U+FFFD, and
   `url_decode_bytes(s)` / `form_decode_bytes(s)` hand back the bytes
 - `url_parse(s) Option[Url]`
+- `url_resolve(base, reference) Option[string]` — RFC 3986 §5.2
+  reference resolution: an absolute reference stands, a scheme-relative
+  one takes the base's scheme, a path is replaced or merged onto the
+  base's directory with dot segments removed, an empty reference keeps
+  the base's path and (without a `?`) query; `None` when the base has no
+  scheme. `url_remove_dot_segments(path)` is the §5.2.4 step on its own
+  (a `..` above the root is dropped, where the request parser refuses it).
 - `query_parse(s) Map[string, string[]]`, `query_encode(pairs)`
 - **Single-key query accessors** (scan the raw query string, no map
   build): `query_get(query, key) Option[string]` (first value),
@@ -1069,8 +1076,11 @@ serializer.
   the last four. `(resp).body_string()` (an ill-formed sequence in a
   byte-domain body reads as U+FFFD: unlike `(req).body_string()` it has no
   error arm, a response being the handler's own), `(resp).body_bytes()` and
-  `(resp).body_len()` read whichever a response carries, a producer's chunks
-  joined; a `BodyFile` reads as empty from a handler, since a handler may not
+  `(resp).body_len()` read whichever a response carries (`(body).bytes()`
+  is the read on the `Body` itself), a producer's chunks
+  joined; `(resp).body_text()` is the checked decode, `None` for bytes that
+  are not UTF-8, for a response that came off the wire (`std/fetch`'s);
+  a `BodyFile` reads as empty from a handler, since a handler may not
   reach the file system (E080), and `http_materialize(resp)` reads one whole
   for a test. The serve loop produces a file body and a chunks body as the
   socket takes them, after the handler has answered: a file is opened and
@@ -1108,6 +1118,33 @@ serializer.
   stream and the wasi-http wrapper's outgoing body carry none, so there
   they are dropped. `http_serialize_fields(map)` writes a map as field
   lines.
+- **Response parsing:** `http_parse_response_framed(buf, method, eof,
+  limits): HttpResponseFraming` is the client side of the wire, the
+  request parser's twin: `Complete(HttpResponseFramed { response, len,
+  version, keep_alive })` once the whole response is in the buffer,
+  `Unfinished` while it is not, `Rejected(code)` for one it will not read
+  (400 malformed, 413 a body past `limits.body`, 431 a header block or
+  chunk framing past its budget, 501 a coding under `chunked`, 505 another
+  major version). `eof` says the peer closed, which delimits a body with
+  neither `Content-Length` nor `Transfer-Encoding` (RFC 9112 §6.3); a
+  response to HEAD, or with a 1xx, 204 or 304 status, has no body
+  whatever its headers say. `http_parse_response_framed_from(buf, from,
+  …)` parses behind an interim response. `http_hop_by_hop(name)` and
+  `http_end_to_end(map)` name and strip the fields a connection owns
+  (`Connection` and the fields it lists, `Keep-Alive`, `Proxy-Connection`,
+  `Transfer-Encoding`, `TE`, `Trailer`, `Upgrade`).
+- **Request writing:** what a client may put on the wire, the parser's
+  refusals turned outward: `http_method_ok(method)` (a token),
+  `http_method_idempotent(method)` (GET, HEAD, PUT, DELETE, OPTIONS and
+  TRACE, the methods a client may send again after a reset before any
+  response byte, RFC 9110 §9.2.2),
+  `http_target_ok(target)` (an origin-form request-target: `/`, `pchar`
+  and `/`, then a query of `pchar`, `/` and `?`, every `%` followed by
+  two hex digits; `%2F` passes, since what a decoded segment may hold is
+  the server's rule), `http_field_name_ok(name)` (a token) and
+  `http_field_value_ok(value)` (no control byte but HTAB and no DEL).
+  `std/fetch` checks each before it connects, so a CRLF in a caller's URL
+  or header cannot split the request it is written into.
 - **Request builder:** `request(method, path)` is a request to hand a
   handler in a test (no headers, no body), and `(req).with_header(name,
   value)`, `(req).with_body(body)` (with the `Content-Length` a client
@@ -1599,26 +1636,75 @@ hoping nothing else holds it.
 
 ### `std/fetch`
 
-Outbound HTTP/1.1 client (the upstream-fetch half of the edge
-use case). Hosts are literal IPv4 (no DNS / TLS yet).
+Outbound HTTP/1.1 client (the upstream-fetch half of the edge use
+case). A request is a value built from a URL and sent blocking; the
+answer is `Result[HttpResponse, FetchError]`.
 
-- **Addresses:** `ipv4(a,b,c,d)` / `parse_ipv4(s)` — pack a
-  dotted-quad into the network-byte-order i32 `tcp_connect` wants.
-- **Blocking:** `fetch_raw(host_be, port, request)`,
-  `fetch_get(host_be, port, path)`, `get_url("http://…")` — send
-  and read the whole response ("" on failure).
-- **Deadline-bounded:** `fetch_raw_deadline` /
-  `fetch_get_deadline(host_be, port, path, deadline):
-  Option[string]` — `Some(response)` in time, `None` when the
-  upstream was too slow (connect/send failure is `Some("")`,
-  mirroring `fetch_raw`).
+- **Requests:** `get(url)` / `request(method, url)`, then
+  `(req).with_header(name, value)`, `(req).with_text(s)`,
+  `(req).with_bytes(bs)`, `(req).with_body(body)` (text, bytes, a stream
+  or chunks; a `BodyFile` is refused, since the client never reads a
+  file), `(req).with_timeouts(t)`, `(req).with_limits(l)`. `std/url`
+  parses the URL; the host is resolved by `std/dns` (a literal, the hosts
+  file, then DNS) and its addresses raced as `dns.connect_race` does.
+  Before it connects the client checks the method, the path and query
+  and every header against `std/http`'s `http_method_ok` /
+  `http_target_ok` / `http_field_name_ok` / `http_field_value_ok`, so a
+  CRLF in a URL or a field cannot split the request on the wire. It
+  writes `Host`,
+  `Content-Length` and `Connection: close` itself and strips hop-by-hop
+  fields from what it sends. No TLS yet (`https` fails with `Tls`), no
+  pool.
+- **Redirects:** a 301, 302, 303, 307 or 308 with a `Location` is
+  followed, `(req).with_redirects(hops)` bounding the hops (10 by
+  default; 0 answers the 3xx as data), every hop under the one total
+  bound. The `Location` is resolved against the request's URL by
+  `url.url_resolve`. A 307 and 308 keep the method and body; a 303, and
+  a 301 or 302 answering a POST, become a GET without the body. When a
+  hop leaves the origin (scheme, host, effective port) `Authorization`,
+  `Proxy-Authorization` and `Cookie` are dropped; `Host` is written per
+  hop.
+- **Retry:** a request the peer resets before any response byte (a
+  reset or abort on the socket, a broken pipe, a close with nothing
+  read) is sent once more when its method is idempotent
+  (`http.http_method_idempotent`: GET, HEAD, PUT, DELETE, OPTIONS,
+  TRACE), on a fresh connection, under the same total bound. A POST is
+  never resent.
+- **Sending:** `send(req)` from a program with a `main`;
+  `(plat: Platform).http(req)` from a handler, the capability-scoped
+  route (a recording bag answers what `MockPlatform.http_set` canned).
+- **Responses:** the same `HttpResponse` the server side builds, with
+  `BodyBytes`, headers case-folded and the hop-by-hop fields stripped, a
+  chunked body decoded and its trailers in `trailers`, interim 1xx
+  responses stepped over, a bodiless 204 / 304 / HEAD answer honoured.
+  The status is data: `(resp).ok_or_status(): Result[HttpResponse, i32]`
+  turns anything outside 2xx into `Err(status)`. `(resp).body_text()`
+  is the checked UTF-8 read, since an upstream can serve anything.
+- **Errors:** `FetchError` is a closed sum over the phase that failed:
+  `InvalidUrl(what)` (unparseable, no scheme or host, a scheme other than
+  `http` / `https`, or a path or query that cannot stand on a request
+  line), `InvalidRequest(what)` (a method that is not a token, a header
+  that cannot be written as one line, or a file body; `what` names the
+  rule, never the value), `Dns(DnsError)`, `Connect(NetError)`, `Tls`,
+  `Timeout(Phase)` with `Phase` one of `Connecting` / `Inactivity` /
+  `Total`, `Protocol(what)` (a response the parser refuses, interim
+  1xx responses past one `limits.header_bytes` between them, or a 101
+  the client did not ask for),
+  `Io(NetError)` (a send or read the kernel refused, and a peer that
+  closed before any response byte, as `ConnectionReset`), `BodyLimit` (a
+  body past `limits.body`), `Redirect(what)` (more hops than
+  `redirects`, a 3xx without a `Location`, or a `Location` that is not a
+  URL), and `Cancelled`, which no path produces yet. `(e).message()`.
+- **Timeouts:** `Timeouts { connect_ms, inactivity_ms, total_ms }`,
+  `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
+  whole address race; inactivity is the longest wait for the next byte
+  of the response; total runs from the start to the last byte read.
 - **Awaitable:** `fetch_future(host_be, port, path):
-  async.Future[string]` — fan out through `async.gather` /
-  `async.race` / `async.with_deadline`.
-- **Response helpers:** `http_status(resp)`, `http_body(resp)`.
-- **Capability-scoped:** `(plat: Platform).fetch(host, port,
-  path): i32` — status-code GET through the handler's `Platform`
-  bag.
+  async.Future[u8[]]` resolves to the response body (empty on any
+  failure, a `path` that `http_target_ok` refuses included, which never
+  connects) — fan out through `async.gather` / `async.race` /
+  `async.with_deadline`. `ipv4(a,b,c,d)` packs the dotted-quad it and
+  `tcp_connect` take.
 
 ### `std/headers`
 
@@ -1776,8 +1862,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
   the same lookup, and a mock records only the name.
 - `(plat).random_i32()` — one draw from the platform CSPRNG
   (`random`).
-- `(plat).fetch(host, port, path)` lives in `std/fetch`, next to the
-  sockets that implement it.
+- `(plat).http(req)` lives in `std/fetch`, next to the sockets that
+  implement it.
 
 ### `std/mock_platform`
 
@@ -1793,14 +1879,15 @@ assert_eq(m.calls()[0].name, "log");
 
 Mocked capabilities answer what the test canned, else a fixed value — 0
 for `now_ms` / `elapsed_ns` / `random_i32`, `None` for `env` / `config` /
-`secret`, -1 for `fetch`, and `log` swallows the line.
+`secret`, `Err(Connect(ConnectionRefused))` for `http`, and `log`
+swallows the line.
 
 - `mock_platform_new()`; `(m).as_platform()`.
 - `(m).env_set(name, value)`, `(m).config_set(name, value)`,
   `(m).secret_set(name, value)`, `(m).now_set(ms)`, `(m).elapsed_set(ns)`,
-  `(m).random_set(v)`, `(m).fetch_set(host, port, path, status)` — the
-  answer the bag gives from then on (the last one canned wins; a fetch of
-  another host, port or path still answers -1). A canned answer is a row
+  `(m).random_set(v)`, `(m).http_set(method, url, status, body)` — the
+  answer the bag gives from then on (the last one canned wins; a request
+  with another method or URL still answers the refusal). A canned answer is a row
   of the same cell the log lives in (`canned`, tab, key, tab, value, the
   value escaped), which `calls()` skips and `reset()` keeps; the bag's
   own `(plat).can(key, value)` / `(plat).canned(key)` are what the

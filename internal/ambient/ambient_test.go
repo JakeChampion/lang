@@ -262,7 +262,7 @@ func TestBagMethodsAreNotHandlers(t *testing.T) {
 import "std/platform";
 import "std/fetch";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var n: i32 = plat.fetch("127.0.0.1", 1, "/");`+handlerTail)
+    var answer: Result[HttpResponse, fetch.FetchError] = plat.http(fetch.get("http://127.0.0.1:1/"));`+handlerTail)
 	if len(vs) != 0 {
 		t.Errorf("std/fetch's bag method reported: %+v", vs)
 	}

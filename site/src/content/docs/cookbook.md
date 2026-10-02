@@ -260,27 +260,33 @@ The third argument is what to feed the child on stdin.
 
 ## Fetch a URL
 
-`std/fetch` speaks HTTP/1.1 over the socket primitives. There is no DNS
-resolver in the standard library yet, so the host is an address:
+`std/fetch` speaks HTTP/1.1 over the socket primitives, resolving the
+host through `std/dns`:
 
 ```fern
 import "std/fetch";
-import "std/utf8";
 
 function main(): i32 {
-    var host: i32 = fetch.ipv4(93, 184, 216, 34);
-    var resp: u8[] = fetch.fetch_get(host, 80, "/");
-    match (utf8.from_bytes(fetch.http_body(resp))) {
-        Some(text) => { print(text); },
-        None => { print("body is not valid UTF-8"); },
+    match (fetch.send(fetch.get("http://example.com/"))) {
+        Ok(resp) => {
+            match (resp.body_text()) {
+                Some(text) => { print(text); },
+                None => { print("body is not valid UTF-8"); },
+            }
+        },
+        Err(e) => { print("fetch failed: " + e.message()); },
     }
     return 0;
 }
 ```
 
-Responses are bytes, not text: an upstream can serve a PNG or a truncated
-UTF-8 sequence, so decoding is an explicit step that can fail.
-`fetch.http_status(resp)` reads the status line, and `fetch.fetch_future`
+The status is data on the response (`resp.status`, or
+`resp.ok_or_status()` to treat anything outside 2xx as an error), and
+`FetchError` says which phase failed: the URL, DNS, the connect, a
+timeout, the protocol. Bodies are bytes, not text: an upstream can serve
+a PNG or a truncated UTF-8 sequence, so `body_text()` is a decode that
+can fail. A handler sends through its bag, `plat.http(req)`, and a
+`MockPlatform` cans the answer with `http_set`. `fetch.fetch_future`
 gives you a future you can hand to `async.gather` to overlap several
 requests on one thread.
 

@@ -2434,6 +2434,145 @@ function main(): i32 {
     return 199;
 }
 `},
+	// A call result lent the parameter as the last reader of its box is a
+	// link of it (ssarc.links_of): `two`, `cond` and `then_append` thread one
+	// through straight-line calls, `looped` and `early` through a loop phi,
+	// `branch` drops it on one arm, and `read_back` reads it again after
+	// lending it, where the bracket makes the callee copy. `h` hands back its
+	// parameter unchanged on even values, so the link is still the
+	// parameter's box on half the calls. Every caller checks the buffer it
+	// lent came back untouched.
+	{name: "call-result-link", atLeast: 15, want: "82|", src: `
+function f(b: i32[], v: i32): i32[] { return b.append(v); }
+function h(b: i32[], v: i32): i32[] {
+    if (v % 2 == 0) { return b; }
+    return b.append(v);
+}
+function two(b: i32[], v: i32): i32[] { b = f(b, v); return f(b, v + 1); }
+function cond(b: i32[], v: i32): i32[] { b = h(b, v); b = h(b, v + 1); return h(b, v + 3); }
+function looped(b: i32[], n: i32): i32[] {
+    var i: i32 = 0;
+    while (i < n) { b = h(b, i); i = i + 1; }
+    return b;
+}
+function read_back(b: i32[], v: i32): i32 {
+    var t: i32[] = h(b, v);
+    var u: i32[] = f(t, 7);
+    return t.len() * 100 + u.len();
+}
+function branch(b: i32[], v: i32): i32[] {
+    var t: i32[] = h(b, v);
+    if (v > 3) { return t; }
+    return [9, 9];
+}
+function then_append(b: i32[], v: i32): i32[] {
+    b = h(b, v);
+    b = b.append(100);
+    return f(b, 101);
+}
+function early(b: i32[], n: i32): i32[] {
+    var i: i32 = 0;
+    while (i < n) {
+        b = f(b, i);
+        if (i == 2) { return b; }
+        i = i + 1;
+    }
+    return b;
+}
+function sum(a: i32[]): i32 {
+    var s: i32 = 0;
+    for x in a { s = s + x; }
+    return s;
+}
+function word(b: string[], v: i32): string[] {
+    var tbl: string[] = ["aa", "bbb", "c"];
+    if (v % 3 == 0) { return b; }
+    return b.append("w-" + tbl[v % 3]);
+}
+function words(b: string[], v: i32): string[] { b = word(b, v); return word(b, v + 1); }
+function pair(a: string[], b: string[], v: i32): string[] {
+    a = word(a, v);
+    return word(a, b.len());
+}
+function total(a: string[]): i32 {
+    var s: i32 = 0;
+    for x in a { s = s + x.len(); }
+    return s;
+}
+function ints(): i32 {
+    var acc: i32[] = [1, 2, 3];
+    var r: i32[] = two(acc, 5);
+    if (acc.len() != 3 || r.len() != 5 || sum(acc) != 6 || sum(r) != 17) { return 1; }
+    acc = r;
+    var k: i32 = 0;
+    while (k < 20) {
+        var before: i32 = acc.len();
+        var r2: i32[] = cond(acc, k);
+        if (acc.len() != before) { return 2; }
+        acc = r2;
+        k = k + 1;
+    }
+    var keep: i32[] = acc;
+    var s1: i32 = sum(acc);
+    acc = looped(acc, 7);
+    if (sum(keep) != s1) { return 3; }
+    k = 0;
+    while (k < 6) {
+        var want: i32 = acc.len() * 100 + acc.len() + 1;
+        if (k % 2 == 1) { want = (acc.len() + 1) * 100 + acc.len() + 2; }
+        if (read_back(acc, k) != want) { return 4; }
+        acc = branch(acc, k);
+        acc = then_append(acc, k);
+        k = k + 1;
+    }
+    var keep2: i32[] = acc;
+    var l2: i32 = keep2.len();
+    acc = early(acc, 5);
+    if (keep2.len() != l2 || acc.len() != l2 + 3) { return 5; }
+    return 100 + sum(acc) % 50;
+}
+function strs(): i32 {
+    var acc: string[] = [];
+    var i: i32 = 0;
+    while (i < 30) {
+        var old: string[] = acc;
+        var n: i32 = old.len();
+        acc = words(acc, i);
+        if (old.len() != n) { return 6; }
+        acc = pair(acc, acc, i);
+        i = i + 1;
+    }
+    var shared: string[] = acc;
+    var t: i32 = total(shared);
+    var r: string[] = pair(acc, acc, 1);
+    if (total(shared) != t || total(acc) != t || r.len() < acc.len()) { return 7; }
+    return 100 + total(r) % 50;
+}
+function main(): i32 {
+    var a: i32 = ints();
+    var b: i32 = strs();
+    if (a < 100) { return a; }
+    if (b < 100) { return b; }
+    return (a - 100) + (b - 100);
+}
+`},
+	// One array lent to two borrowed parameters. `pair` hands `a` on to a
+	// callee that grows it in place, which is only sound when nothing else
+	// reads the box, and `b` is that box: the caller has to bracket it
+	// although it dies at the call.
+	{name: "array-lent-twice", atLeast: 3, want: "32|", src: `
+function push(b: i32[], v: i32): i32[] { return b.append(v); }
+function pair(a: i32[], b: i32[]): i32 {
+    var t: i32[] = push(a, 7);
+    return t.len() * 10 + b.len();
+}
+function main(): i32 {
+    var acc: i32[] = [];
+    acc = acc.append(1);
+    acc = acc.append(2);
+    return pair(acc, acc);
+}
+`},
 	// The paths a deferred receiver retain has to answer on: `maybe` does not
 	// append at all when the flag is false; `ignore` never returns what it
 	// appended to; `twice` appends through the same parameter at two sites, so

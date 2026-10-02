@@ -305,6 +305,181 @@ function __url_reg_name_char(b: i32): boolean {
   return b == 44 || b == 59 || b == 61;
 }
 
+// `url_resolve(base, reference)` — `reference` resolved against `base`
+// (RFC 3986 §5.2): an absolute reference stands as written; a
+// scheme-relative one (`//host/p`) takes the base's scheme; a path that
+// starts with `/` replaces the base's, one that does not is merged onto
+// the base's directory; an empty reference keeps the base's path and,
+// when it carries no `?`, its query; dot segments are removed. `None`
+// when `base` has no scheme or either does not parse. The fragment is
+// the reference's: a base's fragment never survives a resolution.
+pub function url_resolve(base: string, reference: string): Option[string] {
+  match (url_parse(base)) {
+    Some(b) => {
+      if (b.scheme.len() == 0) {
+        return None;
+      }
+      return __resolved(b, reference);
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// `__resolved(b, reference)` — `url_resolve` once the base is known to
+// have a scheme.
+function __resolved(b: Url, reference: string): Option[string] {
+  if (reference.len() == 0) {
+    return Some(__url_compose(b.scheme, b.host, b.port, b.path, b.query, ""));
+  }
+  if (reference.len() >= 2 && reference[0] == 47 as u8 && reference[1] == 47 as u8) {
+    return Some(b.scheme + ":" + reference);
+  }
+  var r: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  match (url_parse(reference)) {
+    Some(parsed) => {
+      r = parsed;
+    },
+    None => {
+      return None;
+    }
+  }
+  if (r.scheme.len() > 0) {
+    return Some(reference);
+  }
+  var pq: (string, string) = __merged(b, r, reference);
+  return Some(__url_compose(b.scheme, b.host, b.port, url_remove_dot_segments(pq.0), pq.1, r.fragment));
+}
+
+// `__merged(b, r, reference)` — the path and query of a relative
+// reference (RFC 3986 §5.2.2): an empty path keeps the base's, and the
+// base's query too unless the reference wrote a `?`; a rooted path
+// replaces the base's; any other is merged onto the base's directory.
+function __merged(b: Url, r: Url, reference: string): (string, string) {
+  if (r.path.len() == 0) {
+    if (reference.index_of("?") >= 0) {
+      return (b.path, r.query);
+    }
+    return (b.path, b.query);
+  }
+  if (r.path[0] != 47 as u8) {
+    return (__merged_path(b.path, r.path), r.query);
+  }
+  return (r.path, r.query);
+}
+
+// `__merged_path(base, rel)` — RFC 3986 §5.2.3: `rel` after the base
+// path's last `/`, or under the root when the base path is empty.
+function __merged_path(base: string, rel: string): string {
+  var cut: i32 = base.len();
+  while (cut > 0 && base[cut - 1] != 47 as u8) {
+    cut = cut - 1;
+  }
+  if (cut == 0) {
+    return "/" + rel;
+  }
+  return slice_unchecked(base, 0, cut).to_owned() + rel;
+}
+
+// `__url_compose(scheme, host, port, path, query, fragment)` — the parts
+// written back as one URL: the host bracketed when it is an IPv6
+// address, the port only when one was given, `?` and `#` only before a
+// query or fragment that has bytes.
+function __url_compose(scheme: string, host: string, port: i32, path: string, query: string, fragment: string): string {
+  var out: string = scheme + "://";
+  if (host.index_of(":") >= 0) {
+    out = out + "[" + host + "]";
+  } else {
+    out = out + host;
+  }
+  if (port != 0) {
+    out = out + ":" + __port_text(port);
+  }
+  out = out + path;
+  if (query.len() > 0) {
+    out = out + "?" + query;
+  }
+  if (fragment.len() > 0) {
+    out = out + "#" + fragment;
+  }
+  return out;
+}
+
+function __port_text(port: i32): string {
+  var digits: string = "";
+  var n: i32 = port;
+  while (n > 0) {
+    digits = string_from_bytes_unchecked([(48 + n % 10) as u8]) + digits;
+    n = n / 10;
+  }
+  return digits;
+}
+
+// `url_remove_dot_segments(path)` — RFC 3986 §5.2.4: a `.` segment is
+// dropped, a `..` segment takes the one before it with it, either at the
+// end keeps the trailing slash, and a `..` with nothing before it is
+// dropped (the server-side request parser refuses that climb instead:
+// std/http's rule for what a peer may send, not a reference's). Empty
+// segments are kept.
+pub function url_remove_dot_segments(path: string): string {
+  var segments: string[] = [];
+  var n: i32 = path.len();
+  var absolute: boolean = n > 0 && path[0] == 47 as u8;
+  var at: i32 = 0;
+  if (absolute) {
+    at = 1;
+  }
+  while (at <= n) {
+    var seg_end: i32 = at;
+    while (seg_end < n && path[seg_end] != 47 as u8) {
+      seg_end = seg_end + 1;
+    }
+    var seg: string = slice_unchecked(path, at, seg_end).to_owned();
+    var last: boolean = seg_end == n;
+    if (seg == "..") {
+      segments = __drop_last(segments);
+    }
+    if (seg == ".." || seg == ".") {
+      if (last) {
+        segments = segments.append("");
+      }
+    } else {
+      segments = segments.append(seg);
+    }
+    at = seg_end + 1;
+  }
+  return __joined_path(segments, absolute);
+}
+
+// `__drop_last(segments)` — `segments` less its last, or empty as it was.
+function __drop_last(segments: string[]): string[] {
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i + 1 < segments.len()) {
+    out = out.append(segments[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// `__joined_path(segments, absolute)` — the segments with `/` between
+// them and a leading one for an absolute path; a trailing slash is the
+// empty last segment.
+function __joined_path(segments: string[], absolute: boolean): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < segments.len()) {
+    if (i > 0 || absolute) {
+      out = out + "/";
+    }
+    out = out + segments[i];
+    i = i + 1;
+  }
+  return out;
+}
+
 // `url_parse(s)` — decompose a URL into its `Url` components.
 //
 // Best-effort about ABSENCE: every component is optional and a missing

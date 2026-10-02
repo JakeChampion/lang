@@ -2,8 +2,8 @@ package arm64
 
 import "github.com/jakechampion/lang/internal/ast"
 
-// Read directly into an owned byte array. Capacity records the allocation;
-// length records the short read, so later mutation and reclamation stay sound.
+// Read directly into an owned byte array. Full reads keep that array; partial
+// reads copy into compact storage before releasing the requested reserve.
 func (g *generator) emitReaderBytesRuntime() {
 	g.line(".global __fern_reader_read_chunk_bytes")
 	g.typeDirective("__fern_reader_read_chunk_bytes")
@@ -24,9 +24,18 @@ func (g *generator) emitReaderBytesRuntime() {
 	g.syscall("read")
 	g.emit("tbnz x0, #63, .Lrrbytes_error")
 	g.emit("mov w22, w0")
-	// __alloc_u8(0) returns an immutable empty sentinel.
-	g.emit("cbz w20, .Lrrbytes_ok")
-	g.emitArrayLenStore("w22", "x21")
+	g.emit("cmp w22, w20")
+	g.emit("b.eq .Lrrbytes_ok")
+	g.emit("mov w0, w22")
+	g.emit("bl __alloc_u8")
+	g.emit("mov x19, x0")
+	g.emit("mov x1, x21")
+	g.emit("mov w2, w22")
+	g.emit("bl __fern_memcpy")
+	g.emit("sub x0, x21, #16")
+	g.emit("add x1, x20, #16")
+	g.emit("bl __fern_free")
+	g.emit("mov x21, x19")
 	g.label(".Lrrbytes_ok")
 	g.emit("mov x0, #16")
 	g.emit("bl __fern_alloc_rc1")
