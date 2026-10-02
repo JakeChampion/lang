@@ -20406,6 +20406,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_" + target
 		case "tcp_send_bytes":
 			target = "__fern_tcp_send_bytes"
+		case "udp_send_bytes", "udp_sendto_bytes":
+			target = "__fern_" + target
 		case "wasm_pollable_drop":
 			target = "__fern_wasm_pollable_drop"
 			g.usesWasmPollableDrop = true
@@ -20722,6 +20724,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesReaderBytes = true
 			g.usesReaderWriter = true
 			g.usesAllocU8 = true
+			g.usesMemcpy = true
 		case "__method_Reader_close":
 			target = "__fern_close_fd_box"
 			g.usesReaderWriter = true

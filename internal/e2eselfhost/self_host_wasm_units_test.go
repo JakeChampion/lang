@@ -55,6 +55,19 @@ func TestSelfHostWasmUnitsN2(t *testing.T) {
 		want int
 	}{
 		{
+			name: "buffer_needs_from_both_units",
+			src: `function create(): usize { return buf_new(1); }
+function text_part(h: usize): void { buf_push(h, "a"); }
+function byte_part(h: usize): void { var bytes: u8[] = [255 as u8]; buf_push_bytes_range(h, bytes, 0, 1); }
+function finish(h: usize): u8[] { var bytes = buf_take_bytes(h); buf_free(h); return bytes; }
+function main(): i32 {
+    var h = create(); text_part(h); byte_part(h); var bytes = finish(h);
+    if (bytes.len() == 2 && bytes[0] == 97 as u8 && bytes[1] == 255 as u8) { return 0; }
+    return 1;
+}`,
+			want: 0,
+		},
+		{
 			name: "cross_unit_calls_both_directions",
 			src: `function a(n: i32): i32 { return b(n) + 1; }
 function b(n: i32): i32 { return c(n) * 2; }

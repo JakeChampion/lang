@@ -1206,7 +1206,7 @@ function send_udp(ns: net.SocketAddr, bytes: u8[]): Result[i32, DnsError] {
       return Err(Socket(e));
     }
   }
-  match (net.send_to(sock, string_from_bytes_unchecked(bytes), ns)) {
+  match (net.send_to(sock, bytes, ns)) {
     Ok(_) => {
       return Ok(sock);
     },

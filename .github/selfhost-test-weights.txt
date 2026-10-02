@@ -129,7 +129,6 @@ TestSelfHostArrArrDiscReclaimIRArm64 2
 TestSelfHostArrArrDiscReclaimWasmIR 2
 TestSelfHostArrArrIdentRowReclaimArm64 2
 TestSelfHostArrArrReclaimWasmIR 2
-TestSelfHostArrArrReturnProofX86_64 11
 TestSelfHostArrArrRowReadHazardsX86_64 2
 TestSelfHostArrArrShadowedProducerX86_64 2
 TestSelfHostArrEnumElemReadLeakCheck 2
@@ -922,7 +921,6 @@ TestSelfHostNumericSettleChecker 21
 TestSelfHostNumericSettleIRX86_64 2
 TestSelfHostNumericSettleRejects 21
 TestSelfHostOOBBranchRangeArm64 2
-TestSelfHostOpBufferSnapshots 62
 TestSelfHostOpaqueUnderAttributes 21
 TestSelfHostOpenFileWasmIR 2
 TestSelfHostOpenedHandleNeverLandsOnStdoutX86_64 2

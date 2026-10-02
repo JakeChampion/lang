@@ -765,17 +765,72 @@ pub function keyed_map_key(k: typeinfo.Type): boolean {
   if let typeinfo.TypeUnion(u) = k {
     return u.args.len() == 0;
   }
+  return structural_map_key(k);
+}
+
+// A tuple or array key, compared and hashed by value element by element
+// (#10020). Its `hash` and `eq` are generated per key type
+// (`semlower.key_helper_source`), so every element has to be something that
+// source can compare without naming a declaration: an integer, a boolean, a
+// char, a string, or another such tuple or array.
+pub function structural_map_key(k: typeinfo.Type): boolean {
+  if let typeinfo.TypeTuple(tup) = k {
+    for e in tup.elements {
+      if (!structural_key_element(e)) {
+        return false;
+      }
+    }
+    return tup.elements.len() > 0;
+  }
+  if let typeinfo.TypeArray(a) = k {
+    return structural_key_element(a.elem);
+  }
   return false;
 }
 
-// The nominal a keyed column's derived methods hang off: `K.hash` and `K.eq`
-// are the receiver methods `@derive(cmp.Eq, cmp.Hash)` synthesises on it.
+// A type key with every byte an identifier cannot hold spelled `_`, so the
+// generated source can declare a function by it.
+function identifier_key(key: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < key.len()) {
+    var c: u8 = key[i];
+    if (c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_') {
+      out = out + slice_unchecked(key, i, i + 1);
+    } else {
+      out = out + "_";
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function structural_key_element(e: typeinfo.Type): boolean {
+  return is_integer(e) || is_bool(e) || is_char(e) || is_string(e) || structural_map_key(e);
+}
+
+// The function a keyed column's probes call, `which` being "eq" or "hash": the
+// receiver method `K.eq` / `K.hash` that `@derive(cmp.Eq, cmp.Hash)`
+// synthesises, or for a structural key the generated free function `K__eq` /
+// `K__hash`.
+pub function keyed_map_key_fn(k: typeinfo.Type, which: string): string {
+  if (structural_map_key(k)) {
+    return keyed_map_key_name(k) + "__" + which;
+  }
+  return keyed_map_key_name(k) + "." + which;
+}
+
+// The nominal a keyed column's derived methods hang off, or the name a
+// structural key's generated helpers are declared under.
 pub function keyed_map_key_name(k: typeinfo.Type): string {
   if let typeinfo.TypeStruct(r) = k {
     return r.name;
   }
   if let typeinfo.TypeUnion(u) = k {
     return u.name;
+  }
+  if (structural_map_key(k)) {
+    return "__fern_key" + identifier_key(type_key(k));
   }
   return "";
 }
@@ -4344,10 +4399,9 @@ function defining_positions(f: Func): i32[] {
 
 // ---- self-tail recursion ----------------------------------------------------
 
-// A self-recursive call in tail position reuses its own activation on the AST
-// lowering, which gets `irlower.tco_self_tail` out of `lower_func`. A produced
-// body never reaches `lower_func`, so until now it grew the stack once per
-// iteration and a deep enough recursion took the program's stack out (#9692).
+// A self-recursive call in tail position reuses its own activation; without
+// this a produced body grew the stack once per iteration and a deep enough
+// recursion took the program's stack out (#9692).
 //
 // The rewrite is on the GRAPH, before the unit planner and the RC lowering see
 // it, and that placement is the point rather than a convenience: a tail call
@@ -4458,7 +4512,7 @@ function without_cons(kinds: i32[]): i32[] {
 // anchor's release, and the unit keeps the payload whole. A VIEW cannot — the
 // call kept its anchor alive for the callee's frame, the jump re-enters the
 // loop with that anchor dead, and a view's retain is a no-op against the
-// immortal sentinel. `irlower.rc_consumed_drop_wired` is that shape: it
+// immortal sentinel. The compiler's own `rc_consumed_drop_wired` was that shape: it
 // recurses on `slice_unchecked(t, 0, t.len() - 2)`, a view of the very
 // parameter the argument replaces, and rewriting it corrupted the heap of every
 // compiler built through this path (#9692). An address anchored to its box, and

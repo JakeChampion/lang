@@ -1548,6 +1548,20 @@ function __fern_udp_sendto(fd: i32, addr: u8[], port: i32, data: string): i32 {
   return r;
 }
 
+function __fern_udp_sendto_bytes(fd: i32, addr: u8[], port: i32, data: u8[]): i32 {
+  if (addr.len() == 0) {
+    return __sendto_bytes(fd, data as usize, data.len(), 0 as usize, 0);
+  }
+  var af: i32 = __af_of(addr);
+  if (af < 0) {
+    return af;
+  }
+  var sa: usize = __sockaddr_of(addr, port);
+  var r: i32 = __sendto_bytes(fd, data as usize, data.len(), sa, __load_i32(sa + 28));
+  __free(sa, 32);
+  return r;
+}
+
 // __fern_udp_recvfrom(fd, buf, from) reads one datagram into buf, up to its
 // length: the datagram's byte count (an empty datagram is 0), or -errno.
 // When from holds at least nineteen bytes it receives the sender: the
@@ -1594,6 +1608,26 @@ function __fern_udp_recvfrom(fd: i32, buf: u8[], from: u8[]): i32 {
 // ephemeral socket that is closed again: the bytes accepted, -errno from the
 // step that failed, or -3 for a host that is not a dotted quad of octets.
 function __fern_udp_send(host: string, port: i32, data: string): i32 {
+  var fd: i32 = __udp_connect_v4_host(host, port);
+  if (fd < 0) {
+    return fd;
+  }
+  var r: i32 = __send_str(fd, data, 0 as usize, 0);
+  __syscall3(__sys_close(), fd as i64, 0, 0);
+  return r;
+}
+
+function __fern_udp_send_bytes(host: string, port: i32, data: u8[]): i32 {
+  var fd: i32 = __udp_connect_v4_host(host, port);
+  if (fd < 0) {
+    return fd;
+  }
+  var r: i32 = __sendto_bytes(fd, data as usize, data.len(), 0 as usize, 0);
+  __syscall3(__sys_close(), fd as i64, 0, 0);
+  return r;
+}
+
+function __udp_connect_v4_host(host: string, port: i32): i32 {
   var host_be: i32 = 0;
   var octet: i32 = 0;
   var octets: i32 = 0;
@@ -1631,9 +1665,9 @@ function __fern_udp_send(host: string, port: i32, data: string): i32 {
     return fd as i32;
   }
   var r: i32 = __connect_v4(fd, host_be, port) as i32;
-  if (r >= 0) {
-    r = __send_str(fd as i32, data, 0 as usize, 0);
+  if (r < 0) {
+    __syscall3(__sys_close(), fd, 0, 0);
+    return r;
   }
-  __syscall3(__sys_close(), fd, 0, 0);
-  return r;
+  return fd as i32;
 }

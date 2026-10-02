@@ -142,17 +142,33 @@ function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): Grow
   return rows.append(GrowRow { callee: callee, param: param, field: field });
 }
 
+// has_row_at is has_row over a table with a name index kept beside it, one
+// entry per row in order: the callee's chain, ascending.
+function has_row_at(rows: GrowRow[], ix: util.NameIndex, callee: string, param: i32, field: i32): boolean {
+  var i: i32 = ix.chain(callee);
+  while (i >= 0) {
+    if (rows[i].callee == callee && rows[i].param == param && rows[i].field == field) {
+      return true;
+    }
+    i = ix.next[i];
+  }
+  return false;
+}
+
 // The rows this function's plan contributes, given the rows `table` already
 // holds for its callees: one per borrowed parameter position an admitted
 // in-place grow or write reaches, directly through an append or a with of its
-// own, through an append whose receiver a phi or an earlier append carries
-// from the parameter (ssarc's links grow those in place), or through a buffer
-// it hands on unbracketed to a callee whose row says that position may grow. A with on a buffer the plan did not admit copies,
+// own, through an append whose receiver a phi, an earlier append or a call
+// carries from the parameter (ssarc's links grow those in place), or through a
+// buffer it hands on unbracketed to a callee whose row says that position may
+// grow — the parameter itself, or a value dying at the call that the same
+// carriers lead back to it. A with on a buffer the plan did not admit copies,
 // so it contributes no row. An owned parameter needs no caller bracket — its caller moved the
 // unit in, or retained and so made the record's own count answer "shared".
-pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]): GrowRow[] {
+pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[], tix: util.NameIndex): GrowRow[] {
   var out: GrowRow[] = [];
   var defs: ssa.SInst[] = definitions(f);
+  var at: i32[] = ssa.block_positions(f.graph);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
@@ -181,18 +197,22 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
     }
   }
   for s in p.steps {
+    if (s.point < 0) {
+      continue;
+    }
+    var ins: ssa.SInst = f.graph.blocks[at[s.block]].insts[s.point];
+    out = dying_lent_rows(callee, f, p, defs, s, ins, table, tix, out);
     var i: i32 = 0;
     while (i < s.hand_roots.len()) {
       var root: i32 = s.hand_roots[i];
       if (root >= 0 && defs[root].kind_tag == 6 && !p.owned[root]) {
-        var ins: ssa.SInst = f.graph.blocks[block_index(f.graph, s.block)].insts[s.point];
         if (is_record(f.values[root]) && s.hand_fields[i] < 0) {
           // A whole record handed on: every field the callee may
           // grow, this parameter may grow.
           for field in grow_fields_of(table, ins.str, i) {
             out = with_row(out, callee, defs[root].imm, field);
           }
-        } else if (has_row(table, ins.str, i, 0 - 1)) {
+        } else if (has_row_at(table, tix, ins.str, i, 0 - 1)) {
           out = with_row(out, callee, defs[root].imm, s.hand_fields[i]);
         }
       }
@@ -202,8 +222,30 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
   return out;
 }
 
-// The parameters whose box `v` may be, through phis and the receivers of
-// appends.
+// The rows of a direct call's array operands that die at it, at the positions
+// the callee may grow: the box they carry from a parameter is lent on with
+// nothing in this frame reading it again.
+function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SInst[], s: Step, ins: ssa.SInst, table: GrowRow[], tix: util.NameIndex, own out: GrowRow[]): GrowRow[] {
+  if (ins.kind_tag != ssasem.call()) {
+    return out;
+  }
+  var i: i32 = 0;
+  while (i < ins.args.len()) {
+    var v: i32 = ins.args[i];
+    if (v >= f.graph.nparams && is_array(f.values[v]) && occurrences(s.drops, v) > 0 && has_row_at(table, tix, ins.str, i, 0 - 1)) {
+      for param in carried_params(f, defs, v) {
+        if (!p.owned[param]) {
+          out = with_row(out, callee, defs[param].imm, 0 - 1);
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// The parameters whose box `v` may be, through phis, the receivers of
+// appends and the array operands of calls.
 function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
   var out: i32[] = [];
   var seen: boolean[] = bits(f.graph.nvals);
@@ -225,6 +267,12 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
       for a in d.args {
         work = work.append(a);
       }
+    } else if (d.kind_tag == ssasem.call()) {
+      for a in d.args {
+        if (is_array(f.values[a])) {
+          work = work.append(a);
+        }
+      }
     }
   }
   return out;
@@ -234,15 +282,19 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
 // ever gains, so the rounds converge.
 pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): GrowRow[] {
   var table: GrowRow[] = [];
+  var no_names: string[] = [];
+  // tix indexes `table` by callee, one entry per row in order.
+  var tix: util.NameIndex = util.name_index(no_names);
   var changed: boolean = true;
   while (changed) {
     changed = false;
     var i: i32 = 0;
     while (i < plans.len()) {
       if (plans[i].ok) {
-        for row in grow_rows(keys[i], funcs[i], plans[i], table) {
-          if (!has_row(table, row.callee, row.param, row.field)) {
+        for row in grow_rows(keys[i], funcs[i], plans[i], table, tix) {
+          if (!has_row_at(table, tix, row.callee, row.param, row.field)) {
             table = table.append(row);
+            tix = tix.added(row.callee);
             changed = true;
           }
         }
@@ -277,17 +329,6 @@ function bits(n: i32): boolean[] {
     i = i + 1;
   }
   return out;
-}
-
-function block_index(f: ssa.SFunc, id: i32): i32 {
-  var i: i32 = 0;
-  while (i < f.blocks.len()) {
-    if (f.blocks[i].id == id) {
-      return i;
-    }
-    i = i + 1;
-  }
-  return 0 - 1;
 }
 
 function successors(b: ssa.SBlock): i32[] {
@@ -1836,15 +1877,15 @@ function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: 
   if (!ssalive.live_out_has(a.flow, bi, root)) {
     return false;
   }
-  return named_after(f, bi, root) || reached_past_take(f, a, defs, bi, take, root);
+  return named_after(f, a.flow, bi, root) || reached_past_take(f, a, defs, bi, take, root);
 }
 
 // A block after bi reads v.
-function named_after(f: ssasem.Func, bi: i32, v: i32): boolean {
+function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32): boolean {
   var seen: boolean[] = bits(f.graph.blocks.len());
   var work: i32[] = [];
   for id in successors(f.graph.blocks[bi]) {
-    work = work.append(block_index(f.graph, id));
+    work = work.append(ssalive.position(fl, id));
   }
   var next: i32 = 0;
   while (next < work.len()) {
@@ -1859,7 +1900,7 @@ function named_after(f: ssasem.Func, bi: i32, v: i32): boolean {
       return true;
     }
     for id in successors(blk) {
-      work = work.append(block_index(f.graph, id));
+      work = work.append(ssalive.position(fl, id));
     }
   }
   return false;

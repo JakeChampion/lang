@@ -307,19 +307,20 @@ var rcOwnedPayloadBuiltins = map[string]bool{
 }
 
 // rcOwnedResultBuiltins names the builtins — by the callee spelling the IR
-// sees — whose Option / Result BOX the caller owns: the I/O family that
-// moved to rcResultOwned in #8398 / #8405, each of which allocates one
-// `__fern_alloc_rc1` block per call.
+// sees - whose returned reference the caller owns. This includes the I/O
+// Option / Result boxes and fresh arrays with live reference-count headers.
 //
 // It is the admission `ownedCallResultType` needs. That predicate's own
 // safety argument is the user function's return-transfer inc ("an aliased
 // return is rc>=2, so the is_unique gate only decs it"), which a builtin
 // cannot offer — so a builtin qualifies only by being on this list, where
-// the runtime body was read and every arm allocates a fresh box.
+// the runtime body was read and every arm hands out caller-owned storage or
+// an immortal empty value that the same release operation safely ignores.
 //
 // The `Reader` / `Writer` constructors are absent by design: their handle
 // is per-stream, not per-call, and keeps the static sentinel.
 var rcOwnedResultBuiltins = map[string]bool{
+	"buf_take_bytes":                   true, // independent array; an empty result may use the immortal sentinel
 	"env":                              true, // __fern_env
 	"read_line":                        true, // __fern_read_line
 	"__method_Reader_read_line":        true, // __fern_reader_read_line
@@ -587,7 +588,8 @@ var rcResultNonPointer = map[string]bool{
 	// Byte counts and status codes from the socket layer.
 	"__fern_tcp_send": true, "__fern_udp_send": true, "__fern_tcp_close": true,
 	"__fern_tcp_send_bytes": true,
-	"__fern_udp_bind":       true, "__fern_udp_connect": true,
+	"__fern_udp_send_bytes": true, "__fern_udp_sendto_bytes": true,
+	"__fern_udp_bind": true, "__fern_udp_connect": true,
 	"__fern_udp_sendto": true, "__fern_udp_recvfrom": true, "__fern_udp_close": true,
 	"__fern_tcp_listen_with": true, "__fern_tcp_socket_ctl": true, "__fern_tcp_connect_with": true, "__fern_ip_flat": true,
 	"__fern_reactor_new": true, "__fern_reactor_ctl": true, "__fern_reactor_wait": true, "__fern_tcp_recv_into": true, "__fern_tcp_sendfile": true,

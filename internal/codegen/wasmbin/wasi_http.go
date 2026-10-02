@@ -20,7 +20,7 @@
 //	                          headers@+20 (HeaderMap ptr),
 //	                          trailers@+24 (HeaderMap ptr, empty)
 //	HttpResponse (12 bytes): status@+0, body@+4 (a Body enum
-//	                          pointer, read through body_string),
+//	                          pointer, read through body_bytes),
 //	                          headers@+8 (HeaderMap ptr)
 //	HeaderMap    (8 bytes):  names_ptr@+0, values_ptr@+4
 //	Stream       (8 bytes):  data_ptr@+0 (u8[]), pos@+4
@@ -40,14 +40,10 @@
 //   - `fields` constructed for the response are owned by the
 //     outgoing-response constructor — no manual drop.
 //   - `outgoing-body` from `outgoing-response.body()` is consumed
-//     by `[static]finish` (skipped here — host seals on
-//     `response-outparam.set`).
-//   - `output-stream` from `outgoing-body.write()` IS dropped
-//     manually before we hand the response to
-//     response-outparam.set. The canonical-ABI rejects parent
-//     drops with live children, same as TCP.
+//     by `[static]finish`, after dropping its child output-stream.
 //   - `outgoing-response` and `response-outparam` are both
-//     consumed by `[static]response-outparam.set`.
+//     consumed by `[static]response-outparam.set` before body writes, so
+//     the host can drain the stream while a blocking write waits.
 //
 // Each canonical-ABI retptr fits in 64 bytes (the wrapper
 // allocates a single 64-byte scratch via __fern_alloc at entry
@@ -265,7 +261,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	allocU8 := idxs["__alloc_u8"]
 	bytesToStr := idxs["__bytes_to_lang_string"]
 	hmAppend, hasHMAppend := idxs["__method_HeaderMap_append"]
-	bodyString, hasBodyString := idxs["__method_HttpResponse_body_string"]
+	bodyBytes, hasBodyBytes := idxs["__method_HttpResponse_body_bytes"]
 	handleFn, hasHandle := idxs["handle"]
 	platformCtor, hasPlatformCtor := idxs["__fern_platform_new"]
 	reqMethod := idxs["wasi_http_request_method"]
@@ -776,18 +772,21 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 		body = memory.InstI32Store(body, 2, 0)
 	}
 
-	// Load the status from resp_struct, and the body as text through
-	// std/http's `body_string`, which reads whichever `Body` the
-	// response holds (a `BodyFile` answers "": the proxy world has no
+	// Load the status from resp_struct, and the body as bytes through
+	// std/http's `body_bytes`, which reads whichever `Body` the
+	// response holds (a `BodyFile` answers empty bytes: the proxy world has no
 	// filesystem). The fallback response has no body to read.
 	body = inst.InstLocalGet(body, 18)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 19)
-	if hasHandle && hasBodyString {
+	if hasHandle && hasBodyBytes {
 		body = inst.InstLocalGet(body, 18)
-		body = inst.InstCall(body, bodyString)
+		body = inst.InstCall(body, bodyBytes)
+		body = inst.InstLocalTee(body, 7) // packed u8[] data pointer
+		body = inst.InstI32Const(body, 4)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load(body, 2, 0) // length at data-4
 		body = inst.InstLocalSet(body, 8)
-		body = inst.InstLocalSet(body, 7)
 	} else {
 		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalSet(body, 7)
@@ -856,7 +855,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 			// canonical-ABI fields.append wants real (ptr, byte_len)
 			// for both the field-name string and the field-value
 			// list<u8>, so normalize each into a heap buffer first
-			// (same SSO-safe copy the response body uses below).
+			// (the byte-domain response body needs no normalization).
 			// Scratch locals 3..16 are dead by this point (request
 			// marshalling is done; body_data/body_len in 7/8 must be
 			// preserved for the body write, so we avoid those).
@@ -919,6 +918,21 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 22) // out_body
 
+	// Hand the response to the host before any blocking body writes. The
+	// outgoing-body is independent; only its output-stream must be dropped
+	// before body.finish. Delaying set until after writes can deadlock as
+	// soon as the host's response buffer fills.
+	body = inst.InstLocalGet(body, 1) // out
+	body = inst.InstI32Const(body, 0) // disc = 0 (Ok)
+	body = inst.InstLocalGet(body, 20)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI64Const(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstCall(body, outparamSet)
+
 	// outgoing-body.write(out_body, retptr) -> result<output-stream>.
 	body = inst.InstLocalGet(body, 22)
 	body = inst.InstLocalGet(body, 2)
@@ -930,14 +944,14 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, 23) // out_stream
 
 	// ================ Stream response body bytes ================
-	// SSO-normalize body string into a heap buffer (write_buf,
-	// write_chunk reused as scratch). Reuse $hm_names and
-	// related locals as norm scratch is risky; allocate fresh
-	// indices via the layout above (41/42/43).
-	body = emitStrNormalize(body, idxs, 7, 8, 43, 42, 41)
+	// The u8[] is already packed for list<u8>; forward its data and length.
+	body = inst.InstLocalGet(body, 7)
+	body = inst.InstLocalSet(body, 43)
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstLocalSet(body, 42)
 
 	// Write loop. write_off=0; while write_off < write_chunk
-	// (write_chunk holds byte_len after normalize),
+	// (write_chunk holds byte_len),
 	// blocking-write-and-flush ≤4096 at a time.
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 41)
@@ -985,29 +999,20 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 23)
 	body = inst.InstCall(body, streamDrop)
 
-	// outgoing-body.finish(out_body, None=0, 0, retptr) closes the
-	// body resource and drops it from the response's child list.
-	// Has to happen BEFORE response-outparam.set — the set
-	// enforces that the response's children are all gone (the
-	// "resource has children" wasmtime trap surfaces otherwise).
+	// outgoing-body.finish(out_body, None=0, 0, retptr) consumes the
+	// body after its child output-stream has been dropped.
 	body = inst.InstLocalGet(body, 22)
 	body = inst.InstI32Const(body, 0) // option-trailers disc = 0 (None)
 	body = inst.InstI32Const(body, 0) // option-trailers payload (unused for None)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstCall(body, outBodyFinish)
 
-	// response-outparam.set(out, Ok(resp_handle)). Comes last so
-	// resp_handle is child-free at the time of the call.
-	body = inst.InstLocalGet(body, 1) // out
-	body = inst.InstI32Const(body, 0) // disc = 0 (Ok)
-	body = inst.InstLocalGet(body, 20)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstI64Const(body, 0)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstCall(body, outparamSet)
+	// body_bytes returns an owned array; release that result on both the
+	// complete-write and host-error paths. u8 elements have a one-byte stride.
+	body = inst.InstLocalGet(body, 7)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstCall(body, idxs["__fern_arr_dec"])
+	body = inst.InstDrop(body)
 
 	// 47 i32 locals after the 2 params (slots 2..48). Slot 24
 	// (formerly $arena_handle) is now unused: per-request memory

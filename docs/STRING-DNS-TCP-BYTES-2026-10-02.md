@@ -24,33 +24,43 @@ owning streams and sockets are closed.
 
 ## Validation
 
+This refresh integrates UDP checkpoint `5fecb0edc`, including main through
+`9b3b60c32`, the TCP byte sink and bounded byte-read storage. The pinned
+Darwin bootstrap reaches identical stage-2 and stage-3 binaries of
+12,081,745 bytes, SHA-256
+`ce6ef52962705af68fae5cf0eafd2187c881fecd1e48eccda264cc92f6dffd3c`.
+The seed is `stage0-20261001-c891ebc`.
+
 The send-loop fixture extracts the production function and replaces only
 connect, send and close calls. It checks exact remaining bytes and resource
 cleanup for short success, interruption, failure before and after progress,
-zero progress, connection failure and an empty frame. Both compilers pass
-on Linux ARM64, x86-64 and core WebAssembly, along with both interpreters.
-Primary native and core runs require balanced allocation censuses.
+zero progress, connection failure and an empty frame. The actual stage-2
+compiler passes these cases on Darwin and core WebAssembly, with 93 and 97
+allocations respectively, all freed and zero live bytes. Its interpreter
+also passes.
 
-The imported DNS module passes a real UDP-to-TCP retry with both compilers
-on Linux ARM64, x86-64 and WASI, plus the Go interpreter. Primary native
-runs require balanced allocations. The existing DNS exchange, paired query,
-NAT64 and dial regressions pass. WASI TCP connect, stream and listener tests,
-socket subscriptions, polling storage and lifetime tests, and reactor tests
-also pass, as do the Go WebAssembly backend unit tests and `make lint-all`.
-The additional checked-in silent-peer deadline test passes with both
-compilers, and its refreshed lint gate passes. The full unit suite and all
-lint gates also pass from the immutable final source snapshot.
+The imported DNS module passes a real UDP-to-TCP retry using actual stage-2
+output on Darwin and WASI. Each run makes exactly two UDP and two TCP
+queries, checks the length-prefixed TCP packets and verifies the address
+and canonical-name answers. UDP includes an EDNS OPT record; TCP encodes
+the original query without it. The native run records 499 allocations and
+499 frees, with zero live bytes.
 
-The pinned three-stage Darwin bootstrap reaches identical stage-2 and
-stage-3 compiler binaries of 12,130,881 bytes, SHA-256
-`c4a03680a66097fdb62a5541f3f72ed8cd45805d4c9d5a2aada9853359ff56de`.
-The deadline comparison above executes this actual stage-2 compiler's
-WASI output against the previous TCP checkpoint's output.
+The deadline comparison executes WASI output from this stage-2 compiler
+against a compiler built from parent `5fecb0edc` using the same generator.
+It checks the silent peer's connection cleanup as well as the result.
 
-The same stage-2 compiler builds the parent compiler to 12,130,865 bytes
-and this candidate to 12,130,881, an increase of 16 bytes. Code grows by
-936 bytes and data by 512, fitting in the existing segments; unwind data
+The same stage-2 compiler builds the parent compiler to 12,081,729 bytes
+and this candidate to 12,081,745, an increase of 16 bytes. Code grows by
+936 bytes and data by 256, fitting in the existing segments; unwind data
 is unchanged and link-edit data grows by 16 bytes. No size baseline changes.
+
+The refreshed Go and primary target suites pass, covering DNS exchange,
+paired queries, NAT64, dial, send faults, TCP connect/stream/listener cases,
+receive deadlines and reactors. The full unit suite and all lint gates pass
+from the immutable source snapshot. The additional SocketCtl/SocketV6 cases
+and WASI socket and poll resource-lifetime, storage and error tests also
+pass on both compilers.
 
 This is the DNS TCP consumer slice for #10948 under epic #5626.
 The UDP byte migration is a separate slice. No whole-component leak claim

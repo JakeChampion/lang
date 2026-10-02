@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -113,16 +113,7 @@ function main(): i32 {
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
-	info, prog := loadCheckMono(t, mainPath)
-	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
-	if err != nil {
-		t.Fatalf("wasmbin.Build: %v", err)
-	}
+	core := e2eharness.SelfHostComponentCore(t, mainPath)
 	if !bytes.Contains(core, []byte("local:test/sink@0.1.0")) {
 		t.Fatalf("core is missing the custom extern import")
 	}

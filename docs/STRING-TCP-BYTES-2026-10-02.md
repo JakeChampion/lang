@@ -1,13 +1,25 @@
 # TCP byte sink for D9
 
-Integration checkpoint, October 2: target tests and lint pass with main
+Current-main refresh: integrated `c83a5855c`, preserving the removal of the
+AST lowering path. TCP byte sends use the typed-IR lowering arm. Fresh Linux
+target tests, per-module linking, 64 WASI fault cases, IR registry checks and
+all lint gates pass. The refreshed pinned bootstrap reaches identical
+stage-2 and stage-3 binaries of 12,196,929 bytes, SHA-256
+`0cc967ca44a36e319863d3adddf7ea7aafb7c4a5259c6f28b7f9a3486b8b731a`.
+Actual stage-2 Darwin loopback again records ten allocations and ten frees;
+descriptor and SIGPIPE probes record zero. The WASI component loopback also
+passes. The refreshed full unit suite and all lint gates pass from the
+immutable final source snapshot. Earlier measurements below retain their
+named source provenance.
+
+Earlier integration checkpoint, October 2: target tests and lint pass with main
 through `0d7a8d321`. The pinned bootstrap produces identical stage-2 and
 stage-3 binaries of 12,130,865 bytes, SHA-256
 `e5f410b9da8852a06b1a586c4551a9c79f92012db8fc2b79952ac760519c7fba`.
 Actual stage-2 Darwin loopback passes with ten allocations and ten frees;
 native descriptor and SIGPIPE probes use zero allocations. The WASI component
 loopback passes. The full unit suite and `make lint-all` pass on the
-current main integration, source checkpoint `b8881841c`.
+earlier main integration, source checkpoint `b8881841c`.
 Measurements below retain their original source provenance.
 
 `tcp_send_bytes(fd: i32, data: u8[]): i32` borrows an owned byte array and
@@ -97,5 +109,14 @@ segment's file size stays 950,272 bytes and its virtual size grows by
 16,384. The different file growth is accounted for by this layout change;
 no size baseline was raised.
 
+On main `c83a5855c`, the refreshed stage-2 compiler builds the parent compiler
+to 12,180,273 bytes and this candidate to 12,196,929, an increase of 16,656.
+Code grows by 6,040 bytes, unwind data by 168 and data by 2,560. The text
+segment crosses a 16,384-byte boundary and link-edit data grows by 272 bytes.
+The data segment's file size stays 950,272 bytes; its virtual size grows by
+16,384. These additions implement the byte-send routing, packing and cleanup.
+No size baseline changes.
+
 This supplies one sink required by #10948 and #5714 under epic #5626.
-HTTP and DNS consumers still need byte migration, and UDP needs a byte API.
+HTTP-over-TCP and DNS consumers still need byte migration, and UDP needs a
+byte API.

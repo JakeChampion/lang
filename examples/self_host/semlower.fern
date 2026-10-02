@@ -391,8 +391,7 @@ function field_spelling(t: typeinfo.Type): string {
   return typeinfo.spelling(t);
 }
 
-// lowered is mod.funcs as the AST lowering reads them, with each `str` erased.
-pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
+pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
   var inf: Inference = produced_rows(mod, structs);
   var built: semsource.Built = inf.built;
   var r: Rows = inf.rows;
@@ -400,25 +399,12 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
   var sigs: irlower.FnSigs = base;
   var helpers: ssarc.Helpers = ssarc.no_helpers();
   var bodies: irlower.LowerResult[] = [];
-  // The may-grow masks an AST caller brackets by are rebuilt with every
-  // produced declaration's own in place of the one its syntax would give.
-  var seeds: string[] = [];
-  // The `own` array positions the produced bodies consume, which an AST
-  // caller reads as a transfer rather than a borrow it releases after
-  // (irlower.own_consumed_positions). An instance is keyed by its template,
-  // since that is the name an AST caller's call spells.
-  var consumed: string[] = [];
   var callees: ssarc.Callee[] = [];
   var n: i32 = 0;
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (r.keep[i]) {
       callees = callees.append(ssarc.Callee { name: semsource.decl_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], receiver: semsource.has_receiver(mod.funcs[i]) });
-      seeds = seeds.append(semsource.decl_key(mod.funcs[i]) + "|"
-        + ssarc.grow_mask(semsource.decl_key(mod.funcs[i]), built.decls[i].func, r.grows, semsource.has_receiver(mod.funcs[i])));
-      if (mod.funcs[i].receiver_type.len() == 0) {
-        consumed = util.append_all(consumed, ssarc.consumed_array_rows(mod.funcs[i].name, built.decls[i].func, built.decls[i].modes));
-      }
       helpers = ssarc.with_drop_helpers(helpers, built.decls[i].func);
       bodies = bodies.append(r.body[i]);
       n = n + 1;
@@ -444,19 +430,10 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
     if (r.keep[mod.funcs.len() + at]) {
       helpers = ssarc.with_drop_helpers(helpers, built.instances[at].func);
       instances = instances.append(r.body[mod.funcs.len() + at]);
-      if (!util.contains(built.instances[at].key, ".")) {
-        consumed = util.append_all(consumed, ssarc.consumed_array_rows(built.instances[at].key, built.instances[at].func, built.instances[at].modes));
-      }
     }
     at = at + 1;
   }
   sigs = ssarc.caller_sigs(sigs, callees);
-  if (seeds.len() > 0) {
-    sigs = irlower.regrow_sigs(sigs, lowered, structs, seeds);
-  }
-  if (consumed.len() > 0) {
-    sigs = irlower.consume_sigs(sigs, lowered, consumed);
-  }
   util.arr_push_cliff_report("sem:substituted", 0);
   // A refused declaration or instance fails the compile.
   var refused_n: i32 = mod.funcs.len() - n + built.instances.len() - instances.len();
@@ -477,10 +454,123 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
     }
     i2 = i2 + 1;
   }
+  var keys: typeinfo.Type[] = [];
+  for d in built.decls {
+    keys = structural_keys(keys, d.func);
+  }
+  for p in built.instances {
+    keys = structural_keys(keys, p.func);
+  }
+  if (keys.len() > 0) {
+    helpers = ssarc.Helpers { ...helpers, rows: util.append_all(helpers.rows, runtime_bodies(key_helper_source(keys))) };
+  }
   // The declaration-less bodies are merged by symbol here, where the rule
   // lives, so the emit path's tail is a plain append.
   var extra: irlower.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
   return ircore.Sub { ...ircore.no_sub(), bodies: bodies, extra: extra, sigs: sigs, records: inf.records };
+}
+
+// The structural key types the maps `f` holds name (#10020), each after the
+// ones nested in it, added to `seen` once.
+function structural_keys(seen: typeinfo.Type[], f: ssasem.Func): typeinfo.Type[] {
+  var out: typeinfo.Type[] = seen;
+  for t in f.values {
+    if (ssasem.is_map(t) && ssasem.structural_map_key(ssasem.map_key(t))) {
+      out = with_structural(out, ssasem.map_key(t));
+    }
+  }
+  return out;
+}
+
+function with_structural(seen: typeinfo.Type[], k: typeinfo.Type): typeinfo.Type[] {
+  if (!ssasem.structural_map_key(k)) {
+    return seen;
+  }
+  var name: string = ssasem.keyed_map_key_name(k);
+  for t in seen {
+    if (ssasem.keyed_map_key_name(t) == name) {
+      return seen;
+    }
+  }
+  var out: typeinfo.Type[] = seen;
+  if let typeinfo.TypeTuple(tup) = k {
+    for e in tup.elements {
+      out = with_structural(out, e);
+    }
+  }
+  if let typeinfo.TypeArray(a) = k {
+    out = with_structural(out, a.elem);
+  }
+  return out.append(k);
+}
+
+// The `K__eq` and `K__hash` of each structural key K, as the source a derived
+// `eq` and `hash` would be: elements compared with `==`, or through their own
+// helpers when structural, and hashed into `h * 31 + element` with a string
+// folded byte by byte.
+function key_helper_source(keys: typeinfo.Type[]): string {
+  var src: string = "";
+  for k in keys {
+    var ty: string = typeinfo.spelling(k);
+    src = src + "function " + ssasem.keyed_map_key_fn(k, "eq") + "(a: " + ty + ", b: " + ty + "): boolean { " + key_eq_body(k) + " }\n";
+    src = src + "function " + ssasem.keyed_map_key_fn(k, "hash") + "(a: " + ty + "): i32 { var h: i32 = 17; " + key_hash_body(k) + " return h; }\n";
+  }
+  return src;
+}
+
+function key_eq_body(k: typeinfo.Type): string {
+  if let typeinfo.TypeArray(arr) = k {
+    return "if (a.len() != b.len()) { return false; } var i: i32 = 0; while (i < a.len()) { if (!("
+      + element_eq(arr.elem, "a[i]", "b[i]") + ")) { return false; } i = i + 1; } return true;";
+  }
+  var out: string = "return true";
+  if let typeinfo.TypeTuple(tup) = k {
+    var i: i32 = 0;
+    while (i < tup.elements.len()) {
+      var at: string = "." + util.i32_to_string(i);
+      out = out + " && " + element_eq(tup.elements[i], "a" + at, "b" + at);
+      i = i + 1;
+    }
+  }
+  return out + ";";
+}
+
+function element_eq(t: typeinfo.Type, x: string, y: string): string {
+  if (ssasem.structural_map_key(t)) {
+    return ssasem.keyed_map_key_fn(t, "eq") + "(" + x + ", " + y + ")";
+  }
+  return x + " == " + y;
+}
+
+function key_hash_body(k: typeinfo.Type): string {
+  if let typeinfo.TypeArray(arr) = k {
+    return "var i: i32 = 0; while (i < a.len()) { " + element_hash(arr.elem, "a[i]", "e") + " i = i + 1; }";
+  }
+  var out: string = "";
+  if let typeinfo.TypeTuple(tup) = k {
+    var i: i32 = 0;
+    while (i < tup.elements.len()) {
+      out = out + element_hash(tup.elements[i], "a." + util.i32_to_string(i), "e" + util.i32_to_string(i)) + " ";
+      i = i + 1;
+    }
+  }
+  return out;
+}
+
+// One element folded into `h`; `sfx` keeps a string's loop counter distinct.
+function element_hash(t: typeinfo.Type, x: string, sfx: string): string {
+  if (ssasem.structural_map_key(t)) {
+    return "h = h * 31 + " + ssasem.keyed_map_key_fn(t, "hash") + "(" + x + ");";
+  }
+  if (ssasem.is_string(t)) {
+    var j: string = "j" + sfx;
+    return "h = h * 31; var " + j + ": i32 = 0; while (" + j + " < " + x + ".len()) { h = h * 31 + ("
+      + x + "[" + j + "] as i32); " + j + " = " + j + " + 1; }";
+  }
+  if (ssasem.is_bool(t)) {
+    return "h = h * 31; if (" + x + ") { h = h + 1; }";
+  }
+  return "h = h * 31 + (" + x + " as i32);";
 }
 
 // runtime_bodies is the typed lowering of a Fern-source runtime helper
@@ -574,7 +664,7 @@ function substitution_of(im: parser.Module): ircore.Sub {
   var lowered: parser.Module = parser.erase_view_module(im);
   var stab: irlower.StructTab = irlower.struct_tab(lowered.structs);
   util.arr_push_cliff_report("sem:gated", 0);
-  var sub: ircore.Sub = substitution(im, lowered.funcs, stab, ircore.wp_fn_sigs(lowered.funcs, stab));
+  var sub: ircore.Sub = substitution(im, stab, ircore.wp_fn_sigs(lowered.funcs, stab));
   return ircore.Sub { ...sub, rt_lower: runtime_bodies };
 }
 
