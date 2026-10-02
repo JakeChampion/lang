@@ -2268,7 +2268,7 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
     // including a function-typed return, whose explicit parens keep its
     // arrow off the top level.
     let saved: Par = p;
-    let (rtr_name, rtr_ret_arr, rtr_fn_ret, rtr_p) = parse_type_name(p);
+    let (rtr_name, rtr_fn_ret, rtr_p) = parse_type_name(p);
     if (rtr_p.peek_punct() == "=>") {
       p = rtr_p;
       ret_type = rtr_name;
@@ -2277,15 +2277,15 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
       // where the coarse `fn_ret` of parse_type_name is only one — and
       // half a signature is worse than none, since fn_tag_spelling would
       // rebuild `() => R` for a function that takes arguments.
-      let (gw, gwa, gwr, gwe) = parse_type_name(Par { ...saved, verbatim: true });
+      let (gw, gwr, gwe) = parse_type_name(Par { ...saved, verbatim: true });
       let (g_ret, g_ptys) = fn_contract_of(rtr_name, gw);
       lam_fn_ret = g_ret;
       lam_fn_ptys = g_ptys;
     } else {
-      let (ra_name, ra_ret_arr, ra_fn_ret, ra_p) = parse_type_name_reserving_arrow(saved);
+      let (ra_name, ra_fn_ret, ra_p) = parse_type_name_reserving_arrow(saved);
       p = ra_p;
       ret_type = ra_name;
-      let (rw, rwa, rwr, rwe) = parse_type_name_reserving_arrow(Par { ...saved, verbatim: true });
+      let (rw, rwr, rwe) = parse_type_name_reserving_arrow(Par { ...saved, verbatim: true });
       let (r_ret, r_ptys) = fn_contract_of(ra_name, rw);
       lam_fn_ret = r_ret;
       lam_fn_ptys = r_ptys;
@@ -2573,7 +2573,7 @@ function scan_written_type_args(p: Par): (string, i32, Par) {
   let out: string = "";
   let n: i32 = 0;
   while (true) {
-    let (tn, tn_arr, tn_fnret, tn_p) = parse_type_name(p);
+    let (tn, tn_fnret, tn_p) = parse_type_name(p);
     if (tn.len() == 0) {
       return ("", 0, p);
     }
@@ -3005,7 +3005,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
       // back as the bare name, so is_numeric_cast_op still recognises
       // them. parse_type_name also folds a trailing `[]` and a qualified
       // `pkg.Type` chain the old single-ident read left on the cursor.
-      let (castty_name, castty_ret_arr, castty_fn_ret, castty_p) = parse_type_name(p);
+      let (castty_name, castty_fn_ret, castty_p) = parse_type_name(p);
       p = castty_p;
       let tyname: string = castty_name;
       if (is_downcast) {
@@ -5471,7 +5471,7 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
       let utype: string = "";
       if (p.peek_punct() == ":") {
         p = p.advance();
-        let (utn_name, utn_ret_arr, utn_fn_ret, utn_p) = parse_type_name(p);
+        let (utn_name, utn_fn_ret, utn_p) = parse_type_name(p);
         p = utn_p;
         utype = utn_name;
       }
@@ -5491,7 +5491,7 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
       // `use` chains).
       let (rest_body, rest_p) = parse_block_body(p, false);
       p = rest_p;
-      let cbparam: ast.ParamDecl = ast.ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
+      let cbparam: ast.ParamDecl = ast.ParamDecl { name: uname, type_name: utype, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" };
       let cbparams: ast.ParamDecl[] = [cbparam];
       // use_infer marks the synthesised callback when the user wrote
       // no `: TYPE` — the checker's E032 rule verifies the binding
@@ -7826,24 +7826,16 @@ pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
   return out;
 }
 
-// parse_param consumes `ident: type_name` and returns a fresh Par +
-// the ParamDecl. ret_arr records, for a closure-typed param `(T) => U[]`
-// (coarsed to type_name "fn"), that the closure RETURNS an array. The type
-// position is a bare ident in this cut — no array / generic / union syntax.
-
 // parse_type_name reads a (possibly generic) type spelling and
 // returns it as a single concatenated string. Recognises:
 //   * `Name`                     — `Map` or `i32`
 //   * `Name[T1, T2, …]`          — `Map[string, i32]`
 // Nested generics (`Map[Map[…], …]`) aren't unrolled; the
 // inner `[…]` substring is captured verbatim by counting the
-// matching `]`. Returns (par, name) — empty name means
-// the parser saw nothing useful.
-// fn_ret records, for a closure-typed result `(T) => R` (coarsed to the flat
-// tag "fn"), the spelling of R when R is a concrete STRUCT type — the sibling
-// of the `ret_arr` bit. It lets a fn-value PARAM `g: () => P` carry its return
-// type, which the checker reads for the declared callable type (#3640 slice A).
-// Empty for non-struct returns (the common fn-value case).
+// matching `]`. Returns (name, fn_ret, par) — empty name means
+// the parser saw nothing useful. fn_ret is, for a closure type
+// `(T) => R` coarsened to the flat tag "fn", the spelling of R when
+// fn_ret_admitted keeps it; empty otherwise.
 
 // consume_array_suffix swallows trailing `[]` suffix(es) after a type and
 // appends them to `name`. Needed for the parenthesized type forms — a
@@ -7930,8 +7922,7 @@ function ret_spelling_is_array(name: string): boolean {
 }
 
 // fn_ret_admitted is the single rule for which RESULT spellings a fn type keeps
-// in its `fn_ret` sidecar. `r_is_arr` says the result is itself an array, which
-// is recorded in the separate ret_arr bit.
+// in its `fn_ret` sidecar.
 //
 // Struct and nominal-enum returns let a fn value resolve `g().field` and let
 // monomorphize rewrite a nested `match (cont(tok))` (#3640, #4722). `string`
@@ -7940,8 +7931,8 @@ function ret_spelling_is_array(name: string): boolean {
 // declared return instead of re-inferring it from the body. Tuple and array
 // results let the checker resolve a call through the fn value to a real type
 // (#5986).
-function fn_ret_admitted(rr_name: string, r_is_arr: boolean): string {
-  if (r_is_arr) {
+function fn_ret_admitted(rr_name: string): string {
+  if (ret_spelling_is_array(rr_name)) {
     return rr_name;
   }
   if (is_struct_ret_name(rr_name)) {
@@ -7971,7 +7962,7 @@ function at_unit_type(p: Par): boolean {
   return p.peek_punct() == "(" && p.peek_punct_at(1) == ")" && p.peek_punct_at(2) != "=>";
 }
 
-function consume_array_suffix(p: Par, name: string): (string, boolean, string, Par) {
+function consume_array_suffix(p: Par, name: string): (string, string, Par) {
   while (p.peek_punct() == "[") {
     p = p.advance();
     if (p.peek_punct() == "]") {
@@ -7979,29 +7970,29 @@ function consume_array_suffix(p: Par, name: string): (string, boolean, string, P
       name = name + "[]";
     }
   }
-  return (name, false, "", p);
+  return (name, "", p);
 }
 
-function parse_type_dyn(p: Par): (string, boolean, string, Par) {
+function parse_type_dyn(p: Par): (string, string, Par) {
   p = p.advance();  // consume `dyn`
-  let (dinner_name, dinner_ret_arr, dinner_fn_ret, dinner_p) = parse_type_name(p);
+  let (dinner_name, dinner_fn_ret, dinner_p) = parse_type_name(p);
   p = dinner_p;
   let dynname: string = dinner_name;
   // Collect any `+ Trait` continuations (multi-trait `dyn A + B`).
   while (p.peek_punct() == "+") {
     p = p.advance();  // consume `+`
-    let (dmore_name, dmore_ret_arr, dmore_fn_ret, dmore_p) = parse_type_name(p);
+    let (dmore_name, dmore_fn_ret, dmore_p) = parse_type_name(p);
     p = dmore_p;
     if (dmore_name.len() == 0) {
       // Trailing / empty `+` — no trait name followed it.
-      return ("", false, "", p);
+      return ("", "", p);
     }
     dynname = dynname + " + " + dmore_name;
   }
-  return ("dyn " + dynname, false, "", p);
+  return ("dyn " + dynname, "", p);
 }
 
-function parse_type_handle(p: Par, base: string): (string, boolean, string, Par) {
+function parse_type_handle(p: Par, base: string): (string, string, Par) {
   // WIT resource-handle type `own R` / `borrow R` (P5 —
   // docs/WIT-BRING-YOUR-OWN.md). Preserved as "own <R>" / "borrow <R>"
   // (mirroring `dyn <trait>`): it lowers to i32 everywhere (a handle is an
@@ -8009,8 +8000,8 @@ function parse_type_handle(p: Par, base: string): (string, boolean, string, Par)
   // defaults), and the spelling lets lower_defers_prepass_module find owned
   // handles and tell own from borrow for its move analysis.
   p = p.advance();  // consume `own` / `borrow`
-  let (hinner_name, hinner_ret_arr, hinner_fn_ret, hinner_p) = parse_type_name(p);
-  return (base + " " + hinner_name, false, "", hinner_p);
+  let (hinner_name, hinner_fn_ret, hinner_p) = parse_type_name(p);
+  return (base + " " + hinner_name, "", hinner_p);
 }
 
 // parse_type_punct_led handles the type forms that do not start with an
@@ -8022,7 +8013,7 @@ function parse_type_handle(p: Par, base: string): (string, boolean, string, Par)
 // parenthesised single trait object `(dyn T)` / `(dyn A + B)`, where the
 // parens are redundant grouping that has to be unwrapped rather than folded
 // into the name.
-function parse_type_paren(p: Par): (string, boolean, string, Par) {
+function parse_type_paren(p: Par): (string, string, Par) {
   return parse_type_paren_arrow(p, true);
 }
 
@@ -8033,14 +8024,14 @@ function parse_type_paren(p: Par): (string, boolean, string, Par) {
 // own arrow follows the annotation (#8743). Only the parenthesised head is
 // ambiguous — every other type form ends before a `=>` — so anything else
 // delegates unchanged.
-function parse_type_name_reserving_arrow(p: Par): (string, boolean, string, Par) {
+function parse_type_name_reserving_arrow(p: Par): (string, string, Par) {
   if (p.peek_punct() != "(") {
     return parse_type_name(p);
   }
   return parse_type_paren_arrow(p, false);
 }
 
-function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, string, Par) {
+function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Par) {
   // The unit type `()`, folded to `void` before the collect loop can record
   // its parens as a spelling.
   if (at_unit_type(p)) {
@@ -8061,7 +8052,7 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
   // fails and the untouched cursor runs the unchanged tuple path.
   let dpa: Par = p.advance();  // peek past `(`
   if (dpa.peek_keyword() == "dyn") {
-    let (dpw_name, dpw_ret_arr, dpw_fn_ret, dpw_p) = parse_type_name(dpa);
+    let (dpw_name, dpw_fn_ret, dpw_p) = parse_type_name(dpa);
     if (dpw_p.peek_punct() == ")") {
       // `(dyn T) => R` is a FUNCTION type whose PARAMETER is a
       // trait object, not a grouped trait-object array — the arrow
@@ -8202,14 +8193,13 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
     // — the same channel the unparenthesised `(T,…) => R` branch fills.
     // This is the ONLY way an array of functions is spelled, so without it
     // `(() => f64)[]` records nothing about its element (#5986).
-    let (gname, gret_arr, gunused, gp) = consume_array_suffix(p, "fn");
+    let (gname, gunused, gp) = consume_array_suffix(p, "fn");
     let gref: TypeRef = parse_type_ref(tbuf);
     if (!ref_is_fn_value(gref)) {
-      return (gname, gret_arr, "", gp);
+      return (gname, "", gp);
     }
     let gres: string = render_type_ref(ref_fn_result(gref));
-    let g_is_arr: boolean = ret_spelling_is_array(gres);
-    return (gname, g_is_arr, fn_ret_admitted(gres, g_is_arr), gp);
+    return (gname, fn_ret_admitted(gres), gp);
   }
   // Function type `(T1, …) => R`. After the balanced param
   // parens, a `=>` introduces the return type. Consume it
@@ -8220,25 +8210,12 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
   // type are left on the cursor and the decl loop spins (OOM).
   if (top_arrow && p.peek_punct() == "=>") {
     p = p.advance();  // consume `=>`
-    let (rr_name, rr_ret_arr, rr_fn_ret, rr_p) = parse_type_name(p);
+    let (rr_name, rr_fn_ret, rr_p) = parse_type_name(p);
     p = rr_p;
     // `(…) => R` — coarse "fn"; a trailing `[]` makes it an
-    // array of closures. Record ret_arr when R is itself an
-    // array (`(T) => U[]`): the tag stays the plain "fn" all
-    // consumers expect.
-    let (fnr_name, fnr_ret_arr, fnr_fn_ret, fnr_p) = consume_array_suffix(p, "fn");
-    let r_is_arr: boolean = ret_spelling_is_array(rr_name);
-    // Preserve R when it is a concrete struct return type, so a
-    // fn-value `g: () => P` can resolve `g().field` on the IR path
-    // (#3640). A bare struct-ish name qualifies — arrays carry their
-    // info in ret_arr, and primitives need no field lookup. Also
-    // preserve a (possibly generic) NOMINAL enum return spelling
-    // (`(i32) => Fut[T]`) so an enum-variant fn payload retains its
-    // return type: the variant desugar records it on the variant
-    // struct field's fn_ret, and monomorphize's me_scrutinee_type
-    // recovers it to rewrite a nested `match (cont(tok))`'s arms
-    // (#4722).
-    let fn_ret_ty: string = fn_ret_admitted(rr_name, r_is_arr);
+    // array of closures.
+    let (fnr_name, fnr_fn_ret, fnr_p) = consume_array_suffix(p, "fn");
+    let fn_ret_ty: string = fn_ret_admitted(rr_name);
     // `-fmt` keeps the declared signature instead of the flat tag:
     // `fn` names neither what the callback takes nor what it
     // returns, so a reformatted `cmp: (T, T) => i32` would lose
@@ -8246,9 +8223,9 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
     // native prints an array-of-closures as `(T) => R[]` — so the
     // suffix goes on the end here too.
     if (p.verbatim) {
-      return (tbuf + " => " + rr_name + slice_unchecked(fnr_name, 2, fnr_name.len()), r_is_arr, fn_ret_ty, fnr_p);
+      return (tbuf + " => " + rr_name + slice_unchecked(fnr_name, 2, fnr_name.len()), fn_ret_ty, fnr_p);
     }
-    return (fnr_name, r_is_arr, fn_ret_ty, fnr_p);
+    return (fnr_name, fn_ret_ty, fnr_p);
   }
   // Tuple type — return the reconstructed precise spelling
   // (e.g. "(string, TestRunner)") so tuple-destructure
@@ -8412,7 +8389,7 @@ function canonicalise_type_args(s: string): string {
   return head + canonicalise_type_args(inner) + canonicalise_type_args(slice_unchecked(s, rest_from, s.len()) + "");
 }
 
-function parse_type_punct_led(p: Par): (string, boolean, string, Par) {
+function parse_type_punct_led(p: Par): (string, string, Par) {
   // Tuple type `(T1, T2, …)`. The self-host stores types
   // coarsely, so consume the balanced parens and return a
   // placeholder "tuple" rather than the precise shape. Without
@@ -8427,20 +8404,20 @@ function parse_type_punct_led(p: Par): (string, boolean, string, Par) {
   // lowering folds it to the array it lowers to (erase_view_spelling).
   if (p.peek_punct() == "[") {
     p = p.advance();  // consume `[`
-    let (bracketed_name, bracketed_ret_arr, bracketed_fn_ret, bracketed_p) = parse_type_name(p);
+    let (bracketed_name, bracketed_fn_ret, bracketed_p) = parse_type_name(p);
     p = bracketed_p;
     if (p.peek_punct() == "]") {
       p = p.advance();
     }
     let (suffixed, sp) = parse_array_suffixes(p, "[" + bracketed_name + "]");
-    return (suffixed, false, "", sp);
+    return (suffixed, "", sp);
   }
-  return ("", false, "", p);
+  return ("", "", p);
 }
 
 // parse_type_ident_led handles the identifier-led forms: a qualified
 // `pkg.Name`, generic args, and the trailing array suffixes.
-function parse_type_ident_led(p: Par, base: string): (string, boolean, string, Par) {
+function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
   p = p.advance();
   // Qualified type name: `pkg.Name` (e.g. `lexer.Token`). Consume
   // the `.ident` suffix chain so cross-module type references in
@@ -8469,7 +8446,7 @@ function parse_type_ident_led(p: Par, base: string): (string, boolean, string, P
     p = p.advance();
   }
   if (p.peek_punct() != "[") {
-    return (base, false, "", p);
+    return (base, "", p);
   }
   // Consume `[T1, T2, …]` by tracking bracket depth so nested
   // generics survive verbatim. Token text reconstructed from
@@ -8620,7 +8597,7 @@ function parse_type_ident_led(p: Par, base: string): (string, boolean, string, P
   // the cursor and the surrounding decl misaligns (the `let` binding
   // gets dropped). The base case `T[]` already returned above.
   let (suffixed, sp) = parse_array_suffixes(p, nm);
-  return (suffixed, false, "", sp);
+  return (suffixed, "", sp);
 }
 
 // parse_array_suffixes folds the `[]` pairs after a complete type onto `nm`:
@@ -8639,32 +8616,32 @@ function parse_array_suffixes(p: Par, nm: string): (string, Par) {
 }
 
 // parse_type_name is the depth-guarded face of parse_type_name_nested: see MAX_NEST_DEPTH.
-function parse_type_name(p: Par): (string, boolean, string, Par) {
+function parse_type_name(p: Par): (string, string, Par) {
   if (p.too_deep()) {
-    return ("", false, "", p.bail());
+    return ("", "", p.bail());
   }
-  let (g0, g1, g2, gq) = parse_type_name_nested(p.with_depth(p.depth + 1));
-  return (g0, g1, g2, gq.with_depth(p.depth));
+  let (g0, g1, gq) = parse_type_name_nested(p.with_depth(p.depth + 1));
+  return (g0, g1, gq.with_depth(p.depth));
 }
 
-struct DeclType { name: string, ret_arr: boolean, fn_ret: string, fn_params: string, fn_dyn: string }
+struct DeclType { name: string, fn_ret: string, fn_params: string }
 
 // Keep the legacy declaration tag and its exact callable contract together.
 function parse_decl_type(p: Par): (DeclType, Par) {
-  let (name, ret_arr, fn_ret, end) = parse_type_name(p);
-  let out: DeclType = DeclType { name: name, ret_arr: ret_arr, fn_ret: fn_ret, fn_params: "", fn_dyn: "" };
+  let (name, fn_ret, end) = parse_type_name(p);
+  let out: DeclType = DeclType { name: name, fn_ret: fn_ret, fn_params: "" };
   if (p.verbatim || !is_fn_contract_tag(name)) {
     return (out, end);
   }
-  let (written, wr_arr, wr_ret, wr_end) = parse_type_name(Par { ...p, verbatim: true });
+  let (written, wr_ret, wr_end) = parse_type_name(Par { ...p, verbatim: true });
   let ref: TypeRef = fn_ref_of(name, written);
   if (!ref_is_fn_value(ref)) {
     return (out, end);
   }
   let result: string = render_type_ref(ref_fn_result(ref));
   return (DeclType {
-    name: name, ret_arr: ret_spelling_is_array(result), fn_ret: result,
-    fn_params: ref_fn_param_spellings(ref), fn_dyn: ref_fn_param_dyn(ref),
+    name: name, fn_ret: result,
+    fn_params: ref_fn_param_spellings(ref),
   }, end);
 }
 
@@ -8696,24 +8673,7 @@ function fn_contract_of(name: string, written: string): (string, string) {
   return (render_type_ref(ref_fn_result(ref)), ref_fn_param_spellings(ref));
 }
 
-function ref_fn_param_dyn(ref: TypeRef): string {
-  let f: TypeRef = ref_ungroup(ref);
-  let out: string = "";
-  let i: i32 = 0;
-  while (i + 1 < f.args.len()) {
-    let p: TypeRef = ref_ungroup(f.args[i]);
-    if (p.array_depth == 0 && p.base.len() > 4 && slice_unchecked(p.base, 0, 4) == "dyn ") {
-      if (out.len() > 0) {
-        out = out + ",";
-      }
-      out = out + util.i32_to_string(i);
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
-function parse_type_name_nested(p: Par): (string, boolean, string, Par) {
+function parse_type_name_nested(p: Par): (string, string, Par) {
   let base: string = p.peek_ident();
   if (base.len() == 0) {
     base = p.peek_keyword();
@@ -8860,7 +8820,7 @@ pub function is_destr_marker(type_name: string): boolean {
 function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
   let tline: i32 = p.peek_line();
   let tcol: i32 = p.peek_col();
-  let bad_param: ast.ParamDecl = ast.ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
+  let bad_param: ast.ParamDecl = ast.ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" };
   let bad: ParamDestr = ParamDestr { names: "", marker: "", synth: "", line: tline, col: tcol };
   // `w @ <pattern>` names the whole value; the binder becomes the holder, so
   // the body reads the argument under the name the source gave it.
@@ -8912,7 +8872,7 @@ function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
   if (holder.len() == 0) {
     holder = "__ptuple_" + util.i32_to_string(tline) + "_" + util.i32_to_string(tcol);
   }
-  return (ast.ParamDecl { name: holder, type_name: tr.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: tr.ret_arr, fn_ret: tr.fn_ret, fn_param_dyn: tr.fn_dyn, fn_param_types: tr.fn_params }, ParamDestr { names: names, marker: marker, synth: holder, line: tline, col: tcol }, p);
+  return (ast.ParamDecl { name: holder, type_name: tr.name, own: false, has_default: false, default_value: e_unknown(""), fn_ret: tr.fn_ret, fn_param_types: tr.fn_params }, ParamDestr { names: names, marker: marker, synth: holder, line: tline, col: tcol }, p);
 }
 
 // prepend_param_destrs splices the desugared `let (a, b) = <holder>;` /
@@ -8942,7 +8902,7 @@ function prepend_param_destrs(body: ast.Stmt[], destrs: ParamDestr[]): ast.Stmt[
 function parse_param(p: Par, nth: i32): (ast.ParamDecl, Par) {
   let name: string = p.peek_ident();
   if (name.len() == 0) {
-    return (ast.ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }, p);
+    return (ast.ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }, p);
   }
   // `own NAME: TYPE` — the affine-ownership modifier (move-checked by
   // the checker's E050/E051). `own` is a plain ident to the lexer, so it
@@ -8961,7 +8921,7 @@ function parse_param(p: Par, nth: i32): (ast.ParamDecl, Par) {
   name = discard_name(name, p.peek_line(), p.peek_col(), nth);
   p = p.advance();
   if (p.peek_punct() != ":") {
-    return (ast.ParamDecl { name: name, type_name: "", own: is_own, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }, p);
+    return (ast.ParamDecl { name: name, type_name: "", own: is_own, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }, p);
   }
   p = p.advance();
   let (tr, tr_p) = parse_decl_type(p);
@@ -8977,7 +8937,7 @@ function parse_param(p: Par, nth: i32): (ast.ParamDecl, Par) {
     has_def = true;
     def_val = de_expr;
   }
-  return (ast.ParamDecl { name: name, type_name: tr.name, own: is_own, has_default: has_def, default_value: def_val, ret_arr: tr.ret_arr, fn_ret: tr.fn_ret, fn_param_dyn: tr.fn_dyn, fn_param_types: tr.fn_params }, p);
+  return (ast.ParamDecl { name: name, type_name: tr.name, own: is_own, has_default: has_def, default_value: def_val, fn_ret: tr.fn_ret, fn_param_types: tr.fn_params }, p);
 }
 
 // parse_func_decl consumes `function name(params): ret_type { body }`
@@ -9174,7 +9134,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
       p = p.advance();
       if (p.peek_punct() == ":") {
         p = p.advance();
-        let (rtr_name, rtr_ret_arr, rtr_fn_ret, rtr_p) = parse_type_name(p);
+        let (rtr_name, rtr_fn_ret, rtr_p) = parse_type_name(p);
         p = rtr_p;
         receiver_type = rtr_name;
       }
@@ -9945,7 +9905,7 @@ function parse_const_decl(p: Par): (FuncDecl, Par) {
   let ty: string = "";
   if (p.peek_punct() == ":") {
     p = p.advance();
-    let (tr_name, tr_ret_arr, tr_fn_ret, tr_p) = parse_type_name(p);
+    let (tr_name, tr_fn_ret, tr_p) = parse_type_name(p);
     p = tr_p;
     ty = tr_name;
   }
@@ -13868,7 +13828,7 @@ pub function instantiate_func(fd: FuncDecl, name: string, tparams: string[], cts
   let nparams: ast.ParamDecl[] = [];
   let i: i32 = 0;
   while (i < fd.params.len()) {
-    nparams = nparams.append(ast.ParamDecl { name: fd.params[i].name, type_name: resolve_proj_in_type(subst_ty(fd.params[i].type_name, tparams, cts), impls), own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, ret_arr: fd.params[i].ret_arr, fn_ret: subst_ty(fd.params[i].fn_ret, tparams, cts), fn_param_dyn: fd.params[i].fn_param_dyn, fn_param_types: subst_ty_list(fd.params[i].fn_param_types, tparams, cts) });
+    nparams = nparams.append(ast.ParamDecl { name: fd.params[i].name, type_name: resolve_proj_in_type(subst_ty(fd.params[i].type_name, tparams, cts), impls), own: fd.params[i].own, has_default: fd.params[i].has_default, default_value: fd.params[i].default_value, fn_ret: subst_ty(fd.params[i].fn_ret, tparams, cts), fn_param_types: subst_ty_list(fd.params[i].fn_param_types, tparams, cts) });
     i = i + 1;
   }
   // The clone is an INSTANTIATION: every `T` has been replaced by the
@@ -14044,7 +14004,7 @@ pub function register_array_method_generics(mod: Module): Module {
   while (i < mod.funcs.len()) {
     let fd: FuncDecl = mod.funcs[i];
     if (is_concrete_array_method(fd)) {
-      let params: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+      let params: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
       for param in fd.params {
         params = params.append(param);
       }
@@ -14058,7 +14018,7 @@ pub function register_array_method_generics(mod: Module): Module {
       }
       // Fold the receiver into a leading param named after the
       // receiver, so the body's references to it resolve normally.
-      let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+      let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
       let j: i32 = 0;
       while (j < fd.params.len()) {
         nparams = nparams.append(fd.params[j]);
@@ -14178,7 +14138,7 @@ pub function register_map_method_generics(mod: Module): Module {
     let fd: FuncDecl = mod.funcs[i];
     if (is_generic_map_method(fd)) {
       let tps: string[] = map_receiver_typevars(fd.receiver_type);
-      let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+      let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
       let j: i32 = 0;
       while (j < fd.params.len()) {
         nparams = nparams.append(fd.params[j]);
@@ -14436,7 +14396,7 @@ pub function register_struct_method_generics(mod: Module): Module {
         bnames = bnames.append("");
         oi = oi + 1;
       }
-      let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+      let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
       let j: i32 = 0;
       while (j < fd.params.len()) {
         nparams = nparams.append(fd.params[j]);
@@ -19177,7 +19137,7 @@ function hl_rewrite(stmts: ast.Stmt[], outer: HlScope, hoisted: FuncDecl[]): (as
                   pname = "__cap_" + pname;
                 }
                 fwd = fwd.append(pname);
-                new_params = new_params.append(ast.ParamDecl { name: pname, type_name: hl_cap_type(sc, caps[ci]), own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+                new_params = new_params.append(ast.ParamDecl { name: pname, type_name: hl_cap_type(sc, caps[ci]), own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" });
                 ci = ci + 1;
               }
               // Hoist nested recursive locals first; inside the
@@ -20400,7 +20360,7 @@ pub function lower_defers_prepass_module(mod: Module): Module {
     let rn: string = needed[k];
     let iface2: string = resource_binding_iface(resources, rn);
     let wit2: string = resource_binding_wit(resources, rn);
-    let hp: ast.ParamDecl[] = [ast.ParamDecl { name: "h", type_name: "own " + rn, own: true, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+    let hp: ast.ParamDecl[] = [ast.ParamDecl { name: "h", type_name: "own " + rn, own: true, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
     out_funcs = out_funcs.append(lower_defers_func(FuncDecl {
       no_inline: false,
       name: resource_drop_fn_name(rn), receiver_name: "", receiver_type: "",
@@ -22290,7 +22250,7 @@ function irt_arm_bindings(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: Fun
           match (m.arms[a].pattern) {
             ast.PatVariant(pv) => {
               if (st.len() > 0 && pv.binding.len() > 0 && pv.binding != "_") {
-                out = out.append(ast.ParamDecl { name: pv.binding, type_name: st, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+                out = out.append(ast.ParamDecl { name: pv.binding, type_name: st, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" });
               }
             },
             _ => {}
@@ -23896,7 +23856,7 @@ function synth_struct_eq(sd: StructDecl): FuncDecl {
   }
   let body: ast.Stmt[] = [s_return(expr)];
   let notp: string[] = [];
-  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   return FuncDecl { no_inline: false, name: "eq", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
@@ -23920,7 +23880,7 @@ function synth_struct_ord(sd: StructDecl): FuncDecl {
   }
   stmts = stmts.append(s_return(e_number("0", "", false)));
   let notp: string[] = [];
-  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: sd.name, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   return FuncDecl { no_inline: false, name: "cmp", receiver_name: "self", receiver_type: sd.name, type_params: notp, params: params, ret_type: "i32", body: stmts, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
@@ -24045,7 +24005,7 @@ function synth_from_json_value(sd: StructDecl): FuncDecl {
     body = [s_match(e_call(e_field_access(e_ident("json"), getter), [e_ident("v"), e_string(fname)]), outer_arms)];
     fi = fi - 1;
   }
-  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "v", type_name: "JsonValue", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "v", type_name: "JsonValue", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   let notp: string[] = [];
   return FuncDecl { no_inline: false, name: "from_json_value", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
@@ -24067,7 +24027,7 @@ function synth_from_json_text(sd: StructDecl): FuncDecl {
     self_ty = sd.name + "[" + tps + "]";
   }
   let call: ast.Expr = ast.ExprCall { callee: e_field_access(e_ident("json"), "decode"), args: [e_ident("s")], line: 0, col: 0, type_args: [self_ty], ty: "" };
-  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "s", type_name: "string", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "s", type_name: "string", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   let notp: string[] = [];
   return FuncDecl { no_inline: false, name: "from_json", receiver_name: "", receiver_type: sd.name, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: [s_return(call)], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
@@ -24180,7 +24140,7 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
   }
   let body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_bool(false))];
   let notp: string[] = [];
-  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   return FuncDecl { no_inline: false, name: "eq", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "boolean", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
@@ -24238,7 +24198,7 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
   }
   let body: ast.Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
   let notp: string[] = [];
-  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "other", type_name: ename, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   return FuncDecl { no_inline: false, name: "cmp", receiver_name: "self", receiver_type: ename, type_params: notp, params: params, ret_type: "i32", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "" };
 }
 
@@ -24870,7 +24830,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
   // name never is, so a keyword followed by `for` is refused below.
   let first_is_kw: boolean = p.peek_ident().len() == 0 && p.peek_keyword().len() > 0;
   let first_at: Par = p;
-  let (tnr_name, tnr_ret_arr, tnr_fn_ret, tnr_p) = parse_type_name(p);
+  let (tnr_name, tnr_fn_ret, tnr_p) = parse_type_name(p);
   p = tnr_p;
   let first_name: string = tnr_name;
   let trait_spelling: string = "";
@@ -24885,7 +24845,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // the trait's default methods.
     trait_name = first_name;
     trait_spelling = first_spelling;
-    let (ity_name, ity_ret_arr, ity_fn_ret, ity_p) = parse_type_name(p);
+    let (ity_name, ity_fn_ret, ity_p) = parse_type_name(p);
     p = ity_p;
     impl_type = ity_name;
   } else {
@@ -24922,7 +24882,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
       if (p.peek_punct() == "=") {
         p = p.advance();
       }
-      let (ab_ty, ab_arr, ab_fnret, ab_p) = parse_type_name(p);
+      let (ab_ty, ab_fnret, ab_p) = parse_type_name(p);
       p = ab_p;
       if (p.peek_punct() == ";") {
         p = p.advance();
@@ -25672,7 +25632,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
     while (ai < m.params.len()) {
       let apt: string = m.params[ai].type_name;
       apt = subst_self(apt, impl_type);
-      aparams = aparams.append(ast.ParamDecl { name: m.params[ai].name, type_name: apt, own: m.params[ai].own, has_default: m.params[ai].has_default, default_value: m.params[ai].default_value, ret_arr: m.params[ai].ret_arr, fn_ret: m.params[ai].fn_ret, fn_param_dyn: m.params[ai].fn_param_dyn, fn_param_types: m.params[ai].fn_param_types });
+      aparams = aparams.append(ast.ParamDecl { name: m.params[ai].name, type_name: apt, own: m.params[ai].own, has_default: m.params[ai].has_default, default_value: m.params[ai].default_value, fn_ret: m.params[ai].fn_ret, fn_param_types: m.params[ai].fn_param_types });
       ai = ai + 1;
     }
     return FuncDecl { ...m, receiver_name: "", receiver_type: impl_type, type_params: mtps, bound_traits: mtbs, params: aparams, ret_type: rt };
@@ -25688,7 +25648,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
     } else {
       let pt: string = m.params[i].type_name;
       pt = subst_self(pt, impl_type);
-      newparams = newparams.append(ast.ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, ret_arr: m.params[i].ret_arr, fn_ret: m.params[i].fn_ret, fn_param_dyn: m.params[i].fn_param_dyn, fn_param_types: m.params[i].fn_param_types });
+      newparams = newparams.append(ast.ParamDecl { name: m.params[i].name, type_name: pt, own: m.params[i].own, has_default: m.params[i].has_default, default_value: m.params[i].default_value, fn_ret: m.params[i].fn_ret, fn_param_types: m.params[i].fn_param_types });
     }
     i = i + 1;
   }
@@ -26678,7 +26638,7 @@ function settle_const_types(funcs: FuncDecl[], structs: StructDecl[]): FuncDecl[
       }
     }
     if (f.is_const && f.ret_type.len() > 0) {
-      known = known.append(ast.ParamDecl { name: f.name, type_name: f.ret_type, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+      known = known.append(ast.ParamDecl { name: f.name, type_name: f.ret_type, own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" });
     }
     out = out.append(f);
   }

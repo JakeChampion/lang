@@ -68,7 +68,7 @@ var iifeFnArmCases = []struct {
 	// #6324 — MIXED arms: one closure-local, one inline lambda. These bailed
 	// until the hoist could carry a fn-TYPED capture as a parameter, which needs
 	// the signature `cap_type`'s flat "fn" tag throws away (fn_ret /
-	// fn_param_types / fn_param_dyn). The capture is copied from the ParamDecl
+	// fn_param_types). The capture is copied from the ParamDecl
 	// when it is a param and reconstructed from the lambda when it is a local
 	// bound from one; anything else still declines.
 	//
