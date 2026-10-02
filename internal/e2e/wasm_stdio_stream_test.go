@@ -98,7 +98,13 @@ var stdioLegs = map[string]stdioLeg{
 		return stdioRunCmd(t, exec.Command("wasmtime", "run", "--invoke", "main", mod))
 	},
 	"wasm preview 2": func(t *testing.T, src string) (string, string, int) {
+		return runComponent(t, buildNativeComponent(t, src, nativeMainResult), runOpts{stdin: "hello\n"})
+	},
+	"self-host wasm core": func(t *testing.T, src string) (string, string, int) {
 		return runComponent(t, buildComponent(t, src), runOpts{stdin: "hello\n"})
+	},
+	"self-host wasm": func(t *testing.T, src string) (string, string, int) {
+		return runCLIComponent(t, src, runOpts{stdin: "hello\n"})
 	},
 }
 
@@ -213,6 +219,24 @@ const failedReadFileSource = `function main(): i32 {
 }
 `
 
+// write_file and write_file_bytes answer a failed write as Other with the
+// errno the target reports: ENOSPC from a kernel or preview 1, EIO from
+// preview 2, whose stream error names none.
+const failedWriteFileSource = `function failed(e: IoError): boolean {
+    match (e) { Other(_, m) => { return m == "No space left on device" || m == "Input/output error"; }, _ => { return false; } }
+}
+function main(): i32 {
+    let bs: u8[] = [120 as u8];
+    let i: i32 = 0;
+    while (i < 200) {
+        match (write_file("full", "x")) { Ok(_) => { return 1; }, Err(e) => { if (!failed(e)) { return 2; } } }
+        match (write_file_bytes("full", bs)) { Ok(_) => { return 3; }, Err(e) => { if (!failed(e)) { return 4; } } }
+        i = i + 1;
+    }
+    return 0;
+}
+`
+
 func requireLinux(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
@@ -242,6 +266,19 @@ func TestWASMPreview1FailedReadLine(t *testing.T) {
 }
 func TestWASMFailedReadLine(t *testing.T) { runParityPreview2(t, failedReadLineSource, procSelf(t)) }
 
+func TestInterpFailedWriteFile(t *testing.T) { runParityInterp(t, failedWriteFileSource, devFull(t)) }
+func TestX86_64FailedWriteFile(t *testing.T) { runParityX86_64(t, failedWriteFileSource, devFull(t)) }
+func TestWASMPreview1FailedWriteFile(t *testing.T) {
+	runParityPreview1(t, failedWriteFileSource, devFull(t))
+}
+func TestWASMFailedWriteFile(t *testing.T) { runParityPreview2(t, failedWriteFileSource, devFull(t)) }
+func TestSelfHostWasmCoreFailedWriteFile(t *testing.T) {
+	runParitySelfHostCore(t, failedWriteFileSource, devFull(t))
+}
+func TestSelfHostWasmFailedWriteFile(t *testing.T) {
+	runParitySelfHostComponent(t, failedWriteFileSource, devFull(t))
+}
+
 func TestInterpFailedReadFile(t *testing.T) { runParityInterp(t, failedReadFileSource, procSelf(t)) }
 func TestX86_64FailedReadFile(t *testing.T) { runParityX86_64(t, failedReadFileSource, procSelf(t)) }
 func TestWASMPreview1FailedReadFile(t *testing.T) {
@@ -260,7 +297,23 @@ func TestWASMFailedPrint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer full.Close()
-	src := `function main(): i32 {
+	for _, leg := range []struct {
+		name string
+		comp func() string
+	}{
+		{"native", func() string { return buildNativeComponent(t, failedPrintSource, nativeMainResult) }},
+		{"self-host", func() string { return buildCLIComponent(t, failedPrintSource) }},
+	} {
+		t.Run(leg.name, func(t *testing.T) {
+			_, stderr, ec := runComponent(t, leg.comp(), runOpts{stdoutFile: full, maxResources: failureResourceCap})
+			if ec != 0 {
+				t.Fatalf("wasmtime exit %d, want 0\nstderr:\n%s", ec, stderr)
+			}
+		})
+	}
+}
+
+const failedPrintSource = `function main(): i32 {
     let i: i32 = 0;
     while (i < 200) {
         print("x");
@@ -271,8 +324,41 @@ func TestWASMFailedPrint(t *testing.T) {
     return 0;
 }
 `
-	_, stderr, ec := runComponent(t, buildComponent(t, src), runOpts{stdoutFile: full, maxResources: failureResourceCap})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d, want 0\nstderr:\n%s", ec, stderr)
-	}
+
+func TestSelfHostWasmCoreStdoutClose(t *testing.T) {
+	checkStdioClose(t, "self-host wasm core", stdoutCloseSource, "stderr")
+}
+func TestSelfHostWasmStdoutClose(t *testing.T) {
+	checkStdioClose(t, "self-host wasm", stdoutCloseSource, "stderr")
+}
+func TestSelfHostWasmCoreStderrClose(t *testing.T) {
+	checkStdioClose(t, "self-host wasm core", stderrCloseSource, "stdout")
+}
+func TestSelfHostWasmStderrClose(t *testing.T) {
+	checkStdioClose(t, "self-host wasm", stderrCloseSource, "stdout")
+}
+func TestSelfHostWasmCoreStdinClose(t *testing.T) {
+	checkStdioClose(t, "self-host wasm core", stdinCloseSource, "stdout")
+}
+func TestSelfHostWasmStdinClose(t *testing.T) {
+	checkStdioClose(t, "self-host wasm", stdinCloseSource, "stdout")
+}
+
+func TestSelfHostWasmCoreFailedWrite(t *testing.T) {
+	runParitySelfHostCore(t, failedWriteSource, devFull(t))
+}
+func TestSelfHostWasmFailedWrite(t *testing.T) {
+	runParitySelfHostComponent(t, failedWriteSource, devFull(t))
+}
+func TestSelfHostWasmCoreFailedReadLine(t *testing.T) {
+	runParitySelfHostCore(t, failedReadLineSource, procSelf(t))
+}
+func TestSelfHostWasmFailedReadLine(t *testing.T) {
+	runParitySelfHostComponent(t, failedReadLineSource, procSelf(t))
+}
+func TestSelfHostWasmCoreFailedReadFile(t *testing.T) {
+	runParitySelfHostCore(t, failedReadFileSource, procSelf(t))
+}
+func TestSelfHostWasmFailedReadFile(t *testing.T) {
+	runParitySelfHostComponent(t, failedReadFileSource, procSelf(t))
 }
