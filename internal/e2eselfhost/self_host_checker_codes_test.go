@@ -1767,6 +1767,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"settle-tuple-bad-element", "function main(): i32 { var t: (f64, i32) = (1, \"x\"); return 0; }\n", []string{"E003"}},
 		{"settle-array-bad-element", "function main(): i32 { var xs: f64[] = [1, \"x\"]; return 0; }\n", []string{"E034"}},
 		{"settle-not-a-string", "function main(): i32 { var x: f64 = \"a\"; return 0; }\n", []string{"E003"}},
+		// An unsuffixed integer literal beside a concrete float operand reads at
+		// that float, on either side and for comparisons too (native's
+		// settleNumeric before requireFloat). An i32 operand is not a literal.
+		{"settle-binary-sub-f64-ok", "function main(): i32 { var x: f64 = 100.5f64; var y: f64 = x - 100; if (y == 0.5f64) { return 0; } return 1; }\n", nil},
+		{"settle-binary-mul-f32-ok", "function main(): i32 { var r: f32 = 1.5f32; var s: f32 = r * 2; if (s == 3.0f32) { return 0; } return 1; }\n", nil},
+		{"settle-binary-left-literal-ok", "function main(): i32 { var r: f64 = 1.5f64; var s: f64 = 3 - r; if (s > 1) { return 0; } return 1; }\n", nil},
+		{"settle-binary-guard-compare-ok", "enum Shape { Circle(f32), Square(f32) }\nfunction classify(s: Shape): i32 { match (s) { Circle(r) when r <= 0 => { return 1; }, Circle(_) => { return 2; }, Square(_) => { return 3; } } return 0; }\nfunction main(): i32 { if (classify(Circle(0.0f32)) != 1) { return 1; } if (classify(Circle(2.0f32)) != 2) { return 2; } return 0; }\n", nil},
+		{"settle-binary-not-an-ident", "function main(): i32 { var n: i32 = 2; var r: f64 = 1.5f64; var s: f64 = r * n; return 0; }\n", []string{"E009"}},
 		{"field-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n", []string{"E048"}},
 		{"field-compound-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x += 5; return p.x; }\n", []string{"E048"}},
 		{"nested-field-assign", "struct Q { a: i32 }\nstruct P { q: Q }\nfunction main(): i32 { var p: P = P { q: Q { a: 1 } }; p.q.a = 9; return 0; }\n", []string{"E048"}},

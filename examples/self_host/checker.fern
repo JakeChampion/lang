@@ -273,6 +273,21 @@ function float_operands_agree(a: typeinfo.Type, b: typeinfo.Type): boolean {
   return is_float(a) && is_float(b) && (type_eq(a, b) || is_poly_float(a) || is_poly_float(b));
 }
 
+// A binary's operand types, with an unsettled integer literal on one side read
+// at a concrete float on the other — native's settleNumeric before
+// requireFloat, so `r * 2` and `r <= 0` hold for an f32 / f64 `r`.
+function binary_operands(b: ast.ExprBinary, s: Scope): (typeinfo.Type, typeinfo.Type) {
+  var lt: typeinfo.Type = check_expr(b.left, s);
+  var rt: typeinfo.Type = check_expr(b.right, s);
+  if (is_float(lt) && !is_poly_float(lt) && unsettled_int_literal(b.right)) {
+    return (lt, lt);
+  }
+  if (is_float(rt) && !is_poly_float(rt) && unsettled_int_literal(b.left)) {
+    return (rt, rt);
+  }
+  return (lt, rt);
+}
+
 function float_result(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
   if (!float_operands_agree(a, b)) {
     return t_unknown("float operands have incompatible widths");
@@ -5965,8 +5980,7 @@ function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
   if (b.op == "__named_arg") {
     return check_expr(b.right, s);
   }
-  var lt: typeinfo.Type = check_expr(b.left, s);
-  var rt: typeinfo.Type = check_expr(b.right, s);
+  let (lt, rt) = binary_operands(b, s);
   // `+` is overloaded across i32 (arithmetic) and string
   // (concatenation). Other arithmetic ops are i32-only.
   if (b.op == "+") {
@@ -13068,8 +13082,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   // check_expr applies, so this fires only where it already
   // rejects the operands (no new false positives).
   if (b.op == "+") {
-    var pl: typeinfo.Type = check_expr(b.left, s);
-    var pr: typeinfo.Type = check_expr(b.right, s);
+    let (pl, pr) = binary_operands(b, s);
     if (!is_unknown(pl) && !is_unknown(pr)) {
       var oks: boolean = type_eq(pl, t_string()) && type_eq(pr, t_string());
       var both_int: boolean = is_integer(pl) && is_integer(pr);
@@ -13090,8 +13103,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
     }
   }
   if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
-    var alt: typeinfo.Type = check_expr(b.left, s);
-    var art: typeinfo.Type = check_expr(b.right, s);
+    let (alt, art) = binary_operands(b, s);
     if (!is_unknown(alt) && !is_unknown(art)) {
       var a_both_int: boolean = is_integer(alt) && is_integer(art);
       var oki: boolean = a_both_int && int_operands_agree(alt, art, b.left, b.right);
@@ -13156,8 +13168,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
   // checker (requireInteger, or requireFloat when either side is
   // float). `==` / `!=` (equality, E041) are handled above.
   if (b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") {
-    var olt: typeinfo.Type = check_expr(b.left, s);
-    var ort: typeinfo.Type = check_expr(b.right, s);
+    let (olt, ort) = binary_operands(b, s);
     if (!is_unknown(olt) && !is_unknown(ort)) {
       var o_both_int: boolean = is_integer(olt) && is_integer(ort);
       var oki_o: boolean = o_both_int && int_operands_agree(olt, ort, b.left, b.right);

@@ -703,7 +703,9 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
   if (parser.is_unit_literal(n)) {
     return define(s, 1, [], 0, "", t_void());
   }
-  if (n.is_float) {
+  // An unsuffixed integer literal takes a float expectation, as the checker
+  // settles it beside a float operand.
+  if (n.is_float || n.suffix == "" && ssasem.is_float(expected)) {
     return float_number(n, s, expected);
   }
   if (!integer_literal(n.text)) {
