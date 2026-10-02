@@ -2,8 +2,7 @@
 
 The serializer and WASI byte writer include the file-byte sink and main's
 compiler changes through `0d7a8d321`. Integrated target tests, the three-stage
-bootstrap and lint pass. The full unit suite passed before this latest main
-integration and is being refreshed. Timing measurements below retain their
+bootstrap, full unit suite and lint pass. Timing measurements below retain their
 original compiler provenance; artifact sizes use the current integrated compiler.
 
 `http_serialize_response_bytes`, `http_serialize_response_conn_bytes`, and
@@ -100,8 +99,8 @@ the real WASI HTTP host. The pinned seed produces identical stage-2 and stage-3
 Darwin compiler binaries of 12,130,737 bytes, SHA-256
 `9f2b730c45086688adbcea3fe8d7474d3c67ee617598cf8871581005679374c2`.
 Stage 1 differs because the seed predates generator changes on main.
-`make lint-all` passes in the updated isolated Linux snapshot. The full unit
-suite passed on `fd1a49d27`; its latest main integration is being refreshed.
+The full unit suite and `make lint-all` pass in the updated isolated Linux
+snapshot of `a485ca32d`, including the latest main integration.
 Host Go linking
 is blocked by Darwin file-table exhaustion; actual stage-2 execution covers
 the integrated Darwin compiler.
