@@ -231,10 +231,8 @@ posted comment cannot be edited; only a follow-up can correct it.
    ported to the self-hosted compiler.** `make distcheck` is green: the
    self-built compiler recompiles the compiler at 5.7 GB and reproduces itself
    byte for byte, in CI on all three hosts (`docs/BOOTSTRAP.md`). The AST
-   lowering (`irlower`) is being retired and nothing selects it any more
-   ("Retiring the AST lowering" in `docs/SELFHOST-SEMANTIC-SOURCE.md`): a bug only it has is
-   closed by the retirement, not fixed; check the typed lowering has it before
-   filing. The live list and the traps this area sets: `docs/rc-log/` (newest
+   lowering is deleted ("Retiring the AST lowering" in
+   `docs/SELFHOST-SEMANTIC-SOURCE.md`); the typed lowering produces every body. The live list and the traps this area sets: `docs/rc-log/` (newest
    file) — its §9
    predecessor in `docs/RC-PERCEUS-SELF-HOST-PORT.md` holds everything before
    2026-08-20 — and `docs/SELFHOST-PERCEUS-REUSE.md`.
