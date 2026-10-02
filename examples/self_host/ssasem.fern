@@ -3152,13 +3152,26 @@ function operations_error(f: Func): string {
 // bytes are static and read none. Storage of anything else escapes, and so
 // does a call to a callee outside the module or one with an owned result; a
 // module callee whose view anchor is not known yet leaves the answer pending.
-struct ViewSources { params: i32[], escapes: boolean, pending: boolean, seen: boolean[] }
+struct ViewSources { params: i32[], escapes: boolean, pending: boolean, seen: boolean[], escape_kind: i32 }
 
-function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: string[], v: i32, acc: ViewSources): ViewSources {
+function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: string[], v: i32, kind: i32, acc: ViewSources): ViewSources {
   if (v < 0 || v >= defs.len() || acc.escapes || acc.seen[v]) {
     return acc;
   }
   let out: ViewSources = ViewSources { ...acc, seen: acc.seen.with(v, true) };
+  // Keep the view being returned distinct from the storage it projects.
+  // A byte view of a str is an array-view escape, even though following
+  // its source subsequently reaches a string view and then owned storage.
+  if (kind == 0) {
+    if let typeinfo.TypeArray(a) = f.values[v] {
+      if (a.view) {
+        kind = 1;
+      }
+    }
+    if (is_view(f.values[v])) {
+      kind = 2;
+    }
+  }
   let d: ssa.SInst = defs[v];
   if (d.kind_tag == 6) {
     if (util.index_of_i32(out.params, d.imm) < 0) {
@@ -3171,7 +3184,7 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
   }
   if (d.kind_tag == 8) {
     for a in d.args {
-      out = view_sources(f, defs, anchors, names, a, out);
+      out = view_sources(f, defs, anchors, names, a, kind, out);
     }
     return out;
   }
@@ -3179,22 +3192,22 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
     // Reaching an owned construction through a projection reaches this
     // frame's storage, even when none of its elements contain views.
     if (!holds_view(f, f.values[v])) {
-      return ViewSources { ...out, escapes: true };
+      return ViewSources { ...out, escapes: true, escape_kind: kind };
     }
     for a in d.args {
       if (a >= 0 && holds_view(f, f.values[a])) {
-        out = view_sources(f, defs, anchors, names, a, out);
+        out = view_sources(f, defs, anchors, names, a, kind, out);
       }
     }
     return out;
   }
   if (projects(d.kind_tag)) {
-    return view_sources(f, defs, anchors, names, d.args[0], out);
+    return view_sources(f, defs, anchors, names, d.args[0], kind, out);
   }
   let read: i32[] = map_read_sources(d);
   if (read.len() > 0) {
     for a in read {
-      out = view_sources(f, defs, anchors, names, a, out);
+      out = view_sources(f, defs, anchors, names, a, kind, out);
     }
     return out;
   }
@@ -3205,23 +3218,25 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
       if (holds_view(f, f.values[v]) && util.index_of_str(names, d.str) >= 0) {
         return ViewSources { ...out, pending: true };
       }
-      return ViewSources { ...out, escapes: true };
+      return ViewSources { ...out, escapes: true, escape_kind: kind };
     }
     for k in anchor_params(anchors, d.str) {
       if (k < d.args.len()) {
-        out = view_sources(f, defs, anchors, names, d.args[k], out);
+        out = view_sources(f, defs, anchors, names, d.args[k], kind, out);
       }
     }
     return out;
   }
-  return ViewSources { ...out, escapes: true };
+  return ViewSources { ...out, escapes: true, escape_kind: kind };
 }
 
 // The anchor a function's result carries: the parameters its returned views
 // read, none when they read no parameter. `escapes` when one reads storage
 // that is not a parameter's, and `pending` while a callee's anchor is still
 // unknown.
-pub struct ResultAnchor { escapes: boolean, pending: boolean, params: i32[] }
+// escape_kind identifies the escaping view, not an unrelated lowering
+// refusal: 1 for an array view, 2 for a string view, 0 when none is known.
+pub struct ResultAnchor { escapes: boolean, pending: boolean, params: i32[], escape_kind: i32 }
 
 pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): ResultAnchor {
   let defs: ssa.SInst[] = definitions(f);
@@ -3231,13 +3246,13 @@ pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): ResultA
     seen = seen.append(false);
     i = i + 1;
   }
-  let acc: ViewSources = ViewSources { params: [], escapes: false, pending: false, seen: seen };
+  let acc: ViewSources = ViewSources { params: [], escapes: false, pending: false, seen: seen, escape_kind: 0 };
   for b in f.graph.blocks {
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
-      acc = view_sources(f, defs, anchors, names, b.term.value, acc);
+      acc = view_sources(f, defs, anchors, names, b.term.value, 0, acc);
     }
   }
-  return ResultAnchor { escapes: acc.escapes, pending: !acc.escapes && acc.pending, params: acc.params };
+  return ResultAnchor { escapes: acc.escapes, pending: !acc.escapes && acc.pending, params: acc.params, escape_kind: acc.escape_kind };
 }
 
 // Every value's defining instruction, indexed by value id; a value no

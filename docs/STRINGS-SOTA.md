@@ -789,8 +789,11 @@ for measurements and reproduction.
 The lifetime rule from #4814 is now established: escaping views must refer
 to parameter or static storage. Typed array-versus-view identity, explicit
 lending and source anchors preserve it through calls, returns and containers.
-Production lowering rejects a returned byte view over local storage;
-frontend-only E063 diagnostic parity and merge validation remain outstanding.
+Production lowering rejects a returned byte view over local storage.
+The primary `-check` command now uses the same typed source anchors to report
+E063 for array-view escapes and E065 for string-view escapes, including
+generic and imported declarations. See [the diagnostic report](STRING-VIEW-DIAGNOSTICS-2026-10-03.md).
+Final validation and merge remain outstanding.
 
 ### D9 - Guarantee UTF-8 validity on `string`. **IN PROGRESS** (#5634, #5714)
 
@@ -1177,7 +1180,7 @@ Tracked as epic #5626; issue numbers below.
 | 3 | **D2** (#5629) — the `char` type — **DONE** | — | Checker + `std/utf8` + `std/unicode` signatures. Big but mechanical; unblocks honest naming everywhere. |
 | 4 | **D3 + D4** (#5630) — flip the default, full case mapping — **DONE** | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
-| 6 | **D8** (#5632) - `[u8]` string view - **IN PROGRESS** | - | Allocation-free primary runtime and consumer checks implemented. Finish frontend E063 diagnostic parity and merge validation. |
+| 6 | **D8** (#5632) - `[u8]` string view - **IN PROGRESS** | - | Allocation-free primary runtime, consumer checks and typed frontend escape diagnostics implemented. Finish validation and merge. |
 | 7 | **D6** (#5633) — grapheme segmentation — **DONE**; word segmentation followed under #5552 | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). Word_Break coalesces to 1085 ranges, ~13 KB; a program that does not segment words is byte-identical to one built before it existed. |
 | 8 | **D9** (#5634, #5714): the UTF-8 validity invariant, **IN PROGRESS** | 6 | `s[a:b]` is `Option[str]`; file reads and regex text results validate, ASCII-byte conversion refuses non-ASCII, and RNG output is bytes. Remaining text-typed raw paths still need migration; see the audit at the top. |
 | 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |

@@ -30,7 +30,9 @@ import "./semfuse";
 // `analysis` is the semantic analysis of `func` as it stands, kept from the
 // anchoring that verified it so the planner reads it rather than analysing the
 // same graph again: None before that, and again once a rewrite moves the graph.
-pub struct Produced { ok: boolean, why: string, func: ssasem.Func, modes: i32[], template: boolean, key: string, requests: Request[], bodyless: boolean, analysis: Option[ssasem.Analysis] }
+// view_escape carries a definite typed source escape (1 array, 2 string).
+// Other refusals and callers refused transitively leave it at zero.
+pub struct Produced { ok: boolean, why: string, func: ssasem.Func, modes: i32[], template: boolean, key: string, requests: Request[], bodyless: boolean, analysis: Option[ssasem.Analysis], view_escape: i32 }
 
 // An instance a produced body asks for: the template's declaration key, the
 // instance's symbol, and the type each variable binds.
@@ -5488,7 +5490,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
   let graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-  return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None };
+  return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0 };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
@@ -6541,7 +6543,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo)
   // Before the verifier in anchor_module, so the rewritten graph is the one
   // it checks, and before anything downstream plans ownership over it (#9692).
   f = ssasem.tail_recursion(f, name);
-  return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None }, memo: table.memo };
+  return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None, view_escape: 0 }, memo: table.memo };
 }
 
 // unresolved_result_spelling names what the refusal failed ON. A type that did
@@ -7569,7 +7571,7 @@ function close_module(all: Produced[], names: util.NameIndex): Produced[] {
 // Every body then carries the whole table, which is what anchors a call's
 // result in the caller's graph, and is verified only then: unanchored, a call
 // result is its own root, which a loop phi it flows back into cannot depend on.
-function anchor_module(all: Produced[], names: string[]): Produced[] {
+function anchor_module(all: Produced[], names: string[], verify: boolean): Produced[] {
   let anchors: ssasem.Anchor[] = [];
   let copied: boolean = true;
   while (copied) {
@@ -7609,9 +7611,10 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
   while (i < all.len()) {
     let p: Produced = all[i];
     if (p.ok && ssasem.holds_view(p.func, p.func.result) && !ssasem.anchored(anchors, names[i])) {
-      p = Produced { ...refuse("view result escapes its source"), key: p.key };
+      let source: ssasem.ResultAnchor = ssasem.result_anchor(p.func, anchors, names);
+      p = Produced { ...refuse("view result escapes its source"), key: p.key, view_escape: source.escape_kind };
     }
-    if (p.ok && !p.template) {
+    if (verify && p.ok && !p.template) {
       p = Produced { ...p, func: ssasem.Func { ...p.func, anchors: anchors } };
       let plan: ssasem.MergePlan = ssasem.merge_copies(p.func);
       if (plan.why != "") {
@@ -7987,6 +7990,17 @@ function infer_ownership(all: Produced[], names: string[], table: ssasem.Contrac
 }
 
 pub function build_module(mod: parser.Module): Built {
+  return produce_module(mod, true);
+}
+
+// Source diagnostics need the production view-anchor fixed point, but no
+// merge-copy planning, ownership verification, inlining or fusion. Keeping
+// those stages out also preserves the source bodies for diagnostic evidence.
+pub function check_views(mod: parser.Module): util.Diag[] {
+  return view_escape_diags(mod, produce_module(mod, false));
+}
+
+function produce_module(mod: parser.Module, verify: boolean): Built {
   let scopes: checker.Scope[] = checker.module_scopes(mod);
   let table: ssasem.Contracts = contracts(mod, scopes);
   let handed_back: util.NameIndex = handers(mod);
@@ -8030,7 +8044,10 @@ pub function build_module(mod: parser.Module): Built {
     names = names.append(r.name);
     at = at + 1;
   }
-  let all: Produced[] = fuse_pipelines(inline_leaves(anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names), names, mod.funcs), names);
+  let all: Produced[] = anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names, verify);
+  if (verify) {
+    all = fuse_pipelines(inline_leaves(all, names, mod.funcs), names);
+  }
   decls = [];
   instances = [];
   i = 0;
@@ -8050,6 +8067,54 @@ pub function build_module(mod: parser.Module): Built {
     i = i + 1;
   }
   return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(util.append_all(decls, instances)) };
+}
+
+// Translate proven source escapes while the original declaration still
+// supplies its location. Instances name their template's declaration; one
+// bad instantiation reports it once, without diagnostics on refused callers.
+pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
+  let kinds: i32[] = [];
+  let names: string[] = [];
+  let i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    kinds = kinds.append(built.decls[i].view_escape);
+    names = names.append(parser.decl_key(mod.funcs[i]));
+    i = i + 1;
+  }
+  for p in built.instances {
+    let at: i32 = util.index_of_str(names, p.key);
+    if (p.view_escape > 0 && at >= 0 && kinds[at] == 0) {
+      kinds = kinds.with(at, p.view_escape);
+    }
+  }
+  let out: util.Diag[] = [];
+  i = 0;
+  while (i < kinds.len()) {
+    if (kinds[i] > 0) {
+      let code: string = "E063";
+      if (kinds[i] == 2) {
+        code = "E065";
+      }
+      let fd: parser.FuncDecl = mod.funcs[i];
+      // Annotation can already have expanded a generic into concrete
+      // declarations. Those clones keep the source declaration's position.
+      let reported: boolean = false;
+      for d in out {
+        if (fd.line > 0 && d.code == code && d.line == fd.line && d.col == fd.col) {
+          reported = true;
+        }
+      }
+      if (!reported) {
+        out = out.append(util.Diag {
+          code: code,
+          message: "the returned view's source cannot be kept alive beyond this function: return owned storage or a view of a parameter instead",
+          line: fd.line, col: fd.col,
+        });
+      }
+    }
+    i = i + 1;
+  }
+  return out;
 }
 
 // Tiny scalar leaves spliced into their callers (seminline). A declaration
