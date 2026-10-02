@@ -872,3 +872,54 @@ pub function treeshake(mod: parser.Module): parser.Module {
   }
   return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts };
 }
+
+// without_extern_callers drops every `@import` extern declaration and every
+// function whose body reaches one, by callee name. An extern has no body on
+// a native target, so a unit emitted whole, as the per-module concat emits
+// a module, must carry no call to it: with the branch on the target pruned
+// first, the callers left are the other target's transport (std/fetch's
+// `__send_hosted`, std/wasi_http's client), which that unit leaves out. The
+// whole-program emit never needs this: its shake from `main` drops such
+// callers with everything else nothing reaches.
+pub function without_extern_callers(mod: parser.Module): parser.Module {
+  var dropped: string[] = [];
+  for f in mod.funcs {
+    if (f.import_iface.len() > 0) {
+      dropped = dropped.append(f.name);
+    }
+  }
+  if (dropped.len() == 0) {
+    return mod;
+  }
+  var grew: boolean = true;
+  while (grew) {
+    grew = false;
+    for f in mod.funcs {
+      if (f.import_iface.len() == 0 && !util.has_str(dropped, f.name) && calls_any(f, dropped)) {
+        dropped = dropped.append(f.name);
+        grew = true;
+      }
+    }
+  }
+  var kept: parser.FuncDecl[] = [];
+  for f in mod.funcs {
+    if (!util.has_str(dropped, f.name)) {
+      kept = kept.append(f);
+    }
+  }
+  return parser.Module { ...mod, funcs: kept };
+}
+
+// calls_any reports whether `f`'s body names one of `names` as a callee.
+function calls_any(f: parser.FuncDecl, names: string[]): boolean {
+  var ids: string[] = [];
+  for st in f.body {
+    ids = astwalk.collect_idents_stmt(st, ids);
+  }
+  for id in ids {
+    if (util.has_str(names, id)) {
+      return true;
+    }
+  }
+  return false;
+}

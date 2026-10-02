@@ -24,7 +24,9 @@ func TestSelfHostWasiHttpByteWriterCleanup(t *testing.T) {
 	if start < 0 || limit < 0 {
 		t.Fatal("HTTP adapter is missing its write loop or chunk limit")
 	}
-	program := text[limit:limit+strings.Index(text[limit:], ";")+1] + "\n" + text[start:] + `
+	// The write loop alone: the function's closing brace ends the slice.
+	end := start + strings.Index(text[start:], "\n}\n") + 3
+	program := text[limit:limit+strings.Index(text[limit:], ";")+1] + "\n" + text[start:end] + `
 function stream_write(stream: i32, data: u8[]): Result[i32, i32] {
     assert(data.len() > 0 && data.len() <= WRITE_CHUNK);
     if (stream == 1 || (stream == 2 && data[0] != 0 as u8)) {

@@ -26,6 +26,7 @@ import "./util";
 import "./lexer";
 import "./parser";
 import "./flatten";
+import "./treeshake";
 import "./asm_arm64_ir";
 import "./asm_ir";
 import "./asmcore";
@@ -159,9 +160,12 @@ struct View {
 }
 
 // per_module_view builds the units of `parts`: the typed lowering lowers the
-// program the merged emit reads, whole, and cuts it into units.
+// program the merged emit reads, whole, and cuts it into units. A unit is
+// its whole module, so a caller's reach never re-emits a library; the one
+// thing a unit leaves out is what has no body on this native target, the
+// callers of an `@import` extern (treeshake.without_extern_callers).
 function per_module_view(entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], target: string): View {
-  var d: semlower.Driven = semlower.driven(merged_program(entry, loaded, target), target);
+  var d: semlower.Driven = semlower.driven(treeshake.without_extern_callers(merged_program(entry, loaded, target)), target);
   var g: ircore.Gated = semlower.program(d);
   var raw: parser.Module[] = [];
   var entry_at: i32 = 0;
@@ -183,9 +187,23 @@ function merged_program(entry: parser.Module, loaded: flatten.LoadedModule[], ta
   // string literals, not calls: the compile driver folds them here
   // (fern.fern) and no backend emits a body for either, so a pipeline that
   // skips the fold hands every later pass a call to a symbol nothing
-  // defines.
+  // defines. The branch the target never takes goes with the fold, so the
+  // gates and the merged emit see the program as built for this target; the
+  // functions nothing reaches after it are pruned at the merged emit
+  // (merged_emitted), not here, since the per-module routing below gates on
+  // the raw function count.
   var md: platforms.Descriptor = platforms.for_target(target);
-  return constfold.fold_target_name(merged, md.environment, md.isa);
+  merged = constfold.fold_target_name(merged, md.environment, md.isa);
+  return constfold.prune_literal_branches(merged);
+}
+
+// merged_emitted is the merged program as the merged emit reads it: the
+// functions nothing reaches pruned, as fern.fern prunes them. A module
+// declaring `@import` externs for another target (std/wasi_http) is reached
+// only through the branch the fold dropped, and an emitted caller of an
+// extern is an undefined symbol at link.
+function merged_emitted(merged: parser.Module): parser.Module {
+  return treeshake.treeshake(merged);
 }
 
 // emit_per_module_concat compiles a program's modules as separate units and
@@ -1092,7 +1110,7 @@ function main(): i32 {
           }
         }
         // IR-or-error (#3457 slice 5) — see asm_load_run's arm64 leg.
-        var d64: semlower.Driven = semlower.driven(merged, target);
+        var d64: semlower.Driven = semlower.driven(merged_emitted(merged), target);
         write(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub));
         return 0;
       }
@@ -1139,7 +1157,7 @@ function main(): i32 {
       // whole-compiler merged bundle lands here, which is why the env-gated
       // merged fixpoints retire with this change — their own header says they
       // "go with" asm.fern.
-      var d: semlower.Driven = semlower.driven(merged, target);
+      var d: semlower.Driven = semlower.driven(merged_emitted(merged), target);
       write(asm_ir.emit_module_or_error_sub(d.full, d.sub));
       return 0;
     },
