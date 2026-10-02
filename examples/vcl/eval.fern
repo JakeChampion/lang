@@ -324,12 +324,6 @@ pub function is_builtin(name: string): boolean {
 // their arguments to a value and touch nothing. None returned means the
 // name is not one of them.
 function call_text_builtin(name: string, args: value.Value[]): Option[value.Value] {
-  if (name == "regsub") {
-    return Some(VString(regex.regex_replace_groups(arg_str(args, 1), arg_str(args, 0), vcl_template(arg_str(args, 2)))));
-  }
-  if (name == "regsuball") {
-    return Some(VString(regex.regex_replace_all_groups(arg_str(args, 1), arg_str(args, 0), vcl_template(arg_str(args, 2)))));
-  }
   if (name == "std.tolower") {
     return Some(VString(arg_str(args, 0).to_ascii_lower()));
   }
@@ -357,6 +351,22 @@ function call_text_builtin(name: string, args: value.Value[]): Option[value.Valu
 // the call, rather than a silent empty string that would quietly change
 // what a policy does.
 pub function call_builtin(t: runtime.Txn, name: string, args: value.Value[]): EvalOut {
+  if (name == "regsub" || name == "regsuball") {
+    let result: Option[string] = None;
+    if (name == "regsub") {
+      result = regex.regex_replace_groups(arg_str(args, 1), arg_str(args, 0), vcl_template(arg_str(args, 2)));
+    } else {
+      result = regex.regex_replace_all_groups(arg_str(args, 1), arg_str(args, 0), vcl_template(arg_str(args, 2)));
+    }
+    match (result) {
+      Some(text) => {
+        return eok(t, VString(text));
+      },
+      None => {
+        return eerr(t, name + " produced invalid UTF-8");
+      }
+    }
+  }
   match (call_text_builtin(name, args)) {
     Some(v) => {
       return eok(t, v);
@@ -699,7 +709,7 @@ function compound_op(op: string): string {
   return slice_unchecked(op, 0, op.len() - 1).to_owned();
 }
 
-// exec_set runs `set <var> <op> <expr>;`, including the compound forms,
+// exec_set runs `set <let> <op> <expr>;`, including the compound forms,
 // which read the current value first.
 function exec_set(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.SetStmt): ExecOut {
   let r: EvalOut = eval_expr(ctx, t, sub, s.value);

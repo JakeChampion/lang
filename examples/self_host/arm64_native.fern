@@ -8954,14 +8954,30 @@ function arm64_parse_f64(s: string): f64 {
   return f64_from_bits(parse_f64_bits(s));
 }
 
-// arm64_gas_data_align pads the data blob to a 2^n byte boundary.
-function arm64_gas_data_align(own p: Arm64GasProg, n: i32): Arm64GasProg {
+// .balign takes bytes; ARM64 .align and .p2align take an exponent.
+function arm64_gas_alignment(line: string): i32 {
+  let sp: i32 = arm64_str_indexof(line, " ");
+  if (sp < 0) {
+    return 1;
+  }
+  let n: i32 = arm64_gas_atoi(arm64_gas_trim(slice_unchecked(line, sp + 1, line.len())));
+  if (n <= 0) {
+    return 1;
+  }
+  if (arm64_str_starts_with(line, ".balign")) {
+    return n;
+  }
   let a: i32 = 1;
   let k: i32 = 0;
   while (k < n) {
     a = a * 2;
     k = k + 1;
   }
+  return a;
+}
+
+// Pad the data blob to a byte boundary already decoded from the directive.
+function arm64_gas_data_align(own p: Arm64GasProg, a: i32): Arm64GasProg {
   while (p.data.len() % a != 0) {
     p = Arm64GasProg { ...p, data: p.data.append(0) };
   }
@@ -8996,13 +9012,7 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
   if (arm64_str_starts_with(line, ".align") || arm64_str_starts_with(line, ".p2align") || arm64_str_starts_with(line, ".balign")) {
     let sp2: i32 = arm64_str_indexof(line, " ");
     if (sp2 >= 0) {
-      let n: i32 = arm64_gas_atoi(arm64_gas_trim(slice_unchecked(line, sp2 + 1, line.len())));
-      let a: i32 = 1;
-      let k: i32 = 0;
-      while (k < n) {
-        a = a * 2;
-        k = k + 1;
-      }
+      let a: i32 = arm64_gas_alignment(line);
       let bs: i32 = p.bss_size;
       while (bs % a != 0) {
         bs = bs + 1;
@@ -9110,7 +9120,7 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string): Arm64GasPr
   if (arm64_str_starts_with(line, ".align") || arm64_str_starts_with(line, ".p2align") || arm64_str_starts_with(line, ".balign")) {
     let sp: i32 = arm64_str_indexof(line, " ");
     if (sp >= 0) {
-      return arm64_gas_data_align(p, arm64_gas_atoi(arm64_gas_trim(slice_unchecked(line, sp + 1, line.len()))));
+      return arm64_gas_data_align(p, arm64_gas_alignment(line));
     }
   }
   return p;  // other directives ignored

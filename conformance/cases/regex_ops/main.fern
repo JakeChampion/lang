@@ -6,22 +6,62 @@
 import "std/regex";
 
 function main(): i32 {
-    let r: i32 = 0;
+  let r: i32 = 0;
 
-    let ms: regex.RMatch[] = regex.regex_find_all("[0-9]+", "a12b345c6");
-    if (ms.len() == 3) { r = r + 1; }
-    if (ms.len() == 3 && ms[0].start == 1 && ms[0].end == 3) { r = r + 2; }
+  let ms: regex.RMatch[] = regex.regex_find_all("[0-9]+", "a12b345c6");
+  if (ms.len() == 3) {
+    r = r + 1;
+  }
+  if (ms.len() == 3 && ms[0].start == 1 && ms[0].end == 3) {
+    r = r + 2;
+  }
 
-    if (regex.regex_replace_all("a", "banana", "X") == "bXnXnX") { r = r + 4; }
-    if (regex.regex_replace_all("[0-9]+", "x12y3", "#") == "x#y#") { r = r + 8; }
-    if (regex.regex_replace_all("(cat|dog)", "cat and dog", "pet") == "pet and pet") { r = r + 16; }
-    if (regex.regex_replace_all("z", "abc", "Q") == "abc") { r = r + 32; }   // no match → unchanged
+  if (require_regex_text(regex.regex_replace_all("a", "banana", "X")) == "bXnXnX") {
+    r = r + 4;
+  }
+  if (require_regex_text(regex.regex_replace_all("[0-9]+", "x12y3", "#")) == "x#y#") {
+    r = r + 8;
+  }
+  if (require_regex_text(regex.regex_replace_all("(cat|dog)", "cat and dog", "pet")) == "pet and pet") {
+    r = r + 16;
+  }
+  if (require_regex_text(regex.regex_replace_all("z", "abc", "Q")) == "abc") {  // no match → unchanged
+    r = r + 32;
+  }
 
-    let parts: string[] = regex.regex_split("a,b,,c", ",");
-    if (parts.len() == 4 && parts[0] == "a" && parts[2] == "" && parts[3] == "c") { r = r + 64; }
+  let parts: string[] = require_regex_parts(regex.regex_split("a,b,,c", ","));
+  if (parts.len() == 4 && parts[0] == "a" && parts[2] == "" && parts[3] == "c") {
+    r = r + 64;
+  }
 
-    let ws: string[] = regex.regex_split("one  two   three", " +");
-    if (ws.len() == 3 && ws[0] == "one" && ws[1] == "two" && ws[2] == "three") { r = r + 128; }
+  let ws: string[] = require_regex_parts(regex.regex_split("one  two   three", " +"));
+  if (ws.len() == 3 && ws[0] == "one" && ws[1] == "two" && ws[2] == "three") {
+    r = r + 128;
+  }
 
-    return r;
+  return r;
+}
+
+function require_regex_parts(result: Option[string[]]): string[] {
+  match (result) {
+    Some(value) => {
+      return value;
+    },
+    None => {
+      exit(1);
+    }
+  }
+  return [];
+}
+
+function require_regex_text(result: Option[string]): string {
+  match (result) {
+    Some(value) => {
+      return value;
+    },
+    None => {
+      exit(1);
+    }
+  }
+  return "";
 }

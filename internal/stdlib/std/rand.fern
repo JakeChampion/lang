@@ -282,16 +282,17 @@ function __rng_word(state: i64): (i64, u64) {
   return (hi.0, lo.1 as u64 | hi.1 as u64 << 32 as u64);
 }
 
-// `rng_bytes(state, n)` — `n` pseudorandom bytes as a string, and the
-// advanced state. The builder form is what a caller filling block after
-// block wants: this one allocates one per call.
-pub function rng_bytes(state: i64, n: i32): (i64, string) {
+// `rng_bytes(state, n)` returns owned bytes and the advanced state.
+// Like rng_fill, each word consumes two draws; a partial final word discards
+// its unused high bytes. n <= 0 leaves state unchanged. The raw builder copy
+// never creates text and the returned bytes outlive the builder.
+pub function rng_bytes(state: i64, n: i32): (i64, u8[]) {
   if (n <= 0) {
-    return (state, "");
+    return (state, []);
   }
   let h: usize = buf_new(n);
   let st: i64 = rng_fill(state, h, n);
-  let out: string = buf_take(h);
+  let out: u8[] = buf_take_bytes(h);
   buf_free(h);
   return (st, out);
 }

@@ -420,15 +420,5 @@ function realtime_number(bare: string): i32 {
 
 // ASCII upper-casing, which is all a signal name can contain.
 function upper(s: string): string {
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < s.len()) {
-    let c: i32 = s[i] as i32;
-    if (c >= 97 && c <= 122) {
-      c = c - 32;
-    }
-    out = out + (c as u8).to_ascii_string();
-    i = i + 1;
-  }
-  return out;
+  return s.to_ascii_upper();
 }

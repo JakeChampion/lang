@@ -11,73 +11,111 @@ import "std/regex";
 // __probe patterns exercise both engines' shared surface: alternation,
 // quantifiers, classes, anchors, boundaries, groups, (?i).
 function patterns(): string[] {
-    return ["(a|ab)", "^(a+)", "([a-z]+)$", "\\b(cat)\\b", "(a?)*b",
-            "((a|b)c)+", "x(\\d{2,3})y", "(?i)h(el+)o", "(\\w+)@(\\w+)", "(a*)(b*)"];
+  return [
+    "(a|ab)", "^(a+)", "([a-z]+)$", "\\b(cat)\\b", "(a?)*b",
+    "((a|b)c)+", "x(\\d{2,3})y", "(?i)h(el+)o", "(\\w+)@(\\w+)", "(a*)(b*)",
+  ];
 }
 
 function texts(): string[] {
-    return ["xab", "aab", "Hello world", "a cat sat", "b", "acbcac",
-            "x123y x45y", "say HELLO", "a@b c@d", "aabb", "", "cat", "?=ab"];
+  return [
+    "xab", "aab", "Hello world", "a cat sat", "b", "acbcac",
+    "x123y x45y", "say HELLO", "a@b c@d", "aabb", "", "cat", "?=ab",
+  ];
 }
 
 function main(): i32 {
-    let r: i32 = 0;
+  let r: i32 = 0;
 
-    // ^ anchor through the capture engine
-    let an: regex.RCaps = regex.regex_captures("^(a+)", "aab");
-    if (an.found && an.group(1) == "aa" && an.group_start(0) == 0) { r = r + 1; }
-    if (!regex.regex_captures("^(b)", "ab").found) { r = r + 2; }
+  // ^ anchor through the capture engine
+  let an: regex.RCaps = regex.regex_captures("^(a+)", "aab");
+  if (an.found && require_regex_text(an.group(1)) == "aa" && an.group_start(0) == 0) {
+    r = r + 1;
+  }
+  if (!regex.regex_captures("^(b)", "ab").found) {
+    r = r + 2;
+  }
 
-    // $ anchor
-    let en: regex.RCaps = regex.regex_captures("([a-z]+)$", "Hello world");
-    if (en.group(1) == "world" && en.group_end(0) == 11) { r = r + 4; }
+  // $ anchor
+  let en: regex.RCaps = regex.regex_captures("([a-z]+)$", "Hello world");
+  if (require_regex_text(en.group(1)) == "world" && en.group_end(0) == 11) {
+    r = r + 4;
+  }
 
-    // \b and \B word boundaries
-    let wb: regex.RCaps = regex.regex_captures("\\b(cat)\\b", "a cat sat");
-    let nb: regex.RCaps = regex.regex_captures("\\B(at)", "a cat sat");
-    if (wb.group_start(1) == 2 && nb.group_start(1) == 3) { r = r + 8; }
+  // \b and \B word boundaries
+  let wb: regex.RCaps = regex.regex_captures("\\b(cat)\\b", "a cat sat");
+  let nb: regex.RCaps = regex.regex_captures("\\B(at)", "a cat sat");
+  if (wb.group_start(1) == 2 && nb.group_start(1) == 3) {
+    r = r + 8;
+  }
 
-    // a group whose star body matches only empty still PARTICIPATES with
-    // an empty span (Go: FindStringSubmatchIndex("(a?)*b","b") = [0,1,0,0])
-    let ep: regex.RCaps = regex.regex_captures("(a?)*b", "b");
-    if (ep.found && ep.has_group(1) && ep.group_start(1) == 0 && ep.group_end(1) == 0) { r = r + 16; }
+  // a group whose star body matches only empty still PARTICIPATES with
+  // an empty span (Go: FindStringSubmatchIndex("(a?)*b","b") = [0,1,0,0])
+  let ep: regex.RCaps = regex.regex_captures("(a?)*b", "b");
+  if (ep.found && ep.has_group(1) && ep.group_start(1) == 0 && ep.group_end(1) == 0) {
+    r = r + 16;
+  }
 
-    // an unrecognised (?... form must not claim a capture index: the
-    // pattern's only capture slot belongs to the real group
-    let uf: regex.RCaps = regex.regex_captures("(?=a)(b)", "?=ab");
-    if (uf.found && uf.group_count() == 1 && uf.group(1) == "b") { r = r + 32; }
+  // an unrecognised (?... form must not claim a capture index: the
+  // pattern's only capture slot belongs to the real group
+  let uf: regex.RCaps = regex.regex_captures("(?=a)(b)", "?=ab");
+  if (uf.found && uf.group_count() == 1 && require_regex_text(uf.group(1)) == "b") {
+    r = r + 32;
+  }
 
-    // differential: regex_captures' group-0 span == regex_search's span
-    // for every pattern x text combination
-    let ps: string[] = patterns();
-    let ts: string[] = texts();
-    let spans_agree: boolean = true;
-    let i: i32 = 0;
-    while (i < ps.len()) {
-        let j: i32 = 0;
-        while (j < ts.len()) {
-            let c: regex.RCaps = regex.regex_captures(ps[i], ts[j]);
-            let s: regex.RMatch = regex.regex_search(ps[i], ts[j]);
-            if (c.found != s.found) { spans_agree = false; }
-            if (c.found && (c.group_start(0) != s.start || c.group_end(0) != s.end)) { spans_agree = false; }
-            j = j + 1;
-        }
-        i = i + 1;
+  // differential: regex_captures' group-0 span == regex_search's span
+  // for every pattern x text combination
+  let ps: string[] = patterns();
+  let ts: string[] = texts();
+  let spans_agree: boolean = true;
+  let i: i32 = 0;
+  while (i < ps.len()) {
+    let j: i32 = 0;
+    while (j < ts.len()) {
+      let c: regex.RCaps = regex.regex_captures(ps[i], ts[j]);
+      let s: regex.RMatch = regex.regex_search(ps[i], ts[j]);
+      if (c.found != s.found) {
+        spans_agree = false;
+      }
+      if (c.found && (c.group_start(0) != s.start || c.group_end(0) != s.end)) {
+        spans_agree = false;
+      }
+      j = j + 1;
     }
-    if (spans_agree) { r = r + 64; }
+    i = i + 1;
+  }
+  if (spans_agree) {
+    r = r + 64;
+  }
 
-    // differential: regex_captures_all match count == regex_find_all count
-    let counts_agree: boolean = true;
-    i = 0;
-    while (i < ps.len()) {
-        let j2: i32 = 0;
-        while (j2 < ts.len()) {
-            if (regex.regex_captures_all(ps[i], ts[j2]).len() != regex.regex_find_all(ps[i], ts[j2]).len()) { counts_agree = false; }
-            j2 = j2 + 1;
-        }
-        i = i + 1;
+  // differential: regex_captures_all match count == regex_find_all count
+  let counts_agree: boolean = true;
+  i = 0;
+  while (i < ps.len()) {
+    let j2: i32 = 0;
+    while (j2 < ts.len()) {
+      if (regex.regex_captures_all(ps[i], ts[j2]).len() != regex.regex_find_all(ps[i], ts[j2]).len()) {
+        counts_agree = false;
+      }
+      j2 = j2 + 1;
     }
-    if (counts_agree) { r = r + 128; }
+    i = i + 1;
+  }
+  if (counts_agree) {
+    r = r + 128;
+  }
 
-    return r;
+  return r;
+}
+
+function require_regex_text(result: Option[string]): string {
+  match (result) {
+    Some(value) => {
+      return value;
+    },
+    None => {
+      exit(1);
+    }
+  }
+  return "";
 }

@@ -796,19 +796,16 @@ pub function rt_src_u64_to_string(): string {
   return "function __fern_u64_to_string(n: u64): string { let v: u64 = n; if (v == (0 as u64)) { let z: usize = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } let nd: i32 = 0; let t: u64 = v; while (t != (0 as u64)) { nd = nd + 1; t = t / (10 as u64); } let p: usize = __raw_alloc(nd); let i: i32 = nd - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __raw_string(p, nd); }";
 }
 
-// chr(n): i32 byte -> 1-char string box. Allocates, so pull in the heap.
+// chr(n): an ASCII integer to text; other integers yield an empty string.
 pub function (s: EmitState) mark_chr(): EmitState {
   return s.need("heap").need("chr");
 }
 
-// rt_src_chr backs `chr(b)` (#2649) — the first Tier-2 helper written in Fern via
-// the raw-memory intrinsic floor (docs/RUNTIME-INTRINSICS.md). Allocate 1 byte,
-// store the low byte of b, box it back into a string. The whole Tier-2 vocabulary
-// (alloc, store a byte, box) in one helper — the end-to-end proof the floor works
-// through a real runtime helper. The intrinsics lower to single instructions
-// (+ one __fern_alloc), so chr's only dep stays `heap` (mark_chr).
+// The legacy byte constructor also backs u8.to_ascii_string. Only ASCII can
+// form a valid single-byte UTF-8 string. Unicode scalar encoding uses the char
+// API instead; raw bytes must remain arrays.
 pub function rt_src_chr(): string {
-  return "function __fern_chr(b: i32): string { let p: usize = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }";
+  return "function __fern_chr(b: i32): string { let len: i32 = 1; if (b < 0 || b > 127) { len = 0; } let p: usize = __raw_alloc(len); if (len != 0) { __raw_store8(p, 0, b); } return __raw_string(p, len); }";
 }
 
 // sysno is the ONE table of syscall numbers the Fern runtime leaves are
@@ -8665,7 +8662,7 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
       let got: Ty = infer_expr_type(a.value, ctx.st);
       let tt: Ty = ctx.st.local_type_of(a.target);
       if (!assignable(tt, got)) {
-        // E003, matching native's numbering (assignment / annotated-var
+        // E003, matching native's numbering (assignment / annotated-let
         // type mismatch); native E004 is call arity (#4327 fold-in —
         // this guard used to say E004).
         return CheckCtx {
