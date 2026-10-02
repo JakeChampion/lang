@@ -1308,6 +1308,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// than the local-backed one, and one that views a param-backed
 		// source, both stay accepted — a summary coarsened to "this
 		// function returns some view" would reject both.
+		// A struct literal naming no struct is E043, so the typed lowering
+		// never meets it (#10965): an imported struct left unqualified, and a
+		// name nothing declares.
+		{"e043-literal-of-unqualified-imported-struct", "import \"std/json\";\nfunction main(): i32 {\n    var e: json.JsonError = JsonError { message: \"m\", offset: 0, line: 1, col: 1 };\n    return e.line;\n}\n", []string{"E043"}},
+		{"e043-literal-of-undeclared-struct", "function main(): i32 {\n    var l = Nope { body: 1024 };\n    return 0;\n}\n", []string{"E043"}},
 		// A `str` receiver's summary is keyed as `string`, the key a call site
 		// looks it up by (#10924).
 		{"e065-str-receiver-method", "function mk(): string { return \"ab\"; }\nfunction (s: str) head1(): str { return slice_unchecked(s, 0, 1); }\nfunction f(): str { var s: string = mk(); return s.head1(); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},

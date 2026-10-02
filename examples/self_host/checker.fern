@@ -10028,6 +10028,14 @@ function find_variant_sig(structs: StructSig[], name: string): StructSig {
   return find_struct_sig(structs, bare);
 }
 
+// slit_names_no_struct reports whether a struct literal's type names no struct
+// at all: not a declared one (an instantiation names its base), and not a
+// built-in.
+function slit_names_no_struct(structs: StructSig[], type_name: string): boolean {
+  var base: string = util.base_type_name(type_name);
+  return find_struct_sig(structs, base).name.len() == 0 && !parser.is_reserved_struct_name(base);
+}
+
 // slit_diags recurses through an expression and emits E005 for every
 // non-update struct literal that omits a declared field. The struct table
 // is module-global, so this needs no scope — and recursing into field
@@ -10054,6 +10062,8 @@ function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
             out = out.append(dg_at("E043", "struct " + sl.type_name + " has no field \"" + field_name + "\"", sl.line, sl.col));
           }
         }
+      } else if (slit_names_no_struct(structs, sl.type_name)) {
+        out = out.append(dg_at("E043", "unknown struct type \"" + sl.type_name + "\"", sl.line, sl.col));
       }
       if (sl.has_base) {
         out = util.append_diags(out, slit_diags(sl.base, structs));
