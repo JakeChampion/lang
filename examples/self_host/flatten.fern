@@ -1688,7 +1688,7 @@ function inherit_trait_defaults(mod: parser.Module, own: string, defaults: Trait
       let key: string = parser.impl_trait_key(im);
       for d in defaults {
         if (d.key == key && index_of_str(d.method.name, im.method_names) < 0) {
-          funcs = funcs.append(parser.FuncDecl { ...parser.finalize_impl_method(d.method, im.impl_type, im.type_params, im.bounds), module: d.method.module });
+          funcs = funcs.append(parser.FuncDecl { ...parser.finalize_impl_method(d.method, im.impl_type, im.type_params, im.bounds), module: d.method.module, impl_trait: im.trait_name });
         }
       }
     }

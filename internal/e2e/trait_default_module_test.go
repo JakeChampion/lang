@@ -85,6 +85,24 @@ function main(): i32 {
 // traitDefaultSameModuleProject: the trait is implemented beside its own
 // declaration. The default body mangles to that module's prefix, which
 // is what its helpers were renamed to, so the impl still resolves.
+// traitDefaultDynProject reaches the inherited default through a `dyn`, which
+// dispatches only to methods recorded as the trait's: 41 + the tag 1 = 42.
+var traitDefaultDynProject = map[string]string{
+	"lib.fern": `pub function base(): i32 { return 41; }
+pub trait Greet {
+    function tag(self: Self): i32;
+    function greet(self: Self): i32 { return base() + self.tag(); }
+}`,
+	"main.fern": `import "./lib";
+function base(): i32 { return 900; }
+struct R { n: i32 }
+impl lib.Greet for R {
+    function tag(self: Self): i32 { return self.n; }
+}
+function call(g: dyn lib.Greet): i32 { return g.greet(); }
+function main(): i32 { return call(R { n: 1 }); }`,
+}
+
 var traitDefaultSameModuleProject = map[string]string{
 	"lib.fern": `pub function h(): i32 { return 41; }
 pub struct S { v: i32 }
@@ -124,6 +142,7 @@ var traitDefaultProjects = []struct {
 	{"helper is private to the trait's module", traitDefaultPrivateHelperProject, 42},
 	{"generic trait, chained defaults, transitive import", traitDefaultGenericProject, 164},
 	{"trait implemented in its own module", traitDefaultSameModuleProject, 42},
+	{"inherited default reached through a dyn", traitDefaultDynProject, 42},
 	{"parametric impl inherits the default", traitDefaultParametricImplProject, 42},
 }
 
