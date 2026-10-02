@@ -108,14 +108,27 @@ function test_refused(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
-  return test.assert_starts_with(__message(got), "connect: ");
+  return test.assert_eq(__message(got), "connect: Connection refused");
+}
+
+// A name with two addresses has them raced as `dns.connect_race` does:
+// the second attempt starts 300 ms after the first, and the one that
+// connects first is the one the request goes to.
+function test_addresses_raced(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN, "93.184.216.35"]).listen(ORIGIN, 80, 20000).listen("93.184.216.35", 80, 5).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "second address")]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__body(got) != "second address") {
+    return test.fail(__body(got));
+  }
+  return test.assert_eq(d.now_ns(), 305 * MS);
 }
 
 // A name the network does not know fails to resolve.
 function test_unknown_name(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(__net(d), fetch.get("http://nowhere.test/"), __open());
-  return test.assert_starts_with(__message(got), "resolve: ");
+  return test.assert_eq(__message(got), "resolve: Name or service not known");
 }
 
 // An origin that never answers is given up on at the inactivity bound
@@ -128,6 +141,19 @@ function test_inactivity_timeout(): test.TestOutcome {
     return test.fail(__message(got));
   }
   return test.assert_eq(d.now_ns(), 5 * MS + 30000 * MS);
+}
+
+// A body read to the close, from an origin that sends it and then holds
+// the connection open, is given up on at the inactivity bound after the
+// last byte.
+function test_held_open_times_out(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.raw("HTTP/1.1 200 OK\r\n\r\npartial").after(10).held()]);
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
+  if (__message(got) != "timed out waiting for the response") {
+    return test.fail(__message(got));
+  }
+  return test.assert_eq(d.now_ns(), 15 * MS + 30000 * MS);
 }
 
 // An origin that keeps the inactivity bound but drips its answer is
@@ -204,7 +230,7 @@ function test_reset_not_retried_when_not_idempotent(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reset(), sim_fetch.reply(200, "second")]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.request("POST", "http://example.test/").with_text("once"), __open());
-  if (!__message(got).starts_with("i/o: ")) {
+  if (__message(got) != "i/o: Connection reset by peer") {
     return test.fail(__message(got));
   }
   return test.assert_eq(n.sent_count(), 1);
@@ -270,11 +296,27 @@ function test_gzip_decoded(): test.TestOutcome {
   return test.assert_eq(__body(got), "unzipped text");
 }
 
-// The body cap bounds what decoding may produce.
+// A thousand `a`s gzipped: 29 bytes on the wire.
+function __gzip_thousand(): u8[] {
+  return [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 2 as u8, 3 as u8, 75 as u8, 76 as u8, 28 as u8, 5 as u8, 163 as u8, 96 as u8, 20 as u8, 12 as u8, 119 as u8, 0 as u8, 0 as u8, 3 as u8, 218 as u8, 56 as u8, 154 as u8, 232 as u8, 3 as u8, 0 as u8, 0 as u8];
+}
+
+// The body cap bounds what decoding may produce: a member that fits the
+// cap on the wire is refused once it decodes past it.
 function test_decoded_past_cap(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [__gzipped("this decodes to more than eight bytes")]);
-  let small: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 8 };
+  let coded: u8[] = __gzip_thousand();
+  let wire: u8[] = ("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: " + coded.len().to_string() + "\r\n\r\n").bytes();
+  for b in coded {
+    wire = wire.append(b);
+  }
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.raw_bytes(wire)]);
+  let big: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 2000 };
+  let whole: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_limits(big), __open());
+  if (__body(whole).len() != 1000) {
+    return test.fail("decoded under a 2000-byte cap: " + __message(whole));
+  }
+  let small: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 100 };
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_limits(small), __open());
   return test.assert_eq(__message(got), "response body past its limit");
 }
@@ -294,8 +336,10 @@ function main(): i32 {
   r = r.it("reads a body that arrives a byte at a time", test_chunked_arrival);
   r = r.it("times out connecting at the connect bound", test_connect_timeout);
   r = r.it("reports a refused connection", test_refused);
+  r = r.it("races the addresses a name has", test_addresses_raced);
   r = r.it("reports a name that does not resolve", test_unknown_name);
   r = r.it("times out waiting at the inactivity bound", test_inactivity_timeout);
+  r = r.it("times out on a connection held open after its bytes", test_held_open_times_out);
   r = r.it("times out in all at the total bound", test_total_timeout);
   r = r.it("follows a redirect", test_redirect_followed);
   r = r.it("drops credentials on a cross-origin redirect", test_cross_origin_drops_credentials);

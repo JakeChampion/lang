@@ -18,10 +18,12 @@
 //   // d.now_ns() is 25 ms: 5 to connect, 20 to the first byte.
 //
 // A name resolves to the addresses `host` gives it, or to itself when it
-// is an IP literal; any other name is `NoSuchName`. A connection succeeds
-// to the first address with a `listen`er on the port, after its connect
-// time; an address with none, or one that `refuse`s, refuses; a connect
-// time past the client's bound is a timeout at that bound. The request
+// is an IP literal; any other name is `NoSuchName`. The addresses are
+// raced as `dns.connect_race` races them: each attempt starts the
+// fallback delay after the one before, or at once when that one was
+// refused, an address with no `listen`er on the port refusing at once;
+// the first to finish its connect time wins, and none finishing within
+// the client's bound is a timeout at the bound. The request
 // written on a connection picks its route by address, port and request
 // target (`*` matches any target), and the n-th request a route takes is
 // answered with its n-th `Answer`, the last repeating; a request no route
@@ -95,9 +97,8 @@ pub function (a: Answer) held(): Answer {
 // `Name` — a host name and the addresses it resolves to, in order.
 pub struct Name { host: string, addrs: string[] }
 
-// `Listener` — an address and port that accepts after `connect_ms`, or
-// refuses every connection when `refuse`.
-pub struct Listener { addr: string, port: i32, connect_ms: i64, refuse: boolean }
+// `Listener` — an address and port that accepts after `connect_ms`.
+pub struct Listener { addr: string, port: i32, connect_ms: i64 }
 
 // `Route` — the answers an address and port give a request target, in
 // the order requests reach it.
@@ -126,12 +127,7 @@ pub function (n: Net) host(name: string, addrs: string[]): Net {
 // `n.listen(addr, port, connect_ms)` — `addr:port` accepting after
 // `connect_ms`.
 pub function (n: Net) listen(addr: string, port: i32, connect_ms: i64): Net {
-  return Net { ...n, listeners: n.listeners.append(Listener { addr: __canon(addr), port: port, connect_ms: connect_ms, refuse: false }) };
-}
-
-// `n.refuse(addr, port)` — `addr:port` refusing every connection.
-pub function (n: Net) refuse(addr: string, port: i32): Net {
-  return Net { ...n, listeners: n.listeners.append(Listener { addr: __canon(addr), port: port, connect_ms: 0, refuse: true }) };
+  return Net { ...n, listeners: n.listeners.append(Listener { addr: __canon(addr), port: port, connect_ms: connect_ms }) };
 }
 
 // `n.route(addr, port, path, answers)` — the answers `addr:port` gives
@@ -175,35 +171,46 @@ impl fetch.Transport for Net {
   function now_ns(self: Net): i64 {
     return self.drv.clock_ns.get();
   }
-  function lookup(self: Net, host: string, judged: boolean): Result[fetch.Lookup, dns.DnsError] {
+  function lookup(self: Net, host: string, checked: boolean): Result[fetch.Lookup, dns.DnsError] {
     let found: net.IpAddr[] = __addrs_of(self, host);
     if (found.len() == 0) {
       return Err(dns.NoSuchName);
     }
     let none: net.IpAddr[] = [];
-    if (!judged) {
+    if (!checked) {
       return Ok(fetch.Lookup { dial: found, named: none, judged: none });
     }
     return Ok(fetch.Lookup { dial: found, named: found, judged: found });
   }
   function connect(self: Net, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError] {
+    let fallback_ms: i64 = dns.dial_options().fallback_ms as i64;
+    let start_ms: i64 = 0;
+    let best_ms: i64 = 0 - 1;
+    let best: string = "";
     for a in addrs {
       let key: string = a.to_string();
-      for l in self.listeners {
-        if (l.addr == key && l.port == port && !l.refuse) {
-          if (l.connect_ms > timeout_ms as i64) {
-            __advance(self, self.drv.clock_ns.get() + timeout_ms as i64 * 1000000);
-            return Err(net.TimedOut);
-          }
-          __advance(self, self.drv.clock_ns.get() + l.connect_ms * 1000000);
-          let id: i32 = self.next.get();
-          self.next.set(id + 1);
-          self.conns.set(self.conns.get() + __row(id, key, port, 0 - 1, 0, 0, 0, 1));
-          return Ok(id);
+      let delay: i64 = __connect_ms(self, key, port);
+      if (delay >= 0) {
+        let done_ms: i64 = start_ms + delay;
+        if (best_ms < 0 || done_ms < best_ms) {
+          best_ms = done_ms;
+          best = key;
         }
+        start_ms = start_ms + fallback_ms;
       }
     }
-    return Err(net.ConnectionRefused);
+    if (best_ms < 0) {
+      return Err(net.ConnectionRefused);
+    }
+    if (best_ms > timeout_ms as i64) {
+      __advance(self, self.drv.clock_ns.get() + timeout_ms as i64 * 1000000);
+      return Err(net.TimedOut);
+    }
+    __advance(self, self.drv.clock_ns.get() + best_ms * 1000000);
+    let id: i32 = self.next.get();
+    self.next.set(id + 1);
+    self.conns.set(self.conns.get() + __row(id, best, port, 0 - 1, 0, 0, 0, 1));
+    return Ok(id);
   }
   function write(self: Net, conn: i32, data: string): i32 {
     let row: string[] = __conn(self, conn);
@@ -297,6 +304,17 @@ function __canon(addr: string): string {
     }
   }
   return addr;
+}
+
+// `__connect_ms(n, addr, port)` — the connect time of the listener on
+// `addr:port`, or -1 when none listens there.
+function __connect_ms(n: Net, addr: string, port: i32): i64 {
+  for l in n.listeners {
+    if (l.addr == addr && l.port == port) {
+      return l.connect_ms;
+    }
+  }
+  return 0 - 1;
 }
 
 // `__addrs_of(n, host)` — `host` itself when it is an IP literal, else the

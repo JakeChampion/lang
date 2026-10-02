@@ -528,7 +528,7 @@ function __asks_gzip(req: Request): boolean {
 // the bytes taken, or a negated errno.
 pub trait Transport {
   function now_ns(self: Self): i64;
-  function lookup(self: Self, host: string, judged: boolean): Result[Lookup, dns.DnsError];
+  function lookup(self: Self, host: string, checked: boolean): Result[Lookup, dns.DnsError];
   function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError];
   function write(self: Self, conn: i32, data: string): i32;
   function read(self: Self, conn: i32, max: i32, wait_ms: i64): Option[u8[]];
@@ -536,7 +536,7 @@ pub trait Transport {
 }
 
 // `Lookup` — a name's addresses: `dial` the ones to connect to, and, when
-// the lookup was asked to be `judged`, `named` the ones the network
+// the lookup is `checked` for the block list, `named` the ones the network
 // returned with `judged[i]` the address `named[i]` carries (itself, or
 // the IPv4 one under a NAT64 prefix), which the block list judges.
 pub struct Lookup { dial: net.IpAddr[], named: net.IpAddr[], judged: net.IpAddr[] }
@@ -554,9 +554,9 @@ impl Transport for Sockets {
   function now_ns(self: Sockets): i64 {
     return monotonic_ns();
   }
-  function lookup(self: Sockets, host: string, judged: boolean): Result[Lookup, dns.DnsError] {
+  function lookup(self: Sockets, host: string, checked: boolean): Result[Lookup, dns.DnsError] {
     let none: net.IpAddr[] = [];
-    if (!judged) {
+    if (!checked) {
       let found: net.IpAddr[] = dns.resolve(host)?;
       return Ok(Lookup { dial: found, named: none, judged: none });
     }

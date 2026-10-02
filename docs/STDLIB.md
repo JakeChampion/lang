@@ -1988,9 +1988,11 @@ Nothing waits: a read that would block moves the clock to when the
 scripted bytes arrive, or by the whole wait when none do, so each bound
 passes at its exact virtual time. `host(name, addrs)` names addresses (an
 IP literal resolves to itself, anything else is `NoSuchName`);
-`listen(addr, port, connect_ms)` accepts after a delay, past the client's
-connect bound a timeout at the bound; an address with no listener, or one
-that `refuse`s, refuses. `route(addr, port, path, answers)` answers the
+`listen(addr, port, connect_ms)` accepts after a delay, and an address
+with no listener refuses at once. A name's addresses are raced as
+`dns.connect_race` races them, each attempt starting the fallback delay
+after the one before (at once after a refusal), the first to connect
+winning and none within the client's connect bound a timeout at it. `route(addr, port, path, answers)` answers the
 n-th request for `path` (`*` for any) with its n-th `Answer`, the last
 repeating; an unrouted request gets a 404. Answers: `reply(status, body)`,
 `redirect(status, location)`, `raw(text)` / `raw_bytes(bytes)` for
