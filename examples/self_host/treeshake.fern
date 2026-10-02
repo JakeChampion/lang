@@ -141,6 +141,9 @@ function ts_routed_map_roots(): string[] {
     "__map_string_column", "__map_box_column", "__map_key_of", "__map_lookup_val",
     "__map_drop_strcols_impl", "__map_drop_boxes_impl", "__map_u8_column", "__map_cell", "__map_cell_load",
     "__map_cell_free", "__map_get_cell_impl", "__map_get_cell_f64_impl", "__map_cell_column", "__map_cell_f64_column",
+    "__map_set_keyed_impl", "__map_has_keyed_impl", "__map_get_keyed_impl", "__map_get_or_keyed_impl",
+    "__map_delete_keyed_impl", "__map_lookup_val_keyed", "__map_key_of_keyed", "__map_drop_keyed_impl",
+    "__map_get_cell_keyed_impl", "__map_get_cell_f64_keyed_impl",
   ];
 }
 
