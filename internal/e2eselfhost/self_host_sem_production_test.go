@@ -213,7 +213,7 @@ import "std/i32";
 struct Box { s: string }
 
 function grown(n: i32, piece: string): string {
-    var s: string = "";
+    let s: string = "";
     for i in 0..n { s = s + piece; }
     return s;
 }
@@ -224,23 +224,23 @@ function suffixed(a: string): string {
 }
 
 function sum(s: string): i32 {
-    var h: i32 = 0;
+    let h: i32 = 0;
     for i in 0..s.len() { h = (h * 31 + (s[i] as i32)) % 1000003; }
     return h;
 }
 
 function main(): i32 {
-    var big: string = grown(70000, "abcdefghij");
-    var s: string = "start";
-    var kept: string = "";
+    let big: string = grown(70000, "abcdefghij");
+    let s: string = "start";
+    let kept: string = "";
     for i in 0..300 {
         s = s + "xy";
         if (i == 150) { kept = s; }
     }
-    var base: string = grown(400, "q");
-    var other: string = suffixed(base);
-    var acc: string = grown(300, "mn");
-    var vlen: i32 = 0;
+    let base: string = grown(400, "q");
+    let other: string = suffixed(base);
+    let acc: string = grown(300, "mn");
+    let vlen: i32 = 0;
     match (acc[0:4]) {
         Some(w) => {
             acc = acc + "tail";
@@ -248,11 +248,11 @@ function main(): i32 {
         },
         None => {}
     }
-    var d: string = "ab";
+    let d: string = "ab";
     for i in 0..12 { d = d + d; }
-    var b = Box { s: "f" };
+    let b = Box { s: "f" };
     for i in 0..500 { b = Box { s: b.s + "g" }; }
-    var xs: string[] = ["p", "q"];
+    let xs: string[] = ["p", "q"];
     for i in 0..300 { xs = xs.with(0, xs[0] + "z"); }
     print(f"{big.len()} {sum(big)} {s.len()} {kept.len()} {sum(kept)} {base.len()} {other.len()} {vlen} {acc.len()} {d.len()} {sum(d)} {b.s.len()} {xs[0].len()} {xs[1]}");
     return 0;
@@ -273,67 +273,67 @@ import "std/float";
 struct P { x: i32 }
 
 function f64s(xs: f64[]): f64 {
-  var t: f64 = 0.0;
+  let t: f64 = 0.0;
   for x in xs { t = t + x; }
   return t;
 }
 
 function main(): i32 {
-  var a: Map[i64, i64] = Map {};
-  var i: i32 = 0;
+  let a: Map[i64, i64] = Map {};
+  let i: i32 = 0;
   while (i < 300) { a = a.insert((i as i64) * 4294967311, (i as i64) * 3); i = i + 1; }
   while (i < 600) { a = a.insert(((i - 300) as i64) * 4294967311, 7); i = i + 1; }
-  var kept = a;
-  var (a2, gone) = a.without(4294967311 * 5);
+  let kept = a;
+  let (a2, gone) = a.without(4294967311 * 5);
   a = a2;
-  var ks: i64 = 0;
+  let ks: i64 = 0;
   for k in kept.keys() { ks = ks + k; }
-  var vs: i64 = 0;
+  let vs: i64 = 0;
   for v in a.values() { vs = vs + v; }
-  var hit: i64 = 0;
+  let hit: i64 = 0;
   match (a.get(4294967311 * 9)) { Some(v) => { hit = v; }, None => { hit = 0 - 1; } }
-  var miss: i64 = 0;
+  let miss: i64 = 0;
   match (a.get(12345)) { Some(v) => { miss = v; }, None => { miss = 0 - 2; } }
-  var it: i64 = 0;
+  let it: i64 = 0;
   for (k, v) in a { it = it + k / 4294967311 + v; }
   print(f"a {a.len()} {kept.len()} {gone} {ks} {vs} {hit} {miss} {a.has(4294967311 * 5)} {kept.has(4294967311 * 5)} {a.get_or(4294967311 * 8, 0 - 9)} {a.get_or(1, 0 - 9)} {it}");
 
-  var f: Map[i32, f64] = Map {};
+  let f: Map[i32, f64] = Map {};
   i = 0;
   while (i < 50) { f = f.insert(i % 20, (i as f64) * 0.5); i = i + 1; }
-  var g: Map[string, f32] = Map {};
+  let g: Map[string, f32] = Map {};
   g = g.insert("x", 1.25);
   g = g.insert("y", 2.5);
   g = g.insert("x", 3.75);
-  var fo: f64 = 0.0;
+  let fo: f64 = 0.0;
   match (f.get(3)) { Some(v) => { fo = v; }, None => {} }
-  var gx: f32 = g.get_or("x", 0.0);
-  var gz: f32 = g.get_or("z", 9.0);
+  let gx: f32 = g.get_or("x", 0.0);
+  let gz: f32 = g.get_or("z", 9.0);
   print(f"f {f.len()} {f64s(f.values())} {f.get_or(19, 0.0)} {f.get_or(99, 1.5)} {fo} {g.len()} {gx} {gz}");
 
-  var u: Map[u64, string] = Map {};
+  let u: Map[u64, string] = Map {};
   i = 0;
   while (i < 40) { u = u.insert((i as u64) * 18446744073709551 as u64, f"s{i}"); i = i + 1; }
-  var u2 = u.cleared();
-  var uk: u64 = 0;
+  let u2 = u.cleared();
+  let uk: u64 = 0;
   for k in u.keys() { uk = uk + k / (1000 as u64); }
-  var u7: string = u.get_or(18446744073709551 as u64 * 7, "none");
+  let u7: string = u.get_or(18446744073709551 as u64 * 7, "none");
   print(f"u {u.len()} {u2.len()} {uk} {u7}");
 
-  var b: Map[u8, u8] = Map {};
+  let b: Map[u8, u8] = Map {};
   i = 0;
   while (i < 300) { b = b.insert((i % 256) as u8, (i % 7) as u8); i = i + 1; }
-  var bs: i32 = 0;
+  let bs: i32 = 0;
   for k in b.keys() { bs = bs + (k as i32); }
   for v in b.values() { bs = bs + (v as i32); }
   print(f"b {b.len()} {bs} {b.get_or(255 as u8, 0 as u8)}");
 
-  var c: Map[i64, P] = Map {};
+  let c: Map[i64, P] = Map {};
   i = 0;
   while (i < 30) { c = c.insert((i % 10) as i64 - 5, P { x: i }); i = i + 1; }
-  var c2 = c;
-  var (c3, cg) = c2.without(0 - 5);
-  var px: i32 = 0;
+  let c2 = c;
+  let (c3, cg) = c2.without(0 - 5);
+  let px: i32 = 0;
   for v in c.values() { px = px + v.x; }
   print(f"c {c.len()} {c3.len()} {cg} {px}");
   return 0;
@@ -351,13 +351,13 @@ function main(): i32 {
 import "std/i32";
 async function compute(): i32 { return 7; }
 pub async function squares(n: i32): i32[] {
-    var out: i32[] = [];
+    let out: i32[] = [];
     for i in 0..n { out = out.append(i * i); }
     return out;
 }
 async function label(xs: i32[]): string { return f"{xs.len()} squares ending {xs[xs.len() - 1]}"; }
 function main(): i32 {
-    var xs: i32[] = squares(4);
+    let xs: i32[] = squares(4);
     print(label(xs) + "\n");
     return compute() + xs[3];
 }
@@ -371,8 +371,8 @@ function main(): i32 {
 	// parse_decl_type already did for a declaration. Produces 0 of 3 without it.
 	{name: "source-lambda-returning-callable", atLeast: 3, want: "42|", src: `
 function main(): i32 {
-    var mk: () => ((i32) => i32) = ((): ((i32) => i32) => { var g: (i32) => i32 = ((y: i32) => y); return g; });
-    var f: (i32) => i32 = mk();
+    let mk: () => ((i32) => i32) = ((): ((i32) => i32) => { let g: (i32) => i32 = ((y: i32) => y); return g; });
+    let f: (i32) => i32 = mk();
     return f(42);
 }
 `},
@@ -383,8 +383,8 @@ function main(): i32 {
 	// are gated. Also produces 0 of 3 without the fix.
 	{name: "source-lambda-returning-callable-bare", atLeast: 3, want: "42|", src: `
 function main(): i32 {
-    var mk: () => ((i32) => i32) = ((): (i32) => i32 => { var g: (i32) => i32 = ((y: i32) => y); return g; });
-    var f: (i32) => i32 = mk();
+    let mk: () => ((i32) => i32) = ((): (i32) => i32 => { let g: (i32) => i32 = ((y: i32) => y); return g; });
+    let f: (i32) => i32 = mk();
     return f(42);
 }
 `},
@@ -404,19 +404,19 @@ struct Slot[T] { v: T }
 function slot_of(n: i32): Slot[i32] { return Slot[i32] { v: n }; }
 
 function take(p: ((i32) => Slot[i32], i32)): i32 {
-    var f: (i32) => Slot[i32] = p.0;
-    var s: Slot[i32] = f(p.1);
+    let f: (i32) => Slot[i32] = p.0;
+    let s: Slot[i32] = f(p.1);
     return s.v;
 }
 
 function unwrap(q: ((Slot[i32]) => i32, Slot[i32])): i32 {
-    var g: (Slot[i32]) => i32 = q.0;
+    let g: (Slot[i32]) => i32 = q.0;
     return g(q.1);
 }
 
 function main(): i32 {
-    var p: ((i32) => Slot[i32], i32) = (((b: i32): Slot[i32] => slot_of(b)), 4);
-    var q: ((Slot[i32]) => i32, Slot[i32]) = (((s: Slot[i32]): i32 => s.v), Slot[i32] { v: 7 });
+    let p: ((i32) => Slot[i32], i32) = (((b: i32): Slot[i32] => slot_of(b)), 4);
+    let q: ((Slot[i32]) => i32, Slot[i32]) = (((s: Slot[i32]): i32 => s.v), Slot[i32] { v: 7 });
     return take(p) + unwrap(q);
 }
 `},
@@ -441,9 +441,9 @@ function outer(): (i32) => (i32) => Slot[i32] {
 }
 
 function main(): i32 {
-    var f: (i32) => (i32) => Slot[i32] = outer();
-    var g: (i32) => Slot[i32] = f(10);
-    var s: Slot[i32] = g(5);
+    let f: (i32) => (i32) => Slot[i32] = outer();
+    let g: (i32) => Slot[i32] = f(10);
+    let s: Slot[i32] = g(5);
     return s.v;
 }
 `},
@@ -458,14 +458,14 @@ function main(): i32 {
 	// which spelled it the same way.
 	{name: "if-expr-boolean-branches", atLeast: 2, want: "1|", src: `
 function main(): i32 {
-    var v: boolean = if (true) { false } else { true };
-    var w: boolean = if (v) { 1 < 2 } else { 2 < 1 };
+    let v: boolean = if (true) { false } else { true };
+    let w: boolean = if (v) { 1 < 2 } else { 2 < 1 };
     return if (v) { 0 } else { if (w) { 42 } else { 1 } };
 }
 `},
 	// An if-expression whose ARMS are lambdas. The IIFE it desugars to is built
 	// by e_lambda_origin, which writes the #5986 sidecar pair empty, and
-	// irlower.hoist_value_iife declares the hoisted function with the coarse "fn"
+	// lift.hoist_value_iife declares the hoisted function with the coarse "fn"
 	// tag on purpose (it IS a higher-order factory). Tag without contract is an
 	// unresolved result type, so the module went to the AST lowering. The arms
 	// carry the contract, so the hoist reads it off the returned lambda.
@@ -476,7 +476,7 @@ function main(): i32 {
 	// Produces 0 of 4 without the fix.
 	{name: "if-expr-lambda-arms-annotated", atLeast: 4, want: "42|", src: `
 function main(): i32 {
-    var f: (i32) => i32 = if (true) { ((x: i32): i32 => x) } else { ((y: i32): i32 => y + 1) };
+    let f: (i32) => i32 = if (true) { ((x: i32): i32 => x) } else { ((y: i32): i32 => y + 1) };
     return f(42);
 }
 `},
@@ -487,40 +487,40 @@ function main(): i32 {
 	{name: "match-expr-lambda-arms-annotated", atLeast: 4, want: "42|", src: `
 enum Pick { A, B }
 function main(): i32 {
-    var p: Pick = Pick.A;
-    var f: (i32) => i32 = match (p) { A => ((x: i32): i32 => x), B => ((y: i32): i32 => y + 1) };
+    let p: Pick = Pick.A;
+    let f: (i32) => i32 = match (p) { A => ((x: i32): i32 => x), B => ((y: i32): i32 => y + 1) };
     return f(42);
 }
 `},
 	// The UNANNOTATED arm — what the previous change deliberately left refusing.
 	// An arm lambda's parameter spellings are always written but its result only
-	// when the author annotates it, so irlower yields no contract rather than half
+	// when the author annotates it, so the lowering yields no contract rather than half
 	// of one, and the hoisted IIFE reaches semsource with the coarse "fn" tag and
 	// nothing to resolve. The body still says what it returns, so the result is
 	// inferred the same way an unannotated declaration's already is. Produces
 	// 0 of 4 without the fix.
 	{name: "if-expr-lambda-arms-unannotated", atLeast: 4, want: "42|", src: `
 function main(): i32 {
-    var f: (i32) => i32 = if (true) { ((x: i32) => x) } else { ((y: i32) => y + 1) };
+    let f: (i32) => i32 = if (true) { ((x: i32) => x) } else { ((y: i32) => y + 1) };
     return f(42);
 }
 `},
 	// A bare function name as an if-expression arm (#10686). The lift boxed a
 	// lambda arm but refused a name arm as unboxable, so the name reached
-	// semsource as a function address. Pinned in a `var`, an assignment, a
+	// semsource as a function address. Pinned in a `let`, an assignment, a
 	// fn-typed argument beside a lambda arm, and through a nested if-expression.
 	{name: "if-expr-function-name-arms", atLeast: 6, want: "41|", src: `
 function inc(x: i32): i32 { return x + 1; }
 function dbl(x: i32): i32 { return x * 2; }
-function main(): i32 { var c: boolean = true; var f: (i32) => i32 = (if (c) { inc } else { dbl }); return f(40); }
+function main(): i32 { let c: boolean = true; let f: (i32) => i32 = (if (c) { inc } else { dbl }); return f(40); }
 `},
 	{name: "if-expr-function-name-arms-nested", atLeast: 9, want: "80|", src: `
 function inc(x: i32): i32 { return x + 1; }
 function dbl(x: i32): i32 { return x * 2; }
 function neg(x: i32): i32 { return 0 - x; }
 function main(): i32 {
-    var a: i32 = 2;
-    var f: (i32) => i32 = (if (a == 1) { inc } else { (if (a == 2) { dbl } else { neg }) });
+    let a: i32 = 2;
+    let f: (i32) => i32 = (if (a == 1) { inc } else { (if (a == 2) { dbl } else { neg }) });
     return f(40);
 }
 `},
@@ -529,8 +529,8 @@ function inc(x: i32): i32 { return x + 1; }
 function dbl(x: i32): i32 { return x * 2; }
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
-    var c: boolean = false;
-    var f: (i32) => i32 = inc;
+    let c: boolean = false;
+    let f: (i32) => i32 = inc;
     f = (if (c) { inc } else { dbl });
     return f(20) + apply((if (c) { dbl } else { (x: i32): i32 => x - 1 }), 2);
 }
@@ -545,24 +545,24 @@ function main(): i32 {
 	{name: "immediately-called-capturing-lambda", atLeast: 4, want: "13|", src: `
 function g(n: i32): i32 { return n * 2; }
 function main(): i32 {
-    var n: i32 = 5;
-    var t: i32 = ((): i32 => { return n + 2; })();
-    var i: i32 = 0;
+    let n: i32 = 5;
+    let t: i32 = ((): i32 => { return n + 2; })();
+    let i: i32 = 0;
     while (i < 3) { t = t + ((): i32 => { return g(i); })(); i = i + 1; }
     return t;
 }
 `},
 	{name: "immediately-called-capturing-lambda-returned", atLeast: 2, want: "3|", src: `
-function main(): i32 { var k: i32 = 3; return ((): i32 => { return k; })(); }
+function main(): i32 { let k: i32 = 3; return ((): i32 => { return k; })(); }
 `},
 	{name: "immediately-called-capturing-lambda-in-a-loop", atLeast: 2, want: "18|", src: `
 function main(): i32 {
-    var base: string = "ab";
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let base: string = "ab";
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         total = total + ((): i32 => {
-            var s: string = base + "c";
+            let s: string = base + "c";
             if (i > 1) { return s.len() * 2; }
             return s.len();
         })();
@@ -577,10 +577,10 @@ function main(): i32 {
 	// the answer (87 for the arguments, 123 for the captures).
 	{name: "immediately-called-capturing-lambda-with-parameters", atLeast: 2, want: "64|", src: `
 function main(): i32 {
-    var k: i32 = 4;
-    var m: i32 = 7;
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let k: i32 = 4;
+    let m: i32 = 7;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
         t = t + ((x: i32, y: i32): i32 => { if (x > k) { return x - y + m; } return x * k + y; })(i, 3);
         i = i + 1;
@@ -594,14 +594,14 @@ function main(): i32 {
 	// snapshotting them into cells here left the AST lowering 64 bytes short.
 	{name: "immediately-called-lambda-with-wide-captures", atLeast: 3, want: "15|", src: `
 function main(): i32 {
-    var big: i64 = 5000000000i64;
-    var ratio: f64 = 1.5;
-    var hits: i32 = 0;
-    var acc: i64 = 0i64;
-    var i: i32 = 0;
+    let big: i64 = 5000000000i64;
+    let ratio: f64 = 1.5;
+    let hits: i32 = 0;
+    let acc: i64 = 0i64;
+    let i: i32 = 0;
     while (i < 3) {
         acc = acc + ((): i64 => { return big + (i as i64); })();
-        var scaled: f64 = ((d: f64): f64 => { defer { hits = hits + 1; } return ratio * d + (big as f64) * 0.0; })(2.0);
+        let scaled: f64 = ((d: f64): f64 => { defer { hits = hits + 1; } return ratio * d + (big as f64) * 0.0; })(2.0);
         acc = acc + (scaled as i64);
         i = i + 1;
     }
@@ -612,12 +612,12 @@ function main(): i32 {
 	// the lift kept every zero-parameter call inside a value block inline, not
 	// only a nested value block.
 	{name: "immediately-called-lambda-in-an-if-expr-arm", atLeast: 2, want: "5|", src: `
-function main(): i32 { var c: boolean = true; var x: i32 = (if (c) { ((): i32 => { return 5; })() } else { 2 }); return x; }
+function main(): i32 { let c: boolean = true; let x: i32 = (if (c) { ((): i32 => { return 5; })() } else { 2 }); return x; }
 `},
 	{name: "scalar-calls", atLeast: 3, want: "15|", src: `
 function add(a: i32, b: i32): i32 { return a + b; }
 function total(xs: i32[]): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for x in xs { t = add(t, x); }
     return t;
 }
@@ -627,8 +627,8 @@ function main(): i32 { return total([1, 2, 3, 4, 5]); }
 	// whose result the checker left unknown refused the body that named it.
 	{name: "a-chr-result-types-its-binding", atLeast: 1, want: "16|", wasm: "out-of-range|", src: `
 function main(): i32 {
-    var a = chr(72);
-    var s = a + chr(105);
+    let a = chr(72);
+    let s = a + chr(105);
     return s.len() * 100 + (s[0] as i32);
 }
 `},
@@ -641,7 +641,7 @@ function label(n: i32): string {
     return "small" + "-past-the-sso-inline-threshold";
 }
 function pick(n: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (n > 3) { _ => { t = n; } }
     match (label(n)) { _ => { t = t + 1; } }
     return t;
@@ -653,10 +653,10 @@ function main(): i32 { return pick(5) * 10 + pick(2); }
 	// than leaving the binding with a bare `Option`.
 	{name: "an-option-array-literal-settles-from-any-element", atLeast: 2, want: "104|", src: `
 function total(c: i32): i32 {
-    var a = [Some(1), Some(2), None];
-    var n: i32 = 0;
+    let a = [Some(1), Some(2), None];
+    let n: i32 = 0;
     for o in a { match (o) { Some(x) => { n = n + x; }, None => {} } }
-    var b = if (c > 3) { [Some(7), None] } else { [Some(1)] };
+    let b = if (c > 3) { [Some(7), None] } else { [Some(1)] };
     return match (b[0]) { Some(v) => n + v, None => n };
 }
 function main(): i32 { return total(5) * 10 + total(1); }
@@ -671,7 +671,7 @@ function (m: Map[string, i32]) goi(k: string, fallback: i32): i32 {
     return fallback;
 }
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a", 10);
     return m.goi("a", 1) + m.goi("b", 2) * 100;
 }
@@ -683,12 +683,12 @@ function main(): i32 {
 	{name: "a-map-column-of-closures", atLeast: 2, want: "2|", src: `
 import "core/map";
 function run(k: i32): i32 {
-    var tag: string = "t" + "-past-the-sso-inline-threshold";
-    var m: Map[i32, () => i32] = map_new(4);
+    let tag: string = "t" + "-past-the-sso-inline-threshold";
+    let m: Map[i32, () => i32] = map_new(4);
     m = m.insert(1, (): i32 => { return tag.len() + k; });
     m = m.insert(2, (): i32 => { return 7; });
     m = m.insert(1, (): i32 => { return tag.len() * 2 + k; });
-    var got: i32 = 0;
+    let got: i32 = 0;
     match (m.get(1)) { Some(f) => { got = f(); }, None => { got = 0 - 1; } }
     let (rest, had) = m.without(2);
     if (!had || rest.len() != 1) { return 0 - 2; }
@@ -708,9 +708,9 @@ function weight(e: E): i32 {
     return match (e) { V(a, s) => a + s.len(), W(a, s) => a * 100 + s.len() };
 }
 function main(): i32 {
-    var y = flip(flip(V(3, "abc")));
-    var z = W(5, "k" + "-past-the-sso-inline-threshold");
-    var keep = z;
+    let y = flip(flip(V(3, "abc")));
+    let z = W(5, "k" + "-past-the-sso-inline-threshold");
+    let keep = z;
     z = flip(z);
     return weight(y) + weight(z) + weight(keep) % 7;
 }
@@ -719,7 +719,7 @@ function main(): i32 {
 function grown(own xs: i32[]): i32[] { return xs.append(9); }
 function span(xs: i32[]): i32 { return xs.len(); }
 function main(): i32 {
-    var ys: i32[] = grown([1, 2, 3]);
+    let ys: i32[] = grown([1, 2, 3]);
     return span(ys);
 }
 `},
@@ -728,7 +728,7 @@ struct Row { name: string, n: i32 }
 function greet(r: Row): string { return "hi " + r.name; }
 function mk(n: i32): Row { return Row { name: "row", n: n }; }
 function main(): i32 {
-    var r: Row = mk(7);
+    let r: Row = mk(7);
     print(greet(r) + "\n");
     return r.n;
 }
@@ -739,7 +739,7 @@ function area(s: Shape): i32 {
     match (s) { Dot => { return 0; }, Line(n) => { return n; }, Box(w, h) => { return w * h; } }
 }
 function total(ss: Shape[]): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     for s in ss { t = t + area(s); }
     return t;
 }
@@ -748,12 +748,12 @@ function main(): i32 { return total([Dot, Line(3), Box(4, 5)]); }
 	{name: "map-and-string-keys", atLeast: 3, want: "1|", src: `
 import "core/map";
 function tally(words: string[]): Map[string, i32] {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     for w in words { m = m.insert(w, 1); }
     return m;
 }
 function seen(words: string[], k: string): i32 {
-    var m: Map[string, i32] = tally(words);
+    let m: Map[string, i32] = tally(words);
     if (m.has(k)) { return 1; }
     return 0;
 }
@@ -767,33 +767,33 @@ function main(): i32 { return seen(["a", "b"], "b") + seen(["a", "b"], "z"); }
 	{name: "map-column-snapshot", atLeast: 4, want: "30|", src: `
 import "core/map";
 function str_keys(n: i32): i32 {
-    var ks: string[] = [];
+    let ks: string[] = [];
     {
-        var m: Map[string, i32] = map_new(4);
+        let m: Map[string, i32] = map_new(4);
         m = m.insert("alpha", 1);
         m = m.insert("beta", 2);
         ks = m.keys();
     }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for k in ks { t = t + k.len(); }
     return t;
 }
 function str_values(n: i32): i32 {
-    var vs: string[] = [];
+    let vs: string[] = [];
     {
-        var m: Map[i32, string] = map_new(4);
+        let m: Map[i32, string] = map_new(4);
         m = m.insert(1, "one");
         vs = m.values();
     }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for v in vs { t = t + v.len(); }
     return t;
 }
 function i32_keys(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(4);
+    let m: Map[i32, i32] = map_new(4);
     m = m.insert(7, 1);
     m = m.insert(9, 2);
-    var t: i32 = 0;
+    let t: i32 = 0;
     for k in m.keys() { t = t + k; }
     return t + m.len();
 }
@@ -816,7 +816,7 @@ function main(): i32 { return str_keys(0) + str_values(0) + i32_keys(0); }
 struct Holder { f: (i32) => i32 }
 
 function make(n: i32): Holder {
-    var xs: i32[] = [n, n + 1, n + 2];
+    let xs: i32[] = [n, n + 1, n + 2];
     return Holder { f: (x: i32): i32 => { return x + xs[0] + xs[2]; } };
 }
 
@@ -825,10 +825,10 @@ function apply(h: Holder): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var h: Holder = make(i);
+        let h: Holder = make(i);
         t = t + apply(h) % 3;
         i = i + 1;
     }
@@ -846,8 +846,8 @@ struct Xyz { n: i32, valid: boolean }
 function gen(): boolean { return true; }
 function mk(n: i32): Xyz { return Xyz { n: n, valid: true }; }
 function main(): i32 {
-    var v: boolean = (if (true) { gen() } else { false });
-    var x: Xyz = (if (v) { mk(3) } else { Xyz { n: 4, valid: false } });
+    let v: boolean = (if (true) { gen() } else { false });
+    let x: Xyz = (if (v) { mk(3) } else { Xyz { n: 4, valid: false } });
     return x.n;
 }`},
 	// A match-expression whose FIRST arm is itself a match-expression, both
@@ -874,12 +874,12 @@ function (o: Opt[T]) or_else(d: T): T { match (o) { Sm(x) => { return x; }, Nn =
 function (o: Opt[T]) swap[U](other: Opt[U]): Opt[U] { match (o) { Sm(x) => { return other; }, Nn => { return Nn; } } }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var s: Opt[string] = Sm("round " + i.to_string());
-        var n: Opt[i32] = s.swap(Sm(i));
-        var e: Opt[string] = Nn;
+        let s: Opt[string] = Sm("round " + i.to_string());
+        let n: Opt[i32] = s.swap(Sm(i));
+        let e: Opt[string] = Nn;
         if (s == e) { t = t + 100; }
         if (s == s.swap(Sm("round " + i.to_string()))) { t = t + 1; }
         t = t + n.or_else(1) + s.or_else("").len();
@@ -896,13 +896,13 @@ function main(): i32 {
 import "std/result";
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var r: Result[i32, string] = Ok(i);
-        var s: Result[string, string] = r.and(Ok("vw"));
-        var e: Result[i32, string] = Err("no");
-        var f: Result[string, string] = e.and(Ok("xyz"));
+        let r: Result[i32, string] = Ok(i);
+        let s: Result[string, string] = r.and(Ok("vw"));
+        let e: Result[i32, string] = Err("no");
+        let f: Result[string, string] = e.and(Ok("xyz"));
         t = t + s.unwrap_or("").len() + f.unwrap_or("q").len() + r.unwrap_or(0);
         i = i + 1;
     }
@@ -915,15 +915,15 @@ function main(): i32 {
 enum Opt[T] { Sm(T), Nn }
 
 function (o: Opt[T]) get_or(d: T): T {
-    var t: Opt[T] = o;
+    let t: Opt[T] = o;
     match (t) { Sm(x) => { return x; }, Nn => { return d; } }
 }
 
 function main(): i32 {
-    var o: Opt[(i32, i32)] = Sm((3, 4));
-    var n: Opt[(i32, i32)] = Nn;
-    var p: (i32, i32) = o.get_or((0, 0));
-    var q: (i32, i32) = n.get_or((1, 1));
+    let o: Opt[(i32, i32)] = Sm((3, 4));
+    let n: Opt[(i32, i32)] = Nn;
+    let p: (i32, i32) = o.get_or((0, 0));
+    let q: (i32, i32) = n.get_or((1, 1));
     return p.0 + p.1 + q.0 + q.1;
 }`},
 	// The same enum used at a simple key AND a tuple key in one module: two
@@ -936,10 +936,10 @@ function (o: Opt[T]) get_or(d: T): T {
 }
 
 function main(): i32 {
-    var a: Opt[i32] = Sm(3);
-    var b: Opt[(i32, i32)] = Sm((1, 2));
-    var n: Opt[i32] = Nn;
-    var p: (i32, i32) = b.get_or((5, 5));
+    let a: Opt[i32] = Sm(3);
+    let b: Opt[(i32, i32)] = Sm((1, 2));
+    let n: Opt[i32] = Nn;
+    let p: (i32, i32) = b.get_or((5, 5));
     return a.get_or(9) * 10 + n.get_or(4) + p.0 + p.1;
 }`},
 	// The inferred spelling of a tuple key, bound and matched inline. The
@@ -953,9 +953,9 @@ function (o: Opt[T]) get_or(d: T): T {
 }
 
 function main(): i32 {
-    var o = Sm((3, 4));
-    var p: (i32, i32) = o.get_or((0, 0));
-    var q: i32 = 0;
+    let o = Sm((3, 4));
+    let p: (i32, i32) = o.get_or((0, 0));
+    let q: i32 = 0;
     match (Sm((5, 6))) { Sm(t) => { q = t.0 + t.1; }, Nn => { q = 0; } }
     return p.0 + p.1 + q - 18;
 }
@@ -964,23 +964,23 @@ function main(): i32 {
 	// is the one that records the instance.
 	{name: "generic-enum-tuple-key-matched-inline-only", atLeast: 1, want: "0|", src: `
 enum Opt[T] { Sm(T), Nn }
-function main(): i32 { var q: i32 = 0; match (Sm((5, 6))) { Sm(t) => { q = t.0 + t.1; }, Nn => { q = 0; } } return q - 11; }
+function main(): i32 { let q: i32 = 0; match (Sm((5, 6))) { Sm(t) => { q = t.0 + t.1; }, Nn => { q = 0; } } return q - 11; }
 `},
 	// The type parameter bound from a later field, with a tuple first: the key
 	// and its spelling must both come from the field that binds T, not from
 	// the first argument.
 	{name: "generic-enum-bound-from-a-later-field", atLeast: 1, want: "0|", src: `
 enum Opt[T] { Sm((i32, i32), T), Nn }
-function main(): i32 { var o = Sm((1, 2), 3); var q: i32 = 0; match (o) { Sm(_, t) => { q = t; }, Nn => { q = 0; } } return q - 3; }
+function main(): i32 { let o = Sm((1, 2), 3); let q: i32 = 0; match (o) { Sm(_, t) => { q = t; }, Nn => { q = 0; } } return q - 3; }
 `},
 	{name: "generic-enum-bound-from-a-later-field-matched-inline", atLeast: 1, want: "0|", src: `
 enum Opt[T] { Sm((i32, i32), T), Nn }
-function main(): i32 { var q: i32 = 0; match (Sm((1, 2), 3)) { Sm(p, t) => { q = t + p.0; }, Nn => { q = 0; } } return q - 4; }
+function main(): i32 { let q: i32 = 0; match (Sm((1, 2), 3)) { Sm(p, t) => { q = t + p.0; }, Nn => { q = 0; } } return q - 4; }
 `},
 	{name: "generic-enum-bound-from-a-later-field-after-a-function", atLeast: 3, want: "0|", src: `
 enum Opt[T] { Sm((i32) => i32, T), Nn }
 function inc(x: i32): i32 { return x + 1; }
-function main(): i32 { var o = Sm(inc, 3); var q: i32 = 0; match (o) { Sm(f, t) => { q = f(t); }, Nn => { q = 0; } } return q - 4; }
+function main(): i32 { let o = Sm(inc, 3); let q: i32 = 0; match (o) { Sm(f, t) => { q = f(t); }, Nn => { q = 0; } } return q - 4; }
 `},
 	// A tuple key holding an array and a nested tuple with a string: the clone
 	// is `Opt__tup_i32_arr_tup_i32_string`, and its payload's counted parts are
@@ -993,13 +993,13 @@ function (o: Opt[T]) get_or(d: T): T {
 }
 
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var o: Opt[(i32[], (i32, string))] = Sm(([i, 2], (3, "four")));
-        var n: Opt[(i32[], (i32, string))] = Nn;
-        var p: (i32[], (i32, string)) = o.get_or(([0], (0, "")));
-        var q: (i32[], (i32, string)) = n.get_or(([7], (1, "x")));
+        let o: Opt[(i32[], (i32, string))] = Sm(([i, 2], (3, "four")));
+        let n: Opt[(i32[], (i32, string))] = Nn;
+        let p: (i32[], (i32, string)) = o.get_or(([0], (0, "")));
+        let q: (i32[], (i32, string)) = n.get_or(([7], (1, "x")));
         total = total + p.0.len() + p.0[1] + p.1.0 + p.1.1.len() + q.0[0] + q.1.1.len();
         i = i + 1;
     }
@@ -1011,9 +1011,9 @@ function main(): i32 {
 enum Opt[T] { Sm(T), Nn }
 
 function main(): i32 {
-    var a: Opt[i32] = Sm(3);
-    var b: Opt[(i32, i32)] = Sm((1, 2));
-    var x: i32 = 0;
+    let a: Opt[i32] = Sm(3);
+    let b: Opt[(i32, i32)] = Sm((1, 2));
+    let x: i32 = 0;
     match (a) { Sm(n) => { x = n; }, Nn => { x = 0; } }
     match (b) { Sm(p) => { x = x + p.0 + p.1; }, Nn => { } }
     return x;
@@ -1043,8 +1043,8 @@ function capturing(i: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         t = t + plain(i) + capturing(i);
         i = i + 1;
@@ -1061,11 +1061,11 @@ function main(): i32 {
 	// released.
 	{name: "lambda-returns-a-lambda-from-a-lambda", atLeast: 5, want: "63|", src: `
 function main(): i32 {
-    var mk = (): ((i32) => i32) => { return (x: i32): i32 => x * 2; };
-    var mk2 = (): (i32) => i32 => { return (x: i32): i32 => x + 3; };
-    var f = mk();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let mk = (): ((i32) => i32) => { return (x: i32): i32 => x * 2; };
+    let mk2 = (): (i32) => i32 => { return (x: i32): i32 => x + 3; };
+    let f = mk();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         t = t + f(i) + mk2()(i);
         i = i + 1;
@@ -1078,12 +1078,12 @@ function main(): i32 {
 	// branch return is pinned here on every leg.
 	{name: "capturing-lambda-returned-from-a-branch-of-a-lambda", atLeast: 4, want: "33|", src: `
 function main(): i32 {
-    var pick = (flag: boolean, n: i32): (i32) => i32 => {
+    let pick = (flag: boolean, n: i32): (i32) => i32 => {
         if (flag) { return (x: i32): i32 => x + n; }
         return (x: i32): i32 => x * 2;
     };
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         t = t + pick(i % 2 == 0, i)(3);
         i = i + 1;
@@ -1097,18 +1097,18 @@ function main(): i32 {
 function give(x: i32, cb: (i32) => i32): i32 { return cb(x); }
 
 function main(): i32 {
-    var bound = (): i32 => {
+    let bound = (): i32 => {
         use n <- give(41);
         return n + 1;
     };
-    var tail = (x: i32) => { var y: i32 = x + 1; y * 2 };
+    let tail = (x: i32) => { let y: i32 = x + 1; y * 2 };
     return bound() + tail(3);
 }`},
 	{name: "value-match-first-arm-is-a-match-of-lambdas", atLeast: 8, want: "42|", src: `
 enum Status { Active, Inactive, Pending }
 function main(): i32 {
-    var v0: Status = Pending;
-    var f: (i32) => i32 = (match (v0) {
+    let v0: Status = Pending;
+    let f: (i32) => i32 = (match (v0) {
         Active => (match (v0) { Active => ((d: i32) => d), Inactive => ((e: i32) => e - 1), Pending => ((g: i32) => g + 1) }),
         Inactive => ((c: i32) => c * 2),
         Pending => ((h: i32) => h + 40)
@@ -1116,17 +1116,17 @@ function main(): i32 {
     return f(2);
 }`},
 	// A view local rebound in a loop, starting from a view that stays live.
-	// Retaining a view is refused (#9802), so `var v: str = s` makes v a fresh
+	// Retaining a view is refused (#9802), so `let v: str = s` makes v a fresh
 	// view of s's bytes, and the loop's phi takes it by move. The AST lowering
 	// leaks the boxes.
 	{name: "view-loop-rebinds-a-live-view", atLeast: 1, want: "14|", src: `
 function main(): i32 {
-    var t: string = "abcde" + "fghij";
-    var s: str = slice_unchecked(t, 0, 5);
-    var v: str = s;
-    var i: i32 = 0;
+    let t: string = "abcde" + "fghij";
+    let s: str = slice_unchecked(t, 0, 5);
+    let v: str = s;
+    let i: i32 = 0;
     while (i < 3) { v = slice_unchecked(t, 5, 10); i = i + 1; }
-    var u: string = "xyz" + "w";
+    let u: string = "xyz" + "w";
     return v.len() + s.len() + u.len();
 }`},
 	// The same loop starting from a borrowed parameter: the phi merges the
@@ -1134,16 +1134,16 @@ function main(): i32 {
 	// fresh view of the parameter.
 	{name: "view-loop-rebinds-a-view-parameter", atLeast: 2, want: "202|", wasm: "out-of-range|", src: `
 function walk(p: str, n: i32): i32 {
-    var v: str = p;
-    var i: i32 = 0;
+    let v: str = p;
+    let i: i32 = 0;
     while (i < n) { v = slice_unchecked(p, 1, p.len()); i = i + 1; }
     return v.len() * 10 + p.len();
 }
 
 function main(): i32 {
-    var t: string = "abcdef" + "g";
-    var total: i32 = 0;
-    var k: i32 = 0;
+    let t: string = "abcdef" + "g";
+    let total: i32 = 0;
+    let k: i32 = 0;
     while (k < 20) { total = total + walk(slice_unchecked(t, 0, 5), k % 3); k = k + 1; }
     return total % 256;
 }`},
@@ -1152,19 +1152,19 @@ function main(): i32 {
 	// the same bytes, so the source's rebinding releases nothing it reads.
 	{name: "a-view-alias-outlives-its-rebound-source", atLeast: 2, want: "21|", src: `
 function pick(t: string, k: i32): i32 {
-    var a: str = slice_unchecked(t, 0, 3);
-    var b: str = a;
+    let a: str = slice_unchecked(t, 0, 3);
+    let b: str = a;
     a = slice_unchecked(t, 3, 6);
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n < k) { a = slice_unchecked(t, n, n + 1); n = n + 1; }
     return b.len() * 10 + a.len() + (b[0] as i32) - 97;
 }
 
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 25) {
-        var t: string = "abcdefg" + "hij";
+        let t: string = "abcdefg" + "hij";
         total = total + pick(t, i % 4);
         i = i + 1;
     }
@@ -1176,45 +1176,45 @@ function main(): i32 {
 	// no view the result still holds.
 	{name: "a-view-yielded-by-an-if-arm-outlives-its-rebound-source", atLeast: 2, want: "17|", src: `
 function pick(t: string, k: i32): i32 {
-    var a: str = slice_unchecked(t, 0, 3);
-    var n: i32 = 0;
-    var b: str = if (k > 1) { a } else { slice_unchecked(t, 1, 2) };
+    let a: str = slice_unchecked(t, 0, 3);
+    let n: i32 = 0;
+    let b: str = if (k > 1) { a } else { slice_unchecked(t, 1, 2) };
     while (n < k) { a = slice_unchecked(t, n, n + 1); n = n + 1; }
     return b.len() * 10 + a.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
-    while (i < 25) { var t: string = "abcdefg" + "hij"; total = total + pick(t, i % 4); i = i + 1; }
+    let total: i32 = 0;
+    let i: i32 = 0;
+    while (i < 25) { let t: string = "abcdefg" + "hij"; total = total + pick(t, i % 4); i = i + 1; }
     return total % 256;
 }`},
 	{name: "a-view-yielded-by-a-match-arm-outlives-its-rebound-source", atLeast: 2, want: "157|", wasm: "out-of-range|", src: `
 function pick(t: string, k: i32): i32 {
-    var a: str = slice_unchecked(t, 0, 3);
-    var n: i32 = 0;
-    var b: str = match (k) { 0 => a, 1 => slice_unchecked(t, 1, 2), _ => a };
+    let a: str = slice_unchecked(t, 0, 3);
+    let n: i32 = 0;
+    let b: str = match (k) { 0 => a, 1 => slice_unchecked(t, 1, 2), _ => a };
     while (n < k) { a = slice_unchecked(t, n, n + 1); n = n + 1; }
     return b.len() * 10 + a.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
-    while (i < 25) { var t: string = "abcdefg" + "hij"; total = total + pick(t, i % 4); i = i + 1; }
+    let total: i32 = 0;
+    let i: i32 = 0;
+    while (i < 25) { let t: string = "abcdefg" + "hij"; total = total + pick(t, i % 4); i = i + 1; }
     return total % 256;
 }`},
 	// A loop variable over a view array rebinds a view declared outside it.
 	{name: "a-for-over-views-rebinds-an-outer-view", atLeast: 2, want: "125|", src: `
 function longest(ws: str[]): i32 {
-    var best: str = "";
+    let best: str = "";
     for w in ws { if (w.len() > best.len()) { best = w; } }
     return best.len();
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 25) {
-        var t: string = "abcdefg" + "hij";
-        var ws: str[] = [slice_unchecked(t, 0, 2), slice_unchecked(t, 2, 7), slice_unchecked(t, 1, 4)];
+        let t: string = "abcdefg" + "hij";
+        let ws: str[] = [slice_unchecked(t, 0, 2), slice_unchecked(t, 2, 7), slice_unchecked(t, 1, 4)];
         total = total + longest(ws);
         i = i + 1;
     }
@@ -1227,11 +1227,11 @@ function main(): i32 {
 struct TA { w: i32, s: string }
 struct Blk { id: i32, xs: TA[] }
 function main(): i32 {
-    var blocks: Blk[] = [Blk { id: 1, xs: [] }, Blk { id: 2, xs: [TA { w: 1, s: "a" }] }];
-    var out: Blk[] = [];
+    let blocks: Blk[] = [Blk { id: 1, xs: [] }, Blk { id: 2, xs: [TA { w: 1, s: "a" }] }];
+    let out: Blk[] = [];
     for b in blocks {
         if (b.id == 2) {
-            var xs: TA[] = b.xs.append(TA { w: 2, s: "b" + "c" }).append(TA { w: 3, s: "d" });
+            let xs: TA[] = b.xs.append(TA { w: 2, s: "b" + "c" }).append(TA { w: 3, s: "d" });
             b = Blk { ...b, xs: xs };
         }
         out = out.append(b);
@@ -1240,7 +1240,7 @@ function main(): i32 {
 }
 `},
 	// The same phi as the row above, with a LITERAL on the entry edge rather
-	// than a live view — the `var spec: str = ""; … spec = slice_unchecked(…)`
+	// than a live view — the `let spec: str = ""; … spec = slice_unchecked(…)`
 	// that `std/format`'s two refused functions are both built on. Produced as
 	// a `string` and retagged by `widen`, the literal is a borrow, and the
 	// phi could only be supplied on that edge by retaining a view; a literal
@@ -1249,19 +1249,19 @@ function main(): i32 {
 	// lowering strands every view box it makes (3240 bytes in 135 blocks).
 	{name: "a-string-literal-is-already-a-view", atLeast: 4, want: "68|", wasm: "out-of-range|", src: `
 function span(fmt: string, take: boolean): i32 {
-    var spec: str = "";
+    let spec: str = "";
     if (take) { spec = slice_unchecked(fmt, 1, 4); }
-    var sum: i32 = spec.len();
-    var k: i32 = 0;
+    let sum: i32 = spec.len();
+    let k: i32 = 0;
     while (k < spec.len()) { sum = sum + (spec[k] as i32); k = k + 1; }
     return sum;
 }
 
 function rounds(fmt: string, n: i32): i32 {
-    var out: i32 = 0;
-    var i: i32 = 0;
+    let out: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var spec: str = "";
+        let spec: str = "";
         if (i % 3 != 0) { spec = slice_unchecked(fmt, 0, i % 5); }
         out = out + spec.len();
         i = i + 1;
@@ -1272,12 +1272,12 @@ function rounds(fmt: string, n: i32): i32 {
 function width(s: str): i32 { return s.len(); }
 
 function main(): i32 {
-    var fmt: string = "abcdefgh" + "ijkl";
-    var many: str[] = ["", "ab", "cde"];
-    var total: i32 = span(fmt, true) + span(fmt, false) + rounds(fmt, 200);
+    let fmt: string = "abcdefgh" + "ijkl";
+    let many: str[] = ["", "ab", "cde"];
+    let total: i32 = span(fmt, true) + span(fmt, false) + rounds(fmt, 200);
     total = total + width("wxyz");
     for m in many { total = total + m.len(); }
-    var last: str = "";
+    let last: str = "";
     if (total > 0) { last = slice_unchecked(fmt, 2, 6); }
     return total + last.len();
 }`},
@@ -1292,22 +1292,22 @@ trait Shout { function shout(self: Self): string; }
 impl Shout for str { function shout(self: Self): string { return self + "!"; } }
 function loud[T: Shout](x: T): string { return x.shout() + x.shout(); }
 function all(xs: str[]): string {
-    var out: string = "";
+    let out: string = "";
     for x in xs { out = out + x.shout(); }
     return out;
 }
 function main(): i32 {
-    var owned: string = "ab" + "cd";
-    var s: str = slice_unchecked(owned, 1, 3);
-    var xs: str[] = [slice_unchecked(owned, 0, 1), s];
+    let owned: string = "ab" + "cd";
+    let s: str = slice_unchecked(owned, 1, 3);
+    let xs: str[] = [slice_unchecked(owned, 0, 1), s];
     print(s.shout() + " " + loud(s) + " " + "yz".shout() + " " + all(xs) + "\n");
     return s.shout().len();
 }`},
 	{name: "an-inherent-method-on-str", atLeast: 2, want: "4|bcbc xyxy\n\n", src: `
 impl str { function twice(self: str): string { return self + self; } }
 function main(): i32 {
-    var owned: string = "ab" + "cd";
-    var s: str = slice_unchecked(owned, 1, 3);
+    let owned: string = "ab" + "cd";
+    let s: str = slice_unchecked(owned, 1, 3);
     print(s.twice() + " " + "xy".twice() + "\n");
     return s.twice().len();
 }`},
@@ -1327,8 +1327,8 @@ function main(): i32 {
 import "core/map";
 
 function sum_values(m: Map[string, i32]): i32 {
-    var total: i32 = 0;
-    var it: MapIter[string, i32] = m.iter();
+    let total: i32 = 0;
+    let it: MapIter[string, i32] = m.iter();
     while (it.has_next()) {
         total = total + it.value() + it.key().len();
         it.advance();
@@ -1337,10 +1337,10 @@ function sum_values(m: Map[string, i32]): i32 {
 }
 
 function longest(m: Map[string, string]): i32 {
-    var best: i32 = 0;
-    var it: MapIter[string, string] = m.iter();
+    let best: i32 = 0;
+    let it: MapIter[string, string] = m.iter();
     while (it.has_next()) {
-        var v: string = it.value();
+        let v: string = it.value();
         if (v.len() > best) { best = v.len(); }
         it.advance();
     }
@@ -1348,10 +1348,10 @@ function longest(m: Map[string, string]): i32 {
 }
 
 function rounds(m: Map[string, i32], n: i32): i32 {
-    var out: i32 = 0;
-    var i: i32 = 0;
+    let out: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
-        var it: MapIter[string, i32] = m.iter();
+        let it: MapIter[string, i32] = m.iter();
         while (it.has_next()) { out = out + it.value(); it.advance(); }
         i = i + 1;
     }
@@ -1359,32 +1359,32 @@ function rounds(m: Map[string, i32], n: i32): i32 {
 }
 
 function narrow_keys(m: Map[i32, i32]): i32 {
-    var total: i32 = 0;
-    var it: MapIter[i32, i32] = m.iter();
+    let total: i32 = 0;
+    let it: MapIter[i32, i32] = m.iter();
     while (it.has_next()) { total = total + it.key() * it.value(); it.advance(); }
     return total;
 }
 
 function narrow_key_str_value(m: Map[i32, string]): i32 {
-    var total: i32 = 0;
-    var it: MapIter[i32, string] = m.iter();
+    let total: i32 = 0;
+    let it: MapIter[i32, string] = m.iter();
     while (it.has_next()) { total = total + it.key() + it.value().len(); it.advance(); }
     return total;
 }
 
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("aa", 1);
     m = m.insert("bbb", 2);
     m = m.insert("cccc", 4);
-    var t: Map[string, string] = map_new(4);
+    let t: Map[string, string] = map_new(4);
     t = t.insert("k", "vvvvv");
     t = t.insert("kk", "vv");
-    var empty: Map[string, i32] = map_new(4);
-    var a: Map[i32, i32] = map_new(4);
+    let empty: Map[string, i32] = map_new(4);
+    let a: Map[i32, i32] = map_new(4);
     a = a.insert(2, 5);
     a = a.insert(3, 7);
-    var b: Map[i32, string] = map_new(4);
+    let b: Map[i32, string] = map_new(4);
     b = b.insert(10, "xyz");
     b = b.insert(20, "pq");
     return sum_values(m) + longest(t) + rounds(m, 50) + sum_values(empty)
@@ -1424,15 +1424,15 @@ function pick(n: i32): i32 {
 }
 
 function words(ws: string[]): i32 {
-    var out: string[] = iter.to_array(iter.of(ws));
-    var sum: i32 = 0;
+    let out: string[] = iter.to_array(iter.of(ws));
+    let sum: i32 = 0;
     for w in out { sum = sum + w.len(); }
     return sum;
 }
 
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         total = total + pick(i % 20);
         total = total + tail([i, i + 1, i + 2]);
@@ -1456,8 +1456,8 @@ function main(): i32 {
 import "std/ndarray" as ndarray;
 
 function main(): i32 {
-    var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
-    var m: ndarray.NdArray[i32] = a.transpose().map((x: i32): i32 => x * 2);
+    let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
+    let m: ndarray.NdArray[i32] = a.transpose().map((x: i32): i32 => x * 2);
     return m.get([1, 1]);
 }`},
 	// The sibling root, one layer in. `map_rank[T, U](k: i32, f: (NdArray[T])
@@ -1479,8 +1479,8 @@ function sum_cell(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
 }
 
 function main(): i32 {
-    var a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
-    var sums: ndarray.NdArray[i32] = a.map_rank(1, sum_cell);
+    let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+    let sums: ndarray.NdArray[i32] = a.map_rank(1, sum_cell);
     return sums.get([1]);
 }`},
 	// The struct monomorphiser mangled every type spelling on a declaration —
@@ -1492,7 +1492,7 @@ function main(): i32 {
 	// argument, the callable's parameter typed as the bare `Slot`, and the
 	// call of `f` refused `call argument type` — taking the whole module with
 	// it. `mg_ty` now covers both, at every site the pass rewrites a
-	// declaration, a lambda, a `var`, or a struct field.
+	// declaration, a lambda, a `let`, or a struct field.
 	//
 	// Both callback shapes are here deliberately: a named function and a
 	// lambda reach the slot by different routes, and `U = string` over
@@ -1511,9 +1511,9 @@ function label(s: Slot[i32]): Slot[string] {
 }
 
 function main(): i32 {
-    var a: Slot[i32] = Slot[i32] { v: 7 };
-    var b: Slot[string] = a.through(label);
-    var c: Slot[string] = a.through((s: Slot[i32]): Slot[string] => Slot[string] { v: "lam" });
+    let a: Slot[i32] = Slot[i32] { v: 7 };
+    let b: Slot[string] = a.through(label);
+    let c: Slot[string] = a.through((s: Slot[i32]): Slot[string] => Slot[string] { v: "lam" });
     print(b.v + "/" + c.v);
     return b.v.len();
 }`},
@@ -1537,7 +1537,7 @@ function main(): i32 {
 	// value of matching arity, taking every test in the file with it (#9940).
 	{name: "an-ascription-names-a-destination", atLeast: 3, want: "27|", src: `
 function total(xs: i32[]): i32 {
-    var s: i32 = 0;
+    let s: i32 = 0;
     for x in xs { s = s + x; }
     return s;
 }
@@ -1547,10 +1547,10 @@ function widen(n: i32): i32 {
 }
 
 function main(): i32 {
-    var empty: i32[] = [] as i32[];
-    var held: i32[] = [4, 5] as i32[];
-    var opt: Option[i32] = None as Option[i32];
-    var seen: i32 = 0;
+    let empty: i32[] = [] as i32[];
+    let held: i32[] = [4, 5] as i32[];
+    let opt: Option[i32] = None as Option[i32];
+    let seen: i32 = 0;
     match (opt) { Some(v) => { seen = v; }, None => { seen = 1; } }
     return total(empty) + total(held) + total([6, 7] as i32[]) + widen(260) + seen;
 }`},
@@ -1572,13 +1572,13 @@ function main(): i32 {
 import "std/array" as array;
 
 function main(): i32 {
-    var words: string[] = ["a", "b", "c"];
-    var joined: string = words.join_with_last(", ", " and ");
-    var ns: i32[] = [3, 1, 4, 1, 5];
-    var sums: i32[] = ns.cumsum();
-    var pos: boolean = ns.every_positive();
+    let words: string[] = ["a", "b", "c"];
+    let joined: string = words.join_with_last(", ", " and ");
+    let ns: i32[] = [3, 1, 4, 1, 5];
+    let sums: i32[] = ns.cumsum();
+    let pos: boolean = ns.every_positive();
     print(joined);
-    var last: i32 = sums[sums.len() - 1];
+    let last: i32 = sums[sums.len() - 1];
     if (!pos) { return 0; }
     return joined.len() + last;
 }`},
@@ -1611,7 +1611,7 @@ function hold[T](tok: i32, next: Box[T]): Box[T] {
 }
 
 function main(): i32 {
-    var b: Box[i32] = hold(3, Now(7));
+    let b: Box[i32] = hold(3, Now(7));
     match (b) {
         Now(v) => { return v; },
         Later(t, k) => { return t + 100; }
@@ -1628,7 +1628,7 @@ function main(): i32 {
 	//
 	// Written in the `[T]` slice-view spelling because that is what the
 	// language has: `all[1:3]` is a borrowed window, not an owned `T[]`, and
-	// native rejects both `var mid: string[] = all[1:3]` (E003) and returning
+	// native rejects both `let mid: string[] = all[1:3]` (E003) and returning
 	// one out of the frame that owns its storage (E063). The answer here,
 	// 19, is native's.
 	//
@@ -1641,23 +1641,23 @@ function main(): i32 {
 	// `conformance/cases/slice_views` went 0 of 111 to 111 of 111 on this.
 	{name: "a-slice-retains-the-elements-it-copied", atLeast: 3, want: "19|beta/gamma\n", src: `
 function total(ws: [string]) : i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for w in ws { n = n + w.len(); }
     return n;
 }
 
 function widths(rs: [i32[]]): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for r in rs { n = n + r.len(); }
     return n;
 }
 
 function main(): i32 {
-    var all: string[] = ["alpha", "beta", "gamma", "delta"];
-    var mid: [string] = all[1:3];
+    let all: string[] = ["alpha", "beta", "gamma", "delta"];
+    let mid: [string] = all[1:3];
     print(mid[0] + "/" + mid[1]);
-    var grid: i32[][] = [[1], [2, 2], [3, 3, 3]];
-    var tail: [i32[]] = grid[1:3];
+    let grid: i32[][] = [[1], [2, 2], [3, 3, 3]];
+    let tail: [i32[]] = grid[1:3];
     return total(mid) + widths(tail) + all[3].len();
 }`},
 	// Two levels of value-position if, the inner arm a boolean call. The
@@ -1670,8 +1670,8 @@ function main(): i32 {
 function gen(): boolean { return true; }
 function pick(n: i32): boolean { return n > 2; }
 function main(): i32 {
-    var v: boolean = (if (pick(3)) { (if (pick(1)) { gen() } else { pick(5) }) } else { pick(0) });
-    var w: boolean = (if (pick(3)) { (if (pick(4)) { gen() } else { false }) } else { false });
+    let v: boolean = (if (pick(3)) { (if (pick(1)) { gen() } else { pick(5) }) } else { pick(0) });
+    let w: boolean = (if (pick(3)) { (if (pick(4)) { gen() } else { false }) } else { false });
     return (if (v) { 3 } else { 4 }) + (if (w) { 10 } else { 20 });
 }`},
 	// A hoisted lambda whose author annotation a bare literal adapts to: the
@@ -1681,7 +1681,7 @@ function main(): i32 {
 	{name: "annotated-lambda-literal-body", atLeast: 3, want: "7|", src: `
 function apply(f: (i32) => u8, n: i32): u8 { return f(n); }
 function main(): i32 {
-    var r: u8 = apply(((x: i32): u8 => 5), 1);
+    let r: u8 = apply(((x: i32): u8 => 5), 1);
     return (r as i32) + 2;
 }`},
 	// A capturing closure held in a TUPLE and called through the element.
@@ -1693,11 +1693,11 @@ function main(): i32 {
 	// `drop_tuple_fields`; produced, the shape is reclaimed whole.
 	{name: "closure-in-a-tuple", atLeast: 2, want: "6|", src: `
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var xs: i32[] = [i, i + 1, i + 2];
-        var p: ((i32) => i32, i32) = (((x: i32) => x + xs[0] + xs[2]), i);
+        let xs: i32[] = [i, i + 1, i + 2];
+        let p: ((i32) => i32, i32) = (((x: i32) => x + xs[0] + xs[2]), i);
         t = t + (p.0)(1) % 3 + p.1 % 2;
         i = i + 1;
     }
@@ -1714,13 +1714,13 @@ function main(): i32 {
 import "core/map";
 import "std/string";
 function main(): i32 {
-    var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
+    let m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
     m = m.insert(4, 40);
-    var (m2, had) = m.without(2);
-    var t: i32 = 0;
+    let (m2, had) = m.without(2);
+    let t: i32 = 0;
     for (k, v) in m2 { t = t + k * v; }
-    var names: Map[string, i32] = Map { "a": 1, "bb": 2 };
-    var n: i32 = 0;
+    let names: Map[string, i32] = Map { "a": 1, "bb": 2 };
+    let n: i32 = 0;
     for (k2, v2) in names { n = n + k2.len() * v2; }
     return (t % 100) + n;
 }`},
@@ -1734,10 +1734,10 @@ function main(): i32 {
 	// negation is its operand.
 	{name: "value-if-arm-is-a-unary", atLeast: 1, want: "1|", src: `
 function main(): i32 {
-    var big: i64 = 5000000000;
-    var flags: boolean[] = (if (big > 0) { [true, (if (big > 1) { (!false) } else { true })] } else { [false] });
-    var wide: u64[] = (if (flags[1]) { [(if (flags[0]) { (big as u64) } else { (7 as u64) })] } else { [1] });
-    var negs: i64[] = (if (flags[0]) { [(if (flags[1]) { -big } else { -(big + 1) })] } else { [2] });
+    let big: i64 = 5000000000;
+    let flags: boolean[] = (if (big > 0) { [true, (if (big > 1) { (!false) } else { true })] } else { [false] });
+    let wide: u64[] = (if (flags[1]) { [(if (flags[0]) { (big as u64) } else { (7 as u64) })] } else { [1] });
+    let negs: i64[] = (if (flags[0]) { [(if (flags[1]) { -big } else { -(big + 1) })] } else { [2] });
     return ((wide[0] % 1000) as i32) + ((negs[0] % 7) as i32) + (if (flags[1]) { 3 } else { 0 });
 }`},
 	// The binding's annotation types the value block bound to it. A `None`
@@ -1748,10 +1748,10 @@ function main(): i32 {
 	{name: "value-block-takes-its-bindings-type", atLeast: 1, want: "15|", src: `
 struct Pt { x: i32, y: i32 }
 function main(): i32 {
-    var a: Option[i32] = (if (true) { None } else { None });
-    var b: Option[i32] = (if (false) { None } else { Some(5) });
-    var p: Pt = (if (true) { Pt { x: 1, y: 2 } } else { Pt { x: 3, y: 4 } });
-    var n: i32 = 0;
+    let a: Option[i32] = (if (true) { None } else { None });
+    let b: Option[i32] = (if (false) { None } else { Some(5) });
+    let p: Pt = (if (true) { Pt { x: 1, y: 2 } } else { Pt { x: 3, y: 4 } });
+    let n: i32 = 0;
     match (a) { Some(v) => { n = n + v; }, None => { n = n + 7; } }
     match (b) { Some(v) => { n = n + v; }, None => { n = n + 70; } }
     return n + p.x + p.y;
@@ -1765,8 +1765,8 @@ function main(): i32 {
 function id[T](x: T): T { return x; }
 function main(): i32 {
     function some_of(k: i32): Option[i32] { return id(Some(k)); }
-    var none_of: (i32) => Option[i32] = ((x: i32) => None);
-    var n: i32 = 0;
+    let none_of: (i32) => Option[i32] = ((x: i32) => None);
+    let n: i32 = 0;
     match (some_of(9)) { Some(v) => { n = n + v; }, None => { n = n + 1; } }
     match (none_of(9)) { Some(v) => { n = n + v; }, None => { n = n + 20; } }
     return n;
@@ -1778,12 +1778,12 @@ function main(): i32 {
 	// hand-written fn local is.
 	{name: "local-function-returns-a-capturing-lambda", atLeast: 3, want: "5|", src: `
 function main(): i32 {
-    var acc: i32 = 3;
+    let acc: i32 = 3;
     function mk(k: i32): (i32) => i32 { return ((x: i32) => acc + x + k); }
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var f: (i32) => i32 = mk(i);
+        let f: (i32) => i32 = mk(i);
         t = t + f(2) % 7;
         i = i + 1;
     }
@@ -1799,12 +1799,12 @@ function main(): i32 {
 	{name: "literal-argument-typed-from-the-destination", atLeast: 2, want: "78|", src: `
 function id[T](x: T): T { return x; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var xs: i32[] = id([]);
-        var ys: i32[] = id([i, i + 1]);
-        var fs: ((i32) => i32)[] = id([((x: i32) => x + i)]);
+        let xs: i32[] = id([]);
+        let ys: i32[] = id([i, i + 1]);
+        let fs: ((i32) => i32)[] = id([((x: i32) => x + i)]);
         t = t + xs.len() + ys[1] + (fs[0])(2);
         i = i + 1;
     }
@@ -1820,13 +1820,13 @@ function main(): i32 {
 	// round and its box reclaimed.
 	{name: "value-block-of-capturing-lambdas", atLeast: 3, want: "54|", src: `
 function main(): i32 {
-    var base: i32 = 5;
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let base: i32 = 5;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 60) {
-        var k: i32 = i;
-        var f: (i32) => i32 = (if (i % 2 == 0) { ((x: i32) => x + base) } else { ((x: i32) => x * k) });
-        var g: (i32) => i32 = (match (i % 3) { 0 => ((x: i32) => x - base), 1 => ((x: i32) => k), _ => ((x: i32) => x + 1) });
+        let k: i32 = i;
+        let f: (i32) => i32 = (if (i % 2 == 0) { ((x: i32) => x + base) } else { ((x: i32) => x * k) });
+        let g: (i32) => i32 = (match (i % 3) { 0 => ((x: i32) => x - base), 1 => ((x: i32) => k), _ => ((x: i32) => x + 1) });
         t = t + f(2) % 11 + g(3) % 7;
         i = i + 1;
     }
@@ -1841,13 +1841,13 @@ function pick(p: P, base: i32): (i32) => i32 {
     return match (p) { P { a: 0, b } => ((x: i32) => x - base + b), P { a: 1, b } => ((x: i32) => b), _ => ((x: i32) => x + 1) };
 }
 function main(): i32 {
-    var base: i32 = 5;
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let base: i32 = 5;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 60) {
-        var k: i32 = i;
-        var g: (i32) => i32 = (match ((i % 3, 0)) { (0, _) => ((x: i32) => x - base), (1, _) => ((x: i32) => k), _ => ((x: i32) => x + 1) });
-        var h: (i32) => i32 = pick(P { a: i % 3, b: i }, base);
+        let k: i32 = i;
+        let g: (i32) => i32 = (match ((i % 3, 0)) { (0, _) => ((x: i32) => x - base), (1, _) => ((x: i32) => k), _ => ((x: i32) => x + 1) });
+        let h: (i32) => i32 = pick(P { a: i % 3, b: i }, base);
         t = t + g(3) % 7 + h(3) % 5;
         i = i + 1;
     }
@@ -1860,16 +1860,16 @@ function main(): i32 {
 	{name: "value-block-tail-local-struct-array", atLeast: 2, want: "56|", src: `
 struct P { x: i32, y: i32 }
 function main(): i32 {
-    var ps = { var j = 1; var q = match (j) { 1 => [P{x:5,y:6}], _ => [P{x:0,y:0}] }; q };
+    let ps = { let j = 1; let q = match (j) { 1 => [P{x:5,y:6}], _ => [P{x:0,y:0}] }; q };
     return ps[0].x * 10 + ps[0].y;
 }`},
 	{name: "value-block-tail-local-struct", atLeast: 1, want: "29|", src: `
 struct R { name: string, n: i32 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) {
-        var r = { var q = if (i % 2 == 0) { R{name: "a" + "b", n: i} } else { R{name: "c", n: 1} }; q };
+        let r = { let q = if (i % 2 == 0) { R{name: "a" + "b", n: i} } else { R{name: "c", n: 1} }; q };
         t = t + r.n + r.name.len();
         i = i + 1;
     }
@@ -1878,10 +1878,10 @@ function main(): i32 {
 	{name: "value-block-tail-local-owning-struct-array-in-loop", atLeast: 1, want: "39|", src: `
 struct R { name: string, n: i32 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) {
-        var rs = { var q = if (i % 2 == 0) { [R{name: "a" + "b", n: i}] } else { [R{name: "c", n: 1}, R{name: "d", n: 2}] }; q };
+        let rs = { let q = if (i % 2 == 0) { [R{name: "a" + "b", n: i}] } else { [R{name: "c", n: 1}, R{name: "d", n: 2}] }; q };
         t = t + rs[rs.len() - 1].n + rs[0].name.len();
         i = i + 1;
     }
@@ -1897,11 +1897,11 @@ function main(): i32 {
 struct Xyz { n: i32, valid: boolean, tag: string }
 function pick[T](c: boolean, a: T, b: T): T { return if (c) { a } else { b }; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 40) {
-        var v: Xyz = pick(i % 2 == 0, (Xyz { n: i, valid: (if (i % 3 == 0) { pick(true, false, true) } else { true }), tag: "a" + "b" }), (Xyz { n: 1, valid: false, tag: "c" }));
-        var w: Xyz = Xyz { ...v, n: (if (v.valid) { pick(false, 1, 2) } else { 3 }) };
+        let v: Xyz = pick(i % 2 == 0, (Xyz { n: i, valid: (if (i % 3 == 0) { pick(true, false, true) } else { true }), tag: "a" + "b" }), (Xyz { n: 1, valid: false, tag: "c" }));
+        let w: Xyz = Xyz { ...v, n: (if (v.valid) { pick(false, 1, 2) } else { 3 }) };
         t = t + w.n + (if (w.valid) { 10 } else { 0 }) + w.tag.len();
         i = i + 1;
     }
@@ -1919,7 +1919,7 @@ struct Name { first: string, rank: i32 }
 @derive(cmp.Eq, cmp.Hash)
 enum Tag { A(i32), B, C(string) }
 function names(): i32 {
-    var m: Map[Name, i32] = map_new(8);
+    let m: Map[Name, i32] = map_new(8);
     m = m.insert(Name { first: "ada", rank: 1 }, 10);
     m = m.insert(Name { first: "bob", rank: 2 }, 20);
     if (m.get_or(Name { first: "a" + "da", rank: 1 }, 0 - 1) != 10) { return 1; }
@@ -1929,13 +1929,13 @@ function names(): i32 {
     return m.get_or(Name { first: "ada", rank: 1 }, 0 - 1) - 90;
 }
 function tags(): i32 {
-    var em: Map[Tag, i32] = map_new(8);
+    let em: Map[Tag, i32] = map_new(8);
     em = em.insert(A(1), 1);
     em = em.insert(B, 2);
     em = em.insert(C("x" + "y"), 3);
     if (em.get_or(C("xy"), 0) != 3) { return 1; }
     if (em.get_or(A(2), 0 - 1) != 0 - 1) { return 2; }
-    var total: i32 = 0;
+    let total: i32 = 0;
     for (k, v) in em { total = total + v; }
     match (em.get(A(1))) { Some(v) => { if (v != 1) { return 3; } }, None => { return 4; } }
     return total;
@@ -1950,14 +1950,14 @@ import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
 struct Coord { a: i32, b: i32 }
 function ranks(): i32 {
-    var ks: Coord[] = [];
+    let ks: Coord[] = [];
     {
-        var m: Map[Coord, i32] = map_new(2);
-        var i: i32 = 0;
+        let m: Map[Coord, i32] = map_new(2);
+        let i: i32 = 0;
         while (i < 6) { m = m.insert(Coord { a: i, b: i * 2 }, i); i = i + 1; }
         ks = m.keys();
     }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for k in ks { t = t + k.b; }
     return t;
 }
@@ -1974,15 +1974,15 @@ import "core/cmp";
 struct Coord { a: i32, b: i32 }
 struct Box { n: i32, tag: string }
 function boxes(): i32 {
-    var m: Map[Coord, Box] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[Coord, Box] = map_new(4);
+    let i: i32 = 0;
     while (i < 20) { m = m.insert(Coord { a: i, b: i * 2 }, Box { n: i * 10, tag: "v" }); i = i + 1; }
     m = m.insert(Coord { a: 7, b: 14 }, Box { n: 777, tag: "w" });
     if (m.len() != 20) { return 1; }
-    var shared: Map[Coord, Box] = m;
+    let shared: Map[Coord, Box] = m;
     m = m.insert(Coord { a: 99, b: 0 }, Box { n: 1, tag: "z" });
     if (shared.len() != 20 || m.len() != 21) { return 2; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (m.get(Coord { a: 7, b: 14 })) { Some(c) => { t = c.n + c.tag.len(); }, None => { return 3; } }
     for k in shared.keys() { t = t + k.b % 3; }
     return t + shared.get_or(Coord { a: 3, b: 6 }, Box { n: 0, tag: "" }).n;
@@ -1996,27 +1996,27 @@ function main(): i32 { return boxes() % 100; }
 	{name: "a-map-of-i64-values-takes-the-typed-path", atLeast: 2, want: "0|", src: `
 import "core/map";
 function total(m: Map[i32, i64]): i64 {
-    var t: i64 = 0;
+    let t: i64 = 0;
     for (k, v) in m { t = t + v + (k as i64); }
     return t;
 }
 function main(): i32 {
-    var m: Map[i32, i64] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[i32, i64] = map_new(2);
+    let i: i32 = 0;
     while (i < 12) { m = m.insert(i, (i as i64) * 1000000000); i = i + 1; }
     m = m.insert(3, 7000000000);
-    var shared: Map[i32, i64] = m;
+    let shared: Map[i32, i64] = m;
     m = m.insert(20, 5);
-    var vs: i64[] = m.values();
-    var s: i64 = 0;
+    let vs: i64[] = m.values();
+    let s: i64 = 0;
     for v in vs { s = s + v; }
-    var g: i64 = m.get_or(3, 0);
-    var miss: i64 = m.get_or(99, 42);
-    var hit: i64 = 0;
+    let g: i64 = m.get_or(3, 0);
+    let miss: i64 = m.get_or(99, 42);
+    let hit: i64 = 0;
     match (m.get(11)) { Some(v) => { hit = v; }, None => { hit = 0 - 1; } }
-    var wo: (Map[i32, i64], boolean) = m.without(5);
+    let wo: (Map[i32, i64], boolean) = m.without(5);
     m = wo.0;
-    var r: i64 = s / 1000000000 + g / 1000000000 + miss + hit / 1000000000 + total(m) / 1000000000 + (shared.len() as i64) + (m.len() as i64);
+    let r: i64 = s / 1000000000 + g / 1000000000 + miss + hit / 1000000000 + total(m) / 1000000000 + (shared.len() as i64) + (m.len() as i64);
     return (r as i32) - 219;
 }
 `},
@@ -2026,16 +2026,16 @@ function main(): i32 {
 	{name: "an-i64-map-pairs-each-key-with-its-value", atLeast: 1, want: "0|", src: `
 import "core/map";
 function main(): i32 {
-    var m: Map[i32, i64] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[i32, i64] = map_new(2);
+    let i: i32 = 0;
     while (i < 40) { m = m.insert((i * 7919) % 101, (((i * 7919) % 101) as i64) * 3); i = i + 1; }
-    var wo: (Map[i32, i64], boolean) = m.without(14);
+    let wo: (Map[i32, i64], boolean) = m.without(14);
     m = wo.0;
-    var bad: i32 = 0;
+    let bad: i32 = 0;
     for (k, v) in m { if (v != (k as i64) * 3) { bad = bad + 1; } }
-    var ks: i32[] = m.keys();
-    var vs: i64[] = m.values();
-    var j: i32 = 0;
+    let ks: i32[] = m.keys();
+    let vs: i64[] = m.values();
+    let j: i32 = 0;
     while (j < ks.len()) { if (vs[j] != (ks[j] as i64) * 3) { bad = bad + 100; } j = j + 1; }
     return bad;
 }
@@ -2050,16 +2050,16 @@ function main(): i32 {
 function sink(u: ()): i32 { return 7; }
 function fallible(): Result[(), i32] { return Ok(()); }
 function main(): i32 {
-    var u: () = ();
-    var v = ();
-    var t: ((), i32) = ((), 5);
-    var w: (i32, ()) = (4, u);
-    var n: i32 = 0;
+    let u: () = ();
+    let v = ();
+    let t: ((), i32) = ((), 5);
+    let w: (i32, ()) = (4, u);
+    let n: i32 = 0;
     match (fallible()) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 10; } }
-    var (a, b) = t;
-    var (_, c) = w;
-    var f = sink;
-    var g = (k: i32): i32 => sink(u) + k;
+    let (a, b) = t;
+    let (_, c) = w;
+    let f = sink;
+    let g = (k: i32): i32 => sink(u) + k;
     return n + sink(u) + sink(v) + sink(t.0) + sink(w.1) + t.1 + w.0 + sink(a) + b + sink(c) + f(()) + g(1) - 72;
 }
 `},
@@ -2068,37 +2068,34 @@ function main(): i32 {
 	// column of boxes, each read back after the delete and re-inserted once.
 	// The map helpers are typed: the keyed column's search calls its eq
 	// function, and its release the value column's, through __raw_call*.
-	{name: "map-delete-releases-the-entry", atLeast: 3, want: "35|", reports: []string{
-		"runtime __fern_map_find: produced", "runtime __fern_map_delete: produced",
-		"runtime __fern_map_delete_rel: produced",
-	}, src: `
+	{name: "map-delete-releases-the-entry", atLeast: 3, want: "35|", src: `
 import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
 struct Coord { a: i32, b: i32 }
 struct Box { n: i32, tag: string }
 function by_string(): i32 {
-    var m: Map[string, i32] = map_new(2);
+    let m: Map[string, i32] = map_new(2);
     m = m.insert("a" + "x", 1);
     m = m.insert("b" + "y", 2);
-    var (m2, gone) = m.without("ax");
+    let (m2, gone) = m.without("ax");
     if (!gone) { return 0 - 1; }
     m2 = m2.insert("a" + "x", 3);
     return m2.len() * 10 + m2.get_or("ax", 0);
 }
 function by_value(): i32 {
-    var m: Map[i32, string] = map_new(2);
+    let m: Map[i32, string] = map_new(2);
     m = m.insert(1, "one" + "!");
     m = m.insert(2, "two" + "!");
-    var (m2, gone) = m.without(1);
+    let (m2, gone) = m.without(1);
     if (!gone) { return 0 - 1; }
     return m2.get_or(2, "").len();
 }
 function by_key(): i32 {
-    var m: Map[Coord, Box] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[Coord, Box] = map_new(2);
+    let i: i32 = 0;
     while (i < 5) { m = m.insert(Coord { a: i, b: i }, Box { n: i, tag: "t" + "!" }); i = i + 1; }
-    var (m2, gone) = m.without(Coord { a: 2, b: 2 });
+    let (m2, gone) = m.without(Coord { a: 2, b: 2 });
     if (!gone) { return 0 - 1; }
     if (m2.has(Coord { a: 2, b: 2 })) { return 0 - 2; }
     return m2.len() + m2.get_or(Coord { a: 4, b: 4 }, Box { n: 0, tag: "" }).n;
@@ -2108,24 +2105,24 @@ function main(): i32 { return by_string() + by_value() + by_key(); }
 	{name: "map-delete-and-clear", atLeast: 4, want: "131|", wasm: "out-of-range|", src: `
 import "core/map";
 function survivors(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(8);
-    var i: i32 = 0;
+    let m: Map[i32, i32] = map_new(8);
+    let i: i32 = 0;
     while (i < n) { m = m.insert(i, i * 10); i = i + 1; }
-    var (m1, gone) = m.without(1);
+    let (m1, gone) = m.without(1);
     if (!gone) { return 0 - 1; }
     return m1.len() * 10 + m1.get_or(4, 0);
 }
 function emptied(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(4);
+    let m: Map[i32, i32] = map_new(4);
     m = m.insert(1, 1);
     m = m.cleared();
     m = m.insert(7, 3);
     return m.len();
 }
 function absent(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(4);
+    let m: Map[i32, i32] = map_new(4);
     m = m.insert(5, 50);
-    var (m1, missing) = m.without(99);
+    let (m1, missing) = m.without(99);
     if (missing) { return 0 - 1; }
     return m1.get_or(5, 0);
 }
@@ -2140,17 +2137,17 @@ function main(): i32 { return survivors(5) + emptied(0) + absent(0); }
 	{name: "tuple-element-take", atLeast: 3, want: "219|", wasm: "out-of-range|", src: `
 import "core/map";
 function chained(n: i32): i32 {
-    var m: Map[i32, i32] = map_new(8);
-    var i: i32 = 0;
+    let m: Map[i32, i32] = map_new(8);
+    let i: i32 = 0;
     while (i < n) { m = m.insert(i, i * 10); i = i + 1; }
     m = m.without(1).0;
     m = m.without(2).0;
     return m.len() * 100 + m.get_or(4, 0);
 }
 function relayed(n: i32): i32 {
-    var t: (i32[], string) = ([n, n + 1], "ab");
-    var b: i32[] = t.0;
-    var s: string = t.1;
+    let t: (i32[], string) = ([n, n + 1], "ab");
+    let b: i32[] = t.0;
+    let s: string = t.1;
     b = b.append(n + 2);
     return b.len() * 10 + s.len() + b[2];
 }
@@ -2166,18 +2163,18 @@ function main(): i32 { return (chained(6) + relayed(1)) & 255; }
 	// that still runs zero times.
 	{name: "inclusive-range", atLeast: 3, want: "48|", src: `
 function closed(n: i32): i32 {
-    var s: i32 = 0;
+    let s: i32 = 0;
     for i in 0..=n { s = s + i; }
     return s;
 }
 function single(n: i32): i32 {
-    var c: i32 = 0;
+    let c: i32 = 0;
     for i in n..=n { c = c + 1; }
     for j in (n + 4)..=n { c = c + 100; }
     return c;
 }
 function skipping(n: i32): i32 {
-    var s: i32 = 0;
+    let s: i32 = 0;
     for i in 0..=n {
         if (i == 4) { continue; }
         if (i == 9) { break; }
@@ -2197,15 +2194,15 @@ function main(): i32 { return (closed(5) + single(3) + skipping(12)) & 255; }
 	{name: "container-read-is-not-a-take", atLeast: 3, want: "71|", src: `
 import "core/map";
 function seeded(n: i32): Map[i32, (i32[], i32)] {
-    var m: Map[i32, (i32[], i32)] = map_new(4);
+    let m: Map[i32, (i32[], i32)] = map_new(4);
     return m.insert(1, ([n, n + 1], n));
 }
 function shared(n: i32): i32 {
-    var m: Map[i32, (i32[], i32)] = seeded(n);
-    var fallback: (i32[], i32) = ([], 0);
-    var first: i32[] = m.get_or(1, fallback).0;
+    let m: Map[i32, (i32[], i32)] = seeded(n);
+    let fallback: (i32[], i32) = ([], 0);
+    let first: i32[] = m.get_or(1, fallback).0;
     first = first.append(99);
-    var again: (i32[], i32) = m.get_or(1, fallback);
+    let again: (i32[], i32) = m.get_or(1, fallback);
     return first.len() * 100 + again.0.len() * 10 + again.1;
 }
 function main(): i32 { return shared(7) & 255; }
@@ -2217,8 +2214,8 @@ function main(): i32 { return shared(7) & 255; }
 	{name: "map-clear-call-receiver", atLeast: 2, want: "1|", src: `
 import "core/map";
 function built(n: i32): Map[i32, i32] {
-    var m: Map[i32, i32] = map_new(8);
-    var i: i32 = 0;
+    let m: Map[i32, i32] = map_new(8);
+    let i: i32 = 0;
     while (i < n) { m = m.insert(i, i); i = i + 1; }
     return m;
 }
@@ -2232,13 +2229,13 @@ function main(): i32 { return built(3).cleared().insert(7, 3).len(); }
 	{name: "lent-view-handback", atLeast: 4, want: "12|", src: `
 function handed(text: string): string { return text; }
 function laundered(src: string): string {
-    var v: str = slice_unchecked(src, 0, 3);
+    let v: str = slice_unchecked(src, 0, 3);
     return handed(v);
 }
 function fresh_of(text: string): string { return text + "!"; }
 function main(): i32 {
-    var s: string = "12345 abc";
-    var v: str = slice_unchecked(s, 0, 4);
+    let s: string = "12345 abc";
+    let v: str = slice_unchecked(s, 0, 4);
     return handed(v).len() + fresh_of(v).len() + laundered(s).len();
 }
 `},
@@ -2250,8 +2247,8 @@ function main(): i32 {
 struct Id { name: string }
 function ident_of(e: Id, own acc: string[]): string[] { return acc.append(e.name); }
 function each(es: Id[], rounds: i32, reads: (Id, own string[]) => string[]): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < rounds) {
         for e in es { for n in reads(e, []) { t = t + n.len(); } }
         r = r + 1;
@@ -2259,8 +2256,8 @@ function each(es: Id[], rounds: i32, reads: (Id, own string[]) => string[]): i32
     return t;
 }
 function main(): i32 {
-    var es: Id[] = [Id { name: "ab" + "" }, Id { name: "cde" + "" }];
-    var t: i32 = each(es, 5, ident_of);
+    let es: Id[] = [Id { name: "ab" + "" }, Id { name: "cde" + "" }];
+    let t: i32 = each(es, 5, ident_of);
     for e in es { t = t + e.name.len(); }
     return t;
 }
@@ -2275,27 +2272,27 @@ struct Tok { text: string, line: i32 }
 function tok_of(text: string, line: i32): Tok { return Tok { text: text, line: line }; }
 function add_word(acc: string[], w: string): string[] { return acc.append(w); }
 function words_of(src: string): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
+    let out: string[] = [];
+    let i: i32 = 0;
     while (i + 2 <= src.len()) {
-        var v: str = slice_unchecked(src, i, i + 2);
+        let v: str = slice_unchecked(src, i, i + 2);
         out = add_word(out, v);
         i = i + 2;
     }
     return out;
 }
 function toks_of(src: string): Tok[] {
-    var out: Tok[] = [];
-    var i: i32 = 0;
+    let out: Tok[] = [];
+    let i: i32 = 0;
     while (i + 2 <= src.len()) {
-        var v: str = slice_unchecked(src, i, i + 2);
+        let v: str = slice_unchecked(src, i, i + 2);
         out = out.append(tok_of(v, i));
         i = i + 2;
     }
     return out;
 }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     for w in words_of("abcdef") { n = n + w.len(); }
     for t in toks_of("abcdef") { n = n + t.text.len() + t.line; }
     return n;
@@ -2313,26 +2310,26 @@ struct Acc { items: Item[] }
 function mk(name: string): Item { return Item { name: name }; }
 function (a: Acc) with_item(it: Item): Acc { return Acc { items: a.items.append(it) }; }
 function add(acc: Acc, name: string): Acc {
-    var st: Acc = acc;
+    let st: Acc = acc;
     st = st.with_item(mk(name));
     return st;
 }
 function build(): Acc {
-    var src: string = "hello:" + "world";
-    var acc: Acc = Acc { items: [] };
+    let src: string = "hello:" + "world";
+    let acc: Acc = Acc { items: [] };
     acc = add(acc, slice_unchecked(src, 6, 11));
     return acc;
 }
 function churn(n: i32): i32 {
-    var a: i32[] = [n, n + 1, n + 2];
-    var s: string = "abcdefghijklmnop" + "qrstuvwxyz";
-    var t: string = s + s;
+    let a: i32[] = [n, n + 1, n + 2];
+    let s: string = "abcdefghijklmnop" + "qrstuvwxyz";
+    let t: string = s + s;
     return a.len() + t.len();
 }
 function main(): i32 {
-    var acc: Acc = build();
-    var z: i32 = churn(3) + churn(4) + churn(5);
-    var s: string = acc.items[0].name;
+    let acc: Acc = build();
+    let z: i32 = churn(3) + churn(4) + churn(5);
+    let s: string = acc.items[0].name;
     if (s == "world" && z > 0) { return 0; }
     return 1;
 }
@@ -2347,15 +2344,15 @@ function main(): i32 {
 	{name: "borrowed-param-append", atLeast: 4, want: "199|", wasm: "out-of-range|", src: `
 function push(buf: i32[], v: i32): i32[] { return buf.append(v); }
 function build(n: i32): i32[] {
-    var out: i32[] = [];
-    var i: i32 = 0;
+    let out: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { out = push(out, i); i = i + 1; }
     return out;
 }
 function set0(buf: i32[], v: i32): i32[] { return buf.with(0, v); }
 function main(): i32 {
-    var a: i32[] = build(64);
-    var b: i32[] = set0(a, 99);
+    let a: i32[] = build(64);
+    let b: i32[] = set0(a, 99);
     if (a[0] != 0) { return 1; }
     if (b[0] != 99) { return 2; }
     if (a.len() != 64 || b.len() != 64) { return 3; }
@@ -2377,19 +2374,19 @@ function main(): i32 {
 struct Box { name: string }
 function add(acc: Box[], n: string): Box[] { return acc.append(Box { name: n }); }
 function tag(i: i32): string {
-    var tbl: string[] = ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj"];
+    let tbl: string[] = ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj"];
     return "payload-" + tbl[i % 10] + "-longer-tail";
 }
 function build(n: i32): Box[] {
-    var out: Box[] = [];
-    var i: i32 = 0;
+    let out: Box[] = [];
+    let i: i32 = 0;
     while (i < n) { out = add(out, tag(i)); i = i + 1; }
     return out;
 }
 function main(): i32 {
-    var all: Box[] = build(9);
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let all: Box[] = build(9);
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < all.len()) {
         if (all[i].name != tag(i)) { return 1 + i; }
         n = n + all[i].name.len();
@@ -2406,7 +2403,7 @@ function main(): i32 {
 	{name: "borrowed-param-append-nested", atLeast: 4, want: "199|", wasm: "out-of-range|", src: `
 struct D { name: string, fields: string[] }
 function declared(ds: D[], name: string): boolean {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < ds.len()) {
         if (ds[i].name == name) { return true; }
         i = i + 1;
@@ -2419,14 +2416,14 @@ function add_one(acc: D[], name: string): D[] {
 }
 function add_two(acc: D[], a: string, b: string): D[] { return add_one(add_one(acc, a), b); }
 function main(): i32 {
-    var all: D[] = [];
+    let all: D[] = [];
     all = add_one(all, "seed-value-one");
     all = add_two(all, "seed-value-two", "seed-value-three");
     all = add_two(all, "seed-value-four", "seed-value-five");
     all = add_one(all, "seed-value-one");
-    var want: string[] = ["seed-value-one", "seed-value-two", "seed-value-three", "seed-value-four", "seed-value-five"];
+    let want: string[] = ["seed-value-one", "seed-value-two", "seed-value-three", "seed-value-four", "seed-value-five"];
     if (all.len() != want.len()) { return 1; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < all.len()) {
         if (all[i].name != want[i]) { return 2 + i; }
         i = i + 1;
@@ -2451,17 +2448,17 @@ function h(b: i32[], v: i32): i32[] {
 function two(b: i32[], v: i32): i32[] { b = f(b, v); return f(b, v + 1); }
 function cond(b: i32[], v: i32): i32[] { b = h(b, v); b = h(b, v + 1); return h(b, v + 3); }
 function looped(b: i32[], n: i32): i32[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { b = h(b, i); i = i + 1; }
     return b;
 }
 function read_back(b: i32[], v: i32): i32 {
-    var t: i32[] = h(b, v);
-    var u: i32[] = f(t, 7);
+    let t: i32[] = h(b, v);
+    let u: i32[] = f(t, 7);
     return t.len() * 100 + u.len();
 }
 function branch(b: i32[], v: i32): i32[] {
-    var t: i32[] = h(b, v);
+    let t: i32[] = h(b, v);
     if (v > 3) { return t; }
     return [9, 9];
 }
@@ -2471,7 +2468,7 @@ function then_append(b: i32[], v: i32): i32[] {
     return f(b, 101);
 }
 function early(b: i32[], n: i32): i32[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         b = f(b, i);
         if (i == 2) { return b; }
@@ -2480,12 +2477,12 @@ function early(b: i32[], n: i32): i32[] {
     return b;
 }
 function sum(a: i32[]): i32 {
-    var s: i32 = 0;
+    let s: i32 = 0;
     for x in a { s = s + x; }
     return s;
 }
 function word(b: string[], v: i32): string[] {
-    var tbl: string[] = ["aa", "bbb", "c"];
+    let tbl: string[] = ["aa", "bbb", "c"];
     if (v % 3 == 0) { return b; }
     return b.append("w-" + tbl[v % 3]);
 }
@@ -2495,62 +2492,62 @@ function pair(a: string[], b: string[], v: i32): string[] {
     return word(a, b.len());
 }
 function total(a: string[]): i32 {
-    var s: i32 = 0;
+    let s: i32 = 0;
     for x in a { s = s + x.len(); }
     return s;
 }
 function ints(): i32 {
-    var acc: i32[] = [1, 2, 3];
-    var r: i32[] = two(acc, 5);
+    let acc: i32[] = [1, 2, 3];
+    let r: i32[] = two(acc, 5);
     if (acc.len() != 3 || r.len() != 5 || sum(acc) != 6 || sum(r) != 17) { return 1; }
     acc = r;
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < 20) {
-        var before: i32 = acc.len();
-        var r2: i32[] = cond(acc, k);
+        let before: i32 = acc.len();
+        let r2: i32[] = cond(acc, k);
         if (acc.len() != before) { return 2; }
         acc = r2;
         k = k + 1;
     }
-    var keep: i32[] = acc;
-    var s1: i32 = sum(acc);
+    let keep: i32[] = acc;
+    let s1: i32 = sum(acc);
     acc = looped(acc, 7);
     if (sum(keep) != s1) { return 3; }
     k = 0;
     while (k < 6) {
-        var want: i32 = acc.len() * 100 + acc.len() + 1;
+        let want: i32 = acc.len() * 100 + acc.len() + 1;
         if (k % 2 == 1) { want = (acc.len() + 1) * 100 + acc.len() + 2; }
         if (read_back(acc, k) != want) { return 4; }
         acc = branch(acc, k);
         acc = then_append(acc, k);
         k = k + 1;
     }
-    var keep2: i32[] = acc;
-    var l2: i32 = keep2.len();
+    let keep2: i32[] = acc;
+    let l2: i32 = keep2.len();
     acc = early(acc, 5);
     if (keep2.len() != l2 || acc.len() != l2 + 3) { return 5; }
     return 100 + sum(acc) % 50;
 }
 function strs(): i32 {
-    var acc: string[] = [];
-    var i: i32 = 0;
+    let acc: string[] = [];
+    let i: i32 = 0;
     while (i < 30) {
-        var old: string[] = acc;
-        var n: i32 = old.len();
+        let old: string[] = acc;
+        let n: i32 = old.len();
         acc = words(acc, i);
         if (old.len() != n) { return 6; }
         acc = pair(acc, acc, i);
         i = i + 1;
     }
-    var shared: string[] = acc;
-    var t: i32 = total(shared);
-    var r: string[] = pair(acc, acc, 1);
+    let shared: string[] = acc;
+    let t: i32 = total(shared);
+    let r: string[] = pair(acc, acc, 1);
     if (total(shared) != t || total(acc) != t || r.len() < acc.len()) { return 7; }
     return 100 + total(r) % 50;
 }
 function main(): i32 {
-    var a: i32 = ints();
-    var b: i32 = strs();
+    let a: i32 = ints();
+    let b: i32 = strs();
     if (a < 100) { return a; }
     if (b < 100) { return b; }
     return (a - 100) + (b - 100);
@@ -2563,11 +2560,11 @@ function main(): i32 {
 	{name: "array-lent-twice", atLeast: 3, want: "32|", src: `
 function push(b: i32[], v: i32): i32[] { return b.append(v); }
 function pair(a: i32[], b: i32[]): i32 {
-    var t: i32[] = push(a, 7);
+    let t: i32[] = push(a, 7);
     return t.len() * 10 + b.len();
 }
 function main(): i32 {
-    var acc: i32[] = [];
+    let acc: i32[] = [];
     acc = acc.append(1);
     acc = acc.append(2);
     return pair(acc, acc);
@@ -2581,21 +2578,21 @@ function main(): i32 {
 	// makes the receiver shared and the push copies.
 	{name: "borrowed-param-obligations", atLeast: 5, want: "211|", wasm: "out-of-range|", src: `
 struct B { n: string }
-function tagx(i: i32): string { var t: string[] = ["aa", "bb", "cc", "dd"]; return "long-payload-" + t[i % 4]; }
+function tagx(i: i32): string { let t: string[] = ["aa", "bb", "cc", "dd"]; return "long-payload-" + t[i % 4]; }
 function maybe(xs: B[], flag: boolean): B[] {
     if (flag) { return xs.append(B { n: tagx(1) }); }
     return [];
 }
-function ignore(xs: B[]): i32 { var ys: B[] = xs.append(B { n: tagx(2) }); return ys.len(); }
+function ignore(xs: B[]): i32 { let ys: B[] = xs.append(B { n: tagx(2) }); return ys.len(); }
 function twice(xs: B[]): B[] { xs = xs.append(B { n: tagx(3) }); xs = xs.append(B { n: tagx(0) }); return xs; }
-function seed(n: i32): B[] { var o: B[] = []; var i: i32 = 0; while (i < n) { o = o.append(B { n: tagx(i) }); i = i + 1; } return o; }
+function seed(n: i32): B[] { let o: B[] = []; let i: i32 = 0; while (i < n) { o = o.append(B { n: tagx(i) }); i = i + 1; } return o; }
 function main(): i32 {
-    var a: B[] = maybe(seed(3), true);
-    var b: B[] = maybe(seed(3), false);
-    var c: i32 = ignore(seed(3));
-    var d: B[] = twice(seed(3));
-    var live: B[] = seed(2);
-    var e: B[] = twice(live);
+    let a: B[] = maybe(seed(3), true);
+    let b: B[] = maybe(seed(3), false);
+    let c: i32 = ignore(seed(3));
+    let d: B[] = twice(seed(3));
+    let live: B[] = seed(2);
+    let e: B[] = twice(live);
     return a.len() * 1000 + b.len() * 100 + c * 10 + d.len() + e.len() + live.len();
 }
 `},
@@ -2619,24 +2616,24 @@ function osz(code: i32[], size: i32): i32[] {
 }
 function via(r: R, size: i32): R { return R { ...r, ops: osz(r.ops, size) }; }
 function keeps(): i32 {
-    var r: R = R { ops: [1, 2, 3], n: 7 };
-    var s: R = emitop(r, 4);
-    var u: R = emit2(r, 5, 6);
-    var v: R = via(r, 16);
+    let r: R = R { ops: [1, 2, 3], n: 7 };
+    let s: R = emitop(r, 4);
+    let u: R = emit2(r, 5, 6);
+    let v: R = via(r, 16);
     return r.ops.len() * 1000 + s.ops.len() * 100 + u.ops.len() * 10 + v.ops.len();
 }
 function dying(n: i32): i32 {
-    var r: R = R { ops: [], n: 0 };
-    var i: i32 = 0;
+    let r: R = R { ops: [], n: 0 };
+    let i: i32 = 0;
     while (i < n) { r = emitop(r, i); r = via(r, 16); i = i + 1; }
     return r.ops.len();
 }
 function boxes(n: i32): i32 {
-    var q: Q = Q { items: [], tag: "t" };
-    var i: i32 = 0;
+    let q: Q = Q { items: [], tag: "t" };
+    let i: i32 = 0;
     while (i < n) { q = addbox(q, "name-" + q.tag); i = i + 1; }
-    var k: Q = addbox(q, "extra-longer-name-payload");
-    var total: i32 = 0;
+    let k: Q = addbox(q, "extra-longer-name-payload");
+    let total: i32 = 0;
     for b in q.items { total = total + b.name.len(); }
     return total * 1000 + k.items.len() * 10 + q.items.len();
 }
@@ -2663,13 +2660,13 @@ function fold[T](xs: string[], own acc: T, f: (string, own T) => T): T {
 }
 function forward(xs: string[], own acc: string[]): string[] { return fold(xs, acc, visit); }
 function census(rows: string[][], acc: string[]): string[] {
-    var a: string[] = acc;
+    let a: string[] = acc;
     for r in rows { a = forward(r, a); }
     return a;
 }
 function main(): i32 {
-    var seed: string[] = ["seed-one", "seed-two"];
-    var out: string[] = census([["alpha", "b", "gamma"], ["delta", "e"], ["epsilon"]], seed);
+    let seed: string[] = ["seed-one", "seed-two"];
+    let out: string[] = census([["alpha", "b", "gamma"], ["delta", "e"], ["epsilon"]], seed);
     return (out.len() * 10 + seed.len()) % 251;
 }
 `},
@@ -2678,10 +2675,10 @@ function main(): i32 {
 	{name: "capture-write", atLeast: 3, want: "7|", src: `
 function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
 function main(): i32 {
-    var total: i32 = 0;
-    var add = (x: i32): i32 => { total = total + x; return total; };
-    var a: i32 = apply(add, 3);
-    var b: i32 = apply(add, 4);
+    let total: i32 = 0;
+    let add = (x: i32): i32 => { total = total + x; return total; };
+    let a: i32 = apply(add, 3);
+    let b: i32 = apply(add, 4);
     return total;
 }
 `},
@@ -2696,7 +2693,7 @@ function main(): i32 {
 	{name: "generic-clones", atLeast: 6, want: "50|", src: `
 function first[T](xs: T[]): T { return xs[0]; }
 function append_all[T](into: T[], more: T[]): T[] {
-    var out: T[] = into;
+    let out: T[] = into;
     for m in more { out = out.append(m); }
     return out;
 }
@@ -2707,7 +2704,7 @@ function fold[T](xs: i32[], own acc: T, visit: (i32, own T) => T): T {
 function add(x: i32, own acc: i32): i32 { return acc + x; }
 function total(xs: i32[]): i32 { return fold(xs, 0, add); }
 function main(): i32 {
-    var names: string[] = append_all(["ab" + ""], ["cde" + "", "f" + ""]);
+    let names: string[] = append_all(["ab" + ""], ["cde" + "", "f" + ""]);
     return first([40]) + total([1, 2, 3]) + names.len() + names[2].len();
 }
 `},
@@ -2728,19 +2725,19 @@ function helper(r: R, slot: i32): R {
     return emit(r, slot + 2);
 }
 function build(n: i32): R {
-    var r: R = R { ops: [], n: 0, name: "h" + "" };
-    var i: i32 = 0;
+    let r: R = R { ops: [], n: 0, name: "h" + "" };
+    let i: i32 = 0;
     while (i < n) { r = helper(r, i); i = i + 1; }
     return r;
 }
 function main(): i32 {
-    var r: R = build(501);
+    let r: R = build(501);
     if (__arr_push_shared_count() > 0) { return 200 + (__arr_push_shared_count() % 50); }
     return r.ops.len() % 100 + r.name.len();
 }
 `},
 	// A `str` binding in a module that declares a generic struct. The struct
-	// monomorphiser rewrites every `var` annotation in every body; when that
+	// monomorphiser rewrites every `let` annotation in every body; when that
 	// lost the binding's view-ness, the checker typed it `string` against a
 	// `str` value and every function holding one refused, producing 0 of 2.
 	// Beyond the AST lowering: a match on a bare `Some(x)` scrutinee with an
@@ -2749,12 +2746,12 @@ function main(): i32 {
 	// produced here, so the module compiles only through the semantic path.
 	{name: "beyond-ast", atLeast: 3, want: "23|", src: `
 function picked(k: i32): i32 {
-    var rows: i32[] = [k, k];
-    var some: i32[] = (match (Some(rows)) { Some(r) => r, None => [] });
+    let rows: i32[] = [k, k];
+    let some: i32[] = (match (Some(rows)) { Some(r) => r, None => [] });
     return some.len();
 }
 function widen(k: i32): i32[] {
-    var o: Option[i32] = Some(k);
+    let o: Option[i32] = Some(k);
     return (match (o) { Some(v) => [v, v, v], None => [] });
 }
 function main(): i32 { return picked(4) * 10 + widen(2).len(); }
@@ -2766,19 +2763,19 @@ function main(): i32 { return picked(4) * 10 + widen(2).len(); }
 enum Shade { Dark, Light }
 struct Tagged { n: i32, tag: string }
 function vb_words(k: i32): i32 {
-    var o: Option[i32] = Some(k);
-    var words: string[] = (match (o) { Some(v) => ["a" + "b", "c"], None => [] });
-    var sh: Shade = Dark;
-    var tag: string = (match (sh) { Dark => "d" + "k", Light => "l" });
-    var ot: Option[string] = Some(tag);
-    var cell: Tagged = (match (ot) { Some(t) => Tagged { n: k, tag: t }, None => Tagged { n: 0, tag: "" } });
-    var pair: (i32, string) = (if (k > 1) { (k, cell.tag) } else { (0, "z") });
+    let o: Option[i32] = Some(k);
+    let words: string[] = (match (o) { Some(v) => ["a" + "b", "c"], None => [] });
+    let sh: Shade = Dark;
+    let tag: string = (match (sh) { Dark => "d" + "k", Light => "l" });
+    let ot: Option[string] = Some(tag);
+    let cell: Tagged = (match (ot) { Some(t) => Tagged { n: k, tag: t }, None => Tagged { n: 0, tag: "" } });
+    let pair: (i32, string) = (if (k > 1) { (k, cell.tag) } else { (0, "z") });
     return words.len() * 100 + tag.len() * 10 + cell.tag.len() + pair.1.len();
 }
 function vb_rows(k: i32): i32 {
-    var rows: i32[] = (if (k > 0) { [k, k] } else { [k] });
-    var orows: Option[i32[]] = Some(rows);
-    var picked: i32[] = (match (orows) { Some(r) => r, None => [0 - 1] });
+    let rows: i32[] = (if (k > 0) { [k, k] } else { [k] });
+    let orows: Option[i32[]] = Some(rows);
+    let picked: i32[] = (match (orows) { Some(r) => r, None => [0 - 1] });
     return rows.len() * 10 + picked.len();
 }
 function main(): i32 { return (vb_words(3) + vb_rows(2) + vb_rows(0)) & 255; }
@@ -2792,7 +2789,7 @@ function u32s(a: u32, b: u32): u32 { return (a +| b) + (a -| b) + (a *| b) + (a 
 function s64(a: i64, b: i64): i64 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
 function u8s(a: u8, b: u8): u8 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
 function c32(a: i32, b: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (a +? b) { Some(v) => { t = t + v; }, None => { t = t + 1; } }
     match (a -? b) { Some(v) => { t = t + v; }, None => { t = t + 2; } }
     match (a *? b) { Some(v) => { t = t + v; }, None => { t = t + 3; } }
@@ -2803,7 +2800,7 @@ function c32(a: i32, b: i32): i32 {
     return t;
 }
 function c64(a: i64, b: i64): i64 {
-    var t: i64 = 0;
+    let t: i64 = 0;
     match (a +? b) { Some(v) => { t = t + v; }, None => { t = t + 1i64; } }
     match (a *? b) { Some(v) => { t = t + v; }, None => { t = t + 3i64; } }
     match (a /? b) { Some(v) => { t = t + v; }, None => { t = t + 4i64; } }
@@ -2811,7 +2808,7 @@ function c64(a: i64, b: i64): i64 {
     return t;
 }
 function cu(a: u32, b: u32): u32 {
-    var t: u32 = 0;
+    let t: u32 = 0;
     match (a +? b) { Some(v) => { t = t + v; }, None => { t = t + 1u32; } }
     match (a -? b) { Some(v) => { t = t + v; }, None => { t = t + 2u32; } }
     match (a *? b) { Some(v) => { t = t + v; }, None => { t = t + 3u32; } }
@@ -2820,7 +2817,7 @@ function cu(a: u32, b: u32): u32 {
     return t;
 }
 function main(): i32 {
-    var r: i32 = s32(2147483000, 1000) + s32(-5, 7) + (u32s(4000000000u32, 500000000u32) as i32) + ((s64(9223372036854775000i64, 1000i64) >> 40i64) as i32) + (u8s(200u8, 100u8) as i32);
+    let r: i32 = s32(2147483000, 1000) + s32(-5, 7) + (u32s(4000000000u32, 500000000u32) as i32) + ((s64(9223372036854775000i64, 1000i64) >> 40i64) as i32) + (u8s(200u8, 100u8) as i32);
     r = r + c32(2147483000, 1000) + c32(7, 0) + c32(-2147483648, -1) + ((c64(5i64, 3i64) & 1023i64) as i32) + (cu(4000000000u32, 500000000u32) as i32);
     return r & 255;
 }
@@ -2829,12 +2826,12 @@ function main(): i32 {
 import "core/iter" as iter;
 
 function kept(xs: i32[]): i32 {
-    var big = iter.filter(iter.of(xs), (x: i32): boolean => { return x > 3; });
+    let big = iter.filter(iter.of(xs), (x: i32): boolean => { return x > 3; });
     return big.len() * 10 + big[0] + big[1];
 }
 
 function doubled(xs: i32[]): i32 {
-    var all = iter.map(iter.of(xs), (x: i32): i32 => { return x * 2; });
+    let all = iter.map(iter.of(xs), (x: i32): i32 => { return x * 2; });
     return all.len() + all[2];
 }
 
@@ -2843,12 +2840,12 @@ function main(): i32 { return kept([5, 2, 8, 1, 4]) + doubled([1, 2, 3]); }
 	{name: "str-binding-beside-a-generic-struct", atLeast: 2, want: "32|", src: `
 struct Box[T] { v: T }
 function head(s: string): i32 {
-    var v: str = slice_unchecked(s, 0, 3);
-    var w: str = slice_unchecked(v, 1, 3);
+    let v: str = slice_unchecked(s, 0, 3);
+    let w: str = slice_unchecked(v, 1, 3);
     return v.len() * 10 + w.len();
 }
 function main(): i32 {
-    var b: Box[i32] = Box { v: head("hello" + "") };
+    let b: Box[i32] = Box { v: head("hello" + "") };
     return b.v;
 }
 `},
@@ -2861,10 +2858,10 @@ function main(): i32 {
 	// taken at registration.
 	{name: "defer-binding-out-of-its-block", atLeast: 4, want: "16|", src: `
 function conditional(enabled: boolean): i32 {
-    var seen: i32 = 1;
+    let seen: i32 = 1;
     loop {
         if (enabled) {
-            var items: i32[] = [2];
+            let items: i32[] = [2];
             defer seen = items[0];
             items = [9];
         }
@@ -2873,19 +2870,19 @@ function conditional(enabled: boolean): i32 {
     return seen;
 }
 function per_iteration(): i32 {
-    var seen: i32 = 0;
-    var i: i32 = 0;
+    let seen: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var k: i32[] = [i];
+        let k: i32[] = [i];
         defer seen = seen + k[0];
         i = i + 1;
     }
     return seen;
 }
 function from_value_block(): i32 {
-    var seen: i32 = 0;
+    let seen: i32 = 0;
     loop {
-        var yielded: i32 = { var items: i32[] = [2]; defer seen = items[0]; items = [4]; 1 };
+        let yielded: i32 = { let items: i32[] = [2]; defer seen = items[0]; items = [4]; 1 };
         seen = seen + yielded;
         break;
     }
@@ -2909,26 +2906,26 @@ function main(): i32 {
 	{name: "defer-binding-at-a-type-with-no-literal-zero", atLeast: 4, want: "21|", src: `
 struct P { a: i32 }
 function via_record(on: boolean): i32 {
-    var seen: i32 = 0;
+    let seen: i32 = 0;
     loop {
-        if (on) { var v: P = P { a: 3 }; defer seen = v.a; v = P { a: 7 }; }
+        if (on) { let v: P = P { a: 3 }; defer seen = v.a; v = P { a: 7 }; }
         break;
     }
     return seen;
 }
 function via_tuple(on: boolean): i32 {
-    var seen: i32 = 0;
+    let seen: i32 = 0;
     loop {
-        if (on) { var v: (i32, i32) = (1, 2); defer seen = v.0; v = (5, 6); }
+        if (on) { let v: (i32, i32) = (1, 2); defer seen = v.0; v = (5, 6); }
         break;
     }
     return seen;
 }
 function via_variant(on: boolean): i32 {
-    var seen: i32 = 0;
+    let seen: i32 = 0;
     loop {
         if (on) {
-            var v: Option[i32] = Some(3);
+            let v: Option[i32] = Some(3);
             defer { match (v) { Some(n) => { seen = n; }, None => { seen = 1; } } }
             v = Some(9);
         }
@@ -2940,12 +2937,12 @@ function main(): i32 { return via_record(true) + via_tuple(true) + via_variant(t
 `},
 	{name: "defer-typed-return-temp", atLeast: 3, want: "72|", src: `
 function snapshot(): i32[] {
-    var items: i32[] = [7];
+    let items: i32[] = [7];
     defer items = [9];
     return items;
 }
 function labelled(): string {
-    var s: string = "ok";
+    let s: string = "ok";
     defer s = "late" + "";
     return s;
 }
@@ -2966,45 +2963,45 @@ function main(): i32 {
 struct P { a: i32, s: string }
 enum Shape { Dot, Box(i32) }
 function record(n: i32): P {
-    var p: P = P { a: n, s: "p" };
+    let p: P = P { a: n, s: "p" };
     defer p = P { a: 0, s: "" };
     return p;
 }
 function pair(n: i32): (i32, string) {
-    var t: (i32, string) = (n, "one");
+    let t: (i32, string) = (n, "one");
     defer t = (0, "");
     return t;
 }
 function variant(n: i32): Shape {
-    var s: Shape = Shape.Dot;
+    let s: Shape = Shape.Dot;
     defer s = Shape.Box(n);
     if (n % 2 == 0) { return Shape.Box(n); }
     return s;
 }
 function maybe(n: i32): Option[P] {
-    var log: i32 = 0;
+    let log: i32 = 0;
     defer log = log + 1;
     if (n < 0) { return None; }
     return Some(P { a: n, s: "m" });
 }
 function risky(fail: boolean): Result[i32, i32] {
-    var code: i32 = 0;
+    let code: i32 = 0;
     errdefer { code = code + 7; }
     if (fail) { return Err(code + 1); }
     return Ok(50);
 }
 function two_defers(n: i32): P {
-    var p: P = P { a: n, s: "x" };
+    let p: P = P { a: n, s: "x" };
     defer { p = P { a: 0, s: "" }; }
-    var q: P = p;
+    let q: P = p;
     defer q = P { a: 5, s: "q" };
     return P { a: p.a + q.a, s: p.s + q.s };
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var pr: (i32, string) = pair(i);
+        let pr: (i32, string) = pair(i);
         t = t + record(i).a + pr.0 + pr.1.len();
         match (variant(i)) { Shape.Dot => { t = t + 1; }, Shape.Box(v) => { t = t + v; } }
         match (maybe(i - 100)) { Some(p) => { t = t + p.a + p.s.len(); }, None => { t = t + 2; } }
@@ -3022,24 +3019,24 @@ function main(): i32 {
 	// declaration built, capturing and plain return one at the return.
 	{name: "defer-in-a-closure-factory", atLeast: 7, want: "90|", src: `
 function capturing(k: i32): (i32) => i32 {
-    var seen: i32 = 0;
+    let seen: i32 = 0;
     defer seen = seen + 1;
     return (x: i32): i32 => x + k;
 }
 function through_local(k: i32): (i32) => i32 {
-    var f: (i32) => i32 = (x: i32): i32 => x * k;
-    var seen: i32 = 0;
+    let f: (i32) => i32 = (x: i32): i32 => x * k;
+    let seen: i32 = 0;
     defer seen = seen + 1;
     return f;
 }
 function plain(): (i32) => i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     defer n = 1;
     return (x: i32): i32 => x + 4;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
         t = t + capturing(i)(1) + plain()(i) + through_local(i)(2);
         i = i + 1;
@@ -3059,36 +3056,36 @@ function scalar_capture(n: i32): (i32) => i32 {
     return (x: i32): i32 => { return x + n; };
 }
 function array_capture(n: i32): (i32) => i32 {
-    var xs: i32[] = [n, n + 1, n + 2];
+    let xs: i32[] = [n, n + 1, n + 2];
     return (x: i32): i32 => { return x + xs[0] + xs[2]; };
 }
 function two_captures(n: i32): (i32) => i32 {
-    var xs: i32[] = [n, n];
-    var ys: i32[] = [n, n];
+    let xs: i32[] = [n, n];
+    let ys: i32[] = [n, n];
     return (x: i32): i32 => { return x + xs[0] + ys[1]; };
 }
 function churn_one(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var f: (i32) => i32 = array_capture(i);
+        let f: (i32) => i32 = array_capture(i);
         t = t + f(0) % 3;
         i = i + 1;
     }
     return t;
 }
 function churn_two(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var g: (i32) => i32 = two_captures(i);
+        let g: (i32) => i32 = two_captures(i);
         t = t + g(0) % 3;
         i = i + 1;
     }
     return t;
 }
 function main(): i32 {
-    var s: (i32) => i32 = scalar_capture(2);
+    let s: (i32) => i32 = scalar_capture(2);
     return (churn_one() + churn_two()) % 7 + s(3);
 }
 `},
@@ -3102,15 +3099,15 @@ function main(): i32 {
 struct Holder { f: (i32) => i32 }
 function plain(x: i32): i32 { return x + 1; }
 function make(n: i32): Holder {
-    var xs: i32[] = [n, n + 1, n + 2];
+    let xs: i32[] = [n, n + 1, n + 2];
     return Holder { f: (x: i32): i32 => { return x + xs[0] + xs[2]; } };
 }
 function main(): i32 {
-    var a: Holder = Holder { f: plain };
-    var t: i32 = a.f(1);
-    var i: i32 = 0;
+    let a: Holder = Holder { f: plain };
+    let t: i32 = a.f(1);
+    let i: i32 = 0;
     while (i < 50) {
-        var h: Holder = make(i);
+        let h: Holder = make(i);
         t = t + h.f(0) % 3;
         i = i + 1;
     }
@@ -3125,20 +3122,20 @@ function main(): i32 {
 	// case for it would pull that whole module's refusals in with it.)
 	{name: "the-bytes-of-a-string", atLeast: 3, want: "6|", src: `
 function total(s: string): i32 {
-    var bs = s.as_bytes();
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let bs = s.as_bytes();
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < bs.len()) { t = t + (bs[i] as i32); i = i + 1; }
     return t;
 }
 function first(s: string): i32 {
-    var bs = s.as_bytes();
+    let bs = s.as_bytes();
     if (bs.len() == 0) { return 0; }
     return bs[0] as i32;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { t = t + total("abc") % 5 + first("z") % 3; i = i + 1; }
     return t % 7;
 }
@@ -3174,8 +3171,8 @@ function whole_as_value(s: Shape): Shape {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
         t = t + whole_after_payload(Shape.Circle("abc"));
         t = t + label(whole_as_value(Shape.Square("wxyz"))).len();
@@ -3196,20 +3193,20 @@ function main(): i32 {
 	// two lowerings of ONE compiler and settles nothing about that.
 	{name: "a-reference-cast-to-an-address", atLeast: 2, want: "0|", src: `
 function copy_bytes(s: string): i32 {
-    var n: i32 = s.len();
-    var out: u8[] = __alloc_u8(n);
+    let n: i32 = s.len();
+    let out: u8[] = __alloc_u8(n);
     if (n > 0) {
         __memcpy(out as usize, s.as_bytes() as usize, n);
     }
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < out.len()) { t = t + (out[i] as i32); i = i + 1; }
     return t;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { t = t + copy_bytes("abc"); i = i + 1; }
     return t % 7;
 }
@@ -3227,19 +3224,19 @@ import "std/array";
 function total(xs: i32[]): i32 { return xs.sum() + xs.product(); }
 
 function names(sep: string): i32 {
-    var parts: string[] = ["ab", "cde", "f"];
+    let parts: string[] = ["ab", "cde", "f"];
     return parts.join(sep).len();
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { t = t + total([2, 3, 4]) + names("--"); i = i + 1; }
     return t % 7;
 }
 `},
 
-	// A driver that reads stdin. `io.read_all_stdin` binds `var r: Reader =
+	// A driver that reads stdin. `io.read_all_stdin` binds `let r: Reader =
 	// stdin()` and loops `r.read_chunk`, and the whole of std/io went to the
 	// AST lowering because the checker resolved no type called `Reader` and
 	// the producer held no contract for the handle builtins (#9781). Every
@@ -3251,10 +3248,10 @@ function main(): i32 {
 import "std/io";
 
 function main(): i32 {
-    var text: string = io.read_all_stdin();
-    var w: Writer = stdout();
+    let text: string = io.read_all_stdin();
+    let w: Writer = stdout();
     w.write(text);
-    var e: Writer = stderr();
+    let e: Writer = stderr();
     e.write("");
     return text.len();
 }
@@ -3273,20 +3270,20 @@ function main(): i32 {
 	// subject.
 	{name: "a-closure-that-captures-a-closure", atLeast: 5, want: "1|", src: `
 function make(n: i32): (i32) => i32 {
-    var xs: i32[] = [n, n + 1, n + 2];
+    let xs: i32[] = [n, n + 1, n + 2];
     return (x: i32): i32 => { return x + xs[0] + xs[2]; };
 }
 
 function wrap(n: i32): (i32) => i32 {
-    var inner: (i32) => i32 = make(n);
+    let inner: (i32) => i32 = make(n);
     return (x: i32): i32 => { return inner(x) + 1; };
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var f: (i32) => i32 = wrap(i);
+        let f: (i32) => i32 = wrap(i);
         t = t + f(0) % 3;
         i = i + 1;
     }
@@ -3323,17 +3320,17 @@ function main(): i32 { return count(1000000, 0) % 7; }
 	// all, so the leak pin is the assertion that carries this case.
 	{name: "an-array-of-capturing-closures", atLeast: 4, want: "2|", src: `
 function build(n: i32): ((i32) => i32)[] {
-    var caps: i32[] = [n, n + 1, n + 2];
-    var other: i32[] = [n * 2, n * 3];
+    let caps: i32[] = [n, n + 1, n + 2];
+    let other: i32[] = [n * 2, n * 3];
     return [((x: i32) => { return x + caps[0] + caps[2]; }),
             ((y: i32) => { return y + other[0] + other[1]; })];
 }
 
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var fs: ((i32) => i32)[] = build(i);
+        let fs: ((i32) => i32)[] = build(i);
         total = total + fs[0](1) % 3 + fs[1](1) % 5;
         i = i + 1;
     }
@@ -3346,16 +3343,16 @@ function main(): i32 {
 	// an i64 parameter and an f64 result. Such a slot was refused ("function
 	// signature slot") on the grounds that the untagged indirect call
 	// describes every slot as one word; the call through the value now
-	// carries the signature tag irlower's call sites carry, so wasm
+	// carries a signature tag, so wasm
 	// dispatches it through the funcref type the body was declared with.
 	{name: "sibling-function-with-a-wide-signature", atLeast: 3, want: "28|", src: `
 function main(): i32 {
     function scale(k: i64): f64 { return (k as f64) / 4.0; }
     function twice(n: i32): i32 { return (scale((n as i64) * 6i64) as i32) + (scale(9i64) as i32); }
-    var half: (i64) => i64 = (x: i64) => x / 2i64;
-    var via: (i32) => i32 = (n: i32) => (half((n as i64) * 5i64) as i32);
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let half: (i64) => i64 = (x: i64) => x / 2i64;
+    let via: (i32) => i32 = (n: i32) => (half((n as i64) * 5i64) as i32);
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 30) {
         t = t + twice(i) + via(i);
         i = i + 1;
@@ -3375,10 +3372,10 @@ function main(): i32 {
 function main(): i32 {
     function make(k: i32): ((i32) => i32)[] { return [((a: i32) => a + k), ((b: i32) => b * k)]; }
     function pick(n: i32): ((i32) => i32)[] { return make(n + 1); }
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 40) {
-        var fs: ((i32) => i32)[] = pick(i);
+        let fs: ((i32) => i32)[] = pick(i);
         t = t + fs[0](i) % 13 + fs[1](2) % 7;
         i = i + 1;
     }
@@ -3392,12 +3389,12 @@ function main(): i32 {
 	{name: "value-block-arm-is-a-template-call-over-a-capturing-lambda", atLeast: 3, want: "74|", src: `
 function id[T](x: T): T { return x; }
 function main(): i32 {
-    var k: i32 = 3;
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let k: i32 = 3;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 40) {
-        var c: boolean = i % 3 == 0;
-        var a: ((i32) => i32)[] = [(if (c) { id(((x: i32) => x + k)) } else { ((y: i32) => y - k) })];
+        let c: boolean = i % 3 == 0;
+        let a: ((i32) => i32)[] = [(if (c) { id(((x: i32) => x + k)) } else { ((y: i32) => y - k) })];
         t = t + a[0](i) % 17;
         i = i + 1;
     }
@@ -3412,7 +3409,7 @@ function main(): i32 {
 enum Color { Red, Green, Blue }
 function id[T](x: T): T { return x; }
 function choose(p: Color, k: i32): i32 {
-    var v1: ((i32) => i32)[] = (match (p) {
+    let v1: ((i32) => i32)[] = (match (p) {
         Red => [((a: i32) => a + k)],
         Green => [id(((b: i32) => b * k))],
         Blue => id((match (p) { Red => [((x: i32) => x)], Green => [((y: i32) => y - k)], Blue => [((z: i32) => 9 + k), ((w: i32) => w)] }))
@@ -3420,10 +3417,10 @@ function choose(p: Color, k: i32): i32 {
     return v1[0](4) + v1.len();
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 30) {
-        var p: Color = if (i % 3 == 0) { Red } else if (i % 3 == 1) { Green } else { Blue };
+        let p: Color = if (i % 3 == 0) { Red } else if (i % 3 == 1) { Green } else { Blue };
         t = t + choose(p, i);
         i = i + 1;
     }
@@ -3441,20 +3438,20 @@ import "core/map";
 function id[T](x: T): T { return x; }
 function same(m: Map[i32, i32]): Map[i32, i32] { return m; }
 function total(m: Map[i32, i32], n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + m.get_or(i, 0); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 40) {
-        var m: Map[i32, i32] = map_new(8);
-        var i: i32 = 0;
+        let m: Map[i32, i32] = map_new(8);
+        let i: i32 = 0;
         while (i < 6) { m = m.insert(i, i * r); i = i + 1; }
-        var a: Map[i32, i32] = id(m);
-        var b: Map[i32, i32] = same(a);
+        let a: Map[i32, i32] = id(m);
+        let b: Map[i32, i32] = same(a);
         acc = acc + total(a, 6) % 17 + total(b, 6) % 13 + total(m, 6) % 7;
         r = r + 1;
     }
@@ -3464,16 +3461,16 @@ function main(): i32 {
 import "core/map";
 function pick(c: boolean, a: Map[string, string], b: Map[string, string]): Map[string, string] { return if (c) { a } else { b }; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 30) {
-        var m: Map[string, string] = map_new(4);
-        var key: string = if (r % 2 == 0) { "even" } else { "odd" };
+        let m: Map[string, string] = map_new(4);
+        let key: string = if (r % 2 == 0) { "even" } else { "odd" };
         m = m.insert(key + "k", key + "v");
         m = m.insert("x", "y");
-        var n: Map[string, string] = map_new(4);
+        let n: Map[string, string] = map_new(4);
         n = n.insert("z", "w");
-        var p: Map[string, string] = pick(r % 2 == 0, m, n);
+        let p: Map[string, string] = pick(r % 2 == 0, m, n);
         acc = acc + p.len() + m.len() + n.len() + p.get_or("x", "").len();
         r = r + 1;
     }
@@ -3487,12 +3484,12 @@ function main(): i32 {
 	{name: "a-shared-map-is-copied-before-it-is-written", atLeast: 1, want: "72|", src: `
 import "core/map";
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 30) {
-        var m: Map[i32, i32] = map_new(8);
+        let m: Map[i32, i32] = map_new(8);
         m = m.insert(1, 10);
-        var snapshot: Map[i32, i32] = m;
+        let snapshot: Map[i32, i32] = m;
         m = m.insert(1, 99);
         m = m.insert(2, 20);
         acc = acc + snapshot.len() * 100 + snapshot.get_or(1, -1) + m.get_or(1, -1) + m.get_or(2, -1) + m.len();
@@ -3501,7 +3498,7 @@ function main(): i32 {
     return acc % 127;
 }`},
 	// A map the frame still reads is not written through. Every collection
-	// operation returns a new value (E055), so `var n = m.insert(k, v)` leaves
+	// operation returns a new value (E055), so `let n = m.insert(k, v)` leaves
 	// `m` as it was, a callee's insert through a lent parameter leaves the
 	// caller's map as it was, and `without` leaves its receiver whole for the
 	// bindings that still read it. The receiver's retain is what makes the
@@ -3513,26 +3510,26 @@ function main(): i32 {
 import "core/map";
 function grown(m: Map[i32, i32], k: i32): Map[i32, i32] { return m.insert(k, k * 3); }
 function main(): i32 {
-    var m: Map[i32, i32] = map_new(8);
+    let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
-    var n: Map[i32, i32] = m.insert(2, 20);
-    var g: Map[i32, i32] = grown(m, 7);
-    var (rest, had) = n.without(2);
-    var snapshot: Map[i32, i32] = n;
-    var (rest2, had2) = n.without(1);
+    let n: Map[i32, i32] = m.insert(2, 20);
+    let g: Map[i32, i32] = grown(m, 7);
+    let (rest, had) = n.without(2);
+    let snapshot: Map[i32, i32] = n;
+    let (rest2, had2) = n.without(1);
     if (g.get_or(7, -1) != 21 || !had || !had2) { return 99; }
     return m.len() + n.len() * 2 + g.len() * 4 + rest.len() * 8 + snapshot.len() * 16 + rest2.len() * 32;
 }`},
 	{name: "a-shared-string-map-is-copied-before-it-is-written", atLeast: 1, want: "31|", src: `
 import "core/map";
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 30) {
-        var word: string = if (r % 2 == 0) { "even" } else { "odd" };
-        var m: Map[string, string] = map_new(4);
+        let word: string = if (r % 2 == 0) { "even" } else { "odd" };
+        let m: Map[string, string] = map_new(4);
         m = m.insert(word + "k", word + "v");
-        var snapshot: Map[string, string] = m;
+        let snapshot: Map[string, string] = m;
         m = m.insert(word + "k", "changed");
         m = m.insert("x", word);
         acc = acc + snapshot.len() + snapshot.get_or(word + "k", "").len() + m.get_or(word + "k", "").len() + m.len();
@@ -3547,14 +3544,14 @@ function main(): i32 {
 	// and a scalar owns nothing.
 	{name: "os-floor-queries", atLeast: 2, want: "255|", nativeOnly: true, src: `
 function queries(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     if (getcwd().len() > 0) { n = n + 1; }
     if (hostname().len() > 0) { n = n + 2; }
     if (cpu_count() > 0) { n = n + 4; }
     if ((geteuid() as i64) >= 0) { n = n + 8; }
     if (uname_field(0).len() > 0) { n = n + 16; }
     if (isatty(1) || !isatty(1)) { n = n + 32; }
-    var old: i32 = umask(18);
+    let old: i32 = umask(18);
     if (umask(old) == 18) { n = n + 64; }
     if (environ().len() > 0) { n = n + 128; }
     return n;
@@ -3567,7 +3564,7 @@ function main(): i32 { return queries(); }
 	// both lowerings take the Err arm and still agree.
 	{name: "os-floor-handles", atLeast: 2, want: "15|", wasm: "out-of-range|", src: `
 function handles(path: string): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (open_reader(path)) {
         Ok(r) => {
             match (r.stat()) { Ok(st) => { n = n + 1; }, Err(e) => { n = n + 1000; } }
@@ -3586,8 +3583,8 @@ function main(): i32 { return handles("/dev/null") % 256; }
 	// Result box. access and chmod are fsmode, which wasi does not grant.
 	{name: "os-floor-files", atLeast: 2, want: "255|", nativeOnly: true, src: `
 function files(dir: string): i32 {
-    var n: i32 = 0;
-    var sub: string = dir + "/d";
+    let n: i32 = 0;
+    let sub: string = dir + "/d";
     match (create_dir(sub, 448)) { Ok(u) => { n = n + 1; }, Err(e) => { n = n + 1000; } }
     match (access(sub, 0)) { Ok(u) => { n = n + 2; }, Err(e) => { n = n + 2000; } }
     match (rename(sub, dir + "/e")) { Ok(u) => { n = n + 4; }, Err(e) => { n = n + 4000; } }
@@ -3600,7 +3597,7 @@ function files(dir: string): i32 {
     return n;
 }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (temp_dir("fernsem")) {
         Ok(d) => { n = files(d); match (remove_dir(d)) { Ok(u) => { }, Err(e) => { n = n + 7; } } },
         Err(e) => { n = 5; },
@@ -3612,7 +3609,7 @@ function main(): i32 {
 	// the parts a release walks; the arguments are lent.
 	{name: "os-floor-subprocess", atLeast: 1, want: "3|hi\n\n", nativeOnly: true, src: `
 function main(): i32 {
-    var p: ProcessResult = subprocess("/bin/echo", ["hi"], "");
+    let p: ProcessResult = subprocess("/bin/echo", ["hi"], "");
     print(p.stdout);
     return p.exit_code + p.stdout.len();
 }
@@ -3625,7 +3622,7 @@ function main(): i32 {
 struct Pair[T] { a: T, b: T }
 function (p: Pair[T]) put[T](v: T): Pair[T] { return Pair { a: p.b, b: v }; }
 function main(): i32 {
-    var p: Pair[i32] = Pair { a: 1, b: 2 };
+    let p: Pair[i32] = Pair { a: 1, b: 2 };
     p = p.put(7);
     return p.a * 10 + p.b;
 }
@@ -3637,7 +3634,7 @@ function main(): i32 {
 	{name: "ordmap-bounded-method-clones", atLeast: 61, want: "52|", src: `
 import "std/ordmap";
 function main(): i32 {
-    var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+    let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
     m = m.insert(3, 4);
     m = m.insert(3, 5);
     m = m.insert(9, 1);
@@ -3659,11 +3656,11 @@ struct Visitor { hit: (string) => void }
 function main(): i32 {
     each(["a", "b"], show);
     each(["c"], (x: string): void => { print(x + "!"); });
-    var v: Visitor = Visitor { hit: show };
+    let v: Visitor = Visitor { hit: show };
     v.hit("d");
-    var g: (string) => void = show;
+    let g: (string) => void = show;
     g("e");
-    var pair: ((string) => void, i32) = (show, 1);
+    let pair: ((string) => void, i32) = (show, 1);
     pair.0("f");
     return pair.1;
 }
@@ -3685,8 +3682,8 @@ function make(n: i32, k: i32): Step {
     return Next(n, (x: i32): Step => make(n - 1, k + x));
 }
 function run(s: Step): i32 {
-    var cur: Step = s;
-    var guard: i32 = 0;
+    let cur: Step = s;
+    let guard: i32 = 0;
     while (guard < 100) {
         match (cur) {
             Done(v) => { return v; },
@@ -3697,13 +3694,13 @@ function run(s: Step): i32 {
     return -1;
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         total = total + run(make(4, i));
         i = i + 1;
     }
-    var dropped: Step = make(2, 7);
+    let dropped: Step = make(2, 7);
     return total;
 }
 `},
@@ -3713,14 +3710,14 @@ function main(): i32 {
 	// is the same in a container and on a developer machine.
 	{name: "os-floor-signals-and-process", atLeast: 2, want: "9|", nativeOnly: true, src: `
 function signals(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     if (signal_ignore(2) >= 0) { n = n + 1; }
     if (signal_disposition(2) >= 0) { n = n + 1; }
     if (signal_default(2) >= 0) { n = n + 1; }
-    var was: i64 = signal_mask(0, 0i64);
+    let was: i64 = signal_mask(0, 0i64);
     if (was >= 0i64) { n = n + 1; }
     if (priority() > -21) { n = n + 1; }
-    var gs: i64[] = getgroups();
+    let gs: i64[] = getgroups();
     if (gs.len() >= 0) { n = n + 1; }
     match (setgroups(gs)) {
         Ok(_) => { n = n + 1; },
@@ -3734,7 +3731,7 @@ function signals(): i32 {
         Ok(_) => { n = n + 1; },
         Err(_) => { n = n + 1; }
     }
-    var fds: i32[] = [timer_fd(1)];
+    let fds: i32[] = [timer_fd(1)];
     if (poll(fds, 2000) > 0) { n = n + 1; }
     if (poll([], 0) == 0) { n = n + 1; }
     return n;
@@ -3750,17 +3747,17 @@ function main(): i32 { return signals(); }
 	// the row counts either way.
 	{name: "os-floor-sockets-and-ids", atLeast: 2, want: "9|", nativeOnly: true, src: `
 function sockets(): i32 {
-    var n: i32 = 0;
-    var listener: i32 = tcp_listen(0);
+    let n: i32 = 0;
+    let listener: i32 = tcp_listen(0);
     if (listener >= 0) {
-        var host_be: i32 = 127 | (1 << 24);
-        var c: i32 = tcp_connect(host_be, tcp_local_port(listener));
+        let host_be: i32 = 127 | (1 << 24);
+        let c: i32 = tcp_connect(host_be, tcp_local_port(listener));
         if (c >= 0) {
-            var a: i32 = tcp_accept(listener);
+            let a: i32 = tcp_accept(listener);
             if (a >= 0) {
                 if (tcp_send(c, "ping") == 4) { n = n + 1; }
                 if (tcp_pollable(c) == c) { n = n + 1; }
-                var got: u8[] = tcp_recv(a, 16);
+                let got: u8[] = tcp_recv(a, 16);
                 if (got.len() == 4 && got[0] as i32 == 112) { n = n + 1; }
                 if (tcp_close(a) >= 0) { n = n + 1; }
             }
@@ -3792,8 +3789,8 @@ function main(): i32 { return sockets(); }
 	// aarch64 table lacks.
 	{name: "os-floor-times-nodes-terminal", atLeast: 3, want: "12|", nativeOnly: true, src: `
 function files(dir: string): i32 {
-    var n: i32 = 0;
-    var f: string = dir + "/f";
+    let n: i32 = 0;
+    let f: string = dir + "/f";
     match (write_file(f, "x")) {
         Ok(_) => { n = n + 1; },
         Err(_) => {}
@@ -3829,12 +3826,12 @@ function files(dir: string): i32 {
     return n;
 }
 function terminal(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (window_size(1)) {
         Ok(w) => { if (w.rows >= 0i64) { n = n + 1; } },
         Err(_) => { n = n + 1; }
     }
-    var r: Reader = stdin();
+    let r: Reader = stdin();
     if (!r.isatty()) { n = n + 1; }
     match (r.window_size()) {
         Ok(w) => { if (w.cols >= 0i64) { n = n + 1; } },
@@ -3852,7 +3849,7 @@ function terminal(): i32 {
     return n;
 }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (temp_dir("fernsem")) {
         Ok(d) => {
             n = n + files(d);
@@ -3875,23 +3872,23 @@ function main(): i32 {
 	// released too (#9843).
 	{name: "array-slice-of-scalars", atLeast: 2, want: "125|", wasm: "out-of-range|", src: `
 function sum(xs: [u8]): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < xs.len()) { t = t + (xs[i] as i32); i = i + 1; }
     return t;
 }
 function main(): i32 {
-    var bytes: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let bytes: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i + 3 <= 10) { total = total + sum(bytes[i:i + 3]); i = i + 3; }
     total = total + sum(bytes[i:]);
-    var words: i32[] = [10, 20, 30, 40];
-    var mid: [i32] = words[1:3];
-    var wide: i64[] = [100i64, 200i64, 300i64];
-    var tail: [i64] = wide[1:];
-    var fl: f64[] = [1.5, 2.5, 3.5];
-    var head: [f64] = fl[0:2];
+    let words: i32[] = [10, 20, 30, 40];
+    let mid: [i32] = words[1:3];
+    let wide: i64[] = [100i64, 200i64, 300i64];
+    let tail: [i64] = wide[1:];
+    let fl: f64[] = [1.5, 2.5, 3.5];
+    let head: [f64] = fl[0:2];
     return total + mid[0] + mid.len() + (tail[1] as i32) + tail.len() + (head[1] as i32);
 }
 `},
@@ -3911,12 +3908,12 @@ function main(): i32 {
 	// agreed with each other on the wrong one.
 	{name: "a-capture-the-closure-writes-is-a-cell", atLeast: 7, want: "42|", src: `
 function tally(): i32 {
-    var n: i32 = 0;
-    var wide: i64 = 100i64;
-    var ratio: f64 = 1.5;
-    var flag: boolean = false;
-    var byte: u8 = 250u8;
-    var bump = (k: i32): i32 => {
+    let n: i32 = 0;
+    let wide: i64 = 100i64;
+    let ratio: f64 = 1.5;
+    let flag: boolean = false;
+    let byte: u8 = 250u8;
+    let bump = (k: i32): i32 => {
         n = n + k;
         wide = wide + (k as i64);
         ratio = ratio * 2.0;
@@ -3924,9 +3921,9 @@ function tally(): i32 {
         byte = byte + 3u8;
         return n;
     };
-    var a: i32 = bump(1);
-    var b: i32 = bump(2);
-    var t: i32 = 0;
+    let a: i32 = bump(1);
+    let b: i32 = bump(2);
+    let t: i32 = 0;
     if (flag) { t = 1000; }
     return a + b + n + (wide as i32) + (ratio as i32) + t + (byte as i32);
 }
@@ -3936,22 +3933,22 @@ function counter(c: Cell[i64]): i32 {
 }
 function apply(f: () => i32): i32 { return f(); }
 function rebound(): i32 {
-    var s: string = "a";
-    var read = (): i32 => { return s.len(); };
-    var i: i32 = 0;
-    var n: i32 = 0;
+    let s: string = "a";
+    let read = (): i32 => { return s.len(); };
+    let i: i32 = 0;
+    let n: i32 = 0;
     while (i < 3) { s = s + "bb"; n = n + apply(read); i = i + 1; }
     return n;
 }
 function main(): i32 {
-    var c: Cell[i64] = cell_new(4i64);
-    var k: i32 = counter(c) + counter(c);
+    let c: Cell[i64] = cell_new(4i64);
+    let k: i32 = counter(c) + counter(c);
     return (tally() + k + rebound()) % 100;
 }
 `},
 	{name: "os-floor-fresh-results-are-freed", atLeast: 3, want: "57|", nativeOnly: true, src: `
 function leaves(dir: string, p: string): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (create_dir(p + ".d", 493)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
     match (remove_dir(p + ".d")) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
     match (create_link(p, p + ".h")) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
@@ -3965,14 +3962,14 @@ function leaves(dir: string, p: string): i32 {
     return n;
 }
 function each(dir: string): i32 {
-    var n: i32 = 0;
-    var cwd: string = getcwd();
+    let n: i32 = 0;
+    let cwd: string = getcwd();
     if (cwd.len() > 0) { n = n + 1; }
-    var host: string = hostname();
+    let host: string = hostname();
     if (host.len() > 0) { n = n + 1; }
-    var sys: string = uname_field(0);
+    let sys: string = uname_field(0);
     n = n + sys.len() % 7;
-    var env: string[] = environ();
+    let env: string[] = environ();
     if (env.len() > 0) { n = n + 1; }
     match (create_symlink("target", dir + "/lnk")) {
         Ok(_) => {
@@ -4006,20 +4003,20 @@ function each(dir: string): i32 {
         Err(_) => { n = n + 6; }
     }
     n = n + leaves(dir, dir + "/f") + leaves(dir, dir + "/missing/f");
-    var rb: u8[] = random_bytes(24);
+    let rb: u8[] = random_bytes(24);
     n = n + rb.len();
     if (cpu_count() >= 0) { n = n + 1; }
-    var gs: i64[] = getgroups();
+    let gs: i64[] = getgroups();
     if (gs.len() >= 0) { n = n + 1; }
-    var r: ProcessResult = subprocess("echo", ["hi", "there"], "");
+    let r: ProcessResult = subprocess("echo", ["hi", "there"], "");
     n = n + r.exit_code + r.stdout.len() + r.stderr.len();
     return n;
 }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (temp_dir("fernfresh")) {
         Ok(d) => {
-            var i: i32 = 0;
+            let i: i32 = 0;
             while (i < 3) { n = n + each(d); i = i + 1; }
             match (remove_dir_all(d)) {
                 Ok(_) => {},
@@ -4040,23 +4037,23 @@ function main(): i32 {
 import "core/map";
 import "std/string";
 function tally(text: string, m: Map[string, i32]): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i + 2 <= text.len()) {
-        var w: str = slice_unchecked(text, i, i + 2);
+        let w: str = slice_unchecked(text, i, i + 2);
         n = n + m.get_or(w, 0);
         i = i + 2;
     }
     return n;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) {
-        var m: Map[string, i32] = map_new(8);
+        let m: Map[string, i32] = map_new(8);
         m = m.insert("ab", 3);
         m = m.insert("cd", 5);
-        var text: string = "ab" + "cd" + "ef";
+        let text: string = "ab" + "cd" + "ef";
         acc = acc + tally(text, m);
         r = r + 1;
     }
@@ -4079,14 +4076,14 @@ import "std/io";
 function sq(s: string): string { return s.replace("Q", "Z"); }
 function blank(s: string): string { return s.replace("", "Z"); }
 function words(n: i32): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < n) { out = out + " x"; i = i + 1; }
     return out;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
+    let acc: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) {
         acc = acc + sq(words(r % 4)).len() + sq(words(r % 3) + "Q").len() + blank(words(r % 2)).len();
         r = r + 1;
@@ -4095,7 +4092,7 @@ function main(): i32 {
     return acc % 109;
 }`},
 	// An unannotated binding of a CALL takes its type from the call, not from
-	// the checker: `var m = s.map(f)` on a generic receiver is a shape the
+	// the checker: `let m = s.map(f)` on a generic receiver is a shape the
 	// checker leaves `not yet checked`, and the instance the call resolves is
 	// what settles it. Every declaration here refused before, through the
 	// binding, so `std/result`'s whole combinator surface stood on the AST
@@ -4104,19 +4101,19 @@ function main(): i32 {
 import "std/option";
 import "std/result";
 function mapped(): i32 {
-    var s: Option[i32] = Some(5);
-    var m = s.map((x: i32): i32 => { return x * 2; });
+    let s: Option[i32] = Some(5);
+    let m = s.map((x: i32): i32 => { return x * 2; });
     return m.unwrap_or(0);
 }
 function chained(): i32 {
-    var r: Result[i32, string] = Ok(7);
-    var d = r.map((x: i32): i32 => { return x + 1; });
-    var e = d.map_err((m: string): string => { return m + "!"; });
+    let r: Result[i32, string] = Ok(7);
+    let d = r.map((x: i32): i32 => { return x + 1; });
+    let e = d.map_err((m: string): string => { return m + "!"; });
     return e.unwrap_or(0);
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) { acc = acc + mapped() + chained(); i = i + 1; }
     return acc % 113;
 }`},
@@ -4129,13 +4126,13 @@ function main(): i32 {
 	{name: "a-variant-literal-types-itself-where-the-parameter-cannot", atLeast: 44, want: "39|", src: `
 import "std/option";
 function both(): i32 {
-    var s: Option[i32] = Some(5);
-    var other: Option[i32] = Some(9);
+    let s: Option[i32] = Some(5);
+    let other: Option[i32] = Some(9);
     return s.and(Some(9)).unwrap_or(0) + s.and(other).unwrap_or(0);
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) { acc = acc + both(); i = i + 1; }
     return acc % 107;
 }`},
@@ -4153,10 +4150,10 @@ import "core/cmp";
 enum Shape { Circle(i32), Square(i32), Empty }
 function direct(): string { return Empty.to_string(); }
 function qualified(): string { return Shape.Circle(1).to_string(); }
-function bound(): string { var e: Shape = Empty; return e.to_string(); }
+function bound(): string { let e: Shape = Empty; return e.to_string(); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) { acc = acc + direct().len() + qualified().len() + bound().len(); i = i + 1; }
     return acc % 101;
 }`},
@@ -4168,12 +4165,12 @@ struct Held { xs: f64[] }
 function (self: Held) render(): string { return self.xs.to_json(); }
 function loose(b: Bag): string { return b.items.to_json(); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) {
-        var bag: Bag = Bag { items: [1, 2, 3], names: ["a", "b"] };
-        var h: Held = Held { xs: [1.5, 2.5] };
-        var nums: i32[] = [10, 20];
+        let bag: Bag = Bag { items: [1, 2, 3], names: ["a", "b"] };
+        let h: Held = Held { xs: [1.5, 2.5] };
+        let nums: i32[] = [10, 20];
         acc = acc + bag.to_json().len() + h.render().len() + loose(bag).len() + nums.to_json().len();
         i = i + 1;
     }
@@ -4191,12 +4188,12 @@ enum Shape { Dot, Line(i32), Box(i32, string) }
 struct Holder[T] { v: T }
 function same[T](a: Holder[T], b: Holder[T]): boolean { return a == b; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) {
-        var a: Point = Point { x: 2, y: "hi" };
-        var b: Point = Point { x: 2, y: "hi" };
-        var c: Point = Point { x: 2, y: "hj" };
+        let a: Point = Point { x: 2, y: "hi" };
+        let b: Point = Point { x: 2, y: "hi" };
+        let c: Point = Point { x: 2, y: "hj" };
         if (!(a == b)) { return 1; }
         if (a == c) { return 2; }
         if (!(a != c)) { return 3; }
@@ -4211,9 +4208,9 @@ function main(): i32 {
         if (!(Line(1) < Box(0, ""))) { return 12; }
         if (!(Dot == Dot)) { return 13; }
         if (Dot == Line(0)) { return 14; }
-        var p: Holder[i32] = Holder { v: 1 };
-        var q: Holder[i32] = Holder { v: 2 };
-        var r: Holder[string] = Holder { v: "a" };
+        let p: Holder[i32] = Holder { v: 1 };
+        let q: Holder[i32] = Holder { v: 2 };
+        let r: Holder[string] = Holder { v: "a" };
         if (!same(p, Holder { v: 1 })) { return 15; }
         if (same(p, q)) { return 16; }
         if (!(p < q)) { return 17; }
@@ -4225,11 +4222,11 @@ function main(): i32 {
 }`},
 	{name: "a-u8-converts-to-and-from-a-float", atLeast: 1, want: "128|", wasm: "out-of-range|", src: `
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 256) {
-        var b: u8 = i as u8;
-        var f: f64 = b as f64;
+        let b: u8 = i as u8;
+        let f: f64 = b as f64;
         if ((f as u8) != b) { return 1; }
         if ((f as i32) != i) { return 2; }
         acc = acc + ((f as i32) & 1);
@@ -4238,7 +4235,7 @@ function main(): i32 {
     if ((300.7 as u8) != 44u8) { return 3; }
     if ((255.9 as u8) != 255u8) { return 4; }
     if ((0.5 as u8) != 0u8) { return 5; }
-    var w: u8 = 200u8;
+    let w: u8 = 200u8;
     if ((w as f64) * 2.0 != 400.0) { return 6; }
     if ((w as f32) != 200.0) { return 7; }
     return acc;
@@ -4275,7 +4272,7 @@ function main(): i32 {
 function give(x: i32, cb: (i32) => i32): i32 { return cb(x); }
 
 function main(): i32 {
-    var bound = (): i32 => {
+    let bound = (): i32 => {
         use n <- give(41);
         return n + 1;
     };
@@ -4294,17 +4291,17 @@ function main(): i32 {
 import "core/map";
 
 function main(): i32 {
-    var m: Map[u8, i32] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[u8, i32] = map_new(2);
+    let i: i32 = 0;
     while (i < 12) { m = m.insert(i as u8, i * 2); i = i + 1; }
-    var ks: u8[] = m.keys();
-    var s: i32 = 0;
+    let ks: u8[] = m.keys();
+    let s: i32 = 0;
     for k in ks { s = s + (k as i32); }
-    var w: Map[i32, u8] = map_new(2);
+    let w: Map[i32, u8] = map_new(2);
     i = 0;
     while (i < 12) { w = w.insert(i, (i * 2) as u8); i = i + 1; }
     for v in w.values() { s = s + (v as i32); }
-    var b: Map[i32, boolean] = map_new(2);
+    let b: Map[i32, boolean] = map_new(2);
     i = 0;
     while (i < 12) { b = b.insert(i, i % 3 == 0); i = i + 1; }
     for f in b.values() { if (f) { s = s + 10; } }
@@ -4323,8 +4320,8 @@ function main(): i32 {
 function pick[T](xs: T[], i: i32): T { return xs[i]; }
 
 function main(): i32 {
-    var xs: i64[] = [1, 2, 3];
-    var ys: i32[] = [4, 5, 6];
+    let xs: i64[] = [1, 2, 3];
+    let ys: i32[] = [4, 5, 6];
     return (pick[i64](xs, 1) as i32) + pick[i32](ys, 2,) + 34;
 }
 `},
@@ -4335,7 +4332,7 @@ function main(): i32 {
 	// loop`; conformance/cases/labeled_loops, #9550).
 	{name: "labelled-range-loop", atLeast: 1, want: "13|", src: `
 function main(): i32 {
-    var sum: i32 = 0;
+    let sum: i32 = 0;
     outer: for i in 0..4 {
         for j in 0..4 {
             if (j == 2) { continue outer; }
@@ -4343,7 +4340,7 @@ function main(): i32 {
         }
         sum = sum + 100;
     }
-    var k: i32 = 0;
+    let k: i32 = 0;
     scan: for a in 0..10 {
         while (true) {
             k = k + 1;
@@ -4364,18 +4361,18 @@ function main(): i32 {
 const NEWLINE: char = '\n';
 
 function upper_ascii(c: char): char {
-    var n: i32 = c as i32;
+    let n: i32 = c as i32;
     if (n >= 97 && n <= 122) { return (n - 32) as char; }
     return c;
 }
 
 function main(): i32 {
-    var c: char = 'x';
+    let c: char = 'x';
     if (upper_ascii(c) != 'X') { return 1; }
     if (upper_ascii('Q') != 'Q') { return 2; }
     if ((NEWLINE as i32) != 10) { return 3; }
     if (('\u{1F600}' as i32) != 128512) { return 4; }
-    var back: char = 65 as char;
+    let back: char = 65 as char;
     if (back != 'A') { return 5; }
     return (c as i32) - 78;
 }
@@ -4395,10 +4392,10 @@ function (a: V) mul(b: V): V { return V { x: a.x * b.x }; }
 function (a: V) neg(): V { return V { x: 0 - a.x }; }
 
 function main(): i32 {
-    var a: V = V { x: 5 };
-    var b: V = V { x: 3 };
-    var d: V = (a + b) * (a - b);
-    var e: V = -(a - b);
+    let a: V = V { x: 5 };
+    let b: V = V { x: 3 };
+    let d: V = (a + b) * (a - b);
+    let e: V = -(a - b);
     return d.x + e.x + 28;
 }
 `},
@@ -4410,9 +4407,9 @@ function main(): i32 {
 	// lambda captures nothing; a capturing one is the issue's second half.
 	{name: "a-lambda-returning-a-lambda-is-called-through-its-result", atLeast: 3, want: "42|", src: `
 function main(): i32 {
-    var mk = () => { return (b: i32): i32 => b * 2; };
-    var f = mk();
-    var add = (n: i32) => { return (a: i32, b: i32): i32 => a + b; };
+    let mk = () => { return (b: i32): i32 => b * 2; };
+    let f = mk();
+    let add = (n: i32) => { return (a: i32, b: i32): i32 => a + b; };
     return f(4) + mk()(3) + add(0)(20, 8);
 }
 `},
@@ -4426,20 +4423,20 @@ function main(): i32 {
 import "std/i32";
 function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }
-    var sLen: i32 = s.len();
+    let sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
     return slice_unchecked(s, n, sLen);
 }
 function pick(a: string, n: i32): str { return a.tail(n); }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var r: str = ("abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string()).tail(i);
-        var junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZYYYY" + i.to_string();
-        var local: string = "0123456789012345678901234567890ab" + i.to_string();
-        var q: str = pick(local, 2);
-        var junk2: string = "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWVVVV" + i.to_string();
+        let r: str = ("abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string()).tail(i);
+        let junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZYYYY" + i.to_string();
+        let local: string = "0123456789012345678901234567890ab" + i.to_string();
+        let q: str = pick(local, 2);
+        let junk2: string = "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWVVVV" + i.to_string();
         print(r);
         print(q);
         t = t + r.len() + q.len() + junk.len() + junk2.len();
@@ -4456,13 +4453,13 @@ function main(): i32 {
 	{name: "a-slice-view-keeps-its-local-alive", atLeast: 1, want: "0|abcdefghijklmnopqrstuvwxyz0123\nabcdefghijklmnopqrstuvwxyz0123\nabcdefghijklmnopqrstuvwxyz0123\n", src: `
 import "std/i32";
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var s: string = "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string();
+        let s: string = "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string();
         match (s[0:30]) {
             Some(v) => {
-                var junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" + i.to_string();
+                let junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" + i.to_string();
                 print(v);
                 t = t + v.len() + junk.len();
             },
@@ -4480,16 +4477,16 @@ function main(): i32 {
 	{name: "an-option-view-result-takes-its-payload", atLeast: 2, want: "0|abc\nabc\nabc\n", src: `
 import "std/i32";
 function first_three(s: string): Option[str] {
-    var v: str = s[0:3]?;
+    let v: str = s[0:3]?;
     return Some(v);
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         match (first_three("abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string())) {
             Some(v) => {
-                var junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" + i.to_string();
+                let junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" + i.to_string();
                 print(v);
                 t = t + v.len() + junk.len();
             },
@@ -4511,8 +4508,8 @@ function main(): i32 {
 	{name: "a-view-of-counted-strings-carries-its-own-bytes", atLeast: 2, want: "0|the quick \nbrown fox \njumps over\n the lazy \ndog\n", src: `
 import "std/string";
 function fold_line(line: string, width: i32): i32 {
-    var n: i32 = 0;
-    var rest: str = line;
+    let n: i32 = 0;
+    let rest: str = line;
     while (rest.len() > width) {
         print(rest.take(width));
         rest = rest.drop(width);
@@ -4535,7 +4532,7 @@ function either(a: string, b: string, first: boolean): str {
     return b;
 }
 function main(): i32 {
-    var v: str = either(7.to_string(), 42.to_string(), false);
+    let v: str = either(7.to_string(), 42.to_string(), false);
     return v.len() - 2;
 }
 `},
@@ -4551,12 +4548,12 @@ function either(a: str, b: str, first: boolean): str {
 }
 function through(a: string, b: string, k: i32): str { return either(a, b, k % 2 == 0); }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 40) {
-        var x: string = "ab" + i.to_string();
-        var v: str = through(x, "q" + i.to_string(), i);
-        var w: str = either(v, x, i % 3 == 0);
+        let x: string = "ab" + i.to_string();
+        let v: str = through(x, "q" + i.to_string(), i);
+        let w: str = either(v, x, i % 3 == 0);
         t = t + v.len() + w.len();
         i = i + 1;
     }
@@ -4573,29 +4570,29 @@ function main(): i32 {
 import "std/i32";
 function keep(v: str, xs: str[]): str[] { return xs.append(v); }
 function pair(a: string, b: string): str[] {
-    var o: str[] = [];
+    let o: str[] = [];
     o = o.append(slice_unchecked(a, 0, 30));
     o = o.append(slice_unchecked(b, 2, 32));
     return o;
 }
 function pick(a: string, b: string, first: boolean): str {
-    var v: str = slice_unchecked(b, 1, 31);
+    let v: str = slice_unchecked(b, 1, 31);
     if (first) { v = slice_unchecked(a, 0, 30); }
     return v;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
-        var s1: string = "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string();
-        var s2: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ9876543210" + i.to_string();
-        var local: str[] = [slice_unchecked(s1, 1, 31), slice_unchecked(s2, 3, 33)];
-        var xs: str[] = pair("abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string(), "0123456789abcdefghijklmnopqrstuvwxyz" + i.to_string());
-        var ys: str[] = [];
+        let s1: string = "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string();
+        let s2: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ9876543210" + i.to_string();
+        let local: str[] = [slice_unchecked(s1, 1, 31), slice_unchecked(s2, 3, 33)];
+        let xs: str[] = pair("abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string(), "0123456789abcdefghijklmnopqrstuvwxyz" + i.to_string());
+        let ys: str[] = [];
         ys = keep(slice_unchecked("klmnopqrstuvwxyz0123456789abcdefghij" + i.to_string(), 0, 30), ys);
-        var p: str = pick("qrstuvwxyz0123456789abcdefghijklmnop" + i.to_string(), "QRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP" + i.to_string(), i == 1);
-        var junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZYYYY" + i.to_string();
-        var junk2: string = "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWVVVV" + i.to_string();
+        let p: str = pick("qrstuvwxyz0123456789abcdefghijklmnop" + i.to_string(), "QRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP" + i.to_string(), i == 1);
+        let junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZYYYY" + i.to_string();
+        let junk2: string = "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWVVVV" + i.to_string();
         print(local[0]);
         print(local[1]);
         print(xs[0]);
@@ -4618,12 +4615,12 @@ function opt(v: str): Option[str] { return Some(v); }
 function arr(v: str): str[] { return [v, v]; }
 function same(v: str): str { return v; }
 function main(): i32 {
-    var s: string = "abcdefgh" + 7.to_string();
-    var p: P = rec(slice_unchecked(s, 1, 4));
-    var o: Option[str] = opt(slice_unchecked(s, 0, 5));
-    var xs: str[] = arr(slice_unchecked(s, 3, 5));
-    var w: str = same(slice_unchecked(s, 4, 9));
-    var n: i32 = 0;
+    let s: string = "abcdefgh" + 7.to_string();
+    let p: P = rec(slice_unchecked(s, 1, 4));
+    let o: Option[str] = opt(slice_unchecked(s, 0, 5));
+    let xs: str[] = arr(slice_unchecked(s, 3, 5));
+    let w: str = same(slice_unchecked(s, 4, 9));
+    let n: i32 = 0;
     match (o) { Some(v) => { n = v.len(); }, None => { n = 100; } }
     print(p.a);
     print(xs[1]);
@@ -4638,16 +4635,16 @@ function main(): i32 {
 	// `ys[0]` still held, and `junk` reused it, so `ys[0]` printed "zz".
 	{name: "a-copied-array-of-views-owns-its-boxes", atLeast: 4, want: "3|ab\ncd\n", src: `
 function mk(s: string): str[] {
-    var xs: str[] = [];
+    let xs: str[] = [];
     xs = xs.append(slice_unchecked(s, 0, 2));
     return xs;
 }
 function grow(xs: str[], s: string): str[] { return xs.append(slice_unchecked(s, 2, 4)); }
-function step(s: string): str[] { var xs: str[] = mk(s); return grow(xs, s); }
+function step(s: string): str[] { let xs: str[] = mk(s); return grow(xs, s); }
 function main(): i32 {
-    var s: string = "abcdefgh";
-    var ys: str[] = step(s);
-    var junk: str[] = mk("zzzzzzzz");
+    let s: string = "abcdefgh";
+    let ys: str[] = step(s);
+    let junk: str[] = mk("zzzzzzzz");
     print(ys[0]);
     print(ys[1]);
     return ys.len() + junk.len();
@@ -4659,21 +4656,21 @@ function main(): i32 {
 	{name: "every-copy-of-a-shared-array-of-views-owns-its-boxes", atLeast: 2, want: "13|abcd\nabcdef\nabgh\nab\nababbc\n", src: `
 struct H { names: str[], n: i32 }
 function mk(s: string): str[] {
-    var xs: str[] = [];
+    let xs: str[] = [];
     xs = xs.append(slice_unchecked(s, 0, 2));
     xs = xs.append(slice_unchecked(s, 2, 4));
     return xs;
 }
 function main(): i32 {
-    var s: string = "abcdefgh";
-    var xs: str[] = mk(s);
-    var ys: str[] = xs.append(slice_unchecked(s, 4, 6));
-    var ws: str[] = xs.with(1, slice_unchecked(s, 6, 8));
-    var zs: [str] = xs[0:1];
-    var h: H = H { names: xs, n: 1 };
-    var g: H = h;
+    let s: string = "abcdefgh";
+    let xs: str[] = mk(s);
+    let ys: str[] = xs.append(slice_unchecked(s, 4, 6));
+    let ws: str[] = xs.with(1, slice_unchecked(s, 6, 8));
+    let zs: [str] = xs[0:1];
+    let h: H = H { names: xs, n: 1 };
+    let g: H = h;
     g = H { ...g, names: g.names.append(slice_unchecked(s, 1, 3)) };
-    var junk: str[] = mk("zzzzzzzz");
+    let junk: str[] = mk("zzzzzzzz");
     print(xs[0] + xs[1]);
     print(ys[0] + ys[1] + ys[2]);
     print(ws[0] + ws[1]);
@@ -4690,22 +4687,22 @@ function main(): i32 {
 	{name: "every-read-of-a-view-map-value-is-a-fresh-view", atLeast: 2, want: "13|ab\ncde\nh\nab\ncde\nab\ncde\ncde\nab\n", src: `
 import "core/map";
 function fill(s: string): Map[i32, str] {
-    var m: Map[i32, str] = map_new(4);
+    let m: Map[i32, str] = map_new(4);
     m = m.insert(1, slice_unchecked(s, 0, 2));
     m = m.insert(2, slice_unchecked(s, 2, 5));
     return m;
 }
 function main(): i32 {
-    var s: string = "abcdefgh";
-    var m: Map[i32, str] = fill(s);
-    var n: i32 = 0;
+    let s: string = "abcdefgh";
+    let m: Map[i32, str] = fill(s);
+    let n: i32 = 0;
     match (m.get(1)) { Some(v) => { print(v); n = n + v.len(); }, None => { n = 100; } }
-    var d: str = m.get_or(2, slice_unchecked(s, 7, 8));
-    var e: str = m.get_or(9, slice_unchecked(s, 7, 8));
-    var junk: str[] = [slice_unchecked("zzzzzzzz", 0, 3), slice_unchecked("yyyyyyyy", 0, 3)];
+    let d: str = m.get_or(2, slice_unchecked(s, 7, 8));
+    let e: str = m.get_or(9, slice_unchecked(s, 7, 8));
+    let junk: str[] = [slice_unchecked("zzzzzzzz", 0, 3), slice_unchecked("yyyyyyyy", 0, 3)];
     print(d);
     print(e);
-    var vs: str[] = m.values();
+    let vs: str[] = m.values();
     for v in vs { print(v); }
     for (k, v) in m { print(v); n = n + k; }
     match (m.get(2)) { Some(v) => { print(v); }, None => { n = 100; } }
@@ -4721,7 +4718,7 @@ function main(): i32 {
 	{name: "a-copied-view-map-owns-its-boxes", atLeast: 3, want: "28|gh\nabcdefgh!\nlit\nq\ngone\nbc\nabcdefgh!\nbc\nbc\nd\n", src: `
 import "core/map";
 function fill(s: string): Map[string, str] {
-    var m: Map[string, str] = map_new(4);
+    let m: Map[string, str] = map_new(4);
     m = m.insert("a", slice_unchecked(s, 0, 2));
     m = m.insert("b", slice_unchecked(s, 2, 5));
     m = m.insert("d", "lit");
@@ -4731,25 +4728,25 @@ function grow(m: Map[string, str], s: string): Map[string, str] {
     return m.insert("e", slice_unchecked(s, 3, 4));
 }
 function main(): i32 {
-    var s: string = "abcdefgh";
-    var m: Map[string, str] = fill(s);
-    var w: Map[i64, str] = map_new(2);
+    let s: string = "abcdefgh";
+    let m: Map[string, str] = fill(s);
+    let w: Map[i64, str] = map_new(2);
     w = w.insert(5 as i64, slice_unchecked(s, 1, 3));
-    var t: string = s + "!";
-    var c: str = t;
+    let t: string = s + "!";
+    let c: str = t;
     m = m.insert("c", c);
-    var held: Map[string, str] = m;
-    var (m2, had) = held.without("b");
+    let held: Map[string, str] = m;
+    let (m2, had) = held.without("b");
     m = m.insert("a", slice_unchecked(s, 6, 8));
-    var m3: Map[string, str] = grow(m, s);
-    var junk: str[] = [slice_unchecked("zzzzzzzz", 0, 3), slice_unchecked("yyyyyyyy", 0, 3)];
+    let m3: Map[string, str] = grow(m, s);
+    let junk: str[] = [slice_unchecked("zzzzzzzz", 0, 3), slice_unchecked("yyyyyyyy", 0, 3)];
     print(m.get_or("a", "q"));
     print(m.get_or("c", "q"));
     print(m.get_or("d", "q"));
     print(m.get_or("x", "q"));
     print(m2.get_or("b", "gone"));
     print(w.get_or(5 as i64, "q"));
-    var n: i32 = 0;
+    let n: i32 = 0;
     for (k, v) in m2 { n = n + v.len(); }
     match (m.get("c")) { Some(v) => { print(v); }, None => { n = 100; } }
     match (w.get(5 as i64)) { Some(v) => { print(v); }, None => { n = 100; } }
@@ -4766,15 +4763,15 @@ function main(): i32 {
 import "std/i32";
 function id(xs: str[]): str[] { return xs; }
 function build(s: string, k: i32): str[] {
-    var xs: str[] = [slice_unchecked(s, 0, 3)];
-    var i: i32 = 0;
+    let xs: str[] = [slice_unchecked(s, 0, 3)];
+    let i: i32 = 0;
     while (i < k) { xs = id(xs); i = i + 1; }
     return xs;
 }
 function main(): i32 {
-    var s: string = "abcdefgh" + 7.to_string();
-    var r: str[] = build(s, 5);
-    var junk: string = "zzzzzzzzzz" + 8.to_string();
+    let s: string = "abcdefgh" + 7.to_string();
+    let r: str[] = build(s, 5);
+    let junk: string = "zzzzzzzzzz" + 8.to_string();
     print(r[0]);
     return r.len() + junk.len();
 }
@@ -4785,10 +4782,10 @@ function main(): i32 {
 import "std/i32";
 function keep(v: str, xs: str[]): str[] { return xs.append(v); }
 function build(a: string, b: string, k: i32): str[] {
-    var xs: str[] = [];
-    var i: i32 = 0;
+    let xs: str[] = [];
+    let i: i32 = 0;
     while (i < k) {
-        var t: str = slice_unchecked(a, i, i + 2);
+        let t: str = slice_unchecked(a, i, i + 2);
         xs = keep(t, xs);
         xs = keep(slice_unchecked(b, i, i + 1), xs);
         i = i + 1;
@@ -4796,11 +4793,11 @@ function build(a: string, b: string, k: i32): str[] {
     return xs;
 }
 function main(): i32 {
-    var a: string = "abcdefgh" + 1.to_string();
-    var b: string = "ABCDEFGH" + 2.to_string();
-    var xs: str[] = build(a, b, 5);
-    var junk: string = "zzzzzzzzzz" + 3.to_string();
-    var line: string = "";
+    let a: string = "abcdefgh" + 1.to_string();
+    let b: string = "ABCDEFGH" + 2.to_string();
+    let xs: str[] = build(a, b, 5);
+    let junk: string = "zzzzzzzzzz" + 3.to_string();
+    let line: string = "";
     for x in xs { line = line + x + ","; }
     print(line);
     return xs.len() + junk.len();
@@ -4811,8 +4808,8 @@ function main(): i32 {
 	{name: "a-loop-keeping-an-anonymous-slice-through-a-call-is-produced", atLeast: 3, want: "5|", src: `
 function keep(v: str, xs: str[]): str[] { return xs.append(v); }
 function build(s: string, n: i32): str[] {
-    var xs: str[] = [];
-    var i: i32 = 0;
+    let xs: str[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = keep(slice_unchecked(s, i, i + 2), xs); i = i + 1; }
     return xs;
 }
@@ -4824,23 +4821,23 @@ function main(): i32 { return build("abcdefgh", 5).len(); }
 	// the operand is now copied on its edge.
 	{name: "a-str-local-assigned-a-view-of-a-branch-local-is-produced", atLeast: 4, want: "12|<p:xx><>amp:x!\n", src: `
 function mk(n: i32): string {
-    var s: string = "stamp:";
-    var i: i32 = 0;
+    let s: string = "stamp:";
+    let i: i32 = 0;
     while (i < n) { s = s + "x"; i = i + 1; }
     return s;
 }
 function branch(n: i32): string {
-    var tail: str = "";
+    let tail: str = "";
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         tail = slice_unchecked(s, 4, 8);
     }
     return "<" + tail + ">";
 }
 function block(n: i32): string {
-    var tail: str = "none";
+    let tail: str = "none";
     {
-        var s: string = mk(n);
+        let s: string = mk(n);
         tail = slice_unchecked(s, 2, 7);
     }
     return tail + "!";
@@ -4854,16 +4851,16 @@ function main(): i32 {
 	// previous round's local.
 	{name: "a-str-local-assigned-a-view-of-a-loop-body-local-is-produced", atLeast: 3, want: "8|[bccc][-]\n", src: `
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function last(k: i32): string {
-    var t: str = "-";
-    var i: i32 = 0;
+    let t: str = "-";
+    let i: i32 = 0;
     while (i < k) {
-        var s: string = mk(i);
+        let s: string = mk(i);
         t = slice_unchecked(s, 1, s.len());
         i = i + 1;
     }
@@ -4878,18 +4875,18 @@ function main(): i32 {
 	// declared there: its views are copied where the construction takes them.
 	{name: "a-str-array-built-from-a-view-of-a-branch-local-is-produced", atLeast: 3, want: "3|ab|\n", src: `
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function f(n: i32): string {
-    var a: str[] = [];
+    let a: str[] = [];
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         a = a.append(slice_unchecked(s, 0, 2));
     }
-    var out: string = "";
+    let out: string = "";
     for v in a { out = out + v + "|"; }
     return out;
 }
@@ -4898,18 +4895,18 @@ function main(): i32 { print(f(3) + f(0)); return f(2).len(); }
 	// The control: the source declared above the branch dominates the join.
 	{name: "a-str-array-built-from-a-view-of-a-dominating-local-is-produced", atLeast: 3, want: "3|ab|\n", src: `
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function f(n: i32): string {
-    var a: str[] = [];
-    var s: string = mk(n);
+    let a: str[] = [];
+    let s: string = mk(n);
     if (n != 0) {
         a = a.append(slice_unchecked(s, 0, 2));
     }
-    var out: string = "";
+    let out: string = "";
     for v in a { out = out + v + "|"; }
     return out;
 }
@@ -4917,24 +4914,24 @@ function main(): i32 { print(f(3) + f(0)); return f(2).len(); }
 `},
 	{name: "a-tuple-option-and-array-of-views-of-a-loop-body-local-is-produced", atLeast: 3, want: "13|abc|a,lit,c,c,c x|-,lit\n", src: `
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function f(n: i32): string {
-    var t: (str, i32) = ("x", 0);
-    var o: Option[str] = None;
-    var a: str[] = ["lit"];
-    var i: i32 = 0;
+    let t: (str, i32) = ("x", 0);
+    let o: Option[str] = None;
+    let a: str[] = ["lit"];
+    let i: i32 = 0;
     while (i < n) {
-        var s: string = mk(i + 1);
+        let s: string = mk(i + 1);
         t = (slice_unchecked(s, 0, 3), i);
         o = Some(slice_unchecked(s, 0, 1));
         a = a.append(slice_unchecked(s, 2, 3));
         i = i + 1;
     }
-    var out: string = t.0 + "|";
+    let out: string = t.0 + "|";
     match (o) { Some(v) => { out = out + v; }, None => { out = out + "-"; } }
     for v in a { out = out + "," + v; }
     return out;
@@ -4958,18 +4955,18 @@ function main(): i32 { f(1); f(0); return 0; }
 	// each takes it.
 	{name: "an-array-with-a-view-of-a-branch-local-is-produced", atLeast: 3, want: "3|ab| zz|\n", src: `
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function f(n: i32): string {
-    var a: str[] = ["zz"];
+    let a: str[] = ["zz"];
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         a = a.with(0, slice_unchecked(s, 0, 2));
     }
-    var out: string = "";
+    let out: string = "";
     for v in a { out = out + v + "|"; }
     return out;
 }
@@ -4979,18 +4976,18 @@ function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 import "core/map";
 import "std/i32";
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function f(n: i32): string {
-    var m: Map[string, str] = Map {};
+    let m: Map[string, str] = Map {};
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         m = m.insert("k", slice_unchecked(s, 0, 2));
     }
-    var out: string = "";
+    let out: string = "";
     for k in m.keys() { out = out + k + "|"; }
     return out + m.len().to_string();
 }
@@ -5000,19 +4997,19 @@ function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 	// loop body it merges out of, is copied whole at the merge (#10815).
 	{name: "a-str-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, want: "4|a|b|\n", src: `
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function heads(s: string): str[] { return [slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 2)]; }
 function f(n: i32): string {
-    var a: str[] = [];
+    let a: str[] = [];
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         a = heads(s);
     }
-    var out: string = "";
+    let out: string = "";
     for v in a { out = out + v + "|"; }
     return out;
 }
@@ -5020,16 +5017,16 @@ function main(): i32 { print(f(3) + f(0)); return f(2).len(); }
 `},
 	{name: "a-tuple-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, want: "4|a/bc -/-\n", src: `
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function split2(s: string): (str, str) { return (slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 3)); }
 function f(n: i32): string {
-    var p: (str, str) = ("-", "-");
+    let p: (str, str) = ("-", "-");
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         p = split2(s);
     }
     return p.0 + "/" + p.1;
@@ -5038,8 +5035,8 @@ function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 `},
 	{name: "an-option-a-call-returns-from-a-loop-body-local-is-produced", atLeast: 4, want: "7|some:ab none none\n", src: `
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
@@ -5048,10 +5045,10 @@ function first(s: string, n: i32): Option[str] {
     return None;
 }
 function f(n: i32): string {
-    var o: Option[str] = None;
-    var i: i32 = 0;
+    let o: Option[str] = None;
+    let i: i32 = 0;
     while (i < n) {
-        var s: string = mk(i);
+        let s: string = mk(i);
         o = first(s, i);
         i = i + 1;
     }
@@ -5067,8 +5064,8 @@ function main(): i32 { print(f(5) + " " + f(2) + " " + f(0)); return f(4).len();
 	{name: "a-three-variant-enum-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, want: "5|ab/bc b:a c\n", src: `
 enum Tri { A(str, str), B(str), C }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
@@ -5078,12 +5075,12 @@ function pick(s: string, which: i32): Tri {
     return C;
 }
 function f(n: i32): string {
-    var t: Tri = C;
+    let t: Tri = C;
     if (n != 0) {
-        var s: string = mk(n + 2);
+        let s: string = mk(n + 2);
         t = pick(s, n);
     }
-    var out: string = "";
+    let out: string = "";
     match (t) { A(a, b) => { out = a + "/" + b; }, B(x) => { out = "b:" + x; }, C => { out = "c"; } }
     return out;
 }
@@ -5098,8 +5095,8 @@ function main(): i32 { print(f(1) + " " + f(2) + " " + f(3)); return f(1).len();
 import "std/i32";
 enum Tri { A(str, str), B(str), C }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
@@ -5109,11 +5106,11 @@ function pick(s: string, which: i32): Tri {
     return C;
 }
 function f(n: i32): string {
-    var t: Tri = pick(mk(n + 2), n);
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let t: Tri = pick(mk(n + 2), n);
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
-    var out: string = "";
+    let out: string = "";
     match (t) { A(a, b) => { out = a + "/" + b; }, B(x) => { out = "b:" + x; }, C => { out = "c"; } }
     return out;
 }
@@ -5125,16 +5122,16 @@ function main(): i32 { print(f(1) + " " + f(2) + " " + f(3)); return 0; }
 import "std/i32";
 struct Pair { a: str, b: str, n: i32 }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function halves(s: string, n: i32): Pair { return Pair { a: slice_unchecked(s, 0, 1), b: slice_unchecked(s, 1, 3), n: n }; }
 function f(n: i32): string {
-    var p: Pair = Pair { a: "-", b: "-", n: 0 };
+    let p: Pair = Pair { a: "-", b: "-", n: 0 };
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         p = halves(s, n);
     }
     return p.a + "/" + p.b + "/" + p.b.len().to_string() + "/" + p.n.to_string();
@@ -5150,16 +5147,16 @@ trait Size { function size(self: Self): i32; }
 struct P { a: str }
 impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
-function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function wrap(s: string): dyn Size { let p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
 function g(n: i32): i32 {
-    var d: dyn Size = wrap(mk(n));
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let d: dyn Size = wrap(mk(n));
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
     return d.size();
 }
@@ -5173,22 +5170,22 @@ trait Size { function size(self: Self): i32; }
 struct P { a: str }
 impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function churn(): i32 {
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
     return junk.len();
 }
-function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function wrap(s: string): dyn Size { let p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
 function g(n: i32): i32 {
-    var d: dyn Size = P { a: "q" };
+    let d: dyn Size = P { a: "q" };
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         d = wrap(s);
     }
     churn();
@@ -5216,38 +5213,38 @@ impl Size for E {
 }
 impl Size for string { function size(self: string): i32 { return 1000 + self.len(); } }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function pick(s: string, k: i32): dyn Size {
-    if (k == 0) { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
-    if (k == 1) { var e: E = One(slice_unchecked(s, 0, 3)); return e; }
-    if (k == 2) { var e2: E = Two(slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 4)); return e2; }
-    var q: Q = Q { n: s.len() };
+    if (k == 0) { let p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+    if (k == 1) { let e: E = One(slice_unchecked(s, 0, 3)); return e; }
+    if (k == 2) { let e2: E = Two(slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 4)); return e2; }
+    let q: Q = Q { n: s.len() };
     return q;
 }
 function g(n: i32): string {
-    var d: dyn Size = P { a: "q" };
-    var out: string = "";
-    var k: i32 = 0;
+    let d: dyn Size = P { a: "q" };
+    let out: string = "";
+    let k: i32 = 0;
     while (k < n) {
-        var s: string = mk(k + 2);
+        let s: string = mk(k + 2);
         if (k == 4) {
-            var t: string = s + "!";
+            let t: string = s + "!";
             d = t;
         } else {
             d = pick(s, k);
         }
-        var junk: string[] = [];
-        var i: i32 = 0;
+        let junk: string[] = [];
+        let i: i32 = 0;
         while (i < 20) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
         out = out + d.size().to_string() + ",";
         k = k + 1;
     }
-    var junk2: string[] = [];
-    var j: i32 = 0;
+    let junk2: string[] = [];
+    let j: i32 = 0;
     while (j < 50) { junk2 = junk2.append("yy" + j.to_string()); j = j + 1; }
     return out + d.size().to_string();
 }
@@ -5263,15 +5260,15 @@ struct Q { n: i32 }
 impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
 impl Size for Q { function size(self: Q): i32 { return self.n; } }
 function churn(): i32 {
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
     return junk.len();
 }
 function g(n: i32): i32 {
-    var d: dyn Size = P { a: "q" };
+    let d: dyn Size = P { a: "q" };
     if (n != 0) {
-        var q: Q = Q { n: n * 7 };
+        let q: Q = Q { n: n * 7 };
         d = q;
     }
     churn();
@@ -5285,26 +5282,26 @@ function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 
 import "std/i32";
 import "core/map";
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function churn(): i32 {
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
     return junk.len();
 }
 function index(s: string): Map[i32, str] {
-    var m: Map[i32, str] = map_new(4);
+    let m: Map[i32, str] = map_new(4);
     m = m.insert(1, slice_unchecked(s, 0, 2));
     return m.insert(2, slice_unchecked(s, 1, 4));
 }
 function g(n: i32): string {
-    var m: Map[i32, str] = map_new(4);
+    let m: Map[i32, str] = map_new(4);
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         m = index(s);
     }
     churn();
@@ -5319,31 +5316,31 @@ import "std/i32";
 import "core/map";
 struct P { a: str, n: i32 }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function index(s: string): Map[string, P] {
-    var m: Map[string, P] = map_new(4);
+    let m: Map[string, P] = map_new(4);
     m = m.insert("x", P { a: slice_unchecked(s, 0, 2), n: 1 });
     m = m.insert("y", P { a: slice_unchecked(s, 1, 4), n: 2 });
     return m;
 }
 function g(n: i32): string {
-    var m: Map[string, P] = map_new(4);
-    var k: i32 = 0;
+    let m: Map[string, P] = map_new(4);
+    let k: i32 = 0;
     while (k < n) {
-        var s: string = mk(k + 2);
+        let s: string = mk(k + 2);
         m = index(s);
         k = k + 1;
     }
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
-    var out: string = m.len().to_string();
+    let out: string = m.len().to_string();
     for key in m.keys() {
-        var p: P = m.get_or(key, P { a: "-", n: 0 });
+        let p: P = m.get_or(key, P { a: "-", n: 0 });
         out = out + ";" + key + "=" + p.a + "/" + p.n.to_string();
     }
     return out;
@@ -5356,22 +5353,22 @@ function main(): i32 { print(g(3) + " " + g(0)); return 0; }
 import "std/i32";
 import "core/map";
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function index(s: string): Map[i32, str] {
-    var m: Map[i32, str] = map_new(4);
+    let m: Map[i32, str] = map_new(4);
     m = m.insert(1, slice_unchecked(s, 0, 2));
     return m.insert(2, slice_unchecked(s, 1, 4));
 }
 function g(n: i32): string {
-    var m: Map[i32, str] = index(mk(n));
-    var v: str = m.get_or(2, "-");
-    var out: string = "2" + ";";
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let m: Map[i32, str] = index(mk(n));
+    let v: str = m.get_or(2, "-");
+    let out: string = "2" + ";";
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
     return out + v;
 }
@@ -5379,19 +5376,19 @@ function main(): i32 { print(g(3)); return 0; }
 `},
 	{name: "a-nested-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, want: "5|a;bc;|\n", src: `
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function grid(s: string): str[][] { return [[slice_unchecked(s, 0, 1)], [slice_unchecked(s, 1, 2), slice_unchecked(s, 2, 3)]]; }
 function f(n: i32): string {
-    var g: str[][] = [];
+    let g: str[][] = [];
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         g = grid(s);
     }
-    var out: string = "";
+    let out: string = "";
     for row in g { for v in row { out = out + v; } out = out + ";"; }
     return out;
 }
@@ -5401,21 +5398,21 @@ function main(): i32 { print(f(3) + "|" + f(0)); return f(2).len(); }
 	// round copies what the join would otherwise read past the local.
 	{name: "an-array-a-call-extends-with-a-loop-body-local-is-produced", atLeast: 4, want: "8|abc,abc,abc,|\n", src: `
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function both(a: str[], s: string): str[] { return a.append(slice_unchecked(s, 0, 3)); }
 function f(n: i32): string {
-    var a: str[] = [];
-    var i: i32 = 0;
+    let a: str[] = [];
+    let i: i32 = 0;
     while (i < n) {
-        var s: string = mk(i + 1);
+        let s: string = mk(i + 1);
         a = both(a, s);
         i = i + 1;
     }
-    var out: string = "";
+    let out: string = "";
     for v in a { out = out + v + ","; }
     return out;
 }
@@ -5424,16 +5421,16 @@ function main(): i32 { print(f(3) + "|" + f(0)); return f(2).len(); }
 	// The control: the source above the loop dominates every join.
 	{name: "a-str-array-a-call-returns-from-a-dominating-local-is-produced", atLeast: 4, want: "2|", src: `
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function heads(s: string): str[] { return [slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 2)]; }
 function pick(n: i32): i32 {
-    var s: string = mk(n);
-    var a: str[] = [];
-    var i: i32 = 0;
+    let s: string = mk(n);
+    let a: str[] = [];
+    let i: i32 = 0;
     while (i < n) {
         if (i % 2 == 0) { a = heads(s); }
         i = i + 1;
@@ -5446,7 +5443,7 @@ function main(): i32 { return pick(9); }
 	{name: "std-time-format-rfc3339-is-produced", atLeast: 74, want: "20|1970-01-02T01:01:01Z\n", src: `
 import "std/time";
 function main(): i32 {
-    var s: string = time.instant_from_unix(90061 as i64).format_rfc3339();
+    let s: string = time.instant_from_unix(90061 as i64).format_rfc3339();
     print(s);
     return s.len();
 }
@@ -5457,28 +5454,28 @@ function main(): i32 {
 	{name: "an-array-of-a-parameters-views-is-anchored-to-it", atLeast: 4, want: "0|", src: `
 import "std/string";
 import "std/i32";
-function g(x: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 2)); o = o.append(slice_unchecked(x, 2, 5)); return o; }
+function g(x: string): str[] { let o: str[] = []; o = o.append(slice_unchecked(x, 0, 2)); o = o.append(slice_unchecked(x, 2, 5)); return o; }
 function pairs(x: string): str[] {
-    var o: str[] = [];
-    var i: i32 = 0;
+    let o: str[] = [];
+    let i: i32 = 0;
     while (i + 2 <= x.len()) { o = o.append(slice_unchecked(x, i, i + 2)); i = i + 2; }
     return o;
 }
 function swapped(x: string): str[] {
-    var o: str[] = [slice_unchecked(x, 0, 1), slice_unchecked(x, 1, 2)];
+    let o: str[] = [slice_unchecked(x, 0, 1), slice_unchecked(x, 1, 2)];
     return o.with(0, slice_unchecked(x, 2, 4));
 }
 function main(): i32 {
-    var xs: str[] = g("ab" + 12345.to_string());
-    var n: i32 = xs.len() + xs[1].len();
-    var k: i32 = 0;
+    let xs: str[] = g("ab" + 12345.to_string());
+    let n: i32 = xs.len() + xs[1].len();
+    let k: i32 = 0;
     while (k < 20) {
-        var ps: str[] = pairs("cd" + (k * 1000).to_string());
+        let ps: str[] = pairs("cd" + (k * 1000).to_string());
         n = n + ps.len();
         if (ps[0].starts_with("cd")) { n = n + 1; }
         k = k + 1;
     }
-    var ws: str[] = swapped("q" + 4567.to_string());
+    let ws: str[] = swapped("q" + 4567.to_string());
     if (ws[0].starts_with("56")) { n = n + 100; }
     return n - 183;
 }
@@ -5489,9 +5486,9 @@ function main(): i32 {
 	{name: "a-checked-slice-is-an-option", atLeast: 2, want: "0|bc\nab\n", src: `
 function f(t: string): Option[str] { return t[0:2]; }
 function main(): i32 {
-    var s: string = "abcdef";
-    var o: Option[str] = s[1:3];
-    var n: i32 = 0;
+    let s: string = "abcdef";
+    let o: Option[str] = s[1:3];
+    let n: i32 = 0;
     match (o) { Some(v) => { print(v); n = n + v.len(); }, None => { n = n + 10; } }
     match (f(s)) { Some(v) => { print(v); n = n + v.len(); }, None => { n = n + 10; } }
     match (s[5:9]) { Some(v) => { n = n + 10; }, None => { n = n + 1; } }
@@ -5507,7 +5504,7 @@ struct Fault { why: string }
 struct Stage { name: string, run: (Ctx) => Result[Ctx, Fault] }
 function names(a: Stage[]): i32 { return a.len(); }
 function main(): i32 {
-    var xs: Stage[] = [Stage { name: "a", run: (c: Ctx): Result[Ctx, Fault] => Ok(c) }];
+    let xs: Stage[] = [Stage { name: "a", run: (c: Ctx): Result[Ctx, Fault] => Ok(c) }];
     return names(xs) - 1;
 }
 `},
@@ -5516,10 +5513,10 @@ function main(): i32 {
 	// arithmetic in std/tcp's request reader was refused as `i64 / i32`.
 	{name: "a-literal-takes-its-operands-width", atLeast: 2, want: "0|", src: `
 function ms(recv_deadline_ms: i32): i32 {
-    var read_start_ns: i64 = monotonic_ns();
-    var deadline_ns: i64 = (recv_deadline_ms as i64) * 1000000;
-    var remaining_ms: i32 = ((deadline_ns - (monotonic_ns() - read_start_ns)) / 1000000) as i32;
-    var back: i64 = 7000000000 - (monotonic_ns() - read_start_ns);
+    let read_start_ns: i64 = monotonic_ns();
+    let deadline_ns: i64 = (recv_deadline_ms as i64) * 1000000;
+    let remaining_ms: i32 = ((deadline_ns - (monotonic_ns() - read_start_ns)) / 1000000) as i32;
+    let back: i64 = 7000000000 - (monotonic_ns() - read_start_ns);
     if (back < 6000000000) { return 0 - 1; }
     return remaining_ms;
 }
@@ -5533,9 +5530,9 @@ function main(): i32 { if (ms(5000) > 4000) { return 0; } return 1; }
 	// the chain's head takes that type where no destination names one.
 	{name: "an-unannotated-map-literal-names-its-columns", atLeast: 1, want: "39|", src: `import "core/map";
 function main(): i32 {
-    var m = Map { true: 5, false: 9 };
-    var n = Map { 1: 10, 2: 20 };
-    var s: i32 = m.get_or(true, 0) + m.get_or(false, 0) + n.get_or(2, 0);
+    let m = Map { true: 5, false: 9 };
+    let n = Map { 1: 10, 2: 20 };
+    let s: i32 = m.get_or(true, 0) + m.get_or(false, 0) + n.get_or(2, 0);
     if (m.has(true)) { s = s + 1; }
     return s + m.len() + n.len();
 }
@@ -5546,17 +5543,17 @@ function main(): i32 {
 	{name: "a-match-value-local-starts-at-its-types-zero", atLeast: 1, want: "20|", src: `struct P { x: i32, name: string }
 struct Q { n: i32 }
 function main(): i32 {
-    var t: (i32, i32) = (7, 2);
-    var p: P = match (t) { (a, b) => P { x: a + b, name: "q" } };
-    var r: Result[Q, string] = match (t) { (a, b) => { if (a > b) { Ok(Q { n: a }) } else { Err("no") } } };
-    var xs: i32[] = match (t) { (a, b) => [a, b, 1] };
-    var out: i32 = p.x + p.name.len() + xs.len();
+    let t: (i32, i32) = (7, 2);
+    let p: P = match (t) { (a, b) => P { x: a + b, name: "q" } };
+    let r: Result[Q, string] = match (t) { (a, b) => { if (a > b) { Ok(Q { n: a }) } else { Err("no") } } };
+    let xs: i32[] = match (t) { (a, b) => [a, b, 1] };
+    let out: i32 = p.x + p.name.len() + xs.len();
     match (r) { Ok(q) => { return out + q.n; }, Err(_) => { return 51; } }
 }
 `},
 	{name: "a-variant-literal-settles-its-float-payload", atLeast: 2, want: "0|", src: `
 function process(): Option[f64] {
-    var v: f64 = Some(3.14)?;
+    let v: f64 = Some(3.14)?;
     return Some(v * 2.0);
 }
 function main(): i32 {
@@ -5573,18 +5570,18 @@ function main(): i32 {
 	// leaves live. Syscall 4000 is unassigned on both Linux ISAs, so it answers
 	// -ENOSYS (-38) on each.
 	{name: "raw-floor-intrinsics", atLeast: 3, want: "3|Abc\n", nativeOnly: true, src: `
-function chr_of(b: i32): string { var p: usize = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }
+function chr_of(b: i32): string { let p: usize = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }
 function cat2(a: string, b: string): string {
-    var la: i32 = a.len();
-    var lb: i32 = b.len();
-    var p: usize = __raw_alloc(la + lb);
+    let la: i32 = a.len();
+    let lb: i32 = b.len();
+    let p: usize = __raw_alloc(la + lb);
     __memcpy(p, __raw_data(a), la);
     __memcpy(__raw_addr(p, la), __raw_data(b), lb);
     return __raw_string(p, la + lb);
 }
 function main(): i32 {
-    var t: string = cat2(chr_of(65), "bc");
-    var sc: usize = __raw_scratch(16);
+    let t: string = cat2(chr_of(65), "bc");
+    let sc: usize = __raw_scratch(16);
     __raw_store_ptr(sc, 0, __raw_data(t));
     if (__raw_load8(__raw_load_ptr(sc, 0), 1) != 98) { return 90; }
     if (__syscall3(4000, 0, 0, 0) != -38) { return 91; }
@@ -5592,8 +5589,8 @@ function main(): i32 {
     if (__syscall5(4000, 1, 2, 3, 4, 5) != -38) { return 96; }
     if (__syscall6(4000, 1, 2, 3, 4, 5, 6) != -38) { return 92; }
     if (__raw_load_ptr(__raw_environ(), 0) == (0 as usize)) { return 93; }
-    var kept: u8[] = __rc_inc(__alloc_u8(8));
-    var none: i32[] = __raw_array(__raw_arr_box(0));
+    let kept: u8[] = __rc_inc(__alloc_u8(8));
+    let none: i32[] = __raw_array(__raw_arr_box(0));
     if (__rc_underflow_count() != 0) { return 94; }
     print(t);
     return t.len() + kept.len() - 8 + none.len();
@@ -5603,8 +5600,8 @@ function main(): i32 {
 	// path from their Fern source rather than by the AST lowering.
 	{name: "runtime-helpers-take-the-typed-path", atLeast: 1, want: "5|abcde!\n", reports: []string{"runtime __fern_chr: produced", "runtime __fern_str_concat: produced"}, src: `
 function main(): i32 {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < 5) { s = s + chr(97 + i); i = i + 1; }
     print(s + "!");
     return s.len();
@@ -5622,15 +5619,15 @@ function main(): i32 {
 import "std/string";
 
 function main(): i32 {
-    var t: string = "  Hello, World  ".trim();
+    let t: string = "  Hello, World  ".trim();
     print(t.to_ascii_upper() + "|" + t.to_ascii_lower() + "|" + "ab".repeat(3) + "|" + t.replace("o", "0"));
-    var parts: string[] = "a,b,,c".split(",");
+    let parts: string[] = "a,b,,c".split(",");
     print(parts.join("-"));
-    var cs: string[] = "héllo".split("");
-    var ls: string[] = "x\r\ny\n".lines();
-    var bs: u8[] = "AZ".bytes();
+    let cs: string[] = "héllo".split("");
+    let ls: string[] = "x\r\ny\n".lines();
+    let bs: u8[] = "AZ".bytes();
     print(string_from_bytes_unchecked(bs));
-    var lt: i32 = 0;
+    let lt: i32 = 0;
     if ("abc" < "abd") { lt = 1; }
     return parts.len() * 10 + cs.len() + ls.len() * 100 + lt * 1000;
 }
@@ -5661,15 +5658,15 @@ function main(): i32 {
 function main(): i32 {
     sleep_ms(1 as i64);
     sleep_ns(1000 as i64);
-    var r: i32 = random_i32();
-    var bs: u8[] = random_bytes(8);
-    var n: i32 = cpu_count();
-    var tty: boolean = isatty(99);
-    var alive: boolean = process_alive(1);
-    var pr: i32 = priority();
-    var old: i32 = umask(18);
+    let r: i32 = random_i32();
+    let bs: u8[] = random_bytes(8);
+    let n: i32 = cpu_count();
+    let tty: boolean = isatty(99);
+    let alive: boolean = process_alive(1);
+    let pr: i32 = priority();
+    let old: i32 = umask(18);
     sync();
-    var score: i32 = bs.len();
+    let score: i32 = bs.len();
     if (n > 0) { score = score + 10; }
     if (!tty) { score = score + 100; }
     if (alive) { score = score + 1000; }
@@ -5688,11 +5685,11 @@ function main(): i32 {
 	}, src: `
 function mk(p: string): IoError { return NotFound(p + "!"); }
 function main(): i32 {
-    var old: i32 = umask(18);
+    let old: i32 = umask(18);
     sync();
-    var pr: i32 = priority();
-    var back: i32 = umask(old);
-    var n: i32 = 0;
+    let pr: i32 = priority();
+    let back: i32 = umask(old);
+    let n: i32 = 0;
     match (mk("path")) {
         NotFound(p) => { n = p.len(); },
         _ => { n = 99; }
@@ -5709,7 +5706,7 @@ function check(x: i32): Result[void, IoError] {
     return Ok(());
 }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (check(3)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 10; } }
     match (check(0 - 3)) { Ok(_) => { n = n + 100; }, Err(NotFound(p)) => { n = n + p.len(); }, Err(_) => { n = n + 1000; } }
     return n;
@@ -5730,10 +5727,10 @@ function missing(r: Result[void, IoError]): i32 {
     match (r) { Err(NotFound(p)) => { return p.len(); }, _ => { return 100; } }
 }
 function main(): i32 {
-    var d: string = "/tmp/fern_sem_fs_leaves";
+    let d: string = "/tmp/fern_sem_fs_leaves";
     remove_file(d + "/t");
     remove_dir(d);
-    var n: i32 = 0;
+    let n: i32 = 0;
     n = n + ok(create_dir(d, 493));
     n = n + ok(chmod(d, 448));
     n = n + ok(create_symlink("nowhere", d + "/s"));
@@ -5756,9 +5753,9 @@ function main(): i32 {
 		"runtime __fern_read_dir: produced", "runtime __fern_remove_dir_all: produced",
 	}, src: `
 function main(): i32 {
-    var d: string = "/tmp/fern_sem_fs_bundle";
+    let d: string = "/tmp/fern_sem_fs_bundle";
     remove_dir_all(d);
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (create_dir_all(d + "/x/y")) { Ok(_) => { n = n + 1; }, Err(_) => {} }
     match (write_file(d + "/x/f.txt", "hello world")) { Ok(_) => { n = n + 1; }, Err(_) => {} }
     match (read_file(d + "/x/f.txt")) { Ok(s) => { n = n + s.len(); }, Err(_) => {} }
@@ -5779,7 +5776,7 @@ function main(): i32 {
 			"runtime __fern_read_line: produced",
 		}, src: `
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (env("FERN_SEM_PROBE")) { Some(v) => { n = n + v.len(); }, None => { n = n + 100; } }
     if (environ().len() > 0) { n = n + 1; }
     if (getcwd().len() > 0) { n = n + 1; }
@@ -5800,16 +5797,16 @@ function main(): i32 {
 		"runtime __fern_timer_fd: produced",
 	}, src: `
 function main(): i32 {
-    var n: i32 = 0;
-    var r: ProcessResult = subprocess("/bin/echo", ["hi", "there"], "");
+    let n: i32 = 0;
+    let r: ProcessResult = subprocess("/bin/echo", ["hi", "there"], "");
     n = n + r.stdout.len() + r.exit_code * 100;
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid == 0) { exit(7); }
-    var st: i32 = proc_waitpid(pid);
+    let st: i32 = proc_waitpid(pid);
     n = n + st * 1000;
-    var old: i64 = signal_mask(0, 0 as i64);
+    let old: i64 = signal_mask(0, 0 as i64);
     if (old >= (0 as i64)) { n = n + 1; }
-    var tfd: i32 = timer_fd(5);
+    let tfd: i32 = timer_fd(5);
     if (tfd >= 0) { n = n + 1; }
     return n % 256;
 }
@@ -5820,13 +5817,13 @@ function main(): i32 {
 		reports: []string{"runtime __fern_arr_slice: produced"}, src: `
 struct P { x: i32, name: string }
 function main(): i32 {
-    var a: i32[] = [1, 2, 3, 4, 5];
-    var b: [i32] = a[1:4];
-    var s: string[] = ["aa", "bbb", "c", "dddd"];
-    var t: [string] = s[2:4];
-    var ps: P[] = [P { x: 1, name: "one" }, P { x: 2, name: "two" }, P { x: 3, name: "three" }];
-    var qs: [P] = ps[0:2];
-    var n: i32 = b.len() * 100 + b[0] * 10 + b[2];
+    let a: i32[] = [1, 2, 3, 4, 5];
+    let b: [i32] = a[1:4];
+    let s: string[] = ["aa", "bbb", "c", "dddd"];
+    let t: [string] = s[2:4];
+    let ps: P[] = [P { x: 1, name: "one" }, P { x: 2, name: "two" }, P { x: 3, name: "three" }];
+    let qs: [P] = ps[0:2];
+    let n: i32 = b.len() * 100 + b[0] * 10 + b[2];
     n = n + t[1].len() * 1000 + qs[1].name.len() * 10000;
     return n % 256;
 }
@@ -5835,8 +5832,8 @@ function main(): i32 {
 	// round-trip it.
 	{name: "usize-widens-to-i64-whole", atLeast: 1, want: "0|", nativeOnly: true, src: `
 function main(): i32 {
-    var p: usize = __raw_scratch(8);
-    var w: i64 = p as i64;
+    let p: usize = __raw_scratch(8);
+    let w: i64 = p as i64;
     __store_i64(p, w);
     if (__raw_load_ptr(p, 0) != p) { return 1; }
     if (__load_i64(p) != w) { return 2; }
@@ -5862,9 +5859,9 @@ function main(): i32 {
 	// the need that defines them: each address pulls in its own definition.
 	{name: "raw-floor-symbols-link-without-a-helper", atLeast: 1, want: "7|", nativeOnly: true, src: `
 function main(): i32 {
-    var sc: usize = __raw_scratch(8);
+    let sc: usize = __raw_scratch(8);
     __raw_store8(sc, 0, 7);
-    var sp: usize = __raw_splice_pipe();
+    let sp: usize = __raw_splice_pipe();
     __raw_store_ptr(sp, 0, sc);
     if (__raw_load_ptr(__raw_environ(), 0) == (0 as usize)) { return 1; }
     return __raw_load8(__raw_load_ptr(sp, 0), 0);
@@ -5895,8 +5892,8 @@ function describe(s: dyn Shape): i32 {
 }
 
 function main(): i32 {
-    var sq: dyn Shape = Square { side: 3 };
-    var tr: dyn Shape = Triangle { base: 4, height: 5 };
+    let sq: dyn Shape = Square { side: 3 };
+    let tr: dyn Shape = Triangle { base: 4, height: 5 };
     return describe(sq) + describe(tr) - 155;
 }
 `},
@@ -5915,10 +5912,10 @@ impl Shape for Named {
 function describe(s: dyn Shape): i32 { return s.area(); }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var n: dyn Shape = Named { label: "sq" + i.to_string(), side: 3 };
+        let n: dyn Shape = Named { label: "sq" + i.to_string(), side: 3 };
         t = t + describe(n);
         i = i + 1;
     }
@@ -5954,16 +5951,16 @@ impl Label for Shape {
     function weight(self: Self, k: f64): f64 { return k + 1.0; }
 }
 function show(l: dyn Label, i: i32): i32 {
-    var s: string = l.tag("<", i);
-    var w: f64 = l.weight(1.5);
+    let s: string = l.tag("<", i);
+    let w: f64 = l.weight(1.5);
     return s.len() + (w * 2.0) as i32;
 }
 
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) {
-        var b: dyn Label = Box { name: "b" + i.to_string(), size: i };
+        let b: dyn Label = Box { name: "b" + i.to_string(), size: i };
         total = total + show(b, i);
         total = total + show(Shape.Line(i), i);
         total = total + show(Shape.Dot, i);
@@ -5992,8 +5989,8 @@ impl Shape for Triangle {
 function describe(s: dyn Shape): i32 { return s.area() * 10 + s.sides(); }
 
 function main(): i32 {
-    var sq: dyn Shape = Square { side: 3 };
-    var tr: dyn Shape = Triangle { base: 4, height: 5 };
+    let sq: dyn Shape = Square { side: 3 };
+    let tr: dyn Shape = Triangle { base: 4, height: 5 };
     return describe(sq) + describe(tr) - 155;
 }
 `},
@@ -6005,10 +6002,10 @@ function main(): i32 {
 	// passed through a function that hands its parameter back.
 	{name: "a-rebound-dyn-value-is-owned", atLeast: 3, want: "0|", src: semDynShapes + `
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var s: dyn Shape = Square { side: 1, tag: "a" + i.to_string() };
+        let s: dyn Shape = Square { side: 1, tag: "a" + i.to_string() };
         if (i % 2 == 1) { s = Tri.Right(i, "b" + i.to_string()); }
         t = t + s.area();
         i = i + 1;
@@ -6018,10 +6015,10 @@ function main(): i32 {
 `},
 	{name: "a-returned-dyn-value-is-owned", atLeast: 4, want: "0|", src: semDynShapes + `
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var s: dyn Shape = make(i);
+        let s: dyn Shape = make(i);
         t = t + s.area();
         i = i + 1;
     }
@@ -6032,10 +6029,10 @@ function main(): i32 {
 struct Holder { s: dyn Shape }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var h: Holder = Holder { s: make(i) };
+        let h: Holder = Holder { s: make(i) };
         t = t + h.s.area();
         i = i + 1;
     }
@@ -6044,10 +6041,10 @@ function main(): i32 {
 `},
 	{name: "a-dyn-array-owns-its-elements", atLeast: 4, want: "0|", src: semDynShapes + `
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var xs: dyn Shape[] = [make(i), make(i + 1)];
+        let xs: dyn Shape[] = [make(i), make(i + 1)];
         t = t + xs[0].area() + xs[1].area();
         i = i + 1;
     }
@@ -6056,10 +6053,10 @@ function main(): i32 {
 `},
 	{name: "a-dyn-option-payload-is-owned", atLeast: 4, want: "0|", src: semDynShapes + `
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var o: Option[dyn Shape] = Some(make(i));
+        let o: Option[dyn Shape] = Some(make(i));
         if let Some(s) = o { t = t + s.area(); }
         i = i + 1;
     }
@@ -6070,9 +6067,9 @@ function main(): i32 {
 	// dispatches the same way.
 	{name: "a-dyn-map-value-is-owned", atLeast: 4, want: "0|", src: `import "core/map";` + semDynShapes + `
 function main(): i32 {
-    var t: i32 = 0;
-    var m: Map[i32, dyn Shape] = map_new(8);
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let m: Map[i32, dyn Shape] = map_new(8);
+    let i: i32 = 0;
     while (i < 6) { m = m.insert(i % 3, make(i)); i = i + 1; }
     i = 0;
     while (i < 3) { if let Some(s) = m.get(i) { t = t + s.area(); } i = i + 1; }
@@ -6081,11 +6078,11 @@ function main(): i32 {
 `},
 	{name: "a-captured-dyn-value-is-owned", atLeast: 5, want: "0|", src: semDynShapes + `
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var s: dyn Shape = make(i);
-        var f = (): i32 => { return s.area(); };
+        let s: dyn Shape = make(i);
+        let f = (): i32 => { return s.area(); };
         t = t + f() + s.area();
         i = i + 1;
     }
@@ -6096,11 +6093,11 @@ function main(): i32 {
 function pass(s: dyn Shape): dyn Shape { return s; }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var q: Square = Square { side: 2, tag: "k" + i.to_string() };
-        var s: dyn Shape = pass(q);
+        let q: Square = Square { side: 2, tag: "k" + i.to_string() };
+        let s: dyn Shape = pass(q);
         t = t + s.area() + q.tag.len();
         i = i + 1;
     }
@@ -6115,10 +6112,10 @@ function main(): i32 {
 trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self * 2; } }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
-function total(xs: dyn Show[]): i32 { var t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
+function total(xs: dyn Show[]): i32 { let t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
 
 function main(): i32 {
-    var xs: dyn Show[] = [1, 2];
+    let xs: dyn Show[] = [1, 2];
     return total(xs) - 6;
 }
 `},
@@ -6127,11 +6124,11 @@ function main(): i32 {
 	// string. The widenings reach a return, a local and an array element.
 	{name: "a-primitive-dyn-value-is-boxed", atLeast: 5, want: "0|", src: semPrimitiveShows + `
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var d: dyn Show = make(i);
-        var e: dyn Show = i + 1;
+        let d: dyn Show = make(i);
+        let e: dyn Show = i + 1;
         t = t + d.show() + e.show();
         i = i + 1;
     }
@@ -6142,11 +6139,11 @@ function main(): i32 {
 struct Holder { d: dyn Show }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var xs: dyn Show[] = [make(i), make(i + 1)];
-        var h: Holder = Holder { d: "h" + i.to_string() };
+        let xs: dyn Show[] = [make(i), make(i + 1)];
+        let h: Holder = Holder { d: "h" + i.to_string() };
         t = t + xs[0].show() + xs[1].show() + h.d.show();
         i = i + 1;
     }
@@ -6163,18 +6160,18 @@ impl Size for string { function size(self: string): i32 { return 1000 + self.len
 struct P { a: str }
 impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
-function pick(s: string): dyn Size { var t: string = s + "!"; return t; }
-function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function pick(s: string): dyn Size { let t: string = s + "!"; return t; }
+function wrap(s: string): dyn Size { let p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
 function main(): i32 {
-    var d: dyn Size = pick(mk(2));
-    var e: dyn Size = wrap(mk(3));
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let d: dyn Size = pick(mk(2));
+    let e: dyn Size = wrap(mk(3));
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
     print(d.size().to_string() + " " + e.size().to_string());
     return 0;
@@ -6191,27 +6188,27 @@ impl Size for str { function size(self: str): i32 { return 1000 + self.len() * 1
 struct P { a: str }
 impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function churn(): i32 {
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
     return junk.len();
 }
-function pick(s: string): dyn Size { var t: string = s + "!"; return t; }
+function pick(s: string): dyn Size { let t: string = s + "!"; return t; }
 function g(n: i32): i32 {
-    var d: dyn Size = P { a: "q" };
-    if (n != 0) { var s: string = mk(n); d = s; }
+    let d: dyn Size = P { a: "q" };
+    if (n != 0) { let s: string = mk(n); d = s; }
     churn();
     return d.size();
 }
 function main(): i32 {
-    var d: dyn Size = pick(mk(2));
-    var lit: dyn Size = "xy";
+    let d: dyn Size = pick(mk(2));
+    let lit: dyn Size = "xy";
     churn();
     print(d.size().to_string() + " " + lit.size().to_string() + " " + g(3).to_string() + " " + g(0).to_string());
     return 0;
@@ -6233,10 +6230,10 @@ function pick(i: i32): dyn Show {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var d: dyn Show = pick(i);
+        let d: dyn Show = pick(i);
         t = t + d.show();
         i = i + 1;
     }
@@ -6251,12 +6248,12 @@ trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self * 2; } }
 impl Show for string { function show(self: Self): i32 { return self.len(); } }
 struct H { xs: dyn Show[] }
-function total(xs: dyn Show[]): i32 { var t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
+function total(xs: dyn Show[]): i32 { let t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
 function mk(): dyn Show[] { return [3, "abc"]; }
 
 function main(): i32 {
-    var xs: dyn Show[] = [1, "ab"];
-    var h: H = H { xs: [2, "x"] };
+    let xs: dyn Show[] = [1, "ab"];
+    let h: H = H { xs: [2, "x"] };
     return total(xs) + total(h.xs) + total(mk()) + total([5, "q"]) - 29;
 }
 `},
@@ -6271,10 +6268,10 @@ impl[T] Shape for W[T] { function area(self: Self): i32 { return self.tag.len();
 function make(i: i32): dyn Shape { return W { v: "v" + i.to_string(), tag: "w" + i.to_string() }; }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var s: dyn Shape = make(i);
+        let s: dyn Shape = make(i);
         t = t + s.area();
         i = i + 1;
     }
@@ -6299,10 +6296,10 @@ function mk(i: i32): dyn Shape {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 30) {
-        var xs: dyn Shape[] = [mk(i), Sq { side: 2, name: "q" + i.to_string() }];
+        let xs: dyn Shape[] = [mk(i), Sq { side: 2, name: "q" + i.to_string() }];
         for x in xs { t = t + x.area(); }
         i = i + 1;
     }
@@ -6318,14 +6315,14 @@ enum Opt[T] { Sm(T, string), Nn }
 impl[T] Shape for Opt[T] { function area(self: Self): i32 { match (self) { Sm(_, s) => { return s.len(); }, Nn => { return 0; } } } }
 
 function mk(i: i32): dyn Shape {
-    var o: Opt[i32] = Sm(i, "abc" + i.to_string());
+    let o: Opt[i32] = Sm(i, "abc" + i.to_string());
     return o;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 10) { var s: dyn Shape = mk(i); t = t + s.area(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 10) { let s: dyn Shape = mk(i); t = t + s.area(); i = i + 1; }
     return t - 40;
 }
 `},
@@ -6337,10 +6334,10 @@ struct W[T] { v: T, tag: string }
 impl[T] Shape for W[T] { function area(self: Self): i32 { return self.tag.len(); } }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var s: dyn Shape = W { v: "v" + i.to_string(), tag: "w" + i.to_string() };
+        let s: dyn Shape = W { v: "v" + i.to_string(), tag: "w" + i.to_string() };
         t = t + s.area();
         i = i + 1;
     }
@@ -6359,12 +6356,12 @@ function main(): i32 {
 	{name: "a-function-value-whose-type-nests-a-function-type", atLeast: 9, want: "41|", src: `
 function with_name(n: i32, k: (string) => i32): i32 { return k("x") + n; }
 function through_local(i: i32): i32 {
-    var f: (i32, (string) => i32) => i32 = with_name;
+    let f: (i32, (string) => i32) => i32 = with_name;
     return f(i, (s: string): i32 => s.len());
 }
 function taker(f: (string) => i32): i32 { return f("hi"); }
 function use_through_local(): i32 {
-    var t = taker;
+    let t = taker;
     use x <- t();
     if (x == "hi") { return 5; }
     return 0;
@@ -6373,8 +6370,8 @@ function runner(k: (i32) => i32, v: i32): i32 { return k(v) + 1; }
 function apply2(h: ((i32) => i32, i32) => i32, v: i32): i32 { return h((z: i32): i32 => z * 3, v); }
 function adder(n: i32): (i32) => i32 { return (b: i32): i32 => b + n; }
 function through_result(): i32 {
-    var mk: (i32) => ((i32) => i32) = adder;
-    var add3 = mk(3);
+    let mk: (i32) => ((i32) => i32) = adder;
+    let add3 = mk(3);
     return add3(4) + mk(10)(0);
 }
 function main(): i32 {
@@ -6394,7 +6391,7 @@ function main(): i32 {
 	// module.
 	{name: "a-call-of-a-call-through-a-function-value", atLeast: 9, want: "58|", src: `
 struct M { k: i32 }
-function (m: M) make(): (i32) => i32 { var k = m.k; return (b: i32): i32 => b + k; }
+function (m: M) make(): (i32) => i32 { let k = m.k; return (b: i32): i32 => b + k; }
 function adder(n: i32): (i32) => i32 { return (b: i32): i32 => b + n; }
 function doubler(n: i32): (i32) => i32 { return (b: i32): i32 => b * 2; }
 function id[T](x: T): T { return x; }
@@ -6402,24 +6399,24 @@ function inc(b: i32): i32 { return b + 1; }
 function c3(a: i32): (i32) => ((i32) => i32) { return (b: i32): (i32) => i32 => (c: i32): i32 => a * 100 + b * 10 + c; }
 function call_through(mk: (i32) => ((i32) => i32)): i32 { return mk(1)(2); }
 struct F { k: f64 }
-function (f: F) scale(): (f64) => f64 { var k = f.k; return (x: f64): f64 => x * k; }
+function (f: F) scale(): (f64) => f64 { let k = f.k; return (x: f64): f64 => x * k; }
 function mkf(k: f64): (f64) => f64 { return (x: f64): f64 => x * k; }
 function mkw(k: i64): (i64) => i64 { return (x: i64): i64 => x * k; }
 function wide(mk: (i64) => ((i64) => i64)): i32 { if (mk(3i64)(5000000000i64) == 15000000000i64) { return 1; } return 0; }
 function floats(): i32 {
-    var f = F { k: 2.0 };
-    var m: (f64) => ((f64) => f64) = mkf;
-    var r = 0;
+    let f = F { k: 2.0 };
+    let m: (f64) => ((f64) => f64) = mkf;
+    let r = 0;
     if (f.scale()(1.5) == 3.0) { r = r + 1; }
     if (m(2.0)(1.5) == 3.0) { r = r + 1; }
     return r + wide(mkw);
 }
 function main(): i32 {
-    var add: (i32) => ((i32) => i32) = adder;
-    var dbl = doubler;
-    var three = c3;
-    var k = 3;
-    var m = M { k: 4 };
+    let add: (i32) => ((i32) => i32) = adder;
+    let dbl = doubler;
+    let three = c3;
+    let k = 3;
+    let m = M { k: 4 };
     return add(10)(20) + dbl(0)(5) + call_through(adder) + id((b: i32): i32 => b + k)(4)
         + id(inc)(5) + three(1)(2)(3) - 100 + m.make()(5) - 33 + floats();
 }
@@ -6437,16 +6434,16 @@ function a(b: i32): i32 { return b + 1; }
 function bb(b: i32): i32 { return b + 2; }
 function z(): i32 { return 7; }
 function y(): i32 { return 8; }
-function pickf(i: i32): (i32) => i32 { var fs = [a, bb]; return fs[i]; }
-function pickz(i: i32): () => i32 { var fs = [z, y]; return fs[i]; }
-function refill(xs: ((i32) => i32)[]): i32 { var fs: ((i32) => i32)[] = []; fs = xs; return fs[0](1) + fs[1](1); }
+function pickf(i: i32): (i32) => i32 { let fs = [a, bb]; return fs[i]; }
+function pickz(i: i32): () => i32 { let fs = [z, y]; return fs[i]; }
+function refill(xs: ((i32) => i32)[]): i32 { let fs: ((i32) => i32)[] = []; fs = xs; return fs[0](1) + fs[1](1); }
 function (m: M) run(fs: ((i32) => i32)[]): i32 { return fs[0](m.k); }
 function main(): i32 {
-    var f = pickf(0);
-    var t: ((() => i32), i32) = (z, 1);
-    var o: Option[() => i32] = Some(y);
-    var w = Wrap(z);
-    var r = f(10) + pickf(1)(10) + pickz(1)() + refill([a, bb]) + M { k: 4 }.run([a]) + t.0() + t.1;
+    let f = pickf(0);
+    let t: ((() => i32), i32) = (z, 1);
+    let o: Option[() => i32] = Some(y);
+    let w = Wrap(z);
+    let r = f(10) + pickf(1)(10) + pickz(1)() + refill([a, bb]) + M { k: 4 }.run([a]) + t.0() + t.1;
     match (o) { Some(g) => { r = r + g(); }, None => {} }
     match (w) { Wrap(h) => { r = r + h(); }, No => {} }
     return r;
@@ -6461,10 +6458,10 @@ function main(): i32 {
 	// bound to a local that returns an expression-bodied lambda.
 	{name: "a-lambda-returning-a-capturing-lambda", atLeast: 5, want: "42|", src: `
 function main(): i32 {
-    var curry = (a: i32) => { return (b: i32): i32 => a + b; };
-    var add5 = curry(5);
-    var c3 = (a: i32) => { return (b: i32) => { return (c: i32): i32 => a + b + c; }; };
-    var add = (x: i32) => (y: i32) => x + y;
+    let curry = (a: i32) => { return (b: i32): i32 => a + b; };
+    let add5 = curry(5);
+    let c3 = (a: i32) => { return (b: i32) => { return (c: i32): i32 => a + b + c; }; };
+    let add = (x: i32) => (y: i32) => x + y;
     return add5(4) + curry(1)(2) + c3(1)(2)(3) + add(3)(4) + 17;
 }
 `},
@@ -6498,23 +6495,23 @@ function put_tag(xs: Tag[], a: T): Tag[] { return xs.append(a.tag); }
 function lit_env(a: E): i32[][] { return [a.env]; }
 function tag_of(t: Tag): i32 { match (t) { A(n) => { return n; }, B => { return 0; } } }
 function main(): i32 {
-    var es: i32[][] = [];
-    var k: i32 = 1;
+    let es: i32[][] = [];
+    let k: i32 = 1;
     while (k < 5) { es = put_env(es, mke(k)); k = k + 1; }
-    var is: In[][] = [];
+    let is: In[][] = [];
     k = 1;
     while (k < 5) { is = put_ins(is, mki(k)); k = k + 1; }
-    var ns: In[] = [];
+    let ns: In[] = [];
     k = 1;
     while (k < 5) { ns = put_inner(ns, mkn(k)); k = k + 1; }
-    var ts: Tag[] = [];
+    let ts: Tag[] = [];
     k = 1;
     while (k < 5) { ts = put_tag(ts, mkt(k)); k = k + 1; }
-    var ls: i32[][] = [];
+    let ls: i32[][] = [];
     k = 1;
     while (k < 5) { ls = ls.append(lit_env(mke(k))[0]); k = k + 1; }
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         t = t * 3 + es[i][0] * 1000 + is[i][0].x * 100 + ns[i].x * 10 + tag_of(ts[i]) + ls[i][1];
         i = i + 1;
@@ -6532,17 +6529,17 @@ function half(x: f32): f32 { return x / 2.0; }
 function big(): i64 { return 5000000000; }
 function id[T](x: T): T { return x; }
 function main(): i32 {
-    var xs = id([4, half(1.0), 0.5]);
-    var ys = [0.25, half(0.5), 3];
-    var zs = [1, big(), 2];
-    var ws = [1.5, 2.25];
-    var tu = (1.5, 2);
-    var s: f32 = 0.0;
+    let xs = id([4, half(1.0), 0.5]);
+    let ys = [0.25, half(0.5), 3];
+    let zs = [1, big(), 2];
+    let ws = [1.5, 2.25];
+    let tu = (1.5, 2);
+    let s: f32 = 0.0;
     for x in xs { s = s + x; }
     for y in ys { s = s + y; }
-    var t: i64 = 0;
+    let t: i64 = 0;
     for z in zs { t = t + z; }
-    var w: f64 = 0.0;
+    let w: f64 = 0.0;
     for v in ws { w = w + v; }
     return (s * 4.0) as i32 + (t / 1000000000) as i32 + (w * 4.0) as i32 + (tu.0 * 2.0) as i32 + tu.1;
 }
@@ -6556,7 +6553,7 @@ import "core/map";
 function width(v: JsonValue): i32 {
     match (v) {
         JObject(m) => {
-            var n: i32 = 0;
+            let n: i32 = 0;
             for (k, x) in m { n = n + k.len() + width(x); }
             return n;
         },
@@ -6569,7 +6566,7 @@ function main(): i32 { return width(JString("abc")) + width(JNull); }
 	{name: "std-json-encode-is-produced", atLeast: 137, want: "2|42\n", src: `
 import "std/json";
 function main(): i32 {
-    var s: string = json.json_encode(JNumber("42"));
+    let s: string = json.json_encode(JNumber("42"));
     print(s);
     return s.len();
 }
@@ -6597,11 +6594,11 @@ function code(r: Reply): i32 {
 }
 
 function main(): i32 {
-    var em: Map[Tag, i32] = map_new(8);
+    let em: Map[Tag, i32] = map_new(8);
     em = em.insert(A(3), 30);
     em = em.insert(B, 4);
-    var n: i32 = em.entries().len();
-    var parsed: i32 = 0;
+    let n: i32 = em.entries().len();
+    let parsed: i32 = 0;
     match (json.json_parse("12")) {
         Some(_) => { parsed = 1; },
         None => { parsed = 0; },
@@ -6614,16 +6611,16 @@ enum Box { W((i32) => i32), No }
 function id[T](x: T): T { return x; }
 function inc(x: i32): i32 { return x + 1; }
 function through(a: i32): (i32) => i32 { return id(((x: i32) => x + a)); }
-function bound(a: i32): (i32) => i32 { var g: (i32) => i32 = id(((x: i32) => x * a)); return g; }
+function bound(a: i32): (i32) => i32 { let g: (i32) => i32 = id(((x: i32) => x * a)); return g; }
 function either(k: i32): (i32) => i32 { if (k > 0) { return inc; } return (x: i32) => x + k; }
 function unbox(b: Box): (i32) => i32 { match (b) { W(f) => { return f; }, No => { return inc; } } }
 function main(): i32 {
     function mk(a: i32): (i32) => i32 { return id(((x: i32) => x)); }
-    var f: (i32) => i32 = mk(1);
-    var g = through(2);
-    var h = bound(3);
-    var e = either(0);
-    var u = unbox(W((x: i32) => x - 1));
+    let f: (i32) => i32 = mk(1);
+    let g = through(2);
+    let h = bound(3);
+    let e = either(0);
+    let u = unbox(W((x: i32) => x - 1));
     return f(4) + g(5) + h(6) + e(7) + u(8) + either(1)(9);
 }
 `},
@@ -6636,8 +6633,8 @@ function main(): i32 {
 import "std/string";
 function mk(p: string): string { return p + "xy"; }
 function owned(p: string): str { return mk(p); }
-function view(pre: string): str { var base: string = pre + "  xy  "; return slice_unchecked(base, 0, 6).trim(); }
-function main(): i32 { var v: str = view("ab"); var w: str = owned("abc"); return v.len() * 10 + w.len(); }
+function view(pre: string): str { let base: string = pre + "  xy  "; return slice_unchecked(base, 0, 6).trim(); }
+function main(): i32 { let v: str = view("ab"); let w: str = owned("abc"); return v.len() * 10 + w.len(); }
 `},
 	// A generic enum's variant carrying a function field that mentions `T`.
 	// The clone substituted the field's result type but not its parameter
@@ -6660,20 +6657,20 @@ import "std/i32";
 struct P { a: i32, s: str }
 function mk(i: i32): string { return "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string(); }
 function round(i: i32): i32 {
-    var b: string = mk(i);
-    var u: str = slice_unchecked(b, 2, 30);
-    var t: (i32, str) = (1, u);
-    var xs: str[] = [u];
+    let b: string = mk(i);
+    let u: str = slice_unchecked(b, 2, 30);
+    let t: (i32, str) = (1, u);
+    let xs: str[] = [u];
     xs = xs.append(u);
     xs = xs.with(0, u);
-    var p: P = P { a: 2, s: u };
-    var o: Option[str] = Some(u);
-    var k: i32 = 0;
+    let p: P = P { a: 2, s: u };
+    let o: Option[str] = Some(u);
+    let k: i32 = 0;
     match (o) { Some(w) => { k = w.len(); }, None => { k = 0; } }
-    var junk: string = mk(i + 1);
+    let junk: string = mk(i + 1);
     return t.0 + t.1.len() + xs.len() + xs[1].len() + p.s.len() + k + u.len() + junk.len() - 150;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t % 256; }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t % 256; }
 `},
 	// A map value column takes a fresh view too, anchored to the source, and
 	// overwriting an entry releases the view it held.
@@ -6682,30 +6679,30 @@ import "core/map";
 import "std/i32";
 function mk(i: i32): string { return "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string(); }
 function round(i: i32): i32 {
-    var b: string = mk(i);
-    var u: str = slice_unchecked(b, 2, 30);
-    var w: str = slice_unchecked(b, 0, 5);
-    var m: Map[i32, str] = map_new(4);
+    let b: string = mk(i);
+    let u: str = slice_unchecked(b, 2, 30);
+    let w: str = slice_unchecked(b, 0, 5);
+    let m: Map[i32, str] = map_new(4);
     m = m.insert(1, u);
     m = m.insert(2, w);
     m = m.insert(1, w);
-    var junk: string = mk(i + 1);
-    var k: i32 = 0;
+    let junk: string = mk(i + 1);
+    let k: i32 = 0;
     return m.len() * 10 + k + u.len() + w.len() + junk.len() - 60;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t % 256; }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t % 256; }
 `},
 	// An unannotated Some(None): the checker leaves the inner Option's payload
 	// open, and it settles at a void payload, since only None can build it
 	// (#10693).
 	{name: "an-unannotated-none-payload-settles-at-void", atLeast: 2, want: "199|", wasm: "out-of-range|", src: `
 function round(i: i32): i32 {
-    var o = Some(None);
-    var k: i32 = 0;
+    let o = Some(None);
+    let k: i32 = 0;
     match (o) { Some(inner) => { match (inner) { Some(_) => { k = 1; }, None => { k = 9; } } }, None => { k = 2; } }
     return k + i % 3;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t; }
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t; }
 `},
 	// A `?` exit replays the deferred assignment on the failure edge alone; the
 	// success edge keeps the binding's own value (#10694).
@@ -6713,17 +6710,17 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + 
 import "std/i32";
 function get(k: i32): Option[string] { if (k % 3 == 0) { return None; } return Some("v" + k.to_string()); }
 function step(k: i32): Option[i32] {
-    var acc: i32 = 0;
-    var names: string[] = [];
+    let acc: i32 = 0;
+    let names: string[] = [];
     defer acc = acc + 1;
     names = names.append("a" + k.to_string());
-    var x: string = get(k)?;
+    let x: string = get(k)?;
     names = names.append(x);
     acc = acc + x.len() + names.len();
     return Some(acc);
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0;
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 30) { match (step(i)) { Some(v) => { t = t + v; }, None => { t = t + 100; } } i = i + 1; }
     return t % 256;
 }
@@ -6734,14 +6731,14 @@ function main(): i32 {
 function fails(k: i32): Option[i32] { if (k % 2 == 0) { return None; } return Some(k); }
 function bump(c: Cell[i32]): void { c.set(c.get() + 1); }
 function step(k: i32, out: Cell[i32]): Option[i32] {
-    var n: i32 = 0;
+    let n: i32 = 0;
     defer bump(out);
-    var x: i32 = fails(k)?;
+    let x: i32 = fails(k)?;
     return Some(n + x);
 }
 function main(): i32 {
-    var out: Cell[i32] = cell_new(0);
-    var t: i32 = 0; var k: i32 = 1;
+    let out: Cell[i32] = cell_new(0);
+    let t: i32 = 0; let k: i32 = 1;
     while (k <= 6) { match (step(k, out)) { Some(v) => { t = t + v; }, None => { t = t + 10; } } k = k + 1; }
     return t + out.get() * 7;
 }
@@ -6753,18 +6750,18 @@ function main(): i32 {
 	// boxing. Answers 44.
 	{name: "an-arm-array-beside-a-parameter-or-call-result", atLeast: 9, want: "44|", src: `
 function pick(ys: ((i32) => i32)[], c: boolean): i32 {
-    var v1: i32 = 3;
-    var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => x + v1)] } else { ys });
+    let v1: i32 = 3;
+    let xs: ((i32) => i32)[] = (if (c) { [((x: i32) => x + v1)] } else { ys });
     return xs[0](1);
 }
 function mk(k: i32): ((i32) => i32)[] { return [((z: i32) => z + k)]; }
 function keep(ys: ((i32) => i32)[]): ((i32) => i32)[] { return ys; }
 function main(): i32 {
-    var v2: i32 = 7;
-    var zs: ((i32) => i32)[] = [((z: i32) => z + 10)];
-    var ws: ((i32) => i32)[] = (if (v2 > 100) { [((x: i32) => x + v2)] } else { mk(20) });
-    var w: i32 = 5;
-    var qs: ((i32) => i32)[] = (match (w) { 5 => keep([((y: i32) => y + v2)]), _ => zs });
+    let v2: i32 = 7;
+    let zs: ((i32) => i32)[] = [((z: i32) => z + 10)];
+    let ws: ((i32) => i32)[] = (if (v2 > 100) { [((x: i32) => x + v2)] } else { mk(20) });
+    let w: i32 = 5;
+    let qs: ((i32) => i32)[] = (match (w) { 5 => keep([((y: i32) => y + v2)]), _ => zs });
     return pick(zs, true) + pick(zs, false) + ws[0](1) + qs[0](1);
 }
 `},
@@ -6775,19 +6772,19 @@ function main(): i32 {
 import "std/i32";
 import "std/i64";
 function fold(s: string): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < s.len()) {
-        var b: u8 = s[i];
+        let b: u8 = s[i];
         out = out + b.to_ascii_lower().to_ascii_string();
         i = i + 1;
     }
     return out;
 }
 function main(): i32 {
-    var n: i32 = 0 - 42;
-    var w: i64 = 9000000000i64;
-    var c: u8 = 90;
+    let n: i32 = 0 - 42;
+    let w: i64 = 9000000000i64;
+    let c: u8 = 90;
     print(fold("MiXeD") + " " + n.to_string() + " " + w.to_string());
     if (c.to_ascii_lower().is_ascii_lower()) { return 3; }
     return 1;
@@ -6802,7 +6799,7 @@ pub function make[T](seed: T): T {
     function idmaker(base: T): (T) => T {
         return (x: T) => x;
     }
-    var f: (T) => T = idmaker(seed);
+    let f: (T) => T = idmaker(seed);
     return f(seed);
 }
 
@@ -6818,13 +6815,13 @@ function main(): i32 {
 struct Slot[T] { v: T }
 
 pub function make[T](seed: T): T {
-    var c: Slot[T] = Slot[T] { v: seed };
+    let c: Slot[T] = Slot[T] { v: seed };
     return c.v;
 }
 
 function main(): i32 {
-    var s: string = make("ab" + "c");
-    var w: i64 = make(5000000000 as i64);
+    let s: string = make("ab" + "c");
+    let w: i64 = make(5000000000 as i64);
     if (w != 5000000000 as i64) { return 1; }
     return make(7) + s.len();
 }
@@ -6835,21 +6832,21 @@ function main(): i32 {
 struct Box[T] { f: (T) => T }
 
 pub function apply[T](seed: T): T {
-    var b: Box[T] = Box[T] { f: (x: T): T => x };
+    let b: Box[T] = Box[T] { f: (x: T): T => x };
     return b.f(seed);
 }
 
 pub function nested[T](seed: T): T {
-    var b: Box[T] = Box[T] { f: (x: T): T => {
-        var c: Box[T] = Box[T] { f: (y: T): T => y };
+    let b: Box[T] = Box[T] { f: (x: T): T => {
+        let c: Box[T] = Box[T] { f: (y: T): T => y };
         return c.f(x);
     } };
     return b.f(seed);
 }
 
 function main(): i32 {
-    var s: string = apply("ab" + "c");
-    var t: string = nested("de" + "f");
+    let s: string = apply("ab" + "c");
+    let t: string = nested("de" + "f");
     return apply(7) + nested(2) + s.len() + t.len();
 }
 `},
@@ -6862,7 +6859,7 @@ function main(): i32 {
 struct Slot[T] { v: T }
 
 pub function hold[T](f: () => T): i32 {
-    var c: Slot[T] = Slot[T] { v: f() };
+    let c: Slot[T] = Slot[T] { v: f() };
     return 1;
 }
 
@@ -6874,9 +6871,9 @@ function seven(): i32 { return 7; }
 function pick(): () => string { return (): string => "de" + "f"; }
 
 function main(): i32 {
-    var m: Maker = Maker { f: (): string => "gh" + "i" };
-    var b: Box[i32] = Box[i32] { f: (): i32 => 3 };
-    var w: Box[string] = Box[string] { f: (): string => "j" + "k" };
+    let m: Maker = Maker { f: (): string => "gh" + "i" };
+    let b: Box[i32] = Box[i32] { f: (): i32 => 3 };
+    let w: Box[string] = Box[string] { f: (): string => "j" + "k" };
     return hold((): i32 => 7) + hold(() => "ab" + "c") + hold(seven) + hold(pick()) + hold(m.f) + hold(b.f) + hold(w.f);
 }
 `},
@@ -6917,9 +6914,9 @@ pub function (s: Stack[T]) size(): i32 {
 }
 
 function main(): i32 {
-    var s: Stack[string] = stack_new();
+    let s: Stack[string] = stack_new();
     s = s.pushed("a" + "b").pushed("c");
-    var n: Stack[i32] = stack_new();
+    let n: Stack[i32] = stack_new();
     n = n.pushed(4);
     return s.size() + n.size() + n.cleared().size() + s.cleared().size() + 5;
 }
@@ -6931,7 +6928,7 @@ function main(): i32 {
 struct Slot[T] { v: T }
 
 pub function hold[T](f: () => T): i32 {
-    var c: Slot[T] = Slot[T] { v: f() };
+    let c: Slot[T] = Slot[T] { v: f() };
     return 1;
 }
 
@@ -6942,8 +6939,8 @@ pub function (b: Box[U]) held(): i32 {
 }
 
 function main(): i32 {
-    var b: Box[i32] = Box[i32] { u: 1 };
-    var w: Box[string] = Box[string] { u: "x" };
+    let b: Box[i32] = Box[i32] { u: 1 };
+    let w: Box[string] = Box[string] { u: "x" };
     return b.held() + w.held() + hold((): i32 => 2);
 }
 `},
@@ -6952,7 +6949,7 @@ function main(): i32 {
 struct Slot[T] { v: T[] }
 
 pub function count[T](f: (T) => i32): i32 {
-    var c: Slot[T] = Slot[T] { v: [] };
+    let c: Slot[T] = Slot[T] { v: [] };
     return c.v.len() + 1;
 }
 
@@ -6970,24 +6967,24 @@ pub function make[T](seed: T): T {
     function outer(base: T): (T) => T {
         return (x: T): T => ((y: T): T => y)(x);
     }
-    var f: (T) => T = outer(seed);
+    let f: (T) => T = outer(seed);
     return f(seed);
 }
 
 pub function keep[T](seed: T): T {
     function outer(base: T): (T) => T {
         return (x: T): T => {
-            var inner: (T) => T = (y: T): T => y;
+            let inner: (T) => T = (y: T): T => y;
             return inner(x);
         };
     }
-    var f: (T) => T = outer(seed);
+    let f: (T) => T = outer(seed);
     return f(seed);
 }
 
 function main(): i32 {
-    var s: string = make("ab" + "c");
-    var t: string = keep("de" + "f");
+    let s: string = make("ab" + "c");
+    let t: string = keep("de" + "f");
     return make(7) + keep(1) + s.len() + t.len();
 }
 `},
@@ -6999,13 +6996,13 @@ pub function make[T](seed: T): T {
     function outer(base: T): (T) => (T) => T {
         return (x: T): (T) => T => (y: T): T => y;
     }
-    var f: (T) => (T) => T = outer(seed);
-    var g: (T) => T = f(seed);
+    let f: (T) => (T) => T = outer(seed);
+    let g: (T) => T = f(seed);
     return g(seed);
 }
 
 function main(): i32 {
-    var s: string = make("ab" + "c");
+    let s: string = make("ab" + "c");
     return make(7) + s.len();
 }
 `},
@@ -7018,24 +7015,24 @@ pub function make[T](seed: T): T {
     function outer(base: T): (string) => i32 {
         return (s: string): i32 => s.len() + 1;
     }
-    var f: (string) => i32 = outer(seed);
-    var n: i32 = f("ab" + "c");
+    let f: (string) => i32 = outer(seed);
+    let n: i32 = f("ab" + "c");
     return seed;
 }
 
 pub function keep[T](seed: T): T {
     function outer(base: T): (string) => i32 {
-        var k: i32 = 2;
+        let k: i32 = 2;
         return (s: string): i32 => s.len() + k;
     }
-    var f: (string) => i32 = outer(seed);
-    var n: i32 = f("de" + "f");
+    let f: (string) => i32 = outer(seed);
+    let n: i32 = f("de" + "f");
     return seed;
 }
 
 function main(): i32 {
-    var s: string = make("ab" + "c");
-    var t: string = keep("gh" + "i");
+    let s: string = make("ab" + "c");
+    let t: string = keep("gh" + "i");
     return make(7) + keep(1) + s.len() + t.len();
 }
 `},
@@ -7046,7 +7043,7 @@ function helper(own xs: string[]): i32 {
 }
 
 pub function pick[T](seed: T): T {
-    var n: i32 = helper(["a" + "b"]);
+    let n: i32 = helper(["a" + "b"]);
     return seed;
 }
 
@@ -7054,13 +7051,13 @@ pub function make[T](seed: T): T {
     function outer(base: T): (string) => i32 {
         return (s: string): i32 => pick(s).len() + 1;
     }
-    var f: (string) => i32 = outer(seed);
-    var n: i32 = f("ab" + "c");
+    let f: (string) => i32 = outer(seed);
+    let n: i32 = f("ab" + "c");
     return seed;
 }
 
 function main(): i32 {
-    var s: string = make("ab" + "c");
+    let s: string = make("ab" + "c");
     return make(7) + s.len() + pick(2);
 }
 `},
@@ -7075,24 +7072,24 @@ function adder(n: i32): (i32) => (i32) => i32 {
 }
 
 function boxed(n: i32): i32 {
-    var b: Box = Box { f: (x: i32): i32 => {
-        var c: Box = Box { f: (y: i32): i32 => y + x + n };
+    let b: Box = Box { f: (x: i32): i32 => {
+        let c: Box = Box { f: (y: i32): i32 => y + x + n };
         return c.f(x);
     } };
     return b.f(n);
 }
 
 function listed(seed: i32, n: i32): i32 {
-    var fs: ((i32) => i32)[] = [((k: i32): i32 => {
-        var gs: ((i32) => i32)[] = [((j: i32): i32 => seed + j)];
+    let fs: ((i32) => i32)[] = [((k: i32): i32 => {
+        let gs: ((i32) => i32)[] = [((j: i32): i32 => seed + j)];
         return gs[0](k + n);
     })];
     return fs[0](0);
 }
 
 function main(): i32 {
-    var f: (i32) => (i32) => i32 = adder(1);
-    var g: (i32) => i32 = f(2);
+    let f: (i32) => (i32) => i32 = adder(1);
+    let g: (i32) => i32 = f(2);
     return g(3) + boxed(3) + listed(7, 1);
 }
 `},
@@ -7104,12 +7101,12 @@ pub function make[A, B](a: A, b: B): A {
     function idmaker(base: A, other: B): (A) => A {
         return (x: A) => x;
     }
-    var f: (A) => A = idmaker(a, b);
+    let f: (A) => A = idmaker(a, b);
     return f(a);
 }
 
 function main(): i32 {
-    var s: string = "x";
+    let s: string = "x";
     return make(7, s) + make(2, true);
 }
 `},
@@ -7117,24 +7114,24 @@ function main(): i32 {
 	// end: the enclosing expression is unreachable, including from inside a
 	// loop whose join and exit the block's `break` still reaches (#10793).
 	{name: "a-value-block-that-leaves-only-by-return-or-break", atLeast: 6, want: "134|ab\nabbb!\nzeromany\n", wasm: "out-of-range|ab\nabbb!\nzeromany\n", src: `
-function f(c: boolean): i32 { var x: i32 = { if (c) { return 1; } return 2; }; return x + 100; }
+function f(c: boolean): i32 { let x: i32 = { if (c) { return 1; } return 2; }; return x + 100; }
 function g(n: i32): string {
-    var s: string = "a";
-    var i: i32 = 0;
+    let s: string = "a";
+    let i: i32 = 0;
     while (i < 5) {
-        if (i == n) { var t: string = { if (n > 2) { return s + "!"; } break; }; s = s + t; }
+        if (i == n) { let t: string = { if (n > 2) { return s + "!"; } break; }; s = s + t; }
         s = s + "b";
         i = i + 1;
     }
     return s;
 }
-function h(c: boolean): i32 { var x: i32 = if (c) { return 1; } else { return 2; }; return x + 100; }
-function k(n: i32): string { var x: string = match (n) { 0 => { return "zero"; }, _ => { return "many"; } }; return x + "?"; }
+function h(c: boolean): i32 { let x: i32 = if (c) { return 1; } else { return 2; }; return x + 100; }
+function k(n: i32): string { let x: string = match (n) { 0 => { return "zero"; }, _ => { return "many"; } }; return x + "?"; }
 function j(c: boolean, stop: boolean): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
         i = i + 1;
-        if (c) { var t: i32 = { if (stop) { return 0; } continue; }; i = i + t; }
+        if (c) { let t: i32 = { if (stop) { return 0; } continue; }; i = i + t; }
     }
     return i;
 }
@@ -7152,14 +7149,14 @@ function main(): i32 {
 	{name: "a-generic-enum-from-a-function-value-or-a-tuple-element", atLeast: 5, want: "59|", src: `
 enum Opt[T] { Non, Has(T) }
 function run(f: (i32) => Opt[string], k: i32): i32 { match (f(k)) { Has(s) => { return s.len(); }, Non => { return 0; } } }
-function pick(t: (Opt[string], i32)): i32 { var e: Opt[string] = t.0; match (e) { Has(s) => { return s.len() + t.1; }, Non => { return t.1; } } }
+function pick(t: (Opt[string], i32)): i32 { let e: Opt[string] = t.0; match (e) { Has(s) => { return s.len() + t.1; }, Non => { return t.1; } } }
 function main(): i32 {
-    var g: (i32) => Opt[i32] = (k: i32): Opt[i32] => { if (k > 0) { return Has(k * 6); } return Non; };
-    var a: i32 = 0;
+    let g: (i32) => Opt[i32] = (k: i32): Opt[i32] => { if (k > 0) { return Has(k * 6); } return Non; };
+    let a: i32 = 0;
     match (g(7)) { Has(v) => { a = v; }, Non => { a = 1; } }
-    var t: (Opt[string], i32) = (Has("abc" + "de"), 2);
-    var u: (i32, Opt[i32]) = (3, Has(4));
-    var b: i32 = 0;
+    let t: (Opt[string], i32) = (Has("abc" + "de"), 2);
+    let u: (i32, Opt[i32]) = (3, Has(4));
+    let b: i32 = 0;
     match (u.1) { Has(v) => { b = v + u.0; }, Non => { b = 0; } }
     return a + run((k: i32): Opt[string] => { if (k > 1) { return Has("x" + "yz"); } return Non; }, 2) + pick(t) + b;
 }
@@ -7180,11 +7177,11 @@ impl[U] E[U] {
 enum Holder[T] { Has(T), Empty }
 function first(h: Holder[string[]]): string { match (h) { Has(xs) => { return xs[0]; }, Empty => { return ""; } } }
 function main(): i32 {
-  var e: E[string] = A(Box { v: "abc" + "d", n: 3 });
-  var f: E[i32] = A(Box { v: 7, n: 5 });
-  var g: E[i32] = B(9);
-  var names: string[] = ["x" + "yz", "w"];
-  var h = Has(names);
+  let e: E[string] = A(Box { v: "abc" + "d", n: 3 });
+  let f: E[i32] = A(Box { v: 7, n: 5 });
+  let g: E[i32] = B(9);
+  let names: string[] = ["x" + "yz", "w"];
+  let h = Has(names);
   print(first(h));
   return e.boxed(Box { v: "", n: 0 }).v.len() + g.boxed(Box { v: 11, n: 0 }).v + e.weight() + f.weight() + g.weight();
 }
@@ -7195,23 +7192,23 @@ function main(): i32 {
 	{name: "a-generic-enum-at-an-array-type-argument", atLeast: 7, want: "86|xyz-\n", src: `
 enum Fut[T] { Ready(T), Pending(i32, (i32) => Fut[T]) }
 enum Holder[T] { Has(T), Empty }
-function step(fd: i32): Fut[u8[]] { var b: u8[] = [1 as u8, 2 as u8, fd as u8]; return Ready(b); }
+function step(fd: i32): Fut[u8[]] { let b: u8[] = [1 as u8, 2 as u8, fd as u8]; return Ready(b); }
 function run(f: Fut[u8[]]): i32 {
     match (f) { Ready(b) => { return b.len() + (b[2] as i32); }, Pending(k, g) => { return run(g(k)); } }
 }
 function mk(n: i32): i32[] {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { a = a.append(i * 3); i = i + 1; }
     return a;
 }
 function probe(h: Holder[i32[]]): i32 { match (h) { Has(xs) => { return xs[1]; }, Empty => { return 0; } } }
 function first(h: Holder[string[]]): string { match (h) { Has(xs) => { return xs[0]; }, Empty => { return "-"; } } }
 function main(): i32 {
-    var names: string[] = ["x" + "yz", "w"];
-    var h = Has(names);
+    let names: string[] = ["x" + "yz", "w"];
+    let h = Has(names);
     print(first(h) + first(Empty));
-    var bound: Holder[i32[]] = Has(mk(4));
+    let bound: Holder[i32[]] = Has(mk(4));
     return run(Pending(5, step)) * 10 + probe(Has(mk(8))) + probe(bound) + probe(Empty);
 }
 `},
@@ -7222,15 +7219,15 @@ function main(): i32 {
 import "std/i32";
 struct Slot[T] { v: T }
 pub function keep[T](f: () => T): T {
-    var c: Slot[T] = Slot[T] { v: f() };
+    let c: Slot[T] = Slot[T] { v: f() };
     return c.v;
 }
 function pick(o: Option[() => string]): string {
     match (o) { Some(f) => { return keep(f); }, None => { return "none"; } }
 }
 function main(): i32 {
-    var fs: (() => i32)[] = [(): i32 => 7];
-    var gs: (() => string)[] = [(): string => "ab" + "c"];
+    let fs: (() => i32)[] = [(): i32 => 7];
+    let gs: (() => string)[] = [(): string => "ab" + "c"];
     print(keep(fs[0]).to_string() + " " + keep(gs[0]) + " " + pick(Some((): string => "arm")));
     return 0;
 }
@@ -7243,14 +7240,14 @@ function main(): i32 {
 	{name: "a-value-if-widens-a-literal-arm", atLeast: 5, want: "0|1 -1 4 9 1\n", src: `
 import "std/i64";
 function pick(k: i32): i64 {
-    var p = match (k) { 0 => { (1, 4) }, 1 => { (2, -4611686018427387905) }, _ => { (3, 5) } };
+    let p = match (k) { 0 => { (1, 4) }, 1 => { (2, -4611686018427387905) }, _ => { (3, 5) } };
     return p.1 + 4611686018427387904;
 }
 function main(): i32 {
-    var r: i64 = 5;
-    var a = if (r > 0) { (2, 4611686018427387905) } else { (3, 4) };
-    var b = if (r < 0) { (3, 4) } else { (2, 4611686018427387905) };
-    var q = if (r > 0) { 4 } else { 4611686018427387905 };
+    let r: i64 = 5;
+    let a = if (r > 0) { (2, 4611686018427387905) } else { (3, 4) };
+    let b = if (r < 0) { (3, 4) } else { (2, 4611686018427387905) };
+    let q = if (r > 0) { 4 } else { 4611686018427387905 };
     print((a.1 - 4611686018427387904).to_string() + " " + pick(1).to_string() + " " + q.to_string()
         + " " + (pick(2) - 4611686018427387900).to_string() + " " + (b.1 - 4611686018427387904).to_string());
     return 0;
@@ -7267,39 +7264,74 @@ struct Box { xs: i64[], tag: string }
 @noinline function takes(own s: string): i32 { return s.len() as i32; }
 @noinline function mk(): string { return "ab" + "cd"; }
 function one(): i32 {
-    var xs: i64[] = [];
+    let xs: i64[] = [];
     xs = xs.append(1);
     return take(xs) + 0;
 }
 function two(): i32 {
-    var xs: i64[] = [5, 6];
+    let xs: i64[] = [5, 6];
     xs = xs.append(7);
-    var r: i32 = take(xs);
+    let r: i32 = take(xs);
     return r;
 }
 function three(): i32 {
-    var b: Box = Box { xs: [1, 2], tag: "t" };
+    let b: Box = Box { xs: [1, 2], tag: "t" };
     b = Box { ...b, tag: b.tag + "u" };
-    var r: i32 = takeb(b);
+    let r: i32 = takeb(b);
     return r;
 }
 function four(): i32 {
-    var s: string = "ab";
+    let s: string = "ab";
     s = s + "cd";
-    var r: i32 = takes(s);
+    let r: i32 = takes(s);
     return r;
 }
 function five(): i32 {
-    var s: string = mk();
+    let s: string = mk();
     return takes(s);
 }
 function main(): i32 {
     function nested(): i32 {
-        var b: Box = Box { xs: [], tag: "nest" };
-        var r: i32 = takeb(b);
+        let b: Box = Box { xs: [], tag: "nest" };
+        let r: i32 = takeb(b);
         return r + 1;
     }
     print((one() + two() + three() + four() + five() + nested()).to_string());
+    return 0;
+}
+`},
+	// A local handed to an `own` parameter and stored to again after
+	// straight-line statements that do not name it is moved at the call
+	// (#11093): ys is stored back only after xs, and gap's xs after an
+	// unrelated var. Each value is freed once.
+	{name: "a-local-stored-after-a-gap-moves-at-the-call", atLeast: 52, want: "0|15\n", src: `
+import "std/i32";
+struct Pair { a: i64[], b: i64[] }
+@noinline function step(own xs: i64[], own ys: i64[], k: i64): Pair {
+    return Pair { a: xs.append(k), b: ys.append(k * 2) };
+}
+@noinline function take(own xs: i64[]): i32 { return xs.len() as i32; }
+function threaded(n: i32): i32 {
+    let xs: i64[] = [];
+    let ys: i64[] = [1];
+    let i: i32 = 0;
+    while (i < n) {
+        let p: Pair = step(xs, ys, i as i64);
+        xs = p.a;
+        ys = p.b;
+        i = i + 1;
+    }
+    return xs.len() as i32 + ys.len() as i32;
+}
+function gap(): i32 {
+    let xs: i64[] = [1, 2];
+    let r: i32 = take(xs);
+    let m: i32 = r + 1;
+    xs = [3];
+    return m + xs.len() as i32;
+}
+function main(): i32 {
+    print((threaded(5) + gap()).to_string());
     return 0;
 }
 `},
@@ -7307,12 +7339,12 @@ function main(): i32 {
 import "std/i32";
 struct Slot[T] { v: T }
 pub function keep[T](f: () => T): T {
-    var c: Slot[T] = Slot[T] { v: f() };
+    let c: Slot[T] = Slot[T] { v: f() };
     return c.v;
 }
 pub function wrap[U](g: () => U): U { return keep(g); }
 function main(): i32 {
-    var n: i32 = 4;
+    let n: i32 = 4;
     print(wrap((): i32 => n + 1).to_string() + " " + wrap((): string => "w" + "x"));
     return 0;
 }
@@ -7364,20 +7396,20 @@ function make(i: i32): dyn Show {
 const semUsizeOperatorsSource = `
 struct Region { base: usize }
 function main(): i32 {
-    var n: i32 = args().len() + 69;
-    var one: usize = (n - 69) as usize;
-    var top: usize = one << (n - 39);
-    var a: usize = top + (n as usize);
-    var b: usize = (n - 59) as usize;
-    var got: i32 = 0;
+    let n: i32 = args().len() + 69;
+    let one: usize = (n - 69) as usize;
+    let top: usize = one << (n - 39);
+    let a: usize = top + (n as usize);
+    let b: usize = (n - 59) as usize;
+    let got: i32 = 0;
     if ((a / b) as i64 == 195225792i64) { got = got + 1; }
     if ((a % b) as i32 == 6) { got = got + 2; }
     if ((top >> (n - 40)) as i32 == 2 && (a >> 28) as i32 == 8) { got = got + 4; }
     if (top > b && a >= top && b < a && !(a <= b)) { got = got + 8; }
     if (a / (0 as usize) == (0 as usize) && a % (0 as usize) == a) { got = got + 16; }
-    var words: usize[] = [top, a];
-    var s: Region = Region { base: top };
-    var t: Region = Region { base: b };
+    let words: usize[] = [top, a];
+    let s: Region = Region { base: top };
+    let t: Region = Region { base: b };
     if ((words[0] >> (n - 40)) as i32 == 2 && (words[1] / b) as i64 == 195225792i64 && s.base > t.base) { got = got + 32; }
     return got;
 }
@@ -7390,34 +7422,34 @@ const semUsizeWideOperatorsSource = `
 struct Region { base: usize }
 function scaled(n: i32): usize { return ((n as i64) * 1000000000i64) as usize; }
 function addresses(n: i32): i32 {
-    var a: usize = scaled(n);
-    var b: usize = scaled(1);
-    var one: usize = (n - 69) as usize;
-    var top: usize = one << (n - 7);
-    var got: i32 = 0;
+    let a: usize = scaled(n);
+    let b: usize = scaled(1);
+    let one: usize = (n - 69) as usize;
+    let top: usize = one << (n - 7);
+    let got: i32 = 0;
     if ((a / b) as i32 == 70) { got = got + 1; }
     if ((a % (b + (7 as usize))) as i64 == 999999517i64) { got = got + 2; }
     if (((one << (n - 30)) >> (n - 32)) as i32 == 4) { got = got + 4; }
     if ((top >> 62) as i32 == 2) { got = got + 8; }
     if (top > a && a >= b && b < top && !(a <= b)) { got = got + 16; }
-    var words: usize[] = [top, a];
-    var s: Region = Region { base: a };
-    var t: Region = Region { base: b };
+    let words: usize[] = [top, a];
+    let s: Region = Region { base: a };
+    let t: Region = Region { base: b };
     if ((words[0] >> 62) as i32 == 2 && (s.base / t.base) as i32 == 70 && words[0] > s.base) { got = got + 32; }
     return got;
 }
 function wide(n: i32): i32 {
-    var one: u64 = (n - 69) as u64;
-    var top: u64 = one << ((n - 7) as u64);
-    var a: u64 = top + (70 as u64);
-    var b: u64 = (n - 60) as u64;
-    var got: i32 = 0;
+    let one: u64 = (n - 69) as u64;
+    let top: u64 = one << ((n - 7) as u64);
+    let a: u64 = top + (70 as u64);
+    let b: u64 = (n - 60) as u64;
+    let got: i32 = 0;
     if (((a / b) >> 59) as i32 == 1 && (a % b) as i32 == 8) { got = got + 1; }
     if ((top >> 62) as i32 == 2 && a > b && !(top < b)) { got = got + 2; }
     return got;
 }
 function main(): i32 {
-    var n: i32 = args().len() + 69;
+    let n: i32 = args().len() + 69;
     return addresses(n) + wide(n) * 64;
 }
 `
@@ -7426,8 +7458,8 @@ function main(): i32 {
 // the register backends, and 1 on wasm, whose address is 32 bits.
 const semUsizeWideLiteralSource = `
 function main(): i32 {
-    var a: usize = 70000000000 as usize;
-    var b: usize = 1000000000 as usize;
+    let a: usize = 70000000000 as usize;
+    let b: usize = 1000000000 as usize;
     return (a / b) as i32;
 }
 `
@@ -7437,10 +7469,10 @@ function main(): i32 {
 const semUsizeWideProductSource = `
 function addr(x: i64): usize { return x as usize; }
 function main(): i32 {
-    var n: i64 = (args().len() as i64) * 70000000000i64;
-    var a: usize = n as usize;
-    var b: usize = addr(n * 2i64);
-    var unit: usize = 100000000 as usize;
+    let n: i64 = (args().len() as i64) * 70000000000i64;
+    let a: usize = n as usize;
+    let b: usize = addr(n * 2i64);
+    let unit: usize = 100000000 as usize;
     return ((a / unit) + (b / unit) * (4 as usize)) as i32;
 }
 `
@@ -7455,9 +7487,9 @@ function run3(cb: usize, a: usize, b: usize, c: usize): i32 { return __c_call3(c
 function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
 function runf(cb: usize, a: usize): f64 { return __c_call1_f64(cb, a) + (__c_call2_f32(cb, a, a) as f64); }
 function main(): i32 {
-    var n: i32 = args().len();
+    let n: i32 = args().len();
     if (n > 100) {
-        var cb: usize = n as usize;
+        let cb: usize = n as usize;
         return run0(cb) + run1(cb, cb) + run2(cb, cb, cb) + run3(cb, cb, cb, cb) + run4(cb, cb, cb, cb, cb) + (runf(cb, cb) as i32);
     }
     return 0;
@@ -7469,18 +7501,18 @@ function main(): i32 {
 // of any would allocate once per round.
 const semDominatingViewSource = `
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function heads(s: string): str[] { return [slice_unchecked(s, 0, 1), slice_unchecked(s, 1, 2)]; }
 function pick(n: i32): i32 {
-    var s: string = mk(n);
-    var tail: str = "";
-    var a: str[] = [];
-    var b: str[] = [];
-    var i: i32 = 0;
+    let s: string = mk(n);
+    let tail: str = "";
+    let a: str[] = [];
+    let b: str[] = [];
+    let i: i32 = 0;
     while (i < n) {
         if (i % 2 == 0) {
             tail = slice_unchecked(s, 1, 3);
@@ -7500,11 +7532,11 @@ const semHeldElementSource = `
 import "std/string";
 
 function ins(own a: string[], lo: i32, hi: i32): string[] {
-    var i: i32 = lo + 1;
+    let i: i32 = lo + 1;
     while (i < hi) {
-        var v: string = a[i];
-        var j: i32 = i - 1;
-        var moving: boolean = j >= lo;
+        let v: string = a[i];
+        let j: i32 = i - 1;
+        let moving: boolean = j >= lo;
         while (moving) {
             if (a[j].len() > v.len()) {
                 a = a.with(j + 1, a[j]);
@@ -7521,10 +7553,10 @@ function ins(own a: string[], lo: i32, hi: i32): string[] {
 }
 
 function main(): i32 {
-    var xs: string[] = ["ccc", "a", "bb", "dddd", "", "ee", "ffffff", "g"];
-    var n: i32 = xs.len();
+    let xs: string[] = ["ccc", "a", "bb", "dddd", "", "ee", "ffffff", "g"];
+    let n: i32 = xs.len();
     xs = ins(xs, 0, n);
-    var out: string = "";
+    let out: string = "";
     for x in xs { out = out + x + "|"; }
     print(out);
     return xs[7].len();

@@ -75,30 +75,30 @@ func TestWideShiftCountIsWidened(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"left shift", `
 function main(): i32 {
-    var s: i64 = 1;
-    var t: i64 = 0;
+    let s: i64 = 1;
+    let t: i64 = 0;
     for i in 0..4 { t = t + (s << i); }
     return t as i32;
 }`},
 		{"right shift", `
 function main(): i32 {
-    var s: i64 = 1024;
-    var t: i64 = 0;
+    let s: i64 = 1024;
+    let t: i64 = 0;
     for i in 0..3 { t = t + (s >> i); }
     return t as i32;
 }`},
 		{"unsigned", `
 function main(): i32 {
-    var u: u64 = 1;
-    var t: u64 = 0;
+    let u: u64 = 1;
+    let t: u64 = 0;
     for i in 0..4 { t = t + (u << i); }
     return t as i32;
 }`},
 		{"count fixed at i32 first", `
 function main(): i32 {
-    var s: i64 = 1;
-    var t: i64 = 0;
-    for i in 0..4 { var j: i32 = i; t = t + (s << i); }
+    let s: i64 = 1;
+    let t: i64 = 0;
+    for i in 0..4 { let j: i32 = i; t = t + (s << i); }
     return t as i32;
 }`},
 	} {
@@ -116,8 +116,8 @@ function main(): i32 {
 func TestWideShiftCountAlreadyWideIsNotExtended(t *testing.T) {
 	ip := lowerForTest(t, `
 function main(): i32 {
-    var s: i64 = 1;
-    var k: i64 = 3;
+    let s: i64 = 1;
+    let k: i64 = 3;
     return (s << k) as i32;
 }
 `)
@@ -136,8 +136,8 @@ function main(): i32 {
 func TestNarrowShiftCountIsNotWidened(t *testing.T) {
 	ip := lowerForTest(t, `
 function main(): i32 {
-    var s: i32 = 1;
-    var k: i32 = 3;
+    let s: i32 = 1;
+    let k: i32 = 3;
     return s << k;
 }
 `)

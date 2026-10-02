@@ -26,7 +26,7 @@ themselves.
 ## The Scope came from an argument temp
 
 ```
-var ntop: ast.Stmt[] = annotate_block(mod.top_stmts,
+let ntop: ast.Stmt[] = annotate_block(mod.top_stmts,
     new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports));
 ```
 
@@ -46,11 +46,11 @@ which is
 
 ```
 function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
-  var cur: Scope = s;              // 13911:20
+  let cur: Scope = s;              // 13911:20
   for stmt in body { … cur = annotate_advance(stmt, cur); }
 ```
 
-`var cur = s` reads as "the callee bound the parameter to a local", the
+`let cur = s` reads as "the callee bound the parameter to a local", the
 canonical uncounted retention — except that it is not one here.
 `computeFreeEligible` has said so since #6403: its `countedSeed` map
 exempts exactly this binding, because for a local that is REASSIGNED
@@ -59,7 +59,7 @@ reference of its own. The counted-retain summaries had no arm for it, so
 the fact the escape analysis already knew was invisible to the tier that
 decides whether the CALLER may release its argument.
 
-Same shape, same refusal: `check_block`'s `var cur: Scope = s`, and
+Same shape, same refusal: `check_block`'s `let cur: Scope = s`, and
 through the fixpoint every walker downstream of them.
 
 ## The fix

@@ -8,12 +8,12 @@ import (
 // returnClosureNestedIRCases pin a DOUBLY-escaping nested closure — a function
 // that returns a closure which itself returns a closure (`() => (() => T)`),
 // issue #5281. The two-level hoist (`pick$clo` / `pick$clo$clo`) is correct; the
-// bug was caller-side: `var g = pick(); var h = g();` bound `h` a plain scalar
+// bug was caller-side: `let g = pick(); let h = g();` bound `h` a plain scalar
 // because `pick`'s nested `() => (() => i32)` return type coarsens to "fn",
 // losing that CALLING g yields another closure — so `h()` bare-called the inner
 // box pointer as code (SIGSEGV). closure_ret_closure_fns_of now marks such a
 // factory RETCLO2 (its returned closure's `__mkclo$` funcval is itself
-// closure-returning); `var g = pick()` records g a RETCLO local, so `var h = g()`
+// closure-returning); `let g = pick()` records g a RETCLO local, so `let h = g()`
 // binds h a closure local and `h()` dispatches env-first.
 //
 // Found via differential probing. Exit codes cross-checked against the
@@ -24,26 +24,26 @@ var returnClosureNestedIRCases = []struct {
 	exit int
 }{
 	// The canonical repro: `return () => () => n`, then g()() at the caller.
-	{"plain", "function pick(n: i32): () => (() => i32) { return () => () => n; } function main(): i32 { var g = pick(7); var h = g(); return h(); }", 7},
+	{"plain", "function pick(n: i32): () => (() => i32) { return () => () => n; } function main(): i32 { let g = pick(7); let h = g(); return h(); }", 7},
 	// Inner body does arithmetic on the (twice-captured) n.
-	{"inner-arith", "function pick(n: i32): () => (() => i32) { return () => () => n + 1; } function main(): i32 { var g = pick(10); var h = g(); return h(); }", 11},
+	{"inner-arith", "function pick(n: i32): () => (() => i32) { return () => () => n + 1; } function main(): i32 { let g = pick(10); let h = g(); return h(); }", 11},
 	// Innermost closure takes an argument.
-	{"inner-arg", "function pick(n: i32): () => ((i32) => i32) { return () => (x: i32) => x + n; } function main(): i32 { var g = pick(5); var h = g(); return h(10); }", 15},
+	{"inner-arg", "function pick(n: i32): () => ((i32) => i32) { return () => (x: i32) => x + n; } function main(): i32 { let g = pick(5); let h = g(); return h(10); }", 15},
 	// Chained call on a var-bound RETCLO local: `g()()` — the inner g() result
-	// is called directly (expression position), no intermediate `var h`.
-	{"chain-local", "function pick(n: i32): () => (() => i32) { return () => () => n; } function main(): i32 { var g = pick(9); return g()(); }", 9},
+	// is called directly (expression position), no intermediate `let h`.
+	{"chain-local", "function pick(n: i32): () => (() => i32) { return () => () => n; } function main(): i32 { let g = pick(9); return g()(); }", 9},
 	// Fully chained on the factory call: `pick(9)()()` — no var at all.
 	{"chain-full", "function pick(n: i32): () => (() => i32) { return () => () => n; } function main(): i32 { return pick(9)()(); }", 9},
 	// Fully chained with an argument-taking innermost closure.
 	{"chain-arg", "function pick(n: i32): () => ((i32) => i32) { return () => (x: i32) => x + n; } function main(): i32 { return pick(5)()(10); }", 15},
 }
 
-// TestSelfHostReturnClosureNestedIRX86_64 — the x86-64 irlower fix, through the
+// TestSelfHostReturnClosureNestedIRX86_64 — the x86-64 fix, through the
 // production driver (asm_ir_run `-ir`).
 func TestSelfHostReturnClosureNestedIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range returnClosureNestedIRCases {
@@ -68,7 +68,7 @@ func TestSelfHostReturnClosureNestedIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostReturnClosureNestedIRArm64 — CI-gated arm64 counterpart. The fix is
-// in the shared irlower.fern, so the arm64 IR backend picks it up.
+// in the shared lowering, so the arm64 IR backend picks it up.
 func TestSelfHostReturnClosureNestedIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -76,7 +76,7 @@ func TestSelfHostReturnClosureNestedIRArm64(t *testing.T) {
 		t.Skip("arm64 return-closure-nested gate needs a native x86 host to run the driver")
 	}
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range returnClosureNestedIRCases {

@@ -39,11 +39,11 @@ function check_reverse_idempotent(input: u8[]): test.TestOutcome {
 // byte-level and holds for invalid UTF-8 too, so the bridge
 // is `string_from_bytes_unchecked`.
 function check_to_lower_no_upper(input: u8[]): test.TestOutcome {
-  var s: string = string_from_bytes_unchecked(input);
-  var lowered: string = s.to_lower();
-  var i: i32 = 0;
+  let s: string = string_from_bytes_unchecked(input);
+  let lowered: string = s.to_lower();
+  let i: i32 = 0;
   while (i < lowered.len()) {
-    var b: i32 = lowered[i] as i32;
+    let b: i32 = lowered[i] as i32;
     if (b >= 65 && b <= 90) {
       return test.fail("uppercase byte " + b.to_string()
         + " at " + i.to_string() + " after to_lower");
@@ -54,7 +54,7 @@ function check_to_lower_no_upper(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("fuzz shrink");
+  let r: test.TestRunner = test.test_new("fuzz shrink");
 
   r = r.fuzz_shrink(
     "len non-negative",

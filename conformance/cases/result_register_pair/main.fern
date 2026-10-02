@@ -10,7 +10,7 @@ function checked_div(a: i32, b: i32): Result[i32, i32] {
 }
 
 function main(): i32 {
-    var flags: i32 = 0;
+    let flags: i32 = 0;
     match (checked_div(84, 2)) {
         Ok(v) => { if (v == 42) { flags = flags + 1; } },
         Err(_) => { flags = flags + 16; }

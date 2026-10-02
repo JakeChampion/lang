@@ -36,11 +36,11 @@ func TestFipAcceptsAllocationFree(t *testing.T) {
 	// because the receiver root is `own`); `len` is whitelisted, the rest
 	// is scalar.
 	wantNoErr(t, "inplace sort", `fip function sort_inplace(own arr: i32[]): i32[] {
-    var n: i32 = arr.len();
-    var k: i32 = 1;
+    let n: i32 = arr.len();
+    let k: i32 = 1;
     while (k < n) {
-        var key: i32 = arr[k];
-        var j: i32 = k - 1;
+        let key: i32 = arr[k];
+        let j: i32 = k - 1;
         while (j >= 0 && arr[j] > key) { arr = arr.with(j + 1, arr[j]); j = j - 1; }
         arr = arr.with(j + 1, key);
         k = k + 1;
@@ -90,7 +90,7 @@ function main(): i32 { return 0; }`)
 func TestFipRefusesAllocatingBuiltinAndShadow(t *testing.T) {
 	wantE053(t, "allocating builtin", `fip function f(xs: f64[]): f64[] { return __scale_f64(xs, 2.0); }
 function main(): i32 { return 0; }`)
-	wantE053(t, "shadowed builtin", `function monotonic_ns(): i64 { var a: i32[] = [1]; return a.len() as i64; }
+	wantE053(t, "shadowed builtin", `function monotonic_ns(): i64 { let a: i32[] = [1]; return a.len() as i64; }
 fip function f(): i32 { return monotonic_ns() as i32; }
 function main(): i32 { return 0; }`)
 }
@@ -103,7 +103,7 @@ function main(): i32 { return 0; }`)
 function main(): i32 { return 0; }`)
 
 	wantE053(t, "calls non-fip", `function alloc(): i32[] { return [1]; }
-fip function f(): i32 { var a: i32[] = alloc(); return a[0]; }
+fip function f(): i32 { let a: i32[] = alloc(); return a[0]; }
 function main(): i32 { return 0; }`)
 
 	// `.with` on a NON-`own` (shared/borrowed) array copies-on-write, so it
@@ -214,7 +214,7 @@ function main(): i32 { return 0; }`)
 function main(): i32 { return 0; }`)
 
 	wantFbipE053(t, "fbip calls unmarked", `function alloc(): i32[] { return [1]; }
-fbip function f(): i32 { var a: i32[] = alloc(); return a[0]; }
+fbip function f(): i32 { let a: i32[] = alloc(); return a[0]; }
 function main(): i32 { return 0; }`)
 
 	wantFbipE053(t, "fbip cow write", `struct H { v: i32 }
@@ -224,7 +224,7 @@ function main(): i32 { return 0; }`)
 	// Bare fip stays strict: it may NOT call fbip (the weaker claim) …
 	wantE053(t, "fip calls fbip", `struct P { x: i32 }
 fbip function g(a: i32): P { return P { x: a }; }
-fip function f(a: i32): i32 { var p: P = g(a); return p.x; }
+fip function f(a: i32): i32 { let p: P = g(a); return p.x; }
 function main(): i32 { return 0; }`)
 
 }

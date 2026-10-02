@@ -8,7 +8,7 @@ import (
 )
 
 // optArrArrReclaimCases pin the #4365 `Option[<scalar-arr-of-arr>]` reclaim: a
-// `var o: Option[i32[][]] = Some([[i, i+1], ...])` consumed by a borrow-only match
+// `let o: Option[i32[][]] = Some([[i, i+1], ...])` consumed by a borrow-only match
 // leaked its payload (inner row buffers + outer buffer) + option box per iteration on the
 // self-host IR path (native bounds it). The new "OPTARRARR:" class is the arr-of-arr
 // sibling of "OPTSTRUCT:": it admits a fresh Some(<arr-of-arr literal>) / None consumed by
@@ -34,13 +34,13 @@ var optArrArrReclaimCases = []struct {
 }{
 	// Core churn: rebuilt per iteration, doubly-indexed scalar read only.
 	{"optarrarr-churn", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]); match (o) { Some(g) => { acc = (acc + g[0][0]) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[i32[][]] = Some([[j, j + 1]]); match (o2) { Some(g) => { acc = (acc + g[0][0]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]); match (o) { Some(g) => { acc = (acc + g[0][0]) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[i32[][]] = Some([[j, j + 1]]); match (o2) { Some(g) => { acc = (acc + g[0][0]) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -48,13 +48,13 @@ var optArrArrReclaimCases = []struct {
 }`, 0},
 	// Full borrow set: g[i][j], g.len() and g[i].len() are all admitted — still reclaims.
 	{"optarrarr-borrow-full", `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 5000) { var o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]); match (o) { Some(g) => { acc = (acc + g[0][0] + g[1][1] + g.len() + g[0].len()) % 251; }, None => {} } i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 5000) { var o2: Option[i32[][]] = Some([[j, j + 1]]); match (o2) { Some(g) => { acc = (acc + g[0][1]) % 251; }, None => {} } j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 5000) { let o: Option[i32[][]] = Some([[i, i + 1], [i + 2, i + 3]]); match (o) { Some(g) => { acc = (acc + g[0][0] + g[1][1] + g.len() + g[0].len()) % 251; }, None => {} } i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 5000) { let o2: Option[i32[][]] = Some([[j, j + 1]]); match (o2) { Some(g) => { acc = (acc + g[0][1]) % 251; }, None => {} } j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
@@ -63,14 +63,14 @@ var optArrArrReclaimCases = []struct {
 	// PAYLOAD-ESCAPE-STORE negative: `Some(g) => keep = g[0]` extracts an inner ROW out of
 	// the arm — the local is NOT credited (leak-safe), and MUST NOT be over-released.
 	{"optarrarr-escape-store-safe", `function main(): i32 {
-    var keep: i32[] = [0, 0];
-    var i: i32 = 0;
+    let keep: i32[] = [0, 0];
+    let i: i32 = 0;
     while (i < 50) {
-        var o: Option[i32[][]] = Some([[i, i + 1]]);
+        let o: Option[i32[][]] = Some([[i, i + 1]]);
         match (o) { Some(g) => { keep = g[0]; }, None => {} }
         i = i + 1;
     }
-    var acc: i32 = keep[0] + keep[1];
+    let acc: i32 = keep[0] + keep[1];
     if (acc < 0) { return 97; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
@@ -79,10 +79,10 @@ var optArrArrReclaimCases = []struct {
 	// — un-credited, leak-safe, detector zero.
 	{"optarrarr-escape-call-safe", `function take(a: i32[]): i32 { return a[0]; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) {
-        var o: Option[i32[][]] = Some([[i, i + 1]]);
+        let o: Option[i32[][]] = Some([[i, i + 1]]);
         match (o) { Some(g) => { acc = (acc + take(g[0])) % 251; }, None => {} }
         i = i + 1;
     }

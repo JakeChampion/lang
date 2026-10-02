@@ -31,17 +31,17 @@ import (
 // read. One execution of `b = a` was always clean; two or more stranded a
 // buffer. The loop bound is what the fix turns on, so the churn is the point.
 const repeatAliasSrc = `function round(n: i32): i32 {
-    var a: i32[] = [n, n, n, n, n];
-    var b: i32[] = [7];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let a: i32[] = [n, n, n, n, n];
+    let b: i32[] = [7];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) { b = a; t = t + b[0]; i = i + 1; }
     return t;
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
     return t % 3;
 }`
@@ -51,10 +51,10 @@ function main(): i32 {
 // iteration, so the bind is a repeated self-alias. This was the last named
 // residual of the #7805 / #7810 / #7812 row work.
 const repeatAliasRowSrc = `function round(n: i32): i32 {
-    var g: i32[][] = [];
-    var held: i32[] = [7];
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let g: i32[][] = [];
+    let held: i32[] = [7];
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         g = g.append([n, n]);
         held = g[0];
@@ -65,8 +65,8 @@ const repeatAliasRowSrc = `function round(n: i32): i32 {
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
     return t % 3;
 }`
@@ -78,15 +78,15 @@ function main(): i32 {
 // this into a use-after-free — which shows up as a wrong answer or a crash,
 // so it is asserted on exit-code agreement rather than on bytes.
 const repeatSelfMutationSrc = `function round(n: i32): i32 {
-    var xs: i32[] = [n];
-    var i: i32 = 0;
+    let xs: i32[] = [n];
+    let i: i32 = 0;
     while (i < 6) { xs = xs.append(n + i); i = i + 1; }
     return xs[0] + xs[3] + xs.len();
 }
 
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 200) { t = t + round(r); r = r + 1; }
     return t % 7;
 }`

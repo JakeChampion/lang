@@ -6,7 +6,7 @@ import (
 
 // --- The struct-literal FIELD share of an array-of-enums local ---------------
 //
-// The arrenum twin of the arrstruct counted field share. `var p: P = P { f: xs, … }`
+// The arrenum twin of the arrstruct counted field share. `let p: P = P { f: xs, … }`
 // where `xs` is a credited `E[]` local: the construction RETAINS it — the
 // ExprStructLit fallback arm alias-incs any bare arr-slot ident whose field type
 // is an array, which covers `E[]` even though the gate above it names only
@@ -54,13 +54,13 @@ type arrenumShareCase struct {
 	balance bool // assert allocs == frees at live_bytes 0
 }
 
-const arrenumShareMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
+const arrenumShareMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 100) { t = t + round(i); i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
 const arrenumShareDecl = `enum E { A(i32[]), B }
 struct P { f: E[], n: i32 }
-function mkv(i: i32): E[] { var o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
+function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
 `
 
 func arrenumShareCases() []arrenumShareCase {
@@ -70,9 +70,9 @@ func arrenumShareCases() []arrenumShareCase {
 			// rounds that skip it are the ones that leaked. 450/350 before.
 			name: "conditional",
 			src: arrenumShareDecl + `function round(i: i32): i32 {
-    var src: E[] = mkv(i);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var p: P = P { f: src, n: i }; t = p.f.len() + p.n; }
+    let src: E[] = mkv(i);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let p: P = P { f: src, n: i }; t = p.f.len() + p.n; }
     return t % 101;
 }` + arrenumShareMain,
 			want: 10, balance: true,
@@ -82,8 +82,8 @@ func arrenumShareCases() []arrenumShareCase {
 			// what lets the two owners decide between them.
 			name: "always",
 			src: arrenumShareDecl + `function round(i: i32): i32 {
-    var src: E[] = mkv(i);
-    var p: P = P { f: src, n: i };
+    let src: E[] = mkv(i);
+    let p: P = P { f: src, n: i };
     return (p.f.len() + p.n + src.len()) % 101;
 }` + arrenumShareMain,
 			want: 69, balance: true,
@@ -94,9 +94,9 @@ func arrenumShareCases() []arrenumShareCase {
 			name: "holder_escapes",
 			src: arrenumShareDecl + `function keepit(p: P): i32 { return p.f.len() + p.n; }
 function round(i: i32): i32 {
-    var src: E[] = mkv(i);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var p: P = P { f: src, n: i }; t = keepit(p); }
+    let src: E[] = mkv(i);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let p: P = P { f: src, n: i }; t = keepit(p); }
     return (t + src.len()) % 101;
 }` + arrenumShareMain,
 			want: 27, balance: true,
@@ -106,9 +106,9 @@ function round(i: i32): i32 {
 			// uncounted, this was exit 99 at 600/600, live_bytes 0.
 			name: "respread",
 			src: arrenumShareDecl + `function round(i: i32): i32 {
-    var src: E[] = mkv(i);
-    var q: P = P { f: src, n: i };
-    var p: P = P { ...q, n: i + 1 };
+    let src: E[] = mkv(i);
+    let q: P = P { f: src, n: i };
+    let p: P = P { ...q, n: i + 1 };
     return (p.f.len() + p.n + q.n) % 101;
 }` + arrenumShareMain,
 			want: 70, balance: true,
@@ -119,10 +119,10 @@ function round(i: i32): i32 {
 			// 500/400, which reads as an improvement and is a double free.
 			name: "moved_ret",
 			src: arrenumShareDecl + `function hold(i: i32): P {
-    var src: E[] = mkv(i);
+    let src: E[] = mkv(i);
     return P { f: src, n: i };
 }
-function round(i: i32): i32 { var p: P = hold(i); return (p.f.len() + p.n) % 101; }` + arrenumShareMain,
+function round(i: i32): i32 { let p: P = hold(i); return (p.f.len() + p.n) % 101; }` + arrenumShareMain,
 			want: 70,
 		},
 		{
@@ -133,18 +133,18 @@ function round(i: i32): i32 { var p: P = hold(i); return (p.f.len() + p.n) % 101
 			// — and both leak counters stay silent throughout.
 			name: "moved_uaf",
 			src: arrenumShareDecl + `function hold(i: i32): P {
-    var src: E[] = mkv(i);
+    let src: E[] = mkv(i);
     return P { f: src, n: i };
 }
 function churn(i: i32): i32 {
-    var a: i32[] = [i, i + 1, i + 2, i + 3];
-    var b: i32[] = [i + 4, i + 5, i + 6, i + 7];
+    let a: i32[] = [i, i + 1, i + 2, i + 3];
+    let b: i32[] = [i + 4, i + 5, i + 6, i + 7];
     return a[0] + b[3];
 }
 function round(i: i32): i32 {
-    var p: P = hold(i);
-    var junk: i32 = churn(i * 7 + 3);
-    var t: i32 = 0;
+    let p: P = hold(i);
+    let junk: i32 = churn(i * 7 + 3);
+    let t: i32 = 0;
     match (p.f[0]) {
         E.A(xs) => { t = xs[0] + xs[1]; },
         E.B => { t = 0 - 1; }
@@ -153,11 +153,11 @@ function round(i: i32): i32 {
     return t % 101;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    var bad: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
+    let bad: i32 = 0;
     while (i < 200) {
-        var r: i32 = round(i);
+        let r: i32 = round(i);
         if (r < 0) { bad = bad + 1; }
         t = t + r;
         i = i + 1;

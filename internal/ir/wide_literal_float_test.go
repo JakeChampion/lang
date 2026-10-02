@@ -9,12 +9,12 @@ import (
 
 // An integer literal past i64 max settled into float context carries its
 // magnitude in Value as a wrapped bit pattern. Converted as signed it lowered
-// to a negative constant: `var f: f64 = 9223372036854775808` was -2^63 on
+// to a negative constant: `let f: f64 = 9223372036854775808` was -2^63 on
 // every compiled backend.
 func TestWideIntLiteralInFloatContextLowersPositive(t *testing.T) {
 	src := `function main(): i32 {
-		var f: f64 = 9223372036854775808;
-		var g: f32 = 18446744073709551615;
+		let f: f64 = 9223372036854775808;
+		let g: f32 = 18446744073709551615;
 		if (f > 0.0 && g > 0.0) { return 1; }
 		return 0;
 	}`

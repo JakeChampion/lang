@@ -17,14 +17,14 @@ import (
 const ownInplaceSortSrc = `
 import "std/sort";
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var a: i32[] = sort.sort_i32_inplace_asc([5, 3, 8, 1, 9, 2, 7, 4, 6]);
+        let a: i32[] = sort.sort_i32_inplace_asc([5, 3, 8, 1, 9, 2, 7, 4, 6]);
         if (a[0] != 1) { return 10; }
         if (a[8] != 9) { return 11; }
         if (a[4] != 5) { return 12; }   // median
-        var b: i32[] = sort.sort_i32_inplace_desc([5, 3, 8, 1, 9, 2, 7, 4, 6]);
+        let b: i32[] = sort.sort_i32_inplace_desc([5, 3, 8, 1, 9, 2, 7, 4, 6]);
         if (b[0] != 9) { return 20; }
         if (b[8] != 1) { return 21; }
         acc = acc + a[0] + b[0];        // 1 + 9 = 10 per iter
@@ -60,11 +60,11 @@ func TestWASMOwnInplaceSort(t *testing.T) {
 		return `
 import "std/sort";
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
     while (i < ` + n + `) {
-        var a: i32[] = sort.sort_i32_inplace_asc([5, 3, 8, 1, 9, 2, 7, 4, 6]);
-        var u: i32 = a[0];
+        let a: i32[] = sort.sort_i32_inplace_asc([5, 3, 8, 1, 9, 2, 7, 4, 6]);
+        let u: i32 = a[0];
         i = i + 1;
     }
     return (__heap_bump_bytes() as i32) - before;

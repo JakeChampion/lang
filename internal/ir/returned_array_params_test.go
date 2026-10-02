@@ -28,7 +28,7 @@ function thread(x: i32[]): i32[] {
     return x;
 }
 function grow_other(x: i32[], y: i32[]): i32[] {
-    var z: i32[] = x.append(1);
+    let z: i32[] = x.append(1);
     if (z.len() > 9) { return [0]; }
     return y;
 }
@@ -40,7 +40,7 @@ function head(xss: i32[][]): i32[] { return xss[0]; }
 struct S { xs: i32[] }
 function peel(s: S): i32[] { return s.xs; }
 function via(x: i32[]): i32[] {
-    var y: i32[] = x;
+    let y: i32[] = x;
     return y;
 }
 function main(): i32 { return 0; }`

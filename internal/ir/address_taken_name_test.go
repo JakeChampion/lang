@@ -17,7 +17,7 @@ func TestAddressTakenIgnoresLocalsSharingAFunctionName(t *testing.T) {
     return Some(n);
 }
 function shift(value: i32): i32 {
-    var find: i32 = value + 1;
+    let find: i32 = value + 1;
     return find;
 }
 function find(n: i32): Option[i32] {
@@ -25,7 +25,7 @@ function find(n: i32): Option[i32] {
     return Some(n);
 }
 function main(): i32 {
-    var f: (i32) => Option[i32] = find;
+    let f: (i32) => Option[i32] = find;
     match (value(shift(1))) {
         Some(v) => { return v; },
         None => { return 0; }

@@ -110,7 +110,7 @@ pub function module_new(): Module {
 // (immutable update; the receiver is unchanged). Chain them off
 // `module_new()`:
 //
-//     var m: module.Module = module.module_new()
+//     let m: module.Module = module.module_new()
 //         .with_types([p0], [r0])
 //         .with_functions([0u32])
 //         .with_exports(["main"], [sections.export_func()], [0u32])
@@ -192,7 +192,7 @@ pub function (m: Module) with_data(offsets: i32[], inits: u8[][]): Module {
 // preamble (\0asm + version 1) followed by every populated
 // section in spec-required order.
 pub function build(m: Module): u8[] {
-  var bytes: u8[] = encode.put_module_header([]);
+  let bytes: u8[] = encode.put_module_header([]);
 
   if (m.type_params.len() > 0) {
     bytes = sections.encode_type_section(bytes, m.type_params, m.type_results);

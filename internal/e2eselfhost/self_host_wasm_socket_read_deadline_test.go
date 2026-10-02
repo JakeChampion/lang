@@ -35,7 +35,7 @@ func TestSelfHostWasmSocketReadDeadline(t *testing.T) {
 			program := fmt.Sprintf(`import "std/tcp";
 import "std/time";
 function main(): i32 {
-    var fd: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+    let fd: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
     assert(fd >= 0);
     match (tcp.tcp_recv_deadline(fd, 1, time.duration_millis(10i64))) {
         None => {},

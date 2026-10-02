@@ -12,7 +12,7 @@ import (
 // which the self-host then reported as undefined (#10209).
 const variantArgInferSrc = `enum Bag[T] { Items(T[]), Empty }
 function size[C](a: C, b: C): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     match (a) { Items(xs) => { n = n + xs.len(); }, Empty => {} }
     match (b) { Items(xs) => { n = n + xs.len() * 10; }, Empty => {} }
     return n;

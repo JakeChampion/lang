@@ -5,7 +5,7 @@
 // point — so the view has to be unwrapped before it can be printed.
 // `slice_unchecked` is the unguarded form that still yields a bare `str`.
 function main(): i32 {
-    var s = "abcdefghij";
+    let s = "abcdefghij";
     match (s[2:5]) {
         Some(v) => { print(v); },
         None => { print("none"); }

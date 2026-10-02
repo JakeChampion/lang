@@ -48,10 +48,10 @@ func TestWasmTcpConnectOutbound(t *testing.T) {
 	src := `function port_from_env(): i32 {
     match (env("PORT")) {
         Some(s) => {
-            var n: i32 = 0;
-            var i: i32 = 0;
+            let n: i32 = 0;
+            let i: i32 = 0;
             while (i < s.len()) {
-                var b: i32 = s[i] as i32;
+                let b: i32 = s[i] as i32;
                 if (b < 48 || b > 57) { return 8080; }
                 n = n * 10 + (b - 48);
                 i = i + 1;
@@ -64,11 +64,11 @@ func TestWasmTcpConnectOutbound(t *testing.T) {
 }
 
 function main(): i32 {
-    var host: i32 = 127 | (1 << 24);   // 127.0.0.1
-    var c: i32 = tcp_connect(host, port_from_env());
+    let host: i32 = 127 | (1 << 24);   // 127.0.0.1
+    let c: i32 = tcp_connect(host, port_from_env());
     if (c < 0) { return 1; }
     if (tcp_send(c, "GET / HTTP/1.1\r\nConnection: close\r\n\r\n") < 0) { return 2; }
-    var resp: string = string_from_bytes_unchecked(tcp_recv(c, 4096));
+    let resp: string = string_from_bytes_unchecked(tcp_recv(c, 4096));
     print(resp);
     tcp_close(c);
     return 0;

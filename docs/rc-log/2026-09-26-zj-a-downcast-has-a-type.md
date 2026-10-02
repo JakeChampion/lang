@@ -1,6 +1,6 @@
 # A downcast has a type
 
-`var o: Option[Circle] = s as? Circle;` failed to compile on the self-host
+`let o: Option[Circle] = s as? Circle;` failed to compile on the self-host
 compiler (#10347): its checker gave `x as? T` no type, so a downcast
 worked only as a `match` scrutinee, which infers nothing from its operand.
 Two type readers needed the arm. `checker.check_expr` now types `as?_T` as

@@ -9,14 +9,14 @@ import (
 //
 // `consumed_scalar_enum_frees` admitted an init only when it was a DIRECT
 // constructor — `fresh_scalar_option_init` matches the callee by name (Some /
-// Ok / Err / None). A `var v: Option[i32] = mk(i)` binding was therefore never
+// Ok / Err / None). A `let v: Option[i32] = mk(i)` binding was therefore never
 // even a candidate, so no free was emitted and the box leaked on every
 // iteration: `frees=0`, one box per round, while the byte-identical shape with
 // the constructor written inline was flat at 0.
 //
 // The freshness proof already existed and was going unused. opt_fresh_ret_fns_of
 // registers every free function whose Option/Result return is always a direct
-// constructor, and lower_func seeds it as "OPTFRESH:<name>" — but only
+// constructor, and lower_func seeded it as "OPTFRESH:<name>" — but only
 // lower_try's `?`-edge consulted it. The user-enum sibling
 // (collect_fresh_rcenum_names via rcenum_call_init_owner) has admitted call
 // inits since #4355 slice 5; this is the same admission for Option / Result.
@@ -43,18 +43,18 @@ const cbeOptCallSrc = `function mk(i: i32): Option[i32] {
     return Some(i);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[i32] = mk(i);
+        let v: Option[i32] = mk(i);
         match (v) { Some(x) => { acc = acc + x; }, None => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -64,18 +64,18 @@ const cbeResultScalarSrc = `function mk(i: i32): Result[i32, i32] {
     return Ok(i);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32, i32] = mk(i);
+        let v: Result[i32, i32] = mk(i);
         match (v) { Ok(x) => { acc = acc + x; }, Err(_) => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -83,18 +83,18 @@ function main(): i32 {
 // The direct-ctor form, which already reclaimed. A regression guard: the new
 // call-init admission must not disturb the path it sits beside.
 const cbeDirectSrc = `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32, string] = Ok(i);
+        let v: Result[i32, string] = Ok(i);
         match (v) { Ok(x) => { acc = acc + x; }, Err(_) => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -108,18 +108,18 @@ const cbeMixedResultSrc = `function mk(i: i32): Result[i32, string] {
     return Ok(i);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32, string] = mk(i);
+        let v: Result[i32, string] = mk(i);
         match (v) { Ok(x) => { acc = acc + x; }, Err(_) => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -132,18 +132,18 @@ const cbeMixedErrPathSrc = `function mk(i: i32): Result[i32, string] {
     return Ok(i);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32, string] = mk(i);
+        let v: Result[i32, string] = mk(i);
         match (v) { Ok(x) => { acc = acc + x; }, Err(_) => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -158,18 +158,18 @@ const cbeMixedErrFreshPathSrc = `function mk(i: i32): Result[i32, string] {
     return Ok(i);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32, string] = mk(i);
+        let v: Result[i32, string] = mk(i);
         match (v) { Ok(x) => { acc = acc + x; }, Err(_) => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -196,35 +196,35 @@ function main(): i32 {
 // REASSIGNMENT, as the complement of the match analyses. The uncovered quadrant
 // is the non-reassigned local that no match consumes.
 const cbeRcPayloadDirectMatchSrc = `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32[], string] = Ok([i, i + 1, i + 2]);
+        let v: Result[i32[], string] = Ok([i, i + 1, i + 2]);
         match (v) { Ok(a) => { acc = acc + a[0]; }, Err(_) => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
 
 const cbeRcPayloadDirectNoMatchSrc = `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32[], string] = Ok([i, i + 1, i + 2]);
+        let v: Result[i32[], string] = Ok([i, i + 1, i + 2]);
         acc = acc + 1;
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -234,18 +234,18 @@ const cbeRcPayloadCallMatchSrc = `function mk(i: i32): Result[i32[], string] {
     return Ok([i, i + 1, i + 2]);
 }
 function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Result[i32[], string] = mk(i);
+        let v: Result[i32[], string] = mk(i);
         match (v) { Ok(a) => { acc = acc + a[0]; }, Err(_) => { acc = acc + 1; } }
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -261,15 +261,15 @@ function main(): i32 {
 //
 // Function-scoped, single bind: 200/200, 0 — fully closed.
 const cbeOptArrFnScopeSrc = `function round(r: i32): i32 {
-    var v: Option[i32[]] = Some([r, r + 1, r + 2]);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let v: Option[i32[]] = Some([r, r + 1, r + 2]);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { acc = acc + 1; i = i + 1; }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -285,15 +285,15 @@ const cbeOptArrCallNoMatchSrc = `function mk(i: i32): Result[i32[], string] {
     return Ok([i, i + 1, i + 2]);
 }
 function round(r: i32): i32 {
-    var v: Result[i32[], string] = mk(r);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let v: Result[i32[], string] = mk(r);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { acc = acc + 1; i = i + 1; }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -311,16 +311,16 @@ const cbeOptArrAliasedPayloadSrc = `function mk(xs: i32[]): Result[i32[], string
     return Ok(xs);
 }
 function round(r: i32): i32 {
-    var a: i32[] = [r, r + 1, r + 2];
-    var v: Result[i32[], string] = mk(a);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let a: i32[] = [r, r + 1, r + 2];
+    let v: Result[i32[], string] = mk(a);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) { acc = acc + a[1] + 3; i = i + 1; }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`
@@ -333,18 +333,18 @@ function main(): i32 {
 // credit's job. Pinned at its measured value so the improvement cannot silently
 // regress and the remainder cannot be silently forgotten.
 const cbeOptArrLoopScopeSrc = `function round(r: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 4) {
-        var v: Option[i32[]] = Some([i, i + 1, i + 2]);
+        let v: Option[i32[]] = Some([i, i + 1, i + 2]);
         acc = acc + 1;
         i = i + 1;
     }
     return acc + r;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`

@@ -28,6 +28,22 @@ type WorldInterface struct {
 	// resource's name (e.g. "thing"), which the P6 export lift needs to surface
 	// the imported resource (docs/WIT-BRING-YOUR-OWN.md).
 	LocalTypeNames []string
+	// LocalTypeOwners is parallel to LocalTypes: the interface whose type-index
+	// space a slot's definition reads, when a WIT `use` brought the type in from
+	// another interface (an `alias outer` into the world's type slots, which
+	// name that interface's export), else nil for a slot of this interface. A
+	// definition's inner indices resolve against its owner, so a `use`d
+	// variant carrying strings classifies as the heap type it is.
+	LocalTypeOwners []*WorldInterface
+}
+
+// ownerOf returns the interface whose type-index space the slot `idx`'s
+// definition reads: another interface for a `use`d type, else this one.
+func (wi *WorldInterface) ownerOf(idx uint32) *WorldInterface {
+	if int(idx) < len(wi.LocalTypeOwners) && wi.LocalTypeOwners[idx] != nil {
+		return wi.LocalTypeOwners[idx]
+	}
+	return wi
 }
 
 // WorldFunc is an exported function with its decoded signature. Resolve a
@@ -47,28 +63,60 @@ func (w *World) Interfaces() []WorldInterface {
 		return nil
 	}
 	// localTypes mirrors the world component's type-index space; entries are
-	// nil for slots introduced by a type alias (we only need to resolve
-	// import targets, which point at instance `type` decls).
+	// nil for slots introduced by a type alias. slotAliases is parallel: the
+	// alias that introduced a slot, when one did — a WIT `use` is an
+	// `alias export <instance> "name"` here, which an interface's own
+	// `alias outer` then points at.
 	var localTypes []*TypeDef
+	var slotAliases []*Alias
+	// instances are the imported instances in import order, which is the
+	// instance-index space an alias export names; lifted holds each one once
+	// lifted, by name, so a later interface's `use` resolves into it.
+	var instances []string
+	lifted := map[string]*WorldInterface{}
 	var out []WorldInterface
+	resolve := func(idx uint32) (*TypeDef, *WorldInterface) {
+		if int(idx) >= len(slotAliases) || slotAliases[idx] == nil || slotAliases[idx].Target != 0x00 {
+			return nil, nil
+		}
+		a := slotAliases[idx]
+		if int(a.InstIdx) >= len(instances) {
+			return nil, nil
+		}
+		owner, ok := lifted[instances[a.InstIdx]]
+		if !ok {
+			return nil, nil
+		}
+		for j, n := range owner.LocalTypeNames {
+			if n == a.Name && owner.LocalTypes[j] != nil {
+				return owner.LocalTypes[j], owner.ownerOf(uint32(j))
+			}
+		}
+		return nil, nil
+	}
 	for i := range world.Decls {
 		d := &world.Decls[i]
 		switch d.Kind {
 		case 0x01: // type
 			localTypes = append(localTypes, d.Type)
+			slotAliases = append(slotAliases, nil)
 		case 0x02: // alias
 			if d.Alias != nil && d.Alias.Sort == 0x03 { // type alias occupies a type slot
 				localTypes = append(localTypes, nil)
+				slotAliases = append(slotAliases, d.Alias)
 			}
 		case 0x03: // import
 			if d.Extern == nil || d.Extern.Kind != 0x05 { // 0x05 = instance
 				continue
 			}
+			instances = append(instances, d.Name)
 			idx := int(d.Extern.TypeIdx)
 			if idx < 0 || idx >= len(localTypes) || localTypes[idx] == nil {
 				continue
 			}
-			out = append(out, liftInterface(d.Name, localTypes[idx]))
+			wi := liftInterface(d.Name, localTypes[idx], resolve)
+			lifted[d.Name] = &wi
+			out = append(out, wi)
 		}
 	}
 	return out
@@ -93,7 +141,11 @@ func (w *World) worldComponent() *TypeDef {
 // (externdesc func) and resources (externdesc type with a `sub` bound), and
 // resolves each function's signature against the interface's local type-index
 // space.
-func liftInterface(name string, inst *TypeDef) WorldInterface {
+// `resolve`, when given, answers an `alias outer` into the world's type slots
+// (a WIT `use` of another interface's type) with that type's definition and
+// the interface whose type-index space it reads; nil leaves such a slot an
+// opaque scalar.
+func liftInterface(name string, inst *TypeDef, resolve func(idx uint32) (*TypeDef, *WorldInterface)) WorldInterface {
 	wi := WorldInterface{Name: name}
 	// Build the instance's type-index space. Anything that binds a type index
 	// advances it: a `type` decl (its defined type), a `type` alias, and an
@@ -107,9 +159,16 @@ func liftInterface(name string, inst *TypeDef) WorldInterface {
 		case d.Kind == 0x01:
 			wi.LocalTypes = append(wi.LocalTypes, d.Type)
 			wi.LocalTypeNames = append(wi.LocalTypeNames, "")
+			wi.LocalTypeOwners = append(wi.LocalTypeOwners, nil)
 		case d.Kind == 0x02 && d.Alias != nil && d.Alias.Sort == 0x03:
-			wi.LocalTypes = append(wi.LocalTypes, nil)
+			var td *TypeDef
+			var owner *WorldInterface
+			if resolve != nil && d.Alias.Target == 0x02 && d.Alias.Count == 1 {
+				td, owner = resolve(d.Alias.Index)
+			}
+			wi.LocalTypes = append(wi.LocalTypes, td)
 			wi.LocalTypeNames = append(wi.LocalTypeNames, "")
+			wi.LocalTypeOwners = append(wi.LocalTypeOwners, owner)
 		case (d.Kind == 0x03 || d.Kind == 0x04) && d.Extern != nil && d.Extern.Kind == 0x03:
 			// A named type export/import (`export "thing" (type (eq N))`) records
 			// the name for the slot so a handle param's `own/borrow <slot>` can
@@ -126,8 +185,10 @@ func liftInterface(name string, inst *TypeDef) WorldInterface {
 			// `(type (sub resource))` bound is a genuine opaque handle → nil.
 			if d.Extern.Bound == 0x00 && int(d.Extern.BoundIdx) < len(wi.LocalTypes) {
 				wi.LocalTypes = append(wi.LocalTypes, wi.LocalTypes[d.Extern.BoundIdx])
+				wi.LocalTypeOwners = append(wi.LocalTypeOwners, wi.LocalTypeOwners[d.Extern.BoundIdx])
 			} else {
 				wi.LocalTypes = append(wi.LocalTypes, nil)
+				wi.LocalTypeOwners = append(wi.LocalTypeOwners, nil)
 			}
 		}
 	}
@@ -181,7 +242,7 @@ func (w *World) ExportedInterfaces() []WorldInterface {
 			if idx < 0 || idx >= len(localTypes) || localTypes[idx] == nil {
 				continue
 			}
-			out = append(out, liftInterface(d.Name, localTypes[idx]))
+			out = append(out, liftInterface(d.Name, localTypes[idx], nil))
 		}
 	}
 	return out

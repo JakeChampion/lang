@@ -39,14 +39,14 @@ which `is_nested_array_field_type` does not reach. It is read by:
 |---|---|---|
 | `Bag { n: 3, grid: [[3, 1], [2, 3]] }` | 4 / 1 | 4 / 4 |
 | the same with a `string[][]` field | 4 / 1 | 4 / 4 |
-| `var t: (i32, i32[][]) = (3, g)` | 4 / 2 | 4 / 4 |
+| `let t: (i32, i32[][]) = (3, g)` | 4 / 2 | 4 / 4 |
 | a producer that builds the grid with `.append`, rebound five times | 57 / 22 | 57 / 57 |
 | three `Bag`s sharing one grid in a `Bag[]` | 13 / 2 | 13 / 13 |
 
 `TestSelfHostTupleFieldShare`'s `callee_local_nested` row (#10402) now
 balances on every lowering (10 / 10, pinned at 10 / 4 before), so its pin is
 removed. `callee_local_nested_strarr` stays pinned at 5 / 1, now attributed to
-#9556: its `var (n, rows) = mk(3)` destructure leaks for any returned tuple,
+#9556: its `let (n, rows) = mk(3)` destructure leaks for any returned tuple,
 and a `(i32, i32[])` return leaks 2 / 0 the same way.
 
 `TestSelfHostNestedArrFieldDrop` runs ten rows on x86-64 (leakcheck and the
@@ -61,5 +61,5 @@ sanitizer), arm64 and wasm, under all four lowerings.
 - An AST `main` does not release a struct that a semantic producer returns
   (#10415). It is not specific to nested arrays: an `i32[]` field leaks the
   same way. Two rows of the test are pinned for it.
-- A `T[][]` local aliased by a plain bind (`var h = g`) loses the `ARRARR:`
+- A `T[][]` local aliased by a plain bind (`let h = g`) loses the `ARRARR:`
   credit, so both slots release shallow and the rows leak (3 / 1, #10416).

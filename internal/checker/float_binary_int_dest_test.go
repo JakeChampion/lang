@@ -13,7 +13,7 @@ func TestFloatLiteralBinaryIsNotSettledToInt(t *testing.T) {
 	}{
 		{"return-i64", `function f(): i64 { return 3.0 * 2.0; }`, "return type mismatch"},
 		{"return-i32", `function f(): i32 { return 1.5 + 2.5; }`, "return type mismatch"},
-		{"var-i64", `function f(): i64 { var y: i64 = 3.0 * 2.0; return y; }`, "cannot assign f64 to variable of type i64"},
+		{"var-i64", `function f(): i64 { let y: i64 = 3.0 * 2.0; return y; }`, "cannot assign f64 to variable of type i64"},
 		{"cast-ok", `function f(): i64 { return (3.0 * 2.0) as i64; }`, ""},
 		{"return-f64-ok", `function f(): f64 { return 3.0 * 2.0; }`, ""},
 		{"int-literals-ok", `function f(): i64 { return 3 * 2; }`, ""},

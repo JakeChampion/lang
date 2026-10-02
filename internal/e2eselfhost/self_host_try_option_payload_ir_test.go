@@ -9,7 +9,7 @@ import (
 // tryOptionPayloadIRCases pin the self-host CHECKER's type for the `?` (try)
 // operator when the unwrapped payload is itself a generic (Option[T]).
 // infer_expr_type's ExprUnary arm typed `try_` (the desugared `?`) as i32 via a
-// fallthrough, so `var o: Option[i32] = f()?` where f: Result[Option[i32], i32]
+// fallthrough, so `let o: Option[i32] = f()?` where f: Result[Option[i32], i32]
 // was rejected E003 ("initializer has type i32") — the self-host compiler
 // refused a program the interpreter and native backend both accept. The arm now
 // returns the operand's Result/Option payload (result_inner / option_inner). The
@@ -32,15 +32,15 @@ var tryOptionPayloadIRCases = []struct {
 	exit int
 }{
 	// The canonical repro: `?` on a Result[Option[i32], i32].
-	{"result-option", "function f(n: i32): Result[Option[i32], i32] { return Ok(Some(n)); } function g(n: i32): Result[i32, i32] { var x: Option[i32] = f(n)?; match (x) { Some(v) => { return Ok(v); }, None => { return Ok(0); } } } function main(): i32 { match (g(5)) { Ok(v) => { return v; }, Err(_) => { return 9; } } }", 5},
+	{"result-option", "function f(n: i32): Result[Option[i32], i32] { return Ok(Some(n)); } function g(n: i32): Result[i32, i32] { let x: Option[i32] = f(n)?; match (x) { Some(v) => { return Ok(v); }, None => { return Ok(0); } } } function main(): i32 { match (g(5)) { Ok(v) => { return v; }, Err(_) => { return 9; } } }", 5},
 	// A nested `?` chain that binds the Option payload then re-wraps.
-	{"nested-chain", "function inner(n: i32): Result[Option[i32], i32] { if (n > 0) { return Ok(Some(n)); } return Ok(None); } function outer(n: i32): Result[i32, i32] { var o: Option[i32] = inner(n)?; match (o) { Some(v) => { return Ok(v); }, None => { return Ok(0); } } } function main(): i32 { match (outer(9)) { Ok(v) => { return v; }, Err(_) => { return 88; } } }", 9},
+	{"nested-chain", "function inner(n: i32): Result[Option[i32], i32] { if (n > 0) { return Ok(Some(n)); } return Ok(None); } function outer(n: i32): Result[i32, i32] { let o: Option[i32] = inner(n)?; match (o) { Some(v) => { return Ok(v); }, None => { return Ok(0); } } } function main(): i32 { match (outer(9)) { Ok(v) => { return v; }, Err(_) => { return 88; } } }", 9},
 	// Regression: scalar payload `?` still types correctly.
-	{"result-i32", "function f(n: i32): Result[i32, i32] { return Ok(n); } function g(n: i32): Result[i32, i32] { var x: i32 = f(n)?; return Ok(x); } function main(): i32 { match (g(5)) { Ok(v) => { return v; }, Err(_) => { return 9; } } }", 5},
+	{"result-i32", "function f(n: i32): Result[i32, i32] { return Ok(n); } function g(n: i32): Result[i32, i32] { let x: i32 = f(n)?; return Ok(x); } function main(): i32 { match (g(5)) { Ok(v) => { return v; }, Err(_) => { return 9; } } }", 5},
 	// Regression: string payload `?`.
-	{"result-string", "function f(n: i32): Result[string, i32] { return Ok(\"hi\"); } function g(n: i32): Result[i32, i32] { var x: string = f(n)?; return Ok(x.len()); } function main(): i32 { match (g(5)) { Ok(v) => { return v; }, Err(_) => { return 9; } } }", 2},
+	{"result-string", "function f(n: i32): Result[string, i32] { return Ok(\"hi\"); } function g(n: i32): Result[i32, i32] { let x: string = f(n)?; return Ok(x.len()); } function main(): i32 { match (g(5)) { Ok(v) => { return v; }, Err(_) => { return 9; } } }", 2},
 	// `?` on a bare Option[i32] (not wrapped in a Result).
-	{"option-payload", "function f(o: Option[i32]): Option[i32] { var x: i32 = o?; return Some(x + 1); } function main(): i32 { match (f(Some(6))) { Some(v) => { return v; }, None => { return 9; } } }", 7},
+	{"option-payload", "function f(o: Option[i32]): Option[i32] { let x: i32 = o?; return Some(x + 1); } function main(): i32 { match (f(Some(6))) { Some(v) => { return v; }, None => { return 9; } } }", 7},
 }
 
 // TestSelfHostTryOptionPayloadIRX86_64 — the x86-64 asmcore checker fix, through
@@ -48,7 +48,7 @@ var tryOptionPayloadIRCases = []struct {
 func TestSelfHostTryOptionPayloadIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range tryOptionPayloadIRCases {
@@ -84,7 +84,7 @@ func TestSelfHostTryOptionPayloadIRArm64(t *testing.T) {
 		t.Skip("arm64 try-option-payload gate needs a native x86 host to run the driver")
 	}
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	for _, tc := range tryOptionPayloadIRCases {

@@ -11,15 +11,15 @@ import "testing"
 
 const pairFormAliasSrc = `struct H { names: string[], values: string[] }
 function get(h: H, name: string): Option[string] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < h.names.len()) { if (h.names[i] == name) { return Some(h.values[i]); } i = i + 1; }
     return None;
 }
 function via_match(h: H): i32 { match (get(h, "connection")) { Some(v) => { return v.len(); }, None => {} } return 0; }
 function via_expr(h: H): i32 { return match (get(h, "connection")) { Some(v) => v.len(), None => 0 }; }
-function via_local(h: H): i32 { var o: Option[string] = get(h, "connection"); match (o) { Some(v) => { return v.len(); }, None => {} } return 0; }
-function via_try(h: H): Option[i32] { var v: string = get(h, "connection")?; return Some(v.len()); }
-function main(): i32 { var h: H = H { names: ["connection"], values: ["keep-alive"] }; return via_match(h) + via_expr(h) + via_local(h); }
+function via_local(h: H): i32 { let o: Option[string] = get(h, "connection"); match (o) { Some(v) => { return v.len(); }, None => {} } return 0; }
+function via_try(h: H): Option[i32] { let v: string = get(h, "connection")?; return Some(v.len()); }
+function main(): i32 { let h: H = H { names: ["connection"], values: ["keep-alive"] }; return via_match(h) + via_expr(h) + via_local(h); }
 `
 
 func lowerPairFormAlias(t *testing.T) *Program {

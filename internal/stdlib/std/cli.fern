@@ -12,14 +12,14 @@
 // Build a spec, parse argv, query the result:
 //
 //   import "std/cli" as cli;
-//   var spec: cli.CliSpec = cli.cli_new("greet", "print a greeting");
+//   let spec: cli.CliSpec = cli.cli_new("greet", "print a greeting");
 //   spec = spec.option("name", "n", "who to greet");
 //   spec = spec.flag("shout", "s", "upper-case the greeting");
-//   var a: cli.CliArgs = spec.parse(args());
+//   let a: cli.CliArgs = spec.parse(args());
 //   if (a.is_error()) { print(a.error_text()); print(spec.usage()); return 2; }
-//   var who: string = a.value_or("name", "world");
+//   let who: string = a.value_or("name", "world");
 //   if (a.is_set("shout")) { ... }
-//   var rest: string[] = a.operands();
+//   let rest: string[] = a.operands();
 //
 // Flags are queried by their LONG name (the canonical key) whether
 // the caller passed `-n` or `--name`. Short aliases are single
@@ -59,8 +59,8 @@ struct CliStep { opts: Map[string, string], next: i32, error: string }
 
 // `cli_new(name, about)` — start a spec with no flags.
 pub function cli_new(name: string, about: string): CliSpec {
-  var fs: CliFlag[] = [];
-  var cs: CliSpec[] = [];
+  let fs: CliFlag[] = [];
+  let cs: CliSpec[] = [];
   return CliSpec { name: name, about: about, flags: fs, commands: cs };
 }
 
@@ -86,7 +86,7 @@ pub function (s: CliSpec) command(sub: CliSpec): CliSpec {
 
 // Find a declared flag by its long name.
 function __cli_find_long(s: CliSpec, name: string): Option[CliFlag] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.flags.len()) {
     if (s.flags[i].long == name) {
       return Some(s.flags[i]);
@@ -98,7 +98,7 @@ function __cli_find_long(s: CliSpec, name: string): Option[CliFlag] {
 
 // Find a declared flag by its (single-byte) short alias.
 function __cli_find_short_byte(s: CliSpec, b: i32): Option[CliFlag] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.flags.len()) {
     if (s.flags[i].short.len() == 1 && s.flags[i].short[0] as i32 == b) {
       return Some(s.flags[i]);
@@ -110,7 +110,7 @@ function __cli_find_short_byte(s: CliSpec, b: i32): Option[CliFlag] {
 
 // Find a declared subcommand by name.
 function __cli_find_command(s: CliSpec, name: string): Option[CliSpec] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.commands.len()) {
     if (s.commands[i].name == name) {
       return Some(s.commands[i]);
@@ -124,7 +124,7 @@ function __cli_find_command(s: CliSpec, name: string): Option[CliSpec] {
 // byte itself, the whole code point when the byte starts a multibyte
 // character, or U+FFFD for an invalid byte.
 function __cli_short_name_at(cluster: string, j: i32): string {
-  var b: i32 = cluster[j] as i32;
+  let b: i32 = cluster[j] as i32;
   if (b < 128) {
     return string_from_bytes_unchecked([cluster[j]]);
   }
@@ -140,7 +140,7 @@ function __cli_short_name_at(cluster: string, j: i32): string {
 
 // Build a failed CliArgs, preserving the operands parsed so far.
 function __cli_err(positionals: string[], msg: string): CliArgs {
-  var empty: Map[string, string] = map_new(1);
+  let empty: Map[string, string] = map_new(1);
   return CliArgs { opts: empty, positionals: positionals, command: "", error: msg };
 }
 
@@ -150,12 +150,12 @@ function __cli_step_err(opts: Map[string, string], i: i32, msg: string): CliStep
 
 // Consume argv[i], a `--name`, `--name=V` or `--name V` token.
 function __cli_long(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): CliStep {
-  var a: string = argv[i];
-  var body: str = slice_unchecked(a, 2, a.len());
-  var eq: i32 = body.index_of("=");
-  var name: str = body;
+  let a: string = argv[i];
+  let body: str = slice_unchecked(a, 2, a.len());
+  let eq: i32 = body.index_of("=");
+  let name: str = body;
   // The value joins `opts`, which outlives this token, so it is copied.
-  var inline_val: string = "";
+  let inline_val: string = "";
   if (eq >= 0) {
     name = slice_unchecked(body, 0, eq);
     inline_val = slice_unchecked(body, eq + 1, body.len()) + "";
@@ -187,9 +187,9 @@ function __cli_long(s: CliSpec, opts: Map[string, string], argv: string[], i: i3
 // valued option consumes the rest of the token as its value (`-n5`)
 // or, when it's the last character, the next argv token (`-n 5`).
 function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): CliStep {
-  var a: string = argv[i];
-  var cluster: str = slice_unchecked(a, 1, a.len());
-  var j: i32 = 0;
+  let a: string = argv[i];
+  let cluster: str = slice_unchecked(a, 1, a.len());
+  let j: i32 = 0;
   while (j < cluster.len()) {
     match (__cli_find_short_byte(s, cluster[j] as i32)) {
       Some(f) => {
@@ -198,7 +198,7 @@ function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i:
           j = j + 1;
         } else {
           // A valued option consumes the token tail.
-          var glued: str = slice_unchecked(cluster, j + 1, cluster.len());
+          let glued: str = slice_unchecked(cluster, j + 1, cluster.len());
           if (glued.len() > 0) {
             return CliStep { opts: opts.insert(f.long, glued + ""), next: i + 1, error: "" };
           }
@@ -219,11 +219,11 @@ function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i:
 // Parse argv[start..] against `s`, starting from the options a parent
 // spec has already collected.
 function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): CliArgs {
-  var positionals: string[] = [];
-  var i: i32 = start;
-  var no_more: boolean = false;
+  let positionals: string[] = [];
+  let i: i32 = start;
+  let no_more: boolean = false;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (no_more) {
       positionals = positionals.append(a);
       i = i + 1;
@@ -233,7 +233,7 @@ function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, s
       i = i + 1;
     } else if (a.starts_with("--") || a.len() >= 2 && a[0] == 45) {
       // A lone "-" falls through to positionals (stdin convention).
-      var st: CliStep = __cli_long(s, opts, argv, i);
+      let st: CliStep = __cli_long(s, opts, argv, i);
       if (!a.starts_with("--")) {
         st = __cli_cluster(s, opts, argv, i);
       }
@@ -247,7 +247,7 @@ function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, s
       // that spec parses the rest on top of the flags seen so far.
       match (__cli_find_command(s, a)) {
         Some(sub) => {
-          var r: CliArgs = __cli_parse(sub, argv, i + 1, opts);
+          let r: CliArgs = __cli_parse(sub, argv, i + 1, opts);
           if (r.error.len() > 0) {
             return r;
           }
@@ -270,7 +270,7 @@ function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, s
 // result carries a non-empty `error`; otherwise `opts` / operands /
 // `command` are populated.
 pub function (s: CliSpec) parse(argv: string[]): CliArgs {
-  var opts: Map[string, string] = map_new(8);
+  let opts: Map[string, string] = map_new(8);
   return __cli_parse(s, argv, 1, opts);
 }
 
@@ -334,11 +334,11 @@ pub function (a: CliArgs) subcommand(): Option[string] {
 // The aligned flag list shared by the usage text and each command's
 // section of it.
 function __cli_usage_flags(flags: CliFlag[], indent: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < flags.len()) {
-    var f: CliFlag = flags[i];
-    var line: string = indent;
+    let f: CliFlag = flags[i];
+    let line: string = indent;
     if (f.short.len() > 0) {
       line = line + "-" + f.short + ", ";
     } else {
@@ -361,11 +361,11 @@ function __cli_usage_flags(flags: CliFlag[], indent: string): string {
 // description, an aligned list of the declared flags, and the
 // subcommands with their descriptions.
 pub function (s: CliSpec) usage(): string {
-  var shape: string = " [options] [args]\n";
+  let shape: string = " [options] [args]\n";
   if (s.commands.len() > 0) {
     shape = " [options] <command> [args]\n";
   }
-  var out: string = "Usage: " + s.name + shape;
+  let out: string = "Usage: " + s.name + shape;
   if (s.about.len() > 0) {
     out = out + "\n" + s.about + "\n";
   }
@@ -374,7 +374,7 @@ pub function (s: CliSpec) usage(): string {
   }
   if (s.commands.len() > 0) {
     out = out + "\nCommands:\n";
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < s.commands.len()) {
       out = out + "  " + s.commands[i].name;
       if (s.commands[i].about.len() > 0) {
@@ -407,7 +407,7 @@ pub function (s: CliSpec) usage(): string {
 //     control character is neutralised with the zero-width
 //     dummy-character escape `\&`, keeping `./build` literal text.
 function __cli_roff(s: string): string {
-  var out: string = s.replace("\\", "\\\\");
+  let out: string = s.replace("\\", "\\\\");
   if (out.len() > 0 && (out[0] as i32 == 46 || out[0] as i32 == 39)) {
     out = "\\&" + out;
   }
@@ -418,12 +418,12 @@ function __cli_roff(s: string): string {
 // tag is the bold dash spelling (`\-s`, `\-\-long`) plus an italic
 // `<value>` for a valued option, the body its help.
 function __cli_man_flags(flags: CliFlag[]): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < flags.len()) {
-    var f: CliFlag = flags[i];
+    let f: CliFlag = flags[i];
     out = out + ".TP\n";
-    var tag: string = "";
+    let tag: string = "";
     if (f.short.len() > 0) {
       tag = "\\fB\\-" + __cli_roff(f.short) + "\\fR, ";
     }
@@ -444,13 +444,13 @@ function __cli_man_flags(flags: CliFlag[]): string {
 // is the numeric string a man page carries in its `.TH` header and its
 // filename suffix (`"1"` for a user command, `"8"` for an admin tool).
 pub function (s: CliSpec) manpage(section: string): string {
-  var out: string = ".TH \"" + __cli_roff(s.name) + "\" \"" + __cli_roff(section) + "\"\n";
+  let out: string = ".TH \"" + __cli_roff(s.name) + "\" \"" + __cli_roff(section) + "\"\n";
   out = out + ".SH NAME\n" + __cli_roff(s.name);
   if (s.about.len() > 0) {
     out = out + " \\- " + __cli_roff(s.about);
   }
   out = out + "\n";
-  var shape: string = " [options] [args]";
+  let shape: string = " [options] [args]";
   if (s.commands.len() > 0) {
     shape = " [options] <command> [args]";
   }
@@ -463,9 +463,9 @@ pub function (s: CliSpec) manpage(section: string): string {
   }
   if (s.commands.len() > 0) {
     out = out + ".SH COMMANDS\n";
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < s.commands.len()) {
-      var c: CliSpec = s.commands[i];
+      let c: CliSpec = s.commands[i];
       out = out + ".TP\n\\fB" + __cli_roff(c.name) + "\\fR\n";
       if (c.about.len() > 0) {
         out = out + __cli_roff(c.about) + "\n";
@@ -506,8 +506,8 @@ function __cli_zsh_desc(s: string): string {
 // Every completable word of a spec: its long and short flags, then
 // its subcommand names — the bash `compgen -W` word list.
 function __cli_words(s: CliSpec): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < s.flags.len()) {
     out = out + " --" + s.flags[i].long;
     if (s.flags[i].short.len() > 0) {
@@ -527,8 +527,8 @@ function __cli_words(s: CliSpec): string {
 }
 
 function __cli_completion_bash(s: CliSpec): string {
-  var fn: string = "_" + __cli_ident(s.name);
-  var out: string = fn + "() {\n";
+  let fn: string = "_" + __cli_ident(s.name);
+  let out: string = fn + "() {\n";
   out = out + "    local cur=\"${COMP_WORDS[COMP_CWORD]}\" words=" + __cli_sq(__cli_words(s)) + "\n";
   if (s.commands.len() > 0) {
     // The word list narrows to a subcommand's once its name has
@@ -536,9 +536,9 @@ function __cli_completion_bash(s: CliSpec): string {
     out = out + "    local i\n";
     out = out + "    for ((i = 1; i < COMP_CWORD; i++)); do\n";
     out = out + "        case \"${COMP_WORDS[i]}\" in\n";
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < s.commands.len()) {
-      var c: CliSpec = s.commands[i];
+      let c: CliSpec = s.commands[i];
       out = out + "            " + c.name + ") words=" + __cli_sq(__cli_words(c)) + " ;;\n";
       i = i + 1;
     }
@@ -555,11 +555,11 @@ function __cli_completion_bash(s: CliSpec): string {
 
 // One spec's flags as zsh `_arguments` entries, one per line.
 function __cli_zsh_opts(s: CliSpec, indent: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < s.flags.len()) {
-    var f: CliFlag = s.flags[i];
-    var tail: string = "[" + __cli_zsh_desc(f.help) + "]";
+    let f: CliFlag = s.flags[i];
+    let tail: string = "[" + __cli_zsh_desc(f.help) + "]";
     if (f.takes_value) {
       tail = tail + ":value:_files";
     }
@@ -574,8 +574,8 @@ function __cli_zsh_opts(s: CliSpec, indent: string): string {
 }
 
 function __cli_completion_zsh(s: CliSpec): string {
-  var fn: string = "_" + __cli_ident(s.name);
-  var out: string = "#compdef " + s.name + "\n";
+  let fn: string = "_" + __cli_ident(s.name);
+  let out: string = "#compdef " + s.name + "\n";
   out = out + fn + "() {\n";
   out = out + "    local -a opts cmds\n";
   out = out + "    opts=(\n" + __cli_zsh_opts(s, "        ") + "    )\n";
@@ -586,9 +586,9 @@ function __cli_completion_zsh(s: CliSpec): string {
     out = out + "    _arguments -s -C \"${opts[@]}\" '1:command:->cmd' '*::arg:->args'\n";
     out = out + "    case \"$state\" in\n";
     out = out + "        cmd)\n            cmds=(\n";
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < s.commands.len()) {
-      var c: CliSpec = s.commands[i];
+      let c: CliSpec = s.commands[i];
       out = out + "                '" + c.name + ":" + __cli_zsh_desc(c.about) + "'\n";
       i = i + 1;
     }
@@ -596,7 +596,7 @@ function __cli_completion_zsh(s: CliSpec): string {
     out = out + "        args)\n            case \"$line[1]\" in\n";
     i = 0;
     while (i < s.commands.len()) {
-      var c: CliSpec = s.commands[i];
+      let c: CliSpec = s.commands[i];
       out = out + "                " + c.name + ")\n";
       out = out + "                    opts=(\n" + __cli_zsh_opts(c, "                        ") + "                    )\n";
       out = out + "                    _arguments -s \"${opts[@]}\" '*::arg:_files' ;;\n";
@@ -613,11 +613,11 @@ function __cli_completion_zsh(s: CliSpec): string {
 // One spec's flags as fish `complete` lines, each under `cond`
 // (a `-n` condition, or "" for none).
 function __cli_fish_flags(prog: string, s: CliSpec, cond: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < s.flags.len()) {
-    var f: CliFlag = s.flags[i];
-    var line: string = "complete -c " + prog + cond + " -l " + f.long;
+    let f: CliFlag = s.flags[i];
+    let line: string = "complete -c " + prog + cond + " -l " + f.long;
     if (f.short.len() > 0) {
       line = line + " -s " + f.short;
     }
@@ -637,11 +637,11 @@ function __cli_completion_fish(s: CliSpec): string {
   if (s.commands.len() == 0) {
     return __cli_fish_flags(s.name, s, "");
   }
-  var out: string = __cli_fish_flags(s.name, s, " -n __fish_use_subcommand");
-  var i: i32 = 0;
+  let out: string = __cli_fish_flags(s.name, s, " -n __fish_use_subcommand");
+  let i: i32 = 0;
   while (i < s.commands.len()) {
-    var c: CliSpec = s.commands[i];
-    var line: string = "complete -c " + s.name + " -n __fish_use_subcommand -a " + c.name;
+    let c: CliSpec = s.commands[i];
+    let line: string = "complete -c " + s.name + " -n __fish_use_subcommand -a " + c.name;
     if (c.about.len() > 0) {
       line = line + " -d " + __cli_sq(c.about);
     }

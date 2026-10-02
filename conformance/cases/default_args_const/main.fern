@@ -10,8 +10,8 @@ function listen(port: i32, backlog: i32 = LIMIT): i32 { return port + backlog; }
 function advance(n: i32, by: i32 = STEP + 1): i32 { return n + by; }
 
 function main(): i32 {
-    var LIMIT: i32 = 1;
-    var ok: i32 = 0;
+    let LIMIT: i32 = 1;
+    let ok: i32 = 0;
     if (listen(80) == 208) { ok = ok + 1; }        // 80 + 128, not 80 + 1
     if (advance(1) == 66) { ok = ok + 1; }         // 1 + (64 + 1)
     if (listen(80, LIMIT) == 81) { ok = ok + 1; }  // the local, passed explicitly

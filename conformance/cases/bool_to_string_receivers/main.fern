@@ -25,10 +25,10 @@ function (b: Box) over_ten(): boolean { return b.v > 10; }
 function (b: Box) under_ten(): boolean { return b.v < 10; }
 
 function main(): i32 {
-    var b: boolean = true;
-    var big: Box = Box { v: 42 };
-    var small: Box = Box { v: 3 };
-    var flags: boolean[] = [true, false];
+    let b: boolean = true;
+    let big: Box = Box { v: 42 };
+    let small: Box = Box { v: 3 };
+    let flags: boolean[] = [true, false];
 
     // the two forms that regressed
     print("call_true=" + yes().to_string());

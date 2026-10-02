@@ -1,6 +1,7 @@
 # The per-operator fusion proof
 
-Status: the contract `internal/ir/array_fusion.go` implements (#9731). What
+Status: the contract `internal/ir/array_fusion.go` (#9731) and the self-host's
+`examples/self_host/semfuse.fern` (#11072) implement. What
 each array operator contributes to a fused loop, and why composing those
 contributions gives the guarantee `docs/ITERATOR-FUSION-CONTRACT.md` clause
 1 asks for.
@@ -223,6 +224,19 @@ than silently allocating per stage — clause 4.
 elements. The pass is `internal/ir/array_fusion.go`; `FERN_NO_ARRAY_FUSION=1`
 turns it off, which is how a miscompilation suspected here is ruled out in
 one run rather than by rebuilding the compiler.
+
+The self-host's pass, `examples/self_host/semfuse.fern`, fuses the same
+stages and sinks on the typed semantic graphs `semsource` produces, before
+ownership is planned, so every self-host backend gains it and the loop is
+counted like any other body. It takes any scalar element rather than only
+8-byte ones, and a `map` may change the element type, since each value in the
+graph carries its own. Its refusals are native's — an element function that is
+not a closure built in the same body, or whose body reaches an effect; an
+intermediate read by anything but the next stage — plus one native does not
+need: the stages and the sink sit in one block with nothing between them that
+calls anything. `FERN_NO_ARRAY_FUSION=1` turns it off too. It prints no
+`-array-report`; `TestSelfHostArrayFusion*` in `internal/e2eselfhost` gate it
+on x86-64, arm64 and wasm32-wasi.
 
 Clause 1's second half — "no unspecialised calls per element" — holds, and it
 is not something this pass does by itself. Fusion runs FIRST in

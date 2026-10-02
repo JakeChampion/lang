@@ -22,23 +22,23 @@ var countWhereSumByCases = []struct {
 	want int
 }{
 	// 3 evens in [1..6] (tag 3) then sum of string lengths a/bb/ccc = 6; 3*10+6 = 36.
-	{"count-and-sum", `function count_where[T](xs: T[], pred: (T) => boolean): i32 { var c: i32 = 0; var i: i32 = 0; while (i < xs.len()) { if (pred(xs[i])) { c = c + 1; } i = i + 1; } return c; }
-function sum_by[T](xs: T[], key: (T) => i32): i32 { var t: i32 = 0; var i: i32 = 0; while (i < xs.len()) { t = t + key(xs[i]); i = i + 1; } return t; }
+	{"count-and-sum", `function count_where[T](xs: T[], pred: (T) => boolean): i32 { let c: i32 = 0; let i: i32 = 0; while (i < xs.len()) { if (pred(xs[i])) { c = c + 1; } i = i + 1; } return c; }
+function sum_by[T](xs: T[], key: (T) => i32): i32 { let t: i32 = 0; let i: i32 = 0; while (i < xs.len()) { t = t + key(xs[i]); i = i + 1; } return t; }
 function is_even(x: i32): boolean { return x % 2 == 0; }
 function slen(s: string): i32 { return s.len(); }
-function main(): i32 { var ns: i32[] = [1, 2, 3, 4, 5, 6]; var ws: string[] = ["a", "bb", "ccc"]; return count_where(ns, is_even) * 10 + sum_by(ws, slen); }`, 36},
+function main(): i32 { let ns: i32[] = [1, 2, 3, 4, 5, 6]; let ws: string[] = ["a", "bb", "ccc"]; return count_where(ns, is_even) * 10 + sum_by(ws, slen); }`, 36},
 	// empty → 0 for both; encode as 2 + 3 = 5.
-	{"empty-zero", `function count_where[T](xs: T[], pred: (T) => boolean): i32 { var c: i32 = 0; var i: i32 = 0; while (i < xs.len()) { if (pred(xs[i])) { c = c + 1; } i = i + 1; } return c; }
-function sum_by[T](xs: T[], key: (T) => i32): i32 { var t: i32 = 0; var i: i32 = 0; while (i < xs.len()) { t = t + key(xs[i]); i = i + 1; } return t; }
+	{"empty-zero", `function count_where[T](xs: T[], pred: (T) => boolean): i32 { let c: i32 = 0; let i: i32 = 0; while (i < xs.len()) { if (pred(xs[i])) { c = c + 1; } i = i + 1; } return c; }
+function sum_by[T](xs: T[], key: (T) => i32): i32 { let t: i32 = 0; let i: i32 = 0; while (i < xs.len()) { t = t + key(xs[i]); i = i + 1; } return t; }
 function is_even(x: i32): boolean { return x % 2 == 0; }
 function idn(x: i32): i32 { return x; }
-function main(): i32 { var e: i32[] = []; return count_where(e, is_even) + 2 + sum_by(e, idn) + 3; }`, 5},
+function main(): i32 { let e: i32[] = []; return count_where(e, is_even) + 2 + sum_by(e, idn) + 3; }`, 5},
 	// none match → 0 count; sum over identity of [10,20,30] = 60.
-	{"none-and-total", `function count_where[T](xs: T[], pred: (T) => boolean): i32 { var c: i32 = 0; var i: i32 = 0; while (i < xs.len()) { if (pred(xs[i])) { c = c + 1; } i = i + 1; } return c; }
-function sum_by[T](xs: T[], key: (T) => i32): i32 { var t: i32 = 0; var i: i32 = 0; while (i < xs.len()) { t = t + key(xs[i]); i = i + 1; } return t; }
+	{"none-and-total", `function count_where[T](xs: T[], pred: (T) => boolean): i32 { let c: i32 = 0; let i: i32 = 0; while (i < xs.len()) { if (pred(xs[i])) { c = c + 1; } i = i + 1; } return c; }
+function sum_by[T](xs: T[], key: (T) => i32): i32 { let t: i32 = 0; let i: i32 = 0; while (i < xs.len()) { t = t + key(xs[i]); i = i + 1; } return t; }
 function is_neg(x: i32): boolean { return x < 0; }
 function idn(x: i32): i32 { return x; }
-function main(): i32 { var ns: i32[] = [10, 20, 30]; return count_where(ns, is_neg) * 100 + sum_by(ns, idn); }`, 60},
+function main(): i32 { let ns: i32[] = [10, 20, 30]; return count_where(ns, is_neg) * 100 + sum_by(ns, idn); }`, 60},
 }
 
 // TestNativeArrayCountWhereSumBy runs the inline programs on interp / x86-64 /
@@ -74,11 +74,11 @@ func TestNativeArrayCountWhereSumByModule(t *testing.T) {
 function is_even(x: i32): boolean { return x % 2 == 0; }
 function slen(s: string): i32 { return s.len(); }
 function main(): i32 {
-    var r = 0;
-    var ns: i32[] = [1, 2, 3, 4, 5, 6];
+    let r = 0;
+    let ns: i32[] = [1, 2, 3, 4, 5, 6];
     if (arr.count_where(ns, is_even) == 3) { r = r + 1; }
     if (ns.count_where(is_even) == 3) { r = r + 2; }
-    var ws: string[] = ["a", "bb", "ccc"];
+    let ws: string[] = ["a", "bb", "ccc"];
     if (arr.sum_by(ws, slen) == 6) { r = r + 4; }
     if (ws.sum_by(slen) == 6) { r = r + 8; }
     return r;

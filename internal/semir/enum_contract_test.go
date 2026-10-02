@@ -168,7 +168,7 @@ func TestEnumContractDetachedFromChecker(t *testing.T) {
 
 func TestEnumExpressionTypesDetachedAtSourceBoundary(t *testing.T) {
 	prog, info := checkedProgram(t, `function pilot(): Option[i32[]] {
-  var values: Option[i32[]][] = [Some([1i32])];
+  let values: Option[i32[]][] = [Some([1i32])];
   values = values.append(None);
   return values[0];
 }`)
@@ -262,7 +262,7 @@ func TestEnumOperationCorruption(t *testing.T) {
 		} {
 			t.Run(kind.String()+"/"+tc.name, func(t *testing.T) {
 				prog, info := checkedProgram(t, `function pilot(): i32[] {
-  var x: Option[i32[]] = Some([1i32]);
+  let x: Option[i32[]] = Some([1i32]);
   return match (x) { None => [0i32], Some(a) => a };
 }`)
 				p, err := BuildProgram(prog, info)

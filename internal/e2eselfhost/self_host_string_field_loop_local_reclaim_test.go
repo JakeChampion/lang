@@ -8,7 +8,7 @@ import (
 )
 
 // #4357 (string-field sibling of #4733): a reclaimable struct loop-local carrying
-// a `string` field set from a FRESH string (`while { var t: S = S { x: i, name:
+// a `string` field set from a FRESH string (`while { let t: S = S { x: i, name:
 // pre + "x" }; }`) leaked its string box every iteration — the loop-rebind reinit
 // freed only the box / array fields (the array-only __field_reclaim path skips
 // strings). The fix routes such a binding through __struct_drop + box dec
@@ -27,10 +27,10 @@ import (
 func stringFieldLoopLocalFreshSrc(n string) string {
 	return `struct S { x: i32, name: string }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var pre: string = "n";
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < ` + n + `) { var t: S = S { x: i, name: pre + "x" }; acc = acc + t.x + t.name.len(); i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "n";
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < ` + n + `) { let t: S = S { x: i, name: pre + "x" }; acc = acc + t.x + t.name.len(); i = i + 1; }
     if (acc < 0) { return 5; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -41,10 +41,10 @@ function main(): i32 {
 func stringAndArrayFieldLoopLocalSrc(n string) string {
 	return `struct S { x: i32, xs: i32[], name: string }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var pre: string = "n";
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < ` + n + `) { var t: S = S { x: i, xs: [i, i + 1], name: pre + "x" }; acc = acc + t.x + t.xs[0] + t.name.len(); i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "n";
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < ` + n + `) { let t: S = S { x: i, xs: [i, i + 1], name: pre + "x" }; acc = acc + t.x + t.xs[0] + t.name.len(); i = i + 1; }
     if (acc < 0) { return 5; }
     return (__heap_bump_bytes() as i32) - before;
 }`
@@ -65,11 +65,11 @@ function main(): i32 {
 func stringFieldLoopLocalRetainedSrc(n string) string {
 	return `struct S { x: i32, name: string }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var pre: string = "n";
-    var keep: S[] = [];
-    var i: i32 = 0;
-    while (i < ` + n + `) { var t: S = S { x: i, name: pre + "x" }; keep = keep.append(t); i = i + 1; }
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "n";
+    let keep: S[] = [];
+    let i: i32 = 0;
+    while (i < ` + n + `) { let t: S = S { x: i, name: pre + "x" }; keep = keep.append(t); i = i + 1; }
     if (keep.len() != ` + n + `) { return 9; }
     if ((__heap_bump_bytes() as i32) > before) { return 1; }
     return 0;
@@ -81,9 +81,9 @@ function main(): i32 {
 // 0..199 = 19900; + 4*200 = 800 -> 20700.
 const stringFieldLoopLocalDetectorSrc = `struct S { x: i32, name: string }
 function main(): i32 {
-    var pre: string = "ab";
-    var i: i32 = 0; var acc: i32 = 0;
-    while (i < 200) { var t: S = S { x: i, name: pre + "cd" }; acc = acc + t.x + t.name.len(); i = i + 1; }
+    let pre: string = "ab";
+    let i: i32 = 0; let acc: i32 = 0;
+    while (i < 200) { let t: S = S { x: i, name: pre + "cd" }; acc = acc + t.x + t.name.len(); i = i + 1; }
     if (acc != 20700) { return 99; }
     return __rc_underflow_count();
 }`

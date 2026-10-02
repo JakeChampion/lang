@@ -15,8 +15,8 @@ import (
 // the body's tail block, and the lift then stayed on that block's id, so the
 // function's own tail appended it a second time. The driver lifts that op
 // stream directly rather than going through a source program, because no loop
-// anybody WRITES ends that way: the scope comes from irlower.tco_self_tail,
-// which wraps a whole function body in `loop { … } end` so a self tail call
+// anybody WRITES ends that way: the scope came from the AST lowering's tco_self_tail,
+// which wrapped a whole function body in `loop { … } end` so a self tail call
 // jumps to the header, and a function body ends in a return. That is why the
 // 55 collisions were all in the compiler's own modules — every one of those
 // functions is self-recursive and none contains a source loop
@@ -31,7 +31,7 @@ import "./ssa";
 import "./ssa_lift";
 
 function distinct_block_ids(name: string, ops: ir.Op[]): i32 {
-    var r: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, 0, 0, ops);
+    let r: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, 0, 0, ops);
     if (!r.ok) { return 2; }
     if (ssa.repeated_block_id(r.func) >= 0) { return 3; }
     return 0;
@@ -39,7 +39,7 @@ function distinct_block_ids(name: string, ops: ir.Op[]): i32 {
 
 function main(): i32 {
     // loop { 0; return } end   0; return
-    var returning_loop: ir.Op[] = [
+    let returning_loop: ir.Op[] = [
         ir.op_loop(0),
         ir.op_const_i32(0),
         ir.op_return(),
@@ -47,11 +47,11 @@ function main(): i32 {
         ir.op_const_i32(0),
         ir.op_return()
     ];
-    var rc: i32 = distinct_block_ids("returning_loop", returning_loop);
+    let rc: i32 = distinct_block_ids("returning_loop", returning_loop);
     if (rc != 0) { return rc; }
 
     // The same loop followed by an ` + "`if`" + `, the other unconditional append.
-    var loop_then_if: ir.Op[] = [
+    let loop_then_if: ir.Op[] = [
         ir.op_loop(0),
         ir.op_const_i32(0),
         ir.op_return(),
@@ -102,8 +102,8 @@ const ssaLiftNegativeKindProg = `import "./ir";
 import "./ssa_lift";
 
 function main(): i32 {
-    var ops: ir.Op[] = [ir.Op { ...ir.op_const_i32(0), kind_tag: 0 - 1 }, ir.op_return()];
-    var r: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "negative_kind", 0, 0, ops);
+    let ops: ir.Op[] = [ir.Op { ...ir.op_const_i32(0), kind_tag: 0 - 1 }, ir.op_return()];
+    let r: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "negative_kind", 0, 0, ops);
     if (r.ok) { return 2; }
     if (r.bail != "invalid#-1") { return 3; }
     return 0;

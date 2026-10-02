@@ -13,12 +13,12 @@ than from its August status comment, which is stale: the `clo_rc_approved` /
 |---|---|---|---|
 | `[() => n, () => n+1, () => n*2]`, called by index | 0 | 12000 | **0** |
 | same, captures a string and an `i32[]` | 0 | 12000 | 3200 (the string, see residue 1) |
-| factory `return a` + `consume(fns)` with `var d = fns[0]` | 0 | 8000 | **0** |
+| factory `return a` + `consume(fns)` with `let d = fns[0]` | 0 | 8000 | **0** |
 | loop-local + `if`-block-local arrays | 0 | 10000 | **0** |
-| `var d = fns[i % 2]` in a loop, `var e = fns[0]` | 12800 | 0 (see trap 2) | **0** |
+| `let d = fns[i % 2]` in a loop, `let e = fns[0]` | 12800 | 0 (see trap 2) | **0** |
 | closure LOCALS as elements: `[c, …]`, `fns.append(c)`, producer `[c]` | 12800 | 8000 | **0** |
-| `var fns = []` + `append(c)` + `append(lambda)` + string capture | 9600 | 7200 | 3200 (the string) |
-| refusals: `return fns[1]`, `var g = fns`, `keep.append(f)` in foreach, `H { f: fns[0] }` | 6352 | 23960 | 23960 (sound, sanitizer clean) |
+| `let fns = []` + `append(c)` + `append(lambda)` + string capture | 9600 | 7200 | 3200 (the string) |
+| refusals: `return fns[1]`, `let g = fns`, `keep.append(f)` in foreach, `H { f: fns[0] }` | 6352 | 23960 | 23960 (sound, sanitizer clean) |
 
 Every admitted row is 40 B per element per round — the env box — and every
 "after" cell was re-run under `FERN_SANITIZE=1`: exit code unchanged, no
@@ -43,17 +43,17 @@ holds at rc==1 (`cloarr_unsafe_for`):
   `__mkclo$` marker, or a closure local the literal and the self-append already
   retain as an is_arr ident. A closure-returning CALL is refused as an element:
   a callee can hand back a param's or a field's box uncounted.
-- every read of the array is `fns[i](args)`, `var d = fns[i]`, `for f in fns`
+- every read of the array is `fns[i](args)`, `let d = fns[i]`, `for f in fns`
   with `f` only ever called, `fns.len()`, or a bare argument at a borrowable
   position. Any other `fns[i]` is an uncounted element escape; any other method
   (`.with` / `.append` bound elsewhere) clones the buffer and shares its boxes.
 - `"CAC:<fn>"` rows in `closurearr_ret_fns` (same list, no registry threaded —
   the `RCE:` / `AAC:` trick) admit a factory whose every return is a fresh
-  literal or a once-bound local of one, so `var fns = mkfns(n)` takes the walk.
+  literal or a once-bound local of one, so `let fns = mkfns(n)` takes the walk.
 
 Two fixes the walk needed and that stand on their own:
 
-1. `var d = fns[i]` (`lower_stmt_var_closure`) now retains the element and
+1. `let d = fns[i]` (`lower_stmt_var_closure`) now retains the element and
    releases the slot's previous box through the cow-guarded `emit_arr_store`.
    Before, the bind stored the box uncounted and the slot's exit dec freed it
    out of the array — a use-after-free in waiting for any later `fns[i]()`, and
@@ -62,7 +62,7 @@ Two fixes the walk needed and that stand on their own:
 2. `[c, …]` with a closure LOCAL first was classified an array-of-arrays by
    `arrarr_from_init_shape` (a closure local's slot is is_arr), which made
    `for f in fns` bind `f` as an OWNED array. Its exit dec double-released the
-   last box with `var e = fns[1]`'s — at live_bytes 0, because the census counts
+   last box with `let e = fns[1]`'s — at live_bytes 0, because the census counts
    frees, not owners. Only the quarantine sees it (exit 124, "touched a
    quarantined block"). The literal now declines the arr-of-arr mark when its
    first element is a closure box.
@@ -96,9 +96,9 @@ array dangles otherwise), i.e. a scope relation between the capture site and the
 `alias_ok` is. Its own slice.
 
 **Residue 3 — the escaping-closure drop thunk** is a both-compiler gap,
-re-measured identical on HEAD: `var c = () => nm.len() + n; return apply(c)`
+re-measured identical on HEAD: `let c = () => nm.len() + n; return apply(c)`
 leaks 3200 / 100 rounds on native AND self-host; a factory `return c` with two
-calls, 3200 on both; the bare alias `var d = c; d() + c()`, 3200 on both. A
+calls, 3200 on both; the bare alias `let d = c; d() + c()`, 3200 on both. A
 parity item to track against #4451, not a port slice.
 
 ## Gates

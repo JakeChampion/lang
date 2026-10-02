@@ -32,15 +32,15 @@ func TestDynIsInvariantInContainerArguments(t *testing.T) {
 		src  string
 	}{
 		{"option-from-call", `function mk(): Option[Square] { return Some(Square { side: 3 }); }
-function main(): i32 { var o: Option[dyn Shape] = mk(); return 0; }`},
-		{"option-from-local", `function main(): i32 { var s: Option[Square] = Some(Square { side: 3 });
-    var o: Option[dyn Shape] = s; return 0; }`},
+function main(): i32 { let o: Option[dyn Shape] = mk(); return 0; }`},
+		{"option-from-local", `function main(): i32 { let s: Option[Square] = Some(Square { side: 3 });
+    let o: Option[dyn Shape] = s; return 0; }`},
 		{"tuple", `function mkt(): (Square, i32) { return (Square { side: 3 }, 7); }
-function main(): i32 { var t: (dyn Shape, i32) = mkt(); return t.1; }`},
+function main(): i32 { let t: (dyn Shape, i32) = mkt(); return t.1; }`},
 		{"nested-option", `function mk(): Option[Option[Square]] { return Some(Some(Square { side: 3 })); }
-function main(): i32 { var o: Option[Option[dyn Shape]] = mk(); return 0; }`},
+function main(): i32 { let o: Option[Option[dyn Shape]] = mk(); return 0; }`},
 		{"result-error-slot", `function mk(): Result[i32, Square] { return Ok(1); }
-function main(): i32 { var r: Result[i32, dyn Shape] = mk(); return 0; }`},
+function main(): i32 { let r: Result[i32, dyn Shape] = mk(); return 0; }`},
 		{"argument-position", `function take(o: Option[dyn Shape]): i32 { return 0; }
 function mk(): Option[Square] { return Some(Square { side: 3 }); }
 function main(): i32 { return take(mk()); }`},
@@ -70,16 +70,16 @@ func TestContainerElementAssignabilityStillWorks(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"polymorphic-literal-payload", `function main(): i32 { var o: Option[i64] = Some(1); return 0; }`},
-		{"nested-polymorphic-payload", `function main(): i32 { var o: Option[Option[i64]] = Some(Some(1)); return 0; }`},
+		{"polymorphic-literal-payload", `function main(): i32 { let o: Option[i64] = Some(1); return 0; }`},
+		{"nested-polymorphic-payload", `function main(): i32 { let o: Option[Option[i64]] = Some(Some(1)); return 0; }`},
 		{"bare-none-in-tuple", `function f(): (Option[i32], i32) { return (None, 7); }
-function main(): i32 { var p = f(); return p.1; }`},
+function main(): i32 { let p = f(); return p.1; }`},
 		{"same-dyn-both-sides", `function mk(): Option[dyn Shape] { return Some(Square { side: 3 } as dyn Shape); }
-function main(): i32 { var o: Option[dyn Shape] = mk(); return 0; }`},
-		{"direct-coercion-still-boxes", `function main(): i32 { var s: dyn Shape = Square { side: 3 }; return describe(s); }`},
+function main(): i32 { let o: Option[dyn Shape] = mk(); return 0; }`},
+		{"direct-coercion-still-boxes", `function main(): i32 { let s: dyn Shape = Square { side: 3 }; return describe(s); }`},
 		{"explicit-rebuild-is-the-way-out", `function mk(): Option[Square] { return Some(Square { side: 3 }); }
 function main(): i32 {
-    var o: Option[dyn Shape] = match (mk()) {
+    let o: Option[dyn Shape] = match (mk()) {
         Some(sq) => { Some(sq as dyn Shape) },
         None => { None }
     };

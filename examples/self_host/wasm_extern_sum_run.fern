@@ -18,12 +18,12 @@ import "./util";
 
 // --- frozen reference: the exact magic-byte logic these replaced ---
 function ref_trim(s: string): string {
-  var n: i32 = s.len();
-  var lo: i32 = 0;
+  let n: i32 = s.len();
+  let lo: i32 = 0;
   while (lo < n && s[lo] == b' ') {
     lo = lo + 1;
   }
-  var hi: i32 = n;
+  let hi: i32 = n;
   while (hi > lo && s[hi - 1] == b' ') {
     hi = hi - 1;
   }
@@ -32,22 +32,22 @@ function ref_trim(s: string): string {
 
 function ref_sum_supported(t: string): boolean {
   if (t.len() > 8 && slice_unchecked(t, 0, 7) == "Option[" && t[t.len() - 1] == b']') {
-    var p: string = ref_trim(slice_unchecked(t, 7, t.len() - 1));
+    let p: string = ref_trim(slice_unchecked(t, 7, t.len() - 1));
     return p == "i32" || p == "u32";
   }
   if (t.len() > 8 && slice_unchecked(t, 0, 7) == "Result[" && t[t.len() - 1] == b']') {
-    var inner: str = slice_unchecked(t, 7, t.len() - 1);
-    var i: i32 = 0;
-    var depth: i32 = 0;
+    let inner: str = slice_unchecked(t, 7, t.len() - 1);
+    let i: i32 = 0;
+    let depth: i32 = 0;
     while (i < inner.len()) {
-      var c: i32 = inner[i] as i32;
+      let c: i32 = inner[i] as i32;
       if (c == 91) {
         depth = depth + 1;
       } else if (c == 93) {
         depth = depth - 1;
       } else if (c == 44 && depth == 0) {
-        var ok: string = ref_trim(slice_unchecked(inner, 0, i));
-        var er: string = ref_trim(slice_unchecked(inner, i + 1, inner.len()));
+        let ok: string = ref_trim(slice_unchecked(inner, 0, i));
+        let er: string = ref_trim(slice_unchecked(inner, i + 1, inner.len()));
         return (ok == "i32" || ok == "u32") && (er == "i32" || er == "u32");
       }
       i = i + 1;
@@ -70,23 +70,23 @@ function b(x: boolean): string {
 }
 
 function main(): i32 {
-  var corpus: string[] = [
+  let corpus: string[] = [
     "Option[i32]", "Option[u32]", "Option[string]", "Option[Foo]", "Option[Map[a, b]]",
     "Option[i32][]", "Option[]", "Option", "Result[i32, u32]", "Result[u32, i32]",
     "Result[i32, string]", "Result[string, i32]", "Result[i32]", "Result[i32, u32, x]",
     "Result[i32, u32][]", "Result", "Result[Map[a, b], i32]", "i32", "u32", "string",
     "Foo", "u8[]", "", "boolean[]", "Map[string, i32]",
   ];
-  var out: string = "";
-  var bad: i32 = 0;
-  var i: i32 = 0;
+  let out: string = "";
+  let bad: i32 = 0;
+  let i: i32 = 0;
   while (i < corpus.len()) {
-    var t: string = corpus[i];
-    var ns: boolean = wasm_ir.extern_sum_param_supported(t);
-    var no: boolean = wasm_ir.extern_sum_param_is_option(t);
-    var os: boolean = ref_sum_supported(t);
-    var oo: boolean = ref_is_option(t);
-    var mark: string = "ok  ";
+    let t: string = corpus[i];
+    let ns: boolean = wasm_ir.extern_sum_param_supported(t);
+    let no: boolean = wasm_ir.extern_sum_param_is_option(t);
+    let os: boolean = ref_sum_supported(t);
+    let oo: boolean = ref_is_option(t);
+    let mark: string = "ok  ";
     if (ns != os || no != oo) {
       mark = "BAD ";
       bad = bad + 1;

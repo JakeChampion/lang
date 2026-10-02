@@ -11,17 +11,17 @@ import (
 // all freshly allocated or fresh and literal, with a diverging branch among
 // them.
 const valueBlockStrReleaseSrc = `import "std/i32";
-function fresh(n: i32): i32 { var s: string = if (n > 0) { "pos" + n.to_string() } else { "neg" + n.to_string() }; return s.len(); }
-function mixed(n: i32): i32 { var s: string = if (n > 0) { "pos" + n.to_string() } else { "x" }; return s.len(); }
-function early(n: i32): i32 { var s: string = if (n > 0) { "pos" + n.to_string() } else { return 0; }; return s.len(); }
+function fresh(n: i32): i32 { let s: string = if (n > 0) { "pos" + n.to_string() } else { "neg" + n.to_string() }; return s.len(); }
+function mixed(n: i32): i32 { let s: string = if (n > 0) { "pos" + n.to_string() } else { "x" }; return s.len(); }
+function early(n: i32): i32 { let s: string = if (n > 0) { "pos" + n.to_string() } else { return 0; }; return s.len(); }
 function arms(n: i32): i32 {
-    var s: string = match (n) { 0 => "zero" + "", 1 => "one" + n.to_string(), _ => { return 9; } };
+    let s: string = match (n) { 0 => "zero" + "", 1 => "one" + n.to_string(), _ => { return 9; } };
     return s.len();
 }
 function looped(k: i32): i32 {
-    var t: i32 = 0; var i: i32 = 0;
+    let t: i32 = 0; let i: i32 = 0;
     while (i < k) {
-        var s: string = if (i % 2 == 0) { "e" + i.to_string() } else { "o" };
+        let s: string = if (i % 2 == 0) { "e" + i.to_string() } else { "o" };
         t = t + s.len();
         i = i + 1;
     }

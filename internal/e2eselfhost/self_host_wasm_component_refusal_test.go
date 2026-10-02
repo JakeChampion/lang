@@ -17,12 +17,12 @@ const handleTupleSrc = `function handle_lit(): (Writer, boolean) {
     return (stdout(), true);
 }
 function handle_var(): (Writer, boolean) {
-    var w: Writer = stdout();
+    let w: Writer = stdout();
     return (w, true);
 }
 function main(): i32 {
-    var a: (Writer, boolean) = handle_lit();
-    var b: (Writer, boolean) = handle_var();
+    let a: (Writer, boolean) = handle_lit();
+    let b: (Writer, boolean) = handle_var();
     match (a.0.write("ok\n")) { Some(_) => { return 1; }, None => {} }
     if (a.1 && b.1) { return 7; }
     return 0;

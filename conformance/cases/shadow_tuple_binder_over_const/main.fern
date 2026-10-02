@@ -9,21 +9,21 @@ enum Inner { Some1(i32), None1 }
 enum Outer2 { Holds(Inner), Empty }
 
 function tuple_binder(): i32 {
-    var t: (i32, i32) = (3, 4);
+    let t: (i32, i32) = (3, 4);
     match (t) {
         (helper, b) => { return helper + b; }
     }
 }
 
 function nested_tuple_binder(): i32 {
-    var t: (i32, (i32, i32)) = (1, (2, 4));
+    let t: (i32, (i32, i32)) = (1, (2, 4));
     match (t) {
         (a, (helper, c)) => { return a + helper + c; }
     }
 }
 
 function payload_sub_binder(): i32 {
-    var o: Outer2 = Holds(Some1(3));
+    let o: Outer2 = Holds(Some1(3));
     match (o) {
         Holds(Some1(helper)) => { return helper + 4; },
         Holds(None1()) => { return 0; },
@@ -33,7 +33,7 @@ function payload_sub_binder(): i32 {
 
 // Control: the plain payload binder, bound since the walk was written.
 function variant_binder(): i32 {
-    var i: Inner = Some1(3);
+    let i: Inner = Some1(3);
     match (i) {
         Some1(helper) => { return helper + 4; },
         None1 => { return 0; }
@@ -41,7 +41,7 @@ function variant_binder(): i32 {
 }
 
 function match_expr_tuple_binder(): i32 {
-    var t: (i32, i32) = (3, 4);
+    let t: (i32, i32) = (3, 4);
     return match (t) {
         (helper, b) => helper + b
     };

@@ -46,7 +46,7 @@ function twice(n: i32): i32 { return n * 2; }
 function big(n: i32): i32 { return n + 1000007; }
 @noinline
 function masked(n: i32): i32 { return n & 0xfffff0; }
-function main(): i32 { var k: i32 = args().len(); return twice(big(k) - 999999) + masked(k + 0x7f0000); }
+function main(): i32 { let k: i32 = args().len(); return twice(big(k) - 999999) + masked(k + 0x7f0000); }
 `
 	asm, _ := compileFilesModload(t, x86runner, driverBin,
 		map[string]string{"main.fern": src}, "-target", "arm64-linux")

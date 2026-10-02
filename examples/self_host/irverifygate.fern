@@ -14,9 +14,9 @@
 // malformed op named at the point it was produced.
 //
 // It is deliberately small and depends only on the verifiers and the op type.
-// Taking the scalars rather than an irlower.LowerResult is what keeps it that
-// way: it does not pull irlower in, so the driver that tests it does not
-// either. The callee index is built by irlower.fn_sig_index on the backend
+// Taking the scalars rather than an irtables.LowerResult is what keeps it that
+// way: it does not pull the lowering in, so the driver that tests it does not
+// either. The callee index is built by irtables.fn_sig_index on the backend
 // side for the same reason — it is an AST question, and answering it here
 // would drag the parser into the gate's closure.
 //
@@ -71,24 +71,24 @@ pub function verify_on(): boolean {
 // everything they found, structure problems first.
 //
 // `sigs` is the callee-arity index for the whole program being emitted, built
-// once per emit loop by irlower.fn_sig_index. A callee it does not carry is
+// once per emit loop by irtables.fn_sig_index. A callee it does not carry is
 // left alone — a runtime helper, a lifted lambda, another unit's function — so
 // the check reports a genuine arity mismatch and never a missing entry.
 //
 // Pure, and separate from the refusal below so the gate's verdict can be
 // asserted without the exit that acting on it entails.
 pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, sigs: irverify.NameIndex): irverify.Problem[] {
-  var out: irverify.Problem[] = irverify.verify_fn(fn_name, ops, n_params, n_locals, sigs);
-  var sr: irverifystack.StackResult = irverifystack.verify_stack_fn(fn_name, ops);
-  var i: i32 = 0;
+  let out: irverify.Problem[] = irverify.verify_fn(fn_name, ops, n_params, n_locals, sigs);
+  let sr: irverifystack.StackResult = irverifystack.verify_stack_fn(fn_name, ops);
+  let i: i32 = 0;
   while (i < sr.problems.len()) {
     out = out.append(sr.problems[i]);
     i = i + 1;
   }
   // The ownership half models one reuse site at a time, so it runs even for
   // a function the stack pass had to abandon.
-  var rr: irverifyrc.RcResult = irverifyrc.verify_rc_fn(fn_name, ops);
-  var j: i32 = 0;
+  let rr: irverifyrc.RcResult = irverifyrc.verify_rc_fn(fn_name, ops);
+  let j: i32 = 0;
   while (j < rr.problems.len()) {
     out = out.append(rr.problems[j]);
     j = j + 1;
@@ -106,7 +106,7 @@ pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_lo
   if (!verify_on()) {
     return 0;
   }
-  var ps: irverify.Problem[] = verify_problems(fn_name, ops, n_params, n_locals, sigs);
+  let ps: irverify.Problem[] = verify_problems(fn_name, ops, n_params, n_locals, sigs);
   if (ps.len() == 0) {
     return 0;
   }

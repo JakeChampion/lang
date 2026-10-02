@@ -8,8 +8,8 @@ Follows the five `__param` cells (`2026-08-27-enum-array-counted-param.md`,
 ## The cell
 
 ```fern
-var q: P = P { f: mkv(i), n: i };
-var p: P = P { f: q.f, n: i };      // f: string[]
+let q: P = P { f: mkv(i), n: i };
+let p: P = P { f: q.f, n: i };      // f: string[]
 ```
 
 800 allocs / 300 frees, 16 800 live, against native's 600/600. Every other field
@@ -106,5 +106,5 @@ change introduced it.
   suite — green
 - the new suite, 4 cases
 
-What remains in this area is the local-BIND read (`var tt = q.f; P { f: tt }`),
+What remains in this area is the local-BIND read (`let tt = q.f; P { f: tt }`),
 pinned above and still #5338's.

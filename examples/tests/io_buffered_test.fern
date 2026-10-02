@@ -16,7 +16,7 @@ import "std/io_buffered" as io;
 // these; this is the migration-shaped (pure-Fern, std/test-driven,
 // self-host-gated) companion.
 function test_empty(): test.TestOutcome {
-  var w = io.bytes_writer_new();
+  let w = io.bytes_writer_new();
   if (!w.is_empty() || w.len() != 0) {
     return test.fail("empty buffer state");
   }
@@ -24,7 +24,7 @@ function test_empty(): test.TestOutcome {
 }
 
 function test_write_string(): test.TestOutcome {
-  var w = io.bytes_writer_new();
+  let w = io.bytes_writer_new();
   w = w.write_string("abc");
   if (w.len() != 3 || w.is_empty()) {
     return test.fail("written buffer state");
@@ -34,27 +34,27 @@ function test_write_string(): test.TestOutcome {
 
 function test_write_byte(): test.TestOutcome {
   // 72 = 'H', 105 = 'i'.
-  var w = io.bytes_writer_new();
+  let w = io.bytes_writer_new();
   w = w.write_byte(72);
   w = w.write_byte(105);
   return test.assert_is_some_eq_string(w.into_string(), "Hi");
 }
 
 function test_write_bytes(): test.TestOutcome {
-  var w = io.bytes_writer_new();
+  let w = io.bytes_writer_new();
   w = w.write_bytes("BC".bytes());
   return test.assert_is_some_eq_string(w.into_string(), "BC");
 }
 
 function test_chained_build(): test.TestOutcome {
   // The motivating HTTP-response-line pattern, fluent.
-  var w = io.bytes_writer_new().write_string("HTTP/1.1 ").write_string("200").write_byte(32).write_string("OK");
+  let w = io.bytes_writer_new().write_string("HTTP/1.1 ").write_string("200").write_byte(32).write_string("OK");
   return test.assert_is_some_eq_string(w.into_string(), "HTTP/1.1 200 OK");
 }
 
 function test_mixed_writes(): test.TestOutcome {
   // string + byte + bytes interleaved accumulate in order.
-  var w = io.bytes_writer_new();
+  let w = io.bytes_writer_new();
   w = w.write_string("a");
   w = w.write_byte(98);  // 'b'
   w = w.write_bytes("cd".bytes());
@@ -65,8 +65,8 @@ function test_mixed_writes(): test.TestOutcome {
 }
 
 function test_into_bytes(): test.TestOutcome {
-  var w = io.bytes_writer_new().write_string("xyz");
-  var bs: u8[] = w.into_bytes();
+  let w = io.bytes_writer_new().write_string("xyz");
+  let bs: u8[] = w.into_bytes();
   // 'x' = 120; the buffer length and first byte round-trip.
   return test.assert_true(bs.len() == 3 && bs[0] as i32 == 120);
 }
@@ -74,19 +74,19 @@ function test_into_bytes(): test.TestOutcome {
 // A byte that is not UTF-8 is refused by into_string and kept by
 // into_bytes.
 function test_into_string_refuses_ill_formed(): test.TestOutcome {
-  var w = io.bytes_writer_new().write_string("a").write_byte(255).write_string("b");
+  let w = io.bytes_writer_new().write_string("a").write_byte(255).write_string("b");
   match (w.into_string()) {
     Some(s) => {
       return test.fail("into_string accepted: " + s);
     },
     None => {}
   }
-  var bs: u8[] = w.into_bytes();
+  let bs: u8[] = w.into_bytes();
   return test.assert_true(bs.len() == 3 && bs[1] as i32 == 255);
 }
 
 function test_reset(): test.TestOutcome {
-  var w = io.bytes_writer_new().write_string("discard me");
+  let w = io.bytes_writer_new().write_string("discard me");
   w = w.reset();
   if (!w.is_empty()) {
     return test.fail("reset buffer state");
@@ -96,7 +96,7 @@ function test_reset(): test.TestOutcome {
 
 function test_reset_then_reuse(): test.TestOutcome {
   // After reset the writer is usable again, with no leftover bytes.
-  var w = io.bytes_writer_new().write_string("old");
+  let w = io.bytes_writer_new().write_string("old");
   w = w.reset();
   w = w.write_string("new");
   return test.assert_is_some_eq_string(w.into_string(), "new");
@@ -104,7 +104,7 @@ function test_reset_then_reuse(): test.TestOutcome {
 
 // BufWriter: written to stderr so the TAP stream on stdout stays clean.
 function test_buf_writer_holds_below_cap(): test.TestOutcome {
-  var b: io.BufWriter = io.buf_writer_new(stderr(), 16);
+  let b: io.BufWriter = io.buf_writer_new(stderr(), 16);
   b = b.write_string("abc");
   b = b.write_byte(100);
   return test.assert_true(b.buffered() == 4);
@@ -113,13 +113,13 @@ function test_buf_writer_holds_below_cap(): test.TestOutcome {
 function test_buf_writer_write_u64(): test.TestOutcome {
   // Digit counts through the width ladder: 0 and 9 are one digit, 10 is
   // two, and u64's maximum is twenty.
-  var b: io.BufWriter = io.buf_writer_new(stderr(), 1024);
+  let b: io.BufWriter = io.buf_writer_new(stderr(), 1024);
   b = b.write_u64(0 as u64);
-  var one: i32 = b.buffered();
+  let one: i32 = b.buffered();
   b = b.write_u64(9 as u64);
-  var two: i32 = b.buffered();
+  let two: i32 = b.buffered();
   b = b.write_u64(10 as u64);
-  var four: i32 = b.buffered();
+  let four: i32 = b.buffered();
   b = b.write_u64(18446744073709551615 as u64);
   return test.assert_true(one == 1 && two == 2 && four == 4 && b.buffered() == 24);
 }
@@ -127,25 +127,25 @@ function test_buf_writer_write_u64(): test.TestOutcome {
 function test_buf_writer_write_i64(): test.TestOutcome {
   // A sign for a negative value and none otherwise; i64's minimum keeps
   // its magnitude through the two's-complement negation.
-  var b: io.BufWriter = io.buf_writer_new(stderr(), 1024);
+  let b: io.BufWriter = io.buf_writer_new(stderr(), 1024);
   b = b.write_i64(0 - 5 as i64);
-  var two: i32 = b.buffered();
+  let two: i32 = b.buffered();
   b = b.write_i64(42 as i64);
-  var four: i32 = b.buffered();
+  let four: i32 = b.buffered();
   b = b.write_i64(0 - 9223372036854775807 as i64 - 1 as i64);
   return test.assert_true(two == 2 && four == 4 && b.buffered() == 24);
 }
 
 function test_buf_writer_flushes_at_cap(): test.TestOutcome {
-  var b: io.BufWriter = io.buf_writer_new(stderr(), 8);
+  let b: io.BufWriter = io.buf_writer_new(stderr(), 8);
   b = b.write_string("abcd");
   b = b.write_string("efgh");
-  var after_cap: i32 = b.buffered();
+  let after_cap: i32 = b.buffered();
   b = b.write_string("ijklmnopqrstuvwxyz");
-  var after_big: i32 = b.buffered();
+  let after_big: i32 = b.buffered();
   b = b.write_string("z");
   b = b.flush();
-  var ok: boolean = after_cap == 0 && after_big == 0 && b.buffered() == 0;
+  let ok: boolean = after_cap == 0 && after_big == 0 && b.buffered() == 0;
   match (b.error()) {
     Some(_) => {
       return test.fail("write error on stderr");
@@ -157,10 +157,10 @@ function test_buf_writer_flushes_at_cap(): test.TestOutcome {
 }
 
 function lines_of(path: string, term: i32, chunk: i32): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   match (open_reader(path)) {
     Ok(r) => {
-      var lr: io.LineReader = io.line_reader_new(r, term, chunk);
+      let lr: io.LineReader = io.line_reader_new(r, term, chunk);
       while (true) {
         let (line, next) = lr.next_line();
         lr = next;
@@ -184,14 +184,14 @@ function lines_of(path: string, term: i32, chunk: i32): string[] {
 function with_file(content: string, term: i32, chunk: i32): string[] {
   match (temp_dir("io_buffered_test")) {
     Ok(dir) => {
-      var path: string = dir + "/input";
+      let path: string = dir + "/input";
       match (write_file(path, content)) {
         Ok(_) => {},
         Err(_) => {
           return [];
         }
       }
-      var got: string[] = lines_of(path, term, chunk);
+      let got: string[] = lines_of(path, term, chunk);
       remove_file(path);
       return got;
     },
@@ -204,19 +204,19 @@ function with_file(content: string, term: i32, chunk: i32): string[] {
 // close(): fclose — the pending bytes reach the file, and a refused
 // write is the error close hands back.
 function test_buf_writer_close_writes(): test.TestOutcome {
-  var path: string = "/tmp/fern_io_buffered_close_test.txt";
+  let path: string = "/tmp/fern_io_buffered_close_test.txt";
   match (open_writer(path)) {
     Ok(w) => {
-      var b: io.BufWriter = io.buf_writer_new(w, 64);
+      let b: io.BufWriter = io.buf_writer_new(w, 64);
       b = b.write_string("held");
-      var held: i32 = b.buffered();
+      let held: i32 = b.buffered();
       match (b.close()) {
         Some(_) => {
           return test.fail("close failed");
         },
         None => {}
       }
-      var got: string = "";
+      let got: string = "";
       match (read_file(path)) {
         Ok(s) => {
           got = s;
@@ -237,9 +237,9 @@ function test_buf_writer_close_writes(): test.TestOutcome {
 function test_buf_writer_close_refused(): test.TestOutcome {
   match (open_writer("/dev/full")) {
     Ok(w) => {
-      var b: io.BufWriter = io.buf_writer_new(w, 4);
+      let b: io.BufWriter = io.buf_writer_new(w, 4);
       b = b.write_string("first flush fails");
-      var sticky: boolean = false;
+      let sticky: boolean = false;
       match (b.error()) {
         Some(_) => {
           sticky = true;
@@ -268,7 +268,7 @@ function test_buf_writer_close_refused(): test.TestOutcome {
 function test_buf_writer_close_empty(): test.TestOutcome {
   match (open_writer("/dev/full")) {
     Ok(w) => {
-      var b: io.BufWriter = io.buf_writer_new(w, 4);
+      let b: io.BufWriter = io.buf_writer_new(w, 4);
       match (b.close()) {
         Some(_) => {
           return test.fail("close with nothing held failed");
@@ -285,24 +285,24 @@ function test_buf_writer_close_empty(): test.TestOutcome {
 }
 
 function test_line_reader_keeps_terminators(): test.TestOutcome {
-  var got: string[] = with_file("a\nbb\n\nccc", 10, 4096);
+  let got: string[] = with_file("a\nbb\n\nccc", 10, 4096);
   return test.assert_true(got.len() == 4 && got[0] == "a\n" && got[1] == "bb\n" && got[2] == "\n" && got[3] == "ccc");
 }
 
 function test_line_reader_spans_chunks(): test.TestOutcome {
   // A 3-byte chunk splits every line; the lines come back whole.
-  var got: string[] = with_file("alpha\nbeta\ngamma\n", 10, 3);
+  let got: string[] = with_file("alpha\nbeta\ngamma\n", 10, 3);
   return test.assert_true(got.len() == 3 && got[0] == "alpha\n" && got[1] == "beta\n" && got[2] == "gamma\n");
 }
 
 function test_line_reader_empty_and_nul(): test.TestOutcome {
-  var empty: string[] = with_file("", 10, 4096);
-  var nul: string[] = with_file("x\x00yy\x00", 0, 4096);
+  let empty: string[] = with_file("", 10, 4096);
+  let nul: string[] = with_file("x\x00yy\x00", 0, 4096);
   return test.assert_true(empty.len() == 0 && nul.len() == 2 && nul[0] == "x\x00" && nul[1] == "yy\x00");
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/io_buffered BytesWriter");
+  let r: test.TestRunner = test.test_new("std/io_buffered BytesWriter");
   r = r.it("empty", test_empty);
   r = r.it("write_string", test_write_string);
   r = r.it("write_byte", test_write_byte);

@@ -24,24 +24,26 @@ func TestSelfHostWasiHttpByteWriterCleanup(t *testing.T) {
 	if start < 0 || limit < 0 {
 		t.Fatal("HTTP adapter is missing its write loop or chunk limit")
 	}
-	program := text[limit:limit+strings.Index(text[limit:], ";")+1] + "\n" + text[start:] + `
+	// The write loop alone: the function's closing brace ends the slice.
+	end := start + strings.Index(text[start:], "\n}\n") + 3
+	program := text[limit:limit+strings.Index(text[limit:], ";")+1] + "\n" + text[start:end] + `
 function stream_write(stream: i32, data: u8[]): Result[i32, i32] {
     assert(data.len() > 0 && data.len() <= WRITE_CHUNK);
     if (stream == 1 || (stream == 2 && data[0] != 0 as u8)) {
         eprint("rejected");
         return Err(1);
     }
-    var w: Writer = stdout();
+    let w: Writer = stdout();
     match (w.write_bytes(data)) { Some(_) => { assert(false); }, None => {} }
     return Ok(0);
 }
 function main(): i32 {
-    var data: u8[] = [];
+    let data: u8[] = [];
     for i in 0..8193 { data = data.append((i % 251) as u8); }
     write_all(0, data);
     write_all(1, data);
     write_all(2, data);
-    var empty: u8[] = [];
+    let empty: u8[] = [];
     write_all(1, empty);
     return 0;
 }
@@ -69,7 +71,7 @@ function main(): i32 {
 			}
 			args = append(args, src, stdlib)
 			compile := exec.Command(cli, args...)
-			compile.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 			if out, err := compile.CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)
 			}
@@ -92,7 +94,7 @@ import "std/http";
 import "std/stream";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var data: u8[] = req.body_bytes();
+    let data: u8[] = req.body_bytes();
     if (req.path == "/stream") {
         return http.stream(200, Stream { data: data, pos: 1 });
     }
@@ -117,8 +119,6 @@ func TestSelfHostWasiHttpByteBodies(t *testing.T) {
 	if err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	t.Setenv("FERN_SEM_IR", "1")
-	t.Setenv("FERN_SEM_IR_STRICT", "1")
 	t.Setenv("FERN_STRICT_IR", "1")
 	dir := t.TempDir()
 	mine := compileWasiHttp(t, dir, wasiHttpByteBodiesSrc, "selfhost.wasm")

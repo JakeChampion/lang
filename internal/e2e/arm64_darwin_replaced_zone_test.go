@@ -26,7 +26,7 @@ import "./lib/tz";
 struct Scan { date_text: string, has_date: boolean, file: string, has_file: boolean, reference: string, has_reference: boolean, format: string, has_format: boolean, utc: boolean, debug: boolean }
 
 function declare_options(): gnu.Opt[] {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("d", "date", 1));
   opts = opts.append(gnu.flag("", "debug", 2));
   opts = opts.append(gnu.valued("f", "file", 3));
@@ -42,10 +42,10 @@ function declare_options(): gnu.Opt[] {
 }
 
 function scan_options(): (Scan, string[]) {
-  var s: Scan = Scan { date_text: "", has_date: false, file: "", has_file: false, reference: "", has_reference: false, format: "", has_format: false, utc: false, debug: false };
-  var g: gnu.Getopt = gnu.getopt_new(args(), declare_options(), "date", "help\n", 1);
+  let s: Scan = Scan { date_text: "", has_date: false, file: "", has_file: false, reference: "", has_reference: false, format: "", has_format: false, utc: false, debug: false };
+  let g: gnu.Getopt = gnu.getopt_new(args(), declare_options(), "date", "help\n", 1);
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -64,9 +64,9 @@ function scan_options(): (Scan, string[]) {
 struct Stamp { sec: i64, nsec: i64 }
 
 function now_stamp(): Stamp {
-  var n: i64 = now_ns();
-  var s: i64 = n / (1000000000 as i64);
-  var r: i64 = n % (1000000000 as i64);
+  let n: i64 = now_ns();
+  let s: i64 = n / (1000000000 as i64);
+  let r: i64 = n % (1000000000 as i64);
   if (r < 0 as i64) {
     s = s - 1 as i64;
     r = r + 1000000000 as i64;
@@ -79,18 +79,18 @@ function emit(o: io_buffered.BufWriter, fmt: string, z: tz.Zone, st: Stamp): io_
 }
 
 function main(): i32 {
-  var scanned: (Scan, string[]) = scan_options();
-  var s: Scan = scanned.0;
-  var operands: string[] = scanned.1;
+  let scanned: (Scan, string[]) = scan_options();
+  let s: Scan = scanned.0;
+  let operands: string[] = scanned.1;
 
-  var fmt: string = "%a %b %e %H:%M:%S %Z %Y";
-  var z: tz.Zone = tz.local_zone();
+  let fmt: string = "%a %b %e %H:%M:%S %Z %Y";
+  let z: tz.Zone = tz.local_zone();
   if (s.utc) {
     z = tz.utc_zone();
   }
-  var now: Stamp = now_stamp();
-  var o: io_buffered.BufWriter = gnu.out_new();
-  var st: Stamp = now;
+  let now: Stamp = now_stamp();
+  let o: io_buffered.BufWriter = gnu.out_new();
+  let st: Stamp = now;
   o = emit(o, fmt, z, st);
   gnu.finish(o);
   return 0;

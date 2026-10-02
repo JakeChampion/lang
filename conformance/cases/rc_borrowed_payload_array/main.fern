@@ -18,10 +18,10 @@
 enum N { Chr(i32), Seq(N[]), Plus(N) }
 
 function closure(inner: N, reps: i32): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < reps) {
-        var got: i32[] = [];
+        let got: i32[] = [];
         got = got.append(sum(inner));
         acc = acc + got[0];
         i = i + 1;
@@ -32,16 +32,16 @@ function closure(inner: N, reps: i32): i32 {
 function sum(n: N): i32 {
     match (n) {
         Chr(c) => { return c; },
-        Seq(xs) => { var s: i32 = 0; var k: i32 = 0; while (k < xs.len()) { s = s + sum(xs[k]); k = k + 1; } return s; },
+        Seq(xs) => { let s: i32 = 0; let k: i32 = 0; while (k < xs.len()) { s = s + sum(xs[k]); k = k + 1; } return s; },
         Plus(inner) => { return closure(inner, 8); }
     }
 }
 
 function main(): i32 {
-    var items: N[] = [];
+    let items: N[] = [];
     items = items.append(Chr(1));
     items = items.append(Chr(2));
-    var t: N = Plus(Seq(items));
+    let t: N = Plus(Seq(items));
     // 8 passes over Seq(1, 2) = 8 * 3 = 24.
     return sum(t);
 }

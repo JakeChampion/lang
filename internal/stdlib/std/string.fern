@@ -67,16 +67,16 @@ pub function (s: string) repeat(n: i32): string {
   if (n <= 0) {
     return "";
   }
-  var sl: i32 = s.len();
+  let sl: i32 = s.len();
   if (sl == 0) {
     return "";
   }
-  var total: i64 = sl as i64 * (n as i64);
-  var out: string = s;
+  let total: i64 = sl as i64 * (n as i64);
+  let out: string = s;
   while (out.len() as i64 * (2 as i64) <= total) {
     out = out + out;
   }
-  var rem: i32 = (total - out.len() as i64) as i32;
+  let rem: i32 = (total - out.len() as i64) as i32;
   if (rem > 0) {
     out = out + slice_unchecked(out, 0, rem);
   }
@@ -92,12 +92,12 @@ pub function (s: string) repeat(n: i32): string {
 // needle / prefix / suffix return true / 0 to match the
 // `strstr` / Go conventions.
 pub function (s: string) starts_with(prefix: string): boolean {
-  var sLen: i32 = s.len();
-  var pLen: i32 = prefix.len();
+  let sLen: i32 = s.len();
+  let pLen: i32 = prefix.len();
   if (pLen > sLen) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < pLen) {
     if (s[i] != prefix[i]) {
       return false;
@@ -108,13 +108,13 @@ pub function (s: string) starts_with(prefix: string): boolean {
 }
 
 pub function (s: string) ends_with(suffix: string): boolean {
-  var sLen: i32 = s.len();
-  var sufLen: i32 = suffix.len();
+  let sLen: i32 = s.len();
+  let sufLen: i32 = suffix.len();
   if (sufLen > sLen) {
     return false;
   }
-  var off: i32 = sLen - sufLen;
-  var i: i32 = 0;
+  let off: i32 = sLen - sufLen;
+  let i: i32 = 0;
   while (i < sufLen) {
     if (s[off + i] != suffix[i]) {
       return false;
@@ -129,7 +129,7 @@ pub function (s: string) ends_with(suffix: string): boolean {
 // caller has already bounds-checked `offset + nLen <=
 // len(s)`, so this just walks until the first mismatch.
 function __substr_eq(s: string, offset: i32, needle: string, nLen: i32): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < nLen) {
     if (s[offset + i] != needle[i]) {
       return false;
@@ -150,15 +150,15 @@ function __substr_eq(s: string, offset: i32, needle: string, nLen: i32): boolean
 // and `p` the period established so far. Each byte is examined O(1) amortized
 // times, so the whole thing is O(m) with no allocation.
 function __str_maxsuf(x: string, m: i32, invert: boolean, origin: i32, step: i32): (i32, i32) {
-  var ms: i32 = 0 - 1;
-  var j: i32 = 0;
-  var k: i32 = 1;
-  var p: i32 = 1;
+  let ms: i32 = 0 - 1;
+  let j: i32 = 0;
+  let k: i32 = 1;
+  let p: i32 = 1;
   while (j + k < m) {
-    var a: i32 = x[origin + step * (j + k)] as i32;
-    var b: i32 = x[origin + step * (ms + k)] as i32;
+    let a: i32 = x[origin + step * (j + k)] as i32;
+    let b: i32 = x[origin + step * (ms + k)] as i32;
     if (invert) {
-      var t: i32 = a;
+      let t: i32 = a;
       a = b;
       b = t;
     }
@@ -198,8 +198,8 @@ function __str_critical_factorization(needle: string, m: i32, origin: i32, step:
   if (m < 3) {
     return (m - 1, 1);
   }
-  var fwd: (i32, i32) = __str_maxsuf(needle, m, false, origin, step);
-  var rev: (i32, i32) = __str_maxsuf(needle, m, true, origin, step);
+  let fwd: (i32, i32) = __str_maxsuf(needle, m, false, origin, step);
+  let rev: (i32, i32) = __str_maxsuf(needle, m, true, origin, step);
   if (rev.0 < fwd.0) {
     return (fwd.0 + 1, fwd.1);
   }
@@ -209,7 +209,7 @@ function __str_critical_factorization(needle: string, m: i32, origin: i32, step:
 // A factorization period is valid when the prefix through crit repeats at
 // that offset. The factorization guarantees crit + period <= needle.len().
 function __str_is_periodic(needle: string, origin: i32, crit: i32, period: i32, step: i32): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < crit) {
     if (needle[origin + step * (period + i)] != needle[origin + step * i]) {
       return false;
@@ -235,20 +235,20 @@ function __str_is_periodic(needle: string, origin: i32, crit: i32, period: i32, 
 // The origins and step map logical indices into the original strings:
 // (0, 0, 1) scans forward; (sLen - 1, m - 1, -1) scans backward.
 function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32, sOrigin: i32, nOrigin: i32, step: i32): i32 {
-  var cf: (i32, i32) = __str_critical_factorization(needle, m, nOrigin, step);
-  var crit: i32 = cf.0;
-  var period: i32 = cf.1;
-  var last: i32 = sLen - m;
-  var j: i32 = start;
+  let cf: (i32, i32) = __str_critical_factorization(needle, m, nOrigin, step);
+  let crit: i32 = cf.0;
+  let period: i32 = cf.1;
+  let last: i32 = sLen - m;
+  let j: i32 = start;
 
   if (__str_is_periodic(needle, nOrigin, crit, period, step)) {
     // Periodic needle ("abcabcabd"): the left half is a suffix of the
     // stretch one period further in, so after a failed left-half match we
     // may shift by exactly `period` and remember (`memory`) the prefix
     // length already known to match, never re-comparing it.
-    var memory: i32 = 0;
+    let memory: i32 = 0;
     while (j <= last) {
-      var i: i32 = crit;
+      let i: i32 = crit;
       if (memory > i) {
         i = memory;
       }
@@ -275,13 +275,13 @@ function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32,
 
   // Aperiodic needle: no prefix carries over between alignments, so a
   // left-half mismatch shifts by more than half the needle.
-  var shift: i32 = crit;
+  let shift: i32 = crit;
   if (m - crit > shift) {
     shift = m - crit;
   }
   shift = shift + 1;
   while (j <= last) {
-    var i: i32 = crit;
+    let i: i32 = crit;
     while (i < m && needle[nOrigin + step * i] == s[sOrigin + step * (i + j)]) {
       i = i + 1;
     }
@@ -304,9 +304,9 @@ function __str_two_way(s: string, sLen: i32, needle: string, m: i32, start: i32,
 // A scan for needles of at most four bytes, with at most four comparisons
 // per candidate. Kept separate from the general search dispatcher.
 function __str_find_short(s: string, sLen: i32, needle: string, nLen: i32, from: i32): i32 {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i <= sLen - nLen) {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < nLen && s[i + k] == needle[k]) {
       k = k + 1;
     }
@@ -333,7 +333,7 @@ function __str_find_short(s: string, sLen: i32, needle: string, nLen: i32, from:
 // `split("\n")`, and the `replace_byte` family are the overwhelmingly common
 // callers, and for them a factorization would be pure overhead.
 function __str_find_from(s: string, sLen: i32, needle: string, nLen: i32, start: i32): i32 {
-  var from: i32 = start;
+  let from: i32 = start;
   if (from < 0) {
     from = 0;
   }
@@ -368,7 +368,7 @@ function __str_find_from(s: string, sLen: i32, needle: string, nLen: i32, start:
 }
 
 pub function (s: string) contains(needle: string): boolean {
-  var nLen: i32 = needle.len();
+  let nLen: i32 = needle.len();
   if (nLen == 0) {
     return true;
   }
@@ -376,7 +376,7 @@ pub function (s: string) contains(needle: string): boolean {
 }
 
 pub function (s: string) index_of(needle: string): i32 {
-  var nLen: i32 = needle.len();
+  let nLen: i32 = needle.len();
   if (nLen == 0) {
     return 0;
   }
@@ -440,12 +440,12 @@ function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 
   }
 
   // Tier 3a — naive backward scan, metered.
-  var spent: i32 = 0;
-  var limit: i32 = sLen * __str_rfind_budget() + 16;
-  var i: i32 = sLen - nLen;
+  let spent: i32 = 0;
+  let limit: i32 = sLen * __str_rfind_budget() + 16;
+  let i: i32 = sLen - nLen;
   while (i >= 0 && spent <= limit) {
-    var k: i32 = 0;
-    var same: boolean = true;
+    let k: i32 = 0;
+    let same: boolean = true;
     while (k < nLen) {
       spent = spent + 1;
       if (s[i + k] != needle[k]) {
@@ -468,7 +468,7 @@ function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 
   // Restart from scratch under the linear algorithm; a partial result cannot
   // be carried over, because the scan above ran right-to-left and Two-Way
   // runs left-to-right over the reversal.
-  var r: i32 = __str_two_way(s, sLen, needle, nLen, 0, sLen - 1, nLen - 1, 0 - 1);
+  let r: i32 = __str_two_way(s, sLen, needle, nLen, 0, sLen - 1, nLen - 1, 0 - 1);
   if (r < 0) {
     return 0 - 1;
   }
@@ -496,7 +496,7 @@ pub function (s: string) last_index_of(needle: string): i32 {
 // returns `Some(0)` and `rfind` returns `Some(len(s))`, never
 // `None`, since an empty needle is always "found".
 pub function (s: string) find(needle: string): Option[i32] {
-  var idx: i32 = s.index_of(needle);
+  let idx: i32 = s.index_of(needle);
   if (idx < 0) {
     return None;
   }
@@ -504,7 +504,7 @@ pub function (s: string) find(needle: string): Option[i32] {
 }
 
 pub function (s: string) rfind(needle: string): Option[i32] {
-  var idx: i32 = s.last_index_of(needle);
+  let idx: i32 = s.last_index_of(needle);
   if (idx < 0) {
     return None;
   }
@@ -521,15 +521,15 @@ pub function (s: string) rfind(needle: string): Option[i32] {
 // the tail since the lossy fold is rarely what callers
 // want).
 pub function (s: string) to_ascii_capitalize(): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return "";
   }
-  var first: i32 = s[0].to_ascii_upper() as i32;
+  let first: i32 = s[0].to_ascii_upper() as i32;
   if (first == s[0] as i32) {
     return s;
   }
-  var buf: u8[] = __alloc_u8(1);
+  let buf: u8[] = __alloc_u8(1);
   buf = buf.with(0, first as u8);
   return string_from_bytes_unchecked(buf) + slice_unchecked(s, 1, n);
 }
@@ -546,9 +546,9 @@ pub function (s: string) capitalize(): string {
 // count as a single separator, empty pieces dropped. Empty
 // / all-whitespace input returns 0.
 pub function (s: string) word_count(): i32 {
-  var n: i32 = s.len();
-  var c: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let c: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     while (i < n && __is_ascii_ws(s[i] as i32)) {
       i = i + 1;
@@ -573,8 +573,8 @@ pub function (s: string) word_count(): i32 {
 // escapers' exact-size second pass so an expanding escape appends in O(len(src))
 // instead of the O(n²) `out = out + esc` that recopied the whole result each byte.
 function put_bytes(buf: u8[], pos: i32, src: string): u8[] {
-  var b: u8[] = buf;
-  var j: i32 = 0;
+  let b: u8[] = buf;
+  let j: i32 = 0;
   while (j < src.len()) {
     b = b.with(pos + j, src[j] as u8);
     j = j + 1;
@@ -583,15 +583,15 @@ function put_bytes(buf: u8[], pos: i32, src: string): u8[] {
 }
 
 pub function (s: string) escape_html(): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   // Two passes over one exact-size buffer instead of `out = out + …`, which
   // recopied the growing result each byte (O(n²) — #4379). Pass 1 sizes the
   // output (the five metacharacters expand to 4–5 bytes, everything else is
   // 1:1); pass 2 fills it.
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 38 || b == 34 || b == 39) {  // &amp; &#34; &#39;
       total = total + 5;
     } else if (b == 60 || b == 62) {  // &lt; &gt;
@@ -601,11 +601,11 @@ pub function (s: string) escape_html(): string {
     }
     i = i + 1;
   }
-  var buf: u8[] = __alloc_u8(total);
-  var pos: i32 = 0;
+  let buf: u8[] = __alloc_u8(total);
+  let pos: i32 = 0;
   i = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 38) {  // &
       buf = put_bytes(buf, pos, "&amp;");
       pos = pos + 5;
@@ -635,12 +635,12 @@ pub function (s: string) escape_html(): string {
 // Otherwise None. Useful for parsing config files / CLI
 // flags / JSON strings where quotes are optional.
 pub function (s: string) strip_quotes(): Option[string] {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n < 2) {
     return None;
   }
-  var first: i32 = s[0] as i32;
-  var last: i32 = s[n - 1] as i32;
+  let first: i32 = s[0] as i32;
+  let last: i32 = s[n - 1] as i32;
   if (first == 34 && last == 34 || first == 39 && last == 39) {
     return Some(slice_unchecked(s, 1, n - 1).to_owned());
   }
@@ -651,8 +651,8 @@ pub function (s: string) strip_quotes(): Option[string] {
 // "    hello".leading_count(32) == 4 (count of spaces).
 // Useful for indent detection / column alignment.
 pub function (s: string) leading_count(b: i32): i32 {
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n && s[i] as i32 == b) {
     i = i + 1;
   }
@@ -663,8 +663,8 @@ pub function (s: string) leading_count(b: i32): i32 {
 // "hello   ".trailing_count(32) == 3. Symmetric to
 // leading_count.
 pub function (s: string) trailing_count(b: i32): i32 {
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n && s[n - 1 - i] as i32 == b) {
     i = i + 1;
   }
@@ -683,10 +683,10 @@ pub function (s: string) hash_fnv32(): u32 {
   // FNV offset basis (decimal: 2166136261); written as
   // (-2128831035 as u32) since lang doesn't lex u32 literals
   // above i32::MAX. The cast preserves the bit pattern.
-  var h: u32 = (0 - 2128831035) as u32;
-  var prime: u32 = 16777619 as u32;
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let h: u32 = (0 - 2128831035) as u32;
+  let prime: u32 = 16777619 as u32;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n) {
     h = h ^ s[i] as u32;
     h = h * prime;
@@ -700,10 +700,10 @@ pub function (s: string) hash_fnv32(): u32 {
 // for short keys due to the differing mixing. Initial value
 // 5381; multiplier 33. Returns u32.
 pub function (s: string) hash_djb2(): u32 {
-  var h: u32 = 5381 as u32;
-  var mult: u32 = 33 as u32;
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let h: u32 = 5381 as u32;
+  let mult: u32 = 33 as u32;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n) {
     h = h * mult + s[i] as u32;
     i = i + 1;
@@ -717,14 +717,14 @@ pub function (s: string) hash_djb2(): u32 {
 // through unchanged. Standard shape for emitting source-
 // code-ready string literals.
 pub function (s: string) escape_c(): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   // Two-pass exact-size buffer (same as escape_html): the six escaped bytes
   // (\ " \n \t \r \0) each become 2 bytes, everything else passes through 1:1.
   // Replaces the O(n²) `out = out + …` accumulation (#4379).
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 92 || b == 34 || b == 10 || b == 9 || b == 13 || b == 0) {
       total = total + 2;
     } else {
@@ -732,11 +732,11 @@ pub function (s: string) escape_c(): string {
     }
     i = i + 1;
   }
-  var buf: u8[] = __alloc_u8(total);
-  var pos: i32 = 0;
+  let buf: u8[] = __alloc_u8(total);
+  let pos: i32 = 0;
   i = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 92) {
       buf = put_bytes(buf, pos, "\\\\");
       pos = pos + 2;
@@ -789,15 +789,15 @@ pub function (s: string) kebab_case(): string {
 }
 
 function __case_separator(s: string, sep_byte: i32): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   // Two-pass exact-size buffer (#4379): an internal uppercase emits sep + its
   // lowercase (2 bytes), every other byte emits 1 (a space becomes the
   // separator, anything else its lowercase). Replaces the O(n²) `out = out + …`
   // accumulation that recopied the growing result each byte.
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var b: u8 = s[i];
+    let b: u8 = s[i];
     if (b.is_ascii_upper() && i > 0) {
       total = total + 2;
     } else {
@@ -805,11 +805,11 @@ function __case_separator(s: string, sep_byte: i32): string {
     }
     i = i + 1;
   }
-  var buf: u8[] = __alloc_u8(total);
-  var pos: i32 = 0;
+  let buf: u8[] = __alloc_u8(total);
+  let pos: i32 = 0;
   i = 0;
   while (i < n) {
-    var b: u8 = s[i];
+    let b: u8 = s[i];
     if (b.is_ascii_upper() && i > 0) {
       buf = buf.with(pos, sep_byte as u8);
       pos = pos + 1;
@@ -851,31 +851,31 @@ pub function (s: string) pascal_case(): string {
 }
 
 function __case_join(s: string, upper_first: boolean): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   // Two-pass exact-size buffer (#4379): separators (`_` `-` space) are
   // dropped and every other byte emits exactly one byte, so the output
   // length is just the count of non-separator bytes.
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var b: u8 = s[i];
+    let b: u8 = s[i];
     if (b != 95 && b != 45 && b != 32) {
       total = total + 1;
     }
     i = i + 1;
   }
-  var buf: u8[] = __alloc_u8(total);
-  var pos: i32 = 0;
-  var at_word_start: boolean = true;  // start of string begins a word
-  var emitted_any: boolean = false;  // has any non-separator byte been written
+  let buf: u8[] = __alloc_u8(total);
+  let pos: i32 = 0;
+  let at_word_start: boolean = true;  // start of string begins a word
+  let emitted_any: boolean = false;  // has any non-separator byte been written
   i = 0;
   while (i < n) {
-    var b: u8 = s[i];
+    let b: u8 = s[i];
     if (b == 95 || b == 45 || b == 32) {
       at_word_start = true;
       i = i + 1;
     } else {
-      var out_b: u8 = b.to_ascii_lower();
+      let out_b: u8 = b.to_ascii_lower();
       if (at_word_start) {
         if (!emitted_any) {
           // First word's initial: PascalCase upper, camelCase lower.
@@ -908,13 +908,13 @@ function __case_join(s: string, upper_first: boolean): string {
 // letters are dropped rather than transliterated. An input with no
 // alphanumerics yields `""`.
 pub function (s: string) slugify(): string {
-  var n: i32 = s.len();
-  var out: u8[] = [];
-  var pending: boolean = false;  // a separator run is buffered
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let out: u8[] = [];
+  let pending: boolean = false;  // a separator run is buffered
+  let i: i32 = 0;
   while (i < n) {
-    var lc: i32 = s[i].to_ascii_lower() as i32;
-    var alnum: boolean = lc >= 97 && lc <= 122 || lc >= 48 && lc <= 57;
+    let lc: i32 = s[i].to_ascii_lower() as i32;
+    let alnum: boolean = lc >= 97 && lc <= 122 || lc >= 48 && lc <= 57;
     if (alnum) {
       // Emit the buffered separator only between alphanumerics, so
       // leading separators (out empty) and trailing ones (never
@@ -937,15 +937,15 @@ pub function (s: string) slugify(): string {
 // underscore, continues with letters / digits / underscores.
 // Empty string returns false.
 pub function (s: string) is_valid_identifier(): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return false;
   }
-  var first: u8 = s[0];
+  let first: u8 = s[0];
   if (!first.is_ascii_alpha() && first != 95) {
     return false;
   }
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < n) {
     if (!s[i].is_ascii_alnum() && s[i] != 95) {
       return false;
@@ -968,21 +968,21 @@ pub function (s: string) is_valid_identifier(): boolean {
 // this note blamed a since-fixed parse_int i64-comparison bug;
 // parse_int("127") returns Some(127) on every backend today.)
 pub function (s: string) is_ipv4(): boolean {
-  var parts: string[] = s.split(".");
+  let parts: string[] = s.split(".");
   if (parts.len() != 4) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 4) {
-    var p: string = parts[i];
-    var plen: i32 = p.len();
+    let p: string = parts[i];
+    let plen: i32 = p.len();
     if (plen == 0 || plen > 3) {
       return false;
     }
-    var v: i32 = 0;
-    var j: i32 = 0;
+    let v: i32 = 0;
+    let j: i32 = 0;
     while (j < plen) {
-      var b: u8 = p[j];
+      let b: u8 = p[j];
       if (!b.is_ascii_digit()) {
         return false;
       }
@@ -1006,13 +1006,13 @@ pub function (s: string) is_ipv4(): boolean {
 // Tuple fields are bound to locals before passing to `len` —
 // `len(p.0)` directly on a `(string, string)` tuple-field
 // access crashes the arm64 backend (the load folds
-// incorrectly). Binding through `var` is a safe workaround
+// incorrectly). Binding through `let` is a safe workaround
 // pending a codegen fix.
 pub function (s: string) is_email_like(): boolean {
   match (s.split_once("@")) {
     Some(p) => {
-      var lo: string = p.0;
-      var dom: string = p.1;
+      let lo: string = p.0;
+      let dom: string = p.1;
       if (lo.len() == 0) {
         return false;
       }
@@ -1033,7 +1033,7 @@ pub function (s: string) is_email_like(): boolean {
 // shape check, like `is_email_like`; defer to a real URL
 // parser when one lands.
 pub function (s: string) is_url_like(): boolean {
-  var rest: string = "";
+  let rest: string = "";
   if (s.starts_with("https://")) {
     rest = s.remove_prefix("https://");
   } else if (s.starts_with("http://")) {
@@ -1052,13 +1052,13 @@ pub function (s: string) is_url_like(): boolean {
 // JSON validator — just a fast pre-flight check before
 // attempting a parse. Empty strings return false.
 pub function (s: string) is_json_like(): boolean {
-  var t: string = s.trim();
-  var n: i32 = t.len();
+  let t: string = s.trim();
+  let n: i32 = t.len();
   if (n < 2) {
     return false;
   }
-  var first: i32 = t[0] as i32;
-  var last: i32 = t[n - 1] as i32;
+  let first: i32 = t[0] as i32;
+  let last: i32 = t[n - 1] as i32;
   if (first == 123 && last == 125) {  // { }
     return true;
   }
@@ -1072,13 +1072,13 @@ pub function (s: string) is_json_like(): boolean {
 // substring. Returns "" when the first byte differs or
 // either argument is empty.
 pub function (s: string) common_prefix(other: string): string {
-  var n: i32 = s.len();
-  var m: i32 = other.len();
-  var cap: i32 = n;
+  let n: i32 = s.len();
+  let m: i32 = other.len();
+  let cap: i32 = n;
   if (m < cap) {
     cap = m;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < cap) {
     if (s[i] != other[i]) {
       return s.take(i);
@@ -1092,13 +1092,13 @@ pub function (s: string) common_prefix(other: string): string {
 // substring. Returns "" when no overlap or either side
 // is empty.
 pub function (s: string) common_suffix(other: string): string {
-  var n: i32 = s.len();
-  var m: i32 = other.len();
-  var cap: i32 = n;
+  let n: i32 = s.len();
+  let m: i32 = other.len();
+  let cap: i32 = n;
   if (m < cap) {
     cap = m;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < cap) {
     if (s[n - 1 - i] != other[m - 1 - i]) {
       return s.drop(n - i);
@@ -1113,8 +1113,8 @@ pub function (s: string) common_suffix(other: string): string {
 // An empty-string prefix always matches (consistent with
 // `starts_with("")`).
 pub function (s: string) starts_with_any(prefixes: string[]): boolean {
-  var n: i32 = prefixes.len();
-  var i: i32 = 0;
+  let n: i32 = prefixes.len();
+  let i: i32 = 0;
   while (i < n) {
     if (s.starts_with(prefixes[i])) {
       return true;
@@ -1127,8 +1127,8 @@ pub function (s: string) starts_with_any(prefixes: string[]): boolean {
 // `s.ends_with_any(suffixes)` — true if any entry in
 // suffixes is a suffix of s. Empty suffixes array → false.
 pub function (s: string) ends_with_any(suffixes: string[]): boolean {
-  var n: i32 = suffixes.len();
-  var i: i32 = 0;
+  let n: i32 = suffixes.len();
+  let i: i32 = 0;
   while (i < n) {
     if (s.ends_with(suffixes[i])) {
       return true;
@@ -1154,7 +1154,7 @@ pub function (s: string) word_at(i: i32): Option[string] {
   if (i < 0) {
     return None;
   }
-  var words: string[] = s.fields();
+  let words: string[] = s.fields();
   if (i >= words.len()) {
     return None;
   }
@@ -1165,10 +1165,10 @@ pub function (s: string) word_at(i: i32): Option[string] {
 // delimited words at least `min_len` bytes long.
 // `min_len <= 0` counts every word.
 pub function (s: string) word_count_min(min_len: i32): i32 {
-  var words: string[] = s.fields();
-  var n: i32 = words.len();
-  var c: i32 = 0;
-  var i: i32 = 0;
+  let words: string[] = s.fields();
+  let n: i32 = words.len();
+  let c: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (words[i].len() >= min_len) {
       c = c + 1;
@@ -1182,13 +1182,13 @@ pub function (s: string) word_count_min(min_len: i32): i32 {
 // whitespace-delimited word. Ties go to the first
 // occurrence. Empty / all-whitespace input → None.
 pub function (s: string) longest_word(): Option[string] {
-  var words: string[] = s.fields();
-  var n: i32 = words.len();
+  let words: string[] = s.fields();
+  let n: i32 = words.len();
   if (n == 0) {
     return None;
   }
-  var best: string = words[0];
-  var i: i32 = 1;
+  let best: string = words[0];
+  let i: i32 = 1;
   while (i < n) {
     if (words[i].len() > best.len()) {
       best = words[i];
@@ -1205,12 +1205,12 @@ pub function (s: string) longest_word(): Option[string] {
 // strings return false (need at least an opening and
 // closing quote).
 pub function (s: string) is_quoted(): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n < 2) {
     return false;
   }
-  var first: i32 = s[0] as i32;
-  var last: i32 = s[n - 1] as i32;
+  let first: i32 = s[0] as i32;
+  let last: i32 = s[n - 1] as i32;
   if (first != last) {
     return false;
   }
@@ -1225,17 +1225,17 @@ pub function (s: string) is_quoted(): boolean {
 // hyphen, and no consecutive hyphens. Matches the
 // "url-slug" shape kebab-case usually denotes.
 pub function (s: string) is_kebab_case(): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return false;
   }
   if (s[0] == 45 || s[n - 1] == 45) {  // leading/trailing -
     return false;
   }
-  var i: i32 = 0;
-  var prev_hyphen: boolean = false;
+  let i: i32 = 0;
+  let prev_hyphen: boolean = false;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 45) {
       if (prev_hyphen) {
         return false;
@@ -1255,17 +1255,17 @@ pub function (s: string) is_kebab_case(): boolean {
 // lowercase / digit / underscore only, no leading or
 // trailing underscore, and no consecutive underscores.
 pub function (s: string) is_snake_case(): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return false;
   }
   if (s[0] == 95 || s[n - 1] == 95) {  // leading/trailing _
     return false;
   }
-  var i: i32 = 0;
-  var prev_under: boolean = false;
+  let i: i32 = 0;
+  let prev_under: boolean = false;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 95) {
       if (prev_under) {
         return false;
@@ -1298,11 +1298,11 @@ pub function (s: string) is_pascal_case(): boolean {
 }
 
 function __is_medial_caps(s: string, upper_first: boolean): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return false;
   }
-  var f: i32 = s[0] as i32;
+  let f: i32 = s[0] as i32;
   if (upper_first) {
     if (!(f >= 65 && f <= 90)) {  // PascalCase starts A-Z
       return false;
@@ -1312,10 +1312,10 @@ function __is_medial_caps(s: string, upper_first: boolean): boolean {
       return false;
     }
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
-    var ok: boolean = b >= 97 && b <= 122 || b >= 65 && b <= 90 || b >= 48 && b <= 57;
+    let b: i32 = s[i] as i32;
+    let ok: boolean = b >= 97 && b <= 122 || b >= 65 && b <= 90 || b >= 48 && b <= 57;
     if (!ok) {  // letters and digits only — no separators
       return false;
     }
@@ -1330,11 +1330,11 @@ function __is_medial_caps(s: string, upper_first: boolean): boolean {
 // don't rely on it for security.
 // The result is owned bytes; validate with utf8.from_bytes to obtain text.
 pub function (s: string) shift_byte(delta: i32): u8[] {
-  var n: i32 = s.len();
-  var buf: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let buf: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32 + delta;
+    let b: i32 = s[i] as i32 + delta;
     // Normalise into 0..255 with two mods (handles
     // negative deltas correctly — `(-1) % 256 == -1`
     // in i32, hence the second add).
@@ -1350,10 +1350,10 @@ pub function (s: string) shift_byte(delta: i32): u8[] {
 // retained units keep their original bytes, without lossy replacement.
 // Plain i32/string -> boolean, without closures, for the self-host surface.
 function __char_in_set(cp: i32, set: string): boolean {
-  var j: i32 = 0;
-  var setLen: i32 = set.len();
+  let j: i32 = 0;
+  let setLen: i32 = set.len();
   while (j < setLen) {
-    var step: i32 = __utf8_step(set, j, setLen);
+    let step: i32 = __utf8_step(set, j, setLen);
     if (__utf8_decode_at(set, j, step) == cp) {
       return true;
     }
@@ -1366,20 +1366,20 @@ function __char_in_set(cp: i32, set: string): boolean {
 // Empty set leaves s unchanged; retained characters keep their original bytes.
 // Ill-formed maximal subparts compare as U+FFFD; this does not validate s.
 pub function (s: string) without_chars(set: string): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return s;
   }
   if (set.len() == 0) {
     return s;
   }
-  var buf: u8[] = __alloc_u8(n);
-  var pos: i32 = 0;
-  var i: i32 = 0;
+  let buf: u8[] = __alloc_u8(n);
+  let pos: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var step: i32 = __utf8_step(s, i, n);
+    let step: i32 = __utf8_step(s, i, n);
     if (!__char_in_set(__utf8_decode_at(s, i, step), set)) {
-      var b: i32 = 0;
+      let b: i32 = 0;
       while (b < step) {
         buf = buf.with(pos, s[i + b]);
         pos = pos + 1;
@@ -1388,8 +1388,8 @@ pub function (s: string) without_chars(set: string): string {
     }
     i = i + step;
   }
-  var out: u8[] = __alloc_u8(pos);
-  var k: i32 = 0;
+  let out: u8[] = __alloc_u8(pos);
+  let k: i32 = 0;
   while (k < pos) {
     out = out.with(k, buf[k]);
     k = k + 1;
@@ -1401,16 +1401,16 @@ pub function (s: string) without_chars(set: string): string {
 // Empty s returns true, including when set is empty.
 // Ill-formed maximal subparts in either input compare as U+FFFD.
 pub function (s: string) contains_only(set: string): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return true;
   }
   if (set.len() == 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var step: i32 = __utf8_step(s, i, n);
+    let step: i32 = __utf8_step(s, i, n);
     if (!__char_in_set(__utf8_decode_at(s, i, step), set)) {
       return false;
     }
@@ -1423,14 +1423,14 @@ pub function (s: string) contains_only(set: string): boolean {
 // Repeated characters in set do not count a character more than once.
 // Each ill-formed maximal subpart in either input compares as U+FFFD.
 pub function (s: string) count_chars_in(set: string): i32 {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0 || set.len() == 0) {
     return 0;
   }
-  var c: i32 = 0;
-  var i: i32 = 0;
+  let c: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var step: i32 = __utf8_step(s, i, n);
+    let step: i32 = __utf8_step(s, i, n);
     if (__char_in_set(__utf8_decode_at(s, i, step), set)) {
       c = c + 1;
     }
@@ -1446,19 +1446,19 @@ pub function (s: string) count_chars_in(set: string): i32 {
 // Negative i clamps to 0; i >= len(s) puts everything in the
 // first part. Returns a (string, string) tuple.
 pub function (s: string) split_at(i: i32): (string, string) {
-  var n: i32 = s.len();
-  var k: i32 = __floor_boundary(s, i);
+  let n: i32 = s.len();
+  let k: i32 = __floor_boundary(s, i);
   return (slice_unchecked(s, 0, k).to_owned(), slice_unchecked(s, k, n).to_owned());
 }
 
 // `s.replace_byte(from, to)` returns owned bytes with each byte equal to
 // from replaced by to (converted to u8). Use replace(old, new) for text.
 pub function (s: string) replace_byte(from: i32, to: i32): u8[] {
-  var n: i32 = s.len();
-  var buf: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let buf: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == from) {
       buf = buf.with(i, to as u8);
     } else {
@@ -1474,14 +1474,14 @@ pub function (s: string) replace_byte(from: i32, to: i32): u8[] {
 // world" → "HW". Empty / all-whitespace input → "".
 // ASCII upper-fold only.
 pub function (s: string) to_acronym(): string {
-  var toks: string[] = s.fields();
-  var n: i32 = toks.len();
-  var out: string = "";
-  var i: i32 = 0;
+  let toks: string[] = s.fields();
+  let n: i32 = toks.len();
+  let out: string = "";
+  let i: i32 = 0;
   while (i < n) {
-    var t: string = toks[i];
+    let t: string = toks[i];
     if (t.len() > 0) {
-      var b: u8 = t[0];
+      let b: u8 = t[0];
       out = out + b.to_ascii_upper().to_ascii_string();
     }
     i = i + 1;
@@ -1497,15 +1497,15 @@ pub function (s: string) to_acronym(): string {
 // `title_case` is the Unicode version, and it also breaks on
 // tabs and newlines rather than the space byte alone.
 pub function (s: string) to_ascii_title_case(): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return s;
   }
-  var buf: u8[] = __alloc_u8(n);
-  var prev_space: boolean = true;
-  var i: i32 = 0;
+  let buf: u8[] = __alloc_u8(n);
+  let prev_space: boolean = true;
+  let i: i32 = 0;
   while (i < n) {
-    var b: u8 = s[i];
+    let b: u8 = s[i];
     if (prev_space) {
       buf = buf.with(i, b.to_ascii_upper());
     } else {
@@ -1531,10 +1531,10 @@ pub function (s: string) title_case(): string {
 // entries. Useful for parsing text that uses blank lines
 // as separators where you don't care about them.
 pub function (s: string) lines_non_empty(): string[] {
-  var raw: string[] = s.lines();
-  var n: i32 = raw.len();
-  var out: string[] = [];
-  var i: i32 = 0;
+  let raw: string[] = s.lines();
+  let n: i32 = raw.len();
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < n) {
     if (raw[i].len() != 0) {
       out = out.append(raw[i]);
@@ -1566,8 +1566,8 @@ pub function (s: string) lines_non_empty(): string[] {
 // it no longer disambiguates from the byte-receiver methods,
 // which carry `ascii` in their names since #5629.
 pub function (s: string) is_ascii_only(): boolean {
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n) {
     if (s[i] > 127) {
       return false;
@@ -1578,11 +1578,11 @@ pub function (s: string) is_ascii_only(): boolean {
 }
 
 pub function (s: string) is_ascii_numeric(): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (!s[i].is_ascii_digit()) {
       return false;
@@ -1597,11 +1597,11 @@ pub function (s: string) is_numeric(): boolean {
 }
 
 pub function (s: string) is_ascii_alpha_only(): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (!s[i].is_ascii_alpha()) {
       return false;
@@ -1616,11 +1616,11 @@ pub function (s: string) is_alpha_only(): boolean {
 }
 
 pub function (s: string) is_ascii_alnum_only(): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (!s[i].is_ascii_alnum()) {
       return false;
@@ -1639,11 +1639,11 @@ pub function (s: string) is_alnum_only(): boolean {
 // Doesn't check for i32 overflow — `s.parse_int()` is the
 // validating + parsing form.
 pub function (s: string) is_int(): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   if (s[0] == 45 || s[0] == 43) {
     i = 1;
   }
@@ -1665,18 +1665,18 @@ pub function (s: string) is_int(): boolean {
 // also accepted (5 → true). Used as a quick "looks numeric"
 // check before invoking parse_float.
 pub function (s: string) is_float(): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   if (s[0] == 45 || s[0] == 43) {
     i = 1;
   }
   if (i >= n) {
     return false;
   }
-  var any_digits: boolean = false;
+  let any_digits: boolean = false;
   while (i < n && s[i].is_ascii_digit()) {
     any_digits = true;
     i = i + 1;
@@ -1704,8 +1704,8 @@ pub function (s: string) wrap(prefix: string, suffix: string): string {
 // of pure tabs / spaces / newlines. Useful for "skip blank
 // lines" passes.
 pub function (s: string) is_blank(): boolean {
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n) {
     if (!__is_ascii_ws(s[i] as i32)) {
       return false;
@@ -1720,11 +1720,11 @@ pub function (s: string) is_blank(): boolean {
 // is_numeric / is_alpha_only conventions). Useful for
 // validating user-supplied hex hashes / hex-color values.
 pub function (s: string) is_hex_string(): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (!s[i].is_ascii_hex_digit()) {
       return false;
@@ -1742,24 +1742,24 @@ pub function (s: string) is_hex_string(): boolean {
 // line and after each '\n', which matches the bytewise
 // model.
 pub function (s: string) indent(prefix: string): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return "";
   }
-  var pl: i32 = prefix.len();
+  let pl: i32 = prefix.len();
   // Two-pass exact-size buffer (#4379): the output is the input plus one prefix
   // at the start and after every NON-final newline. Replaces the O(n²)
   // `out = out + …` that recopied the growing result each byte.
-  var nl: i32 = 0;
-  var i: i32 = 0;
+  let nl: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (s[i] == 10 && i + 1 < n) {
       nl = nl + 1;
     }
     i = i + 1;
   }
-  var buf: u8[] = __alloc_u8(pl * (1 + nl) + n);
-  var pos: i32 = 0;
+  let buf: u8[] = __alloc_u8(pl * (1 + nl) + n);
+  let pos: i32 = 0;
   buf = put_bytes(buf, pos, prefix);
   pos = pos + pl;
   i = 0;
@@ -1784,25 +1784,25 @@ pub function (s: string) indent(prefix: string): string {
 // indented with a tab and one indented with spaces share no prefix (as
 // in Python). Lines are split on `\n`.
 pub function (s: string) dedent(): string {
-  var lines: string[] = s.split("\n");
+  let lines: string[] = s.split("\n");
   // First pass: the common leading-whitespace prefix over non-blank lines.
-  var common: string = "";
-  var have_common: boolean = false;
-  var i: i32 = 0;
+  let common: string = "";
+  let have_common: boolean = false;
+  let i: i32 = 0;
   while (i < lines.len()) {
-    var line: string = lines[i];
-    var ws: i32 = 0;
+    let line: string = lines[i];
+    let ws: i32 = 0;
     while (ws < line.len() && (line[ws] == 32 || line[ws] == 9)) {
       ws = ws + 1;
     }
     if (ws < line.len()) {  // has non-whitespace content
-      var lead: string = slice_unchecked(line, 0, ws) + "";
+      let lead: string = slice_unchecked(line, 0, ws) + "";
       if (!have_common) {
         common = lead;
         have_common = true;
       } else {
-        var k: i32 = 0;
-        var maxk: i32 = common.len();
+        let k: i32 = 0;
+        let maxk: i32 = common.len();
         if (lead.len() < maxk) {
           maxk = lead.len();
         }
@@ -1815,12 +1815,12 @@ pub function (s: string) dedent(): string {
     i = i + 1;
   }
   // Second pass: strip `common` from each line; blank lines → "".
-  var clen: i32 = common.len();
-  var out: string[] = [];
-  var j: i32 = 0;
+  let clen: i32 = common.len();
+  let out: string[] = [];
+  let j: i32 = 0;
   while (j < lines.len()) {
-    var ln: string = lines[j];
-    var wsj: i32 = 0;
+    let ln: string = lines[j];
+    let wsj: i32 = 0;
     while (wsj < ln.len() && (ln[wsj] == 32 || ln[wsj] == 9)) {
       wsj = wsj + 1;
     }
@@ -1852,9 +1852,9 @@ pub function (s: string) to_owned(): string {
 }
 
 pub function (s: string) trim(): string {
-  var n: i32 = s.len();
-  var low: i32 = 0;
-  var high: i32 = n;
+  let n: i32 = s.len();
+  let low: i32 = 0;
+  let high: i32 = n;
   while (low < high) {
     if (!__is_ascii_ws(s[low] as i32)) {
       break;
@@ -1875,8 +1875,8 @@ pub function (s: string) trim(): string {
 // are the asymmetric variants useful for trimming a
 // prompt prefix without eating trailing data, or vice versa.
 pub function (s: string) trim_start(): string {
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n && __is_ascii_ws(s[i] as i32)) {
     i = i + 1;
   }
@@ -1884,8 +1884,8 @@ pub function (s: string) trim_start(): string {
 }
 
 pub function (s: string) trim_end(): string {
-  var n: i32 = s.len();
-  var end: i32 = n;
+  let n: i32 = s.len();
+  let end: i32 = n;
   while (end > 0 && __is_ascii_ws(s[end - 1] as i32)) {
     end = end - 1;
   }
@@ -1897,7 +1897,7 @@ pub function (s: string) trim_end(): string {
 // runs of multiple newlines are preserved beyond the first
 // strip. Use trim_end for full whitespace strip.
 pub function (s: string) rstrip_newline(): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return s;
   }
@@ -1914,21 +1914,21 @@ pub function (s: string) rstrip_newline(): string {
 // ends. Empty chars is a no-op. Combining marks are separate scalars.
 // Ill-formed maximal subparts compare as U+FFFD; retained bytes are unchanged.
 pub function (s: string) trim_chars(chars: string): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (chars.len() == 0) {
     return s;
   }
-  var low: i32 = 0;
-  var high: i32 = n;
+  let low: i32 = 0;
+  let high: i32 = n;
   while (low < high) {
-    var step: i32 = __utf8_step(s, low, n);
+    let step: i32 = __utf8_step(s, low, n);
     if (!__char_in_set(__utf8_decode_at(s, low, step), chars)) {
       break;
     }
     low = low + step;
   }
   while (high > low) {
-    var start: i32 = __utf8_prev_unit(s, high);
+    let start: i32 = __utf8_prev_unit(s, high);
     if (!__char_in_set(__utf8_decode_at(s, start, high - start), chars)) {
       break;
     }
@@ -1942,13 +1942,13 @@ pub function (s: string) trim_chars(chars: string): string {
 // from the start / end only.
 // Ill-formed maximal subparts compare as U+FFFD; retained bytes are unchanged.
 pub function (s: string) trim_start_chars(chars: string): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (chars.len() == 0) {
     return s;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var step: i32 = __utf8_step(s, i, n);
+    let step: i32 = __utf8_step(s, i, n);
     if (!__char_in_set(__utf8_decode_at(s, i, step), chars)) {
       break;
     }
@@ -1959,13 +1959,13 @@ pub function (s: string) trim_start_chars(chars: string): string {
 
 // As trim_start_chars, using the same maximal-subpart units from the end.
 pub function (s: string) trim_end_chars(chars: string): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (chars.len() == 0) {
     return s;
   }
-  var end: i32 = n;
+  let end: i32 = n;
   while (end > 0) {
-    var start: i32 = __utf8_prev_unit(s, end);
+    let start: i32 = __utf8_prev_unit(s, end);
     if (!__char_in_set(__utf8_decode_at(s, start, end - start), chars)) {
       break;
     }
@@ -1978,12 +1978,12 @@ pub function (s: string) trim_end_chars(chars: string): string {
 // ASCII case-insensitive variants of starts_with / ends_with.
 // Folds A-Z to a-z per byte.
 pub function (s: string) starts_with_ci(prefix: string): boolean {
-  var sLen: i32 = s.len();
-  var pLen: i32 = prefix.len();
+  let sLen: i32 = s.len();
+  let pLen: i32 = prefix.len();
   if (pLen > sLen) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < pLen) {
     if (s[i].to_ascii_lower() != prefix[i].to_ascii_lower()) {
       return false;
@@ -1994,13 +1994,13 @@ pub function (s: string) starts_with_ci(prefix: string): boolean {
 }
 
 pub function (s: string) ends_with_ci(suffix: string): boolean {
-  var sLen: i32 = s.len();
-  var uLen: i32 = suffix.len();
+  let sLen: i32 = s.len();
+  let uLen: i32 = suffix.len();
   if (uLen > sLen) {
     return false;
   }
-  var off: i32 = sLen - uLen;
-  var i: i32 = 0;
+  let off: i32 = sLen - uLen;
+  let i: i32 = 0;
   while (i < uLen) {
     if (s[off + i].to_ascii_lower() != suffix[i].to_ascii_lower()) {
       return false;
@@ -2014,13 +2014,13 @@ pub function (s: string) ends_with_ci(suffix: string): boolean {
 // independently owned. Use `s.as_bytes()` (slice form) when
 // you don't need ownership; that's the zero-copy companion.
 pub function (s: string) bytes(): u8[] {
-  var n: i32 = s.len();
-  var out: u8[] = __alloc_u8(n);
-  var data: usize = __str_bytes(s, 0 as usize);
+  let n: i32 = s.len();
+  let out: u8[] = __alloc_u8(n);
+  let data: usize = __str_bytes(s, 0 as usize);
   if (data == 0 as usize) {
     // Inline strings have no stable address. Copy their bytes directly;
     // the backend decides which values use inline storage.
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
       out = out.with(i, s[i]);
       i = i + 1;
@@ -2040,11 +2040,11 @@ pub function (s: string) bytes(): u8[] {
 // always fall outside the [srcBase, srcBase+26) check, so
 // UTF-8 multibyte sequences pass through unchanged.
 function __string_case_fold(s: string, srcBase: i32, dstBase: i32): string {
-  var n: i32 = s.len();
-  var buf: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let buf: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b >= srcBase && b < srcBase + 26) {
       b = b + (dstBase - srcBase);
     }
@@ -2120,11 +2120,11 @@ pub function (s: string) to_upper(): string {
 // version. Its own inverse:
 // `s.to_ascii_swap_case().to_ascii_swap_case() == s`.
 pub function (s: string) to_ascii_swap_case(): string {
-  var n: i32 = s.len();
-  var buf: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let buf: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b >= 65 && b <= 90) {  // A-Z → a-z
       b = b + 32;
     } else if (b >= 97 && b <= 122) {  // a-z → A-Z
@@ -2158,14 +2158,14 @@ pub function (s: string) swap_case(): string {
 // to_array — is materialised with `+ ""`: a bare slice is a view of `s`,
 // and the array holding it outlives `s`.
 pub function (s: string) split(sep: string): string[] {
-  var n: i32 = s.len();
-  var sepLen: i32 = sep.len();
-  var out: string[] = [];
+  let n: i32 = s.len();
+  let sepLen: i32 = sep.len();
+  let out: string[] = [];
   if (sepLen == 0) {
     return __split_scalars(s);
   }
-  var start: i32 = 0;
-  var hit: i32 = __str_find_from(s, n, sep, sepLen, start);
+  let start: i32 = 0;
+  let hit: i32 = __str_find_from(s, n, sep, sepLen, start);
   while (hit >= 0) {
     out = out.append(slice_unchecked(s, start, hit) + "");
     start = hit + sepLen;
@@ -2180,9 +2180,9 @@ pub function (s: string) split(sep: string): string[] {
 // `str::rsplit`; for a symmetric separator it is `split` reversed. Pairs
 // with `rsplit_once` (the first split from the end) already in this module.
 pub function (s: string) rsplit(sep: string): string[] {
-  var fwd: string[] = s.split(sep);
-  var out: string[] = [];
-  var i: i32 = fwd.len() - 1;
+  let fwd: string[] = s.split(sep);
+  let out: string[] = [];
+  let i: i32 = fwd.len() - 1;
   while (i >= 0) {
     out = out.append(fwd[i]);
     i = i - 1;
@@ -2196,30 +2196,30 @@ pub function (s: string) rsplit(sep: string): string[] {
 // Useful for "first token, rest" parsing — HTTP request
 // lines, URL scheme separation, header `key: value`.
 pub function (s: string) splitn(sep: string, n: i32): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   if (n <= 0) {
     return out;
   }
   if (n == 1) {
     return out.append(s);
   }
-  var sepLen: i32 = sep.len();
+  let sepLen: i32 = sep.len();
   // Hoist sLen / i / start to function scope — wasm rejects
   // sibling-scope duplicate locals. `i` belongs to the empty-sep
   // branch, `start` to the separator scan.
-  var sLen: i32 = s.len();
-  var i: i32 = 0;
-  var start: i32 = 0;
+  let sLen: i32 = s.len();
+  let i: i32 = 0;
+  let start: i32 = 0;
   if (sepLen == 0) {
     // Match split's empty-sep behaviour: one piece per codepoint.
     while (i < sLen && out.len() < n - 1) {
-      var step: i32 = __utf8_step(s, i, sLen);
+      let step: i32 = __utf8_step(s, i, sLen);
       out = out.append(slice_unchecked(s, i, i + step) + "");
       i = i + step;
     }
     return out.append(slice_unchecked(s, i, sLen) + "");
   }
-  var hit: i32 = __str_find_from(s, sLen, sep, sepLen, start);
+  let hit: i32 = __str_find_from(s, sLen, sep, sepLen, start);
   while (hit >= 0 && out.len() < n - 1) {
     out = out.append(slice_unchecked(s, start, hit) + "");
     start = hit + sepLen;
@@ -2236,15 +2236,15 @@ pub function (s: string) splitn(sep: string, n: i32): string[] {
 // and everything before it" parsing (a filename's extension, the final path
 // segment).
 pub function (s: string) rsplitn(sep: string, n: i32): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   if (n <= 0) {
     return out;
   }
-  var fwd: string[] = s.split(sep);
-  var k: i32 = fwd.len();
+  let fwd: string[] = s.split(sep);
+  let k: i32 = fwd.len();
   // Fewer pieces than the cap: nothing to keep unsplit, so it is `rsplit`.
   if (k <= n) {
-    var a: i32 = k - 1;
+    let a: i32 = k - 1;
     while (a >= 0) {
       out = out.append(fwd[a]);
       a = a - 1;
@@ -2252,13 +2252,13 @@ pub function (s: string) rsplitn(sep: string, n: i32): string[] {
     return out;
   }
   // Emit the last n-1 pieces (reversed), then join the remaining head.
-  var i: i32 = k - 1;
+  let i: i32 = k - 1;
   while (i >= k - (n - 1)) {
     out = out.append(fwd[i]);
     i = i - 1;
   }
-  var head: string = fwd[0];
-  var j: i32 = 1;
+  let head: string = fwd[0];
+  let j: i32 = 1;
   while (j <= i) {
     head = head + sep + fwd[j];
     j = j + 1;
@@ -2277,7 +2277,7 @@ pub function (s: string) first(): Option[i32] {
 }
 
 pub function (s: string) last(): Option[i32] {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return None;
   }
@@ -2289,8 +2289,8 @@ pub function (s: string) last(): Option[i32] {
 // The probe (`byte < 128 || byte >= 192`) is inlined because
 // std/utf8 imports this module.
 function __floor_boundary(s: string, i: i32): i32 {
-  var n: i32 = s.len();
-  var k: i32 = i;
+  let n: i32 = s.len();
+  let k: i32 = i;
   if (k < 0) {
     k = 0;
   }
@@ -2298,7 +2298,7 @@ function __floor_boundary(s: string, i: i32): i32 {
     k = n;
   }
   while (k > 0 && k < n) {
-    var c: i32 = s[k] as i32;
+    let c: i32 = s[k] as i32;
     if (c < 128 || c >= 192) {
       break;
     }
@@ -2308,8 +2308,8 @@ function __floor_boundary(s: string, i: i32): i32 {
 }
 
 function __ceil_boundary(s: string, i: i32): i32 {
-  var n: i32 = s.len();
-  var k: i32 = i;
+  let n: i32 = s.len();
+  let k: i32 = i;
   if (k < 0) {
     k = 0;
   }
@@ -2317,7 +2317,7 @@ function __ceil_boundary(s: string, i: i32): i32 {
     k = n;
   }
   while (k < n) {
-    var c: i32 = s[k] as i32;
+    let c: i32 = s[k] as i32;
     if (c < 128 || c >= 192) {
       break;
     }
@@ -2337,7 +2337,7 @@ pub function (s: string) take(n: i32): string {
   if (n <= 0) {
     return "";
   }
-  var sLen: i32 = s.len();
+  let sLen: i32 = s.len();
   if (n >= sLen) {
     return s;
   }
@@ -2348,7 +2348,7 @@ pub function (s: string) drop(n: i32): string {
   if (n <= 0) {
     return s;
   }
-  var sLen: i32 = s.len();
+  let sLen: i32 = s.len();
   if (n >= sLen) {
     return "";
   }
@@ -2363,8 +2363,8 @@ pub function (s: string) drop(n: i32): string {
 // indices already sit on boundaries — hence on all ASCII input.
 // An inverted or snapped-empty range returns "".
 pub function (s: string) slice_snap(a: i32, b: i32): string {
-  var lo: i32 = __ceil_boundary(s, a);
-  var hi: i32 = __floor_boundary(s, b);
+  let lo: i32 = __ceil_boundary(s, a);
+  let hi: i32 = __floor_boundary(s, b);
   if (lo >= hi) {
     return "";
   }
@@ -2381,17 +2381,17 @@ pub function (s: string) slice_snap(a: i32, b: i32): string {
 // just s (or empty if s is empty). Useful for base64
 // line-wrapping, hex-dump formatting, paged output.
 pub function (s: string) chunks(size: i32): string[] {
-  var sLen: i32 = s.len();
-  var out: string[] = [];
+  let sLen: i32 = s.len();
+  let out: string[] = [];
   if (sLen == 0) {
     return out;
   }
   if (size <= 0) {
     return out.append(s);
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < sLen) {
-    var end: i32 = i + size;
+    let end: i32 = i + size;
     if (end > sLen) {
       end = sLen;
     } else {
@@ -2422,16 +2422,16 @@ pub function (s: string) chunks(size: i32): string[] {
 // substring slicing rather than the per-byte `s[i:i+1] == "\n"`
 // pattern, so the inner loop allocates nothing.
 pub function (s: string) lines(): string[] {
-  var n: i32 = s.len();
-  var out: string[] = [];
+  let n: i32 = s.len();
+  let out: string[] = [];
   if (n == 0) {
     return out;
   }
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (s[i] == 10) {
-      var end: i32 = i;
+      let end: i32 = i;
       if (end > start) {
         if (s[end - 1] == 13) {
           end = end - 1;
@@ -2448,7 +2448,7 @@ pub function (s: string) lines(): string[] {
   // start == n means the input ended with '\n' and we DON'T
   // want a phantom empty line.
   if (start < n) {
-    var endTail: i32 = n;
+    let endTail: i32 = n;
     if (endTail > start) {
       if (s[endTail - 1] == 13) {
         endTail = endTail - 1;
@@ -2470,9 +2470,9 @@ pub function (s: string) lines(): string[] {
 // Matches Go strings.Fields, Roc Str.split (whitespace
 // flavour), Python str.split() (no-arg).
 pub function (s: string) fields(): string[] {
-  var n: i32 = s.len();
-  var out: string[] = [];
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < n) {
     while (i < n && __is_ascii_ws(s[i] as i32)) {
       i = i + 1;
@@ -2480,7 +2480,7 @@ pub function (s: string) fields(): string[] {
     if (i >= n) {
       break;
     }
-    var start: i32 = i;
+    let start: i32 = i;
     while (i < n && !__is_ascii_ws(s[i] as i32)) {
       i = i + 1;
     }
@@ -2516,14 +2516,14 @@ pub function (s: string) eq_ignore_case(other: string): boolean {
 // strictly ASCII per RFC 7230. Unlike `eq_ignore_case`, this
 // never allocates and never consults a table.
 pub function (s: string) eq_ignore_ascii_case(other: string): boolean {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n != other.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var a: i32 = s[i] as i32;
-    var b: i32 = other[i] as i32;
+    let a: i32 = s[i] as i32;
+    let b: i32 = other[i] as i32;
     // Fold A-Z (65..90) into a-z (97..122) by setting bit 5.
     if (a >= 65 && a <= 90) {
       a = a + 32;
@@ -2557,7 +2557,7 @@ pub function (s: string) strip_suffix(suffix: string): Option[string] {
   if (!s.ends_with(suffix)) {
     return None;
   }
-  var k: i32 = s.len() - suffix.len();
+  let k: i32 = s.len() - suffix.len();
   return Some(slice_unchecked(s, 0, k).to_owned());
 }
 
@@ -2577,7 +2577,7 @@ pub function (s: string) remove_suffix(suffix: string): string {
   if (!s.ends_with(suffix)) {
     return s;
   }
-  var k: i32 = s.len() - suffix.len();
+  let k: i32 = s.len() - suffix.len();
   return slice_unchecked(s, 0, k) + "";
 }
 
@@ -2589,7 +2589,7 @@ pub function (s: string) is_uuid(): boolean {
   if (s.len() != 36) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < 36) {
     if (i == 8 || i == 13 || i == 18 || i == 23) {
       if (s[i] != 45) {  // '-'
@@ -2638,13 +2638,13 @@ function __fill_lead_len(b: i32): i32 {
 // Single-byte fills, which is every caller in this repo, are
 // unchanged: the character length is 1 and `need` is filled exactly.
 function __fill_bytes(ch: string, need: i32): u8[] {
-  var clen: i32 = __fill_lead_len(ch[0] as i32);
+  let clen: i32 = __fill_lead_len(ch[0] as i32);
   if (clen > ch.len()) {
     clen = ch.len();
   }
-  var total: i32 = need / clen * clen;
-  var buf: u8[] = __alloc_u8(total);
-  var i: i32 = 0;
+  let total: i32 = need / clen * clen;
+  let buf: u8[] = __alloc_u8(total);
+  let i: i32 = 0;
   while (i < total) {
     buf = buf.with(i, ch[i % clen]);
     i = i + 1;
@@ -2663,7 +2663,7 @@ function __fill_bytes(ch: string, need: i32): u8[] {
 // remainder unfilled rather than splitting a character — see
 // __fill_bytes. Empty `ch` degenerates to no padding.
 pub function (s: string) pad_start(n: i32, ch: string): string {
-  var sl: i32 = s.len();
+  let sl: i32 = s.len();
   if (sl >= n) {
     return s;
   }
@@ -2673,15 +2673,15 @@ pub function (s: string) pad_start(n: i32, ch: string): string {
   // Result is exactly n bytes; fill one buffer (O(n)) instead of the
   // `pad = pad + ch[0:1]` loop, which recopied the growing pad each
   // step (O(need²) — the #4379 hot path). `need` fill bytes, then s.
-  var fill: u8[] = __fill_bytes(ch, n - sl);
-  var fl: i32 = fill.len();
-  var buf: u8[] = __alloc_u8(fl + sl);
-  var i: i32 = 0;
+  let fill: u8[] = __fill_bytes(ch, n - sl);
+  let fl: i32 = fill.len();
+  let buf: u8[] = __alloc_u8(fl + sl);
+  let i: i32 = 0;
   while (i < fl) {
     buf = buf.with(i, fill[i]);
     i = i + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < sl) {
     buf = buf.with(fl + j, s[j] as u8);
     j = j + 1;
@@ -2690,7 +2690,7 @@ pub function (s: string) pad_start(n: i32, ch: string): string {
 }
 
 pub function (s: string) pad_end(n: i32, ch: string): string {
-  var sl: i32 = s.len();
+  let sl: i32 = s.len();
   if (sl >= n) {
     return s;
   }
@@ -2699,15 +2699,15 @@ pub function (s: string) pad_end(n: i32, ch: string): string {
   }
   // Result is exactly n bytes; fill one buffer (O(n)). s, then `need`
   // fill bytes.
-  var fill: u8[] = __fill_bytes(ch, n - sl);
-  var fl: i32 = fill.len();
-  var buf: u8[] = __alloc_u8(sl + fl);
-  var j: i32 = 0;
+  let fill: u8[] = __fill_bytes(ch, n - sl);
+  let fl: i32 = fill.len();
+  let buf: u8[] = __alloc_u8(sl + fl);
+  let j: i32 = 0;
   while (j < sl) {
     buf = buf.with(j, s[j] as u8);
     j = j + 1;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fl) {
     buf = buf.with(sl + i, fill[i]);
     i = i + 1;
@@ -2722,27 +2722,27 @@ pub function (s: string) pad_end(n: i32, ch: string): string {
 // counts toward `width` (Python's `str.zfill`). The formatting shape for
 // fixed-width signed numbers — ledgers, zero-padded ids, timestamps.
 pub function (s: string) zfill(width: i32): string {
-  var sl: i32 = s.len();
+  let sl: i32 = s.len();
   if (sl >= width) {
     return s;
   }
-  var has_sign: boolean = sl > 0 && (s[0] == 45 || s[0] == 43);  // '-' or '+'
-  var need: i32 = width - sl;
-  var buf: u8[] = __alloc_u8(width);
-  var pos: i32 = 0;
-  var body_start: i32 = 0;
+  let has_sign: boolean = sl > 0 && (s[0] == 45 || s[0] == 43);  // '-' or '+'
+  let need: i32 = width - sl;
+  let buf: u8[] = __alloc_u8(width);
+  let pos: i32 = 0;
+  let body_start: i32 = 0;
   if (has_sign) {
     buf = buf.with(0, s[0] as u8);
     pos = 1;
     body_start = 1;
   }
-  var z: i32 = 0;
+  let z: i32 = 0;
   while (z < need) {  // '0'
     buf = buf.with(pos, 48 as u8);
     pos = pos + 1;
     z = z + 1;
   }
-  var j: i32 = body_start;
+  let j: i32 = body_start;
   while (j < sl) {
     buf = buf.with(pos, s[j] as u8);
     pos = pos + 1;
@@ -2760,9 +2760,9 @@ pub function (s: string) split_once(sep: string): Option[(string, string)] {
   if (sep.len() == 0) {
     return None;
   }
-  var n: i32 = s.len();
-  var sLen: i32 = sep.len();
-  var hit: i32 = __str_find_from(s, n, sep, sLen, 0);
+  let n: i32 = s.len();
+  let sLen: i32 = sep.len();
+  let hit: i32 = __str_find_from(s, n, sep, sLen, 0);
   if (hit < 0) {
     return None;
   }
@@ -2779,9 +2779,9 @@ pub function (s: string) partition(sep: string): (string, string, string) {
   if (sep.len() == 0) {
     return (s.to_owned(), "", "");
   }
-  var n: i32 = s.len();
-  var sLen: i32 = sep.len();
-  var hit: i32 = __str_find_from(s, n, sep, sLen, 0);
+  let n: i32 = s.len();
+  let sLen: i32 = sep.len();
+  let hit: i32 = __str_find_from(s, n, sep, sLen, 0);
   if (hit < 0) {
     return (s.to_owned(), "", "");
   }
@@ -2797,9 +2797,9 @@ pub function (s: string) rpartition(sep: string): (string, string, string) {
   if (sep.len() == 0) {
     return ("", "", s.to_owned());
   }
-  var n: i32 = s.len();
-  var sLen: i32 = sep.len();
-  var i: i32 = __str_rfind_from(s, n, sep, sLen);
+  let n: i32 = s.len();
+  let sLen: i32 = sep.len();
+  let i: i32 = __str_rfind_from(s, n, sep, sLen);
   if (i < 0) {
     return ("", "", s.to_owned());
   }
@@ -2816,9 +2816,9 @@ pub function (s: string) rsplit_once(sep: string): Option[(string, string)] {
   if (sep.len() == 0) {
     return None;
   }
-  var n: i32 = s.len();
-  var sLen: i32 = sep.len();
-  var i: i32 = __str_rfind_from(s, n, sep, sLen);
+  let n: i32 = s.len();
+  let sLen: i32 = sep.len();
+  let i: i32 = __str_rfind_from(s, n, sep, sLen);
   if (i < 0) {
     return None;
   }
@@ -2833,9 +2833,9 @@ pub function (s: string) trim_start_matches(sub: string): string {
   if (sub.len() == 0) {
     return s;
   }
-  var n: i32 = s.len();
-  var subLen: i32 = sub.len();
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let subLen: i32 = sub.len();
+  let i: i32 = 0;
   while (i + subLen <= n && __substr_eq(s, i, sub, subLen)) {
     i = i + subLen;
   }
@@ -2846,9 +2846,9 @@ pub function (s: string) trim_end_matches(sub: string): string {
   if (sub.len() == 0) {
     return s;
   }
-  var n: i32 = s.len();
-  var subLen: i32 = sub.len();
-  var end: i32 = n;
+  let n: i32 = s.len();
+  let subLen: i32 = sub.len();
+  let end: i32 = n;
   while (end - subLen >= 0 && __substr_eq(s, end - subLen, sub, subLen)) {
     end = end - subLen;
   }
@@ -2864,19 +2864,19 @@ pub function (s: string) contains_ci(needle: string): boolean {
 }
 
 pub function (s: string) index_of_ci(needle: string): i32 {
-  var nLen: i32 = needle.len();
+  let nLen: i32 = needle.len();
   if (nLen == 0) {
     return 0;
   }
-  var sLen: i32 = s.len();
+  let sLen: i32 = s.len();
   if (nLen > sLen) {
     return 0 - 1;
   }
-  var last: i32 = sLen - nLen;
-  var i: i32 = 0;
+  let last: i32 = sLen - nLen;
+  let i: i32 = 0;
   while (i <= last) {
-    var j: i32 = 0;
-    var ok: boolean = true;
+    let j: i32 = 0;
+    let ok: boolean = true;
     while (j < nLen) {
       if (s[i + j].to_ascii_lower() != needle[j].to_ascii_lower()) {
         ok = false;
@@ -2898,7 +2898,7 @@ pub function (s: string) index_of_ci(needle: string): i32 {
 // insensitive match, `None` when absent. Empty needle returns
 // `Some(0)`. Same Option convention as `find` / `rfind`.
 pub function (s: string) find_ci(needle: string): Option[i32] {
-  var idx: i32 = s.index_of_ci(needle);
+  let idx: i32 = s.index_of_ci(needle);
   if (idx < 0) {
     return None;
   }
@@ -2911,11 +2911,11 @@ pub function (s: string) find_ci(needle: string): Option[i32] {
 // width. Existing content is never truncated. Empty fill is a no-op.
 // `pad_start` / `pad_end` instead repeat only the first character of fill.
 pub function (s: string) pad_start_str(width: i32, fill: string): string {
-  var sLen: i32 = s.len();
+  let sLen: i32 = s.len();
   if (sLen >= width || fill.len() == 0) {
     return s;
   }
-  var pad: string = "";
+  let pad: string = "";
   while (pad.len() + fill.len() <= width - sLen) {
     pad = pad + fill;
   }
@@ -2926,11 +2926,11 @@ pub function (s: string) pad_start_str(width: i32, fill: string): string {
 }
 
 pub function (s: string) pad_end_str(width: i32, fill: string): string {
-  var sLen: i32 = s.len();
+  let sLen: i32 = s.len();
   if (sLen >= width || fill.len() == 0) {
     return s;
   }
-  var pad: string = "";
+  let pad: string = "";
   while (pad.len() + fill.len() <= width - sLen) {
     pad = pad + fill;
   }
@@ -2947,13 +2947,13 @@ pub function (s: string) pad_end_str(width: i32, fill: string): string {
 // fill is never split. Already-long strings pass through
 // unchanged.
 pub function (s: string) center(width: i32, ch: string): string {
-  var sLen: i32 = s.len();
+  let sLen: i32 = s.len();
   if (sLen >= width || ch.len() == 0) {
     return s;
   }
-  var total: i32 = width - sLen;
-  var lpad: i32 = total / 2;
-  var rpad: i32 = total - lpad;
+  let total: i32 = width - sLen;
+  let lpad: i32 = total / 2;
+  let rpad: i32 = total - lpad;
   return string_from_bytes_unchecked(__fill_bytes(ch, lpad)) + s + string_from_bytes_unchecked(__fill_bytes(ch, rpad));
 }
 
@@ -2963,7 +2963,7 @@ pub function (s: string) center(width: i32, ch: string): string {
 // / newlines all collapse to single ' '). Empty input
 // returns "".
 pub function (s: string) reverse_words(): string {
-  var words: string[] = s.fields();
+  let words: string[] = s.fields();
   return words.reverse().join(" ");
 }
 
@@ -2979,11 +2979,11 @@ pub function (s: string) truncate(n: i32, ellipsis: string): string {
   if (n <= 0) {
     return "";
   }
-  var sLen: i32 = s.len();
+  let sLen: i32 = s.len();
   if (sLen <= n) {
     return s;
   }
-  var eLen: i32 = ellipsis.len();
+  let eLen: i32 = ellipsis.len();
   if (n <= eLen) {
     return s.slice_snap(0, n).to_owned();
   }
@@ -3022,7 +3022,7 @@ pub function (s: string) first_line(): Option[string] {
   if (s.len() == 0) {
     return None;
   }
-  var idx: i32 = s.index_of("\n");
+  let idx: i32 = s.index_of("\n");
   if (idx < 0) {
     return Some(s);
   }
@@ -3050,11 +3050,11 @@ pub function (s: string) to_array(): string[] {
 // Scalar splitting has no separator search. Keep its implementation shared
 // without making to_array retain the general split machinery.
 function __split_scalars(s: string): string[] {
-  var n: i32 = s.len();
-  var out: string[] = [];
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < n) {
-    var step: i32 = __utf8_step(s, i, n);
+    let step: i32 = __utf8_step(s, i, n);
     out = out.append(slice_unchecked(s, i, i + step) + "");
     i = i + step;
   }
@@ -3148,19 +3148,19 @@ function __utf8_cont_hi(b0: i32): i32 {
 // `pub` because std/utf8's lossy walkers step with this too — one rule
 // for "how many bytes is the next character" across the whole stdlib.
 pub function __utf8_step(s: string, i: i32, n: i32): i32 {
-  var b0: i32 = s[i] as i32;
-  var want: i32 = __utf8_expect(b0);
+  let b0: i32 = s[i] as i32;
+  let want: i32 = __utf8_expect(b0);
   if (want <= 1) {  // ASCII, or a byte that cannot lead
     return 1;
   }
   if (i + 1 >= n) {
     return 1;
   }
-  var c1: i32 = s[i + 1] as i32;
+  let c1: i32 = s[i + 1] as i32;
   if (c1 < __utf8_cont_lo(b0) || c1 > __utf8_cont_hi(b0)) {
     return 1;
   }
-  var k: i32 = 2;
+  let k: i32 = 2;
   while (k < want) {
     if (i + k >= n) {  // truncated
       return k;
@@ -3177,7 +3177,7 @@ pub function __utf8_step(s: string, i: i32, n: i32): i32 {
 // A unit spans at most four bytes. Bound the backward probe so repeated
 // trimming stays linear even for long runs of stray continuation bytes.
 function __utf8_prev_unit(s: string, end: i32): i32 {
-  var start: i32 = end - 1;
+  let start: i32 = end - 1;
   while (start > 0 && end - start < 4 && __utf8_is_cont(s[start] as i32)) {
     start = start - 1;
   }
@@ -3196,7 +3196,7 @@ function __utf8_prev_unit(s: string, end: i32): i32 {
 // lead-specific continuation range has already excluded the overlong,
 // surrogate and out-of-range forms, so there is nothing left to re-check.
 function __utf8_decode_at(s: string, i: i32, step: i32): i32 {
-  var b0: i32 = s[i] as i32;
+  let b0: i32 = s[i] as i32;
   if (b0 < 128) {
     return b0;
   }
@@ -3219,11 +3219,11 @@ function __utf8_decode_at(s: string, i: i32, step: i32): i32 {
 // and Go's `[]rune`: iterating it never splits a multibyte sequence. For
 // the byte layer reach for `bytes()` or `as_bytes()`.
 pub function (s: string) chars(): char[] {
-  var n: i32 = s.len();
-  var out: char[] = [];
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let out: char[] = [];
+  let i: i32 = 0;
   while (i < n) {
-    var step: i32 = __utf8_step(s, i, n);
+    let step: i32 = __utf8_step(s, i, n);
     out = out.append(__utf8_decode_at(s, i, step) as char);
     i = i + step;
   }
@@ -3236,9 +3236,9 @@ pub function (s: string) chars(): char[] {
 // ill-formed input costs one U+FFFD per maximal subpart in each. This is
 // the "length in characters" a byte `len()` can't give for non-ASCII text.
 pub function (s: string) codepoint_count(): i32 {
-  var n: i32 = s.len();
-  var count: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let count: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     i = i + __utf8_step(s, i, n);
     count = count + 1;
@@ -3276,7 +3276,7 @@ function __utf8_sanitise(c: i32): i32 {
 // `c` at `pos`, returning the (possibly grown) buffer. Caller sizes `buf`
 // via `__utf8_encoded_len` and advances `pos` by the same.
 function __utf8_put(buf_in: u8[], pos: i32, c: i32): u8[] {
-  var buf: u8[] = buf_in;
+  let buf: u8[] = buf_in;
   if (c < 128) {
     buf = buf.with(pos, c as u8);
   } else if (c < 2048) {
@@ -3299,8 +3299,8 @@ function __utf8_put(buf_in: u8[], pos: i32, c: i32): u8[] {
 // scalar `cp` (out-of-range / surrogate → U+FFFD). The inverse of indexing
 // `chars()`; the way to build non-ASCII text from a numeric scalar.
 pub function string_from_codepoint(ch: char): string {
-  var c: i32 = __utf8_sanitise(ch as i32);
-  var buf: u8[] = __alloc_u8(__utf8_encoded_len(c));
+  let c: i32 = __utf8_sanitise(ch as i32);
+  let buf: u8[] = __alloc_u8(__utf8_encoded_len(c));
   buf = __utf8_put(buf, 0, c);
   return string_from_bytes_unchecked(buf);
 }
@@ -3311,18 +3311,18 @@ pub function string_from_codepoint(ch: char): string {
 // `s` (ill-formed runs collapse to U+FFFD). Two-pass exact-size buffer, no
 // O(n²) concatenation.
 pub function string_from_codepoints(cps: char[]): string {
-  var m: i32 = cps.len();
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let m: i32 = cps.len();
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < m) {
     total = total + __utf8_encoded_len(__utf8_sanitise(cps[i] as i32));
     i = i + 1;
   }
-  var buf: u8[] = __alloc_u8(total);
-  var pos: i32 = 0;
+  let buf: u8[] = __alloc_u8(total);
+  let pos: i32 = 0;
   i = 0;
   while (i < m) {
-    var c: i32 = __utf8_sanitise(cps[i] as i32);
+    let c: i32 = __utf8_sanitise(cps[i] as i32);
     buf = __utf8_put(buf, pos, c);
     pos = pos + __utf8_encoded_len(c);
     i = i + 1;
@@ -3334,9 +3334,9 @@ pub function string_from_codepoints(cps: char[]): string {
 // bytes of a multibyte scalar is not text; use unicode.reverse_graphemes
 // to reverse text, or utf8.from_bytes to validate the byte result explicitly.
 pub function (s: string) reverse_bytes(): u8[] {
-  var n: i32 = s.len();
-  var buf: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let buf: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     buf = buf.with(i, s[n - 1 - i] as u8);
     i = i + 1;
@@ -3351,10 +3351,10 @@ pub function (s: string) count(sub: string): i32 {
   if (sub.len() == 0) {
     return 0;
   }
-  var n: i32 = s.len();
-  var subLen: i32 = sub.len();
-  var c: i32 = 0;
-  var hit: i32 = __str_find_from(s, n, sub, subLen, 0);
+  let n: i32 = s.len();
+  let subLen: i32 = sub.len();
+  let c: i32 = 0;
+  let hit: i32 = __str_find_from(s, n, sub, subLen, 0);
   while (hit >= 0) {
     c = c + 1;
     hit = __str_find_from(s, n, sub, subLen, hit + subLen);
@@ -3369,13 +3369,13 @@ pub function (s: string) count(sub: string): i32 {
 // equals `s.count(sub)`. Useful for highlighting / span extraction where you
 // need the positions, not just how many.
 pub function (s: string) find_all(sub: string): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   if (sub.len() == 0) {
     return out;
   }
-  var n: i32 = s.len();
-  var subLen: i32 = sub.len();
-  var hit: i32 = __str_find_from(s, n, sub, subLen, 0);
+  let n: i32 = s.len();
+  let subLen: i32 = sub.len();
+  let hit: i32 = __str_find_from(s, n, sub, subLen, 0);
   while (hit >= 0) {
     out = out.append(hit);
     hit = __str_find_from(s, n, sub, subLen, hit + subLen);
@@ -3389,7 +3389,7 @@ pub function (s: string) find_all(sub: string): i32[] {
 // array, so it is the cheap answer when you only need the tally. An empty
 // `sub` counts 0. Mirrors Rust's `s.matches(pat).count()`.
 pub function (s: string) count_matches(sub: string): i32 {
-  var subLen: i32 = sub.len();
+  let subLen: i32 = sub.len();
   if (subLen == 0) {
     return 0;
   }
@@ -3401,9 +3401,9 @@ pub function (s: string) count_matches(sub: string): i32 {
   if (subLen == 1) {
     return __count_byte(s, sub[0] as i32);
   }
-  var n: i32 = s.len();
-  var count: i32 = 0;
-  var hit: i32 = __str_find_from(s, n, sub, subLen, 0);
+  let n: i32 = s.len();
+  let count: i32 = 0;
+  let hit: i32 = __str_find_from(s, n, sub, subLen, 0);
   while (hit >= 0) {
     count = count + 1;
     hit = __str_find_from(s, n, sub, subLen, hit + subLen);
@@ -3430,15 +3430,15 @@ pub function (s: string) count_byte(b: i32): i32 {
 // substitutions are interesting (e.g. unquoting the first
 // few escapes, masking PII while keeping later context).
 pub function (s: string) replace_n(old: string, new: string, n: i32): string {
-  var sLen: i32 = s.len();
-  var oLen: i32 = old.len();
+  let sLen: i32 = s.len();
+  let oLen: i32 = old.len();
   if (oLen == 0 || n <= 0) {
     return s;
   }
-  var out: string = "";
-  var start: i32 = 0;
-  var done: i32 = 0;
-  var hit: i32 = __str_find_from(s, sLen, old, oLen, 0);
+  let out: string = "";
+  let start: i32 = 0;
+  let done: i32 = 0;
+  let hit: i32 = __str_find_from(s, sLen, old, oLen, 0);
   while (hit >= 0 && done < n) {
     out = out + slice_unchecked(s, start, hit) + new;
     start = hit + oLen;
@@ -3458,7 +3458,7 @@ pub function (s: string) remove_all(needle: string): string {
 // of sep. Returns s unchanged if sep not present, "" if
 // s starts with sep. Doesn't include sep in the result.
 pub function (s: string) before(sep: string): string {
-  var idx: i32 = s.index_of(sep);
+  let idx: i32 = s.index_of(sep);
   if (idx < 0) {
     return s;
   }
@@ -3472,7 +3472,7 @@ pub function (s: string) after(sep: string): string {
   if (sep.len() == 0) {
     return s;
   }
-  var idx: i32 = s.index_of(sep);
+  let idx: i32 = s.index_of(sep);
   if (idx < 0) {
     return "";
   }
@@ -3488,14 +3488,14 @@ pub function (s: string) between(start: string, end: string): Option[string] {
   if (start.len() == 0 || end.len() == 0) {
     return None;
   }
-  var i: i32 = s.index_of(start);
+  let i: i32 = s.index_of(start);
   if (i < 0) {
     return None;
   }
-  var begin: i32 = i + start.len();
-  var n: i32 = s.len();
-  var endLen: i32 = end.len();
-  var j: i32 = begin;
+  let begin: i32 = i + start.len();
+  let n: i32 = s.len();
+  let endLen: i32 = end.len();
+  let j: i32 = begin;
   while (j + endLen <= n) {
     if (__substr_eq(s, j, end, endLen)) {
       return Some(slice_unchecked(s, begin, j).to_owned());
@@ -3510,12 +3510,12 @@ pub function (s: string) between(start: string, end: string): Option[string] {
 // is NOT counted as an extra empty line (matches Go's
 // bufio.Scanner ScanLines + lines() prelude function).
 pub function (s: string) count_lines(): i32 {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return 0;
   }
-  var c: i32 = 0;
-  var i: i32 = 0;
+  let c: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (s[i] == 10) {
       c = c + 1;
@@ -3536,27 +3536,27 @@ pub function (s: string) repeat_with_sep(n: i32, sep: string): string {
   if (n <= 0) {
     return "";
   }
-  var sl: i32 = s.len();
-  var pl: i32 = sep.len();
+  let sl: i32 = s.len();
+  let pl: i32 = sep.len();
   // n copies of s + (n-1) separators — a known size, so fill one
   // buffer (O(total)) instead of the O(total²) `out = out + sep + s`.
-  var total: i32 = sl * n + pl * (n - 1);
+  let total: i32 = sl * n + pl * (n - 1);
   if (total == 0) {
     return "";
   }
-  var buf: u8[] = __alloc_u8(total);
-  var pos: i32 = 0;
-  var k: i32 = 0;
+  let buf: u8[] = __alloc_u8(total);
+  let pos: i32 = 0;
+  let k: i32 = 0;
   while (k < n) {
     if (k > 0) {
-      var pj: i32 = 0;
+      let pj: i32 = 0;
       while (pj < pl) {
         buf = buf.with(pos, sep[pj] as u8);
         pos = pos + 1;
         pj = pj + 1;
       }
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < sl) {
       buf = buf.with(pos, s[j] as u8);
       pos = pos + 1;
@@ -3579,13 +3579,13 @@ pub function (s: string) repeat_with_sep(n: i32, sep: string): string {
 // the non-overlapping matches to size the result exactly
 // (n + matches·(len(new) − len(old))); pass 2 fills it.
 pub function (s: string) replace(old: string, new: string): string {
-  var n: i32 = s.len();
-  var oLen: i32 = old.len();
+  let n: i32 = s.len();
+  let oLen: i32 = old.len();
   if (oLen == 0) {
     return s;
   }
-  var matches: i32 = 0;
-  var hit: i32 = __str_find_from(s, n, old, oLen, 0);
+  let matches: i32 = 0;
+  let hit: i32 = __str_find_from(s, n, old, oLen, 0);
   while (hit >= 0) {
     matches = matches + 1;
     hit = __str_find_from(s, n, old, oLen, hit + oLen);
@@ -3593,14 +3593,14 @@ pub function (s: string) replace(old: string, new: string): string {
   if (matches == 0) {
     return s;
   }
-  var nLen: i32 = new.len();
-  var out_len: i32 = n + matches * (nLen - oLen);
+  let nLen: i32 = new.len();
+  let out_len: i32 = n + matches * (nLen - oLen);
   if (out_len == 0) {
     return "";
   }
-  var buf: u8[] = __alloc_u8(out_len);
-  var pos: i32 = 0;
-  var i: i32 = 0;
+  let buf: u8[] = __alloc_u8(out_len);
+  let pos: i32 = 0;
+  let i: i32 = 0;
   hit = __str_find_from(s, n, old, oLen, 0);
   while (hit >= 0) {
     while (i < hit) {
@@ -3608,7 +3608,7 @@ pub function (s: string) replace(old: string, new: string): string {
       pos = pos + 1;
       i = i + 1;
     }
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < nLen) {
       buf = buf.with(pos, new[k] as u8);
       pos = pos + 1;
@@ -3633,15 +3633,15 @@ pub function (s: string) replace(old: string, new: string): string {
 // `str::replacen`. Copies whole runs between matches rather than
 // byte-by-byte, and appends the tail once.
 pub function (s: string) replacen(old: string, new: string, n: i32): string {
-  var oLen: i32 = old.len();
+  let oLen: i32 = old.len();
   if (n <= 0 || oLen == 0) {
     return s;
   }
-  var slen: i32 = s.len();
-  var out: string = "";
-  var done: i32 = 0;
-  var run_start: i32 = 0;
-  var hit: i32 = __str_find_from(s, slen, old, oLen, 0);
+  let slen: i32 = s.len();
+  let out: string = "";
+  let done: i32 = 0;
+  let run_start: i32 = 0;
+  let hit: i32 = __str_find_from(s, slen, old, oLen, 0);
   while (hit >= 0 && done < n) {
     out = out + slice_unchecked(s, run_start, hit) + new;
     run_start = hit + oLen;
@@ -3696,13 +3696,13 @@ pub function (s: string) is_http_idempotent_method(): boolean {
 // `wasm.go`; the lang version compiles to roughly the same
 // code via the IR.
 pub function (s: string) parse_int(): Option[i32] {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return None;
   }
 
-  var i: i32 = 0;
-  var neg: boolean = false;
+  let i: i32 = 0;
+  let neg: boolean = false;
   if (s[0] == 45) {  // '-'
     if (n == 1) {
       return None;
@@ -3711,9 +3711,9 @@ pub function (s: string) parse_int(): Option[i32] {
     i = 1;
   }
 
-  var acc: i64 = 0;
+  let acc: i64 = 0;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b < 48 || b > 57) {  // not 0..9
       return None;
     }
@@ -3728,7 +3728,7 @@ pub function (s: string) parse_int(): Option[i32] {
     if (acc > 2147483648) {  // < i32 min
       return None;
     }
-    var v: i64 = 0 - acc;
+    let v: i64 = 0 - acc;
     return Some(v as i32);
   }
   if (acc > 2147483647) {  // > i32 max
@@ -3824,8 +3824,8 @@ function __bn_of_digits(s: string): bigint.BigInt {
 // compare  Ldig * 10^p  vs  V * 2^b  → -1 / 0 / 1 (cross-multiply, no
 // fractions). Ldig is a bignum; V fits an i64.
 function __cmp_big(Ldig: bigint.BigInt, p: i32, V: i64, b: i32): i32 {
-  var L: bigint.BigInt = Ldig;
-  var R: bigint.BigInt = bigint.from_i64(V);
+  let L: bigint.BigInt = Ldig;
+  let R: bigint.BigInt = bigint.from_i64(V);
   if (p > 0) {
     L = L.mul_pow10(p);
   }
@@ -3844,8 +3844,8 @@ function __cmp_big(Ldig: bigint.BigInt, p: i32, V: i64, b: i32): i32 {
 // IEEE-754 f64 = sig * 2^bexp, sig in [2^52, 2^53) for normals (or the
 // raw fraction for subnormals). These decode the fields of a bit pattern.
 function __f64_sig(bits: i64): i64 {
-  var e11: i64 = bits >> 52 & 2047;
-  var frac: i64 = bits & 4503599627370495;
+  let e11: i64 = bits >> 52 & 2047;
+  let frac: i64 = bits & 4503599627370495;
   if (e11 == 0) {
     return frac;
   }
@@ -3853,7 +3853,7 @@ function __f64_sig(bits: i64): i64 {
 }
 
 function __f64_bexp(bits: i64): i32 {
-  var e11: i64 = bits >> 52 & 2047;
+  let e11: i64 = bits >> 52 & 2047;
   if (e11 == 0) {
     return 0 - 1074;
   }
@@ -3869,11 +3869,11 @@ function __f64_bexp(bits: i64): i32 {
 // spacing changes at powers of two and the subnormal boundary are handled
 // automatically (IEEE bit patterns are monotone in magnitude).
 function __decimal_to_f64(dig: string, k: i32): f64 {
-  var dl: i32 = dig.len();
+  let dl: i32 = dig.len();
   if (dl == 0) {
     return 0.0;
   }
-  var mag: i32 = dl + k;  // ~ floor(log10(value)) + 1
+  let mag: i32 = dl + k;  // ~ floor(log10(value)) + 1
   if (mag > 310) {  // clearly overflows → +Inf
     return 1.0 / 0.0;
   }
@@ -3883,30 +3883,30 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
   // Seed: m0 = first <=15 digits (exact, < 2^53); Clinger's exact path
   // (single mul/div by an exact 10^e) when |e0| <= 22, else a drifting
   // estimate the refinement below corrects.
-  var take: i32 = dl;
+  let take: i32 = dl;
   if (take > 15) {
     take = 15;
   }
-  var m0: i64 = 0;
-  var di: i32 = 0;
+  let m0: i64 = 0;
+  let di: i32 = 0;
   while (di < take) {
     m0 = m0 * 10 + (dig[di] as i64 - 48);
     di = di + 1;
   }
-  var e0: i32 = k + (dl - take);
-  var v: f64 = 0.0;
+  let e0: i32 = k + (dl - take);
+  let v: f64 = 0.0;
   if (e0 >= 0 && e0 <= 22) {
-    var p: f64 = 1.0;
-    var t: i32 = 0;
+    let p: f64 = 1.0;
+    let t: i32 = 0;
     while (t < e0) {
       p = p * 10.0;
       t = t + 1;
     }
     v = m0 as f64 * p;
   } else if (e0 < 0 && e0 >= 0 - 22) {
-    var p2: f64 = 1.0;
-    var t2: i32 = 0;
-    var ne: i32 = 0 - e0;
+    let p2: f64 = 1.0;
+    let t2: i32 = 0;
+    let ne: i32 = 0 - e0;
     while (t2 < ne) {
       p2 = p2 * 10.0;
       t2 = t2 + 1;
@@ -3914,7 +3914,7 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
     v = m0 as f64 / p2;
   } else {
     v = m0 as f64;
-    var ee: i32 = e0;
+    let ee: i32 = e0;
     while (ee > 0) {
       v = v * 10.0;
       ee = ee - 1;
@@ -3924,8 +3924,8 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
       ee = ee + 1;
     }
   }
-  var INF: i64 = 9218868437227405312;  // 0x7FF0000000000000
-  var bits: i64 = f64_bits(v);
+  let INF: i64 = 9218868437227405312;  // 0x7FF0000000000000
+  let bits: i64 = f64_bits(v);
   if (bits < 1) {  // estimate underflowed → smallest subnormal
     bits = 1;
   }
@@ -3934,21 +3934,21 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
   }
   // Ld = 2 * mantissa: the midpoint tests compare 2*value against the
   // (integer) sum of two adjacent f64s.
-  var Ld: bigint.BigInt = __bn_of_digits(dig).shl(1);
-  var guard: i32 = 0;
+  let Ld: bigint.BigInt = __bn_of_digits(dig).shl(1);
+  let guard: i32 = 0;
   while (guard < 4000) {
     guard = guard + 1;
-    var s: i64 = __f64_sig(bits);
-    var e: i32 = __f64_bexp(bits);
-    var up: i64 = bits + 1;
-    var su: i64 = __f64_sig(up);
-    var eu: i32 = __f64_bexp(up);
-    var emin: i32 = e;
+    let s: i64 = __f64_sig(bits);
+    let e: i32 = __f64_bexp(bits);
+    let up: i64 = bits + 1;
+    let su: i64 = __f64_sig(up);
+    let eu: i32 = __f64_bexp(up);
+    let emin: i32 = e;
     if (eu < emin) {
       emin = eu;
     }
-    var msum_up: i64 = (s << e - emin) + (su << eu - emin);
-    var cu: i32 = __cmp_big(Ld, k, msum_up, emin);  // sign of (2*value - (v + v_up))
+    let msum_up: i64 = (s << e - emin) + (su << eu - emin);
+    let cu: i32 = __cmp_big(Ld, k, msum_up, emin);  // sign of (2*value - (v + v_up))
     if (cu > 0) {
       if (up >= INF) {  // rounds up past max finite → +Inf
         return f64_from_bits(INF);
@@ -3957,15 +3957,15 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
     } else if (bits == 0) {
       return f64_from_bits(bits);
     } else {
-      var dn: i64 = bits - 1;
-      var sd: i64 = __f64_sig(dn);
-      var ed: i32 = __f64_bexp(dn);
-      var emin2: i32 = e;
+      let dn: i64 = bits - 1;
+      let sd: i64 = __f64_sig(dn);
+      let ed: i32 = __f64_bexp(dn);
+      let emin2: i32 = e;
       if (ed < emin2) {
         emin2 = ed;
       }
-      var msum_dn: i64 = (s << e - emin2) + (sd << ed - emin2);
-      var cd: i32 = __cmp_big(Ld, k, msum_dn, emin2);
+      let msum_dn: i64 = (s << e - emin2) + (sd << ed - emin2);
+      let cd: i32 = __cmp_big(Ld, k, msum_dn, emin2);
       if (cd < 0) {
         bits = dn;
       } else {
@@ -4021,8 +4021,8 @@ function _el_dig(c: i32): u64 {
 // _el_word decodes the 64-bit word starting at `at`: 11 characters, most
 // significant base-64 digit first.
 function _el_word(s: string, at: i32): u64 {
-  var v: u64 = 0 as u64;
-  var i: i32 = 0;
+  let v: u64 = 0 as u64;
+  let i: i32 = 0;
   while (i < 11) {
     v = v * (64 as u64) + _el_dig(s[at + i] as i32);
     i = i + 1;
@@ -4033,24 +4033,24 @@ function _el_word(s: string, at: i32): u64 {
 // _el_mul64 is the 64x64 -> 128 widening multiply, returned as (high, low),
 // assembled from four 32x32 -> 64 partial products.
 function _el_mul64(x: u64, y: u64): (u64, u64) {
-  var m: u64 = 4294967295 as u64;
-  var sh: u64 = 32 as u64;
-  var a: u64 = x >> sh;
-  var b: u64 = x & m;
-  var c: u64 = y >> sh;
-  var d: u64 = y & m;
-  var bd: u64 = b * d;
-  var ad: u64 = a * d;
-  var bc: u64 = b * c;
-  var mid: u64 = (bd >> sh) + (ad & m) + (bc & m);
-  var hi: u64 = a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
+  let m: u64 = 4294967295 as u64;
+  let sh: u64 = 32 as u64;
+  let a: u64 = x >> sh;
+  let b: u64 = x & m;
+  let c: u64 = y >> sh;
+  let d: u64 = y & m;
+  let bd: u64 = b * d;
+  let ad: u64 = a * d;
+  let bc: u64 = b * c;
+  let mid: u64 = (bd >> sh) + (ad & m) + (bc & m);
+  let hi: u64 = a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
   return (hi, (mid & m) << sh | bd & m);
 }
 
 // _el_clz64 counts leading zero bits. `x` is never zero at the call site.
 function _el_clz64(x: u64): i32 {
-  var n: i32 = 0;
-  var v: u64 = x;
+  let n: i32 = 0;
+  let v: u64 = x;
   if (v >> 32 as u64 == 0 as u64) {
     n = n + 32;
     v = v << 32 as u64;
@@ -4087,14 +4087,14 @@ function _el_log2_pow10(q: i32): i32 {
 // power of five for `q`, taking a second multiplication only when the leading
 // bits are too close to call (the low 9 bits all set).
 function _el_mul_pow5(q: i32, w: u64): (u64, u64) {
-  var tbl: string = _el_pow5();
-  var at: i32 = (q + 342) * 22;
-  var phi: u64 = _el_word(tbl, at);
-  var r: (u64, u64) = _el_mul64(w, phi);
-  var hi: u64 = r.0;
-  var lo: u64 = r.1;
+  let tbl: string = _el_pow5();
+  let at: i32 = (q + 342) * 22;
+  let phi: u64 = _el_word(tbl, at);
+  let r: (u64, u64) = _el_mul64(w, phi);
+  let hi: u64 = r.0;
+  let lo: u64 = r.1;
   if ((hi & 511 as u64) == 511 as u64) {
-    var r2: (u64, u64) = _el_mul64(w, _el_word(tbl, at + 11));
+    let r2: (u64, u64) = _el_mul64(w, _el_word(tbl, at + 11));
     lo = lo + r2.0;
     if (r2.0 > lo) {
       hi = hi + 1 as u64;
@@ -4113,14 +4113,14 @@ function _el_compute(w: u64, q: i32): (u64, i32) {
     return (0 as u64, 2047);
   }
 
-  var lz: i32 = _el_clz64(w);
-  var p: (u64, u64) = _el_mul_pow5(q, w << lz as u64);
-  var hi: u64 = p.0;
-  var lo: u64 = p.1;
-  var upperbit: i32 = (hi >> 63 as u64) as i32;
-  var shift: i32 = upperbit + 9;  // upperbit + 64 - 52 - 3
-  var mant: u64 = hi >> shift as u64;
-  var pow2: i32 = _el_log2_pow10(q) + upperbit - lz + 1023;
+  let lz: i32 = _el_clz64(w);
+  let p: (u64, u64) = _el_mul_pow5(q, w << lz as u64);
+  let hi: u64 = p.0;
+  let lo: u64 = p.1;
+  let upperbit: i32 = (hi >> 63 as u64) as i32;
+  let shift: i32 = upperbit + 9;  // upperbit + 64 - 52 - 3
+  let mant: u64 = hi >> shift as u64;
+  let pow2: i32 = _el_log2_pow10(q) + upperbit - lz + 1023;
 
   if (pow2 <= 0) {
     // Subnormal, or below the smallest one.
@@ -4163,28 +4163,28 @@ function _el_compute(w: u64, q: i32): (u64, i32) {
 // leading and trailing zeros. Returns (bits, true) when the answer is proven
 // exact, or (0, false) when the caller must use __decimal_to_f64.
 function _el_parse(dig: string, k: i32): (i64, boolean) {
-  var nd: i32 = dig.len();
+  let nd: i32 = dig.len();
   if (nd == 0) {  // value is zero
     return (0, true);
   }
-  var take: i32 = nd;
+  let take: i32 = nd;
   if (take > 19) {
     take = 19;
   }
-  var w: u64 = 0 as u64;
-  var i: i32 = 0;
+  let w: u64 = 0 as u64;
+  let i: i32 = 0;
   while (i < take) {
     w = w * (10 as u64) + (dig[i] as i32 - 48) as u64;
     i = i + 1;
   }
   // Dropped digits only shift the exponent; they never change `w`.
-  var q: i32 = k + (nd - take);
+  let q: i32 = k + (nd - take);
 
-  var r: (u64, i32) = _el_compute(w, q);
+  let r: (u64, i32) = _el_compute(w, q);
   if (nd > take) {
     // Truncated: the true significand lies in (w, w+1). If both ends give
     // the same double, every value between them does too.
-    var r2: (u64, i32) = _el_compute(w + 1 as u64, q);
+    let r2: (u64, i32) = _el_compute(w + 1 as u64, q);
     if (r.0 != r2.0 || r.1 != r2.1) {
       return (0, false);
     }
@@ -4202,13 +4202,13 @@ function _el_parse(dig: string, k: i32): (i64, boolean) {
 // correctly-rounded (round-half-to-even) nearest f64 — bit-exact with
 // strconv (#5566).
 pub function (s: string) parse_float(): Option[f64] {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return None;
   }
 
-  var i: i32 = 0;
-  var neg: boolean = false;
+  let i: i32 = 0;
+  let neg: boolean = false;
   if (s[0] == 45) {  // '-'
     if (n == 1) {
       return None;
@@ -4219,14 +4219,14 @@ pub function (s: string) parse_float(): Option[f64] {
 
   // Collect every integer + fraction digit into one buffer; the base-10
   // exponent tracks the decimal point and the literal exponent.
-  var db: u8[] = [];
-  var fraclen: i32 = 0;
-  var saw_int: boolean = false;
-  var saw_frac: boolean = false;
+  let db: u8[] = [];
+  let fraclen: i32 = 0;
+  let saw_int: boolean = false;
+  let saw_frac: boolean = false;
   // Single `b` reused across the integer / fraction / exponent inner
   // loops — declaring the same name in multiple inner scopes triggers a
   // duplicate-local collision in the wasm emitter.
-  var b: i32 = 0;
+  let b: i32 = 0;
 
   while (i < n) {
     b = s[i] as i32;
@@ -4256,18 +4256,18 @@ pub function (s: string) parse_float(): Option[f64] {
     return None;
   }
 
-  var eexp: i32 = 0;
+  let eexp: i32 = 0;
   if (i < n && (s[i] == 101 || s[i] == 69)) {  // 'e' / 'E'
     i = i + 1;
-    var exp_neg: boolean = false;
+    let exp_neg: boolean = false;
     if (i < n && s[i] == 43) {  // '+'
       i = i + 1;
     } else if (i < n && s[i] == 45) {  // '-'
       exp_neg = true;
       i = i + 1;
     }
-    var exp: i32 = 0;
-    var saw_exp: boolean = false;
+    let exp: i32 = 0;
+    let saw_exp: boolean = false;
     while (i < n) {
       b = s[i] as i32;
       if (b < 48 || b > 57) {
@@ -4296,20 +4296,20 @@ pub function (s: string) parse_float(): Option[f64] {
   // value = (db as integer) * 10^(eexp - fraclen). Strip leading zeros
   // (no value change) and trailing zeros (each bumps the exponent) so
   // the bignum stays small and `dig` is canonical.
-  var m: i32 = db.len();
-  var lo: i32 = 0;
+  let m: i32 = db.len();
+  let lo: i32 = 0;
   while (lo < m && db[lo] == 48) {
     lo = lo + 1;
   }
-  var hi: i32 = m - 1;
+  let hi: i32 = m - 1;
   while (hi >= lo && db[hi] == 48) {
     hi = hi - 1;
   }
-  var k: i32 = eexp - fraclen + (m - 1 - hi);
-  var dig: string = "";
+  let k: i32 = eexp - fraclen + (m - 1 - hi);
+  let dig: string = "";
   if (hi >= lo) {
-    var out: u8[] = [];
-    var j: i32 = lo;
+    let out: u8[] = [];
+    let j: i32 = lo;
     while (j <= hi) {
       out = out.append(db[j]);
       j = j + 1;
@@ -4319,8 +4319,8 @@ pub function (s: string) parse_float(): Option[f64] {
 
   // Eisel-Lemire decides almost every input with one 128-bit multiply;
   // __decimal_to_f64 is the exact fallback for the rest.
-  var fast: (i64, boolean) = _el_parse(dig, k);
-  var v: f64 = 0.0;
+  let fast: (i64, boolean) = _el_parse(dig, k);
+  let v: f64 = 0.0;
   if (fast.1) {
     v = f64_from_bits(fast.0);
   } else {
@@ -4352,28 +4352,28 @@ pub function __is_ascii_ws(b: i32): boolean {
 // scalar of new, or removes it when new is empty. An out-of-range offset or
 // an offset inside a scalar leaves s unchanged.
 pub function (s: string) replace_at(i: i32, new: string): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (i < 0 || i >= n) {
     return s;
   }
   if (__floor_boundary(s, i) != i) {
     return s;
   }
-  var end: i32 = i + __utf8_step(s, i, n);
+  let end: i32 = i + __utf8_step(s, i, n);
   if (new.len() == 0) {
     return slice_unchecked(s, 0, i) + slice_unchecked(s, end, n);
   }
-  var width: i32 = __utf8_step(new, 0, new.len());
+  let width: i32 = __utf8_step(new, 0, new.len());
   return slice_unchecked(s, 0, i) + slice_unchecked(new, 0, width) + slice_unchecked(s, end, n);
 }
 
 // `s.without_byte(b)` returns owned bytes with every byte equal to b removed.
 // Use replace(old, "") or without_chars(set) for text.
 pub function (s: string) without_byte(b: i32): u8[] {
-  var n: i32 = s.len();
-  var buf: u8[] = __alloc_u8(n);
-  var pos: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let buf: u8[] = __alloc_u8(n);
+  let pos: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (s[i] as i32 != b) {
       buf = buf.with(pos, s[i] as u8);
@@ -4381,8 +4381,8 @@ pub function (s: string) without_byte(b: i32): u8[] {
     }
     i = i + 1;
   }
-  var out: u8[] = __alloc_u8(pos);
-  var k: i32 = 0;
+  let out: u8[] = __alloc_u8(pos);
+  let k: i32 = 0;
   while (k < pos) {
     out = out.with(k, buf[k]);
     k = k + 1;
@@ -4396,10 +4396,10 @@ pub function (s: string) without_byte(b: i32): u8[] {
 // truncate-not-overrun shape matches a common "fill to width
 // without exceeding" pattern.
 pub function (s: string) repeat_to(target: i32): string {
-  var sLen: i32 = s.len();
+  let sLen: i32 = s.len();
   if (sLen == 0 || target <= 0) {
     return "";
   }
-  var copies: i32 = target / sLen;
+  let copies: i32 = target / sLen;
   return s.repeat(copies);
 }

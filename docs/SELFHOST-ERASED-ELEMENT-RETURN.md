@@ -11,7 +11,7 @@ every path. One shape remains — see the last section.
 ```fern
 function first_of[T](xs: T[]): T { return xs[0]; }
 function main(): i32 {
-    var xs: f64[] = [4.5, 1.5];
+    let xs: f64[] = [4.5, 1.5];
     return (first_of(xs) * 10.0) as i32;   // want 45; self-host x86-64 gives 255
 }
 ```
@@ -148,8 +148,8 @@ self-host x86-64, 0 on wasm). The promotion fires and the clone is correct —
 
 ```fern
 function enum2[T](xs: T[]): (i32, T)[] { … }
-var ps = enum2(xs);      // ps[0]'s stamped type is "(i32, T)", not "(i32, f64)"
-var (i, v) = ps[0];      // T is not a width, so v reads as i32
+let ps = enum2(xs);      // ps[0]'s stamped type is "(i32, T)", not "(i32, f64)"
+let (i, v) = ps[0];      // T is not a width, so v reads as i32
 ```
 
 `checker.annotate_module` runs before `monomorphize_module`, so the `ty` stamped

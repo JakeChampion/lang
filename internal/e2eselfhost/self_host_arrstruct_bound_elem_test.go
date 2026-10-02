@@ -8,7 +8,7 @@ import (
 )
 
 // arrstructBoundElemCases pin the #6535 array-store element move: an element
-// BOUND to a local before being pushed — `var v = Val { … }; vals =
+// BOUND to a local before being pushed — `let v = Val { … }; vals =
 // vals.append(v)` — must cost the same fresh memory as the identical value
 // pushed inline. The append-built ARRSTRUCT credit (#6559) admitted only a
 // literal element, so every bound push refused the credit and leaked the whole
@@ -33,26 +33,26 @@ var arrstructBoundElemCases = []struct {
 	// against 872 / 0 for the same value pushed inline.
 	{"loop-bound-elem", `struct Val { kind: i32, kids: i32[] }
 function bnd(n: i32): i32 {
-    var vals: Val[] = [];
-    var total: i32 = 0;
+    let vals: Val[] = [];
+    let total: i32 = 0;
     for i in 0..n {
-        var v: Val = Val { kind: i, kids: [i, i + 1] };
+        let v: Val = Val { kind: i, kids: [i, i + 1] };
         vals = vals.append(v);
         total = total + vals.len();
     }
     return total;
 }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     for i in 0..n { acc = acc + bnd(8); }
     return acc;
 }
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(50);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(100);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds(50);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = rounds(100);
+    let b2: i64 = __heap_bump_bytes();
     if (x != 1800) { return 91; }
     if (y != 3600) { return 93; }
     if ((b2 - b1) > (b1 - b0)) { return 92; }
@@ -65,22 +65,22 @@ function main(): i32 {
 	// rewrites the scan the straight-line case shares.
 	{"straightline-bound-elem", `struct Val { kind: i32, kids: i32[] }
 function line(k: i32): i32 {
-    var vals: Val[] = [];
-    var v: Val = Val { kind: k, kids: [k] };
+    let vals: Val[] = [];
+    let v: Val = Val { kind: k, kids: [k] };
     vals = vals.append(v);
     return vals.len();
 }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     for i in 0..n { acc = acc + line(i); }
     return acc;
 }
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(50);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(100);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds(50);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = rounds(100);
+    let b2: i64 = __heap_bump_bytes();
     if (x != 50) { return 91; }
     if (y != 100) { return 93; }
     if ((b2 - b1) > (b1 - b0)) { return 92; }
@@ -92,8 +92,8 @@ function main(): i32 {
 	// change and must keep reclaiming after it.
 	{"inline-elem-still-flat", `struct Val { kind: i32, kids: i32[] }
 function inl(n: i32): i32 {
-    var vals: Val[] = [];
-    var total: i32 = 0;
+    let vals: Val[] = [];
+    let total: i32 = 0;
     for i in 0..n {
         vals = vals.append(Val { kind: i, kids: [i, i + 1] });
         total = total + vals.len();
@@ -101,16 +101,16 @@ function inl(n: i32): i32 {
     return total;
 }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     for i in 0..n { acc = acc + inl(8); }
     return acc;
 }
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var x: i32 = rounds(50);
-    var b1: i64 = __heap_bump_bytes();
-    var y: i32 = rounds(100);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let x: i32 = rounds(50);
+    let b1: i64 = __heap_bump_bytes();
+    let y: i32 = rounds(100);
+    let b2: i64 = __heap_bump_bytes();
     if (x != 1800) { return 91; }
     if (y != 3600) { return 93; }
     if ((b2 - b1) > (b1 - b0)) { return 92; }
@@ -127,9 +127,9 @@ function main(): i32 {
 	// would see recycled memory — which is what the reads report as 90.
 	{"outside-loop-elem-shared", `struct Val { kind: i32, kids: i32[] }
 function haz(n: i32): i32 {
-    var v: Val = Val { kind: 7, kids: [7, 8] };
-    var vals: Val[] = [];
-    var total: i32 = 0;
+    let v: Val = Val { kind: 7, kids: [7, 8] };
+    let vals: Val[] = [];
+    let total: i32 = 0;
     for i in 0..n {
         vals = vals.append(v);
         total = total + vals.len();
@@ -137,13 +137,13 @@ function haz(n: i32): i32 {
     return total + v.kids[0] + v.kids[1];
 }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     for i in 0..n { acc = acc + haz(4); }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = rounds(50);
-    var y: i32 = rounds(100);
+    let x: i32 = rounds(50);
+    let y: i32 = rounds(100);
     if (x != 1250) { return 90; }
     if (y != 2500) { return 90; }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -155,19 +155,19 @@ function main(): i32 {
 	// release finds rc 1 walks `v.kids`, the other takes the box dec.
 	{"read-after-push-shared", `struct Val { kind: i32, kids: i32[] }
 function after(k: i32): i32 {
-    var vals: Val[] = [];
-    var v: Val = Val { kind: k, kids: [k] };
+    let vals: Val[] = [];
+    let v: Val = Val { kind: k, kids: [k] };
     vals = vals.append(v);
     return vals.len() + v.kids[0];
 }
 function rounds(n: i32): i32 {
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     for i in 0..n { acc = acc + after(i); }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = rounds(50);
-    var y: i32 = rounds(100);
+    let x: i32 = rounds(50);
+    let y: i32 = rounds(100);
     if (x != 1275) { return 90; }
     if (y != 5050) { return 90; }
     if (__rc_underflow_count() != 0) { return 99; }

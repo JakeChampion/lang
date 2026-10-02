@@ -23,22 +23,22 @@ import (
 // typeCannotCarrySlice gates.
 
 const viewLendSrc = `function total(src: [u8], n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + (src[i] as i32); i = i + 1; }
     return t;
 }
 function mk(n: i32): u8[] {
-    var a: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
+    let a: u8[] = __alloc_u8(n);
+    let i: i32 = 0;
     while (i < n) { a = a.with(i, ((i * 3) % 251) as u8); i = i + 1; }
     return a;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var b: u8[] = mk(8);
+        let b: u8[] = mk(8);
         acc = acc + total(b, 8);
         i = i + 1;
     }
@@ -50,21 +50,21 @@ function main(): i32 {
 // This is the half `std/crypto` reaches through `__sha256_absorb`, and the
 // reason audit_std_crypto's census row moved.
 const viewLendAsBytesSrc = `function total(src: [u8], n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + (src[i] as i32); i = i + 1; }
     return t;
 }
 function w(i: i32): string {
-    var t: string = "x";
+    let t: string = "x";
     if (i % 2 == 0) { t = "yy"; }
     return "a-wide-payload-past-any-inline-threshold-" + t;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var s: string = w(i);
+        let s: string = w(i);
         acc = acc + total(s.as_bytes(), 8);
         i = i + 1;
     }
@@ -82,19 +82,19 @@ function main(): i32 {
 // use-after-free this gate exists for.
 const viewLendEscapeSrc = `function id(s: [u8]): [u8] { return s; }
 function mk(n: i32): u8[] {
-    var a: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
+    let a: u8[] = __alloc_u8(n);
+    let i: i32 = 0;
     while (i < n) { a = a.with(i, ((i * 3) % 251) as u8); i = i + 1; }
     return a;
 }
 function through(b: u8[]): [u8] { return id(b); }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var arr: u8[] = mk(8);
-        var v: [u8] = through(arr);
-        var w: [u8] = id(arr);
+        let arr: u8[] = mk(8);
+        let v: [u8] = through(arr);
+        let w: [u8] = id(arr);
         if ((v[3] as i32) + v.len() != 17) { return 1; }
         if ((w[3] as i32) + w.len() != 17) { return 2; }
         acc = acc + 1;
@@ -106,23 +106,23 @@ function main(): i32 {
 
 func viewLendBumpSrc(n string) string {
 	return `function total(src: [u8], n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { t = t + (src[i] as i32); i = i + 1; }
     return t;
 }
 function mk(n: i32): u8[] {
-    var a: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
+    let a: u8[] = __alloc_u8(n);
+    let i: i32 = 0;
     while (i < n) { a = a.with(i, ((i * 3) % 251) as u8); i = i + 1; }
     return a;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + n + `) {
-        var b: u8[] = mk(8);
+        let b: u8[] = mk(8);
         acc = acc + total(b, 8);
         i = i + 1;
     }

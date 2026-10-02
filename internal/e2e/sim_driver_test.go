@@ -44,24 +44,24 @@ import "std/time";
 import "std/sim";
 
 function tie_winner(seed: i64): i32 {
-    var d: sim.Sim = sim.new(seed);
-    var fs: async.Future[i32][] = [
+    let d: sim.Sim = sim.new(seed);
+    let fs: async.Future[i32][] = [
         sim.future_at(d, 5000000, 100),
         sim.future_at(d, 5000000, 200)
     ];
-    var (w, v) = async.race_on(d, fs, -1);
+    let (w, v) = async.race_on(d, fs, -1);
     if (w == 0 && v != 100) { return -2; }
     if (w == 1 && v != 200) { return -3; }
     return w;
 }
 
 function main(): i32 {
-    var d: sim.Sim = sim.new(7);
-    var fs: async.Future[string][] = [
+    let d: sim.Sim = sim.new(7);
+    let fs: async.Future[string][] = [
         sim.future_at(d, 40000000, "late"),
         sim.future_at(d, 10000000, "early")
     ];
-    var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
+    let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
     match (got[0]) { Some(v) => { return 1; }, None => { } }
     match (got[1]) { Some(v) => { if (v != "early") { return 2; } }, None => { return 3; } }
     if (d.now_ns() != 25000000) { return 4; }
@@ -72,18 +72,18 @@ function main(): i32 {
     // seeds swapped sides. Same-seed reproducibility (check 5) is unchanged.
     if (tie_winner(1) != 0) { return 6; }
     if (tie_winner(2) != 1) { return 7; }
-    var g: sim.Sim = sim.new(1);
-    var gf: async.Future[i32][] = [
+    let g: sim.Sim = sim.new(1);
+    let gf: async.Future[i32][] = [
         sim.future_at(g, 30000000, 10),
         sim.future_at(g, 10000000, 20),
         sim.future_at(g, 20000000, 30)
     ];
-    var order: i32[] = async.gather_on(g, gf, -1);
+    let order: i32[] = async.gather_on(g, gf, -1);
     if (order[0] != 10 || order[1] != 20 || order[2] != 30) { return 8; }
     if (g.now_ns() != 30000000) { return 9; }
-    var c: sim.Sim = sim.new(1);
-    var cf: async.Future[i32][] = [sim.future_chain(c, 10000000, 5000000, 3, 9)];
-    var res: i32[] = async.gather_on(c, cf, -1);
+    let c: sim.Sim = sim.new(1);
+    let cf: async.Future[i32][] = [sim.future_chain(c, 10000000, 5000000, 3, 9)];
+    let res: i32[] = async.gather_on(c, cf, -1);
     if (res[0] != 9) { return 10; }
     if (c.now_ns() != 25000000) { return 11; }
     return 42;

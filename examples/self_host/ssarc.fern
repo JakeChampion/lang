@@ -1,7 +1,8 @@
 // Verified semantic ownership to the production stack IR. No AST ownership
 // facts or alternate backend ABI enter this boundary.
 import "./ir";
-import "./irlower";
+import "./irtables";
+import "./fnsigs";
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
@@ -12,11 +13,11 @@ import "./semtypes";
 import "./typeinfo";
 import "./util";
 
-function empty(why: string): irlower.LowerResult {
-  return irlower.LowerResult {
+function empty(why: string): irtables.LowerResult {
+  return irtables.LowerResult {
     ok: false, why: why, ops: [], n_locals: 0,
     n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
-    f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_i32(),
+    f64_slots: [], str_slots: [], name: "", result_kind: irtables.result_i32(),
   };
 }
 
@@ -53,9 +54,9 @@ function narrow_slot(t: typeinfo.Type): boolean {
 }
 
 // The slot width an array's element ops carry: eight bytes for a 64-bit
-// scalar, one byte for a u8, one i32-shaped word for everything else. The
-// register backends pack a u8 array a byte an element (ir.packed) and give
-// every other element eight bytes; wasm reads 8 as its narrow 4-byte slot.
+// scalar, one byte for a u8, one i32-shaped word for everything else. Every
+// backend packs a u8 array a byte an element (ir.packed); the register
+// backends give every other element eight bytes.
 // The `_i64` forms name the SLOT, not the sign, so an i64 and a u64 take the
 // same ones; a float shares the width and differs in the load and store wasm
 // selects, the f32 occupying the f64's slot.
@@ -240,8 +241,8 @@ function fields_have_children(fields: semrecords.Field[]): boolean {
 // A routed map whose columns own what their slots name, released with the
 // map: a string column's strings, and a wide column's cells.
 function owned_columns(t: typeinfo.Type): boolean {
-  var k: typeinfo.Type = ssasem.map_key(t);
-  var v: typeinfo.Type = ssasem.map_value(t);
+  let k: typeinfo.Type = ssasem.map_key(t);
+  let v: typeinfo.Type = ssasem.map_value(t);
   return ssasem.is_text(k) || ssasem.is_string(v) || cell_column(k) || cell_column(v);
 }
 
@@ -264,6 +265,9 @@ function release_name(t: typeinfo.Type, f: ssasem.Func): string {
   }
   if (ssasem.is_string(t)) {
     return "__fern_str_free";
+  }
+  if (routed_map(t, f) && ssasem.keyed_map_key(ssasem.map_key(t))) {
+    return "__map_drop_keyed_impl";
   }
   if (routed_map(t, f) && routed_box(ssasem.map_value(t))) {
     return "__map_drop_boxes_impl";
@@ -295,9 +299,9 @@ function release_name(t: typeinfo.Type, f: ssasem.Func): string {
 // provides; the `_vf` members take the value's release as a further argument
 // and call it on every entry.
 function map_release_name(t: typeinfo.Type): string {
-  var v: typeinfo.Type = ssasem.map_value(t);
-  var ks: boolean = ssasem.is_text(ssasem.map_key(t));
-  var kf: boolean = ssasem.keyed_map_key(ssasem.map_key(t));
+  let v: typeinfo.Type = ssasem.map_value(t);
+  let ks: boolean = ssasem.is_text(ssasem.map_key(t));
+  let kf: boolean = ssasem.keyed_map_key(ssasem.map_key(t));
   if (ssasem.is_string(v)) {
     if (kf) {
       return "__fern_map_free_kfvs";
@@ -338,14 +342,21 @@ function map_release_name(t: typeinfo.Type): string {
 // release the function that releases one key, and a map of boxes the one
 // that releases one value — the key's first, the value's on top — so the
 // runtime can walk a column whose shape it does not know.
-function release(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
+function release(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
+  if (routed_map(t, f) && ssasem.keyed_map_key(ssasem.map_key(t))) {
+    r = emit(r, ir.op_load_local(slot));
+    r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_key(t))));
+    r = emit(r, ir.op_const_closure(value_env_release(ssasem.map_value(t))));
+    r = emit(r, ir.op_call_direct(release_name(t, f), 3));
+    return emit(r, ir.op_drop());
+  }
   if (routed_map(t, f) && routed_box(ssasem.map_value(t))) {
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_value(t))));
     r = emit(r, ir.op_call_direct(release_name(t, f), 2));
     return emit(r, ir.op_drop());
   }
-  var fns: string[] = map_release_fns(t);
+  let fns: string[] = map_release_fns(t);
   if (fns.len() == 0) {
     return helper(r, slot, release_name(t, f));
   }
@@ -360,7 +371,7 @@ function release(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, f: ssa
 // The per-type releases a map's free is handed after the box: the key's for
 // a keyed column, then the value's for a column of boxes.
 function map_release_fns(t: typeinfo.Type): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   if (!ssasem.is_map(t)) {
     return out;
   }
@@ -448,7 +459,7 @@ function value_widekind(v: typeinfo.Type): i32 {
 // the function the insert names. It is what tells map_set which release the
 // value it supersedes on an overwrite is owed (#9300).
 function map_value_kind(t: typeinfo.Type): i32 {
-  var v: typeinfo.Type = ssasem.map_value(t);
+  let v: typeinfo.Type = ssasem.map_value(t);
   if (ssasem.is_string(v)) {
     return 1;
   }
@@ -461,11 +472,11 @@ function map_value_kind(t: typeinfo.Type): i32 {
   return 0;
 }
 
-function emit(own r: irlower.LowerResult, op: ir.Op): irlower.LowerResult {
-  return irlower.LowerResult { ...r, ops: r.ops.append(op) };
+function emit(own r: irtables.LowerResult, op: ir.Op): irtables.LowerResult {
+  return irtables.LowerResult { ...r, ops: r.ops.append(op) };
 }
 
-function helper(own r: irlower.LowerResult, slot: i32, name: string): irlower.LowerResult {
+function helper(own r: irtables.LowerResult, slot: i32, name: string): irtables.LowerResult {
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_call_direct(name, 1));
   return emit(r, ir.op_drop());
@@ -474,8 +485,8 @@ function helper(own r: irlower.LowerResult, slot: i32, name: string): irlower.Lo
 // `defer0` holds an append's or a with's receiver's retain back, so the
 // operation's own rc gate reads the box rather than this supply — see `deferred_retain` for why the
 // order is the whole of it.
-function supplies(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, defer0: boolean, kept: i32[], late: i32[]): irlower.LowerResult {
-  var j: i32 = 0;
+function supplies(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, defer0: boolean, kept: i32[], late: i32[]): irtables.LowerResult {
+  let j: i32 = 0;
   for supply in step.supplies {
     // A string literal's retain is the immortal guard's no-op; a late kept
     // read is retained where the construction copies it.
@@ -515,8 +526,8 @@ function definition(f: ssasem.Func, v: i32): ssa.SInst {
 // enum's payload are the same slot to this, since both read through
 // `op_struct_get`. The scratch slot holds the box's answer; nothing reads it
 // past this point.
-function steal(own r: irlower.LowerResult, f: ssasem.Func, v: i32, unique: i32): irlower.LowerResult {
-  var get: ssa.SInst = definition(f, v);
+function steal(own r: irtables.LowerResult, f: ssasem.Func, v: i32, unique: i32): irtables.LowerResult {
+  let get: ssa.SInst = definition(f, v);
   r = reserve(r, unique + 1);
   r = emit(r, ir.op_load_local(get.args[0]));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -559,7 +570,7 @@ function steal(own r: irlower.LowerResult, f: ssasem.Func, v: i32, unique: i32):
 //
 // A map mutation never defers. Its receiver's retain is what makes a map
 // the frame still reads count as shared, and `unshared_map` then copies:
-// `var n = m.insert(k, v)` leaves `m` as it was, which is the value the
+// `let n = m.insert(k, v)` leaves `m` as it was, which is the value the
 // checker's E055 promises for every collection operation.
 //
 // A string append defers every retain of its left operand: a string the
@@ -632,18 +643,18 @@ function receiver_retained(step: ssaunits.Step): boolean {
 // wrappers that lend a record on.
 struct Held { arrays: i32[], records: i32[], fields: i32[], gated: i32[], gated_roots: i32[], gated_records: i32[], gated_fields: i32[] }
 
-function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowRow[]): Held {
-  var out: Held = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [], gated_records: [], gated_fields: [] };
+function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: ssaunits.GrowTable): Held {
+  let out: Held = Held { arrays: [], records: [], fields: [], gated: [], gated_roots: [], gated_records: [], gated_fields: [] };
   if (ins.kind_tag != ssasem.call()) {
     return out;
   }
-  var modes: i32[] = ssaunits.callee_modes(f, ins);
-  var i: i32 = 0;
+  let modes: i32[] = ssaunits.callee_modes(f, ins);
+  let i: i32 = 0;
   while (i < ins.args.len() && i < modes.len()) {
-    var v: i32 = ins.args[i];
-    var last: boolean = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1;
+    let v: i32 = ins.args[i];
+    let last: boolean = util.index_of_i32(step.drops, v) >= 0 && ssaunits.occurrences(ins.args, v) == 1;
     if (modes[i] == ssaunits.borrow_mode() && !last) {
-      var handed: boolean = i < step.hand_roots.len() && step.hand_roots[i] >= 0;
+      let handed: boolean = i < step.hand_roots.len() && step.hand_roots[i] >= 0;
       if (bracketable(f.values[v]) && !handed && ssaunits.grows_buffer(grows, ins.str, i) && util.index_of_i32(out.arrays, v) < 0) {
         out = Held { ...out, arrays: out.arrays.append(v) };
       }
@@ -666,7 +677,7 @@ function bracketed(f: ssasem.Func, step: ssaunits.Step, ins: ssa.SInst, grows: s
 }
 
 function holds_field(h: Held, rec: i32, field: i32): boolean {
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < h.records.len()) {
     if (h.records[k] == rec && h.fields[k] == field) {
       return true;
@@ -698,13 +709,13 @@ function record_bracketable(t: typeinfo.Type): boolean {
 
 // The scratch locals sit above the value ids; a call's own lowering reserves
 // none, so the held buffers keep theirs from the take to the give.
-function bracket_take(own r: irlower.LowerResult, f: ssasem.Func, held: Held): irlower.LowerResult {
+function bracket_take(own r: irtables.LowerResult, f: ssasem.Func, held: Held): irtables.LowerResult {
   for v in held.arrays {
     r = helper(r, v, "__fern_rc_inc");
   }
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < held.records.len()) {
-    var slot: i32 = scratch_base(f) + k;
+    let slot: i32 = scratch_base(f) + k;
     r = reserve(r, slot + 1);
     r = emit(r, ir.op_load_local(held.records[k]));
     r = emit(r, ir.op_struct_get(held.fields[k], 0));
@@ -712,9 +723,9 @@ function bracket_take(own r: irlower.LowerResult, f: ssasem.Func, held: Held): i
     r = helper(r, slot, "__fern_arr_share_inc");
     k = k + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < held.gated.len()) {
-    var unique: i32 = scratch_base(f) + held.records.len() + j;
+    let unique: i32 = scratch_base(f) + held.records.len() + j;
     r = reserve(r, unique + 1);
     r = emit(r, ir.op_load_local(held.gated_roots[j]));
     r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -724,9 +735,9 @@ function bracket_take(own r: irlower.LowerResult, f: ssasem.Func, held: Held): i
   }
   // A gated field takes two scratch slots: the buffer, captured before the
   // call for the reason a bracketed field's is, and the record's answer.
-  var g: i32 = 0;
+  let g: i32 = 0;
   while (g < held.gated_records.len()) {
-    var slot: i32 = gated_field_slot(f, held, g);
+    let slot: i32 = gated_field_slot(f, held, g);
     r = reserve(r, slot + 2);
     r = emit(r, ir.op_load_local(held.gated_records[g]));
     r = emit(r, ir.op_struct_get(held.gated_fields[g], 0));
@@ -744,23 +755,23 @@ function gated_field_slot(f: ssasem.Func, held: Held, g: i32): i32 {
   return scratch_base(f) + held.records.len() + held.gated.len() + 2 * g;
 }
 
-function bracket_give(own r: irlower.LowerResult, f: ssasem.Func, held: Held): irlower.LowerResult {
+function bracket_give(own r: irtables.LowerResult, f: ssasem.Func, held: Held): irtables.LowerResult {
   for v in held.arrays {
     r = release(r, v, f.values[v], f);
   }
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < held.records.len()) {
     r = helper(r, scratch_base(f) + k, "__fern_arr_share_dec");
     k = k + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < held.gated.len()) {
     r = unless_unique(r, scratch_base(f) + held.records.len() + j, held.gated[j], "__fern_arr_share_dec");
     j = j + 1;
   }
-  var g: i32 = 0;
+  let g: i32 = 0;
   while (g < held.gated_records.len()) {
-    var slot: i32 = gated_field_slot(f, held, g);
+    let slot: i32 = gated_field_slot(f, held, g);
     r = unless_unique(r, slot + 1, slot, "__fern_arr_share_dec");
     g = g + 1;
   }
@@ -768,9 +779,9 @@ function bracket_give(own r: irlower.LowerResult, f: ssasem.Func, held: Held): i
 }
 
 // Scratch storage is shared by successive drops and distinct within recursion.
-function reserve(own r: irlower.LowerResult, end: i32): irlower.LowerResult {
+function reserve(own r: irtables.LowerResult, end: i32): irtables.LowerResult {
   if (end > r.n_locals) {
-    return irlower.LowerResult { ...r, n_locals: end };
+    return irtables.LowerResult { ...r, n_locals: end };
   }
   return r;
 }
@@ -864,7 +875,7 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
 // frame that holds the type only indirectly — as a field of a record it never
 // names — lists the same environments as the frame that built the closure.
 function env_records(f: ssasem.Func, fn_ty: typeinfo.Type): semrecords.Record[] {
-  var out: semrecords.Record[] = [];
+  let out: semrecords.Record[] = [];
   for rec in f.records.list {
     if (!semtypes.is_env(rec.ty) || !fields_have_children(rec.fields)) {
       continue;
@@ -872,7 +883,7 @@ function env_records(f: ssasem.Func, fn_ty: typeinfo.Type): semrecords.Record[] 
     if (!serves(f.envs, fn_ty, rec.ty)) {
       continue;
     }
-    var at: i32 = 0;
+    let at: i32 = 0;
     while (at < out.len() && semtypes.env_body(out[at].ty) < semtypes.env_body(rec.ty)) {
       at = at + 1;
     }
@@ -891,8 +902,8 @@ function serves(rows: ssasem.EnvRow[], fn_ty: typeinfo.Type, env_ty: typeinfo.Ty
 }
 
 function inserted_record(recs: semrecords.Record[], at: i32, rec: semrecords.Record): semrecords.Record[] {
-  var out: semrecords.Record[] = [];
-  var i: i32 = 0;
+  let out: semrecords.Record[] = [];
+  let i: i32 = 0;
   while (i < recs.len()) {
     if (i == at) {
       out = out.append(rec);
@@ -912,7 +923,7 @@ function inserted_record(recs: semrecords.Record[], at: i32, rec: semrecords.Rec
 // nothing matches none and is released alone. The box need not have been built
 // in this frame — that is the point of matching on the body address rather
 // than on what the frame knows it made.
-function drop_captures(own r: irlower.LowerResult, slot: i32, fn_ty: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
+function drop_captures(own r: irtables.LowerResult, slot: i32, fn_ty: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
   for rec in env_records(f, fn_ty) {
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_const_i32(0));
@@ -932,7 +943,7 @@ function drop_captures(own r: irlower.LowerResult, slot: i32, fn_ty: typeinfo.Ty
 // so it is called unguarded. The value need not have been widened in this
 // frame, which is why the set is the type's (`ssasem.Func.dyns`) rather than
 // what the frame saw built.
-function drop_dyn(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
+function drop_dyn(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   for c in dyn_concretes(f, t) {
     if (ssasem.is_string(c)) {
       r = reserve(r, scratch + 1);
@@ -963,7 +974,7 @@ function drop_dyn(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scrat
 }
 
 function dyn_concretes(f: ssasem.Func, t: typeinfo.Type): typeinfo.Type[] {
-  var out: typeinfo.Type[] = [];
+  let out: typeinfo.Type[] = [];
   for row in f.dyns {
     if (semtypes.equal(row.fn_ty, t)) {
       out = out.append(row.env_ty);
@@ -975,7 +986,7 @@ function dyn_concretes(f: ssasem.Func, t: typeinfo.Type): typeinfo.Type[] {
 // The units a box owns, released without releasing the box. The caller has
 // already emitted the uniqueness test this belongs under: `drop_value` before
 // it releases the box, `reuse_token` before it hands the box on.
-function drop_children(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
+function drop_children(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   if let typeinfo.TypeFunc(_) = t {
     r = drop_captures(r, slot, t, f);
   }
@@ -1000,7 +1011,7 @@ function drop_children(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, 
 // A nominal type with children is released by its own helper: the inline
 // test-walk-release is ~20 emitted lines a site, and the self-host assembles
 // every line it emits.
-function drop_value(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
+function drop_value(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   if (outlined_release(t, f)) {
     return helper(r, slot, release_helper_name(t));
   }
@@ -1011,7 +1022,7 @@ function outlined_release(t: typeinfo.Type, f: ssasem.Func): boolean {
   return named(t) != "" && has_children(t, f);
 }
 
-function drop_value_inline(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
+function drop_value_inline(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   if (has_children(t, f)) {
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -1024,12 +1035,12 @@ function drop_value_inline(own r: irlower.LowerResult, slot: i32, t: typeinfo.Ty
 
 // A builtin union's box carries no shape pointer, so the walk selects its one
 // payload by the tag the box stores rather than by a variant shape.
-function drop_payload(own r: irlower.LowerResult, slot: i32, e: semrecords.Enum, scratch: i32, f: ssasem.Func): irlower.LowerResult {
-  var child: i32 = scratch;
+function drop_payload(own r: irtables.LowerResult, slot: i32, e: semrecords.Enum, scratch: i32, f: ssasem.Func): irtables.LowerResult {
+  let child: i32 = scratch;
   r = reserve(r, child + 1);
-  var tag: i32 = 0;
+  let tag: i32 = 0;
   while (tag < e.variants.len()) {
-    var fields: semrecords.Field[] = e.variants[tag].fields;
+    let fields: semrecords.Field[] = e.variants[tag].fields;
     if (fields.len() == 1 && ssasem.reference(fields[0].ty)) {
       r = emit(r, ir.op_load_local(slot));
       r = emit(r, ir.op_opt_tag());
@@ -1049,8 +1060,8 @@ function drop_payload(own r: irlower.LowerResult, slot: i32, e: semrecords.Enum,
 
 // A variant box carries only its own variant's fields, so the walk selects
 // them by the box's runtime variant.
-function drop_variant_fields(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
-  var e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
+function drop_variant_fields(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
+  let e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
   if (e.layout == semrecords.layout_option()) {
     return drop_payload(r, slot, e, scratch, f);
   }
@@ -1069,8 +1080,8 @@ function drop_variant_fields(own r: irlower.LowerResult, slot: i32, t: typeinfo.
 // self_tail_field: the index of the variant's last field of the enum's own
 // type, or -1.
 function self_tail_field(v: semrecords.Variant, t: typeinfo.Type): i32 {
-  var at: i32 = 0 - 1;
-  var i: i32 = 0;
+  let at: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < v.fields.len()) {
     if (semtypes.equal(v.fields[i].ty, t)) {
       at = i;
@@ -1081,7 +1092,7 @@ function self_tail_field(v: semrecords.Variant, t: typeinfo.Type): i32 {
 }
 
 function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
-  var e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
+  let e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
   if (e.layout == semrecords.layout_option()) {
     return false;
   }
@@ -1100,11 +1111,11 @@ function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
 // children are, exactly as drop_value would release it; a shared next node is
 // released without its children, and the walk stops. Slots: 1 the node, 2
 // whether it is the caller's box, 3 the next node, 4 up scratch.
-function drop_variant_chain(own r: irlower.LowerResult, t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
-  var e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
-  var node: i32 = 1;
-  var first: i32 = 2;
-  var next: i32 = 3;
+function drop_variant_chain(own r: irtables.LowerResult, t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
+  let e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
+  let node: i32 = 1;
+  let first: i32 = 2;
+  let next: i32 = 3;
   r = reserve(r, 5);
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_store_local(node));
@@ -1118,11 +1129,11 @@ function drop_variant_chain(own r: irlower.LowerResult, t: typeinfo.Type, f: ssa
     if (!fields_have_children(v.fields)) {
       continue;
     }
-    var tail: i32 = self_tail_field(v, t);
+    let tail: i32 = self_tail_field(v, t);
     r = emit(r, ir.op_load_local(node));
     r = emit(r, ir.op_variant_is(v.name));
     r = emit(r, ir.op_if(0));
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < v.fields.len()) {
       if (walked(v.fields[i].ty)) {
         r = emit(r, ir.op_load_local(node));
@@ -1165,9 +1176,9 @@ function drop_variant_chain(own r: irlower.LowerResult, t: typeinfo.Type, f: ssa
   return emit(r, ir.op_end());
 }
 
-function drop_elements(own r: irlower.LowerResult, slot: i32, elem: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
-  var index: i32 = scratch;
-  var child: i32 = index + 1;
+function drop_elements(own r: irtables.LowerResult, slot: i32, elem: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
+  let index: i32 = scratch;
+  let child: i32 = index + 1;
   r = reserve(r, child + 1);
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(index));
@@ -1192,10 +1203,10 @@ function drop_elements(own r: irlower.LowerResult, slot: i32, elem: typeinfo.Typ
   return emit(r, ir.op_end());
 }
 
-function drop_tuple_fields(own r: irlower.LowerResult, slot: i32, tup: typeinfo.TypeTuple, scratch: i32, f: ssasem.Func): irlower.LowerResult {
-  var child: i32 = scratch;
+function drop_tuple_fields(own r: irtables.LowerResult, slot: i32, tup: typeinfo.TypeTuple, scratch: i32, f: ssasem.Func): irtables.LowerResult {
+  let child: i32 = scratch;
   r = reserve(r, child + 1);
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < tup.elements.len()) {
     if (ssasem.reference(tup.elements[i])) {
       r = emit(r, ir.op_load_local(slot));
@@ -1210,10 +1221,10 @@ function drop_tuple_fields(own r: irlower.LowerResult, slot: i32, tup: typeinfo.
 
 // `env` selects the box LAYOUT, not what is walked: an environment addresses
 // its captures as array slots and a record its fields as struct ones.
-function drop_record_fields(own r: irlower.LowerResult, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean): irlower.LowerResult {
-  var child: i32 = scratch;
+function drop_record_fields(own r: irtables.LowerResult, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean): irtables.LowerResult {
+  let child: i32 = scratch;
   r = reserve(r, child + 1);
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fields.len()) {
     if (walked(fields[i].ty)) {
       r = emit(r, ir.op_load_local(slot));
@@ -1231,7 +1242,7 @@ function drop_record_fields(own r: irlower.LowerResult, slot: i32, fields: semre
   return r;
 }
 
-function drops(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, links: i32[]): irlower.LowerResult {
+function drops(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func, links: i32[]): irtables.LowerResult {
   for value in step.drops {
     r = drop_linked(r, value, links, f);
   }
@@ -1242,7 +1253,7 @@ function drops(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, 
 // storage became the result's, so releasing it here would free a live box.
 // `shell` is a box whose payload this step took without emptying its slot
 // (`ssaunits.shell_root`), so its drop releases the box alone.
-function drops_less(own r: irlower.LowerResult, step: ssaunits.Step, f: ssasem.Func, links: i32[], taken: i32, took: i32, shell: i32): irlower.LowerResult {
+function drops_less(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.Func, links: i32[], taken: i32, took: i32, shell: i32): irtables.LowerResult {
   for value in step.drops {
     if (value == shell) {
       r = release(r, value, f.values[value], f);
@@ -1338,14 +1349,14 @@ function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
 // to give, and a wrong one is the pairing that emits its machinery and then
 // declines.
 function union_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
-  var at: i32 = semrecords.find_enum(f.enums, t);
+  let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0) {
     return 0 - 1;
   }
   if (f.enums[at].layout == semrecords.layout_option()) {
     return 0 - 1;
   }
-  var n: i32 = 0 - 1;
+  let n: i32 = 0 - 1;
   for v in f.enums[at].variants {
     if (n < 0) {
       n = v.fields.len();
@@ -1357,6 +1368,39 @@ function union_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
     return 0 - 1;
   }
   return n + 1;
+}
+
+// The slots one variant of a declared enum builds: its shape word and one per
+// field, as `struct_make` allocates them. -1 for any other layout.
+function variant_slots(t: typeinfo.Type, name: string, f: ssasem.Func): i32 {
+  let at: i32 = semrecords.find_enum(f.enums, t);
+  if (at < 0 || f.enums[at].layout != semrecords.layout_variant()) {
+    return 0 - 1;
+  }
+  let v: i32 = semrecords.find_variant(f.enums[at], name);
+  if (v < 0) {
+    return 0 - 1;
+  }
+  return f.enums[at].variants[v].fields.len() + 1;
+}
+
+// The slots a dying value's box has in block `b`. A declared enum whose
+// variants disagree has no count of its own, but a payload read executes only
+// where the tag test chose its variant, so a block reading one holds a box of
+// that variant's count. That is the consuming match's shape: the arm takes the
+// payloads, the scrutinee dies, and the arm's construction builds in its box.
+function donor_slots(f: ssasem.Func, b: ssa.SBlock, d: i32): i32 {
+  let t: typeinfo.Type = f.values[d];
+  let n: i32 = reuse_slots(t, f);
+  if (n >= 0 || ssasem.finalizer_of(f, t) != "") {
+    return n;
+  }
+  for ins in b.insts {
+    if (ins.kind_tag == ssasem.variant_get() && ins.args[0] == d) {
+      return variant_slots(t, ins.str, f);
+    }
+  }
+  return 0 - 1;
 }
 
 // The slots a construction claims, or -1 where it is not one a token can be
@@ -1373,7 +1417,11 @@ function recipient_slots(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): i32 
     return reuse_slots(f.values[ins.result], f);
   }
   if (ins.kind_tag == ssasem.variant_new()) {
-    return union_slots(f.values[ins.result], f);
+    let n: i32 = union_slots(f.values[ins.result], f);
+    if (n < 0) {
+      n = variant_slots(f.values[ins.result], ins.str, f);
+    }
+    return n;
   }
   return 0 - 1;
 }
@@ -1390,13 +1438,13 @@ function recipient_slots(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): i32 
 struct Claims { counts: i32[], last: i32[] }
 
 function block_claims(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): Claims {
-  var counts: i32[] = [];
-  var last: i32[] = [];
-  var pos: i32 = 0;
+  let counts: i32[] = [];
+  let last: i32[] = [];
+  let pos: i32 = 0;
   while (pos < b.insts.len()) {
-    var c: i32 = recipient_slots(f, p, b.insts[pos]);
+    let c: i32 = recipient_slots(f, p, b.insts[pos]);
     if (c >= 0) {
-      var at: i32 = util.index_of_i32(counts, c);
+      let at: i32 = util.index_of_i32(counts, c);
       if (at < 0) {
         counts = counts.append(c);
         last = last.append(pos);
@@ -1410,31 +1458,31 @@ function block_claims(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): Claims {
 }
 
 function claimed_after(c: Claims, slots: i32, pos: i32): boolean {
-  var at: i32 = util.index_of_i32(c.counts, slots);
+  let at: i32 = util.index_of_i32(c.counts, slots);
   return at >= 0 && c.last[at] > pos;
 }
 
 function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, off: boolean): ReusePairs {
-  var tokens: i32[] = [];
-  var builds: i32[] = [];
-  var selfs: i32[] = [];
-  var claims_tab: Claims = block_claims(f, p, b);
-  var pending: i32 = 0 - 1;
-  var pending_at: i32 = 0 - 1;
-  var pos: i32 = 0;
+  let tokens: i32[] = [];
+  let builds: i32[] = [];
+  let selfs: i32[] = [];
+  let claims_tab: Claims = block_claims(f, p, b);
+  let pending: i32 = 0 - 1;
+  let pending_at: i32 = 0 - 1;
+  let pos: i32 = 0;
   while (pos < b.insts.len()) {
     tokens = tokens.append(0 - 1);
     builds = builds.append(0 - 1);
     selfs = selfs.append(0 - 1);
-    var ins: ssa.SInst = b.insts[pos];
+    let ins: ssa.SInst = b.insts[pos];
     if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-      var step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
-      var claims: i32 = recipient_slots(f, p, ins);
+      let step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
+      let claims: i32 = recipient_slots(f, p, ins);
       if (off) {
         pending = 0 - 1;
       } else {
         if (claims >= 0 && pending >= 0
-          && claims == reuse_slots(f.values[pending], f)
+          && claims == donor_slots(f, b, pending)
           && util.index_of_i32(ins.args, pending) < 0) {
           builds = builds.with(pos, pending);
           tokens = tokens.with(pending_at, pending);
@@ -1464,7 +1512,7 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlo
           // has already built into and is returning live.
           for d in step.drops {
             if (selfs[pos] < 0 && d != ins.result
-              && reuse_slots(f.values[d], f) == claims
+              && donor_slots(f, b, d) == claims
               && util.index_of_i32(ins.args, d) < 0) {
               selfs = selfs.with(pos, d);
             }
@@ -1479,7 +1527,7 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlo
         // pairing, which spends it on the spot rather than saving it.
         if (pending < 0 && claims < 0) {
           for d in step.drops {
-            var sl: i32 = reuse_slots(f.values[d], f);
+            let sl: i32 = donor_slots(f, b, d);
             if (pending < 0 && sl >= 0 && claimed_after(claims_tab, sl, pos)) {
               pending = d;
               pending_at = pos;
@@ -1507,8 +1555,8 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlo
 // CHILDREN ONLY, which is what makes it the one to call: the box itself is not
 // freed but handed on, and the runtime's mismatch path frees a donor block
 // shallowly, so its children are owed here either way.
-function reuse_token(own r: irlower.LowerResult, f: ssasem.Func, donor: i32): irlower.LowerResult {
-  var token: i32 = token_slot(f);
+function reuse_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): irtables.LowerResult {
+  let token: i32 = token_slot(f);
   r = reserve(r, scratch_base(f));
   r = emit(r, ir.op_load_local(donor));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -1551,31 +1599,31 @@ function reuse_token(own r: irlower.LowerResult, f: ssasem.Func, donor: i32): ir
 struct Keeps { donors: i32[], slots: boolean[][], values: i32[][], late: i32[][], start: i32[], taken: i32[], built: i32[] }
 
 function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, ins: ssa.SInst, built: i32, donor: i32, taken: i32, uses: i32[]): Keeps {
-  var none: Keeps = Keeps { donors: [], slots: [], values: [], late: [], start: [], taken: [], built: [] };
+  let none: Keeps = Keeps { donors: [], slots: [], values: [], late: [], start: [], taken: [], built: [] };
   if (ins.kind_tag != ssasem.record_new() || !semtypes.equal(f.values[ins.result], f.values[donor])) {
     return none;
   }
-  var slots: boolean[] = [];
+  let slots: boolean[] = [];
   while (slots.len() < ins.args.len()) {
     slots = slots.append(false);
   }
-  var values: i32[] = [];
-  var late: i32[] = [];
-  var start: i32 = 0 - 1;
-  var retained: i32[] = [];
+  let values: i32[] = [];
+  let late: i32[] = [];
+  let start: i32 = 0 - 1;
+  let retained: i32[] = [];
   for supply in at(p, idx, b.id, built, 0 - 1).supplies {
     if (supply.mode == ssaunits.retain_unit()) {
       retained = retained.append(supply.value);
     }
   }
-  var pos: i32 = 0;
+  let pos: i32 = 0;
   while (pos <= taken) {
-    var get: ssa.SInst = b.insts[pos];
+    let get: ssa.SInst = b.insts[pos];
     // Exactly one unit: a read that is taken AND retained at the
     // construction holds two, and keeping in place stands in for one.
     if (get.kind_tag == ssasem.record_get() && get.args[0] == donor
       && payload_taken(f, p, get) != util.index_of_i32(retained, get.result) >= 0) {
-      var i: i32 = util.index_of_i32(ins.args, get.result);
+      let i: i32 = util.index_of_i32(ins.args, get.result);
       // Once: the donor's slot holds one unit, which a second operand
       // naming the same value would need a retain of its own for.
       if (i == get.imm && !slots[i] && ssaunits.occurrences(ins.args, get.result) == 1) {
@@ -1607,7 +1655,7 @@ function held_read(p: ssaunits.Plan, ins: ssa.SInst): boolean {
 // How many operands name each value, over every instruction and terminator
 // of the function.
 function use_counts(f: ssasem.Func): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   while (out.len() < f.graph.nvals) {
     out = out.append(0);
   }
@@ -1630,14 +1678,14 @@ function use_counts(f: ssasem.Func): i32[] {
 // Every pairing's token interval in the block: `from` where the token is taken,
 // `to` where it is spent.
 function token_busy(pairs: ReusePairs, from: i32, to: i32, own_build: i32): boolean {
-  var pos: i32 = 0;
+  let pos: i32 = 0;
   while (pos < pairs.builds.len()) {
     if (pos != own_build) {
       if (pairs.selfs[pos] >= 0 && pos >= from && pos <= to) {
         return true;
       }
       if (pairs.builds[pos] >= 0 && pos >= from) {
-        var t: i32 = util.index_of_i32(pairs.tokens, pairs.builds[pos]);
+        let t: i32 = util.index_of_i32(pairs.tokens, pairs.builds[pos]);
         if (t <= to) {
           return true;
         }
@@ -1649,17 +1697,17 @@ function token_busy(pairs: ReusePairs, from: i32, to: i32, own_build: i32): bool
 }
 
 function block_keeps(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, uses: i32[]): Keeps {
-  var out: Keeps = Keeps { donors: [], slots: [], values: [], late: [], start: [], taken: [], built: [] };
-  var pos: i32 = 0;
+  let out: Keeps = Keeps { donors: [], slots: [], values: [], late: [], start: [], taken: [], built: [] };
+  let pos: i32 = 0;
   while (pos < b.insts.len()) {
-    var donor: i32 = pairs.selfs[pos];
-    var taken: i32 = pos;
+    let donor: i32 = pairs.selfs[pos];
+    let taken: i32 = pos;
     if (donor < 0 && pairs.builds[pos] >= 0) {
       donor = pairs.builds[pos];
       taken = util.index_of_i32(pairs.tokens, donor);
     }
     if (donor >= 0 && taken >= 0) {
-      var k: Keeps = keep_slots(f, p, idx, b, b.insts[pos], pos, donor, taken, uses);
+      let k: Keeps = keep_slots(f, p, idx, b, b.insts[pos], pos, donor, taken, uses);
       if (k.donors.len() > 0 && !token_busy(pairs, k.start[0], pos, pos)) {
         out = Keeps {
           donors: out.donors.append(donor), slots: out.slots.append(k.slots[0]),
@@ -1674,7 +1722,7 @@ function block_keeps(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlo
 }
 
 function kept_values(k: Keeps): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for vs in k.values {
     for v in vs {
       out = out.append(v);
@@ -1686,7 +1734,7 @@ function kept_values(k: Keeps): i32[] {
 // Whether a keep's donor dies at `pos` for a construction later in the block:
 // its box is released at that construction, not here.
 function token_kept(k: Keeps, pos: i32): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < k.taken.len()) {
     if (k.taken[i] == pos && k.built[i] != pos) {
       return true;
@@ -1697,7 +1745,7 @@ function token_kept(k: Keeps, pos: i32): boolean {
 }
 
 function late_values(k: Keeps): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for vs in k.late {
     for v in vs {
       out = out.append(v);
@@ -1708,8 +1756,8 @@ function late_values(k: Keeps): i32[] {
 
 // The token as the kept steals read it: the donor's box when it is unique,
 // null when it is shared.
-function keep_token(own r: irlower.LowerResult, f: ssasem.Func, donor: i32): irlower.LowerResult {
-  var token: i32 = token_slot(f);
+function keep_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): irtables.LowerResult {
+  let token: i32 = token_slot(f);
   r = reserve(r, scratch_base(f));
   r = emit(r, ir.op_load_local(donor));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -1724,7 +1772,7 @@ function keep_token(own r: irlower.LowerResult, f: ssasem.Func, donor: i32): irl
 
 // The kept donor's drop: a unique donor gives up the children it does not keep
 // and its box is the token; a shared one is released as any dying value.
-function keep_release(own r: irlower.LowerResult, f: ssasem.Func, donor: i32, slots: boolean[]): irlower.LowerResult {
+function keep_release(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, slots: boolean[]): irtables.LowerResult {
   r = emit(r, ir.op_load_local(token_slot(f)));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("ne", 0, false));
@@ -1738,10 +1786,10 @@ function keep_release(own r: irlower.LowerResult, f: ssasem.Func, donor: i32, sl
 }
 
 // drop_record_fields over the fields `skip` does not mark.
-function drop_fields_except(own r: irlower.LowerResult, slot: i32, fields: semrecords.Field[], skip: boolean[], scratch: i32, f: ssasem.Func): irlower.LowerResult {
-  var child: i32 = scratch;
+function drop_fields_except(own r: irtables.LowerResult, slot: i32, fields: semrecords.Field[], skip: boolean[], scratch: i32, f: ssasem.Func): irtables.LowerResult {
+  let child: i32 = scratch;
   r = reserve(r, child + 1);
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fields.len()) {
     if (walked(fields[i].ty) && !(i < skip.len() && skip[i])) {
       r = emit(r, ir.op_load_local(slot));
@@ -1761,16 +1809,16 @@ function drop_fields_except(own r: irlower.LowerResult, slot: i32, fields: semre
 // construction: a unique donor gives up the children the construction
 // replaces before their slots are overwritten, and a shared one is released
 // once its kept fields are copied. The replaced slots are stored last.
-function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, k: Keeps, at: i32): irlower.LowerResult {
+function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, k: Keeps, at: i32): irtables.LowerResult {
   if (ins.kind_tag == ssasem.tuple_new()) {
     return reuse_tuple(r, f, ins);
   }
   // A declared variant's box is laid out as a record's: the shape word
   // `struct_make` writes, naming the variant, then the variant's fields.
-  var fields: semrecords.Field[] = [];
-  var shape: string = ins.str;
+  let fields: semrecords.Field[] = [];
+  let shape: string = ins.str;
   if (ins.kind_tag == ssasem.variant_new()) {
-    var owner: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, f.values[ins.result])];
+    let owner: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, f.values[ins.result])];
     fields = owner.variants[variant_tag(f, f.values[ins.result], ins.str)].fields;
   } else {
     fields = record_fields(f.values[ins.result], f);
@@ -1789,14 +1837,14 @@ function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
   r = emit(r, ir.op_load_local(ins.result));
   r = emit(r, ir.op_struct_set_shape(shape));
   r = emit(r, ir.op_drop());
-  var kept: boolean[] = [];
+  let kept: boolean[] = [];
   if (at >= 0) {
     kept = k.slots[at];
     r = emit(r, ir.op_load_local(token_slot(f)));
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_bin("eq", 0, false));
     r = emit(r, ir.op_if(0));
-    var ki: i32 = 0;
+    let ki: i32 = 0;
     while (ki < ins.args.len() && ki < fields.len()) {
       if (ki < kept.len() && kept[ki]) {
         r = emit(r, ir.op_load_local(ins.result));
@@ -1814,7 +1862,7 @@ function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
     r = emit(r, ir.op_end());
     r = keep_release(r, f, k.donors[at], kept);
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ins.args.len() && i < fields.len()) {
     if (!(i < kept.len() && kept[i])) {
       r = emit(r, ir.op_load_local(ins.result));
@@ -1827,7 +1875,7 @@ function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
 }
 
 // The store of field `i` from the box and the value on the stack.
-function field_store(own r: irlower.LowerResult, fields: semrecords.Field[], i: i32): irlower.LowerResult {
+function field_store(own r: irtables.LowerResult, fields: semrecords.Field[], i: i32): irtables.LowerResult {
   if (ssasem.is_wide(fields[i].ty)) {
     return emit(r, ir.op_struct_set_i64(i));
   }
@@ -1838,17 +1886,17 @@ function field_store(own r: irlower.LowerResult, fields: semrecords.Field[], i: 
 // per element and there is nothing at slot 0 to identify. The element stores
 // carry their own width, as `op_tuple_make_k` does on the fresh path, or wasm
 // writes the low half of an eight-byte slot and the read back is garbage.
-function reuse_tuple(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var elems: typeinfo.Type[] = tuple_elements(f.values[ins.result]);
+function reuse_tuple(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let elems: typeinfo.Type[] = tuple_elements(f.values[ins.result]);
   r = emit(r, ir.op_load_local(token_slot(f)));
   r = emit(r, ir.op_const_i32(elems.len()));
   r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
   r = emit(r, ir.op_store_local(ins.result));
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ins.args.len() && i < elems.len()) {
     r = emit(r, ir.op_load_local(ins.result));
     r = emit(r, ir.op_load_local(ins.args[i]));
-    var kind: string = tuple_kind(elems[i]);
+    let kind: string = tuple_kind(elems[i]);
     if (kind == "i64") {
       r = emit(r, ir.op_tuple_set_w(i, 64, true));
     } else if (kind == "f64") {
@@ -1869,7 +1917,7 @@ function tuple_elements(t: typeinfo.Type): typeinfo.Type[] {
 }
 
 function at(p: ssaunits.Plan, idx: i32[][], block: i32, point: i32, target: i32): ssaunits.Step {
-  var i: i32 = ssaunits.step_at(p, idx, block, point, target);
+  let i: i32 = ssaunits.step_at(p, idx, block, point, target);
   if (i >= 0) {
     return p.steps[i];
   }
@@ -1878,7 +1926,7 @@ function at(p: ssaunits.Plan, idx: i32[][], block: i32, point: i32, target: i32)
 }
 
 function block_index(f: ssa.SFunc, id: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < f.blocks.len()) {
     if (f.blocks[i].id == id) {
       return i;
@@ -1901,11 +1949,11 @@ function successors(t: ssa.STerm): i32[] {
   return [];
 }
 
-function edge(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], from: i32, target: i32): irlower.LowerResult {
-  var step: ssaunits.Step = at(p, idx, from, ssaunits.edge_point(), target);
-  var dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
+function edge(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], from: i32, target: i32): irtables.LowerResult {
+  let step: ssaunits.Step = at(p, idx, from, ssaunits.edge_point(), target);
+  let dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
   r = supplies(r, f, p, owed_on_entry(step, dest, links), false, [], []);
-  var pi: i32 = 0;
+  let pi: i32 = 0;
   while (dest.preds[pi] != from) {
     pi = pi + 1;
   }
@@ -1918,9 +1966,9 @@ function edge(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx:
     }
   }
   r = drops(r, step, f, links);
-  var i: i32 = dest.insts.len() - 1;
+  let i: i32 = dest.insts.len() - 1;
   while (i >= 0) {
-    var ins: ssa.SInst = dest.insts[i];
+    let ins: ssa.SInst = dest.insts[i];
     if (ins.kind_tag == 8) {
       r = emit(r, ir.op_store_local(ins.result));
     }
@@ -1949,8 +1997,8 @@ function walkable_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
 // width its declaration names, which is what `op_struct_make` carries as the
 // declaration index; a wide field of a construction whose declaration is not
 // in the table has no store width to carry.
-function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): string {
-  var declared: boolean = ins.kind_tag == ssasem.record_new() || ins.kind_tag == ssasem.variant_new();
+function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): string {
+  let declared: boolean = ins.kind_tag == ssasem.record_new() || ins.kind_tag == ssasem.variant_new();
   // A builtin union names no declaration and needs none: its box carries the
   // payload's width in the op (`op_opt_make_w`) rather than reading it from a
   // field table.
@@ -1990,11 +2038,11 @@ function wide_element_site(k: i32): boolean {
 // through: a record's by its name, a variant's by its name within its enum,
 // since two enums may declare one variant name with differently sized
 // payloads. -1 when the table holds no such declaration.
-function decl_of(f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): i32 {
+function decl_of(f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): i32 {
   if (ins.kind_tag == ssasem.record_new()) {
-    return irlower.decl_index_of(structs, record_name(f.values[ins.result]));
+    return irtables.decl_index_of(structs, record_name(f.values[ins.result]));
   }
-  return irlower.variant_decl_index(structs, ins.str, enum_name(f.values[ins.result]));
+  return irtables.variant_decl_index(structs, ins.str, enum_name(f.values[ins.result]));
 }
 
 function enum_name(t: typeinfo.Type): string {
@@ -2083,8 +2131,8 @@ pub function release_helper_name(t: typeinfo.Type): string {
   return "__sem_release_" + ssasem.type_key(t);
 }
 
-function release_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
-  var r: irlower.LowerResult = irlower.LowerResult {
+function release_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
+  let r: irtables.LowerResult = irtables.LowerResult {
     ...empty(""), ok: true,
     n_params: 1, n_locals: 1, name: release_helper_name(t),
   };
@@ -2097,13 +2145,13 @@ function release_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
 // The element types of the columns of boxes this function's values and schema
 // fields name — a keyed key column's and a boxed value column's — each once.
 function boxed_columns(f: ssasem.Func): typeinfo.Type[] {
-  var out: typeinfo.Type[] = [];
-  var names: string[] = [];
+  let out: typeinfo.Type[] = [];
+  let names: string[] = [];
   for t in schema_types(f) {
     if (!ssasem.is_map(t)) {
       continue;
     }
-    var cols: typeinfo.Type[] = [];
+    let cols: typeinfo.Type[] = [];
     if (ssasem.keyed_map_key(ssasem.map_key(t))) {
       cols = cols.append(ssasem.map_key(t));
     }
@@ -2111,7 +2159,7 @@ function boxed_columns(f: ssasem.Func): typeinfo.Type[] {
       cols = cols.append(ssasem.map_value(t));
     }
     for v in cols {
-      var name: string = release_helper_name(v);
+      let name: string = release_helper_name(v);
       if (util.index_of_str(names, name) >= 0) {
         continue;
       }
@@ -2125,13 +2173,13 @@ function boxed_columns(f: ssasem.Func): typeinfo.Type[] {
 // The box value columns of the maps this function's values and schema fields
 // name that run on core/map, each once.
 function routed_box_columns(f: ssasem.Func): typeinfo.Type[] {
-  var out: typeinfo.Type[] = [];
-  var names: string[] = [];
+  let out: typeinfo.Type[] = [];
+  let names: string[] = [];
   for t in schema_types(f) {
     if (!routed_map(t, f) || !routed_box(ssasem.map_value(t))) {
       continue;
     }
-    var name: string = env_release_name(ssasem.map_value(t));
+    let name: string = env_release_name(ssasem.map_value(t));
     if (util.index_of_str(names, name) >= 0) {
       continue;
     }
@@ -2142,7 +2190,7 @@ function routed_box_columns(f: ssasem.Func): typeinfo.Type[] {
 }
 
 function schema_types(f: ssasem.Func): typeinfo.Type[] {
-  var all: typeinfo.Type[] = f.values;
+  let all: typeinfo.Type[] = f.values;
   for rec in f.records.list {
     for field in rec.fields {
       all = all.append(field.ty);
@@ -2162,11 +2210,112 @@ function env_release_name(t: typeinfo.Type): string {
   return release_helper_name(t) + "$env";
 }
 
+// The routed maps this function's values and schema fields name whose key
+// column is keyed, each once.
+function routed_keyed_maps(f: ssasem.Func): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  let names: string[] = [];
+  for t in schema_types(f) {
+    if (!routed_map(t, f) || !ssasem.keyed_map_key(ssasem.map_key(t))) {
+      continue;
+    }
+    let name: string = ssasem.type_key(t);
+    if (util.index_of_str(names, name) < 0) {
+      names = names.append(name);
+      out = out.append(t);
+    }
+  }
+  return out;
+}
+
+// What a keyed routed map hands core/map as function values: the key's hash
+// and equality, the key's release, and the value's release, each a closure
+// body taking its environment first. `done` grows as each is added, so two
+// maps sharing a key or value type add its closure once.
+function append_keyed_closures(own out: irtables.LowerResult[], t: typeinfo.Type, done: util.NameIndex): irtables.LowerResult[] {
+  let k: typeinfo.Type = ssasem.map_key(t);
+  let v: typeinfo.Type = ssasem.map_value(t);
+  let fresh: irtables.LowerResult[] = [key_closure(k, "hash", 2), key_closure(k, "eq", 3), env_release_helper(k), value_env_helper(v)];
+  for h in fresh {
+    if (!done.has(h.name) && util.index_of_str(result_names(out), h.name) < 0) {
+      out = out.append(h);
+    }
+  }
+  return out;
+}
+
+function result_names(rows: irtables.LowerResult[]): string[] {
+  let out: string[] = [];
+  for r in rows {
+    out = out.append(r.name);
+  }
+  return out;
+}
+
+// The closure body a keyed probe calls for `which`, "hash" or "eq": its
+// environment, then the key or the two keys, handed to the key type's own
+// function (ssasem.keyed_map_key_fn).
+function key_closure(k: typeinfo.Type, which: string, nparams: i32): irtables.LowerResult {
+  let r: irtables.LowerResult = irtables.LowerResult {
+    ...empty(""), ok: true,
+    n_params: nparams, n_locals: nparams, name: key_closure_name(k, which),
+  };
+  let p: i32 = 1;
+  while (p < nparams) {
+    r = emit(r, ir.op_load_local(p));
+    p = p + 1;
+  }
+  r = emit(r, ir.op_call_direct(ssasem.keyed_map_key_fn(k, which), nparams - 1));
+  return emit(r, ir.op_return());
+}
+
+function key_closure_name(k: typeinfo.Type, which: string): string {
+  return "__sem_key" + which + "_" + ssasem.type_key(k) + "$env";
+}
+
+// The release of one value of a keyed routed map's column, as a closure: a
+// string's, a box's through its type's helper, a wide value's cell, or
+// nothing for a scalar.
+function value_env_release(v: typeinfo.Type): string {
+  if (ssasem.is_string(v)) {
+    return "__sem_str_release$env";
+  }
+  if (routed_box(v)) {
+    return env_release_name(v);
+  }
+  if (cell_column(v)) {
+    return "__sem_cell_release$env";
+  }
+  return "__sem_scalar_release$env";
+}
+
+function value_env_helper(v: typeinfo.Type): irtables.LowerResult {
+  if (routed_box(v)) {
+    return env_release_helper(v);
+  }
+  let r: irtables.LowerResult = irtables.LowerResult {
+    ...empty(""), ok: true,
+    n_params: 2, n_locals: 2, name: value_env_release(v),
+  };
+  if (ssasem.is_string(v)) {
+    r = emit(r, ir.op_load_local(1));
+    r = emit(r, ir.op_call_direct("__fern_str_free", 1));
+    return emit(r, ir.op_return());
+  }
+  if (cell_column(v)) {
+    r = emit(r, ir.op_load_local(1));
+    r = emit(r, ir.op_call_direct("__map_cell_free", 1));
+    return emit(r, ir.op_return());
+  }
+  r = emit(r, ir.op_const_i32(0));
+  return emit(r, ir.op_return());
+}
+
 // A box column's release in the shape a function value's body takes, its
 // environment first: core/map's drop of a routed map calls it through a
 // closure.
-function env_release_helper(t: typeinfo.Type): irlower.LowerResult {
-  var r: irlower.LowerResult = irlower.LowerResult {
+function env_release_helper(t: typeinfo.Type): irtables.LowerResult {
+  let r: irtables.LowerResult = irtables.LowerResult {
     ...empty(""), ok: true,
     n_params: 2, n_locals: 2, name: env_release_name(t),
   };
@@ -2181,13 +2330,13 @@ function env_release_helper(t: typeinfo.Type): irlower.LowerResult {
 // allocated frame. The body is the raw op sequence: every function that
 // mentions the type produces one, and `merge_helpers` runs the peephole once
 // per symbol it keeps rather than once per producer.
-function one_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
-  var r: irlower.LowerResult = irlower.LowerResult {
+function one_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
+  let r: irtables.LowerResult = irtables.LowerResult {
     ...empty(""), ok: true,
     n_params: 1, n_locals: 1, name: drop_helper_name(t),
   };
   // The finalizer runs first, while every field is still live.
-  var finalizer: string = ssasem.finalizer_of(f, t);
+  let finalizer: string = ssasem.finalizer_of(f, t);
   if (finalizer != "") {
     r = helper(r, 0, finalizer);
   }
@@ -2207,9 +2356,9 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
   return r;
 }
 
-function optimized_helper(h: irlower.LowerResult): irlower.LowerResult {
-  var optimized: ir.OptimizedOps = ir.optimize_ops(h.ops, 1, h.n_locals);
-  return irlower.LowerResult { ...h, ops: optimized.ops, n_locals: optimized.n_locals };
+function optimized_helper(h: irtables.LowerResult): irtables.LowerResult {
+  let optimized: ir.OptimizedOps = ir.optimize_ops(h.ops, 1, h.n_locals);
+  return irtables.LowerResult { ...h, ops: optimized.ops, n_locals: optimized.n_locals };
 }
 
 // One helper per nominal schema the walk can call, gated on has_children —
@@ -2219,8 +2368,8 @@ function optimized_helper(h: irlower.LowerResult): irlower.LowerResult {
 // linkage discards; the reverse, a call with no body, is what the shared gate
 // rules out. A function's schema set is closed under field reachability, so
 // iterating it also reaches the types the bodies themselves call.
-pub function drop_helpers(f: ssasem.Func): irlower.LowerResult[] {
-  var none: string[] = [];
+pub function drop_helpers(f: ssasem.Func): irtables.LowerResult[] {
+  let none: string[] = [];
   return helpers_not_in(f, util.name_index(none));
 }
 
@@ -2229,16 +2378,16 @@ pub function drop_helpers(f: ssasem.Func): irlower.LowerResult[] {
 // function whose schema names its type. Every function's table is built from
 // the module's one declaration set, so a later function's body would be the
 // same one.
-pub struct Helpers { rows: irlower.LowerResult[], done: util.NameIndex }
+pub struct Helpers { rows: irtables.LowerResult[], done: util.NameIndex }
 
 pub function no_helpers(): Helpers {
-  var none: irlower.LowerResult[] = [];
+  let none: irtables.LowerResult[] = [];
   return Helpers { rows: none, done: util.name_index(row_names(none)) };
 }
 
 // with_drop_helpers adds the helpers of f whose symbols h does not carry yet.
 pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
-  var out: Helpers = h;
+  let out: Helpers = h;
   for fresh in helpers_not_in(f, h.done) {
     out = Helpers { rows: out.rows.append(fresh), done: out.done.added(fresh.name) };
   }
@@ -2246,8 +2395,8 @@ pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
 }
 
 // helpers_not_in is drop_helpers less the symbols `done` carries.
-function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irlower.LowerResult[] {
-  var out: irlower.LowerResult[] = [];
+function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irtables.LowerResult[] {
+  let out: irtables.LowerResult[] = [];
   for rec in f.records.list {
     if (has_children(rec.ty, f)) {
       out = append_helpers(out, rec.ty, f, done);
@@ -2271,11 +2420,14 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex): irlower.LowerResu
       out = out.append(env_release_helper(v));
     }
   }
+  for t in routed_keyed_maps(f) {
+    out = append_keyed_closures(out, t, done);
+  }
   return out;
 }
 
 // append_helpers adds t's drop and release helpers, each unless done has it.
-function append_helpers(own out: irlower.LowerResult[], t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): irlower.LowerResult[] {
+function append_helpers(own out: irtables.LowerResult[], t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): irtables.LowerResult[] {
   if (!done.has(drop_helper_name(t))) {
     out = out.append(one_helper(t, f));
   }
@@ -2285,8 +2437,8 @@ function append_helpers(own out: irlower.LowerResult[], t: typeinfo.Type, f: ssa
   return out;
 }
 
-function row_names(rows: irlower.LowerResult[]): string[] {
-  var out: string[] = [];
+function row_names(rows: irtables.LowerResult[]): string[] {
+  let out: string[] = [];
   for r in rows {
     out = out.append(r.name);
   }
@@ -2299,13 +2451,13 @@ function row_names(rows: irlower.LowerResult[]): string[] {
 // module collects are one per symbol already (Helpers); the merge keeps the
 // first of a symbol handed to it twice rather than co-linking both under the
 // .weak linkage, which would pick one silently.
-pub function merge_helpers(cache: irlower.LowerResult[], helpers: irlower.LowerResult[]): irlower.LowerResult[] {
-  var out: irlower.LowerResult[] = cache;
-  var cached: util.NameIndex = util.name_index(row_names(cache));
-  var names: util.NameIndex = util.name_index(row_names(helpers));
-  var k: i32 = 0;
+pub function merge_helpers(cache: irtables.LowerResult[], helpers: irtables.LowerResult[]): irtables.LowerResult[] {
+  let out: irtables.LowerResult[] = cache;
+  let cached: util.NameIndex = util.name_index(row_names(cache));
+  let names: util.NameIndex = util.name_index(row_names(helpers));
+  let k: i32 = 0;
   while (k < helpers.len()) {
-    var h: irlower.LowerResult = helpers[k];
+    let h: irtables.LowerResult = helpers[k];
     if (names.find(h.name) == k && !cached.has(h.name)) {
       if (h.ok) {
         out = out.append(optimized_helper(h));
@@ -2319,7 +2471,7 @@ pub function merge_helpers(cache: irlower.LowerResult[], helpers: irlower.LowerR
 }
 
 function types_error(f: ssasem.Func): string {
-  var why: string = schema_types_error(f);
+  let why: string = schema_types_error(f);
   if (why != "") {
     return why;
   }
@@ -2344,8 +2496,8 @@ function types_error(f: ssasem.Func): string {
   return "";
 }
 
-function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab): string {
-  var why: string = ssaunits.verify_planned(f, modes, p);
+function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab): string {
+  let why: string = ssaunits.verify_planned(f, modes, p);
   if (why != "") {
     return why;
   }
@@ -2436,33 +2588,33 @@ function supported_op(k: i32): boolean {
 // 64-bit slot and ignore the distinction.
 function result_kind(t: typeinfo.Type): i32 {
   if (ssasem.is_wide(t)) {
-    return irlower.result_i64();
+    return irtables.result_i64();
   }
   if (ssasem.is_float(t)) {
-    return irlower.result_f64();
+    return irtables.result_f64();
   }
-  return irlower.result_i32();
+  return irtables.result_i32();
 }
 
-function frame(f: ssasem.Func): irlower.LowerResult {
-  var r: irlower.LowerResult = empty("");
-  r = irlower.LowerResult {
+function frame(f: ssasem.Func): irtables.LowerResult {
+  let r: irtables.LowerResult = empty("");
+  r = irtables.LowerResult {
     ...r, ok: true, n_params: f.params.len(), n_locals: f.graph.nvals,
     name: f.graph.name, result_kind: result_kind(f.result),
   };
-  var vi: i32 = 0;
+  let vi: i32 = 0;
   while (vi < f.values.len()) {
     if let typeinfo.TypeArray(_) = f.values[vi] {
-      r = irlower.LowerResult { ...r, arr_slots: r.arr_slots.append(vi) };
+      r = irtables.LowerResult { ...r, arr_slots: r.arr_slots.append(vi) };
     }
     if let typeinfo.TypeString(_) = f.values[vi] {
-      r = irlower.LowerResult { ...r, str_slots: r.str_slots.append(vi) };
+      r = irtables.LowerResult { ...r, str_slots: r.str_slots.append(vi) };
     }
     if (ssasem.is_wide(f.values[vi])) {
-      r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(vi) };
+      r = irtables.LowerResult { ...r, i64_slots: r.i64_slots.append(vi) };
     }
     if (ssasem.is_float(f.values[vi])) {
-      r = irlower.LowerResult { ...r, f64_slots: r.f64_slots.append(vi) };
+      r = irtables.LowerResult { ...r, f64_slots: r.f64_slots.append(vi) };
     }
     vi = vi + 1;
   }
@@ -2472,9 +2624,9 @@ function frame(f: ssasem.Func): irlower.LowerResult {
 // The stack IR's name for each integer operator, the signed form where the
 // IR distinguishes one.
 function binary_kind(op: string): string {
-  var ops: string[] = ["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "<", "<=", ">", ">=", "=="];
-  var kinds: string[] = ["add", "sub", "mul", "div_s", "rem_s", "and", "or", "xor", "shl", "shr_s", "lt_s", "le_s", "gt_s", "ge_s", "eq"];
-  var i: i32 = 0;
+  let ops: string[] = ["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "<", "<=", ">", ">=", "=="];
+  let kinds: string[] = ["add", "sub", "mul", "div_s", "rem_s", "and", "or", "xor", "shl", "shr_s", "lt_s", "le_s", "gt_s", "ge_s", "eq"];
+  let i: i32 = 0;
   while (i < ops.len()) {
     if (ops[i] == op) {
       return kinds[i];
@@ -2511,7 +2663,7 @@ function wrap_kind(t: typeinfo.Type): string {
 // operands the same type, so one of them names the form.
 function integer_kind(op: string, operand: typeinfo.Type): string {
   if (ssasem.is_unsigned_int(operand)) {
-    return irlower.to_unsigned_kind(binary_kind(op));
+    return irtables.to_unsigned_kind(binary_kind(op));
   }
   return binary_kind(op);
 }
@@ -2532,8 +2684,8 @@ function operand_width(f: ssasem.Func, ins: ssa.SInst): i32 {
 // buffer in place when the block has room, and the result IS the operand;
 // otherwise the concatenation builds a fresh box and the operand's unit is
 // released.
-function grow_or_concat(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var res: i32 = scratch_base(f);
+function grow_or_concat(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let res: i32 = scratch_base(f);
   r = reserve(r, res + 1);
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
@@ -2555,7 +2707,7 @@ function grow_or_concat(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIn
 // both operands, and an ordering is `str_cmp` — which hands back a signed i32
 // under, at or over zero — against a zero constant. The verifier admits no
 // other string operator (ssasem.string_result).
-function string_binary(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+function string_binary(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   if (ins.str == "+") {
     return emit(r, ir.op_str_concat());
   }
@@ -2592,10 +2744,10 @@ function literal_text_eq(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): i32 
 
 // A comparison against a literal of length K reads the other operand's length
 // first and calls `str_eq` only when it is K.
-function text_eq_by_length(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
-  var lit: i32 = literal_text_eq(f, p, ins);
-  var other: i32 = ins.args[1 - lit];
-  var res: i32 = scratch_base(f);
+function text_eq_by_length(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
+  let lit: i32 = literal_text_eq(f, p, ins);
+  let other: i32 = ins.args[1 - lit];
+  let res: i32 = scratch_base(f);
   r = reserve(r, res + 1);
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(res));
@@ -2620,11 +2772,11 @@ function text_eq_by_length(own r: irlower.LowerResult, f: ssasem.Func, p: ssauni
 // back an f64, rounded to single precision where the result is an f32, a
 // comparison the i32 the boolean occupies, and negation flips the sign bit.
 // Nothing wraps.
-function float_scalar(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+function float_scalar(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == 10) {
     return emit(r, ir.op_funary("fneg"));
   }
-  r = emit(r, ir.op_fbin(irlower.map_fbinop(ins.str)));
+  r = emit(r, ir.op_fbin(irtables.map_fbinop(ins.str)));
   if (ssasem.is_f32(f.values[ins.result])) {
     return round_f32(r);
   }
@@ -2633,16 +2785,16 @@ function float_scalar(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst
 
 // An f32 is the f64 on the stack rounded to single precision, which the
 // demote-and-promote pair applies.
-function round_f32(own r: irlower.LowerResult): irlower.LowerResult {
+function round_f32(own r: irtables.LowerResult): irtables.LowerResult {
   r = emit(r, ir.op_f32_bits());
   return emit(r, ir.op_f32_from_bits());
 }
 
 // Into a float: an integer converts at its width and signedness, the other
 // float width is already the f64, and an f32 destination rounds.
-function into_float(own r: irlower.LowerResult, from: typeinfo.Type, to: typeinfo.Type): irlower.LowerResult {
+function into_float(own r: irtables.LowerResult, from: typeinfo.Type, to: typeinfo.Type): irtables.LowerResult {
   if (!ssasem.is_float(from)) {
-    var bits: i32 = 32;
+    let bits: i32 = 32;
     if (ssasem.is_wide(from)) {
       bits = 64;
     }
@@ -2655,18 +2807,18 @@ function into_float(own r: irlower.LowerResult, from: typeinfo.Type, to: typeinf
 }
 
 // A saturating or checked operator is the AST lowering's own shape
-// (irlower.sat_binary_ops / chk_binary_ops) over this function's slots: the
+// (irtables.sat_binary_ops / chk_binary_ops) over this function's slots: the
 // operands are values, so they are already in slots, the result's slot holds
 // the shape's outcome, and an intermediate the shape reads twice is
 // recomputed from the operands rather than spilled, so it takes no scratch.
-function overflow_binary(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var t: typeinfo.Type = f.values[ins.args[0]];
-  var wide: boolean = ssasem.is_wide(t);
-  var ops: ir.Op[] = [];
+function overflow_binary(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let t: typeinfo.Type = f.values[ins.args[0]];
+  let wide: boolean = ssasem.is_wide(t);
+  let ops: ir.Op[] = [];
   if (ssasem.saturating(ins.str)) {
-    ops = irlower.sat_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], ins.result, 0 - 1, 0 - 1);
+    ops = irtables.sat_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], ins.result, 0 - 1, 0 - 1);
   } else {
-    ops = irlower.chk_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], 0 - 1, ins.result);
+    ops = irtables.chk_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], 0 - 1, ins.result);
   }
   for op in ops {
     r = emit(r, op);
@@ -2691,7 +2843,7 @@ function overflow_kind(t: typeinfo.Type): string {
   return "i32";
 }
 
-function scalar(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+function scalar(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == ssasem.cast()) {
     return cast(r, f, ins);
   }
@@ -2704,7 +2856,7 @@ function scalar(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irl
   if (ssasem.is_float(f.values[ins.args[0]])) {
     return float_scalar(r, f, ins);
   }
-  var w: i32 = operand_width(f, ins);
+  let w: i32 = operand_width(f, ins);
   if (ins.kind_tag == 9) {
     r = emit(r, ir.op_bin(integer_kind(ins.str, f.values[ins.args[0]]), w, false));
   } else {
@@ -2749,7 +2901,7 @@ function narrow_mask(from: typeinfo.Type, to: typeinfo.Type): string {
 // answer at 32 or 64 bits, so a u8 destination needs the narrowing the integer
 // wrap applies for the same destination — without it `300.7 as u8` keeps 300
 // where the AST lowering and native both answer 44.
-function out_of_float(own r: irlower.LowerResult, to: typeinfo.Type): irlower.LowerResult {
+function out_of_float(own r: irtables.LowerResult, to: typeinfo.Type): irtables.LowerResult {
   r = emit(r, from_f64(to));
   if (!ssasem.is_u8(to)) {
     return r;
@@ -2788,9 +2940,9 @@ function from_f64(to: typeinfo.Type): ir.Op {
 // real conversion: the convert at the operand's width and signedness, and the
 // truncation toward zero at the result's; into the f32 the value is rounded
 // to single precision, and out of it to the f64 it is already the f64.
-function cast(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var from: typeinfo.Type = f.values[ins.args[0]];
-  var to: typeinfo.Type = f.values[ins.result];
+function cast(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let from: typeinfo.Type = f.values[ins.args[0]];
+  let to: typeinfo.Type = f.values[ins.result];
   // An address and the box it names share a slot, so neither direction of the
   // reinterpretation moves anything. Both have to answer before the width
   // arms below, which would read the reference as a narrow integer and emit a
@@ -2843,7 +2995,7 @@ function cast(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlow
     }
     return emit(r, ir.op_int_cast("u8"));
   }
-  var mask: string = narrow_mask(from, to);
+  let mask: string = narrow_mask(from, to);
   if (mask == "") {
     return r;
   }
@@ -2858,7 +3010,7 @@ function cast(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlow
 // being wrapped to the address. On a register backend the pointer-width half
 // moves nothing and the 64-bit half does the extension; on wasm the two halves
 // cancel for a 32-bit destination and the 64-bit half is the real conversion.
-function from_address(own r: irlower.LowerResult, to: typeinfo.Type): irlower.LowerResult {
+function from_address(own r: irtables.LowerResult, to: typeinfo.Type): irtables.LowerResult {
   if (ssasem.is_usize(to)) {
     return r;
   }
@@ -2873,7 +3025,7 @@ function from_address(own r: irlower.LowerResult, to: typeinfo.Type): irlower.Lo
   return emit(r, ir.op_int_cast("u8"));
 }
 
-function into_address(own r: irlower.LowerResult, from: typeinfo.Type): irlower.LowerResult {
+function into_address(own r: irtables.LowerResult, from: typeinfo.Type): irtables.LowerResult {
   if (!ssasem.is_wide(from)) {
     r = emit(r, ir.op_int_extend(ssasem.is_unsigned_int(from)));
   }
@@ -2896,9 +3048,9 @@ function tuple_kind(t: typeinfo.Type): string {
 }
 
 function tuple_kinds(t: typeinfo.Type): string {
-  var out: string = "";
+  let out: string = "";
   if let typeinfo.TypeTuple(tup) = t {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < tup.elements.len()) {
       if (i > 0) {
         out = out + ",";
@@ -2913,7 +3065,7 @@ function tuple_kinds(t: typeinfo.Type): string {
 // The window copy the runtime hands back aliases every element pointer it
 // copied, so the copy takes its own unit on each — the same `own_copied`
 // `sole_owned_base` makes over the same copy.
-function arr_slice(own r: irlower.LowerResult, f: ssasem.Func, elem: typeinfo.Type): irlower.LowerResult {
+function arr_slice(own r: irtables.LowerResult, f: ssasem.Func, elem: typeinfo.Type): irtables.LowerResult {
   r = emit(r, ir.op_arr_slice(elem_width(elem)));
   if (!ssasem.reference(elem)) {
     return r;
@@ -2923,8 +3075,8 @@ function arr_slice(own r: irlower.LowerResult, f: ssasem.Func, elem: typeinfo.Ty
 
 // The array on the stack aliases every element pointer it holds, and takes
 // its own unit on each.
-function owned_copy(own r: irlower.LowerResult, f: ssasem.Func, elem: typeinfo.Type): irlower.LowerResult {
-  var copy: i32 = scratch_base(f);
+function owned_copy(own r: irtables.LowerResult, f: ssasem.Func, elem: typeinfo.Type): irtables.LowerResult {
+  let copy: i32 = scratch_base(f);
   r = reserve(r, copy + 1);
   r = emit(r, ir.op_store_local(copy));
   r = own_copied(r, elem, copy, copy);
@@ -2934,7 +3086,7 @@ function owned_copy(own r: irlower.LowerResult, f: ssasem.Func, elem: typeinfo.T
 // `copy`'s first len(`source`) elements alias `source`'s, and each needs a
 // unit of its own: a count on a counted element, and on a string view a fresh
 // box, since a view box carries the immortal rc and cannot be counted.
-function own_copied(own r: irlower.LowerResult, elem: typeinfo.Type, copy: i32, source: i32): irlower.LowerResult {
+function own_copied(own r: irtables.LowerResult, elem: typeinfo.Type, copy: i32, source: i32): irtables.LowerResult {
   if (!ssasem.is_view(elem)) {
     return helper(r, source, "__fern_arr_inc_elems");
   }
@@ -2948,7 +3100,7 @@ function own_copied(own r: irlower.LowerResult, elem: typeinfo.Type, copy: i32, 
 // declaration index is where wasm reads each field's store width; the register
 // backends store every field as 8 bytes, and every read takes its offset from
 // the field index alone.
-function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
+function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): irtables.LowerResult {
   if (variant_op(ins.kind_tag)) {
     return variant(r, f, ins, structs);
   }
@@ -3012,7 +3164,7 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
 // A read of a counted column RETAINS what it answers. The plan gives the
 // result a unit of its own because the value may be the column's or the
 // caller's default, and only a retain gives one owner to both.
-function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irlower.LowerResult {
+function map_op(own r: irtables.LowerResult, ins: ssa.SInst, f: ssasem.Func): irtables.LowerResult {
   if (ins.kind_tag == ssasem.map_new()) {
     return emit(r, ir.op_map_new(map_key_kind(f.values[ins.result]), map_key_fns(f.values[ins.result])));
   }
@@ -3027,12 +3179,12 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
     r = emit(r, ir.op_const_i32(8));
     return emit(r, ir.op_map_new(map_key_kind(f.values[ins.result]), map_key_fns(f.values[ins.result])));
   }
-  var t: typeinfo.Type = f.values[ins.args[0]];
-  var kkind: i32 = map_key_kind(t);
-  var vkind: i32 = map_value_kind(t);
-  var eq: string = map_key_eq(t);
-  var vrel: string = "";
-  var krel: string = "";
+  let t: typeinfo.Type = f.values[ins.args[0]];
+  let kkind: i32 = map_key_kind(t);
+  let vkind: i32 = map_value_kind(t);
+  let eq: string = map_key_eq(t);
+  let vrel: string = "";
+  let krel: string = "";
   if (vkind == 3) {
     vrel = release_helper_name(ssasem.map_value(t));
   }
@@ -3063,7 +3215,7 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
     return r;
   }
   if (ins.kind_tag == ssasem.map_values()) {
-    var vt: typeinfo.Type = ssasem.map_value(t);
+    let vt: typeinfo.Type = ssasem.map_value(t);
     if (ssasem.is_view(vt)) {
       r = emit(r, ir.op_map_values(0, map_widekind(t)));
       return owned_copy(r, f, vt);
@@ -3107,9 +3259,11 @@ function routed_iter(t: typeinfo.Type, f: ssasem.Func): boolean {
 }
 
 // A string column, of keys or values, holds one unit of each string, as the
-// runtime's does.
+// runtime's does; a keyed column (a derived Eq + Hash nominal, or a tuple or
+// array key) one unit of each key, hashed and compared through closures over
+// the key type's own functions (key_closure).
 function routed_key(t: typeinfo.Type): boolean {
-  return routed_column(t) || ssasem.is_text(t) || ssasem.wide_map_key(t);
+  return routed_column(t) || ssasem.is_text(t) || ssasem.wide_map_key(t) || ssasem.keyed_map_key(t);
 }
 
 // A value column may also hold boxes, one unit of each; core/map retains them
@@ -3121,9 +3275,9 @@ function routed_value(t: typeinfo.Type): boolean {
 }
 
 // The boxes a routed value column can hold: any counted value but a string,
-// a function or a map, released through the type's own release helper. A
-// view's box is not counted, so core/map's retains would share it; a view
-// column stays on the runtime's map, whose reads take a fresh box.
+// released through the type's own release helper. A view's box is not
+// counted, so core/map's retains would share it; a view column stays on the
+// runtime's map, whose reads take a fresh box.
 function routed_box(t: typeinfo.Type): boolean {
   return ssasem.boxed_map_value(t) && !ssasem.is_view(t) || ssasem.is_string_array(t);
 }
@@ -3155,8 +3309,8 @@ function routed_map_op(f: ssasem.Func, ins: ssa.SInst): boolean {
 // ir.CodegenAliases names for it. Every key and value crosses as core/map's
 // `usize` slot, converted the way `as usize` converts it, so equal keys are
 // equal slots.
-function routed_map_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var k: i32 = ins.kind_tag;
+function routed_map_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let k: i32 = ins.kind_tag;
   if (k == ssasem.map_new() || k == ssasem.map_cleared()) {
     if (k == ssasem.map_new()) {
       r = emit(r, ir.op_load_local(ins.args[0]));
@@ -3174,7 +3328,7 @@ function routed_map_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
     r = emit(r, ir.op_load_local(ins.args[0]));
     return routed_cursor(r, f, ins);
   }
-  var t: typeinfo.Type = f.values[ins.args[0]];
+  let t: typeinfo.Type = f.values[ins.args[0]];
   if (k == ssasem.map_len()) {
     r = emit(r, ir.op_load_local(ins.args[0]));
     return emit(r, ir.op_call_direct("__map_len_impl", 1));
@@ -3201,22 +3355,22 @@ function routed_map_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
 }
 
 // has, get and get_or, with the receiver on the stack.
-function routed_lookup(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var t: typeinfo.Type = f.values[ins.args[0]];
-  var v: typeinfo.Type = ssasem.map_value(t);
+function routed_lookup(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let t: typeinfo.Type = f.values[ins.args[0]];
+  let v: typeinfo.Type = ssasem.map_value(t);
   r = key_operand(r, f, ins);
   if (ins.kind_tag == ssasem.map_has()) {
-    return emit(r, ir.op_call_direct("__map_has_impl", 2));
+    return map_entry(r, f, ins, "__map_has_impl", "__map_has_keyed_impl", 2);
   }
-  var counted: boolean = ssasem.is_string(v);
+  let counted: boolean = ssasem.is_string(v);
   if (ins.kind_tag == ssasem.map_get()) {
     if (cell_column(v) && ssasem.is_float(v)) {
-      return emit(r, ir.op_call_direct("__map_get_cell_f64_impl", 2));
+      return map_entry(r, f, ins, "__map_get_cell_f64_impl", "__map_get_cell_f64_keyed_impl", 2);
     }
     if (cell_column(v)) {
-      return emit(r, ir.op_call_direct("__map_get_cell_impl", 2));
+      return map_entry(r, f, ins, "__map_get_cell_impl", "__map_get_cell_keyed_impl", 2);
     }
-    r = emit(r, ir.op_call_direct("__map_get_impl", 2));
+    r = map_entry(r, f, ins, "__map_get_impl", "__map_get_keyed_impl", 2);
     if (!counted) {
       return r;
     }
@@ -3226,7 +3380,7 @@ function routed_lookup(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     return cell_get_or(r, f, ins);
   }
   r = routed_slot(r, ins.args[2], v);
-  r = emit(r, ir.op_call_direct("__map_get_or_impl", 3));
+  r = map_entry(r, f, ins, "__map_get_or_impl", "__map_get_or_keyed_impl", 3);
   if (counted) {
     r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
   }
@@ -3236,14 +3390,14 @@ function routed_lookup(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 // get_or on a cell column: the fallback crosses as a cell of its own, the
 // answer is read out of whichever cell comes back, and the fallback's cell
 // is returned after.
-function cell_get_or(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var v: typeinfo.Type = ssasem.map_value(f.values[ins.args[0]]);
-  var fallback: i32 = key_cell(f) + 1;
+function cell_get_or(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let v: typeinfo.Type = ssasem.map_value(f.values[ins.args[0]]);
+  let fallback: i32 = key_cell(f) + 1;
   r = reserve(r, fallback + 1);
   r = routed_slot(r, ins.args[2], v);
   r = emit(r, ir.op_store_local(fallback));
   r = emit(r, ir.op_load_local(fallback));
-  r = emit(r, ir.op_call_direct("__map_get_or_impl", 3));
+  r = map_entry(r, f, ins, "__map_get_or_impl", "__map_get_or_keyed_impl", 3);
   r = routed_from_slot(r, v);
   return helper(r, fallback, "__map_cell_free");
 }
@@ -3256,8 +3410,8 @@ function key_cell(f: ssasem.Func): i32 {
 
 // A wide key crosses as a cell, made once per op and returned after it,
 // unless an insert's new entry keeps it.
-function box_key(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var kt: typeinfo.Type = ssasem.map_key(f.values[ins.args[0]]);
+function box_key(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let kt: typeinfo.Type = ssasem.map_key(f.values[ins.args[0]]);
   if (!cell_column(kt)) {
     return r;
   }
@@ -3266,8 +3420,8 @@ function box_key(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
   return emit(r, ir.op_store_local(key_cell(f)));
 }
 
-function key_operand(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var kt: typeinfo.Type = ssasem.map_key(f.values[ins.args[0]]);
+function key_operand(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let kt: typeinfo.Type = ssasem.map_key(f.values[ins.args[0]]);
   if (cell_column(kt)) {
     return emit(r, ir.op_load_local(key_cell(f)));
   }
@@ -3290,10 +3444,14 @@ function routed_val_tag(t: typeinfo.Type): i32 {
 }
 
 // core/map's keyTag: 1 a string, 0 a scalar held in the slot itself, 2 one
-// held in an eight-byte cell, whose size is the tag's high bytes.
+// held in an eight-byte cell, whose size is the tag's high bytes, 4 a
+// counted keyed key.
 function routed_key_tag(t: typeinfo.Type): i32 {
   if (ssasem.is_text(t)) {
     return 1;
+  }
+  if (ssasem.keyed_map_key(t)) {
+    return 4;
   }
   if (cell_column(t)) {
     return 2 + 8 * 256;
@@ -3303,7 +3461,7 @@ function routed_key_tag(t: typeinfo.Type): i32 {
 
 // A string key crosses as its box's address, which is its slot already; a
 // wide scalar as a fresh cell (`cell_column`).
-function routed_slot(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type): irlower.LowerResult {
+function routed_slot(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type): irtables.LowerResult {
   r = emit(r, ir.op_load_local(slot));
   if (ssasem.reference(t)) {
     return r;
@@ -3317,7 +3475,7 @@ function routed_slot(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type): i
   return into_address(r, t);
 }
 
-function routed_from_slot(own r: irlower.LowerResult, t: typeinfo.Type): irlower.LowerResult {
+function routed_from_slot(own r: irtables.LowerResult, t: typeinfo.Type): irtables.LowerResult {
   if (ssasem.reference(t)) {
     return r;
   }
@@ -3333,7 +3491,7 @@ function routed_from_slot(own r: irlower.LowerResult, t: typeinfo.Type): irlower
 
 // A column snapshot is a fresh array in this compiler's own layout, built by
 // core/map as a typed Fern array.
-function routed_column_read(own r: irlower.LowerResult, elem: typeinfo.Type, offset: ir.Op): irlower.LowerResult {
+function routed_column_read(own r: irtables.LowerResult, elem: typeinfo.Type, offset: ir.Op): irtables.LowerResult {
   r = emit(r, offset);
   if (ssasem.is_bool(elem)) {
     return emit(r, ir.op_call_direct("__map_bool_column", 2));
@@ -3358,8 +3516,8 @@ function routed_column_read(own r: irlower.LowerResult, elem: typeinfo.Type, off
 
 // The cursor holds the map's buffer, not a unit of the map, as the runtime's
 // does; it is released through __mapiter_drop_impl.
-function routed_cursor(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var k: i32 = ins.kind_tag;
+function routed_cursor(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let k: i32 = ins.kind_tag;
   if (k == ssasem.map_iter()) {
     return emit(r, ir.op_call_direct("__map_iter_impl", 1));
   }
@@ -3369,7 +3527,7 @@ function routed_cursor(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
   if (k == ssasem.mapiter_advance()) {
     return emit(r, ir.op_call_direct("__mapiter_advance_impl", 1));
   }
-  var t: typeinfo.Type = f.values[ins.args[0]];
+  let t: typeinfo.Type = f.values[ins.args[0]];
   if (k == ssasem.mapiter_key()) {
     r = emit(r, ir.op_call_direct("__mapiter_key_impl", 1));
     return routed_from_slot(r, semtypes.map_iter_key(t));
@@ -3387,14 +3545,14 @@ function routed_cursor(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 // growing is what says the arriving unit is released. An overwrite of a box
 // likewise releases the box it supersedes, which core/map leaves to its
 // caller and which is read out before the set.
-function routed_insert(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var t: typeinfo.Type = f.values[ins.args[0]];
-  var res: i32 = scratch_base(f);
-  var before: i32 = res + 1;
-  var old_val: i32 = res + 2;
-  var counted_key: boolean = ssasem.is_text(ssasem.map_key(t));
-  var cell_key: boolean = cell_column(ssasem.map_key(t));
-  var boxed_val: boolean = routed_box(ssasem.map_value(t));
+function routed_insert(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let t: typeinfo.Type = f.values[ins.args[0]];
+  let res: i32 = scratch_base(f);
+  let before: i32 = res + 1;
+  let old_val: i32 = res + 2;
+  let counted_key: boolean = counted_key_column(ssasem.map_key(t));
+  let cell_key: boolean = cell_column(ssasem.map_key(t));
+  let boxed_val: boolean = routed_box(ssasem.map_value(t));
   r = reserve(r, old_val + 1);
   r = box_key(r, f, ins);
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -3412,7 +3570,7 @@ function routed_insert(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
   r = emit(r, ir.op_load_local(res));
   r = key_operand(r, f, ins);
   r = routed_slot(r, ins.args[2], ssasem.map_value(t));
-  r = emit(r, ir.op_call_direct("__map_set_impl", 3));
+  r = map_entry(r, f, ins, "__map_set_impl", "__map_set_keyed_impl", 3);
   r = emit(r, ir.op_store_local(res));
   if (counted_key || cell_key || boxed_val) {
     r = emit(r, ir.op_load_local(res));
@@ -3420,7 +3578,9 @@ function routed_insert(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     r = emit(r, ir.op_load_local(before));
     r = emit(r, ir.op_bin("eq", 0, false));
     r = emit(r, ir.op_if(0));
-    if (counted_key) {
+    if (counted_key && ssasem.keyed_map_key(ssasem.map_key(t))) {
+      r = helper(r, ins.args[1], value_release(ssasem.map_key(t)));
+    } else if (counted_key) {
       r = release(r, ins.args[1], ssasem.map_key(t), f);
     }
     if (cell_key) {
@@ -3439,14 +3599,14 @@ function routed_insert(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 // delete then runs on it in place. A string or box column's removed entry is
 // the map's unit, which core/map's delete drops from the column without
 // releasing, so it is read out first and released after.
-function routed_delete(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var t: typeinfo.Type = f.values[ins.args[0]];
-  var box: i32 = scratch_base(f);
-  var found: i32 = box + 1;
-  var old_key: i32 = box + 2;
-  var old_val: i32 = box + 3;
-  var counted_key: boolean = ssasem.is_text(ssasem.map_key(t));
-  var counted_val: boolean = ssasem.is_string(ssasem.map_value(t)) || routed_box(ssasem.map_value(t));
+function routed_delete(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let t: typeinfo.Type = f.values[ins.args[0]];
+  let box: i32 = scratch_base(f);
+  let found: i32 = box + 1;
+  let old_key: i32 = box + 2;
+  let old_val: i32 = box + 3;
+  let counted_key: boolean = counted_key_column(ssasem.map_key(t));
+  let counted_val: boolean = ssasem.is_string(ssasem.map_value(t)) || routed_box(ssasem.map_value(t));
   r = reserve(r, old_val + 1);
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_call_direct("__map_cow_inplace", 1));
@@ -3460,13 +3620,13 @@ function routed_delete(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
   }
   r = emit(r, ir.op_load_local(box));
   r = key_operand(r, f, ins);
-  r = emit(r, ir.op_call_direct("__map_delete_impl", 2));
+  r = map_entry(r, f, ins, "__map_delete_impl", "__map_delete_keyed_impl", 2);
   r = emit(r, ir.op_store_local(found));
   if (counted_key || counted_val) {
     r = emit(r, ir.op_load_local(found));
     r = emit(r, ir.op_if(0));
     if (counted_key) {
-      r = helper(r, old_key, "__fern_str_free");
+      r = helper(r, old_key, value_release(ssasem.map_key(t)));
     }
     if (counted_val) {
       r = helper(r, old_val, value_release(ssasem.map_value(t)));
@@ -3478,24 +3638,49 @@ function routed_delete(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
   return emit(r, ir.op_tuple_make_k(2, tuple_kinds(f.values[ins.result])));
 }
 
+// A key column holding one unit of each key: a string or a keyed column.
+function counted_key_column(k: typeinfo.Type): boolean {
+  return ssasem.is_text(k) || ssasem.keyed_map_key(k);
+}
+
 // The release of one value a routed column holds: a string's, or a box's
 // through its type's own release helper.
 function value_release(v: typeinfo.Type): string {
-  if (ssasem.is_string(v)) {
+  if (ssasem.is_text(v)) {
     return "__fern_str_free";
   }
   return release_helper_name(v);
 }
 
 // The slot `reader` finds in `box` for the instruction's key, kept in `into`.
-function read_at_key(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, box: i32, reader: string, into: i32): irlower.LowerResult {
+function read_at_key(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, box: i32, reader: string, into: i32): irtables.LowerResult {
   r = emit(r, ir.op_load_local(box));
   r = key_operand(r, f, ins);
-  r = emit(r, ir.op_call_direct(reader, 2));
+  r = map_entry(r, f, ins, reader, keyed_twin(reader), 2);
   return emit(r, ir.op_store_local(into));
 }
 
-function release_if_copied(own r: irlower.LowerResult, receiver: i32, handle: i32): irlower.LowerResult {
+function keyed_twin(reader: string): string {
+  if (reader == "__map_key_of") {
+    return "__map_key_of_keyed";
+  }
+  return "__map_lookup_val_keyed";
+}
+
+// A call to core/map's `plain` entry for the instruction's map, or for a
+// keyed key column to its `keyed` twin, with the key type's hash and
+// equality closures after the other `argc` arguments.
+function map_entry(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, plain: string, keyed: string, argc: i32): irtables.LowerResult {
+  let k: typeinfo.Type = ssasem.map_key(f.values[ins.args[0]]);
+  if (!ssasem.keyed_map_key(k)) {
+    return emit(r, ir.op_call_direct(plain, argc));
+  }
+  r = emit(r, ir.op_const_closure(key_closure_name(k, "hash")));
+  r = emit(r, ir.op_const_closure(key_closure_name(k, "eq")));
+  return emit(r, ir.op_call_direct(keyed, argc + 2));
+}
+
+function release_if_copied(own r: irtables.LowerResult, receiver: i32, handle: i32): irtables.LowerResult {
   r = emit(r, ir.op_load_local(handle));
   r = emit(r, ir.op_load_local(receiver));
   r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
@@ -3512,10 +3697,10 @@ function release_if_copied(own r: irlower.LowerResult, receiver: i32, handle: i3
 // The runtime map's snapshot of a u8 column is a word array, where a u8[]
 // this lowering reads is packed (ir.packed), so it is copied into one and
 // released: fresh, it holds the only unit of itself and no counted element.
-function packed_snapshot(own r: irlower.LowerResult, f: ssasem.Func): irlower.LowerResult {
-  var src: i32 = scratch_base(f);
-  var dst: i32 = src + 1;
-  var index: i32 = src + 2;
+function packed_snapshot(own r: irtables.LowerResult, f: ssasem.Func): irtables.LowerResult {
+  let src: i32 = scratch_base(f);
+  let dst: i32 = src + 1;
+  let index: i32 = src + 2;
   r = reserve(r, index + 1);
   r = emit(r, ir.op_store_local(src));
   r = emit(r, ir.op_load_local(src));
@@ -3559,7 +3744,7 @@ function column_flag(elem: typeinfo.Type): i32 {
 // copies out of the column without a retain, so a hit on a counted column
 // retains the payload here: the box then owns one unit of it, as any Option
 // this frame drops is expected to.
-function retain_hit_payload(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+function retain_hit_payload(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_store_local(ins.result));
   r = emit(r, ir.op_load_local(ins.result));
   r = emit(r, ir.op_opt_tag());
@@ -3577,8 +3762,8 @@ function retain_hit_payload(own r: irlower.LowerResult, ins: ssa.SInst): irlower
 // On a view column the payload is the column's own view box, which a retain
 // cannot count, so a hit is rebuilt around the unit `__fern_str_own` answers
 // and the runtime's box is freed alone.
-function own_view_hit(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var hit: i32 = scratch_base(f);
+function own_view_hit(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let hit: i32 = scratch_base(f);
   r = reserve(r, hit + 1);
   r = emit(r, ir.op_store_local(ins.result));
   r = emit(r, ir.op_load_local(ins.result));
@@ -3614,8 +3799,8 @@ function load_width(t: typeinfo.Type): i32 {
 // lift builds: its field k is the box's slot k, read with the array op, since
 // only the register backends give a record's fields and an array's elements
 // the same stride.
-function field_get(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var t: typeinfo.Type = f.values[ins.result];
+function field_get(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let t: typeinfo.Type = f.values[ins.result];
   if (semtypes.is_env(f.values[ins.args[0]])) {
     r = emit(r, ir.op_const_i32(ins.imm));
     return emit(r, ir.op_arr_get(32));
@@ -3626,14 +3811,14 @@ function field_get(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
   return emit(r, ir.op_struct_get(ins.imm, load_width(t)));
 }
 
-function variant(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
+function variant(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): irtables.LowerResult {
   if (identity_op(ins.kind_tag)) {
     return r;
   }
   if (ins.kind_tag == ssasem.dyn_is()) {
     return dyn_test(r, f, ins);
   }
-  var whole: typeinfo.Type = variant_union(f, ins);
+  let whole: typeinfo.Type = variant_union(f, ins);
   if (enum_layout(f, whole) == semrecords.layout_option()) {
     return option_site(r, f, ins, whole);
   }
@@ -3650,12 +3835,12 @@ function variant(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, str
 // variant's, so the downcast's test is the member test. An enum's box carries
 // the shape of the variant it holds, so an enum target is any of them, each
 // test reading the operand afresh.
-function dyn_test(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var at: i32 = semrecords.find_enum(f.enums, typeinfo.TypeUnion { name: ins.str, args: [] });
+function dyn_test(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let at: i32 = semrecords.find_enum(f.enums, typeinfo.TypeUnion { name: ins.str, args: [] });
   if (at < 0) {
     return emit(r, ir.op_variant_is(ins.str));
   }
-  var first: boolean = true;
+  let first: boolean = true;
   for v in f.enums[at].variants {
     if (!first) {
       r = emit(r, ir.op_load_local(ins.args[0]));
@@ -3679,7 +3864,7 @@ function variant_union(f: ssasem.Func, ins: ssa.SInst): typeinfo.Type {
 }
 
 function enum_layout(f: ssasem.Func, t: typeinfo.Type): i32 {
-  var at: i32 = semrecords.find_enum(f.enums, t);
+  let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0) {
     return 0;
   }
@@ -3709,8 +3894,8 @@ function wide_payload(t: typeinfo.Type): boolean {
 // reads the single payload without a field index. `op_opt_none` writes the
 // tag at position 1 itself; an Ok carrying `void` is the box at position 0
 // with a zero payload word, as the writers hand it back.
-function option_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, whole: typeinfo.Type): irlower.LowerResult {
-  var tag: i32 = variant_tag(f, whole, ins.str);
+function option_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, whole: typeinfo.Type): irtables.LowerResult {
+  let tag: i32 = variant_tag(f, whole, ins.str);
   if (ins.kind_tag == ssasem.variant_new()) {
     if (ins.args.len() == 0 && tag == 1) {
       return emit(r, ir.op_opt_none());
@@ -3719,7 +3904,7 @@ function option_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst,
       r = emit(r, ir.op_const_i32(0));
       return emit(r, ir.op_opt_make(tag));
     }
-    var pay: typeinfo.Type = f.values[ins.args[0]];
+    let pay: typeinfo.Type = f.values[ins.args[0]];
     if (wide_payload(pay)) {
       return emit(r, ir.op_opt_make_w(tag, 64, !ssasem.is_float(pay)));
     }
@@ -3730,7 +3915,7 @@ function option_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst,
     r = emit(r, ir.op_const_i32(tag));
     return emit(r, ir.op_bin("eq", 0, false));
   }
-  var got: typeinfo.Type = f.values[ins.result];
+  let got: typeinfo.Type = f.values[ins.result];
   if (wide_payload(got)) {
     return emit(r, ir.op_opt_payload_w(64, !ssasem.is_float(got)));
   }
@@ -3754,7 +3939,7 @@ function zero(t: typeinfo.Type): ir.Op {
 // A constant the verifier gave literal text to reaches the backends as that
 // text, spliced into an immediate of its own width (ssasem.text_constant);
 // every other integer constant is carried in the instruction's i32 immediate.
-function constant(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+function constant(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == 1 && ssasem.is_wide(f.values[ins.result])) {
     return emit(r, ir.op_const_i64_text(ins.str));
   }
@@ -3772,7 +3957,7 @@ function constant(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): i
     return emit(r, ir.op_const_str(ins.str));
   }
   if (ins.kind_tag == ssasem.zero()) {
-    var t: typeinfo.Type = f.values[ins.result];
+    let t: typeinfo.Type = f.values[ins.result];
     r = emit(r, zero(t));
     if (ssasem.is_f32(t)) {
       return round_f32(r);
@@ -3785,7 +3970,7 @@ function constant(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): i
 // Integer negation is a zero-minus, so the zero is pushed under the operand at
 // the operand's own width or the two sides of the subtraction disagree; a
 // float has its own sign-flip opcode and pushes nothing.
-function negation_zero(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+function negation_zero(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == 10 && ins.str == "-" && !ssasem.is_float(f.values[ins.args[0]])) {
     return emit(r, zero(f.values[ins.args[0]]));
   }
@@ -3794,18 +3979,18 @@ function negation_zero(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 
 // A construction the plan found constant is a static box: its operands were
 // loaded for the ordinary construction and are dropped unread.
-function static_box(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, words: string): irlower.LowerResult {
+function static_box(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, words: string): irtables.LowerResult {
   for a in ins.args {
     r = emit(r, ir.op_drop());
   }
-  var values: string = slice_unchecked(words, 1, words.len()) + "";
+  let values: string = slice_unchecked(words, 1, words.len()) + "";
   if (ins.kind_tag == ssasem.array_new() && ssasem.is_u8(elem_type(f.values[ins.result]))) {
     return emit(r, ir.op_const_bytes(values));
   }
   if (ins.kind_tag == ssasem.array_new()) {
     return emit(r, ir.op_const_array(values));
   }
-  var name: string = ins.str;
+  let name: string = ins.str;
   if (ins.kind_tag == ssasem.record_new()) {
     name = record_name(f.values[ins.result]);
   }
@@ -3816,7 +4001,7 @@ function constant_op(k: i32): boolean {
   return k == 1 || k == 2 || k == 5 || k == ssasem.zero();
 }
 
-function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irlower.StructTab, defer0: boolean, link: Link, kept: boolean): irlower.LowerResult {
+function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irtables.StructTab, defer0: boolean, link: Link, kept: boolean): irtables.LowerResult {
   r = negation_zero(r, f, ins);
   if (ins.kind_tag == ssasem.with()) {
     r = with_update(r, f, p, ins, defer0);
@@ -3907,7 +4092,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
 
 // An element read the plan HOLDS retains what it read: the unit is the frame's
 // own from here (ssaunits.held_elements).
-function held(own r: irlower.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
+function held(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   if (ins.result >= p.held.len() || !p.held[ins.result]) {
     return r;
   }
@@ -3916,15 +4101,15 @@ function held(own r: irlower.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irl
 
 // A runtime helper (ircore.is_fern_helper) binds its parameters in reverse
 // push order (#5666): the backends push a helper call's operands as they come,
-// where a user call's go last first. So the last argument goes in first, as
-// irlower pushes them. __fern_map_find is the one such helper a typed body
+// where a user call's go last first. So the last argument goes in first.
+// __fern_map_find is the one such helper a typed body
 // calls with more than one argument.
 function fern_helper_call(name: string, argc: i32): boolean {
   return argc > 1 && name == "__fern_map_find";
 }
 
-function helper_call(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
-  var i: i32 = ins.args.len() - 1;
+function helper_call(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
+  let i: i32 = ins.args.len() - 1;
   while (i >= 0) {
     r = emit(r, ir.op_load_local(ins.args[i]));
     i = i - 1;
@@ -3941,13 +4126,13 @@ function helper_call(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerR
 // first. The instruction spells the receiver first, as every other operation
 // here does, which is why this loads the two in reverse rather than leaving
 // them to the generic push.
-function join_call(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+function join_call(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[0]));
   return emit(r, ir.op_call_direct("__fern_arr_str_join", 2));
 }
 
-function took(own r: irlower.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
+function took(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   if (ins.result >= p.takes.len() || p.takes[ins.result] < 0) {
     return r;
   }
@@ -3963,7 +4148,7 @@ function took(own r: irlower.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irl
 // dies at this read, so its own drop runs in this same step — walking past
 // the slot the take emptied, then releasing the box itself
 // (ssaunits.payload_root).
-function took_payload(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
+function took_payload(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   if (!payload_taken(f, p, ins)) {
     return r;
   }
@@ -3984,8 +4169,8 @@ function payload_taken(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolea
 // A receiver whose retain was DEFERRED never arrives here: `append_push` sends
 // it to `append_borrowed` or `append_field` instead, and `with_update` sends
 // one whose field the plan admitted to `with_field`.
-function sole_owned_base(own r: irlower.LowerResult, f: ssasem.Func, base: i32, scratch: i32): irlower.LowerResult {
-  var elem: typeinfo.Type = elem_type(f.values[base]);
+function sole_owned_base(own r: irtables.LowerResult, f: ssasem.Func, base: i32, scratch: i32): irtables.LowerResult {
+  let elem: typeinfo.Type = elem_type(f.values[base]);
   r = emit(r, ir.op_load_local(base));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
   r = emit(r, ir.op_if(0));
@@ -4011,7 +4196,7 @@ function sole_owned_base(own r: irlower.LowerResult, f: ssasem.Func, base: i32, 
 // leaves a shared receiver's count alone and hands back an un-share copy — so
 // the release that makes the operation take exactly one unit at every count
 // belongs here rather than in the shared helper the AST lowering also calls.
-function append_push(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irlower.LowerResult {
+function append_push(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irtables.LowerResult {
   if (link.root >= 0) {
     return append_linked(r, f, ins, link);
   }
@@ -4021,8 +4206,8 @@ function append_push(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   if (defer0) {
     return append_borrowed(r, f, ins, link.out);
   }
-  var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
-  var res: i32 = scratch_base(f);
+  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+  let res: i32 = scratch_base(f);
   r = reserve(r, res + 1);
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -4074,8 +4259,8 @@ function append_push(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
 //
 // A result that is a chain LINK (`out`, see `append_linked`) skips the retain:
 // it is owed where the chain ends.
-function append_borrowed(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, out: boolean): irlower.LowerResult {
-  var scratch: i32 = scratch_base(f);
+function append_borrowed(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, out: boolean): irtables.LowerResult {
+  let scratch: i32 = scratch_base(f);
   r = reserve(r, scratch + 1);
   r = borrowed_push(r, f, ins, scratch, out);
   return emit(r, ir.op_load_local(scratch));
@@ -4085,13 +4270,13 @@ function append_borrowed(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
 // `scratch`, and the units that settles: a retain of the result when it is
 // the receiver's box, unless `out` defers it, and a count on every element
 // the receiver shares with a fresh result.
-function borrowed_push(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean): irlower.LowerResult {
-  var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+function borrowed_push(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean): irtables.LowerResult {
+  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, arr_push_borrowed_op(elem));
   r = emit(r, ir.op_store_local(scratch));
-  var aliased: boolean = ssasem.reference(elem);
+  let aliased: boolean = ssasem.reference(elem);
   if (out && !aliased) {
     return r;
   }
@@ -4125,9 +4310,9 @@ function borrowed_push(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 // append whose result is not one, or at the return (`take_owed`).
 struct Link { root: i32, out: boolean }
 
-function append_linked(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, link: Link): irlower.LowerResult {
-  var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
-  var scratch: i32 = scratch_base(f);
+function append_linked(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, link: Link): irtables.LowerResult {
+  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+  let scratch: i32 = scratch_base(f);
   r = reserve(r, scratch + 1);
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(link.root));
@@ -4161,14 +4346,14 @@ function append_linked(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 // reads anywhere else: it is removed, and whatever depended on it goes with it
 // on the next round.
 function links_of(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][]): i32[] {
-  var top: i32 = 0 - 2;
-  var state: i32[] = [];
-  var v: i32 = 0;
+  let top: i32 = 0 - 2;
+  let state: i32[] = [];
+  let v: i32 = 0;
   while (v < f.graph.nvals) {
     state = state.append(0 - 1);
     v = v + 1;
   }
-  var bi: i32 = 0;
+  let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     for ins in f.graph.blocks[bi].insts {
       if (link_kind(f, p, ins)) {
@@ -4177,11 +4362,11 @@ function links_of(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][]): i32[] {
     }
     bi = bi + 1;
   }
-  var roots: boolean[] = link_roots(f, p);
-  var changed: boolean = true;
+  let roots: boolean[] = link_roots(f, p);
+  let changed: boolean = true;
   while (changed) {
     changed = false;
-    var next: i32[] = propagate(f, p, idx, state, roots);
+    let next: i32[] = propagate(f, p, idx, state, roots);
     next = prune(f, p, next);
     v = 0;
     while (v < next.len()) {
@@ -4225,8 +4410,8 @@ function is_array_type(t: typeinfo.Type): boolean {
 // requires it dead in the loop it enters (`Plan.entry_kept`), so any read of
 // it, a return of it included, happens before the box can grow.
 function link_roots(f: ssasem.Func, p: ssaunits.Plan): boolean[] {
-  var ok: boolean[] = [];
-  var v: i32 = 0;
+  let ok: boolean[] = [];
+  let v: i32 = 0;
   while (v < f.graph.nparams) {
     ok = ok.append(is_array_type(f.values[v]) && !(v < p.owned.len() && p.owned[v]) && !p.entry_kept[v]);
     v = v + 1;
@@ -4237,16 +4422,16 @@ function link_roots(f: ssasem.Func, p: ssaunits.Plan): boolean[] {
 // One round of the candidates' roots, read off their inputs. A root only
 // descends: unknown, then a parameter, then none.
 function propagate(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], state: i32[], roots: boolean[]): i32[] {
-  var top: i32 = 0 - 2;
-  var out: i32[] = state;
+  let top: i32 = 0 - 2;
+  let out: i32[] = state;
   for b in f.graph.blocks {
-    var pos: i32 = 0 - 1;
+    let pos: i32 = 0 - 1;
     for ins in b.insts {
       pos = pos + 1;
       if (state[ins.result] == 0 - 1) {
         continue;
       }
-      var root: i32 = top;
+      let root: i32 = top;
       if (ins.kind_tag == ssasem.append()) {
         root = input_root(f, state, roots, ins.args[0]);
         // Straight onto the parameter, the push must be the deferred one.
@@ -4257,7 +4442,7 @@ function propagate(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], state: i32[],
         root = call_root(f, at(p, idx, b.id, pos, 0 - 1), state, roots, ins);
       } else {
         for a in ins.args {
-          var r0: i32 = input_root(f, state, roots, a);
+          let r0: i32 = input_root(f, state, roots, a);
           if (r0 == 0 - 1 || root >= 0 && r0 >= 0 && r0 != root) {
             root = 0 - 1;
           } else if (r0 >= 0 && root == top) {
@@ -4279,11 +4464,11 @@ function propagate(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], state: i32[],
 // this frame reads it again, and what comes back is either the same box, at
 // the callee's retain, or one the frame holds a unit of.
 function call_root(f: ssasem.Func, step: ssaunits.Step, state: i32[], roots: boolean[], ins: ssa.SInst): i32 {
-  var modes: i32[] = ssaunits.callee_modes(f, ins);
-  var root: i32 = 0 - 1;
-  var i: i32 = 0;
+  let modes: i32[] = ssaunits.callee_modes(f, ins);
+  let root: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < ins.args.len()) {
-    var r0: i32 = input_root(f, state, roots, ins.args[i]);
+    let r0: i32 = input_root(f, state, roots, ins.args[i]);
     if (r0 != 0 - 1) {
       if (root != 0 - 1 || !lent_last(f, step, modes, ins, i)) {
         return 0 - 1;
@@ -4296,7 +4481,7 @@ function call_root(f: ssasem.Func, step: ssaunits.Step, state: i32[], roots: boo
 }
 
 function lent_last(f: ssasem.Func, step: ssaunits.Step, modes: i32[], ins: ssa.SInst, i: i32): boolean {
-  var a: i32 = ins.args[i];
+  let a: i32 = ins.args[i];
   if (i >= modes.len() || modes[i] != ssaunits.borrow_mode() || ssaunits.occurrences(ins.args, a) != 1) {
     return false;
   }
@@ -4321,13 +4506,14 @@ function input_root(f: ssasem.Func, state: i32[], roots: boolean[], a: i32): i32
 
 // Candidates with a use the encoding cannot reach, removed.
 function prune(f: ssasem.Func, p: ssaunits.Plan, state: i32[]): i32[] {
-  var out: i32[] = state;
+  let out: i32[] = state;
+  let at: i32[] = ssa.block_positions(f.graph);
   for step in p.steps {
     for h in step.hand_roots {
       out = unlink(out, h);
     }
     for supply in step.supplies {
-      if (supply.value >= 0 && supply.value < state.len() && state[supply.value] != 0 - 1 && !linked_supply(f, p, state, step, supply)) {
+      if (supply.value >= 0 && supply.value < state.len() && state[supply.value] != 0 - 1 && !linked_supply(f, p, at, state, step, supply)) {
         out = unlink(out, supply.value);
       }
     }
@@ -4342,26 +4528,26 @@ function unlink(own state: i32[], v: i32): i32[] {
   return state.with(v, 0 - 1);
 }
 
-function linked_supply(f: ssasem.Func, p: ssaunits.Plan, state: i32[], step: ssaunits.Step, supply: ssaunits.Supply): boolean {
+function linked_supply(f: ssasem.Func, p: ssaunits.Plan, at: i32[], state: i32[], step: ssaunits.Step, supply: ssaunits.Supply): boolean {
   if (supply.mode != ssaunits.move_unit()) {
     return false;
   }
-  var b: ssa.SBlock = f.graph.blocks[block_index(f.graph, step.block)];
+  let b: ssa.SBlock = f.graph.blocks[at[step.block]];
   if (step.point == ssaunits.return_point()) {
     return b.term.kind_tag == 1 && b.term.value == supply.value;
   }
   if (step.point == ssaunits.edge_point()) {
-    var dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, step.target)];
+    let dest: ssa.SBlock = f.graph.blocks[at[step.target]];
     if (supply.slot < 0 || supply.slot >= dest.insts.len()) {
       return false;
     }
-    var phi: ssa.SInst = dest.insts[supply.slot];
+    let phi: ssa.SInst = dest.insts[supply.slot];
     return phi.kind_tag == 8 && same_root(state[phi.result], state[supply.value]);
   }
   if (step.point < 0) {
     return false;
   }
-  var ins: ssa.SInst = b.insts[step.point];
+  let ins: ssa.SInst = b.insts[step.point];
   return ins.kind_tag == ssasem.append() && supply.slot == 0 && ins.args[0] == supply.value && p.grows[ins.result] < 0;
 }
 
@@ -4378,7 +4564,7 @@ function link_at(f: ssasem.Func, links: i32[], ins: ssa.SInst): Link {
   if (ins.kind_tag != ssasem.append()) {
     return Link { root: 0 - 1, out: false };
   }
-  var root: i32 = 0 - 1;
+  let root: i32 = 0 - 1;
   if (ins.args[0] >= f.graph.nparams) {
     root = links[ins.args[0]];
   }
@@ -4388,9 +4574,9 @@ function link_at(f: ssasem.Func, links: i32[], ins: ssa.SInst): Link {
 // An edge's supplies less the retain of a parameter into a link phi of it:
 // the phi still holds the parameter's box, whose unit stays owed.
 function owed_on_entry(step: ssaunits.Step, dest: ssa.SBlock, links: i32[]): ssaunits.Step {
-  var kept: ssaunits.Supply[] = [];
+  let kept: ssaunits.Supply[] = [];
   for supply in step.supplies {
-    var owed: boolean = supply.mode == ssaunits.retain_unit() && supply.slot >= 0 && supply.slot < dest.insts.len()
+    let owed: boolean = supply.mode == ssaunits.retain_unit() && supply.slot >= 0 && supply.slot < dest.insts.len()
       && dest.insts[supply.slot].kind_tag == 8 && links[dest.insts[supply.slot].result] == supply.value;
     if (!owed) {
       kept = kept.append(supply);
@@ -4402,7 +4588,7 @@ function owed_on_entry(step: ssaunits.Step, dest: ssa.SBlock, links: i32[]): ssa
 // A call result that is a link and still the parameter's box gives the
 // callee's retain back: the caller's count keeps the box live, and the link
 // holds no unit while it is the parameter's.
-function settle_call_link(own r: irlower.LowerResult, f: ssasem.Func, links: i32[], ins: ssa.SInst): irlower.LowerResult {
+function settle_call_link(own r: irtables.LowerResult, f: ssasem.Func, links: i32[], ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag != ssasem.call() || links[ins.result] < 0) {
     return r;
   }
@@ -4416,7 +4602,7 @@ function settle_call_link(own r: irlower.LowerResult, f: ssasem.Func, links: i32
 
 // The drop of `value`, which a link owes only when it is a box of the frame's
 // own.
-function drop_linked(own r: irlower.LowerResult, value: i32, links: i32[], f: ssasem.Func): irlower.LowerResult {
+function drop_linked(own r: irtables.LowerResult, value: i32, links: i32[], f: ssasem.Func): irtables.LowerResult {
   if (value >= links.len() || links[value] < 0) {
     return drop_value(r, value, f.values[value], scratch_base(f), f);
   }
@@ -4430,7 +4616,7 @@ function drop_linked(own r: irlower.LowerResult, value: i32, links: i32[], f: ss
 
 // The unit a link owes, taken where it leaves the frame: a retain when it is
 // still the parameter's box, nothing when it is a box of the frame's own.
-function take_owed(own r: irlower.LowerResult, v: i32, root: i32): irlower.LowerResult {
+function take_owed(own r: irtables.LowerResult, v: i32, root: i32): irtables.LowerResult {
   r = emit(r, ir.op_load_local(v));
   r = emit(r, ir.op_load_local(root));
   r = emit(r, ir.op_bin("eq", 0, false));
@@ -4449,11 +4635,11 @@ function take_owed(own r: irlower.LowerResult, v: i32, root: i32): irlower.Lower
 // that reallocated, or a copy, leaves the old buffer in the field for the
 // record's release, its elements now aliased by the result and counted for
 // exactly as `append_borrowed` counts them.
-function append_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
-  var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
-  var root: i32 = p.grows[ins.result];
-  var unique: i32 = scratch_base(f);
-  var res: i32 = unique + 1;
+function append_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
+  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+  let root: i32 = p.grows[ins.result];
+  let unique: i32 = scratch_base(f);
+  let res: i32 = unique + 1;
   r = reserve(r, res + 1);
   r = emit(r, ir.op_load_local(root));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -4481,7 +4667,7 @@ function append_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pl
 
 // `if (!unique) { fn(value) }`: one half of the share bracket a shared record
 // holds on its field across the push.
-function unless_unique(own r: irlower.LowerResult, unique: i32, value: i32, fn: string): irlower.LowerResult {
+function unless_unique(own r: irtables.LowerResult, unique: i32, value: i32, fn: string): irtables.LowerResult {
   r = emit(r, ir.op_load_local(unique));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_bin("eq", 0, false));
@@ -4491,8 +4677,8 @@ function unless_unique(own r: irlower.LowerResult, unique: i32, value: i32, fn: 
 }
 
 // The element the store replaces gives back the one count it held.
-function drop_replaced(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, elem: typeinfo.Type): irlower.LowerResult {
-  var old: i32 = scratch + 1;
+function drop_replaced(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, elem: typeinfo.Type): irtables.LowerResult {
+  let old: i32 = scratch + 1;
   r = reserve(r, old + 1);
   r = emit(r, ir.op_load_local(scratch));
   r = emit(r, ir.op_load_local(ins.args[1]));
@@ -4505,12 +4691,12 @@ function drop_replaced(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 // unit was the box's only one and in a fresh copy otherwise, the AST lowering's
 // two forms chosen here by the count at run time rather than by the receiver's
 // syntax.
-function with_update(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean): irlower.LowerResult {
+function with_update(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean): irtables.LowerResult {
   if (defer0 && p.grows[ins.result] >= 0) {
     return with_field(r, f, p, ins);
   }
-  var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
-  var scratch: i32 = scratch_base(f);
+  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+  let scratch: i32 = scratch_base(f);
   r = reserve(r, scratch + 1);
   r = sole_owned_base(r, f, ins.args[0], scratch);
   if (ssasem.reference(elem)) {
@@ -4530,11 +4716,11 @@ function with_update(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
 // holders. The receiver's retain was held back (deferred_retain), so the two
 // count tests read the boxes rather than this frame's supply, as the field
 // append's do.
-function with_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
-  var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
-  var root: i32 = p.grows[ins.result];
-  var unique: i32 = scratch_base(f);
-  var res: i32 = unique + 1;
+function with_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
+  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+  let root: i32 = p.grows[ins.result];
+  let unique: i32 = scratch_base(f);
+  let res: i32 = unique + 1;
   r = reserve(r, res + 1);
   r = emit(r, ir.op_load_local(root));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -4574,6 +4760,133 @@ function with_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
   return emit(r, ir.op_load_local(res));
 }
 
+// R7 of docs/REUSE-CONTRACT.md: a same-shape `map` over an `own` array writes
+// each result through the donor's buffer instead of appending to a fresh one.
+// `maps` marks, by result value, the calls every static condition admits:
+//
+// - the receiver is a parameter this function consumes, and its unit dies at
+//   the call with nothing else supplied from it, so it is the frame's to give;
+// - the element function is a lambda that captures nothing and reaches no
+//   observable effect (`pure`), so it cannot read the buffer it is writing;
+// - the element type is unchanged and is a 64-bit integer, the slice native
+//   implements, and the result is not linked to a borrowed parameter.
+//
+// The uniqueness test at run time (`sole_owned_base`) is what keeps a shared
+// donor immutable: its buffer is copied before the first write.
+// The reuse layer's off switch (`no_reuse`) turns it off with the pairings.
+function in_place_maps(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, idx: i32[][], links: i32[], pure: util.NameIndex, no_reuse: boolean): boolean[] {
+  let out: boolean[] = [];
+  while (out.len() < f.graph.nvals) {
+    out = out.append(false);
+  }
+  if (no_reuse) {
+    return out;
+  }
+  for b in f.graph.blocks {
+    let pos: i32 = 0;
+    while (pos < b.insts.len()) {
+      let ins: ssa.SInst = b.insts[pos];
+      if (ins.kind_tag == ssasem.call() && util.str_has_prefix(ins.str, "__arrm_map__")
+        && in_place_map(f, modes, at(p, idx, b.id, pos, 0 - 1), links, pure, ins)) {
+        out = out.with(ins.result, true);
+      }
+      pos = pos + 1;
+    }
+  }
+  return out;
+}
+
+function in_place_map(f: ssasem.Func, modes: i32[], step: ssaunits.Step, links: i32[], pure: util.NameIndex, ins: ssa.SInst): boolean {
+  if (ins.args.len() != 2 || ins.args[0] == ins.args[1] || links[ins.result] >= 0) {
+    return false;
+  }
+  let recv: i32 = ins.args[0];
+  if (!same_wide_array(f.values[recv], f.values[ins.result]) || !consumed_param(f, modes, recv)) {
+    return false;
+  }
+  if (util.index_of_i32(step.drops, recv) < 0 || supplied(step, recv)) {
+    return false;
+  }
+  let fn: ssa.SInst = definition(f, ins.args[1]);
+  return fn.result == ins.args[1] && fn.kind_tag == ssasem.closure_new() && fn.args.len() == 0 && pure.has(fn.str);
+}
+
+function same_wide_array(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(arr) = a {
+    return !arr.view && ssasem.is_wide(arr.elem) && semtypes.equal(a, b);
+  }
+  return false;
+}
+
+function consumed_param(f: ssasem.Func, modes: i32[], v: i32): boolean {
+  let d: ssa.SInst = definition(f, v);
+  return d.result == v && d.kind_tag == 6 && d.imm >= 0 && d.imm < modes.len() && modes[d.imm] == ssaunits.counted_mode();
+}
+
+function supplied(step: ssaunits.Step, v: i32): boolean {
+  for s in step.supplies {
+    if (s.value == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function without(xs: i32[], v: i32): i32[] {
+  let out: i32[] = [];
+  for x in xs {
+    if (x != v) {
+      out = out.append(x);
+    }
+  }
+  return out;
+}
+
+// The loop R7 lowers a marked map to: `buf[i] = f(buf[i])` over the buffer
+// the receiver's unit becomes, which is the result. The receiver's drop is
+// the result's unit, so the caller takes it out of the step's drops.
+//
+// The element read and the call stay on the operand stack beneath the store's
+// box and index: the frame's scratch slots are typed once per function, and a
+// 64-bit element in one would collide with a narrow use of the same slot.
+function map_in_place(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+  let fn: i32 = ins.args[1];
+  let buf: i32 = scratch_base(f);
+  let index: i32 = buf + 1;
+  r = reserve(r, index + 1);
+  r = sole_owned_base(r, f, ins.args[0], buf);
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(index));
+  r = emit(r, ir.op_block(0));
+  r = emit(r, ir.op_loop(0));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, ir.op_load_local(buf));
+  r = emit(r, ir.op_arr_len());
+  r = emit(r, ir.op_bin("ge_s", 0, false));
+  r = emit(r, ir.op_brif(1));
+  r = emit(r, ir.op_load_local(buf));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, ir.op_load_local(fn));
+  r = emit(r, ir.op_load_local(buf));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, arr_get_op(elem, true));
+  r = emit(r, ir.op_load_local(fn));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_arr_get(32));
+  r = emit(r, ir.op_call_indirect_sig(2, signature_tag(f.values[fn])));
+  r = emit(r, arr_set_op(elem));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, ir.op_const_i32(1));
+  r = emit(r, ir.op_bin("add", 0, false));
+  r = emit(r, ir.op_store_local(index));
+  r = emit(r, ir.op_br(0));
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_load_local(buf));
+  return emit(r, ir.op_store_local(ins.result));
+}
+
 // The cursor cluster. `map_iter` is the only allocation of the five, a fresh
 // unit the frame releases through `__fern_mapiter_free`. `key` and `value` load the map's own column element at
 // the cursor, so the value is the map's and stays borrowed. `advance` moves
@@ -4581,14 +4894,14 @@ function with_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
 //
 // An i64 or u64 value column sets both width flags, which only the wasm
 // accessors read.
-function map_iter_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+function map_iter_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_load_local(ins.args[0]));
   if (ins.kind_tag == ssasem.map_iter()) {
     r = emit(r, ir.op_map_iter(map_widekind(f.values[ins.args[0]]), map_keywide(f.values[ins.args[0]])));
   } else if (ins.kind_tag == ssasem.mapiter_has_next()) {
     r = emit(r, ir.op_mapiter_has_next());
   } else if (ins.kind_tag == ssasem.mapiter_key()) {
-    var kw: i32 = 0;
+    let kw: i32 = 0;
     if (ssasem.wide_map_key(semtypes.map_iter_key(f.values[ins.args[0]]))) {
       kw = 1;
     }
@@ -4603,7 +4916,7 @@ function map_iter_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 
 // A cell is a one-element array box shared by every holder, built over the
 // one element it takes.
-function cell_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+function cell_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == ssasem.cell_get()) {
     return cell_read(r, f, ins);
   }
@@ -4618,7 +4931,7 @@ function cell_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
 // A node's address is the box's own word. A fill writes the node at the hole
 // over its zero placeholder, so nothing is released, and answers the chain;
 // the first fill has no node to write and answers the value itself.
-function hole_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+function hole_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == ssasem.hole_at()) {
     r = emit(r, ir.op_load_local(ins.args[0]));
     return emit(r, ir.op_store_local(ins.result));
@@ -4641,8 +4954,8 @@ function hole_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerRes
 // A read hands out a unit of the element: the slot is loaded and, for a
 // reference, retained, since a later write may release what the slot held
 // while the value read is still in hand.
-function cell_read(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var elem: typeinfo.Type = f.values[ins.result];
+function cell_read(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let elem: typeinfo.Type = f.values[ins.result];
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, arr_get_op(elem, true));
@@ -4655,10 +4968,10 @@ function cell_read(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
 
 // A write releases what the slot held, stores the unit it was supplied and
 // leaves the dummy a statement op leaves for the store of its void result.
-function cell_write(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var elem: typeinfo.Type = f.values[ins.args[1]];
+function cell_write(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let elem: typeinfo.Type = f.values[ins.args[1]];
   if (ssasem.reference(elem)) {
-    var old: i32 = scratch_base(f);
+    let old: i32 = scratch_base(f);
     r = reserve(r, old + 1);
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_const_i32(0));
@@ -4682,7 +4995,7 @@ function cell_write(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst):
 // body reaches its captures through the parameter it was hoisted with. The
 // call carries the signature tag the value's type spells, so wasm dispatches
 // a wide or float slot through the funcref type the body was declared with.
-function function_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+function function_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (ins.kind_tag == ssasem.closure_new()) {
     // Capturing nothing, every word of the box is known at compile time, so
     // it is one static block rather than a fresh box per evaluation (#9839).
@@ -4706,15 +5019,15 @@ function function_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 
 // The funcref signature tag a call through a value dispatches by: one width
 // char per slot, the environment word first, then `_` and the result — the
-// spelling irlower's call sites carry, so both name one funcref type on wasm.
-// An all-narrow signature carries no tag, as those sites carry none.
+// spelling wasm_ir.fn_type_name turns into `$fn<tag>`.
+// An all-narrow signature carries no tag.
 function signature_tag(sig: typeinfo.Type): string {
-  var tag: string = "w";
+  let tag: string = "w";
   for p in ssasem.func_params(sig) {
     tag = tag + width_char(p);
   }
   tag = tag + "_" + width_char(ssasem.func_result(sig));
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < tag.len()) {
     if (tag[i] != b'w' && tag[i] != b'_') {
       return tag;
@@ -4744,12 +5057,12 @@ function width_char(t: typeinfo.Type): string {
 // a string key's and a counted value's — since the register runtimes retain
 // nothing on an insert. The snapshots hold no units and are released
 // shallow; the shared box loses this frame's unit, which cannot be its last.
-function map_mutation(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-  var box: i32 = scratch_base(f);
+function map_mutation(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let box: i32 = scratch_base(f);
   r = reserve(r, box + 1);
   r = unshared_map(r, f, ins.args[0], box);
   r = emit(r, ir.op_load_local(box));
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < ins.args.len()) {
     r = emit(r, ir.op_load_local(ins.args[i]));
     i = i + 1;
@@ -4757,30 +5070,30 @@ function map_mutation(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst
   return map_op(r, ins, f);
 }
 
-function unshared_map(own r: irlower.LowerResult, f: ssasem.Func, slot: i32, box: i32): irlower.LowerResult {
-  var t: typeinfo.Type = f.values[slot];
-  var kkind: i32 = map_key_kind(t);
-  var vkind: i32 = map_value_kind(t);
-  var keys: i32 = box + 1;
-  var vals: i32 = box + 2;
-  var index: i32 = box + 3;
+function unshared_map(own r: irtables.LowerResult, f: ssasem.Func, slot: i32, box: i32): irtables.LowerResult {
+  let t: typeinfo.Type = f.values[slot];
+  let kkind: i32 = map_key_kind(t);
+  let vkind: i32 = map_value_kind(t);
+  let keys: i32 = box + 1;
+  let vals: i32 = box + 2;
+  let index: i32 = box + 3;
   // The key and value slots are one per width: the slots are the frame's,
   // shared by every rebuild in it, and a slot's type is declared once, so
   // a narrow column and a wide one in the same function cannot share a
   // slot (wasm refuses an i32 stored into an i64 local).
-  var key: i32 = box + 4;
-  var value: i32 = box + 5;
+  let key: i32 = box + 4;
+  let value: i32 = box + 5;
   if (map_keywide(t) == 1) {
     key = box + 6;
-    r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(key) };
+    r = irtables.LowerResult { ...r, i64_slots: r.i64_slots.append(key) };
   }
   if (map_widekind(t) == 1) {
     value = box + 7;
-    r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(value) };
+    r = irtables.LowerResult { ...r, i64_slots: r.i64_slots.append(value) };
   }
   if (map_widekind(t) == 2) {
     value = box + 8;
-    r = irlower.LowerResult { ...r, f64_slots: r.f64_slots.append(value) };
+    r = irtables.LowerResult { ...r, f64_slots: r.f64_slots.append(value) };
   }
   r = reserve(r, box + 9);
   r = emit(r, ir.op_load_local(slot));
@@ -4860,7 +5173,7 @@ function dyn_call(ins: ssa.SInst): boolean {
 }
 
 function consecutive(args: i32[]): boolean {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < args.len()) {
     if (args[i] != args[0] + i) {
       return false;
@@ -4870,11 +5183,11 @@ function consecutive(args: i32[]): boolean {
   return args.len() > 0;
 }
 
-function dyn_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+function dyn_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   return emit(r, ir.op_dyn_dispatch(ssasem.dyn_call_method(ins.str), ssasem.dyn_call_traits(ins.str), ins.args[0], ins.args.len()));
 }
 
-function call_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (util.index_of_str(f.shadows, ins.str) >= 0) {
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
   }
@@ -4920,7 +5233,7 @@ function call_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
 
 // One half of the builtin dispatch below: the result with that builtin's op
 // emitted, or the result untouched when the name is not one of this half's.
-struct Lowered { found: boolean, r: irlower.LowerResult }
+struct Lowered { found: boolean, r: irtables.LowerResult }
 
 // The builtins whose result is an instantiated builtin union: each is the
 // stack IR op the AST lowering emits for the same call. `read_line` reads a FD
@@ -4929,7 +5242,7 @@ struct Lowered { found: boolean, r: irlower.LowerResult }
 // The stream handles: a handle IS its descriptor, so the three standard ones
 // are constants and every method is the free op with the receiver as its
 // first operand. Writer.close shares Reader.close's op.
-function handle_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function handle_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "stdin") {
     return Lowered { found: true, r: emit(r, ir.op_const_i32(0)) };
   }
@@ -4992,8 +5305,8 @@ function handle_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 
 // The handle metadata ops, each asked of the bare descriptor like close and
 // shared by the two handle types.
-function handle_metadata_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
-  var op: string = handle_method(ins.str);
+function handle_metadata_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
+  let op: string = handle_method(ins.str);
   if (op == "stat") {
     return Lowered { found: true, r: emit(r, ir.op_fd_stat()) };
   }
@@ -5038,7 +5351,7 @@ function handle_metadata_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
 // handle_method is the method half of a `Reader.` or `Writer.` metadata
 // contract name, "" for any other name.
 function handle_method(name: string): string {
-  var methods: string[] = [
+  let methods: string[] = [
     "stat", "flags", "seek", "fsync", "fdatasync", "syncfs", "isatty", "dup_onto", "window_size",
     "set_window_size", "termios_get", "termios_set",
   ];
@@ -5050,7 +5363,7 @@ function handle_method(name: string): string {
   return "";
 }
 
-function union_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function union_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "env" || ins.str == "config_get") {
     return Lowered { found: true, r: emit(r, ir.op_env()) };
   }
@@ -5080,7 +5393,7 @@ function union_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered
 }
 
 // The builtins whose result is the outcome of a write: `Result[void, IoError]`.
-function outcome_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function outcome_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "write_file") {
     return Lowered { found: true, r: emit(r, ir.op_write_file()) };
   }
@@ -5105,7 +5418,7 @@ function outcome_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
 // The builtins whose result owns nothing. The over-release counter and the two
 // shared-append totals read a runtime word; the first of them is a runtime
 // call rather than an op.
-function value_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function value_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "args") {
     return Lowered { found: true, r: emit(r, ir.op_args()) };
   }
@@ -5134,7 +5447,7 @@ function value_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered
 // Each is an op of its own rather than a call, the way the AST lowering emits
 // it — a contract alone would reach the backends as a call to a symbol no
 // runtime defines.
-function host_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function host_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "random_bytes") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_random_bytes())) };
   }
@@ -5161,7 +5474,7 @@ function host_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered 
 
 // The process and host queries: each is the op the AST lowering emits, with
 // no operand but the ones the call names.
-function os_query_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function os_query_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "getcwd") {
     return Lowered { found: true, r: emit(r, ir.op_getcwd()) };
   }
@@ -5232,7 +5545,7 @@ function os_query_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 }
 
 // The directory, link and permission ops, each the op the AST lowering emits.
-function fs_op_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function fs_op_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "temp_dir") {
     return Lowered { found: true, r: emit(r, ir.op_temp_dir()) };
   }
@@ -5274,7 +5587,7 @@ function fs_op_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 
 // The rest of the OS floor (semsource.os_floor_contracts), each the op the
 // AST lowering emits; `sync` pushes the dummy every statement op pushes.
-function os_floor_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function os_floor_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "set_file_times") {
     return Lowered { found: true, r: emit(r, ir.op_set_file_times()) };
   }
@@ -5326,7 +5639,7 @@ function os_floor_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
   return os_floor_process_site(r, ins);
 }
 
-function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function os_floor_process_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "tcp_send") {
     return Lowered { found: true, r: emit(r, ir.op_tcp_send()) };
   }
@@ -5437,7 +5750,7 @@ function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowe
 
 // The string builder's ops: a handle is a value, and the statement ops push
 // the dummy a statement op pushes.
-function builder_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function builder_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "buf_new") {
     return Lowered { found: true, r: emit(r, ir.op_buf_new()) };
   }
@@ -5483,20 +5796,20 @@ function builder_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
 // The runtime intrinsics: each is the stack IR op the AST lowering emits for
 // the same call, so a contract here is only half the work — without the op the
 // name reaches the backends as a direct call to a symbol no runtime defines.
-function intrinsic_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
-  var kind: string = irlower.f64_math_builtin_kind(ins.str);
+function intrinsic_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
+  let kind: string = irtables.f64_math_builtin_kind(ins.str);
   if (kind != "") {
     return Lowered { found: true, r: emit(r, ir.op_funary(kind)) };
   }
   if (ins.str == "__pow_f64") {
     return Lowered { found: true, r: emit(r, ir.op_fbin("fpow")) };
   }
-  var bits: Lowered = bit_count_site(r, ins);
+  let bits: Lowered = bit_count_site(r, ins);
   if (bits.found) {
     return bits;
   }
   r = bits.r;
-  var mem: Lowered = raw_memory_site(r, ins);
+  let mem: Lowered = raw_memory_site(r, ins);
   if (mem.found) {
     return mem;
   }
@@ -5505,7 +5818,7 @@ function intrinsic_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 }
 
 // One op per operand width, the width carried by the op rather than the name.
-function bit_count_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function bit_count_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__clz32") {
     return Lowered { found: true, r: emit(r, ir.op_clz(32)) };
   }
@@ -5529,12 +5842,12 @@ function bit_count_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 
 // __fern_str_dec(s): core/map releases one unit of a string it holds, which
 // is what __fern_str_free does to the box. Its dummy result is the store's.
-function str_release(own r: irlower.LowerResult): irlower.LowerResult {
+function str_release(own r: irtables.LowerResult): irtables.LowerResult {
   return emit(r, ir.op_call_direct("__fern_str_free", 1));
 }
 
-function no_op_release(own r: irlower.LowerResult, operands: i32): irlower.LowerResult {
-  var i: i32 = 0;
+function no_op_release(own r: irtables.LowerResult, operands: i32): irtables.LowerResult {
+  let i: i32 = 0;
   while (i < operands) {
     r = emit(r, ir.op_drop());
     i = i + 1;
@@ -5543,8 +5856,8 @@ function no_op_release(own r: irlower.LowerResult, operands: i32): irlower.Lower
 }
 
 // __fern_box_free(data, size): the raw free of the rc'd block that starts 8
-// bytes before `data` and is `size + 8` long, as irlower lowers it.
-function box_free(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+// bytes before `data` and is `size + 8` long.
+function box_free(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -5558,7 +5871,7 @@ function box_free(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResu
 
 // __store_u8(addr, v): the raw byte store at a constant zero offset. Its
 // offset sits between the two operands, so they are re-read round it.
-function store_u8(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+function store_u8(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -5570,7 +5883,7 @@ function store_u8(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResu
 // __str_bytes(s, scratch): the address of the string's bytes, as __raw_data
 // reads it. A self-host string is never inline, so the scratch operand is
 // dropped unread.
-function str_bytes(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+function str_bytes(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -5578,7 +5891,7 @@ function str_bytes(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerRes
 }
 
 // __arr_set_len(a, n): the length is slot 0 of the box.
-function arr_set_len(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+function arr_set_len(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -5590,7 +5903,7 @@ function arr_set_len(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerR
 // The raw-memory escape hatches. The byte load has no op of its own: it is the
 // two-operand raw load at a constant zero offset, which is also what keeps the
 // address at full pointer width.
-function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function raw_memory_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__alloc") {
     return Lowered { found: true, r: emit(r, ir.op_alloc()) };
   }
@@ -5609,7 +5922,7 @@ function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__map_hash_seed") {
     return Lowered { found: true, r: emit(r, ir.op_map_hash_seed()) };
   }
-  // core/map's array-value releases stay no-ops, as irlower lowers them: the
+  // core/map's array-value releases stay no-ops: the
   // lent operands are dropped, nothing is released, and the dummy 0 a void
   // call leaves is pushed. No routed map has an array column.
   if (ins.str == "__fern_str_dec") {
@@ -5671,7 +5984,7 @@ function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 }
 
 // The floor the runtime helpers are written on, and the two rc test hooks:
-// the ops irlower emits for each. `__raw_array` and `__raw_arr_ptr` emit
+// the ops the lowering emits for each. `__raw_array` and `__raw_arr_ptr` emit
 // nothing: the address already is the array.
 struct RawOps { name: string, ops: ir.Op[] }
 
@@ -5702,7 +6015,7 @@ function raw_floor_ops(): RawOps[] {
   ];
 }
 
-function raw_floor_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function raw_floor_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (!util.str_has_prefix(ins.str, "__raw_") && !util.str_has_prefix(ins.str, "__syscall") && !util.str_has_prefix(ins.str, "__rc_")) {
     return Lowered { found: false, r: r };
   }
@@ -5718,7 +6031,7 @@ function raw_floor_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 }
 
 // The byte scans over a lent string.
-function byte_scan_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__sum_bytes") {
     return Lowered { found: true, r: emit(r, ir.op_sum_bytes()) };
   }
@@ -5754,7 +6067,7 @@ function byte_scan_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 
 // The string methods the AST lowering emits an op for, keyed by receiver the
 // way their contracts are.
-function string_method_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function string_method_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "string.to_ascii_upper") {
     return Lowered { found: true, r: emit(r, ir.op_str_to_upper()) };
   }
@@ -5781,7 +6094,7 @@ function string_method_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered
 
 // The builtins that are a call of a Fern-source runtime helper whose symbol
 // differs from the builtin's name.
-function runtime_helper_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
+function runtime_helper_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "chr") {
     return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_chr", 1)) };
   }
@@ -5793,8 +6106,8 @@ function runtime_helper_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowere
 
 // A name no half owns is a runtime helper with a symbol of its own, which a
 // direct call reaches.
-function builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
-  var done: Lowered = handle_site(r, ins);
+function builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
+  let done: Lowered = handle_site(r, ins);
   if (!done.found) {
     r = done.r;
     done = union_builtin_site(r, ins);
@@ -5822,22 +6135,22 @@ function builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.Lower
   return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 
-function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[], no_reuse: boolean, uses: i32[]): irlower.LowerResult {
+function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irtables.StructTab, grows: ssaunits.GrowTable, no_reuse: boolean, uses: i32[], maps: boolean[]): irtables.LowerResult {
   r = drops(r, at(p, idx, b.id, ssaunits.entry_point(), 0 - 1), f, links);
-  var pos: i32 = 0;
-  var pairs: ReusePairs = reuse_pairs(f, p, idx, b, no_reuse);
-  var keeps: Keeps = block_keeps(f, p, idx, b, pairs, uses);
-  var kept: i32[] = kept_values(keeps);
-  var late: i32[] = late_values(keeps);
+  let pos: i32 = 0;
+  let pairs: ReusePairs = reuse_pairs(f, p, idx, b, no_reuse);
+  let keeps: Keeps = block_keeps(f, p, idx, b, pairs, uses);
+  let kept: i32[] = kept_values(keeps);
+  let late: i32[] = late_values(keeps);
   for ins in b.insts {
     if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-      var step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
-      var held: Held = bracketed(f, step, ins, grows);
+      let step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
+      let held: Held = bracketed(f, step, ins, grows);
       // One answer for both: the retain `supplies` holds back is the one
       // `instruction` then takes, and two calls could drift apart with
       // nothing to catch it.
-      var defer0: boolean = deferred_retain(f, p, step, ins);
-      var k: i32 = util.index_of_i32(keeps.start, pos);
+      let defer0: boolean = deferred_retain(f, p, step, ins);
+      let k: i32 = util.index_of_i32(keeps.start, pos);
       if (k >= 0) {
         r = keep_token(r, f, keeps.donors[k]);
       }
@@ -5849,12 +6162,15 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
       // reads one token slot and the runtime decides. A kept donor's token
       // was taken at its first kept read, and its drop is the
       // construction's.
-      var kb: i32 = util.index_of_i32(keeps.built, pos);
+      let kb: i32 = util.index_of_i32(keeps.built, pos);
       if (pairs.selfs[pos] >= 0 && kb < 0) {
         r = reuse_token(r, f, pairs.selfs[pos]);
       }
       if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) {
         r = reuse_construct(r, f, ins, keeps, kb);
+      } else if (ins.result >= 0 && maps[ins.result]) {
+        r = map_in_place(r, f, ins);
+        step = ssaunits.Step { ...step, drops: without(step.drops, ins.args[0]) };
       } else if (util.index_of_i32(late, ins.result) < 0) {
         r = instruction(r, f, p, ins, structs, defer0, link_at(f, links, ins), util.index_of_i32(kept, ins.result) >= 0);
         r = settle_call_link(r, f, links, ins);
@@ -5877,7 +6193,7 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
 // no_reuse is the #4350 §6.5 differential switch, which the AST path's reuse
 // layer answers too: with it set every construction allocates, so a program's
 // observable behaviour can be compared against its own reusing build.
-struct Emit { r: irlower.LowerResult, labels: i32[], why: string, steps: i32[][], links: i32[], no_reuse: boolean, uses: i32[] }
+struct Emit { r: irtables.LowerResult, labels: i32[], why: string, steps: i32[][], links: i32[], no_reuse: boolean, uses: i32[], maps: boolean[] }
 
 function label_if(): i32 {
   return 0 - 1;
@@ -5888,8 +6204,8 @@ function push(own e: Emit, op: ir.Op, label: i32): Emit {
 }
 
 function pop(own e: Emit): Emit {
-  var labels: i32[] = [];
-  var i: i32 = 0;
+  let labels: i32[] = [];
+  let i: i32 = 0;
   while (i < e.labels.len() - 1) {
     labels = labels.append(e.labels[i]);
     i = i + 1;
@@ -5900,7 +6216,7 @@ function pop(own e: Emit): Emit {
 // A branch target without an open label is a layout defect; refuse the
 // function rather than emit a depth the backends would fault on.
 function depth(e: Emit, target: i32): i32 {
-  var i: i32 = e.labels.len() - 1;
+  let i: i32 = e.labels.len() - 1;
   while (i >= 0 && e.labels[i] != target) {
     i = i - 1;
   }
@@ -5911,7 +6227,7 @@ function depth(e: Emit, target: i32): i32 {
 }
 
 function rank(f: ssa.SFunc, order: i32[], id: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < order.len()) {
     if (f.blocks[order[i]].id == id) {
       return i;
@@ -5923,11 +6239,11 @@ function rank(f: ssa.SFunc, order: i32[], id: i32): i32 {
 
 function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32, target: i32): Emit {
   e = Emit { ...e, r: edge(e.r, f, p, e.steps, e.links, f.graph.blocks[order[position]].id, target) };
-  var dest: i32 = rank(f.graph, order, target);
+  let dest: i32 = rank(f.graph, order, target);
   if (dest == position + 1) {
     return e;
   }
-  var d: i32 = depth(e, dest);
+  let d: i32 = depth(e, dest);
   if (d < 0) {
     return Emit { ...e, why: "branch target has no open label" };
   }
@@ -5935,9 +6251,9 @@ function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], posit
 }
 
 function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32): Emit {
-  var b: ssa.SBlock = f.graph.blocks[order[position]];
+  let b: ssa.SBlock = f.graph.blocks[order[position]];
   if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
-    var ret: ssaunits.Step = at(p, e.steps, b.id, ssaunits.return_point(), 0 - 1);
+    let ret: ssaunits.Step = at(p, e.steps, b.id, ssaunits.return_point(), 0 - 1);
     e = Emit { ...e, r: supplies(e.r, f, p, ret, false, [], []) };
     if (b.term.kind_tag == 1 && b.term.value >= 0 && e.links[b.term.value] >= 0) {
       e = Emit { ...e, r: take_owed(e.r, b.term.value, e.links[b.term.value]) };
@@ -5973,7 +6289,7 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
 // Blocks inside an inner loop get their labels when that loop is entered,
 // so a label never crosses the loop's own scope.
 function inner(l: ssalayout.Layout, first: i32, last: i32, looping: boolean, at: i32): boolean {
-  var i: i32 = first + 1;
+  let i: i32 = first + 1;
   if (!looping) {
     i = first;
   }
@@ -5993,18 +6309,18 @@ function inner(l: ssalayout.Layout, first: i32, last: i32, looping: boolean, at:
 // Emit layout indices first..last. A looping region is one natural loop:
 // its `loop` label opens first, then a `block` per position inside that no
 // nested loop owns, each closed just before its position is reached.
-function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, first: i32, last: i32, looping: boolean, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): Emit {
+function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layout, first: i32, last: i32, looping: boolean, structs: irtables.StructTab, grows: ssaunits.GrowTable): Emit {
   if (looping) {
     e = push(e, ir.op_loop(0), first);
   }
-  var target: i32 = last;
+  let target: i32 = last;
   while (target > first) {
     if (!inner(l, first, last, looping, target)) {
       e = push(e, ir.op_block(0), target);
     }
     target = target - 1;
   }
-  var position: i32 = first;
+  let position: i32 = first;
   while (position <= last) {
     if (position > first) {
       e = pop(e);
@@ -6013,7 +6329,7 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
       e = region(e, f, p, l, position, l.loop_end[position], true, structs, grows);
       position = l.loop_end[position] + 1;
     } else {
-      e = Emit { ...e, r: block_body(e.r, f, p, e.steps, e.links, f.graph.blocks[l.order[position]], structs, grows, e.no_reuse, e.uses) };
+      e = Emit { ...e, r: block_body(e.r, f, p, e.steps, e.links, f.graph.blocks[l.order[position]], structs, grows, e.no_reuse, e.uses, e.maps) };
       e = terminator(e, f, p, l.order, position);
       position = position + 1;
     }
@@ -6032,16 +6348,16 @@ pub struct Callee { name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.P
 
 // caller_sigs replaces every callee's borrowability rows with the ones its
 // verified contract gives, in callee order.
-pub function caller_sigs(sg: irlower.FnSigs, callees: Callee[]): irlower.FnSigs {
-  var borrows: string[] = sg.borrowable_params;
+pub function caller_sigs(sg: fnsigs.FnSigs, callees: Callee[]): fnsigs.FnSigs {
+  let borrows: string[] = sg.borrowable_params;
   for c in callees {
-    var first: i32 = 0;
+    let first: i32 = 0;
     if (c.receiver) {
       first = 1;
     }
     borrows = borrow_rows(borrows, c.name, counted_tiers(c.f, c.modes, first), bare_flags(c.f, c.modes, c.plan, first));
   }
-  return irlower.FnSigs { ...sg, borrowable_params: borrows };
+  return fnsigs.FnSigs { ...sg, borrowable_params: borrows };
 }
 
 // The AST caller's release of an argument it built follows the callee's
@@ -6082,8 +6398,8 @@ function counted_tier(t: typeinfo.Type): string {
 }
 
 function counted_tiers(f: ssasem.Func, modes: i32[], first: i32): string[] {
-  var out: string[] = [];
-  var i: i32 = first;
+  let out: string[] = [];
+  let i: i32 = first;
   while (i < modes.len()) {
     if (modes[i] == ssaunits.borrow_mode()) {
       out = out.append(counted_tier(f.params[i]));
@@ -6096,8 +6412,8 @@ function counted_tiers(f: ssasem.Func, modes: i32[], first: i32): string[] {
 }
 
 function tier_flags(tiers: string[], prefix: string): string {
-  var flags: string = "";
-  var any: boolean = false;
+  let flags: string = "";
+  let any: boolean = false;
   for tier in tiers {
     if (tier == prefix || prefix == "CNT:" && tier != "") {
       flags = flags + "1";
@@ -6112,9 +6428,9 @@ function tier_flags(tiers: string[], prefix: string): string {
   return flags;
 }
 
-function borrow_rows(reg: string[], name: string, tiers: string[], bare_row: string): string[] {
-  var bare: string[] = irlower.borrow_reg_set(reg, name, bare_row);
-  return irlower.borrow_reg_set(bare, "CNT:" + name, tier_flags(tiers, "CNT:"));
+function borrow_rows(own reg: string[], name: string, tiers: string[], bare_row: string): string[] {
+  reg = fnsigs.borrow_reg_set(reg, name, bare_row);
+  return fnsigs.borrow_reg_set(reg, "CNT:" + name, tier_flags(tiers, "CNT:"));
 }
 
 // The bare row promises the callee keeps no reference to the argument once
@@ -6126,7 +6442,7 @@ function bare_flags(f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, first: i3
   if (!plan.ok) {
     return "";
   }
-  var borrows: boolean = false;
+  let borrows: boolean = false;
   for m in modes {
     if (m == ssaunits.borrow_mode()) {
       borrows = true;
@@ -6135,15 +6451,15 @@ function bare_flags(f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, first: i3
   if (!borrows) {
     return "";
   }
-  var a: ssasem.Analysis = plan.analysis;
+  let a: ssasem.Analysis = plan.analysis;
   if (!a.ok) {
     return "";
   }
-  var flags: string = "";
-  var any: boolean = false;
-  var i: i32 = first;
+  let flags: string = "";
+  let any: boolean = false;
+  let i: i32 = first;
   while (i < modes.len()) {
-    var v: i32 = param_value(f, i);
+    let v: i32 = param_value(f, i);
     if (v >= 0 && modes[i] == ssaunits.borrow_mode() && keeps_nothing(f, plan, a, v)) {
       flags = flags + "1";
       any = true;
@@ -6179,7 +6495,7 @@ function keeps_nothing(f: ssasem.Func, plan: ssaunits.Plan, a: ssasem.Analysis, 
   }
   for b in f.graph.blocks {
     for ins in b.insts {
-      var handed: boolean = ins.kind_tag == ssasem.call_value() || ins.kind_tag == ssasem.call() && !ssasem.is_dyn_call(ins.str);
+      let handed: boolean = ins.kind_tag == ssasem.call_value() || ins.kind_tag == ssasem.call() && !ssasem.is_dyn_call(ins.str);
       if (!handed) {
         continue;
       }
@@ -6218,7 +6534,7 @@ function built_result(f: ssasem.Func, plan: ssaunits.Plan): boolean {
   if (!plan.ok) {
     return false;
   }
-  var boxes: i32[] = returned_records(f);
+  let boxes: i32[] = returned_records(f);
   if (boxes.len() == 0) {
     return false;
   }
@@ -6242,15 +6558,15 @@ function built_result(f: ssasem.Func, plan: ssaunits.Plan): boolean {
 // The returned values and every copy or phi operand they merge, or nothing
 // when one of them is defined by anything but a record construction.
 function returned_records(f: ssasem.Func): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for b in f.graph.blocks {
     if (b.term.kind_tag == 1 && b.term.value >= 0 && util.index_of_i32(out, b.term.value) < 0) {
       out = out.append(b.term.value);
     }
   }
-  var at: i32 = 0;
+  let at: i32 = 0;
   while (at < out.len()) {
-    var def: ssa.SInst = defining(f, out[at]);
+    let def: ssa.SInst = defining(f, out[at]);
     if (def.kind_tag == 7 || def.kind_tag == 8) {
       for arg in def.args {
         if (util.index_of_i32(out, arg) < 0) {
@@ -6295,11 +6611,11 @@ function box_use_ok(ins: ssa.SInst, boxes: i32[]): boolean {
 // A frame view's three words sit above every other slot, which is only known
 // once the body is lowered, so `instruction` marks the op and this gives each
 // its own words.
-function place_views(own r: irlower.LowerResult): irlower.LowerResult {
-  var ops: ir.Op[] = r.ops;
-  var next: i32 = r.n_locals;
-  var k_str_slice: i32 = ir.kind_id("str_slice");
-  var i: i32 = 0;
+function place_views(own r: irtables.LowerResult): irtables.LowerResult {
+  let ops: ir.Op[] = r.ops;
+  let next: i32 = r.n_locals;
+  let k_str_slice: i32 = ir.kind_id("str_slice");
+  let i: i32 = 0;
   while (i < ops.len()) {
     if (ops[i].kind_tag == k_str_slice && ops[i].i32_imm > 0) {
       ops = ops.with(i, ir.op_str_slice_frame(next));
@@ -6307,7 +6623,7 @@ function place_views(own r: irlower.LowerResult): irlower.LowerResult {
     }
     i = i + 1;
   }
-  return irlower.LowerResult { ...r, ops: ops, n_locals: next };
+  return irtables.LowerResult { ...r, ops: ops, n_locals: next };
 }
 
 // `structs` is the declaration table the backends read a construction's field
@@ -6317,21 +6633,26 @@ function place_views(own r: irlower.LowerResult): irlower.LowerResult {
 // `grows` is the module's table of callee positions whose buffers a produced
 // callee may grow in place (ssaunits.grow_rows over every produced plan), read
 // by the caller-side bracket.
-pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
-  var why: string = validate(f, modes, p, structs);
+// `pure` names the module's functions that reach no observable effect
+// (semlower.pure_rows), the element functions the in-place map may run.
+pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex): irtables.LowerResult {
+  let why: string = validate(f, modes, p, structs);
   if (why != "") {
     return empty(why);
   }
-  var layout: ssalayout.Layout = ssalayout.compute(f.graph);
+  let layout: ssalayout.Layout = ssalayout.compute(f.graph);
   if (!layout.ok) {
     return empty("physical RC needs reducible graph");
   }
-  var steps: i32[][] = ssaunits.step_index(p);
-  var e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links_of(f, p, steps), no_reuse: irlower.reuse_layer_disabled(), uses: use_counts(f) }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
+  let steps: i32[][] = ssaunits.step_index(p);
+  let links: i32[] = links_of(f, p, steps);
+  let no_reuse: boolean = irtables.reuse_layer_disabled();
+  let maps: boolean[] = in_place_maps(f, modes, p, steps, links, pure, no_reuse);
+  let e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links, no_reuse: no_reuse, uses: use_counts(f), maps: maps }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
   if (e.why != "") {
     return empty(e.why);
   }
   e = Emit { ...e, r: place_views(e.r) };
-  var optimized: ir.OptimizedOps = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
-  return irlower.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
+  let optimized: ir.OptimizedOps = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
+  return irtables.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
 }

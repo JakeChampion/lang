@@ -57,23 +57,23 @@ func TestSelfHostOuterWriteCaptureIRX86_64(t *testing.T) {
 		// CONTROL: top-level binding. Correct before the fix and after.
 		{
 			"toplevel",
-			`function main(): i32 { var i: i32 = 0; var f: (i32) => i32 = ((x: i32) => x + i); i = 3; return f(0); }`,
+			`function main(): i32 { let i: i32 = 0; let f: (i32) => i32 = ((x: i32) => x + i); i = 3; return f(0); }`,
 			3,
 		},
 		// The regression: the identical binding one block deeper.
 		{
 			"in-loop",
-			`function main(): i32 { var fs: ((i32) => i32)[] = []; var i: i32 = 0; while (i < 3) { var g: (i32) => i32 = ((x: i32) => x + i); fs = fs.append(g); i = i + 1; } return (fs[0])(0); }`,
+			`function main(): i32 { let fs: ((i32) => i32)[] = []; let i: i32 = 0; while (i < 3) { let g: (i32) => i32 = ((x: i32) => x + i); fs = fs.append(g); i = i + 1; } return (fs[0])(0); }`,
 			3,
 		},
 		// Two blocks deep, and through an `if` rather than a loop — the walk has
 		// to recurse generally, not special-case `while`.
 		{
 			"nested-if-in-loop",
-			`function main(): i32 { var fs: ((i32) => i32)[] = []; var i: i32 = 0; while (i < 2) { if (i >= 0) { var g: (i32) => i32 = ((x: i32) => x + i); fs = fs.append(g); } i = i + 1; } return (fs[0])(0); }`,
+			`function main(): i32 { let fs: ((i32) => i32)[] = []; let i: i32 = 0; while (i < 2) { if (i >= 0) { let g: (i32) => i32 = ((x: i32) => x + i); fs = fs.append(g); } i = i + 1; } return (fs[0])(0); }`,
 			2,
 		},
-		// OPERAND POSITIONS. The two shapes above are `var g = <lambda>`, which
+		// OPERAND POSITIONS. The two shapes above are `let g = <lambda>`, which
 		// the scan matches because the init IS a lambda. These are lambdas the
 		// init merely CONTAINS — a struct-literal field, a call argument — and
 		// they were invisible at any depth, top level included, until the scan
@@ -81,12 +81,12 @@ func TestSelfHostOuterWriteCaptureIRX86_64(t *testing.T) {
 		// original reproducer.
 		{
 			"struct-literal-field",
-			`struct C { f: (i32) => i32, n: i32 } function main(): i32 { var cs: C[] = []; var i: i32 = 0; while (i < 2) { cs = cs.append(C { f: ((x: i32) => x + i), n: i }); i = i + 1; } return (cs[0].f)(0); }`,
+			`struct C { f: (i32) => i32, n: i32 } function main(): i32 { let cs: C[] = []; let i: i32 = 0; while (i < 2) { cs = cs.append(C { f: ((x: i32) => x + i), n: i }); i = i + 1; } return (cs[0].f)(0); }`,
 			2,
 		},
 		{
 			"call-argument",
-			`function take(f: (i32) => i32): i32 { return f(0); } function main(): i32 { var i: i32 = 0; var fs: ((i32) => i32)[] = []; fs = fs.append(((x: i32) => x + i)); i = 4; return take(fs[0]); }`,
+			`function take(f: (i32) => i32): i32 { return f(0); } function main(): i32 { let i: i32 = 0; let fs: ((i32) => i32)[] = []; fs = fs.append(((x: i32) => x + i)); i = 4; return take(fs[0]); }`,
 			4,
 		},
 		// A read-only capture nothing ever reassigns must stay unboxed and keep
@@ -94,7 +94,7 @@ func TestSelfHostOuterWriteCaptureIRX86_64(t *testing.T) {
 		// the scan into boxing every capture it can now see.
 		{
 			"readonly-capture-control",
-			`function main(): i32 { var fs: ((i32) => i32)[] = []; var k: i32 = 5; var i: i32 = 0; while (i < 2) { var g: (i32) => i32 = ((x: i32) => x + k); fs = fs.append(g); i = i + 1; } return (fs[0])(0); }`,
+			`function main(): i32 { let fs: ((i32) => i32)[] = []; let k: i32 = 5; let i: i32 = 0; while (i < 2) { let g: (i32) => i32 = ((x: i32) => x + k); fs = fs.append(g); i = i + 1; } return (fs[0])(0); }`,
 			5,
 		},
 	} {

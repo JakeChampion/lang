@@ -80,7 +80,7 @@ pub function fold_stmt_pruned[T](st: ast.Stmt, own acc: T, visit: (ast.Expr, own
 // allocation per node visited.
 //
 // A consumer whose contribution is statement-shaped needs this pair: an
-// assignment TARGET and a `var` / `for` / match-arm BINDER are names carried on
+// assignment TARGET and a `let` / `for` / match-arm BINDER are names carried on
 // the statement, not expressions the expression visitor can ever be handed.
 pub function fold_expr_nodes[T](e: ast.Expr, own acc: T, visit_stmt: (ast.Stmt, own T) => T, visit_expr: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
   acc = visit_expr(e, acc);
@@ -121,7 +121,7 @@ pub function fold_expr_nodes[T](e: ast.Expr, own acc: T, visit_stmt: (ast.Stmt, 
       return acc;
     },
     ast.ExprMapLit(ml) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < ml.keys.len()) {
         acc = fold_expr_nodes(ml.keys[i], acc, visit_stmt, visit_expr, descend);
         acc = fold_expr_nodes(ml.vals[i], acc, visit_stmt, visit_expr, descend);
@@ -130,7 +130,7 @@ pub function fold_expr_nodes[T](e: ast.Expr, own acc: T, visit_stmt: (ast.Stmt, 
       return acc;
     },
     ast.ExprFString(fs) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < fs.exprs.len()) {
         if (fs.is_expr[i]) {
           acc = fold_expr_nodes(fs.exprs[i], acc, visit_stmt, visit_expr, descend);
@@ -254,7 +254,7 @@ pub function fold_stmt_nodes[T](st: ast.Stmt, own acc: T, visit_stmt: (ast.Stmt,
 // expression, so a lambda body stays out of reach.
 //
 // This is what a statement-shaped consumer wants: an assignment TARGET and a
-// `var` / `for` / match-arm BINDER are names carried on the statement, so the
+// `let` / `for` / match-arm BINDER are names carried on the statement, so the
 // expression half of fold_stmt_nodes contributes nothing and costs two indirect
 // calls plus a match for every expression a statement owns.
 //
@@ -320,7 +320,7 @@ pub function fold_stmt_spine[T](st: ast.Stmt, own acc: T, visit: (ast.Stmt, own 
   return acc;
 }
 
-// fold_stmt_own visits the expressions the statement ITSELF owns — a `var`'s
+// fold_stmt_own visits the expressions the statement ITSELF owns — a `let`'s
 // initialiser, an assignment's value, a `return` / expression statement's
 // value, an `if` / `while` condition, a `for`'s iterated expression, and a
 // `match`'s scrutinee and arm guards — and does NOT enter the statement lists
@@ -330,7 +330,7 @@ pub function fold_stmt_spine[T](st: ast.Stmt, own acc: T, visit: (ast.Stmt, own 
 // pass wants when its driver visits the child blocks itself. interp's cellify
 // pre-pass is the archetype: it runs once per statement of a block against that
 // block's reassignment set, and a nested block gets its own pass with its own
-// set — walking into one here would cell a loop-local `var` that has to stay
+// set — walking into one here would cell a loop-local `let` that has to stay
 // per-iteration.
 //
 // A `defer`'s action is a child statement, so it contributes nothing at this
@@ -443,21 +443,21 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
       return visit(ast.ExprUnary { ...u, operand: map_expr(u.operand, visit) });
     },
     ast.ExprCall(c) => {
-      var args: ast.Expr[] = [];
+      let args: ast.Expr[] = [];
       for arg in c.args {
         args = args.append(map_expr(arg, visit));
       }
       return visit(ast.ExprCall { ...c, callee: map_expr(c.callee, visit), args: args });
     },
     ast.ExprArray(a) => {
-      var els: ast.Expr[] = [];
+      let els: ast.Expr[] = [];
       for el in a.elements {
         els = els.append(map_expr(el, visit));
       }
       return visit(ast.ExprArray { ...a, elements: els });
     },
     ast.ExprTuple(t) => {
-      var tel: ast.Expr[] = [];
+      let tel: ast.Expr[] = [];
       for el in t.elements {
         tel = tel.append(map_expr(el, visit));
       }
@@ -470,13 +470,13 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
       return visit(ast.ExprSlice { ...sl, array: map_expr(sl.array, visit), start: map_expr(sl.start, visit), end: map_expr(sl.end, visit) });
     },
     ast.ExprStructLit(st) => {
-      var fv: ast.Expr[] = [];
+      let fv: ast.Expr[] = [];
       for field_value in st.field_values {
         fv = fv.append(map_expr(field_value, visit));
       }
       // `base` is only a real expression when has_base; the slot is
       // otherwise whatever the parser left there.
-      var nb: ast.Expr = st.base;
+      let nb: ast.Expr = st.base;
       if (st.has_base) {
         nb = map_expr(st.base, visit);
       }
@@ -489,8 +489,8 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
       return visit(ast.ExprLambda { ...lm, body: map_stmts(lm.body, visit) });
     },
     ast.ExprMapLit(ml) => {
-      var ks: ast.Expr[] = [];
-      var vs: ast.Expr[] = [];
+      let ks: ast.Expr[] = [];
+      let vs: ast.Expr[] = [];
       for key in ml.keys {
         ks = ks.append(map_expr(key, visit));
       }
@@ -503,8 +503,8 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
       // The three arrays are parallel, one entry per PART: a part with
       // is_expr false is literal text and its `exprs` slot is filler, not
       // an expression to rewrite.
-      var xs: ast.Expr[] = [];
-      var q: i32 = 0;
+      let xs: ast.Expr[] = [];
+      let q: i32 = 0;
       while (q < fs.exprs.len()) {
         if (fs.is_expr[q]) {
           xs = xs.append(map_expr(fs.exprs[q], visit));
@@ -545,9 +545,9 @@ pub function map_stmt(st: ast.Stmt, visit: (ast.Expr) => ast.Expr): ast.Stmt {
       return ast.StmtFor { ...fo, iter: map_expr(fo.iter, visit), body: map_stmts(fo.body, visit) };
     },
     ast.StmtMatch(mt) => {
-      var arms: ast.MatchArm[] = [];
+      let arms: ast.MatchArm[] = [];
       for arm in mt.arms {
-        var g: ast.Expr = arm.guard;
+        let g: ast.Expr = arm.guard;
         if (arm.has_guard) {
           g = map_expr(arm.guard, visit);
         }
@@ -572,7 +572,7 @@ pub function map_stmt(st: ast.Stmt, visit: (ast.Expr) => ast.Expr): ast.Stmt {
 }
 
 pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.Stmt[] {
-  var out: ast.Stmt[] = [];
+  let out: ast.Stmt[] = [];
   for stmt in stmts {
     out = out.append(map_stmt(stmt, visit));
   }
@@ -583,7 +583,7 @@ pub function map_stmts(stmts: ast.Stmt[], visit: (ast.Expr) => ast.Expr): ast.St
 //
 // map_expr_acc / map_stmt_acc / map_stmts_acc are map_expr's state-threading
 // twin: the walk hands back a NEW TREE and an accumulator, for the rewrite
-// passes that also build something as they go — irlower's env-box lift is the
+// passes that also build something as they go — lift's env-box lift is the
 // archetype, accumulating the hoisted `$cloN` functions and the counter that
 // names them.
 //
@@ -641,7 +641,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
   if (vh) {
     return (ve, va, true);
   }
-  var a: T = va;
+  let a: T = va;
   match (e) {
     ast.ExprNumber(_) => {
       return (e, a, false);
@@ -671,7 +671,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       return (ast.ExprUnary { ...u, operand: oe }, oa, false);
     },
     ast.ExprCall(c) => {
-      var args: ast.Expr[] = [];
+      let args: ast.Expr[] = [];
       for arg in c.args {
         let (ae, aa, ah) = map_expr_acc(arg, a, visit_stmt, visit);
         a = aa;
@@ -681,7 +681,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       return (ast.ExprCall { ...c, callee: ce, args: args }, ca, false);
     },
     ast.ExprArray(arr) => {
-      var els: ast.Expr[] = [];
+      let els: ast.Expr[] = [];
       for el in arr.elements {
         let (ee, ea, eh) = map_expr_acc(el, a, visit_stmt, visit);
         a = ea;
@@ -690,7 +690,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       return (ast.ExprArray { ...arr, elements: els }, a, false);
     },
     ast.ExprTuple(t) => {
-      var tel: ast.Expr[] = [];
+      let tel: ast.Expr[] = [];
       for el in t.elements {
         let (ee, ea, eh) = map_expr_acc(el, a, visit_stmt, visit);
         a = ea;
@@ -710,7 +710,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       return (ast.ExprSlice { ...sl, array: xe, start: se, end: ne }, na, false);
     },
     ast.ExprStructLit(sl) => {
-      var fv: ast.Expr[] = [];
+      let fv: ast.Expr[] = [];
       for field_value in sl.field_values {
         let (fe, fa, fh) = map_expr_acc(field_value, a, visit_stmt, visit);
         a = fa;
@@ -718,7 +718,7 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       }
       // `base` is only a real expression when has_base; the slot is
       // otherwise whatever the parser left there.
-      var nb: ast.Expr = sl.base;
+      let nb: ast.Expr = sl.base;
       if (sl.has_base) {
         let (be, ba, bh) = map_expr_acc(sl.base, a, visit_stmt, visit);
         a = ba;
@@ -735,9 +735,9 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       return (ast.ExprLambda { ...lm, body: bs }, ba, false);
     },
     ast.ExprMapLit(ml) => {
-      var ks: ast.Expr[] = [];
-      var vs: ast.Expr[] = [];
-      var q: i32 = 0;
+      let ks: ast.Expr[] = [];
+      let vs: ast.Expr[] = [];
+      let q: i32 = 0;
       while (q < ml.keys.len()) {
         let (ke, ka, kh) = map_expr_acc(ml.keys[q], a, visit_stmt, visit);
         let (ue, ua, uh) = map_expr_acc(ml.vals[q], ka, visit_stmt, visit);
@@ -752,8 +752,8 @@ pub function map_expr_acc[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (
       // The three arrays are parallel, one entry per PART: a part with
       // is_expr false is literal text and its `exprs` slot is filler, not
       // an expression to rewrite.
-      var xs: ast.Expr[] = [];
-      var q: i32 = 0;
+      let xs: ast.Expr[] = [];
+      let q: i32 = 0;
       while (q < fs.exprs.len()) {
         if (fs.is_expr[q]) {
           let (pe, pa, ph) = map_expr_acc(fs.exprs[q], a, visit_stmt, visit);
@@ -775,7 +775,7 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
   if (vh) {
     return (vs, va, true);
   }
-  var a: T = va;
+  let a: T = va;
   match (st) {
     ast.StmtVar(v) => {
       let (ie, ia, ih) = map_expr_acc(v.init, a, visit_stmt, visit);
@@ -812,9 +812,9 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
     ast.StmtMatch(mt) => {
       let (se, sa, sh) = map_expr_acc(mt.scrutinee, a, visit_stmt, visit);
       a = sa;
-      var arms: ast.MatchArm[] = [];
+      let arms: ast.MatchArm[] = [];
       for arm in mt.arms {
-        var g: ast.Expr = arm.guard;
+        let g: ast.Expr = arm.guard;
         if (arm.has_guard) {
           let (ge, ga, gh) = map_expr_acc(arm.guard, a, visit_stmt, visit);
           a = ga;
@@ -844,7 +844,7 @@ pub function map_stmt_acc[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) => 
 }
 
 pub function map_stmts_acc[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean)): (ast.Stmt[], T) {
-  var out: ast.Stmt[] = [];
+  let out: ast.Stmt[] = [];
   for stmt in stmts {
     let (ns, na, nh) = map_stmt_acc(stmt, acc, visit_stmt, visit);
     acc = na;
@@ -872,7 +872,7 @@ pub function splice_stmts(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[]): a
 // Finish each lambda after its statements have been spliced, so a semantic
 // transformation can update its capture contract without rechecking the tree.
 pub function splice_stmts_with_lambda(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[], finish_lambda: (ast.ExprLambda) => ast.ExprLambda): ast.Stmt[] {
-  var mapped: ast.Stmt[] = map_stmts(stmts, (x: ast.Expr): ast.Expr => {
+  let mapped: ast.Stmt[] = map_stmts(stmts, (x: ast.Expr): ast.Expr => {
     match (x) {
       ast.ExprLambda(lm) => {
         return finish_lambda(ast.ExprLambda { ...lm, body: splice_own(lm.body, visit) });
@@ -890,9 +890,9 @@ pub function splice_stmts_with_lambda(stmts: ast.Stmt[], visit: (ast.Stmt) => as
 // descend into expressions: splice_stmts' map pass has already spliced every
 // lambda body, and descending again would splice a nested one twice.
 function splice_own(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[]): ast.Stmt[] {
-  var out: ast.Stmt[] = [];
+  let out: ast.Stmt[] = [];
   for stmt in stmts {
-    var repl: ast.Stmt[] = visit(splice_own_children(stmt, visit));
+    let repl: ast.Stmt[] = visit(splice_own_children(stmt, visit));
     for r in repl {
       out = out.append(r);
     }
@@ -915,7 +915,7 @@ function splice_own_children(st: ast.Stmt, visit: (ast.Stmt) => ast.Stmt[]): ast
       return ast.StmtFor { ...fo, body: splice_own(fo.body, visit) };
     },
     ast.StmtMatch(mt) => {
-      var arms: ast.MatchArm[] = [];
+      let arms: ast.MatchArm[] = [];
       for arm in mt.arms {
         arms = arms.append(ast.MatchArm { ...arm, body: splice_own(arm.body, visit) });
       }
@@ -984,7 +984,7 @@ function scoped_reads(e: ast.Expr, bound: string[], acc: string[], reads: (ast.E
 function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: (ast.Expr, own string[]) => string[]): string[] {
   match (st) {
     ast.StmtVar(v) => {
-      var init_bound: string[] = bound;
+      let init_bound: string[] = bound;
       if (ast.var_binds_itself(v)) {
         init_bound = append_bound_name(init_bound, v.name);
       }
@@ -1018,7 +1018,7 @@ function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: 
       // append_bound_name and pattern_binders CONSUME the list they
       // extend and can hand the very same buffer back, so a nested scope
       // extends a fresh copy rather than this frame's borrow.
-      var loop_bound: string[] = [];
+      let loop_bound: string[] = [];
       loop_bound = util.append_all(loop_bound, bound);
       loop_bound = append_bound_name(loop_bound, f.var_name);
       let (used, inner_bound) = scoped_stmts_reads(f.body, loop_bound, acc, reads);
@@ -1027,7 +1027,7 @@ function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: 
     ast.StmtMatch(m) => {
       acc = scoped_reads(m.scrutinee, bound, acc, reads);
       for arm in m.arms {
-        var arm_bound: string[] = [];
+        let arm_bound: string[] = [];
         arm_bound = util.append_all(arm_bound, bound);
         arm_bound = pattern_binders(arm.pattern, arm_bound);
         if (arm.has_guard) {
@@ -1070,7 +1070,7 @@ function scoped_stmts_reads(body: ast.Stmt[], bound: string[], acc: string[], re
 // Capture consumers use this shared ordered walk before testing which free
 // names resolve to slots in the enclosing scope.
 pub function collect_lambda_idents(lm: ast.ExprLambda, own acc: string[]): string[] {
-  var bound: string[] = [];
+  let bound: string[] = [];
   for param in lm.params {
     bound = append_bound_name(bound, param.name);
   }
@@ -1081,7 +1081,7 @@ pub function collect_lambda_idents(lm: ast.ExprLambda, own acc: string[]): strin
 // collect_free_idents appends every identifier `body` reads that neither
 // `params` nor a declaration inside the body binds.
 pub function collect_free_idents(params: string[], body: ast.Stmt[], own acc: string[]): string[] {
-  var bound: string[] = [];
+  let bound: string[] = [];
   for p in params {
     bound = append_bound_name(bound, p);
   }
@@ -1180,7 +1180,7 @@ pub function count_ident_stmts(stmts: ast.Stmt[], name: string): i32 {
     }
     return n;
   }
-  var count: i32 = 0;
+  let count: i32 = 0;
   for st in stmts {
     count = fold_stmt_nodes(st, count, at_stmt, at_expr, not_lambda);
   }
@@ -1188,18 +1188,18 @@ pub function count_ident_stmts(stmts: ast.Stmt[], name: string): i32 {
 }
 
 // append_bound_name appends a binder name, splitting the comma-joined form the
-// multi-name binders use — a tuple destructure `var (a, b) = t` ("a,b", #5173)
+// multi-name binders use — a tuple destructure `let (a, b) = t` ("a,b", #5173)
 // and a two-binding `for (k, v) in m` ("k,v"). Unsplit, neither name is
 // recognised as an enclosing local, so a lambda reading one reads as
 // capture-free: it takes the no-capture `$wrapN` lift and resolves the name
 // against the module instead of capturing it.
 pub function append_bound_name(own acc: string[], name: string): string[] {
-  var start: i32 = 0;
-  var depth: i32 = 0;
-  var i: i32 = 0;
+  let start: i32 = 0;
+  let depth: i32 = 0;
+  let i: i32 = 0;
   while (i <= name.len()) {
     if (i == name.len() || name[i] == b',' && depth == 0) {
-      var piece: string = slice_unchecked(name, start, i) + "";
+      let piece: string = slice_unchecked(name, start, i) + "";
       if (util.is_tuple_type_name(piece)) {
         acc = append_bound_name(acc, slice_unchecked(piece, 1, piece.len() - 1) + "");
       } else if (piece.len() > 0 && piece != "_") {
@@ -1321,7 +1321,7 @@ pub function pattern_binders(p: ast.Pattern, own acc: string[]): string[] {
   return acc;
 }
 
-// binders_of contributes the names one statement BINDS: a `var`, a `for`'s
+// binders_of contributes the names one statement BINDS: a `let`, a `for`'s
 // loop variable, and the patterns of a `match`'s arms. Every one of them is
 // carried on the statement node, which is why this walk needs a statement
 // visitor and cannot be written over fold_stmt alone.
@@ -1439,7 +1439,7 @@ pub function substitute_consts_expr(e: ast.Expr, names: string[], values: ast.Ex
 }
 
 function cs_bind(c: ConstSubst, packed: string): ConstSubst {
-  var bound: string[] = c.bound;
+  let bound: string[] = c.bound;
   for name in append_bound_name([], packed) {
     bound = bound.append(name);
   }
@@ -1452,8 +1452,8 @@ function cs_expr(e: ast.Expr, c: ConstSubst): ast.Expr {
 }
 
 function cs_body(stmts: ast.Stmt[], c: ConstSubst): ast.Stmt[] {
-  var out: ast.Stmt[] = [];
-  var cur: ConstSubst = c;
+  let out: ast.Stmt[] = [];
+  let cur: ConstSubst = c;
   for st in stmts {
     let (next, tail, handled) = map_stmt_acc(st, cur, cs_stmt_at, cs_expr_at);
     out = out.append(next);
@@ -1466,7 +1466,7 @@ function cs_expr_at(e: ast.Expr, c: ConstSubst): (ast.Expr, ConstSubst, boolean)
   match (e) {
     ast.ExprIdent(i) => {
       if (!util.has_str(c.bound, i.name)) {
-        var k: i32 = util.index_of_str(c.names, i.name);
+        let k: i32 = util.index_of_str(c.names, i.name);
         if (k >= 0) {
           return (placed_at(c.values[k], i.line, i.col), c, true);
         }
@@ -1474,7 +1474,7 @@ function cs_expr_at(e: ast.Expr, c: ConstSubst): (ast.Expr, ConstSubst, boolean)
       return (e, c, true);
     },
     ast.ExprLambda(lm) => {
-      var inner: ConstSubst = c;
+      let inner: ConstSubst = c;
       for p in lm.params {
         inner = cs_bind(inner, p.name);
       }
@@ -1514,7 +1514,7 @@ function placed_at(e: ast.Expr, line: i32, col: i32): ast.Expr {
 function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean) {
   match (st) {
     ast.StmtVar(v) => {
-      var before: ConstSubst = c;
+      let before: ConstSubst = c;
       if (ast.var_binds_itself(v)) {
         before = cs_bind(before, v.name);
       }
@@ -1530,13 +1530,13 @@ function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean
       return (ast.StmtFor { ...f, iter: cs_expr(f.iter, c), body: cs_body(f.body, cs_bind(c, f.var_name)) }, c, true);
     },
     ast.StmtMatch(m) => {
-      var arms: ast.MatchArm[] = [];
+      let arms: ast.MatchArm[] = [];
       for arm in m.arms {
-        var inner: ConstSubst = c;
+        let inner: ConstSubst = c;
         for n in pattern_binders(arm.pattern, []) {
           inner = cs_bind(inner, n);
         }
-        var guard: ast.Expr = arm.guard;
+        let guard: ast.Expr = arm.guard;
         if (arm.has_guard) {
           guard = cs_expr(guard, inner);
         }

@@ -12,7 +12,7 @@ import (
 // TestSelfHostPerModuleArm64LeafOnlyLinkRun is the regression guard for #4305:
 // the arm64 per-module unit emit used to reference runtime-helper string
 // literals with a BARE label (.S0/.S1 — via the AST emitter's emit_function,
-// which emit_runtime_fern_fn drives for arr_str_join / str_lines) while
+// which emit_runtime_fern_fn drove for arr_str_join / str_lines) while
 // DEFINING them with the per-module-namespaced label (str_lit_label →
 // .S<ns>_<idx>). The ref/def mismatch made a leaf-only program (whose library
 // modules emit no bare .S<idx> to accidentally satisfy the reference) fail to

@@ -30,7 +30,7 @@ func TestReceiverTypeVarsIgnoreTypesTheModuleCannotSee(t *testing.T) {
 			src: `import "core/map";
 struct V { n: i32 }
 function main(): i32 {
-    var m: Map[i32, V] = map_new(8);
+    let m: Map[i32, V] = map_new(8);
     m = m.insert(1, V { n: 10 });
     return m.len();
 }`,
@@ -42,7 +42,7 @@ function main(): i32 {
 			src: `import "core/map";
 struct K { a: i32 }
 function main(): i32 {
-    var m: Map[i32, string] = map_new(8);
+    let m: Map[i32, string] = map_new(8);
     m = m.insert(1, "x");
     return m.len();
 }`,
@@ -55,7 +55,7 @@ function main(): i32 {
 			src: `import "std/array";
 struct T { a: i32 }
 function main(): i32 {
-    var xs: i32[] = [3, 1, 2];
+    let xs: i32[] = [3, 1, 2];
     return xs.fold(0, (acc: i32, x: i32) => acc + x);
 }`,
 		},
@@ -65,7 +65,7 @@ function main(): i32 {
 struct K { a: i32 }
 struct V { n: i32 }
 function main(): i32 {
-    var m: Map[i32, V] = map_new(8);
+    let m: Map[i32, V] = map_new(8);
     m = m.insert(1, V { n: 10 });
     return m.len();
 }`,
@@ -95,7 +95,7 @@ struct Other { n: i32 }
 struct Box[T] { v: T }
 function (b: Box[Payload]) get(): i32 { return b.v.n; }
 function main(): i32 {
-    var o: Box[Other] = Box { v: Other { n: 1 } };
+    let o: Box[Other] = Box { v: Other { n: 1 } };
     return o.get();
 }`,
 	})
@@ -120,7 +120,7 @@ pub function (b: Box[payload.Payload]) get(): i32 { return b.v.n; }`,
 		"main.fern": `import "./boxes";
 import "./payload";
 function main(): i32 {
-    var b: boxes.Box[payload.Payload] = boxes.Box { v: payload.Payload { n: 7 } };
+    let b: boxes.Box[payload.Payload] = boxes.Box { v: payload.Payload { n: 7 } };
     return b.get();
 }`,
 	})
@@ -143,7 +143,7 @@ pub function (b: Box[T]) unwrap(): T { return b.v; }`,
 		"main.fern": `import "./boxes";
 struct T { n: i32 }
 function main(): i32 {
-    var b: boxes.Box[T] = boxes.Box { v: T { n: 5 } };
+    let b: boxes.Box[T] = boxes.Box { v: T { n: 5 } };
     return b.unwrap().n;
 }`,
 	})
@@ -164,7 +164,7 @@ func TestCollidingNameDiagnosticsNameTheUsersFile(t *testing.T) {
 		"main.fern": `import "core/map";
 struct K { a: i32 }
 function main(): i32 {
-    var m: Map[K, string] = map_new(8);
+    let m: Map[K, string] = map_new(8);
     return m.len();
 }`,
 	})

@@ -14,14 +14,14 @@ import "std/utf8" as utf8;
 // multi-byte codepoints — the corpus §3.4 measured the kernel's WORST case on.
 // This is the complement, so a regression that only hurts long runs shows up.
 function body(): string {
-  var block: string = "a";
-  var k: i32 = 0;
+  let block: string = "a";
+  let k: i32 = 0;
   while (k < 10) {  // 1 B -> 1 KiB
     block = block + block;
     k = k + 1;
   }
-  var s: string = block + "é";  // one 2-byte cp per KiB
-  var d: i32 = 0;
+  let s: string = block + "é";  // one 2-byte cp per KiB
+  let d: i32 = 0;
   while (d < 6) {  // -> ~64 KiB
     s = s + s;
     d = d + 1;
@@ -30,9 +30,9 @@ function body(): string {
 }
 
 function main(): i32 {
-  var text: string = body();
-  var acc: i32 = 0;
-  var r: i32 = 0;
+  let text: string = body();
+  let acc: i32 = 0;
+  let r: i32 = 0;
   while (r < 1500) {
     if (utf8.is_valid_utf8(text)) {
       acc = acc + 1;

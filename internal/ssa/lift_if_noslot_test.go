@@ -33,7 +33,7 @@ func ifExprIR(slots int) *ir.Func {
 // liveness was read off its slot snapshot being non-nil, and with zero slots
 // `append([]Value(nil), l.slots...)` is nil — so every live then arm in a
 // slotless function looked dead. Any `return if (c) { a } else { b }` written
-// before the function's first `var` hit it; 60 of the 2048 fernsmith exit-byte
+// before the function's first `let` hit it; 60 of the 2048 fernsmith exit-byte
 // seeds failed to compile through `-target arm64-linux -backend ssa` on it.
 func TestLiftValueIfWithoutLocals(t *testing.T) {
 	for _, slots := range []int{0, 1} {

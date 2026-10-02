@@ -18,7 +18,7 @@ import (
 const withChainInPlaceSrc = `import "core/map";
 
 function chain(own b: i32[], x: i32, y: i32): i32[] {
-	var i: i32 = 0;
+	let i: i32 = 0;
 	while (i < 4) {
 		b = b.with(i, x + i).with(i + 4, y + i);
 		i = i + 1;
@@ -27,13 +27,13 @@ function chain(own b: i32[], x: i32, y: i32): i32[] {
 }
 
 function reads_receiver(): i32 {
-	var b: i32[] = [7, 8, 9, 10];
+	let b: i32[] = [7, 8, 9, 10];
 	b = b.with(0, 3).with(1, b[0]);
 	return b[0] * 10 + b[1];
 }
 
 function map_reads_receiver(): i32 {
-	var m: Map[i32, i32] = map_new(4);
+	let m: Map[i32, i32] = map_new(4);
 	m = m.insert(1, 5);
 	m = m.insert(1, 3).insert(2, m.get_or(1, 0));
 	return m.get_or(1, 0) * 10 + m.get_or(2, 0);
@@ -45,9 +45,9 @@ function own_param(own b: i32[]): i32[] {
 }
 
 function main(): i32 {
-	var b: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
-	var at: i64 = __heap_alloc_count();
-	var n: i32 = 0;
+	let b: i32[] = [0, 0, 0, 0, 0, 0, 0, 0];
+	let at: i64 = __heap_alloc_count();
+	let n: i32 = 0;
 	while (n < 50) { b = chain(b, n, 100); n = n + 1; }
 	if (__heap_alloc_count() - at != (0 as i64)) { return 90; }
 	if (b[0] != 49 || b[3] != 52 || b[4] != 100 || b[7] != 103) { return 91; }
@@ -55,7 +55,7 @@ function main(): i32 {
 	if (reads_receiver() != 37) { return 92; }
 	if (map_reads_receiver() != 35) { return 94; }
 
-	var c: i32[] = own_param([0, 0, 0]);
+	let c: i32[] = own_param([0, 0, 0]);
 	if (c[0] != 1 || c[1] != 2 || c[2] != 0) { return 93; }
 
 	return 42;

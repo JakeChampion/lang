@@ -53,8 +53,8 @@ for running it rather than reasoning about reachability.
 ```fern
 function widen(v: i64): i64 { return v; }
 function main(): i32 {
-    var widen: i64 = 7000000000i64;                       // shadows the module fn
-    var xs: i64[] = [1i64, (if (true) { widen } else { 2i64 }), 3i64];
+    let widen: i64 = 7000000000i64;                       // shadows the module fn
+    let xs: i64[] = [1i64, (if (true) { widen } else { 2i64 }), 3i64];
     if (xs[1] != 7000000000i64) { return 1; }
     return 0;
 }

@@ -9,7 +9,7 @@ import (
 )
 
 // `__fern_str_eq(a, b)` is the RUNTIME SYMBOL accepted as surface syntax, the
-// same shape as the `__rc_dec` / `__fern_rc_dec` hooks next to it in irlower.
+// same shape as the `__rc_dec` / `__fern_rc_dec` hooks next to it in the lowering.
 //
 // It exists for helper sources written on the raw-memory floor (#2649). Those
 // hold a string as the usize address of its box — `keys[i]` read back through
@@ -21,16 +21,16 @@ import (
 const strEqSymbolSrc = `// A string box is {data, len}. box() builds a fresh one over s's bytes, the
 // way a helper holds a key: as the usize address of its box.
 function box(s: string): usize {
-    var p: usize = __raw_alloc(16);
+    let p: usize = __raw_alloc(16);
     __raw_store_ptr(p, 0, __raw_data(s));
     __raw_store_ptr(p, 1, s.len() as usize);
     return p;
 }
 
 function main(): i32 {
-    var a: string = "hello";
-    var b: string = "hel" + "lo";
-    var c: string = "world";
+    let a: string = "hello";
+    let b: string = "hel" + "lo";
+    let c: string = "world";
     // Two DISTINCT data blocks: literals are interned, so "hello" twice would
     // share its bytes and a data-pointer shortcut would pass without comparing.
     if (__raw_data(a) == __raw_data(b)) { return 90; }
@@ -125,7 +125,7 @@ func TestSelfHostStrEqSymbolTypeChecks(t *testing.T) {
 
 	// Control: this front end really does reject a type error. Without it, a
 	// pass below would only show that nothing was checked.
-	if out, code := check(t, "control", "function main(): i32 {\n    var x: i32 = \"hello\";\n    return x;\n}\n"); code == 0 {
+	if out, code := check(t, "control", "function main(): i32 {\n    let x: i32 = \"hello\";\n    return x;\n}\n"); code == 0 {
 		t.Fatalf("the control program type-checked — this front end is not checking, so the assertion below proves nothing (out=%q)", out)
 	} else if !strings.Contains(out, "E003") {
 		t.Fatalf("control rejected but not with E003: %q", out)

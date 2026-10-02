@@ -10,7 +10,7 @@ import (
 
 // --- An enum local handed to a struct FIELD is a counted share ---------------
 //
-// `var src: E = E.A([..]); var p: P = P { e: src, … }` stranded src's box AND
+// `let src: E = E.A([..]); let p: P = P { e: src, … }` stranded src's box AND
 // its payload once per construction. The construction retains the value (the
 // k_enum arm's dec is what that balances), but every rc-enum release credit —
 // the RCENUMS sweep, the loop rebind, the consuming-match free — refused a name
@@ -50,8 +50,8 @@ type enumFieldShareCase struct {
 // over-released, so an exit of 99 fails the row on the dangling direction
 // rather than the leaking one.
 const efsMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -69,8 +69,8 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// payload stranded every round, only the holder's box came back.
 			name: "local_no_match",
 			src: decls + `function round(i: i32): i32 {
-    var src: E = E.A([i, i + 5]);
-    var p: P = P { e: src, n: i };
+    let src: E = E.A([i, i + 5]);
+    let p: P = P { e: src, n: i };
     return p.n % 101;
 }
 ` + efsMain,
@@ -83,9 +83,9 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// does the payload. Base: allocs=300 frees=100.
 			name: "local_then_match",
 			src: decls + `function round(i: i32): i32 {
-    var src: E = E.A([i, i + 5]);
-    var p: P = P { e: src, n: i };
-    var t: i32 = 0;
+    let src: E = E.A([i, i + 5]);
+    let p: P = P { e: src, n: i };
+    let t: i32 = 0;
     match (src) { E.A(xs) => { t = xs.len(); }, E.B => { t = 0; } }
     return (t + p.n) % 101;
 }
@@ -97,8 +97,8 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// the "RCE:" registry's admission, sharing the same field position.
 			name: "call_bound_local",
 			src: decls + `function round(i: i32): i32 {
-    var src: E = mkv(i);
-    var p: P = P { e: src, n: i };
+    let src: E = mkv(i);
+    let p: P = P { e: src, n: i };
     return p.n % 101;
 }
 ` + efsMain,
@@ -111,10 +111,10 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// ownership hand-off (rather than the runtime gate) wrong here.
 			name: "conditional_share",
 			src: decls + `function round(i: i32): i32 {
-    var src: E = mkv(i);
-    var t: i32 = 0;
+    let src: E = mkv(i);
+    let t: i32 = 0;
     if (i % 2 == 0) {
-        var p: P = P { e: src, n: i };
+        let p: P = P { e: src, n: i };
         t = (match (p.e) { E.A(xs) => xs.len(), E.B => 0 }) + p.n;
     }
     return t % 101;
@@ -136,8 +136,8 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
     return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + k;
 }
 function round(i: i32): i32 {
-    var src: E = E.A([i, i + 5]);
-    var p: P = P { e: src, n: i };
+    let src: E = E.A([i, i + 5]);
+    let p: P = P { e: src, n: i };
     return (sink(src, p.n)) % 101;
 }
 ` + efsMain,

@@ -5,7 +5,7 @@ through a tuple of its fields was never released (#10315):
 
 ```fern
 function mk(k: i32): (i32, i32[]) {
-    var r: Rec = Rec { n: k, ys: [k, 1] };
+    let r: Rec = Rec { n: k, ys: [k, 1] };
     return (r.n, r.ys);
 }
 ```

@@ -17,96 +17,121 @@
 //
 // Showcases: building a translation table over bytes, range
 // expansion, the delete / squeeze variants.
-import "std/string";
-import "std/io";
 
 // Expand `a-z` style ranges in a SET argument into the full byte
 // sequence. A literal `-` at the start or end is kept as-is.
-function expand_set(s: string): string {
-  var n: i32 = s.len();
-  var out: string = "";
-  var i: i32 = 0;
+function expand_set(s: string): u8[] {
+  let n: i32 = s.len();
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < n) {
     if (i + 2 < n && s[i + 1] == 45 && s[i] <= s[i + 2]) {
       // range lo '-' hi
-      var lo: i32 = s[i] as i32;
-      var hi: i32 = s[i + 2] as i32;
-      var c: i32 = lo;
+      let lo: i32 = s[i] as i32;
+      let hi: i32 = s[i + 2] as i32;
+      let c: i32 = lo;
       while (c <= hi) {
-        out = out + (c as u8).to_ascii_string();
+        out = out.append(c as u8);
         c = c + 1;
       }
       i = i + 3;
     } else {
-      out = out + slice_unchecked(s, i, i + 1);
+      out = out.append(s[i]);
       i = i + 1;
     }
   }
   return out;
 }
 
-function translate(text: string, set1: string, set2: string): string {
-  var n: i32 = text.len();
-  var out: string = "";
-  var i: i32 = 0;
-  while (i < n) {
-    var b: i32 = text[i] as i32;
-    var pos: i32 = set1.index_of((b as u8).to_ascii_string());
-    if (pos >= 0) {
-      // Map to the same position in set2; clamp to its last byte.
-      var k: i32 = pos;
+// Build the byte lookup once, then stream raw chunks through a reusable buffer.
+// The first occurrence in SET1 wins, matching the previous index_of lookup.
+function transform(set1: u8[], set2: u8[], del: boolean, squeeze: boolean): i32 {
+  let member: u8[] = __alloc_u8(256);
+  let mapped: u8[] = __alloc_u8(256);
+  let i: i32 = 0;
+  while (i < 256) {
+    mapped = mapped.with(i, i as u8);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < set1.len()) {
+    let b: i32 = set1[i] as i32;
+    if (member[b] == 0) {
+      member = member.with(b, 1 as u8);
+      let k: i32 = i;
       if (k >= set2.len()) {
         k = set2.len() - 1;
       }
       if (set2.len() > 0) {
-        out = out + slice_unchecked(set2, k, k + 1);
+        mapped = mapped.with(b, set2[k]);
       }
-    } else {
-      out = out + slice_unchecked(text, i, i + 1);
     }
     i = i + 1;
   }
-  return out;
-}
-
-function delete_set(text: string, set1: string): string {
-  return text.without_chars(set1);
-}
-
-function squeeze_set(text: string, set1: string): string {
-  var n: i32 = text.len();
-  var out: string = "";
-  var prev: i32 = 0 - 1;
-  var i: i32 = 0;
-  while (i < n) {
-    var b: i32 = text[i] as i32;
-    var in_set: boolean = set1.index_of((b as u8).to_ascii_string()) >= 0;
-    if (in_set && b == prev) {
-      i = i + 1;
-      continue;
+  let reader = stdin();
+  let writer = stdout();
+  let out: usize = buf_new(4096);
+  let prev: i32 = 0 - 1;
+  while (true) {
+    match (reader.read_chunk_bytes(4096)) {
+      Err(_) => {
+        buf_free(out);
+        eprint("tr: input read failed");
+        return 1;
+      },
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        i = 0;
+        while (i < chunk.len()) {
+          let b: i32 = chunk[i] as i32;
+          let in_set: boolean = member[b] != 0;
+          if (del) {
+            if (!in_set) {
+              buf_push_byte(out, b);
+            }
+          } else if (squeeze) {
+            if (!in_set || b != prev) {
+              buf_push_byte(out, b);
+            }
+            prev = b;
+          } else if (!in_set || set2.len() > 0) {
+            buf_push_byte(out, mapped[b] as i32);
+          }
+          i = i + 1;
+        }
+        let bytes = buf_take_bytes(out);
+        match (writer.write_bytes(bytes)) {
+          Some(_) => {
+            buf_free(out);
+            eprint("tr: output write failed");
+            return 1;
+          },
+          None => {}
+        }
+      }
     }
-    out = out + slice_unchecked(text, i, i + 1);
-    prev = b;
-    i = i + 1;
   }
-  return out;
+  buf_free(out);
+  return 0;
 }
 
 function main(): i32 {
-  var argv: string[] = args();
-  var del: boolean = false;
-  var squeeze: boolean = false;
-  var sets: string[] = [];
+  let argv: string[] = args();
+  let del: boolean = false;
+  let squeeze: boolean = false;
+  let sets: string[] = [];
 
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "-d") {
       del = true;
     } else if (a == "-s") {
       squeeze = true;
     } else {
-      sets = sets.append(expand_set(a));
+      sets = sets.append(a);
     }
     i = i + 1;
   }
@@ -116,18 +141,13 @@ function main(): i32 {
     return 2;
   }
 
-  var text: string = io.read_all_stdin();
-  var result: string = text;
-  if (del) {
-    result = delete_set(text, sets[0]);
-  } else if (squeeze) {
-    result = squeeze_set(text, sets[0]);
-  } else if (sets.len() >= 2) {
-    result = translate(text, sets[0], sets[1]);
-  } else {
+  if (!del && !squeeze && sets.len() < 2) {
     eprint("tr: missing operand after '" + sets[0] + "'");
     return 2;
   }
-  write(result);
-  return 0;
+  let set2: u8[] = [];
+  if (sets.len() >= 2) {
+    set2 = expand_set(sets[1]);
+  }
+  return transform(expand_set(sets[0]), set2, del, squeeze);
 }

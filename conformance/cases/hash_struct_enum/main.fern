@@ -13,10 +13,10 @@ struct Point { x: i32, y: i32 }
 enum Shape { Dot, Circle(i32), Rect(i32, i32) }
 
 function main(): i32 {
-    var r: i32 = 0;
-    var a: Point = Point { x: 3, y: 4 };
-    var b: Point = Point { x: 3, y: 4 };   // equal value, distinct object
-    var c: Point = Point { x: 5, y: 4 };
+    let r: i32 = 0;
+    let a: Point = Point { x: 3, y: 4 };
+    let b: Point = Point { x: 3, y: 4 };   // equal value, distinct object
+    let c: Point = Point { x: 5, y: 4 };
     if (a.hash() == b.hash()) { r = r + 1; }   // Eq ⇒ equal hashes
     if (a.hash() != c.hash()) { r = r + 2; }   // differ (very likely)
     if ("hello".hash() != 0) { r = r + 4; }    // string FNV-1a

@@ -8,7 +8,7 @@ matches.
 ## What it was
 
 The parser desugars a nested, tuple, struct-field or literal arm pattern
-into a done-flag chain of flat matches: `var __na_s = scrut; var __na_d =
+into a done-flag chain of flat matches: `let __na_s = scrut; let __na_d =
 false; if (!__na_d) { match (__na_s) { … } } if (!__na_d) { … }`. Every
 arm of the written match returns, the flag is set beside each body, and
 the chain falls through by construction. The checker's E052 reads the

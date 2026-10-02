@@ -32,7 +32,7 @@ func TestSelfHostArm64ProcExecRuns(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "proc_exec.fern")
 	prog := "function main(): i32 {\n" +
-		"    var rc: i32 = proc_exec(\"/bin/sh\", [\"-c\", \"exit 9\"]);\n" +
+		"    let rc: i32 = proc_exec(\"/bin/sh\", [\"-c\", \"exit 9\"]);\n" +
 		"    return 1;\n" +
 		"}\n"
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {

@@ -16,15 +16,15 @@ import (
 // in place and growing, and to an alias, which must copy and leave the
 // original alone.
 const arrPushFastProg = `function main(): i32 {
-    var a: i32[] = [];
-    var i: i32 = 0;
+    let a: i32[] = [];
+    let i: i32 = 0;
     while (i < 100) { a = a.append(i); i = i + 1; }
-    var b: i32[] = a;
+    let b: i32[] = a;
     b = b.append(1000);
     if (a.len() != 100) { return 1; }
     if (b.len() != 101) { return 2; }
     if (b[100] != 1000) { return 3; }
-    var s: i32 = 0;
+    let s: i32 = 0;
     for x in a { s = s + x; }
     if (s != 4950) { return 4; }
     return 42;

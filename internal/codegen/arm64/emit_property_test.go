@@ -72,8 +72,8 @@ function main(): i32 { return 0; }`,
 
 	"arithmetic": `
 function main(): i32 {
-	var x: i32 = 6;
-	var y: i32 = 7;
+	let x: i32 = 6;
+	let y: i32 = 7;
 	return x * y + (y - x) / 2;
 }`,
 
@@ -86,8 +86,8 @@ function main(): i32 { return classify(-5) + classify(5) + classify(0); }`,
 
 	"while_loop": `
 function main(): i32 {
-	var i: i32 = 0;
-	var sum: i32 = 0;
+	let i: i32 = 0;
+	let sum: i32 = 0;
 	while (i < 10) { sum = sum + i; i = i + 1; }
 	return sum;
 }`,
@@ -103,7 +103,7 @@ function main(): i32 { return fact(5, 1); }`,
 struct Point { x: i32, y: i32 }
 function (p: Point) sq(): i32 { return p.x * p.x + p.y * p.y; }
 function main(): i32 {
-	var p: Point = Point { x: 3, y: 4 };
+	let p: Point = Point { x: 3, y: 4 };
 	return p.sq();
 }`,
 
@@ -120,8 +120,8 @@ function main(): i32 {
 
 	"bitwise": `
 function main(): i32 {
-	var a: i32 = 0xF0;
-	var b: i32 = 0x0F;
+	let a: i32 = 0xF0;
+	let b: i32 = 0x0F;
 	return (a | b) & 0xFF ^ (a >> 2);
 }`,
 
@@ -130,7 +130,7 @@ function main(): i32 {
 	// length prefix on x86), plus literal interning of the operands.
 	"string_concat": `
 function main(): i32 {
-	var s: string = "hello" + " " + "world";
+	let s: string = "hello" + " " + "world";
 	return s.len();
 }`,
 
@@ -139,9 +139,9 @@ function main(): i32 {
 	// element-load + body codegen.
 	"array_iterate": `
 function main(): i32 {
-	var xs: i32[] = [1, 2, 3];
+	let xs: i32[] = [1, 2, 3];
 	xs = xs.append(4);
-	var sum: i32 = 0;
+	let sum: i32 = 0;
 	for x in xs { sum = sum + x; }
 	return sum;
 }`,
@@ -172,8 +172,8 @@ function adder(n: i32): (i32) => i32 {
 	return (x: i32): i32 => { return x + n; };
 }
 function main(): i32 {
-	var add10: (i32) => i32 = adder(10);
-	var add20: (i32) => i32 = adder(20);
+	let add10: (i32) => i32 = adder(10);
+	let add20: (i32) => i32 = adder(20);
 	return add10(1) + add20(2);
 }`,
 
@@ -190,7 +190,7 @@ function greeter(name: string): () => string {
 	return (): string => { return "hello, " + name; };
 }
 function main(): i32 {
-	var g: () => string = greeter("world");
+	let g: () => string = greeter("world");
 	return g().len();
 }`,
 }
@@ -281,8 +281,8 @@ func TestRcHelpersGuardBelowHeap(t *testing.T) {
 	// emits rc_dec on their slots; assigning one to another pulls rc_inc.
 	src := `struct Box { v: i32 }
 function main(): i32 {
-	var a: Box = Box { v: 1 };
-	var b: Box = a;
+	let a: Box = Box { v: 1 };
+	let b: Box = a;
 	return b.v;
 }`
 	asm := compile(t, src, Options{})

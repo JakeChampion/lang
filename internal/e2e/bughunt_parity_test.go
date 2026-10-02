@@ -61,9 +61,9 @@ func TestBugHunt_SignedShiftParity(t *testing.T) {
 		// All-ones stays all-ones under arithmetic shift.
 		{"arith_shr_allones", `function main(): i32 { if (((0 - 1) >> 5) == (0 - 1)) { return 7; } return 1; }`},
 		// Runtime count 33 masks to 33 & 31 == 1: -8 >> 1 = -4.
-		{"shr_count_mask", `function main(): i32 { var s: i32 = 33; if (((0 - 8) >> s) == (0 - 4)) { return 7; } return 1; }`},
+		{"shr_count_mask", `function main(): i32 { let s: i32 = 33; if (((0 - 8) >> s) == (0 - 4)) { return 7; } return 1; }`},
 		// Left-shift count masks the same way: 1 << (33 & 31) = 2.
-		{"shl_count_mask", `function main(): i32 { var s: i32 = 33; if ((1 << s) == 2) { return 7; } return 1; }`},
+		{"shl_count_mask", `function main(): i32 { let s: i32 = 33; if ((1 << s) == 2) { return 7; } return 1; }`},
 	}
 	for _, c := range cases {
 		assertBackendsAgreeWithInterp(t, c.name, c.src)
@@ -78,7 +78,7 @@ func TestBugHunt_SignedShiftParity(t *testing.T) {
 // f64, 0 means it silently truncated to f32.
 func TestBugHunt_FloatLiteralDefaultsToF64(t *testing.T) {
 	src := `function main(): i32 {
-    var x = 16777217.0;
+    let x = 16777217.0;
     return (x - 16777216.0) as i32;
 }`
 	if got := runInterpByte(t, src); got != 1 {
@@ -126,21 +126,21 @@ func TestBugHunt_FloatNaNComparisonParity(t *testing.T) {
 		src  string
 	}{
 		// NaN != NaN is the one comparison that must be true.
-		{"ne_true", `function main(): i32 { var z: f64 = 0.0; var n: f64 = z / z; if (n != n) { return 7; } return 1; }`},
+		{"ne_true", `function main(): i32 { let z: f64 = 0.0; let n: f64 = z / z; if (n != n) { return 7; } return 1; }`},
 		// NaN == NaN must be false.
-		{"eq_false", `function main(): i32 { var z: f64 = 0.0; var n: f64 = z / z; if (n == n) { return 1; } return 7; }`},
+		{"eq_false", `function main(): i32 { let z: f64 = 0.0; let n: f64 = z / z; if (n == n) { return 1; } return 7; }`},
 		// NaN < x and NaN <= NaN must be false (the bug made them true).
-		{"lt_false", `function main(): i32 { var z: f64 = 0.0; var n: f64 = z / z; if (n < 1.0) { return 1; } return 7; }`},
-		{"le_false", `function main(): i32 { var z: f64 = 0.0; var n: f64 = z / z; if (n <= n) { return 1; } return 7; }`},
+		{"lt_false", `function main(): i32 { let z: f64 = 0.0; let n: f64 = z / z; if (n < 1.0) { return 1; } return 7; }`},
+		{"le_false", `function main(): i32 { let z: f64 = 0.0; let n: f64 = z / z; if (n <= n) { return 1; } return 7; }`},
 		// NaN > x and NaN >= x are already false on every backend.
-		{"gt_false", `function main(): i32 { var z: f64 = 0.0; var n: f64 = z / z; if (n > 1.0) { return 1; } return 7; }`},
-		{"ge_false", `function main(): i32 { var z: f64 = 0.0; var n: f64 = z / z; if (n >= 1.0) { return 1; } return 7; }`},
+		{"gt_false", `function main(): i32 { let z: f64 = 0.0; let n: f64 = z / z; if (n > 1.0) { return 1; } return 7; }`},
+		{"ge_false", `function main(): i32 { let z: f64 = 0.0; let n: f64 = z / z; if (n >= 1.0) { return 1; } return 7; }`},
 		// f32 NaN behaves the same (ucomiss path).
-		{"f32_ne_true", `function main(): i32 { var z: f32 = 0.0; var n: f32 = z / z; if (n != n) { return 7; } return 1; }`},
-		{"f32_eq_false", `function main(): i32 { var z: f32 = 0.0; var n: f32 = z / z; if (n == n) { return 1; } return 7; }`},
+		{"f32_ne_true", `function main(): i32 { let z: f32 = 0.0; let n: f32 = z / z; if (n != n) { return 7; } return 1; }`},
+		{"f32_eq_false", `function main(): i32 { let z: f32 = 0.0; let n: f32 = z / z; if (n == n) { return 1; } return 7; }`},
 		// Ordered comparisons must still work (no regression).
-		{"ordered_lt", `function main(): i32 { var a: f64 = 1.5; var b: f64 = 2.5; if (a < b) { return 7; } return 1; }`},
-		{"ordered_eq", `function main(): i32 { var a: f64 = 2.5; if (a == a) { return 7; } return 1; }`},
+		{"ordered_lt", `function main(): i32 { let a: f64 = 1.5; let b: f64 = 2.5; if (a < b) { return 7; } return 1; }`},
+		{"ordered_eq", `function main(): i32 { let a: f64 = 2.5; if (a == a) { return 7; } return 1; }`},
 	}
 	for _, c := range cases {
 		assertBackendsAgreeWithInterp(t, c.name, c.src)
@@ -162,16 +162,16 @@ func TestBugHunt_FloatToIntSaturation(t *testing.T) {
 		src  string
 	}{
 		// signed i32
-		{"i32_pos_ovf", `function main(): i32 { var x: f64 = 1e30; if ((x as i32) == 2147483647) { return 7; } return 1; }`},
-		{"i32_neg_ovf", `function main(): i32 { var x: f64 = 0.0 - 1e30; if ((x as i32) == 0 - 2147483647 - 1) { return 7; } return 1; }`},
-		{"i32_nan", `function main(): i32 { var x: f64 = 0.0 / 0.0; if ((x as i32) == 0) { return 7; } return 1; }`},
-		{"i32_in_range", `function main(): i32 { var x: f64 = 0.0 - 42.9; if ((x as i32) == 0 - 42) { return 7; } return 1; }`},
+		{"i32_pos_ovf", `function main(): i32 { let x: f64 = 1e30; if ((x as i32) == 2147483647) { return 7; } return 1; }`},
+		{"i32_neg_ovf", `function main(): i32 { let x: f64 = 0.0 - 1e30; if ((x as i32) == 0 - 2147483647 - 1) { return 7; } return 1; }`},
+		{"i32_nan", `function main(): i32 { let x: f64 = 0.0 / 0.0; if ((x as i32) == 0) { return 7; } return 1; }`},
+		{"i32_in_range", `function main(): i32 { let x: f64 = 0.0 - 42.9; if ((x as i32) == 0 - 42) { return 7; } return 1; }`},
 		// signed i64
-		{"i64_pos_ovf", `function main(): i32 { var x: f64 = 1e30; if ((x as i64) == 9223372036854775807) { return 7; } return 1; }`},
-		{"i64_neg_ovf", `function main(): i32 { var x: f64 = 0.0 - 1e30; if ((x as i64) == 0 - 9223372036854775807 - 1) { return 7; } return 1; }`},
-		{"i64_nan", `function main(): i32 { var x: f64 = 0.0 / 0.0; var r: i64 = x as i64; if (r == 0) { return 7; } return 1; }`},
+		{"i64_pos_ovf", `function main(): i32 { let x: f64 = 1e30; if ((x as i64) == 9223372036854775807) { return 7; } return 1; }`},
+		{"i64_neg_ovf", `function main(): i32 { let x: f64 = 0.0 - 1e30; if ((x as i64) == 0 - 9223372036854775807 - 1) { return 7; } return 1; }`},
+		{"i64_nan", `function main(): i32 { let x: f64 = 0.0 / 0.0; let r: i64 = x as i64; if (r == 0) { return 7; } return 1; }`},
 		// f32 source (exercises the arm64 32-bit-dest encoding fix)
-		{"f32_i32_ovf", `function main(): i32 { var x: f32 = 1e30; if ((x as i32) == 2147483647) { return 7; } return 1; }`},
+		{"f32_i32_ovf", `function main(): i32 { let x: f32 = 1e30; if ((x as i32) == 2147483647) { return 7; } return 1; }`},
 	}
 	for _, c := range cases {
 		assertBackendsAgreeWithInterp(t, c.name, c.src)

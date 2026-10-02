@@ -41,7 +41,7 @@ encodes things that must always be true about the playground:
 
 2. Install a Chromium-compatible browser (Chrome, Chromium, Brave,
    Edge — Bombadil will auto-detect, or you can point it via the
-   `CHROME` env var below).
+   `CHROME` env let below).
 
 3. Install the TypeScript typings if you plan to edit the spec
    with editor support (optional — the binary doesn't need them):

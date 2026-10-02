@@ -55,15 +55,15 @@ func TestSelfHostArm64GasStringComment(t *testing.T) {
 // exact lengths and failed on correct output).
 const arm64GasStringCommentSelfTestMain = `
 function slash_count(d: i32[]): i32 {
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < d.len()) { if (d[i] == 47) { n = n + 1; } i = i + 1; }
     return n;
 }
 
 function main(): i32 {
     // Two slashes inside a .ascii string are DATA. 97 47 47 98 = a / / b.
-    var p1: Arm64GasProg = arm64_gas_program(".data\ns:\n.ascii \"a//b\"\n");
+    let p1: Arm64GasProg = arm64_gas_program(".data\ns:\n.ascii \"a//b\"\n");
     if (p1.data.len() < 4) { return 1; }
     if (p1.data[0] != 97 || p1.data[1] != 47 || p1.data[2] != 47 || p1.data[3] != 98) { return 2; }
     if (slash_count(p1.data) != 2) { return 3; }
@@ -71,30 +71,30 @@ function main(): i32 {
     // The url_codec literal that exposed it. The old truncation stopped at
     // "http:" (5 bytes); all 12 must survive — data[7] = 'h' (104), data[11] =
     // 'm' (109) — with both slashes intact at 5 and 6.
-    var p2: Arm64GasProg = arm64_gas_program(".data\nu:\n.ascii \"http://h.com\"\n");
+    let p2: Arm64GasProg = arm64_gas_program(".data\nu:\n.ascii \"http://h.com\"\n");
     if (p2.data.len() < 12) { return 4; }
     if (p2.data[5] != 47 || p2.data[6] != 47) { return 5; }
     if (p2.data[7] != 104 || p2.data[11] != 109) { return 6; }
 
     // A comment OUTSIDE a string is still stripped.
-    var p3: Arm64GasProg = arm64_gas_program(".data\n.byte 7 // trailing comment\n");
+    let p3: Arm64GasProg = arm64_gas_program(".data\n.byte 7 // trailing comment\n");
     if (p3.data.len() < 1 || p3.data[0] != 7) { return 7; }
     if (slash_count(p3.data) != 0) { return 8; }
 
     // ... including one that follows a closing quote on the same line: the
     // comment text must not reach the blob.
-    var p4: Arm64GasProg = arm64_gas_program(".data\n.ascii \"ab\" // note\n");
+    let p4: Arm64GasProg = arm64_gas_program(".data\n.ascii \"ab\" // note\n");
     if (p4.data.len() < 2 || p4.data[0] != 97 || p4.data[1] != 98) { return 9; }
     if (slash_count(p4.data) != 0) { return 10; }
 
     // An ESCAPED quote does not close the string, so the slashes after it are
     // still data: x " / / y = 120 34 47 47 121.
-    var p5: Arm64GasProg = arm64_gas_program(".data\n.ascii \"x\\\"//y\"\n");
+    let p5: Arm64GasProg = arm64_gas_program(".data\n.ascii \"x\\\"//y\"\n");
     if (p5.data.len() < 5) { return 11; }
     if (p5.data[0] != 120 || p5.data[1] != 34 || p5.data[2] != 47 || p5.data[3] != 47 || p5.data[4] != 121) { return 12; }
 
     // An UNTERMINATED string is refused rather than silently truncated.
-    var p6: Arm64GasProg = arm64_gas_program(".data\n.ascii \"oops\n");
+    let p6: Arm64GasProg = arm64_gas_program(".data\n.ascii \"oops\n");
     if (p6.unknown.len() == 0) { return 13; }
 
     return 0;

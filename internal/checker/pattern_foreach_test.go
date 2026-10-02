@@ -27,14 +27,14 @@ func checkSrc(t *testing.T, src string) string {
 // (cursor loop).
 func TestPatternForEachChoosesLoopByIterandType(t *testing.T) {
 	arrayProg := `function f(): i32 {
-		var xs: (i32, i32)[] = [(1, 2)];
-		var sum: i32 = 0;
+		let xs: (i32, i32)[] = [(1, 2)];
+		let sum: i32 = 0;
 		for (a, b) in xs { sum = sum + a + b; }
 		return sum;
 	}`
 	mapProg := `function f(): i32 {
-		var m: Map[i32, i32] = map_new(4);
-		var sum: i32 = 0;
+		let m: Map[i32, i32] = map_new(4);
+		let sum: i32 = 0;
 		for (k, v) in m { sum = sum + k + v; }
 		return sum;
 	}`
@@ -113,7 +113,7 @@ func TestPatternForEachArityDiagnostics(t *testing.T) {
 		{
 			name: "array element arity",
 			src: `function f(): i32 {
-				var xs: (i32, i32)[] = [(1, 2)];
+				let xs: (i32, i32)[] = [(1, 2)];
 				for (a, b, c) in xs { return a + b + c; }
 				return 0;
 			}`,
@@ -122,7 +122,7 @@ func TestPatternForEachArityDiagnostics(t *testing.T) {
 		{
 			name: "map needs a pair",
 			src: `function f(): i32 {
-				var m: Map[i32, i32] = map_new(4);
+				let m: Map[i32, i32] = map_new(4);
 				for (k, v, extra) in m { return k + v + extra; }
 				return 0;
 			}`,
@@ -131,7 +131,7 @@ func TestPatternForEachArityDiagnostics(t *testing.T) {
 		{
 			name: "element is not a tuple",
 			src: `function f(): i32 {
-				var xs: i32[] = [1, 2];
+				let xs: i32[] = [1, 2];
 				for (a, b) in xs { return a + b; }
 				return 0;
 			}`,

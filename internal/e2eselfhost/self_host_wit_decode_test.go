@@ -49,16 +49,16 @@ func witSectionSelfTestMain(t *testing.T) string {
 	sb.WriteString("\"; }\n")
 	sb.WriteString(`
 function wit_bytes_of(s: string): i32[] {
-    var o: i32[] = [];
-    var i: i32 = 0;
+    let o: i32[] = [];
+    let i: i32 = 0;
     while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
 function main(): i32 {
-    var payload: i32[] = wit_bytes_of(FERN_BIN());
-    var got: i32[] = wit_reencode_sections(payload);
+    let payload: i32[] = wit_bytes_of(FERN_BIN());
+    let got: i32[] = wit_reencode_sections(payload);
     if (got.len() != payload.len()) { return 1; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < got.len()) {
         if ((got[i] as i32) != (payload[i] as i32)) { return 2; }
         i = i + 1;
@@ -94,17 +94,17 @@ func TestSelfHostWitValtypeRoundTrip(t *testing.T) {
 const witValtypeSelfTestMain = `
 function wit_eq(a: i32[], b: i32[]): boolean {
     if (a.len() != b.len()) { return false; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
     return true;
 }
 function wit_rt_def(v: i32[]): boolean {
-    var r: WitDefR = wit_decode_def(v, 0);
+    let r: WitDefR = wit_decode_def(v, 0);
     if (r.next != v.len()) { return false; }
     return wit_eq(wit_encode_def([], r.def), v);
 }
 function wit_rt_func(v: i32[]): boolean {
-    var r: WitFuncR = wit_decode_func(v, 0);
+    let r: WitFuncR = wit_decode_func(v, 0);
     if (r.next != v.len()) { return false; }
     return wit_eq(wit_encode_func([], r.fn), v);
 }
@@ -161,22 +161,22 @@ func witPayloadFunc(t *testing.T, fn, world string) string {
 
 const witWorldSelfTestMain = `
 function wit_bytes(s: string): i32[] {
-    var o: i32[] = [];
-    var i: i32 = 0;
+    let o: i32[] = [];
+    let i: i32 = 0;
     while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
 function wit_eq2(a: i32[], b: i32[]): boolean {
     if (a.len() != b.len()) { return false; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < a.len()) { if ((a[i] as i32) != (b[i] as i32)) { return false; } i = i + 1; }
     return true;
 }
 function main(): i32 {
-    var fern: i32[] = wit_bytes(FERN_BIN());
+    let fern: i32[] = wit_bytes(FERN_BIN());
     if (!wit_eq2(wit_transcode_type_section(wit_section_body(fern, 7)), wit_section_body(fern, 7))) { return 1; }
     if (!wit_eq2(wit_transcode_export_section(wit_section_body(fern, 11)), wit_section_body(fern, 11))) { return 2; }
-    var http: i32[] = wit_bytes(HTTP_BIN());
+    let http: i32[] = wit_bytes(HTTP_BIN());
     if (!wit_eq2(wit_transcode_type_section(wit_section_body(http, 7)), wit_section_body(http, 7))) { return 3; }
     if (!wit_eq2(wit_transcode_export_section(wit_section_body(http, 11)), wit_section_body(http, 11))) { return 4; }
     return 0;
@@ -204,13 +204,13 @@ func TestSelfHostWitWorldLift(t *testing.T) {
 
 const witLiftSelfTestMain = `
 function wit_lift_bytes(s: string): i32[] {
-    var o: i32[] = [];
-    var i: i32 = 0;
+    let o: i32[] = [];
+    let i: i32 = 0;
     while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
 function main(): i32 {
-    var want: string[] = [
+    let want: string[] = [
         "wasi:io/error@0.2.0", "wasi:io/poll@0.2.0", "wasi:io/streams@0.2.0",
         "wasi:cli/stdin@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0",
         "wasi:cli/environment@0.2.0", "wasi:cli/exit@0.2.0", "wasi:clocks/monotonic-clock@0.2.0",
@@ -220,9 +220,9 @@ function main(): i32 {
         "wasi:sockets/tcp-create-socket@0.2.0", "wasi:sockets/udp@0.2.0",
         "wasi:sockets/udp-create-socket@0.2.0", "wasi:random/random@0.2.0"
     ];
-    var got: string[] = wit_world_import_names(wit_section_body(wit_lift_bytes(FERN_BIN()), 7));
+    let got: string[] = wit_world_import_names(wit_section_body(wit_lift_bytes(FERN_BIN()), 7));
     if (got.len() != want.len()) { return 99; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < want.len()) {
         if (got[i] != want[i]) { return i + 1; }
         i = i + 1;
@@ -273,17 +273,17 @@ func witBytesFunc(fn string, b []byte) string {
 
 const witEmitSelfTestMain = `
 function wit_emit_bytes(s: string): i32[] {
-    var o: i32[] = [];
-    var i: i32 = 0;
+    let o: i32[] = [];
+    let i: i32 = 0;
     while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
 function main(): i32 {
-    var tb: i32[] = wit_section_body(wit_emit_bytes(FERN_BIN()), 7);
-    var got: i32[] = wit_emit_world_imports(tb, wit_import_plan(tb, wit_world_import_names(tb)));
-    var want: i32[] = wit_emit_bytes(EMIT_REF());
+    let tb: i32[] = wit_section_body(wit_emit_bytes(FERN_BIN()), 7);
+    let got: i32[] = wit_emit_world_imports(tb, wit_import_plan(tb, wit_world_import_names(tb)));
+    let want: i32[] = wit_emit_bytes(EMIT_REF());
     if (got.len() != want.len()) { return 1; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < got.len()) {
         if ((got[i] as i32) != (want[i] as i32)) { return 2; }
         i = i + 1;
@@ -314,8 +314,8 @@ func TestSelfHostWitClassify(t *testing.T) {
 
 const witClassifySelfTestMain = `
 function wit_cl_bytes(s: string): i32[] {
-    var o: i32[] = [];
-    var i: i32 = 0;
+    let o: i32[] = [];
+    let i: i32 = 0;
     while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
@@ -324,9 +324,9 @@ function wit_ck(tb: i32[], iface: string, fn: string, want: i32, id: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var tb: i32[] = wit_cl_bytes(FERN_BIN());
+    let tb: i32[] = wit_cl_bytes(FERN_BIN());
     tb = wit_section_body(tb, 7);
-    var r: i32 = 0;
+    let r: i32 = 0;
     r = wit_ck(tb, "wasi:cli/stdout@0.2.0", "get-stdout", 0, 1); if (r != 0) { return r; }
     r = wit_ck(tb, "wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush", 1, 2); if (r != 0) { return r; }
     r = wit_ck(tb, "wasi:io/streams@0.2.0", "[method]input-stream.blocking-read", 2, 3); if (r != 0) { return r; }
@@ -362,27 +362,27 @@ func TestSelfHostWitPrefixLayout(t *testing.T) {
 
 const witLayoutSelfTestMain = `
 function wit_ly_bytes(s: string): i32[] {
-    var o: i32[] = [];
-    var i: i32 = 0;
+    let o: i32[] = [];
+    let i: i32 = 0;
     while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
     return o;
 }
 function main(): i32 {
-    var tb: i32[] = wit_section_body(wit_ly_bytes(FERN_BIN()), 7);
-    var pl: WitPrefixLayout = wit_prefix_layout(tb);
+    let tb: i32[] = wit_section_body(wit_ly_bytes(FERN_BIN()), 7);
+    let pl: WitPrefixLayout = wit_prefix_layout(tb);
     if (pl.types != 32) { return 1; }
     if (pl.instances != 19) { return 2; }
-    var all: WitImportPlan = wit_import_plan(tb, wit_world_import_names(tb));
+    let all: WitImportPlan = wit_import_plan(tb, wit_world_import_names(tb));
     if (all.n_inst != 19) { return 8; }
     if (wit_import_instance_index(tb, all, "wasi:io/error@0.2.0") != 0) { return 3; }
     if (wit_import_instance_index(tb, all, "wasi:io/streams@0.2.0") != 2) { return 4; }
     if (wit_import_instance_index(tb, all, "wasi:cli/stdout@0.2.0") != 4) { return 5; }
     if (wit_import_instance_index(tb, all, "wasi:random/random@0.2.0") != 18) { return 6; }
     if (wit_import_instance_index(tb, all, "wasi:not/here@0.2.0") != (0 - 1)) { return 7; }
-    var stdout: WitImportPlan = wit_import_plan(tb, ["wasi:cli/stdout@0.2.0"]);
+    let stdout: WitImportPlan = wit_import_plan(tb, ["wasi:cli/stdout@0.2.0"]);
     if (stdout.n_inst >= 19) { return 9; }
     if (wit_import_instance_index(tb, stdout, "wasi:io/error@0.2.0") != 0) { return 10; }
-    var so: i32 = wit_import_instance_index(tb, stdout, "wasi:cli/stdout@0.2.0");
+    let so: i32 = wit_import_instance_index(tb, stdout, "wasi:cli/stdout@0.2.0");
     if (so < 1 || so >= stdout.n_inst || so >= 4) { return 11; }
     if (wit_import_instance_index(tb, stdout, "wasi:random/random@0.2.0") != (0 - 1)) { return 12; }
     return 0;

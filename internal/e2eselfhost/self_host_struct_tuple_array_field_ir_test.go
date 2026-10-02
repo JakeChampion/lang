@@ -18,7 +18,7 @@ import (
 //     bailed the whole module to the ~35 KB AST emitter (and miscompiled). Now an
 //     `is_leaksafe_tuple_field` element is admitted in leak mode, like the sibling
 //     array-of-struct / array-of-enum fields.
-//  2. INDEX-READ BIND (lower_stmt_var): `var p = r.pairs[0]` read the element
+//  2. INDEX-READ BIND (lower_stmt_var): `let p = r.pairs[0]` read the element
 //     tuple tags off the array LOCAL's arrarr_elem slot — but a struct-field array
 //     access has no slot, so p got no tuple tags and `p.1.len()` mis-read a
 //     pointer element (a silent miscompile: p.0=1, p.1.len()=0 → 1 not 2). The
@@ -40,8 +40,8 @@ var structTupleArrayFieldIRCases = []struct {
 	// FOR-LOOP over the field reading a pointer (string) element: 1+2+3 = 6.
 	{"foreach_field", `struct Row { pairs: (i32, string)[] }
 function main(): i32 {
-    var r = Row { pairs: [(1, "a"), (2, "bb"), (3, "ccc")] };
-    var s = 0;
+    let r = Row { pairs: [(1, "a"), (2, "bb"), (3, "ccc")] };
+    let s = 0;
     for p in r.pairs { s = s + p.1.len(); }
     return s;
 }`},
@@ -49,30 +49,30 @@ function main(): i32 {
 	// 3*10+3 = 66.
 	{"foreach_both", `struct Row { pairs: (i32, string)[] }
 function main(): i32 {
-    var r = Row { pairs: [(1, "a"), (2, "bb"), (3, "ccc")] };
-    var s = 0;
+    let r = Row { pairs: [(1, "a"), (2, "bb"), (3, "ccc")] };
+    let s = 0;
     for p in r.pairs { s = s + p.0 * 10 + p.1.len(); }
     return s;
 }`},
-	// INDEX-READ into a local: `var p = r.pairs[0]` then p.0 + p.1.len() = 1 + 1
+	// INDEX-READ into a local: `let p = r.pairs[0]` then p.0 + p.1.len() = 1 + 1
 	// = 2 (the silent-miscompile case: was 1 before the ExprFieldAccess arm).
 	{"index_bind", `struct Row { pairs: (i32, string)[] }
 function main(): i32 {
-    var r = Row { pairs: [(1, "a"), (2, "bb")] };
-    var p = r.pairs[0];
+    let r = Row { pairs: [(1, "a"), (2, "bb")] };
+    let p = r.pairs[0];
     return p.0 + p.1.len();
 }`},
 	// DIRECT index without a binding: r.pairs[2].0 + r.pairs[2].1.len() = 3 + 3 = 6.
 	{"direct_index", `struct Row { pairs: (i32, string)[] }
 function main(): i32 {
-    var r = Row { pairs: [(1, "a"), (2, "bb"), (3, "ccc")] };
+    let r = Row { pairs: [(1, "a"), (2, "bb"), (3, "ccc")] };
     return r.pairs[2].0 + r.pairs[2].1.len();
 }`},
 	// A (string, string) element array — read the SECOND string element: 2 + 3 = 5.
 	{"string_string", `struct Row { pairs: (string, string)[] }
 function main(): i32 {
-    var r = Row { pairs: [("a", "xx"), ("bb", "yyy")] };
-    var s = 0;
+    let r = Row { pairs: [("a", "xx"), ("bb", "yyy")] };
+    let s = 0;
     for p in r.pairs { s = s + p.1.len(); }
     return s;
 }`},
@@ -81,8 +81,8 @@ function main(): i32 {
 	// + (3+4+3) = 20.
 	{"mixed_nested", `struct Row { n: i32, pairs: (i32, (i32, string))[] }
 function main(): i32 {
-    var r = Row { n: 5, pairs: [(1, (2, "ab")), (3, (4, "cde"))] };
-    var s = r.n;
+    let r = Row { n: 5, pairs: [(1, (2, "ab")), (3, (4, "cde"))] };
+    let s = r.n;
     for p in r.pairs { s = s + p.0 + p.1.0 + p.1.1.len(); }
     return s;
 }`},
@@ -90,12 +90,12 @@ function main(): i32 {
 	// function that iterates the field — the leak-only field must not over-release
 	// / underflow. total % 256 = (100 * (1+2)) % 256 = 300 % 256 = 44.
 	{"rc_loop", `struct Row { pairs: (i32, string)[] }
-function sumrow(r: Row): i32 { var s = 0; for p in r.pairs { s = s + p.1.len(); } return s; }
+function sumrow(r: Row): i32 { let s = 0; for p in r.pairs { s = s + p.1.len(); } return s; }
 function main(): i32 {
-    var total = 0;
-    var i = 0;
+    let total = 0;
+    let i = 0;
     while (i < 100) {
-        var r = Row { pairs: [(i, "x"), (i, "yy")] };
+        let r = Row { pairs: [(i, "x"), (i, "yy")] };
         total = total + sumrow(r);
         i = i + 1;
     }
@@ -155,7 +155,7 @@ func TestSelfHostStructTupleArrayFieldIR(t *testing.T) {
 	}
 }
 
-// The wasm leg: the fixes live in shared irlower.fern, so the wasm IR backend
+// The wasm leg: the fixes live in the shared lowering, so the wasm IR backend
 // admits the same struct and reads the tuple-box pointer elements through the
 // 4-byte-slot arr_get walk. Drives wasm_ir_run (stdin → wat) and runs under
 // wasmtime. Case table shared with the x86-64 leg.

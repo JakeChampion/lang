@@ -27,13 +27,13 @@ func TestGenericArrayCombinators(t *testing.T) {
 		{
 			name: "map then index-sum",
 			src: `function map_arr[T, U](xs: T[], f: (T) => U): U[] {
-    var out: U[] = [];
+    let out: U[] = [];
     for x in xs { out = out.append(f(x)); }
     return out;
 }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var ys: i32[] = map_arr(xs, (n: i32): i32 => { return n * 10; });
+    let xs: i32[] = [1, 2, 3];
+    let ys: i32[] = map_arr(xs, (n: i32): i32 => { return n * 10; });
     return ys[0] + ys[1] + ys[2];
 }`,
 			want: 60,
@@ -41,12 +41,12 @@ function main(): i32 {
 		{
 			name: "fold sum",
 			src: `function fold_arr[T, A](xs: T[], init: A, f: (A, T) => A): A {
-    var acc: A = init;
+    let acc: A = init;
     for x in xs { acc = f(acc, x); }
     return acc;
 }
 function main(): i32 {
-    var xs: i32[] = [4, 5, 6];
+    let xs: i32[] = [4, 5, 6];
     return fold_arr(xs, 0, (a: i32, n: i32): i32 => { return a + n; });
 }`,
 			want: 15,
@@ -56,13 +56,13 @@ function main(): i32 {
 			// the lambda (#10499).
 			name: "fold seeded with an empty array",
 			src: `function fold_arr[T, A](xs: T[], init: A, f: (A, T) => A): A {
-    var acc: A = init;
+    let acc: A = init;
     for x in xs { acc = f(acc, x); }
     return acc;
 }
 function main(): i32 {
-    var xs: i32[] = [4, 5, 6];
-    var ys: i32[] = fold_arr(xs, [], (a: i32[], n: i32): i32[] => { return a.append(n * 2); });
+    let xs: i32[] = [4, 5, 6];
+    let ys: i32[] = fold_arr(xs, [], (a: i32[], n: i32): i32[] => { return a.append(n * 2); });
     return ys.len() * 10 + ys[2];
 }`,
 			want: 42,
@@ -72,7 +72,7 @@ function main(): i32 {
 			// from whichever argument binds T, before or after it.
 			name: "empty array at an element-typed parameter",
 			src: `function zip[T](a: T[], b: T[]): T[] {
-    var out: T[] = a;
+    let out: T[] = a;
     for x in b { out = out.append(x); }
     return out;
 }
@@ -89,15 +89,15 @@ function main(): i32 { return head2([], [7, 8]); }`,
 		{
 			name: "filter then count via len",
 			src: `function filter_arr[T](xs: T[], keep: (T) => boolean): T[] {
-    var out: T[] = [];
+    let out: T[] = [];
     for x in xs {
         if (keep(x)) { out = out.append(x); }
     }
     return out;
 }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4, 5, 6];
-    var evens: i32[] = filter_arr(xs, (n: i32): boolean => { return n % 2 == 0; });
+    let xs: i32[] = [1, 2, 3, 4, 5, 6];
+    let evens: i32[] = filter_arr(xs, (n: i32): boolean => { return n % 2 == 0; });
     return evens.len() * 10 + evens[0] + evens[1] + evens[2];
 }`,
 			want: 42, // 3 evens (2,4,6): 3*10 + 2 + 4 + 6 (kept < 256 for the exit-code path)
@@ -105,18 +105,18 @@ function main(): i32 {
 		{
 			name: "map+fold pipeline",
 			src: `function map_arr[T, U](xs: T[], f: (T) => U): U[] {
-    var out: U[] = [];
+    let out: U[] = [];
     for x in xs { out = out.append(f(x)); }
     return out;
 }
 function fold_arr[T, A](xs: T[], init: A, f: (A, T) => A): A {
-    var acc: A = init;
+    let acc: A = init;
     for x in xs { acc = f(acc, x); }
     return acc;
 }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4];
-    var doubled: i32[] = map_arr(xs, (n: i32): i32 => { return n + n; });
+    let xs: i32[] = [1, 2, 3, 4];
+    let doubled: i32[] = map_arr(xs, (n: i32): i32 => { return n + n; });
     return fold_arr(doubled, 0, (a: i32, n: i32): i32 => { return a + n; });
 }`,
 			want: 20, // (1+2+3+4)*2
@@ -162,9 +162,9 @@ func TestStdArrayCombinators(t *testing.T) {
 			name: "map+filter+fold qualified",
 			src: `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3, 4, 5, 6];
-    var doubled: i32[] = array.map(xs, (n: i32): i32 => { return n * 2; });
-    var evens: i32[] = array.filter(doubled, (n: i32): boolean => { return n % 4 == 0; });
+    let xs: i32[] = [1, 2, 3, 4, 5, 6];
+    let doubled: i32[] = array.map(xs, (n: i32): i32 => { return n * 2; });
+    let evens: i32[] = array.filter(doubled, (n: i32): boolean => { return n % 4 == 0; });
     return array.fold(evens, 0, (a: i32, n: i32): i32 => { return a + n; });
 }`,
 			want: 24, // doubled=[2,4,6,8,10,12]; %4==0 -> [4,8,12]; sum=24
@@ -173,8 +173,8 @@ function main(): i32 {
 			name: "any+all qualified",
 			src: `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [2, 4, 6, 8];
-    var r: i32 = 0;
+    let xs: i32[] = [2, 4, 6, 8];
+    let r: i32 = 0;
     if (array.all(xs, (n: i32): boolean => { return n % 2 == 0; })) { r = r + 10; }
     if (array.any(xs, (n: i32): boolean => { return n == 6; })) { r = r + 5; }
     if (array.any(xs, (n: i32): boolean => { return n == 7; })) { r = r + 1; }
@@ -186,13 +186,13 @@ function main(): i32 {
 			name: "find Option arms qualified",
 			src: `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [5, 10, 15, 20];
-    var hit: i32 = 0;
+    let xs: i32[] = [5, 10, 15, 20];
+    let hit: i32 = 0;
     match (array.find(xs, (n: i32): boolean => { return n > 12; })) {
         Some(v) => { hit = v; },
         None => { hit = 0 - 1; }
     }
-    var miss: i32 = 0;
+    let miss: i32 = 0;
     match (array.find(xs, (n: i32): boolean => { return n > 99; })) {
         Some(v) => { miss = v; },
         None => { miss = 1; }
@@ -205,12 +205,12 @@ function main(): i32 {
 			name: "enumerate tuple-in-array qualified",
 			src: `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [10, 20, 30];
-    var pairs: (i32, i32)[] = array.enumerate(xs);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let xs: i32[] = [10, 20, 30];
+    let pairs: (i32, i32)[] = array.enumerate(xs);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < pairs.len()) {
-        var p: (i32, i32) = pairs[i];
+        let p: (i32, i32) = pairs[i];
         acc = acc + p.0 + p.1;
         i = i + 1;
     }

@@ -24,11 +24,11 @@ owning streams and sockets are closed.
 
 ## Validation
 
-This refresh integrates UDP checkpoint `5fecb0edc`, including main through
-`9b3b60c32`, the TCP byte sink and bounded byte-read storage. The pinned
+This refresh integrates main `da4dd43be`, including the checked text producers,
+TCP and UDP byte sinks, bounded byte-read storage and `let` syntax. The pinned
 Darwin bootstrap reaches identical stage-2 and stage-3 binaries of
-12,081,745 bytes, SHA-256
-`ce6ef52962705af68fae5cf0eafd2187c881fecd1e48eccda264cc92f6dffd3c`.
+12,990,081 bytes, SHA-256
+`aef288ad5137eb49df0c1b10fc316b87a718afc28e24da74c4b1501902cc9ce9`.
 The seed is `stage0-20261001-c891ebc`.
 
 The send-loop fixture extracts the production function and replaces only
@@ -47,20 +47,22 @@ the original query without it. The native run records 499 allocations and
 499 frees, with zero live bytes.
 
 The deadline comparison executes WASI output from this stage-2 compiler
-against a compiler built from parent `5fecb0edc` using the same generator.
+against a compiler built from parent `da4dd43be` using the same generator.
 It checks the silent peer's connection cleanup as well as the result.
 
-The same stage-2 compiler builds the parent compiler to 12,081,729 bytes
-and this candidate to 12,081,745, an increase of 16 bytes. Code grows by
-936 bytes and data by 256, fitting in the existing segments; unwind data
-is unchanged and link-edit data grows by 16 bytes. No size baseline changes.
+The same stage-2 compiler builds the parent compiler to 12,990,065 bytes
+and this candidate to 12,990,081, an increase of 16 bytes. Code grows from
+11,244,868 to 11,245,804 bytes, and data from 950,296 to 950,808 bytes.
+The additional branches, import strings and emitted WAT select readiness
+according to the socket kind. They fit in the existing segments; unwind
+data remains 590,188 bytes. No size baseline changes.
 
-The refreshed Go and primary target suites pass, covering DNS exchange,
-paired queries, NAT64, dial, send faults, TCP connect/stream/listener cases,
-receive deadlines and reactors. The full unit suite and all lint gates pass
-from the immutable source snapshot. The additional SocketCtl/SocketV6 cases
-and WASI socket and poll resource-lifetime, storage and error tests also
-pass on both compilers.
+The refreshed Go and primary target suites, all lint gates and async-fetch
+caller checks pass. The target matrix covers DNS exchange, paired
+queries, NAT64, dial, send faults, TCP connect/stream/listener cases, receive
+deadlines, reactors, SocketCtl/SocketV6 and WASI resource-lifetime tests.
+The full suite will run in CI under the project's early-publication policy;
+it remains a merge gate.
 
 This is the DNS TCP consumer slice for #10948 under epic #5626.
 The UDP byte migration is a separate slice. No whole-component leak claim

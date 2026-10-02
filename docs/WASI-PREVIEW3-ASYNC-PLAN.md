@@ -215,7 +215,7 @@ So the epic is tooling-feasible. The work, smallest-first:
    import additionally needs `waitable-set.*` + the subtask poll), and a
    runtime helper exposing "call this async import and block until ready".
 4. **Fern surface — DECIDED: colorless auto-await.** An `async`-marked
-   import call is implicitly awaited — `var x = dep();` just returns the
+   import call is implicitly awaited — `let x = dep();` just returns the
    value, the compiler inserts the await (no `await` keyword; matches the
    research doc's colorless-concurrency stance). The surface foundation
    is **already in place**: `@import("iface","name") async function
@@ -457,7 +457,7 @@ All three pieces landed:
   `__bytes_to_lang_string` + `cabi_realloc`; `TestScanExternImportsAsyncString`).
 - (c) **e2e**: `TestWasmP3AsyncImportStringFromFern` compiles a real Fern
   `@import async function fetch(): string` + `async function run(): i32 {
-  var s = fetch(); return s.len(); }`, composes it against the proven
+  let s = fetch(); return s.len(); }`, composes it against the proven
   string provider, and runs `run()` under wasmtime's async features → **5**
   (`len "hello"`). The string flows colorlessly across the async lower/lift
   round-trip.
@@ -484,7 +484,7 @@ result (`buildExternAsyncListResultWrapper` — the array sibling of the
 string wrapper: drops the status, copies count*stride bytes past a length
 prefix), and the composer's `NeedsRealloc` lower supplies the bytes.
 `TestWasmP3AsyncImportListFromFern` compiles a real Fern `@import async
-function fetch(): u8[]` + `run() { var xs = fetch(); if (xs.len()==5 &&
+function fetch(): u8[]` + `run() { let xs = fetch(); if (xs.len()==5 &&
 xs[0]==104 && xs[4]==111) return 42; }`, composes it against the list
 provider, and runs `run()` → **42** — the array flows colorlessly with the
 right length AND element values.
@@ -534,7 +534,7 @@ caller's, no realloc on the consumer side); the provider lifts a defined
 the callee's memory). `buildExternAsyncArrayParamWrapper` is the array sibling of
 `buildExternAsyncStringParamWrapper` (no `__fern_str_*` helpers).
 `TestWasmP3AsyncImportListParamFromFern` compiles a real Fern `@import async
-function recv(xs: u8[]): i32` + `run() { var xs: u8[] = [104,…,111]; return
+function recv(xs: u8[]): i32` + `run() { let xs: u8[] = [104,…,111]; return
 recv(xs); }`, composes it against the list-param provider (reusing the
 string-param core, which task-returns the length), and runs `run()` → **5**.
 `TestWasmP3AsyncListParamExportProvider` runtime-verifies the provider half. So a
@@ -567,7 +567,7 @@ result bytes in the consumer's memory — `NeedsRealloc`). The provider side add
 `component.BuildAsyncLiftedExportComponentStringParamStringResult`, which unions
 the `[memory, realloc]` param lift with the gMem-trampolined string `task.return`
 result. `TestWasmP3AsyncImportStringParamStringResultFromFern` compiles a real
-Fern `@import async function echo(s: string): string` + `run() { var r =
+Fern `@import async function echo(s: string): string` + `run() { let r =
 echo("hello"); return r.len(); }`, composes it against the echo provider, and
 runs `run()` → **5**. So a mem param and a composite result now flow together
 across an awaited import.
@@ -583,7 +583,7 @@ are already rejected by the shared param-validation loop) and emits the full
 canonical flattening (`canonicalExternParamValtypes`). The provider side adds
 `component.BuildAsyncLiftedExportComponentTupleParam` (a defined `tuple`/record
 param type, plain async lift). `TestWasmP3AsyncImportTupleParamFromFern` compiles
-a real Fern `@import async function add(p: (i32, i32)): i32` + `run() { var p =
+a real Fern `@import async function add(p: (i32, i32)): i32` + `run() { let p =
 (10, 32); return add(p); }` → **42** (the tuple flattens to `(x, y)`).
 
 **Still remaining:** a composite (record/tuple/option) RESULT from an async

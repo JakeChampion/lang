@@ -19,7 +19,7 @@ function main(): i32 {
     if ((35 as i64).to_string_radix(36) != "z") { return 5; }          // base 36
     if ((4294967296 as i64).to_string_radix(16) != "100000000") { return 6; } // 2^32
     if ((9223372036854775807 as i64).to_string_radix(16) != "7fffffffffffffff") { return 7; } // i64::MAX
-    var mn: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
+    let mn: i64 = (0 as i64) - (9223372036854775807 as i64) - (1 as i64);
     if (mn.to_string_radix(16) != "-8000000000000000") { return 8; }   // i64::MIN
     if ((5 as i64).to_string_radix(1) != "") { return 9; }             // base too small
     if ((5 as i64).to_string_radix(37) != "") { return 10; }           // base too large

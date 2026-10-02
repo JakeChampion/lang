@@ -24,19 +24,19 @@ var f64RecvIRCases = []struct {
 }{
 	// Receiver in f64 arithmetic: 3.5 + 3.5 = 7.
 	{"arith", `function (x: f64) dbl(): f64 { return x + x; }
-function main(): i32 { var a: f64 = 3.5; return a.dbl() as i32; }`},
+function main(): i32 { let a: f64 = 3.5; return a.dbl() as i32; }`},
 	// Identity receiver: the value flows straight back out as f64.
 	{"id", `function (x: f64) id(): f64 { return x; }
-function main(): i32 { var a: f64 = 5.5; return a.id() as i32; }`},
+function main(): i32 { let a: f64 = 5.5; return a.id() as i32; }`},
 	// Division in the method body: 9.0 / 2.0 = 4.5 -> 4.
 	{"div", `function (x: f64) half(): f64 { return x / 2.0; }
-function main(): i32 { var a: f64 = 9.0; return a.half() as i32; }`},
+function main(): i32 { let a: f64 = 9.0; return a.half() as i32; }`},
 	// Method result feeding further f64 arithmetic: (4+1) + 2 = 7.
 	{"chain", `function (x: f64) inc(): f64 { return x + 1.0; }
-function main(): i32 { var a: f64 = 4.0; var r: f64 = a.inc() + 2.0; return r as i32; }`},
+function main(): i32 { let a: f64 = 4.0; let r: f64 = a.inc() + 2.0; return r as i32; }`},
 	// Method body calls an f64 math intrinsic: sqrt(16) = 4.
 	{"intrinsic", `function (x: f64) sq(): f64 { return __sqrt_f64(x); }
-function main(): i32 { var a: f64 = 16.0; return a.sq() as i32; }`},
+function main(): i32 { let a: f64 = 16.0; return a.sq() as i32; }`},
 }
 
 // TestSelfHostF64RecvIR compiles each case with the self-host CLI for

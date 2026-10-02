@@ -307,6 +307,56 @@ func TestRunnerUrlExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/deflate_test.fern` covers std/deflate against streams
+// Python's zlib produced: the three block types, a 60 KB corpus with
+// matches reaching the whole window back, every optional gzip header
+// field, two members, a zlib stream, and the refusals.
+func TestRunnerDeflateExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/deflate_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/deflate", "# pass 14", "# fail 0", "1..14"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/net_test.fern` covers std/net's `is_global`, the
+// predicate behind std/fetch's block list.
+func TestRunnerNetExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/net_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/net", "# pass 10", "# fail 0", "1..10"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/fetch_proxy_test.fern` covers std/fetch's proxy
+// selection: which variables are read and every `no_proxy` form.
+func TestRunnerFetchProxyExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/fetch_proxy_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/fetch proxies", "# pass 16", "# fail 0", "1..16"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/csv_test.fern` covers std/csv's RFC 4180 single-line
 // surface — csv_escape (quote-wrap on comma / quote / newline, interior
 // quotes doubled), csv_join (escape then comma-join) and csv_parse_line
@@ -1448,7 +1498,7 @@ function test_failing(): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("failure-shape");
+    let r: test.TestRunner = test.test_new("failure-shape");
     r = r.it("passing", () => test_passing());
     r = r.it("failing", () => test_failing());
     return r.finish();
@@ -1530,7 +1580,7 @@ function passing(): test.TestOutcome { return test.assert_eq(1, 1); }
 func TestRunnerDroppedItResultStillFailsSuite(t *testing.T) {
 	runDroppedHandleCase(t, droppedHandlePreamble+`
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("dropped-it");
+    let r: test.TestRunner = test.test_new("dropped-it");
     r = r.it("kept", passing);
     r.it("dropped result", failing);
     return r.finish();
@@ -1552,9 +1602,9 @@ function main(): i32 {
 func TestRunnerUnusedSubsuiteHandleStillFailsSuite(t *testing.T) {
 	runDroppedHandleCase(t, droppedHandlePreamble+`
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("unused-subsuite");
+    let r: test.TestRunner = test.test_new("unused-subsuite");
     r = r.it("kept", passing);
-    var sub: test.TestRunner = r.subsuite("child");
+    let sub: test.TestRunner = r.subsuite("child");
     sub = sub.it("child fails", failing);
     return r.finish();
 }
@@ -1577,9 +1627,9 @@ function main(): i32 {
 func TestRunnerDroppedItAndUnusedSubsuiteTogether(t *testing.T) {
 	runDroppedHandleCase(t, droppedHandlePreamble+`
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("s");
+    let r: test.TestRunner = test.test_new("s");
     r.it("dropped result", failing);
-    var sub: test.TestRunner = r.subsuite("child");
+    let sub: test.TestRunner = r.subsuite("child");
     sub = sub.it("child fails", failing);
     return r.finish();
 }
@@ -1707,7 +1757,7 @@ function detect_bad(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("fuzz-failure");
+    let r: test.TestRunner = test.test_new("fuzz-failure");
     r = r.fuzz("detect", ["good".bytes(), "BAD seed".bytes(), "another".bytes()], 5, detect_bad);
     return r.finish();
 }
@@ -1853,7 +1903,7 @@ func TestRunnerDeferCleanupRunsAtFinish(t *testing.T) {
 import "std/test";
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("cleanup");
+    let r: test.TestRunner = test.test_new("cleanup");
     match (temp_dir("fern-cleanup-probe")) {
         Ok(dir) => {
             print("# tempdir: " + dir);
@@ -2115,7 +2165,7 @@ function detect_bad(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("shrink-failure");
+    let r: test.TestRunner = test.test_new("shrink-failure");
     r = r.fuzz_shrink("detect",
                       ["lots of padding here BAD lots more padding".bytes()],
                       5, detect_bad);
@@ -4506,7 +4556,7 @@ func TestRunnerEmptySuiteIsValidTAP(t *testing.T) {
 import "std/test";
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("empty");
+    let r: test.TestRunner = test.test_new("empty");
     return r.finish();
 }
 `)
@@ -4557,9 +4607,9 @@ import "std/test";
 function failing(): test.TestOutcome { return test.assert_eq(1, 2); }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("discarded");
+    let r: test.TestRunner = test.test_new("discarded");
     r.it("dropped result", failing);
-    var sub: test.TestRunner = r.subsuite("child");
+    let sub: test.TestRunner = r.subsuite("child");
     sub = sub.it("child fails", failing);
     return r.finish();
 }
@@ -4606,9 +4656,9 @@ import "std/test";
 function passing(): test.TestOutcome { return test.assert_eq(1, 1); }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("clean");
+    let r: test.TestRunner = test.test_new("clean");
     r = r.it("first", passing);
-    var sub: test.TestRunner = r.subsuite("child");
+    let sub: test.TestRunner = r.subsuite("child");
     sub = sub.it("nested", passing);
     r = r.merge(sub);
     r = r.it("last", passing);

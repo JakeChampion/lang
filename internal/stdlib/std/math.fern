@@ -43,14 +43,14 @@ pub function random_int(lo: i32, hi: i32): i32 {
   if (hi <= lo) {
     return lo;
   }
-  var range: u32 = (hi - lo) as u32;
+  let range: u32 = (hi - lo) as u32;
   return lo + __random_below(range) as i32;
 }
 
 // __random_u32 draws a full 32-bit value from the platform CSPRNG
 // (kernel getrandom on natives, wasi_random on wasm).
 function __random_u32(): u32 {
-  var b: u8[] = random_bytes(4);
+  let b: u8[] = random_bytes(4);
   return b[0] as u32 << 24 as u32
     | b[1] as u32 << 16 as u32
     | b[2] as u32 << 8 as u32
@@ -80,13 +80,13 @@ function __random_u32(): u32 {
 // `1 - (2^32 mod range)/2^32 > 1/2`, so the loop ends with
 // probability 1 and takes under two iterations on average.
 function __random_below(range: u32): u32 {
-  var wide: u64 = range as u64;
-  var mask: u64 = (1 as u64 << 32 as u64) - 1 as u64;
-  var product: u64 = __random_u32() as u64 * wide;
-  var low: u64 = product & mask;
+  let wide: u64 = range as u64;
+  let mask: u64 = (1 as u64 << 32 as u64) - 1 as u64;
+  let product: u64 = __random_u32() as u64 * wide;
+  let low: u64 = product & mask;
   if (low < wide) {
     // 2^32 mod range — the size of the surplus zone to reject.
-    var threshold: u64 = ((1 as u64 << 32 as u64) - wide) % wide;
+    let threshold: u64 = ((1 as u64 << 32 as u64) - wide) % wide;
     while (low < threshold) {
       product = __random_u32() as u64 * wide;
       low = product & mask;
@@ -98,8 +98,8 @@ function __random_below(range: u32): u32 {
 // `range(start, end)` — i32[] of [start, end). Empty if
 // start >= end. Standard half-open range.
 pub function range(start: i32, end: i32): i32[] {
-  var out: i32[] = [];
-  var i: i32 = start;
+  let out: i32[] = [];
+  let i: i32 = start;
   while (i < end) {
     out = out.append(i);
     i = i + 1;
@@ -111,11 +111,11 @@ pub function range(start: i32, end: i32): i32[] {
 // arbitrary positive step. Step <= 0 returns empty (no
 // reverse ranges — use a manual while loop for that).
 pub function range_step(start: i32, end: i32, step: i32): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   if (step <= 0) {
     return out;
   }
-  var i: i32 = start;
+  let i: i32 = start;
   while (i < end) {
     out = out.append(i);
     i = i + step;
@@ -218,16 +218,16 @@ function __hex_digit(b: i32): i32 {
 // and both the 6-digit form (`#rrggbb`) and 3-digit shorthand (`#rgb`,
 // each nibble doubled so `#f80` == `#ff8800`). Hex is case-insensitive.
 pub function parse_rgb_hex(s: string): Option[i32] {
-  var start: i32 = 0;
+  let start: i32 = 0;
   if (s.len() > 0 && s[0] == 35) {  // optional '#'
     start = 1;
   }
-  var body: i32 = s.len() - start;
+  let body: i32 = s.len() - start;
   if (body == 6) {
-    var v: i32 = 0;
-    var i: i32 = 0;
+    let v: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-      var d: i32 = __hex_digit(s[start + i] as i32);
+      let d: i32 = __hex_digit(s[start + i] as i32);
       if (d < 0) {
         return None;
       }
@@ -237,9 +237,9 @@ pub function parse_rgb_hex(s: string): Option[i32] {
     return Some(v);
   }
   if (body == 3) {
-    var r: i32 = __hex_digit(s[start] as i32);
-    var g: i32 = __hex_digit(s[start + 1] as i32);
-    var b: i32 = __hex_digit(s[start + 2] as i32);
+    let r: i32 = __hex_digit(s[start] as i32);
+    let g: i32 = __hex_digit(s[start + 1] as i32);
+    let b: i32 = __hex_digit(s[start + 2] as i32);
     if (r < 0 || g < 0 || b < 0) {
       return None;
     }
@@ -255,9 +255,9 @@ pub function parse_rgb_hex(s: string): Option[i32] {
 // every backend. The standard cheap "how bright does this look?"
 // measure — brighter greens read lighter than equally-valued blues.
 pub function rgb_luminance(rgb: i32): i32 {
-  var r: i32 = rgb >> 16 & 255;
-  var g: i32 = rgb >> 8 & 255;
-  var b: i32 = rgb & 255;
+  let r: i32 = rgb >> 16 & 255;
+  let g: i32 = rgb >> 8 & 255;
+  let b: i32 = rgb & 255;
   return (r * 299 + g * 587 + b * 114) / 1000;
 }
 

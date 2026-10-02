@@ -17,8 +17,8 @@ import (
 // point. Returns 0 on the expected length so a miscompile shows as a non-zero
 // exit rather than a silently wrong allocation count.
 const strSelfAppendLoopSrc = `function main(): i32 {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < 2000) {
         s = s + "ab";
         i = i + 1;
@@ -76,8 +76,8 @@ func TestX86_64StrSelfAppendAllocsBounded(t *testing.T) {
 //   - appending the empty string (a zero-byte copy that must not disturb the
 //     length or the class test).
 const strSelfAppendCorrectnessSrc = `function build(n: i32, piece: string): string {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < n) {
         s = s + piece;
         i = i + 1;
@@ -89,16 +89,16 @@ function main(): i32 {
     print(build(5, "ab"));
     print(build(40, "xyz"));
     print("[" + build(3, "") + "]");
-    var d: string = "";
-    var i: i32 = 0;
+    let d: string = "";
+    let i: i32 = 0;
     while (i < 6) {
-        var alias: string = d;
+        let alias: string = d;
         d = d + "q";
         print(alias + "|" + d);
         i = i + 1;
     }
-    var e: string = "ab";
-    var k: i32 = 0;
+    let e: string = "ab";
+    let k: i32 = 0;
     while (k < 5) {
         e = e + e;
         k = k + 1;
@@ -181,8 +181,8 @@ func TestArm64StrSelfAppendCorrect(t *testing.T) {
 // leftmost appends into its own slack, and each join above grows the buffer the
 // one below returned.
 const strConcatChainSrc = `function main(): i32 {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < 500) {
         out = out + "a" + "bb" + "ccc";
         i = i + 1;
@@ -234,22 +234,22 @@ const strConcatChainCorrectnessSrc = `function join3(a: string, b: string, c: st
 function main(): i32 {
     print(join3("aa", "bb", "cc"));
     print("<" + "x" + "|" + "yy" + ">");
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < 8) {
         out = out + "[" + "*" + "]";
         i = i + 1;
     }
     print(out);
-    var d: string = "";
-    var k: i32 = 0;
+    let d: string = "";
+    let k: i32 = 0;
     while (k < 5) {
-        var alias: string = d;
+        let alias: string = d;
         d = d + "q" + "r";
         print(alias + "/" + d);
         k = k + 1;
     }
-    var s: string = "abcdefghij";
+    let s: string = "abcdefghij";
     print(slice_unchecked(s, 0, 3) + slice_unchecked(s, 3, 6) + slice_unchecked(s, 6, 9) + "!");
     return 0;
 }`
@@ -298,16 +298,16 @@ func TestX86_64StrConcatChainCorrect(t *testing.T) {
 // wrong offset or a length prefix restamped wrong is visible where a uniform
 // fill would not be.
 const strAppendClassBoundarySrc = `function main(): i32 {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (i < 2100) {
         s = s + "ab";
         i = i + 1;
     }
     if (s.len() != 4200) { return 1; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 4200) {
-        var want: i32 = 97;
+        let want: i32 = 97;
         if (j % 2 == 1) { want = 98; }
         if ((s[j] as i32) != want) { return 2; }
         j = j + 1;
@@ -400,8 +400,8 @@ func TestWASMStrAppendClassBoundary(t *testing.T) {
 // Doubling per iteration makes a fused compile visible rather than subtle:
 // each step must be `prev + "-" + prev`.
 const strChainAliasSrc = `function main(): i32 {
-    var out: string = "ab";
-    var i: i32 = 0;
+    let out: string = "ab";
+    let i: i32 = 0;
     while (i < 5) {
         out = out + "-" + out;
         i = i + 1;

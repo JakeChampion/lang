@@ -22,10 +22,10 @@ var stdlibFuncCases = []struct {
 }{
 	// std/string method `.to_upper()` (receiver method on string).
 	{"str-to-upper", `import "std/string";
-function main(): i32 { var s = "hello"; if (s.to_upper() == "HELLO") { return 42; } return 0; }`},
+function main(): i32 { let s = "hello"; if (s.to_upper() == "HELLO") { return 42; } return 0; }`},
 	// several std/string methods in one program: to_lower / starts_with / len.
 	{"str-methods", `import "std/string";
-function main(): i32 { var s = "Hello, World"; var n = 0; if (s.to_lower() == "hello, world") { n = n + 1; } if (s.starts_with("Hello")) { n = n + 1; } if (s.len() == 12) { n = n + 1; } return n * 14; }`},
+function main(): i32 { let s = "Hello, World"; let n = 0; if (s.to_lower() == "hello, world") { n = n + 1; } if (s.starts_with("Hello")) { n = n + 1; } if (s.len() == 12) { n = n + 1; } return n * 14; }`},
 	// core/int's qualified module-free function parse_int_radix (decimal).
 	{"int-parse-dec", `import "core/int";
 function main(): i32 { match (int.parse_int_radix("42", 10)) { Some(n) => { return n; }, None => { return 0; } } }`},

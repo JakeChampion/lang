@@ -45,13 +45,13 @@ func tcpClientIRProgram(port int) string {
 	// 127.0.0.1 in network byte order = 127 | (1 << 24) = 16777343.
 	const host = 127 | (1 << 24)
 	return fmt.Sprintf(`function main(): i32 {
-    var host: i32 = %d;
-    var c: i32 = tcp_connect(host, %d);
+    let host: i32 = %d;
+    let c: i32 = tcp_connect(host, %d);
     if (c < 0) { return 100; }
     if (tcp_pollable(c) != c) { tcp_close(c); return 102; }
-    var req: string = "ping";
+    let req: string = "ping";
     if (tcp_send(c, req) < 0) { tcp_close(c); return 101; }
-    var resp: u8[] = tcp_recv(c, 64);
+    let resp: u8[] = tcp_recv(c, 64);
     tcp_close(c);
     return resp.len();
 }`, host, port)

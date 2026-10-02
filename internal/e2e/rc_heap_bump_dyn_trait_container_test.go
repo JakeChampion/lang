@@ -41,11 +41,11 @@ struct Rect   { label: string }
 impl Shape for Circle { function area(self: Self): i32 { return 1; } }
 impl Shape for Rect   { function area(self: Self): i32 { return 2; } }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var shapes: dyn Shape[] = [
+        let shapes: dyn Shape[] = [
             Circle { tag: "a heap string owned by a circle behind dyn" },
             Rect   { label: "another heap string owned by a rect behind dyn" }
         ];
@@ -69,10 +69,10 @@ struct Rect   { label: string }
 impl Shape for Circle { function area(self: Self): i32 { return 1; } }
 impl Shape for Rect   { function area(self: Self): i32 { return 2; } }
 function main(): i32 {
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var shapes: dyn Shape[] = [
+        let shapes: dyn Shape[] = [
             Circle { tag: "a heap string owned by a circle behind dyn" },
             Rect   { label: "another heap string owned by a rect behind dyn" }
         ];
@@ -139,11 +139,11 @@ impl B for Both  { function b1(self: Self): i32 { return 2; } function b2(self: 
 impl A for Other { function a1(self: Self): i32 { return 4; } }
 impl B for Other { function b1(self: Self): i32 { return 5; } function b2(self: Self): i32 { return 6; } }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var xs: dyn A + B[] = [
+        let xs: dyn A + B[] = [
             Both  { tag: "a string owned by Both behind a multi-trait dyn" },
             Other { name: "a string owned by Other behind a multi-trait dyn" }
         ];
@@ -237,20 +237,20 @@ impl Shape for Rect   { function area(self: Self): i32 { return self.label.len()
 function measure(s: dyn Shape): i32 { return s.area(); }
 function keep(s: dyn Shape): dyn Shape { return s; }
 function build(i: i32): i32 {
-    var shapes: dyn Shape[] = [
+    let shapes: dyn Shape[] = [
         Circle { tag: "circle " + (i % 10).to_string() },
         Rect   { label: "rect " + (i % 10).to_string() }
     ];
-    var t: i32 = 0;
+    let t: i32 = 0;
     for s in shapes { t = t + measure(s); }
-    var k = keep(shapes[0]);
-    var second: dyn Shape = shapes[1];
+    let k = keep(shapes[0]);
+    let second: dyn Shape = shapes[1];
     return t + k.area() + second.area();
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
         sum = sum + build(i);
         i = i + 1;

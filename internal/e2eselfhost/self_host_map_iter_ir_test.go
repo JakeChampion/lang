@@ -35,13 +35,13 @@ func TestSelfHostMapIterIRX86_64(t *testing.T) {
 		prog string
 		want int
 	}{
-		{"keys-string", `function f(): i32 { var m: Map[string, i32] = map_new(0); m = m.insert("a", 7); m = m.insert("b", 8); var s: i32 = 0; for k in m.keys() { s = s + m.get_or(k, 0); } return s; }
+		{"keys-string", `function f(): i32 { let m: Map[string, i32] = map_new(0); m = m.insert("a", 7); m = m.insert("b", 8); let s: i32 = 0; for k in m.keys() { s = s + m.get_or(k, 0); } return s; }
 function main(): i32 { return f(); }`, 15},
-		{"values-i32", `function f(): i32 { var m: Map[string, i32] = map_new(0); m = m.insert("a", 7); m = m.insert("b", 8); var s: i32 = 0; for v in m.values() { s = s + v; } return s; }
+		{"values-i32", `function f(): i32 { let m: Map[string, i32] = map_new(0); m = m.insert("a", 7); m = m.insert("b", 8); let s: i32 = 0; for v in m.values() { s = s + v; } return s; }
 function main(): i32 { return f(); }`, 15},
-		{"keys-i32", `function f(): i32 { var m: Map[i32, i32] = __map_new_i32(0); m = m.insert(3, 10); m = m.insert(4, 20); var s: i32 = 0; for k in m.keys() { s = s + k; } return s; }
+		{"keys-i32", `function f(): i32 { let m: Map[i32, i32] = __map_new_i32(0); m = m.insert(3, 10); m = m.insert(4, 20); let s: i32 = 0; for k in m.keys() { s = s + k; } return s; }
 function main(): i32 { return f(); }`, 7},
-		{"keys-continue", `function f(): i32 { var m: Map[i32, i32] = __map_new_i32(0); m = m.insert(1, 0); m = m.insert(2, 0); m = m.insert(3, 0); var s: i32 = 0; for k in m.keys() { if (k % 2 == 0) { continue; } s = s + k; } return s; }
+		{"keys-continue", `function f(): i32 { let m: Map[i32, i32] = __map_new_i32(0); m = m.insert(1, 0); m = m.insert(2, 0); m = m.insert(3, 0); let s: i32 = 0; for k in m.keys() { if (k % 2 == 0) { continue; } s = s + k; } return s; }
 function main(): i32 { return f(); }`, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

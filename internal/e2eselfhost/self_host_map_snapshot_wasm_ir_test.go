@@ -36,17 +36,17 @@ func TestSelfHostMapKeysSnapshotWasmIR(t *testing.T) {
 		// #4353): keys()/values() taken before later inserts/overwrites show
 		// the pre-insert state, including across a rehash-triggering growth.
 		{"map-keys-snapshot-semantics-wasm", `function main(): i32 {
-    var m: Map[i32, i32] = Map { 1: 10, 2: 20 };
-    var ks = m.keys();
-    var vs: i32[] = m.values();
+    let m: Map[i32, i32] = Map { 1: 10, 2: 20 };
+    let ks = m.keys();
+    let vs: i32[] = m.values();
     m = m.insert(9, 90);
     m = m.insert(10, 100);
     m = m.insert(11, 110);
     m = m.insert(1, 11);
     if (ks.len() != 2) { return 10; }
     if (vs.len() != 2) { return 11; }
-    var sv: i32 = 0;
-    var i: i32 = 0;
+    let sv: i32 = 0;
+    let i: i32 = 0;
     while (i < vs.len()) { sv = sv + vs[i]; i = i + 1; }
     if (sv != 30) { return 12; }
     if (m.len() != 5) { return 13; }
@@ -58,8 +58,8 @@ func TestSelfHostMapKeysSnapshotWasmIR(t *testing.T) {
 		// MUTATION DURING `for (k, v) in m`: iterates the entry-time snapshot
 		// (wasm's historical semantics, now shared by the register backends).
 		{"map-kv-iter-mutate-snapshot-wasm", `function main(): i32 {
-    var m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
-    var total: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
+    let total: i32 = 0;
     for (k, v) in m {
         total = total + k + v;
         m = m.insert(k + 100, v);
@@ -75,26 +75,26 @@ func TestSelfHostMapKeysSnapshotWasmIR(t *testing.T) {
 		// the loop (they used to leak per loop on wasm), so the iterating
 		// build must not grow measurably faster than the plain one.
 		{"map-kv-iter-churn-flat-wasm", `function build_it(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2, 3: 4, 5: 6 };
-    var t: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: 2, 3: 4, 5: 6 };
+    let t: i32 = 0;
     for (k, v) in m { t = t + k + v; }
     return t;
 }
 function build_plain(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2, 3: 4, 5: 6 };
+    let m: Map[i32, i32] = Map { 1: 2, 3: 4, 5: 6 };
     return m.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { acc = acc + build_it(i) + build_plain(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 500) { acc = acc + build_it(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
-    var k: i32 = 0;
+    let s2: i32 = (__heap_bump_bytes() as i32);
+    let k: i32 = 0;
     while (k < 500) { acc = acc + build_plain(k); k = k + 1; }
-    var k2: i32 = (__heap_bump_bytes() as i32);
+    let k2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
     if (acc < 0) { return 97; }
@@ -104,27 +104,27 @@ function main(): i32 {
 		// pins that the owncols width bit changes nothing here (differential
 		// against a non-growing build of the same shape).
 		{"map-i32-grow-churn-wasm", `function build_grow(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2 };
-    var j: i32 = 0;
+    let m: Map[i32, i32] = Map { 1: 2 };
+    let j: i32 = 0;
     while (j < 12) { m = m.insert(j + 10, j * 2); j = j + 1; }
     if (m.has(15)) { return m.len(); }
     return 0;
 }
 function build_small(n: i32): i32 {
-    var m: Map[i32, i32] = Map { 1: 2 };
+    let m: Map[i32, i32] = Map { 1: 2 };
     return m.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { acc = acc + build_grow(i) + build_small(i); i = i + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 500) { acc = acc + build_grow(j); j = j + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
-    var k: i32 = 0;
+    let s2: i32 = (__heap_bump_bytes() as i32);
+    let k: i32 = 0;
     while (k < 500) { acc = acc + build_small(k); k = k + 1; }
-    var k2: i32 = (__heap_bump_bytes() as i32);
+    let k2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 8192) { return 1; }
     if (acc < 0) { return 97; }
@@ -138,26 +138,26 @@ function main(): i32 {
 		// and __rc_underflow_count()==0 proves the deep release never over-frees a
 		// map-owned key. The keys must still all be seen (correctness).
 		{"map-string-keys-iter-churn-flat-wasm", `function build_iter(n: i32): i32 {
-    var m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
-    var seen: i32 = 0;
+    let m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
+    let seen: i32 = 0;
     for k in m.keys() { seen = seen + k.len(); }
     return seen;
 }
 function build_noiter(n: i32): i32 {
-    var m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
+    let m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
     return m.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { acc = acc + build_iter(i) + build_noiter(i); i = i + 1; }
-    var s0: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s0: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 500) { acc = acc + build_iter(j); j = j + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var k: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let k: i32 = 0;
     while (k < 500) { acc = acc + build_noiter(k); k = k + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s1 - s0) > (s2 - s1) + 8192) { return 1; }
     if (acc < 0) { return 97; }
@@ -167,26 +167,26 @@ function main(): i32 {
 		// snapshots+retains and deep-releases too. Same flatness + underflow
 		// contract; the values must be seen (each is length 2).
 		{"map-string-values-iter-churn-flat-wasm", `function build_iter(n: i32): i32 {
-    var m: Map[i32, string] = Map { 1: "a" + "a", 2: "b" + "b" };
-    var seen: i32 = 0;
+    let m: Map[i32, string] = Map { 1: "a" + "a", 2: "b" + "b" };
+    let seen: i32 = 0;
     for (k, v) in m { seen = seen + v.len(); }
     return seen;
 }
 function build_noiter(n: i32): i32 {
-    var m: Map[i32, string] = Map { 1: "a" + "a", 2: "b" + "b" };
+    let m: Map[i32, string] = Map { 1: "a" + "a", 2: "b" + "b" };
     return m.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 50) { acc = acc + build_iter(i) + build_noiter(i); i = i + 1; }
-    var s0: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let s0: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 500) { acc = acc + build_iter(j); j = j + 1; }
-    var s1: i32 = (__heap_bump_bytes() as i32);
-    var k: i32 = 0;
+    let s1: i32 = (__heap_bump_bytes() as i32);
+    let k: i32 = 0;
     while (k < 500) { acc = acc + build_noiter(k); k = k + 1; }
-    var s2: i32 = (__heap_bump_bytes() as i32);
+    let s2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if ((s1 - s0) > (s2 - s1) + 8192) { return 1; }
     if (acc < 0) { return 97; }

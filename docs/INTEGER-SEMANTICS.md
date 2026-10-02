@@ -207,7 +207,7 @@ the `checked_add` / `checked_sub` / `checked_mul` stdlib methods, the way
 
 There is no checked IR opcode. The native compiler desugars `a +? b` in
 the checker (`buildCheckedLowered`, spliced in via `Binary.CheckedLowered`)
-to an `Option`-yielding block-expr — `{ var l = a; var r = b; var s = a
+to an `Option`-yielding block-expr — `{ let l = a; let r = b; let s = a
 <op> b; if (overflowed) { None } else { Some(s) } }` — so the interpreter
 and every codegen backend lower it through the ordinary `Option` / `if` /
 wrapping-arithmetic paths. The self-host compiler, whose IR-subset has no

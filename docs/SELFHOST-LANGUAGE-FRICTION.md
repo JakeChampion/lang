@@ -47,11 +47,11 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **13**, all `astwalk`'s — 10 fold spine, 3 accumulator map spine | pinned |
 | Generic structs | ✅ | **0** — load-bearing: a generic struct in a signature promotes its type param to the monomorphiser, which the per-module emit path does not run (the accumulator spine returns bare tuples for exactly that reason) | pinned |
-| Closures / lambdas | Capturing and escaping lambdas and nested named functions | **118**: 105 nested named functions across 6 modules, plus 13 arrow lambdas across 3 modules; deleting the AST lowering took irlower's lowering visitors with it, and trimming FnSigs one more. Scalar identifier counting adds three visitors that capture the queried name; the checker's value-block return walk (#9828) adds one arrow callback; wasm_ir's gate for the `scale_f64` kernel adds one op predicate; the AST lowering's cell-read desugar (#9320) adds one arrow visitor; the checker's unannotated-lambda exit walk (#9518) adds one arrow callback; irlower's for-loop admission for an array of structs (#10161) adds eight visitors that close over the loop var or the array; its struct alias and parameter-snapshot releases (#10171, #10162) add four that close over the alias or the local; its lent-struct share marking (#10328) adds two that close over the lent local; the parser's type-variable respelling (#9577) adds two arrow visitors that close over a declaration's variables; the checker's instantiation re-check (#10018) adds three that close over a scope; irlower's `own` array alias (#10357) adds one that closes over the name it looks for; its closure-payload arm bindings (#9841) add two that close over the binding; its conditional-leaf credit view (#10570) adds one arrow visitor that closes over the local a conditional yields. | pinned |
-| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,150** in 8 modules — `irlower.fern` and `checker.fern` carry most of them | floor |
+| Closures / lambdas | Capturing and escaping lambdas and nested named functions | **118**: 105 nested named functions across 7 modules, plus 13 arrow lambdas across 3 modules; deleting the AST lowering took irlower's lowering visitors with it, and trimming FnSigs one more. Scalar identifier counting adds three visitors that capture the queried name; the checker's value-block return walk (#9828) adds one arrow callback; wasm_ir's gate for the `scale_f64` kernel adds one op predicate; the AST lowering's cell-read desugar (#9320) added one arrow visitor; the checker's unannotated-lambda exit walk (#9518) adds one arrow callback; the AST lowering's for-loop admission for an array of structs (#10161) added eight visitors that close over the loop var or the array; its struct alias and parameter-snapshot releases (#10171, #10162) added four that close over the alias or the local; its lent-struct share marking (#10328) added two that close over the lent local; the parser's type-variable respelling (#9577) adds two arrow visitors that close over a declaration's variables; the checker's instantiation re-check (#10018) adds three that close over a scope; the AST lowering's `own` array alias (#10357) added one that closes over the name it looks for; its closure-payload arm bindings (#9841) added two that close over the binding; its conditional-leaf credit view (#10570) added one arrow visitor that closes over the local a conditional yields. | pinned |
+| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,983** in 55 modules — `checker.fern`, `fnsigs.fern`, `parser.fern` and `semsource.fern` carry most of them | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 5 modules (`wasm_ir`'s call set, `builtins`' mirror of `JObject`, `printer`'s line-id table for the linear-space diff (#8611), `modloader`'s fact-hash de-duplication set, and `seminline`'s leaf table) | pinned |
-| `astwalk` call sites (walkers on the shared spine) | — | **168** across 13 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, `irlower.fern`'s cap-type, assign-targets, Perceus escape-scanner and env-box-lift families, `treeshake.fern`'s name collector, and `asmcore.fern`'s P001/P002 pre-check (#6993) | floor |
+| `astwalk` call sites (walkers on the shared spine) | — | **266** across 21 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, `lift.fern`'s cap-type and env-box-lift families, `irtables.fern`'s assign-targets family, `fnsigs.fern`'s Perceus escape scanners, `treeshake.fern`'s name collector, and `asmcore.fern`'s P001/P002 pre-check (#6993) | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |
@@ -182,11 +182,11 @@ functions). Nothing else. The consequences:
 
 `fern -check` on two mutually-importing files: `import cycle detected`. Combined
 with one-module-per-file and no package concept, a mutually-recursive compiler
-pass cannot be split at all. `lower_expr` ↔ `lower_stmt` ↔ `lower_call_method`
-↔ `lower_stmt_var` are irreducibly mutually recursive, so they live in one
-60,552-line file, and the functions inside it grow to 1,704 lines because
-splitting *them* out is the only decomposition the language permits and it
-does not reduce the file.
+pass cannot be split at all. The deleted AST lowering's `lower_expr` ↔
+`lower_stmt` ↔ `lower_call_method` ↔ `lower_stmt_var` were irreducibly
+mutually recursive, so they lived in one 60,552-line file, and the functions
+inside it grew to 1,704 lines because splitting *them* out was the only
+decomposition the language permits and it did not reduce the file.
 
 The second cost is the test-staging tax: because there is no package, every Go
 test that compiles a self-host module lists its transitive module set by hand.
@@ -283,7 +283,7 @@ Three things this leaves worth keeping:
   `expected Expr, got Expr`. The first conversion worked around it with a nested
   named function, which resolves and captures identically. #6996 then fixed the
   cause — and the bug turned out to be neither union-specific nor lambda-specific,
-  reaching `var`s in expression position too. Its real cost was the ratchet's:
+  reaching `let`s in expression position too. Its real cost was the ratchet's:
   nothing exercised closures here, so the one genuine bug in the path went
   unfound.
 - **A visitor with no descent control cannot express every walk.**
@@ -377,7 +377,7 @@ What it cost, and none of it was visible from outside:
   the binding declined the lift (`function value n not defined`). Fixing the
   binder set was half of it: `cap_type_in_stmts` also had to type the capture,
   which is the scrutinee's type. `asmcore`'s call gate did not comma-split a
-  tuple destructure, so `var (g, h) = pair(); g(1)` was rejected with
+  tuple destructure, so `let (g, h) = pair(); g(1)` was rejected with
   `error[E001]: call to undefined function 'g'` — a valid program refused.
   `flatten`'s copy never entered a `defer`.
 - **Native had the same binder bug, in the same shape.** `modload.collectLocals`
@@ -422,7 +422,7 @@ test before this slice:
   declaration. `Map.insert` is last-wins, so the build inserts only when absent.
   Two entries can disagree about arity and the call check reads whichever the
   index kept, which is the difference between an arity report and a false one.
-- **The struct-field rebind.** `var m: Map[K, V] = ix.m;` before a map op is
+- **The struct-field rebind.** `let m: Map[K, V] = ix.m;` before a map op is
   load-bearing: dispatch keys off the written `Map` type, which a bare field
   read does not carry. It costs nothing measurable.
 
@@ -536,7 +536,7 @@ different module; the five `irlower` slices took that file from 0 `for..in` to
 **The transferable output is the transformer's three refusal rules, each from a
 bug hit rather than anticipated:**
 
-1. **The index must be initialised to `0`.** A suffix scan (`var j: i32 = i + 1`)
+1. **The index must be initialised to `0`.** A suffix scan (`let j: i32 = i + 1`)
    has the same body shape and the same index usage, and `for x in xs` rescans
    from the front. Two of `wcap_stmt_needs_env_box`'s scans were converted before
    this rule existed. It type-checked and the fixpoint still converged — the
@@ -726,17 +726,17 @@ parse error inside the interpolant land where the reader wrote them.
 The census row it plausibly explains has not moved: the self-host still uses 235
 f-strings against 11,914 string-literal `+` concatenations.
 
-### 4.2 A failed `var` inference deleted the binding, cascading E001 everywhere — fixed (#5317)
+### 4.2 A failed `let` inference deleted the binding, cascading E001 everywhere — fixed (#5317)
 
 ```fern
 function main(): i32 {
-    var b = nosuch();     // E001: undefined identifier "nosuch"   ← correct
+    let b = nosuch();     // E001: undefined identifier "nosuch"   ← correct
     return b;             // E001: undefined identifier "b"        ← spurious
 }
 ```
 
-With `var b: i32 = nosuch();` there was exactly one error: the recovery path for
-an un-annotated `var` dropped the binding instead of poisoning it, so every
+With `let b: i32 = nosuch();` there was exactly one error: the recovery path for
+an un-annotated `let` dropped the binding instead of poisoning it, so every
 later use was a fresh, genuine-looking "undefined identifier". Against 96%
 annotated locals in the self-host, that looks less like a coincidence than a
 habit the compiler taught.
@@ -777,13 +777,13 @@ This one is **not a bug** — it is filed here because the *language* offers no 
 to see it or to say what you meant.
 
 ```fern
-var xs: i32[] = [];
+let xs: i32[] = [];
 while (i < n) { xs = xs.append(i); i = i + 1; }        // 200,000 appends: 4 ms
 ```
 
 ```fern
 while (i < n) {
-    var keep: i32[] = xs;                              // ← the only change
+    let keep: i32[] = xs;                              // ← the only change
     xs = xs.append(i);
     if (keep.len() > n) { return 7; }                  // keep is LIVE here
     i = i + 1;
@@ -865,7 +865,7 @@ Ordered by (unblocking value) ÷ (cost), not by size.
 2. ~~**Character literals** (§3.3)~~ — the syntax is in (#6991), on both
    compilers. What remains is the mechanical pass that converts the 342 magic
    constants and the `as i32` casts they force.
-3. ~~**Poison, don't delete, a failed `var` binding** (§4.2)~~ — done (#5317),
+3. ~~**Poison, don't delete, a failed `let` binding** (§4.2)~~ — done (#5317),
    along with the derive hints (§4.3) and the dead `unknownTypeHint` branches
    (§4.4). The rest of #5317 — suppressing the *type-mismatch* fan-out with a
    tainted-symbols set — is the same size again and still open.
@@ -904,9 +904,9 @@ commit, on `-interp` and `-target x86-64-linux`. Reproductions:
 | Claim | Probe |
 |---|---|
 | §4.1 f-string positions | `print(f"{zzz}\n")` vs `print(zzz)` — both on the interpolant since #6997 |
-| §4.2 cascading E001 | `var b = nosuch(); return b;` — one diagnostic, matching the annotated form |
+| §4.2 cascading E001 | `let b = nosuch(); return b;` — one diagnostic, matching the annotated form |
 | §4.3 derive hint | `@derive(Eq, Hash)` vs `@derive(cmp.Eq, cmp.Hash)` + `import "core/cmp"` |
-| §4.4 dead hints | `var t: str = s[1:3];` and `var b: u8 = 3;` both check clean |
+| §4.4 dead hints | `let t: str = s[1:3];` and `let b: u8 = 3;` both check clean |
 | §4.5 append cliff | the two loops in §4.5 at n = 25k/50k/100k |
 | §2.3 import cycles | two mutually-importing modules → `import cycle detected` |
 | §5 numeric semantics | `-7 % 3`, `-7 / 3`, `2147483647 + 1`, `0 / 0` — identical on both engines |

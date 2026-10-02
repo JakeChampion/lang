@@ -33,18 +33,18 @@ import "std/array";
 enum DnsError { NoReply, Socket(net.NetError) }
 ` + body + `
 function probe(mode: i32): void {
-    var data: u8[] = [0u8, 255u8, 128u8, 65u8, 0u8, 254u8, 253u8, 10u8];
+    let data: u8[] = [0u8, 255u8, 128u8, 65u8, 0u8, 254u8, 253u8, 10u8];
     if (mode == 6) { data = []; }
-    var calls: i32 = 0;
-    var progress: i32 = 0;
-    var closed: i32 = 0;
-    var reset: net.NetError = net.ConnectionReset;
-    var interrupted: net.NetError = net.Interrupted;
-    var connect = (addr: net.SocketAddr): Result[i32, net.NetError] => {
+    let calls: i32 = 0;
+    let progress: i32 = 0;
+    let closed: i32 = 0;
+    let reset: net.NetError = net.ConnectionReset;
+    let interrupted: net.NetError = net.Interrupted;
+    let connect = (addr: net.SocketAddr): Result[i32, net.NetError] => {
         if (mode == 5) { return Err(net.ConnectionRefused); }
         return Ok(9);
     };
-    var send = (fd: i32, remaining: u8[]): i32 => {
+    let send = (fd: i32, remaining: u8[]): i32 => {
         assert(fd == 9 && closed == 0);
         calls = calls + 1;
         assert(calls <= 4);
@@ -53,12 +53,12 @@ function probe(mode: i32): void {
         if (mode == 1 && calls == 1) { return 0 - interrupted.errno(); }
         if (mode == 2 || mode == 3 && calls == 2) { return 0 - reset.errno(); }
         if (mode == 4 && calls == 2) { return 0; }
-        var n: i32 = remaining.len();
+        let n: i32 = remaining.len();
         if (n > 3) { n = 3; }
         progress = progress + n;
         return n;
     };
-    var close = (fd: i32): i32 => { assert(fd == 9); closed = closed + 1; return 0; };
+    let close = (fd: i32): i32 => { assert(fd == 9); closed = closed + 1; return 0; };
     match (send_tcp(net.socket_addr(net.ipv4_loopback(), 53), data, connect, send, close)) {
         Ok(fd) => { assert(mode == 0 || mode == 1 || mode == 6); assert(fd == 9 && progress == data.len()); },
         Err(e) => { match (e) {

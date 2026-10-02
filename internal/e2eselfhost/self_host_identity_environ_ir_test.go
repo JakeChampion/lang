@@ -23,16 +23,16 @@ func selfHostIdentitySource(uid, gid, euid, egid int, groups []int, envCount int
     if (getgid() != (%d as u32)) { return 2; }
     if (geteuid() != (%d as u32)) { return 3; }
     if (getegid() != (%d as u32)) { return 4; }
-    var gs: i64[] = getgroups();
+    let gs: i64[] = getgroups();
     if (gs.len() != %d) { return 5; }
 `, uid, gid, euid, egid, len(groups))
 	for i, g := range groups {
 		fmt.Fprintf(&b, "    if (gs[%d] != (%d as i64)) { return %d; }\n", i, g, 10+i)
 	}
-	fmt.Fprintf(&b, `    var e: string[] = environ();
+	fmt.Fprintf(&b, `    let e: string[] = environ();
     if (e.len() != %d) { return 6; }
-    var seen: i32 = 0;
-    var i: i32 = 0;
+    let seen: i32 = 0;
+    let i: i32 = 0;
     while (i < e.len()) {
         if (e[i] == %q) { seen = seen + 1; }
         i = i + 1;

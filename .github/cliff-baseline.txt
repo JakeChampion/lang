@@ -15,7 +15,7 @@
 # IT IS NOT A CEILING, AND A MOVE UPWARD IS NOT AUTOMATICALLY A REGRESSION.
 # The subject is the self-host compiler compiling checker.fern, so the number
 # scales with the compiler's OWN sources: every feature that adds `ir.Op`s
-# through irlower.LowerState.emit, or names through checker.Scope.bind, adds
+# through the lowering, or names through checker.Scope.bind, adds
 # appends and therefore bytes. Between f350a01 and ce72d61 it rose 12% with no
 # regression in it — 8d3fef0 (`if let` / `let … else` on the shared pattern
 # grammar, #2698) accounts for 5.8% of that on its own, and d61e5d3 (a

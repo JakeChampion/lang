@@ -15,7 +15,7 @@ import "std/string";
 //
 //   `d///` is `d/`, `d/.///` is `d/./`, `///` is `/`, `//` is `//`.
 pub function trim(p: string): string {
-  var n: i32 = p.len();
+  let n: i32 = p.len();
   if (n > 2 && p[n - 1] as i32 == 47) {
     while (n > 1 && p[n - 2] as i32 == 47) {
       n = n - 1;
@@ -51,9 +51,9 @@ pub function is_slash(s: string, i: i32): boolean {
 // components and two ancestors, `a//` has one component and none, and
 // `/` has none at all — which is why `mkdir -p /` succeeds silently.
 pub function last_component_end(dir: string): i32 {
-  var end: i32 = 0 - 1;
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let end: i32 = 0 - 1;
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i <= dir.len()) {
     if (i == dir.len() || is_slash(dir, i)) {
       if (i > start) {
@@ -71,7 +71,7 @@ pub function last_component_end(dir: string): i32 {
 // instead of trying to make them, and an empty component (a doubled
 // slash) is not a name at all.
 pub function is_traversed(dir: string, start: i32, stop: i32): boolean {
-  var n: i32 = stop - start;
+  let n: i32 = stop - start;
   if (n == 0) {
     return true;
   }

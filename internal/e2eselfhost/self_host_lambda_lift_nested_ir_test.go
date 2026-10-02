@@ -25,7 +25,7 @@ var lambdaLiftNestedIRCases = []struct {
 	// IIFE under a unary minus, kept positive: 100 - (5+1) = 94.
 	{"iife-unary", `function main(): i32 { return 100 - ((x: i32): i32 => { return x + 1; })(5); }`},
 	// IIFE as an array index: a[(1+1)] = a[2] = 30.
-	{"iife-index", `function main(): i32 { var a: i32[] = [10, 20, 30]; return a[((x: i32): i32 => { return x + 1; })(1)]; }`},
+	{"iife-index", `function main(): i32 { let a: i32[] = [10, 20, 30]; return a[((x: i32): i32 => { return x + 1; })(1)]; }`},
 	// Lambda call ARGUMENT inside a binary op: ap(\x.x+1)=4, +1 = 5.
 	{"lambda-arg-binary", `function ap(f: (i32) => i32): i32 { return f(3); }
 function main(): i32 { return ap((x: i32): i32 => { return x + 1; }) + 1; }`},

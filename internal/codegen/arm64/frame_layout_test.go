@@ -123,13 +123,13 @@ func TestEveryUnscaledFrameOffsetIsEncodable(t *testing.T) {
 func hotLateLocal(cold int) string {
 	var decls, sum strings.Builder
 	for i := 0; i < cold; i++ {
-		fmt.Fprintf(&decls, "    var c%d: i64 = %d;\n", i, i)
+		fmt.Fprintf(&decls, "    let c%d: i64 = %d;\n", i, i)
 		fmt.Fprintf(&sum, " + c%d", i)
 	}
 	return fmt.Sprintf(`
 function hot(): i64 {
-%s    var acc: i64 = 0;
-    var i: i64 = 0;
+%s    let acc: i64 = 0;
+    let i: i64 = 0;
     while (i < 1000) { acc = acc + i; i = i + 1; }
     return acc%s;
 }

@@ -11,22 +11,22 @@ import "testing"
 const arrayFindIndicesProg = `
 import "std/array";
 function main(): i32 {
-    var xs: i32[] = [10, 7, 4, 3, 8, 5, 2];
-    var evens: i32[] = array.find_indices(xs, (x: i32) => x % 2 == 0);   // 0,2,4,6
+    let xs: i32[] = [10, 7, 4, 3, 8, 5, 2];
+    let evens: i32[] = array.find_indices(xs, (x: i32) => x % 2 == 0);   // 0,2,4,6
     if (evens.len() != 4 || evens[0] != 0 || evens[1] != 2 || evens[2] != 4 || evens[3] != 6) { return 1; }
     // None match.
-    var big: i32[] = array.find_indices(xs, (x: i32) => x > 100);
+    let big: i32[] = array.find_indices(xs, (x: i32) => x > 100);
     if (big.len() != 0) { return 2; }
     // All match.
-    var all: i32[] = array.find_indices(xs, (x: i32) => x >= 0);
+    let all: i32[] = array.find_indices(xs, (x: i32) => x >= 0);
     if (all.len() != 7) { return 3; }
     // Agrees with position on the first hit.
     match (array.position(xs, (x: i32) => x < 5)) {
-        Some(p) => { var idx: i32[] = array.find_indices(xs, (x: i32) => x < 5); if (idx.len() == 0 || idx[0] != p) { return 4; } },
+        Some(p) => { let idx: i32[] = array.find_indices(xs, (x: i32) => x < 5); if (idx.len() == 0 || idx[0] != p) { return 4; } },
         None => { if (array.find_indices(xs, (x: i32) => x < 5).len() != 0) { return 5; } }
     }
     // Empty input.
-    var e: i32[] = [];
+    let e: i32[] = [];
     if (array.find_indices(e, (x: i32) => true).len() != 0) { return 6; }
     return 42;
 }

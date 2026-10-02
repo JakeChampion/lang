@@ -11,13 +11,13 @@ import "testing"
 const stringRsplitProg = `
 import "std/string";
 function main(): i32 {
-    var p: string[] = "a.b.c".rsplit(".");
+    let p: string[] = "a.b.c".rsplit(".");
     if (p.len() != 3 || p[0] != "c" || p[1] != "b" || p[2] != "a") { return 1; }
-    var q: string[] = "hello".rsplit(".");           // no sep -> one piece
+    let q: string[] = "hello".rsplit(".");           // no sep -> one piece
     if (q.len() != 1 || q[0] != "hello") { return 2; }
-    var e: string[] = "".rsplit(",");
+    let e: string[] = "".rsplit(",");
     if (e.len() != 1 || e[0] != "") { return 3; }
-    var m: string[] = "a,,b".rsplit(",");            // ["b","","a"]
+    let m: string[] = "a,,b".rsplit(",");            // ["b","","a"]
     if (m.len() != 3 || m[0] != "b" || m[1] != "" || m[2] != "a") { return 4; }
     return 42;
 }

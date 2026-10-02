@@ -42,12 +42,12 @@ function print_i64(n: i64): i32 {
 `},
 	{"read_int", `
 function read_int(): i32 {
-    var line: string = "";
+    let line: string = "";
     match (read_line()) { Some(s) => { line = s; }, None => { return 0; } }
-    var i: i32 = 0;
-    var neg: boolean = false;
+    let i: i32 = 0;
+    let neg: boolean = false;
     if (line.len() > 0 && line[0] == (45 as u8)) { neg = true; i = 1; }
-    var acc: i32 = 0;
+    let acc: i32 = 0;
     while (i < line.len() && line[i] >= (48 as u8) && line[i] <= (57 as u8)) {
         acc = acc * 10 + ((line[i] - (48 as u8)) as i32);
         i = i + 1;

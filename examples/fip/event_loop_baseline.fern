@@ -62,9 +62,9 @@ struct State {
 }
 
 function new_state(): State {
-  var none: Entry[] = [];
-  var q: Event[] = [];
-  var o: Response[] = [];
+  let none: Entry[] = [];
+  let q: Event[] = [];
+  let o: Response[] = [];
   return State {
     entries: none, queue: q, out: o,
     m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_dropped: 0 as i64,
@@ -83,7 +83,7 @@ function respond(s: State, r: Response): State {
 }
 
 function find_slot(entries: Entry[], id: i64): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < entries.len()) {
     if (entries[i].key == id) {
       return i;
@@ -94,34 +94,34 @@ function find_slot(entries: Entry[], id: i64): i32 {
 }
 
 function apply_create(s: State, id: i64, value: i64): State {
-  var at: i32 = find_slot(s.entries, id);
+  let at: i32 = find_slot(s.entries, id);
   if (at >= 0) {
-    var updated: Entry[] = s.entries.with(at, Entry { key: id, value: value });
+    let updated: Entry[] = s.entries.with(at, Entry { key: id, value: value });
     return respond(State { ...s, entries: updated, m_ok: s.m_ok + 1 as i64 }, Response.Ok);
   }
   if (s.entries.len() >= max_entries()) {
     return respond(State { ...s, m_full: s.m_full + 1 as i64 }, Response.Full);
   }
-  var grown: Entry[] = s.entries.append(Entry { key: id, value: value });
+  let grown: Entry[] = s.entries.append(Entry { key: id, value: value });
   return respond(State { ...s, entries: grown, m_ok: s.m_ok + 1 as i64 }, Response.Ok);
 }
 
 function apply_update(s: State, id: i64, delta: i64): State {
-  var at: i32 = find_slot(s.entries, id);
+  let at: i32 = find_slot(s.entries, id);
   if (at < 0) {
     return respond(State { ...s, m_miss: s.m_miss + 1 as i64 }, Response.Missing);
   }
-  var e: Entry = s.entries[at];
-  var updated: Entry[] = s.entries.with(at, Entry { key: e.key, value: e.value + delta });
+  let e: Entry = s.entries[at];
+  let updated: Entry[] = s.entries.with(at, Entry { key: e.key, value: e.value + delta });
   return respond(State { ...s, entries: updated, m_ok: s.m_ok + 1 as i64 }, Response.Ok);
 }
 
 function apply_read(s: State, id: i64): State {
-  var at: i32 = find_slot(s.entries, id);
+  let at: i32 = find_slot(s.entries, id);
   if (at < 0) {
     return respond(State { ...s, m_miss: s.m_miss + 1 as i64 }, Response.Missing);
   }
-  var e: Entry = s.entries[at];
+  let e: Entry = s.entries[at];
   return respond(State { ...s, m_ok: s.m_ok + 1 as i64 }, Response.Value(e.value));
 }
 
@@ -129,12 +129,12 @@ function apply_read(s: State, id: i64): State {
 // entry is appended to a fresh array. The packed variants mark a slot unused
 // and touch one word.
 function apply_delete(s: State, id: i64): State {
-  var at: i32 = find_slot(s.entries, id);
+  let at: i32 = find_slot(s.entries, id);
   if (at < 0) {
     return respond(State { ...s, m_miss: s.m_miss + 1 as i64 }, Response.Missing);
   }
-  var kept: Entry[] = [];
-  var i: i32 = 0;
+  let kept: Entry[] = [];
+  let i: i32 = 0;
   while (i < s.entries.len()) {
     if (i != at) {
       kept = kept.append(s.entries[i]);
@@ -150,14 +150,14 @@ function iteration(s: State): State {
   if (s.queue.len() == 0) {
     return s;
   }
-  var head: Event = s.queue[0];
-  var rest: Event[] = [];
-  var i: i32 = 1;
+  let head: Event = s.queue[0];
+  let rest: Event[] = [];
+  let i: i32 = 1;
   while (i < s.queue.len()) {
     rest = rest.append(s.queue[i]);
     i = i + 1;
   }
-  var t: State = State { ...s, queue: rest };
+  let t: State = State { ...s, queue: rest };
   match (head) {
     Create(id, value) => {
       return apply_create(t, id, value);
@@ -175,7 +175,7 @@ function iteration(s: State): State {
 }
 
 function drain_output(s: State): State {
-  var empty: Response[] = [];
+  let empty: Response[] = [];
   return State { ...s, out: empty };
 }
 
@@ -189,7 +189,7 @@ function reset_metrics(s: State): State {
 // held and in nothing else.
 
 function event_id(n: i64): i64 {
-  var x: i64 = n * (2654435761 as i64);
+  let x: i64 = n * (2654435761 as i64);
   x = x ^ x >> 15 as i64;
   x = x * (2246822519 as i64);
   x = x ^ x >> 13 as i64;
@@ -200,8 +200,8 @@ function event_id(n: i64): i64 {
 }
 
 function event_of(n: i64): Event {
-  var bucket: i64 = n % (10 as i64);
-  var id: i64 = event_id(n);
+  let bucket: i64 = n % (10 as i64);
+  let id: i64 = event_id(n);
   if (bucket == 0 as i64) {
     return Create(id, n);
   }
@@ -215,8 +215,8 @@ function event_of(n: i64): Event {
 }
 
 function prefill(s: State): State {
-  var t: State = s;
-  var id: i32 = 0;
+  let t: State = s;
+  let id: i32 = 0;
   while (id < max_entries()) {
     t = apply_create(t, id as i64, id as i64 * (10 as i64));
     id = id + 1;
@@ -225,13 +225,13 @@ function prefill(s: State): State {
 }
 
 function round(s: State, seed: i64, batch: i32): State {
-  var t: State = s;
-  var i: i32 = 0;
+  let t: State = s;
+  let i: i32 = 0;
   while (i < batch) {
     t = enqueue(t, event_of(seed + i as i64));
     i = i + 1;
   }
-  var worked: i32 = 0;
+  let worked: i32 = 0;
   while (worked < batch) {
     t = iteration(t);
     worked = worked + 1;
@@ -240,25 +240,25 @@ function round(s: State, seed: i64, batch: i32): State {
 }
 
 function main(): i32 {
-  var s: State = new_state();
+  let s: State = new_state();
   s = prefill(s);
   s = round(s, 1 as i64, queue_cap());
   s = reset_metrics(s);
-  var rounds: i32 = 20000;
+  let rounds: i32 = 20000;
   // Built before the mark: the sample buffer is part of the instrument, not
   // of the steady state being measured.
-  var samples: i64[] = [];
-  var p: i32 = 0;
+  let samples: i64[] = [];
+  let p: i32 = 0;
   while (p < rounds) {
     samples = samples.append(0 as i64);
     p = p + 1;
   }
-  var at_allocs: i64 = bench.alloc_count();
-  var at_fresh: i64 = bench.bump_bytes();
-  var started_ns: i64 = monotonic_ns();
-  var r: i32 = 0;
+  let at_allocs: i64 = bench.alloc_count();
+  let at_fresh: i64 = bench.bump_bytes();
+  let started_ns: i64 = monotonic_ns();
+  let r: i32 = 0;
   while (r < rounds) {
-    var t0: i64 = monotonic_ns();
+    let t0: i64 = monotonic_ns();
     s = round(s, r as i64 * (7 as i64) + 1 as i64, queue_cap());
     // `.with` on a uniquely-owned array writes in place, so recording a
     // sample costs the measured region no allocation. The harness pins
@@ -266,15 +266,15 @@ function main(): i32 {
     samples = samples.with(r, monotonic_ns() - t0);
     r = r + 1;
   }
-  var elapsed_ns: i64 = monotonic_ns() - started_ns;
-  var allocs: i64 = bench.allocs_after(at_allocs);
-  var fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  var events: i64 = rounds as i64 * (queue_cap() as i64);
+  let elapsed_ns: i64 = monotonic_ns() - started_ns;
+  let allocs: i64 = bench.allocs_after(at_allocs);
+  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
+  let events: i64 = rounds as i64 * (queue_cap() as i64);
   // The per-round samples become a bench.Report, so the percentile and
   // throughput arithmetic is the harness's and identical across the three
   // variants. Sorting allocates, which is why it happens down here — after
   // the allocation figures have already been read.
-  var rep: bench.Report = bench.Report {
+  let rep: bench.Report = bench.Report {
     name: "baseline",
     iterations: rounds,
     wall_ns: elapsed_ns,

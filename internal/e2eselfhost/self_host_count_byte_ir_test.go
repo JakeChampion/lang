@@ -35,8 +35,8 @@ import (
 const countByteIRProg = `function ref(s: string, b: i32): i32 {
     if (b < 0) { return 0; }
     if (b > 255) { return 0; }
-    var i: i32 = 0;
-    var c: i32 = 0;
+    let i: i32 = 0;
+    let c: i32 = 0;
     while (i < s.len()) {
         if ((s[i] as i32) == b) { c = c + 1; }
         i = i + 1;
@@ -44,24 +44,24 @@ const countByteIRProg = `function ref(s: string, b: i32): i32 {
     return c;
 }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n <= 72) {
-        var base: string = "";
-        var k: i32 = 0;
+        let base: string = "";
+        let k: i32 = 0;
         while (k < n) { base = base + "a"; k = k + 1; }
         if (__count_byte(base, 122) != ref(base, 122)) { return 1; }
         if (__count_byte(base, 97) != ref(base, 97)) { return 2; }
-        var at: i32 = 0;
+        let at: i32 = 0;
         while (at < n) {
-            var s: string = slice_unchecked(base, 0, at) + "z" + slice_unchecked(base, at + 1, n);
+            let s: string = slice_unchecked(base, 0, at) + "z" + slice_unchecked(base, at + 1, n);
             if (__count_byte(s, 122) != ref(s, 122)) { return 3; }
             if (__count_byte(s, 97) != ref(s, 97)) { return 4; }
             at = at + 1;
         }
         n = n + 1;
     }
-    var alt: string = "";
-    var j: i32 = 0;
+    let alt: string = "";
+    let j: i32 = 0;
     while (j < 100) { alt = alt + "ab"; j = j + 1; }
     if (__count_byte(alt, 97) != 100) { return 5; }
     if (__count_byte(alt, 98) != 100) { return 6; }

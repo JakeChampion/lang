@@ -614,7 +614,7 @@ func TestWasmP3AsyncImportI64ResultFromFern(t *testing.T) {
 
 	src := `@import("test:dep/d", "big") async function big(): u64;
 async function run(): i32 {
-	var x: u64 = big();
+	let x: u64 = big();
 	if (x == 4294967338) { return 42; }
 	return 0;
 }

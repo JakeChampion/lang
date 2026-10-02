@@ -31,21 +31,21 @@ func TestSelfHostArrArrCallRetReclaimWasmIR(t *testing.T) {
     return [["a" + "b"], ["c" + "d", "e" + "f"]];
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var g: string[][] = mk(i);
+        let g: string[][] = mk(i);
         acc = acc + g.len() + g[0][0].len();
         i = i + 1;
     }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 1500) {
-        var g2: string[][] = mk(j);
+        let g2: string[][] = mk(j);
         acc = acc + g2.len() + g2[1][1].len();
         j = j + 1;
     }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -55,11 +55,11 @@ function main(): i32 {
     return [[s], ["c" + "d"]];
 }
 function main(): i32 {
-    var bad: i32 = 0;
-    var i: i32 = 0;
+    let bad: i32 = 0;
+    let i: i32 = 0;
     while (i < 500) {
-        var s1: string = "aa" + "bb";
-        var g: string[][] = mk2(s1);
+        let s1: string = "aa" + "bb";
+        let g: string[][] = mk2(s1);
         if (g[0][0].len() != 4) { bad = 1; }
         if (s1.len() != 4) { bad = 1; }
         i = i + 1;
@@ -69,17 +69,17 @@ function main(): i32 {
     return 0;
 }`, 0},
 		{"arrarr-fnscope-sweep-flat-wasm", `function work(n: i32): i32 {
-    var g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
+    let g: string[][] = [["a" + "b"], ["c" + "d", "e" + "f"]];
     return g.len() + g[0][0].len() + n;
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = acc + work(i); i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 1500) { acc = acc + work(j); j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }

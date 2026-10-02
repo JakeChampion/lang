@@ -17,30 +17,30 @@ const trmcWidenSrc = `enum List { Cons(i32, List), Nil }
 enum Rev { Node(Rev, i32), End }
 
 function build_signed(n: i32): List {
-    var acc: List = Nil;
-    var i: i32 = 0;
-    var s: i32 = 1;
+    let acc: List = Nil;
+    let i: i32 = 0;
+    let s: i32 = 1;
     while (i < n) { acc = Cons(i * s, acc); s = 0 - s; i = i + 1; }
     return acc;
 }
 function sum(l: List): i32 {
-    var acc: i32 = 0;
-    var cur: List = l;
-    var go: boolean = true;
+    let acc: i32 = 0;
+    let cur: List = l;
+    let go: boolean = true;
     while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } }
     return acc;
 }
 function sum_rev(r: Rev): i32 {
-    var acc: i32 = 0;
-    var cur: Rev = r;
-    var go: boolean = true;
+    let acc: i32 = 0;
+    let cur: Rev = r;
+    let go: boolean = true;
     while (go) { match (cur) { Node(nx, v) => { acc = acc + v; cur = nx; }, End => { go = false; } } }
     return acc;
 }
 
 // Setup statements before the match, one of them an early return.
 function take_inc(xs: List, n: i32): List {
-    var lim: i32 = n;
+    let lim: i32 = n;
     if (lim <= 0) { return Nil; }
     match (xs) {
         Cons(h, t) => { return Cons(h + 1, take_inc(t, lim - 1)); },
@@ -51,8 +51,8 @@ function take_inc(xs: List, n: i32): List {
 // A guarded arm, statements before each arm tail, and a wildcard base arm.
 function abs_scale(xs: List): List {
     match (xs) {
-        Cons(h, t) when h < 0 => { var p: i32 = 0 - h; return Cons(p * 2, abs_scale(t)); },
-        Cons(h, t) => { var d: i32 = h * 2; return Cons(d, abs_scale(t)); },
+        Cons(h, t) when h < 0 => { let p: i32 = 0 - h; return Cons(p * 2, abs_scale(t)); },
+        Cons(h, t) => { let d: i32 = h * 2; return Cons(d, abs_scale(t)); },
         _ => { return Nil; },
     }
 }
@@ -84,7 +84,7 @@ function to_rev(xs: List): Rev {
 }
 
 function main(): i32 {
-    var xs: List = build_signed(6);
+    let xs: List = build_signed(6);
     if (sum(xs) != 0 - 3) { return 1; }
     if (sum(abs_scale(xs)) != 30) { return 2; }        // [10,8,6,4,2,0]
     if (sum(drop_neg(xs)) != 6) { return 3; }          // [4,2,0]
@@ -131,8 +131,8 @@ function drop_neg(xs: List): List {
         Nil => { return Nil; },
     }
 }
-function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
-function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function build(n: i32): List { let acc: List = Nil; let i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
+function sum(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 {
     if (sum(drop_neg(build(300000))) != 600000) { return 1; }
     return 0;

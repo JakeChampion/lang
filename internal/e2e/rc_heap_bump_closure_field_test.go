@@ -40,18 +40,18 @@ function mkP(n: i32): P {
 }
 
 function round(): i32 {
-    var t: i32 = 0;
-    var ps: P[] = [];
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let ps: P[] = [];
+    let i: i32 = 0;
     while (i < 8) { ps = ps.append(mkP(i)); i = i + 1; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < ps.len()) { t = t + (ps[j].f)(1); j = j + 1; }
     return t;
 }
 
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < n) { t = t + round(); r = r + 1; }
     if (t != n * 36) { return 99; }
     if ((__heap_bump_bytes() as i32) < 65536) { return 0; }

@@ -111,7 +111,7 @@ impl Area for Point { function area(self: Self): i32 { return self.x * self.y; }
 function describe(s: facade.Shape): i32 { return match (s) { Circle(r) => r, Square(w) => w * 4 }; }
 function dynArea(a: dyn facade.Area): i32 { return a.area(); }
 function main(): i32 {
-    var p: facade.Point = facade.Point { x: 6, y: 7 };
+    let p: facade.Point = facade.Point { x: 6, y: 7 };
     return p.area() + describe(Square(10)) + dynArea(p);
 }`,
 }

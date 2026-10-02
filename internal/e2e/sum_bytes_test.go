@@ -198,7 +198,7 @@ func TestArm64SSASumBytes(t *testing.T) {
 const sumBytesWrapSrc = `import "std/i32";
 
 function main(): i32 {
-    var big: string = "\xff".repeat(16843010);
+    let big: string = "\xff".repeat(16843010);
     write((__sum_bytes(big)).to_string());
     write("\n");
     return 0;
@@ -235,15 +235,15 @@ func TestArm64SumBytesWraps(t *testing.T) {
 const sumBytesNoAllocSrc = `import "std/i32";
 
 function main(): i32 {
-    var s: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOP";
-    var before: i64 = __heap_bump_bytes();
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let s: string = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOP";
+    let before: i64 = __heap_bump_bytes();
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 1000) {
         total = total + __sum_bytes(s);
         i = i + 1;
     }
-    var after: i64 = __heap_bump_bytes();
+    let after: i64 = __heap_bump_bytes();
     write((after - before).to_string());
     write("\n");
     write(total.to_string());

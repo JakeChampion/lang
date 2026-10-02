@@ -40,9 +40,9 @@ inc/dec/is_unique events to an allocation needed the fix.
 
     import "core/iter" as iter;
     function main(): i32 {
-        var xs: i32[] = [5, 2, 8, 1, 4, 9, 6];
-        var it = iter.of(xs);
-        var ys = iter.filter(it, function(x: i32): boolean { return x % 2 == 0; });
+        let xs: i32[] = [5, 2, 8, 1, 4, 9, 6];
+        let it = iter.of(xs);
+        let ys = iter.filter(it, function(x: i32): boolean { return x % 2 == 0; });
         return ys.len();
     }
 
@@ -72,7 +72,7 @@ two-word Option/tuple box `next` returns.
 ### The source shape
 
     pub function filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[] {
-        var out: T[] = [];  var cur = it;  var go = true;
+        let out: T[] = [];  let cur = it;  let go = true;
         while (go) {
             match (cur.next()) {
                 Some(t) => { if (keep(t.0)) { out = out.append(t.0); }

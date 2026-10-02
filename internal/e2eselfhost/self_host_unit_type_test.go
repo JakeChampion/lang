@@ -14,7 +14,7 @@ import (
 // The front end is what needs a runtime check. `()` used to type i32 — the
 // constant it lowers to — while the type `()` resolved to nothing at all, so
 // the two disagreed and no destination spelled void ever saw the value. Both
-// now say void, which is what the annotator stamps and irlower reads to size a
+// now say void, which is what the annotator stamps and the lowering reads to size a
 // slot. One backend is enough to say the slot survived: nothing in the change
 // is target-specific.
 //
@@ -25,10 +25,10 @@ import (
 const unitRuntimeProgram = `function sink(u: ()): i32 { return 7; }
 function fallible(): Result[(), i32] { return Ok(()); }
 function main(): i32 {
-    var u: () = ();
-    var v = ();
-    var t: ((), i32) = ((), 5);
-    var n: i32 = 0;
+    let u: () = ();
+    let v = ();
+    let t: ((), i32) = ((), 5);
+    let n: i32 = 0;
     match (fallible()) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 10; } }
     return n + sink(u) + sink(v) + sink(t.0) + t.1;
 }

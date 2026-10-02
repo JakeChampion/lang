@@ -1,6 +1,6 @@
 # A `replace` result is releasable only behind an identity guard
 
-`var r: string = base.replace(old, new)` leaked its box whenever the needle was
+`let r: string = base.replace(old, new)` leaked its box whenever the needle was
 present. 400 rounds of the churn harness, a pair of compilers from the same
 commit:
 

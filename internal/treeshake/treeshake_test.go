@@ -74,7 +74,7 @@ function main(): i32 { return middle(); }`
 func TestShakeKeepsFunctionAddressed(t *testing.T) {
 	src := `function helper(x: i32): i32 { return x + 1; }
 function main(): i32 {
-    var f: (i32) => i32 = helper;
+    let f: (i32) => i32 = helper;
     return f(41);
 }`
 	names := runShake(t, src)
@@ -151,7 +151,7 @@ func TestShakeNoOpOnEmptyProgram(t *testing.T) {
 func TestShakeWalksLambdaBody(t *testing.T) {
 	src := `function helper(): i32 { return 7; }
 function main(): i32 {
-    var f = (): i32 => { return helper(); };
+    let f = (): i32 => { return helper(); };
     return f();
 }`
 	names := runShake(t, src)
@@ -168,7 +168,7 @@ function main(): i32 {
 func TestShakeKeepsStructUpdateBaseCall(t *testing.T) {
 	src := `struct S { a: i32, b: i32 }
 function mk(): S { return S { a: 1, b: 2 }; }
-function main(): i32 { var s: S = S { ...mk(), b: 40 }; return s.a + s.b; }`
+function main(): i32 { let s: S = S { ...mk(), b: 40 }; return s.a + s.b; }`
 	names := runShake(t, src)
 	if !hasName(names, "mk") {
 		t.Errorf("mk is referenced by the struct-update base and must survive: %v", names)
@@ -186,7 +186,7 @@ struct Loud { n: i32 }
 impl Greet for Loud { function hello(self: Self): i32 { return only_from_hello(); } }
 function only_from_hello(): i32 { return 42; }
 function dead_coercion(): i32 {
-    var g: dyn Greet = Loud { n: 1 };
+    let g: dyn Greet = Loud { n: 1 };
     return g.hello();
 }
 function main(): i32 { return 0; }`
@@ -210,7 +210,7 @@ struct Loud { n: i32 }
 impl Greet for Loud { function hello(self: Self): i32 { return only_from_hello(); } }
 function only_from_hello(): i32 { return 42; }
 function main(): i32 {
-    var g: dyn Greet = Loud { n: 1 };
+    let g: dyn Greet = Loud { n: 1 };
     return g.hello();
 }`
 	names := runShake(t, src)
@@ -229,7 +229,7 @@ func TestShakeDowncastRootsFollowReachability(t *testing.T) {
 struct Quiet { n: i32 }
 impl Greet for Quiet { function hello(self: Self): i32 { return 1; } }
 function probe(g: dyn Greet): i32 {
-    var l: Option[Loud] = g as? Loud;
+    let l: Option[Loud] = g as? Loud;
     return 0;
 }
 `
@@ -244,7 +244,7 @@ function only_from_hello(): i32 { return 42; }
 	}
 
 	live := head + tail + `function main(): i32 {
-    var q: dyn Greet = Quiet { n: 2 };
+    let q: dyn Greet = Quiet { n: 2 };
     return probe(q);
 }`
 	names := runShake(t, live)

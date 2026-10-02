@@ -54,7 +54,7 @@ func TestSelfHostLEB128(t *testing.T) {
 // (0xE5=229, 0x8E=142, 0x26=38, 0xC0=192, 0xBF=191, 0x7F=127).
 const leb128SelfTestMain = `
 function main(): i32 {
-    var b: i32[] = [];
+    let b: i32[] = [];
     b = leb_u32([], 0);        if (b.len() != 1 || b[0] != 0) { return 1; }
     b = leb_u32([], 127);      if (b.len() != 1 || b[0] != 127) { return 2; }
     b = leb_u32([], 128);      if (b.len() != 2 || b[0] != 128 || b[1] != 1) { return 3; }
@@ -65,10 +65,10 @@ function main(): i32 {
     b = leb_i32([], 64);       if (b.len() != 2 || b[0] != 192 || b[1] != 0) { return 8; }
     b = leb_i32([], 0 - 64);   if (b.len() != 1 || b[0] != 64) { return 9; }
     b = leb_i32([], 0 - 65);   if (b.len() != 2 || b[0] != 191 || b[1] != 127) { return 10; }
-    var z: i64 = 0;            b = leb_i64([], z);   if (b.len() != 1 || b[0] != 0) { return 11; }
-    var n1: i64 = 0 - 1;       b = leb_i64([], n1);  if (b.len() != 1 || b[0] != 127) { return 12; }
-    var p64: i64 = 64;         b = leb_i64([], p64); if (b.len() != 2 || b[0] != 192 || b[1] != 0) { return 13; }
-    var big: i64 = 5000000000; b = leb_i64([], big); if (b.len() != 5) { return 14; }
+    let z: i64 = 0;            b = leb_i64([], z);   if (b.len() != 1 || b[0] != 0) { return 11; }
+    let n1: i64 = 0 - 1;       b = leb_i64([], n1);  if (b.len() != 1 || b[0] != 127) { return 12; }
+    let p64: i64 = 64;         b = leb_i64([], p64); if (b.len() != 2 || b[0] != 192 || b[1] != 0) { return 13; }
+    let big: i64 = 5000000000; b = leb_i64([], big); if (b.len() != 5) { return 14; }
     if (parse_dec("+0x7f") != 127 || parse_dec("-0X80") != -128) { return 15; }
     if (parse_dec("0xffff_ffff") != -1 || parse_dec("+123") != 123) { return 16; }
     if (parse_dec_i64("0xFFFFFFFF") != 4294967295 || parse_dec_i64("-0X80000000") != -2147483648) { return 17; }

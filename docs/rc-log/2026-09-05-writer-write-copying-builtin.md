@@ -9,7 +9,7 @@ string accumulator and hands it to `w.write(out)`.
 ```fern
 match (r.read_chunk(131072)) {
     Some(chunk) => {
-        var out: string = "";
+        let out: string = "";
         …
         while (i < n) { … out = out + piece; … }
         match (w.write(out)) { Some(_) => { return 1; }, None => {} }
@@ -49,7 +49,7 @@ bounded by `__fern_str_append`'s class-step re-copy, which is the next entry.
 - **The trap was not the block scope.** The rc-plan dump (`RcPlanHook`) for
   the arm shape read `freeEligible: piece,r,w` with the write present and
   gained `out` the moment `w.write(out)` became `return out.len()`; a
-  block-scoped `var`, a match binding feeding `slice_unchecked`, and the `str`
+  block-scoped `let`, a match binding feeding `slice_unchecked`, and the `str`
   view were each cleared by a variant before the call was suspected. Dump
   the plan before reading the analysis.
 - **The two-word ABIs never had the taint**, so arm64 and wasm read this

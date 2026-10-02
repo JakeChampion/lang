@@ -293,23 +293,23 @@ function cmp128(ah: u64, al: u64, bh: u64, bl: u64): i32 {
 // The high word of the 128-bit product x × y; the low word is the
 // machine's wrapping product. Four 32×32 partials, each of which fits.
 function mul_hi64(x: u64, y: u64): u64 {
-  var m: u64 = 4294967295 as u64;
-  var sh: u64 = 32 as u64;
-  var a: u64 = x >> sh;
-  var b: u64 = x & m;
-  var c: u64 = y >> sh;
-  var d: u64 = y & m;
-  var bd: u64 = b * d;
-  var ad: u64 = a * d;
-  var bc: u64 = b * c;
-  var mid: u64 = (bd >> sh) + (ad & m) + (bc & m);
+  let m: u64 = 4294967295 as u64;
+  let sh: u64 = 32 as u64;
+  let a: u64 = x >> sh;
+  let b: u64 = x & m;
+  let c: u64 = y >> sh;
+  let d: u64 = y & m;
+  let bd: u64 = b * d;
+  let ad: u64 = a * d;
+  let bc: u64 = b * c;
+  let mid: u64 = (bd >> sh) + (ad & m) + (bc & m);
   return a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
 }
 
 // The high word of (ah:al) − (bh:bl), which requires the first to be
 // the larger; the low word is the machine's wrapping difference.
 function sub_hi(ah: u64, al: u64, bh: u64, bl: u64): u64 {
-  var hi: u64 = ah - bh;
+  let hi: u64 = ah - bh;
   if (al < bl) {
     hi = hi - 1 as u64;
   }
@@ -337,32 +337,32 @@ function to_big(hi: u64, lo: u64): bigint.BigInt {
 // above: this is the one function every operation ends in, and on the
 // x86-64 backend a helper call costs more than the shift it wraps.
 function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boolean): LD {
-  var bl: i32 = 64 - __clz64(lo);
+  let bl: i32 = 64 - __clz64(lo);
   if (hi != 0 as u64) {
     bl = 128 - __clz64(hi);
   }
   if (bl == 0) {
     return f.zero(neg);
   }
-  var top: i32 = e + bl - 1;
+  let top: i32 = e + bl - 1;
   if (top > f.emax) {
     return inf(neg);
   }
   // `emin` and `min_exp` spelled out: the accessors are calls, and
   // this is where every operation ends.
-  var min_exp: i32 = 2 - f.emax - f.mant;
+  let min_exp: i32 = 2 - f.emax - f.mant;
   if (top < min_exp - 1) {
     return f.zero(neg);
   }
-  var at: i32 = top - (f.mant - 1);
+  let at: i32 = top - (f.mant - 1);
   if (top < 1 - f.emax) {
     at = min_exp;
   }
-  var shift: i32 = at - e;
+  let shift: i32 = at - e;
   if (shift <= 0) {
     // Exact: the value has no more bits than the format keeps, so it
     // is only moved up to its canonical width. The shift is under 128.
-    var k: i32 = 0 - shift;
+    let k: i32 = 0 - shift;
     if (k == 0) {
       return LD { neg: neg, kind: 0, hi: hi, lo: lo, e: at };
     }
@@ -374,10 +374,10 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
   // Rounding: `shift` is in [1, bl], so at most 128. `mh:ml` is the
   // kept part, `round` the first bit below it and `below` whether any
   // bit under that one is set.
-  var mh: u64 = 0 as u64;
-  var ml: u64 = 0 as u64;
-  var round: boolean = false;
-  var below: boolean = sticky;
+  let mh: u64 = 0 as u64;
+  let ml: u64 = 0 as u64;
+  let round: boolean = false;
+  let below: boolean = sticky;
   if (shift < 64) {
     mh = hi >> shift as u64;
     ml = lo >> shift as u64 | hi << (64 - shift) as u64;
@@ -388,7 +388,7 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
     round = lo >> 63 as u64 == 1 as u64;
     below = below || lo << 1 as u64 != 0 as u64;
   } else if (shift < 128) {
-    var t: i32 = shift - 64;
+    let t: i32 = shift - 64;
     ml = hi >> t as u64;
     round = (hi >> (t - 1) as u64 & 1 as u64) == 1 as u64;
     below = below || lo != 0 as u64 || (hi & (1 as u64 << (t - 1) as u64) - 1 as u64) != 0 as u64;
@@ -403,7 +403,7 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
     }
     // A carry out of the top bit leaves a power of two one bit wider
     // than the format, which drops back exactly.
-    var wide: boolean = false;
+    let wide: boolean = false;
     if (mh != 0 as u64) {
       wide = 128 - __clz64(mh) > f.mant;
     } else {
@@ -427,19 +427,19 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
 // rounding. Only the top 128 bits of `q` reach the rounding; everything
 // below them is sticky, which decides the same tie the exact tail would.
 pub function (f: Format) round(q: bigint.BigInt, e: i32, sticky: boolean, neg: boolean): (LD, boolean) {
-  var bl: i32 = q.bit_length();
+  let bl: i32 = q.bit_length();
   if (bl == 0) {
     return (f.zero(neg), false);
   }
-  var k: i32 = bl - 128;
+  let k: i32 = bl - 128;
   if (k < 0) {
     k = 0;
   }
-  var t: bigint.BigInt = q.shr(k);
-  var hi: u64 = t.word64(1);
-  var lo: u64 = t.word64(0);
-  var st: boolean = sticky || q.has_low_bits(k);
-  var r: LD = round128(f, hi, lo, e + k, st, neg);
+  let t: bigint.BigInt = q.shr(k);
+  let hi: u64 = t.word64(1);
+  let lo: u64 = t.word64(0);
+  let st: boolean = sticky || q.has_low_bits(k);
+  let r: LD = round128(f, hi, lo, e + k, st, neg);
   if (r.kind == 1) {
     return (r, true);
   }
@@ -453,8 +453,8 @@ pub function (f: Format) round(q: bigint.BigInt, e: i32, sticky: boolean, neg: b
 }
 
 pub function (f: Format) from_i64(v: i64): LD {
-  var neg: boolean = v < 0 as i64;
-  var mag: u64 = v as u64;
+  let neg: boolean = v < 0 as i64;
+  let mag: u64 = v as u64;
   if (neg) {
     mag = 0 as u64 - mag;
   }
@@ -476,11 +476,11 @@ pub function (v: LD) as_i64(): Option[i64] {
   if (top_of(v) >= 64) {
     return None;
   }
-  var u: u64 = v.lo;
+  let u: u64 = v.lo;
   if (v.e >= 0) {
     u = shl_lo(v.lo, v.e);
   } else {
-    var drop: i32 = 0 - v.e;
+    let drop: i32 = 0 - v.e;
     if (low_bits_set(v.hi, v.lo, drop)) {
       return None;
     }
@@ -514,12 +514,12 @@ pub function (f: Format) max_exact_u64(): u64 {
 // the power outgrows the significand. Exact either way while 5^k still
 // fits (k up to 27 in x87, 48 in binary128, 22 in binary64).
 pub function (f: Format) pow10(k: i32): LD {
-  var v: LD = f.from_i64(1 as i64);
+  let v: LD = f.from_i64(1 as i64);
   if (k <= 0) {
     return v;
   }
-  var ten: LD = f.from_i64(10 as i64);
-  var i: i32 = 0;
+  let ten: LD = f.from_i64(10 as i64);
+  let i: i32 = 0;
   while (i < k) {
     v = f.mul(v, ten);
     i = i + 1;
@@ -547,14 +547,14 @@ pub function (f: Format) from_decimal(digits: string, k: i32, neg: boolean): (LD
   if (digits.len() == 0) {
     return (f.zero(neg), false);
   }
-  var mag: i32 = digits.len() + k;
+  let mag: i32 = digits.len() + k;
   if (mag > decimal_hi(f)) {
     return (inf(neg), true);
   }
   if (mag < decimal_lo(f)) {
     return (f.zero(neg), true);
   }
-  var d: bigint.BigInt = bigint.zero();
+  let d: bigint.BigInt = bigint.zero();
   match (bigint.parse(digits)) {
     Some(v) => {
       d = v;
@@ -564,12 +564,12 @@ pub function (f: Format) from_decimal(digits: string, k: i32, neg: boolean): (LD
   if (k >= 0) {
     return f.round(d.mul_pow10(k), 0, false, neg);
   }
-  var b: bigint.BigInt = bigint.from_i64(1 as i64).mul_pow10(0 - k);
-  var s: i32 = f.mant + 2 + b.bit_length() - d.bit_length();
+  let b: bigint.BigInt = bigint.from_i64(1 as i64).mul_pow10(0 - k);
+  let s: i32 = f.mant + 2 + b.bit_length() - d.bit_length();
   if (s < 0) {
     s = 0;
   }
-  var qr: (bigint.BigInt, bigint.BigInt) = d.shl(s).divmod(b);
+  let qr: (bigint.BigInt, bigint.BigInt) = d.shl(s).divmod(b);
   return f.round(qr.0, 0 - s, !qr.1.is_zero(), neg);
 }
 
@@ -589,7 +589,7 @@ function lower(b: i32): i32 {
 }
 
 function is_alpha(b: i32): boolean {
-  var l: i32 = lower(b);
+  let l: i32 = lower(b);
   return l >= 97 && l <= 122;
 }
 
@@ -630,7 +630,7 @@ function has_word(s: string, i: i32, word: string): boolean {
   if (i + word.len() > s.len()) {
     return false;
   }
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < word.len()) {
     if (lower(s[i + k] as i32) != word[k] as i32) {
       return false;
@@ -642,8 +642,8 @@ function has_word(s: string, i: i32, word: string): boolean {
 
 // A decimal exponent, saturating far beyond any magnitude that matters.
 function read_exponent(s: string, i: i32): (i32, i32) {
-  var j: i32 = i;
-  var neg: boolean = false;
+  let j: i32 = i;
+  let neg: boolean = false;
   if (j < s.len() && (s[j] as i32 == 43 || s[j] as i32 == 45)) {
     neg = s[j] as i32 == 45;
     j = j + 1;
@@ -651,7 +651,7 @@ function read_exponent(s: string, i: i32): (i32, i32) {
   if (j >= s.len() || !is_digit(s[j] as i32)) {
     return (0, i);
   }
-  var v: i32 = 0;
+  let v: i32 = 0;
   while (j < s.len() && is_digit(s[j] as i32)) {
     if (v < 100000000) {
       v = v * 10 + (s[j] as i32 - 48);
@@ -667,12 +667,12 @@ function read_exponent(s: string, i: i32): (i32, i32) {
 // `strtold(f, s)` — glibc's c_strtold: white space, sign, then inf /
 // infinity / nan / nan(chars), a hex float, or a decimal one.
 pub function (f: Format) strtold(s: string): Parse {
-  var n: i32 = s.len();
-  var i: i32 = 0;
+  let n: i32 = s.len();
+  let i: i32 = 0;
   while (i < n && is_space(s[i] as i32)) {
     i = i + 1;
   }
-  var neg: boolean = false;
+  let neg: boolean = false;
   if (i < n && (s[i] as i32 == 45 || s[i] as i32 == 43)) {
     neg = s[i] as i32 == 45;
     i = i + 1;
@@ -687,7 +687,7 @@ pub function (f: Format) strtold(s: string): Parse {
   if (has_word(s, i, "nan")) {
     i = i + 3;
     if (i < n && s[i] as i32 == 40) {
-      var k: i32 = i + 1;
+      let k: i32 = i + 1;
       while (k < n && (is_digit(s[k] as i32) || is_alpha(s[k] as i32) || s[k] as i32 == 95)) {
         k = k + 1;
       }
@@ -698,8 +698,8 @@ pub function (f: Format) strtold(s: string): Parse {
     return Parse { v: nan(neg), erange: false, end: i };
   }
   if (i + 1 < n && s[i] as i32 == 48 && lower(s[i + 1] as i32) == 120) {
-    var j: i32 = i + 2;
-    var hex_start: boolean = j < n && hex_digit(s[j] as i32) >= 0;
+    let j: i32 = i + 2;
+    let hex_start: boolean = j < n && hex_digit(s[j] as i32) >= 0;
     if (!hex_start && j + 1 < n && s[j] as i32 == 46 && hex_digit(s[j + 1] as i32) >= 0) {
       hex_start = true;
     }
@@ -711,21 +711,21 @@ pub function (f: Format) strtold(s: string): Parse {
 }
 
 function hex_float(f: Format, s: string, start: i32, neg: boolean): Parse {
-  var n: i32 = s.len();
-  var i: i32 = start;
-  var q: bigint.BigInt = bigint.zero();
-  var sixteen: bigint.BigInt = bigint.from_i64(16 as i64);
-  var frac: i32 = 0;
-  var in_frac: boolean = false;
-  var any: boolean = false;
+  let n: i32 = s.len();
+  let i: i32 = start;
+  let q: bigint.BigInt = bigint.zero();
+  let sixteen: bigint.BigInt = bigint.from_i64(16 as i64);
+  let frac: i32 = 0;
+  let in_frac: boolean = false;
+  let any: boolean = false;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 46 && !in_frac) {
       in_frac = true;
       i = i + 1;
       continue;
     }
-    var d: i32 = hex_digit(b);
+    let d: i32 = hex_digit(b);
     if (d < 0) {
       break;
     }
@@ -738,9 +738,9 @@ function hex_float(f: Format, s: string, start: i32, neg: boolean): Parse {
     }
     i = i + 1;
   }
-  var exp: i32 = 0;
+  let exp: i32 = 0;
   if (i < n && lower(s[i] as i32) == 112) {
-    var r: (i32, i32) = read_exponent(s, i + 1);
+    let r: (i32, i32) = read_exponent(s, i + 1);
     if (r.1 > i + 1) {
       exp = r.0;
       i = r.1;
@@ -749,20 +749,20 @@ function hex_float(f: Format, s: string, start: i32, neg: boolean): Parse {
   if (q.is_zero()) {
     return Parse { v: f.zero(neg), erange: false, end: i };
   }
-  var lr: (LD, boolean) = f.round(q, exp - 4 * frac, false, neg);
+  let lr: (LD, boolean) = f.round(q, exp - 4 * frac, false, neg);
   return Parse { v: lr.0, erange: lr.1, end: i };
 }
 
 function decimal_float(f: Format, s: string, start: i32, neg: boolean): Parse {
-  var n: i32 = s.len();
-  var i: i32 = start;
-  var digits: u8[] = [];
-  var frac: i32 = 0;
-  var in_frac: boolean = false;
-  var seen: boolean = false;
-  var lead_zero: boolean = true;
+  let n: i32 = s.len();
+  let i: i32 = start;
+  let digits: u8[] = [];
+  let frac: i32 = 0;
+  let in_frac: boolean = false;
+  let seen: boolean = false;
+  let lead_zero: boolean = true;
   while (i < n) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 46 && !in_frac) {
       if (i + 1 >= n || !is_digit(s[i + 1] as i32)) {
         if (!seen) {
@@ -795,30 +795,30 @@ function decimal_float(f: Format, s: string, start: i32, neg: boolean): Parse {
   if (!seen) {
     return no_float(f);
   }
-  var exp: i32 = 0;
+  let exp: i32 = 0;
   if (i < n && lower(s[i] as i32) == 101) {
-    var r: (i32, i32) = read_exponent(s, i + 1);
+    let r: (i32, i32) = read_exponent(s, i + 1);
     if (r.1 > i + 1) {
       exp = r.0;
       i = r.1;
     }
   }
-  var last: i32 = digits.len();
+  let last: i32 = digits.len();
   while (last > 0 && digits[last - 1] as i32 == 48) {
     last = last - 1;
   }
-  var k: i32 = exp - frac + (digits.len() - last);
-  var ds: string = "";
+  let k: i32 = exp - frac + (digits.len() - last);
+  let ds: string = "";
   if (last > 0) {
-    var kept: u8[] = [];
-    var j: i32 = 0;
+    let kept: u8[] = [];
+    let j: i32 = 0;
     while (j < last) {
       kept = kept.append(digits[j]);
       j = j + 1;
     }
     ds = string_from_bytes_unchecked(kept);
   }
-  var lr: (LD, boolean) = f.from_decimal(ds, k, neg);
+  let lr: (LD, boolean) = f.from_decimal(ds, k, neg);
   return Parse { v: lr.0, erange: lr.1, end: i };
 }
 
@@ -859,8 +859,8 @@ pub function (f: Format) add(a: LD, b: LD): LD {
   if (b.is_zero()) {
     return a;
   }
-  var e: i32 = a.e + trailing_zeros128(a.hi, a.lo);
-  var eb: i32 = b.e + trailing_zeros128(b.hi, b.lo);
+  let e: i32 = a.e + trailing_zeros128(a.hi, a.lo);
+  let eb: i32 = b.e + trailing_zeros128(b.hi, b.lo);
   if (eb < e) {
     e = eb;
   }
@@ -873,19 +873,19 @@ pub function (f: Format) add(a: LD, b: LD): LD {
 // The sum on words: both significands aligned to 2^e fit 127 bits, so
 // the sum fits 128 and the difference needs no borrow past the top.
 function add128(f: Format, a: LD, b: LD, e: i32): LD {
-  var ah: u64 = aligned_hi(a, e);
-  var al: u64 = aligned_lo(a, e);
-  var bh: u64 = aligned_hi(b, e);
-  var bl: u64 = aligned_lo(b, e);
+  let ah: u64 = aligned_hi(a, e);
+  let al: u64 = aligned_lo(a, e);
+  let bh: u64 = aligned_hi(b, e);
+  let bl: u64 = aligned_lo(b, e);
   if (a.neg == b.neg) {
-    var lo: u64 = al + bl;
-    var hi: u64 = ah + bh;
+    let lo: u64 = al + bl;
+    let hi: u64 = ah + bh;
     if (lo < al) {
       hi = hi + 1 as u64;
     }
     return round128(f, hi, lo, e, false, a.neg);
   }
-  var c: i32 = cmp128(ah, al, bh, bl);
+  let c: i32 = cmp128(ah, al, bh, bl);
   if (c == 0) {
     return f.zero(false);
   }
@@ -918,28 +918,28 @@ function aligned_lo(v: LD, e: i32): u64 {
 // result, and the ld suite compares the two paths on random values,
 // which is what these are public for.
 pub function (f: Format) add_exact(a: LD, b: LD): LD {
-  var e: i32 = a.e;
+  let e: i32 = a.e;
   if (b.e < e) {
     e = b.e;
   }
-  var av: bigint.BigInt = to_big(a.hi, a.lo).shl(a.e - e);
+  let av: bigint.BigInt = to_big(a.hi, a.lo).shl(a.e - e);
   if (a.neg) {
     av = av.negate();
   }
-  var bv: bigint.BigInt = to_big(b.hi, b.lo).shl(b.e - e);
+  let bv: bigint.BigInt = to_big(b.hi, b.lo).shl(b.e - e);
   if (b.neg) {
     bv = bv.negate();
   }
-  var s: bigint.BigInt = av.add(bv);
+  let s: bigint.BigInt = av.add(bv);
   if (s.is_zero()) {
     return f.zero(false);
   }
-  var r: (LD, boolean) = f.round(s.abs(), e, false, s.is_negative());
+  let r: (LD, boolean) = f.round(s.abs(), e, false, s.is_negative());
   return r.0;
 }
 
 pub function (f: Format) mul_exact(a: LD, b: LD): LD {
-  var r: (LD, boolean) = f.round(to_big(a.hi, a.lo).mul(to_big(b.hi, b.lo)), a.e + b.e, false, a.neg != b.neg);
+  let r: (LD, boolean) = f.round(to_big(a.hi, a.lo).mul(to_big(b.hi, b.lo)), a.e + b.e, false, a.neg != b.neg);
   return r.0;
 }
 
@@ -947,12 +947,12 @@ pub function (f: Format) mul_exact(a: LD, b: LD): LD {
 // the whole significand plus the round bit; a non-zero remainder is
 // the sticky bit.
 pub function (f: Format) div_exact(a: LD, b: LD): LD {
-  var s: i32 = f.mant + 3 + bit_length128(b.hi, b.lo) - bit_length128(a.hi, a.lo);
+  let s: i32 = f.mant + 3 + bit_length128(b.hi, b.lo) - bit_length128(a.hi, a.lo);
   if (s < 0) {
     s = 0;
   }
-  var qr: (bigint.BigInt, bigint.BigInt) = to_big(a.hi, a.lo).shl(s).divmod(to_big(b.hi, b.lo));
-  var r: (LD, boolean) = f.round(qr.0, a.e - b.e - s, !qr.1.is_zero(), a.neg != b.neg);
+  let qr: (bigint.BigInt, bigint.BigInt) = to_big(a.hi, a.lo).shl(s).divmod(to_big(b.hi, b.lo));
+  let r: (LD, boolean) = f.round(qr.0, a.e - b.e - s, !qr.1.is_zero(), a.neg != b.neg);
   return r.0;
 }
 
@@ -967,7 +967,7 @@ pub function (f: Format) mul(a: LD, b: LD): LD {
   if (b.kind == 2) {
     return b;
   }
-  var neg: boolean = a.neg != b.neg;
+  let neg: boolean = a.neg != b.neg;
   if (a.kind == 1 || b.kind == 1) {
     if (a.is_zero() || b.is_zero()) {
       return nan(false);
@@ -978,15 +978,15 @@ pub function (f: Format) mul(a: LD, b: LD): LD {
     return f.zero(neg);
   }
   if (a.hi == 0 as u64 && b.hi == 0 as u64) {
-    var ta: i32 = __ctz64(a.lo);
-    var tb: i32 = __ctz64(b.lo);
-    var xa: u64 = a.lo >> ta as u64;
-    var yb: u64 = b.lo >> tb as u64;
+    let ta: i32 = __ctz64(a.lo);
+    let tb: i32 = __ctz64(b.lo);
+    let xa: u64 = a.lo >> ta as u64;
+    let yb: u64 = b.lo >> tb as u64;
     return round128(f, mul_hi64(xa, yb), xa * yb, a.e + ta + b.e + tb, false, neg);
   }
   if (fits_word(a) && fits_word(b)) {
-    var x: u64 = reduced(a);
-    var y: u64 = reduced(b);
+    let x: u64 = reduced(a);
+    let y: u64 = reduced(b);
     return round128(f, mul_hi64(x, y), x * y, a.e + trailing_zeros128(a.hi, a.lo) + b.e + trailing_zeros128(b.hi, b.lo), false, neg);
   }
   return f.mul_exact(a, b);
@@ -1014,7 +1014,7 @@ function reduced(v: LD): u64 {
   if (v.lo == 0 as u64) {
     return v.hi >> __ctz64(v.hi) as u64;
   }
-  var t: i32 = __ctz64(v.lo);
+  let t: i32 = __ctz64(v.lo);
   return v.lo >> t as u64 | v.hi << (64 - t) as u64;
 }
 
@@ -1030,7 +1030,7 @@ pub function (f: Format) div(a: LD, b: LD): LD {
   if (b.kind == 2) {
     return b;
   }
-  var neg: boolean = a.neg != b.neg;
+  let neg: boolean = a.neg != b.neg;
   if (a.kind == 1) {
     if (b.kind == 1) {
       return nan(false);
@@ -1050,14 +1050,14 @@ pub function (f: Format) div(a: LD, b: LD): LD {
     return f.zero(neg);
   }
   if (a.hi == 0 as u64 && b.hi == 0 as u64) {
-    var tb: i32 = __ctz64(b.lo);
-    var d1: u64 = b.lo >> tb as u64;
+    let tb: i32 = __ctz64(b.lo);
+    let d1: u64 = b.lo >> tb as u64;
     if (d1 <= 4294967295 as u64) {
-      var ta: i32 = __ctz64(a.lo);
+      let ta: i32 = __ctz64(a.lo);
       return div_small(f, a.lo >> ta as u64, a.e + ta, d1, b.e + tb, neg);
     }
   } else if (fits_word(a) && fits_word(b)) {
-    var d: u64 = reduced(b);
+    let d: u64 = reduced(b);
     if (d <= 4294967295 as u64) {
       return div_small(f, reduced(a), a.e + trailing_zeros128(a.hi, a.lo), d, b.e + trailing_zeros128(b.hi, b.lo), neg);
     }
@@ -1073,31 +1073,31 @@ pub function (f: Format) div(a: LD, b: LD): LD {
 // chunk is whatever is left over above a multiple of 32, so the
 // quotient, which is under `mant + 4` bits, never outgrows two words.
 function div_small(f: Format, x: u64, ex: i32, d: u64, ed: i32, neg: boolean): LD {
-  var s: i32 = f.mant + 3 + (64 - __clz64(d)) - (64 - __clz64(x));
+  let s: i32 = f.mant + 3 + (64 - __clz64(d)) - (64 - __clz64(x));
   if (s < 0) {
     s = 0;
   }
-  var pos: i32 = 64 - __clz64(x) + s;
-  var width: i32 = pos % 32;
+  let pos: i32 = 64 - __clz64(x) + s;
+  let width: i32 = pos % 32;
   if (width == 0) {
     width = 32;
   }
-  var qh: u64 = 0 as u64;
-  var ql: u64 = 0 as u64;
-  var rem: u64 = 0 as u64;
+  let qh: u64 = 0 as u64;
+  let ql: u64 = 0 as u64;
+  let rem: u64 = 0 as u64;
   while (pos > 0) {
     // Bits [from, from + width) of the dividend are the same bits of
     // `x` when `from` is at or above 0, the low bits of `x` moved up
     // when it is within `width` below, and zero further down.
-    var from: i32 = pos - width - s;
-    var chunk: u64 = 0 as u64;
+    let from: i32 = pos - width - s;
+    let chunk: u64 = 0 as u64;
     if (from >= 0) {
       chunk = x >> from as u64 & (1 as u64 << width as u64) - 1 as u64;
     } else if (from + width > 0) {
       chunk = x << (0 - from) as u64 & (1 as u64 << width as u64) - 1 as u64;
     }
-    var cur: u64 = rem << 32 as u64 | chunk;
-    var q: u64 = cur / d;
+    let cur: u64 = rem << 32 as u64 | chunk;
+    let q: u64 = cur / d;
     rem = cur % d;
     qh = qh << width as u64 | ql >> (64 - width) as u64;
     ql = ql << width as u64 | q;
@@ -1115,15 +1115,15 @@ pub function (a: LD) cmp(b: LD): i32 {
   if (a.kind == 2 || b.kind == 2) {
     return 2;
   }
-  var an: boolean = a.neg && !a.is_zero();
-  var bn: boolean = b.neg && !b.is_zero();
+  let an: boolean = a.neg && !a.is_zero();
+  let bn: boolean = b.neg && !b.is_zero();
   if (an != bn) {
     if (an) {
       return 0 - 1;
     }
     return 1;
   }
-  var c: i32 = a.cmp_abs(b);
+  let c: i32 = a.cmp_abs(b);
   if (an) {
     return 0 - c;
   }
@@ -1161,8 +1161,8 @@ pub function (a: LD) cmp_abs(b: LD): i32 {
     return 2;
   }
   if (a.kind == 1 || b.kind == 1 || (a.hi | a.lo) == 0 as u64 || (b.hi | b.lo) == 0 as u64) {
-    var ca: i32 = mag_class(a);
-    var cb: i32 = mag_class(b);
+    let ca: i32 = mag_class(a);
+    let cb: i32 = mag_class(b);
     if (ca < cb) {
       return 0 - 1;
     }
@@ -1171,11 +1171,11 @@ pub function (a: LD) cmp_abs(b: LD): i32 {
     }
     return 0;
   }
-  var ta: i32 = a.e + 63 - __clz64(a.lo);
+  let ta: i32 = a.e + 63 - __clz64(a.lo);
   if (a.hi != 0 as u64) {
     ta = a.e + 127 - __clz64(a.hi);
   }
-  var tb: i32 = b.e + 63 - __clz64(b.lo);
+  let tb: i32 = b.e + 63 - __clz64(b.lo);
   if (b.hi != 0 as u64) {
     tb = b.e + 127 - __clz64(b.hi);
   }
@@ -1188,7 +1188,7 @@ pub function (a: LD) cmp_abs(b: LD): i32 {
   if (a.e == b.e) {
     return cmp128(a.hi, a.lo, b.hi, b.lo);
   }
-  var e: i32 = a.e;
+  let e: i32 = a.e;
   if (b.e < e) {
     e = b.e;
   }
@@ -1236,9 +1236,9 @@ pub function (f: Format) round_to_int(v: LD, mode: i32): LD {
   }
   // The whole part, as an integer in two words, plus one when the
   // mode moves away from zero; both fit, since the value did.
-  var drop: i32 = 0 - v.e;
-  var wh: u64 = 0 as u64;
-  var wl: u64 = 0 as u64;
+  let drop: i32 = 0 - v.e;
+  let wh: u64 = 0 as u64;
+  let wl: u64 = 0 as u64;
   if (drop < 64) {
     if ((v.lo & (1 as u64 << drop as u64) - 1 as u64) == 0 as u64) {
       return v;
@@ -1266,10 +1266,10 @@ pub function (f: Format) round_to_int(v: LD, mode: i32): LD {
 // it lands within two words of it; a value too small for that is
 // added the general way.
 function plus_half(f: Format, v: LD): LD {
-  var k: i32 = 0 - 1 - v.e;
+  let k: i32 = 0 - 1 - v.e;
   if (k < 127 && top_of(v) - v.e < 127) {
-    var sh: u64 = v.hi;
-    var sl: u64 = v.lo;
+    let sh: u64 = v.hi;
+    let sl: u64 = v.lo;
     if (k >= 64) {
       sh = sh + (1 as u64 << (k - 64) as u64);
     } else {
@@ -1323,32 +1323,32 @@ pub function (v: LD) dec(): Dec {
   if (v.is_zero()) {
     return Dec { digits: "", dp: 0 };
   }
-  var tz: i32 = trailing_zeros128(v.hi, v.lo);
-  var hi: u64 = shr_hi(v.hi, tz);
-  var lo: u64 = shr_lo(v.hi, v.lo, tz);
-  var e: i32 = v.e + tz;
+  let tz: i32 = trailing_zeros128(v.hi, v.lo);
+  let hi: u64 = shr_hi(v.hi, tz);
+  let lo: u64 = shr_lo(v.hi, v.lo, tz);
+  let e: i32 = v.e + tz;
   if (e >= 0) {
     if (hi == 0 as u64 && 64 - __clz64(lo) + e <= 64) {
-      var w: string = (lo << e as u64).to_string();
+      let w: string = (lo << e as u64).to_string();
       return Dec { digits: w, dp: w.len() };
     }
-    var s: string = to_big(hi, lo).shl(e).to_string();
+    let s: string = to_big(hi, lo).shl(e).to_string();
     return Dec { digits: s, dp: s.len() };
   }
   // m × 5^-e, which a word holds while 5^k has room beside m: 5^27 is
   // the largest power under 2^63.
   if (hi == 0 as u64 && 0 - e <= 27 && 64 - __clz64(lo) + pow5_bits(0 - e) <= 64) {
-    var u: string = (lo * pow5_u64(0 - e)).to_string();
+    let u: string = (lo * pow5_u64(0 - e)).to_string();
     return Dec { digits: u, dp: u.len() + e };
   }
-  var t: string = to_big(hi, lo).mul_pow5(0 - e).to_string();
+  let t: string = to_big(hi, lo).mul_pow5(0 - e).to_string();
   return Dec { digits: t, dp: t.len() + e };
 }
 
 // 5^k for k up to 27, and its width in bits.
 function pow5_u64(k: i32): u64 {
-  var p: u64 = 1 as u64;
-  var i: i32 = 0;
+  let p: u64 = 1 as u64;
+  let i: i32 = 0;
   while (i < k) {
     p = p * (5 as u64);
     i = i + 1;
@@ -1370,7 +1370,7 @@ pub function (f: Format) canonical(v: LD): LD {
   if (v.kind != 0 || v.hi != 0 as u64 || v.lo == 0 as u64) {
     return v;
   }
-  var shift: i32 = f.mant - (64 - __clz64(v.lo));
+  let shift: i32 = f.mant - (64 - __clz64(v.lo));
   if (shift > v.e - f.min_exp()) {
     shift = v.e - f.min_exp();
   }
@@ -1390,22 +1390,22 @@ pub function (f: Format) canonical(v: LD): LD {
 // and whose remainder, against half the unit, is the rounding and,
 // against half the format's gap, the read-back.
 pub function (f: Format) round_to(v: LD, x: i32, p: i32): (Dec, boolean) {
-  var s: i32 = p - 1 - x;
-  var fast: (Dec, i32) = round_fast(f, v, x, p, s);
+  let s: i32 = p - 1 - x;
+  let fast: (Dec, i32) = round_fast(f, v, x, p, s);
   if (fast.1 != 0) {
     return (fast.0, fast.1 == 2);
   }
-  var m: bigint.BigInt = bigint.from_u64(v.lo);
-  var e2: i32 = v.e + s;
-  var q: bigint.BigInt = m;
-  var r: bigint.BigInt = bigint.zero();
-  var d: bigint.BigInt = bigint.from_u64(1 as u64);
-  var h: bigint.BigInt = d;
+  let m: bigint.BigInt = bigint.from_u64(v.lo);
+  let e2: i32 = v.e + s;
+  let q: bigint.BigInt = m;
+  let r: bigint.BigInt = bigint.zero();
+  let d: bigint.BigInt = bigint.from_u64(1 as u64);
+  let h: bigint.BigInt = d;
   if (s >= 0) {
     // m × 5^s over 2^-e2: the remainder is the low bits, and half a
     // gap is 5^s in units of the divisor.
     h = h.mul_pow5(s);
-    var a: bigint.BigInt = m.mul(h);
+    let a: bigint.BigInt = m.mul(h);
     if (e2 >= 0) {
       q = a.shl(e2);
     } else {
@@ -1418,35 +1418,35 @@ pub function (f: Format) round_to(v: LD, x: i32, p: i32): (Dec, boolean) {
     // both whole; half a gap is 2^e2 in units of the divisor, or one
     // when the divisor took the power.
     d = d.mul_pow5(0 - s);
-    var b: bigint.BigInt = m;
+    let b: bigint.BigInt = m;
     if (e2 >= 0) {
       b = m.shl(e2);
       h = h.shl(e2);
     } else {
       d = d.shl(0 - e2);
     }
-    var qr: (bigint.BigInt, bigint.BigInt) = b.divmod(d);
+    let qr: (bigint.BigInt, bigint.BigInt) = b.divmod(d);
     q = qr.0;
     r = qr.1;
   }
-  var c: i32 = r.shl(1).cmp(d);
-  var up: boolean = c > 0 || c == 0 && q.bit(0);
-  var dist: bigint.BigInt = r;
-  var twice: i32 = 1;
+  let c: i32 = r.shl(1).cmp(d);
+  let up: boolean = c > 0 || c == 0 && q.bit(0);
+  let dist: bigint.BigInt = r;
+  let twice: i32 = 1;
   if (up) {
     dist = d.sub(r);
   } else if (v.lo == 1 as u64 << (f.mant - 1) as u64 && v.e > f.min_exp()) {
     // The gap below a power of two is half the gap above it.
     twice = 2;
   }
-  var cg: i32 = dist.shl(twice).cmp(h);
-  var reads_back: boolean = cg < 0 || cg == 0 && (v.lo & 1 as u64) == 0 as u64;
-  var n: u64 = q.low_u64();
+  let cg: i32 = dist.shl(twice).cmp(h);
+  let reads_back: boolean = cg < 0 || cg == 0 && (v.lo & 1 as u64) == 0 as u64;
+  let n: u64 = q.low_u64();
   if (up) {
     n = n + 1 as u64;
   }
-  var digits: string = n.to_string();
-  var dp: i32 = x + 1;
+  let digits: string = n.to_string();
+  let dp: i32 = x + 1;
   if (digits.len() > p) {
     digits = "1";
     dp = dp + 1;
@@ -1469,24 +1469,24 @@ function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
   if (s < 0 - 292 || s > 326) {
     return no_dec();
   }
-  var chi: u64 = float.pow10_hi(s);
-  var clo: u64 = float.pow10_lo(s);
+  let chi: u64 = float.pow10_hi(s);
+  let clo: u64 = float.pow10_lo(s);
   // v × 10^s is m × c / 2^sigma; F is that in units of 2^-64, so its
   // high word is the integer part and its low word the fraction.
-  var t: i32 = 63 - float.pow10_log2(s) - v.e;
+  let t: i32 = 63 - float.pow10_log2(s) - v.e;
   if (t < 48 || t > 126) {
     return no_dec();
   }
-  var m: u64 = v.lo;
-  var mc: u64 = m * chi;
-  var p0: u64 = m * clo;
-  var p1: u64 = mc + mul_hi64(m, clo);
-  var p2: u64 = mul_hi64(m, chi);
+  let m: u64 = v.lo;
+  let mc: u64 = m * chi;
+  let p0: u64 = m * clo;
+  let p1: u64 = mc + mul_hi64(m, clo);
+  let p2: u64 = mul_hi64(m, chi);
   if (p1 < mc) {
     p2 = p2 + 1 as u64;
   }
-  var q: u64 = 0 as u64;
-  var fr: u64 = 0 as u64;
+  let q: u64 = 0 as u64;
+  let fr: u64 = 0 as u64;
   if (t >= 64) {
     q = shr_hi(p2, t - 64);
     fr = shr_lo(p2, p1, t - 64);
@@ -1496,27 +1496,27 @@ function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
   }
   // The true F is below the computed one plus one, and above it less
   // m × θ / 2^t.
-  var margin: u64 = 1 as u64;
+  let margin: u64 = 1 as u64;
   if (t < 64) {
     margin = (m >> t as u64) + 1 as u64;
   }
   if (fr < margin) {
     return no_dec();
   }
-  var half: u64 = 9223372036854775808 as u64;
-  var up: boolean = fr - margin >= half;
+  let half: u64 = 9223372036854775808 as u64;
+  let up: boolean = fr - margin >= half;
   if (!up && fr >= half) {
     return no_dec();
   }
   // Half the format's gap in the same units is (c − θ) / 2^(t + 1),
   // within one of its computed value either way.
-  var hh: u64 = shr_hi(chi, t + 1);
-  var hl: u64 = shr_lo(chi, clo, t + 1);
-  var reads: i32 = 0;
+  let hh: u64 = shr_hi(chi, t + 1);
+  let hl: u64 = shr_lo(chi, clo, t + 1);
+  let reads: i32 = 0;
   if (hh != 0 as u64) {
     reads = 2;
   } else if (up) {
-    var dc: u64 = 0 as u64 - fr;
+    let dc: u64 = 0 as u64 - fr;
     if (dc - 1 as u64 > hl) {
       reads = 1;
     } else if (hl >= margin + 1 as u64 && dc <= hl - margin - 1 as u64) {
@@ -1539,12 +1539,12 @@ function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
   if (reads == 0) {
     return no_dec();
   }
-  var n: u64 = q;
+  let n: u64 = q;
   if (up) {
     n = n + 1 as u64;
   }
-  var digits: string = n.to_string();
-  var dp: i32 = x + 1;
+  let digits: string = n.to_string();
+  let dp: i32 = x + 1;
   if (digits.len() > p) {
     digits = "1";
     dp = dp + 1;
@@ -1561,7 +1561,7 @@ pub function round_digits(d: string, n: i32): (string, boolean) {
     if (n < 0) {
       return ("", false);
     }
-    var first: i32 = d[0] as i32;
+    let first: i32 = d[0] as i32;
     if (first > 53 || first == 53 && has_nonzero(d, 1)) {
       return ("1", true);
     }
@@ -1570,8 +1570,8 @@ pub function round_digits(d: string, n: i32): (string, boolean) {
   if (n >= d.len()) {
     return (d, false);
   }
-  var c: i32 = d[n] as i32;
-  var up: boolean = false;
+  let c: i32 = d[n] as i32;
+  let up: boolean = false;
   if (c > 53) {
     up = true;
   } else if (c == 53) {
@@ -1581,8 +1581,8 @@ pub function round_digits(d: string, n: i32): (string, boolean) {
       up = (d[n - 1] as i32 - 48) % 2 == 1;
     }
   }
-  var kept: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let kept: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     kept = kept.with(i, d[i]);
     i = i + 1;
@@ -1604,7 +1604,7 @@ pub function round_digits(d: string, n: i32): (string, boolean) {
 }
 
 function has_nonzero(d: string, from: i32): boolean {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i < d.len()) {
     if (d[i] as i32 != 48) {
       return true;
@@ -1666,8 +1666,8 @@ pub function fixed(d: Dec, prec: i64, alt: boolean, extra: i64): Body {
     }
     return fixed_shape("", 0, prec, alt, prec);
   }
-  var n: i64 = d.dp as i64 + prec;
-  var whole: i64 = d.dp as i64;
+  let n: i64 = d.dp as i64 + prec;
+  let whole: i64 = d.dp as i64;
   if (whole < 1 as i64) {
     whole = 1 as i64;
   }
@@ -1680,8 +1680,8 @@ pub function fixed(d: Dec, prec: i64, alt: boolean, extra: i64): Body {
   if (n < 0 as i64) {
     return fixed_shape("", 0, prec, alt, prec);
   }
-  var rf: (string, boolean) = round_digits(d.digits, n as i32);
-  var dp: i32 = d.dp;
+  let rf: (string, boolean) = round_digits(d.digits, n as i32);
+  let dp: i32 = d.dp;
   if (rf.1) {
     dp = dp + 1;
   }
@@ -1692,7 +1692,7 @@ pub function fixed(d: Dec, prec: i64, alt: boolean, extra: i64): Body {
 // (dp ≤ 0 puts leading zeros after the point), and `zeros` how many
 // more zeros make the fraction exactly `prec` long.
 function fixed_shape(digits: string, dp: i32, prec: i64, alt: boolean, zeros: i64): Body {
-  var head: string = "";
+  let head: string = "";
   if (dp >= 1) {
     head = slice_unchecked(digits, 0, dp) + "";
     if (prec > 0 as i64 || alt) {
@@ -1711,17 +1711,17 @@ function fixed_shape(digits: string, dp: i32, prec: i64, alt: boolean, zeros: i6
 
 // The `e+NN` tail, at least two exponent digits.
 function exp_suffix(x: i32, upper: boolean): string {
-  var ax: i32 = x;
+  let ax: i32 = x;
   if (x < 0) {
     ax = 0 - x;
   }
-  var nd: i32 = 2;
-  var probe: i32 = ax / 100;
+  let nd: i32 = 2;
+  let probe: i32 = ax / 100;
   while (probe > 0) {
     nd = nd + 1;
     probe = probe / 10;
   }
-  var out: u8[] = __alloc_u8(2 + nd);
+  let out: u8[] = __alloc_u8(2 + nd);
   out = out.with(0, 101 as u8);
   if (upper) {
     out = out.with(0, 69 as u8);
@@ -1730,7 +1730,7 @@ function exp_suffix(x: i32, upper: boolean): string {
   if (x < 0) {
     out = out.with(1, 45 as u8);
   }
-  var i: i32 = 1 + nd;
+  let i: i32 = 1 + nd;
   while (i >= 2) {
     out = out.with(i, (ax % 10 + 48) as u8);
     ax = ax / 10;
@@ -1751,13 +1751,13 @@ pub function sci(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64): B
   if (prec + 2 as i64 + extra + exp_suffix(d.dp - 1, false).len() as i64 >= overflow_len()) {
     return refused();
   }
-  var n: i64 = prec + 1 as i64;
+  let n: i64 = prec + 1 as i64;
   if (n >= d.digits.len() as i64) {
     return sci_shape(d.digits, d.dp - 1, prec, alt, upper, n - d.digits.len() as i64);
   }
-  var re: (string, boolean) = round_digits(d.digits, n as i32);
-  var xe: i32 = d.dp - 1;
-  var de: string = re.0;
+  let re: (string, boolean) = round_digits(d.digits, n as i32);
+  let xe: i32 = d.dp - 1;
+  let de: string = re.0;
   if (re.1) {
     xe = xe + 1;
     de = slice_unchecked(de, 0, n as i32) + "";
@@ -1766,7 +1766,7 @@ pub function sci(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64): B
 }
 
 function sci_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: boolean, zeros: i64): Body {
-  var head: string = slice_unchecked(digits, 0, 1) + "";
+  let head: string = slice_unchecked(digits, 0, 1) + "";
   if (prec > 0 as i64 || alt) {
     head = head + ".";
   }
@@ -1779,21 +1779,21 @@ function sci_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: boole
 // below -4 or at least `prec` and `%f` otherwise, trailing zeros gone
 // unless `alt` asks for them.
 pub function general(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64): Body {
-  var pr: i64 = prec;
+  let pr: i64 = prec;
   if (pr == 0 as i64) {
     pr = 1 as i64;
   }
   if (d.digits.len() == 0) {
     return general_shape("0", 0, pr, alt, upper, false, extra);
   }
-  var sig: i32 = d.digits.len();
+  let sig: i32 = d.digits.len();
   if (pr >= sig as i64) {
     return general_shape(d.digits, d.dp - 1, pr, alt, upper, false, extra);
   }
   sig = pr as i32;
-  var r: (string, boolean) = round_digits(d.digits, sig);
-  var x: i32 = d.dp - 1;
-  var digits: string = r.0;
+  let r: (string, boolean) = round_digits(d.digits, sig);
+  let x: i32 = d.dp - 1;
+  let digits: string = r.0;
   if (r.1) {
     x = x + 1;
     digits = slice_unchecked(digits, 0, sig) + "";
@@ -1808,10 +1808,10 @@ pub function general(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64
 // style inherits the fixed style's zero fraction digits: `%#.3g` of
 // 999.5 is `1.e+03`.
 function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: boolean, carried: boolean, extra: i64): Body {
-  var pr: i32 = prec as i32;
-  var zeros: i64 = 0 as i64;
+  let pr: i32 = prec as i32;
+  let zeros: i64 = 0 as i64;
   if (x < 0 - 4 || x as i64 >= prec) {
-    var end: i32 = digits.len();
+    let end: i32 = digits.len();
     if (carried && x as i64 == prec) {
       end = 1;
     } else if (alt) {
@@ -1822,11 +1822,11 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
     } else {
       end = nonzero_end(digits, 1);
     }
-    var point: i32 = 0;
+    let point: i32 = 0;
     if (end > 1 || alt) {
       point = 1;
     }
-    var mant: u8[] = __alloc_u8(end + point);
+    let mant: u8[] = __alloc_u8(end + point);
     mant = mant.with(0, digits[0]);
     if (point == 1) {
       mant = mant.with(1, 46 as u8);
@@ -1838,10 +1838,10 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
   // digits there are, or a lone zero when the value is below one; the
   // fraction is `lead` zeros and the digits after, cut back to the last
   // non-zero one unless `alt` keeps them.
-  var dp: i32 = x + 1;
-  var whole: i32 = dp;
-  var lead: i32 = 0;
-  var from: i32 = dp;
+  let dp: i32 = x + 1;
+  let whole: i32 = dp;
+  let lead: i32 = 0;
+  let from: i32 = dp;
   if (dp < 1) {
     whole = 1;
     lead = 0 - dp;
@@ -1850,9 +1850,9 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
   if (from > digits.len()) {
     from = digits.len();
   }
-  var end: i32 = digits.len();
+  let end: i32 = digits.len();
   if (alt) {
-    var want: i32 = pr - 1 - x;
+    let want: i32 = pr - 1 - x;
     if (want as i64 + extra >= overflow_len()) {
       return refused();
     }
@@ -1865,12 +1865,12 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
       lead = 0;
     }
   }
-  var point: i32 = 0;
+  let point: i32 = 0;
   if (lead + end - from > 0 || alt) {
     point = 1;
   }
-  var head: u8[] = __alloc_u8(whole + point + lead + end - from);
-  var at: i32 = 0;
+  let head: u8[] = __alloc_u8(whole + point + lead + end - from);
+  let at: i32 = 0;
   if (dp < 1) {
     head = head.with(0, 48 as u8);
     at = 1;
@@ -1897,7 +1897,7 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
 
 // The end of `s` once its trailing zeros are dropped, never before `from`.
 function nonzero_end(s: string, from: i32): i32 {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   while (n > from && s[n - 1] as i32 == 48) {
     n = n - 1;
   }
@@ -1905,7 +1905,7 @@ function nonzero_end(s: string, from: i32): i32 {
 }
 
 function copy_digits(own out: u8[], at: i32, s: string, from: i32, to: i32): u8[] {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i < to) {
     out = out.with(at + i - from, s[i]);
     i = i + 1;
@@ -1931,13 +1931,13 @@ pub function (f: Format) to_fixed(v: LD, prec: i32): string {
       return fixed_u64(0 as u64, prec, v.neg);
     }
     if (v.hi == 0 as u64) {
-      var tz: i32 = __ctz64(v.lo);
-      var q1: u64 = scaled_u64(v.lo >> tz as u64, v.e + tz, prec);
+      let tz: i32 = __ctz64(v.lo);
+      let q1: u64 = scaled_u64(v.lo >> tz as u64, v.e + tz, prec);
       if (q1 != 18446744073709551615 as u64) {
         return fixed_u64(q1, prec, v.neg);
       }
     } else if (fits_word(v)) {
-      var q: u64 = scaled_u64(reduced(v), v.e + trailing_zeros128(v.hi, v.lo), prec);
+      let q: u64 = scaled_u64(reduced(v), v.e + trailing_zeros128(v.hi, v.lo), prec);
       if (q != 18446744073709551615 as u64) {
         return fixed_u64(q, prec, v.neg);
       }
@@ -1950,20 +1950,20 @@ pub function (f: Format) to_fixed(v: LD, prec: i32): string {
 // MAX when it does not fit a word — a value that large is the 20-digit
 // case `fixed` handles, so the sentinel costs nothing.
 function scaled_u64(m: u64, e: i32, prec: i32): u64 {
-  var p: u64 = pow10_u64(prec);
-  var hi: u64 = mul_hi64(m, p);
-  var lo: u64 = m * p;
-  var none: u64 = 18446744073709551615 as u64;
+  let p: u64 = pow10_u64(prec);
+  let hi: u64 = mul_hi64(m, p);
+  let lo: u64 = m * p;
+  let none: u64 = 18446744073709551615 as u64;
   if (e >= 0) {
     if (hi != 0 as u64 || e >= 64 || e > 0 && lo >> (64 - e) as u64 != 0 as u64) {
       return none;
     }
     return lo << e as u64;
   }
-  var shift: i32 = 0 - e;
-  var q: u64 = 0 as u64;
-  var round: boolean = false;
-  var below: boolean = false;
+  let shift: i32 = 0 - e;
+  let q: u64 = 0 as u64;
+  let round: boolean = false;
+  let below: boolean = false;
   if (shift < 64) {
     if (hi >> shift as u64 != 0 as u64) {
       return none;
@@ -1976,7 +1976,7 @@ function scaled_u64(m: u64, e: i32, prec: i32): u64 {
     round = lo >> 63 as u64 == 1 as u64;
     below = lo << 1 as u64 != 0 as u64;
   } else if (shift < 128) {
-    var t: i32 = shift - 64;
+    let t: i32 = shift - 64;
     q = hi >> t as u64;
     round = (hi >> (t - 1) as u64 & 1 as u64) == 1 as u64;
     below = lo != 0 as u64 || (hi & (1 as u64 << (t - 1) as u64) - 1 as u64) != 0 as u64;
@@ -1995,8 +1995,8 @@ function scaled_u64(m: u64, e: i32, prec: i32): u64 {
 
 // 10^k for k up to 19.
 function pow10_u64(k: i32): u64 {
-  var p: u64 = 1 as u64;
-  var i: i32 = 0;
+  let p: u64 = 1 as u64;
+  let i: i32 = 0;
   while (i < k) {
     p = p * (10 as u64);
     i = i + 1;
@@ -2007,31 +2007,31 @@ function pow10_u64(k: i32): u64 {
 // `q` written with its last `prec` digits after the point, zero-padded
 // to at least one digit before it, and a sign in front.
 function fixed_u64(q: u64, prec: i32, neg: boolean): string {
-  var digits: i32 = 1;
-  var t: u64 = q / (10 as u64);
+  let digits: i32 = 1;
+  let t: u64 = q / (10 as u64);
   while (t > 0 as u64) {
     digits = digits + 1;
     t = t / (10 as u64);
   }
-  var whole: i32 = digits - prec;
+  let whole: i32 = digits - prec;
   if (whole < 1) {
     whole = 1;
   }
-  var n: i32 = whole;
+  let n: i32 = whole;
   if (prec > 0) {
     n = n + 1 + prec;
   }
-  var start: i32 = 0;
+  let start: i32 = 0;
   if (neg) {
     start = 1;
   }
-  var out: u8[] = __alloc_u8(start + n);
+  let out: u8[] = __alloc_u8(start + n);
   if (neg) {
     out = out.with(0, 45 as u8);
   }
-  var i: i32 = start + n - 1;
-  var rest: u64 = q;
-  var k: i32 = 0;
+  let i: i32 = start + n - 1;
+  let rest: u64 = q;
+  let k: i32 = 0;
   while (k < prec) {
     out = out.with(i, ((rest % (10 as u64)) as i32 + 48) as u8);
     rest = rest / (10 as u64);
@@ -2091,47 +2091,47 @@ pub function (f: Format) hex(v: LD, prec: i64, alt: boolean): string {
 }
 
 pub function (f: Format) hex_parts(v: LD, prec: i64, alt: boolean): Body {
-  var shift: i32 = hex_shift(f);
-  var nd: i32 = shift / 4;
-  var lead: i32 = 0;
-  var frac: u8[] = __alloc_u8(nd);
-  var pe: i32 = 0;
+  let shift: i32 = hex_shift(f);
+  let nd: i32 = shift / 4;
+  let lead: i32 = 0;
+  let frac: u8[] = __alloc_u8(nd);
+  let pe: i32 = 0;
   if (!v.is_zero()) {
     lead = nibble_at(v, shift);
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < nd) {
       frac = frac.with(i, hex_char(nibble_at(v, shift - 4 * (i + 1))) as u8);
       i = i + 1;
     }
     pe = v.e + shift;
   } else {
-    var z: i32 = 0;
+    let z: i32 = 0;
     while (z < nd) {
       frac = frac.with(z, 48 as u8);
       z = z + 1;
     }
   }
-  var keep: i32 = nd;
+  let keep: i32 = nd;
   if (prec >= 0 as i64 && prec < nd as i64) {
     keep = prec as i32;
-    var rd: i32 = hex_digit(frac[keep] as i32);
-    var rest: boolean = false;
-    var k: i32 = keep + 1;
+    let rd: i32 = hex_digit(frac[keep] as i32);
+    let rest: boolean = false;
+    let k: i32 = keep + 1;
     while (k < nd) {
       if (frac[k] as i32 != 48) {
         rest = true;
       }
       k = k + 1;
     }
-    var last_odd: boolean = lead % 2 == 1;
+    let last_odd: boolean = lead % 2 == 1;
     if (keep > 0) {
       last_odd = hex_digit(frac[keep - 1] as i32) % 2 == 1;
     }
     if (rd > 8 || rd == 8 && (rest || last_odd)) {
-      var j: i32 = keep - 1;
-      var carry: boolean = true;
+      let j: i32 = keep - 1;
+      let carry: boolean = true;
       while (j >= 0 && carry) {
-        var dv: i32 = hex_digit(frac[j] as i32) + 1;
+        let dv: i32 = hex_digit(frac[j] as i32) + 1;
         if (dv == 16) {
           frac = frac.with(j, 48 as u8);
         } else {
@@ -2153,16 +2153,16 @@ pub function (f: Format) hex_parts(v: LD, prec: i64, alt: boolean): Body {
       keep = keep - 1;
     }
   }
-  var digits: string = slice_unchecked(string_from_bytes_unchecked(frac), 0, keep) + "";
-  var zeros: i64 = 0 as i64;
+  let digits: string = slice_unchecked(string_from_bytes_unchecked(frac), 0, keep) + "";
+  let zeros: i64 = 0 as i64;
   if (prec > nd as i64) {
     zeros = prec - nd as i64;
   }
-  var head: string = string_from_bytes_unchecked([hex_char(lead) as u8]);
+  let head: string = string_from_bytes_unchecked([hex_char(lead) as u8]);
   if (digits.len() > 0 || zeros > 0 as i64 || alt) {
     head = head + "." + digits;
   }
-  var ps: string = "p";
+  let ps: string = "p";
   if (pe < 0) {
     ps = ps + "-" + ((0 - pe) as i64).to_string();
   } else {

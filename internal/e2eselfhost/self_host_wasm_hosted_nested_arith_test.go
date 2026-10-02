@@ -108,7 +108,7 @@ func TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith(t *testing.T) {
 			// The reduced #7948 repro: two `a + a * a` initialisers, `a` a
 			// parameter so nothing folds.
 			name: "two-nested-initialisers",
-			src: "function f(a: i32): i32 { var x: i32 = a + a * a; var y: i32 = a + a * a; return x; }\n" +
+			src: "function f(a: i32): i32 { let x: i32 = a + a * a; let y: i32 = a + a * a; return x; }\n" +
 				"function main(): i32 { return f(1); }\n",
 			want: 2,
 		},
@@ -117,7 +117,7 @@ func TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith(t *testing.T) {
 			// results are USED, so a wrong answer is a wrong exit code rather
 			// than dead code.
 			name: "nested-initialisers-both-read",
-			src: "function g(a: i32): i32 { var v0: i32 = 1 + a * 1; var v1: i32 = 1 + a * 1; return v0 + v1; }\n" +
+			src: "function g(a: i32): i32 { let v0: i32 = 1 + a * 1; let v1: i32 = 1 + a * 1; return v0 + v1; }\n" +
 				"function main(): i32 { return g(3); }\n",
 			want: 8,
 		},
@@ -125,10 +125,10 @@ func TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith(t *testing.T) {
 			// Deeper and wider: four initialisers at depth 3.
 			name: "four-deep-initialisers",
 			src: "function h(a: i32, b: i32): i32 {\n" +
-				"    var p: i32 = a + b * (a + b);\n" +
-				"    var q: i32 = a + b * (a + b);\n" +
-				"    var r: i32 = b + a * (b + a);\n" +
-				"    var s: i32 = b + a * (b + a);\n" +
+				"    let p: i32 = a + b * (a + b);\n" +
+				"    let q: i32 = a + b * (a + b);\n" +
+				"    let r: i32 = b + a * (b + a);\n" +
+				"    let s: i32 = b + a * (b + a);\n" +
 				"    return p + q + r + s;\n" +
 				"}\n" +
 				"function main(): i32 { return h(2, 3); }\n",

@@ -125,7 +125,7 @@ func TestSelfHostWasmIRUdpSend(t *testing.T) {
 		}()
 
 		out := run(t, "udp_ok", fmt.Sprintf(`function main(): i32 {
-    var n: i32 = udp_send("127.0.0.1", %d, "hello-udp");
+    let n: i32 = udp_send("127.0.0.1", %d, "hello-udp");
     write("sent="); print_int(n); write("\n");
     return 0;
 }`, port))
@@ -169,7 +169,7 @@ func TestSelfHostWasmIRUdpSend(t *testing.T) {
 		}()
 
 		out := run(t, "udp_high_octet", fmt.Sprintf(`function main(): i32 {
-    var n: i32 = udp_send("127.0.0.200", %d, "high-octet");
+    let n: i32 = udp_send("127.0.0.200", %d, "high-octet");
     write("sent="); print_int(n); write("\n");
     return 0;
 }`, port))
@@ -196,7 +196,7 @@ func TestSelfHostWasmIRUdpSend(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := run(t, tc.name, fmt.Sprintf(`function main(): i32 {
-    var n: i32 = udp_send("%s", 9311, "x");
+    let n: i32 = udp_send("%s", 9311, "x");
     write("r="); print_int(n); write("\n");
     return 0;
 }`, tc.host))
@@ -212,7 +212,7 @@ func TestSelfHostWasmIRUdpSend(t *testing.T) {
 	// payload actually went out correctly.
 	t.Run("sends_without_listener", func(t *testing.T) {
 		out := run(t, "udp_nolisten", `function main(): i32 {
-    var n: i32 = udp_send("127.0.0.1", 9399, "xyz");
+    let n: i32 = udp_send("127.0.0.1", 9399, "xyz");
     write("r="); print_int(n); write("\n");
     return 0;
 }`)

@@ -43,12 +43,12 @@ function deep_alias(o: S, i: i32): S {
 // Marked: the container is not rebound, so a later statement still reads the
 // place through it.
 function no_rebind(o: S, i: i32): i32 {
-    var q: S = S { xs: o.xs.append(i), ys: o.ys, inner: o.inner, deep: o.deep, n: i };
+    let q: S = S { xs: o.xs.append(i), ys: o.ys, inner: o.inner, deep: o.deep, n: i };
     return q.xs.len() + o.xs.len();
 }
 // Marked: the rebinding forwards the NAME, but this alias holds the container.
 function aliased_container(o: S, i: i32): i32 {
-    var old: S = o;
+    let old: S = o;
     o = S { xs: o.xs.append(i), ys: o.ys, inner: o.inner, deep: o.deep, n: i };
     return o.xs.len() + old.xs.len();
 }
@@ -73,19 +73,19 @@ function retpos(o: S, i: i32): S {
 }
 // Unmarked: no read of the place anywhere else at all.
 function only_read(o: S, i: i32): i32[] {
-    var ys: i32[] = o.xs.append(i);
+    let ys: i32[] = o.xs.append(i);
     return ys;
 }
 // Unmarked: the container reaches a call, but the call gives back a SCALAR, so
 // no name that outlives the read can hold it. The x86 assembler's shape.
 function scalar_binding(o: S, i: i32): S {
-    var n: i32 = mark(o);
+    let n: i32 = mark(o);
     o = S { ...o, xs: o.xs.append(i + n) };
     return o;
 }
 // Marked: the same read, bound to something that CAN hold the container.
 function container_binding(o: S, i: i32): S {
-    var keep: S = pass(o);
+    let keep: S = pass(o);
     o = S { ...o, xs: o.xs.append(i) };
     return S { ...o, ys: keep.xs };
 }
@@ -93,14 +93,14 @@ function container_binding(o: S, i: i32): S {
 // carries the container all the same — bindingHoldsContainer is a whitelist of
 // the scalars for exactly this reason.
 function map_binding(o: S, i: i32): S {
-    var m: Map[i32, S] = stash(o);
+    let m: Map[i32, S] = stash(o);
     o = S { ...o, xs: o.xs.append(i + m.len()) };
     return o;
 }
 
 function mark(s: S): i32 { return s.xs.len(); }
 function pass(s: S): S { return s; }
-function stash(s: S): Map[i32, S] { var m: Map[i32, S] = map_new(4); return m.insert(0, s); }
+function stash(s: S): Map[i32, S] { let m: Map[i32, S] = map_new(4); return m.insert(0, s); }
 function main(): i32 { return 0; }`
 
 	prog, err := parser.Parse(src)
@@ -182,50 +182,50 @@ func TestFieldPlaceMutationSequencedReads(t *testing.T) {
 
 // Unmarked: both overlapping reads yield a scalar computed before the grow.
 function pre_len_index(o: S, i: i32): S {
-    var k: i32 = o.xs.len();
-    var e: i32 = o.xs[0];
-    var zs: i32[] = o.xs.append(i + k + e);
+    let k: i32 = o.xs.len();
+    let e: i32 = o.xs[0];
+    let zs: i32[] = o.xs.append(i + k + e);
     return S { xs: zs, ys: o.ys, n: k };
 }
 // Marked: the length read comes AFTER the append and sees the grown buffer.
 function post_len(o: S, i: i32): S {
-    var zs: i32[] = o.xs.append(i);
-    var k: i32 = o.xs.len();
+    let zs: i32[] = o.xs.append(i);
+    let k: i32 = o.xs.len();
     return S { xs: zs, ys: o.ys, n: k };
 }
 // Marked: one statement orders nothing within itself.
 function same_stmt(o: S, i: i32): S {
-    var zs: i32[] = o.xs.append(o.xs.len() + i);
+    let zs: i32[] = o.xs.append(o.xs.len() + i);
     return S { xs: zs, ys: o.ys, n: i };
 }
 // Marked: a preceding read that BINDS the buffer rather than a scalar off it.
 function pre_bind(o: S, i: i32): S {
-    var keep: i32[] = o.xs;
-    var zs: i32[] = o.xs.append(i);
+    let keep: i32[] = o.xs;
+    let zs: i32[] = o.xs.append(i);
     return S { xs: zs, ys: keep, n: i };
 }
 // Marked: the lambda reads the root when it is CALLED, so a read that precedes
 // the site textually does not precede it in time.
 function pre_len_lambda(o: S, i: i32): i32 {
-    var f: () => i32 = (): i32 => { return o.xs.len(); };
-    var zs: i32[] = o.xs.append(i);
+    let f: () => i32 = (): i32 => { return o.xs.len(); };
+    let zs: i32[] = o.xs.append(i);
     return zs.len() + f();
 }
 // Unmarked: the hash-index shape — the bucket and the chain link are both read
 // before the store that replaces the bucket.
 function with_pre_reads(o: S, i: i32): S {
-    var bk: i32 = o.xs.len() - 1;
-    var e: i32 = o.xs[bk];
-    var zs: i32[] = o.xs.with(bk, i + e);
+    let bk: i32 = o.xs.len() - 1;
+    let e: i32 = o.xs[bk];
+    let zs: i32[] = o.xs.with(bk, i + e);
     return S { xs: zs, ys: o.ys, n: bk };
 }
 // Marked: an admitted .with moves the field out, so a body-scope host inside
 // a loop would read the moved-out field on the next pass.
 function with_in_loop(o: S, i: i32): i32 {
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < i) {
-        var zs: i32[] = o.xs.with(0, j);
+        let zs: i32[] = o.xs.with(0, j);
         acc = acc + zs[0];
         j = j + 1;
     }
@@ -234,7 +234,7 @@ function with_in_loop(o: S, i: i32): i32 {
 // Unmarked: the same .with under a rebind of its own root, which replaces
 // the container the next pass reads.
 function with_in_loop_rebind(o: S, i: i32): i32 {
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < i) {
         o = S { ...o, xs: o.xs.with(0, j) };
         j = j + 1;
@@ -291,30 +291,30 @@ struct RefSet { names: i32[], head: i32[] }
 
 // Admitted: every read of head precedes the store that replaces one slot.
 function refset_add(rs: RefSet, name: i32): RefSet {
-    var bk: i32 = name % rs.head.len();
-    var names: i32[] = rs.names.append(name);
-    var head: i32[] = rs.head.with(bk, names.len() - 1);
+    let bk: i32 = name % rs.head.len();
+    let names: i32[] = rs.names.append(name);
+    let head: i32[] = rs.head.with(bk, names.len() - 1);
     return RefSet { names: names, head: head };
 }
 // Admitted: a struct this frame builds, whose field outlives the box.
 function build(n: i32): i32[] {
-    var b: Inner = Inner { xs: [0, 0, 0] };
-    var ys: i32[] = b.xs.with(0, n);
+    let b: Inner = Inner { xs: [0, 0, 0] };
+    let ys: i32[] = b.xs.with(0, n);
     return ys;
 }
 // Refused: the root is a local naming another container's box.
 function alias_root(v: i32): i32[] {
-    var o: Outer = Outer { inner: Inner { xs: [1, 2, 3] }, n: 0 };
-    var t: Inner = o.inner;
+    let o: Outer = Outer { inner: Inner { xs: [1, 2, 3] }, n: 0 };
+    let t: Inner = o.inner;
     return t.xs.with(0, v + o.inner.xs[0]);
 }
 // Refused: a body-scope host inside a loop runs again against the same root.
 function loop_host(k: i32): i32 {
-    var b: Inner = Inner { xs: [1, 2, 3] };
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let b: Inner = Inner { xs: [1, 2, 3] };
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < k) {
-        var zs: i32[] = b.xs.with(0, j);
+        let zs: i32[] = b.xs.with(0, j);
         acc = acc + zs[0];
         j = j + 1;
     }

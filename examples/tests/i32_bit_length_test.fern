@@ -41,12 +41,12 @@ function test_max(): test.TestOutcome {
 
 function test_min(): test.TestOutcome {
   // i32::MIN magnitude is 2^31 -> 32 bits.
-  var min: i32 = 0 - 2147483647 - 1;
+  let min: i32 = 0 - 2147483647 - 1;
   return test.assert_true(min.bit_length() == 32);
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/i32 bit_length");
+  let r: test.TestRunner = test.test_new("std/i32 bit_length");
   r = r.it("zero", test_zero);
   r = r.it("one", test_one);
   r = r.it("five", test_five);

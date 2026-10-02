@@ -13,15 +13,15 @@ const closureCallIntoContainerSrc = `struct H { f: (i32) => i32, n: i32 }
 function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function mkh(i: i32): H { return H { f: mk(i * 3), n: i }; }
 function main(): i32 {
-    var t: i32 = 0;
-    var fns: ((i32) => i32)[] = [];
-    var hs: H[] = [];
-    var q: ((i32) => i32, i32) = (mk(0), 0);
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let fns: ((i32) => i32)[] = [];
+    let hs: H[] = [];
+    let q: ((i32) => i32, i32) = (mk(0), 0);
+    let i: i32 = 0;
     while (i < 6) {
-        var h: H = H { f: mk(i + 1), n: i };
-        var fs: ((i32) => i32)[] = [mk(i), mk(1)];
-        var p: ((i32) => i32, i32) = (mk(i), i);
+        let h: H = H { f: mk(i + 1), n: i };
+        let fs: ((i32) => i32)[] = [mk(i), mk(1)];
+        let p: ((i32) => i32, i32) = (mk(i), i);
         fns = fns.append(mk(i * 2));
         hs = hs.append(mkh(i));
         q = (mk(i + 2), i);
@@ -45,17 +45,17 @@ const closureCallIntoContainerWant = 74
 // release freed it.
 const closureContainerSharedSrc = `struct H { f: (i32) => i32, n: i32 }
 function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
-function wrap(i: i32): H { var g: (i32) => i32 = mk(i); return H { f: g, n: i }; }
+function wrap(i: i32): H { let g: (i32) => i32 = mk(i); return H { f: g, n: i }; }
 function main(): i32 {
-    var t: i32 = 0;
-    var keep: (i32) => i32 = mk(100);
-    var hs: H[] = [];
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let keep: (i32) => i32 = mk(100);
+    let hs: H[] = [];
+    let i: i32 = 0;
     while (i < 6) {
-        var g: (i32) => i32 = mk(i + 1);
-        var h: H = H { f: g, n: i };
-        var fs: ((i32) => i32)[] = [g, mk(1)];
-        var p: ((i32) => i32, i32) = (g, i);
+        let g: (i32) => i32 = mk(i + 1);
+        let h: H = H { f: g, n: i };
+        let fs: ((i32) => i32)[] = [g, mk(1)];
+        let p: ((i32) => i32, i32) = (g, i);
         hs = hs.append(H { f: g, n: i });
         hs = hs.append(wrap(i));
         if (i == 3) { keep = g; }
@@ -85,17 +85,17 @@ function fieldof(h: H): (i32) => i32 { return h.f; }
 function first(fs: ((i32) => i32)[]): (i32) => i32 { return fs[0]; }
 function loopret(fs: ((i32) => i32)[]): (i32) => i32 { for f in fs { return f; } return mk(0); }
 function main(): i32 {
-    var t: i32 = 0;
-    var k: i32 = 3;
-    var keep: (i32) => i32 = mk(3);
-    var h: H = H { f: (x: i32) => x * k, n: 1 };
-    var fs: ((i32) => i32)[] = [(x: i32) => x + k, (x: i32) => x + k + 1];
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let k: i32 = 3;
+    let keep: (i32) => i32 = mk(3);
+    let h: H = H { f: (x: i32) => x * k, n: 1 };
+    let fs: ((i32) => i32)[] = [(x: i32) => x + k, (x: i32) => x + k + 1];
+    let i: i32 = 0;
     while (i < 6) {
-        var g: (i32) => i32 = pass(keep);
-        var a: (i32) => i32 = fieldof(h);
-        var b: (i32) => i32 = first(fs);
-        var c: (i32) => i32 = loopret(fs);
+        let g: (i32) => i32 = pass(keep);
+        let a: (i32) => i32 = fieldof(h);
+        let b: (i32) => i32 = first(fs);
+        let c: (i32) => i32 = loopret(fs);
         t = t + g(10) + pass(keep)(i) + a(i) + b(i) + c(i);
         i = i + 1;
     }
@@ -112,11 +112,11 @@ const closureReturnFieldArraySrc = `struct G { fs: ((i32) => i32)[], n: i32 }
 function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function elem(g: G): (i32) => i32 { return g.fs[0]; }
 function main(): i32 {
-    var t: i32 = 0;
-    var g: G = G { fs: [mk(1), mk(2)], n: 4 };
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let g: G = G { fs: [mk(1), mk(2)], n: 4 };
+    let i: i32 = 0;
     while (i < 6) {
-        var f: (i32) => i32 = elem(g);
+        let f: (i32) => i32 = elem(g);
         t = t + f(10 + i) + elem(g)(i);
         i = i + 1;
     }
@@ -131,11 +131,11 @@ const closureReturnFieldArrayWant = 91
 const closureReturnTupleElemSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function tfirst(p: ((i32) => i32, i32)): (i32) => i32 { return p.0; }
 function main(): i32 {
-    var t: i32 = 0;
-    var p: ((i32) => i32, i32) = (mk(2), 9);
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let p: ((i32) => i32, i32) = (mk(2), 9);
+    let i: i32 = 0;
     while (i < 6) {
-        var f: (i32) => i32 = tfirst(p);
+        let f: (i32) => i32 = tfirst(p);
         t = t + f(10 + i) + tfirst(p)(i);
         i = i + 1;
     }
@@ -151,14 +151,14 @@ const closureReturnValueBranchSrc = `function mk(b: i32): (i32) => i32 { return 
 function pickif(fs: ((i32) => i32)[], c: boolean): (i32) => i32 { return (if (c) { fs[0] } else { fs[1] }); }
 function pickmatch(f: (i32) => i32, g: (i32) => i32, c: i32): (i32) => i32 { return match (c) { 0 => f, _ => g }; }
 function main(): i32 {
-    var t: i32 = 0;
-    var fs: ((i32) => i32)[] = [mk(1), mk(2)];
-    var keep: (i32) => i32 = mk(3);
-    var alt: (i32) => i32 = mk(4);
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let fs: ((i32) => i32)[] = [mk(1), mk(2)];
+    let keep: (i32) => i32 = mk(3);
+    let alt: (i32) => i32 = mk(4);
+    let i: i32 = 0;
     while (i < 6) {
-        var f: (i32) => i32 = pickif(fs, i % 2 == 0);
-        var g: (i32) => i32 = pickmatch(keep, alt, i % 3);
+        let f: (i32) => i32 = pickif(fs, i % 2 == 0);
+        let g: (i32) => i32 = pickmatch(keep, alt, i % 3);
         t = t + f(10 + i) + g(i) + pickif(fs, i > 2)(i) + pickmatch(keep, keep, i)(1);
         i = i + 1;
     }
@@ -179,13 +179,13 @@ function pickf(k: i32, c: i32): (i32) => i32 {
     return match ((c, 0)) { (0, _) => ((x: i32) => x + k), _ => mk(k) };
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var a: (i32) => i32 = mk(1);
-    var b: (i32) => i32 = mk(2);
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let a: (i32) => i32 = mk(1);
+    let b: (i32) => i32 = mk(2);
+    let i: i32 = 0;
     while (i < 6) {
-        var f: (i32) => i32 = pickb(a, b, i % 2);
-        var g: (i32) => i32 = pickf(i, i % 2);
+        let f: (i32) => i32 = pickb(a, b, i % 2);
+        let g: (i32) => i32 = pickf(i, i % 2);
         t = t + f(10 + i) + g(i) + pickb(a, b, i % 3)(1) + pickf(i, i % 3)(2);
         i = i + 1;
     }
@@ -201,13 +201,13 @@ const closureReturnPatternMatchWant = 86
 const closureReturnClosureCallSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function viaclo(g: () => ((i32) => i32)): (i32) => i32 { return g(); }
 function main(): i32 {
-    var t: i32 = 0;
-    var keep: (i32) => i32 = mk(4);
-    var src: () => ((i32) => i32) = () => keep;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let keep: (i32) => i32 = mk(4);
+    let src: () => ((i32) => i32) = () => keep;
+    let i: i32 = 0;
     while (i < 6) {
-        var a: (i32) => i32 = viaclo(src);
-        var b: (i32) => i32 = mk(0);
+        let a: (i32) => i32 = viaclo(src);
+        let b: (i32) => i32 = mk(0);
         t = t + a(i) + b(i);
         i = i + 1;
     }
@@ -227,19 +227,19 @@ function dbl(x: i32): i32 { return x * 2; }
 function fresh(b: i32): (i32) => i32 { return (x: i32) => x + b; }
 function named(): (i32) => i32 { return dbl; }
 function viacall(b: i32): (i32) => i32 { return mk(b + 1); }
-function vialocal(b: i32): (i32) => i32 { var g: (i32) => i32 = mk(b); return g; }
+function vialocal(b: i32): (i32) => i32 { let g: (i32) => i32 = mk(b); return g; }
 function (m: M) make(): (i32) => i32 { return (x: i32) => x * m.b; }
 function viamethod(m: M): (i32) => i32 { return m.make(); }
 function main(): i32 {
-    var t: i32 = 0;
-    var m: M = M { b: 3 };
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let m: M = M { b: 3 };
+    let i: i32 = 0;
     while (i < 6) {
-        var a: (i32) => i32 = fresh(i);
-        var b: (i32) => i32 = named();
-        var c: (i32) => i32 = viacall(i);
-        var d: (i32) => i32 = vialocal(i);
-        var f: (i32) => i32 = viamethod(m);
+        let a: (i32) => i32 = fresh(i);
+        let b: (i32) => i32 = named();
+        let c: (i32) => i32 = viacall(i);
+        let d: (i32) => i32 = vialocal(i);
+        let f: (i32) => i32 = viamethod(m);
         t = t + a(i) + b(i) + c(i) + d(i) + f(i) + fresh(i)(1) + viamethod(m)(2);
         i = i + 1;
     }
@@ -254,10 +254,10 @@ const closureReturnOwnedWant = 55
 const closureReturnOwnParamSrc = `function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function passown(own f: (i32) => i32): (i32) => i32 { return f; }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var e: (i32) => i32 = passown(mk(i));
+        let e: (i32) => i32 = passown(mk(i));
         t = t + e(i + 7) + passown(mk(i))(1);
         i = i + 1;
     }
@@ -274,18 +274,18 @@ const closureOwnParamKeptSrc = `function apply_int(f: (i32) => i32, n: i32): i32
 function mk(b: i32): (i32) => i32 { return (x: i32) => x - b; }
 function via_capture(f: (i32) => i32, n: i32): i32 { return apply_int((x: i32): i32 => { return f(x) + 1; }, n); }
 function keep(own f: (i32) => i32): ((i32) => i32)[] {
-    var fs: ((i32) => i32)[] = [];
+    let fs: ((i32) => i32)[] = [];
     fs = fs.append(f);
     return fs;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 6) {
-        var g: (i32) => i32 = mk(i);
+        let g: (i32) => i32 = mk(i);
         t = t + via_capture(g, 10) + via_capture(mk(1), i);
         t = t + via_capture(g, 3);
-        var ks: ((i32) => i32)[] = keep(mk(i));
+        let ks: ((i32) => i32)[] = keep(mk(i));
         t = t + ks[0](20);
         t = t + keep(mk(i + 2))[0](2);
         i = i + 1;

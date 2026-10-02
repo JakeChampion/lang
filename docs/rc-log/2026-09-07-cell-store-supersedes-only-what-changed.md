@@ -9,8 +9,8 @@ back — so the store released the very value it was about to store.
 ```fern
 import "core/map";
 function main(): i32 {
-  var m: Map[string, i32] = map_new(2);
-  var f: () => i32 = (): i32 => { return m.len(); };   // captures m, so m is boxed
+  let m: Map[string, i32] = map_new(2);
+  let f: () => i32 = (): i32 => { return m.len(); };   // captures m, so m is boxed
   m = m.insert("k", 1);
   return m.len() * 10 + f();                            // expect 11
 }
@@ -70,7 +70,7 @@ x86-64, `leak` bytes:
 | `m = map_new(4); m = m.insert("k", i)` | **7344** | **124 use-after-free** | 144 | 144 |
 | `m = id(m)` (`@noinline` identity fn) | **7344** | 144 | **7344** | 144 |
 | `a = a.append(i)` | **6032** | clean | **6000** | clean |
-| `var t = id(m); m = t` | **7344** | 144 | **7344** | 144 |
+| `let t = id(m); m = t` | **7344** | 144 | **7344** | 144 |
 | `a = a.with(0, i)` | **2400** | clean | clean | clean |
 | `s = s + "abcdefgh"` | **10784** | clean | clean | clean |
 | `s = mk(i)` | **2352** | clean | clean | clean |
@@ -119,15 +119,15 @@ hole, one shape over, that let #8441 land.
 ## Still broken: a moved alias of the cell's own element
 
 ```fern
-var t: Map[string, i32] = m.insert("k", 1);   // cow in place: t IS m's handle
+let t: Map[string, i32] = m.insert("k", 1);   // cow in place: t IS m's handle
 m = t;                                        // over-release, exit 124
 ```
 
 unchanged by this work — 124 on `main` and 124 after. The cause is upstream of
-the store: the `var` binding takes a borrowed cow-in-place result without
+the store: the `let` binding takes a borrowed cow-in-place result without
 retaining it, so `t` and the cell share one count between them and the store's
 release (correctly, for a moved alias that owns its reference) spends it. The
-store cannot tell this apart from `var t = id(m); m = t`, where `t` genuinely
+store cannot tell this apart from `let t = id(m); m = t`, where `t` genuinely
 owns a count and the release is owed — the two differ only in `t`'s
 initialiser, and the pointer is the same on both. Filed as #8853; fixing it at
 the binding is the coherent place, not by widening this guard.

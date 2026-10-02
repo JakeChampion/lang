@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The checked operators in DESTINATION-TYPED positions: an annotated `var`, a
+// The checked operators in DESTINATION-TYPED positions: an annotated `let`, a
 // `return`, and a call argument. checked_arith_test.go covers the same
 // operators but reaches every one of them through `match (a +? b)`, which
 // supplies no expected type — so none of it exercised the settle path, and the
@@ -25,13 +25,13 @@ function unwrap(o: Option[i32], dflt: i32): i32 {
 }
 
 function main(): i32 {
-    var i32max: i32 = 2147483647;
-    var i32min: i32 = 0 - 2147483647 - 1;
+    let i32max: i32 = 2147483647;
+    let i32min: i32 = 0 - 2147483647 - 1;
 
-    // Annotated var destination.
-    var a: Option[i32] = i32max +? 1;
+    // Annotated let destination.
+    let a: Option[i32] = i32max +? 1;
     match (a) { Some(v) => { return 1; }, None => {} }
-    var b: Option[i32] = 40 +? 2;
+    let b: Option[i32] = 40 +? 2;
     match (b) { Some(v) => { if (v != 42) { return 2; } }, None => { return 3; } }
 
     // Return position, at three widths / signednesses.
@@ -48,21 +48,21 @@ function main(): i32 {
 
     // Every operator in the family through an annotated destination, since the
     // guard is per-operator and a partial list would leave some mistyped.
-    var d: Option[i32] = 84 /? 2;
+    let d: Option[i32] = 84 /? 2;
     if (unwrap(d, 0) != 42) { return 15; }
-    var e: Option[i32] = 84 /? 0;
+    let e: Option[i32] = 84 /? 0;
     match (e) { Some(v) => { return 16; }, None => {} }
-    var f: Option[i32] = 85 %? 43;
+    let f: Option[i32] = 85 %? 43;
     if (unwrap(f, 0) != 42) { return 17; }
-    var g: Option[i32] = i32min /? (0 - 1);
+    let g: Option[i32] = i32min /? (0 - 1);
     match (g) { Some(v) => { return 18; }, None => {} }
-    var h: Option[i32] = 1 <<? 3;
+    let h: Option[i32] = 1 <<? 3;
     if (unwrap(h, 0) != 8) { return 19; }
-    var i: Option[i32] = 1 <<? 32;
+    let i: Option[i32] = 1 <<? 32;
     match (i) { Some(v) => { return 20; }, None => {} }
-    var j: Option[i32] = 256 >>? 2;
+    let j: Option[i32] = 256 >>? 2;
     if (unwrap(j, 0) != 64) { return 21; }
-    var k: Option[i32] = 256 >>? 40;
+    let k: Option[i32] = 256 >>? 40;
     match (k) { Some(v) => { return 22; }, None => {} }
 
     return 0;

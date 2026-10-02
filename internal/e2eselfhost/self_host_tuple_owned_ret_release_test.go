@@ -14,7 +14,7 @@ import (
 // the fresh-ret registry admitted only direct literal returns, its "TUP:"
 // credit was the shallow box dec (element arrays stranded), and a bare
 // `return t` disqualified the whole function — so even the plainest producer,
-// `var t = (i, [i, i+1]); return t;`, left the caller with nothing to release
+// `let t = (i, [i, i+1]); return t;`, left the caller with nothing to release
 // and the callee refusing to sweep a returned name. Measured on the x86-64
 // self-host before the fix: allocs=200 frees=0 live_bytes=8000 per 100
 // rounds on the bare-return shapes, frees=100 (box only) on the
@@ -33,40 +33,40 @@ var tupleOwnedRetReleaseCases = []struct {
 	// The base p9 shape: an early conditional literal return, then the local.
 	{"tupown-cond-lit-then-local", `function mk(i: i32): (i32, i32[]) {
     if (i % 7 == 0) { return (0, [0]); }
-    var t: (i32, i32[]) = (i, [i, i + 1]);
+    let t: (i32, i32[]) = (i, [i, i + 1]);
     return t;
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var r: (i32, i32[]) = mk(i); t = t + r.0 + r.1.len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let r: (i32, i32[]) = mk(i); t = t + r.0 + r.1.len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 	// The plainest producer: an unconditional bare return of the local.
 	{"tupown-uncond-local", `function mk(i: i32): (i32, i32[]) {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
+    let t: (i32, i32[]) = (i, [i, i + 1]);
     return t;
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var r: (i32, i32[]) = mk(i); t = t + r.0 + r.1.len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let r: (i32, i32[]) = mk(i); t = t + r.0 + r.1.len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -75,20 +75,20 @@ function main(): i32 {
 	// slot is block-scoped and entry-zeroed on the literal path — the sweep's
 	// null guards are required here).
 	{"tupown-early-local-late-lit", `function mk(i: i32): (i32, i32[]) {
-    if (i % 7 != 0) { var t: (i32, i32[]) = (i, [i, i + 1]); return t; }
+    if (i % 7 != 0) { let t: (i32, i32[]) = (i, [i, i + 1]); return t; }
     return (0, [0]);
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var r: (i32, i32[]) = mk(i); t = t + r.0 + r.1.len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let r: (i32, i32[]) = mk(i); t = t + r.0 + r.1.len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -101,16 +101,16 @@ function main(): i32 {
     return (i, [i, i + 1]);
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var r: (i32, i32[]) = mk(i); t = t + r.0 + r.1.len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let r: (i32, i32[]) = mk(i); t = t + r.0 + r.1.len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -119,21 +119,21 @@ function main(): i32 {
 	// path's per-return keep-sweep must free the not-returned local (the
 	// callee half of the admission), and the returning path must keep it.
 	{"tupown-local-before-early-lit", `function mk(i: i32): (i32, i32[]) {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
+    let t: (i32, i32[]) = (i, [i, i + 1]);
     if (i % 7 == 0) { return (0, [0]); }
     return t;
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var r: (i32, i32[]) = mk(i); t = t + r.0 + r.1.len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let r: (i32, i32[]) = mk(i); t = t + r.0 + r.1.len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -143,21 +143,21 @@ function main(): i32 {
 	// per-name), the flags AND both declaration shapes, and each return
 	// path keeps only the local it moves out while the other is swept.
 	{"tupown-two-locals", `function mk(i: i32): (i32, i32[]) {
-    if (i % 2 == 0) { var t: (i32, i32[]) = (i, [i, i + 1]); return t; }
-    var u: (i32, i32[]) = (i, [i, i + 1]);
+    if (i % 2 == 0) { let t: (i32, i32[]) = (i, [i, i + 1]); return t; }
+    let u: (i32, i32[]) = (i, [i, i + 1]);
     return u;
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var r: (i32, i32[]) = mk(i); t = t + r.0 + r.1.len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let r: (i32, i32[]) = mk(i); t = t + r.0 + r.1.len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -168,25 +168,25 @@ function main(): i32 {
 	// TUPRC:/TUPRCS: and swept on NO path — the rebind reclaim then frees
 	// each superseded box and the sweep-or-keep pair handles the last one.
 	{"tupown-loop-resident-callee", `function mk(n: i32): (i32, i32[]) {
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < n) {
-        var t: (i32, i32[]) = (j, [j, j + 1]);
+        let t: (i32, i32[]) = (j, [j, j + 1]);
         if (j >= n - 1) { return t; }
         j = j + 1;
     }
     return (0, [0]);
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var r: (i32, i32[]) = mk(3 + (i % 4)); t = t + r.0 + r.1.len(); i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let r: (i32, i32[]) = mk(3 + (i % 4)); t = t + r.0 + r.1.len(); i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
@@ -201,24 +201,24 @@ function main(): i32 {
 	// is_arr slot-flag sweep no credit can deny. 99 = the gate regressed;
 	// 97 = the returned array was freed under the caller.
 	{"tupown-elem-extract-return", `function mk(i: i32): (i32, i32[]) {
-    var t: (i32, i32[]) = (i, [i, i + 1]);
+    let t: (i32, i32[]) = (i, [i, i + 1]);
     return t;
 }
 function pick(i: i32): i32[] {
-    var r: (i32, i32[]) = mk(i);
+    let r: (i32, i32[]) = mk(i);
     return r.1;
 }
 function churn(n: i32): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) { var xs: i32[] = pick(i); t = t + xs.len() + xs[0]; i = i + 1; }
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) { let xs: i32[] = pick(i); t = t + xs.len() + xs[0]; i = i + 1; }
     return t % 251;
 }
 function main(): i32 {
-    var w: i32 = churn(200);
-    var b1: i64 = __heap_bump_bytes();
-    var x: i32 = churn(200);
-    var b2: i64 = __heap_bump_bytes();
+    let w: i32 = churn(200);
+    let b1: i64 = __heap_bump_bytes();
+    let x: i32 = churn(200);
+    let b2: i64 = __heap_bump_bytes();
     if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;

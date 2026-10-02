@@ -36,20 +36,20 @@ var consumedAppendCases = []struct {
 }{
 	// The grow COPIES: `full` has no spare capacity, so the temp is a fresh
 	// buffer nobody else holds and the dec frees it. 56 B/round before.
-	{"copy-path-receiver-read-after", `function sink(xs: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
+	{"copy-path-receiver-read-after", `function sink(xs: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
 function work(n: i32): i32 {
-    var full: i32[] = [n, n + 1];
-    var a: i32 = sink(full.append(10));
+    let full: i32[] = [n, n + 1];
+    let a: i32 = sink(full.append(10));
     return a + sink(full) + full.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = (acc + work(i % 8)) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = (acc + work(j % 8)) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -60,24 +60,24 @@ function main(): i32 {
 	// helper bumps the receiver's count and hands the RECEIVER back. The same
 	// dec must net that bump away and free nothing — `roomy` is summed again
 	// after the call to say so.
-	{"inplace-path-frees-nothing", `function sink(xs: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
+	{"inplace-path-frees-nothing", `function sink(xs: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
 function work(n: i32): i32 {
-    var roomy: i32[] = [];
-    var i: i32 = 0;
+    let roomy: i32[] = [];
+    let i: i32 = 0;
     while (i < 3) { roomy = roomy.append(n + i); i = i + 1; }
-    var a: i32 = sink(roomy.append(20));
-    var b: i32 = sink(roomy);
+    let a: i32 = sink(roomy.append(20));
+    let b: i32 = sink(roomy);
     if (a <= b) { return 0 - 1; }
     return a + b + roomy.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 200) { var v: i32 = work(i % 8); if (v < 0) { return 97; } acc = (acc + v) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
-    while (j < 2000) { var w: i32 = work(j % 8); if (w < 0) { return 97; } acc = (acc + w) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 200) { let v: i32 = work(i % 8); if (v < 0) { return 97; } acc = (acc + v) % 251; i = i + 1; }
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
+    while (j < 2000) { let w: i32 = work(j % 8); if (w < 0) { return 97; } acc = (acc + w) % 251; j = j + 1; }
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     return 0;
@@ -86,20 +86,20 @@ function main(): i32 {
 	// The ELEMENT-receiver spelling: the container still owns what the append
 	// read, and `xs[0]` is not an Ident so it reaches the classifier by a
 	// different route than a bare local.
-	{"element-receiver", `function sink(xs: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
+	{"element-receiver", `function sink(xs: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
 function work(n: i32): i32 {
-    var xs: i32[][] = [[n], [n + 1]];
-    var a: i32 = sink(xs[0].append(30));
+    let xs: i32[][] = [[n], [n + 1]];
+    let a: i32 = sink(xs[0].append(30));
     return a + sink(xs[0]) + sink(xs[1]) + xs[0].len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = (acc + work(i % 8)) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = (acc + work(j % 8)) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -109,20 +109,20 @@ function main(): i32 {
 	// The shape the leak class is named for: a PARAM receiver appended once
 	// per iteration and consumed immediately. 8 leaks per call before, so this
 	// is the case that was unbounded in the way a real backtracking search is.
-	{"param-receiver-in-loop", `function sink(xs: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
-function walk(path: i32[]): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 8) { t = t + sink(path.append(i)); i = i + 1; } return t; }
+	{"param-receiver-in-loop", `function sink(xs: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
+function walk(path: i32[]): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 8) { t = t + sink(path.append(i)); i = i + 1; } return t; }
 function work(n: i32): i32 {
-    var full: i32[] = [n, n + 1];
+    let full: i32[] = [n, n + 1];
     return walk(full) + sink(full) + full.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { acc = (acc + work(i % 8)) % 251; i = i + 1; }
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var j: i32 = 0;
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let j: i32 = 0;
     while (j < 2000) { acc = (acc + work(j % 8)) % 251; j = j + 1; }
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
@@ -134,19 +134,19 @@ function main(): i32 {
 	// through the deep walk such a buffer earns would free strings the
 	// original still holds. Values must stay correct — this one still leaks,
 	// so it is deliberately not asserted flat.
-	{"pointer-elem-receiver-is-refused", `function sink(xs: string[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i].len(); i = i + 1; } return s; }
+	{"pointer-elem-receiver-is-refused", `function sink(xs: string[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i].len(); i = i + 1; } return s; }
 function tag(k: i32): string { if (k == 0) { return "zero"; } return "many"; }
 function work(n: i32): i32 {
-    var ss: string[] = ["alpha-" + tag(n)];
-    var a: i32 = sink(ss.append("beta-" + tag(n)));
-    var b: i32 = sink(ss);
+    let ss: string[] = ["alpha-" + tag(n)];
+    let a: i32 = sink(ss.append("beta-" + tag(n)));
+    let b: i32 = sink(ss);
     if (a <= b) { return 0 - 1; }
     return a + b + ss.len();
 }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
-    while (i < 400) { var v: i32 = work(i % 2); if (v < 0) { return 97; } acc = (acc + v) % 251; i = i + 1; }
+    let acc: i32 = 0;
+    let i: i32 = 0;
+    while (i < 400) { let v: i32 = work(i % 2); if (v < 0) { return 97; } acc = (acc + v) % 251; i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;

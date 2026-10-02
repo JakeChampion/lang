@@ -11,7 +11,7 @@ import "testing"
 // toolchain is absent.
 const floatHypot3Prog = `
 import "std/float" as float;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
     if (!approx((2.0).hypot3(3.0, 6.0), 7.0)) { return 1; }        // 2-3-6 -> 7
     if (!approx((0.0).hypot3(0.0, 0.0), 0.0)) { return 2; }

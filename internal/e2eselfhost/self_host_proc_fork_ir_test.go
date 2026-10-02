@@ -25,10 +25,10 @@ var procForkPrograms = []struct {
 	{
 		"normal-exit",
 		`function main(): i32 {
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 91; }
     if (pid == 0) { exit(17); }
-    var code: i32 = proc_waitpid(pid);
+    let code: i32 = proc_waitpid(pid);
     if (code != 17) { return 92; }
     return 42;
 }`,
@@ -37,12 +37,12 @@ var procForkPrograms = []struct {
 	{
 		"signal-death",
 		`function worker(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var i: i32 = 9;
+    let xs: i32[] = [1, 2, 3];
+    let i: i32 = 9;
     return xs[i];
 }
 function main(): i32 {
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 91; }
     if (pid == 0) { return worker(); }
     return proc_waitpid(pid);
@@ -141,7 +141,7 @@ func TestSelfHostProcForkIRArm64(t *testing.T) {
 func TestSelfHostProcForkWasmRejected(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern", "wasm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern", "wasm_ir_run.fern")
 	drivers := []struct {
 		name string
 		bin  string
@@ -150,7 +150,7 @@ func TestSelfHostProcForkWasmRejected(t *testing.T) {
 		{"wasm_run", buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run"), nil},
 		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasm_ir_run"), []string{"-ir"}},
 	}
-	const src = "function main(): i32 { var pid: i32 = proc_fork(); if (pid == 0) { exit(3); } return proc_waitpid(pid); }"
+	const src = "function main(): i32 { let pid: i32 = proc_fork(); if (pid == 0) { exit(3); } return proc_waitpid(pid); }"
 	for _, d := range drivers {
 		t.Run(d.name, func(t *testing.T) {
 			out, errOut, code := runDriverAllowFail(t, runner, d.bin, src+"\n", d.args...)

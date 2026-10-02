@@ -14,15 +14,15 @@ import "testing"
 const arrayProductCumsumProg = `
 import "std/array" as array;
 import "std/num" as num;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
-    var xs: f64[] = [1.0, 2.0, 3.0, 4.0];
+    let xs: f64[] = [1.0, 2.0, 3.0, 4.0];
     if (!approx(xs.product(), 24.0)) { return 1; }
-    var mt: f64[] = [];
+    let mt: f64[] = [];
     if (!approx(mt.product(), 1.0)) { return 2; }                       // empty product = 1
-    var neg: f64[] = [2.0, 0.0 - 3.0];
+    let neg: f64[] = [2.0, 0.0 - 3.0];
     if (!approx(neg.product(), 0.0 - 6.0)) { return 3; }                // negatives
-    var cs: f64[] = array.cumsum_f64(xs);
+    let cs: f64[] = array.cumsum_f64(xs);
     if (!approx(cs[0], 1.0)) { return 4; }
     if (!approx(cs[1], 3.0)) { return 5; }
     if (!approx(cs[2], 6.0)) { return 6; }
@@ -33,7 +33,7 @@ function main(): i32 {
     // empty in -> empty out
     if (array.cumsum_f64([]).len() != 0) { return 10; }
     // running total with a negative step
-    var d: f64[] = array.cumsum_f64([5.0, 0.0 - 2.0, 1.0]);
+    let d: f64[] = array.cumsum_f64([5.0, 0.0 - 2.0, 1.0]);
     if (!approx(d[1], 3.0)) { return 11; }
     if (!approx(d[2], 4.0)) { return 12; }
     return 42;

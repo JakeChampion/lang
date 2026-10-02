@@ -10,8 +10,8 @@ rejection.
 ```fern
 import "std/array";
 function main(): i32 {
-    var xs: f64[] = [1.5, 2.5, 4.5];
-    var ys: f64[] = array.reverse(xs);
+    let xs: f64[] = [1.5, 2.5, 4.5];
+    let ys: f64[] = array.reverse(xs);
     return (ys[0] * 10.0) as i32;      // want 45 (4.5); self-host wasm gives 15
 }
 ```
@@ -192,7 +192,7 @@ where A matches and T does not — would otherwise clone with an erased sibling
 result_two_bare_vars(ret_type, unbounded_tps) && has_any_bare_scalar_param(...)`
 — that promotes BOTH vars, so neither is stranded erased on the Err arm: `T`
 binds from the scalar arg, `E` from the call-site return annotation
-(`infer_inst_ret`). `result_two_bare_vars` requires BARE var args (a nested
+(`infer_inst_ret`). `result_two_bare_vars` requires BARE let args (a nested
 `Result[Option[T], E]` does not match), which is what guarantees the clone is
 fully concrete. The two paths stay disjoint — clause (c)'s `all_tp_count == 1`
 guard excludes this shape.

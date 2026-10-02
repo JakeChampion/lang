@@ -25,15 +25,15 @@ var arrLitIndexCases = []struct {
 }{
 	// [10.5,20.5,30.5][1] == 20.5 → 42.
 	{"f64-literal-index", "function main(): i32 {\n" +
-		"    var i: i32 = 1;\n" +
-		"    var x: f64 = [10.5, 20.5, 30.5][i];\n" +
+		"    let i: i32 = 1;\n" +
+		"    let x: f64 = [10.5, 20.5, 30.5][i];\n" +
 		"    if (x > 20.0 && x < 21.0) { return 42; }\n" +
 		"    return 1;\n" +
 		"}\n", 42},
 	// [100,200,300 as i64][2] == 300 → 43.
 	{"i64-literal-index", "function main(): i32 {\n" +
-		"    var i: i32 = 2;\n" +
-		"    var x: i64 = [100 as i64, 200 as i64, 300 as i64][i];\n" +
+		"    let i: i32 = 2;\n" +
+		"    let x: i64 = [100 as i64, 200 as i64, 300 as i64][i];\n" +
 		"    if (x == (300 as i64)) { return 43; }\n" +
 		"    return 1;\n" +
 		"}\n", 43},

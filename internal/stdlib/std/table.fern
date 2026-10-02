@@ -19,14 +19,14 @@ import "std/array";
 
 // __tbl_pad appends spaces so `s` reaches `width` code points.
 function __tbl_pad(s: string, width: i32): string {
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
     out = out.append(s[i] as u8);
     i = i + 1;
   }
-  var pad: i32 = width - utf8.codepoint_count(s);
-  var p: i32 = 0;
+  let pad: i32 = width - utf8.codepoint_count(s);
+  let p: i32 = 0;
   while (p < pad) {
     out = out.append(32 as u8);
     p = p + 1;
@@ -36,16 +36,16 @@ function __tbl_pad(s: string, width: i32): string {
 
 // __tbl_widths returns the per-column max code-point width across `rows`.
 function __tbl_widths(rows: string[][]): i32[] {
-  var ncols: i32 = 0;
-  var r: i32 = 0;
+  let ncols: i32 = 0;
+  let r: i32 = 0;
   while (r < rows.len()) {
     if (rows[r].len() > ncols) {
       ncols = rows[r].len();
     }
     r = r + 1;
   }
-  var widths: i32[] = [];
-  var c: i32 = 0;
+  let widths: i32[] = [];
+  let c: i32 = 0;
   while (c < ncols) {
     widths = widths.append(0);
     c = c + 1;
@@ -54,7 +54,7 @@ function __tbl_widths(rows: string[][]): i32[] {
   while (r < rows.len()) {
     c = 0;
     while (c < rows[r].len()) {
-      var w: i32 = utf8.codepoint_count(rows[r][c]);
+      let w: i32 = utf8.codepoint_count(rows[r][c]);
       if (w > widths[c]) {
         widths = widths.with(c, w);
       }
@@ -68,10 +68,10 @@ function __tbl_widths(rows: string[][]): i32[] {
 // __tbl_row renders one row against the given column widths (the last
 // column is emitted unpadded).
 function __tbl_row(row: string[], widths: i32[]): string {
-  var cells: string[] = [];
-  var c: i32 = 0;
+  let cells: string[] = [];
+  let c: i32 = 0;
   while (c < widths.len()) {
-    var cell: string = "";
+    let cell: string = "";
     if (c < row.len()) {
       cell = row[c];
     }
@@ -88,9 +88,9 @@ function __tbl_row(row: string[], widths: i32[]): string {
 // `render(rows)` — the column-aligned table (no header rule). Rows are
 // joined by newlines, with no trailing newline.
 pub function render(rows: string[][]): string {
-  var widths: i32[] = __tbl_widths(rows);
-  var lines: string[] = [];
-  var r: i32 = 0;
+  let widths: i32[] = __tbl_widths(rows);
+  let lines: string[] = [];
+  let r: i32 = 0;
   while (r < rows.len()) {
     lines = lines.append(__tbl_row(rows[r], widths));
     r = r + 1;
@@ -103,21 +103,21 @@ pub function render(rows: string[][]): string {
 // the header AND the rows).
 pub function render_with_header(headers: string[], rows: string[][]): string {
   // Combine into one array to size the columns over everything.
-  var all: string[][] = [headers];
-  var i: i32 = 0;
+  let all: string[][] = [headers];
+  let i: i32 = 0;
   while (i < rows.len()) {
     all = all.append(rows[i]);
     i = i + 1;
   }
-  var widths: i32[] = __tbl_widths(all);
-  var lines: string[] = [];
+  let widths: i32[] = __tbl_widths(all);
+  let lines: string[] = [];
   lines = lines.append(__tbl_row(headers, widths));
   // Rule row: each column's width in '-'.
-  var rule: string[] = [];
-  var c: i32 = 0;
+  let rule: string[] = [];
+  let c: i32 = 0;
   while (c < widths.len()) {
-    var dashes: u8[] = [];
-    var d: i32 = 0;
+    let dashes: u8[] = [];
+    let d: i32 = 0;
     while (d < widths[c]) {  // '-'
       dashes = dashes.append(45 as u8);
       d = d + 1;
@@ -126,7 +126,7 @@ pub function render_with_header(headers: string[], rows: string[][]): string {
     c = c + 1;
   }
   lines = lines.append(__tbl_row(rule, widths));
-  var r: i32 = 0;
+  let r: i32 = 0;
   while (r < rows.len()) {
     lines = lines.append(__tbl_row(rows[r], widths));
     r = r + 1;

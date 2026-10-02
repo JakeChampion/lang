@@ -13,7 +13,7 @@ const NEG = -WIDTH;
 const WIDE = WIDTH > 4;
 
 function main(): i32 {
-    var total: i32 = AREA + NAME.len() + NEG;
+    let total: i32 = AREA + NAME.len() + NEG;
     if (RATIO * 2.0 == 5.0) { total = total + 1; }
     if (ON && WIDE) { total = total + 1; }
     if (BIG > 4000000000) { total = total + 1; }

@@ -19,21 +19,21 @@ var numImplicitReducerCases = []struct {
 }{
 	// sum over an i32 array, identity recovered from Zero → 10+20+12 = 42.
 	{"sum-i32", `import "std/num";
-function main(): i32 { var a: i32[] = [10, 20, 12]; return num.sum(a); }`, 42},
+function main(): i32 { let a: i32[] = [10, 20, 12]; return num.sum(a); }`, 42},
 	// product over a u32 array, identity recovered from One → 2*3*7 = 42.
 	{"product-u32", `import "std/num";
-function main(): i32 { var a: u32[] = [2, 3, 7]; return (num.product(a) as i32); }`, 42},
+function main(): i32 { let a: u32[] = [2, 3, 7]; return (num.product(a) as i32); }`, 42},
 	// i64 element width (exercises a non-i32 T inferred from the array) →
 	// 40+2 = 42, kept in exit-code range.
 	{"sum-i64", `import "std/num";
-function main(): i32 { var b: i64[] = [40, 2]; return (num.sum(b) as i32); }`, 42},
+function main(): i32 { let b: i64[] = [40, 2]; return (num.sum(b) as i32); }`, 42},
 	// empty array → additive identity 0 (sum) + multiplicative identity 1
 	// (product) = 1.
 	{"empty-identities", `import "std/num";
-function main(): i32 { var e: i32[] = []; return num.sum(e) + num.product(e); }`, 1},
+function main(): i32 { let e: i32[] = []; return num.sum(e) + num.product(e); }`, 1},
 	// product over an i32 array → 1*2*3*4 = 24.
 	{"product-i32", `import "std/num";
-function main(): i32 { var a: i32[] = [1, 2, 3, 4]; return num.product(a); }`, 24},
+function main(): i32 { let a: i32[] = [1, 2, 3, 4]; return num.product(a); }`, 24},
 }
 
 func TestNumImplicitReducers(t *testing.T) {

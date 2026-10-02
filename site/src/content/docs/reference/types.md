@@ -52,7 +52,7 @@ operations live in `core/map`, so the module has to be imported:
 ```fern
 import "core/map";
 
-var stock: Map[string, i32] = Map { "frond": 3, "spore": 7 };
+let stock: Map[string, i32] = Map { "frond": 3, "spore": 7 };
 stock = stock.insert("rhizome", 1);
 
 match (stock.get("frond")) {
@@ -88,8 +88,8 @@ treat the old binding as spent instead of expecting two independent maps.
 There aren't any between numeric widths. Casts are explicit:
 
 ```fern
-var a: i32 = 7;
-var b: i64 = a as i64;
+let a: i32 = 7;
+let b: i64 = a as i64;
 ```
 
 The one exception is the polymorphic numeric literal: `1` types as
@@ -155,7 +155,7 @@ function parse(s: string): Result[i32, string] {
 }
 
 function double(s: string): Result[i32, string] {
-    var n: i32 = parse(s)?;          // bails on Err
+    let n: i32 = parse(s)?;          // bails on Err
     return Ok(n * 2);
 }
 ```

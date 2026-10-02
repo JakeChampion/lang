@@ -12,7 +12,7 @@
 function id[T](x: T): T { return x; }
 
 function gen(): i64 {
-    var fe: i64[] = [(match ((1099511628358i64) +? (200i64)) { Some(n) => n, None => id(1099511628488i64) })];
+    let fe: i64[] = [(match ((1099511628358i64) +? (200i64)) { Some(n) => n, None => id(1099511628488i64) })];
     return fe[0];
 }
 

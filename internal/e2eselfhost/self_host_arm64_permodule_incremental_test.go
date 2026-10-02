@@ -47,7 +47,7 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(proj, "mid.fern"), []byte(
 		"import \"./leaf\";\n"+
 			"pub function mid_val(): i32 {\n"+
-			"    var x = leaf.leaf_val();\n"+
+			"    let x = leaf.leaf_val();\n"+
 			"    if (x > 0) { return 42; }\n"+
 			"    return 0;\n"+
 			"}\n"), 0o644); err != nil {

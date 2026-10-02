@@ -501,8 +501,8 @@ function put(o: Out, s: string): Out {
 
 // A name written with its byte range recorded, for `--dired`.
 function put_name(c: Cfg, o: Out, s: string): Out {
-  var start: i64 = o.pos;
-  var next: Out = put(o, s);
+  let start: i64 = o.pos;
+  let next: Out = put(o, s);
   if (!c.dired) {
     return next;
   }
@@ -510,8 +510,8 @@ function put_name(c: Cfg, o: Out, s: string): Out {
 }
 
 function put_subdir(c: Cfg, o: Out, s: string): Out {
-  var start: i64 = o.pos;
-  var next: Out = put(o, s);
+  let start: i64 = o.pos;
+  let next: Out = put(o, s);
   if (!c.dired) {
     return next;
   }
@@ -528,7 +528,7 @@ function dired_indent(c: Cfg, o: Out): Out {
 }
 
 function fail(o: Out, msg: string, status: i32): Out {
-  var worst: i32 = o.status;
+  let worst: i32 = o.status;
   if (status > worst) {
     worst = status;
   }
@@ -543,12 +543,12 @@ function spaces(n: i32): string {
   if (n <= 0) {
     return "";
   }
-  var pool: string = "                                                                ";
+  let pool: string = "                                                                ";
   if (n <= pool.len()) {
     return slice_unchecked(pool, 0, n) + "";
   }
-  var bs: u8[] = [];
-  var i: i32 = 0;
+  let bs: u8[] = [];
+  let i: i32 = 0;
   while (i < n) {
     bs = bs.append(32 as u8);
     i = i + 1;
@@ -568,8 +568,8 @@ function pad_right(s: string, w: i32): string {
 // strictly beyond the one the next character would reach, spaces after
 // that. `size` of zero is `-T 0` and never emits a tab.
 function indent(from: i32, to: i32, size: i32): string {
-  var bs: u8[] = [];
-  var f: i32 = from;
+  let bs: u8[] = [];
+  let f: i32 = from;
   while (f < to) {
     if (size != 0 && to / size > (f + 1) / size) {
       bs = bs.append(9 as u8);
@@ -684,8 +684,8 @@ pub struct Palette { on: boolean, link_target: boolean, lc: string, rc: string, 
 // Every slot is present even with colour off, so that a caller can ask
 // about a capability without first asking whether colour is on.
 function empty_caps(): string[] {
-  var out: string[] = [];
-  var i: i32 = 0;
+  let out: string[] = [];
+  let i: i32 = 0;
   while (i < cap_count()) {
     out = out.append("");
     i = i + 1;
@@ -694,8 +694,8 @@ function empty_caps(): string[] {
 }
 
 function unset_caps(): boolean[] {
-  var out: boolean[] = [];
-  var i: i32 = 0;
+  let out: boolean[] = [];
+  let i: i32 = 0;
   while (i < cap_count()) {
     out = out.append(false);
     i = i + 1;
@@ -712,9 +712,9 @@ pub function palette_off(): Palette {
 // `mh` are unset here where the database names them, so an orphaned
 // link takes `ln`'s bright cyan rather than a colour of its own.
 function palette_default(): Palette {
-  var code: string[] = empty_caps();
-  var set: boolean[] = unset_caps();
-  var p: Palette = Palette { on: true, link_target: false, lc: "\x1b[", rc: "m", rs: "0", ec: "", has_ec: false, code: code, set: set, suffix: [], suffix_code: [] };
+  let code: string[] = empty_caps();
+  let set: boolean[] = unset_caps();
+  let p: Palette = Palette { on: true, link_target: false, lc: "\x1b[", rc: "m", rs: "0", ec: "", has_ec: false, code: code, set: set, suffix: [], suffix_code: [] };
   p = cap_put(p, cap_di(), "01;34");
   p = cap_put(p, cap_ln(), "01;36");
   p = cap_put(p, cap_pi(), "33");
@@ -748,7 +748,7 @@ function cap_on(p: Palette, id: i32): boolean {
   if (!p.set[id]) {
     return false;
   }
-  var v: string = p.code[id];
+  let v: string = p.code[id];
   return v.len() > 0 && v != "0" && v != "00";
 }
 
@@ -757,12 +757,12 @@ function cap_on(p: Palette, id: i32): boolean {
 // space, `\NNN` octal and `\xHH` hex, a backslash before anything else
 // standing for that byte, and `^X` for the control character X names.
 function unescape(s: string, start: i32, end: i32): string {
-  var bs: u8[] = [];
-  var i: i32 = start;
+  let bs: u8[] = [];
+  let i: i32 = start;
   while (i < end) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c == 92 && i + 1 < end) {
-      var n: i32 = s[i + 1] as i32;
+      let n: i32 = s[i + 1] as i32;
       if (n == 97) {
         bs = bs.append(7 as u8);
         i = i + 2;
@@ -794,8 +794,8 @@ function unescape(s: string, start: i32, end: i32): string {
         bs = bs.append(32 as u8);
         i = i + 2;
       } else if (n >= 48 && n <= 55) {
-        var v: i32 = 0;
-        var k: i32 = i + 1;
+        let v: i32 = 0;
+        let k: i32 = i + 1;
         while (k < end && k < i + 4 && s[k] as i32 >= 48 && s[k] as i32 <= 55) {
           v = v * 8 + (s[k] as i32 - 48);
           k = k + 1;
@@ -803,11 +803,11 @@ function unescape(s: string, start: i32, end: i32): string {
         bs = bs.append((v & 255) as u8);
         i = k;
       } else if (n == 120 || n == 88) {
-        var hv: i32 = 0;
-        var hk: i32 = i + 2;
-        var any: boolean = false;
+        let hv: i32 = 0;
+        let hk: i32 = i + 2;
+        let any: boolean = false;
         while (hk < end) {
-          var d: i32 = hex_value(s[hk] as i32);
+          let d: i32 = hex_value(s[hk] as i32);
           if (d < 0) {
             break;
           }
@@ -827,7 +827,7 @@ function unescape(s: string, start: i32, end: i32): string {
         i = i + 2;
       }
     } else if (c == 94 && i + 1 < end) {
-      var m: i32 = s[i + 1] as i32;
+      let m: i32 = s[i + 1] as i32;
       if (m == 63) {
         bs = bs.append(127 as u8);
       } else {
@@ -857,9 +857,9 @@ function hex_value(c: i32): i32 {
 
 // The index of the next unescaped `b` at or after `i`, or `end`.
 function scan_to(s: string, i0: i32, end: i32, b: i32): i32 {
-  var i: i32 = i0;
+  let i: i32 = i0;
   while (i < end) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c == 92 && i + 1 < end) {
       i = i + 2;
       continue;
@@ -881,28 +881,28 @@ function scan_to(s: string, i0: i32, end: i32, b: i32): i32 {
 // and colour is off for the run, but the listing still happens and the
 // exit status does not move.
 function parse_ls_colors(spec: string): Palette {
-  var p: Palette = palette_default();
-  var names: string[] = cap_names();
-  var n: i32 = spec.len();
-  var i: i32 = 0;
+  let p: Palette = palette_default();
+  let names: string[] = cap_names();
+  let n: i32 = spec.len();
+  let i: i32 = 0;
   while (i < n) {
     if (spec[i] as i32 == 58) {
       i = i + 1;
       continue;
     }
-    var stop: i32 = scan_to(spec, i, n, 58);
-    var eq: i32 = scan_to(spec, i, stop, 61);
+    let stop: i32 = scan_to(spec, i, n, 58);
+    let eq: i32 = scan_to(spec, i, stop, 61);
     if (eq >= stop) {
       gnu.error("unparsable value for LS_COLORS environment variable");
       return palette_off();
     }
-    var key: string = unescape(spec, i, eq);
-    var value: string = unescape(spec, eq + 1, stop);
+    let key: string = unescape(spec, i, eq);
+    let value: string = unescape(spec, eq + 1, stop);
     if (key.len() > 1 && key[0] as i32 == 42) {
       p = Palette { ...p, suffix: p.suffix.append(slice_unchecked(key, 1, key.len()) + ""), suffix_code: p.suffix_code.append(value) };
     } else {
-      var slot: i32 = 0 - 1;
-      var k: i32 = 0;
+      let slot: i32 = 0 - 1;
+      let k: i32 = 0;
       while (k < names.len()) {
         if (names[k] == key) {
           slot = k;
@@ -1006,8 +1006,8 @@ function needs_link_mode(c: Cfg): boolean {
 // The link target is read whenever the entry IS a link and something
 // will print or judge it.
 function stat_entry(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
-  var follow: boolean = c.deref == deref_all() || cmdline && c.deref == deref_cmd();
-  var out: Ent = e;
+  let follow: boolean = c.deref == deref_all() || cmdline && c.deref == deref_cmd();
+  let out: Ent = e;
   if (follow) {
     match (stat(e.path)) {
       Ok(s) => {
@@ -1117,7 +1117,7 @@ function byte_cmp(a: string, b: string): i32 {
 // The file suffix `-X` groups by: everything from the last dot that is
 // not the first byte, or nothing at all.
 function extension(name: string): string {
-  var i: i32 = name.len() - 1;
+  let i: i32 = name.len() - 1;
   while (i > 0) {
     if (name[i] as i32 == 46) {
       return slice_unchecked(name, i, name.len()) + "";
@@ -1145,7 +1145,7 @@ function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
     return byte_cmp(a.name, b.name);
   }
   if (c.sort_key == sort_time()) {
-    var r: i32 = cmp_i64(ent_time(c, b), ent_time(c, a));
+    let r: i32 = cmp_i64(ent_time(c, b), ent_time(c, a));
     if (r == 0) {
       r = cmp_i64(ent_nsec(c, b), ent_nsec(c, a));
     }
@@ -1155,14 +1155,14 @@ function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
     return byte_cmp(a.name, b.name);
   }
   if (c.sort_key == sort_size()) {
-    var s: i32 = cmp_i64(b.st.size, a.st.size);
+    let s: i32 = cmp_i64(b.st.size, a.st.size);
     if (s != 0) {
       return s;
     }
     return byte_cmp(a.name, b.name);
   }
   if (c.sort_key == sort_ext()) {
-    var e: i32 = byte_cmp(extension(a.name), extension(b.name));
+    let e: i32 = byte_cmp(extension(a.name), extension(b.name));
     if (e != 0) {
       return e;
     }
@@ -1175,7 +1175,7 @@ function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
     // The DISPLAYED width, so a name carrying a control byte sorts by
     // the cells it takes rather than the bytes it holds: `nl\nx` is 3
     // wide and leads a listing of four-byte names.
-    var w: i32 = printable_width(quoted_name(c, a.name)) - printable_width(quoted_name(c, b.name));
+    let w: i32 = printable_width(quoted_name(c, a.name)) - printable_width(quoted_name(c, b.name));
     if (w != 0) {
       return w;
     }
@@ -1194,8 +1194,8 @@ function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
 // puts the directories first and only reverses within each group.
 function before(c: Cfg, es: Ent[], a: i32, b: i32): boolean {
   if (c.dirs_first) {
-    var ad: boolean = is_dir_entry(c, es[a]);
-    var bd: boolean = is_dir_entry(c, es[b]);
+    let ad: boolean = is_dir_entry(c, es[a]);
+    let bd: boolean = is_dir_entry(c, es[b]);
     if (ad != bd) {
       return ad;
     }
@@ -1225,33 +1225,33 @@ function is_dir_entry(c: Cfg, e: Ent): boolean {
 // A merge sort over the indices, so the comparator can take `c`
 // without a closure.
 function sort_entries(c: Cfg, es: Ent[]): Ent[] {
-  var n: i32 = es.len();
+  let n: i32 = es.len();
   if (n < 2 || c.sort_key == sort_none()) {
     return es;
   }
-  var src: i32[] = [];
-  var dst: i32[] = [];
-  var i: i32 = 0;
+  let src: i32[] = [];
+  let dst: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     src = src.append(i);
     dst = dst.append(0);
     i = i + 1;
   }
-  var width: i32 = 1;
+  let width: i32 = 1;
   while (width < n) {
-    var start: i32 = 0;
-    var at: i32 = 0;
+    let start: i32 = 0;
+    let at: i32 = 0;
     while (start < n) {
-      var mid: i32 = start + width;
+      let mid: i32 = start + width;
       if (mid > n) {
         mid = n;
       }
-      var end: i32 = mid + width;
+      let end: i32 = mid + width;
       if (end > n) {
         end = n;
       }
-      var p: i32 = start;
-      var q: i32 = mid;
+      let p: i32 = start;
+      let q: i32 = mid;
       while (p < mid && q < end) {
         if (before(c, es, src[q], src[p])) {
           dst = dst.with(at, src[q]);
@@ -1274,13 +1274,13 @@ function sort_entries(c: Cfg, es: Ent[]): Ent[] {
       }
       start = end;
     }
-    var swap: i32[] = src;
+    let swap: i32[] = src;
     src = dst;
     dst = swap;
     width = width * 2;
   }
-  var out: Ent[] = [];
-  var k: i32 = 0;
+  let out: Ent[] = [];
+  let k: i32 = 0;
   while (k < n) {
     out = out.append(es[src[k]]);
     k = k + 1;
@@ -1301,10 +1301,10 @@ function qmark_applies(style: i32): boolean {
 }
 
 function qmark(s: string): string {
-  var bs: u8[] = [];
-  var i: i32 = 0;
+  let bs: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b < 32 || b >= 127) {
       bs = bs.append(63 as u8);
     } else {
@@ -1320,11 +1320,11 @@ function qmark(s: string): string {
 // `stat`'s QUOTING_STYLE leaves the space alone. It is ls's own
 // addition to the table, not the style's.
 function quoted_name(c: Cfg, name: string): string {
-  var extra: string = "";
+  let extra: string = "";
   if (c.qstyle == 7) {
     extra = " ";
   }
-  var out: string = gnu.quote_style_with(name, c.qstyle, extra);
+  let out: string = gnu.quote_style_with(name, c.qstyle, extra);
   if (c.qmark && qmark_applies(c.qstyle)) {
     return qmark(out);
   }
@@ -1342,8 +1342,8 @@ function quoted_name(c: Cfg, name: string): string {
 
 // `?` for the newline and nothing else.
 function newline_qmark(s: string): string {
-  var bs: u8[] = [];
-  var i: i32 = 0;
+  let bs: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] as i32 == 10) {
       bs = bs.append(63 as u8);
@@ -1361,7 +1361,7 @@ function newline_qmark(s: string): string {
 // set, so `ls -bR` writes the entry `sp\ ace` and the header
 // `./sp ace:`.
 function quoted_header(c: Cfg, name: string): string {
-  var out: string = gnu.quote_style_with(name, c.qstyle, ":");
+  let out: string = gnu.quote_style_with(name, c.qstyle, ":");
   if (c.qmark && qmark_applies(c.qstyle)) {
     return qmark(out);
   }
@@ -1375,7 +1375,7 @@ function indicator(c: Cfg, e: Ent): string {
   if (c.indicator == ind_none()) {
     return "";
   }
-  var m: u32 = kind_mode(e);
+  let m: u32 = kind_mode(e);
   if (filetype.is_dir(m)) {
     return "/";
   }
@@ -1404,7 +1404,7 @@ function indicator(c: Cfg, e: Ent): string {
 // one hard link — and the filename suffixes are consulted only for a
 // regular file that none of those claimed.
 function color_slot(c: Cfg, e: Ent): i32 {
-  var p: Palette = c.colors;
+  let p: Palette = c.colors;
   if (filetype.is_link(e.st.mode)) {
     if (!e.link_ok && (p.link_target || cap_on(p, cap_or()))) {
       return cap_or();
@@ -1413,10 +1413,10 @@ function color_slot(c: Cfg, e: Ent): i32 {
       return cap_ln();
     }
   }
-  var m: u32 = effective_mode(c, e);
+  let m: u32 = effective_mode(c, e);
   if (filetype.is_dir(m)) {
-    var sticky: boolean = (m & 0x200 as u32) != 0 as u32;
-    var other_w: boolean = (m & 2 as u32) != 0 as u32;
+    let sticky: boolean = (m & 0x200 as u32) != 0 as u32;
+    let other_w: boolean = (m & 2 as u32) != 0 as u32;
     if (sticky && other_w && cap_on(p, cap_tw())) {
       return cap_tw();
     }
@@ -1465,10 +1465,10 @@ function color_code(c: Cfg, e: Ent): (string, boolean) {
   if (!c.color) {
     return ("", false);
   }
-  var p: Palette = c.colors;
-  var slot: i32 = color_slot(c, e);
+  let p: Palette = c.colors;
+  let slot: i32 = color_slot(c, e);
   if (slot == cap_fi()) {
-    var i: i32 = p.suffix.len() - 1;
+    let i: i32 = p.suffix.len() - 1;
     while (i >= 0) {
       if (ends_with_fold(e.name, p.suffix[i])) {
         return (p.suffix_code[i], true);
@@ -1488,11 +1488,11 @@ function ends_with_fold(name: string, suffix: string): boolean {
   if (suffix.len() > name.len()) {
     return false;
   }
-  var off: i32 = name.len() - suffix.len();
-  var i: i32 = 0;
+  let off: i32 = name.len() - suffix.len();
+  let i: i32 = 0;
   while (i < suffix.len()) {
-    var x: i32 = name[off + i] as i32;
-    var y: i32 = suffix[i] as i32;
+    let x: i32 = name[off + i] as i32;
+    let y: i32 = suffix[i] as i32;
     if (x >= 65 && x <= 90) {
       x = x + 32;
     }
@@ -1517,11 +1517,11 @@ function osc_end(): string {
 // `--hyperlink` wraps the name in OSC 8 with a `file://HOST/ABS-PATH`
 // URI, every byte outside the unreserved set percent-encoded.
 function uri_encode(s: string): string {
-  var bs: u8[] = [];
-  var i: i32 = 0;
+  let bs: u8[] = [];
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
-    var plain: boolean = b >= 48 && b <= 57 || b >= 65 && b <= 90 || b >= 97 && b <= 122 || b == 45 || b == 46 || b == 95 || b == 126 || b == 47;
+    let b: i32 = s[i] as i32;
+    let plain: boolean = b >= 48 && b <= 57 || b >= 65 && b <= 90 || b >= 97 && b <= 122 || b == 45 || b == 46 || b == 95 || b == 126 || b == 47;
     if (plain) {
       bs = bs.append(b as u8);
     } else {
@@ -1599,19 +1599,19 @@ function is_device(e: Ent): boolean {
 struct IdNames { passwd: string, group: string, uids: i64[], users: string[], gids: i64[], groups: string[] }
 
 function id_names_new(c: Cfg): IdNames {
-  var empty: IdNames = IdNames { passwd: "", group: "", uids: [], users: [], gids: [], groups: [] };
+  let empty: IdNames = IdNames { passwd: "", group: "", uids: [], users: [], gids: [], groups: [] };
   if (c.format != fmt_long() || c.numeric_ids) {
     return empty;
   }
-  var want_user: boolean = c.show_owner || c.show_author;
+  let want_user: boolean = c.show_owner || c.show_author;
   if (!want_user && !c.show_group) {
     return empty;
   }
-  var text: string = "";
+  let text: string = "";
   if (want_user) {
     text = pwdb.passwd_text();
   }
-  var groups: string = "";
+  let groups: string = "";
   if (c.show_group) {
     groups = pwdb.group_text();
   }
@@ -1619,15 +1619,15 @@ function id_names_new(c: Cfg): IdNames {
 }
 
 function owner_of(n: IdNames, uid: u32): (string, IdNames) {
-  var key: i64 = uid as i64;
-  var i: i32 = 0;
+  let key: i64 = uid as i64;
+  let i: i32 = 0;
   while (i < n.uids.len()) {
     if (n.uids[i] == key) {
       return (n.users[i], n);
     }
     i = i + 1;
   }
-  var name: string = uid.to_string();
+  let name: string = uid.to_string();
   match (pwdb.user_by_uid_in(n.passwd, key)) {
     Some(u) => {
       name = u.name;
@@ -1638,15 +1638,15 @@ function owner_of(n: IdNames, uid: u32): (string, IdNames) {
 }
 
 function group_of(n: IdNames, gid: u32): (string, IdNames) {
-  var key: i64 = gid as i64;
-  var i: i32 = 0;
+  let key: i64 = gid as i64;
+  let i: i32 = 0;
   while (i < n.gids.len()) {
     if (n.gids[i] == key) {
       return (n.groups[i], n);
     }
     i = i + 1;
   }
-  var name: string = gid.to_string();
+  let name: string = gid.to_string();
   match (pwdb.group_name_in(n.group, key)) {
     Some(g) => {
       name = g;
@@ -1665,16 +1665,16 @@ function resolve_ids(c: Cfg, n: IdNames, e: Ent): (Ent, IdNames) {
   if (c.numeric_ids) {
     return (Ent { ...e, owner: e.st.uid.to_string(), group: e.st.gid.to_string() }, n);
   }
-  var names: IdNames = n;
-  var owner: string = "";
+  let names: IdNames = n;
+  let owner: string = "";
   if (c.show_owner || c.show_author) {
-    var u: (string, IdNames) = owner_of(names, e.st.uid);
+    let u: (string, IdNames) = owner_of(names, e.st.uid);
     owner = u.0;
     names = u.1;
   }
-  var group: string = "";
+  let group: string = "";
   if (c.show_group) {
-    var g: (string, IdNames) = group_of(names, e.st.gid);
+    let g: (string, IdNames) = group_of(names, e.st.gid);
     group = g.0;
     names = g.1;
   }
@@ -1715,8 +1715,8 @@ function block_text(c: Cfg, e: Ent): string {
 // is written as the format rendered it, since the format carries its
 // own alignment.
 function time_width(c: Cfg): i32 {
-  var a: i32 = timefmt.strftime(c.nonrecent_fmt, c.zone, c.now, 0 as i64).len();
-  var b: i32 = timefmt.strftime(c.recent_fmt, c.zone, c.now, 0 as i64).len();
+  let a: i32 = timefmt.strftime(c.nonrecent_fmt, c.zone, c.now, 0 as i64).len();
+  let b: i32 = timefmt.strftime(c.recent_fmt, c.zone, c.now, 0 as i64).len();
   if (b > a) {
     return b;
   }
@@ -1727,8 +1727,8 @@ function time_text(c: Cfg, e: Ent): string {
   if (!e.stated) {
     return pad_left("?", time_width(c));
   }
-  var t: i64 = ent_time(c, e);
-  var recent: boolean = c.now - six_months() < t && t <= c.now;
+  let t: i64 = ent_time(c, e);
+  let recent: boolean = c.now - six_months() < t && t <= c.now;
   if (recent) {
     return timefmt.strftime(c.recent_fmt, c.zone, t, ent_nsec(c, e));
   }
@@ -1736,20 +1736,20 @@ function time_text(c: Cfg, e: Ent): string {
 }
 
 function measure(c: Cfg, es: Ent[]): Widths {
-  var w: Widths = widths_new();
+  let w: Widths = widths_new();
   w = Widths { ...w, time: time_width(c), pad: some_quoted(c, es) };
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < es.len()) {
-    var e: Ent = es[i];
+    let e: Ent = es[i];
     if (c.inode) {
-      var ino: string = "?";
+      let ino: string = "?";
       if (e.stated) {
         ino = e.st.ino.to_string();
       }
       w = Widths { ...w, inode: max_i32(w.inode, ino.len()) };
     }
     if (c.show_blocks) {
-      var blk: string = "?";
+      let blk: string = "?";
       if (e.stated) {
         blk = block_text(c, e);
       }
@@ -1759,7 +1759,7 @@ function measure(c: Cfg, es: Ent[]): Widths {
       w = Widths { ...w, context: max_i32(w.context, context_text().len()) };
     }
     if (c.format == fmt_long()) {
-      var nl: string = "?";
+      let nl: string = "?";
       if (e.stated) {
         nl = e.st.nlink.to_string();
       }
@@ -1824,16 +1824,16 @@ function size_field(c: Cfg, w: Widths, e: Ent): string {
 // The columns `-i` and `-s` put in FRONT of everything, in that order,
 // in every format and not only the long one.
 function frills(c: Cfg, w: Widths, e: Ent): string {
-  var out: string = "";
+  let out: string = "";
   if (c.inode) {
-    var ino: string = "?";
+    let ino: string = "?";
     if (e.stated) {
       ino = e.st.ino.to_string();
     }
     out = out + pad_left(ino, w.inode) + " ";
   }
   if (c.show_blocks) {
-    var blk: string = "?";
+    let blk: string = "?";
     if (e.stated) {
       blk = block_text(c, e);
     }
@@ -1851,14 +1851,14 @@ function frills(c: Cfg, w: Widths, e: Ent): string {
 // rebuilt the writer a dozen times, where one buffer appends in place
 // and hands the result over without a copy.
 function long_prefix(c: Cfg, w: Widths, e: Ent): string {
-  var h: usize = buf_new(96);
+  let h: usize = buf_new(96);
   buf_push(h, frills(c, w, e));
   if (e.stated) {
     buf_push(h, filetype.mode_string(e.st.mode));
   } else {
     buf_push(h, unknown_mode_string(e));
   }
-  var nl: string = "?";
+  let nl: string = "?";
   if (e.stated) {
     nl = e.st.nlink.to_string();
   }
@@ -1889,7 +1889,7 @@ function long_prefix(c: Cfg, w: Widths, e: Ent): string {
 }
 
 function push_pad(h: usize, n: i32): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     buf_push_byte(h, 32);
     i = i + 1;
@@ -1930,11 +1930,11 @@ function paint_new(): Paint {
 // hyperlink and its byte range recorded for `--dired`. `code` is the
 // colour to wrap it in, "" for none; `text` is the already-quoted name.
 function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean), text: string, record: boolean, hoist: boolean): (Out, Paint) {
-  var out: Out = o;
-  var paint: Paint = p;
-  var pal: Palette = c.colors;
-  var has: boolean = colour.1;
-  var coloured: boolean = c.color && (has || cap_on(pal, cap_no()));
+  let out: Out = o;
+  let paint: Paint = p;
+  let pal: Palette = c.colors;
+  let has: boolean = colour.1;
+  let coloured: boolean = c.color && (has || cap_on(pal, cap_no()));
   if (coloured) {
     if (!paint.started) {
       out = put(out, reset_seq(pal));
@@ -1954,7 +1954,7 @@ function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean),
   // --hyperlink=always --quoting-style=shell-escape` puts the quote
   // before the OSC 8 and after its terminator, and `-m` and `-1`, which
   // pad nothing, keep both inside. The colour still wraps the lot.
-  var body: string = text;
+  let body: string = text;
   if (hoist) {
     out = put(out, slice_unchecked(text, 0, 1) + "");
     body = slice_unchecked(text, 1, text.len() - 1) + "";
@@ -1987,8 +1987,8 @@ function start_entry(c: Cfg, o: Out, p: Paint): (Out, Paint) {
   if (!c.color || !cap_on(c.colors, cap_no())) {
     return (o, p);
   }
-  var out: Out = o;
-  var paint: Paint = p;
+  let out: Out = o;
+  let paint: Paint = p;
   if (!paint.started) {
     out = put(out, reset_seq(c.colors));
     paint = Paint { started: true, used: true };
@@ -2007,7 +2007,7 @@ function start_entry(c: Cfg, o: Out, p: Paint): (Out, Paint) {
 // literal style it leaves in place quotes nothing — so `ls -q -C` pads
 // nothing while `ls --quoting-style=shell -C` pads every bare name.
 function aligns_quotes(c: Cfg): boolean {
-  var laid_out: boolean = c.format == fmt_long() || (c.format == fmt_vertical() || c.format == fmt_across()) && c.width != 0 as i64;
+  let laid_out: boolean = c.format == fmt_long() || (c.format == fmt_vertical() || c.format == fmt_across()) && c.width != 0 as i64;
   if (!laid_out) {
     return false;
   }
@@ -2027,7 +2027,7 @@ function some_quoted(c: Cfg, es: Ent[]): boolean {
   if (!aligns_quotes(c)) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < es.len()) {
     if (wears_quotes(quoted_name(c, es[i].name))) {
       return true;
@@ -2041,15 +2041,15 @@ function some_quoted(c: Cfg, es: Ent[]): boolean {
 // and, on a long line, the ` -> target` of a symlink — whose target is
 // coloured in its own right, by the TARGET's kind.
 function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean): (Out, Paint) {
-  var text: string = quoted_name(c, e.name);
-  var lead: Out = o;
-  var quoted: boolean = wears_quotes(text);
+  let text: string = quoted_name(c, e.name);
+  let lead: Out = o;
+  let quoted: boolean = wears_quotes(text);
   if (pad && !quoted) {
     lead = put(lead, " ");
   }
-  var r: (Out, Paint) = write_name(c, lead, p, e, color_code(c, e), text, true, c.hyperlink && pad && quoted);
-  var out: Out = r.0;
-  var paint: Paint = r.1;
+  let r: (Out, Paint) = write_name(c, lead, p, e, color_code(c, e), text, true, c.hyperlink && pad && quoted);
+  let out: Out = r.0;
+  let paint: Paint = r.1;
   // In the long format an entry that IS a symbolic link never carries
   // an indicator of its own: it carries ` -> target` when the target
   // was read, and nothing at all when it was not, which is what
@@ -2059,7 +2059,7 @@ function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean
   }
   if (long && e.has_target) {
     out = put(out, " -> ");
-    var target: Ent = ent_new(e.target, e.target);
+    let target: Ent = ent_new(e.target, e.target);
     if (e.link_ok) {
       target = Ent { ...target, st: FileStat { ...e.st, mode: e.link_mode }, stated: true };
     }
@@ -2067,13 +2067,13 @@ function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean
     // names it and otherwise falls through the kind switch with a mode
     // of zero, which lands on `or` — so `LS_COLORS=or=42` colours both
     // the link and what it points at.
-    var code: (string, boolean) = color_code(c, target);
+    let code: (string, boolean) = color_code(c, target);
     if (!e.link_ok && cap_set(c.colors, cap_mi())) {
       code = (c.colors.code[cap_mi()], true);
     }
     // The link TARGET is not in the column the padding lines up, so its
     // quotes stay where the quoting put them.
-    var t: (Out, Paint) = write_name(c, out, paint, target, code, quoted_name(c, e.target), false, false);
+    let t: (Out, Paint) = write_name(c, out, paint, target, code, quoted_name(c, e.target), false, false);
     out = t.0;
     paint = t.1;
     out = put(out, indicator(c, target));
@@ -2092,8 +2092,8 @@ function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean
 // width. `-q` makes the two agree by turning every one of them into a
 // `?`.
 function display_len(c: Cfg, w: Widths, e: Ent): i32 {
-  var text: string = quoted_name(c, e.name);
-  var pad: i32 = 0;
+  let text: string = quoted_name(c, e.name);
+  let pad: i32 = 0;
   if (w.pad && !wears_quotes(text)) {
     pad = 1;
   }
@@ -2101,10 +2101,10 @@ function display_len(c: Cfg, w: Widths, e: Ent): i32 {
 }
 
 function printable_width(s: string): i32 {
-  var n: i32 = 0;
-  var i: i32 = 0;
+  let n: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b >= 32 && b < 127) {
       n = n + 1;
     }
@@ -2120,10 +2120,10 @@ function printable_width(s: string): i32 {
 // down-then-across against `-x`'s across-then-down, and the two differ
 // only in which column an entry lands in.
 function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32 {
-  var n: i32 = lens.len();
+  let n: i32 = lens.len();
   // The first column carries no separator, and a width below the
   // minimum still fits one column, so a remainder buys one more.
-  var max_cols: i32 = width / min_column_width();
+  let max_cols: i32 = width / min_column_width();
   if (width % min_column_width() != 0) {
     max_cols = max_cols + 1;
   }
@@ -2136,17 +2136,17 @@ function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32
   // `cols[i]` is the candidate of i+1 columns: its per-column widths
   // laid end to end at `base[i]`, its running total, and whether it
   // still fits.
-  var base: i32[] = [];
-  var total: i32[] = [];
-  var valid: boolean[] = [];
-  var flat: i32[] = [];
-  var at: i32 = 0;
-  var i: i32 = 0;
+  let base: i32[] = [];
+  let total: i32[] = [];
+  let valid: boolean[] = [];
+  let flat: i32[] = [];
+  let at: i32 = 0;
+  let i: i32 = 0;
   while (i < max_cols) {
     base = base.append(at);
     total = total.append(min_column_width() * (i + 1));
     valid = valid.append(true);
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j <= i) {
       flat = flat.append(min_column_width());
       j = j + 1;
@@ -2154,27 +2154,27 @@ function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32
     at = at + i + 1;
     i = i + 1;
   }
-  var f: i32 = 0;
+  let f: i32 = 0;
   while (f < n) {
-    var len: i32 = lens[f];
-    var k: i32 = 0;
+    let len: i32 = lens[f];
+    let k: i32 = 0;
     while (k < max_cols) {
       if (valid[k]) {
-        var cols: i32 = k + 1;
-        var idx: i32 = 0;
+        let cols: i32 = k + 1;
+        let idx: i32 = 0;
         if (by_columns) {
-          var rows: i32 = (n + k) / cols;
+          let rows: i32 = (n + k) / cols;
           if (rows > 0) {
             idx = f / rows;
           }
         } else {
           idx = f % cols;
         }
-        var want: i32 = len;
+        let want: i32 = len;
         if (idx != k) {
           want = want + 2;
         }
-        var slot: i32 = base[k] + idx;
+        let slot: i32 = base[k] + idx;
         if (flat[slot] < want) {
           total = total.with(k, total[k] + want - flat[slot]);
           flat = flat.with(slot, want);
@@ -2185,8 +2185,8 @@ function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32
     }
     f = f + 1;
   }
-  var chosen: i32 = 1;
-  var c2: i32 = max_cols;
+  let chosen: i32 = 1;
+  let c2: i32 = max_cols;
   while (c2 > 1) {
     if (valid[c2 - 1]) {
       chosen = c2;
@@ -2201,17 +2201,17 @@ function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32
 // carried out of `column_count`, which holds a candidate per possible
 // count and would have to hand back a slice of one flat array.
 function column_widths(lens: i32[], cols: i32, by_columns: boolean): i32[] {
-  var n: i32 = lens.len();
-  var w: i32[] = [];
-  var i: i32 = 0;
+  let n: i32 = lens.len();
+  let w: i32[] = [];
+  let i: i32 = 0;
   while (i < cols) {
     w = w.append(min_column_width());
     i = i + 1;
   }
-  var rows: i32 = (n + cols - 1) / cols;
-  var f: i32 = 0;
+  let rows: i32 = (n + cols - 1) / cols;
+  let f: i32 = 0;
   while (f < n) {
-    var idx: i32 = 0;
+    let idx: i32 = 0;
     if (by_columns) {
       if (rows > 0) {
         idx = f / rows;
@@ -2219,7 +2219,7 @@ function column_widths(lens: i32[], cols: i32, by_columns: boolean): i32[] {
     } else {
       idx = f % cols;
     }
-    var want: i32 = lens[f];
+    let want: i32 = lens[f];
     if (idx != cols - 1) {
       want = want + 2;
     }
@@ -2232,8 +2232,8 @@ function column_widths(lens: i32[], cols: i32, by_columns: boolean): i32[] {
 }
 
 function column_start(w: i32[], col: i32): i32 {
-  var s: i32 = 0;
-  var i: i32 = 0;
+  let s: i32 = 0;
+  let i: i32 = 0;
   while (i < col) {
     s = s + w[i];
     i = i + 1;
@@ -2253,14 +2253,14 @@ function eol(c: Cfg): string {
 }
 
 function emit_single(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Paint) {
-  var out: Out = o;
-  var paint: Paint = p;
-  var i: i32 = 0;
+  let out: Out = o;
+  let paint: Paint = p;
+  let i: i32 = 0;
   while (i < es.len()) {
-    var open: (Out, Paint) = start_entry(c, out, paint);
+    let open: (Out, Paint) = start_entry(c, out, paint);
     out = put(open.0, frills(c, w, es[i]));
     paint = open.1;
-    var r: (Out, Paint) = emit_name(c, out, paint, es[i], false, w.pad);
+    let r: (Out, Paint) = emit_name(c, out, paint, es[i], false, w.pad);
     out = r.0;
     paint = r.1;
     out = put(out, eol(c));
@@ -2270,15 +2270,15 @@ function emit_single(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Pain
 }
 
 function emit_long(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Paint) {
-  var out: Out = o;
-  var paint: Paint = p;
-  var i: i32 = 0;
+  let out: Out = o;
+  let paint: Paint = p;
+  let i: i32 = 0;
   while (i < es.len()) {
     out = dired_indent(c, out);
-    var open: (Out, Paint) = start_entry(c, out, paint);
+    let open: (Out, Paint) = start_entry(c, out, paint);
     out = put(open.0, long_prefix(c, w, es[i]));
     paint = open.1;
-    var r: (Out, Paint) = emit_name(c, out, paint, es[i], true, w.pad);
+    let r: (Out, Paint) = emit_name(c, out, paint, es[i], true, w.pad);
     out = r.0;
     paint = r.1;
     out = put(out, eol(c));
@@ -2291,13 +2291,13 @@ function emit_long(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Paint)
 // separator between them, breaking to a new line when the next name
 // would not fit. A width of zero never breaks.
 function emit_separated(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, sep: string): (Out, Paint) {
-  var out: Out = o;
-  var paint: Paint = p;
-  var width: i32 = c.width as i32;
-  var pos: i32 = 0;
-  var i: i32 = 0;
+  let out: Out = o;
+  let paint: Paint = p;
+  let width: i32 = c.width as i32;
+  let pos: i32 = 0;
+  let i: i32 = 0;
   while (i < es.len()) {
-    var len: i32 = 0;
+    let len: i32 = 0;
     if (width != 0) {
       len = display_len(c, w, es[i]);
     }
@@ -2306,7 +2306,7 @@ function emit_separated(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, sep: str
       // What this entry will occupy: the two separator bytes, the name,
       // and the comma that will follow it when it is not the last. 9.5
       // made the comparison inclusive and started counting that comma.
-      var want: i32 = pos + len + 2;
+      let want: i32 = pos + len + 2;
       if (sep == "," && i < es.len() - 1) {
         want = want + 1;
       }
@@ -2318,10 +2318,10 @@ function emit_separated(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, sep: str
         out = put(out, "\n");
       }
     }
-    var open: (Out, Paint) = start_entry(c, out, paint);
+    let open: (Out, Paint) = start_entry(c, out, paint);
     out = put(open.0, frills(c, w, es[i]));
     paint = open.1;
-    var r: (Out, Paint) = emit_name(c, out, paint, es[i], false, w.pad);
+    let r: (Out, Paint) = emit_name(c, out, paint, es[i], false, w.pad);
     out = r.0;
     paint = r.1;
     pos = pos + display_len(c, w, es[i]);
@@ -2334,7 +2334,7 @@ function emit_separated(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, sep: str
 }
 
 function emit_columns(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, by_columns: boolean): (Out, Paint) {
-  var n: i32 = es.len();
+  let n: i32 = es.len();
   // A width of zero is unlimited, and GNU does not lay out one very
   // wide grid for it: the whole listing goes on one line with the same
   // separator writer `-m` uses, whose own separator is a space here
@@ -2342,23 +2342,23 @@ function emit_columns(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, by_columns
   if (c.width == 0 as i64) {
     return emit_separated(c, o, p, es, w, " ");
   }
-  var lens: i32[] = [];
-  var i: i32 = 0;
+  let lens: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     lens = lens.append(display_len(c, w, es[i]));
     i = i + 1;
   }
-  var cols: i32 = column_count(c, lens, by_columns, c.width as i32);
-  var cw: i32[] = column_widths(lens, cols, by_columns);
-  var rows: i32 = (n + cols - 1) / cols;
-  var out: Out = o;
-  var paint: Paint = p;
-  var r: i32 = 0;
+  let cols: i32 = column_count(c, lens, by_columns, c.width as i32);
+  let cw: i32[] = column_widths(lens, cols, by_columns);
+  let rows: i32 = (n + cols - 1) / cols;
+  let out: Out = o;
+  let paint: Paint = p;
+  let r: i32 = 0;
   while (r < rows) {
-    var pos: i32 = 0;
-    var col: i32 = 0;
+    let pos: i32 = 0;
+    let col: i32 = 0;
     while (col < cols) {
-      var idx: i32 = 0;
+      let idx: i32 = 0;
       if (by_columns) {
         idx = col * rows + r;
       } else {
@@ -2367,12 +2367,12 @@ function emit_columns(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, by_columns
       if (idx >= n) {
         break;
       }
-      var start: i32 = column_start(cw, col);
+      let start: i32 = column_start(cw, col);
       out = put(out, indent(pos, start, c.tabsize as i32));
-      var open: (Out, Paint) = start_entry(c, out, paint);
+      let open: (Out, Paint) = start_entry(c, out, paint);
       out = put(open.0, frills(c, w, es[idx]));
       paint = open.1;
-      var e: (Out, Paint) = emit_name(c, out, paint, es[idx], false, w.pad);
+      let e: (Out, Paint) = emit_name(c, out, paint, es[idx], false, w.pad);
       out = e.0;
       paint = e.1;
       pos = start + lens[idx];
@@ -2406,16 +2406,16 @@ function emit_measured(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Pa
 
 // The `total` line, in the block unit rather than the file-size one.
 function emit_total(c: Cfg, o: Out, es: Ent[]): Out {
-  var sum: i64 = 0 as i64;
-  var i: i32 = 0;
+  let sum: i64 = 0 as i64;
+  let i: i32 = 0;
   while (i < es.len()) {
     if (es[i].stated) {
       sum = sum + es[i].st.blocks;
     }
     i = i + 1;
   }
-  var text: string = render(c.bsize, (sum * (512 as i64)) as u64);
-  var out: Out = dired_indent(c, o);
+  let text: string = render(c.bsize, (sum * (512 as i64)) as u64);
+  let out: Out = dired_indent(c, o);
   return put(out, "total " + text + eol(c));
 }
 
@@ -2434,7 +2434,7 @@ function hidden(c: Cfg, name: string): boolean {
 }
 
 function matches_any(pats: string[], name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < pats.len()) {
     if (fnmatch.fnmatch(pats[i], name)) {
       return true;
@@ -2473,10 +2473,10 @@ function attach(dir: string, name: string): string {
 }
 
 function dir_entries(c: Cfg, o: Out, path: string, seed: IdNames): (Ent[], Out, IdNames) {
-  var out: Out = o;
-  var names: string[] = [];
-  var failed: boolean = false;
-  var why: string = "";
+  let out: Out = o;
+  let names: string[] = [];
+  let failed: boolean = false;
+  let why: string = "";
   if (c.ignore_mode == ignore_minimal()) {
     match (read_dir_all(path)) {
       Ok(es) => {
@@ -2501,10 +2501,10 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: IdNames): (Ent[], Out, 
   if (failed) {
     return ([], fail(out, "cannot open directory " + gnu.quotea(path) + ": " + why, status_minor()), seed);
   }
-  var list: Ent[] = [];
-  var i: i32 = 0;
+  let list: Ent[] = [];
+  let i: i32 = 0;
   while (i < names.len()) {
-    var name: string = names[i];
+    let name: string = names[i];
     if (hidden(c, name) || ignored(c, name)) {
       i = i + 1;
       continue;
@@ -2515,12 +2515,12 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: IdNames): (Ent[], Out, 
   if (!needs_stat(c)) {
     return (list, out, seed);
   }
-  var ids: IdNames = seed;
-  var filled: Ent[] = [];
-  var k: i32 = 0;
+  let ids: IdNames = seed;
+  let filled: Ent[] = [];
+  let k: i32 = 0;
   while (k < list.len()) {
-    var r: (Ent, boolean, string) = stat_entry(c, list[k], false);
-    var e: Ent = r.0;
+    let r: (Ent, boolean, string) = stat_entry(c, list[k], false);
+    let e: Ent = r.0;
     if (!r.1) {
       out = fail(out, "cannot access " + gnu.quotea(e.path) + ": " + r.2, status_minor());
       // lstat still answers for a link whose TARGET is what could not
@@ -2533,7 +2533,7 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: IdNames): (Ent[], Out, 
         Err(_) => {}
       }
     }
-    var r2: (Ent, IdNames) = resolve_ids(c, ids, e);
+    let r2: (Ent, IdNames) = resolve_ids(c, ids, e);
     filled = filled.append(r2.0);
     ids = r2.1;
     k = k + 1;
@@ -2554,15 +2554,15 @@ struct State { out: Out, paint: Paint, wrote: boolean, queue: Pending[], names: 
 // sorted order, so the walk is depth first through the listing's own
 // order rather than readdir's.
 function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
-  var r: (Ent[], Out, IdNames) = dir_entries(c, st.out, p.path, st.names);
-  var es: Ent[] = r.0;
-  var out: Out = r.1;
-  var state: State = State { ...st, out: out, names: r.2 };
+  let r: (Ent[], Out, IdNames) = dir_entries(c, st.out, p.path, st.names);
+  let es: Ent[] = r.0;
+  let out: Out = r.1;
+  let state: State = State { ...st, out: out, names: r.2 };
   if (header) {
     if (state.wrote) {
       state = State { ...state, out: put(state.out, "\n") };
     }
-    var h: Out = dired_indent(c, state.out);
+    let h: Out = dired_indent(c, state.out);
     h = put_subdir(c, h, quoted_header(c, p.path));
     state = State { ...state, out: put(h, ":\n") };
   }
@@ -2571,7 +2571,7 @@ function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
   if (c.format == fmt_long() || c.show_blocks) {
     state = State { ...state, out: emit_total(c, state.out, es) };
   }
-  var e: (Out, Paint) = emit_entries(c, state.out, state.paint, es);
+  let e: (Out, Paint) = emit_entries(c, state.out, state.paint, es);
   state = State { ...state, out: e.0, paint: e.1 };
   if (!c.recursive) {
     return state;
@@ -2580,17 +2580,17 @@ function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
   // parent of `.`, so a recursive listing of the current directory
   // heads its children `./adir:` while the entries inside them are
   // reached by `attach` above.
-  var subs: Pending[] = [];
-  var i: i32 = 0;
+  let subs: Pending[] = [];
+  let i: i32 = 0;
   while (i < es.len()) {
-    var ent: Ent = es[i];
+    let ent: Ent = es[i];
     if (filetype.is_dir(ent.st.mode) && ent.name != "." && ent.name != "..") {
       subs = subs.append(Pending { path: gnu.join_path(p.path, ent.name) });
     }
     i = i + 1;
   }
-  var q: Pending[] = subs;
-  var k: i32 = 0;
+  let q: Pending[] = subs;
+  let k: i32 = 0;
   while (k < state.queue.len()) {
     q = q.append(state.queue[k]);
     k = k + 1;
@@ -2604,27 +2604,27 @@ function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
 // suppressed only when it is the SOLE thing being listed and the walk
 // is not recursive — the first `-R` directory keeps its header.
 function run_operands(c: Cfg, o: Out, operands: string[]): Out {
-  var files: Ent[] = [];
-  var every: Ent[] = [];
-  var dirs: Pending[] = [];
-  var out: Out = o;
-  var ids: IdNames = id_names_new(c);
-  var explicit: boolean = operands.len() > 0;
-  var args: string[] = operands;
+  let files: Ent[] = [];
+  let every: Ent[] = [];
+  let dirs: Pending[] = [];
+  let out: Out = o;
+  let ids: IdNames = id_names_new(c);
+  let explicit: boolean = operands.len() > 0;
+  let args: string[] = operands;
   if (!explicit) {
     args = ["."];
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < args.len()) {
-    var arg: string = args[i];
-    var e: Ent = ent_new(arg, arg);
-    var r: (Ent, boolean, string) = stat_entry(c, e, true);
+    let arg: string = args[i];
+    let e: Ent = ent_new(arg, arg);
+    let r: (Ent, boolean, string) = stat_entry(c, e, true);
     if (!r.1) {
       out = fail(out, "cannot access " + gnu.quotea(arg) + ": " + r.2, status_usage());
       i = i + 1;
       continue;
     }
-    var got0: (Ent, IdNames) = resolve_ids(c, ids, r.0);
+    let got0: (Ent, IdNames) = resolve_ids(c, ids, r.0);
     every = every.append(got0.0);
     ids = got0.1;
     i = i + 1;
@@ -2634,10 +2634,10 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
   // directories too — a directory operand's 4096 sizes the column its
   // own listing never uses.
   every = sort_entries(c, every);
-  var operand_widths: Widths = measure(c, every);
-  var k2: i32 = 0;
+  let operand_widths: Widths = measure(c, every);
+  let k2: i32 = 0;
   while (k2 < every.len()) {
-    var got: Ent = every[k2];
+    let got: Ent = every[k2];
     if (filetype.is_dir(got.st.mode) && !c.immediate_dirs) {
       dirs = dirs.append(Pending { path: got.name });
     } else {
@@ -2645,18 +2645,18 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
     }
     k2 = k2 + 1;
   }
-  var state: State = State { out: out, paint: paint_new(), wrote: false, queue: dirs, names: ids };
+  let state: State = State { out: out, paint: paint_new(), wrote: false, queue: dirs, names: ids };
   // The command-line group gets no `total`: that line counts one
   // DIRECTORY's blocks, and a list of operands is not one.
   if (files.len() > 0) {
-    var fe: (Out, Paint) = emit_measured(c, state.out, state.paint, files, operand_widths);
+    let fe: (Out, Paint) = emit_measured(c, state.out, state.paint, files, operand_widths);
     state = State { ...state, out: fe.0, paint: fe.1, wrote: true };
   }
-  var header: boolean = state.wrote || c.recursive || args.len() > 1 || dirs.len() > 1;
+  let header: boolean = state.wrote || c.recursive || args.len() > 1 || dirs.len() > 1;
   while (state.queue.len() > 0) {
-    var next: Pending = state.queue[0];
-    var rest: Pending[] = [];
-    var k: i32 = 1;
+    let next: Pending = state.queue[0];
+    let rest: Pending[] = [];
+    let k: i32 = 1;
     while (k < state.queue.len()) {
       rest = rest.append(state.queue[k]);
       k = k + 1;
@@ -2665,7 +2665,7 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
     state = list_dir(c, state, next, header);
     header = true;
   }
-  var done: Out = state.out;
+  let done: Out = state.out;
   if (c.color && state.paint.used && (c.colors.lc != "\x1b[" || c.colors.rc != "m")) {
     done = put(done, c.colors.lc + c.colors.rc);
   }
@@ -2682,8 +2682,8 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
 }
 
 function dired_line(tag: string, offs: i64[]): string {
-  var out: string = tag;
-  var i: i32 = 0;
+  let out: string = tag;
+  let i: i32 = 0;
   while (i < offs.len()) {
     out = out + " " + offs[i].to_string();
     i = i + 1;
@@ -2702,8 +2702,8 @@ function dired_line(tag: string, offs: i64[]): string {
 // default.
 function apply_time_style(c: Cfg, spec: string, from_env: boolean): Cfg {
   if (spec.len() > 0 && spec[0] as i32 == 43) {
-    var body: string = slice_unchecked(spec, 1, spec.len()) + "";
-    var parts: string[] = body.lines();
+    let body: string = slice_unchecked(spec, 1, spec.len()) + "";
+    let parts: string[] = body.lines();
     if (parts.len() > 2) {
       gnu.error("invalid time style format " + gnu.quote(body));
       exit(status_usage());
@@ -2713,7 +2713,7 @@ function apply_time_style(c: Cfg, spec: string, from_env: boolean): Cfg {
     }
     return Cfg { ...c, nonrecent_fmt: body, recent_fmt: body };
   }
-  var name: string = spec;
+  let name: string = spec;
   if (name.starts_with("posix-")) {
     name = slice_unchecked(name, 6, name.len()) + "";
     if (name == "full-iso" || name == "long-iso" || name == "iso" || name == "locale") {
@@ -2749,7 +2749,7 @@ function apply_time_style(c: Cfg, spec: string, from_env: boolean): Cfg {
 
 // ---- options ----------------------------------------------------------------
 function options(): gnu.Opt[] {
-  var o: gnu.Opt[] = [];
+  let o: gnu.Opt[] = [];
   o = o.append(gnu.flag("a", "all", op_all()));
   o = o.append(gnu.flag("b", "escape", op_escape()));
   o = o.append(gnu.flag("d", "directory", op_directory()));
@@ -2875,8 +2875,8 @@ function indicator_names(): string[] {
 // `0x28` is 40 and `040` is 32. A `-` is not — `-w -0` is an invalid
 // line width.
 function parse_ulong0(spec: string): (i64, boolean) {
-  var n: i32 = spec.len();
-  var i: i32 = 0;
+  let n: i32 = spec.len();
+  let i: i32 = 0;
   while (i < n && gnu.is_blank(spec[i] as i32)) {
     i = i + 1;
   }
@@ -2886,7 +2886,7 @@ function parse_ulong0(spec: string): (i64, boolean) {
   if (i >= n) {
     return (0 as i64, false);
   }
-  var base: i64 = 10 as i64;
+  let base: i64 = 10 as i64;
   if (spec[i] as i32 == 48) {
     if (i + 1 < n && (spec[i + 1] as i32 == 120 || spec[i + 1] as i32 == 88)) {
       base = 16 as i64;
@@ -2902,9 +2902,9 @@ function parse_ulong0(spec: string): (i64, boolean) {
       }
     }
   }
-  var v: i64 = 0 as i64;
+  let v: i64 = 0 as i64;
   while (i < n) {
-    var d: i32 = hex_value(spec[i] as i32);
+    let d: i32 = hex_value(spec[i] as i32);
     if (d < 0 || d as i64 >= base) {
       return (0 as i64, false);
     }
@@ -2918,7 +2918,7 @@ function parse_ulong0(spec: string): (i64, boolean) {
 }
 
 function parse_count(spec: string, what: string): i64 {
-  var r: (i64, boolean) = parse_ulong0(spec);
+  let r: (i64, boolean) = parse_ulong0(spec);
   if (!r.1) {
     gnu.error("invalid " + what + ": " + gnu.quote(spec));
     exit(status_usage());
@@ -2928,7 +2928,7 @@ function parse_count(spec: string, what: string): i64 {
 
 // ---- help -------------------------------------------------------------------
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "List information about the FILEs (the current directory by default).\n";
   out = out + "Entries are sorted alphabetically unless an option below says otherwise.\n";
@@ -3016,34 +3016,34 @@ function help_text(): string {
 struct Scan { c: Cfg, width_seen: boolean, hide_opt: i32, operands: string[] }
 
 function scan(argv: string[], start: Cfg): Scan {
-  var c: Cfg = start;
+  let c: Cfg = start;
   // gnulib's hide_control_chars_opt: -1 for neither option given, which
   // is not the same as `--show-control-chars`. The newline
   // substitution asks whether that option was given, where the general
   // one asks for the resolved answer.
-  var hide_opt: i32 = 0 - 1;
+  let hide_opt: i32 = 0 - 1;
   c = Cfg { ...c, qstyle: gnu.quoting_style_from_env_with(c.qstyle) };
-  var g: gnu.Getopt = gnu.getopt_new(argv, options(), gnu.prog(), help_text(), status_usage());
+  let g: gnu.Getopt = gnu.getopt_new(argv, options(), gnu.prog(), help_text(), status_usage());
   // The format an option ASKED for, apart from the program's default:
   // `-1` gives way to a long format that was TYPED and overrides one
   // that came from being `vdir`, and `--zero` falls back to
   // one-per-line only when nothing was typed.
-  var format_opt: i32 = 0 - 1;
+  let format_opt: i32 = 0 - 1;
   // `-c` and `-u` pick the timestamp, and when the format is NOT long
   // and no sort was asked for they also pick the SORT: `ls -u` is
   // ordered by access time where `ls -lu` is ordered by name.
-  var sort_opt: i32 = 0 - 1;
-  var explicit_time: boolean = false;
-  var deref_seen: boolean = false;
-  var kibibytes: boolean = false;
-  var width_seen: boolean = false;
-  var color_when: i32 = when_never();
-  var link_when: i32 = when_never();
-  var block_spec_seen: boolean = false;
-  var time_style: string = "";
-  var time_style_seen: boolean = false;
+  let sort_opt: i32 = 0 - 1;
+  let explicit_time: boolean = false;
+  let deref_seen: boolean = false;
+  let kibibytes: boolean = false;
+  let width_seen: boolean = false;
+  let color_when: i32 = when_never();
+  let link_when: i32 = when_never();
+  let block_spec_seen: boolean = false;
+  let time_style: string = "";
+  let time_style_seen: boolean = false;
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -3089,7 +3089,7 @@ function scan(argv: string[], start: Cfg): Scan {
           c = Cfg { ...c, fsize: blocks.human_unit(1000 as u64), bsize: blocks.human_unit(1000 as u64) };
           block_spec_seen = true;
         } else if (m.id == op_block_size()) {
-          var n: blocks.Num = blocks.parse_num(m.value, false, true, false);
+          let n: blocks.Num = blocks.parse_num(m.value, false, true, false);
           if (n.status != blocks.size_ok()) {
             blocks.die_size_with(n.status, "--block-size", m.value, status_usage());
           }
@@ -3252,7 +3252,7 @@ function scan(argv: string[], start: Cfg): Scan {
     c = Cfg { ...c, dired: false };
   }
   if (c.color) {
-    var spec: string = "";
+    let spec: string = "";
     match (env("LS_COLORS")) {
       Some(v) => {
         spec = v;
@@ -3304,7 +3304,7 @@ function scan(argv: string[], start: Cfg): Scan {
   // which `-k` then undoes for the size column by moving only the
   // block one, last of all.
   if (!block_spec_seen) {
-    var u: blocks.Unit = blocks.env_unit(["LS_BLOCK_SIZE", "BLOCK_SIZE", "BLOCKSIZE"]);
+    let u: blocks.Unit = blocks.env_unit(["LS_BLOCK_SIZE", "BLOCK_SIZE", "BLOCKSIZE"]);
     c = Cfg { ...c, bsize: u };
     if (env_named_block_size()) {
       c = Cfg { ...c, fsize: u };
@@ -3374,7 +3374,7 @@ function resolve_width(c: Cfg, seen: boolean): Cfg {
   match (env("COLUMNS")) {
     Some(v) => {
       if (v.len() > 0) {
-        var r: (i64, boolean) = parse_ulong0(v);
+        let r: (i64, boolean) = parse_ulong0(v);
         if (r.1) {
           return Cfg { ...c, width: r.0 };
         }
@@ -3427,10 +3427,10 @@ function qstyle_escape(): i32 {
 }
 
 function run(format: i32, qstyle: i32, qmark: boolean): i32 {
-  var argv: string[] = args();
-  var start: Cfg = defaults(format, qstyle, qmark);
-  var s: Scan = scan(argv, start);
-  var c: Cfg = resolve_width(s.c, s.width_seen);
+  let argv: string[] = args();
+  let start: Cfg = defaults(format, qstyle, qmark);
+  let s: Scan = scan(argv, start);
+  let c: Cfg = resolve_width(s.c, s.width_seen);
   // A NEWLINE in a name comes out `?` under the styles that do not
   // spell a control byte out, whatever standard output is — an entry
   // may not span two lines. 9.5 narrowed it to the layouts a newline
@@ -3440,8 +3440,8 @@ function run(format: i32, qstyle: i32, qmark: boolean): i32 {
   // not under `--zero`, where a NUL ends each record.
   c = Cfg { ...c, qmark_newline: s.hide_opt != 0 && !c.zero && (c.width != 0 as i64 && (c.format == fmt_commas() || c.format == fmt_vertical() || c.format == fmt_across()) || c.format == fmt_single() || c.format == fmt_long()) };
   c = Cfg { ...c, zone: tz.local_zone(), now: now_unix_ms() / (1000 as i64) };
-  var o: Out = run_operands(c, out_new(), s.operands);
-  var status: i32 = o.status;
+  let o: Out = run_operands(c, out_new(), s.operands);
+  let status: i32 = o.status;
   // gnulib's `exit_failure` for `ls` is 2, so a write that cannot
   // finish exits 2 rather than 1.
   gnu.close_stdout_with(o.w, false, status_usage());

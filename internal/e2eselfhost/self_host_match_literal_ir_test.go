@@ -20,7 +20,7 @@ import (
 // the same shape `switch` and the native emitLiteralMatch produce — so it
 // reuses the existing if / while / `==` lowering with no new AST node and
 // every backend (here the IR path) inherits it. The expression form
-// (`var r = match (n) { 1 => 10, _ => 0 }`) routes through the same
+// (`let r = match (n) { 1 => 10, _ => 0 }`) routes through the same
 // desugar inside the IIFE the self-host already builds for value-position
 // matches.
 func TestSelfHostMatchLiteralIR(t *testing.T) {
@@ -70,25 +70,25 @@ func TestSelfHostMatchLiteralIR(t *testing.T) {
 	}{
 		// Statement form, i32 scrutinee: first arm, a middle arm, and the
 		// `_` fall-through all dispatch by `==`.
-		{"i32-first", `function main(): i32 { var n: i32 = 1; match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 0; } } }`, 10},
-		{"i32-middle", `function main(): i32 { var n: i32 = 2; match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 0; } } }`, 20},
-		{"i32-default", `function main(): i32 { var n: i32 = 9; match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 7; } } }`, 7},
+		{"i32-first", `function main(): i32 { let n: i32 = 1; match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 0; } } }`, 10},
+		{"i32-middle", `function main(): i32 { let n: i32 = 2; match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 0; } } }`, 20},
+		{"i32-default", `function main(): i32 { let n: i32 = 9; match (n) { 1 => { return 10; }, 2 => { return 20; }, _ => { return 7; } } }`, 7},
 		// Literal scrutinee (constant-folded) still routes through the
 		// literal-match desugar.
 		{"i32-literal-scrutinee", `function main(): i32 { match (3) { 1 => { return 1; }, 3 => { return 33; }, _ => { return 0; } } }`, 33},
 		// String scrutinee: arms compare with `==` (string equality).
-		{"string-match", `function main(): i32 { var s: string = "b"; match (s) { "a" => { return 1; }, "b" => { return 7; }, _ => { return 0; } } }`, 7},
-		{"string-default", `function main(): i32 { var s: string = "z"; match (s) { "a" => { return 1; }, "b" => { return 7; }, _ => { return 4; } } }`, 4},
+		{"string-match", `function main(): i32 { let s: string = "b"; match (s) { "a" => { return 1; }, "b" => { return 7; }, _ => { return 0; } } }`, 7},
+		{"string-default", `function main(): i32 { let s: string = "z"; match (s) { "a" => { return 1; }, "b" => { return 7; }, _ => { return 4; } } }`, 4},
 		// Guard on a literal arm: `5 when n > 3` folds to `n == 5 && n > 3`.
-		{"guard-true", `function main(): i32 { var n: i32 = 5; match (n) { 1 => { return 1; }, 5 when n > 3 => { return 88; }, _ => { return 0; } } }`, 88},
-		{"guard-false-falls-through", `function main(): i32 { var n: i32 = 5; match (n) { 1 => { return 1; }, 5 when n > 100 => { return 88; }, _ => { return 9; } } }`, 9},
+		{"guard-true", `function main(): i32 { let n: i32 = 5; match (n) { 1 => { return 1; }, 5 when n > 3 => { return 88; }, _ => { return 0; } } }`, 88},
+		{"guard-false-falls-through", `function main(): i32 { let n: i32 = 5; match (n) { 1 => { return 1; }, 5 when n > 100 => { return 88; }, _ => { return 9; } } }`, 9},
 		// Expression form (value position): desugars to an IIFE wrapping the
 		// same literal-match if-chain.
-		{"expr-i32", `function main(): i32 { var n: i32 = 2; var r: i32 = match (n) { 1 => 10, 2 => 20, _ => 0 }; return r; }`, 20},
-		{"expr-default", `function main(): i32 { var n: i32 = 8; var r: i32 = match (n) { 1 => 10, 2 => 20, _ => 30 }; return r; }`, 30},
+		{"expr-i32", `function main(): i32 { let n: i32 = 2; let r: i32 = match (n) { 1 => 10, 2 => 20, _ => 0 }; return r; }`, 20},
+		{"expr-default", `function main(): i32 { let n: i32 = 8; let r: i32 = match (n) { 1 => 10, 2 => 20, _ => 30 }; return r; }`, 30},
 		// A `_`-only-after-one-literal match still works (the chain has a
 		// single `if`, base else is the `_` body).
-		{"single-literal-plus-default", `function main(): i32 { var n: i32 = 4; match (n) { 1 => { return 1; }, _ => { return 42; } } }`, 42},
+		{"single-literal-plus-default", `function main(): i32 { let n: i32 = 4; match (n) { 1 => { return 1; }, _ => { return 42; } } }`, 42},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -61,7 +61,7 @@ var mapKeyAnnotationRows = []struct {
 	rejected bool
 }{
 	{"var-annotation", `import "core/map";
-function main(): i32 { var m: Map[f64, i32] = map_new(2); return 0; }
+function main(): i32 { let m: Map[f64, i32] = map_new(2); return 0; }
 `, true},
 	{"parameter", `import "core/map";
 function take(m: Map[f64, i32]): i32 { return 0; }
@@ -84,10 +84,10 @@ function take(p: (string, Map[f64, i32])): i32 { return 0; }
 function main(): i32 { return 0; }
 `, true},
 	{"empty-literal-with-an-annotation", `import "core/map";
-function main(): i32 { var m: Map[f64, i32] = Map {}; return 0; }
+function main(): i32 { let m: Map[f64, i32] = Map {}; return 0; }
 `, true},
 	{"non-empty-literal-with-an-annotation", `import "core/map";
-function main(): i32 { var m: Map[f64, i32] = Map { 1.5: 7 }; return 0; }
+function main(): i32 { let m: Map[f64, i32] = Map { 1.5: 7 }; return 0; }
 `, true},
 	{"f32-key", `import "core/map";
 function take(m: Map[f32, i32]): i32 { return 0; }
@@ -100,13 +100,13 @@ function main(): i32 { return 0; }
 `, true},
 	{"lambda-parameter", `import "core/map";
 function main(): i32 {
-    var f = (m: Map[f64, i32]): i32 => { return 0; };
+    let f = (m: Map[f64, i32]): i32 => { return 0; };
     return 0;
 }
 `, true},
 	{"lambda-return-type", `import "core/map";
 function main(): i32 {
-    var f = (n: i32): Map[f64, i32] => { return map_new(2); };
+    let f = (n: i32): Map[f64, i32] => { return map_new(2); };
     return 0;
 }
 `, true},
@@ -122,10 +122,10 @@ function main(): i32 { return 0; }
 	// A tuple or array of scalar keys is compared element by element, in a
 	// literal and an annotation alike (#10020).
 	{"tuple-key-literal", `import "core/map";
-function main(): i32 { var m: Map[(i32, i32), i32] = Map { (1, 2): 5 }; return 0; }
+function main(): i32 { let m: Map[(i32, i32), i32] = Map { (1, 2): 5 }; return 0; }
 `, false},
 	{"array-key-literal", `import "core/map";
-function main(): i32 { var m: Map[i32[], i32] = Map { [1, 2]: 5 }; return 0; }
+function main(): i32 { let m: Map[i32[], i32] = Map { [1, 2]: 5 }; return 0; }
 `, false},
 	{"tuple-key", `import "core/map";
 function take(m: Map[(i32, i32), i32]): i32 { return 0; }
@@ -143,14 +143,14 @@ function main(): i32 { return 0; }
 	// alike, and both rules refused them until that was measured.
 	{"boolean-key", `import "core/map";
 function main(): i32 {
-    var m: Map[boolean, i32] = map_new(8);
+    let m: Map[boolean, i32] = map_new(8);
     m = m.insert(true, 5);
     return m.get_or(true, 0);
 }
 `, false},
 	{"borrowed-string-key", `import "core/map";
 function main(): i32 {
-    var m: Map[str, i32] = map_new(8);
+    let m: Map[str, i32] = map_new(8);
     m = m.insert("ab", 5);
     return m.get_or("ab", 0);
 }
@@ -160,15 +160,15 @@ import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
 struct K { a: i32 }
 function take(m: Map[K, i32]): i32 { return m.len(); }
-function main(): i32 { var m: Map[K, i32] = map_new(2); return take(m); }
+function main(): i32 { let m: Map[K, i32] = map_new(2); return take(m); }
 `, false},
 	{"narrow-integer-keys", `import "core/map";
 function take(a: Map[u8, i32], b: Map[u32, i32]): i32 { return 0; }
-function main(): i32 { var m: Map[u8, i32] = map_new(2); return 0; }
+function main(): i32 { let m: Map[u8, i32] = map_new(2); return 0; }
 `, false},
 	{"string-key", `import "core/map";
 function take(m: Map[string, i32]): i32 { return m.len(); }
-function main(): i32 { var m: Map[string, i32] = map_new(2); return take(m); }
+function main(): i32 { let m: Map[string, i32] = map_new(2); return take(m); }
 `, false},
 	{"generic-key-parameter", `import "core/map";
 function take[T](m: Map[T, i32]): i32 { return 0; }

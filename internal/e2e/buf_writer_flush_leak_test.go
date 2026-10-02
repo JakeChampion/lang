@@ -10,8 +10,8 @@ import "testing"
 // writer's own buffer, still live at exit.
 const bufWriterFlushSrc = `import "std/io_buffered";
 function main(): i32 {
-    var b: io_buffered.BufWriter = io_buffered.buf_writer_new(stdout(), 64);
-    var i: i32 = 0;
+    let b: io_buffered.BufWriter = io_buffered.buf_writer_new(stdout(), 64);
+    let i: i32 = 0;
     while (i < 200) {
         b = b.write_string("x");
         b = b.flush();

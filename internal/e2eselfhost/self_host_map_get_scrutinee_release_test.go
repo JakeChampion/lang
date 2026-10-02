@@ -16,11 +16,11 @@ function find(m: Map[string, i32], k: string): i32 {
     match (m.get(k)) { Some(v) => { return v + 40; }, None => { return 9; } }
 }
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
+    let m: Map[string, i32] = map_new(8);
     m = m.insert("a", 1);
     m = m.insert("b", 2);
-    var n: i32 = 0;
-    var i: i32 = 0;
+    let n: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) { n = n + find(m, "b") + find(m, "z"); i = i + 1; }
     return n % 101;
 }

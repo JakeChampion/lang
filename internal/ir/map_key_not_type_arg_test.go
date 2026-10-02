@@ -14,7 +14,7 @@ import (
 // first version asked the question for every generic call, so
 //
 //	function id[T](x: T): T { return x; }
-//	function f(): i32 { var a = [1, 2, 3]; var b = id(a); return b[0]; }
+//	function f(): i32 { let a = [1, 2, 3]; let b = id(a); return b[0]; }
 //
 // — a program with no map anywhere — was refused for "a Map keyed by i32[]".
 // Both directions are pinned here because they are one rule: the array is a
@@ -27,12 +27,12 @@ func TestGenericTypeArgIsNotAMapKey(t *testing.T) {
 		{
 			name: "array",
 			src: `function id[T](x: T): T { return x; }
-function main(): i32 { var a = [1, 2, 3]; var b = id(a); return b[0]; }`,
+function main(): i32 { let a = [1, 2, 3]; let b = id(a); return b[0]; }`,
 		},
 		{
 			name: "tuple",
 			src: `function id[T](x: T): T { return x; }
-function main(): i32 { var a = (1, 2); var b = id(a); return b.0; }`,
+function main(): i32 { let a = (1, 2); let b = id(a); return b.0; }`,
 		},
 	}
 	for _, tc := range cases {
@@ -58,7 +58,7 @@ function main(): i32 { var a = (1, 2); var b = id(a); return b.0; }`,
 // refused and the message names it.
 func TestMapKeyedByArrayIsRefused(t *testing.T) {
 	src := `function main(): i32 {
-	var m: Map[i32[], i32] = map_new(8);
+	let m: Map[i32[], i32] = map_new(8);
 	m = m.insert([1, 2], 5);
 	return m.get_or([1, 2], 0);
 }`

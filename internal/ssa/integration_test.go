@@ -85,8 +85,8 @@ func TestIntegrationIfElse(t *testing.T) {
 func TestIntegrationLoop(t *testing.T) {
 	src := `
 		function sum(n: i32): i32 {
-			var total: i32 = 0;
-			var i: i32 = 0;
+			let total: i32 = 0;
+			let i: i32 = 0;
 			while (i < n) {
 				total = total + i;
 				i = i + 1;

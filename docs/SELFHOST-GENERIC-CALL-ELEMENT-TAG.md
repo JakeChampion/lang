@@ -23,14 +23,14 @@ silent 0 into a diagnostic.
 
 ```fern
 function enum2[T](xs: T[]): (i32, T)[] {
-    var out: (i32, T)[] = [];
-    var i: i32 = 0;
+    let out: (i32, T)[] = [];
+    let i: i32 = 0;
     while (i < xs.len()) { out = out.append((i, xs[i])); i = i + 1; }
     return out;
 }
 function main(): i32 {
-    var xs: f64[] = [4.5];
-    var ps = enum2(xs);
+    let xs: f64[] = [4.5];
+    let ps = enum2(xs);
     return (ps[0].1 * 10.0) as i32;   // want 45; self-host x86-64 gives 255, wasm 0
 }
 ```
@@ -45,7 +45,7 @@ function main(): i32 {
 | `pk[T](xs: T[]): (i32, T)` | generic, BARE TUPLE return | 45 correct |
 | `enum2[T](xs: T[]): (i32, T)[]` | generic, TUPLE-ARRAY return | **255** |
 | `mk(): (i32, f64)[]` | NON-generic, tuple-array return | 45 correct |
-| `enum2` with `var ps: (i32, f64)[] = …` | annotated binding | 45 correct |
+| `enum2` with `let ps: (i32, f64)[] = …` | annotated binding | 45 correct |
 
 Generic alone is fine. Tuple-array alone is fine. The combination is not.
 
@@ -119,7 +119,7 @@ keeps its only `T`.
 
 ```fern
 function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { var ps = mk(); var t = ps[0]; return (t.1 * 10.0) as i32; }
+function main(): i32 { let ps = mk(); let t = ps[0]; return (t.1 * 10.0) as i32; }
 ```
 
 It answered 45 on interp and self-host x86-64 and **1** on self-host wasm:

@@ -6,7 +6,7 @@ import (
 )
 
 // The "TUPB:" payload tier learns the #7553 alias forgiveness
-// (rctuple_param_alias_bind_sites): a callee that binds `var x = src` and only
+// (rctuple_param_alias_bind_sites): a callee that binds `let x = src` and only
 // READS through the alias keeps its tuple param payload-borrowable, so the
 // caller's TUPRCS deep free survives. The vet is the rc-tuple payload scan on
 // the alias's own name — never the box walker, which would admit the handout
@@ -29,9 +29,9 @@ type tupleAliasParamCase struct {
 
 const tupleAliasParamMain = `
 function main(): i32 {
-    var keep: (i32, i32[]) = (5, [6, 7]);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: (i32, i32[]) = (5, [6, 7]);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) { acc = acc + round(keep, i); i = i + 1; }
     acc = (acc + keep.0 + keep.1.len()) % 83;
     if (__rc_underflow_count() != 0) { return 99; }
@@ -47,8 +47,8 @@ func tupleAliasParamCases() []tupleAliasParamCase {
 			// the TUPB vet.
 			name: "fnscope_alias_reads_only",
 			src: `function round(src: (i32, i32[]), i: i32): i32 {
-    var t: i32 = 0;
-    var x: (i32, i32[]) = src;
+    let t: i32 = 0;
+    let x: (i32, i32[]) = src;
     t = (t + x.0 + x.1.len()) % 101;
     return t;
 }` + tupleAliasParamMain,
@@ -60,9 +60,9 @@ func tupleAliasParamCases() []tupleAliasParamCase {
 			// block-scoped bind is forgiven exactly like the fnscope one.
 			name: "if_block_alias_reads_only",
 			src: `function round(src: (i32, i32[]), i: i32): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     if (i % 2 == 0) {
-        var x: (i32, i32[]) = src;
+        let x: (i32, i32[]) = src;
         t = (t + x.0 + x.1.len()) % 101;
         t = t + 1;
     }
@@ -77,16 +77,16 @@ func tupleAliasParamCases() []tupleAliasParamCase {
 			// everything.
 			name: "handout_elem_keeps_refused",
 			src: `function get(src: (i32, i32[]), i: i32): i32[] {
-    var x: (i32, i32[]) = src;
+    let x: (i32, i32[]) = src;
     return x.1;
 }
 function main(): i32 {
-    var keep: (i32, i32[]) = (5, [6, 7]);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let keep: (i32, i32[]) = (5, [6, 7]);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var out: i32[] = get(keep, i);
-        var churn: i32[] = [i, i + 1, i + 2];
+        let out: i32[] = get(keep, i);
+        let churn: i32[] = [i, i + 1, i + 2];
         acc = (acc + out.len() + churn.len()) % 101;
         i = i + 1;
     }
@@ -97,11 +97,11 @@ function main(): i32 {
 			want: 20,
 		},
 		{
-			// A chained alias: `var y = x`.
+			// A chained alias: `let y = x`.
 			name: "chained_alias_keeps_refused",
 			src: `function round(src: (i32, i32[]), i: i32): i32 {
-    var x: (i32, i32[]) = src;
-    var y: (i32, i32[]) = x;
+    let x: (i32, i32[]) = src;
+    let y: (i32, i32[]) = x;
     return (y.0 + y.1.len()) % 101;
 }` + tupleAliasParamMain,
 			want: 43,
@@ -111,8 +111,8 @@ function main(): i32 {
 			// exit and the sanitize leg hold.
 			name: "reassigned_alias_sound",
 			src: `function round(src: (i32, i32[]), i: i32): i32 {
-    var x: (i32, i32[]) = src;
-    var t: i32 = (x.0 + x.1.len()) % 101;
+    let x: (i32, i32[]) = src;
+    let t: i32 = (x.0 + x.1.len()) % 101;
     x = (i, [i, i + 1, i + 2]);
     t = (t + x.1.len()) % 101;
     return t;

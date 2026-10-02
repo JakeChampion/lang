@@ -26,10 +26,10 @@ import "./util";
 // and HTTP modules describe record separators), so an escape that only
 // rewrote newlines would be ambiguous with text that was already there.
 function escape(s: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < s.len()) {
-    var b: i32 = s[i] as i32;
+    let b: i32 = s[i] as i32;
     if (b == 92) {
       out = out + "\\\\";
     } else if (b == 10) {
@@ -43,11 +43,11 @@ function escape(s: string): string {
 }
 
 function report(src: string): string {
-  var dm: ferndoc.DocModule = ferndoc.docs_of(src);
-  var out: string = "intro:" + escape(dm.intro) + "\n";
-  var i: i32 = 0;
+  let dm: ferndoc.DocModule = ferndoc.docs_of(src);
+  let out: string = "intro:" + escape(dm.intro) + "\n";
+  let i: i32 = 0;
   while (i < dm.decls.len()) {
-    var d: ferndoc.DocDecl = dm.decls[i];
+    let d: ferndoc.DocDecl = dm.decls[i];
     out = out + d.kind + " " + d.name + " "
       + util.i32_to_string(d.line) + ":" + util.i32_to_string(d.col)
       + " " + escape(d.doc) + "\n";
@@ -90,7 +90,7 @@ function self_checks(): i32 {
   }
 
   // ---- 2. the run directly above -------------------------------------
-  var one: lexer.Comment[] = [c(4, " doc")];
+  let one: lexer.Comment[] = [c(4, " doc")];
   if (took(one, 0, 5) != "doc") {
     return 10;
   }
@@ -108,12 +108,12 @@ function self_checks(): i32 {
   }
 
   // ---- 3. runs join, gaps split --------------------------------------
-  var run: lexer.Comment[] = [c(3, " first"), c(4, " second")];
+  let run: lexer.Comment[] = [c(3, " first"), c(4, " second")];
   if (took(run, 0, 5) != "first\nsecond") {
     return 20;
   }
   // A gap inside means only the run touching the declaration is taken.
-  var split: lexer.Comment[] = [c(2, " far"), c(4, " near")];
+  let split: lexer.Comment[] = [c(2, " far"), c(4, " near")];
   if (took(split, 0, 5) != "near") {
     return 21;
   }
@@ -129,12 +129,12 @@ function self_checks(): i32 {
   // ---- 4. the cursor is the whole state ------------------------------
   // Two documented declarations in a row: each takes its own run, and the
   // second must not see the first's.
-  var two: lexer.Comment[] = [c(1, " a"), c(4, " b")];
-  var t1: ferndoc.TakeResult = ferndoc.take_doc(two, 0, 2);
+  let two: lexer.Comment[] = [c(1, " a"), c(4, " b")];
+  let t1: ferndoc.TakeResult = ferndoc.take_doc(two, 0, 2);
   if (t1.doc != "a" || t1.cursor != 1) {
     return 30;
   }
-  var t2: ferndoc.TakeResult = ferndoc.take_doc(two, t1.cursor, 5);
+  let t2: ferndoc.TakeResult = ferndoc.take_doc(two, t1.cursor, 5);
   if (t2.doc != "b" || t2.cursor != 2) {
     return 31;
   }
@@ -155,7 +155,7 @@ function self_checks(): i32 {
 
   // ---- 5. module intro -----------------------------------------------
   // A header run followed by a blank line is the intro, joined by SPACE.
-  var hdr: lexer.Comment[] = [c(1, " Package foo."), c(2, " Second line.")];
+  let hdr: lexer.Comment[] = [c(1, " Package foo."), c(2, " Second line.")];
   if (ferndoc.module_intro(hdr, 5) != "Package foo. Second line.") {
     return 40;
   }
@@ -179,7 +179,7 @@ function self_checks(): i32 {
   // ---- 6. end to end -------------------------------------------------
   // The shape the whole pass exists for: a header, a private declaration
   // between two public ones, and a blank line detaching a comment.
-  var src: string = "// Header line.\n"
+  let src: string = "// Header line.\n"
     + "\n"
     + "// Adds.\n"
     + "pub function add(a: i32, b: i32): i32 { return a + b; }\n"
@@ -190,7 +190,7 @@ function self_checks(): i32 {
     + "// Detached.\n"
     + "\n"
     + "pub function bare(): i32 { return 1; }\n";
-  var dm: ferndoc.DocModule = ferndoc.docs_of(src);
+  let dm: ferndoc.DocModule = ferndoc.docs_of(src);
   if (dm.intro != "Header line.") {
     return 50;
   }
@@ -211,7 +211,7 @@ function self_checks(): i32 {
 
   // Structs and enums are collected too, in source order rather than list
   // order — the parser hands back a separate list per decl kind.
-  var src2: string = "// Point.\n"
+  let src2: string = "// Point.\n"
     + "pub struct P { x: i32 }\n"
     + "\n"
     + "// Colour.\n"
@@ -219,7 +219,7 @@ function self_checks(): i32 {
     + "\n"
     + "// Maker.\n"
     + "pub function make(): i32 { return 0; }\n";
-  var dm2: ferndoc.DocModule = ferndoc.docs_of(src2);
+  let dm2: ferndoc.DocModule = ferndoc.docs_of(src2);
   // The header runs straight into `struct P`, so it is P's doc, not an intro.
   if (dm2.intro != "") {
     return 60;
@@ -248,13 +248,13 @@ function self_checks(): i32 {
 
   // A private declaration is not documented at all, and neither is a
   // `__`-prefixed public one.
-  var src3: string = "// Hidden.\n"
+  let src3: string = "// Hidden.\n"
     + "function priv(): i32 { return 0; }\n"
     + "// Also hidden.\n"
     + "pub function __internal(): i32 { return 0; }\n"
     + "// Shown.\n"
     + "pub function shown(): i32 { return 0; }\n";
-  var dm3: ferndoc.DocModule = ferndoc.docs_of(src3);
+  let dm3: ferndoc.DocModule = ferndoc.docs_of(src3);
   if (dm3.decls.len() != 1) {
     return 70;
   }
@@ -266,13 +266,13 @@ function self_checks(): i32 {
   // from the function below it is `is_const`. Both directions matter: the
   // const must not be reported as a function, and the function must not be
   // swept up as a const.
-  var src4: string = "// Limit.\n"
+  let src4: string = "// Limit.\n"
     + "pub const MAX: i32 = 10;\n"
     + "// Zero.\n"
     + "pub function zero(): i32 { return 0; }\n"
     + "// Private, and skipped.\n"
     + "const HIDDEN: i32 = 1;\n";
-  var dm4: ferndoc.DocModule = ferndoc.docs_of(src4);
+  let dm4: ferndoc.DocModule = ferndoc.docs_of(src4);
   if (dm4.decls.len() != 2) {
     return 80;
   }
@@ -291,9 +291,9 @@ function self_checks(): i32 {
 
   // The `__` filter is native's, and native applies it to its funcs list
   // alone — a `__`-prefixed const has no such filter and is documented.
-  var src5: string = "// Kept.\n"
+  let src5: string = "// Kept.\n"
     + "pub const __RAW: i32 = 2;\n";
-  var dm5: ferndoc.DocModule = ferndoc.docs_of(src5);
+  let dm5: ferndoc.DocModule = ferndoc.docs_of(src5);
   if (dm5.decls.len() != 1) {
     return 85;
   }
@@ -305,7 +305,7 @@ function self_checks(): i32 {
   // type clause entirely when the source did not write one — `?` is what an
   // absent type renders as elsewhere, and a const without one is a different
   // fact.
-  var page: string = ferndoc.render_page("pub const A: i32 = 1;\npub const B = 2;\n", "std/x");
+  let page: string = ferndoc.render_page("pub const A: i32 = 1;\npub const B = 2;\n", "std/x");
   if (!util.contains(page, "## `const A`\n\n```fern\npub const A: i32\n```\n")) {
     return 87;
   }
@@ -320,11 +320,11 @@ function self_checks(): i32 {
 }
 
 function main(): i32 {
-  var av: string[] = args();
-  var i: i32 = 0;
+  let av: string[] = args();
+  let i: i32 = 0;
   while (i < av.len()) {
     if (av[i] == "-self") {
-      var rc: i32 = self_checks();
+      let rc: i32 = self_checks();
       if (rc != 0) {
         return rc;
       }
@@ -333,7 +333,7 @@ function main(): i32 {
     }
     i = i + 1;
   }
-  var mi: i32 = 0;
+  let mi: i32 = 0;
   while (mi < av.len()) {
     // `-page <std/name>` renders the full Markdown page instead of the
     // association report — the form the byte-for-byte differential against

@@ -29,7 +29,7 @@ var nestedGenericEnumIRCases = []nestedGenericEnumIRCase{
 	// the core shape: construct `Sm(Sm(3))` and extract through two matches.
 	{"two_level_i32", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
-    var o: Opt[Opt[i32]] = Sm(Sm(3));
+    let o: Opt[Opt[i32]] = Sm(Sm(3));
     match (o) {
         Sm(n) => { match (n) { Sm(m) => { return m; }, Nn => { return 0; } } },
         Nn => { return 0; }
@@ -38,7 +38,7 @@ function main(): i32 {
 	// the OUTER value is the unit variant `Nn` (pinned from the annotation).
 	{"outer_unit", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
-    var o: Opt[Opt[i32]] = Nn;
+    let o: Opt[Opt[i32]] = Nn;
     match (o) { Sm(n) => { return 1; }, Nn => { return 9; } }
 }`, 9},
 	// the INNER payload is the unit variant `Nn` (`Sm(Nn)`): the inner `Nn` has
@@ -46,7 +46,7 @@ function main(): i32 {
 	// `Opt[Opt[i32]]` annotation into the construction argument.
 	{"inner_unit", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
-    var o: Opt[Opt[i32]] = Sm(Nn);
+    let o: Opt[Opt[i32]] = Sm(Nn);
     match (o) {
         Sm(n) => { match (n) { Sm(m) => { return m; }, Nn => { return 7; } } },
         Nn => { return 0; }
@@ -55,7 +55,7 @@ function main(): i32 {
 	// three levels of nesting (`Opt[Opt[Opt[i32]]]`).
 	{"three_level", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
-    var o: Opt[Opt[Opt[i32]]] = Sm(Sm(Sm(5)));
+    let o: Opt[Opt[Opt[i32]]] = Sm(Sm(Sm(5)));
     match (o) {
         Sm(a) => { match (a) { Sm(b) => { match (b) { Sm(c) => { return c; }, Nn => { return 0; } } }, Nn => { return 0; } } },
         Nn => { return 0; }
@@ -65,15 +65,15 @@ function main(): i32 {
 	{"two_kinds", `enum Inner[T] { I(T) }
 enum Outer[U] { O(U) }
 function main(): i32 {
-    var o: Outer[Inner[i32]] = O(I(5));
+    let o: Outer[Inner[i32]] = O(I(5));
     match (o) { O(x) => { match (x) { I(n) => { return n + 1; } } } }
 }`, 6},
 	// a nested enum and a plain instantiation of the same enum coexisting.
 	{"coexist_with_flat", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
-    var a: Opt[Opt[i32]] = Sm(Sm(3));
-    var b: Opt[i32] = Sm(4);
-    var x: i32 = 0;
+    let a: Opt[Opt[i32]] = Sm(Sm(3));
+    let b: Opt[i32] = Sm(4);
+    let x: i32 = 0;
     match (a) { Sm(n) => { match (n) { Sm(m) => { x = m; }, Nn => { } } }, Nn => { } }
     match (b) { Sm(k) => { x = x + k; }, Nn => { } }
     return x;
@@ -81,7 +81,7 @@ function main(): i32 {
 	// nested string payload, with method dispatch on the innermost binding.
 	{"nested_string_method", `enum Box[T] { V(T) }
 function main(): i32 {
-    var o: Box[Box[string]] = V(V("hello"));
+    let o: Box[Box[string]] = V(V("hello"));
     match (o) { V(inner) => { match (inner) { V(s) => { return s.len(); } } } }
 }`, 5},
 }

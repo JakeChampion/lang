@@ -15,7 +15,7 @@ import "std/i64";
 import "std/string";
 
 function grow(n: i32): string[] {
-    var out: string[] = [];
+    let out: string[] = [];
     for i in 0..n {
         out = out.append("abcdefgh" + i.to_string());
     }
@@ -23,11 +23,11 @@ function grow(n: i32): string[] {
 }
 
 function main(): i32 {
-    var b0: i64 = __heap_bump_bytes();
-    var a: string[] = grow(50);
-    var b1: i64 = __heap_bump_bytes();
-    var b: string[] = grow(100);
-    var b2: i64 = __heap_bump_bytes();
+    let b0: i64 = __heap_bump_bytes();
+    let a: string[] = grow(50);
+    let b1: i64 = __heap_bump_bytes();
+    let b: string[] = grow(100);
+    let b2: i64 = __heap_bump_bytes();
 
     print(a.len().to_string());
     print(b.len().to_string());

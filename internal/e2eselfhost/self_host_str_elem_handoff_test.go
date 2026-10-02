@@ -7,7 +7,7 @@ import (
 
 // --- A caller-owned string element handed to a callee that keeps it ---------
 //
-// `var nm: string = names[i]` inside a function borrowing `names` reads an
+// `let nm: string = names[i]` inside a function borrowing `names` reads an
 // element the CALLER's deep free releases, and `out.bind(nm, i)` hands it to
 // a parameter that is stored (`s.names.append(name)`), which is neither
 // borrowable nor counted. A string parameter at such a position takes over
@@ -27,8 +27,8 @@ const strElemHandoffSrc = `struct Sc { names: string[], types: i32[] }
 struct FB { scope: Sc, valid: boolean }
 
 function (s: Sc) bind(name: string, t: i32): Sc {
-  var ns: string[] = s.names.append(name);
-  var ts: i32[] = s.types.append(t);
+  let ns: string[] = s.names.append(name);
+  let ts: i32[] = s.types.append(t);
   return Sc { names: ns, types: ts };
 }
 
@@ -37,9 +37,9 @@ function (s: Sc) enter_loop(): Sc {
 }
 
 function split(enc: string): string[] {
-  var out: string[] = [];
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i < enc.len()) {
     if (enc[i] == 44) {
       out = out.append(slice_unchecked(enc, start, i) + "");
@@ -52,9 +52,9 @@ function split(enc: string): string[] {
 }
 
 function bind_names(out: Sc, names: string[]): Sc {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
-    var nm: string = names[i];
+    let nm: string = names[i];
     if (nm.len() > 0) {
       out = out.bind(nm, i);
     }
@@ -64,17 +64,17 @@ function bind_names(out: Sc, names: string[]): Sc {
 }
 
 function for_binding(enc: string, s: Sc): FB {
-  var body = s.enter_loop();
-  var names = split(enc);
+  let body = s.enter_loop();
+  let names = split(enc);
   return FB { scope: bind_names(body, names), valid: names.len() == 2 };
 }
 
 function main(): i32 {
-  var s: Sc = Sc { names: [], types: [] };
-  var r: Sc = for_binding("k,v", s).scope;
+  let s: Sc = Sc { names: [], types: [] };
+  let r: Sc = for_binding("k,v", s).scope;
   r = r.bind("text", 3);
-  var total: i32 = 0;
-  var j: i32 = 0;
+  let total: i32 = 0;
+  let j: i32 = 0;
   while (j < r.names.len()) {
     total = total + r.names[j].len() + r.types[j];
     j = j + 1;

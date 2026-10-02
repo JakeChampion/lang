@@ -21,15 +21,15 @@ var optArithNarrowBindIRCases = []struct {
 	main string
 }{
 	// (payload + 2) as i32. 40 + 2 = 42.
-	{"add-narrow", `function main(): i32 { var o: Option[i64] = Some(40); return match (o) { Some(x) => (x + 2) as i32, None => 0 }; }`},
+	{"add-narrow", `function main(): i32 { let o: Option[i64] = Some(40); return match (o) { Some(x) => (x + 2) as i32, None => 0 }; }`},
 	// (payload * 2) as i32. 40 * 2 = 80.
-	{"mul-narrow", `function main(): i32 { var o: Option[i64] = Some(40); return match (o) { Some(x) => (x * 2) as i32, None => 0 }; }`},
+	{"mul-narrow", `function main(): i32 { let o: Option[i64] = Some(40); return match (o) { Some(x) => (x * 2) as i32, None => 0 }; }`},
 	// None arm taken — the arith arm is not evaluated. 7.
-	{"none-taken", `function main(): i32 { var o: Option[i64] = None; return match (o) { Some(x) => (x + 2) as i32, None => 7 }; }`},
+	{"none-taken", `function main(): i32 { let o: Option[i64] = None; return match (o) { Some(x) => (x + 2) as i32, None => 7 }; }`},
 	// Result[i64, i32], Ok arm arith-then-narrow. 40 - 5 = 35.
-	{"result-sub", `function main(): i32 { var r: Result[i64, i32] = Ok(40); return match (r) { Ok(x) => (x - 5) as i32, Err(e) => 0 }; }`},
+	{"result-sub", `function main(): i32 { let r: Result[i64, i32] = Ok(40); return match (r) { Ok(x) => (x - 5) as i32, Err(e) => 0 }; }`},
 	// Regression: the bare-payload narrow (`x as i32`) was already on the IR path. 40.
-	{"bare-narrow", `function main(): i32 { var o: Option[i64] = Some(40); return match (o) { Some(x) => x as i32, None => 0 }; }`},
+	{"bare-narrow", `function main(): i32 { let o: Option[i64] = Some(40); return match (o) { Some(x) => x as i32, None => 0 }; }`},
 }
 
 // TestSelfHostOptArithNarrowBindIR compiles each case with the self-host CLI for

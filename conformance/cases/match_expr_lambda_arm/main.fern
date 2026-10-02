@@ -31,19 +31,19 @@ function named_arms(s: Status): i32 {
 }
 
 function main(): i32 {
-    var f: (i32) => i32 = via_match(Active);
+    let f: (i32) => i32 = via_match(Active);
     if (f(7i32) != 7i32) { return 1; }
 
-    var g: (i32) => i32 = via_match(Inactive);
+    let g: (i32) => i32 = via_match(Inactive);
     if (g(7i32) != 8i32) { return 2; }
 
-    var h: (i32) => i32 = via_match(Pending);
+    let h: (i32) => i32 = via_match(Pending);
     if (h(7i32) != 72i32) { return 3; }
 
-    var i1: (i32) => i32 = via_if(true);
+    let i1: (i32) => i32 = via_if(true);
     if (i1(7i32) != 7i32) { return 4; }
 
-    var i2: (i32) => i32 = via_if(false);
+    let i2: (i32) => i32 = via_if(false);
     if (i2(7i32) != 72i32) { return 5; }
 
     if (named_arms(Inactive) != 2i32) { return 6; }

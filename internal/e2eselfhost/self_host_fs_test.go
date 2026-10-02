@@ -11,12 +11,12 @@ import (
 // builtins: make a temp dir, write a file, stat it, list the dir,
 // remove the tree, and confirm it's gone. Returns 42 on full success.
 const fsBuiltinsProgram = `function main(): i32 {
-    var dir: string = "";
+    let dir: string = "";
     match (temp_dir("fernfs")) {
         Ok(d) => { dir = d; },
         Err(_) => { return 1; }
     }
-    var f: string = dir + "/hello.txt";
+    let f: string = dir + "/hello.txt";
     match (write_file(f, "0123456789")) {
         Err(_) => { return 2; },
         Ok(_) => {}

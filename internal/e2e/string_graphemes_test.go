@@ -37,10 +37,10 @@ function main(): i32 {
     if (unicode.grapheme_count(cp(127468) + cp(127463) + cp(127482)) != 2) { return 7; }
 
     // Emoji ZWJ sequences are one cluster (GB11): a family emoji is one.
-    var fam: string = cp(128104) + cp(8205) + cp(128105) + cp(8205) + cp(128103);
+    let fam: string = cp(128104) + cp(8205) + cp(128105) + cp(8205) + cp(128103);
     if (unicode.grapheme_count(fam) != 1) { return 8; }
     // Profession emoji with a skin-tone modifier, likewise.
-    var prof: string = cp(128104) + cp(127997) + cp(8205) + cp(128187);
+    let prof: string = cp(128104) + cp(127997) + cp(8205) + cp(128187);
     if (unicode.grapheme_count(prof) != 1) { return 9; }
     // But a ZWJ NOT preceded by a pictograph does not join.
     if (unicode.grapheme_count("a" + cp(8205) + cp(128105)) != 2) { return 10; }
@@ -60,7 +60,7 @@ function main(): i32 {
 
     // The clusters themselves are the right slices, not just the right
     // count: a combining pair is 3 bytes, the following ASCII 1.
-    var gs: str[] = unicode.graphemes("e" + cp(769) + "x");
+    let gs: str[] = unicode.graphemes("e" + cp(769) + "x");
     if (gs.len() != 2) { return 18; }
     if (gs[0].len() != 3) { return 19; }
     if (gs[1].len() != 1) { return 20; }
@@ -71,7 +71,7 @@ function main(): i32 {
     if (unicode.reverse_graphemes("abc") != "cba") { return 22; }
     if (unicode.reverse_graphemes("") != "") { return 23; }
     // A flag survives reversal as a unit.
-    var flags: string = cp(127468) + cp(127463) + cp(127482) + cp(127480);
+    let flags: string = cp(127468) + cp(127463) + cp(127482) + cp(127480);
     if (unicode.reverse_graphemes(flags) != cp(127482) + cp(127480) + cp(127468) + cp(127463)) { return 24; }
 
     // len() is still BYTES, and is NOT the cluster count.

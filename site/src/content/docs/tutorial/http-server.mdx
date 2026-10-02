@@ -172,8 +172,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     match (url.url_parse("http://x.local" + req.path)) {
         None => { return http.bad_request("bad URL\n"); },
         Some(u) => {
-            var q: Map[string, string[]] = url.query_parse(u.query);
-            var out: Map[string, JsonValue] = map_new(2);
+            let q: Map[string, string[]] = url.query_parse(u.query);
+            let out: Map[string, JsonValue] = map_new(2);
             out = out.insert("path", JString(u.path));
             match (q.get("q")) {
                 Some(vs) => {
@@ -182,7 +182,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
                 None => {}
             }
             // `|>` pipes the left value into the right function.
-            var body: string = JObject(out) |> json.json_encode;
+            let body: string = JObject(out) |> json.json_encode;
             return http.ok(body);
         }
     }
@@ -212,7 +212,7 @@ function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
 
 function handle(hits: Map[string, i32], req: HttpRequest,
                 plat: Platform): (Map[string, i32], HttpResponse) {
-    var n: i32 = 1;
+    let n: i32 = 1;
     match (hits.get(req.path)) {
         Some(prev) => { n = prev + 1; },
         None => {}

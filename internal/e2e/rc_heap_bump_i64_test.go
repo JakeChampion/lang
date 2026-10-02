@@ -26,9 +26,9 @@ import (
 // allocated yet), `after` is a positive one-array high-water whose high 32 bits
 // are clear. Returns 7 when every leg holds.
 const heapBumpIsI64Src = `function main(): i32 {
-    var before: i64 = __heap_bump_bytes();
-    var a: i32[] = [1, 2, 3];
-    var after: i64 = __heap_bump_bytes();
+    let before: i64 = __heap_bump_bytes();
+    let a: i32[] = [1, 2, 3];
+    let after: i64 = __heap_bump_bytes();
     if (before != (0 as i64)) { return 1; }
     if (after <= before) { return 2; }
     if ((after >> (32 as i64)) != (0 as i64)) { return 3; }
@@ -67,9 +67,9 @@ func TestWasmHeapBumpIsI64(t *testing.T) {
 // recycle them out from under the high-water mark. Under the old i32 result
 // the 2400000032-byte mark read back as -1894967264 and the first check fired.
 const heapBumpAbove2GiBSrc = `function main(): i32 {
-    var a: u8[] = __alloc_u8(1200000000);
-    var b: u8[] = __alloc_u8(1200000000);
-    var mark: i64 = __heap_bump_bytes();
+    let a: u8[] = __alloc_u8(1200000000);
+    let b: u8[] = __alloc_u8(1200000000);
+    let mark: i64 = __heap_bump_bytes();
     if (mark <= (2147483647 as i64)) { return 1; }
     if (mark < (2400000000 as i64)) { return 2; }
     if (mark > (2500000000 as i64)) { return 3; }

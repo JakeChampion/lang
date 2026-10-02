@@ -36,10 +36,10 @@ var arrayMethodMultiElemIRCases = []struct {
 function dbl(x: i32): i32 { return x * 2; }
 function id_s(s: string): string { return s; }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var ss: string[] = ["a", "b"];
-    var a: i32[] = xs.map(dbl);
-    var b: string[] = ss.map(id_s);
+    let xs: i32[] = [1, 2, 3];
+    let ss: string[] = ["a", "b"];
+    let a: i32[] = xs.map(dbl);
+    let b: string[] = ss.map(id_s);
     return a[2] + b.len();
 }`, []string{"__arrm_map__i32", "__arrm_map__string"}},
 
@@ -49,9 +49,9 @@ function dbl(x: i32): i32 { return x * 2; }
 function id_s(s: string): string { return s; }
 function id_l(x: i64): i64 { return x; }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var ss: string[] = ["a", "b"];
-    var ls: i64[] = [7i64];
+    let xs: i32[] = [1, 2, 3];
+    let ss: string[] = ["a", "b"];
+    let ls: i64[] = [7i64];
     return xs.map(dbl)[2] + ss.map(id_s).len() + (ls.map(id_l)[0] as i32);
 }`, []string{"__arrm_map__i32", "__arrm_map__string", "__arrm_map__i64"}},
 
@@ -59,12 +59,12 @@ function main(): i32 {
 	// named as crashing at two element types; it lowers and runs correctly now.
 	{"concat-i32-string", `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2];
-    var ys: i32[] = [3];
-    var ss: string[] = ["a"];
-    var ts: string[] = ["b", "c"];
-    var a: i32[] = xs.concat(ys);
-    var b: string[] = ss.concat(ts);
+    let xs: i32[] = [1, 2];
+    let ys: i32[] = [3];
+    let ss: string[] = ["a"];
+    let ts: string[] = ["b", "c"];
+    let a: i32[] = xs.concat(ys);
+    let b: string[] = ss.concat(ts);
     return a.len() * 10 + b.len();
 }`, []string{"__arrm_concat__i32", "__arrm_concat__string"}},
 
@@ -72,10 +72,10 @@ function main(): i32 {
 	// `i32.cmp` in one clone and `string.cmp` in the other.
 	{"is_sorted-bounded", `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var ss: string[] = ["b", "a"];
-    var a: boolean = xs.is_sorted();
-    var b: boolean = ss.is_sorted();
+    let xs: i32[] = [1, 2, 3];
+    let ss: string[] = ["b", "a"];
+    let a: boolean = xs.is_sorted();
+    let b: boolean = ss.is_sorted();
     if (a && !b) { return 7; }
     return 9;
 }`, []string{"__arrm_is_sorted__i32", "__arrm_is_sorted__string"}},
@@ -84,8 +84,8 @@ function main(): i32 {
 	// so the element type comes from the receiver alone).
 	{"dedup-bounded", `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 1, 2];
-    var ss: string[] = ["a", "a", "b", "c"];
+    let xs: i32[] = [1, 1, 2];
+    let ss: string[] = ["a", "a", "b", "c"];
     return xs.dedup().len() * 10 + ss.dedup().len();
 }`, []string{"__arrm_dedup__i32", "__arrm_dedup__string"}},
 
@@ -98,10 +98,10 @@ function main(): i32 {
 	// well as both clones.
 	{"rotate_left-silent-misdispatch", `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var ss: string[] = ["a", "b", "c"];
-    var a: i32[] = xs.rotate_left(1);
-    var b: string[] = ss.rotate_left(1);
+    let xs: i32[] = [1, 2, 3];
+    let ss: string[] = ["a", "b", "c"];
+    let a: i32[] = xs.rotate_left(1);
+    let b: string[] = ss.rotate_left(1);
     return a[0] * 10 + b[0].len() + b.len();
 }`, []string{"__arrm_rotate_left__i32", "__arrm_rotate_left__string"}},
 
@@ -116,10 +116,10 @@ function big(x: i32): boolean { return x > 2; }
 function id_s(s: string): string { return s; }
 function nonempty(s: string): boolean { return s.len() > 0; }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var ss: string[] = ["a", "", "b"];
-    var a: i32[] = xs.map(dbl).filter(big);
-    var b: string[] = ss.map(id_s).filter(nonempty);
+    let xs: i32[] = [1, 2, 3];
+    let ss: string[] = ["a", "", "b"];
+    let a: i32[] = xs.map(dbl).filter(big);
+    let b: string[] = ss.map(id_s).filter(nonempty);
     return a.len() * 10 + b.len();
 }`, []string{"__arrm_map__i32", "__arrm_map__string", "__arrm_filter__"}},
 
@@ -132,14 +132,14 @@ function bigl(x: i64): boolean { return x > 1i64; }
 function bigf(x: f64): boolean { return x > 1.0; }
 function nonempty(s: string): boolean { return s.len() > 0; }
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var ls: i64[] = [1i64, 5i64, 9i64];
-    var fs: f64[] = [0.5, 2.5];
-    var ss: string[] = ["a", "", "b"];
-    var a = xs.filter(bigi);
-    var b = ls.filter(bigl);
-    var c = fs.filter(bigf);
-    var d = ss.filter(nonempty);
+    let xs: i32[] = [1, 2, 3];
+    let ls: i64[] = [1i64, 5i64, 9i64];
+    let fs: f64[] = [0.5, 2.5];
+    let ss: string[] = ["a", "", "b"];
+    let a = xs.filter(bigi);
+    let b = ls.filter(bigl);
+    let c = fs.filter(bigf);
+    let d = ss.filter(nonempty);
     return a.len() * 1000 + b.len() * 100 + c.len() * 10 + d.len();
 }`, []string{"__arrm_filter__"}},
 }

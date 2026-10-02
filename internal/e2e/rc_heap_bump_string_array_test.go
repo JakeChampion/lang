@@ -33,10 +33,10 @@ func strArrLit(n int) string {
 func strArrDead4Src() string {
 	l := strArrLit(40)
 	return `function main(): i32 {
-    var a: string[] = ` + l + `; var sa: i32 = a[0].len();
-    var b: string[] = ` + l + `; var sb: i32 = b[0].len();
-    var c: string[] = ` + l + `; var sc: i32 = c[0].len();
-    var d: string[] = ` + l + `; var sd: i32 = d[0].len();
+    let a: string[] = ` + l + `; let sa: i32 = a[0].len();
+    let b: string[] = ` + l + `; let sb: i32 = b[0].len();
+    let c: string[] = ` + l + `; let sc: i32 = c[0].len();
+    let d: string[] = ` + l + `; let sd: i32 = d[0].len();
     return (__heap_bump_bytes() as i32) + sa + sb + sc + sd;
 }`
 }
@@ -44,10 +44,10 @@ func strArrDead4Src() string {
 func strArrLive4Src() string {
 	l := strArrLit(40)
 	return `function main(): i32 {
-    var a: string[] = ` + l + `;
-    var b: string[] = ` + l + `;
-    var c: string[] = ` + l + `;
-    var d: string[] = ` + l + `;
+    let a: string[] = ` + l + `;
+    let b: string[] = ` + l + `;
+    let c: string[] = ` + l + `;
+    let d: string[] = ` + l + `;
     return (__heap_bump_bytes() as i32) + a[0].len() + b[0].len() + c[0].len() + d[0].len();
 }`
 }
@@ -56,12 +56,12 @@ func strArrLive4Src() string {
 // array's precise drop, with a forced interleaved allocation (junk). The
 // per-element str_dec must only DEC the aliased string (keep survives).
 const strArrAliasSrc = `function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var xs: string[] = ["aaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbb", "ccccccccccccccccc"];
-        var keep: string = xs[1];
-        var junk: string[] = ["ddddddddddddddddd", "eeeeeeeeeeeeeeeee", "fffffffffffffffff"];
+        let xs: string[] = ["aaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbb", "ccccccccccccccccc"];
+        let keep: string = xs[1];
+        let junk: string[] = ["ddddddddddddddddd", "eeeeeeeeeeeeeeeee", "fffffffffffffffff"];
         acc = acc + keep.len() + xs[0].len() + junk[0].len();
         i = i + 1;
     }

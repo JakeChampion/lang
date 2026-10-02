@@ -11,7 +11,7 @@ import (
 // A call whose generic callee returns an UNBOUNDED type parameter — `fold[T, A,
 // I]: A` (core/iter.fold), where `A` is erased from `type_params`, so the
 // monomorphiser never substitutes it — used to make the self-host `mono_infer`
-// report the bare type variable "A" as the call's type. Binding `var s =
+// report the bare type variable "A" as the call's type. Binding `let s =
 // iter.fold(..)` to "A" then keyed a spurious clone of any trait-bounded generic
 // `s` flowed into (`assert_eq[T: Eq + Display](s, 6)` -> `assert_eq__A`), whose
 // `A.eq` / `A.to_string` can't resolve — dragging the whole module to the AST
@@ -34,7 +34,7 @@ pub function showeq[T: cmp.Eq + cmp.Display](a: T, b: T): i32 {
     return b.to_string().len();
 }
 function main(): i32 {
-    var s = gfold(0, (a: i32, x: i32): i32 => { return a + x; });
+    let s = gfold(0, (a: i32, x: i32): i32 => { return a + x; });
     return showeq(s, 7);
 }`},
 
@@ -47,22 +47,22 @@ function main(): i32 {
 	// f64: id(2.5) + 0.5 == 3.0 (float add, not an integer op on the bits).
 	{"typevar-f64-arith", `pub function id[T](x: T): T { return x; }
 function main(): i32 {
-    var r: f64 = id(2.5) + 0.5;
+    let r: f64 = id(2.5) + 0.5;
     if (r == 3.0) { return 1; }
     return 0;
 }`},
 	// f32 (uses the f64 twin): id(2.5 as f32) + 1.0 as f32 == 3.5.
 	{"typevar-f32-arith", `pub function id[T](x: T): T { return x; }
 function main(): i32 {
-    var r: f32 = id(2.5 as f32) + 1.0 as f32;
+    let r: f32 = id(2.5 as f32) + 1.0 as f32;
     if (r == 3.5) { return 1; }
     return 0;
 }`},
 	// u64 (bit 63 set): id(big) >> 1 needs the UNSIGNED shift, else it diverges.
 	{"typevar-u64-shift", `pub function id[T](x: T): T { return x; }
 function main(): i32 {
-    var a: u64 = 18000000000000000000;
-    var r: u64 = id(a) >> 1;
+    let a: u64 = 18000000000000000000;
+    let r: u64 = id(a) >> 1;
     if (r == 9000000000000000000) { return 1; }
     return 0;
 }`},
@@ -76,7 +76,7 @@ function main(): i32 {
 	// and the readings settle at the wider integer one.
 	{"shared-typevar-widest-arg", `pub function second[T](a: T, b: T): T { return b; }
 function main(): i32 {
-    var x: i64 = second(1, 4611686018427387904);
+    let x: i64 = second(1, 4611686018427387904);
     if (x == 4611686018427387904) { return 7; }
     if (x == 0) { return 1; }
     return 3;
@@ -87,37 +87,37 @@ function main(): i32 {
 	// answer (#8722 part 4).
 	{"shared-typevar-tuple-return", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
 function main(): i32 {
-    var q = both(1, 4611686018427387904);
+    let q = both(1, 4611686018427387904);
     if (q.1 - q.0 == 4611686018427387903) { return 7; }
     return 3;
 }`},
 	{"shared-typevar-three-args", `pub function three[T](a: T, b: T, c: T): (T, T, T) { return (a, b, c); }
 function main(): i32 {
-    var q = three(1, 2, 4611686018427387904);
+    let q = three(1, 2, 4611686018427387904);
     if (q.2 - q.0 - q.1 == 4611686018427387901) { return 7; }
     return 3;
 }`},
 	{"shared-typevar-negative-wide", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
 function main(): i32 {
-    var q = both(0 - 4611686018427387904, 1);
+    let q = both(0 - 4611686018427387904, 1);
     if (q.1 - q.0 == 4611686018427387905) { return 7; }
     return 3;
 }`},
 	{"shared-typevar-array-return", `pub function arr[T](a: T, b: T): T[] { return [a, b]; }
 function main(): i32 {
-    var q = arr(1, 4611686018427387904);
+    let q = arr(1, 4611686018427387904);
     if (q[1] - q[0] == 4611686018427387903) { return 7; }
     return 3;
 }`},
 	{"shared-typevar-annotated-tuple", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
 function main(): i32 {
-    var q: (i64, i64) = both(1, 4611686018427387904);
+    let q: (i64, i64) = both(1, 4611686018427387904);
     if (q.1 - q.0 == 4611686018427387903) { return 7; }
     return 3;
 }`},
 	// The other positions that read a literal-bound variable (#10176): a
 	// scrutinee and a plain comparison take the widest reading as the
-	// unannotated `var` does, and a destination settles the variable at its
+	// unannotated `let` does, and a destination settles the variable at its
 	// own width — `u64`, which no literal reading gives, and through a field
 	// read of the result.
 	{"shared-typevar-scrutinee", `pub function pick[T](a: T, b: T): Option[T] { return Some(b); }
@@ -134,28 +134,28 @@ function main(): i32 {
 }`},
 	{"shared-typevar-u64-destination", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
 function main(): i32 {
-    var x: (u64, u64) = both(1, 4611686018427387904);
+    let x: (u64, u64) = both(1, 4611686018427387904);
     if (x.1 / 1000000000000000000 == 4 && x.0 == 1) { return 7; }
     return 3;
 }`},
 	{"shared-typevar-field-at-destination", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
 function main(): i32 {
-    var z: u64 = both(1, 18000000000000000000).1;
+    let z: u64 = both(1, 18000000000000000000).1;
     if (z >> 1 == 9000000000000000000) { return 7; }
     return 3;
 }`},
 	{"typevar-settles-at-typed-operand", `pub function id[T](x: T): T { return x; }
 function main(): i32 {
-    var big: u64 = 18000000000000000000;
+    let big: u64 = 18000000000000000000;
     if (id(1) < big) { return 7; }
     return 3;
 }`},
 	{"typevar-shares-a-literal-locals-width", `pub function id[T](x: T): T { return x; }
 function main(): i32 {
-    var n = 4294967296;
-    var k = 1;
+    let n = 4294967296;
+    let k = 1;
     if (k == id(1)) { k = k + n; }
-    var w: i64 = k;
+    let w: i64 = k;
     if (w == 4294967297) { return 7; }
     return 3;
 }`},
@@ -163,8 +163,8 @@ function main(): i32 {
 	// alone takes the widest reading.
 	{"shared-typevar-typed-arg-pins", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
 function main(): i32 {
-    var x: i32 = 1;
-    var q = both(x, 2);
+    let x: i32 = 1;
+    let q = both(x, 2);
     return q.1 + q.0 + 4;
 }`},
 	// A generic struct literal whose type argument only literals bind takes
@@ -173,10 +173,10 @@ function main(): i32 {
 	// instantiation is what the literal is, and is not widened.
 	{"struct-literal-local-wide-field", `struct Same[T] { a: T, b: T }
 function main(): i32 {
-    var q = Same { a: 1, b: 4611686018427387904 };
-    var r: i64 = q.b;
-    var xs = [Same { a: 1, b: 4611686018427387904 }];
-    var w = Same[i64] { a: 4294967296, b: 2 };
+    let q = Same { a: 1, b: 4611686018427387904 };
+    let r: i64 = q.b;
+    let xs = [Same { a: 1, b: 4611686018427387904 }];
+    let w = Same[i64] { a: 4294967296, b: 2 };
     if (r == 4611686018427387904 && q.a + 1 == 2 && xs[0].b == r && w.a == 4294967296) { return 7; }
     return 3;
 }`},
@@ -190,11 +190,11 @@ struct Stack[T] { items: T[] }
 function wrap[T](x: T): Box[T] { return Box[T] { v: x }; }
 function many[T](x: T): Many[T] { return Many[T] { xs: [x] }; }
 function main(): i32 {
-    var b = wrap(4294967296);
-    var r: i64 = b.v;
-    var m = many(4294967296);
-    var k: i64 = m.xs[0];
-    var st = Stack { items: [1, 4611686018427387904] };
+    let b = wrap(4294967296);
+    let r: i64 = b.v;
+    let m = many(4294967296);
+    let k: i64 = m.xs[0];
+    let st = Stack { items: [1, 4611686018427387904] };
     if (r == 4294967296 && k == r && st.items[1] == 4611686018427387904) { return 7; }
     return 3;
 }`},
@@ -203,9 +203,9 @@ function main(): i32 {
 	{"typed-field-binds-ahead-of-literal", `struct Same[T] { a: T, b: T }
 @noinline function pair[T](a: T, b: T): T { return a; }
 function main(): i32 {
-    var y: i64 = 8589934592;
-    var q = Same { a: 3, b: y };
-    var r: i64 = pair(1, y);
+    let y: i64 = 8589934592;
+    let q = Same { a: 3, b: y };
+    let r: i64 = pair(1, y);
     if (q.a + q.b == 8589934595 && r == 1) { return 7; }
     return 3;
 }`},
@@ -213,12 +213,12 @@ function main(): i32 {
 	// order, and a struct local's copy shares its width (#10453).
 	{"struct-literal-array-and-copy-widths", `struct Same[T] { a: T, b: T }
 function main(): i32 {
-    var y: i64 = 8589934592;
-    var xs = [Same { a: 1, b: 2 }, Same { a: 3, b: y }];
-    var ws = [Same { a: 3, b: y }, Same { a: 1, b: 2 }];
-    var o = Same { a: 1, b: 2 };
-    var o2 = o;
-    var z: i64 = o2.a * 4294967296;
+    let y: i64 = 8589934592;
+    let xs = [Same { a: 1, b: 2 }, Same { a: 3, b: y }];
+    let ws = [Same { a: 3, b: y }, Same { a: 1, b: 2 }];
+    let o = Same { a: 1, b: 2 };
+    let o2 = o;
+    let z: i64 = o2.a * 4294967296;
     if (xs[1].b == y && xs[0].a * 4294967296 == 4294967296 && ws[1].b * 4294967296 == 8589934592 && z == 4294967296) { return 7; }
     return 3;
 }`},
@@ -229,10 +229,10 @@ struct Stack[T] { items: T[] }
 @noinline function take1(x: Same[i64]): i64 { return x.a + x.b + 8589934592; }
 @noinline function take_stack(x: Stack[i64]): i64 { return x.items[1] * 4294967296; }
 function main(): i32 {
-    var q = Same { a: 1, b: 2 };
-    var o = Same { a: 5, b: 6 };
-    var r: i64 = o.a;
-    var st = Stack { items: [1, 2] };
+    let q = Same { a: 1, b: 2 };
+    let o = Same { a: 5, b: 6 };
+    let r: i64 = o.a;
+    let st = Stack { items: [1, 2] };
     if (take1(q) == 8589934595 && r * 4294967296 == 21474836480 && take_stack(st) == 8589934592) { return 7; }
     return 3;
 }`},
@@ -241,7 +241,7 @@ function main(): i32 {
 	// exactly as it did.
 	{"shared-typevar-strings", `pub function second[T](a: T, b: T): T { return b; }
 function main(): i32 {
-    var s: string = second("ab", "cd");
+    let s: string = second("ab", "cd");
     if (s == "cd") { return 7; }
     return 3;
 }`},

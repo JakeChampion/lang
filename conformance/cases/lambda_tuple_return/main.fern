@@ -7,17 +7,17 @@ function bump(n: i32): (string, i32) {
 }
 
 function main(): i32 {
-    var pair = (n: i32): (string, i32) => { return ("ab", n + 1); };
-    var t = pair(6);
+    let pair = (n: i32): (string, i32) => { return ("ab", n + 1); };
+    let t = pair(6);
     // An expression body reads the same way, including one that starts like
     // a type name: the tuple annotation, the lambda's arrow, then the call.
-    var pair2 = (n: i32): (string, i32) => bump(n);
-    var u = pair2(9);
+    let pair2 = (n: i32): (string, i32) => bump(n);
+    let u = pair2(9);
     // A function-typed return keeps its arrow inside explicit parens.
-    var mk = (): ((i32) => i32) => { return (x: i32): i32 => x * 2; };
-    var f = mk();
+    let mk = (): ((i32) => i32) => { return (x: i32): i32 => x * 2; };
+    let f = mk();
     // The unparenthesised function-typed return still reads greedily.
-    var mk2 = (): (i32) => i32 => { return (x: i32): i32 => x + 3; };
+    let mk2 = (): (i32) => i32 => { return (x: i32): i32 => x + 3; };
     if (t.0.len() == 2 && t.1 == 7 && u.1 == 10 && f(4) == 8 && mk2()(4) == 7) { return 0; }
     return 1;
 }

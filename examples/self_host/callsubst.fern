@@ -17,7 +17,7 @@ struct Context {
 }
 
 function context(fname: string, lname: string, args: ast.Expr[], bindings: ast.TypedBinding[]): Context {
-  var injected: string[] = [];
+  let injected: string[] = [];
   for arg in args {
     injected = astwalk.collect_idents_expr(arg, injected);
   }
@@ -36,9 +36,9 @@ function shadow(ctx: Context, names: string[]): Context {
 // Each list owns its scope. An ordinary initializer still sees the old
 // binding; a nested function's sees its own declared function.
 function body(stmts: ast.Stmt[], ctx: Context): (ast.Stmt[], Context) {
-  var out: ast.Stmt[] = [];
+  let out: ast.Stmt[] = [];
   for stmt in stmts {
-    var initctx: Context = ctx;
+    let initctx: Context = ctx;
     if let ast.StmtVar(v) = stmt {
       if (ast.var_binds_itself(v)) {
         initctx = shadow(ctx, astwalk.append_bound_name([], v.name));
@@ -73,21 +73,21 @@ function expr(e: ast.Expr, ctx: Context): ast.Expr {
 // an introduced capture of a checked lambda, decline that rewrite rather than
 // manufacture a type or pass stale metadata to lowering.
 function lambda(lm: ast.ExprLambda, ctx: Context): ast.Expr {
-  var names: string[] = [];
+  let names: string[] = [];
   for param in lm.params {
     names = astwalk.append_bound_name(names, param.name);
   }
   let (nb, tailctx) = body(lm.body, shadow(ctx, names));
-  var rewritten = ast.ExprLambda { ...lm, body: nb };
+  let rewritten = ast.ExprLambda { ...lm, body: nb };
   if (!lm.captures_known) {
     return rewritten;
   }
-  var caps: ast.TypedBinding[] = [];
-  var seen: string[] = [];
+  let caps: ast.TypedBinding[] = [];
+  let seen: string[] = [];
   for name in astwalk.collect_lambda_idents(rewritten, []) {
     if (!util.has_str(seen, name)) {
       seen = seen.append(name);
-      var found: boolean = false;
+      let found: boolean = false;
       for cap in lm.captures {
         if (cap.name == name) {
           caps = caps.append(cap);
@@ -118,7 +118,7 @@ function expr_at(e: ast.Expr, ctx: Context): (ast.Expr, Context, boolean) {
   }
   match (e) {
     ast.ExprCall(c) => {
-      var args: ast.Expr[] = [];
+      let args: ast.Expr[] = [];
       for arg in c.args {
         args = args.append(expr(arg, ctx));
       }
@@ -127,7 +127,7 @@ function expr_at(e: ast.Expr, ctx: Context): (ast.Expr, Context, boolean) {
           for arg in ctx.args {
             args = args.append(arg);
           }
-          var target: ast.Expr = ast.ExprIdent { name: ctx.lname, line: i.line, col: i.col, ty: i.ty };
+          let target: ast.Expr = ast.ExprIdent { name: ctx.lname, line: i.line, col: i.col, ty: i.ty };
           return (ast.ExprCall { ...c, callee: target, args: args }, ctx, true);
         }
       }
@@ -162,10 +162,10 @@ function stmt_at(st: ast.Stmt, ctx: Context): (ast.Stmt, Context, boolean) {
       return (ast.StmtFor { ...f, iter: expr(f.iter, ctx), body: fb }, ctx, true);
     },
     ast.StmtMatch(m) => {
-      var arms: ast.MatchArm[] = [];
+      let arms: ast.MatchArm[] = [];
       for arm in m.arms {
-        var ac = shadow(ctx, astwalk.pattern_binders(arm.pattern, []));
-        var guard: ast.Expr = arm.guard;
+        let ac = shadow(ctx, astwalk.pattern_binders(arm.pattern, []));
+        let guard: ast.Expr = arm.guard;
         if (arm.has_guard) {
           guard = expr(guard, ac);
         }

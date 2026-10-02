@@ -55,7 +55,7 @@ multiples of five, both for multiples of fifteen, and a `.` otherwise:
 ```fern
 <<the main loop>>=
 function main(): i32 {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i <= 15) {
     <<classify one number>>
     putchar(10);  // newline

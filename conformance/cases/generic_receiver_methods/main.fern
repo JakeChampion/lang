@@ -15,10 +15,10 @@ function (o: Opt[T]) unwrap_or(d: T): T {
 }
 
 function main(): i32 {
-    var bi: Box[i32] = Box { v: 42 };
-    var p: Pair[i32, i32] = Pair { fst: 10, snd: 20 };
-    var some: Opt[i32] = Has(5);
-    var none: Opt[i32] = Nil;
+    let bi: Box[i32] = Box { v: 42 };
+    let p: Pair[i32, i32] = Pair { fst: 10, snd: 20 };
+    let some: Opt[i32] = Has(5);
+    let none: Opt[i32] = Nil;
     return bi.get()                       // 42
          + p.first() + p.second()         // 30
          + some.unwrap_or(0)              // 5

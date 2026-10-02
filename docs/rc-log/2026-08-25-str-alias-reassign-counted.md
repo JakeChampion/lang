@@ -1,13 +1,13 @@
 # A string local reassigned from an alias reclaimed nothing — killer-drops slice 16
 
 ```
-var s: string = "ab" + "cd";
-var keep: string = "zz";
+let s: string = "ab" + "cd";
+let keep: string = "zz";
 keep = s;
 ```
 
 **40 allocs / 0 frees** over 20 rounds — neither box. The BIND form
-(`var keep: string = s;`) has been at parity since #7282, so this is the same
+(`let keep: string = s;`) has been at parity since #7282, so this is the same
 REASSIGN-vs-BIND split the struct limb had, in the class that keeps its own
 reclaim machinery.
 
@@ -69,7 +69,7 @@ accumulator included. The self-host still compiles itself under `FERN_STRICT_IR=
 
 ## Still refused, pinned as a row
 
-**Borrowed PARAMS** — `var q: string = p; q = o;` with `p` and `o` both params,
+**Borrowed PARAMS** — `let q: string = p; q = o;` with `p` and `o` both params,
 80/0. Whether the release may fire depends on whether the slot's CURRENT value is
 owned or borrowed, and the slot is a LOCAL, so the `slot >= n_params` guard does
 not cover it. Releasing a borrowed param's value is a use-after-free the caller

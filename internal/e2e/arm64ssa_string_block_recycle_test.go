@@ -33,8 +33,8 @@ import (
 // the widths are pinned from observation rather than from arithmetic that the
 // bug itself makes untrustworthy.
 const arm64SSAStringBlockSrc = `function main(): i32 {
-    var r: Reader = stdin();
-    var n: i32 = 0;
+    let r: Reader = stdin();
+    let n: i32 = 0;
     loop {
         match (r.read_line()) {
             Some(line) => { n = (n + line.len()) % 101; },

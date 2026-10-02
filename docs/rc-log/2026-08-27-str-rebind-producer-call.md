@@ -6,7 +6,7 @@
 ## The cells
 
 ```fern
-var x: string = mkstr("x");
+let x: string = mkstr("x");
 x = mkstr("yz");
 ```
 
@@ -30,9 +30,9 @@ qualifies. Measured, before this change:
 
 | probe | self-host |
 |---|---|
-| `var x = i.to_string() + "…"; x = i.to_string() + "…"` | 800/800 clean |
-| `var x = i.to_string() + "…"; x = x + "…"` | 600/600 clean |
-| `var x = mkstr("x"); x = mkstr("yz")` | **400/0** |
+| `let x = i.to_string() + "…"; x = i.to_string() + "…"` | 800/800 clean |
+| `let x = i.to_string() + "…"; x = x + "…"` | 600/600 clean |
+| `let x = mkstr("x"); x = mkstr("yz")` | **400/0** |
 
 Three rebinds of the same class; only the one through a user function leaked.
 
@@ -42,7 +42,7 @@ The class asks `str_local_binding_is_fresh`, which answers from the expression
 alone — a concat, a string method, a known producer. `mkstr` is none of those
 syntactically. That it returns a fresh box on every path is a *whole-program*
 fact, and it is already proven: `str_fresh_ret_fns_of` builds the registry, and
-`collect_str_fresh_ret_call_names` credits `var r = mk(..)` off it.
+`collect_str_fresh_ret_call_names` credits `let r = mk(..)` off it.
 
 But that collector takes `reassigned` and skips every name in it — by
 construction, since it grants the single-bind credit. So a reassigned local

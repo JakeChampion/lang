@@ -20,12 +20,12 @@ import (
 func TestPairFormCalleeReleasesCountedArgTemp(t *testing.T) {
 	p := lowerSourceWith(t, `struct S { data: u8[] }
 struct R { body: S }
-function copy2(buf: u8[]): u8[] { var out: u8[] = __alloc_u8(2); out = out.with(0, buf[0]); out = out.with(1, buf[1]); return out; }
+function copy2(buf: u8[]): u8[] { let out: u8[] = __alloc_u8(2); out = out.with(0, buf[0]); out = out.with(1, buf[1]); return out; }
 function wrap(bs: u8[]): S { return S { data: bs }; }
 function parse(buf: u8[]): Option[R] { if (buf.len() < 2) { return None; } return Some(R { body: wrap(copy2(buf)) }); }
-function mk(): u8[] { var out: u8[] = __alloc_u8(3); return out; }
+function mk(): u8[] { let out: u8[] = __alloc_u8(3); return out; }
 function main(): i32 {
-    var t: i32 = 0;
+    let t: i32 = 0;
     match (parse(mk())) { Some(r) => { t = t + r.body.data.len(); }, None => { t = t + 100; } }
     return t;
 }`, 8)
@@ -38,7 +38,7 @@ function main(): i32 {
 }
 
 // A local seeded from an element of an array reached through a field of a
-// parameter, then reassigned: the serve loop's `var buf = c.bufs[at]; buf =
+// parameter, then reassigned: the serve loop's `let buf = c.bufs[at]; buf =
 // buf.concat(…)`. The binding takes its inc and the array deep-drops its
 // elements, so the seed is counted at both ends exactly as an element read
 // out of an array local is; the conservative taint stranded every value the
@@ -50,17 +50,17 @@ func TestElementReadThroughFieldChainIsOwned(t *testing.T) {
 	lowerSourceWith(t, `struct C { bufs: u8[][] }
 struct W { c: C }
 function read(c: C, at: i32): i32 {
-    var buf: u8[] = c.bufs[at];
+    let buf: u8[] = c.bufs[at];
     buf = buf.append(9 as u8);
     return buf.len();
 }
 function deep(w: W, at: i32): i32 {
-    var buf: u8[] = w.c.bufs[at];
+    let buf: u8[] = w.c.bufs[at];
     buf = buf.append(9 as u8);
     return buf.len();
 }
 function main(): i32 {
-    var c: C = C { bufs: [[1 as u8, 2 as u8], [3 as u8]] };
+    let c: C = C { bufs: [[1 as u8, 2 as u8], [3 as u8]] };
     return read(c, 1) + deep(W { c: c }, 0);
 }`, 8)
 	for _, fn := range []string{"read", "deep"} {

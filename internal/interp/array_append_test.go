@@ -22,9 +22,9 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			// overwrite, the element the first one added.
 			name: "two appends off one array",
 			src: `function main(): i32 {
-				var a: i32[] = [1, 2];
-				var x: i32[] = a.append(3);
-				var y: i32[] = a.append(4);
+				let a: i32[] = [1, 2];
+				let x: i32[] = a.append(3);
+				let y: i32[] = a.append(4);
 				return x[2] * 100 + y[2] * 10 + a.len();
 			}`,
 			want: 342,
@@ -34,11 +34,11 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			// growth rather than one sized exactly to its elements.
 			name: "two appends off a grown array",
 			src: `function main(): i32 {
-				var a: i32[] = [];
-				var i: i32 = 0;
+				let a: i32[] = [];
+				let i: i32 = 0;
 				while (i < 10) { a = a.append(i); i = i + 1; }
-				var x: i32[] = a.append(100);
-				var y: i32[] = a.append(200);
+				let x: i32[] = a.append(100);
+				let y: i32[] = a.append(200);
 				return x[10] + y[10] + a.len();
 			}`,
 			want: 310,
@@ -47,10 +47,10 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			// A chain off one array: z extends x, y still starts from a.
 			name: "chained append off an alias",
 			src: `function main(): i32 {
-				var a: i32[] = [1, 2];
-				var x: i32[] = a.append(3);
-				var z: i32[] = x.append(5);
-				var y: i32[] = a.append(4);
+				let a: i32[] = [1, 2];
+				let x: i32[] = a.append(3);
+				let z: i32[] = x.append(5);
+				let y: i32[] = a.append(4);
 				return z[3] * 100 + y[2] * 10 + z[2];
 			}`,
 			want: 543,
@@ -61,10 +61,10 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			// has spare capacity at the point the two views split.
 			name: "append after storing in a nested array",
 			src: `function main(): i32 {
-				var a: i32[] = [];
-				var i: i32 = 0;
+				let a: i32[] = [];
+				let i: i32 = 0;
 				while (i < 5) { a = a.append(i); i = i + 1; }
-				var rows: i32[][] = [];
+				let rows: i32[][] = [];
 				rows = rows.append(a);
 				a = a.append(99);
 				return rows[0].len() * 10 + a.len();
@@ -76,10 +76,10 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			name: "append after storing in a struct field",
 			src: `struct Box { items: i32[] }
 			function main(): i32 {
-				var a: i32[] = [];
-				var i: i32 = 0;
+				let a: i32[] = [];
+				let i: i32 = 0;
 				while (i < 5) { a = a.append(i); i = i + 1; }
-				var b: Box = Box { items: a };
+				let b: Box = Box { items: a };
 				a = a.append(99);
 				return b.items.len() * 10 + a.len();
 			}`,
@@ -92,12 +92,12 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			name: "two appends off one array through a field",
 			src: `struct Box { items: i32[] }
 			function main(): i32 {
-				var a: i32[] = [];
-				var i: i32 = 0;
+				let a: i32[] = [];
+				let i: i32 = 0;
 				while (i < 5) { a = a.append(i); i = i + 1; }
-				var b: Box = Box { items: a };
-				var x: i32[] = b.items.append(100);
-				var y: i32[] = a.append(200);
+				let b: Box = Box { items: a };
+				let x: i32[] = b.items.append(100);
+				let y: i32[] = a.append(200);
 				return x[5] + y[5] + b.items.len();
 			}`,
 			want: 305,
@@ -108,11 +108,11 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			name: "two appends off one array through a call",
 			src: `function grow(p: i32[], v: i32): i32[] { return p.append(v); }
 			function main(): i32 {
-				var a: i32[] = [];
-				var i: i32 = 0;
+				let a: i32[] = [];
+				let i: i32 = 0;
 				while (i < 5) { a = a.append(i); i = i + 1; }
-				var x: i32[] = grow(a, 100);
-				var y: i32[] = grow(a, 200);
+				let x: i32[] = grow(a, 100);
+				let y: i32[] = grow(a, 200);
 				return x[5] + y[5] + a.len();
 			}`,
 			want: 305,
@@ -123,12 +123,12 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			name: "param appended in argument position",
 			src: `function walk(path: i32[], depth: i32): i32 {
 				if (depth == 0) { return path.len(); }
-				var a: i32 = walk(path.append(depth), depth - 1);
-				var b: i32 = path.append(depth).len();
+				let a: i32 = walk(path.append(depth), depth - 1);
+				let b: i32 = path.append(depth).len();
 				return a * 100 + b;
 			}
 			function main(): i32 {
-				var p: i32[] = [];
+				let p: i32[] = [];
 				return walk(p, 2);
 			}`,
 			want: 20201,
@@ -138,11 +138,11 @@ func TestArrayAppendValueSemantics(t *testing.T) {
 			// the sum must not pick up a stale or duplicated element.
 			name: "self-reassign append loop",
 			src: `function main(): i32 {
-				var a: i32[] = [];
-				var i: i32 = 0;
+				let a: i32[] = [];
+				let i: i32 = 0;
 				while (i < 64) { a = a.append(i); i = i + 1; }
-				var sum: i32 = 0;
-				var j: i32 = 0;
+				let sum: i32 = 0;
+				let j: i32 = 0;
 				while (j < a.len()) { sum = sum + a[j]; j = j + 1; }
 				return sum;
 			}`,
@@ -166,8 +166,8 @@ func TestArrayAppendIsAmortised(t *testing.T) {
 	build := func(n int) int {
 		t.Helper()
 		src := fmt.Sprintf(`function main(): i32 {
-			var a: i32[] = [];
-			var i: i32 = 0;
+			let a: i32[] = [];
+			let i: i32 = 0;
 			while (i < %d) { a = a.append(i); i = i + 1; }
 			return a.len();
 		}`, n)

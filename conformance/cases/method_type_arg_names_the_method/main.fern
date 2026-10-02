@@ -28,11 +28,11 @@ function take(b: Box[i32, string]): i32 {
 }
 
 function main(): i32 {
-    var b: Box[i32, string] = Full(5);
-    var inferred: i32 = take(b.pair(Full(9)));                  // 9
-    var advised: i32 = take(b.pair[i32](Full(7)));              // 7
-    var spelled: i32 = take(b.pair[i32, string, i32](Full(4))); // 4, the full list
-    var r: Result[i32, string] = Ok(5);
-    var combinator: i32 = r.and(Ok(3)).unwrap_or(0);            // 3
+    let b: Box[i32, string] = Full(5);
+    let inferred: i32 = take(b.pair(Full(9)));                  // 9
+    let advised: i32 = take(b.pair[i32](Full(7)));              // 7
+    let spelled: i32 = take(b.pair[i32, string, i32](Full(4))); // 4, the full list
+    let r: Result[i32, string] = Ok(5);
+    let combinator: i32 = r.and(Ok(3)).unwrap_or(0);            // 3
     return inferred + advised + spelled + combinator;           // 23
 }

@@ -188,7 +188,7 @@ function time_ctime(): i32 {
 pub struct Conf { all: boolean, apparent: boolean, block_size: u64, suffix: string, human: u64, total: boolean, deref: i32, max_depth: u64, inodes: boolean, count_links: boolean, separate_dirs: boolean, threshold: i64, has_threshold: boolean, time_kind: i32, time_format: string, zone: tz.Zone, excludes: string[], one_file_system: boolean, terminator: string }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: du [OPTION]... [FILE]...\n";
   out = out + "  or:  du [OPTION]... --files0-from=F\n";
   out = out + "Summarize device usage of the set of FILEs, recursively for directories.\n";
@@ -240,12 +240,12 @@ function fnmatch(p: string, t: string): boolean {
 }
 
 function match_at(p: string, pi0: i32, t: string, ti0: i32): boolean {
-  var pi: i32 = pi0;
-  var ti: i32 = ti0;
+  let pi: i32 = pi0;
+  let ti: i32 = ti0;
   while (pi < p.len()) {
-    var pc: i32 = p[pi] as i32;
+    let pc: i32 = p[pi] as i32;
     if (pc == 42) {
-      var k: i32 = ti;
+      let k: i32 = ti;
       while (k <= t.len()) {
         if (match_at(p, pi + 1, t, k)) {
           return true;
@@ -263,7 +263,7 @@ function match_at(p: string, pi0: i32, t: string, ti0: i32): boolean {
       continue;
     }
     if (pc == 91) {
-      var r: (boolean, i32) = bracket(p, pi, t[ti] as i32);
+      let r: (boolean, i32) = bracket(p, pi, t[ti] as i32);
       if (r.1 >= 0) {
         if (!r.0) {
           return false;
@@ -290,14 +290,14 @@ function match_at(p: string, pi0: i32, t: string, ti0: i32): boolean {
 // One bracket expression against `ch`, returning (matched, the index
 // past the `]`), or a negative index when the bracket is never closed.
 function bracket(p: string, start: i32, ch: i32): (boolean, i32) {
-  var i: i32 = start + 1;
-  var negate: boolean = false;
+  let i: i32 = start + 1;
+  let negate: boolean = false;
   if (i < p.len() && (p[i] as i32 == 33 || p[i] as i32 == 94)) {
     negate = true;
     i = i + 1;
   }
-  var matched: boolean = false;
-  var first: boolean = true;
+  let matched: boolean = false;
+  let first: boolean = true;
   while (i < p.len()) {
     if (p[i] as i32 == 93 && !first) {
       if (negate) {
@@ -307,7 +307,7 @@ function bracket(p: string, start: i32, ch: i32): (boolean, i32) {
     }
     first = false;
     if (p[i] as i32 == 91 && i + 1 < p.len() && p[i + 1] as i32 == 58) {
-      var close: i32 = find_class_end(p, i + 2);
+      let close: i32 = find_class_end(p, i + 2);
       if (close > 0) {
         if (in_class(slice_unchecked(p, i + 2, close) + "", ch)) {
           matched = true;
@@ -316,7 +316,7 @@ function bracket(p: string, start: i32, ch: i32): (boolean, i32) {
         continue;
       }
     }
-    var lo: i32 = p[i] as i32;
+    let lo: i32 = p[i] as i32;
     if (lo == 92 && i + 1 < p.len()) {
       i = i + 1;
       lo = p[i] as i32;
@@ -337,7 +337,7 @@ function bracket(p: string, start: i32, ch: i32): (boolean, i32) {
 }
 
 function find_class_end(p: string, from: i32): i32 {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i + 1 < p.len()) {
     if (p[i] as i32 == 58 && p[i + 1] as i32 == 93) {
       return i;
@@ -348,8 +348,8 @@ function find_class_end(p: string, from: i32): i32 {
 }
 
 function in_class(name: string, ch: i32): boolean {
-  var alpha: boolean = ch >= 65 && ch <= 90 || ch >= 97 && ch <= 122;
-  var digit: boolean = ch >= 48 && ch <= 57;
+  let alpha: boolean = ch >= 65 && ch <= 90 || ch >= 97 && ch <= 122;
+  let digit: boolean = ch >= 48 && ch <= 57;
   if (name == "alpha") {
     return alpha;
   }
@@ -393,12 +393,12 @@ function in_class(name: string, ch: i32): boolean {
 // as printed, or any suffix of it starting just after a `/`, which is
 // what makes `--exclude=sub` drop `a/sub`.
 function excluded(c: Conf, name: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < c.excludes.len()) {
     if (fnmatch(c.excludes[i], name)) {
       return true;
     }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < name.len()) {
       if (name[j] as i32 == 47) {
         if (fnmatch(c.excludes[i], slice_unchecked(name, j + 1, name.len()) + "")) {
@@ -424,7 +424,7 @@ function join_path(dir: string, name: string): string {
 // children are named with. A name that is nothing but slashes keeps
 // one, and `//` keeps both: the kernel treats it as a root of its own.
 function walk_base(arg: string): string {
-  var n: i32 = arg.len();
+  let n: i32 = arg.len();
   while (n > 0 && arg[n - 1] as i32 == 47) {
     n = n - 1;
   }
@@ -447,7 +447,7 @@ function display_name(arg: string): string {
   if (arg[arg.len() - 1] as i32 != 47) {
     return arg;
   }
-  var b: string = walk_base(arg);
+  let b: string = walk_base(arg);
   if (b[b.len() - 1] as i32 == 47) {
     return b;
   }
@@ -535,7 +535,7 @@ function wants_line(c: Conf, depth: i32, is_dir: boolean): boolean {
 }
 
 function emit(c: Conf, o: io_buffered.BufWriter, size: u64, tsec: i64, tnsec: i64, display: string): io_buffered.BufWriter {
-  var line: string = blocks.format_size(size, c.block_size, c.suffix, c.human) + "\t";
+  let line: string = blocks.format_size(size, c.block_size, c.suffix, c.human) + "\t";
   if (c.time_kind != time_none()) {
     line = line + timefmt.strftime(c.time_format, c.zone, tsec, tnsec) + "\t";
   }
@@ -568,21 +568,21 @@ struct Frame { path: string, display: string, names: string[], idx: i32, depth: 
 //
 // Returns the exit status.
 function walk(c: Conf, names: string[], have_files0: boolean, list_name: string, from_stdin: boolean): i32 {
-  var out: io_buffered.BufWriter = gnu.out_new();
-  var seen: Map[string, i32] = map_new(1024);
-  var failed: boolean = false;
-  var grand: u64 = 0 as u64;
-  var gtime: i64 = 0 as i64;
-  var gnsec: i64 = 0 as i64;
-  var stack: Frame[] = [];
+  let out: io_buffered.BufWriter = gnu.out_new();
+  let seen: Map[string, i32] = map_new(1024);
+  let failed: boolean = false;
+  let grand: u64 = 0 as u64;
+  let gtime: i64 = 0 as i64;
+  let gnsec: i64 = 0 as i64;
+  let stack: Frame[] = [];
 
-  var oi: i32 = 0;
+  let oi: i32 = 0;
   while (oi < names.len()) {
-    var arg: string = names[oi];
-    var ordinal: i32 = oi + 1;
+    let arg: string = names[oi];
+    let ordinal: i32 = oi + 1;
     oi = oi + 1;
     if (arg.len() == 0) {
-      var where: string = "";
+      let where: string = "";
       if (have_files0) {
         where = gnu.quotef(list_name) + ":" + ordinal.to_string() + ": ";
       }
@@ -595,14 +595,14 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       failed = true;
       continue;
     }
-    var display: string = display_name(arg);
+    let display: string = display_name(arg);
     if (excluded(c, display)) {
       continue;
     }
     // The stat names the operand as TYPED, so a trailing slash resolves
     // a symlink through the kernel exactly as it does for GNU.
-    var st: FileStat = zero_stat();
-    var got: boolean = false;
+    let st: FileStat = zero_stat();
+    let got: boolean = false;
     match (lstat(arg)) {
       Ok(s) => {
         st = s;
@@ -617,7 +617,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       continue;
     }
     if (c.deref != deref_none() && is_symlink(st)) {
-      var resolved: boolean = false;
+      let resolved: boolean = false;
       match (stat(arg)) {
         Ok(s) => {
           st = s;
@@ -633,42 +633,42 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       }
     }
 
-    var root_dev: i64 = st.dev;
-    var sp: i32 = 0;
+    let root_dev: i64 = st.dev;
+    let sp: i32 = 0;
     // The entry waiting to be counted: the operand first, then each
     // child the stack's top frame hands over.
-    var pending: boolean = true;
-    var p_path: string = walk_base(arg);
-    var p_display: string = display;
-    var p_st: FileStat = st;
-    var p_depth: i32 = 0;
+    let pending: boolean = true;
+    let p_path: string = walk_base(arg);
+    let p_display: string = display;
+    let p_st: FileStat = st;
+    let p_depth: i32 = 0;
     // What a finished entry contributes to its parent — or, with the
     // stack empty, to this operand's total.
-    var owed: boolean = false;
-    var o_size: u64 = 0 as u64;
-    var o_time: i64 = 0 as i64;
-    var o_nsec: i64 = 0 as i64;
-    var o_dir: boolean = false;
-    var total: u64 = 0 as u64;
-    var ttime: i64 = 0 as i64;
-    var tnsec: i64 = 0 as i64;
-    var thave: boolean = false;
+    let owed: boolean = false;
+    let o_size: u64 = 0 as u64;
+    let o_time: i64 = 0 as i64;
+    let o_nsec: i64 = 0 as i64;
+    let o_dir: boolean = false;
+    let total: u64 = 0 as u64;
+    let ttime: i64 = 0 as i64;
+    let tnsec: i64 = 0 as i64;
+    let thave: boolean = false;
 
     while (pending || owed || sp > 0) {
       if (owed) {
         owed = false;
         if (sp > 0) {
-          var par: Frame = stack[sp - 1];
-          var nfull: u64 = par.full + o_size;
-          var nft: i64 = par.ftime;
-          var nfn: i64 = par.fnsec;
+          let par: Frame = stack[sp - 1];
+          let nfull: u64 = par.full + o_size;
+          let nft: i64 = par.ftime;
+          let nfn: i64 = par.fnsec;
           if (newer(o_time, o_nsec, nft, nfn)) {
             nft = o_time;
             nfn = o_nsec;
           }
-          var nshown: u64 = par.shown;
-          var nst: i64 = par.stime;
-          var nsn: i64 = par.snsec;
+          let nshown: u64 = par.shown;
+          let nst: i64 = par.stime;
+          let nsn: i64 = par.snsec;
           if (!c.separate_dirs || !o_dir) {
             nshown = nshown + o_size;
             if (newer(o_time, o_nsec, nst, nsn)) {
@@ -694,9 +694,9 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         // files with a single link included, and across operands. The
         // same set is what silently stops a symlink loop under -L; -l
         // turns the whole mechanism off.
-        var known: boolean = false;
+        let known: boolean = false;
         if (!c.count_links) {
-          var key: string = inode_key(p_st.dev, p_st.ino);
+          let key: string = inode_key(p_st.dev, p_st.ino);
           match (seen.get(key)) {
             Some(_) => {
               known = true;
@@ -710,8 +710,8 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         if (known) {
           continue;
         }
-        var own: u64 = entry_size(c, p_st, p_st.is_dir);
-        var stamp: (i64, i64) = stamp_of(c, p_st);
+        let own: u64 = entry_size(c, p_st, p_st.is_dir);
+        let stamp: (i64, i64) = stamp_of(c, p_st);
         if (p_st.is_dir) {
           // A directory already on the path from the operand to here is a
           // CYCLE, which `-L` reaches through a symlink pointing at an
@@ -719,8 +719,8 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
           // nothing said. The check is separate from the seen set above
           // because `-l` turns that off, and the descent would then be
           // endless; the stack IS the path, so this is a walk of it.
-          var cycle: boolean = false;
-          var f: i32 = 0;
+          let cycle: boolean = false;
+          let f: i32 = 0;
           while (f < sp) {
             if (stack[f].dev == p_st.dev && stack[f].ino == p_st.ino) {
               cycle = true;
@@ -731,7 +731,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
           if (cycle) {
             continue;
           }
-          var kids: string[] = [];
+          let kids: string[] = [];
           match (read_dir(p_path)) {
             Ok(es) => {
               kids = es;
@@ -741,7 +741,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
               failed = true;
             }
           }
-          var pushed: Frame = Frame { path: p_path, display: p_display, names: kids, idx: 0, depth: p_depth, dev: p_st.dev, ino: p_st.ino, full: own, shown: own, ftime: stamp.0, fnsec: stamp.1, stime: stamp.0, snsec: stamp.1 };
+          let pushed: Frame = Frame { path: p_path, display: p_display, names: kids, idx: 0, depth: p_depth, dev: p_st.dev, ino: p_st.ino, full: own, shown: own, ftime: stamp.0, fnsec: stamp.1, stime: stamp.0, snsec: stamp.1 };
           if (sp < stack.len()) {
             stack = stack.with(sp, pushed);
           } else {
@@ -761,7 +761,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         continue;
       }
 
-      var top: Frame = stack[sp - 1];
+      let top: Frame = stack[sp - 1];
       if (top.idx >= top.names.len()) {
         // Post-order: the directory's own line follows its contents.
         sp = sp - 1;
@@ -775,15 +775,15 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         o_dir = true;
         continue;
       }
-      var nm: string = top.names[top.idx];
+      let nm: string = top.names[top.idx];
       stack = stack.with(sp - 1, Frame { ...top, idx: top.idx + 1 });
-      var cpath: string = join_path(top.path, nm);
-      var cname: string = join_path(top.display, nm);
+      let cpath: string = join_path(top.path, nm);
+      let cname: string = join_path(top.display, nm);
       if (excluded(c, cname)) {
         continue;
       }
-      var cst: FileStat = zero_stat();
-      var cgot: boolean = false;
+      let cst: FileStat = zero_stat();
+      let cgot: boolean = false;
       match (lstat(cpath)) {
         Ok(s) => {
           cst = s;
@@ -798,7 +798,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         continue;
       }
       if (c.deref == deref_all() && is_symlink(cst)) {
-        var cres: boolean = false;
+        let cres: boolean = false;
         match (stat(cpath)) {
           Ok(s) => {
             cst = s;
@@ -855,7 +855,7 @@ struct Slurp { text: string, ok: boolean, at_open: boolean, err: Option[IoError]
 
 // The whole of `path`, or stdin for `-`.
 function slurp(path: string): Slurp {
-  var r: Reader = stdin();
+  let r: Reader = stdin();
   if (path != "-") {
     match (open_reader(path)) {
       Ok(f) => {
@@ -866,8 +866,8 @@ function slurp(path: string): Slurp {
       }
     }
   }
-  var chunks: string[] = [];
-  var text: string = "";
+  let chunks: string[] = [];
+  let text: string = "";
   while (true) {
     match (r.read_chunk(65536)) {
       Ok(chunk) => {
@@ -887,7 +887,7 @@ function slurp(path: string): Slurp {
   if (path != "-") {
     r.close();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < chunks.len()) {
     text = text + chunks[i];
     i = i + 1;
@@ -899,16 +899,16 @@ function slurp(path: string): Slurp {
 // stripped, the line cut at an embedded NUL, and an empty line ignored.
 // Leading and trailing SPACES are significant.
 function exclude_patterns(text: string): string[] {
-  var out: string[] = [];
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i <= text.len()) {
     if (i == text.len() || text[i] as i32 == 10) {
-      var stop: i32 = i;
+      let stop: i32 = i;
       while (stop > start && text[stop - 1] as i32 == 13) {
         stop = stop - 1;
       }
-      var j: i32 = start;
+      let j: i32 = start;
       while (j < stop && text[j] as i32 != 0) {
         j = j + 1;
       }
@@ -925,9 +925,9 @@ function exclude_patterns(text: string): string[] {
 // The NUL-separated names of a --files0-from file. A trailing NUL is
 // optional; an empty name is reported with its ordinal and skipped.
 function files0_names(text: string): string[] {
-  var out: string[] = [];
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i < text.len()) {
     if (text[i] as i32 == 0) {
       out = out.append(slice_unchecked(text, start, i) + "");
@@ -946,11 +946,11 @@ function files0_names(text: string): string[] {
 // stamps: a prefix of several names that all mean the same stamp is NOT
 // ambiguous, which is why `--time=a` is atime.
 function time_word(v: string): i32 {
-  var names: string[] = ["atime", "access", "use", "ctime", "status"];
-  var kinds: i32[] = [time_atime(), time_atime(), time_atime(), time_ctime(), time_ctime()];
-  var found: i32 = 0 - 1;
-  var ambiguous: boolean = false;
-  var i: i32 = 0;
+  let names: string[] = ["atime", "access", "use", "ctime", "status"];
+  let kinds: i32[] = [time_atime(), time_atime(), time_atime(), time_ctime(), time_ctime()];
+  let found: i32 = 0 - 1;
+  let ambiguous: boolean = false;
+  let i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == v) {
       return kinds[i];
@@ -967,7 +967,7 @@ function time_word(v: string): i32 {
   if (found >= 0 && !ambiguous) {
     return kinds[found];
   }
-  var what: string = "invalid";
+  let what: string = "invalid";
   if (ambiguous) {
     what = "ambiguous";
   }
@@ -986,11 +986,11 @@ function time_word(v: string): i32 {
 pub function die_time_style(spec: string, names: string[], posix: boolean, status: i32, what: string): void {
   gnu.error(what + " argument " + gnu.quote(spec) + " for " + gnu.quote("time style"));
   eprint("Valid arguments are:");
-  var prefix: string = "";
+  let prefix: string = "";
   if (posix) {
     prefix = "[posix-]";
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     eprint("  - " + prefix + names[i]);
     i = i + 1;
@@ -1005,13 +1005,13 @@ function style_format(v: string): string {
   if (v.len() > 0 && v[0] as i32 == 43) {
     return slice_unchecked(v, 1, v.len()) + "";
   }
-  var names: string[] = ["full-iso", "long-iso", "iso"];
-  var formats: string[] = ["%Y-%m-%d %H:%M:%S.%N %z", "%Y-%m-%d %H:%M", "%Y-%m-%d"];
-  var k: i32 = gnu.argmatch_find(v, names, [0, 1, 2]);
+  let names: string[] = ["full-iso", "long-iso", "iso"];
+  let formats: string[] = ["%Y-%m-%d %H:%M:%S.%N %z", "%Y-%m-%d %H:%M", "%Y-%m-%d"];
+  let k: i32 = gnu.argmatch_find(v, names, [0, 1, 2]);
   if (k < 0) {
     // -2 is a prefix of several with different meanings; the empty
     // string is a prefix of all three, so `--time-style=` is ambiguous.
-    var what: string = "invalid";
+    let what: string = "invalid";
     if (k == 0 - 2) {
       what = "ambiguous";
     }
@@ -1028,7 +1028,7 @@ function env_style(v: string): string {
   if (v == "locale") {
     return "%Y-%m-%d %H:%M";
   }
-  var s: string = v;
+  let s: string = v;
   if (s.starts_with("posix-")) {
     s = slice_unchecked(s, 6, s.len()) + "";
   }
@@ -1044,18 +1044,18 @@ function env_style(v: string): string {
 // the digits and nothing at all after them. A negative is refused:
 // GNU <= 9.4 let it wrap and `-d -1` came out unlimited.
 function parse_depth(spec: string): u64 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < spec.len() && gnu.is_blank(spec[i] as i32)) {
     i = i + 1;
   }
-  var neg: boolean = false;
+  let neg: boolean = false;
   if (i < spec.len() && spec[i] as i32 == 43) {
     i = i + 1;
   } else if (i < spec.len() && spec[i] as i32 == 45) {
     neg = true;
     i = i + 1;
   }
-  var n: (u64, i32, boolean) = blocks.scan_number(spec, i);
+  let n: (u64, i32, boolean) = blocks.scan_number(spec, i);
   if (n.1 == i || n.1 != spec.len() || n.2 || neg && n.0 != 0 as u64) {
     gnu.die_usage("invalid maximum depth " + gnu.quote(spec), 1);
   }
@@ -1064,7 +1064,7 @@ function parse_depth(spec: string): u64 {
 
 // ---- main ------------------------------------------------------------------
 function declare_options(): gnu.Opt[] {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("0", "null", opt_null()));
   opts = opts.append(gnu.flag("a", "all", opt_all()));
   opts = opts.append(gnu.flag("", "apparent-size", opt_apparent()));
@@ -1095,25 +1095,25 @@ function declare_options(): gnu.Opt[] {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = declare_options();
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = declare_options();
 
-  var c: Conf = Conf { all: false, apparent: false, block_size: 1024 as u64, suffix: "", human: 0 as u64, total: false, deref: deref_none(), max_depth: 0 as u64 - 1 as u64, inodes: false, count_links: false, separate_dirs: false, threshold: 0 as i64, has_threshold: false, time_kind: time_none(), time_format: "%Y-%m-%d %H:%M", zone: tz.utc_zone(), excludes: [], one_file_system: false, terminator: "\n" };
-  var unit: blocks.Unit = blocks.default_unit();
-  var summarize: boolean = false;
-  var depth_text: string = "";
-  var have_depth: boolean = false;
-  var depth: u64 = 0 as u64;
-  var files0: string = "";
-  var have_files0: boolean = false;
-  var style: string = "";
-  var have_style: boolean = false;
+  let c: Conf = Conf { all: false, apparent: false, block_size: 1024 as u64, suffix: "", human: 0 as u64, total: false, deref: deref_none(), max_depth: 0 as u64 - 1 as u64, inodes: false, count_links: false, separate_dirs: false, threshold: 0 as i64, has_threshold: false, time_kind: time_none(), time_format: "%Y-%m-%d %H:%M", zone: tz.utc_zone(), excludes: [], one_file_system: false, terminator: "\n" };
+  let unit: blocks.Unit = blocks.default_unit();
+  let summarize: boolean = false;
+  let depth_text: string = "";
+  let have_depth: boolean = false;
+  let depth: u64 = 0 as u64;
+  let files0: string = "";
+  let have_files0: boolean = false;
+  let style: string = "";
+  let have_style: boolean = false;
 
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "du", help_text(), 1);
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "du", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
-    var done: boolean = false;
+    let done: boolean = false;
     match (r.0) {
       Some(m) => {
         if (m.id == opt_null()) {
@@ -1123,7 +1123,7 @@ pub function main(): i32 {
         } else if (m.id == opt_apparent()) {
           c = Conf { ...c, apparent: true };
         } else if (m.id == opt_block_size()) {
-          var n: blocks.Num = blocks.parse_num(m.value, false, true, false);
+          let n: blocks.Num = blocks.parse_num(m.value, false, true, false);
           if (n.status != blocks.size_ok()) {
             blocks.die_size(n.status, blocks.option_name(m, "--block-size", "-B"), m.value);
           }
@@ -1163,7 +1163,7 @@ pub function main(): i32 {
         } else if (m.id == opt_summarize()) {
           summarize = true;
         } else if (m.id == opt_threshold()) {
-          var t: blocks.Num = blocks.parse_num(m.value, true, false, true);
+          let t: blocks.Num = blocks.parse_num(m.value, true, false, true);
           if (t.status == blocks.size_ok() && t.neg && t.value == 0 as u64) {
             gnu.error("invalid --threshold argument '-0'");
             exit(1);
@@ -1171,13 +1171,13 @@ pub function main(): i32 {
           if (t.status != blocks.size_ok()) {
             blocks.die_size(t.status, blocks.option_name(m, "--threshold", "-t"), m.value);
           }
-          var v: i64 = t.value as i64;
+          let v: i64 = t.value as i64;
           if (t.neg) {
             v = 0 as i64 - v;
           }
           c = Conf { ...c, threshold: v, has_threshold: true };
         } else if (m.id == opt_time()) {
-          var kind: i32 = time_mtime();
+          let kind: i32 = time_mtime();
           if (m.has_value) {
             kind = time_word(m.value);
           }
@@ -1245,16 +1245,16 @@ pub function main(): i32 {
   if (c.inodes) {
     unit = blocks.Unit { ...unit, block_size: 1 as u64 };
   }
-  var suffix: string = "";
+  let suffix: string = "";
   if (unit.show_suffix) {
     suffix = blocks.unit_text(unit.block_size, unit.base, unit.with_b);
   }
   c = Conf { ...c, block_size: unit.block_size, human: unit.human, suffix: suffix };
 
-  var operands: string[] = g.operands();
-  var names: string[] = operands;
-  var from_stdin: boolean = false;
-  var list_name: string = "";
+  let operands: string[] = g.operands();
+  let names: string[] = operands;
+  let from_stdin: boolean = false;
+  let list_name: string = "";
   if (have_files0) {
     if (operands.len() > 0) {
       gnu.error("extra operand " + gnu.quote(operands[0]) + "\nfile operands cannot be combined with --files0-from");
@@ -1274,13 +1274,13 @@ pub function main(): i32 {
 // lets `du -X - --files0-from=-` take the whole of stdin for the
 // patterns and leave the name list empty.
 function read_exclude_file(have: string[], path: string): string[] {
-  var r: Slurp = slurp(path);
+  let r: Slurp = slurp(path);
   if (!r.ok) {
     gnu.die_usage(gnu.quotef(path) + ": " + slurp_error(r), 1);
   }
-  var pats: string[] = exclude_patterns(r.text);
-  var out: string[] = have;
-  var i: i32 = 0;
+  let pats: string[] = exclude_patterns(r.text);
+  let out: string[] = have;
+  let i: i32 = 0;
   while (i < pats.len()) {
     out = out.append(pats[i]);
     i = i + 1;
@@ -1299,7 +1299,7 @@ function slurp_error(r: Slurp): string {
 }
 
 function read_name_list(path: string): string[] {
-  var r: Slurp = slurp(path);
+  let r: Slurp = slurp(path);
   if (!r.ok) {
     if (r.at_open) {
       gnu.error("cannot open " + gnu.quotea(path) + " for reading: " + slurp_error(r));

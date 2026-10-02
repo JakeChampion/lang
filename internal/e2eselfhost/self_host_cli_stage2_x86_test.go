@@ -48,12 +48,12 @@ func TestSelfHostCLIStage2X86_64(t *testing.T) {
 	t.Run("program", func(t *testing.T) {
 		src := filepath.Join(dir, "stage2_prog.fern")
 		prog := `struct P { name: string, xs: i32[] }
-function total(p: P): i32 { var s: i32 = 0; for x in p.xs { s = s + x; } return s + p.name.len(); }
+function total(p: P): i32 { let s: i32 = 0; for x in p.xs { s = s + x; } return s + p.name.len(); }
 function main(): i32 {
-    var ps: P[] = [];
-    var i: i32 = 0;
+    let ps: P[] = [];
+    let i: i32 = 0;
     while (i < 5) { ps = ps.append(P { name: "p" + "q", xs: [i, i + 1] }); i = i + 1; }
-    var t: i32 = 0;
+    let t: i32 = 0;
     for p in ps { t = t + total(p); }
     return t;
 }
@@ -77,8 +77,8 @@ function main(): i32 {
 		prog := `import "core/map";
 function id[T](x: T): T { return x; }
 function main(): i32 {
-    var a: i32 = 1;
-    var v3: Map[i32, i32] = if (false) { Map { a: 1 } } else { Map { id(a): 2 } };
+    let a: i32 = 1;
+    let v3: Map[i32, i32] = if (false) { Map { a: 1 } } else { Map { id(a): 2 } };
     return 0;
 }
 `

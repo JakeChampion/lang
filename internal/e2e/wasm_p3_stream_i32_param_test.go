@@ -56,7 +56,7 @@ var p3StreamI32SinkProviderCore = []byte{
 // u8/i32). Real Fern:
 //
 //	@import("test:dep/d","sink") async function sink(s: stream[i32]): i32;
-//	async function run(): i32 { var xs: i32[] = [10,20,12]; return sink(xs); }
+//	async function run(): i32 { let xs: i32[] = [10,20,12]; return sink(xs); }
 //
 // The produce-wrapper streams the eager i32[] out (write ptr advances by
 // wrote*stride with stride 4), and the host sink collect-reads + sums the i32
@@ -66,7 +66,7 @@ func TestWasmP3StreamI32ParamFromFern(t *testing.T) {
 
 	src := `@import("test:dep/d", "sink") async function sink(s: stream[i32]): i32;
 async function run(): i32 {
-	var xs: i32[] = [10, 20, 12];
+	let xs: i32[] = [10, 20, 12];
 	return sink(xs);
 }
 function main(): i32 { return 0; }

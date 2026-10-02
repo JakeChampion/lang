@@ -7,13 +7,13 @@ import "std/i32";
 // persistent hash set over std/pmap's trie: membership, add / remove
 // with structural sharing, iteration, and the set algebra.
 function test_of_dedup(): test.TestOutcome {
-  var s: pset.PSet[i32] = pset.pset_of([3, 1, 2, 3, 1]);
+  let s: pset.PSet[i32] = pset.pset_of([3, 1, 2, 3, 1]);
   if (s.len() != 3 || !s.is_valid()) {
     return test.fail("len " + s.len().to_string() + " != 3");
   }
-  var arr: i32[] = s.to_array();
-  var total: i32 = 0;
-  var i: i32 = 0;
+  let arr: i32[] = s.to_array();
+  let total: i32 = 0;
+  let i: i32 = 0;
   while (i < arr.len()) {
     total = total + arr[i];
     i = i + 1;
@@ -22,8 +22,8 @@ function test_of_dedup(): test.TestOutcome {
 }
 
 function test_add_is_persistent(): test.TestOutcome {
-  var a: pset.PSet[i32] = pset.pset_of([1, 2]);
-  var b: pset.PSet[i32] = a.add(3);
+  let a: pset.PSet[i32] = pset.pset_of([1, 2]);
+  let b: pset.PSet[i32] = a.add(3);
   if (a.len() != 2 || b.len() != 3) {
     return test.fail("add mutated receiver");
   }
@@ -31,13 +31,13 @@ function test_add_is_persistent(): test.TestOutcome {
 }
 
 function test_remove(): test.TestOutcome {
-  var s: pset.PSet[i32] = pset.pset_new();
-  var i: i32 = 0;
+  let s: pset.PSet[i32] = pset.pset_new();
+  let i: i32 = 0;
   while (i < 1000) {
     s = s.add(i * 31 % 1000);
     i = i + 1;
   }
-  var keep: pset.PSet[i32] = s;
+  let keep: pset.PSet[i32] = s;
   i = 0;
   while (i < 1000) {
     if (i % 2 == 0) {
@@ -55,11 +55,11 @@ function test_remove(): test.TestOutcome {
 }
 
 function test_algebra(): test.TestOutcome {
-  var a: pset.PSet[i32] = pset.pset_of([1, 2, 3, 4]);
-  var b: pset.PSet[i32] = pset.pset_of([3, 4, 5, 6]);
-  var u: pset.PSet[i32] = a.union(b);
-  var x: pset.PSet[i32] = a.intersection(b);
-  var d: pset.PSet[i32] = a.difference(b);
+  let a: pset.PSet[i32] = pset.pset_of([1, 2, 3, 4]);
+  let b: pset.PSet[i32] = pset.pset_of([3, 4, 5, 6]);
+  let u: pset.PSet[i32] = a.union(b);
+  let x: pset.PSet[i32] = a.intersection(b);
+  let d: pset.PSet[i32] = a.difference(b);
   if (u.len() != 6 || x.len() != 2 || d.len() != 2) {
     return test.fail("sizes");
   }
@@ -76,20 +76,20 @@ function test_algebra(): test.TestOutcome {
 }
 
 function test_filter_fold_strings(): test.TestOutcome {
-  var s: pset.PSet[string] = pset.pset_of(["pear", "apple", "fig", "apple"]);
+  let s: pset.PSet[string] = pset.pset_of(["pear", "apple", "fig", "apple"]);
   if (s.len() != 3 || !s.contains("fig") || s.contains("kiwi")) {
     return test.fail("string members");
   }
-  var short: pset.PSet[string] = s.filter((x: string) => x.len() <= 4);
+  let short: pset.PSet[string] = s.filter((x: string) => x.len() <= 4);
   if (short.len() != 2 || !short.contains("pear") || short.contains("apple")) {
     return test.fail("filter");
   }
-  var chars: i32 = s.fold(0, (a: i32, x: string) => a + x.len());
+  let chars: i32 = s.fold(0, (a: i32, x: string) => a + x.len());
   return test.assert_eq(chars, 12);
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/pset");
+  let r: test.TestRunner = test.test_new("std/pset");
   r = r.it("of dedups", test_of_dedup);
   r = r.it("add is persistent", test_add_is_persistent);
   r = r.it("remove", test_remove);

@@ -47,7 +47,7 @@ func TestExternImportWithBuiltinUDPViaCLI(t *testing.T) {
 function rand_bytes(n: u64): u8[];
 
 function main(): i32 {
-	var b: u8[] = rand_bytes(4 as u64);
+	let b: u8[] = rand_bytes(4 as u64);
 	if (b.len() != 4) { return 2; }
 	if (udp_send("127.0.0.1", ` + strconv.Itoa(udpPort) + `, "` + want + `") > 0) { return 0; }
 	return 1;

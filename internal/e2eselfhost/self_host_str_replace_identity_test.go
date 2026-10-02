@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// `var r: string = base.replace(old, new)` leaked its box whenever the needle
+// `let r: string = base.replace(old, new)` leaked its box whenever the needle
 // was present, and could not simply be credited the way `.trim()` was in #7249,
 // because replace has a genuine identity fast-path.
 //
@@ -47,16 +47,16 @@ const strReplacePrelude = strProbeHelpers + `function w(pre: string): string { r
 
 func strReplaceHeap(body string, limit int) string {
 	return strReplacePrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
+    let base: string = w(pre);
 ` + body + `
 }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= ` + fmt.Sprint(limit) + `) { return 98; }
@@ -68,12 +68,12 @@ var strReplaceHeapCases = []struct {
 	name string
 	body string
 }{
-	{"str-replace-fresh-released", `    var r: string = base.replace("wide", "NARROW");
+	{"str-replace-fresh-released", `    let r: string = base.replace("wide", "NARROW");
     return r.len() % 251;`},
 	// The identity case allocates nothing to begin with, so this pins that the
 	// guard did not somehow ADD a cost — and, with the fault case below, that it
 	// skipped the free rather than performing a harmless one.
-	{"str-replace-identity-stays-flat", `    var r: string = base.replace("ZZZZ", "!");
+	{"str-replace-identity-stays-flat", `    let r: string = base.replace("ZZZZ", "!");
     return r.len() % 251;`},
 }
 
@@ -85,11 +85,11 @@ var strReplaceFaultCases = []struct {
 	// only one may be freed. A compiler with the guard removed exits 99 here on
 	// x86-64 and traps on wasm.
 	{"str-replace-identity-and-fresh-live", strReplacePrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var same: string = base.replace("ZZZZ", "!");
-    var diff: string = base.replace("wide", "NARROW");
-    var p1: string = w("XXXXXXXX");
-    var p2: string = w("YYYYYYYY");
+    let base: string = w(pre);
+    let same: string = base.replace("ZZZZ", "!");
+    let diff: string = base.replace("wide", "NARROW");
+    let p1: string = w("XXXXXXXX");
+    let p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 1; }
     if (!has_prefix(same, "abcdefgh-a-wide")) { return 0 - 2; }
@@ -99,26 +99,26 @@ var strReplaceFaultCases = []struct {
     if (diff.len() != base.len() + 2) { return 0 - 6; }
     return 3;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// ESCAPE: the result is returned, so the credit is withheld.
-	{"str-replace-escapes-return", strReplacePrelude + `function rep(pre: string): string { var base: string = w(pre); var r: string = base.replace("wide", "NARROW"); return r; }
+	{"str-replace-escapes-return", strReplacePrelude + `function rep(pre: string): string { let base: string = w(pre); let r: string = base.replace("wide", "NARROW"); return r; }
 function round(pre: string): i32 {
-    var r: string = rep(pre);
-    var p1: string = w("XXXXXXXX");
+    let r: string = rep(pre);
+    let p1: string = w("XXXXXXXX");
     if (p1.len() < 0) { return 0; }
     if (!has_sub(r, "NARROW")) { return 0 - 1; }
     return r.len() % 251;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; var want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; let want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// A USER `.replace()` returning a field alias: refused by the declared-type
 	// receiver test, like its trim / join / to_string siblings.
 	{"str-replace-user-method-not-credited", strReplacePrelude + `struct Holder { name: string, tag: string }
 function (h: Holder) replace(a: string, b: string): string { return h.name; }
-function rep(h: Holder): i32 { var r: string = h.replace("x", "y"); return r.len() % 251; }
-function churn(pre: string): i32 { var a: string = w(pre + "1"); var b: string = w(pre + "2"); return a.len() + b.len(); }
+function rep(h: Holder): i32 { let r: string = h.replace("x", "y"); return r.len() % 251; }
+function churn(pre: string): i32 { let a: string = w(pre + "1"); let b: string = w(pre + "2"); return a.len() + b.len(); }
 function main(): i32 {
-    var keep: Holder = Holder { name: w("aaaa"), tag: w("bbbb") };
-    var i: i32 = 0;
+    let keep: Holder = Holder { name: w("aaaa"), tag: w("bbbb") };
+    let i: i32 = 0;
     while (i < 2000) {
         if (rep(keep) < 0) { return 96; }
         if (churn("QQQQQQQQ") < 0) { return 95; }
@@ -203,7 +203,7 @@ func TestSelfHostStrReplaceIdentityWasmIR(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	for _, tc := range strReplaceSources() {

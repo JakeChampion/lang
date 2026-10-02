@@ -52,7 +52,7 @@ func writeCapsProject(t *testing.T, dir, depEntry, helperBody string) string {
 	t.Helper()
 	files := map[string]string{
 		"app/fern.toml":    "[package]\nname = \"app\"\n[dependencies]\n" + depEntry + "\n",
-		"app/main.fern":    "import \"helper\";\nfunction main(): i32 {\n  var r: i32 = helper.save(\"x\");\n  return r;\n}\n",
+		"app/main.fern":    "import \"helper\";\nfunction main(): i32 {\n  let r: i32 = helper.save(\"x\");\n  return r;\n}\n",
 		"helper/fern.toml": "[package]\nname = \"helper\"\n",
 		"helper/lib.fern":  helperBody,
 	}

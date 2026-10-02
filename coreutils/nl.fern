@@ -74,7 +74,7 @@ function opt_delim(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "Write each FILE to standard output, with line numbers added.\n";
   out = out + "\n";
@@ -149,7 +149,7 @@ function empty_style(kind: i32): Style {
 // and `n`, so `-bax` is `-ba`; `p` takes everything after it as the
 // pattern, and an empty one matches every line.
 function parse_style(arg: string, what: string): Style {
-  var c: i32 = 0;
+  let c: i32 = 0;
   if (arg.len() > 0) {
     c = arg[0] as i32;
   }
@@ -163,7 +163,7 @@ function parse_style(arg: string, what: string): Style {
     return empty_style(style_none());
   }
   if (c == 112) {
-    var re: bre.Bre = bre.bre_compile(slice_unchecked(arg, 1, arg.len()) + "");
+    let re: bre.Bre = bre.bre_compile(slice_unchecked(arg, 1, arg.len()) + "");
     if (re.err.len() > 0) {
       gnu.error(re.err);
       exit(1);
@@ -192,11 +192,11 @@ function fmt_rz(): i32 {
 // suffix texts glibc's errno strings give the two ways it can fail.
 // Returns (value, status): 0 accepted, 1 malformed, 2 out of intmax_t.
 function parse_imax(s: string): (i64, i32) {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
     i = i + 1;
   }
-  var neg: boolean = false;
+  let neg: boolean = false;
   if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
     neg = s[i] as i32 == 45;
     i = i + 1;
@@ -204,16 +204,16 @@ function parse_imax(s: string): (i64, i32) {
   if (i >= s.len() || !gnu.is_digit(s[i] as i32)) {
     return (0 as i64, 1);
   }
-  var mag: u64 = 0 as u64;
-  var over: boolean = false;
+  let mag: u64 = 0 as u64;
+  let over: boolean = false;
   // The magnitude a negative value may reach is one more than a
   // positive one, which is the whole reason it is accumulated unsigned.
-  var limit: u64 = 9223372036854775807 as u64;
+  let limit: u64 = 9223372036854775807 as u64;
   if (neg) {
     limit = 9223372036854775808 as u64;
   }
   while (i < s.len() && gnu.is_digit(s[i] as i32)) {
-    var d: u64 = (s[i] as i32 - 48) as u64;
+    let d: u64 = (s[i] as i32 - 48) as u64;
     match (mag.checked_mul(10 as u64)) {
       Some(m) => {
         match (m.checked_add(d)) {
@@ -268,14 +268,14 @@ function parse_imax(s: string): (i64, i32) {
 //	            of what it parsed, so a zero under a minimum of one
 //	            takes this one rather than the min's
 function number_option(value: string, what: string, min: i64, max: i64, min_range: boolean, max_quiet: boolean): i64 {
-  var r: (i64, i32) = parse_imax(value);
+  let r: (i64, i32) = parse_imax(value);
   if (r.1 == 1) {
     gnu.error("invalid " + what + ": " + gnu.quote(value));
     exit(1);
   }
-  var out: i64 = r.0;
-  var range: boolean = false;
-  var bad: boolean = r.1 == 2;
+  let out: i64 = r.0;
+  let range: boolean = false;
+  let bad: boolean = r.1 == 2;
   if (r.0 < min) {
     out = min;
     range = min_range;
@@ -333,11 +333,11 @@ function with_pads(o: Opts): Opts {
 // The three FORMATs. A number wider than the field overflows it rather
 // than being truncated, and `rz` puts its zeros after the sign.
 function push_lineno(h: usize, n: i64, o: Opts): void {
-  var mag: u64 = n as u64;
+  let mag: u64 = n as u64;
   if (n < 0 as i64) {
     mag = 0 as u64 - mag;
   }
-  var len: i32 = io_buffered.buf_u64_len(mag);
+  let len: i32 = io_buffered.buf_u64_len(mag);
   if (n < 0 as i64) {
     len = len + 1;
   }
@@ -345,7 +345,7 @@ function push_lineno(h: usize, n: i64, o: Opts): void {
     io_buffered.buf_push_i64(h, n);
     return;
   }
-  var need: i32 = o.width - len;
+  let need: i32 = o.width - len;
   if (o.fmt == fmt_ln()) {
     io_buffered.buf_push_i64(h, n);
     buf_push_range(h, o.pad, 0, need);
@@ -422,7 +422,7 @@ function check_section(buf: string, lo: i32, hi: i32, o: Opts): i32 {
 
 // Whether `buf[lo, hi)` is `s`.
 function span_is(buf: string, lo: i32, hi: i32, s: string): boolean {
-  var n: i32 = hi - lo;
+  let n: i32 = hi - lo;
   return n == s.len() && __mismatch(buf, lo, s, 0, n) == n;
 }
 
@@ -446,7 +446,7 @@ function numbered(buf: string, lo: i32, hi: i32, st: State, sty: Style, o: Opts)
   if (hi > lo) {
     return (true, 0 as i64);
   }
-  var run: i64 = st.blanks + 1 as i64;
+  let run: i64 = st.blanks + 1 as i64;
   if (run == o.join_blank) {
     return (true, 0 as i64);
   }
@@ -469,20 +469,20 @@ struct Emit { st: State, w: io_buffered.BufWriter }
 
 // The line `buf[lo, hi)`, without its newline.
 function proc_line(buf: string, lo: i32, hi: i32, st0: State, o: Opts, w0: io_buffered.BufWriter): Emit {
-  var st: State = st0;
-  var w: io_buffered.BufWriter = w0;
-  var sec: i32 = check_section(buf, lo, hi, o);
+  let st: State = st0;
+  let w: io_buffered.BufWriter = w0;
+  let sec: i32 = check_section(buf, lo, hi, o);
   if (sec >= 0) {
-    var next: State = State { ...st, section: sec, blanks: 0 as i64 };
+    let next: State = State { ...st, section: sec, blanks: 0 as i64 };
     if (o.renumber) {
       next = State { ...next, line_no: o.start, over: false };
     }
     return Emit { st: next, w: gnu.put(w, "\n") };
   }
-  var r: (boolean, i64) = numbered_here(buf, lo, hi, st, o);
+  let r: (boolean, i64) = numbered_here(buf, lo, hi, st, o);
   st = State { ...st, blanks: r.1 };
   if (!r.0) {
-    var hb: usize = w.handle();
+    let hb: usize = w.handle();
     buf_push(hb, o.blank);
     buf_push_range(hb, buf, lo, hi);
     buf_push_byte(hb, 10);
@@ -496,7 +496,7 @@ function proc_line(buf: string, lo: i32, hi: i32, st0: State, o: Opts, w0: io_bu
     gnu.error("line number overflow");
     exit(1);
   }
-  var h: usize = w.handle();
+  let h: usize = w.handle();
   push_lineno(h, st.line_no, o);
   buf_push(h, o.sep);
   buf_push_range(h, buf, lo, hi);
@@ -540,8 +540,8 @@ function matches_here(buf: string, lo: i32, hi: i32, st: State, o: Opts): boolea
 struct Field { q: i64, head: string, tail: string }
 
 function field_for(q: i64, o: Opts): Field {
-  var digits: string = q.to_string();
-  var need: i32 = o.width - digits.len() - 2;
+  let digits: string = q.to_string();
+  let need: i32 = o.width - digits.len() - 2;
   if (need < 0) {
     need = 0;
   }
@@ -574,30 +574,30 @@ function next_line_no(n: i64, incr: i64): (boolean, i64) {
 // overflow) or at the end of the complete lines, and answers where it
 // stopped.
 function fast_lines(buf: string, pos0: i32, st: State, o: Opts, w0: io_buffered.BufWriter): (i32, State, io_buffered.BufWriter) {
-  var w: io_buffered.BufWriter = w0;
-  var h: usize = w.handle();
-  var kind: i32 = kind_of(st, o);
+  let w: io_buffered.BufWriter = w0;
+  let h: usize = w.handle();
+  let kind: i32 = kind_of(st, o);
   if (!fast_style(kind, o) || st.over) {
     return (pos0, st, w);
   }
-  var d0: i32 = 0 - 1;
+  let d0: i32 = 0 - 1;
   if (o.del1.len() > 0) {
     d0 = o.del1[0] as i32;
   }
-  var line_no: i64 = st.line_no;
-  var incr: i64 = o.incr;
-  var field: Field = Field { q: 0 as i64, head: "", tail: "" };
-  var base: i64 = 0 as i64;
-  var pos: i32 = pos0;
+  let line_no: i64 = st.line_no;
+  let incr: i64 = o.incr;
+  let field: Field = Field { q: 0 as i64, head: "", tail: "" };
+  let base: i64 = 0 as i64;
+  let pos: i32 = pos0;
   while (true) {
-    var j: i32 = __memchr(buf, 10, pos);
+    let j: i32 = __memchr(buf, 10, pos);
     if (j < 0 || j > pos && buf[pos] as i32 == d0) {
       break;
     }
     if (kind == style_none() || kind == style_nonempty() && j == pos || kind == style_regex() && !matches_here(buf, pos, j, st, o)) {
       buf_push(h, o.blank);
     } else {
-      var nx: (boolean, i64) = next_line_no(line_no, incr);
+      let nx: (boolean, i64) = next_line_no(line_no, incr);
       if (!nx.0) {
         break;
       }
@@ -610,7 +610,7 @@ function fast_lines(buf: string, pos0: i32, st: State, o: Opts, w0: io_buffered.
           base = field.q * (100 as i64);
         }
         buf_push(h, field.head);
-        var r: i32 = (line_no - base) as i32 * 2;
+        let r: i32 = (line_no - base) as i32 * 2;
         buf_push_range(h, io_buffered.digit_pairs(), r, r + 2);
         buf_push(h, field.tail);
       }
@@ -628,19 +628,19 @@ function read_size(): i32 {
 }
 
 function proc_reader(r: Reader, name: string, st0: State, o: Opts, w0: io_buffered.BufWriter): Emit {
-  var st: State = st0;
-  var w: io_buffered.BufWriter = w0;
-  var buf: string = "";
-  var pos: i32 = 0;
-  var eof: boolean = false;
+  let st: State = st0;
+  let w: io_buffered.BufWriter = w0;
+  let buf: string = "";
+  let pos: i32 = 0;
+  let eof: boolean = false;
   while (true) {
-    var f: (i32, State, io_buffered.BufWriter) = fast_lines(buf, pos, st, o, w);
+    let f: (i32, State, io_buffered.BufWriter) = fast_lines(buf, pos, st, o, w);
     pos = f.0;
     st = f.1;
     w = f.2;
-    var j: i32 = __memchr(buf, 10, pos);
+    let j: i32 = __memchr(buf, 10, pos);
     if (j >= 0) {
-      var e: Emit = proc_line(buf, pos, j, st, o, w);
+      let e: Emit = proc_line(buf, pos, j, st, o, w);
       st = e.st;
       w = e.w;
       pos = j + 1;
@@ -648,13 +648,13 @@ function proc_reader(r: Reader, name: string, st0: State, o: Opts, w0: io_buffer
     }
     if (eof) {
       if (pos < buf.len()) {
-        var e: Emit = proc_line(buf, pos, buf.len(), st, o, w);
+        let e: Emit = proc_line(buf, pos, buf.len(), st, o, w);
         st = e.st;
         w = e.w;
       }
       return Emit { st: st, w: w };
     }
-    var rest: string = slice_unchecked(buf, pos, buf.len()) + "";
+    let rest: string = slice_unchecked(buf, pos, buf.len()) + "";
     match (r.read_chunk(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
@@ -680,12 +680,12 @@ function proc_file(path: string, st: State, o: Opts, w: io_buffered.BufWriter): 
   }
   match (open_reader(path)) {
     Ok(f) => {
-      var e: Emit = proc_reader(f, path, st, o, w);
+      let e: Emit = proc_reader(f, path, st, o, w);
       f.close();
       return e;
     },
     Err(err) => {
-      var w2: io_buffered.BufWriter = gnu.error_out(w, gnu.quotef(path) + ": " + gnu.io_error_text(err));
+      let w2: io_buffered.BufWriter = gnu.error_out(w, gnu.quotef(path) + ": " + gnu.io_error_text(err));
       return Emit { st: State { ...st, status: 1 }, w: w2 };
     }
   }
@@ -696,7 +696,7 @@ function proc_file(path: string, st: State, o: Opts, w: io_buffered.BufWriter): 
 // second `:`, the empty string turns section matching off, and anything
 // longer is taken whole (a GNU extension).
 function delimiters(cc: string): (string, string, string) {
-  var d: string = cc;
+  let d: string = cc;
   if (d.len() == 1) {
     d = d + ":";
   }
@@ -704,8 +704,8 @@ function delimiters(cc: string): (string, string, string) {
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [];
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("h", "header-numbering", opt_header()));
   opts = opts.append(gnu.valued("b", "body-numbering", opt_body()));
   opts = opts.append(gnu.valued("f", "footer-numbering", opt_footer()));
@@ -718,12 +718,12 @@ pub function main(): i32 {
   opts = opts.append(gnu.valued("n", "number-format", opt_format()));
   opts = opts.append(gnu.valued("d", "section-delimiter", opt_delim()));
 
-  var dels: (string, string, string) = delimiters("\\:");
-  var o: Opts = Opts { header: empty_style(style_none()), body: empty_style(style_nonempty()), footer: empty_style(style_none()), sep: "\t", fmt: fmt_rn(), width: 6, start: 1 as i64, incr: 1 as i64, join_blank: 1 as i64, renumber: true, del1: dels.0, del2: dels.1, del3: dels.2, pad: "", zeros: "", blank: "" };
+  let dels: (string, string, string) = delimiters("\\:");
+  let o: Opts = Opts { header: empty_style(style_none()), body: empty_style(style_nonempty()), footer: empty_style(style_none()), sep: "\t", fmt: fmt_rn(), width: 6, start: 1 as i64, incr: 1 as i64, join_blank: 1 as i64, renumber: true, del1: dels.0, del2: dels.1, del3: dels.2, pad: "", zeros: "", blank: "" };
 
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "nl", help_text(), 1);
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "nl", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -756,7 +756,7 @@ pub function main(): i32 {
             gnu.die_usage("invalid line numbering format: " + gnu.quote(m.value), 1);
           }
         } else if (m.id == opt_delim()) {
-          var d: (string, string, string) = delimiters(m.value);
+          let d: (string, string, string) = delimiters(m.value);
           o = Opts { ...o, del1: d.0, del2: d.1, del3: d.2 };
         }
       },
@@ -768,15 +768,15 @@ pub function main(): i32 {
 
   o = with_pads(o);
 
-  var files: string[] = g.operands();
+  let files: string[] = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
-  var st: State = State { section: section_body(), line_no: o.start, blanks: 0 as i64, over: false, status: 0 };
-  var w: io_buffered.BufWriter = gnu.out_new();
-  var i: i32 = 0;
+  let st: State = State { section: section_body(), line_no: o.start, blanks: 0 as i64, over: false, status: 0 };
+  let w: io_buffered.BufWriter = gnu.out_new();
+  let i: i32 = 0;
   while (i < files.len()) {
-    var e: Emit = proc_file(files[i], st, o, w);
+    let e: Emit = proc_file(files[i], st, o, w);
     st = e.st;
     w = e.w;
     i = i + 1;

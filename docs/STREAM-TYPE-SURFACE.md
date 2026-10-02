@@ -38,7 +38,7 @@ and no "deferred value" surface object (`docs/WASI-PREVIEW3-ASYNC-PLAN.md`).
   async function body(): stream[u8];
 
   async function handle(): i32 {
-      var bytes: u8[] = body();   // colorless: reads the whole stream into u8[]
+      let bytes: u8[] = body();   // colorless: reads the whole stream into u8[]
       return bytes.len();
   }
   ```
@@ -57,7 +57,7 @@ and no "deferred value" surface object (`docs/WASI-PREVIEW3-ASYNC-PLAN.md`).
 and consistently with the colorless model: the checker rewrites the `stream[T]`
 result to `T[]` (the eager collected array), so the ordinary parse-time array
 `for-in` desugar (`.len()` + index) iterates it after the collect-wrapper drains
-the stream to EOF — no intermediate `var b: u8[] = …` and no for-in rework
+the stream to EOF — no intermediate `let b: u8[] = …` and no for-in rework
 needed. Locked by `internal/e2e` `TestWasmP3StreamForIn` (→ 42).
 
 True *element-at-a-time* lazy iteration (process each item as it arrives off the
@@ -132,11 +132,11 @@ constructs):
   `StreamResultElem` is set) desugars each stream `ast.ForEach` into a Fern block,
   and registers the helper FuncSigs. For `for x in body()` with `stream[u8]`:
   ```
-  var __h: i32 = body$open();              // per-import: raw lower → readable handle
+  let __h: i32 = body$open();              // per-import: raw lower → readable handle
   while (true) {
-      var __v: i32 = __stream_next_u8(__h); // read 1 + await; element (0..255) or -1 at EOF
+      let __v: i32 = __stream_next_u8(__h); // read 1 + await; element (0..255) or -1 at EOF
       if (__v < 0) { break; }
-      var x: u8 = __v as u8;
+      let x: u8 = __v as u8;
       BODY                                  // real loop ⇒ break/continue/return work
   }
   __stream_drop(__h);
@@ -193,10 +193,10 @@ together (no half-step, since it flips the working eager behavior).
    rewrite `ReturnType = ArrayType{T}`. After that every checker site (and `ir.go`)
    sees a plain `T[]` async-list result — NO per-site checker changes, NO
    monomorph subst plumbing needed for the result path (slice 1's `Equal`/
-   `SubstSelf` cover the rare param/var use). `ir.go` (`ExternFunc` build,
+   `SubstSelf` cover the rare param/let use). `ir.go` (`ExternFunc` build,
    ~L2608) copies `StreamResultElem` onto a new `ExternFunc.StreamResultElem`.
    Test: checker accepts `@import async function body(): stream[u8]` and types
-   `var b: u8[] = body()`.
+   `let b: u8[] = body()`.
 3. **wasmbin collect-wrapper + composer.** In `scanExternImports`
    (`internal/codegen/wasmbin/wasi.go`), when `ex.StreamResultElem != nil` the
    raw `canon lower async` of the import returns a **stream readable handle**
@@ -255,7 +255,7 @@ together (no half-step, since it flips the working eager behavior).
      this write-await; the consumer collect-wrapper (slice 3, the wasmbin
      deliverable) is the read side.
 4. **e2e.** Real Fern `@import async function body(): stream[u8]` +
-   `var b: u8[] = body();` collect, composed against the stream producer, run
+   `let b: u8[] = body();` collect, composed against the stream producer, run
    under wasmtime → the collected bytes (mirrors `TestWasmP3StreamExportImport`,
    from Fern source). The runnable payoff.
 

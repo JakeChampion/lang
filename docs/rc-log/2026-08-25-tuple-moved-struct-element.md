@@ -1,6 +1,6 @@
 # A tuple's struct element gets a release — the moved half
 
-`tuple__moved` on the container-sink matrix: `var tp: (i32, P) = (i, p);` with `p`
+`tuple__moved` on the container-sink matrix: `let tp: (i32, P) = (i, p);` with `p`
 not mentioned again. 300 allocs / 100 frees over 100 rounds against native's
 300/300 — the tuple box was freed and the struct element it held was not, along
 with that struct's array field.

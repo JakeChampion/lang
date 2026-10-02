@@ -32,7 +32,7 @@ func enumDeclFor(t *testing.T, src, name string) *checker.Info {
 func TestEnumVariantDropPlanFreesAPayloadlessBox(t *testing.T) {
 	info := enumDeclFor(t, `
 enum E { Full(i32[]), Empty }
-function main(): i32 { var e: E = E.Full([1]); match (e) { Full(a) => { return a.len(); }, Empty => { return 0; } } return 0; }
+function main(): i32 { let e: E = E.Full([1]); match (e) { Full(a) => { return a.len(); }, Empty => { return 0; } } return 0; }
 `, "E")
 	plan, ok := enumVariantDropPlan(info.Enums["E"], 8, true)
 	if !ok {
@@ -71,7 +71,7 @@ function main(): i32 { var e: E = E.Full([1]); match (e) { Full(a) => { return a
 func TestEnumVariantDropPlanStillDeclinesAnAllPayloadlessEnum(t *testing.T) {
 	info := enumDeclFor(t, `
 enum Flag { On, Off }
-function main(): i32 { var f: Flag = Flag.On; match (f) { On => { return 1; }, Off => { return 0; } } return 0; }
+function main(): i32 { let f: Flag = Flag.On; match (f) { On => { return 1; }, Off => { return 0; } } return 0; }
 `, "Flag")
 	if plan, ok := enumVariantDropPlan(info.Enums["Flag"], 8, true); ok {
 		t.Errorf("an all-payloadless enum produced a plan (%d arms) — its values are "+

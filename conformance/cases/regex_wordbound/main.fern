@@ -5,17 +5,45 @@
 import "std/regex";
 
 function main(): i32 {
-    var r: i32 = 0;
-    if (regex.regex_match("\\bcat\\b", "the cat sat")) { r = r + 1; }       // whole word
-    if (!regex.regex_match("\\bcat\\b", "scatter")) { r = r + 2; }          // inside a word: no
-    if (regex.regex_find("\\bcat\\b", "a cat") == 2) { r = r + 4; }         // boundary position
-    if (regex.regex_match("\\bword\\b", "word")) { r = r + 8; }             // boundaries at edges
-    if (regex.regex_match("ca\\Bt", "cat")) { r = r + 16; }                 // \B inside a word
-    if (!regex.regex_match("cat\\B", "cat ")) { r = r + 32; }               // \B is false at a boundary
+  let r: i32 = 0;
+  if (regex.regex_match("\\bcat\\b", "the cat sat")) {  // whole word
+    r = r + 1;
+  }
+  if (!regex.regex_match("\\bcat\\b", "scatter")) {  // inside a word: no
+    r = r + 2;
+  }
+  if (regex.regex_find("\\bcat\\b", "a cat") == 2) {  // boundary position
+    r = r + 4;
+  }
+  if (regex.regex_match("\\bword\\b", "word")) {  // boundaries at edges
+    r = r + 8;
+  }
+  if (regex.regex_match("ca\\Bt", "cat")) {  // \B inside a word
+    r = r + 16;
+  }
+  if (!regex.regex_match("cat\\B", "cat ")) {  // \B is false at a boundary
+    r = r + 32;
+  }
 
-    var ms: regex.RMatch[] = regex.regex_find_all("\\b\\w+\\b", "one two three");
-    if (ms.len() == 3) { r = r + 64; }                                      // word tokenisation
+  let ms: regex.RMatch[] = regex.regex_find_all("\\b\\w+\\b", "one two three");
+  if (ms.len() == 3) {  // word tokenisation
+    r = r + 64;
+  }
 
-    if (regex.regex_replace_all("\\bcat\\b", "cat cats category", "X") == "X cats category") { r = r + 128; }
-    return r;
+  if (require_regex_text(regex.regex_replace_all("\\bcat\\b", "cat cats category", "X")) == "X cats category") {
+    r = r + 128;
+  }
+  return r;
+}
+
+function require_regex_text(result: Option[string]): string {
+  match (result) {
+    Some(value) => {
+      return value;
+    },
+    None => {
+      exit(1);
+    }
+  }
+  return "";
 }

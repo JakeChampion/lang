@@ -13,11 +13,11 @@ import "std/test";
 //     over ∅).
 
 function test_map_i32_eq_pass(): test.TestOutcome {
-  var a: Map[i32, i32] = map_new(4);
+  let a: Map[i32, i32] = map_new(4);
   a = a.insert(1, 10);
   a = a.insert(2, 20);
   a = a.insert(3, 30);
-  var b: Map[i32, i32] = map_new(4);
+  let b: Map[i32, i32] = map_new(4);
   b = b.insert(3, 30);  // insertion order differs
   b = b.insert(2, 20);
   b = b.insert(1, 10);
@@ -25,9 +25,9 @@ function test_map_i32_eq_pass(): test.TestOutcome {
 }
 
 function test_map_i32_eq_length_mismatch(): test.TestOutcome {
-  var a: Map[i32, i32] = map_new(4);
+  let a: Map[i32, i32] = map_new(4);
   a = a.insert(1, 10);
-  var b: Map[i32, i32] = map_new(4);
+  let b: Map[i32, i32] = map_new(4);
   b = b.insert(1, 10);
   b = b.insert(2, 20);
   match (test.assert_eq_map(a, b)) {
@@ -44,10 +44,10 @@ function test_map_i32_eq_length_mismatch(): test.TestOutcome {
 }
 
 function test_map_i32_eq_value_mismatch(): test.TestOutcome {
-  var a: Map[i32, i32] = map_new(4);
+  let a: Map[i32, i32] = map_new(4);
   a = a.insert(1, 10);
   a = a.insert(2, 20);
-  var b: Map[i32, i32] = map_new(4);
+  let b: Map[i32, i32] = map_new(4);
   b = b.insert(1, 10);
   b = b.insert(2, 99);
   match (test.assert_eq_map(a, b)) {
@@ -65,9 +65,9 @@ function test_map_i32_eq_value_mismatch(): test.TestOutcome {
 
 function test_map_i32_eq_disjoint_keys_same_len(): test.TestOutcome {
   // Same length, different key sets — must fail.
-  var a: Map[i32, i32] = map_new(4);
+  let a: Map[i32, i32] = map_new(4);
   a = a.insert(1, 10);
-  var b: Map[i32, i32] = map_new(4);
+  let b: Map[i32, i32] = map_new(4);
   b = b.insert(2, 10);
   match (test.assert_eq_map(a, b)) {
     Pass => {
@@ -83,25 +83,25 @@ function test_map_i32_eq_disjoint_keys_same_len(): test.TestOutcome {
 }
 
 function test_map_i32_eq_both_empty(): test.TestOutcome {
-  var a: Map[i32, i32] = map_new(4);
-  var b: Map[i32, i32] = map_new(4);
+  let a: Map[i32, i32] = map_new(4);
+  let b: Map[i32, i32] = map_new(4);
   return test.assert_eq_map(a, b);
 }
 
 function test_map_string_eq_pass(): test.TestOutcome {
-  var a: Map[string, string] = map_new(4);
+  let a: Map[string, string] = map_new(4);
   a = a.insert("k1", "v1");
   a = a.insert("k2", "v2");
-  var b: Map[string, string] = map_new(4);
+  let b: Map[string, string] = map_new(4);
   b = b.insert("k2", "v2");
   b = b.insert("k1", "v1");
   return test.assert_eq_map(a, b);
 }
 
 function test_map_string_eq_value_mismatch(): test.TestOutcome {
-  var a: Map[string, string] = map_new(4);
+  let a: Map[string, string] = map_new(4);
   a = a.insert("k", "alpha");
-  var b: Map[string, string] = map_new(4);
+  let b: Map[string, string] = map_new(4);
   b = b.insert("k", "beta");
   match (test.assert_eq_map(a, b)) {
     Pass => {
@@ -148,7 +148,7 @@ function test_assert_all_i32_fails_with_index(): test.TestOutcome {
 }
 
 function test_assert_all_i32_empty_vacuous(): test.TestOutcome {
-  var empty: i32[] = [];
+  let empty: i32[] = [];
   return test.assert_all_i32(empty, is_positive);
 }
 
@@ -172,7 +172,7 @@ function test_assert_any_i32_fail(): test.TestOutcome {
 
 function test_assert_any_i32_empty_fails(): test.TestOutcome {
   // ∃ over ∅ is vacuously false — must fail.
-  var empty: i32[] = [];
+  let empty: i32[] = [];
   match (test.assert_any_i32(empty, is_positive)) {
     Pass => {
       return test.fail("∃ over empty must fail");
@@ -196,7 +196,7 @@ function test_assert_any_string_pass(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("map-eq + array predicates");
+  let r: test.TestRunner = test.test_new("map-eq + array predicates");
   r = r.it("map i32 eq pass (order-indep)", test_map_i32_eq_pass);
   r = r.it("map i32 eq length mismatch", test_map_i32_eq_length_mismatch);
   r = r.it("map i32 eq value mismatch + key", test_map_i32_eq_value_mismatch);

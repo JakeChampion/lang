@@ -15,7 +15,7 @@ function cut(s: string, a: i32, b: i32): i32 {
 }
 
 function main(): i32 {
-    var s: string = "hi";
+    let s: string = "hi";
     print(cut(s, 1, 9).to_string());
     return 0;
 }

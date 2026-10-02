@@ -39,34 +39,34 @@ var erasedWideArrayFixedCases = []struct {
 	// interpreter does.
 	{"flat_map_method_i64", `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var w: i64[] = xs.flat_map((x: i32) => [(x as i64) * 2i64]);
+    let xs: i32[] = [1, 2, 3];
+    let w: i64[] = xs.flat_map((x: i32) => [(x as i64) * 2i64]);
     if (w[2] != 6i64) { return 2; }
     return 11;
 }`},
 	{"flat_map_method_f64", `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var w: f64[] = xs.flat_map((x: i32) => [(x as f64) * 1.5]);
+    let xs: i32[] = [1, 2, 3];
+    let w: f64[] = xs.flat_map((x: i32) => [(x as f64) * 1.5]);
     if (w[2] < 4.4) { return 2; }
     return 11;
 }`},
 	{"reverse_f64", `import "std/array";
 function main(): i32 {
-    var xs: f64[] = [1.5, 2.5, 4.5];
-    var ys: f64[] = array.reverse(xs);
+    let xs: f64[] = [1.5, 2.5, 4.5];
+    let ys: f64[] = array.reverse(xs);
     return (ys[0] * 10.0) as i32;
 }`}, // 45
 	{"rotate_left_f64", `import "std/array";
 function main(): i32 {
-    var xs: f64[] = [1.5, 2.5, 4.5];
-    var ys: f64[] = array.rotate_left(xs, 2);
+    let xs: f64[] = [1.5, 2.5, 4.5];
+    let ys: f64[] = array.rotate_left(xs, 2);
     return (ys[0] * 10.0) as i32;
 }`}, // 45
 	{"drop_f64", `import "std/array";
 function main(): i32 {
-    var xs: f64[] = [1.5, 2.5, 4.5];
-    var ys: f64[] = array.drop(xs, 2);
+    let xs: f64[] = [1.5, 2.5, 4.5];
+    let ys: f64[] = array.drop(xs, 2);
     return (ys[0] * 10.0) as i32;
 }`}, // 45
 	// The two-typevar `map[T, U](xs: T[], f)` at a wide element and the
@@ -79,8 +79,8 @@ function main(): i32 {
 	{"map_f64_two_typevars", `import "std/array";
 function dbl(x: f64): f64 { return x * 2.0; }
 function main(): i32 {
-    var xs: f64[] = [1.5, 2.25];
-    var ys: f64[] = array.map(xs, dbl);
+    let xs: f64[] = [1.5, 2.25];
+    let ys: f64[] = array.map(xs, dbl);
     return (ys[1] * 10.0) as i32;
 }`},
 	// The same two-typevar erasure reached through the array-METHOD spelling
@@ -93,25 +93,25 @@ function main(): i32 {
 	// `U` from the lambda and produces it at the concrete element.
 	{"map_method_i64", `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var w: i64[] = xs.map((x: i32) => (x as i64) * 2i64);
+    let xs: i32[] = [1, 2, 3];
+    let w: i64[] = xs.map((x: i32) => (x as i64) * 2i64);
     if (w[2] != 6i64) { return 2; }
     return 11;
 }`},
 	// The result reaches its wide destination by `return` and by assignment, not
-	// only by an annotated `var` — each is a separate reader of the mis-strided
+	// only by an annotated `let` — each is a separate reader of the mis-strided
 	// array, so each is its own row.
 	{"map_method_i64_return", `import "std/array";
 function g(xs: i32[]): i64[] { return xs.map((x: i32) => (x as i64) * 2i64); }
 function main(): i32 {
-    var w: i64[] = g([1, 2, 3]);
+    let w: i64[] = g([1, 2, 3]);
     if (w[2] != 6i64) { return 2; }
     return 11;
 }`},
 	{"map_method_i64_assign", `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var w: i64[] = [0i64];
+    let xs: i32[] = [1, 2, 3];
+    let w: i64[] = [0i64];
     w = xs.map((x: i32) => (x as i64) * 2i64);
     if (w[2] != 6i64) { return 2; }
     return 11;
@@ -128,21 +128,21 @@ function twice(own xs: i64[]): i64[] { return xs.map(dbl); }
 function main(): i32 { return twice([3 as i64, 5 as i64]).len() + 40; }`}, // 42
 	{"map_method_i64_elem_lambda", `import "std/array";
 function main(): i32 {
-    var xs: i64[] = [3 as i64, 5 as i64];
-    var ys: i64[] = xs.map((x: i64): i64 => x * (2 as i64));
+    let xs: i64[] = [3 as i64, 5 as i64];
+    let ys: i64[] = xs.map((x: i64): i64 => x * (2 as i64));
     return (ys[0] + ys[1]) as i32;
 }`}, // 16
 	{"map_method_i64_elem_narrow_result", `import "std/array";
 function main(): i32 {
-    var xs: i64[] = [3 as i64, 5 as i64];
-    var ys: i32[] = xs.map((x: i64): i32 => (x as i32) + 1);
+    let xs: i64[] = [3 as i64, 5 as i64];
+    let ys: i32[] = xs.map((x: i64): i32 => (x as i32) + 1);
     return ys[0] * 10 + ys[1];
 }`}, // 46
 	{"map_method_f64_elem_named", `import "std/array";
 function dbl(x: f64): f64 { return x * 2.0; }
 function main(): i32 {
-    var xs: f64[] = [1.5, 2.25];
-    var ys: f64[] = xs.map(dbl);
+    let xs: f64[] = [1.5, 2.25];
+    let ys: f64[] = xs.map(dbl);
     return (ys[1] * 10.0) as i32;
 }`}, // 45
 }
@@ -156,14 +156,14 @@ var erasedWideArrayAllowCases = []struct {
 }{
 	{"reverse_i32", `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 4];
-    var ys: i32[] = array.reverse(xs);
+    let xs: i32[] = [1, 2, 4];
+    let ys: i32[] = array.reverse(xs);
     return ys[0] * 10 + 5;
 }`}, // 45
 	{"reverse_string", `import "std/array";
 function main(): i32 {
-    var xs: string[] = ["ab", "cdef"];
-    var ys: string[] = array.reverse(xs);
+    let xs: string[] = ["ab", "cdef"];
+    let ys: string[] = array.reverse(xs);
     return ys[0].len() + 38;
 }`}, // 42
 	// The array-METHOD refusals above key on the RESULT element being wide, so
@@ -171,20 +171,20 @@ function main(): i32 {
 	// including the pointer-element `string[]`, whose stride is 4 on wasm32.
 	{"map_method_i32", `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var w: i32[] = xs.map((x: i32) => x * 2);
+    let xs: i32[] = [1, 2, 3];
+    let w: i32[] = xs.map((x: i32) => x * 2);
     return w[2] * 7 + 3;
 }`}, // 45
 	{"map_method_string", `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var w: string[] = xs.map((x: i32) => "abcde");
+    let xs: i32[] = [1, 2, 3];
+    let w: string[] = xs.map((x: i32) => "abcde");
     return w[2].len() + 40;
 }`}, // 45
 	{"flat_map_method_i32", `import "std/array";
 function main(): i32 {
-    var xs: i32[] = [1, 2, 3];
-    var w: i32[] = xs.flat_map((x: i32) => [x * 2]);
+    let xs: i32[] = [1, 2, 3];
+    let w: i32[] = xs.flat_map((x: i32) => [x * 2]);
     return w[2] * 7 + 3;
 }`}, // 45
 }
@@ -202,18 +202,18 @@ var erasedWideArrayBlindCases = []struct {
 }{
 	{"is_empty_f64", `import "std/array";
 function main(): i32 {
-    var xs: f64[] = [1.5, 2.5];
+    let xs: f64[] = [1.5, 2.5];
     if (array.is_empty(xs)) { return 1; }
     return 45;
 }`}, // 45
 	{"len_only_generic_f64", `function count_of[T](xs: T[]): i32 { return xs.len(); }
 function main(): i32 {
-    var xs: f64[] = [4.5, 1.5];
+    let xs: f64[] = [4.5, 1.5];
     return count_of(xs) * 20 + 5;
 }`}, // 45
 	{"len_only_generic_i64", `function count_of[T](xs: T[]): i32 { return xs.len(); }
 function main(): i32 {
-    var xs: i64[] = [9000000000, 1];
+    let xs: i64[] = [9000000000, 1];
     return count_of(xs) * 20 + 5;
 }`}, // 45
 }

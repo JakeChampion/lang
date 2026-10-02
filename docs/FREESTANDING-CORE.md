@@ -17,6 +17,11 @@ Linux/Darwin/WASI is the point of the epic.
 `Descriptor.Capabilities`, checked post-tree-shake as E066, on the principle (from Roc,
 via `docs/NICHE-LANGUAGE-RESEARCH.md`) that *what a target doesn't provide should not be
 expressible in a program compiled for it*. It had simply never been pointed at the OS.
+The gate judges the program as built for its target: `target_os()` and
+`target_arch()` are the target's name by then, and an `if` on them keeps only the
+arm the target takes (both constfolds), so an arm that reaches what one target
+lacks compiles for the other — std/fetch dials on every target but wasi-http,
+where it sends through the host.
 
 ## The rule
 

@@ -10,9 +10,9 @@ import (
 // TestSelfHostDynArrayAppendIR pins `(dyn Trait)[]` element dispatch after an
 // append REASSIGN (`ds = ds.append(x)`) on the self-host x86-64 IR path.
 //
-// A dyn-array slot (`var ds: (dyn Shape)[]`) is marked with struct_type
+// A dyn-array slot (`let ds: (dyn Shape)[]`) is marked with struct_type
 // "dyn Shape" — the ELEMENT type, the `[]` stripped at its init/param bind — so
-// it is indistinguishable from a SCALAR dyn slot (`var d: dyn Shape`) by the
+// it is indistinguishable from a SCALAR dyn slot (`let d: dyn Shape`) by the
 // type string alone. lower_stmt_assign's scalar-dyn coercion keyed only on
 // `struct_type[0:4]=="dyn " && !is_array_type_name`, so `ds = ds.append(x)`
 // coerced the whole grown ARRAY into a single dyn cell [shape, array] and stored
@@ -45,7 +45,7 @@ func TestSelfHostDynArrayAppendIR(t *testing.T) {
 			`trait Shape { function area(self: Self): i32; }
 struct Sq { s: i32 }
 impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } }
-function main(): i32 { var ds: (dyn Shape)[] = []; ds = ds.append(Sq { s: 3 }); return ds[0].area(); }`,
+function main(): i32 { let ds: (dyn Shape)[] = []; ds = ds.append(Sq { s: 3 }); return ds[0].area(); }`,
 			9},
 		// Literal-init + append; reading the ORIGINAL element [0] broke too
 		// (the whole ds was replaced by a dyn cell wrapping the array).
@@ -53,7 +53,7 @@ function main(): i32 { var ds: (dyn Shape)[] = []; ds = ds.append(Sq { s: 3 }); 
 			`trait Shape { function area(self: Self): i32; }
 struct Sq { s: i32 }
 impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } }
-function main(): i32 { var ds: (dyn Shape)[] = [Sq { s: 3 }]; ds = ds.append(Sq { s: 4 }); return ds[0].area() + ds[1].area(); }`,
+function main(): i32 { let ds: (dyn Shape)[] = [Sq { s: 3 }]; ds = ds.append(Sq { s: 4 }); return ds[0].area() + ds[1].area(); }`,
 			25},
 		// Heterogeneous two-impl appends + index-loop dispatch (SIGSEGV'd).
 		{"heterogeneous-append-loop",
@@ -62,14 +62,14 @@ struct Sq { s: i32 }
 impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } }
 struct Rect { w: i32, h: i32 }
 impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } }
-function main(): i32 { var ds: (dyn Shape)[] = []; ds = ds.append(Sq { s: 3 }); ds = ds.append(Rect { w: 2, h: 5 }); var s: i32 = 0; var i: i32 = 0; while (i < ds.len()) { s = s + ds[i].area(); i = i + 1; } return s; }`,
+function main(): i32 { let ds: (dyn Shape)[] = []; ds = ds.append(Sq { s: 3 }); ds = ds.append(Rect { w: 2, h: 5 }); let s: i32 = 0; let i: i32 = 0; while (i < ds.len()) { s = s + ds[i].area(); i = i + 1; } return s; }`,
 			19},
 		// for-in over an appended dyn array.
 		{"append-forin",
 			`trait Shape { function area(self: Self): i32; }
 struct Sq { s: i32 }
 impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } }
-function main(): i32 { var ds: (dyn Shape)[] = []; ds = ds.append(Sq { s: 3 }); ds = ds.append(Sq { s: 4 }); var s: i32 = 0; for d in ds { s = s + d.area(); } return s; }`,
+function main(): i32 { let ds: (dyn Shape)[] = []; ds = ds.append(Sq { s: 3 }); ds = ds.append(Sq { s: 4 }); let s: i32 = 0; for d in ds { s = s + d.area(); } return s; }`,
 			25},
 		// Regression guard: a SCALAR dyn reassign must STILL coerce.
 		{"scalar-dyn-reassign-still-coerces",
@@ -78,7 +78,7 @@ struct Sq { s: i32 }
 impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } }
 struct Rect { w: i32, h: i32 }
 impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } }
-function main(): i32 { var d: dyn Shape = Sq { s: 3 }; d = Rect { w: 2, h: 6 }; return d.area(); }`,
+function main(): i32 { let d: dyn Shape = Sq { s: 3 }; d = Rect { w: 2, h: 6 }; return d.area(); }`,
 			12},
 	}
 

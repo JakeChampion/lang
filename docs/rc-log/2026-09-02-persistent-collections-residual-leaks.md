@@ -27,7 +27,7 @@ Every unpaired node in the union / filter traces carried an `a` line and
 nothing else: never retained, never released. The site was `insert_min` or
 `join` and the caller `join` or `union`, which is where the node was BUILT,
 not where it was dropped on the floor. That frame was `__om_filter` /
-`__om_union` binding `var fl = __om_filter(l, pred)`: the callee returns its
+`__om_union` binding `let fl = __om_filter(l, pred)`: the callee returns its
 bare parameter on the `Tip` arm, `returnsOwnBox` refused every bare parameter
 return, so the binding kept the conservative call taint and the exit sweep's
 ineligible path only flat-dec'd it — a node `join` did not keep was never
@@ -113,5 +113,5 @@ release and stays at its 16 / 48 pins without it.)
   before any change. Reproduce the shape without the library before naming
   a rule.
 - The Fern `Map` type spells insertion `insert`, and a struct literal
-  cannot infer `map_new(4)`'s type arguments — bind it to a typed `var`
+  cannot infer `map_new(4)`'s type arguments — bind it to a typed `let`
   first. Both cost a unit-test round.

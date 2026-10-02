@@ -48,8 +48,8 @@ function put(own b: Box, i: i32, x: i32): Box {
     }
 }
 function main(): i32 {
-    var b: Box = Full([0, 0, 0]);
-    var i: i32 = 0;
+    let b: Box = Full([0, 0, 0]);
+    let i: i32 = 0;
     while (i < 30) { b = put(b, i % 3, i); i = i + 1; }
     match (b) {
         Full(xs) => { if (xs[0] + xs[1] + xs[2] != 27 + 28 + 29) { return 1; } },
@@ -68,9 +68,9 @@ function main(): i32 {
 function swap(own n: Node, at: i32, v: i32): Node {
     match (n) {
         Branch(kids) => {
-            var nil: Node = Nil;
-            var child: Node = kids[at];
-            var rest: Node[] = kids.with(at, nil);
+            let nil: Node = Nil;
+            let child: Node = kids[at];
+            let rest: Node[] = kids.with(at, nil);
             child = swap(child, 0, v);
             return Branch(rest.with(at, child));
         },
@@ -79,10 +79,10 @@ function swap(own n: Node, at: i32, v: i32): Node {
     }
 }
 function main(): i32 {
-    var leaf: Node = Leaf(0);
-    var inner: Node = Branch([leaf]);
-    var n: Node = Branch([inner]);
-    var i: i32 = 0;
+    let leaf: Node = Leaf(0);
+    let inner: Node = Branch([leaf]);
+    let n: Node = Branch([inner]);
+    let i: i32 = 0;
     while (i < 20) { n = swap(n, 0, i); i = i + 1; }
     match (n) {
         Branch(a) => {
@@ -108,8 +108,8 @@ function left(own p: Pair, x: i32): Pair {
     }
 }
 function main(): i32 {
-    var p: Pair = Both([1, 2], [5, 6]);
-    var i: i32 = 0;
+    let p: Pair = Both([1, 2], [5, 6]);
+    let i: i32 = 0;
     while (i < 20) { p = left(p, i); i = i + 1; }
     match (p) {
         Both(a, b) => { if (a[0] != 19 || a[1] != 2 || b[0] != 5 || b[1] != 6) { return 1; } },
@@ -131,8 +131,8 @@ function bump(b: Box, i: i32): Box {
     }
 }
 function main(): i32 {
-    var b: Box = Full([1, 2, 3]);
-    var c: Box = bump(b, 0);
+    let b: Box = Full([1, 2, 3]);
+    let c: Box = bump(b, 0);
     match (b) { Full(xs) => { if (xs[0] != 1) { return 1; } }, Empty => { return 2; } }
     match (c) { Full(ys) => { if (ys[0] != 7) { return 3; } }, Empty => { return 4; } }
     if (__rc_underflow_count() != 0) { return 99; }

@@ -45,7 +45,7 @@ var fnValueWideSigCases = []struct {
 	// A wide PARAM, called in a loop — sim.sweep_seeds reduced. The module did
 	// not load: the call pushes a real i64 where $fn2 declared i32.
 	{"wide-param-loop", `function sweep(n: i64, prop: (i64) => boolean): i64 {
-    var s: i64 = 1;
+    let s: i64 = 1;
     while (s <= n) {
         if (!prop(s)) { return s; }
         s = s + 1;
@@ -66,7 +66,7 @@ function main(): i32 { return (apply((x: i64) => x * 2i64, 21i64)) as i32; }`},
 function main(): i32 { return pick((x: f64) => (x * 2.0) as i32, 21.0); }`},
 	// The wide result bound to a local rather than returned — the path through
 	// infer_expr_width rather than lower_i64's return context.
-	{"wide-result-bound", `function apply(g: (i32) => i64): i64 { var v: i64 = g(5); return v + 1i64; }
+	{"wide-result-bound", `function apply(g: (i32) => i64): i64 { let v: i64 = g(5); return v + 1i64; }
 function main(): i32 { return (apply((x: i32) => (x as i64) * 3000000000i64) / 1000000000i64) as i32; }`},
 	// Control: an all-i32 signature keeps the arity-keyed $fn<N> type and must
 	// be unaffected. If this ever fails the fallback has stopped falling back.
@@ -75,7 +75,7 @@ function main(): i32 { return apply((x: i32) => x * 2); }`},
 
 	// --- the SHADOW rows (#7253) --------------------------------------------
 	//
-	// A nested `var g = <lambda>` shadowing a top-level one. `subst_fcall_expr`
+	// A nested `let g = <lambda>` shadowing a top-level one. `subst_fcall_expr`
 	// rewrites every `g(…)` callee it walks past to the outer lambda's hoisted
 	// `__lam_N`, and it recurses into if / while / for / match bodies with no
 	// notion of scope — so the INNER binding's own calls ran the OUTER lambda.
@@ -90,20 +90,20 @@ function main(): i32 { return apply((x: i32) => x * 2); }`},
 	// The broken one is always the inner binding — the outer one is what the lift
 	// hoisted — so a probe that shadows the other way measures nothing.
 	{"shadowed-sig", `function apply(v: i64): i64 {
-    var g: (i64) => i64 = (x: i64) => x * 2i64;
-    var t: i64 = g(v);
+    let g: (i64) => i64 = (x: i64) => x * 2i64;
+    let t: i64 = g(v);
     if (v > 0i64) {
-        var g: (i32) => i32 = (y: i32) => y + 1;
+        let g: (i32) => i32 = (y: i32) => y + 1;
         t = t + (g(3) as i64);
     }
     return t + g(v + 1i64);
 }
 function main(): i32 { return apply(20i64) as i32; }`},
 	{"shadowed-sig-rename-control", `function apply(v: i64): i64 {
-    var g: (i64) => i64 = (x: i64) => x * 2i64;
-    var t: i64 = g(v);
+    let g: (i64) => i64 = (x: i64) => x * 2i64;
+    let t: i64 = g(v);
     if (v > 0i64) {
-        var h: (i32) => i32 = (y: i32) => y + 1;
+        let h: (i32) => i32 = (y: i32) => y + 1;
         t = t + (h(3) as i64);
     }
     return t + g(v + 1i64);
@@ -114,22 +114,22 @@ function main(): i32 { return apply(20i64) as i32; }`},
 	// declared i64 return, so lower_i64 skipped the sign-extend its i32 result
 	// needed and infer_expr_width width-tracked the binding at 64.
 	{"shadowed-ret", `function apply(v: i64): i64 {
-    var g: (i32) => i64 = (x: i32) => (x as i64) * 3000000000i64;
-    var t: i64 = g(1);
+    let g: (i32) => i64 = (x: i32) => (x as i64) * 3000000000i64;
+    let t: i64 = g(1);
     if (v > 0i64) {
-        var g: (i32) => i32 = (y: i32) => y + 7;
-        var u: i64 = g(3) as i64;
+        let g: (i32) => i32 = (y: i32) => y + 7;
+        let u: i64 = g(3) as i64;
         t = t + u;
     }
     return (t / 1000000000i64) + g(2);
 }
 function main(): i32 { return (apply(4i64) % 83i64) as i32; }`},
 	{"shadowed-ret-rename-control", `function apply(v: i64): i64 {
-    var g: (i32) => i64 = (x: i32) => (x as i64) * 3000000000i64;
-    var t: i64 = g(1);
+    let g: (i32) => i64 = (x: i32) => (x as i64) * 3000000000i64;
+    let t: i64 = g(1);
     if (v > 0i64) {
-        var h: (i32) => i32 = (y: i32) => y + 7;
-        var u: i64 = h(3) as i64;
+        let h: (i32) => i32 = (y: i32) => y + 7;
+        let u: i64 = h(3) as i64;
         t = t + u;
     }
     return (t / 1000000000i64) + g(2);
@@ -145,16 +145,16 @@ function main(): i32 { return (apply(4i64) % 83i64) as i32; }`},
 struct A { v: i32 }
 impl Show for A { function show(self: Self): i32 { return self.v; } }
 function run(k: i32): i32 {
-    var d: (dyn Show) => i32 = (s: dyn Show) => s.show();
-    var t: i32 = d(A { v: k });
+    let d: (dyn Show) => i32 = (s: dyn Show) => s.show();
+    let t: i32 = d(A { v: k });
     if (k % 2 == 0) {
-        var d: (i32) => i32 = (y: i32) => if (y == 4) { 1 } else { 0 };
+        let d: (i32) => i32 = (y: i32) => if (y == 4) { 1 } else { 0 };
         t = t + d(4);
     }
     return t + d(A { v: 1 });
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0;
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + run(i); i = i + 1; }
     return t % 83;
 }`},
@@ -162,16 +162,16 @@ function main(): i32 {
 struct A { v: i32 }
 impl Show for A { function show(self: Self): i32 { return self.v; } }
 function run(k: i32): i32 {
-    var d: (dyn Show) => i32 = (s: dyn Show) => s.show();
-    var t: i32 = d(A { v: k });
+    let d: (dyn Show) => i32 = (s: dyn Show) => s.show();
+    let t: i32 = d(A { v: k });
     if (k % 2 == 0) {
-        var e: (i32) => i32 = (y: i32) => if (y == 4) { 1 } else { 0 };
+        let e: (i32) => i32 = (y: i32) => if (y == 4) { 1 } else { 0 };
         t = t + e(4);
     }
     return t + d(A { v: 1 });
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0;
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + run(i); i = i + 1; }
     return t % 83;
 }`},
@@ -188,7 +188,7 @@ func TestSelfHostFnValueWideSigWasmIR(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostFiles(t, dir,
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
-		"ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
+		"ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	for _, tc := range fnValueWideSigCases {

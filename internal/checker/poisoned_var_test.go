@@ -18,7 +18,7 @@ func diagCount(err error) int {
 	return 1
 }
 
-// A `var` whose initialiser fails to check keeps its name in scope with
+// A `let` whose initialiser fails to check keeps its name in scope with
 // an erroneous type, so the one real error is the only one reported
 // (#5317). Dropping the binding — what the recovery path used to do —
 // turned a single typo into an E001 per later use, which is how a
@@ -36,7 +36,7 @@ func TestFailedVarInitPoisonsTheBinding(t *testing.T) {
 		{
 			name: "undefined initialiser, read once",
 			src: `function main(): i32 {
-    var b = nosuch();
+    let b = nosuch();
     return b;
 }`,
 			want: `undefined identifier "nosuch"`,
@@ -46,10 +46,10 @@ func TestFailedVarInitPoisonsTheBinding(t *testing.T) {
 			src: `struct S { n: i32 }
 function take(x: i32): i32 { return x; }
 function main(): i32 {
-    var b = nosuch();
-    var s = S { n: b };
-    var t = take(b);
-    var u = b as i64;
+    let b = nosuch();
+    let s = S { n: b };
+    let t = take(b);
+    let u = b as i64;
     print(f"{b}\n");
     if (b) { return 1; }
     while (b) { }
@@ -60,9 +60,9 @@ function main(): i32 {
 		{
 			name: "poison transfers to the bindings that read it",
 			src: `function main(): i32 {
-    var b = nosuch();
-    var c = b + 1;
-    var d = c * 2;
+    let b = nosuch();
+    let c = b + 1;
+    let d = c * 2;
     return d;
 }`,
 			want: `undefined identifier "nosuch"`,
@@ -74,9 +74,9 @@ function main(): i32 {
 			// that never sees a checkExpr result.
 			name: "captured by a local function and a lambda",
 			src: `function main(): i32 {
-    var b = nosuch();
+    let b = nosuch();
     function inner(): i32 { return b; }
-    var f = (x: i32) => x + b;
+    let f = (x: i32) => x + b;
     return inner();
 }`,
 			want: `undefined identifier "nosuch"`,
@@ -84,7 +84,7 @@ function main(): i32 {
 		{
 			name: "un-annotated empty array",
 			src: `function main(): i32 {
-    var xs = [];
+    let xs = [];
     return xs.len();
 }`,
 			want: "empty array literal needs a type annotation",
@@ -92,7 +92,7 @@ function main(): i32 {
 		{
 			name: "array literal whose elements failed to check",
 			src: `function main(): i32 {
-    var xs = [nosuch(), 1];
+    let xs = [nosuch(), 1];
     return xs.len();
 }`,
 			want: `undefined identifier "nosuch"`,
@@ -203,9 +203,9 @@ function main(): i32 {
 // connection to either is still reported.
 func TestPoisonDoesNotSwallowIndependentErrors(t *testing.T) {
 	err := checkSource(t, `function main(): i32 {
-    var b = nosuch();
-    var d = alsonosuch();
-    var e: i32 = "hi";
+    let b = nosuch();
+    let d = alsonosuch();
+    let e: i32 = "hi";
     return 0;
 }`)
 	if err == nil {
@@ -225,8 +225,8 @@ func TestPoisonDoesNotSwallowIndependentErrors(t *testing.T) {
 // is still E013.
 func TestPoisonedBindingStillCollidesOnRedeclaration(t *testing.T) {
 	err := checkSource(t, `function main(): i32 {
-    var b = nosuch();
-    var b: i32 = 1;
+    let b = nosuch();
+    let b: i32 = 1;
     return b;
 }`)
 	if err == nil {

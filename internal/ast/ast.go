@@ -1102,7 +1102,7 @@ func (n NumberType) IsSigned() bool {
 // uses for untyped float literals, and the language's primary
 // float type. Defaulting these to f32 silently halved the
 // precision of any literal not explicitly annotated `f64` (e.g.
-// `var x = 1.0 / 3.0` or a bare `(3.14159).to_string()` receiver).
+// `let x = 1.0 / 3.0` or a bare `(3.14159).to_string()` receiver).
 // An explicit `f32` is spelled `FloatType{Width:0, Spelling:"f32"}`
 // by the parser (the historical zero-value-is-f32 convention), so a
 // NON-polymorphic Width=0 still maps to 32 — only the Polymorphic
@@ -1207,7 +1207,7 @@ func UseTwoWordStrings(ptrW int) bool {
 // (`docs/SSO-NATIVE-FLIP-STATUS.md`). Set to true before
 // `ir.LowerWith` runs; reset after.
 //
-// Concurrent codegen — e.g. `TestDifferential_LangsmithMain`'s
+// Concurrent codegen — e.g. a differential sweep's
 // per-seed parallelism — must serialise its arm64 + x86_64
 // emit calls via `CodegenMu` below. Reads from this flag
 // during a backend's emit body are NOT lock-protected; the
@@ -1965,7 +1965,7 @@ type NumberLit struct {
 	// of the literal's type need to know.
 	IsUnsigned bool
 	// IsFloat is set when a polymorphic integer literal got
-	// settled to a float type via settleFloat (e.g. `var r:
+	// settled to a float type via settleFloat (e.g. `let r:
 	// f32 = 0`, `f32_param * 2`, `r <= 0` where r is f32).
 	// FloatWidth records the destination float width; the IR
 	// emits OpConstF32 / OpConstF64 with float64(Value) instead
@@ -2131,7 +2131,7 @@ type FloatLit struct {
 	// from Value as before.
 	Raw string
 	// Width is set by the checker once a concrete float type is
-	// known (`var x: f32 = 1.5` → 32). 0 means the literal stayed
+	// known (`let x: f32 = 1.5` → 32). 0 means the literal stayed
 	// unsettled; every consumer (interp, IR lowering) defaults it
 	// to f64, the language's primary float — see
 	// FloatType.NormalWidth.
@@ -2856,7 +2856,7 @@ type ForEach struct {
 	RangeHigh Expr
 	RangeIncl bool
 	// Pattern is the destructuring header `for (a, b) in xs` — the very
-	// *Destructure that `var (a, b) = e;` builds, so one pattern grammar
+	// *Destructure that `let (a, b) = e;` builds, so one pattern grammar
 	// serves both. Its Init is left nil for the lowering to fill: over an
 	// array it reads the element bound to Var, over a Map its Names take the
 	// entry's key and value directly. Nil for the plain `for x in xs` form.
@@ -2894,7 +2894,7 @@ func DesugarForEachArray(fe *ForEach) *Block {
 // step lives on the For (not appended to the body) so `continue` still advances
 // the index; the index decls sit beside the loop so an outer loop does not
 // re-zero them. A destructuring header binds the element to the synthetic Var
-// and hands it to the pattern, which is the same *Destructure `var (a, b) = e;`
+// and hands it to the pattern, which is the same *Destructure `let (a, b) = e;`
 // produces.
 func ForEachArrayLoop(fe *ForEach, iterName string) []Stmt {
 	kw := fe.P
@@ -2936,12 +2936,12 @@ func ForEachArrayLoop(fe *ForEach, iterName string) []Stmt {
 // come out in insertion order with no per-iteration allocation. The pattern's
 // two top-level binders take the key and the value; any nested pattern below
 // them is its own Destructure reading the binder it names, exactly as in
-// `var ((a, b), v) = e;`.
+// `let ((a, b), v) = e;`.
 //
-//	var __foreach_iter_N = m.iter();          (the caller's binding)
+//	let __foreach_iter_N = m.iter();          (the caller's binding)
 //	for (; __foreach_iter_N.has_next(); __foreach_iter_N.advance()) {
-//	  var K = __foreach_iter_N.key();
-//	  var V = __foreach_iter_N.value();
+//	  let K = __foreach_iter_N.key();
+//	  let V = __foreach_iter_N.value();
 //	  <body>
 //	}
 func ForEachMapLoop(fe *ForEach, iterName string) []Stmt {
@@ -3015,7 +3015,7 @@ func StreamElemKind(t Type) string {
 //	    var __stream_c_<ID> = f$open(args);            // cursor pointer
 //	    while (true) {
 //	        if (__stream_next(__stream_c_<ID>) == 0) { break; }   // 0 = EOF
-//	        var x: T = __stream_elem_<kind>(__stream_c_<ID>);     // buffered element
+//	        let x: T = __stream_elem_<kind>(__stream_c_<ID>);     // buffered element
 //	        BODY
 //	    }
 //	    __stream_drop(__stream_c_<ID>);
@@ -4152,8 +4152,8 @@ type ResourceDecl struct {
 //     `type Expr = Binary | Unary | Call` instead of
 //     `enum Expr { Binary(Binary), Unary(Unary), Call(Call) }`.
 //   - A bare struct literal flows into the union without an
-//     explicit wrap: `var e: Expr = Binary{...}` instead of
-//     `var e: Expr = Binary(Binary{...})`. The checker's
+//     explicit wrap: `let e: Expr = Binary{...}` instead of
+//     `let e: Expr = Binary(Binary{...})`. The checker's
 //     `assignable` rule recognises the (struct, union) pair
 //     and inserts the wrapping at the AST level.
 type UnionDecl struct {
@@ -4414,7 +4414,7 @@ type Program struct {
 	// inside blocks rather than collapsing every statement together.
 	BlankLines []int
 	// TypeRefs records every named-type reference the parser saw
-	// in a type-annotation slot (`var c: Color`, `Option[T]`,
+	// in a type-annotation slot (`let c: Color`, `Option[T]`,
 	// `pub function f(x: Point): Result[i32, Err]`, field type
 	// lists, etc.). Each entry is `(position, source-spelling)`
 	// for the name token alone — composite parts (`[T]`, `T[]`,
@@ -4422,7 +4422,7 @@ type Program struct {
 	// parseType descent. The LSP queries this to answer
 	// "what type is at this position?" because ast.Type values are
 	// positionless; without this table, type-annotation hover
-	// (`var c: Color`) and goto-def on type names can't work.
+	// (`let c: Color`) and goto-def on type names can't work.
 	// Modload merges every loaded module's entries into this one
 	// table, stamping each with its SourceModule; the checker
 	// leaves it alone.

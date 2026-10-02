@@ -72,8 +72,8 @@ func TestSelfHostWasmModloadTypedLowering(t *testing.T) {
 		write(t, entry, `import "./leaf";
 
 function main(): i32 {
-    var s: string = leaf.pick("ab", "xyz", false);
-    var k: i32 = 3;
+    let s: string = leaf.pick("ab", "xyz", false);
+    let k: i32 = 3;
     return leaf.pick(4, 5, true) + s.len() + leaf.apply((x: i32): i32 => x * k, 2);
 }
 `)
@@ -136,7 +136,7 @@ function main(): i32 {
 		write(t, filepath.Join(proj, "leaf.fern"), `pub struct Slot[T] { v: T }
 
 pub function keep[T](f: () => T): T {
-    var c: Slot[T] = Slot[T] { v: f() };
+    let c: Slot[T] = Slot[T] { v: f() };
     return c.v;
 }
 `)
@@ -144,8 +144,8 @@ pub function keep[T](f: () => T): T {
 		write(t, entry, `import "./leaf";
 
 function main(): i32 {
-    var fs: (() => i64)[] = [(): i64 => 5000000010 as i64];
-    var gs: (() => string)[] = [(): string => "ab" + "c"];
+    let fs: (() => i64)[] = [(): i64 => 5000000010 as i64];
+    let gs: (() => string)[] = [(): string => "ab" + "c"];
     return ((leaf.keep(fs[0]) - (5000000000 as i64)) as i32) + leaf.keep(gs[0]).len();
 }
 `)
@@ -193,20 +193,20 @@ function main(): i32 {
 struct P { a: str }
 impl Size for P { function size(self: P): i32 { return self.a.len() * 10 + (self.a[0] as i32) - 97; } }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
-function wrap(s: string): dyn Size { var p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
+function wrap(s: string): dyn Size { let p: P = P { a: slice_unchecked(s, 1, 4) }; return p; }
 function g(n: i32): i32 {
-    var d: dyn Size = P { a: "q" };
+    let d: dyn Size = P { a: "q" };
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         d = wrap(s);
     }
-    var junk: string[] = [];
-    var i: i32 = 0;
+    let junk: string[] = [];
+    let i: i32 = 0;
     while (i < 50) { junk = junk.append("zz"); i = i + 1; }
     return d.size();
 }
@@ -241,13 +241,13 @@ function main(): i32 { return g(3) + g(0); }
 		proj := t.TempDir()
 		entry := filepath.Join(proj, "main.fern")
 		write(t, entry, `function viewer(n: i32): () => i32 {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
-    var v: str = slice_unchecked(s, 1, 4);
+    let v: str = slice_unchecked(s, 1, 4);
     return () => v.len() * 10 + (v[0] as i32) - 97;
 }
-function main(): i32 { var f: () => i32 = viewer(3); return f(); }
+function main(): i32 { let f: () => i32 = viewer(3); return f(); }
 `)
 		_, se, code := drive(t, entry, nil, "-per-module-emit", "0")
 		if code != 3 || !strings.Contains(se, "FERN_SEM_IR: viewer: closure capture type") {
@@ -264,17 +264,17 @@ function main(): i32 { var f: () => i32 = viewer(3); return f(); }
 		write(t, entry, `import "std/i32";
 enum L { Cons(str, L), Nil }
 function mk(n: i32): string {
-    var s: string = "ab";
-    var i: i32 = 0;
+    let s: string = "ab";
+    let i: i32 = 0;
     while (i < n) { s = s + "c"; i = i + 1; }
     return s;
 }
 function two(s: string): L { return Cons(slice_unchecked(s, 0, 1), Cons(slice_unchecked(s, 1, 3), Nil)); }
 function count(l: L): i32 { match (l) { Cons(h, t) => { return h.len() + count(t); }, Nil => { return 0; } } return 0; }
 function g(n: i32): i32 {
-    var l: L = Nil;
+    let l: L = Nil;
     if (n != 0) {
-        var s: string = mk(n);
+        let s: string = mk(n);
         l = two(s);
     }
     return count(l);

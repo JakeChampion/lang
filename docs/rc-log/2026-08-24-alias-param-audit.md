@@ -12,7 +12,7 @@ registry is shared and kind-agnostic; the per-kind gates all bottom out in
 the same lookup). Registry side: the flag is refused by the
 `body_unsafe_for_match_borrow` conjunct in `borrowable_params_of` (and its
 interproc twin), whose walker reaches the bare-ident StmtVar init with a
-hardwired-empty alias list — the callee's `var x = src` alone flips the flag.
+hardwired-empty alias list — the callee's `let x = src` alone flips the flag.
 The `alias_ok` forgiveness machinery exists one call away and is simply never
 fed there.
 

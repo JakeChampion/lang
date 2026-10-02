@@ -16,8 +16,8 @@ func TestWASMLongPrintWriteEprint(t *testing.T) {
 import "std/i32";
 
 function body(n: i32): string {
-    var s: string = "";
-    var i: i32 = 0;
+    let s: string = "";
+    let i: i32 = 0;
     while (s.len() < n) {
         s = s + (i % 10).to_string();
         i = i + 1;

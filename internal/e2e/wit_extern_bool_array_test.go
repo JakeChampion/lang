@@ -152,7 +152,7 @@ func TestExternBoolArrayParamCustomProvider(t *testing.T) {
 function count_true(b: boolean[]): i32;
 
 function main(): i32 {
-	var bs: boolean[] = [true, false, true];
+	let bs: boolean[] = [true, false, true];
 	if (count_true(bs) == 2) { write("` + want + `"); } else { write("ct-bad"); }
 	return 0;
 }`

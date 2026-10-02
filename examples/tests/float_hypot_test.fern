@@ -61,7 +61,7 @@ function test_f32_fract(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/float hypot");
+  let r: test.TestRunner = test.test_new("std/float hypot");
   r = r.it("hypot 3,4,5", test_hypot_345);
   r = r.it("hypot 5,12,13", test_hypot_51213);
   r = r.it("hypot 0,0", test_hypot_zero);

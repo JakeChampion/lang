@@ -21,8 +21,8 @@ func TestSelfHostX86ByteKernelsRunAVX2(t *testing.T) {
 	src := filepath.Join(dir, "kernels.fern")
 	prog := `import "std/string";
 function main(): i32 {
-    var s: string = "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789";
-    var n: i32 = s.count_byte(97) + s.index_of("z") + s.last_index_of("z") + __ascii_run(s, 0);
+    let s: string = "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789";
+    let n: i32 = s.count_byte(97) + s.index_of("z") + s.last_index_of("z") + __ascii_run(s, 0);
     return n % 100;
 }
 `

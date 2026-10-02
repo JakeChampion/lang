@@ -5,7 +5,7 @@
 //
 // The monomorphiser has two ways to instantiate a call. mono_expr infers the
 // type variable from the ARGUMENTS; mono_call_expected also unifies an EXPECTED
-// type against the return. `var x: T[] = f(..)` and `return f(..)` route through
+// type against the return. `let x: T[] = f(..)` and `return f(..)` route through
 // the second, but a struct-literal field value went to the first — so a call
 // whose args do not determine T stayed the un-instantiated template and mangled
 // to a name no instantiation defines. The generic-ENUM walk had always passed
@@ -27,7 +27,7 @@ struct Holder { xs: A[], ys: A[], ss: S[], ts: S[] }
 struct Bag { av: A[], sv: S[] }
 
 function append_all[T](into: T[], more: T[]): T[] {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < more.len()) { into = into.append(more[i]); i = i + 1; }
     return into;
 }
@@ -44,21 +44,21 @@ function build_idents(a: A[], b: A[], s: S[], t: S[]): Bag {
 
 // Control: binding first is the workaround that always worked.
 function build_bound(h: Holder): Bag {
-    var av: A[] = append_all(h.xs, h.ys);
-    var sv: S[] = append_all(h.ss, h.ts);
+    let av: A[] = append_all(h.xs, h.ys);
+    let sv: S[] = append_all(h.ss, h.ts);
     return Bag { av: av, sv: sv };
 }
 
 function main(): i32 {
-    var h: Holder = Holder {
+    let h: Holder = Holder {
         xs: [A { n: 1 }],
         ys: [A { n: 2 }, A { n: 3 }],
         ss: [S { s: "p" }],
         ts: [S { s: "q" }],
     };
-    var b1: Bag = build(h);
-    var b2: Bag = build_idents(h.xs, h.ys, h.ss, h.ts);
-    var b3: Bag = build_bound(h);
+    let b1: Bag = build(h);
+    let b2: Bag = build_idents(h.xs, h.ys, h.ss, h.ts);
+    let b3: Bag = build_bound(h);
     // 3 + 2 + 3 + 2 + 3 + 2 = 15
     return b1.av.len() + b1.sv.len() + b2.av.len() + b2.sv.len() + b3.av.len() + b3.sv.len();
 }

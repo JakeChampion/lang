@@ -11,8 +11,8 @@ import (
 // or enum compares its keys through K's derived `Eq` on the self-host ARM64
 // path, not by reinterpreting the key box.
 //
-// The arm64 map runtime had no keyed-compare path at all. irlower threads the
-// derived equality symbol through every keyed map op (`map_key_eqfn` →
+// The arm64 map runtime had no keyed-compare path at all. The lowering threads the
+// derived equality symbol through every keyed map op (in
 // `Op.str`), and the x86-64 emitter loads it into %r8 for __fern_map_set /
 // _get / _has / _delete — but the arm64 emitter discarded it, so a
 // struct key fell through to the STRING loop and `__fern_str_eq` read the key
@@ -54,7 +54,7 @@ import "core/cmp";
 struct Name { first: string, rank: i32 }
 
 function main(): i32 {
-    var m: Map[Name, i32] = map_new(8);
+    let m: Map[Name, i32] = map_new(8);
     m = m.insert(Name { first: "ada", rank: 1 }, 10);
     m = m.insert(Name { first: "bob", rank: 2 }, 20);
     if (m.get_or(Name { first: "a" + "da", rank: 1 }, -1) != 10) { return 1; }   // map_get
@@ -64,7 +64,7 @@ function main(): i32 {
     m = m.insert(Name { first: "a" + "da", rank: 1 }, 99);                       // map_set overwrite
     if (m.len() != 2) { return 5; }
     if (m.get_or(Name { first: "ada", rank: 1 }, -1) != 99) { return 6; }
-    var (m2, gone) = m.without(Name { first: "a" + "da", rank: 1 });             // map_delete
+    let (m2, gone) = m.without(Name { first: "a" + "da", rank: 1 });             // map_delete
     if (!gone) { return 7; }
     if (m2.has(Name { first: "ada", rank: 1 })) { return 8; }
     if (m2.len() != 1) { return 9; }
@@ -82,7 +82,7 @@ import "core/cmp";
 struct P { a: i32, b: i32 }
 
 function main(): i32 {
-    var m: Map[P, i32] = map_new(8);
+    let m: Map[P, i32] = map_new(8);
     m = m.insert(P { a: 1, b: 2 }, 10);
     m = m.insert(P { a: 3, b: 4 }, 20);
     if (m.get_or(P { a: 1, b: 2 }, -1) != 10) { return 1; }
@@ -101,7 +101,7 @@ import "core/cmp";
 enum Tag { A(i32), B, C(string) }
 
 function main(): i32 {
-    var m: Map[Tag, i32] = map_new(8);
+    let m: Map[Tag, i32] = map_new(8);
     m = m.insert(A(1), 100);
     m = m.insert(B, 200);
     m = m.insert(C("x" + "y"), 300);

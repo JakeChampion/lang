@@ -30,16 +30,16 @@ var nestedArrayIRCases = []struct {
 	main string
 }{
 	// Read across two rows of a 2x2 i32[][]: m[0][1] + m[1][0] = 2 + 3 = 5.
-	{"read-2x2", `function main(): i32 { var m: i32[][] = [[1, 2], [3, 4]]; return m[0][1] + m[1][0]; }`},
+	{"read-2x2", `function main(): i32 { let m: i32[][] = [[1, 2], [3, 4]]; return m[0][1] + m[1][0]; }`},
 	// Outer + inner length: m.len() (2) + m[0].len() (3) = 5.
-	{"row-len", `function main(): i32 { var m: i32[][] = [[1, 2, 3], [4, 5]]; return m.len() + m[0].len(); }`},
+	{"row-len", `function main(): i32 { let m: i32[][] = [[1, 2, 3], [4, 5]]; return m.len() + m[0].len(); }`},
 	// Loop-sum every element via per-row binding: 1+2+3+4+5+6 = 21.
-	{"loop-sum", `function main(): i32 { var m: i32[][] = [[1, 2], [3, 4], [5, 6]]; var s = 0; var i = 0; while (i < m.len()) { var r = m[i]; var j = 0; while (j < r.len()) { s = s + r[j]; j = j + 1; } i = i + 1; } return s; }`},
+	{"loop-sum", `function main(): i32 { let m: i32[][] = [[1, 2], [3, 4], [5, 6]]; let s = 0; let i = 0; while (i < m.len()) { let r = m[i]; let j = 0; while (j < r.len()) { s = s + r[j]; j = j + 1; } i = i + 1; } return s; }`},
 	// string[][]: nested string elements round-trip; sum their byte lengths.
 	// "ab"(2) + "c"(1) + "de"(2) = 5.
-	{"string-nested", `function main(): i32 { var g: string[][] = [["ab", "c"], ["de"]]; return g[0][0].len() + g[0][1].len() + g[1][0].len(); }`},
+	{"string-nested", `function main(): i32 { let g: string[][] = [["ab", "c"], ["de"]]; return g[0][0].len() + g[0][1].len() + g[1][0].len(); }`},
 	// f64[][] direct nested read — the parallel f64 8-byte fix. 2.5 * 2 = 5.
-	{"f64-2x2", `function main(): i32 { var m: f64[][] = [[2.5], [3.5]]; return (m[0][0] * 2.0) as i32; }`},
+	{"f64-2x2", `function main(): i32 { let m: f64[][] = [[2.5], [3.5]]; return (m[0][0] * 2.0) as i32; }`},
 }
 
 // nestedArrayI64IRCases pin the i64[][] read AND construction fixes on x86-64 +
@@ -50,7 +50,7 @@ var nestedArrayIRCases = []struct {
 // classifies a literal that exceeds i32-max as i64 by value (it has no valid
 // i32 reading — checker E047), so the inner array literal takes the
 // arr_make_i64 path and the element is emitted i64.const.
-// (An UNANNOTATED 1-D big-literal array — `var a = [7000000000]` — would exercise
+// (An UNANNOTATED 1-D big-literal array — `let a = [7000000000]` — would exercise
 // the same compiler path, but the tree-walking interpreter still defaults an
 // unannotated big literal to i32 and wraps, so it can't serve as an oracle here;
 // that checker/interp divergence is tracked separately. The annotated cases below
@@ -61,17 +61,17 @@ var nestedArrayI64IRCases = []struct {
 }{
 	// i64[][] direct nested read — the 8-byte element must NOT truncate to 32 bits.
 	// 5000000000 / 1e9 = 5.
-	{"i64-2x2", `function main(): i32 { var m: i64[][] = [[5000000000], [6000000000]]; return (m[0][0] / 1000000000) as i32; }`},
-	// i64[][] via a row binding (var r = m[0]; r[j]) — r tracked as i64[]. 5+1 = 6.
-	{"i64-row-binding", `function main(): i32 { var m: i64[][] = [[5000000000, 1000000000], [2000000000]]; var r = m[0]; return (r[0] / 1000000000) as i32 + (r[1] / 1000000000) as i32; }`},
+	{"i64-2x2", `function main(): i32 { let m: i64[][] = [[5000000000], [6000000000]]; return (m[0][0] / 1000000000) as i32; }`},
+	// i64[][] via a row binding (let r = m[0]; r[j]) — r tracked as i64[]. 5+1 = 6.
+	{"i64-row-binding", `function main(): i32 { let m: i64[][] = [[5000000000, 1000000000], [2000000000]]; let r = m[0]; return (r[0] / 1000000000) as i32 + (r[1] / 1000000000) as i32; }`},
 	// i64[][] via nested for-in (for row in m { for x in row }). (5+6)e9 / 1e9 = 11.
-	{"i64-forin", `function main(): i32 { var m: i64[][] = [[5000000000], [6000000000]]; var t: i64 = 0; for row in m { for x in row { t = t + x; } } return (t / 1000000000) as i32; }`},
+	{"i64-forin", `function main(): i32 { let m: i64[][] = [[5000000000], [6000000000]]; let t: i64 = 0; for row in m { for x in row { t = t + x; } } return (t / 1000000000) as i32; }`},
 }
 
 // nestedArrayStructIRCases pin field/method access on a struct/enum element of an
 // array-of-arrays (`a[i][j].field`, `a[i][j].method()`) to the self-host IR path on
 // x86-64 + wasm. Value lowering of `a[i][j]` already worked (the temp-bound form
-// `var p = a[i][j]; p.x` lowers), but `expr_struct_type` couldn't recover the
+// `let p = a[i][j]; p.x` lowers), but `expr_struct_type` couldn't recover the
 // element type for a doubly-indexed `a[i][j]` (its ExprIndex arm only matched an
 // ExprIdent/ExprFieldAccess array, never a nested ExprIndex), so the field-read and
 // method-dispatch paths bailed. #2691 adds the depth-2 ExprIndex
@@ -82,15 +82,15 @@ var nestedArrayStructIRCases = []struct {
 	main string
 }{
 	// Two field reads off a struct element of a P[][]. 3 + 4 = 7.
-	{"struct-field", `struct P{x:i32,y:i32} function main(): i32 { var a: P[][] = [[P{x:3,y:4}]]; return a[0][0].x + a[0][0].y; }`},
+	{"struct-field", `struct P{x:i32,y:i32} function main(): i32 { let a: P[][] = [[P{x:3,y:4}]]; return a[0][0].x + a[0][0].y; }`},
 	// Variable indices into the nested struct array. a[0][1].x = 6.
-	{"struct-field-var-idx", `struct P{x:i32} function main(): i32 { var a: P[][] = [[P{x:5},P{x:6}]]; var i = 0; var j = 1; return a[i][j].x; }`},
+	{"struct-field-var-idx", `struct P{x:i32} function main(): i32 { let a: P[][] = [[P{x:5},P{x:6}]]; let i = 0; let j = 1; return a[i][j].x; }`},
 	// Method dispatch on the struct element. 3*2 = 6.
-	{"struct-method", `struct P{x:i32} function (p: P) val(): i32 { return p.x*2; } function main(): i32 { var a: P[][] = [[P{x:3}]]; return a[0][0].val(); }`},
+	{"struct-method", `struct P{x:i32} function (p: P) val(): i32 { return p.x*2; } function main(): i32 { let a: P[][] = [[P{x:3}]]; return a[0][0].val(); }`},
 	// 8-byte i64 field on the nested element (field read picks the 8-byte load). 5.
-	{"struct-i64-field", `struct P{x:i64} function main(): i32 { var a: P[][] = [[P{x:5000000000}]]; return (a[0][0].x / 1000000000) as i32; }`},
+	{"struct-i64-field", `struct P{x:i64} function main(): i32 { let a: P[][] = [[P{x:5000000000}]]; return (a[0][0].x / 1000000000) as i32; }`},
 	// Method dispatch on an enum element of a Sh[][] (`<Enum>.<method>`). 3*3 = 9.
-	{"enum-method", `enum Sh{C(i32)} function (s: Sh) area(): i32 { match(s){Sh.C(r)=>{return r*r;}} } function main(): i32 { var a: Sh[][] = [[Sh.C(3)]]; return a[0][0].area(); }`},
+	{"enum-method", `enum Sh{C(i32)} function (s: Sh) area(): i32 { match(s){Sh.C(r)=>{return r*r;}} } function main(): i32 { let a: Sh[][] = [[Sh.C(3)]]; return a[0][0].area(); }`},
 }
 
 // TestSelfHostNestedArrayIRX86_64 routes each case through the self-hosted x86-64

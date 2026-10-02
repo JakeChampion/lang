@@ -5,7 +5,7 @@
 ```
 function make(s: string): (i32) => i32 { return (x: i32): i32 => { return x + s.len(); }; }
 …
-while (i < 200) { var f: (i32) => i32 = make("a" + "b"); … }
+while (i < 200) { let f: (i32) => i32 = make("a" + "b"); … }
 ```
 
 On x86-64 `-sanitize` this freed 2 of 400 blocks. A closure that captured

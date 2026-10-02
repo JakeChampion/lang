@@ -10,7 +10,7 @@ import (
 // on the self-host's wasm target while native wasm ran it. The word stored is
 // 0xC8030201: the high byte checks the load zero-extends.
 const loadU8Src = `function main(): i32 {
-    var p: usize = __alloc(16);
+    let p: usize = __alloc(16);
     __store_i32(p, 0 - 939326975);
     if (__load_u8(p) != 1) { return 1; }
     if (__load_u8(p + 1) != 2) { return 2; }

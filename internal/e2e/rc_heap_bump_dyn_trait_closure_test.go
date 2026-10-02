@@ -49,15 +49,15 @@ func dynClosureCaptureSrc(n string) string {
 struct Circle { tag: string }
 impl Shape for Circle { function area(self: Self): i32 { return 1; } }
 function make(seed: i32): () => i32 {
-    var dc: dyn Shape = Circle { tag: "a heap string owned by a circle behind a captured dyn" };
+    let dc: dyn Shape = Circle { tag: "a heap string owned by a circle behind a captured dyn" };
     return (): i32 => { return dc.area(); };
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var f: () => i32 = make(i);
+        let f: () => i32 = make(i);
         sum = sum + f();
         i = i + 1;
     }
@@ -76,14 +76,14 @@ func dynClosureCaptureUnderflowSrc(n string) string {
 struct Circle { tag: string }
 impl Shape for Circle { function area(self: Self): i32 { return 1; } }
 function make(seed: i32): () => i32 {
-    var dc: dyn Shape = Circle { tag: "a heap string owned by a circle behind a captured dyn" };
+    let dc: dyn Shape = Circle { tag: "a heap string owned by a circle behind a captured dyn" };
     return (): i32 => { return dc.area(); };
 }
 function main(): i32 {
-    var i: i32 = 0;
-    var sum: i32 = 0;
+    let i: i32 = 0;
+    let sum: i32 = 0;
     while (i < ` + n + `) {
-        var f: () => i32 = make(i);
+        let f: () => i32 = make(i);
         sum = sum + f();
         i = i + 1;
     }

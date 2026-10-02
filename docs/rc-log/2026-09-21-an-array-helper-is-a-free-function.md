@@ -4,7 +4,7 @@
 on one call:
 
 ```fern
-var s: string = xs.join_with_last(", ", " and ");
+let s: string = xs.join_with_last(", ", " and ");
 ```
 
 ```

@@ -22,49 +22,49 @@ var bufIRCases = []struct {
 	name, src, want string
 }{
 	{"take-bytes", `function main(): i32 {
-    var h: usize = buf_new(1);
-    var empty: u8[] = buf_take_bytes(h);
+    let h: usize = buf_new(1);
+    let empty: u8[] = buf_take_bytes(h);
     if (empty.len() != 0) { return 1; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 256) { buf_push_byte(h, i); i = i + 1; }
-    var out: u8[] = buf_take_bytes(h);
+    let out: u8[] = buf_take_bytes(h);
     buf_push_byte(h, 99);
-    var next: u8[] = buf_take_bytes(h);
+    let next: u8[] = buf_take_bytes(h);
     buf_free(h);
     if (out.len() != 256 || next.len() != 1 || next[0] != 99) { return 2; }
     i = 0;
     while (i < 256) { if (out[i] != i as u8) { return 3; } i = i + 1; }
     return 0;
 }`, ""},
-	{"build", `function main(): i32 { var b: usize = buf_new(16); buf_push(b, "ab"); buf_push(b, "cd"); write(buf_take(b)); buf_free(b); return 0; }`, "abcd"},
-	{"empty-take", `function main(): i32 { var b: usize = buf_new(16); write(buf_take(b)); write("end"); buf_free(b); return 0; }`, "end"},
-	{"reuse-after-take", `function main(): i32 { var b: usize = buf_new(16); buf_push(b, "x"); write(buf_take(b)); buf_push(b, "y"); write(buf_take(b)); buf_free(b); return 0; }`, "xy"},
-	{"two-builders", `function main(): i32 { var a: usize = buf_new(16); var c: usize = buf_new(16); buf_push(a, "A"); buf_push(c, "B"); buf_push(a, "A"); write(buf_take(a)); write(buf_take(c)); buf_free(a); buf_free(c); return 0; }`, "AAB"},
-	{"push-byte-and-range", `function main(): i32 { var b: usize = buf_new(16); buf_push_byte(b, 33); buf_push_range(b, "0123456789", 2, 5); buf_push_range(b, "xyz", 0, 2); write(buf_take(b)); buf_free(b); return 0; }`, "!234xy"},
+	{"build", `function main(): i32 { let b: usize = buf_new(16); buf_push(b, "ab"); buf_push(b, "cd"); write(buf_take(b)); buf_free(b); return 0; }`, "abcd"},
+	{"empty-take", `function main(): i32 { let b: usize = buf_new(16); write(buf_take(b)); write("end"); buf_free(b); return 0; }`, "end"},
+	{"reuse-after-take", `function main(): i32 { let b: usize = buf_new(16); buf_push(b, "x"); write(buf_take(b)); buf_push(b, "y"); write(buf_take(b)); buf_free(b); return 0; }`, "xy"},
+	{"two-builders", `function main(): i32 { let a: usize = buf_new(16); let c: usize = buf_new(16); buf_push(a, "A"); buf_push(c, "B"); buf_push(a, "A"); write(buf_take(a)); write(buf_take(c)); buf_free(a); buf_free(c); return 0; }`, "AAB"},
+	{"push-byte-and-range", `function main(): i32 { let b: usize = buf_new(16); buf_push_byte(b, 33); buf_push_range(b, "0123456789", 2, 5); buf_push_range(b, "xyz", 0, 2); write(buf_take(b)); buf_free(b); return 0; }`, "!234xy"},
 	// take-len asserts through the exit code: buf_take's result is a string
 	// box, so its .len() dispatches as a string, which is what says the
 	// self-host's expr_is_str tracks the result.
-	{"take-len", `function main(): i32 { var b: usize = buf_new(16); buf_push(b, "abcde"); var s: string = buf_take(b); buf_free(b); return s.len(); }`, ""},
+	{"take-len", `function main(): i32 { let b: usize = buf_new(16); buf_push(b, "abcde"); let s: string = buf_take(b); buf_free(b); return s.len(); }`, ""},
 	// GROWTH: 100 pushes of "xyz" = 300 bytes out of a 16-byte reserve, so the
 	// buffer doubles several times. Reads s[250] ('y' = 121), well past every
 	// intermediate buffer, so a dropped byte in a grow-copy shows up.
-	{"grow-byte", `function main(): i32 { var b: usize = buf_new(16); var i: i32 = 0; while (i < 100) { buf_push(b, "xyz"); i = i + 1; } var s: string = buf_take(b); buf_free(b); return s[250] as i32; }`, ""},
+	{"grow-byte", `function main(): i32 { let b: usize = buf_new(16); let i: i32 = 0; while (i < 100) { buf_push(b, "xyz"); i = i + 1; } let s: string = buf_take(b); buf_free(b); return s[250] as i32; }`, ""},
 	// The eight-byte push (#9221). It carries a value 64 bits WIDE, which is
 	// the part the self-host has to get right beyond the store itself: wasm
 	// types its stack, so an i32 reaching the helper's i64 parameter is a
 	// module the host refuses rather than a truncation nobody sees. The
 	// constants are printable ASCII, which is what makes the ORDER readable —
 	// 0x4847464544434241 least-significant-byte-first is "ABCDEFGH".
-	{"push-u64", `function main(): i32 { var b: usize = buf_new(16); buf_push_u64(b, 0x4847464544434241); buf_push(b, "-"); buf_push_u64(b, 0x5a59585756555453); write(buf_take(b)); buf_free(b); return 0; }`, "ABCDEFGH-STUVWXYZ"},
+	{"push-u64", `function main(): i32 { let b: usize = buf_new(16); buf_push_u64(b, 0x4847464544434241); buf_push(b, "-"); buf_push_u64(b, 0x5a59585756555453); write(buf_take(b)); buf_free(b); return 0; }`, "ABCDEFGH-STUVWXYZ"},
 	// The value from ARITHMETIC rather than a literal, and a grow: 40 pushes
 	// of eight bytes out of a 16-byte reserve. Answers with the length and the
 	// last of the 320 bytes, so a short grow-copy shows up.
-	{"push-u64-grow", `function main(): i32 { var b: usize = buf_new(16); var v: u64 = 0; var k: i32 = 0; while (k < 8) { v = v * 256 + 65; k = k + 1; } var i: i32 = 0; while (i < 40) { buf_push_u64(b, v); i = i + 1; } var s: string = buf_take(b); buf_free(b); return s.len() / 10 + (s[319] as i32); }`, ""},
+	{"push-u64-grow", `function main(): i32 { let b: usize = buf_new(16); let v: u64 = 0; let k: i32 = 0; while (k < 8) { v = v * 256 + 65; k = k + 1; } let i: i32 = 0; while (i < 40) { buf_push_u64(b, v); i = i + 1; } let s: string = buf_take(b); buf_free(b); return s.len() / 10 + (s[319] as i32); }`, ""},
 	// An INLINE `as u64` at the parameter, which is the shape that has to
 	// reach lower_arg_u64's widening arm: a 32-bit value cast where the
 	// call is built, rather than a wide literal or a wide slot. Answers
 	// with the byte that landed, having checked the seven zeros above it.
-	{"push-u64-cast", `function main(): i32 { var b: usize = buf_new(16); var x: i32 = 66; buf_push_u64(b, x as u64); var s: string = buf_take(b); buf_free(b); if (s.len() != 8) { return 1; } var k: i32 = 1; while (k < 8) { if (s[k] as i32 != 0) { return 2; } k = k + 1; } return s[0] as i32; }`, ""},
+	{"push-u64-cast", `function main(): i32 { let b: usize = buf_new(16); let x: i32 = 66; buf_push_u64(b, x as u64); let s: string = buf_take(b); buf_free(b); if (s.len() != 8) { return 1; } let k: i32 = 1; while (k < 8) { if (s[k] as i32 != 0) { return 2; } k = k + 1; } return s[0] as i32; }`, ""},
 }
 
 // bufExpectedExit returns the want exit code for an exit-code-checked case, or

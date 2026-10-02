@@ -11,7 +11,7 @@ which answered correctly, so no test noticed.
 ## 1. A variant literal's float payload
 
 ```
-function f(): Option[f64] { var y: f64 = Some(3.14)?; return Some(y); }
+function f(): Option[f64] { let y: f64 = Some(3.14)?; return Some(y); }
 ```
 
 `f64_tryop_widen` in the conformance corpus. `settled()` settled a bare
@@ -23,7 +23,7 @@ settles the whole literal before it is compared.
 ## 2. An unannotated map literal
 
 ```
-var m = Map { true: 5, false: 9 };
+let m = Map { true: 5, false: 9 };
 ```
 
 `TestSelfHostNarrowMapKeyAnswersX86_64`. The literal desugars to
@@ -43,11 +43,11 @@ The map had no shape, so the construction was refused.
 ## 3. A match in value position at a reference type
 
 ```
-var p: P = match (t) { (a, b) => P { x: a } };
+let p: P = match (t) { (a, b) => P { x: a } };
 ```
 
 `TestSelfHostMatchExprValueLocalWasm`. The parser routes the arms through a
-local it declares as `var $v = 0` before any arm names a type. At a struct,
+local it declares as `let $v = 0` before any arm names a type. At a struct,
 union, array or tuple type that `0` is an `i32` flowing into a reference
 slot, and the typed path refused it. A placeholder local initialised with a
 bare `0` at a non-integer type is now bound to `ssasem.zero()`, the null

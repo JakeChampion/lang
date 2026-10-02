@@ -17,7 +17,7 @@ import (
 // construction that makes the whole module IR-ineligible falls back to the AST
 // emitter, which mis-lowers it (`# unresolved ident: Color`) and
 // produces a binary that crashes — a native-vs-self-host gap and a miscompile.
-// With qualified construction + qualified patterns lowered in irlower.fern, the
+// With qualified construction + qualified patterns lowered, the
 // module is IR-eligible and lowers correctly.
 //
 // use_box builds Box{c: Color.Custom(7), n: 5} and matches on the field with
@@ -38,8 +38,8 @@ func TestSelfHostQualifiedVariantIRX86_64(t *testing.T) {
 	prog := `enum Color { Red, Green, Custom(i32) }
 struct Box { c: Color, n: i32 }
 function use_box(): i32 {
-    var b: Box = Box { c: Color.Custom(7), n: 5 };
-    var r: i32 = 0;
+    let b: Box = Box { c: Color.Custom(7), n: 5 };
+    let r: i32 = 0;
     match (b.c) {
         Color.Red => { r = 1; },
         Color.Green => { r = 2; },

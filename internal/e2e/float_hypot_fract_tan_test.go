@@ -10,7 +10,7 @@ import "testing"
 // wasm / arm64; each leg skips itself when its toolchain is absent.
 const floatHypotFractTanProg = `
 import "std/float" as float;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.001; }
 function main(): i32 {
     // ---- hypot (f64) ----
     if (!approx((3.0).hypot(4.0), 5.0)) { return 1; }

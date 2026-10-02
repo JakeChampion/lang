@@ -8,8 +8,8 @@ could be measured.
 ```fern
 enum R { Full(i32[]), Empty }
 function round(i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: R = R.Full([i + 2, i + 3]); t = t + 1; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: R = R.Full([i + 2, i + 3]); t = t + 1; }
     return t;
 }
 ```

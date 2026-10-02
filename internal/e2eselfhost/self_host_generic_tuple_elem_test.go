@@ -27,12 +27,12 @@ function two[S, E: Answer](p: (S, Result[i32, E])): (S, i32) {
     return (p.0, inner(p.1));
 }
 function main(): i32 {
-    var p: (i32, Result[i32, Boom]) = (1, Err(Boom { n: 7 }));
+    let p: (i32, Result[i32, Boom]) = (1, Err(Boom { n: 7 }));
     if (one(p) != 7) { return 1; }
-    var q: (string, Result[i32, Boom]) = ("s", Err(Boom { n: 9 }));
-    var o: (string, i32) = two(q);
+    let q: (string, Result[i32, Boom]) = ("s", Err(Boom { n: 9 }));
+    let o: (string, i32) = two(q);
     if (o.0 != "s" || o.1 != 9) { return 2; }
-    var r: (string, Result[i32, Boom]) = ("t", Ok(3));
+    let r: (string, Result[i32, Boom]) = ("t", Ok(3));
     if (two(r).1 != 3) { return 3; }
     return 0;
 }
@@ -70,7 +70,7 @@ function first[T: Answer](o: Option[T]): i32 {
     return 0;
 }
 function main(): i32 {
-    var o: (string, i32) = outer("s", Err(Boom { n: 7 }));
+    let o: (string, i32) = outer("s", Err(Boom { n: 7 }));
     if (o.0 != "s" || o.1 != 7) { return 1; }
     if (inner(Err(Boom { n: 5 })) != 5) { return 2; }
     if (first(Some(Boom { n: 4 })) != 4) { return 3; }

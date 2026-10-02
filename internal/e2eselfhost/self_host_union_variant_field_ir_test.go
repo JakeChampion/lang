@@ -66,8 +66,8 @@ function count(l: uvrows.Line): i32 {
 }
 
 function main(): i32 {
-    var a: uvrows.Line = uvrows.mk_row(["x", "y", "z"]);
-    var b: uvrows.Line = uvrows.mk_blank();
+    let a: uvrows.Line = uvrows.mk_row(["x", "y", "z"]);
+    let b: uvrows.Line = uvrows.mk_blank();
     return count(a) * 10 + count(b);
 }
 `

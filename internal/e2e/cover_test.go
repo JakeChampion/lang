@@ -45,7 +45,7 @@ function never_called(n: i32): i32 {
     return n * 3;
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) {
         i = i + 1;
     }
@@ -320,7 +320,7 @@ function guard(a: i32, b: i32): i32 {
     return 0;
 }
 function main(): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 3) { i = i + 1; }
     while (i > 99) { i = i + 1; }
     print("ran");

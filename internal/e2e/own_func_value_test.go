@@ -18,7 +18,7 @@ import "testing"
 const ownFuncValueFreshArg = `function eat(own xs: i32[]): i32 { return xs.len(); }
 function apply(f: (own i32[]) => i32): i32 { return f([1, 2, 3]); }
 function main(): i32 {
-    var n: i32 = apply(eat);
+    let n: i32 = apply(eat);
     if (n != 3) { return 1; }
     return 0;
 }`
@@ -37,7 +37,7 @@ function keep(own a: Acc): Acc { return a; }
 function bump(own a: Acc): Acc { return Acc { ...a, hits: a.hits + 1 }; }
 
 function fold[T](own acc: T, n: i32, visit: (own T) => T): T {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) {
         acc = visit(acc);
         i = i + 1;
@@ -46,18 +46,18 @@ function fold[T](own acc: T, n: i32, visit: (own T) => T): T {
 }
 
 function main(): i32 {
-    var held: string[] = ["alpha", "beta"];
-    var a: Acc = fold(Acc { tag: "a", hits: 0 }, 8, bump);
+    let held: string[] = ["alpha", "beta"];
+    let a: Acc = fold(Acc { tag: "a", hits: 0 }, 8, bump);
     if (a.hits != 8) { return 1; }
     if (a.tag != "a") { return 2; }
-    var b: Acc = fold(Acc { tag: "b", hits: 5 }, 8, keep);
+    let b: Acc = fold(Acc { tag: "b", hits: 5 }, 8, keep);
     if (b.hits != 5) { return 3; }
     if (b.tag != "b") { return 4; }
-    var c: Acc = fold(Acc { tag: "c", hits: 0 }, 8, (own x: Acc) => Acc { ...x, hits: x.hits + 2 });
+    let c: Acc = fold(Acc { tag: "c", hits: 0 }, 8, (own x: Acc) => Acc { ...x, hits: x.hits + 2 });
     if (c.hits != 16) { return 5; }
     if (held[0] != "alpha") { return 6; }
     if (held[1] != "beta") { return 7; }
-    var n: i32 = fold(0, 4, (own k: i32) => k + 3);
+    let n: i32 = fold(0, 4, (own k: i32) => k + 3);
     if (n != 12) { return 8; }
     return 0;
 }`
@@ -75,17 +75,17 @@ function has(xs: string[], s: string): boolean {
     return false;
 }
 function run(names: string[]): i32 {
-    var acc: string[] = [];
+    let acc: string[] = [];
     for n in names { acc = eat(acc, n); }
     function seen(s: string): boolean { return has(acc, s); }
-    var hits: i32 = 0;
+    let hits: i32 = 0;
     for n in names { if (seen(n)) { hits = hits + 1; } }
     return hits + acc.len();
 }
 function main(): i32 {
-    var held: string[] = ["alpha", "beta"];
-    var k: i32 = 0;
-    var i: i32 = 0;
+    let held: string[] = ["alpha", "beta"];
+    let k: i32 = 0;
+    let i: i32 = 0;
     while (i < 20) { k = k + run(["a", "b", "c"]); i = i + 1; }
     if (k != 120) { return 1; }
     if (held[0] != "alpha") { return 2; }

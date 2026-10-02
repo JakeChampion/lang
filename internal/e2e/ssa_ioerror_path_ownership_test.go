@@ -26,7 +26,7 @@ import (
 // case uses a path that cannot exist, so the failure edge is the one taken.
 const ioErrPathOwnershipSrc = `function mk(a: string): string { return a + ""; }
 function main(): i32 {
-    var p: string = mk("/fern/no/such/path/here");
+    let p: string = mk("/fern/no/such/path/here");
     match (BUILTIN(p)) { Ok(_) => {}, Err(_) => {} }
     return p.len();
 }

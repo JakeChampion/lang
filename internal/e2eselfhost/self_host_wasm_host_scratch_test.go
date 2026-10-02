@@ -26,16 +26,16 @@ func TestSelfHostWasmHostScratchFreed(t *testing.T) {
 		bare, withEnv int
 	}{
 		{"args", `function main(): i32 {
-    var n: i32 = 0;
-    var k: i32 = 0;
-    while (k < 3) { var xs: string[] = args(); n = n + xs.len() + xs[1].len(); k = k + 1; }
+    let n: i32 = 0;
+    let k: i32 = 0;
+    while (k < 3) { let xs: string[] = args(); n = n + xs.len() + xs[1].len(); k = k + 1; }
     return n;
 }`, 15, 15},
 		{"environ", `function main(): i32 {
-    var n: i32 = 0;
-    var k: i32 = 0;
+    let n: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) {
-        var es: string[] = environ();
+        let es: string[] = environ();
         for e in es { n = n + e.len(); }
         n = n + es.len() * 10;
         k = k + 1;
@@ -43,8 +43,8 @@ func TestSelfHostWasmHostScratchFreed(t *testing.T) {
     return n;
 }`, 0, 84},
 		{"env", `function main(): i32 {
-    var n: i32 = 0;
-    var k: i32 = 0;
+    let n: i32 = 0;
+    let k: i32 = 0;
     while (k < 3) {
         match (env("BB")) { Some(v) => { n = n + v.len() + 1; }, None => { n = n + 10; } }
         match (env("ZZ")) { Some(v) => { n = n + 100; }, None => { n = n + 1; } }

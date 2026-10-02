@@ -7,7 +7,7 @@ import (
 
 // --- A struct payload's rc fields need a DEEP drop (#6127) -------------------
 //
-// `var o: Option[P] = Some(P { xs: [..], n: .. })` consumed by one `match (o)`
+// `let o: Option[P] = Some(P { xs: [..], n: .. })` consumed by one `match (o)`
 // is released by consumed_rcpayload_option_frees → emit_opt_payload_drop, which
 // dec'd the payload BOX and the option box. For a scalar-only struct that is
 // complete; for a struct with an rc-ARRAY field it freed the box and stranded
@@ -48,14 +48,14 @@ func TestSelfHostOptStructPayloadDropX86_64(t *testing.T) {
 			name: "single_bind_scalar_field_read",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { acc = p.n; }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -66,14 +66,14 @@ function main(): i32 {
 			name: "single_bind_field_len",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { acc = p.xs.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -85,14 +85,14 @@ function main(): i32 {
 			name: "single_bind_element_read",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { acc = p.xs[1]; }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -104,14 +104,14 @@ function main(): i32 {
 			name: "single_bind_bigger_array_field",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i, i, i, i, i, i, i, i, i], n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i, i, i, i, i, i, i, i, i], n: i });
     match (o) { Some(p) => { acc = p.n; }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -125,14 +125,14 @@ function main(): i32 {
 			name: "result_ok_struct_payload",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Result[P, string] = Ok(P { xs: [i, i + 1], n: i });
+    let acc: i32 = 0;
+    let o: Result[P, string] = Ok(P { xs: [i, i + 1], n: i });
     match (o) { Ok(p) => { acc = p.n + p.xs.len(); }, Err(e) => { acc = e.len(); } }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -146,14 +146,14 @@ function main(): i32 {
 			name: "string_field_beside_the_array_field",
 			src: `struct P { xs: i32[], s: string }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], s: "hello" });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], s: "hello" });
     match (o) { Some(p) => { acc = p.xs.len() + p.s.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -167,8 +167,8 @@ function main(): i32 {
 			name: "guarded_arm",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) {
         Some(p) when p.n > 50 => { acc = p.n; },
         Some(p) => { acc = p.xs.len(); },
@@ -177,8 +177,8 @@ function round(i: i32): i32 {
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -192,14 +192,14 @@ function main(): i32 {
 			name: "scalar_only_struct_payload_stays_balanced",
 			src: `struct P { n: i32, m: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { n: i, m: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { n: i, m: i });
     match (o) { Some(p) => { acc = p.n; }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -281,15 +281,15 @@ func TestSelfHostOptStructPayloadDropHazardsX86_64(t *testing.T) {
 			name: "field_extracted_to_an_outer_local",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var held: i32[] = [];
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let held: i32[] = [];
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { held = p.xs; acc = p.n; }, None => {} }
     return acc + held[0] + held.len();
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -300,15 +300,15 @@ function main(): i32 {
 			name: "field_appended_into_a_container",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var keep: i32[][] = [];
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let keep: i32[][] = [];
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { keep = keep.append(p.xs); acc = p.n; }, None => {} }
     return acc + keep[0][1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -320,15 +320,15 @@ function main(): i32 {
 			src: `struct P { xs: i32[], n: i32 }
 function keepit(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
-    var held: i32[] = [];
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let held: i32[] = [];
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { held = keepit(p.xs); acc = p.n; }, None => {} }
     return acc + held[1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -340,15 +340,15 @@ function main(): i32 {
 			name: "whole_payload_struct_escapes",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var hp: P = P { xs: [0], n: 0 };
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let hp: P = P { xs: [0], n: 0 };
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { hp = p; acc = p.n; }, None => {} }
     return acc + hp.xs[1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -362,17 +362,17 @@ function main(): i32 {
 			name: "nested_block_match_field_extracted",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var held: i32[] = [];
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let held: i32[] = [];
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     if (i >= 0) {
         match (o) { Some(p) => { held = p.xs; acc = p.n; }, None => {} }
     }
     return acc + held[1];
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
@@ -431,14 +431,14 @@ func TestSelfHostOptStructPayloadDropNoUnderflowX86_64(t *testing.T) {
 			name: "array_field",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], n: i });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], n: i });
     match (o) { Some(p) => { acc = p.n + p.xs.len() + p.xs[0]; }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();
@@ -451,14 +451,14 @@ function main(): i32 {
 			name: "string_literal_field",
 			src: `struct P { xs: i32[], s: string }
 function round(i: i32): i32 {
-    var acc: i32 = 0;
-    var o: Option[P] = Some(P { xs: [i, i + 1], s: "hello" });
+    let acc: i32 = 0;
+    let o: Option[P] = Some(P { xs: [i, i + 1], s: "hello" });
     match (o) { Some(p) => { acc = p.xs.len() + p.s.len(); }, None => {} }
     return acc;
 }
 function main(): i32 {
-    var x: i32 = 0;
-    var r: i32 = 0;
+    let x: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     if (x == 999999) { return 90; }
     return __rc_underflow_count();

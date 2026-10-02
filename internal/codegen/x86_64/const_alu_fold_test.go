@@ -115,8 +115,8 @@ func TestConstOperandReachesImmediateForm(t *testing.T) {
 @noinline function bump(x: i64): i64 { return x + 1i64; }
 @noinline function scaled(x: i64): i64 { return x * 10i64; }
 function main(): i32 {
-  var i: i64 = 0i64;
-  var s: i64 = 0i64;
+  let i: i64 = 0i64;
+  let s: i64 = 0i64;
   while (i < 7i64) { s = s + bump(i) + scaled(i); i = i + 1i64; }
   return s as i32;
 }`
@@ -150,7 +150,7 @@ function main(): i32 {
 func TestConstOperandFoldsIntoFusedCompare(t *testing.T) {
 	const src = `
 function main(): i32 {
-  var i: i64 = 0i64;
+  let i: i64 = 0i64;
   while (i < 3000000i64) { i = i + 1i64; }
   return (i % 97i64) as i32;
 }`

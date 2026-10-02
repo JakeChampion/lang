@@ -61,7 +61,7 @@ The shape #8402 established, and it needed no new intrinsic: a fused string
 over the block at the block's TRUE size names its owner, and the frame's own
 reclaim gives it back.
 
-    var pathz_own: string = __raw_string(pathz, plen + 1);
+    let pathz_own: string = __raw_string(pathz, plen + 1);
 
 placed at the first point every path reaches, right after the syscall that
 reads the buffer — and for `create_dir_all` after the last one, because it

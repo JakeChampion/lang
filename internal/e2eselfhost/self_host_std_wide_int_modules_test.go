@@ -19,8 +19,8 @@ import (
 // min(10,20)=10, max(10,20)=20, clamp(10, 0, 100)=10 → 10+20+10 = 40.
 const u32ModMain = `import "std/u32";
 function main(): i32 {
-    var a: u32 = 10u32;
-    var b: u32 = 20u32;
+    let a: u32 = 10u32;
+    let b: u32 = 20u32;
     return ((a.min(b)) as i32) + ((a.max(b)) as i32) + ((a.clamp(0u32, 100u32)) as i32);
 }
 `
@@ -28,9 +28,9 @@ function main(): i32 {
 // abs(-5)=5, min(3,7)=3, max(3,7)=7 → 5+3+7 = 15.
 const i64ModMain = `import "std/i64";
 function main(): i32 {
-    var a: i64 = (0 as i64) - (5 as i64);
-    var b: i64 = 3 as i64;
-    var c: i64 = 7 as i64;
+    let a: i64 = (0 as i64) - (5 as i64);
+    let b: i64 = 3 as i64;
+    let c: i64 = 7 as i64;
     return ((a.abs()) as i32) + ((b.min(c)) as i32) + ((b.max(c)) as i32);
 }
 `
@@ -40,8 +40,8 @@ function main(): i32 {
 // (32, unsigned) and i64 (64, signed) don't exercise.
 const u64ModMain = `import "std/u64";
 function main(): i32 {
-    var a: u64 = 10u64;
-    var b: u64 = 20u64;
+    let a: u64 = 10u64;
+    let b: u64 = 20u64;
     return ((a.min(b)) as i32) + ((a.max(b)) as i32) + ((a.clamp(0u64, 100u64)) as i32);
 }
 `

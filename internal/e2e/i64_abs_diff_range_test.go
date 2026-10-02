@@ -12,8 +12,8 @@ import "testing"
 const i64AbsDiffRangeProg = `
 import "std/i64";
 function main(): i32 {
-    var a: i64 = 5000000000 as i64;
-    var b: i64 = 3000000000 as i64;
+    let a: i64 = 5000000000 as i64;
+    let b: i64 = 3000000000 as i64;
     // ---- abs_diff ----
     if (a.abs_diff(b) != (2000000000 as i64)) { return 1; }
     if (b.abs_diff(a) != (2000000000 as i64)) { return 2; }

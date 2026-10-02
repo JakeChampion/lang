@@ -13,7 +13,7 @@ import "testing"
 const floatSignProg = `
 import "std/float";
 function main(): i32 {
-    var negzero: f64 = f64_from_bits(0 - 9223372036854775807 - 1);   // 0x8000...0
+    let negzero: f64 = f64_from_bits(0 - 9223372036854775807 - 1);   // 0x8000...0
     if (!(0.0 - 5.0).is_sign_negative()) { return 1; }
     if ((5.0).is_sign_negative()) { return 2; }
     if (!negzero.is_sign_negative()) { return 3; }         // -0.0 is negative
@@ -22,7 +22,7 @@ function main(): i32 {
     if ((0.0 - 5.0).is_sign_positive()) { return 6; }
     if (!(0.0).is_sign_positive()) { return 7; }
     if (negzero.is_sign_positive()) { return 8; }
-    var inf: f64 = 1.0 / 0.0;
+    let inf: f64 = 1.0 / 0.0;
     if (!inf.is_sign_positive()) { return 9; }
     if (!(0.0 - inf).is_sign_negative()) { return 10; }
     // f32 siblings.

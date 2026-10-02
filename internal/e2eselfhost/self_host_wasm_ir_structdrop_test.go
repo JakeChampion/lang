@@ -35,11 +35,11 @@ func TestSelfHostWasmIRStructDropEmitted(t *testing.T) {
 		// Nested-struct field: Box{p:Point} passed to bx() -> the caller releases
 		// the Box, nested Point and all.
 		{"nested-struct", "Box", 42,
-			`struct Point { x: i32, y: i32 } struct Box { p: Point } function bx(b: Box): i32 { return b.p.x + b.p.y; } function main(): i32 { var b = Box { p: Point { x: 30, y: 12 } }; return bx(b); }`},
+			`struct Point { x: i32, y: i32 } struct Box { p: Point } function bx(b: Box): i32 { return b.p.x + b.p.y; } function main(): i32 { let b = Box { p: Point { x: 30, y: 12 } }; return bx(b); }`},
 		// Three-deep nesting: Outer{Mid{Inner}} consumed by f() -> the release
 		// chain through Outer and Mid must all be DEFINED.
 		{"deep-nested", "Outer", 105,
-			`struct Inner { v: i32 } struct Mid { inner: Inner, n: i32 } struct Outer { mid: Mid } function f(o: Outer): i32 { return o.mid.inner.v + o.mid.n; } function main(): i32 { var o = Outer { mid: Mid { inner: Inner { v: 100 }, n: 5 } }; return f(o); }`},
+			`struct Inner { v: i32 } struct Mid { inner: Inner, n: i32 } struct Outer { mid: Mid } function f(o: Outer): i32 { return o.mid.inner.v + o.mid.n; } function main(): i32 { let o = Outer { mid: Mid { inner: Inner { v: 100 }, n: 5 } }; return f(o); }`},
 	}
 
 	for _, tc := range cases {

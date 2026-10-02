@@ -11,7 +11,7 @@ struct S { name: string, n: i32 }
 function mk(i: i32): S { return S { name: w("k"), n: i }; }
 
 function round(i: i32): i32 {
-    var s: S = mk(i);      // producer-call init
+    let s: S = mk(i);      // producer-call init
     s = mk(i + 1);         // …then rebound
     return (s.name.len() + s.n) % 101;
 }
@@ -96,7 +96,7 @@ scope. It still gave this shape no coverage, because **every kind in the
 generator inits from a literal**:
 
 ```go
-init: "var x: P = P { xs: [i, i + 1], k: i };", init2: "x = P { xs: [i + 2], k: i + 1 };"
+init: "let x: P = P { xs: [i, i + 1], k: i };", init2: "x = P { xs: [i + 2], k: i + 1 };"
 ```
 
 The grid's axes are kind × scope × consumption × origin, and the producer-call
@@ -123,11 +123,11 @@ the collector rather than to the shared gate under it.
 
 Two residues, both measured here and both left open:
 
-1. `var t = s.name` with no rebind still leaks one block a round (400/200) — the
+1. `let t = s.name` with no rebind still leaks one block a round (400/200) — the
    read-side retain fires and no credit family ever releases `t`. That is
    #5338's first tractable slice, untouched by this change; the `A` row
    (bind + rebind) improved 800/0 → 800/600 and the remaining 200 is exactly it.
-2. A plain `string` local rebound from a producer call — `var x = mkstr("x");
+2. A plain `string` local rebound from a producer call — `let x = mkstr("x");
    x = mkstr("yz");` — measures **native x86-64 400/200, self-host 400/400**:
    the reverse direction, a native-side leak rather than a port gap. It holds
    whether or not the first value is read before the rebind. Worth a native look

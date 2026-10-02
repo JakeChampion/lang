@@ -26,7 +26,7 @@ func TestAssert(t *testing.T) {
 	}{
 		// Both asserts pass → the function's own return value is the exit code.
 		{"pass_both", `function main(): i32 {
-    var n: i32 = 5;
+    let n: i32 = 5;
     assert(n > 0, "n must be positive");
     assert(n < 100);
     return 7;
@@ -42,7 +42,7 @@ function main(): i32 {
 		// bumped by the condition call must read 1, not 2.
 		{"cond_evaluated_once", `function bump(c: Cell[i32]): boolean { c.set(c.get() + 1); return true; }
 function main(): i32 {
-    var a: Cell[i32] = cell_new(0);
+    let a: Cell[i32] = cell_new(0);
     assert(bump(a), "once");
     return a.get();
 }`, 1},
@@ -50,7 +50,7 @@ function main(): i32 {
 		// statement-position `assert (` shape is intercepted. A local named
 		// `assert` and a reference to it in expression position are unaffected.
 		{"identifier_still_usable", `function main(): i32 {
-    var assert: i32 = 5;
+    let assert: i32 = 5;
     return assert + 2;
 }`, 7},
 	}
@@ -88,7 +88,7 @@ function main(): i32 {
 	}{
 		// A false assert with a message aborts with exit 1.
 		{"fail_with_msg", `function main(): i32 {
-    var n: i32 = 0 - 3;
+    let n: i32 = 0 - 3;
     assert(n > 0, "n must be positive");
     return 42;
 }`},

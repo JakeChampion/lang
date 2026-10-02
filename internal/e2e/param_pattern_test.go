@@ -86,9 +86,9 @@ function main(): i32 { return f(1, Point { x: 3, y: 4 }); }`,
 		name: "lambdas",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-  var p: Point = Point { x: 3, y: 4 };
-  var verbose = (Point { x, y }: Point): i32 => { return x * 10 + y; };
-  var arrow = (Point { x, y }: Point) => x + y;
+  let p: Point = Point { x: 3, y: 4 };
+  let verbose = (Point { x, y }: Point): i32 => { return x * 10 + y; };
+  let arrow = (Point { x, y }: Point) => x + y;
   return verbose(p) + arrow(p);
 }`,
 		want: 41, // 34 + 7
@@ -224,7 +224,7 @@ func paramPatternCaseByName(t *testing.T, name string) struct {
 	return paramPatternCases[0]
 }
 
-// The `let` / `var` destructuring statements read the same grammar, via
+// The `let` destructuring statements read the same grammar, via
 // the same irrefutableDestructure conversion — the last of #5356's five
 // binding sites to stop hand-rolling its own parse. `_` is renamed per
 // occurrence at every element position (#6346), which is what lets a
@@ -238,9 +238,9 @@ var destructureStmtCases = []struct {
 		name: "tuple_and_struct_forms",
 		src: `struct P { x: i32, y: i32 }
 function main(): i32 {
-  var (a, b) = (1, 2);
+  let (a, b) = (1, 2);
   let (c, d) = (3, 4);
-  var P { x, y } = P { x: 5, y: 6 };
+  let P { x, y } = P { x: 5, y: 6 };
   let P { x: nx, .. } = P { x: 7, y: 8 };
   return a + b + c + d + x + y + nx;
 }`,
@@ -252,8 +252,8 @@ function main(): i32 {
 		name: "repeated_discards",
 		src: `struct P { x: i32, y: i32 }
 function main(): i32 {
-  var (a, _) = (1, 2);
-  var (_, b) = (3, 4);
+  let (a, _) = (1, 2);
+  let (_, b) = (3, 4);
   let (_, _) = (5, 6);
   let P { x: _, y } = P { x: 7, y: 8 };
   return a + b + y;
@@ -312,16 +312,16 @@ func TestDestructureStmtWasm(t *testing.T) {
 	}
 }
 
-// A refutable pattern in a `let` / `var` destructure is rejected. The
+// A refutable pattern in a `let` destructure is rejected. The
 // `let` spelling has a refutable form, so it asks for the `else` that
-// makes it one; `var` has none, so the pattern simply isn't a
+// makes it one; `let` has none, so the pattern simply isn't a
 // destructure.
 func TestDestructureStmtRefutableRejected(t *testing.T) {
 	for _, src := range []string{
 		"enum O { A(i32), B }\nfunction main(): i32 { let A(v) = A(1); return v; }",
-		"enum O { A(i32), B }\nfunction main(): i32 { var A(v) = A(1); return v; }",
+		"enum O { A(i32), B }\nfunction main(): i32 { let A(v) = A(1); return v; }",
 		"function main(): i32 { let (1, b) = (1, 2); return b; }",
-		"struct P { x: i32 }\nfunction main(): i32 { var P {} = P { x: 1 }; return 0; }",
+		"struct P { x: i32 }\nfunction main(): i32 { let P {} = P { x: 1 }; return 0; }",
 	} {
 		if _, _, err := modload.LoadSource(src); err == nil {
 			t.Errorf("expected a parse error for:\n%s", src)

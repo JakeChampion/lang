@@ -29,7 +29,7 @@ import "std/io_buffered";
 import "./lib/gnu";
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [VARIABLE]...\n";
   out = out + "Print the values of the specified environment VARIABLE(s).\n";
   out = out + "If no VARIABLE is specified, print name=value pairs for them all.\n";
@@ -41,11 +41,11 @@ function help_text(): string {
 }
 
 pub function main(): i32 {
-  var opts: gnu.Opt[] = [gnu.flag("0", "null", 1)];
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "printenv", help_text(), 2).in_order();
-  var zero: boolean = false;
+  let opts: gnu.Opt[] = [gnu.flag("0", "null", 1)];
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "printenv", help_text(), 2).in_order();
+  let zero: boolean = false;
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(_) => {
@@ -56,29 +56,29 @@ pub function main(): i32 {
       }
     }
   }
-  var term: string = "\n";
+  let term: string = "\n";
   if (zero) {
     term = "\x00";
   }
-  var operands: string[] = g.operands();
+  let operands: string[] = g.operands();
   // Quoted since 9.12, so the output can be sourced by a shell and so
   // that arbitrary bytes do not reach a terminal raw. `-0` is the
   // machine-readable form and stays exact; with named VARIABLEs the
   // output is a value rather than a pair, and only a terminal gets it
   // quoted.
-  var qstyle: i32 = 0;
-  var quoted_out: boolean = false;
+  let qstyle: i32 = 0;
+  let quoted_out: boolean = false;
   if (!zero && (operands.len() == 0 || isatty(1))) {
     qstyle = gnu.quoting_style_from_env_with(3);
     quoted_out = qstyle != 0;
   }
-  var o: io_buffered.BufWriter = gnu.out_new();
-  var ok: boolean = true;
+  let o: io_buffered.BufWriter = gnu.out_new();
+  let ok: boolean = true;
   if (operands.len() == 0) {
-    var all: string[] = environ();
-    var i: i32 = 0;
+    let all: string[] = environ();
+    let i: i32 = 0;
     while (i < all.len()) {
-      var shown: string = all[i];
+      let shown: string = all[i];
       if (quoted_out) {
         shown = gnu.env_entry(all[i], qstyle);
       }
@@ -86,18 +86,18 @@ pub function main(): i32 {
       i = i + 1;
     }
   } else {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < operands.len()) {
       // A name containing `=` names nothing, and printenv says so
       // rather than letting the lookup answer: `FERN_EQ=a` against an
       // entry `FERN_EQ=a=b` would otherwise match its first nine bytes
       // and hand back `b`. POSIX rules the character out of a name, so
       // the operand is refused before the environment is asked.
-      var found: boolean = false;
+      let found: boolean = false;
       if (operands[k].index_of("=") < 0) {
         match (env(operands[k])) {
           Some(v) => {
-            var shown: string = v;
+            let shown: string = v;
             if (quoted_out) {
               shown = gnu.quote_style(v, qstyle);
             }

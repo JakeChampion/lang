@@ -40,9 +40,9 @@ struct Pos { i: i32, line: i32, col: i32 }
 // scanned to an end offset and then committed through here, so position
 // tracking lives in exactly one place.
 function advance(src: string, p: Pos, to: i32): Pos {
-  var i: i32 = p.i;
-  var line: i32 = p.line;
-  var col: i32 = p.col;
+  let i: i32 = p.i;
+  let line: i32 = p.line;
+  let col: i32 = p.col;
   while (i < to) {
     if (src[i] == 10) {
       line = line + 1;
@@ -72,12 +72,12 @@ function is_alnum(b: u8): boolean {
 // continue it, but a `-` only when a name character follows so that
 // `a - b` stays three tokens.
 function ident_end(src: string, i: i32): i32 {
-  var j: i32 = i;
+  let j: i32 = i;
   if (j < src.len() && src[j] == 46) {
     j = j + 1;
   }
   while (j < src.len()) {
-    var b: u8 = src[j];
+    let b: u8 = src[j];
     if (is_alnum(b) || b == 46) {
       j = j + 1;
     } else if (b == 45 && j + 1 < src.len() && is_alnum(src[j + 1])) {
@@ -92,7 +92,7 @@ function ident_end(src: string, i: i32): i32 {
 // number_end returns the offset just past the digits (and at most one
 // decimal point) starting at `i`.
 function number_end(src: string, i: i32): i32 {
-  var j: i32 = i;
+  let j: i32 = i;
   while (j < src.len() && is_digit(src[j])) {
     j = j + 1;
   }
@@ -119,10 +119,10 @@ function byte_units(): string[] {
 // is not itself followed by a name character (so `10secs` is not a
 // duration `10s` followed by `ecs`). "" when none match.
 function match_unit(src: string, i: i32, units: string[]): string {
-  var u: i32 = 0;
+  let u: i32 = 0;
   while (u < units.len()) {
-    var unit: string = units[u];
-    var e: i32 = i + unit.len();
+    let unit: string = units[u];
+    let e: i32 = i + unit.len();
     if (e <= src.len() && slice_unchecked(src, i, e) == unit) {
       if (e == src.len() || !is_alnum(src[e])) {
         return unit;
@@ -140,7 +140,7 @@ struct Run { start: i32, end: i32, close: i32, ok: boolean }
 // delimited scans forward from `from` for `closer`, returning the content
 // span and the offset past the closer.
 function delimited(src: string, from: i32, closer: string): Run {
-  var j: i32 = from;
+  let j: i32 = from;
   while (j + closer.len() <= src.len()) {
     if (slice_unchecked(src, j, j + closer.len()) == closer) {
       return Run { start: from, end: j, close: j + closer.len(), ok: true };
@@ -152,7 +152,7 @@ function delimited(src: string, from: i32, closer: string): Run {
 
 // A short `"…"` string, which may not span a line.
 function short_string(src: string, from: i32): Run {
-  var j: i32 = from;
+  let j: i32 = from;
   while (j < src.len() && src[j] != 34 && src[j] != 10) {
     j = j + 1;
   }
@@ -168,7 +168,7 @@ function short_string(src: string, from: i32): Run {
 // which the caller sees as EOF; vcc reports it and this prototype does
 // not.
 function comment_end(src: string, i: i32): i32 {
-  var b: u8 = src[i];
+  let b: u8 = src[i];
   if (b == 35) {
     return line_end(src, i);
   }
@@ -190,12 +190,12 @@ function is_space(b: u8): boolean {
 
 // skip_trivia advances past whitespace and comments to the next token.
 function skip_trivia(src: string, p: Pos): Pos {
-  var cur: Pos = p;
+  let cur: Pos = p;
   while (cur.i < src.len()) {
     if (is_space(src[cur.i])) {
       cur = advance(src, cur, cur.i + 1);
     } else {
-      var ce: i32 = comment_end(src, cur.i);
+      let ce: i32 = comment_end(src, cur.i);
       if (ce < 0) {
         return cur;
       }
@@ -206,7 +206,7 @@ function skip_trivia(src: string, p: Pos): Pos {
 }
 
 function line_end(src: string, i: i32): i32 {
-  var j: i32 = i;
+  let j: i32 = i;
   while (j < src.len() && src[j] != 10) {
     j = j + 1;
   }
@@ -227,8 +227,8 @@ function punct_bytes(): string {
 }
 
 function is_punct_byte(b: u8): boolean {
-  var set: string = punct_bytes();
-  var i: i32 = 0;
+  let set: string = punct_bytes();
+  let i: i32 = 0;
   while (i < set.len()) {
     if (set[i] == b) {
       return true;
@@ -253,28 +253,28 @@ function scan_failed(t: Tok, next: Pos, msg: string, at: Pos): Scan {
 // scan_number reads a number and any unit suffix, producing TNumber,
 // TDuration, or TBytes.
 function scan_number(src: string, p: Pos): Scan {
-  var e: i32 = number_end(src, p.i);
-  var text: string = slice_unchecked(src, p.i, e).to_owned();
-  var bu: string = match_unit(src, e, byte_units());
+  let e: i32 = number_end(src, p.i);
+  let text: string = slice_unchecked(src, p.i, e).to_owned();
+  let bu: string = match_unit(src, e, byte_units());
   if (bu != "") {
-    var t: Tok = Tok { kind: TBytes, text: text, aux: bu, line: p.line, col: p.col };
+    let t: Tok = Tok { kind: TBytes, text: text, aux: bu, line: p.line, col: p.col };
     return scanned(t, advance(src, p, e + bu.len()));
   }
-  var du: string = match_unit(src, e, duration_units());
+  let du: string = match_unit(src, e, duration_units());
   if (du != "") {
-    var d: Tok = Tok { kind: TDuration, text: text, aux: du, line: p.line, col: p.col };
+    let d: Tok = Tok { kind: TDuration, text: text, aux: du, line: p.line, col: p.col };
     return scanned(d, advance(src, p, e + du.len()));
   }
-  var n: Tok = Tok { kind: TNumber, text: text, aux: "", line: p.line, col: p.col };
+  let n: Tok = Tok { kind: TNumber, text: text, aux: "", line: p.line, col: p.col };
   return scanned(n, advance(src, p, e));
 }
 
 // scan_string reads one of the three string forms. The caller has
 // already established that `p` sits on a `"` or on `{"`.
 function scan_string(src: string, p: Pos): Scan {
-  var form: string = "short";
-  var open: i32 = p.i + 1;
-  var closer: string = "\"";
+  let form: string = "short";
+  let open: i32 = p.i + 1;
+  let closer: string = "\"";
   if (src[p.i] == 123) {
     form = "brace";
     open = p.i + 2;
@@ -284,13 +284,13 @@ function scan_string(src: string, p: Pos): Scan {
     open = p.i + 3;
     closer = "\"\"\"";
   }
-  var sp: Run = Run { start: 0, end: 0, close: 0, ok: false };
+  let sp: Run = Run { start: 0, end: 0, close: 0, ok: false };
   if (form == "short") {
     sp = short_string(src, open);
   } else {
     sp = delimited(src, open, closer);
   }
-  var tok: Tok = Tok { kind: TString, text: slice_unchecked(src, sp.start, sp.end).to_owned(), aux: form, line: p.line, col: p.col };
+  let tok: Tok = Tok { kind: TString, text: slice_unchecked(src, sp.start, sp.end).to_owned(), aux: form, line: p.line, col: p.col };
   if (!sp.ok) {
     return scan_failed(tok, advance(src, p, sp.close), "unterminated string literal", p);
   }
@@ -299,24 +299,24 @@ function scan_string(src: string, p: Pos): Scan {
 
 // scan_punct reads the longest operator at `p`.
 function scan_punct(src: string, p: Pos): Scan {
-  var ops: string[] = two_byte_ops();
-  var k: i32 = 0;
+  let ops: string[] = two_byte_ops();
+  let k: i32 = 0;
   while (k < ops.len()) {
-    var op: string = ops[k];
+    let op: string = ops[k];
     if (p.i + 2 <= src.len() && slice_unchecked(src, p.i, p.i + 2) == op) {
-      var t2: Tok = Tok { kind: TPunct, text: op, aux: "", line: p.line, col: p.col };
+      let t2: Tok = Tok { kind: TPunct, text: op, aux: "", line: p.line, col: p.col };
       return scanned(t2, advance(src, p, p.i + 2));
     }
     k = k + 1;
   }
-  var t1: Tok = Tok { kind: TPunct, text: slice_unchecked(src, p.i, p.i + 1).to_owned(), aux: "", line: p.line, col: p.col };
+  let t1: Tok = Tok { kind: TPunct, text: slice_unchecked(src, p.i, p.i + 1).to_owned(), aux: "", line: p.line, col: p.col };
   return scanned(t1, advance(src, p, p.i + 1));
 }
 
 // scan_c_source reads an inline-C block, `C{ … }C`, whose body is opaque.
 function scan_c_source(src: string, p: Pos): Scan {
-  var sp: Run = delimited(src, p.i + 2, "}C");
-  var tok: Tok = Tok { kind: TCSource, text: slice_unchecked(src, sp.start, sp.end).to_owned(), aux: "", line: p.line, col: p.col };
+  let sp: Run = delimited(src, p.i + 2, "}C");
+  let tok: Tok = Tok { kind: TCSource, text: slice_unchecked(src, sp.start, sp.end).to_owned(), aux: "", line: p.line, col: p.col };
   if (!sp.ok) {
     return scan_failed(tok, advance(src, p, sp.close), "unterminated C{ … }C block", p);
   }
@@ -342,7 +342,7 @@ function at_brace_string(src: string, i: i32): boolean {
 // it would only move the same forks behind names used once.
 // fern-lint: allow cyclomatic-complexity
 function scan_one(src: string, p: Pos): Scan {
-  var b: u8 = src[p.i];
+  let b: u8 = src[p.i];
   if (at_c_source(src, p.i)) {
     return scan_c_source(src, p);
   }
@@ -353,21 +353,21 @@ function scan_one(src: string, p: Pos): Scan {
     return scan_number(src, p);
   }
   if (is_alpha(b)) {
-    var e: i32 = ident_end(src, p.i);
-    var id: Tok = Tok { kind: TIdent, text: slice_unchecked(src, p.i, e).to_owned(), aux: "", line: p.line, col: p.col };
+    let e: i32 = ident_end(src, p.i);
+    let id: Tok = Tok { kind: TIdent, text: slice_unchecked(src, p.i, e).to_owned(), aux: "", line: p.line, col: p.col };
     return scanned(id, advance(src, p, e));
   }
   // A `.` followed by a name byte opens a property name; a bare `.` is
   // not otherwise part of VCL syntax.
   if (b == 46 && p.i + 1 < src.len() && is_alpha(src[p.i + 1])) {
-    var pe: i32 = ident_end(src, p.i);
-    var prop: Tok = Tok { kind: TIdent, text: slice_unchecked(src, p.i, pe).to_owned(), aux: "", line: p.line, col: p.col };
+    let pe: i32 = ident_end(src, p.i);
+    let prop: Tok = Tok { kind: TIdent, text: slice_unchecked(src, p.i, pe).to_owned(), aux: "", line: p.line, col: p.col };
     return scanned(prop, advance(src, p, pe));
   }
   if (is_punct_byte(b)) {
     return scan_punct(src, p);
   }
-  var bad: Tok = Tok { kind: TPunct, text: slice_unchecked(src, p.i, p.i + 1).to_owned(), aux: "", line: p.line, col: p.col };
+  let bad: Tok = Tok { kind: TPunct, text: slice_unchecked(src, p.i, p.i + 1).to_owned(), aux: "", line: p.line, col: p.col };
   return scan_failed(bad, advance(src, p, p.i + 1), "unexpected byte '" + slice_unchecked(src, p.i, p.i + 1) + "'", p);
 }
 
@@ -375,16 +375,16 @@ function scan_one(src: string, p: Pos): Scan {
 // in TEOF: a lexical error is recorded and scanning continues, so the
 // parser sees the whole file and one bad byte does not hide the rest.
 pub function lex(src: string): LexResult {
-  var toks: Tok[] = [];
-  var diags: diag.Diag[] = [];
-  var cur: Pos = Pos { i: 0, line: 1, col: 1 };
+  let toks: Tok[] = [];
+  let diags: diag.Diag[] = [];
+  let cur: Pos = Pos { i: 0, line: 1, col: 1 };
   while (true) {
     cur = skip_trivia(src, cur);
     if (cur.i >= src.len()) {
       toks = toks.append(Tok { kind: TEOF, text: "", aux: "", line: cur.line, col: cur.col });
       return LexResult { toks: toks, diags: diags };
     }
-    var s: Scan = scan_one(src, cur);
+    let s: Scan = scan_one(src, cur);
     if (!s.ok) {
       diags = diags.append(s.err);
     }

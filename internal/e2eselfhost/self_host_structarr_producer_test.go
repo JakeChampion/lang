@@ -16,8 +16,8 @@ import (
 // every neighbouring one has had one for a while ("ARRSTRUCTF:" for structs with
 // an rc-array field, "ARRTUPF:" for tuples, "ARENUMF:" for enums). So:
 //
-//	var v: P[] = [P { .. }, P { .. }];   // credited, flat
-//	var v: P[] = mk();                   // uncredited, 160 B per round
+//	let v: P[] = [P { .. }, P { .. }];   // credited, flat
+//	let v: P[] = mk();                   // uncredited, 160 B per round
 //
 // Same elements, same frame, same free. The uncredited binding fell through to
 // the generic shallow buffer dec, which frees the outer buffer and no element
@@ -52,7 +52,7 @@ type structarrProdCase struct {
 const structarrProdDecl = "struct P { s: string, n: i32 }\n" +
 	"function w(a: string): string { return a + \"!\"; }\n"
 
-const structarrProdMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
+const structarrProdMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 200) { t = t + round(i); i = i + 1; } " +
 	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
@@ -61,8 +61,8 @@ func structarrProdCases() []structarrProdCase {
 		{
 			// The repro: the producer binds the literal to a local and returns it.
 			name: "producer_returns_local",
-			src: structarrProdDecl + `function mk(): P[] { var a: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; return a; }
-function round(i: i32): i32 { var v: P[] = mk(); return v.len(); }` + structarrProdMain,
+			src: structarrProdDecl + `function mk(): P[] { let a: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; return a; }
+function round(i: i32): i32 { let v: P[] = mk(); return v.len(); }` + structarrProdMain,
 			want: 68, balance: true,
 		},
 		{
@@ -71,14 +71,14 @@ function round(i: i32): i32 { var v: P[] = mk(); return v.len(); }` + structarrP
 			// the return, which is what separates this from its arrstruct sibling.
 			name: "producer_returns_literal",
 			src: structarrProdDecl + `function mk(): P[] { return [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; }
-function round(i: i32): i32 { var v: P[] = mk(); return v.len(); }` + structarrProdMain,
+function round(i: i32): i32 { let v: P[] = mk(); return v.len(); }` + structarrProdMain,
 			want: 68, balance: true,
 		},
 		{
 			// No producer: the literal bound straight into the local. Credited all
 			// along, and the control that says the elements themselves are fine.
 			name: "literal_init",
-			src: structarrProdDecl + `function round(i: i32): i32 { var v: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; return v.len(); }` +
+			src: structarrProdDecl + `function round(i: i32): i32 { let v: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; return v.len(); }` +
 				structarrProdMain,
 			want: 68, balance: true,
 		},
@@ -88,8 +88,8 @@ function round(i: i32): i32 { var v: P[] = mk(); return v.len(); }` + structarrP
 			// written, so a literal-only registry would have left the common form
 			// leaking after the main shape was fixed.
 			name: "producer_append_built",
-			src: structarrProdDecl + `function mk(i: i32): P[] { var a: P[] = []; a = a.append(P { s: w("p"), n: i }); a = a.append(P { s: w("q"), n: i }); return a; }
-function round(i: i32): i32 { var v: P[] = mk(i); return v.len() + v[0].n; }` + structarrProdMain,
+			src: structarrProdDecl + `function mk(i: i32): P[] { let a: P[] = []; a = a.append(P { s: w("p"), n: i }); a = a.append(P { s: w("q"), n: i }); return a; }
+function round(i: i32): i32 { let v: P[] = mk(i); return v.len() + v[0].n; }` + structarrProdMain,
 			want: 48, balance: true,
 		},
 		{
@@ -98,10 +98,10 @@ function round(i: i32): i32 { var v: P[] = mk(i); return v.len() + v[0].n; }` + 
 			// recycled into the second array, so the answer discriminates where a
 			// byte count would not.
 			name: "readback_beside_fresh",
-			src: structarrProdDecl + `function mk(): P[] { var a: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; return a; }
+			src: structarrProdDecl + `function mk(): P[] { let a: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }]; return a; }
 function round(i: i32): i32 {
-    var v: P[] = mk();
-    var junk: P[] = [P { s: w("zz"), n: 9 }, P { s: w("yy"), n: 8 }];
+    let v: P[] = mk();
+    let junk: P[] = [P { s: w("zz"), n: 9 }, P { s: w("yy"), n: 8 }];
     return v[0].s.len() + v[1].n + junk[0].n;
 }` + structarrProdMain,
 			want: 27, balance: true,
@@ -112,16 +112,16 @@ function round(i: i32): i32 {
 			// alias cannot inherit it — asserted, not assumed. 99 here would be
 			// main's `b` freed under it, and no byte count would say so.
 			name: "sibling_alias",
-			src: structarrProdDecl + `function mk(i: i32): P[] { var a: P[] = [P { s: w("p"), n: i }]; return a; }
+			src: structarrProdDecl + `function mk(i: i32): P[] { let a: P[] = [P { s: w("p"), n: i }]; return a; }
 function round(base: P[], i: i32): i32 {
-    var t: i32 = 0;
-    if (i % 2 == 0) { var v: P[] = mk(i); t = t + v.len() + v[0].n; }
-    if (i % 2 == 1) { var v: P[] = base;  t = t + v.len() + v[0].n; }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let v: P[] = mk(i); t = t + v.len() + v[0].n; }
+    if (i % 2 == 1) { let v: P[] = base;  t = t + v.len() + v[0].n; }
     return t;
 }
 function main(): i32 {
-    var b: P[] = [P { s: w("base"), n: 7 }];
-    var t: i32 = 0; var i: i32 = 0;
+    let b: P[] = [P { s: w("base"), n: 7 }];
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(b, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -133,8 +133,8 @@ function main(): i32 {
 			// returned container's counted co-owner is a local of the frame being
 			// left. Admitting it would free `e`'s box twice. Stays a safe leak.
 			name: "producer_bare_ident_elem",
-			src: structarrProdDecl + `function mk(i: i32): P[] { var e: P = P { s: w("p"), n: i }; var a: P[] = []; a = a.append(e); return a; }
-function round(i: i32): i32 { var v: P[] = mk(i); return v.len() + v[0].n; }` + structarrProdMain,
+			src: structarrProdDecl + `function mk(i: i32): P[] { let e: P = P { s: w("p"), n: i }; let a: P[] = []; a = a.append(e); return a; }
+function round(i: i32): i32 { let v: P[] = mk(i); return v.len() + v[0].n; }` + structarrProdMain,
 			want: 14,
 		},
 		{
@@ -144,8 +144,8 @@ function round(i: i32): i32 { var v: P[] = mk(i); return v.len() + v[0].n; }` + 
 			name: "producer_returns_param",
 			src: structarrProdDecl + `function passthru(a: P[]): P[] { return a; }
 function round(i: i32): i32 {
-    var src: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }];
-    var v: P[] = passthru(src);
+    let src: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }];
+    let v: P[] = passthru(src);
     return v.len() + src.len();
 }` + structarrProdMain,
 			want: 53,
@@ -158,20 +158,20 @@ function round(i: i32): i32 {
 			name: "producer_param_string_field",
 			src: structarrProdDecl + `function mkp(nm: string): P[] { return [P { s: nm, n: 1 }]; }
 function round(i: i32): i32 {
-    var owned: string = w("keepvalue");
-    var acc: i32 = 0;
-    var j: i32 = 0;
+    let owned: string = w("keepvalue");
+    let acc: i32 = 0;
+    let j: i32 = 0;
     while (j < 4) {
-        var v: P[] = mkp(owned);
+        let v: P[] = mkp(owned);
         acc = acc + v.len() + v[0].s.len();
         j = j + 1;
     }
-    var junk1: string = w("ZZZZZZZZZZ");
-    var junk2: string = w("YYYYYYYYYY");
+    let junk1: string = w("ZZZZZZZZZZ");
+    let junk2: string = w("YYYYYYYYYY");
     return acc + owned.len() + junk1.len() + junk2.len();
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0;
+    let t: i32 = 0; let i: i32 = 0;
     while (i < 100) { t = t + round(i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
@@ -184,8 +184,8 @@ function main(): i32 {
 			// it must stay balanced.
 			name: "arrfield_elem_stays_arrstruct",
 			src: `struct Q { ys: i32[], n: i32 }
-function mkq(): Q[] { var a: Q[] = [Q { ys: [1, 2], n: 1 }, Q { ys: [3], n: 2 }]; return a; }
-function round(i: i32): i32 { var v: Q[] = mkq(); return v.len() + v[0].ys.len(); }` + structarrProdMain,
+function mkq(): Q[] { let a: Q[] = [Q { ys: [1, 2], n: 1 }, Q { ys: [3], n: 2 }]; return a; }
+function round(i: i32): i32 { let v: Q[] = mkq(); return v.len() + v[0].ys.len(); }` + structarrProdMain,
 			want: 53, balance: true,
 		},
 	}

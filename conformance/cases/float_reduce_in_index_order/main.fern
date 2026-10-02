@@ -28,12 +28,12 @@ import "std/float";
 import "std/num";
 
 function main(): i32 {
-  var xs: f64[] = [1.0e16, 1.0, -1.0e16];
+  let xs: f64[] = [1.0e16, 1.0, -1.0e16];
   print(xs.sum().to_string());
 
   // Four elements, so a tree reduction has a balanced shape to take:
   // ((a+b)+(c+d)) regroups where ((a+b)+c)+d does not.
-  var ys: f64[] = [1.0e16, 1.0, -1.0e16, 1.0];
+  let ys: f64[] = [1.0e16, 1.0, -1.0e16, 1.0];
   print(ys.sum().to_string());
   return 0;
 }

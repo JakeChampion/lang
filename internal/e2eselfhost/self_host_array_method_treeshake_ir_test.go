@@ -35,7 +35,7 @@ func TestSelfHostArrayMethodTreeshakeIR(t *testing.T) {
 		t.Skip("file-loading driver test runs only natively (argv paths)")
 	}
 
-	dir := writeSelfHostAsmProject(t) // util, parser, irlower, asm_ir, treeshake, …
+	dir := writeSelfHostAsmProject(t) // util, parser, irtables, asm_ir, treeshake, …
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
 	mmc := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc")
 
@@ -46,7 +46,7 @@ func TestSelfHostArrayMethodTreeshakeIR(t *testing.T) {
 
 	const src = `import "std/array";
 function joined(): string {
-    var ss: string[] = ["1", "2", "3"];
+    let ss: string[] = ["1", "2", "3"];
     return ss.join("-");
 }
 function main(): i32 {

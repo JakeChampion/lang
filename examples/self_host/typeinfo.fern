@@ -112,11 +112,11 @@ pub function ownable(t: Type): boolean {
 // left is EMPTY — so a callable that owns nothing keeps one spelling and
 // compares equal to one built without the mask.
 pub function own_flags(flags: boolean[], params: Type[]): boolean[] {
-  var kept: boolean[] = [];
-  var any: boolean = false;
-  var i: i32 = 0;
+  let kept: boolean[] = [];
+  let any: boolean = false;
+  let i: i32 = 0;
   while (i < params.len()) {
-    var on: boolean = i < flags.len() && flags[i] && ownable(params[i]);
+    let on: boolean = i < flags.len() && flags[i] && ownable(params[i]);
     kept = kept.append(on);
     if (on) {
       any = true;
@@ -148,7 +148,7 @@ pub struct TypeMap { key: Type, value: Type }
 // name-only union (args=[]) and an instantiated one stay interchangeable
 // everywhere the checker compares them — the field is read only by the
 // typed-IR annotation (type_to_irtag), to reconstruct the "Option[T]" /
-// "Result[T, E]" tag irlower's try_opt_type keys on (#5531).
+// "Result[T, E]" tag the lowering keys on (#5531).
 pub struct TypeUnion { name: string, args: Type[] }
 
 // A `dyn Trait` object type. `traits` is the trait-set text after the
@@ -255,7 +255,7 @@ pub function handle_spelling(h: TypeHandle): string {
 // arguments are renamed in turn.
 pub function renamed_nominals(t: Type, clone_of: (Type) => string): Type {
   if let TypeStruct(s) = t {
-    var n: string = "";
+    let n: string = "";
     if (s.args.len() > 0) {
       n = clone_of(t);
     }
@@ -265,7 +265,7 @@ pub function renamed_nominals(t: Type, clone_of: (Type) => string): Type {
     return TypeStruct { ...s, args: renamed_list(s.args, clone_of) };
   }
   if let TypeUnion(u) = t {
-    var n: string = "";
+    let n: string = "";
     if (u.args.len() > 0) {
       n = clone_of(t);
     }
@@ -290,7 +290,7 @@ pub function renamed_nominals(t: Type, clone_of: (Type) => string): Type {
 }
 
 function renamed_list(ts: Type[], clone_of: (Type) => string): Type[] {
-  var out: Type[] = [];
+  let out: Type[] = [];
   for el in ts {
     out = out.append(renamed_nominals(el, clone_of));
   }
@@ -324,7 +324,7 @@ pub function spelling(t: Type): string {
       return "";
     },
     TypeArray(a) => {
-      var elem: string = spelling(a.elem);
+      let elem: string = spelling(a.elem);
       if (elem.len() == 0) {
         return "";
       }
@@ -343,7 +343,7 @@ pub function spelling(t: Type): string {
       if (tup.elements.len() < 2) {
         return "";
       }
-      var fields: string = type_list_spelling(tup.elements);
+      let fields: string = type_list_spelling(tup.elements);
       if (fields.len() == 0) {
         return "";
       }
@@ -353,11 +353,11 @@ pub function spelling(t: Type): string {
       if (!f.params_known) {
         return "";
       }
-      var params: string = param_list_spelling(f);
+      let params: string = param_list_spelling(f);
       if (params.len() == 0 && f.param_types.len() > 0) {
         return "";
       }
-      var ret: string = spelling(f.ret_type);
+      let ret: string = spelling(f.ret_type);
       if (ret.len() == 0) {
         return "";
       }
@@ -366,8 +366,8 @@ pub function spelling(t: Type): string {
       return "((" + params + ") => " + ret + ")";
     },
     TypeMap(m) => {
-      var key: string = spelling(m.key);
-      var value: string = spelling(m.value);
+      let key: string = spelling(m.key);
+      let value: string = spelling(m.value);
       if (key.len() == 0 || value.len() == 0) {
         return "";
       }
@@ -398,10 +398,10 @@ pub function spelling(t: Type): string {
 // A consuming slot spells its `own`, so a callable's spelling round-trips the
 // whole type rather than the lending half of it.
 function param_list_spelling(f: TypeFunc): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < f.param_types.len()) {
-    var one: string = spelling(f.param_types[i]);
+    let one: string = spelling(f.param_types[i]);
     if (one.len() == 0) {
       return "";
     }
@@ -418,10 +418,10 @@ function param_list_spelling(f: TypeFunc): string {
 }
 
 function type_list_spelling(ts: Type[]): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < ts.len()) {
-    var next: string = spelling(ts[i]);
+    let next: string = spelling(ts[i]);
     if (next.len() == 0) {
       return "";
     }
@@ -438,7 +438,7 @@ function nominal_spelling(name: string, args: Type[]): string {
   if (name.len() == 0 || args.len() == 0) {
     return name;
   }
-  var params: string = type_list_spelling(args);
+  let params: string = type_list_spelling(args);
   if (params.len() == 0) {
     return "";
   }

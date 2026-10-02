@@ -15,6 +15,6 @@ function eval(e: Expr): i32 {
 function apply(e: Expr, f: (Expr) => i32): i32 { return f(e); }
 
 function main(): i32 {
-    var g: (Expr) => i32 = ((e: Expr) => eval(e));
+    let g: (Expr) => i32 = ((e: Expr) => eval(e));
     return apply(Add { l: 30, r: 10 }, (e: Expr) => eval(e)) + g(Lit { v: 2 });
 }

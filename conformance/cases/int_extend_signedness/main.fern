@@ -12,9 +12,9 @@
 // Returns 0; each failing direction sets its own bit so a partial fix is
 // distinguishable from none.
 function main(): i32 {
-  var bad: i32 = 0;
-  var s: i32 = -1;
-  var u: u32 = 4294967295u32;
+  let bad: i32 = 0;
+  let s: i32 = -1;
+  let u: u32 = 4294967295u32;
 
   if ((s as i64) != -1i64) { bad = bad + 1; }
   if ((u as i64) != 4294967295i64) { bad = bad + 2; }
@@ -24,7 +24,7 @@ function main(): i32 {
   // The same widths reached through an expression rather than a bare
   // identifier: the operand of the cast is a division whose result is still
   // a u32 with the top bit set.
-  var big: u32 = 2147483648u32;
+  let big: u32 = 2147483648u32;
   if ((big / 1u32) as i64 != 2147483648i64) { bad = bad + 16; }
   if ((big % 3u32) as i64 != 2i64) { bad = bad + 32; }
 

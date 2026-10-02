@@ -14,7 +14,7 @@ import (
 // element was tagged "f64" and lost the width its method dispatch keys on. The
 // stored value was right; only the RENDERING was wrong:
 //
-//	var t = (3.14159 as f32 * 2.5 as f32, 1); print(t.0.to_string());
+//	let t = (3.14159 as f32 * 2.5 as f32, 1); print(t.0.to_string());
 //	native   19.634937
 //	selfhost 19.634937286376953
 //
@@ -47,19 +47,19 @@ func f32ElemTagCases() []f32ElemTagCase {
 			name: "tuple_elem_f32_renders_at_f32",
 			src: `import "std/float";
 function main(): i32 {
-  var t = (3.14159 as f32 * 2.5 as f32, 1);
+  let t = (3.14159 as f32 * 2.5 as f32, 1);
   return t.0.to_string().len();
 }`,
 			want: 9,
 		},
 		{
-			// An INFERRED Option payload (`var o = Some(<f32>)`). Its tag reaches
+			// An INFERRED Option payload (`let o = Some(<f32>)`). Its tag reaches
 			// the payload admission list, which dropped an f32 outright rather than
 			// widening it — losing the payload type, not just its width.
 			name: "inferred_option_f32_payload",
 			src: `import "std/float";
 function main(): i32 {
-  var o = Some(3.14159 as f32 * 2.5 as f32);
+  let o = Some(3.14159 as f32 * 2.5 as f32);
   match (o) { Some(v) => { return v.to_string().len(); }, None => {} }
   return 0;
 }`,
@@ -71,7 +71,7 @@ function main(): i32 {
 			name: "annotated_option_f32_payload",
 			src: `import "std/float";
 function main(): i32 {
-  var o: Option[f32] = Some(3.14159 as f32 * 2.5 as f32);
+  let o: Option[f32] = Some(3.14159 as f32 * 2.5 as f32);
   match (o) { Some(v) => { return v.to_string().len(); }, None => {} }
   return 0;
 }`,
@@ -84,7 +84,7 @@ function main(): i32 {
 			name: "tuple_mixes_f32_and_f64_elems",
 			src: `import "std/float";
 function main(): i32 {
-  var t = (3.14159 as f32 * 2.5 as f32, 3.14159 as f64 * 2.5 as f64, 3);
+  let t = (3.14159 as f32 * 2.5 as f32, 3.14159 as f64 * 2.5 as f64, 3);
   return t.0.to_string().len() * 10 + t.1.to_string().len();
 }`,
 			want: 98,
@@ -96,7 +96,7 @@ function main(): i32 {
 			name: "plain_f32_local_unchanged",
 			src: `import "std/float";
 function main(): i32 {
-  var v = 3.14159 as f32 * 2.5 as f32;
+  let v = 3.14159 as f32 * 2.5 as f32;
   return v.to_string().len();
 }`,
 			want: 9,

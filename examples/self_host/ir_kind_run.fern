@@ -32,16 +32,16 @@ function b2s(b: boolean): string {
 }
 
 function main(): i32 {
-  var n: i32 = ir.kind_count();
+  let n: i32 = ir.kind_count();
 
   // 1. Full-table bijection sweep. Every id in 1..n must render to a
   //    non-"invalid" tag that maps back to the same id.
-  var failures: i32 = 0;
-  var ok: i32 = 0;
-  var id: i32 = 1;
+  let failures: i32 = 0;
+  let ok: i32 = 0;
+  let id: i32 = 1;
   while (id <= n) {
-    var name: string = ir.kind_name(id);
-    var back: i32 = ir.kind_id(name);
+    let name: string = ir.kind_name(id);
+    let back: i32 = ir.kind_id(name);
     if (name == "invalid" || back != id) {
       failures = failures + 1;
     } else {
@@ -60,7 +60,7 @@ function main(): i32 {
   //     ext_max + 1, so an unregistered tag silently becomes the
   //     "past every registered id" probe and reports its own name where the
   //     invalid sentinel belongs.
-  var ext_names: string[] = [
+  let ext_names: string[] = [
     "struct_copy", "store_i64", "tcp_listen", "tcp_accept", "writer_write",
     "open_file", "syscall3", "raw_scratch", "syscall4", "raw_environ", "raw_splice_pipe",
     "udp_send", "proc_fork", "proc_waitpid",
@@ -93,12 +93,12 @@ function main(): i32 {
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "str_data", "tcp_sendfile", "tcp_send_bytes",
     "udp_send_bytes", "udp_sendto_bytes",
   ];
-  var ext_max: i32 = n;
-  var ext_ok: i32 = 0;
-  var ext_failures: i32 = 0;
-  var ei: i32 = 0;
+  let ext_max: i32 = n;
+  let ext_ok: i32 = 0;
+  let ext_failures: i32 = 0;
+  let ei: i32 = 0;
   while (ei < ext_names.len()) {
-    var eid: i32 = ir.kind_id(ext_names[ei]);
+    let eid: i32 = ir.kind_id(ext_names[ei]);
     if (eid > ext_max) {
       ext_max = eid;
     }
@@ -110,7 +110,7 @@ function main(): i32 {
     ei = ei + 1;
   }
 
-  var out: string = "";
+  let out: string = "";
   out = out + "kind_count=" + util.i32_to_string(n) + "\n";
   out = out + "bijection_ok=" + util.i32_to_string(ok) + "\n";
   out = out + "bijection_failures=" + util.i32_to_string(failures) + "\n";
@@ -126,14 +126,14 @@ function main(): i32 {
   //     "call_directt"), a length no tag has at all (17 and 20 bytes, which
   //     no kind_id_lenN owns), the empty string, and a one-byte tag. Every
   //     one of them must be KIND_INVALID.
-  var neg_names: string[] = [
+  let neg_names: string[] = [
     "", "a", "adz", "fadz", "zadd", "or_", "brif_", "call_direc",
     "tcp_connecx", "call_directt", "arr_push_shared_bytez",
     "aaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaaaaaa", "ADD",
   ];
-  var neg_ok: i32 = 0;
-  var neg_failures: i32 = 0;
-  var ni: i32 = 0;
+  let neg_ok: i32 = 0;
+  let neg_failures: i32 = 0;
+  let ni: i32 = 0;
   while (ni < neg_names.len()) {
     if (ir.kind_id(neg_names[ni]) == 0) {
       neg_ok = neg_ok + 1;
@@ -182,7 +182,7 @@ function main(): i32 {
   //    name maps to (kind_tag == kind_id(EXPECTED)) across a representative
   //    spread — a wrong literal or a registry reorder desyncs this and fails
   //    here rather than silently misdispatching a backend.
-  var probe: ir.Op[] = [
+  let probe: ir.Op[] = [
     ir.op_const_i32(42), ir.op_const_str("x"), ir.op_load_local(0),
     ir.op_store_local(0), ir.op_tee_local(0), ir.op_bin("add", 0, false),
     ir.op_bin("ge_u", 0, true), ir.op_fbin("fadd"), ir.op_funary("fsqrt"),
@@ -225,7 +225,7 @@ function main(): i32 {
     ir.op_reactor_new(), ir.op_reactor_ctl(), ir.op_reactor_wait(), ir.op_tcp_recv_into(), ir.op_str_data(), ir.op_tcp_sendfile(), ir.op_tcp_send_bytes(),
     ir.op_udp_send_bytes(), ir.op_udp_sendto_bytes(),
   ];
-  var names: string[] = [
+  let names: string[] = [
     "const_i32", "const_str", "load_local",
     "store_local", "tee_local", "add",
     "ge_u", "fadd", "fsqrt",
@@ -260,9 +260,9 @@ function main(): i32 {
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "str_data", "tcp_sendfile", "tcp_send_bytes",
     "udp_send_bytes", "udp_sendto_bytes",
   ];
-  var tag_ok: i32 = 0;
-  var tag_bad: i32 = 0;
-  var j: i32 = 0;
+  let tag_ok: i32 = 0;
+  let tag_bad: i32 = 0;
+  let j: i32 = 0;
   while (j < probe.len()) {
     if (probe[j].kind_tag == ir.kind_id(names[j])) {
       tag_ok = tag_ok + 1;
@@ -277,9 +277,9 @@ function main(): i32 {
   // 6. Every registered tag's id, in id order (the golden pins the whole
   //    table, not a spot-check: the backends dispatch on literal ids, so a
   //    renumbering that still bijects is a miscompile).
-  var tid: i32 = 1;
+  let tid: i32 = 1;
   while (tid <= ext_max) {
-    var tname: string = ir.kind_name(tid);
+    let tname: string = ir.kind_name(tid);
     if (tname != "invalid") {
       out = out + tname + "=" + util.i32_to_string(ir.kind_id(tname)) + "\n";
     }

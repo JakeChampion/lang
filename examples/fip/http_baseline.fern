@@ -23,7 +23,7 @@ import "std/string";
 // the id, anything else is a 404; a served response carries the request id
 // back.
 function route(req: HttpRequest): HttpResponse {
-  var resp: HttpResponse = http.text(404, "not found");
+  let resp: HttpResponse = http.text(404, "not found");
   if (req.path == "/") {
     resp = http.ok("ok");
   } else if (req.path == "/echo" && req.method == "POST") {
@@ -86,7 +86,7 @@ fip function sp(): u8 {
 }
 
 fip function put_str(own out: u8[], at: i32, lit: string): u8[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < lit.len()) {
     out = out.with(at + i, lit[i]);
     i = i + 1;
@@ -95,8 +95,8 @@ fip function put_str(own out: u8[], at: i32, lit: string): u8[] {
 }
 
 fip function digits(n: i32): i32 {
-  var d: i32 = 1;
-  var v: i32 = n;
+  let d: i32 = 1;
+  let v: i32 = n;
   while (v >= 10) {
     v = v / 10;
     d = d + 1;
@@ -105,9 +105,9 @@ fip function digits(n: i32): i32 {
 }
 
 fip function put_int(own out: u8[], at: i32, n: i32): u8[] {
-  var d: i32 = digits(n);
-  var v: i32 = n;
-  var i: i32 = d - 1;
+  let d: i32 = digits(n);
+  let v: i32 = n;
+  let i: i32 = d - 1;
   while (i >= 0) {
     out = out.with(at + i, (48 + v % 10) as u8);
     v = v / 10;
@@ -219,16 +219,16 @@ fip function put_length(own w: u8[], at: i32, cl: i32): u8[] {
 // it back with the length in its last four bytes. It takes the buffer `own`
 // in both variants: generating the input is the harness, not the codec.
 fip function build_request(own w: u8[], n: i64): u8[] {
-  var id: i32 = n as i32;
-  var m: i32 = method_of(n);
-  var p: i32 = path_of(n);
-  var corrupt: i32 = corruption(n);
-  var has_body: boolean = m == 1 || m == 2;
-  var blen: i32 = 0;
+  let id: i32 = n as i32;
+  let m: i32 = method_of(n);
+  let p: i32 = path_of(n);
+  let corrupt: i32 = corruption(n);
+  let has_body: boolean = m == 1 || m == 2;
+  let blen: i32 = 0;
   if (has_body) {
     blen = gen_body_len(n);
   }
-  var at: i32 = 0;
+  let at: i32 = 0;
   w = put_method(w, at, m);
   at = at + method_len(m);
   if (corrupt != 0) {
@@ -249,8 +249,8 @@ fip function build_request(own w: u8[], n: i64): u8[] {
   at = at + 2;
   w = put_str(w, at, "Host: example.test\r\nUser-Agent: bench/");
   at = at + 38;
-  var ua: i32 = (n % (61 as i64)) as i32;
-  var j: i32 = 0;
+  let ua: i32 = (n % (61 as i64)) as i32;
+  let j: i32 = 0;
   while (j < ua) {
     w = w.with(at + j, 97 as u8);
     j = j + 1;
@@ -270,7 +270,7 @@ fip function build_request(own w: u8[], n: i64): u8[] {
     w = put_str(w, at, "Content-Length: 12a\r\n");
     at = at + 21;
   } else if (has_body || corrupt == 3 || corrupt == 5) {
-    var declared: i32 = blen;
+    let declared: i32 = blen;
     if (corrupt == 5) {
       declared = blen + 7;
     }
@@ -283,7 +283,7 @@ fip function build_request(own w: u8[], n: i64): u8[] {
   }
   w = put_crlf(w, at);
   at = at + 2;
-  var k: i32 = 0;
+  let k: i32 = 0;
   while (k < blen) {
     w = w.with(at + k, gen_byte(n, k));
     k = k + 1;
@@ -303,7 +303,7 @@ fip function wire_len_of(w: u8[]): i32 {
 // codec agree only if this agrees, which is what makes the comparison a
 // differential test rather than two unrelated benchmarks.
 fip function mix(d: i64, b: i32): i64 {
-  var x: i64 = d ^ b as i64;
+  let x: i64 = d ^ b as i64;
   x = x * (1099511628211 as i64);
   x = x ^ x >> 29 as i64;
   if (x < 0 as i64) {
@@ -313,8 +313,8 @@ fip function mix(d: i64, b: i32): i64 {
 }
 
 function zeros_u8(n: i32): u8[] {
-  var xs: u8[] = __alloc_u8(n);
-  var i: i32 = 0;
+  let xs: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
   while (i < n) {
     xs = xs.with(i, 0 as u8);
     i = i + 1;
@@ -325,42 +325,42 @@ function zeros_u8(n: i32): u8[] {
 // ===================== DRIVER =====================
 
 function main(): i32 {
-  var batch: i32 = 64;
-  var rounds: i32 = 2000;
-  var wire: u8[] = zeros_u8(max_wire());
+  let batch: i32 = 64;
+  let rounds: i32 = 2000;
+  let wire: u8[] = zeros_u8(max_wire());
 
-  var ok: i64 = 0 as i64;
-  var rejected: i64 = 0 as i64;
-  var digest: i64 = 1469598103934665603 as i64;
-  var written: i64 = 0 as i64;
+  let ok: i64 = 0 as i64;
+  let rejected: i64 = 0 as i64;
+  let digest: i64 = 1469598103934665603 as i64;
+  let written: i64 = 0 as i64;
 
-  var samples: i64[] = [];
-  var p: i32 = 0;
+  let samples: i64[] = [];
+  let p: i32 = 0;
   while (p < rounds) {
     samples = samples.append(0 as i64);
     p = p + 1;
   }
 
   // One warm round before the mark.
-  var w: i32 = 0;
+  let w: i32 = 0;
   while (w < batch) {
     wire = build_request(wire, w as i64);
-    var warm: string = serve(wire, wire_len_of(wire));
+    let warm: string = serve(wire, wire_len_of(wire));
     w = w + 1;
   }
 
-  var at_allocs: i64 = bench.alloc_count();
-  var at_fresh: i64 = bench.bump_bytes();
-  var started_ns: i64 = monotonic_ns();
-  var r: i32 = 0;
+  let at_allocs: i64 = bench.alloc_count();
+  let at_fresh: i64 = bench.bump_bytes();
+  let started_ns: i64 = monotonic_ns();
+  let r: i32 = 0;
   while (r < rounds) {
-    var t0: i64 = monotonic_ns();
-    var k: i32 = 0;
+    let t0: i64 = monotonic_ns();
+    let k: i32 = 0;
     while (k < batch) {
-      var n: i64 = r as i64 * (batch as i64) + k as i64;
+      let n: i64 = r as i64 * (batch as i64) + k as i64;
       wire = build_request(wire, n);
-      var resp: string = serve(wire, wire_len_of(wire));
-      var i: i32 = 0;
+      let resp: string = serve(wire, wire_len_of(wire));
+      let i: i32 = 0;
       while (i < resp.len()) {
         digest = mix(digest, resp[i] as i32);
         i = i + 1;
@@ -376,11 +376,11 @@ function main(): i32 {
     samples = samples.with(r, monotonic_ns() - t0);
     r = r + 1;
   }
-  var elapsed_ns: i64 = monotonic_ns() - started_ns;
-  var allocs: i64 = bench.allocs_after(at_allocs);
-  var fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  var requests: i64 = rounds as i64 * (batch as i64);
-  var rep: bench.Report = bench.Report {
+  let elapsed_ns: i64 = monotonic_ns() - started_ns;
+  let allocs: i64 = bench.allocs_after(at_allocs);
+  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
+  let requests: i64 = rounds as i64 * (batch as i64);
+  let rep: bench.Report = bench.Report {
     name: "baseline",
     iterations: rounds,
     wall_ns: elapsed_ns,

@@ -41,7 +41,7 @@ function opt_ignore(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... DIRECTORY...\n";
   out = out + "Remove the DIRECTORY(ies), if they are empty.\n";
   out = out + "\n";
@@ -110,7 +110,7 @@ function ends_with_slash(s: string): boolean {
 // `s` without its trailing slashes, keeping one when that is all there
 // is — gnulib's strip_trailing_slashes, which never empties a name.
 function strip_trailing_slashes(s: string): string {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   while (n > 1 && s[n - 1] as i32 == 47) {
     n = n - 1;
   }
@@ -142,7 +142,7 @@ function is_symlink_with_slash(dir: string): boolean {
 
 // The text after the colon in a removal diagnostic.
 function failure_text(dir: string, e: IoError): string {
-  var text: string = gnu.io_error_text(e);
+  let text: string = gnu.io_error_text(e);
   if (text == "Not a directory" && is_symlink_with_slash(dir)) {
     return "Symbolic link not followed";
   }
@@ -179,8 +179,8 @@ function report(o: Out, msg: string): Out {
 // while `/a/b` climbs to `/a` and then to the empty name, which is
 // ENOENT, exactly as GNU's pointer surgery leaves it.
 function parent_of(dir: string): Option[string] {
-  var slash: i32 = 0 - 1;
-  var i: i32 = 0;
+  let slash: i32 = 0 - 1;
+  let i: i32 = 0;
   while (i < dir.len()) {
     if (dir[i] as i32 == 47) {
       slash = i;
@@ -190,7 +190,7 @@ function parent_of(dir: string): Option[string] {
   if (slash < 0) {
     return None;
   }
-  var k: i32 = slash - 1;
+  let k: i32 = slash - 1;
   while (k > 0 && dir[k] as i32 == 47) {
     k = k - 1;
   }
@@ -198,8 +198,8 @@ function parent_of(dir: string): Option[string] {
 }
 
 function remove_parents(o0: Out, dir0: string, verbose: boolean, ignore: boolean): Out {
-  var o: Out = o0;
-  var dir: string = strip_trailing_slashes(dir0);
+  let o: Out = o0;
+  let dir: string = strip_trailing_slashes(dir0);
   while (true) {
     match (parent_of(dir)) {
       Some(up) => {
@@ -213,7 +213,7 @@ function remove_parents(o0: Out, dir0: string, verbose: boolean, ignore: boolean
     match (remove_dir(dir)) {
       Ok(_) => {},
       Err(e) => {
-        var text: string = failure_text(dir, e);
+        let text: string = failure_text(dir, e);
         if (ignorable_failure(ignore, text, dir)) {
           return o;
         }
@@ -225,7 +225,7 @@ function remove_parents(o0: Out, dir0: string, verbose: boolean, ignore: boolean
 }
 
 pub function main(): i32 {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("", "ignore-fail-on-non-empty", opt_ignore()));
   // `--path` is a deprecated synonym for `--parents` that the help text
   // does not mention, and it is visible all the same: it stands ahead of
@@ -236,12 +236,12 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("p", "parents", opt_parents()));
   opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
 
-  var parents: boolean = false;
-  var verbose: boolean = false;
-  var ignore: boolean = false;
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "rmdir", help_text(), 1);
+  let parents: boolean = false;
+  let verbose: boolean = false;
+  let ignore: boolean = false;
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "rmdir", help_text(), 1);
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -259,15 +259,15 @@ pub function main(): i32 {
     }
   }
 
-  var operands: string[] = g.operands();
+  let operands: string[] = g.operands();
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
 
-  var o: Out = Out { s: gnu.stdio_new(), ok: true };
-  var i: i32 = 0;
+  let o: Out = Out { s: gnu.stdio_new(), ok: true };
+  let i: i32 = 0;
   while (i < operands.len()) {
-    var dir: string = operands[i];
+    let dir: string = operands[i];
     o = announce(o, verbose, dir);
     match (remove_dir(dir)) {
       Ok(_) => {
@@ -276,7 +276,7 @@ pub function main(): i32 {
         }
       },
       Err(e) => {
-        var text: string = failure_text(dir, e);
+        let text: string = failure_text(dir, e);
         if (!ignorable_failure(ignore, text, dir)) {
           o = report(o, "failed to remove " + gnu.quotea(dir) + ": " + text);
         }

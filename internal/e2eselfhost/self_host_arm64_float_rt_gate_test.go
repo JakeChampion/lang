@@ -88,11 +88,11 @@ func TestSelfHostArm64FloatRuntimeGate(t *testing.T) {
 			want int
 		}{
 			{"arith", "function main(): i32 { return 2 + 3 * 4 - 1; }", 13},
-			{"loop", "function main(): i32 { var s = 0; var i = 0; while (i < 10) { s = s + i * 2; i = i + 1; } return s; }", 90},
+			{"loop", "function main(): i32 { let s = 0; let i = 0; while (i < 10) { s = s + i * 2; i = i + 1; } return s; }", 90},
 			{"call", "function add3(a: i32, b: i32, c: i32): i32 { return a + b + c; } function main(): i32 { return add3(20, 15, 7); }", 42},
 			// f64 arithmetic and comparison lower to native FP instructions and
 			// must NOT drag in the transcendental bundle.
-			{"f64_arith", "function main(): i32 { var a: f64 = 6.5; var b: f64 = 2.0; var c: f64 = a * b - 1.0; if (c > 11.5) { return 7; } return 0; }", 7},
+			{"f64_arith", "function main(): i32 { let a: f64 = 6.5; let b: f64 = 2.0; let c: f64 = a * b - 1.0; if (c > 11.5) { return 7; } return 0; }", 7},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
@@ -119,15 +119,15 @@ func TestSelfHostArm64FloatRuntimeGate(t *testing.T) {
 			want int
 		}{
 			// sin(2.0) ≈ 0.909 > 0
-			{"sin", "function main(): i32 { var x: f64 = 2.0; if (__sin_f64(x) > 0.9) { return 1; } return 0; }", 1},
+			{"sin", "function main(): i32 { let x: f64 = 2.0; if (__sin_f64(x) > 0.9) { return 1; } return 0; }", 1},
 			// cos(0.0) == 1
-			{"cos", "function main(): i32 { var x: f64 = 0.0; if (__cos_f64(x) > 0.99) { return 2; } return 0; }", 2},
+			{"cos", "function main(): i32 { let x: f64 = 0.0; if (__cos_f64(x) > 0.99) { return 2; } return 0; }", 2},
 			// exp(1.0) ≈ 2.718
-			{"exp", "function main(): i32 { var x: f64 = 1.0; if (__exp_f64(x) > 2.7) { return 3; } return 0; }", 3},
+			{"exp", "function main(): i32 { let x: f64 = 1.0; if (__exp_f64(x) > 2.7) { return 3; } return 0; }", 3},
 			// log(e) ≈ 1
-			{"log", "function main(): i32 { var x: f64 = 2.718281828459045; if (__log_f64(x) > 0.99) { return 4; } return 0; }", 4},
+			{"log", "function main(): i32 { let x: f64 = 2.718281828459045; if (__log_f64(x) > 0.99) { return 4; } return 0; }", 4},
 			// pow(2,10) == 1024
-			{"pow", "function main(): i32 { var b: f64 = 2.0; var e: f64 = 10.0; if (__pow_f64(b, e) > 1023.5) { return 5; } return 0; }", 5},
+			{"pow", "function main(): i32 { let b: f64 = 2.0; let e: f64 = 10.0; if (__pow_f64(b, e) > 1023.5) { return 5; } return 0; }", 5},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {

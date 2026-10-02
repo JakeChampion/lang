@@ -13,7 +13,7 @@ import (
 // The final block of #7253 step 1, and the one that RETIRES reclaim_slot_name:
 // "ARRTUP:", "ARRSTRUCT:", "ARRSTRUCTA:", "ARRENUM:", "STRUCTARR:",
 // "STRUCTARRA:", "RCENUM:", "RCENUMS:", "SCENUMS:" and the "DYN:" / "DYNCAND:"
-// pair. After this nothing in irlower.fern resolves a reclaim credit by name.
+// pair. After it, nothing in irlower.fern resolved a reclaim credit by name.
 //
 // A name has no scope, so two same-named locals in sibling blocks must each
 // keep their own reclaim verdict. A collision shows as a release landing on a
@@ -48,13 +48,13 @@ func finalKeyCases() []finalKeyCase {
 			// a bare alias of a local that outlives the block.
 			name: "arrtup_collide",
 			src: `function round(i: i32): i32 {
-    var keep: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])];
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: (i32, i32[])[] = [(i, [i, i + 1])]; t = t + o.len(); }
-    if (i % 2 == 1) { var o: (i32, i32[])[] = keep; t = t + o.len(); }
+    let keep: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])];
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: (i32, i32[])[] = [(i, [i, i + 1])]; t = t + o.len(); }
+    if (i % 2 == 1) { let o: (i32, i32[])[] = keep; t = t + o.len(); }
     return t + keep.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 18, allocs: 650, frees: 650,
 		},
 		{
@@ -62,13 +62,13 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			// renamed. The colliding row must match these exact numbers.
 			name: "arrtup_renamed",
 			src: `function round(i: i32): i32 {
-    var keep: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])];
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: (i32, i32[])[] = [(i, [i, i + 1])]; t = t + o.len(); }
-    if (i % 2 == 1) { var u: (i32, i32[])[] = keep; t = t + u.len(); }
+    let keep: (i32, i32[])[] = [(i, [i, i + 1]), (i + 1, [i + 2, i + 3])];
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: (i32, i32[])[] = [(i, [i, i + 1])]; t = t + o.len(); }
+    if (i % 2 == 1) { let u: (i32, i32[])[] = keep; t = t + u.len(); }
     return t + keep.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 18, allocs: 650, frees: 650,
 		},
 		{
@@ -77,13 +77,13 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "arrstruct_collide",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
-    var keep: P[] = [P { xs: [i, i + 1] }, P { xs: [i + 2, i + 3] }];
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: P[] = [P { xs: [i, i + 1] }]; t = t + o.len(); }
-    if (i % 2 == 1) { var o: P[] = keep; t = t + o.len(); }
+    let keep: P[] = [P { xs: [i, i + 1] }, P { xs: [i + 2, i + 3] }];
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: P[] = [P { xs: [i, i + 1] }]; t = t + o.len(); }
+    if (i % 2 == 1) { let o: P[] = keep; t = t + o.len(); }
     return t + keep.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 18, allocs: 650, frees: 650,
 		},
 		{
@@ -92,13 +92,13 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "arrstruct_renamed",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
-    var keep: P[] = [P { xs: [i, i + 1] }, P { xs: [i + 2, i + 3] }];
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: P[] = [P { xs: [i, i + 1] }]; t = t + o.len(); }
-    if (i % 2 == 1) { var u: P[] = keep; t = t + u.len(); }
+    let keep: P[] = [P { xs: [i, i + 1] }, P { xs: [i + 2, i + 3] }];
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: P[] = [P { xs: [i, i + 1] }]; t = t + o.len(); }
+    if (i % 2 == 1) { let u: P[] = keep; t = t + u.len(); }
     return t + keep.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 18, allocs: 650, frees: 650,
 		},
 		{
@@ -106,13 +106,13 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "structarr_collide",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
-    var keep: N[] = [N { a: i, b: i + 1 }, N { a: i + 2, b: i + 3 }];
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: N[] = [N { a: i, b: i }]; t = t + o.len(); }
-    if (i % 2 == 1) { var o: N[] = keep; t = t + o.len(); }
+    let keep: N[] = [N { a: i, b: i + 1 }, N { a: i + 2, b: i + 3 }];
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: N[] = [N { a: i, b: i }]; t = t + o.len(); }
+    if (i % 2 == 1) { let o: N[] = keep; t = t + o.len(); }
     return t + keep.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 18, allocs: 400, frees: 400,
 		},
 		{
@@ -121,13 +121,13 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "structarr_renamed",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
-    var keep: N[] = [N { a: i, b: i + 1 }, N { a: i + 2, b: i + 3 }];
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: N[] = [N { a: i, b: i }]; t = t + o.len(); }
-    if (i % 2 == 1) { var u: N[] = keep; t = t + u.len(); }
+    let keep: N[] = [N { a: i, b: i + 1 }, N { a: i + 2, b: i + 3 }];
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: N[] = [N { a: i, b: i }]; t = t + o.len(); }
+    if (i % 2 == 1) { let u: N[] = keep; t = t + u.len(); }
     return t + keep.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 18, allocs: 400, frees: 400,
 		},
 		{
@@ -137,14 +137,14 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "structarra_collide",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
-    var keep: N[] = [];
+    let keep: N[] = [];
     keep = keep.append(N { a: i, b: i + 1 });
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: N[] = []; o = o.append(N { a: i, b: i }); t = t + o.len(); }
-    if (i % 2 == 1) { var o: N[] = keep; t = t + o.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: N[] = []; o = o.append(N { a: i, b: i }); t = t + o.len(); }
+    if (i % 2 == 1) { let o: N[] = keep; t = t + o.len(); }
     return t + keep.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
@@ -153,14 +153,14 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "structarra_renamed",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
-    var keep: N[] = [];
+    let keep: N[] = [];
     keep = keep.append(N { a: i, b: i + 1 });
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: N[] = []; o = o.append(N { a: i, b: i }); t = t + o.len(); }
-    if (i % 2 == 1) { var u: N[] = keep; t = t + u.len(); }
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: N[] = []; o = o.append(N { a: i, b: i }); t = t + o.len(); }
+    if (i % 2 == 1) { let u: N[] = keep; t = t + u.len(); }
     return t + keep.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
@@ -169,13 +169,13 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "arrenum_collide",
 			src: `enum E { A(string), B }
 function round(pre: string, i: i32): i32 {
-    var keep: E[] = [E.A(pre + "k"), E.B];
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: E[] = [E.A(pre + "x"), E.B]; t = t + o.len(); }
-    if (i % 2 == 1) { var o: E[] = keep; t = t + o.len(); }
+    let keep: E[] = [E.A(pre + "k"), E.B];
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: E[] = [E.A(pre + "x"), E.B]; t = t + o.len(); }
+    if (i % 2 == 1) { let o: E[] = keep; t = t + o.len(); }
     return t + keep.len();
 }
-function main(): i32 { var pre: string = "ab"; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(pre, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let pre: string = "ab"; let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(pre, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 68, allocs: 450, frees: 450,
 		},
 		{
@@ -184,13 +184,13 @@ function main(): i32 { var pre: string = "ab"; var t: i32 = 0; var i: i32 = 0; w
 			name: "arrenum_renamed",
 			src: `enum E { A(string), B }
 function round(pre: string, i: i32): i32 {
-    var keep: E[] = [E.A(pre + "k"), E.B];
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: E[] = [E.A(pre + "x"), E.B]; t = t + o.len(); }
-    if (i % 2 == 1) { var u: E[] = keep; t = t + u.len(); }
+    let keep: E[] = [E.A(pre + "k"), E.B];
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: E[] = [E.A(pre + "x"), E.B]; t = t + o.len(); }
+    if (i % 2 == 1) { let u: E[] = keep; t = t + u.len(); }
     return t + keep.len();
 }
-function main(): i32 { var pre: string = "ab"; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(pre, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let pre: string = "ab"; let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(pre, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 68, allocs: 450, frees: 450,
 		},
 		{
@@ -198,14 +198,14 @@ function main(): i32 { var pre: string = "ab"; var t: i32 = 0; var i: i32 = 0; w
 			name: "scenum_collide",
 			src: `enum S { P(i32), Q }
 function round(i: i32): i32 {
-    var keep: S = S.P(i);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: S = S.P(i + 1); t = t + 1; }
-    if (i % 2 == 1) { var o: S = keep; t = t + 2; }
+    let keep: S = S.P(i);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: S = S.P(i + 1); t = t + 1; }
+    if (i % 2 == 1) { let o: S = keep; t = t + 2; }
     match (keep) { S.P(v) => { t = t + v; }, S.Q => {} }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 37, allocs: 150, frees: 150,
 		},
 		{
@@ -214,14 +214,14 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "scenum_renamed",
 			src: `enum S { P(i32), Q }
 function round(i: i32): i32 {
-    var keep: S = S.P(i);
-    var t: i32 = 0;
-    if (i % 2 == 0) { var o: S = S.P(i + 1); t = t + 1; }
-    if (i % 2 == 1) { var u: S = keep; t = t + 2; }
+    let keep: S = S.P(i);
+    let t: i32 = 0;
+    if (i % 2 == 0) { let o: S = S.P(i + 1); t = t + 1; }
+    if (i % 2 == 1) { let u: S = keep; t = t + 2; }
     match (keep) { S.P(v) => { t = t + v; }, S.Q => {} }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 37, allocs: 150, frees: 150,
 		},
 		{
@@ -232,13 +232,13 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 struct A { v: i32 }
 impl Show for A { function id(self: Self): i32 { return self.v; } }
 function round(i: i32): i32 {
-    var keep: dyn Show = A { v: i };
-    var t: i32 = 0;
-    if (i % 2 == 0) { var d: dyn Show = A { v: i + 1 }; t = t + d.id(); }
-    if (i % 2 == 1) { var d: dyn Show = keep; t = t + d.id(); }
+    let keep: dyn Show = A { v: i };
+    let t: i32 = 0;
+    if (i % 2 == 0) { let d: dyn Show = A { v: i + 1 }; t = t + d.id(); }
+    if (i % 2 == 1) { let d: dyn Show = keep; t = t + d.id(); }
     return t + keep.id();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 73, allocs: 150, frees: 150,
 		},
 		{
@@ -249,13 +249,13 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 struct A { v: i32 }
 impl Show for A { function id(self: Self): i32 { return self.v; } }
 function round(i: i32): i32 {
-    var keep: dyn Show = A { v: i };
-    var t: i32 = 0;
-    if (i % 2 == 0) { var d: dyn Show = A { v: i + 1 }; t = t + d.id(); }
-    if (i % 2 == 1) { var e: dyn Show = keep; t = t + e.id(); }
+    let keep: dyn Show = A { v: i };
+    let t: i32 = 0;
+    if (i % 2 == 0) { let d: dyn Show = A { v: i + 1 }; t = t + d.id(); }
+    if (i % 2 == 1) { let e: dyn Show = keep; t = t + e.id(); }
     return t + keep.id();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 73, allocs: 150, frees: 150,
 		},
 		{
@@ -264,10 +264,10 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			// denies the credit, which no exit code would show.
 			name: "credited_arrtup",
 			src: `function round(i: i32): i32 {
-    var o: (i32, i32[])[] = [(i, [i, i + 1])];
+    let o: (i32, i32[])[] = [(i, [i, i + 1])];
     return o.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 17, allocs: 300, frees: 300,
 		},
 		{
@@ -277,10 +277,10 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "credited_arrstruct",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
-    var o: P[] = [P { xs: [i, i + 1] }];
+    let o: P[] = [P { xs: [i, i + 1] }];
     return o.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 17, allocs: 300, frees: 300,
 		},
 		{
@@ -290,10 +290,10 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "credited_structarr",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
-    var o: N[] = [N { a: i, b: i + 1 }];
+    let o: N[] = [N { a: i, b: i + 1 }];
     return o.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 17, allocs: 200, frees: 200,
 		},
 		{
@@ -303,11 +303,11 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "credited_structarra",
 			src: `struct N { a: i32, b: i32 }
 function round(i: i32): i32 {
-    var o: N[] = [];
+    let o: N[] = [];
     o = o.append(N { a: i, b: i + 1 });
     return o.len();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 17, allocs: 200, frees: 200,
 		},
 		{
@@ -317,10 +317,10 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "credited_arrenum",
 			src: `enum E { A(string), B }
 function round(pre: string, i: i32): i32 {
-    var o: E[] = [E.A(pre + "x"), E.B];
+    let o: E[] = [E.A(pre + "x"), E.B];
     return o.len();
 }
-function main(): i32 { var pre: string = "ab"; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(pre, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let pre: string = "ab"; let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(pre, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
@@ -330,12 +330,12 @@ function main(): i32 { var pre: string = "ab"; var t: i32 = 0; var i: i32 = 0; w
 			name: "credited_rcenum",
 			src: `enum R { Full(i32[]), Empty }
 function round(i: i32): i32 {
-    var o: R = R.Full([i, i + 1]);
-    var t: i32 = 0;
+    let o: R = R.Full([i, i + 1]);
+    let t: i32 = 0;
     match (o) { R.Full(xs) => { t = t + xs[0]; }, R.Empty => {} }
     return t;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 53, allocs: 200, frees: 200,
 		},
 		{
@@ -345,10 +345,10 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			name: "credited_scenum",
 			src: `enum S { P(i32), Q }
 function round(i: i32): i32 {
-    var o: S = S.P(i);
+    let o: S = S.P(i);
     return i + 1;
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 70, allocs: 100, frees: 100,
 		},
 		{
@@ -360,10 +360,10 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 struct A { v: i32 }
 impl Show for A { function id(self: Self): i32 { return self.v; } }
 function round(i: i32): i32 {
-    var d: dyn Show = A { v: i };
+    let d: dyn Show = A { v: i };
     return d.id();
 }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 53, allocs: 100, frees: 100,
 		}}
 }

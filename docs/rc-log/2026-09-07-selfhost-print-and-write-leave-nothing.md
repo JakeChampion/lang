@@ -77,8 +77,8 @@ post-match box releases rather than a loop each had its own copy of.
 
 ## What is still open here
 
-- **The bound-only form.** `var e: Option[IoError] = w.write(s);` with no match
-  still strands its box — but so does `var e: Option[IoError] = g(s);` for a USER
+- **The bound-only form.** `let e: Option[IoError] = w.write(s);` with no match
+  still strands its box — but so does `let e: Option[IoError] = g(s);` for a USER
   `g`, and so does `match (g(s))` on one. The scalar-payload sibling
   (`Option[i32]`) is released in both forms. The gap is the PAYLOAD KIND in
   `consumed_scalar_enum_frees` / `consumed_rcpayload_option_frees`, not the

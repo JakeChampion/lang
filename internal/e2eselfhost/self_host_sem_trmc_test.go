@@ -50,7 +50,7 @@ function drop_neg(xs: List): List {
 
 // Statements before the match run each round, and a scalar parameter advances.
 function take(xs: List, n: i32): List {
-    var lim: i32 = n;
+    let lim: i32 = n;
     if (lim <= 0) { return Nil; }
     match (xs) {
         Cons(h, t) => { return Cons(h, take(t, lim - 1)); },
@@ -108,8 +108,8 @@ function count(xs: NL, acc: i32): i32 {
     }
 }
 function spans(n: i32): NL {
-    var acc: NL = NNil;
-    var i: i32 = 0;
+    let acc: NL = NNil;
+    let i: i32 = 0;
     while (i < n) { acc = NCons(slice_unchecked("abcdefgh", 0, 1 + i % 3), acc); i = i + 1; }
     return acc;
 }
@@ -125,8 +125,8 @@ function mirror(t: Tree): Tree {
 }
 
 function build(n: i32): List {
-    var acc: List = Nil;
-    var i: i32 = 0;
+    let acc: List = Nil;
+    let i: i32 = 0;
     while (i < n) {
         if (i % 3 == 2) { acc = Neg(i % 7, acc); } else { acc = Cons(i % 5, acc); }
         i = i + 1;
@@ -135,17 +135,17 @@ function build(n: i32): List {
 }
 
 function strings(n: i32): SList {
-    var acc: SList = SNil;
-    var i: i32 = 0;
+    let acc: SList = SNil;
+    let i: i32 = 0;
     while (i < n) { acc = SCons("s" + (i % 10).to_string(), acc); i = i + 1; }
     return acc;
 }
 
 function score(l: List): i32 {
-    var acc: i32 = 0;
-    var n: i32 = 0;
-    var cur: List = l;
-    var go: boolean = true;
+    let acc: i32 = 0;
+    let n: i32 = 0;
+    let cur: List = l;
+    let go: boolean = true;
     while (go) {
         match (cur) {
             Cons(h, t) => { acc = acc + h; n = n + 1; cur = t; },
@@ -157,33 +157,33 @@ function score(l: List): i32 {
 }
 
 function rev_score(r: Rev): i32 {
-    var acc: i32 = 0;
-    var cur: Rev = r;
-    var go: boolean = true;
+    let acc: i32 = 0;
+    let cur: Rev = r;
+    let go: boolean = true;
     while (go) { match (cur) { Node(nx, v) => { acc = acc + v; cur = nx; }, End => { go = false; } } }
     return acc;
 }
 
 function text_len(l: SList): i32 {
-    var acc: i32 = 0;
-    var cur: SList = l;
-    var go: boolean = true;
+    let acc: i32 = 0;
+    let cur: SList = l;
+    let go: boolean = true;
     while (go) { match (cur) { SCons(h, t) => { acc = acc + h.len(); cur = t; }, SNil => { go = false; } } }
     return acc;
 }
 
 function leaning(n: i32): Tree {
-    var acc: Tree = Leaf(0);
-    var i: i32 = 0;
+    let acc: Tree = Leaf(0);
+    let i: i32 = 0;
     while (i < n) { acc = Fork(acc, Leaf(i % 9)); i = i + 1; }
     return acc;
 }
 
 // The mirrored tree leans right: a leaf on the left of every fork.
 function right_spine(t: Tree): i32 {
-    var acc: i32 = 0;
-    var cur: Tree = t;
-    var go: boolean = true;
+    let acc: i32 = 0;
+    let cur: Tree = t;
+    let go: boolean = true;
     while (go) {
         match (cur) {
             Fork(l, r) => { match (l) { Leaf(v) => { acc = acc + v; }, Fork(_, _) => { acc = acc + 100000; } } cur = r; },
@@ -194,25 +194,25 @@ function right_spine(t: Tree): i32 {
 }
 
 function main(): i32 {
-    var n: i32 = 300000;
+    let n: i32 = 300000;
     // Held across every call below, so a walk that freed the cells it
     // passed would answer a different score afterwards.
-    var keep: List = build(n);
-    var before: i32 = score(keep);
-    var a: i32 = score(inc_all(keep));
-    var b: i32 = score(drop_neg(keep));
-    var c: i32 = score(take(keep, n - 5));
-    var d: i32 = rev_score(to_rev(keep));
-    var e: i32 = text_len(tag_all(strings(n)));
-    var f: i32 = last_of(keep, 0 - 1);
+    let keep: List = build(n);
+    let before: i32 = score(keep);
+    let a: i32 = score(inc_all(keep));
+    let b: i32 = score(drop_neg(keep));
+    let c: i32 = score(take(keep, n - 5));
+    let d: i32 = rev_score(to_rev(keep));
+    let e: i32 = text_len(tag_all(strings(n)));
+    let f: i32 = last_of(keep, 0 - 1);
     // A temporary input the walk may consume as it goes.
-    var g: i32 = score(inc_all(build(n)));
-    var m: i32 = right_spine(mirror(leaning(n)));
-    var tails: List[] = [build(10)];
-    var j: i32 = score(append_to(keep, tails));
-    var tail_after: i32 = score(tails[0]);
-    var k: i32 = count(spans(20), 0);
-    var after: i32 = score(keep);
+    let g: i32 = score(inc_all(build(n)));
+    let m: i32 = right_spine(mirror(leaning(n)));
+    let tails: List[] = [build(10)];
+    let j: i32 = score(append_to(keep, tails));
+    let tail_after: i32 = score(tails[0]);
+    let k: i32 = count(spans(20), 0);
+    let after: i32 = score(keep);
     print("before=" + before.to_string() + " a=" + a.to_string() + " b=" + b.to_string()
         + " c=" + c.to_string() + " d=" + d.to_string() + " e=" + e.to_string()
         + " f=" + f.to_string() + " g=" + g.to_string() + " m=" + m.to_string()

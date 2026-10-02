@@ -39,15 +39,15 @@ func TestWasmSelfHostArrPush(t *testing.T) {
 		stdout string
 	}{
 		// i32 append: len, indexed read, empty start, chain, grow-then-sum.
-		{"append-len", "function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.append(4); return a.len(); }", 4, ""},
-		{"append-empty", "function main(): i32 { var a: i32[] = []; a = a.append(42); return a[0]; }", 42, ""},
-		{"append-chain", "function main(): i32 { var a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return a[0] + a[1] + a[2]; }", 6, ""},
-		{"append-grow", "function main(): i32 { var a: i32[] = []; var i = 0; while (i < 10) { a = a.append(i); i = i + 1; } var s = 0; for x in a { s = s + x; } return s; }", 45, ""},
+		{"append-len", "function main(): i32 { let a: i32[] = [1, 2, 3]; a = a.append(4); return a.len(); }", 4, ""},
+		{"append-empty", "function main(): i32 { let a: i32[] = []; a = a.append(42); return a[0]; }", 42, ""},
+		{"append-chain", "function main(): i32 { let a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return a[0] + a[1] + a[2]; }", 6, ""},
+		{"append-grow", "function main(): i32 { let a: i32[] = []; let i = 0; while (i < 10) { a = a.append(i); i = i + 1; } let s = 0; for x in a { s = s + x; } return s; }", 45, ""},
 		// string append (a string is one 4-byte slot on wasm32, same push).
-		{"append-string", "function main(): i32 { var xs: string[] = [\"a\"]; xs = xs.append(\"b\"); write(xs[1]); return xs.len(); }", 2, "b"},
+		{"append-string", "function main(): i32 { let xs: string[] = [\"a\"]; xs = xs.append(\"b\"); write(xs[1]); return xs.len(); }", 2, "b"},
 		// append must coexist with str_split (which bundles its own
 		// $__fern_arr_push) without a double-definition.
-		{"append-with-split", "function main(): i32 { var parts = \"a,b,c\".split(\",\"); var xs: i32[] = []; xs = xs.append(parts.len()); return xs[0]; }", 3, ""},
+		{"append-with-split", "function main(): i32 { let parts = \"a,b,c\".split(\",\"); let xs: i32[] = []; xs = xs.append(parts.len()); return xs[0]; }", 3, ""},
 	}
 
 	for _, tc := range cases {

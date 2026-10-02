@@ -12,8 +12,8 @@ every array overwrite in the compiler goes through.
 Minimal shape — no nested array, no append, no element read:
 
 ```fern
-var a: i32[] = [n, n, n, n, n];
-var b: i32[] = [7];
+let a: i32[] = [n, n, n, n, n];
+let b: i32[] = [7];
 while (i < 3) { b = a; t = t + b[0]; i = i + 1; }
 ```
 
@@ -58,7 +58,7 @@ both compilers:
 
 | shape | self-host | native |
 |---|---|---|
-| flat `var xs: i32[] = []` grown by append | `4/4/0` | `4/4/0` |
+| flat `let xs: i32[] = []` grown by append | `4/4/0` | `4/4/0` |
 | append-built `i32[][]`, no row bound | `10/10/0` | `10/10/0` |
 | literal-built `i32[][]` with a row bound | `3/3/0` | `3/3/0` |
 | append-built `i32[][]` + a bound row | `10/8/80` | `10/10/0` |
@@ -91,7 +91,7 @@ iteration — it was a repeated self-alias wearing a hat.
   it retires with that dup", which was read as applying to the plain arr-of-arr
   row read and produced a whole wrong design. It is about OPTAARR, whose
   elements are option boxes. For the arr-of-arr row the dup is already emitted —
-  one `rc_inc` for `var row = g[i]`, one for `row = g[i]`, ZERO for
+  one `rc_inc` for `let row = g[i]`, one for `row = g[i]`, ZERO for
   `for row in g`. Counting the incs settled in one command what reading the
   comment got wrong.
 - **`arrarr_row_escapes` has three callers.** The first #7810 patch edited the
@@ -109,7 +109,7 @@ iteration, and the 200-round self-append rebind churn (`1800/1800/0`, from
 `1800/800/48000` at the start).
 
 One refusal is deliberate and stays: `for row in g` where the BODY lets the loop
-var escape. The iteration binder emits no dup, so the row outlives the loop with
+let escape. The iteration binder emits no dup, so the row outlives the loop with
 no counted reference; it leaks soundly and its exit code agrees with native.
 Closing it needs a retain at the for-binder — the obvious next increment in this
 area, and the only one left named.

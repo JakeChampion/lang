@@ -21,13 +21,13 @@ function weigh(e: E): i32 {
 	}
 }
 function total(h: H): i32 {
-	var n: i32 = 0;
-	var i: i32 = 0;
+	let n: i32 = 0;
+	let i: i32 = 0;
 	while (i < h.items.len()) { n = n + weigh(h.items[i]); i = i + 1; }
 	return n;
 }
 function main(): i32 {
-	var h: H = H { items: [A(1), B("xy")] };
+	let h: H = H { items: [A(1), B("xy")] };
 	return total(h) + weigh(B("q"));
 }`)
 	hints := map[string]ast.InlineHint{}

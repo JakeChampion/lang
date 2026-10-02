@@ -26,22 +26,22 @@ function neg(x: f64): f64 { return -x; }
 function third(x: i64): i64 { return x / 3; }
 function ult(x: u64, y: u64): boolean { return x < y; }
 function run(a: ndarray.NdArray[f64], b: ndarray.NdArray[f64], m: ndarray.NdArray[i64], u: ndarray.NdArray[u64]): f64 {
-  var d: ndarray.NdArray[f64] = a.inner(b, 0.0, fmul, fadd);
-  var s: ndarray.NdArray[f64] = a.map(scale);
-  var t: ndarray.NdArray[f64] = a.map(twice);
-  var l: ndarray.NdArray[f64] = a.map(loud);
-  var i: ndarray.NdArray[f64] = a.map(ident);
-  var n: ndarray.NdArray[f64] = a.map(neg);
-  var f: f64 = 7.0;
-  var c: ndarray.NdArray[f64] = a.map((x: f64): f64 => x * f);
-  var h: ndarray.NdArray[i64] = m.map(third);
-  var q: ndarray.NdArray[boolean] = u.zip_with(u, ult);
+  let d: ndarray.NdArray[f64] = a.inner(b, 0.0, fmul, fadd);
+  let s: ndarray.NdArray[f64] = a.map(scale);
+  let t: ndarray.NdArray[f64] = a.map(twice);
+  let l: ndarray.NdArray[f64] = a.map(loud);
+  let i: ndarray.NdArray[f64] = a.map(ident);
+  let n: ndarray.NdArray[f64] = a.map(neg);
+  let f: f64 = 7.0;
+  let c: ndarray.NdArray[f64] = a.map((x: f64): f64 => x * f);
+  let h: ndarray.NdArray[i64] = m.map(third);
+  let q: ndarray.NdArray[boolean] = u.zip_with(u, ult);
   return d.get([]) + s.get([0]) + t.get([0]) + l.get([0]) + i.get([0]) + n.get([0]) + c.get([0]) + (h.get([0]) as f64) + (if (q.get([0])) { 1.0 } else { 0.0 });
 }
 function main(): i32 {
-  var a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0], [2]);
-  var m: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64], [2]);
-  var u: ndarray.NdArray[u64] = ndarray.from_flat([1u64, 2u64], [2]);
+  let a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0], [2]);
+  let m: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64], [2]);
+  let u: ndarray.NdArray[u64] = ndarray.from_flat([1u64, 2u64], [2]);
   return run(a, a, m, u) as i32;
 }`
 

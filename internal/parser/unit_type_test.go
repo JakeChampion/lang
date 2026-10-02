@@ -13,7 +13,7 @@ import (
 // carry can still be constructed: `Result[void, IoError]` is what every
 // fallible operation with no result returns, and `Ok(())` builds it.
 func TestParseUnitLiteral(t *testing.T) {
-	prog, err := Parse(`function main(): i32 { var u = (); return 0; }`)
+	prog, err := Parse(`function main(): i32 { let u = (); return 0; }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

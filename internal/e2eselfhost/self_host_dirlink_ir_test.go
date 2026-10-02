@@ -85,7 +85,7 @@ func selfHostDirLinkSource(prefix string, withUmask bool) string {
     match (rename(%[1]q, %[2]q)) { Ok(_) => { return 24; }, Err(_) => {} }
 `, p("g.txt"), p("occupied.txt"))
 	if withUmask {
-		src += `    var prev: i32 = umask(18);
+		src += `    let prev: i32 = umask(18);
     if (umask(prev) != 18) { return 25; }
 `
 	}

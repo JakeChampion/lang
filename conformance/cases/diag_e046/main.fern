@@ -3,11 +3,11 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 function main(): i32 {
-    var t: (i32, string) = (1, "hi");
+    let t: (i32, string) = (1, "hi");
     return t.first;             // error[E046]: tuple field access requires a numeric index, got "first"
 }
 
 function main2(): i32 {
-    var t: (i32, string) = (1, "hi");
+    let t: (i32, string) = (1, "hi");
     return t.2;                 // error[E046]: tuple has 2 elements; index 2 is out of range
 }

@@ -183,7 +183,7 @@ func lifetimeFernFixture(t *testing.T, tc lifetimeFixture) (string, string) {
 	}
 	blockID := func(b *ssa.Block) int32 { return b.ID*10 + 7 }
 	var source strings.Builder
-	source.WriteString("import \"./ssa\";\nimport \"./ssalive\";\nfunction same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } var i: i32 = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }\nfunction main(): i32 {\nvar blocks: ssa.SBlock[] = [];\n")
+	source.WriteString("import \"./ssa\";\nimport \"./ssalive\";\nfunction same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } let i: i32 = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }\nfunction main(): i32 {\nlet blocks: ssa.SBlock[] = [];\n")
 	for _, b := range tc.f.Blocks {
 		var insts, preds []string
 		for _, op := range b.Ops {
@@ -211,22 +211,22 @@ func lifetimeFernFixture(t *testing.T, tc lifetimeFixture) (string, string) {
 	for v := int32(0); v < nvals; v++ {
 		deps = append(deps, ints(tc.deps[v+1]))
 	}
-	fmt.Fprintf(&source, "var f = ssa.SFunc { name: \"fixture\", nparams: 0, nvals: %d, blocks: blocks, entry: %d, takes_env: false };\nvar deps: i32[][] = [%s];\n", nvals, blockID(tc.f.Entry), strings.Join(deps, ","))
-	source.WriteString(`var before = ssa.print_func(f);
-var result = ssalive.compute(f, deps);
+	fmt.Fprintf(&source, "let f = ssa.SFunc { name: \"fixture\", nparams: 0, nvals: %d, blocks: blocks, entry: %d, takes_env: false };\nlet deps: i32[][] = [%s];\n", nvals, blockID(tc.f.Entry), strings.Join(deps, ","))
+	source.WriteString(`let before = ssa.print_func(f);
+let result = ssalive.compute(f, deps);
 if (!result.ok) { print(result.why); return 1; }
 if (ssa.print_func(f) != before) { return 2; }
-var bits: string = "";
+let bits: string = "";
 for bit in ssalive.live_in_bits(result, f.blocks.len(), f.nvals) { if (bit) { bits = bits + "1"; } else { bits = bits + "0"; } }
 print(bits);
 bits = "";
 for bit in ssalive.live_out_bits(result, f.blocks.len(), f.nvals) { if (bit) { bits = bits + "1"; } else { bits = bits + "0"; } }
 print(bits);
-var bi: i32 = 0;
+let bi: i32 = 0;
 while (bi < f.blocks.len()) {
-    var ins: i32[] = [];
-    var outs: i32[] = [];
-    var v: i32 = 0;
+    let ins: i32[] = [];
+    let outs: i32[] = [];
+    let v: i32 = 0;
     while (v < f.nvals) {
         if (ssalive.live_in_has(result, bi, v)) { ins = ins.append(v); }
         if (ssalive.live_out_has(result, bi, v)) { outs = outs.append(v); }
@@ -234,9 +234,9 @@ while (bi < f.blocks.len()) {
     }
     if (!same(ssalive.live_in_ids(result, bi), ins)) { print("live_in_ids"); return 3; }
     if (!same(ssalive.live_out_ids(result, bi), outs)) { print("live_out_ids"); return 3; }
-    var si: i32 = 0;
+    let si: i32 = 0;
     while (si < f.blocks.len()) {
-        var diff: i32[] = [];
+        let diff: i32[] = [];
         for o in outs { if (!ssalive.live_in_has(result, si, o)) { diff = diff.append(o); } }
         if (!same(ssalive.out_not_in(result, bi, si), diff)) { print("out_not_in"); return 3; }
         si = si + 1;
@@ -301,19 +301,19 @@ func TestSelfHostSSALifetimeInvalidMetadata(t *testing.T) {
 		{"dependency-id", "deps = deps.with(1, [f.nvals]);", "dependency value out of range"},
 		{"entry", "f = ssa.SFunc { ...f, entry: 0 - 1 };", "missing entry block"},
 		{"predecessor", "f = ssa.SFunc { ...f, blocks: f.blocks.with(1, ssa.SBlock { ...f.blocks[1], preds: [] }) };", "missing predecessor edge"},
-		{"terminator", "var b = f.blocks[0]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 0 } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "invalid terminator"},
-		{"negative-successor", "var b = f.blocks[0]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, target: 0 - 1 } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "negative successor"},
-		{"missing-successor", "var b = f.blocks[0]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, target: 999 } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "missing successor"},
-		{"phi-arity", "var b = f.blocks[0]; var ins = ssa.SInst { ...b.insts[2], kind_tag: 8 }; b = ssa.SBlock { ...b, insts: b.insts.with(2, ins) }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "phi predecessor arity"},
-		{"operand-id", "var b = f.blocks[0]; var ins = ssa.SInst { ...b.insts[2], args: [f.nvals] }; b = ssa.SBlock { ...b, insts: b.insts.with(2, ins) }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "operand value out of range"},
-		{"result-id", "var b = f.blocks[0]; var ins = ssa.SInst { ...b.insts[2], result: f.nvals }; b = ssa.SBlock { ...b, insts: b.insts.with(2, ins) }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "result value out of range"},
-		{"return-id", "var b = f.blocks[2]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, value: f.nvals } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(2, b) };", "return value out of range"},
-		{"condition-id", "var b = f.blocks[0]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 3, cond: f.nvals } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "condition value out of range"},
+		{"terminator", "let b = f.blocks[0]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 0 } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "invalid terminator"},
+		{"negative-successor", "let b = f.blocks[0]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, target: 0 - 1 } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "negative successor"},
+		{"missing-successor", "let b = f.blocks[0]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, target: 999 } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "missing successor"},
+		{"phi-arity", "let b = f.blocks[0]; let ins = ssa.SInst { ...b.insts[2], kind_tag: 8 }; b = ssa.SBlock { ...b, insts: b.insts.with(2, ins) }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "phi predecessor arity"},
+		{"operand-id", "let b = f.blocks[0]; let ins = ssa.SInst { ...b.insts[2], args: [f.nvals] }; b = ssa.SBlock { ...b, insts: b.insts.with(2, ins) }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "operand value out of range"},
+		{"result-id", "let b = f.blocks[0]; let ins = ssa.SInst { ...b.insts[2], result: f.nvals }; b = ssa.SBlock { ...b, insts: b.insts.with(2, ins) }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "result value out of range"},
+		{"return-id", "let b = f.blocks[2]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, value: f.nvals } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(2, b) };", "return value out of range"},
+		{"condition-id", "let b = f.blocks[0]; b = ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 3, cond: f.nvals } }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "condition value out of range"},
 		{"duplicate-block", "f = ssa.SFunc { ...f, blocks: [f.blocks[0], f.blocks[1], f.blocks[2], f.blocks[0]] };", "duplicate or negative block id"},
 		{"negative-block", "f = ssa.SFunc { ...f, blocks: [ssa.SBlock { ...f.blocks[2], id: 0 - 1 }, f.blocks[0], f.blocks[1], f.blocks[2]] };", "duplicate or negative block id"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			src := strings.Replace(source, "var before =", tc.change+"\nvar before =", 1)
+			src := strings.Replace(source, "let before =", tc.change+"\nlet before =", 1)
 			dir := t.TempDir()
 			copySelfHostDriver(t, dir, "ssalive.fern")
 			if err := os.WriteFile(filepath.Join(dir, "lifetime_fixture.fern"), []byte(src), 0o644); err != nil {

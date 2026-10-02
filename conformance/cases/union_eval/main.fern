@@ -11,6 +11,6 @@ function eval(e: Expr): i32 {
 }
 
 function main(): i32 {
-    var e: Expr = Add { l: 40, r: 2 };
+    let e: Expr = Add { l: 40, r: 2 };
     return eval(e);
 }

@@ -5,8 +5,8 @@
 // them. Like std/option, each is an ordinary generic method (a small
 // `match`), enabled by the generic-methods support (#2692).
 //
-//   var parsed: Result[Config, string] = Config::from_json(body);
-//   var cfg: Config = parsed.unwrap_or(default_config());
+//   let parsed: Result[Config, string] = Config::from_json(body);
+//   let cfg: Config = parsed.unwrap_or(default_config());
 //
 // NOTE: callback combinators invoke their function through an indirect
 // call. Composite callback parameter / return types (struct, enum,

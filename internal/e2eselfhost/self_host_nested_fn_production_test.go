@@ -30,12 +30,12 @@ var nestedFnProductionCases = []struct {
     function pick(b: i32): (i32) => i32 {
         return (x: i32) => x + 1;
     }
-    var g: (i32) => i32 = pick(3);
+    let g: (i32) => i32 = pick(3);
     return g(4);
 }
 function main(): i32 { return mk(); }
 `, `function pick(b: i32): (i32) => i32 { return (x: i32) => x + 1; }
-function mk(): i32 { var g: (i32) => i32 = pick(3); return g(4); }
+function mk(): i32 { let g: (i32) => i32 = pick(3); return g(4); }
 function main(): i32 { return mk(); }
 `, 5},
 
@@ -46,12 +46,12 @@ function main(): i32 { return mk(); }
     function pick(b: i32): (i32) => i32 {
         return (x: i32) => x + b;
     }
-    var g: (i32) => i32 = pick(3);
+    let g: (i32) => i32 = pick(3);
     return g(4);
 }
 function main(): i32 { return mk(); }
 `, `function pick(b: i32): (i32) => i32 { return (x: i32) => x + b; }
-function mk(): i32 { var g: (i32) => i32 = pick(3); return g(4); }
+function mk(): i32 { let g: (i32) => i32 = pick(3); return g(4); }
 function main(): i32 { return mk(); }
 `, 7},
 }

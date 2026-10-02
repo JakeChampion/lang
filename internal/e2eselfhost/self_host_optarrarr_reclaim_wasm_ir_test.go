@@ -5,7 +5,7 @@ import (
 )
 
 // TestSelfHostOptArrArrReclaimWasmIR is the wasm port of
-// TestSelfHostOptArrArrReclaimIRX86_64: the OPTARRARR class lives in shared irlower.fern;
+// TestSelfHostOptArrArrReclaimIRX86_64: the OPTARRARR class lives in shared lowering;
 // on wasm the option box is [tag@0, payload@4], __fern_rc_dec maps to $__fern_arr_dec, and
 // $__fern_arrarr_free (wasm arrarr free helper) frees the payload whole, so the inline
 // tag-check + arr-of-arr free resolves without any dedicated new runtime helper. Case table

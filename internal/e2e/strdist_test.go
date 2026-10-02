@@ -16,7 +16,7 @@ function main(): i32 {
     if (strdist.levenshtein("café", "cafe") != 1) { return 5; }
     if (strdist.similarity("abc", "abc") != 1.0 || strdist.similarity("", "") != 1.0) { return 6; }
     if (strdist.similarity("abc", "xyz") != 0.0) { return 7; }
-    var s: f64 = strdist.similarity("kitten", "sitting");
+    let s: f64 = strdist.similarity("kitten", "sitting");
     if (s < 0.57 || s > 0.58) { return 8; }
     return 42;
 }

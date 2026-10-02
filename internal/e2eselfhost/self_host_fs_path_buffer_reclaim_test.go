@@ -43,8 +43,8 @@ func fsBase(name string) func(work string) string {
 
 func fsLoop(rounds int, body string) string {
 	return fmt.Sprintf(`function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < %d) {
 %s
         i = i + 1;

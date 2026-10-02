@@ -14,7 +14,7 @@ const enumKeysDriver = `import "./parser";
 import "./rundriver";
 
 function main(): i32 {
-    var m: parser.Module = parser.module_with_builtins(rundriver.parse_stdin("enum_keys"));
+    let m: parser.Module = parser.module_with_builtins(rundriver.parse_stdin("enum_keys"));
     for e in m.enums { print(e.name + "\n"); }
     return 0;
 }
@@ -36,15 +36,15 @@ func TestSelfHostGenericEnumTupleKey(t *testing.T) {
 		name, body string
 		want       []string
 	}{
-		{"annotated", `function main(): i32 { var o: Opt[(i32, i32)] = Sm((3, 4)); match (o) { Sm(p) => { return p.0; }, Nn => { return 0; } } }`,
+		{"annotated", `function main(): i32 { let o: Opt[(i32, i32)] = Sm((3, 4)); match (o) { Sm(p) => { return p.0; }, Nn => { return 0; } } }`,
 			[]string{"Opt__tup_i32_i32"}},
-		{"inferred", `function main(): i32 { var o = Sm((3, 4)); match (o) { Sm(p) => { return p.1; }, Nn => { return 0; } } }`,
+		{"inferred", `function main(): i32 { let o = Sm((3, 4)); match (o) { Sm(p) => { return p.1; }, Nn => { return 0; } } }`,
 			[]string{"Opt__tup_i32_i32"}},
-		{"nested-and-array", `function main(): i32 { var o: Opt[(i32[], (i32, string))] = Nn; match (o) { Sm(p) => { return 1; }, Nn => { return 0; } } }`,
+		{"nested-and-array", `function main(): i32 { let o: Opt[(i32[], (i32, string))] = Nn; match (o) { Sm(p) => { return 1; }, Nn => { return 0; } } }`,
 			[]string{"Opt__tup_i32_arr_tup_i32_string"}},
-		{"simple-and-tuple", `function main(): i32 { var a: Opt[i32] = Sm(3); var b: Opt[(i32, i32)] = Nn; match (a) { Sm(n) => { return n; }, Nn => { return 0; } } }`,
+		{"simple-and-tuple", `function main(): i32 { let a: Opt[i32] = Sm(3); let b: Opt[(i32, i32)] = Nn; match (a) { Sm(n) => { return n; }, Nn => { return 0; } } }`,
 			[]string{"Opt__i32", "Opt__tup_i32_i32"}},
-		{"tuple-of-a-generic-enum", `function main(): i32 { var o: Opt[(Opt[i32], i32)] = Nn; match (o) { Sm(p) => { return 1; }, Nn => { return 0; } } }`,
+		{"tuple-of-a-generic-enum", `function main(): i32 { let o: Opt[(Opt[i32], i32)] = Nn; match (o) { Sm(p) => { return 1; }, Nn => { return 0; } } }`,
 			[]string{"Opt"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

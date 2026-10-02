@@ -28,7 +28,7 @@ const selfHostTermiosSource = `function main(): i32 {
         Ok(t) => {
             if (t.len() != 24) { return 11; }
             if (t[5] != (3 as i64)) { return 12; }
-            var off: i64[] = t.with(3, t[3] & (0 - 1 - 8));
+            let off: i64[] = t.with(3, t[3] & (0 - 1 - 8));
             match (termios_set(0, 1, off)) { Err(_) => { return 13; }, Ok(_) => {} }
             match (termios_get(0)) {
                 Err(_) => { return 14; },

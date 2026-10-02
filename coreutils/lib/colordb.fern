@@ -23,7 +23,7 @@ import "./fnmatch";
 // here. 9.4 to 9.12 moved the year, added a `TERM vt220` line, said
 // "regular file" in three descriptions, and changed the extension list.
 pub function text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "# Configuration file for dircolors, a utility to help you set the\n";
   out = out + "# LS_COLORS environment variable used by GNU ls with the --color option.\n";
   out = out + "# Copyright (C) 1996-2026 Free Software Foundation, Inc.\n";
@@ -280,10 +280,10 @@ pub function term_known(term: string): boolean {
   if (term.len() == 0) {
     return false;
   }
-  var lines: string[] = text().lines();
-  var i: i32 = 0;
+  let lines: string[] = text().lines();
+  let i: i32 = 0;
   while (i < lines.len()) {
-    var line: string = lines[i];
+    let line: string = lines[i];
     if (line.starts_with("TERM ")) {
       if (fnmatch.fnmatch(slice_unchecked(line, 5, line.len()) + "", term)) {
         return true;

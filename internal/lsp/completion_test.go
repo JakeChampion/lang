@@ -36,8 +36,8 @@ func detailFor(items []completionItem, label string) string {
 }
 
 func TestCompletion_InFunctionBody(t *testing.T) {
-	src := "function add(a: i32, b: i32): i32 {\n  var sum: i32 = a + b;\n  return sum;\n}\n"
-	// Cursor inside the body, somewhere after `var sum...`.
+	src := "function add(a: i32, b: i32): i32 {\n  let sum: i32 = a + b;\n  return sum;\n}\n"
+	// Cursor inside the body, somewhere after `let sum...`.
 	got := completionFor(src, 2, 2)
 	if got == nil || len(got.Items) == 0 {
 		t.Fatal("expected completion items")
@@ -60,7 +60,7 @@ func TestCompletion_InFunctionBody(t *testing.T) {
 }
 
 func TestCompletion_LocalCarriesType(t *testing.T) {
-	src := "function main(): i32 {\n  var n: i32 = 7;\n  return n;\n}\n"
+	src := "function main(): i32 {\n  let n: i32 = 7;\n  return n;\n}\n"
 	got := completionFor(src, 2, 2)
 	if got == nil {
 		t.Fatal("expected completion items")

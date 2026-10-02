@@ -25,12 +25,12 @@ struct Box { items: i32[] }
 function mkbox(n: i32): Box { return Box { items: [n, n + 1] }; }
 
 function bindIt(n: i32): i32 {
-    var a: i32[] = mkbox(n).items;
+    let a: i32[] = mkbox(n).items;
     return a[0];
 }
 
 function assignIt(n: i32): i32 {
-    var a: i32[] = [0];
+    let a: i32[] = [0];
     a = mkbox(n).items;
     return a[0];
 }

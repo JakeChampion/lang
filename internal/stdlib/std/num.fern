@@ -7,13 +7,13 @@
 //     import "std/num" as num;
 //
 //     function (a: T[]) total[T: num.Num](init: T): T {
-//         var s = init;
-//         var i = 0;
+//         let s = init;
+//         let i = 0;
 //         while (i < a.len()) { s = s.add(a[i]); i = i + 1; }
 //         return s;
 //     }
-//     var xs: i64[] = [40, 2];
-//     var t: i64 = xs.total(0);            // works for ANY Num element type
+//     let xs: i64[] = [40, 2];
+//     let t: i64 = xs.total(0);            // works for ANY Num element type
 //
 // The method names match the operator-overload convention (#2706: `+` -> add,
 // `-` -> sub, `*` -> mul, `/` -> div, unary `-` -> neg), so a user struct that
@@ -51,7 +51,7 @@ pub trait Neg {
 
 // Zero is the additive identity (0) as an associated function, so generic
 // reducers can seed an accumulator without a caller-supplied init
-// (`var s = T.zero();`). Kept a STANDALONE trait — not folded into Num — so its
+// (`let s = T.zero();`). Kept a STANDALONE trait — not folded into Num — so its
 // primitive impls register across module imports the same way Add/Sub/… do.
 pub trait Zero {
   function zero(): Self;
@@ -348,7 +348,7 @@ impl Num for u64 {}
 // sum_with folds `xs` left with `.add`, starting from `zero`: the generic
 // element-wise total. Empty `xs` returns `zero` unchanged.
 pub function sum_with[T: Add](xs: T[], zero: T): T {
-  var acc = zero;
+  let acc = zero;
   for x in xs {
     acc = acc.add(x);
   }
@@ -358,7 +358,7 @@ pub function sum_with[T: Add](xs: T[], zero: T): T {
 // product_with folds `xs` left with `.mul`, starting from `one`: the generic
 // element-wise product. Empty `xs` returns `one` unchanged.
 pub function product_with[T: Mul](xs: T[], one: T): T {
-  var acc = one;
+  let acc = one;
   for x in xs {
     acc = acc.mul(x);
   }
@@ -376,7 +376,7 @@ pub function product_with[T: Mul](xs: T[], one: T): T {
 
 // sum totals `xs` from the additive identity; empty `xs` returns `T.zero()`.
 pub function sum[T: Add + Zero](xs: T[]): T {
-  var acc: T = T.zero();
+  let acc: T = T.zero();
   for x in xs {
     acc = acc.add(x);
   }
@@ -386,7 +386,7 @@ pub function sum[T: Add + Zero](xs: T[]): T {
 // product multiplies `xs` from the multiplicative identity; empty `xs` returns
 // `T.one()`.
 pub function product[T: Mul + One](xs: T[]): T {
-  var acc: T = T.one();
+  let acc: T = T.one();
   for x in xs {
     acc = acc.mul(x);
   }
@@ -398,8 +398,8 @@ pub function product[T: Mul + One](xs: T[]): T {
 // specialisation of `scan(+)` — the cumulative sibling of `sum`. Empty in,
 // empty out. Same `Add + Zero` bound, so it works for every numeric width.
 pub function cumsum[T: Add + Zero](xs: T[]): T[] {
-  var out: T[] = [];
-  var run: T = T.zero();
+  let out: T[] = [];
+  let run: T = T.zero();
   for x in xs {
     run = run.add(x);
     out = out.append(run);
@@ -411,8 +411,8 @@ pub function cumsum[T: Add + Zero](xs: T[]): T[] {
 // `xs[0..=i]` (`cumproduct([1,2,3,4])` is `[1,2,6,24]`). The cumulative
 // sibling of `product`; same `Mul + One` bound.
 pub function cumproduct[T: Mul + One](xs: T[]): T[] {
-  var out: T[] = [];
-  var run: T = T.one();
+  let out: T[] = [];
+  let run: T = T.one();
   for x in xs {
     run = run.mul(x);
     out = out.append(run);
@@ -427,8 +427,8 @@ pub function cumproduct[T: Mul + One](xs: T[]): T[] {
 // standard "convert running totals to per-step deltas" step. Fewer than two
 // elements in, empty out.
 pub function adjacent_diff[T: Sub](xs: T[]): T[] {
-  var out: T[] = [];
-  var i: i32 = 1;
+  let out: T[] = [];
+  let i: i32 = 1;
   while (i < xs.len()) {
     out = out.append(xs[i].sub(xs[i - 1]));
     i = i + 1;
@@ -455,9 +455,9 @@ pub function adjacent_diff[T: Sub](xs: T[]): T[] {
 // sum_iter totals every value an iterator yields, starting from `zero`
 // (returned unchanged for an empty iterator).
 pub function sum_iter[T: Add, I: iter.Iterator[T]](it: I, zero: T): T {
-  var acc = zero;
-  var cur = it;
-  var go = true;
+  let acc = zero;
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
@@ -475,9 +475,9 @@ pub function sum_iter[T: Add, I: iter.Iterator[T]](it: I, zero: T): T {
 // product_iter multiplies every value an iterator yields, starting from `one`
 // (returned unchanged for an empty iterator).
 pub function product_iter[T: Mul, I: iter.Iterator[T]](it: I, one: T): T {
-  var acc = one;
-  var cur = it;
-  var go = true;
+  let acc = one;
+  let cur = it;
+  let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {

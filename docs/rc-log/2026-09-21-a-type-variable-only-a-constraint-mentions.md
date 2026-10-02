@@ -103,4 +103,4 @@ The self-host checker's half landed with #9925. Every scope carries the impl
 table, a bounded parameter's impl binds the type variables its bound names, and
 a destination that the arguments leave open is compared against the impl. So
 `iter.nth(iter.range(0, 9), 4)` reads `Option[i32]` on both compilers, and
-`var xs: string[] = iter.to_array(iter.range(0, 5))` is E021 on both.
+`let xs: string[] = iter.to_array(iter.range(0, 5))` is E021 on both.

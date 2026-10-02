@@ -42,7 +42,7 @@ the call. The self-host's threading defeats all four of its shapes at once:
   `s.for_wasm()` and `expr_is_str(_, s)`, neither of which can reach `ops`;
 - `lower_expr_binary` reads `s` again in five branches, each of which RETURNS,
   so no two of them run on one path;
-- `var sr: LowerState = eqR.state;` binds the state out of an `ArgStash`, and a
+- `let sr: LowerState = eqR.state;` binds the state out of an `ArgStash`, and a
   local bound from a field access was excluded outright as a possible alias.
 
 Three deaths, all in `callArgDeaths`:
@@ -61,7 +61,7 @@ Three deaths, all in `callArgDeaths`:
    whose enclosing statement list returns before mentioning the name again is
    equally final. A `break` or `continue` that can escape the list withdraws it,
    and so does an ARRAY parameter position (below).
-3. **`unpackInitLocal`** — `var q = h.f` where `h` is a call-init local, `h.f`
+3. **`unpackInitLocal`** — `let q = h.f` where `h` is a call-init local, `h.f`
    occurs once in the body, and every other mention of `h` selects a different
    field. Nothing else in the frame names that buffer, which is the same
    argument `callInitLocal` already rests on.
@@ -156,7 +156,7 @@ holds at the top site, not everywhere.
 
 **`site` in an rc trace is the immediate caller of the runtime helper, and gdb
 attributes the bracket's inc to the line of the CALL it wraps.** Both hot
-`irlower` incs report the line of `var p = lower_view_borrowed(e, s);` rather
+`irlower` incs report the line of `let p = lower_view_borrowed(e, s);` rather
 than any line that mentions `ops`; the bracket has no source line of its own.
 
 **Removing one level's bracket relocates the copy rather than deleting it,

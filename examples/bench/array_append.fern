@@ -2,8 +2,8 @@
 // the reference-counting traffic on an owned array, with nothing else in the
 // loop.
 function build(n: i32): i32[] {
-  var xs: i32[] = [];
-  var i: i32 = 0;
+  let xs: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     xs = xs.append(i * 7);
     i = i + 1;
@@ -12,10 +12,10 @@ function build(n: i32): i32[] {
 }
 
 function main(): i32 {
-  var total: i64 = 0i64;
-  var r: i32 = 0;
+  let total: i64 = 0i64;
+  let r: i32 = 0;
   while (r < 40) {
-    var xs: i32[] = build(20000);
+    let xs: i32[] = build(20000);
     total = total + xs[xs.len() - 1] as i64;
     r = r + 1;
   }

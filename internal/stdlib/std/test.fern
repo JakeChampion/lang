@@ -27,7 +27,7 @@
 //   }
 //
 //   function main(): i32 {
-//       var r: test.TestRunner = test.test_new("arithmetic");
+//       let r: test.TestRunner = test.test_new("arithmetic");
 //       r = r.it("addition", test_addition);
 //       r = r.it("strings", test_strings);
 //       return r.finish();
@@ -203,7 +203,7 @@ pub function test_new(suite: string): TestRunner {
 // to lift the filter from a `--filter PATTERN` command-line
 // flag without hand-rolling the argv plumbing.
 pub function test_new_filtered(suite: string, filter: string): TestRunner {
-  var r: TestRunner = test_new(suite);
+  let r: TestRunner = test_new(suite);
   return TestRunner { ...r, filter: filter };
 }
 
@@ -213,16 +213,16 @@ pub function test_new_filtered(suite: string, filter: string): TestRunner {
 // which matches the "no filter" sentinel `test_new_filtered`
 // uses.
 //
-//   var r: TestRunner = test_new_filtered("my suite",
+//   let r: TestRunner = test_new_filtered("my suite",
 //                                         parse_filter_from_args(args()));
 //
 // Skip patterns that are CLI-flag-shaped beyond the basic
 // `--filter` — anything fancier should reach for a real
 // argv-parser module once one lands.
 pub function parse_filter_from_args(argv: string[]): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "--filter" && i + 1 < argv.len()) {
       return argv[i + 1];
     }
@@ -244,10 +244,10 @@ pub function parse_filter_from_args(argv: string[]): string {
 // Pair with `parse_fail_fast_from_args(args())` to lift the
 // setting from a `--fail-fast` command-line flag:
 //
-//   var r: TestRunner = test_new("my suite");
+//   let r: TestRunner = test_new("my suite");
 //   if (parse_fail_fast_from_args(args())) { r = r.with_fail_fast(); }
 pub function test_new_fail_fast(suite: string): TestRunner {
-  var r: TestRunner = test_new(suite);
+  let r: TestRunner = test_new(suite);
   return r.with_fail_fast();
 }
 
@@ -262,12 +262,12 @@ pub function (r: TestRunner) with_fail_fast(): TestRunner {
 // `parse_fail_fast_from_args(argv)` — true iff `--fail-fast`
 // appears anywhere in `argv`. Use with `with_fail_fast()`:
 //
-//   var r: TestRunner = test_new("my suite");
+//   let r: TestRunner = test_new("my suite");
 //   if (parse_fail_fast_from_args(args())) {
 //       r = r.with_fail_fast();
 //   }
 pub function parse_fail_fast_from_args(argv: string[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < argv.len()) {
     if (argv[i] == "--fail-fast") {
       return true;
@@ -292,10 +292,10 @@ pub function parse_fail_fast_from_args(argv: string[]): boolean {
 // Pair with `parse_quiet_from_args(args())` to lift the
 // setting from a `--quiet` command-line flag:
 //
-//   var r = test_new("my suite");
+//   let r = test_new("my suite");
 //   if (parse_quiet_from_args(args())) { r = r.with_quiet(); }
 pub function test_new_quiet(suite: string): TestRunner {
-  var r: TestRunner = test_new(suite);
+  let r: TestRunner = test_new(suite);
   return r.with_quiet();
 }
 
@@ -310,10 +310,10 @@ pub function (r: TestRunner) with_quiet(): TestRunner {
 // `parse_quiet_from_args(argv)` — true iff `--quiet`
 // appears anywhere in `argv`. Use with `with_quiet()`:
 //
-//   var r = test_new("my suite");
+//   let r = test_new("my suite");
 //   if (parse_quiet_from_args(args())) { r = r.with_quiet(); }
 pub function parse_quiet_from_args(argv: string[]): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < argv.len()) {
     if (argv[i] == "--quiet") {
       return true;
@@ -329,7 +329,7 @@ pub function parse_quiet_from_args(argv: string[]): boolean {
 // is reserved for a future "--verbose" mode that adds timing
 // or extra context to passing cases.
 pub function test_new_verbose(suite: string): TestRunner {
-  var r: TestRunner = test_new(suite);
+  let r: TestRunner = test_new(suite);
   return TestRunner { ...r, verbose: true };
 }
 
@@ -357,7 +357,7 @@ pub function test_new_verbose(suite: string): TestRunner {
 // prefix duplicates the suite line so the bottom summary
 // stays scannable.
 pub function (r: TestRunner) it(name: string, body: () => TestOutcome): TestRunner {
-  var display: string = r.prefix + name;
+  let display: string = r.prefix + name;
   // Pre-filter: skip cases whose display name doesn't match
   // the runner's filter pattern (set via `test_new_filter`).
   // Counted as skipped rather than not-printed so the TAP
@@ -374,7 +374,7 @@ pub function (r: TestRunner) it(name: string, body: () => TestOutcome): TestRunn
   if (r.fail_fast && r.failed > 0) {
     return r.skip(name, "fail-fast: prior case failed");
   }
-  var idx: i32 = r.emitted.get() + 1;
+  let idx: i32 = r.emitted.get() + 1;
   r.emitted.set(idx);
   // Everything that could skip this case has been decided, so
   // now the test actually runs.
@@ -394,7 +394,7 @@ pub function (r: TestRunner) it(name: string, body: () => TestOutcome): TestRunn
       print("  ---");
       print("  message: " + msg);
       print("  ---");
-      var fs: string[] = r.failures.append(display + ": " + msg);
+      let fs: string[] = r.failures.append(display + ": " + msg);
       return TestRunner { ...r, failed: r.failed + 1, failures: fs };
     }
   }
@@ -416,13 +416,13 @@ pub function (r: TestRunner) it(name: string, body: () => TestOutcome): TestRunn
 //       r = r.it("wasm e2e", run_wasm_test);
 //   }
 pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
-  var idx: i32 = r.emitted.get() + 1;
+  let idx: i32 = r.emitted.get() + 1;
   r.emitted.set(idx);
-  var display: string = r.prefix + name;
+  let display: string = r.prefix + name;
   if (!r.quiet) {
     print("ok " + idx.to_string() + " - " + display + " # SKIP " + reason);
   }
-  var sr: string[] = r.skip_reasons.append(display + ": " + reason);
+  let sr: string[] = r.skip_reasons.append(display + ": " + reason);
   return TestRunner { ...r, skipped: r.skipped + 1, skip_reasons: sr };
 }
 
@@ -451,7 +451,7 @@ pub function (r: TestRunner) skip_if(cond: boolean, name: string, reason: string
 // hierarchical:
 //
 //   r = r.it("standalone", run_standalone);
-//   var arm = r.subsuite("arm64");
+//   let arm = r.subsuite("arm64");
 //   arm = arm.it("exit-code", run_arm64_exit);
 //   arm = arm.it("stdout",    run_arm64_stdout);
 //   r = r.merge(arm);
@@ -491,8 +491,8 @@ pub function (r: TestRunner) subsuite(name: string): TestRunner {
 // closures) so it stays inside the self-host fixed-point emit
 // surface that std/test lands in via the differential gate.
 function __append_all(dst: string[], src: string[]): string[] {
-  var out: string[] = dst;
-  var i: i32 = 0;
+  let out: string[] = dst;
+  let i: i32 = 0;
   while (i < src.len()) {
     out = out.append(src[i]);
     i = i + 1;
@@ -506,9 +506,9 @@ function __append_all(dst: string[], src: string[]): string[] {
 // concatenated. The parent's prefix and verbose flag are
 // preserved.
 pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
-  var fs: string[] = __append_all(r.failures, child.failures);
-  var sr: string[] = __append_all(r.skip_reasons, child.skip_reasons);
-  var cl: string[] = __append_all(r.cleanup_paths, child.cleanup_paths);
+  let fs: string[] = __append_all(r.failures, child.failures);
+  let sr: string[] = __append_all(r.skip_reasons, child.skip_reasons);
+  let cl: string[] = __append_all(r.cleanup_paths, child.cleanup_paths);
   return TestRunner {
     ...r,
     passed: r.passed + child.passed,
@@ -527,7 +527,7 @@ pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
 // immediately, then writes fixtures + spawns subprocesses
 // against it.
 //
-//   var dir: string = expect_ok(temp_dir("foo"));
+//   let dir: string = expect_ok(temp_dir("foo"));
 //   r = r.defer_cleanup(dir);
 //
 // Each registered path goes through `remove_dir_all` at
@@ -537,7 +537,7 @@ pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
 // code's "real" cause — fast-failing on a cleanup error
 // would hide the actual test failure.
 pub function (r: TestRunner) defer_cleanup(path: string): TestRunner {
-  var cl: string[] = r.cleanup_paths.append(path);
+  let cl: string[] = r.cleanup_paths.append(path);
   return TestRunner { ...r, cleanup_paths: cl };
 }
 
@@ -608,16 +608,16 @@ pub function (r: TestRunner) finish(): i32 {
   // cells record what actually reached stdout, so the plan and the
   // fail count are taken from the stream and can never claim fewer
   // than were printed (#8466).
-  var accounted: i32 = r.passed + r.failed + r.skipped;
-  var total: i32 = r.emitted.get();
+  let accounted: i32 = r.passed + r.failed + r.skipped;
+  let total: i32 = r.emitted.get();
   if (accounted > total) {
     total = accounted;
   }
-  var failed: i32 = r.failed;
+  let failed: i32 = r.failed;
   if (r.emitted_failed.get() > failed) {
     failed = r.emitted_failed.get();
   }
-  var dropped: i32 = total - accounted;
+  let dropped: i32 = total - accounted;
   print("1.." + total.to_string());
   print("# tests " + total.to_string());
   print("# pass " + (total - failed - r.skipped).to_string());
@@ -632,7 +632,7 @@ pub function (r: TestRunner) finish(): i32 {
   }
   if (r.skipped > 0) {
     print("# skipped:");
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < r.skip_reasons.len()) {
       print("#   " + r.skip_reasons[j]);
       j = j + 1;
@@ -643,10 +643,10 @@ pub function (r: TestRunner) finish(): i32 {
   // silently swallowed, but they don't override the "real"
   // test result. The exit code below still reflects whether
   // the test assertions themselves passed.
-  var k: i32 = 0;
-  var cleanup_errored: boolean = false;
+  let k: i32 = 0;
+  let cleanup_errored: boolean = false;
   while (k < r.cleanup_paths.len()) {
-    var p: string = r.cleanup_paths[k];
+    let p: string = r.cleanup_paths[k];
     match (remove_dir_all(p)) {
       Ok(_) => {},
       Err(_) => {
@@ -658,7 +658,7 @@ pub function (r: TestRunner) finish(): i32 {
   }
   if (failed > 0) {
     print("# failures:");
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < r.failures.len()) {
       print("#   " + r.failures[i]);
       i = i + 1;
@@ -832,7 +832,7 @@ pub function assert_eq_f64_near(actual: f64, expected: f64, epsilon: f64): TestO
   if (actual == expected) {
     return Pass;
   }
-  var diff: f64 = actual - expected;
+  let diff: f64 = actual - expected;
   if (diff < 0.0) {
     diff = 0.0 - diff;
   }
@@ -872,11 +872,11 @@ pub function assert_eq_f64_rel(actual: f64, expected: f64, rel_tol: f64): TestOu
   if (actual == expected) {
     return Pass;
   }
-  var diff: f64 = actual - expected;
+  let diff: f64 = actual - expected;
   if (diff < 0.0) {
     diff = 0.0 - diff;
   }
-  var denom: f64 = expected;
+  let denom: f64 = expected;
   if (denom < 0.0) {
     denom = 0.0 - denom;
   }
@@ -891,7 +891,7 @@ pub function assert_eq_f64_rel(actual: f64, expected: f64, rel_tol: f64): TestOu
       + " - 0| = " + diff.to_string()
       + " > rel_tol " + rel_tol.to_string());
   }
-  var ratio: f64 = diff / denom;
+  let ratio: f64 = diff / denom;
   if (ratio <= rel_tol) {
     return Pass;
   }
@@ -1076,7 +1076,7 @@ pub function assert_non_empty_string(s: string): TestOutcome {
 // method so the "non-overlapping" semantics stay
 // consistent with other string library callers.
 pub function assert_string_count(haystack: string, needle: string, n: i32): TestOutcome {
-  var got: i32 = haystack.count(needle);
+  let got: i32 = haystack.count(needle);
   if (got == n) {
     return Pass;
   }
@@ -1096,7 +1096,7 @@ pub function assert_string_count(haystack: string, needle: string, n: i32): Test
 // rather than sorting, since there is no generic sort — same result.)
 // See docs/TRAITS.md.
 pub function assert_sorted_asc[T: cmp.Ord + cmp.Display](arr: T[]): TestOutcome {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < arr.len()) {
     if (arr[i - 1].cmp(arr[i]) > 0) {
       return Fail("assert_sorted_asc: inversion at index " + i.to_string()
@@ -1108,7 +1108,7 @@ pub function assert_sorted_asc[T: cmp.Ord + cmp.Display](arr: T[]): TestOutcome 
 }
 
 pub function assert_sorted_desc[T: cmp.Ord + cmp.Display](arr: T[]): TestOutcome {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < arr.len()) {
     if (arr[i - 1].cmp(arr[i]) < 0) {
       return Fail("assert_sorted_desc: inversion at index " + i.to_string()
@@ -1120,7 +1120,7 @@ pub function assert_sorted_desc[T: cmp.Ord + cmp.Display](arr: T[]): TestOutcome
 }
 
 pub function assert_strictly_sorted_asc[T: cmp.Ord + cmp.Display](arr: T[]): TestOutcome {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < arr.len()) {
     if (arr[i - 1].cmp(arr[i]) >= 0) {
       return Fail("assert_strictly_sorted_asc: not strict at index " + i.to_string()
@@ -1132,9 +1132,9 @@ pub function assert_strictly_sorted_asc[T: cmp.Ord + cmp.Display](arr: T[]): Tes
 }
 
 pub function assert_unique[T: cmp.Eq + cmp.Display](arr: T[]): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < arr.len()) {
-    var j: i32 = i + 1;
+    let j: i32 = i + 1;
     while (j < arr.len()) {
       if (arr[i].eq(arr[j])) {
         return Fail("assert_unique: duplicate value " + arr[i].to_string());
@@ -1147,18 +1147,18 @@ pub function assert_unique[T: cmp.Eq + cmp.Display](arr: T[]): TestOutcome {
 }
 
 pub function assert_subset[T: cmp.Eq + cmp.Display](superset: T[], subset: T[]): TestOutcome {
-  var used: boolean[] = [];
-  var sn: i32 = superset.len();
-  var i: i32 = 0;
+  let used: boolean[] = [];
+  let sn: i32 = superset.len();
+  let i: i32 = 0;
   while (i < sn) {
     used = used.append(false);
     i = i + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < subset.len()) {
-    var want: T = subset[j];
-    var matched: boolean = false;
-    var k: i32 = 0;
+    let want: T = subset[j];
+    let matched: boolean = false;
+    let k: i32 = 0;
     while (k < sn && !matched) {
       if (!used[k] && superset[k].eq(want)) {
         used = used.with(k, true);
@@ -1175,24 +1175,24 @@ pub function assert_subset[T: cmp.Eq + cmp.Display](superset: T[], subset: T[]):
 }
 
 pub function assert_set_eq[T: cmp.Eq + cmp.Display](actual: T[], expected: T[]): TestOutcome {
-  var an: i32 = actual.len();
-  var en: i32 = expected.len();
+  let an: i32 = actual.len();
+  let en: i32 = expected.len();
   if (an != en) {
     return Fail("assert_set_eq: length differs - expected "
       + en.to_string() + ", got " + an.to_string());
   }
   // Equal length + actual is a (multiset) subset of expected ⟹ equal.
-  var used: boolean[] = [];
-  var i: i32 = 0;
+  let used: boolean[] = [];
+  let i: i32 = 0;
   while (i < en) {
     used = used.append(false);
     i = i + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < an) {
-    var want: T = actual[j];
-    var matched: boolean = false;
-    var k: i32 = 0;
+    let want: T = actual[j];
+    let matched: boolean = false;
+    let k: i32 = 0;
     while (k < en && !matched) {
       if (!used[k] && expected[k].eq(want)) {
         used = used.with(k, true);
@@ -1209,7 +1209,7 @@ pub function assert_set_eq[T: cmp.Eq + cmp.Display](actual: T[], expected: T[]):
 }
 
 pub function assert_len_i32(arr: i32[], n: i32): TestOutcome {
-  var got: i32 = arr.len();
+  let got: i32 = arr.len();
   if (got == n) {
     return Pass;
   }
@@ -1218,7 +1218,7 @@ pub function assert_len_i32(arr: i32[], n: i32): TestOutcome {
 }
 
 pub function assert_len_string(arr: string[], n: i32): TestOutcome {
-  var got: i32 = arr.len();
+  let got: i32 = arr.len();
   if (got == n) {
     return Pass;
   }
@@ -1260,13 +1260,13 @@ pub function assert_len_string(arr: string[], n: i32): TestOutcome {
 // per-element-width families (`assert_eq_i32_array`, `assert_at_string`,
 // …) once traits landed. See docs/TRAITS.md.
 pub function assert_eq_array[T: cmp.Eq + cmp.Display](actual: T[], expected: T[]): TestOutcome {
-  var an: i32 = actual.len();
-  var en: i32 = expected.len();
+  let an: i32 = actual.len();
+  let en: i32 = expected.len();
   if (an != en) {
     return Fail("assert_eq_array: length differs - expected "
       + en.to_string() + ", got " + an.to_string());
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < an) {
     if (!actual[i].eq(expected[i])) {
       return Fail("assert_eq_array: at index " + i.to_string()
@@ -1279,7 +1279,7 @@ pub function assert_eq_array[T: cmp.Eq + cmp.Display](actual: T[], expected: T[]
 }
 
 pub function assert_at[T: cmp.Eq + cmp.Display](arr: T[], idx: i32, expected: T): TestOutcome {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (idx < 0 || idx >= n) {
     return Fail("assert_at: index " + idx.to_string()
       + " out of bounds (length " + n.to_string() + ")");
@@ -1293,7 +1293,7 @@ pub function assert_at[T: cmp.Eq + cmp.Display](arr: T[], idx: i32, expected: T)
 }
 
 pub function assert_array_contains[T: cmp.Eq + cmp.Display](arr: T[], needle: T): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < arr.len()) {
     if (arr[i].eq(needle)) {
       return Pass;
@@ -1306,7 +1306,7 @@ pub function assert_array_contains[T: cmp.Eq + cmp.Display](arr: T[], needle: T)
 }
 
 pub function assert_array_not_contains[T: cmp.Eq + cmp.Display](arr: T[], needle: T): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < arr.len()) {
     if (arr[i].eq(needle)) {
       return Fail("assert_array_not_contains: "
@@ -1319,12 +1319,12 @@ pub function assert_array_not_contains[T: cmp.Eq + cmp.Display](arr: T[], needle
 }
 
 pub function assert_at_f64(arr: f64[], idx: i32, expected: f64, epsilon: f64): TestOutcome {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (idx < 0 || idx >= n) {
     return Fail("assert_at_f64: index " + idx.to_string()
       + " out of bounds (length " + n.to_string() + ")");
   }
-  var a: f64 = arr[idx];
+  let a: f64 = arr[idx];
   if (a != a) {
     return Fail("assert_at_f64: at index " + idx.to_string()
       + " actual is NaN");
@@ -1336,7 +1336,7 @@ pub function assert_at_f64(arr: f64[], idx: i32, expected: f64, epsilon: f64): T
   if (a == expected) {
     return Pass;
   }
-  var diff: f64 = a - expected;
+  let diff: f64 = a - expected;
   if (diff < 0.0) {
     diff = 0.0 - diff;
   }
@@ -1354,12 +1354,12 @@ pub function assert_at_f64(arr: f64[], idx: i32, expected: f64, epsilon: f64): T
 // difference calc (same precision-safety trick as the
 // scalar `assert_eq_f32_near`).
 pub function assert_at_f32(arr: f32[], idx: i32, expected: f32, epsilon: f32): TestOutcome {
-  var n: i32 = arr.len();
+  let n: i32 = arr.len();
   if (idx < 0 || idx >= n) {
     return Fail("assert_at_f32: index " + idx.to_string()
       + " out of bounds (length " + n.to_string() + ")");
   }
-  var a: f32 = arr[idx];
+  let a: f32 = arr[idx];
   if (a != a) {
     return Fail("assert_at_f32: at index " + idx.to_string()
       + " actual is NaN");
@@ -1371,7 +1371,7 @@ pub function assert_at_f32(arr: f32[], idx: i32, expected: f32, epsilon: f32): T
   if (a == expected) {
     return Pass;
   }
-  var diff: f64 = a as f64 - expected as f64;
+  let diff: f64 = a as f64 - expected as f64;
   if (diff < 0.0) {
     diff = 0.0 - diff;
   }
@@ -1412,22 +1412,22 @@ pub function assert_at_f32(arr: f32[], idx: i32, expected: f32, epsilon: f32): T
 // the `_near` semantics mean cumulative rounding error in
 // vector ops doesn't fail the test spuriously.
 pub function assert_eq_f64_array_near(actual: f64[], expected: f64[], epsilon: f64): TestOutcome {
-  var an: i32 = actual.len();
-  var en: i32 = expected.len();
+  let an: i32 = actual.len();
+  let en: i32 = expected.len();
   if (an != en) {
     return Fail("assert_eq_f64_array_near: length differs - expected "
       + en.to_string() + ", got " + an.to_string());
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < an) {
-    var a: f64 = actual[i];
-    var e: f64 = expected[i];
+    let a: f64 = actual[i];
+    let e: f64 = expected[i];
     if (a != a || e != e) {
       return Fail("assert_eq_f64_array_near: NaN at index "
         + i.to_string());
     }
     if (a != e) {
-      var diff: f64 = a - e;
+      let diff: f64 = a - e;
       if (diff < 0.0) {
         diff = 0.0 - diff;
       }
@@ -1448,22 +1448,22 @@ pub function assert_eq_f64_array_near(actual: f64[], expected: f64[], epsilon: f
 // difference calc, same precision-safety trick as the
 // scalar `assert_eq_f32_near`.
 pub function assert_eq_f32_array_near(actual: f32[], expected: f32[], epsilon: f32): TestOutcome {
-  var an: i32 = actual.len();
-  var en: i32 = expected.len();
+  let an: i32 = actual.len();
+  let en: i32 = expected.len();
   if (an != en) {
     return Fail("assert_eq_f32_array_near: length differs - expected "
       + en.to_string() + ", got " + an.to_string());
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < an) {
-    var a: f32 = actual[i];
-    var e: f32 = expected[i];
+    let a: f32 = actual[i];
+    let e: f32 = expected[i];
     if (a != a || e != e) {
       return Fail("assert_eq_f32_array_near: NaN at index "
         + i.to_string());
     }
     if (a != e) {
-      var diff: f64 = a as f64 - e as f64;
+      let diff: f64 = a as f64 - e as f64;
       if (diff < 0.0) {
         diff = 0.0 - diff;
       }
@@ -1525,7 +1525,7 @@ pub function assert_exit(actual: ProcessResult, expected: i32): TestOutcome {
   if (actual.exit_code == expected) {
     return Pass;
   }
-  var tail: string = "";
+  let tail: string = "";
   if (actual.stdout.len() > 0) {
     tail = tail + "\n  stdout: " + actual.stdout;
   }
@@ -1635,7 +1635,7 @@ pub function assert_stderr_lines(actual: ProcessResult, expected_lines: string[]
 // (timestamps, random ids, etc.). Same line definition as
 // `.lines()` — trailing newline doesn't overcount.
 pub function assert_stdout_line_count(actual: ProcessResult, n: i32): TestOutcome {
-  var got: i32 = actual.stdout.lines().len();
+  let got: i32 = actual.stdout.lines().len();
   if (got == n) {
     return Pass;
   }
@@ -1645,7 +1645,7 @@ pub function assert_stdout_line_count(actual: ProcessResult, n: i32): TestOutcom
 
 // `assert_stderr_line_count(actual, n)` — stderr mirror.
 pub function assert_stderr_line_count(actual: ProcessResult, n: i32): TestOutcome {
-  var got: i32 = actual.stderr.lines().len();
+  let got: i32 = actual.stderr.lines().len();
   if (got == n) {
     return Pass;
   }
@@ -1667,7 +1667,7 @@ pub function assert_stderr_line_count(actual: ProcessResult, n: i32): TestOutcom
 // required; if order matters, use a sequence of substring
 // `index_of` checks). Empty needles list always passes.
 pub function assert_contains_all(haystack: string, needles: string[]): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < needles.len()) {
     if (!haystack.contains(needles[i])) {
       return Fail("assert_contains_all: missing \"" + needles[i]
@@ -1686,7 +1686,7 @@ pub function assert_contains_any(haystack: string, needles: string[]): TestOutco
   if (needles.len() == 0) {
     return Fail("assert_contains_any: empty needles list");
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < needles.len()) {
     if (haystack.contains(needles[i])) {
       return Pass;
@@ -1703,11 +1703,11 @@ pub function assert_contains_any(haystack: string, needles: string[]): TestOutco
 // X at line N, got Y") where the file/line/expected/actual
 // sequence is contractual.
 pub function assert_contains_in_order(haystack: string, needles: string[]): TestOutcome {
-  var cursor: i32 = 0;
-  var i: i32 = 0;
+  let cursor: i32 = 0;
+  let i: i32 = 0;
   while (i < needles.len()) {
-    var rest: str = slice_unchecked(haystack, cursor, haystack.len());
-    var idx: i32 = rest.index_of(needles[i]);
+    let rest: str = slice_unchecked(haystack, cursor, haystack.len());
+    let idx: i32 = rest.index_of(needles[i]);
     if (idx < 0) {
       return Fail("assert_contains_in_order: \"" + needles[i]
         + "\" not found after byte " + cursor.to_string()
@@ -1733,13 +1733,13 @@ pub function assert_contains_in_order(haystack: string, needles: string[]): Test
 // difference past end-of-shorter as a difference at the
 // shorter's last+1 line.
 function __diff_lines(a: string, b: string): i32 {
-  var a_lines: string[] = a.lines();
-  var b_lines: string[] = b.lines();
-  var n: i32 = a_lines.len();
+  let a_lines: string[] = a.lines();
+  let b_lines: string[] = b.lines();
+  let n: i32 = a_lines.len();
   if (b_lines.len() < n) {
     n = b_lines.len();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
     if (a_lines[i] != b_lines[i]) {
       return i + 1;
@@ -1761,12 +1761,12 @@ pub function assert_eq_string_diff(actual: string, expected: string): TestOutcom
   if (actual == expected) {
     return Pass;
   }
-  var line_no: i32 = __diff_lines(expected, actual);
-  var a_lines: string[] = actual.lines();
-  var e_lines: string[] = expected.lines();
-  var actual_line: string = "<past end>";
-  var expected_line: string = "<past end>";
-  var ix: i32 = line_no - 1;
+  let line_no: i32 = __diff_lines(expected, actual);
+  let a_lines: string[] = actual.lines();
+  let e_lines: string[] = expected.lines();
+  let actual_line: string = "<past end>";
+  let expected_line: string = "<past end>";
+  let ix: i32 = line_no - 1;
   if (ix >= 0 && ix < a_lines.len()) {
     actual_line = a_lines[ix];
   }
@@ -1786,14 +1786,14 @@ pub function assert_eq_string_diff(actual: string, expected: string): TestOutcom
 // first differing line + its 1-based index + both values,
 // same shape as `assert_eq_string_diff`.
 pub function assert_lines_eq(actual: string, expected_lines: string[]): TestOutcome {
-  var a_lines: string[] = actual.lines();
-  var an: i32 = a_lines.len();
-  var en: i32 = expected_lines.len();
+  let a_lines: string[] = actual.lines();
+  let an: i32 = a_lines.len();
+  let en: i32 = expected_lines.len();
   if (an != en) {
     return Fail("assert_lines_eq: line count differs - expected "
       + en.to_string() + ", got " + an.to_string());
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < an) {
     if (a_lines[i] != expected_lines[i]) {
       return Fail("assert_lines_eq: differ at line " + (i + 1).to_string()
@@ -2033,7 +2033,7 @@ pub function assert_file_lines(path: string, expected_lines: string[]): TestOutc
 pub function assert_file_line_count(path: string, n: i32): TestOutcome {
   match (read_file(path)) {
     Ok(actual) => {
-      var got: i32 = actual.lines().len();
+      let got: i32 = actual.lines().len();
       if (got == n) {
         return Pass;
       }
@@ -2125,8 +2125,8 @@ pub function assert_file_size(path: string, expected: i64): TestOutcome {
 pub function assert_eq_dir_listing(dir: string, expected_names: string[]): TestOutcome {
   match (read_dir(dir)) {
     Ok(names) => {
-      var actual_sorted: string[] = cmp.sort(names);
-      var expected_sorted: string[] = cmp.sort(expected_names);
+      let actual_sorted: string[] = cmp.sort(names);
+      let expected_sorted: string[] = cmp.sort(expected_names);
       return assert_eq_array(actual_sorted, expected_sorted);
     },
     Err(_) => {
@@ -2167,8 +2167,8 @@ pub function assert_file_contains(path: string, needle: string): TestOutcome {
 // case — `/tmp` is writable on every supported platform) can
 // skip the match boilerplate.
 //
-//   var dir: string = "";
-//   var rr: TestRunner = r;
+//   let dir: string = "";
+//   let rr: TestRunner = r;
 //   match (must_temp_dir(rr, "my-fixture")) {
 //       (p, nr) => { dir = p; rr = nr; }
 //   }
@@ -2211,22 +2211,22 @@ pub function must_temp_dir(r: TestRunner, prefix: string): (string, TestRunner) 
 // type. O(n²) either way; sample counts stay under ~100 so
 // the absolute cost is negligible.
 function __bench_sort_us(samples: i64[]): i64[] {
-  var n: i32 = samples.len();
+  let n: i32 = samples.len();
   // Track which indices have been consumed via a parallel
   // boolean array — easier than mutating `samples` in place
   // (lang has no in-place array set today).
-  var taken: boolean[] = [];
-  var i: i32 = 0;
+  let taken: boolean[] = [];
+  let i: i32 = 0;
   while (i < n) {
     taken = taken.append(false);
     i = i + 1;
   }
-  var out: i64[] = [];
+  let out: i64[] = [];
   i = 0;
   while (i < n) {
     // Find the smallest still-available value.
-    var best: i32 = 0 - 1;
-    var j: i32 = 0;
+    let best: i32 = 0 - 1;
+    let j: i32 = 0;
     while (j < n) {
       if (!taken[j]) {
         if (best < 0 || samples[j] < samples[best]) {
@@ -2240,8 +2240,8 @@ function __bench_sort_us(samples: i64[]): i64[] {
     // ... then re-flag the chosen index. Lang has no
     // in-place set; rebuild `taken` with the slot
     // updated.
-    var t2: boolean[] = [];
-    var k: i32 = 0;
+    let t2: boolean[] = [];
+    let k: i32 = 0;
     while (k < n) {
       if (k == best) {
         t2 = t2.append(true);
@@ -2263,26 +2263,26 @@ pub function (r: TestRunner) bench(name: string, iterations: i32, fn: () => void
   if (iterations <= 0) {
     return r.it(name, () => fail("bench: iterations must be > 0"));
   }
-  var samples: i64[] = [];
-  var i: i32 = 0;
+  let samples: i64[] = [];
+  let i: i32 = 0;
   while (i < iterations) {
-    var start_ns: i64 = monotonic_ns();
+    let start_ns: i64 = monotonic_ns();
     fn();
-    var elapsed_ns: i64 = monotonic_ns() - start_ns;
+    let elapsed_ns: i64 = monotonic_ns() - start_ns;
     samples = samples.append(elapsed_ns / (1000 as i64));
     i = i + 1;
   }
-  var sorted: i64[] = __bench_sort_us(samples);
-  var min_us: i64 = sorted[0];
-  var max_us: i64 = sorted[iterations - 1];
-  var median_us: i64 = sorted[iterations / 2];
-  var sum_us: i64 = 0 as i64;
-  var k: i32 = 0;
+  let sorted: i64[] = __bench_sort_us(samples);
+  let min_us: i64 = sorted[0];
+  let max_us: i64 = sorted[iterations - 1];
+  let median_us: i64 = sorted[iterations / 2];
+  let sum_us: i64 = 0 as i64;
+  let k: i32 = 0;
   while (k < iterations) {
     sum_us = sum_us + sorted[k];
     k = k + 1;
   }
-  var mean_us: i64 = sum_us / (iterations as i64);
+  let mean_us: i64 = sum_us / (iterations as i64);
   print("# bench " + name + " (" + iterations.to_string() + " iters): "
     + "min=" + min_us.to_string() + "us "
     + "median=" + median_us.to_string() + "us "
@@ -2300,18 +2300,18 @@ pub function (r: TestRunner) bench_max_us(name: string, iterations: i32, fn: () 
   if (iterations <= 0) {
     return r.it(name, () => fail("bench: iterations must be > 0"));
   }
-  var samples: i64[] = [];
-  var i: i32 = 0;
+  let samples: i64[] = [];
+  let i: i32 = 0;
   while (i < iterations) {
-    var start_ns: i64 = monotonic_ns();
+    let start_ns: i64 = monotonic_ns();
     fn();
-    var elapsed_ns: i64 = monotonic_ns() - start_ns;
+    let elapsed_ns: i64 = monotonic_ns() - start_ns;
     samples = samples.append(elapsed_ns / (1000 as i64));
     i = i + 1;
   }
-  var sorted: i64[] = __bench_sort_us(samples);
-  var median_us: i64 = sorted[iterations / 2];
-  var max_us_observed: i64 = sorted[iterations - 1];
+  let sorted: i64[] = __bench_sort_us(samples);
+  let median_us: i64 = sorted[iterations / 2];
+  let max_us_observed: i64 = sorted[iterations - 1];
   print("# bench " + name + " (" + iterations.to_string() + " iters): "
     + "median=" + median_us.to_string() + "us "
     + "max=" + max_us_observed.to_string() + "us "
@@ -2319,7 +2319,7 @@ pub function (r: TestRunner) bench_max_us(name: string, iterations: i32, fn: () 
   if (median_us > max_us) {
     // Built once, outside the lambda — the message is the same on every
     // call and this is the only place it is needed.
-    var over_us: string = "bench_max_us: median " + median_us.to_string()
+    let over_us: string = "bench_max_us: median " + median_us.to_string()
       + "us > budget " + max_us.to_string() + "us";
     return r.it(name, () => Fail(over_us));
   }
@@ -2356,8 +2356,8 @@ pub function (r: TestRunner) bench_max_ms(name: string, iterations: i32, fn: () 
 // failure logs enough context to decide whether to bump
 // the bound.
 pub function assert_elapsed_lt_ms(start_ns: i64, max_ms: i64): TestOutcome {
-  var elapsed_ns: i64 = monotonic_ns() - start_ns;
-  var elapsed_ms: i64 = elapsed_ns / (1000000 as i64);
+  let elapsed_ns: i64 = monotonic_ns() - start_ns;
+  let elapsed_ms: i64 = elapsed_ns / (1000000 as i64);
   if (elapsed_ms < max_ms) {
     return Pass;
   }
@@ -2369,8 +2369,8 @@ pub function assert_elapsed_lt_ms(start_ns: i64, max_ms: i64): TestOutcome {
 // for sub-millisecond budgets. Same shape as the `_ms`
 // variant; the failure message reports microseconds.
 pub function assert_elapsed_lt_us(start_ns: i64, max_us: i64): TestOutcome {
-  var elapsed_ns: i64 = monotonic_ns() - start_ns;
-  var elapsed_us: i64 = elapsed_ns / (1000 as i64);
+  let elapsed_ns: i64 = monotonic_ns() - start_ns;
+  let elapsed_us: i64 = elapsed_ns / (1000 as i64);
   if (elapsed_us < max_us) {
     return Pass;
   }
@@ -2389,9 +2389,9 @@ pub function assert_elapsed_lt_us(start_ns: i64, max_us: i64): TestOutcome {
 // observed skew (signed; negative means the actual is in
 // the future) and the bound.
 pub function assert_close_to_now_ms(actual_ms: i64, max_skew_ms: i64): TestOutcome {
-  var now_ms: i64 = now_unix_ms();
-  var skew_ms: i64 = now_ms - actual_ms;
-  var abs_skew: i64 = skew_ms;
+  let now_ms: i64 = now_unix_ms();
+  let skew_ms: i64 = now_ms - actual_ms;
+  let abs_skew: i64 = skew_ms;
   if (abs_skew < 0 as i64) {
     abs_skew = 0 as i64 - abs_skew;
   }
@@ -2467,7 +2467,7 @@ function __json_value_eq(a: JsonValue, b: JsonValue): boolean {
           if (av.len() != bv.len()) {
             return false;
           }
-          var i: i32 = 0;
+          let i: i32 = 0;
           while (i < av.len()) {
             if (!__json_value_eq(av[i], bv[i])) {
               return false;
@@ -2487,10 +2487,10 @@ function __json_value_eq(a: JsonValue, b: JsonValue): boolean {
           if (am.len() != bm.len()) {
             return false;
           }
-          var keys: string[] = am.keys();
-          var i: i32 = 0;
+          let keys: string[] = am.keys();
+          let i: i32 = 0;
           while (i < keys.len()) {
-            var k: string = keys[i];
+            let k: string = keys[i];
             match (am.get(k)) {
               None => {
                 return false;
@@ -2602,7 +2602,7 @@ pub function assert_env_set(name: string): TestOutcome {
 }
 
 // `assert_env_unset(name)` — the inverse. Useful for tests
-// that exercise the "use the default when env var missing"
+// that exercise the "use the default when env let missing"
 // fallback path.
 pub function assert_env_unset(name: string): TestOutcome {
   match (env(name)) {
@@ -2617,7 +2617,7 @@ pub function assert_env_unset(name: string): TestOutcome {
 }
 
 // `assert_env_eq(name, expected)` — set AND equal to
-// `expected`. Failure message distinguishes "var missing"
+// `expected`. Failure message distinguishes "let missing"
 // from "var present but wrong value" so the diagnostic is
 // unambiguous.
 pub function assert_env_eq(name: string, expected: string): TestOutcome {
@@ -2654,7 +2654,7 @@ pub function assert_env_eq(name: string, expected: string): TestOutcome {
 
 // `assert_map_len(m, n)` — map length matches.
 pub function assert_map_len[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](m: Map[K, V], n: i32): TestOutcome {
-  var got: i32 = m.len();
+  let got: i32 = m.len();
   if (got == n) {
     return Pass;
   }
@@ -2701,16 +2701,16 @@ pub function assert_map_lacks[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](
 // the WHOLE map state; reach for `_has` / `_lacks` / `_len` when only
 // individual entries matter.
 pub function assert_eq_map[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](actual: Map[K, V], expected: Map[K, V]): TestOutcome {
-  var an: i32 = actual.len();
-  var en: i32 = expected.len();
+  let an: i32 = actual.len();
+  let en: i32 = expected.len();
   if (an != en) {
     return Fail("assert_eq_map: length differs - expected "
       + en.to_string() + ", got " + an.to_string());
   }
-  var ks: K[] = actual.keys();
-  var i: i32 = 0;
+  let ks: K[] = actual.keys();
+  let i: i32 = 0;
   while (i < ks.len()) {
-    var k: K = ks[i];
+    let k: K = ks[i];
     match (expected.get(k)) {
       None => {
         return Fail("assert_eq_map: key " + k.to_string()
@@ -2747,7 +2747,7 @@ pub function assert_eq_map[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](act
 // Vacuously holds for an empty array (matches the
 // mathematical convention `∀ x ∈ ∅ : P(x)`).
 pub function assert_all_i32(arr: i32[], pred: (i32) => boolean): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < arr.len()) {
     if (!pred(arr[i])) {
       return Fail("assert_all_i32: predicate failed at index "
@@ -2760,7 +2760,7 @@ pub function assert_all_i32(arr: i32[], pred: (i32) => boolean): TestOutcome {
 
 // `assert_all_string(arr, pred)` — string-typed mirror.
 pub function assert_all_string(arr: string[], pred: (string) => boolean): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < arr.len()) {
     if (!pred(arr[i])) {
       return Fail("assert_all_string: predicate failed at index "
@@ -2777,8 +2777,8 @@ pub function assert_all_string(arr: string[], pred: (string) => boolean): TestOu
 // classical logic). Failure message names the array length
 // so an empty-array failure is obvious.
 pub function assert_any_i32(arr: i32[], pred: (i32) => boolean): TestOutcome {
-  var n: i32 = arr.len();
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let i: i32 = 0;
   while (i < n) {
     if (pred(arr[i])) {
       return Pass;
@@ -2791,8 +2791,8 @@ pub function assert_any_i32(arr: i32[], pred: (i32) => boolean): TestOutcome {
 
 // `assert_any_string(arr, pred)` — string-typed mirror.
 pub function assert_any_string(arr: string[], pred: (string) => boolean): TestOutcome {
-  var n: i32 = arr.len();
-  var i: i32 = 0;
+  let n: i32 = arr.len();
+  let i: i32 = 0;
   while (i < n) {
     if (pred(arr[i])) {
       return Pass;
@@ -2831,8 +2831,8 @@ pub function assert_any_string(arr: string[], pred: (string) => boolean): TestOu
 // least one) — pin the exact cardinality. Failure message
 // embeds the observed count so the diff is obvious.
 pub function assert_count_i32(arr: i32[], pred: (i32) => boolean, expected_count: i32): TestOutcome {
-  var hits: i32 = 0;
-  var i: i32 = 0;
+  let hits: i32 = 0;
+  let i: i32 = 0;
   while (i < arr.len()) {
     if (pred(arr[i])) {
       hits = hits + 1;
@@ -2850,8 +2850,8 @@ pub function assert_count_i32(arr: i32[], pred: (i32) => boolean, expected_count
 // `assert_count_string(arr, pred, expected_count)` — string-
 // typed mirror.
 pub function assert_count_string(arr: string[], pred: (string) => boolean, expected_count: i32): TestOutcome {
-  var hits: i32 = 0;
-  var i: i32 = 0;
+  let hits: i32 = 0;
+  let i: i32 = 0;
   while (i < arr.len()) {
     if (pred(arr[i])) {
       hits = hits + 1;
@@ -2882,7 +2882,7 @@ pub function assert_count_string(arr: string[], pred: (string) => boolean, expec
 // context to fix the call site without re-reading the
 // test source.
 pub function assert_one_of_i32(actual: i32, allowed: i32[]): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < allowed.len()) {
     if (allowed[i] == actual) {
       return Pass;
@@ -2891,8 +2891,8 @@ pub function assert_one_of_i32(actual: i32, allowed: i32[]): TestOutcome {
   }
   // Build a comma-separated rendering of the allowed set
   // so the message reads like a normal failure diff.
-  var rendered: string = "[";
-  var j: i32 = 0;
+  let rendered: string = "[";
+  let j: i32 = 0;
   while (j < allowed.len()) {
     if (j > 0) {
       rendered = rendered + ", ";
@@ -2908,15 +2908,15 @@ pub function assert_one_of_i32(actual: i32, allowed: i32[]): TestOutcome {
 // `assert_one_of_string(actual, allowed)` — string-typed
 // mirror.
 pub function assert_one_of_string(actual: string, allowed: string[]): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < allowed.len()) {
     if (allowed[i] == actual) {
       return Pass;
     }
     i = i + 1;
   }
-  var rendered: string = "[";
-  var j: i32 = 0;
+  let rendered: string = "[";
+  let j: i32 = 0;
   while (j < allowed.len()) {
     if (j > 0) {
       rendered = rendered + ", ";
@@ -2937,7 +2937,7 @@ pub function assert_one_of_string(actual: string, allowed: string[]): TestOutcom
 // accidentally returns the bad value points at the right
 // case immediately.
 pub function assert_none_of_i32(actual: i32, forbidden: i32[]): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < forbidden.len()) {
     if (forbidden[i] == actual) {
       return Fail("assert_none_of_i32: " + actual.to_string()
@@ -2951,7 +2951,7 @@ pub function assert_none_of_i32(actual: i32, forbidden: i32[]): TestOutcome {
 // `assert_none_of_string(actual, forbidden)` — string-typed
 // mirror.
 pub function assert_none_of_string(actual: string, forbidden: string[]): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < forbidden.len()) {
     if (forbidden[i] == actual) {
       return Fail("assert_none_of_string: \"" + actual
@@ -3112,7 +3112,7 @@ pub function assert_no_header(resp: HttpResponse, name: string): TestOutcome {
 
 // `assert_body(resp, expected)` — the response's body, as text.
 pub function assert_body(resp: HttpResponse, expected: string): TestOutcome {
-  var got: string = resp.body_string();
+  let got: string = resp.body_string();
   if (got == expected) {
     return Pass;
   }
@@ -3226,9 +3226,9 @@ pub function assert_is_err_string_array(res: Result[string[], IoError]): TestOut
 // empty). Linear-time `O(|a| * |b|)` scan — fine for
 // the typical short test arrays.
 pub function assert_array_intersects_i32(a: i32[], b: i32[]): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < b.len()) {
       if (a[i] == b[j]) {
         return Pass;
@@ -3244,9 +3244,9 @@ pub function assert_array_intersects_i32(a: i32[], b: i32[]): TestOutcome {
 // `assert_array_intersects_string(a, b)` — string-typed
 // mirror.
 pub function assert_array_intersects_string(a: string[], b: string[]): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < b.len()) {
       if (a[i] == b[j]) {
         return Pass;
@@ -3265,9 +3265,9 @@ pub function assert_array_intersects_string(a: string[], b: string[]): TestOutco
 // of empty with anything is empty). Failure message names
 // the first shared element.
 pub function assert_array_disjoint_i32(a: i32[], b: i32[]): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < b.len()) {
       if (a[i] == b[j]) {
         return Fail("assert_array_disjoint_i32: shared element "
@@ -3283,9 +3283,9 @@ pub function assert_array_disjoint_i32(a: i32[], b: i32[]): TestOutcome {
 // `assert_array_disjoint_string(a, b)` — string-typed
 // mirror.
 pub function assert_array_disjoint_string(a: string[], b: string[]): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < b.len()) {
       if (a[i] == b[j]) {
         return Fail("assert_array_disjoint_string: shared element \""
@@ -3313,13 +3313,13 @@ pub function assert_array_disjoint_string(a: string[], b: string[]): TestOutcome
 // empty prefix). Failure either reports too-short OR
 // names the first non-matching index.
 pub function assert_array_starts_with_i32(arr: i32[], prefix: i32[]): TestOutcome {
-  var pn: i32 = prefix.len();
+  let pn: i32 = prefix.len();
   if (pn > arr.len()) {
     return Fail("assert_array_starts_with_i32: array length "
       + arr.len().to_string() + " < prefix length "
       + pn.to_string());
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < pn) {
     if (arr[i] != prefix[i]) {
       return Fail("assert_array_starts_with_i32: at index "
@@ -3335,13 +3335,13 @@ pub function assert_array_starts_with_i32(arr: i32[], prefix: i32[]): TestOutcom
 // `assert_array_starts_with_string(arr, prefix)` — string-
 // typed mirror.
 pub function assert_array_starts_with_string(arr: string[], prefix: string[]): TestOutcome {
-  var pn: i32 = prefix.len();
+  let pn: i32 = prefix.len();
   if (pn > arr.len()) {
     return Fail("assert_array_starts_with_string: array length "
       + arr.len().to_string() + " < prefix length "
       + pn.to_string());
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < pn) {
     if (arr[i] != prefix[i]) {
       return Fail("assert_array_starts_with_string: at index "
@@ -3358,15 +3358,15 @@ pub function assert_array_starts_with_string(arr: string[], prefix: string[]): T
 // vacuously passes. Failure reports too-short or names
 // the first mismatching index (offset into `arr`).
 pub function assert_array_ends_with_i32(arr: i32[], suffix: i32[]): TestOutcome {
-  var sn: i32 = suffix.len();
-  var an: i32 = arr.len();
+  let sn: i32 = suffix.len();
+  let an: i32 = arr.len();
   if (sn > an) {
     return Fail("assert_array_ends_with_i32: array length "
       + an.to_string() + " < suffix length "
       + sn.to_string());
   }
-  var off: i32 = an - sn;
-  var i: i32 = 0;
+  let off: i32 = an - sn;
+  let i: i32 = 0;
   while (i < sn) {
     if (arr[off + i] != suffix[i]) {
       return Fail("assert_array_ends_with_i32: at index "
@@ -3382,15 +3382,15 @@ pub function assert_array_ends_with_i32(arr: i32[], suffix: i32[]): TestOutcome 
 // `assert_array_ends_with_string(arr, suffix)` — string-
 // typed mirror.
 pub function assert_array_ends_with_string(arr: string[], suffix: string[]): TestOutcome {
-  var sn: i32 = suffix.len();
-  var an: i32 = arr.len();
+  let sn: i32 = suffix.len();
+  let an: i32 = arr.len();
   if (sn > an) {
     return Fail("assert_array_ends_with_string: array length "
       + an.to_string() + " < suffix length "
       + sn.to_string());
   }
-  var off: i32 = an - sn;
-  var i: i32 = 0;
+  let off: i32 = an - sn;
+  let i: i32 = 0;
   while (i < sn) {
     if (arr[off + i] != suffix[i]) {
       return Fail("assert_array_ends_with_string: at index "
@@ -3407,18 +3407,18 @@ pub function assert_array_ends_with_string(arr: string[], suffix: string[]): Tes
 // Plain O(N*M) scan; fine for the typical short arrays in
 // tests.
 function __match_subseq_i32(arr: i32[], needle: i32[]): boolean {
-  var nn: i32 = needle.len();
+  let nn: i32 = needle.len();
   if (nn == 0) {
     return true;
   }
-  var an: i32 = arr.len();
+  let an: i32 = arr.len();
   if (nn > an) {
     return false;
   }
-  var start: i32 = 0;
+  let start: i32 = 0;
   while (start <= an - nn) {
-    var matched: boolean = true;
-    var i: i32 = 0;
+    let matched: boolean = true;
+    let i: i32 = 0;
     while (i < nn) {
       if (arr[start + i] != needle[i]) {
         matched = false;
@@ -3453,18 +3453,18 @@ pub function assert_array_contains_subseq_i32(arr: i32[], needle: i32[]): TestOu
 }
 
 function __match_subseq_string(arr: string[], needle: string[]): boolean {
-  var nn: i32 = needle.len();
+  let nn: i32 = needle.len();
   if (nn == 0) {
     return true;
   }
-  var an: i32 = arr.len();
+  let an: i32 = arr.len();
   if (nn > an) {
     return false;
   }
-  var start: i32 = 0;
+  let start: i32 = 0;
   while (start <= an - nn) {
-    var matched: boolean = true;
-    var i: i32 = 0;
+    let matched: boolean = true;
+    let i: i32 = 0;
     while (i < nn) {
       if (arr[start + i] != needle[i]) {
         matched = false;
@@ -3510,7 +3510,7 @@ pub function assert_array_contains_subseq_string(arr: string[], needle: string[]
 // passes (∀ over ∅). Empty prefix vacuously passes for
 // every non-null string.
 pub function assert_all_starts_with(arr: string[], prefix: string): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < arr.len()) {
     if (!arr[i].starts_with(prefix)) {
       return Fail("assert_all_starts_with: at index "
@@ -3525,7 +3525,7 @@ pub function assert_all_starts_with(arr: string[], prefix: string): TestOutcome 
 // `assert_all_ends_with(arr, suffix)` — every element ends
 // with `suffix`. Same shape as the `_starts_with` mirror.
 pub function assert_all_ends_with(arr: string[], suffix: string): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < arr.len()) {
     if (!arr[i].ends_with(suffix)) {
       return Fail("assert_all_ends_with: at index "
@@ -3542,7 +3542,7 @@ pub function assert_all_ends_with(arr: string[], suffix: string): TestOutcome {
 // is "every error message mentions the operation name" or
 // "every emitted log line has the trace id".
 pub function assert_all_contain(arr: string[], needle: string): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < arr.len()) {
     if (!arr[i].contains(needle)) {
       return Fail("assert_all_contain: at index "
@@ -3565,7 +3565,7 @@ pub function assert_all_contain(arr: string[], needle: string): TestOutcome {
 // at least one prefix in `prefixes`. Empty `prefixes`
 // list always fails (nothing to match).
 pub function assert_starts_with_any(s: string, prefixes: string[]): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < prefixes.len()) {
     if (s.starts_with(prefixes[i])) {
       return Pass;
@@ -3581,7 +3581,7 @@ pub function assert_starts_with_any(s: string, prefixes: string[]): TestOutcome 
 // the suffix family. Common shape: "the file extension is
 // one of [.fern, .ll, .s]".
 pub function assert_ends_with_any(s: string, suffixes: string[]): TestOutcome {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < suffixes.len()) {
     if (s.ends_with(suffixes[i])) {
       return Pass;
@@ -3608,8 +3608,8 @@ pub function assert_ends_with_any(s: string, suffixes: string[]): TestOutcome {
 // decls under the `json__` prefix; bare-name lookup would
 // miss them).
 pub function assert_json_eq(actual: string, expected: string): TestOutcome {
-  var av: Option[JsonValue] = json.json_parse(actual);
-  var ev: Option[JsonValue] = json.json_parse(expected);
+  let av: Option[JsonValue] = json.json_parse(actual);
+  let ev: Option[JsonValue] = json.json_parse(expected);
   match (av) {
     None => {
       return Fail("assert_json_eq: actual is not valid JSON: " + actual);
@@ -3731,7 +3731,7 @@ pub function assert_json_array_len(json_text: string, n: i32): TestOutcome {
     Some(v) => {
       match (v) {
         JArray(arr) => {
-          var got: i32 = arr.len();
+          let got: i32 = arr.len();
           if (got == n) {
             return Pass;
           }
@@ -3770,7 +3770,7 @@ pub function assert_json_object_size(json_text: string, n: i32): TestOutcome {
     Some(v) => {
       match (v) {
         JObject(m) => {
-          var got: i32 = m.len();
+          let got: i32 = m.len();
           if (got == n) {
             return Pass;
           }
@@ -3970,11 +3970,11 @@ pub function assert_json_eq_field_bool(json_text: string, key: string, expected:
               if (b == expected) {
                 return Pass;
               }
-              var ebs: string = "false";
+              let ebs: string = "false";
               if (expected) {
                 ebs = "true";
               }
-              var gbs: string = "false";
+              let gbs: string = "false";
               if (b) {
                 gbs = "true";
               }

@@ -12,7 +12,7 @@ import (
 // through the field. Maps are leak-only on the IR path (the exit sweep tracks
 // local_is_arr, not local_map_type — a map box is never freed), so a map-typed
 // field leaks with the struct like a string / Option / tuple / enum field: no RC,
-// no aliasing bail. Reading the field into a `var got: Map[K, V] = c.m` local
+// no aliasing bail. Reading the field into a `let got: Map[K, V] = c.m` local
 // re-marks the map type from the annotation so get_or dispatches as a map op.
 //
 // f builds mm{"a": 3}, stores it in Cache{m: mm, n: 4}, reads c.m back, and
@@ -33,10 +33,10 @@ func TestSelfHostMapStructFieldIRX86_64(t *testing.T) {
 
 	prog := `struct Cache { m: Map[string, i32], n: i32 }
 function f(): i32 {
-    var mm: Map[string, i32] = map_new(0);
+    let mm: Map[string, i32] = map_new(0);
     mm = mm.insert("a", 3);
-    var c: Cache = Cache { m: mm, n: 4 };
-    var got: Map[string, i32] = c.m;
+    let c: Cache = Cache { m: mm, n: 4 };
+    let got: Map[string, i32] = c.m;
     return got.get_or("a", 0) + c.n;
 }
 function main(): i32 { return f(); }`

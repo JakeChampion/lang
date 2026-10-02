@@ -11,7 +11,7 @@ import (
 // paramDestructureCases pin tuple-destructuring parameters
 // `function f((a, b): (T, U))` on the self-host compiler. The parser
 // desugars the pattern into a synthetic `__ptuple_<line>_<col>` param
-// plus a leading `var (a, b) = <synth>;` destructure (mirroring the
+// plus a leading `let (a, b) = <synth>;` destructure (mirroring the
 // native parser), so these use the same proven destructure lowering
 // the tupleDestructureIRCases pin — each case carries the same fresh
 // struct temp whose IR-only reclaim free (`call __fn___fern_arr_dec`)
@@ -23,10 +23,10 @@ var paramDestructureCases = []struct {
 	src  string
 	exit int
 }{
-	{"fn-param", "struct Point { x: i32, y: i32 } function add((a, b): (i32, i32)): i32 { return a + b; } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; return add((30, 12)) + pad; }", 42},
-	{"second-position", "struct Point { x: i32, y: i32 } function scale(k: i32, (lo, hi): (i32, i32)): i32 { return k * (hi - lo); } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; return scale(21, (3, 5)) + pad; }", 42},
-	{"lambda", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var f = ((x, y): (i32, i32)): i32 => { return x * y; }; return f((6, 7)) + pad; }", 42},
-	{"arrow-lambda", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var g = ((lo, hi): (i32, i32)) => hi - lo; return g((5, 47)) + pad; }", 42},
+	{"fn-param", "struct Point { x: i32, y: i32 } function add((a, b): (i32, i32)): i32 { return a + b; } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; return add((30, 12)) + pad; }", 42},
+	{"second-position", "struct Point { x: i32, y: i32 } function scale(k: i32, (lo, hi): (i32, i32)): i32 { return k * (hi - lo); } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; return scale(21, (3, 5)) + pad; }", 42},
+	{"lambda", "struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let f = ((x, y): (i32, i32)): i32 => { return x * y; }; return f((6, 7)) + pad; }", 42},
+	{"arrow-lambda", "struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let g = ((lo, hi): (i32, i32)) => hi - lo; return g((5, 47)) + pad; }", 42},
 }
 
 // TestSelfHostParamDestructureX86_64 compiles each case through the

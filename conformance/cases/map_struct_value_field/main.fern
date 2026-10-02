@@ -12,7 +12,7 @@ import "core/int";
 struct Box { n: i32, tag: string }
 
 function main(): i32 {
-    var m: Map[i32, Box] = map_new(8);
+    let m: Map[i32, Box] = map_new(8);
     m = m.insert(1, Box { n: 10, tag: "a" });
     m = m.insert(2, Box { n: 20, tag: "b" });
 
@@ -21,8 +21,8 @@ function main(): i32 {
     if (m.get_or(9, Box { n: 0 - 1, tag: "" }).n != 0 - 1) { return 2; }
 
     // MapIter value().field
-    var total: i32 = 0;
-    var it = m.iter();
+    let total: i32 = 0;
+    let it = m.iter();
     while (it.has_next()) {
         total = total + it.value().n;
         it.advance();

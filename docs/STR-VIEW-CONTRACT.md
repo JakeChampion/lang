@@ -26,7 +26,7 @@ Probed individually against native `fern -check`, all four pass:
 Fern has no borrow checker, so nothing ties a view to its backing buffer's
 lifetime. The one rule that exists — E003, `str` does not assign to `string`
 without `.to_owned()` — polices the *other* direction. Both checkers
-implement it now: the self-host refuses a view at a var init, an assignment,
+implement it now: the self-host refuses a view at a let init, an assignment,
 a return and a struct field, with native's message text (#7293), and lets one
 through in argument position, where a parameter is borrowed rather than
 owning (#7086).
@@ -180,7 +180,7 @@ them taking `[u8]` as a **parameter**.
 
 It is almost only parameter position: never a return type, never a struct
 field, never an array element, and one local binding
-(`internal/stdlib/std/io_buffered.fern:47`, `var bs: [u8] = s.as_bytes()`).
+(`internal/stdlib/std/io_buffered.fern:47`, `let bs: [u8] = s.as_bytes()`).
 A local is still non-escaping, so the argument holds — but "only in parameter
 position" overstated it.
 

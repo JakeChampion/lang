@@ -32,12 +32,12 @@ function main(): i32 {
 
     // std/array's higher-order functions must still work — their parameters are
     // exactly the names shadowed above, so this is the half that broke.
-    var xs: i32[] = [1, 2, 3];
-    var doubled: i32[] = xs.map((x: i32) => x * 2);
+    let xs: i32[] = [1, 2, 3];
+    let doubled: i32[] = xs.map((x: i32) => x * 2);
     if (doubled[2] != 6) { return 5; }
-    var evens: i32[] = xs.filter((x: i32) => x % 2 == 0);
+    let evens: i32[] = xs.filter((x: i32) => x % 2 == 0);
     if (evens.len() != 1 || evens[0] != 2) { return 6; }
-    var flat: i32[] = xs.flat_map((x: i32) => [x, x]);
+    let flat: i32[] = xs.flat_map((x: i32) => [x, x]);
     if (flat.len() != 6 || flat[5] != 3) { return 7; }
 
     // NOT covered here: a WIDE element through flat_map. That answers wrong on

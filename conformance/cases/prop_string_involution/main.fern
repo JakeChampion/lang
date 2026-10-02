@@ -32,9 +32,9 @@ function lcg_next(state: i32): i32 {
 }
 
 function gen_bytes(seed: i32, n: i32): u8[] {
-    var buf: u8[] = __alloc_u8(n);
-    var state: i32 = seed;
-    var i: i32 = 0;
+    let buf: u8[] = __alloc_u8(n);
+    let state: i32 = seed;
+    let i: i32 = 0;
     while (i < n) {
         state = lcg_next(state);
         buf = buf.with(i, ((state / 7) % 256) as u8);
@@ -45,9 +45,9 @@ function gen_bytes(seed: i32, n: i32): u8[] {
 
 // Same generator restricted to printable ASCII, for the agreement property.
 function gen_ascii(seed: i32, n: i32): u8[] {
-    var buf: u8[] = __alloc_u8(n);
-    var state: i32 = seed;
-    var i: i32 = 0;
+    let buf: u8[] = __alloc_u8(n);
+    let state: i32 = seed;
+    let i: i32 = 0;
     while (i < n) {
         state = lcg_next(state);
         buf = buf.with(i, (32 + ((state / 7) % 95)) as u8);
@@ -57,12 +57,12 @@ function gen_ascii(seed: i32, n: i32): u8[] {
 }
 
 function main(): i32 {
-    var state: i32 = 1985229328;
-    var trial: i32 = 0;
+    let state: i32 = 1985229328;
+    let trial: i32 = 0;
     while (trial < 300) {
         state = lcg_next(state);
-        var n: i32 = state % 48;
-        var s: string = string_from_bytes_unchecked(gen_bytes(state, n));
+        let n: i32 = state % 48;
+        let s: string = string_from_bytes_unchecked(gen_bytes(state, n));
 
         if (!s.reverse_bytes().reverse().equal(s.bytes())) {
             print("reverse_bytes involution FAILED at trial " + trial.to_string());
@@ -74,7 +74,7 @@ function main(): i32 {
         }
 
         // The byte fold: idempotent and length-preserving over any bytes.
-        var alo: string = s.to_ascii_lower();
+        let alo: string = s.to_ascii_lower();
         if (alo.to_ascii_lower() != alo) {
             print("to_ascii_lower idempotence FAILED at trial " + trial.to_string());
             return 1;
@@ -83,7 +83,7 @@ function main(): i32 {
             print("to_ascii_lower length FAILED at trial " + trial.to_string());
             return 1;
         }
-        var aup: string = s.to_ascii_upper();
+        let aup: string = s.to_ascii_upper();
         if (aup.to_ascii_upper() != aup) {
             print("to_ascii_upper idempotence FAILED at trial " + trial.to_string());
             return 1;
@@ -95,7 +95,7 @@ function main(): i32 {
 
         // Unicode: idempotent, and always yields valid UTF-8 even when the
         // input was arbitrary bytes.
-        var lo: string = s.to_lower();
+        let lo: string = s.to_lower();
         if (lo.to_lower() != lo) {
             print("to_lower idempotence FAILED at trial " + trial.to_string());
             return 1;
@@ -104,7 +104,7 @@ function main(): i32 {
             print("to_lower validity FAILED at trial " + trial.to_string());
             return 1;
         }
-        var up: string = s.to_upper();
+        let up: string = s.to_upper();
         if (up.to_upper() != up) {
             print("to_upper idempotence FAILED at trial " + trial.to_string());
             return 1;
@@ -115,7 +115,7 @@ function main(): i32 {
         }
 
         // ASCII input: the Unicode entry points and the fold must agree.
-        var a: string = string_from_bytes_unchecked(gen_ascii(state, n));
+        let a: string = string_from_bytes_unchecked(gen_ascii(state, n));
         if (a.to_lower() != a.to_ascii_lower()) {
             print("ascii to_lower agreement FAILED at trial " + trial.to_string());
             return 1;

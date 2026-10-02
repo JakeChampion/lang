@@ -9,14 +9,14 @@ import (
 	"testing"
 )
 
-// An UNANNOTATED `var u = f()?` whose success payload is a STRUCT (or nominal
+// An UNANNOTATED `let u = f()?` whose success payload is a STRUCT (or nominal
 // ENUM) now lowers on the self-host IR path. The try-operator bind already
 // recovered a TUPLE payload's element tags (so `u.0` / `u.1` read) via
 // try_opt_type, but a struct / enum payload left the slot untyped — so `u.field`
 // / `u.method()` / `match (u)` in the body failed to lower and the whole module
 // dropped to the legacy AST emitter. The fix carries the payload's struct/enum
 // name onto the slot (mark_struct_type), exactly what an explicit
-// `var u: User = f()?` annotation already did (the annotated form always worked;
+// `let u: User = f()?` annotation already did (the annotated form always worked;
 // only the inferred one bailed). Found by differential probing; each case is
 // oracle-checked and routing-pinned "ir".
 var tryStructPayloadIRCases = []struct {
@@ -26,19 +26,19 @@ var tryStructPayloadIRCases = []struct {
 	// The minimal case: a Result[Struct, E] try, read a field of the payload → 42.
 	{"result_struct", `struct User { id: i32 }
 function find(n: i32): Result[User, string] { if (n > 0) { return Ok(User { id: n }); } return Err("bad"); }
-function getid(n: i32): Result[i32, string] { var u = find(n)?; return Ok(u.id); }
+function getid(n: i32): Result[i32, string] { let u = find(n)?; return Ok(u.id); }
 function main(): i32 { match (getid(42)) { Ok(id) => { return id; }, Err(e) => { return 0; } } }`},
 	// An Option[Struct] try, calling a METHOD on the payload → 21 * 2 = 42.
 	{"option_struct_method", `struct User { id: i32 }
 function (u: User) doubled(): i32 { return u.id * 2; }
 function find(n: i32): Option[User] { if (n > 0) { return Some(User { id: n }); } return None; }
-function getid(n: i32): Option[i32] { var u = find(n)?; return Some(u.doubled()); }
+function getid(n: i32): Option[i32] { let u = find(n)?; return Some(u.doubled()); }
 function main(): i32 { match (getid(21)) { Some(v) => { return v; }, None => { return 0; } } }`},
 	// A nominal-ENUM payload, matched in the body → 42.
 	{"result_enum_match", `enum Color { Red, Green, Blue }
 function pick(n: i32): Result[Color, string] { if (n > 0) { return Ok(Color.Green); } return Err("bad"); }
 function go(n: i32): Result[i32, string] {
-    var c = pick(n)?;
+    let c = pick(n)?;
     match (c) { Color.Green => { return Ok(42); }, _ => { return Ok(0); } }
 }
 function main(): i32 { match (go(5)) { Ok(v) => { return v; }, Err(e) => { return 0; } } }`},
@@ -48,9 +48,9 @@ function main(): i32 { match (go(5)) { Ok(v) => { return v; }, Err(e) => { retur
 	// 1325 % 256 = 45.
 	{"rc_stress", `struct User { id: i32, name: string }
 function find(n: i32): Result[User, string] { if (n > 0) { return Ok(User { id: n, name: "u" }); } return Err("x"); }
-function getid(n: i32): Result[i32, string] { var u = find(n)?; return Ok(u.id + u.name.len()); }
+function getid(n: i32): Result[i32, string] { let u = find(n)?; return Ok(u.id + u.name.len()); }
 function main(): i32 {
-    var acc = 0; var i = 1;
+    let acc = 0; let i = 1;
     while (i <= 50) { match (getid(i)) { Ok(v) => { acc = acc + v; }, Err(e) => {} } i = i + 1; }
     return acc % 256;
 }`},
@@ -108,7 +108,7 @@ func TestSelfHostTryStructPayloadIR(t *testing.T) {
 	}
 }
 
-// The wasm leg: the fix lives in shared irlower.fern, so the wasm IR backend types
+// The wasm leg: the fix lives in the shared lowering, so the wasm IR backend types
 // the try-payload slot the same way.
 func TestSelfHostTryStructPayloadWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

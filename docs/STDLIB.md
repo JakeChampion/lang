@@ -29,6 +29,9 @@ Receiver methods on i32 / byte values.
   `is_ascii_upper`, `matches_any`,
   `hex_digit`, `digit_value`, `hex_value`, `to_ascii_lower`,
   `to_ascii_upper`, `to_ascii_string`
+  (`to_ascii_string` accepts a `u8`: 0..127 produces one ASCII byte,
+  including NUL; 128..255 produces the empty string. Keep arbitrary bytes
+  in `u8[]`, or validate a complete sequence with `utf8.from_bytes`.)
 - **Sign / classification:** `signum`, `is_positive`, `is_negative`,
   `is_zero`, `is_in_range`, `is_between`, `is_multiple_of`,
   `is_perfect_square`, `is_palindrome`, `is_even`, `is_odd`,
@@ -558,12 +561,15 @@ a key from it.
   bounded forms are unbiased (Lemire).
 - `rng_fill(state, h, n): i64` — push `n` pseudorandom bytes onto the
   capacity-carrying builder `h` and return the advanced state.
-  `rng_bytes(state, n): (i64, string)` is the same as a string. Eight
-  bytes leave per `buf_push_u64`, which is what makes this the fast way
-  to produce bulk randomness: 4 MiB costs 5.6 ms against `random_bytes`'
-  15.3 ms, because the kernel's generator is the slower of the two
-  (#9221). `shuffle_seeded` / `choice_seeded` / `sample_seeded` are the
-  array helpers over the same generator.
+  Eight bytes leave per `buf_push_u64`; the bulk builder measurements
+  are recorded in #9221.
+- `rng_bytes(state, n): (i64, u8[])` returns the same stream as owned
+  bytes. Each eight-byte word consumes two draws, low byte first; a
+  partial final word discards unused high bytes. For `n <= 0`, the array
+  is empty and the state is unchanged. Use a validating text constructor
+  if the bytes must become a string.
+- `shuffle_seeded` / `choice_seeded` / `sample_seeded` are the array
+  helpers over the same generator.
 
 ### `std/semver`
 
@@ -653,7 +659,7 @@ sets, not for large collections.
 A persistent, ordered map with structural sharing: `OrdMap[K: cmp.Ord, V]`,
 a weight-balanced tree (Adams / Hirai–Yamamoto, delta 3, ratio 2 — the shape
 behind Haskell's `Data.Map`). Every operation returns a new map; a snapshot
-(`var old = m;`) costs one pointer and shares every node, and an update
+(`let old = m;`) costs one pointer and shares every node, and an update
 rebuilds only the O(log n) path to the key. When the input is not shared
 (`m = m.insert(k, v)`), the compiler's reuse pass writes the new path into the
 old nodes in place, so the same source line allocates nothing. Keys are
@@ -871,6 +877,25 @@ RFC 4648 base32 (standard `A–Z 2–7` alphabet, `=` padding).
   the strict variant to use for a security-sensitive secret / token,
   matching `base64_decode_strict` / `hex_decode_strict`.
 
+### `std/deflate`
+
+DEFLATE decoding (RFC 1951) with the zlib (RFC 1950) and gzip (RFC 1952)
+framings, pure Fern. Every decoder takes `max_out`, the most bytes it
+will produce, and answers `OutputLimit` past it: a compressed body is a
+caller-controlled expansion, so the bound is part of the call.
+
+- `inflate(input, max_out): Result[Inflated, InflateError]` and
+  `inflate_from(input, from, max_out)` decode a raw stream;
+  `Inflated { out, consumed }` says how many input bytes it took, so a
+  framing can read what follows.
+- `gunzip(input, max_out): Result[u8[], InflateError]` decodes every
+  member in the input and checks each CRC-32 and length;
+  `zlib_decode(input, max_out)` checks the Adler-32 (`adler32(bs)` is
+  public). A preset dictionary is not supported.
+- `InflateError`: `Truncated`, `Malformed(what)`, `OutputLimit`,
+  `BadChecksum`, `BadHeader(what)`; `(e).message()`.
+- No encoder yet.
+
 ### `std/hex`
 
 Hex round-trip.
@@ -894,13 +919,13 @@ rebound in the cursor style (docs/CURSOR-IDIOM.md) so the pending block and
 the state box are reused in place rather than copied per call:
 
 ```fern
-var h: crypto.Sha256 = crypto.sha256_new();
+let h: crypto.Sha256 = crypto.sha256_new();
 h = h.update(chunk);              // a string of any length (a read_chunk piece)
 h = h.update_bytes(arr[a:b]);     // a [u8] view: a u8[] lends itself, or a slice
-var hex: string = h.final_hex();  // or h.final_bytes(): u8[]
+let hex: string = h.final_hex();  // or h.final_bytes(): u8[]
 ```
 
-A state can be forked (`var h2 = h.update("x")` while `h` stays live); each
+A state can be forked (`let h2 = h.update("x")` while `h` stays live); each
 side then owns its own copy. `final_*` reads the state without consuming it.
 
 - Constructors: `md5_new(): Md5`, `sha1_new(): Sha1`, `sha256_new(): Sha256`,
@@ -1081,7 +1106,7 @@ serializer.
   (`req.body.data`, a `u8[]`); `(req).body_string(): Result[string,
   BodyError]` is the body as text, `Err(NotUtf8)` when it is not well-formed
   UTF-8, so a handler declared as `Result[HttpResponse, http.BodyError]`
-  reads `var text: string = req.body_string()?;`.
+  reads `let text: string = req.body_string()?;`.
 - **Typed JSON body:** `body_json[T](req): Result[T, BodyError]` decodes the
   body as a `T: json.FromJson` and tells the failures apart:
   `UnsupportedMediaType(ct)` when the `Content-Type` is not
@@ -1090,7 +1115,7 @@ serializer.
   `JsonError`, `WrongShape(why)` naming the field. `BodyError` is
   `ToResponse` (415 / 400 / 400 / 422, as RFC 9457 problems), so a handler
   declared as `Result[HttpResponse, http.BodyError]` reads
-  `var item: Item = http.body_json[Item](req)?;`.
+  `let item: Item = http.body_json[Item](req)?;`.
 - **Header methods:** `(resp).with_header(name, value)` (set) /
   `(resp).with_appended_header(name, value)` (append) /
   `(resp).with_content_type(ct)`, and `(resp).with_trailer(name, value)`
@@ -1265,9 +1290,18 @@ order, built with `ipv4(a, b, c, d)`, `ipv6(bytes)` or `ip_parse(text)` and
 rendered by `to_string()` in the RFC 5952 canonical form; `SocketAddr` is an
 address and a port, parsed by `socket_addr_parse` from `a.b.c.d:port` and
 the bracketed `[v6]:port` form. The predicates (`is_loopback`,
-`is_private`, `is_link_local`, `is_multicast`, `is_unspecified`) unwrap an
-IPv4-mapped IPv6 address first; `packed_v4()` bridges an `IpAddr` to the
-packed IPv4 argument `tcp_connect` takes.
+`is_private`, `is_link_local`, `is_multicast`, `is_unspecified`) read the
+address as given; `to_canonical()` unwraps an IPv4-mapped IPv6 address for
+them. `is_global()` is the one an outbound block list wants: false for
+every block that is not reachable from anywhere (unspecified, loopback,
+private, link-local, shared 100.64/10, the documentation and benchmarking
+nets, multicast, reserved, broadcast, unique-local, 2001:db8::/32), and an
+IPv6 address carrying an IPv4 one (IPv4-mapped, NAT64's well-known
+64:ff9b::/96, 6to4) answers for the address it carries; one in NAT64's
+local-use 64:ff9b:1::/48 is global only under every prefix length the
+operator may pick. `(a).embedded_v4(bits)` is the address a NAT64 address
+carries under a prefix of `bits` in RFC 6052's layout. `packed_v4()`
+bridges an `IpAddr` to the packed IPv4 argument `tcp_connect` takes.
 
 `NetError` is a closed enum (`AddrInUse`, `ConnectionRefused`,
 `WouldBlock`, … and `Other(errno)`); `error_from_errno(n)` maps the errno a
@@ -1434,8 +1468,12 @@ for query ids, `now` for the wait and `reactor` for the race.
   literal as it is, then the hosts file, then DNS, the addresses in RFC
   6724 order. On a host with no IPv4 route, IPv4 addresses with no IPv6
   beside them are synthesized under the prefixes the nameservers reveal
-  (RFC 8305 §7.3). `.local` names go to the nameservers like any other
-  (no mDNS).
+  (RFC 8305 §7.3). `resolve_plain(name)` is the same lookup before that
+  synthesis and the ordering, for a policy that judges the addresses as
+  the sources name them, and `synthesized(addrs)` applies both to its
+  answer; `nat64_carried(addr)` is the IPv4 address `addr` carries under
+  a prefix the nameservers reveal. `.local` names go to the nameservers
+  like any other (no mDNS).
 
 `examples/tests/dns_test.fern` covers the codec, the files, the plan, the
 walk and the ordering rules; `TestDnsExchangeX86_64`, `TestDnsPairX86_64`
@@ -1630,15 +1668,24 @@ answer is `Result[HttpResponse, FetchError]`.
   or chunks; a `BodyFile` is refused, since the client never reads a
   file), `(req).with_timeouts(t)`, `(req).with_limits(l)`. `std/url`
   parses the URL; the host is resolved by `std/dns` (a literal, the hosts
-  file, then DNS) and its addresses raced as `dns.connect_race` does.
+  file, then DNS) and its addresses raced as `dns.connect_race` does. An
+  IPv4 address in the URL is four decimal octets or refused
+  (`2130706433`, `0177.0.0.1`, `127.1` read as loopback to some resolvers
+  and as a name to others).
   Before it connects the client checks the method, the path and query
   and every header against `std/http`'s `http_method_ok` /
   `http_target_ok` / `http_field_name_ok` / `http_field_value_ok`, so a
   CRLF in a URL or a field cannot split the request on the wire. It
   writes `Host`,
   `Content-Length` and `Connection: close` itself and strips hop-by-hop
-  fields from what it sends. No TLS yet (`https` fails with `Tls`), no
-  pool.
+  fields from what it sends. No TLS where the client dials (`https` fails
+  with `Tls`), no pool. On `wasm32-wasi-http` the client dials nothing:
+  the request goes to the host's wasi:http/outgoing-handler (`std/wasi_http`),
+  which resolves the name, connects, speaks TLS (so `https` works there)
+  and HTTP/2 where it can, under the connect and inactivity bounds as
+  `request-options`; the response comes back whole under the body cap,
+  and every rule above the transport (redirects, decoding, the request
+  checks, the retry) is the same.
 - **Redirects:** a 301, 302, 303, 307 or 308 with a `Location` is
   followed, `(req).with_redirects(hops)` bounding the hops (10 by
   default; 0 answers the 3xx as data), every hop under the one total
@@ -1648,15 +1695,64 @@ answer is `Result[HttpResponse, FetchError]`.
   hop leaves the origin (scheme, host, effective port) `Authorization`,
   `Proxy-Authorization` and `Cookie` are dropped; `Host` is written per
   hop.
+- **Decoding:** the client writes `Accept-Encoding: gzip` unless the
+  caller wrote an `Accept-Encoding` of their own, and undoes the `gzip`
+  (`x-gzip`) codings a response names, from the last applied, under
+  `Decoding { depth, ratio }` (`decoding()` is one coding and a
+  hundredfold growth; `(req).with_decoding(d)`; `depth: 0` asks for none
+  and undoes none) and the body cap, which the decoder never exceeds
+  (`BodyLimit`); `Content-Encoding` and `Content-Length` are dropped from
+  a decoded response. The ratio is judged on the response as a whole once
+  every coding is undone, and a decoded body of 64 KiB or less is never
+  refused on it (a small body compresses far past any plausible ratio,
+  and the cap bounds it; a `ratio` of 0 or less admits only that much).
+  More codings than `depth`, a body that is not gzip, or one grown past
+  what `ratio` allows fail with `Decode(what)`, a refused body naming the
+  allowance that refused it. An empty body (a
+  HEAD or 204 answer may still name a coding), a coding the client did
+  not ask for, and a caller's own `Accept-Encoding` leave the body as it
+  came. Request bodies are never compressed.
 - **Retry:** a request the peer resets before any response byte (a
   reset or abort on the socket, a broken pipe, a close with nothing
   read) is sent once more when its method is idempotent
   (`http.http_method_idempotent`: GET, HEAD, PUT, DELETE, OPTIONS,
   TRACE), on a fresh connection, under the same total bound. A POST is
-  never resent.
+  never resent. On `wasm32-wasi-http` nothing is: the host reports a
+  connection closed before any response byte as its protocol error, the
+  same as a malformed response, so the client cannot tell that nothing
+  happened.
 - **Sending:** `send(req)` from a program with a `main`;
   `(plat: Platform).http(req)` from a handler, the capability-scoped
   route (a recording bag answers what `MockPlatform.http_set` canned).
+  The handler's route reaches global addresses only: once the host has
+  resolved, an address `net.is_global` refuses (loopback, a private or
+  link-local block, the cloud metadata address, an IPv4 address carried
+  inside an IPv6 one) fails the request with `Blocked` before anything is
+  dialled, so a rebinding record is caught too. The check reads the
+  addresses as the network names them, before NAT64 synthesis, and an
+  address under a NAT64 prefix the nameservers reveal is judged by the
+  address it carries (`dns.nat64_carried`). `send` has no such rule. On
+  `wasm32-wasi-http` neither route has one: the host resolves names and
+  owns the network, so its outbound policy (Spin's
+  `allowed_outbound_hosts`, what `wasmtime serve` is run with) is the
+  rule there, and a loopback or private address is the host's to refuse.
+- **Proxies:** both routes go through the forward proxy the environment
+  names, read through `config_get` as `ProxyEnv` (`proxy_env()`,
+  `proxy_env_from(...)` for the pure form): the lowercase `http_proxy`
+  only, as curl reads it (a CGI host maps a client's `Proxy:` header onto
+  the uppercase name), and none under `REQUEST_METHOD`; `no_proxy` (or
+  `NO_PROXY`) lists the hosts reached directly as `*`, a domain (with a
+  leading dot, its subdomains only), an address, a CIDR block of either
+  family, any of them with a `:port`, zones ignored. `localhost` and
+  loopback are never proxied. `(p).proxy_for(url)` is the pure decision.
+  A proxied request carries the absolute-form target, the origin's
+  `Host`, and `Proxy-Authorization: Basic` from the proxy URL's
+  credentials. On the handler's route the origin is still resolved and
+  checked before the request goes to the proxy (the proxy's own address
+  is the deployment's choice and goes unchecked), so a deployment where
+  only the proxy can resolve names reaches it through `send`. On
+  `wasm32-wasi-http` the environment's proxy is the host's own to go
+  through, and the client reads none.
 - **Responses:** the same `HttpResponse` the server side builds, with
   `BodyBytes`, headers case-folded and the hop-by-hop fields stripped, a
   chunked body decoded and its trailers in `trailers`, interim 1xx
@@ -1669,16 +1765,27 @@ answer is `Result[HttpResponse, FetchError]`.
   `http` / `https`, or a path or query that cannot stand on a request
   line), `InvalidRequest(what)` (a method that is not a token, a header
   that cannot be written as one line, or a file body; `what` names the
-  rule, never the value), `Dns(DnsError)`, `Connect(NetError)`, `Tls`,
+  rule, never the value), `Dns(DnsError)`, `Connect(NetError)`,
+  `Blocked(what)` (a host the handler's route may not reach, naming the
+  address), `Tls(what)` (`https` where no host speaks TLS, or the
+  host's handshake failure),
   `Timeout(Phase)` with `Phase` one of `Connecting` / `Inactivity` /
   `Total`, `Protocol(what)` (a response the parser refuses, interim
   1xx responses past one `limits.header_bytes` between them, or a 101
   the client did not ask for),
   `Io(NetError)` (a send or read the kernel refused, and a peer that
   closed before any response byte, as `ConnectionReset`), `BodyLimit` (a
-  body past `limits.body`), `Redirect(what)` (more hops than
+  body past `limits.body`, decoded or not), `Decode(what)` (a content
+  coding the client could not undo), `Redirect(what)` (more hops than
   `redirects`, a 3xx without a `Location`, or a `Location` that is not a
-  URL), and `Cancelled`, which no path produces yet. `(e).message()`.
+  URL), `Host(what)` (a wasi-http host refusing or failing the request
+  outside any phase this client owns: denied, a loop detected, its
+  configuration, an internal error), and `Cancelled`, which no path
+  produces yet. On `wasm32-wasi-http` the host's `error-code` is read
+  into these by its case: DNS cases to `Dns`, the connect and TLS
+  cases to `Connect`, `Timeout` and `Tls`, what the host would not send
+  to `InvalidRequest` / `InvalidUrl`, what it could not read to
+  `Protocol`, `BodyLimit` and `Decode`. `(e).message()`.
 - **Timeouts:** `Timeouts { connect_ms, inactivity_ms, total_ms }`,
   `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
   whole address race; inactivity is the longest wait for the next byte
@@ -1856,8 +1963,8 @@ handler a bag over the mock's own sink, so every capability call it makes
 lands in `m`'s log and nothing reaches the host:
 
 ```fern
-var m: MockPlatform = mock_platform.mock_platform_new();
-var resp: HttpResponse = handle(req, m.as_platform());
+let m: MockPlatform = mock_platform.mock_platform_new();
+let resp: HttpResponse = handle(req, m.as_platform());
 assert_eq(m.calls()[0].name, "log");
 ```
 
@@ -1900,7 +2007,7 @@ function test_addition(): test.TestOutcome {
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("arithmetic");
+    let r: test.TestRunner = test.test_new("arithmetic");
     r = r.it("addition", test_addition);
     return r.finish();
 }
@@ -2233,7 +2340,7 @@ function check_to_upper_idempotent(input: string): Option[string] {
 }
 
 function main(): i32 {
-    var r: TestRunner = test_new("fuzz");
+    let r: TestRunner = test_new("fuzz");
     r = r.fuzz("to_upper idempotent",
                ["", "abc", "Hello"], 100,
                check_to_upper_idempotent);
@@ -2459,7 +2566,7 @@ function block_bytes(): i32 {
 ```
 
 Compare the call itself, as above. A string held in a local is not
-propagated into a comparison, so `var os: string = target_os(); if (os == …)`
+propagated into a comparison, so `let os: string = target_os(); if (os == …)`
 evaluates the comparison at runtime — correctly, just not for free.
 
 Under `fern -interp` the program runs where the compiler runs, so the value

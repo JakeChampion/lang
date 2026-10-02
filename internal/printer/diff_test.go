@@ -218,7 +218,7 @@ func TestUnifiedDiffLargeMostlyChangedFile(t *testing.T) {
 		"return acc;",
 		"push(out, item);",
 		"} else {",
-		"var acc = 0;",
+		"let acc = 0;",
 		"acc = step(acc, n);",
 	}
 	var before, after strings.Builder

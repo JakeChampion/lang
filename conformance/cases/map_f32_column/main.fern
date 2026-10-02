@@ -9,15 +9,15 @@ import "std/i32";
 // It prints its verdict rather than exiting with it, because a WASI component
 // reports every non-zero status as 1.
 function check(): i32 {
-    var m: Map[i32, f32] = map_new(4);
-    var i: i32 = 0;
+    let m: Map[i32, f32] = map_new(4);
+    let i: i32 = 0;
     while (i < 12) {
         m = m.insert(i, (i as f32) / 4.0);
         i = i + 1;
     }
-    var vs: f32[] = m.values();
+    let vs: f32[] = m.values();
     if (vs.len() != 12) { return 1; }
-    var vsum: f32 = 0.0 as f32;
+    let vsum: f32 = 0.0 as f32;
     for v in vs { vsum = vsum + v; }
     if (vsum != 16.5 as f32) { return 2; }
     if (m.get_or(3, 9.0 as f32) != 0.75 as f32) { return 3; }
@@ -26,16 +26,16 @@ function check(): i32 {
         Some(v) => { if (v != 1.25 as f32) { return 5; } },
         None => { return 6; }
     }
-    var lit: Map[i32, f32] = Map { 1: 2.5 as f32, 2: 0.25 as f32 };
+    let lit: Map[i32, f32] = Map { 1: 2.5 as f32, 2: 0.25 as f32 };
     if (lit.get_or(1, 0.0 as f32) != 2.5 as f32) { return 7; }
-    var lsum: f32 = 0.0 as f32;
+    let lsum: f32 = 0.0 as f32;
     for (k, v) in lit { lsum = lsum + v; }
     if (lsum != 2.75 as f32) { return 8; }
-    var named: Map[string, f32] = map_new(4);
+    let named: Map[string, f32] = map_new(4);
     named = named.insert("a", 1.5 as f32);
     named = named.insert("b", -3.0 as f32);
     if (named.get_or("b", 0.0 as f32) != -3.0 as f32) { return 9; }
-    var nsum: f32 = 0.0 as f32;
+    let nsum: f32 = 0.0 as f32;
     for (k, v) in named { nsum = nsum + v; }
     if (nsum != -1.5 as f32) { return 10; }
     return 0;

@@ -17,7 +17,7 @@ function fail(n: i32): i32 {
 }
 
 function main(): i32 {
-    var drv: sim.Sim = sim.new(7 as i64);
+    let drv: sim.Sim = sim.new(7 as i64);
     if (drv.watch(7, 1) != 0) { return fail(1); }
     if (drv.wait(2, 20).len() != 0) { return fail(2); }
     if (drv.now_ns() != (20000000 as i64)) { return fail(3); }
@@ -25,7 +25,7 @@ function main(): i32 {
     drv.ready_at(9, 30, 1);
     if (drv.wait(2, 5).len() != 0) { return fail(4); }
     if (drv.now_ns() != (25000000 as i64)) { return fail(5); }
-    var got: i32[] = drv.wait(2, -1);
+    let got: i32[] = drv.wait(2, -1);
     if (got.len() != 2 || got[0] != 7 || got[1] != 1) { return fail(6); }
     if (drv.now_ns() != (50000000 as i64)) { return fail(7); }
     if (drv.wait(2, 10).len() != 0) { return fail(8); }

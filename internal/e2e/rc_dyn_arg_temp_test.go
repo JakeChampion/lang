@@ -30,10 +30,10 @@ impl Label for Shape {
 }
 function show(l: dyn Label): i32 { return l.a(); }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + n + `) {
-        var b: dyn Label = Box { name: "b" + "c" };
+        let b: dyn Label = Box { name: "b" + "c" };
         total = total + show(Shape.Line(i));
         i = i + 1;
     }
@@ -66,13 +66,13 @@ impl Label for Tagged {
 }
 function show(l: dyn Label): i32 { return l.a(); }
 function main(): i32 {
-    var sum: i32 = 0;
-    var i: i32 = 0;
-    var base: i32 = (__heap_bump_bytes() as i32);
-` + churn(n) + `    var first: i32 = (__heap_bump_bytes() as i32) - base;
-    var mid: i32 = (__heap_bump_bytes() as i32);
+    let sum: i32 = 0;
+    let i: i32 = 0;
+    let base: i32 = (__heap_bump_bytes() as i32);
+` + churn(n) + `    let first: i32 = (__heap_bump_bytes() as i32) - base;
+    let mid: i32 = (__heap_bump_bytes() as i32);
     i = 0;
-` + churn(wider) + `    var second: i32 = (__heap_bump_bytes() as i32) - mid;
+` + churn(wider) + `    let second: i32 = (__heap_bump_bytes() as i32) - mid;
     if (second > first) { return 1; }
     return sum - sum;
 }`
@@ -149,12 +149,12 @@ impl Label for i32 { function a(self: Self): i32 { return self; } }
 impl Label for string { function a(self: Self): i32 { return self.len(); } }
 function show(l: dyn Label): i32 { return l.a(); }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    var keep: Box = Box { name: "kept" };
-    var s: string = "ab" + "c";
+    let t: i32 = 0;
+    let i: i32 = 0;
+    let keep: Box = Box { name: "kept" };
+    let s: string = "ab" + "c";
     while (i < ` + n + `) {
-        var local: Box = Box { name: "b" + "c" };
+        let local: Box = Box { name: "b" + "c" };
         t = t + show(Shape.Dot) + show(local) + show(keep) + show(i) + show(s);
         t = t + local.name.len();
         i = i + 1;
@@ -168,7 +168,7 @@ function main(): i32 {
 func dynArgNonFreshBumpSrc(n, wider string) string {
 	churn := func(bound string) string {
 		return `    while (i < ` + bound + `) {
-        var local: Box = Box { name: "b" + "c" };
+        let local: Box = Box { name: "b" + "c" };
         sum = sum + show(Shape.Dot) + show(local) + show(keep) + show(i);
         i = i + 1;
     }
@@ -189,14 +189,14 @@ impl Label for Shape {
 impl Label for i32 { function a(self: Self): i32 { return self; } }
 function show(l: dyn Label): i32 { return l.a(); }
 function main(): i32 {
-    var sum: i32 = 0;
-    var i: i32 = 0;
-    var keep: Box = Box { name: "kept" };
-    var base: i32 = (__heap_bump_bytes() as i32);
-` + churn(n) + `    var first: i32 = (__heap_bump_bytes() as i32) - base;
-    var mid: i32 = (__heap_bump_bytes() as i32);
+    let sum: i32 = 0;
+    let i: i32 = 0;
+    let keep: Box = Box { name: "kept" };
+    let base: i32 = (__heap_bump_bytes() as i32);
+` + churn(n) + `    let first: i32 = (__heap_bump_bytes() as i32) - base;
+    let mid: i32 = (__heap_bump_bytes() as i32);
     i = 0;
-` + churn(wider) + `    var second: i32 = (__heap_bump_bytes() as i32) - mid;
+` + churn(wider) + `    let second: i32 = (__heap_bump_bytes() as i32) - mid;
     if (second > first) { return 1; }
     return sum - sum;
 }`

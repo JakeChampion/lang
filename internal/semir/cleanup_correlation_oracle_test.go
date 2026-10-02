@@ -228,19 +228,19 @@ func cleanupOracleFlow(f *Func, registrations, replays int) *cleanupBoundaryFlow
 
 func TestNestedCleanupCorrelationMatchesFullStackOracle(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
-		{"outer-pending-inner-close", `var xs: i32[] = [1]; if (flag) { defer xs = [2]; }
-  loop { var ys: i32[] = [3]; if (other) { defer ys = [4]; } break; }`},
-		{"nested-iteration", `var xs: i32[] = [1]; if (flag) { defer xs = [2]; }
-  var i = 0i32; while (i < 3i32) { var ys: i32[] = [3];
+		{"outer-pending-inner-close", `let xs: i32[] = [1]; if (flag) { defer xs = [2]; }
+  loop { let ys: i32[] = [3]; if (other) { defer ys = [4]; } break; }`},
+		{"nested-iteration", `let xs: i32[] = [1]; if (flag) { defer xs = [2]; }
+  let i = 0i32; while (i < 3i32) { let ys: i32[] = [3];
     if (other) { defer ys = [4]; defer xs = [5]; } i = i + 1i32; }`},
-		{"labelled-break", `var xs: i32[] = [1]; if (flag) { defer xs = [2]; }
-  outer: loop { var ys: i32[] = [3]; if (other) { defer ys = [4]; }
-    loop { var zs: i32[] = [5]; if (flag) { defer zs = [6]; } break outer; } }`},
-		{"continue", `var xs: i32[] = [1]; if (flag) { defer xs = [2]; }
-  var i = 0i32; while (i < 3i32) { var ys: i32[] = [3]; i = i + 1i32;
+		{"labelled-break", `let xs: i32[] = [1]; if (flag) { defer xs = [2]; }
+  outer: loop { let ys: i32[] = [3]; if (other) { defer ys = [4]; }
+    loop { let zs: i32[] = [5]; if (flag) { defer zs = [6]; } break outer; } }`},
+		{"continue", `let xs: i32[] = [1]; if (flag) { defer xs = [2]; }
+  let i = 0i32; while (i < 3i32) { let ys: i32[] = [3]; i = i + 1i32;
     if (other) { defer ys = [4]; } if (flag) { continue; } }`},
-		{"return", `var xs: i32[] = [1]; if (flag) { defer xs = [2]; }
-  loop { var ys: i32[] = [3]; if (other) { defer ys = [4]; }
+		{"return", `let xs: i32[] = [1]; if (flag) { defer xs = [2]; }
+  loop { let ys: i32[] = [3]; if (other) { defer ys = [4]; }
     if (flag) { return; } break; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

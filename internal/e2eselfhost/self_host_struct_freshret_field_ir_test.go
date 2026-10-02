@@ -68,11 +68,11 @@ func TestSelfHostStructFreshRetFieldIRX86_64(t *testing.T) {
 struct Outer { inner: Inner, tag: i32 }
 function mk_inner(): Inner { return Inner { a: 1, b: 2 }; }
 function mk(): i32 {
-    var o: Outer = Outer { inner: mk_inner(), tag: 7 };
+    let o: Outer = Outer { inner: mk_inner(), tag: 7 };
     return o.inner.a + o.inner.b + o.tag;
 }
 function main(): i32 {
-    var s: i32 = 0; var f: i32 = 0;
+    let s: i32 = 0; let f: i32 = 0;
     while (f < 150000000) { s = mk(); f = f + 1; }
     return s - 10;
 }`, "struct_freshret_field_churn", 0)
@@ -83,7 +83,7 @@ function main(): i32 {
 struct Outer { inner: Inner, tag: i32 }
 function mk_inner(): Inner { return Inner { a: 1, b: 2 }; }
 function main(): i32 {
-    var o: Outer = Outer { inner: mk_inner(), tag: 7 };
+    let o: Outer = Outer { inner: mk_inner(), tag: 7 };
     return o.inner.a + o.inner.b + o.tag;
 }`, "struct_freshret_field_value", 10)
 }

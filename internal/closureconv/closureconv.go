@@ -8,7 +8,7 @@
 // variables are rewritten from *ast.Ident to *ast.CaptureRef, which
 // codegen lowers as loads from the env parameter at the recorded
 // offset. At the original def site, the *ast.FuncDecl statement is
-// replaced with `var name = makeClosure(funcIndex, [captures])`,
+// replaced with `let name = makeClosure(funcIndex, [captures])`,
 // where the synthetic *ast.MakeClosure node tells codegen to
 // allocate the env, populate it with current capture values, and
 // build the 8-byte closure pair.
@@ -25,7 +25,7 @@ import (
 // function body is hoisted to prog.Funcs (with a renamed identifier
 // and a synthetic env parameter), captures inside its body are
 // rewritten as *ast.CaptureRef nodes, and the original statement is
-// replaced with `var <orig-name> = MakeClosure{...}`.
+// replaced with `let <orig-name> = MakeClosure{...}`.
 func Convert(prog *ast.Program, info *checker.Info) error {
 	return ConvertWith(prog, info, 4)
 }
@@ -339,7 +339,7 @@ func (c *converter) rewriteBlock(b *ast.Block, hoistedFor *captureCtx) error {
 	// SCC members get the null-env direct-call rewrite — plain
 	// forward references capture normally (the closureconv pass
 	// already builds the env entry for them; the surrounding
-	// `var <name> = MakeClosure{...}` Var is initialised before
+	// `let <name> = MakeClosure{...}` Var is initialised before
 	// any caller reads it because Stmts run in source order).
 	var localFns []*ast.FuncDecl
 	for _, s := range b.Stmts {
@@ -629,7 +629,7 @@ func (c *converter) rewriteExpr(e ast.Expr, ctx *captureCtx) (ast.Expr, error) {
 		// the throwaway synthetic FuncDecl (see ast.Lambda.Synthetic)
 		// onto the hoisted FuncDecl. Without this, `lowerFunc` reads
 		// `info.Locals[fn]` and sees an empty list, then the body
-		// walk hits "var X has no slot" on every `var x = ...`
+		// walk hits "var X has no slot" on every `let x = ...`
 		// inside the lambda body.
 		if n.Synthetic != nil {
 			if locals, ok := c.info.Locals[n.Synthetic]; ok {

@@ -37,11 +37,11 @@ func TestSelfHostLargeTierFreelistX86_64(t *testing.T) {
 	// else ~4000*~1.5 MiB churn exhausts the arena. Reads a[0]/a[last]/len so a
 	// mis-sized reuse surfaces as a wrong count.
 	const prog = `function main(): i32 {
-    var i: i32 = 0;
-    var ok: i32 = 0;
+    let i: i32 = 0;
+    let ok: i32 = 0;
     while (i < 4000) {
-        var a: i64[] = [];
-        var j: i32 = 0;
+        let a: i64[] = [];
+        let j: i32 = 0;
         while (j < 70000) { a = a.append((j + i) as i64); j = j + 1; }
         if (a.len() == 70000 && a[69999] == (69999 + i) as i64 && a[0] == i as i64) { ok = ok + 1; }
         i = i + 1;

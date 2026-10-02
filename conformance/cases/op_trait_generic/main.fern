@@ -9,7 +9,7 @@ function sum3[T: num.Num](a: T, b: T, c: T): T { return a + b + c; }       // ne
 function dsq[T: num.Num](a: T, b: T): T { return (a + b) * (a - b); }      // nested both sides
 function negate[T: num.Neg](a: T): T { return -a; }                        // unary on a type param
 function main(): i32 {
-    var s: i32 = sum3(10, 20, 12);   // 42
+    let s: i32 = sum3(10, 20, 12);   // 42
     s = s + dsq(5, 3);               // (8)*(2)=16 -> 58
     s = s + negate(0 - 8);           // 8         -> 66
     return s;                        // 66

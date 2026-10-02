@@ -12,17 +12,14 @@ import (
 
 func TestSelfHostBufByteRange(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	// Both legacy flag values must use production typed-IR ownership.
-	for _, mode := range []string{"0", "1"} {
-		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-			t.Run("legacy-env="+mode+"/"+target, func(t *testing.T) {
-				stderr, code := cli.exitOf(t, e2eharness.BufByteRangeProgram, target, "FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
-				if code != 0 {
-					t.Fatalf("exit = %d\n%s", code, stderr)
-				}
-				assertBalancedCensus(t, stderr)
-			})
-		}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, e2eharness.BufByteRangeProgram, target, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("exit = %d\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
 	}
 }
 
@@ -38,22 +35,19 @@ func TestSelfHostArm64DarwinBufByteRange(t *testing.T) {
 	if err := os.WriteFile(src, []byte(e2eharness.BufByteRangeProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Both legacy flag values must use production typed-IR ownership.
-	for _, mode := range []string{"0", "1"} {
-		t.Run("legacy-env="+mode, func(t *testing.T) {
-			bin := filepath.Join(t.TempDir(), "range")
-			compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
-			compile.Env = append(os.Environ(), "FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
-			if out, err := compile.CombinedOutput(); err != nil {
-				t.Fatalf("compile: %v\n%s", err, out)
-			}
-			if out, err := exec.Command(bin).CombinedOutput(); err != nil {
-				t.Fatalf("run: %v\n%s", err, out)
-			} else {
-				assertBalancedCensus(t, string(out))
-			}
-		})
-	}
+	t.Run("compiled", func(t *testing.T) {
+		bin := filepath.Join(t.TempDir(), "range")
+		compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
+		compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+		if out, err := compile.CombinedOutput(); err != nil {
+			t.Fatalf("compile: %v\n%s", err, out)
+		}
+		if out, err := exec.Command(bin).CombinedOutput(); err != nil {
+			t.Fatalf("run: %v\n%s", err, out)
+		} else {
+			assertBalancedCensus(t, string(out))
+		}
+	})
 	t.Run("interp", func(t *testing.T) {
 		if out, err := exec.Command(cli, "-interp", src, stdlib).CombinedOutput(); err != nil {
 			t.Fatalf("interpreter: %v\n%s", err, out)

@@ -36,13 +36,13 @@ func TestArm64VeneerForcedReach(t *testing.T) {
 		{"exit_code", `function main(): i32 { return 42; }`, "", 42},
 		{"fib", `function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n-1) + fib(n-2); } function main(): i32 { return fib(12); }`, "", 144},
 		{"print", `function main(): i32 { print("hello"); return 0; }`, "hello\n", 0},
-		{"strings", `function main(): i32 { var s = "a" + "bc"; print(s); return s.len(); }`, "abc\n", 3},
+		{"strings", `function main(): i32 { let s = "a" + "bc"; print(s); return s.len(); }`, "abc\n", 3},
 		// The float formatter is a long runtime with its own loops and
 		// literal pools — the program that hung on the nested-island bug.
 		{"float_to_string", `import "std/float"; function main(): i32 { print((0.0 - 2.25).to_string()); return 0; }`, "-2.25\n", 0},
-		{"array_sum", `function main(): i32 { var a = [1,2,3,4,5]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, "", 15},
+		{"array_sum", `function main(): i32 { let a = [1,2,3,4,5]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, "", 15},
 		{"struct_enum", `enum Shape { Circle(i32), Square(i32) } function area(s: Shape): i32 { match (s) { Circle(r) => { return r*r*3; }, Square(w) => { return w*w; } } } function main(): i32 { return area(Circle(2)) + area(Square(3)); }`, "", 21},
-		{"closure", `function main(): i32 { var n = 7; var f = (x: i32) => x + n; return f(35); }`, "", 42},
+		{"closure", `function main(): i32 { let n = 7; let f = (x: i32) => x + n; return f(35); }`, "", 42},
 	}
 
 	for _, c := range cases {

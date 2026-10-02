@@ -74,7 +74,7 @@ buffer at `ceil(len/8)`.
 | probe | native x86-64 | self-host before | self-host after |
 |---|---|---|---|
 | `struct N { n: i32 }` | 1 | 1 | 1 |
-| `var xs: i32[] = [i, i+1]` | 1 | 1 | 1 |
+| `let xs: i32[] = [i, i+1]` | 1 | 1 | 1 |
 | `struct A { xs: i32[] }` | 2 | 2 | 2 |
 | 21-char concat result | 1 | **2** | **1** |
 | `struct S { s: string }`, 21-char | 2 | **3** | **2** |
@@ -122,7 +122,7 @@ Worth recording because the first reading of that SIGSEGV was "the fused free
 path corrupts the heap". It does not — but the route to knowing is not the
 symptom. `gen2` built from `-emit asm` through gcc gives a SYMBOLISED binary of
 the same code, and gdb then names the frame in one step
-(`irlower.bytes_at` ← `tagged_value_start` ← `tagged_value_of`, reading a
+(`fnsigs.bytes_at` ← `tagged_value_start` ← `tagged_value_of`, reading a
 `reclaimable_names` element whose data word is 1). Reach for that before
 theorising about a stripped address.
 

@@ -101,7 +101,7 @@ func TestSelfHostWasmSocketCloseZeroHandles(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := runX86_64Bin(runner, bin)
-			cmd.Stdin = strings.NewReader("function main(): i32 { var h: i32 = " + tc.expr + "; if (h < 0) { return h; } return tcp_close(h); }")
+			cmd.Stdin = strings.NewReader("function main(): i32 { let h: i32 = " + tc.expr + "; if (h < 0) { return h; } return tcp_close(h); }")
 			wat, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("self-host socket probe: %v", err)

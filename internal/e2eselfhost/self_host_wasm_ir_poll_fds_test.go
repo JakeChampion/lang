@@ -107,9 +107,9 @@ func TestSelfHostWasmIRPollFds(t *testing.T) {
 	// its index, and the wait is short.
 	t.Run("ready_before_timeout_returns_index", func(t *testing.T) {
 		out, elapsed := run(t, "poll_ready", `function main(): i32 {
-    var d: i64 = 50000000i64;
-    var a: i32 = wasm_timer_pollable(d);
-    var ps: i32[] = [a];
+    let d: i64 = 50000000i64;
+    let a: i32 = wasm_timer_pollable(d);
+    let ps: i32[] = [a];
     write("ready="); print_int(poll(ps, 5000)); write("\n");
     return 0;
 }`)
@@ -125,9 +125,9 @@ func TestSelfHostWasmIRPollFds(t *testing.T) {
 	// answer is -1 and the wait is bounded by the budget, not the pollable.
 	t.Run("timeout_returns_negative_one", func(t *testing.T) {
 		out, elapsed := run(t, "poll_timeout", `function main(): i32 {
-    var d: i64 = 3000000000i64;
-    var a: i32 = wasm_timer_pollable(d);
-    var ps: i32[] = [a];
+    let d: i64 = 3000000000i64;
+    let a: i32 = wasm_timer_pollable(d);
+    let ps: i32[] = [a];
     write("timedout="); print_int(poll(ps, 200)); write("\n");
     return 0;
 }`)
@@ -143,9 +143,9 @@ func TestSelfHostWasmIRPollFds(t *testing.T) {
 	// $__fern_wasm_poll. The 400ms pollable must actually be waited for.
 	t.Run("negative_timeout_blocks_indefinitely", func(t *testing.T) {
 		out, elapsed := run(t, "poll_block", `function main(): i32 {
-    var d: i64 = 400000000i64;
-    var a: i32 = wasm_timer_pollable(d);
-    var ps: i32[] = [a];
+    let d: i64 = 400000000i64;
+    let a: i32 = wasm_timer_pollable(d);
+    let ps: i32[] = [a];
     write("blocking-ready="); print_int(poll(ps, 0 - 1)); write("\n");
     return 0;
 }`)

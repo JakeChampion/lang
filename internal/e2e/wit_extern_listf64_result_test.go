@@ -124,7 +124,7 @@ func TestExternListF64ResultCustomProvider(t *testing.T) {
 function iota(n: u32): f64[];
 
 function main(): i32 {
-	var xs: f64[] = iota(4u32);
+	let xs: f64[] = iota(4u32);
 	if (xs.len() == 4 && xs[3] == 3.0) { write("` + want + `"); } else { write("iota-bad"); }
 	return 0;
 }`

@@ -16,7 +16,7 @@ package e2e
 // reuse path owed the same copy and did not make it. What it looked like: the
 // map read back EMPTY one statement later, or a segfault once the freed block
 // was recycled, and only when the struct was rebuilt through a local alias of
-// a parameter (`var h = h0`) — the shape that makes the frame the owner and so
+// a parameter (`let h = h0`) — the shape that makes the frame the owner and so
 // lets the reuse fire at all. A `-sanitize` build, which never recycles a
 // freed block, printed the right answer throughout.
 
@@ -32,7 +32,7 @@ import "std/i32";
 struct Seen { m: Map[string, i32], hits: i32 }
 
 function step(s0: Seen, key: string): Seen {
-    var s: Seen = s0;
+    let s: Seen = s0;
     match (s.m.get(key)) {
         Some(_) => {
             return Seen { ...s, hits: s.hits + 1 };
@@ -45,9 +45,9 @@ function step(s0: Seen, key: string): Seen {
 }
 
 function main(): i32 {
-    var m: Map[string, i32] = map_new(16);
-    var k: Seen = Seen { m: m, hits: 0 };
-    var i: i32 = 0;
+    let m: Map[string, i32] = map_new(16);
+    let k: Seen = Seen { m: m, hits: 0 };
+    let i: i32 = 0;
     while (i < 24) {
         k = step(k, "key-that-heap-allocates-" + i.to_string());
         if (k.m.len() != i + 1) { return 1; }
@@ -56,7 +56,7 @@ function main(): i32 {
     // Every key is still there after the last rebind, and every one of them
     // is a hit the second time round.
     if (k.m.len() != 24) { return 2; }
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < 24) {
         k = step(k, "key-that-heap-allocates-" + j.to_string());
         j = j + 1;
@@ -102,14 +102,14 @@ import "std/i32";
 struct Seen { m: Map[string, i32], hits: i32 }
 
 function put(s0: Seen, key: string): Seen {
-    var s: Seen = s0;
+    let s: Seen = s0;
     return Seen { ...s, m: s.m.insert(key, 1) };
 }
 
 function main(): i32 {
-    var m: Map[string, i32] = map_new(8);
-    var k: Seen = Seen { m: m, hits: 0 };
-    var i: i32 = 0;
+    let m: Map[string, i32] = map_new(8);
+    let k: Seen = Seen { m: m, hits: 0 };
+    let i: i32 = 0;
     while (i < 32) {
         k = put(k, "key-that-heap-allocates-" + i.to_string());
         i = i + 1;

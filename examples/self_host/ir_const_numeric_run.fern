@@ -15,7 +15,7 @@ import "./util";
 import "./parser";
 import "./rundriver";
 import "./ir";
-import "./irlower";
+import "./irtables";
 import "./ircore";
 import "./semlower";
 import "./asm_ir";
@@ -23,16 +23,16 @@ import "./asm_arm64_ir";
 import "./wasm_ir";
 import "./asmcore";
 
-struct Rebuilt { cache: irlower.LowerResult[], i64s: i32, f64s: i32 }
+struct Rebuilt { cache: irtables.LowerResult[], i64s: i32, f64s: i32 }
 
-function rebuild(cache: irlower.LowerResult[]): Rebuilt {
-  var out: irlower.LowerResult[] = [];
-  var n64: i32 = 0;
-  var nf: i32 = 0;
+function rebuild(cache: irtables.LowerResult[]): Rebuilt {
+  let out: irtables.LowerResult[] = [];
+  let n64: i32 = 0;
+  let nf: i32 = 0;
   for r in cache {
-    var ops: ir.Op[] = [];
+    let ops: ir.Op[] = [];
     for o in r.ops {
-      var no: ir.Op = o;
+      let no: ir.Op = o;
       if (o.kind_tag == ir.kind_id("const_i64") && o.str.len() > 0) {
         no = ir.Op { ...ir.op_const_i64(util.lit_to_i64(o.str)), decl: o.decl };
         n64 = n64 + 1;
@@ -42,15 +42,15 @@ function rebuild(cache: irlower.LowerResult[]): Rebuilt {
       }
       ops = ops.append(no);
     }
-    out = out.append(irlower.LowerResult { ...r, ops: ops });
+    out = out.append(irtables.LowerResult { ...r, ops: ops });
   }
   return Rebuilt { cache: out, i64s: n64, f64s: nf };
 }
 
 // rebuilt is `sub` with the constants in its bodies rebuilt.
 function rebuilt(sub: ircore.Sub): ircore.Sub {
-  var rb: Rebuilt = rebuild(sub.bodies);
-  var rx: Rebuilt = rebuild(sub.extra);
+  let rb: Rebuilt = rebuild(sub.bodies);
+  let rx: Rebuilt = rebuild(sub.extra);
   eprint("rebuilt i64=" + util.i32_to_string(rb.i64s + rx.i64s) + " f64=" + util.i32_to_string(rb.f64s + rx.f64s));
   return ircore.Sub { ...sub, bodies: rb.cache, extra: rx.cache };
 }
@@ -58,7 +58,7 @@ function rebuilt(sub: ircore.Sub): ircore.Sub {
 // bits_round_trip checks the patterns no source literal spells: a NaN's
 // payload and sign, both infinities, and negative zero.
 function bits_round_trip(): boolean {
-  var pats: i64[] = [0x7ff8000000000123i64, 0i64 - 0x0007fffffffffffdi64, 0x7ff0000000000000i64, 0i64 - 0x0010000000000000i64, 0i64 - 0x7fffffffffffffffi64 - 1i64, 1i64];
+  let pats: i64[] = [0x7ff8000000000123i64, 0i64 - 0x0007fffffffffffdi64, 0x7ff0000000000000i64, 0i64 - 0x0010000000000000i64, 0i64 - 0x7fffffffffffffffi64 - 1i64, 1i64];
   for b in pats {
     if (ir.const_f64_bits(ir.op_const_f64(f64_from_bits(b))) != b) {
       return false;
@@ -72,17 +72,17 @@ function main(): i32 {
     eprint("ir_const_numeric_run: a numeric constant did not keep its bits");
     return 3;
   }
-  var av: string[] = args();
-  var target: string = "x86-64-linux";
+  let av: string[] = args();
+  let target: string = "x86-64-linux";
   if (av.len() > 2 && av[1] == "-target") {
     target = av[2];
   }
-  var mod: parser.Module = rundriver.parse_stdin("ir_const_numeric_run");
+  let mod: parser.Module = rundriver.parse_stdin("ir_const_numeric_run");
   if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
     return 1;
   }
-  var d: semlower.Driven = semlower.driven(mod, target);
-  var sub: ircore.Sub = rebuilt(d.sub);
+  let d: semlower.Driven = semlower.driven(mod, target);
+  let sub: ircore.Sub = rebuilt(d.sub);
   if (target == "wasm32-wasi") {
     write(wasm_ir.emit_module_mode_or_error_sub(d.full, false, false, sub));
   } else if (target == "arm64-linux") {

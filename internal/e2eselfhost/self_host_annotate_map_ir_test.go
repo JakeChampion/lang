@@ -8,7 +8,7 @@ import (
 )
 
 // annotateMapCases extend the typed-IR annotation (#5531) to map-valued calls.
-// type_to_irtag now serialises a TypeMap to its "Map[K, V]" tag (irlower's own
+// type_to_irtag now serialises a TypeMap to its "Map[K, V]" tag (the lowering's own
 // spelling), and expr_map_type_tag's ExprCall arm reads it instead of
 // re-deriving via the map_ret_fns registry — the decisive path being a
 // map-valued call in a TUPLE element (its #3317 arm), where a later
@@ -22,16 +22,16 @@ var annotateMapCases = []struct {
 }{
 	// map-valued call as a tuple element, then get_or on t.0.
 	{"tuple_map_elem", `import "core/map";
-function build(): Map[string, i32] { var m: Map[string, i32] = Map { }; m = m.insert("a", 10); return m; }
-function main(): i32 { var t = (build(), 5); return t.0.get_or("a", 0) + t.1; }`}, // 10 + 5 = 15
+function build(): Map[string, i32] { let m: Map[string, i32] = Map { }; m = m.insert("a", 10); return m; }
+function main(): i32 { let t = (build(), 5); return t.0.get_or("a", 0) + t.1; }`}, // 10 + 5 = 15
 	// map-valued call used directly for get_or (two lookups + len).
 	{"call_get_or", `import "core/map";
-function build(): Map[string, i32] { var m: Map[string, i32] = Map { }; m = m.insert("a", 10); m = m.insert("bb", 20); return m; }
-function main(): i32 { var m = build(); return m.get_or("a", 0) + m.get_or("bb", 0) + m.len(); }`}, // 10 + 20 + 2 = 32
+function build(): Map[string, i32] { let m: Map[string, i32] = Map { }; m = m.insert("a", 10); m = m.insert("bb", 20); return m; }
+function main(): i32 { let m = build(); return m.get_or("a", 0) + m.get_or("bb", 0) + m.len(); }`}, // 10 + 20 + 2 = 32
 }
 
 // TestSelfHostAnnotateMapIR_X86_64 pins the checker-stamped Map[K,V] result type
-// feeding irlower's expr_map_type_tag through the IR path (#5531).
+// feeding the lowering through the IR path (#5531).
 func TestSelfHostAnnotateMapIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

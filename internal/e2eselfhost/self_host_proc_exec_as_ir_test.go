@@ -27,11 +27,11 @@ var procExecAsPrograms = []struct {
 	{
 		"argv0-and-envp",
 		`function main(): i32 {
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 70; }
     if (pid == 0) {
-        var script: string = "test \"$0\" = myname || exit 61; test \"$FERNX\" = 42 || exit 62; test -z \"${HOME+set}\" || exit 63; exit 29";
-        var rc: i32 = proc_exec_as("/bin/sh", ["myname", "-c", script], ["FERNX=42"]);
+        let script: string = "test \"$0\" = myname || exit 61; test \"$FERNX\" = 42 || exit 62; test -z \"${HOME+set}\" || exit 63; exit 29";
+        let rc: i32 = proc_exec_as("/bin/sh", ["myname", "-c", script], ["FERNX=42"]);
         return 71;
     }
     return proc_waitpid(pid);
@@ -41,12 +41,12 @@ var procExecAsPrograms = []struct {
 	{
 		"failure-and-empty-envp",
 		`function main(): i32 {
-    var rc: i32 = proc_exec_as("/nonexistent/binary", ["x"], ["A=1"]);
+    let rc: i32 = proc_exec_as("/nonexistent/binary", ["x"], ["A=1"]);
     if (rc >= 0) { return 70; }
-    var pid: i32 = proc_fork();
+    let pid: i32 = proc_fork();
     if (pid < 0) { return 71; }
     if (pid == 0) {
-        var r2: i32 = proc_exec_as("/bin/sh", ["sh", "-c", "test -z \"${HOME+set}\" && exit 31"], []);
+        let r2: i32 = proc_exec_as("/bin/sh", ["sh", "-c", "test -z \"${HOME+set}\" && exit 31"], []);
         return 72;
     }
     return proc_waitpid(pid);
@@ -130,7 +130,7 @@ func TestSelfHostProcExecAsIRArm64(t *testing.T) {
 func TestSelfHostProcExecAsWasmRejected(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern", "wasm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern", "wasm_ir_run.fern")
 	drivers := []struct {
 		name string
 		bin  string

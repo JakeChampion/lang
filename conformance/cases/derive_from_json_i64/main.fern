@@ -5,7 +5,7 @@
 import "std/json";
 @derive(json.Json, json.FromJson) struct Event { id: i64, name: string, ts: i64 }
 function main(): i32 {
-    var e: Event = Event { id: 9000000000, name: "boot", ts: 1717000000000 };
+    let e: Event = Event { id: 9000000000, name: "boot", ts: 1717000000000 };
     match (Event.from_json(e.to_json())) {
         Ok(e2) => {
             if (e2.id == 9000000000 && e2.ts == 1717000000000 && e2.name == "boot") { return 42; }

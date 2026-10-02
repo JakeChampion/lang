@@ -22,12 +22,12 @@ import (
 // high-water probe, flat under reclaim and linear under a leak.
 
 const mapArrayValueColumnSrc = `import "core/map";
-function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var m: Map[i32, string[]] = Map {};
+        let m: Map[i32, string[]] = Map {};
         m = m.insert(i, [w(i), w(i + 1)]);
         acc = acc + m.get_or(i, []).len();
         i = i + 1;
@@ -41,15 +41,15 @@ function main(): i32 {
 // runtime retains a hit's value and a miss's fallback alike), which is what
 // lets the binding reclaim it and the temp form above end its fallback.
 const mapArrayValueColumnBoundSrc = `import "core/map";
-function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 100) {
-        var m: Map[i32, string[]] = Map {};
+        let m: Map[i32, string[]] = Map {};
         m = m.insert(i, [w(i), w(i + 1)]);
-        var v: string[] = m.get_or(i, []);
-        var d: string[] = m.get_or(i + 1, []);
+        let v: string[] = m.get_or(i, []);
+        let d: string[] = m.get_or(i + 1, []);
         acc = acc + v.len() + d.len();
         i = i + 1;
     }
@@ -59,13 +59,13 @@ function main(): i32 {
 
 func mapArrayValueColumnBumpSrc(n string) string {
 	return `import "core/map";
-function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < ` + n + `) {
-        var m: Map[i32, string[]] = Map {};
+        let m: Map[i32, string[]] = Map {};
         m = m.insert(i, [w(i), w(i + 1)]);
         acc = acc + m.get_or(i, []).len();
         i = i + 1;
@@ -79,15 +79,15 @@ function main(): i32 {
 // after a second insert must still hold its strings, and the map's drop must
 // release each value exactly once — the direction leakcheck cannot see.
 const mapArrayValueColumnUnderflowSrc = `import "core/map";
-function w(i: i32): string { var t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
+function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }
 function main(): i32 {
-    var acc: i32 = 0;
-    var i: i32 = 0;
+    let acc: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) {
-        var m: Map[i32, string[]] = Map {};
+        let m: Map[i32, string[]] = Map {};
         m = m.insert(i, [w(i), w(i + 1)]);
         m = m.insert(i + 1, [w(i + 2)]);
-        var got: string[] = m.get_or(i, []);
+        let got: string[] = m.get_or(i, []);
         acc = acc + got.len() + got[0].len();
         match (m.get(i + 1)) { Some(v) => { acc = acc + v.len(); }, None => { acc = acc + 100; } }
         i = i + 1;

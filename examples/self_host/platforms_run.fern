@@ -34,7 +34,7 @@ function reach_of(src: string): string[] {
 
 // first_msg renders the first violation, or "" when there is none.
 function first_msg(src: string, target: string): string {
-  var vs: platforms.Violation[] = violations(src, target);
+  let vs: platforms.Violation[] = violations(src, target);
   if (vs.len() == 0) {
     return "";
   }
@@ -46,7 +46,7 @@ function main(): i32 {
   // Each target resolves to an environment, and the environment decides
   // the capability set — the ISA has nothing to say about whether there is
   // a filesystem.
-  var wasm: platforms.Descriptor = platforms.for_target("wasm32-wasi");
+  let wasm: platforms.Descriptor = platforms.for_target("wasm32-wasi");
   if (!wasm.known) {
     return 1;
   }
@@ -54,7 +54,7 @@ function main(): i32 {
     return 2;
   }
 
-  var x86: platforms.Descriptor = platforms.for_target("x86-64-linux");
+  let x86: platforms.Descriptor = platforms.for_target("x86-64-linux");
   if (x86.isa != "x86-64" || x86.environment != "linux") {
     return 3;
   }
@@ -181,8 +181,8 @@ function main(): i32 {
   }
   // The two halves of the classification never overlap: a builtin is gated
   // or it needs no host, never both.
-  var cores: string[] = platforms.core_builtins();
-  var ci: i32 = 0;
+  let cores: string[] = platforms.core_builtins();
+  let ci: i32 = 0;
   while (ci < cores.len()) {
     if (platforms.gated_capability(cores[ci]).len() != 0) {
       return 26;
@@ -194,8 +194,8 @@ function main(): i32 {
   // builtin unreachable everywhere while looking like a deliberate refusal
   // — native's TestGatedCapabilitiesResolvable is the same check — and it
   // is what lets violation_message assume a non-empty provider list.
-  var gates: platforms.Gate[] = platforms.gated_builtins();
-  var gi: i32 = 0;
+  let gates: platforms.Gate[] = platforms.gated_builtins();
+  let gi: i32 = 0;
   while (gi < gates.len()) {
     if (gates[gi].builtin.len() == 0) {
       return 27;
@@ -207,7 +207,7 @@ function main(): i32 {
   }
 
   // ---- 4. enforcement over a program ---------------------------------
-  var forks: string = "function f(): i32 { return proc_fork(); }\nfunction main(): i32 { return f(); }\n";
+  let forks: string = "function f(): i32 { return proc_fork(); }\nfunction main(): i32 { return f(); }\n";
   if (count(forks, "wasm32-wasi") != 1) {
     return 30;
   }
@@ -217,7 +217,7 @@ function main(): i32 {
   // A freestanding target has no host at all, so the same call is refused
   // there too — and `print` is refused with it, which every hosted target
   // grants.
-  var prints: string = "function main(): i32 { print(\"hi\"); return 0; }\n";
+  let prints: string = "function main(): i32 { print(\"hi\"); return 0; }\n";
   if (count(forks, "arm64-freestanding") != 1) {
     return 32;
   }
@@ -234,7 +234,7 @@ function main(): i32 {
 
   // `subprocess` is refused on the wasm worlds and allowed on the natives,
   // which is the emitter support (#4320) the profile records.
-  var spawns: string = "function main(): i32 { return subprocess(\"ls\"); }\n";
+  let spawns: string = "function main(): i32 { return subprocess(\"ls\"); }\n";
   if (count(spawns, "wasm32-wasi") != 1) {
     return 35;
   }
@@ -244,11 +244,11 @@ function main(): i32 {
 
   // Dedup is per (function, builtin): a builtin called twice in one body
   // reports once, and a second function calling it reports again.
-  var twice: string = "function f(): i32 { var a: i32 = proc_fork(); return a + proc_fork(); }\n";
+  let twice: string = "function f(): i32 { let a: i32 = proc_fork(); return a + proc_fork(); }\n";
   if (count(twice, "wasm32-wasi") != 1) {
     return 37;
   }
-  var two_fns: string = "function f(): i32 { return proc_fork(); }\nfunction g(): i32 { return proc_fork(); }\n";
+  let two_fns: string = "function f(): i32 { return proc_fork(); }\nfunction g(): i32 { return proc_fork(); }\n";
   if (count(two_fns, "wasm32-wasi") != 2) {
     return 38;
   }
@@ -257,20 +257,20 @@ function main(): i32 {
   // A local whose NAME matches a gated builtin is not a call to it. `env`
   // is the live case: it is both a capability-gated builtin and the most
   // natural name for a variable holding one.
-  var shadow: string = "function main(): i32 { var env: i32 = 3; return env; }\n";
+  let shadow: string = "function main(): i32 { let env: i32 = 3; return env; }\n";
   if (count(shadow, "wasm32-wasi") != 0) {
     return 40;
   }
 
   // Builtins are free functions, so a method whose name matches one is not
   // a violation either.
-  var method: string = "struct S { n: i32 }\nfunction (s: S) stat(): i32 { return s.n; }\nfunction main(): i32 { var s: S = S { n: 1 }; return s.stat(); }\n";
+  let method: string = "struct S { n: i32 }\nfunction (s: S) stat(): i32 { return s.n; }\nfunction main(): i32 { let s: S = S { n: 1 }; return s.stat(); }\n";
   if (count(method, "wasm32-wasi") != 0) {
     return 41;
   }
 
   // An UNGATED builtin is never reported, on any target.
-  var ungated: string = "function main(): i32 { return __heap_bump_bytes(); }\n";
+  let ungated: string = "function main(): i32 { return __heap_bump_bytes(); }\n";
   if (count(ungated, "wasm32-wasi") != 0) {
     return 42;
   }
@@ -279,20 +279,20 @@ function main(): i32 {
   // A lambda body is part of what the artifact executes, so a gated call
   // inside one counts. Free-variable analysis subtracts a lambda's
   // bindings; this walk descends into it instead.
-  var in_lambda: string = "function main(): i32 { var f: fn(): i32 = (): i32 => { return proc_fork(); }; return f(); }\n";
+  let in_lambda: string = "function main(): i32 { let f: fn(): i32 = (): i32 => { return proc_fork(); }; return f(); }\n";
   if (count(in_lambda, "wasm32-wasi") != 1) {
     return 50;
   }
 
   // A call nested in an argument, a condition, or a match arm is still a
   // call — the walk is not top-level-statement shaped.
-  var nested: string = "function id(x: i32): i32 { return x; }\nfunction main(): i32 { if (id(proc_fork()) > 0) { return 1; } return 0; }\n";
+  let nested: string = "function id(x: i32): i32 { return x; }\nfunction main(): i32 { if (id(proc_fork()) > 0) { return 1; } return 0; }\n";
   if (count(nested, "wasm32-wasi") != 1) {
     return 51;
   }
 
   // ---- 7. the message ------------------------------------------------
-  var m: string = first_msg(forks, "wasm32-wasi");
+  let m: string = first_msg(forks, "wasm32-wasi");
   // The text tracks native's wording (internal/platforms.Violation.Message)
   // so the two are diffable by eye; the CODE is what a differential pins.
   if (!util.contains(m, "target \"wasm32-wasi\" does not provide `proc`")) {
@@ -311,7 +311,7 @@ function main(): i32 {
   }
 
   // The wasm refusal names the natives as the way out.
-  var ms: string = first_msg(spawns, "wasm32-wasi");
+  let ms: string = first_msg(spawns, "wasm32-wasi");
   if (!util.contains(ms, "does not provide `subprocess`")) {
     return 64;
   }
@@ -329,20 +329,20 @@ function main(): i32 {
     return 70;
   }
 
-  var r1: string[] = reach_of(forks);
+  let r1: string[] = reach_of(forks);
   if (r1.len() != 1 || r1[0] != "proc") {
     return 71;
   }
 
   // Sorted, and one entry per capability however many builtins reached it.
-  var many: string = "function main(): i32 {\n"
-    + "    var t: i64 = now_unix_ms();\n"
-    + "    var p: i32 = proc_fork();\n"
-    + "    var q: i32 = proc_fork();\n"
+  let many: string = "function main(): i32 {\n"
+    + "    let t: i64 = now_unix_ms();\n"
+    + "    let p: i32 = proc_fork();\n"
+    + "    let q: i32 = proc_fork();\n"
     + "    print(\"x\");\n"
     + "    return q + p;\n"
     + "}\n";
-  var r2: string[] = reach_of(many);
+  let r2: string[] = reach_of(many);
   if (r2.len() != 3) {
     return 72;
   }

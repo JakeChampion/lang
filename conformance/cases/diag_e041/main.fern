@@ -3,8 +3,8 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 function main(): i32 {
-    var a: i32 = 1;
-    var b: string = "hi";
+    let a: i32 = 1;
+    let b: string = "hi";
     if (a == b) {              // error[E041]: cannot compare i32 and string
         return 1;
     }

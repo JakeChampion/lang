@@ -50,20 +50,20 @@ var noColumnMapKeyCases = []struct {
 	// it). This one routes `ir` without it.
 	{"construct-only", `import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(2);
+    let m: Map[i64, i32] = map_new(2);
     return 7;
 }
 `, "ir", 7},
 	{"construct-and-insert", `import "core/map";
 function main(): i32 {
-    var m: Map[i64, i32] = map_new(2);
+    let m: Map[i64, i32] = map_new(2);
     m = m.insert(7, 3);
     return m.len() + 7;
 }
 `, "ir", 8},
 	{"pair-iteration-of-a-parameter", `import "core/map";
 function total(m: Map[i64, i32]): i32 {
-    var s: i32 = 0;
+    let s: i32 = 0;
     for (k, v) in m { s = s + v; }
     return s + 7;
 }
@@ -71,7 +71,7 @@ function main(): i32 { return total(map_new(2)); }
 `, "ir", 7},
 	{"keys-of-a-parameter", `import "core/map";
 function total(m: Map[u64, i32]): i32 {
-    var s: i32 = 0;
+    let s: i32 = 0;
     for k in m.keys() { s = s + 1; }
     return s + 7;
 }
@@ -84,7 +84,7 @@ function main(): i32 { return total(map_new(2)); }
 	// The control: the same iteration over a key that DOES fit the column.
 	{"pair-iteration-of-an-i32-parameter", `import "core/map";
 function total(m: Map[i32, i32]): i32 {
-    var s: i32 = 0;
+    let s: i32 = 0;
     for (k, v) in m { s = s + v; }
     return s + 7;
 }
@@ -146,20 +146,20 @@ var narrowMapKeyCases = []struct {
 }{
 	{"u8", `import "core/map";
 function main(): i32 {
-    var m: Map[u8, i32] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[u8, i32] = map_new(2);
+    let i: i32 = 0;
     while (i < 12) { m = m.insert(i as u8, i * 2); i = i + 1; }
-    var s: i32 = 0;
+    let s: i32 = 0;
     for (k, v) in m { s = s + (k as i32) + v; }
     return s + m.len();
 }
 `, 210},
 	{"u32", `import "core/map";
 function main(): i32 {
-    var m: Map[u32, i32] = map_new(2);
-    var i: i32 = 0;
+    let m: Map[u32, i32] = map_new(2);
+    let i: i32 = 0;
     while (i < 12) { m = m.insert(i as u32, i * 2); i = i + 1; }
-    var s: i32 = 0;
+    let s: i32 = 0;
     for k in m.keys() { s = s + m.get_or(k, 0); }
     return s + m.len();
 }
@@ -174,8 +174,8 @@ function main(): i32 {
 	// it catches the regression at CONSTRUCTION.
 	{"boolean-literal", `import "core/map";
 function main(): i32 {
-    var m = Map { true: 5, false: 9 };
-    var s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
+    let m = Map { true: 5, false: 9 };
+    let s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
     if (m.has(true)) { s = s + 1; }
     if (!m.has(false)) { s = s + 100; }
     return s + m.len();
@@ -186,8 +186,8 @@ function main(): i32 {
 	// every lookup is a hit cannot distinguish from pointer-identity luck.
 	{"boolean-literal-absent-key", `import "core/map";
 function main(): i32 {
-    var m = Map { true: 5 };
-    var s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
+    let m = Map { true: 5 };
+    let s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
     if (!m.has(false)) { s = s + 100; }
     return s + m.len();
 }
@@ -196,17 +196,17 @@ function main(): i32 {
 	// so a fix to the literal path cannot regress them unnoticed.
 	{"boolean-annotated", `import "core/map";
 function main(): i32 {
-    var m: Map[boolean, i32] = map_new(2);
+    let m: Map[boolean, i32] = map_new(2);
     m = m.insert(true, 5);
     m = m.insert(false, 9);
-    var s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
+    let s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
     if (m.has(true)) { s = s + 1; }
     return s + m.len();
 }
 `, 17},
 	{"boolean-annotated-literal", `import "core/map";
 function main(): i32 {
-    var m: Map[boolean, i32] = Map { true: 5, false: 9 };
+    let m: Map[boolean, i32] = Map { true: 5, false: 9 };
     return m.get_or(false, 0) + m.get_or(true, 0) + m.len();
 }
 `, 16},
@@ -275,7 +275,7 @@ func TestSelfHostNarrowMapKeyAnswersX86_64(t *testing.T) {
 // instantiates a `Map[T, i32]`-returning generic at T = f64.
 const monomorphisedFloatKeySrc = `import "core/map";
 function build[T](k: T, v: i32): Map[T, i32] {
-    var m: Map[T, i32] = map_new(2);
+    let m: Map[T, i32] = map_new(2);
     return m.insert(k, v);
 }
 function main(): i32 { return build(2.5, 7).get_or(2.5, 0); }

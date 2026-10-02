@@ -10,15 +10,15 @@ import "testing"
 // it. Both paths run here: the string dropped in the callee, and the string
 // handed back in an Option.
 const stringFromBytesLocalSrc = `function conv(b: u8[]): Option[string] {
-    var s: string = string_from_bytes_unchecked(b);
+    let s: string = string_from_bytes_unchecked(b);
     if (s.len() > 10) { return Some(s); }
     return None;
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
+    let t: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
-        var b: u8[] = __alloc_u8(3 + i);
+        let b: u8[] = __alloc_u8(3 + i);
         match (conv(b)) { Some(x) => { t = t + 100 + x.len() - x.len(); }, None => { t = t + 3; } }
         i = i + 1;
     }

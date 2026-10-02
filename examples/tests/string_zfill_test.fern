@@ -48,7 +48,7 @@ function test_non_numeric(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/string zfill");
+  let r: test.TestRunner = test.test_new("std/string zfill");
   r = r.it("unsigned", test_unsigned);
   r = r.it("negative", test_negative);
   r = r.it("positive sign", test_positive_sign);

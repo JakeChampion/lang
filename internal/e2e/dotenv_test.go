@@ -11,7 +11,7 @@ const dotenvProg = `
 import "std/dotenv" as dotenv;
 import "core/map";
 function main(): i32 {
-    var m: Map[string, string] = dotenv.parse("# c\nHOST=localhost\nPORT = 8080\nexport TOKEN=abc\nMSG=\"a\\nb\"\nRAW='x\\ny'\nEMPTY=\nno_eq\n=nokey\nHOST=override\r\n");
+    let m: Map[string, string] = dotenv.parse("# c\nHOST=localhost\nPORT = 8080\nexport TOKEN=abc\nMSG=\"a\\nb\"\nRAW='x\\ny'\nEMPTY=\nno_eq\n=nokey\nHOST=override\r\n");
     if (m.get_or("HOST", "?") != "override") { return 1; }
     if (m.get_or("PORT", "?") != "8080") { return 2; }
     if (m.get_or("TOKEN", "?") != "abc") { return 3; }

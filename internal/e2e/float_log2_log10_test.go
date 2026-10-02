@@ -10,7 +10,7 @@ import "testing"
 // toolchain is absent.
 const floatLog2Log10Prog = `
 import "std/float" as float;
-function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
+function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
     if (!approx((8.0).log2(), 3.0)) { return 1; }
     if (!approx((1024.0).log2(), 10.0)) { return 2; }

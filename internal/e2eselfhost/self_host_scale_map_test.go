@@ -46,8 +46,8 @@ const scaleMapSrc = `import "std/array";
 
 // The same transform as a loop. Not a map, so nothing rewrites it.
 @noinline function loop_scale(xs: f64[], k: f64): f64[] {
-    var out: f64[] = [];
-    var i: i32 = 0;
+    let out: f64[] = [];
+    let i: i32 = 0;
     while (i < xs.len()) { out = out.append(xs[i] * k); i = i + 1; }
     return out;
 }
@@ -60,7 +60,7 @@ const scaleMapSrc = `import "std/array";
 
 @noinline function same(a: f64[], b: f64[]): boolean {
     if (a.len() != b.len()) { return false; }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < a.len()) {
         if (!same_f64(a[i], b[i])) { return false; }
         i = i + 1;
@@ -71,10 +71,10 @@ const scaleMapSrc = `import "std/array";
 // Values a scale can go wrong on: sign, zero, a fraction, and an infinity
 // whose product with zero is NaN.
 @noinline function build(n: i32): f64[] {
-    var inf: f64 = 1.0e308 * 10.0;
-    var seed: f64[] = [1.0, 0.0 - 2.0, 0.0, 0.5, 0.0 - 0.25, 1000000.0, inf, 0.0 - 1.0, 7.5];
-    var xs: f64[] = [];
-    var i: i32 = 0;
+    let inf: f64 = 1.0e308 * 10.0;
+    let seed: f64[] = [1.0, 0.0 - 2.0, 0.0, 0.5, 0.0 - 0.25, 1000000.0, inf, 0.0 - 1.0, 7.5];
+    let xs: f64[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(seed[i]); i = i + 1; }
     return xs;
 }
@@ -82,9 +82,9 @@ const scaleMapSrc = `import "std/array";
 function main(): i32 {
     // 0..9 covers two whole blocks and every tail remainder of both a 4-lane
     // (AVX2) and a 2-lane (SSE2 / NEON / v128) body.
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n <= 9) {
-        var xs: f64[] = build(n);
+        let xs: f64[] = build(n);
         if (!same(scale2(xs), loop_scale(xs, 2.0))) { return 10 + n; }
         if (!same(scale_named(xs), loop_scale(xs, 0.5))) { return 30 + n; }
         n = n + 1;
@@ -93,13 +93,13 @@ function main(): i32 {
     // The kernel's result is an ordinary array afterwards: the length header
     // is right and it indexes. A buffer-out kernel gets the header wrong
     // before it gets the arithmetic wrong.
-    var ys: f64[] = scale2(build(3));
+    let ys: f64[] = scale2(build(3));
     if (ys.len() != 3) { return 91; }
     if (ys[1] != 0.0 - 4.0) { return 92; }
 
     // The receiver is borrowed, not consumed.
-    var src: f64[] = build(5);
-    var out: f64[] = scale2(src);
+    let src: f64[] = build(5);
+    let out: f64[] = scale2(src);
     if (!same(src, build(5))) { return 93; }
     if (out.len() != 5) { return 94; }
     return 42;
@@ -113,8 +113,8 @@ const scaleMapKeptSrc = `import "std/array";
 @noinline function bump(xs: f64[]): f64[] { return xs.map((x: f64): f64 => x + 2.0); }
 
 function main(): i32 {
-    var xs: f64[] = [1.0, 2.0];
-    var ys: f64[] = bump(xs);
+    let xs: f64[] = [1.0, 2.0];
+    let ys: f64[] = bump(xs);
     if (ys[0] != 3.0) { return 1; }
     if (ys[1] != 4.0) { return 2; }
     return 42;

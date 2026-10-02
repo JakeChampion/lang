@@ -1713,8 +1713,8 @@ type rewriter struct {
 	// localVars is the set of identifier names bound as local
 	// variables / parameters in the currently-walking function
 	// body. Populated by `rewriteFuncBody` from the function's
-	// params + a pre-walk that collects `var` declarations. The
-	// Ident rewriter consults the set so a local `var range: u32`
+	// params + a pre-walk that collects `let` declarations. The
+	// Ident rewriter consults the set so a local `let range: u32`
 	// inside a function whose enclosing module also declares
 	// `function range(…)` doesn't get the module-prefix mangling
 	// applied to its uses.
@@ -1982,7 +1982,7 @@ func (r *rewriter) importedModule(localName string) (*module, string, bool) {
 
 // rewriteFuncBody walks fn's body with a fresh local-var set
 // scoped to that function. The set is the union of fn's
-// parameters + any `var` declared anywhere in the body,
+// parameters + any `let` declared anywhere in the body,
 // including in nested blocks. The granularity is intentionally
 // coarse — we collect at function granularity, not lexical
 // scope — because we only need to answer "is this Ident a
@@ -2029,7 +2029,7 @@ func (r *rewriter) rewriteTraitDefaultBody(m *ast.TraitMethod) {
 	r.localVars = prev
 }
 
-// collectLocals adds to dst every name b binds — a `var`, a
+// collectLocals adds to dst every name b binds — a `let`, a
 // destructure, a `for` binder, and everything a match arm's pattern
 // binds (statement or expression form) — at any depth, INCLUDING
 // inside a block sitting in expression position (`defer { … }`, a

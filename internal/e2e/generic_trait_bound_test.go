@@ -17,8 +17,8 @@ struct Celsius { deg: i32 }
 impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg: v }; } }
 function describe[T: From[i32]](proto: T, v: i32): T { return T.from(v); }
 function main(): i32 {
-    var zero: Celsius = Celsius { deg: 0 };
-    var c: Celsius = describe(zero, 20);
+    let zero: Celsius = Celsius { deg: 0 };
+    let c: Celsius = describe(zero, 20);
     return c.deg;
 }
 `

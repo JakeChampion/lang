@@ -1,11 +1,11 @@
 // A binding that dies inside a loop body used to hold its reference for the
 // rest of the function. computePreciseDrops built its candidate set from
-// `fn.Body.Stmts`, so only a TOP-LEVEL `var` could be released at its last
+// `fn.Body.Stmts`, so only a TOP-LEVEL `let` could be released at its last
 // use; anything declared inside an if / while / for / match survived to the
 // next entry's re-init drop or the function-exit sweep.
 //
 // For an alias of an accumulator that is exactly the rc==1 append cliff
-// (#6024). `var keep = acc` takes an alias inc, so `acc` sits at rc 2, and
+// (#6024). `let keep = acc` takes an alias inc, so `acc` sits at rc 2, and
 // __fern_arr_push_grow mutates in place only at rc 1 — every subsequent
 // append copies the whole buffer. 200 appends behind a binding that nothing
 // reads again cost 199 full-buffer copies, identically on x86-64, arm64 and
@@ -28,10 +28,10 @@ import (
 // deadAliasAppendSrc: `keep` is read BEFORE the append and never again, so the
 // mutation is unobservable through it and the buffer can be grown in place.
 const deadAliasAppendSrc = `function main(): i32 {
-    var acc: i32[] = [];
-    var i: i32 = 0;
+    let acc: i32[] = [];
+    let i: i32 = 0;
     while (i < 200) {
-        var keep: i32[] = acc;
+        let keep: i32[] = acc;
         if (keep.len() != i) { return 999; }
         acc = acc.append(i);
         i = i + 1;
@@ -44,10 +44,10 @@ const deadAliasAppendSrc = `function main(): i32 {
 // liveAliasAppendSrc: the control. Same program with the read moved AFTER the
 // append, so `keep` is still live across it and every copy is required.
 const liveAliasAppendSrc = `function main(): i32 {
-    var acc: i32[] = [];
-    var i: i32 = 0;
+    let acc: i32[] = [];
+    let i: i32 = 0;
     while (i < 200) {
-        var keep: i32[] = acc;
+        let keep: i32[] = acc;
         acc = acc.append(i);
         if (keep.len() != i) { return 999; }
         i = i + 1;

@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// `var t: string = base.trim()` leaked its box on every backend.
+// `let t: string = base.trim()` leaked its box on every backend.
 //
 // trim is listed in `str_local_binding_is_fresh`'s DELIBERATELY EXCLUDED set as
 // a "zero-copy VIEW into the receiver buffer", alongside the genuine
@@ -50,16 +50,16 @@ const strTrimPrelude = strProbeHelpers + `function w(pre: string): string { retu
 
 func strTrimHeap(body string, limit int) string {
 	return strTrimPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
+    let base: string = w(pre);
 ` + body + `
 }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
+function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
+    let pre: string = "abcdefgh";
+    let a: i32 = churn(pre, 400);
+    let b1: i32 = (__heap_bump_bytes() as i32);
+    let b: i32 = churn(pre, 400);
+    let b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= ` + fmt.Sprint(limit) + `) { return 98; }
@@ -71,13 +71,13 @@ var strTrimHeapCases = []struct {
 	name string
 	body string
 }{
-	{"str-trim-view-released", `    var t: string = base.trim();
+	{"str-trim-view-released", `    let t: string = base.trim();
     return t.len() % 251;`},
 	// A trim OF a trim: a view over a view on the register backends, so the
 	// second box's data pointer is inside the first box's source. Both are
 	// released, and neither release may touch the bytes.
-	{"str-trim-of-trim-released", `    var t: string = base.trim();
-    var u: string = t.trim();
+	{"str-trim-of-trim-released", `    let t: string = base.trim();
+    let u: string = t.trim();
     return (t.len() + u.len()) % 251;`},
 }
 
@@ -90,12 +90,12 @@ var strTrimFaultCases = []struct {
 	// or freed the wrong thing. `base.len() == t.len() + 3` pins that the bytes
 	// behind the view are intact, not merely readable.
 	{"str-trim-source-and-result-live", strTrimPrelude + `function round(pre: string): i32 {
-    var base: string = w(pre);
-    var t: string = base.trim();
-    var u: string = t.trim();
-    var n: i32 = t.len();
-    var p1: string = w("XXXXXXXX");
-    var p2: string = w("YYYYYYYY");
+    let base: string = w(pre);
+    let t: string = base.trim();
+    let u: string = t.trim();
+    let n: i32 = t.len();
+    let p1: string = w("XXXXXXXX");
+    let p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
     if (!has_prefix(base, "abcdefgh   -")) { return 0 - 1; }
     if (!has_prefix(t, "abcdefgh   -")) { return 0 - 2; }
@@ -106,28 +106,28 @@ var strTrimFaultCases = []struct {
     if (base.len() != n + 3) { return 0 - 7; }
     return 3;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// ESCAPE: the trim result is returned, so the credit is withheld and the
 	// caller's read has to find both the box and the bytes.
-	{"str-trim-escapes-return", strTrimPrelude + `function trimmed(pre: string): string { var base: string = w(pre); var t: string = base.trim(); return t; }
+	{"str-trim-escapes-return", strTrimPrelude + `function trimmed(pre: string): string { let base: string = w(pre); let t: string = base.trim(); return t; }
 function round(pre: string): i32 {
-    var t: string = trimmed(pre);
-    var p1: string = w("XXXXXXXX");
+    let t: string = trimmed(pre);
+    let p1: string = w("XXXXXXXX");
     if (p1.len() < 0) { return 0; }
     if (!has_prefix(t, "abcdefgh   -")) { return 0 - 1; }
     return t.len() % 251;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; var want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; let want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// A USER `.trim()` whose result ALIASES a field the receiver still owns.
 	// Nothing may credit it — this is what proves trim_str_init's receiver-type
 	// test is required here, since the heap cases above move either way.
 	{"str-trim-user-method-not-credited", strTrimPrelude + `struct Holder { name: string, tag: string }
 function (h: Holder) trim(): string { return h.name; }
-function trimmed(h: Holder): i32 { var t: string = h.trim(); return t.len() % 251; }
-function churn(pre: string): i32 { var a: string = w(pre + "1"); var b: string = w(pre + "2"); return a.len() + b.len(); }
+function trimmed(h: Holder): i32 { let t: string = h.trim(); return t.len() % 251; }
+function churn(pre: string): i32 { let a: string = w(pre + "1"); let b: string = w(pre + "2"); return a.len() + b.len(); }
 function main(): i32 {
-    var keep: Holder = Holder { name: w("aaaa"), tag: w("bbbb") };
-    var i: i32 = 0;
+    let keep: Holder = Holder { name: w("aaaa"), tag: w("bbbb") };
+    let i: i32 = 0;
     while (i < 2000) {
         if (trimmed(keep) < 0) { return 96; }
         if (churn("QQQQQQQQ") < 0) { return 95; }
@@ -214,7 +214,7 @@ func TestSelfHostStrTrimViewReleaseWasmIR(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
 
 	for _, tc := range strTrimSources() {

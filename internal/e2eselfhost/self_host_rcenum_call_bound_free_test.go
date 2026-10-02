@@ -10,7 +10,7 @@ import (
 
 // --- A CALL-bound rc-enum earns the consuming-match free too ------------------
 //
-// `var v: E = mkv(i)` followed by a sole top-level consuming match reclaimed
+// `let v: E = mkv(i)` followed by a sole top-level consuming match reclaimed
 // NOTHING — 200 allocs / 0 frees over 100 rounds against native's 200/200 —
 // while the byte-identical shape with the constructor written INLINE was flat.
 //
@@ -50,8 +50,8 @@ type rcenumCallFreeCase struct {
 }
 
 const recfMain = `function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -66,8 +66,8 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// THE REPRO. Base: 200 allocs / 0 frees.
 			name: "call_bound_sole_match",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = mkv(i);
-    var a: i32 = 0;
+    let v: E = mkv(i);
+    let a: i32 = 0;
     match (v) { E.A(xs) => { a = xs.len(); }, E.B => { a = 0; } }
     return a % 101;
 }
@@ -79,8 +79,8 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// says the difference was the call and not the match.
 			name: "inline_ctor_sole_match_unchanged",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = E.A([i, i + 1]);
-    var a: i32 = 0;
+    let v: E = E.A([i, i + 1]);
+    let a: i32 = 0;
     match (v) { E.A(xs) => { a = xs.len(); }, E.B => { a = 0; } }
     return a % 101;
 }
@@ -95,9 +95,9 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// fired via the credit, the final value's free did not.
 			name: "call_bound_rebound",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = mkv(i);
+    let v: E = mkv(i);
     v = mkv(i + 3);
-    var a: i32 = 0;
+    let a: i32 = 0;
     match (v) { E.A(xs) => { a = xs.len() + xs[0]; }, E.B => { a = 0; } }
     return a % 101;
 }
@@ -109,10 +109,10 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// pass (lower_block runs it per block). Base: 400 / 200.
 			name: "call_bound_in_loop_block",
 			src: decls + `function round(i: i32): i32 {
-    var a: i32 = 0;
-    var k: i32 = 0;
+    let a: i32 = 0;
+    let k: i32 = 0;
     while (k < 2) {
-        var v: E = mkv(i + k);
+        let v: E = mkv(i + k);
         match (v) { E.A(xs) => { a = a + xs.len(); }, E.B => { a = a; } }
         k = k + 1;
     }
@@ -130,8 +130,8 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			src: `enum T { W(string), N }
 function mkt(i: i32): T { return T.W("ab" + "cd"); }
 function round(i: i32): i32 {
-    var v: T = mkt(i);
-    var a: i32 = 0;
+    let v: T = mkt(i);
+    let a: i32 = 0;
     match (v) { T.W(s) => { a = s.len(); }, T.N => { a = 0; } }
     return a % 101;
 }
@@ -146,8 +146,8 @@ function round(i: i32): i32 {
 enum S { V(P), N }
 function mks(i: i32): S { return S.V(P { xs: [i, i + 1] }); }
 function round(i: i32): i32 {
-    var v: S = mks(i);
-    var a: i32 = 0;
+    let v: S = mks(i);
+    let a: i32 = 0;
     match (v) { S.V(p) => { a = p.xs.len(); }, S.N => { a = 0; } }
     return a % 101;
 }
@@ -167,17 +167,17 @@ function round(i: i32): i32 {
 			src: `enum E { A(i32[]), B }
 function mkv(): E { return E.A([7, 8]); }
 function round(i: i32): i32 {
-    var v: E = mkv();
-    var a: i32 = 0;
+    let v: E = mkv();
+    let a: i32 = 0;
     match (v) { E.A(xs) => { a = xs[0] + xs[xs.len() - 1]; }, E.B => { a = 0; } }
-    var j1: i32[] = [111, 222];
-    var j2: i32[] = [333, 444];
-    var j3: i32[] = [555, 666];
+    let j1: i32[] = [111, 222];
+    let j2: i32[] = [333, 444];
+    let j3: i32[] = [555, 666];
     return a + j1[0] - j1[0] + j2[0] - j2[0] + j3[0] - j3[0];
 }
 function main(): i32 {
-    var t: i32 = 0;
-    var r: i32 = 0;
+    let t: i32 = 0;
+    let r: i32 = 0;
     while (r < 20) { t = t + round(r); r = r + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -195,9 +195,9 @@ function main(): i32 {
 			src: `enum E { A(i32[]), B }
 function passthru(e: E): E { return e; }
 function round(i: i32): i32 {
-    var s: E = E.A([i, i + 1]);
-    var v: E = passthru(s);
-    var a: i32 = 0;
+    let s: E = E.A([i, i + 1]);
+    let v: E = passthru(s);
+    let a: i32 = 0;
     match (v) { E.A(xs) => { a = xs.len(); }, E.B => { a = 0; } }
     return a % 101;
 }
@@ -209,8 +209,8 @@ function round(i: i32): i32 {
 			// divert execution to an arm that did not move the payload.
 			name: "guarded_arm_store_reclaimed",
 			src: decls + `function round(i: i32): i32 {
-    var v: E = mkv(i);
-    var keep: i32[] = [0];
+    let v: E = mkv(i);
+    let keep: i32[] = [0];
     match (v) { E.A(xs) when i % 2 == 0 => { keep = xs; }, E.A(ys) => { keep = [ys.len()]; }, E.B => { keep = [0]; } }
     return (keep.len() + keep[0]) % 101;
 }

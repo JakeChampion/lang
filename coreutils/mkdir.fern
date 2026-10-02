@@ -64,7 +64,7 @@ function opt_z(): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... DIRECTORY...\n";
   out = out + "Create the DIRECTORY(ies), if they do not already exist.\n";
   out = out + "\n";
@@ -91,7 +91,7 @@ struct Plan { create: i32, finish: i32, chmod_after: boolean }
 // The default: no `-m`, so the umask does all the work and there is
 // nothing to hold back.
 function plan_default(mask: i32): Plan {
-  var m: i32 = mode.s_irwxugo() & mode.complement(mask);
+  let m: i32 = mode.s_irwxugo() & mode.complement(mask);
   return Plan { create: m, finish: m, chmod_after: false };
 }
 
@@ -108,13 +108,13 @@ function plan_default(mask: i32): Plan {
 // when the MODE MENTIONED them. Nothing restores them otherwise, which
 // is why `-m +t` leaves 1755 where `-m 1777` leaves 1777.
 function plan_mode(c: mode.Changes, mask: i32): Plan {
-  var a: mode.Adjusted = c.adjust(mode.s_irwxugo(), true, mask);
-  var special: i32 = mode.setid_bits() + mode.s_isvtx();
+  let a: mode.Adjusted = c.adjust(mode.s_irwxugo(), true, mask);
+  let special: i32 = mode.setid_bits() + mode.s_isvtx();
   if ((a.mode & special) == 0 && !a.touches_setid) {
     return Plan { create: a.mode, finish: a.mode, chmod_after: false };
   }
-  var held: i32 = a.mode & mode.complement(mode.w_group_other());
-  var needed: boolean = (a.mode & mode.setid_bits()) != 0 || (a.mentioned & a.mode & mode.w_group_other()) != 0;
+  let held: i32 = a.mode & mode.complement(mode.w_group_other());
+  let needed: boolean = (a.mode & mode.setid_bits()) != 0 || (a.mentioned & a.mode & mode.w_group_other()) != 0;
   if (needed) {
     return Plan { create: held, finish: a.mode, chmod_after: true };
   }
@@ -182,13 +182,13 @@ function enterable(dir: string): Option[IoError] {
 
 // One ancestor. `Ok` when the walk may continue.
 function make_ancestor(o0: Out, cfg: Cfg, prefix: string): (Out, boolean) {
-  var o: Out = o0;
+  let o: Out = o0;
   match (create_dir(prefix, cfg.ancestor)) {
     Ok(_) => {
       return (announce(o, cfg.verbose, prefix), true);
     },
     Err(e) => {
-      var text: string = gnu.io_error_text(e);
+      let text: string = gnu.io_error_text(e);
       if (text != "File exists") {
         return (cannot_create(o, prefix, text), false);
       }
@@ -200,7 +200,7 @@ function make_ancestor(o0: Out, cfg: Cfg, prefix: string): (Out, boolean) {
           // A name that exists but resolves to nothing is a dangling
           // symbolic link: the chdir says ENOENT and GNU reports the
           // mkdir's own EEXIST rather than that.
-          var t2: string = gnu.io_error_text(e2);
+          let t2: string = gnu.io_error_text(e2);
           if (t2 == "No such file or directory") {
             t2 = text;
           }
@@ -220,7 +220,7 @@ function make_ancestor(o0: Out, cfg: Cfg, prefix: string): (Out, boolean) {
 // that cannot be stat'ed at all is `cannot stat`, which is the one
 // diagnostic mkdir words with a different verb.
 function make_final(o0: Out, cfg: Cfg, dir: string): Out {
-  var o: Out = o0;
+  let o: Out = o0;
   match (create_dir(dir, cfg.plan.create)) {
     Ok(_) => {
       o = announce(o, cfg.verbose, dir);
@@ -239,7 +239,7 @@ function make_final(o0: Out, cfg: Cfg, dir: string): Out {
       return o;
     },
     Err(e) => {
-      var text: string = gnu.io_error_text(e);
+      let text: string = gnu.io_error_text(e);
       if (!cfg.parents || text != "File exists") {
         return cannot_create(o, dir, text);
       }
@@ -265,7 +265,7 @@ function existing_final(o: Out, dir: string, text: string): Out {
       return cannot_create(o, dir, text);
     },
     Err(e) => {
-      var t: string = gnu.io_error_text(e);
+      let t: string = gnu.io_error_text(e);
       if (t == "No such file or directory" || t == "Not a directory") {
         return cannot_create(o, dir, text);
       }
@@ -275,15 +275,15 @@ function existing_final(o: Out, dir: string, text: string): Out {
 }
 
 function make(o0: Out, cfg: Cfg, dir: string): Out {
-  var o: Out = o0;
+  let o: Out = o0;
   if (cfg.parents) {
-    var last: i32 = fts.last_component_end(dir);
-    var start: i32 = 0;
-    var i: i32 = 0;
+    let last: i32 = fts.last_component_end(dir);
+    let start: i32 = 0;
+    let i: i32 = 0;
     while (i < last) {
       if (fts.is_slash(dir, i)) {
         if (!fts.is_traversed(dir, start, i)) {
-          var step: (Out, boolean) = make_ancestor(o, cfg, slice_unchecked(dir, 0, i) + "");
+          let step: (Out, boolean) = make_ancestor(o, cfg, slice_unchecked(dir, 0, i) + "");
           o = step.0;
           if (!step.1) {
             return o;
@@ -301,7 +301,7 @@ function make(o0: Out, cfg: Cfg, dir: string): Out {
 struct Scan { mode_text: string, mode_given: boolean, parents: boolean, verbose: boolean }
 
 function scan_options(): (Scan, string[]) {
-  var opts: gnu.Opt[] = [];
+  let opts: gnu.Opt[] = [];
   // Declaration order is visible: `mkdir --=x` lists the long options in
   // it, and `--context` stands first.
   opts = opts.append(gnu.optional("", "context", opt_context()));
@@ -310,10 +310,10 @@ function scan_options(): (Scan, string[]) {
   opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
   opts = opts.append(gnu.flag("Z", "", opt_z()));
 
-  var s: Scan = Scan { mode_text: "", mode_given: false, parents: false, verbose: false };
-  var g: gnu.Getopt = gnu.getopt_new(args(), opts, "mkdir", help_text(), 1);
+  let s: Scan = Scan { mode_text: "", mode_given: false, parents: false, verbose: false };
+  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "mkdir", help_text(), 1);
   while (true) {
-    var res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
@@ -355,9 +355,9 @@ function security_context(named: boolean): void {
 }
 
 pub function main(): i32 {
-  var scanned: (Scan, string[]) = scan_options();
-  var s: Scan = scanned.0;
-  var operands: string[] = scanned.1;
+  let scanned: (Scan, string[]) = scan_options();
+  let s: Scan = scanned.0;
+  let operands: string[] = scanned.1;
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
@@ -365,9 +365,9 @@ pub function main(): i32 {
   // The mask is read the only way POSIX offers — set zero and take the
   // answer — and left at zero, so every mode below reaches mkdir(2)
   // exactly as computed.
-  var mask: i32 = umask(0);
+  let mask: i32 = umask(0);
 
-  var plan: Plan = plan_default(mask);
+  let plan: Plan = plan_default(mask);
   if (s.mode_given) {
     match (mode.compile(s.mode_text)) {
       Some(c) => {
@@ -381,9 +381,9 @@ pub function main(): i32 {
     }
   }
 
-  var cfg: Cfg = Cfg { plan: plan, ancestor: ancestor_mode(mask), parents: s.parents, verbose: s.verbose };
-  var o: Out = Out { s: gnu.stdio_new(), ok: true };
-  var i: i32 = 0;
+  let cfg: Cfg = Cfg { plan: plan, ancestor: ancestor_mode(mask), parents: s.parents, verbose: s.verbose };
+  let o: Out = Out { s: gnu.stdio_new(), ok: true };
+  let i: i32 = 0;
   while (i < operands.len()) {
     o = make(o, cfg, operands[i]);
     i = i + 1;

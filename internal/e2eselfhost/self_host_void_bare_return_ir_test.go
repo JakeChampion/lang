@@ -4,7 +4,7 @@ import "testing"
 
 // voidBareReturnIRCases pin a VOID function with an explicit bare `return;`
 // (value-less) to the self-host IR path on x86-64 + wasm. parse_expr yields an
-// ExprUnknown for the missing return value, which lower_expr can't lower, so the
+// ExprUnknown for the missing return value, which lower_expr couldn't lower, so the
 // StmtReturn arm bailed the whole module to the legacy AST emitter — affecting
 // every void helper with an early `return;` (the common guard-clause shape in the
 // CLI tools). #2691 detects the ExprUnknown (only reachable in a void function;
@@ -22,7 +22,7 @@ var voidBareReturnIRCases = []struct {
 	// Early bare return (guard NOT taken) — the print runs, then fall-through. 42.
 	{"early-not-taken", `function f(x: i32): void { if (x > 0) { return; } print("neg"); } function main(): i32 { f(0 - 1); return 42; }`},
 	// Bare return inside a loop (continue-like exit). 42.
-	{"in-loop", `function f(n: i32): void { var i: i32 = 0; while (i < n) { if (i == 2) { return; } print("x"); i = i + 1; } } function main(): i32 { f(5); return 42; }`},
+	{"in-loop", `function f(n: i32): void { let i: i32 = 0; while (i < n) { if (i == 2) { return; } print("x"); i = i + 1; } } function main(): i32 { f(5); return 42; }`},
 	// Two void helpers, each with a bare return, both called. 42.
 	{"two-helpers", `function a(x: i32): void { if (x > 0) { return; } print("a"); } function b(x: i32): void { print("b"); return; } function main(): i32 { a(1); b(2); return 42; }`},
 }

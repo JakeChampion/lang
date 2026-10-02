@@ -20,17 +20,17 @@ function or_head(e: E): i32 {
 }
 
 function main(): i32 {
-    var total: i32 = 0;
+    let total: i32 = 0;
     total = total + or_head(E.Aa(1));      // 1
     total = total + or_head(E.Bb(2));      // 3
     total = total + or_head(E.Cc(9));      // 23 — falls past the if-let
 
-    var p: P = P { x: 3, y: 4 };
+    let p: P = P { x: 3, y: 4 };
     if let P { x, y } = p { total = total + x + y; }               // 30
     if let P { x: a, y: b } = p { total = total + a * 10 + b; }    // 64
     if let w @ P { x, y } = p { total = total + w.x + y; }         // 71
 
-    var q: P3 = P3 { x: 5, y: 6, z: 7 };
+    let q: P3 = P3 { x: 5, y: 6, z: 7 };
     if let P3 { x, .. } = q { total = total + x; }                 // 76
 
     return total;

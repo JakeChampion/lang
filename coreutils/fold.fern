@@ -49,7 +49,7 @@ function opt_digit(d: i32): i32 {
 }
 
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "Wrap input lines in each FILE, writing to standard output.\n";
   out = out + "\n";
@@ -96,16 +96,16 @@ function width_max(): u64 {
 // strtoumax underneath; a multiplier suffix is NOT, unlike head's count.
 // A usage error here prints one line and NO `Try …` line.
 function width_of(text: string): u64 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < text.len() && (text[i] as i32 == 32 || text[i] as i32 >= 9 && text[i] as i32 <= 13)) {
     i = i + 1;
   }
   if (i < text.len() && text[i] as i32 == 43) {
     i = i + 1;
   }
-  var digits: i32 = i;
-  var value: u64 = 0 as u64;
-  var over: boolean = false;
+  let digits: i32 = i;
+  let value: u64 = 0 as u64;
+  let over: boolean = false;
   while (i < text.len() && is_digit(text[i] as i32)) {
     match (value.checked_mul(10 as u64)) {
       Some(m) => {
@@ -185,29 +185,29 @@ function advance(column: u64, lastw: i32, c: i32, mode: i32): (u64, i32) {
   if (c == 9) {
     return (column + (8 as u64 - column % (8 as u64)), lastw);
   }
-  var w: i32 = byte_width(c, mode);
+  let w: i32 = byte_width(c, mode);
   return (column + w as u64, w);
 }
 
 pub function main(): i32 {
-  var argv: string[] = args();
-  var opts: gnu.Opt[] = [];
+  let argv: string[] = args();
+  let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("b", "bytes", opt_bytes()));
   opts = opts.append(gnu.flag("c", "characters", opt_chars()));
   opts = opts.append(gnu.flag("s", "spaces", opt_spaces()));
   opts = opts.append(gnu.valued("w", "width", opt_width()));
-  var d: i32 = 0;
+  let d: i32 = 0;
   while (d < 10) {
     opts = opts.append(gnu.optional(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit(d)));
     d = d + 1;
   }
 
-  var mode: i32 = count_columns();
-  var break_spaces: boolean = false;
-  var width: u64 = 80 as u64;
-  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "fold", help_text(), 1);
+  let mode: i32 = count_columns();
+  let break_spaces: boolean = false;
+  let width: u64 = 80 as u64;
+  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "fold", help_text(), 1);
   while (true) {
-    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
     match (r.0) {
       Some(m) => {
@@ -229,7 +229,7 @@ pub function main(): i32 {
     }
   }
 
-  var files: string[] = g.operands();
+  let files: string[] = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
@@ -241,28 +241,28 @@ pub function main(): i32 {
 // once it holds a block, so no byte is copied into an accumulator on the
 // way.
 function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32 {
-  var o: io_buffered.BufWriter = gnu.out_with(block_size());
-  var h: usize = o.handle();
-  var ok: boolean = true;
+  let o: io_buffered.BufWriter = gnu.out_with(block_size());
+  let h: usize = o.handle();
+  let ok: boolean = true;
 
-  var fi: i32 = 0;
-  var have_reader: boolean = false;
-  var is_stdin: boolean = false;
-  var name: string = "";
-  var r: Reader = stdin();
-  var chunk: string = "";
-  var pos: i32 = 0;
-  var specat: i32 = 0 - 1;
-  var carry: string = "";
-  var tail: boolean = false;
-  var done: boolean = false;
+  let fi: i32 = 0;
+  let have_reader: boolean = false;
+  let is_stdin: boolean = false;
+  let name: string = "";
+  let r: Reader = stdin();
+  let chunk: string = "";
+  let pos: i32 = 0;
+  let specat: i32 = 0 - 1;
+  let carry: string = "";
+  let tail: boolean = false;
+  let done: boolean = false;
 
   while (true) {
     if (pos >= chunk.len()) {
       chunk = "";
       pos = 0;
       tail = false;
-      var got: boolean = false;
+      let got: boolean = false;
       while (!got) {
         if (!have_reader) {
           if (fi >= files.len()) {
@@ -276,7 +276,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
               r = stdin();
               have_reader = true;
             } else {
-              var opened: boolean = false;
+              let opened: boolean = false;
               match (open_reader(name)) {
                 Ok(f) => {
                   r = f;
@@ -291,8 +291,8 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
             }
           }
         } else {
-          var piece: string = "";
-          var read_ok: boolean = true;
+          let piece: string = "";
+          let read_ok: boolean = true;
           match (r.read_chunk(read_size())) {
             Ok(c) => {
               piece = c;
@@ -332,7 +332,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       continue;
     }
 
-    var j: i32 = __memchr(chunk, 10, pos);
+    let j: i32 = __memchr(chunk, 10, pos);
     if (j < 0) {
       if (!tail) {
         carry = carry + slice_unchecked(chunk, pos, chunk.len());
@@ -342,10 +342,10 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       j = chunk.len() - 1;
     }
 
-    var buf: string = chunk;
-    var lo: i32 = pos;
-    var hi: i32 = j + 1;
-    var carried: boolean = carry.len() > 0;
+    let buf: string = chunk;
+    let lo: i32 = pos;
+    let hi: i32 = j + 1;
+    let carried: boolean = carry.len() > 0;
     if (carried) {
       buf = carry + slice_unchecked(chunk, pos, j + 1);
       carry = "";
@@ -354,10 +354,10 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
     }
     // Only the tail a file left behind is unterminated: it holds
     // everything after that file's last line delimiter.
-    var terminated: boolean = !tail;
+    let terminated: boolean = !tail;
     pos = j + 1;
 
-    var body: i32 = hi;
+    let body: i32 = hi;
     if (terminated) {
       body = hi - 1;
     }
@@ -367,14 +367,14 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
     // measured of it, so a line that does not wrap costs ONE append and
     // a line that wraps costs one per piece. fold copies its input
     // verbatim, so an output line is always a contiguous run of it.
-    var start: i32 = lo;
-    var p: i32 = lo;
-    var column: u64 = 0 as u64;
-    var lastw: i32 = 1;
+    let start: i32 = lo;
+    let p: i32 = lo;
+    let column: u64 = 0 as u64;
+    let lastw: i32 = 1;
     // The next byte whose column cost is not one. Under -b there is no
     // such byte; otherwise it is a cursor over the chunk, so finding
     // them all costs one pass over it rather than one scan per line.
-    var sp: i32 = 0 - 1;
+    let sp: i32 = 0 - 1;
     if (mode != count_bytes_mode()) {
       if (carried) {
         sp = special_at(buf, lo, mode);
@@ -387,7 +387,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
     }
 
     while (p < body) {
-      var run_end: i32 = body;
+      let run_end: i32 = body;
       if (sp >= p && sp < run_end) {
         run_end = sp;
       }
@@ -396,17 +396,17 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       while (p < run_end) {
         // A byte that did not fit an empty line leaves the column PAST
         // the width, so there is no room at all until the next break.
-        var room: u64 = 0 as u64;
+        let room: u64 = 0 as u64;
         if (column < width) {
           room = width - column;
         }
-        var avail: i32 = run_end - p;
+        let avail: i32 = run_end - p;
         if (avail as u64 <= room) {
           column = column + avail as u64;
           lastw = 1;
           p = run_end;
         } else {
-          var cut: i32 = break_before(buf, start, p + room as i32, break_spaces);
+          let cut: i32 = break_before(buf, start, p + room as i32, break_spaces);
           buf_push_range(h, buf, start, cut);
           buf_push_byte(h, 10);
           start = cut;
@@ -415,9 +415,9 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
             column = 0 as u64;
           } else {
             column = 0 as u64;
-            var m: i32 = cut;
+            let m: i32 = cut;
             while (m < p) {
-              var st: (u64, i32) = advance(column, lastw, buf[m] as i32, mode);
+              let st: (u64, i32) = advance(column, lastw, buf[m] as i32, mode);
               column = st.0;
               lastw = st.1;
               m = m + 1;
@@ -432,23 +432,23 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
         break;
       }
       // One byte that moves the column by something other than one.
-      var c: i32 = buf[p] as i32;
-      var step: (u64, i32) = advance(column, lastw, c, mode);
-      var next: u64 = step.0;
+      let c: i32 = buf[p] as i32;
+      let step: (u64, i32) = advance(column, lastw, c, mode);
+      let next: u64 = step.0;
       if (next <= width) {
         column = next;
         lastw = step.1;
         p = p + 1;
       } else {
-        var cut: i32 = break_before(buf, start, p, break_spaces);
+        let cut: i32 = break_before(buf, start, p, break_spaces);
         if (cut > start) {
           buf_push_range(h, buf, start, cut);
           buf_push_byte(h, 10);
           start = cut;
           column = 0 as u64;
-          var m: i32 = cut;
+          let m: i32 = cut;
           while (m < p) {
-            var st2: (u64, i32) = advance(column, lastw, buf[m] as i32, mode);
+            let st2: (u64, i32) = advance(column, lastw, buf[m] as i32, mode);
             column = st2.0;
             lastw = st2.1;
             m = m + 1;
@@ -499,7 +499,7 @@ function break_before(s: string, start: i32, limit: i32, break_spaces: boolean):
   if (!break_spaces) {
     return limit;
   }
-  var k: i32 = limit;
+  let k: i32 = limit;
   while (k > start) {
     k = k - 1;
     if (is_blank(s[k] as i32)) {
@@ -512,17 +512,17 @@ function break_before(s: string, start: i32, limit: i32, break_spaces: boolean):
 // The first byte at or after `from` whose column cost is not one: a tab,
 // a backspace or a carriage return. -1 when the rest holds none.
 function special_at(s: string, from: i32, mode: i32): i32 {
-  var best: i32 = __memchr(s, 9, from);
-  var b: i32 = __memchr(s, 8, from);
+  let best: i32 = __memchr(s, 9, from);
+  let b: i32 = __memchr(s, 8, from);
   if (b >= 0 && (best < 0 || b < best)) {
     best = b;
   }
-  var c: i32 = __memchr(s, 13, from);
+  let c: i32 = __memchr(s, 13, from);
   if (c >= 0 && (best < 0 || c < best)) {
     best = c;
   }
   if (mode == count_columns()) {
-    var z: i32 = __memchr(s, 0, from);
+    let z: i32 = __memchr(s, 0, from);
     if (z >= 0 && (best < 0 || z < best)) {
       best = z;
     }

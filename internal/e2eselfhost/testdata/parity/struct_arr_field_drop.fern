@@ -5,4 +5,4 @@
 // while folding the mirror drivers behind -target (#4398 part 1). Returns
 // 3 + 7 = 10.
 struct B { xs: i32[] }
-function main(): i32 { var b = B { xs: [7, 8, 9] }; return b.xs.len() + b.xs[0]; }
+function main(): i32 { let b = B { xs: [7, 8, 9] }; return b.xs.len() + b.xs[0]; }

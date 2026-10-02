@@ -82,8 +82,8 @@ pub enum NetError {
 // Constructors
 
 function __zero_bytes(n: i32): u8[] {
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(0 as u8);
     i = i + 1;
@@ -94,7 +94,7 @@ function __zero_bytes(n: i32): u8[] {
 // `ipv4(a, b, c, d)` — the address `a.b.c.d`; each octet is masked to
 // 0..255.
 pub function ipv4(a: i32, b: i32, c: i32, d: i32): IpAddr {
-  var out: u8[] = [];
+  let out: u8[] = [];
   out = out.append((a & 255) as u8);
   out = out.append((b & 255) as u8);
   out = out.append((c & 255) as u8);
@@ -128,7 +128,7 @@ pub function ipv4_loopback(): IpAddr {
 
 // `ipv6_loopback()` — `::1`.
 pub function ipv6_loopback(): IpAddr {
-  var b: u8[] = __zero_bytes(15);
+  let b: u8[] = __zero_bytes(15);
   return V6(b.append(1 as u8));
 }
 
@@ -168,7 +168,7 @@ pub function (a: IpAddr) is_v6(): boolean {
 }
 
 function __all_zero(b: u8[], from: i32, to: i32): boolean {
-  var i: i32 = from;
+  let i: i32 = from;
   while (i < to) {
     if (b[i] != 0) {
       return false;
@@ -180,7 +180,7 @@ function __all_zero(b: u8[], from: i32, to: i32): boolean {
 
 // `is_unspecified()` — `0.0.0.0` or `::`.
 pub function (a: IpAddr) is_unspecified(): boolean {
-  var b: u8[] = a.bytes();
+  let b: u8[] = a.bytes();
   return __all_zero(b, 0, b.len());
 }
 
@@ -259,8 +259,183 @@ pub function (a: IpAddr) to_canonical(): IpAddr {
   if (!a.is_v4_mapped()) {
     return a;
   }
-  var b: u8[] = a.bytes();
+  let b: u8[] = a.bytes();
   return ipv4(b[12] as i32, b[13] as i32, b[14] as i32, b[15] as i32);
+}
+
+// `is_global()` — an address that is reachable from anywhere, so the
+// one an outbound request may dial from inside a network without
+// reaching the network itself. False for the unspecified address,
+// loopback, the private blocks (RFC 1918, RFC 4193), link-local (169.254/16,
+// where the cloud metadata services sit, and fe80::/10), the shared block
+// 100.64/10 (RFC 6598), this-network 0/8, the IETF protocol block
+// 192.0.0.0/24, the documentation blocks (192.0.2/24, 198.51.100/24,
+// 203.0.113/24, 2001:db8::/32), benchmarking 198.18/15, multicast, the
+// reserved 240/4 and broadcast. An IPv6 address carrying an IPv4 one
+// (IPv4-mapped, NAT64's well-known 64:ff9b::/96, 6to4's 2002::/16) answers
+// for the address it carries, so `::ffff:10.0.0.1` reads as `10.0.0.1`;
+// one in NAT64's local-use 64:ff9b:1::/48 (RFC 8215), whose prefix
+// length the operator chooses, is global only when the address it would
+// carry under each length is. A NAT64 address under a network's own
+// prefix is not recognisable here: `dns.nat64_carried` names it.
+pub function (a: IpAddr) is_global(): boolean {
+  match (a) {
+    V4(b) => {
+      return !__v4_special(b);
+    },
+    V6(b) => {
+      match (__carried_v4(b)) {
+        Some(inner) => {
+          return !__v4_special(inner);
+        },
+        None => {
+          if (__local_nat64(b)) {
+            return __local_nat64_global(b);
+          }
+          return !__v6_special(b);
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// `embedded_v4(bits)` — the IPv4 address a NAT64 address carries under a
+// prefix of `bits` (32, 40, 48, 56, 64 or 96), in RFC 6052 §2.2's layout:
+// the four bytes after the prefix, skipping byte 8. `None` for an IPv4
+// address or a length the RFC does not define.
+pub function (a: IpAddr) embedded_v4(bits: i32): Option[IpAddr] {
+  match (a) {
+    V4(b) => {
+      return None;
+    },
+    V6(b) => {
+      if (!__nat64_bits(bits)) {
+        return None;
+      }
+      return Some(V4(__nat64_bytes(b, bits)));
+    }
+  }
+  return None;
+}
+
+function __nat64_bits(bits: i32): boolean {
+  return bits == 96 || bits == 64 || bits == 56 || bits == 48 || bits == 40 || bits == 32;
+}
+
+function __nat64_bytes(b: u8[], bits: i32): u8[] {
+  let out: u8[] = [];
+  let at: i32 = bits / 8;
+  while (out.len() < 4) {
+    if (at != 8) {
+      out = out.append(b[at]);
+    }
+    at = at + 1;
+  }
+  return out;
+}
+
+// `64:ff9b:1::/48`, RFC 8215's local-use NAT64 space.
+function __local_nat64(b: u8[]): boolean {
+  return b[0] == 0 && b[1] == 100 && b[2] == 255 && b[3] == 155 && b[4] == 0 && b[5] == 1;
+}
+
+// Whether every address a local-use NAT64 address would carry, under
+// each prefix length an operator may pick inside the /48, is global. A
+// length counts only when the address is laid out as RFC 6052 §2.2 would
+// under it (byte 8 and the bytes after the carried address zero) and
+// carries an address at all, since the unspecified one is no target.
+function __local_nat64_global(b: u8[]): boolean {
+  let lengths: i32[] = [48, 56, 64, 96];
+  let i: i32 = 0;
+  while (i < lengths.len()) {
+    if (__nat64_laid_out(b, lengths[i]) && __v4_special(__nat64_bytes(b, lengths[i]))) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// Whether `b` could be a synthesis under a prefix of `bits`: byte 8 is
+// zero when the carried address straddles it, every byte after the
+// carried address is zero, and the carried address is not 0.0.0.0.
+function __nat64_laid_out(b: u8[], bits: i32): boolean {
+  let start: i32 = bits / 8;
+  let end: i32 = start + 4;
+  if (start <= 8) {
+    end = end + 1;
+    if (b[8] != 0) {
+      return false;
+    }
+  }
+  return __all_zero(b, end, 16) && !__all_zero(__nat64_bytes(b, bits), 0, 4);
+}
+
+// The IPv4 blocks `is_global` refuses.
+function __v4_special(b: u8[]): boolean {
+  return __v4_low_blocks(b) || __v4_doc_blocks(b) || (b[0] & 240) >= 224;
+}
+
+// This-network 0/8, private 10/8, loopback 127/8, shared 100.64/10,
+// link-local 169.254/16 and private 172.16/12.
+function __v4_low_blocks(b: u8[]): boolean {
+  if (b[0] == 0 || b[0] == 10 || b[0] == 127) {
+    return true;
+  }
+  if (b[0] == 100 && (b[1] & 192) == 64) {
+    return true;
+  }
+  if (b[0] == 169 && b[1] == 254) {
+    return true;
+  }
+  return b[0] == 172 && (b[1] & 240) == 16;
+}
+
+// Private 192.168/16, the IETF protocol block 192.0.0/24, the three
+// documentation nets and the benchmarking range 198.18/15.
+function __v4_doc_blocks(b: u8[]): boolean {
+  if (b[0] == 192) {
+    return b[1] == 168 || b[1] == 0 && (b[2] == 0 || b[2] == 2);
+  }
+  if (b[0] == 198) {
+    return (b[1] & 254) == 18 || b[1] == 51 && b[2] == 100;
+  }
+  return b[0] == 203 && b[1] == 0 && b[2] == 113;
+}
+
+// The IPv6 blocks `is_global` refuses, once an embedded IPv4 address has
+// been ruled out: unspecified, loopback, unique-local fc00::/7, link-local
+// fe80::/10, multicast ff00::/8 and documentation 2001:db8::/32.
+function __v6_special(b: u8[]): boolean {
+  if (__all_zero(b, 0, 15)) {
+    return b[15] == 0 || b[15] == 1;
+  }
+  if ((b[0] & 254) == 252 || b[0] == 255) {
+    return true;
+  }
+  if (b[0] == 254 && (b[1] & 192) == 128) {
+    return true;
+  }
+  return b[0] == 32 && b[1] == 1 && b[2] == 13 && b[3] == 184;
+}
+
+// The IPv4 address an IPv6 one carries: the low four bytes of an
+// IPv4-mapped (`::ffff:a.b.c.d`) or NAT64 well-known-prefix
+// (`64:ff9b::a.b.c.d`) address, bytes 2 to 5 of a 6to4 one
+// (`2002:abcd:ef01::`); `None` for any other.
+function __carried_v4(b: u8[]): Option[u8[]] {
+  if (__all_zero(b, 0, 10) && b[10] == 255 && b[11] == 255) {
+    return Some([b[12], b[13], b[14], b[15]]);
+  }
+  let head: i32 = b[0] as i32 << 24 | b[1] as i32 << 16 | b[2] as i32 << 8 | b[3] as i32;
+  if (head == 6619035 && __all_zero(b, 4, 12)) {
+    return Some([b[12], b[13], b[14], b[15]]);
+  }
+  if (head >> 16 == 8194) {
+    return Some([b[2], b[3], b[4], b[5]]);
+  }
+  return None;
 }
 
 // `packed_v4()` — a `V4` as the packed network-order `i32` the
@@ -269,7 +444,7 @@ pub function (a: IpAddr) to_canonical(): IpAddr {
 pub function (a: IpAddr) packed_v4(): Option[i32] {
   match (a) {
     V4(b) => {
-      var p: i32 = b[0] as i32 | b[1] as i32 << 8 | b[2] as i32 << 16 | b[3] as i32 << 24;
+      let p: i32 = b[0] as i32 | b[1] as i32 << 8 | b[2] as i32 << 16 | b[3] as i32 << 24;
       return Some(p);
     },
     V6(b) => {
@@ -283,9 +458,9 @@ pub function (a: IpAddr) eq(other: IpAddr): boolean {
   if (a.is_v4() != other.is_v4()) {
     return false;
   }
-  var x: u8[] = a.bytes();
-  var y: u8[] = other.bytes();
-  var i: i32 = 0;
+  let x: u8[] = a.bytes();
+  let y: u8[] = other.bytes();
+  let i: i32 = 0;
   while (i < x.len()) {
     if (x[i] != y[i]) {
       return false;
@@ -308,8 +483,8 @@ function __v4_text(b: u8[]): string {
 
 // The eight 16-bit groups of a V6.
 function __v6_groups(b: u8[]): i32[] {
-  var g: i32[] = [];
-  var i: i32 = 0;
+  let g: i32[] = [];
+  let i: i32 = 0;
   while (i < 8) {
     g = g.append(b[2 * i] as i32 << 8 | b[2 * i + 1] as i32);
     i = i + 1;
@@ -321,11 +496,11 @@ function __v6_groups(b: u8[]): i32[] {
 // more, leftmost on a tie) as `(start, len)`, or `(-1, 0)` when there is
 // none. RFC 5952 §4.2.
 function __v6_zero_run(g: i32[]): (i32, i32) {
-  var best_start: i32 = -1;
-  var best_len: i32 = 0;
-  var i: i32 = 0;
+  let best_start: i32 = -1;
+  let best_len: i32 = 0;
+  let i: i32 = 0;
   while (i < g.len()) {
-    var j: i32 = i;
+    let j: i32 = i;
     while (j < g.len() && g[j] == 0) {
       j = j + 1;
     }
@@ -346,8 +521,8 @@ function __v6_zero_run(g: i32[]): (i32, i32) {
 }
 
 function __v6_join(g: i32[], from: i32, to: i32): string {
-  var out: string = "";
-  var i: i32 = from;
+  let out: string = "";
+  let i: i32 = from;
   while (i < to) {
     if (i > from) {
       out = out + ":";
@@ -359,16 +534,16 @@ function __v6_join(g: i32[], from: i32, to: i32): string {
 }
 
 function __v6_text(b: u8[]): string {
-  var g: i32[] = __v6_groups(b);
+  let g: i32[] = __v6_groups(b);
   if (__all_zero(b, 0, 10) && b[10] == 255 && b[11] == 255) {
-    var tail: u8[] = [];
+    let tail: u8[] = [];
     tail = tail.append(b[12]);
     tail = tail.append(b[13]);
     tail = tail.append(b[14]);
     tail = tail.append(b[15]);
     return "::ffff:" + __v4_text(tail);
   }
-  var run: (i32, i32) = __v6_zero_run(g);
+  let run: (i32, i32) = __v6_zero_run(g);
   if (run.0 < 0) {
     return __v6_join(g, 0, 8);
   }
@@ -412,9 +587,9 @@ impl cmp.Display for SocketAddr {}
 // The pieces of `s` between occurrences of the byte `sep`, as owned
 // strings; an empty input is one empty piece.
 function __pieces(s: string, sep: i32): string[] {
-  var out: string[] = [];
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: string[] = [];
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] as i32 == sep) {
       out = out.append(slice_unchecked(s, start, i) + "");
@@ -426,7 +601,7 @@ function __pieces(s: string, sep: i32): string[] {
 }
 
 function __has_byte(s: string, b: i32): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] as i32 == b) {
       return true;
@@ -441,17 +616,17 @@ function __has_byte(s: string, b: i32): boolean {
 // to some parsers and decimal to others, and an address that reads two
 // ways is how an allow list is bypassed.
 function __octet(s: string): i32 {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0 || n > 3) {
     return -1;
   }
   if (n > 1 && s[0] == 48) {
     return -1;
   }
-  var v: i32 = 0;
-  var i: i32 = 0;
+  let v: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c < 48 || c > 57) {
       return -1;
     }
@@ -466,14 +641,14 @@ function __octet(s: string): i32 {
 
 // `ipv4_parse(s)` — `a.b.c.d`, four octets exactly.
 pub function ipv4_parse(s: string): Option[IpAddr] {
-  var parts: string[] = __pieces(s, 46);
+  let parts: string[] = __pieces(s, 46);
   if (parts.len() != 4) {
     return None;
   }
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < 4) {
-    var v: i32 = __octet(parts[i]);
+    let v: i32 = __octet(parts[i]);
     if (v < 0) {
       return None;
     }
@@ -498,14 +673,14 @@ function __hex_digit(c: i32): i32 {
 
 // One IPv6 group: one to four hex digits, or -1.
 function __v6_group(s: string): i32 {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0 || n > 4) {
     return -1;
   }
-  var v: i32 = 0;
-  var i: i32 = 0;
+  let v: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var d: i32 = __hex_digit(s[i] as i32);
+    let d: i32 = __hex_digit(s[i] as i32);
     if (d < 0) {
       return -1;
     }
@@ -520,18 +695,18 @@ function __v6_group(s: string): i32 {
 // it is only allowed where the address ends (`v4_tail`). `None` on any
 // malformed piece; an empty side is an empty list.
 function __v6_side(s: string, v4_tail: boolean): Option[i32[]] {
-  var groups: i32[] = [];
+  let groups: i32[] = [];
   if (s.len() == 0) {
     return Some(groups);
   }
-  var parts: string[] = __pieces(s, 58);
-  var i: i32 = 0;
+  let parts: string[] = __pieces(s, 58);
+  let i: i32 = 0;
   while (i < parts.len()) {
-    var last: boolean = i == parts.len() - 1;
+    let last: boolean = i == parts.len() - 1;
     if (last && v4_tail && __has_byte(parts[i], 46)) {
       match (ipv4_parse(parts[i])) {
         Some(v4) => {
-          var b: u8[] = v4.bytes();
+          let b: u8[] = v4.bytes();
           groups = groups.append(b[0] as i32 << 8 | b[1] as i32);
           groups = groups.append(b[2] as i32 << 8 | b[3] as i32);
         },
@@ -540,7 +715,7 @@ function __v6_side(s: string, v4_tail: boolean): Option[i32[]] {
         }
       }
     } else {
-      var g: i32 = __v6_group(parts[i]);
+      let g: i32 = __v6_group(parts[i]);
       if (g < 0) {
         return None;
       }
@@ -553,7 +728,7 @@ function __v6_side(s: string, v4_tail: boolean): Option[i32[]] {
 
 // The index of the first `::` in `s`, or -1.
 function __find_double_colon(s: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i + 1 < s.len()) {
     if (s[i] == 58 && s[i + 1] == 58) {
       return i;
@@ -564,21 +739,21 @@ function __find_double_colon(s: string): i32 {
 }
 
 function __v6_from_groups(left: i32[], right: i32[]): IpAddr {
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < left.len()) {
     out = out.append((left[i] >> 8) as u8);
     out = out.append((left[i] & 255) as u8);
     i = i + 1;
   }
-  var zeros: i32 = 8 - left.len() - right.len();
-  var z: i32 = 0;
+  let zeros: i32 = 8 - left.len() - right.len();
+  let z: i32 = 0;
   while (z < zeros) {
     out = out.append(0 as u8);
     out = out.append(0 as u8);
     z = z + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < right.len()) {
     out = out.append((right[j] >> 8) as u8);
     out = out.append((right[j] & 255) as u8);
@@ -592,12 +767,12 @@ function __v6_from_groups(left: i32[], right: i32[]): IpAddr {
 // or when the two sides already fill all eight groups (a `::` stands for
 // at least one).
 function __v6_compressed(s: string, at: i32): Option[IpAddr] {
-  var left_text: string = slice_unchecked(s, 0, at) + "";
-  var right_text: string = slice_unchecked(s, at + 2, s.len()) + "";
+  let left_text: string = slice_unchecked(s, 0, at) + "";
+  let right_text: string = slice_unchecked(s, at + 2, s.len()) + "";
   if (__find_double_colon(right_text) >= 0) {
     return None;
   }
-  var left: i32[] = [];
+  let left: i32[] = [];
   match (__v6_side(left_text, false)) {
     Some(g) => {
       left = g;
@@ -606,7 +781,7 @@ function __v6_compressed(s: string, at: i32): Option[IpAddr] {
       return None;
     }
   }
-  var right: i32[] = [];
+  let right: i32[] = [];
   match (__v6_side(right_text, true)) {
     Some(g) => {
       right = g;
@@ -629,7 +804,7 @@ pub function ipv6_parse(s: string): Option[IpAddr] {
   if (s.len() == 0) {
     return None;
   }
-  var at: i32 = __find_double_colon(s);
+  let at: i32 = __find_double_colon(s);
   if (at >= 0) {
     return __v6_compressed(s, at);
   }
@@ -656,14 +831,14 @@ pub function ip_parse(s: string): Option[IpAddr] {
 
 // A port: one to five decimal digits, at most 65535, or -1.
 function __port(s: string): i32 {
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0 || n > 5) {
     return -1;
   }
-  var v: i32 = 0;
-  var i: i32 = 0;
+  let v: i32 = 0;
+  let i: i32 = 0;
   while (i < n) {
-    var c: i32 = s[i] as i32;
+    let c: i32 = s[i] as i32;
     if (c < 48 || c > 57) {
       return -1;
     }
@@ -679,8 +854,8 @@ function __port(s: string): i32 {
 // The `[v6]:port` form: the bytes between the brackets are the address
 // and a `:port` must follow the closing bracket.
 function __socket_addr_bracketed(s: string): Option[SocketAddr] {
-  var close: i32 = -1;
-  var i: i32 = 1;
+  let close: i32 = -1;
+  let i: i32 = 1;
   while (i < s.len()) {
     if (s[i] == 93) {
       close = i;
@@ -691,7 +866,7 @@ function __socket_addr_bracketed(s: string): Option[SocketAddr] {
   if (close < 0 || close + 1 >= s.len() || s[close + 1] != 58) {
     return None;
   }
-  var port: i32 = __port(slice_unchecked(s, close + 2, s.len()) + "");
+  let port: i32 = __port(slice_unchecked(s, close + 2, s.len()) + "");
   if (port < 0) {
     return None;
   }
@@ -713,8 +888,8 @@ pub function socket_addr_parse(s: string): Option[SocketAddr] {
   if (s.len() > 0 && s[0] == 91) {
     return __socket_addr_bracketed(s);
   }
-  var colon: i32 = -1;
-  var i: i32 = 0;
+  let colon: i32 = -1;
+  let i: i32 = 0;
   while (i < s.len()) {
     if (s[i] == 58) {
       colon = i;
@@ -724,7 +899,7 @@ pub function socket_addr_parse(s: string): Option[SocketAddr] {
   if (colon < 0) {
     return None;
   }
-  var port: i32 = __port(slice_unchecked(s, colon + 1, s.len()) + "");
+  let port: i32 = __port(slice_unchecked(s, colon + 1, s.len()) + "");
   if (port < 0) {
     return None;
   }
@@ -764,7 +939,7 @@ function __net_errnos_wasi(): i32[] {
 // wasm targets use WASI preview 1 numbering, which is what the wasm
 // socket helpers translate wasi:sockets error codes to.
 function __net_errnos(): i32[] {
-  var os: string = target_os();
+  let os: string = target_os();
   if (os == "darwin") {
     return __net_errnos_darwin();
   }
@@ -820,12 +995,12 @@ function __net_error_at_high(i: i32, errno: i32): NetError {
 // the plain number; anything the table does not name is `Other(n)` with
 // the sign dropped.
 pub function error_from_errno(errno: i32): NetError {
-  var e: i32 = errno;
+  let e: i32 = errno;
   if (e < 0) {
     e = 0 - e;
   }
-  var table: i32[] = __net_errnos();
-  var i: i32 = 0;
+  let table: i32[] = __net_errnos();
+  let i: i32 = 0;
   while (i < table.len()) {
     if (table[i] == e) {
       return __net_error_at(i, e);
@@ -951,7 +1126,7 @@ pub function (e: NetError) to_string(): string {
 
 // `eq(other)` — same variant, and the same errno for `Other`.
 pub function (e: NetError) eq(other: NetError): boolean {
-  var i: i32 = __net_error_index(e);
+  let i: i32 = __net_error_index(e);
   if (i != __net_error_index(other)) {
     return false;
   }
@@ -1046,7 +1221,7 @@ pub function send_queue(sock: i32): Result[i32, NetError] {
 // XORed, so the peers of one /64 share a key. What a per-client
 // connection cap counts by (`ServeOptions.max_connections_per_ip`).
 pub function peer_key(sock: i32): Option[i32] {
-  var k: i32 = tcp_socket_ctl(sock, 7, 0);
+  let k: i32 = tcp_socket_ctl(sock, 7, 0);
   if (k == 0) {
     return None;
   }
@@ -1056,7 +1231,7 @@ pub function peer_key(sock: i32): Option[i32] {
 // `shutdown(sock, how)` — close one or both directions while keeping the
 // descriptor; `tcp_close` still releases it.
 pub function shutdown(sock: i32, how: Shutdown): Result[void, NetError] {
-  var arg: i32 = 2;
+  let arg: i32 = 2;
   match (how) {
     Read => {
       arg = 0;
@@ -1072,7 +1247,7 @@ pub function shutdown(sock: i32, how: Shutdown): Result[void, NetError] {
 }
 
 function __socket_ctl(sock: i32, op: i32, on: boolean): Result[void, NetError] {
-  var arg: i32 = 0;
+  let arg: i32 = 0;
   if (on) {
     arg = 1;
   }
@@ -1121,24 +1296,24 @@ pub function send_to(sock: i32, data: u8[], to: SocketAddr): Result[i32, NetErro
 
 // `send(sock, data)` — one datagram to the peer `set_peer` fixed.
 pub function send(sock: i32, data: u8[]): Result[i32, NetError] {
-  var peer: u8[] = [];
+  let peer: u8[] = [];
   return __socket_count(udp_sendto_bytes(sock, peer, 0, data));
 }
 
 // The sender `udp_recvfrom` reports: the family at 0, the address bytes
 // from 1, the port at 17 and 18.
 function __sender(from: u8[]): SocketAddr {
-  var n: i32 = 4;
+  let n: i32 = 4;
   if (from[0] == 6u8) {
     n = 16;
   }
-  var b: u8[] = [];
-  var i: i32 = 0;
+  let b: u8[] = [];
+  let i: i32 = 0;
   while (i < n) {
     b = b.append(from[1 + i]);
     i = i + 1;
   }
-  var ip: IpAddr = V4(b);
+  let ip: IpAddr = V4(b);
   if (n == 16) {
     ip = V6(b);
   }
@@ -1150,8 +1325,8 @@ function __sender(from: u8[]): SocketAddr {
 // sender, or the error the receive reported. A non-blocking socket with
 // nothing queued answers `WouldBlock`.
 pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError] {
-  var from: u8[] = __zero_bytes(19);
-  var n: i32 = udp_recvfrom(sock, buf, from);
+  let from: u8[] = __zero_bytes(19);
+  let n: i32 = udp_recvfrom(sock, buf, from);
   if (n < 0) {
     return Err(error_from_errno(n));
   }
@@ -1160,7 +1335,7 @@ pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError
 
 // `recv(sock, buf)` — `recv_from` without the sender.
 pub function recv(sock: i32, buf: u8[]): Result[i32, NetError] {
-  var none: u8[] = [];
+  let none: u8[] = [];
   return __socket_count(udp_recvfrom(sock, buf, none));
 }
 
@@ -1257,18 +1432,18 @@ pub function peer_addr(sock: i32): Result[SocketAddr, NetError] {
 // the address as 16-bit groups, two for an IPv4 address and eight for an
 // IPv6 one, the family at arg 8 and the port at arg 9.
 function __name_of(sock: i32, op: i32): Result[SocketAddr, NetError] {
-  var fam: i32 = tcp_socket_ctl(sock, op, 8);
+  let fam: i32 = tcp_socket_ctl(sock, op, 8);
   if (fam < 0) {
     return Err(error_from_errno(fam));
   }
-  var groups: i32 = 2;
+  let groups: i32 = 2;
   if (fam == 6) {
     groups = 8;
   }
-  var b: u8[] = [];
-  var i: i32 = 0;
+  let b: u8[] = [];
+  let i: i32 = 0;
   while (i < groups) {
-    var g: i32 = tcp_socket_ctl(sock, op, i);
+    let g: i32 = tcp_socket_ctl(sock, op, i);
     if (g < 0) {
       return Err(error_from_errno(g));
     }
@@ -1276,7 +1451,7 @@ function __name_of(sock: i32, op: i32): Result[SocketAddr, NetError] {
     b = b.append((g & 255) as u8);
     i = i + 1;
   }
-  var port: i32 = tcp_socket_ctl(sock, op, 9);
+  let port: i32 = tcp_socket_ctl(sock, op, 9);
   if (port < 0) {
     return Err(error_from_errno(port));
   }

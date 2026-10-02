@@ -33,7 +33,7 @@ var ifLetPatternCases = []struct {
 		name: "struct_fields",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-  var p: Point = Point { x: 3, y: 4 };
+  let p: Point = Point { x: 3, y: 4 };
   if let Point { x, y } = p { return x * 10 + y; }
   return 99;
 }`,
@@ -44,7 +44,7 @@ function main(): i32 {
 		name: "struct_rename",
 		src: `struct Point { x: i32, y: i32 }
 function main(): i32 {
-  var p: Point = Point { x: 3, y: 4 };
+  let p: Point = Point { x: 3, y: 4 };
   if let Point { x: a, y: b } = p { return a * 10 + b; }
   return 99;
 }`,
@@ -53,7 +53,7 @@ function main(): i32 {
 	{
 		name: "tuple_elems",
 		src: `function main(): i32 {
-  var t: (i32, i32) = (3, 4);
+  let t: (i32, i32) = (3, 4);
   if let (a, b) = t { return a * 10 + b; }
   return 99;
 }`,
@@ -63,7 +63,7 @@ function main(): i32 {
 		// A literal tuple element is refutable, so the else branch is live.
 		name: "tuple_literal_elem_else",
 		src: `function main(): i32 {
-  var t: (i32, i32) = (3, 4);
+  let t: (i32, i32) = (3, 4);
   if let (9, b) = t { return b; } else { return 7; }
   return 99;
 }`,
@@ -74,7 +74,7 @@ function main(): i32 {
 		src: `enum Box { Full(i32), Empty }
 function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }
 function main(): i32 {
-  var b: Box = Full(3);
+  let b: Box = Full(3);
   if let n @ Full(v) = b { return total(n) * 10 + v; }
   return 99;
 }`,
@@ -122,7 +122,7 @@ function main(): i32 { return classify(0) * 100 + classify(15) * 10 + classify(5
 		name: "else_taken",
 		src: `enum Box { Full(i32), Empty }
 function main(): i32 {
-  var b: Box = Empty;
+  let b: Box = Empty;
   if let Full(v) = b { return v; } else { return 42; }
   return 99;
 }`,
@@ -134,7 +134,7 @@ function main(): i32 {
 		name: "braceless_then",
 		src: `enum Box { Full(i32), Empty }
 function main(): i32 {
-  var b: Box = Full(8);
+  let b: Box = Full(8);
   if let Full(v) = b return v;
   return 99;
 }`,
@@ -145,7 +145,7 @@ function main(): i32 {
 		name: "qualified_variant",
 		src: `enum Color { Red(i32), Blue }
 function main(): i32 {
-  var c: Color = Red(6);
+  let c: Color = Red(6);
   if let Color.Red(n) = c { return n; }
   return 99;
 }`,
@@ -206,25 +206,25 @@ func TestIfLetPatternDiagnostics(t *testing.T) {
 	}{
 		{
 			name: "source_not_enum",
-			src:  `function main(): i32 { var n: i32 = 5; if let Has(v) = n { return 0; } return 0; }`,
+			src:  `function main(): i32 { let n: i32 = 5; if let Has(v) = n { return 0; } return 0; }`,
 			want: "E022",
 		},
 		{
 			name: "source_struct_variant_pattern",
 			src: `struct P { x: i32 }
-function main(): i32 { var p: P = P { x: 1 }; if let Has(v) = p { return 0; } return 0; }`,
+function main(): i32 { let p: P = P { x: 1 }; if let Has(v) = p { return 0; } return 0; }`,
 			want: "E022",
 		},
 		{
 			name: "unknown_variant",
 			src: `enum O { Has(i32), Nil }
-function main(): i32 { var o: O = Nil; if let Bogus(v) = o { return 0; } return 0; }`,
+function main(): i32 { let o: O = Nil; if let Bogus(v) = o { return 0; } return 0; }`,
 			want: "E014",
 		},
 		{
 			name: "payload_arity",
 			src: `enum O { Has(i32), Nil }
-function main(): i32 { var o: O = Nil; if let Has(a, b) = o { return 0; } return 0; }`,
+function main(): i32 { let o: O = Nil; if let Has(a, b) = o { return 0; } return 0; }`,
 			want: "E015",
 		},
 	}
@@ -270,8 +270,8 @@ func containsStr(xs []string, want string) bool {
 func TestIfLetIrrefutableHeadAccepted(t *testing.T) {
 	for _, src := range []string{
 		`struct P { x: i32, y: i32 }
-function main(): i32 { var p: P = P { x: 1, y: 2 }; if let P { x, y } = p { return x + y; } else { return 0; } return 0; }`,
-		`function main(): i32 { var t: (i32, i32) = (1, 2); if let (a, b) = t { return a + b; } else { return 0; } return 0; }`,
+function main(): i32 { let p: P = P { x: 1, y: 2 }; if let P { x, y } = p { return x + y; } else { return 0; } return 0; }`,
+		`function main(): i32 { let t: (i32, i32) = (1, 2); if let (a, b) = t { return a + b; } else { return 0; } return 0; }`,
 	} {
 		prog, _, err := modload.LoadSource(src)
 		if err != nil {

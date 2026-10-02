@@ -210,19 +210,19 @@ function piece_units(p: string): (u64, i32) {
   if (p.len() == 0) {
     return (0 as u64, 1);
   }
-  var last: u8 = p[p.len() - 1];
+  let last: u8 = p[p.len() - 1];
   if (last != b'c' && last != b'w') {
     return gnu.parse_units(p);
   }
-  var scale: u64 = 1 as u64;
+  let scale: u64 = 1 as u64;
   if (last == b'w') {
     scale = 2 as u64;
   }
-  var head: string = slice_unchecked(p, 0, p.len() - 1) + "";
+  let head: string = slice_unchecked(p, 0, p.len() - 1) + "";
   if (head.len() == 0) {
     return (scale, 0);
   }
-  var got: (u64, i32) = gnu.parse_number(head);
+  let got: (u64, i32) = gnu.parse_number(head);
   if (got.1 != 0) {
     return got;
   }
@@ -237,15 +237,15 @@ function piece_units(p: string): (u64, i32) {
 }
 
 function parse_num(v: string, positive: boolean): Num {
-  var total: u64 = 1 as u64;
-  var bytes: boolean = false;
-  var start: i32 = 0;
-  var i: i32 = 0;
-  var pieces: i32 = 0;
-  var zero_multiplier: boolean = false;
+  let total: u64 = 1 as u64;
+  let bytes: boolean = false;
+  let start: i32 = 0;
+  let i: i32 = 0;
+  let pieces: i32 = 0;
+  let zero_multiplier: boolean = false;
   while (i <= v.len()) {
     if (i == v.len() || v[i] == b'x') {
-      var piece: string = slice_unchecked(v, start, i) + "";
+      let piece: string = slice_unchecked(v, start, i) + "";
       // A single zero in front of an `x` reads as the start of a hex
       // literal, which this grammar has no notion of, so GNU says what
       // the value really is rather than refusing it. `00x3` is the
@@ -254,8 +254,8 @@ function parse_num(v: string, positive: boolean): Num {
       if (piece == "0" && i < v.len()) {
         zero_multiplier = true;
       }
-      var marked: boolean = piece.len() > 0 && piece[piece.len() - 1] == b'B';
-      var got: (u64, i32) = piece_units(piece);
+      let marked: boolean = piece.len() > 0 && piece[piece.len() - 1] == b'B';
+      let got: (u64, i32) = piece_units(piece);
       if (marked && gnu.count_malformed(got.1)) {
         got = piece_units(slice_unchecked(piece, 0, piece.len() - 1) + "");
       }
@@ -299,7 +299,7 @@ function parse_num(v: string, positive: boolean): Num {
 // rejects the sign first — `count=-1` is `invalid number: '-1'`, not
 // 18446744073709551615.
 function has_sign(v: string): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < v.len()) {
     if (v[i] == b'-') {
       return true;
@@ -310,7 +310,7 @@ function has_sign(v: string): boolean {
 }
 
 function bad_number(v: string, status: i32): void {
-  var msg: string = "invalid number: " + gnu.quote(v);
+  let msg: string = "invalid number: " + gnu.quote(v);
   if (status == num_over()) {
     msg = msg + ": " + gnu.eoverflow_text();
   }
@@ -322,7 +322,7 @@ function number_operand(v: string, positive: boolean): Num {
   if (has_sign(v)) {
     bad_number(v, num_bad());
   }
-  var got: Num = parse_num(v, positive);
+  let got: Num = parse_num(v, positive);
   if (got.status != 0) {
     bad_number(v, got.status);
   }
@@ -336,13 +336,13 @@ function number_operand(v: string, positive: boolean): Num {
 // name that is not in it. An empty list is one empty NAME, which is
 // how `conv=` reports `invalid conversion: ''`.
 function parse_set(v: string, names: string[], bits: i32[], wording: string): i32 {
-  var out: i32 = 0;
-  var start: i32 = 0;
-  var i: i32 = 0;
+  let out: i32 = 0;
+  let start: i32 = 0;
+  let i: i32 = 0;
   while (i <= v.len()) {
     if (i == v.len() || v[i] == b',') {
-      var name: string = slice_unchecked(v, start, i) + "";
-      var at: i32 = index_in(names, name);
+      let name: string = slice_unchecked(v, start, i) + "";
+      let at: i32 = index_in(names, name);
       if (at < 0) {
         gnu.error("invalid " + wording + ": " + gnu.quote(name));
         gnu.try_help(1);
@@ -356,7 +356,7 @@ function parse_set(v: string, names: string[], bits: i32[], wording: string): i3
 }
 
 function index_in(names: string[], name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < names.len()) {
     if (names[i] == name) {
       return i;
@@ -391,18 +391,18 @@ function bytes_bit(n: Num, bit: i32): i32 {
 }
 
 function scan_operands(argv: string[]): Scan {
-  var s: Settings = settings_new();
-  var bs_given: boolean = false;
-  var i: i32 = 1;
+  let s: Settings = settings_new();
+  let bs_given: boolean = false;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
-    var eq: i32 = find_eq(a);
+    let a: string = argv[i];
+    let eq: i32 = find_eq(a);
     if (eq < 0) {
       gnu.error("unrecognized operand " + gnu.quote(a));
       gnu.try_help(1);
     }
-    var name: string = slice_unchecked(a, 0, eq) + "";
-    var value: string = slice_unchecked(a, eq + 1, a.len()) + "";
+    let name: string = slice_unchecked(a, 0, eq) + "";
+    let value: string = slice_unchecked(a, eq + 1, a.len()) + "";
     if (index_in(op_names(), name) < 0) {
       gnu.error("unrecognized operand " + gnu.quote(a));
       gnu.try_help(1);
@@ -412,26 +412,26 @@ function scan_operands(argv: string[]): Scan {
     } else if (name == "of") {
       s = Settings { ...s, out_name: value, have_out: true };
     } else if (name == "bs") {
-      var b: Num = number_operand(value, true);
+      let b: Num = number_operand(value, true);
       s = Settings { ...s, ibs: b.value, obs: b.value };
       bs_given = true;
     } else if (name == "ibs") {
-      var ib: Num = number_operand(value, true);
+      let ib: Num = number_operand(value, true);
       s = Settings { ...s, ibs: ib.value };
     } else if (name == "obs") {
-      var ob: Num = number_operand(value, true);
+      let ob: Num = number_operand(value, true);
       s = Settings { ...s, obs: ob.value };
     } else if (name == "cbs") {
-      var cb: Num = number_operand(value, true);
+      let cb: Num = number_operand(value, true);
       s = Settings { ...s, cbs: cb.value };
     } else if (name == "count") {
-      var cn: Num = number_operand(value, false);
+      let cn: Num = number_operand(value, false);
       s = Settings { ...s, count: cn.value, have_count: true, iflag: s.iflag | bytes_bit(cn, flag_count_bytes()) };
     } else if (name == "skip" || name == "iseek") {
-      var sn: Num = number_operand(value, false);
+      let sn: Num = number_operand(value, false);
       s = Settings { ...s, skip: sn.value, iflag: s.iflag | bytes_bit(sn, flag_skip_bytes()) };
     } else if (name == "seek" || name == "oseek") {
-      var kn: Num = number_operand(value, false);
+      let kn: Num = number_operand(value, false);
       s = Settings { ...s, seek: kn.value, oflag: s.oflag | bytes_bit(kn, flag_seek_bytes()) };
     } else if (name == "conv") {
       s = Settings { ...s, conv: s.conv | parse_set(value, conv_names(), conv_bits(), "conversion") };
@@ -448,7 +448,7 @@ function scan_operands(argv: string[]): Scan {
 }
 
 function find_eq(a: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
     if (a[i] == b'=') {
       return i;
@@ -459,7 +459,7 @@ function find_eq(a: string): i32 {
 }
 
 function status_operand(v: string): i32 {
-  var at: i32 = index_in(status_names(), v);
+  let at: i32 = index_in(status_names(), v);
   if (at < 0) {
     gnu.error("invalid status level: " + gnu.quote(v));
     gnu.try_help(1);
@@ -490,12 +490,12 @@ function counts_new(): Counts {
 // BYTES that is corruption. Built once per run, since a table per record
 // is what made this the slowest thing in the program.
 function case_table(conv: i32): u8[] {
-  var t: u8[] = __alloc_u8(256);
-  var up: boolean = (conv & conv_ucase()) != 0;
-  var down: boolean = (conv & conv_lcase()) != 0;
-  var i: i32 = 0;
+  let t: u8[] = __alloc_u8(256);
+  let up: boolean = (conv & conv_ucase()) != 0;
+  let down: boolean = (conv & conv_lcase()) != 0;
+  let i: i32 = 0;
   while (i < 256) {
-    var b: i32 = i;
+    let b: i32 = i;
     if (up && i >= 97 && i <= 122) {
       b = i - 32;
     } else if (down && i >= 65 && i <= 90) {
@@ -511,9 +511,9 @@ function apply_case(piece: string, tab: u8[], conv: i32): string {
   if ((conv & (conv_ucase() | conv_lcase())) == 0) {
     return piece;
   }
-  var b: usize = buf_new(piece.len());
+  let b: usize = buf_new(piece.len());
   buf_push_mapped(b, piece, tab);
-  var out: string = buf_take(b);
+  let out: string = buf_take(b);
   buf_free(b);
   return out;
 }
@@ -534,19 +534,19 @@ function swab_new(): Swab {
 // available — the record plus whatever was held — are an odd number and
 // this is not the last call.
 function apply_swab(sw: Swab, data: string, last: boolean): (Swab, string) {
-  var n: i32 = data.len();
-  var avail: i32 = n;
+  let n: i32 = data.len();
+  let avail: i32 = n;
   if (sw.held) {
     avail = avail + 1;
   }
-  var outlen: i32 = avail;
+  let outlen: i32 = avail;
   if (!last && avail - avail / 2 * 2 == 1) {
     outlen = outlen - 1;
   }
-  var buf: u8[] = __alloc_u8(outlen);
-  var out: Swab = sw;
-  var i: i32 = 0;
-  var j: i32 = 0;
+  let buf: u8[] = __alloc_u8(outlen);
+  let out: Swab = sw;
+  let i: i32 = 0;
+  let j: i32 = 0;
   if (out.held && n > 0) {
     buf = buf.with(0, data[0]);
     buf = buf.with(1, out.byte);
@@ -577,14 +577,14 @@ function apply_sync(piece: string, s: Settings): string {
   if (piece.len() as i64 >= s.ibs) {
     return piece;
   }
-  var pad: i32 = (s.ibs - piece.len() as i64) as i32;
-  var fill: u8 = 0 as u8;
+  let pad: i32 = (s.ibs - piece.len() as i64) as i32;
+  let fill: u8 = 0 as u8;
   if ((s.conv & (conv_block() | conv_unblock())) != 0) {
     fill = 32 as u8;
   }
-  var h: usize = buf_new(piece.len() + pad);
+  let h: usize = buf_new(piece.len() + pad);
   buf_push(h, piece);
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < pad) {
     buf_push_byte(h, fill as i32);
     i = i + 1;
@@ -610,9 +610,9 @@ function sink_new(w: Writer, name: string, obs: i32, c: Counts): Sink {
 }
 
 function write_full(k: Sink, data: string, partial: boolean): Sink {
-  var off: i32 = 0;
+  let off: i32 = 0;
   while (off < data.len()) {
-    var piece: string = data;
+    let piece: string = data;
     if (off > 0) {
       piece = slice_unchecked(data, off, data.len()) + "";
     }
@@ -630,7 +630,7 @@ function write_full(k: Sink, data: string, partial: boolean): Sink {
       }
     }
   }
-  var c: Counts = k.c;
+  let c: Counts = k.c;
   if (partial) {
     c = Counts { ...c, part_out: c.part_out + 1 as i64, bytes: c.bytes + data.len() as i64 };
   } else {
@@ -651,11 +651,11 @@ function sink_direct(k: Sink, data: string): Sink {
 // `sink_push` is the assembling path: hold the bytes, and write every
 // time a whole `obs` block has accumulated.
 function sink_push(k: Sink, data: string): Sink {
-  var out: Sink = k;
-  var off: i32 = 0;
+  let out: Sink = k;
+  let off: i32 = 0;
   while (off < data.len()) {
-    var room: i32 = out.obs - out.held;
-    var take: i32 = data.len() - off;
+    let room: i32 = out.obs - out.held;
+    let take: i32 = data.len() - off;
     if (take > room) {
       take = room;
     }
@@ -663,7 +663,7 @@ function sink_push(k: Sink, data: string): Sink {
     out = Sink { ...out, held: out.held + take };
     off = off + take;
     if (out.held == out.obs) {
-      var block: string = buf_take(out.buf);
+      let block: string = buf_take(out.buf);
       out = write_full(out, block, false);
       out = Sink { ...out, held: 0 };
       if (!out.ok) {
@@ -680,8 +680,8 @@ function sink_flush(k: Sink): Sink {
   if (k.held == 0) {
     return k;
   }
-  var block: string = buf_take(k.buf);
-  var out: Sink = write_full(k, block, true);
+  let block: string = buf_take(k.buf);
+  let out: Sink = write_full(k, block, true);
   return Sink { ...out, held: 0 };
 }
 
@@ -716,9 +716,9 @@ function read_record(r: Reader, s: Settings, want: i32, name: string): Take {
 // whole block. The end of the input stops it short, and that record is
 // the partial one.
 function fill_block(r: Reader, s: Settings, want: i32, name: string, first: string): Take {
-  var h: usize = buf_new(want);
+  let h: usize = buf_new(want);
   buf_push(h, first);
-  var have: i32 = first.len();
+  let have: i32 = first.len();
   while (have < want) {
     match (r.read_chunk(want - have)) {
       Err(e) => {
@@ -762,7 +762,7 @@ function whole_seconds(ns: i64): i64 {
 }
 
 function progress_line(bytes: i64, sec: i64): void {
-  var w: Writer = stderr();
+  let w: Writer = stderr();
   match (w.write("\r" + transfer_line(bytes, sec as f64))) {
     Some(_) => {},
     None => {}
@@ -770,16 +770,16 @@ function progress_line(bytes: i64, sec: i64): void {
 }
 
 function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: string, started: i64): Run {
-  var k: Sink = k0;
-  var st: Rec = rec_new(s.cbs as i32);
-  var sw: Swab = swab_new();
-  var records: i64 = 0 as i64;
-  var bytes_left: i64 = s.count;
-  var count_bytes: boolean = (s.iflag & flag_count_bytes()) != 0;
-  var status: i32 = 0;
-  var last_tick: i64 = started;
-  var progressed: boolean = false;
-  var tab: u8[] = case_table(s.conv);
+  let k: Sink = k0;
+  let st: Rec = rec_new(s.cbs as i32);
+  let sw: Swab = swab_new();
+  let records: i64 = 0 as i64;
+  let bytes_left: i64 = s.count;
+  let count_bytes: boolean = (s.iflag & flag_count_bytes()) != 0;
+  let status: i32 = 0;
+  let last_tick: i64 = started;
+  let progressed: boolean = false;
+  let tab: u8[] = case_table(s.conv);
   while (true) {
     if (s.have_count) {
       if (count_bytes) {
@@ -790,11 +790,11 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
         break;
       }
     }
-    var want: i32 = s.ibs as i32;
+    let want: i32 = s.ibs as i32;
     if (s.have_count && count_bytes && bytes_left < s.ibs) {
       want = bytes_left as i32;
     }
-    var got: Take = read_record(r, s, want, in_name);
+    let got: Take = read_record(r, s, want, in_name);
     if (!got.ok) {
       if ((s.conv & conv_noerror()) == 0) {
         return Run { c: k.c, status: 1, progressed: progressed };
@@ -805,7 +805,7 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
     if (got.eof) {
       break;
     }
-    var c: Counts = k.c;
+    let c: Counts = k.c;
     if (got.data.len() as i64 == s.ibs) {
       c = Counts { ...c, full_in: c.full_in + 1 as i64 };
     } else {
@@ -814,11 +814,11 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
     k = Sink { ...k, c: c };
     records = records + 1 as i64;
     bytes_left = bytes_left - got.data.len() as i64;
-    var conv1: (Swab, string) = convert_record(sw, tab, got.data, s, false);
+    let conv1: (Swab, string) = convert_record(sw, tab, got.data, s, false);
     sw = conv1.0;
-    var piece: string = conv1.1;
+    let piece: string = conv1.1;
     if (records_wanted(s)) {
-      var conv: (Rec, string) = apply_records(st, piece, s, false);
+      let conv: (Rec, string) = apply_records(st, piece, s, false);
       st = conv.0;
       piece = conv.1;
       k = sink_push(k, piece);
@@ -831,7 +831,7 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
       return Run { c: k.c, status: 1, progressed: progressed };
     }
     if (s.status == status_progress()) {
-      var now: i64 = monotonic_ns();
+      let now: i64 = monotonic_ns();
       if (now - last_tick >= 1000000000 as i64) {
         last_tick = now;
         progress_line(k.c.bytes, whole_seconds(now - started));
@@ -842,7 +842,7 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
   // The byte a `conv=swab` is holding when the input ends has nothing
   // to pair with, and reaches the output as it stands.
   if (sw.held) {
-    var tailsw: (Swab, string) = apply_swab(sw, "", true);
+    let tailsw: (Swab, string) = apply_swab(sw, "", true);
     sw = tailsw.0;
     k = sink_push(k, tailsw.1);
     if (!k.ok) {
@@ -852,7 +852,7 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
   // The line a record conversion is still holding when the input ends
   // is a record too, so the flush comes before the last short write.
   if (records_wanted(s)) {
-    var tail: (Rec, string) = apply_records(st, "", s, true);
+    let tail: (Rec, string) = apply_records(st, "", s, true);
     st = tail.0;
     k = sink_push(k, tail.1);
     if (!k.ok) {
@@ -863,7 +863,7 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
   if (!k.ok) {
     return Run { c: k.c, status: 1, progressed: progressed };
   }
-  var c: Counts = Counts { ...k.c, truncated: st.trunc };
+  let c: Counts = Counts { ...k.c, truncated: st.trunc };
   return Run { c: c, status: status, progressed: progressed };
 }
 
@@ -871,10 +871,10 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
 // byte pairs first, then the case, then the padding that makes a short
 // record a whole one.
 function convert_record(sw: Swab, tab: u8[], data: string, s: Settings, last: boolean): (Swab, string) {
-  var out: string = data;
-  var state: Swab = sw;
+  let out: string = data;
+  let state: Swab = sw;
   if ((s.conv & conv_swab()) != 0) {
-    var swapped: (Swab, string) = apply_swab(state, out, last);
+    let swapped: (Swab, string) = apply_swab(state, out, last);
     state = swapped.0;
     out = swapped.1;
   }
@@ -910,10 +910,10 @@ function rec_new(cbs: i32): Rec {
 
 // One line out: the bytes held, padded with spaces to `cbs`.
 function rec_emit_block(st: Rec, out: usize): Rec {
-  var line: string = buf_take(st.pend);
+  let line: string = buf_take(st.pend);
   buf_push(out, line);
-  var pad: i32 = st.cbs - line.len();
-  var i: i32 = 0;
+  let pad: i32 = st.cbs - line.len();
+  let i: i32 = 0;
   while (i < pad) {
     buf_push_byte(out, 32);
     i = i + 1;
@@ -922,9 +922,9 @@ function rec_emit_block(st: Rec, out: usize): Rec {
 }
 
 function conv_block_apply(rc: Rec, data: string, last: boolean): (Rec, string) {
-  var out: usize = buf_new(data.len() + rc.cbs + 1);
-  var st: Rec = rc;
-  var i: i32 = 0;
+  let out: usize = buf_new(data.len() + rc.cbs + 1);
+  let st: Rec = rc;
+  let i: i32 = 0;
   while (i < data.len()) {
     if (data[i] == b'\n') {
       st = rec_emit_block(st, out);
@@ -947,8 +947,8 @@ function conv_block_apply(rc: Rec, data: string, last: boolean): (Rec, string) {
 // One record out: the bytes held with their trailing spaces dropped,
 // and a newline.
 function rec_emit_unblock(st: Rec, out: usize): Rec {
-  var record: string = buf_take(st.pend);
-  var end: i32 = record.len();
+  let record: string = buf_take(st.pend);
+  let end: i32 = record.len();
   while (end > 0 && record[end - 1] == b' ') {
     end = end - 1;
   }
@@ -958,9 +958,9 @@ function rec_emit_unblock(st: Rec, out: usize): Rec {
 }
 
 function conv_unblock_apply(rc: Rec, data: string, last: boolean): (Rec, string) {
-  var out: usize = buf_new(data.len() + rc.cbs + 1);
-  var st: Rec = rc;
-  var i: i32 = 0;
+  let out: usize = buf_new(data.len() + rc.cbs + 1);
+  let st: Rec = rc;
+  let i: i32 = 0;
   while (i < data.len()) {
     buf_push_byte(st.pend, data[i] as i32);
     st = Rec { ...st, len: st.len + 1 };
@@ -984,7 +984,7 @@ function conv_unblock_apply(rc: Rec, data: string, last: boolean): (Rec, string)
 // case conversions are NOT here: they rewrite bytes one for one, so a
 // per-record write gives the same counts and saves the assembly copy.
 function rewrites_bytes(s: Settings): boolean {
-  var mask: i32 = conv_swab() | conv_sync() | conv_block() | conv_unblock();
+  let mask: i32 = conv_swab() | conv_sync() | conv_block() | conv_unblock();
   return (s.conv & mask) != 0;
 }
 
@@ -1019,7 +1019,7 @@ function report(c: Counts, s: Settings, secs: f64): void {
   eprint(c.full_in.to_string() + "+" + c.part_in.to_string() + " records in");
   eprint(c.full_out.to_string() + "+" + c.part_out.to_string() + " records out");
   if (c.truncated > 0 as i64) {
-    var word: string = " truncated records";
+    let word: string = " truncated records";
     if (c.truncated == 1 as i64) {
       word = " truncated record";
     }
@@ -1035,12 +1035,12 @@ function report(c: Counts, s: Settings, secs: f64): void {
 // parentheses once the count reaches 1000 — GNU prints `10 bytes
 // copied` bare and `2048 bytes (2.0 kB, 2.0 KiB) copied`.
 function transfer_line(bytes: i64, secs: f64): string {
-  var out: string = bytes.to_string() + " bytes";
+  let out: string = bytes.to_string() + " bytes";
   if (bytes >= 1000 as i64) {
     out = out + " (" + human(bytes, 1000 as i64, "B") + ", " + human(bytes, 1024 as i64, "iB") + ")";
   }
   out = out + " copied, " + fmt_g(secs) + " s, ";
-  var rate: f64 = 0.0;
+  let rate: f64 = 0.0;
   if (secs > 0.0) {
     rate = bytes as f64 / secs;
   }
@@ -1052,13 +1052,13 @@ function transfer_line(bytes: i64, secs: f64): string {
 function human(n: i64, base: i64, tail: string): string {
   // The IEC prefix for 1024 is an uppercase K where the SI one for 1000
   // is lower case: `2.0 kB, 2.0 KiB`.
-  var units: string[] = ["k", "M", "G", "T", "P", "E"];
+  let units: string[] = ["k", "M", "G", "T", "P", "E"];
   if (base == 1024 as i64) {
     units = ["K", "M", "G", "T", "P", "E"];
   }
-  var v: f64 = n as f64;
-  var b: f64 = base as f64;
-  var i: i32 = 0;
+  let v: f64 = n as f64;
+  let b: f64 = base as f64;
+  let i: i32 = 0;
   while (v >= b && i < units.len()) {
     v = v / b;
     i = i + 1;
@@ -1070,9 +1070,9 @@ function human(n: i64, base: i64, tail: string): string {
 }
 
 function human_rate(rate: f64): string {
-  var units: string[] = ["kB", "MB", "GB", "TB", "PB", "EB"];
-  var v: f64 = rate / 1000.0;
-  var i: i32 = 0;
+  let units: string[] = ["kB", "MB", "GB", "TB", "PB", "EB"];
+  let v: f64 = rate / 1000.0;
+  let i: i32 = 0;
   while (v >= 1000.0 && i + 1 < units.len()) {
     v = v / 1000.0;
     i = i + 1;
@@ -1090,7 +1090,7 @@ function one_decimal(v: f64): string {
   if (v >= 10.0) {
     return (v.round() as i64).to_string();
   }
-  var scaled: i64 = (v * 10.0).round() as i64;
+  let scaled: i64 = (v * 10.0).round() as i64;
   return (scaled / (10 as i64)).to_string() + "." + (scaled % (10 as i64)).to_string();
 }
 
@@ -1102,12 +1102,12 @@ function fmt_g(v: f64): string {
   if (v == 0.0) {
     return "0";
   }
-  var exp: i32 = decimal_exponent(v);
+  let exp: i32 = decimal_exponent(v);
   if (exp < 0 - 4 || exp >= 6) {
-    var mant: f64 = v / pow10(exp);
+    let mant: f64 = v / pow10(exp);
     return trim_zeros(mant.to_string_prec(5)) + "e" + exp_text(exp);
   }
-  var prec: i32 = 5 - exp;
+  let prec: i32 = 5 - exp;
   if (prec < 0) {
     prec = 0;
   }
@@ -1115,8 +1115,8 @@ function fmt_g(v: f64): string {
 }
 
 function decimal_exponent(v: f64): i32 {
-  var e: i32 = 0;
-  var x: f64 = v;
+  let e: i32 = 0;
+  let x: f64 = v;
   if (x < 0.0) {
     x = 0.0 - x;
   }
@@ -1132,13 +1132,13 @@ function decimal_exponent(v: f64): i32 {
 }
 
 function pow10(e: i32): f64 {
-  var out: f64 = 1.0;
-  var i: i32 = 0;
+  let out: f64 = 1.0;
+  let i: i32 = 0;
   while (i < e) {
     out = out * 10.0;
     i = i + 1;
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j > e) {
     out = out / 10.0;
     j = j - 1;
@@ -1149,13 +1149,13 @@ function pow10(e: i32): f64 {
 // The exponent is always signed and always at least two digits, as C's
 // `%g` writes it: `6.3384e-05`, not `6.3384e-5`.
 function exp_text(e: i32): string {
-  var sign: string = "+";
-  var mag: i32 = e;
+  let sign: string = "+";
+  let mag: i32 = e;
   if (e < 0) {
     sign = "-";
     mag = 0 - e;
   }
-  var digits: string = mag.to_string();
+  let digits: string = mag.to_string();
   if (mag < 10) {
     digits = "0" + digits;
   }
@@ -1166,7 +1166,7 @@ function trim_zeros(s: string): string {
   if (s.index_of(".") < 0) {
     return s;
   }
-  var end: i32 = s.len();
+  let end: i32 = s.len();
   while (end > 0 && s[end - 1] == b'0') {
     end = end - 1;
   }
@@ -1178,7 +1178,7 @@ function trim_zeros(s: string): string {
 
 // ---- --help / --version -----------------------------------------------------
 function help_text(): string {
-  var out: string = "";
+  let out: string = "";
   out = out + "Usage: " + gnu.prog() + " [OPERAND]...\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
   out = out + "Copy a file, converting and formatting according to the operands.\n";
@@ -1257,9 +1257,9 @@ function usage(status: i32): void {
 // how GNU tells the two apart. A bare `-` is an operand, and an
 // unrecognized one.
 function scan_options(argv: string[]): void {
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < argv.len()) {
-    var a: string = argv[i];
+    let a: string = argv[i];
     if (a == "--help") {
       usage(0);
     }
@@ -1292,7 +1292,7 @@ function open_input(s: Settings): (Reader, boolean) {
   if (!s.have_in) {
     return (stdin(), true);
   }
-  var flags: i32 = 0;
+  let flags: i32 = 0;
   if ((s.iflag & flag_nonblock()) != 0) {
     flags = 2;
   }
@@ -1325,7 +1325,7 @@ function open_output(s: Settings): (Writer, boolean) {
   if ((s.oflag & flag_append()) != 0) {
     return open_out_appending(s);
   }
-  var flags: i32 = 1;
+  let flags: i32 = 1;
   if ((s.conv & conv_nocreat()) != 0) {
     flags = 0;
   }
@@ -1368,7 +1368,7 @@ function open_out_appending(s: Settings): (Writer, boolean) {
 // `'NAME': cannot skip to specified offset` and carries on from where
 // it is, as GNU does, rather than failing.
 function skip_input(r: Reader, s: Settings): boolean {
-  var want: i64 = s.skip;
+  let want: i64 = s.skip;
   if (want <= 0 as i64) {
     return true;
   }
@@ -1413,9 +1413,9 @@ function cannot_skip(s: Settings): void {
 // The forward read a pipe needs. A short read is fine; the end of the
 // input before the offset is what GNU warns about.
 function drain(r: Reader, s: Settings, want: i64): boolean {
-  var left: i64 = want;
+  let left: i64 = want;
   while (left > 0 as i64) {
-    var take: i32 = s.ibs as i32;
+    let take: i32 = s.ibs as i32;
     if (left < s.ibs) {
       take = left as i32;
     }
@@ -1442,7 +1442,7 @@ function drain(r: Reader, s: Settings, want: i64): boolean {
 // separates `dd of=f seek=2` (a 5-byte file after three bytes are
 // written) from the same run with `conv=notrunc` (a 10-byte one).
 function seek_output(w: Writer, s: Settings, name: string): boolean {
-  var want: i64 = s.seek;
+  let want: i64 = s.seek;
   if ((s.oflag & flag_seek_bytes()) == 0) {
     want = want * s.obs;
   }
@@ -1472,40 +1472,40 @@ function seek_output(w: Writer, s: Settings, name: string): boolean {
 
 // ---- main -------------------------------------------------------------------
 pub function main(): i32 {
-  var argv: string[] = args();
+  let argv: string[] = args();
   scan_options(argv);
-  var scan: Scan = scan_operands(argv);
-  var s: Settings = scan.s;
+  let scan: Scan = scan_operands(argv);
+  let s: Settings = scan.s;
   if ((s.conv & conv_block()) != 0 && (s.conv & conv_unblock()) != 0) {
     gnu.error("cannot combine block and unblock");
     exit(1);
   }
-  var ri: (Reader, boolean) = open_input(s);
+  let ri: (Reader, boolean) = open_input(s);
   if (!ri.1) {
     exit(1);
   }
-  var wo: (Writer, boolean) = open_output(s);
+  let wo: (Writer, boolean) = open_output(s);
   if (!wo.1) {
     exit(1);
   }
-  var r: Reader = ri.0;
-  var w: Writer = wo.0;
+  let r: Reader = ri.0;
+  let w: Writer = wo.0;
   if (!skip_input(r, s)) {
     exit(1);
   }
   if (!seek_output(w, s, s.out_name)) {
     exit(1);
   }
-  var started: i64 = monotonic_ns();
-  var k: Sink = sink_new(w, s.out_name, s.obs as i32, counts_new());
-  var run: Run = copy(r, k, s, scan.bs_given, s.in_name, started);
-  var status: i32 = run.status;
+  let started: i64 = monotonic_ns();
+  let k: Sink = sink_new(w, s.out_name, s.obs as i32, counts_new());
+  let run: Run = copy(r, k, s, scan.bs_given, s.in_name, started);
+  let status: i32 = run.status;
   // A `conv=fdatasync` the descriptor cannot answer becomes a full
   // `fsync`: EINVAL there is the descriptor saying it has no data-only
   // sync rather than a failure to report, which is why a run over
   // /dev/null reports `fsync failed` and not `fdatasync failed`. Any
   // other errno is the fdatasync's own.
-  var want_fsync: boolean = (s.conv & conv_fsync()) != 0;
+  let want_fsync: boolean = (s.conv & conv_fsync()) != 0;
   if ((s.conv & conv_fdatasync()) != 0) {
     match (w.fdatasync()) {
       Some(e) => {
@@ -1528,7 +1528,7 @@ pub function main(): i32 {
       None => {}
     }
   }
-  var secs: f64 = (monotonic_ns() - started) as f64 / 1000000000.0;
+  let secs: f64 = (monotonic_ns() - started) as f64 / 1000000000.0;
   if (run.progressed) {
     eprint("");
   }

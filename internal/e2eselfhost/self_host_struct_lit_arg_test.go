@@ -15,11 +15,11 @@ import (
 //
 // It leaks per EVALUATION, not once, which is what separates it from the
 // construction-retain matrix's cells — and it is invisible to that matrix,
-// because all 35 of its cells bind the literal to `var p` first. That is the one
+// because all 35 of its cells bind the literal to `let p` first. That is the one
 // position which already worked.
 //
 // The mechanism was already here and only lacked a dispatch arm.
-// `lower_call_named` stashes a fresh literal argument in a scratch local and
+// `lower_call_named` stashed a fresh literal argument in a scratch local and
 // frees it after the call, with arms for string literals, scalar-array
 // literals, "ARR:"/"STRARR:" producer calls and the consumed-append temp. Two
 // pieces were missing and BOTH are needed — either alone is a no-op:
@@ -27,8 +27,8 @@ import (
 //   - the stash arm itself, releasing with the discarded-statement arm's own two
 //     shapes (scalar-only -> box dec; reusable rc fields -> __struct_drop_<T>
 //     then the box dec), and
-//   - a "BORROW:" row to consult. Those rows are NARROW-SEEDED, deliberately:
-//     lower_func seeds only callees that lit_arg_callees_expr saw carrying a
+//   - a "BORROW:" row to consult. Those rows were NARROW-SEEDED, deliberately:
+//     lower_func seeded only callees that lit_arg_callees_expr saw carrying a
 //     literal argument, so the list stays tiny. A struct literal was not in that
 //     census, so call_arg_borrowable answered false and the arm could never
 //     fire. Adding the arm without the census entry measures as no change at
@@ -59,7 +59,7 @@ struct Box { a: A, n: i32 }
 func structLitArgMain(loopBody string) string {
 	return `
 function main(): i32 {
-    var t: i32 = 0; var r: i32 = 0;
+    let t: i32 = 0; let r: i32 = 0;
     while (r < 100) { ` + loopBody + ` }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
@@ -124,21 +124,21 @@ func structLitArgCases() []arrenumShareCase {
 			src: `struct A { xs: i32[], k: i32 }
 function grab(p: A): i32[] { return p.xs; }
 function churn(i: i32): i32 {
-    var a: i32[] = [i, i + 1, i + 2, i + 3];
-    var b: i32[] = [i + 4, i + 5, i + 6, i + 7];
+    let a: i32[] = [i, i + 1, i + 2, i + 3];
+    let b: i32[] = [i + 4, i + 5, i + 6, i + 7];
     return a[0] + b[3];
 }
 function round(i: i32): i32 {
-    var held: i32[] = grab(A { xs: [i, i + 1], k: i });
-    var junk: i32 = churn(i * 7 + 3);
+    let held: i32[] = grab(A { xs: [i, i + 1], k: i });
+    let junk: i32 = churn(i * 7 + 3);
     if (held.len() != 2) { return 0 - 1; }
-    var v: i32 = held[0] + held[1];
+    let v: i32 = held[0] + held[1];
     if (v != i + i + 1) { return 0 - 1; }
     return v % 101;
 }
 function main(): i32 {
-    var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
-    while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
+    let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0;
+    while (i < 200) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;

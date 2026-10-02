@@ -36,8 +36,8 @@ import (
 // A failure returns a small distinct code rather than a sum, so the exit
 // status says WHICH shape disagreed. 42 means every comparison matched.
 const sumBytesIRProg = `function ref(s: string): i32 {
-    var i: i32 = 0;
-    var acc: i32 = 0;
+    let i: i32 = 0;
+    let acc: i32 = 0;
     while (i < s.len()) {
         acc = acc + (s[i] as i32);
         i = i + 1;
@@ -45,28 +45,28 @@ const sumBytesIRProg = `function ref(s: string): i32 {
     return acc;
 }
 function main(): i32 {
-    var n: i32 = 0;
+    let n: i32 = 0;
     while (n <= 40) {
-        var base: string = "";
-        var k: i32 = 0;
+        let base: string = "";
+        let k: i32 = 0;
         while (k < n) { base = base + "a"; k = k + 1; }
         if (__sum_bytes(base) != ref(base)) { return 1; }
         if (__sum_bytes(base) != n * 97) { return 2; }
-        var at: i32 = 0;
+        let at: i32 = 0;
         while (at < n) {
-            var hi: string = slice_unchecked(base, 0, at) + "\xff" + slice_unchecked(base, at + 1, n);
+            let hi: string = slice_unchecked(base, 0, at) + "\xff" + slice_unchecked(base, at + 1, n);
             if (__sum_bytes(hi) != ref(hi)) { return 3; }
             if (__sum_bytes(hi) != (n - 1) * 97 + 255) { return 4; }
-            var z: string = slice_unchecked(base, 0, at) + "\x00" + slice_unchecked(base, at + 1, n);
+            let z: string = slice_unchecked(base, 0, at) + "\x00" + slice_unchecked(base, at + 1, n);
             if (__sum_bytes(z) != ref(z)) { return 5; }
             at = at + 1;
         }
         n = n + 1;
     }
-    var m: i32 = 0;
+    let m: i32 = 0;
     while (m <= 40) {
-        var all: string = "";
-        var k2: i32 = 0;
+        let all: string = "";
+        let k2: i32 = 0;
         while (k2 < m) { all = all + "\xff"; k2 = k2 + 1; }
         if (__sum_bytes(all) != ref(all)) { return 6; }
         if (__sum_bytes(all) != m * 255) { return 7; }
@@ -78,8 +78,8 @@ function main(): i32 {
     if (__sum_bytes("\x7f\x80") != 255) { return 11; }
     if (__sum_bytes("\x80\x80\x80\x80") != 512) { return 12; }
     // 16 MiB of 0xff sums to 4278190080, which the 32-bit result wraps.
-    var big: string = "\xff";
-    var d: i32 = 0;
+    let big: string = "\xff";
+    let d: i32 = 0;
     while (d < 24) { big = big + big; d = d + 1; }
     if (__sum_bytes(big) != 0 - 16777216) { return 13; }
     return 42;

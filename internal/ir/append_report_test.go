@@ -32,14 +32,14 @@ func TestAppendReportSeparatesInPlaceFromCopying(t *testing.T) {
 	// one must copy — and the second, at the receiver's last occurrence,
 	// must not.
 	src := `function grow(n: i32): i32 {
-    var xs: i32[] = [];
-    var i: i32 = 0;
+    let xs: i32[] = [];
+    let i: i32 = 0;
     while (i < n) { xs = xs.append(i); i = i + 1; }
     return xs.len();
 }
 function reused(acc: i32[]): i32 {
-    var a: i32 = acc.append(1).len();
-    var b: i32 = acc.append(2).len();
+    let a: i32 = acc.append(1).len();
+    let b: i32 = acc.append(2).len();
     return a * 10 + b;
 }
 function main(): i32 { return grow(3) + reused([1, 2]); }`
@@ -97,7 +97,7 @@ func TestAppendReportRecordsExemptShapesAsInPlace(t *testing.T) {
     return acc.append(0 - x);
 }
 function selfp(acc: i32[], n: i32): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { acc = acc.append(i); i = i + 1; }
     return acc.len();
 }
@@ -127,7 +127,7 @@ function main(): i32 { return retpos([1], 1).len() + selfp([1], 2); }`
 func TestAppendReportNamesFieldReceivers(t *testing.T) {
 	src := `struct Bag { items: i32[] }
 function add(b: Bag, v: i32): i32 {
-    var c: Bag = Bag { items: b.items.append(v) };
+    let c: Bag = Bag { items: b.items.append(v) };
     return c.items.len() + b.items.len();
 }
 function main(): i32 { return add(Bag { items: [1] }, 2); }`
@@ -150,12 +150,12 @@ function main(): i32 { return add(Bag { items: [1] }, 2); }`
 // second, independently-wrong opinion about what the compiler did.
 func TestAppendReportAgreesWithEmittedCode(t *testing.T) {
 	src := `function reused(acc: i32[]): i32 {
-    var a: i32 = acc.append(1).len();
-    var b: i32 = acc.append(2).len();
+    let a: i32 = acc.append(1).len();
+    let b: i32 = acc.append(2).len();
     return a * 10 + b;
 }
 function selfp(acc: i32[], n: i32): i32 {
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < n) { acc = acc.append(i); i = i + 1; }
     return acc.len();
 }

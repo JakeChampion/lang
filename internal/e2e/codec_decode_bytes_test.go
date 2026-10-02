@@ -21,7 +21,7 @@ import "std/utf8" as utf8;
 function main(): i32 {
     // "//79" is base64 for FF FE FD — three bytes that are not valid
     // UTF-8 anywhere, which is exactly why this cannot be a string.
-    var raw: u8[] = b64.base64_decode("//79");
+    let raw: u8[] = b64.base64_decode("//79");
     if (raw.len() != 3) { return 1; }
     if (raw[0] as i32 != 255) { return 2; }
     if (raw[1] as i32 != 254) { return 3; }
@@ -48,19 +48,19 @@ function main(): i32 {
 
     // The url-safe decoder delegates to the standard one, so it moved
     // with it: "____" is url-safe for FF FF FF.
-    var u: u8[] = b64.base64url_decode("____");
+    let u: u8[] = b64.base64url_decode("____");
     if (u.len() != 3) { return 13; }
     if (u[0] as i32 != 255) { return 14; }
 
     // Every byte value round-trips byte-exactly through both codecs,
     // including the 128 that are not valid UTF-8 on their own.
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 256) {
-        var one: u8[] = [i as u8];
-        var b64back: u8[] = b64.base64_decode(b64.base64_encode(one));
+        let one: u8[] = [i as u8];
+        let b64back: u8[] = b64.base64_decode(b64.base64_encode(one));
         if (b64back.len() != 1) { return 15; }
         if (b64back[0] as i32 != i) { return 16; }
-        var b32back: u8[] = b32.base32_decode(b32.base32_encode(one));
+        let b32back: u8[] = b32.base32_decode(b32.base32_encode(one));
         if (b32back.len() != 1) { return 17; }
         if (b32back[0] as i32 != i) { return 18; }
         i = i + 1;

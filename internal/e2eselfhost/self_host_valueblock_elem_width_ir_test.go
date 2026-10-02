@@ -38,17 +38,17 @@ var valueBlockElemWidthCases = []struct {
 }{
 	// Reduced from fernsmith seed 161, then rewritten to READ the element — the
 	// reduced seed never reads what it builds.
-	{"call-arm-in-i64-array-elem", `function id[T](x: T): T { return x; } function main(): i32 { var xs: i64[] = [(match ((366i64 ^ 456i64) +? 673i64) { Some(v) => v, None => id((if (true) { 1099511628488i64 } else { 5i64 })) })]; return ((xs[0i32] as i32) & 63i32); }`, 7},
+	{"call-arm-in-i64-array-elem", `function id[T](x: T): T { return x; } function main(): i32 { let xs: i64[] = [(match ((366i64 ^ 456i64) +? 673i64) { Some(v) => v, None => id((if (true) { 1099511628488i64 } else { 5i64 })) })]; return ((xs[0i32] as i32) & 63i32); }`, 7},
 	// The same shape with an if-expression rather than a checked-arith match.
-	{"call-arm-ifexpr-i64-array-elem", `function id[T](x: T): T { return x; } function main(): i32 { var xs: i64[] = [(if (true) { id(1099511628488i64) } else { 5i64 })]; return ((xs[0i32] as i32) & 63i32); }`, 8},
-	{"literal-arm-unchanged", `function main(): i32 { var xs: i64[] = [(match ((366i64 ^ 456i64) +? 673i64) { Some(v) => v, None => 0i64 })]; return ((xs[0i32] as i32) & 63i32); }`, 7},
-	{"scalar-binding-unchanged", `function main(): i32 { var w: i64 = (match ((366i64 ^ 456i64) +? 673i64) { Some(v) => v, None => 0i64 }); return ((w as i32) & 63i32); }`, 7},
+	{"call-arm-ifexpr-i64-array-elem", `function id[T](x: T): T { return x; } function main(): i32 { let xs: i64[] = [(if (true) { id(1099511628488i64) } else { 5i64 })]; return ((xs[0i32] as i32) & 63i32); }`, 8},
+	{"literal-arm-unchanged", `function main(): i32 { let xs: i64[] = [(match ((366i64 ^ 456i64) +? 673i64) { Some(v) => v, None => 0i64 })]; return ((xs[0i32] as i32) & 63i32); }`, 7},
+	{"scalar-binding-unchanged", `function main(): i32 { let w: i64 = (match ((366i64 ^ 456i64) +? 673i64) { Some(v) => v, None => 0i64 }); return ((w as i32) & 63i32); }`, 7},
 	// An i32[] element's guess already agrees with its annotation, so the
 	// stamp leaves it as it is.
-	{"i32-array-elem-unchanged", `function main(): i32 { var xs: i32[] = [(if (true) { 7i32 } else { 5i32 })]; return (xs[0i32] & 63i32); }`, 7},
+	{"i32-array-elem-unchanged", `function main(): i32 { let xs: i32[] = [(if (true) { 7i32 } else { 5i32 })]; return (xs[0i32] & 63i32); }`, 7},
 	// A `None` arm is unguessable and the annotation is not a width: the
 	// binding's `Option[i32]` is stamped on the block all the same.
-	{"none-arm-option-binding", `function main(): i32 { var v: Option[i32] = (if (true) { None } else { Some(3i32) }); return match (v) { Some(x) => x, None => 7i32 }; }`, 7},
+	{"none-arm-option-binding", `function main(): i32 { let v: Option[i32] = (if (true) { None } else { Some(3i32) }); return match (v) { Some(x) => x, None => 7i32 }; }`, 7},
 }
 
 // TestSelfHostValueBlockElemWidthIRX86_64 — the x86-64 IR path.

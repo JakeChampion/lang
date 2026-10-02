@@ -28,13 +28,13 @@ func tupStrRebindCases() []tupStrRebindCase {
 	repro := `@noinline
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (i32, string) = (i, s);
-    var u: string = w("cd");
+    let s: string = w("ab");
+    let t: (i32, string) = (i, s);
+    let u: string = w("cd");
     t = (i + 1, u);
     return t.1.len() + s.len();
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < ROUNDS) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < ROUNDS) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`
 
 	return []tupStrRebindCase{
 		{name: "str_pos_rebind_100", src: strings.Replace(repro, "ROUNDS", "100", 1), want: 31},
@@ -48,13 +48,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < ROUNDS) { x = 
 			src: `@noinline
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function round(i: i32): i32 {
-    var s1: string = w("ab");
-    var s2: string = w("cd");
-    var t: (i32, string) = (i, s1);
+    let s1: string = w("ab");
+    let s2: string = w("cd");
+    let t: (i32, string) = (i, s1);
     t = (i + 1, s2);
     return t.0 + t.1.len();
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 17,
 		},
 		{
@@ -65,12 +65,12 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 			src: `@noinline
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (i32, string) = (i, s);
+    let s: string = w("ab");
+    let t: (i32, string) = (i, s);
     t = (i + 1, s);
     return t.1.len() + s.len();
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 62,
 		},
 		{
@@ -81,15 +81,15 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 			src: `@noinline
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function round(i: i32): i32 {
-    var s: string = w("ab");
-    var xs: i32[] = [i, i + 1];
-    var t: (i32[], string) = (xs, s);
-    var u: string = w("cd");
-    var ys: i32[] = [i + 2, i + 3];
+    let s: string = w("ab");
+    let xs: i32[] = [i, i + 1];
+    let t: (i32[], string) = (xs, s);
+    let u: string = w("cd");
+    let ys: i32[] = [i + 2, i + 3];
     t = (ys, u);
     return t.1.len() + t.0[0];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 39,
 		},
 		{
@@ -100,13 +100,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 			src: `@noinline
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (i32, string) = (i, s);
-    var u: string = w("cd");
+    let s: string = w("ab");
+    let t: (i32, string) = (i, s);
+    let u: string = w("cd");
     t = (i + 1, u);
     return t.1.len() + s.len() + u.len();
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 4,
 		},
 		{
@@ -117,13 +117,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 			src: `@noinline
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (i32, string) = (i, s);
-    var u: string = w("cd");
+    let s: string = w("ab");
+    let t: (i32, string) = (i, s);
+    let u: string = w("cd");
     if (i % 2 == 0) { t = (i + 1, u); }
     return t.1.len() + s.len();
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 62,
 		},
 		{
@@ -131,13 +131,13 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 			// before this change and must release identically after.
 			name: "arr_pos_rebind_control",
 			src: `function round(i: i32): i32 {
-    var xs: i32[] = [i, i + 1];
-    var ys: i32[] = [i + 2, i + 3];
-    var t: (i32, i32[]) = (i, xs);
+    let xs: i32[] = [i, i + 1];
+    let ys: i32[] = [i + 2, i + 3];
+    let t: (i32, i32[]) = (i, xs);
     t = (i + 1, ys);
     return t.1[0];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 8,
 		},
 	}
@@ -160,12 +160,12 @@ func tupStrRebindHazards() []tupStrRebindCase {
 			src: `@noinline
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (i32, string) = (i, s);
+    let s: string = w("ab");
+    let t: (i32, string) = (i, s);
     t = (i + 1, "a-literal-string-payload-past-any-inline-threshold");
     return t.1.len() + s.len();
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 63,
 		},
 		{
@@ -176,14 +176,14 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 			src: `@noinline
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (i32, string) = (i, s);
-    var b: string = w("cd");
-    var u: string = b;
+    let s: string = w("ab");
+    let t: (i32, string) = (i, s);
+    let b: string = w("cd");
+    let u: string = b;
     t = (i + 1, u);
     return t.1.len() + s.len() + b.len();
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 4,
 		},
 		{
@@ -199,14 +199,14 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function (s: string) tail(n: i32): str { return slice_unchecked(s, n, s.len()); }
 function round(i: i32): i32 {
-    var s: string = w("ab");
-    var t: (i32, str) = (i, s);
-    var b: string = w("cd");
-    var u: str = b.tail(2);
+    let s: string = w("ab");
+    let t: (i32, str) = (i, s);
+    let b: string = w("cd");
+    let u: str = b.tail(2);
     t = (i + 1, u);
     return t.0 + u.len() + s.len() + b.len();
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 35,
 		},
 	}

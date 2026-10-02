@@ -44,9 +44,9 @@ func threadedArrayParamSrc(n, twoN string) string {
     return buf;
 }
 function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var acc: i32[] = [];
-    var i: i32 = 0;
+    let before: i32 = (__heap_bump_bytes() as i32);
+    let acc: i32[] = [];
+    let i: i32 = 0;
     while (i < ` + n + `) { acc = le32(acc, i); i = i + 1; }
     if (acc.len() != ` + twoN + `) { return 254; }
     if (acc[0] != 0 || acc[2] != 1 || acc[6] != 3 || acc[7] != 0) { return 253; }

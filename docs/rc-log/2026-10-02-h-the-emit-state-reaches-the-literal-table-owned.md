@@ -65,10 +65,12 @@ green), the lint ratchet, both emit identities and the sweep.
 
 ## Next
 
-The largest copy on the profile is now `irlower.borrow_reg_set`'s `with`
+The largest copy on the profile is now `fnsigs.borrow_reg_set`'s `with`
 over 4093 buckets, 1.82 G of `__fern_arr_inc_elems` over 21,370 calls:
 taking the registry `own` removes it (202.85 G against 206.70 G in the
-previous entry's measurement) and waits for the stage0 pin to carry
-cec88134, since the fixture that calls it from a struct literal argument
-is compiled by the pin (#11020). Then `semsource.define` 0.88 G and
+previous entry's measurement), which is `2026-10-02-t`; the fixture that
+calls it from a struct literal argument binds the field to a local and
+stores through the call, which the stage0 pin admits
+(`TestSelfHostSSAPhysicalRCRejects`). Then
+`semsource.define` 0.88 G and
 `util.NameIndex.added` 0.50 G, the same shape at smaller scale.

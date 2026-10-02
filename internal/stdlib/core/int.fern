@@ -92,23 +92,23 @@ function __int_u32_digits(u: u32): i32 {
 // (8-byte-slotted `u8[]`). The element-wise form is layout-agnostic, so it is
 // correct on every backend and lowers on the self-host IR path.
 pub function int_to_string(n: i32): string {
-  var neg: boolean = false;
+  let neg: boolean = false;
   if (n < 0) {
     neg = true;
     n = 0 - n;
   }
-  var u: u32 = n as u32;
-  var ndig: i32 = __int_u32_digits(u);
-  var total: i32 = ndig;
+  let u: u32 = n as u32;
+  let ndig: i32 = __int_u32_digits(u);
+  let total: i32 = ndig;
   if (neg) {
     total = total + 1;
   }
-  var buf: u8[] = __alloc_u8(total);
-  var tbl: string = __int_pair_table();
-  var w: i32 = total;
+  let buf: u8[] = __alloc_u8(total);
+  let tbl: string = __int_pair_table();
+  let w: i32 = total;
   // Two digits at a time from the least significant end.
   while (u >= 100 as u32) {
-    var r: i32 = (u % (100 as u32)) as i32;
+    let r: i32 = (u % (100 as u32)) as i32;
     u = u / (100 as u32);
     w = w - 2;
     buf = buf.with(w, tbl[r * 2] as u8);
@@ -117,7 +117,7 @@ pub function int_to_string(n: i32): string {
   // 1 or 2 digits left. Reading both from the table covers the two-digit
   // remainder without a second division; the one-digit case takes the low
   // half only, which is why the width was computed up front.
-  var last: i32 = u as i32;
+  let last: i32 = u as i32;
   if (u >= 10 as u32) {
     w = w - 2;
     buf = buf.with(w, tbl[last * 2] as u8);
@@ -146,9 +146,9 @@ pub function int_to_string(n: i32): string {
 // a u64 ladder would be twenty comparisons, and the count loop here runs at
 // most ten times because it consumes two digits per step.
 pub function __int_to_string_u64(mag: i64, neg: i32): string {
-  var m: u64 = mag as u64;
-  var ndig: i32 = 1;
-  var probe: u64 = m;
+  let m: u64 = mag as u64;
+  let ndig: i32 = 1;
+  let probe: u64 = m;
   while (probe >= 100 as u64) {
     ndig = ndig + 2;
     probe = probe / (100 as u64);
@@ -156,21 +156,21 @@ pub function __int_to_string_u64(mag: i64, neg: i32): string {
   if (probe >= 10 as u64) {
     ndig = ndig + 1;
   }
-  var total: i32 = ndig;
+  let total: i32 = ndig;
   if (neg != 0) {
     total = total + 1;
   }
-  var buf: u8[] = __alloc_u8(total);
-  var tbl: string = __int_pair_table();
-  var w: i32 = total;
+  let buf: u8[] = __alloc_u8(total);
+  let tbl: string = __int_pair_table();
+  let w: i32 = total;
   while (m >= 100 as u64) {
-    var r: i32 = (m % (100 as u64)) as i32;
+    let r: i32 = (m % (100 as u64)) as i32;
     m = m / (100 as u64);
     w = w - 2;
     buf = buf.with(w, tbl[r * 2] as u8);
     buf = buf.with(w + 1, tbl[r * 2 + 1] as u8);
   }
-  var last: i32 = m as i32;
+  let last: i32 = m as i32;
   if (m >= 10 as u64) {
     w = w - 2;
     buf = buf.with(w, tbl[last * 2] as u8);
@@ -209,12 +209,12 @@ pub function parse_int_radix(s: string, base: i32): Option[i32] {
   if (base < 2 || base > 36) {
     return None;
   }
-  var n: i32 = s.len();
+  let n: i32 = s.len();
   if (n == 0) {
     return None;
   }
-  var neg: boolean = false;
-  var i: i32 = 0;
+  let neg: boolean = false;
+  let i: i32 = 0;
   if (s[0] == 45) {  // '-'
     neg = true;
     i = 1;
@@ -224,9 +224,9 @@ pub function parse_int_radix(s: string, base: i32): Option[i32] {
   if (i >= n) {  // sign without digits
     return None;
   }
-  var v: i32 = 0;
+  let v: i32 = 0;
   while (i < n) {
-    var d: i32 = __radix_digit(s[i] as i32);
+    let d: i32 = __radix_digit(s[i] as i32);
     if (d < 0 || d >= base) {
       return None;
     }
@@ -251,33 +251,33 @@ pub function int_to_string_radix(n: i32, base: i32): string {
   if (n == 0) {
     return "0";
   }
-  var neg: boolean = n < 0;
+  let neg: boolean = n < 0;
   // Use i64 magnitude so INT_MIN's negation doesn't overflow.
-  var mag: i64 = n as i64;
+  let mag: i64 = n as i64;
   if (neg) {
     mag = 0 - mag;
   }
   // Worst case is 32 binary digits + sign = 33; allocate slack.
-  var digits: u8[] = __alloc_u8(33);
-  var k: i32 = 0;
-  var b64: i64 = base as i64;
+  let digits: u8[] = __alloc_u8(33);
+  let k: i32 = 0;
+  let b64: i64 = base as i64;
   while (mag > 0 as i64) {
-    var d: i32 = (mag % b64) as i32;
+    let d: i32 = (mag % b64) as i32;
     digits = digits.with(k, __radix_char(d) as u8);
     k = k + 1;
     mag = mag / b64;
   }
-  var out_len: i32 = k;
+  let out_len: i32 = k;
   if (neg) {
     out_len = k + 1;
   }
-  var buf: u8[] = __alloc_u8(out_len);
-  var bi: i32 = 0;
+  let buf: u8[] = __alloc_u8(out_len);
+  let bi: i32 = 0;
   if (neg) {
     buf = buf.with(0, 45 as u8);  // '-'
     bi = 1;
   }
-  var j: i32 = k - 1;
+  let j: i32 = k - 1;
   while (j >= 0) {
     buf = buf.with(bi, digits[j]);
     bi = bi + 1;

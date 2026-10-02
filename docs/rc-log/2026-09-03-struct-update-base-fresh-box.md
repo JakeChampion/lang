@@ -9,7 +9,7 @@ un-overridden field into the new box with a retain, and then releases the base
 in the result.
 
 That is far stronger than the release needs, and unreachable for a builder
-function. `irlower.fn_sigs_for_borrow` returns a 40-field registry struct; a
+function. `fnsigs.fn_sigs_for_borrow` returns a 40-field registry struct; a
 `FERN_DBG_NPE` dump over the whole self-host shows **32 of its pointer fields
 refused at once**, because each is a call whose own callee threads a parameter,
 and four are locals shared between fields. The verdict is a single bit per
@@ -28,7 +28,7 @@ returnsNoParamEscape[name]`. Nothing else moves; the drop it gates is unchanged.
 
 Why the wider fact is enough, in one line: the drop is `is_unique`-gated, so a
 base something else still holds is only decremented, and a fresh box AT rc 1
-owns its pointer fields — otherwise the exit sweep of `var b = mk()` would
+owns its pointer fields — otherwise the exit sweep of `let b = mk()` would
 already over-release through the identical helper.
 
 ## Measured
@@ -41,8 +41,8 @@ string[], c: string }` with non-SSO payloads, 30 rounds,
 | shape | x86-64 before | x86-64 after | arm64 before | arm64 after |
 | --- | --- | --- | --- | --- |
 | `Sig { ...mk(4, seed), c: pad(seed, 5) }` | 1050/690, **19,680 B** | 1050/1050, **0** | 46,560 B | **24,480 B** |
-| `var b = mk(4, seed); Sig { ...b, c: … }` | 1050/1050, 0 | 0 | 24,480 B | 24,480 B |
-| `var s = mk(4, seed)` (no spread) | 870/870, 0 | 0 | 17,760 B | 17,760 B |
+| `let b = mk(4, seed); Sig { ...b, c: … }` | 1050/1050, 0 | 0 | 24,480 B | 24,480 B |
+| `let s = mk(4, seed)` (no spread) | 870/870, 0 | 0 | 17,760 B | 17,760 B |
 
 Alloc counts are identical across the change on every row: this is placement of
 releases, not of allocations. **Both spellings now read the same number on both

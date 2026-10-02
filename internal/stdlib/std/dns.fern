@@ -213,7 +213,7 @@ pub struct Message {
 // `query(id, name, qtype)` — a recursion-desired query for the records
 // of `name` of type `qtype`, class IN.
 pub function query(id: i32, name: string, qtype: i32): Message {
-  var qs: Question[] = [Question { name: name, qtype: qtype, qclass: class_in() }];
+  let qs: Question[] = [Question { name: name, qtype: qtype, qclass: class_in() }];
   return Message {
     id: id & 65535, response: false, opcode: 0, authoritative: false, truncated: false,
     recursion_desired: true, recursion_available: false, rcode: 0,
@@ -231,8 +231,8 @@ pub function udp_payload(): i32 {
 // additional section: owner the root, type OPT, the class carrying the UDP
 // payload size, no options.
 pub function with_edns(m: Message): Message {
-  var none: u8[] = [];
-  var opt: Record = Record { name: "", rtype: type_opt(), rclass: udp_payload(), ttl: 0, data: Raw(none) };
+  let none: u8[] = [];
+  let opt: Record = Record { name: "", rtype: type_opt(), rclass: udp_payload(), ttl: 0, data: Raw(none) };
   return Message { ...m, additional: m.additional.append(opt) };
 }
 
@@ -263,12 +263,12 @@ pub function rcode_name(rcode: i32): string {
 // ---- encoding ---------------------------------------------------------------
 
 function put16(b: u8[], v: i32): u8[] {
-  var out: u8[] = b.append((v >> 8 & 255) as u8);
+  let out: u8[] = b.append((v >> 8 & 255) as u8);
   return out.append((v & 255) as u8);
 }
 
 function put32(b: u8[], v: i32): u8[] {
-  var out: u8[] = put16(b, v >> 16 & 65535);
+  let out: u8[] = put16(b, v >> 16 & 65535);
   return put16(out, v & 65535);
 }
 
@@ -277,23 +277,23 @@ function put32(b: u8[], v: i32): u8[] {
 // (`a..b`), one over 63 bytes, or a name over 255 bytes on the wire
 // cannot be encoded.
 pub function encode_name(name: string): Result[u8[], DnsError] {
-  var out: u8[] = [];
-  var n: string = name;
+  let out: u8[] = [];
+  let n: string = name;
   if (n.ends_with(".")) {
     n = slice_unchecked(n, 0, n.len() - 1) + "";
   }
   if (n.len() == 0) {
     return Ok(out.append(0 as u8));
   }
-  var labels: string[] = n.split(".");
-  var i: i32 = 0;
+  let labels: string[] = n.split(".");
+  let i: i32 = 0;
   while (i < labels.len()) {
-    var l: string = labels[i];
+    let l: string = labels[i];
     if (l.len() == 0 || l.len() > 63) {
       return Err(Malformed);
     }
     out = out.append(l.len() as u8);
-    var j: i32 = 0;
+    let j: i32 = 0;
     while (j < l.len()) {
       out = out.append(l[j]);
       j = j + 1;
@@ -308,8 +308,8 @@ pub function encode_name(name: string): Result[u8[], DnsError] {
 }
 
 function encode_question(b: u8[], q: Question): Result[u8[], DnsError] {
-  var name: u8[] = encode_name(q.name)?;
-  var out: u8[] = b.concat(name);
+  let name: u8[] = encode_name(q.name)?;
+  let out: u8[] = b.concat(name);
   out = put16(out, q.qtype);
   return Ok(put16(out, q.qclass));
 }
@@ -338,17 +338,17 @@ function encode_rdata(d: RData): Result[u8[], DnsError] {
       return Ok(bytes);
     }
   }
-  var none: u8[] = [];
+  let none: u8[] = [];
   return Ok(none);
 }
 
 function encode_record(b: u8[], r: Record): Result[u8[], DnsError] {
-  var name: u8[] = encode_name(r.name)?;
-  var data: u8[] = encode_rdata(r.data)?;
+  let name: u8[] = encode_name(r.name)?;
+  let data: u8[] = encode_rdata(r.data)?;
   if (data.len() > 65535) {
     return Err(Malformed);
   }
-  var out: u8[] = b.concat(name);
+  let out: u8[] = b.concat(name);
   out = put16(out, r.rtype);
   out = put16(out, r.rclass);
   out = put32(out, r.ttl);
@@ -357,8 +357,8 @@ function encode_record(b: u8[], r: Record): Result[u8[], DnsError] {
 }
 
 function encode_records(b: u8[], rs: Record[]): Result[u8[], DnsError] {
-  var out: u8[] = b;
-  var i: i32 = 0;
+  let out: u8[] = b;
+  let i: i32 = 0;
   while (i < rs.len()) {
     out = encode_record(out, rs[i])?;
     i = i + 1;
@@ -374,14 +374,14 @@ pub function encode(m: Message): Result[u8[], DnsError] {
   if (!sections_fit(m)) {
     return Err(Malformed);
   }
-  var out: u8[] = [];
+  let out: u8[] = [];
   out = put16(out, m.id & 65535);
   out = put16(out, header_flags(m));
   out = put16(out, m.questions.len());
   out = put16(out, m.answers.len());
   out = put16(out, m.authority.len());
   out = put16(out, m.additional.len());
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < m.questions.len()) {
     out = encode_question(out, m.questions[i])?;
     i = i + 1;
@@ -397,7 +397,7 @@ function sections_fit(m: Message): boolean {
 
 // The second header word: QR, opcode, AA, TC, RD, RA and the rcode.
 function header_flags(m: Message): i32 {
-  var flags: i32 = (m.opcode & 15) << 11 | m.rcode & 15;
+  let flags: i32 = (m.opcode & 15) << 11 | m.rcode & 15;
   if (m.response) {
     flags = flags | 32768;
   }
@@ -435,13 +435,13 @@ pub struct NameAt { name: string, next: i32 }
 // bytes is `Malformed`; `next` is the offset after the labels or after
 // the first pointer, which is where the message continues.
 pub function decode_name(msg: u8[], pos: i32): Result[NameAt, DnsError] {
-  var out: string = "";
-  var total: i32 = 0;
-  var p: i32 = pos;
-  var next: i32 = -1;
-  var hops: i32 = 0;
+  let out: string = "";
+  let total: i32 = 0;
+  let p: i32 = pos;
+  let next: i32 = -1;
+  let hops: i32 = 0;
   while (p < msg.len()) {
-    var l: i32 = msg[p] as i32;
+    let l: i32 = msg[p] as i32;
     if (l == 0) {
       return Ok(NameAt { name: out, next: first_of(next, p + 1) });
     }
@@ -484,7 +484,7 @@ function pointer_target(msg: u8[], p: i32, hops: i32): Result[i32, DnsError] {
   if (p + 1 >= msg.len()) {
     return Err(Malformed);
   }
-  var target: i32 = (msg[p] as i32 & 63) << 8 | msg[p + 1] as i32;
+  let target: i32 = (msg[p] as i32 & 63) << 8 | msg[p + 1] as i32;
   if (target >= p || hops > 127) {
     return Err(Malformed);
   }
@@ -495,8 +495,8 @@ function pointer_target(msg: u8[], p: i32, hops: i32): Result[i32, DnsError] {
 // None when those bytes are not well-formed UTF-8: a name is text, and
 // the wire is the boundary where that is checked.
 function join_label(out: string, msg: u8[], at: i32, len: i32): Option[string] {
-  var label: u8[] = [];
-  var k: i32 = 0;
+  let label: u8[] = [];
+  let k: i32 = 0;
   while (k < len) {
     label = label.append(msg[at + k]);
     k = k + 1;
@@ -518,19 +518,19 @@ function join_label(out: string, msg: u8[], at: i32, len: i32): Option[string] {
 struct QuestionAt { q: Question, next: i32 }
 
 function decode_question(msg: u8[], pos: i32): Result[QuestionAt, DnsError] {
-  var n: NameAt = decode_name(msg, pos)?;
+  let n: NameAt = decode_name(msg, pos)?;
   if (n.next + 4 > msg.len()) {
     return Err(Malformed);
   }
-  var q: Question = Question { name: n.name, qtype: be16(msg, n.next), qclass: be16(msg, n.next + 2) };
+  let q: Question = Question { name: n.name, qtype: be16(msg, n.next), qclass: be16(msg, n.next + 2) };
   return Ok(QuestionAt { q: q, next: n.next + 4 });
 }
 
 struct RecordAt { r: Record, next: i32 }
 
 function decode_rdata(msg: u8[], rtype: i32, rclass: i32, at: i32, rdlen: i32): Result[RData, DnsError] {
-  var raw: u8[] = [];
-  var k: i32 = 0;
+  let raw: u8[] = [];
+  let k: i32 = 0;
   while (k < rdlen) {
     raw = raw.append(msg[at + k]);
     k = k + 1;
@@ -566,7 +566,7 @@ function decode_address_rdata(rtype: i32, raw: u8[]): Result[RData, DnsError] {
 // A CNAME or PTR record's name, which may point back into the message
 // but has to end within the record's data.
 function decode_name_rdata(msg: u8[], rtype: i32, at: i32, rdlen: i32): Result[RData, DnsError] {
-  var n: NameAt = decode_name(msg, at)?;
+  let n: NameAt = decode_name(msg, at)?;
   if (n.next > at + rdlen) {
     return Err(Malformed);
   }
@@ -577,32 +577,32 @@ function decode_name_rdata(msg: u8[], rtype: i32, at: i32, rdlen: i32): Result[R
 }
 
 function decode_record(msg: u8[], pos: i32): Result[RecordAt, DnsError] {
-  var n: NameAt = decode_name(msg, pos)?;
-  var p: i32 = n.next;
+  let n: NameAt = decode_name(msg, pos)?;
+  let p: i32 = n.next;
   if (p + 10 > msg.len()) {
     return Err(Malformed);
   }
-  var rtype: i32 = be16(msg, p);
-  var rclass: i32 = be16(msg, p + 2);
-  var ttl: i32 = be32(msg, p + 4);
-  var rdlen: i32 = be16(msg, p + 8);
+  let rtype: i32 = be16(msg, p);
+  let rclass: i32 = be16(msg, p + 2);
+  let ttl: i32 = be32(msg, p + 4);
+  let rdlen: i32 = be16(msg, p + 8);
   p = p + 10;
   if (p + rdlen > msg.len()) {
     return Err(Malformed);
   }
-  var data: RData = decode_rdata(msg, rtype, rclass, p, rdlen)?;
-  var r: Record = Record { name: n.name, rtype: rtype, rclass: rclass, ttl: ttl, data: data };
+  let data: RData = decode_rdata(msg, rtype, rclass, p, rdlen)?;
+  let r: Record = Record { name: n.name, rtype: rtype, rclass: rclass, ttl: ttl, data: data };
   return Ok(RecordAt { r: r, next: p + rdlen });
 }
 
 struct RecordsAt { rs: Record[], next: i32 }
 
 function decode_records(msg: u8[], pos: i32, count: i32): Result[RecordsAt, DnsError] {
-  var out: Record[] = [];
-  var p: i32 = pos;
-  var i: i32 = 0;
+  let out: Record[] = [];
+  let p: i32 = pos;
+  let i: i32 = 0;
   while (i < count) {
-    var r: RecordAt = decode_record(msg, p)?;
+    let r: RecordAt = decode_record(msg, p)?;
     out = out.append(r.r);
     p = r.next;
     i = i + 1;
@@ -617,23 +617,23 @@ pub function decode(msg: u8[]): Result[Message, DnsError] {
   if (msg.len() < 12) {
     return Err(Malformed);
   }
-  var flags: i32 = be16(msg, 2);
-  var qd: i32 = be16(msg, 4);
-  var an: i32 = be16(msg, 6);
-  var ns: i32 = be16(msg, 8);
-  var ar: i32 = be16(msg, 10);
-  var p: i32 = 12;
-  var qs: Question[] = [];
-  var i: i32 = 0;
+  let flags: i32 = be16(msg, 2);
+  let qd: i32 = be16(msg, 4);
+  let an: i32 = be16(msg, 6);
+  let ns: i32 = be16(msg, 8);
+  let ar: i32 = be16(msg, 10);
+  let p: i32 = 12;
+  let qs: Question[] = [];
+  let i: i32 = 0;
   while (i < qd) {
-    var q: QuestionAt = decode_question(msg, p)?;
+    let q: QuestionAt = decode_question(msg, p)?;
     qs = qs.append(q.q);
     p = q.next;
     i = i + 1;
   }
-  var answers: RecordsAt = decode_records(msg, p, an)?;
-  var authority: RecordsAt = decode_records(msg, answers.next, ns)?;
-  var additional: RecordsAt = decode_records(msg, authority.next, ar)?;
+  let answers: RecordsAt = decode_records(msg, p, an)?;
+  let authority: RecordsAt = decode_records(msg, answers.next, ns)?;
+  let additional: RecordsAt = decode_records(msg, authority.next, ar)?;
   return Ok(Message {
     id: be16(msg, 0),
     response: (flags & 32768) != 0,
@@ -670,7 +670,7 @@ pub function (m: Message) answers_question(q: Question): boolean {
   if (m.questions.len() != 1) {
     return false;
   }
-  var mq: Question = m.questions[0];
+  let mq: Question = m.questions[0];
   return mq.qtype == q.qtype && mq.qclass == q.qclass && names_equal(mq.name, q.name);
 }
 
@@ -683,17 +683,17 @@ pub struct Answer { canonical: string, records: Record[] }
 // that has them. A chain longer than the section is cut off where it
 // loops.
 pub function records_for(m: Message, name: string, rtype: i32): Answer {
-  var cur: string = name;
-  var hops: i32 = 0;
+  let cur: string = name;
+  let hops: i32 = 0;
   while (hops <= m.answers.len()) {
-    var at: OwnerScan = scan_owner(m, cur, rtype);
+    let at: OwnerScan = scan_owner(m, cur, rtype);
     if (at.found.len() > 0 || at.alias.len() == 0) {
       return Answer { canonical: cur, records: at.found };
     }
     cur = at.alias;
     hops = hops + 1;
   }
-  var none: Record[] = [];
+  let none: Record[] = [];
   return Answer { canonical: cur, records: none };
 }
 
@@ -702,11 +702,11 @@ pub function records_for(m: Message, name: string, rtype: i32): Answer {
 struct OwnerScan { found: Record[], alias: string }
 
 function scan_owner(m: Message, owner: string, rtype: i32): OwnerScan {
-  var found: Record[] = [];
-  var alias: string = "";
-  var i: i32 = 0;
+  let found: Record[] = [];
+  let alias: string = "";
+  let i: i32 = 0;
   while (i < m.answers.len()) {
-    var r: Record = m.answers[i];
+    let r: Record = m.answers[i];
     i = i + 1;
     if (r.rclass != class_in() || !names_equal(r.name, owner)) {
       continue;
@@ -735,8 +735,8 @@ function cname_target(d: RData): string {
 // `addresses_of(records)` — the addresses the A and AAAA records among
 // `records` carry, in their order.
 pub function addresses_of(records: Record[]): net.IpAddr[] {
-  var out: net.IpAddr[] = [];
-  var i: i32 = 0;
+  let out: net.IpAddr[] = [];
+  let i: i32 = 0;
   while (i < records.len()) {
     match (records[i].data) {
       A(ip) => {
@@ -763,11 +763,11 @@ pub struct HostsEntry { ip: net.IpAddr, names: string[] }
 // `#` starts a comment; a line whose first field is not an address of
 // either family, or that names nothing, is skipped.
 pub function parse_hosts(contents: string): HostsEntry[] {
-  var out: HostsEntry[] = [];
-  var lines: string[] = contents.lines();
-  var i: i32 = 0;
+  let out: HostsEntry[] = [];
+  let lines: string[] = contents.lines();
+  let i: i32 = 0;
   while (i < lines.len()) {
-    var f: string[] = strip_comment(lines[i], "#").fields();
+    let f: string[] = strip_comment(lines[i], "#").fields();
     i = i + 1;
     if (f.len() < 2) {
       continue;
@@ -786,8 +786,8 @@ pub function parse_hosts(contents: string): HostsEntry[] {
 // name or alias is `name`, compared without regard to ASCII case, in file
 // order; empty when no line names it.
 pub function hosts_lookup(entries: HostsEntry[], name: string): net.IpAddr[] {
-  var out: net.IpAddr[] = [];
-  var i: i32 = 0;
+  let out: net.IpAddr[] = [];
+  let i: i32 = 0;
   while (i < entries.len()) {
     if (entry_names(entries[i], name)) {
       out = out.append(entries[i].ip);
@@ -801,7 +801,7 @@ pub function hosts_lookup(entries: HostsEntry[], name: string): net.IpAddr[] {
 // naming `name`, as getaddrinfo's AI_CANONNAME reads it from the files
 // backend.
 pub function hosts_canonical(entries: HostsEntry[], name: string): Option[string] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < entries.len()) {
     if (entry_names(entries[i], name)) {
       return Some(entries[i].names[0]);
@@ -812,7 +812,7 @@ pub function hosts_canonical(entries: HostsEntry[], name: string): Option[string
 }
 
 function entry_names(e: HostsEntry, name: string): boolean {
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < e.names.len()) {
     if (names_equal(e.names[j], name)) {
       return true;
@@ -824,7 +824,7 @@ function entry_names(e: HostsEntry, name: string): boolean {
 
 // The line up to its first `marker`, if any.
 function strip_comment(line: string, marker: string): string {
-  var h: i32 = line.index_of(marker);
+  let h: i32 = line.index_of(marker);
   if (h < 0) {
     return line;
   }
@@ -856,7 +856,7 @@ pub function dns_port(): i32 {
 // nameserver, the search list from `host`'s domain, `ndots` 1, a 5 s
 // timeout, 2 attempts, no rotation.
 pub function resolv_defaults(host: string): ResolvConf {
-  var ns: net.SocketAddr[] = [net.socket_addr(net.ipv4_loopback(), dns_port())];
+  let ns: net.SocketAddr[] = [net.socket_addr(net.ipv4_loopback(), dns_port())];
   return ResolvConf { nameservers: ns, search: host_domain(host), ndots: 1, timeout_ms: 5000, attempts: 2, rotate: false };
 }
 
@@ -869,13 +869,13 @@ pub function resolv_defaults(host: string): ResolvConf {
 // that is not an address, or that carries an IPv6 zone, is skipped, and
 // only the first three count.
 pub function parse_resolv_conf(contents: string, host: string): ResolvConf {
-  var rc: ResolvConf = resolv_defaults(host);
-  var ns: net.SocketAddr[] = [];
-  var have_search: boolean = false;
-  var lines: string[] = contents.lines();
-  var i: i32 = 0;
+  let rc: ResolvConf = resolv_defaults(host);
+  let ns: net.SocketAddr[] = [];
+  let have_search: boolean = false;
+  let lines: string[] = contents.lines();
+  let i: i32 = 0;
   while (i < lines.len()) {
-    var f: string[] = strip_comment(strip_comment(lines[i], "#"), ";").fields();
+    let f: string[] = strip_comment(strip_comment(lines[i], "#"), ";").fields();
     i = i + 1;
     if (f.len() < 2) {
       continue;
@@ -920,14 +920,14 @@ function with_nameserver(ns: net.SocketAddr[], text: string): net.SocketAddr[] {
 // takes all; a trailing dot is dropped and an entry that is only a dot is
 // the root and contributes nothing.
 function search_domains(f: string[]): string[] {
-  var out: string[] = [];
-  var n: i32 = f.len();
+  let out: string[] = [];
+  let n: i32 = f.len();
   if (f[0] == "domain") {
     n = 2;
   }
-  var i: i32 = 1;
+  let i: i32 = 1;
   while (i < n) {
-    var d: string = f[i];
+    let d: string = f[i];
     if (d.ends_with(".")) {
       d = slice_unchecked(d, 0, d.len() - 1) + "";
     }
@@ -940,10 +940,10 @@ function search_domains(f: string[]): string[] {
 }
 
 function parse_options(f: string[], rc0: ResolvConf): ResolvConf {
-  var rc: ResolvConf = rc0;
-  var i: i32 = 1;
+  let rc: ResolvConf = rc0;
+  let i: i32 = 1;
   while (i < f.len()) {
-    var o: string = f[i];
+    let o: string = f[i];
     i = i + 1;
     if (o == "rotate") {
       rc = ResolvConf { ...rc, rotate: true };
@@ -981,8 +981,8 @@ function option_value(o: string, at: i32, lo: i32, hi: i32, current: i32): i32 {
 // The search list glibc derives from the local hostname: everything after
 // its first dot, or nothing.
 function host_domain(host: string): string[] {
-  var out: string[] = [];
-  var dot: i32 = host.index_of(".");
+  let out: string[] = [];
+  let dot: i32 = host.index_of(".");
   if (dot < 0 || dot + 1 >= host.len()) {
     return out;
   }
@@ -1006,20 +1006,20 @@ pub struct SearchPlan { as_is: string, suffixes: string[], leads: boolean }
 // search domain; one with fewer tries the search domains first and the
 // as-is name after them.
 pub function search_plan(name: string, rc: ResolvConf): SearchPlan {
-  var none: string[] = [];
+  let none: string[] = [];
   if (name.ends_with(".")) {
     return SearchPlan { as_is: strip_root(name), suffixes: none, leads: true };
   }
-  var dots: i32 = 0;
-  var i: i32 = 0;
+  let dots: i32 = 0;
+  let i: i32 = 0;
   while (i < name.len()) {
     if (name[i] == 46) {
       dots = dots + 1;
     }
     i = i + 1;
   }
-  var sfx: string[] = [];
-  var j: i32 = 0;
+  let sfx: string[] = [];
+  let j: i32 = 0;
   while (j < rc.search.len()) {
     sfx = sfx.append(name + "." + rc.search[j]);
     j = j + 1;
@@ -1030,12 +1030,12 @@ pub function search_plan(name: string, rc: ResolvConf): SearchPlan {
 // `search_candidates(name, rc)` — the plan flattened into the order the
 // names are asked in.
 pub function search_candidates(name: string, rc: ResolvConf): string[] {
-  var p: SearchPlan = search_plan(name, rc);
-  var out: string[] = [];
+  let p: SearchPlan = search_plan(name, rc);
+  let out: string[] = [];
   if (p.leads) {
     out = out.append(p.as_is);
   }
-  var j: i32 = 0;
+  let j: i32 = 0;
   while (j < p.suffixes.len()) {
     out = out.append(p.suffixes[j]);
     j = j + 1;
@@ -1055,8 +1055,8 @@ pub function new_id(): i32 {
 }
 
 function zero_bytes(n: i32): u8[] {
-  var out: u8[] = [];
-  var i: i32 = 0;
+  let out: u8[] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append(0 as u8);
     i = i + 1;
@@ -1071,25 +1071,25 @@ function now_ms(): i64 {
 // Whether `fd` is readable within `wait_ms`: `first_readable` for one
 // socket, as the TCP reads use it.
 function readable_within(fd: i32, wait_ms: i32): boolean {
-  var ms: i32 = wait_ms;
+  let ms: i32 = wait_ms;
   if (ms < 1) {
     ms = 1;
   }
-  var ns_per_ms: i64 = 1000000i64;
-  var start: i64 = monotonic_ns();
-  var tok: i32 = tcp_pollable(fd);
-  var timer: i32 = wasm_timer_pollable(ms as i64 * ns_per_ms);
-  var pollset: i32[] = [tok, timer];
-  var ready: i32 = poll(pollset, ms);
-  var dtimer: i32 = wasm_pollable_drop(timer);
-  var dtok: i32 = wasm_pollable_drop(tok);
+  let ns_per_ms: i64 = 1000000i64;
+  let start: i64 = monotonic_ns();
+  let tok: i32 = tcp_pollable(fd);
+  let timer: i32 = wasm_timer_pollable(ms as i64 * ns_per_ms);
+  let pollset: i32[] = [tok, timer];
+  let ready: i32 = poll(pollset, ms);
+  let dtimer: i32 = wasm_pollable_drop(timer);
+  let dtok: i32 = wasm_pollable_drop(tok);
   if (ready == 0) {
     return true;
   }
   if (ready == 1) {
     return false;
   }
-  var waited: i64 = monotonic_ns() - start;
+  let waited: i64 = monotonic_ns() - start;
   return waited * 2i64 < ms as i64 * ns_per_ms;
 }
 
@@ -1116,19 +1116,19 @@ pub function exchange(ns: net.SocketAddr, q: Message, timeout_ms: i32): Result[M
 // together, so the queries cost one round trip between them rather
 // than one each. The answers are parallel to `qs`.
 pub function exchange_many(ns: net.SocketAddr, qs: Message[], timeout_ms: i32): Result[Message, DnsError][] {
-  var deadline: i64 = now_ms() + timeout_ms as i64;
-  var slots: Slot[] = [];
-  var i: i32 = 0;
+  let deadline: i64 = now_ms() + timeout_ms as i64;
+  let slots: Slot[] = [];
+  let i: i32 = 0;
   while (i < qs.len()) {
     slots = slots.append(opened_slot(ns, qs[i]));
     i = i + 1;
   }
   slots = await_udp_replies(slots, deadline);
-  var out: Result[Message, DnsError][] = [];
+  let out: Result[Message, DnsError][] = [];
   i = 0;
   while (i < slots.len()) {
     if (slots[i].sock >= 0) {
-      var closed: Result[void, net.NetError] = net.close(slots[i].sock);
+      let closed: Result[void, net.NetError] = net.close(slots[i].sock);
     }
     out = out.append(slot_result(ns, slots[i], deadline));
     i = i + 1;
@@ -1158,7 +1158,7 @@ function waiting(s: Slot): boolean {
 
 // A slot with `q` sent to `ns`, or one carrying the failure to send it.
 function opened_slot(ns: net.SocketAddr, q: Message): Slot {
-  var bytes: u8[] = [];
+  let bytes: u8[] = [];
   match (encode(with_edns(q))) {
     Ok(b) => {
       bytes = b;
@@ -1197,7 +1197,7 @@ function slot_result(ns: net.SocketAddr, s: Slot, deadline: i64): Result[Message
 
 // A datagram socket of the nameserver's family with `bytes` sent to it.
 function send_udp(ns: net.SocketAddr, bytes: u8[]): Result[i32, DnsError] {
-  var sock: i32 = 0;
+  let sock: i32 = 0;
   match (net.udp_socket(local_for(ns))) {
     Ok(s) => {
       sock = s;
@@ -1211,7 +1211,7 @@ function send_udp(ns: net.SocketAddr, bytes: u8[]): Result[i32, DnsError] {
       return Ok(sock);
     },
     Err(e) => {
-      var closed: Result[void, net.NetError] = net.close(sock);
+      let closed: Result[void, net.NetError] = net.close(sock);
       return Err(Socket(e));
     }
   }
@@ -1220,8 +1220,8 @@ function send_udp(ns: net.SocketAddr, bytes: u8[]): Result[i32, DnsError] {
 
 // The indexes of the slots still waiting.
 function pending_slots(slots: Slot[]): i32[] {
-  var out: i32[] = [];
-  var i: i32 = 0;
+  let out: i32[] = [];
+  let i: i32 = 0;
   while (i < slots.len()) {
     if (waiting(slots[i])) {
       out = out.append(i);
@@ -1238,11 +1238,11 @@ function pending_slots(slots: Slot[]): i32[] {
 // (the interpreter) the sockets are made non-blocking and tried in turn
 // instead, a millisecond's pause between rounds.
 function await_udp_replies(slots: Slot[], deadline: i64): Slot[] {
-  var out: Slot[] = slots;
-  var pending: i32[] = pending_slots(out);
-  var left: i32 = (deadline - now_ms()) as i32;
+  let out: Slot[] = slots;
+  let pending: i32[] = pending_slots(out);
+  let left: i32 = (deadline - now_ms()) as i32;
   while (pending.len() > 0 && left > 0) {
-    var ready: i32 = first_readable(out, pending, left);
+    let ready: i32 = first_readable(out, pending, left);
     if (ready == 0 - 1) {
       return out;
     }
@@ -1282,11 +1282,11 @@ function taken(slots: Slot[], k: i32): Slot[] {
 // non-blocking and tried, a round that found nothing pausing a
 // millisecond so the wait does not spin.
 function sweep_replies(slots: Slot[], pending: i32[]): Slot[] {
-  var out: Slot[] = slots;
-  var i: i32 = 0;
+  let out: Slot[] = slots;
+  let i: i32 = 0;
   while (i < pending.len()) {
-    var k: i32 = pending[i];
-    var nb: Result[void, net.NetError] = net.set_nonblocking(out[k].sock, true);
+    let k: i32 = pending[i];
+    let nb: Result[void, net.NetError] = net.set_nonblocking(out[k].sock, true);
     out = taken(out, k);
     i = i + 1;
   }
@@ -1298,7 +1298,7 @@ function sweep_replies(slots: Slot[], pending: i32[]): Slot[] {
 
 // The socket closed, and -1 for the slot that held it.
 function closed_slot(sock: i32): i32 {
-  var closed: Result[void, net.NetError] = net.close(sock);
+  let closed: Result[void, net.NetError] = net.close(sock);
   return 0 - 1;
 }
 
@@ -1310,24 +1310,24 @@ function closed_slot(sock: i32): i32 {
 // interpreter's poll is a stub that answers -1 at once, which is told
 // from a native timeout by the time that passed.
 function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
-  var ms: i32 = wait_ms;
+  let ms: i32 = wait_ms;
   if (ms < 1) {
     ms = 1;
   }
-  var ns_per_ms: i64 = 1000000i64;
-  var start: i64 = monotonic_ns();
-  var pollset: i32[] = [];
-  var i: i32 = 0;
+  let ns_per_ms: i64 = 1000000i64;
+  let start: i64 = monotonic_ns();
+  let pollset: i32[] = [];
+  let i: i32 = 0;
   while (i < pending.len()) {
     pollset = pollset.append(tcp_pollable(slots[pending[i]].sock));
     i = i + 1;
   }
-  var timer: i32 = wasm_timer_pollable(ms as i64 * ns_per_ms);
+  let timer: i32 = wasm_timer_pollable(ms as i64 * ns_per_ms);
   pollset = pollset.append(timer);
-  var ready: i32 = poll(pollset, ms);
+  let ready: i32 = poll(pollset, ms);
   i = 0;
   while (i < pollset.len()) {
-    var dropped: i32 = wasm_pollable_drop(pollset[i]);
+    let dropped: i32 = wasm_pollable_drop(pollset[i]);
     i = i + 1;
   }
   if (ready >= 0 && ready < pending.len()) {
@@ -1336,7 +1336,7 @@ function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
   if (ready == pending.len()) {
     return 0 - 1;
   }
-  var waited: i64 = monotonic_ns() - start;
+  let waited: i64 = monotonic_ns() - start;
   if (waited * 2i64 >= ms as i64 * ns_per_ms) {
     return 0 - 1;
   }
@@ -1346,8 +1346,8 @@ function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
 // One datagram off `sock`: the reply to `q` when it is one, `None` when
 // it is something else or nothing was queued after all.
 function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError] {
-  var buf: u8[] = zero_bytes(udp_payload());
-  var n: i32 = 0;
+  let buf: u8[] = zero_bytes(udp_payload());
+  let n: i32 = 0;
   match (net.recv_from(sock, buf)) {
     Ok(got) => {
       n = got.0;
@@ -1381,13 +1381,13 @@ function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError] {
 // behind a two-byte length, the reply read until its own length is
 // satisfied, each read awaited up to the timeout.
 pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout_ms: i32): Result[Message, DnsError] {
-  var bytes: u8[] = encode(q)?;
-  var framed: u8[] = [];
+  let bytes: u8[] = encode(q)?;
+  let framed: u8[] = [];
   framed = put16(framed, bytes.len());
-  var sock: i32 = send_tcp(ns, framed.concat(bytes))?;
-  var got: Result[u8[], DnsError] = read_framed(sock, now_ms() + timeout_ms as i64);
+  let sock: i32 = send_tcp(ns, framed.concat(bytes))?;
+  let got: Result[u8[], DnsError] = read_framed(sock, now_ms() + timeout_ms as i64);
   tcp_close(sock);
-  var reply: Message = decode(got?)?;
+  let reply: Message = decode(got?)?;
   if (reply.id != q.id || !reply.response || !reply.answers_question(q.questions[0])) {
     return Err(Malformed);
   }
@@ -1396,7 +1396,7 @@ pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout_ms: i32): Resu
 
 // A connection to the nameserver with `framed` written to it.
 function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError] {
-  var sock: i32 = 0;
+  let sock: i32 = 0;
   match (net.connect(ns)) {
     Ok(s) => {
       sock = s;
@@ -1405,11 +1405,11 @@ function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError] {
       return Err(Socket(e));
     }
   }
-  var remaining: u8[] = framed;
+  let remaining: u8[] = framed;
   while (remaining.len() > 0) {
-    var sent: i32 = tcp_send_bytes(sock, remaining);
+    let sent: i32 = tcp_send_bytes(sock, remaining);
     if (sent < 0) {
-      var failure: net.NetError = net.error_from_errno(sent);
+      let failure: net.NetError = net.error_from_errno(sent);
       if (!failure.eq(net.Interrupted)) {
         tcp_close(sock);
         return Err(Socket(failure));
@@ -1432,14 +1432,14 @@ function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError] {
 // to `deadline`: `NoReply` when it passes, `Malformed` when the peer
 // closes short of the length.
 function read_framed(sock: i32, deadline: i64): Result[u8[], DnsError] {
-  var buf: u8[] = [];
-  var want: i32 = -1;
+  let buf: u8[] = [];
+  let want: i32 = -1;
   while (want < 0 || buf.len() < want) {
-    var left: i32 = (deadline - now_ms()) as i32;
+    let left: i32 = (deadline - now_ms()) as i32;
     if (left <= 0 || !readable_within(sock, left)) {
       return Err(NoReply);
     }
-    var chunk: u8[] = tcp_recv(sock, 4096);
+    let chunk: u8[] = tcp_recv(sock, 4096);
     if (chunk.len() == 0) {
       return Err(Malformed);
     }
@@ -1466,21 +1466,21 @@ pub function ask(conf: ResolvConf, q: Message): Result[Message, DnsError] {
 // server's answer to one is kept while the others go on to the next.
 // The answers are parallel to `qs`.
 pub function ask_many(conf: ResolvConf, qs: Message[]): Result[Message, DnsError][] {
-  var n: i32 = conf.nameservers.len();
-  var asked: Asked[] = [];
-  var i: i32 = 0;
+  let n: i32 = conf.nameservers.len();
+  let asked: Asked[] = [];
+  let i: i32 = 0;
   while (i < qs.len()) {
     asked = asked.append(Asked { reply: None, tally: Tally { servfail: false, refused: false, silent: false, last: NoNameserver } });
     i = i + 1;
   }
   if (n > 0) {
-    var start: i32 = 0;
+    let start: i32 = 0;
     if (conf.rotate) {
       start = (random_i32() & 2147483647) % n;
     }
-    var round: i32 = 0;
+    let round: i32 = 0;
     while (round < conf.attempts) {
-      var k: i32 = 0;
+      let k: i32 = 0;
       while (k < n) {
         asked = ask_server(conf.nameservers[(start + k) % n], qs, asked, conf.timeout_ms);
         k = k + 1;
@@ -1488,7 +1488,7 @@ pub function ask_many(conf: ResolvConf, qs: Message[]): Result[Message, DnsError
       round = round + 1;
     }
   }
-  var out: Result[Message, DnsError][] = [];
+  let out: Result[Message, DnsError][] = [];
   i = 0;
   while (i < asked.len()) {
     out = out.append(asked_result(asked[i]));
@@ -1527,9 +1527,9 @@ function unanswered(a: Asked): boolean {
 
 // The unanswered queries put to one server, their replies noted.
 function ask_server(ns: net.SocketAddr, qs: Message[], asked: Asked[], timeout_ms: i32): Asked[] {
-  var open: i32[] = [];
-  var open_qs: Message[] = [];
-  var i: i32 = 0;
+  let open: i32[] = [];
+  let open_qs: Message[] = [];
+  let i: i32 = 0;
   while (i < asked.len()) {
     if (unanswered(asked[i])) {
       open = open.append(i);
@@ -1540,8 +1540,8 @@ function ask_server(ns: net.SocketAddr, qs: Message[], asked: Asked[], timeout_m
   if (open.len() == 0) {
     return asked;
   }
-  var replies: Result[Message, DnsError][] = exchange_many(ns, open_qs, timeout_ms);
-  var out: Asked[] = asked;
+  let replies: Result[Message, DnsError][] = exchange_many(ns, open_qs, timeout_ms);
+  let out: Asked[] = asked;
   i = 0;
   while (i < open.len()) {
     out = out.with(open[i], noted(out[open[i]], replies[i]));
@@ -1624,7 +1624,7 @@ pub function answer_records(reply: Message, qname: string, rtype: i32): Result[A
   if (reply.rcode != rcode_ok()) {
     return Err(Malformed);
   }
-  var a: Answer = records_for(reply, qname, rtype);
+  let a: Answer = records_for(reply, qname, rtype);
   if (a.records.len() == 0) {
     return Err(NoData);
   }
@@ -1646,8 +1646,8 @@ pub function lookup_records_with(conf: ResolvConf, name: string, rtype: i32, ask
 // nothing, the as-is query's failure is reported when it led, else a
 // remembered `ServerFailure`, else the last failure.
 pub function search_with(plan: SearchPlan, asker: (string) => Result[Answer, DnsError]): Result[Answer, DnsError] {
-  var lead_failed: boolean = false;
-  var lead_err: DnsError = NoSuchName;
+  let lead_failed: boolean = false;
+  let lead_err: DnsError = NoSuchName;
   if (plan.leads) {
     match (asker(plan.as_is)) {
       Ok(a) => {
@@ -1659,7 +1659,7 @@ pub function search_with(plan: SearchPlan, asker: (string) => Result[Answer, Dns
       }
     }
   }
-  var sfx: Suffixes = search_suffixes(plan.suffixes, asker);
+  let sfx: Suffixes = search_suffixes(plan.suffixes, asker);
   match (sfx.answer) {
     Some(a) => {
       return Ok(a);
@@ -1669,7 +1669,7 @@ pub function search_with(plan: SearchPlan, asker: (string) => Result[Answer, Dns
   if (sfx.refused) {
     return Err(Refused);
   }
-  var last: DnsError = sfx.last;
+  let last: DnsError = sfx.last;
   if (!plan.leads) {
     match (asker(plan.as_is)) {
       Ok(a) => {
@@ -1701,8 +1701,8 @@ function search_failure(lead_failed: boolean, lead_err: DnsError, servfail: bool
 struct Suffixes { answer: Option[Answer], refused: boolean, servfail: boolean, last: DnsError }
 
 function search_suffixes(suffixes: string[], asker: (string) => Result[Answer, DnsError]): Suffixes {
-  var out: Suffixes = Suffixes { answer: None, refused: false, servfail: false, last: NoSuchName };
-  var i: i32 = 0;
+  let out: Suffixes = Suffixes { answer: None, refused: false, servfail: false, last: NoSuchName };
+  let i: i32 = 0;
   while (i < suffixes.len()) {
     match (asker(suffixes[i])) {
       Ok(a) => {
@@ -1764,19 +1764,19 @@ pub function lookup_records(conf: ResolvConf, name: string, rtype: i32): Result[
 // One query of the walk: `qname` put to the nameservers and its reply
 // read for the records of `rtype`.
 function ask_one(conf: ResolvConf, qname: string, rtype: i32): Result[Answer, DnsError] {
-  var reply: Message = ask(conf, query(new_id(), qname, rtype))?;
+  let reply: Message = ask(conf, query(new_id(), qname, rtype))?;
   return answer_records(reply, qname, rtype);
 }
 
 // `lookup_a(conf, name)` — the IPv4 addresses of `name`.
 pub function lookup_a(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
-  var a: Answer = lookup_records(conf, name, type_a())?;
+  let a: Answer = lookup_records(conf, name, type_a())?;
   return Ok(addresses_of(a.records));
 }
 
 // `lookup_aaaa(conf, name)` — the IPv6 addresses of `name`.
 pub function lookup_aaaa(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
-  var a: Answer = lookup_records(conf, name, type_aaaa())?;
+  let a: Answer = lookup_records(conf, name, type_aaaa())?;
   return Ok(addresses_of(a.records));
 }
 
@@ -1784,7 +1784,7 @@ pub function lookup_aaaa(conf: ResolvConf, name: string): Result[net.IpAddr[], D
 // its CNAME chain is followed, as getaddrinfo's AI_CANONNAME reads it off
 // the DNS backend.
 pub function canonical_name(conf: ResolvConf, name: string): Result[string, DnsError] {
-  var a: Answer = lookup_records(conf, name, type_a())?;
+  let a: Answer = lookup_records(conf, name, type_a())?;
   return Ok(a.canonical);
 }
 
@@ -1794,25 +1794,25 @@ pub function canonical_name(conf: ResolvConf, name: string): Result[string, DnsE
 // both record types pass it over (`NoSuchName`, `NoData`); a failure on
 // either ends the walk as it does for one query.
 pub function lookup_addresses(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
-  var found: net.IpAddr[] = found_addresses(conf, name)?;
+  let found: net.IpAddr[] = found_addresses(conf, name)?;
   return Ok(sort_addresses(found));
 }
 
 // The paired walk's addresses for `name`, in the order the server gave.
 function found_addresses(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
-  var a: Answer = search_with(search_plan(name, conf), (qname: string): Result[Answer, DnsError] => ask_pair(conf, qname))?;
+  let a: Answer = search_with(search_plan(name, conf), (qname: string): Result[Answer, DnsError] => ask_pair(conf, qname))?;
   return Ok(addresses_of(a.records));
 }
 
 // One step of the paired walk: `qname`'s A and AAAA queries put to the
 // nameservers together, their replies read and combined.
 function ask_pair(conf: ResolvConf, qname: string): Result[Answer, DnsError] {
-  var replies: Result[Message, DnsError][] = ask_many(conf, [query(new_id(), qname, type_a()), query(new_id(), qname, type_aaaa())]);
+  let replies: Result[Message, DnsError][] = ask_many(conf, [query(new_id(), qname, type_a()), query(new_id(), qname, type_aaaa())]);
   return combine_pair(reply_records(replies[0], qname, type_a()), reply_records(replies[1], qname, type_aaaa()));
 }
 
 function reply_records(r: Result[Message, DnsError], qname: string, rtype: i32): Result[Answer, DnsError] {
-  var reply: Message = r?;
+  let reply: Message = r?;
   return answer_records(reply, qname, rtype);
 }
 
@@ -1916,7 +1916,7 @@ pub function policy_of(ip: net.IpAddr): Policy {
   if (ip.is_loopback()) {
     return Policy { precedence: 50, label: 0 };
   }
-  var b: u8[] = ip.bytes();
+  let b: u8[] = ip.bytes();
   if (leading_zero_bytes(b) >= 10) {
     return policy_embedded(b);
   }
@@ -1964,7 +1964,7 @@ function policy_local(b: u8[]): Policy {
 
 // How many of the address's bytes are zero before the first that is not.
 function leading_zero_bytes(b: u8[]): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   while (n < b.len() && b[n] == 0u8) {
     n = n + 1;
   }
@@ -2017,14 +2017,14 @@ pub function common_prefix_len(a: net.IpAddr, b: net.IpAddr): i32 {
   if (a.is_v4() || b.is_v4()) {
     return 0;
   }
-  var ab: u8[] = a.bytes();
-  var bb: u8[] = b.bytes();
-  var bits: i32 = 0;
-  var i: i32 = 0;
+  let ab: u8[] = a.bytes();
+  let bb: u8[] = b.bytes();
+  let bits: i32 = 0;
+  let i: i32 = 0;
   while (i < 8) {
-    var x: i32 = (ab[i] ^ bb[i]) as i32;
+    let x: i32 = (ab[i] ^ bb[i]) as i32;
     if (x != 0) {
-      var m: i32 = 128;
+      let m: i32 = 128;
       while (m > 0 && (x & m) == 0) {
         bits = bits + 1;
         m = m >> 1;
@@ -2042,8 +2042,8 @@ pub function common_prefix_len(a: net.IpAddr, b: net.IpAddr): i32 {
 // packet, asked for its local address; `None` when the host has no
 // route, which is what makes `dst` unusable.
 pub function source_for(dst: net.IpAddr): Option[net.IpAddr] {
-  var probe: net.SocketAddr = net.socket_addr(dst, 9);
-  var sock: i32 = 0;
+  let probe: net.SocketAddr = net.socket_addr(dst, 9);
+  let sock: i32 = 0;
   match (net.udp_socket(local_for(probe))) {
     Ok(s) => {
       sock = s;
@@ -2052,7 +2052,7 @@ pub function source_for(dst: net.IpAddr): Option[net.IpAddr] {
       return None;
     }
   }
-  var found: Option[net.IpAddr] = None;
+  let found: Option[net.IpAddr] = None;
   match (net.set_peer(sock, probe)) {
     Ok(_) => {
       match (net.local_addr(sock)) {
@@ -2064,7 +2064,7 @@ pub function source_for(dst: net.IpAddr): Option[net.IpAddr] {
     },
     Err(_) => {}
   }
-  var closed: Result[void, net.NetError] = net.close(sock);
+  let closed: Result[void, net.NetError] = net.close(sock);
   return found;
 }
 
@@ -2072,16 +2072,16 @@ pub function source_for(dst: net.IpAddr): Option[net.IpAddr] {
 // being the source the host would use for `dsts[i]` (`None` for no
 // route). A stable sort, so what the rules leave tied keeps its order.
 pub function order_addresses(dsts: net.IpAddr[], srcs: Option[net.IpAddr][]): net.IpAddr[] {
-  var out: net.IpAddr[] = [];
-  var taken: boolean[] = [];
-  var i: i32 = 0;
+  let out: net.IpAddr[] = [];
+  let taken: boolean[] = [];
+  let i: i32 = 0;
   while (i < dsts.len()) {
     taken = taken.append(false);
     i = i + 1;
   }
-  var placed: i32 = 0;
+  let placed: i32 = 0;
   while (placed < dsts.len()) {
-    var best: i32 = 0 - 1;
+    let best: i32 = 0 - 1;
     i = 0;
     while (i < dsts.len()) {
       if (!taken[i] && (best < 0 || prefers(dsts[i], srcs[i], dsts[best], srcs[best]) < 0)) {
@@ -2099,8 +2099,8 @@ pub function order_addresses(dsts: net.IpAddr[], srcs: Option[net.IpAddr][]): ne
 // `sort_addresses(dsts)` — `order_addresses` over the source the host
 // would use for each destination.
 pub function sort_addresses(dsts: net.IpAddr[]): net.IpAddr[] {
-  var srcs: Option[net.IpAddr][] = [];
-  var i: i32 = 0;
+  let srcs: Option[net.IpAddr][] = [];
+  let i: i32 = 0;
   while (i < dsts.len()) {
     srcs = srcs.append(source_for(dsts[i]));
     i = i + 1;
@@ -2138,14 +2138,14 @@ function prefers(a: net.IpAddr, sa: Option[net.IpAddr], b: net.IpAddr, sb: Optio
 
 // Rules 2, 5, 6, 8 and 9 for two destinations the host can reach.
 function prefers_routed(a: net.IpAddr, sa: net.IpAddr, b: net.IpAddr, sb: net.IpAddr): i32 {
-  var scope_a: i32 = scope_of(a);
-  var scope_b: i32 = scope_of(b);
-  var r: i32 = prefer_true(scope_a == scope_of(sa), scope_b == scope_of(sb));
+  let scope_a: i32 = scope_of(a);
+  let scope_b: i32 = scope_of(b);
+  let r: i32 = prefer_true(scope_a == scope_of(sa), scope_b == scope_of(sb));
   if (r != 0) {
     return r;
   }
-  var pa: Policy = policy_of(a);
-  var pb: Policy = policy_of(b);
+  let pa: Policy = policy_of(a);
+  let pb: Policy = policy_of(b);
   r = prefer_true(pa.label == policy_of(sa).label, pb.label == policy_of(sb).label);
   if (r != 0) {
     return r;
@@ -2200,10 +2200,10 @@ pub function interleave_families(addrs: net.IpAddr[]): net.IpAddr[] {
   if (addrs.len() == 0) {
     return addrs;
   }
-  var lead_v6: boolean = addrs[0].is_v6();
-  var lead: net.IpAddr[] = [];
-  var other: net.IpAddr[] = [];
-  var i: i32 = 0;
+  let lead_v6: boolean = addrs[0].is_v6();
+  let lead: net.IpAddr[] = [];
+  let other: net.IpAddr[] = [];
+  let i: i32 = 0;
   while (i < addrs.len()) {
     if (addrs[i].is_v6() == lead_v6) {
       lead = lead.append(addrs[i]);
@@ -2212,7 +2212,7 @@ pub function interleave_families(addrs: net.IpAddr[]): net.IpAddr[] {
     }
     i = i + 1;
   }
-  var out: net.IpAddr[] = [];
+  let out: net.IpAddr[] = [];
   i = 0;
   while (i < lead.len() || i < other.len()) {
     if (i < lead.len()) {
@@ -2236,11 +2236,11 @@ struct Attempt { sock: i32 }
 // with none connected, the last failure when every address failed,
 // `HostUnreachable` for no addresses.
 pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[i32, net.NetError] {
-  var drv: async.RealDriver = async.real_driver();
-  var deadline: i64 = now_ms() + opts.timeout_ms as i64;
-  var race: Race = Race { open: [], next: 0, due: now_ms(), last: HostUnreachable };
+  let drv: async.RealDriver = async.real_driver();
+  let deadline: i64 = now_ms() + opts.timeout_ms as i64;
+  let race: Race = Race { open: [], next: 0, due: now_ms(), last: HostUnreachable };
   while (true) {
-    var now: i64 = now_ms();
+    let now: i64 = now_ms();
     if (now >= deadline) {
       close_attempts(drv, race.open);
       return Err(TimedOut);
@@ -2252,10 +2252,10 @@ pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Re
     if (race.open.len() == 0) {
       return Err(race.last);
     }
-    var woke: i32[] = drv.wait(race.open.len(), wait_window(race, addrs.len(), now, deadline));
+    let woke: i32[] = drv.wait(race.open.len(), wait_window(race, addrs.len(), now, deadline));
     match (settled(drv, race)) {
       Ok(sock) => {
-        var blocking: Result[void, net.NetError] = net.set_nonblocking(sock, false);
+        let blocking: Result[void, net.NetError] = net.set_nonblocking(sock, false);
         return Ok(sock);
       },
       Err(after) => {
@@ -2270,7 +2270,7 @@ pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Re
 // attempt's start when an address is left, else the deadline, and at
 // least a millisecond.
 function wait_window(race: Race, n: i32, now: i64, deadline: i64): i32 {
-  var wait_ms: i32 = (deadline - now) as i32;
+  let wait_ms: i32 = (deadline - now) as i32;
   if (race.next < n && (race.due - now) as i32 < wait_ms) {
     wait_ms = (race.due - now) as i32;
   }
@@ -2289,10 +2289,10 @@ struct Race { open: Attempt[], next: i32, due: i64, last: net.NetError }
 // connects before answering (the interpreter), the attempt is already
 // settled and the next wait finds it so.
 function started(drv: async.RealDriver, race: Race, addr: net.SocketAddr, opts: DialOptions): Race {
-  var next: i32 = race.next + 1;
+  let next: i32 = race.next + 1;
   match (net.connect_start(addr)) {
     Ok(sock) => {
-      var watched: i32 = drv.watch(sock, 2);
+      let watched: i32 = drv.watch(sock, 2);
       return Race { open: race.open.append(Attempt { sock: sock }), next: next, due: now_ms() + opts.fallback_ms as i64, last: race.last };
     },
     Err(e) => {
@@ -2306,14 +2306,14 @@ function started(drv: async.RealDriver, race: Race, addr: net.SocketAddr, opts: 
 // connected is the winner, the others closed; one that failed is closed
 // and its turn handed on at once; the rest stay open.
 function settled(drv: async.RealDriver, race: Race): Result[i32, Race] {
-  var keep: Attempt[] = [];
-  var out: Race = race;
-  var i: i32 = 0;
+  let keep: Attempt[] = [];
+  let out: Race = race;
+  let i: i32 = 0;
   while (i < race.open.len()) {
-    var a: Attempt = race.open[i];
+    let a: Attempt = race.open[i];
     match (net.connect_result(a.sock)) {
       Ok(_) => {
-        var unwatched: i32 = drv.unwatch(a.sock);
+        let unwatched: i32 = drv.unwatch(a.sock);
         close_attempts(drv, keep);
         close_attempts(drv, after(race.open, i));
         return Ok(a.sock);
@@ -2334,8 +2334,8 @@ function settled(drv: async.RealDriver, race: Race): Result[i32, Race] {
 
 // The attempts past index `i`.
 function after(attempts: Attempt[], i: i32): Attempt[] {
-  var out: Attempt[] = [];
-  var k: i32 = i + 1;
+  let out: Attempt[] = [];
+  let k: i32 = i + 1;
   while (k < attempts.len()) {
     out = out.append(attempts[k]);
     k = k + 1;
@@ -2344,10 +2344,10 @@ function after(attempts: Attempt[], i: i32): Attempt[] {
 }
 
 function close_attempts(drv: async.RealDriver, attempts: Attempt[]): void {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < attempts.len()) {
-    var unwatched: i32 = drv.unwatch(attempts[i].sock);
-    var closed: Result[void, net.NetError] = net.close(attempts[i].sock);
+    let unwatched: i32 = drv.unwatch(attempts[i].sock);
+    let closed: Result[void, net.NetError] = net.close(attempts[i].sock);
     i = i + 1;
   }
 }
@@ -2356,7 +2356,7 @@ function close_attempts(drv: async.RealDriver, attempts: Attempt[]): void {
 // a connection, or the resolver's failure, or the dial's as
 // `Socket(e)`.
 pub function dial(name: string, port: i32, opts: DialOptions): Result[i32, DnsError] {
-  var addrs: net.IpAddr[] = resolve(name)?;
+  let addrs: net.IpAddr[] = resolve(name)?;
   match (connect_race(interleave_families(addrs), port, opts)) {
     Ok(sock) => {
       return Ok(sock);
@@ -2384,12 +2384,17 @@ pub function nat64_prefix_of(aaaa: net.IpAddr): Option[Nat64Prefix] {
   if (!aaaa.is_v6()) {
     return None;
   }
-  var b: u8[] = aaaa.bytes();
-  var lengths: i32[] = [96, 64, 56, 48, 40, 32];
-  var i: i32 = 0;
+  let b: u8[] = aaaa.bytes();
+  let lengths: i32[] = [96, 64, 56, 48, 40, 32];
+  let i: i32 = 0;
   while (i < lengths.len()) {
-    if (is_well_known(embedded_v4(b, lengths[i]))) {
-      return Some(Nat64Prefix { bytes: b.take(lengths[i] / 8).concat(zero_bytes(16 - lengths[i] / 8)), bits: lengths[i] });
+    match (aaaa.embedded_v4(lengths[i])) {
+      Some(v4) => {
+        if (is_well_known(v4.bytes())) {
+          return Some(Nat64Prefix { bytes: b.take(lengths[i] / 8).concat(zero_bytes(16 - lengths[i] / 8)), bits: lengths[i] });
+        }
+      },
+      None => {}
     }
     i = i + 1;
   }
@@ -2401,21 +2406,6 @@ function is_well_known(v4: u8[]): boolean {
   return v4[0] == 192u8 && v4[1] == 0u8 && v4[2] == 0u8 && (v4[3] == 170u8 || v4[3] == 171u8);
 }
 
-// The IPv4 address an IPv6 address embeds under a prefix of `bits`, in
-// RFC 6052 §2.2's layout: the four bytes after the prefix, skipping byte
-// 8, which a /40, /48 or /56 prefix's address straddles.
-function embedded_v4(b: u8[], bits: i32): u8[] {
-  var out: u8[] = [];
-  var at: i32 = bits / 8;
-  while (out.len() < 4) {
-    if (at != 8) {
-      out = out.append(b[at]);
-    }
-    at = at + 1;
-  }
-  return out;
-}
-
 // `synthesize(prefix, v4)` — `v4` under `prefix` as RFC 6052 §2.2 lays
 // it out: the four bytes follow the prefix, skipping byte 8, which stays
 // zero. An IPv6 address is answered as it is.
@@ -2423,9 +2413,9 @@ pub function synthesize(prefix: Nat64Prefix, v4: net.IpAddr): net.IpAddr {
   if (!v4.is_v4()) {
     return v4;
   }
-  var src: u8[] = v4.bytes();
-  var out: u8[] = prefix.bytes.take(prefix.bits / 8);
-  var k: i32 = 0;
+  let src: u8[] = v4.bytes();
+  let out: u8[] = prefix.bytes.take(prefix.bits / 8);
+  let k: i32 = 0;
   while (out.len() < 16) {
     if (out.len() != 8 && k < 4) {
       out = out.append(src[k]);
@@ -2450,10 +2440,10 @@ pub function synthesize(prefix: Nat64Prefix, v4: net.IpAddr): net.IpAddr {
 // came; none when the name has no such record or the query fails, which
 // is every network without a translator.
 pub function nat64_prefixes(conf: ResolvConf): Nat64Prefix[] {
-  var out: Nat64Prefix[] = [];
+  let out: Nat64Prefix[] = [];
   match (lookup_aaaa(conf, "ipv4only.arpa.")) {
     Ok(xs) => {
-      var i: i32 = 0;
+      let i: i32 = 0;
       while (i < xs.len()) {
         match (nat64_prefix_of(xs[i])) {
           Some(p) => {
@@ -2471,8 +2461,26 @@ pub function nat64_prefixes(conf: ResolvConf): Nat64Prefix[] {
   return out;
 }
 
+// `nat64_carried(addr)` — the IPv4 address `addr` carries under a NAT64
+// prefix this host's nameservers reveal, or `None`: for an IPv4 address,
+// one under no revealed prefix, or a network with no translator. What a
+// block list checks beside `net.is_global`, which knows only the
+// well-known and local-use prefixes.
+pub function nat64_carried(addr: net.IpAddr): Option[net.IpAddr] {
+  if (!addr.is_v6()) {
+    return None;
+  }
+  let b: u8[] = addr.bytes();
+  for p in nat64_prefixes(system_conf()) {
+    if (same_bytes(b.take(p.bits / 8), p.bytes.take(p.bits / 8))) {
+      return addr.embedded_v4(p.bits);
+    }
+  }
+  return None;
+}
+
 function has_prefix(ps: Nat64Prefix[], p: Nat64Prefix): boolean {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ps.len()) {
     if (ps[i].bits == p.bits && same_bytes(ps[i].bytes, p.bytes)) {
       return true;
@@ -2486,7 +2494,7 @@ function same_bytes(a: u8[], b: u8[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
@@ -2501,7 +2509,7 @@ function same_bytes(a: u8[], b: u8[]): boolean {
 // replaced by its synthesis under every prefix the nameservers reveal;
 // elsewhere, or with no prefix revealed, `addrs` as it is.
 function with_nat64(conf: ResolvConf, addrs: net.IpAddr[]): net.IpAddr[] {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < addrs.len()) {
     if (addrs[i].is_v6()) {
       return addrs;
@@ -2517,14 +2525,14 @@ function with_nat64(conf: ResolvConf, addrs: net.IpAddr[]): net.IpAddr[] {
     },
     None => {}
   }
-  var prefixes: Nat64Prefix[] = nat64_prefixes(conf);
+  let prefixes: Nat64Prefix[] = nat64_prefixes(conf);
   if (prefixes.len() == 0) {
     return addrs;
   }
-  var out: net.IpAddr[] = [];
+  let out: net.IpAddr[] = [];
   i = 0;
   while (i < addrs.len()) {
-    var k: i32 = 0;
+    let k: i32 = 0;
     while (k < prefixes.len()) {
       out = out.append(synthesize(prefixes[k], addrs[i]));
       k = k + 1;
@@ -2538,7 +2546,7 @@ function with_nat64(conf: ResolvConf, addrs: net.IpAddr[]): net.IpAddr[] {
 // `/etc/resolv.conf` over its hostname, the defaults when the file is
 // missing.
 pub function system_conf(): ResolvConf {
-  var contents: string = "";
+  let contents: string = "";
   match (read_file("/etc/resolv.conf")) {
     Ok(c) => {
       contents = c;
@@ -2555,11 +2563,11 @@ pub function system_hosts(): HostsEntry[] {
       return parse_hosts(c);
     },
     Err(_) => {
-      var none: HostsEntry[] = [];
+      let none: HostsEntry[] = [];
       return none;
     }
   }
-  var none2: HostsEntry[] = [];
+  let none2: HostsEntry[] = [];
   return none2;
 }
 
@@ -2570,17 +2578,37 @@ pub function system_hosts(): HostsEntry[] {
 // IPv4 addresses with no IPv6 beside them are synthesized under the
 // NAT64 prefixes the nameservers reveal.
 pub function resolve(name: string): Result[net.IpAddr[], DnsError] {
-  var conf: ResolvConf = system_conf();
+  let conf: ResolvConf = system_conf();
+  return Ok(reachable(conf, resolve_with(conf, name)?));
+}
+
+// `resolve_plain(name)` — `resolve` as the sources name the addresses,
+// before NAT64 synthesis and RFC 6724 ordering: what a policy judges,
+// since a synthesized address stands for the one it carries.
+pub function resolve_plain(name: string): Result[net.IpAddr[], DnsError] {
+  return resolve_with(system_conf(), name);
+}
+
+// `synthesized(addrs)` — `addrs` as this machine reaches them: `resolve`'s
+// NAT64 synthesis and ordering over `resolve_plain`'s answer.
+pub function synthesized(addrs: net.IpAddr[]): net.IpAddr[] {
+  return reachable(system_conf(), addrs);
+}
+
+function reachable(conf: ResolvConf, addrs: net.IpAddr[]): net.IpAddr[] {
+  return sort_addresses(with_nat64(conf, addrs));
+}
+
+function resolve_with(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
   match (net.ip_parse(name)) {
     Some(ip) => {
-      return Ok(with_nat64(conf, [ip]));
+      return Ok([ip]);
     },
     None => {}
   }
-  var hosts: net.IpAddr[] = hosts_lookup(system_hosts(), name);
+  let hosts: net.IpAddr[] = hosts_lookup(system_hosts(), name);
   if (hosts.len() > 0) {
-    return Ok(sort_addresses(with_nat64(conf, hosts)));
+    return Ok(hosts);
   }
-  var found: net.IpAddr[] = found_addresses(conf, name)?;
-  return Ok(sort_addresses(with_nat64(conf, found)));
+  return found_addresses(conf, name);
 }

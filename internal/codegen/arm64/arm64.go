@@ -466,7 +466,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// (multiple arm64 Emit goroutines) and against
 	// `x86_64.Emit` (which reads `TwoWordOverride` via
 	// ir.LowerWith without setting it). Without the lock,
-	// `TestDifferential_LangsmithMain`'s seed-level
+	// a differential sweep's seed-level
 	// `t.Parallel` lets one arm64 emit's `defer` restore the
 	// flag to false while another arm64 emit was still in
 	// flight — producing single-word string_from_bytes_unchecked /
@@ -6139,7 +6139,7 @@ func (g *generator) emitStrSliceRuntime2W() {
 	// Allocate new_len bytes for the heap output via the rc-headered
 	// allocator (rc=1 at data-8, payload size at data-4) so the
 	// substring is a real rc-tracked string — str_inc on an alias
-	// (e.g. `var w = words[i]` where the element is a slice) and
+	// (e.g. `let w = words[i]` where the element is a slice) and
 	// str_dec on drop both read that header. A raw __fern_alloc
 	// buffer has none, so retaining a slice read before the
 	// allocation and SIGSEGV'd. Mirrors __fern_strcat / read_file.
@@ -15704,8 +15704,8 @@ type generator struct {
 	usesRcDec bool
 	// rcInlineOK gates the #4402 opt-2b inline rc fast path per function.
 	// Inlining expands each rc op from a single `bl` into ~10 instructions;
-	// in the self-host compiler's largest lowering functions (irlower__
-	// lower_expr is ~9.75M IR ops with ~1.66M rc ops) that bloat pushes the
+	// in the self-host compiler's largest lowering functions (the deleted
+	// AST lowering's lower_expr was ~9.75M IR ops with ~1.66M rc ops) that bloat pushes the
 	// function body past aarch64's ±128MB unconditional-branch reach, so the
 	// intra-function `b .Lret_…` epilogue jumps overflow ("branch out of
 	// range"). Set false for such a function (see rcInlineMaxOps) so its rc
@@ -16918,8 +16918,8 @@ func (g *generator) emitStartRuntime() {
 
 // rcInlineMaxOps is the per-function IR-op ceiling for the opt-2b inline rc
 // fast path (see the rcInlineOK field). 1M sits ~2× above the largest normal
-// self-host function (~0.5M ops) and ~10× below irlower__lower_expr (~9.75M
-// ops), the only function whose inlined body overflows aarch64's ±128MB
+// self-host function (~0.5M ops) and ~10× below the deleted AST lowering's lower_expr (~9.75M
+// ops), the only function whose inlined body overflowed aarch64's ±128MB
 // branch reach. A var (not a const) only so the backend's own tests can lower
 // it to exercise the fall-back on a small function; production never
 // reassigns it. (Mirrors the x86-64 backend's rcInlineMaxOps.)
@@ -17174,8 +17174,8 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 
 	// #4402 opt 2b: inline rc ops only when the function is small enough
 	// that the ~10-instruction-per-op expansion can't push its body past
-	// aarch64's ±128MB branch reach. Only the self-host compiler's largest
-	// lowering function (irlower__lower_expr, ~9.75M ops) exceeds this; the
+	// aarch64's ±128MB branch reach. Only the deleted AST lowering's
+	// lower_expr (~9.75M ops) exceeded this; the
 	// next-largest is ~0.5M ops, so the threshold has wide margin and every
 	// user-scale function inlines. See the rcInlineOK field comment.
 	g.rcInlineOK = len(irFn.Ops) <= rcInlineMaxOps

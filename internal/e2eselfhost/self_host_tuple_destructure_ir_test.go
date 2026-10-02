@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// tupleDestructureIRCases pin `var (a, b) = E` / `let (a, b) = E` tuple
+// tupleDestructureIRCases pin `let (a, b) = E` / `let (a, b) = E` tuple
 // destructuring on the IR path. The destructure already lowers fully through IR
-// (irlower.fern's StmtVar arm emits op_tuple_get reads into the freshly-bound
+// (the lowering emits op_tuple_get reads into the freshly-bound
 // locals — no bail), but the existing TestSelfHostTupleDestructure* assert only
 // exit codes, which the legacy AST emitter also satisfies. So a silent regression
 // that kicked destructuring off the IR path would pass undetected — and the
@@ -28,12 +28,12 @@ var tupleDestructureIRCases = []struct {
 	src  string
 	exit int
 }{
-	{"from-fn-return", "struct Point { x: i32, y: i32 } function swap(a: i32, b: i32): (i32, i32) { return (b, a); } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var (x, y) = swap(10, 32); return x + y + pad; }", 42},
-	{"from-local", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var p: (i32, i32) = (15, 27); var (a, b) = p; return a + b + pad; }", 42},
-	{"first-only", "struct Point { x: i32, y: i32 } function mk(): (i32, i32) { return (42, 7); } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var (a, b) = mk(); return a + pad; }", 42},
-	{"second-only", "struct Point { x: i32, y: i32 } function mk(): (i32, i32) { return (7, 42); } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var (a, b) = mk(); return b + pad; }", 42},
-	{"let-from-fn-return", "struct Point { x: i32, y: i32 } function swap(a: i32, b: i32): (i32, i32) { return (b, a); } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; let (x, y) = swap(10, 32); return x + y + pad; }", 42},
-	{"let-from-local", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var p: (i32, i32) = (15, 27); let (a, b) = p; return a + b + pad; }", 42},
+	{"from-fn-return", "struct Point { x: i32, y: i32 } function swap(a: i32, b: i32): (i32, i32) { return (b, a); } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let (x, y) = swap(10, 32); return x + y + pad; }", 42},
+	{"from-local", "struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let p: (i32, i32) = (15, 27); let (a, b) = p; return a + b + pad; }", 42},
+	{"first-only", "struct Point { x: i32, y: i32 } function mk(): (i32, i32) { return (42, 7); } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let (a, b) = mk(); return a + pad; }", 42},
+	{"second-only", "struct Point { x: i32, y: i32 } function mk(): (i32, i32) { return (7, 42); } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let (a, b) = mk(); return b + pad; }", 42},
+	{"let-from-fn-return", "struct Point { x: i32, y: i32 } function swap(a: i32, b: i32): (i32, i32) { return (b, a); } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let (x, y) = swap(10, 32); return x + y + pad; }", 42},
+	{"let-from-local", "struct Point { x: i32, y: i32 } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; let p: (i32, i32) = (15, 27); let (a, b) = p; return a + b + pad; }", 42},
 }
 
 // TestSelfHostTupleDestructureIRX86_64 compiles each case through the self-hosted

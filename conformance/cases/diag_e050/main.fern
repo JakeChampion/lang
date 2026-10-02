@@ -13,6 +13,6 @@
 function take(own xs: i32[]): i32 { return xs[0]; }
 
 function f(own xs: i32[]): i32 {
-    var a: i32 = take(xs);   // consumes xs — the callee takes ownership
+    let a: i32 = take(xs);   // consumes xs — the callee takes ownership
     return take(xs) + a;     // error[E050]: xs was already consumed
 }

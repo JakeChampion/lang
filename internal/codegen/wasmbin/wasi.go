@@ -1545,7 +1545,7 @@ func scanExternImports(prog *ir.Program, in *importNeeds, helpers *runtimeNeeds)
 				specs[rawName] = importSpec{module: ex.Iface, name: ex.WITName, params: rawParams, results: []byte{encode.ValtypeI32}}
 				in.add(rawName)
 				helpers.add("__fern_alloc")
-				// VALUE context (`var b: u8[] = f()`, or eager `for x in f()` over a
+				// VALUE context (`let b: u8[] = f()`, or eager `for x in f()` over a
 				// non-u8 stream): the collect-wrapper drains the whole stream to EOF
 				// into a Fern array, materialised under the Fern name `f`.
 				if used[ex.Name] {

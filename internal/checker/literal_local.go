@@ -2,8 +2,8 @@ package checker
 
 import "github.com/jakechampion/lang/internal/ast"
 
-// A literal local is an unannotated `var` whose initialiser is still an
-// untyped integer — `var x = 5`, and the `var i = LOW` a range loop desugars
+// A literal local is an unannotated `let` whose initialiser is still an
+// untyped integer — `let x = 5`, and the `let i = LOW` a range loop desugars
 // to. It takes ONE integer type: the first use that fixes a width decides it,
 // and it defaults to i32 when no use does (#10123). Every read of the local
 // that was typed before its width was known is settled to that width once the
@@ -11,7 +11,7 @@ import "github.com/jakechampion/lang/internal/ast"
 // over it agree.
 //
 // An unannotated local of generic struct type is one literal local per type
-// argument only untyped literals bound (#10453): `var q = Same { a: 1, b: 2 }`
+// argument only untyped literals bound (#10453): `let q = Same { a: 1, b: 2 }`
 // takes the width of the first use that fixes T — a field read at a typed
 // destination, or the whole local where a Same[i64] is wanted — and arg is
 // that argument's index. arg is -1 for an integer local.
@@ -330,7 +330,7 @@ func (c *checker) propagateLitLocals(body *ast.Block) {
 	}
 }
 
-// linkLitStructCopy gives `var r = q`, both generic struct locals whose
+// linkLitStructCopy gives `let r = q`, both generic struct locals whose
 // arguments literals bound, one width per argument: whichever side a use
 // fixed first decides the other, and two different widths are E003.
 func (c *checker) linkLitStructCopy(r *ast.Var, q *ast.Var, pos ast.Position) {

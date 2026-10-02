@@ -23,17 +23,17 @@ function fmt_align_code(c: i32): i32 {
     return 3;
 }
 function fmt_repeat(s: string, count: i32): string {
-    var out: string = "";
-    var i: i32 = 0;
+    let out: string = "";
+    let i: i32 = 0;
     while (i < count) { out = out + s; i = i + 1; }
     return out;
 }
 function fmt_apply_spec(s: string, spec: string): string {
     if (spec.len() == 0) { return s; }
-    var m: i32 = spec.len();
-    var p: i32 = 1;
-    var fill: str = " ";
-    var align: i32 = 1;
+    let m: i32 = spec.len();
+    let p: i32 = 1;
+    let fill: str = " ";
+    let align: i32 = 1;
     if (p + 1 < m && fmt_is_align(spec[p + 1] as i32)) {
         fill = slice_unchecked(spec, p, p + 1);
         align = fmt_align_code(spec[p + 1] as i32);
@@ -42,20 +42,20 @@ function fmt_apply_spec(s: string, spec: string): string {
         align = fmt_align_code(spec[p] as i32);
         p = p + 1;
     }
-    var plus: boolean = false;
+    let plus: boolean = false;
     if (p < m && spec[p] == 43) { plus = true; p = p + 1; }
     else if (p < m && spec[p] == 45) { p = p + 1; }
-    var zero: boolean = false;
+    let zero: boolean = false;
     if (p < m && spec[p] == 48) { zero = true; p = p + 1; }
-    var width: i32 = 0;
+    let width: i32 = 0;
     while (p < m && spec[p] >= 48 && spec[p] <= 57) {
         width = width * 10 + ((spec[p] as i32) - 48);
         p = p + 1;
     }
-    var val: string = s;
+    let val: string = s;
     if (p < m && spec[p] == 46) {
         p = p + 1;
-        var prec: i32 = 0;
+        let prec: i32 = 0;
         while (p < m && spec[p] >= 48 && spec[p] <= 57) {
             prec = prec * 10 + ((spec[p] as i32) - 48);
             p = p + 1;
@@ -65,9 +65,9 @@ function fmt_apply_spec(s: string, spec: string): string {
     if (plus && val.len() > 0 && val[0] >= 48 && val[0] <= 57) {
         val = "+" + val;
     }
-    var vlen: i32 = val.len();
+    let vlen: i32 = val.len();
     if (vlen >= width) { return val; }
-    var pad: i32 = width - vlen;
+    let pad: i32 = width - vlen;
     if (zero) {
         if (val.len() > 0 && (val[0] == 45 || val[0] == 43)) {
             return slice_unchecked(val, 0, 1) + fmt_repeat("0", pad) + slice_unchecked(val, 1, val.len());
@@ -76,16 +76,16 @@ function fmt_apply_spec(s: string, spec: string): string {
     }
     if (align == 2) { return fmt_repeat(fill, pad) + val; }
     if (align == 3) {
-        var left: i32 = pad / 2;
+        let left: i32 = pad / 2;
         return fmt_repeat(fill, left) + val + fmt_repeat(fill, pad - left);
     }
     return val + fmt_repeat(fill, pad);
 }
 function fmt_format(fmt: string, args: string[]): string {
-    var n: i32 = fmt.len();
-    var out: string = "";
-    var i: i32 = 0;
-    var argi: i32 = 0;
+    let n: i32 = fmt.len();
+    let out: string = "";
+    let i: i32 = 0;
+    let argi: i32 = 0;
     while (i < n) {
         if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 123) {
             out = out + "{";
@@ -94,10 +94,10 @@ function fmt_format(fmt: string, args: string[]): string {
             out = out + "}";
             i = i + 2;
         } else if (fmt[i] == 123) {
-            var j: i32 = i + 1;
+            let j: i32 = i + 1;
             while (j < n && fmt[j] != 125) { j = j + 1; }
-            var isPlaceholder: boolean = false;
-            var spec: str = "";
+            let isPlaceholder: boolean = false;
+            let spec: str = "";
             if (j < n) {
                 spec = slice_unchecked(fmt, i + 1, j);
                 if (spec.len() == 0) { isPlaceholder = true; }
@@ -129,33 +129,33 @@ var formatSpecIRCases = []struct {
 	main string
 }{
 	// right-align width 8: "[{:>8}]" + ["hi"] -> "[      hi]" (10).
-	{"right", `var a: string[] = ["hi"]; return fmt_format("[{:>8}]", a).len();`},
+	{"right", `let a: string[] = ["hi"]; return fmt_format("[{:>8}]", a).len();`},
 	// left-align width 8: "[{:<8}]" + ["hi"] -> "[hi      ]" (10).
-	{"left", `var a: string[] = ["hi"]; return fmt_format("[{:<8}]", a).len();`},
+	{"left", `let a: string[] = ["hi"]; return fmt_format("[{:<8}]", a).len();`},
 	// center width 7: "[{:^7}]" + ["hi"] -> "[  hi   ]" (9).
-	{"center", `var a: string[] = ["hi"]; return fmt_format("[{:^7}]", a).len();`},
+	{"center", `let a: string[] = ["hi"]; return fmt_format("[{:^7}]", a).len();`},
 	// custom fill '*' right-align: "[{:*>6}]" + ["ab"] -> "[****ab]" (8).
-	{"fill", `var a: string[] = ["ab"]; return fmt_format("[{:*>6}]", a).len();`},
+	{"fill", `let a: string[] = ["ab"]; return fmt_format("[{:*>6}]", a).len();`},
 	// precision (truncate): "[{:.3}]" + ["hello"] -> "[hel]" (5).
-	{"precision", `var a: string[] = ["hello"]; return fmt_format("[{:.3}]", a).len();`},
+	{"precision", `let a: string[] = ["hello"]; return fmt_format("[{:.3}]", a).len();`},
 	// precision + width: "[{:>8.3}]" + ["hello"] -> "[     hel]" (10).
-	{"prec-width", `var a: string[] = ["hello"]; return fmt_format("[{:>8.3}]", a).len();`},
+	{"prec-width", `let a: string[] = ["hello"]; return fmt_format("[{:>8.3}]", a).len();`},
 	// non-spec braces render literally, consuming no arg: "{x}" + [] -> "{x}" (3).
-	{"literal-braces", `var a: string[] = []; return fmt_format("{x}", a).len();`},
+	{"literal-braces", `let a: string[] = []; return fmt_format("{x}", a).len();`},
 	// underflow with a spec emits the placeholder verbatim: "{:>4}" + [] -> "{:>4}" (5).
-	{"underflow-spec", `var a: string[] = []; return fmt_format("{:>4}", a).len();`},
+	{"underflow-spec", `let a: string[] = []; return fmt_format("{:>4}", a).len();`},
 	// plain `{}` still works: "{}" + ["x"] -> "x" (1).
-	{"plain", `var a: string[] = ["x"]; return fmt_format("{}", a).len();`},
+	{"plain", `let a: string[] = ["x"]; return fmt_format("{}", a).len();`},
 	// sign flag: "[{:+}]" + ["42"] -> "[+42]" (5).
-	{"sign-plus", `var a: string[] = ["42"]; return fmt_format("[{:+}]", a).len();`},
+	{"sign-plus", `let a: string[] = ["42"]; return fmt_format("[{:+}]", a).len();`},
 	// sign flag is a no-op on a value that already carries '-': "[{:+}]" + ["-7"] -> "[-7]" (4).
-	{"sign-neg", `var a: string[] = ["-7"]; return fmt_format("[{:+}]", a).len();`},
+	{"sign-neg", `let a: string[] = ["-7"]; return fmt_format("[{:+}]", a).len();`},
 	// zero-pad: "[{:05}]" + ["42"] -> "[00042]" (7).
-	{"zero-pad", `var a: string[] = ["42"]; return fmt_format("[{:05}]", a).len();`},
+	{"zero-pad", `let a: string[] = ["42"]; return fmt_format("[{:05}]", a).len();`},
 	// sign-aware zero-pad keeps '-' leading: "[{:05}]" + ["-42"] -> "[-0042]" (7).
-	{"zero-pad-neg", `var a: string[] = ["-42"]; return fmt_format("[{:05}]", a).len();`},
+	{"zero-pad-neg", `let a: string[] = ["-42"]; return fmt_format("[{:05}]", a).len();`},
 	// sign + zero-pad combine: "[{:+06}]" + ["42"] -> "[+00042]" (8).
-	{"sign-zero-pad", `var a: string[] = ["42"]; return fmt_format("[{:+06}]", a).len();`},
+	{"sign-zero-pad", `let a: string[] = ["42"]; return fmt_format("[{:+06}]", a).len();`},
 }
 
 func formatSpecIRSrc(mainBody string) string {

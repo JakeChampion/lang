@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// #8853 — `var t = m.insert(k, v); m = t` on a CAPTURED map. The map lives in
+// #8853 — `let t = m.insert(k, v); m = t` on a CAPTURED map. The map lives in
 // a boxcapture cell, and a cow-in-place insert hands the cell's own element
 // back borrowed, so the binding used to share the cell's one count and the
 // store's release of the superseded element spent it: a correct 11 on both
@@ -24,27 +24,27 @@ var cellCowVarBindingCases = []struct {
 }{
 	{"rebind", `import "core/map";
 function main(): i32 {
-  var m: Map[string, i32] = map_new(2);
-  var f: () => i32 = (): i32 => { return m.len(); };
-  var t: Map[string, i32] = m.insert("k", 1);
+  let m: Map[string, i32] = map_new(2);
+  let f: () => i32 = (): i32 => { return m.len(); };
+  let t: Map[string, i32] = m.insert("k", 1);
   m = t;
   return m.len() * 10 + f();
 }`, 11},
 	{"rebind_binding_read_after", `import "core/map";
 function main(): i32 {
-  var m: Map[string, i32] = map_new(2);
-  var f: () => i32 = (): i32 => { return m.len(); };
-  var t: Map[string, i32] = m.insert("k", 1);
+  let m: Map[string, i32] = map_new(2);
+  let f: () => i32 = (): i32 => { return m.len(); };
+  let t: Map[string, i32] = m.insert("k", 1);
   m = t;
   return m.len() * 10 + f() + t.len() * 100;
 }`, 111},
 	{"rebind_loop", `import "core/map";
 function main(): i32 {
-  var m: Map[string, i32] = map_new(2);
-  var f: () => i32 = (): i32 => { return m.len(); };
-  var i: i32 = 0;
+  let m: Map[string, i32] = map_new(2);
+  let f: () => i32 = (): i32 => { return m.len(); };
+  let i: i32 = 0;
   while (i < 50) {
-    var t: Map[string, i32] = m.insert("k", i);
+    let t: Map[string, i32] = m.insert("k", i);
     m = t;
     i = i + 1;
   }

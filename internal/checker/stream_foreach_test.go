@@ -9,8 +9,8 @@ import (
 
 // A `for x in f()` over a scalar async stream import iterates LAZILY: the parser
 // leaves the ast.ForEach and the checker lowers it to a per-element read loop
-// (ast.DesugarForEachStream) — `var c = f$open(); while (true) { if
-// (__stream_next(c) == 0) break; var x = __stream_elem_u8(c); BODY }
+// (ast.DesugarForEachStream) — `let c = f$open(); while (true) { if
+// (__stream_next(c) == 0) break; let x = __stream_elem_u8(c); BODY }
 // __stream_drop(c)`. Output is identical to the eager collect-then-iterate form,
 // so this pins the lazy STRUCTURE (the cursor + helper calls + the EOF break)
 // that the e2e can't distinguish from eager by its result alone. See
@@ -18,7 +18,7 @@ import (
 func TestStreamForEachDesugarsToLazyLoop(t *testing.T) {
 	prog, err := parser.Parse(`@import("test:dep/d", "prod") async function body(): stream[u8];
 async function run(): i32 {
-	var sum: i32 = 0;
+	let sum: i32 = 0;
 	for x in body() {
 		sum = sum + (x as i32);
 	}
@@ -49,7 +49,7 @@ async function run(): i32 {
 	}
 	declC, ok := blk.Stmts[0].(*ast.Var)
 	if !ok || !isCallTo(declC.Init, "body$open") {
-		t.Fatalf("stmt 0 should be `var c = body$open()`, got %#v", blk.Stmts[0])
+		t.Fatalf("stmt 0 should be `let c = body$open()`, got %#v", blk.Stmts[0])
 	}
 	loop, ok := blk.Stmts[1].(*ast.While)
 	if !ok {
@@ -72,10 +72,10 @@ async function run(): i32 {
 	if !ok || cmp.Op != "==" || !isCallTo(cmp.Left, "__stream_next") {
 		t.Fatalf("EOF guard should test `__stream_next(c) == 0`, got %#v", eofIf.Cond)
 	}
-	// stmt 1: `var x = __stream_elem_u8(c)`
+	// stmt 1: `let x = __stream_elem_u8(c)`
 	bindV, ok := loopBlk.Stmts[1].(*ast.Var)
 	if !ok || !isCallTo(bindV.Init, "__stream_elem_u8") {
-		t.Fatalf("loop stmt 1 should be `var x = __stream_elem_u8(c)`, got %#v", loopBlk.Stmts[1])
+		t.Fatalf("loop stmt 1 should be `let x = __stream_elem_u8(c)`, got %#v", loopBlk.Stmts[1])
 	}
 }
 
@@ -107,7 +107,7 @@ func TestStreamForEachInsideNestedFuncLowers(t *testing.T) {
 	prog, err := parser.Parse(`@import("test:dep/d", "prod") async function body(): stream[u8];
 async function run(): i32 {
 	function inner(): i32 {
-		var sum: i32 = 0;
+		let sum: i32 = 0;
 		for x in body() { sum = sum + (x as i32); }
 		return sum;
 	}
@@ -134,6 +134,6 @@ async function run(): i32 {
 	}
 	declC, ok := blk.Stmts[0].(*ast.Var)
 	if !ok || !isCallTo(declC.Init, "body$open") {
-		t.Fatalf("stmt 0 should be `var c = body$open()`, got %#v", blk.Stmts[0])
+		t.Fatalf("stmt 0 should be `let c = body$open()`, got %#v", blk.Stmts[0])
 	}
 }

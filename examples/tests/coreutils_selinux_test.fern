@@ -51,7 +51,7 @@ function test_only_nuls(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("coreutils/lib/selinux");
+  let r: test.TestRunner = test.test_new("coreutils/lib/selinux");
   r = r.it("the terminating NUL goes", test_trailing_nul_goes);
   r = r.it("a newline before the NUL stays", test_newline_stays);
   r = r.it("a newline with no NUL stays", test_newline_stays_without_a_nul);

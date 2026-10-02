@@ -51,8 +51,8 @@ func TestSelfHostTcpServerIRX86_64(t *testing.T) {
 	// `port_str` is spelled out rather than imported from core/int because
 	// this driver parses ONE module off stdin and resolves no imports.
 	prog := `function port_str(n: i32): string {
-    var s: string = "";
-    var v: i32 = n;
+    let s: string = "";
+    let v: i32 = n;
     while (v > 0) {
         s = chr(48 + (v % 10)) + s;
         v = v / 10;
@@ -61,20 +61,20 @@ func TestSelfHostTcpServerIRX86_64(t *testing.T) {
 }
 
 function main(): i32 {
-    var fd: i32 = tcp_listen(0);
+    let fd: i32 = tcp_listen(0);
     if (fd < 0) { return 91; }
-    var port: i32 = tcp_local_port(fd);
+    let port: i32 = tcp_local_port(fd);
     if (port <= 0) { return 97; }
     print(port_str(port));
-    var lfds: i32[] = [fd];
+    let lfds: i32[] = [fd];
     if (poll(lfds, 10000) < 0) { return 95; }
-    var c: i32 = tcp_accept(fd);
+    let c: i32 = tcp_accept(fd);
     if (c < 0) { return 92; }
-    var cfds: i32[] = [c];
+    let cfds: i32[] = [c];
     if (poll(cfds, 10000) < 0) { return 96; }
-    var req: u8[] = tcp_recv(c, 4096);
+    let req: u8[] = tcp_recv(c, 4096);
     if (req.len() == 0) { return 93; }
-    var n: i32 = tcp_send(c, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
+    let n: i32 = tcp_send(c, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
     tcp_close(c);
     tcp_close(fd);
     if (n < 0) { return 94; }

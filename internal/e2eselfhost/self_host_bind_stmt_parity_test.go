@@ -24,7 +24,7 @@ import (
 // statement that caused it.
 //
 // So this runs both over the same statements and compares the bindings they
-// leave, on a corpus that covers every ast.Stmt form and every shape of `var`
+// leave, on a corpus that covers every ast.Stmt form and every shape of `let`
 // the checker binds differently. bind_stmt_parity_run.fern does the walk: for
 // each statement of each function body (recursing into nested blocks as the
 // walkers do) and of the top level, in the scope check_module would walk it
@@ -51,33 +51,33 @@ type bindStmtParityCase struct {
 
 var bindStmtParityCases = []bindStmtParityCase{
 	{
-		// Every shape of `var` the annotated path can take, including the two
+		// Every shape of `let` the annotated path can take, including the two
 		// check_stmt reports a type error for and still binds the ANNOTATION
 		// under (unknown annotation, init/annotation mismatch): the error goes
 		// in the `ty` all twelve callers discard, so bind_stmt must not
 		// disagree about the scope there.
-		name: "var forms",
+		name: "let forms",
 		src: `struct P { x: i32, y: string }
 struct G { v: i32 }
 type Shape = P | G;
 function mk(): P { return P { x: 1, y: "a" }; }
 function main(): i32 {
-  var inferred = 41;
-  var annotated: i32 = 1;
-  var s: string = "hi";
-  var sv: str = "view";
-  var f: f64 = 1.5;
-  var b: boolean = true;
-  var arr: i32[] = [1, 2, 3];
-  var arr2: string[][] = [];
-  var p: P = mk();
-  var u: Shape = mk();
-  var m: Map[string, i32] = {};
-  var tup: (i32, string) = (1, "a");
-  var fnv: fn = (z: i32): i32 => { return z; };
-  var unknownAnn: NoSuchType = 1;
-  var mismatch: i32 = "not an i32";
-  var slice: [i32] = arr;
+  let inferred = 41;
+  let annotated: i32 = 1;
+  let s: string = "hi";
+  let sv: str = "view";
+  let f: f64 = 1.5;
+  let b: boolean = true;
+  let arr: i32[] = [1, 2, 3];
+  let arr2: string[][] = [];
+  let p: P = mk();
+  let u: Shape = mk();
+  let m: Map[string, i32] = {};
+  let tup: (i32, string) = (1, "a");
+  let fnv: fn = (z: i32): i32 => { return z; };
+  let unknownAnn: NoSuchType = 1;
+  let mismatch: i32 = "not an i32";
+  let slice: [i32] = arr;
   return annotated + inferred + p.x + arr[0];
 }`,
 		minCompared: 18,
@@ -91,12 +91,12 @@ function main(): i32 {
 		src: `struct P { x: i32, y: i32 }
 struct One { only: i32 }
 function main(): i32 {
-  var p: P = P { x: 1, y: 2 };
+  let p: P = P { x: 1, y: 2 };
   let (a, b) = (1, "two");
   let P { x, y } = p;
   let One { only } = One { only: 3 };
   let whole @ P { x: rx, y: ry } = p;
-  var t3 = (1, 2, 3);
+  let t3 = (1, 2, 3);
   let (c, d, e) = t3;
   return a + x + y + only + rx + ry + c + d + e + whole.x;
 }`,
@@ -108,28 +108,28 @@ function main(): i32 {
 		name: "nested bodies",
 		src: `function side(n: i32): i32 { return n; }
 function main(): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   side(n);
-  if (n > 0) { var t: i32 = 1; n = n + t; } else { var e: string = "x"; n = n + e.len(); }
-  while (n < 5) { var w = n; if (w > 3) { break; } n = n + 1; continue; }
-  var arr: i32[] = [1, 2];
-  for x in arr { var q: i32 = x; n = n + q; }
+  if (n > 0) { let t: i32 = 1; n = n + t; } else { let e: string = "x"; n = n + e.len(); }
+  while (n < 5) { let w = n; if (w > 3) { break; } n = n + 1; continue; }
+  let arr: i32[] = [1, 2];
+  for x in arr { let q: i32 = x; n = n + q; }
   defer side(n);
   return n;
 }`,
 		minCompared: 21,
 	},
 	{
-		// The recursive-local self-binding: `var f = (…) => { … }` must
+		// The recursive-local self-binding: `let f = (…) => { … }` must
 		// have `f` in scope while its own initialiser is inferred, or the
 		// self-call inside it resolves to nothing.
 		name: "lambdas and recursive locals",
 		src: `function main(): i32 {
   function rec(n: i32): i32 { if (n <= 0) { return 0; } return rec(n - 1); }
-  var lam = (z: i32): i32 => { return z + 1; };
-  var lam2: fn = (z: f64): f64 => { return z; };
-  var arrfn: fn[] = [];
-  var used = lam(1) + rec(2);
+  let lam = (z: i32): i32 => { return z + 1; };
+  let lam2: fn = (z: f64): f64 => { return z; };
+  let arrfn: fn[] = [];
+  let used = lam(1) + rec(2);
   return used + arrfn.len();
 }`,
 		minCompared: 6,
@@ -137,8 +137,8 @@ function main(): i32 {
 	{
 		name: "top-level statements",
 		src: `struct P { x: i32 }
-var top: i32 = 7;
-var topInferred = top + 1;
+let top: i32 = 7;
+let topInferred = top + 1;
 let (ta, tb) = (1, 2);
 function main(): i32 { return top + topInferred + ta + tb; }`,
 		minCompared: 4,
@@ -148,9 +148,9 @@ function main(): i32 { return top + topInferred + ta + tb; }`,
 		// binds nothing — and the statements after it still have to be walked.
 		name: "unparseable statement",
 		src: `function main(): i32 {
-  var arr: i32[] = [1];
-  for in arr { var q = 1; }
-  var after: i32 = 2;
+  let arr: i32[] = [1];
+  for in arr { let q = 1; }
+  let after: i32 = 2;
   return after;
 }`,
 		minCompared: 7,
@@ -161,13 +161,13 @@ function main(): i32 { return top + topInferred + ta + tb; }`,
 struct Q { r: string }
 type Shape = P | Q;
 function main(): i32 {
-  var sh: Shape = P { x: 2 };
-  var n: i32 = 0;
+  let sh: Shape = P { x: 2 };
+  let n: i32 = 0;
   match (sh) {
-    P(pp) => { var mv: i32 = pp.x; n = n + mv; },
-    Q(qq) => { var mq = qq.r; n = n + mq.len(); }
+    P(pp) => { let mv: i32 = pp.x; n = n + mv; },
+    Q(qq) => { let mq = qq.r; n = n + mq.len(); }
   }
-  match (n) { 0 => { var z = 1; n = n + z; }, _ => { var o: i32 = 2; n = n + o; } }
+  match (n) { 0 => { let z = 1; n = n + z; }, _ => { let o: i32 = 2; n = n + o; } }
   return n;
 }`,
 		minCompared: 13,

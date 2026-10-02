@@ -39,7 +39,7 @@ function count_problems(ops: ir.Op[], n_params: i32, n_locals: i32): i32 {
 
 // first_msg returns the first problem's rendered message, or "" if clean.
 function first_msg(ops: ir.Op[], n_params: i32, n_locals: i32): string {
-  var ps: irverify.Problem[] = irverify.verify_fn("f", ops, n_params, n_locals, no_sigs());
+  let ps: irverify.Problem[] = irverify.verify_fn("f", ops, n_params, n_locals, no_sigs());
   if (ps.len() == 0) {
     return "";
   }
@@ -56,7 +56,7 @@ function sp_count(ops: ir.Op[]): i32 {
 }
 
 function sp_msg(ops: ir.Op[]): string {
-  var r: irverifystack.StackResult = irverifystack.verify_stack_fn("f", ops);
+  let r: irverifystack.StackResult = irverifystack.verify_stack_fn("f", ops);
   if (r.problems.len() == 0) {
     return "";
   }
@@ -87,7 +87,7 @@ function stack_checks(): i32 {
 
   // A value still held where the function falls off its end is the case
   // that backend fallthrough cannot absorb: it would be pushed ON TOP.
-  var dangling: ir.Op[] = [ir.op_const_i32(1)];
+  let dangling: ir.Op[] = [ir.op_const_i32(1)];
   if (sp_count(dangling) != 1) {
     return 73;
   }
@@ -97,7 +97,7 @@ function stack_checks(): i32 {
 
   // ---- 2. underflow --------------------------------------------------
   // An op with no operands to take. One report, not one per following op.
-  var starved: ir.Op[] = [ir.op_bin("add", 0, false), ir.op_return()];
+  let starved: ir.Op[] = [ir.op_bin("add", 0, false), ir.op_return()];
   if (sp_count(starved) != 1) {
     return 75;
   }
@@ -115,9 +115,9 @@ function stack_checks(): i32 {
   }
 
   // ---- 3. scope height -----------------------------------------------
-  // Every scope irlower opens is void, so it must leave the stack where it
+  // Every scope the lowering opens is void, so it must leave the stack where it
   // found it.
-  var leaky_if: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(2), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
+  let leaky_if: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(2), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
   if (sp_count(leaky_if) != 1) {
     return 80;
   }
@@ -127,7 +127,7 @@ function stack_checks(): i32 {
 
   // The then-arm is checked at the `else`, so a two-armed if names which
   // arm is unbalanced rather than blaming the end.
-  var leaky_then: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(2), ir.op_else(), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
+  let leaky_then: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(2), ir.op_else(), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
   if (sp_count(leaky_then) != 1) {
     return 82;
   }
@@ -136,11 +136,11 @@ function stack_checks(): i32 {
   }
 
   // A balanced if/else, and a balanced loop, are clean.
-  var balanced_if: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(2), ir.op_drop(), ir.op_else(), ir.op_const_i32(3), ir.op_drop(), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
+  let balanced_if: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(2), ir.op_drop(), ir.op_else(), ir.op_const_i32(3), ir.op_drop(), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
   if (sp_count(balanced_if) != 0) {
     return 84;
   }
-  var wloop: ir.Op[] = [ir.op_block(0), ir.op_loop(0), ir.op_const_i32(1), ir.op_brif(1), ir.op_br(0), ir.op_end(), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
+  let wloop: ir.Op[] = [ir.op_block(0), ir.op_loop(0), ir.op_const_i32(1), ir.op_brif(1), ir.op_br(0), ir.op_end(), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
   if (sp_count(wloop) != 0) {
     return 85;
   }
@@ -196,7 +196,7 @@ function stack_checks(): i32 {
   // ---- 6. fail-soft --------------------------------------------------
   // An op the pass does not model abandons the function rather than
   // guessing at its arity, and says which op it was.
-  var unmodelled: ir.Op[] = [ir.op_load(32)];
+  let unmodelled: ir.Op[] = [ir.op_load(32)];
   if (sp_bail(unmodelled) != "unmodelled op load") {
     return 100;
   }
@@ -204,7 +204,7 @@ function stack_checks(): i32 {
     return 101;
   }
 
-  // A non-void scope is not something irlower emits; modelling what it
+  // A non-void scope is not something the lowering emits; modelling what it
   // leaves behind would be guessing.
   if (!util.contains(sp_bail([ir.op_block(1), ir.op_end()]), "non-void block type 1")) {
     return 102;
@@ -229,7 +229,7 @@ function stack_checks(): i32 {
   }
 
   // ---- 7. coverage ---------------------------------------------------
-  var cov: irverifystack.Coverage = irverifystack.coverage_new();
+  let cov: irverifystack.Coverage = irverifystack.coverage_new();
   cov = irverifystack.coverage_add(cov, "a", "");
   cov = irverifystack.coverage_add(cov, "b", "unmodelled op load");
   cov = irverifystack.coverage_add(cov, "c", "unmodelled op load");
@@ -260,7 +260,7 @@ function fip_problems(kw: string, allowance: i32, ops: ir.Op[]): i32 {
 }
 
 function fip_msg(kw: string, allowance: i32, ops: ir.Op[]): string {
-  var r: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim(kw, allowance), ops);
+  let r: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim(kw, allowance), ops);
   if (r.problems.len() == 0) {
     return "";
   }
@@ -273,8 +273,8 @@ function fip_msg(kw: string, allowance: i32, ops: ir.Op[]): string {
 // within it — a pass that charges a reuse-paired site would report every real
 // `fbip` function, which is the failure mode that matters here.
 function fip_checks(): i32 {
-  var fresh_struct: ir.Op[] = [ir.op_const_i32(1), ir.op_const_i32(2), ir.op_struct_make("P", 2, 0 - 1)];
-  var paired_struct: ir.Op[] = [ir.op_const_i32(0), ir.op_const_i32(3), ir.op_call_direct("__fern_alloc_reuse", 2)];
+  let fresh_struct: ir.Op[] = [ir.op_const_i32(1), ir.op_const_i32(2), ir.op_struct_make("P", 2, 0 - 1)];
+  let paired_struct: ir.Op[] = [ir.op_const_i32(0), ir.op_const_i32(3), ir.op_call_direct("__fern_alloc_reuse", 2)];
 
   // ---- 1. the budget -------------------------------------------------
   // One fresh constructor: over a bare claim's allowance of 0, within a
@@ -304,7 +304,7 @@ function fip_checks(): i32 {
   if (fip_problems("fbip", 0, paired_struct) != 0) {
     return 125;
   }
-  var pr: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 0), paired_struct);
+  let pr: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 0), paired_struct);
   if (pr.paired != 1 || pr.fresh != 0) {
     return 126;
   }
@@ -357,8 +357,8 @@ function fip_checks(): i32 {
   // ---- 4. the census -------------------------------------------------
   // Counts are reported whether or not the claim is exceeded, so a caller
   // can tell "constructs nothing" from "pairs everything".
-  var mixed: ir.Op[] = [ir.op_struct_make("P", 2, 0 - 1), ir.op_call_direct("__fern_alloc_reuse", 2), ir.op_tuple_make(2)];
-  var mr: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 2), mixed);
+  let mixed: ir.Op[] = [ir.op_struct_make("P", 2, 0 - 1), ir.op_call_direct("__fern_alloc_reuse", 2), ir.op_tuple_make(2)];
+  let mr: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 2), mixed);
   if (mr.fresh != 2 || mr.paired != 1) {
     return 140;
   }
@@ -369,11 +369,11 @@ function fip_checks(): i32 {
   // ---- 5. the message ------------------------------------------------
   // One problem per function naming every site, not one problem per site:
   // the count IS the verdict, and a per-site list would bury it.
-  var over: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 0), mixed);
+  let over: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 0), mixed);
   if (over.problems.len() != 1) {
     return 150;
   }
-  var m: string = irverify.problem_str(over.problems[0]);
+  let m: string = irverify.problem_str(over.problems[0]);
   if (!util.contains(m, "`fbip` function \"f\" allocates: 2 un-reused allocation site(s)")) {
     return 151;
   }
@@ -429,7 +429,7 @@ function pv_count(ops: ir.Op[], declared: string[]): i32 {
 }
 
 function pv_msg(ops: ir.Op[], declared: string[]): string {
-  var r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn("f", ops, irverify.name_index(declared));
+  let r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn("f", ops, irverify.name_index(declared));
   if (r.problems.len() == 0) {
     return "";
   }
@@ -441,8 +441,8 @@ function pv_msg(ops: ir.Op[], declared: string[]): string {
 // declared function, a runtime helper, a per-type generated helper, and an FFI
 // shim — it must stay silent on.
 function provided_checks(): i32 {
-  var none: string[] = [];
-  var decl: string[] = ["main", "helper"];
+  let none: string[] = [];
+  let decl: string[] = ["main", "helper"];
 
   // The failure this pass exists to catch: a call to a name nothing defines.
   if (pv_count([ir.op_call_direct("nope", 1)], decl) != 1) {
@@ -514,8 +514,8 @@ function provided_checks(): i32 {
 
   // The call tally travels with the verdict, so a clean result over a module
   // with no calls is distinguishable from a clean result over one with many.
-  var mixed: ir.Op[] = [ir.op_call_direct("helper", 1), ir.op_call_direct("__fern_rc_inc", 1), ir.op_call_direct("nope", 0)];
-  var mr: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn("f", mixed, irverify.name_index(decl));
+  let mixed: ir.Op[] = [ir.op_call_direct("helper", 1), ir.op_call_direct("__fern_rc_inc", 1), ir.op_call_direct("nope", 0)];
+  let mr: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn("f", mixed, irverify.name_index(decl));
   if (mr.calls != 3) {
     return 86;
   }
@@ -527,13 +527,13 @@ function provided_checks(): i32 {
   // Membership is what the pass rests on, and a bucketing bug would show up
   // as a false unresolved report rather than a crash. Check both answers,
   // and check them at a size that spans many buckets.
-  var big: string[] = [];
-  var i: i32 = 0;
+  let big: string[] = [];
+  let i: i32 = 0;
   while (i < 3000) {
     big = big.append("fn_" + util.i32_to_string(i));
     i = i + 1;
   }
-  var ix: irverify.NameIndex = irverify.name_index(big);
+  let ix: irverify.NameIndex = irverify.name_index(big);
   if (!irverify.index_has(ix, "fn_0")) {
     return 88;
   }
@@ -551,8 +551,8 @@ function provided_checks(): i32 {
   }
   // Every name goes in exactly once — a placement bug that overwrote a
   // bucket entry would leave an earlier name unfindable.
-  var placed: i32 = 0;
-  var pj: i32 = 0;
+  let placed: i32 = 0;
+  let pj: i32 = 0;
   while (pj < big.len()) {
     if (irverify.index_has(ix, big[pj])) {
       placed = placed + 1;
@@ -570,12 +570,12 @@ function provided_checks(): i32 {
   // A duplicated name resolves to its FIRST declaration. Two entries can
   // disagree about arity, and the call check reads whichever the index kept,
   // so this is the difference between an arity report and a false one.
-  var dsigs: irverify.FnSig[] = [
+  let dsigs: irverify.FnSig[] = [
     irverify.FnSig { name: "dup", n_params: 2 },
     irverify.FnSig { name: "other", n_params: 1 },
     irverify.FnSig { name: "dup", n_params: 7 },
   ];
-  var dix: irverify.NameIndex = irverify.sig_index(dsigs);
+  let dix: irverify.NameIndex = irverify.sig_index(dsigs);
   if (irverify.index_params(dix, "dup") != 2) {
     return 97;
   }
@@ -587,7 +587,7 @@ function provided_checks(): i32 {
   }
   // A membership-only index carries no arity, so index_params declines for a
   // name index_has admits — the two answers are independent.
-  var mix: irverify.NameIndex = irverify.name_index(["solo"]);
+  let mix: irverify.NameIndex = irverify.name_index(["solo"]);
   if (!irverify.index_has(mix, "solo")) {
     return 107;
   }
@@ -597,11 +597,11 @@ function provided_checks(): i32 {
 
   // The inventory is non-empty and every entry resolves through is_provided
   // — an entry that did not would be dead weight the audit could not see.
-  var inv: string[] = irverifyprovided.provided_names();
+  let inv: string[] = irverifyprovided.provided_names();
   if (inv.len() < 30) {
     return 95;
   }
-  var vi: i32 = 0;
+  let vi: i32 = 0;
   while (vi < inv.len()) {
     if (!irverifyprovided.is_provided(inv[vi])) {
       return 96;
@@ -619,7 +619,7 @@ function gate_checks(): i32 {
   // either pass. This is the case that decides whether the gate is usable at
   // all: it runs on every function of every compile, so a false positive here
   // would refuse valid programs.
-  var clean: ir.Op[] = [ir.op_const_i32(1), ir.op_return()];
+  let clean: ir.Op[] = [ir.op_const_i32(1), ir.op_return()];
   if (irverifygate.verify_problems("f", clean, 0, 1, no_sigs()).len() != 0) {
     return 170;
   }
@@ -627,7 +627,7 @@ function gate_checks(): i32 {
   // A STRUCTURE problem alone: the local index is outside a 1-slot frame.
   // The stack pass is silent on it (load_local pops nothing either way), so
   // this reaches the gate only through irverify.
-  var bad_slot: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
+  let bad_slot: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
   if (irverifygate.verify_problems("f", bad_slot, 0, 1, no_sigs()).len() != 1) {
     return 171;
   }
@@ -642,7 +642,7 @@ function gate_checks(): i32 {
   // frame is well-formed, so irverify says nothing and only the stack pass
   // reaches the gate — the direction a merge dropping irverifystack would
   // miss, which is the class the gate was built for.
-  var underflow: ir.Op[] = [ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_return()];
+  let underflow: ir.Op[] = [ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_return()];
   if (irverifygate.verify_problems("f", underflow, 0, 1, no_sigs()).len() != 1) {
     return 173;
   }
@@ -654,8 +654,8 @@ function gate_checks(): i32 {
   }
 
   // Both at once: the gate reports each pass's findings, structure first.
-  var both: ir.Op[] = [ir.op_load_local(5), ir.op_bin("add", 0, false), ir.op_return()];
-  var bps: irverify.Problem[] = irverifygate.verify_problems("f", both, 0, 1, no_sigs());
+  let both: ir.Op[] = [ir.op_load_local(5), ir.op_bin("add", 0, false), ir.op_return()];
+  let bps: irverify.Problem[] = irverifygate.verify_problems("f", both, 0, 1, no_sigs());
   if (bps.len() != 2) {
     return 175;
   }
@@ -670,9 +670,9 @@ function gate_checks(): i32 {
   // the parameter list. A wrong-arity call is invisible to the stack pass —
   // it pops what the op says it pops — so this is the only case that fails
   // if the gate goes back to verifying against an empty signature set.
-  var sigs: irverify.NameIndex = irverify.sig_index([irverify.FnSig { name: "takes2", n_params: 2 }]);
-  var arity: ir.Op[] = [ir.op_call_direct("takes2", 0), ir.op_return()];
-  var aps: irverify.Problem[] = irverifygate.verify_problems("f", arity, 0, 1, sigs);
+  let sigs: irverify.NameIndex = irverify.sig_index([irverify.FnSig { name: "takes2", n_params: 2 }]);
+  let arity: ir.Op[] = [ir.op_call_direct("takes2", 0), ir.op_return()];
+  let aps: irverify.Problem[] = irverifygate.verify_problems("f", arity, 0, 1, sigs);
   if (aps.len() != 1) {
     return 178;
   }
@@ -695,7 +695,7 @@ function gate_checks(): i32 {
 // otherwise pin that the flag is read, that a non-empty verdict is acted on,
 // or that the exit code is 4. Reached only via `-refuse`.
 function refuse_probe(): i32 {
-  var malformed: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
+  let malformed: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
   irverifygate.verify_or_refuse("probe", malformed, 0, 1, no_sigs());
   // Only reachable under FERN_IR_VERIFY=0: the opt-out must make the gate
   // inert, which is as much of the contract as the refusal is.
@@ -711,7 +711,7 @@ function raw_op(kind: string): ir.Op {
   return ir.Op { decl: 0 - 1, kind_tag: ir.kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
-// selfhost_reuse builds the shape irlower ACTUALLY emits, read off a
+// selfhost_reuse builds the shape the lowering ACTUALLY emits, read off a
 // `-dump-fn churn` of conformance/cases/general_reuse_struct:
 //
 //   load_local D; call __fern_rc_is_unique/1; tee_local u
@@ -822,8 +822,8 @@ function native_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
 
 // concat_ops lays two op streams end to end.
 function concat_ops(a: ir.Op[], b: ir.Op[]): ir.Op[] {
-  var out: ir.Op[] = a;
-  var i: i32 = 0;
+  let out: ir.Op[] = a;
+  let i: i32 = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
     i = i + 1;
@@ -834,7 +834,7 @@ function concat_ops(a: ir.Op[], b: ir.Op[]): ir.Op[] {
 // rc_only_skip reports whether the pass counted the site and skipped it for
 // exactly the named reason, with nothing reported.
 function rc_only_skip(ops: ir.Op[], why: string): boolean {
-  var r: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", ops);
+  let r: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", ops);
   if (r.problems.len() != 0 || r.sites != 1 || r.checked != 0) {
     return false;
   }
@@ -848,7 +848,7 @@ function rc_only_skip(ops: ir.Op[], why: string): boolean {
 // emitted shapes. Returns 0 when every case holds.
 function rc_checks(): i32 {
   // ---- a well-formed site verifies clean, on both shapes -------------
-  var sh: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", selfhost_reuse(1, 1));
+  let sh: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", selfhost_reuse(1, 1));
   if (sh.problems.len() != 0) {
     return 190;
   }
@@ -856,7 +856,7 @@ function rc_checks(): i32 {
     return 191;
   }
 
-  var na: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", native_reuse(1, 1, 1));
+  let na: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", native_reuse(1, 1, 1));
   if (na.problems.len() != 0) {
     return 192;
   }
@@ -868,7 +868,7 @@ function rc_checks(): i32 {
   // The 2026-08-29 first-match hazard: the pairing resolved a donor other
   // than the one whose uniqueness was established, so the site writes over
   // a box that may still have other owners.
-  var t1: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", selfhost_reuse(1, 2));
+  let t1: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", selfhost_reuse(1, 2));
   if (t1.checked != 1) {
     return 194;
   }
@@ -879,7 +879,7 @@ function rc_checks(): i32 {
     return 196;
   }
 
-  var t2: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", native_reuse(1, 2, 1));
+  let t2: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", native_reuse(1, 2, 1));
   if (t2.problems.len() != 1) {
     return 197;
   }
@@ -891,7 +891,7 @@ function rc_checks(): i32 {
   // The mirror failure: the gate and the token agree, but the shared arm
   // releases something else, so the tested donor leaks when the site
   // declines. Only the native shape carries a decline release at all.
-  var d1: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", native_reuse(1, 1, 2));
+  let d1: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", native_reuse(1, 1, 2));
   if (d1.checked != 1) {
     return 199;
   }
@@ -907,12 +907,12 @@ function rc_checks(): i32 {
   // shape the pass cannot model must cost coverage and nothing else. The
   // reason is pinned per case, so a case cannot pass by being skipped for
   // an unrelated cause further up the recogniser.
-  var no_gate: ir.Op[] = selfhost_reuse(1, 1).with(1, ir.op_drop());
+  let no_gate: ir.Op[] = selfhost_reuse(1, 1).with(1, ir.op_drop());
   if (!rc_only_skip(no_gate, "no uniqueness gate before the token select")) {
     return 202;
   }
 
-  var no_else: ir.Op[] = [
+  let no_else: ir.Op[] = [
     ir.op_load_local(1),
     ir.op_call_direct("__fern_rc_is_unique", 1),
     ir.op_tee_local(3),
@@ -928,7 +928,7 @@ function rc_checks(): i32 {
     return 203;
   }
 
-  var const_token: ir.Op[] = selfhost_reuse(1, 1).with(10, ir.op_const_i32(0));
+  let const_token: ir.Op[] = selfhost_reuse(1, 1).with(10, ir.op_const_i32(0));
   if (!rc_only_skip(const_token, "token argument is not a local load")) {
     return 204;
   }
@@ -936,7 +936,7 @@ function rc_checks(): i32 {
   // A select conditioned on something that is neither a local load nor a
   // tee is its own shape, reported apart from a missing gate so a new
   // emitter cannot hide behind the other's count.
-  var cond_not_local: ir.Op[] = native_reuse(1, 1, 1).with(3, ir.op_const_i32(1));
+  let cond_not_local: ir.Op[] = native_reuse(1, 1, 1).with(3, ir.op_const_i32(1));
   if (!rc_only_skip(cond_not_local, "token select is not conditioned on a local")) {
     return 205;
   }
@@ -950,8 +950,8 @@ function rc_checks(): i32 {
   }
 
   // ---- a function with no reuse site is untouched --------------------
-  var plain: ir.Op[] = [ir.op_load_local(1), ir.op_call_direct("__fern_rc_inc", 1), ir.op_drop()];
-  var pr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", plain);
+  let plain: ir.Op[] = [ir.op_load_local(1), ir.op_call_direct("__fern_rc_inc", 1), ir.op_drop()];
+  let pr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", plain);
   if (pr.problems.len() != 0 || pr.sites != 0) {
     return 207;
   }
@@ -959,9 +959,9 @@ function rc_checks(): i32 {
   // ---- the gate runs the ownership half ------------------------------
   // Wiring, not algorithm: a donor mismatch must reach verify_problems, or
   // the pass is correct and never consulted.
-  var gp: irverify.Problem[] = irverifygate.verify_problems("f", selfhost_reuse(1, 2), 0, 8, no_sigs());
-  var seen: boolean = false;
-  var gi: i32 = 0;
+  let gp: irverify.Problem[] = irverifygate.verify_problems("f", selfhost_reuse(1, 2), 0, 8, no_sigs());
+  let seen: boolean = false;
+  let gi: i32 = 0;
   while (gi < gp.len()) {
     if (util.contains(gp[gi].msg, "never proved unique")) {
       seen = true;
@@ -975,8 +975,8 @@ function rc_checks(): i32 {
   // ---- one donor claimed twice ---------------------------------------
   // The first site gives the box away; the second hands the same memory to
   // a second recipient.
-  var twice: ir.Op[] = concat_ops(selfhost_reuse(1, 1), selfhost_reuse(1, 1));
-  var tw: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", twice);
+  let twice: ir.Op[] = concat_ops(selfhost_reuse(1, 1), selfhost_reuse(1, 1));
+  let tw: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", twice);
   if (tw.sites != 2 || tw.checked != 2) {
     return 211;
   }
@@ -992,11 +992,11 @@ function rc_checks(): i32 {
   // docs/rc-log/2026-08-29-xblock-recipient-site-key.md is precisely this
   // shape: an if-arm's recipient is an ordinary block-scoped var, so sibling
   // arms naturally reuse one name.
-  var arms: ir.Op[] = concat_ops([ir.op_const_i32(1), ir.op_if(0)], selfhost_reuse(1, 1));
+  let arms: ir.Op[] = concat_ops([ir.op_const_i32(1), ir.op_if(0)], selfhost_reuse(1, 1));
   arms = concat_ops(arms, [ir.op_else()]);
   arms = concat_ops(arms, selfhost_reuse(1, 1));
   arms = concat_ops(arms, [ir.op_end()]);
-  var ar: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", arms);
+  let ar: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", arms);
   if (ar.checked != 2) {
     return 214;
   }
@@ -1006,16 +1006,16 @@ function rc_checks(): i32 {
 
   // A store to the donor's slot between the two sites makes the second
   // claim a different box.
-  var rebound: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(0), ir.op_store_local(1)]);
+  let rebound: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(0), ir.op_store_local(1)]);
   rebound = concat_ops(rebound, selfhost_reuse(1, 1));
-  var rb: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", rebound);
+  let rb: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", rebound);
   if (rb.checked != 2 || rb.problems.len() != 0) {
     return 216;
   }
 
   // Distinct donors never collide.
-  var distinct: ir.Op[] = concat_ops(selfhost_reuse(1, 1), selfhost_reuse(2, 2));
-  var di: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", distinct);
+  let distinct: ir.Op[] = concat_ops(selfhost_reuse(1, 1), selfhost_reuse(2, 2));
+  let di: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", distinct);
   if (di.checked != 2 || di.problems.len() != 0) {
     return 217;
   }
@@ -1024,23 +1024,23 @@ function rc_checks(): i32 {
   // A function return on the first claim's path separates the sites.
   // Each site must remain checked, and a conditional return must still
   // expose the reachable double claim through its other arm.
-  var stopped: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_return()]);
+  let stopped: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_return()]);
   stopped = concat_ops(stopped, selfhost_reuse(1, 1));
-  var sr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", stopped);
+  let sr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", stopped);
   if (sr.checked != 2 || sr.problems.len() != 0) {
     return 221;
   }
-  var conditional: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(1), ir.op_if(0), ir.op_return(), ir.op_end()]);
+  let conditional: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(1), ir.op_if(0), ir.op_return(), ir.op_end()]);
   conditional = concat_ops(conditional, selfhost_reuse(1, 1));
-  var cr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", conditional);
+  let cr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", conditional);
   if (cr.checked != 2 || cr.problems.len() != 1) {
     return 222;
   }
   // An op of no known kind (its tag is KIND_INVALID) is not a return: the
   // walk continues past it, the way native's switch matches no arm.
-  var unknown: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [raw_op("not_an_op_kind")]);
+  let unknown: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [raw_op("not_an_op_kind")]);
   unknown = concat_ops(unknown, selfhost_reuse(1, 1));
-  var ur: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", unknown);
+  let ur: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", unknown);
   if (ur.checked != 2 || ur.problems.len() != 1) {
     return 223;
   }
@@ -1050,15 +1050,15 @@ function rc_checks(): i32 {
   // the token slot; after the allocation keep_release branches on the token
   // itself. The gate and the token source come from the first select, the
   // decline release from the second.
-  var kc: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 1, 1));
+  let kc: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 1, 1));
   if (kc.checked != 1 || kc.problems.len() != 0) {
     return 218;
   }
-  var kt: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 2, 1));
+  let kt: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 2, 1));
   if (kt.checked != 1 || kt.problems.len() != 1 || !util.contains(kt.problems[0].msg, "never proved unique")) {
     return 219;
   }
-  var kd: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 1, 2));
+  let kd: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 1, 2));
   if (kd.checked != 1 || kd.problems.len() != 1 || !util.contains(kd.problems[0].msg, "leaks on the decline path")) {
     return 220;
   }
@@ -1067,7 +1067,7 @@ function rc_checks(): i32 {
   if (!util.contains(irverifyrc.rc_coverage_str(sh), "reuse sites modelled 1/1")) {
     return 209;
   }
-  var skipped: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", no_gate);
+  let skipped: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", no_gate);
   if (!util.contains(irverifyrc.rc_coverage_str(skipped), "skipped 1: no uniqueness gate")) {
     return 210;
   }
@@ -1076,8 +1076,8 @@ function rc_checks(): i32 {
 }
 
 function main(): i32 {
-  var av: string[] = args();
-  var ai: i32 = 0;
+  let av: string[] = args();
+  let ai: i32 = 0;
   while (ai < av.len()) {
     if (av[ai] == "-refuse") {
       return refuse_probe();
@@ -1087,23 +1087,23 @@ function main(): i32 {
 
   // ---- 1. local index bounds ----------------------------------------
   // A frame of 3 slots admits 0..2 and refuses 3 and -1.
-  var in_range: ir.Op[] = [ir.op_load_local(0), ir.op_store_local(2), ir.op_tee_local(1)];
+  let in_range: ir.Op[] = [ir.op_load_local(0), ir.op_store_local(2), ir.op_tee_local(1)];
   if (count_problems(in_range, 1, 3) != 0) {
     return 1;
   }
 
-  var past_end: ir.Op[] = [ir.op_load_local(3)];
+  let past_end: ir.Op[] = [ir.op_load_local(3)];
   if (count_problems(past_end, 1, 3) != 1) {
     return 2;
   }
 
-  var negative_idx: ir.Op[] = [ir.op_store_local(0 - 1)];
+  let negative_idx: ir.Op[] = [ir.op_store_local(0 - 1)];
   if (count_problems(negative_idx, 1, 3) != 1) {
     return 3;
   }
 
   // The message names the frame breakdown, not just the index.
-  var m1: string = first_msg(past_end, 1, 3);
+  let m1: string = first_msg(past_end, 1, 3);
   if (!util.contains(m1, "local index 3 is outside the frame")) {
     return 4;
   }
@@ -1118,23 +1118,23 @@ function main(): i32 {
 
   // ---- 2. control scope discipline ----------------------------------
   // Balanced block/end is clean, and so is a nested if/else/end.
-  var balanced: ir.Op[] = [ir.op_block(0), ir.op_end()];
+  let balanced: ir.Op[] = [ir.op_block(0), ir.op_end()];
   if (count_problems(balanced, 0, 1) != 0) {
     return 10;
   }
 
-  var if_else: ir.Op[] = [ir.op_if(0), ir.op_else(), ir.op_end()];
+  let if_else: ir.Op[] = [ir.op_if(0), ir.op_else(), ir.op_end()];
   if (count_problems(if_else, 0, 1) != 0) {
     return 11;
   }
 
-  var nested: ir.Op[] = [ir.op_block(0), ir.op_loop(0), ir.op_if(0), ir.op_else(), ir.op_end(), ir.op_end(), ir.op_end()];
+  let nested: ir.Op[] = [ir.op_block(0), ir.op_loop(0), ir.op_if(0), ir.op_else(), ir.op_end(), ir.op_end(), ir.op_end()];
   if (count_problems(nested, 0, 1) != 0) {
     return 12;
   }
 
   // An unclosed scope is reported once, against the op that opened it.
-  var unclosed: ir.Op[] = [ir.op_block(0)];
+  let unclosed: ir.Op[] = [ir.op_block(0)];
   if (count_problems(unclosed, 0, 1) != 1) {
     return 13;
   }
@@ -1148,7 +1148,7 @@ function main(): i32 {
   }
 
   // An end with nothing open.
-  var extra_end: ir.Op[] = [ir.op_end()];
+  let extra_end: ir.Op[] = [ir.op_end()];
   if (count_problems(extra_end, 0, 1) != 1) {
     return 16;
   }
@@ -1157,7 +1157,7 @@ function main(): i32 {
   }
 
   // An else against a block rather than an if.
-  var else_on_block: ir.Op[] = [ir.op_block(0), ir.op_else(), ir.op_end()];
+  let else_on_block: ir.Op[] = [ir.op_block(0), ir.op_else(), ir.op_end()];
   if (count_problems(else_on_block, 0, 1) != 1) {
     return 18;
   }
@@ -1166,7 +1166,7 @@ function main(): i32 {
   }
 
   // A second else for one if.
-  var double_else: ir.Op[] = [ir.op_if(0), ir.op_else(), ir.op_else(), ir.op_end()];
+  let double_else: ir.Op[] = [ir.op_if(0), ir.op_else(), ir.op_else(), ir.op_end()];
   if (count_problems(double_else, 0, 1) != 1) {
     return 20;
   }
@@ -1182,17 +1182,17 @@ function main(): i32 {
   // ---- 3. branch depth ----------------------------------------------
   // Inside one block, depth 0 targets it and depth 1 targets the implicit
   // function-body scope — both legal. Depth 2 has no target.
-  var br0: ir.Op[] = [ir.op_block(0), ir.op_br(0), ir.op_end()];
+  let br0: ir.Op[] = [ir.op_block(0), ir.op_br(0), ir.op_end()];
   if (count_problems(br0, 0, 1) != 0) {
     return 30;
   }
 
-  var br1: ir.Op[] = [ir.op_block(0), ir.op_br(1), ir.op_end()];
+  let br1: ir.Op[] = [ir.op_block(0), ir.op_br(1), ir.op_end()];
   if (count_problems(br1, 0, 1) != 0) {
     return 31;
   }
 
-  var br2: ir.Op[] = [ir.op_block(0), ir.op_br(2), ir.op_end()];
+  let br2: ir.Op[] = [ir.op_block(0), ir.op_br(2), ir.op_end()];
   if (count_problems(br2, 0, 1) != 1) {
     return 32;
   }
@@ -1222,26 +1222,26 @@ function main(): i32 {
   }
 
   // ---- 4. call arity -------------------------------------------------
-  var sigs: irverify.NameIndex = irverify.sig_index([
+  let sigs: irverify.NameIndex = irverify.sig_index([
     irverify.FnSig { name: "takes2", n_params: 2 },
     irverify.FnSig { name: "takes0", n_params: 0 },
   ]);
 
   // Exact arity is clean.
-  var call_ok: ir.Op[] = [ir.op_call_direct("takes2", 2)];
+  let call_ok: ir.Op[] = [ir.op_call_direct("takes2", 2)];
   if (irverify.verify_fn("f", call_ok, 0, 1, sigs).len() != 0) {
     return 40;
   }
 
   // One fewer than declared is the closure-environment shape, also clean.
-  var call_env: ir.Op[] = [ir.op_call_direct("takes2", 1)];
+  let call_env: ir.Op[] = [ir.op_call_direct("takes2", 1)];
   if (irverify.verify_fn("f", call_env, 0, 1, sigs).len() != 0) {
     return 41;
   }
 
   // Two fewer is a real mismatch.
-  var call_bad: ir.Op[] = [ir.op_call_direct("takes2", 0)];
-  var bad_ps: irverify.Problem[] = irverify.verify_fn("f", call_bad, 0, 1, sigs);
+  let call_bad: ir.Op[] = [ir.op_call_direct("takes2", 0)];
+  let bad_ps: irverify.Problem[] = irverify.verify_fn("f", call_bad, 0, 1, sigs);
   if (bad_ps.len() != 1) {
     return 42;
   }
@@ -1292,8 +1292,8 @@ function main(): i32 {
 
   // ---- 5. reporting --------------------------------------------------
   // Problems accumulate in op order across classes.
-  var many: ir.Op[] = [ir.op_load_local(9), ir.op_end(), ir.op_br(4)];
-  var mp: irverify.Problem[] = irverify.verify_fn("g", many, 0, 1, no_sigs());
+  let many: ir.Op[] = [ir.op_load_local(9), ir.op_end(), ir.op_br(4)];
+  let mp: irverify.Problem[] = irverify.verify_fn("g", many, 0, 1, no_sigs());
   if (mp.len() != 3) {
     return 60;
   }
@@ -1322,27 +1322,27 @@ function main(): i32 {
     return 66;
   }
 
-  var sc: i32 = stack_checks();
+  let sc: i32 = stack_checks();
   if (sc != 0) {
     return sc;
   }
 
-  var fc: i32 = fip_checks();
+  let fc: i32 = fip_checks();
   if (fc != 0) {
     return fc;
   }
 
-  var pc: i32 = provided_checks();
+  let pc: i32 = provided_checks();
   if (pc != 0) {
     return pc;
   }
 
-  var gc: i32 = gate_checks();
+  let gc: i32 = gate_checks();
   if (gc != 0) {
     return gc;
   }
 
-  var rc: i32 = rc_checks();
+  let rc: i32 = rc_checks();
   if (rc != 0) {
     return rc;
   }

@@ -80,7 +80,7 @@ pub function is_sock(mode: u32): boolean {
 // word, which is why the size is an argument; `weird file` is the kind
 // the kernel grew after this was written.
 pub function type_name(mode: u32, size: i64): string {
-  var t: u32 = kind(mode);
+  let t: u32 = kind(mode);
   if (t == s_ifreg()) {
     if (size == 0 as i64) {
       return "regular empty file";
@@ -111,13 +111,13 @@ pub function type_name(mode: u32, size: i64): string {
 // The letter that leads `ls -l`'s mode column and `stat %A`. `?` for a
 // kind with no letter, which is what the C library prints too.
 pub function type_letter(mode: u32): string {
-  var h: usize = buf_new(1);
+  let h: usize = buf_new(1);
   buf_push_byte(h, type_letter_byte(mode));
   return buf_take(h);
 }
 
 function type_letter_byte(mode: u32): i32 {
-  var t: u32 = kind(mode);
+  let t: u32 = kind(mode);
   if (t == s_ifdir()) {
     return 100;
   }
@@ -152,7 +152,7 @@ function type_letter_byte(mode: u32): i32 {
 // times per line, and an array of bytes grown one at a time
 // reallocates four times.
 function push_triple(h: usize, mode: u32, shift: i32, extra: u32, hi: i32, lo: i32): void {
-  var bits: u32 = mode >> shift as u32 & 7 as u32;
+  let bits: u32 = mode >> shift as u32 & 7 as u32;
   if ((bits & 4 as u32) != 0 as u32) {
     buf_push_byte(h, 114);
   } else {
@@ -163,7 +163,7 @@ function push_triple(h: usize, mode: u32, shift: i32, extra: u32, hi: i32, lo: i
   } else {
     buf_push_byte(h, 45);
   }
-  var x: i32 = 45;
+  let x: i32 = 45;
   if ((bits & 1 as u32) != 0 as u32) {
     x = 120;
   }
@@ -181,7 +181,7 @@ function push_triple(h: usize, mode: u32, shift: i32, extra: u32, hi: i32, lo: i
 // and three rwx triples, each of which can carry the special bit that
 // shares its execute position.
 pub function mode_string(mode: u32): string {
-  var h: usize = buf_new(10);
+  let h: usize = buf_new(10);
   buf_push_byte(h, type_letter_byte(mode));
   push_triple(h, mode, 6, 0x800 as u32, 115, 83);
   push_triple(h, mode, 3, 0x400 as u32, 115, 83);

@@ -28,8 +28,8 @@ function build(n: i32): List {
     return Cons(n, build(n - 1));
 }
 function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
+    let total: i32 = 0;
+    let i: i32 = 0;
     while (i < 200) { total = total + sum(build(5).inc()); i = i + 1; }
     if (total != 4000) { return 999; }
     return __rc_underflow_count();

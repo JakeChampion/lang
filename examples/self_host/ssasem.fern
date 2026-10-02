@@ -44,7 +44,7 @@ pub struct Anchor { name: string, params: i32[] }
 // value of such a type is always a counted box, so the finalizer runs at the
 // free: never a static constant, never a box handed on for reuse.
 pub function finalizer_of(f: Func, t: typeinfo.Type): string {
-  var n: string = "";
+  let n: string = "";
   if let typeinfo.TypeStruct(r) = t {
     n = r.name;
   }
@@ -101,7 +101,7 @@ pub struct Contract { name: string, params: typeinfo.Type[], modes: i32[], resul
 pub struct Contracts { list: Contract[], names: util.NameIndex }
 
 pub function contracts_of(list: Contract[]): Contracts {
-  var names: string[] = [];
+  let names: string[] = [];
   for c in list {
     names = names.append(c.name);
   }
@@ -115,7 +115,7 @@ pub function find_contract(table: Contracts, name: string): i32 {
 // find_contract_in is find_contract over a list with no index: a body's own
 // calls, or the table while it is still being collected.
 pub function find_contract_in(calls: Contract[], name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < calls.len()) {
     if (calls[i].name == name) {
       return i;
@@ -404,8 +404,8 @@ function failed(why: string): Analysis {
 }
 
 function empty_dependencies(n: i32): i32[][] {
-  var out: i32[][] = [];
-  var i: i32 = 0;
+  let out: i32[][] = [];
+  let i: i32 = 0;
   while (i < n) {
     out = out.append([]);
     i = i + 1;
@@ -632,8 +632,8 @@ pub function is_dyn(t: typeinfo.Type): boolean {
 // carries. The contract is the implementations' shared signature with the dyn
 // type at the receiver.
 pub function dyn_call_name(method: string, traits: string[]): string {
-  var out: string = "dyn " + method;
-  var i: i32 = 0;
+  let out: string = "dyn " + method;
+  let i: i32 = 0;
   while (i < traits.len()) {
     if (i == 0) {
       out = out + "|";
@@ -651,7 +651,7 @@ pub function is_dyn_call(name: string): boolean {
 }
 
 function dyn_call_bar(name: string): i32 {
-  var i: i32 = 4;
+  let i: i32 = 4;
   while (i < name.len() && name[i] != b'|') {
     i = i + 1;
   }
@@ -663,9 +663,9 @@ pub function dyn_call_method(name: string): string {
 }
 
 pub function dyn_call_traits(name: string): string[] {
-  var out: string[] = [];
-  var start: i32 = dyn_call_bar(name) + 1;
-  var k: i32 = start;
+  let out: string[] = [];
+  let start: i32 = dyn_call_bar(name) + 1;
+  let k: i32 = start;
   while (k <= name.len()) {
     if (k == name.len() || name[k] == b',') {
       if (k > start) {
@@ -791,10 +791,10 @@ pub function structural_map_key(k: typeinfo.Type): boolean {
 // A type key with every byte an identifier cannot hold spelled `_`, so the
 // generated source can declare a function by it.
 function identifier_key(key: string): string {
-  var out: string = "";
-  var i: i32 = 0;
+  let out: string = "";
+  let i: i32 = 0;
   while (i < key.len()) {
-    var c: u8 = key[i];
+    let c: u8 = key[i];
     if (c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_') {
       out = out + slice_unchecked(key, i, i + 1);
     } else {
@@ -838,8 +838,8 @@ pub function keyed_map_key_name(k: typeinfo.Type): string {
 // A column whose snapshot is a fresh array owning one unit of every element:
 // a string column and a column of boxes are copied with a per-element retain,
 // and a column of narrow scalars — `i32`, `u8`, `u32`, `bool`, each an
-// i32-shaped cell — holds no references. Every other element — a wide scalar,
-// a function value, a map — would come back aliasing the map's own.
+// i32-shaped cell — holds no references. Any other element would come back
+// aliasing the map's own.
 pub function retained_column(elem: typeinfo.Type): boolean {
   return is_string(elem) || narrow_column(elem) || wide_map_value(elem) || float_map_value(elem) || keyed_map_key(elem) || counted_map_value(elem);
 }
@@ -870,11 +870,9 @@ pub function is_string_array(v: typeinfo.Type): boolean {
 
 // A value column whose entries are boxes of a shape the runtime does not
 // know: a record, a union, an array of anything but strings, a tuple, a dyn
-// value, a function value's environment box. A map's box carries no count on
-// the register backends, so a read of a column of them has nothing to retain,
-// and it stays refused.
+// value, a function value's environment box, a map.
 pub function boxed_map_value(v: typeinfo.Type): boolean {
-  return reference(v) && !is_string(v) && !is_string_array(v) && !is_map(v);
+  return reference(v) && !is_string(v) && !is_string_array(v);
 }
 
 pub function func_params(t: typeinfo.Type): typeinfo.Type[] {
@@ -934,9 +932,9 @@ function env_word(): typeinfo.Type {
 // The type a closure over `c` hands out: what its body promises minus the
 // environment parameter, which the box supplies rather than the caller.
 pub function closure_type(c: Contract): typeinfo.Type {
-  var params: typeinfo.Type[] = [];
-  var owns: boolean[] = [];
-  var i: i32 = 1;
+  let params: typeinfo.Type[] = [];
+  let owns: boolean[] = [];
+  let i: i32 = 1;
   while (i < c.params.len()) {
     params = params.append(c.params[i]);
     owns = owns.append(consuming_mode(c.modes, i, c.params[i]));
@@ -1067,7 +1065,7 @@ function tuple_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type
     if (ins.args.len() != tup.elements.len()) {
       return "tuple construction arity";
     }
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < ins.args.len()) {
       if (!semtypes.equal(tup.elements[i], f.values[ins.args[i]])) {
         return "tuple element type";
@@ -1112,15 +1110,15 @@ function tuple_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type):
 }
 
 function record_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-  var at: i32 = semrecords.find(f.records, result);
+  let at: i32 = semrecords.find(f.records, result);
   if (at < 0) {
     return "missing record construction schema";
   }
-  var fields: semrecords.Field[] = f.records.list[at].fields;
+  let fields: semrecords.Field[] = f.records.list[at].fields;
   if (ins.args.len() != fields.len()) {
     return "record construction arity";
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fields.len()) {
     if (!semtypes.equal(fields[i].ty, f.values[ins.args[i]])) {
       return "record field type";
@@ -1137,7 +1135,7 @@ function append_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 2) {
     return "append arity";
   }
-  var recv: typeinfo.Type = f.values[ins.args[0]];
+  let recv: typeinfo.Type = f.values[ins.args[0]];
   if (!semtypes.equal(recv, result)) {
     return "append result type";
   }
@@ -1158,7 +1156,7 @@ function with_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 3) {
     return "with arity";
   }
-  var recv: typeinfo.Type = f.values[ins.args[0]];
+  let recv: typeinfo.Type = f.values[ins.args[0]];
   if (!semtypes.equal(recv, result)) {
     return "with result type";
   }
@@ -1183,7 +1181,7 @@ function length_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (!is_i32(result)) {
     return "length result type";
   }
-  var recv: typeinfo.Type = f.values[ins.args[0]];
+  let recv: typeinfo.Type = f.values[ins.args[0]];
   if let typeinfo.TypeArray(_) = recv {
     return "";
   }
@@ -1197,11 +1195,11 @@ function record_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type)
   if (ins.args.len() != 1) {
     return "record projection arity";
   }
-  var at: i32 = semrecords.find(f.records, f.values[ins.args[0]]);
+  let at: i32 = semrecords.find(f.records, f.values[ins.args[0]]);
   if (at < 0) {
     return "missing record projection schema";
   }
-  var fields: semrecords.Field[] = f.records.list[at].fields;
+  let fields: semrecords.Field[] = f.records.list[at].fields;
   if (ins.imm < 0 || ins.imm >= fields.len()) {
     return "record projection index";
   }
@@ -1215,11 +1213,11 @@ function record_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type)
 }
 
 function variant_fields(f: Func, t: typeinfo.Type, name: string): semrecords.Field[] {
-  var at: i32 = semrecords.find_enum(f.enums, t);
+  let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0) {
     return [];
   }
-  var v: i32 = semrecords.find_variant(f.enums[at], name);
+  let v: i32 = semrecords.find_variant(f.enums[at], name);
   if (v < 0) {
     return [];
   }
@@ -1227,7 +1225,7 @@ function variant_fields(f: Func, t: typeinfo.Type, name: string): semrecords.Fie
 }
 
 function variant_known(f: Func, t: typeinfo.Type, name: string): string {
-  var at: i32 = semrecords.find_enum(f.enums, t);
+  let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0) {
     return "missing variant schema";
   }
@@ -1238,15 +1236,15 @@ function variant_known(f: Func, t: typeinfo.Type, name: string): string {
 }
 
 function variant_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-  var why: string = variant_known(f, result, ins.str);
+  let why: string = variant_known(f, result, ins.str);
   if (why != "") {
     return why;
   }
-  var fields: semrecords.Field[] = variant_fields(f, result, ins.str);
+  let fields: semrecords.Field[] = variant_fields(f, result, ins.str);
   if (ins.args.len() != fields.len()) {
     return "variant construction arity";
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < fields.len()) {
     if (!semtypes.equal(fields[i].ty, f.values[ins.args[i]])) {
       return "variant field type";
@@ -1270,11 +1268,11 @@ function variant_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type
   if (ins.args.len() != 1) {
     return "variant projection arity";
   }
-  var why: string = variant_known(f, f.values[ins.args[0]], ins.str);
+  let why: string = variant_known(f, f.values[ins.args[0]], ins.str);
   if (why != "") {
     return why;
   }
-  var fields: semrecords.Field[] = variant_fields(f, f.values[ins.args[0]], ins.str);
+  let fields: semrecords.Field[] = variant_fields(f, f.values[ins.args[0]], ins.str);
   if (ins.imm < 0 || ins.imm >= fields.len()) {
     return "variant projection index";
   }
@@ -1288,7 +1286,7 @@ function variant_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type
 // identities between the member's type and the union's. An enum boxes its
 // payload behind the variant's own shape and has neither operation.
 function member_layout(f: Func, t: typeinfo.Type): boolean {
-  var at: i32 = semrecords.find_enum(f.enums, t);
+  let at: i32 = semrecords.find_enum(f.enums, t);
   return at >= 0 && f.enums[at].layout == semrecords.layout_member();
 }
 
@@ -1306,7 +1304,7 @@ function widening_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string 
   if (!member_layout(f, result)) {
     return "variant widening layout";
   }
-  var why: string = variant_known(f, result, ins.str);
+  let why: string = variant_known(f, result, ins.str);
   if (why != "") {
     return why;
   }
@@ -1325,7 +1323,7 @@ function dyn_widening_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): str
   if (!is_dyn(result)) {
     return "dyn widening type";
   }
-  var from: typeinfo.Type = f.values[ins.args[0]];
+  let from: typeinfo.Type = f.values[ins.args[0]];
   if let typeinfo.TypeStruct(_) = from {
     return "";
   }
@@ -1383,7 +1381,7 @@ function dyn_box_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (!is_dyn(result)) {
     return "dyn box type";
   }
-  var from: typeinfo.Type = f.values[ins.args[0]];
+  let from: typeinfo.Type = f.values[ins.args[0]];
   if (!boxes_into_dyn(from) || typeinfo.spelling(from) != ins.str) {
     return "dyn box operand";
   }
@@ -1409,11 +1407,11 @@ function narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
   if (ins.args.len() != 1) {
     return "variant narrowing arity";
   }
-  var whole: typeinfo.Type = f.values[ins.args[0]];
+  let whole: typeinfo.Type = f.values[ins.args[0]];
   if (!member_layout(f, whole)) {
     return "variant narrowing layout";
   }
-  var why: string = variant_known(f, whole, ins.str);
+  let why: string = variant_known(f, whole, ins.str);
   if (why != "") {
     return why;
   }
@@ -1432,9 +1430,9 @@ function retag_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1) {
     return "string retag arity";
   }
-  var from: typeinfo.Type = f.values[ins.args[0]];
-  var texts: boolean = is_text(from) && is_text(result);
-  var arrays: boolean = is_text_array(from) && is_text_array(result);
+  let from: typeinfo.Type = f.values[ins.args[0]];
+  let texts: boolean = is_text(from) && is_text(result);
+  let arrays: boolean = is_text_array(from) && is_text_array(result);
   if (!texts && !arrays || semtypes.equal(from, result)) {
     return "string retag type";
   }
@@ -1455,22 +1453,22 @@ function closure_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (!is_func(result)) {
     return "closure value type";
   }
-  var at: i32 = find_contract_in(f.calls, ins.str);
+  let at: i32 = find_contract_in(f.calls, ins.str);
   if (at < 0) {
     return "missing closure body contract";
   }
-  var c: Contract = f.calls[at];
+  let c: Contract = f.calls[at];
   if (!closure_env(c)) {
     return "closure environment parameter";
   }
   if (!semtypes.equal(closure_type(c), result)) {
     return "closure signature";
   }
-  var caps: typeinfo.Type[] = closure_captures(c);
+  let caps: typeinfo.Type[] = closure_captures(c);
   if (ins.args.len() != caps.len()) {
     return "closure capture count";
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < caps.len()) {
     if (!semtypes.equal(f.values[ins.args[i]], caps[i])) {
       return "closure capture type";
@@ -1488,15 +1486,15 @@ function call_value_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   if (ins.args.len() == 0) {
     return "indirect call arity";
   }
-  var sig: typeinfo.Type = f.values[ins.args[0]];
+  let sig: typeinfo.Type = f.values[ins.args[0]];
   if (!is_func(sig)) {
     return "indirect call target type";
   }
-  var params: typeinfo.Type[] = func_params(sig);
+  let params: typeinfo.Type[] = func_params(sig);
   if (ins.args.len() != params.len() + 1) {
     return "indirect call arity";
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < params.len()) {
     if (!semtypes.equal(params[i], f.values[ins.args[i + 1]])) {
       return "indirect call argument type";
@@ -1576,7 +1574,7 @@ function arr_slice_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
   if (ins.args.len() != 3) {
     return "slice arity";
   }
-  var src: typeinfo.Type = f.values[ins.args[0]];
+  let src: typeinfo.Type = f.values[ins.args[0]];
   if (!semtypes.equal(src, result)) {
     return "slice container type";
   }
@@ -1726,7 +1724,7 @@ function map_iter_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string 
   if (ins.args.len() != 1) {
     return "map cursor arity";
   }
-  var recv: typeinfo.Type = f.values[ins.args[0]];
+  let recv: typeinfo.Type = f.values[ins.args[0]];
   if (ins.kind_tag == map_iter()) {
     if (!is_supported_map(recv)) {
       return "unsupported map shape: " + typeinfo.spelling(recv);
@@ -1786,7 +1784,7 @@ function cell_read_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
   if (ins.args.len() != 1) {
     return "cell read arity";
   }
-  var cell: typeinfo.Type = f.values[ins.args[0]];
+  let cell: typeinfo.Type = f.values[ins.args[0]];
   if (!semtypes.is_cell(cell)) {
     return "cell read type";
   }
@@ -1800,7 +1798,7 @@ function cell_write_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   if (ins.args.len() != 2) {
     return "cell write arity";
   }
-  var cell: typeinfo.Type = f.values[ins.args[0]];
+  let cell: typeinfo.Type = f.values[ins.args[0]];
   if (!semtypes.is_cell(cell)) {
     return "cell write type";
   }
@@ -1859,7 +1857,7 @@ function map_delete_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   if (ins.args.len() != 2) {
     return "map delete arity";
   }
-  var m: typeinfo.Type = f.values[ins.args[0]];
+  let m: typeinfo.Type = f.values[ins.args[0]];
   if (!is_supported_map(m)) {
     return "map delete type";
   }
@@ -1895,11 +1893,11 @@ function map_column_error(ins: ssa.SInst, f: Func, result: typeinfo.Type, keys: 
   if (ins.args.len() != 1) {
     return "map column arity";
   }
-  var m: typeinfo.Type = f.values[ins.args[0]];
+  let m: typeinfo.Type = f.values[ins.args[0]];
   if (!is_supported_map(m)) {
     return "map column type";
   }
-  var elem: typeinfo.Type = map_value(m);
+  let elem: typeinfo.Type = map_value(m);
   if (keys) {
     elem = map_key(m);
   }
@@ -1918,7 +1916,7 @@ function map_get_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 2) {
     return "map get arity";
   }
-  var m: typeinfo.Type = f.values[ins.args[0]];
+  let m: typeinfo.Type = f.values[ins.args[0]];
   if (!is_supported_map(m)) {
     return "map get type";
   }
@@ -1962,7 +1960,7 @@ function map_insert_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   if (ins.args.len() != 3) {
     return "map insert arity";
   }
-  var m: typeinfo.Type = f.values[ins.args[0]];
+  let m: typeinfo.Type = f.values[ins.args[0]];
   if (!is_supported_map(m)) {
     return "map insert type";
   }
@@ -1976,7 +1974,7 @@ function map_has_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 2) {
     return "map has arity";
   }
-  var m: typeinfo.Type = f.values[ins.args[0]];
+  let m: typeinfo.Type = f.values[ins.args[0]];
   if (!is_supported_map(m)) {
     return "map has type";
   }
@@ -1990,7 +1988,7 @@ function map_get_or_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   if (ins.args.len() != 3) {
     return "map get_or arity";
   }
-  var m: typeinfo.Type = f.values[ins.args[0]];
+  let m: typeinfo.Type = f.values[ins.args[0]];
   if (!is_supported_map(m)) {
     return "map get_or type";
   }
@@ -2041,7 +2039,7 @@ function unbindable(why: string): Binding {
 }
 
 function bound_at(b: Binding, name: string): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < b.names.len()) {
     if (b.names[i] == name) {
       return i;
@@ -2074,7 +2072,7 @@ function bind_variable(b: Binding, name: string, got: typeinfo.Type): Binding {
   if (!semtypes.concrete(got, false)) {
     return unbindable("type variable binds no concrete type");
   }
-  var at: i32 = bound_at(b, name);
+  let at: i32 = bound_at(b, name);
   if (at >= 0) {
     if (!semtypes.equal(b.types[at], got)) {
       return unbindable("erased variable binds two types");
@@ -2150,7 +2148,7 @@ function bind_callable(b: Binding, x: typeinfo.TypeFunc, y: typeinfo.TypeFunc): 
   if (x.params_known != y.params_known || x.param_types.len() != y.param_types.len()) {
     return mismatch();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < x.param_types.len()) {
     if (typeinfo.fn_own_at(x, i) && typeinfo.ownable(y.param_types[i]) != typeinfo.fn_own_at(y, i)) {
       return mismatch();
@@ -2171,7 +2169,7 @@ function bind_list(b: Binding, want: typeinfo.Type[], got: typeinfo.Type[]): Bin
   if (want.len() != got.len()) {
     return mismatch();
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < want.len()) {
     b = bind_type(b, want[i], got[i]);
     if (!b.ok) {
@@ -2184,14 +2182,14 @@ function bind_list(b: Binding, want: typeinfo.Type[], got: typeinfo.Type[]): Bin
 
 pub function substitute(t: typeinfo.Type, b: Binding): typeinfo.Type {
   if (semtypes.erased(t)) {
-    var at: i32 = bound_at(b, variable_name(t));
+    let at: i32 = bound_at(b, variable_name(t));
     if (at >= 0) {
       return b.types[at];
     }
     return t;
   }
   if let typeinfo.TypeFunc(fn) = t {
-    var params: typeinfo.Type[] = substitute_list(fn.param_types, b);
+    let params: typeinfo.Type[] = substitute_list(fn.param_types, b);
     // The mask is renormalised against the SUBSTITUTED types: a variable
     // bound to a scalar carries no unit there, so the slot stops being a
     // consuming one and the instantiated type matches the callable a
@@ -2217,7 +2215,7 @@ pub function substitute(t: typeinfo.Type, b: Binding): typeinfo.Type {
 }
 
 function substitute_list(ts: typeinfo.Type[], b: Binding): typeinfo.Type[] {
-  var out: typeinfo.Type[] = [];
+  let out: typeinfo.Type[] = [];
   for t in ts {
     out = out.append(substitute(t, b));
   }
@@ -2228,7 +2226,7 @@ function substitute_list(ts: typeinfo.Type[], b: Binding): typeinfo.Type[] {
 // over its parameters and then its result: the order an instance's name lists
 // their bindings in.
 pub function contract_variables(c: Contract): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   for p in c.params {
     out = variables(p, out);
   }
@@ -2237,7 +2235,7 @@ pub function contract_variables(c: Contract): string[] {
 
 function variables(t: typeinfo.Type, out: string[]): string[] {
   if (semtypes.erased(t)) {
-    var name: string = variable_name(t);
+    let name: string = variable_name(t);
     for seen in out {
       if (seen == name) {
         return out;
@@ -2285,7 +2283,7 @@ pub function binds_all(b: Binding, vars: string[]): boolean {
 // An instance's symbol: the template's key, then the type each variable binds
 // in the contract's own order, `$`-separated the way a lifted lambda's is.
 pub function instance_name(key: string, b: Binding, vars: string[]): string {
-  var out: string = key;
+  let out: string = key;
   for v in vars {
     out = out + "$" + type_key(b.types[bound_at(b, v)]);
   }
@@ -2296,12 +2294,12 @@ pub function instance_name(key: string, b: Binding, vars: string[]): string {
 // parameter whose variable bound a scalar carrying no unit, so its declared
 // mode drops to a value's.
 pub function instantiate_contract(c: Contract, b: Binding, vars: string[]): Contract {
-  var name: string = instance_name(c.name, b, vars);
-  var params: typeinfo.Type[] = [];
-  var modes: i32[] = [];
-  var i: i32 = 0;
+  let name: string = instance_name(c.name, b, vars);
+  let params: typeinfo.Type[] = [];
+  let modes: i32[] = [];
+  let i: i32 = 0;
   while (i < c.params.len()) {
-    var t: typeinfo.Type = substitute(c.params[i], b);
+    let t: typeinfo.Type = substitute(c.params[i], b);
     // An instance's environment names the instance, whose address the
     // box's slot 0 holds.
     if (i == 0 && semtypes.is_env(t)) {
@@ -2360,12 +2358,12 @@ pub function type_key(t: typeinfo.Type): string {
 // characters: a letter or a digit stands for itself and every other byte,
 // `_` included, is `_` and its two hex digits, so no two sets share a key.
 function trait_set_key(traits: string): string {
-  var hex: string = "0123456789abcdef";
-  var out: string = "";
-  var i: i32 = 0;
+  let hex: string = "0123456789abcdef";
+  let out: string = "";
+  let i: i32 = 0;
   while (i < traits.len()) {
-    var b: i32 = traits[i] as i32;
-    var alnum: boolean = b >= 48 && b <= 57 || b >= 65 && b <= 90 || b >= 97 && b <= 122;
+    let b: i32 = traits[i] as i32;
+    let alnum: boolean = b >= 48 && b <= 57 || b >= 65 && b <= 90 || b >= 97 && b <= 122;
     if (alnum) {
       out = out + slice_unchecked(traits, i, i + 1);
     } else {
@@ -2377,7 +2375,7 @@ function trait_set_key(traits: string): string {
 }
 
 function key_args(name: string, args: typeinfo.Type[]): string {
-  var out: string = name;
+  let out: string = name;
   for a in args {
     out = out + "$" + type_key(a);
   }
@@ -2427,18 +2425,18 @@ function leaf_key(t: typeinfo.Type): string {
 // A produced graph's contracts are instances: every parameter and the result
 // are exact types, and a call is held to them.
 function call_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-  var at: i32 = find_contract_in(f.calls, ins.str);
+  let at: i32 = find_contract_in(f.calls, ins.str);
   if (at < 0) {
     return "missing call contract";
   }
-  var c: Contract = f.calls[at];
+  let c: Contract = f.calls[at];
   if (ins.args.len() != c.params.len()) {
     return "call arity";
   }
   if (is_dyn_call(ins.str) && (c.params.len() == 0 || !is_dyn(c.params[0]))) {
     return "dyn call receiver type";
   }
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < ins.args.len()) {
     if (!semtypes.equal(c.params[i], f.values[ins.args[i]])) {
       return "call argument type";
@@ -2587,7 +2585,7 @@ function binary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 2) {
     return "binary operator arity";
   }
-  var want: typeinfo.Type = binary_result(ins.str, f.values[ins.args[0]], f.values[ins.args[1]]);
+  let want: typeinfo.Type = binary_result(ins.str, f.values[ins.args[0]], f.values[ins.args[1]]);
   if (!semtypes.concrete(want, false) || !semtypes.equal(want, result)) {
     return "binary operator contract";
   }
@@ -2704,7 +2702,7 @@ function unary_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1) {
     return "unary operator arity";
   }
-  var want: typeinfo.Type = unary_result(ins.str, f.values[ins.args[0]]);
+  let want: typeinfo.Type = unary_result(ins.str, f.values[ins.args[0]]);
   if (!semtypes.concrete(want, false) || !semtypes.equal(want, result)) {
     return "unary operator contract";
   }
@@ -2737,7 +2735,7 @@ function is_aggregate_op(kind: i32): boolean {
 }
 
 function aggregate_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-  var kind: i32 = ins.kind_tag;
+  let kind: i32 = ins.kind_tag;
   if (kind == array_new()) {
     return array_construction_error(ins, f, result);
   }
@@ -2757,7 +2755,7 @@ function aggregate_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 }
 
 function composite_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-  var kind: i32 = ins.kind_tag;
+  let kind: i32 = ins.kind_tag;
   if (kind == zero()) {
     return zero_error(ins, result);
   }
@@ -2811,13 +2809,13 @@ function hole_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 }
 
 function record_laid(f: Func, t: typeinfo.Type): boolean {
-  var at: i32 = semrecords.find_enum(f.enums, t);
+  let at: i32 = semrecords.find_enum(f.enums, t);
   return at >= 0 && f.enums[at].layout == semrecords.layout_variant();
 }
 
 // Some variant of `t` has a field of type `t` at `index`.
 function holds_own_type(f: Func, t: typeinfo.Type, index: i32): boolean {
-  var at: i32 = semrecords.find_enum(f.enums, t);
+  let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0 || index < 0) {
     return false;
   }
@@ -2845,8 +2843,8 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
   if (ins.result < 0) {
     return "semantic operation needs a result";
   }
-  var result: typeinfo.Type = f.values[ins.result];
-  var kind: i32 = ins.kind_tag;
+  let result: typeinfo.Type = f.values[ins.result];
+  let kind: i32 = ins.kind_tag;
   if (kind == 6) {
     return parameter_error(ins, f, result);
   }
@@ -2936,7 +2934,7 @@ function type_placement_error(t: typeinfo.Type): string {
 
 function field_placement_error(f: Func): string {
   for record in f.records.list {
-    var env: boolean = semtypes.is_env(record.ty);
+    let env: boolean = semtypes.is_env(record.ty);
     for field in record.fields {
       if (!holds_func(field.ty)) {
         continue;
@@ -2970,7 +2968,7 @@ function field_placement_error(f: Func): string {
 }
 
 function placement_error(f: Func): string {
-  var named: typeinfo.Type[] = f.values.append(f.result);
+  let named: typeinfo.Type[] = f.values.append(f.result);
   for c in f.calls {
     for t in c.params {
       named = named.append(t);
@@ -2978,7 +2976,7 @@ function placement_error(f: Func): string {
     named = named.append(c.result);
   }
   for t in named {
-    var why: string = type_placement_error(t);
+    let why: string = type_placement_error(t);
     if (why != "") {
       return why;
     }
@@ -3000,7 +2998,7 @@ function dimension_error(f: Func): string {
 }
 
 function schema_error(f: Func): string {
-  var why: string = dimension_error(f);
+  let why: string = dimension_error(f);
   if (why != "") {
     return why;
   }
@@ -3038,9 +3036,9 @@ function schema_error(f: Func): string {
 // Contracts are a finite table keyed by callee name. A void result is the
 // only void a contract may carry; parameters are values.
 function contracts_error(calls: Contract[]): string {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < calls.len()) {
-    var c: Contract = calls[i];
+    let c: Contract = calls[i];
     if (c.name == "") {
       return "empty call contract name";
     }
@@ -3080,10 +3078,10 @@ function terminator_error(b: ssa.SBlock, f: Func): string {
 }
 
 function operations_error(f: Func): string {
-  var seen_params: i32 = 0;
+  let seen_params: i32 = 0;
   for b in f.graph.blocks {
     for ins in b.insts {
-      var why: string = instruction_error(ins, f);
+      let why: string = instruction_error(ins, f);
       if (why != "") {
         return why;
       }
@@ -3091,7 +3089,7 @@ function operations_error(f: Func): string {
         seen_params = seen_params + 1;
       }
     }
-    var why: string = terminator_error(b, f);
+    let why: string = terminator_error(b, f);
     if (why != "") {
       return why;
     }
@@ -3115,8 +3113,8 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
   if (v < 0 || v >= defs.len() || acc.escapes || acc.seen[v]) {
     return acc;
   }
-  var out: ViewSources = ViewSources { ...acc, seen: acc.seen.with(v, true) };
-  var d: ssa.SInst = defs[v];
+  let out: ViewSources = ViewSources { ...acc, seen: acc.seen.with(v, true) };
+  let d: ssa.SInst = defs[v];
   if (d.kind_tag == 6) {
     if (util.index_of_i32(out.params, d.imm) < 0) {
       out = ViewSources { ...out, params: out.params.append(d.imm) };
@@ -3143,7 +3141,7 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
   if (projects(d.kind_tag)) {
     return view_sources(f, defs, anchors, names, d.args[0], out);
   }
-  var read: i32[] = map_read_sources(d);
+  let read: i32[] = map_read_sources(d);
   if (read.len() > 0) {
     for a in read {
       out = view_sources(f, defs, anchors, names, a, out);
@@ -3176,14 +3174,14 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
 pub struct ResultAnchor { escapes: boolean, pending: boolean, params: i32[] }
 
 pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): ResultAnchor {
-  var defs: ssa.SInst[] = definitions(f);
-  var seen: boolean[] = [];
-  var i: i32 = 0;
+  let defs: ssa.SInst[] = definitions(f);
+  let seen: boolean[] = [];
+  let i: i32 = 0;
   while (i < defs.len()) {
     seen = seen.append(false);
     i = i + 1;
   }
-  var acc: ViewSources = ViewSources { params: [], escapes: false, pending: false, seen: seen };
+  let acc: ViewSources = ViewSources { params: [], escapes: false, pending: false, seen: seen };
   for b in f.graph.blocks {
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
       acc = view_sources(f, defs, anchors, names, b.term.value, acc);
@@ -3195,9 +3193,9 @@ pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): ResultA
 // Every value's defining instruction, indexed by value id; a value no
 // instruction defines keeps the empty sentinel.
 function definitions(f: Func): ssa.SInst[] {
-  var none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
-  var out: ssa.SInst[] = [];
-  var i: i32 = 0;
+  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let out: ssa.SInst[] = [];
+  let i: i32 = 0;
   while (i < f.values.len()) {
     out = out.append(none);
     i = i + 1;
@@ -3215,14 +3213,14 @@ function definitions(f: Func): ssa.SInst[] {
 // The index of the block `target` names, when the edge from `from` is its
 // only way in.
 function sole_successor(f: Func, target: i32, from: i32): i32 {
-  var i: i32 = 0;
+  let i: i32 = 0;
   while (i < f.graph.blocks.len() && f.graph.blocks[i].id != target) {
     i = i + 1;
   }
   if (i == f.graph.blocks.len()) {
     return 0 - 1;
   }
-  var succ: ssa.SBlock = f.graph.blocks[i];
+  let succ: ssa.SBlock = f.graph.blocks[i];
   if (succ.preds.len() != 1 || succ.preds[0] != from) {
     return 0 - 1;
   }
@@ -3237,20 +3235,20 @@ struct Known { held: string[], gone: string[] }
 // edge settles nothing unless it is its successor's only way in, and unless
 // that successor dominates `bi`.
 function settled(f: Func, value: i32, bi: i32, dom: ssadeps.Dom, defs: ssa.SInst[]): Known {
-  var held: string[] = [];
-  var gone: string[] = [];
-  var n: i32 = f.graph.blocks.len();
-  var pi: i32 = 0;
+  let held: string[] = [];
+  let gone: string[] = [];
+  let n: i32 = f.graph.blocks.len();
+  let pi: i32 = 0;
   while (pi < n) {
-    var b: ssa.SBlock = f.graph.blocks[pi];
+    let b: ssa.SBlock = f.graph.blocks[pi];
     if (b.term.kind_tag == 3 && b.term.t != b.term.f && b.term.cond >= 0 && b.term.cond < defs.len()) {
-      var test: ssa.SInst = defs[b.term.cond];
+      let test: ssa.SInst = defs[b.term.cond];
       if ((test.kind_tag == variant_is() || test.kind_tag == dyn_is()) && test.args[0] == value) {
-        var ti: i32 = sole_successor(f, b.term.t, b.id);
+        let ti: i32 = sole_successor(f, b.term.t, b.id);
         if (ti >= 0 && ssadeps.dom_holds(dom, bi, ti)) {
           held = held.append(test.str);
         }
-        var fi: i32 = sole_successor(f, b.term.f, b.id);
+        let fi: i32 = sole_successor(f, b.term.f, b.id);
         if (fi >= 0 && ssadeps.dom_holds(dom, bi, fi)) {
           gone = gone.append(test.str);
         }
@@ -3275,8 +3273,8 @@ function names_has(names: string[], name: string): boolean {
 // one of them. The second is what a total match's last arm rests on: it
 // carries no test of its own.
 function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: ssadeps.Dom, defs: ssa.SInst[]): boolean {
-  var value: i32 = ins.args[0];
-  var known: Known = settled(f, value, bi, dom, defs);
+  let value: i32 = ins.args[0];
+  let known: Known = settled(f, value, bi, dom, defs);
   if (settled_viewless(ins)) {
     for c in dyn_view_concretes(f, f.values[value]) {
       if (!names_has(known.gone, shape_name(f, c))) {
@@ -3288,7 +3286,7 @@ function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: ssadeps.Dom, defs: ssa.S
   if (names_has(known.held, ins.str)) {
     return true;
   }
-  var at: i32 = semrecords.find_enum(f.enums, f.values[value]);
+  let at: i32 = semrecords.find_enum(f.enums, f.values[value]);
   if (at < 0) {
     return false;
   }
@@ -3304,10 +3302,10 @@ function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: ssadeps.Dom, defs: ssa.S
 // projection must sit where that is known. A value never changes variant, so
 // what a test settled holds for every later use of the value.
 function guard_error(f: Func): string {
-  var reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
-  var dom: ssadeps.Dom = ssadeps.dominates(f.graph);
-  var defs: ssa.SInst[] = definitions(f);
-  var bi: i32 = 0;
+  let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
+  let dom: ssadeps.Dom = ssadeps.dominates(f.graph);
+  let defs: ssa.SInst[] = definitions(f);
+  let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     if (reachable[bi]) {
       for ins in f.graph.blocks[bi].insts {
@@ -3350,8 +3348,8 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
   if (v < 0 || v >= defs.len() || seen[v]) {
     return [];
   }
-  var d: ssa.SInst = defs[v];
-  var next: boolean[] = seen.with(v, true);
+  let d: ssa.SInst = defs[v];
+  let next: boolean[] = seen.with(v, true);
   // A retag is the same box, whichever way it goes.
   if (d.kind_tag == str_as() && d.args.len() == 1) {
     return bytes_roots(f, defs, d.args[0], next);
@@ -3367,9 +3365,9 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
   if (projects(d.kind_tag) && d.args.len() > 0) {
     return bytes_roots(f, defs, d.args[0], next);
   }
-  var read: i32[] = map_read_sources(d);
+  let read: i32[] = map_read_sources(d);
   if (read.len() > 0) {
-    var from: i32[] = [];
+    let from: i32[] = [];
     for a in read {
       from = union_into(from, bytes_roots(f, defs, a, next));
     }
@@ -3379,7 +3377,7 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
     if (!anchored(f.anchors, d.str)) {
       return [v];
     }
-    var called: i32[] = [];
+    let called: i32[] = [];
     for k in anchor_params(f.anchors, d.str) {
       if (k < d.args.len()) {
         called = union_into(called, bytes_roots(f, defs, d.args[k], next));
@@ -3390,7 +3388,7 @@ function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[]
   if (!gathers_views(d.kind_tag)) {
     return [v];
   }
-  var roots: i32[] = [];
+  let roots: i32[] = [];
   for a in d.args {
     if (a < 0 || d.kind_tag != 8 && !holds_view(f, f.values[a])) {
       continue;
@@ -3436,7 +3434,7 @@ function counted_view(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): bool
   if (v < 0 || v >= defs.len() || seen[v]) {
     return true;
   }
-  var d: ssa.SInst = defs[v];
+  let d: ssa.SInst = defs[v];
   if (d.kind_tag == 5) {
     return true;
   }
@@ -3446,7 +3444,7 @@ function counted_view(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): bool
   if (d.kind_tag != 8) {
     return false;
   }
-  var next: boolean[] = seen.with(v, true);
+  let next: boolean[] = seen.with(v, true);
   for a in d.args {
     if (!counted_view(f, defs, a, next)) {
       return false;
@@ -3467,20 +3465,20 @@ function gathers_views(kind: i32): boolean {
 // operands' anchors stop short of once it holds them: to every source, when
 // they read more than one, so each stays alive until the value's last read.
 function view_roots(f: Func, parents: i32[][]): i32[][] {
-  var defs: ssa.SInst[] = definitions(f);
-  var none: boolean[] = [];
-  var i: i32 = 0;
+  let defs: ssa.SInst[] = definitions(f);
+  let none: boolean[] = [];
+  let i: i32 = 0;
   while (i < f.graph.nvals) {
     none = none.append(false);
     i = i + 1;
   }
-  var out: i32[][] = parents;
+  let out: i32[][] = parents;
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.result < 0 || !gathers_views(ins.kind_tag) || !holds_view(f, f.values[ins.result])) {
         continue;
       }
-      var roots: i32[] = [];
+      let roots: i32[] = [];
       for r in bytes_roots(f, defs, ins.result, none) {
         if (r != ins.result) {
           roots = roots.append(r);
@@ -3495,24 +3493,24 @@ function view_roots(f: Func, parents: i32[][]): i32[][] {
 }
 
 function borrow_parents(f: Func): i32[][] {
-  var parents: i32[][] = [];
-  var i: i32 = 0;
+  let parents: i32[][] = [];
+  let i: i32 = 0;
   while (i < f.graph.nvals) {
     parents = parents.append([]);
     i = i + 1;
   }
   for b in f.graph.blocks {
     for ins in b.insts {
-      var anchors: boolean = projects(ins.kind_tag) && semtypes.needs_anchor(f.values[ins.result]);
+      let anchors: boolean = projects(ins.kind_tag) && semtypes.needs_anchor(f.values[ins.result]);
       if (anchors || borrows_storage(ins, f)) {
         parents = parents.with(ins.result, [ins.args[0]]);
       }
-      var read: i32[] = map_read_sources(ins);
+      let read: i32[] = map_read_sources(ins);
       if (read.len() > 0 && holds_view(f, f.values[ins.result])) {
         parents = parents.with(ins.result, read);
       }
       if (ins.kind_tag == call() && anchored(f.anchors, ins.str)) {
-        var args: i32[] = [];
+        let args: i32[] = [];
         for k in anchor_params(f.anchors, ins.str) {
           if (k < ins.args.len() && util.index_of_i32(args, ins.args[k]) < 0) {
             args = args.append(ins.args[k]);
@@ -3534,25 +3532,25 @@ function borrow_parents(f: Func): i32[][] {
 struct Closure { ok: boolean, dependencies: i32[][] }
 
 function closure(parents: i32[][]): Closure {
-  var n: i32 = parents.len();
-  var derived: i32[][] = [];
+  let n: i32 = parents.len();
+  let derived: i32[][] = [];
   // 0 unvisited, 1 on the walk, 2 done.
-  var state: i32[] = [];
-  var i: i32 = 0;
+  let state: i32[] = [];
+  let i: i32 = 0;
   while (i < n) {
     derived = derived.append([]);
     state = state.append(0);
     i = i + 1;
   }
-  var v: i32 = 0;
+  let v: i32 = 0;
   while (v < n) {
     if (state[v] == 0) {
-      var stack: i32[] = [v];
-      var top: i32 = 1;
+      let stack: i32[] = [v];
+      let top: i32 = 1;
       state = state.with(v, 1);
       while (top > 0) {
-        var x: i32 = stack[top - 1];
-        var next: i32 = 0 - 1;
+        let x: i32 = stack[top - 1];
+        let next: i32 = 0 - 1;
         for p in parents[x] {
           if (p < 0 || p >= n || state[p] == 1) {
             return Closure { ok: false, dependencies: [] };
@@ -3583,7 +3581,7 @@ function closure(parents: i32[][]): Closure {
 }
 
 function chain_of(ps: i32[], derived: i32[][]): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   if (ps.len() == 1) {
     out = out.append(ps[0]);
     for d in derived[ps[0]] {
@@ -3601,11 +3599,11 @@ function chain_of(ps: i32[], derived: i32[][]): i32[] {
 }
 
 function analyze_parents(f: Func, parents: i32[][]): Analysis {
-  var c: Closure = closure(parents);
+  let c: Closure = closure(parents);
   if (!c.ok) {
     return failed("cyclic semantic projection");
   }
-  var flow: ssalive.Flow = ssadeps.analyze(f.graph, c.dependencies);
+  let flow: ssalive.Flow = ssadeps.analyze(f.graph, c.dependencies);
   if (!flow.ok) {
     return failed(flow.why);
   }
@@ -3619,7 +3617,7 @@ function analyze_parents(f: Func, parents: i32[][]): Analysis {
 // graph, plan and modes — which is what `semlower` tests before keeping a body
 // across a second lowering.
 pub function called_names(f: Func): string[] {
-  var out: string[] = [];
+  let out: string[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag == call() && ins.str != "" && !name_seen(out, ins.str)) {
@@ -3644,7 +3642,7 @@ function name_seen(names: string[], name: string): boolean {
 // gathering views borrows the storage they read. Other constructions and phis
 // have no parent: their counted supplies are obligations of the unit pass.
 pub function analyze(f: Func): Analysis {
-  var why: string = schema_error(f);
+  let why: string = schema_error(f);
   if (why != "") {
     return failed(why);
   }
@@ -3690,36 +3688,36 @@ pub struct MergeCopy { at: i32, edge: boolean, consumer: i32, slot: i32, value: 
 // (docs/STR-VIEW-CONTRACT.md §5). Both read a body carrying the module's
 // anchor table, through which a call's roots are found.
 pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
-  var s: CopySplice = CopySplice { values: f.values, done: [], id: 0, preds: [], insts: [], next_block: next_block_id(f.graph) };
-  var made: i32[] = [];
+  let s: CopySplice = CopySplice { values: f.values, done: [], id: 0, preds: [], insts: [], next_block: next_block_id(f.graph) };
+  let made: i32[] = [];
   for _ in copies {
     made = made.append(0 - 1);
   }
-  var last: i32[] = [];
-  var pi: i32 = 0;
+  let last: i32[] = [];
+  let pi: i32 = 0;
   while (pi < f.graph.blocks.len()) {
-    var b: ssa.SBlock = f.graph.blocks[pi];
+    let b: ssa.SBlock = f.graph.blocks[pi];
     s = CopySplice { ...s, id: b.id, preds: b.preds, insts: [] };
     for ins in b.insts {
-      var k: Made = copies_at(f, s, made, copies, pi, false, ins.result);
+      let k: Made = copies_at(f, s, made, copies, pi, false, ins.result);
       s = CopySplice { ...k.s, insts: k.s.insts.append(ins) };
       made = k.made;
     }
-    var e: Made = copies_at(f, s, made, copies, pi, true, 0 - 1);
+    let e: Made = copies_at(f, s, made, copies, pi, true, 0 - 1);
     s = e.s;
     made = e.made;
     last = last.append(s.id);
     s = sp_close(s, b.term);
     pi = pi + 1;
   }
-  var blocks: ssa.SBlock[] = [];
-  var first_new: i32 = next_block_id(f.graph);
+  let blocks: ssa.SBlock[] = [];
+  let first_new: i32 = next_block_id(f.graph);
   for blk in s.done {
-    var insts: ssa.SInst[] = [];
+    let insts: ssa.SInst[] = [];
     for ins in blk.insts {
       insts = insts.append(with_copied_operands(ins, copies, made));
     }
-    var preds: i32[] = blk.preds;
+    let preds: i32[] = blk.preds;
     if (blk.id < first_new) {
       preds = moved_preds(f.graph, preds, last);
     }
@@ -3731,10 +3729,10 @@ pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
 // A block's predecessors once each original block's terminator has moved to
 // the last block its copies left it ending in.
 function moved_preds(g: ssa.SFunc, preds: i32[], last: i32[]): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for p in preds {
-    var at: i32 = 0 - 1;
-    var i: i32 = 0;
+    let at: i32 = 0 - 1;
+    let i: i32 = 0;
     while (i < g.blocks.len()) {
       if (g.blocks[i].id == p) {
         at = i;
@@ -3751,7 +3749,7 @@ function moved_preds(g: ssa.SFunc, preds: i32[], last: i32[]): i32[] {
 }
 
 function next_block_id(g: ssa.SFunc): i32 {
-  var n: i32 = 0;
+  let n: i32 = 0;
   for b in g.blocks {
     if (b.id >= n) {
       n = b.id + 1;
@@ -3765,11 +3763,11 @@ struct Made { s: CopySplice, made: i32[] }
 // The copies made at block position `at`: those on its outgoing edges, or
 // those just before the instruction defining `consumer`.
 function copies_at(f: Func, s: CopySplice, made: i32[], copies: MergeCopy[], at: i32, edge: boolean, consumer: i32): Made {
-  var ci: i32 = 0;
+  let ci: i32 = 0;
   while (ci < copies.len()) {
-    var c: MergeCopy = copies[ci];
+    let c: MergeCopy = copies[ci];
     if (c.at == at && c.edge == edge && (edge || c.consumer == consumer)) {
-      var r: Copied = deep_copy(f, s, c.value);
+      let r: Copied = deep_copy(f, s, c.value);
       s = r.s;
       made = made.with(ci, r.value);
     }
@@ -3779,9 +3777,9 @@ function copies_at(f: Func, s: CopySplice, made: i32[], copies: MergeCopy[], at:
 }
 
 function with_copied_operands(ins: ssa.SInst, copies: MergeCopy[], made: i32[]): ssa.SInst {
-  var ci: i32 = 0;
+  let ci: i32 = 0;
   while (ci < copies.len()) {
-    var c: MergeCopy = copies[ci];
+    let c: MergeCopy = copies[ci];
     if (ins.result >= 0 && ins.result == c.consumer) {
       ins = ssa.SInst { ...ins, args: ins.args.with(c.slot, made[ci]) };
     }
@@ -3799,13 +3797,13 @@ struct CopySplice { values: typeinfo.Type[], done: ssa.SBlock[], id: i32, preds:
 struct Copied { s: CopySplice, value: i32 }
 
 function sp_emit(s: CopySplice, kind: i32, t: typeinfo.Type, args: i32[], imm: i32, str: string): Copied {
-  var v: i32 = s.values.len();
-  var ins: ssa.SInst = ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str };
+  let v: i32 = s.values.len();
+  let ins: ssa.SInst = ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str };
   return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(ins) }, value: v };
 }
 
 function sp_close(s: CopySplice, term: ssa.STerm): CopySplice {
-  var b: ssa.SBlock = ssa.SBlock { id: s.id, insts: s.insts, term: term, preds: s.preds };
+  let b: ssa.SBlock = ssa.SBlock { id: s.id, insts: s.insts, term: term, preds: s.preds };
   return CopySplice { ...s, done: s.done.append(b), insts: [] };
 }
 
@@ -3860,11 +3858,11 @@ pub function holds_view(f: Func, t: typeinfo.Type): boolean {
   if let typeinfo.TypeMap(m) = t {
     return holds_view(f, m.key) || holds_view(f, m.value);
   }
-  var r: i32 = semrecords.find(f.records, t);
+  let r: i32 = semrecords.find(f.records, t);
   if (r >= 0) {
     return f.records.list[r].views;
   }
-  var e: i32 = semrecords.find_enum(f.enums, t);
+  let e: i32 = semrecords.find_enum(f.enums, t);
   if (e >= 0) {
     return f.enums[e].views;
   }
@@ -3923,19 +3921,19 @@ function copy_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string 
       return typeinfo.spelling(t) + " holds itself, so its copy would recurse";
     }
   }
-  var inner: typeinfo.Type[] = open.append(t);
+  let inner: typeinfo.Type[] = open.append(t);
   if (is_dyn(t)) {
     return dyn_refusal(f, t, inner);
   }
   if let typeinfo.TypeUnion(_) = t {
     return enum_refusal(f, t, inner);
   }
-  var r: i32 = semrecords.find(f.records, t);
+  let r: i32 = semrecords.find(f.records, t);
   if (r < 0 || semtypes.is_env(t)) {
     return typeinfo.spelling(t) + " has no record schema to rebuild it by";
   }
   for fl in f.records.list[r].fields {
-    var why: string = copy_refusal(f, fl.ty, inner);
+    let why: string = copy_refusal(f, fl.ty, inner);
     if (why != "") {
       return why;
     }
@@ -3945,7 +3943,7 @@ function copy_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string 
 
 function all_copyable(f: Func, ts: typeinfo.Type[], open: typeinfo.Type[]): string {
   for e in ts {
-    var why: string = copy_refusal(f, e, open);
+    let why: string = copy_refusal(f, e, open);
     if (why != "") {
       return why;
     }
@@ -3954,13 +3952,13 @@ function all_copyable(f: Func, ts: typeinfo.Type[], open: typeinfo.Type[]): stri
 }
 
 function enum_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
-  var at: i32 = semrecords.find_enum(f.enums, t);
+  let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0 || f.enums[at].layout == semrecords.layout_member()) {
     return typeinfo.spelling(t) + " has no variant tests to rebuild it by";
   }
   for v in f.enums[at].variants {
     for fl in v.fields {
-      var why: string = copy_refusal(f, fl.ty, open);
+      let why: string = copy_refusal(f, fl.ty, open);
       if (why != "") {
         return why;
       }
@@ -3985,7 +3983,7 @@ function dyn_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
     if (shape_name(f, c) == "") {
       return "the box " + typeinfo.spelling(c) + " of " + typeinfo.spelling(t) + " carries no shape a test names";
     }
-    var why: string = copy_refusal(f, c, open);
+    let why: string = copy_refusal(f, c, open);
     if (why != "") {
       return why;
     }
@@ -3995,7 +3993,7 @@ function dyn_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
 
 // The concretes a value of dyn type `t` can be holding that hold a view.
 function dyn_view_concretes(f: Func, t: typeinfo.Type): typeinfo.Type[] {
-  var out: typeinfo.Type[] = [];
+  let out: typeinfo.Type[] = [];
   for row in f.dyns {
     if (semtypes.equal(row.fn_ty, t) && !semtypes.equal(row.env_ty, t) && holds_view(f, row.env_ty)) {
       out = out.append(row.env_ty);
@@ -4014,7 +4012,7 @@ function shape_name(f: Func, c: typeinfo.Type): string {
     }
   }
   if let typeinfo.TypeUnion(u) = c {
-    var at: i32 = semrecords.find_enum(f.enums, c);
+    let at: i32 = semrecords.find_enum(f.enums, c);
     if (u.args.len() == 0 && at >= 0 && f.enums[at].layout == semrecords.layout_variant()) {
       return u.name;
     }
@@ -4025,17 +4023,17 @@ function shape_name(f: Func, c: typeinfo.Type): string {
 // `v` rebuilt in the open block and any it adds, each view it holds replaced
 // by a counted copy (`view_copy`) and every other part read out of it.
 function deep_copy(f: Func, s: CopySplice, v: i32): Copied {
-  var t: typeinfo.Type = s.values[v];
+  let t: typeinfo.Type = s.values[v];
   if (!holds_view(f, t)) {
     return Copied { s: s, value: v };
   }
   if (is_view(t)) {
-    var first: i32 = s.values.len();
-    var values: typeinfo.Type[] = s.values;
+    let first: i32 = s.values.len();
+    let values: typeinfo.Type[] = s.values;
     for vt in view_copy_types() {
       values = values.append(vt);
     }
-    var insts: ssa.SInst[] = s.insts;
+    let insts: ssa.SInst[] = s.insts;
     for ins in view_copy(first, v) {
       insts = insts.append(ins);
     }
@@ -4060,12 +4058,12 @@ function deep_copy(f: Func, s: CopySplice, v: i32): Copied {
 }
 
 function copy_record(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
-  var fields: semrecords.Field[] = f.records.list[semrecords.find(f.records, t)].fields;
-  var parts: i32[] = [];
-  var i: i32 = 0;
+  let fields: semrecords.Field[] = f.records.list[semrecords.find(f.records, t)].fields;
+  let parts: i32[] = [];
+  let i: i32 = 0;
   while (i < fields.len()) {
-    var g: Copied = sp_emit(s, record_get(), fields[i].ty, [v], i, fields[i].name);
-    var c: Copied = deep_copy(f, g.s, g.value);
+    let g: Copied = sp_emit(s, record_get(), fields[i].ty, [v], i, fields[i].name);
+    let c: Copied = deep_copy(f, g.s, g.value);
     s = c.s;
     parts = parts.append(c.value);
     i = i + 1;
@@ -4074,11 +4072,11 @@ function copy_record(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
 }
 
 function copy_tuple(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elements: typeinfo.Type[]): Copied {
-  var parts: i32[] = [];
-  var i: i32 = 0;
+  let parts: i32[] = [];
+  let i: i32 = 0;
   while (i < elements.len()) {
-    var e: Copied = sp_emit(s, tuple_get(), elements[i], [v], i, "");
-    var c: Copied = deep_copy(f, e.s, e.value);
+    let e: Copied = sp_emit(s, tuple_get(), elements[i], [v], i, "");
+    let c: Copied = deep_copy(f, e.s, e.value);
     s = c.s;
     parts = parts.append(c.value);
     i = i + 1;
@@ -4088,12 +4086,12 @@ function copy_tuple(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elements: 
 
 // An empty array, then each element copied onto it in a loop.
 function copy_array(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elem: typeinfo.Type): Copied {
-  var n: Copied = sp_emit(s, length(), i32_type(), [v], 0, "");
-  var acc0: Copied = sp_emit(n.s, array_new(), t, [], 0, "");
-  var l: CopyLoop = loop_enter(acc0.s, n.value, acc0.value, t);
-  var e: Copied = sp_emit(l.s, array_get(), elem, [v, l.i], 0, "");
-  var c: Copied = deep_copy(f, e.s, e.value);
-  var acc1: Copied = sp_emit(c.s, append(), t, [l.acc, c.value], 0, "");
+  let n: Copied = sp_emit(s, length(), i32_type(), [v], 0, "");
+  let acc0: Copied = sp_emit(n.s, array_new(), t, [], 0, "");
+  let l: CopyLoop = loop_enter(acc0.s, n.value, acc0.value, t);
+  let e: Copied = sp_emit(l.s, array_get(), elem, [v, l.i], 0, "");
+  let c: Copied = deep_copy(f, e.s, e.value);
+  let acc1: Copied = sp_emit(c.s, append(), t, [l.acc, c.value], 0, "");
   return loop_leave(l, acc1.s, acc1.value);
 }
 
@@ -4101,18 +4099,18 @@ function copy_array(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elem: type
 // The snapshots own their elements, so a view value is a fresh box over the
 // map's bytes until its copy replaces it.
 function copy_map(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
-  var kt: typeinfo.Type = map_key(t);
-  var vt: typeinfo.Type = map_value(t);
-  var keys: Copied = sp_emit(s, map_keys(), typeinfo.TypeArray { elem: kt, view: false }, [v], 0, "");
-  var vals: Copied = sp_emit(keys.s, map_values(), typeinfo.TypeArray { elem: vt, view: false }, [v], 0, "");
-  var n: Copied = sp_emit(vals.s, length(), i32_type(), [keys.value], 0, "");
-  var acc0: Copied = sp_emit(n.s, map_new(), t, [n.value], 0, "");
-  var l: CopyLoop = loop_enter(acc0.s, n.value, acc0.value, t);
-  var k: Copied = sp_emit(l.s, array_get(), kt, [keys.value, l.i], 0, "");
-  var ck: Copied = deep_copy(f, k.s, k.value);
-  var x: Copied = sp_emit(ck.s, array_get(), vt, [vals.value, l.i], 0, "");
-  var cx: Copied = deep_copy(f, x.s, x.value);
-  var acc1: Copied = sp_emit(cx.s, map_insert(), t, [l.acc, ck.value, cx.value], 0, "");
+  let kt: typeinfo.Type = map_key(t);
+  let vt: typeinfo.Type = map_value(t);
+  let keys: Copied = sp_emit(s, map_keys(), typeinfo.TypeArray { elem: kt, view: false }, [v], 0, "");
+  let vals: Copied = sp_emit(keys.s, map_values(), typeinfo.TypeArray { elem: vt, view: false }, [v], 0, "");
+  let n: Copied = sp_emit(vals.s, length(), i32_type(), [keys.value], 0, "");
+  let acc0: Copied = sp_emit(n.s, map_new(), t, [n.value], 0, "");
+  let l: CopyLoop = loop_enter(acc0.s, n.value, acc0.value, t);
+  let k: Copied = sp_emit(l.s, array_get(), kt, [keys.value, l.i], 0, "");
+  let ck: Copied = deep_copy(f, k.s, k.value);
+  let x: Copied = sp_emit(ck.s, array_get(), vt, [vals.value, l.i], 0, "");
+  let cx: Copied = deep_copy(f, x.s, x.value);
+  let acc1: Copied = sp_emit(cx.s, map_insert(), t, [l.acc, ck.value, cx.value], 0, "");
   return loop_leave(l, acc1.s, acc1.value);
 }
 
@@ -4125,25 +4123,25 @@ function copy_map(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
 struct CopyLoop { s: CopySplice, pre: i32, head: i32, exit: i32, head_at: i32, i: i32, acc: i32, cond: i32, zero: i32, one: i32, n: i32, acc0: i32 }
 
 function loop_enter(s: CopySplice, n: i32, acc0: i32, t: typeinfo.Type): CopyLoop {
-  var zero: Copied = sp_emit(s, 1, i32_type(), [], 0, "");
-  var one: Copied = sp_emit(zero.s, 1, i32_type(), [], 1, "");
+  let zero: Copied = sp_emit(s, 1, i32_type(), [], 0, "");
+  let one: Copied = sp_emit(zero.s, 1, i32_type(), [], 1, "");
   s = one.s;
-  var head: i32 = s.next_block;
-  var pre: i32 = s.id;
-  var i: i32 = s.values.len();
+  let head: i32 = s.next_block;
+  let pre: i32 = s.id;
+  let i: i32 = s.values.len();
   s = CopySplice { ...sp_blocks(s, 3), values: s.values.append(i32_type()).append(t).append(boolean_type()) };
   s = sp_close(s, t_br(head));
-  var head_at: i32 = s.done.len();
+  let head_at: i32 = s.done.len();
   s = sp_open(s, head + 1, [head]);
   return CopyLoop { s: s, pre: pre, head: head, exit: head + 2, head_at: head_at, i: i, acc: i + 1, cond: i + 2, zero: zero.value, one: one.value, n: n, acc0: acc0 };
 }
 
 function loop_leave(l: CopyLoop, s: CopySplice, acc1: i32): Copied {
-  var i1: Copied = sp_emit(s, 9, i32_type(), [l.i, l.one], 0, "+");
+  let i1: Copied = sp_emit(s, 9, i32_type(), [l.i, l.one], 0, "+");
   s = i1.s;
-  var latch: i32 = s.id;
+  let latch: i32 = s.id;
   s = sp_close(s, t_br(l.head));
-  var header: ssa.SBlock = ssa.SBlock { id: l.head, preds: [l.pre, latch], term: t_brif(l.cond, l.head + 1, l.exit), insts: [
+  let header: ssa.SBlock = ssa.SBlock { id: l.head, preds: [l.pre, latch], term: t_brif(l.cond, l.head + 1, l.exit), insts: [
     ssa.SInst { kind_tag: 8, result: l.i, args: [l.zero, i1.value], imm: 0, str: "" },
     ssa.SInst { kind_tag: 8, result: l.acc, args: [l.acc0, acc1], imm: 0, str: "" },
     ssa.SInst { kind_tag: 9, result: l.cond, args: [l.i, l.n], imm: 0, str: "<" },
@@ -4154,8 +4152,8 @@ function loop_leave(l: CopyLoop, s: CopySplice, acc1: i32): Copied {
 }
 
 function inserted(blocks: ssa.SBlock[], at: i32, b: ssa.SBlock): ssa.SBlock[] {
-  var out: ssa.SBlock[] = [];
-  var i: i32 = 0;
+  let out: ssa.SBlock[] = [];
+  let i: i32 = 0;
   while (i < blocks.len()) {
     if (i == at) {
       out = out.append(b);
@@ -4172,26 +4170,26 @@ function inserted(blocks: ssa.SBlock[], at: i32, b: ssa.SBlock): ssa.SBlock[] {
 // Each variant tested in turn, the last known by exclusion, and rebuilt with
 // its fields copied; the rebuilt values meet in a phi.
 function copy_enum(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
-  var variants: semrecords.Variant[] = f.enums[semrecords.find_enum(f.enums, t)].variants;
-  var join: i32 = s.next_block;
+  let variants: semrecords.Variant[] = f.enums[semrecords.find_enum(f.enums, t)].variants;
+  let join: i32 = s.next_block;
   s = sp_blocks(s, 1);
-  var froms: i32[] = [];
-  var built: i32[] = [];
-  var k: i32 = 0;
+  let froms: i32[] = [];
+  let built: i32[] = [];
+  let k: i32 = 0;
   while (k < variants.len()) {
     if (k + 1 < variants.len()) {
-      var test: Copied = sp_emit(s, variant_is(), boolean_type(), [v], 0, variants[k].name);
+      let test: Copied = sp_emit(s, variant_is(), boolean_type(), [v], 0, variants[k].name);
       s = test.s;
-      var arm: i32 = s.next_block;
-      var next: i32 = arm + 1;
-      var at: i32 = s.id;
+      let arm: i32 = s.next_block;
+      let next: i32 = arm + 1;
+      let at: i32 = s.id;
       s = sp_close(sp_blocks(s, 2), t_brif(test.value, arm, next));
-      var r: Copied = rebuilt_variant(f, sp_open(s, arm, [at]), v, t, variants[k]);
+      let r: Copied = rebuilt_variant(f, sp_open(s, arm, [at]), v, t, variants[k]);
       froms = froms.append(r.s.id);
       built = built.append(r.value);
       s = sp_open(sp_close(r.s, t_br(join)), next, [at]);
     } else {
-      var r: Copied = rebuilt_variant(f, s, v, t, variants[k]);
+      let r: Copied = rebuilt_variant(f, s, v, t, variants[k]);
       froms = froms.append(r.s.id);
       built = built.append(r.value);
       s = sp_close(r.s, t_br(join));
@@ -4199,17 +4197,17 @@ function copy_enum(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
     k = k + 1;
   }
   s = sp_open(s, join, froms);
-  var out: i32 = s.values.len();
-  var phi: ssa.SInst = ssa.SInst { kind_tag: 8, result: out, args: built, imm: 0, str: "" };
+  let out: i32 = s.values.len();
+  let phi: ssa.SInst = ssa.SInst { kind_tag: 8, result: out, args: built, imm: 0, str: "" };
   return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(phi) }, value: out };
 }
 
 function rebuilt_variant(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, variant: semrecords.Variant): Copied {
-  var parts: i32[] = [];
-  var j: i32 = 0;
+  let parts: i32[] = [];
+  let j: i32 = 0;
   while (j < variant.fields.len()) {
-    var g: Copied = sp_emit(s, variant_get(), variant.fields[j].ty, [v], j, variant.name);
-    var c: Copied = deep_copy(f, g.s, g.value);
+    let g: Copied = sp_emit(s, variant_get(), variant.fields[j].ty, [v], j, variant.name);
+    let c: Copied = deep_copy(f, g.s, g.value);
     s = c.s;
     parts = parts.append(c.value);
     j = j + 1;
@@ -4222,30 +4220,30 @@ function rebuilt_variant(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, varia
 // kept, retagged as settled (`dyn_as` naming no shape). The values meet in a
 // phi.
 function copy_dyn(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
-  var join: i32 = s.next_block;
+  let join: i32 = s.next_block;
   s = sp_blocks(s, 1);
-  var froms: i32[] = [];
-  var built: i32[] = [];
+  let froms: i32[] = [];
+  let built: i32[] = [];
   for c in dyn_view_concretes(f, t) {
-    var name: string = shape_name(f, c);
-    var test: Copied = sp_emit(s, dyn_is(), boolean_type(), [v], 0, name);
+    let name: string = shape_name(f, c);
+    let test: Copied = sp_emit(s, dyn_is(), boolean_type(), [v], 0, name);
     s = test.s;
-    var arm: i32 = s.next_block;
-    var at: i32 = s.id;
+    let arm: i32 = s.next_block;
+    let at: i32 = s.id;
     s = sp_close(sp_blocks(s, 2), t_brif(test.value, arm, arm + 1));
-    var n: Copied = sp_emit(sp_open(s, arm, [at]), dyn_as(), c, [v], 0, name);
-    var cc: Copied = deep_copy(f, n.s, n.value);
-    var up: Copied = sp_emit(cc.s, dyn_up(), t, [cc.value], 0, "");
+    let n: Copied = sp_emit(sp_open(s, arm, [at]), dyn_as(), c, [v], 0, name);
+    let cc: Copied = deep_copy(f, n.s, n.value);
+    let up: Copied = sp_emit(cc.s, dyn_up(), t, [cc.value], 0, "");
     froms = froms.append(up.s.id);
     built = built.append(up.value);
     s = sp_open(sp_close(up.s, t_br(join)), arm + 1, [at]);
   }
-  var kept: Copied = sp_emit(s, dyn_as(), t, [v], 0, "");
+  let kept: Copied = sp_emit(s, dyn_as(), t, [v], 0, "");
   froms = froms.append(kept.s.id);
   built = built.append(kept.value);
   s = sp_open(sp_close(kept.s, t_br(join)), join, froms);
-  var out: i32 = s.values.len();
-  var phi: ssa.SInst = ssa.SInst { kind_tag: 8, result: out, args: built, imm: 0, str: "" };
+  let out: i32 = s.values.len();
+  let phi: ssa.SInst = ssa.SInst { kind_tag: 8, result: out, args: built, imm: 0, str: "" };
   return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(phi) }, value: out };
 }
 
@@ -4255,17 +4253,17 @@ function copy_dyn(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
 pub struct MergePlan { copies: MergeCopy[], why: string }
 
 pub function merge_copies(f: Func): MergePlan {
-  var plan: MergePlan = MergePlan { copies: [], why: "" };
+  let plan: MergePlan = MergePlan { copies: [], why: "" };
   if (!has_view_phi(f)) {
     return plan;
   }
-  var none: boolean[] = [];
+  let none: boolean[] = [];
   for _ in f.values {
     none = none.append(false);
   }
-  var defs: ssa.SInst[] = definitions(f);
-  var m: MergeScan = MergeScan { at: ssadeps.position_of(f.graph), dom: ssadeps.dominates(f.graph), home: defining_positions(f), none: none };
-  var bi: i32 = 0;
+  let defs: ssa.SInst[] = definitions(f);
+  let m: MergeScan = MergeScan { at: ssadeps.position_of(f.graph), dom: ssadeps.dominates(f.graph), home: defining_positions(f), none: none };
+  let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     for ins in f.graph.blocks[bi].insts {
       if (ins.kind_tag == 8 && holds_view(f, f.values[ins.result])) {
@@ -4309,13 +4307,13 @@ function held_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consum
   if (is_view(f.values[x])) {
     return with_copy(f, defs, m, consumer, slot, x, plan);
   }
-  var d: ssa.SInst = defs[x];
-  var next: boolean[] = seen.with(x, true);
+  let d: ssa.SInst = defs[x];
+  let next: boolean[] = seen.with(x, true);
   if (projects(d.kind_tag) && d.args.len() > 0) {
     return held_copies(f, defs, m, join, x, 0, d.args[0], next, plan);
   }
   if (!gathers_views(d.kind_tag)) {
-    var why: string = copy_refusal(f, f.values[x], []);
+    let why: string = copy_refusal(f, f.values[x], []);
     if (why != "") {
       if (plan.why == "") {
         plan = MergePlan { ...plan, why: "a value merged past its source has no copy: " + why };
@@ -4329,8 +4327,8 @@ function held_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consum
 
 // held_copies over each operand of `consumer`.
 function operand_copies(f: Func, defs: ssa.SInst[], m: MergeScan, join: i32, consumer: i32, seen: boolean[], own plan: MergePlan): MergePlan {
-  var args: i32[] = defs[consumer].args;
-  var j: i32 = 0;
+  let args: i32[] = defs[consumer].args;
+  let j: i32 = 0;
   while (j < args.len()) {
     plan = held_copies(f, defs, m, join, consumer, j, args[j], seen, plan);
     j = j + 1;
@@ -4351,11 +4349,11 @@ function with_copy(f: Func, defs: ssa.SInst[], m: MergeScan, consumer: i32, slot
   if (copies_slot(plan.copies, consumer, slot)) {
     return plan;
   }
-  var home: i32 = m.home[consumer];
-  var edge: boolean = defs[consumer].kind_tag == 8;
-  var at: i32 = home;
+  let home: i32 = m.home[consumer];
+  let edge: boolean = defs[consumer].kind_tag == 8;
+  let at: i32 = home;
   if (edge) {
-    var preds: i32[] = f.graph.blocks[home].preds;
+    let preds: i32[] = f.graph.blocks[home].preds;
     if (slot >= preds.len()) {
       return plan;
     }
@@ -4368,7 +4366,7 @@ function with_copy(f: Func, defs: ssa.SInst[], m: MergeScan, consumer: i32, slot
 // block position `bi`.
 function roots_outlived(f: Func, defs: ssa.SInst[], m: MergeScan, v: i32, bi: i32): boolean {
   for r in bytes_roots(f, defs, v, m.none) {
-    var h: i32 = 0 - 1;
+    let h: i32 = 0 - 1;
     if (r >= 0 && r < m.home.len()) {
       h = m.home[r];
     }
@@ -4381,11 +4379,11 @@ function roots_outlived(f: Func, defs: ssa.SInst[], m: MergeScan, v: i32, bi: i3
 
 // The block position each value is defined at, -1 for none.
 function defining_positions(f: Func): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for _ in f.values {
     out = out.append(0 - 1);
   }
-  var bi: i32 = 0;
+  let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     for ins in f.graph.blocks[bi].insts {
       if (ins.result >= 0 && ins.result < out.len()) {
@@ -4433,14 +4431,14 @@ pub function tail_recursion(own f: Func, name: string): Func {
   if (f.graph.blocks[0].preds.len() > 0) {
     return f;
   }
-  var nparams: i32 = f.graph.nparams;
+  let nparams: i32 = f.graph.nparams;
   if (f.values.len() < nparams) {
     return f;
   }
-  var parents: i32[][] = borrow_parents(f);
-  var defs: ssa.SInst[] = definitions(f);
-  var kinds: i32[] = back_kinds(f, name, nparams, parents, defs);
-  var hole: i32 = agreed_hole(f, kinds, name, nparams, parents, defs);
+  let parents: i32[][] = borrow_parents(f);
+  let defs: ssa.SInst[] = definitions(f);
+  let kinds: i32[] = back_kinds(f, name, nparams, parents, defs);
+  let hole: i32 = agreed_hole(f, kinds, name, nparams, parents, defs);
   if (hole < 0) {
     kinds = without_cons(kinds);
   }
@@ -4460,9 +4458,9 @@ function cons_tail(): i32 {
 
 // Per block: a self-tail call, a tail call modulo cons, or neither.
 function back_kinds(f: Func, name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for b in f.graph.blocks {
-    var k: i32 = 0;
+    let k: i32 = 0;
     if (is_self_tail(f, b, name, nparams, parents, defs)) {
       k = self_tail();
     } else if (cons_hole(f, b, name, nparams, parents, defs) >= 0) {
@@ -4480,11 +4478,11 @@ function agreed_hole(f: Func, kinds: i32[], name: string, nparams: i32, parents:
   if (!record_laid(f, f.result)) {
     return 0 - 1;
   }
-  var hole: i32 = 0 - 1;
-  var bi: i32 = 0;
+  let hole: i32 = 0 - 1;
+  let bi: i32 = 0;
   while (bi < kinds.len()) {
     if (kinds[bi] == cons_tail()) {
-      var at: i32 = cons_hole(f, f.graph.blocks[bi], name, nparams, parents, defs);
+      let at: i32 = cons_hole(f, f.graph.blocks[bi], name, nparams, parents, defs);
       if (hole >= 0 && at != hole) {
         return 0 - 1;
       }
@@ -4496,7 +4494,7 @@ function agreed_hole(f: Func, kinds: i32[], name: string, nparams: i32, parents:
 }
 
 function without_cons(kinds: i32[]): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for k in kinds {
     if (k == cons_tail()) {
       out = out.append(0);
@@ -4521,16 +4519,36 @@ function without_cons(kinds: i32[]): i32[] {
 //
 // This declines the ONE block, not the function: a call that stays a call
 // keeps holding what it holds.
+//
+// A fresh slice whose every anchor is a view PARAMETER does cross: those read
+// the caller's bytes, which outlive the loop, so the jump strands nothing
+// (#9794). The loop owns each round's box, and `spliced` hands the entry edge
+// a box of its own so the phi owns one on every edge.
 function crosses_jump(f: Func, a: i32, parents: i32[][], defs: ssa.SInst[]): boolean {
   if (a < 0 || a >= parents.len() || parents[a].len() == 0) {
     return true;
   }
-  var t: typeinfo.Type = f.values[a];
+  if (sliced_view_param(f, a, parents, defs)) {
+    return true;
+  }
+  let t: typeinfo.Type = f.values[a];
   if (!reference(t) || holds_view(f, t) || is_map(t)) {
     return false;
   }
-  var k: i32 = defs[a].kind_tag;
+  let k: i32 = defs[a].kind_tag;
   return k == variant_get() || k == record_get() || k == tuple_get() || k == array_get();
+}
+
+function sliced_view_param(f: Func, a: i32, parents: i32[][], defs: ssa.SInst[]): boolean {
+  if (!is_view(f.values[a]) || defs[a].kind_tag != slice()) {
+    return false;
+  }
+  for p in parents[a] {
+    if (p >= f.graph.nparams || !is_view(f.values[p])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function args_cross(f: Func, args: i32[], parents: i32[][], defs: ssa.SInst[]): boolean {
@@ -4550,7 +4568,7 @@ function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32, parent
   if (b.term.kind_tag != 1 || b.insts.len() == 0) {
     return false;
   }
-  var last: ssa.SInst = b.insts[b.insts.len() - 1];
+  let last: ssa.SInst = b.insts[b.insts.len() - 1];
   if (last.kind_tag != call() || last.str != name || last.args.len() != nparams) {
     return false;
   }
@@ -4568,15 +4586,15 @@ function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32, parent
 // runs before the rest of the recursion once the call is gone, so it has to
 // be something whose order cannot show (`reorderable`).
 function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32 {
-  var n: i32 = b.insts.len();
+  let n: i32 = b.insts.len();
   if (b.term.kind_tag != 1 || n < 2) {
     return 0 - 1;
   }
-  var cons: ssa.SInst = b.insts[n - 1];
+  let cons: ssa.SInst = b.insts[n - 1];
   if (cons.kind_tag != variant_new() || b.term.value != cons.result) {
     return 0 - 1;
   }
-  var at: i32 = n - 2;
+  let at: i32 = n - 2;
   while (at >= 0 && !(b.insts[at].kind_tag == call() && b.insts[at].str == name)) {
     if (!reorderable(b.insts[at])) {
       return 0 - 1;
@@ -4586,18 +4604,18 @@ function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: 
   if (at < 0) {
     return 0 - 1;
   }
-  var c: ssa.SInst = b.insts[at];
+  let c: ssa.SInst = b.insts[at];
   if (c.args.len() != nparams || !args_cross(f, c.args, parents, defs)) {
     return 0 - 1;
   }
-  var i: i32 = at + 1;
+  let i: i32 = at + 1;
   while (i < n - 1) {
     if (util.index_of_i32(b.insts[i].args, c.result) >= 0) {
       return 0 - 1;
     }
     i = i + 1;
   }
-  var uses: i32 = 0;
+  let uses: i32 = 0;
   for a in cons.args {
     if (a == c.result) {
       uses = uses + 1;
@@ -4612,7 +4630,7 @@ function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: 
 // Reads of values nothing can change, and operators that cannot stop the
 // program: a division or remainder can trap, so it stays behind the call.
 function reorderable(ins: ssa.SInst): boolean {
-  var k: i32 = ins.kind_tag;
+  let k: i32 = ins.kind_tag;
   if (k == 9) {
     return ins.str != "/" && ins.str != "%";
   }
@@ -4621,7 +4639,7 @@ function reorderable(ins: ssa.SInst): boolean {
 }
 
 function fresh_block_id(f: Func): i32 {
-  var top: i32 = 0;
+  let top: i32 = 0;
   for b in f.graph.blocks {
     if (b.id > top) {
       top = b.id;
@@ -4634,8 +4652,8 @@ function fresh_block_id(f: Func): i32 {
 // EVERY value, so a rewrite of an instruction's operands is one lookup rather
 // than a search.
 function phi_map(f: Func, nparams: i32): i32[] {
-  var map: i32[] = [];
-  var v: i32 = 0;
+  let map: i32[] = [];
+  let v: i32 = 0;
   while (v < f.graph.nvals) {
     if (v < nparams) {
       map = map.append(f.graph.nvals + v);
@@ -4655,7 +4673,7 @@ function mapped(map: i32[], v: i32): i32 {
 }
 
 function mapped_list(map: i32[], vs: i32[]): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for v in vs {
     out = out.append(mapped(map, v));
   }
@@ -4686,7 +4704,7 @@ struct Splice { values: typeinfo.Type[], blocks: ssa.SBlock[], backs: i32[], row
 struct Chain { r: i32, h: i32, r0: i32, h0: i32 }
 
 function loop_chain(f: Func, nparams: i32): Chain {
-  var r: i32 = f.graph.nvals + nparams;
+  let r: i32 = f.graph.nvals + nparams;
   return Chain { r: r, h: r + 1, r0: r + 2, h0: r + 3 };
 }
 
@@ -4703,12 +4721,12 @@ function address(): typeinfo.Type {
 // header anyway, so what changes is that the edge that tail contributes comes
 // from the header rather than from the entry.
 function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: string): Func {
-  var map: i32[] = phi_map(f, nparams);
-  var header: i32 = fresh_block_id(f);
-  var entry: ssa.SBlock = f.graph.blocks[0];
-  var ch: Chain = loop_chain(f, nparams);
-  var values: typeinfo.Type[] = f.values;
-  var p: i32 = 0;
+  let map: i32[] = phi_map(f, nparams);
+  let header: i32 = fresh_block_id(f);
+  let entry: ssa.SBlock = f.graph.blocks[0];
+  let ch: Chain = loop_chain(f, nparams);
+  let values: typeinfo.Type[] = f.values;
+  let p: i32 = 0;
   while (p < nparams) {
     values = values.append(f.values[p]);
     p = p + 1;
@@ -4716,12 +4734,12 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: strin
   if (hole >= 0) {
     values = values.append(f.result).append(address()).append(f.result).append(address());
   }
-  var s: Splice = Splice { values: values, blocks: [], backs: [], rows: [] };
-  var head: ssa.SBlock = ssa.SBlock { ...entry, id: header, insts: not_kind_6(entry.insts) };
+  let s: Splice = Splice { values: values, blocks: [], backs: [], rows: [] };
+  let head: ssa.SBlock = ssa.SBlock { ...entry, id: header, insts: not_kind_6(entry.insts) };
   s = rewrite_block(s, f, head, kinds[0], map, header, hole, ch);
-  var bi: i32 = 1;
+  let bi: i32 = 1;
   while (bi < f.graph.blocks.len()) {
-    var b: ssa.SBlock = f.graph.blocks[bi];
+    let b: ssa.SBlock = f.graph.blocks[bi];
     s = rewrite_block(s, f, ssa.SBlock { ...b, preds: repointed(b.preds, entry.id, header) }, kinds[bi], map, header, hole, ch);
     bi = bi + 1;
   }
@@ -4729,29 +4747,61 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: strin
   // The parameter definitions STAY in the entry block: ssadeps.verify reads a
   // `param` instruction anywhere else as a malformed graph, and they are also
   // what the entry edge's phi operands name.
-  var entry_insts: ssa.SInst[] = kind_6(entry.insts);
+  let entry_insts: ssa.SInst[] = kind_6(entry.insts);
+  let firsts: i32[] = [];
+  p = 0;
+  while (p < nparams) {
+    firsts = firsts.append(p);
+    if (sliced_on_back_edge(f, s.rows, p)) {
+      let at: i32 = s.values.len();
+      entry_insts = entry_insts.append(ssa.SInst { kind_tag: 1, result: at, args: [], imm: 0, str: "" });
+      entry_insts = entry_insts.append(ssa.SInst { kind_tag: length(), result: at + 1, args: [p], imm: 0, str: "" });
+      entry_insts = entry_insts.append(ssa.SInst { kind_tag: slice(), result: at + 2, args: [p, at, at + 1], imm: 0, str: "" });
+      s = Splice { ...s, values: s.values.append(i32_type()).append(i32_type()).append(f.values[p]) };
+      firsts = firsts.with(p, at + 2);
+    }
+    p = p + 1;
+  }
   if (hole >= 0) {
     entry_insts = entry_insts.append(ssa.SInst { kind_tag: zero(), result: ch.r0, args: [], imm: 0, str: "" });
     entry_insts = entry_insts.append(ssa.SInst { kind_tag: zero(), result: ch.h0, args: [], imm: 0, str: "" });
   }
-  var blocks: ssa.SBlock[] = [ssa.SBlock { id: entry.id, insts: entry_insts, term: branch_to(header), preds: [] }];
-  var built: ssa.SBlock = s.blocks[0];
-  var head_insts: ssa.SInst[] = phis(map, s.rows, nparams, hole, ch, name);
+  let blocks: ssa.SBlock[] = [ssa.SBlock { id: entry.id, insts: entry_insts, term: branch_to(header), preds: [] }];
+  let built: ssa.SBlock = s.blocks[0];
+  let head_insts: ssa.SInst[] = phis(map, firsts, s.rows, nparams, hole, ch, name);
   for ins in built.insts {
     head_insts = head_insts.append(ins);
   }
-  var preds: i32[] = [entry.id];
+  let preds: i32[] = [entry.id];
   for back in s.backs {
     preds = preds.append(back);
   }
   blocks = blocks.append(ssa.SBlock { ...built, insts: head_insts, preds: preds });
-  var k: i32 = 1;
+  let k: i32 = 1;
   while (k < s.blocks.len()) {
     blocks = blocks.append(s.blocks[k]);
     k = k + 1;
   }
-  var graph: ssa.SFunc = ssa.SFunc { ...f.graph, nvals: s.values.len(), blocks: blocks };
+  let graph: ssa.SFunc = ssa.SFunc { ...f.graph, nvals: s.values.len(), blocks: blocks };
   return Func { ...f, graph: graph, values: s.values };
+}
+
+// A view parameter some tail call replaces with a fresh slice of the
+// parameters (`crosses_jump`): its phi owns a box on that edge, so the entry
+// edge passes a box of its own, `slice(p, 0, p.len())`, rather than lending
+// the caller's.
+function sliced_on_back_edge(f: Func, rows: i32[][], p: i32): boolean {
+  if (!is_view(f.values[p])) {
+    return false;
+  }
+  let defs: ssa.SInst[] = definitions(f);
+  for row in rows {
+    let v: i32 = row[p];
+    if (v >= 0 && v < defs.len() && defs[v].kind_tag == slice()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function branch_to(header: i32): ssa.STerm {
@@ -4767,13 +4817,13 @@ function branch_to(header: i32): ssa.STerm {
 // to, so it has to be the same one.
 function rewrite_block(own s: Splice, f: Func, b: ssa.SBlock, kind: i32, map: i32[], header: i32, hole: i32, ch: Chain): Splice {
   if (kind == self_tail()) {
-    var kept: ssa.SInst[] = [];
-    var i: i32 = 0;
+    let kept: ssa.SInst[] = [];
+    let i: i32 = 0;
     while (i + 1 < b.insts.len()) {
       kept = kept.append(mapped_inst(map, b.insts[i]));
       i = i + 1;
     }
-    var row: i32[] = mapped_list(map, b.insts[b.insts.len() - 1].args);
+    let row: i32[] = mapped_list(map, b.insts[b.insts.len() - 1].args);
     if (hole >= 0) {
       row = row.append(ch.r).append(ch.h);
     }
@@ -4782,10 +4832,10 @@ function rewrite_block(own s: Splice, f: Func, b: ssa.SBlock, kind: i32, map: i3
   if (kind == cons_tail()) {
     return linked(s, f, b, map, header, hole, ch);
   }
-  var insts: ssa.SInst[] = rewritten(map, b.insts);
-  var term: ssa.STerm = mapped_ret_term(map, b.term);
+  let insts: ssa.SInst[] = rewritten(map, b.insts);
+  let term: ssa.STerm = mapped_ret_term(map, b.term);
   if (hole >= 0 && term.kind_tag == 1 && term.value >= 0) {
-    var filled: i32 = s.values.len();
+    let filled: i32 = s.values.len();
     insts = insts.append(ssa.SInst { kind_tag: hole_fill(), result: filled, args: [ch.r, ch.h, term.value], imm: hole, str: "" });
     term = ssa.STerm { ...term, value: filled };
     s = Splice { ...s, values: s.values.append(f.result) };
@@ -4797,10 +4847,10 @@ function rewrite_block(own s: Splice, f: Func, b: ssa.SBlock, kind: i32, map: i3
 // node is built over, the call's arguments go to the header, and the node is
 // linked into the chain and becomes its hole.
 function linked(own s: Splice, f: Func, b: ssa.SBlock, map: i32[], header: i32, hole: i32, ch: Chain): Splice {
-  var cons: ssa.SInst = b.insts[b.insts.len() - 1];
-  var placeholder: i32 = cons.args[hole];
-  var insts: ssa.SInst[] = [];
-  var row: i32[] = [];
+  let cons: ssa.SInst = b.insts[b.insts.len() - 1];
+  let placeholder: i32 = cons.args[hole];
+  let insts: ssa.SInst[] = [];
+  let row: i32[] = [];
   for ins in b.insts {
     if (ins.result == placeholder) {
       row = mapped_list(map, ins.args);
@@ -4809,17 +4859,17 @@ function linked(own s: Splice, f: Func, b: ssa.SBlock, map: i32[], header: i32, 
       insts = insts.append(mapped_inst(map, ins));
     }
   }
-  var at: i32 = s.values.len();
-  var chain: i32 = at + 1;
+  let at: i32 = s.values.len();
+  let chain: i32 = at + 1;
   insts = insts.append(ssa.SInst { kind_tag: hole_at(), result: at, args: [cons.result], imm: 0, str: "" });
   insts = insts.append(ssa.SInst { kind_tag: hole_fill(), result: chain, args: [ch.r, ch.h, cons.result], imm: hole, str: "" });
   row = row.append(chain).append(at);
-  var block: ssa.SBlock = ssa.SBlock { ...b, insts: insts, term: branch_to(header) };
+  let block: ssa.SBlock = ssa.SBlock { ...b, insts: insts, term: branch_to(header) };
   return Splice { values: s.values.append(address()).append(f.result), blocks: s.blocks.append(block), backs: s.backs.append(b.id), rows: s.rows.append(row) };
 }
 
 function repointed(preds: i32[], from: i32, to: i32): i32[] {
-  var out: i32[] = [];
+  let out: i32[] = [];
   for p in preds {
     if (p == from) {
       out = out.append(to);
@@ -4832,7 +4882,7 @@ function repointed(preds: i32[], from: i32, to: i32): i32[] {
 
 // The parameter definitions, and everything else, in their original order.
 function kind_6(insts: ssa.SInst[]): ssa.SInst[] {
-  var out: ssa.SInst[] = [];
+  let out: ssa.SInst[] = [];
   for ins in insts {
     if (ins.kind_tag == 6) {
       out = out.append(ins);
@@ -4842,7 +4892,7 @@ function kind_6(insts: ssa.SInst[]): ssa.SInst[] {
 }
 
 function not_kind_6(insts: ssa.SInst[]): ssa.SInst[] {
-  var out: ssa.SInst[] = [];
+  let out: ssa.SInst[] = [];
   for ins in insts {
     if (ins.kind_tag != 6) {
       out = out.append(ins);
@@ -4852,7 +4902,7 @@ function not_kind_6(insts: ssa.SInst[]): ssa.SInst[] {
 }
 
 function rewritten(map: i32[], insts: ssa.SInst[]): ssa.SInst[] {
-  var out: ssa.SInst[] = [];
+  let out: ssa.SInst[] = [];
   for ins in insts {
     out = out.append(mapped_inst(map, ins));
   }
@@ -4865,11 +4915,11 @@ function rewritten(map: i32[], insts: ssa.SInst[]): ssa.SInst[] {
 // for, so the ownership inference reads the loop as the recursion it was
 // (`ownership.slot_carried`). Under modulo cons the chain and its hole follow,
 // entering empty.
-function phis(map: i32[], rows: i32[][], nparams: i32, hole: i32, ch: Chain, name: string): ssa.SInst[] {
-  var out: ssa.SInst[] = [];
-  var p: i32 = 0;
+function phis(map: i32[], firsts: i32[], rows: i32[][], nparams: i32, hole: i32, ch: Chain, name: string): ssa.SInst[] {
+  let out: ssa.SInst[] = [];
+  let p: i32 = 0;
   while (p < nparams) {
-    out = out.append(ssa.SInst { ...phi_over(map[p], p, rows, p), imm: p, str: name });
+    out = out.append(ssa.SInst { ...phi_over(map[p], firsts[p], rows, p), imm: p, str: name });
     p = p + 1;
   }
   if (hole >= 0) {
@@ -4880,7 +4930,7 @@ function phis(map: i32[], rows: i32[][], nparams: i32, hole: i32, ch: Chain, nam
 }
 
 function phi_over(result: i32, first: i32, rows: i32[][], at: i32): ssa.SInst {
-  var ops: i32[] = [first];
+  let ops: i32[] = [first];
   for row in rows {
     ops = ops.append(row[at]);
   }

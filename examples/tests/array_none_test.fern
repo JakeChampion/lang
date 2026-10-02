@@ -31,7 +31,7 @@ function test_free_fn(): test.TestOutcome {
 }
 
 function test_empty_vacuous(): test.TestOutcome {
-  var e: i32[] = [];
+  let e: i32[] = [];
   return test.assert_true(e.none(is_neg));
 }
 
@@ -41,7 +41,7 @@ function test_all_match(): test.TestOutcome {
 }
 
 function main(): i32 {
-  var r: test.TestRunner = test.test_new("std/array none");
+  let r: test.TestRunner = test.test_new("std/array none");
   r = r.it("none true", test_none_true);
   r = r.it("none false", test_none_false);
   r = r.it("free fn", test_free_fn);

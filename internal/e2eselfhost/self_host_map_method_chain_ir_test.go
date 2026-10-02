@@ -26,16 +26,16 @@ var mapMethodChainIRCases = []struct {
 }{
 	// insert-chain then len: the result is a fresh map of length 1.
 	{"insert-len", `import "core/map";
-function main(): i32 { var m: Map[i32, i32] = map_new(4); return m.insert(1, 10).len(); }`},
+function main(): i32 { let m: Map[i32, i32] = map_new(4); return m.insert(1, 10).len(); }`},
 	// double insert-chain then len → 2.
 	{"insert-insert-len", `import "core/map";
-function main(): i32 { var m: Map[i32, i32] = map_new(4); return m.insert(1, 10).insert(2, 20).len(); }`},
+function main(): i32 { let m: Map[i32, i32] = map_new(4); return m.insert(1, 10).insert(2, 20).len(); }`},
 	// insert-chain then get_or reads the just-inserted value.
 	{"insert-get_or", `import "core/map";
-function main(): i32 { var m: Map[i32, i32] = map_new(4); return m.insert(7, 70).get_or(7, 0); }`},
+function main(): i32 { let m: Map[i32, i32] = map_new(4); return m.insert(7, 70).get_or(7, 0); }`},
 	// string keys: insert-chain then get_or on a string-keyed map.
 	{"insert-get_or-strkey", `import "core/map";
-function main(): i32 { var m: Map[string, i32] = map_new(4); return m.insert("a", 5).get_or("a", 0); }`},
+function main(): i32 { let m: Map[string, i32] = map_new(4); return m.insert("a", 5).get_or("a", 0); }`},
 }
 
 func TestSelfHostMapMethodChainIR(t *testing.T) {

@@ -33,12 +33,12 @@ function rejects(b: u8[]): boolean {
 
 function main(): i32 {
     // A + e-acute + euro + grinning face: all four widths, 10 bytes.
-    var mixed: u8[] = [65 as u8, 195 as u8, 169 as u8, 226 as u8, 130 as u8,
+    let mixed: u8[] = [65 as u8, 195 as u8, 169 as u8, 226 as u8, 130 as u8,
         172 as u8, 240 as u8, 159 as u8, 152 as u8, 128 as u8];
-    var s: string = must(mixed, 1);
+    let s: string = must(mixed, 1);
     if (s.len() != 10) { return 2; }
     // The bytes come back exactly, not lossily re-encoded.
-    var i: i32 = 0;
+    let i: i32 = 0;
     while (i < 10) {
         if (s[i] != mixed[i]) { return 3; }
         i = i + 1;
@@ -60,13 +60,13 @@ function main(): i32 {
     // from_bytes agrees with is_valid_utf8 over the whole 2-byte space:
     // the checked constructor admits a byte sequence iff the scanner
     // says it is well-formed.
-    var p: i32 = 0;
+    let p: i32 = 0;
     while (p < 256) {
-        var q: i32 = 0;
+        let q: i32 = 0;
         while (q < 256) {
-            var pair: u8[] = [p as u8, q as u8];
-            var accepted: boolean = !rejects(pair);
-            var valid: boolean = utf8.is_valid_utf8(string_from_bytes_unchecked(pair));
+            let pair: u8[] = [p as u8, q as u8];
+            let accepted: boolean = !rejects(pair);
+            let valid: boolean = utf8.is_valid_utf8(string_from_bytes_unchecked(pair));
             if (accepted != valid) { return 16; }
             q = q + 1;
         }
@@ -75,7 +75,7 @@ function main(): i32 {
 
     // from_bytes_lossy: well-formed input untouched, one U+FFFD per
     // maximal subpart, and the result is always well-formed.
-    var fffd: string = utf8.utf8_encode(65533 as char);
+    let fffd: string = utf8.utf8_encode(65533 as char);
     if (utf8.from_bytes_lossy(mixed) != s) { return 17; }
     if (utf8.from_bytes_lossy([226 as u8, 130 as u8, 65 as u8]) != fffd + "A") { return 18; } // truncated 3-byte, then A
     if (utf8.from_bytes_lossy([240 as u8, 128 as u8]) != fffd + fffd) { return 19; }           // F0 cannot take 80: two units

@@ -3,7 +3,7 @@ package e2eselfhost
 import "testing"
 
 // structUpdateIRCases pin functional struct-update expressions
-// (`T { ...base, field: v }`) to the self-host IR path on x86-64 + wasm. irlower
+// (`T { ...base, field: v }`) to the self-host IR path on x86-64 + wasm. The lowering
 // fully lowers an ExprStructLit with a base (emit each declared field in order;
 // lower the overrides, struct_get-copy the rest from the base), gated only by
 // decl_is_struct + decl_is_leaksafe — so an all-scalar or scalar+string struct
@@ -21,21 +21,21 @@ var structUpdateIRCases = []struct {
 	// Single field override; the other two fields copy from the base.
 	// q = {1, 20, 3} -> 24.
 	{"single-override", `struct P { x: i32, y: i32, z: i32 }
-function main(): i32 { var p: P = P { x: 1, y: 2, z: 3 }; var q: P = P { ...p, y: 20 }; return q.x + q.y + q.z; }`},
+function main(): i32 { let p: P = P { x: 1, y: 2, z: 3 }; let q: P = P { ...p, y: 20 }; return q.x + q.y + q.z; }`},
 	// A STRING field copies through the update unchanged while an i32 field is
 	// overridden — exercises the leaksafe non-i32 copy path. t.name == "hi" -> 9.
 	{"string-field-copy", `struct S { name: string, n: i32 }
-function main(): i32 { var s: S = S { name: "hi", n: 3 }; var t: S = S { ...s, n: 9 }; if (t.name == "hi") { return t.n; } return 0; }`},
+function main(): i32 { let s: S = S { name: "hi", n: 3 }; let t: S = S { ...s, n: 9 }; if (t.name == "hi") { return t.n; } return 0; }`},
 	// Update in return position with a NON-ident base computation (p.b + 100),
 	// spilling the base once. q = {5, 106} -> 111.
 	{"update-in-return", `struct P { a: i32, b: i32 }
 function bump(p: P): P { return P { ...p, b: p.b + 100 }; }
-function main(): i32 { var p: P = P { a: 5, b: 6 }; var q: P = bump(p); return q.a + q.b; }`},
+function main(): i32 { let p: P = P { a: 5, b: 6 }; let q: P = bump(p); return q.a + q.b; }`},
 	// Functional update threaded through a loop (the immutable-counter idiom).
 	// inc 5 times from 0 -> 5.
 	{"functional-loop", `struct C { n: i32 }
 function inc(c: C): C { return C { ...c, n: c.n + 1 }; }
-function main(): i32 { var c: C = C { n: 0 }; var i: i32 = 0; while (i < 5) { c = inc(c); i = i + 1; } return c.n; }`},
+function main(): i32 { let c: C = C { n: 0 }; let i: i32 = 0; while (i < 5) { c = inc(c); i = i + 1; } return c.n; }`},
 }
 
 // TestSelfHostStructUpdateIR compiles each case with the self-host CLI for
