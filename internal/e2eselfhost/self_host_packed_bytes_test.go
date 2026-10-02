@@ -15,8 +15,11 @@ import (
 
 // packedBytesElementsSrc: literals, pushes past a grow, `.with`, slices,
 // string bytes both ways, __alloc_u8, random_bytes, a digest over a string
-// that crosses many blocks, and the heap cost of a 4 MiB byte array, which
-// packed is a quarter of the 20 MB threshold and in slots well over it.
+// that crosses many blocks, and the heap cost of a 4 MiB byte array. Packed
+// it is 5 MiB after the large tier's rounding; wasm keeps a 4-byte slot per
+// byte and lands on 20 MiB; the 8-byte slots the register backends had would
+// round to 40 MiB, so the 24 MB threshold separates packed from unpacked only
+// where #9634 packs.
 const packedBytesElementsSrc = `import "std/i32";
 import "std/crypto";
 
@@ -53,7 +56,7 @@ function main(): i32 {
     var before: i64 = __heap_bump_bytes();
     var mb: u8[] = __alloc_u8(4194304);
     var cost: i64 = __heap_bump_bytes() - before;
-    print("heap " + (mb.len() > 0 && cost < (20000000 as i64)).to_string());
+    print("heap " + (mb.len() > 0 && cost < (24000000 as i64)).to_string());
     return 0;
 }
 `
