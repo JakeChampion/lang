@@ -1342,7 +1342,7 @@ function main(): i32 {
 		// is a false positive. This is the bundle-wide FP guard the
 		// differential corpus can't express, mirroring the manual
 		// "fern -check over every module" validation prior slices used.
-		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "arm64_native.fern", "x86_native.fern", "elf.fern", "fern.fern"} {
+		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "arm64_native.fern", "x86_native.fern", "elf.fern", "fern.fern"} {
 			combined, _ := exec.Command(fernBin, "-check", filepath.Join(dir, m)).CombinedOutput()
 			if strings.Contains(string(combined), "error[E001]") {
 				t.Errorf("-check on self-host module %s reported a spurious E001:\n%s", m, combined)
@@ -2692,6 +2692,20 @@ function main(): i32 {
 		}
 		if out, err := exec.Command(wasmtime, "run", comp).Output(); err != nil || string(out) != "unset1\n" {
 			t.Errorf("without X: stdout = %q (%v), want %q", out, err, "unset1\n")
+		}
+	})
+
+	t.Run("wasm-component-refuses-extern-outside-world", func(t *testing.T) {
+		// An extern to an interface the fern world does not declare cannot be
+		// composed; the CLI refuses it by naming the interface.
+		refused := filepath.Join(dir, "comp_refused.fern")
+		if err := os.WriteFile(refused, []byte("@import(\"local:test/sink@0.1.0\", \"pick\")\nfunction pick(c: i32): i32;\nfunction main(): i32 { return pick(1); }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", filepath.Join(dir, "comp_refused.wasm"), refused)
+		out, _ := cmd.CombinedOutput()
+		if code := cmd.ProcessState.ExitCode(); code != 2 || !strings.Contains(string(out), "local:test/sink@0.1.0") {
+			t.Errorf("exit %d, output %q; want 2 naming the interface", code, out)
 		}
 	})
 

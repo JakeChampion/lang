@@ -341,6 +341,11 @@ var interpProgs = []struct {
 	{"enum-method-nullary", "enum Dir { N, S, E, W } function (d: Dir) dx(): i32 { match (d) { Dir.E => { return 1; }, Dir.W => { return 0 - 1; }, _ => { return 0; } } } function main(): i32 { var d = Dir.E; return d.dx(); }", 1},
 	{"enum-method-with-arg", "enum Opt { Some(i32), None } function (o: Opt) unwrap_or(dflt: i32): i32 { match (o) { Opt.Some(x) => { return x; }, Opt.None => { return dflt; } } } function main(): i32 { return Opt.Some(7).unwrap_or(0) + Opt.None.unwrap_or(5); }", 12},
 
+	// Injected variants include nullary cases. A user declaration reusing a
+	// builtin variant's name must keep its own owner for method dispatch.
+	{"builtin-ioerror-method", "function (e: IoError) count(): i32 { match (e) { Interrupted => { return 7; }, _ => { return 0; } } } function main(): i32 { return Interrupted.count(); }", 7},
+	{"builtin-variant-shadow-method", "enum Own { BodyBytes(i32) } function (b: Body) count(): i32 { return 99; } function (b: Own) count(): i32 { match (b) { BodyBytes(n) => { return n; } } } function main(): i32 { return BodyBytes(4).count(); }", 4},
+
 	// i64 values beyond i32 range. The interp's VInt is a 32-bit slot, so an
 	// i64 literal / arithmetic result that exceeds i32 would truncate
 	// (`5000000000` wraps). A second integer variant, VInt64, holds

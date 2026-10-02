@@ -28,15 +28,15 @@ func TestSelfHostDeclarationSpellingContracts(t *testing.T) {
 		{"missing result", "() => ", "|||"},
 	}
 	var src strings.Builder
-	src.WriteString("import \"./irlower\";\nfunction main(): i32 {\n")
+	src.WriteString("import \"./lift\";\nfunction main(): i32 {\n")
 	for i, tc := range cases {
-		fmt.Fprintf(&src, "var p%d = irlower.fn_param_from_spelling(\"capture\", %s);\n", i, strconv.Quote(tc.spelling))
+		fmt.Fprintf(&src, "var p%d = lift.fn_param_from_spelling(\"capture\", %s);\n", i, strconv.Quote(tc.spelling))
 		fmt.Fprintf(&src, "print(p%d.type_name + \"|\" + p%d.fn_param_types + \"|\" + p%d.fn_ret + \"|\" + p%d.fn_param_dyn);\n", i, i, i, i)
 		fmt.Fprintf(&src, "if (p%d.name != \"capture\" || p%d.own || p%d.has_default || p%d.ret_arr) { return %d; }\n", i, i, i, i, i+1)
 	}
 	src.WriteString("return 0;\n}\n")
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "irlower.fern")
+	copySelfHostFiles(t, dir, "irtables.fern", "fnsigs.fern", "lift.fern")
 	if err := os.WriteFile(filepath.Join(dir, "declaration_contract.fern"), []byte(src.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}

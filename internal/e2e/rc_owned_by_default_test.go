@@ -20,9 +20,9 @@ func TestX86_64OwnedByDefaultMatchesBorrow(t *testing.T) {
 		prev := ast.OwnedByDefault
 		defer func() { ast.OwnedByDefault = prev }()
 		ast.OwnedByDefault = false
-		outOff, exitOff := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
+		outOff, exitOff := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
 		ast.OwnedByDefault = true
-		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
+		outOn, exitOn := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("owned-by-default diverged from borrow model:\n borrow=(exit %d) %q\n owned =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
@@ -34,9 +34,9 @@ func TestArm64OwnedByDefaultMatchesBorrow(t *testing.T) {
 		prev := ast.OwnedByDefault
 		defer func() { ast.OwnedByDefault = prev }()
 		ast.OwnedByDefault = false
-		outOff, exitOff := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
+		outOff, exitOff := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
 		ast.OwnedByDefault = true
-		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
+		outOn, exitOn := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("owned-by-default diverged from borrow model:\n borrow=(exit %d) %q\n owned =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}

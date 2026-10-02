@@ -329,3 +329,5 @@ write_some_bytes=350
 buf_push_bytes_range=351
 write_file_bytes=352
 tcp_send_bytes=353
+udp_send_bytes=354
+udp_sendto_bytes=355

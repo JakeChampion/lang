@@ -465,7 +465,7 @@ function main(): i32 {
 `},
 	// An if-expression whose ARMS are lambdas. The IIFE it desugars to is built
 	// by e_lambda_origin, which writes the #5986 sidecar pair empty, and
-	// irlower.hoist_value_iife declares the hoisted function with the coarse "fn"
+	// lift.hoist_value_iife declares the hoisted function with the coarse "fn"
 	// tag on purpose (it IS a higher-order factory). Tag without contract is an
 	// unresolved result type, so the module went to the AST lowering. The arms
 	// carry the contract, so the hoist reads it off the returned lambda.

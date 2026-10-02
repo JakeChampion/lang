@@ -76,7 +76,7 @@ function declname_buckets(n: i32): i32 {
 }
 
 // build_declname_head / _next index `names` by hash, as the head/next columns
-// the same shape treeshake.RefSet and irlower.CallDeps use. mangle_bare is the
+// the same shape treeshake.RefSet and fnsigs.CallDeps use. mangle_bare is the
 // only reader and it ran a full scan per bare name — 305 string compares a
 // call, 6.7 M over a checker.fern compile.
 function build_declname_head(names: string[]): i32[] {

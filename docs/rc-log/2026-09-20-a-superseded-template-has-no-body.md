@@ -18,7 +18,7 @@ does, so the dead body's WAT was valid and the verdict was the whole of the
 refusal. The fix is the rule the decline already stated: a template's erased
 body is no body of this module's. In a module produced whole,
 `semlower` replaces the template's entry with a superseded one
-(`irlower.LowerResult.superseded`, no ops) and the three emitters skip it,
+(`irtables.LowerResult.superseded`, no ops) and the three emitters skip it,
 as the wasm one skips an `@import` extern; nothing calls it, since every
 produced caller calls an instance. Under the bisect knobs a module is mixed
 and an AST-lowered caller may call the template, so there its AST lowering

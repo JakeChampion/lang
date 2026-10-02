@@ -3,6 +3,7 @@ package interp
 import (
 	"fmt"
 	"net"
+	"strings"
 	"syscall"
 )
 
@@ -141,16 +142,53 @@ func builtinUdpConnect(i *Interp, args []Value) (Value, error) {
 }
 
 func builtinUdpSendto(i *Interp, args []Value) (Value, error) {
-	if len(args) != 4 {
-		return nil, fmt.Errorf("udp_sendto: expected 4 args, got %d", len(args))
+	return udpSendto(i, args, false)
+}
+
+func builtinUdpSendtoBytes(i *Interp, args []Value) (Value, error) {
+	return udpSendto(i, args, true)
+}
+
+func udpPayload(name string, value Value) ([]byte, error) {
+	array, ok := value.(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected u8[] data arg, got %T", name, value)
 	}
-	n, err := numberArgs("udp_sendto", []Value{args[0], args[2]}, 2)
+	data := make([]byte, len(array.E))
+	for k, value := range array.E {
+		n, ok := value.(Number)
+		if !ok {
+			return nil, fmt.Errorf("%s: expected u8 data element, got %T", name, value)
+		}
+		data[k] = byte(n)
+	}
+	return data, nil
+}
+
+func udpSendto(i *Interp, args []Value, raw bool) (Value, error) {
+	name := "udp_sendto"
+	if raw {
+		name = "udp_sendto_bytes"
+	}
+	if len(args) != 4 {
+		return nil, fmt.Errorf("%s: expected 4 args, got %d", name, len(args))
+	}
+	n, err := numberArgs(name, []Value{args[0], args[2]}, 2)
 	if err != nil {
 		return nil, err
 	}
-	data, ok := args[3].(String)
-	if !ok {
-		return nil, fmt.Errorf("udp_sendto: expected string data arg, got %T", args[3])
+	var data []byte
+	if raw {
+		data, err = udpPayload(name, args[3])
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		text, ok := args[3].(String)
+		if !ok {
+			return nil, fmt.Errorf("%s: expected string data arg, got %T", name, args[3])
+		}
+		data = []byte(text)
 	}
 	fd, ok := i.udpSocks[n[0]]
 	if !ok {
@@ -159,7 +197,7 @@ func builtinUdpSendto(i *Interp, args []Value) (Value, error) {
 	// An empty address sends to the connected peer.
 	var to syscall.Sockaddr
 	if addr, ok := args[1].(Array); ok && len(addr.E) != 0 {
-		to, err = sockaddrOf("udp_sendto", args[1], n[1])
+		to, err = sockaddrOf(name, args[1], n[1])
 		if err != nil {
 			return nil, err
 		}
@@ -167,10 +205,62 @@ func builtinUdpSendto(i *Interp, args []Value) (Value, error) {
 			return Number(-int64(syscall.EAFNOSUPPORT)), nil
 		}
 	} else if !ok {
-		return nil, fmt.Errorf("udp_sendto: expected u8[] addr arg, got %T", args[1])
+		return nil, fmt.Errorf("%s: expected u8[] addr arg, got %T", name, args[1])
 	}
 	// A datagram goes out whole or not at all, so the count is the length.
-	if err := syscall.Sendto(fd, []byte(data), 0, to); err != nil {
+	if err := syscall.Sendto(fd, data, 0, to); err != nil {
+		return negErrno(err), nil
+	}
+	return Number(len(data)), nil
+}
+
+func builtinUdpSendBytes(_ *Interp, args []Value) (Value, error) {
+	const name = "udp_send_bytes"
+	if len(args) != 3 {
+		return nil, fmt.Errorf("%s: expected 3 args, got %d", name, len(args))
+	}
+	host, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected string host arg, got %T", name, args[0])
+	}
+	port, err := numberArgs(name, args[1:2], 1)
+	if err != nil {
+		return nil, err
+	}
+	data, err := udpPayload(name, args[2])
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(string(host), ".")
+	if len(parts) != 4 {
+		return Number(-3), nil
+	}
+	to := &syscall.SockaddrInet4{Port: int(port[0])}
+	for k, part := range parts {
+		if part == "" {
+			return Number(-3), nil
+		}
+		octet := 0
+		for _, digit := range part {
+			if digit < '0' || digit > '9' {
+				return Number(-3), nil
+			}
+			octet = octet*10 + int(digit-'0')
+			if octet > 255 {
+				return Number(-3), nil
+			}
+		}
+		to.Addr[k] = byte(octet)
+	}
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+	if err != nil {
+		return negErrno(err), nil
+	}
+	defer syscall.Close(fd)
+	if err := syscall.Connect(fd, to); err != nil {
+		return negErrno(err), nil
+	}
+	if err := syscall.Sendto(fd, data, 0, nil); err != nil {
 		return negErrno(err), nil
 	}
 	return Number(len(data)), nil

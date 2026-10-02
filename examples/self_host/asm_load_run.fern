@@ -72,7 +72,7 @@ function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.Loaded
     out = out + asm_ir.emit_module_ir_unit_flat(u.mods[ti], parts[ti].is_entry, true, parts[ti].ns, textra, g.im.funcs, g.stab, 0, 0 - 1, u.caches[ti], g.base, d.sub.rt_lower);
     ti = ti + 1;
   }
-  return out;
+  return asmcore.dedupe_weak_defs(out);
 }
 
 function part_mods(parts: flatten.PerModule[]): parser.Module[] {

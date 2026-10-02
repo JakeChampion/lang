@@ -2595,7 +2595,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_sockets_incoming_datagram_stream_drop")
 		in.add("wasi_sockets_outgoing_datagram_stream_drop")
 	}
-	if helpers.set["__fern_udp_sendto"] {
+	if helpers.set["__fern_udp_sendto"] || helpers.set["__fern_udp_sendto_bytes"] {
 		in.add("wasi_sockets_udp_check_send")
 		in.add("wasi_sockets_udp_outgoing_subscribe")
 		in.add("wasi_io_pollable_block")

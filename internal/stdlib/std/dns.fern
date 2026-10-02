@@ -1206,7 +1206,7 @@ function send_udp(ns: net.SocketAddr, bytes: u8[]): Result[i32, DnsError] {
       return Err(Socket(e));
     }
   }
-  match (net.send_to(sock, string_from_bytes_unchecked(bytes), ns)) {
+  match (net.send_to(sock, bytes, ns)) {
     Ok(_) => {
       return Ok(sock);
     },
@@ -2373,8 +2373,13 @@ pub function nat64_prefix_of(aaaa: net.IpAddr): Option[Nat64Prefix] {
   var lengths: i32[] = [96, 64, 56, 48, 40, 32];
   var i: i32 = 0;
   while (i < lengths.len()) {
-    if (is_well_known(embedded_v4(b, lengths[i]))) {
-      return Some(Nat64Prefix { bytes: b.take(lengths[i] / 8).concat(zero_bytes(16 - lengths[i] / 8)), bits: lengths[i] });
+    match (aaaa.embedded_v4(lengths[i])) {
+      Some(v4) => {
+        if (is_well_known(v4.bytes())) {
+          return Some(Nat64Prefix { bytes: b.take(lengths[i] / 8).concat(zero_bytes(16 - lengths[i] / 8)), bits: lengths[i] });
+        }
+      },
+      None => {}
     }
     i = i + 1;
   }
@@ -2384,21 +2389,6 @@ pub function nat64_prefix_of(aaaa: net.IpAddr): Option[Nat64Prefix] {
 // RFC 7050's well-known IPv4 addresses, 192.0.0.170 and 192.0.0.171.
 function is_well_known(v4: u8[]): boolean {
   return v4[0] == 192u8 && v4[1] == 0u8 && v4[2] == 0u8 && (v4[3] == 170u8 || v4[3] == 171u8);
-}
-
-// The IPv4 address an IPv6 address embeds under a prefix of `bits`, in
-// RFC 6052 §2.2's layout: the four bytes after the prefix, skipping byte
-// 8, which a /40, /48 or /56 prefix's address straddles.
-function embedded_v4(b: u8[], bits: i32): u8[] {
-  var out: u8[] = [];
-  var at: i32 = bits / 8;
-  while (out.len() < 4) {
-    if (at != 8) {
-      out = out.append(b[at]);
-    }
-    at = at + 1;
-  }
-  return out;
 }
 
 // `synthesize(prefix, v4)` — `v4` under `prefix` as RFC 6052 §2.2 lays
@@ -2454,6 +2444,24 @@ pub function nat64_prefixes(conf: ResolvConf): Nat64Prefix[] {
     Err(_) => {}
   }
   return out;
+}
+
+// `nat64_carried(addr)` — the IPv4 address `addr` carries under a NAT64
+// prefix this host's nameservers reveal, or `None`: for an IPv4 address,
+// one under no revealed prefix, or a network with no translator. What a
+// block list checks beside `net.is_global`, which knows only the
+// well-known and local-use prefixes.
+pub function nat64_carried(addr: net.IpAddr): Option[net.IpAddr] {
+  if (!addr.is_v6()) {
+    return None;
+  }
+  var b: u8[] = addr.bytes();
+  for p in nat64_prefixes(system_conf()) {
+    if (same_bytes(b.take(p.bits / 8), p.bytes.take(p.bits / 8))) {
+      return addr.embedded_v4(p.bits);
+    }
+  }
+  return None;
 }
 
 function has_prefix(ps: Nat64Prefix[], p: Nat64Prefix): boolean {
@@ -2556,16 +2564,36 @@ pub function system_hosts(): HostsEntry[] {
 // NAT64 prefixes the nameservers reveal.
 pub function resolve(name: string): Result[net.IpAddr[], DnsError] {
   var conf: ResolvConf = system_conf();
+  return Ok(reachable(conf, resolve_with(conf, name)?));
+}
+
+// `resolve_plain(name)` — `resolve` as the sources name the addresses,
+// before NAT64 synthesis and RFC 6724 ordering: what a policy judges,
+// since a synthesized address stands for the one it carries.
+pub function resolve_plain(name: string): Result[net.IpAddr[], DnsError] {
+  return resolve_with(system_conf(), name);
+}
+
+// `synthesized(addrs)` — `addrs` as this machine reaches them: `resolve`'s
+// NAT64 synthesis and ordering over `resolve_plain`'s answer.
+pub function synthesized(addrs: net.IpAddr[]): net.IpAddr[] {
+  return reachable(system_conf(), addrs);
+}
+
+function reachable(conf: ResolvConf, addrs: net.IpAddr[]): net.IpAddr[] {
+  return sort_addresses(with_nat64(conf, addrs));
+}
+
+function resolve_with(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
   match (net.ip_parse(name)) {
     Some(ip) => {
-      return Ok(with_nat64(conf, [ip]));
+      return Ok([ip]);
     },
     None => {}
   }
   var hosts: net.IpAddr[] = hosts_lookup(system_hosts(), name);
   if (hosts.len() > 0) {
-    return Ok(sort_addresses(with_nat64(conf, hosts)));
+    return Ok(hosts);
   }
-  var found: net.IpAddr[] = found_addresses(conf, name)?;
-  return Ok(sort_addresses(with_nat64(conf, found)));
+  return found_addresses(conf, name);
 }

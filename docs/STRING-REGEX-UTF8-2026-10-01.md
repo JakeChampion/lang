@@ -40,14 +40,25 @@ be malformed text. Their existing valid replacements keep their behavior.
 
 ## Current validation
 
-The integration includes main `cede3aaf3` and uses its production typed-IR
-lowering. Refreshed bootstrap and primary Linux/WASM target matrices pass,
-including regex conformance, seeded random bytes, ASCII conversion, VCL
-callers, GNU tr parity, opcode inventories and all lint gates.
+The final integration includes main `1745ab368` and uses typed-IR lowering.
+The refreshed bootstrap, actual stage-2 probes, regex ownership tests on
+three targets, primary producer matrix, full unit suite and all lint gates
+pass. The per-module cache test also passes under the x86-64 runner on an ARM
+host. GNU tr parity and VCL callers passed in the preceding integration;
+their source is unchanged.
+
+The checked regex fixtures now require counted enum-payload ownership:
+returning a string from `Some` must keep that string alive after the box is
+dropped. Their old-backend gates check expected results under production
+ownership instead of comparing with the move-only model, which cannot keep
+that alias alive. The primary compiler's census tests remain in place.
+Upstream fixes cover WASM allocation-size arithmetic and the simulation
+test's component builder. The cache test edits the live chained fixture
+and checks cached output against a clean build at every phase.
 
 The pinned seed `stage0-20261001-c891ebc` produces identical stage-2 and
-stage-3 binaries of 12,411,809 bytes, SHA-256
-`1ceb7758111680f0138ba6f346c3f113ee35bb61c7b8c2e0c76938c8f582599f`.
+stage-3 binaries of 12,081,745 bytes, SHA-256
+`a4e86e7e079ab08a0f4957ad7ff1eef7e1b17f12b66c88d6e044531e05d111d1`.
 Stage 1 differs because the seed predates generator changes.
 
 The actual stage-2 compiler passes the regex, RNG and ASCII fixtures on
@@ -73,13 +84,19 @@ inside the program, so WASI's exit-code limit cannot hide a failing bitmask.
 
 After the target pass, duplicate runs under retired lowering-mode flags
 were replaced with one production-path run per target. Assertions and target
-coverage remain. The final Darwin bootstrap and primary matrices, revised
-Linux tests, full unit suite and all lint gates pass.
+coverage remain. The new integration retains these production-path tests.
 
 ## Native measurements
 
-Measured on arm64 macOS on 2026-10-02. The same final stage-2 compiler builds
-both versions; the baseline uses main `cede3aaf3`'s stdlib. Each process
+Measured on arm64 macOS on 2026-10-02 using the `cede3aaf3` integration's
+stage-2 compiler for both versions. Rebuilding with the final compiler and
+main `1745ab368` as the baseline produces byte-identical before and after
+executables, so these measurements still describe the current fixtures.
+Their SHA-256 hashes are
+`7f7e2f3e8369dc83992454068e488ec150cb566ca5c702e7894d1c70933626d4`
+before and
+`a5fd7ac6dc56cc35bf0a0216141eeacaed18755fc80460aa2978203fc1b7dee3`
+after. Each process
 checks the exact result of 20 replacements. A 16-repeat pilot precedes
 4096 repeats, changing only the repeat count. Two warmups precede seven
 samples, alternating version order. Task-owned compiler and test jobs had
@@ -102,7 +119,8 @@ data stays at 2440 bytes. Direct span assembly removes temporary captures,
 replacement arrays and the old join helper while adding checked output.
 
 Building both compiler sources with the same final compiler yields
-12,411,809-byte executables on both sides. Code grows by 80 bytes, unwind
-data by 72 and data by 256, all within the existing file segments. The
+12,081,761 bytes before and 12,081,745 after. Code grows by 88 bytes and unwind
+data by 72; the data section is unchanged. Text and data file segments stay
+the same, while link-edit data shrinks by 16 bytes. The
 integration includes ASCII validation and the ARM64 byte-alignment fix;
 no size baseline changed. These figures supersede older integration results.

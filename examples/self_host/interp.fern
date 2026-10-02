@@ -1641,7 +1641,7 @@ function sat_clamp(v: i64, minv: i64, maxv: i64): i64 {
 // Add / sub pre-check against the bound; mul post-checks the WRAPPED product
 // with a division round-trip, plus the `a == -1 && b == MIN` term that a total
 // `MIN / -1 == MIN` would otherwise hide. Mirrors the IR lowering
-// (irlower.sat_binary_ops) and native's ir.satBinary.
+// (irtables.sat_binary_ops) and native's ir.satBinary.
 function sat_i64(op: string, a: i64, b: i64): i64 {
   var maxv: i64 = 9223372036854775807;
   var minv: i64 = 0 - 9223372036854775807 - 1;
@@ -3204,18 +3204,30 @@ function variant_simple_name(name: string): string {
   return name;
 }
 
-// aliases_with_enums appends a synthetic union alias (name → variant
-// names) for each enum to the alias list. Enums desugar to variant
-// structs but not to a TypeAlias, so without this a method declared on
-// the enum type — `function (s: Shape) area()` where `Shape` is an enum —
-// wouldn't dispatch on a variant value: is_variant_of_alias_interp only
-// consults the alias table. Treating each enum as a union of its
-// variants makes union-receiver method dispatch resolve enum methods too.
-function aliases_with_enums(aliases: parser.TypeAlias[], enums: parser.EnumDecl[]): parser.TypeAlias[] {
+// aliases_with_enums appends a synthetic union alias (enum name → variant
+// names) for each enum the variant structs in `types` name as their owner —
+// the module's own enums and the injected builtin ones (JsonValue, IoError,
+// Body) alike. Enums desugar to variant structs but not to a TypeAlias, so
+// without this a method declared on the enum type — `function (s: Shape)
+// area()` — wouldn't dispatch on a variant value: is_variant_of_alias_interp
+// only consults the alias table.
+function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDecl[]): parser.TypeAlias[] {
   var out: parser.TypeAlias[] = aliases;
+  var base: i32 = aliases.len();
   var i: i32 = 0;
-  while (i < enums.len()) {
-    out = out.append(parser.TypeAlias { name: enums[i].name, variants: enums[i].variant_names, variant_args: [], variant_lines: [], type_params: [], line: 0, col: 0, is_pub: true, is_package: false, module: enums[i].module });
+  while (i < types.len()) {
+    var owner: string = types[i].enum_owner;
+    if (owner.len() > 0) {
+      var k: i32 = base;
+      while (k < out.len() && out[k].name != owner) {
+        k = k + 1;
+      }
+      if (k == out.len()) {
+        out = out.append(parser.TypeAlias { name: owner, variants: [types[i].name], variant_args: [], variant_lines: [], type_params: [], line: 0, col: 0, is_pub: true, is_package: false, module: "" });
+      } else {
+        out = out.with(k, parser.TypeAlias { ...out[k], variants: out[k].variants.append(types[i].name) });
+      }
+    }
     i = i + 1;
   }
   return out;
@@ -4048,7 +4060,7 @@ function call_buf_builtin(name: string, args: Value[]): Value {
 }
 
 function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
-  // The string-taking I/O trio, matching internal/interp's builtinPrint /
+  // The Display-taking I/O trio, matching internal/interp's builtinPrint /
   // builtinWrite / builtinEprint: print and eprint append a newline, write
   // does not, and eprint goes to stderr. The interpreter is itself a Fern
   // program, so each one is the same builtin the interpreted program asked
@@ -4061,7 +4073,21 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     if (args.len() != 1) {
       return v_err(name + " takes exactly 1 argument");
     }
-    match (args[0]) {
+    // The Display spine: a non-string argument is printed as its
+    // `to_string()`, the call native's checker rewrites it to. This engine
+    // runs no checker pass, so it dispatches the method here.
+    var text_val: Value = args[0];
+    match (text_val) {
+      VString(_) => {},
+      _ => {
+        var no_args: Value[] = [];
+        text_val = call_method(args[0], "to_string", no_args, funcs, aliases, type_decls, argv);
+      }
+    }
+    match (text_val) {
+      VErr(_) => {
+        return text_val;
+      },
       VString(s) => {
         // The typed local is required for the bootstrap: passing
         // `s.v` straight to a Display-constrained builtin resolves the
@@ -4080,7 +4106,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
         return v_int(0);
       },
       _ => {
-        return v_err(name + ": argument must be a string");
+        return v_err(name + ": to_string() did not return a string");
       }
     }
   }
@@ -5356,8 +5382,8 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   var mod: parser.Module = parser.fill_default_args_module(parser.desugar_ranges_module(parser.lower_defers_module(parser.erase_view_module(raw_mod))));
   // Fold each enum into the alias table as a synthetic union so a method
   // declared on the enum type dispatches on its variant values.
-  var all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, mod.enums);
   var all_variants: parser.StructDecl[] = module_type_decls(mod.structs);
+  var all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, all_variants);
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (mod.funcs[i].name == "main") {

@@ -1,15 +1,16 @@
 name: Test e2e differential
 
-# `TestDifferential_LangsmithMain` — the static (non-fuzz)
-# differential oracle. Iterates 2048 fernsmith seeds; for each
-# one, compares the interpreter's result against arm64, x86_64,
-# and wasmbin backends. Asserts byte-for-byte agreement.
+# The seeded differential sweeps whose names start `TestDifferential`:
+# `TestDifferential_PrintableStdout` compares each fernsmith-generated
+# program's stdout from the interpreter against the self-host compiler's
+# x86-64, arm64 and wasm32-wasi builds, and the SSA differentials compare
+# the Go SSA backends. The self-host exit-byte legs
+# (`TestDifferential_SelfHost*`) run in test-e2e-selfhost.yml's
+# diff-selfhost job instead, behind FERN_SELFHOST_DIFF.
 #
-# This is the heaviest single e2e test on the suite (~5+ min for
-# the full 2048-seed sweep). Split via the `DIFF_ORACLE_SHARD=I/N`
-# env var the test honours: each shard claims `seed % N == I`, so at
-# N=1 one job sweeps all 2048 seeds. Crossed with the per-arch matrix
-# that gives 2 parallel jobs.
+# Split via the `DIFF_ORACLE_SHARD=I/N` env var the tests honour: each
+# shard claims `seed % N == I`, so at N=1 one job sweeps the whole
+# corpus. Crossed with the per-arch matrix that gives 2 parallel jobs.
 #
 # The shard count is set by queue pressure, not by the work, and it has
 # come down twice for that reason: four per arch (run 31819148034, 18.5
@@ -28,12 +29,10 @@ name: Test e2e differential
 # grows; nshard rides the matrix, so the denominator moves with the
 # job count rather than being restated by hand.
 #
-# Needs wasmtime because the wasmbin sub-test invokes
-# `wasmtime run --invoke main`. arm64 sub-tests skip on x86 (no
-# qemu / cross-gcc); x86 sub-tests skip on arm64 (no qemu-x86_64).
-# Matrix per arch so each runner natively exercises its backend +
-# wasm, instead of paying skip overhead on one and toolchain
-# overhead on the other.
+# Needs wasmtime for the wasm32-wasi legs. arm64 legs skip on x86 (no
+# qemu / cross-gcc); x86 legs skip on arm64 (no qemu-x86_64). Matrix per
+# arch so each runner natively exercises its own target + wasm, instead
+# of paying skip overhead on one and toolchain overhead on the other.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It holds one of the PR queue's two slots
@@ -55,16 +54,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `require` is the set of oracle legs this runner is meant to
-        # exercise, passed to the test as FERN_REQUIRE_DIFF_BACKENDS so a
-        # lost toolchain FAILS here instead of skipping. Per-arch by
-        # design: each runner has its own register backend plus wasm, and
-        # skips the other one (see the header note). Before #7310 a runner
-        # that lost a toolchain reported its seeds green having executed
-        # no compiled code at all.
+        # Per-arch: each runner runs its own register target natively plus
+        # wasm, and skips the other target (see the header note).
         host:
-          - { runner: ubuntu-latest,    name: x86_64,  require: "x86_64,wasmbin"      }
-          - { runner: ubuntu-24.04-arm, name: aarch64, require: "arm64-linux,wasmbin" }
+          - { runner: ubuntu-latest,    name: x86_64  }
+          - { runner: ubuntu-24.04-arm, name: aarch64 }
         # Two shards per arch, each half the 2048-seed sweep. See the
         # shard-count note above before changing this; nshard rides along so the partition
         # denominator cannot drift from the number of jobs scheduled, which
@@ -86,7 +80,6 @@ jobs:
       - name: go test (differential shard ${{ matrix.shard.index }}/${{ matrix.shard.nshard }})
         env:
           DIFF_ORACLE_SHARD: "${{ matrix.shard.index }}/${{ matrix.shard.nshard }}"
-          FERN_REQUIRE_DIFF_BACKENDS: "${{ matrix.host.require }}"
           # Per-shard artifact dir so multiple shards on the
           # same runner don't clobber each other's failed-
           # program asm. `diffOracleArtifactDir()` reads this.

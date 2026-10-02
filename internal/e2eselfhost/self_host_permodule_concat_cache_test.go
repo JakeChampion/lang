@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,9 +17,6 @@ import (
 // body-only edit that flips a borrow verdict its caller reads.
 func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("file-loading driver test runs only natively (argv paths)")
-	}
 	dir, mmr := buildConcatDriver(t, gcc)
 	entryPath, nMod := writeConcatFixture(t, dir)
 	proj := filepath.Dir(entryPath)
@@ -31,7 +27,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 
 	drive := func(args ...string) (string, string) {
 		t.Helper()
-		cmd := exec.Command(mmr, append([]string{entryPath}, args...)...)
+		cmd := runX86_64Bin(runner, mmr, append([]string{entryPath}, args...)...)
 		var errb strings.Builder
 		cmd.Stderr = &errb
 		out, err := cmd.Output()
@@ -85,13 +81,14 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	hits, misses = concat("warm")
 	pmWantSets(t, "warm", hits, misses, all, []string{})
 
-	// Body-only edit of a function the reach set drops: lib3's source changes,
-	// so lib3 alone re-emits.
-	edit("lib3.fern", "return x + 305;", "return x + 1305;")
+	// A value-preserving body edit keeps every link in the live chain while
+	// changing lib3's source, so lib3 alone re-emits.
+	edit("lib3.fern", "return m3_f6(x) + 1;", "return m3_f6(x) + 2 - 1;")
 	hits, misses = concat("body")
 	pmWantSets(t, "body", hits, misses, without("lib3"), []string{"lib3"})
 
-	// Reach edit: the entry keeps its value but now reaches m3_f1.
+	// Caller edit: m3_f1 is already reached through the chain, but the entry
+	// now calls it directly too. Only the entry's source changes.
 	edit("entry.fern", "lib3.m3_f0(1)", "lib3.m3_f0(1) + lib3.m3_f1(1) - lib3.m3_f1(1)")
 	hits, misses = concat("reach")
 	var reHits []string
@@ -107,7 +104,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 	// verdict, so lib3's facts move and every module importing lib3 re-emits the
 	// way it would for a signature change. Modules outside that closure are
 	// served. First bring m3_keep into reach, then make the fact-only edit.
-	edit("lib3.fern", "return x + 301;", "return x + 301 + m3_keep([x]) - 1;")
+	edit("lib3.fern", "return m3_f2(x) + 1;", "return m3_f2(x) + 1 + m3_keep([x]) - 1;")
 	b3, err := os.ReadFile(filepath.Join(proj, "lib3.fern"))
 	if err != nil {
 		t.Fatalf("read lib3: %v", err)
@@ -123,7 +120,7 @@ func TestSelfHostPerModuleConcatObjectCacheX86_64(t *testing.T) {
 
 	asm, _ := drive("-cache-dir", cacheDir)
 	bin := buildBin(t, gcc, dir, "concat_cache_prog", asm)
-	rc := exec.Command(bin)
+	rc := runX86_64Bin(runner, bin)
 	_ = rc.Run()
 	if code := rc.ProcessState.ExitCode(); code != 0 {
 		t.Fatalf("cached concat program exited %d, want 0", code)

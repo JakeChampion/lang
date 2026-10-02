@@ -1,8 +1,8 @@
 # Whole-input bytes and checked stdin text
 
-This slice integrates producer checkpoint `6a056addd` and preserves
+This slice integrates producer checkpoint `c75e0f6f2` and preserves
 typed-IR-only lowering. Target tests, browser tests, bootstrap and actual
-stage-2 probes, full unit suite and all lint gates pass.
+stage-2 probes, the full unit suite and all lint gates pass.
 
 The refresh removes an earlier map-method retention workaround. It could
 keep an unrelated Hash implementation whenever any map was reachable,
@@ -36,34 +36,34 @@ collisions. Names retain spans of the input rather than copying each token.
 
 ## Validation
 
-On the integration with producer checkpoint `6a056addd`:
+On the integration with producer checkpoint `c75e0f6f2`:
 
 - Partial-input I/O fault tests pass for valid, malformed and multi-chunk
-  prefixes. The Go compiler target matrix passes in 39.256 seconds.
+  prefixes. The Go compiler target matrix passes in 82.936 seconds.
 - Primary text, raw-reader, example-tee, `tsort`, unused-map-method and
-  compiler-driver regressions pass in 122.677 seconds.
+  compiler-driver regressions pass in 178.221 seconds.
 - The actual final stage-2 compiler passes 96 additional text cases:
   three APIs, 16 inputs each, on Darwin and core WASM. All allocation and
   free counts balance. Cases include NUL, empty input, malformed sequences,
   truncated final input, and every split of two-, three- and four-byte scalars.
 
 All nine browser shim tests pass. The expanded GNU `env`/`tsort` parity
-suite passes in 1.658
+suite passes in 2.523
 seconds, including binary names from files and stdin, cycles, NUL truncation,
 unsigned byte ordering and distinct names with the same FNV hash. Primary
 `tsort` regressions pass on native and core-WASM targets with balanced
 ownership. An unused hash implementation contributes no target effects,
 including when an unrelated integer-keyed map is reachable.
 
-The published-seed bootstrap completes in 27, 23 and 19 seconds. Stages two
-and three are identical: 12,411,809 bytes, SHA-256
-`1ceb7758111680f0138ba6f346c3f113ee35bb61c7b8c2e0c76938c8f582599f`.
+The refreshed published-seed bootstrap completes in 26, 22 and 19 seconds.
+Stages two and three are identical: 12,081,745 bytes, SHA-256
+`a4e86e7e079ab08a0f4957ad7ff1eef7e1b17f12b66c88d6e044531e05d111d1`.
 They also match the producer checkpoint's final compiler byte for byte.
 The final stage-2 compiler repeats all 96 text cases and 16 `tsort` cases on
 Darwin/core WASM with balanced ownership. The final integer-index `tsort`
-also passes the GNU parity and primary target suites. The full unit suite
-and all lint gates pass. Validation durations are not performance
-comparisons.
+also passes the GNU parity and primary target suites. The refreshed full
+unit suite and all lint gates pass. Validation durations are not
+performance comparisons.
 
 Bootstrap Preview 2 tests pass. Primary Preview 2 stdin remains unsupported:
 the unchanged compiler refuses both the old `read_chunk` and the new
@@ -84,7 +84,7 @@ expected length on both versions.
 | Darwin code section | 26,044 bytes | 28,272 bytes |
 | Darwin unwind section | 4,060 bytes | 4,676 bytes |
 | Darwin data section | 4,376 bytes | 4,400 bytes |
-| Core WASM | 15,511 bytes | 16,880 bytes |
+| Core WASM | 15,546 bytes | 16,914 bytes |
 
 The native code increase is 2,228 bytes; the text segment grows from 32,768
 to 49,152 bytes as checked decoding and error cleanup cross its alignment
@@ -97,11 +97,18 @@ to 15,028 bytes, and the data section remains 6,328 bytes.
 
 ## Native tsort comparison
 
-Measured on arm64 macOS with the final stage-2 compiler for both Fern versions,
+Measured on arm64 macOS with the preceding stage-2 compiler for both Fern versions,
 GNU coreutils 9.12 and Rust uutils 0.0.29. The pipeline first checks 1,000
 pairs, then changes only the pair count to 100,000. Each workload has two
 warmup rounds and seven timed rounds with alternating command order; every
 output is checked. Sanitizers and other local compiler jobs are absent.
+
+Rebuilding both executables with the refreshed compiler produces identical
+bytes, so the measurements still apply. The executable SHA-256 hashes are
+`10b28d2458c8e188f63f6d5f8c867ee856dc2629c8be059fab80d92cc8b763a6`
+before and
+`83b2d4b96634a7b345429d29176d62c86c54f9043df8014f941c534452d16018`
+after.
 
 | Workload | Previous Fern | Byte-based Fern | GNU | uutils |
 | --- | ---: | ---: | ---: | ---: |
