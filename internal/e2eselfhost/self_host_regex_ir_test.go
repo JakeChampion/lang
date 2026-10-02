@@ -59,32 +59,64 @@ function main(): i32 { if (regex.regex_match("(ab)+c", "ababc")) { return 42; } 
 	{"captures", `import "std/regex";
 function main(): i32 {
     let m: regex.RCaps = regex.regex_captures("(\\d+)-(\\d+)", "order 123-456 shipped");
-    if (m.found && m.group(1) == "123" && m.group(2) == "456" && m.group_count() == 2) { return 42; }
+    if (m.found && require_regex_text(m.group(1)) == "123" && require_regex_text(m.group(2)) == "456" && m.group_count() == 2) { return 42; }
     return 0;
-}`},
+}
+function require_regex_text(result: Option[string]): string {
+    match (result) {
+        Some(value) => { return value; },
+        None => { exit(1); },
+    }
+    return "";
+}
+`},
 	// Non-capturing (?:...) group + captures_all over multiple matches.
 	{"captures-all", `import "std/regex";
 function main(): i32 {
     let nc: regex.RCaps = regex.regex_captures("(?:ab)+(c)", "ababc");
     let all: regex.RCaps[] = regex.regex_captures_all("(\\w+)@(\\w+)", "a@b c@d");
-    if (nc.group_count() == 1 && nc.group(1) == "c" && all.len() == 2 && all[1].group(2) == "d") { return 42; }
+    if (nc.group_count() == 1 && require_regex_text(nc.group(1)) == "c" && all.len() == 2 && require_regex_text(all[1].group(2)) == "d") { return 42; }
     return 0;
-}`},
-	// $-template replacement over captures (__rx_expand + __rx_join).
+}
+function require_regex_text(result: Option[string]): string {
+    match (result) {
+        Some(value) => { return value; },
+        None => { exit(1); },
+    }
+    return "";
+}
+`},
+	// Template replacement over capture spans and checked UTF-8 output.
 	{"replace-groups", `import "std/regex";
 function main(): i32 {
-    if (regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1") == "b@a d@c") { return 42; }
+    if (require_regex_text(regex.regex_replace_all_groups("(\\w+)@(\\w+)", "a@b c@d", "$2@$1")) == "b@a d@c") { return 42; }
     return 0;
-}`},
+}
+function require_regex_text(result: Option[string]): string {
+    match (result) {
+        Some(value) => { return value; },
+        None => { exit(1); },
+    }
+    return "";
+}
+`},
 	// Named groups (?<name>…): RGroupData.name payload + the __rx_names walk
 	// + ${name} template through the self-host IR path.
 	{"named-groups", `import "std/regex";
 function main(): i32 {
     let m: regex.RCaps = regex.regex_captures("(?<y>\\d+)-(?<m>\\d+)", "12-34");
-    let t: string = regex.regex_replace_groups("(?<w>\\w+)", "hi", "[${w}]");
-    if (m.group_named("y") == "12" && m.group_index("m") == 2 && t == "[hi]") { return 42; }
+    let t: string = require_regex_text(regex.regex_replace_groups("(?<w>\\w+)", "hi", "[${w}]"));
+    if (require_regex_text(m.group_named("y")) == "12" && m.group_index("m") == 2 && t == "[hi]") { return 42; }
     return 0;
-}`},
+}
+function require_regex_text(result: Option[string]): string {
+    match (result) {
+        Some(value) => { return value; },
+        None => { exit(1); },
+    }
+    return "";
+}
+`},
 }
 
 func TestSelfHostRegexModuleIR(t *testing.T) {
@@ -116,6 +148,9 @@ func TestSelfHostRegexModuleIR(t *testing.T) {
 				t.Fatalf("write entry: %v", err)
 			}
 			_, want := runFixtureInterp(t, entry, "")
+			if want != 42 {
+				t.Fatalf("interpreter exit = %d, want 42", want)
+			}
 			if out, _ := runDriver(entry, root, "-decide"); strings.TrimSpace(out) != "ir" {
 				t.Errorf("%s decide = %q, want \"ir\"", tc.name, strings.TrimSpace(out))
 			}

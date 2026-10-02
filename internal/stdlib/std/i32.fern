@@ -219,13 +219,11 @@ pub function (b: u8) hex_value(): i32 {
   return 0 - 1;
 }
 
-// `(b: u8) to_ascii_string()` — single-byte string from a
-// byte value. Out-of-range (< 0 or > 255) returns "". The
-// inverse of `s[0]` for single-char strings. Useful when
-// composing tokeniser output where you've got the byte and
-// want a string at the call site.
+// `(b: u8) to_ascii_string()` returns one ASCII byte as text, including NUL.
+// Non-ASCII bytes (128..255) return "". Keep arbitrary bytes in u8[]; use
+// string_from_codepoint for a Unicode scalar or utf8.from_bytes for decoding.
 pub function (b: u8) to_ascii_string(): string {
-  if (b < 0 || b > 255) {
+  if (b > 127) {
     return "";
   }
   let buf: u8[] = __alloc_u8(1);

@@ -116,6 +116,14 @@ function test_regsuball_replaces_every_match(): test.TestOutcome {
   return test.assert_eq(expr_result("regsuball(\"x1y2\", \"[0-9]\", \"#\")"), "x#y#");
 }
 
+function test_regsub_rejects_partial_utf8(): test.TestOutcome {
+  return test.assert_eq(expr_result("regsub(\"é\", \".\", \"X\")"), "ERR:vcl_backend_response: regsub produced invalid UTF-8");
+}
+
+function test_regsuball_rejects_partial_utf8(): test.TestOutcome {
+  return test.assert_eq(expr_result("regsuball(\"é\", \"^.\", \"X\")"), "ERR:vcl_backend_response: regsuball produced invalid UTF-8");
+}
+
 // ------------------------------------------------------------------ ACL
 function acl_program(): string {
   return "acl purgers { \"127.0.0.1\"; \"192.0.2.0\"/24; ! \"192.0.2.23\"; }\n" + "sub vcl_recv {\n" + "  if (client.ip ~ purgers) { return (synth(200, \"in\")); }\n" + "  return (synth(403, \"out\"));\n" + "}\n";
@@ -475,6 +483,8 @@ function main(): i32 {
   r = r.it("unset header is empty string", test_unset_header_is_empty_string);
   r = r.it("regsub backreference", test_regsub_backreference);
   r = r.it("regsuball replaces every match", test_regsuball_replaces_every_match);
+  r = r.it("regsub rejects partial UTF-8", test_regsub_rejects_partial_utf8);
+  r = r.it("regsuball rejects partial UTF-8", test_regsuball_rejects_partial_utf8);
   r = r.it("acl admits a covered address", test_acl_admits_a_covered_address);
   r = r.it("acl exclusion beats a broader inclusion", test_acl_exclusion_beats_a_broader_inclusion);
   r = r.it("acl rejects an uncovered address", test_acl_rejects_an_uncovered_address);

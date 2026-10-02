@@ -5,14 +5,42 @@
 import "std/regex";
 
 function main(): i32 {
-    let r: i32 = 0;
-    if (regex.regex_match("(?i)hello", "HELLO")) { r = r + 1; }            // literal
-    if (regex.regex_match("(?i)Hello", "hELLo")) { r = r + 2; }            // mixed case
-    if (!regex.regex_match("hello", "HELLO")) { r = r + 4; }               // no flag → sensitive
-    if (regex.regex_match("(?i)^[a-z]+$", "AbCdE")) { r = r + 8; }         // class folds
-    if (regex.regex_match("(?i)(cat|dog)", "DOG")) { r = r + 16; }         // alternation folds
-    if (regex.regex_find("(?i)world", "Hello World") == 6) { r = r + 32; } // find folds
-    if (regex.regex_replace_all("(?i)a", "AbAcad", "X") == "XbXcXd") { r = r + 64; } // replace folds
-    if (regex.regex_match("(?i)gr[ae]y", "GREY")) { r = r + 128; }         // class + alternation-ish
-    return r;
+  let r: i32 = 0;
+  if (regex.regex_match("(?i)hello", "HELLO")) {  // literal
+    r = r + 1;
+  }
+  if (regex.regex_match("(?i)Hello", "hELLo")) {  // mixed case
+    r = r + 2;
+  }
+  if (!regex.regex_match("hello", "HELLO")) {  // no flag → sensitive
+    r = r + 4;
+  }
+  if (regex.regex_match("(?i)^[a-z]+$", "AbCdE")) {  // class folds
+    r = r + 8;
+  }
+  if (regex.regex_match("(?i)(cat|dog)", "DOG")) {  // alternation folds
+    r = r + 16;
+  }
+  if (regex.regex_find("(?i)world", "Hello World") == 6) {  // find folds
+    r = r + 32;
+  }
+  if (require_regex_text(regex.regex_replace_all("(?i)a", "AbAcad", "X")) == "XbXcXd") {  // replace folds
+    r = r + 64;
+  }
+  if (regex.regex_match("(?i)gr[ae]y", "GREY")) {  // class + alternation-ish
+    r = r + 128;
+  }
+  return r;
+}
+
+function require_regex_text(result: Option[string]): string {
+  match (result) {
+    Some(value) => {
+      return value;
+    },
+    None => {
+      exit(1);
+    }
+  }
+  return "";
 }
