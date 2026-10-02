@@ -39,7 +39,7 @@ import "./astwalk";
 // =================== INT / FOLD HELPERS ====================
 
 // A folded literal is built in the shape the PARSER produces. A number
-// literal's TEXT never carries a sign — irlower.literal_is_i64 classifies by
+// literal's TEXT never carries a sign — parser.literal_is_i64 classifies by
 // MAGNITUDE alone — so a negative result is unary minus over the
 // magnitude, exactly as `-5` is parsed. Emitting the sign inline made an
 // 11-character "-2147483648", which literal_is_i64 read as an i64 and the i32
@@ -77,7 +77,7 @@ function num_lit(text: string, suffix: string): ast.Expr {
 // 127 at u8 and 0 at i32, and it is the negative operand that declines it.
 //
 // i64 / u64 are declined rather than folded in range. Downstream, a literal's
-// width is re-derived from its text MAGNITUDE (irlower.literal_is_i64), which
+// width is re-derived from its text MAGNITUDE (parser.literal_is_i64), which
 // for a decimal spelling can only answer i32 or i64 — and the FOLDED result
 // carries no suffix to declare otherwise — so an i64/u64 value would be re-read
 // at a width the folding cannot control. Floats are not integers, and a char
@@ -795,7 +795,7 @@ function main(): i32 {
   // i32::MIN: the one magnitude with no i32 representation, so it is spelled
   // `0 - 2147483647 - 1`. Suffixed, the chain folds all the way, and the sign
   // lands on a unary minus rather than in the literal's text, whose 10-digit
-  // "2147483648" reads as an i64 (irlower.literal_is_i64 measures magnitude).
+  // "2147483648" reads as an i64 (parser.literal_is_i64 measures magnitude).
   var mod14: parser.Module = fold_source("var a = 0i32 - 2147483647i32 - 1i32; return 0;");
   match (mod14.top_stmts[0]) {
     ast.StmtVar(v) => {

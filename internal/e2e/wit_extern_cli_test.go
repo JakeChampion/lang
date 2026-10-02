@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,11 +26,6 @@ func TestExternImportViaCLI(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
-
 	const want = "cli-extern-ok"
 	src := `@import("wasi:random/random@0.2.0", "get-random-bytes")
 function rand_bytes(n: u64): u8[];
@@ -48,10 +44,46 @@ function main(): i32 {
 		t.Fatalf("write prog: %v", err)
 	}
 	compPath := filepath.Join(dir, "prog.wasm")
-	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", compPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+	if out, err := e2eharness.SelfHostCompileCmd(t, "wasm32-wasi", progPath, compPath).CombinedOutput(); err != nil {
+		t.Fatalf("self-host fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	out, err := exec.Command(wasmtime, "run", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasmtime run: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), want) {
+		t.Fatalf("stdout = %q, want it to contain %q", out, want)
+	}
+}
+
+// TestManyWasiCategoriesViaCLI: a program reaching more WASI categories than
+// any fixed wasi:cli/run framing wires (environment, arguments, entropy and the
+// wall clock, over stdout) composes against the fern world (#11019).
+func TestManyWasiCategoriesViaCLI(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	const want = "many-ok"
+	src := `function main(): i32 {
+	var a: string[] = args();
+	var g: string = "MISS";
+	match (env("GREETING")) { Some(v) => { g = v; }, None => {} }
+	var b: u8[] = random_bytes(8);
+	var t: i64 = now_ns();
+	if (a.len() == 2 && g == "` + want + `" && b.len() == 8 && t > 0) { write(g); } else { write("bad"); }
+	return 0;
+}`
+	progPath := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write prog: %v", err)
+	}
+	compPath := filepath.Join(dir, "prog.wasm")
+	if out, err := e2eharness.SelfHostCompileCmd(t, "wasm32-wasi", progPath, compPath).CombinedOutput(); err != nil {
+		t.Fatalf("self-host fern -target wasm32-wasi: %v\n%s", err, out)
+	}
+	out, err := exec.Command(wasmtime, "run", "--env", "GREETING="+want, compPath, "alpha").CombinedOutput()
 	if err != nil {
 		t.Fatalf("wasmtime run: %v\n%s", err, out)
 	}

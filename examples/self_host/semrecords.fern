@@ -70,6 +70,27 @@ pub function find_in(list: Record[], ty: typeinfo.Type): i32 {
   return 0 - 1;
 }
 
+// find_named is find_in over a list with a name index kept beside it, one
+// entry per record in order: the name's chain, ascending, as find_struct.
+pub function find_named(list: Record[], names: util.NameIndex, name: string, ty: typeinfo.Type): i32 {
+  var i: i32 = names.chain(name);
+  while (i >= 0) {
+    if (names.names[i] == name && semtypes.equal(list[i].ty, ty)) {
+      return i;
+    }
+    i = names.next[i];
+  }
+  return 0 - 1;
+}
+
+// name_of: a struct type's name, "" for any other type.
+pub function name_of(t: typeinfo.Type): string {
+  if let typeinfo.TypeStruct(s) = t {
+    return s.name;
+  }
+  return "";
+}
+
 pub function find_enum(enums: Enum[], ty: typeinfo.Type): i32 {
   if let typeinfo.TypeUnion(u) = ty {
     return find_union(enums, u.name, ty);

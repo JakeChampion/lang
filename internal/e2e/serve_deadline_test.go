@@ -7,10 +7,11 @@
 //     single-threaded accept loop is not pinned — a well-formed
 //     request right after still answers 200 (the scenario is
 //     e2eharness's, shared with the self-host twin).
-//  2. `fetch_get_deadline`: against an upstream that accepts and
-//     never replies the call returns `None` at the deadline;
-//     against a live upstream it returns `Some(response)` (also
-//     e2eharness's, with a self-host twin).
+//  2. std/fetch's timeouts: against an upstream that accepts and
+//     never replies `send` answers `Timeout(Inactivity)` or
+//     `Timeout(Total)` at the bound that passed; against a live
+//     upstream it answers the response (also e2eharness's, with a
+//     self-host twin).
 //
 // The interp fallback (poll is a stub there, so the deadline
 // degrades to blocking reads) is covered by

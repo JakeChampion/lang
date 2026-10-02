@@ -1,31 +1,46 @@
 // std/fetch — outbound HTTP/1.1 client (the upstream-fetch half of the
-// edge-handler use case: docs/PLATFORM-RESEARCH.md Rec §1,
-// docs/ASYNC-REDESIGN.md).
+// edge-handler use case: docs/PLATFORM-RESEARCH.md Rec §1).
 //
-// Built on the native socket primitives (tcp_connect / tcp_send /
-// tcp_recv / tcp_close). A single `fetch_get` is a blocking request;
-// overlapping several upstreams is `std/async`'s job — `fetch_future`
-// (below) returns an `async.Future[u8[]]` you fan out through
-// `async.gather` / `async.race`, and their reads overlap on one thread.
+// A request is a value built from a URL (`get(url)`, `request(method,
+// url)`, then `with_header`, `with_text`, `with_bytes`, `with_body`,
+// `with_timeouts`, `with_limits`) and sent with `send(req)` from a program
+// with a `main`, or through the `Platform` bag a handler was handed
+// (`plat.http(req)`), which is the capability-scoped route: a handler can
+// only fetch through the platform it was given, and a recording bag
+// answers what the test canned instead of opening a socket.
 //
-// `host_be` is the IPv4 address in network byte order packed into an
-// i32 (use `ipv4(a,b,c,d)`); pass the upstream port separately. URL /
-// DNS parsing is a higher layer.
+// The answer is `Result[HttpResponse, FetchError]`: the status is data on
+// the response (`ok_or_status()` turns a status outside 2xx into an
+// `Err`), and `FetchError` is a closed sum over the phase that failed. The
+// response is the same byte-bodied type the server side builds, headers
+// case-folded by `HeaderMap` with the hop-by-hop fields stripped, a
+// chunked body decoded and its trailers in `trailers`; `body_text()` is the
+// checked UTF-8 read of a body that came off the wire, which may hold
+// anything. The name is resolved by `std/dns` (a literal address, the
+// hosts file, then DNS) and the addresses raced the way `dns.connect_race`
+// does. Every phase is bounded by `Timeouts`. A 3xx with a `Location` is
+// followed, ten hops by default, the credentials dropped when a hop
+// leaves the origin; an idempotent request the peer resets before
+// answering is sent once more. No TLS yet (`https` fails with `Tls`), no
+// pool: each request is one connection sent with `Connection: close`.
 //
-// Responses are `u8[]`, not `string`. An upstream serves whatever bytes
-// it likes — a PNG, a gzip stream, a truncated UTF-8 sequence — so a
-// text-typed response would be a `string` that is not well-formed UTF-8,
-// which the D9 invariant forbids (docs/STRINGS-SOTA.md). Callers that
-// want text decode explicitly: `utf8.from_bytes(fetch.http_body(resp))`
-// returns `None` when the body is not valid UTF-8.
+// A single `send` is a blocking request; overlapping several upstreams is
+// `std/async`'s job — `fetch_future` returns an `async.Future[u8[]]` you
+// fan out through `async.gather` / `async.race`, and their reads overlap
+// on one thread.
 
 import "std/string";
 import "std/async";
 import "std/time";
 // std/tcp — tcp_recv_deadline, the recv-with-deadline primitive behind
-// the *_deadline fetch variants.
+// the inactivity and total timeouts.
 import "std/tcp";
 import "std/platform";
+import "std/http";
+import "std/headers";
+import "std/url";
+import "std/dns";
+import "std/net";
 import "core/int";
 
 // ipv4(a, b, c, d) — pack a dotted-quad into the network-byte-order
@@ -35,15 +50,733 @@ pub function ipv4(a: i32, b: i32, c: i32, d: i32): i32 {
   return a & 255 | (b & 255) << 8 | (c & 255) << 16 | (d & 255) << 24;
 }
 
+// ---------------------------------------------------------------------------
+// Errors
+
+// `Phase` — which bound a `Timeout` passed: `Connecting` for the connect
+// timeout, `Inactivity` for the longest the client waits for the next
+// byte of the response, `Total` for the whole request.
+pub enum Phase { Connecting, Inactivity, Total }
+
+// `FetchError` — why a request failed, by phase. `InvalidUrl` for a URL
+// `std/url` cannot parse, with no scheme or host, with a scheme other
+// than `http` and `https`, or whose path or query cannot stand on a
+// request line; `InvalidRequest` for a method that is not a token, a
+// header that cannot be written as one line, or a file body (a handler
+// reads files through its bag, not through the client); `Dns` for a name
+// that did not resolve; `Connect` for
+// addresses that all failed; `Tls` for `https` (not supported yet);
+// `Timeout` for a bound passed; `Protocol` for a response this client
+// cannot read, with what was wrong; `Io` for a send or read the kernel
+// refused; `Redirect` for a redirect the client would not follow: more
+// hops than `Request.redirects`, a 3xx without a `Location`, or one that
+// is not a URL; `BodyLimit` for a body past `HttpLimits.body`;
+// `Cancelled` for a request abandoned by its caller, part of the sum so a
+// match written today survives the client growing cancellation; this
+// client does not produce it yet.
+pub enum FetchError {
+  InvalidUrl(string),
+  InvalidRequest(string),
+  Dns(dns.DnsError),
+  Connect(net.NetError),
+  Tls,
+  Timeout(Phase),
+  Protocol(string),
+  Io(net.NetError),
+  Redirect(string),
+  BodyLimit,
+  Cancelled,
+}
+
+pub function (p: Phase) message(): string {
+  match (p) {
+    Connecting => {
+      return "connecting";
+    },
+    Inactivity => {
+      return "waiting for the response";
+    },
+    Total => {
+      return "in all";
+    }
+  }
+  return "";
+}
+
+pub function (e: FetchError) message(): string {
+  match (e) {
+    InvalidUrl(what) => {
+      return "invalid URL: " + what;
+    },
+    InvalidRequest(what) => {
+      return "invalid request: " + what;
+    },
+    Dns(d) => {
+      return "resolve: " + d.message();
+    },
+    Connect(n) => {
+      return "connect: " + n.message();
+    },
+    Tls => {
+      return "TLS is not supported";
+    },
+    Timeout(p) => {
+      return "timed out " + p.message();
+    },
+    _ => {
+      return __later_message(e);
+    }
+  }
+  return "";
+}
+
+function __later_message(e: FetchError): string {
+  match (e) {
+    Protocol(what) => {
+      return "protocol: " + what;
+    },
+    Io(n) => {
+      return "i/o: " + n.message();
+    },
+    Redirect(what) => {
+      return "redirect: " + what;
+    },
+    BodyLimit => {
+      return "response body past its limit";
+    },
+    Cancelled => {
+      return "cancelled";
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "";
+}
+
+pub function (e: FetchError) to_string(): string {
+  return e.message();
+}
+
+// ---------------------------------------------------------------------------
+// Requests
+
+// `Timeouts` — the bounds on one request, in milliseconds: `connect_ms`
+// on the connect (the whole address race), `inactivity_ms` on the wait
+// for the next byte of the response, `total_ms` on the request from its
+// start to the last byte read.
+pub struct Timeouts { connect_ms: i32, inactivity_ms: i32, total_ms: i32 }
+
+// `timeouts()` — ten seconds to connect, thirty between bytes, sixty in
+// all.
+pub function timeouts(): Timeouts {
+  return Timeouts { connect_ms: 10000, inactivity_ms: 30000, total_ms: 60000 };
+}
+
+// `Request` — what `send` sends: the method, the URL, the headers
+// (end-to-end ones; the client writes `Host`, `Content-Length` and
+// `Connection` itself), the body, the bounds on the response
+// (`timeouts`, and `limits` for its size: the body cap is
+// `limits.body`, the status line is capped by `limits.request_line`),
+// and `redirects`, the most 3xx hops `send` follows (0 answers the 3xx
+// as data).
+pub struct Request { method: string, url: string, headers: HeaderMap, body: Body, timeouts: Timeouts, limits: http.HttpLimits, redirects: i32 }
+
+// `request(method, url)` — a request with no headers and no body, the
+// default bounds, and ten redirects.
+pub function request(method: string, url: string): Request {
+  var none: u8[] = [];
+  return Request { method: method, url: url, headers: headers.header_map_new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.http_limits(), redirects: 10 };
+}
+
+// `get(url)` — `request("GET", url)`.
+pub function get(url: string): Request {
+  return request("GET", url);
+}
+
+// `(r: Request).with_header(name, value)` — `r` with the field appended.
+pub function (r: Request) with_header(name: string, value: string): Request {
+  return Request { ...r, headers: r.headers.append(name, value) };
+}
+
+// `(r: Request).with_body(body)` — `r` with `body` as its body: text,
+// bytes, a stream or chunks. A `BodyFile` is refused by `send` with
+// `InvalidRequest`: the client never reads a file.
+pub function (r: Request) with_body(body: Body): Request {
+  return Request { ...r, body: body };
+}
+
+// `(r: Request).with_text(s)` — `r` with `s` as its body.
+pub function (r: Request) with_text(s: string): Request {
+  return Request { ...r, body: BodyText(s) };
+}
+
+// `(r: Request).with_bytes(bs)` — `r` with `bs` as its body.
+pub function (r: Request) with_bytes(bs: u8[]): Request {
+  return Request { ...r, body: BodyBytes(bs) };
+}
+
+// `(r: Request).with_timeouts(t)` — `r` bounded by `t`.
+pub function (r: Request) with_timeouts(t: Timeouts): Request {
+  return Request { ...r, timeouts: t };
+}
+
+// `(r: Request).with_limits(l)` — `r` with the response capped by `l`.
+pub function (r: Request) with_limits(l: http.HttpLimits): Request {
+  return Request { ...r, limits: l };
+}
+
+// `(r: Request).with_redirects(hops)` — `r` following at most `hops`
+// redirects; 0 answers a 3xx as the response it is.
+pub function (r: Request) with_redirects(hops: i32): Request {
+  return Request { ...r, redirects: hops };
+}
+
+// `(r: HttpResponse).ok_or_status()` — `Ok(r)` for a 2xx status, else
+// `Err(status)`: for a caller that treats anything else as a failure.
+pub function (r: HttpResponse) ok_or_status(): Result[HttpResponse, i32] {
+  if (r.status >= 200 && r.status < 300) {
+    return Ok(r);
+  }
+  return Err(r.status);
+}
+
+// ---------------------------------------------------------------------------
+// Sending
+
+// Where a request goes: the host as the URL names it, the port, and the
+// request-target (path and query) to put on the request line.
+struct __Target { host: string, port: i32, target: string }
+
+// `__target_of(url)` — the URL split for the wire, or why it cannot be.
+function __target_of(raw: string): Result[__Target, FetchError] {
+  var u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  match (url.url_parse(raw)) {
+    Some(parsed) => {
+      u = parsed;
+    },
+    None => {
+      return Err(InvalidUrl(raw));
+    }
+  }
+  if (u.scheme == "https") {
+    return Err(Tls);
+  }
+  if (u.scheme.len() == 0) {
+    return Err(InvalidUrl("no scheme in " + raw));
+  }
+  if (u.scheme != "http") {
+    return Err(InvalidUrl("scheme " + u.scheme + " is not http"));
+  }
+  if (u.host.len() == 0) {
+    return Err(InvalidUrl("no host in " + raw));
+  }
+  var port: i32 = u.port;
+  if (port == 0) {
+    port = 80;
+  }
+  return Ok(__Target { host: u.host, port: port, target: __request_target(u)? });
+}
+
+// `__request_target(u)` — the origin-form request-target of `u`: its
+// path (`/` for none) and query, when they can stand on a request line.
+function __request_target(u: Url): Result[string, FetchError] {
+  var target: string = u.path;
+  if (target.len() == 0) {
+    target = "/";
+  }
+  if (u.query.len() > 0) {
+    target = target + "?" + u.query;
+  }
+  if (!http.http_target_ok(target)) {
+    return Err(InvalidUrl("a path or query that cannot be written on a request line"));
+  }
+  return Ok(target);
+}
+
+// `__request_ok(req)` — the request refused before a byte is written when
+// its method or a header could not be put on the wire as one line, or
+// its body is a file. The messages name the rule and never the value,
+// which may be the injected bytes themselves.
+function __request_ok(req: Request): Result[void, FetchError] {
+  if (!http.http_method_ok(req.method)) {
+    return Err(InvalidRequest("the method is not a token"));
+  }
+  var i: i32 = 0;
+  while (i < req.headers.names.len()) {
+    if (!http.http_field_name_ok(req.headers.names[i])) {
+      return Err(InvalidRequest("a header name is not a token"));
+    }
+    if (!http.http_field_value_ok(req.headers.values[i])) {
+      return Err(InvalidRequest("a header value has a byte that cannot be written"));
+    }
+    i = i + 1;
+  }
+  match (req.body) {
+    BodyFile(path) => {
+      return Err(InvalidRequest("a file body cannot be sent"));
+    },
+    _ => {}
+  }
+  return Ok(());
+}
+
+// `__host_field(t)` — the `Host` value: the host, bracketed when it is an
+// IPv6 address, and the port when it is not the scheme's default.
+function __host_field(t: __Target): string {
+  var host: string = t.host;
+  if (host.index_of(":") >= 0) {
+    host = "[" + host + "]";
+  }
+  if (t.port != 80) {
+    return host + ":" + int.int_to_string(t.port);
+  }
+  return host;
+}
+
+// `__head(req, t, body_len)` — the request line and header block: the
+// caller's end-to-end fields, then what the client decides.
+function __head(req: Request, t: __Target, body_len: i32): string {
+  var out: string = req.method + " " + t.target + " HTTP/1.1\r\n" + "Host: " + __host_field(t) + "\r\n";
+  var fields: HeaderMap = http.http_end_to_end(req.headers);
+  var i: i32 = 0;
+  while (i < fields.names.len()) {
+    if (fields.names[i] != "host" && fields.names[i] != "content-length") {
+      out = out + fields.names[i] + ": " + fields.values[i] + "\r\n";
+    }
+    i = i + 1;
+  }
+  if (body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
+    out = out + "Content-Length: " + int.int_to_string(body_len) + "\r\n";
+  }
+  return out + "Connection: close\r\n\r\n";
+}
+
+// `send(req)` — the request sent and its response read, as the module
+// comment says: a 3xx with a `Location` is followed up to
+// `req.redirects` hops, all under the one total bound. Blocking: every
+// connection is closed before it answers.
+pub function send(req: Request): Result[HttpResponse, FetchError] {
+  var started: i64 = monotonic_ns();
+  var cur: Request = req;
+  var hops: i32 = 0;
+  while (true) {
+    var resp: HttpResponse = __send_once(cur, started)?;
+    if (!__redirects(resp.status) || req.redirects == 0) {
+      return Ok(resp);
+    }
+    if (hops >= req.redirects) {
+      return Err(Redirect("more than " + int.int_to_string(req.redirects) + " redirects"));
+    }
+    hops = hops + 1;
+    cur = __next_hop(cur, resp)?;
+  }
+  return Err(Redirect("unreachable"));
+}
+
+// `__redirects(status)` — whether a status sends the client elsewhere:
+// 301, 302, 303, 307 and 308 (RFC 9110 §15.4).
+function __redirects(status: i32): boolean {
+  return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+}
+
+// `__next_hop(cur, resp)` — the request for `resp`'s `Location`: the
+// method and body kept on a 307 and 308, a GET with no body on a 303 and
+// on a 301 or 302 answering a POST (RFC 9110 §15.4), and the credentials
+// (`Authorization`, `Proxy-Authorization`, `Cookie`) dropped when the hop
+// leaves the origin. `Host` is written per hop by the client.
+function __next_hop(cur: Request, resp: HttpResponse): Result[Request, FetchError] {
+  var location: string = "";
+  match (resp.headers.get("location")) {
+    Some(l) => {
+      location = l;
+    },
+    None => {
+      return Err(Redirect("a " + int.int_to_string(resp.status) + " without a Location"));
+    }
+  }
+  var target: string = "";
+  match (url.url_resolve(cur.url, location)) {
+    Some(t) => {
+      target = t;
+    },
+    None => {
+      return Err(Redirect("a Location that is not a URL"));
+    }
+  }
+  var next: Request = Request { ...cur, url: target };
+  if (__rewrites_to_get(resp.status, cur.method)) {
+    var none: u8[] = [];
+    next = Request { ...next, method: "GET", body: BodyBytes(none), headers: __without(next.headers, ["content-type", "content-length"]) };
+  }
+  if (!__same_origin(cur.url, target)) {
+    next = Request { ...next, headers: __without(next.headers, ["authorization", "proxy-authorization", "cookie"]) };
+  }
+  return Ok(next);
+}
+
+// `__rewrites_to_get(status, method)` — whether the hop becomes a GET
+// without the body: a 303 for anything but HEAD, and a 301 or 302
+// answering a POST, as browsers do (RFC 9110 §15.4.2 to §15.4.4).
+function __rewrites_to_get(status: i32, method: string): boolean {
+  if (status == 303) {
+    return method != "HEAD";
+  }
+  return (status == 301 || status == 302) && method == "POST";
+}
+
+// `__without(h, names)` — `h` less the fields named (case-folded names).
+function __without(h: HeaderMap, names: string[]): HeaderMap {
+  var out: HeaderMap = headers.header_map_new();
+  var i: i32 = 0;
+  while (i < h.names.len()) {
+    if (!__holds(names, h.names[i])) {
+      out = out.append(h.names[i], h.values[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function __holds(names: string[], name: string): boolean {
+  for n in names {
+    if (n == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// `__same_origin(a, b)` — whether two URLs share scheme, host (ASCII
+// case-folded) and effective port, the origin a credential is scoped to.
+function __same_origin(a: string, b: string): boolean {
+  var ua: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  var ub: Url = ua;
+  match (url.url_parse(a)) {
+    Some(p) => {
+      ua = p;
+    },
+    None => {
+      return false;
+    }
+  }
+  match (url.url_parse(b)) {
+    Some(p) => {
+      ub = p;
+    },
+    None => {
+      return false;
+    }
+  }
+  return ua.scheme.to_lower() == ub.scheme.to_lower() && ua.host.to_lower() == ub.host.to_lower() && __effective_port(ua) == __effective_port(ub);
+}
+
+function __effective_port(u: Url): i32 {
+  if (u.port != 0) {
+    return u.port;
+  }
+  if (u.scheme == "https") {
+    return 443;
+  }
+  return 80;
+}
+
+// `__send_once(req, started)` — one hop: the request validated, sent
+// and its response read, and sent once more when the peer reset the
+// connection before any response byte and the method is idempotent
+// (RFC 9110 §9.2.2): a reset before an answer says nothing happened.
+function __send_once(req: Request, started: i64): Result[HttpResponse, FetchError] {
+  var t: __Target = __target_of(req.url)?;
+  match (__request_ok(req)) {
+    Ok(_) => {},
+    Err(e) => {
+      return Err(e);
+    }
+  }
+  var first: Result[HttpResponse, FetchError] = __attempt(req, t, started);
+  match (first) {
+    Err(e) => {
+      if (__reset(e) && http.http_method_idempotent(req.method)) {
+        return __attempt(req, t, started);
+      }
+      return Err(e);
+    },
+    Ok(resp) => {
+      return Ok(resp);
+    }
+  }
+  return first;
+}
+
+// `__reset(e)` — whether `e` is the peer dropping the connection before
+// answering: a reset or abort on the socket, a broken pipe, or the close
+// `__read_response` reports when no byte came.
+function __reset(e: FetchError): boolean {
+  match (e) {
+    Io(n) => {
+      return n.eq(net.ConnectionReset) || n.eq(net.ConnectionAborted) || n.eq(net.Other(32));
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// `__attempt(req, t, started)` — one connection: opened, the request
+// written, the response read, and closed.
+function __attempt(req: Request, t: __Target, started: i64): Result[HttpResponse, FetchError] {
+  var sock: i32 = __connect(t, req.timeouts)?;
+  var body: u8[] = req.body.bytes();
+  var sent: Result[void, FetchError] = __send_all(sock, __head(req, t, body.len()) + string_from_bytes_unchecked(body));
+  match (sent) {
+    Ok(_) => {},
+    Err(e) => {
+      tcp_close(sock);
+      return Err(e);
+    }
+  }
+  var answer: Result[HttpResponse, FetchError] = __read_response(sock, req, started);
+  tcp_close(sock);
+  return answer;
+}
+
+// `__connect(t, timeouts)` — a connection to the host, resolved and raced
+// under the connect bound.
+function __connect(t: __Target, timeouts: Timeouts): Result[i32, FetchError] {
+  var addrs: net.IpAddr[] = [];
+  match (dns.resolve(t.host)) {
+    Ok(found) => {
+      addrs = found;
+    },
+    Err(e) => {
+      return Err(Dns(e));
+    }
+  }
+  var connect_ms: i32 = timeouts.connect_ms;
+  if (timeouts.total_ms < connect_ms) {
+    connect_ms = timeouts.total_ms;
+  }
+  var opts: dns.DialOptions = dns.DialOptions { ...dns.dial_options(), timeout_ms: connect_ms };
+  match (dns.connect_race(addrs, t.port, opts)) {
+    Ok(sock) => {
+      return Ok(sock);
+    },
+    Err(e) => {
+      if (e.eq(net.TimedOut)) {
+        return Err(Timeout(Connecting));
+      }
+      return Err(Connect(e));
+    }
+  }
+  return Err(Timeout(Connecting));
+}
+
+// `__send_all(sock, payload)` — every byte of `payload` written, or the
+// failure as the kernel reported it. The payload is handed to `tcp_send`
+// as the bytes it holds; a body is not text, and never read as one.
+function __send_all(sock: i32, payload: string): Result[void, FetchError] {
+  var at: i32 = 0;
+  while (at < payload.len()) {
+    var n: i32 = tcp_send(sock, slice_unchecked(payload, at, payload.len()).to_owned());
+    if (n < 0) {
+      return Err(Io(net.error_from_errno(0 - n)));
+    }
+    if (n == 0) {
+      return Err(Io(net.ConnectionReset));
+    }
+    at = at + n;
+  }
+  return Ok(());
+}
+
+// `__read_response(sock, req, started)` — the response read under the
+// inactivity and total bounds, interim 1xx responses stepped over (within
+// one header budget for all of them, so a peer cannot stream `100
+// Continue` for as long as the timeout allows), and handed back with its
+// hop-by-hop fields stripped. The buffer is uniquely owned and grows in
+// place, so the read stays linear in the response.
+function __read_response(sock: i32, req: Request, started: i64): Result[HttpResponse, FetchError] {
+  var buf: u8[] = [];
+  var from: i32 = 0;
+  var eof: boolean = false;
+  while (true) {
+    match (http.http_parse_response_framed_from(buf, from, req.method, eof, req.limits)) {
+      Complete(framed) => {
+        var next: i32 = __after_interim(framed, from, req.limits)?;
+        if (next < 0) {
+          return Ok(HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) });
+        }
+        from = next;
+        continue;
+      },
+      Unfinished => {
+        if (eof) {
+          return Err(__closed_early(buf.len() - from));
+        }
+      },
+      Rejected(code) => {
+        return Err(__rejected(code));
+      }
+    }
+    var chunk: u8[] = __recv_bounded(sock, req.timeouts, started)?;
+    if (chunk.len() == 0) {
+      eof = true;
+    } else {
+      buf = __append_bytes(buf, chunk);
+    }
+  }
+  return Err(Protocol("unreachable"));
+}
+
+// `__append_bytes(buf, chunk)` — `buf` with `chunk` on its end, grown in
+// place: `buf` is owned here, so each push lands on a unique array and
+// the accumulation over a whole response is one linear pass.
+function __append_bytes(own buf: u8[], chunk: u8[]): u8[] {
+  var i: i32 = 0;
+  while (i < chunk.len()) {
+    buf = buf.append(chunk[i]);
+    i = i + 1;
+  }
+  return buf;
+}
+
+// `__closed_early(got)` — the peer's close read as the client's error:
+// a reset when no byte of the response came, since the request may not
+// have been read at all and an idempotent one is sent again, and a
+// protocol failure once a response had begun.
+function __closed_early(got: i32): FetchError {
+  if (got == 0) {
+    return Io(net.ConnectionReset);
+  }
+  return Protocol("the connection closed before the response ended");
+}
+
+// `__after_interim(framed, from, limits)` — where the response behind an
+// interim `framed` begins, -1 when `framed` is the final response, or
+// the refusal: a 101, since what follows a switch is another protocol
+// and this client never asks for one, and interim responses past one
+// header budget between them.
+function __after_interim(framed: http.HttpResponseFramed, from: i32, limits: http.HttpLimits): Result[i32, FetchError] {
+  if (framed.response.status == 101) {
+    return Err(Protocol("a protocol switch the client did not ask for"));
+  }
+  if (!__interim(framed.response.status)) {
+    return Ok(0 - 1);
+  }
+  var next: i32 = from + framed.len;
+  if (next > limits.header_bytes) {
+    return Err(Protocol("interim responses past the header budget"));
+  }
+  return Ok(next);
+}
+
+// `__interim(status)` — whether a status is a 1xx the final response
+// follows (RFC 9110 §15.2); `__after_interim` refuses 101 before asking.
+function __interim(status: i32): boolean {
+  return status >= 100 && status < 200;
+}
+
+// `__recv_bounded(sock, timeouts, started)` — the next chunk of the
+// response within the tighter of the inactivity bound and what is left
+// of the total, or the bound that passed.
+function __recv_bounded(sock: i32, timeouts: Timeouts, started: i64): Result[u8[], FetchError] {
+  var ns_per_ms: i64 = 1000000;
+  var left_ms: i64 = timeouts.total_ms as i64 - (monotonic_ns() - started) / ns_per_ms;
+  if (left_ms <= 0) {
+    return Err(Timeout(Total));
+  }
+  var wait_ms: i64 = timeouts.inactivity_ms as i64;
+  var bound: Phase = Inactivity;
+  if (left_ms < wait_ms) {
+    wait_ms = left_ms;
+    bound = Total;
+  }
+  match (tcp.tcp_recv_deadline(sock, 65536, time.duration_millis(wait_ms))) {
+    Some(chunk) => {
+      return Ok(chunk);
+    },
+    None => {
+      return Err(Timeout(bound));
+    }
+  }
+  return Err(Timeout(bound));
+}
+
+// `__rejected(code)` — the parser's refusal as a `FetchError`.
+function __rejected(code: i32): FetchError {
+  if (code == 413) {
+    return BodyLimit;
+  }
+  if (code == 431) {
+    return Protocol("the header block or chunk framing is past its limit");
+  }
+  if (code == 501) {
+    return Protocol("a transfer coding other than chunked");
+  }
+  if (code == 505) {
+    return Protocol("an HTTP version other than 1");
+  }
+  return Protocol("a malformed response");
+}
+
+// `(plat: Platform).http(req)` — `send(req)` through the handler's
+// `Platform` bag, the capability-scoped route (docs/PLATFORM-RESEARCH.md
+// Rec §1): a handler can only fetch through the platform it was handed.
+//
+// A recording bag reaches no socket: the call is logged as `http` with
+// `METHOD url` and answered with what the test canned for that pair
+// (std/mock_platform's `http_set`), else `Err(Connect(ConnectionRefused))`,
+// what a real request gives for a host that is not listening.
+pub function (plat: Platform) http(req: Request): Result[HttpResponse, FetchError] {
+  if (!plat.is_mock()) {
+    return send(req);
+  }
+  var summary: string = req.method + " " + req.url;
+  plat.record("http", summary);
+  match (plat.canned("http " + summary)) {
+    Some(v) => {
+      return Ok(__canned_response(v));
+    },
+    None => {
+      return Err(Connect(net.ConnectionRefused));
+    }
+  }
+  return Err(Connect(net.ConnectionRefused));
+}
+
+// `__canned_response(v)` — the canned `STATUS BODY` as a response, 200
+// when the status does not read.
+function __canned_response(v: string): HttpResponse {
+  var sp: i32 = v.index_of(" ");
+  var code: string = v;
+  var body: string = "";
+  if (sp >= 0) {
+    code = slice_unchecked(v, 0, sp).to_owned();
+    body = slice_unchecked(v, sp + 1, v.len()).to_owned();
+  }
+  var status: i32 = 200;
+  match (int.parse_int_radix(code, 10)) {
+    Some(n) => {
+      status = n;
+    },
+    None => {}
+  }
+  return http.text(status, body);
+}
+
+// ---------------------------------------------------------------------------
+// The awaitable fetch
+
 // __join_bytes(chunks) — the chunk list flattened into one buffer, sized
 // up front so the fill is a single pass over a uniquely-owned array.
 //
-// Every read path here collects `recv` buffers into a list and joins once
-// rather than concatenating onto a growing accumulator. Concatenation is
-// quadratic in the response size whenever the accumulator has a second
-// reference — which it always does inside `__fetch_drain`, where `resume`
-// captures it — and `__arr_push_shared_count()` is what makes that
-// visible: one crossing per chunk, each copying the whole response so far.
+// `__fetch_drain` collects its `recv` buffers into a list and joins once,
+// because its accumulator is captured by `resume`: a second reference
+// makes every append copy the whole response so far, and
+// `__arr_push_shared_count()` is what makes that visible. The blocking
+// client's buffer has no second reference, so it appends in place
+// (`__append_bytes`) instead.
 function __join_bytes(chunks: u8[][]): u8[] {
   var total: i32 = 0;
   var k: i32 = 0;
@@ -67,103 +800,6 @@ function __join_bytes(chunks: u8[][]): u8[] {
   return out;
 }
 
-// fetch_raw(host_be, port, request) — open a connection, send `request`
-// verbatim, and read the whole response until the peer closes (the
-// request should carry `Connection: close`). Returns the raw response
-// bytes, or the empty array if the connection or send failed. Blocking;
-// for overlap, use `fetch_future` through `async.gather` / `async.race`.
-pub function fetch_raw(host_be: i32, port: i32, request: string): u8[] {
-  var empty: u8[] = [];
-  var c: i32 = tcp_connect(host_be, port);
-  if (c < 0) {
-    return empty;
-  }
-  if (tcp_send(c, request) < 0) {
-    tcp_close(c);
-    return empty;
-  }
-  var chunks: u8[][] = [];
-  while (true) {
-    var chunk: u8[] = tcp_recv(c, 4096);
-    if (chunk.len() == 0) {
-      break;
-    }
-    chunks = chunks.append(chunk);
-  }
-  tcp_close(c);
-  return __join_bytes(chunks);
-}
-
-// fetch_get(host_be, port, path) — issue `GET <path>` against the
-// upstream and return the raw HTTP/1.1 response bytes (status line +
-// headers + body). `Connection: close` so the read terminates at EOF.
-// Use `http_body(resp)` to peel the body off.
-pub function fetch_get(host_be: i32, port: i32, path: string): u8[] {
-  var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
-  return fetch_raw(host_be, port, request);
-}
-
-// fetch_raw_deadline(host_be, port, request, deadline) — `fetch_raw`
-// with a total read deadline: `Some(response)` when the upstream's
-// whole response arrived within `deadline` of the send, `None` when
-// the deadline passed first (the connection is closed either way). A
-// connect/send failure is `Some([])`, mirroring `fetch_raw`'s empty
-// response — so None means exactly one thing: too slow. The deadline
-// covers the read phase; `tcp_connect` itself is still a blocking connect (no
-// non-blocking connect primitive yet), which on a reachable-but-dead
-// upstream fails fast but on a black-holed address waits for the whole
-// the kernel SYN timeout. On interp the deadline degrades to blocking
-// reads (see `tcp_recv_deadline`).
-pub function fetch_raw_deadline(host_be: i32, port: i32, request: string, deadline: Duration): Option[u8[]] {
-  var empty: u8[] = [];
-  var c: i32 = tcp_connect(host_be, port);
-  if (c < 0) {
-    return Some(empty);
-  }
-  if (tcp_send(c, request) < 0) {
-    tcp_close(c);
-    return Some(empty);
-  }
-  var start_ns: i64 = monotonic_ns();
-  var deadline_ns: i64 = deadline.as_nanos();
-  var chunks: u8[][] = [];
-  while (true) {
-    var remaining_ns: i64 = deadline_ns - (monotonic_ns() - start_ns);
-    if (remaining_ns <= 0) {
-      tcp_close(c);
-      return None;
-    }
-    var chunk: u8[] = [];
-    var timed_out: boolean = false;
-    match (tcp.tcp_recv_deadline(c, 4096, time.duration_nanos(remaining_ns))) {
-      Some(got) => {
-        chunk = got;
-      },
-      None => {
-        timed_out = true;
-      }
-    }
-    if (timed_out) {
-      tcp_close(c);
-      return None;
-    }
-    if (chunk.len() == 0) {
-      break;
-    }
-    chunks = chunks.append(chunk);
-  }
-  tcp_close(c);
-  return Some(__join_bytes(chunks));
-}
-
-// fetch_get_deadline(host_be, port, path, deadline) — `fetch_get`
-// with a total read deadline. `Some(raw response bytes)` in time (use
-// `http_body` / `http_status`), `None` when the upstream was too slow.
-pub function fetch_get_deadline(host_be: i32, port: i32, path: string, deadline: Duration): Option[u8[]] {
-  var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
-  return fetch_raw_deadline(host_be, port, request, deadline);
-}
-
 // fetch_future(host_be, port, path) — the AWAITABLE fetch: open a
 // connection and send the request NON-blocking, then return a
 // `Future[u8[]]` that resolves to the response body once the socket
@@ -178,7 +814,9 @@ pub function fetch_get_deadline(host_be: i32, port: i32, path: string, deadline:
 //   ], none);
 //
 // On a connect/send failure it resolves immediately to the empty body (a
-// `Ready` future), so a failed upstream doesn't stall the fan-out. The
+// `Ready` future), so a failed upstream doesn't stall the fan-out, and so
+// does a response the parser refuses or a `path` that cannot stand on a
+// request line (`http_target_ok`), which is refused before connecting. The
 // read is STREAMING — `__fetch_drain` re-suspends per chunk and accumulates, so
 // the whole response comes back (not just one `recv` buffer) while
 // staying overlapped with the other futures. PORTABLE native + wasm: the
@@ -189,8 +827,11 @@ pub function fetch_get_deadline(host_be: i32, port: i32, path: string, deadline:
 // woken token, which differs by backend). On interp the `poll` stub
 // means the `Pending` never resolves (consistent with std/async).
 pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u8[]] {
-  var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
   var empty: u8[] = [];
+  if (!http.http_target_ok(path)) {
+    return Ready(empty);
+  }
+  var request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
   var c: i32 = tcp_connect(host_be, port);
   if (c < 0) {
     return Ready(empty);
@@ -208,8 +849,7 @@ pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u
 // either FINISHES (empty recv = EOF, since we send `Connection: close`) by
 // returning the parsed body, or RE-SUSPENDS to read more. `chunks` carries the
 // buffers read so far across re-suspends, so a response spanning multiple recv
-// buffers / TCP segments is read in FULL — the previous single-`recv` version
-// truncated anything past one 4 KiB chunk. Re-suspending (rather than looping
+// buffers / TCP segments is read in FULL. Re-suspending (rather than looping
 // `recv` synchronously) keeps the read overlapped with the other futures in a
 // `gather`/`race`. At most one pollable is live at a time (each step drops the
 // previous before subscribing the next), so the socket has no child pollable
@@ -227,205 +867,25 @@ function __fetch_drain(c: i32, chunks: u8[][]): async.Future[u8[]] {
     var chunk: u8[] = tcp_recv(c, 4096);
     if (chunk.len() == 0) {
       tcp_close(c);
-      return Ready(http_body(__join_bytes(chunks)));
+      return Ready(__body_of(__join_bytes(chunks)));
     }
     return __fetch_drain(c, chunks.append(chunk));
   }
   return Pending(tcp_pollable(c), resume);
 }
 
-// http_status(resp) — parse the numeric status code from an HTTP/1.1 response's
-// status line (`HTTP/1.1 200 OK` → 200), or -1 if the response is empty or the
-// status line is malformed. The code is the run of digits after the first space.
-pub function http_status(resp: u8[]): i32 {
-  var n: i32 = resp.len();
-  var sp: i32 = -1;
-  var i: i32 = 0;
-  while (i < n) {
-    if (resp[i] as i32 == 32) {
-      sp = i;
-      break;
-    }
-    i = i + 1;
-  }
-  if (sp < 0) {
-    return -1;
-  }
-  var j: i32 = sp + 1;
-  var code: i32 = 0;
-  var have: boolean = false;
-  while (j < n) {
-    var ch: i32 = resp[j] as i32;
-    if (ch < 48 || ch > 57) {
-      break;
-    }
-    code = code * 10 + (ch - 48);
-    have = true;
-    j = j + 1;
-  }
-  if (!have) {
-    return -1;
-  }
-  return code;
-}
-
-// http_body(resp) — return the body of an HTTP response (everything
-// after the first blank line `\r\n\r\n`), or the empty array if the
-// response has no header/body separator. Does not interpret
-// Content-Length / chunked encoding; it returns whatever followed the
-// headers. Decode with `utf8.from_bytes` when the body is meant to be
-// text — an upstream can serve anything.
-pub function http_body(resp: u8[]): u8[] {
-  var out: u8[] = [];
-  var n: i32 = resp.len();
-  var sep: i32 = -1;
-  var i: i32 = 0;
-  while (i + 3 < n) {
-    if (resp[i] as i32 == 13 && resp[i + 1] as i32 == 10
-      && resp[i + 2] as i32 == 13 && resp[i + 3] as i32 == 10) {
-      sep = i;
-      break;
-    }
-    i = i + 1;
-  }
-  if (sep < 0) {
-    return out;
-  }
-  var start: i32 = sep + 4;
-  out = __alloc_u8(n - start);
-  var j: i32 = start;
-  while (j < n) {
-    out = out.with(j - start, resp[j]);
-    j = j + 1;
-  }
-  return out;
-}
-
-// parse_ipv4(s) — parse a dotted-quad "a.b.c.d" into the network-byte-
-// order i32 tcp_connect wants, or -1 if it isn't four 0..255 octets.
-// No DNS — a literal address only.
-pub function parse_ipv4(s: string): i32 {
-  var octets: i32[] = [];
-  var cur: i32 = 0;
-  var have: boolean = false;
-  var i: i32 = 0;
-  while (i < s.len()) {
-    var ch: i32 = s[i] as i32;
-    if (ch == 46) {  // '.'
-      if (!have) {
-        return -1;
-      }
-      octets = octets.append(cur);
-      cur = 0;
-      have = false;
-    } else if (ch >= 48 && ch <= 57) {
-      cur = cur * 10 + (ch - 48);
-      if (cur > 255) {
-        return -1;
-      }
-      have = true;
-    } else {
-      return -1;
-    }
-    i = i + 1;
-  }
-  if (!have) {
-    return -1;
-  }
-  octets = octets.append(cur);
-  if (octets.len() != 4) {
-    return -1;
-  }
-  return ipv4(octets[0], octets[1], octets[2], octets[3]);
-}
-
-// (plat: Platform).fetch(host, port, path) — the capability-scoped outbound GET
-// an edge handler reaches for: `plat.fetch("a.b.c.d", port, "/x")`. Routing
-// outbound I/O through the `Platform` bag keeps the capability model
-// (docs/PLATFORM-RESEARCH.md Rec §1) — a handler can only fetch through the
-// platform it was handed. `host` is a literal IPv4. Returns the HTTP STATUS CODE
-// (an i32, e.g. 200 / 404), or -1 on a parse / connect / malformed-response
-// failure. For the response BODY, or to overlap several fetches, use
-// `fetch_future` through `async.gather` / `async.race`. Blocking.
-//
-// A recording bag reaches no socket: the call is logged as `fetch` with a
-// `host:port path` summary and answered with the status the test canned
-// for that summary (std/mock_platform's `fetch_set`), else -1, the same
-// value a real fetch gives for a host it could not reach.
-pub function (plat: Platform) fetch(host: string, port: i32, path: string): i32 {
-  if (plat.is_mock()) {
-    var summary: string = host + ":" + int.int_to_string(port) + " " + path;
-    plat.record("fetch", summary);
-    match (plat.canned("fetch " + summary)) {
-      Some(v) => {
-        match (int.parse_int_radix(v, 10)) {
-          Some(status) => {
-            return status;
-          },
-          None => {
-            return -1;
-          }
-        }
-      },
-      None => {
-        return -1;
-      }
-    }
-    return -1;
-  }
-  var h: i32 = parse_ipv4(host);
-  if (h < 0) {
-    return -1;
-  }
-  return http_status(fetch_get(h, port, path));
-}
-
-// get_url(url) — fetch a full `http://HOST[:PORT]/PATH` URL in one
-// call: split the scheme / host / optional port / path and GET it,
-// returning the raw response bytes (use `http_body`). HOST must be a
-// literal IPv4 (no DNS / TLS yet); the port defaults to 80; a missing
-// path becomes "/". Returns the empty array on a malformed URL or a
-// connect failure.
-pub function get_url(url: string): u8[] {
-  var empty: u8[] = [];
-  // Require and strip the http:// scheme.
-  var prefix: string = "http://";
-  if (!url.starts_with(prefix)) {
-    return empty;
-  }
-  var rest: str = slice_unchecked(url, prefix.len(), url.len());
-  // authority is up to the first '/'; the rest (incl. the '/') is the path.
-  var slash: i32 = rest.index_of("/");
-  var authority: str = rest;
-  var path: str = "/";
-  if (slash >= 0) {
-    authority = slice_unchecked(rest, 0, slash);
-    path = slice_unchecked(rest, slash, rest.len());
-  }
-  // authority = HOST[:PORT].
-  var host: str = authority;
-  var port: i32 = 80;
-  var colon: i32 = authority.index_of(":");
-  if (colon >= 0) {
-    host = slice_unchecked(authority, 0, colon);
-    var portstr: str = slice_unchecked(authority, colon + 1, authority.len());
-    port = 0;
-    var i: i32 = 0;
-    while (i < portstr.len()) {
-      var ch: i32 = portstr[i] as i32;
-      if (ch < 48 || ch > 57) {
-        return empty;
-      }
-      port = port * 10 + (ch - 48);
-      i = i + 1;
-    }
-    if (i == 0) {
+// `__body_of(raw)` — the body of the whole response `raw`, decoded under
+// its framing, or empty for one the parser refuses.
+function __body_of(raw: u8[]): u8[] {
+  match (http.http_parse_response_framed(raw, "GET", true, http.http_limits())) {
+    Complete(framed) => {
+      return framed.response.body_bytes();
+    },
+    _ => {
+      var empty: u8[] = [];
       return empty;
     }
   }
-  var h: i32 = parse_ipv4(host);
-  if (h < 0) {
-    return empty;
-  }
-  return fetch_get(h, port, path);
+  var none: u8[] = [];
+  return none;
 }

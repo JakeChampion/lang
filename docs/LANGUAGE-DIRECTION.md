@@ -605,6 +605,10 @@ Deferred to a follow-up:
     compilers — the key is a cell the map owns, hashed and
     compared through the cell (the self-host's `_k64` helpers,
     #10005). An f64 key is refused by the checker (E045).
+  - Tuple / array K: compared and hashed element by element, when
+    every element is an integer, boolean, char, string, or another
+    such tuple or array (#10020). The self-host generates each key
+    type's `eq` / `hash`; the native backends refuse to compile one.
 - Map literals: TBD syntax. `{ "k": v }` collides with struct
   literals. Candidates: `#{ "k": v }`, `Map { "k": v }`,
   `Map.from([("k", v)])`. Lean `Map { ... }` — it reads naturally

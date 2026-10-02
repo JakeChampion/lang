@@ -1,5 +1,8 @@
 # Persistent instruction accumulation
 
+`ir.OpBuffer` was the AST lowering's instruction buffer and was deleted with
+that lowering. What follows is the record of why it existed.
+
 Lowering keeps snapshots of its state. A shared flat instruction array makes
 an append copy every earlier instruction. Tracing a self-built compiler while
 it lowers `asm_ir.emit_ir_runtime` attributed 3,171,509,704 copied bytes to

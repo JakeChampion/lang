@@ -102,16 +102,6 @@ func TestX86_64ArrPushCliffBytes(t *testing.T) {
 	}
 }
 
-func TestArm64ArrPushCliffBytes(t *testing.T) {
-	for _, c := range cliffBytesCases {
-		t.Run(c.name, func(t *testing.T) {
-			_, count := compileAndRunArm64(t, c.countSrc())
-			_, bytes := compileAndRunArm64(t, c.bytesSrc())
-			c.check(t, "arm64-linux", count, bytes)
-		})
-	}
-}
-
 func TestWASMArrPushCliffBytes(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true

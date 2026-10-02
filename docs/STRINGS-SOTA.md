@@ -29,6 +29,11 @@ invariant from holding across the stdlib.
 | `u8.to_ascii_string` | a byte value | empty text for bytes above 127; ASCII, including NUL, is preserved |
 | `rng_bytes` / `random_bytes` | pseudorandom or system random bytes | owned `u8[]`, with no text conversion |
 
+HTTP response serialization now has `*_bytes` siblings that preserve the
+body and frame its byte length. The text siblings retain replacement decoding
+and count the decoded bytes they emit. Both evaluate chunk producers once.
+See [HTTP byte serialization](STRING-HTTP-SERIALIZATION-2026-10-02.md).
+
 The rule the table follows: where the API has an error channel the
 bytes are refused through it; where it has none they decode as U+FFFD,
 one per maximal subpart (`utf8.from_bytes_lossy`, the rule the string
@@ -917,8 +922,8 @@ The WebAssembly seek helper releases its syscall return buffer on success
 and error; repeated seek tests and the file-input cases check for leaks.
 
 Current target, ownership, bootstrap and performance results are recorded
-in [the byte-line report](STRING-BYTE-LINES-2026-10-02.md). The full-unit gate
-remains pending.
+in [the byte-line report](STRING-BYTE-LINES-2026-10-02.md). The full unit suite
+and all lint gates pass.
 
 The Fern interpreter also supports raw stdin reads; its file-handle opening
 remains unsupported. The existing `Reader.read_chunk` remains text-typed and
@@ -944,16 +949,26 @@ Byte writes, mappings and ranges can therefore flush arbitrary bytes or partial
 scalar encodings without constructing a string. Direct string writes retain
 their fast path; sticky write errors and close-error precedence are unchanged.
 
+Both HTTP component adapters use `body_bytes()` and writes of at most 4096
+bytes. The primary `std/wasi_http` adapter passes `u8[]` to the host's
+`list<u8>` import; the bootstrap emitter forwards the packed array. Neither
+converts binary bodies through a string. Each hands off the response before
+writing its body, letting the host drain the stream under backpressure.
+This closes the HTTP component adapters' part of #10948; the TCP, UDP and
+file sinks still need byte-domain interfaces. See the
+[HTTP byte validation and size report](STRING-WASI-HTTP-BYTES-2026-10-02.md).
+
 The socket TRANSPORT followed. `tcp_recv_deadline` returns
-`Option[u8[]]`, and `std/fetch` is byte-domain end to end —
-`fetch_raw` / `fetch_get` / `get_url` return `u8[]`, their `_deadline`
-siblings `Option[u8[]]`, `fetch_future` an `async.Future[u8[]]`, and
-`http_status` / `http_body` read bytes. An upstream serves whatever
-bytes it likes, so a text-typed response was a `string` this decision
-forbids; callers decode with `utf8.from_bytes` where they want text.
-`std/sim`'s scripted `Net.fetch_future` deliberately stays
-`Future[string]` — its bodies are program values, well-formed by
-construction, and what it exists to pin is the combinator timing.
+`Option[u8[]]`, and `std/fetch` is byte-domain end to end: `send(req)`
+and `plat.http(req)` answer `Result[HttpResponse, FetchError]` with the
+body as `BodyBytes`, `(resp).body_text()` is the checked decode that
+answers `None` for bytes that are not UTF-8, `(resp).body_bytes()` the
+body as it came, and `fetch_future` an `async.Future[u8[]]`. An
+upstream serves whatever bytes it likes, so a text-typed response was a
+`string` this decision forbids. `std/sim`'s scripted `Net.fetch_future`
+deliberately stays `Future[string]` — its bodies are program values,
+well-formed by construction, and what it exists to pin is the
+combinator timing.
 
 The HTTP MESSAGE layer followed. A serve loop holds its buffer as
 `u8[]` and parses it with `http_parse_request_bytes`; `HttpRequest.body`

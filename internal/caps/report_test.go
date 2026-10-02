@@ -188,7 +188,7 @@ func TestFormat(t *testing.T) {
 	rows := []caps.Row{
 		{Package: "app", Uses: []caps.Use{
 			{Capability: "fs", Chain: []string{"main", "lib__save", "write_file"}},
-			{Capability: "net", Chain: []string{"main", "fetch__fetch_raw", "tcp_connect"}},
+			{Capability: "net", Chain: []string{"main", "fetch__send", "tcp_connect_with"}},
 		}},
 		{Package: "helper", Uses: nil},
 	}

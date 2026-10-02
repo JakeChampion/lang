@@ -67,15 +67,6 @@ func TestX86_64DeadAliasAppendNoCopy(t *testing.T) {
 	}
 }
 
-func TestArm64DeadAliasAppendNoCopy(t *testing.T) {
-	if _, got := compileAndRunArm64(t, deadAliasAppendSrc); got != 0 {
-		t.Errorf("arm64 dead alias: __arr_push_shared_count() = %d, want 0", got)
-	}
-	if _, got := compileAndRunArm64(t, liveAliasAppendSrc); got != 199 {
-		t.Errorf("arm64 live alias: __arr_push_shared_count() = %d, want 199", got)
-	}
-}
-
 func TestWASMDeadAliasAppendNoCopy(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true

@@ -223,37 +223,6 @@ func TestX86_64ArrPushCliffCounter(t *testing.T) {
 	}
 }
 
-func TestArm64ArrPushCliffCounter(t *testing.T) {
-	if _, got := compileAndRunArm64(t, arrPushCliffHealthySrc); got != 0 {
-		t.Errorf("arm64 healthy accumulator: __arr_push_shared_count() = %d, want 0", got)
-	}
-	if _, got := compileAndRunArm64(t, arrPushCliffSharedSrc); got != 1 {
-		t.Errorf("arm64 shared buffer: __arr_push_shared_count() = %d, want 1", got)
-	}
-	if _, got := compileAndRunArm64(t, arrPushCliffFieldBorrowSrc); got != 0 {
-		t.Errorf("arm64 field accumulator past a scalar-returning read: "+
-			"__arr_push_shared_count() = %d, want 0", got)
-	}
-	if _, got := compileAndRunArm64(t, arrPushCliffFieldAliasSrc); got != 1 {
-		t.Errorf("arm64 field accumulator with a live container alias: "+
-			"__arr_push_shared_count() = %d, want 1", got)
-	}
-	if _, got := compileAndRunArm64(t, arrPushCliffPtrHealthySrc); got != 0 {
-		t.Errorf("arm64 pointer-element accumulator: __arr_push_shared_count() = %d, want 0", got)
-	}
-	if _, got := compileAndRunArm64(t, arrPushCliffPtrSharedSrc); got != 49 {
-		t.Errorf("arm64 pointer-element accumulator behind a live second box: "+
-			"__arr_push_shared_count() = %d, want 49", got)
-	}
-	if _, got := compileAndRunArm64(t, arrPushCliffStrHealthySrc); got != 0 {
-		t.Errorf("arm64 string-element accumulator: __arr_push_shared_count() = %d, want 0", got)
-	}
-	if _, got := compileAndRunArm64(t, arrPushCliffStrSharedSrc); got != 49 {
-		t.Errorf("arm64 string-element accumulator behind a live second box: "+
-			"__arr_push_shared_count() = %d, want 49", got)
-	}
-}
-
 func TestWASMArrPushCliffCounter(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true

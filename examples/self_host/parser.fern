@@ -6542,31 +6542,19 @@ function mentions_name(e: ast.Expr, name: string, hit: boolean): boolean {
   return false;
 }
 
-// expr_mentions / stmt_mentions / stmts_mention report whether `name` appears
-// as an identifier anywhere in an expression / statement / statement list. Used
-// to detect a self-recursive local function (whose body references its own
-// name), which hl_rewrite lifts to top level. Conservative: any mention counts.
+// stmt_mentions / stmts_mention report whether `name` appears as an
+// identifier anywhere in a statement / statement list. Used to detect a
+// self-recursive local function (whose body references its own name), which
+// hl_rewrite lifts to top level. Conservative: any mention counts.
 //
 // Folding these onto astwalk WIDENS them by one node: the hand-written walk's
 // `_ =>` tail had no StmtDefer arm, so a name mentioned only inside a defer
 // action read as absent. astwalk enumerates all twelve Stmt cases, so it is
-// seen. Measured on a parsed `defer cleanup(zz)`: before, no mention; after,
-// one. Widening is the safe direction — every caller treats absence as a
-// licence (irlower's `return false` guards, the self-recursion check here) —
-// but no end-to-end consequence has been demonstrated, so this is recorded as
-// coverage gained, not as a fixed miscompile.
+// seen. Widening is the safe direction — every caller treats absence as a
+// licence.
 //
 // The other two nodes the `_ =>` swallowed, ExprFString and ExprMapLit, change
 // nothing: parse_module desugars both to calls before any consumer runs.
-// Checked rather than assumed, because a consumer walking a tree BEFORE that
-// desugar would see a difference.
-pub function expr_mentions(e: ast.Expr, name: string): boolean {
-  function visit(n: ast.Expr, own a: boolean): boolean {
-    return mentions_name(n, name, a);
-  }
-  return astwalk.fold_expr(e, false, visit);
-}
-
 pub function stmt_mentions(st: ast.Stmt, name: string): boolean {
   function visit(n: ast.Expr, own a: boolean): boolean {
     return mentions_name(n, name, a);
@@ -10145,7 +10133,7 @@ pub function builtin_function_names(): string[] {
     // float / int bit reinterprets
     "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
     // networking
-    "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close",
+    "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_send_bytes", "tcp_close",
     "udp_send", "tcp_connect", "tcp_pollable", "tcp_listen_with", "tcp_socket_ctl",
     "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect",
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
@@ -11277,7 +11265,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
   if (pb > 0 && slice_unchecked(pattern, pattern.len() - 1, pattern.len()) == "]" && cb < 0) {
     var pbase: str = slice_unchecked(pattern, 0, pb);
     var mpfx: string = pbase + "__";
-    if (concrete.len() > mpfx.len() && slice_unchecked(concrete, 0, mpfx.len()) == mpfx) {
+    if (concrete.len() > mpfx.len() && util.str_has_prefix(concrete, mpfx)) {
       var pp: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
       var ckey: str = slice_unchecked(concrete, mpfx.len(), concrete.len());
       var cp: string[] = [ckey + ""];
@@ -13101,7 +13089,7 @@ function inst_struct(ot: string, structs: StructDecl[]): InstStruct {
         si = i;
       } else if (structs[i].type_params.len() > 0 && first_bracket(ot) < 0) {
         var pfx: string = structs[i].name + "__";
-        if (ot.len() > pfx.len() && slice_unchecked(ot, 0, pfx.len()) == pfx) {
+        if (ot.len() > pfx.len() && util.str_has_prefix(ot, pfx)) {
           var rest: string = slice_unchecked(ot, pfx.len(), ot.len()) + "";
           cts = [rest];
           if (structs[i].type_params.len() != 1) {
@@ -15289,7 +15277,7 @@ function lit_field_decl_type(structs: StructDecl[], name: string, field: string)
 // is_clone_of: `mangled` names a monomorphised clone of generic struct `base`.
 function is_clone_of(mangled: string, base: string): boolean {
   var pfx: string = base + "__";
-  return mangled.len() > pfx.len() && slice_unchecked(mangled, 0, pfx.len()) == pfx;
+  return mangled.len() > pfx.len() && util.str_has_prefix(mangled, pfx);
 }
 
 // ms_expr_to is ms_expr for an expression bound to the mangled type `dest`: a
@@ -15400,7 +15388,7 @@ function retype_assoc_ctor(init: ast.Expr, concrete: string, gstructs: StructDec
             ast.ExprIdent(oid) => {
               if (gstruct_index(gstructs, oid.name) >= 0) {
                 var pfx: string = oid.name + "__";
-                if (concrete.len() > pfx.len() && slice_unchecked(concrete, 0, pfx.len()) == pfx) {
+                if (concrete.len() > pfx.len() && util.str_has_prefix(concrete, pfx)) {
                   return ast.ExprCall { callee: ast.ExprFieldAccess { obj: ast.ExprIdent { name: concrete, line: oid.line, col: oid.col, ty: "" }, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, args: c.args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
                 }
               }
@@ -22225,8 +22213,9 @@ struct LenLoopMatch { ok: boolean, idx: string, arr: string }
 struct LenArrRef { ok: boolean, name: string }
 
 // elide_len_bounded_body is the pass entry: it rewrites a function body,
-// returning a copy with in-bounds `arr[i]` reads marked. Called at
-// irlower.lower_func entry — after every AST transform — so no later pass
+// returning a copy with in-bounds `arr[i]` reads marked. Called where
+// semsource builds a declaration's body — after every AST transform — so no
+// later pass
 // clobbers the flag and the transform sites all default it to false.
 pub function elide_len_bounded_body(stmts: ast.Stmt[]): ast.Stmt[] {
   // Recurse into nested statement lists first, so inner loops are handled in

@@ -1,7 +1,7 @@
 package x86_64
 
-// Keep the requested capacity when a read is short, and expose only the bytes
-// actually read. Both copy-on-write and reclamation use the array header.
+// Full reads keep the requested array. Partial reads copy into compact storage
+// so retaining small chunks does not pin each request's full capacity.
 func (g *generator) emitReaderBytesRuntime() {
 	g.line(".globl __fern_reader_read_chunk_bytes")
 	g.line(".type __fern_reader_read_chunk_bytes, @function")
@@ -26,9 +26,21 @@ func (g *generator) emitReaderBytesRuntime() {
 	g.emitSyscallPreloaded(sysRead)
 	g.emit("test rax, rax")
 	g.emit("js .Lrrbytes_error")
-	g.emit("test r12d, r12d")
-	g.emit("jz .Lrrbytes_ok")
-	g.emit("mov [r13 - 4], eax")
+	g.emit("cmp eax, r12d")
+	g.emit("je .Lrrbytes_ok")
+	g.emit("mov r14d, eax")
+	g.emit("mov edi, eax")
+	g.emit("call __alloc_u8")
+	g.emit("mov rbx, rax")
+	g.emit("mov rdi, rax")
+	g.emit("mov rsi, r13")
+	g.emit("mov rcx, r14")
+	g.emit("cld")
+	g.emit("rep movsb")
+	g.emit("lea rdi, [r13 - 16]")
+	g.emit("lea rsi, [r12 + 16]")
+	g.emit("call __fern_free")
+	g.emit("mov r13, rbx")
 	g.label(".Lrrbytes_ok")
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_rc1")

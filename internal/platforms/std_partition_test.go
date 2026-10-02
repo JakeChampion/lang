@@ -61,7 +61,7 @@ var stdModuleReach = map[string]string{
 	"std/dns":           "fs,host,now,random,reactor,tcp,unix",
 	"std/dotenv":        "",
 	"std/error":         "",
-	"std/fetch":         "config,env,fs,log,now,proc,random,reactor,sysinfo,tcp,unix",
+	"std/fetch":         "config,env,fs,host,log,now,proc,random,reactor,sysinfo,tcp,unix",
 	"std/float":         "",
 	"std/format":        "",
 	"std/fuzz":          "config,env,fs,log,now,random",

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -291,4 +292,77 @@ func RunWasmCore(t testing.TB, corePath string, args ...string) *exec.Cmd {
 		t.Skip("wasmtime not on PATH")
 	}
 	return exec.Command(wasmtime, append([]string{"run", corePath}, args...)...)
+}
+
+// compileSelfHostProgram writes src to a temp dir and compiles it with the
+// current self-host compiler for target, with env added to the compiler's
+// environment. It returns the output path.
+func compileSelfHostProgram(t testing.TB, target, src string, env []string) string {
+	t.Helper()
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	out := filepath.Join(dir, "prog")
+	args := []string{"-target", target}
+	if target == TargetWasm32Wasi {
+		out += ".wasm"
+		args = append(args, "-emit", "core-module")
+	}
+	cmd := exec.Command(SelfHostCLI(t), append(args, "-o", out, srcPath, SelfHostStdlibRoot(t))...)
+	cmd.Env = append(os.Environ(), env...)
+	if msg, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("SELFHOST-COMPILE-FAIL -target %s: %v\n%s\nsrc:\n%s", target, err, msg, src)
+	}
+	if err := os.Chmod(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// SelfHostCompileCmd is the current self-host compiler compiling the entry
+// file to out for target, with the stdlib root its `std/` imports resolve
+// against.
+func SelfHostCompileCmd(t testing.TB, target, entry, out string) *exec.Cmd {
+	t.Helper()
+	return exec.Command(SelfHostCLI(t), "-target", target, "-o", out, entry, SelfHostStdlibRoot(t))
+}
+
+var (
+	currentCLIOnce sync.Once
+	currentCLIPath string
+)
+
+// SelfHostCLI is the current self-host compiler (fern.fern) built by
+// the pin for the host, shared by every program compile in the process.
+func SelfHostCLI(t testing.TB) string {
+	t.Helper()
+	host := hostSelfHostTarget()
+	if host == "" {
+		t.Skipf("no self-host target runs natively on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	currentCLIOnce.Do(func() {
+		dir := WriteSelfHostAsmProject(t)
+		CopySelfHostDriver(t, dir, "fern.fern")
+		currentCLIPath = CachedDriverBinFor(t, dir, "fern.fern", host)
+	})
+	if currentCLIPath == "" {
+		t.Fatal("the self-host compiler failed to build; the first test to need it has the error")
+	}
+	return currentCLIPath
+}
+
+// hostSelfHostTarget is the self-host target whose binaries this host runs
+// directly, or "" when there is none.
+func hostSelfHostTarget() string {
+	switch runtime.GOOS + "/" + runtime.GOARCH {
+	case "linux/amd64":
+		return TargetX86_64Linux
+	case "linux/arm64":
+		return TargetArm64Linux
+	case "darwin/arm64":
+		return TargetArm64Darwin
+	}
+	return ""
 }

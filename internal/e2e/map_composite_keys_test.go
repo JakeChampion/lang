@@ -13,12 +13,11 @@ import (
 //
 // This is the interpreter oracle: `findKey` deep-compares composite values
 // (interp.valuesEqual), so the reference compiler is value-correct for every
-// composite key, INCLUDING tuples. The struct/enum legs now also lower on the
-// compiled backends (via the keyed hash/eq runtime — see the
-// map_struct_enum_keys fixture), but TUPLE keys still have no nominal type to
-// hang Eq/Hash on, so the compiled path can't dispatch them yet — this stays
-// interp-only because of the tuple section. main returns 0 iff every check
-// holds.
+// composite key, INCLUDING tuples. The struct/enum legs also lower on the
+// native backends (via the keyed hash/eq runtime — see the
+// map_struct_enum_keys fixture); a tuple key does not, and the self-host's
+// lowering of one is gated by TestSelfHostMapStructuralKeys. main returns 0
+// iff every check holds.
 const mapCompositeKeysProgram = `
 import "core/map";
 import "core/cmp" as cmp;
@@ -65,8 +64,7 @@ function main(): i32 {
 `
 
 // TestInterpMapCompositeKeys gates composite (struct / enum / tuple) map keys
-// through the reference interpreter (#2671 slice 1). See the program comment for
-// why this is interp-only for now.
+// through the reference interpreter (#2671 slice 1).
 func TestInterpMapCompositeKeys(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")

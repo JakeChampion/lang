@@ -2800,6 +2800,25 @@ pub function component_full_io_exit(core: i32[], drop_io_errors: boolean = false
   return wcat(o, component_suffix_exit(drop_io_errors));
 }
 
+// Assertions report on stderr before exiting. Import both interfaces over
+// the stdout prefix; the exit interface is type 6 after stderr's type 5.
+pub function component_full_io_eprint_exit(core: i32[], drop_io_errors: boolean = false): i32[] {
+  var o: i32[] = io_stdout_head();
+  o = wcat(o, blob_to_bytes(tb_cli_stderr()));
+  o = wcat(o, blob_to_bytes("\x07\x1d\x01B\x03\x01j\x00\x00\x01@\x01\x06status\x00\x01\x00\x04\x00\x04exit\x01\x01\n\x18\x01\x00\x13wasi:cli/exit@0.2.0\x05\x06"));
+  o = wcat(o, wsection(1, core));
+  var none: i32[] = [];
+  return wcat(o, component_suffix_io(
+    ["wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0", "wasi:cli/exit@0.2.0"],
+    [blocking_write_name(), "get-stdout", "get-stderr", "exit"],
+    [1, 0, 0, 0],
+    [1, 2, 3, 4],
+    [[127, 127, 127, 127], none, none, none],
+    [0, 0, 0, 0],
+    7, 5, 0, "_lang_run", drop_io_errors,
+  ));
+}
+
 // ---- args + read_file + stdout component framing ------------------------
 //
 // component_full_io_fs_args_read wraps a core that uses the preview2 stdout

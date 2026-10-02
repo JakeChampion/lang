@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -34,11 +35,6 @@ func TestExternImportScalarRunsUnderWasmtime(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
-
 	// `r & 0` is deterministically 0, so the program prints a fixed string and
 	// exits 0 — but the random_u64() result flows into the branch condition,
 	// so the call (and thus the import) survives optimisation.
@@ -58,8 +54,8 @@ function main(): i32 {
 		t.Fatalf("write prog: %v", err)
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
-	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+	if out, err := e2eharness.SelfHostCompileCmd(t, "wasm32-wasi", progPath, refPath).CombinedOutput(); err != nil {
+		t.Fatalf("self-host fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {

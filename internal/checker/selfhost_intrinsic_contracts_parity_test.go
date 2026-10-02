@@ -159,12 +159,13 @@ func withLowering(names []string, lowerable map[string]bool) []string {
 }
 
 // selfHostLoweredIntrinsics is every intrinsic name the self-hosted lowering
-// mentions — irlower for the AST path, ir.fern for the op table. A name in
-// neither has no IR behind it on this compiler at all.
+// mentions — semsource and ssarc, the typed lowering, irlower for the op
+// builders it calls, ir.fern for the op table. A name in none has no IR
+// behind it on this compiler at all.
 func selfHostLoweredIntrinsics(t *testing.T) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
-	for _, f := range []string{"irlower.fern", "ir.fern", "ssarc.fern"} {
+	for _, f := range []string{"semsource.fern", "ssarc.fern", "irlower.fern", "ir.fern"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", f))
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
@@ -362,11 +363,11 @@ func selfHostTypedBuiltins(t *testing.T, section string, members bool) map[strin
 
 // TestSelfHostRawFloorIsTypedWhole pins the raw-memory floor the runtime
 // helpers are written on. Native registers none of it, so the family gate
-// above cannot see it; the source of truth is what irlower lowers. Every such
-// name must have a row in checker.fern's raw_floor_sigs (which
-// semsource.fern's raw_floor_contracts reads, so a typed name is contracted)
-// and in ssarc.fern's raw_floor_ops, or the typed path refuses the helper that
-// calls it.
+// above cannot see it; the source of truth is what the helper sources
+// (asmcore.fern's rt_src_*) call. Every such name must have a row in
+// checker.fern's raw_floor_sigs (which semsource.fern's raw_floor_contracts
+// reads, so a typed name is contracted) and in ssarc.fern's raw_floor_ops, or
+// the typed path refuses the helper that calls it.
 func TestSelfHostRawFloorIsTypedWhole(t *testing.T) {
 	read := func(name string) string {
 		b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", name))
@@ -375,17 +376,17 @@ func TestSelfHostRawFloorIsTypedWhole(t *testing.T) {
 		}
 		return string(b)
 	}
-	lowered := map[string]bool{}
-	for _, m := range regexp.MustCompile(`cid\.name == "(__raw_[a-z0-9_]+|__syscall[0-9])"`).FindAllStringSubmatch(read("irlower.fern"), -1) {
-		lowered[m[1]] = true
+	called := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\b(__raw_[a-z0-9_]+|__syscall[0-9])\(`).FindAllStringSubmatch(read("asmcore.fern"), -1) {
+		called[m[1]] = true
 	}
-	if len(lowered) == 0 {
-		t.Fatal("irlower.fern lowers no raw-floor name — the pattern has drifted from its spelling")
+	if len(called) == 0 {
+		t.Fatal("asmcore.fern's helper sources call no raw-floor name — the pattern has drifted from its spelling")
 	}
 	typed := rawFloorTableNames(t, read("checker.fern"), `function raw_floor_sigs\(\): RawFloorSig\[\] \{`)
 	arms := rawFloorTableNames(t, read("ssarc.fern"), `function raw_floor_ops\(\): RawOps\[\] \{`)
 	var untyped, unlowered []string
-	for n := range lowered {
+	for n := range called {
 		if !typed[n] {
 			untyped = append(untyped, n)
 		}
@@ -396,10 +397,10 @@ func TestSelfHostRawFloorIsTypedWhole(t *testing.T) {
 	sort.Strings(untyped)
 	sort.Strings(unlowered)
 	if len(untyped) > 0 {
-		t.Errorf("irlower lowers %s, which checker.fern's raw_floor_sigs does not type", strings.Join(untyped, ", "))
+		t.Errorf("the runtime helpers call %s, which checker.fern's raw_floor_sigs does not type", strings.Join(untyped, ", "))
 	}
 	if len(unlowered) > 0 {
-		t.Errorf("irlower lowers %s, which ssarc.fern's raw_floor_ops has no row for", strings.Join(unlowered, ", "))
+		t.Errorf("the runtime helpers call %s, which ssarc.fern's raw_floor_ops has no row for", strings.Join(unlowered, ", "))
 	}
 }
 

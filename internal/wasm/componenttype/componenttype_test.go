@@ -125,31 +125,36 @@ func findWITDir() (string, error) {
 	}
 }
 
-// TestProxyWorldFernPayload pins the self-host compiler's copy of the proxy
-// world (examples/self_host/wit_proxy_world.fern, the concatenated Fern string
-// literals of proxy_world_payload) to proxy.bin, so the two cannot drift when
-// the WIT is regenerated. The literals are read through the lexer, so any
-// spelling of a byte counts.
-func TestProxyWorldFernPayload(t *testing.T) {
-	want, err := componenttype.PayloadFor("proxy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src, err := os.ReadFile(filepath.Join("..", "..", "..", "examples", "self_host", "wit_proxy_world.fern"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	toks, _, err := lexer.Tokenize(string(src))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got []byte
-	for _, tok := range toks {
-		if tok.Kind == lexer.String {
-			got = append(got, tok.Text...)
+// TestWorldFernPayloads pins the self-host compiler's copies of the embedded
+// worlds (the concatenated Fern string literals of each file's payload
+// function) to their .bin files, so the two cannot drift when the WIT is
+// regenerated. The literals are read through the lexer, so any spelling of a
+// byte counts.
+func TestWorldFernPayloads(t *testing.T) {
+	for world, file := range map[string]string{
+		"fern":  "wit_fern_world.fern",
+		"proxy": "wit_proxy_world.fern",
+	} {
+		want, err := componenttype.PayloadFor(world)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("wit_proxy_world.fern carries %d bytes that differ from proxy.bin (%d bytes); regenerate it per doc.go", len(got), len(want))
+		src, err := os.ReadFile(filepath.Join("..", "..", "..", "examples", "self_host", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		toks, _, err := lexer.Tokenize(string(src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []byte
+		for _, tok := range toks {
+			if tok.Kind == lexer.String {
+				got = append(got, tok.Text...)
+			}
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s carries %d bytes that differ from %s.bin (%d bytes); regenerate it per doc.go", file, len(got), world, len(want))
+		}
 	}
 }

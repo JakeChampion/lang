@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -49,10 +50,6 @@ func TestComposeTcpFromWorld(t *testing.T) {
 	probe.Close()
 
 	dir := t.TempDir()
-	fernBin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", fernBin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("build fern: %v\n%s", err, out)
-	}
 
 	src := strings.Replace(`function main(): i32 {
     var sock = tcp_listen(__PORT__);
@@ -72,8 +69,8 @@ func TestComposeTcpFromWorld(t *testing.T) {
 		t.Fatalf("write prog: %v", err)
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
-	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+	if out, err := e2eharness.SelfHostCompileCmd(t, "wasm32-wasi", progPath, refPath).CombinedOutput(); err != nil {
+		t.Fatalf("self-host fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {

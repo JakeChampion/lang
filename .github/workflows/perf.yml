@@ -17,13 +17,14 @@ name: Perf
 # change is signal. The one exception — the string-keyed map's per-process hash
 # seed — is documented and given its own tolerance in the baseline.
 #
-# ADVISORY, EXCEPT THE ALLOCATION COMPARISON. Every check here warns and
-# annotates without failing the job — flip FERN_CI_PERF_GATE_STRICT=1 on one
-# once its numbers have been stable for a while and the corpus is trusted, the
-# route the size gate took (#6826). The self-host allocation step is the
-# exception and does fail: it carries FERN_CI_PERF_GATE_MAX_DRIFT, a CEILING
-# rather than a strict tolerance, for the reasons written above that step
-# (#9963).
+# TWO GATES FAIL, TWO ADVISE. `bench` is strict (FERN_CI_PERF_GATE_STRICT=1):
+# a row outside its tolerance in either direction fails the job, so a
+# regression cannot merge and a win has to be banked in the PR that made it
+# (#9647). The self-host allocation step carries FERN_CI_PERF_GATE_MAX_DRIFT, a
+# CEILING rather than a strict tolerance, for the reasons written above that
+# step (#9963). The cliff and emitted-size checks warn and annotate only — the
+# route the size gate took (#6826) is to flip STRICT on one once its numbers
+# have been stable for a while.
 #
 # HISTORY. On main, every job also appends its report to the commit's note
 # under refs/notes/perf (scripts/perf-history). The baseline files are the
@@ -74,11 +75,16 @@ jobs:
       - name: Benchmark
         run: scripts/perf-bench "${{ runner.temp }}/perf-report.txt"
 
+      # Strict, unlike the self-host lanes below: `.text` is a static count
+      # that moves only when codegen does, and the `.ir` rows whose spread is
+      # not zero (the string-keyed map's hash seed) carry their own tolerance.
       - name: Compare against the baseline
+        env:
+          FERN_CI_PERF_GATE_STRICT: "1"
         run: scripts/ci-check-perf .github/perf-baseline.txt "${{ runner.temp }}/perf-report.txt"
 
       - name: Record the report in refs/notes/perf
-        if: github.event_name == 'push'
+        if: ${{ !cancelled() && github.event_name == 'push' }}
         run: scripts/perf-history record perf-${{ matrix.host }} "${{ runner.temp }}/perf-report.txt"
 
       - name: Upload the report

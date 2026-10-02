@@ -1,5 +1,10 @@
 # Byte records and binary-safe shuf
 
+The refresh integrates stdin checkpoint `3730af531`, preserving
+typed-IR-only lowering and the removal of unrelated map-method roots.
+Bootstrap, actual stage-2 probes, target tests, the full unit suite and
+all lint gates pass.
+
 `ByteLineReader` reads delimited byte records from a borrowed `Reader`.
 Returned arrays own their contents and remain valid after later reads or
 closing the reader. Records include their delimiter when present; EOF keeps
@@ -26,26 +31,24 @@ now frees its scratch return area on success and failure.
 
 ## Current integration validation
 
-The source is based on stdin commit `1573fe231`. In-process partial-read
-faults, byte-scan type contracts, borrowing and WASM helper-registration
-checks pass. The bootstrap target matrix passes in 13.237 seconds and GNU
-`shuf` parity in 0.974 seconds. Primary x86-64, ARM64 and core-WASM tests,
-including ownership and IR registration checks, pass in 79.598 seconds.
-Darwin primary and interpreter tests pass in 30.707 seconds. All lint gates
-pass after expressing the interpreter's array guard with `if let`; the
-wildcard-match ceiling is unchanged.
+The source is based on stdin commit `3730af531`. In-process partial-read
+faults and the Go compiler's byte-record and byte-scan target matrix pass
+in 14.500 seconds. Primary byte-record, byte-scan, `shuf` and seek tests
+pass. After reconciling the registry totals for both `tcp_send_bytes` and
+`memchr_bytes`, the opcode and lift-admission checks pass in 1.257 seconds.
+GNU `shuf` parity passes in 0.940 seconds. The full unit suite and all lint
+gates pass on the final source.
 
-The published-seed bootstrap completes in 25, 23 and 24 seconds. Stages two
-and three are identical: 12,130,833 bytes, SHA-256
-`7bf1d72975ceda529b77b53eb1deb8682865d745cad03dac120d8ee55691e29c`.
+The published-seed bootstrap completes in 25, 21 and 19 seconds. Stages two
+and three are identical: 12,411,905 bytes, SHA-256
+`857784a4d4a5ec1d690ddb914f0b294b88650f98b437ef4f6474bbcc5bada346`.
 That stage-2 compiler passes 84 byte-record cases and 20 `shuf` cases across
 Darwin and core WASM, with balanced allocations and frees. Byte-scan probes
 also pass on those targets, Preview 2 and the primary interpreter. Compiled
 scan probes verify zero allocations during repeated scans. The Preview 2
 result does not claim a whole-component allocation census or Reader support.
 
-Full-unit validation remains pending. Test durations are not performance
-comparisons.
+Test durations are not performance comparisons.
 
 The regression matrix covers every byte value, vector boundaries, extreme
 scan arguments, zero allocations during repeated scans, retained aliases,
@@ -67,30 +70,32 @@ separately.
 
 | Workload | Previous Fern | Byte-based Fern | GNU | uutils |
 | --- | ---: | ---: | ---: | ---: |
-| Whole file, median | 12.027 ms | 12.272 ms | 10.004 ms | 10.466 ms |
-| Stdin reservoir, median | 51.015 ms | 48.973 ms | 46.021 ms | 51.379 ms |
-| Whole file, peak RSS | 43,810,816 B | 35,160,064 B | 9,584,640 B | 12,271,616 B |
-| Reservoir, peak RSS | 81,166,336 B | 43,401,216 B | 9,682,944 B | 20,791,296 B |
+| Whole file, median | 15.167 ms | 14.683 ms | 11.933 ms | 12.393 ms |
+| Stdin reservoir, median | 54.260 ms | 50.028 ms | 47.075 ms | 52.924 ms |
+| Whole file, peak RSS | 43,827,200 B | 35,176,448 B | 9,584,640 B | 12,271,616 B |
+| Reservoir, peak RSS | 81,182,720 B | 43,499,520 B | 9,715,712 B | 20,824,064 B |
 
-Whole-file timing ranges overlap: 11.760-12.400 ms before and
-11.825-12.462 ms after. Reservoir ranges are 50.635-52.156 ms before and
-47.825-49.828 ms after. The reservoir improvement applies to this measured
-long-record workload; it is not a claim about all inputs.
+Both timing ranges overlap: whole-file timings are 13.838-29.098 ms before
+and 12.918-16.122 ms after; reservoir timings are 51.831-57.741 ms before
+and 49.187-54.616 ms after. This run establishes lower peak memory use for
+these workloads, not a throughput improvement.
 
 ## Size
 
-Both `shuf` executables are 149,409 bytes. Native code grows from 101,684 to
-103,272 bytes, unwind data from 12,812 to 13,396, and the data section stays
+Both `shuf` executables are 149,409 bytes. Native code grows from 101,748 to
+103,772 bytes, unwind data from 12,812 to 13,460, and the data section stays
 at 7,840 bytes. Segment sizes remain unchanged.
 
-Platform-assembled objects attribute 1,568 bytes of additional code; the
+Platform-assembled objects attribute 2,004 bytes of additional code; the
 native emitter's increase is 20 bytes larger. The new byte-line routine
 uses 2,432 bytes versus 2,876 for the old text routine. Raw input, byte
 copying/scanning, output and ownership helpers account for the additions;
 removing string joins, delimiter stripping and the old slurp loop offsets
-part of that cost. No size baseline changed.
+part of that cost. For this symbol comparison, ELF `.weak` directives in
+the emitted assembly were translated to Mach-O `.weak_definition` before
+assembly. No executable code was changed. No size baseline changed.
 
-The compiler grows from 12,114,209 to 12,130,833 bytes. Code adds 5,920 bytes,
-unwind data 280 and data 1,536 for the new intrinsic's checking, interpretation
-and lowering plus seek cleanup. The text segment crosses a 16 KiB boundary;
-link-edit payload adds 240 bytes, including 128 bytes of code signature.
+The compiler grows from 12,411,809 to 12,411,905 bytes. Code adds 5,776 bytes,
+unwind data 272 and data 1,280 for the new intrinsic's checking, interpretation
+and lowering. Text and data file segments stay the same; the link-edit
+payload grows by 96 bytes. Both compilers include the shared seek cleanup.
