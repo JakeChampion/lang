@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -29,40 +28,6 @@ import (
 // `entry = av[1]` / `root = av[2]` last-used at `av[2]` inside an `if`). The
 // cfArgsAliasSrc case below pins that this self-host shape is reclaimed
 // correctly (no over-release) with the pointer-element gate in place.
-
-func cfLit(n int) string {
-	p := make([]string, n)
-	for i := range p {
-		p[i] = "0"
-	}
-	return "[" + strings.Join(p, ", ") + "]"
-}
-
-// cfUsedInIfSrc: `big` is used ONLY inside a taken if-branch, dead after; a
-// later `tail` alloc should reuse big's freed block (peak ~1 block).
-func cfUsedInIfSrc() string {
-	l := cfLit(100)
-	return `function main(): i32 {
-    let before: i32 = (__heap_bump_bytes() as i32);
-    let big: i32[] = ` + l + `;
-    let acc: i32 = 0;
-    if (before >= 0) { acc = acc + big[0] + big[99]; }
-    let tail: i32[] = ` + l + `;
-    acc = acc + tail[0];
-    return ((__heap_bump_bytes() as i32) - before) + acc;
-}`
-}
-
-// cfBothLiveSrc: the control — big + tail both live to exit (peak ~2 blocks).
-func cfBothLiveSrc() string {
-	l := cfLit(100)
-	return `function main(): i32 {
-    let before: i32 = (__heap_bump_bytes() as i32);
-    let big: i32[] = ` + l + `;
-    let tail: i32[] = ` + l + `;
-    return ((__heap_bump_bytes() as i32) - before) + big[0] + tail[0];
-}`
-}
 
 // cfEarlyReturnSrc: `big` is used inside an if that can early-return on one
 // path (big still live there -> its own exit sweep) and is dead after the if

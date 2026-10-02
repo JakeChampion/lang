@@ -55,30 +55,6 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// genReuseDead2Src / genReuseLive2Src: heap-bump win probe. Two sequentially
-// dead Points reused vs two simultaneously live — reuse holds ~1 box.
-func genReuseDead2Src() string {
-	return `struct Box { a: i32, b: i32, c: i32, d: i32 }
-function main(): i32 {
-    let p: Box = Box { a: 1, b: 2, c: 3, d: 4 };
-    let s: i32 = p.a + p.d;
-    let q: Box = Box { a: s, b: 0, c: 0, d: 0 };   // reuses p's box
-    let t: i32 = q.a;
-    let r: Box = Box { a: t, b: 0, c: 0, d: 0 };   // reuses q's box
-    return (__heap_bump_bytes() as i32) + r.a;
-}`
-}
-
-func genReuseLive2Src() string {
-	return `struct Box { a: i32, b: i32, c: i32, d: i32 }
-function main(): i32 {
-    let p: Box = Box { a: 1, b: 2, c: 3, d: 4 };
-    let q: Box = Box { a: 5, b: 6, c: 7, d: 8 };
-    let r: Box = Box { a: 9, b: 10, c: 11, d: 12 };
-    return (__heap_bump_bytes() as i32) + p.a + q.a + r.a;
-}`
-}
-
 // genReusePtrChurnSrc: pointer-field general reuse. Each iteration builds a
 // dead Holder `a` with an array, then reuses a's box for `b` with a FRESH
 // array — a's old array is deep-freeing-dropped on the reuse branch before b's
