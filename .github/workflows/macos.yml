@@ -372,11 +372,8 @@ jobs:
         # qemu-aarch64 + aarch64-linux-gnu-gcc aren't present
         # (which is always the case on macOS). `standard-verbose`
         # keeps the streamed RUN/PASS/FAIL of the old `-v` run.
-        # -timeout for the corpus step's reason: this runner's speed varies
-        # about twofold, and the self-host sibling below has reached go
-        # test's default ten minutes, which killed it mid-test.
         run: |
-          gotestsum --format standard-verbose -- -timeout 30m -run TestArm64Darwin ./internal/e2e/
+          gotestsum --format standard-verbose -- -run TestArm64Darwin ./internal/e2e/
 
       - name: go test (SELF-HOST arm64-darwin native execution)
         if: "!cancelled() && matrix.shard == 0 && steps.gate.outputs.signed != 'true'"
@@ -388,8 +385,13 @@ jobs:
         # the static LC_UNIXTHREAD container, the entry-point offset and the
         # unmapped .bss tail all shipped: on the Linux shards this test only
         # parses the Mach-O it cannot run.
+        #
+        # -timeout is explicit for the corpus step's reason above: the set
+        # measures ~590 s, and go test's ten-minute default left no room for
+        # this runner's twofold speed swing.
+        timeout-minutes: 30
         run: |
-          gotestsum --format standard-verbose -- -timeout 30m -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
+          gotestsum --format standard-verbose -- -timeout 25m -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

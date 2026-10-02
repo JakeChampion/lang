@@ -93,8 +93,10 @@ pub function rc_coverage_str(r: RcResult): string {
 
 // is_reuse_alloc reports whether a call names the reuse allocator. Both
 // spellings are accepted so the pass reads native-emitted streams too.
-function is_reuse_alloc(op: ir.Op): boolean {
-  if (op.kind_tag != ir.kind_id("call_direct")) {
+// is_reuse_alloc: `op` is a direct call of the reuse allocator; `k_calld` is
+// the call_direct kind, decided once by the scan that asks per op.
+function is_reuse_alloc(op: ir.Op, k_calld: i32): boolean {
+  if (op.kind_tag != k_calld) {
     return false;
   }
   return op.str == "__fern_alloc_reuse" || op.str == "__alloc_reuse";
@@ -757,9 +759,10 @@ function double_claim_problems(fn_name: string, ops: ir.Op[], claims: Claim[]): 
 pub function verify_rc_fn(fn_name: string, ops: ir.Op[]): RcResult {
   var r: RcResult = rc_result_new();
   var claims: Claim[] = [];
+  var k_calld: i32 = ir.kind_id("call_direct");
   var i: i32 = 0;
   while (i < ops.len()) {
-    if (is_reuse_alloc(ops[i])) {
+    if (is_reuse_alloc(ops[i], k_calld)) {
       r = RcResult { ...r, sites: r.sites + 1 };
       var s: Site = read_site(ops, i);
       if (s.ok) {

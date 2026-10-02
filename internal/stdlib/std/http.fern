@@ -1836,7 +1836,8 @@ function __http_reason(code: i32): string {
 // response from an HttpResponse, advertising `Connection: close`
 // so the client's `read()` returns the EOF that tells it the
 // response is complete after the caller's `tcp_send` finishes the
-// write. No chunked TE.
+// write. No chunked TE. This text form decodes byte bodies with replacement;
+// use http_serialize_response_bytes to preserve a binary body.
 pub function http_serialize_response(resp: HttpResponse): string {
   return http_serialize_response_conn(resp, false);
 }
@@ -1860,14 +1861,48 @@ pub function http_serialize_response_conn(resp: HttpResponse, keep_alive: boolea
 pub function http_serialize_response_to(method: string, resp: HttpResponse, keep_alive: boolean): string {
   var bodiless: boolean = http_bodiless(resp.status);
   var framing: string = "";
+  var body: string = "";
   if (!bodiless) {
-    framing = "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n";
+    body = resp.body_string();
+    framing = "Content-Length: " + int.int_to_string(body.len()) + "\r\n";
   }
   var head: string = http_serialize_response_head(resp, keep_alive, framing);
   if (bodiless || method == "HEAD") {
     return head;
   }
-  return head + resp.body_string();
+  return head + body;
+}
+
+// Byte-domain counterparts of the text serializers above. The body is read
+// once, including a chunk producer, and Content-Length counts those bytes.
+// A file body must first be materialized, as for the text form.
+pub function http_serialize_response_bytes(resp: HttpResponse): u8[] {
+  return http_serialize_response_conn_bytes(resp, false);
+}
+
+pub function http_serialize_response_conn_bytes(resp: HttpResponse, keep_alive: boolean): u8[] {
+  return http_serialize_response_to_bytes("GET", resp, keep_alive);
+}
+
+pub function http_serialize_response_to_bytes(method: string, resp: HttpResponse, keep_alive: boolean): u8[] {
+  if (http_bodiless(resp.status)) {
+    return http_serialize_response_head(resp, keep_alive, "").bytes();
+  }
+  if (method == "HEAD") {
+    var framing: string = "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n";
+    return http_serialize_response_head(resp, keep_alive, framing).bytes();
+  }
+  var body: u8[] = resp.body_bytes();
+  var framing: string = "Content-Length: " + int.int_to_string(body.len()) + "\r\n";
+  var head: string = http_serialize_response_head(resp, keep_alive, framing);
+  var prefix: i32 = head.len();
+  assert(body.len() <= 2147483647 - prefix);
+  var builder: usize = buf_new(prefix + body.len());
+  buf_push(builder, head);
+  buf_push_bytes_range(builder, body, 0, body.len());
+  var wire: u8[] = buf_take_bytes(builder);
+  buf_free(builder);
+  return wire;
 }
 
 // `http_bodiless(status)` — whether a response with `status` carries no

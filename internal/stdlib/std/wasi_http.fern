@@ -8,8 +8,8 @@
 // the header snapshot, the body stream — into an `HttpRequest`, calls the
 // program's `handle(req, plat)` with a fresh `Platform` bag, and writes the
 // `HttpResponse` back: headers appended to a fresh `fields`, the status set,
-// the body streamed in the 4096-byte pieces `blocking-write-and-flush`
-// takes, the body finished, and the response handed to the outparam.
+// the response handed to the outparam, and the body streamed in 4096-byte
+// pieces before finishing it.
 //
 // The compiler appends the export that binds this to the program's `handle`
 // (examples/self_host/emitforms.fern, HTTP_ENTRY_STUB); a program does not
@@ -86,7 +86,7 @@ function response_body(resp: i32): Result[i32, i32];
 function body_write(body: i32): Result[i32, i32];
 
 @import("wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush")
-function stream_write(stream: i32, bytes: string): Result[i32, i32];
+function stream_write(stream: i32, bytes: u8[]): Result[i32, i32];
 
 @import("wasi:io/streams@0.2.0", "[resource-drop]output-stream")
 function output_stream_drop(stream: i32): void;
@@ -231,9 +231,9 @@ function headers_of(fields: i32): HeaderMap {
   return HeaderMap { names: names, values: values };
 }
 
-// send writes the response to the host. The output stream is dropped
-// before the body is finished, and the body finished before the response
-// is set: each is the child the next step's resource must no longer have.
+// Send the response before writing its body so the host can drain the
+// stream under backpressure. The output stream must still be dropped
+// before finishing its parent outgoing-body resource.
 function send(response_out: i32, resp: HttpResponse): void {
   var fields: i32 = fields_new();
   var i: i32 = 0;
@@ -248,9 +248,10 @@ function send(response_out: i32, resp: HttpResponse): void {
   response_set_status(response, resp.status);
   match (response_body(response)) {
     Ok(body) => {
+      outparam_set(response_out, 0, response, 0, 0 as i64, 0, 0, 0, 0);
       match (body_write(body)) {
         Ok(stream) => {
-          write_all(stream, body_wire(resp));
+          write_all(stream, resp.body_bytes());
           output_stream_drop(stream);
         },
         Err(e) => {}
@@ -260,45 +261,28 @@ function send(response_out: i32, resp: HttpResponse): void {
         Err(e) => {}
       }
     },
-    Err(e) => {}
-  }
-  outparam_set(response_out, 0, response, 0, 0 as i64, 0, 0, 0, 0);
-}
-
-// body_wire is the body's bytes as `stream_write` takes them, which is
-// as a string (#10948): a text body is itself, and a byte-domain body
-// rides an unchecked string so a binary body reaches the host intact,
-// where `body_string` would read its ill-formed sequences as U+FFFD.
-function body_wire(resp: HttpResponse): string {
-  match (resp.body) {
-    BodyText(s) => {
-      return s;
-    },
-    BodyBytes(bs) => {
-      return string_from_bytes_unchecked(bs);
-    },
-    BodyStream(st) => {
-      return string_from_bytes_unchecked(resp.body_bytes());
-    },
-    BodyFile(path) => {
-      return "";
-    },
-    BodyChunks(producer) => {
-      return string_from_bytes_unchecked(resp.body_bytes());
+    Err(e) => {
+      outparam_set(response_out, 0, response, 0, 0 as i64, 0, 0, 0, 0);
     }
   }
-  return "";
 }
 
-function write_all(stream: i32, body: string): void {
+// The host accepts list<u8>, including bytes that are not UTF-8. Keep the
+// body in that domain through chunking and canonical ABI marshalling.
+function write_all(stream: i32, body: u8[]): void {
   var off: i32 = 0;
   var n: i32 = body.len();
+  if (n == 0) {
+    return;
+  }
+  var chunk: usize = buf_new(WRITE_CHUNK);
   while (off < n) {
-    var end: i32 = off + WRITE_CHUNK;
-    if (end > n) {
-      end = n;
+    var end: i32 = n;
+    if (n - off > WRITE_CHUNK) {
+      end = off + WRITE_CHUNK;
     }
-    match (stream_write(stream, slice_unchecked(body, off, end) + "")) {
+    buf_push_bytes_range(chunk, body, off, end);
+    match (stream_write(stream, buf_take_bytes(chunk))) {
       Ok(v) => {
         off = end;
       },
@@ -307,4 +291,5 @@ function write_all(stream: i32, body: string): void {
       }
     }
   }
+  buf_free(chunk);
 }

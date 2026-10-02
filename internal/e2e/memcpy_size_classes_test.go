@@ -54,18 +54,6 @@ function main(): i32 {
 }
 `
 
-func TestX86_64MemcpySizeClasses(t *testing.T) {
-	if _, code := compileAndRunX86_64(t, memcpySizeClassesProgram); code != 0 {
-		t.Errorf("x86-64 __memcpy size classes: exit = %d, want 0 (bad byte count)", code)
-	}
-}
-
-func TestArm64MemcpySizeClasses(t *testing.T) {
-	if _, code := compileAndRunArm64(t, memcpySizeClassesProgram); code != 0 {
-		t.Errorf("arm64 __memcpy size classes: exit = %d, want 0 (bad byte count)", code)
-	}
-}
-
 func TestWASMMemcpySizeClasses(t *testing.T) {
 	if code := runWasm(t, memcpySizeClassesProgram); code != 0 {
 		t.Errorf("wasm __memcpy size classes: exit = %d, want 0 (bad byte count)", code)

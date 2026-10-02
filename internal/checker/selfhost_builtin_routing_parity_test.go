@@ -19,8 +19,9 @@ import (
 // (#9124) each reached main that way, and the name gate passed on all three
 // (#9158, #9156).
 //
-// A builtin is routed when a self-host lowering source names it: irlower for
-// the AST path, semlower and semsource for the typed one. ir.fern's op table
+// A builtin is routed when a self-host lowering source names it: semlower,
+// semsource and ssarc, the typed lowering, or constfold, which folds a call
+// (target_os, target_arch) to its value before lowering. ir.fern's op table
 // does not count, since an op nothing emits is the window_size shape. The
 // check is string lookups over committed sources, so it runs on every host,
 // including the ones where the e2e self-host legs skip.
@@ -40,7 +41,7 @@ func TestSelfHostRoutesEveryNativeBuiltin(t *testing.T) {
 		t.Fatalf("check probe: %v", err)
 	}
 	routed := map[string]bool{}
-	for _, f := range []string{"irlower.fern", "semlower.fern", "semsource.fern"} {
+	for _, f := range []string{"semlower.fern", "semsource.fern", "ssarc.fern", "constfold.fern"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", f))
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
