@@ -70,6 +70,38 @@ function test_v6_carrying_a_public_v4_address(): test.TestOutcome {
   return test.assert_eq(kinds(["::ffff:8.8.8.8", "64:ff9b::808:808", "2002:808:808::"]), "global global global");
 }
 
+// 64:ff9b:1::/48, where the operator picks the prefix length: the same
+// 169.254.169.254 laid out under /48, /64 and /96 is special, and
+// 8.8.8.8 under /48 is global.
+function test_local_use_nat64(): test.TestOutcome {
+  return test.assert_eq(kinds(["64:ff9b:1:a9fe:a9:fe00::", "64:ff9b:1:0:a9:fea9:fe00:0", "64:ff9b:1::a9fe:a9fe", "64:ff9b:1:808:8:800::"]), "special special special global");
+}
+
+// `carried(text, bits)` — the address `text` carries under a prefix of
+// `bits`, or "none".
+function carried(text: string, bits: i32): string {
+  match (net.ip_parse(text)) {
+    Some(a) => {
+      match (a.embedded_v4(bits)) {
+        Some(v4) => {
+          return v4.to_string();
+        },
+        None => {
+          return "none";
+        }
+      }
+    },
+    None => {
+      return "unparsed";
+    }
+  }
+  return "unparsed";
+}
+
+function test_embedded_v4(): test.TestOutcome {
+  return test.assert_eq(carried("64:ff9b::c000:201", 96) + " " + carried("2001:db8:1:2:c0:2:100:0", 64) + " " + carried("64:ff9b:1:a9fe:a9:fe00::", 48) + " " + carried("64:ff9b::c000:201", 50) + " " + carried("192.0.2.1", 96), "192.0.2.1 192.0.2.1 169.254.169.254 none none");
+}
+
 function main(): i32 {
   var r: test.TestRunner = test.test_new("std/net");
   r = r.it("public addresses are global", test_public_addresses);
@@ -80,5 +112,7 @@ function main(): i32 {
   r = r.it("v6 just past each edge", test_v6_just_past_each_edge);
   r = r.it("v6 carrying a v4 address", test_v6_carrying_a_v4_address);
   r = r.it("v6 carrying a public v4 address", test_v6_carrying_a_public_v4_address);
+  r = r.it("local-use NAT64 under any prefix length", test_local_use_nat64);
+  r = r.it("embedded_v4 under each layout", test_embedded_v4);
   return r.finish();
 }

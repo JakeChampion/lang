@@ -178,13 +178,14 @@ func proxyLine(method, target, host, body, trace, proxyAuth string) string {
 }
 
 // SetFetchProxy names the upstream as the forward proxy for the test
-// process and every program it runs (`http_proxy`, with credentials), so
-// a request for a host other than loopback goes to the upstream as an
+// process and every program it runs (`http_proxy`, with a user and no
+// password, the credential form that needs its colon supplied), so a
+// request for a host other than loopback goes to the upstream as an
 // absolute-form target. Loopback is never proxied, so every other case
 // of FetchClientSource is unaffected.
 func SetFetchProxy(t *testing.T, up *FetchUpstream) {
 	t.Helper()
-	t.Setenv("http_proxy", "http://u:p@127.0.0.1:"+strconv.Itoa(up.Port))
+	t.Setenv("http_proxy", "http://u@127.0.0.1:"+strconv.Itoa(up.Port))
 }
 
 // readRequest reads a request head and the body its Content-Length
@@ -240,7 +241,9 @@ func headerValue(head, name string) string {
 // before any lookup, and the proxy SetFetchProxy names taking every
 // request for a host that is not loopback (through `send` and through
 // `plat.http`, whose block list does not apply to the proxy), with the
-// absolute-form target, the origin's `Host` and the proxy credentials.
+// absolute-form target, the origin's `Host` and the proxy credentials; the
+// `plat.http` request for a global literal is proxied, the one for the
+// metadata address is refused before the proxy sees it.
 // `closedPort` is a port nothing listens on.
 func FetchClientSource(port, closedPort int) string {
 	return fmt.Sprintf(`import "std/fetch";
@@ -292,7 +295,8 @@ function main(): i32 {
     show("octal", fetch.send(fetch.get("http://0177.0.0.1/")));
     show("short", fetch.send(fetch.get("http://127.1/")));
     show("proxied", fetch.send(fetch.request("POST", "http://origin.invalid:81/via?x=1").with_header("X-Trace", "p1").with_text("body")));
-    show("platproxied", platform.platform_new().http(fetch.get("http://origin.invalid/via")));
+    show("platproxied", platform.platform_new().http(fetch.get("http://8.8.8.8/via")));
+    show("platproxiedblocked", platform.platform_new().http(fetch.get("http://169.254.169.254/via")));
     match (fetch.send(fetch.get(base() + "/binary"))) {
         Ok(resp) => {
             var bs: u8[] = resp.body_bytes();
@@ -369,6 +373,7 @@ octal: error invalid URL: an IPv4 address that is not four decimal octets
 short: error invalid URL: an IPv4 address that is not four decimal octets
 proxied: 201 [VIAPOST] headers: content-length=VIAPOSTLEN trailers:
 platproxied: 201 [VIAGET] headers: content-length=VIAGETLEN trailers:
+platproxiedblocked: error blocked: 169.254.169.254 is not a global address
 binary: 4 255 97 <not utf-8>
 big: 312000
 limit: error response body past its limit
@@ -415,8 +420,8 @@ func CheckFetchClient(t *testing.T, up *FetchUpstream, stdout string, exit int) 
 	for name, line := range map[string]string{
 		"ECHO":       echoLine("POST", "/echo?q=1", host, "payload", "t1", "", ""),
 		"PUT":        echoLine("PUT", "/echo", host, "raw", "", "", ""),
-		"VIAPOST":    proxyLine("POST", "http://origin.invalid:81/via?x=1", "origin.invalid:81", "body", "p1", "Basic dTpw"),
-		"VIAGET":     proxyLine("GET", "http://origin.invalid/via", "origin.invalid", "", "", "Basic dTpw"),
+		"VIAPOST":    proxyLine("POST", "http://origin.invalid:81/via?x=1", "origin.invalid:81", "body", "p1", "Basic dTo="),
+		"VIAGET":     proxyLine("GET", "http://8.8.8.8/via", "8.8.8.8", "", "", "Basic dTo="),
 		"POST303":    echoLine("GET", "/echo", host, "", "", "", ""),
 		"POST302":    echoLine("GET", "/echo", host, "", "", "", ""),
 		"POST307":    echoLine("POST", "/echo", host, "payload", "", "", ""),
