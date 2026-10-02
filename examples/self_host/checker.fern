@@ -15093,11 +15093,11 @@ function registered_intrinsics(): string[] {
 
 // redeclares reports whether funcs[di] redeclares an earlier function, method
 // or associated function, or a surface builtin.
-function redeclares(funcs: parser.FuncDecl[], di: i32): boolean {
+function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): boolean {
   var f2: parser.FuncDecl = funcs[di];
   var earlier: boolean = false;
-  var ej: i32 = 0;
-  while (ej < di) {
+  var ej: i32 = names.chain(f2.name);
+  while (ej >= 0 && ej < di) {
     var pe: parser.FuncDecl = funcs[ej];
     // Key redeclaration on the receiver TYPE, not the receiver NAME:
     // an ASSOCIATED function (`impl Default for i32 { function default()
@@ -15113,7 +15113,7 @@ function redeclares(funcs: parser.FuncDecl[], di: i32): boolean {
     if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type)) {
       earlier = true;
     }
-    ej = ej + 1;
+    ej = names.next[ej];
   }
   // A free function named like a builtin or an intrinsic redeclares it, as
   // native's pre-registered signature makes it there.
@@ -15161,10 +15161,15 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   // a method redeclared (same name AND receiver namespace). The redeclaration
   // SITE — the second + occurrences — is flagged, matching the Go
   // checker.
+  var decl_names: string[] = [];
+  for fd in mod.funcs {
+    decl_names = decl_names.append(fd.name);
+  }
+  var decl_index: util.NameIndex = util.name_index(decl_names);
   var di: i32 = 0;
   while (di < mod.funcs.len()) {
     var f2: parser.FuncDecl = mod.funcs[di];
-    if (redeclares(mod.funcs, di)) {
+    if (redeclares(mod.funcs, decl_index, di)) {
       if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else {
@@ -15320,6 +15325,10 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
 // dyn-trait consuming methods) — it under-reports rather than over-reports.
 pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[] }
 
+// OwnFuncs is the module's own-taking free functions with a name index over
+// them, one entry per row in order.
+pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex }
+
 struct MovedEntry { mname: string, mline: i32 }
 
 struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
@@ -15340,7 +15349,7 @@ struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 // checked type is scalar carries no reference, so handing it to a consuming
 // parameter transfers nothing and needs no proof of ownership (native's
 // scalarArgs).
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[] }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[] }
 
 // ow_expr_is_scalar is native's definitelyScalar on the argument's checked type.
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
@@ -15477,23 +15486,17 @@ function ow_nested_moved(m: MovedEntry[], params: ast.ParamDecl[]): MovedEntry[]
   return out;
 }
 
-function ow_func_flags(ofuncs: OwnFunc[], name: string): boolean[] {
-  for ofunc in ofuncs {
-    if (ofunc.name == name) {
-      return ofunc.flags;
-    }
+function ow_func_flags(ofuncs: OwnFuncs, name: string): boolean[] {
+  var i: i32 = ofuncs.names.find(name);
+  if (i >= 0) {
+    return ofuncs.rows[i].flags;
   }
   var empty: boolean[] = [];
   return empty;
 }
 
-function ow_is_own_func(ofuncs: OwnFunc[], name: string): boolean {
-  for ofunc in ofuncs {
-    if (ofunc.name == name) {
-      return true;
-    }
-  }
-  return false;
+function ow_is_own_func(ofuncs: OwnFuncs, name: string): boolean {
+  return ofuncs.names.has(name);
 }
 
 // ow_variant_known reports whether `name` is a declared VARIANT, optionally of
@@ -15647,7 +15650,7 @@ struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[], sels: LuSel[] 
 
 // LuFn is what every verdict reads: the body's facts, its parameter names and
 // the own-func table.
-struct LuFn { facts: LuFacts, params: string[], ofuncs: OwnFunc[] }
+struct LuFn { facts: LuFacts, params: string[], ofuncs: OwnFuncs }
 
 // LuSite is the statement a call sits in: its innermost statement list, its
 // index there, whether a loop re-runs it, and whether that list is the body of
@@ -15946,7 +15949,7 @@ function lu_returns_before_reading(site: LuSite, name: string): boolean {
 }
 
 function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
-  for ofn in fx.ofuncs {
+  for ofn in fx.ofuncs.rows {
     if (ofn.name == callee) {
       return i >= ofn.arr.len() || ofn.arr[i];
     }
@@ -16198,7 +16201,7 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: 
 // lu_last_use_args is the E051 admission for `fn`: the keys of the local
 // arguments handed to an `own` parameter where they die. A nested function is
 // lowered as a function of its own, so its body is answered by its own walk.
-function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFunc[]): string[] {
+function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs): string[] {
   var facts: LuFacts = LuFacts { occ: [], vars: [], escaping: [], sels: [] };
   var nested: ast.ExprLambda[] = [];
   for st in fn.body {
@@ -16906,8 +16909,9 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
 
 // collect_own_funcs records every function that has at least one `own`
 // parameter, with a per-parameter owned-flag list (for the E051 guard).
-function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFunc[] {
+function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFuncs {
   var out: OwnFunc[] = [];
+  var names: string[] = [];
   for func in funcs {
     var any_own: boolean = false;
     var flags: boolean[] = [];
@@ -16923,9 +16927,10 @@ function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFunc[] {
     }
     if (any_own && func.receiver_name.len() == 0) {
       out = out.append(OwnFunc { name: func.name, flags: flags, arr: arr });
+      names = names.append(func.name);
     }
   }
-  return out;
+  return OwnFuncs { rows: out, names: util.name_index(names) };
 }
 
 // ow_type_is_pointer reports whether a declared type SPELLING is
@@ -17005,7 +17010,7 @@ function ow_spine_stmts(body: ast.Stmt[]): ast.Stmt[] {
 
 // ow_borrowed_params names the parameters of `fn` that are pointers the caller
 // still owns — the only values whose owner outlives the call.
-function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFunc[]): string[] {
+function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFuncs): string[] {
   var flags: boolean[] = ow_func_flags(ofuncs, fn.name);
   var out: string[] = [];
   var i: i32 = 0;
@@ -17144,7 +17149,7 @@ function ow_borrowed_locals(spine: ast.Stmt[], mod: parser.Module, borrowed: str
 
 // ow_func_result_borrows reports whether any of the returns of `fn` is derived
 // from one of its borrowed pointer parameters.
-function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFunc[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   var borrowed: string[] = ow_borrowed_params(fn, mod, ofuncs);
   if (borrowed.len() == 0) {
     return false;
@@ -17203,7 +17208,7 @@ function ow_fresh_builtins(): string[] {
 // scrutinee alone (#9539): a pointer-returning function takes no pointer
 // parameter, so its result is built fresh, or every pointer parameter is
 // `own`, so the callee already took ownership of each.
-function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex): string[] {
+function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex): string[] {
   var out: string[] = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
@@ -17235,7 +17240,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builti
 // ow_result_borrows settles the least fixed point described at
 // ow_fresh_owners. After the first round only a function calling one the
 // previous round marked can change its answer, so only those are examined again.
-function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex): util.NameIndex {
+function ow_result_borrows(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex): util.NameIndex {
   var none: string[] = [];
   var borrows: util.NameIndex = util.name_index(none);
   var pending: parser.FuncDecl[] = [];
@@ -17280,7 +17285,7 @@ function ow_calls_any(fn: parser.FuncDecl, names: util.NameIndex): boolean {
 
 // ow_fresh_owners is the complement: every pointer-returning function the
 // fixpoint did not mark, plus the builtins.
-function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex, borrows: util.NameIndex): string[] {
+function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
   var out: string[] = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) {
@@ -17303,7 +17308,7 @@ function ow_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.N
 // a borrow back. ow_call_may_borrow already treats every method callee as able
 // to, so one pass over the settled `borrows` is enough — a method reached only
 // through another method is pessimistic already.
-function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.NameIndex, borrows: util.NameIndex): string[] {
+function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, borrows: util.NameIndex): string[] {
   var out: string[] = [];
   var refused: string[] = [];
   for fn in mod.funcs {
@@ -17335,7 +17340,7 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: util.
 // ordinary programs are untouched. The result-borrow fixpoint always spans the
 // module; only the bodies `focus` admits (in_focus) are walked.
 pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
-  var ofuncs: OwnFunc[] = collect_own_funcs(mod.funcs);
+  var ofuncs: OwnFuncs = collect_own_funcs(mod.funcs);
   var builtins: util.NameIndex = util.name_index(ow_fresh_builtins());
   var borrows: util.NameIndex = ow_result_borrows(mod, ofuncs, builtins);
   var fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);
@@ -17356,7 +17361,7 @@ pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
         borrowed = borrowed.append(param.name);
       }
     }
-    if (owned.len() > 0 || ofuncs.len() > 0) {
+    if (owned.len() > 0 || ofuncs.rows.len() > 0) {
       var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs) };
       var nomoved: MovedEntry[] = [];
       var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);

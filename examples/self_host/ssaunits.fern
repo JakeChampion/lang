@@ -126,26 +126,25 @@ function has_row(rows: GrowRow[], callee: string, param: i32, field: i32): boole
 // identically, however much they differ elsewhere. That is what lets a second
 // lowering keep a body the inference did not move.
 pub function grow_rows_agree(a: GrowTable, b: GrowTable, callees: string[]): boolean {
-  for row in a.rows {
-    if (names_has(callees, row.callee) && !has_row_at(b.rows, b.by_callee, row.callee, row.param, row.field)) {
-      return false;
-    }
-  }
-  for row in b.rows {
-    if (names_has(callees, row.callee) && !has_row_at(a.rows, a.by_callee, row.callee, row.param, row.field)) {
+  for callee in callees {
+    if (!rows_within(a, b, callee) || !rows_within(b, a, callee)) {
       return false;
     }
   }
   return true;
 }
 
-function names_has(names: string[], name: string): boolean {
-  for n in names {
-    if (n == name) {
-      return true;
+// rows_within reports whether every row of `a` for `callee` is in `b`.
+function rows_within(a: GrowTable, b: GrowTable, callee: string): boolean {
+  var i: i32 = a.by_callee.chain(callee);
+  while (i >= 0) {
+    var row: GrowRow = a.rows[i];
+    if (row.callee == callee && !has_row_at(b.rows, b.by_callee, callee, row.param, row.field)) {
+      return false;
     }
+    i = a.by_callee.next[i];
   }
-  return false;
+  return true;
 }
 
 function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): GrowRow[] {
