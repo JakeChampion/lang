@@ -42,54 +42,51 @@ func TestSelfHostWasmBufferRuntimeNeeds(t *testing.T) {
 		}{kind, `buf_push_` + kind + `(h, "\0", ` + table + `); var got = buf_take(h); buf_free(h); if (got != ` + want + `) { return 1; } return 0;`, []string{"push_" + kind, "reserve", "take"}})
 	}
 	definitions := regexp.MustCompile(`(?m)^  \(func \$__fern_buf_([A-Za-z0-9_]+)\b`)
-	// Legacy environment settings both use production typed-IR ownership.
-	for _, mode := range []string{"", "1"} {
-		for _, tc := range cases {
-			t.Run("legacy-env="+mode+"/"+tc.name, func(t *testing.T) {
-				dir := t.TempDir()
-				src, wat := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wat")
-				if err := os.WriteFile(src, []byte(`function main(): i32 { var h: usize = buf_new(1); `+tc.body+` }`), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				compile := exec.Command(cli, "-target", "wasm32-wasi", "-emit", "asm", "-o", wat, src, stdlib)
-				compile.Env = append(os.Environ(), "FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
-				if out, err := compile.CombinedOutput(); err != nil {
-					t.Fatalf("compile: %v\n%s", err, out)
-				}
-				text, err := os.ReadFile(wat)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var got []string
-				for _, match := range definitions.FindAllStringSubmatch(string(text), -1) {
-					got = append(got, match[1])
-				}
-				want := append([]string{"new", "free"}, tc.needs...)
-				sort.Strings(got)
-				sort.Strings(want)
-				if !reflect.DeepEqual(got, want) {
-					t.Fatalf("buffer helpers: got %v, want %v", got, want)
-				}
-				out, err := exec.Command(wasmtime, "run", wat).CombinedOutput()
-				if err != nil {
-					t.Fatalf("run: %v\n%s", err, out)
-				}
-				assertBalancedCensus(t, string(out))
-				// Each helper is also guest-local in a Preview 2 component.
-				// Recording its individual need must not require a host import.
-				component := filepath.Join(dir, "main.wasm")
-				compile = exec.Command(cli, "-target", "wasm32-wasi", "-o", component, src, stdlib)
-				compile.Env = append(os.Environ(), "FERN_SEM_IR="+mode, "FERN_SEM_IR_STRICT="+mode, "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
-				if out, err := compile.CombinedOutput(); err != nil {
-					t.Fatalf("component compile: %v\n%s", err, out)
-				}
-				out, err = exec.Command(wasmtime, "run", component).CombinedOutput()
-				if err != nil {
-					t.Fatalf("component run: %v\n%s", err, out)
-				}
-				// Component entry points do not print the allocation census;
-				// the core-module run above checks the same helper ownership.
-			})
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src, wat := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wat")
+			if err := os.WriteFile(src, []byte(`function main(): i32 { var h: usize = buf_new(1); `+tc.body+` }`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			compile := exec.Command(cli, "-target", "wasm32-wasi", "-emit", "asm", "-o", wat, src, stdlib)
+			compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if out, err := compile.CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, out)
+			}
+			text, err := os.ReadFile(wat)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, match := range definitions.FindAllStringSubmatch(string(text), -1) {
+				got = append(got, match[1])
+			}
+			want := append([]string{"new", "free"}, tc.needs...)
+			sort.Strings(got)
+			sort.Strings(want)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("buffer helpers: got %v, want %v", got, want)
+			}
+			out, err := exec.Command(wasmtime, "run", wat).CombinedOutput()
+			if err != nil {
+				t.Fatalf("run: %v\n%s", err, out)
+			}
+			assertBalancedCensus(t, string(out))
+			// Each helper is also guest-local in a Preview 2 component.
+			// Recording its individual need must not require a host import.
+			component := filepath.Join(dir, "main.wasm")
+			compile = exec.Command(cli, "-target", "wasm32-wasi", "-o", component, src, stdlib)
+			compile.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if out, err := compile.CombinedOutput(); err != nil {
+				t.Fatalf("component compile: %v\n%s", err, out)
+			}
+			out, err = exec.Command(wasmtime, "run", component).CombinedOutput()
+			if err != nil {
+				t.Fatalf("component run: %v\n%s", err, out)
+			}
+			// Component entry points do not print the allocation census;
+			// the core-module run above checks the same helper ownership.
+		})
 	}
 }

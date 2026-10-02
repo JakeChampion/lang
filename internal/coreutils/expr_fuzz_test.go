@@ -28,13 +28,11 @@ import (
 // what the failure names is that.
 //
 // The seed below is green. Others are not: sweeping 1-20 at 4000 cases
-// left seven seeds red, every one of them on a shape #9092 records with
-// a minimal input — a SIGSEGV in GNU expr, a match GNU never returns
-// from, four patterns glibc declares unmatched though they match, and
-// an empty alternation branch inside a counted repetition, where
-// glibc's answer is not a branch order at all (compile_rep in
-// coreutils/lib/bre.fern). All seven are older than this file. A
-// failure naming one of those inputs is that, not a regression.
+// against GNU 9.12 leaves six seeds red (7, 12, 15, 16, 17, 20), every
+// one on a GNU defect #9092 records with a minimal input — a SIGSEGV in
+// GNU expr, a match GNU never returns from, and four patterns glibc
+// declares unmatched though they match. A failure naming one of those
+// inputs is that, not a regression.
 const (
 	exprFuzzSeed  = 0x9051
 	exprFuzzCases = 3000
