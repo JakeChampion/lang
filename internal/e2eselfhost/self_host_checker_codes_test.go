@@ -1308,6 +1308,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// than the local-backed one, and one that views a param-backed
 		// source, both stay accepted — a summary coarsened to "this
 		// function returns some view" would reject both.
+		// A `str` receiver's summary is keyed as `string`, the key a call site
+		// looks it up by (#10924).
+		{"e065-str-receiver-method", "function mk(): string { return \"ab\"; }\nfunction (s: str) head1(): str { return slice_unchecked(s, 0, 1); }\nfunction f(): str { var s: string = mk(); return s.head1(); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-callee-launder", "function mk(): string { return \"ab\"; }\nfunction idv(s: str): str { return s; }\nfunction f(): str { var s: string = mk(); return idv(slice_unchecked(s, 0, 1)); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-callee-two-hop", "function mk(): string { return \"ab\"; }\nfunction idv(s: str): str { return s; }\nfunction hop(s: str): str { return idv(s); }\nfunction f(): str { var s: string = mk(); return hop(slice_unchecked(s, 0, 1)); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-callee-method", "function mk(): string { return \"ab\"; }\nfunction (s: string) view(): str { return s; }\nfunction f(): str { var s: string = mk(); return s.view(); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},

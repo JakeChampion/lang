@@ -8294,7 +8294,7 @@ pub struct ViewCallee { key: string, args: ast.Expr[] }
 
 function view_sum_key(fn: parser.FuncDecl): string {
   if (fn.receiver_type.len() > 0) {
-    return util.base_type_name(fn.receiver_type) + "." + fn.name;
+    return parser.receiver_base(fn.receiver_type) + "." + fn.name;
   }
   return fn.name;
 }
