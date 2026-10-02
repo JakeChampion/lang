@@ -6565,16 +6565,22 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
 // comment-only lines are dropped here, so no round ever sees one.
 function x86_gas_prepare(src: string): GasLine[] {
   var out: GasLine[] = [];
-  var lines: string[] = x86_str_split(src, "\n");
-  var li: i32 = 0;
-  while (li < lines.len()) {
-    var raw: string = lines[li];
-    li = li + 1;
+  var n: i32 = src.len();
+  var pos: i32 = 0;
+  // Each line is a view of `src` until its parts are kept: the split, the
+  // comment strip and the trims copy nothing.
+  while (pos < n) {
+    var stop: i32 = __memchr(src, 10, pos);
+    if (stop < 0) {
+      stop = n;
+    }
+    var raw: str = slice_unchecked(src, pos, stop);
+    pos = stop + 1;
     var hash: i32 = x86_gas_comment_start(raw);
     if (hash >= 0) {
-      raw = slice_unchecked(raw, 0, hash) + "";
+      raw = slice_unchecked(raw, 0, hash);
     }
-    var line: string = x86_gas_trim(raw);
+    var line: str = x86_gas_trimmed(raw);
     if (line.len() == 0) {
       continue;
     }
@@ -6587,7 +6593,7 @@ function x86_gas_prepare(src: string): GasLine[] {
       var before: str = slice_unchecked(line, 0, colon);
       if (x86_str_indexof(before, " ") < 0 && x86_str_indexof(before, "(") < 0 && x86_gas_top_comma(before) < 0) {
         label = before + "";
-        line = x86_gas_trim(slice_unchecked(line, colon + 1, line.len()));
+        line = x86_gas_trimmed(slice_unchecked(line, colon + 1, line.len()));
       }
     }
     if (label.len() == 0 && line.len() == 0) {
@@ -6596,17 +6602,19 @@ function x86_gas_prepare(src: string): GasLine[] {
     var mnem: string = "";
     var rest: string = "";
     if (line.len() > 0 && line[0] != b'.') {
-      mnem = line;
       var sp: i32 = x86_str_indexof(line, " ");
       if (sp >= 0) {
         mnem = slice_unchecked(line, 0, sp) + "";
-        rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
+        rest = x86_gas_trimmed(slice_unchecked(line, sp + 1, line.len())) + "";
+      } else {
+        mnem = line + "";
       }
     }
+    var body: string = line + "";
     if (mnem.len() == 0) {
-      out = out.append(GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 });
+      out = out.append(GasLine { label: label, body: body, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 });
     } else {
-      out = out.append(GasLine { ...x86_gas_classify(mnem, rest), label: label, body: line });
+      out = out.append(GasLine { ...x86_gas_classify(mnem, rest), label: label, body: body });
     }
   }
   return out;
