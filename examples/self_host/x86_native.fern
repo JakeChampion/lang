@@ -6579,19 +6579,27 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
 // comment-only lines are dropped here, so no round ever sees one.
 function x86_gas_prepare(src: string): GasLine[] {
   var out: GasLine[] = [];
-  var lines: string[] = x86_str_split(src, "\n");
-  var li: i32 = 0;
-  while (li < lines.len()) {
-    var raw: string = lines[li];
-    li = li + 1;
+  // Each line is read as a view of the text, its comment stripped and its
+  // ends trimmed by index, and copied once. The text is scanned for `\n`
+  // with __memchr rather than split into a second copy of every line.
+  var n: i32 = src.len();
+  var pos: i32 = 0;
+  while (pos <= n) {
+    var nl: i32 = __memchr(src, 10, pos);
+    if (nl < 0) {
+      nl = n;
+    }
+    var raw: str = slice_unchecked(src, pos, nl);
+    pos = nl + 1;
     var hash: i32 = x86_gas_comment_start(raw);
     if (hash >= 0) {
-      raw = slice_unchecked(raw, 0, hash) + "";
+      raw = slice_unchecked(raw, 0, hash);
     }
-    var line: string = x86_gas_trim(raw);
-    if (line.len() == 0) {
+    var lv: str = x86_gas_trimmed(raw);
+    if (lv.len() == 0) {
       continue;
     }
+    var line: string = lv + "";
     var label: string = "";
     // label prefix: `name:` possibly followed by more on the same
     // line (asm.fern emits `.L0: .double 84.0`). A label is a single
