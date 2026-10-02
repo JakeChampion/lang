@@ -393,22 +393,11 @@ func (b *builder) freshOwnedBoxType(e ast.Expr) (ast.Type, bool) {
 // ownedCallResultType excludes.
 //
 // The drop this admits is DEEP (__drop_enum_<Name> releases payloads),
-// so it is sound exactly when the construction COUNTED them — and the
-// gate here is therefore the same pair emitEnumNew's payload inc
-// carries, rather than a restatement of it:
+// so it is sound exactly when the construction COUNTED them, which
+// emitEnumNew does everywhere but a consumingMatchReuse site: that path
+// stores moved-out bindings back into the box and skips the inc.
 //
-//   - enumRcPayloadsEligible(enumName). Under the move model
-//     (EnumRcPayloads off) and for a Map-carrying enum, an aliased
-//     payload is not inc'd at all, so releasing the box frees a value
-//     the caller still owns. Both differentials caught exactly this:
-//     the wasm move leg aborted (134) where the rc leg returned 0, and
-//     stdlib_json_roundtrip — a JsonValue tree, whose JObject payload
-//     is a Map — "improved" by 112 bytes on each backend, which was
-//     the over-release, not a reclaim.
-//   - !consumingMatchReuse. That path stores moved-out bindings back
-//     into the box and skips the inc for the same reason.
-//
-// With both held, every payload form balances: an aliased ident /
+// Outside it, every payload form balances: an aliased ident /
 // field / index is inc'd (needsRcIncOnAlias), one the move analysis
 // marked a last use hands over its own reference, and a fresh call
 // result or literal is owned outright at rc 1.
@@ -430,8 +419,8 @@ func (b *builder) freshVariantConstructionType(x *ast.Call) (ast.Type, bool) {
 	if !ok || b.nameShadowsVariant(cid.Name) || b.rc.consumingMatchReuse[x] {
 		return nil, false
 	}
-	enumName, _, payloads, isVariant := b.lookupVariantOn(cid.Name, cid.EnumName)
-	if !isVariant || payloads == 0 || !b.enumRcPayloadsEligible(enumName) {
+	_, _, payloads, isVariant := b.lookupVariantOn(cid.Name, cid.EnumName)
+	if !isVariant || payloads == 0 {
 		return nil, false
 	}
 	if t := b.exprType(x); ast.IsPointerType(t) {
@@ -1057,11 +1046,11 @@ func (b *builder) sinkRetainsArg(c *ast.Call, i int, bt ast.Type) bool {
 // wherever the construction sits: `return Some(c)`, `let r = Err(c)`, or a
 // struct field `{ ...s, err: Some(c) }`. The gate is emitEnumNew's, the
 // stricter of the two constructors' (the pair form's emitPairFormPayloadRetain
-// drops the eligibility and reuse terms). A move site hands over the
+// drops the reuse term). A move site hands over the
 // binding's reference instead, and so is not counted. `bt` is the binding's
 // type, which exprType cannot supply before the arm is in scope.
 func (b *builder) variantRetainsPayload(c *ast.Call, id *ast.Ident, bt ast.Type) bool {
-	return c.IsVariantCall && b.enumRcPayloadsEligibleForValue(c) &&
+	return c.IsVariantCall && b.isVariantConstruction(c) &&
 		!b.rc.consumingMatchReuse[c] && b.retainsOnAlias(bt) && !b.rc.moveSites[id]
 }
 
@@ -1084,18 +1073,11 @@ func (b *builder) assignTakesAliasInc(n *ast.Assign, bt ast.Type) bool {
 // arm's own list does not carry), and each named pointer binding is confined to
 // its arm's guard and body.
 //
-// The countedness condition is what keeps the outer join's DEEP drop correct:
-// that drop reaches the inner box through the instantiation's generated
-// __drop_enum_, which releases the inner payloads, so the inner enum must have
-// taken a reference to them. Only an EnumRcPayloads-eligible construction does
-// — outside that model an aliased payload (`Some(pre)` over a live local) is
-// stored uncounted, and dropping it frees storage the caller still holds.
-// reclaimableTryScrutinee requires the same fact for the same reason, and an
-// ineligible enum keeping flag-off behaviour at every site is the documented
-// contract on enumRcPayloadsEligible.
+// The outer join's DEEP drop reaches the inner box through the instantiation's
+// generated __drop_enum_, which releases the inner payloads; construction
+// counted them, so that release is balanced.
 func (b *builder) nestedMatchConfines(m *ast.Match, scrutType ast.Type) bool {
-	et, isEnum := scrutType.(ast.EnumType)
-	if !isEnum || !b.enumRcPayloadsEligible(et.Name) {
+	if _, isEnum := scrutType.(ast.EnumType); !isEnum {
 		return false
 	}
 	for _, arm := range m.Arms {
@@ -1271,14 +1253,11 @@ func (b *builder) indirectCallArg(call *ast.Call) bool {
 //   - the success payload (`n.Type`) is a NON-POINTER scalar or a STRING. A
 //     scalar copy can't alias the freed box. A string payload is MOVED out:
 //     the box's payload reference transfers to the extracted value —
-//     construction-side alias-incs under EnumRcPayloads make that reference
-//     counted, so rhsTainted's TryOp case credits the binding as owned and
-//     the exit sweep balances it. Other pointer payloads (struct / array /
+//     construction-side alias-incs make that reference counted, so
+//     rhsTainted's TryOp case credits the binding as owned and the exit
+//     sweep balances it. Other pointer payloads (struct / array /
 //     tuple / enum / Map) keep today's sound box+payload leak until their
-//     ownership transfer is wired;
-//   - the enum is EnumRcPayloads-eligible, so an aliased payload (`Ok(pre)`)
-//     was inc'd at construction — the move hands the binding a counted
-//     reference, never an uncounted borrow.
+//     ownership transfer is wired.
 //
 // The free itself (emitTryBoxFree) is is_unique-gated, so an aliased box (a
 // callee returning its param, rc>=2 via the return-transfer inc) is only
@@ -1293,9 +1272,6 @@ func (b *builder) reclaimableTryScrutinee(n *ast.TryOp) (ast.EnumType, bool) {
 	}
 	et, ok := t.(ast.EnumType)
 	if !ok {
-		return ast.EnumType{}, false
-	}
-	if !b.enumRcPayloadsEligible(et.Name) {
 		return ast.EnumType{}, false
 	}
 	if n.Type == nil {
@@ -4299,11 +4275,8 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 			Op{Kind: OpEq},
 			Op{Kind: OpIf, I32: BlockTypeVoid})
 		for k, ld := range vd.loads {
-			// A CLOSURE payload is a DOCUMENTED SAFE LEAK. A variant's
-			// payloads are stored without a retain unless the enum is
-			// EnumRcPayloads-eligible, and a matched arm's binding takes
-			// the reference out of the box under the move model — so
-			// deep-releasing one here frees an env the binding is still
+			// A CLOSURE payload is a DOCUMENTED SAFE LEAK. A matched arm's
+			// binding takes the reference out of the box, so deep-releasing one here frees an env the binding is still
 			// calling through. `async.Future[T]`'s
 			// `Pending(i32, (i32) => Future[T])` is exactly that: the
 			// combinators match a Pending, call its `resume`, and build the

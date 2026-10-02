@@ -13,7 +13,8 @@ import (
 
 // Three legs run the fixture corpus through the SELF-HOST compiler:
 // TestFernFixturesSelfHostWasm, TestFernFixturesSelfHostX86_64 and
-// TestFernFixturesSelfHostArm64. Nothing else does.
+// TestFernFixturesSelfHostArm64, plus TestFernFixturesSelfHostX86_64Quarantine,
+// the x86-64 leg under the use-after-free quarantine. Nothing else does.
 //
 // # Why these exist
 //
@@ -215,6 +216,23 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 // those names are now simply legal on this path. They still break
 // `-target x86-64-linux -emit asm` piped to gcc, which is what that flag is for.
 func TestFernFixturesSelfHostX86_64(t *testing.T) {
+	runSelfHostFixtureLegX86_64(t, nil)
+}
+
+// TestFernFixturesSelfHostX86_64Quarantine runs the same corpus compiled
+// under FERN_RC_FREE_DEBUG=1: no block is recycled, and a release or retain
+// that touches a freed block aborts with the sanitizer's report. A fixture
+// that reads storage its own program already released fails here even when
+// the stale bytes happen to still hold the right answer. A reclaim-observable
+// case prints its free-off output under the quarantine, so only its exit code
+// is held to the spec.
+func TestFernFixturesSelfHostX86_64Quarantine(t *testing.T) {
+	runSelfHostFixtureLegX86_64(t, []string{"FERN_RC_FREE_DEBUG=1"})
+}
+
+// runSelfHostFixtureLegX86_64 compiles each fixture with `env` added to the
+// driver's environment.
+func runSelfHostFixtureLegX86_64(t *testing.T, env []string) {
 	requireSelfHostFixtureLeg(t)
 	gcc, runner := x86_64Tooling(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
@@ -225,6 +243,9 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath := filepath.Join(t.TempDir(), "prog")
 			cmd := fixtureCompile(fernBin, "-target", "x86-64-linux", f.mainPath, stdlibRoot, "-o", binPath)
+			if env != nil {
+				cmd.Env = append(os.Environ(), env...)
+			}
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				// Includes the in-process assembler's own refusal ("could not
@@ -239,7 +260,17 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 			}
 			// No runner prefix: runSelfHostFixtureLeg has already skipped the
 			// hosts that need one (they cannot exec the driver either).
-			checkSelfHostNativeRun(t, f, runSelfHostBin(exec.Command(binPath), f.stdin), failf)
+			r := runSelfHostBin(exec.Command(binPath), f.stdin)
+			if strings.Contains(r.stderr, "fern-sanitizer:") {
+				failf("the sanitizer reported a finding:\n%s", r.stderr)
+				return
+			}
+			if env != nil && f.reclaimObservable {
+				exitOnly := *f
+				exitOnly.exact, exitOnly.contains = false, nil
+				f = &exitOnly
+			}
+			checkSelfHostNativeRun(t, f, r, failf)
 		},
 	})
 }

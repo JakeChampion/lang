@@ -1129,7 +1129,6 @@ func computeReadOnlyComparators(info *checker.Info) map[string]bool {
 //
 //   - the callee resolves to a payload-carrying variant, and the name is not
 //     shadowed by a local, a binding or a user function (nameShadowsVariant);
-//   - the enum's payloads are rc-counted (enumRcPayloadsEligible);
 //   - the construction is not a consuming-match reuse site, which stores its
 //     payloads without the inc. computeConsumingMatchReuse pairs the sole
 //     `return Ctor(..)` of an arm of a `match` on an `own` enum parameter;
@@ -1137,7 +1136,7 @@ func computeReadOnlyComparators(info *checker.Info) map[string]bool {
 //     gates (box uniformity, the reuse flag), the conservative direction.
 func variantCtorCountedIn(fn *ast.FuncDecl, info *checker.Info, shadowed map[string]bool) func(*ast.Call) bool {
 	ctorFresh := variantCtorFreshIn(info, shadowed)
-	if !ast.EnumRcPayloads || info == nil || fn.Body == nil {
+	if info == nil || fn.Body == nil {
 		return func(*ast.Call) bool { return false }
 	}
 	ownParam := map[string]bool{}
@@ -1175,13 +1174,10 @@ func variantCtorCountedIn(fn *ast.FuncDecl, info *checker.Info, shadowed map[str
 // variantCtorFreshIn returns the predicate "this call constructs a fresh rc=1
 // box of an rc-payload enum" — the callee resolves to a payload-carrying
 // variant (callBody's dispatch, minus a name a local, a binding or a user
-// function shadows: nameShadowsVariant) of an enum whose payloads emitEnumNew
-// counts (enumRcPayloadsEligible). Under that gate the construction inc's
-// every aliased payload, so the box owns what it holds; a Map-carrying enum
-// stores its payloads uncounted and is refused, exactly as rhsTainted's
-// direct-constructor carve-out refuses it.
+// function shadows: nameShadowsVariant). emitEnumNew inc's every aliased
+// payload, so the box owns what it holds.
 func variantCtorFreshIn(info *checker.Info, shadowed map[string]bool) func(*ast.Call) bool {
-	if !ast.EnumRcPayloads || info == nil {
+	if info == nil {
 		return func(*ast.Call) bool { return false }
 	}
 	return func(c *ast.Call) bool {
@@ -1192,8 +1188,8 @@ func variantCtorFreshIn(info *checker.Info, shadowed map[string]bool) func(*ast.
 		if _, isFunc := info.FuncSigs[id.Name]; isFunc {
 			return false
 		}
-		en, _, payloads, isVariant := lookupVariantIn(info, id.Name, id.EnumName)
-		return isVariant && payloads > 0 && enumRcPayloadsEligibleIn(info, en)
+		_, _, payloads, isVariant := lookupVariantIn(info, id.Name, id.EnumName)
+		return isVariant && payloads > 0
 	}
 }
 
@@ -3274,20 +3270,13 @@ func (b *builder) computeFreeEligible() map[string]bool {
 						}
 					}
 				default:
-					// Variant constructor (`Arr(xs)`): under the move model
-					// emitEnumNew stores the payload without an inc, so a local
-					// passed as a payload escapes into the box (full escape). Under
-					// EnumRcPayloads it inc's like StructLit, so the payload is
-					// co-owned and its source stays reclaimable — escapeOwned.
+					// Variant constructor (`Arr(xs)`): emitEnumNew inc's like
+					// StructLit, so the payload is co-owned and its source
+					// stays reclaimable — escapeOwned.
 					if _, isLocal := b.locals[id.Name]; !isLocal {
-						if en, _, _, isVariant := b.lookupVariantOn(id.Name, id.EnumName); isVariant {
-							rc := b.enumRcPayloadsEligible(en)
+						if _, _, _, isVariant := b.lookupVariantOn(id.Name, id.EnumName); isVariant {
 							for _, a := range s.Args {
-								if rc {
-									escapeOwned(a)
-								} else {
-									escape(a)
-								}
+								escapeOwned(a)
 							}
 						} else if !ast.UseTwoWordStrings(b.ptrW) {
 							// User-function call: a native single-word STRING local passed as an
@@ -3400,13 +3389,8 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				escapeMapEntry(ent.Key, ent.Value, s.KeyType, s.ValueType)
 			}
 		case *ast.EnumLit:
-			rc := b.enumRcPayloadsEligible(s.EnumName)
 			for _, a := range s.Args {
-				if rc {
-					escapeOwned(a)
-				} else {
-					escape(a)
-				}
+				escapeOwned(a)
 			}
 		case *ast.CastExpr:
 			// Casting a pointer-shaped local to a raw integer (`buf as usize`)
@@ -3886,7 +3870,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		if isSliceType(b.exprType(x)) {
 			return false
 		}
-		// Slice 1b: under EnumRcPayloads a variant constructor is a FRESH
+		// A variant constructor is a FRESH
 		// rc=1 box that inc's its pointer payloads (like StructLit), so the
 		// constructed value is reclaimable regardless of payload taint — return
 		// false, mirroring the StructLit/TupleLit cases. Without this the generic
@@ -3894,7 +3878,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// arg (`Nil`) up to the enum local, leaving it permanently ineligible.
 		if id, ok := x.Callee.(*ast.Ident); ok {
 			if _, isLocal := b.locals[id.Name]; !isLocal {
-				if en, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName); isVar && b.enumRcPayloadsEligible(en) {
+				if _, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName); isVar {
 					return false
 				}
 			}
@@ -4112,8 +4096,8 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// `f()?` MOVES the success payload out of a fresh call-result box —
 		// the TryOp lowering frees the box shallow (emitTryBoxFree), so a
 		// STRING payload's counted reference transfers to the binding: owned,
-		// exactly like a fresh concat (the construction-side alias-inc under
-		// EnumRcPayloads keeps an `Ok(pre)`-style aliased payload balanced —
+		// exactly like a fresh concat (the construction-side alias-inc
+		// keeps an `Ok(pre)`-style aliased payload balanced —
 		// see reclaimableTryScrutinee, whose gate this mirrors so analysis
 		// and lowering can never disagree). Non-reclaimable inners (a bare
 		// local `r?`, field / index projections, pair-form callees) and
@@ -4495,14 +4479,14 @@ func (b *builder) markConstructionMoves(val ast.Expr, order checker.IdentOrder, 
 				}
 			}
 		case *ast.Call:
-			// Slice 1b: an enum variant constructor — emitEnumNew now inc's an
+			// An enum variant constructor — emitEnumNew inc's an
 			// aliased pointer payload and the enum's deep drop dec's it, so a moved
 			// last-use OWNED-LOCAL payload balances (mark self-filters via
 			// isOwnedRcLocal — own params aren't locals, so they're inc'd and
 			// balanced by the exit-sweep dec, exactly like a struct field). Only
 			// variant-constructor calls.
 			if id, ok := lit.Callee.(*ast.Ident); ok {
-				if en, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName); isVar && b.enumRcPayloadsEligible(en) {
+				if _, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName); isVar {
 					for _, a := range lit.Args {
 						mark(a)
 					}
@@ -6198,14 +6182,10 @@ func (b *builder) preciseDroppableType(name string) bool {
 	if !ok {
 		return false
 	}
-	if et, isEnum := t.(ast.EnumType); isEnum {
-		// ENUMs are precise-droppable only under Slice 1b (rc-eligible enums):
-		// once enum construction rc-counts its pointer payloads (like StructLit)
-		// the deep drop is rc-protected exactly like a struct, and the
-		// escape-taint that kept enum locals ineligible is lifted in tandem.
-		// Under the default move model (or for Map-containing enums) they stay
-		// excluded (payloads carry no counted box reference).
-		return b.enumRcPayloadsEligible(et.Name)
+	if _, isEnum := t.(ast.EnumType); isEnum {
+		// Enum construction rc-counts its pointer payloads (like StructLit),
+		// so the deep drop is rc-protected exactly like a struct's.
+		return true
 	}
 	switch tt := t.(type) {
 	case ast.ArrayType:
@@ -6733,7 +6713,7 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[*as
 			return true
 		}
 		et, ok := b.fn.Params[pi].Type.(ast.EnumType)
-		if !ok || !b.enumRcPayloadsEligible(et.Name) {
+		if !ok {
 			return true
 		}
 		ed, ok := b.info.Enums[et.Name]
@@ -9774,8 +9754,8 @@ func (b *builder) computeCtorAliasInced() map[string]bool {
 
 // ctorRetainedOperands calls `f` for every operand of a container construction
 // under `n`: array / tuple / struct-literal elements, and the payloads of an
-// rc-payload enum-variant call (`Some(xs)` / `Ok(xs)` — inc'd under
-// EnumRcPayloads exactly like a struct field). These are the four sites that
+// enum-variant call (`Some(xs)` / `Ok(xs)` — inc'd exactly like a struct
+// field). These are the four sites that
 // emit a construction alias-inc.
 func (b *builder) ctorRetainedOperands(n ast.Node, f func(ast.Expr)) {
 	ast.Walk(n, func(m ast.Node) bool {
@@ -9794,7 +9774,7 @@ func (b *builder) ctorRetainedOperands(n ast.Node, f func(ast.Expr)) {
 			}
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
-				if en, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName); isVar && b.enumRcPayloadsEligible(en) {
+				if _, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName); isVar {
 					for _, a := range x.Args {
 						f(a)
 					}
