@@ -232,7 +232,7 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
       }
       let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops);
       if (lifted.ok) {
-        let f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted.func))));
+        let f: ssa.SFunc = ssa.register_form(lifted.func);
         for leaf in ssa.leaf_of(name, f) {
           out = out.append(leaf);
         }
