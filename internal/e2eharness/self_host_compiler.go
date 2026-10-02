@@ -300,20 +300,29 @@ func RunWasmCore(t testing.TB, corePath string, args ...string) *exec.Cmd {
 // environment. It returns the output path.
 func compileSelfHostProgram(t testing.TB, target, src string, env []string) string {
 	t.Helper()
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
+	srcPath := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	out := filepath.Join(dir, "prog")
+	return CompileSelfHostFile(t, target, srcPath, env)
+}
+
+// CompileSelfHostFile compiles the entry file (with the modules beside it) with
+// the current self-host compiler for target, with env added to the compiler's
+// environment, and returns the executable's path: a native binary, or a wasm
+// core module for wasm32-wasi.
+func CompileSelfHostFile(t testing.TB, target, entry string, env []string) string {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "prog")
 	args := []string{"-target", target}
 	if target == TargetWasm32Wasi {
 		out += ".wasm"
 		args = append(args, "-emit", "core-module")
 	}
-	cmd := exec.Command(SelfHostCLI(t), append(args, "-o", out, srcPath, SelfHostStdlibRoot(t))...)
+	cmd := exec.Command(SelfHostCLI(t), append(args, "-o", out, entry, SelfHostStdlibRoot(t))...)
 	cmd.Env = append(os.Environ(), env...)
 	if msg, err := cmd.CombinedOutput(); err != nil {
+		src, _ := os.ReadFile(entry)
 		t.Fatalf("SELFHOST-COMPILE-FAIL -target %s: %v\n%s\nsrc:\n%s", target, err, msg, src)
 	}
 	if err := os.Chmod(out, 0o755); err != nil {

@@ -20,7 +20,7 @@ import (
 // element struct, the same __struct_arr_elems_drop_<E> pre-pass).
 //
 // The walk is admitted per type by the "sarr:" half of
-// irlower.strfld_reclaim_ok_types_of, and the append case below is why it needs
+// fnsigs.strfld_reclaim_ok_types_of, and the append case below is why it needs
 // one at all: `d = Doc { ...d, vals: d.vals.append(v) }` hands the NEW buffer the
 // same element pointers the superseded one holds, uncounted, so walking the old
 // buffer would free boxes the live one still references (it segfaulted the

@@ -871,6 +871,25 @@ RFC 4648 base32 (standard `A–Z 2–7` alphabet, `=` padding).
   the strict variant to use for a security-sensitive secret / token,
   matching `base64_decode_strict` / `hex_decode_strict`.
 
+### `std/deflate`
+
+DEFLATE decoding (RFC 1951) with the zlib (RFC 1950) and gzip (RFC 1952)
+framings, pure Fern. Every decoder takes `max_out`, the most bytes it
+will produce, and answers `OutputLimit` past it: a compressed body is a
+caller-controlled expansion, so the bound is part of the call.
+
+- `inflate(input, max_out): Result[Inflated, InflateError]` and
+  `inflate_from(input, from, max_out)` decode a raw stream;
+  `Inflated { out, consumed }` says how many input bytes it took, so a
+  framing can read what follows.
+- `gunzip(input, max_out): Result[u8[], InflateError]` decodes every
+  member in the input and checks each CRC-32 and length;
+  `zlib_decode(input, max_out)` checks the Adler-32 (`adler32(bs)` is
+  public). A preset dictionary is not supported.
+- `InflateError`: `Truncated`, `Malformed(what)`, `OutputLimit`,
+  `BadChecksum`, `BadHeader(what)`; `(e).message()`.
+- No encoder yet.
+
 ### `std/hex`
 
 Hex round-trip.
@@ -1332,13 +1351,15 @@ On wasm, `set_nodelay`, `set_nonblocking` and `send_queue` answer
 reading of the queue, and `reuse_port` is ignored there.
 
 The datagram sockets are typed faces over `udp_bind`, `udp_connect`,
-`udp_sendto` and `udp_recvfrom`, on the same descriptors:
+`udp_sendto_bytes` and `udp_recvfrom`, on the same descriptors:
 
 - `udp_socket(addr)` — a socket bound to a `SocketAddr` of either family
   (port 0 lets the host pick), receiving from any peer until
   `set_peer(sock, peer)` fixes one.
-- `send_to(sock, data, to)` and `send(sock, data)` — one datagram to `to`,
-  or to the fixed peer: the bytes accepted.
+- `send_to(sock, data, to)` and `send(sock, data)`: send one `u8[]` datagram
+  to `to` or the fixed peer and return the byte count. Empty arrays send empty
+  datagrams. The payload remains available to the caller. Convert text with
+  `string.bytes(text)` from `std/string` before sending it.
 - `recv_from(sock, buf)` and `recv(sock, buf)` — one datagram into the
   caller's `u8[]`, up to its length: the byte count, with the sender as a
   `SocketAddr` from `recv_from`. A non-blocking socket with nothing queued

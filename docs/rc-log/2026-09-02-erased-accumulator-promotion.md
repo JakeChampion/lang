@@ -69,7 +69,7 @@ In the compiler itself: the eight `astwalk` fold and map walkers and
 `util.append_all`, 86 clones in all — `fold_stmt_nodes` at `string[]`,
 `ast.Expr[]`, `boolean`, `i32`, `string`, `checker.Annot[]`,
 `asmcore.UnkScan`, `parser.CFScan`; `map_*_acc` at `embed.FoldAcc` and
-`irlower.InlineCloAcc`. 6,050 functions against 5,997.
+`lift.InlineCloAcc`. 6,050 functions against 5,997.
 
 ## Measured
 

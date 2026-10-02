@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupleElemTag pins irlower's tuple element-tag decoder
-// (examples/self_host/irlower.fern's tuple_type_elem_tag — SH-021,
+// TestSelfHostTupleElemTag pins the tuple element-tag decoder
+// (examples/self_host/irtables.fern's tuple_type_elem_tag — SH-021,
 // docs/SELF-HOST-AUDIT.md T2). It now extracts element n of a tuple type spelling
 // "(t0, t1, …)" via the structured TypeRef (parser.parse_type_ref) instead of a
 // hand-rolled depth-tracking top-level-comma scan.
@@ -28,7 +28,7 @@ func TestSelfHostTupleElemTag(t *testing.T) {
 		t.Skip("tuple_elem_tag_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "tuple_elem_tag_run.fern")
+	copySelfHostFiles(t, dir, "lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "tuple_elem_tag_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "tuple_elem_tag_run.fern", "tuple_elem_tag_run")
 
 	const want = "ok  (i32, i32)[-1]=<empty>\n" +

@@ -827,7 +827,7 @@ function flipped(m: Swap): Swap { match (m) { Front(n, k) => { return Back(k, fl
 `
 
 const semsourcePrintDriver = `import "./semsource"; import "./ssa"; import "./ssaunits"; import "./typeinfo";
-import "./parser"; import "./lexer"; import "./util"; import "./irlower";
+import "./parser"; import "./lexer"; import "./util"; import "./lift";
 function show(p: semsource.Produced): void {
     if (!p.ok) { print("refused " + p.why); return; }
     if (p.template) { print("template instantiated"); return; }
@@ -853,7 +853,7 @@ function main(): i32 {
     // The production pipeline injects the front end's own enum variants
     // (IoError, JsonValue) as declarations before the lambda lift runs;
     // without them a Result's error arm names a union nothing declares.
-    var mod = irlower.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
+    var mod = lift.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
     // Every declaration in order, then every instance the templates were
     // produced at.
     var built = semsource.build_module(mod);
@@ -927,12 +927,12 @@ function main(): i32 {
 `
 
 const semsourceInferDriver = `import "./semsource"; import "./util";
-import "./parser"; import "./lexer"; import "./irlower";
+import "./parser"; import "./lexer"; import "./lift";
 function main(): i32 {
     var src: string = "";
     match (read_file(args()[1])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
     var parsed = parser.parse_module(lexer.tokenize(src));
-    var mod = irlower.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
+    var mod = lift.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
     var built = semsource.with_inferred_modes(semsource.build_module(mod));
     var i: i32 = 0;
     while (i < built.decls.len()) {

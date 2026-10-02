@@ -9,6 +9,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
+	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
@@ -71,6 +72,26 @@ func runFixtureArm64FreeOn(t *testing.T, mainPath, stdin string) (string, int) {
 	bin := linkAsm(t, gcc, asm, "-static", "-nostdlib")
 	cmd := runArm64Bin(qemu, bin)
 	return runBin(cmd, stdin)
+}
+
+// runFixtureWasm builds the fixture with the native wasm backend, as a
+// preview-2 component whose stdout carries main's result.
+func runFixtureWasm(t *testing.T, mainPath, stdin string) (string, int) {
+	t.Helper()
+	skipIfPreview2Missing(t)
+	info, prog := loadCheckMonoFor(t, mainPath, "wasm32-wasi")
+	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+		ForceMemorySection: true,
+		Preview2WASI:       true,
+		SynthCliRun:        true,
+		PrintMainResult:    true,
+	})
+	if err != nil {
+		t.Fatalf("wasmbin.Build: %v", err)
+	}
+	component := finishComponentFromCoreBytes(t, core)
+	so, _, ec := runComponent(t, component, runOpts{stdin: stdin})
+	return so, ec
 }
 
 // forEachRunnableFixture walks conformance/cases and invokes fn for

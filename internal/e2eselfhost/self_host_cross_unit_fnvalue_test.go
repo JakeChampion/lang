@@ -28,7 +28,7 @@ import (
 // of a code address and jumps through garbage.
 //
 // Fixed by threading a whole-program signature view through the lift pass
-// (irlower.lift_lambdas_view): the caller now sees the sibling module's
+// (lift.lift_lambdas_view): the caller now sees the sibling module's
 // declaration, so it boxes the argument exactly as it does for a local callee.
 func TestSelfHostCrossUnitFnValue(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)

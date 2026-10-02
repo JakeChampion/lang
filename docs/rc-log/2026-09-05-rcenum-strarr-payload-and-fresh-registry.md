@@ -39,7 +39,7 @@ proof "avoids ordering the two registries against each other". There is no
 ordering to avoid: the call site is
 
 ```fern
-opt_fresh_ret_fns_of(fns, s.struct_decls, irlower.str_fresh_ret_fns_of(fns))
+opt_fresh_ret_fns_of(fns, s.struct_decls, fnsigs.str_fresh_ret_fns_of(fns))
 ```
 
 so the registry is complete before the proof runs, and the Option / Result

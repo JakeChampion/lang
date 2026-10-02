@@ -25,7 +25,7 @@ The first produces 4 of 4. The second produced 1 of 4.
 
 ## What it was
 
-`irlower.desugar_lambda_returns` rewrites a return-position lambda to a binding
+`lift.desugar_lambda_returns` rewrites a return-position lambda to a binding
 plus a return of that binding, so the closure-lift pipeline gives it a unique
 `$cloN` and an env-first box. Without it — its own comment says so, from #5266 —
 a no-capture return is hoisted to a bare `__lam_N` address and the caller

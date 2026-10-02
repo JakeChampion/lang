@@ -38,7 +38,7 @@ import "./parser";
 import "./flatten";
 import "./wasm_ir";
 import "./asmcore";
-import "./irlower";
+import "./irtables";
 import "./ircore";
 import "./modloader";
 import "./wasm_objfile";
@@ -132,7 +132,7 @@ function whole_module_plan(nmods: i32): ShardRef[] {
 // unit_obj emits a unit's lowered bodies and packages them with the metadata
 // link needs. cache[i] lowers unit.funcs[i]; entries past them are bodies with
 // no declaration.
-function unit_obj(ns: string, unit: parser.Module, cache: irlower.LowerResult[], all_funcs: parser.FuncDecl[], all_stab: irlower.StructTab): wasm_objfile.UnitObj {
+function unit_obj(ns: string, unit: parser.Module, cache: irtables.LowerResult[], all_funcs: parser.FuncDecl[], all_stab: irtables.StructTab): wasm_objfile.UnitObj {
   return wasm_objfile.UnitObj {
     strs: wasm_ir.str_values(cache),
     caggs: wasm_ir.const_agg_values(cache),
@@ -253,7 +253,7 @@ struct Typed { g: ircore.Gated, u: ircore.Units, keys: ircore.UnitKeys }
 
 function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: string): Typed {
   var im: parser.Module = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
-  var stab: irlower.StructTab = irlower.struct_tab(im.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(im.structs);
   var l: ircore.Lowered = ircore.gate(im, d.sub);
   if (!l.ok) {
     ircore.eprint_ir_ineligible();
@@ -279,19 +279,19 @@ function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: 
   return Typed { g: g, u: u, keys: keys };
 }
 
-struct TypedUnit { mod: parser.Module, cache: irlower.LowerResult[] }
+struct TypedUnit { mod: parser.Module, cache: irtables.LowerResult[] }
 
 // typed_unit is unit idx's functions [lo, hi) with their bodies. The window
 // that ends a unit also carries its cache tail.
 function typed_unit(t: Typed, idx: i32, lo: i32, hi: i32): TypedUnit {
   var m: parser.Module = t.u.mods[idx];
-  var whole: irlower.LowerResult[] = t.u.caches[idx];
+  var whole: irtables.LowerResult[] = t.u.caches[idx];
   var end: i32 = hi;
   if (end < 0 || end > m.funcs.len()) {
     end = m.funcs.len();
   }
   var fs: parser.FuncDecl[] = [];
-  var cache: irlower.LowerResult[] = [];
+  var cache: irtables.LowerResult[] = [];
   var i: i32 = lo;
   while (i < end) {
     fs = fs.append(m.funcs[i]);

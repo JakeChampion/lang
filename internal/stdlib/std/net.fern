@@ -1290,14 +1290,14 @@ pub function set_peer(sock: i32, peer: SocketAddr): Result[void, NetError] {
 
 // `send_to(sock, data, to)` — one datagram to `to`: the bytes accepted, or
 // the error the send reported.
-pub function send_to(sock: i32, data: string, to: SocketAddr): Result[i32, NetError] {
-  return __socket_count(udp_sendto(sock, to.ip.bytes(), to.port, data));
+pub function send_to(sock: i32, data: u8[], to: SocketAddr): Result[i32, NetError] {
+  return __socket_count(udp_sendto_bytes(sock, to.ip.bytes(), to.port, data));
 }
 
 // `send(sock, data)` — one datagram to the peer `set_peer` fixed.
-pub function send(sock: i32, data: string): Result[i32, NetError] {
+pub function send(sock: i32, data: u8[]): Result[i32, NetError] {
   var peer: u8[] = [];
-  return __socket_count(udp_sendto(sock, peer, 0, data));
+  return __socket_count(udp_sendto_bytes(sock, peer, 0, data));
 }
 
 // The sender `udp_recvfrom` reports: the family at 0, the address bytes

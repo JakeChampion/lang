@@ -3611,7 +3611,7 @@ i64[] / f64[] already rode the 8-byte-element path (`op_arr_make_i64` + the
 `B { peers: A[] }`) — the shape behind linked lists, trees, and ASTs — now route
 the self-host IR path. Previously a self-referential struct fell to the AST emitter.
 
-- **Root cause.** The leak-safety gate `irlower.decl_is_leaksafe_d` walks a
+- **Root cause.** The leak-safety gate `fnsigs.decl_is_leaksafe_d` walks a
   struct's field type graph to admit it to the IR path in *leak mode* (no RC; the
   boxes leak with the struct, matching the AST path's exit codes). It used a
   depth cap (`depth > 16`) purely to avoid looping on cyclic type graphs — but

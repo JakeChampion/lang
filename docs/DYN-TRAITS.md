@@ -565,7 +565,7 @@ a dispatch chain searching for a bare `m` would then find only the FIRST
 trait's provider, whatever `d`'s trait says. So `op_dyn_dispatch` carries
 the dyn type's trait set alongside the method name (`str` is `m|B` /
 `m|A,B`), and every backend's arm enumerator resolves through
-`irlower.dyn_arm_matches`: a receiver whose provider for one of the dyn's
+`irtables.dyn_arm_matches`: a receiver whose provider for one of the dyn's
 traits was interposed matches THAT definition, and its bare namesake — a
 different trait's method — does not answer for it. Receivers with no
 collision keep matching the bare name, so `dyn A + B` where A provides `m`

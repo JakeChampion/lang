@@ -76,7 +76,7 @@ ratchet, the fixed-tree identity and the emit-hash sweep.
 
 Self cost on this profile: `ssa_lift.lift_impl` 7.05 G, `util.hash_bucket`
 6.78 G (#11008 shortens its loop), `__fern_str_eq` 5.20 G, `__fern_alloc`
-4.92 G, `__fern_arr_slice` 4.25 G, `irlower.param_is_borrowable` 3.39 G,
+4.92 G, `__fern_arr_slice` 4.25 G, `fnsigs.param_is_borrowable` 3.39 G,
 `asmcore.infer_call_named_type` 3.10 G, `ir.fold_const_binaries` 2.83 G.
 `NameIndex.chain` is 3.56 G inclusive, now mostly `has` and `find` from the
 registries' probes rather than from a scan standing in for a lookup.
