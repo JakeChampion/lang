@@ -5886,22 +5886,51 @@ function schemas(types: typeinfo.Type[], s: State, memo: SchemaMemo): Schemas {
   return out;
 }
 
+// named_by_schemas queues the field types of the records and enums added
+// since `nr` and `ne` that schema_of can walk into or record; a scalar or a
+// string names no schema, and schema_of hands it back unchanged.
 function named_by_schemas(out: Schemas, nr: i32, ne: i32, pending: typeinfo.Type[]): typeinfo.Type[] {
   while (nr < out.records.len()) {
     for field in out.records[nr].fields {
-      pending = pending.append(field.ty);
+      if (names_schema(field.ty)) {
+        pending = pending.append(field.ty);
+      }
     }
     nr = nr + 1;
   }
   while (ne < out.enums.len()) {
     for v in out.enums[ne].variants {
       for field in v.fields {
-        pending = pending.append(field.ty);
+        if (names_schema(field.ty)) {
+          pending = pending.append(field.ty);
+        }
       }
     }
     ne = ne + 1;
   }
   return pending;
+}
+
+function names_schema(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeTuple(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeMap(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeFunc(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeUnion(_) = t {
+    return true;
+  }
+  return false;
 }
 
 // Structural types name records inside them; a nominal type is its own.
