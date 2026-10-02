@@ -13259,7 +13259,7 @@ function strarrfld_program_has_field(structs: irtables.StructTab): boolean {
 
 // strarr_visible_producers: the whole-array producers `fn` can call by name —
 // a local or parameter of a producer's name holds an unknown body, not the
-// registered declaration.
+// registered declaration, and a receiver of one is a struct value.
 function strarr_visible_producers(fn: parser.FuncDecl, producers: string[], pix: util.NameIndex): string[] {
   let bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
   let hides: boolean = false;
