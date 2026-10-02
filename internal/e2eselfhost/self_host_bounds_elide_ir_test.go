@@ -12,9 +12,9 @@ import (
 // #4380 lever 3, self-host slice C: the parser's elide_len_bounded_body pass
 // marks `arr[i]` READS inside a `while (i < arr.len())` loop Unchecked when
 // `0 <= i < arr.len()` is syntactically provable, so the lowering emits op_arr_get_nc (no
-// per-iteration bounds check + len reload). The pass runs at
-// lower_func entry, so it is shared by every IR backend: x86-64, wasm, and arm64
-// (the latter two already lower the _nc op from slice B). These programs must
+// per-iteration bounds check + len reload). The pass runs at the start of
+// each function's lowering (semsource.build), so it is shared by every IR
+// backend: x86-64, wasm, and arm64 (the latter two already lower the _nc op from slice B). These programs must
 // exit with the interpreter-oracle value with the checks elided.
 var boundsElideCases = []struct {
 	name string

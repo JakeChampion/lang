@@ -323,7 +323,7 @@ function main(): i32 {
 	// The BINDING destination for that same read. `.len()` above borrows the
 	// moved-out string and the receiver-position reclaim frees it; a binding
 	// OWNS it instead, and the credit that says so is decided by
-	// reclaimable_names_of, which has no LowerState and so resolves the
+	// reclaimable_names_of, which sees no slot types and so resolves the
 	// receiver's type from the local's annotation. Until it did, the string
 	// survived the box it was moved out of with nothing left to free it: 72 B a
 	// round, where the free-function spelling of the same binding is flat.

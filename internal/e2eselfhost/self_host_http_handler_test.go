@@ -61,17 +61,8 @@ func TestSelfHostHttpHandlerRoutesIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostOverBudgetRoutesIRArm64 pins that `-target arm64-linux` reaches the IR
-// path for the same over-budget programs, so the arm64 half of #3457 does NOT
-// need the per-module concat.
-//
-// Worth pinning because the shape invites the opposite conclusion: the driver's
-// arm64 branch returns `asm_arm64.emit_module` directly, with none of the
-// budget arithmetic or concat rescue the x86 branch below carries, which reads
-// like a branch that cannot route IR at all. It is not — `emit_module`
-// tries `all_eligible` first, and unlike x86 the arm64 merged IR path has no
-// 512-function budget, so it takes programs the x86 path has to rescue.
-// (It emits the whole closure rather than the treeshaken subset, so its output
-// is several times larger; that is a size difference, not a routing one.)
+// path for the same over-budget programs, through the same per-module rescue
+// the x86 leg has.
 //
 // Only the x86-built driver is needed — asserting the ROUTING reads the emitted
 // assembly, so no aarch64 cross toolchain is involved.

@@ -19,8 +19,8 @@ import (
 //	Invalid input WebAssembly code ...: type mismatch: expected f64, found i32
 //
 // The fix registers an f64 PARAM as flag '4' in the existing "ret+params"
-// signature registry that already backs param_is_i64 — no new LowerState field
-// — and converts via op_i32_to_f64 at the call site. Part of #4801.
+// signature registry that already backs param_is_i64 and converts via
+// op_i32_to_f64 at the call site. Part of #4801.
 //
 // Oracle-checked against the reference interpreter so a wrong-but-stable value
 // cannot pass.

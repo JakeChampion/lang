@@ -175,8 +175,7 @@ pub function variant_decl_index(structs: StructTab, name: string, owner: string)
 }
 
 // ---- struct decl helpers -----------------------------------------------
-// The core lookups take the decl table directly (so lower_func can use them
-// while building its initial state); the LowerState methods delegate.
+// The core lookups take the decl table directly.
 // decl_field_index returns a field's position in DECL order (-1 if absent);
 // decl_is_struct reports whether `name` is a declared struct.
 
@@ -1405,9 +1404,7 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
 // for body would reuse the once-allocated donor repeatedly (2nd turn: donor slot
 // already zeroed → write to null). When B is itself a loop body, D is re-declared
 // each iteration, so the pattern "loop { var a = …; if (c) { var b = … /*reuse a*/ } }"
-// fires every iteration. The pairing is carried to the nested lower_block via
-// LowerState.xblock_pending (recip|donor); the recursive lower_block consumes it
-// when it constructs the recipient. Donor selection excludes any donor a
+// fires every iteration. Donor selection excludes any donor a
 // same-block site already consumed (so the two passes never double-free a box).
 
 // reuse_layer_disabled: the #4350 §6.5 differential switch. When the
@@ -1419,8 +1416,8 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
 // back to emit_enum_reclaim_store's free+alloc — mirroring native
 // ast.RcReuseEnabled=false. Reuse-on vs reuse-off must be OBSERVATIONALLY
 // IDENTICAL (the differential gate in self_host_reuse_differential_test.go
-// asserts it); OFF trades only alloc count / peak heap. Read per lower_block /
-// lower_func entry (an env scan — no allocation on the None path).
+// asserts it); OFF trades only alloc count / peak heap. Read once per function
+// by ssarc (an env scan — no allocation on the None path).
 pub function reuse_layer_disabled(): boolean {
   match (env("FERN_SELFHOST_NO_REUSE")) {
     Some(v) => {
@@ -1433,7 +1430,7 @@ pub function reuse_layer_disabled(): boolean {
   return false;
 }
 
-// LowerResult is lower_func's output: the lowered op stream, the local-slot
+// LowerResult is one function's lowering: the lowered op stream, the local-slot
 // count (operand-frame size for the interpreter / a backend — the count
 // ir.optimize_ops returns, which a slot-allocating pass grows past the
 // lowering's own), and ok.
@@ -1467,15 +1464,11 @@ pub struct LowerResult {
   // (#6639), not for emission — a string is one operand slot on the
   // registers and two on wasm32, so a stack model needs the distinction.
   str_slots: i32[],
-  // why: why this function did not lower — either a SIGNATURE refusal raised
-  // in lower_func itself (an unlowerable return / receiver / param type) or
-  // the body's innermost failing node, carried out of LowerState.fail_why.
-  // Empty when ok. The strict-IR diagnostic prints it; nothing on the emit
-  // path reads it.
+  // why: why this function did not lower. Empty when ok. The strict-IR
+  // diagnostic prints it; nothing on the emit path reads it.
   why: string,
   // alias_incs: the var-bind alias retains this lowering decided
-  // (`line:col=name`), carried out of LowerState for the `-rc-plan`
-  // aliasBindIncs table (#4482). Nothing on the emit path reads it.
+  // (`line:col=name`), for the `-rc-plan` aliasBindIncs table (#4482). Nothing on the emit path reads it.
   alias_incs: string[],
   // name: the symbol this body defines, for a lowering that has no
   // declaration to take one from. Empty for a body lowered from a
@@ -1813,7 +1806,7 @@ function declares_typevars(fn: parser.FuncDecl): boolean {
 // callee-resolution pass look a callee up without scanning the declaration
 // list per call op.
 //
-// The arity counts the receiver, because lower_func does: the receiver is
+// The arity counts the receiver, because the lowering does: the receiver is
 // param slot 0 of a method, and the call site pushes it as the first argument.
 // DECLARED functions, not lowered ones — a function whose lowering bailed and
 // a generic monomorphised under another name are both absent from the lowered
@@ -1925,9 +1918,7 @@ pub function body_assign_targets(stmts: ast.Stmt[]): string[] {
 // assign_targets_into threads ONE accumulator through astwalk's statement
 // spine. It is a hot path — a statement at depth d sits in the body of every
 // block above it — so every consumer takes the set as a PARAMETER and each
-// scope folds it once: lower_func for the fn-level analyses and lower_block for
-// its own block (#6911). The block-level classifiers fold no block of their
-// own: they thread the function's set down as block_reassigns' filter.
+// scope folds it once (#6911).
 // assign_target_into captures nothing, so the fold allocates nothing per call.
 function assign_targets_into(out: string[], stmts: ast.Stmt[]): string[] {
   for stmt in stmts {

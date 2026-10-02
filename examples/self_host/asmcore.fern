@@ -9057,7 +9057,7 @@ function callgate_name_in(names: string[], name: string): boolean {
 }
 
 // emitter_call_names are the free-function spellings the self-host emitters
-// intercept in try_emit_builtin / lower_expr beyond the front-end builtin set:
+// intercept beyond the front-end builtin set:
 // the string helpers (`str_split(s, sep)` is the free form of `s.split(sep)`),
 // the i32 stringifier and its one mangled stdlib special case, and the raw
 // string writer. Native's checker rejects these bare forms (E001), so they are

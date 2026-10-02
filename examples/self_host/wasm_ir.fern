@@ -1559,7 +1559,7 @@ pub function struct_arr_elems_drop_types(cache: irtables.LowerResult[], structs:
 
 // module_emits_op_cached reports whether any lowered function emits an op of
 // `kind` — the shared scanner the random/byte-source helper gates use (issue
-// #2747). It reads the pre-lowered cache (lower_all_for) rather than re-lowering
+// #2747). It reads the pre-lowered cache rather than re-lowering
 // the module: the emit drivers call it dozens of times per compile, so scanning
 // the shared cache once (not re-lowering every function per call) is what makes
 // the wasm self-host compile linear (#4652). The op-kind arrives by string;
@@ -6215,7 +6215,7 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
   parts = parts.append("  (func $" + fn_name);
   var p: i32 = 0;
   while (p < r.n_params) {
-    // An i64 param is in r.i64_slots, an f64 param in r.f64_slots (lower_func
+    // An i64 param is in r.i64_slots, an f64 param in r.f64_slots (the lowering
     // marks them); the receiver slot 0 of a method never is.
     if (slot_in_list(r.i64_slots, p)) {
       parts = parts.append(" (param i64)");

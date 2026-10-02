@@ -18,7 +18,7 @@ import (
 // Writer are both their fd. Every failure returns its own
 // exit code; the reads after each seek are the assertion that the position
 // moved, and the stat after the resize is the assertion that the length did.
-// `minus2` is bound first because the self-host's lower_expr has no `as i64`
+// `minus2` is bound first because the AST lowering's lower_expr had no `as i64`
 // arm for a mixed-width subtraction.
 func selfHostHandleMethodSource(path string, out string, app string) string {
 	return fmt.Sprintf(`function main(): i32 {

@@ -72,10 +72,8 @@ var constAggCases = []struct {
 		56, 1, 2},
 	// The constant/REUSE interaction, in the shape the reuse suites test: two
 	// same-block literals where the second would otherwise reuse the first's dead
-	// box. TWO blocks and ZERO allocations — the reuse scanners run per STATEMENT
-	// in lower_block, before the literal ever reaches lower_expr where the
-	// constant is recognised, so `reuse_recipient_ok` excludes a recipient that is
-	// itself constant and both literals reach static placement.
+	// box. TWO blocks and ZERO allocations — both literals reach static
+	// placement; a recipient that is itself constant is not reused into.
 	//
 	// It read 1 block / 1 allocation before that exclusion: the donor `a` was
 	// placed statically while the recipient `b` stayed on the reuse emitter, whose
