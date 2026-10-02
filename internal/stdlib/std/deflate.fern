@@ -1,0 +1,658 @@
+// std/deflate — DEFLATE decoding (RFC 1951) and the two framings that
+// carry it: zlib (RFC 1950) and gzip (RFC 1952). Pure Fern, the bit-serial
+// shape of zlib's puff.c: a canonical Huffman code is a count per length
+// and the symbols in code order, and a symbol is read one bit at a time.
+//
+// Every decoder takes `max_out`, the most bytes it will produce, and fails
+// with `OutputLimit` past it: a compressed body is a caller-controlled
+// expansion, so the bound is part of the call, not an afterthought.
+// Compression (deflate) is not here; a server that wants to compress
+// what it serves is a later module.
+
+import "std/hash";
+import "core/int";
+
+// `InflateError` — why a stream could not be decoded. `Truncated` for
+// input that ends inside a block or a header; `Malformed(what)` for a
+// stream the format forbids, with what was wrong; `OutputLimit` for more
+// than `max_out` bytes of output; `BadChecksum` for a gzip CRC-32 or
+// length, or a zlib Adler-32, that does not match the output;
+// `BadHeader(what)` for a framing this decoder does not read.
+pub enum InflateError {
+  Truncated,
+  Malformed(string),
+  OutputLimit,
+  BadChecksum,
+  BadHeader(string),
+}
+
+pub function (e: InflateError) message(): string {
+  match (e) {
+    Truncated => {
+      return "the compressed data ends early";
+    },
+    Malformed(what) => {
+      return "malformed compressed data: " + what;
+    },
+    OutputLimit => {
+      return "the decompressed data is past its limit";
+    },
+    BadChecksum => {
+      return "the checksum does not match the decompressed data";
+    },
+    BadHeader(what) => {
+      return "unsupported compressed data: " + what;
+    }
+  }
+  return "";
+}
+
+pub function (e: InflateError) to_string(): string {
+  return e.message();
+}
+
+// `Inflated` — the output and how many input bytes it took, so a framing
+// can read what follows the stream.
+pub struct Inflated { out: u8[], consumed: i32 }
+
+// ---------------------------------------------------------------------------
+// The raw stream
+
+// `inflate(input, max_out)` — the raw DEFLATE stream at the head of
+// `input` decoded, at most `max_out` bytes of output.
+pub function inflate(input: u8[], max_out: i32): Result[Inflated, InflateError] {
+  return inflate_from(input, 0, max_out);
+}
+
+// `inflate_from(input, from, max_out)` — `inflate` over input[from, len).
+pub function inflate_from(input: u8[], from: i32, max_out: i32): Result[Inflated, InflateError] {
+  var s: __State = __State { pos: from, bitbuf: 0, bitcnt: 0, out: [], max_out: max_out, last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
+  var done: boolean = false;
+  while (!done && !s.failed) {
+    s = __bits(s, input, 1);
+    done = s.last == 1;
+    s = __bits(s, input, 2);
+    var kind: i32 = s.last;
+    s = __block(s, input, kind);
+  }
+  if (s.failed) {
+    return Err(s.error);
+  }
+  return Ok(Inflated { out: s.out, consumed: s.pos - from });
+}
+
+// `__State` — the decoder: the next input byte to take, the bits taken
+// from the input and not yet read (`bitbuf`, least significant first,
+// `bitcnt` of them), the output so far and its cap, `last`, what the
+// most recent read answered (`distance` the distance beside a length),
+// the first failure, which sticks (a failed decoder reads nothing more
+// and every loop stops on it), and the code lengths a dynamic block's
+// header sent. The input is borrowed by every reader rather than held
+// here, and the output leaves the state while a block runs: the state
+// is rebuilt per bit, and what it holds is what each bit costs.
+struct __State { pos: i32, bitbuf: i32, bitcnt: i32, out: u8[], max_out: i32, last: i32, distance: i32, failed: boolean, error: InflateError, lengths: i32[] }
+
+// `__fail(s, e)` — `s` failed with `e`, unless it had failed already. A
+// failed state reads as nothing: `last` and `distance` are 0 and every
+// reader hands it back unchanged, so a caller that goes on without
+// asking copies nothing and appends nothing.
+function __fail(own s: __State, e: InflateError): __State {
+  if (s.failed) {
+    return s;
+  }
+  return __State { ...s, failed: true, error: e, last: 0, distance: 0 };
+}
+
+// `__block(s, data, kind)` — one block of the given type (RFC 1951 §3.2.3).
+function __block(own s: __State, data: u8[], kind: i32): __State {
+  if (kind == 0) {
+    return __stored(s, data);
+  }
+  if (kind == 1) {
+    return __fixed(s, data);
+  }
+  if (kind == 2) {
+    return __dynamic(s, data);
+  }
+  return __fail(s, Malformed("a reserved block type"));
+}
+
+// `__bits(s, data, need)` — the next `need` bits (at most 16) as an integer,
+// least significant bit first (RFC 1951 §3.1.1), into `last`; 0 once
+// the decoder has failed.
+function __bits(own s: __State, data: u8[], need: i32): __State {
+  if (s.failed) {
+    return s;
+  }
+  var val: i32 = s.bitbuf;
+  var cnt: i32 = s.bitcnt;
+  var pos: i32 = s.pos;
+  while (cnt < need) {
+    if (pos >= data.len()) {
+      return __fail(s, Truncated);
+    }
+    val = val | data[pos] as i32 << cnt;
+    pos = pos + 1;
+    cnt = cnt + 8;
+  }
+  var mask: i32 = (1 << need) - 1;
+  return __State { ...s, pos: pos, bitbuf: val >> need, bitcnt: cnt - need, last: val & mask };
+}
+
+// `__stored(s, data)` — a stored block (RFC 1951 §3.2.4): the rest of the
+// current byte dropped, then LEN, its complement, and LEN bytes copied.
+function __stored(own s: __State, data: u8[]): __State {
+  s = __State { ...s, bitbuf: 0, bitcnt: 0 };
+  if (s.pos + 4 > data.len()) {
+    return __fail(s, Truncated);
+  }
+  var len: i32 = data[s.pos] as i32 | data[s.pos + 1] as i32 << 8;
+  var nlen: i32 = data[s.pos + 2] as i32 | data[s.pos + 3] as i32 << 8;
+  if (len != (nlen ^ 65535)) {
+    return __fail(s, Malformed("a stored block's length and its complement disagree"));
+  }
+  var at: i32 = s.pos + 4;
+  if (at + len > data.len()) {
+    return __fail(s, Truncated);
+  }
+  if (s.out.len() + len > s.max_out) {
+    return __fail(s, OutputLimit);
+  }
+  var out: u8[] = s.out;
+  s = __State { ...s, out: [] };
+  var i: i32 = 0;
+  while (i < len) {
+    out = out.append(data[at + i]);
+    i = i + 1;
+  }
+  return __State { ...s, pos: at + len, out: out };
+}
+
+// ---------------------------------------------------------------------------
+// Huffman codes
+
+// `__Huff` — a canonical code: how many codes have each length (index 0
+// counts the unused symbols) and the symbols in code order. `left` is
+// how many codes an incomplete set leaves unused, 0 for a complete one
+// and -1 for an over-subscribed one, which is no code at all.
+struct __Huff { count: i32[], symbol: i32[], left: i32 }
+
+// `__construct(lengths, n)` — the code for `lengths[0, n)`.
+function __construct(lengths: i32[], n: i32): __Huff {
+  var count: i32[] = __zeros(16);
+  var sym: i32 = 0;
+  while (sym < n) {
+    count = count.with(lengths[sym], count[lengths[sym]] + 1);
+    sym = sym + 1;
+  }
+  var left: i32 = 1;
+  var len: i32 = 1;
+  while (len <= 15) {
+    left = left << 1;
+    left = left - count[len];
+    if (left < 0) {
+      return __Huff { count: count, symbol: [], left: 0 - 1 };
+    }
+    len = len + 1;
+  }
+  var offs: i32[] = __zeros(16);
+  len = 1;
+  while (len < 15) {
+    offs = offs.with(len + 1, offs[len] + count[len]);
+    len = len + 1;
+  }
+  var symbols: i32[] = __zeros(n);
+  sym = 0;
+  while (sym < n) {
+    if (lengths[sym] != 0) {
+      symbols = symbols.with(offs[lengths[sym]], sym);
+      offs = offs.with(lengths[sym], offs[lengths[sym]] + 1);
+    }
+    sym = sym + 1;
+  }
+  return __Huff { count: count, symbol: symbols, left: left };
+}
+
+function __zeros(n: i32): i32[] {
+  var out: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append(0);
+    i = i + 1;
+  }
+  return out;
+}
+
+// `__decode(s, data, h)` — the next symbol under `h`, read a bit at a time
+// through the code lengths (RFC 1951 §3.2.2), into `last`; a bit pattern
+// no code has is `Malformed`.
+function __decode(own s: __State, data: u8[], h: __Huff): __State {
+  var code: i32 = 0;
+  var first: i32 = 0;
+  var index: i32 = 0;
+  var len: i32 = 1;
+  while (len <= 15) {
+    s = __bits(s, data, 1);
+    if (s.failed) {
+      return s;
+    }
+    code = code | s.last;
+    var count: i32 = h.count[len];
+    if (code - count < first) {
+      return __State { ...s, last: h.symbol[index + (code - first)] };
+    }
+    index = index + count;
+    first = first + count << 1;
+    code = code << 1;
+    len = len + 1;
+  }
+  return __fail(s, Malformed("a bit pattern that is no code"));
+}
+
+// ---------------------------------------------------------------------------
+// Compressed blocks
+
+function __length_base(): i32[] {
+  return [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+}
+
+function __length_extra(): i32[] {
+  return [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+}
+
+function __dist_base(): i32[] {
+  return [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+}
+
+function __dist_extra(): i32[] {
+  return [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+}
+
+// `__codes(s, data, lencode, distcode)` — the symbols of one block decoded to
+// the end-of-block code (RFC 1951 §3.2.5): a literal is appended, a
+// length and distance pair copies from the output already produced. The
+// output is held as a local the state no longer references while the
+// block runs, so every append lands on a uniquely owned array.
+function __codes(own s: __State, data: u8[], lencode: __Huff, distcode: __Huff): __State {
+  var out: u8[] = s.out;
+  s = __State { ...s, out: [], lengths: [] };
+  while (!s.failed) {
+    s = __decode(s, data, lencode);
+    if (s.failed) {
+      return __State { ...s, out: out };
+    }
+    var sym: i32 = s.last;
+    if (sym < 256) {
+      if (out.len() >= s.max_out) {
+        s = __fail(s, OutputLimit);
+      } else {
+        out = out.append(sym as u8);
+      }
+    } else if (sym == 256) {
+      return __State { ...s, out: out };
+    } else {
+      s = __pair(s, data, sym - 257, distcode, out.len());
+      out = __copy(out, s.last, s.distance);
+    }
+  }
+  return __State { ...s, out: out };
+}
+
+// `__pair(s, data, sym, distcode, produced)` — the length (into `last`) and
+// distance (into `distance`) a literal/length symbol `sym` (257
+// subtracted) and the distance code after it describe, both 0 when the
+// pair is refused: a code past the tables, a distance before the start
+// of the output, or a copy past `max_out`.
+function __pair(own s: __State, data: u8[], sym: i32, distcode: __Huff, produced: i32): __State {
+  if (sym >= 29) {
+    return __fail(s, Malformed("a length code past 285"));
+  }
+  s = __bits(s, data, __length_extra()[sym]);
+  var len: i32 = __length_base()[sym] + s.last;
+  s = __decode(s, data, distcode);
+  if (s.failed) {
+    return s;
+  }
+  var dsym: i32 = s.last;
+  if (dsym >= 30) {
+    return __fail(s, Malformed("a distance code past 29"));
+  }
+  s = __bits(s, data, __dist_extra()[dsym]);
+  if (s.failed) {
+    return s;
+  }
+  var dist: i32 = __dist_base()[dsym] + s.last;
+  if (dist > produced) {
+    return __fail(s, Malformed("a distance before the start of the output"));
+  }
+  if (produced + len > s.max_out) {
+    return __fail(s, OutputLimit);
+  }
+  return __State { ...s, last: len, distance: dist };
+}
+
+// `__copy(out, len, dist)` — `out` with `len` bytes repeated from `dist`
+// back in it, which may overlap what is being written (a run); `len` is
+// 0 for a refused pair.
+function __copy(own out: u8[], len: i32, dist: i32): u8[] {
+  var i: i32 = 0;
+  while (i < len) {
+    out = out.append(out[out.len() - dist]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// `__fixed(s, data)` — a block under the fixed codes (RFC 1951 §3.2.6).
+function __fixed(own s: __State, data: u8[]): __State {
+  var lengths: i32[] = [];
+  var sym: i32 = 0;
+  while (sym < 288) {
+    lengths = lengths.append(__fixed_length(sym));
+    sym = sym + 1;
+  }
+  var dlengths: i32[] = [];
+  sym = 0;
+  while (sym < 30) {
+    dlengths = dlengths.append(5);
+    sym = sym + 1;
+  }
+  return __codes(s, data, __construct(lengths, 288), __construct(dlengths, 30));
+}
+
+function __fixed_length(sym: i32): i32 {
+  if (sym < 144) {
+    return 8;
+  }
+  if (sym < 256) {
+    return 9;
+  }
+  if (sym < 280) {
+    return 7;
+  }
+  return 8;
+}
+
+// The order the code length code's lengths are sent in (RFC 1951 §3.2.7).
+function __code_length_order(): i32[] {
+  return [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+}
+
+// `__dynamic(s, data)` — a block under codes sent in its header (RFC 1951
+// §3.2.7): the code length code, then the literal/length and distance
+// code lengths under it, then the block's symbols.
+function __dynamic(own s: __State, data: u8[]): __State {
+  s = __bits(s, data, 5);
+  var nlen: i32 = s.last + 257;
+  s = __bits(s, data, 5);
+  var ndist: i32 = s.last + 1;
+  s = __bits(s, data, 4);
+  var ncode: i32 = s.last + 4;
+  if (nlen > 286 || ndist > 30) {
+    return __fail(s, Malformed("too many length or distance codes"));
+  }
+  var order: i32[] = __code_length_order();
+  var lengths: i32[] = __zeros(19);
+  var i: i32 = 0;
+  while (i < ncode) {
+    s = __bits(s, data, 3);
+    lengths = lengths.with(order[i], s.last);
+    i = i + 1;
+  }
+  var lencode: __Huff = __construct(lengths, 19);
+  if (lencode.left != 0) {
+    return __fail(s, Malformed("an incomplete or over-subscribed code length code"));
+  }
+  s = __code_lengths(s, data, lencode, nlen + ndist);
+  if (s.failed) {
+    return s;
+  }
+  return __dynamic_codes(s, data, nlen, ndist);
+}
+
+// `__dynamic_codes(s, data, nlen, ndist)` — the block's symbols under the
+// literal/length and distance codes whose lengths `__code_lengths` left
+// in `lengths`; an incomplete code is allowed only with a single code
+// (RFC 1951 §3.2.7, a one-distance block), an over-subscribed one never.
+function __dynamic_codes(own s: __State, data: u8[], nlen: i32, ndist: i32): __State {
+  var all: i32[] = s.lengths;
+  if (all[256] == 0) {
+    return __fail(s, Malformed("no end-of-block code"));
+  }
+  var lit: __Huff = __construct(all, nlen);
+  if (lit.left < 0 || lit.left > 0 && nlen - lit.count[0] != 1) {
+    return __fail(s, Malformed("an incomplete or over-subscribed literal/length code"));
+  }
+  var dist: __Huff = __construct(__tail(all, nlen, nlen + ndist), ndist);
+  if (dist.left < 0 || dist.left > 0 && ndist - dist.count[0] != 1) {
+    return __fail(s, Malformed("an incomplete or over-subscribed distance code"));
+  }
+  return __codes(s, data, lit, dist);
+}
+
+function __tail(xs: i32[], from: i32, end: i32): i32[] {
+  var out: i32[] = [];
+  var i: i32 = from;
+  while (i < end) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// `__code_lengths(s, data, code, n)` — `n` code lengths under the code length
+// code (RFC 1951 §3.2.7), left in `lengths`: 0 to 15 are lengths, 16
+// repeats the previous length three to six times, 17 and 18 send three
+// to ten and eleven to 138 zeros.
+function __code_lengths(own s: __State, data: u8[], code: __Huff, n: i32): __State {
+  var lengths: i32[] = [];
+  while (lengths.len() < n && !s.failed) {
+    s = __decode(s, data, code);
+    var sym: i32 = s.last;
+    if (sym < 16) {
+      lengths = lengths.append(sym);
+    } else {
+      s = __repeat(s, data, sym, lengths);
+      if (lengths.len() + s.last > n) {
+        return __fail(s, Malformed("more code lengths than codes"));
+      }
+      var value: i32 = __repeat_value(sym, lengths);
+      lengths = __repeated(lengths, s.last, value);
+    }
+  }
+  return __State { ...s, lengths: lengths };
+}
+
+// `__repeat(s, data, sym, lengths)` — how often a 16, 17 or 18 repeats, into
+// `last`; a 16 with no length before it is `Malformed`.
+function __repeat(own s: __State, data: u8[], sym: i32, lengths: i32[]): __State {
+  if (sym == 16) {
+    if (lengths.len() == 0) {
+      return __fail(s, Malformed("a repeat with no length before it"));
+    }
+    s = __bits(s, data, 2);
+    return __State { ...s, last: 3 + s.last };
+  }
+  if (sym == 17) {
+    s = __bits(s, data, 3);
+    return __State { ...s, last: 3 + s.last };
+  }
+  s = __bits(s, data, 7);
+  return __State { ...s, last: 11 + s.last };
+}
+
+// `__repeat_value(sym, lengths)` — what a 16 repeats (the previous
+// length) and what 17 and 18 repeat (0).
+function __repeat_value(sym: i32, lengths: i32[]): i32 {
+  if (sym == 16 && lengths.len() > 0) {
+    return lengths[lengths.len() - 1];
+  }
+  return 0;
+}
+
+function __repeated(own lengths: i32[], times: i32, value: i32): i32[] {
+  var k: i32 = 0;
+  while (k < times) {
+    lengths = lengths.append(value);
+    k = k + 1;
+  }
+  return lengths;
+}
+
+// ---------------------------------------------------------------------------
+// gzip (RFC 1952)
+
+// `gunzip(input, max_out)` — every gzip member in `input` decoded and
+// their outputs joined, at most `max_out` bytes in all; each member's
+// CRC-32 and length are checked against what it produced.
+pub function gunzip(input: u8[], max_out: i32): Result[u8[], InflateError] {
+  var out: u8[] = [];
+  var at: i32 = 0;
+  while (at < input.len()) {
+    var member: Inflated = __gzip_member(input, at, max_out - out.len())?;
+    out = __joined(out, member.out);
+    at = at + member.consumed;
+  }
+  if (input.len() == 0) {
+    return Err(BadHeader("empty"));
+  }
+  return Ok(out);
+}
+
+function __joined(own out: u8[], more: u8[]): u8[] {
+  var i: i32 = 0;
+  while (i < more.len()) {
+    out = out.append(more[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// `__gzip_member(input, from, max_out)` — one member at `from`: the
+// header read past its optional fields, the stream inflated, the trailer
+// checked; `consumed` covers all three.
+function __gzip_member(input: u8[], from: i32, max_out: i32): Result[Inflated, InflateError] {
+  var body: i32 = __gzip_header(input, from)?;
+  var inflated: Inflated = inflate_from(input, body, max_out)?;
+  var trailer: i32 = body + inflated.consumed;
+  if (trailer + 8 > input.len()) {
+    return Err(Truncated);
+  }
+  var crc: u32 = __le32(input, trailer);
+  var isize: u32 = __le32(input, trailer + 4);
+  if (crc != hash.crc32_new().update_bytes(inflated.out[:]).finish() || isize != inflated.out.len() as u32) {
+    return Err(BadChecksum);
+  }
+  return Ok(Inflated { out: inflated.out, consumed: trailer + 8 - from });
+}
+
+// `__gzip_header(input, from)` — where the member's stream begins, past
+// the fixed header and the optional extra field, name, comment and
+// header CRC (RFC 1952 §2.3.1), or why the header is not one this reads.
+function __gzip_header(input: u8[], from: i32): Result[i32, InflateError] {
+  if (from + 2 > input.len()) {
+    return Err(Truncated);
+  }
+  if (input[from] != 31 as u8 || input[from + 1] != 139 as u8) {
+    return Err(BadHeader("not gzip"));
+  }
+  if (from + 10 > input.len()) {
+    return Err(Truncated);
+  }
+  if (input[from + 2] != 8 as u8) {
+    return Err(BadHeader("a gzip compression method other than deflate"));
+  }
+  var flags: i32 = input[from + 3] as i32;
+  if ((flags & 224) != 0) {
+    return Err(BadHeader("reserved gzip flags"));
+  }
+  return __gzip_optional(input, from + 10, flags);
+}
+
+// `__gzip_optional(input, at, flags)` — the index past the optional
+// header fields `flags` announce, in their order: the extra field, the
+// name, the comment, the header CRC.
+function __gzip_optional(input: u8[], at: i32, flags: i32): Result[i32, InflateError] {
+  if ((flags & 4) != 0) {
+    if (at + 2 > input.len()) {
+      return Err(Truncated);
+    }
+    at = at + 2 + (input[at] as i32 | input[at + 1] as i32 << 8);
+  }
+  if ((flags & 8) != 0) {
+    at = __past_nul(input, at)?;
+  }
+  if ((flags & 16) != 0) {
+    at = __past_nul(input, at)?;
+  }
+  if ((flags & 2) != 0) {
+    at = at + 2;
+  }
+  if (at > input.len()) {
+    return Err(Truncated);
+  }
+  return Ok(at);
+}
+
+// `__past_nul(input, at)` — the index after the NUL that ends the
+// zero-terminated field at `at`.
+function __past_nul(input: u8[], at: i32): Result[i32, InflateError] {
+  var i: i32 = at;
+  while (i < input.len()) {
+    if (input[i] == 0 as u8) {
+      return Ok(i + 1);
+    }
+    i = i + 1;
+  }
+  return Err(Truncated);
+}
+
+function __le32(input: u8[], at: i32): u32 {
+  return input[at] as u32 | input[at + 1] as u32 << 8 | input[at + 2] as u32 << 16 | input[at + 3] as u32 << 24;
+}
+
+// ---------------------------------------------------------------------------
+// zlib (RFC 1950)
+
+// `zlib_decode(input, max_out)` — a zlib stream decoded, at most
+// `max_out` bytes, its Adler-32 checked. A preset dictionary is not
+// supported.
+pub function zlib_decode(input: u8[], max_out: i32): Result[u8[], InflateError] {
+  if (input.len() < 2) {
+    return Err(Truncated);
+  }
+  var cmf: i32 = input[0] as i32;
+  var flg: i32 = input[1] as i32;
+  if ((cmf & 15) != 8 || cmf >> 4 > 7) {
+    return Err(BadHeader("a zlib compression method or window this decoder does not read"));
+  }
+  if ((cmf * 256 + flg) % 31 != 0) {
+    return Err(BadHeader("a zlib header whose check fails"));
+  }
+  if ((flg & 32) != 0) {
+    return Err(BadHeader("a zlib preset dictionary"));
+  }
+  var inflated: Inflated = inflate_from(input, 2, max_out)?;
+  var trailer: i32 = 2 + inflated.consumed;
+  if (trailer + 4 > input.len()) {
+    return Err(Truncated);
+  }
+  var want: u32 = input[trailer] as u32 << 24 | input[trailer + 1] as u32 << 16 | input[trailer + 2] as u32 << 8 | input[trailer + 3] as u32;
+  if (want != adler32(inflated.out)) {
+    return Err(BadChecksum);
+  }
+  return Ok(inflated.out);
+}
+
+// `adler32(bs)` — the Adler-32 checksum (RFC 1950 §8.2) of `bs`.
+pub function adler32(bs: u8[]): u32 {
+  var a: u32 = 1;
+  var b: u32 = 0;
+  var i: i32 = 0;
+  while (i < bs.len()) {
+    a = (a + bs[i] as u32) % 65521;
+    b = (b + a) % 65521;
+    i = i + 1;
+  }
+  return b << 16 | a;
+}
