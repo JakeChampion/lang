@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"strconv"
 	"strings"
@@ -116,10 +117,26 @@ func (up *FetchUpstream) serve(c net.Conn) {
 	case target == "/gzip":
 		z := gzipped([]byte("hello gzip"))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\nX-Up: 1\r\n\r\n", len(z))), z...)
-	case target == "/gzip-chunked":
+	case target == "/gzip-body-chunked":
 		z := gzipped([]byte("hello gzip"))
 		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n%x\r\n", len(z))), z...)
 		resp = append(resp, "\r\n0\r\n\r\n"...)
+	case target == "/gzip-identity-coding":
+		z := gzipped([]byte("hello gzip"))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: identity, gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/gzip-floor":
+		// 60 000 zero bytes: a few dozen bytes encoded, far past a
+		// hundredfold growth, under the 64 KiB the ratio never refuses.
+		z := gzipped(make([]byte, 60000))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
+	case target == "/gzip-wide":
+		// 100 000 bytes past that floor, from 2 000 seeded random bytes
+		// repeated: the first copy is incompressible, so the growth stays
+		// well under a hundredfold and the ratio admits the body.
+		block := make([]byte, 2000)
+		rand.New(rand.NewSource(7)).Read(block)
+		z := gzipped(bytes.Repeat(block, 50))
+		resp = append([]byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n", len(z))), z...)
 	case target == "/gzip-bad":
 		resp = []byte("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 15\r\n\r\nnot gzip at all")
 	case target == "/gzip-bomb":
@@ -274,9 +291,11 @@ func headerValue(head, name string) string {
 // `plat.http` request for a global literal is proxied, the one for the
 // metadata address is refused before the proxy sees it.
 // The gzip cases pin a `Content-Encoding: gzip` body decoded (with a
-// length, chunked) and its encoding and length fields dropped, a HEAD
-// answer naming a coding left alone, a body that is not gzip, a body
-// past a hundredfold growth, the body cap applied to the decoded bytes,
+// length, chunked, and beside an `identity` coding) and its encoding and
+// length fields dropped, a HEAD answer naming a coding left alone, a body
+// that is not gzip, a body past a hundredfold growth refused and two
+// admitted (one under the 64 KiB the ratio never refuses, one past it
+// but within the ratio), the body cap applied to the decoded bytes,
 // two codings refused at the default depth and undone at depth 2, a
 // caller's own `Accept-Encoding` and `Decoding { depth: 0 }` each leaving
 // the body as it came, a coding the client never asks for left alone,
@@ -361,7 +380,16 @@ function main(): i32 {
     show("switch", fetch.send(fetch.get(base() + "/switch")));
     show("truncated", fetch.send(fetch.get(base() + "/truncated")));
     show("gzip", fetch.send(fetch.get(base() + "/gzip")));
-    show("gzipchunk", fetch.send(fetch.get(base() + "/gzip-chunked")));
+    show("gzipbodychunked", fetch.send(fetch.get(base() + "/gzip-body-chunked")));
+    show("gzipidentitycoding", fetch.send(fetch.get(base() + "/gzip-identity-coding")));
+    match (fetch.send(fetch.get(base() + "/gzip-floor"))) {
+        Ok(resp) => { print("gzipfloor: " + resp.body_bytes().len().to_string()); },
+        Err(e) => { print("gzipfloor: error " + e.message()); }
+    }
+    match (fetch.send(fetch.get(base() + "/gzip-wide"))) {
+        Ok(resp) => { print("gzipwide: " + resp.body_bytes().len().to_string()); },
+        Err(e) => { print("gzipwide: error " + e.message()); }
+    }
     show("gziphead", fetch.send(fetch.request("HEAD", base() + "/gzip")));
     show("gzipbad", fetch.send(fetch.get(base() + "/gzip-bad")));
     show("gzipbomb", fetch.send(fetch.get(base() + "/gzip-bomb")));
@@ -435,7 +463,10 @@ flood: error protocol: interim responses past the header budget
 switch: error protocol: a protocol switch the client did not ask for
 truncated: error protocol: the connection closed before the response ended
 gzip: 200 [hello gzip] headers: x-up=1 trailers:
-gzipchunk: 200 [hello gzip] headers: trailers:
+gzipbodychunked: 200 [hello gzip] headers: trailers:
+gzipidentitycoding: 200 [hello gzip] headers: trailers:
+gzipfloor: 60000
+gzipwide: 100000
 gziphead: 200 [] headers: content-encoding=gzip content-length=GZLEN x-up=1 trailers:
 gzipbad: error decode: a gzip body that does not decode: unsupported compressed data: not gzip
 gzipbomb: error decode: a body past 100 times its encoded size

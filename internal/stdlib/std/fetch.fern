@@ -24,9 +24,10 @@
 // answering is sent once more. No TLS yet (`https` fails with `Tls`), no
 // pool: each request is one connection sent with `Connection: close`.
 // The client asks for `gzip` unless the caller wrote an `Accept-Encoding`
-// of their own, and undoes the coding it asked for under `Decoding`'s
-// depth and ratio and the body cap, so a caller sees the bytes the
-// origin meant and a hostile origin cannot inflate past the bounds.
+// of their own, and undoes the coding it asked for, so a caller sees the
+// bytes the origin meant: the body cap bounds what the decoder may
+// produce, and `Decoding`'s depth and ratio refuse a response that
+// stacks codings or grew implausibly.
 //
 // The two routes differ in what they may reach. `plat.http` refuses a
 // host that resolves to an address `net.is_global` does not admit
@@ -218,10 +219,19 @@ pub struct Request { method: string, url: string, headers: HeaderMap, body: Body
 
 // `Decoding` — what the client undoes in a response body: `depth`, how
 // many content codings it undoes (each one `gzip`), 0 for none, and then
-// it asks for none either; `ratio`, the most a body may grow in decoding,
-// as a multiple of its encoded size. The decoded body is bounded by
-// `limits.body` as any body is.
+// it asks for none either; `ratio`, the most the decoded body may exceed
+// its encoded size, as a multiple, judged on the response as a whole once
+// every coding is undone. A decoded body of 64 KiB or less is never
+// refused on the ratio: a small body compresses far past any plausible
+// ratio (a run of zeros a thousandfold), and the cap already bounds it.
+// The decoder never produces more than `limits.body` bytes whatever the
+// ratio says, so the ratio is a policy on a response's shape, not what
+// bounds memory.
 pub struct Decoding { depth: i32, ratio: i32 }
+
+// What the ratio never refuses: a decoded body of this many bytes or
+// fewer.
+const RATIO_FLOOR: i32 = 65536;
 
 // `decoding()` — one coding undone, a body allowed to grow a hundredfold.
 pub function decoding(): Decoding {
@@ -846,12 +856,13 @@ function __closed_early(got: i32): FetchError {
 
 // `__decoded(resp, req)` — `resp` with its content codings undone when
 // the client asked for them: a `Content-Encoding` of `gzip` (or
-// `x-gzip`) codings, each undone in turn from the last applied, under
-// `req.decoding.depth`, `req.decoding.ratio` and `req.limits.body`, the
-// `Content-Encoding` and `Content-Length` fields then dropped since
-// neither describes the body any more. A body with no coding, an empty
-// one (a HEAD or 204 answer may still name a coding), and a coding the
-// client did not ask for are handed back as they came.
+// `x-gzip`) codings, each undone in turn from the last applied, each
+// under `req.limits.body`, their number under `req.decoding.depth` and
+// the whole under `req.decoding.ratio`; the `Content-Encoding` and
+// `Content-Length` fields then dropped since neither describes the body
+// any more. A body with no coding, an empty one (a HEAD or 204 answer may
+// still name a coding), and a coding the client did not ask for are
+// handed back as they came.
 function __decoded(resp: HttpResponse, req: Request): Result[HttpResponse, FetchError] {
   var codings: string[] = __codings(resp.headers);
   var body: u8[] = resp.body_bytes();
@@ -861,12 +872,27 @@ function __decoded(resp: HttpResponse, req: Request): Result[HttpResponse, Fetch
   if (codings.len() > req.decoding.depth) {
     return Err(Decode("content codings past the depth of " + int.int_to_string(req.decoding.depth)));
   }
+  var encoded: i32 = body.len();
   var left: i32 = codings.len();
   while (left > 0) {
-    body = __gunzipped(body, req)?;
+    body = __gunzipped(body, req.limits.body)?;
     left = left - 1;
   }
+  if (body.len() as i64 > __allowed(encoded, req.decoding.ratio)) {
+    return Err(Decode("a body past " + int.int_to_string(req.decoding.ratio) + " times its encoded size"));
+  }
   return Ok(HttpResponse { ...resp, body: BodyBytes(body), headers: __without(resp.headers, ["content-encoding", "content-length"]) });
+}
+
+// `__allowed(encoded, ratio)` — the most decoded bytes a response of
+// `encoded` bytes may become: `ratio` times that, and never less than
+// `RATIO_FLOOR`.
+function __allowed(encoded: i32, ratio: i32): i64 {
+  var allowed: i64 = encoded as i64 * (ratio as i64);
+  if (allowed < RATIO_FLOOR as i64) {
+    return RATIO_FLOOR as i64;
+  }
+  return allowed;
 }
 
 // `__codings(h)` — the `Content-Encoding` codings in the order applied,
@@ -895,14 +921,11 @@ function __all_gzip(codings: string[]): boolean {
   return true;
 }
 
-// `__gunzipped(body, req)` — one gzip coding undone, under the body cap
-// and the ratio.
-function __gunzipped(body: u8[], req: Request): Result[u8[], FetchError] {
-  match (deflate.gunzip(body, req.limits.body)) {
+// `__gunzipped(body, max_out)` — one gzip coding undone, the decoder
+// producing at most `max_out` bytes.
+function __gunzipped(body: u8[], max_out: i32): Result[u8[], FetchError] {
+  match (deflate.gunzip(body, max_out)) {
     Ok(out) => {
-      if (out.len() as i64 > body.len() as i64 * (req.decoding.ratio as i64)) {
-        return Err(Decode("a body past " + int.int_to_string(req.decoding.ratio) + " times its encoded size"));
-      }
       return Ok(out);
     },
     Err(e) => {
