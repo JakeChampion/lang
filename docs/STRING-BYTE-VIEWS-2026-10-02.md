@@ -41,25 +41,28 @@ and zero live bytes. `TestSelfHostByteViewRC` checks tagged and ordinary
 pointers through value and fused-branch uniqueness tests, alias retention,
 final release and native alignment-proof selection.
 
-The final pre-integration target group passed on x86-64 Linux, ARM64 Linux
-and WASM in 169.850 seconds, including optimization shapes, physical RC,
-helper resolution and lifting. Its lifetime group passed in 239.860 seconds,
-followed by all lint gates. The earlier reader checkpoint passed the full
-unit lane. Actual stage-2 Darwin/core-WASM probes pass, including the added
-CRC32 case. The CRC32 fixture also passes on all three Linux/WASM targets
-in 26.796 seconds. Integration checks follow before publication.
+After integrating main `8e10c76fe`, the target group passed on x86-64 Linux,
+ARM64 Linux and WASM in 180.860 seconds, including CRC32, optimization
+shapes, physical RC, helper resolution, lifting and WASM alignment. The
+lifetime group passed in 227.301 seconds. Checker differential, semantic
+identity, lending and SSA ownership tests passed in 591.021 seconds. The
+integrated tree also passes all lint gates. The earlier reader checkpoint
+passed the full unit lane; the final pre-integration
+runtime passed target, lifetime and all lint gates. Actual integrated stage-2
+Darwin/core-WASM probes pass all five runtime fixtures, with balanced counts.
 
-The pre-integration bootstrap reaches a byte-identical stage-2/stage-3 fixed
-point at 13,072,817 bytes, SHA-256
-`07f2eaaafdbc5a8aedbe61d29e5f7f827e36e87d055b9805a836a1ee3014c705`.
+The integrated bootstrap reaches a byte-identical stage-2/stage-3 fixed
+point at 12,480,129 bytes, SHA-256
+`ef60e137fa8db9349fd067ad085d7c96485607d4dad1da87b6fcdbc914421439`.
 Native and WASM cross-version cache probes verify old cold/warm entries,
 candidate invalidation, equality with clean output and reuse of new entries
 across two linked units.
 
 ## Measurements
 
-The prerequisite baseline compiler has SHA-256
-`039fb2ee864414734ddef432570ec16ab9cb9d335c3a389c423fba85a9257eb9`.
+The baseline is main `8e10c76fe`, built to its own byte-identical fixed point,
+12,397,377 bytes, SHA-256
+`50d5ef464f03aeeaef746f7378848c1f04554466870dcfab84535fa0f7d1e06b`.
 The ARM64 Darwin benchmark converts a 4096-byte string and either reads its
 length or scans its bytes. It checks results, warms each binary and alternates
 five samples. A scale-1 pilot precedes scale 256, with 256,000 conversions per
@@ -67,11 +70,11 @@ sample. No other workstream compiler or test job ran during timing.
 
 | Workload | Copying baseline median | Byte-view median |
 | --- | ---: | ---: |
-| Conversion and length | 41.708 ms | 3.492 ms |
-| Conversion and scan | 678.155 ms | 553.784 ms |
+| Conversion and length | 40.167 ms | 3.164 ms |
+| Conversion and scan | 677.997 ms | 563.174 ms |
 
-These timings use candidate `e97d0d33`, before the final generated-release
-alignment proof. Both program images occupy 49,713 bytes. Reproduce with:
+These timings use the integrated candidate `ef60e137`. Both program images
+occupy 49,713 bytes. Reproduce with:
 
 ```sh
 uv run --no-project python tools/bench_byte_views.py \
@@ -88,9 +91,21 @@ zero with the candidate on Darwin and core WASM. Both produce checksum
 3631681148 and byte count 4096, with all allocations released. The regression
 now asserts the allocation-free update.
 
-No binary-size baseline is changed by this work. The size audit separates
-generated-code overhead from the added compiler implementation; final
-integration measurements follow before publication.
+No binary-size baseline is changed by this work. Compiling the same main
+source with each generator separates the generated-code cost from the
+added implementation. These are x86-64 Linux compiler images:
+
+| Generator | Compiler source | Bytes |
+| --- | --- | ---: |
+| Main | Main | 11,009,240 |
+| Candidate | Main | 11,091,416 |
+| Candidate | Candidate | 11,121,232 |
+
+The 111,992-byte increase consists of 82,176 bytes in generated code and
+29,816 bytes from the added implementation. The generated-code changes
+include counted borrowed descriptors, tag-aware retains and uniqueness,
+and typed array-view lowering. Alignment proofs avoid imposing the new tag
+mask on typed ordinary references and generated container-release helpers.
 
 D8's frontend-only E063 diagnostic parity remains acceptance work.
 Production typed lowering already refuses a returned view whose source
