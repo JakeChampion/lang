@@ -1,0 +1,71 @@
+// examples/self_host/util_hash_run.fern — driver for util.hash_bucket.
+//
+// The bucket a name lands in reaches no emitted byte, so no behaviour test
+// can tell a wrong weight in the four-byte step from a right one. This driver
+// recomputes the hash byte at a time and compares: every length from 0 to 41
+// (so the step and every tail length run), bytes drawn from every quarter of
+// the byte range, and bucket counts of 0, 1, a negative, a power of two, a
+// prime and the mask itself. The companion Go test
+// (internal/e2eselfhost/self_host_util_hash_test.go) asserts the report and
+// the exit code.
+
+import "./util";
+
+// reference is hash_bucket's contract spelled a byte at a time.
+function reference(s: string, n: i32): i32 {
+  if (n <= 1) {
+    return 0;
+  }
+  var a: i32 = 208357;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    a = a * 31 + s[i] as i32;
+    i = i + 1;
+  }
+  a = a * 31 + s.len();
+  return (a & 1073741823) % n;
+}
+
+// sample is a string of `len` bytes whose values walk the byte range with a
+// stride that depends on `seed`, so neighbouring positions differ and the
+// high bytes are reached.
+function sample(len: i32, seed: i32): string {
+  var buf: u8[] = __alloc_u8(len);
+  var i: i32 = 0;
+  while (i < len) {
+    buf = buf.with(i, ((i * 67 + seed * 131 + 3) % 256) as u8);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(buf);
+}
+
+function main(): i32 {
+  var ns: i32[] = [0, 1, 0 - 5, 16, 7, 1073741823];
+  var out: string = "";
+  var checked: i32 = 0;
+  var wrong: i32 = 0;
+  var len: i32 = 0;
+  while (len <= 41) {
+    var seed: i32 = 0;
+    while (seed < 4) {
+      var s: string = sample(len, seed);
+      for n in ns {
+        var got: i32 = util.hash_bucket(s, n);
+        var want: i32 = reference(s, n);
+        if (got != want || n > 1 && (got < 0 || got >= n)) {
+          out = out + "mismatch len=" + util.i32_to_string(len) + " seed=" + util.i32_to_string(seed) + " n=" + util.i32_to_string(n) + " got=" + util.i32_to_string(got) + " want=" + util.i32_to_string(want) + "\n";
+          wrong = wrong + 1;
+        }
+        checked = checked + 1;
+      }
+      seed = seed + 1;
+    }
+    len = len + 1;
+  }
+  out = out + "checked=" + util.i32_to_string(checked) + " wrong=" + util.i32_to_string(wrong) + "\n";
+  write(out);
+  if (wrong > 0) {
+    return 1;
+  }
+  return 0;
+}
