@@ -2334,7 +2334,7 @@ pub function random_func_p2(): string {
   var o: string = "";
   o = o + "  (func $__fern_random_bytes (param $n i32) (result i32)\n";
   o = o + "    (local $arr i32) (local $i i32) (local $r i64)\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -2492,7 +2492,7 @@ pub function args_func_p2(): string {
   o = o + "    (call $get_arguments (local.get $ra))\n";
   o = o + "    (local.set $ptr (i32.load (local.get $ra)))\n";
   o = o + "    (local.set $count (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $count) (i32.const 4))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $count) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $count))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $count))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -2532,7 +2532,7 @@ pub function environ_func_p2(): string {
   o = o + "    (call $get_environment (local.get $ra))\n";
   o = o + "    (local.set $ptr (i32.load (local.get $ra)))\n";
   o = o + "    (local.set $count (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $count) (i32.const 4))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $count) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $count))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $count))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -2723,7 +2723,7 @@ pub function readfile_bytes_func_p2(): string {
   o = o + "      (br $rc)))\n";
   o = o + "    (call $in_strm_drop (local.get $strm))\n";
   o = o + "    (call $desc_drop (local.get $fd))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $off) (i32.const 4))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $off) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $off))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $off))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -4370,7 +4370,7 @@ pub function tcp_recv_func(): string {
   o = o + "      (return (local.get $arr))))\n";
   o = o + "    (local.set $src (i32.load offset=4 (local.get $ret)))\n";
   o = o + "    (local.set $n (i32.load offset=8 (local.get $ret)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
   o = o + "    (block $done\n";
@@ -6980,7 +6980,7 @@ pub function random_bytes_ir_func(): string {
   o = o + "    (local $arr i32) (local $buf i32) (local $i i32)\n";
   o = o + "    (local.set $buf (call $__fern_alloc (local.get $n)))\n";
   o = o + "    (drop (call $random_get (local.get $buf) (local.get $n)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -7012,7 +7012,7 @@ pub function str_bytes_func(): string {
   o = o + "  (func $__fern_str_bytes (param $s i32) (result i32)\n";
   o = o + "    (local $n i32) (local $arr i32) (local $i i32)\n";
   o = o + "    (local.set $n (i32.load (local.get $s)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -8316,7 +8316,7 @@ pub function scale_f64_helper(): string {
   o = o + "  (func $__fern_scale_f64 (param $a i32) (param $k f64) (result i32)\n";
   o = o + "    (local $n i32) (local $o i32) (local $i i32) (local $pairs i32) (local $kk v128)\n";
   o = o + "    (local.set $n (i32.load (local.get $a)))\n";
-  o = o + "    (local.set $o (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 8))))\n";
+  o = o + "    (local.set $o (call $__fern_arr_elems (local.get $n) (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $o) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $o) (i32.const 4)) (local.get $n))\n";
   o = o + "    (local.set $kk (f64x2.splat (local.get $k)))\n";
@@ -8733,7 +8733,7 @@ pub function arr_push_helper(): string {
   o = o + "    (if (i32.ge_s (local.get $len) (local.get $cap)) (then\n";
   o = o + "      (local.set $ncap (i32.const 4))\n";
   o = o + "      (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))))\n";
-  o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $ncap) (i32.const 4))))\n";
+  o = o + "    (local.set $na (call $__fern_arr_elems (local.get $ncap) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $na) (i32.add (local.get $len) (i32.const 1)))\n";
   o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $ncap))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -8952,7 +8952,7 @@ pub function arr_slice_helper(): string {
   o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (unreachable)))\n";
   o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
   o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
-  o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+  o = o + "    (local.set $na (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $na) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $n))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -9096,7 +9096,7 @@ function buf_take_bytes_helper(): string {
   var o: string = "  (func $__fern_buf_take_bytes (param $h i32) (result i32)\n";
   o = o + "    (local $n i32) (local $a i32) (local $src i32) (local $i i32)\n";
   o = o + "    (local.set $n (i32.load offset=4 (local.get $h)))\n";
-  o = o + "    (local.set $a (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+  o = o + "    (local.set $a (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $a) (local.get $n))\n";
   o = o + "    (i32.store offset=4 (local.get $a) (local.get $n))\n";
   o = o + "    (local.set $src (i32.add (i32.load (local.get $h)) (i32.const 4)))\n";
@@ -9675,7 +9675,7 @@ pub function args_func(): string {
   o = o + "    (local.set $ptrs (call $__fern_alloc (i32.mul (local.get $argc) (i32.const 4))))\n";
   o = o + "    (local.set $buf (call $__fern_alloc (local.get $bufsz)))\n";
   o = o + "    (drop (call $args_get (local.get $ptrs) (local.get $buf)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $argc) (i32.const 4))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $argc) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $argc))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $argc))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -9720,7 +9720,7 @@ pub function environ_func(): string {
   o = o + "    (local.set $ptrs (call $__fern_alloc (i32.mul (local.get $count) (i32.const 4))))\n";
   o = o + "    (local.set $buf (call $__fern_alloc (local.get $bufsz)))\n";
   o = o + "    (drop (call $environ_get (local.get $ptrs) (local.get $buf)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $count) (i32.const 4))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $count) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $count))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $count))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -9911,7 +9911,7 @@ pub function readfile_bytes_func(): string {
   o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n)))\n";
   o = o + "      (br $rc)))\n";
   o = o + "    (drop (call $fd_close (local.get $fd)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $off) (i32.const 4))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $off) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $off))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $off))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -10338,7 +10338,7 @@ pub function reader_read_chunk_bytes_func(): string {
   o = o + "    (local $a i32) (local $source i32) (local $got i32) (local $box i32) (local $err i32) (local $path i32) (local $i i32)\n";
   o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $err (i32.const 28))) (else\n";
   o = o + "      (if (i64.gt_u (i64.mul (i64.extend_i32_u (local.get $n)) (i64.const 4)) (i64.const 2147483631)) (then (unreachable)))\n";
-  o = o + "      (local.set $a (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+  o = o + "      (local.set $a (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
   o = o + "      (i32.store (local.get $a) (i32.const 0)) (i32.store offset=4 (local.get $a) (local.get $n))\n";
   o = o + "      (i32.store (i32.const 0) (i32.add (local.get $a) (i32.const 8)))\n";
   o = o + "      (i32.store (i32.const 4) (local.get $n))\n";
@@ -10356,7 +10356,7 @@ pub function reader_read_chunk_bytes_func(): string {
   // retaining the original allocation until every source byte is copied.
   o = o + "    (local.set $source (local.get $a))\n";
   o = o + "    (if (i32.lt_u (local.get $got) (local.get $n)) (then\n";
-  o = o + "      (local.set $a (call $__fern_arr_box (i32.mul (local.get $got) (i32.const 4))))\n";
+  o = o + "      (local.set $a (call $__fern_arr_elems (local.get $got) (i32.const 4)))\n";
   o = o + "      (i32.store offset=4 (local.get $a) (local.get $got))))\n";
   o = o + "    (local.set $i (local.get $got))\n";
   o = o + "    (block $done (loop $expand (br_if $done (i32.eqz (local.get $i)))\n";
@@ -10869,7 +10869,7 @@ pub function map_helpers(): string {
   o = o + "  (func $__fern_map_snapshot (param $box i32) (param $src i32) (result i32)\n";
   o = o + "    (local $n i32) (local $arr i32) (local $ord i32) (local $base i32) (local $i i32)\n";
   o = o + "    (local.set $n (i32.load (local.get $box)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 4))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
   o = o + "    (local.set $ord (i32.load (i32.add (local.get $box) (i32.const 40))))\n";
@@ -11332,6 +11332,14 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o = o + "    (i32.store (local.get $base) (i32.const 1))\n";
   o = o + "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $n))\n";
   o = o + "    (i32.add (local.get $base) (i32.const 8)))\n";
+  // $__fern_arr_elems(n, stride) is $__fern_arr_box for n elements of `stride`
+  // bytes. The byte count is formed in 64 bits: a 32-bit product wraps to a
+  // small size $__fern_alloc's own range check cannot see.
+  o = o + "  (func $__fern_arr_elems (param $n i32) (param $stride i32) (result i32)\n";
+  o = o + "    (local $b i64)\n";
+  o = o + "    (local.set $b (i64.mul (i64.extend_i32_u (local.get $n)) (i64.extend_i32_u (local.get $stride))))\n";
+  o = o + "    (if (i64.gt_u (local.get $b) (i64.const 2147483631)) (then (unreachable)))\n";
+  o = o + "    (call $__fern_arr_box (i32.wrap_i64 (local.get $b))))\n";
   // $__fern_str_box(p) -> s: rc-header a heap STRING block. `p` is the
   // string payload size (4-byte len word + bytes); the 8-byte rc+bsz
   // header is prepended and s = base+8 is returned, so [s] = len,
@@ -11589,7 +11597,7 @@ pub function arr_slice8_helper(): string {
   o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (unreachable)))\n";
   o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
   o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
-  o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 8))))\n";
+  o = o + "    (local.set $na (call $__fern_arr_elems (local.get $n) (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $na) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $n))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -11667,7 +11675,7 @@ pub function map_k64_helpers(): string {
   o = o + "  (func $__fern_map_keys_k64 (param $box i32) (result i32)\n";
   o = o + "    (local $n i32) (local $arr i32) (local $ord i32) (local $keys i32) (local $i i32)\n";
   o = o + "    (local.set $n (i32.load (local.get $box)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 8))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
   o = o + "    (local.set $ord (i32.load (i32.add (local.get $box) (i32.const 40))))\n";
@@ -11786,7 +11794,7 @@ pub function map_w64_helpers(): string {
   o = o + "  (func $__fern_map_values_w64 (param $box i32) (result i32)\n";
   o = o + "    (local $n i32) (local $arr i32) (local $ord i32) (local $vals i32) (local $i i32)\n";
   o = o + "    (local.set $n (i32.load (local.get $box)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $n) (i32.const 8))))\n";
+  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
   o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
   o = o + "    (local.set $ord (i32.load (i32.add (local.get $box) (i32.const 40))))\n";
@@ -12040,7 +12048,7 @@ pub function arr_push_wide(vty: string, sop: string): string {
   o = o + "    (if (i32.ge_s (local.get $len) (local.get $cap)) (then\n";
   o = o + "      (local.set $ncap (i32.const 4))\n";
   o = o + "      (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))))\n";
-  o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $ncap) (i32.const 8))))\n";
+  o = o + "    (local.set $na (call $__fern_arr_elems (local.get $ncap) (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $na) (i32.add (local.get $len) (i32.const 1)))\n";
   o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $ncap))\n";
   o = o + "    (local.set $i (i32.const 0))\n";
@@ -15523,7 +15531,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
       var alenS: string = util.i32_to_string(wp + 1);
       var aptrS: string = util.i32_to_string(wp);
       var ajS: string = util.i32_to_string(j);
-      body = body + "    (local.set " + ablkS + " (call $__fern_arr_box (i32.mul (local.get " + alenS + ") (i32.const " + assz + "))))\n";
+      body = body + "    (local.set " + ablkS + " (call $__fern_arr_elems (local.get " + alenS + ") (i32.const " + assz + ")))\n";
       body = body + "    (i32.store (local.get " + ablkS + ") (local.get " + alenS + "))\n";
       body = body + "    (i32.store offset=4 (local.get " + ablkS + ") (local.get " + alenS + "))\n";
       body = body + "    (local.set " + aiS + " (i32.const 0))\n";
@@ -15750,7 +15758,7 @@ pub function extern_copy_string(slot: i32, dst: string, ptr: string, len: string
 // widen into the array's 4-byte slots ([len@0][cap@4], elements at +8).
 pub function extern_copy_bytes(dst: string, ptr: string, len: string, ctr: string, lbl: string): string {
   var o: string = "";
-  o = o + "    (local.set " + dst + " (call $__fern_arr_box (i32.mul (local.get " + len + ") (i32.const 4))))\n";
+  o = o + "    (local.set " + dst + " (call $__fern_arr_elems (local.get " + len + ") (i32.const 4)))\n";
   o = o + "    (i32.store (local.get " + dst + ") (local.get " + len + "))\n";
   o = o + "    (i32.store offset=4 (local.get " + dst + ") (local.get " + len + "))\n";
   o = o + "    (local.set " + ctr + " (i32.const 0))\n";
@@ -16269,7 +16277,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("    (call $" + f.name + "__import" + ttargs + " (local.get $rb))\n");
       parts = parts.append("    (local.set $dp (i32.load (local.get $rb)))\n");
       parts = parts.append("    (local.set $ln (i32.load offset=4 (local.get $rb)))\n");
-      parts = parts.append("    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const 4))))\n");
+      parts = parts.append("    (local.set $s (call $__fern_arr_elems (local.get $ln) (i32.const 4)))\n");
       parts = parts.append("    (i32.store (local.get $s) (local.get $ln))\n");
       parts = parts.append("    (i32.store offset=4 (local.get $s) (local.get $ln))\n");
       parts = parts.append("    (local.set $i (i32.const 0))\n");
@@ -16315,7 +16323,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
         // Both store one byte per element, so expand each host byte into
         // its slot (a boolean[] element is the canonical list<bool> byte,
         // 0/1, the same shape as a list<u8> byte).
-        parts = parts.append("    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const 4))))\n");
+        parts = parts.append("    (local.set $s (call $__fern_arr_elems (local.get $ln) (i32.const 4)))\n");
         parts = parts.append("    (i32.store (local.get $s) (local.get $ln))\n");
         parts = parts.append("    (i32.store offset=4 (local.get $s) (local.get $ln))\n");
         parts = parts.append("    (local.set $i (i32.const 0))\n");
@@ -16331,7 +16339,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
         var rk: str = slice_unchecked(f.ret_type, 0, f.ret_type.len() - 2);
         var rss: string = util.i32_to_string(elem_slot_size(rk));
         var rcs: string = util.i32_to_string(extern_list_elem_size(rk));
-        parts = parts.append("    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const " + rss + "))))\n");
+        parts = parts.append("    (local.set $s (call $__fern_arr_elems (local.get $ln) (i32.const " + rss + ")))\n");
         parts = parts.append("    (i32.store (local.get $s) (local.get $ln))\n");
         parts = parts.append("    (i32.store offset=4 (local.get $s) (local.get $ln))\n");
         parts = parts.append("    (local.set $i (i32.const 0))\n");
@@ -17006,7 +17014,7 @@ function emit_wasm_alloc_u8(arrtmp: i32, eltmp: i32, parts: string[]): string[] 
   // (matching arr_make), its slots cleared: a block off the free list
   // keeps its last owner's bytes, and the builtin promises zeros.
   parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
-  parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+  parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    call $__fern_arr_elems\n    local.set " + util.i32_to_string(arrtmp) + "\n");
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    i32.const 0\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.mul\n    memory.fill\n");

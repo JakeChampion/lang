@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -51,6 +53,25 @@ var enumRcPayloadsKnownDivergent = map[string]bool{
 	"derive_from_json_shapes": true,
 }
 
+// Checked regex text results return a string borrowed from Some's payload.
+// The move-only model does not retain that escaping alias when it drops the
+// box. Run these fixtures against their specified answers under production
+// ownership instead of treating the unsound model as an oracle. The primary
+// compiler also checks every regex fixture with a balanced allocation census
+// in TestSelfHostRegexConformance.
+var enumRcPayloadsCheckedRegex = map[string]bool{
+	"regex_captures":        true,
+	"regex_captures_all":    true,
+	"regex_captures_assert": true,
+	"regex_ci":              true,
+	"regex_convenience":     true,
+	"regex_named_groups":    true,
+	"regex_ops":             true,
+	"regex_replace_edge":    true,
+	"regex_replace_groups":  true,
+	"regex_wordbound":       true,
+}
+
 func TestX86_64EnumRcPayloadsMatchesMove(t *testing.T) {
 	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
 		if enumRcPayloadsKnownDivergent[f.name] {
@@ -58,6 +79,12 @@ func TestX86_64EnumRcPayloadsMatchesMove(t *testing.T) {
 		}
 		prev := ast.EnumRcPayloads
 		defer func() { ast.EnumRcPayloads = prev }()
+		if enumRcPayloadsCheckedRegex[f.name] {
+			ast.EnumRcPayloads = true
+			out, code := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
+			f.check(t, out, code)
+			return
+		}
 		ast.EnumRcPayloads = false
 		outOff, exitOff := runFixtureX86_64Native(t, f.mainPath, f.stdin, true)
 		ast.EnumRcPayloads = true
@@ -75,6 +102,12 @@ func TestArm64EnumRcPayloadsMatchesMove(t *testing.T) {
 		}
 		prev := ast.EnumRcPayloads
 		defer func() { ast.EnumRcPayloads = prev }()
+		if enumRcPayloadsCheckedRegex[f.name] {
+			ast.EnumRcPayloads = true
+			out, code := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
+			f.check(t, out, code)
+			return
+		}
 		ast.EnumRcPayloads = false
 		outOff, exitOff := runFixtureArm64Native(t, f.mainPath, f.stdin, true)
 		ast.EnumRcPayloads = true
@@ -95,6 +128,16 @@ func TestWASMEnumRcPayloadsMatchesMove(t *testing.T) {
 		ast.RcFreeEnabled = true
 		pe := ast.EnumRcPayloads
 		defer func() { ast.EnumRcPayloads = pe }()
+		if enumRcPayloadsCheckedRegex[f.name] {
+			ast.EnumRcPayloads = true
+			out, code := runFixtureWasm(t, f.mainPath, f.stdin)
+			result := strconv.Itoa(f.wantExit) + "\n"
+			if code != 0 || !strings.HasSuffix(out, result) {
+				t.Fatalf("production ownership: exit=%d stdout=%q, want result %q", code, out, result)
+			}
+			f.check(t, strings.TrimSuffix(out, result), f.wantExit)
+			return
+		}
 		ast.EnumRcPayloads = false
 		outOff, exitOff := runFixtureWasm(t, f.mainPath, f.stdin)
 		ast.EnumRcPayloads = true
