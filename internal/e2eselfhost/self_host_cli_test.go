@@ -2670,18 +2670,33 @@ function main(): i32 {
 		}
 	})
 
-	t.Run("wasm-component-rejects-unsupported", func(t *testing.T) {
-		// A program mixing two WASI categories (env + args) has no single
-		// wrap yet, so it must be rejected with a clear error rather than
-		// emitting a broken component.
+	t.Run("wasm-component-multi-category-composes", func(t *testing.T) {
+		// A program mixing two WASI categories (env + args) fits none of the
+		// fixed wasi:cli/run framings, so it composes against the fern world
+		// instead; the result must load and see both its arguments and its
+		// environment.
 		srcPath := filepath.Join(dir, "comp_multi.fern")
-		src := "function main(): i32 { var n = args().len(); match (env(\"X\")) { Some(v) => { return n; }, None => { return n + 1; } } }\n"
+		src := "function main(): i32 { if (args().len() == 3) { write(\"three\"); } else { write(\"other\"); } match (env(\"X\")) { Some(v) => { write(v); return 0; }, None => { write(\"none\"); return 1; } } }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		_, code := runDriver(t, "-target", "wasm32-wasi", "-o", filepath.Join(dir, "comp_multi.wasm"), srcPath)
-		if code != 2 {
-			t.Errorf("wasm-component on a multi-WASI program exited %d, want 2 (rejected)", code)
+		outPath := filepath.Join(dir, "comp_multi.wasm")
+		if _, code := runDriver(t, "-target", "wasm32-wasi", "-o", outPath, srcPath); code != 0 {
+			t.Fatalf("wasm-component on a multi-WASI program exited %d, want 0", code)
+		}
+		wasmtime, err := exec.LookPath("wasmtime")
+		if err != nil {
+			t.Skip("wasmtime not on PATH; skipping the multi-category component run")
+		}
+		cmd := exec.Command(wasmtime, "run", "--env", "X=hi", outPath, "a", "b")
+		out, _ := cmd.Output()
+		if string(out) != "threehi" || cmd.ProcessState.ExitCode() != 0 {
+			t.Errorf("args+env: stdout = %q, exit = %d; want %q, 0", string(out), cmd.ProcessState.ExitCode(), "threehi")
+		}
+		cmd = exec.Command(wasmtime, "run", outPath)
+		out, _ = cmd.Output()
+		if string(out) != "othernone" || cmd.ProcessState.ExitCode() != 1 {
+			t.Errorf("no args, no env: stdout = %q, exit = %d; want %q, 1", string(out), cmd.ProcessState.ExitCode(), "othernone")
 		}
 	})
 
