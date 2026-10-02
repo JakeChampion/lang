@@ -108,6 +108,8 @@ const (
 	// print helper consumes; stderr's pair is the same shape for
 	// wasi:cli/stderr. init=0 means "not yet fetched"; on first call the
 	// helper invokes get-stdout, stores the handle, and sets init=1.
+	// stdioClosed (2) means the program closed a Writer on the stream and
+	// the cached handle is dropped.
 	stdoutInitAddr   = networkHandleAddr + 4
 	stdoutHandleAddr = stdoutInitAddr + 4
 	stderrInitAddr   = stdoutHandleAddr + 4
@@ -247,8 +249,13 @@ const (
 	ipBoxAddr  = ipFlatAddr + ipFlatSize
 	ipBox2Addr = ipBoxAddr + 8
 
+	// stdinClosedAddr is 1 once the program has closed a preview-2 stdin
+	// Reader. Every stdin() mints its own input-stream, so the closed state
+	// cannot live in one handle; it belongs to the process, as fd 0's does.
+	stdinClosedAddr = ipBox2Addr + 8
+
 	// scratchEnd is the first address past the named scratch.
-	scratchEnd = ipBox2Addr + 8
+	scratchEnd = stdinClosedAddr + 4
 )
 
 // allocMinStart is the floor for the bump cursor: past every reserved slot

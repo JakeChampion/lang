@@ -9754,11 +9754,26 @@ func buildStdinBodyP2(idxs map[string]uint32) []byte {
 	// builds (buildOpenReaderBodyP2). The leading static rc sentinel
 	// keeps __fern_retain / __fern_drop (which mutate mem[ptr-8]) off
 	// the preceding static data segment — see issue #2550.
-	body = inst.InstCall(body, getStdin) // handle = get-stdin()
+	// Once stdin is closed a new Reader is born closed, and holds no
+	// stream: handle = closed ? 0 : get-stdin().
+	body = inst.InstI32Const(body, stdinClosedAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstIfStart(body, encode.ValtypeI32)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstElse(body)
+	body = inst.InstCall(body, getStdin)
+	body = inst.InstEnd(body)
 	body = inst.InstLocalSet(body, 1)
 	body = inst.InstI32Const(body, noDescriptor)
 	body = inst.InstLocalSet(body, 2)
 	body = emitReaderBoxP2(body, alloc, 1, 2, 0)
+	body = inst.InstI32Const(body, stdinClosedAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI64Const(body, closedHandlePos)
+	body = memory.InstI64Store(body, 3, readerPosOff)
+	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 0)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)

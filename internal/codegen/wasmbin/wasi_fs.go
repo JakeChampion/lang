@@ -346,15 +346,16 @@ func buildWasiErrnoOfCodeBody(_ map[string]uint32) []byte {
 // string runtime) → path_open(fd=3, …, retptr) →
 // errno-check → if open failed, wrap errno via
 // __build_io_error and return Err. Otherwise loop fd_read with
-// a 4 KiB doubling buffer, fd_close, materialise the string,
-// wrap as Ok and return.
+// a 4 KiB doubling buffer until it reads 0 bytes (a failed read is
+// Err as well), fd_close, materialise the string, wrap as Ok and
+// return.
 //
 // Locals (after the two params):
 //
 //	0: $path_data           (param)
 //	1: $path_len            (param)
 //	2: $scratch             4-word WASI ABI scratch
-//	3: $errno               path_open errno
+//	3: $errno               path_open / fd_read errno
 //	4: $fd                  opened fd
 //	5: $buf                 growing accumulator (heap ptr)
 //	6: $buf_size            current capacity (4096 → doubles)
@@ -504,7 +505,17 @@ func buildReadFileBodyCommon(idxs map[string]uint32, asBytes bool) []byte {
 		body = inst.InstI32Const(body, 12)
 		body = numeric.InstI32Add(body) // scratch+12 (nread_ptr)
 		body = inst.InstCall(body, fdRead)
-		body = inst.InstDrop(body) // ignore errno (treat as EOF)
+		// A failed read is an error; only nread == 0 is end of file.
+		body = inst.InstLocalTee(body, 3)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 4)
+			body = inst.InstCall(body, fdClose)
+			body = inst.InstDrop(body)
+			body = inst.InstLocalGet(body, 3)
+			body = wrapErrReturn(body)
+		}
+		body = inst.InstEnd(body)
 
 		// nread = mem[scratch+12]
 		body = inst.InstLocalGet(body, 2)
@@ -652,10 +663,8 @@ func buildReadFileBodyCommon(idxs map[string]uint32, asBytes bool) []byte {
 // open/read failure. The blocking-read chunks are host-allocated
 // (cabi_realloc) and copied into a doubling accumulator.
 //
-// Known simplification: open/read errors map to ENOENT (NotFound)
-// via __build_io_error rather than translating each error-code
-// case; blocking-read errors are treated as end-of-stream. Refining
-// the error-code → IoError mapping is a follow-up.
+// A blocking-read that fails is Err(EIO): the stream-error carries no
+// errno. One that reports `closed` is the end of the file.
 //
 // Locals (after 2 params): 2=rb, 3=path_buf, 4=path_byte_len,
 // 5=preopen, 6=fd, 7=stream, 8=acc_buf, 9=acc_size, 10=acc_cur,
@@ -763,10 +772,30 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 		body = inst.InstI64Const(body, 4096)
 		body = inst.InstLocalGet(body, 2)
 		body = inst.InstCall(body, blockingRead)
-		// disc != 0 → end of stream (closed / EOF) → break.
+		// disc != 0 → a stream-error: tag 1 (closed) is end of input →
+		// break; tag 0 failed, and owns an error resource → Err(EIO).
 		body = inst.InstLocalGet(body, 2)
 		body = memory.InstI32Load8U(body, 0, 0)
-		body = inst.InstBrIf(body, 1) // depth 1 = $end
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 2)
+			body = memory.InstI32Load8U(body, 0, 4)
+			body = numeric.InstI32Eqz(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			{
+				body = emitStreamErrorDrop(body, idxs, 2)
+				body = inst.InstLocalGet(body, 7)
+				body = inst.InstCall(body, streamDrop)
+				body = inst.InstLocalGet(body, 6)
+				body = inst.InstCall(body, descDrop)
+				body = inst.InstI32Const(body, errnoIo)
+				body = inst.InstLocalSet(body, 16)
+				body = buildReadFileErr(body, idxs, buildIoErr, alloc, 16)
+			}
+			body = inst.InstEnd(body)
+			body = inst.InstBr(body, 2) // depth 2 = $end
+		}
+		body = inst.InstEnd(body)
 		// chunk_ptr = mem[rb+4]; chunk_len = mem[rb+8]
 		body = inst.InstLocalGet(body, 2)
 		body = memory.InstI32Load(body, 2, 4)
@@ -1448,9 +1477,7 @@ func buildWriteFileSpanBodyP2(idxs map[string]uint32, raw bool) []byte {
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
-			if raw {
-				body = emitStreamErrorDrop(body, idxs, 4)
-			}
+			body = emitStreamErrorDrop(body, idxs, 4)
 			body = inst.InstLocalGet(body, 11)
 			body = inst.InstCall(body, streamDrop)
 			body = inst.InstLocalGet(body, 10)
@@ -2369,11 +2396,36 @@ const noDescriptor = -1
 // returns nothing, so these always return None — selected via
 // preview2HelperBodyOverrides.
 func buildReaderCloseFdBodyP2(idxs map[string]uint32) []byte {
-	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_input_stream_drop"])
+	// The only Reader without a descriptor is stdin's.
+	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_input_stream_drop"], func(b []byte, _ uint32) []byte {
+		b = inst.InstI32Const(b, stdinClosedAddr)
+		b = inst.InstI32Const(b, 1)
+		return memory.InstI32Store(b, 2, 0)
+	})
 }
 
 func buildWriterCloseBodyP2(idxs map[string]uint32) []byte {
-	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_output_stream_drop"])
+	// A Writer without a descriptor holds the cached stdout or stderr
+	// handle; the one it holds is the stream now closed.
+	return buildStreamCloseBodyP2(idxs, idxs["wasi_io_output_stream_drop"], func(b []byte, streamLocal uint32) []byte {
+		for _, s := range [][2]int32{{stdoutInitAddr, stdoutHandleAddr}, {stderrInitAddr, stderrHandleAddr}} {
+			b = inst.InstI32Const(b, s[0])
+			b = memory.InstI32Load(b, 2, 0)
+			b = inst.InstI32Const(b, 1)
+			b = numeric.InstI32Eq(b)
+			b = inst.InstI32Const(b, s[1])
+			b = memory.InstI32Load(b, 2, 0)
+			b = inst.InstLocalGet(b, streamLocal)
+			b = numeric.InstI32Eq(b)
+			b = numeric.InstI32And(b)
+			b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+			b = inst.InstI32Const(b, s[0])
+			b = inst.InstI32Const(b, stdioClosed)
+			b = memory.InstI32Store(b, 2, 0)
+			b = inst.InstEnd(b)
+		}
+		return b
+	})
 }
 
 // buildStreamCloseBodyP2 drops the stream handle stored at the Reader /
@@ -2381,9 +2433,14 @@ func buildWriterCloseBodyP2(idxs map[string]uint32) []byte {
 // and returns None ((4-byte alloc, tag=1) — the Option[IoError] success
 // form). `drop` is the canon resource.drop import for the relevant
 // stream resource. A stdio handle owns no descriptor and carries
-// noDescriptor there. The handle is left marked closed (closedHandlePos)
+// noDescriptor there; closing one closes the stream for the whole
+// process, which `markStdio` records given the local holding the
+// dropped stream. The handle is left marked closed (closedHandlePos)
 // for every later method to check.
-func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
+//
+// Locals after the param: 1: $box  2: $err_ptr  3: $errno  4: $stream
+// 5: $desc
+func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32, markStdio func([]byte, uint32) []byte) []byte {
 	allocRc1 := idxs["__fern_alloc_rc1"]
 
 	// A second close answers EBADF, as the kernel does.
@@ -2391,21 +2448,29 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 	// resource.drop(mem[$self+0]) — the own<…stream> handle.
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalTee(body, 4)
 	body = inst.InstCall(body, drop)
-	// if mem[$self+4] != noDescriptor: resource.drop(mem[$self+4]). The
-	// import is declared only when an opener is in the module; without
-	// one every handle is stdio's and the slot is always noDescriptor.
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 4)
+	body = inst.InstLocalSet(body, 5)
+	// if desc != noDescriptor: resource.drop(desc). The import is
+	// declared only when an opener is in the module; without one every
+	// handle is stdio's and the slot is always noDescriptor.
 	if descDrop, ok := idxs["wasi_descriptor_drop_p2"]; ok {
-		body = inst.InstLocalGet(body, 0)
-		body = memory.InstI32Load(body, 2, 4)
-		body = inst.InstLocalTee(body, 2)
+		body = inst.InstLocalGet(body, 5)
 		body = inst.InstI32Const(body, noDescriptor)
 		body = numeric.InstI32Ne(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 5)
 		body = inst.InstCall(body, descDrop)
 		body = inst.InstEnd(body)
 	}
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, noDescriptor)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = markStdio(body, 4)
+	body = inst.InstEnd(body)
 
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI64Const(body, closedHandlePos)
@@ -2413,7 +2478,7 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 	// Return None, at Option[IoError]'s uniform box size.
 	body = emitPayloadlessResultBox(body, allocRc1, 1, 8, 1)
 
-	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
@@ -2615,6 +2680,7 @@ func buildWriterWriteBodyP2(idxs map[string]uint32) []byte {
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
+			body = emitStreamErrorDrop(body, idxs, 3)
 			body = inst.InstI32Const(body, 0)
 			body = inst.InstI32Const(body, 0)
 			body = inst.InstI32Const(body, 0)
@@ -2866,7 +2932,7 @@ func buildReaderReadLineFdBody(idxs map[string]uint32) []byte {
 // handle (stored by __fern_stdin's get-stdin or open_reader's
 // read-via-stream) at +0 instead of an fd; each byte comes from
 // wasi:io/streams::blocking-read(handle, 1) rather than fd_read.
-// disc != 0 (stream-error / closed = EOF) or an empty ok-list ends
+// disc != 0 (a failed read or closed = EOF) or an empty ok-list ends
 // the line. Same growable accumulator + Option[string] box as the
 // fd version.
 //
@@ -2910,10 +2976,12 @@ func buildReaderReadLineFdBodyP2(idxs map[string]uint32) []byte {
 		body = inst.InstI64Const(body, 1)
 		body = inst.InstLocalGet(body, 1)
 		body = inst.InstCall(body, blockingRead)
-		// disc != 0 → EOF/error → break out of block.
+		// disc != 0 → EOF/error → break out of block, dropping the
+		// error a failed read owns.
 		body = inst.InstLocalGet(body, 1)
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = emitStreamErrorDrop(body, idxs, 1)
 		body = inst.InstBr(body, 2)
 		body = inst.InstEnd(body)
 		// list len == 0 → break (no byte).

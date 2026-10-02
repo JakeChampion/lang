@@ -138,6 +138,7 @@ func buildWriterWriteSomeBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		body = emitStreamErrorDrop(body, idxs, 3)
 		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalSet(body, 8)
 		body = emitHandleResultErr(body, buildIoErr, allocRc1, 8, 8, 9)

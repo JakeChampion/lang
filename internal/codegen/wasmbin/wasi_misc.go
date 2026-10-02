@@ -265,6 +265,44 @@ func buildFixedFdWriterBody(idxs map[string]uint32, fd int32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// stdioClosed is the value a stdout / stderr init slot holds once the
+// program has closed a Writer on that stream (memlayout.go). The cached
+// handle is dropped by then, and every later use answers as fd 1 / 2 do
+// after close(2): handle methods fail with EBADF, print writes nothing.
+const stdioClosed int32 = 2
+
+// emitIfStdioClosedP2 opens an `if` taken when the stream whose init slot
+// is `initAddr` has been closed.
+func emitIfStdioClosedP2(body []byte, initAddr int32) []byte {
+	body = inst.InstI32Const(body, initAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, stdioClosed)
+	body = numeric.InstI32Eq(body)
+	return inst.InstIfStart(body, inst.BlocktypeEmpty)
+}
+
+// emitStdioHandleP2 appends the lookup every stdout / stderr path makes
+// before writing: `closed` runs when the stream has been closed, and a
+// writing path returns from it, since the cached handle is dropped.
+// Otherwise the handle is fetched on first use and cached in `handleAddr`;
+// a closed stream is never fetched again.
+func emitStdioHandleP2(body []byte, getHandle uint32, initAddr, handleAddr int32, closed func([]byte) []byte) []byte {
+	body = emitIfStdioClosedP2(body, initAddr)
+	body = closed(body)
+	body = inst.InstEnd(body)
+	body = inst.InstI32Const(body, initAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, handleAddr)
+	body = inst.InstCall(body, getHandle)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstI32Const(body, initAddr)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	return inst.InstEnd(body)
+}
+
 // buildStdoutBodyP2 / buildStderrBodyP2 are the preview-2 stdio Writer
 // constructors. Unlike preview-1 (where the Writer's field is the raw
 // fd 1/2 that fd_write consumes), preview-2 has no fds: the Writer must
@@ -285,19 +323,9 @@ func buildStderrBodyP2(idxs map[string]uint32) []byte {
 
 func buildCachedHandleWriterBodyP2(idxs map[string]uint32, get uint32, initAddr, handleAddr int32) []byte {
 	alloc := idxs["__fern_alloc"]
-	var body []byte
-	// If !init: mem[handleAddr] = get-*(); mem[initAddr] = 1.
-	body = inst.InstI32Const(body, initAddr)
-	body = memory.InstI32Load(body, 2, 0)
-	body = numeric.InstI32Eqz(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstI32Const(body, handleAddr)
-	body = inst.InstCall(body, get)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstI32Const(body, initAddr)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstEnd(body)
+	// A closed stream still gets a Writer, marked closed below, as a
+	// Writer on a closed fd 1 is still a Writer.
+	body := emitStdioHandleP2(nil, get, initAddr, handleAddr, func(b []byte) []byte { return b })
 	// Writer struct: the rc sentinel, {handle} and noDescriptor — the
 	// same layout open_writer's Writer uses, seek fields and all. The leading static rc
 	// sentinel (0x80000000) is mandatory: the Writer is a refcounted
@@ -322,6 +350,11 @@ func buildCachedHandleWriterBodyP2(idxs map[string]uint32, get uint32, initAddr,
 	body = inst.InstI32Const(body, noDescriptor)
 	body = memory.InstI32Store(body, 2, 4)
 	body = emitWriterFieldsP2(body, 0, false)
+	body = emitIfStdioClosedP2(body, initAddr)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI64Const(body, closedHandlePos)
+	body = memory.InstI64Store(body, 3, writerPosOff)
+	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 0)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
