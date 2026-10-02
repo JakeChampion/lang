@@ -13781,6 +13781,41 @@ pub function wat_extern_valtype(t: string): string {
   return "i32";
 }
 
+// extern_core_valtype is the value type an `@import`'s raw core signature
+// carries for a scalar: wat_extern_valtype, except that an f32 stays f32
+// where the self-host's own values hold it as an f64.
+function extern_core_valtype(t: string): string {
+  if (t == "f32") {
+    return "f32";
+  }
+  return wat_extern_valtype(t);
+}
+
+// extern_core_arg forwards the scalar in `local` to a raw import, demoting an
+// f32 held as an f64.
+function extern_core_arg(t: string, local: string): string {
+  if (t == "f32") {
+    return "(f32.demote_f64 (local.get " + local + "))";
+  }
+  return "(local.get " + local + ")";
+}
+
+// has_extern_f32 is true when an `@import` takes or returns an f32, which a
+// wrapper converts between the self-host's f64 and the import's f32.
+function has_extern_f32(f: parser.FuncDecl): boolean {
+  if (f.ret_type == "f32") {
+    return true;
+  }
+  var i: i32 = 0;
+  while (i < f.params.len()) {
+    if (f.params[i].type_name == "f32") {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
 // extern_imports emits the core wasm function imports for the module's
 // `@import` extern declarations (P4). A body-less `@import("iface", "wit")`
 // function becomes `(import "iface" "wit" (func $name (param …) (result …)))`;
@@ -14890,6 +14925,16 @@ pub function has_extern_mem_param(mod: parser.Module, f: parser.FuncDecl): boole
   return false;
 }
 
+// extern_marshals is true when an `@import` goes through the parameter-
+// marshalling wrapper: a memory parameter, or an f32 with a scalar, void or
+// sum result (an f32 beside a composite result rides that result's wrapper).
+function extern_marshals(mod: parser.Module, f: parser.FuncDecl): boolean {
+  if (has_extern_mem_param(mod, f)) {
+    return true;
+  }
+  return has_extern_f32(f) && (extern_sum_result_supported(f.ret_type) || !is_extern_composite_ret(mod, f.ret_type) && !extern_plain_enum_param(mod, f.ret_type));
+}
+
 // extern_needs_wrapper is true when an extern's Fern call must resolve to a
 // generated wrapper rather than straight to the import: a composite result
 // (return-area lift) or a memory/record parameter.
@@ -14905,7 +14950,7 @@ pub function has_extern_mem_param(mod: parser.Module, f: parser.FuncDecl): boole
 // gate is unchanged.
 pub function extern_needs_wrapper(mod: parser.Module, f: parser.FuncDecl, slot: i32): boolean {
   return is_extern_composite_ret(mod, f.ret_type) || has_extern_mem_param(mod, f) || extern_plain_enum_param(mod, f.ret_type)
-    || slot >= 8 && !returns_value(f.ret_type);
+    || has_extern_f32(f) || slot >= 8 && !returns_value(f.ret_type);
 }
 
 pub function extern_imports(mod: parser.Module, slot: i32): string {
@@ -14965,7 +15010,7 @@ pub function extern_imports(mod: parser.Module, slot: i32): string {
               parts = parts.append(" (param i32)");
             }
           } else {
-            parts = parts.append(" (param " + wat_extern_valtype(f.params[sp].type_name) + ")");
+            parts = parts.append(" (param " + extern_core_valtype(f.params[sp].type_name) + ")");
           }
           sp = sp + 1;
         }
@@ -14978,7 +15023,7 @@ pub function extern_imports(mod: parser.Module, slot: i32): string {
           parts = parts.append(" (param i32)))\n");
         } else {
           if (returns_value(f.ret_type)) {
-            parts = parts.append(" (result " + wat_extern_valtype(f.ret_type) + ")");
+            parts = parts.append(" (result " + extern_core_valtype(f.ret_type) + ")");
           }
           parts = parts.append("))\n");
         }
@@ -15190,6 +15235,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
       // array-result wrapper) and pass its block base to the Fern func.
       var akind: str = slice_unchecked(params[j].type_name, 0, params[j].type_name.len() - 2);
       var assz: string = util.i32_to_string(elem_slot_size(akind));
+      var acsz: string = util.i32_to_string(extern_list_elem_size(akind));
       var ablkS: string = util.i32_to_string(blk);
       var aiS: string = util.i32_to_string(i_local);
       var alenS: string = util.i32_to_string(wp + 1);
@@ -15201,7 +15247,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
       body = body + "    (local.set " + aiS + " (i32.const 0))\n";
       body = body + "    (block $pda" + ajS + " (loop $pca" + ajS + "\n";
       body = body + "      (br_if $pda" + ajS + " (i32.ge_u (local.get " + aiS + ") (local.get " + alenS + ")))\n";
-      body = body + "      (" + elem_store_op(akind) + " (i32.add (i32.add (local.get " + ablkS + ") (i32.const 8)) (i32.mul (local.get " + aiS + ") (i32.const " + assz + "))) (" + elem_load_op(akind) + " (i32.add (local.get " + aptrS + ") (i32.mul (local.get " + aiS + ") (i32.const " + assz + ")))))\n";
+      body = body + "      " + extern_elem_from_canon(akind, "(i32.add (i32.add (local.get " + ablkS + ") (i32.const 8)) (i32.mul (local.get " + aiS + ") (i32.const " + assz + ")))", "(i32.add (local.get " + aptrS + ") (i32.mul (local.get " + aiS + ") (i32.const " + acsz + ")))") + "\n";
       body = body + "      (local.set " + aiS + " (i32.add (local.get " + aiS + ") (i32.const 1)))\n";
       body = body + "      (br $pca" + ajS + ")))\n";
       callargs = callargs + " (local.get " + ablkS + ")";
@@ -15231,6 +15277,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
     // reads.
     var rk: str = slice_unchecked(ret, 0, ret.len() - 2);
     var ss: string = util.i32_to_string(elem_slot_size(rk));
+    var cs: string = util.i32_to_string(extern_list_elem_size(rk));
     var aS: string = util.i32_to_string(arr_arr);
     var lnS: string = util.i32_to_string(arr_alen);
     var bfS: string = util.i32_to_string(arr_buf);
@@ -15238,11 +15285,11 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
     var iS2: string = util.i32_to_string(i_local);
     body = body + "    (local.set " + aS + " (call $" + fname + callargs + "))\n";
     body = body + "    (local.set " + lnS + " (i32.load (local.get " + aS + ")))\n";
-    body = body + "    (local.set " + bfS + " (i32.and (i32.add (call $__fern_alloc (i32.mul (local.get " + lnS + ") (i32.const " + ss + "))) (i32.const 7)) (i32.const -8)))\n";
+    body = body + "    (local.set " + bfS + " (i32.and (i32.add (call $__fern_alloc (i32.mul (local.get " + lnS + ") (i32.const " + cs + "))) (i32.const 7)) (i32.const -8)))\n";
     body = body + "    (local.set " + iS2 + " (i32.const 0))\n";
     body = body + "    (block $da (loop $ca\n";
     body = body + "      (br_if $da (i32.ge_u (local.get " + iS2 + ") (local.get " + lnS + ")))\n";
-    body = body + "      (" + elem_store_op(rk) + " (i32.add (local.get " + bfS + ") (i32.mul (local.get " + iS2 + ") (i32.const " + ss + "))) (" + elem_load_op(rk) + " (i32.add (i32.add (local.get " + aS + ") (i32.const 8)) (i32.mul (local.get " + iS2 + ") (i32.const " + ss + ")))))\n";
+    body = body + "      " + extern_elem_to_canon(rk, "(i32.add (local.get " + bfS + ") (i32.mul (local.get " + iS2 + ") (i32.const " + cs + ")))", "(i32.add (i32.add (local.get " + aS + ") (i32.const 8)) (i32.mul (local.get " + iS2 + ") (i32.const " + ss + ")))") + "\n";
     body = body + "      (local.set " + iS2 + " (i32.add (local.get " + iS2 + ") (i32.const 1)))\n";
     body = body + "      (br $ca)))\n";
     body = body + "    (local.set " + raS2 + " (i32.and (i32.add (call $__fern_alloc (i32.const 12)) (i32.const 3)) (i32.const -4)))\n";
@@ -15507,7 +15554,7 @@ function extern_tuple_result_wrapper(f: parser.FuncDecl, slot: i32): string {
   var p: i32 = 0;
   while (p < f.params.len()) {
     parts = parts.append(" (param $ep" + util.i32_to_string(p) + " " + wat_extern_valtype(f.params[p].type_name) + ")");
-    args = args + " (local.get $ep" + util.i32_to_string(p) + ")";
+    args = args + " " + extern_core_arg(f.params[p].type_name, "$ep" + util.i32_to_string(p));
     p = p + 1;
   }
   parts = parts.append(" (result i32)\n");
@@ -15530,7 +15577,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
     var f: parser.FuncDecl = mod.funcs[i];
-    if (f.import_iface.len() > 0 && has_extern_mem_param(mod, f)) {
+    if (f.import_iface.len() > 0 && extern_marshals(mod, f)) {
       // memory parameter (P4c): the wrapper forwards each to the canonical
       // (ptr, len). A `string` ([len][bytes]) forwards (ptr+4, load(ptr)).
       // A numeric array forwards (buf, len): the self-host array value is
@@ -15587,13 +15634,16 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
           var tn: string = f.params[ci].type_name;
           var k: str = slice_unchecked(tn, 0, tn.len() - 2);
           var ss: string = util.i32_to_string(elem_slot_size(k));
+          var cs: string = util.i32_to_string(extern_list_elem_size(k));
           var lbl: string = util.i32_to_string(ci);
+          var src: string = "(i32.add (i32.add (local.get " + cppn + ") (i32.const 8)) (i32.mul (local.get $ai) (i32.const " + ss + ")))";
+          var dst: string = "(i32.add (local.get " + bn + ") (i32.mul (local.get $ai) (i32.const " + cs + ")))";
           parts = parts.append("    (local.set $an (i32.load (local.get " + cppn + ")))\n");
-          parts = parts.append("    (local.set " + bn + " (i32.and (i32.add (call $__fern_alloc (i32.mul (local.get $an) (i32.const " + ss + "))) (i32.const 7)) (i32.const -8)))\n");
+          parts = parts.append("    (local.set " + bn + " (i32.and (i32.add (call $__fern_alloc (i32.mul (local.get $an) (i32.const " + cs + "))) (i32.const 7)) (i32.const -8)))\n");
           parts = parts.append("    (local.set $ai (i32.const 0))\n");
           parts = parts.append("    (block $d" + lbl + " (loop $c" + lbl + "\n");
           parts = parts.append("      (br_if $d" + lbl + " (i32.ge_u (local.get $ai) (local.get $an)))\n");
-          parts = parts.append("      (" + elem_store_op(k) + " (i32.add (local.get " + bn + ") (i32.mul (local.get $ai) (i32.const " + ss + "))) (" + elem_load_op(k) + " (i32.add (i32.add (local.get " + cppn + ") (i32.const 8)) (i32.mul (local.get $ai) (i32.const " + ss + ")))))\n");
+          parts = parts.append("      " + extern_elem_to_canon(k, dst, src) + "\n");
           parts = parts.append("      (local.set $ai (i32.add (local.get $ai) (i32.const 1)))\n");
           parts = parts.append("      (br $c" + lbl + ")))\n");
         } else if (extern_byte_array_param(f.params[ci].type_name)) {
@@ -15687,14 +15737,18 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
             margs = margs + (" (i32.load (i32.add (local.get " + fppn + ") (i32.const " + util.i32_to_string(xbox_field_off(slot, 0)) + ")))");
           }
         } else {
-          margs = margs + (" (local.get " + fppn + ")");
+          margs = margs + (" " + extern_core_arg(f.params[fi].type_name, fppn));
         }
         fi = fi + 1;
       }
       if (sum_ret) {
         parts = parts.append(extern_sum_result_tail(f.name, f.ret_type, slot, margs));
       } else {
-        parts = parts.append("    (call $" + f.name + "__import" + margs + ")");
+        if (f.ret_type == "f32") {
+          parts = parts.append("    (f64.promote_f32 (call $" + f.name + "__import" + margs + "))");
+        } else {
+          parts = parts.append("    (call $" + f.name + "__import" + margs + ")");
+        }
         if (void_shim) {
           parts = parts.append("\n    (i32.const 0)");
         }
@@ -15718,7 +15772,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(xbox_field_off(slot, 0)) + ")) (call $" + f.name + "__import");
       var da: i32 = 0;
       while (da < f.params.len()) {
-        parts = parts.append(" (local.get $ep" + util.i32_to_string(da) + ")");
+        parts = parts.append(" " + extern_core_arg(f.params[da].type_name, "$ep" + util.i32_to_string(da)));
         da = da + 1;
       }
       parts = parts.append("))\n");
@@ -15758,7 +15812,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("    (call $" + f.name + "__import");
       var ra: i32 = 0;
       while (ra < f.params.len()) {
-        parts = parts.append(" (local.get $ep" + util.i32_to_string(ra) + ")");
+        parts = parts.append(" " + extern_core_arg(f.params[ra].type_name, "$ep" + util.i32_to_string(ra)));
         ra = ra + 1;
       }
       parts = parts.append(" (local.get $rb))\n");
@@ -15779,7 +15833,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       var sargs: string = "";
       while (sp2 < f.params.len()) {
         parts = parts.append(" (param $ep" + util.i32_to_string(sp2) + " " + wat_extern_valtype(f.params[sp2].type_name) + ")");
-        sargs = sargs + " (local.get $ep" + util.i32_to_string(sp2) + ")";
+        sargs = sargs + " " + extern_core_arg(f.params[sp2].type_name, "$ep" + util.i32_to_string(sp2));
         sp2 = sp2 + 1;
       }
       parts = parts.append(" (result i32)\n");
@@ -15801,7 +15855,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("    (local.set $d (call $" + f.name + "__import");
       var ena: i32 = 0;
       while (ena < f.params.len()) {
-        parts = parts.append(" (local.get $ep" + util.i32_to_string(ena) + ")");
+        parts = parts.append(" " + extern_core_arg(f.params[ena].type_name, "$ep" + util.i32_to_string(ena)));
         ena = ena + 1;
       }
       parts = parts.append("))\n");
@@ -15819,7 +15873,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       var svargs: string = "";
       while (svp < f.params.len()) {
         parts = parts.append(" (param $ep" + util.i32_to_string(svp) + " " + wat_extern_valtype(f.params[svp].type_name) + ")");
-        svargs = svargs + " (local.get $ep" + util.i32_to_string(svp) + ")";
+        svargs = svargs + " " + extern_core_arg(f.params[svp].type_name, "$ep" + util.i32_to_string(svp));
         svp = svp + 1;
       }
       parts = parts.append(" (result i32)\n");
@@ -15870,7 +15924,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("    (call $" + f.name + "__import");
       var vra: i32 = 0;
       while (vra < f.params.len()) {
-        parts = parts.append(" (local.get $ep" + util.i32_to_string(vra) + ")");
+        parts = parts.append(" " + extern_core_arg(f.params[vra].type_name, "$ep" + util.i32_to_string(vra)));
         vra = vra + 1;
       }
       parts = parts.append(" (local.get $rb))\n");
@@ -15930,7 +15984,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       var ttp: i32 = 0;
       while (ttp < f.params.len()) {
         parts = parts.append(" (param $ep" + util.i32_to_string(ttp) + " " + wat_extern_valtype(f.params[ttp].type_name) + ")");
-        ttargs = ttargs + " (local.get $ep" + util.i32_to_string(ttp) + ")";
+        ttargs = ttargs + " " + extern_core_arg(f.params[ttp].type_name, "$ep" + util.i32_to_string(ttp));
         ttp = ttp + 1;
       }
       parts = parts.append(" (result i32)\n");
@@ -15996,18 +16050,18 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
         parts = parts.append("      (br $c)))\n");
         parts = parts.append("    (local.get $s))\n");
       } else if (extern_array_param_supported(f.ret_type)) {
-        // numeric array list<T>: the slot size equals the canonical
-        // element size, so copy each element straight into its slot at
-        // +8 (no byte-expansion as for u8[]).
+        // numeric array list<T>: copy each element into its slot at +8
+        // (extern_elem_from_canon widens an f32 to its f64 slot).
         var rk: str = slice_unchecked(f.ret_type, 0, f.ret_type.len() - 2);
         var rss: string = util.i32_to_string(elem_slot_size(rk));
+        var rcs: string = util.i32_to_string(extern_list_elem_size(rk));
         parts = parts.append("    (local.set $s (call $__fern_arr_box (i32.mul (local.get $ln) (i32.const " + rss + "))))\n");
         parts = parts.append("    (i32.store (local.get $s) (local.get $ln))\n");
         parts = parts.append("    (i32.store offset=4 (local.get $s) (local.get $ln))\n");
         parts = parts.append("    (local.set $i (i32.const 0))\n");
         parts = parts.append("    (block $d (loop $c\n");
         parts = parts.append("      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n");
-        parts = parts.append("      (" + elem_store_op(rk) + " (i32.add (i32.add (local.get $s) (i32.const 8)) (i32.mul (local.get $i) (i32.const " + rss + "))) (" + elem_load_op(rk) + " (i32.add (local.get $dp) (i32.mul (local.get $i) (i32.const " + rss + ")))))\n");
+        parts = parts.append("      " + extern_elem_from_canon(rk, "(i32.add (i32.add (local.get $s) (i32.const 8)) (i32.mul (local.get $i) (i32.const " + rss + ")))", "(i32.add (local.get $dp) (i32.mul (local.get $i) (i32.const " + rcs + ")))") + "\n");
         parts = parts.append("      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
         parts = parts.append("      (br $c)))\n");
         parts = parts.append("    (local.get $s))\n");
@@ -16038,7 +16092,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
       parts = parts.append("    (call $" + f.name + "__import");
       var va: i32 = 0;
       while (va < f.params.len()) {
-        parts = parts.append(" (local.get $ep" + util.i32_to_string(va) + ")");
+        parts = parts.append(" " + extern_core_arg(f.params[va].type_name, "$ep" + util.i32_to_string(va)));
         va = va + 1;
       }
       parts = parts.append(")\n    (i32.const 0))\n");
@@ -16176,6 +16230,32 @@ pub function nth_tuple_type_elem(spelling: string, idx: i32): string {
 // f64 stride and instruction. Spelling it literally is what left an f32 tuple
 // element storing through i32.store — `expected i32, found f64` at validation
 // (#7756).
+// extern_list_elem_size is a numeric element's size in a canonical list:
+// its WIT width, where the self-host slot holds an f32 as an 8-byte f64.
+function extern_list_elem_size(kind: string): i32 {
+  if (kind == "f32") {
+    return 4;
+  }
+  return elem_slot_size(kind);
+}
+
+// extern_elem_to_canon copies the self-host array element at address `src`
+// into the canonical list element at `dst`; extern_elem_from_canon copies
+// back. Only an f32 changes width on the way.
+function extern_elem_to_canon(kind: string, dst: string, src: string): string {
+  if (kind == "f32") {
+    return "(f32.store " + dst + " (f32.demote_f64 (f64.load " + src + ")))";
+  }
+  return "(" + elem_store_op(kind) + " " + dst + " (" + elem_load_op(kind) + " " + src + "))";
+}
+
+function extern_elem_from_canon(kind: string, dst: string, src: string): string {
+  if (kind == "f32") {
+    return "(f64.store " + dst + " (f64.promote_f32 (f32.load " + src + ")))";
+  }
+  return "(" + elem_store_op(kind) + " " + dst + " (" + elem_load_op(kind) + " " + src + "))";
+}
+
 pub function elem_slot_size(kind: string): i32 {
   if (kind == "i64" || irlower.elem_ty_is_f64slot(kind)) {
     return 8;
