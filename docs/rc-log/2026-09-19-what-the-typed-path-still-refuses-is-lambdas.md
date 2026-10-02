@@ -172,7 +172,7 @@ member of that family that never got them**, and the loss happens in two steps:
    `e_lambda(fr_func.params, fr_func.ret_type, fr_func.body)` — the parsed
    `FuncDecl` HAS `ret_fn_ret` filled in, and `e_lambda` takes no parameter to
    put it in, because `ExprLambda` has no field for it.
-2. **`irlower.try_lift_binding` (`irlower.fern:73715`) hoists that binding to
+2. **`lift.try_lift_binding` (`irlower.fern:73715`) hoists that binding to
    `__lam_0`** and writes `ret_fn_ret: ""`, because by then there is nothing
    left to copy. It is one of only two places in the tree that mint a `__lam_N`
    name — the other is `lift_call_arg` (`irlower.fern:73141`).

@@ -4,7 +4,7 @@ import "./parser";
 import "./astwalk";
 import "./util";
 import "./ir";
-import "./irlower";
+import "./irtables";
 import "./ssa";
 import "./ssa_lift";
 
@@ -90,7 +90,7 @@ pub struct EmitState {
   // helper bodies to append. Replaces ~26 parallel needs_*
   // booleans — see asm.fern for the rationale.
   needed: string[],
-  struct_decls: irlower.StructTab,
+  struct_decls: irtables.StructTab,
   // loop_exit_labels / loop_cont_labels: see asm.fern for
   // semantics. break / continue use the top of each stack.
   loop_exit_labels: string[],
@@ -150,7 +150,7 @@ pub struct EmitState {
   // entry (`__fn_<name>.r`), sanitized; a direct call to one passes its
   // arguments in registers. Every function keeps its stack-ABI entry, so a
   // callee missing from it is still called correctly, only more slowly.
-  reg_entries: irlower.SigReg,
+  reg_entries: irtables.SigReg,
   // leaves are the unit's functions a call may take inline (ssa.Leaf).
   leaves: ssa.Leaf[],
   // capture is a builder handle that write() appends to instead of the
@@ -160,7 +160,7 @@ pub struct EmitState {
   // The typed lowering of a runtime helper's source: one body per function it
   // defines, then the drop helpers those bodies carry. The CLI supplies it
   // (semlower.runtime_bodies); a backend never links that pipeline itself.
-  rt_lower: (string) => irlower.LowerResult[],
+  rt_lower: (string) => irtables.LowerResult[],
   // The symbols this file already defines as named bodies (the drop helpers
   // a substitution or a runtime helper's lowering carries), so a second
   // source bringing the same one does not define it twice.
@@ -180,7 +180,7 @@ pub function (s: EmitState) with_named(name: string): EmitState {
 
 // no_rt_lower is the runtime-helper lowering of an emit no driver handed the
 // typed one (semlower.runtime_bodies): appending a helper there is a bug.
-pub function no_rt_lower(src: string): irlower.LowerResult[] {
+pub function no_rt_lower(src: string): irtables.LowerResult[] {
   eprint("internal error: a runtime helper was appended with no typed lowering to lower it");
   exit(3);
   return [];
@@ -189,7 +189,7 @@ pub function no_rt_lower(src: string): irlower.LowerResult[] {
 // unit_labels is the sanitized label of every function a unit emits for
 // mod.funcs[lo..hi) and the bodies on the cache tail: the names a direct call
 // in that unit may reach through their register entries (reg_entries).
-pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irlower.LowerResult[]): string[] {
+pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): string[] {
   var out: string[] = [];
   var fi: i32 = lo;
   while (fi < hi) {
@@ -213,7 +213,7 @@ pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irlower.Lo
 // unit_leaves lifts every small body in the unit's cache (the same bodies
 // unit_labels names) and keeps the ones a caller may take inline. A body
 // declared `@noinline` stays a call.
-pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irlower.LowerResult[]): ssa.Leaf[] {
+pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): ssa.Leaf[] {
   var out: ssa.Leaf[] = [];
   var kt: ssa_lift.KindTable = ssa_lift.kind_table();
   var fi: i32 = 0;
@@ -264,7 +264,7 @@ pub function new_state(): EmitState {
     slit_head: slit_empty_buckets(),
     slit_next: [],
     needed: nd,
-    struct_decls: irlower.struct_tab_empty(),
+    struct_decls: irtables.struct_tab_empty(),
     loop_exit_labels: lex,
     loop_cont_labels: lcn,
     funcs: fns,
@@ -280,7 +280,7 @@ pub function new_state(): EmitState {
     ssa_frame: 0,
     ssa_save: 0,
     ssa_x0: 0 - 1,
-    reg_entries: irlower.sig_reg_of([]),
+    reg_entries: irtables.sig_reg_of([]),
     leaves: [],
     capture: 0 as usize,
     rt_lower: no_rt_lower,
@@ -8721,7 +8721,7 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
 // checks with; `tm` is the module as the checker annotated it.
 pub function entry_check_errors(tm: parser.Module): util.Diag[] {
   var s: EmitState = new_state();
-  s = with_funcs(EmitState { ...s, struct_decls: irlower.struct_tab(tm.structs) }, tm.funcs);
+  s = with_funcs(EmitState { ...s, struct_decls: irtables.struct_tab(tm.structs) }, tm.funcs);
   return check_module(tm, s);
 }
 
@@ -9932,7 +9932,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
 // The three IR backends each hand-wrote the field walk inside
 // `__struct_drop_<T>`: which arm a field takes, in what priority, and which
 // helper releases it. That decision is backend-INDEPENDENT — it reads only the
-// struct decls, the shared `irlower` predicates and the whole-program need set
+// struct decls, the shared `irtables` predicates and the whole-program need set
 // — while only the instruction selection differs. Writing it three times is
 // what made every RC slice a three-way port and every divergence silent, which
 // is the drift `RC-PERCEUS-SELF-HOST-PORT.md` §1b names as the lever.
@@ -9976,39 +9976,39 @@ pub struct RcOp { kind: string, idx: i32, ty: string, cow: boolean, uniq: boolea
 // that emits the directive.
 pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
   var ops: RcOp[] = [];
-  var n: i32 = irlower.decl_field_count(s.struct_decls, sty);
+  var n: i32 = irtables.decl_field_count(s.struct_decls, sty);
   var k: i32 = 0;
   while (k < n) {
-    var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
-    var k_scalar: boolean = irlower.is_leaksafe_array_field(fdt);
-    var k_box: boolean = !k_scalar && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)
-      || irlower.is_row_array_field_type(s.struct_decls, fdt));
-    var k_struct: boolean = !k_scalar && !k_box && irlower.decl_is_struct(s.struct_decls, fdt);
+    var fdt: string = irtables.decl_field_type_at(s.struct_decls, sty, k);
+    var k_scalar: boolean = irtables.is_leaksafe_array_field(fdt);
+    var k_box: boolean = !k_scalar && (irtables.is_struct_array_field_type(s.struct_decls, fdt) || irtables.is_enum_array_field_type(s.struct_decls, fdt)
+      || irtables.is_row_array_field_type(s.struct_decls, fdt));
+    var k_struct: boolean = !k_scalar && !k_box && irtables.decl_is_struct(s.struct_decls, fdt);
     // The string / string[] / closure arms are gated on the whole-program
     // read scan: the construction-side retain only fires for admitted
     // types, so a non-admitted type's fields are uncounted aliases this
     // release would dangle. A non-admitted type keeps the sound leak.
     var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string" && s.has_need("strfldok:" + sty);
-    var k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irlower.decl_is_enum(s.struct_decls, fdt);
+    var k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irtables.decl_is_enum(s.struct_decls, fdt);
     var k_str_arr: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
     var k_clo: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && fdt == "fn" && s.has_need("strfldok:clo:" + sty);
     // The buffer half of a string[] the element scan refused: a read hazard
     // costs the element walk, not the buffer this box still owes back.
     var k_str_arr_shallow: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && !k_clo && fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty);
     if (k_box) {
-      if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
+      if (irtables.is_struct_array_field_type(s.struct_decls, fdt)) {
         var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-        if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
+        if (irtables.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
           ops = ops.append(RcOp { kind: "elems_drop_struct", idx: k, ty: elem_ty + "", cow: false, uniq: false });
         }
-      } else if (irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+      } else if (irtables.is_enum_array_field_type(s.struct_decls, fdt)) {
         var eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-        if (irlower.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
+        if (irtables.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
           ops = ops.append(RcOp { kind: "elems_drop_enum", idx: k, ty: eaty + "", cow: false, uniq: false });
         }
       }
       ops = ops.append(RcOp { kind: "box_walk_dec", idx: k, ty: "", cow: false, uniq: false });
-    } else if (k_struct && irlower.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
+    } else if (k_struct && irtables.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
       ops = ops.append(RcOp { kind: "deep_struct_drop", idx: k, ty: fdt, cow: false, uniq: false });
       ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
     } else if (k_str) {
@@ -10019,7 +10019,7 @@ pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
       // rc==1-gated on the enum box), then the box. This helper is the one
       // releaser of that payload on every drop path (#8692), as
       // __field_reclaim_'s deep_enum_dec is on the rebind path.
-    } else if (k_enum && irlower.enum_arr_elems_walk_ok(s.struct_decls, fdt)) {
+    } else if (k_enum && irtables.enum_arr_elems_walk_ok(s.struct_decls, fdt)) {
       ops = ops.append(RcOp { kind: "deep_enum_drop", idx: k, ty: fdt, cow: false, uniq: false });
       ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
     } else if (k_scalar || k_struct || k_enum || k_clo || k_str_arr_shallow) {
@@ -10047,25 +10047,25 @@ pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
 // the matching need() stays with the backend that emits the directive.
 pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
   var ops: RcOp[] = [];
-  var n: i32 = irlower.decl_field_count(s.struct_decls, sty);
+  var n: i32 = irtables.decl_field_count(s.struct_decls, sty);
   var k: i32 = 0;
   while (k < n) {
-    var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
+    var fdt: string = irtables.decl_field_type_at(s.struct_decls, sty, k);
     var fr_str: boolean = fdt == "string" && s.has_need("strfldok:" + sty);
     var fr_str_arr: boolean = fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
     var fr_clo: boolean = fdt == "fn" && s.has_need("strfldok:clo:" + sty);
-    var fr_struct: boolean = irlower.decl_is_struct(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
-    var fr_enum: boolean = irlower.decl_is_enum(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
+    var fr_struct: boolean = irtables.decl_is_struct(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
+    var fr_enum: boolean = irtables.decl_is_enum(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
     var fr_box_arr: boolean = !fr_str && !fr_str_arr && !fr_clo && !fr_struct && !fr_enum
-      && !irlower.is_leaksafe_array_field(fdt)
-      && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt))
+      && !irtables.is_leaksafe_array_field(fdt)
+      && (irtables.is_struct_array_field_type(s.struct_decls, fdt) || irtables.is_enum_array_field_type(s.struct_decls, fdt))
       && s.has_need("strfldok:sarr:" + sty);
-    var fr_rows: boolean = irlower.is_row_array_field_type(s.struct_decls, fdt);
+    var fr_rows: boolean = irtables.is_row_array_field_type(s.struct_decls, fdt);
     var participates: boolean = fr_str || fr_str_arr || fr_clo || fr_struct || fr_enum || fr_rows
       || fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty)
-      || irlower.is_leaksafe_array_field(fdt)
-      || irlower.is_struct_array_field_type(s.struct_decls, fdt)
-      || irlower.is_enum_array_field_type(s.struct_decls, fdt);
+      || irtables.is_leaksafe_array_field(fdt)
+      || irtables.is_struct_array_field_type(s.struct_decls, fdt)
+      || irtables.is_enum_array_field_type(s.struct_decls, fdt);
     if (participates) {
       // The carries the base copy RETAINS take the uniq arm: a nested struct
       // or enum, and every array kind. Pointer-equal in old and new then means
@@ -10074,10 +10074,10 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
       // pointers coincide for that reason. A string or closure field is
       // carried uncounted unless routed, so it keeps the cow compare.
       var uniq: boolean = fr_struct || fr_enum || fr_str_arr || fr_box_arr || fr_rows
-        || irlower.is_leaksafe_array_field(fdt)
+        || irtables.is_leaksafe_array_field(fdt)
         || fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty)
-        || irlower.is_struct_array_field_type(s.struct_decls, fdt)
-        || irlower.is_enum_array_field_type(s.struct_decls, fdt);
+        || irtables.is_struct_array_field_type(s.struct_decls, fdt)
+        || irtables.is_enum_array_field_type(s.struct_decls, fdt);
       var cow: boolean = !uniq;
       // A nested STRUCT field owns rc children of its own, and the box dec
       // below frees only the box — so the children were stranded (#8538).
@@ -10087,14 +10087,14 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
       // nothing reclaimable, or when its graph has a cycle
       // (nested_field_deep_drop_ok), leaving today's box-only release.
       var deep: string = "";
-      if (fr_struct && irlower.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
+      if (fr_struct && irtables.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
         deep = fdt;
       }
       // The enum sibling (#8567): a direct enum field's live variant owns rc
       // payloads the box dec alone strands, under the gate struct_drop_field_ops
       // uses for the same field.
       var deep_enum: string = "";
-      if (fr_enum && irlower.enum_arr_elems_walk_ok(s.struct_decls, fdt)) {
+      if (fr_enum && irtables.enum_arr_elems_walk_ok(s.struct_decls, fdt)) {
         deep_enum = fdt;
       }
       if (fr_rows) {
@@ -10102,16 +10102,16 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
       } else if (fr_box_arr) {
         var pre: string = "";
         var pre_kind: string = "arrarr_free";
-        if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
+        if (irtables.is_struct_array_field_type(s.struct_decls, fdt)) {
           var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-          if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
+          if (irtables.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
             pre = elem_ty + "";
           }
-        } else if (irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+        } else if (irtables.is_enum_array_field_type(s.struct_decls, fdt)) {
           // The enum-array sibling, under the gate struct_drop_field_ops'
           // elems_drop_enum arm uses so the two helpers agree (#8604).
           var eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-          if (irlower.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
+          if (irtables.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
             pre = eaty + "";
             pre_kind = "arrarr_free_enum";
           }

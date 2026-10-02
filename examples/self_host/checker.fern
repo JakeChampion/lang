@@ -20461,7 +20461,7 @@ function e060_decl_is_plain_struct(mod: parser.Module, name: string): boolean {
 }
 
 // e060_decl_is_enum: `name` is a declared enum (some decl records it as its
-// enum_owner) — mirrors irlower.decl_is_enum.
+// enum_owner) — mirrors irtables.decl_is_enum.
 function e060_decl_is_enum(mod: parser.Module, name: string): boolean {
   if (name.len() == 0) {
     return false;

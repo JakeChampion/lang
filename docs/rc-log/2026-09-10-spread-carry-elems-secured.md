@@ -79,7 +79,7 @@ spliced into its report and a hook onto the release helper for the quarantined
 pointer (the allocator is deterministic run to run), and the two pointed at
 two places.
 
-**A handed-back argument.** `irlower.lift_lambdas_view` returns
+**A handed-back argument.** `lift.lift_lambdas_view` returns
 `infer_ret_types_module(lower_defers_module(result))`; `lower_defers_module`
 rebuilds `funcs` by appending `lower_defers_func(mod.funcs[i])`, and that
 callee returns its parameter bare when the function has no defer. The append

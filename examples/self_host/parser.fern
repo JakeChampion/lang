@@ -832,7 +832,7 @@ pub const ORIGIN_MAP_COMP: string = "map_comp";
 // defer machinery into the enclosing function and hoist the cleanup with it.
 //
 // A defer-free IIFE is left unmarked: the lambda lift hoists it to a direct
-// `__lam_N` call either way (irlower.lift_capturing_iife for a capturing one),
+// `__lam_N` call either way (lift.lift_capturing_iife for a capturing one),
 // and only one the lift declines is inlined.
 pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
 
@@ -10523,7 +10523,7 @@ struct RStmts { rstmts: ast.Stmt[], rins3: Insts }
 // empty bucket.
 //
 // The index travels WITH the decls rather than beside them so the two cannot
-// be built from different arrays. Mirrors irlower.MFuncs, which does the same
+// be built from different arrays. Mirrors lift.MFuncs, which does the same
 // for the closure-lift pass.
 pub struct MFns {
   decls: FuncDecl[],
@@ -17767,7 +17767,7 @@ pub function is_value_block(c: ast.ExprCall): boolean {
 }
 
 // mkclo_body names the hoisted body a lambda-lift closure marker carries, or
-// "" for any other name. irlower.lift_inline_closures writes the marker as a
+// "" for any other name. lift.lift_inline_closures writes the marker as a
 // call of `__mkclo$<body>`; the checker types the box it builds and the
 // semantic source boundary produces it, so the spelling lives in one place.
 pub function mkclo_body(name: string): string {
@@ -23431,7 +23431,7 @@ function claim_method_name(fd: FuncDecl, tname: string, keys: string[], traits: 
 // These three are the INVERSE of claim_method_name: given the traits a `dyn`
 // spans and the method a call names, they say which of the flat symbols the
 // claim table produced is the one that call means. Every dispatcher needs the
-// same answer — the compiled backends through irlower.dyn_arm_matches, the AST
+// same answer — the compiled backends through irtables.dyn_arm_matches, the AST
 // interpreter through dyn_provider_name — so the rule lives beside the renaming
 // it undoes rather than once per engine.
 

@@ -33,7 +33,7 @@ import "./parser";
 import "./rundriver";
 import "./asmcore";
 import "./wasm_ir";
-import "./irlower";
+import "./irtables";
 import "./ircore";
 import "./semlower";
 import "./util";
@@ -50,8 +50,8 @@ function slice_funcs(fs: parser.FuncDecl[], lo: i32, hi: i32): parser.FuncDecl[]
   return out;
 }
 
-function slice_cache(c: irlower.LowerResult[], lo: i32, hi: i32): irlower.LowerResult[] {
-  var out: irlower.LowerResult[] = [];
+function slice_cache(c: irtables.LowerResult[], lo: i32, hi: i32): irtables.LowerResult[] {
+  var out: irtables.LowerResult[] = [];
   var i: i32 = lo;
   while (i < hi) {
     out = out.append(c[i]);
@@ -116,15 +116,15 @@ function main(): i32 {
   // lowered once and its cache split with the functions; the bodies with no
   // declaration of their own (generic instances, drop helpers) go with the
   // second half.
-  var stab: irlower.StructTab = irlower.struct_tab(im.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(im.structs);
   var g: ircore.Lowered = ircore.gate(im, d.sub);
   if (!g.ok) {
     ircore.eprint_ir_ineligible();
     return 1;
   }
-  var whole: irlower.LowerResult[] = g.cache;
-  var cache_a: irlower.LowerResult[] = slice_cache(whole, 0, half);
-  var cache_b: irlower.LowerResult[] = slice_cache(whole, half, whole.len());
+  var whole: irtables.LowerResult[] = g.cache;
+  var cache_a: irtables.LowerResult[] = slice_cache(whole, 0, half);
+  var cache_b: irtables.LowerResult[] = slice_cache(whole, half, whole.len());
 
   var unit_a: string = wasm_ir.emit_functions_view("", mod_a, cache_a, im.funcs, stab);
   var unit_b: string = wasm_ir.emit_functions_view("$u1", mod_b, cache_b, im.funcs, stab);

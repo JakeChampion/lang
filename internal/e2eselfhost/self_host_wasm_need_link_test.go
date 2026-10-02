@@ -15,16 +15,16 @@ import (
 // `=== need: <op>` line for the test to validate on its own; an op needs_of
 // does not record for its own unit is reported behind `=== unrecorded:`.
 const wasmNeedLinkDriver = `import "./ir";
-import "./irlower";
+import "./irtables";
 import "./lexer";
 import "./parser";
 import "./util";
 import "./wasm_ir";
 
-function unit(o: ir.Op): irlower.LowerResult[] {
-    return [irlower.LowerResult { ok: true, why: "", ops: [o], n_locals: 0,
+function unit(o: ir.Op): irtables.LowerResult[] {
+    return [irtables.LowerResult { ok: true, why: "", ops: [o], n_locals: 0,
         n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
-        f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_i32() }];
+        f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irtables.result_i32() }];
 }
 
 function main(): i32 {
@@ -58,7 +58,7 @@ func TestSelfHostWasmEveryNeedLinksAlone(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern")
 	if err := os.WriteFile(filepath.Join(dir, "need_link.fern"), []byte(wasmNeedLinkDriver), 0o644); err != nil {
 		t.Fatal(err)
 	}

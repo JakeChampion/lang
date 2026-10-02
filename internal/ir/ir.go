@@ -19256,7 +19256,7 @@ func (b *builder) emitRetainValueOnStack(t ast.Type) {
 // `var b = mk(); T { ...b, f: v }` already reclaims mk's box at b's scope exit
 // through this same `dropStructField`, under the same is_unique gate, on the
 // same oracle. Escape freedom is a far stronger fact and out of reach for a
-// registry builder — every field of `irlower.fn_sigs_for_borrow`'s 40-field
+// registry builder — every field of `fnsigs.fn_sigs_for_borrow`'s 40-field
 // result is a call whose own callee threads a parameter, which refuses the
 // whole function on all 32 pointer fields at once.
 func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {

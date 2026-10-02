@@ -32,7 +32,9 @@ import "./parser";
 import "./asmcore";
 import "./util";
 import "./ir";
-import "./irlower";
+import "./irtables";
+import "./fnsigs";
+import "./lift";
 import "./irfipverify";
 import "./irverify";
 import "./ast";
@@ -422,7 +424,7 @@ pub function ssa_block_id_collision(name: string, id: i32): i32 {
 // "<Type>.<method>" (the dispatch label) for a receiver function, and the
 // bodies the substitution defines beside the declarations. Built once per
 // module, since the eligibility walk asks per call op.
-function defined_reg(mod: parser.Module, extra: irlower.LowerResult[]): irlower.SigReg {
+function defined_reg(mod: parser.Module, extra: irtables.LowerResult[]): irtables.SigReg {
   var rows: string[] = [];
   for fd in mod.funcs {
     rows = rows.append(fd.name);
@@ -433,7 +435,7 @@ function defined_reg(mod: parser.Module, extra: irlower.LowerResult[]): irlower.
   for x in extra {
     rows = rows.append(x.name);
   }
-  return irlower.sig_reg_of(rows);
+  return irtables.sig_reg_of(rows);
 }
 
 // ---- compare-and-branch fusion --------------------------------------------
@@ -484,10 +486,10 @@ pub function flip_int_cmp_kind(id: i32): i32 {
   return id;
 }
 
-// lift_lambdas re-exports irlower's lambda-lift pre-pass so the dispatch sites
+// lift_lambdas re-exports lift's lambda-lift pre-pass so the dispatch sites
 // (the three backends' `*_or_error` entries, asm_ir_run, the modload drivers)
 // can hoist no-capture lambda arguments before the eligibility check + emit
-// without importing irlower directly. It also
+// without importing lift directly. It also
 // injects the built-in struct/enum declarations (FileStat / HeaderMap /
 // JsonValue / the std/time types / …) into the module's struct table — the AST
 // path got these via parser.module_with_builtins, and the IR path (probe +
@@ -643,7 +645,7 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 }
 
 // lift_lambdas_view threads a whole-program signature view into the lift pass —
-// see irlower.lift_lambdas_view. A per-module build must pass one or a fn value
+// see lift.lift_lambdas_view. A per-module build must pass one or a fn value
 // handed to a SIBLING module's function is not boxed at the call site (#5698);
 // an empty view keeps the module-only behaviour every other caller has.
 pub function lift_lambdas_view(mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
@@ -655,18 +657,18 @@ pub function lift_lambdas_view(mod: parser.Module, view: parser.FuncDecl[]): par
   // rather than an omission. Those call this after module_with_builtins, so
   // the module arrives monomorphised and the map is the free call the pass
   // matches. The wasm route does neither: wasm_ir.lift_lambdas goes straight
-  // to irlower, bypassing this function, and it lifts BEFORE monomorphising
+  // to lift, bypassing this function, and it lifts BEFORE monomorphising
   // (wasm_ir_run.fern lifts at 80 and monomorphises at 107). So hooking the
   // wasm funnel would not help either -- pre-mono there is no
   // `__arrm_map__<elem>` call to recognise. Giving wasm the kernel means
   // running this pass post-mono on that route, which is its own change.
-  return with_builtin_enums(irlower.lift_lambdas_view(scale_f64_maps_module(mod), view));
+  return with_builtin_enums(lift.lift_lambdas_view(scale_f64_maps_module(mod), view));
 }
 
 // lift_lambdas_typed is lift_lambdas for the typed lowering, which keeps each
 // `str` as a view.
 pub function lift_lambdas_typed(mod: parser.Module): parser.Module {
-  return with_builtin_enums(irlower.lift_lambdas_typed(scale_f64_maps_module(mod)));
+  return with_builtin_enums(lift.lift_lambdas_typed(scale_f64_maps_module(mod)));
 }
 
 function with_builtin_enums(lifted: parser.Module): parser.Module {
@@ -840,7 +842,7 @@ pub function unsupported_op_refuse(tag: i32, backend: string): string {
 // with n_locals 0, and letting that reach the IR verify gate reports the bail
 // as malformed IR with every local "outside the frame" (#8590) — or on wasm
 // as an elem entry naming a `$<fd>$clo` nothing defines (#7215).
-pub function lower_failed_refuse(name: string, r: irlower.LowerResult): i32 {
+pub function lower_failed_refuse(name: string, r: irtables.LowerResult): i32 {
   if (r.ok) {
     return 0;
   }
@@ -851,8 +853,8 @@ pub function lower_failed_refuse(name: string, r: irlower.LowerResult): i32 {
 
 // wp_fn_sigs derives the whole-program FnSigs base once (the expensive
 // O(all_funcs) part).
-pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: irlower.StructTab): irlower.FnSigs {
-  return irlower.fn_sigs_for_borrow(funcs, structs, irlower.borrowable_params_interproc(funcs, structs));
+pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: irtables.StructTab): fnsigs.FnSigs {
+  return fnsigs.fn_sigs_for_borrow(funcs, structs, fnsigs.borrowable_params_interproc(funcs, structs));
 }
 
 // Sub is a whole-module semantic lowering the CALLER produced, threaded into
@@ -862,15 +864,15 @@ pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: irlower.StructTab): i
 // it. `no_sub()` is the empty substitution.
 pub struct Sub {
   // One entry per mod.funcs.
-  bodies: irlower.LowerResult[],
+  bodies: irtables.LowerResult[],
   // The bodies with no declaration of their own: the generic instances and
   // the per-type drop helpers, deduped onto the cache tail by symbol.
-  extra: irlower.LowerResult[],
+  extra: irtables.LowerResult[],
   // The registries `ssarc.caller_sigs` rewrote from the produced callees'
   // verified contracts, which the emit reads.
-  sigs: irlower.FnSigs,
+  sigs: fnsigs.FnSigs,
   // The runtime helpers' lowering, handed to the emit's state.
-  rt_lower: (string) => irlower.LowerResult[],
+  rt_lower: (string) => irtables.LowerResult[],
   // The typed module the producer lambda-lifted, which a register backend's
   // emit reads erased rather than lifting again; `has_lifted` says it is set.
   lifted: parser.Module,
@@ -882,7 +884,7 @@ pub struct Sub {
 
 pub function no_sub(): Sub {
   var none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [] };
-  return Sub { bodies: [], extra: [], sigs: irlower.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [] };
+  return Sub { bodies: [], extra: [], sigs: fnsigs.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [] };
 }
 
 // The register emit's lambda-lifted module: the producer's, erased, when it
@@ -908,7 +910,7 @@ pub function with_records(mod: parser.Module, sub: Sub): parser.Module {
 // (`fd`) of the bodies an emit reads. Every declaration has one: a refusal
 // already failed the compile where the substitution was built, so a missing
 // body is a compiler bug, reported naming the function.
-pub function produced(bodies: irlower.LowerResult[], i: i32, fd: parser.FuncDecl): irlower.LowerResult {
+pub function produced(bodies: irtables.LowerResult[], i: i32, fd: parser.FuncDecl): irtables.LowerResult {
   if (i < bodies.len() && bodies[i].ok) {
     return bodies[i];
   }
@@ -928,7 +930,7 @@ pub function produced(bodies: irlower.LowerResult[], i: i32, fd: parser.FuncDecl
 // legitimately empty.
 pub struct Lowered {
   ok: boolean,
-  cache: irlower.LowerResult[],
+  cache: irtables.LowerResult[],
 }
 
 // gate is the eligibility verdict every whole-program emit path asks of the
@@ -938,23 +940,23 @@ pub struct Lowered {
 // helper calls all pass is_fern_helper). The cache it returns is the one the
 // emit reads.
 pub function gate(mod: parser.Module, sub: Sub): Lowered {
-  var cache: irlower.LowerResult[] = [];
-  var freg: irlower.SigReg = defined_reg(mod, sub.extra);
+  var cache: irtables.LowerResult[] = [];
+  var freg: irtables.SigReg = defined_reg(mod, sub.extra);
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
-    var r: irlower.LowerResult = produced(sub.bodies, i, mod.funcs[i]);
+    var r: irtables.LowerResult = produced(sub.bodies, i, mod.funcs[i]);
     var j: i32 = 0;
     while (j < r.ops.len()) {
       var o: ir.Op = r.ops[j];
       if (o.kind_tag == 149) {  // call_direct
-        if (!is_fern_helper(o.str) && !is_c_call(o.str) && !irlower.sig_reg_has_exact(freg, o.str)) {
+        if (!is_fern_helper(o.str) && !is_c_call(o.str) && !irtables.sig_reg_has_exact(freg, o.str)) {
           if (strict_ir_on()) {
             strict_ir_refuse(mod.funcs[i].name + " (call to unknown symbol " + o.str + ")");
           }
           return Lowered { ok: false, cache: [] };
         }
       } else if (o.kind_tag == 6) {  // const_func
-        if (!irlower.sig_reg_has_exact(freg, o.str)) {
+        if (!irtables.sig_reg_has_exact(freg, o.str)) {
           if (strict_ir_on()) {
             strict_ir_refuse(mod.funcs[i].name + " (function value " + o.str + " not defined)");
           }
@@ -977,9 +979,9 @@ pub function gate(mod: parser.Module, sub: Sub): Lowered {
 pub struct Gated {
   ok: boolean,
   im: parser.Module,
-  stab: irlower.StructTab,
-  base: irlower.FnSigs,
-  cache: irlower.LowerResult[],
+  stab: irtables.StructTab,
+  base: fnsigs.FnSigs,
+  cache: irtables.LowerResult[],
 }
 
 // gate_program is the gate both register backends' whole-module emits run, and
@@ -987,7 +989,7 @@ pub struct Gated {
 // lambda-lifted module (sub_lifted).
 pub function gate_program(lifted: parser.Module, sub: Sub): Gated {
   var im: parser.Module = with_records(parser.infer_ret_types_module(script_normalized(lifted)), sub);
-  var stab: irlower.StructTab = irlower.struct_tab(im.structs);
+  var stab: irtables.StructTab = irtables.struct_tab(im.structs);
   var g: Lowered = gate(im, sub);
   return Gated { ok: g.ok, im: im, stab: stab, base: sub.sigs, cache: g.cache };
 }
@@ -997,7 +999,7 @@ pub function gate_program(lifted: parser.Module, sub: Sub): Gated {
 // the entry's cache carrying the declaration-less bodies on its tail. `loose`
 // lists the functions no part declares (a lifted lambda, a generic clone),
 // which a unit can call whichever unit emits them.
-pub struct Units { mods: parser.Module[], caches: irlower.LowerResult[][], loose: parser.FuncDecl[] }
+pub struct Units { mods: parser.Module[], caches: irtables.LowerResult[][], loose: parser.FuncDecl[] }
 
 // split_units assigns every function of `g` to one of `parts` (the modules
 // flatten.bundle_per_module returns, the entry at `entry`). A declaration goes
@@ -1010,11 +1012,11 @@ pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
   var declared: i32[] = declared_owners(g, parts);
   var owner: i32[] = unit_owners(g, declared, entry);
   var mods: parser.Module[] = [];
-  var caches: irlower.LowerResult[][] = [];
+  var caches: irtables.LowerResult[][] = [];
   var k: i32 = 0;
   while (k < parts.len()) {
     var funcs: parser.FuncDecl[] = [];
-    var cache: irlower.LowerResult[] = [];
+    var cache: irtables.LowerResult[] = [];
     var i: i32 = 0;
     while (i < g.im.funcs.len()) {
       if (owner[i] == k) {
@@ -1091,7 +1093,7 @@ function unit_owners(g: Gated, declared: i32[], entry: i32): i32[] {
     if (owner[i] >= 0) {
       queue = queue.append(i);
     } else {
-      unowned = unowned.insert(irlower.grow_fn_key(g.im.funcs[i]), i + 1);
+      unowned = unowned.insert(fnsigs.grow_fn_key(g.im.funcs[i]), i + 1);
     }
     i = i + 1;
   }
@@ -1143,9 +1145,9 @@ pub function no_unit_keys(): UnitKeys {
 }
 
 // unit_keys derives the keys of `u` once for every unit of it. `facts` folds in
-// the verdicts irlower.wp_fact_rows derives from `base`, for a target whose emit
+// the verdicts fnsigs.wp_fact_rows derives from `base`, for a target whose emit
 // reads that registry (the register backends' does; wasm's does not).
-pub function unit_keys(u: Units, funcs: parser.FuncDecl[], stab: irlower.StructTab, base: irlower.FnSigs, facts: boolean): UnitKeys {
+pub function unit_keys(u: Units, funcs: parser.FuncDecl[], stab: irtables.StructTab, base: fnsigs.FnSigs, facts: boolean): UnitKeys {
   var sigmods: parser.Module[] = [];
   var none: string[] = [];
   for m in u.mods {
@@ -1154,7 +1156,7 @@ pub function unit_keys(u: Units, funcs: parser.FuncDecl[], stab: irlower.StructT
   }
   var fh: modloader.FactHashes = modloader.FactHashes { per_mod: none, global: "" };
   if (facts) {
-    fh = modloader.module_fact_hashes(sigmods, irlower.wp_fact_rows(base, funcs, stab));
+    fh = modloader.module_fact_hashes(sigmods, fnsigs.wp_fact_rows(base, funcs, stab));
   }
   var loose: string = modloader.module_sig_string(parser.Module { ...sigmods[0], funcs: u.loose });
   return UnitKeys { sighashes: modloader.fact_sig_hashes(sigmods, fh), facts: fh, view: util.hash_key(loose + struct_table_text(stab.decls)) };
@@ -1210,7 +1212,7 @@ function list_text(xs: string[]): string {
 // lowered_digest fingerprints what an emit reads of each body, so a
 // per-module cache keyed on it moves whenever a unit's lowering does, including
 // when that lowering depends on another module's body.
-pub function lowered_digest(cache: irlower.LowerResult[]): string {
+pub function lowered_digest(cache: irtables.LowerResult[]): string {
   var d: Digest = Digest { a: 208357, b: 5381 };
   for r in cache {
     d = roll(roll(roll(roll(d, r.n_locals), r.n_params), r.result_kind), r.ops.len());
@@ -1297,7 +1299,7 @@ function inline_leaf_ops(): i32 {
   return 16;
 }
 
-pub function inline_tiny_leaves(mod: parser.Module, cache: irlower.LowerResult[]): irlower.LowerResult[] {
+pub function inline_tiny_leaves(mod: parser.Module, cache: irtables.LowerResult[]): irtables.LowerResult[] {
   var names: string[] = [];
   var at: i32[] = [];
   var unit: i32 = 0;
@@ -1313,16 +1315,16 @@ pub function inline_tiny_leaves(mod: parser.Module, cache: irlower.LowerResult[]
   if (names.len() == 0) {
     return cache;
   }
-  var reg: irlower.SigReg = irlower.sig_reg_of(names);
+  var reg: irtables.SigReg = irtables.sig_reg_of(names);
   // Only a unit over native's inlineMaxUnitOps has its growth budgeted.
   var budget: i32 = 2147483647;
   if (unit > 20000) {
     budget = unit / 10;
   }
-  var out: irlower.LowerResult[] = [];
+  var out: irtables.LowerResult[] = [];
   i = 0;
   while (i < cache.len()) {
-    var r: irlower.LowerResult = cache[i];
+    var r: irtables.LowerResult = cache[i];
     var claims: boolean = i < mod.funcs.len() && (mod.funcs[i].fip || mod.funcs[i].fbip);
     if (r.ok && !r.superseded && !claims && budget > 0) {
       var self: string = r.name;
@@ -1333,7 +1335,7 @@ pub function inline_tiny_leaves(mod: parser.Module, cache: irlower.LowerResult[]
       budget = sp.budget;
       if (sp.changed) {
         var opt: ir.OptimizedOps = ir.optimize_ops(sp.r.ops, sp.r.n_params, sp.r.n_locals);
-        r = irlower.LowerResult { ...sp.r, ops: opt.ops, n_locals: opt.n_locals };
+        r = irtables.LowerResult { ...sp.r, ops: opt.ops, n_locals: opt.n_locals };
       }
     }
     out = out.append(r);
@@ -1348,7 +1350,7 @@ pub function inline_tiny_leaves(mod: parser.Module, cache: irlower.LowerResult[]
 // dispatch, and a `__` name through the runtime, neither of which spells a
 // reference in the ops — and never `main`, an import or an export. Dropping is marking it
 // superseded, which no emit writes.
-function cull_spliced_leaves(mod: parser.Module, cache: irlower.LowerResult[], names: string[], at: i32[]): irlower.LowerResult[] {
+function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], names: string[], at: i32[]): irtables.LowerResult[] {
   var dead: boolean[] = [];
   var k: i32 = 0;
   while (k < names.len()) {
@@ -1362,7 +1364,7 @@ function cull_spliced_leaves(mod: parser.Module, cache: irlower.LowerResult[], n
     dead = dead.append(fd.receiver_type.len() == 0 && fd.name != "main" && !util.str_has_prefix(fd.name, "__") && fd.import_iface == "" && !exported);
     k = k + 1;
   }
-  var reg: irlower.SigReg = irlower.sig_reg_of(names);
+  var reg: irtables.SigReg = irtables.sig_reg_of(names);
   for r in cache {
     if (r.superseded) {
       continue;
@@ -1375,16 +1377,16 @@ function cull_spliced_leaves(mod: parser.Module, cache: irlower.LowerResult[], n
       if (o.kind_tag == ir.kind_id("const_struct")) {
         ref = ir.const_struct_fn_body(o.str);
       }
-      if (irlower.sig_reg_has_exact(reg, ref)) {
+      if (irtables.sig_reg_has_exact(reg, ref)) {
         dead = dead.with(util.index_of_str(names, ref), false);
       }
     }
   }
-  var out: irlower.LowerResult[] = cache;
+  var out: irtables.LowerResult[] = cache;
   k = 0;
   while (k < names.len()) {
     if (dead[k]) {
-      out = out.with(at[k], irlower.LowerResult { ...out[at[k]], superseded: true });
+      out = out.with(at[k], irtables.LowerResult { ...out[at[k]], superseded: true });
     }
     k = k + 1;
   }
@@ -1399,7 +1401,7 @@ function inline_label(fd: parser.FuncDecl): string {
   return fd.name;
 }
 
-function inline_leaf(fd: parser.FuncDecl, r: irlower.LowerResult): boolean {
+function inline_leaf(fd: parser.FuncDecl, r: irtables.LowerResult): boolean {
   if (!r.ok || r.superseded || fd.no_inline || r.n_params > r.n_locals) {
     return false;
   }
@@ -1427,7 +1429,7 @@ function inline_leaf(fd: parser.FuncDecl, r: irlower.LowerResult): boolean {
   return true;
 }
 
-struct Spliced { r: irlower.LowerResult, changed: boolean, budget: i32 }
+struct Spliced { r: irtables.LowerResult, changed: boolean, budget: i32 }
 
 // splice_leaves rewrites every call in `r` to a leaf. A site becomes: the
 // arguments stored to a fresh copy of the leaf's parameter slots, its other
@@ -1435,18 +1437,18 @@ struct Spliced { r: irlower.LowerResult, changed: boolean, budget: i32 }
 // body inside a void block that each `return` leaves with `br`, the word it
 // returns (every function returns one, irverifystack) parked in one more
 // fresh slot and loaded after the block.
-function splice_leaves(r: irlower.LowerResult, self: string, reg: irlower.SigReg, names: string[], at: i32[], cache: irlower.LowerResult[], budget: i32): Spliced {
+function splice_leaves(r: irtables.LowerResult, self: string, reg: irtables.SigReg, names: string[], at: i32[], cache: irtables.LowerResult[], budget: i32): Spliced {
   var k_calld: i32 = ir.kind_id("call_direct");
   var out: ir.Op[] = [];
   var n_locals: i32 = r.n_locals;
   var changed: boolean = false;
   for o in r.ops {
-    if (o.kind_tag != k_calld || o.str == self || !irlower.sig_reg_has_exact(reg, o.str)) {
+    if (o.kind_tag != k_calld || o.str == self || !irtables.sig_reg_has_exact(reg, o.str)) {
       out = out.append(o);
       continue;
     }
     var li: i32 = at[util.index_of_str(names, o.str)];
-    var leaf: irlower.LowerResult = cache[li];
+    var leaf: irtables.LowerResult = cache[li];
     if (o.i32_imm != leaf.n_params || leaf.ops.len() > budget) {
       out = out.append(o);
       continue;
@@ -1489,7 +1491,7 @@ function splice_leaves(r: irlower.LowerResult, self: string, reg: irlower.SigReg
     budget = budget - leaf.ops.len();
     changed = true;
   }
-  return Spliced { r: irlower.LowerResult { ...r, ops: out, n_locals: n_locals }, changed: changed, budget: budget };
+  return Spliced { r: irtables.LowerResult { ...r, ops: out, n_locals: n_locals }, changed: changed, budget: budget };
 }
 
 // check_fip_claims refuses a window of declarations whose `fip` / `fbip` claim
@@ -1514,7 +1516,7 @@ function splice_leaves(r: irlower.LowerResult, self: string, reg: irlower.SigReg
 //
 // The unannotated early return is what keeps this free: one boolean pair per
 // function, before any op is examined.
-pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache: irlower.LowerResult[]): void {
+pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache: irtables.LowerResult[]): void {
   var diags: util.Diag[] = [];
   var hh: i32 = hi;
   if (hh < 0 || hh > funcs.len()) {
@@ -1535,7 +1537,7 @@ pub function check_fip_claims(funcs: parser.FuncDecl[], lo: i32, hi: i32, cache:
 }
 
 // fip_claim_diags appends this function's E068 verdicts.
-function fip_claim_diags(fn: parser.FuncDecl, r: irlower.LowerResult, acc: util.Diag[]): util.Diag[] {
+function fip_claim_diags(fn: parser.FuncDecl, r: irtables.LowerResult, acc: util.Diag[]): util.Diag[] {
   var claim: irfipverify.FipClaim = irfipverify.FipClaim {
     fn_name: fn.name, is_fip: fn.fip, is_fbip: fn.fbip, allowance: fn.fip_allowance,
   };

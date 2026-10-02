@@ -122,7 +122,7 @@ Worth recording because the first reading of that SIGSEGV was "the fused free
 path corrupts the heap". It does not — but the route to knowing is not the
 symptom. `gen2` built from `-emit asm` through gcc gives a SYMBOLISED binary of
 the same code, and gdb then names the frame in one step
-(`irlower.bytes_at` ← `tagged_value_start` ← `tagged_value_of`, reading a
+(`fnsigs.bytes_at` ← `tagged_value_start` ← `tagged_value_of`, reading a
 `reclaimable_names` element whose data word is 1). Reach for that before
 theorising about a stripped address.
 

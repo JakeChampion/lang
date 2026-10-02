@@ -28,7 +28,7 @@ func TestSelfHostTupleElemTag(t *testing.T) {
 		t.Skip("tuple_elem_tag_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "tuple_elem_tag_run.fern")
+	copySelfHostFiles(t, dir, "lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "ir.fern", "irtables.fern", "fnsigs.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "tuple_elem_tag_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "tuple_elem_tag_run.fern", "tuple_elem_tag_run")
 
 	const want = "ok  (i32, i32)[-1]=<empty>\n" +

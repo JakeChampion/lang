@@ -30,7 +30,7 @@ import (
 //
 // The unmarked IIFE then needs something to call: the lift hoists it to a
 // direct `__lam_N` call, with any captures as trailing arguments
-// (irlower.lift_capturing_iife).
+// (lift.lift_capturing_iife).
 //
 // Every case is oracle-checked against the interpreter and compiled under
 // FERN_STRICT_IR, so a per-function bail is a hard failure rather than a route

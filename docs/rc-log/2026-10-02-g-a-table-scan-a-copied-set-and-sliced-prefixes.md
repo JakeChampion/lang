@@ -2,7 +2,7 @@
 
 `asmcore.infer_call_named_type`, `irlower.noesc_set_kill`, `semtypes.prefixed`,
 every `slice_unchecked(s, 0, p.len()) == p` in the self-host sources, the
-borrowable registry's bucket count and `irlower.strarr_own_call`'s store
+borrowable registry's bucket count and `fnsigs.strarr_own_call`'s store
 lookup. Refs #8171. No emitted byte changes: the stage0-built compiler before and after
 emits the fixed older tree (`examples/self_host/fern.fern` at 1ae9cad) byte for
 byte, and `checker.fern` likewise, on main at 0d7a8d32 with the previous
@@ -27,10 +27,10 @@ The whole-compiler emit after the previous entry
   `slice_unchecked(s, 0, p.len()) == p`, occurred at 22 other sites, among
   them `irlower.strarr_keyed_any` (1.02 G, 11.8 M rows scanned for a prefix
   by `strarr_own_call`).
-- `irlower.param_is_borrowable` 3.56 G self, 351 k lookups at 9.7 k Ir: the
+- `fnsigs.param_is_borrowable` 3.56 G self, 351 k lookups at 9.7 k Ir: the
   borrowable registry had 251 buckets for some 11 k keys across its tiers,
   and a lookup walks its bucket's records byte by byte.
-- `irlower.borrow_reg_set` 2.00 G: it copied the registry bucket by bucket
+- `fnsigs.borrow_reg_set` 2.00 G: it copied the registry bucket by bucket
   with `append` before storing one record, twice per callee in
   `ssarc.caller_sigs`.
 
@@ -79,9 +79,9 @@ entry's change, and this change on top.
 | `asmcore.infer_call_named_type`, inclusive | 3.28 G | 0.08 G |
 | `irlower.noesc_set_kill`, inclusive | 1.31 G | 0.02 G |
 | `semtypes.is_env`, inclusive | 1.90 G | 1.07 G |
-| `irlower.param_is_borrowable`, inclusive | 3.56 G | 0.66 G |
-| `irlower.borrow_reg_set`, inclusive | 2.00 G | 2.62 G |
-| `irlower.strarr_own_call`, inclusive | 1.20 G | 0.41 G |
+| `fnsigs.param_is_borrowable`, inclusive | 3.56 G | 0.66 G |
+| `fnsigs.borrow_reg_set`, inclusive | 2.00 G | 2.62 G |
+| `fnsigs.strarr_own_call`, inclusive | 1.20 G | 0.41 G |
 | `__fern_arr_slice`, inclusive | 3.25 G | 2.67 G |
 
 `borrow_reg_set` rises because its one `with` now copies 4093 buckets rather
@@ -111,8 +111,8 @@ ratchet, and the two emit identities.
 Self cost on this profile: `ssa_lift.lift_impl` 7.05 G, `util.hash_bucket`
 6.82 G (#11008 shortens its loop), `__fern_alloc` 4.82 G (4.06 G of it under
 `__fern_arr_box`, 171 M boxings, 63 M of them from `__fern_arr_push`),
-`__fern_str_eq` 4.42 G, `__fern_arr_dec` 3.54 G, `irlower.param_is_borrowable`
+`__fern_str_eq` 4.42 G, `__fern_arr_dec` 3.54 G, `fnsigs.param_is_borrowable`
 3.39 G (351 k calls at 9.7 k Ir: a byte walk of the whole bucket row per
 lookup), `asmcore.add_string_lit` 3.17 G inclusive (the copy above),
-`ir.fold_const_binaries` 2.83 G, `irlower.strarr_own_call` 1.20 G (the
+`ir.fold_const_binaries` 2.83 G, `fnsigs.strarr_own_call` 1.20 G (the
 `stores` rows want an index by their key rather than a prefix scan per call).
