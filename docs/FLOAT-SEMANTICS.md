@@ -322,7 +322,7 @@ no verbatim parse, so `fern -fmt` there fails on the file instead.
   output, so NaN-edge programs are fine.
 
 - `ProfileRunnable` — drives the cross-backend exit-byte oracle
-  (`FuzzGenerate_ExecutionAgrees`, `TestDifferential_LangsmithMain`).
+  (`FuzzGenerate_ExecutionAgrees` and the `TestDifferential_SelfHost*` sweeps).
   Floats are **deliberately excluded from every draw** — the type
   pool, `main`'s local pool, dynamic struct fields, and enum payload
   slots — because the oracle compares `main()`'s 1-byte return code

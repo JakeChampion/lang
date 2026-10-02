@@ -167,8 +167,8 @@ func TestDifferential_Arm64SSAStdout(t *testing.T) {
 
 // TestDifferential_Arm64SSAExitByte runs the exit-code fernsmith
 // corpus through `-target arm64-linux -backend ssa` and asserts the binary's exit
-// code matches the interpreter's, the same contract the other
-// backends are held to in TestDifferential_LangsmithMain.
+// code matches the interpreter's, the same contract the self-host targets
+// are held to in TestDifferential_SelfHostX86_64.
 //
 // See the file header for why this is not redundant with the stdout
 // leg: it is the one that catches #5767's class. A crash reaches the
