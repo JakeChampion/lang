@@ -24,8 +24,8 @@ func TestSelfHostBufferedWriterBytes(t *testing.T) {
 			name string
 			env  []string
 		}{
-			{"semantic", []string{"FERN_SEM_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1"}},
-			{"default", []string{"FERN_SEM_IR="}},
+			{"checked", []string{"FERN_SANITIZE=1", "FERN_LEAKCHECK=1"}},
+			{"plain", nil},
 		} {
 			t.Run(target+"/"+mode.name, func(t *testing.T) {
 				var cmd *exec.Cmd
@@ -51,7 +51,7 @@ func TestSelfHostBufferedWriterBytes(t *testing.T) {
 				if !bytes.Equal(out.Bytes(), e2eharness.BufferedWriterBytesOutput()) {
 					t.Fatalf("binary output differs: got %d bytes\n%s", out.Len(), diagnostic.String())
 				}
-				if mode.name == "semantic" {
+				if mode.name == "checked" {
 					if strings.Contains(diagnostic.String(), "fern-sanitizer:") {
 						t.Fatal(diagnostic.String())
 					}
@@ -77,12 +77,12 @@ func TestSelfHostArm64DarwinBufferedWriterBytes(t *testing.T) {
 	if err := os.WriteFile(src, []byte(e2eharness.BufferedWriterBytesProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"default", "FERN_SEM_IR="}} {
-		t.Run(mode.name, func(t *testing.T) {
+	for _, checked := range []bool{true, false} {
+		t.Run(map[bool]string{true: "checked", false: "plain"}[checked], func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "writer")
 			compile := exec.Command(cli, "-target", "arm64-darwin", src, stdlib, "-o", bin)
-			compile.Env = append(os.Environ(), mode.env)
-			if mode.name == "semantic" {
+			compile.Env = os.Environ()
+			if checked {
 				compile.Env = append(compile.Env, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 			}
 			if out, err := compile.CombinedOutput(); err != nil {
@@ -100,7 +100,7 @@ func TestSelfHostArm64DarwinBufferedWriterBytes(t *testing.T) {
 			if err != nil || strings.Contains(string(out), "fern-sanitizer:") {
 				t.Fatalf("writer bytes: %v\n%s", err, out)
 			}
-			if mode.name == "semantic" {
+			if checked {
 				assertBalancedCensus(t, string(out))
 			}
 		})
