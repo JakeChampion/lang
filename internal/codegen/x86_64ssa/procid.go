@@ -18,6 +18,15 @@ func emitIdHelper(name string, sysno int) func(func(string, ...any)) {
 	}
 }
 
+// emitPwNameHelper writes __getpwuid_name(uid) -> 0: Linux keeps every
+// account in the files the caller reads (#9815).
+func emitPwNameHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__getpwuid_name"))
+	w("\txor eax, eax")
+	w("\tret")
+}
+
 // emitUmaskHelper writes umask(mask) -> the previous mask. umask(2) cannot
 // fail and returns the mask it replaced, so the syscall's own return value is
 // the whole answer.

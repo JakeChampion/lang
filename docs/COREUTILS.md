@@ -491,7 +491,11 @@ coreutils/
                     getgrouplist's ordering, the process's own group
                     set, and the gecos field finger reads as a real name
                     (`&` is the login name capitalised) — for whoami,
-                    id, groups, logname and pinky
+                    id, groups, logname and pinky. A uid's NAME falls
+                    back to libSystem's getpwuid(3) on arm64-darwin
+                    (`user_name`, #9815): regular accounts live in
+                    Directory Services there, and /etc/passwd holds only
+                    the system ones
   lib/utmp.fern     the login-accounting record: the fixed-size utmp
                     entry, the scans over it, and the terminal a ut_line
                     names — its mode is the message status and its atime

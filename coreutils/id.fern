@@ -178,13 +178,7 @@ function print_user(o: Out, uid: i64, use_name: boolean): Out {
   if (!use_name) {
     return Out { w: gnu.put(o.w, uid.to_string()), ok: o.ok };
   }
-  let name: Option[string] = None;
-  match (pwdb.user_by_uid(uid)) {
-    Some(u) => {
-      name = Some(u.name);
-    },
-    None => {}
-  }
+  let name: Option[string] = pwdb.user_name(uid);
   return name_or_number(o, uid, name, "user");
 }
 
@@ -239,13 +233,7 @@ function id_with_name(id: i64, name: Option[string]): string {
 }
 
 function user_field(label: string, uid: i64): string {
-  let name: Option[string] = None;
-  match (pwdb.user_by_uid(uid)) {
-    Some(u) => {
-      name = Some(u.name);
-    },
-    None => {}
-  }
+  let name: Option[string] = pwdb.user_name(uid);
   return label + id_with_name(uid, name);
 }
 
