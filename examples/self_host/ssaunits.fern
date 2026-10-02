@@ -70,7 +70,10 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // `held` marks an element read that takes a unit of its own at the read
 // (held_elements); the physical lowering retains what it read.
 // `literal` marks the values that can only hold a string literal (`literals`).
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis }
+// `defs` is the definitions table (`definitions`) of the function the plan was
+// planned from, indexed by value; a verifier checking another function
+// derives its own.
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[] }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
@@ -179,8 +182,9 @@ function has_row_at(rows: GrowRow[], ix: util.NameIndex, callee: string, param: 
 // unit in, or retained and so made the record's own count answer "shared".
 pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[], tix: util.NameIndex): GrowRow[] {
   let out: GrowRow[] = [];
-  let defs: ssa.SInst[] = definitions(f);
+  let defs: ssa.SInst[] = p.defs;
   let at: i32[] = ssa.block_positions(f.graph);
+  let seen: boolean[] = bits(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
@@ -195,7 +199,9 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
         continue;
       }
       if (field < 0) {
-        for param in carried_params(f, defs, root) {
+        let carried: Carried = carried_params(f, defs, root, seen);
+        seen = carried.seen;
+        for param in carried.params {
           if (!p.owned[param]) {
             out = with_row(out, callee, defs[param].imm, 0 - 1);
           }
@@ -246,7 +252,8 @@ function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SIns
   while (i < ins.args.len()) {
     let v: i32 = ins.args[i];
     if (v >= f.graph.nparams && is_array(f.values[v]) && occurrences(s.drops, v) > 0 && has_row_at(table, tix, ins.str, i, 0 - 1)) {
-      for param in carried_params(f, defs, v) {
+      let carried: Carried = carried_params(f, defs, v, bits(f.graph.nvals));
+      for param in carried.params {
         if (!p.owned[param]) {
           out = with_row(out, callee, defs[param].imm, 0 - 1);
         }
@@ -257,11 +264,13 @@ function dying_lent_rows(callee: string, f: ssasem.Func, p: Plan, defs: ssa.SIns
   return out;
 }
 
+struct Carried { params: i32[], seen: boolean[] }
+
 // The parameters whose box `v` may be, through phis, the receivers of
-// appends and the array operands of calls.
-function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
+// appends and the array operands of calls. `seen` is a clear nvals-long
+// scratch set, handed back clear.
+function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32, own seen: boolean[]): Carried {
   let out: i32[] = [];
-  let seen: boolean[] = bits(f.graph.nvals);
   let work: i32[] = [v];
   let k: i32 = 0;
   while (k < work.len()) {
@@ -288,7 +297,14 @@ function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
       }
     }
   }
-  return out;
+  let c: i32 = 0;
+  while (c < work.len()) {
+    if (work[c] >= 0) {
+      seen = seen.with(work[c], false);
+    }
+    c = c + 1;
+  }
+  return Carried { params: out, seen: seen };
 }
 
 // Every produced body's rows, closed over the buffers handed on: a row only
@@ -319,7 +335,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
 }
 
 function bad(why: string): Plan {
-  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why) };
+  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [] };
 }
 
 pub function refused(why: string): Plan {
@@ -637,7 +653,7 @@ function literals(f: ssasem.Func): boolean[] {
   return out;
 }
 
-function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
+function owned_values(f: ssasem.Func, modes: i32[], defs: ssa.SInst[]): boolean[] {
   let out: boolean[] = bits(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -651,7 +667,7 @@ function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
       out = out.with(ins.result, owns);
     }
   }
-  return phi_ownership(f, out);
+  return phi_ownership(f, out, defs);
 }
 
 // A phi owns a unit unless every operand is lent whole: a borrowed parameter,
@@ -665,8 +681,7 @@ function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
 // an owned record is anchored to its root, and the retain the edge supplies
 // is what keeps the child alive past the root's release. To a fixpoint, since
 // ownership reaches a phi through a phi, and through a projection of one.
-function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
-  let defs: ssa.SInst[] = definitions(f);
+function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boolean[] {
   let out: boolean[] = owned;
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -746,8 +761,7 @@ function part_read(kind: i32): boolean {
 // A string retagged as a view is the string's own counted box, so retaining
 // it retains the string, which `__fern_str_view_free` then releases as one.
 // A literal's retain is never emitted (ssarc.supplies), so it lends nothing.
-function view_retain_error(f: ssasem.Func, steps: Step[], literal: boolean[]): string {
-  let defs: ssa.SInst[] = definitions(f);
+function view_retain_error(f: ssasem.Func, steps: Step[], literal: boolean[], defs: ssa.SInst[]): string {
   for s in steps {
     for item in s.supplies {
       if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value]) && !retagged_string(f, defs, item.value) && !literal[item.value]) {
@@ -2280,9 +2294,9 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
   if (why != "") {
     return bad(why);
   }
-  let owned: boolean[] = owned_values(f, modes);
-  let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
   let defs: ssa.SInst[] = definitions(f);
+  let owned: boolean[] = owned_values(f, modes, defs);
+  let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
   let units: Units = units_of(f, owned, analysis, defs);
   owned = units.owned;
   let takes: i32[] = units.takes;
@@ -2375,11 +2389,11 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
     bi = bi + 1;
   }
   let literal: boolean[] = literals(f);
-  why = view_retain_error(f, steps, literal);
+  why = view_retain_error(f, steps, literal, defs);
   if (why != "") {
     return bad(why);
   }
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs), text_lens: text_lens(f), analysis: semantic };
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs), text_lens: text_lens(f), analysis: semantic, defs: defs };
 }
 
 function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i32, own out: boolean[]): boolean[] {
@@ -2833,8 +2847,9 @@ pub function verify_planned(f: ssasem.Func, modes: i32[], p: Plan): string {
   return verify_analyzed(f, modes, p, p.analysis, false);
 }
 
-// `whole` runs the contract check on `f` as the planner did, for a plan that
-// may be checked against a function other than the one it was planned from.
+// `whole` runs the contract check on `f` as the planner did and derives the
+// definitions table from `f`, for a plan that may be checked against a
+// function other than the one it was planned from.
 function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem.Analysis, whole: boolean): string {
   if (!p.ok || p.why != "") {
     return "missing successful unit plan";
@@ -2844,8 +2859,10 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
     return analysis.why;
   }
   let why: string = "";
+  let defs: ssa.SInst[] = p.defs;
   if (whole) {
     why = contract_error(f, modes);
+    defs = definitions(f);
   } else if (modes.len() != f.params.len()) {
     why = "parameter mode dimensions";
   } else {
@@ -2854,7 +2871,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   if (why != "") {
     return why;
   }
-  let units: Units = units_of(f, owned_values(f, modes), analysis, definitions(f));
+  let units: Units = units_of(f, owned_values(f, modes, defs), analysis, defs);
   let owned: boolean[] = units.owned;
   if (!same_takes(units.takes, p.takes)) {
     return "tuple take disagrees with the plan";
