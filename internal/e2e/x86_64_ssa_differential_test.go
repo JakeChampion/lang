@@ -150,7 +150,7 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 				return
 			}
 			_, stdoutUnstable := unstable[rel]
-			if d := ssaDiffCompare(base, ssa, stdoutUnstable); d != "" {
+			if d := ssaDiffCompare(rel, base, ssa, stdoutUnstable); d != "" {
 				atomic.AddInt64(&diverged, 1)
 				if isKnown {
 					t.Logf("known divergence (%s): %s", reason, d)

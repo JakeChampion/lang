@@ -2540,6 +2540,10 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	}
 	if helpers.set["__fern_tcp_pollable"] {
 		in.add("wasi_sockets_tcp_subscribe")
+		in.add("wasi_io_input_stream_subscribe")
+		if helpers.set["__fern_udp_bind"] {
+			in.add("wasi_sockets_udp_incoming_subscribe")
+		}
 	}
 	if helpers.set["__fern_reactor_ctl"] {
 		in.add("wasi_sockets_tcp_subscribe")
